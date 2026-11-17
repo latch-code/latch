@@ -42,6 +42,7 @@ export * from './questions.ts'
 export * from './attachments.ts'
 export * from './mcp.ts'
 export * from './customization.ts'
+export * from './simulators.ts'
 
 export { isFileMention, fileMentionContext, type FileMention } from './file-refs.ts'
 export { isFileChange } from './file-changes.ts'

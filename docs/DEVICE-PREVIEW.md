@@ -1,5 +1,5 @@
 ---
-description: 设备预览：右栏「设备」面板经 xcrun simctl 列出、启动、关机、截图、打开地址与切换外观；在 Device Hub 中打开；Agent 的 device_* 工具与指引；设置 › MCP 的「Xcode」预设（xcrun mcpbridge）的工具开关、分级、审计与「Agent 正在使用」；限制与尚未实现的部分。
+description: 设备预览：右栏「设备」面板经 xcrun simctl 与 devicectl 列出、新建、启动、关机、截图与标注、录屏、旋转、缩放、App 与权限、日志、打开地址与切换外观，快捷键，闲置自动关机；在 Device Hub 中打开；Agent 的 device_* 工具与指引；设置 › MCP 的「Xcode」预设（xcrun mcpbridge）的工具开关、分级、审计与「Agent 正在使用」；限制与尚未实现的部分。
 sources:
   - apps/host/src/simulators.ts
   - apps/host/src/routes/simulators.ts
@@ -10,7 +10,9 @@ sources:
   - packages/harness-acp/src/browser-server.ts
   - packages/harness-acp/src/mcp-bridge.ts
   - apps/web/src/panel/device
+  - packages/protocol/src/simulators.ts
   - apps/host/test/simulators.test.ts
+  - apps/host/test/simulators-public.test.ts
   - apps/host/test/mcp-xcode.test.ts
   - apps/web/test/device-panel.test.ts
   - e2e/desktop-device.e2e.ts
@@ -21,11 +23,12 @@ sources:
 ---
 # 设备预览
 
-右栏「+」里的「设备」（字母键 V）显示这台 Mac 上一台 iOS 模拟器的画面，并提供启动、关机、截图、打开地址、外观与「在 Device Hub 中打开」。面板只用 Apple 公开的 `xcrun simctl` 与 `open`；唯一加载私有框架的是还没有接入面板的画面组件 `latch-simulator`（见[实时画面组件](#实时画面组件)）。不下载，不加依赖。
+右栏「+」里的「设备」（字母键 V）显示这台 Mac 上一台 iOS 模拟器的画面，并提供新建、启动、关机、缩放、旋转、截图与标注、录屏、App 与权限、日志、打开地址、外观与「在 Device Hub 中打开」。面板只用 Apple 公开的 `xcrun simctl`、`xcrun devicectl` 与 `open`，不下载，不加依赖，不要新的系统权限；唯一加载私有框架的是还没有接入面板的画面组件 `latch-simulator`（见[实时画面组件](#实时画面组件)）。
 
 | 部分 | 位置 |
 | --- | --- |
-| simctl 模块：固定参数、校验、上限、只关自己启动的 | `apps/host/src/simulators.ts` |
+| simctl 与 devicectl 模块：固定参数、校验、上限、只关自己启动的 | `apps/host/src/simulators.ts` |
+| 共用的取值与上限（权限服务、录屏与日志上限、名字与 bundle id 的格式） | `packages/protocol/src/simulators.ts` |
 | 路由与功能开关 | `apps/host/src/routes/simulators.ts` |
 | Agent 的 `device_*` 工具 | `apps/host/src/plugins/tools/device/` |
 | 「Xcode」预设 | `apps/host/src/mcp-xcode.ts` |
@@ -40,7 +43,7 @@ sources:
 
 ## Host
 
-`Simulators` 只运行 `/usr/bin/xcrun simctl` 与 `/usr/bin/open`，参数是固定数组（`execFile`，不经 shell），工作目录固定为 `/`（按相对名字写的文件不会落进任何人的文件夹），环境只有 `PATH`、`HOME`、`TMPDIR`、`DEVELOPER_DIR`、`USER`、`LOGNAME`：
+`Simulators` 只运行 `/usr/bin/xcrun simctl`、`/usr/bin/xcrun devicectl` 与 `/usr/bin/open`，参数是固定数组（`execFile` 或 `spawn`，不经 shell，没有输入），工作目录固定为 `/`（按相对名字写的文件不会落进任何人的文件夹），环境只有 `PATH`、`HOME`、`TMPDIR`、`DEVELOPER_DIR`、`USER`、`LOGNAME`（所以没有 `SIMCTL_CHILD_*` 能带进设备）。三个测试接缝：跑完即返回的 `run` 与 `devicectl`、一直运行到被叫停的 `spawn`：
 
 | 动作 | simctl | 超时 |
 | --- | --- | --- |
@@ -51,36 +54,89 @@ sources:
 | 打开地址 | `openurl <UDID> <地址>` | 20 s |
 | 外观 | `ui <UDID> appearance [light|dark]` | 20 s |
 | Device Hub | `open -a <xcode-select 的 Xcode>/Contents/Applications/DeviceHub.app devices://device/open?id=<UDID>` | 20 s |
+| 方向 | `devicectl device orientation get --device <UDID> -t 20 -j -` | 25 s |
+| 旋转 | 先读方向，再 `devicectl device orientation rotate --device <UDID> left|right -t 20 -j -` | 各 25 s |
+| App 列表 | `listapps <UDID>`（≤ 4 MiB，最多 500 个，隐藏的不列） | 20 s |
+| 启动、结束 App | `launch <UDID> <bundle id>`、`terminate <UDID> <bundle id>` | 20 s |
+| 权限 | `privacy <UDID> grant|revoke|reset <服务> <bundle id>` | 20 s |
+| 新建的取值 | `list devicetypes --json`、`list runtimes --json`（各 ≤ 1 MiB、最多 300 条） | 各 20 s |
+| 新建 | `create <名字> <设备类型 ID> <系统 ID>` | 60 s |
+| 录屏 | `io <UDID> recordVideo --codec=h264 --force <私有临时文件>`，SIGINT 结束 | ≤ 60 s（Host 不在时 90 s） |
+| 日志 | `spawn <UDID> log stream --style compact [--predicate 'process == "<进程名>"']`，SIGINT 结束 | 面板开着时 |
+
+两种长期运行的进程都经一个固定的 `/bin/sh -c` 脚本启动（`CHILD_WATCHER`，脚本不含任何输入，参数只作 `$1`…）：它先起一个看守，再 `exec` 成 `xcrun simctl`，所以进程号、信号与退出码都是 simctl 的，看守也不占它的管道。看守每秒检查一次，Host 进程没了（被杀、崩溃）或到了时限（录屏 90 秒，日志不限时）就给 simctl 发 SIGINT 并退出。它从不发 SIGKILL，原因见下面两条。2026-11-17 在 Xcode 27.2 的 `latch-` 设备上实测：父进程被 `kill -9` 后，录屏在 5 秒内正常写完并退出，录屏器随后可以再用；没有输出的日志流在设备里也结束了。
+
+- **SIGINT，不 SIGKILL。** 同一次实测：
+  - SIGKILL `simctl io … recordVideo` 后，设备的录屏器一直报「A recording is already in progress」，直到设备重启。
+  - SIGKILL `simctl spawn … log stream` 后，设备里的 `log` 进程（`launchd_sim` 的子进程）还在：输出多的会在下一次写坏管道时退出，带过滤、没有输出的会一直留到设备关机。
+  - SIGINT 两者都正常结束。所以 Host 总是先发 SIGINT，只有子进程 10 秒不理时才 SIGKILL，作最后手段。
 
 - **UDID** 必须是大写 UUID，并且出现在最新的列表里；`booted`、`all` 与选项一律拒绝。
 - **地址** ≤ 2048 字符、有协议、没有空白与控制字符；`file:`、`javascript:`、`data:`、`blob:`、`about:`、`vbscript:` 拒绝。深链接（`myapp://…`）可以。
-- **只关自己启动的。** Host 记住自己从关机状态启动成功的设备；列表里看到它已关机（人在别处关的）就忘掉。两次列表之间人自己关机又启动的设备看不出来，Host 仍会提供「关机」：这一点只靠列表，没有更可靠的公开接口。已经在运行的设备启动时原样保留，仍是人的。Host 停止时只结束在途的 simctl 进程，设备保持原状。
-- 同一台设备同一时间一个启动、关机或修改；同一台设备同一种画面同时只取一次，后来的请求共用结果；全部设备同时最多 4 个 simctl 进程。
+- **bundle id** 先过格式（字母数字开头、点分、不像选项，≤ 155），再必须出现在这台设备最新的 `listapps` 里；`launch` 只带 bundle id，没有参数、`--console` 或输出文件。**权限服务**是固定的 12 个（`all` 不在其中），每次只对一个列出的 App。
+- **新名字** 去掉首尾空白后只能是字母、数字、空格与 `. _ ( ) ' -`，字母或数字开头，≤ 64 字符；**设备类型与系统** 必须是 `com.apple.CoreSimulator.…` 形式、出现在刚读的列表里、系统可用且支持这种设备。新设备不启动。
+- **日志过滤** 只按列出的 App 的 `CFBundleExecutable`，进程名只能是字母数字与空格 `. _ + -`（没有引号与反斜杠），否则拒绝；谓词由 Host 按固定模板拼出。
+- **App 列表** 是旧式属性列表，Host 自己解析（嵌套 ≤ 8），不另运行 `plutil`。
+- **只关自己启动的。** Host 记住自己从关机状态启动成功的设备，并记下启动后列表里它的 `lastUsedAt`。实测在 Xcode 27.2 上，这个字段在第一次启动前没有，运行期间不变，每次启动都换新。列表里看到它已关机（人在别处关的），或 `lastUsedAt` 变了（两次列表之间人自己关机又启动），就不再算 Latch 的。列表里没有这个字段时，Host 分不出来：仍提供人自己点的「关机」，但闲置和 Host 停止时都不自动关它。这个字段只在一台设备、一个 Xcode 版本上核对过。已经在运行的设备启动时原样保留，仍是人的。
+- **闲置自动关机。** Latch 启动的设备，10 分钟没有取帧、面板动作或 Agent 调用，也没有录屏、日志或 Agent 的 Xcode 设备会话，Host 先重新列出确认它仍在运行，并且仍是这次启动（`lastUsedAt` 没变），再关掉它（每分钟查一次）。「在 Device Hub 中打开」算一次使用。人在 Device Hub 里用了 10 分钟以上、其间面板关着，Latch 看不到，仍会关掉它。
+- **Host 停止时：**
+  - 结束在途的 simctl 进程，关闭日志；
+  - 给录屏发 SIGINT 并立即删除目录，不等它写完；
+  - 重新列出一次，关掉仍是自己那次启动的设备（不经 `simctl()`）。
+  
+  以上都在同一个 2.5 秒里。已经发出的关机自己关完；列表本身超过 2.5 秒时（机器很忙），这次一台都不关，设备留着运行，下次由人或新的 Host 处理。人启动的设备一律不碰。闲置和停止两种情况都记 `auto-shutdown`（`idle` 或 `host-stop`），写不进审计也照常关：这只结束东西。
+- **Host 启动时** 删除临时文件夹里崩溃的 Host 留下的 `latch-rec-xxxxxx`、`latch-sim-xxxxxx` 目录。只删名字完全符合、属于本用户、不是符号链接、里面 10 分钟没有任何变化的；正在录屏的其他 Host（另一个数据目录、测试）的目录不受影响。
+- 同一台设备同一时间一个启动、关机、旋转或修改；同一台设备同一种画面同时只取一次，后来的请求共用结果；跑完即返回的进程全部设备同时最多 4 个。长期运行的另算：录屏每台一个、全部两个（在第一次等待之前占位，同时开始的也不会超出）；日志每台两条、全部四条。日志在启动前，录屏在建目录后，都再查一次 Host 是否已开始停止，已停止就不启动。
 - **画面。** Xcode 27.2 的 simctl 不肯写到标准输出（`-` 被当成文件名，`/dev/stdout` 被拒绝），所以每张画面写进 `mkdtemp` 新建的 0700 目录，读出（≤ 5 MiB，超出 413）后立即删除目录。画面不进日志、审计、SSE 或数据目录。
+- **旋转。** 2026-11-17 在 Xcode 27.2、iOS 27.2 的 `latch-` 设备上验证：`devicectl` 认得 simctl 列出的模拟器（按 UDID），但只在设备运行时；关机时回答「The capability “Device Orientation” is not supported by this device」，刚启动完也可能这样回答一阵。所以面板每次都重新问（`orientation`），不把「不能」记下来，最多再问 5 次；不能时按钮不可用。转之前与之后各读一次 `deviceOrientationNonFlat`（`deviceOrientation` 在新设备上读作 `unknown`），没有变就回答 502「设备没有转动」，从不在没转时报成功。方向是设备的物理方向：前台 App 支持横屏时画面随之转动（在探测时取到过 2622×1206 的横向截图）；iPhone 的主屏幕不转，读回已是 `landscapeRight` 时面板里仍是竖着的主屏幕。
+- **录屏。** 写进 `mkdtemp` 新建的 0700 目录里的 `recording.mp4`，等 simctl 在标准错误说「Recording started」才算开始（20 秒没说就失败并删除目录）。最长 60 秒或 25 MB（草稿的文件附件上限；每秒查一次大小，离上限 1 MB 时停止），到了就自己结束并等 60 秒让面板取走。面板停止取帧 20 秒（关掉、隐藏、换设备、页面没了）、Latch 关掉这台设备、设备在别处关掉、Host 停止时都丢弃并删除目录。同一台设备的多个窗口共享这段录屏，任一窗口在取帧都算面板还在。只有开始录屏的那台设备（人的窗口）能看、取、丢弃它。取走时读出（≤ 25 MB）并立即删除目录，作为 `video/mp4` 回答这一个请求，页面把它作为下载交给人。录屏不进日志、审计、SSE 或数据目录。
+- **日志。** 每行去掉控制与双向字符，≤ 1000 字符，开头几行（`Filtering the log data`、表头）去掉；每 200 ms 一批经面板自己的 `text/event-stream` 回答发出。页面读得慢（回答里积压超过 1 MB 未读）时这些行直接丢掉并计数（`dropped`），不在 Host 缓存。每批行与每 15 秒复查设备的范围与凭据，不再允许就结束。页面在流建立期间（读设备、写审计、读 App 列表）就关了，`log` 不会启动；已启动的立即结束。日志行可能有个人数据：不进 Host 日志、审计、主事件流或磁盘。
 - 失败的原因是 simctl 标准错误的第一行有意义的话，去掉控制与双向字符，≤ 200 字符，显示在面板的悬停里。
 
 ### 路由
 
 | 路由 | 作用 |
 | --- | --- |
-| `GET /simulators` | `{ xcode, devices: [{ udid, name, os, state, ours, shown?, agent? }], agentUnnamed? }` |
+| `GET /simulators` | `{ xcode, devices: [{ udid, name, os, state, ours, shown?, agent? }], agentUnnamed?, abilities: { rotate, record, logs } }` |
+| `POST /simulators` | `{ name, deviceType, runtime }` → `{ udid }`（新建） |
+| `GET /simulators/catalog` | `{ deviceTypes: [{ id, name, family }], runtimes: [{ id, name, deviceTypes }] }`，读一次留一分钟 |
 | `GET /simulators/:udid/frame` | JPEG，`cache-control: no-store`；标记「面板正在显示这台」15 秒 |
 | `GET /simulators/:udid/appearance` | `{ appearance: 'light' | 'dark' | null }` |
-| `POST …/boot`、`…/shutdown`、`…/screenshot`（PNG）、`…/open-url`、`…/appearance`、`…/device-hub` | 先写审计，再执行 |
+| `GET /simulators/:udid/orientation` | `{ supported, orientation }` |
+| `GET /simulators/:udid/apps` | `{ apps: [{ bundleId, name, kind: 'user' | 'system' }] }`（进程名不给页面） |
+| `GET /simulators/:udid/record` | `{ state: 'none' | 'recording' | 'ready', seconds?, ended?: 'time' | 'size' }`，只对开始它的设备 |
+| `GET /simulators/:udid/logs[?app=<bundle id>]` | `text/event-stream`：`lines`、`dropped`、`closed`（`SimulatorLogEvents`）；先写审计 |
+| `POST …/boot`、`…/shutdown`、`…/screenshot`（PNG）、`…/open-url`、`…/appearance`、`…/device-hub`、`…/rotate`、`…/launch`、`…/terminate`、`…/privacy` | 先写审计，再执行 |
+| `POST …/record` | `{ action: 'start' }` 先写审计；`'stop'` 回答 `video/mp4`；`'discard'` |
+
+请求体都经 zod 的 strict schema；名字、bundle id、服务、方向、类型与系统 ID 在任何进程启动之前校验。
 
 ### 审计
 
-- `simulator.action`：人的动作（启动、关机、截图、打开地址、外观、Device Hub），记 UDID、动作、外观；打开地址只记协议与源的 SHA-256。写不进就不执行。
-- `simulator.call`：Agent 的 `device_*` 调用，记会话、工具、UDID、分级、运行时的工具调用 ID，经网关时 `via: 'mcp'`。
-- 面板的刷新帧是看，不是动作，不记。
+- `simulator.action`：人的动作（启动、关机、截图、打开地址、外观、Device Hub、旋转、录屏开始、新建、启动与结束 App、权限、打开日志），记 UDID、动作与枚举（外观、方向、权限的操作与服务、日志是否按 App 过滤）；打开地址只记协议与源的 SHA-256，App 只记 bundle id 的 SHA-256（它可能带着人的项目名），新建只记设备类型与系统的 ID、不记人填的名字。写不进就不执行。Host 自己的关机记 `auto-shutdown` 与 `reason`。
+- `simulator.call`：Agent 的 `device_*` 调用，记会话、工具、UDID、分级、方向、bundle id 的 SHA-256、运行时的工具调用 ID，经网关时 `via: 'mcp'`。
+- 面板的刷新帧是看，不是动作，不记；画面、录屏与日志行从不进审计。
 
 ## 面板
 
-- 顶部：设备选择（名字 · 系统版本，运行中的带绿点），外观、打开地址、截图、在 Device Hub 中打开、启动或关机。关机只对 Latch 启动的设备可用，其他运行中的设备提示「只关闭 Latch 启动的设备」。没有旋转：simctl 没有这个命令。
-- 中间：运行中的设备画面放在凹陷底色上，一圈细边，按面板缩小。画面不能点，没有指针手势。其他时候是设备列表，选中的一行末尾有「启动」，按钮位置始终保留，不跳动。
-- 底部一个状态词：未启动、启动中、运行中、关机中、Agent 正在使用、失败（原因在悬停里）。设备在运行但还没有第一帧画面时仍写「启动中」；Host 的启动在 `simctl bootstatus` 报告系统起来之后才返回。
+排成设备窗格的样子，说明都在悬停里，面板里不写句子：
+
+- **顶栏：** 设备选择（名字 · 系统版本，运行中的带绿点；菜单末尾「新建设备…」），紧跟一个状态词：未启动、启动中、运行中、关机中、录屏 0:07、Agent 正在使用、失败（原因在悬停里）。右边是缩放（缩小、「适应」或百分比、放大）与启动或关机。关机只对 Latch 启动的设备可用，其他运行中的设备悬停写「只关闭 Latch 启动的设备」。设备在运行但还没有第一帧画面时仍写「启动中」；Host 的启动在 `simctl bootstatus` 报告系统起来之后才返回。
+- **中间：** 运行中的设备画面放在凹陷底色上，一圈细边。画面不能点，没有指针手势。其他时候是设备列表，选中的一行末尾有「启动」，按钮位置始终保留，不跳动。
+- **缩放：** 「适应」按面板缩小（不超过 1:1）；点数值在适应与 1:1 之间切换；1:1 是一个设备像素对一个屏幕像素（按 `devicePixelRatio`）；放大缩小按 25%～200% 的档位，比适应还小就回到适应。放大后画面在面板里滚动。每台设备的缩放记在这个浏览器里（`latch.device-zoom.<UDID>`），读写失败就只对这次有效。
+- **底栏：** 向左旋转、向右旋转（各 90°，Host 有 devicectl 时才有；这台设备不能转时不可用）、截图、录屏、标注截图 | App、日志、打开地址、外观 | 「在 Device Hub 中打开」（悬停：在 Device Hub 里实时查看和点按，Latch 的面板还不能点按）。窄面板里底栏换行。
+- **新建设备：** 对话框里填名字，选系统与设备类型（iPhone、iPad、其他分组）；新设备出现在列表里并被选中，不启动。
+- **App：** 画面下面的窗格，列出设备上不隐藏的 App（人的在前，标「你的」，bundle id 在悬停里），每个有启动、结束和一个盾牌：对窗格顶上选的那一项权限「允许、拒绝、重置」。预先授权解决不了已经弹出的系统对话框。
+- **日志：** 同一位置的窗格：顶上选「全部进程」或一个 App，状态词（实时、已结束、失败），读得慢时写「少 N 行」；暂停（新行先留着）、清空、关闭。只留最新的 1000 行，只在这里显示，不保存；关闭窗格、换设备或隐藏面板就结束流。
+- **标注：** 先取一张 PNG 截图，画面换成画布：箭头、方框、画笔三种，一种强调色（`--accent`），撤销（⌘Z）、取消（Esc）、「放进草稿」。笔迹按截图自己的像素记，所以缩放不影响结果；放进草稿时编码成 PNG，超过 5 MB 改用 JPEG，仍超就报错。草稿不收附件时按钮不可用。
+- **快捷键：** 焦点在面板里时 ⌘S 截图、⇧⌘R 录屏或停止、⌘← 和 ⌘→ 旋转；焦点在输入框、选择框或可编辑区域、或带别的修饰键时不响应，按钮悬停里写着快捷键。
+  - 录屏不用 ⌘R，因为桌面端菜单的「重新载入」（`role: 'reload'`）占着它。
+  - 新键对照过 `apps/desktop/src/menu.cjs`（包括各 `role` 自带的快捷键）和 `workbenchShortcuts.ts`，都没有占用。
+  - 只在桌面端绑定：面板本来只在桌面端（`host.sock`）出现，普通浏览器的页面没有面板，不会抢浏览器自己的 ⌘S。
+  - Electron e2e 用 Playwright 合成的按键验证过（合成按键不经过系统菜单）。
 - **刷新。** 只在面板显示、设备运行时取帧：上一帧到了，再等 250 ms 取下一帧；隐藏即停止并中止在途请求。取帧失败时间隔翻倍，最长 8 s；连续两次失败后底部写「失败」，原因在悬停里。实测见下。
-- **截图**把 PNG 作为图片附件放进草稿，不发送；发送后按附件规则交给模型服务。
+- **截图**把 PNG 作为图片附件放进草稿，不发送；发送后按附件规则交给模型服务。草稿不收附件时改为下载到这台电脑。
+- **录屏**停止后把 MP4 下载到这台电脑（桌面端弹出保存位置），不放进草稿：多数模型服务不收视频，草稿也按会话的模型限制附件（演示模型只收小文本，1 MB 的录屏会被拒）。关掉面板、换设备或设备停止时丢弃。
 
 **实测的刷新**（Xcode 27.2、iOS 27.2，这台 Mac 负载 12～36 时，Electron e2e 量的是面板一帧的往返）：每帧 1.3～2.3 s，主要是 simctl 进程启动与截图；首屏 JPEG 约 60 KB。加上 250 ms 的间隔，约每秒 0.4～0.6 帧。这是准实时的缩略画面，不是视频；负载低时单次 simctl 截图约 0.5 s。
 
@@ -98,12 +154,18 @@ sources:
 | `device_screenshot` | R0 | 运行中设备的 PNG，作为工具结果的图片进会话（附件规则；没有 `vision` 的模型不提供） |
 | `device_open_url` | R1 | 只打开这台 Mac 的本机地址（http(s) 的 localhost、`*.localhost`、127/8、::1，同浏览器工具） |
 | `device_set_appearance` | R1 | 浅色或深色 |
+| `device_rotate` | R1 | 向左或向右转 90°，回答读回的方向；没有转就报错 |
+| `device_apps` | R0 | 不隐藏的 App：bundle id、名字、人的还是系统的 |
+| `device_launch` | R1 | 按 `device_apps` 里的 bundle id 启动，不带参数 |
+
+- **没有 `device_record`。** 工具结果只能带文字与图片，录下的视频进不了会话，也不该落进项目文件夹；有 shell 的 Agent 可以自己运行 `xcrun simctl io <UDID> recordVideo`，指引里也这样说，或请人在面板里录。
+- **启动 App 不带参数**：参数能让 App 打开任意地址，会绕过下面 `device_open_url` 的本机地址规则。权限的授予与撤销只给人（面板），不给 Agent。
 
 - **地址。** Agent 不能在设备上打开别的地址或深链接（`myapp://…`），即使这一会话「始终允许」了它：那会把读到的东西带出设备，深链接交给哪个 App 也没人选。它得到一句话，请人在设备面板里打开；人在面板里可以打开任何网址与深链接。
 - **只为能看全部数据的设备发起的一轮。** 截图会进入会话，能读这个会话的设备都看得到，所以设备工具只在最近一次输入来自数据范围为「全部」的设备时执行；手机或范围更小的浏览器发起的一轮、没有人发起的定时运行都被拒绝。
 - 只在这台 Mac 的桌面端开着（已登记为浏览器提供者）时执行，否则回答「Latch 窗口没有打开」；外部 Harness 的会话要有项目、完全访问、在运行中的一轮里（同浏览器工具）。网关的工具列表只在 Host 上次列出设备时找到 Xcode 才包含它们。
 - 启动与关机留给人：设备没运行时工具回答「设备未启动，请在设备面板里启动」。
-- **指引。** `latch-browser` 的 `initialize` 带 `instructions`：用 `device_list` 标出的那台设备的 UDID，不用 `booted`；设备没运行就请人在面板里启动；在检查点截图核对；这些工具不能点按，构建、安装、运行用自己 shell 里的 `xcodebuild` 与 `xcrun simctl`（`-destination id=<UDID>`），或人添加的 Xcode 服务器；不抹掉、不删除设备，不登录真实账号。工具说明里也写了其中要紧的几条。
+- **指引。** `latch-browser` 的 `initialize` 带 `instructions`：用 `device_list` 标出的那台设备的 UDID，不用 `booted`；设备没运行就请人在面板里启动；在检查点截图核对；`device_rotate` 说没转时截图核对，不要重试；`device_launch` 只用 `device_apps` 里的 bundle id；这些工具不能点按、输入或录屏，构建、安装、运行用自己 shell 里的 `xcodebuild` 与 `xcrun simctl`（`-destination id=<UDID>`），或人添加的 Xcode 服务器，录屏请人在面板里录或自己运行 `simctl io recordVideo`；不抹掉、不删除设备，不在没被要求时改权限，不登录真实账号。工具说明里也写了其中要紧的几条。
 
 ### 「Xcode」预设（设置 › MCP）
 
@@ -137,12 +199,11 @@ Xcode 自带的 MCP 桥 `xcrun mcpbridge`（Apple 文档：Giving external agent
 
 ## 尚未实现
 
-- **在 Latch 面板里点按。** 尚未实现：`simctl` 没有点按，`latch-simulator` 这一版只读画面、不发任何输入；点按在 Device Hub 的窗口里。
-- **面板里的实时视频。** 尚未实现：`latch-simulator` 已能出画面，但还没有路由与面板解码接入，面板仍用截图。
+- **在 Latch 面板里点按、滑动、输入、硬件按钮：尚未实现。** 公开的 `simctl` 与 `devicectl` 都没有向模拟器送触摸或键盘的命令，`latch-simulator` 只读画面、不发任何输入；点按在 Device Hub 的窗口里。
+- **面板里的实时画面：尚未实现。** `latch-simulator` 已能出画面，但还没有路由与面板解码接入，面板的画面仍是每 1～2 秒一张的 `simctl io screenshot`。录屏能录下连续画面，但只是文件，不是面板里的直播。
 - **接手与交还 Xcode 的设备会话。** Xcode 的调用由 Agent 进程里的桥直接交给 `mcpbridge`，结果不经 Host，Host 拦不住在途的点按，所以只显示状态，不提供接手；面板的画面也不从 Agent 的工具结果更新，只来自 simctl 截图。
 - **手机与其他电脑上看模拟器。** 要把这台 Mac 的画面传到别的设备，需要单独的安全审阅；那些设备上没有入口。
 - **Android 与真机。** 不列出，不操作。
-- **录屏。** `simctl io recordVideo` 这一期没有接入。
 - **Agent 启动或关闭设备。** 留给人。
 - **`device_*` 的指引作为内置技能。** 内置技能挂在 Latch 的 MCP 服务器上，`latch-browser` 不是其中之一，所以这段指引只经 `instructions` 与工具说明给出。
 
@@ -150,12 +211,13 @@ Xcode 自带的 MCP 桥 `xcrun mcpbridge`（Apple 文档：Giving external agent
 
 | 范围 | 文件 |
 | --- | --- |
-| 固定参数与 UDID、地址校验、只关自己启动的、画面上限与临时文件、停止只结束进程、工作目录是 `/`；Agent 只开本机地址（「始终允许」之后也一样）、不开深链接，只为数据范围「全部」的设备发起的一轮 | `apps/host/test/simulators.test.ts` |
+| 固定参数与 UDID、地址校验、只关自己启动的、画面上限与临时文件、停止不碰人启动的设备、工作目录是 `/`；Agent 只开本机地址（「始终允许」之后也一样）、不开深链接，只为数据范围「全部」的设备发起的一轮 | `apps/host/test/simulators.test.ts` |
+| 旋转的参数与读回、没转不报成功；App 列表解析、只对列出的 App、启动不带参数、权限的固定服务；新建的名字与类型校验；录屏的私有目录、SIGINT、只给开始它的设备、按时长与大小结束、超过上限 413、同时开始也最多两段、面板没了或关机即丢弃、Host 停止时目录在停止返回前删掉；给 spawner 的时限；日志的谓词、清理、每台与全部的上限、丢弃计数、Host 开始停止后不启动；崩溃遗留目录只删合格的；闲置与 Host 停止时只关自己那次启动的（重启过或没有启动时间的不关）、Device Hub 算使用；页面在流建立期间关掉不留 `log`、范围收窄或设备撤销或凭据失效时结束流；新路由只收 `host.sock` 上 `run` 加 `all`、先审计、审计里没有 bundle id 与名字；`device_rotate`、`device_apps`、`device_launch` | `apps/host/test/simulators-public.test.ts` |
 | 路由：只有 `host.sock` 上 `run` 加 `all` 的设备、功能开关、先审计、Device Hub；内置 Harness 的工具 | `apps/host/test/simulators.test.ts` |
 | 「Xcode」：检查、添加、工具开关、分级；假 ACP Agent 经桥调用替身 `xcrun`：Latch 的指引、分级与设备 UDID 进审计、关掉的工具被拒 | `apps/host/test/mcp-xcode.test.ts` |
 | 桥：Latch 的指引在前、只交出设备 UDID | `packages/harness-acp/test/mcp-bridge.test.ts` |
-| 面板模型与「+」 | `apps/web/test/device-panel.test.ts` |
-| 真实 Electron 与真实 simctl（只用名字以 `latch-` 开头的设备，没有 Xcode 时跳过） | `e2e/desktop-device.e2e.ts` |
+| 面板模型与「+」、缩放、标注、日志的行数上限、快捷键 | `apps/web/test/device-panel.test.ts` |
+| 真实 Electron 与真实 simctl（只用名字以 `latch-` 开头的设备，没有 Xcode 时跳过）；替身下的底栏：缩放、旋转、录屏下载、标注、App、日志、新建对话框、⌘S；`LATCH_E2E_SIMULATOR` 指定的真实 `latch-` 设备上的公开命令 | `e2e/desktop-device.e2e.ts` |
 | 画面组件的分帧（畸形、超长、未知类型）、包装的监管、背压与关闭升级（替身组件）、真实组件的三个自检（协议拒绝、超长请求、只写不读、方法改变；不连设备） | `apps/host/test/simulator-helper.test.ts` |
 
 这些用例不证明 Xcode 的设备交互真的能用：2026-11-17 在 Xcode 设置允许外部 Agent、打开一个临时示例工程后，桥从 Xcode 之外回答了 `initialize` 与 `tools/list`（54 个工具），但第一次 `DeviceInteractionStartSession` 回答「This agent isn't approved to use Xcode's tools yet. Call XcodeOpenWorkspace or XcodeNewProject first」——批准要由人在 Xcode 弹出的提示里做，还没有做，所以点按、输入与截图都没有真实验证。

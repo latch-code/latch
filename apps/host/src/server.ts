@@ -49,7 +49,7 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 export { loadPluginPackage } from './plugin-packages.ts'
 import { existsSync, realpathSync, statSync, type BigIntStats } from 'node:fs'
 import { lstat, mkdir, mkdtemp, chmod, open as openFile, readFile, readdir, realpath, rm, rmdir, stat, unlink } from 'node:fs/promises'
-import { homedir, hostname } from 'node:os'
+import { homedir, hostname, tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
 import {
@@ -224,8 +224,8 @@ import {
   type DeviceOutcome,
   type DeviceTool,
 } from './plugins/tools/device/index.ts'
-import { Simulators, isSimulatorUdid, simulatorUrl, type SimulatorOptions } from './simulators.ts'
-import { addressFacts } from './routes/simulators.ts'
+import { Simulators, isBundleId, isSimulatorUdid, removeStaleSimulatorTemp, simulatorUrl, type SimulatorOptions } from './simulators.ts'
+import { addressFacts, bundleHash } from './routes/simulators.ts'
 import {
   XCODE_GUIDE_SKILL,
   XCODE_INSTRUCTIONS,
@@ -1949,8 +1949,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
     })
     startupCleanup.push(() => browserBroker.end('stopping'))
-    // This Mac's iOS simulators, through simctl alone; the first list, in the background, says whether Xcode is here.
-    const simulators = new Simulators(options.simulators ?? {})
+    // This Mac's iOS simulators, through simctl and devicectl; the first list, in the background, says whether Xcode is here.
+    const simulators = new Simulators({
+      ...options.simulators,
+      // The Host's own shutdowns of devices it booted: recorded, never blocked by the record (it only ends something).
+      onAutoShutdown: async (udid, reason) => {
+        await audit
+          .append({
+            action: 'simulator.action',
+            actor: { listener: 'host' },
+            target: '',
+            detail: { action: 'auto-shutdown', udid, reason },
+          })
+          .catch(error => logNoted('audit-write-failed', { error }, `审计记录写入失败：${errorText(error)}`))
+      },
+    })
     /**
      * Whether the device that last sent a session input sees all data: a simulator's picture enters the session, where
      * every device that may read it sees it, so the device tools run only for a turn such a device asked for. A turn
@@ -1965,6 +1978,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
     startupCleanup.push(() => simulators.stop())
     if (simulators.supported) void simulators.list().catch(() => undefined)
+    // A picture or recording directory a crashed Host of this user left in the temporary folder.
+    if (simulators.supported) void removeStaleSimulatorTemp(tmpdir()).catch(() => undefined)
     if (simulators.supported) {
       registry.register(createDeviceToolsPlugin({ call: (tool, args, context) => deviceCall(tool, args, context) }), {
         managed: 'core',
@@ -4979,6 +4994,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       const appearance = args.appearance
       if (tool === 'device_set_appearance' && appearance !== 'light' && appearance !== 'dark') return { ok: false, error: 'invalid-input' }
+      const direction = args.direction
+      if (tool === 'device_rotate' && direction !== 'left' && direction !== 'right') return { ok: false, error: 'invalid-input' }
+      // Checked against the device's own list as it runs; only its hash is recorded.
+      const bundleId = args.bundleId
+      if (tool === 'device_launch' && !isBundleId(bundleId)) return { ok: false, error: 'invalid-input' }
       try {
         await audit.append({
           action: 'simulator.call',
@@ -4991,6 +5011,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(typeof udid === 'string' && tool !== 'device_list' ? { udid } : {}),
             risk: classifyDeviceCall(tool).risk,
             ...(appearance === 'light' || appearance === 'dark' ? { appearance } : {}),
+            ...(tool === 'device_rotate' && (direction === 'left' || direction === 'right') ? { direction } : {}),
+            ...(tool === 'device_launch' && isBundleId(bundleId) ? { bundleHash: bundleHash(bundleId) } : {}),
             ...(address ? { scheme: address.scheme, ...(address.originHash ? { originHash: address.originHash } : {}) } : {}),
             ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
             ...(input.approvalId ? { approvalId: input.approvalId } : {}),
@@ -5024,6 +5046,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (tool === 'device_open_url') {
           await simulators.openUrl(udid, address!.url)
           return { ok: true, text: `Opened in ${String(udid)}.` }
+        }
+        if (tool === 'device_rotate') {
+          const orientation = await simulators.rotate(udid, direction)
+          return { ok: true, text: `${String(udid)} is now ${orientation}.` }
+        }
+        if (tool === 'device_apps') {
+          const apps = await simulators.appList(udid)
+          const lines = apps.map(app => [app.bundleId, escapeSecurityText(app.name), app.kind].join(' · '))
+          return { ok: true, text: lines.length ? lines.join('\n') : 'No apps.' }
+        }
+        if (tool === 'device_launch') {
+          await simulators.launch(udid, bundleId)
+          return { ok: true, text: `Launched ${String(bundleId)} on ${String(udid)}.` }
         }
         await simulators.setAppearance(udid, appearance)
         return { ok: true, text: `Appearance of ${String(udid)} is ${String(appearance)}.` }

@@ -1,11 +1,19 @@
 import type { HarnessPlugin, ToolDefinition, ToolResult } from '@latch/sdk'
 
 /** The tools' names, as the Host's classifier and audit know them. */
-const DEVICE_TOOLS = ['device_list', 'device_screenshot', 'device_open_url', 'device_set_appearance'] as const
+const DEVICE_TOOLS = [
+  'device_list',
+  'device_screenshot',
+  'device_open_url',
+  'device_set_appearance',
+  'device_rotate',
+  'device_apps',
+  'device_launch',
+] as const
 export type DeviceTool = (typeof DEVICE_TOOLS)[number]
 export const isDeviceTool = (name: string): name is DeviceTool => (DEVICE_TOOLS as readonly string[]).includes(name)
-/** Looking is R0; opening an address or changing the appearance acts on the device, R1. */
-export const DEVICE_READS: ReadonlySet<DeviceTool> = new Set(['device_list', 'device_screenshot'])
+/** Looking is R0 (the list, a picture, the apps); opening, turning, switching or starting acts on the device, R1. */
+export const DEVICE_READS: ReadonlySet<DeviceTool> = new Set(['device_list', 'device_screenshot', 'device_apps'])
 
 export type DeviceOutcome = { ok: true; text: string; image?: Buffer } | { ok: false; error: string; detail?: string }
 
@@ -33,6 +41,10 @@ const FAILURES: Record<string, string> = {
     'Agent 不能在设备上打开深链接（如 myapp://）：不知道是哪个 App 接收它；请人在设备面板里打开。Deep links are the person’s to open from the 设备 panel.',
   'device-scope':
     '这一轮不是由能看全部数据的设备发起的，设备工具不可用：截图会进入这个会话。The device tools run only for a turn sent from a device that sees all data.',
+  'simulator-rotate-unsupported': '这台设备不能旋转（devicectl 没有为它提供方向）。This device cannot be rotated.',
+  'simulator-rotate-failed': '设备没有转动；不要重复调用，请截图核对。The device did not turn; take a screenshot instead of retrying.',
+  'simulator-app-not-found':
+    '这台设备上没有这个 App；先用 device_apps 取它的 bundle id。No such app on the device: take its bundle id from device_apps.',
   'invalid-input': '参数无效。',
   'no-project': '这个会话没有项目，设备工具不可用。',
   'not-full-access': '这个会话不是完全访问的外部 Harness 会话，Latch 的设备工具不经这里给它。',
@@ -95,6 +107,30 @@ export const DEVICE_TOOL_DEFINITIONS: readonly Definition[] = [
     description: "Set a running simulator's appearance to light or dark.",
     parameters: object({ udid, appearance: { type: 'string', enum: ['light', 'dark'] } }, ['udid', 'appearance']),
   },
+  {
+    name: 'device_rotate',
+    title: '旋转模拟器',
+    kind: 'other',
+    description:
+      'Turn a running simulator a quarter turn left or right. The answer is the orientation read back afterwards; if it says the device did not turn, take a screenshot rather than retrying.',
+    parameters: object({ udid, direction: { type: 'string', enum: ['left', 'right'] } }, ['udid', 'direction']),
+  },
+  {
+    name: 'device_apps',
+    title: '列出模拟器上的 App',
+    kind: 'read',
+    description:
+      "The apps on a running simulator that are not hidden: bundle id, name, and whether it is the person's own or the system's.",
+    parameters: object({ udid }, ['udid']),
+  },
+  {
+    name: 'device_launch',
+    title: '在模拟器上启动 App',
+    kind: 'other',
+    description:
+      'Start an app on a running simulator by a bundle id from device_apps, with no arguments. To run a new build, install it with xcrun simctl in your own shell first.',
+    parameters: object({ udid, bundleId: { type: 'string', maxLength: 155 } }, ['udid', 'bundleId']),
+  },
 ]
 
 /**
@@ -123,7 +159,7 @@ export function createDeviceToolsPlugin(backend: DeviceBackend): HarnessPlugin {
     id: 'device',
     name: '设备',
     version: '0.1.0',
-    description: '内置 Agent 经 xcrun simctl 查看和操作这台 Mac 上的 iOS 模拟器：不能点按，不启动或关闭设备。',
+    description: '内置 Agent 经 xcrun simctl 与 devicectl 查看和操作这台 Mac 上的 iOS 模拟器：不能点按，不启动或关闭设备。',
     activate(context) {
       for (const tool of tools) context.registerTool(tool)
     },

@@ -133,9 +133,10 @@ export function classifyBrowserCall(tool: string, _args: unknown, facts: Browser
 }
 
 /**
- * The built-in simulator tools: listing and a picture are R0; opening an address and changing the appearance are R1.
- * The Host refuses an address that is not this Mac's own, and any deep link, whatever was approved, so an allowance for
- * the session never reaches another address. There is no tool that boots, shuts down, erases, installs or taps.
+ * The built-in simulator tools: listing, a picture and the apps are R0; opening an address, the appearance, rotating and
+ * launching a listed app are R1. The Host refuses an address that is not this Mac's own, and any deep link, whatever was
+ * approved, so an allowance for the session never reaches another address; a launch takes no arguments. There is no
+ * tool that boots, shuts down, erases, installs, records or taps.
  */
 export function classifyDeviceCall(tool: string): { risk: RiskLevel; reason?: RiskReason } {
   if (!isDeviceTool(tool)) return { risk: 'R2', reason: 'unlisted-tool' }

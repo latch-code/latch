@@ -66,7 +66,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 ```
 
 - `-t` 匹配以 ` > ` 连接的完整用例名。
-- e2e 的环境变量：`LATCH_BROWSER_PATH`（已安装的 Chrome）、`LATCH_E2E_UI_DIR`（页面目录，默认 `dist/web`）、`LATCH_ELECTRON_E2E=1`（Electron 用例）。
+- e2e 的环境变量：`LATCH_BROWSER_PATH`（已安装的 Chrome）、`LATCH_E2E_UI_DIR`（页面目录，默认 `dist/web`）、`LATCH_ELECTRON_E2E=1`（Electron 用例）、`LATCH_E2E_SIMULATOR=<latch- 开头的名字>`（`desktop-device.e2e.ts` 只用这台真实模拟器，并跑公开命令的真实用例）。
 - 构建与原生链路的用例需要 Go 1.26.x ≥ 1.26.10 或 1.27.x ≥ 1.27.3，其他版本编出的 TLS 组件被拒收。`LATCH_RELAY_GO=/absolute/path/to/go` 只选择编译器；构建不下载 Go 模块。
 
 ### 测试位置

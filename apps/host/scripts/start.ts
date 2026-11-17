@@ -18,7 +18,7 @@ import {
 } from '../src/host-state.ts'
 import { latchEnv } from '../src/env.ts'
 import { COMPUTER_APP } from '../src/mcp-computer.ts'
-import { openInDeviceHub, xcrunSimctl } from '../src/simulators.ts'
+import { openInDeviceHub, spawnSimctl, xcrunDevicectl, xcrunSimctl } from '../src/simulators.ts'
 import { latchCodeRoot, resolveLatchPaths } from '../src/paths.ts'
 import { presenceHelperPath } from '../src/presence.ts'
 import { buildPresenceHelper } from './presence-helper.ts'
@@ -237,7 +237,11 @@ async function main(): Promise<void> {
     cliUsage: { home: homedir() },
     // 「操控这台 Mac」 looks for Cua Driver at its one place, on macOS only.
     ...(process.platform === 'darwin'
-      ? { computerDriver: { app: COMPUTER_APP }, simulators: { run: xcrunSimctl, openHub: openInDeviceHub }, xcodeBridge: {} }
+      ? {
+          computerDriver: { app: COMPUTER_APP },
+          simulators: { run: xcrunSimctl, devicectl: xcrunDevicectl, spawn: spawnSimctl, openHub: openInDeviceHub },
+          xcodeBridge: {},
+        }
       : {}),
     commandDirectories: personCommandDirectories,
     pathDirectories: personPathDirectories,

@@ -30,6 +30,9 @@ function fakeSimctl(options: { xcode?: boolean; pictureBytes?: number; hold?: Pr
   ])
   const calls: string[][] = []
   const aborted: string[][] = []
+  /** `lastUsedAt` as Xcode 27.2 lists it: unset before a first boot, new on each boot. */
+  const marks = new Map<string, string>([[THEIRS, '2026-11-17T01:00:00Z']])
+  let boots = 0
   const run: SimctlRunner = async (args, { signal }) => {
     calls.push([...args])
     if (options.xcode === false) return { code: 72, stdout: Buffer.alloc(0), stderr: 'xcrun: error: unable to find utility "simctl"' }
@@ -47,6 +50,7 @@ function fakeSimctl(options: { xcode?: boolean; pictureBytes?: number; hold?: Pr
         name: index === 0 ? 'latch-test' : 'iPhone 18 Pro',
         state,
         isAvailable: true,
+        ...(marks.has(id) ? { lastUsedAt: marks.get(id) } : {}),
       }))
       return {
         code: 0,
@@ -54,8 +58,10 @@ function fakeSimctl(options: { xcode?: boolean; pictureBytes?: number; hold?: Pr
         stderr: '',
       }
     }
-    if (command === 'boot') states.set(udid!, 'Booted')
-    else if (command === 'shutdown') states.set(udid!, 'Shutdown')
+    if (command === 'boot') {
+      states.set(udid!, 'Booted')
+      marks.set(udid!, `2026-11-17T02:00:${String(++boots).padStart(2, '0')}Z`)
+    } else if (command === 'shutdown') states.set(udid!, 'Shutdown')
     else if (command === 'io') {
       const { writeFile } = await import('node:fs/promises')
       const file = args.at(-1)!
@@ -65,7 +71,7 @@ function fakeSimctl(options: { xcode?: boolean; pictureBytes?: number; hold?: Pr
       return { code: 115, stdout: Buffer.alloc(0), stderr: 'Simulator device failed to open nowhere://x.\n' }
     return { code: 0, stdout: Buffer.alloc(0), stderr: '' }
   }
-  return { run, calls, aborted, states }
+  return { run, calls, aborted, states, marks }
 }
 
 describe('simctl module', () => {
@@ -123,6 +129,13 @@ describe('simctl module', () => {
     sim.states.set(OURS, 'Booted')
     expect((await simulators.list()).devices.find(device => device.udid === OURS)?.ours).toBe(false)
     await expect(simulators.shutdown(OURS)).rejects.toMatchObject({ code: 'simulator-not-ours' })
+    // Shut down and booted again between two lists: simctl's boot time is new, so it is the person's now too.
+    sim.states.set(OURS, 'Shutdown')
+    await simulators.boot(OURS)
+    expect((await simulators.list()).devices.find(device => device.udid === OURS)?.ours).toBe(true)
+    sim.marks.set(OURS, '2026-11-17T03:00:00Z')
+    expect((await simulators.list()).devices.find(device => device.udid === OURS)?.ours).toBe(false)
+    await expect(simulators.shutdown(OURS)).rejects.toMatchObject({ code: 'simulator-not-ours' })
   })
 
   it('takes pictures only of running devices, within 5 MiB, and keeps no file', async () => {
@@ -144,7 +157,7 @@ describe('simctl module', () => {
     await expect(big.picture(THEIRS, 'png')).rejects.toMatchObject({ code: 'simulator-picture-too-large' })
   })
 
-  it('says when Xcode is missing, and ends its children on stop without touching any device', async () => {
+  it('says when Xcode is missing, and ends its children on stop without touching a device it did not boot', async () => {
     const none = new Simulators({ run: fakeSimctl({ xcode: false }).run })
     expect(await none.list()).toEqual({ xcode: false, devices: [] })
     expect(none.offered).toBe(true)
@@ -201,6 +214,9 @@ describe('device tool classes', () => {
       ['device_screenshot', 'R0'],
       ['device_open_url', 'R1'],
       ['device_set_appearance', 'R1'],
+      ['device_rotate', 'R1'],
+      ['device_apps', 'R0'],
+      ['device_launch', 'R1'],
     ])
     expect(risk('device_list', 'someone-else')).toBe('R2')
     expect(risk('device_boot')).toBe('R2')
@@ -311,7 +327,11 @@ describe('设备 panel routes', () => {
   it('says when Xcode is missing', async () => {
     const { t } = await hostWithSimulators({}, fakeSimctl({ xcode: false }))
     const desktop = await t.enroll({ listener: 'unix' })
-    expect(await desktop.json('simulators')).toEqual({ xcode: false, devices: [] })
+    expect(await desktop.json('simulators')).toEqual({
+      xcode: false,
+      devices: [],
+      abilities: { rotate: false, record: false, logs: false },
+    })
     expect(await offered(desktop)).toBe(true)
   })
 })

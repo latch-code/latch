@@ -1,18 +1,48 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { AppWindow, Camera, Link, Moon, Power, Smartphone, Sun } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import {
+  AppWindow,
+  Camera,
+  Circle,
+  LayoutGrid,
+  Link,
+  Minus,
+  Moon,
+  PenLine,
+  Plus,
+  Power,
+  RotateCcw,
+  RotateCw,
+  ScrollText,
+  Smartphone,
+  Square,
+  Sun,
+} from 'lucide-react'
 import { Button, Icon, IconButton, Menu, Spinner, StatusWord } from '@latch/ui'
+import type { SimulatorAppView, SimulatorPrivacyAction, SimulatorPrivacyService } from '@latch/protocol'
 import { api, errorMessage } from '../../core/api.ts'
+import { currentShell } from '../../core/shell.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
+import { DeviceAnnotate, type AnnotateImage } from './DeviceAnnotate.tsx'
+import { DeviceApps, SERVICE_LABELS } from './DeviceApps.tsx'
+import { DeviceLogs } from './DeviceLogs.tsx'
+import { NewDeviceDialog } from './NewDeviceDialog.tsx'
 import {
   frameDelay,
   LIST_EVERY_MS,
   chooseDevice,
+  clock,
   deviceLabel,
+  isEditable,
+  panelShortcut,
+  parseApps,
+  parseOrientation,
+  parseRecording,
   parseSimulators,
   shotName,
   sortDevices,
   type SimulatorList,
 } from './model.ts'
+import { fitScale, readZoom, screenSize, writeZoom, zoomIn, zoomLabel, zoomOut, type Zoom } from './zoom.ts'
 
 export interface DevicePanelProps {
   /** Whether the panel is on screen: frames and the list are read only then. */
@@ -21,12 +51,27 @@ export interface DevicePanelProps {
   onAttach?: ((files: File[]) => void) | undefined
 }
 
-type Pending = 'boot' | 'shutdown' | 'appearance' | 'shot' | 'url' | 'hub'
+type Pending = 'boot' | 'shutdown' | 'appearance' | 'shot' | 'url' | 'hub' | 'rotate' | 'record' | 'annotate'
+
+/** Hands a file to the person: into the draft when it takes one, else as a download. */
+function deliver(file: File, onAttach: DevicePanelProps['onAttach']): void {
+  if (onAttach) {
+    onAttach([file])
+    return
+  }
+  const url = URL.createObjectURL(file)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = file.name
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 30_000)
+}
 
 /**
- * 设备: this Mac's iOS simulators through the Host's simctl routes. A picture of the chosen device, refreshed while the
- * panel shows and the device runs; it is not interactive (tapping is in Device Hub's own window). Each button is one
- * Host action, recorded there.
+ * 设备: this Mac's iOS simulators through the Host's simctl and devicectl routes. A picture of the chosen device,
+ * refreshed while the panel shows and the device runs, at the panel's fit or a chosen zoom; it is not interactive
+ * (tapping is in Device Hub's own window). The bottom bar has the device's tools; each button is one Host action,
+ * recorded there.
  */
 export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   const [list, setList] = useState<SimulatorList | null>(null)
@@ -39,17 +84,31 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   const [frameFailure, setFrameFailure] = useState<string>()
   const [appearance, setAppearance] = useState<'light' | 'dark'>()
   const [address, setAddress] = useState<string>()
+  const [rotatable, setRotatable] = useState(false)
+  const [recording, setRecording] = useState<{ udid: string; since: number }>()
+  const [now, setNow] = useState(() => Date.now())
+  const [annotating, setAnnotating] = useState<AnnotateImage>()
+  const [pane, setPane] = useState<'apps' | 'logs'>()
+  const [apps, setApps] = useState<SimulatorAppView[]>()
+  const [appBusy, setAppBusy] = useState<string>()
+  const [creating, setCreating] = useState(false)
+  const [zoom, setZoom] = useState<Zoom>('fit')
+  const [box, setBox] = useState({ width: 0, height: 0 })
   const addressInput = useRef<HTMLInputElement>(null)
+  const canvas = useRef<HTMLDivElement>(null)
   const devices = list ? sortDevices(list.devices) : []
   const device = chooseDevice(devices, chosen)
   const udid = device?.udid
   const running = device?.state === 'booted'
+  const abilities = list?.abilities ?? { rotate: false, record: false, logs: false }
+  const desktop = currentShell() !== null
+  const pixelRatio = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1
 
   const read = async () => {
     try {
       setList(parseSimulators(await api<unknown>('simulators', { timeoutMs: 30_000 })))
     } catch (error) {
-      setList(previous => previous ?? { xcode: true, devices: [] })
+      setList(previous => previous ?? { xcode: true, devices: [], abilities: { rotate: false, record: false, logs: false } })
       setFailure({ udid: '', text: errorMessage(error) })
     }
   }
@@ -60,6 +119,21 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     const timer = setInterval(() => void read(), LIST_EVERY_MS)
     return () => clearInterval(timer)
   }, [shown])
+
+  // The zoom this browser kept for the device.
+  useEffect(() => {
+    setZoom(udid ? readZoom(udid) : 'fit')
+  }, [udid])
+
+  useLayoutEffect(() => {
+    const element = canvas.current
+    if (!element) return
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setBox({ width: entry.contentRect.width - 32, height: entry.contentRect.height - 32 })
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [list !== null && list.xcode])
 
   // Frames only while shown and the device runs: the next is asked for once the last arrived; nothing when hidden.
   useEffect(() => {
@@ -119,6 +193,32 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     return () => controller.abort()
   }, [shown, udid, running])
 
+  // Whether devicectl can turn this device: asked again a few times, since right after a boot it may not say yet.
+  useEffect(() => {
+    setRotatable(false)
+    if (!shown || !udid || !running || !abilities.rotate) return
+    const controller = new AbortController()
+    let tries = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const ask = () => {
+      void api<unknown>(`simulators/${udid}/orientation`, { signal: controller.signal, timeoutMs: 30_000 })
+        .then(answer => {
+          if (controller.signal.aborted) return
+          const { supported } = parseOrientation(answer)
+          setRotatable(supported)
+          if (!supported && ++tries < 6) timer = setTimeout(ask, 5_000)
+        })
+        .catch(() => {})
+    }
+    ask()
+    return () => {
+      controller.abort()
+      if (timer) clearTimeout(timer)
+    }
+  }, [shown, udid, running, abilities.rotate])
+
+  const fail = (text: string) => udid && setFailure({ udid, text })
+
   const act = async (kind: Pending, path: string, body?: object) => {
     if (!udid) return
     setPending(kind)
@@ -135,17 +235,173 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     }
   }
 
+  const takePicture = async (): Promise<ArrayBuffer | undefined> => {
+    if (!udid) return
+    try {
+      return await api<ArrayBuffer>(`simulators/${udid}/screenshot`, { method: 'POST', response: 'bytes', timeoutMs: 30_000 })
+    } catch (error) {
+      setFailure({ udid, text: errorMessage(error) })
+      return
+    }
+  }
+
   const screenshot = async () => {
-    if (!udid || !device || !onAttach) return
+    if (!udid || !device || pending) return
     setPending('shot')
     setFailure(undefined)
+    const bytes = await takePicture()
+    if (bytes) deliver(new File([bytes], shotName(device), { type: 'image/png' }), onAttach)
+    setPending(undefined)
+  }
+
+  const annotate = async () => {
+    if (!udid || !device || pending || !onAttach) return
+    setPending('annotate')
+    setFailure(undefined)
+    const bytes = await takePicture()
+    setPending(undefined)
+    if (!bytes) return
+    const blob = new Blob([bytes], { type: 'image/png' })
+    const bitmap = await createImageBitmap(blob).catch(() => undefined)
+    if (!bitmap) {
+      fail('没有读懂截图')
+      return
+    }
+    setAnnotating({ url: URL.createObjectURL(blob), width: bitmap.width, height: bitmap.height, name: shotName(device) })
+    bitmap.close()
+  }
+
+  const closeAnnotate = () => {
+    if (annotating) URL.revokeObjectURL(annotating.url)
+    setAnnotating(undefined)
+  }
+
+  const rotate = async (direction: 'left' | 'right') => {
+    if (!rotatable || pending) return
+    await act('rotate', 'rotate', { direction })
+  }
+
+  // ── Recording: started and stopped here, ended by the Host at a minute or 25 MB, thrown away if the panel goes ──
+
+  /** A take in flight: the timer's poll and the button must not both take it. */
+  const taking = useRef(false)
+  const takeRecording = useCallback(async (target: string, name: string) => {
+    if (taking.current) return
+    taking.current = true
+    setPending('record')
     try {
-      const bytes = await api<ArrayBuffer>(`simulators/${udid}/screenshot`, { method: 'POST', response: 'bytes', timeoutMs: 30_000 })
-      onAttach([new File([bytes], shotName(device), { type: 'image/png' })])
+      const bytes = await api<ArrayBuffer>(`simulators/${target}/record`, {
+        method: 'POST',
+        body: { action: 'stop' },
+        response: 'bytes',
+        timeoutMs: 60_000,
+      })
+      // A movie is saved, not put in the draft: most model services take no video, and the draft's limits would refuse it.
+      deliver(new File([bytes], name, { type: 'video/mp4' }), undefined)
+    } catch (error) {
+      setFailure({ udid: target, text: errorMessage(error) })
+    } finally {
+      taking.current = false
+      setRecording(undefined)
+      setPending(undefined)
+    }
+  }, [])
+
+  const record = async () => {
+    if (!udid || !device || !abilities.record) return
+    if (recording) {
+      await takeRecording(recording.udid, shotName(device, new Date(recording.since), 'mp4'))
+      return
+    }
+    if (pending) return
+    setPending('record')
+    setFailure(undefined)
+    try {
+      const view = parseRecording(
+        await api<unknown>(`simulators/${udid}/record`, { method: 'POST', body: { action: 'start' }, timeoutMs: 30_000 }),
+      )
+      if (view.state === 'recording') setRecording({ udid, since: Date.now() - (view.seconds ?? 0) * 1000 })
     } catch (error) {
       setFailure({ udid, text: errorMessage(error) })
     } finally {
       setPending(undefined)
+    }
+  }
+
+  // The timer, and whether the Host ended it by itself (then it is taken at once).
+  useEffect(() => {
+    if (!recording || !device) return
+    const target = recording.udid
+    const name = shotName(device, new Date(recording.since), 'mp4')
+    const timer = setInterval(() => {
+      setNow(Date.now())
+      void api<unknown>(`simulators/${target}/record`, { timeoutMs: 10_000 })
+        .then(answer => {
+          const view = parseRecording(answer)
+          if (view.state === 'ready') void takeRecording(target, name)
+          else if (view.state === 'none') {
+            setRecording(undefined)
+            setFailure({ udid: target, text: '录屏已结束' })
+          }
+        })
+        .catch(() => {})
+    }, 1_000)
+    return () => clearInterval(timer)
+  }, [recording, device?.udid, takeRecording])
+
+  // Hidden, another device chosen or the device stopped: a recording is thrown away.
+  useEffect(() => {
+    if (!recording) return
+    if (shown && recording.udid === udid && running) return
+    void api(`simulators/${recording.udid}/record`, { method: 'POST', body: { action: 'discard' } }).catch(() => {})
+    setRecording(undefined)
+  }, [shown, udid, running, recording])
+
+  // ── Apps ──
+
+  const readApps = async () => {
+    if (!udid) return
+    setApps(undefined)
+    try {
+      setApps(parseApps(await api<unknown>(`simulators/${udid}/apps`, { timeoutMs: 30_000 })))
+    } catch (error) {
+      setApps([])
+      setFailure({ udid, text: errorMessage(error) })
+    }
+  }
+
+  useEffect(() => {
+    setApps(undefined)
+    if ((pane === 'apps' || pane === 'logs') && udid && running && shown) void readApps()
+  }, [pane, udid, running, shown])
+
+  useEffect(() => {
+    if (!running) setPane(undefined)
+  }, [running])
+
+  const appAction = async (app: SimulatorAppView, path: 'launch' | 'terminate', body: object) => {
+    if (!udid) return
+    setAppBusy(app.bundleId)
+    setFailure(undefined)
+    try {
+      await api(`simulators/${udid}/${path}`, { method: 'POST', body, timeoutMs: 30_000 })
+    } catch (error) {
+      setFailure({ udid, text: errorMessage(error) })
+    } finally {
+      setAppBusy(undefined)
+    }
+  }
+
+  const privacy = async (app: SimulatorAppView, action: SimulatorPrivacyAction, service: SimulatorPrivacyService) => {
+    if (!udid) return
+    setAppBusy(app.bundleId)
+    setFailure(undefined)
+    try {
+      await api(`simulators/${udid}/privacy`, { method: 'POST', body: { action, service, bundleId: app.bundleId }, timeoutMs: 30_000 })
+    } catch (error) {
+      setFailure({ udid, text: `${SERVICE_LABELS[service]}：${errorMessage(error)}` })
+    } finally {
+      setAppBusy(undefined)
     }
   }
 
@@ -159,6 +415,32 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   useEffect(() => {
     if (address !== undefined) addressInput.current?.focus()
   }, [address !== undefined])
+
+  const changeZoom = (next: Zoom) => {
+    setZoom(next)
+    if (udid) writeZoom(udid, next)
+  }
+
+  /** ⌘S, ⇧⌘R, ⌘← and ⌘→ while focus is in the panel; only in the desktop app, where the panel exists, never in a field. */
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (!desktop || !running || annotating) return
+    const shortcut = panelShortcut({
+      key: event.key,
+      metaKey: event.metaKey,
+      ctrlKey: event.ctrlKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+      editable: isEditable(event.target),
+    })
+    if (!shortcut) return
+    if ((shortcut === 'rotate-left' || shortcut === 'rotate-right') && !rotatable) return
+    if (shortcut === 'record' && !abilities.record) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (shortcut === 'shot') void screenshot()
+    else if (shortcut === 'record') void record()
+    else void rotate(shortcut === 'rotate-left' ? 'left' : 'right')
+  }
 
   if (list === null)
     return (
@@ -182,6 +464,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   const booting = pending === 'boot' || device?.state === 'booting' || (running && !pictured && !failed)
   const stopping = pending === 'shutdown' || device?.state === 'shutting-down'
   const agent = device?.agent === true || (running && list.agentUnnamed === true)
+  const recordingHere = recording !== undefined && recording.udid === udid
   const state = failed ? (
     <StatusWord tone="failed" title={failed}>
       失败
@@ -190,6 +473,10 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     <StatusWord tone="running">启动中</StatusWord>
   ) : stopping ? (
     <StatusWord tone="running">关机中</StatusWord>
+  ) : recordingHere ? (
+    <StatusWord tone="running" title="最长 1 分钟或 25 MB · 关闭面板即丢弃">
+      录屏 {clock((now - recording.since) / 1000)}
+    </StatusWord>
   ) : pictured && agent ? (
     <StatusWord tone="running" title="一个会话的 Agent 正经 Xcode 的设备工具使用它">
       Agent 正在使用
@@ -200,9 +487,15 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     <StatusWord tone="neutral">未启动</StatusWord>
   ) : null
 
+  const natural = frame && frame.udid === udid ? { width: frame.width, height: frame.height } : { width: 0, height: 0 }
+  const fit = fitScale(natural, box, pixelRatio)
+  const size = screenSize(zoom, natural, box, pixelRatio)
+  const busy = pending !== undefined
+  const tools = running && !annotating
+
   return (
-    <section className="sim-panel" aria-label="设备">
-      <div className="sim-toolbar" role="toolbar" aria-label="设备工具">
+    <section className="sim-panel" aria-label="设备" tabIndex={-1} onKeyDown={onKeyDown}>
+      <div className="sim-toolbar" role="toolbar" aria-label="设备">
         <Menu
           label="选择设备"
           selection
@@ -220,6 +513,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
                 },
               })),
             },
+            { id: 'new', items: [{ id: 'new', label: '新建设备…', icon: Plus, onSelect: () => setCreating(true) }] },
           ]}
           trigger={props => (
             <Button {...props} size="xs" variant="ghost" icon={Smartphone} className="sim-picker">
@@ -228,51 +522,29 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
             </Button>
           )}
         />
+        <span className="sim-state">{state}</span>
         <span className="sim-spacer" />
-        <IconButton
-          size="xs"
-          icon={appearance === 'dark' ? Moon : Sun}
-          label={appearance === 'dark' ? '外观：深色' : '外观：浅色'}
-          tooltip="切换设备的浅色与深色"
-          pressed={appearance === 'dark'}
-          disabled={!running || pending !== undefined}
-          onClick={async () => {
-            const next = appearance === 'dark' ? 'light' : 'dark'
-            if (await act('appearance', 'appearance', { appearance: next })) setAppearance(next)
-          }}
-        />
-        <IconButton
-          size="xs"
-          icon={Link}
-          label="打开地址"
-          tooltip="在设备上打开网址或深链接"
-          pressed={address !== undefined}
-          disabled={!running}
-          onClick={() => setAddress(value => (value === undefined ? '' : undefined))}
-        />
-        <IconButton
-          size="xs"
-          icon={Camera}
-          label="截图"
-          tooltip={onAttach ? '截图放进草稿 · 发送后交给模型服务' : '现在不能添加附件'}
-          disabled={!running || !onAttach || pending !== undefined}
-          onClick={() => void screenshot()}
-        />
-        <IconButton
-          size="xs"
-          icon={AppWindow}
-          label="在 Device Hub 中打开"
-          tooltip="在 Device Hub 里实时查看和点按"
-          disabled={!device || pending !== undefined}
-          onClick={() => void act('hub', 'device-hub')}
-        />
+        {pictured && !annotating && (
+          <span className="sim-zoom" role="group" aria-label="缩放">
+            <IconButton size="xs" icon={Minus} label="缩小" disabled={zoom === 'fit'} onClick={() => changeZoom(zoomOut(zoom, fit))} />
+            <button
+              type="button"
+              className="sim-zoom-value"
+              title={zoom === 'fit' ? '切到 1:1（一个设备像素对一个屏幕像素）' : '适应面板'}
+              aria-label={zoom === 'fit' ? '缩放：适应，切到 1:1' : `缩放：${zoomLabel(zoom, fit)}，切到适应`}
+              onClick={() => changeZoom(zoom === 'fit' ? 1 : 'fit')}>
+              {zoom === 'fit' ? '适应' : zoomLabel(zoom, fit)}
+            </button>
+            <IconButton size="xs" icon={Plus} label="放大" disabled={zoom === 2} onClick={() => changeZoom(zoomIn(zoom, fit))} />
+          </span>
+        )}
         <IconButton
           size="xs"
           icon={Power}
           label={running ? '关机' : '启动'}
           tooltip={running && !device?.ours ? '只关闭 Latch 启动的设备' : running ? '关机' : '启动'}
           pressed={running}
-          disabled={!device || pending !== undefined || booting || stopping || (running && !device.ours)}
+          disabled={!device || busy || booting || stopping || (running && !device.ours)}
           onClick={() => void (running ? act('shutdown', 'shutdown') : act('boot', 'boot'))}
         />
       </div>
@@ -294,9 +566,35 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
           />
         </form>
       )}
-      <div className="sim-canvas" data-running={running ? '' : undefined} data-frame-ms={frameMs}>
-        {running && frame && frame.udid === udid ? (
-          <img className="sim-screen" src={frame.url} alt={device ? `${device.name} 的画面` : '设备画面'} draggable={false} />
+      <div
+        ref={canvas}
+        className="sim-canvas"
+        data-running={running ? '' : undefined}
+        data-frame-ms={frameMs}
+        data-zoom={zoom === 'fit' ? 'fit' : String(zoom)}
+        data-pane={pane}>
+        {annotating ? (
+          <DeviceAnnotate
+            image={annotating}
+            onCancel={closeAnnotate}
+            onFailure={fail}
+            onDone={file => {
+              onAttach?.([file])
+              closeAnnotate()
+            }}
+          />
+        ) : running && frame && frame.udid === udid ? (
+          <img
+            className="sim-screen"
+            src={frame.url}
+            alt={device ? `${device.name} 的画面` : '设备画面'}
+            draggable={false}
+            style={
+              zoom === 'fit' || natural.width === 0
+                ? undefined
+                : { width: size.width, height: size.height, maxWidth: 'none', maxHeight: 'none' }
+            }
+          />
         ) : running ? (
           <Spinner size={14} />
         ) : (
@@ -316,7 +614,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
                   </button>
                   <span className="sim-row-action" aria-hidden={!selected}>
                     {selected && item.state === 'shutdown' && (
-                      <Button size="xs" variant="ghost" disabled={pending !== undefined} onClick={() => void act('boot', 'boot')}>
+                      <Button size="xs" variant="ghost" disabled={busy} onClick={() => void act('boot', 'boot')}>
                         {pending === 'boot' ? <Spinner size={12} /> : '启动'}
                       </Button>
                     )}
@@ -327,7 +625,127 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
           </ul>
         )}
       </div>
-      <footer className="sim-foot">{state}</footer>
+      {pane === 'apps' && udid && running && (
+        <DeviceApps
+          apps={apps}
+          busy={appBusy}
+          onLaunch={app => void appAction(app, 'launch', { bundleId: app.bundleId })}
+          onTerminate={app => void appAction(app, 'terminate', { bundleId: app.bundleId })}
+          onPrivacy={(app, action, service) => void privacy(app, action, service)}
+          onReload={() => void readApps()}
+          onClose={() => setPane(undefined)}
+        />
+      )}
+      {pane === 'logs' && udid && running && <DeviceLogs udid={udid} apps={apps ?? []} onClose={() => setPane(undefined)} />}
+      <div className="sim-foot" role="toolbar" aria-label="设备工具">
+        {abilities.rotate
+          && (['left', 'right'] as const).map(direction => (
+            <IconButton
+              key={direction}
+              size="xs"
+              icon={direction === 'left' ? RotateCcw : RotateCw}
+              label={direction === 'left' ? '向左旋转' : '向右旋转'}
+              tooltip={rotatable ? (direction === 'left' ? '向左转 90°' : '向右转 90°') : '这台设备不能旋转'}
+              shortcut={desktop && rotatable ? (direction === 'left' ? '⌘←' : '⌘→') : undefined}
+              disabled={!tools || !rotatable || busy}
+              busy={pending === 'rotate'}
+              onClick={() => void rotate(direction)}
+            />
+          ))}
+        <IconButton
+          size="xs"
+          icon={Camera}
+          label="截图"
+          tooltip={onAttach ? '截图放进草稿 · 发送后交给模型服务' : '截图下载到这台电脑'}
+          shortcut={desktop ? '⌘S' : undefined}
+          disabled={!tools || busy}
+          busy={pending === 'shot'}
+          onClick={() => void screenshot()}
+        />
+        {abilities.record && (
+          <IconButton
+            size="xs"
+            icon={recordingHere ? Square : Circle}
+            label={recordingHere ? '停止录屏' : '录屏'}
+            tooltip={recordingHere ? '停止并保存到这台电脑' : '录屏 · 最长 1 分钟或 25 MB · 停止后保存到这台电脑'}
+            shortcut={desktop ? '⇧⌘R' : undefined}
+            pressed={recordingHere}
+            className={recordingHere ? 'sim-recording' : undefined}
+            disabled={!tools || (busy && pending !== 'record') || (recording !== undefined && !recordingHere)}
+            busy={pending === 'record'}
+            onClick={() => void record()}
+          />
+        )}
+        <IconButton
+          size="xs"
+          icon={PenLine}
+          label="标注截图"
+          tooltip={onAttach ? '截图后标注，再放进草稿' : '现在不能添加附件'}
+          disabled={!tools || busy || !onAttach}
+          busy={pending === 'annotate'}
+          onClick={() => void annotate()}
+        />
+        <span className="sim-foot-gap" />
+        <IconButton
+          size="xs"
+          icon={LayoutGrid}
+          label="App"
+          tooltip="设备上的 App：启动、结束、预先授权"
+          pressed={pane === 'apps'}
+          disabled={!tools}
+          onClick={() => setPane(value => (value === 'apps' ? undefined : 'apps'))}
+        />
+        {abilities.logs && (
+          <IconButton
+            size="xs"
+            icon={ScrollText}
+            label="日志"
+            tooltip="设备的实时日志 · 只在这里显示，不保存"
+            pressed={pane === 'logs'}
+            disabled={!tools}
+            onClick={() => setPane(value => (value === 'logs' ? undefined : 'logs'))}
+          />
+        )}
+        <IconButton
+          size="xs"
+          icon={Link}
+          label="打开地址"
+          tooltip="在设备上打开网址或深链接"
+          pressed={address !== undefined}
+          disabled={!tools}
+          onClick={() => setAddress(value => (value === undefined ? '' : undefined))}
+        />
+        <IconButton
+          size="xs"
+          icon={appearance === 'dark' ? Moon : Sun}
+          label={appearance === 'dark' ? '外观：深色' : '外观：浅色'}
+          tooltip="切换设备的浅色与深色"
+          pressed={appearance === 'dark'}
+          disabled={!tools || busy}
+          onClick={async () => {
+            const next = appearance === 'dark' ? 'light' : 'dark'
+            if (await act('appearance', 'appearance', { appearance: next })) setAppearance(next)
+          }}
+        />
+        <span className="sim-spacer" />
+        <IconButton
+          size="xs"
+          icon={AppWindow}
+          label="在 Device Hub 中打开"
+          tooltip="在 Device Hub 里实时查看和点按 · Latch 的面板还不能点按"
+          disabled={!device || busy}
+          onClick={() => void act('hub', 'device-hub')}
+        />
+      </div>
+      <NewDeviceDialog
+        open={creating}
+        onClose={() => setCreating(false)}
+        onCreated={created => {
+          setCreating(false)
+          setChosen(created)
+          void read()
+        }}
+      />
     </section>
   )
 }
