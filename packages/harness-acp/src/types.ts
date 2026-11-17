@@ -8,6 +8,11 @@ export interface AcpAgentOptions {
   cancelGraceMs?: number
   /** A resumable agent process without a running turn stops after this long. Default 10 min. */
   idleMs?: number
+  /**
+   * The same for a session of one of 我的 Agent that is not an unattended run: a person comes back to their helper's
+   * chat later than to a Code session. Default 30 min, never less than `idleMs`.
+   */
+  agentIdleMs?: number
   /** Limit for other setup and configuration requests. Default 120 s. */
   requestTimeoutMs?: number
   /**
@@ -65,6 +70,7 @@ export interface AcpAgentOptions {
 export interface ResolvedOptions {
   cancelGraceMs: number
   idleMs: number
+  agentIdleMs: number
   requestTimeoutMs: number
   configTimeoutMs: number
   handshakeTimeoutMs: number
@@ -90,6 +96,7 @@ export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
     requireConfirmedCommand: options.requireConfirmedCommand === true,
     cancelGraceMs: pick(options.cancelGraceMs, 30_000),
     idleMs: pick(options.idleMs, 10 * 60_000),
+    agentIdleMs: Math.max(pick(options.agentIdleMs, 30 * 60_000), pick(options.idleMs, 10 * 60_000)),
     requestTimeoutMs: pick(options.requestTimeoutMs, 120_000),
     configTimeoutMs: Math.min(pick(options.configTimeoutMs, 30_000), pick(options.requestTimeoutMs, 120_000)),
     handshakeTimeoutMs: pick(options.handshakeTimeoutMs, 30_000),

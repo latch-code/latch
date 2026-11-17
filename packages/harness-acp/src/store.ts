@@ -19,6 +19,7 @@ import {
 import type { ModelRoute } from '@latch/sdk'
 import type {
   AgentBrief,
+  AgentNote,
   Message,
   SessionCommand,
   PlanEntry,
@@ -46,6 +47,10 @@ export interface AcpRecord {
   turnSeq: number
   /** The agent's first-turn block until a turn has actually carried it to the engine. */
   brief?: AgentBrief
+  /** The latest digest note the Host gave (`AgentExecutionContext.note`), until a turn carries it. */
+  note?: AgentNote
+  /** The key of the last note a turn of this context carried; a fresh context forgets it. */
+  noteSent?: string
   /** Whether `config` came from `configOptions` or the legacy `models`/`modes` fields. */
   configSource?: ConfigSource
   /** The agent offered session/delete when this session was last bound, so removal may start it to ask. */
@@ -85,7 +90,7 @@ export interface AcpRecord {
   proposalsOffset?: number
   /** Lines taken and then cleared from the file; they still count toward the session's limit. */
   proposalsCleared?: number
-  /** A scheduled run: whatever it proposes is external. */
+  /** A scheduled run: whatever it proposes is external, and its idle process is reclaimed as a Code session's. */
   unattended?: true
   /**
    * What the draft chose, set before the first prompt and dropped once set. `category` and `label` are what the catalogue
@@ -497,6 +502,11 @@ const stateSchema = z.object({
         agentVersion: z.string().optional(),
         turnSeq: z.number().int().nonnegative(),
         brief: agentBrief.optional(),
+        note: z.object({ key: z.string().regex(/^[0-9a-f]{64}$/u), segments: agentBrief.shape.segments }).optional(),
+        noteSent: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/u)
+          .optional(),
         configSource: z.enum(['options', 'legacy']).optional(),
         deletable: z.boolean().optional(),
         launchHash: z

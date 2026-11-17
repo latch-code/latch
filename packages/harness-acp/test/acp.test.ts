@@ -1,7 +1,7 @@
 import type { FileTrackingInput, FileTrackingResult } from '@latch/sdk'
 import { AppError } from '@latch/sdk'
 import { spawn, spawnSync } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
@@ -956,6 +956,110 @@ describe('ACP agent environment', () => {
     await vi.waitFor(async () => expect(alive(promptPid(await pinned.log(), 'echo a'))).toBe(false), { timeout: 5_000, interval: 20 })
     await kept.prompt(b.sessionId, 'echo b again', rid())
     expect(assistants(await settled(kept, b.sessionId)).at(-1)?.text).toBe('echo: echo b again')
+  })
+
+  it("warms a settled session's process without a turn, and only under the limit, never stopping another's", async () => {
+    const fixture = await setup({ FAKE_ACP_CAPS: 'resume' }, { maxProcesses: 1, idleMs: 80 })
+    const bridge = await fixture.open()
+    const first = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, first.sessionId)
+    // Reclaimed when idle; warming it starts it again with no prompt.
+    await vi.waitFor(async () => expect((await fixture.log()).some(entry => entry.event === 'stdin-end')).toBe(true), {
+      timeout: 5_000,
+      interval: 20,
+    })
+    const prompts = received(await fixture.log(), 'session/prompt').length
+    expect(await bridge.warm!(first.sessionId)).toBe(true)
+    let log = await fixture.log()
+    expect(log.filter(entry => entry.event === 'start')).toHaveLength(2)
+    expect(received(log, 'session/resume')).toHaveLength(1)
+    expect(received(log, 'session/prompt')).toHaveLength(prompts)
+    // Already running: nothing more starts.
+    expect(await bridge.warm!(first.sessionId)).toBe(false)
+
+    // At the limit a warm-up gives up rather than stopping the live process of another session.
+    const busy = await setup({ FAKE_ACP_CAPS: 'resume' }, { maxProcesses: 1, idleMs: 60_000 })
+    const kept = await busy.open()
+    const a = await kept.createTask({ prompt: 'echo a', requestId: rid() })
+    await settled(kept, a.sessionId)
+    const b = await kept.createTask({ prompt: 'echo b', requestId: rid() })
+    await settled(kept, b.sessionId)
+    log = await busy.log()
+    const bPid = promptPid(log, 'echo b')
+    expect(await kept.warm!(a.sessionId)).toBe(false)
+    log = await busy.log()
+    expect(log.some(entry => entry.event === 'stdin-end' && entry.pid === bPid)).toBe(false)
+    expect(log.filter(entry => entry.event === 'start')).toHaveLength(2)
+    expect(await kept.warm!('missing-session')).toBe(false)
+  })
+
+  it('warms nothing in a folder, under a definition or with a command a turn would refuse', async () => {
+    // A folder the Host no longer lists.
+    const fixture = await setup({ FAKE_ACP_CAPS: 'resume' }, { idleMs: 80 })
+    const other = join(fixture.root, 'other')
+    await mkdir(other)
+    let workspaces = [fixture.workspace, other]
+    const bridge = await fixture.open(() => workspaces)
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid(), cwd: other })
+    await settled(bridge, sessionId)
+    await vi.waitFor(async () => expect((await fixture.log()).some(entry => entry.event === 'exit')).toBe(true), {
+      timeout: 5_000,
+      interval: 20,
+    })
+    workspaces = [fixture.workspace]
+    expect(await bridge.warm!(sessionId)).toBe(false)
+    expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(1)
+
+    // A definition changed since the session was confirmed.
+    const defined = await setup({ FAKE_ACP_CAPS: 'resume' })
+    const first = await defined.open()
+    const started = await first.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(first, started.sessionId)
+    await first.close()
+    const changed = await defined.redefine({ env: { ...defined.record.env, FAKE_EXTRA: '1' } })
+    expect(await changed.warm!(started.sessionId)).toBe(false)
+    expect((await defined.log()).filter(entry => entry.event === 'start')).toHaveLength(1)
+    expect(received(await defined.log(), 'session/resume')).toEqual([])
+  })
+
+  it('reclaims an unattended run of 我的 Agent as soon as a Code session, even where it cannot propose', async () => {
+    const fixture = await setup({ FAKE_ACP_CAPS: 'resume' }, { idleMs: 60, agentIdleMs: 60_000 })
+    const bridge = await fixture.open()
+    const run = await bridge.createTask({
+      prompt: 'echo scheduled',
+      requestId: rid(),
+      agentContext: { agent: { customAgentId: `agt_${randomUUID()}` }, instructions: '', revision: 'a'.repeat(64), unattended: true },
+    })
+    await settled(bridge, run.sessionId)
+    const pid = promptPid(await fixture.log(), 'echo scheduled')
+    await vi.waitFor(async () => expect((await fixture.log()).some(entry => entry.event === 'stdin-end' && entry.pid === pid)).toBe(true), {
+      timeout: 5_000,
+      interval: 20,
+    })
+  })
+
+  it("keeps an idle process of one of 我的 Agent longer than a Code session's", async () => {
+    const fixture = await setup({ FAKE_ACP_CAPS: 'resume' }, { idleMs: 60, agentIdleMs: 60_000 })
+    const bridge = await fixture.open()
+    const agent = await bridge.createTask({
+      prompt: 'echo helper',
+      requestId: rid(),
+      agentContext: { agent: { customAgentId: `agt_${randomUUID()}` }, instructions: '', revision: 'a'.repeat(64) },
+    })
+    await settled(bridge, agent.sessionId)
+    const code = await bridge.createTask({ prompt: 'echo code', requestId: rid() })
+    await settled(bridge, code.sessionId)
+    const log = await fixture.log()
+    const codePid = promptPid(log, 'echo code'),
+      agentPid = promptPid(log, 'echo helper')
+    await vi.waitFor(
+      async () => expect((await fixture.log()).some(entry => entry.event === 'stdin-end' && entry.pid === codePid)).toBe(true),
+      {
+        timeout: 5_000,
+        interval: 20,
+      },
+    )
+    expect((await fixture.log()).some(entry => entry.event === 'stdin-end' && entry.pid === agentPid)).toBe(false)
   })
 })
 
@@ -4609,6 +4713,52 @@ describe('agent context', () => {
     await bridge.close()
     const restored = await fixture.open()
     expect((await restored.detail(sessionId)).summary.agent).toEqual(agentContext.agent)
+  })
+
+  it('sends the digest note before the turn whenever it changed, once per context, and again after the context is cleared', async () => {
+    const fixture = await setup()
+    const bridge = await fixture.open()
+    const note = (text: string) => ({
+      key: createHash('sha256').update(text).digest('hex'),
+      segments: [
+        { source: 'latch' as const, text: '你最近做过的事：' },
+        { source: 'material' as const, text },
+      ],
+    })
+    const first = note('- 定时「晨报」完成')
+    const agentContext = context({ brief: undefined, note: first })
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid(), agentContext })
+    await settled(bridge, sessionId)
+    const prompts = () =>
+      fixture.log().then(log => received(log, 'session/prompt').map(entry => (entry.params as { prompt: unknown[] }).prompt))
+    expect((await prompts())[0]).toEqual([
+      { type: 'text', text: '你最近做过的事：\n- 定时「晨报」完成' },
+      { type: 'text', text: 'echo one' },
+    ])
+    // The same note again: not repeated.
+    const turn = { agent: agentContext.agent, instructions: '', revision: 'a'.repeat(64) }
+    await bridge.prompt(sessionId, 'echo two', rid(), { agentContext: { ...turn, note: first } })
+    await settled(bridge, sessionId)
+    expect((await prompts())[1]).toEqual([{ type: 'text', text: 'echo two' }])
+    // A new one goes with the next turn, and only the turn's text is the message.
+    const second = note('- 定时「晨报」失败')
+    await bridge.prompt(sessionId, 'echo three', rid(), { agentContext: { ...turn, note: second } })
+    await settled(bridge, sessionId)
+    expect((await prompts())[2]).toEqual([
+      { type: 'text', text: '你最近做过的事：\n- 定时「晨报」失败' },
+      { type: 'text', text: 'echo three' },
+    ])
+    expect((await bridge.detail(sessionId)).messages.filter(message => message.role === 'user').map(message => message.text)).toEqual([
+      'echo one',
+      'echo two',
+      'echo three',
+    ])
+    // Another Agent's note never lands on this session.
+    await bridge.prompt(sessionId, 'echo four', rid(), {
+      agentContext: { ...turn, agent: { customAgentId: `agt_${randomUUID()}` }, note: note('别人的') },
+    })
+    await settled(bridge, sessionId)
+    expect((await prompts())[3]).toEqual([{ type: 'text', text: 'echo four' }])
   })
 
   it('keeps the block for the first turn that reaches the engine, across a restart, and only then records it', async () => {

@@ -1,5 +1,7 @@
 import type {
   AgentExecutionContext,
+  AgentNote,
+  DataScope,
   AgentSkillBody,
   AutomationConfig,
   CustomAgent,
@@ -13,7 +15,7 @@ import type {
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
-import { agentContext, type AgentSessionSelection, type CustomAgents } from './custom-agents.ts'
+import { agentContext, generalFacts, type AgentSessionSelection, type CustomAgents } from './custom-agents.ts'
 import type { AutomationPlan } from './automations.ts'
 
 const STANDARD = 'standard'
@@ -36,6 +38,8 @@ interface Options {
   automationAllowed(harnessId: string): boolean
   /** What a run's folders depend on: the policy, the start directory and the project's folders. */
   environment(projectId: string | undefined): unknown
+  /** 「它做过什么」 for this Agent now (`agent-digest.ts`); absent while nothing happened lately. */
+  digest?(owner: string): AgentNote | undefined
 }
 
 /** Turns saved agents into what a session of them receives. Nothing here is taken from a request. */
@@ -82,7 +86,14 @@ export class AgentPlans {
       available: unavailableReason === undefined,
       ...(unavailableReason ? { unavailableReason } : {}),
       canAutomate: unavailableReason === undefined && this.options.automationAllowed(agent.harnessId),
+      generalFacts: this.factCounts(agent),
     }
+  }
+
+  /** 「认识你」 as the Agent's page shows it: how many of 通用's confirmed memories its turns carry now, of how many. */
+  private factCounts(agent: CustomAgent): { sent: number; total: number } {
+    const { facts, total } = generalFacts(this.options.agents.memories(GENERAL_AGENT_ID))
+    return { sent: agent.generalFactsOff ? 0 : facts.length, total }
   }
 
   /** The request's choices on top of the agent's defaults: changing them affects only this session. */
@@ -108,9 +119,14 @@ export class AgentPlans {
     }
   }
 
-  /** The context of one of 我的 Agent on an engine. A start also asks `unavailable`; an open session keeps its own model. */
-  agentContext(id: string, harnessId: string): AgentExecutionContext {
-    return this.build(this.options.agents.get(id), harnessId)
+  /**
+   * The context of one of 我的 Agent on an engine, for a turn a device sends. A start also asks `unavailable`; an open
+   * session keeps its own model. Only a device with data scope `all` gets 「认识你」 and 「它做过什么」 into the turn: the
+   * Agent's reply may repeat them. Neither is in the revision, so they apply as they stand when the turn is sent, as 通用
+   * does for a Code session.
+   */
+  agentContext(id: string, harnessId: string, scope: DataScope | undefined): AgentExecutionContext {
+    return this.build(this.options.agents.get(id), harnessId, scope === 'all')
   }
 
   /** What a session on this engine that picks no other agent receives; undefined while 通用 has nothing to add. */
@@ -190,7 +206,9 @@ export class AgentPlans {
     const skillOwners = skills ? skills.map(id => id.slice(0, id.indexOf(':'))) : tools
     const owners = harnessId === STANDARD ? [STANDARD_PLUGIN, provider!, ...tools, ...skillOwners] : [...skillOwners]
     const snapshot = this.options.revisions([...new Set(owners)])
-    const context = agent ? this.build(agent, harnessId) : this.generalContext(harnessId)
+    // A run's basis covers what it receives, so neither 「认识你」 nor 「它做过什么」 goes in: a fact confirmed in 通用 would
+    // otherwise pause every schedule. The person's own later turns in that session carry them.
+    const context = agent ? this.build(agent, harnessId, false) : this.generalContext(harnessId)
     const definition = this.options.agents.definitionHash(owner)
     const mode = agent?.mode ?? 'agent'
     const choices = !hostModel ? Object.entries(agent?.engineOptions ?? {}).map(([configId, value]) => ({ configId, value })) : []
@@ -226,9 +244,11 @@ export class AgentPlans {
     return skills.filter(id => known.has(id))
   }
 
-  private build(agent: CustomAgent, harnessId: string): AgentExecutionContext {
+  private build(agent: CustomAgent, harnessId: string, personal: boolean): AgentExecutionContext {
     const harness = this.options.harness(harnessId)
     if (!harness?.agentContext) throw new AppError(409, 'agent-unavailable', '这个 Harness 收不到 Agent 的指令。')
+    const facts = personal && !agent.generalFactsOff ? generalFacts(this.options.agents.memories(GENERAL_AGENT_ID)).facts : []
+    const digest = personal ? this.options.digest?.(agent.id) : undefined
     return agentContext({
       agent: { customAgentId: agent.id },
       delivery: harness.agentContext,
@@ -242,6 +262,8 @@ export class AgentPlans {
         instructions: agent.instructions,
         memories: this.options.agents.memories(agent.id),
         skillNames: this.skillNames(harness, agent.skills),
+        ...(facts.length ? { facts } : {}),
+        ...(digest ? { digest } : {}),
       },
     })
   }

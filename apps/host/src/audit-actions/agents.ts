@@ -26,6 +26,8 @@ export const AGENT_ACTIONS = {
   }),
   'automation.changed': z.strictObject({ operation: z.enum(['create', 'update', 'delete']), before: hex64, after: hex64 }),
   'automation.ran': z.strictObject({ trigger: z.enum(['schedule', 'manual']), attempt: hex64 }),
+  /** Opening an Agent's chat starts its process ahead of the next message: which Agent and its one chat, nothing else. */
+  'agent.warm.requested': z.strictObject({ customAgentId: opaqueId, sessionId: opaqueId }),
   'agent.probe.requested': z.strictObject({ agentId: opaqueId, launchHash: hex64 }),
   'agent.probed': z.strictObject({ agentId: opaqueId, launchHash: hex64, status: z.enum(['ready', 'authentication-required', 'failed']) }),
   /** A harness started only to say what it offers: an empty session with no prompt, or its own model list. */

@@ -46,6 +46,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type {
   AgentBrief,
+  AgentNote,
   AgentExecutionContext,
   Approval,
   ApprovalOptionKind,
@@ -269,6 +270,8 @@ const UNRECOGNIZED_PARAMS_LIMIT = 2000
 interface Live {
   /** Latch task this process serves; also names its private temporary directory. */
   key: string
+  /** Started by `warm` and not yet used by a turn: its failures do not count toward the Harness's crash pause. */
+  warmOnly?: true
   wire: AgentWire
   commandCache?: { directory: string; confirmed: Confirmed; ordinal: number }
   initialized: boolean
@@ -937,6 +940,8 @@ export class AgentRuntime implements Bridge {
   private readonly lifetime = new AbortController()
   private readonly lives = new Map<string, Live>()
   private readonly spawning = new Map<string, Promise<Live>>()
+  /** Sessions whose process `warm` is starting: they take no other session's place. */
+  private readonly warming = new Set<string>()
   /** Requests on a task's process outside a turn or setup, such as a config change; its process must not be stopped. */
   private readonly holds = new Map<string, number>()
   /** Sessions whose agent 核对 is reading: nothing else may reach their process meanwhile. */
@@ -1230,6 +1235,8 @@ export class AgentRuntime implements Bridge {
     }
     // Reset before attaching: the new session can read a prompt through its bridge during session/new.
     delete task.acp.outsideRead
+    // A new context has seen no digest yet.
+    delete task.acp.noteSent
     const prior = task.acp.acpSessionId
     if (prior !== undefined) {
       const chosen = task.acp.startConfig ?? []
@@ -2694,8 +2701,10 @@ export class AgentRuntime implements Bridge {
         ...(scope?.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
         ...(agentContext?.skillBodies?.length ? { skills: true as const } : {}),
         ...(this.proposing(agentContext) ? { proposals: true as const } : {}),
-        ...(this.proposing(agentContext) && agentContext?.unattended ? { unattended: true as const } : {}),
+        // Whether or not it may propose: an unattended run also keeps Code's idle reclaim (`idleFor`).
+        ...(agentContext?.unattended ? { unattended: true as const } : {}),
         ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
+        ...(agentContext?.note ? { note: agentContext.note } : {}),
         ...(startConfig ? { startConfig } : {}),
         ...(this.startLaunchThinking(startConfig, route?.model)
           ? { launchThinking: this.startLaunchThinking(startConfig, route?.model)! }
@@ -2753,8 +2762,10 @@ export class AgentRuntime implements Bridge {
         ...(scope?.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
         ...(agentContext?.skillBodies?.length ? { skills: true as const } : {}),
         ...(this.proposing(agentContext) ? { proposals: true as const } : {}),
-        ...(this.proposing(agentContext) && agentContext?.unattended ? { unattended: true as const } : {}),
+        // Whether or not it may propose: an unattended run also keeps Code's idle reclaim (`idleFor`).
+        ...(agentContext?.unattended ? { unattended: true as const } : {}),
         ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
+        ...(agentContext?.note ? { note: agentContext.note } : {}),
         ...(startConfig ? { startConfig } : {}),
         ...(this.startLaunchThinking(startConfig, route?.model)
           ? { launchThinking: this.startLaunchThinking(startConfig, route?.model)! }
@@ -2856,6 +2867,10 @@ export class AgentRuntime implements Bridge {
           if (agent && agent.customAgentId === current.summary.agent?.customAgentId && options.agentContext?.brief)
             current.acp.brief = options.agentContext.brief
         }
+        // The digest as it stands now; a turn sends it only when it differs from the last one this context carried.
+        const owner = options.agentContext?.agent
+        if (owner && owner.customAgentId === this.state.tasks[sessionId]?.summary.agent?.customAgentId && options.agentContext?.note)
+          this.task(sessionId).acp.note = options.agentContext.note
         // Reattach and confirm the mode before recording, so a refused turn leaves no side effects. A stop meanwhile is no
         // refusal: the prompt is recorded as sent and stopped before it reached the agent, as a new session's is.
         await this.attach(sessionId).catch((error: unknown) => {
@@ -4955,6 +4970,7 @@ export class AgentRuntime implements Bridge {
         return
       }
       run.live = binding.live
+      delete binding.live.warmOnly
       run.acpSessionId = binding.acpSessionId
       this.holdIdle(binding.live)
       const fork = this.state.tasks[run.taskId]?.acp.fork
@@ -4965,7 +4981,12 @@ export class AgentRuntime implements Bridge {
       const named = /^\/(\S+)/u.exec(run.prompt)?.[1]
       const nativeCommand = named !== undefined && (binding.live.wire.commandsWithoutContext ?? binding.live.wire.idleCommands)?.has(named)
       const brief = nativeCommand ? undefined : this.state.tasks[run.taskId]?.acp.brief
-      const blocks = brief ? [{ type: 'text', text: brief.segments.map(segment => segment.text).join('\n') }, ...content] : content
+      const pendingNote = nativeCommand ? undefined : this.state.tasks[run.taskId]?.acp.note
+      const note = pendingNote && pendingNote.key !== this.state.tasks[run.taskId]?.acp.noteSent ? pendingNote : undefined
+      const lead = [brief, note].flatMap(block =>
+        block ? [{ type: 'text', text: block.segments.map(segment => segment.text).join('\n') }] : [],
+      )
+      const blocks = lead.length ? [...lead, ...content] : content
       if (run.cancelRequested) {
         status = 'cancelled'
         return
@@ -4988,6 +5009,7 @@ export class AgentRuntime implements Bridge {
         run.userText === undefined ? undefined : { userText: run.userText },
       )
       if (brief) this.briefSent(run, brief)
+      if (note) this.noteSent(run, note)
       const result = await answer
       status = this.outcome(run, result, notes)
     } catch (error) {
@@ -5011,6 +5033,15 @@ export class AgentRuntime implements Bridge {
     if (message?.role === 'user') message.agentBrief = brief
     this.mark()
     this.notify(run.taskId)
+  }
+
+  /** As `briefSent`: recorded on the turn that carried it, so a note that never reached the engine goes with the next. */
+  private noteSent(run: Run, note: AgentNote): void {
+    const task = this.state.tasks[run.taskId]
+    if (!task) return
+    task.acp.noteSent = note.key
+    if (task.acp.note?.key === note.key) delete task.acp.note
+    this.mark()
   }
 
   private outcome(run: Run, result: unknown, notes: string[]): TaskStatus {
@@ -5412,10 +5443,16 @@ export class AgentRuntime implements Bridge {
     }
   }
 
-  /** Stops the least recently used idle process whose session can be restored, when the limit is reached. */
-  private makeRoom(): void {
+  /**
+   * Stops the least recently used idle process whose session can be restored, when the limit is reached. A warm-up
+   * (`warm`) takes no other session's place: at the limit it gives up instead.
+   */
+  private makeRoom(key: string): void {
     const running = [...this.lives.values()].filter(live => !live.wire.stopping)
     if (running.length < this.limits.maxProcesses) return
+    // A turn that joined the warm-up meanwhile makes room as any turn does.
+    if (this.warming.has(key) && !this.runs.has(key))
+      throw new AppError(503, 'agent-busy', `同时运行的 ${this.agent.name} 会话已满，没有提前启动`)
     const victim = running
       .filter(live => live.initialized && (live.capabilities.resume || live.capabilities.load) && !this.busy(live.key))
       .sort((a, b) => a.lastUsed - b.lastUsed)[0]
@@ -5498,7 +5535,7 @@ export class AgentRuntime implements Bridge {
       this.processModeChanges.get(key)?.authorize?.()
       this.launchThinkingChanges.get(key)?.authorize?.()
       this.routeChanges.get(key)?.authorize?.()
-      this.makeRoom()
+      this.makeRoom(key)
     } catch (error) {
       gateway?.close()
       throw error
@@ -5549,7 +5586,8 @@ export class AgentRuntime implements Bridge {
     } catch (error) {
       gateway?.close()
       const detail = clip(this.redact(message(error)), 1000)
-      this.health.lastError = `无法启动：${clip(detail, 300)}`
+      // A warm-up that could not start is not the Harness's status: the next turn tries again and says why.
+      if (!this.warming.has(key) || this.runs.has(key)) this.health.lastError = `无法启动：${clip(detail, 300)}`
       throw new AppError(503, 'agent-start-failed', `${name} 启动失败：${detail}`)
     }
     if (gateway) {
@@ -5558,6 +5596,7 @@ export class AgentRuntime implements Bridge {
     }
     live = {
       key,
+      ...(this.warming.has(key) && !this.runs.has(key) ? { warmOnly: true as const } : {}),
       wire,
       ...(cacheDirectory ? { commandCache: { directory: cacheDirectory, confirmed: structuredClone(confirmed), ordinal: 0 } } : {}),
       ...(gateway ? { gateway } : {}),
@@ -5706,7 +5745,8 @@ export class AgentRuntime implements Bridge {
       if (permission.live === live) this.closePermission(permission, CANCELLED_OUTCOME, this.unanswered())
     }
     const unexpected = !info.reason || info.reason === 'overflow'
-    if (unexpected) {
+    // A process only warmed ahead of a turn says nothing yet about whether the Harness keeps crashing on real work.
+    if (unexpected && !live.warmOnly) {
       this.health.crashed()
       if (live.initialized) this.health.lastError = `进程意外退出（${describeExit(info)}）`
     }
@@ -6365,8 +6405,44 @@ export class AgentRuntime implements Bridge {
       // A stop sent after the turn that the subagent never answered is over with its process.
       for (const child of live.children.values()) delete child.stopping
       void live.wire.stop('stop', this.limits.stopGraceMs)
-    }, this.limits.idleMs)
+    }, this.idleFor(key))
     live.idleTimer.unref()
+  }
+
+  /** How long a session's idle process stays: longer for a person's helper than for a Code session or an unattended run. */
+  private idleFor(key: string): number {
+    const task = this.state.tasks[key]
+    return task?.summary.agent && !task.acp.unattended ? this.limits.agentIdleMs : this.limits.idleMs
+  }
+
+  /**
+   * Starts a settled session's process before its next turn, as that turn's binding would (`Bridge.warm`): only while
+   * fewer than `maxProcesses` run, so it never stops another session's process, and never while the session is busy.
+   * Nothing goes to the model. A failure is swallowed: the next turn starts it again and says why if it still fails.
+   */
+  async warm(sessionId: string): Promise<boolean> {
+    if (this.closed) return false
+    const task = this.state.tasks[sessionId]
+    if (!task || task.summary.status === 'running' || task.summary.status === 'waiting-approval') return false
+    if (this.busy(sessionId) || this.lives.has(sessionId)) return false
+    const running = [...this.lives.values()].filter(live => !live.wire.stopping).length + this.spawning.size
+    if (running >= this.limits.maxProcesses) return false
+    this.warming.add(sessionId)
+    try {
+      // The checks a turn runs before its process starts in the session's folder: the session can still take input,
+      // its folders are the ones it was given, and the confirmed command and project configuration are unchanged.
+      this.assertUsable(task)
+      this.assertNotChecking(sessionId)
+      await this.assertWorkspace(task)
+      await this.assertLaunch(task.acp.cwd, confirmedOf(task.acp))
+      if (this.busy(sessionId) || this.lives.has(sessionId)) return false
+      await this.attach(sessionId)
+      return true
+    } catch {
+      return false
+    } finally {
+      this.warming.delete(sessionId)
+    }
   }
 
   private busy(key: string): boolean {

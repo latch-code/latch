@@ -15,6 +15,7 @@ import { Handoffs } from './handoffs.ts'
 import { HistoryImports, HistoryReceipts } from './history-import.ts'
 import { ReviewNotes } from './review-notes.ts'
 import { AgentPlans, canPropose } from './agent-plans.ts'
+import { agentDigest } from './agent-digest.ts'
 import { resultContent } from './agent-activity.ts'
 import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
@@ -27,6 +28,7 @@ import {
   parseModelChoice,
   refusedBeforeAccepting,
   type AgentExecutionContext,
+  type AgentNote,
   type AutomationConfig,
   type ModelChoice,
 } from '@latch/protocol'
@@ -388,6 +390,10 @@ const TASK_BODY_LIMIT = 256 * KIB
 const HARNESS_ID = /^[a-zA-Z0-9_-]{1,64}$/
 const LEGACY_PROVIDER_ID = 'openai-compatible'
 const STANDARD = 'standard'
+/** An Agent's chat is warmed at most once in this long, however often a page opens it. */
+const AGENT_WARM_EVERY_MS = 30_000
+/** Warm-ups a minute from one device and from all of them, whichever Agents they name. */
+const AGENT_WARM_LIMITS = { device: 6, all: 20 } as const
 const ACTIVE_STATUSES: ReadonlySet<TaskStatus> = new Set(['running', 'waiting-approval'])
 /** How long after start the Host waits before its one background read of recent sessions' local Git. */
 const BOARD_WARM_DELAY_MS = 2_000
@@ -2941,6 +2947,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             return { owner, path, available: false, reason: '工作位置无法确认，原文件已保留；请在这台 Mac 上检查' }
           }
         },
+        warm: (owner, caller) => warmAgentChat(owner, caller),
       },
       automations: {
         automations: () => automations,
@@ -3368,7 +3375,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       authorize()
       return { actor: { ...actorOf(caller), deviceId: caller.device.id }, authorize }
     }
+    /** 「它做过什么」, set once schedules and handoffs are open; until then no turn carries a digest. */
+    let digestOf: ((owner: string) => AgentNote | undefined) | undefined
     const agentPlans = new AgentPlans({
+      digest: owner => digestOf?.(owner),
       agents: customAgents,
       harness: id => hub!.info(id),
       plugins: () => registry.list().filter(plugin => plugin.enabled),
@@ -3631,12 +3641,30 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           res,
         ),
       async send(caller, id, { requestId, prompt, fileRefs }) {
-        await sendPrompt(caller, id, { requestId, prompt, ...(fileRefs.length ? { fileRefs } : {}) })
+        // Into an Agent's or 通用's chat, the handed-over material is not the person's words: what that context proposes
+        // from now on is marked external, as a 待办 thread's delivery is. Code sessions propose nothing.
+        await sendPrompt(caller, id, { requestId, prompt, ...(fileRefs.length ? { fileRefs } : {}) }, false, sessionOwner(id) !== undefined)
       },
       listTasks: () => hub!.listTasks(),
       detail: id => hub!.detail(id),
       changed: () => refresh(),
     })
+    digestOf = owner => {
+      const owns = (sessionId: string) => hub?.agentOf(sessionId)?.customAgentId === owner
+      return agentDigest({
+        owner,
+        now: now(),
+        results: automations.results(),
+        handoffs: handoffs.summaries({ has: owns }) ?? [],
+        owns,
+        party: sessionId => {
+          if (sessionId === undefined) return '新会话'
+          const other = hub?.agentOf(sessionId)?.customAgentId
+          if (other) return customAgents.list().find(agent => agent.id === other)?.name ?? '已删除的 Agent'
+          return hub?.generalChatOf(sessionId) ? '通用' : 'Code 会话'
+        },
+      })
+    }
     startupCleanup.push(() => handoffs.close())
     const reviewNotes = await ReviewNotes.open({ dataDir, now, log })
     startupCleanup.push(() => reviewNotes.close())
@@ -8474,7 +8502,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const prompt = fork ? fork.text + (input.prompt || '请接着这个会话继续。') : input.prompt
         const baseContext: AgentExecutionContext | undefined =
           (customAgentId
-            ? agentPlans.agentContext(customAgentId, harnessId)
+            ? agentPlans.agentContext(
+                customAgentId,
+                harnessId,
+                withoutPrivateContext ? undefined : devices.get(caller.device.id)?.dataScope,
+              )
             : generalContextFor(withoutPrivateContext ? undefined : devices.get(caller.device.id)?.dataScope, harnessId))
           ?? (fork && privateSession(fork.source)
             ? { instructions: '', revision: sha256Hex(canonicalJson(['fork', fork.source.id])) }
@@ -9009,6 +9041,46 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return new AppError(409, 'queue-context-changed', 'Agent 的设置已改变，请移除此项后重新加入队列。')
     }
     /** 通用's instructions and memories go only to a device that could read them, or its model's reply would carry them there. */
+    /** When each Agent's chat was last warmed, and the recent warm-ups per device and in all: a page cannot drive starts. */
+    const warmedAt = new Map<string, number>()
+    const warmsBy = new Map<string, number[]>()
+    let warmsAll: number[] = []
+    /**
+     * Starts the process of an Agent's one chat before the person's next message (`Bridge.warm`). The route already
+     * required `run` and data scope `all`; the session is only ever the Host's own chat slot for that Agent, never one a
+     * client names. Audited first (`agent.warm.requested`), failing closed like a probe: binding the session may write
+     * its Harness session, a config readback or a drift mark. Then, in the background, the same folder checks a turn runs
+     * (`assertSessionWorkspace`); any refusal there or in the driver means only that nothing was warmed. Nothing reaches
+     * the model, and the driver keeps its process limit.
+     */
+    async function warmAgentChat(owner: string, caller: Caller): Promise<boolean> {
+      if (owner === GENERAL_AGENT_ID) return false
+      const agent = customAgents.get(owner)
+      if (agentPlans.unavailable(agent) !== undefined) return false
+      const chat = customAgents.chats()[owner]
+      if (chat?.state !== 'ready') return false
+      const sessionId = chat.sessionId
+      if (hub!.agentOf(sessionId)?.customAgentId !== owner || hub!.personalOf(sessionId)) return false
+      const device = caller.device?.id
+      if (!device) return false
+      const at = now(),
+        recent = (times: number[] | undefined) => (times ?? []).filter(time => at - time < 60_000)
+      const mine = recent(warmsBy.get(device))
+      warmsAll = recent(warmsAll)
+      if (at - (warmedAt.get(owner) ?? 0) < AGENT_WARM_EVERY_MS) return false
+      if (mine.length >= AGENT_WARM_LIMITS.device || warmsAll.length >= AGENT_WARM_LIMITS.all) return false
+      await audited({ action: 'agent.warm.requested', actor: actorOf(caller), target: owner, detail: { customAgentId: owner, sessionId } })
+      warmedAt.set(owner, at)
+      if (warmedAt.size > 256) warmedAt.delete(warmedAt.keys().next().value!)
+      warmsBy.set(device, [...mine, at])
+      if (warmsBy.size > 256) warmsBy.delete(warmsBy.keys().next().value!)
+      warmsAll.push(at)
+      void (async () => {
+        await assertSessionWorkspace(sessionId)
+        await hub!.warm(sessionId)
+      })().catch(() => false)
+      return true
+    }
     function generalContextFor(dataScope: DataScope | undefined, harnessId: string): AgentExecutionContext | undefined {
       return dataScope === 'all' ? agentPlans.generalContext(harnessId) : undefined
     }
@@ -9021,6 +9093,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const context = turnContext(sessionId, harnessId, dataScope)
       const owner = hub!.agentOf(sessionId)
       if (!owner) return context ? { agentContext: context } : undefined
+      // A first-turn engine's queued turn carries only the digest note, which applies as it stands when sent.
+      if (hub!.info(harnessId)?.agentContext === 'first-turn') return context ? { agentContext: context } : undefined
       if (hub!.info(harnessId)?.agentContext !== 'private') return undefined
       const session = await hub!.summary(sessionId)
       const model =
@@ -9038,13 +9112,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     ): AgentExecutionContext | undefined {
       const contextKind = hub!.info(harnessId)?.agentContext
       const owner = hub!.agentOf(sessionId)
-      if (contextKind !== 'private' && !(contextKind === 'first-turn' && freshContext && owner && dataScope === 'all')) return undefined
+      // A first-turn engine keeps its block in its own history; past the first turn only the digest note goes along.
+      const noteOnly = contextKind === 'first-turn' && !freshContext && owner !== undefined && dataScope === 'all'
+      if (contextKind !== 'private' && !noteOnly && !(contextKind === 'first-turn' && freshContext && owner && dataScope === 'all'))
+        return undefined
       if (!owner) {
         const general = generalContextFor(dataScope, harnessId)
         return dataScope === 'all' && hub!.generalChatOf(sessionId) ? agentPlans.generalChatContext(harnessId, general) : general
       }
+      // A deleted Agent's session on a first-turn engine continues without a note, as it did before notes existed.
+      if (noteOnly && !customAgents.list().some(agent => agent.id === owner.customAgentId)) return undefined
       try {
-        const context = agentPlans.agentContext(owner.customAgentId, harnessId)
+        const context = agentPlans.agentContext(owner.customAgentId, harnessId, dataScope)
+        if (noteOnly)
+          return context.note
+            ? { agent: { customAgentId: owner.customAgentId }, instructions: '', note: context.note, revision: context.revision }
+            : undefined
         if (harnessId !== STANDARD) return context
         const chat = customAgents.chats()[owner.customAgentId]
         if (chat?.state !== 'ready' || chat.sessionId !== sessionId) return context

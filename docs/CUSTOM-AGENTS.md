@@ -5,6 +5,7 @@ sources:
   - apps/host/src/agent-plans.ts
   - apps/host/src/agent-journal.ts
   - apps/host/src/agent-activity.ts
+  - apps/host/src/agent-digest.ts
   - apps/host/src/computer.ts
   - apps/host/src/routes/agents.ts
   - apps/host/src/hub.ts
@@ -26,6 +27,7 @@ sources:
   - apps/web/src/shell/SpaceNav.tsx
   - apps/web/src/agents/chat.ts
   - apps/web/src/agents/AgentChat.tsx
+  - apps/web/src/agents/opening.ts
   - apps/web/src/agents/AgentFrame.tsx
   - apps/web/src/agents/TopicFrame.tsx
   - apps/web/src/agents/NewTopic.tsx
@@ -98,6 +100,7 @@ Agent 是一份定义（名称、头像、说明、指令、技能、Harness、�
 | `GET …/results` | 还没有聊天时等着的定时结果卡（[AUTOMATIONS.md](AUTOMATIONS.md#结果回到对话)） |
 | `GET …/activity?before=`、`…/library?before=` | 动态（每页 30 条）与资料库（每页最多 8 组） |
 | `GET …/computer`、`…/home` | 「电脑」；家的路径与可用性 |
+| `POST /custom-agents/:id/warm` | 打开聊天时预热它的进程（见「回得快」） |
 | `PUT`、`DELETE /custom-agents/:id/avatar-image`，`GET /custom-agents/avatar-images/:hash` | 图片头像 |
 | `GET /custom-agents/:id/export`、`…/export/preview` | 导出 |
 | `POST /custom-agents/import`、`…/import/preview` | 导入 |
@@ -135,6 +138,7 @@ iOS（`PhoneHelperCreate`）同样两步。提交时再核对当前目录，不�
 | `avatar` | `{ kind: 'face', bracket, eyes, hue }`，取值见 `AGENT_BRACKETS`、`AGENT_EYES`、`AGENT_HUES`；图片见「图片头像」。新建时缺省由 Host 分配一个没用过的括号 × 颜色组合，眼睛用圆点 |
 | `notifications` | `{ completed, failed, waiting }`：桌面端是否为这个 Agent 的聊天与定时运行发通知。缺省全部开启，`PATCH` 传 `null` 回到缺省 |
 | `keepAwakeForSchedules` | 「到点前后保持唤醒」，缺省为关，只存为 `true`（[AUTOMATIONS.md](AUTOMATIONS.md#到点前后保持唤醒)） |
+| `generalFactsOff` | 「带上『通用』里关于你的事」关掉时为 `true`，缺省为开；`PATCH` 写 `generalFacts: true/false`（见「认识你」） |
 
 未知的字段与取值都拒绝。
 
@@ -312,9 +316,49 @@ Agent 的工具结果写明原因。人的「记住…」被拒绝时消息照�
 
 导入页把文件里的文字按隐藏字符规则显示（`VisibleText`）。跨电脑的 Agent 汇总尚未实现。
 
+## 像助手
+
+### 认识你
+
+人在「通用」里写下或保存的记忆，只读地带进每个 Agent 的每一轮，标明是「用户在『通用』里确认过、告诉 Latch 的事」（`GENERAL_FACTS`），与这个 Agent 自己的记忆和资料分开。
+
+- **只取人的话**（`generalFacts`）：与「用户明确维护的记忆」同一个判定（`outsideMemory`）。导入的、来自外部内容的记忆不带，人「设为我说的」之后才带；提议从不带。这些事实不写进这个 Agent 的记忆，`recall_memory` 查不到，「通用」自己的会话不重复带。
+- **上限**（`GENERAL_FACT_LIMITS`）：最多 24 条、合计 6 KB，整条取舍，先留最近修改的，按原顺序给出。摘要的 `generalFacts` 是带了几条、共几条。
+- **怎么带**：内置 Harness 在系统上下文里，每轮按此刻的记忆重读；外部 Harness 在首轮块里（`source: 'user'` 的段），与记忆一样清空上下文后才收到新的。
+- **谁的一轮带上**：只有完整数据范围的设备发出的一轮（`AgentPlans.agentContext` 的范围参数）；Agent 的会话本身也只对完整数据范围开放。定时任务的运行不带：运行的依据（`basis`）不覆盖它，在「通用」确认一件事不会暂停任何定时任务；人在那个会话里接着发的轮次照常带。
+- **不在修订里**：`definitionHash` 与会话的 `revision` 不含它，排队的一轮按发送那一刻的事实带，与「通用」给 Code 会话的规则一样。
+- **每个 Agent 可关**：缺省为开（「通用」确认的记忆本来就带给 Code 会话）。资料面板「记忆」顶部的开关写 `generalFacts`，是这个 Agent 的一次普通修改（同样的回执与审计），不改变定义的哈希；提示框写明首轮 Harness 在清空上下文后才生效。
+
+### 它做过什么
+
+Agent 的下一轮带上一段简短的近况（`agent-digest.ts`）：它自己的定时运行与它给出或收到的交接，在什么时候、怎么结束、在哪里看。
+
+- **只有 Host 的记录**：时间（UTC，到分钟）、定时的名称（人保存的）、按时或立即运行、结果的枚举词、改动的文件数、会话 ID；交接写对方（Agent 的名字、「通用」或「Code 会话」）与状态。运行的回复、交接的结论、话题标题与文件名都不抄进来：它们是模型的输出。
+- **标记**：每行都写「来自外部内容」：定时运行一律算读过外部内容（见「外部内容」），交接带的是另一个会话的材料与输出。整段放在说明它不是用户的话、也不是指令的标题下（`DIGEST_HEADING`），外部 Harness 收到的段是 `material`。名称压成一行、最多 40 字，去掉「」『』与 ·，不能伪造新的一行或一行里的字段。
+- **上限**（`DIGEST_LIMITS`）：最近 7 天、最多 6 行，新的优先。会话被删的写「会话已删除」，不带内容。
+- **怎么带**：内置 Harness 每轮在系统上下文末尾。外部 Harness 经 `AgentExecutionContext.note`：驱动记下这个上下文已经带过的 `key`，内容变了才在下一轮的输入之前再发一次，清空上下文后重新发；记录在送达的那一轮（`noteSent`），没送达的留给下一轮。它不在消息正文里。
+- **谁的一轮带上**：与「认识你」相同，只有完整数据范围的设备发出的一轮，定时运行自己不带。
+
+### 回得快
+
+- **预热**：打开某个 Agent 已有的唯一聊天时，页面发 `POST /custom-agents/:id/warm`（`run` 加完整数据范围，否则 403 `agent-scope-required`）。Host 只用自己记录的聊天槽（`ready`）找会话，从不接受客户端给的会话 ID；Agent 不可用、聊天还没开始、会话属于别人、这个 Agent 30 秒内已预热过、这台设备一分钟内已预热 6 次或全部设备一分钟内已 20 次时什么都不做。回答 `{ started }`，预热在后台进行（[HARNESSES.md](HARNESSES.md#进程与环境)）。
+- **审计**：开始之前写 `agent.warm.requested`（`customAgentId`、`sessionId`），写不下就不预热（503）。绑定会话可能记下 Harness 的会话、设置读回或权限漂移标记。
+- **与一轮相同的检查**：后台先做一轮发送前的文件夹检查（`assertSessionWorkspace`：家的标记、与项目重叠、移除的工作树、停用的项目），驱动再查会话的文件夹、确认过的命令与项目配置（`assertWorkspace`、`assertLaunch`）。任何一项不通过都只是不预热，下一轮照常拒绝并说明原因。
+- **不越界**：驱动只在进程数低于上限时启动，不为它停掉别的会话，不发提示、不调模型。预热启动的进程在第一轮用到它之前崩溃不计入 Harness 的连续崩溃暂停，启动失败也不改 Harness 的状态。内置 Harness 没有进程，「通用」不预热。聊天还没开始时没有会话可热：第一条消息照常启动进程。
+- **空闲回收**：Agent 会话的空闲进程保留 30 分钟，Code 会话 10 分钟；后台定时运行按 Code 的。
+
+### 先开口
+
+还没有消息的聊天先显示 Agent 的开场（`opening.ts`），不调模型：它的头像和三件可以点的事；名字与说明在正上方的页头里，不重复。点了只把文字填进输入框（已写的保留，接在后面），不发送。
+
+- 三件事来自它此刻真能做的：它的定时任务（上次怎么样）、能定时却还没有时的「每天帮我做一件事」、能读写文件时的文件夹或默认项目、它的说明（「交给你一件事」）、能跑命令时的「帮我跑个命令」，以及任何 Harness 都能用的「记住一件事」。没有卡片的 Harness 不写文件夹与命令。
+- 首条消息待确认、或另一台设备已经开始聊天时不显示。
+
+iPhone 与 iPad 尚未实现开场、预热与「认识你」的开关；事实与近况在 Host 上照样带给 Agent。
+
 ## 「通用」
 
-「通用」的聊天固定使用 Standard 的 Agent 模式和 Host 模型服务，在 `helpers/general` 工作。写给它的指令和记忆也对没选别的 Agent 的会话生效；这些会话没有 `TaskSummary.agent`，仍属于 Code。
+「通用」的聊天固定使用 Standard 的 Agent 模式和 Host 模型服务，在 `helpers/general` 工作。写给它的指令和记忆也对没选别的 Agent 的会话生效；这些会话没有 `TaskSummary.agent`，仍属于 Code。它的记忆里人自己的话也带给每个 Agent（见「认识你」）。
 
 - 只有完整数据范围的设备发出的一轮才带上「通用」：模型的回复可能复述它。范围较小的设备照常工作，就像「通用」是空的。
 - 一轮带上「通用」后，会话的 `TaskSummary.agentPrivate` 为真，在模型收到之前写入。此后读取与继续都要完整数据范围，即使这个会话是范围较小的设备开始的。分叉出的新会话同样私有，定时任务的每次运行也是。
@@ -436,14 +480,15 @@ Host 在 `custom.json` 的 `chats` 里为每个 Agent 与「通用」保留一�
 - 名册（`roster.ts`）全部由快照的摘要算出。切换对话与看板不改变所在的 Agent、阅读位置和草稿。
 - 仍有会话的已删除 Agent 写「已删除的 Agent」；摘要因写入结果未知暂缺时不推断谁被删除。断线时保留最后的状态并标「上次状态」。
 - 点 Agent、旧深链或命令面板总是打开 Host 指定的聊天（`chat.ts`）。还没有聊天时首条消息开始它；另一台设备已经开始时，草稿可以带入已有聊天。
-- 总览（`AgentsHome.tsx`）按 Host 的组（`board.group`）分「等你处理」「在工作」，另有「最近结果」。Agent 的会话没有交付，所以没有「可交付」。
+- 总览（`AgentsHome.tsx`）是有事时的「等你处理」卡片和一列助手（「全部 Agent」）：每行头像带状态、名字、在做什么（工作或等你时）否则最近的话题或说明、下一次定时、最近活动的时间，和一个动作：等你时「去处理」打开等着的话题，否则「聊天」。没有事时不画空的分组与「0」。手机的根页面是同一列。「新会话」键打开最近说过话的 Agent（否则「通用」）的聊天。
+- 助手的聊天不默认打开右侧面板：只有这个会话记着的标签页才在宽窗口打开它。
 - 删除 Agent 用原删除接口；已发送但结果未知的删除留在当前页面内存，用原 `requestId` 重试，「放弃等待」只清本页的记录。
 
 **像一个人**（`personWords.ts`）
 
 - 我的 Agent 的会话里，作者是 Agent 的头像与名字，不写 Harness、模型、tokens 与上下文；演示模型回答时仍标「演示」。只有要人去处理的「<Harness> 还没登录」写 Harness 的名字。
 - 工具行、审批卡的内容与 Host 写的失败原因原样不改。
-- 输入框没有 Harness、模型、思考与权限控件，安全事实改写在名字旁：权限读不回时琥珀色「权限没确认」，执行前不询问时琥珀色「不先问你」，原因是它的提示框。外部 Harness 始终保留「Latch 不隔离」的说明入口，创建第二步与设置里也有。
+- 输入框没有 Harness、模型、思考与权限控件，安全事实改写在名字旁：权限读不回时琥珀色「权限没确认」，执行前不询问时琥珀色「不先问你」，原因是它的提示框。外部 Harness 始终保留「Latch 不隔离」的说明入口：名字旁只是盾形图标，文字在它的名称与提示框里；创建第二步与设置里也有。
 - 模型路线绕过 Latch 或下一轮不可用时，输入框下保留警告与完整原因。
 
 **头像**

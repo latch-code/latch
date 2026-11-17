@@ -398,6 +398,7 @@ Driver 上的其他声明：
 | `subscribe` | 状态变化时通知；带 `sessionId` 时 Host 合并通知并推送该会话 |
 | `liveRuns?` | 同步返回内存中活动的运行，开销只随活动运行数增长；Host 据此发现沉默，不提供就没有沉默通知 |
 | `remove?` | 删除已结束会话的数据；运行中 409 `task-running` |
+| `warm?` | 在下一轮之前启动已结束会话的进程，像那一轮的绑定一样，不发提示。只在进程数低于自己的上限时做，从不为它停掉别的会话；会话忙时不做。`false` 表示什么都没启动（含失败） |
 | `setConfig?` | 从下一轮生效。`options.authorize()` 须在异步准备之后、实际外部修改之前同步调用，抛错即停。只在确定没改时用 409 `task-running` 或 `details.configOutcome`（`not-sent`、`refused`）拒绝；其他错误在回执之后都记为结果未知。模型选项的 `serviceChoice`／`ownChoice` 值让会话换路线，服务的路线由 Host 经 `options.route` 给出（[会话中换路线](MODEL-GATEWAY.md#会话中换路线)） |
 | `readConfig?` | 从 Agent 本身读一项的当前值，不用 Driver 记下的值，只在会话空闲时读，不改任何设置；读取期间拒绝这个会话的发送、追加与修改，并先结束收到未回答修改的进程。`source: 'launch'` 的选项是 Host 管理的启动设置，不能拿持久化值当读回 |
 | `readCatalogue?` | 不发提示读取开始前的选项，同时只有一次读取。是否自动读取由 `catalogueRead()` 决定，不在需人请求的 Harness 上自动运行 |

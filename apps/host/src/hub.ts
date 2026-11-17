@@ -1096,6 +1096,13 @@ export class HarnessHub implements Bridge {
     await bridge.markOutsideContent(sessionId)
   }
 
+  /** Starts a settled session's process ahead of its next turn (`Bridge.warm`); false when its driver has none or declined. */
+  async warm(sessionId: string): Promise<boolean> {
+    const { bridge } = await this.route(sessionId)
+    if (!bridge.warm) return false
+    return bridge.warm(sessionId).catch(() => false)
+  }
+
   /** 「继续等」: asks later about this run's silence; nothing else about the run changes. */
   async keepWaiting(sessionId: string, input: { runId: string; thresholdMs: number }): Promise<KeepWaitingResult> {
     const member = await this.route(sessionId)

@@ -247,6 +247,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'native.inputs.resumed': {},
   'pairing.contended': { invitationId, cancelled: 1, removed: 0 },
   'personal.changed': { kind: 'routine', operation: 'start', before: hex, after: hex, assistantId: 'asst_1' },
+  'agent.warm.requested': { customAgentId: 'agt_00000000-0000-4000-8000-000000000000', sessionId: 'task-1' },
   'agent.probe.requested': { agentId: 'codex', launchHash: hex },
   'agent.probed': { agentId: 'codex', launchHash: hex, status: 'authentication-required' },
   'agent.catalogue.requested': { agentId: 'codex', auto: true },

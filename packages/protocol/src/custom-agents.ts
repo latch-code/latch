@@ -31,6 +31,11 @@ export interface AgentFace {
 export const AGENT_AVATAR_IMAGE = { bytes: 2 * 1024 * 1024, maxSide: 1024, minSide: 16, size: 256 } as const
 
 export const GENERAL_AGENT_ID = 'general'
+/**
+ * What every Agent's turn may carry of 通用's confirmed memories (「认识你」): whole entries only, the newest first, at
+ * most this many and this many UTF-8 bytes together.
+ */
+export const GENERAL_FACT_LIMITS = { count: 24, bytes: 6 * 1024 } as const
 
 /** The Host's verified home hint, visible only to devices allowed to read this Agent's private data. */
 export interface AgentHome {
@@ -82,6 +87,11 @@ export interface CustomAgent extends CustomAgentConfig {
    * scheduled runs until the run settles, within a cap. Absent: off. It never wakes a Mac that already sleeps.
    */
   keepAwakeForSchedules?: true
+  /**
+   * 「认识你」 turned off: this Agent's turns leave out what the person confirmed in 通用 (`generalFacts`). Absent: on.
+   * Stored only as off.
+   */
+  generalFactsOff?: true
   revision: number
   createdAt: string
   updatedAt: string
@@ -96,6 +106,11 @@ export type CustomAgentSummary = Omit<CustomAgent, 'instructions' | 'skills' | '
   unavailableReason?: string
   /** Automations run on the built-in engine only. */
   canAutomate: boolean
+  /**
+   * How many of 通用's confirmed memories this Agent's turns carry now, within `GENERAL_FACT_LIMITS` (0 while it is
+   * off), and how many there are. Absent from older Hosts.
+   */
+  generalFacts?: { sent: number; total: number }
 }
 /** `avatar`: the face chosen while creating (never a picture); absent, the Host assigns an unused one. */
 export type CustomAgentCreate = CustomAgentConfig & { requestId: string; avatar?: AgentAvatar }
@@ -108,6 +123,8 @@ export type CustomAgentPatch = Partial<Omit<CustomAgentConfig, 'model' | 'tools'
   /** Null: back to every notification. */
   notifications?: AgentNotifications | null
   keepAwakeForSchedules?: boolean
+  /** 「认识你」: false leaves 通用's confirmed memories out of this Agent's turns; true puts them back. */
+  generalFacts?: boolean
   model?: ModelRef | null
   engineOptions?: Record<string, string> | null
   tools?: string[] | null
@@ -465,6 +482,12 @@ export interface AgentBrief {
   segments: Array<{ source: 'latch' | 'user' | 'material'; text: string }>
 }
 
+/** A block a first-turn driver sends once per change: `key` is the SHA-256 of `segments`. */
+export interface AgentNote {
+  key: string
+  segments: AgentBrief['segments']
+}
+
 /** A skill's text, handed only to a driver that serves skills to its engine (`HarnessInfo.skills: 'server'`). */
 export interface AgentSkillBody {
   id: string
@@ -487,6 +510,12 @@ export interface AgentExecutionContext {
   instructions: string
   /** First-turn block for drivers with `agentContext: 'first-turn'`. */
   brief?: AgentBrief
+  /**
+   * For drivers with `agentContext: 'first-turn'`: what the Agent's own schedules and handoffs did lately
+   * (docs/CUSTOM-AGENTS.md#它做过什么). Sent before the next turn's input whenever `key` differs from the last one this
+   * context carried; a fresh context sends it again. Drivers with `private` get it inside `instructions`.
+   */
+  note?: AgentNote
   /** For a driver with `skills: 'server'`, which attaches a read-only skills server at session start. */
   skillBodies?: AgentSkillBody[]
   /** Plugins whose tools it may call, and with no `skillIds`, whose skills it may load. Absent: every enabled plugin. */

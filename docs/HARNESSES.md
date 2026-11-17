@@ -291,7 +291,8 @@ Agent 详情页的「测试启动」：`POST /link/api/agents/:id/probe { reques
 ## 进程与环境
 
 - **每会话一个进程。** 首次需要时启动，工作目录是会话的主文件夹，在独立进程组中运行。同一定义最多同时 8 个进程（`AcpAgentOptions.maxProcesses`）：到上限时停掉最久未用、可恢复的空闲进程，没有可停的返回 503 `agent-busy`。
-- **空闲。** 空闲 10 分钟且 Agent 支持恢复会话时优雅停止，下次需要时再启动。
+- **空闲。** 空闲 10 分钟且 Agent 支持恢复会话时优雅停止，下次需要时再启动。我的 Agent 的会话放宽到 30 分钟（`agentIdleMs`，不短于 `idleMs`）；后台定时运行（`acp.unattended`，无论能否提议都记下）仍是 10 分钟。
+- **预热（`Bridge.warm`）。** 打开某个 Agent 的唯一聊天时，Host 可以让驱动先启动这个会话的进程并恢复会话，与下一轮的绑定相同，但不发提示、不调模型。只在同一定义的进程数低于 `maxProcesses` 时做：到上限时放弃，从不为它停掉别的会话的进程；会话在运行、等你处理或另有操作时不做；先做一轮会做的检查（`assertUsable`、`assertWorkspace`、`assertLaunch`），不通过就不启动。失败只是没有预热，下一轮照常启动并说明原因；预热的进程在第一轮用到它之前崩溃不计入连续崩溃暂停。谁能触发见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#回得快)。
 - **崩溃。** 会话转为 `failed`，`runEnd` 为 `process-exited` 并列出结果未知的调用，`runOutcome` 仍是 `interrupted`（见 [STREAMING.md](./STREAMING.md#运行的真实状态)）。重启从 250 ms 起按最近崩溃次数加倍（最多 5 秒）；同一定义一分钟内崩溃 3 次，暂停自动重启一分钟（503 `agent-paused`）。
 - **stderr。** 持续读入 64 KiB 环形缓冲，只在启动失败或崩溃时以脱敏的短摘要写进 Host 日志，不进会话记录。
 - **脱敏。** Agent 自己写的回复、思考与工具输出原样进入会话。它报告的错误、提示、压缩失败与停止原因先遮蔽定义的变量值、Host 的秘密变量与网关凭据，再经 `redactSecrets`：模型服务的报错常带着密钥的一部分。

@@ -298,6 +298,12 @@ export interface Bridge {
    */
   markOutsideContent?(sessionId: string): Promise<void>
   /**
+   * Optional. Starts the settled session's process ahead of its next turn, as that turn would, and sends nothing to the
+   * model. A driver starts one only while it is under its process limit, never stopping another session's process for
+   * it, and not while the session runs. `false`: nothing was started (already running, at the limit, or failed).
+   */
+  warm?(sessionId: string): Promise<boolean>
+  /**
    * Optional, with `Subagent.stoppable`. Stops one subagent's current work, named by its row's message ID, and answers its
    * open requests as cancelled; the session's turn goes on. Resolves once the stop is sent, not once it took effect: the
    * row says `stopping` until the subagent reports how it ended. `false`: that row cannot be stopped now.

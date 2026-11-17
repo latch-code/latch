@@ -434,7 +434,7 @@ export class Handoffs {
   }
 
   /** Summaries for the snapshot: handoffs whose source or target the reader can see. Only IDs and states. */
-  summaries(visible: ReadonlySet<string>): HandoffSummary[] | undefined {
+  summaries(visible: Pick<ReadonlySet<string>, 'has'>): HandoffSummary[] | undefined {
     if (this.journal.hasPending()) return undefined
     return this.journal
       .read()

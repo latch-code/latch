@@ -42,6 +42,8 @@ export interface AgentRouteDeps {
   sessionFiles: (sessionId: string) => Promise<ChangedFile[] | undefined>
   computer: () => HostComputer
   home: (owner: string) => Promise<AgentHome>
+  /** Starts the process of the Agent's one chat ahead of the next message; false when nothing was started. */
+  warm?: (owner: string, caller: Caller) => Promise<boolean>
 }
 
 const deletion = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) })
@@ -58,6 +60,8 @@ const avatarUpload = z.strictObject({
   requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
   baseRevision: z.coerce.number().int().positive().safe(),
 })
+/** Opening an Agent's chat: its process may start before the person writes. */
+const WARM = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/warm$/u
 const EXPORT = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36})\/export(\/preview)?$/u
 const IMPORT = /^\/link\/api\/custom-agents\/import(\/preview)?$/u
 /** Short enough that each schedule's own request, derived from it, still fits a request ID. */
@@ -283,6 +287,18 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
         }
         const result: AgentImportResult = { agent: created.value, memories: file.memories.length, schedules: made }
         reply({ value: result, audited: created.audited }, 201)
+        return true
+      }
+      const warm = WARM.exec(path)
+      if (warm) {
+        if (method !== 'POST') throw new AppError(404, 'not-found', '接口不存在。')
+        const owner = warm[1]!
+        // Only an owner that exists, and only a device that may run Agents (the write access above: run and scope all).
+        agents.memories(owner)
+        actor.authorize()
+        const started = (await deps.warm?.(owner, caller)) ?? false
+        actor.authorize()
+        json(res, { started })
         return true
       }
       const view = VIEWS.exec(path)
