@@ -229,6 +229,12 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
     expect(await log.innerText()).toContain('error: Process completed with exit code 1.')
     expect(await log.innerText()).not.toContain('2026-11-12T')
     await shots(page, 'check-failed', true)
+    // A tablet has no room for the panel beside the conversation: back at 1440 it opens again and reads afresh, with
+    // no log open.
+    if (!(await log.isVisible())) {
+      await failing.getByRole('button', { name: '查看日志' }).click()
+      await expect.poll(() => log.innerText(), SLOW).toContain('rounds JPY to 0 decimals')
+    }
     const messages = (await owner.json<TaskDetail>(`tasks/${first}`)).messages.length
     await section.locator('.delivery-log').getByRole('button', { name: '加入对话' }).click()
     const draft = page.locator('.composer textarea').first()

@@ -257,7 +257,22 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     expect(await instructions.inputValue()).toBe('只用中文回答，结论放最前。')
     expect(await page.getByText('已在别处修改').count()).toBe(0)
     expect((await owner.json<CustomAgentDetail>(`custom-agents/${agent.id}`)).agent.instructions).toBe('只用中文回答。')
-    await panel.getByRole('button', { name: '关闭资料', exact: true }).click()
+    // The profile's head is the right column's top row, under the window's controls: its close button stays clear of
+    // them at every desktop width, with the sidebar open and shut.
+    const closeProfile = panel.getByRole('button', { name: '关闭资料', exact: true })
+    const closeOnTop = () =>
+      closeProfile.evaluate(button => {
+        const box = button.getBoundingClientRect()
+        return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.closest('button') === button
+      })
+    for (const width of [1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect.poll(closeOnTop, { message: `${width}` }).toBe(true)
+      await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
+      await expect.poll(closeOnTop, { message: `${width}, sidebar shut` }).toBe(true)
+      await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
+    }
+    await closeProfile.click()
     await panel.waitFor({ state: 'detached' })
 
     const cannotArchive = await owner.request('tasks/' + first!.id, { method: 'PATCH', body: { archived: true } })

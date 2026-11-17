@@ -412,6 +412,48 @@ describe('the picker board', () => {
     await expect.poll(() => document.querySelector('.ui-board')?.closest('[popover]')?.matches(':popover-open')).toBe(false)
   })
 
+  it('closes a sheet over the search it was opened on, as the popover does', async () => {
+    // A sheet is a dialog that no layer key handler closes, and Chromium's own Escape in a search field clears it.
+    function Asked() {
+      const [request, setRequest] = useState<{ query: string; revision: number }>()
+      return (
+        <>
+          <button type="button" onClick={() => setRequest({ query: 'gam', revision: 1 })}>
+            ask
+          </button>
+          <ValuePicker
+            label="模型"
+            value="face"
+            variant="row"
+            options={[{ value: 'face', label: 'beta' }]}
+            onValueChange={() => {}}
+            searchRequest={request}
+            panel={
+              <PickerBoard
+                label="模型"
+                levelsLabel="思考"
+                layout="sheet"
+                sources={GALLERY_SOURCES}
+                value="lab/beta"
+                levels={galleryLevels}
+                query={request}
+                onItem={() => {}}
+                onLevel={() => {}}
+              />
+            }
+          />
+        </>
+      )
+    }
+    const screen = await render(<Asked />)
+    await screen.getByRole('button', { name: 'ask' }).click()
+    const search = screen.getByRole('searchbox', { name: '搜索模型' })
+    await expect.element(search).toHaveValue('gam')
+    await userEvent.click(search)
+    await userEvent.keyboard('{Escape}')
+    await expect.poll(() => document.querySelector('dialog[open] .ui-board')).toBeNull()
+  })
+
   it('opens in one place from either of two triggers placed against the same element', async () => {
     const first = (trigger: HTMLElement) => trigger.parentElement!.querySelector<HTMLElement>('.first')!
     const screen = await render(

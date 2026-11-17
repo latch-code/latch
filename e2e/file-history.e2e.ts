@@ -7,7 +7,7 @@ import type { Device } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
-import { openSession, settleShell } from './helpers/layout.ts'
+import { openPanelTab, openSession, settleShell } from './helpers/layout.ts'
 
 it('opens every tool edit of a file in the same column and keeps history available after deletion and reload', async () => {
   const plugin: HarnessPlugin = {
@@ -160,7 +160,8 @@ it('opens every tool edit of a file in the same column and keeps history availab
           await openSession(page, sessionId)
           const panel = page.getByRole('button', { name: '侧边面板', exact: true })
           if ((await panel.getAttribute('aria-pressed')) !== 'true') await panel.click()
-          await page.getByRole('tab', { name: 'report.txt', exact: true }).click()
+          // After the reload the strip may hold report.txt in its 「其余」 menu (890b9f1e).
+          await openPanelTab(page, 'report.txt')
           await history.getByText('2 次工具修改', { exact: false }).waitFor()
           await history.getByRole('region', { name: '第 1 次修改', exact: true }).locator('.diff-file-header').click()
           await history

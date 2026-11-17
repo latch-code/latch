@@ -735,6 +735,26 @@ button.agent-memory-topic:hover {
   height: 44px;
   padding: 0 var(--sp-8) 0 var(--sp-16);
 }
+/* A sub-view's back button (the Agent's name) gives way, never pushing 关闭资料 out of the head's room. */
+.agent-profile-head > .ui-button {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  justify-content: flex-start;
+}
+/*
+ * In the right panel's column from 1024 the head is that column's top row, under the window's controls (work-surface.css):
+ * as tall as the title row, with their measured width kept clear, so 关闭资料 is never under them.
+ */
+@media (min-width: 1024px) {
+  .app-shell:not([data-inspector='sheet']) .inspector-column .agent-profile-head {
+    height: var(--title-row);
+    padding-inline-end: calc(var(--window-controls) + var(--sp-12));
+  }
+  .app-shell:not([data-inspector='sheet']) .inspector-column .agent-profile-head :is(button, [tabindex]) {
+    -webkit-app-region: no-drag;
+  }
+}
 .agent-profile-head h2 {
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);

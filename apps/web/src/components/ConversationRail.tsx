@@ -251,6 +251,9 @@ export const ConversationRail = memo(function ConversationRail({
             aria-label={`${index + 1} · ${marker.excerpt}`}
             onClick={() => {
               touchBrowsing.current = false
+              // The reveal scrolls the transcript and can shift the marks under a resting pointer, which the browser
+              // reports as a new pointerover: the preview comes back only once the pointer really moves.
+              resumeHoverOnMovement.current = true
               dismiss()
               onReveal(marker.id)
             }}

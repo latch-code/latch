@@ -826,7 +826,22 @@ describe('the shell', () => {
 describe('the session menu', () => {
   const OUTPUT = 'test-results/session-menu'
   // 标签… and the priorities follow the first group where the Host groups sessions (docs/DESIGN.md, 会话菜单).
-  const OPEN = ['重命名', '置顶', '标为未读', '标签…', '高', '中', '低', '复制为 Markdown', '导出 Markdown', '清空上下文', '归档', '删除']
+  // 加入待办… since ace96eb7: a Host that keeps 待办 offers it on every Code session.
+  const OPEN = [
+    '重命名',
+    '置顶',
+    '标为未读',
+    '标签…',
+    '高',
+    '中',
+    '低',
+    '加入待办…',
+    '复制为 Markdown',
+    '导出 Markdown',
+    '清空上下文',
+    '归档',
+    '删除',
+  ]
   const OTHER = OPEN.filter(name => name !== '清空上下文')
   let host: TestHost
   let owner: TestDevice

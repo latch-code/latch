@@ -324,7 +324,7 @@ export function PanelTabs<T extends string>({
           trigger={props => (
             <button {...props} type="button" className="ui-panel-tabs-more" aria-label={`其余 ${hidden.length} 个标签`}>
               +{hidden.length}
-              {hidden.some(({ tab }) => tab.fresh) && <span className="ui-panel-tab-fresh" />}
+              {hidden.some(({ tab }) => tab.fresh) && <span className="ui-panel-tab-fresh" role="img" aria-label="有新内容" />}
             </button>
           )}
         />

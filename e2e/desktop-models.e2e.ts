@@ -192,7 +192,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           // its own panel, so the level is the one shown.
           await thinkingPicker.click()
           const effort = width === 900 ? 'Low' : 'High'
+          // In the panel now open: the model chip's, shut by Escape above, may still be fading out in place.
           await page
+            .locator(':popover-open, dialog[open]')
             .getByRole('menuitemradio', { name: new RegExp(`^${effort}`, 'u') })
             .filter({ visible: true })
             .first()

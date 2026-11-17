@@ -240,6 +240,20 @@ export async function openPanelTab(page: Page, name: string): Promise<void> {
     await tab.first().click()
     return
   }
+  // A tab the strip has no room for is in its 「其余 N 个标签」 menu.
+  const more = page
+    .getByRole('tablist', { name: '会话面板', exact: true })
+    .locator('xpath=..')
+    .getByRole('button', { name: /^其余 \d+ 个标签$/u })
+  if (await more.filter({ visible: true }).count()) {
+    await more.filter({ visible: true }).first().click()
+    const item = page.getByRole('menuitem', { name: new RegExp(`^${name}`, 'u') })
+    if (await item.count()) {
+      await item.first().click()
+      return
+    }
+    await page.keyboard.press('Escape')
+  }
   const choice = page.locator('.panel-empty-choice', { hasText: name }).filter({ visible: true })
   if (await choice.count()) {
     await choice.first().click()

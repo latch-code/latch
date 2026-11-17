@@ -259,8 +259,10 @@ describe('the v8 work canvas', () => {
           const inset = placement === 'sheet' ? 8 : 0
           expect(Math.round(inspector.right)).toBe(window.width - inset)
           expect(Math.round(inspector.bottom)).toBe(panel.bottom - inset)
-          // Its top is under the session's head (--panel-top), and a sheet's 8 below that.
-          expect(Math.round(inspector.top)).toBeGreaterThanOrEqual(51 + inset)
+          // From 1024 an open panel's column reaches the window's top (890b9f1e); a sheet stays under the session's head
+          // (--panel-top), 8 below it.
+          if (placement === 'open' && window.width >= 1024) expect(Math.round(inspector.top)).toBe(0)
+          else expect(Math.round(inspector.top)).toBeGreaterThanOrEqual(51 + inset)
           if (placement === 'open') expect(Math.round(inspector.left)).toBe(panel.right)
           // The panel has no close of its own since its tabs (382abe25): the title row's 侧边面板 shuts it.
           const close = page.getByRole('button', { name: '侧边面板', exact: true }).filter({ visible: true }).first()

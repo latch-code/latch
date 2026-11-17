@@ -263,9 +263,11 @@ it('offers previous-session commands in a normal new draft after recovery withou
                 }
               })
               expect(box.scale).toBe(1.5)
-              expect(box.x).toBeGreaterThanOrEqual(box.left + 7)
+              // A phone's list is a sheet across the visible window, edge to edge (8fb50c87, DESIGN「浮层」), clear of its
+              // top and bottom.
+              expect(Math.abs(box.x - box.left)).toBeLessThanOrEqual(1)
+              expect(Math.abs(box.right - (box.left + box.width))).toBeLessThanOrEqual(1)
               expect(box.y).toBeGreaterThanOrEqual(box.top + 7)
-              expect(box.right).toBeLessThanOrEqual(box.left + box.width - 7)
               expect(box.bottom).toBeLessThanOrEqual(box.top + box.height - 7)
               await currentPage.screenshot({ path: `${output}/zoom-short-390-dark.png`, animations: 'disabled' })
               await group

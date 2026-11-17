@@ -171,15 +171,15 @@ describe('the right panel', () => {
         await settleShell(page)
         await shot(page, 'docx', width, theme)
 
-        const tabs = page.getByRole('tablist', { name: '会话面板', exact: true })
-        await tabs.getByRole('tab', { name: '文件', exact: true }).click()
+        // Past the two tabs the strip has room for, the rest are in its 「其余」 menu (890b9f1e).
+        await openPanelTab(page, '文件')
         await row(page, 'book.xlsx').click()
         await page.getByRole('gridcell').first().waitFor()
         await settleShell(page)
         await shot(page, 'xlsx', width, theme)
         expect(await page.getByText('隐藏的工作表未显示。', { exact: true }).count()).toBe(0)
 
-        await tabs.getByRole('tab', { name: '文件', exact: true }).click()
+        await openPanelTab(page, '文件')
         await row(page, 'guide.md').click()
         await viewer.getByRole('heading', { name: 'Guide', exact: true }).waitFor()
         await viewer.getByRole('button', { name: '源码', exact: true }).click()
@@ -191,7 +191,7 @@ describe('the right panel', () => {
         await viewer.getByRole('searchbox', { name: '查找文件内容' }).waitFor()
         await shot(page, 'text-find', width, theme)
 
-        await tabs.getByRole('tab', { name: '文件', exact: true }).click()
+        await openPanelTab(page, '文件')
         await row(page, 'paper.pdf').click()
         await viewer
           .getByRole('status')
@@ -200,7 +200,7 @@ describe('the right panel', () => {
         await settleShell(page)
         await shot(page, 'pdf', width, theme)
 
-        await tabs.getByRole('tab', { name: '文件', exact: true }).click()
+        await openPanelTab(page, '文件')
         await row(page, 'page.html').click()
         await frame.getByRole('heading', { name: 'Static page', exact: true }).waitFor()
         await settleShell(page)
@@ -247,13 +247,16 @@ describe('the right panel', () => {
       await page.getByRole('button', { name: '发送', exact: true }).click()
       const tabs = page.getByRole('tablist', { name: '会话面板', exact: true })
       await tabs.getByRole('tab', { name: 'numbers.csv', selected: true }).waitFor()
+      // The waiting document's tab carries the dot; where the strip has no room for that tab, its 「其余」 button does.
       const waiting = tabs.getByRole('tab', { name: /report\.html/u })
-      await waiting.getByRole('img', { name: '有新内容', exact: true }).waitFor()
+      const more = tabs.locator('xpath=..').getByRole('button', { name: /^其余 \d+ 个标签$/u })
+      const dot = waiting.or(more).getByRole('img', { name: '有新内容', exact: true })
+      await dot.first().waitFor()
       await settleShell(page)
       await shot(page, 'new-documents', 1440, 'light')
-      await waiting.click()
+      await openPanelTab(page, 'report.html')
       await page.frameLocator('iframe').getByRole('heading', { name: 'Report', exact: true }).waitFor()
-      expect(await waiting.getByRole('img', { name: '有新内容', exact: true }).count()).toBe(0)
+      expect(await dot.count()).toBe(0)
     } finally {
       await page.context().close()
     }

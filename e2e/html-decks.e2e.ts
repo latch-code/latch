@@ -362,7 +362,15 @@ describe('HTML presentations', () => {
           const element = page.locator('iframe[title="文档预览"]')
           await page.frameLocator('iframe[title="文档预览"]').getByText('Slide 1', { exact: true }).waitFor()
           await settleShell(page)
-          await page.evaluate(() => Promise.allSettled(document.getAnimations().map(animation => animation.finished)))
+          // Transitions that end: the connected dot's pulse (54c94894) loops for as long as the page is connected.
+          await page.evaluate(() =>
+            Promise.allSettled(
+              document
+                .getAnimations()
+                .filter(animation => animation.effect?.getTiming().iterations !== Infinity)
+                .map(animation => animation.finished),
+            ),
+          )
           const frame = page.frames().find(item => item.url().includes('/preview-frame/html.html'))!
           await expect.poll(() => frame.evaluate(() => [innerWidth, innerHeight])).toEqual([1280, 720])
           await expect.poll(() => stageBox(frame)).toEqual({ left: 0, top: 0, right: 1280, bottom: 720 })

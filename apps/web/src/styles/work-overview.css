@@ -391,6 +391,13 @@
   position: relative;
   z-index: 3;
 }
+/* It runs on over the right panel's strip, which from 1024 shares the title row: only what it holds takes clicks. */
+.app-shell[data-start] .titlebar .titlebar-page {
+  pointer-events: none;
+}
+.app-shell[data-start] .titlebar .titlebar-page > * {
+  pointer-events: auto;
+}
 
 .work-landing-context > span {
   overflow: hidden;

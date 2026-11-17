@@ -532,10 +532,13 @@ export function PickerBoard<T extends string, L extends string>({
       event.preventDefault()
       const first = visible.find(item => item.disabledReason === undefined)
       if (first) chooseItem(first)
-    } else if (event.key === 'Escape' && query && query !== given) {
+    } else if (event.key === 'Escape' && query) {
+      // Handled here either way: left alone, Chromium's own Escape in a search field clears it, and a sheet (a dialog,
+      // which no layer key handler closes) would stay open over the search it was given.
       event.preventDefault()
       event.stopPropagation()
-      setQuery('')
+      if (query !== given) setQuery('')
+      else close()
     }
   }
   const levelKeys = (event: KeyboardEvent<HTMLDivElement>) => {

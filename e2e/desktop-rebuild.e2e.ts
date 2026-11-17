@@ -100,7 +100,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await page.getByRole('button', { name: '使用离线连接码', exact: true }).click()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
       // The window works against the new Host: it reports the page's own build, so no 「还是旧版本」.
-      await page.getByRole('button', { name: '新会话' }).first().waitFor()
+      // Code opens on its start screen, whose input is 新会话 (cae787a4).
+      await page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
       expect(await page.getByText('还是旧版本').count()).toBe(0)
       expect(await probeDesktopHost(dataDir, 2_000, host.pid)).toBeDefined()
       expect(output.join('')).not.toContain('转发请求失败')

@@ -27,7 +27,19 @@ interface Lights {
  * shadow), and the lights are what stands out from the row's ground before the page's first thing. Null where this
  * process may not record the screen.
  */
+/**
+ * A window just shown can be photographed before the window server has drawn its lights (seen once under load), so a
+ * photograph without them is taken again a few times; one that never shows them still reports null.
+ */
 async function nativeLights(app: ElectronApplication, file: string, corner: string, until: number): Promise<Lights | null> {
+  for (let attempt = 0; ; attempt++) {
+    const lights = await photographLights(app, file, corner, until)
+    if (lights || attempt === 3) return lights
+    await new Promise(done => setTimeout(done, 500))
+  }
+}
+
+async function photographLights(app: ElectronApplication, file: string, corner: string, until: number): Promise<Lights | null> {
   const source = await app.evaluate(({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows()[0]!
     window.show()

@@ -461,8 +461,12 @@ it.each([false, true])('saves native defaults and retains the same home; permiss
       .poll(async () => (await owner.json<TaskDetail>(`tasks/${first}`)).config?.find(item => item.id === 'effort')?.currentValue)
       .toBe('high')
     await currentChat.locator('button.chip-permission').click()
+    // The mode's own reply: the 思考 change above may still be answering when this starts waiting.
     const modeReply = page.waitForResponse(
-      response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith(`/tasks/${first}/config`),
+      response =>
+        response.request().method() === 'POST'
+        && new URL(response.url()).pathname.endsWith(`/tasks/${first}/config`)
+        && (JSON.parse(response.request().postData() ?? '{}') as { configId?: string }).configId === 'mode',
     )
     await pick(page, 'plan').click()
     if (sticky) {
