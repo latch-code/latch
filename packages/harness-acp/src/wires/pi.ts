@@ -1096,11 +1096,46 @@ export class PiWire implements AgentWire {
       return
     }
     if (!DIALOGS.has(method)) return
-    const { type: _type, id: _id, method: _method, ...asked } = event
+    // A choice or words of the person's: the same question card as any agent's question (ACP's form elicitation).
+    // Within the question card's limits for a prompt and a question.
+    const title = typeof event.title === 'string' && event.title.trim() ? clip(event.title, 1000) : 'pi 扩展的提问'
+    const options = Array.isArray(event.options) ? event.options.filter((item): item is string => typeof item === 'string') : []
+    if (method === 'select' && !options.length) {
+      answer({ cancelled: true })
+      return
+    }
     this.handlers
-      .request(`extension_ui/${method}`, asked, `ui-${id}`)
-      .catch(() => undefined)
-      .finally(() => answer({ cancelled: true }))
+      .request(
+        'elicitation/create',
+        {
+          sessionId: this.sessionId,
+          mode: 'form',
+          message: title,
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              value: method === 'select' ? { type: 'string', title, enum: options } : { type: 'string', title },
+            },
+            required: ['value'],
+          },
+        },
+        `ui-${id}`,
+      )
+      .then(
+        result => {
+          const content = isRecord(result) && result.action === 'accept' && isRecord(result.content) ? result.content : undefined
+          const value = typeof content?.value === 'string' ? content.value : undefined
+          // A choice is one of pi's own: words of the person's own do not answer a select, and the session says so.
+          if (value !== undefined && method === 'select' && !options.includes(value))
+            this.update({
+              sessionUpdate: 'notice',
+              severity: 'warning',
+              title: `pi 的这道选择题只收它列出的选项，写的话没有交给它：「${clip(title, 200)}」`,
+            })
+          answer(value !== undefined && (method !== 'select' || options.includes(value)) ? { value } : { cancelled: true })
+        },
+        () => answer({ cancelled: true }),
+      )
   }
 
   private release(): void {

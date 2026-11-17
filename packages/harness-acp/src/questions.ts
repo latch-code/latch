@@ -131,7 +131,7 @@ export const CURSOR_DECLINE_REPLY = {
   outcome: { outcome: 'skipped', reason: 'The client cannot show this question; the user may answer in the next message.' },
 }
 
-const titled = z.object({ const: z.union([z.string(), z.number()]), title: text.optional() })
+const titled = z.object({ const: z.union([z.string(), z.number()]), title: text.optional(), description: text.optional() })
 const property = z.object({
   type: z.string().max(32).optional(),
   title: text.optional(),
@@ -169,12 +169,17 @@ const elicitation = z.object({
     .optional(),
 })
 
-type Choice = { value: string | number | boolean; label: string }
-type Field = { key: string; kind: 'one' | 'many' | 'text' | 'number' | 'integer'; choices: Choice[] }
+type Choice = { value: string | number | boolean; label: string; description?: string }
+/** `other`: the key of a companion text field that holds this choice's own words (`<key>_custom`, see `companions`). */
+type Field = { key: string; kind: 'one' | 'many' | 'text' | 'number' | 'integer'; choices: Choice[]; other?: string }
 
 function field(key: string, raw: z.infer<typeof property>): Field | undefined {
   const fromTitled = (items: Array<z.infer<typeof titled>>) =>
-    items.map(item => ({ value: item.const, label: item.title ?? String(item.const) }))
+    items.map(item => ({
+      value: item.const,
+      label: item.title ?? String(item.const),
+      ...(item.description?.trim() ? { description: item.description.trim() } : {}),
+    }))
   if (raw.type === 'array') {
     const items = raw.items
     const choices = items?.enum
@@ -200,6 +205,23 @@ function field(key: string, raw: z.infer<typeof property>): Field | undefined {
 }
 
 /**
+ * Text fields that hold the person's own words for a choice beside them, by the choice's key: `<key>_custom` next to a
+ * field of choices `<key>`, as Claude's adapter asks AskUserQuestion (each question followed by its 「Other」 box). The
+ * question card's 其他 is that box, so it is not a question of its own.
+ */
+function companions(entries: ReadonlyArray<[string, z.infer<typeof property>]>): Map<string, string> {
+  const keys = new Map(entries)
+  const found = new Map<string, string>()
+  for (const [key, raw] of entries) {
+    if (!key.endsWith('_custom') || (raw.type !== undefined && raw.type !== 'string') || raw.enum || raw.oneOf || raw.anyOf) continue
+    const owner = keys.get(key.slice(0, -'_custom'.length))
+    if (owner && (owner.enum?.length || owner.oneOf?.length || owner.anyOf?.length || owner.items))
+      found.set(key, key.slice(0, -'_custom'.length))
+  }
+  return found
+}
+
+/**
  * A form-mode elicitation as Latch can ask it: each field a question, its choices the options (yes or no for a boolean),
  * and a field of free text or a number answered in the person's own words (其他). Undefined: not form mode, or a field
  * Latch cannot ask; the agent is then told the params are invalid, as ACP says for a mode the client did not offer.
@@ -207,13 +229,16 @@ function field(key: string, raw: z.infer<typeof property>): Field | undefined {
 export function elicitationAsk(params: unknown): AgentAsk | undefined {
   const parsed = elicitation.safeParse(params)
   if (!parsed.success || parsed.data.mode !== 'form') return undefined
-  const entries = Object.entries(parsed.data.requestedSchema?.properties ?? {})
+  const all = Object.entries(parsed.data.requestedSchema?.properties ?? {})
+  const folded = companions(all)
+  const entries = all.filter(([key]) => !folded.has(key))
   if (entries.length > QUESTIONS) return undefined
   const fields: Field[] = []
   for (const [key, raw] of entries) {
     const read = field(key, raw)
     if (!read) return undefined
-    fields.push(read)
+    const other = [...folded.keys()].find(companion => folded.get(companion) === key)
+    fields.push(other ? { ...read, other } : read)
   }
   const labels = new Map(entries)
   const questions = fields.map((item, index) => {
@@ -222,7 +247,11 @@ export function elicitationAsk(params: unknown): AgentAsk | undefined {
       id: `q${index}`,
       label: (raw.title ?? raw.description ?? item.key).trim() || item.key,
       multiple: item.kind === 'many',
-      options: item.choices.map((choice, at) => ({ id: `o${at}`, label: choice.label.trim() || String(choice.value) })),
+      options: item.choices.map((choice, at) => ({
+        id: `o${at}`,
+        label: choice.label.trim() || String(choice.value),
+        ...(choice.description ? { description: choice.description.slice(0, OPTION_LIMIT) } : {}),
+      })),
     }
   })
   // A form with no fields only asks for consent: one question, yes or no.
@@ -256,6 +285,13 @@ export function elicitationAsk(params: unknown): AgentAsk | undefined {
         const answer = result.answers.find(entry => entry.questionId === `q${index}`)
         if (!answer) return
         const chosen = chosenIndexes(answer, questions[index]!.options).map(at => item.choices[at]!.value)
+        // The agent's own field for words of the person's: they go there, and the choices stay choices.
+        if (item.other) {
+          if (item.kind === 'many') content[item.key] = chosen
+          else if (chosen.length) content[item.key] = chosen[0]
+          if (answer.other !== undefined) content[item.other] = answer.other
+          return
+        }
         if (item.kind === 'many') content[item.key] = answer.other ? [...chosen, answer.other] : chosen
         else if (item.kind === 'number' || item.kind === 'integer') {
           const value = Number(answer.other)

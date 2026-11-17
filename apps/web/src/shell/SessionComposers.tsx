@@ -306,6 +306,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
     deviceId: shell.snapshot.device.id,
     canAnswer: gate.kind === 'open' && sessionBlock === undefined,
     onChanged: refresh,
+    onSettledElsewhere: (text: string) => setToast({ text, tone: 'ok' }),
   }
   const asked = useQuestionDrawer(current?.questions?.[0], selectedId ?? '', questionActions)
   const answersQuestion = asked !== undefined && !asked.locked && gate.kind === 'open' && !earlierDraft.held

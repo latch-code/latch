@@ -2124,6 +2124,71 @@ export class CodexWire implements AgentWire {
    * asks the person only within the session's own mode. Every other request goes to the runtime, whose profile answers
    * the ones it knows (`profiles/codex.ts`) and says so in the session; the rest are unknown there, and said so too.
    */
+  /**
+   * Codex's questions to the person, put as ACP's form elicitation so they reach the same question card: each question a
+   * field, its options the choices (the card's 其他 is the free answer). Answered by question ID with the chosen label or
+   * the words written. A question marked secret is never asked through Latch, whose answers stay in the session's record:
+   * Codex gets no answers and the session says why. No answer (stopped, or a card Latch cannot show) is no answers.
+   */
+  private async userInput(params: Record<string, unknown>, id: RpcId): Promise<unknown> {
+    // Read before the shape is checked: a request Latch cannot read is written into the session as an unknown one, and a
+    // secret question's words must never be.
+    const secret = Array.isArray(params.questions) && params.questions.some(item => isRecord(item) && item.isSecret === true)
+    const parsed = userInputParams.safeParse(params)
+    if (!secret && !parsed.success)
+      return this.handlers.request('item/tool/requestUserInput', { ...params, ...(this.threadId ? { sessionId: this.threadId } : {}) }, id)
+    if (secret || !parsed.success) {
+      this.update({
+        sessionUpdate: 'notice',
+        severity: 'warning',
+        title: 'Codex 要的回答可能是密码或密钥。Latch 不代收这类回答，已告诉它没有回答；需要时在终端里直接交给 Codex。',
+      })
+      return NO_ANSWERS
+    }
+    const { questions } = parsed.data
+    const title = (item: (typeof questions)[number]) => (item.header?.trim() ? `${item.header.trim()}：${item.question}` : item.question)
+    const properties = Object.fromEntries(
+      questions.map((item, index) => [
+        `q${index}`,
+        {
+          type: 'string',
+          title: title(item),
+          ...(item.options?.length
+            ? {
+                oneOf: item.options.map(option => ({
+                  const: option.label,
+                  title: option.label,
+                  ...(option.description ? { description: option.description } : {}),
+                })),
+              }
+            : {}),
+        },
+      ]),
+    )
+    const answer = await this.handlers
+      .request(
+        'elicitation/create',
+        {
+          ...(this.threadId ? { sessionId: this.threadId } : {}),
+          mode: 'form',
+          message: questions.length === 1 ? title(questions[0]!) : 'Codex 有几个问题',
+          requestedSchema: { type: 'object', properties, required: Object.keys(properties) },
+        },
+        id,
+      )
+      .catch(() => undefined)
+    if (!isRecord(answer) || answer.action !== 'accept' || !isRecord(answer.content)) return NO_ANSWERS
+    const content = answer.content
+    return {
+      answers: Object.fromEntries(
+        questions.flatMap((item, index) => {
+          const value = content[`q${index}`]
+          return typeof value === 'string' && value ? [[item.id, { answers: [value] }]] : []
+        }),
+      ),
+    }
+  }
+
   private async onRequest(method: string, params: Record<string, unknown>, id: RpcId): Promise<unknown> {
     if (method === 'mcpServer/elicitation/request' && isToolApproval(params)) return this.toolApproval(params, id)
     const active = this.turn
@@ -2134,6 +2199,7 @@ export class CodexWire implements AgentWire {
       if (permission) return { decision: 'cancel' }
       throw new RpcError(RPC.invalidParams, 'Codex 请求没有可确认的会话来源。')
     }
+    if (method === 'item/tool/requestUserInput') return this.userInput(params, id)
     if (!permission) return this.handlers.request(method, { ...params, ...(this.threadId ? { sessionId: this.threadId } : {}) }, id)
     const command = method === 'item/commandExecution/requestApproval'
     const itemId = typeof params.itemId === 'string' ? clip(params.itemId, 512) : `ask-${String(id)}`

@@ -312,6 +312,21 @@ async function play(message) {
       input: message,
     })
     await reply(`model: ${answer.text}`)
+  } else if (/^dialog/u.test(message)) {
+    // An extension's select, then its input: the reply names what pi got back for each.
+    const ask = request =>
+      Promise.race([
+        new Promise(resolve => {
+          const id = `fake-ui-${++uiRequests}`
+          dialogs.set(id, resolve)
+          send({ type: 'extension_ui_request', id, ...request })
+        }),
+        current.stopped.then(() => ({ cancelled: true })),
+      ])
+    const picked = await ask({ method: 'select', title: 'Which branch?', options: ['main', 'dev'] })
+    const named = await ask({ method: 'input', title: 'Name the change', placeholder: 'short name' })
+    const said = answer => (answer.cancelled ? 'cancelled' : answer.value)
+    if (!current.aborted) await reply(`dialog: ${said(picked)} / ${said(named)}`)
   } else if (/confirm/u.test(message)) {
     const answer = await Promise.race([confirm('Go on with the fake task?'), current.stopped.then(() => ({ cancelled: true }))])
     if (!current.aborted) await reply(answer.confirmed ? 'confirmed: yes' : 'confirmed: no')

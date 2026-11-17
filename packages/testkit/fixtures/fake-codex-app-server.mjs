@@ -270,6 +270,25 @@ async function play(text) {
   // the reply is the answers it got.
   if (word === 'ask-user') {
     const secret = text.includes('secret')
+    // `ask-user secret many`: more questions than Latch reads, one of them secret.
+    if (text.includes('many')) {
+      const answer = await ask('item/tool/requestUserInput', {
+        threadId: thread.id,
+        turnId: turn.id,
+        itemId: `ask-${randomUUID()}`,
+        isBlocking: true,
+        autoResolutionMs: null,
+        questions: Array.from({ length: 11 }, (_, n) => ({
+          id: `q${n}`,
+          header: 'H',
+          question: n === 0 ? 'SECRET-QUESTION-TEXT' : `Question ${n}`,
+          isOther: false,
+          isSecret: n === 0,
+          options: null,
+        })),
+      })
+      return reply(`answers: ${JSON.stringify(answer?.answers ?? null)}`)
+    }
     const answer = await ask('item/tool/requestUserInput', {
       threadId: thread.id,
       turnId: turn.id,

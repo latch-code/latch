@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { AgentQuestion, QuestionAnswer, QuestionReceipt, QuestionResult, QuestionSubmission } from '@latch/protocol'
 import { Button, Drawer, Icon, InlineNotice, Kbd, MessageGlyph, Tooltip } from '@latch/ui'
-import { api, inlineError, MessageError } from '../core/api.ts'
+import { api, ApiError, inlineError, MessageError } from '../core/api.ts'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { cardTakesKeys, useArmed } from './useArmed.ts'
 
@@ -10,7 +10,11 @@ export interface QuestionActions {
   canAnswer: boolean
   disabledReason?: string
   onChanged(): Promise<void>
+  /** This answer was not needed: another device answered, or the question ended. Said once, not as an error. */
+  onSettledElsewhere?(text: string): void
 }
+/** The Host's word that the question no longer waits for this answer. */
+const SETTLED_ELSEWHERE = new Set(['question-answered', 'question-closed', 'question-not-found'])
 interface Draft {
   step: number
   answers: QuestionAnswer[]
@@ -178,6 +182,14 @@ export function useQuestionDrawer(
       localStorage.removeItem(storageKey)
       await actions.onChanged()
     } catch (cause) {
+      // Answered from another device, or the question is over: this answer is moot, and the session shows what happened.
+      if (cause instanceof ApiError && SETTLED_ELSEWHERE.has(cause.code)) {
+        localStorage.removeItem(storageKey)
+        update({ draft: emptyDraft(question), error: '' })
+        actions.onSettledElsewhere?.(cause.code === 'question-answered' ? '这个问题已在另一台设备回答' : '这个问题已经结束')
+        await actions.onChanged().catch(() => {})
+        return
+      }
       update({ error: `${inlineError(cause)} · 这次回答还在，重试会沿用它。` })
     } finally {
       update({ busy: false })

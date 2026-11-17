@@ -451,7 +451,7 @@ Codex 自己中断、Latch 没有要求停止的一轮同样先等它的命令�
 - **停止。** 先 `clear_queue` 再 `abort`：不清空队列，`abort` 会接着处理排队的追加。清掉的追加内容在会话里写一行。
 - **运行中追加。** pi 在跑这一轮（`agent_start` 到 `agent_end`）时用 `steer`；其他时候交回 Host 排队。
 - **工具与其他事件。** `tool_execution_*` 成为工具行（`bash` 命令，`read` 读取，`edit`、`write` 改文件，`grep`、`find`、`ls` 搜索）。压缩成为压缩行；自动重试、扩展的通知与扩展出错成为通知。pi 转来的失败回复、重试原因、压缩失败原因与扩展出错都先遮住像密钥的部分。
-- **扩展的提问。** `confirm` 像审批一样交给人；`select`、`input`、`editor` 按「不支持的请求」写进会话，回答「已取消」。
+- **扩展的提问。** `confirm` 像审批一样交给人；`select`、`input`、`editor` 是一道题，进同一张提问卡（下文「Agent 的提问」）：`select` 的回答只能是它列出的选项之一（自己写的话答「已取消」，会话里写一行），`input` 与 `editor` 收自己写的话。没人回答时答「已取消」。
 
 **`/compact`。** pi 的 RPC 不列出它界面里的 `/compact`，当文字发出去会交给模型，所以 Latch 在会话第一轮开始时把它列为 pi 的命令。
 
@@ -833,6 +833,21 @@ profile 可以读某个 Agent 在 ACP 之外发来的请求（`extensions`）。
 - **`cursor/ask_question`，任何 Harness 发来都读。** 最多 10 题、每题 20 个选项，每段文字不超过 4,000 字符。问题与选项都有 `id` 时放进提问卡，按 Cursor 的形状回答；人只写了「其他」时 Cursor 收不了选项外的文字，答复 `skipped` 并把文字放在 `reason` 里。缺 `id` 或 Host 不提供 `askUser` 时答复 `skipped`，在会话里写下它问了什么。
 - **行与状态。** 每个提问有自己的一行 `ask_user`（`tool:<轮次>:ask-<UUID>`），从不借用 Agent 同 ID 的调用行。等待时会话为 `waiting-approval`。回答按选项位置（`optionIds`）而不是文字映射回 Agent 的取值。
 - **回执。** 回答写进这一行的结果并落盘后，才由 `questionSettled` 给回答的设备回执；落盘失败时回执是结果尚未确认。没人回答的提问记为已结束，Host 停止时这一行带 `interrupted`。
+- **选项说明。** `oneOf`/`anyOf` 取值的 `description` 成为选项的说明。
+- **自己写的话的栏位。** 选项字段 `<键>` 旁边有一个文字字段 `<键>_custom` 时（Claude 适配器问 AskUserQuestion 的样子：每题后面一个「Other」框），它不另成一题：提问卡的「其他…」写进这个字段，选项留在原字段。
+- **Codex 的 `item/tool/requestUserInput`。** 线把它换成同样的表单提问：每题一个字段，标题是 `header：question`，选项与说明照原样；回答按题目 ID 回 `{ answers: { <id>: { answers: [选中的选项或写的话] } } }`，没人回答回空的 `answers`。标为 `isSecret` 的题不经 Latch 收：回答会留在会话记录里，所以直接回空的 `answers`，会话里写一行原因。这一点在核对请求形状之前判断，读不懂的请求里有密码类的题时，它的文字也不写进会话。
+- **pi 扩展的 `select`、`input`、`editor`** 见「pi 的 RPC 模式」。
+
+| Harness | 能回答的提问 | 不支持 |
+| --- | --- | --- |
+| Latch 内置 | `ask_user`：选项、多选、其他 | — |
+| Claude Agent | AskUserQuestion（经 `elicitation/create`）：单选、多选、选项说明、Other；MCP 服务器的表单提问 | URL 模式 |
+| Codex | `requestUserInput`：选项、选项说明、自己写的话 | 标为密码或密钥的题 |
+| Cursor | `cursor/ask_question`：单选、多选 | 只写「其他」：Cursor 只收选项 ID，写的话作为跳过的原因带回 |
+| pi | 扩展的 `select`、`input`、`editor`、`confirm` | — |
+| 其他 ACP Agent | 表单模式的 `elicitation/create` | URL 模式、超过 10 题或卡片长度 |
+
+所有 Harness 的提问协议都没有附件的位置，所以回答不能带文件；要给文件就在下一条消息里附上。
 
 ## 不支持的请求
 
@@ -1033,8 +1048,10 @@ Harness 报告的命令透传，是否报告与执行由 Harness 决定。
 | goose 的运行中追加 | 它的私有方法要 goose 自己的运行标识，也没有声明字段，未经真实核对 |
 | 按会话放行 OpenCode 访问其他文件夹 | 需要按会话改变 OpenCode 的配置并提高 profile 版本；2.x 的 ACP 字段尚未使用 |
 | Claude Agent 的其他文件夹（`additionalDirectories`） | Claude 访问会话目录以外的路径时逐次询问 |
-| ACP 的原生分叉（`session/fork`）、Codex 的 `thread/fork` | `session/fork` 只能分叉整个会话，新进程能否分叉另一个进程的会话没有用真实 Agent 核对。pi 以外的分叉都用背景文本 |
-| 回答 pi 扩展的选择题与输入框 | 它们回答「已取消」并写进会话 |
+| ACP 的原生分叉（`session/fork`） | `session/fork` 只能分叉整个会话；Claude 适配器按某一条分叉只认另一个客户端的私有 `_meta`，`resumeSessionAt` 也不对客户端开放。pi 与 Codex 以外的分叉都用背景文本 |
+| 「从这里编辑」原地回退 Harness 的上下文 | Codex 0.169 有 `thread/revert`，但 Latch 的会话记录是会话的权威，原地回退会让记录与 Harness 的记忆分开。编辑都从那一条之前分叉，原会话不动（[STREAMING.md](STREAMING.md#从这里编辑)） |
+| 编辑 Harness 的计划 | Claude、Cursor 的 ACP 都没有这个回答 |
+| 回答提问时附文件 | 没有哪个 Harness 的提问协议能收文件 |
 | 只有主文件夹的 Codex 会话把 `.agents/skills/` 计入启动指纹 | 原生技能目录读取已接入，指纹范围没有扩展 |
 | iOS 的原生技能选择菜单 | iOS 仍可手动输入原生调用文字 |
 | Codex 的 `/review` | 见「会话命令」 |

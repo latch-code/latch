@@ -117,6 +117,7 @@ export function WorkbenchDecision({
       await shell.refresh()
       read.retry()
     },
+    onSettledElsewhere: text => shell.setToast({ text, tone: 'ok' }),
   })
   const status = workStatus(task, { connected: enabled, now: hostNow() })
   const [index, setIndex] = useState<number>()

@@ -467,7 +467,7 @@ describe('pi over its own RPC', () => {
     expect(detail.permission?.notes).toContain('pi 的其他扩展在 Latch 的询问之外运行，它们可以自己执行任何事')
     const notes = detail.messages.filter(message => message.role === 'system').map(message => message.text)
     expect(notes).toHaveLength(1)
-    expect(notes[0]).toContain('pi 发来请求 extension_ui/select：Latch 不支持这个请求')
+    expect(notes[0]).toContain('pi 发来请求 elicitation/create')
     expect(notes[0]).toContain('Which branch?')
     // The reply came whole at its end, with no pieces before it.
     expect(detail.messages.filter(message => message.role === 'assistant').map(message => message.text)).toEqual(['Staying on main.'])
