@@ -162,10 +162,14 @@ it('drags a card between columns: the drop does the card’s own action, the Hos
     await hold(page, sessionCard(page, running), column(page, '已结束'))
     expect(await drop('已结束')).toBe('target')
     expect(await drop('未开始')).toBe('forbidden')
+    // The column under the pointer is the drop's place: the accent's tint over its fill, besides the hairline.
+    expect(await column(page, '已结束').evaluate(element => getComputedStyle(element).backgroundImage)).not.toBe('none')
     await capture(page, 'drag-session', 1440)
     await page.mouse.up()
     const confirm = page.getByRole('dialog', { name: '停止会话' })
     await confirm.waitFor()
+    // Dropped near the window's end, the confirm keeps the board's gutter from it.
+    expect(await confirm.evaluate(element => innerWidth - element.getBoundingClientRect().right)).toBeGreaterThanOrEqual(15.5)
     await capture(page, 'stop-confirm', 1440)
     // 取消 does nothing; the confirm's 停止 stops it, and the card goes where the Host says once the run settled.
     await confirm.getByRole('button', { name: '取消', exact: true }).click()

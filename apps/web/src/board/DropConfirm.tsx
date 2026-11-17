@@ -1,8 +1,8 @@
 import { useLayoutEffect, useRef } from 'react'
 import { Button } from '@latch/ui'
 
-/** Space kept between the confirm and the window's edges. */
-const MARGIN = 8
+/** Space kept between the confirm and the window's edges: the board's own gutter, so it never sits on the edge. */
+const MARGIN = 16
 
 /**
  * The small confirm a drop asks for where it landed (a running session on 已结束 is a stop): the question, 取消 and the
@@ -30,9 +30,11 @@ export function DropConfirm({
     const element = layer.current
     if (!element) return undefined
     element.showPopover()
-    const { width, height } = element.getBoundingClientRect()
-    element.style.left = `${Math.max(MARGIN, Math.min(point.x, innerWidth - width - MARGIN))}px`
-    element.style.top = `${Math.max(MARGIN, Math.min(point.y + MARGIN, innerHeight - height - MARGIN))}px`
+    // Its layout size: the entrance scales the box, which the bounding rectangle would include.
+    const { offsetWidth: width, offsetHeight: height } = element
+    const { clientWidth, clientHeight } = document.documentElement
+    element.style.left = `${Math.max(MARGIN, Math.min(point.x, clientWidth - width - MARGIN))}px`
+    element.style.top = `${Math.max(MARGIN, Math.min(point.y + 8, clientHeight - height - MARGIN))}px`
     element.querySelector<HTMLElement>('[data-confirm]')?.focus({ preventScroll: true })
     const outside = (event: PointerEvent) => {
       if (event.target instanceof Node && element.contains(event.target)) return

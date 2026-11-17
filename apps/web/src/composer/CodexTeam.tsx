@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Button, Dialog, Menu, SelectButton, StatusWord } from '@latch/ui'
+import { Button, Dialog, Menu, SelectButton, StatusWord, Tooltip } from '@latch/ui'
 import type { Message, Subagent, TaskDetail } from '@latch/protocol'
 import { AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import { MessageContent } from '../MessageContent.tsx'
@@ -89,7 +89,16 @@ export function CodexTeam({
         onClose={() => setOpen(false)}
         size="lg"
         title="Agent 团队"
-        subtitle="当前会话中的 Codex 委派"
+        subtitle={
+          // That members go to the session's own service is the subtitle's hover: a fact about where they run, not a line.
+          detail.summary.modelRoute ? (
+            <Tooltip content="成员走当前会话的模型服务，调用量合计在此会话">
+              <span tabIndex={0}>当前会话中的 Codex 委派</span>
+            </Tooltip>
+          ) : (
+            '当前会话中的 Codex 委派'
+          )
+        }
         className="codex-team-dialog"
         footer={
           teamRun ? (
@@ -101,6 +110,14 @@ export function CodexTeam({
               <Button
                 variant="primary"
                 disabled={conflict || draft.startsWith(REQUEST)}
+                // Why it is off, or what it does: the request goes into the input, and the person sends it.
+                tooltip={
+                  conflict
+                    ? '输入框里已有斜杠命令，先发送或移除它'
+                    : draft.startsWith(REQUEST)
+                      ? '分工请求已在输入框里'
+                      : '把分工请求放入输入框，写清目标后亲自发送'
+                }
                 onClick={() => {
                   onPrepare(draft.trim() ? `${REQUEST}\n\n${draft}` : `${REQUEST}\n\n`)
                   setOpen(false)
@@ -188,12 +205,6 @@ export function CodexTeam({
             <p className="codex-team-empty">发送分工请求后，Codex 自行创建成员。这里会显示实际分工和成员回报。</p>
           )}
           {detail.codexTeam === 'disabled' && <p className="codex-team-note">当前 Codex 会话的原生协作已关闭。</p>}
-          {detail.summary.modelRoute && <p className="codex-team-note">成员走当前会话的模型服务，调用量合计在此会话。</p>}
-          {canAdd && (
-            <p className="codex-team-note">
-              {conflict ? '输入框里已有斜杠命令，先发送或移除它。' : '把分工请求放入输入框，写清目标后亲自发送。'}
-            </p>
-          )}
         </div>
       </Dialog>
     </div>

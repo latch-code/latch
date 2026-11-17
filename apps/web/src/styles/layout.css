@@ -397,14 +397,23 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   opacity: 1;
   pointer-events: auto;
 }
+/*
+ * A toggle whose surface has something new: a 6px ink dot on its glyph's corner. Not the icon button's badge, whose
+ * filled pill outside the button is for a count and would show as an empty pill around a dot.
+ */
+.topbar-toggle {
+  position: relative;
+  display: inline-flex;
+}
 .topbar-toggle-dot {
-  display: block;
+  position: absolute;
+  top: var(--sp-4);
+  left: var(--sp-16);
   width: 6px;
   height: 6px;
   border-radius: var(--r-full);
   background: var(--ink);
-  /* The shared badge sits outside the button, for a count; a dot belongs on the icon's corner. */
-  transform: translate(-5px, 10px);
+  pointer-events: none;
 }
 /* 改动 with the totals the page has read: the glyph, then +a −d in tabular digits; open, it keeps the hover fill. */
 .topbar-changes {
@@ -427,12 +436,6 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
 }
 .topbar-changes-stat > [data-tone='remove'] {
   color: var(--red);
-}
-.topbar-changes > .topbar-toggle-dot {
-  position: absolute;
-  top: var(--sp-4);
-  left: var(--sp-16);
-  transform: none;
 }
 .topbar-title {
   display: flex;

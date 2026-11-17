@@ -238,8 +238,9 @@
 /*
  * No padding, border or weight: a mark never moves a character. The sigil (`$` 0.6em, `/` 0.3em) is narrower than the
  * glyph drawn for it, so glyph and tint end at the sigil's right edge and reach left over the whitespace, line start or
- * input padding that the Host's rules always put before a token (prompt-tokens.ts); 0.85em keeps the glyph's ink at
- * about cap height and inside a space before `$`. The name carries the rest of the tint, one layer, never doubled.
+ * input padding that the Host's rules always put before a token (prompt-tokens.ts); 0.72em keeps the glyph's ink at
+ * about cap height and leaves part of a space before `$` clear, so the mark does not touch the word before it. The
+ * name carries the rest of the tint, one layer, never doubled.
  */
 .prompt-mark {
   color: var(--content-path-ink);
@@ -252,7 +253,7 @@
   position: absolute;
   inset-block: 0;
   inset-inline-end: 0;
-  width: max(100%, 0.85em);
+  width: max(100%, 0.72em);
   border-start-start-radius: var(--r-4);
   border-end-start-radius: var(--r-4);
   background: var(--content-path-tint);
@@ -262,8 +263,8 @@
   position: absolute;
   inset-inline-end: 0;
   top: 50%;
-  width: 0.85em;
-  height: 0.85em;
+  width: 0.72em;
+  height: 0.72em;
   color: var(--content-path-ink);
   transform: translateY(-50%);
 }

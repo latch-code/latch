@@ -36,7 +36,11 @@ export const GALLERY_SOURCES: Array<BoardSource<string>> = [
   {
     id: 'lab',
     label: 'Lab · 经 Latch',
-    hint: '请求由 Latch 在这台 Mac 上转发，用设置里的密钥。',
+    hint: '请求由 Latch 在这台 Mac 上转发，用设置里的密钥。协议转换，实验性：略去或受限的有音频、引用标注、概率详情。',
+    note: {
+      lead: '请求由 Latch 在这台 Mac 上转发，用设置里的密钥。协议转换，实验性。',
+      fold: { label: '略去或受限', items: ['音频', '引用标注', '概率详情'] },
+    },
     icon: <Icon icon={ModelGlyph} size={16} />,
     items: ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta', 'iota', 'kappa', 'lambda'].map(name => ({
       value: `lab/${name}`,
@@ -86,6 +90,29 @@ function HintedSheet() {
           onValueChange={() => {}}
         />
       </SheetSurface>
+    </div>
+  )
+}
+
+/** A phone's board whose group heading was tapped, its note's folded list opened, as a finger would. */
+function NotedBoard() {
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    box.current?.querySelector<HTMLButtonElement>('.ui-board-heading-toggle')?.click()
+    requestAnimationFrame(() => box.current?.querySelector<HTMLButtonElement>('.ui-board-hint-fold')?.click())
+  }, [])
+  return (
+    <div ref={box} className="ui-sheet-surface">
+      <PickerBoard
+        label="模型"
+        levelsLabel="思考"
+        layout="sheet"
+        sources={[GALLERY_SOURCES[1]!]}
+        value="lab/beta"
+        levels={galleryLevels}
+        onItem={() => {}}
+        onLevel={() => {}}
+      />
     </div>
   )
 }
@@ -161,6 +188,9 @@ export function Boards() {
         </Cell>
         <Cell caption="手机选值 · 组标题的说明点开">
           <HintedSheet />
+        </Cell>
+        <Cell caption="手机 · 组的说明点开，略去的各项展开">
+          <NotedBoard />
         </Cell>
         <Cell caption="一个来源 · 搜不到 · 只有默认">
           <div className="ui-popover" data-size="lg">

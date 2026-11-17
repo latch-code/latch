@@ -92,6 +92,7 @@ export {
   type BoardItem,
   type BoardLevel,
   type BoardLevels,
+  type BoardNote,
   type BoardSource,
   type ModeStripOption,
   type PickerBoardProps,

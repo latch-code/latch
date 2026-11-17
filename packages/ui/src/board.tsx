@@ -1,8 +1,10 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { CheckGlyph, BlockedGlyph, SearchGlyph } from './glyphs/index.tsx'
+import { FoldHeader } from './fold.tsx'
 import { Icon, Spinner, type IconComponent } from './icon.tsx'
 import { cx, nextIndex, PHONE_QUERY, useMediaQuery } from './internal.ts'
 import { InMenu, useLayerClose, useLayerOpen } from './menu.tsx'
+import { Collapse } from './motion.tsx'
 import { Kbd } from './pill.tsx'
 import { Tooltip } from './tooltip.tsx'
 
@@ -162,6 +164,44 @@ export interface BoardItem<T extends string> {
   disabledReason?: string
 }
 
+/**
+ * A group's note as a phone shows it once its heading is tapped, for a note too long to read as one paragraph: a short
+ * lead, a list folded behind one line, then any short lines. The hover keeps `hint`, the whole note in one.
+ */
+export interface BoardNote {
+  lead: string
+  fold?: { label: string; items: string[] } | undefined
+  after?: string[] | undefined
+}
+
+/** A phone's tapped note: the lead, the folded list and the lines after it. */
+function BoardNoteView({ note }: { note: BoardNote }) {
+  const [open, setOpen] = useState(false)
+  const id = useId()
+  return (
+    <div className="ui-board-hint">
+      <p>{note.lead}</p>
+      {note.fold && (
+        <>
+          <FoldHeader open={open} onOpenChange={setOpen} aria-controls={id} meta={note.fold.items.length} className="ui-board-hint-fold">
+            {note.fold.label}
+          </FoldHeader>
+          <Collapse open={open} id={id}>
+            <ul>
+              {note.fold.items.map(item => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </Collapse>
+        </>
+      )}
+      {note.after?.map(line => (
+        <p key={line}>{line}</p>
+      ))}
+    </div>
+  )
+}
+
 /** A headed group of a source's items, for a source that holds several (a gateway, each service it forwards to). */
 export interface BoardGroup<T extends string> {
   id: string
@@ -172,6 +212,8 @@ export interface BoardGroup<T extends string> {
   tag?: ReactNode
   /** More about the group: on hover of its heading; on a phone, tapping the heading shows it. Never a row. */
   hint?: string | undefined
+  /** The same note in parts, for a phone's tap: see `BoardNote`. Without it the phone shows `hint` as one paragraph. */
+  note?: BoardNote | undefined
   items: Array<BoardItem<T>>
 }
 
@@ -185,6 +227,8 @@ export interface BoardSource<T extends string> {
   icon: ReactNode
   /** More about the source, on its heading as a group's `hint` is; never on the rail. */
   hint?: string | undefined
+  /** The same in parts, for a phone's tap, as a group's `note`. */
+  note?: BoardNote | undefined
   /** Its items under one heading, its name; or `groups`, each under its own. */
   items?: Array<BoardItem<T>>
   groups?: Array<BoardGroup<T>>
@@ -193,7 +237,15 @@ export interface BoardSource<T extends string> {
 /** A source's items as headed groups: its own groups, or its items under its name. */
 function groupsOf<T extends string>(source: BoardSource<T>): Array<BoardGroup<T>> {
   if (source.groups) return source.groups
-  return [{ id: source.id, label: source.label, ...(source.hint ? { hint: source.hint } : {}), items: source.items ?? [] }]
+  return [
+    {
+      id: source.id,
+      label: source.label,
+      ...(source.hint ? { hint: source.hint } : {}),
+      ...(source.note ? { note: source.note } : {}),
+      items: source.items ?? [],
+    },
+  ]
 }
 const itemsOf = <T extends string>(source: BoardSource<T>) => groupsOf(source).flatMap(group => group.items)
 
@@ -201,6 +253,8 @@ export interface BoardLevel<L extends string> {
   value: L
   label: string
   disabledReason?: string
+  /** What the value means, on hover of its row (默认: whose default it is). */
+  hint?: string | undefined
 }
 
 /** The second choice of the highlighted item (思考 for a model): its values, the chosen one, and a short state. */
@@ -410,10 +464,9 @@ export function PickerBoard<T extends string, L extends string>({
   const showSource = (sourceId: string) => {
     setViewed(sourceId)
     setQuery('')
+    // The levels stay the chosen item's: a source without it highlights nothing until a row is focused.
     const source = sources.find(item => item.id === sourceId)
-    const listed = source ? itemsOf(source) : []
-    const first = listed.find(item => item.value === value) ?? listed[0]
-    setHighlighted(first?.value)
+    setHighlighted(source && itemsOf(source).some(item => item.value === value) ? value : undefined)
   }
 
   const noteFocus = (event: FocusEvent<HTMLDivElement>) => {
@@ -509,7 +562,7 @@ export function PickerBoard<T extends string, L extends string>({
               }}>
               {heading}
             </button>
-            {noted === section.key && <p className="ui-board-hint">{group.hint}</p>}
+            {noted === section.key && (group.note ? <BoardNoteView note={group.note} /> : <p className="ui-board-hint">{group.hint}</p>)}
           </>
         ) : (
           <Tooltip content={group.hint}>
@@ -562,7 +615,7 @@ export function PickerBoard<T extends string, L extends string>({
   })
 
   const levelRows = shownLevels.options.map(level => (
-    <Tooltip key={level.value} content={level.disabledReason}>
+    <Tooltip key={level.value} content={level.disabledReason ?? level.hint}>
       <button
         type="button"
         role="menuitemradio"

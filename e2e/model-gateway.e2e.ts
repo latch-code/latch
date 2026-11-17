@@ -207,6 +207,21 @@ describe('a Harness with its own models on a saved service', () => {
       await service(page, 'OpenAI')
       await noHorizontalOverflow(page)
       await shot(page, `draft-menu-${width}-${theme}`)
+      if (width === 390) {
+        // A tapped heading's note is one short line, with what the translation leaves out folded under it.
+        const heading = layer(page).getByRole('button', { name: /^DeepSeek/u })
+        await heading.click()
+        const note = layer(page).locator('.ui-board-hint').filter({ visible: true })
+        expect(await note.locator('p').first().innerText()).toMatch(/^请求由 Latch 在 \S+ 上转发，用设置里的密钥。协议转换，实验性。$/u)
+        const fold = note.getByRole('button', { name: /略去或受限/u })
+        expect(await fold.getAttribute('aria-expanded')).toBe('false')
+        await shot(page, `draft-note-${width}-${theme}`)
+        await fold.click()
+        await note.getByText('文件与服务端会话状态（不能转换）', { exact: true }).waitFor()
+        await noHorizontalOverflow(page)
+        await shot(page, `draft-note-open-${width}-${theme}`)
+        await heading.click()
+      }
       await row(page, 'fake-model').click()
       if (width === 390) {
         await expect.poll(() => chip(page, '模型').innerText()).toContain('fake-model')

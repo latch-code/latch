@@ -112,6 +112,47 @@
 .view-switch .ui-count {
   margin-inline-start: calc(var(--sp-2) * -1);
 }
+/* The shell's switch carries each view's glyph for its compact form only. */
+.shell-view-switch .ui-segmented-option > svg {
+  display: none;
+}
+/*
+ * Compact while the right panel's strip shares the window's top row (from 1024, work-surface.css): each view's glyph
+ * instead of its word, the word staying its name and tooltip, so the strip keeps room for its tabs. The reserved end
+ * narrows with it, and the strip reads that width (--window-controls). Same control, same keys; the full words come
+ * back when the panel shuts.
+ */
+@media (min-width: 1024px) {
+  .app-shell[data-inspector='open']:not([data-view='board']) > .shell-view-switch {
+    width: 60px;
+  }
+  .app-shell[data-inspector='open']:not([data-view='board']) > .shell-view-switch .ui-segmented-option {
+    padding-inline: var(--sp-4);
+  }
+  /* The count of cards waiting on the person rides on the glyph's corner, so the segment keeps its width. */
+  .app-shell[data-inspector='open']:not([data-view='board']) > .shell-view-switch .ui-count {
+    position: absolute;
+    top: calc(var(--sp-2) * -1);
+    right: 0;
+    margin: 0;
+    font-size: var(--fs-meta);
+    line-height: var(--lh-meta);
+  }
+  .app-shell[data-inspector='open']:not([data-view='board']) > .shell-view-switch .ui-segmented-option > svg {
+    display: block;
+  }
+  .app-shell[data-inspector='open']:not([data-view='board']) > .shell-view-switch .ui-segmented-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .app-shell[data-inspector='open']:not([data-view='board']) .titlebar .view-switch-space {
+    width: calc(60px + var(--sp-8) + var(--sp-12));
+  }
+}
 /* 对话 ⇄ 看板 cross-fades the whole window; 对话 stays mounted under 看板. */
 /* The group's own (250ms by default) holds the transition open, and the window out of reach, after the fade is over. */
 :root[data-view-switch]::view-transition-group(root),

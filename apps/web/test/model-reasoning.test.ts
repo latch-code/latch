@@ -869,8 +869,10 @@ describe('thinking on a service model before the session starts', () => {
     const markup = session(codex())
     expect(named(markup, '思考')).toBe('默认')
     expect(markup).not.toContain('用 Codex 的默认值')
-    // Another Harness's 默认 is its own: the note it had stays.
-    expect(session(codex(undefined, false))).toContain('用 Codex 的默认值')
+    // Another Harness's 默认 is its own: that is the hover of its 默认 row, not a line at the column's foot.
+    const own = levelsColumn(session(codex(undefined, false)))
+    expect(own).toMatch(/aria-label="默认"[^>]*>.*?<\/button><span[^>]*role="tooltip"[^>]*><span>用 Codex 的默认值<\/span>/su)
+    expect(own).not.toContain('ui-board-note')
   })
 })
 

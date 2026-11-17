@@ -86,7 +86,7 @@ sources:
 自己带模型的 Harness 的模型菜单先列它原生报告的模型，未报告时保留「默认模型」；之后按 Host 的 `models.wires` 与 `pairRoute` 列出可转发的已保存服务：都在一个来源「Latch 网关」下（不论有哪些服务），每个服务一组，组名写服务名。
 
 - Host 从实际命令所选的 profile 投影能力；客户端不维护另一份协议表。
-- 路线声明 `experimental` 时组名带「实验性」标记，全部实验性时左栏的悬停写「Latch 网关 · 实验性」：已实现的转换是 Responses→Chat、Responses→Anthropic、Anthropic→Chat、Anthropic→Responses，可能略去的能力在组名的悬停说明里（`PickerGroup.hint`），菜单里没有说明行。其他方向不可选。
+- 路线声明 `experimental` 时组名带「实验性」标记，全部实验性时左栏的悬停写「Latch 网关 · 实验性」：已实现的转换是 Responses→Chat、Responses→Anthropic、Anthropic→Chat、Anthropic→Responses，可能略去的能力在组名的悬停说明里（`PickerGroup.hint`），菜单里没有说明行；手机点按组名时同一说明分成一句与折起的各项（`BoardNote`）。其他方向不可选。
 - 用不了的服务收在「N 个服务用不了」，展开显示原因。`models.wires` 为空的 Harness 只用自己的模型。
 - `models.knownOnly`（codex-acp）：只有适配器认识的服务模型可选。Codex 直连可选服务声明但原生 `model/list` 没有的模型。
 - 服务选择按 Harness 分别保存，换 Harness 不带过去。控件显示模型 ID 与服务标记，避免同名模型混淆。

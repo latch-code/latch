@@ -241,7 +241,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               }}>
               {!phone && <TitleBar shell={shell} />}
               {/* One switch for both views, at the end of the window's top row: it stays mounted through a change. */}
-              {!phone && <ViewSwitch className="shell-view-switch" value={shell.preferences.workView} waiting={counts.attention} />}
+              {!phone && <ViewSwitch className="shell-view-switch" icons value={shell.preferences.workView} waiting={counts.attention} />}
               {viewport === 'tablet' && <TabletRail shell={shell} />}
               <Scrim
                 open={drawerMode && drawer.open}

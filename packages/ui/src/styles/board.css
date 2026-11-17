@@ -155,8 +155,8 @@
   background: var(--hover);
   color: var(--ink);
 }
-/* The source the chosen item comes from: a short bar on the rail's edge. */
-.ui-board-source[data-current]::after {
+/* The source shown: a short bar on the rail's edge, with the fill. */
+.ui-board-source[aria-selected='true']::after {
   content: '';
   position: absolute;
   top: var(--sp-8);
@@ -252,8 +252,19 @@
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-.ui-board-item[data-highlight]:not(:focus-visible) {
+/*
+ * The chosen item has the fill, with its tick. Keyboard focus is a separate, quieter state: a hairline in the accent and
+ * no fill of its own, so moving through the list never reads as choosing.
+ */
+.ui-board-item[aria-checked='true'] {
   background: var(--hover);
+}
+.ui-board-item:focus-visible:not([aria-checked='true']):not(:hover) {
+  background: transparent;
+}
+.ui-board .ui-board-item:focus-visible {
+  outline-width: 1px;
+  outline-offset: -1px;
 }
 .ui-board-empty {
   margin: 0;
@@ -383,11 +394,31 @@
   padding: 0;
   border: 0;
 }
-/* A group's note on a phone, which has no hover: one muted paragraph under its heading, once tapped. */
+/*
+ * A group's note on a phone, which has no hover: muted under its heading, once tapped. A long one is a lead line, its
+ * list folded behind one row, then any short lines (BoardNote).
+ */
 .ui-board-hint {
   margin: 0;
   padding: 0 var(--sp-10) var(--sp-6);
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
+}
+div.ui-board-hint {
+  display: grid;
+  gap: var(--sp-2);
+}
+.ui-board-hint p {
+  margin: 0;
+}
+.ui-board-hint .ui-fold-header.ui-board-hint-fold {
+  padding: var(--sp-2) 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.ui-board-hint ul {
+  margin: 0;
+  padding: 0 0 var(--sp-4) var(--sp-20);
 }

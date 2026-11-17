@@ -49,7 +49,8 @@ async function caretAfterGlyph(page: Page, input: Locator, index: number): Promi
 
 /**
  * Every mark's glyph at about the text's cap height, inside the mirror (so the input's padding holds it at a line's
- * start) and never left of the whitespace before it, so it covers no earlier character. Returns what breaks that.
+ * start) and never left of the whitespace before it, so it covers no earlier character; after a space it leaves at
+ * least 1px of that space clear, so the mark does not touch the word before it. Returns what breaks that.
  */
 async function glyphRoom(page: Page): Promise<string[]> {
   return page.evaluate(() => {
@@ -82,9 +83,12 @@ async function glyphRoom(page: Page): Promise<string[]> {
       const tintLeft = sigil.right - Math.max(sigil.width, parseFloat(tint.width))
       const before = start > 0 && text[start - 1] !== '\n' ? charRect(start - 1) : undefined
       const floor = before && Math.abs(before.top - sigil.top) < 2 ? before.left : inner
-      if (glyph.height < size * 0.8) problems.push(`${start}: glyph ${glyph.height}px at ${size}px text`)
+      if (glyph.height < size * 0.7) problems.push(`${start}: glyph ${glyph.height}px at ${size}px text`)
       if (Math.min(glyph.left, tintLeft) < floor - 0.5)
         problems.push(`${start}: reaches ${floor - Math.min(glyph.left, tintLeft)}px past its room`)
+      // A space before it on the same line: the word before stays clear of the mark.
+      if (before && text[start - 1] === ' ' && Math.abs(before.top - sigil.top) < 2 && Math.min(glyph.left, tintLeft) - before.left < 1)
+        problems.push(`${start}: touches the word before it (${Math.min(glyph.left, tintLeft) - before.left}px)`)
       if (glyph.right > sigil.right + 0.5) problems.push(`${start}: glyph runs into the name`)
     }
     return problems

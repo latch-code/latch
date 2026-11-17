@@ -271,12 +271,60 @@ describe('the picker board', () => {
       'DeepSeek',
       'Relay',
     ])
+    // Nothing here is chosen, so no row is filled, and the bar on the rail's edge is the shown source's.
+    expect(document.querySelectorAll('.ui-board-item[data-highlight]')).toHaveLength(0)
+    expect(getComputedStyle(document.querySelector('.ui-board-item')!).backgroundColor).toBe('rgba(0, 0, 0, 0)')
+    const bar = (name: string) => getComputedStyle(screen.getByRole('tab', { name, exact: true }).element(), '::after').content
+    expect(bar('Latch 网关')).not.toBe('none')
+    expect(bar('Harness')).toBe('none')
     expect(document.querySelector('.ui-board-heading')?.textContent).toBe('DeepSeek实验性')
     await expect.element(screen.getByRole('group', { name: 'Relay' })).toHaveAccessibleDescription(hint)
     // Typing searches every group, each under its own heading.
     await userEvent.keyboard('{ArrowRight}')
     await userEvent.keyboard('model')
     expect(Array.from(document.querySelectorAll('.ui-board-section'), section => section.getAttribute('aria-label'))).toEqual(['Relay'])
+  })
+
+  it('shows a long note on a phone as its lead, with its list folded behind one row', async () => {
+    const screen = await render(
+      <PickerBoard
+        label="模型"
+        levelsLabel="思考"
+        layout="sheet"
+        sources={[
+          { id: 'own', label: 'Harness', icon: null, items: [{ value: 'own', label: '默认模型' }] },
+          {
+            id: 'gateway',
+            label: 'Latch 网关',
+            icon: null,
+            groups: [
+              {
+                id: 'deepseek',
+                label: 'DeepSeek',
+                hint: '请求由 Latch 转发。协议转换，实验性：略去或受限的有音频、引用标注。',
+                note: { lead: '请求由 Latch 转发。协议转换，实验性。', fold: { label: '略去或受限', items: ['音频', '引用标注'] } },
+                items: [{ value: 'd/1', label: 'deepseek-chat' }],
+              },
+            ],
+          },
+        ]}
+        value="own"
+        levels={() => ({ value: 'default', options: [{ value: 'default', label: '默认' }] })}
+        onItem={() => {}}
+        onLevel={() => {}}
+      />,
+    )
+    await screen.getByRole('tab', { name: 'Latch 网关' }).click()
+    await screen.getByRole('button', { name: /DeepSeek/u }).click()
+    const note = document.querySelector<HTMLElement>('.ui-board-hint')!
+    expect(note.querySelector('p')?.textContent).toBe('请求由 Latch 转发。协议转换，实验性。')
+    const fold = screen.getByRole('button', { name: /略去或受限/u })
+    await expect.element(fold).toHaveAttribute('aria-expanded', 'false')
+    expect(note.querySelector('li')?.checkVisibility()).toBeFalsy()
+    await fold.click()
+    await expect
+      .poll(() => Array.from(note.querySelectorAll('li'), item => item.checkVisibility() && item.textContent))
+      .toEqual(['音频', '引用标注'])
   })
 
   it('opens on the levels when its trigger asks', async () => {

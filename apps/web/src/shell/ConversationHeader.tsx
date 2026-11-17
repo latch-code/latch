@@ -114,7 +114,7 @@ function ChangesToggle({ toggle, totals }: { toggle: HeaderToggle; totals?: Chan
           <span data-tone="remove">−{totals.del}</span>
         </span>
       </Button>
-      {toggle.dot && <span className="topbar-toggle-dot" />}
+      {toggle.dot && <span className="topbar-toggle-dot" aria-hidden="true" />}
     </span>
   )
 }
@@ -384,15 +384,15 @@ function PhoneTopBar({
 }
 
 function Toggle({ toggle }: { toggle: HeaderToggle }) {
+  const button = (
+    <IconButton label={toggle.label} icon={toggle.icon} shortcut={toggle.shortcut} pressed={toggle.pressed} onClick={toggle.onToggle} />
+  )
+  if (!toggle.dot) return button
   return (
-    <IconButton
-      label={toggle.label}
-      icon={toggle.icon}
-      shortcut={toggle.shortcut}
-      pressed={toggle.pressed}
-      badge={toggle.dot ? <span className="topbar-toggle-dot" /> : undefined}
-      onClick={toggle.onToggle}
-    />
+    <span className="topbar-toggle">
+      {button}
+      <span className="topbar-toggle-dot" aria-hidden="true" />
+    </span>
   )
 }
 

@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { Route } from 'lucide-react'
 import {
   parseModelChoice,
   type HarnessInfo,
@@ -173,13 +174,15 @@ export function boardSources(groups: ReadonlyArray<ModelGroup>): Array<BoardSour
       id: '~gateway',
       label: GATEWAY_NAME,
       ...(experimental ? { tip: `${GATEWAY_NAME} · ${EXPERIMENTAL}` } : {}),
-      icon: <Icon icon={ModelGlyph} size={16} />,
+      // A route, not a chip: the model glyph's pins read as a gear at this size.
+      icon: <Icon icon={Route} size={16} />,
       groups: gateway.map(item => ({
         id: item.id,
         label: item.label ?? '',
         ...(item.media ? { media: item.media } : {}),
         ...(item.gateway?.experimental ? { tag: <Badge>{EXPERIMENTAL}</Badge> } : {}),
         ...(item.hint ? { hint: item.hint } : {}),
+        ...(item.note ? { note: item.note } : {}),
         items: boardItems(item),
       })),
     })
@@ -371,6 +374,8 @@ interface HarnessThinking {
   /** The thinking of the model in use, as reported or as the draft knows it. */
   option: SessionConfigOption | undefined
   note?: string | Brief | undefined
+  /** While the Harness reported no levels: what its lone 默认 means, on hover of that row and of the chip. */
+  defaultHint?: string | undefined
   /** Rows under the levels: reading what the picked model offers. */
   footer?: ReactNode
   hint?: string | undefined
@@ -477,7 +482,11 @@ function harnessBoard({
   const own = thinking.option
   const thinkingFeedback = feedbackFor(feedback, [own?.id])
   const levelsOf = (option: SessionConfigOption | undefined, current: boolean): BoardLevels<string> => {
-    if (!option) return { value: MODEL_DEFAULT_LEVEL, options: DEFAULT_ONLY }
+    if (!option)
+      return {
+        value: MODEL_DEFAULT_LEVEL,
+        options: current && thinking.defaultHint ? [{ ...DEFAULT_ONLY[0]!, hint: thinking.defaultHint }] : DEFAULT_ONLY,
+      }
     return {
       value: option.currentValue,
       options: agentConfigValues(option).map(item => ({
@@ -543,7 +552,7 @@ function harnessBoard({
       pendingLabel: reading ? '正在读取…' : slow ? `等 ${name} 回应…` : '正在切换…',
       disabled: locked !== undefined || disabled === true,
       disabledReason: locked,
-      hint: thinking.hint,
+      hint: thinking.hint ?? (own ? undefined : thinking.defaultHint),
     },
     groups,
     value,
@@ -682,12 +691,11 @@ function useDraftBoard({
     // person's own code, on request otherwise.
     const readable = unknown && readsModel(harness, access)
     const bySelf = readable && harness.catalogueRead?.when === 'select'
-    const thinkingNote =
-      harness.capabilities.models.thinkingInModel && !service
-        ? '在模型列表里选'
-        : service || !known || known.thinkingUnknown
-          ? undefined
-          : unreportedThinkingNote(name, true, known.config, harness.capabilities.models.thinkingPerModel === true)
+    const thinkingNote = harness.capabilities.models.thinkingInModel && !service ? '在模型列表里选' : undefined
+    const thinkingDefault =
+      thinkingNote !== undefined || service || !known || known.thinkingUnknown
+        ? undefined
+        : unreportedThinkingNote(name, true, known.config, harness.capabilities.models.thinkingPerModel === true)
     const opened = (open: boolean) => {
       if (!open) setTyping(false)
       // Opening the panel of a Harness nothing is known of is asking what it offers.
@@ -744,6 +752,7 @@ function useDraftBoard({
       thinking: {
         option: service && !option ? undefined : option,
         note: thinkingNote,
+        defaultHint: thinkingDefault,
         footer:
           readable && !bySelf && !reading ? (
             <MenuFooterLink chevron={false} closes onClick={() => void readHarnessCatalogue(harness, false, pickedModel).catch(() => {})}>
@@ -962,10 +971,10 @@ function useSessionBoard({
     computer,
     thinking: {
       option,
-      note: routed
-        ? undefined
-        : harness?.capabilities.models.thinkingInModel
-          ? '在模型列表里选'
+      note: !routed && harness?.capabilities.models.thinkingInModel ? '在模型列表里选' : undefined,
+      defaultHint:
+        routed || harness?.capabilities.models.thinkingInModel
+          ? undefined
           : unreportedThinkingNote(name, true, config, harness?.capabilities.models.thinkingPerModel === true),
       hint: routed && !option ? SERVICE_DEFAULT_HINT : undefined,
     },

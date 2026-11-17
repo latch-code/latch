@@ -638,8 +638,9 @@
 /*
  * A drag is a gesture: the drop performs the card's own action and the Host's group decides where it then stands. While
  * one is held the cards take no pointer, so the column under it says where the card may go: a target a hairline in the
- * accent (one more half pixel under the pointer), any other column but its own at 45% with a forbidden mark and the
- * not-allowed cursor. The card stays put at 45%; a copy follows the pointer, lifted.
+ * accent, and the target under the pointer the drop's place, with one more half pixel and the accent's light tint over
+ * its own fill; any other column but its own at 45% with a forbidden mark and the not-allowed cursor. The card stays
+ * put at 45%; a copy follows the pointer, lifted.
  */
 .work-board[data-dragging] {
   cursor: grabbing;
@@ -652,12 +653,15 @@
   pointer-events: none;
 }
 .work-board-column {
-  transition: box-shadow var(--m-micro) var(--e-micro);
+  transition:
+    box-shadow var(--m-micro) var(--e-micro),
+    background-image var(--m-micro) var(--e-micro);
 }
 .work-board-columns[data-drag] .work-board-column[data-drop='target'] {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 .work-board-columns[data-drag] .work-board-column[data-drop='target'][data-over] {
+  background-image: linear-gradient(var(--accent-soft), var(--accent-soft));
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 .work-board-columns[data-drag] .work-board-column[data-drop='forbidden'] {

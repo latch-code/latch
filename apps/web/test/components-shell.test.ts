@@ -103,6 +103,12 @@ describe('top bar', () => {
     expect(read).toContain(
       '<span class="topbar-changes-stat" aria-hidden="true"><span data-tone="add">+9</span><span data-tone="remove">−3</span></span>',
     )
+    // Something new behind 改动 is a dot on the glyph's corner, never the badge's empty pill above the button.
+    const unread = renderToStaticMarkup(createElement(SessionHeader, { ...topBar, slots: { changes: { ...changes, dot: true } } }))
+    expect(unread).toMatch(
+      /<span class="topbar-toggle"><button[^>]*aria-label="改动"[^>]*>.*?<\/button>.*?<span class="topbar-toggle-dot" aria-hidden="true"><\/span><\/span><\/div>/u,
+    )
+    expect(unread).not.toContain('ui-icon-button-badge')
   })
 
   it('heads a phone session page with the way back, the title over where it runs, and the panel toggle', () => {

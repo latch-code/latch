@@ -25,6 +25,7 @@ import {
   Popover,
   Tooltip,
   useLayerClose,
+  type BoardNote,
   type PickerGroup,
   ChevronDownGlyph,
   ChevronLeftGlyph,
@@ -50,6 +51,7 @@ import { HarnessTile, ProviderTile } from '../components/BrandTile.tsx'
 import { HealthDot, menuHealth, nameWithHealth } from '../components/ServiceHealth.tsx'
 import { AgentPresetList, AgentSetupPanel } from '../components/SetupPanels.tsx'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
+import { isolationBrief } from '../agents/helpers.ts'
 import { agentConfigValues, DEFAULT_MODEL } from './modelReasoning.ts'
 import { ValuePicker } from './ComposerControl.tsx'
 import { readOnSelect, readsOnSelect } from './harnessCatalogue.tsx'
@@ -58,6 +60,15 @@ type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin' | 'scopes'>
 export const OWN_MODEL = 'own'
 
 const HERE = '这台 Mac'
+
+/**
+ * That Latch does not isolate an external Harness, as the chip that picks it says on hover: the same words each reply's
+ * author line carries. Nothing for the built-in Harness.
+ */
+export function isolationTip(harness: Pick<HarnessInfo, 'capabilities' | 'level' | 'permission'>): string | undefined {
+  const brief = isolationBrief(harness)
+  return brief && [brief.label, brief.detail].filter(Boolean).join('。')
+}
 
 /**
  * One of Latch's own sentences as a page shows it: 「这台 Mac」 in the Latch app on that Mac (`computer` undefined), the
@@ -218,6 +229,7 @@ export function DraftHarnessControl({
   // A pin names a saved Harness; one still on offer is saved by its first session.
   const canPin =
     !access.legacy && access.local && access.admin && catalog.features?.pinnedDefaults === true && !noService && !harness?.offer
+  const boundary = harness && isolationTip(harness)
   return (
     <ValuePicker
       label="Harness"
@@ -236,6 +248,7 @@ export function DraftHarnessControl({
       className="harness-picker"
       menuChevron
       disabled={disabled}
+      {...(boundary ? { hint: boundary } : {})}
       onOpenChange={open => {
         if (!open) setAdding(false)
       }}
@@ -308,13 +321,14 @@ export function SessionHarnessControl({
   fork?: SessionFork | undefined
 }) {
   const name = harnessName(harness)
+  const boundary = isolationTip(harness)
   return (
     <Popover
       label="Harness"
       size="sm"
       side="top"
       trigger={props => (
-        <Tooltip content="开始后不能换 Harness">
+        <Tooltip content={boundary ? `${boundary}开始后不能换 Harness。` : '开始后不能换 Harness'}>
           <button {...props} type="button" className="chip chip-harness" aria-label={`Harness：${name}`}>
             <HarnessTile harness={harness} size={16} />
             <span className="chip-text">{name}</span>
@@ -463,7 +477,7 @@ export const EXPERIMENTAL = '实验性'
  * A group of the model panel. `gateway`: a service's models that go through Latch's gateway, all of which the panel
  * shows under the one 「Latch 网关」 source, each service under its own name.
  */
-export type ModelGroup = PickerGroup<string> & { gateway?: { experimental: boolean } }
+export type ModelGroup = PickerGroup<string> & { gateway?: { experimental: boolean }; note?: BoardNote }
 
 // Only a turn with no request through the gateway can be told apart; a turn that sends some elsewhere cannot.
 export const ROUTE_NOTE = (name: string, computer?: string, inherited?: boolean): Brief & { detail: string } => ({
@@ -513,7 +527,8 @@ export function routeService(
 /**
  * What a group of a service's models says on hover of its heading: where its requests go and with which key, what a
  * protocol translation leaves out, that the Harness's commands read the credential, and for the session's own service
- * what it falls back to. Not a row of the menu.
+ * what it falls back to. Not a row of the menu. `note` is the same for a phone's tap: the lead, then what a translation
+ * leaves out folded behind one row.
  */
 function serviceHint(
   harness: HarnessInfo | undefined,
@@ -521,17 +536,23 @@ function serviceHint(
   provider: ProviderSummary | undefined,
   computer: string | undefined,
   route?: NonNullable<TaskSummary['modelRoute']>,
-): string {
+): { hint: string; note: BoardNote } {
   const pair = harness && provider ? pairRoute(harness.capabilities, provider) : undefined
   const others = (route?.fallbacks ?? []).flatMap(item => (item.name ? [item.name] : []))
-  return [
-    onComputer('请求由 Latch 在这台 Mac 上转发，用设置里的密钥。', computer),
-    pair?.kind === 'translate'
-      ? `协议转换，实验性：略去或受限的有${[...new Set(pair.losses)].map(loss => GATEWAY_LOSS_NAMES[loss]).join('、')}；文件与服务端会话状态不能转换。`
-      : '',
+  const lead = onComputer('请求由 Latch 在这台 Mac 上转发，用设置里的密钥。', computer)
+  const losses = pair?.kind === 'translate' ? [...new Set(pair.losses)].map(loss => GATEWAY_LOSS_NAMES[loss]) : undefined
+  const after = [
     harness?.capabilities.models.credentialInherited ? credentialInherited(name) : '',
     others.length ? `出错时改用「${[...new Set(others)].join('」「')}」。` : '',
-  ].join('')
+  ].filter(Boolean)
+  return {
+    hint: [lead, losses ? `协议转换，实验性：略去或受限的有${losses.join('、')}；文件与服务端会话状态不能转换。` : '', ...after].join(''),
+    note: {
+      lead: losses ? `${lead}协议转换，实验性。` : lead,
+      ...(losses ? { fold: { label: '略去或受限', items: [...losses, '文件与服务端会话状态（不能转换）'] } } : {}),
+      after,
+    },
+  }
 }
 
 /**
@@ -585,7 +606,7 @@ export function ownModelGroups(
       label: routed!.unusable ? `${routed!.name} · ${routed!.unusable.words}` : nameWithHealth(routed!.name, health),
       gateway: { experimental: experimental && !routed!.unusable },
       ...(health ? { media: <HealthDot words={health} /> } : {}),
-      hint: serviceHint(harness, name, provider, computer, route),
+      ...serviceHint(harness, name, provider, computer, route),
       options: routed!.unusable ? own.map(option => ({ ...option, disabledReason: `下一轮会失败：服务${routed!.unusable!.words}` })) : own,
     }
   }
@@ -609,7 +630,7 @@ export function ownModelGroups(
       label: nameWithHealth(provider.name, health),
       gateway: { experimental },
       ...(health ? { media: <HealthDot words={health} /> } : {}),
-      hint: serviceHint(harness, name, provider, computer),
+      ...serviceHint(harness, name, provider, computer),
       options: serviceModels(provider).map(model => {
         const why = knows && !knows.has(modelIdKey(model)) ? `${name} 不认识这个模型` : reason
         return {

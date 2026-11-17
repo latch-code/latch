@@ -94,8 +94,8 @@ export function unreportedModelNote(harness: string, started: boolean, config: r
 export const NO_THINKING_LEVELS = '这个模型没有思考档位'
 
 /**
- * The thinking menu's few words on levels the Harness has not told Latch of. Nothing when it reported them, and nothing
- * before a start: the menu then shows what will be used, 默认. `perModel`: the Harness reports them for every model that
+ * What the thinking column's lone 默认 means while the Harness has told Latch of no levels, on hover of that row and of
+ * the chip. Nothing when it reported them, and nothing before a start: the menu then shows what will be used, 默认. `perModel`: the Harness reports them for every model that
  * has them (`models.thinkingPerModel`), so none means the model has none.
  */
 export function unreportedThinkingNote(
