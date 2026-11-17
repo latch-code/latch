@@ -93,6 +93,14 @@
   user-select: none;
   pointer-events: none;
 }
+.sim-live[data-input] {
+  pointer-events: auto;
+  touch-action: none;
+  outline: none;
+}
+.sim-live[data-input]:focus-visible {
+  border-color: var(--accent);
+}
 .sim-quiet {
   color: var(--muted);
   font-size: var(--fs-caption);

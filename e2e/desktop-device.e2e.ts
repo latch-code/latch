@@ -12,7 +12,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { spawnSimctl, xcrunDevicectl, xcrunSimctl, type SimctlChild, type SimctlRunner, type SimctlSpawner } from '@latch/host/simulators'
 import type { McpServerView } from '@latch/protocol'
-import { FAKE_ACP_AGENT } from '@latch/testkit'
+import { FAKE_ACP_AGENT, fakeIdbCompanion, fakeSimulatorLive } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
 
 const electronE2E = latchEnv(process.env, 'ELECTRON_E2E') === '1'
@@ -537,6 +537,123 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       expect(fake.calls.some(args => args[0] === 'create')).toBe(false)
       // Every call named the stand-in device or listed.
       expect(fake.calls.every(args => args[0] === 'list' || args.includes(TOOLBAR_UDID))).toBe(true)
+    } finally {
+      await application?.close()
+      await testHost.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 300_000)
+})
+
+describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop shell: 设备 live picture and input', () => {
+  it('decodes the live picture with VideoDecoder, sends a click as a tap at the right point, keys and Home, and says when input is unavailable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-electron-device-live-'))
+    await mkdir(OUT, { recursive: true })
+    const fake = toolbarFakes()
+    const idb = fakeIdbCompanion()
+    const live = fakeSimulatorLive()
+    const testHost = await startTestHost({
+      demo: true,
+      hostName: '验收电脑',
+      uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
+      simulators: {
+        run: fake.run,
+        devicectl: fake.devicectl,
+        spawn: fake.spawn,
+        idleMs: 0,
+        live: live.attach,
+        idb: { locate: idb.locate, spawn: idb.spawn },
+      },
+    })
+    let application: ElectronApplication | undefined
+    try {
+      const { app, page } = await launchDesktop(testHost, join(root, 'electron'))
+      application = app
+      // The desktop app's page has WebCodecs, and the Host's page policy lets it decode and draw.
+      expect(await page.evaluate(() => typeof VideoDecoder)).toBe('function')
+      const panel = await openDevicePanel(page, testHost)
+      const screen = panel.locator('canvas.sim-live')
+      await screen.waitFor()
+      // Frames decoded from the recorded H.264 stream reach the canvas.
+      await expect.poll(async () => Number(await screen.getAttribute('data-fps')), { timeout: 20_000 }).toBeGreaterThan(0)
+      expect(await panel.locator('img.sim-screen').count()).toBe(0)
+      const tools = panel.getByRole('toolbar', { name: '设备工具', exact: true })
+      for (const name of ['主屏幕', '锁屏', '键盘输入到设备']) await tools.getByRole('button', { name, exact: true }).waitFor()
+      await capture(page, 'live')
+      // A click at (201, 160) points of the 402 × 874 screen: where the picture is drawn in the canvas (contain, by its
+      // own 220 × 480 pixels), scaled.
+      const box = await screen.evaluate(element => {
+        const canvas = element as HTMLCanvasElement
+        const rect = canvas.getBoundingClientRect()
+        const scale = Math.min(canvas.clientWidth / canvas.width, canvas.clientHeight / canvas.height)
+        const width = canvas.width * scale
+        const height = canvas.height * scale
+        return {
+          left: rect.left + canvas.clientLeft + (canvas.clientWidth - width) / 2,
+          top: rect.top + canvas.clientTop + (canvas.clientHeight - height) / 2,
+          width,
+          height,
+        }
+      })
+      await page.mouse.click(box.left + (box.width * 201) / 402, box.top + (box.height * 160) / 874)
+      await expect.poll(() => idb.events.filter(event => event.kind === 'touch').length).toBe(2)
+      const [down, up] = idb.events.filter(event => event.kind === 'touch') as Array<{ x: number; y: number; direction: string }>
+      expect(down!.direction).toBe('down')
+      expect(up!.direction).toBe('up')
+      expect(Math.abs(down!.x - 201)).toBeLessThanOrEqual(1.5)
+      expect(Math.abs(down!.y - 160)).toBeLessThanOrEqual(1.5)
+      expect(idb.events.every(event => event.udid === TOOLBAR_UDID)).toBe(true)
+      // Home, and the keyboard toggle: Enter goes to the device as return; a letter does not.
+      await tools.getByRole('button', { name: '主屏幕', exact: true }).click()
+      await expect.poll(() => idb.events.some(event => event.kind === 'button' && event.button === 1)).toBe(true)
+      await tools.getByRole('button', { name: '键盘输入到设备', exact: true }).click()
+      await page.keyboard.press('a')
+      await page.keyboard.press('Enter')
+      await expect.poll(() => idb.events.some(event => event.kind === 'key' && event.code === 40)).toBe(true)
+      expect(idb.events.some(event => event.kind === 'key' && event.code === 4)).toBe(false)
+      await capture(page, 'live-keyboard')
+      expect(idb.starts).toHaveLength(1)
+      expect(idb.starts[0]!.args).not.toContain('--grpc-port')
+    } finally {
+      await application?.close()
+      await testHost.close()
+      await rm(root, { recursive: true, force: true })
+    }
+    expect(idb.running()).toBe(0)
+    expect(live.closed).toBe(live.attached.length)
+  }, 300_000)
+
+  it('shows 输入不可用 with the install command in its hover when idb_companion is not installed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-electron-device-noinput-'))
+    await mkdir(OUT, { recursive: true })
+    const fake = toolbarFakes()
+    const idb = fakeIdbCompanion({ installed: false })
+    const testHost = await startTestHost({
+      demo: true,
+      hostName: '验收电脑',
+      uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
+      simulators: {
+        run: fake.run,
+        devicectl: fake.devicectl,
+        spawn: fake.spawn,
+        idleMs: 0,
+        live: fakeSimulatorLive().attach,
+        idb: { locate: idb.locate, spawn: idb.spawn },
+      },
+    })
+    let application: ElectronApplication | undefined
+    try {
+      const { app, page } = await launchDesktop(testHost, join(root, 'electron'))
+      application = app
+      const panel = await openDevicePanel(page, testHost)
+      const screen = panel.locator('canvas.sim-live')
+      await expect.poll(async () => Number(await screen.getAttribute('data-fps')), { timeout: 20_000 }).toBeGreaterThan(0)
+      await screen.click()
+      const state = panel.locator('.ui-status-word', { hasText: '输入不可用' })
+      await state.waitFor()
+      expect(await state.getAttribute('title')).toContain('brew install idb-companion')
+      await capture(page, 'live-input-unavailable')
+      expect(idb.starts).toEqual([])
     } finally {
       await application?.close()
       await testHost.close()

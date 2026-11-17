@@ -3,8 +3,11 @@ import {
   AppWindow,
   Camera,
   Circle,
+  House,
+  Keyboard,
   LayoutGrid,
   Link,
+  Lock,
   Minus,
   Moon,
   PenLine,
@@ -18,13 +21,21 @@ import {
   Sun,
 } from 'lucide-react'
 import { Button, Icon, IconButton, Menu, Spinner, StatusWord } from '@latch/ui'
-import type { SimulatorAppView, SimulatorPrivacyAction, SimulatorPrivacyService } from '@latch/protocol'
+import type {
+  SimulatorAppView,
+  SimulatorControlView,
+  SimulatorInputEvent,
+  SimulatorPrivacyAction,
+  SimulatorPrivacyService,
+} from '@latch/protocol'
 import { api, errorMessage } from '../../core/api.ts'
 import { currentShell } from '../../core/shell.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
 import { DeviceAnnotate, type AnnotateImage } from './DeviceAnnotate.tsx'
 import { DeviceApps, SERVICE_LABELS } from './DeviceApps.tsx'
 import { DeviceLogs } from './DeviceLogs.tsx'
+import { DeviceScreen, type LiveState } from './DeviceScreen.tsx'
+import { InputSender, deviceKey, inputReason, parseControl } from './live.ts'
 import { NewDeviceDialog } from './NewDeviceDialog.tsx'
 import {
   frameDelay,
@@ -68,10 +79,11 @@ function deliver(file: File, onAttach: DevicePanelProps['onAttach']): void {
 }
 
 /**
- * 设备: this Mac's iOS simulators through the Host's simctl and devicectl routes. A picture of the chosen device,
- * refreshed while the panel shows and the device runs, at the panel's fit or a chosen zoom; it is not interactive
- * (tapping is in Device Hub's own window). The bottom bar has the device's tools; each button is one Host action,
- * recorded there.
+ * 设备: this Mac's iOS simulators through the Host's simctl and devicectl routes. The chosen device's live picture
+ * (latch-simulator's stream), or screenshots refreshed while the panel shows when there is none, at the panel's fit or a
+ * chosen zoom. Pointer, wheel, keys, Home and Lock go to the device through the person's idb_companion once they act on
+ * it (taking control, recorded once); where that is unavailable the state says why and Device Hub stays the way to tap.
+ * The bottom bar has the device's tools; each button is one Host action, recorded there.
  */
 export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   const [list, setList] = useState<SimulatorList | null>(null)
@@ -94,6 +106,12 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   const [creating, setCreating] = useState(false)
   const [zoom, setZoom] = useState<Zoom>('fit')
   const [box, setBox] = useState({ width: 0, height: 0 })
+  /** The live picture of a device: connecting, on, or unavailable (then screenshots). */
+  const [live, setLive] = useState<{ udid: string; state: LiveState; reason?: string; size?: { width: number; height: number } }>()
+  /** What input can do on the device, once the person took control of it. */
+  const [control, setControl] = useState<{ udid: string; view: SimulatorControlView }>()
+  const [inputFailure, setInputFailure] = useState<{ udid: string; text: string }>()
+  const [keysOn, setKeysOn] = useState(false)
   const addressInput = useRef<HTMLInputElement>(null)
   const canvas = useRef<HTMLDivElement>(null)
   const devices = list ? sortDevices(list.devices) : []
@@ -135,9 +153,10 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     return () => observer.disconnect()
   }, [list !== null && list.xcode])
 
-  // Frames only while shown and the device runs: the next is asked for once the last arrived; nothing when hidden.
+  const liveOff = live !== undefined && live.udid === udid && live.state === 'unavailable'
+  // Screenshots only while shown, the device runs and there is no live picture: the next once the last arrived.
   useEffect(() => {
-    if (!shown || !udid || !running) return
+    if (!shown || !udid || !running || !liveOff) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let last: string | undefined
@@ -179,7 +198,95 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
       setFrame(undefined)
       setFrameFailure(undefined)
     }
+  }, [shown, udid, running, liveOff])
+
+  // A new device, or the same one started again: its live picture is tried first.
+  useEffect(() => {
+    setLive(undefined)
+  }, [udid, running, shown])
+
+  // ── Input: control is taken when the person first acts on the device, and given back when the panel leaves it ──
+
+  const takingRef = useRef<{ udid: string; waiting: SimulatorInputEvent[] } | undefined>(undefined)
+  const controlRef = useRef(control)
+  controlRef.current = control
+  const sender = useRef<{ udid: string; sender: InputSender } | undefined>(undefined)
+
+  const senderFor = (target: string): InputSender => {
+    if (sender.current?.udid === target) return sender.current.sender
+    const created = new InputSender(
+      async events => {
+        await api(`simulators/${target}/input`, { method: 'POST', body: { events }, timeoutMs: 15_000 })
+      },
+      error => {
+        setInputFailure({ udid: target, text: errorMessage(error) })
+        // Control lapsed (the Host restarted or the companion stopped): the next touch takes it again.
+        if (sender.current?.udid === target) sender.current = undefined
+        setControl(current => (current?.udid === target ? undefined : current))
+      },
+    )
+    sender.current = { udid: target, sender: created }
+    return created
+  }
+
+  const sendInput = (event: SimulatorInputEvent) => {
+    if (!udid) return
+    const target = udid
+    const held = controlRef.current
+    if (held?.udid === target) {
+      const kind = event.type === 'touch' ? held.view.touch : event.type === 'key' ? held.view.keys : held.view.buttons
+      if (kind.available) senderFor(target).send(event)
+      return
+    }
+    if (takingRef.current?.udid === target) {
+      takingRef.current.waiting.push(event)
+      return
+    }
+    const taking = { udid: target, waiting: [event] }
+    takingRef.current = taking
+    setInputFailure(undefined)
+    void api<unknown>(`simulators/${target}/control`, { method: 'POST', body: { action: 'take' }, timeoutMs: 45_000 })
+      .then(answer => {
+        const view = parseControl(answer)
+        controlRef.current = { udid: target, view }
+        setControl({ udid: target, view })
+        if (takingRef.current === taking) takingRef.current = undefined
+        for (const waiting of taking.waiting) sendInput(waiting)
+      })
+      .catch(error => {
+        if (takingRef.current === taking) takingRef.current = undefined
+        setInputFailure({ udid: target, text: errorMessage(error) })
+      })
+  }
+
+  // The panel hidden, another device chosen or the device stopped: control is given back.
+  useEffect(() => {
+    if (!shown || !udid || !running) return
+    const target = udid
+    return () => {
+      sender.current = undefined
+      takingRef.current = undefined
+      setControl(undefined)
+      setInputFailure(undefined)
+      setKeysOn(false)
+      void api(`simulators/${target}/control`, { method: 'POST', body: { action: 'release' } }).catch(() => {})
+    }
   }, [shown, udid, running])
+
+  // Keys to the device while the toggle is on, never while a field of Latch's has focus.
+  useEffect(() => {
+    if (!keysOn || !running) return
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (isEditable(event.target)) return
+      const key = deviceKey(event)
+      if (!key) return
+      event.preventDefault()
+      event.stopPropagation()
+      sendInput({ type: 'key', key })
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  })
 
   useEffect(() => {
     setAppearance(undefined)
@@ -459,8 +566,13 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
 
   const failed =
     (failure && (failure.udid === '' || failure.udid === udid) ? failure.text : undefined) ?? (running ? frameFailure : undefined)
+  const liveHere = live?.udid === udid ? live : undefined
+  const liveOn = running && liveHere?.state === 'live'
   // Running, but no picture yet: still starting as far as anyone can see.
-  const pictured = running && frame !== undefined && frame.udid === udid
+  const pictured = liveOn || (running && frame !== undefined && frame.udid === udid)
+  const controlHere = control && control.udid === udid ? control.view : undefined
+  const inputFailed = inputFailure && inputFailure.udid === udid ? inputFailure.text : undefined
+  const inputOff = controlHere && !controlHere.touch.available ? inputReason(controlHere.touch) : inputFailed
   const booting = pending === 'boot' || device?.state === 'booting' || (running && !pictured && !failed)
   const stopping = pending === 'shutdown' || device?.state === 'shutting-down'
   const agent = device?.agent === true || (running && list.agentUnnamed === true)
@@ -481,13 +593,24 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     <StatusWord tone="running" title="一个会话的 Agent 正经 Xcode 的设备工具使用它">
       Agent 正在使用
     </StatusWord>
+  ) : pictured && inputOff ? (
+    <StatusWord tone="warn" title={`${inputOff} · 可在 Device Hub 中点按`}>
+      输入不可用
+    </StatusWord>
   ) : pictured ? (
-    <StatusWord tone="done">运行中</StatusWord>
+    <StatusWord tone="done" title={liveOn ? '实时画面' : `截图画面${liveHere?.reason ? ` · ${liveHere.reason}` : ''}`}>
+      运行中
+    </StatusWord>
   ) : device ? (
     <StatusWord tone="neutral">未启动</StatusWord>
   ) : null
 
-  const natural = frame && frame.udid === udid ? { width: frame.width, height: frame.height } : { width: 0, height: 0 }
+  const natural =
+    liveOn && liveHere?.size
+      ? liveHere.size
+      : frame && frame.udid === udid
+        ? { width: frame.width, height: frame.height }
+        : { width: 0, height: 0 }
   const fit = fitScale(natural, box, pixelRatio)
   const size = screenSize(zoom, natural, box, pixelRatio)
   const busy = pending !== undefined
@@ -582,6 +705,18 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
               onAttach?.([file])
               closeAnnotate()
             }}
+          />
+        ) : running && shown && udid && device && !liveOff ? (
+          <DeviceScreen
+            udid={udid}
+            name={device.name}
+            zoom={zoom}
+            box={box}
+            pixelRatio={pixelRatio}
+            onState={(state, detail) =>
+              setLive({ udid, state, ...(detail?.reason ? { reason: detail.reason } : {}), ...(detail?.size ? { size: detail.size } : {}) })
+            }
+            onInput={desktop ? sendInput : undefined}
           />
         ) : running && frame && frame.udid === udid ? (
           <img
@@ -678,6 +813,35 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
         )}
         <IconButton
           size="xs"
+          icon={House}
+          label="主屏幕"
+          tooltip={controlHere && !controlHere.buttons.available ? inputReason(controlHere.buttons) : '主屏幕'}
+          disabled={!tools || !desktop || (controlHere !== undefined && !controlHere.buttons.available)}
+          onClick={() => sendInput({ type: 'button', button: 'home' })}
+        />
+        <IconButton
+          size="xs"
+          icon={Lock}
+          label="锁屏"
+          tooltip={controlHere && !controlHere.buttons.available ? inputReason(controlHere.buttons) : '锁屏键'}
+          disabled={!tools || !desktop || (controlHere !== undefined && !controlHere.buttons.available)}
+          onClick={() => sendInput({ type: 'button', button: 'lock' })}
+        />
+        <IconButton
+          size="xs"
+          icon={Keyboard}
+          label="键盘输入到设备"
+          tooltip={
+            controlHere && !controlHere.keys.available
+              ? inputReason(controlHere.keys)
+              : `⏎ ⌫ ⇥ ⎋ 与方向键发到设备 · 文字：${inputReason(controlHere?.text ?? { available: false, reason: 'paste-refused' })}`
+          }
+          pressed={keysOn}
+          disabled={!tools || !desktop || (controlHere !== undefined && !controlHere.keys.available)}
+          onClick={() => setKeysOn(value => !value)}
+        />
+        <IconButton
+          size="xs"
           icon={PenLine}
           label="标注截图"
           tooltip={onAttach ? '截图后标注，再放进草稿' : '现在不能添加附件'}
@@ -732,7 +896,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
           size="xs"
           icon={AppWindow}
           label="在 Device Hub 中打开"
-          tooltip="在 Device Hub 里实时查看和点按 · Latch 的面板还不能点按"
+          tooltip="在 Device Hub 里查看和点按"
           disabled={!device || busy}
           onClick={() => void act('hub', 'device-hub')}
         />
