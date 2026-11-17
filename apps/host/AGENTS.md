@@ -18,7 +18,7 @@
 - 插件目录只用 `@latch/sdk`、`@latch/protocol`、本目录与种类目录下的共用文件，不导入 Host 或其他插件目录；只有 `standard` 用 `@latch/core`（`.oxlintrc.json`）。
 - `latchCodeRoot()` 定位代码根，不随项目目录（ARCHITECTURE）。
 - 同项目的变更与启动串行、跨项目不等，撤销和收紧仍可并行；旧会话保留冻结目录（`test/project-regressions.test.ts`）。分支与工作树见 BRANCHES。
-- 本机确认只经 `PresenceService`，无设备签名批准。开发固定 CDHash。发布固定编译身份与审计记录，任缺一侧须离线重新固定，核验实际子进程后才运行（ARCHITECTURE）。
+- 确认只经 `PresenceService`，无设备签名批准。开发固定 CDHash，发布固定身份与审计，缺一须离线重新固定，运行前核验子进程（ARCHITECTURE）。
 - 终端限 `host.sock`、`all`，复核目录身份，环境用 `terminalEnvironment`（[TERMINAL](../../docs/TERMINAL.md)）。
 - 本机 MCP 提示先审计、持久化来源再转发；远程拒绝（MCP.md）。
 - 构建禁测试代码；组件自检；私有框架只在 `latch-simulator`（DEVICE-PREVIEW）。

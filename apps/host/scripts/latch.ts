@@ -178,6 +178,7 @@ function parseArgs(argv: string[]): { positional: string[]; flags: Map<string, s
     '--out',
     '--file',
     '--expect-key',
+    '--region',
   ])
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!

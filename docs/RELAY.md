@@ -108,7 +108,7 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 
 ### Cloudflare Workers（edge）
 
-当前 Workers 的 WebSocket 接口在交给 JavaScript 前已经组装消息，也没有返回单连接物理关闭结果的接口。生产 Worker 拒绝升级，源码部署命令停止。设置与 CLI 拒绝添加 Workers 配置，已有配置可以停用、移除。Host 不为这些配置拨号或签发通行证，手机也跳过旧连接簿里的 Workers 地址。
+当前 Workers 的 WebSocket 接口在交给 JavaScript 前已经组装消息，也没有返回单连接物理关闭结果的接口。生产 Worker 拒绝升级。源码部署命令 `pnpm relay-edge:setup` 与应用命令 `latch relay setup cloudflare` 共用发布门槛，在构建与调用 Wrangler 前拒绝。设置与 CLI 拒绝添加 Workers 配置，已有配置可以停用、移除。Host 不为这些配置拨号或签发通行证，手机也跳过旧连接簿里的 Workers 地址。
 
 协议和部署模块保留用于本地验证。发布门槛见 [Worker 验收条件](../apps/relay-edge/deploy/README.md)。
 
@@ -118,7 +118,7 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 
 - 只有这台 Mac 上有 `admin` 的设备能添加、停用、移除；其他有 `admin` 的设备只看得到列表与状态。
 - 每个节点只能添加一次，至多四个自己的中继。
-- 命令行：Host 停止时可用 `pnpm latch relay add --file <中继文件> --data-dir <目录>`、`relay list` 和 `relay remove <节点标识>`。添加时终端列出每个地址与密钥短哈希，核对后输入 y，非交互用 `--expect-key <密钥短哈希>`。先写审计再保存为待核对，Host 启动后节点证明密钥并接受登记，才可进入签名连接簿。Host 运行时可用 `relay test <节点标识>` 检查连通性、身份与登记，并查看 Host 签发状态。
+- Host 停止时可用 `latch relay add --file <中继文件> --data-dir <目录>`、`relay list` 和 `relay remove <节点标识>`。源码运行使用 `pnpm latch`。添加时终端列出每个地址与密钥短哈希，核对后输入 y，非交互用 `--expect-key <密钥短哈希>`。先写审计再保存为待核对，Host 启动后节点证明密钥并接受登记，才可进入签名连接簿。Host 运行时可用 `relay test <节点标识>` 检查连通性、身份与登记，并查看 Host 签发状态。`relay setup linux` 显示服务器发布物尚未提供，Linux 源码部署流程见上文。
 
 **Host 做什么。**
 

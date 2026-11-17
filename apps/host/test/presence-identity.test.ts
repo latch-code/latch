@@ -22,9 +22,11 @@ async function fixture() {
   for (const name of ['latch-presence', 'latch-presence-launch'])
     await writeFile(join(root, 'dist/native', name), 'fixture', { mode: 0o700 })
   const audit = await AuditLog.open(join(root, 'audit'))
-  cleanup.push(() => audit.close())
+  let closing: Promise<void> | undefined
+  const closeAudit = () => (closing ??= audit.close())
+  cleanup.push(closeAudit)
   const policy = await PolicyStore.open({ dataDir: root, audit, platform: 'darwin' })
-  return { root, audit, policy }
+  return { root, audit, policy, closeAudit }
 }
 
 describe('release presence identity', () => {
@@ -60,6 +62,36 @@ describe('release presence identity', () => {
     await reopened.pinHelperIdentity(identity.hash, true)
     expect(reopened.get().presence).toMatchObject({ mode: 'identity', identityHash: identity.hash })
     expect(audit.latest(['presence.helper.identity-pinned'])).toMatchObject({ stepup: 'offline' })
+  })
+
+  it('remembers a legacy first offline CDHash repin after the policy file is lost and the audit is reopened', async () => {
+    const { root, audit, policy, closeAudit } = await fixture()
+    const actor = { listener: 'cli', via: 'cli' } as const
+    const initial = policy.get()
+    await policy.update({ ...initial, presence: { ...initial.presence, helperCdhash: 'c'.repeat(40) } }, actor, 'offline')
+    expect(audit.lastOf('policy.changed')?.detail.fields).toEqual(['presence.helperCdhash'])
+    expect(audit.lastOf('presence.helper.pinned')).toBeUndefined()
+    await policy.update({ ...policy.get(), hostEgressAllow: ['example.test:443'] }, actor, 'offline')
+    expect(audit.lastOf('policy.changed')?.detail.fields).toEqual(['hostEgressAllow'])
+
+    const auditPath = join(root, 'audit/audit.jsonl')
+    const original = await readFile(auditPath, 'utf8')
+    await rm(join(root, 'policy.json'))
+    const lost = await PolicyStore.open({ dataDir: root, audit, platform: 'darwin' })
+    const rebuilt = await readFile(auditPath, 'utf8')
+    expect(rebuilt.startsWith(original)).toBe(true)
+    expect(audit.lastOf('policy.changed-outside')).toBeDefined()
+    await expect(lost.pinHelperIdentity(identity.hash)).rejects.toMatchObject({ code: 'presence-repin-required' })
+    await closeAudit()
+    const reopenedAudit = await AuditLog.open(join(root, 'audit'))
+    cleanup.push(() => reopenedAudit.close())
+    const reopened = await PolicyStore.open({ dataDir: root, audit: reopenedAudit, platform: 'darwin' })
+    await expect(reopened.pinHelperIdentity(identity.hash)).rejects.toMatchObject({ code: 'presence-repin-required' })
+    await expect(reopened.pinHelperCdhash('d'.repeat(40))).rejects.toMatchObject({ code: 'presence-repin-required' })
+    expect(await readFile(auditPath, 'utf8')).toBe(rebuilt)
+
+    await reopened.pinHelperIdentity(identity.hash, true)
+    expect(reopenedAudit.lastOf('presence.helper.identity-pinned')).toMatchObject({ stepup: 'offline' })
   })
 
   it('requires an offline repin when the policy has an identity and the audit has no previous pin', async () => {

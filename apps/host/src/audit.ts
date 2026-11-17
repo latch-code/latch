@@ -157,6 +157,7 @@ export class AuditLog {
   private headState = { seq: 0, hash: GENESIS }
   private readonly hashes: string[] = []
   private readonly latestByAction = new Map<AuditAction, AuditRecord>()
+  private presenceCdhashRecorded = false
   /** What full-access sessions started with: their launch fingerprints, definitions and harnesses. */
   private readonly started = { launches: new Set<string>(), definitions: new Set<string>(), harnesses: new Set<string>() }
   private bytes = 0
@@ -246,6 +247,14 @@ export class AuditLog {
 
   private index(record: AuditRecord): void {
     this.latestByAction.set(record.action, record)
+    // Older offline repins described the changed field without a dedicated pin event.
+    if (
+      record.action === 'presence.helper.pinned'
+      || (record.action === 'policy.changed'
+        && Array.isArray(record.detail.fields)
+        && record.detail.fields.includes('presence.helperCdhash'))
+    )
+      this.presenceCdhashRecorded = true
     if (record.action === 'worktree.remove') {
       const key = String(record.detail.worktreeHash)
       this.worktreeRemovalsBegun.delete(key)
@@ -266,6 +275,10 @@ export class AuditLog {
     if (typeof launchHash === 'string') this.started.launches.add(launchHash)
     if (typeof definitionHash === 'string') this.started.definitions.add(definitionHash)
     if (typeof harnessId === 'string') this.started.harnesses.add(harnessId)
+  }
+
+  hasPresenceCdhashHistory(): boolean {
+    return this.presenceCdhashRecorded
   }
 
   /**

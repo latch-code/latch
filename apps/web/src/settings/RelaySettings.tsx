@@ -536,7 +536,10 @@ function AddRelay({
       />
     </div>
   )
-  const commands = way === 'edge' || way === 'self' ? relaySetupCommands(way, { region, server, domain }) : undefined
+  const commands =
+    sourceCheckout && (way === 'self' || (way === 'edge' && edgeAvailable))
+      ? relaySetupCommands(way, { region, server, domain })
+      : undefined
   const steps =
     way === 'edge' && commands ? (
       <ol className="relay-steps-list">
@@ -658,7 +661,7 @@ function AddRelay({
             return missing ? (
               <Tooltip
                 key={option}
-                content={platformUnavailable ? EDGE_UNAVAILABLE : '安装版尚未提供引导部署命令。部署好后用「已有中继文件」添加。'}>
+                content={platformUnavailable ? EDGE_UNAVAILABLE : '安装版尚未提供服务器发布物。部署好后用「已有中继文件」添加。'}>
                 {row}
               </Tooltip>
             ) : (

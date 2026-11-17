@@ -225,11 +225,11 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 
 `Contents/Resources/bin/latch` 是原生入口。它从固定 Homebrew、fnm、nvm 安装目录查找 Node，不解析工作目录或 PATH 上的同名程序；解析真实路径后限制在安装根内，检查文件与父目录的属主、写权限与 Mach-O 头，再在空工作目录中用过滤后的环境探测受支持的安全版本。缺失、过旧或不可核对时只提示安装。Host 与 CLI 始终带 `--disable-sigusr1`。桌面端首次启动与每次包内重启均通过该入口重新核对系统 Node。旧 Node 路径已移除时仍按合法启动记录恢复，成功启动就记录实际选中的新路径。
 
-安装包 CLI 默认使用平台数据目录，忽略调用目录下的旧 `.runtime`；显式 `--data-dir` 与 `LATCH_DATA_DIR` 仍适用。源码的 `pnpm latch` 保留原兼容规则。网页按自身构建来自源码或应用包选择对应命令。`status` 经 `host.sock` 核对后报告运行状态与构建是否一致，`stop` 复用同一身份核验、忙时保护与 SIGTERM 流程；其他在线命令统一核对 Host 构建。应用自己的终端将包内 `bin` 放入初始 PATH，登录 shell 可重新排序。本机设置复制的命令使用包内绝对路径。
+安装包 CLI 默认使用平台数据目录，忽略调用目录下的旧 `.runtime`；显式 `--data-dir` 与 `LATCH_DATA_DIR` 仍适用。源码的 `pnpm latch` 保留原兼容规则。网页按自身构建来自源码或应用包选择对应命令。`status` 经 `host.sock` 核对后报告运行状态与构建是否一致，`stop` 复用同一身份核验、忙时保护与 SIGTERM 流程；其他在线命令统一核对 Host 构建。应用自己的终端将包内 `bin` 放入初始 PATH，登录 shell 可重新排序。安装包只向本机主窗口顶层页提供包内绝对路径。设置复制、离线连接及模型密钥与地址的本机指引都用同一套 shell 引号规则。
 
 设置中的命令行链接只接受本机主窗口的真实手势。只在当前用户拥有、他人不可写、非符号链接的 `~/.local/bin` 中独占创建 `latch` 链接；已有相同目标读作已链接，其他文件或链接读作占用，均不改写。更新同一路径的应用后链接自然指向新版本。移动应用后旧链接需所有者自行移除再重新链接。不会修改 profile 或 shell 配置。
 
-**确认组件身份。** 源码与本机 ad-hoc 签名应用继续固定 CDHash。发布身份构建将 Apple Developer ID Application 证书类别、公开 Team ID 与 `dev.latch.presence` 标识符编译为固定 requirement，运行时环境和 `policy.json` 均不能提供身份。策略严格校验 `mode`（旧文件缺省为 `cdhash`）与 `identityHash`，不保存可更改的 requirement。策略与审计均无旧固定记录时，首次使用先审计再固定。任一侧的身份记录缺失，或存在旧 CDHash 记录时，须停止 Host，显式运行 `presence repin` 并确认。审计失败不迁移，换团队拒绝自动迁移，开发构建不能降低已有身份模式。
+**确认组件身份。** 源码与本机 ad-hoc 签名应用继续固定 CDHash。发布身份构建将 Apple Developer ID Application 证书类别、公开 Team ID 与 `dev.latch.presence` 标识符编译为固定 requirement，运行时环境和 `policy.json` 均不能提供身份。策略严格校验 `mode`（旧文件缺省为 `cdhash`）与 `identityHash`，不保存可更改的 requirement。策略与审计均无旧固定记录时，首次使用先审计再固定。审计链读回与新增记录都会索引专用 CDHash 固定事件，以及旧版手工固定时写入 `policy.changed` 的 `presence.helperCdhash` 字段。任一侧的身份记录缺失，或存在旧 CDHash 记录时，须停止 Host，显式运行 `presence repin` 并确认。审计失败不迁移，换团队拒绝自动迁移，开发构建不能降低已有身份模式。
 
 每次确认前核对 helper 与同团队的 `dev.latch.presence-launch` 签名和权限。原生启动器以 `POSIX_SPAWN_START_SUSPENDED` 创建确认进程，随后用 Security.framework 对实际子进程进行动态 requirement 校验，成功后才恢复执行；未核验的进程不能读取预览或写出批准。子进程未被回收期间 PID 不会复用。预览、摘要、nonce 与返回协议不变。
 

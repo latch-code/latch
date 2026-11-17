@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -26,11 +27,6 @@ describe.runIf(process.platform === 'darwin' && packageApp !== undefined)('appli
     const data = join(temporary, 'data')
     await mkdir(directory)
     await mkdir(data, { mode: 0o700 })
-    await writeFile(
-      join(data, 'policy.json'),
-      JSON.stringify({ ...defaultPolicy('darwin'), presence: { backend: 'none', helperCdhash: null } }),
-      { mode: 0o600 },
-    )
     await writeFile(join(directory, 'node'), '#!/bin/sh\nprintf project-node-ran >&2\nexit 71\n', { mode: 0o755 })
     const loader = join(temporary, 'loader.mjs')
     await writeFile(loader, 'throw new Error("loader-injection-ran")\n')
@@ -48,6 +44,43 @@ describe.runIf(process.platform === 'darwin' && packageApp !== undefined)('appli
     expect((await cli(['--help', '--data-dir', data])).stdout).toContain('用法：latch <命令>')
     expect((await cli(['--version', '--data-dir', data])).stdout).toMatch(/^Latch \d+\.\d+\.\d+/u)
     expect((await cli(['--runtime-check'])).stdout).toMatch(/^Node.js /u)
+    const out = join(temporary, 'latch-cloudflare.json')
+    await expect(cli(['relay', 'setup', 'cloudflare', '--region', 'ne', '--out', out, '--data-dir', data])).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining('消息组装前大小与连接释放约束'),
+    })
+    await expect(stat(out)).rejects.toMatchObject({ code: 'ENOENT' })
+
+    let connections = 0
+    const fakeRelay = createServer(socket => {
+      connections++
+      socket.destroy()
+    })
+    await new Promise<void>((resolve, reject) => {
+      fakeRelay.once('error', reject)
+      fakeRelay.listen(0, '127.0.0.1', resolve)
+    })
+    cleanup.push(() => new Promise<void>(resolve => fakeRelay.close(() => resolve())))
+    const address = fakeRelay.address()
+    if (!address || typeof address === 'string') throw new Error('Local test relay did not get a TCP port')
+    const self = { relayId: 'a'.repeat(32), url: `https://127.0.0.1:${address.port}/`, spkiHash: 'b'.repeat(64) }
+    await writeFile(
+      join(data, 'policy.json'),
+      JSON.stringify({
+        ...defaultPolicy('darwin'),
+        presence: { backend: 'none', helperCdhash: null },
+        hostEgressAllow: [`127.0.0.1:${address.port}`],
+      }),
+      { mode: 0o600 },
+    )
+    const file = join(temporary, 'self-relay.json')
+    await writeFile(file, JSON.stringify({ version: 1, profile: self }), { mode: 0o600 })
+    expect((await cli(['relay', 'add', '--file', file, '--expect-key', self.spkiHash.slice(0, 8), '--data-dir', data])).stdout).toContain(
+      '已保存',
+    )
+    const list = async () => JSON.parse((await cli(['relay', 'list', '--json', '--data-dir', data])).stdout)
+    expect(await list()).toMatchObject({ relays: [{ relayId: self.relayId, kind: 'self', unverified: true }] })
+
     cleanup.push(() => cli(['stop', '--data-dir', data]))
     const started = await cli(['--internal-desktop-bootstrap', '--data-dir', data, '--workspace', directory, '--port', '0', '--demo'])
     expect(JSON.parse(started.stdout)).toEqual({ hostStatePath: join(data, 'host.json') })
@@ -58,6 +91,12 @@ describe.runIf(process.platform === 'darwin' && packageApp !== undefined)('appli
     expect(record.launch).toMatchObject({ script: await realpath(join(resources, 'app/dist/start.js')), nodeArgs: [] })
     expect((await run('/bin/ps', ['-p', String(status.pid), '-o', 'command='])).stdout).toContain('--disable-sigusr1')
     expect((await cli(['device', 'list', '--json', '--data-dir', data])).stdout.trim()).toBe('[]')
+    const beforeTest = connections
+    await expect(cli(['relay', 'test', self.relayId, '--data-dir', data])).rejects.toMatchObject({
+      code: 1,
+      stdout: expect.stringContaining('连不上这个中继'),
+    })
+    expect(connections).toBeGreaterThan(beforeTest)
 
     await writeFile(join(resources, 'app/dist/web/build.json'), JSON.stringify({ build: '20000101T000000Z-abcdef' }))
     const olderHost = JSON.parse((await cli(['status', '--json', '--data-dir', data])).stdout)
@@ -73,6 +112,8 @@ describe.runIf(process.platform === 'darwin' && packageApp !== undefined)('appli
         stderr: expect.stringContaining('运行中的 Host 与此 Latch 应用版本不一致'),
       })
     expect((await cli(['stop', '--data-dir', data])).stdout).toContain('已停止')
+    expect((await cli(['relay', 'remove', self.relayId, '--data-dir', data])).stdout).toContain('已移除')
+    expect(await list()).toMatchObject({ relays: [] })
   }, 120_000)
 })
 

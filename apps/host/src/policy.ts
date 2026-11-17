@@ -308,7 +308,7 @@ export class PolicyStore {
           'presence-already-pinned',
           `本机确认组件记录了其他签名；如需更换，请停止 Host 后运行 ${CLI_PROGRAM} presence repin。`,
         )
-      if (this.audit.latest(['presence.helper.pinned'])) {
+      if (this.audit.hasPresenceCdhashHistory()) {
         throw new AppError(
           409,
           'presence-repin-required',
@@ -339,10 +339,7 @@ export class PolicyStore {
       if (current.mode === 'identity' && current.identityHash !== identityHash)
         throw new AppError(409, 'presence-identity-changed', '发布签名身份与此数据目录的记录不符。')
       if (current.mode === 'identity' && previous) return
-      if (
-        !migrate
-        && (current.mode === 'identity' || previous || current.helperCdhash !== null || this.audit.latest(['presence.helper.pinned']))
-      )
+      if (!migrate && (current.mode === 'identity' || previous || current.helperCdhash !== null || this.audit.hasPresenceCdhashHistory()))
         throw new AppError(409, 'presence-repin-required', '本机确认记录不完整或需要迁移。请停止 Host 后运行 latch presence repin。')
       const actor: AuditActor = migrate ? { listener: 'cli', via: 'cli' } : { listener: 'host', via: 'startup' }
       await this.audit.append({

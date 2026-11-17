@@ -898,7 +898,8 @@ describe('latch CLI', () => {
   it('writes a code only to a file it creates: never through a symlink, over an existing file or in a shared directory', async () => {
     const directory = await temporaryDirectory()
     const victim = join(directory, 'victim-rc')
-    await writeFile(victim, 'export PATH=/usr/bin\n', { mode: 0o644 })
+    await writeFile(victim, 'export PATH=/usr/bin\n')
+    await chmod(victim, 0o644)
     await symlink(victim, join(directory, 'linked.txt'))
     await symlink(join(directory, 'created-elsewhere'), join(directory, 'dangling.txt'))
     await writeFile(join(directory, 'existing.txt'), 'keep\n', { mode: 0o600 })
@@ -1103,6 +1104,20 @@ describe('latch CLI', () => {
     cleanups.push(() => t.close())
     const verified = await run(TSX, [LATCH, 'audit', 'verify', '--data-dir', t.dataDir], { cwd: directory, env })
     expect(verified.stdout).toMatch(/审计记录完整：共 \d+ 条/u)
+  })
+
+  it('refuses unavailable relay setup before it creates output or Host data', async () => {
+    const directory = await temporaryDirectory()
+    const dataDir = join(directory, 'absent-data')
+    const out = join(directory, 'latch-relay.json')
+    const cloudflare = cli({ cwd: directory })
+    expect(await cloudflare.latch('relay', 'setup', 'cloudflare', '--region', 'ne', '--out', out, '--data-dir', dataDir)).toBe(1)
+    expect(cloudflare.output.stderr).toContain('消息组装前大小与连接释放约束')
+    const linux = cli({ cwd: directory })
+    expect(await linux.latch('relay', 'setup', 'linux', '--data-dir', dataDir)).toBe(1)
+    expect(linux.output.stderr).toContain('尚未提供 Linux 中继发布物')
+    await expect(stat(dataDir)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(out)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('adds, lists, orders, switches and removes relays with the Host stopped, never showing a registration key', async () => {

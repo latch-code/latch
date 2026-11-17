@@ -194,6 +194,7 @@ function createWindow({ width = 1250, height = 850, preload = true, partition } 
     ...(preload && process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: trafficLights() } : {}),
     webPreferences: {
       ...(preload ? { preload: join(__dirname, 'preload.cjs') } : {}),
+      ...(preload && !partition && app.isPackaged ? { additionalArguments: [`--latch-cli-executable=${PACKAGED_CLI}`] } : {}),
       // Another computer's window: its own storage, cache and scheme handlers, shared with nothing else.
       ...(partition ? { partition } : {}),
       sandbox: true,

@@ -449,6 +449,8 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 
 `desktop-cli.e2e.ts` 的三种链接状态、三种宽度与浅深色截图默认写 `test-results/desktop-cli`，可用 `LATCH_PACKAGE_SHOTS` 指定验收目录。复制用内存剪贴板，登录 shell 使用临时 profile 和同名命令，核对含空格与单引号的包内绝对路径仍执行正确的程序。链接只写测试自己的临时目录。`enrollment.e2e.ts` 在指定 `LATCH_PACKAGE_APP` 时也核对包内页面显示安装命令。
 
+分发用例同时走包内 `relay add`、`list`、`test` 与 `remove`。临时策略只放行假中继刚申请的回环端口，断言测试确实拨到了该端口。`relay setup cloudflare` 应在产生输出文件前拒绝。
+
 ## 构建产物检查
 
 测试代码是 `@latch/testkit`（`packages/testkit/`）、`tests/`、`e2e/` 与各项目 `test/` 中的文件，只有测试导入它们：

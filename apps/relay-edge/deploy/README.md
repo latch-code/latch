@@ -1,6 +1,6 @@
 # Cloudflare Workers 中继
 
-生产部署尚未开放。发布入口会拒绝 WebSocket 升级，`pnpm relay-edge:setup` 会在构建或调用 Wrangler 前停止。当前可用的方式是 [Linux 中继](../../../docs/RELAY.md#方式-alinux-服务器self) 与局域网直连。
+生产部署尚未开放。发布入口会拒绝 WebSocket 升级，`pnpm relay-edge:setup` 与 `latch relay setup cloudflare` 会在构建或调用 Wrangler 前停止。当前可用的方式是 [Linux 中继](../../../docs/RELAY.md#方式-alinux-服务器self) 与局域网直连。
 
 ## 上线所需的平台能力
 

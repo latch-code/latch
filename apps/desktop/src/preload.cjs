@@ -547,6 +547,10 @@ const HOME = (() => {
   }
 })()
 const REMOTE = /^h-[a-z2-7]{52}$/.test(HOME)
+const CLI_EXECUTABLE =
+  HOME === 'app' && process.isMainFrame
+    ? process.argv.find(value => value.startsWith('--latch-cli-executable='))?.slice('--latch-cli-executable='.length)
+    : undefined
 
 /**
  * Where the traffic lights end, in px from the window's left edge, so the page's top row starts clear of them: they
@@ -599,6 +603,7 @@ if (!REMOTE)
       platform: process.platform,
       previews: Object.freeze({ protocolVersion: 1, htmlScripts: true }),
       cli: Object.freeze({
+        ...(CLI_EXECUTABLE ? { executable: CLI_EXECUTABLE } : {}),
         get: () => ipcRenderer.invoke('latch:cli:get'),
         install: () => ipcRenderer.invoke('latch:cli:install'),
       }),

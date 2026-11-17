@@ -63,6 +63,7 @@ import {
   CONFIRMATION_RESULT_TEXT,
   DEVICES_COPY,
   describeFailure,
+  ENROLLMENT_COPY,
   FILE_COPY,
   isCatalogCode,
   MODEL_MENU_COPY,
@@ -371,6 +372,25 @@ describe('a Host of the previous build (no snapshot.host)', () => {
   it('shows the restart message when the enrollment API is missing after a 401', () => {
     expect(infoFailureStep(new ApiError(404, 'not-found', 'x'))).toEqual({ kind: 'old-host' })
     expect(infoFailureStep(new TypeError('Failed to fetch')).kind).toBe('load-failed')
+  })
+})
+
+describe('offline command guidance', () => {
+  it('uses the signed local shell path for credentials before a short command has been linked', () => {
+    const executable = "/Applications/Owner's Latch.app/Contents/Resources/bin/latch"
+    vi.stubGlobal('window', { latchShell: { kind: 'electron', cli: { executable } } })
+    const command = String.raw`'/Applications/Owner'\''s Latch.app/Contents/Resources/bin/latch'`
+    expect(ENROLLMENT_COPY.unavailable('本机确认不可用')).toContain(`${command} device enroll --offline`)
+    expect(ENROLLMENT_COPY.unavailableRemote('本机确认不可用')).not.toContain(executable)
+    expect(PROVIDER_COPY.keyOffline('test-provider')).toContain(`${command} provider set-key test-provider`)
+    expect(PROVIDER_COPY.confirmOffline('test-provider')).toContain(`${command} provider confirm test-provider`)
+    expect(PROVIDER_COPY.confirmOfflineNew()).toContain(`${command} provider confirm <服务 ID>`)
+  })
+
+  it('keeps the source command without an installed local executable', () => {
+    vi.stubGlobal('window', { latchShell: { kind: 'electron' } })
+    expect(ENROLLMENT_COPY.unavailable('本机确认不可用')).toContain('pnpm latch device enroll --offline')
+    expect(PROVIDER_COPY.keyOffline('test-provider')).toContain('pnpm latch provider set-key test-provider')
   })
 })
 

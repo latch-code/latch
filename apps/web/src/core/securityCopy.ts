@@ -1,4 +1,4 @@
-import { LATCH_COMMAND } from './commands.ts'
+import { LATCH_COMMAND, localLatchCommand } from './commands.ts'
 import {
   escapeSecurityText,
   isAcceptableDeviceName,
@@ -318,7 +318,7 @@ export const ENROLLMENT_COPY = {
   offline: '用离线连接码连接',
   /** Why only the offline code is accepted, with the Host's reason (trailing full stops removed). */
   unavailable: (reason: string) =>
-    `Mac 现在不能确认：${reason || '未知原因'}。停止 Latch 服务后，在 Mac 上运行 ${LATCH_COMMAND} device enroll --offline，把生成的离线连接码填在下面。`,
+    `Mac 现在不能确认：${reason || '未知原因'}。停止 Latch 服务后，在 Mac 上运行 ${localLatchCommand()} device enroll --offline，把生成的离线连接码填在下面。`,
   /** The same, where the Host takes no offline code (every listener but host.sock): nothing here can be submitted yet. */
   unavailableRemote: (reason: string) => `Mac 现在不能确认：${reason || '未知原因'}。要等它能确认后才能连接。`,
   invitationRequired: '这台设备还没连接到 Latch。用运行 Latch 的人发来的链接打开这一页，就能连接。',
@@ -660,7 +660,7 @@ export const PROVIDER_COPY = {
   keyElsewhere: (computer = 'Mac') => `在 ${computer} 上的 Latch 里填写`,
   /** Without Touch ID or a password to confirm with, for an address not confirmed yet: the key goes in with the address. */
   keyOffline: (id: string) =>
-    `地址确认之前不能在这里填写密钥：停止 Latch 服务后运行 ${LATCH_COMMAND} provider set-key ${id}，密钥与地址一起确认。`,
+    `地址确认之前不能在这里填写密钥：停止 Latch 服务后运行 ${localLatchCommand()} provider set-key ${id}，密钥与地址一起确认。`,
   /** The add form on a device that cannot type keys, for a service that needs one. */
   keyAfterSave: (computer = 'Mac') => `保存后在 ${computer} 上填写密钥`,
   /** A saved service at a known address without a key: it is not offered. */
@@ -690,8 +690,9 @@ export const PROVIDER_COPY = {
   confirmElsewhere: (name: string, computer = 'Mac') => `需要在 ${computer} 上确认这个地址：设置 › 模型 › ${name}。`,
   /** A computer without Touch ID or a password to confirm with: the offline command. */
   confirmOffline: (id: string) =>
-    `这台电脑不能用 Touch ID 或登录密码确认。停止 Latch 服务后运行 ${LATCH_COMMAND} provider confirm ${id}（或用 set-key 同时保存密钥），再启动 Latch。`,
-  confirmOfflineNew: `这台电脑不能用 Touch ID 或登录密码确认。先不填密钥保存，再停止 Latch 服务，运行 ${LATCH_COMMAND} provider confirm <服务 ID>。`,
+    `这台电脑不能用 Touch ID 或登录密码确认。停止 Latch 服务后运行 ${localLatchCommand()} provider confirm ${id}（或用 set-key 同时保存密钥），再启动 Latch。`,
+  confirmOfflineNew: () =>
+    `这台电脑不能用 Touch ID 或登录密码确认。先不填密钥保存，再停止 Latch 服务，运行 ${localLatchCommand()} provider confirm <服务 ID>。`,
   /** A Mac whose confirmation component needs fixing (rebuilt, signature lost): the given reason, with its fix. */
   presenceBroken: (message: string) => `这台 Mac 暂时不能确认：${message}`,
   savedUnconfirmed: (computer = 'Mac') => `保存后在 ${computer} 上确认这个地址`,

@@ -429,6 +429,8 @@ export interface LatchShell {
     subscribe(callback: (lifecycle: ShellLifecycle) => void): () => void
   }
   cli?: {
+    /** The installed executable path, supplied only to the main window for this Mac. */
+    executable?: string
     get(): Promise<ShellCli | undefined>
     install(): Promise<ShellCli | undefined>
   }

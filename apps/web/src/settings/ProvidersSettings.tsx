@@ -79,7 +79,7 @@ type CheckState = { ok: true; latencyMs: number; count: number } | { ok: false; 
 /** Where an address is confirmed on the desktop that cannot confirm it now: the fix, or the offline command. */
 function offlineText(abilities: ProviderAbilities, providerId?: string): string {
   if (abilities.presenceBroken) return PROVIDER_COPY.presenceBroken(abilities.presenceBroken)
-  return providerId ? PROVIDER_COPY.confirmOffline(providerId) : PROVIDER_COPY.confirmOfflineNew
+  return providerId ? PROVIDER_COPY.confirmOffline(providerId) : PROVIDER_COPY.confirmOfflineNew()
 }
 
 /** The protocols a service's address speaks, its preset's first; a service with no preset may speak any. */
