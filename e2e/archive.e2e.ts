@@ -85,7 +85,7 @@ describe('archived session management', () => {
       await expect.poll(() => batch.locator('input:checked').count()).toBe(2)
       await batch.getByRole('button', { name: '删除', exact: true }).click()
       const confirmation = page.getByRole('dialog', { name: '删除 2 个会话？', exact: true })
-      await confirmation.getByText('会话记录会永久删除，文件夹中的文件不受影响。', { exact: true }).waitFor()
+      await confirmation.getByText('删除这些会话在 Latch 里的对话、附件与改动快照。').waitFor()
       const deleteResponse = page.waitForResponse(
         response => response.url().endsWith('/link/api/tasks/batch') && response.request().method() === 'POST',
       )

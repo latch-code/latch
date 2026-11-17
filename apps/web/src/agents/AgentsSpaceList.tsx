@@ -23,6 +23,7 @@ import { VisibleText } from '../components/VisibleText.tsx'
 import { startBlock } from '../composerChoice.ts'
 import { MessageError } from '../core/api.ts'
 import { relativeTime } from '../format.ts'
+import { agentDeletionMessage } from '../deletionCopy.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { WriteNotice } from './AgentForm.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
@@ -321,7 +322,7 @@ export function AgentsSpaceList({
       {canDelete && removing && (
         <ConfirmDialog
           title={`删除「${removing.name}」？`}
-          message="它的记忆会删除，聊天记录和文件夹会保留。"
+          message={agentDeletionMessage()}
           danger
           confirmLabel={writes.held ? '重试同一请求' : '删除'}
           onClose={() => setRemoving(null)}

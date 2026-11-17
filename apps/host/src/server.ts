@@ -2628,6 +2628,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       audited,
       auditFailed,
     })
+    /**
+     * Everything Latch keeps for a session, removed the same way by every delete (one, or a batch of archived ones): the
+     * harness's record (an ACP agent is asked to delete its own copy only where it offers that, never for an imported
+     * session; docs/HARNESSES.md), queued input, questions, attachments, file references and the session's summary;
+     * `sessionDeleted` then removes its change snapshots, review notes and page data. The worktree stays, marked private.
+     */
+    async function removeSessionRecords(id: string): Promise<void> {
+      memoryRefusals.delete(id)
+      await keepWorktreePrivacy(id)
+      await harnessHub.remove(id)
+      await promptQueues.forgetSession(id)
+      await questions.forgetSession(id)
+      fileRoutes.forgetSession(id)
+      await attachmentStore.removeTask(id).catch(() => logNoted('cleanup-failed', {}, '未能清理已删除会话的附件'))
+      await fileReferences.remove(id).catch(() => logNoted('cleanup-failed', {}, '未能清理已删除会话的文件引用记录'))
+      summaries.delete(id)
+      refresh()
+    }
     const sessionRoutes = createSessionRoutes<Caller>({
       templates: templateStore,
       changed: () => refresh(),
@@ -2642,16 +2660,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       },
       remove: async id => {
         restrictChatRemoval(id)
-        memoryRefusals.delete(id)
-        await keepWorktreePrivacy(id)
-        await harnessHub.remove(id)
-        await promptQueues.forgetSession(id)
-        await questions.forgetSession(id)
-        fileRoutes.forgetSession(id)
-        await attachmentStore.removeTask(id).catch(() => logNoted('cleanup-failed', {}, '未能清理已删除会话的附件'))
-        await fileReferences.remove(id).catch(() => logNoted('cleanup-failed', {}, '未能清理已删除会话的文件引用记录'))
-        summaries.delete(id)
-        refresh()
+        await removeSessionRecords(id)
       },
       authorize: requireScope,
       recheck: (caller, scope) => {
@@ -9543,14 +9552,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await assertSessionAccess(caller, id)
         restrictChatRemoval(id)
         terminalRoutes.checkSessionEnd(caller, id)
-        await keepWorktreePrivacy(id)
-        await hub!.remove(id)
-        memoryRefusals.delete(id)
-        await promptQueues.forgetSession(id)
-        await questions.forgetSession(id)
-        await attachmentStore.removeTask(id).catch(() => logNoted('cleanup-failed', {}, '未能清理已删除会话的附件'))
-        summaries.delete(id)
-        refresh()
+        await removeSessionRecords(id)
         json(res, { deleted: true })
         return true
       }

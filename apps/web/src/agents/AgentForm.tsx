@@ -17,6 +17,7 @@ import {
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ProjectPicker } from '../components/Pickers.tsx'
 import { harnessName } from '../composerChoice.ts'
+import { agentDeletionMessage } from '../deletionCopy.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { draftOf, normalizedDraft, patchOf, rebaseDraft, saveWaits, type AgentDraft } from './model.ts'
 import { isolationBrief } from './helpers.ts'
@@ -424,7 +425,7 @@ export function AgentForm({
           title={`删除「${agent.name}」？`}
           danger
           confirmLabel="删除"
-          message={`它的记忆一并删除，已有会话保留。它在内置 Harness 上的会话不再接受输入。它的文件夹留着${homePath ? `：${homePath}` : ''}。`}
+          message={agentDeletionMessage(homePath)}
           onClose={() => {
             setDeleting(false)
           }}

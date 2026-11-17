@@ -4,6 +4,7 @@ import { api, errorMessage, MessageError } from '../core/api.ts'
 import { ShellPalette } from '../palette/ShellPalette.tsx'
 import { ConfirmDialog, PromptDialog } from '../components/overlays.tsx'
 import { toolRowId } from '../conversation.ts'
+import { sessionDeletionMessage } from '../deletionCopy.ts'
 import { Button, Toast } from '@latch/ui'
 import { settingsSections } from '../settings/SettingsPage.tsx'
 import { ShortcutsOverlay } from './ShortcutsOverlay.tsx'
@@ -207,7 +208,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
           title="删除会话"
           danger
           confirmLabel="删除"
-          message={`删除「${deleting.title || '未命名会话'}」及其全部记录？此操作无法撤销。`}
+          message={sessionDeletionMessage([deleting], snapshot.catalog?.harnesses ?? [], deleting.title || '未命名会话')}
           onClose={() => {
             setDeleting(null)
           }}

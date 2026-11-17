@@ -27,6 +27,7 @@ import { api, errorMessage, isUncertain } from '../core/api.ts'
 import { computerName, describeFailure, SETUP_COPY } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, type FolderResult, type ShellFolders } from '../core/shell.ts'
 import { basename, relativeTime, statusLabels } from '../format.ts'
+import { FOLDER_REMOVAL, PROJECT_REMOVAL } from '../deletionCopy.ts'
 import { recentProjectSessions } from '../sessions.ts'
 import { folderAccessText, PROJECT_ICONS, ProjectIcon, projectFolders, projectName, projectSessionCount } from '../projects.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
@@ -550,7 +551,7 @@ export function ProjectEditor({
               ? `移除项目「${escapeSecurityText(name)}」？`
               : `从项目中移除「${escapeSecurityText(basename(removing.path))}」？`
           }
-          message="文件夹中的文件不会被删除。在这个项目中使用这些文件夹的已有会话仍可查看，但不能继续。"
+          message={removing === 'project' ? PROJECT_REMOVAL : FOLDER_REMOVAL}
           confirmLabel={removing === 'project' ? '移除项目' : '移除'}
           danger
           onClose={() => setRemoving(null)}

@@ -1,11 +1,20 @@
 import { useState } from 'react'
-import type { SessionBatchResult, TaskSummary } from '@latch/protocol'
+import type { HarnessInfo, SessionBatchResult, TaskSummary } from '@latch/protocol'
 import { Button, InlineNotice } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
+import { sessionDeletionMessage } from '../deletionCopy.ts'
 import { isActive } from '../format.ts'
 import { ConfirmDialog } from './overlays.tsx'
 
-export function ArchiveBatch({ tasks, onChanged }: { tasks: TaskSummary[]; onChanged: () => Promise<unknown> }) {
+export function ArchiveBatch({
+  tasks,
+  harnesses,
+  onChanged,
+}: {
+  tasks: TaskSummary[]
+  harnesses: readonly HarnessInfo[]
+  onChanged: () => Promise<unknown>
+}) {
   const [active, setActive] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [anchor, setAnchor] = useState<number>()
@@ -102,7 +111,10 @@ export function ArchiveBatch({ tasks, onChanged }: { tasks: TaskSummary[]; onCha
       {deleting && (
         <ConfirmDialog
           title={`删除 ${selected.size} 个会话？`}
-          message="会话记录会永久删除，文件夹中的文件不受影响。"
+          message={sessionDeletionMessage(
+            rows.filter(task => selected.has(task.id)),
+            harnesses,
+          )}
           confirmLabel="删除"
           danger
           onConfirm={() => run('delete')}

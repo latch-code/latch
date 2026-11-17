@@ -1592,7 +1592,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     search.trim() && catalog?.features?.search ? <SessionSearchResults state={contentSearch} onSelect={selectSearchHit} /> : undefined
   const archiveBatch =
     filter === 'archived' && catalog?.features?.sessionBatch && access.scopes.has('run') ? (
-      <ArchiveBatch tasks={snapshot.tasks} onChanged={refresh} />
+      <ArchiveBatch tasks={snapshot.tasks} harnesses={snapshot.catalog?.harnesses ?? []} onChanged={refresh} />
     ) : undefined
   const archiveUndo = archivedLast ? <ArchiveUndo key={archivedLast.id} onUndo={undoArchive} onExpire={forgetArchive} /> : undefined
   const findReveal = useStableCallback((messageId: string, offset?: number) => {

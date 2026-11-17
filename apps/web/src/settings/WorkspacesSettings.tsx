@@ -5,6 +5,7 @@ import type { DeviceAccess } from '../core/permissions.ts'
 import { api, errorMessage, MessageError } from '../core/api.ts'
 import { computerName, describeFailure, SETUP_COPY } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFolders, type FolderResult, type ShellFolders } from '../core/shell.ts'
+import { PROJECT_REMOVAL } from '../deletionCopy.ts'
 import { basename } from '../format.ts'
 import { ProjectIcon, projectFolders } from '../projects.tsx'
 import { CodeRootNotice } from '../components/CodeRootNotice.tsx'
@@ -402,7 +403,7 @@ export function WorkspacesSettings({
           title={`移除「${removing.name || basename(removing.path)}」？`}
           confirmLabel="移除项目"
           danger
-          message="文件夹中的文件不会被删除。"
+          message={PROJECT_REMOVAL}
           onClose={() => {
             setRemoving(null)
           }}

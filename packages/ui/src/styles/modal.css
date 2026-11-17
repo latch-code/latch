@@ -120,6 +120,8 @@
   min-height: 44px;
 }
 .ui-confirm-message {
+  /* A message of several facts breaks between them (a deletion's \n-separated lines). */
+  white-space: pre-line;
   color: var(--ink-2);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui-para);
