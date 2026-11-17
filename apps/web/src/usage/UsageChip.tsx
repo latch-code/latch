@@ -37,7 +37,15 @@ function LimitChip({
   const words = `${name}${figure}`
   return (
     <span className="composer-control composer-usage">
-      <Tooltip content={reset ?? label} shortcut={keys} describe={false}>
+      {/* The words lead the hover too: a short row shows the bar alone (usage.css). */}
+      <Tooltip
+        content={
+          <>
+            <span>{words}</span> · <span>{reset ?? label}</span>
+          </>
+        }
+        shortcut={keys}
+        describe={false}>
         <button
           type="button"
           className="chip usage-chip"

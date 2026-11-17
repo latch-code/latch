@@ -709,16 +709,17 @@ export function Composer({
         ) : (
           <>
             {!desktopLocation && input}
+            {/* The choices wrap among themselves; 「⋯」 and send keep the line's end (composer.css). */}
             <div className="composer-toolbar">
               <div className="composer-controls">
                 {!addLeads && add}
                 {slashButton}
                 {controls}
+                {trailing}
+                {usage}
               </div>
               <div className="composer-end">
-                {trailing}
                 {meta && <div className="composer-meta">{meta}</div>}
-                {usage}
                 {action}
               </div>
             </div>

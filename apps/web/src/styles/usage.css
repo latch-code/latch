@@ -130,13 +130,48 @@
 }
 /*
  * The chip takes only the room the row has left, so its coming never pushes a control onto another line: it starts
- * from nothing and grows into the space before send, standing at its end; where that is short the name gives way first,
- * the figure never.
+ * from nothing and grows into the space before send, standing at its end. It shows whole (bar and words), or its bar
+ * alone with the words in its hover, or nothing: its words wrap onto a second line its own height hides, and below
+ * the bar's own width it goes. Never cut, never a stub.
  */
 .composer-usage {
   display: flex;
   flex: 1 1 0;
   justify-content: flex-end;
+  min-width: 0;
+}
+/* It may get no room at all: the gap before it is its own, so a full line never breaks for it. */
+.composer-toolbar .composer-usage {
+  container: composer-usage / inline-size;
+  margin-inline-start: calc(-1 * var(--sp-4));
+  padding-inline-start: var(--sp-4);
+}
+.composer-toolbar .usage-chip {
+  flex-wrap: wrap;
+  align-content: flex-start;
+  justify-content: flex-end;
+  row-gap: 0;
+  overflow: hidden;
+}
+.composer-toolbar .usage-chip > * {
+  flex: none;
+  block-size: 28px;
+}
+.composer-toolbar .usage-chip-bar {
+  block-size: 4px;
+  margin-block: 12px;
+}
+.composer-toolbar .usage-chip > svg {
+  block-size: 14px;
+  margin-block: 7px;
+}
+.composer-toolbar .usage-chip-text.chip-text {
+  align-items: center;
+}
+@container composer-usage (max-width: 31.98px) {
+  .usage-chip {
+    display: none;
+  }
 }
 .usage-chip {
   min-width: 0;

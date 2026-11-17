@@ -295,41 +295,45 @@
   display: none;
 }
 
+/*
+ * Two parts that never wrap past each other: the choices (「+」, Harness, 模型, 思考, 权限, then the limit in what is
+ * left of their line) and the end (「⋯」 and send), which keeps the right of the choices' last line, so send never stands
+ * alone or under anything. As the composer narrows, in this order: the limit chip's words go (its bar stays, the words
+ * in its hover), then its bar goes; then the choices take another line among themselves, the last first (权限, then
+ * 思考, …); then a choice alone wider than its line cuts its value with an ellipsis (the whole value in its hover).
+ * No choice is ever hidden.
+ */
 .composer-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-4) var(--sp-8);
+  flex-wrap: nowrap;
+  align-items: flex-end;
+  gap: var(--sp-8);
   min-height: 44px;
   padding: 0 var(--sp-8) var(--sp-8) var(--sp-8);
 }
-/*
- * Who does the work and with which model at the start (「+」, Harness, 模型); how hard and how careful at the end, by
- * send (思考, 权限, 「⋯」). All four stay readable at every width, so a narrow toolbar takes another row instead of
- * hiding one, and the end keeps to the right on it.
- */
-.composer-controls,
-.composer-end {
+.composer-controls {
   display: flex;
+  flex: 1 1 auto;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-4);
   min-width: 0;
-}
-.composer-controls {
-  flex: 0 1 auto;
+  min-height: 32px;
 }
 .composer-controls:empty {
   display: none;
 }
 .composer-end {
-  flex: 0 1 auto;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-4);
   margin-inline-start: auto;
 }
-.composer-end > .composer-slot {
-  margin-inline-start: var(--sp-4);
+.composer-end:empty {
+  display: none;
 }
-:is(.composer-controls, .composer-end) > *,
+.composer-controls > *,
 .composer-control {
   max-width: 100%;
   min-width: 0;

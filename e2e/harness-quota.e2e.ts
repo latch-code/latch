@@ -250,6 +250,140 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
     }
   })
 
+  /**
+   * What breaks the composer's footer at a width: two of its parts overlapping, send past the composer's edge or on a line
+   * of its own, or the limit chip cut (a bar with no room, words past its edge). Read on the visible composer.
+   */
+  const footerProblems = (page: Page) =>
+    page.evaluate(() => {
+      const form = [...document.querySelectorAll<HTMLElement>('form.composer')].find(
+        element => element.checkVisibility() && !element.closest('[inert]'),
+      )
+      if (!form) return ['no composer']
+      const problems: string[] = []
+      const shown = (element: Element) => (element as HTMLElement).checkVisibility({ visibilityProperty: true, opacityProperty: true })
+      const rect = (element: Element) => element.getBoundingClientRect()
+      const frame = rect(form)
+      const send = form.querySelector('.send-button, .stop-button')
+      const parts = [
+        ...form.querySelectorAll(
+          '[data-composer-control] > button, [data-composer-control] > * > button, .composer-meta > *, .send-button, .stop-button',
+        ),
+      ].filter(element => shown(element) && rect(element).width > 0 && !element.closest('.composer-usage'))
+      const chip = form.querySelector('.composer-toolbar .usage-chip')
+      const boxes = parts.map(element => [element, rect(element)] as const)
+      if (chip && shown(chip) && rect(chip).width > 0) {
+        const box = rect(chip)
+        const bar = chip.querySelector('.usage-chip-bar, svg')
+        const text = chip.querySelector('.usage-chip-text')
+        const barBox = bar && rect(bar)
+        if (barBox && (barBox.left < box.left - 0.5 || barBox.right > box.right + 0.5)) problems.push('limit bar cut')
+        const textBox = text && rect(text)
+        // Words on the chip's own line are whole; on the line under it they are hidden by its height.
+        if (textBox && textBox.top < box.bottom - 1 && (textBox.left < box.left - 0.5 || textBox.right > box.right + 0.5))
+          problems.push('limit words cut')
+        // What of it shows: from its bar (or glyph) to its end.
+        boxes.push([chip, new DOMRect(barBox ? barBox.left : box.left, box.top, box.right - (barBox ? barBox.left : box.left), box.height)])
+      }
+      for (let a = 0; a < boxes.length; a++)
+        for (let b = a + 1; b < boxes.length; b++) {
+          const [, one] = boxes[a]!
+          const [, two] = boxes[b]!
+          if (one.left < two.right - 0.5 && two.left < one.right - 0.5 && one.top < two.bottom - 0.5 && two.top < one.bottom - 0.5)
+            problems.push(`${(boxes[a]![0] as HTMLElement).className} × ${(boxes[b]![0] as HTMLElement).className}`)
+        }
+      if (send) {
+        const box = rect(send)
+        if (box.right > frame.right - 1 || box.left < frame.left) problems.push(`send outside the composer (${box.right} > ${frame.right})`)
+        // Send stands on a row of controls, never alone under them (a phone's controls are a row of their own above the input).
+        const controls = boxes.filter(([element]) => element !== send && element.closest('[data-composer-control]'))
+        if (
+          form.querySelector('.composer-toolbar')
+          && controls.length
+          && !controls.some(([, other]) => other.top < box.bottom && box.top < other.bottom)
+        )
+          problems.push('send on a line of its own')
+      }
+      return problems
+    })
+
+  it('keeps the footer on one line with send at its end at every width, with and without the limit and with long values', async () => {
+    const context = await browser.newContext({ viewport: { width: 1100, height: 900 }, reducedMotion: 'reduce', locale: 'zh-CN' })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    try {
+      await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
+      const shots = [780, 840, 900, 1020, 1100]
+      let long = false
+      // Long values as a Harness may report them: a long model ID and thinking level, set again after each re-render.
+      const lengthen = () =>
+        page.evaluate(() => {
+          const text = (selector: string, words: string) => {
+            for (const element of document.querySelectorAll(`form.composer ${selector} .ui-value-picker-text`)) element.textContent = words
+          }
+          text('.model-picker', 'gpt-6.1-sol-codex-max-preview-2026-11-01')
+          text('.thinking-picker', 'Extra high reasoning')
+        })
+      const step = async (label: string) => {
+        const failures: string[] = []
+        for (let width = 320; width <= 1100; width += 20) {
+          await page.setViewportSize({ width, height: 900 })
+          await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))))
+          if (long) {
+            await lengthen()
+            await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))))
+          }
+          for (const problem of await footerProblems(page)) failures.push(`${label} ${width}: ${problem}`)
+          if (shots.includes(width))
+            for (const theme of ['light', 'dark'] as const) {
+              await page.emulateMedia({ colorScheme: theme })
+              await page.screenshot({
+                path: `${OUTPUT}/footer-${label.replaceAll(/[ ,]+/gu, '-')}--${width}-${theme}.png`,
+                animations: 'disabled',
+              })
+            }
+        }
+        await page.emulateMedia({ colorScheme: 'light' })
+        expect(failures).toEqual([])
+      }
+      // A session on Codex, its limit shown.
+      await openSession(page, sessions.codex)
+      await chip(page).waitFor({ state: 'attached' })
+      await step('session')
+      long = true
+      await step('session, long values')
+      long = false
+      // The start screen on Codex, as a new session's composer lays out its footer by its own width.
+      await page.setViewportSize({ width: 1100, height: 900 })
+      await page
+        .getByRole('button', { name: /^新会话/u })
+        .filter({ visible: true })
+        .first()
+        .click()
+      const harness = page.locator('.workbench-home .harness-picker').filter({ visible: true }).first()
+      if (!(await harness.innerText()).includes('Codex')) {
+        await harness.click()
+        await page
+          .getByRole('option', { name: /^Codex/u })
+          .or(page.getByRole('menuitemradio', { name: /^Codex/u }))
+          .first()
+          .click()
+      }
+      await page.locator('.workbench-home .usage-chip').first().waitFor({ state: 'attached' })
+      await step('start')
+      long = true
+      await step('start, long values')
+      long = false
+      // Without the limit.
+      await page.addStyleTag({ content: '.composer-usage { display: none !important; }' })
+      await step('start, no limit')
+      await openSession(page, sessions.codex)
+      await step('session, no limit')
+    } finally {
+      await context.close()
+    }
+  })
+
   it('opens the surface as a sheet on a phone', async () => {
     const page = await open(390, 'light', sessions.codex)
     try {

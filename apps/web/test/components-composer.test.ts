@@ -886,7 +886,7 @@ describe('composer', () => {
     expect(html).not.toContain('取消')
   })
 
-  it('puts Harness and 模型 at the start and 思考 and 权限 at the end, by send', () => {
+  it('puts Harness and 模型 first, then 思考 and 权限, and keeps 「⋯」 and send in an end of their own', () => {
     const controls = createElement('span', { 'data-composer-control': 'model' }, 'gpt-5.5')
     const trailing = createElement('span', { 'data-composer-control': 'thinking' }, '高')
     const order = (markup: string) =>
@@ -896,19 +896,20 @@ describe('composer', () => {
     expect(order(renderToStaticMarkup(createElement(Composer, { ...base, controls, trailing })))).toEqual([
       'controls',
       'model',
-      'end',
       'thinking',
+      'end',
       'send',
     ])
     // What comes and goes by itself, as a Harness's limits mark, is given last, after every control and right before
     // send at either width: when it appears or leaves, no control before it moves.
-    const meta = createElement('span', { 'data-composer-control': 'late' }, '68%')
-    expect(order(renderToStaticMarkup(createElement(Composer, { ...base, controls, trailing, meta }))).slice(-3)).toEqual([
+    const usage = createElement('span', { 'data-composer-control': 'late' }, '68%')
+    expect(order(renderToStaticMarkup(createElement(Composer, { ...base, controls, trailing, usage }))).slice(-4)).toEqual([
       'thinking',
       'late',
+      'end',
       'send',
     ])
-    const chips = order(renderToStaticMarkup(createElement(Composer, { ...base, inline: true, controls, trailing, meta })))
+    const chips = order(renderToStaticMarkup(createElement(Composer, { ...base, inline: true, controls, trailing, usage })))
     expect(chips).toEqual(['model', 'thinking', 'late', 'send'])
     // A phone: the four controls are one row of chips above the line of ＋, the input and send; no toolbar.
     const phone = renderToStaticMarkup(createElement(Composer, { ...base, variant: 'session', inline: true, controls, trailing }))

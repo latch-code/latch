@@ -379,14 +379,8 @@
 .workbench-home-composer .composer-toolbar {
   padding: 0 var(--sp-12) var(--sp-12);
 }
-.workbench-home-composer .composer-end {
-  display: contents;
-}
 .workbench-home-composer .composer-meta {
   margin-left: 0;
-}
-.workbench-home-composer .composer-slot {
-  margin-left: auto;
 }
 .workbench-home-composer .send-button {
   border-radius: var(--r-8);
@@ -652,12 +646,6 @@
 }
 .workspace .composer {
   border-radius: var(--r-16);
-}
-.workspace .composer-toolbar:not([data-rows='two']) > .composer-end {
-  display: contents;
-}
-.workspace .composer-toolbar:not([data-rows='two']) .composer-slot {
-  margin-inline-start: auto;
 }
 .workspace .composer-dock {
   padding-bottom: var(--sp-24);
