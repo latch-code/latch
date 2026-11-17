@@ -847,6 +847,13 @@ do {
         result = ["hostId": book.hostId, "deviceId": book.deviceId, "generation": book.generation, "payloadHash": LinkBytes.hex(book.payloadHash), "relays": book.relays.count]
         if let directory = book.directory { result["directoryAnchors"] = directory.anchors.count }
         if input["profiles"] as? Bool == true { result["profiles"] = book.relays.map { $0.profile?.rawValue ?? "legacy-v1" } }
+        if input["edge"] as? Bool == true {
+            result["kinds"] = book.relays.map { $0.edge == nil ? "self" : "edge" }
+            result["relayKeys"] = book.relays.map { $0.edge.map { LinkBytes.hex($0.relayKey) } ?? "" }
+            result["urls"] = book.relays.map { $0.urls.map(\.absoluteString) }
+            result["order"] = NativeRelayOrder.ordered(book).map { LinkBytes.hex($0.relayId) }
+            result["hostRegion"] = book.hostRegion ?? ""
+        }
     case "bookPathChange":
         let root = try LinkBytes.unhex(input["rootSpki"] as? String ?? ""), deviceId = input["deviceId"] as? String ?? ""
         let now = (input["timeMs"] as? NSNumber)?.uint64Value ?? 0
@@ -877,6 +884,16 @@ do {
         result = ["matches": value == Data((input["expected"] as? String ?? "").utf8),
             "backupExcluded": try directory.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true]
         await vault.lock()
+    case "edgeRelay":
+        func value(_ text: Any?) throws -> Data { try LinkBytes.unhex(text as? String ?? "invalid") }
+        let edge = input["edgeRelay"] as? [String: Any] ?? [:], time = (input["timeMs"] as? NSNumber)?.uint64Value ?? 0
+        let relayId = try value(input["relayId"]), clientNonce = try value(edge["clientNonce"]), relayNonce = try value(edge["relayNonce"])
+        result["challengeInput"] = try LinkBytes.hex(NativeEdgeChallenge.input(relayId: relayId, clientNonce: clientNonce, relayNonce: relayNonce, timeMs: time, requiresToken: false))
+        result["verified"] = try NativeEdgeChallenge.verify(relayKey: value(edge["relayKey"]), relayId: relayId, clientNonce: clientNonce, relayNonce: relayNonce, timeMs: time, requiresToken: false, signature: value(edge["challengeSignature"]))
+        result["otherNonce"] = try NativeEdgeChallenge.verify(relayKey: value(edge["relayKey"]), relayId: relayId, clientNonce: Data(count: 32), relayNonce: relayNonce, timeMs: time, requiresToken: false, signature: value(edge["challengeSignature"]))
+        result["otherKey"] = try NativeEdgeChallenge.verify(relayKey: Data(repeating: 1, count: 32), relayId: relayId, clientNonce: clientNonce, relayNonce: relayNonce, timeMs: time, requiresToken: false, signature: value(edge["challengeSignature"]))
+        let pass = try NativeRelayPass(bytes: value(input["pass"]), holderSeed: value(input["holderSeed"]))
+        result["boundAdmission"] = try LinkBytes.hex(pass.boundAdmission(timeMs: time, nonce: value(edge["proofNonce"]), relayNonce: relayNonce))
     case "vectors":
         func bytes(_ text: Any?) throws -> Data { try LinkBytes.unhex(text as? String ?? "invalid") }
         let pairing = input["pairing"] as? [String: Any] ?? [:], verification = input["nativeVerification"] as? [String: Any] ?? [:]

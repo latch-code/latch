@@ -79,12 +79,31 @@ private func certificateSPKI(_ der: Data) throws -> Data {
 private final class RelaySetup: @unchecked Sendable {
     let endpoint: NativeRelayAddress
     let admission: NativeRelayPass
+    /** The origin this connection dials: the node's URL or, on an edge node, one of its further origins. */
+    let origin: URL
     let key: String
     let outerSlot: RelayOuterSlot?
-    init(endpoint: NativeRelayAddress, admission: NativeRelayPass) throws {
-        self.endpoint = endpoint; self.admission = admission
+    /** Edge kind: this connection's nonce, signed back by the node with its relay key. */
+    let clientNonce: Data
+    init(endpoint: NativeRelayAddress, admission: NativeRelayPass, origin: URL) throws {
+        self.endpoint = endpoint; self.admission = admission; self.origin = origin
         outerSlot = try endpoint.profile == .outerPadV2 ? RelayOuterSlot() : nil
         key = try LinkBytes.random(16).base64EncodedString()
+        clientNonce = try LinkBytes.random(32)
+    }
+    var path: String { endpoint.edge.map { "/v1/c/\($0.shard)" } ?? "/v1/c" }
+}
+
+/** The edge kind's challenge text (link-wire relay-identity.ts `edgeChallengeInput`), for the client role. */
+public enum NativeEdgeChallenge {
+    public static func input(relayId: Data, clientNonce: Data, relayNonce: Data, timeMs: UInt64, requiresToken: Bool) throws -> Data {
+        try Data("latch-relay-edge-challenge-v1\0".utf8) + LinkBytes.fixed(relayId, 16) + Data([3]) + LinkBytes.fixed(clientNonce, 32)
+            + LinkBytes.fixed(relayNonce, 32) + LinkBytes.integer(timeMs, size: 8) + Data([requiresToken ? 1 : 0])
+    }
+    public static func verify(relayKey: Data, relayId: Data, clientNonce: Data, relayNonce: Data, timeMs: UInt64, requiresToken: Bool, signature: Data) -> Bool {
+        guard let key = try? Curve25519.Signing.PublicKey(rawRepresentation: relayKey), signature.count == 64,
+              let text = try? input(relayId: relayId, clientNonce: clientNonce, relayNonce: relayNonce, timeMs: timeMs, requiresToken: requiresToken) else { return false }
+        return key.isValidSignature(signature, for: text)
     }
 }
 
@@ -103,10 +122,10 @@ private final class RelayFramer: NWProtocolFramerImplementation {
     private var stopped = false
     required init(framer: NWProtocolFramer.Instance) { setup = framer.options["latch.relay"] as? RelaySetup }
     func start(framer: NWProtocolFramer.Instance) -> NWProtocolFramer.StartResult {
-        guard let setup, let host = setup.endpoint.url.host else { framer.markFailed(error: .posix(.EAUTH)); return .willMarkReady }
-        let authority = host + (setup.endpoint.url.port.map { ":\($0)" } ?? "")
+        guard let setup, let host = setup.origin.host else { framer.markFailed(error: .posix(.EAUTH)); return .willMarkReady }
+        let authority = host + (setup.origin.port.map { ":\($0)" } ?? "")
         let protocolName = setup.endpoint.profile == .outerPadV2 ? "latch-relay.2" : "latch-relay.1"
-        let request = "GET /v1/c HTTP/1.1\r\nHost: \(authority)\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: \(setup.key)\r\nSec-WebSocket-Protocol: \(protocolName)\r\n\r\n"
+        let request = "GET \(setup.path) HTTP/1.1\r\nHost: \(authority)\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: \(setup.key)\r\nSec-WebSocket-Protocol: \(protocolName)\r\n\r\n"
         framer.writeOutput(data: Data(request.utf8))
         framer.scheduleWakeup(wakeupTime: .milliseconds(8000))
         return .willMarkReady
@@ -184,7 +203,8 @@ private final class RelayFramer: NWProtocolFramerImplementation {
                 remaining = Data(header[end.upperBound...]); header.removeAll(keepingCapacity: false)
                 phase = .challenge
                 if setup.endpoint.profile == .outerPadV2 { outer = NativeRelayOuterPadding(); outerStart = .now; schedule(framer: framer) }
-                try send(Data([0x20, 1]), framer: framer)
+                // Edge: EDGE-HELLO with this connection's nonce; self-hosted: the frozen HELLO.
+                try send(setup.endpoint.edge == nil ? Data([0x20, 1]) : Data([0x27]) + setup.clientNonce, framer: framer)
             } else {
                 guard header.count <= 16_384 else { throw NativeFailure.invalidRecord }; return
             }
@@ -200,14 +220,25 @@ private final class RelayFramer: NWProtocolFramerImplementation {
             switch phase {
             case .challenge:
                 var reader = try LinkReader(frame.payload)
-                guard try reader.integer(1) == 0x40, LinkBytes.equal(try reader.take(16), setup.endpoint.relayId) else { throw NativeFailure.identityMismatch }
-                _ = try reader.take(32)
+                let edge = setup.endpoint.edge
+                guard try reader.integer(1) == (edge == nil ? 0x40 : 0x46), LinkBytes.equal(try reader.take(16), setup.endpoint.relayId) else { throw NativeFailure.identityMismatch }
+                let relayNonce = try reader.take(32)
                 let relayTime = try reader.integer(8), needsToken = try reader.integer(1)
+                let signature = try edge == nil ? Data() : reader.take(64)
                 try reader.done()
+                // Edge: nothing that depends on the node is sent before its relay-key signature over our nonce verifies.
+                if let edge {
+                    guard needsToken == 0, NativeEdgeChallenge.verify(relayKey: edge.relayKey, relayId: setup.endpoint.relayId, clientNonce: setup.clientNonce,
+                        relayNonce: relayNonce, timeMs: relayTime, requiresToken: false, signature: signature) else { throw NativeFailure.identityMismatch }
+                }
                 let now = Date().timeIntervalSince1970 * 1000, pass = try AdmissionPass.decode(setup.admission.bytes)
                 guard needsToken <= 1, abs(Double(relayTime) - now) <= 86_400_000,
                       now / 1000 >= Double(pass.notBefore), now / 1000 <= Double(pass.notAfter) else { throw NativeFailure.expired }
-                try send(Data([0x10]) + setup.admission.admission(timeMs: relayTime, nonce: LinkBytes.random(16)), framer: framer)
+                if edge != nil {
+                    try send(Data([0x11]) + setup.admission.boundAdmission(timeMs: relayTime, nonce: LinkBytes.random(16), relayNonce: relayNonce), framer: framer)
+                } else {
+                    try send(Data([0x10]) + setup.admission.admission(timeMs: relayTime, nonce: LinkBytes.random(16)), framer: framer)
+                }
                 phase = .admitted
             case .admitted:
                 guard frame.payload == Data([0x60]) else { throw NativeFailure.unavailable }; phase = .spliced
@@ -262,17 +293,43 @@ extension NativeHTTPConnection {
     public static func relay(target: NativeDirectoryTarget, admission: NativeRelayPass, rootSpki: Data, knockKey: Data,
         identity: PlatformIdentity? = nil, trustAnchor: Data? = nil) async throws -> NativeHTTPConnection {
         let address = try NativeDirectoryFetch.checkedAddress(target.address)
-        return try await relay(endpoint: target.endpoint, admission: admission, rootSpki: rootSpki, knockKey: knockKey,
+        guard target.endpoint.edge == nil else { throw NativeFailure.invalidRecord }
+        return try await relay(endpoint: target.endpoint, origin: target.endpoint.url, admission: admission, rootSpki: rootSpki, knockKey: knockKey,
             identity: identity, trustAnchor: trustAnchor, dialAddress: address)
     }
+    /**
+     * Self-hosted: the one pinned URL. Edge: every origin of the node races, staggered by 250 ms, the last good one first;
+     * the first whose relay-key signature verifies wins and the others are closed. The hostname never decides the node.
+     */
     public static func relay(endpoint: NativeRelayAddress, admission: NativeRelayPass, rootSpki: Data, knockKey: Data,
         identity: PlatformIdentity? = nil, trustAnchor: Data? = nil) async throws -> NativeHTTPConnection {
-        try await relay(endpoint: endpoint, admission: admission, rootSpki: rootSpki, knockKey: knockKey, identity: identity, trustAnchor: trustAnchor, dialAddress: nil)
+        guard endpoint.edge != nil else {
+            return try await relay(endpoint: endpoint, origin: endpoint.url, admission: admission, rootSpki: rootSpki, knockKey: knockKey, identity: identity, trustAnchor: trustAnchor, dialAddress: nil)
+        }
+        let origins = NativeEdgeOrigins.ordered(endpoint)
+        return try await withThrowingTaskGroup(of: (NativeHTTPConnection, URL)?.self) { group in
+            for (index, origin) in origins.enumerated() {
+                group.addTask {
+                    if index > 0 { try await Task.sleep(for: .milliseconds(250 * index)) }
+                    do {
+                        return (try await relay(endpoint: endpoint, origin: origin, admission: admission, rootSpki: rootSpki, knockKey: knockKey, identity: identity, trustAnchor: trustAnchor, dialAddress: nil), origin)
+                    } catch is CancellationError { throw CancellationError() } catch { return nil }
+                }
+            }
+            var winner: (NativeHTTPConnection, URL)?
+            while let next = try await group.next() {
+                guard let next else { continue }
+                if winner == nil { winner = next; group.cancelAll() } else { await next.0.close() }
+            }
+            guard let winner else { throw NativeFailure.unavailable }
+            NativeEdgeOrigins.remember(endpoint, origin: winner.1)
+            return winner.0
+        }
     }
-    private static func relay(endpoint: NativeRelayAddress, admission: NativeRelayPass, rootSpki: Data, knockKey: Data,
+    private static func relay(endpoint: NativeRelayAddress, origin: URL, admission: NativeRelayPass, rootSpki: Data, knockKey: Data,
         identity: PlatformIdentity?, trustAnchor: Data?, dialAddress: String?) async throws -> NativeHTTPConnection {
-        _ = try AddressBookCodec.relayURL(endpoint.url.absoluteString)
-        guard let hostname = endpoint.url.host, endpoint.spkiHash.count == 32, endpoint.relayId.count == 16,
+        _ = try AddressBookCodec.relayURL(origin.absoluteString)
+        guard let hostname = origin.host, endpoint.spkiHash.count == 32, endpoint.relayId.count == 16,
               LinkBytes.equal(try AdmissionPass.decode(admission.bytes).relayId, endpoint.relayId) else { throw NativeFailure.invalidRecord }
         let host = hostname.trimmingCharacters(in: CharacterSet(charactersIn: "[]")), outer = NWProtocolTLS.Options()
         let security = outer.securityProtocolOptions
@@ -292,9 +349,10 @@ extension NativeHTTPConnection {
                       SecTrustSetAnchorCertificates(actual, [certificate] as CFArray) == errSecSuccess,
                       SecTrustSetAnchorCertificatesOnly(actual, true) == errSecSuccess else { complete(false); return }
             }
+            // Edge: ordinary WebPKI; the node's identity is checked by its relay-key signature after the upgrade.
             guard SecTrustEvaluateWithError(actual, nil), let chain = SecTrustCopyCertificateChain(actual) as? [SecCertificate],
                   let leaf = chain.first, let spki = try? certificateSPKI(SecCertificateCopyData(leaf) as Data),
-                  LinkBytes.equal(LinkBytes.hash(spki), endpoint.spkiHash),
+                  endpoint.edge != nil || LinkBytes.equal(LinkBytes.hash(spki), endpoint.spkiHash),
                   sec_protocol_metadata_get_negotiated_tls_protocol_version(metadata) == .TLSv13,
                   let selected = sec_protocol_metadata_get_negotiated_protocol(metadata), String(cString: selected) == "http/1.1" else { complete(false); return }
             complete(true)
@@ -303,13 +361,31 @@ extension NativeHTTPConnection {
         let state = try HandshakeState(root: rootSpki, knockKey: knockKey, binding: binding)
         let inner = try NativeTLS.options(state: state, identity: identity)
         let knock = NWProtocolFramer.Options(definition: KnockFramer.definition); knock["latch.state"] = state
-        let relay = NWProtocolFramer.Options(definition: RelayFramer.definition); relay["latch.relay"] = try RelaySetup(endpoint: endpoint, admission: admission)
+        let relay = NWProtocolFramer.Options(definition: RelayFramer.definition); relay["latch.relay"] = try RelaySetup(endpoint: endpoint, admission: admission, origin: origin)
         let tcp = NWProtocolTCP.Options(); tcp.noDelay = true; tcp.connectionTimeout = 5
         tcp.enableKeepalive = true; tcp.keepaliveIdle = 60; tcp.keepaliveInterval = 15; tcp.keepaliveCount = 4
         let parameters = NWParameters(tls: outer, tcp: tcp)
         parameters.defaultProtocolStack.applicationProtocols.insert(contentsOf: [inner, knock, relay], at: 0)
         parameters.includePeerToPeer = false
-        let connection = NWConnection(host: NWEndpoint.Host(dialAddress ?? host), port: NWEndpoint.Port(rawValue: UInt16(endpoint.url.port ?? 443))!, using: parameters)
+        let connection = NWConnection(host: NWEndpoint.Host(dialAddress ?? host), port: NWEndpoint.Port(rawValue: UInt16(origin.port ?? 443))!, using: parameters)
         return try await establish(connection, state: state)
+    }
+}
+
+/** The origin of each edge node that last passed the identity check, tried first next time (in memory, at most 64). */
+public enum NativeEdgeOrigins {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var lastGood: [Data: URL] = [:]
+    public static func ordered(_ endpoint: NativeRelayAddress) -> [URL] {
+        let urls = Array(endpoint.urls.prefix(4))
+        lock.lock(); let remembered = lastGood[endpoint.relayId]; lock.unlock()
+        guard let remembered, let index = urls.firstIndex(of: remembered), index > 0 else { return urls }
+        return [remembered] + urls.enumerated().filter { $0.offset != index }.map(\.element)
+    }
+    static func remember(_ endpoint: NativeRelayAddress, origin: URL?) {
+        guard let origin else { return }
+        lock.lock(); defer { lock.unlock() }
+        if lastGood.count >= 64, lastGood[endpoint.relayId] == nil { lastGood.removeAll() }
+        lastGood[endpoint.relayId] = origin
     }
 }

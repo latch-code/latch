@@ -35,6 +35,8 @@ import {
   gatewayHash,
   invitationCode,
   parsePairingPayload,
+  verifyProof,
+  hex,
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import { FAKE_ACP_AGENT, fakeConversation, swiftFixturePath, testHarness, writeFakeHistory } from '@latch/testkit'
@@ -854,6 +856,52 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     const result = await invoke({ ...vectors, operation: 'vectors', binding: 'relay-pad-v2' })
     expect(result.knock).toBe(vectors.outerRelayV2.knock)
     expect(result.serverBinding).toBe(vectors.outerRelayV2.serverBinding)
+  })
+  it('decodes the v4 edge book and signs and checks the edge identity exchange like link-wire', async () => {
+    const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {
+      relayId: string
+      pass: string
+      holderSeed: string
+      timeMs: number
+      edgeRelay: Record<string, string>
+      addressBookV4: {
+        encoded: string
+        rootSpki: string
+        deviceId: string
+        issuedAt: number
+        hostId: string
+        generation: number
+        payloadHash: string
+      }
+    }
+    const signed = vectors.addressBookV4
+    expect(await invoke({ operation: 'addressBook', ...signed, timeMs: signed.issuedAt, profiles: true, edge: true })).toEqual({
+      hostId: signed.hostId,
+      deviceId: signed.deviceId,
+      generation: signed.generation,
+      payloadHash: signed.payloadHash,
+      relays: 2,
+      profiles: ['outer-pad-v2', 'outer-pad-v2'],
+      kinds: ['edge', 'self'],
+      relayKeys: [vectors.edgeRelay.relayKey, ''],
+      urls: [['https://latch-relay-ne.example.workers.dev/', 'https://ne.relay.example/'], ['https://relay.example/']],
+      order: [vectors.relayId, '33'.repeat(16)],
+      hostRegion: 'apac-ne',
+    })
+    const result = await invoke({ ...vectors, operation: 'edgeRelay' })
+    expect(result).toMatchObject({ challengeInput: vectors.edgeRelay.challengeInput, verified: true, otherNonce: false, otherKey: false })
+    // CryptoKit's Ed25519 signatures are randomized: the Swift proof is checked by the TypeScript verifier instead of by bytes.
+    const admission = Buffer.from(String(result.boundAdmission), 'hex')
+    const proof = {
+      pass: admission.subarray(0, 174),
+      timeMs: Number(admission.readBigUInt64BE(174)),
+      nonce: admission.subarray(182, 198),
+      signature: admission.subarray(198),
+    }
+    const relayNonce = Buffer.from(vectors.edgeRelay.relayNonce!, 'hex')
+    expect(hex(proof.nonce)).toBe(vectors.edgeRelay.proofNonce)
+    expect(await verifyProof(nodeCrypto, Buffer.from(vectors.relayId, 'hex'), proof, vectors.timeMs, relayNonce)).not.toBeNull()
+    expect(await verifyProof(nodeCrypto, Buffer.from(vectors.relayId, 'hex'), proof, vectors.timeMs)).toBeNull()
   })
   it('keeps both directory floors through encrypted restart, revoked online keys and unknown commits in Swift', async () => {
     const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {

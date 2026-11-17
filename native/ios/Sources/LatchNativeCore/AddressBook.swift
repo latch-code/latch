@@ -6,6 +6,7 @@ import Foundation
 public struct NativeRelayPass: Codable, Sendable {
     public let bytes: Data
     public let holderSeed: Data
+    public init(bytes: Data, holderSeed: Data) { self.bytes = bytes; self.holderSeed = holderSeed }
     public func routeId() throws -> Data { LinkBytes.hash(Data("latch-route-id-v1\0".utf8) + (try AdmissionPass.decode(bytes)).routePublicKey).prefix(16) }
     public func admission(timeMs: UInt64, nonce: Data) throws -> Data {
         let pass = try AdmissionPass.decode(bytes)
@@ -14,6 +15,21 @@ public struct NativeRelayPass: Codable, Sendable {
         guard LinkBytes.equal(key.publicKey.rawRepresentation, pass.holderPublicKey) else { throw NativeFailure.identityMismatch }
         return try bytes + LinkBytes.integer(timeMs, size: 8) + nonce + key.signature(for: input)
     }
+    /** The edge kind's single-use proof (link-wire pass.ts `boundProofInput`): v1's fields plus the node's 32-byte nonce. */
+    public func boundAdmission(timeMs: UInt64, nonce: Data, relayNonce: Data) throws -> Data {
+        let pass = try AdmissionPass.decode(bytes)
+        let input = try Data("latch-relay-proof-v2\0".utf8) + pass.relayId + routeId() + pass.tag + LinkBytes.integer(timeMs, size: 8)
+            + LinkBytes.fixed(nonce, 16) + LinkBytes.fixed(relayNonce, 32)
+        let key = try Curve25519.Signing.PrivateKey(rawRepresentation: LinkBytes.fixed(holderSeed, 32))
+        guard LinkBytes.equal(key.publicKey.rawRepresentation, pass.holderPublicKey) else { throw NativeFailure.identityMismatch }
+        return try bytes + LinkBytes.integer(timeMs, size: 8) + nonce + key.signature(for: input)
+    }
+}
+/** An edge node proves itself with this Ed25519 key over the challenge; every origin is only an address of it. */
+public struct NativeEdgeIdentity: Codable, Sendable, Equatable {
+    public let relayKey: Data
+    public let shard: Int
+    public let extraURLs: [URL]
 }
 public struct NativeRelayAddress: Codable, Sendable {
     public let relayId: Data
@@ -21,9 +37,16 @@ public struct NativeRelayAddress: Codable, Sendable {
     public let spkiHash: Data
     public let passes: [NativeRelayPass]
     public let profile: NativeRelayProfile?
-    public init(relayId: Data, url: URL, spkiHash: Data, passes: [NativeRelayPass], profile: NativeRelayProfile? = nil) {
+    /** Present only for the edge kind; then `spkiHash` is 32 zero bytes, which no certificate matches. */
+    public let edge: NativeEdgeIdentity?
+    public let region: String?
+    public init(relayId: Data, url: URL, spkiHash: Data, passes: [NativeRelayPass], profile: NativeRelayProfile? = nil,
+                edge: NativeEdgeIdentity? = nil, region: String? = nil) {
         self.relayId = relayId; self.url = url; self.spkiHash = spkiHash; self.passes = passes; self.profile = profile
+        self.edge = edge; self.region = region
     }
+    /** Every origin of the node, in signed order. */
+    public var urls: [URL] { [url] + (edge?.extraURLs ?? []) }
 }
 public struct NativeLanAddress: Codable, Sendable {
     public let address: String
@@ -43,6 +66,15 @@ public struct NativeAddressBook: Codable, Sendable {
     public let relays: [NativeRelayAddress]
     public let payloadHash: Data
     public let directory: NativeDirectorySource?
+    public var hostRegion: String? = nil
+}
+/** Relays in the Host's measured region first, then the rest in signed order (link-wire `orderRelays`). */
+public enum NativeRelayOrder {
+    public static func ordered(_ book: NativeAddressBook?) -> [NativeRelayAddress] {
+        guard let book else { return [] }
+        guard let near = book.hostRegion else { return book.relays }
+        return book.relays.filter { $0.region == near } + book.relays.filter { $0.region != near }
+    }
 }
 
 public struct AdmissionPass: Sendable {
@@ -96,7 +128,7 @@ public enum AddressBookCodec {
         guard NativeCrypto.verifyP256(spki: rootSpki, input: Data("latch-address-book-v1\0".utf8) + payload, signature: signature) else { throw NativeFailure.identityMismatch }
         var reader = try LinkReader(payload)
         let version = try reader.integer(1)
-        guard [1, 2, 3].contains(version), try reader.integer(1) == 0 else { throw NativeFailure.invalidRecord }
+        guard [1, 2, 3, 4].contains(version), try reader.integer(1) == 0 else { throw NativeFailure.invalidRecord }
         func text(_ bytes: Data) throws -> String {
             guard bytes.allSatisfy({ (33...126).contains($0) }), let value = String(data: bytes, encoding: .ascii) else { throw NativeFailure.invalidRecord }
             return value
@@ -119,8 +151,20 @@ public enum AddressBookCodec {
         guard relayCount <= 4 else { throw NativeFailure.invalidRecord }
         var relays: [NativeRelayAddress] = [], relayIds = Set<Data>()
         for _ in 0..<relayCount {
-            let relayId = try reader.take(16), url = try relayURL(text(reader.field(512))), spki = try reader.take(32), profile = try version == 3 ? reader.integer(1) : 0, passCount = try reader.integer(1)
-            guard profile <= 1, relayIds.insert(relayId).inserted, (1...64).contains(passCount) else { throw NativeFailure.invalidRecord }
+            let relayId = try reader.take(16), url = try relayURL(text(reader.field(512)))
+            let kind = try version == 4 ? reader.integer(1) : 0, identity = try reader.take(32), profile = try version >= 3 ? reader.integer(1) : 0
+            let shard = try version == 4 ? reader.integer(1) : 0, regionBytes = try version == 4 ? reader.field(16) : Data()
+            let extraCount = try version == 4 ? reader.integer(1) : 0
+            guard kind <= 1, kind == 1 || shard == 0, shard < 16, extraCount <= 3 else { throw NativeFailure.invalidRecord }
+            var extra: [URL] = []
+            for _ in 0..<extraCount { extra.append(try relayURL(text(reader.field(512)))) }
+            let region = try regionBytes.isEmpty ? nil : text(regionBytes)
+            let passCount = try reader.integer(1)
+            guard profile <= 1, relayIds.insert(relayId).inserted, (1...64).contains(passCount),
+                  region.map({ LinkBytes.matches($0, "[a-z0-9-]{1,16}") }) ?? true,
+                  Set(([url] + extra).map(\.absoluteString)).count == extra.count + 1,
+                  kind == 1 || extra.isEmpty,
+                  kind == 0 || (profile == 1 && !identity.allSatisfy { $0 == 0 }) else { throw NativeFailure.invalidRecord }
             var passes: [NativeRelayPass] = [], days = Set<String>()
             for _ in 0..<passCount {
                 let raw = try reader.take(174), seed = try reader.take(32), pass = try AdmissionPass.decode(raw)
@@ -129,7 +173,9 @@ public enum AddressBookCodec {
                       days.insert("\(pass.day):\(LinkBytes.hex(pass.routePublicKey))").inserted else { throw NativeFailure.identityMismatch }
                 passes.append(NativeRelayPass(bytes: raw, holderSeed: seed))
             }
-            relays.append(NativeRelayAddress(relayId: relayId, url: url, spkiHash: spki, passes: passes, profile: profile == 1 ? .outerPadV2 : nil))
+            relays.append(NativeRelayAddress(relayId: relayId, url: url, spkiHash: kind == 1 ? Data(count: 32) : identity, passes: passes,
+                profile: profile == 1 ? .outerPadV2 : nil, edge: kind == 1 ? NativeEdgeIdentity(relayKey: identity, shard: Int(shard), extraURLs: extra) : nil,
+                region: region))
         }
         var directory: NativeDirectorySource?
         if version >= 2 {
@@ -137,9 +183,20 @@ public enum AddressBookCodec {
             if !bytes.isEmpty { directory = try NativeDirectorySource.decode(bytes) }
             else if version == 2 { throw NativeFailure.invalidRecord }
         }
+        var hostRegion: String?
+        if version == 4 {
+            let bytes = try reader.field(16)
+            if !bytes.isEmpty {
+                hostRegion = try text(bytes)
+                guard LinkBytes.matches(hostRegion!, "[a-z0-9-]{1,16}") else { throw NativeFailure.invalidRecord }
+            }
+        }
         try reader.done()
         guard version != 3 || relays.contains(where: { $0.profile == .outerPadV2 }) else { throw NativeFailure.invalidRecord }
-        return NativeAddressBook(hostId: hostId, deviceId: actualDevice, generation: generation, issuedAt: issuedAt, expiresAt: expiresAt, discoveryKey: discoveryKey, lan: lan, relays: relays, payloadHash: payloadHash, directory: directory)
+        guard version != 4 || hostRegion != nil || relays.contains(where: { $0.edge != nil || $0.region != nil }) else { throw NativeFailure.invalidRecord }
+        var book = NativeAddressBook(hostId: hostId, deviceId: actualDevice, generation: generation, issuedAt: issuedAt, expiresAt: expiresAt, discoveryKey: discoveryKey, lan: lan, relays: relays, payloadHash: payloadHash, directory: directory)
+        book.hostRegion = hostRegion
+        return book
     }
 }
 

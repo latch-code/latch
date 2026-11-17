@@ -202,24 +202,26 @@ public actor NativeWorkspace {
     /** The PathOwner remains the only retry owner; each invocation rechecks the current signed book and admission date. */
     public func relayCandidate(relayId: Data) throws -> NativePathCandidate {
         guard relayId.count == 16, let endpoint = try currentBook().relays.first(where: { LinkBytes.equal($0.relayId, relayId) }) else { throw NativeFailure.invalidRecord }
-        let pin = endpoint.spkiHash, profile = endpoint.profile
+        let pin = endpoint.spkiHash, profile = endpoint.profile, edge = endpoint.edge
         return try NativePathCandidate(id: LinkBytes.hex(relayId), kind: .relay) { [weak self] in
-            guard let self else { throw NativeFailure.unavailable }; return try await self.connectRelay(relayId: relayId, spkiHash: pin, profile: profile)
+            guard let self else { throw NativeFailure.unavailable }; return try await self.connectRelay(relayId: relayId, spkiHash: pin, profile: profile, edge: edge)
         }
     }
-    private func connectRelay(relayId: Data, spkiHash: Data, profile: NativeRelayProfile?) async throws -> NativeHTTPConnection {
+    private func connectRelay(relayId: Data, spkiHash: Data, profile: NativeRelayProfile?, edge: NativeEdgeIdentity?) async throws -> NativeHTTPConnection {
         guard revocation == nil, !Task.isCancelled else { throw NativeFailure.unavailable }
         let book = try currentBook(), round = attempt, hash = bookDevice.bookHash
         if book.directory == nil { try await directoryResolver.configure(nil) }
         guard round == attempt, !Task.isCancelled else { throw NativeFailure.unavailable }
-        guard let endpoint = book.relays.first(where: { LinkBytes.equal($0.relayId, relayId) }), LinkBytes.equal(endpoint.spkiHash, spkiHash), endpoint.profile == profile else { throw NativeFailure.contextChanged }
+        guard let endpoint = book.relays.first(where: { LinkBytes.equal($0.relayId, relayId) }), LinkBytes.equal(endpoint.spkiHash, spkiHash), endpoint.profile == profile,
+              endpoint.edge == edge else { throw NativeFailure.contextChanged }
         let admission = try NativeRelayAdmission.current(endpoint: endpoint, bookExpiresAt: book.expiresAt, nowMs: UInt64(max(0, Date().timeIntervalSince1970 * 1000)))
         func current() -> Bool { round == attempt && LinkBytes.equal(hash, bookDevice.bookHash) && revocation == nil && !Task.isCancelled }
         do {
             let connection = try await NativeHTTPConnection.relay(endpoint: endpoint, admission: admission, rootSpki: device.rootSpki, knockKey: device.knockKey, identity: keys.identity())
             guard current() else { await connection.close(); throw NativeFailure.unavailable }; return connection
         } catch {
-            guard current(), let source = book.directory else { throw error }
+            // The address directory pins self-hosted nodes by TLS key and IP; an edge node is reached only by its origins.
+            guard current(), endpoint.edge == nil, let source = book.directory else { throw error }
             try await directoryResolver.configure(source)
             guard current() else { throw NativeFailure.unavailable }
             await directoryResolver.refresh()

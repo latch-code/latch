@@ -11,8 +11,10 @@ public enum NativeBookPathChange {
         let id: Data
         let spki: Data
         let profile: String?
+        let relayKey: Data?
+        let shard: Int?
     }
     private static func identities(_ book: NativeAddressBook) -> Set<RelayIdentity> {
-        Set(book.relays.map { RelayIdentity(id: $0.relayId, spki: $0.spkiHash, profile: $0.profile?.rawValue) })
+        Set(book.relays.map { RelayIdentity(id: $0.relayId, spki: $0.spkiHash, profile: $0.profile?.rawValue, relayKey: $0.edge?.relayKey, shard: $0.edge?.shard) })
     }
 }
