@@ -78,6 +78,16 @@ async function fixture() {
 }
 
 describe('bounded filename index', () => {
+  it('closes without waiting forever on a file system call that never settles', async () => {
+    const { index, search } = await fixture()
+    vi.mocked(opendir).mockImplementation((() => new Promise(() => {})) as typeof opendir)
+    void search('report').catch(() => {})
+    await new Promise(done => setTimeout(done, 50))
+    const started = performance.now()
+    await index.close()
+    expect(performance.now() - started).toBeLessThan(3000)
+  })
+
   it('reuses only names while freshly rejecting changed secret content, symlinks and revoked callers', async () => {
     controlledWatches()
     const f = await fixture()

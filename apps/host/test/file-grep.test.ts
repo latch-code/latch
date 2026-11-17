@@ -116,7 +116,7 @@ describe('content search', () => {
     const result = await search(f, 'needle', {}, { ...GREP_LIMITS, fileBytes: 1024 })
     expect(result.files.map(file => file.path)).not.toContain('image.bin')
     expect(result.files.map(file => file.path)).not.toContain('big.txt')
-    expect(result.skipped).toEqual({ large: 1, binary: 1, unchecked: 0 })
+    expect(result.skipped).toEqual({ large: 1, binary: 1, unchecked: 0, uncheckedFolders: 0 })
   })
 
   it('matches what looks like an option or a pattern as the literal text it is', async () => {
@@ -550,13 +550,15 @@ describe('content search route', () => {
   })
 
   it('frees a slot a hung read holds, after its hard time-out, and answers that it timed out', async () => {
-    const { request, state } = await routes()
+    const { request, state, nativeSignal } = await routes()
     state.afterResolve = () => new Promise<void>(() => {})
     const started = performance.now()
     const answer = await request('all', 'tasks/session/files/grep', { q: 'needle' })
     expect(answer.status).toBe(503)
     expect(((await answer.json()) as { error: string }).error).toBe('file-grep-timeout')
     expect(performance.now() - started).toBeLessThan(4000)
+    // The read still hangs, yet the listener on the long-lived connection signal (and the lease with it) is gone.
+    expect(getEventListeners(nativeSignal.signal, 'abort')).toHaveLength(0)
     state.afterResolve = undefined
     expect((await request('all', 'tasks/session/files/grep', { q: 'needle' })).status).toBe(200)
   })

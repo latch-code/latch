@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { folderOf, highlightParts, parseContentResults, resultSummary } from '../src/preview/contentSearch.ts'
+import { folderOf, highlightParts, parseContentResults, resultSummary, uncheckedNote } from '../src/preview/contentSearch.ts'
 
 const reply = (extra: Record<string, unknown> = {}) => ({
   files: [
@@ -81,8 +81,11 @@ describe('content search results', () => {
       skipped: '未搜索 1 个大文件、2 个非文本文件',
     })
     expect(
-      resultSummary(parseContentResults({ files: [], count: 0, scanned: 3, skipped: { large: 0, binary: 0, unchecked: 4 } })!).skipped,
-    ).toBe('未搜索 4 项未按忽略规则核对完')
+      resultSummary(
+        parseContentResults({ files: [], count: 0, scanned: 3, skipped: { large: 0, binary: 0, unchecked: 4, uncheckedFolders: 2 } })!,
+      ).unchecked,
+    ).toEqual({ label: '6 项未核对', detail: '2 个文件夹（连同其中内容）和 4 个文件的忽略规则没有核对完，按已忽略处理，没有搜索。' })
+    expect(uncheckedNote(0, 1)?.detail).toBe('1 个文件夹（连同其中内容）的忽略规则没有核对完，按已忽略处理，没有搜索。')
     expect(folderOf('src/deep/main.ts')).toBe('src/deep')
     expect(folderOf('main.ts')).toBe('')
   })

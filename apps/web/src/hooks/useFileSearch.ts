@@ -5,7 +5,10 @@ import { fileContextBody, fileContextKey, fileRoute } from '../preview/fileConte
 interface FileResults {
   files: Array<{ name: string; path: string; root: string }>
   truncated: boolean
+  /** Entries whose ignore check the Host cut short (treated as ignored). */
+  unchecked?: { files: number; directories: number }
 }
+const isCount = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 export function useFileSearch(query: string, context: FileContext | undefined) {
   const [state, setState] = useState<FileResults & { loading: boolean; error: string }>({
     files: [],
@@ -33,9 +36,17 @@ export function useFileSearch(query: string, context: FileContext | undefined) {
             || result.files.length > 100
             || typeof result.truncated !== 'boolean'
             || result.files.some(file => typeof file.name !== 'string' || !isFileMention({ root: file.root, path: file.path }))
+            || (result.unchecked !== undefined && (!isCount(result.unchecked.files) || !isCount(result.unchecked.directories)))
           )
             throw new MessageError('文件搜索响应无效。')
-          if (!controller.signal.aborted) setState({ ...result, loading: false, error: '' })
+          if (!controller.signal.aborted)
+            setState({
+              files: result.files,
+              truncated: result.truncated,
+              ...(result.unchecked ? { unchecked: { files: result.unchecked.files, directories: result.unchecked.directories } } : {}),
+              loading: false,
+              error: '',
+            })
         })
         .catch(cause => {
           if (!controller.signal.aborted) setState({ files: [], truncated: false, loading: false, error: errorMessage(cause) })

@@ -1,10 +1,13 @@
 // A small .gitignore reader for the file search. It only decides which names are offered first: every name offered is
 // still resolved and classified, so a wrong answer here can hide or demote a file but never reveal one.
 //
-// Matching is bounded, because the rules come from the repository: every character comparison is counted against a
-// budget per entry and per walk, and the deadline is looked at as patterns are tried. When the budget or the time runs
-// out, or a level's file was not kept whole (too long, too many lines, over the total), the answer is `undecided`, which
-// callers treat as ignored: never as "not ignored", so a cut-short check cannot bring a hidden file forward.
+// The rules come from the repository, so nothing here may hold the Host's event loop for long, whatever they hold.
+// Parsing is one pass per line, and a `[...]` set is compiled into a lookup with at most MAX_SET_ITEMS items, so every
+// counted step costs at most a bounded amount of work. Time is the backstop: while a verdict is worked out, the clock is
+// read every CLOCK_STEPS steps, and once the walk has gone YIELD_MS without letting the event loop turn, the verdict is
+// `undecided`. Callers treat `undecided` as ignored, never as kept, so a cut-short check cannot bring a hidden file
+// forward. The same holds when a level's file was not kept whole (too long, a line over a cap) and when a `!` line
+// matches at or below such a level.
 import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -17,12 +20,21 @@ const MAX_TOTAL_PATTERNS = 2000
 /** A pattern with more path segments or more `**` than this is not kept (the level is then not whole). */
 const MAX_SEGMENTS = 32
 const MAX_GLOBSTARS = 4
-/** Character comparisons one entry may cost across all levels, and one walk across all entries. */
+/** Characters and ranges one `[...]` set may list; a longer set leaves its line out (the level is then not whole). */
+const MAX_SET_ITEMS = 64
+/** Set items one file may compile in all. */
+const MAX_SET_ITEMS_PER_FILE = 8192
+/** Counted steps one entry may cost across all levels, and one walk across all entries. */
 export const ENTRY_STEPS = 200_000
 export const WALK_STEPS = 20_000_000
+/** Characters of ignore files one walk may parse. */
+export const PARSE_CHARACTERS = 4 * 1024 * 1024
+/** The longest a walk works without letting the event loop turn, and how often a verdict reads the clock. */
+export const YIELD_MS = 8
+const CLOCK_STEPS = 256
 
-type Token = { kind: 'literal'; value: string } | { kind: 'any' } | { kind: 'star' } | { kind: 'set'; negated: boolean; items: SetItem[] }
-type SetItem = { from: string; to: string }
+type CharSet = { negated: boolean; singles: Set<string>; ranges: Array<[string, string]> }
+type Token = { kind: 'literal'; value: string } | { kind: 'any' } | { kind: 'star' } | { kind: 'set'; set: CharSet }
 type Segment = 'globstar' | Token[]
 interface Pattern {
   negated: boolean
@@ -42,39 +54,75 @@ export interface IgnoreRules {
 }
 /** What the ignore rules say about one entry; `undecided` when the check was cut short or a level is not whole. */
 export type IgnoreVerdict = 'ignored' | 'kept' | 'undecided'
-/** The work one walk may still spend on matching, and when it must stop. */
+/**
+ * What one walk may still spend: counted steps, characters of ignore files to parse, its deadline, and `since`, when
+ * the walk last let the event loop turn (the walk sets it each time it yields).
+ */
 export interface MatchBudget {
   walk: number
+  parse: number
   deadline: number
+  since: number
 }
-export const matchBudget = (deadline = Number.POSITIVE_INFINITY): MatchBudget => ({ walk: WALK_STEPS, deadline })
+export const matchBudget = (deadline = Number.POSITIVE_INFINITY): MatchBudget => ({
+  walk: WALK_STEPS,
+  parse: PARSE_CHARACTERS,
+  deadline,
+  since: performance.now(),
+})
 class Spent extends Error {}
 const SPENT = new Spent()
-type Meter = { left: number }
+type Meter = { left: number; budget?: MatchBudget }
 
-function setAt(text: string, start: number): { token: Token; end: number } | undefined {
+/** Charges `cost` steps; every CLOCK_STEPS of them the clock is read against the walk's last turn and deadline. */
+function charge(meter: Meter, cost: number): void {
+  const before = meter.left
+  meter.left -= cost
+  if (meter.left < 0) throw SPENT
+  const budget = meter.budget
+  if (budget && Math.floor(before / CLOCK_STEPS) !== Math.floor(meter.left / CLOCK_STEPS)) {
+    const now = performance.now()
+    if (now - budget.since > YIELD_MS || now > budget.deadline) throw SPENT
+  }
+}
+
+/**
+ * The set starting at `start` (a `[`), or `unclosed` when no `]` follows in the segment, so the caller treats this and
+ * every later `[` of the segment as a literal and the segment is read in one pass. `tooLarge` past MAX_SET_ITEMS.
+ */
+function setAt(text: string, start: number): { set: CharSet; end: number; items: number } | 'unclosed' | 'too-large' {
   let at = start + 1
   const negated = text[at] === '!' || text[at] === '^'
   if (negated) at++
-  const items: SetItem[] = []
+  const singles = new Set<string>()
+  const ranges: Array<[string, string]> = []
+  let items = 0
   const first = at
   while (at < text.length && (text[at] !== ']' || at === first)) {
     let from = text[at]!
     if (from === '\\' && at + 1 < text.length) from = text[++at]!
     at++
+    if (++items > MAX_SET_ITEMS) {
+      // Only whether it closes still matters: one forward scan, then the line is left out.
+      return text.indexOf(']', at) < 0 ? 'unclosed' : 'too-large'
+    }
     if (text[at] === '-' && at + 1 < text.length && text[at + 1] !== ']') {
       let to = text[at + 1]!
       at += 2
       if (to === '\\' && at < text.length) to = text[at++]!
-      items.push({ from, to })
-    } else items.push({ from, to: from })
+      if (from === to) singles.add(from)
+      else ranges.push([from, to])
+    } else singles.add(from)
   }
-  if (text[at] !== ']') return
-  return { token: { kind: 'set', negated, items }, end: at + 1 }
+  if (text[at] !== ']') return 'unclosed'
+  return { set: { negated, singles, ranges }, end: at + 1, items }
 }
 
-function compile(segment: string): Token[] {
+/** One segment's tokens in one pass, with how many set items it compiled; undefined when a set is over the cap. */
+function compile(segment: string): { tokens: Token[]; items: number } | undefined {
   const tokens: Token[] = []
+  let items = 0,
+    closes = true
   for (let at = 0; at < segment.length;) {
     const character = segment[at]!
     if (character === '*') {
@@ -83,14 +131,18 @@ function compile(segment: string): Token[] {
     } else if (character === '?') {
       tokens.push({ kind: 'any' })
       at++
-    } else if (character === '[') {
-      const set = setAt(segment, at)
-      if (set) {
-        tokens.push(set.token)
-        at = set.end
-      } else {
+    } else if (character === '[' && closes) {
+      const found = setAt(segment, at)
+      if (found === 'too-large') return undefined
+      if (found === 'unclosed') {
+        // No `]` after this one, so none after any later `[` either: they are all literals.
+        closes = false
         tokens.push({ kind: 'literal', value: character })
         at++
+      } else {
+        tokens.push({ kind: 'set', set: found.set })
+        items += found.items
+        at = found.end
       }
     } else if (character === '\\' && at + 1 < segment.length) {
       tokens.push({ kind: 'literal', value: segment[at + 1]! })
@@ -100,17 +152,29 @@ function compile(segment: string): Token[] {
       at++
     }
   }
-  return tokens
+  return { tokens, items }
 }
 
 export function parseGitignore(text: string): Pattern[] {
   return parseIgnoreFile(text).patterns
 }
 
-/** The patterns of one file, and whether any line was left out by a cap. */
-export function parseIgnoreFile(text: string): { patterns: Pattern[]; partial: boolean } {
+/**
+ * The patterns of one file, and whether any line was left out by a cap. With a `budget`, the characters parsed are
+ * charged to the walk; once it is spent the rest of the file is left out.
+ */
+export function parseIgnoreFile(text: string, budget?: MatchBudget): { patterns: Pattern[]; partial: boolean } {
   const patterns: Pattern[] = []
-  let partial = false
+  let partial = false,
+    setItems = 0
+  if (budget) {
+    if (budget.parse <= 0) return { patterns, partial: true }
+    if (text.length > budget.parse) {
+      text = text.slice(0, budget.parse)
+      partial = true
+    }
+    budget.parse -= text.length
+  }
   for (const raw of text.replace(/^﻿/u, '').split('\n')) {
     if (patterns.length >= MAX_PATTERNS) {
       partial = true
@@ -135,20 +199,36 @@ export function parseIgnoreFile(text: string): { patterns: Pattern[]; partial: b
       partial = true
       continue
     }
-    patterns.push({
-      negated,
-      directoryOnly,
-      anchored,
-      segments: parts.map(part => (part === '**' ? 'globstar' : compile(part))),
-    })
+    const segments: Segment[] = []
+    for (const part of parts) {
+      if (part === '**') {
+        segments.push('globstar')
+        continue
+      }
+      const compiled = compile(part)
+      if (!compiled || setItems + compiled.items > MAX_SET_ITEMS_PER_FILE) break
+      setItems += compiled.items
+      segments.push(compiled.tokens)
+    }
+    if (segments.length !== parts.length) {
+      partial = true
+      continue
+    }
+    patterns.push({ negated, directoryOnly, anchored, segments })
   }
   return { patterns, partial }
 }
 
-function tokenMatches(token: Token, character: string): boolean {
+/** Whether `token` takes `character`, charging what it really costs: one step, plus one per range of a set. */
+function tokenMatches(token: Token, character: string, meter: Meter): boolean {
   if (token.kind === 'any') return true
   if (token.kind === 'literal') return token.value === character
-  if (token.kind === 'set') return token.items.some(item => item.from <= character && character <= item.to) !== token.negated
+  if (token.kind === 'set') {
+    const { set } = token
+    charge(meter, set.ranges.length)
+    const inside = set.singles.has(character) || set.ranges.some(([from, to]) => from <= character && character <= to)
+    return inside !== set.negated
+  }
   return false
 }
 
@@ -162,12 +242,12 @@ function segmentMatches(tokens: Token[], text: string, meter: Meter): boolean {
     star = -1,
     resume = 0
   while (at < text.length) {
-    if (--meter.left < 0) throw SPENT
+    charge(meter, 1)
     const current = tokens[token]
     if (current?.kind === 'star') {
       star = token++
       resume = at
-    } else if (current && tokenMatches(current, text[at]!)) {
+    } else if (current && tokenMatches(current, text[at]!, meter)) {
       token++
       at++
     } else if (star >= 0) {
@@ -182,8 +262,7 @@ function segmentMatches(tokens: Token[], text: string, meter: Meter): boolean {
 function pathMatches(segments: Segment[], parts: string[], meter: Meter): boolean {
   let reachable = Array.from({ length: parts.length + 1 }, (_, index) => index === 0)
   segments.forEach((segment, index) => {
-    meter.left -= parts.length + 1
-    if (meter.left < 0) throw SPENT
+    charge(meter, parts.length + 1)
     const next = Array.from<boolean>({ length: parts.length + 1 }).fill(false)
     if (segment === 'globstar') {
       // A trailing /** needs something inside the directory; elsewhere it may match nothing.
@@ -213,15 +292,19 @@ function patternMatches(pattern: Pattern, parts: string[], directory: boolean, m
  */
 export function ignoreVerdict(rules: IgnoreRules | undefined, relative: string, directory: boolean, budget?: MatchBudget): IgnoreVerdict {
   const allowed = budget ? Math.min(ENTRY_STEPS, budget.walk) : ENTRY_STEPS
-  const meter: Meter = { left: allowed }
+  const meter: Meter = { left: allowed, ...(budget ? { budget } : {}) }
+  // A level not kept whole, here or deeper, may have held a later line that decides otherwise.
   let partial = false
   try {
+    if (budget && (allowed <= 0 || performance.now() - budget.since > YIELD_MS || performance.now() > budget.deadline)) return 'undecided'
     for (let level = rules; level; level = level.parent) {
       partial ||= level.partial === true
       const parts = (level.base ? relative.slice(level.base.length + 1) : relative).split('/')
       for (let at = level.patterns.length - 1; at >= 0; at--) {
-        if (budget && (at & 63) === 0 && performance.now() > budget.deadline) return 'undecided'
-        if (patternMatches(level.patterns[at]!, parts, directory, meter)) return level.patterns[at]!.negated ? 'kept' : 'ignored'
+        charge(meter, 1)
+        if (!patternMatches(level.patterns[at]!, parts, directory, meter)) continue
+        if (!level.patterns[at]!.negated) return 'ignored'
+        return partial ? 'undecided' : 'kept'
       }
     }
     return partial ? 'undecided' : 'kept'
@@ -239,14 +322,19 @@ export function isGitignored(rules: IgnoreRules | undefined, relative: string, d
 }
 
 /** The rules a directory's children follow. A missing or unreadable file adds nothing; a long one is read up to the cap. */
-export async function readIgnoreRules(directory: string, base: string, parent: IgnoreRules | undefined): Promise<IgnoreRules | undefined> {
+export async function readIgnoreRules(
+  directory: string,
+  base: string,
+  parent: IgnoreRules | undefined,
+  budget?: MatchBudget,
+): Promise<IgnoreRules | undefined> {
   let handle: Awaited<ReturnType<typeof open>> | undefined
   try {
     handle = await open(join(directory, '.gitignore'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     if (!(await handle.stat()).isFile()) return parent
     const buffer = Buffer.alloc(MAX_FILE_BYTES)
     const { bytesRead } = await handle.read(buffer, 0, MAX_FILE_BYTES, 0)
-    const parsed = parseIgnoreFile(buffer.toString('utf8', 0, bytesRead))
+    const parsed = parseIgnoreFile(buffer.toString('utf8', 0, bytesRead), budget)
     // A file longer than the cap is read in part: what its lines past the cap would say is unknown.
     const truncated = bytesRead === MAX_FILE_BYTES && (await handle.stat()).size > MAX_FILE_BYTES
     const above = parent?.total ?? 0

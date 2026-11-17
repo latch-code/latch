@@ -927,11 +927,27 @@ export function createFileRoutes(options: FileRoutesOptions) {
     const abort = new AbortController()
     const cancel = () => abort.abort()
     const signal = options.requestSignal?.(caller)
+    // Runs once: when the search ends, or when its slot times out while a read never settles (a hung mount), so the
+    // lease and the listeners on the long-lived connection signal go then, not whenever that read returns.
+    let cleaned = false
+    const cleanup = () => {
+      if (cleaned) return
+      cleaned = true
+      lease.release()
+      req.off('aborted', cancel)
+      res.off('close', cancel)
+      signal?.removeEventListener('abort', cancel)
+      slot.removeEventListener('abort', ended)
+    }
+    const ended = () => {
+      cancel()
+      cleanup()
+    }
     try {
       req.once('aborted', cancel)
       res.once('close', cancel)
       signal?.addEventListener('abort', cancel, { once: true })
-      slot.addEventListener('abort', cancel, { once: true })
+      slot.addEventListener('abort', ended, { once: true })
       if (req.aborted || res.destroyed || signal?.aborted || slot.aborted) abort.abort()
       const cancelled = () => abort.signal.aborted
       const access = await contextLease(caller, context)
@@ -967,11 +983,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
       await access.recheck()
       if (!res.destroyed && !cancelled()) json(res, result)
     } finally {
-      lease.release()
-      req.off('aborted', cancel)
-      res.off('close', cancel)
-      signal?.removeEventListener('abort', cancel)
-      slot.removeEventListener('abort', cancel)
+      cleanup()
     }
   }
 

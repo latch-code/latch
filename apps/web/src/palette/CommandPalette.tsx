@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { FileCode, TextSearch } from 'lucide-react'
 import type { ContextFileOpenTarget, FileContext, SearchHit } from '@latch/protocol'
-import { Icon, Kbd, Modal, SearchField } from '@latch/ui'
+import { Hint, Icon, Kbd, Modal, SearchField } from '@latch/ui'
 import { overlayDismissed } from '../escapeGrace.ts'
 import { useFileSearch } from '../hooks/useFileSearch.ts'
 import { useSessionSearch } from '../hooks/useSessionSearch.ts'
 import { targetIn } from '../preview/fileContext.ts'
+import { uncheckedNote } from '../preview/contentSearch.ts'
 import {
   fileFolder,
   paletteGroups,
@@ -101,6 +102,7 @@ export function CommandPalette({
       loading: file.loading,
       error: file.error,
       truncated: file.truncated,
+      unchecked: file.unchecked && uncheckedNote(file.unchecked.files, file.unchecked.directories),
     }
     const messages: PaletteSearchState | undefined = searchMessages
       ? {
@@ -250,7 +252,7 @@ export function CommandPalette({
             ))}
             {group.notes?.map(note => (
               <p key={note.text} className="palette-note" role="status" data-tone={note.tone}>
-                {note.text}
+                {note.hint ? <Hint label={note.text}>{note.hint}</Hint> : note.text}
               </p>
             ))}
           </section>

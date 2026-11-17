@@ -20,7 +20,7 @@ export interface ContentResults {
   files: ContentFile[]
   count: number
   scanned: number
-  skipped: { large: number; binary: number; unchecked: number }
+  skipped: { large: number; binary: number; unchecked: number; uncheckedFolders: number }
   stopped?: ContentStop
 }
 export interface ContentQuery {
@@ -69,6 +69,7 @@ export function parseContentResults(value: unknown): ContentResults | undefined 
   const skipped = reply.skipped as Record<string, unknown> | undefined
   if (!skipped || typeof skipped !== 'object' || !count(skipped.large) || !count(skipped.binary)) return undefined
   if (skipped.unchecked !== undefined && !count(skipped.unchecked)) return undefined
+  if (skipped.uncheckedFolders !== undefined && !count(skipped.uncheckedFolders)) return undefined
   if (reply.stopped !== undefined && !STOPS.has(reply.stopped as ContentStop)) return undefined
   const files: ContentFile[] = []
   let total = 0
@@ -93,7 +94,12 @@ export function parseContentResults(value: unknown): ContentResults | undefined 
     files,
     count: total,
     scanned: reply.scanned,
-    skipped: { large: skipped.large, binary: skipped.binary, unchecked: (skipped.unchecked as number | undefined) ?? 0 },
+    skipped: {
+      large: skipped.large,
+      binary: skipped.binary,
+      unchecked: (skipped.unchecked as number | undefined) ?? 0,
+      uncheckedFolders: (skipped.uncheckedFolders as number | undefined) ?? 0,
+    },
     ...(reply.stopped ? { stopped: reply.stopped as ContentStop } : {}),
   }
 }
@@ -120,22 +126,35 @@ const STOP_WORDS: Record<ContentStop, string> = {
   entries: '文件夹较大，只搜索了一部分',
 }
 
+/**
+ * Files and folders whose ignore check the Host cut short, as content search and ⌘P both show them: a short label, and
+ * the reason on hover. A folder counts as one folder, with everything in it.
+ */
+export function uncheckedNote(files: number, folders: number): { label: string; detail: string } | undefined {
+  if (!files && !folders) return undefined
+  const parts = [folders ? `${folders} 个文件夹（连同其中内容）` : '', files ? `${files} 个文件` : ''].filter(Boolean).join('和 ')
+  return { label: `${files + folders} 项未核对`, detail: `${parts}的忽略规则没有核对完，按已忽略处理，没有搜索。` }
+}
+
 /** The count line under the field: how many lines in how many files, whether more exist, and what was left out. */
-export function resultSummary(results: ContentResults): { text: string; partial?: string; skipped?: string } {
+export function resultSummary(results: ContentResults): {
+  text: string
+  partial?: string
+  skipped?: string
+  unchecked?: { label: string; detail: string }
+} {
   const { files, count, stopped, skipped } = results
   const more = stopped !== undefined || files.some(file => file.more)
   const text = count === 0 ? '没有找到' : `${count} 处 · ${files.length} 个文件`
-  const left = [
-    skipped.large ? `${skipped.large} 个大文件` : '',
-    skipped.binary ? `${skipped.binary} 个非文本文件` : '',
-    skipped.unchecked ? `${skipped.unchecked} 项未按忽略规则核对完` : '',
-  ]
+  const unchecked = uncheckedNote(skipped.unchecked, skipped.uncheckedFolders)
+  const left = [skipped.large ? `${skipped.large} 个大文件` : '', skipped.binary ? `${skipped.binary} 个非文本文件` : '']
     .filter(Boolean)
     .join('、')
   return {
     text,
     ...(more ? { partial: stopped ? STOP_WORDS[stopped] : '有的文件匹配较多，只显示前一部分' } : {}),
     ...(left ? { skipped: `未搜索 ${left}` } : {}),
+    ...(unchecked ? { unchecked } : {}),
   }
 }
 

@@ -29,6 +29,8 @@ export interface PaletteRow extends PaletteEntry {
 export interface PaletteNote {
   text: string
   tone?: 'error'
+  /** The reason, on hover; the note then reads as a short state. */
+  hint?: string
 }
 
 export interface PaletteGroup {
@@ -43,6 +45,8 @@ export interface PaletteSearchState {
   loading: boolean
   error: string
   truncated: boolean
+  /** Entries the Host could not check against the ignore rules (`uncheckedNote`). */
+  unchecked?: { label: string; detail: string } | undefined
 }
 
 /** Rows that contain the query; those that begin with it come first, and each keeps its given order otherwise. */
@@ -86,8 +90,9 @@ function searchNotes(
 ): PaletteNote[] {
   if (state.error) return [{ text: `${words.failed}：${state.error}`, tone: 'error' }]
   if (state.loading) return [{ text: words.loading }]
-  if (state.truncated) return [{ text: words.truncated }]
-  return !state.rows.length && words.none ? [{ text: words.none }] : []
+  const unchecked = state.unchecked ? [{ text: state.unchecked.label, hint: state.unchecked.detail }] : []
+  if (state.truncated) return [{ text: words.truncated }, ...unchecked]
+  return [...(!state.rows.length && words.none ? [{ text: words.none }] : []), ...unchecked]
 }
 
 const shown = (group: PaletteGroup) => group.rows.length > 0 || (group.notes?.length ?? 0) > 0

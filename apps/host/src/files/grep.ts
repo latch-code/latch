@@ -8,8 +8,11 @@ import { containsSecret } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import { openContent } from './read.ts'
 import { resolveRecorded, type FileRoot, type ProtectedPaths, type ResolvedFile, type ResolveOptions } from './resolve.ts'
-import { freshBudget, walk } from './search.ts'
+import { freshBudget, walk, type Unchecked } from './search.ts'
 import { looksLikeText } from './sniff.ts'
+import { YIELD_MS } from './gitignore.ts'
+
+const READ_CHUNK = 64 * 1024
 
 /** Every bound of one search. Tests pass smaller ones. */
 export interface GrepLimits {
@@ -74,8 +77,11 @@ export interface GrepResult {
   count: number
   /** Files read. */
   scanned: number
-  /** Files left out: too large, not text, or not checked against the ignore rules (cut short, treated as ignored). */
-  skipped: { large: number; binary: number; unchecked: number }
+  /**
+   * Left out: files too large or not text; files and folders (with all they hold) whose ignore check was cut short,
+   * which count as ignored.
+   */
+  skipped: { large: number; binary: number; unchecked: number; uncheckedFolders: number }
   /** Set when not every file was searched or not every match returned. */
   stopped?: GrepStop
 }
@@ -154,7 +160,7 @@ export interface GrepHooks {
     root: FileRoot,
     cancelled: () => boolean,
     check: () => void,
-  ): Promise<{ paths: readonly string[]; truncated: boolean; undecided: number } | undefined>
+  ): Promise<{ paths: readonly string[]; truncated: boolean; undecided: Unchecked } | undefined>
   /** Test seam: runs after a file was resolved, before it is opened. */
   resolve?: ResolveOptions['hooks']
 }
@@ -177,7 +183,7 @@ export async function grepFiles(
   if (!query.q || query.q.length > GREP_QUERY_MAX || /[\r\n]/u.test(query.q)) throw new AppError(400, 'file-grep-invalid', '搜索内容无效')
   const pattern = literalPattern(query)
   const deadline = performance.now() + limits.ms
-  const result: GrepResult = { files: [], count: 0, scanned: 0, skipped: { large: 0, binary: 0, unchecked: 0 } }
+  const result: GrepResult = { files: [], count: 0, scanned: 0, skipped: { large: 0, binary: 0, unchecked: 0, uncheckedFolders: 0 } }
   let resolves = 0
   // A file's first bytes are read to classify it even when it is then skipped: they count against the budget too.
   const charge = (bytes: number) => {
@@ -212,7 +218,8 @@ export async function grepFiles(
       (await hooks.list?.(root, late, check))
       ?? (await walk(root, guard, late, check, () => {}, budget, [{ relative: '', depth: 0 }], true))
     check()
-    result.skipped.unchecked += walked.undecided
+    result.skipped.unchecked += walked.undecided.files
+    result.skipped.uncheckedFolders += walked.undecided.directories
     if (walked.truncated) result.stopped ??= performance.now() > deadline ? 'time' : 'entries'
     for (const relative of walked.paths) {
       // A turn of the event loop before each file, so a long search never holds the Host.
@@ -265,14 +272,17 @@ export async function grepFiles(
       try {
         const fd = await openContent(file, false)
         try {
-          content = Buffer.alloc(file.size)
+          // In chunks, so a read that never settles (a hung mount) holds one chunk, not the whole file.
+          const chunks: Buffer[] = []
           let at = 0
-          while (at < content.length) {
-            const { bytesRead } = await fd.read(content, at, content.length - at, at)
-            if (bytesRead === 0) break
+          while (at < file.size) {
+            const chunk = Buffer.alloc(Math.min(READ_CHUNK, file.size - at))
+            const { bytesRead } = await fd.read(chunk, 0, chunk.length, at)
+            if (bytesRead === 0 || cancelled()) break
+            chunks.push(bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead))
             at += bytesRead
           }
-          content = content.subarray(0, at)
+          content = Buffer.concat(chunks)
         } finally {
           await fd.close()
         }
@@ -294,8 +304,19 @@ export async function grepFiles(
       if (containsSecret(text)) continue
       const lines: GrepLine[] = []
       let more = false
-      let number = 0
-      for (const raw of text.split('\n')) {
+      let number = 0,
+        from = 0,
+        since = performance.now()
+      while (from <= text.length) {
+        // However many lines, the event loop turns every few milliseconds.
+        if ((number & 1023) === 0 && performance.now() - since > YIELD_MS) {
+          await new Promise(resolve => setImmediate(resolve))
+          since = performance.now()
+          if (cancelled()) return result
+        }
+        const next = text.indexOf('\n', from)
+        const raw = text.slice(from, next < 0 ? text.length : next)
+        from = next < 0 ? text.length + 1 : next + 1
         number++
         // Only the first GREP_LINE_SCAN characters of a line are searched, so no step on one line costs more than that.
         const line = (raw.length > GREP_LINE_SCAN ? raw.slice(0, GREP_LINE_SCAN) : raw).replace(/\r$/u, '')

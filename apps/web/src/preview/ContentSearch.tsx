@@ -203,6 +203,11 @@ export function ContentSearch({ context, focus = 0, onClose }: { context: FileCo
                 {summary.skipped}
               </Hint>
             )}
+            {summary.unchecked && (
+              <Hint className="content-search-skipped" label={summary.unchecked.label}>
+                {summary.unchecked.detail}
+              </Hint>
+            )}
           </>
         )}
       </div>

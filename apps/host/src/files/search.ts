@@ -2,14 +2,14 @@ import { watch, type FSWatcher } from 'node:fs'
 import { lstat, opendir, realpath, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AppError } from '@latch/sdk'
-import { ignoreVerdict, matchBudget, readIgnoreRules, type IgnoreRules } from './gitignore.ts'
+import { YIELD_MS, ignoreVerdict, matchBudget, readIgnoreRules, type IgnoreRules } from './gitignore.ts'
 import { IGNORED_NAMES } from './ignore.ts'
 import { resolveRecorded, type FileRoot, type ProtectedPaths } from './resolve.ts'
 import { isInsidePath } from '../paths.ts'
 
 const NEVER_LISTED = new Set(['.git', '.ds_store'])
-/** The longest a walk runs before it lets the event loop turn. */
-const YIELD_MS = 8
+/** How long closing the index waits for operations still running. */
+const CLOSE_WAIT_MS = 2000
 // Only in a folder without .git: in a repository these can be real source, and .gitignore says which they are.
 const LIKELY_OUTPUT = new Set(['target', 'out', 'vendor', 'coverage', '.cache', '.gradle', '.nuxt', '.svelte-kit', '.turbo'])
 const SOURCE_EXTENSIONS = new Set(
@@ -28,6 +28,11 @@ interface IgnoredNames {
   paths: readonly string[]
   truncated: boolean
 }
+/** Files and folders whose ignore check was cut short: treated as ignored, and said so to the person. */
+export interface Unchecked {
+  files: number
+  directories: number
+}
 interface Snapshot {
   paths: readonly string[]
   /** Files .gitignore names beside the files the first walk kept. */
@@ -37,7 +42,7 @@ interface Snapshot {
   partial: boolean
   truncated: boolean
   /** Entries whose ignore check was cut short (budget, time or a file not kept whole): treated as ignored. */
-  undecided: number
+  undecided: Unchecked
   current?(): boolean
   skippedNames?(cancelled: () => boolean, check: Check): Promise<IgnoredNames>
 }
@@ -198,11 +203,20 @@ export class FileSearchIndex {
       this.operations.delete(operation)
     }
   }
+  /**
+   * Stops the index. Operations still running end at their next check; one stuck in a file system call that never
+   * settles (a hung mount) is not waited for past CLOSE_WAIT_MS, so shutting the Host down never hangs on it.
+   */
   async close(): Promise<void> {
     this.closed = true
     for (const [key, entry] of this.entries) this.invalidate(key, entry)
-    await Promise.allSettled(this.operations)
-    await Promise.allSettled(this.watcherClosures)
+    let timer: NodeJS.Timeout | undefined
+    const waited = new Promise<void>(resolve => {
+      timer = setTimeout(resolve, CLOSE_WAIT_MS)
+      timer.unref()
+    })
+    await Promise.race([Promise.allSettled([...this.operations]).then(() => Promise.allSettled([...this.watcherClosures])), waited])
+    clearTimeout(timer)
   }
   private invalidate(key: string, entry: Entry) {
     entry.dirty = true
@@ -224,7 +238,14 @@ export class FileSearchIndex {
     }
     const entry: Entry = {
       guard,
-      promise: Promise.resolve({ paths: [], ignored: [], skipped: [], partial: false, truncated: false, undecided: 0 }),
+      promise: Promise.resolve({
+        paths: [],
+        ignored: [],
+        skipped: [],
+        partial: false,
+        truncated: false,
+        undecided: { files: 0, directories: 0 },
+      }),
       watchers: [],
       dirty: false,
       fullyWatched: true,
@@ -334,8 +355,8 @@ export async function walk(
     queueBytes = 0,
     truncated = false,
     partial = false,
-    undecided = 0,
     at = 0
+  const undecided: Unchecked = { files: 0, directories: 0 }
   const checked = async <T>(operation: Promise<T>) => {
     const result = await operation
     check()
@@ -345,15 +366,14 @@ export async function walk(
   /** Ignored, kept, or undecided (counted, and then treated as ignored: never brought forward on a cut-short check). */
   const ignoredHere = (rules: IgnoreRules | undefined, relative: string, isDirectory: boolean) => {
     const verdict = ignoreVerdict(rules, relative, isDirectory, matching)
-    if (verdict === 'undecided') undecided++
+    if (verdict === 'undecided') undecided[isDirectory ? 'directories' : 'files']++
     return verdict !== 'kept'
   }
   // The event loop gets a turn every few milliseconds of walking, however the entries come in.
-  let turned = performance.now()
   const turn = async () => {
-    if (performance.now() - turned < YIELD_MS) return
+    if (performance.now() - matching.since < YIELD_MS) return
     await new Promise(resolve => setImmediate(resolve))
-    turned = performance.now()
+    matching.since = performance.now()
     check()
   }
   const inRepository = honourIgnores && (await checked(repositoryAt(root)))
@@ -366,7 +386,9 @@ export async function walk(
     const real = await checked(realpath(path).catch(() => undefined))
     if (real === undefined || !isInsidePath(real, root.path) || (await checked(guard.contains(real)))) continue
     observe(real)
-    const rules = honourIgnores ? await checked(readIgnoreRules(real, entry.relative, entry.rules)) : undefined
+    const rules = honourIgnores ? await checked(readIgnoreRules(real, entry.relative, entry.rules, matching)) : undefined
+    // Awaited operations above let the loop turn; the parse after the read is charged and linear.
+    await turn()
     let directory: Awaited<ReturnType<typeof opendir>>
     try {
       directory = await opendir(real)
@@ -542,7 +564,17 @@ async function runSearch(
     }
   stale()
   const settled = await settle(candidates, needle, guard, limit, cancelled, check, stale)
-  return { files: settled.files, truncated: truncated || settled.truncated }
+  return { files: settled.files, truncated: truncated || settled.truncated, ...uncheckedOf(loaded.map(item => item.snapshot.undecided)) }
+}
+
+/** What the answer says of entries whose ignore check was cut short, when there were any. */
+function uncheckedOf(counts: readonly Unchecked[]): { unchecked?: Unchecked } {
+  const total = { files: 0, directories: 0 }
+  for (const count of counts) {
+    total.files += count.files
+    total.directories += count.directories
+  }
+  return total.files || total.directories ? { unchecked: total } : {}
 }
 
 /** A bounded filename search, without git subprocesses, symlink traversal or a directory tree response. */
@@ -564,7 +596,8 @@ export async function searchFiles(
     accept = (relative: string) => matchTier(relative, needle) !== NO_MATCH,
     budget = freshBudget(2000, 50_000),
     candidates: Candidate[] = [],
-    walked: Array<{ root: FileRoot; rootIndex: number; ignored: readonly string[]; skipped: readonly string[]; partial: boolean }> = []
+    walked: Array<{ root: FileRoot; rootIndex: number; ignored: readonly string[]; skipped: readonly string[]; partial: boolean }> = [],
+    undecided: Unchecked[] = []
   let truncated = false
   for (const [rootIndex, source] of roots.entries()) {
     const path = await checked(realpath(source.path).catch(() => undefined))
@@ -572,6 +605,7 @@ export async function searchFiles(
     const root = { id: source.id, path }
     const result = await walk(root, guard, cancelled, check, () => {}, budget, [{ relative: '', depth: 0 }], true, accept)
     truncated ||= result.truncated
+    undecided.push(result.undecided)
     walked.push({ root, rootIndex, ignored: result.ignored, skipped: result.skipped, partial: result.partial })
     for (const relative of result.paths) candidates.push(candidate(root, rootIndex, relative, needle, false)!)
     if (cancelled()) break
@@ -585,5 +619,5 @@ export async function searchFiles(
     }
   }
   const settled = await settle(candidates, needle, guard, limit, cancelled, check)
-  return { files: settled.files, truncated: truncated || settled.truncated || cancelled() }
+  return { files: settled.files, truncated: truncated || settled.truncated || cancelled(), ...uncheckedOf(undecided) }
 }

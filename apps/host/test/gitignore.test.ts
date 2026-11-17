@@ -116,6 +116,35 @@ describe('gitignore rules from the repository, bounded', () => {
     expect(ignoreVerdict(heavy, 'a'.repeat(10), false, matchBudget(performance.now() - 1))).toBe('undecided')
   })
 
+  it('parses in one pass: an unclosed [ is a literal, a set over the cap leaves its line out', () => {
+    const started = performance.now()
+    expect(parseGitignore(`${'['.repeat(1023)}\n`.repeat(63))).toHaveLength(63)
+    expect(parseGitignore(`${'[a'.repeat(511)}\n`.repeat(64))).toHaveLength(64)
+    expect(performance.now() - started).toBeLessThan(50)
+    expect(isGitignored(rules('[[a'), '[[a', false)).toBe(true)
+    expect(isGitignored(rules('x[ab'), 'x[ab', false)).toBe(true)
+    const wide = rules(`*[${'b'.repeat(1021)}]\nkeep`)
+    expect(wide.patterns).toHaveLength(1)
+    expect(ignoreVerdict({ ...wide, partial: true }, 'other', false)).toBe('undecided')
+    expect(ignoreVerdict(rules('[a-cx-z]'), 'y', false)).toBe('ignored')
+    expect(ignoreVerdict(rules('[a-cx-z]'), 'm', false)).toBe('kept')
+  })
+
+  it('never keeps an entry on a ! line when that level or a deeper one is not whole', () => {
+    const dropped = `${'a/'.repeat(40)}x.txt`
+    const partial = (text: string, base = '', parent?: IgnoreRules): IgnoreRules => ({
+      base,
+      patterns: parseGitignore(text),
+      partial: true,
+      ...(parent ? { parent } : {}),
+    })
+    expect(ignoreVerdict(partial(`*.txt\n!x.txt\n${dropped}`), 'x.txt', false)).toBe('undecided')
+    expect(ignoreVerdict(partial('*.txt\n!x.txt\n**/a/**/b/**/c/**/d/**/x.txt'), 'x.txt', false)).toBe('undecided')
+    expect(ignoreVerdict(partial('other', 'app', rules('!x.txt')), 'app/x.txt', false)).toBe('undecided')
+    // Whole levels decide as before.
+    expect(ignoreVerdict(rules('other', 'app', rules('!x.txt')), 'app/x.txt', false)).toBe('kept')
+  })
+
   it('leaves out over-long and over-complex patterns, and marks the file as not kept whole', () => {
     expect(parseGitignore(`${'a/'.repeat(40)}b\nz`)).toHaveLength(1)
     expect(parseGitignore('**/a/**/b/**/c/**/d/**/e\nz')).toHaveLength(1)
@@ -127,7 +156,7 @@ afterEach(async () => {
   for (const close of cleanups.splice(0)) await close()
 })
 
-/** Runs `work` with a 10 ms timer on the event loop and reports the longest gap between its ticks. */
+/** Runs `work` with a 1 ms timer on the event loop and reports the longest gap between its ticks. */
 async function longestGap(work: () => Promise<unknown>) {
   let last = performance.now(),
     gap = 0
@@ -135,7 +164,7 @@ async function longestGap(work: () => Promise<unknown>) {
     const now = performance.now()
     gap = Math.max(gap, now - last)
     last = now
-  }, 10)
+  }, 1)
   const started = performance.now()
   try {
     await work()
@@ -146,15 +175,22 @@ async function longestGap(work: () => Promise<unknown>) {
   return { gap, ms: performance.now() - started }
 }
 
-/** The reviewer's shapes of a crafted repository. */
-async function crafted(shape: 'root' | 'globstar' | 'chain') {
+/** A set at the cap, all ranges: each set test costs every range, the most one step can cost. */
+const WIDE_SET = `[${Array.from({ length: 64 }, (_, index) => `${String.fromCharCode(0x4e00 + 2 * index)}-${String.fromCharCode(0x4e01 + 2 * index)}`).join('')}]`
+type Shape = 'root' | 'globstar' | 'chain' | 'sets' | 'wide-sets' | 'brackets' | 'open-sets'
+
+/** Crafted repositories: the shapes of the reviews, kept small on disk. */
+async function crafted(shape: Shape) {
   const parent = await realpath(await mkdtemp(join(tmpdir(), 'latch-ignore-')))
   cleanups.push(() => rm(parent, { recursive: true, force: true }))
   const root = join(parent, 'repo')
   await mkdir(join(root, '.git'), { recursive: true })
+  const files = async (at: string, count: number, name: (index: number) => string) => {
+    for (let index = 0; index < count; index++) await writeFile(join(at, name(index)), 'needle\n')
+  }
   if (shape === 'root') {
     await writeFile(join(root, '.gitignore'), `${'*'.concat('a'.repeat(62), 'b')}\n`.repeat(1000))
-    for (let index = 0; index < 64; index++) await writeFile(join(root, `${'a'.repeat(250)}${String(index).padStart(3, '0')}`), 'needle\n')
+    await files(root, 64, index => `${'a'.repeat(250)}${String(index).padStart(3, '0')}`)
   } else if (shape === 'globstar') {
     let at = root
     for (let level = 0; level < 4; level++) {
@@ -162,44 +198,72 @@ async function crafted(shape: 'root' | 'globstar' | 'chain') {
       at = join(at, `${String(level)}${'a'.repeat(219)}`)
       await mkdir(at)
     }
-    for (let index = 0; index < 40; index++) await writeFile(join(at, `${'a'.repeat(30)}${index}`), 'needle\n')
-  } else {
+    await files(at, 40, index => `${'a'.repeat(30)}${index}`)
+  } else if (shape === 'chain') {
     let at = root
     for (let level = 0; level < 30; level++) {
       await writeFile(join(at, '.gitignore'), `${'*a'.repeat(30)}b\n`.repeat(900))
       at = join(at, `${String(level).padStart(2, '0')}${'a'.repeat(26)}`)
       await mkdir(at)
-      for (let index = 0; index < 4; index++) await writeFile(join(at, `${'a'.repeat(26)}${index}`), 'needle\n')
+      await files(at, 4, index => `${'a'.repeat(26)}${index}`)
     }
+  } else if (shape === 'sets' || shape === 'wide-sets') {
+    // 32 nested d/ levels, each ignore file one-byte sets of 1,021 items (or sets at the cap) and `!d`; CJK and emoji names.
+    const line = shape === 'sets' ? `*[${'b'.repeat(1021)}]` : `*${WIDE_SET}${WIDE_SET}`
+    let at = root
+    for (let level = 0; level < 32; level++) {
+      await writeFile(join(at, '.gitignore'), `${`${line}\n`.repeat(shape === 'sets' ? 61 : 300)}.gitignore\n!d\n`)
+      at = join(at, 'd')
+      await mkdir(at)
+    }
+    await files(at, 20, index => `${'😀'.repeat(61)}${index}`)
+    await files(at, 20, index => `${'漢'.repeat(80)}${index}`)
+  } else if (shape === 'brackets') {
+    await writeFile(join(root, '.gitignore'), `${'['.repeat(1023)}\n`.repeat(63))
+    await files(root, 40, index => `${'a'.repeat(200)}${index}`)
+  } else {
+    await writeFile(join(root, '.gitignore'), `${'[a'.repeat(511)}\n`.repeat(64))
+    await files(root, 40, index => `${'a'.repeat(200)}${index}`)
   }
   return { id: 'default', path: root }
 }
 
-describe.each(['root', 'globstar', 'chain'] as const)('a crafted repository (%s) never holds the event loop', shape => {
-  const guard = new ProtectedPaths([])
-  it('content search', async () => {
-    const root = await crafted(shape)
-    const { gap, ms } = await longestGap(() =>
-      grepFiles(
-        [root],
-        guard,
-        { q: 'needle', caseSensitive: false, wholeWord: false },
-        () => false,
-        () => {},
-      ),
-    )
-    expect(gap).toBeLessThan(100)
-    expect(ms).toBeLessThan(3500)
-  })
-  it('name search, fresh and through the index', async () => {
-    const root = await crafted(shape)
-    const fresh = await longestGap(() => searchFiles([root], guard, 'aaa', 50, () => false))
-    expect(fresh.gap).toBeLessThan(100)
-    expect(fresh.ms).toBeLessThan(4500)
-    const index = new FileSearchIndex()
-    cleanups.push(() => index.close())
-    const indexed = await longestGap(() => index.search([root], guard, 'identity', 'aaa', 50, () => false))
-    expect(indexed.gap).toBeLessThan(100)
-    expect(indexed.ms).toBeLessThan(4500)
-  })
-})
+describe.each(['root', 'globstar', 'chain', 'sets', 'wide-sets', 'brackets', 'open-sets'] as const)(
+  'a crafted repository (%s) never holds the event loop',
+  shape => {
+    const guard = new ProtectedPaths([])
+    // The invariant is ~25 ms on this machine; the assertion leaves room for a loaded test runner.
+    const GAP = 60
+    it('content search, listing through the index as the route does', async () => {
+      const root = await crafted(shape)
+      const index = new FileSearchIndex()
+      cleanups.push(() => index.close())
+      const { gap, ms } = await longestGap(() =>
+        grepFiles(
+          [root],
+          guard,
+          { q: 'needle', caseSensitive: false, wholeWord: false },
+          () => false,
+          () => {},
+          undefined,
+          {
+            list: (folder, late, check) => index.files(folder, guard, 'identity', late, check),
+          },
+        ),
+      )
+      expect(gap).toBeLessThan(GAP)
+      expect(ms).toBeLessThan(6500)
+    })
+    it('name search, fresh and through the index', async () => {
+      const root = await crafted(shape)
+      const fresh = await longestGap(() => searchFiles([root], guard, 'aaa', 50, () => false))
+      expect(fresh.gap).toBeLessThan(GAP)
+      expect(fresh.ms).toBeLessThan(4500)
+      const index = new FileSearchIndex()
+      cleanups.push(() => index.close())
+      const indexed = await longestGap(() => index.search([root], guard, 'identity', 'aaa', 50, () => false))
+      expect(indexed.gap).toBeLessThan(GAP)
+      expect(indexed.ms).toBeLessThan(4500)
+    })
+  },
+)
