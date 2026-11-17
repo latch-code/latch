@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
-import { pinLayer, setPopover } from './internal.ts'
+import { HOLD_MS, HOLD_SLOP, pinLayer, setPopover } from './internal.ts'
 
 /** Hovering waits this long before a tooltip appears. */
 const HOVER_DELAY = 400
@@ -22,7 +22,9 @@ const markWarm = (element: HTMLElement) => {
  * (--m-micro). It goes as soon as the pointer leaves, the trigger is pressed or Escape is pressed. It is inverted (ink
  * on light, a lifted grey on dark), 12/16 with 6px corners, and never takes the pointer. Its text describes the
  * trigger for screen readers unless `describe` is false, as for an icon button whose name is already the same text.
- * Touch never shows it.
+ * Touch has no hover: a press and hold on the trigger shows it (the click that ends the hold does not also press the
+ * trigger), and the next touch anywhere or a scroll takes it away. A trigger inside a row whose press and hold opens a
+ * menu (`data-context-gesture`) leaves the hold to that menu.
  */
 export function Tooltip({
   content,
@@ -72,6 +74,10 @@ export function Tooltip({
     if (!active || !element || !(anchor instanceof HTMLElement)) return undefined
     if (describe) anchor.setAttribute('aria-describedby', [anchor.getAttribute('aria-describedby'), id].filter(Boolean).join(' '))
     let timer: ReturnType<typeof setTimeout> | undefined
+    let holdTimer: ReturnType<typeof setTimeout> | undefined
+    let start: { x: number; y: number } | null = null
+    // Shown by a press and hold: lifting the finger keeps it, and the click that ends the hold is swallowed.
+    let held = false
     const show = (immediate: boolean) => {
       clearTimeout(timer)
       glide.current = !immediate && isWarm()
@@ -85,9 +91,56 @@ export function Tooltip({
       clearTimeout(timer)
       if (element.matches(':popover-open')) markWarm(element)
       setOpen(false)
+      stopDismissing()
     }
     const enter = (event: PointerEvent) => {
       if (event.pointerType !== 'touch') show(false)
+    }
+    const leave = (event: PointerEvent) => {
+      // A finger leaves the trigger as it lifts: a tooltip it held open stays until the next touch.
+      if (event.pointerType === 'touch' && held) return
+      hide()
+    }
+    const outside = (event: Event) => {
+      if (event.type === 'pointerdown' && anchor.contains(event.target as Node)) return
+      hide()
+    }
+    const stopDismissing = () => {
+      document.removeEventListener('pointerdown', outside, true)
+      document.removeEventListener('scroll', outside, true)
+    }
+    const cancelHold = () => {
+      clearTimeout(holdTimer)
+      start = null
+    }
+    const down = (event: PointerEvent) => {
+      hide()
+      held = false
+      if (event.pointerType === 'mouse' || anchor.closest('[data-context-gesture]')) return
+      start = { x: event.clientX, y: event.clientY }
+      clearTimeout(holdTimer)
+      holdTimer = setTimeout(() => {
+        held = true
+        start = null
+        // A held word would otherwise start a text selection under the tooltip.
+        window.getSelection()?.removeAllRanges()
+        show(true)
+        document.addEventListener('pointerdown', outside, true)
+        document.addEventListener('scroll', outside, true)
+      }, HOLD_MS)
+    }
+    const move = (event: PointerEvent) => {
+      if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > HOLD_SLOP) cancelHold()
+    }
+    const click = (event: MouseEvent) => {
+      if (!held) return
+      held = false
+      event.preventDefault()
+      event.stopPropagation()
+    }
+    const contextmenu = (event: MouseEvent) => {
+      // A touch browser's own menu for a held trigger would cover the tooltip.
+      if (held || start) event.preventDefault()
     }
     const focus = () => {
       if (anchor.matches(':focus-visible')) show(true)
@@ -95,19 +148,34 @@ export function Tooltip({
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') hide()
     }
+    const blur = () => {
+      if (!held) hide()
+    }
     anchor.addEventListener('pointerenter', enter)
-    anchor.addEventListener('pointerleave', hide)
-    anchor.addEventListener('pointerdown', hide)
+    anchor.addEventListener('pointerleave', leave)
+    anchor.addEventListener('pointerdown', down)
+    anchor.addEventListener('pointermove', move)
+    anchor.addEventListener('pointerup', cancelHold)
+    anchor.addEventListener('pointercancel', cancelHold)
+    anchor.addEventListener('click', click, true)
+    anchor.addEventListener('contextmenu', contextmenu)
     anchor.addEventListener('focus', focus)
-    anchor.addEventListener('blur', hide)
+    anchor.addEventListener('blur', blur)
     anchor.addEventListener('keydown', key)
     return () => {
       clearTimeout(timer)
+      cancelHold()
+      stopDismissing()
       anchor.removeEventListener('pointerenter', enter)
-      anchor.removeEventListener('pointerleave', hide)
-      anchor.removeEventListener('pointerdown', hide)
+      anchor.removeEventListener('pointerleave', leave)
+      anchor.removeEventListener('pointerdown', down)
+      anchor.removeEventListener('pointermove', move)
+      anchor.removeEventListener('pointerup', cancelHold)
+      anchor.removeEventListener('pointercancel', cancelHold)
+      anchor.removeEventListener('click', click, true)
+      anchor.removeEventListener('contextmenu', contextmenu)
       anchor.removeEventListener('focus', focus)
-      anchor.removeEventListener('blur', hide)
+      anchor.removeEventListener('blur', blur)
       anchor.removeEventListener('keydown', key)
       const others =
         anchor

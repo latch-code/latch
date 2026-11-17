@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 
-import { Button, Count, IconButton, InlineNotice, PlusGlyph, SettingsGlyph } from '../src/index.ts'
+import { Button, Count, Hint, IconButton, InlineNotice, PlusGlyph, SettingsGlyph, Tooltip } from '../src/index.ts'
 import { onTouchScreen, press } from './helpers.ts'
 
 const style = (element: Element, pseudo?: string) => getComputedStyle(element, pseudo)
@@ -206,6 +206,78 @@ describe('buttons', () => {
     expect([next.hasAttribute('data-glide'), style(next).transitionProperty]).toEqual([true, 'left, top'])
     await userEvent.hover(screen.getByText('别处'))
     expect(openTooltips()).toEqual([])
+  })
+
+  it('shows a tooltip on a press and hold by touch, keeps it as the finger lifts, swallows that click and goes on the next touch', async () => {
+    let pressed = 0
+    const screen = await render(
+      <div>
+        <Tooltip content="以你的账户运行，不是沙箱">
+          <button
+            type="button"
+            onClick={() => {
+              pressed += 1
+            }}>
+            终端
+          </button>
+        </Tooltip>
+        <span>别处</span>
+      </div>,
+    )
+    const trigger = screen.getByRole('button', { name: '终端' }).element()
+    const touch = (type: string, target: Element = trigger) =>
+      target.dispatchEvent(new PointerEvent(type, { pointerType: 'touch', bubbles: true, clientX: 10, clientY: 10 }))
+    // A tap is a press: no tooltip.
+    touch('pointerdown')
+    touch('pointerup')
+    trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await wait(600)
+    expect([openTooltips(), pressed]).toEqual([[], 1])
+    // A hold shows it; lifting the finger (which also leaves the trigger) keeps it, and the hold's click is not a press.
+    touch('pointerdown')
+    await expect.poll(openTooltips, { timeout: 2000 }).toEqual(['以你的账户运行，不是沙箱'])
+    touch('pointerup')
+    touch('pointerleave')
+    trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    expect([openTooltips(), pressed]).toEqual([['以你的账户运行，不是沙箱'], 1])
+    // The text describes the trigger for assistive tech.
+    expect(document.getElementById(trigger.getAttribute('aria-describedby')!)?.textContent).toBe('以你的账户运行，不是沙箱')
+    touch('pointerdown', screen.getByText('别处').element())
+    await expect.poll(openTooltips).toEqual([])
+  })
+
+  it('leaves the hold to a row whose press and hold opens its menu', async () => {
+    const screen = await render(
+      <div data-context-gesture="">
+        <Tooltip content="说明">
+          <span tabIndex={0}>行</span>
+        </Tooltip>
+      </div>,
+    )
+    const trigger = screen.getByText('行').element()
+    trigger.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch', bubbles: true }))
+    await wait(700)
+    expect(openTooltips()).toEqual([])
+  })
+
+  it('keeps a hint to its label, with the detail as the label’s tooltip on focus, and an ⓘ only when inline', async () => {
+    const screen = await render(
+      <div>
+        <Hint label="这台 Mac 的时间">按这台 Mac 当前的时区。</Hint>
+        <Hint inline label="仍可以开始会话">
+          版本可能不配套。
+        </Hint>
+      </div>,
+    )
+    const label = screen.getByText('这台 Mac 的时间').element()
+    expect(screen.container.querySelectorAll('.ui-hint .ui-icon-button')).toHaveLength(1)
+    expect(screen.container.querySelector('.ui-hint[data-tip] .ui-hint-lead')).toBeNull()
+    await userEvent.keyboard('{Tab}')
+    expect(document.activeElement).toBe(label)
+    await expect.poll(openTooltips).toEqual(['按这台 Mac 当前的时区。'])
+    expect(document.getElementById(label.getAttribute('aria-describedby')!)?.textContent).toBe('按这台 Mac 当前的时区。')
+    await userEvent.keyboard('{Escape}')
+    await expect.poll(openTooltips).toEqual([])
   })
 
   it('names icon buttons by their label, shows a toggle as a neutral press and makes them 44px targets on touch', async () => {

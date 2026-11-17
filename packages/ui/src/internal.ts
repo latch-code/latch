@@ -23,6 +23,10 @@ export function mergeRefs<T>(...refs: Array<Ref<T> | undefined>): RefCallback<T>
 }
 
 /** Phones (below 768px): popovers, menus, pickers and suggestions become bottom sheets there. */
+/** How long a finger rests before its menu or tooltip opens, and how far it may wander meanwhile. */
+export const HOLD_MS = 500
+export const HOLD_SLOP = 8
+
 export const PHONE_QUERY = '(max-width: 767.98px)'
 
 export function useMediaQuery(query: string): boolean {

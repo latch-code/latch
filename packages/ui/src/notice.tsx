@@ -4,6 +4,7 @@ import { InfoGlyph, WarningGlyph, CloseGlyph } from './glyphs/index.tsx'
 import { IconButton } from './button.tsx'
 import { Icon } from './icon.tsx'
 import { cx } from './internal.ts'
+import { Tooltip } from './tooltip.tsx'
 
 export type NoticeTone = 'neutral' | 'warn' | 'error'
 
@@ -58,14 +59,18 @@ export function InlineNotice({
 }
 
 /**
- * A fact in a few words, with the rest one press away: a glyph or mark, a short label, and an ⓘ that unfolds the detail
- * under it in place (so it works by touch and keyboard, and inside a menu). Use it where a surface would otherwise
- * carry a sentence of explanation: the label says what the thing is, the detail says the fine print for whoever asks.
+ * A fact in a few words, with the fine print on hover: an optional glyph or mark, a short label, and the detail as the
+ * label's tooltip (hover, keyboard focus, or a press and hold on touch), so the explanation never takes room or moves
+ * anything. The label says what the thing is; the detail is for whoever asks.
+ *
+ * `inline` keeps the older form, an ⓘ that unfolds the detail under the label in place: only where the words belong
+ * on the surface itself (an approval, a failure and what to do next, a security surface).
  */
 export function Hint({
   label,
   lead,
   children,
+  inline = false,
   moreLabel = '说明',
   defaultOpen = false,
   locked = false,
@@ -74,17 +79,34 @@ export function Hint({
   label: ReactNode
   /** A warning that must look the same under every customisation (不先问你): the product's own tokens (tokens.css). */
   locked?: boolean
-  /** A mark or glyph before the label; the info glyph by default. */
+  /** A mark or glyph before the label; none on hover by default, the info glyph when `inline`. */
   lead?: ReactNode
   /** The detail. Without it the hint is the label alone. */
   children?: ReactNode
+  /** The detail unfolds in place behind an ⓘ instead of being the label's tooltip. */
+  inline?: boolean
   moreLabel?: string
-  /** Starts unfolded, as a static sheet of the design system shows it. */
+  /** Starts unfolded, as a static sheet of the design system shows it (`inline` only). */
   defaultOpen?: boolean
   className?: string
 }) {
   const id = useId()
   const [open, setOpen] = useState(defaultOpen)
+  if (!inline)
+    return (
+      <div className={cx('ui-hint', className)} data-tip="" data-lock={locked ? '' : undefined}>
+        {lead !== undefined && lead !== false && (
+          <span className="ui-hint-lead" aria-hidden="true">
+            {lead}
+          </span>
+        )}
+        <Tooltip content={children ?? undefined}>
+          <span className="ui-hint-label" tabIndex={children ? 0 : undefined}>
+            {label}
+          </span>
+        </Tooltip>
+      </div>
+    )
   return (
     <div className={cx('ui-hint', className)} data-open={open ? '' : undefined} data-lock={locked ? '' : undefined}>
       <span className="ui-hint-lead" aria-hidden="true">

@@ -171,8 +171,9 @@
 }
 
 /*
- * Hint: a fact in a few words. A 14px lead (a brand mark or a muted glyph), the label in muted caption type, and an ⓘ
- * that unfolds the detail under the label in place; the detail starts on the label's column.
+ * Hint: a fact in a few words. An optional 14px lead (a brand mark or a muted glyph) and the label in muted caption
+ * type; the detail is the label's tooltip. `inline` hints keep an ⓘ that unfolds the detail under the label in place,
+ * starting on the label's column.
  */
 .ui-hint {
   display: grid;
@@ -200,6 +201,15 @@
 }
 .ui-hint[data-open] > .ui-icon-button {
   color: var(--ink);
+}
+/* On hover: the lead and the label in one line; the detail is the label's tooltip and takes no room. */
+.ui-hint[data-tip] {
+  display: flex;
+  min-width: 0;
+}
+.ui-hint[data-tip] > .ui-hint-label[tabindex] {
+  border-radius: var(--r-4);
+  cursor: default;
 }
 .ui-hint-detail {
   grid-column: 2 / -1;

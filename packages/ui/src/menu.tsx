@@ -21,6 +21,8 @@ import { Kbd } from './pill.tsx'
 import {
   cx,
   firstMeaningful,
+  HOLD_MS,
+  HOLD_SLOP,
   nextIndex,
   onAnchorScrolled,
   PHONE_QUERY,
@@ -125,10 +127,6 @@ function useLayer(
   return { trigger, layer, open, setOpen: toggle, close, openFrom }
 }
 
-/** How long a finger rests on a row before its menu opens, and how far it may wander meanwhile. */
-const HOLD_MS = 500
-const HOLD_SLOP = 8
-
 /**
  * Whether a context gesture on `target` keeps the browser's own menu: text the person may want to copy or edit (a field,
  * an editable region, a link, code) or a selection that reaches it. Exported for its test.
@@ -209,6 +207,8 @@ function useContextGesture(
       event.preventDefault()
       event.stopPropagation()
     }
+    // A tooltip inside the row leaves its press and hold to this menu.
+    row.dataset.contextGesture = ''
     row.addEventListener('contextmenu', contextmenu)
     row.addEventListener('keydown', keydown)
     row.addEventListener('pointerdown', down)
@@ -219,6 +219,7 @@ function useContextGesture(
     row.addEventListener('click', click, true)
     return () => {
       cancel()
+      delete row.dataset.contextGesture
       row.removeEventListener('contextmenu', contextmenu)
       row.removeEventListener('keydown', keydown)
       row.removeEventListener('pointerdown', down)
