@@ -1,5 +1,5 @@
 import { z, type ZodType } from 'zod'
-import { SIMULATOR_PRIVACY_ACTIONS, SIMULATOR_PRIVACY_SERVICES } from '@latch/protocol'
+import { SIMULATOR_BUTTONS, SIMULATOR_KEYS, SIMULATOR_PRIVACY_ACTIONS, SIMULATOR_PRIVACY_SERVICES } from '@latch/protocol'
 import { hex64, opaqueId } from './fields.ts'
 
 const udid = z.string().regex(/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/u)
@@ -10,7 +10,9 @@ const direction = z.enum(['left', 'right'])
  * before it runs. Who, which device, which action; never a picture, a recording or a log line, of an opened address only
  * its scheme and the SHA-256 of its origin, of an app only the SHA-256 of its bundle id, and of a new device its type and
  * runtime identifiers but never the name the person typed. The panel's own frames are looking, not acting, and are not
- * recorded. `auto-shutdown` is the Host's own: a device it booted, shut down when idle or as the Host stops.
+ * recorded. `auto-shutdown` is the Host's own: a device it booted, shut down when idle or as the Host stops. The
+ * person's taps are not recorded one by one: `control` once, when they take control of a device. An agent's input
+ * call records how many points and which key or button, never where, and of text only its length.
  */
 export const SIMULATOR_ACTIONS = {
   'simulator.action': z
@@ -30,6 +32,7 @@ export const SIMULATOR_ACTIONS = {
         'privacy',
         'logs',
         'auto-shutdown',
+        'control',
       ]),
       /** Absent for `create` alone, which has no device yet; required for every other action (checked below). */
       udid: udid.optional(),
@@ -70,8 +73,21 @@ export const SIMULATOR_ACTIONS = {
       'device_rotate',
       'device_apps',
       'device_launch',
+      'device_tap',
+      'device_swipe',
+      'device_type_text',
+      'device_press_key',
+      'device_press_button',
     ]),
     udid: udid.optional(),
+    /** How many points a tap (1) or swipe (2) named; never the points. */
+    points: z.number().int().min(0).max(2).optional(),
+    /** Whether a tap was held (a long press). */
+    held: z.boolean().optional(),
+    /** The length of text an agent asked to type; never the text. */
+    textLength: z.number().int().min(0).max(1_000_000).optional(),
+    key: z.enum(SIMULATOR_KEYS).optional(),
+    button: z.enum(SIMULATOR_BUTTONS).optional(),
     risk: z.enum(['R0', 'R1', 'R2']),
     appearance: z.enum(['light', 'dark']).optional(),
     direction: direction.optional(),

@@ -71,3 +71,89 @@ export interface SimulatorLogEvents {
   /** The stream ended: the device stopped, the Host stopped, or `log` exited. */
   closed: { reason: 'device' | 'host' | 'exited' }
 }
+
+// ── The live picture and input (docs/DEVICE-PREVIEW.md) ──
+
+/**
+ * `GET /simulators/:udid/stream?codec=&fps=&size=`: application/octet-stream of messages, each a 13-byte header (type,
+ * microseconds since the stream began as an unsigned 64-bit integer, payload length as an unsigned 32-bit integer, all
+ * big-endian) and the payload. A description comes before the first frame and again whenever the picture changes form.
+ */
+export const SIMULATOR_STREAM = {
+  headerBytes: 13,
+  /** JSON `SimulatorLiveDescription`. */
+  description: 0x01,
+  /** One H.264 access unit in AVCC form. */
+  delta: 0x02,
+  key: 0x03,
+  /** One JPEG. */
+  jpeg: 0x04,
+  /** JSON `{ reason }`: the stream ends here. */
+  end: 0x05,
+} as const
+
+/** What a live stream may ask for; the Host refuses anything outside. */
+export const SIMULATOR_STREAM_LIMITS = { fps: { min: 1, max: 60 }, size: { min: 160, max: 4096 } } as const
+
+export interface SimulatorLiveDescription {
+  codec: 'h264' | 'jpeg'
+  /** For `VideoDecoder.configure`: `avc1.xxxxxx` and the avcC record (base64). */
+  codecString?: string
+  config?: string
+  /** The encoded picture in pixels: always the screen's own (portrait) framebuffer. */
+  width: number
+  height: number
+  /** The framebuffer in points, and in the device's own pixels (what 1:1 zoom shows). */
+  points: { width: number; height: number }
+  source: { width: number; height: number }
+  /**
+   * How the screen's content is turned in the framebuffer: 1 upright, 2 upside down, 3 turned so its top is at the
+   * framebuffer's left, 4 at its right. Input points are in the content's own frame.
+   */
+  orientation: 1 | 2 | 3 | 4
+}
+
+export type SimulatorLiveEnd = 'device' | 'host' | 'closed' | 'failed'
+
+/** Single keys the panel and agents may press; text is not typed through the device keyboard. */
+export const SIMULATOR_KEYS = ['return', 'delete', 'tab', 'escape', 'left', 'right', 'up', 'down'] as const
+export type SimulatorKey = (typeof SIMULATOR_KEYS)[number]
+/** Hardware buttons. Apple Pay is not offered: idb answers it is not implemented on this transport. */
+export const SIMULATOR_BUTTONS = ['home', 'lock', 'side', 'siri'] as const
+export type SimulatorButton = (typeof SIMULATOR_BUTTONS)[number]
+
+/** `POST /simulators/:udid/input`: at most this many events, in order, in device points. */
+export const SIMULATOR_INPUT_LIMITS = { events: 64 } as const
+export type SimulatorInputEvent =
+  /** One finger: down, moves while down, up. A second finger is not available. */
+  | { type: 'touch'; phase: 'down' | 'move' | 'up'; x: number; y: number }
+  | { type: 'key'; key: SimulatorKey }
+  | { type: 'button'; button: SimulatorButton }
+
+/** Why a kind of input is unavailable; the panel shows it in a hover. */
+export type SimulatorInputReason =
+  /** idb_companion is not installed (the person installs it; Latch never does). */
+  | 'idb-missing'
+  /** It did not start, or stopped. */
+  | 'companion-failed'
+  /** It started but did not answer. */
+  | 'no-answer'
+  /** The private socket's path is too long for this Mac. */
+  | 'socket-path'
+  /** The device refuses pasted text from outside it (checked on iOS 27.2). */
+  | 'paste-refused'
+  /** idb's touch carries one point and no finger number. */
+  | 'single-touch'
+  /** This Host was started without input (tests, or not macOS). */
+  | 'unsupported'
+
+export type SimulatorInputKind = { available: true } | { available: false; reason: SimulatorInputReason }
+
+/** `POST /simulators/:udid/control`: what this device's input can do now. */
+export interface SimulatorControlView {
+  touch: SimulatorInputKind
+  keys: SimulatorInputKind
+  buttons: SimulatorInputKind
+  text: SimulatorInputKind
+  twoFingers: SimulatorInputKind
+}

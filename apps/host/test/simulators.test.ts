@@ -217,6 +217,11 @@ describe('device tool classes', () => {
       ['device_rotate', 'R1'],
       ['device_apps', 'R0'],
       ['device_launch', 'R1'],
+      ['device_tap', 'R1'],
+      ['device_swipe', 'R1'],
+      ['device_type_text', 'R1'],
+      ['device_press_key', 'R1'],
+      ['device_press_button', 'R1'],
     ])
     expect(risk('device_list', 'someone-else')).toBe('R2')
     expect(risk('device_boot')).toBe('R2')

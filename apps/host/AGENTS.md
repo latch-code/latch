@@ -21,9 +21,9 @@
 - 确认只经 `PresenceService`，无设备签名批准。开发固定 CDHash，发布固定身份与审计，缺一须离线重新固定，运行前核验子进程（ARCHITECTURE）。
 - 终端限 `host.sock`、`all`，复核目录身份，环境用 `terminalEnvironment`（[TERMINAL](../../docs/TERMINAL.md)）。
 - 本机 MCP 提示先审计、持久化来源再转发；远程拒绝（MCP.md）。
-- 构建禁测试代码；组件自检；私有框架只在 `latch-simulator`（DEVICE-PREVIEW）。
+- 构建禁测试代码；组件自检；私有框架只在 `latch-simulator`；输入只经 `idb_companion` 套接字（DEVICE-PREVIEW）。
 - `work` 不见文件差异；输出投影不改执行参数、回执和终态（STREAMING）。
-- `src/paths.ts`、`host-state.ts`、`env.ts` 只用可擦除语法（`tsconfig.strip.json`），供 Vite 与 Vitest 配置直接加载。
+- `src/paths.ts`、`host-state.ts`、`env.ts` 只用可擦除语法（`tsconfig.strip.json`）。
 - 附件字节只进私有存储，消息与 SSE 只存引用；上传逐块复查设备，下载句柄绑定设备（`test/attachment-routes.test.ts`）。
 - 文件树/搜索限 `files`、`all`；macOS 仅经 `latch-files` 描述符。索引不存权限，预览绑定 Harness/根身份/版本，晚回复查设备与正文窗口（ARCHITECTURE）。
 - 插件草稿与应用分离，批准执行摘要后才导入，旧租约真实释放后回收（PLUGIN-DEVELOPMENT、`test/plugin-package-api.test.ts`）。

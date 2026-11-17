@@ -19,6 +19,7 @@ import {
 import { latchEnv } from '../src/env.ts'
 import { COMPUTER_APP } from '../src/mcp-computer.ts'
 import { openInDeviceHub, spawnSimctl, xcrunDevicectl, xcrunSimctl } from '../src/simulators.ts'
+import { attachSimulatorHelper } from '../src/simulator-live.ts'
 import { latchCodeRoot, resolveLatchPaths } from '../src/paths.ts'
 import { presenceHelperPath } from '../src/presence.ts'
 import { buildPresenceHelper } from './presence-helper.ts'
@@ -242,7 +243,15 @@ async function main(): Promise<void> {
     ...(process.platform === 'darwin'
       ? {
           computerDriver: { app: COMPUTER_APP },
-          simulators: { run: xcrunSimctl, devicectl: xcrunDevicectl, spawn: spawnSimctl, openHub: openInDeviceHub },
+          simulators: {
+            run: xcrunSimctl,
+            devicectl: xcrunDevicectl,
+            spawn: spawnSimctl,
+            openHub: openInDeviceHub,
+            // The live picture from dist/native/latch-simulator, and input through the person's own idb_companion.
+            live: attachSimulatorHelper,
+            idb: {},
+          },
           xcodeBridge: {},
         }
       : {}),

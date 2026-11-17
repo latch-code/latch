@@ -17,6 +17,8 @@ import { createReviewNoteRoutes, type ReviewNoteRouteDeps } from './review-notes
 import { createShortcutRoutes, type ShortcutRouteDeps } from './shortcuts.ts'
 import { createSimulatorRoutes } from './simulators.ts'
 import type { Simulators } from '../simulators.ts'
+import type { SimulatorControl } from '../simulator-control.ts'
+import type { SimulatorLive } from '../simulator-live.ts'
 import { createWorkItemRoutes, type WorkItemRouteDeps } from './work-items.ts'
 import { createWorkThreadRoutes, type WorkThreadRouteDeps } from './work-threads.ts'
 import { createWorkProposalRoutes, type WorkProposalRouteDeps, type WorkProposalRoutes } from './work-proposals.ts'
@@ -40,7 +42,7 @@ export interface RouteDeps {
   git?: GitRouteOptions
   apps: AppRouteDeps
   browser: BrowserRouteDeps
-  simulators: Simulators
+  simulators: { simulators: Simulators; live: SimulatorLive; control: SimulatorControl }
   mcp: McpRouteDeps
   customization: CustomizationRouteDeps
   shortcuts: ShortcutRouteDeps
@@ -87,7 +89,7 @@ export function createRoutes(
       createGitRoutes(context, deps.git),
       terminal,
       createBrowserRoutes(context, deps.browser),
-      createSimulatorRoutes(context, deps.simulators),
+      createSimulatorRoutes(context, deps.simulators.simulators, deps.simulators.live, deps.simulators.control),
       createMcpRoutes(context, deps.mcp),
       createAgentRoutes(context, deps.agents),
       agentLogin,

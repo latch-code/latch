@@ -226,6 +226,7 @@ import {
 import { BrowserBroker, isBrowserTool, isLoopbackName, type BrokerOutcome, type BrowserTool } from './browser-broker.ts'
 import { BROWSER_TOOL_DEFINITIONS, browserFailure, browserResultText, createBrowserToolsPlugin } from './plugins/tools/browser/index.ts'
 import {
+  DEVICE_INPUTS,
   DEVICE_TOOL_DEFINITIONS,
   createDeviceToolsPlugin,
   deviceFailure,
@@ -233,6 +234,9 @@ import {
   type DeviceOutcome,
   type DeviceTool,
 } from './plugins/tools/device/index.ts'
+import { SimulatorControl, deviceInputFacts, parseDeviceInput, type DeviceInputArgs } from './simulator-control.ts'
+import { removeStaleIdbDirs } from './simulator-idb.ts'
+import { SimulatorLive } from './simulator-live.ts'
 import { Simulators, isBundleId, isSimulatorUdid, removeStaleSimulatorTemp, simulatorUrl, type SimulatorOptions } from './simulators.ts'
 import { addressFacts, bundleHash } from './routes/simulators.ts'
 import {
@@ -2034,6 +2038,17 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (turnScopes.size > 2000) turnScopes.delete(turnScopes.keys().next().value!)
     }
     startupCleanup.push(() => simulators.stop())
+    // The live picture (latch-simulator) and input (the person's idb_companion) end with the device and the Host.
+    const simulatorLive = new SimulatorLive(options.simulators?.live ? { attach: options.simulators.live } : {})
+    const simulatorControl = new SimulatorControl(options.simulators?.idb ? { idb: options.simulators.idb } : {})
+    simulators.onDeviceEnded(udid => {
+      simulatorLive.deviceEnded(udid)
+      simulatorControl.deviceEnded(udid)
+    })
+    startupCleanup.push(() => simulatorLive.stop())
+    startupCleanup.push(() => simulatorControl.stop())
+    // A private socket directory a crashed Host left, where no companion answers any more.
+    if (simulatorControl.offered) void removeStaleIdbDirs(options.simulators?.idb?.tempDir ?? tmpdir()).catch(() => undefined)
     if (simulators.supported) void simulators.list().catch(() => undefined)
     // A picture or recording directory a crashed Host of this user left in the temporary folder.
     if (simulators.supported) void removeStaleSimulatorTemp(tmpdir()).catch(() => undefined)
@@ -2063,13 +2078,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             admits: () => browserBroker.available(),
             // The simulator tools join while the last list found Xcode on this Mac.
             tools: () =>
-              [...BROWSER_TOOL_DEFINITIONS, ...(simulators.ready ? DEVICE_TOOL_DEFINITIONS : [])].map(
-                ({ name, description, parameters }) => ({
-                  name,
-                  description,
-                  inputSchema: parameters,
-                }),
-              ),
+              [
+                ...BROWSER_TOOL_DEFINITIONS,
+                ...(simulators.ready
+                  ? DEVICE_TOOL_DEFINITIONS.filter(
+                      definition => simulatorControl.offered || !DEVICE_INPUTS.has(definition.name as DeviceTool),
+                    )
+                  : []),
+              ].map(({ name, description, parameters }) => ({
+                name,
+                description,
+                inputSchema: parameters,
+              })),
             call: input => (isDeviceTool(input.tool) ? gatewayDeviceCall(input) : gatewayBrowserCall(input)),
             mcp: mcpGateway(),
             log,
@@ -3304,7 +3324,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         ...(options.computerDriver ? { computer: options.computerDriver } : {}),
         ...(options.xcodeBridge ? { xcode: options.xcodeBridge } : {}),
       },
-      simulators,
+      simulators: { simulators, live: simulatorLive, control: simulatorControl },
       browser: {
         broker: browserBroker,
         async readSession(caller, id) {
@@ -5261,6 +5281,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // Checked against the device's own list as it runs; only its hash is recorded.
       const bundleId = args.bundleId
       if (tool === 'device_launch' && !isBundleId(bundleId)) return { ok: false, error: 'invalid-input' }
+      // Tapping, swiping and pressing: only a full-access session (an external harness at L3) a person started, never an
+      // unattended run. With input an agent could open any address in Safari, so this is where that is decided.
+      let inputArgs: DeviceInputArgs | undefined
+      if (DEVICE_INPUTS.has(tool)) {
+        if (hub!.unattended(input.sessionId)) return { ok: false, error: 'unattended' }
+        const summary = await hub!
+          .detail(input.sessionId)
+          .then(detail => detail.summary)
+          .catch(() => undefined)
+        if (!summary || hub!.levelOf(summary.harnessId) !== 'L3') return { ok: false, error: 'not-full-access-input' }
+        if (!simulatorControl.offered) return { ok: false, error: 'simulator-input-unavailable' }
+        const parsed = parseDeviceInput(tool, args)
+        if (!parsed) return { ok: false, error: 'invalid-input' }
+        inputArgs = parsed
+      }
       try {
         await audit.append({
           action: 'simulator.call',
@@ -5276,6 +5311,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(tool === 'device_rotate' && (direction === 'left' || direction === 'right') ? { direction } : {}),
             ...(tool === 'device_launch' && isBundleId(bundleId) ? { bundleHash: bundleHash(bundleId) } : {}),
             ...(address ? { scheme: address.scheme, ...(address.originHash ? { originHash: address.originHash } : {}) } : {}),
+            ...(inputArgs ? deviceInputFacts(inputArgs) : {}),
             ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
             ...(input.approvalId ? { approvalId: input.approvalId } : {}),
             ...(input.via ? { via: input.via } : {}),
@@ -5317,6 +5353,32 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           const apps = await simulators.appList(udid)
           const lines = apps.map(app => [app.bundleId, escapeSecurityText(app.name), app.kind].join(' · '))
           return { ok: true, text: lines.length ? lines.join('\n') : 'No apps.' }
+        }
+        if (inputArgs) {
+          if (inputArgs.tool === 'device_type_text') return { ok: false, error: 'simulator-text-unavailable' }
+          const device = await simulators.device(inputArgs.udid)
+          if (device.state !== 'booted') return { ok: false, error: 'simulator-not-booted' }
+          simulators.touch(device.udid)
+          simulators.agentCall(input.sessionId, 'start', device.udid)
+          if (inputArgs.tool === 'device_tap') {
+            await simulatorControl.tap(device.udid, inputArgs.x, inputArgs.y, inputArgs.holdMs)
+            return { ok: true, text: inputArgs.holdMs && inputArgs.holdMs > 500 ? 'Long-pressed.' : 'Tapped.' }
+          }
+          if (inputArgs.tool === 'device_swipe') {
+            await simulatorControl.swipe(
+              device.udid,
+              { x: inputArgs.fromX, y: inputArgs.fromY },
+              { x: inputArgs.toX, y: inputArgs.toY },
+              inputArgs.durationMs,
+            )
+            return { ok: true, text: 'Swiped.' }
+          }
+          if (inputArgs.tool === 'device_press_key') {
+            await simulatorControl.key(device.udid, inputArgs.key)
+            return { ok: true, text: `Pressed ${inputArgs.key}.` }
+          }
+          await simulatorControl.button(device.udid, inputArgs.button)
+          return { ok: true, text: `Pressed ${inputArgs.button}.` }
         }
         if (tool === 'device_launch') {
           await simulators.launch(udid, bundleId)

@@ -5,16 +5,27 @@
 import { createHash } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 import { z } from 'zod'
-import { SIMULATOR_PRIVACY_ACTIONS, SIMULATOR_PRIVACY_SERVICES, isLocalListener, type SimulatorLogEvents } from '@latch/protocol'
+import {
+  SIMULATOR_BUTTONS,
+  SIMULATOR_INPUT_LIMITS,
+  SIMULATOR_KEYS,
+  SIMULATOR_PRIVACY_ACTIONS,
+  SIMULATOR_PRIVACY_SERVICES,
+  SIMULATOR_STREAM_LIMITS,
+  isLocalListener,
+  type SimulatorLogEvents,
+} from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { authFailure } from '../access.ts'
 import { json, jsonBody, safeDecode } from '../http-util.ts'
 import { SIMULATOR_RUNTIME_ID, SIMULATOR_TYPE_ID, isBundleId, simulatorName, simulatorUrl, type Simulators } from '../simulators.ts'
 import type { AuditDetail } from '../audit.ts'
+import type { SimulatorControl } from '../simulator-control.ts'
+import type { SimulatorLive } from '../simulator-live.ts'
 import type { Caller, DeviceCaller, RouteContext, RouteModule } from './registry.ts'
 
 const SIMULATOR_PATH =
-  /^\/link\/api\/simulators\/([^/]+)\/(frame|screenshot|boot|shutdown|open-url|appearance|device-hub|orientation|rotate|record|apps|launch|terminate|privacy|logs)$/u
+  /^\/link\/api\/simulators\/([^/]+)\/(frame|screenshot|boot|shutdown|open-url|appearance|device-hub|orientation|rotate|record|apps|launch|terminate|privacy|logs|stream|control|input)$/u
 const openSchema = z.strictObject({ url: z.string().max(2048) })
 const appearanceSchema = z.strictObject({ appearance: z.enum(['light', 'dark']) })
 const rotateSchema = z.strictObject({ direction: z.enum(['left', 'right']) })
@@ -30,6 +41,27 @@ const createSchema = z.strictObject({
   deviceType: z.string().regex(SIMULATOR_TYPE_ID),
   runtime: z.string().regex(SIMULATOR_RUNTIME_ID),
 })
+const streamSchema = z.strictObject({
+  codec: z.enum(['h264', 'jpeg']),
+  fps: z.coerce.number().int().min(SIMULATOR_STREAM_LIMITS.fps.min).max(SIMULATOR_STREAM_LIMITS.fps.max),
+  size: z.coerce.number().int().min(SIMULATOR_STREAM_LIMITS.size.min).max(SIMULATOR_STREAM_LIMITS.size.max),
+})
+const controlSchema = z.strictObject({ action: z.enum(['take', 'release']) })
+const coordinate = z.number().min(0).max(10_000)
+const inputSchema = z.strictObject({
+  events: z
+    .array(
+      z.discriminatedUnion('type', [
+        z.strictObject({ type: z.literal('touch'), phase: z.enum(['down', 'move', 'up']), x: coordinate, y: coordinate }),
+        z.strictObject({ type: z.literal('key'), key: z.enum(SIMULATOR_KEYS) }),
+        z.strictObject({ type: z.literal('button'), button: z.enum(SIMULATOR_BUTTONS) }),
+      ]),
+    )
+    .min(1)
+    .max(SIMULATOR_INPUT_LIMITS.events),
+})
+/** How often an open live stream marks its device as shown and in use. */
+const WATCHING_EVERY_MS = 5_000
 const LOG_HEARTBEAT_MS = 15_000
 const LOG_BEHIND_BYTES = 1024 * 1024
 
@@ -60,9 +92,16 @@ function frame<E extends keyof SimulatorLogEvents>(event: E, data: SimulatorLogE
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
 }
 
-export function createSimulatorRoutes(context: RouteContext, simulators: Simulators): RouteModule {
+export function createSimulatorRoutes(
+  context: RouteContext,
+  simulators: Simulators,
+  live: SimulatorLive,
+  control: SimulatorControl,
+): RouteModule {
   const { devices, lifecycle } = context
-  lifecycle.on('hostStopping', () => simulators.stop())
+  lifecycle.on('hostStopping', async () => {
+    await Promise.all([simulators.stop(), live.stop(), control.stop()])
+  })
   for (const event of ['sessionArchived', 'sessionDeleted', 'runSettled'] as const)
     lifecycle.on(event, ({ sessionId }: { sessionId: string }) => simulators.agentEnded(sessionId))
 
@@ -154,6 +193,61 @@ export function createSimulatorRoutes(context: RouteContext, simulators: Simulat
     res.on('drain', () => stream.resume())
   }
 
+  /**
+   * The live picture as a binary fetch stream (SIMULATOR_STREAM framing): each message is written only once the socket
+   * took the last, so a page that reads slowly holds back its own small queue (frames dropped there), never the Host.
+   */
+  async function stream(
+    res: ServerResponse,
+    caller: DeviceCaller,
+    udid: string,
+    settings: z.infer<typeof streamSchema>,
+    gone: AbortController,
+  ) {
+    const { credentialHash } = caller
+    if (!credentialHash) throw authFailure('unauthorized')
+    const deviceId = caller.device.id
+    const allowed = () => {
+      const device = devices.get(deviceId)
+      return device?.dataScope === 'all' && device.scopes.includes('run') && devices.streamAllowed(deviceId, credentialHash)
+    }
+    const watch = await live.watch(udid, { codec: settings.codec, maxFps: settings.fps, maxDimension: settings.size })
+    if (gone.signal.aborted || res.destroyed) {
+      watch.close()
+      return
+    }
+    gone.signal.addEventListener('abort', () => watch.close(), { once: true })
+    res.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'cache-control': 'no-store, no-transform',
+      'x-content-type-options': 'nosniff',
+      'x-accel-buffering': 'no',
+    })
+    simulators.watching(udid)
+    const marking = setInterval(() => simulators.watching(udid), WATCHING_EVERY_MS)
+    marking.unref()
+    try {
+      for (;;) {
+        const message = await watch.next()
+        if (!message || res.destroyed || gone.signal.aborted || !allowed()) break
+        if (!res.write(message))
+          await new Promise<void>(resolve => {
+            const done = () => {
+              res.off('drain', done)
+              gone.signal.removeEventListener('abort', done)
+              resolve()
+            }
+            res.on('drain', done)
+            gone.signal.addEventListener('abort', done, { once: true })
+          })
+      }
+    } finally {
+      clearInterval(marking)
+      watch.close()
+      if (!res.writableEnded) res.end()
+    }
+  }
+
   return {
     async route({ req, res, caller, path, method }) {
       if (path !== '/link/api/simulators' && !path.startsWith('/link/api/simulators/')) return false
@@ -232,6 +326,19 @@ export function createSimulatorRoutes(context: RouteContext, simulators: Simulat
           json(res, { apps })
           return true
         }
+        if (action === 'stream') {
+          const gone = new AbortController()
+          res.once('close', () => gone.abort())
+          const query = new URL(req.url ?? '/', 'http://host').searchParams
+          if ([...query.keys()].some((key, index, keys) => keys.indexOf(key) !== index))
+            throw new AppError(400, 'invalid-input', '画面参数无效')
+          const settings = streamSchema.parse(Object.fromEntries(query))
+          const device = await simulators.device(udid)
+          authorize(caller)
+          if (device.state !== 'booted') throw new AppError(409, 'simulator-not-booted', '设备未启动')
+          await stream(res, caller, device.udid, settings, gone)
+          return true
+        }
         if (action === 'logs') {
           // Before any await: a page that closes during the setup below must still end what it would have started.
           const gone = new AbortController()
@@ -247,8 +354,34 @@ export function createSimulatorRoutes(context: RouteContext, simulators: Simulat
         return false
       }
       if (method !== 'POST') return false
+      if (action === 'input') {
+        // Read and checked before the device is looked up: inputs come many a second, and the list is kept two seconds.
+        const { events } = inputSchema.parse(await jsonBody(req))
+        if (!control.holds(udid, owner)) throw new AppError(409, 'simulator-control-required', '先在面板里接管这台设备')
+        const device = await simulators.device(udid)
+        authorize(caller)
+        if (device.state !== 'booted') throw new AppError(409, 'simulator-not-booted', '设备未启动')
+        simulators.touch(device.udid)
+        await control.input(device.udid, owner, events)
+        json(res, { delivered: events.length })
+        return true
+      }
       const device = await simulators.device(udid)
       authorize(caller)
+      if (action === 'control') {
+        const { action: step } = controlSchema.parse(await jsonBody(req))
+        authorize(caller)
+        if (step === 'release') {
+          await control.release(device.udid, owner)
+          json(res, { released: true })
+          return true
+        }
+        if (device.state !== 'booted') throw new AppError(409, 'simulator-not-booted', '设备未启动')
+        // The person's taps are not recorded one by one: once, as they take control.
+        if (!control.holds(device.udid, owner)) await audited(caller, { action: 'control', udid: device.udid })
+        json(res, { control: await control.take(device.udid, owner) })
+        return true
+      }
       if (action === 'boot') {
         await audited(caller, { action: 'boot', udid: device.udid })
         json(res, { device: await simulators.boot(device.udid) })

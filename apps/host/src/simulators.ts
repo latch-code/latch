@@ -26,6 +26,8 @@ import {
   type SimulatorRecordingView,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
+import type { IdbOptions } from './simulator-idb.ts'
+import type { LiveAttach } from './simulator-live.ts'
 
 /** simctl's own UDIDs: an upper-case UUID; anything else (`booted`, `all`, an option) is refused before simctl runs. */
 export const SIMULATOR_UDID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/u
@@ -132,6 +134,10 @@ export interface SimulatorOptions {
   /** A recording's bounds; a minute and 25 MB unless a test names smaller ones. */
   recordLimits?: { ms: number; bytes: number }
   now?: () => number
+  /** The live picture's helper (`attachSimulatorHelper`). Left out, the panel keeps its screenshots. */
+  live?: LiveAttach
+  /** How idb_companion is found and run, for input. Left out, there is no input. */
+  idb?: IdbOptions
 }
 
 /** A child's environment: the same few variables as the runners. */
@@ -578,6 +584,7 @@ export class Simulators {
   private catalogCache: { at: number; value: SimulatorCatalogView } | undefined
   private readonly idleTimer: ReturnType<typeof setInterval> | undefined
   private readonly recordLimits: { ms: number; bytes: number }
+  private readonly endedListeners = new Set<(udid: string) => void>()
 
   constructor(options: SimulatorOptions = {}) {
     this.run = options.run
@@ -812,8 +819,22 @@ export class Simulators {
     return device
   }
 
+  /** Told when a device shuts down (here or elsewhere): its live picture and input end with it. */
+  onDeviceEnded(listener: (udid: string) => void): void {
+    this.endedListeners.add(listener)
+  }
+
+  /** A live picture of the device is being watched now: it is the one the panel shows, and in use. */
+  watching(udid: string): void {
+    if (!isSimulatorUdid(udid)) return
+    this.shownDevice = { udid, at: this.now() }
+    this.lastFrame.set(udid, this.now())
+    this.touch(udid)
+  }
+
   /** The recording and the log streams of one device end: it was shut down. */
   private endChildren(udid: string): void {
+    for (const listener of this.endedListeners) listener(udid)
     const recording = this.recordings.get(udid)
     if (recording) void this.discard(recording)
     for (const stream of [...this.logStreams]) if (stream.udid === udid) stream.close('device')
