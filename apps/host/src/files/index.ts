@@ -33,7 +33,7 @@ import { canTruncate, contentLimit, fileEtag, fileFormat } from './metadata.ts'
 import { isReferenced, isReferenceListed, sessionReferences } from './references.ts'
 import { openContent, sendContent } from './read.ts'
 import { FileReadQuota } from './quota.ts'
-import { FileSearchIndex } from './search.ts'
+import { FileSearchIndex, tooManyHung, trackHung } from './search.ts'
 import { GREP_LIMITS, GREP_QUERY_MAX, grepFiles, type GrepLimits } from './grep.ts'
 import {
   ProtectedPaths,
@@ -245,7 +245,8 @@ export function createFileRoutes(options: FileRoutesOptions) {
       throw new AppError(403, 'file-scope', '这台设备只能打开本会话提到过的文件，不能搜索文件内容')
     const id = caller.device.id,
       side = isLocalListener(caller.connection.listener) ? 'local' : 'remote'
-    if (searchingDevices.has(id) || searchingTotal[side] >= 2)
+    // While file operations that timed out still hang (a hung mount), nothing new is started to join them.
+    if (searchingDevices.has(id) || searchingTotal[side] >= 2 || tooManyHung())
       throw new AppError(429, 'file-grep-busy', '正在进行的内容搜索过多，请稍后再试')
     searchingDevices.add(id)
     searchingTotal[side]++
@@ -254,6 +255,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
     const expired = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         hard.abort()
+        trackHung(running)
         reject(new AppError(503, 'file-grep-timeout', '内容搜索没有及时结束，请稍后再试'))
       }, slotMs())
       timer.unref()

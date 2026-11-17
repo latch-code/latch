@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ignoreVerdict, isGitignored, matchBudget, parseGitignore, readIgnoreRules, type IgnoreRules } from '../src/files/gitignore.ts'
-import { grepFiles } from '../src/files/grep.ts'
+import { GREP_LIMITS, grepFiles } from '../src/files/grep.ts'
 import { ProtectedPaths } from '../src/files/resolve.ts'
 import { FileSearchIndex, searchFiles } from '../src/files/search.ts'
 
@@ -267,3 +267,81 @@ describe.each(['root', 'globstar', 'chain', 'sets', 'wide-sets', 'brackets', 'op
     })
   },
 )
+
+describe('ordinary repositories and many walks at once', () => {
+  const guard = new ProtectedPaths([])
+  const GAP = 60
+
+  async function ordinary(files: number, folders = 20) {
+    const parent = await realpath(await mkdtemp(join(tmpdir(), 'latch-ordinary-')))
+    cleanups.push(() => rm(parent, { recursive: true, force: true }))
+    const root = join(parent, 'repo')
+    await mkdir(join(root, '.git'), { recursive: true })
+    await writeFile(join(root, '.gitignore'), 'node_modules/\ndist/\n*.log\n.env\ncoverage/\n*.tmp\nbuild/\n.cache/\n*.swp\n.DS_Store\n')
+    for (let folder = 0; folder < folders; folder++) {
+      const at = join(root, `pkg-${folder}`, 'src')
+      await mkdir(at, { recursive: true })
+      for (let index = 0; index < files / folders; index++) await writeFile(join(at, `file-${index}.ts`), 'export const needle = 1\n')
+    }
+    return { id: 'default', path: root }
+  }
+
+  it('leaves nothing unchecked in an ordinary repository, over 100 content searches and 100 name searches', async () => {
+    const root = await ordinary(2000)
+    let unchecked = 0
+    for (let run = 0; run < 100; run++) {
+      const result = await grepFiles(
+        [root],
+        guard,
+        { q: 'needle', caseSensitive: false, wholeWord: false },
+        () => false,
+        () => {},
+        {
+          ...GREP_LIMITS,
+          files: 1,
+        },
+      )
+      unchecked += result.skipped.unchecked + result.skipped.uncheckedFolders
+      const names = await searchFiles([root], guard, 'file-1', 20, () => false)
+      unchecked += (names.unchecked?.files ?? 0) + (names.unchecked?.directories ?? 0)
+    }
+    expect(unchecked).toBe(0)
+  }, 120_000)
+
+  it('keeps the gap bounded with 8 walks at once on the hostile root fixture', async () => {
+    const root = await crafted('root')
+    const { gap } = await longestGap(() =>
+      Promise.all([
+        ...Array.from({ length: 4 }, () => searchFiles([root], guard, 'aaa', 50, () => false)),
+        ...Array.from({ length: 4 }, () =>
+          grepFiles(
+            [root],
+            guard,
+            { q: 'needle', caseSensitive: false, wholeWord: false },
+            () => false,
+            () => {},
+          ),
+        ),
+      ]),
+    )
+    expect(gap).toBeLessThan(GAP)
+  })
+
+  it('closes the watchers of 8 cached contexts a few at a time when a file changes', async () => {
+    const root = await ordinary(200, 40)
+    const index = new FileSearchIndex()
+    cleanups.push(() => index.close())
+    for (let context = 0; context < 8; context++) await index.search([root], guard, `context-${context}`, 'file', 20, () => false)
+    const { gap } = await longestGap(async () => {
+      await writeFile(join(root.path, 'pkg-0', 'src', 'changed.ts'), 'x')
+      await new Promise(done => setTimeout(done, 600))
+    })
+    expect(gap).toBeLessThan(GAP)
+  })
+
+  it('ranks many candidates without one long stretch', async () => {
+    const root = await ordinary(12_000, 24)
+    const { gap } = await longestGap(() => searchFiles([root], guard, '', 50, () => false))
+    expect(gap).toBeLessThan(GAP)
+  }, 60_000)
+})

@@ -10,7 +10,7 @@ import { openContent } from './read.ts'
 import { resolveRecorded, type FileRoot, type ProtectedPaths, type ResolvedFile, type ResolveOptions } from './resolve.ts'
 import { freshBudget, walk, type Unchecked } from './search.ts'
 import { looksLikeText } from './sniff.ts'
-import { YIELD_MS } from './gitignore.ts'
+import { beginLoopWork, turnIfDue } from './loop-turn.ts'
 
 const READ_CHUNK = 64 * 1024
 
@@ -171,7 +171,16 @@ export interface GrepHooks {
  * synchronous step works on one file of at most `fileBytes` and is linear in it; between files the event loop turns and
  * the deadline and `cancelled` are looked at again.
  */
-export async function grepFiles(
+export async function grepFiles(...args: Parameters<typeof grepFolders>): ReturnType<typeof grepFolders> {
+  const end = beginLoopWork()
+  try {
+    return await grepFolders(...args)
+  } finally {
+    end()
+  }
+}
+
+async function grepFolders(
   roots: readonly FileRoot[],
   guard: ProtectedPaths,
   query: GrepQuery,
@@ -222,8 +231,8 @@ export async function grepFiles(
     result.skipped.uncheckedFolders += walked.undecided.directories
     if (walked.truncated) result.stopped ??= performance.now() > deadline ? 'time' : 'entries'
     for (const relative of walked.paths) {
-      // A turn of the event loop before each file, so a long search never holds the Host.
-      await new Promise(resolve => setImmediate(resolve))
+      // The event loop turns between files whenever it has been held YIELD_MS, so a long search never holds the Host.
+      await turnIfDue()
       check()
       if (cancelled()) return result
       if (performance.now() > deadline) {
@@ -305,13 +314,11 @@ export async function grepFiles(
       const lines: GrepLine[] = []
       let more = false
       let number = 0,
-        from = 0,
-        since = performance.now()
+        from = 0
       while (from <= text.length) {
         // However many lines, the event loop turns every few milliseconds.
-        if ((number & 1023) === 0 && performance.now() - since > YIELD_MS) {
-          await new Promise(resolve => setImmediate(resolve))
-          since = performance.now()
+        if ((number & 255) === 0) {
+          await turnIfDue()
           if (cancelled()) return result
         }
         const next = text.indexOf('\n', from)

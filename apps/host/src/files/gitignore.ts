@@ -11,6 +11,9 @@
 import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { join } from 'node:path'
+import { YIELD_MS, sinceTurn } from './loop-turn.ts'
+
+export { YIELD_MS } from './loop-turn.ts'
 
 const MAX_FILE_BYTES = 64 * 1024
 const MAX_PATTERNS = 1000
@@ -29,8 +32,7 @@ export const ENTRY_STEPS = 200_000
 export const WALK_STEPS = 20_000_000
 /** Characters of ignore files one walk may parse. */
 export const PARSE_CHARACTERS = 4 * 1024 * 1024
-/** The longest a walk works without letting the event loop turn, and how often a verdict reads the clock. */
-export const YIELD_MS = 8
+/** How often a verdict reads the clock (`YIELD_MS` and the shared clock are in loop-turn.ts). */
 const CLOCK_STEPS = 256
 
 type CharSet = { negated: boolean; singles: Set<string>; ranges: Array<[string, string]> }
@@ -55,34 +57,40 @@ export interface IgnoreRules {
 /** What the ignore rules say about one entry; `undecided` when the check was cut short or a level is not whole. */
 export type IgnoreVerdict = 'ignored' | 'kept' | 'undecided'
 /**
- * What one walk may still spend: counted steps, characters of ignore files to parse, its deadline, and `since`, when
- * the walk last let the event loop turn (the walk sets it each time it yields).
+ * What one walk may still spend: counted steps, characters of ignore files to parse, and its deadline. `cut` says why
+ * the last verdict was `undecided` when it was cut short: by time (the loop was held YIELD_MS; worth a retry after a
+ * turn), by steps or by the deadline.
  */
 export interface MatchBudget {
   walk: number
   parse: number
   deadline: number
-  since: number
+  cut?: 'time' | 'steps' | 'deadline'
 }
 export const matchBudget = (deadline = Number.POSITIVE_INFINITY): MatchBudget => ({
   walk: WALK_STEPS,
   parse: PARSE_CHARACTERS,
   deadline,
-  since: performance.now(),
 })
-class Spent extends Error {}
-const SPENT = new Spent()
+class Spent extends Error {
+  constructor(readonly reason: 'time' | 'steps' | 'deadline') {
+    super(reason)
+  }
+}
+const SPENT_STEPS = new Spent('steps')
+const SPENT_TIME = new Spent('time')
+const SPENT_DEADLINE = new Spent('deadline')
 type Meter = { left: number; budget?: MatchBudget }
 
-/** Charges `cost` steps; every CLOCK_STEPS of them the clock is read against the walk's last turn and deadline. */
+/** Charges `cost` steps; every CLOCK_STEPS of them the clock is read against the loop's last turn and the deadline. */
 function charge(meter: Meter, cost: number): void {
   const before = meter.left
   meter.left -= cost
-  if (meter.left < 0) throw SPENT
+  if (meter.left < 0) throw SPENT_STEPS
   const budget = meter.budget
   if (budget && Math.floor(before / CLOCK_STEPS) !== Math.floor(meter.left / CLOCK_STEPS)) {
-    const now = performance.now()
-    if (now - budget.since > YIELD_MS || now > budget.deadline) throw SPENT
+    if (sinceTurn() > YIELD_MS) throw SPENT_TIME
+    if (performance.now() > budget.deadline) throw SPENT_DEADLINE
   }
 }
 
@@ -295,8 +303,11 @@ export function ignoreVerdict(rules: IgnoreRules | undefined, relative: string, 
   const meter: Meter = { left: allowed, ...(budget ? { budget } : {}) }
   // A level not kept whole, here or deeper, may have held a later line that decides otherwise.
   let partial = false
+  if (budget) delete budget.cut
   try {
-    if (budget && (allowed <= 0 || performance.now() - budget.since > YIELD_MS || performance.now() > budget.deadline)) return 'undecided'
+    if (budget && allowed <= 0) throw SPENT_STEPS
+    if (budget && sinceTurn() > YIELD_MS) throw SPENT_TIME
+    if (budget && performance.now() > budget.deadline) throw SPENT_DEADLINE
     for (let level = rules; level; level = level.parent) {
       partial ||= level.partial === true
       const parts = (level.base ? relative.slice(level.base.length + 1) : relative).split('/')
@@ -309,8 +320,9 @@ export function ignoreVerdict(rules: IgnoreRules | undefined, relative: string, 
     }
     return partial ? 'undecided' : 'kept'
   } catch (cause) {
-    if (cause === SPENT) return 'undecided'
-    throw cause
+    if (!(cause instanceof Spent)) throw cause
+    if (budget) budget.cut = cause.reason
+    return 'undecided'
   } finally {
     if (budget) budget.walk -= allowed - Math.max(0, meter.left)
   }

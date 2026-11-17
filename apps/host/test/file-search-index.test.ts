@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppError } from '@latch/sdk'
-import { FileSearchIndex, searchFiles } from '../src/files/search.ts'
+import { FileSearchIndex, hungFileOperations, searchFiles, trackHung } from '../src/files/search.ts'
 import { ProtectedPaths } from '../src/files/resolve.ts'
 
 vi.mock('node:fs', async original => {
@@ -78,14 +78,38 @@ async function fixture() {
 }
 
 describe('bounded filename index', () => {
-  it('closes without waiting forever on a file system call that never settles', async () => {
+  it('drops a scan stuck in a call that never settles, answers its waiters, and closes without waiting forever', async () => {
     const { index, search } = await fixture()
-    vi.mocked(opendir).mockImplementation((() => new Promise(() => {})) as typeof opendir)
-    void search('report').catch(() => {})
-    await new Promise(done => setTimeout(done, 50))
-    const started = performance.now()
-    await index.close()
-    expect(performance.now() - started).toBeLessThan(3000)
+    const stuck: Array<() => void> = []
+    vi.mocked(opendir).mockImplementation(
+      (() => new Promise((_, reject) => stuck.push(() => reject(new Error('released'))))) as typeof opendir,
+    )
+    try {
+      const started = performance.now()
+      await expect(search('report')).rejects.toMatchObject({ code: 'file-search-timeout' })
+      expect(performance.now() - started).toBeLessThan(7000)
+      expect(hungFileOperations.count).toBe(1)
+      const closing = performance.now()
+      await index.close()
+      expect(performance.now() - closing).toBeLessThan(3000)
+    } finally {
+      for (const release of stuck.splice(0)) release()
+    }
+    await vi.waitFor(() => expect(hungFileOperations.count).toBe(0))
+  }, 15_000)
+
+  it('does not start a scan while two file operations still hang', async () => {
+    const { search } = await fixture()
+    const hold: Array<() => void> = []
+    trackHung(new Promise<void>(resolve => hold.push(resolve)))
+    trackHung(new Promise<void>(resolve => hold.push(resolve)))
+    try {
+      await expect(search('report')).rejects.toMatchObject({ code: 'file-list-busy' })
+    } finally {
+      for (const resolve of hold.splice(0)) resolve()
+    }
+    await vi.waitFor(() => expect(hungFileOperations.count).toBe(0))
+    expect((await search('report')).files.length).toBeGreaterThan(0)
   })
 
   it('reuses only names while freshly rejecting changed secret content, symlinks and revoked callers', async () => {
@@ -193,6 +217,8 @@ describe('bounded filename index', () => {
     await f.search('report')
     expect(opendir).toHaveBeenCalledTimes(scans)
     await vi.advanceTimersByTimeAsync(1000)
+    // Closed a few per turn, all within a few turns.
+    await vi.advanceTimersByTimeAsync(20)
     expect(watches.every(watch => watch.close.mock.calls.length === 1)).toBe(true)
     await f.search('report')
     expect(vi.mocked(opendir).mock.calls.length).toBeGreaterThan(scans)

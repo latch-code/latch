@@ -12,6 +12,7 @@ import { AuditLog } from '../src/audit.ts'
 import { createFileRoutes } from '../src/files/index.ts'
 import { GREP_LIMITS, grepFiles, literalPattern, windowed, type GrepLimits, type GrepResult } from '../src/files/grep.ts'
 import { ProtectedPaths } from '../src/files/resolve.ts'
+import { hungFileOperations } from '../src/files/search.ts'
 
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -549,17 +550,29 @@ describe('content search route', () => {
     expect(state.resolved - at).toBeLessThanOrEqual(1)
   })
 
-  it('frees a slot a hung read holds, after its hard time-out, and answers that it timed out', async () => {
+  it('frees a slot a hung read holds, after its hard time-out, and refuses new searches while two still hang', async () => {
     const { request, state, nativeSignal } = await routes()
-    state.afterResolve = () => new Promise<void>(() => {})
-    const started = performance.now()
-    const answer = await request('all', 'tasks/session/files/grep', { q: 'needle' })
-    expect(answer.status).toBe(503)
-    expect(((await answer.json()) as { error: string }).error).toBe('file-grep-timeout')
-    expect(performance.now() - started).toBeLessThan(4000)
-    // The read still hangs, yet the listener on the long-lived connection signal (and the lease with it) is gone.
-    expect(getEventListeners(nativeSignal.signal, 'abort')).toHaveLength(0)
-    state.afterResolve = undefined
+    const hung: Array<() => void> = []
+    state.afterResolve = () => new Promise<void>(resolve => hung.push(resolve))
+    try {
+      const started = performance.now()
+      const answer = await request('all', 'tasks/session/files/grep', { q: 'needle' })
+      expect(answer.status).toBe(503)
+      expect(((await answer.json()) as { error: string }).error).toBe('file-grep-timeout')
+      expect(performance.now() - started).toBeLessThan(4000)
+      // The read still hangs, yet the listener on the long-lived connection signal (and the lease with it) is gone.
+      expect(getEventListeners(nativeSignal.signal, 'abort')).toHaveLength(0)
+      expect((await request('other', 'tasks/session/files/grep', { q: 'needle' })).status).toBe(503)
+      // Two time-outs still hang: nothing new is started to join them, from any device.
+      expect(hungFileOperations.count).toBe(2)
+      const refused = await request('files', 'tasks/session/files/grep', { q: 'needle' })
+      expect(refused.status).toBe(429)
+      expect(((await refused.json()) as { error: string }).error).toBe('file-grep-busy')
+    } finally {
+      state.afterResolve = undefined
+      for (const resolve of hung.splice(0)) resolve()
+    }
+    await vi.waitFor(() => expect(hungFileOperations.count).toBe(0))
     expect((await request('all', 'tasks/session/files/grep', { q: 'needle' })).status).toBe(200)
   })
 

@@ -2,12 +2,34 @@ import { watch, type FSWatcher } from 'node:fs'
 import { lstat, opendir, realpath, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AppError } from '@latch/sdk'
-import { YIELD_MS, ignoreVerdict, matchBudget, readIgnoreRules, type IgnoreRules } from './gitignore.ts'
+import { ignoreVerdict, matchBudget, readIgnoreRules, type IgnoreRules } from './gitignore.ts'
+import { beginLoopWork, turnIfDue, yieldTurn } from './loop-turn.ts'
 import { IGNORED_NAMES } from './ignore.ts'
 import { resolveRecorded, type FileRoot, type ProtectedPaths } from './resolve.ts'
 import { isInsidePath } from '../paths.ts'
 
 const NEVER_LISTED = new Set(['.git', '.ds_store'])
+/** Watchers closed per turn of the event loop. */
+const WATCHER_CLOSES_PER_TURN = 4
+/** Candidates ranked per turn of the event loop. */
+const RANK_CHUNK = 2048
+/** How long one scan may run before it is dropped as hung. */
+const SCAN_HARD_MS = 5000
+/** File searches and scans that timed out and have not settled, in the whole process; past MAX_HUNG nothing new starts. */
+export const hungFileOperations = { count: 0 }
+const MAX_HUNG = 2
+/** Counts `operation` as hung until it settles. */
+export function trackHung(operation: Promise<unknown>): void {
+  hungFileOperations.count++
+  void operation
+    .catch(() => {})
+    .finally(() => {
+      hungFileOperations.count--
+    })
+}
+/** The refusal while too many file operations hang: the normal busy answer, so the client retries later. */
+export const busyWithHung = () => new AppError(429, 'file-list-busy', '文件读取繁忙，请稍后再试')
+export const tooManyHung = () => hungFileOperations.count >= MAX_HUNG
 /** How long closing the index waits for operations still running. */
 const CLOSE_WAIT_MS = 2000
 // Only in a folder without .git: in a repository these can be real source, and .gitignore says which they are.
@@ -144,6 +166,8 @@ function wantsSkipped(candidates: readonly Candidate[], limit: number, needle: s
 export class FileSearchIndex {
   private readonly entries = new Map<string, Entry>()
   private readonly operations = new Set<Promise<unknown>>()
+  private readonly closing: FSWatcher[] = []
+  private draining = false
   private readonly watcherClosures = new Set<Promise<void>>()
   private activeWatchers = 0
   private closed = false
@@ -162,6 +186,8 @@ export class FileSearchIndex {
     }
     current()
     const operation = (async () => {
+      // The shared loop clock's heartbeat runs for the ranking too, not only the walk (loop-turn.ts).
+      const end = beginLoopWork()
       try {
         return await runSearch(roots, guard, query, limit, cancelled, current, (root, key) =>
           this.load(root, guard, JSON.stringify([identity, key]), cancelled, current),
@@ -169,7 +195,9 @@ export class FileSearchIndex {
       } catch (cause) {
         if (!(cause instanceof IndexChanged)) throw cause
         current()
-        return searchFiles(roots, guard, query, limit, cancelled, current)
+        return await searchFiles(roots, guard, query, limit, cancelled, current)
+      } finally {
+        end()
       }
     })()
     this.operations.add(operation)
@@ -187,6 +215,7 @@ export class FileSearchIndex {
     if (this.closed) throw unavailable()
     const info = await stat(root.path, { bigint: true }).catch(() => undefined)
     check()
+    if (this.closed) throw unavailable()
     if (!info?.isDirectory()) return undefined
     const key = JSON.stringify([identity, JSON.stringify([root.id, root.path, String(info.dev), String(info.ino)])])
     const operation = this.load(root, guard, key, cancelled, check).then(
@@ -221,8 +250,23 @@ export class FileSearchIndex {
   private invalidate(key: string, entry: Entry) {
     entry.dirty = true
     clearTimeout(entry.timer)
-    for (const watcher of entry.watchers.splice(0)) watcher.close()
+    this.closing.push(...entry.watchers.splice(0))
+    this.drainWatchers()
     if (this.entries.get(key) === entry) this.entries.delete(key)
+  }
+  /**
+   * Closes watchers a few at a time, a timer turn apart: on macOS each close costs in proportion to how many are open,
+   * so closing hundreds at once would hold the event loop for a tenth of a second or more.
+   */
+  private drainWatchers() {
+    if (this.draining) return
+    this.draining = true
+    const step = () => {
+      for (const watcher of this.closing.splice(0, WATCHER_CLOSES_PER_TURN)) watcher.close()
+      if (this.closing.length) setTimeout(step, 0)
+      else this.draining = false
+    }
+    step()
   }
   private load(root: FileRoot, guard: ProtectedPaths, key: string, cancelled: () => boolean, check: Check): Promise<Snapshot> {
     const previous = this.entries.get(key)
@@ -231,6 +275,8 @@ export class FileSearchIndex {
       this.entries.set(key, previous)
       return previous.promise
     }
+    // A new scan is not started while file operations that timed out still hang (a hung mount).
+    if (tooManyHung()) throw busyWithHung()
     if (previous) this.invalidate(key, previous)
     while (this.entries.size >= 8) {
       const [oldKey, old] = this.entries.entries().next().value!
@@ -276,7 +322,20 @@ export class FileSearchIndex {
         entry.fullyWatched = false
       }
     }
-    entry.promise = scan(root, guard, cancelled, check, observe)
+    const scanning = scan(root, guard, cancelled, check, observe)
+    // A scan stuck in a file system call that never settles (a hung mount) is not left as the shared in-flight entry:
+    // past SCAN_HARD_MS it is dropped, its waiters get an answer, and it counts as hung until it settles.
+    let hardTimer: NodeJS.Timeout | undefined
+    const hard = new Promise<never>((_, reject) => {
+      hardTimer = setTimeout(() => {
+        trackHung(scanning)
+        this.invalidate(key, entry)
+        reject(new AppError(503, 'file-search-timeout', '文件搜索没有及时结束，请稍后再试'))
+      }, SCAN_HARD_MS)
+      hardTimer.unref()
+    })
+    void scanning.finally(() => clearTimeout(hardTimer)).catch(() => {})
+    entry.promise = Promise.race([scanning, hard])
       .then(snapshot => {
         check()
         if (entry.dirty || snapshot.truncated) throw new IndexChanged()
@@ -336,7 +395,17 @@ const repositoryAt = (root: FileRoot) =>
  * A bounded BFS, with at most two MiB each of queued directory paths and cached file paths. With `honourIgnores`
  * it leaves build output and ignored files for `walkSkipped`, so they cannot spend the budget that source needs.
  */
-export async function walk(
+/** The walk below, with the shared loop clock's heartbeat running while it works (loop-turn.ts). */
+export async function walk(...args: Parameters<typeof walkFolders>): ReturnType<typeof walkFolders> {
+  const end = beginLoopWork()
+  try {
+    return await walkFolders(...args)
+  } finally {
+    end()
+  }
+}
+
+async function walkFolders(
   root: FileRoot,
   guard: ProtectedPaths,
   cancelled: () => boolean,
@@ -352,6 +421,7 @@ export async function walk(
     skipped: string[] = []
   const queue = start
   let bytes = 0,
+    ignoredBytes = 0,
     queueBytes = 0,
     truncated = false,
     partial = false,
@@ -363,17 +433,24 @@ export async function walk(
     return result
   }
   const matching = matchBudget(budget.deadline)
-  /** Ignored, kept, or undecided (counted, and then treated as ignored: never brought forward on a cut-short check). */
-  const ignoredHere = (rules: IgnoreRules | undefined, relative: string, isDirectory: boolean) => {
-    const verdict = ignoreVerdict(rules, relative, isDirectory, matching)
+  /**
+   * Ignored, kept, or undecided (counted, and then treated as ignored: never brought forward on a cut-short check). A
+   * check cut short only because the loop had been held long enough is tried once more after a turn, with a fresh
+   * window, so an ordinary repository is never left with undecided entries.
+   */
+  const ignoredHere = async (rules: IgnoreRules | undefined, relative: string, isDirectory: boolean) => {
+    let verdict = ignoreVerdict(rules, relative, isDirectory, matching)
+    if (verdict === 'undecided' && matching.cut === 'time') {
+      await yieldTurn()
+      check()
+      verdict = ignoreVerdict(rules, relative, isDirectory, matching)
+    }
     if (verdict === 'undecided') undecided[isDirectory ? 'directories' : 'files']++
     return verdict !== 'kept'
   }
   // The event loop gets a turn every few milliseconds of walking, however the entries come in.
   const turn = async () => {
-    if (performance.now() - matching.since < YIELD_MS) return
-    await new Promise(resolve => setImmediate(resolve))
-    matching.since = performance.now()
+    await turnIfDue()
     check()
   }
   const inRepository = honourIgnores && (await checked(repositoryAt(root)))
@@ -420,7 +497,7 @@ export async function walk(
       if (item.isDirectory()) {
         if (
           honourIgnores
-          && (IGNORED_NAMES.has(lower) || (!inRepository && LIKELY_OUTPUT.has(lower)) || ignoredHere(rules, relative, true))
+          && (IGNORED_NAMES.has(lower) || (!inRepository && LIKELY_OUTPUT.has(lower)) || (await ignoredHere(rules, relative, true)))
         ) {
           if (skipped.length < MAX_SKIPPED_DIRECTORIES) skipped.push(relative)
           else partial = true
@@ -429,9 +506,11 @@ export async function walk(
           queueBytes += size
         } else truncated = true
       } else if (item.isFile() && accept(relative)) {
-        if (honourIgnores && ignoredHere(rules, relative, false)) {
-          if (ignored.length < MAX_IGNORED_FILES) ignored.push(relative)
-          else partial = true
+        if (honourIgnores && (await ignoredHere(rules, relative, false))) {
+          if (ignored.length < MAX_IGNORED_FILES && ignoredBytes + size <= MAX_PATH_BYTES) {
+            ignored.push(relative)
+            ignoredBytes += size
+          } else partial = true
           continue
         }
         if (paths.length >= 20_000 || bytes + size > MAX_PATH_BYTES) {
@@ -483,8 +562,8 @@ async function settle(
   const files: FileSearchHit[] = []
   let truncated = false
   const deadline = performance.now() + 2000
-  candidates.sort(byRank(needle))
-  for (const [index, item] of candidates.entries()) {
+  const ranked = await topRanked(candidates, byRank(needle), Math.max(limit * 4, 64))
+  for (const [index, item] of ranked.entries()) {
     check()
     stale()
     if (cancelled() || performance.now() > deadline) {
@@ -506,7 +585,28 @@ async function settle(
       break
     }
   }
+  // Fewer kept than asked for, and candidates past the ranked head were never tried.
+  if (files.length < limit && candidates.length > ranked.length) truncated = true
   return { files, truncated }
+}
+
+/**
+ * The best `keep` candidates in order, ranked in chunks with a turn of the event loop between them, so ranking tens of
+ * thousands of paths never runs as one stretch: each chunk is sorted and merged into the head kept so far.
+ */
+async function topRanked(candidates: readonly Candidate[], compare: (a: Candidate, b: Candidate) => number, keep: number) {
+  let head: Candidate[] = []
+  for (let start = 0; start < candidates.length; start += RANK_CHUNK) {
+    await turnIfDue()
+    const chunk = candidates.slice(start, start + RANK_CHUNK).sort(compare)
+    const merged: Candidate[] = []
+    let a = 0,
+      b = 0
+    while (merged.length < keep && (a < head.length || b < chunk.length))
+      merged.push(b >= chunk.length || (a < head.length && compare(head[a]!, chunk[b]!) <= 0) ? head[a++]! : chunk[b++]!)
+    head = merged
+  }
+  return head
 }
 
 async function runSearch(
@@ -546,7 +646,8 @@ async function runSearch(
     if (snapshot.current && (!snapshot.current() || performance.now() > deadline)) throw new IndexChanged()
     truncated ||= snapshot.truncated
     loaded.push({ root, rootIndex, snapshot })
-    for (const relative of snapshot.paths) {
+    for (const [index, relative] of snapshot.paths.entries()) {
+      if ((index & 1023) === 0) await turnIfDue()
       const found = candidate(root, rootIndex, relative, needle, false)
       if (found) candidates.push(found)
     }
@@ -557,7 +658,8 @@ async function runSearch(
         ? await checked(snapshot.skippedNames(cancelled, check))
         : { paths: [] as readonly string[], truncated: false }
       truncated ||= names.truncated || snapshot.partial
-      for (const relative of [...snapshot.ignored, ...names.paths]) {
+      for (const [index, relative] of [...snapshot.ignored, ...names.paths].entries()) {
+        if ((index & 1023) === 0) await turnIfDue()
         const found = candidate(root, rootIndex, relative, needle, true)
         if (found) candidates.push(found)
       }
@@ -578,7 +680,16 @@ function uncheckedOf(counts: readonly Unchecked[]): { unchecked?: Unchecked } {
 }
 
 /** A bounded filename search, without git subprocesses, symlink traversal or a directory tree response. */
-export async function searchFiles(
+export async function searchFiles(...args: Parameters<typeof searchFolders>): ReturnType<typeof searchFolders> {
+  const end = beginLoopWork()
+  try {
+    return await searchFolders(...args)
+  } finally {
+    end()
+  }
+}
+
+async function searchFolders(
   roots: readonly FileRoot[],
   guard: ProtectedPaths,
   query: string,
@@ -607,7 +718,10 @@ export async function searchFiles(
     truncated ||= result.truncated
     undecided.push(result.undecided)
     walked.push({ root, rootIndex, ignored: result.ignored, skipped: result.skipped, partial: result.partial })
-    for (const relative of result.paths) candidates.push(candidate(root, rootIndex, relative, needle, false)!)
+    for (const [index, relative] of result.paths.entries()) {
+      if ((index & 1023) === 0) await turnIfDue()
+      candidates.push(candidate(root, rootIndex, relative, needle, false)!)
+    }
     if (cancelled()) break
   }
   if (wantsSkipped(candidates, limit, needle)) {
@@ -615,7 +729,10 @@ export async function searchFiles(
     for (const { root, rootIndex, ignored, skipped, partial } of walked) {
       const names = await walkSkipped(root, skipped, guard, cancelled, check, later, accept)
       truncated ||= names.truncated || partial
-      for (const relative of [...ignored, ...names.paths]) candidates.push(candidate(root, rootIndex, relative, needle, true)!)
+      for (const [index, relative] of [...ignored, ...names.paths].entries()) {
+        if ((index & 1023) === 0) await turnIfDue()
+        candidates.push(candidate(root, rootIndex, relative, needle, true)!)
+      }
     }
   }
   const settled = await settle(candidates, needle, guard, limit, cancelled, check)
