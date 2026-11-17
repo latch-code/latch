@@ -3,9 +3,9 @@ import type { HarnessInfo } from '@latch/protocol'
 import { agentDeletionMessage, sessionDeletionMessage } from '../src/deletionCopy.ts'
 
 const harnesses = [
-  { id: 'standard', capabilities: { display: { label: '内置' } } },
-  { id: 'acp:codex', capabilities: { display: { label: 'Codex' } } },
-  { id: 'acp:pi', capabilities: { display: { label: 'pi' } } },
+  { id: 'standard', capabilities: { display: { label: '内置' }, models: { owner: 'latch' } } },
+  { id: 'acp:codex', capabilities: { display: { label: 'Codex' }, models: { owner: 'harness' } } },
+  { id: 'acp:pi', capabilities: { display: { label: 'pi' }, models: { owner: 'harness' } } },
 ] as unknown as HarnessInfo[]
 
 describe('deletion wording', () => {
@@ -19,7 +19,7 @@ describe('deletion wording', () => {
 
   it('asks an ACP Harness to delete only where it can, and never deletes an imported original', () => {
     const started = sessionDeletionMessage([{ harnessId: 'acp:codex' }], harnesses, 'a')
-    expect(started).toContain('Codex 支持删除会话时，Latch 也请它删除自己保存的副本；不支持时副本留在 Codex 里。')
+    expect(started).toContain('Latch 能启动 Codex 且它支持删除会话时，也请它删除自己保存的副本；否则它自己的副本可能留下。')
     expect(started).not.toContain('接入的原会话')
     const imported = sessionDeletionMessage([{ harnessId: 'acp:codex', imported: { agentSessionId: 'x' } as never }], harnesses, 'b')
     expect(imported).toContain('从 Codex 接入的原会话不会删除。')
@@ -32,7 +32,7 @@ describe('deletion wording', () => {
       harnesses,
     )
     expect(text).toContain('删除这些会话')
-    expect(text).toContain('Harness 支持删除会话时')
+    expect(text).toContain('Latch 能启动 Harness 且它支持删除会话时')
     expect(text).toContain('从 Harness 接入的原会话不会删除。')
   })
 

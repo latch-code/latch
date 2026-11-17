@@ -42,6 +42,7 @@ export function dataKinds(): Array<Omit<DataKind, 'bytes' | 'files' | 'truncated
         'review-notes',
         'file-references',
         'session-folders.json',
+        'history-imports.json',
       ],
       retention: '一直保留，直到删除会话',
     },
@@ -64,9 +65,13 @@ export function dataKinds(): Array<Omit<DataKind, 'bytes' | 'files' | 'truncated
     automations: {
       label: '定时任务与交接',
       entries: ['automations.json', 'handoffs'],
-      retention: `每个定时任务最近 ${MAX_RUNS} 次运行，结果最多 ${MAX_RESULTS} 条；交接最多 ${MAX_HANDOFFS} 个，超出先删最早结束的`,
+      retention: `每个定时任务最近 ${MAX_RUNS} 次运行（另记最近 ${MAX_RUNS} 次错过或跳过的），结果最多 ${MAX_RESULTS} 条；交接最多 ${MAX_HANDOFFS} 个，超出先删最早结束的`,
     },
-    usage: { label: '用量记录', entries: ['gateway', 'usage'], retention: `${USAGE_KEEP_DAYS} 天，按月删去更早的` },
+    usage: {
+      label: '用量记录',
+      entries: ['gateway', 'usage'],
+      retention: `明细 ${USAGE_KEEP_DAYS} 天，按月删去更早的；单价与预算一直保留`,
+    },
     audit: { label: '审计记录', entries: ['audit'], retention: '一直保留' },
     devices: {
       label: '设备登记',
@@ -80,7 +85,15 @@ export function dataKinds(): Array<Omit<DataKind, 'bytes' | 'files' | 'truncated
     },
     settings: {
       label: '设置',
-      entries: ['settings.json', 'policy.json', 'customization.json', 'shortcuts.json', 'prompt-templates.json', 'project-context.json'],
+      entries: [
+        'settings.json',
+        'policy.json',
+        'customization.json',
+        'shortcuts.json',
+        'prompt-templates.json',
+        'project-context.json',
+        'mcp-ended.json',
+      ],
       retention: `一直保留；外观保留最近 ${CUSTOMIZATION_REVISION_LIMIT} 个修订`,
     },
     secrets: {
@@ -94,7 +107,7 @@ export function dataKinds(): Array<Omit<DataKind, 'bytes' | 'files' | 'truncated
 }
 
 /** Outside the data directory: named, never walked. */
-export function dataElsewhere(paths: { worktrees: string; agents: string }): DataElsewhere[] {
+function dataElsewhere(paths: { worktrees: string; agents: string }): DataElsewhere[] {
   return [
     { label: '会话的工作树', where: paths.worktrees, retention: '一直保留，直到你在「项目」里移除' },
     { label: 'Agent 的家', where: paths.agents, retention: '一直保留；删除 Agent 时也保留' },
@@ -103,7 +116,7 @@ export function dataElsewhere(paths: { worktrees: string; agents: string }): Dat
 }
 
 /** The walk's bounds: what one count may visit. */
-export const SIZE_LIMITS = { entries: 200_000, depth: 16 } as const
+const SIZE_LIMITS = { entries: 200_000, depth: 16 } as const
 
 interface Tally {
   bytes: number

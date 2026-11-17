@@ -59,7 +59,7 @@ describe('设置 › 数据 and 审计记录 in a browser', { timeout: 180_000 }
         await settings.getByText(host.dataDir).first().waitFor()
         await settings.getByRole('button', { name: /^审计记录/u }).waitFor()
         await settings.getByText('一直保留').first().waitFor()
-        await settings.getByText('90 天，按月删去更早的').waitFor()
+        await settings.getByText('明细 90 天，按月删去更早的；单价与预算一直保留').waitFor()
         await settings.locator('.data-size').first().waitFor()
         await settings.getByText(/统计于/u).waitFor()
         // 导出全部 is the desktop app's: a browser does not offer it.

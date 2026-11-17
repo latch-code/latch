@@ -155,7 +155,7 @@ function ExportRow({ start }: { start: NonNullable<NonNullable<ReturnType<typeof
     if (result.status === 'exporting') {
       setJob({ id: result.id, state: 'running', name: result.name, startedAt: new Date().toISOString(), progress: { done: 0, total: 0 } })
       poll(result.id)
-    } else if (result.status === 'failed') setError(`没有导出（${result.code}）`)
+    } else if (result.status === 'failed') setError(EXPORT_FAILURES[result.code] ?? '没有导出，请重试。')
   }
   const cancel = async () => {
     if (!job) return
@@ -258,6 +258,16 @@ function ExportRow({ start }: { start: NonNullable<NonNullable<ReturnType<typeof
   )
 }
 
+/** Why main or the Host did not start an export, in words. */
+const EXPORT_FAILURES: Partial<Record<string, string>> = {
+  'export-folder-invalid': '选择的位置不能用来导出，换一个文件夹。',
+  'export-folder-exists': '这个位置已有同名的导出文件夹，换一个位置。',
+  'export-busy': '另一次导出还在进行，等它结束后再试。',
+  'workspace-folder-unprintable': '文件夹路径里有不可显示的字符，换一个文件夹。',
+  'agent-scope-required': '这台设备不能读取全部数据，不能导出。',
+  'host-unavailable': '连不上 Host，请重试。',
+}
+
 type Span = 'all' | 'day' | 'week' | 'month'
 const SPANS: ReadonlyArray<{ value: Span; label: string }> = [
   { value: 'all', label: '全部' },
@@ -329,6 +339,7 @@ export function AuditView() {
           : (actors.find(item => item.id === actor)?.name ?? '设备')
   return (
     <div className="audit-view">
+      <h1 className="settings-title audit-title">审计记录</h1>
       <div className="audit-filters">
         <FilterPills label="时间" value={span} options={SPANS} onValueChange={setSpan} />
         <ActionMenu

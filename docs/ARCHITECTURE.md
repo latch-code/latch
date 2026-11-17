@@ -568,7 +568,7 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 | `mcp/servers.json`、`mcp/secrets.json`、`mcp-ended.json` | MCP 服务器定义与秘密值（目录 0700、文件 0600）、登录已结束但令牌未删净的服务器 ID（[MCP.md](./MCP.md)） |
 | `customization.json` | 外观的修订与写入回执（[CUSTOMIZATION.md](CUSTOMIZATION.md)） |
 | `sessions-meta.json` | Host 为每个会话保存的元数据：标题覆盖、置顶、归档、标签、优先级、看板记号、所属项目、会话文件夹或工作树、分叉来源、接入来源、Agent 归属、绑定的 PR，以及审批、取消、交付与配置修改的回执 |
-| `session-folders.json` | 会话启动请求键的哈希、自有文件夹名与启动目录哈希；Agent 固定家的归属与目录身份（0600） |
+| `session-folders.json`、`history-imports.json` | 会话启动请求键的哈希、自有文件夹名与启动目录哈希；Agent 固定家的归属与目录身份（0600） |
 | `project-context.json` | 上次成功启动时用于离线项目校验的目录与 TLS 私钥路径（0600，不含密钥内容） |
 | `sessions/runtime.json`、`runtime.lock` | Standard 的会话、请求回执与删除记录 |
 | `harnesses/<id>/` | 外部 Harness 的私有数据；ACP 为 `acp.json`、`acp.lock`、命令目录缓存与每会话的 `skills/`（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#外部-harness-的通道)） |
@@ -619,12 +619,12 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 | 我的 Agent 与记忆 | `agents/` | 直到删除；删除的记忆文字可撤销 7 天 |
 | 待办与讨论 | `work/` | 直到删除待办 |
 | 附件 | `attachments/` | 随会话；没发出的 60 分钟，中断的上传 60 分钟 |
-| 定时任务与交接 | `automations.json`、`handoffs/` | 每个定时任务最近 50 次运行、结果 256 条；交接 256 个 |
-| 用量记录 | `gateway/`、`usage/` | 90 天，按月删去更早的 |
+| 定时任务与交接 | `automations.json`、`handoffs/` | 每个定时任务最近 50 次运行（另 50 次错过或跳过的）、结果 256 条；交接 256 个 |
+| 用量记录 | `gateway/`、`usage/` | 明细 90 天，按月删去更早的；单价与预算一直保留 |
 | 审计记录 | `audit/` | 一直保留 |
 | 设备登记 | `auth/` | 撤销或凭据过期 90 天后删去登记；撤销记录一直保留 |
 | 插件与应用数据 | `plugin-packages/`、`plugin-data/` | 每个插件 5 个可回退版本、3 代应用数据 |
-| 设置 | `settings.json`、`policy.json`、`customization.json`、`shortcuts.json`、`prompt-templates.json`、`project-context.json` | 一直保留；外观 20 个修订 |
+| 设置 | `settings.json`、`policy.json`、`customization.json`、`shortcuts.json`、`prompt-templates.json`、`project-context.json`、`mcp-ended.json` | 一直保留；外观 20 个修订 |
 | 密钥与连接凭据 | `providers.json`、`mcp/`、`identity/`、`native/` | 直到你删除；从不导出 |
 | 运行日志 | `host.log` | 一直保留，不轮转 |
 
@@ -653,7 +653,7 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 
 删除会话、项目与 Agent 的确认都取自 `apps/web/src/deletionCopy.ts`，按实际行为写：
 
-- **会话**：删除 Latch 里的对话、附件与改动快照（每条删除路径都经 `removeSessionRecords`）。内置 Harness 只有 Latch 这一份；ACP Harness 支持 `session/delete` 时 Latch 也请它删除自己保存的副本，不支持时副本留在它那里（[HARNESSES](HARNESSES.md)）；接入的原会话从不删除。审计与用量记录保留；已发给模型服务的内容无法撤回。
+- **会话**：删除 Latch 里的对话、附件与改动快照（每条删除路径都经 `removeSessionRecords`）。用 Host 自己的模型服务运行的 Harness（`capabilities.models.owner` 为 `latch`）只有 Latch 这一份；其他 Harness 在 Latch 能启动它（项目仍在、启动方式核对通过）且它声明 `session/delete` 时，Latch 也请它删除自己保存的副本，否则它的副本可能留下（Grok 的私有目录随会话删除，见 [HARNESSES](HARNESSES.md)）；接入的原会话从不删除。审计与用量记录保留；已发给模型服务的内容无法撤回。
 - **项目**：只从列表移除，文件、会话与快照都保留。
 - **Agent**：记忆、提议与撤销记录删除，聊天记录与家保留；外部 Harness 已收到的上下文留在原会话里。
 - 没有「删除全部数据」：停止 Host 后删除数据目录才是。

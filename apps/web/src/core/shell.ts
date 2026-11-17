@@ -37,7 +37,7 @@ export interface ShellFolders {
 }
 
 /** What asking main to export came to: the export under way, or why it did not start. */
-export type ExportStart =
+type ExportStart =
   | { status: 'exporting'; id: string; name: string }
   | { status: 'canceled' }
   | { status: 'busy' }

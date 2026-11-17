@@ -109,7 +109,7 @@ function messageOut(message: Message) {
 }
 
 /** A session as it goes out: what it was, and its conversation. */
-export function sessionOut(summary: TaskSummary, detail: TaskDetail, harnessName: string | undefined) {
+function sessionOut(summary: TaskSummary, detail: TaskDetail, harnessName: string | undefined) {
   return {
     id: summary.id,
     title: clean(summary.title),
@@ -126,7 +126,7 @@ export function sessionOut(summary: TaskSummary, detail: TaskDetail, harnessName
 const ROLE_WORDS: Record<Message['role'], string> = { user: '你', assistant: 'Agent', tool: '工具', system: 'Latch' }
 
 /** The same session as Markdown, for reading. */
-export function sessionMarkdown(session: ReturnType<typeof sessionOut>): string {
+function sessionMarkdown(session: ReturnType<typeof sessionOut>): string {
   const lines = [`# ${session.title || '未命名会话'}`, '', `- Harness：${session.harness}`, `- 会话：${session.id}`]
   if (session.createdAt) lines.push(`- 开始：${session.createdAt}`)
   lines.push(`- 最后更新：${session.updatedAt}`, '')

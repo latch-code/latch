@@ -6,38 +6,40 @@ import type { HarnessInfo, TaskSummary } from '@latch/protocol'
  * the program offers that (`session/delete`); a session brought in from a Harness's history never loses its original.
  * What went to a model service, or into an external Harness's context, cannot be called back.
  */
-export const NOT_RECALLED = '已发给模型服务的内容无法撤回。'
+const NOT_RECALLED = '已发给模型服务的内容无法撤回。'
 const IRREVERSIBLE = '此操作无法撤销。'
 const KEPT = '审计与用量记录保留。'
 
 type SessionTarget = Pick<TaskSummary, 'harnessId' | 'imported'>
 
-/** The built-in harness keeps its sessions only in Latch; every other one is a program with its own record. */
-const external = (session: SessionTarget): boolean => session.harnessId !== 'standard'
+type HarnessView = Pick<HarnessInfo, 'id' | 'capabilities'>
 
-function harnessLabel(harnessId: string, harnesses: readonly Pick<HarnessInfo, 'id' | 'capabilities'>[]): string {
+/**
+ * A Harness that runs on the Host's own model services keeps the session only in Latch; one with its own models and
+ * login is a program with its own record. Unknown (no longer listed) reads as having one, which says more, not less.
+ */
+const external = (session: SessionTarget, harnesses: readonly HarnessView[]): boolean =>
+  harnesses.find(harness => harness.id === session.harnessId)?.capabilities.models.owner !== 'latch'
+
+function harnessLabel(harnessId: string, harnesses: readonly HarnessView[]): string {
   return harnesses.find(harness => harness.id === harnessId)?.capabilities.display.label ?? harnessId
 }
 
 /** What happens to the program's own copy of these sessions; empty when every one is the built-in harness's. */
-function externalCopies(sessions: readonly SessionTarget[], harnesses: readonly Pick<HarnessInfo, 'id' | 'capabilities'>[]): string[] {
-  const outside = sessions.filter(external)
+function externalCopies(sessions: readonly SessionTarget[], harnesses: readonly HarnessView[]): string[] {
+  const outside = sessions.filter(session => external(session, harnesses))
   if (outside.length === 0) return []
   const names = [...new Set(outside.map(session => harnessLabel(session.harnessId, harnesses)))]
   const name = names.length === 1 ? names[0]! : 'Harness'
   const lines: string[] = []
   if (outside.some(session => !session.imported))
-    lines.push(`${name} 支持删除会话时，Latch 也请它删除自己保存的副本；不支持时副本留在 ${name} 里。`)
+    lines.push(`Latch 能启动 ${name} 且它支持删除会话时，也请它删除自己保存的副本；否则它自己的副本可能留下。`)
   if (outside.some(session => session.imported)) lines.push(`从 ${name} 接入的原会话不会删除。`)
   return lines
 }
 
 /** The confirmation of deleting one session or several: what goes, what the Harness keeps, what nothing can recall. */
-export function sessionDeletionMessage(
-  sessions: readonly SessionTarget[],
-  harnesses: readonly Pick<HarnessInfo, 'id' | 'capabilities'>[],
-  title?: string,
-): string {
+export function sessionDeletionMessage(sessions: readonly SessionTarget[], harnesses: readonly HarnessView[], title?: string): string {
   const what = title === undefined ? '这些会话' : `「${title}」`
   return [
     `删除${what}在 Latch 里的对话、附件与改动快照。`,

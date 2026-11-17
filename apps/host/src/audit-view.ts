@@ -12,7 +12,7 @@ import { AUDIT_FIELDS, type AuditFieldView } from './audit-fields.ts'
 import { AUDIT_LABELS } from './audit-labels.ts'
 
 /** One page's bounds: what it answers, and how many records it may read looking for them. */
-export const AUDIT_PAGE = { limit: 50, maxLimit: 100, scan: 5000, chunk: 256 } as const
+const AUDIT_PAGE = { limit: 50, maxLimit: 100, scan: 5000, chunk: 256 } as const
 const SHORT = 8
 
 export interface AuditQuery {
@@ -72,7 +72,7 @@ const NAMED_FIELDS = new Set([
 ])
 
 /** A record as 审计记录 shows it. */
-export function auditEntry(record: AuditRecord, names: AuditNames): AuditEntry {
+function auditEntry(record: AuditRecord, names: AuditNames): AuditEntry {
   const [kind, label] = AUDIT_LABELS[record.action]
   const fields: AuditEntry['fields'] = []
   // Only what the action's field table marks; a field it does not name is not shown (`audit-fields.ts`).
