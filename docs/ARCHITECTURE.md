@@ -84,7 +84,7 @@ Provider 负责模型协议转换；Tool 执行一种操作；HarnessDriver 提�
 
 ### Workspace 项目
 
-仓库是 pnpm workspace。每个项目的目录、运行环境与可用的 workspace 包只写在 `scripts/boundaries.ts` 的 `PROJECTS`；仓库根 `latch` 也有一行（兼容入口、仓库脚本与 `tests/`）。每个项目在 `package.json` 中用 `"latch": { "env": … }` 声明运行环境（`isomorphic`、`browser`、`node`、`electron-main`；仓库根不声明）。
+仓库是 pnpm workspace。每个项目的目录、运行环境与可用的 workspace 包只写在 `scripts/boundaries.ts` 的 `PROJECTS`；仓库根 `latch` 也有一行（兼容入口、仓库脚本与 `tests/`）。每个项目在 `package.json` 中用 `"latch": { "env": … }` 声明运行环境（`isomorphic`、`browser`、`node`、`electron-main`、`workerd`；仓库根不声明）。`workerd` 是 Cloudflare Workers（`apps/relay-edge`），只能用同构包。
 
 `pnpm check:boundaries` 按这张表检查：
 
@@ -126,11 +126,12 @@ Provider 负责模型协议转换；Tool 执行一种操作；HarnessDriver 提�
 
 | 环境 | 配置 | 代码 | 类型 |
 | --- | --- | --- | --- |
-| 同构 | `tsconfig.isomorphic.json` | `packages/protocol`、`packages/link-wire/src` | 只有标准库，没有 DOM，不加载 Node 类型 |
+| 同构 | `tsconfig.isomorphic.json` | `packages/protocol`、`packages/link-wire/src`、`packages/relay-core/src` | 只有标准库，没有 DOM，不加载 Node 类型 |
+| Workers | `tsconfig.workerd.json` | `apps/relay-edge/src` | 只有标准库与手写的平台接口（`platform.ts`），不加载 Node 或厂商类型 |
 | 插件 SDK | `tsconfig.sdk.json` | `packages/sdk` | Node ES 模块，无 DOM；`isolatedDeclarations`：导出须写明类型 |
 | Core | `tsconfig.core.json` | `packages/core` | Node ES 模块，无 DOM |
 | 浏览器 | `tsconfig.web.json` | `apps/web/src`、`packages/ui/src`、`packages/app-sdk/src` | DOM，不加载 Node 类型 |
-| Host | `tsconfig.host.json` | `apps/host/src`、`apps/host/scripts`、`apps/relay/src`、`apps/relay/scripts`、`packages/link-client/src`、`packages/harness-acp/src`、兼容入口、`scripts`、根目录的 `*.config.ts`、`apps/web/vite.config.ts` | Node ES 模块，无 DOM |
+| Host | `tsconfig.host.json` | `apps/host/src`、`apps/host/scripts`、`apps/relay/src`、`apps/relay/scripts`、`apps/relay-edge/scripts`、`packages/link-client/src`、`packages/harness-acp/src`、兼容入口、`scripts`、根目录的 `*.config.ts`、`apps/web/vite.config.ts` | Node ES 模块，无 DOM |
 | 只剥离类型加载的 Host 模块 | `tsconfig.strip.json` | `apps/host/src/paths.ts`、`host-state.ts`、`env.ts` | 同 Host，另开启 `erasableSyntaxOnly` |
 | 桌面端 | `tsconfig.desktop.json` | `apps/desktop/src` | Electron 与 Node 的 CommonJS，用 `checkJs` 检查，无 DOM |
 | 测试 | `tsconfig.tests.json` | `tests`、`e2e`、各项目的 `test`、`packages/testkit` | Node 与 DOM |
@@ -797,7 +798,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `PATCH /devices/:id` | `admin`；授予权限或扩大数据范围需本机与本机确认 | 调整权限与数据范围 |
 | `PATCH /devices/:id/name`、`GET /enrollments` | 本机 `admin` | 重命名任一设备；仍在等待的登记 |
 | `POST /pairings` | 本机 `admin` 或匿名 | 配对邀请 `{ scopes?, target? }`；未配置 HTTPS 入口时 409 `tls-not-configured`。桌面端只由主进程调用 |
-| `GET /native/info`、`/native/pairings…`、`/native/relays…`、`/native/relay-requests/:id`、`DELETE /native/directory` | 本机 `admin`（`GET /native/info` 或匿名）；添加中继需本机确认 | 手机配对二维码与自建中继（[RELAY.md](RELAY.md)）。签发二维码要先打开局域网入口：没有网络时 409 `native-no-lan`，完全访问的会话运行或等待时 409 `presence-blocked` |
+| `GET /native/info`、`/native/pairings…`、`/native/relays…`、`/native/relay-requests/:id`、`PUT /native/official-relay`、`DELETE /native/directory` | 本机 `admin`（`GET /native/info`：任何 `admin` 设备，或本机匿名）；添加中继需本机确认 | 手机配对二维码、官方中继的开关与优先顺序、自己的中继（[RELAY.md](RELAY.md)）。签发二维码要先打开局域网入口：没有网络时 409 `native-no-lan`，完全访问的会话运行或等待时 409 `presence-blocked` |
 | `/native/pairing`、`/native/verification…`、`/native/revocation…`、`/native/address-book`、`/native/proximity`、`/native/bulk` | 原生连接上的设备 | 手机 App 的验证窗口、撤销通知、地址簿与文件传输 |
 | `GET`/`DELETE /confirmations/:id` | 发起确认的设备 | 查询或取消本机确认 |
 | `GET /audit/head`、`GET /audit/hash?seq=` | `view` | 审计检查点 |
@@ -902,7 +903,7 @@ Latch 不再提供个人助手、助手群聊与它们的定时任务，数据�
 | 项目 | 原因 |
 | --- | --- |
 | `host.sock` 对端进程身份检查、按会话标记识别进程 | 需要签名的原生扩展 |
-| 浏览器里的多台电脑、桌面端经原生链路或中继连接其他电脑、跨电脑会话、iPhone/iPad 后台时的其他电脑通知 | 不提供或尚未实现：浏览器保持严格同源；桌面端只走运营者证书的 HTTPS |
+| 浏览器里的多台电脑、桌面端经原生链路或中继连接其他电脑（直连与中继竞速）、跨电脑会话、iPhone/iPad 后台时的其他电脑通知 | 不提供或尚未实现：浏览器保持严格同源；桌面端只走运营者证书的 HTTPS，还没有接入 link-client |
 | 回环请求的额外绑定值或设备签名 | 未实现（见「不防御的情况」） |
 | Linux（polkit）与 Windows（Windows Hello）本机确认 | 未实现；这些系统上本机确认不可用，可用离线连接码登记桌面端，回环与 HTTPS 上的登记无法完成 |
 | 在 macOS 以外从桌面端打开浏览器 | 未实现；改用 `pnpm latch device invite --loopback` |
@@ -923,7 +924,10 @@ Latch 不再提供个人助手、助手群聊与它们的定时任务，数据�
 | 在手机、其他电脑或本机浏览器上添加文件夹（包括 Host 端的目录浏览） | 不提供：加入文件夹就是授予权限，只在 Host 所在电脑上进行 |
 | 跟随移动或改名的文件夹，运行中会话的文件夹变化 | 未实现；Latch 不是 App Sandbox 构建，Electron 只为 Mac App Store 构建创建安全范围书签 |
 | 按设备或文件夹的项目授权、只读文件夹、按文件夹的 Standard 风险级别 | 未实现；设备权限对所有项目生效 |
-| 地址目录的入口、官方中继、可安装的手机 App 与推送通知 | 尚未提供；Host 直连与[自建中继](RELAY.md)已接入 |
+| 官方中继的部署 | 代码与模板已就绪（`apps/relay-edge`），官方列表在所有者部署并填入节点公钥前为空；见 [RELAY.md](RELAY.md) |
+| edge 中继在 WebSocket 内对节点密钥的再一层加密 | 未实现；现在节点身份靠签名挑战，不绑定 TLS 会话，能为域名终止 TLS 的一方可实时转发并看到路由元数据（[RELAY.md](RELAY.md#两种中继类型的身份)） |
+| iOS 在网络不变时从中继切回直连 | 未实现；只在网络变化时重新竞速 |
+| 地址目录的入口、可安装的手机 App 与推送通知 | 尚未提供；Host 直连、官方与[自己的中继](RELAY.md)已接入 |
 | 一条消息在多个 Agent 之间依次回答 | 规则在 `apps/host/src/agent-relay.ts`，尚未接入任何路由 |
 
 尚未在真机上验证：Host 进程遇到 macOS「隐私与安全性」（TCC）时的行为与提示、外接与网络卷上的「在访达中显示」、iCloud「桌面与文稿」文件夹的真实路径。

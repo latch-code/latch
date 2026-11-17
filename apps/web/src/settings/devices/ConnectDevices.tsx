@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AppWindow, Link, QrCode } from 'lucide-react'
 import type { NativeLinkInfo, NativeRelayProfile } from '@latch/protocol'
-import { Button, Icon, InlineNotice, LaptopGlyph, LockGlyph, PhoneGlyph } from '@latch/ui'
+import { Button, Icon, InlineNotice, LaptopGlyph, LockGlyph, PhoneGlyph, SegmentedControl, Switch, Tooltip } from '@latch/ui'
 import { api, inlineError } from '../../core/api.ts'
 import { withConfirmation } from '../../core/confirmations.ts'
 import { describeFailure, DEVICES_COPY as COPY } from '../../core/securityCopy.ts'
@@ -204,34 +204,70 @@ function ConnectRows({
   )
 }
 
+/**
+ * A relay file: version 1 is a self-hosted node exported by the relay CLI (pinned TLS key); version 2 is an edge node
+ * exported by apps/relay-edge (relay key and its origins). Either may carry a registration key, which this page sends to
+ * this Mac's Host and never shows.
+ */
 function readRelayProfile(text: string): NativeRelayProfile {
-  const file = JSON.parse(text) as { version?: unknown; profile?: Partial<NativeRelayProfile> } | null
+  const file = JSON.parse(text) as { version?: unknown; profile?: Record<string, unknown> } | null
   const profile = file?.profile
-  if (
-    file?.version !== 1
-    || typeof profile?.url !== 'string'
-    || profile.url.length > 512
-    || typeof profile.relayId !== 'string'
-    || !/^[a-f0-9]{32}$/u.test(profile.relayId)
-    || typeof profile.spkiHash !== 'string'
-    || !/^[a-f0-9]{64}$/u.test(profile.spkiHash)
-    || (profile.registrationKey !== undefined
-      && (typeof profile.registrationKey !== 'string' || !/^lrt1\.[A-Za-z0-9_-]{43}$/u.test(profile.registrationKey)))
-  )
+  const origin = (value: unknown) => {
+    if (typeof value !== 'string' || value.length > 512) throw new Error('Invalid relay origin')
+    const url = new URL(value)
+    if (url.protocol !== 'https:' || url.username || url.password || value !== `${url.origin}/`) throw new Error('Invalid relay origin')
+    return value
+  }
+  const hex = (value: unknown, size: number) => {
+    if (typeof value !== 'string' || !new RegExp(`^[a-f0-9]{${size}}$`, 'u').test(value)) throw new Error('Invalid relay profile')
+    return value
+  }
+  const registration = profile?.registrationKey
+  if (!profile || (registration !== undefined && (typeof registration !== 'string' || !/^lrt1\.[A-Za-z0-9_-]{43}$/u.test(registration))))
     throw new Error('Invalid relay profile')
-  const url = new URL(profile.url)
-  if (url.protocol !== 'https:' || url.username || url.password || profile.url !== `${url.origin}/`) throw new Error('Invalid relay origin')
+  const shared = { url: origin(profile.url), relayId: hex(profile.relayId, 32) }
+  const key = registration === undefined ? {} : { registrationKey: registration as string }
+  if (file?.version === 1) return { ...shared, spkiHash: hex(profile.spkiHash, 64), ...key }
+  if (file?.version !== 2 || profile.kind !== 'edge') throw new Error('Invalid relay profile')
+  const extra = profile.extraUrls
+  if (extra !== undefined && (!Array.isArray(extra) || extra.length < 1 || extra.length > 3)) throw new Error('Invalid relay profile')
+  const shard = profile.shard
+  if (shard !== undefined && (!Number.isInteger(shard) || (shard as number) < 0 || (shard as number) > 15))
+    throw new Error('Invalid relay profile')
   return {
-    url: profile.url,
-    relayId: profile.relayId,
-    spkiHash: profile.spkiHash,
-    ...(profile.registrationKey === undefined ? {} : { registrationKey: profile.registrationKey }),
+    ...shared,
+    kind: 'edge',
+    relayKey: hex(profile.relayKey, 64),
+    ...(extra ? { extraUrls: (extra as unknown[]).map(origin) } : {}),
+    ...(shard === undefined ? {} : { shard: shard as number }),
+    ...key,
   }
 }
 
-const RELAY_STATUS = { connecting: '正在连接', connected: '已连接', waiting: '等待重连', attention: '需要检查' } as const
+const RELAY_STATUS = {
+  connecting: '正在连接',
+  connected: '已连接',
+  waiting: '无法连接',
+  attention: '需要检查',
+  refused: '登记被拒绝',
+  off: '已关闭',
+} as const
+const RELAY_KIND = { self: '自建服务器', edge: 'Workers' } as const
+const REGION: Record<string, string> = { 'apac-ne': '东京', 'apac-se': '新加坡' }
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+const since = (at: number | undefined) => (at === undefined ? undefined : `上次连接 ${new Date(at).toLocaleString()}`)
 
-function SavedRoutes() {
+/**
+ * 中继: the official relay (尚未部署, or a switch) and the person's own relays, with one order of preference. Changes are
+ * this Mac's local administrator's; other devices see the state only.
+ */
+function SavedRoutes({ manage }: { manage: boolean }) {
   const file = useRef<HTMLInputElement>(null)
   const [info, setInfo] = useState<NativeLinkInfo | null>(null)
   const [candidate, setCandidate] = useState<{ requestId: string; profile: NativeRelayProfile } | null>(null)
@@ -273,6 +309,8 @@ function SavedRoutes() {
     }
   }
   const remove = (path: string) => void run(() => api<NativeLinkInfo>(path, { method: 'DELETE' }))
+  const official = (body: { enabled?: boolean; ownFirst?: boolean }) =>
+    void run(() => api<NativeLinkInfo>('native/official-relay', { method: 'PUT', body }))
   const add = (body: { requestId: string; profile?: NativeRelayProfile }) =>
     void run(
       () =>
@@ -281,14 +319,18 @@ function SavedRoutes() {
         ),
       true,
     )
-  const pending = info?.pendingRelay
+  if (!info) return null
+  const pending = info.pendingRelay
+  const deployed = info.official?.deployed ?? false
+  const officialState = info.official?.nodes.map(node => `${REGION[node.region] ?? node.region} ${RELAY_STATUS[node.status]}`).join(' · ')
   return (
-    <div className="settings-card device-saved-list" data-secure="">
+    <div className="settings-card device-saved-list" data-secure="" data-testid="relay-settings">
       <input
         ref={file}
         type="file"
         accept=".json,application/json"
         hidden
+        data-testid="relay-file"
         onChange={event => {
           const chosen = event.currentTarget.files?.[0]
           event.currentTarget.value = ''
@@ -296,7 +338,7 @@ function SavedRoutes() {
           setError('')
           setCandidate(null)
           if (chosen.size > 4096) {
-            setError('这个文件不是中继 CLI 导出的连接配置。')
+            setError('这个文件不是中继导出的连接配置。')
             return
           }
           setBusy(true)
@@ -306,25 +348,88 @@ function SavedRoutes() {
               setCandidate({ requestId: crypto.randomUUID(), profile: readRelayProfile(text) })
             })
             .catch(() => {
-              setError('这个文件不是中继 CLI 导出的连接配置。')
+              setError('这个文件不是中继导出的连接配置。')
             })
             .finally(() => setBusy(false))
         }}
       />
-      <div className="device-saved">
+      <div className="device-saved" data-testid="relay-official">
         <span className="device-saved-text">
-          <b>自建中继</b>
-          <span>导入中继 CLI 导出的连接配置</span>
+          <b>官方中继</b>
+          <Tooltip content={deployed ? 'Latch 提供，部署在 Cloudflare：看得到 IP、时间与流量大小，看不到内容' : '官方中继还没有上线'}>
+            <span>{!deployed ? '尚未部署' : info.official?.enabled ? officialState || '已开启' : '已关闭'}</span>
+          </Tooltip>
         </span>
-        <Button disabled={busy || info === null || Boolean(pending)} onClick={() => file.current?.click()}>
-          导入配置
-        </Button>
+        {deployed && (
+          <Switch
+            label="官方中继"
+            checked={info.official?.enabled ?? false}
+            disabled={!manage || busy}
+            onCheckedChange={enabled => official({ enabled })}
+          />
+        )}
       </div>
-      {candidate && !pending && (
+      {deployed && info.official?.enabled && info.relays.length > 0 && (
         <div className="device-saved">
           <span className="device-saved-text">
-            <b>添加中继</b>
-            <span title={candidate.profile.url}>{candidate.profile.url}</span>
+            <b>优先使用</b>
+          </span>
+          <SegmentedControl
+            label="优先使用"
+            value={info.official.ownFirst ? 'own' : 'official'}
+            disabled={!manage || busy}
+            options={[
+              { value: 'official', label: '官方', title: '先试官方中继，再试自己的' },
+              { value: 'own', label: '自己的', title: '先试自己的中继，再试官方' },
+            ]}
+            onValueChange={value => official({ ownFirst: value === 'own' })}
+          />
+        </div>
+      )}
+      {info.relays.map(relay => (
+        <div key={relay.relayId} className="device-saved" data-testid="relay-own">
+          <span className="device-saved-text">
+            <b>{RELAY_KIND[relay.kind ?? 'self']}</b>
+            <span title={relay.url}>{hostOf(relay.url)}</span>
+            <Tooltip content={since(relay.connectedAt)}>
+              <span>{RELAY_STATUS[relay.status]}</span>
+            </Tooltip>
+          </span>
+          {manage && (
+            <Button
+              disabled={busy}
+              onClick={() => {
+                remove(`native/relays/${relay.relayId}`)
+              }}>
+              {COPY.remove}
+            </Button>
+          )}
+        </div>
+      ))}
+      {manage && (
+        <div className="device-saved">
+          <span className="device-saved-text">
+            <b>自己的中继</b>
+          </span>
+          <Button disabled={busy || Boolean(pending)} onClick={() => file.current?.click()}>
+            添加自己的中继
+          </Button>
+        </div>
+      )}
+      {manage && candidate && !pending && (
+        <div className="device-saved" data-testid="relay-candidate">
+          <span className="device-saved-text">
+            <b>{`添加中继 · ${RELAY_KIND['kind' in candidate.profile ? 'edge' : 'self']}`}</b>
+            <span title={candidate.profile.url}>
+              {[candidate.profile.url, ...('extraUrls' in candidate.profile ? (candidate.profile.extraUrls ?? []) : [])]
+                .map(hostOf)
+                .join('、')}
+            </span>
+            <span>
+              {'relayKey' in candidate.profile
+                ? `中继公钥 ${candidate.profile.relayKey.slice(0, 16)}…`
+                : `证书公钥 ${candidate.profile.spkiHash.slice(0, 16)}…`}
+            </span>
           </span>
           <Button disabled={busy} onClick={() => setCandidate(null)}>
             取消
@@ -334,7 +439,7 @@ function SavedRoutes() {
           </Button>
         </div>
       )}
-      {pending && (
+      {manage && pending && (
         <div className="device-saved">
           <span className="device-saved-text">
             <b>添加结果待确认</b>
@@ -355,34 +460,20 @@ function SavedRoutes() {
           )}
         </div>
       )}
-      {info?.relays.map(relay => (
-        <div key={relay.relayId} className="device-saved">
-          <span className="device-saved-text">
-            <b>{COPY.savedRelay}</b>
-            <span title={relay.url}>{relay.url}</span>
-            <span>{RELAY_STATUS[relay.status]}</span>
-          </span>
-          <Button
-            disabled={busy}
-            onClick={() => {
-              remove(`native/relays/${relay.relayId}`)
-            }}>
-            {COPY.remove}
-          </Button>
-        </div>
-      ))}
-      {info?.directory && (
+      {info.directory && (
         <div className="device-saved">
           <span className="device-saved-text">
             <b>{COPY.savedDirectory}</b>
           </span>
-          <Button
-            disabled={busy}
-            onClick={() => {
-              remove('native/directory')
-            }}>
-            {COPY.remove}
-          </Button>
+          {manage && (
+            <Button
+              disabled={busy}
+              onClick={() => {
+                remove('native/directory')
+              }}>
+              {COPY.remove}
+            </Button>
+          )}
         </div>
       )}
       {error && (
@@ -403,7 +494,7 @@ export function AboutConnection({ entry, canManageRoutes }: { entry: boolean; ca
     <SettingsGroup title={COPY.about} bare>
       {!entry && <NoteLine brief={COPY.aboutOtherComputerMissing} icon={LaptopGlyph} />}
       <NoteLine brief={COPY.aboutPhone} icon={LockGlyph} />
-      {canManageRoutes && <SavedRoutes />}
+      <SavedRoutes manage={canManageRoutes} />
     </SettingsGroup>
   )
 }

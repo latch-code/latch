@@ -173,7 +173,7 @@ describe('设置 › 设备', () => {
       await connected(page)
       await openEntry(page, '设备')
       const list = page.locator('.device-saved-list')
-      await list.getByRole('button', { name: '导入配置', exact: true }).waitFor()
+      await list.getByRole('button', { name: '添加自己的中继', exact: true }).waitFor()
       await list.locator('input[type=file]').setInputFiles({
         name: 'connection.json',
         mimeType: 'application/json',
@@ -193,6 +193,121 @@ describe('设置 › 设备', () => {
       await context.close()
     }
   })
+
+  for (const size of SIZES)
+    it(`manages the official relay and own relays of both kinds at ${size.label} width`, async () => {
+      const context = await browser.newContext({ viewport: { width: size.width, height: size.height } })
+      context.setDefaultTimeout(15_000)
+      try {
+        const page = await context.newPage()
+        const state: PageState = { devices: [], pairing: { state: 'ready', offNetwork: false }, create: 'ok', relays: [] }
+        await enrollBrowser(page, testHost, { name: `中继一节 ${size.label}`, scopes: ['admin'] })
+        await asDesktop(page, state)
+        const edge = {
+          url: 'https://latch-relay-ne.example.workers.dev/',
+          relayId: 'e'.repeat(32),
+          kind: 'edge' as const,
+          relayKey: 'f'.repeat(64),
+          extraUrls: ['https://relay.mine.example/'],
+          registrationKey: `lrt1.${'K'.repeat(43)}`,
+        }
+        const official = { deployed: true, enabled: true, ownFirst: false }
+        let relays: NativeLinkInfo['relays'] = [
+          {
+            relayId: 'a'.repeat(32),
+            url: 'https://home.example/',
+            kind: 'self',
+            status: 'refused',
+            connectedAt: Date.UTC(2026, 10, 16, 9),
+          },
+        ]
+        const requests: Array<{ method: string; path: string; body: unknown }> = []
+        const info = (): NativeLinkInfo => ({
+          version: 1,
+          enabled: true,
+          directManaged: false,
+          listening: null,
+          directory: false,
+          official: {
+            ...official,
+            nodes: [
+              { relayId: '1'.repeat(32), region: 'apac-ne', status: official.enabled ? 'connected' : 'off' },
+              { relayId: '2'.repeat(32), region: 'apac-se', status: official.enabled ? 'waiting' : 'off' },
+            ],
+          },
+          relays,
+        })
+        await page.route('**/link/api/native/info', route => route.fulfill({ json: info() }))
+        await page.route('**/link/api/native/official-relay', route => {
+          const body = route.request().postDataJSON() as { enabled?: boolean; ownFirst?: boolean }
+          requests.push({ method: route.request().method(), path: 'official-relay', body })
+          if (body.enabled !== undefined) official.enabled = body.enabled
+          if (body.ownFirst !== undefined) official.ownFirst = body.ownFirst
+          return route.fulfill({ json: info() })
+        })
+        await page.route('**/link/api/native/relays', route => {
+          const body = route.request().postDataJSON() as { profile?: unknown }
+          requests.push({ method: 'POST', path: 'relays', body: body.profile })
+          relays = [...relays, { relayId: edge.relayId, url: edge.url, kind: 'edge', status: 'connected', connectedAt: Date.now() }]
+          return route.fulfill({ status: 201, json: info() })
+        })
+        await page.route('**/link/api/native/relays/*', route => {
+          requests.push({ method: route.request().method(), path: route.request().url().split('/').at(-1)!, body: null })
+          relays = relays.filter(relay => !route.request().url().endsWith(relay.relayId))
+          return route.fulfill({ json: info() })
+        })
+        await page.reload()
+        await connected(page)
+        await openEntry(page, '设备')
+        const section = page.getByTestId('relay-settings')
+        await section.getByText('东京 已连接 · 新加坡 无法连接', { exact: true }).waitFor()
+        await section.getByText('登记被拒绝', { exact: true }).waitFor()
+        const capture = async (name: string) => {
+          await section.scrollIntoViewIfNeeded()
+          for (const colorScheme of ['light', 'dark'] as const) {
+            await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+            await page.waitForTimeout(60)
+            await section.screenshot({ path: `${OUTPUT}/relays-${name}-${size.label}-${colorScheme}.png`, animations: 'disabled' })
+          }
+          await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
+        }
+        await capture('own-and-official')
+
+        // Add an edge relay from its file: every origin and the key prefix show; the registration key never does.
+        await section.getByTestId('relay-file').setInputFiles({
+          name: 'latch-relay.json',
+          mimeType: 'application/json',
+          buffer: Buffer.from(JSON.stringify({ version: 2, profile: edge })),
+        })
+        const candidate = section.getByTestId('relay-candidate')
+        await candidate.getByText('latch-relay-ne.example.workers.dev、relay.mine.example', { exact: true }).waitFor()
+        await candidate.getByText(`中继公钥 ${'f'.repeat(16)}…`, { exact: true }).waitFor()
+        expect((await section.innerText()).includes(edge.registrationKey)).toBe(false)
+        await capture('adding-edge')
+        await candidate.getByRole('button', { name: '验证并添加', exact: true }).click()
+        await section.getByText('Workers', { exact: true }).waitFor()
+        expect(requests.at(-1)).toEqual({ method: 'POST', path: 'relays', body: edge })
+
+        // Order of preference, then the official switch.
+        await section.getByRole('radio', { name: '自己的' }).click()
+        await expect.poll(() => official.ownFirst).toBe(true)
+        await section.getByRole('switch', { name: '官方中继' }).click()
+        await section.getByText('已关闭', { exact: true }).waitFor()
+        expect(requests.filter(item => item.path === 'official-relay').map(item => item.body)).toEqual([
+          { ownFirst: true },
+          { enabled: false },
+        ])
+        await expect.poll(() => section.getByRole('radio', { name: '自己的' }).count()).toBe(0)
+        await capture('official-off')
+
+        // Remove the self-hosted relay.
+        await section.getByTestId('relay-own').first().getByRole('button', { name: '移除', exact: true }).click()
+        await section.getByText('登记被拒绝', { exact: true }).waitFor({ state: 'detached' })
+        expect(requests.at(-1)).toMatchObject({ method: 'DELETE', path: 'a'.repeat(32) })
+      } finally {
+        await context.close()
+      }
+    })
 
   for (const size of SIZES)
     it(`draws the page and every state of the pairing sheet at ${size.label} width`, async () => {
