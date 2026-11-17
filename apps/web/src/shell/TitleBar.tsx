@@ -27,8 +27,9 @@ import type { ShellState } from './useShellLayout.tsx'
 /**
  * The 52px row spanning the window. Its left zone holds the traffic lights' inset and ◧, with 新建会话 once the panel is
  * shut; its end is kept free for the shell's 对话 | 看板 switch; the rest of the row is the conversation's header, or the
- * title of a page. Over 看板 it holds the computer and the sidebar foot's 设置, 额度与用量 and 检查更新. On the desktop
- * app the row moves the window, except over its controls.
+ * title of a page. From 1024 an open right panel's strip shares the row: the panel's column starts at the window's top
+ * and its strip keeps this end clear. Over 看板 it holds the computer and the sidebar foot's 设置, 额度与用量 and
+ * 检查更新. On the desktop app the row moves the window, except over its controls.
  */
 export function TitleBar({ shell }: { shell: ShellState }) {
   const {
@@ -146,18 +147,22 @@ export function TitleBar({ shell }: { shell: ShellState }) {
           )}
         </header>
       )}
+      {/* Shut, the sidebar's foot stands here: 设置, 额度与用量 and 检查更新, left of an open right panel. */}
+      {sidebarColumn && sidebarCollapsed && (
+        <div className="titlebar-foot">
+          {shell.entries.includes('settings') && (
+            <IconButton
+              label="设置"
+              icon={SettingsGlyph}
+              shortcut={shortcutKeys('settings', desktop !== null) ?? undefined}
+              onClick={() => shell.goEntry('settings')}
+            />
+          )}
+          {shell.access.scopes.has('view') && <UsageEntry />}
+          <ShellUpdateCheck shell={shell} />
+        </div>
+      )}
       <div className="titlebar-views">
-        {/* Shut, the sidebar's foot stands here: 设置, 额度与用量 and 检查更新. */}
-        {sidebarColumn && sidebarCollapsed && shell.entries.includes('settings') && (
-          <IconButton
-            label="设置"
-            icon={SettingsGlyph}
-            shortcut={shortcutKeys('settings', desktop !== null) ?? undefined}
-            onClick={() => shell.goEntry('settings')}
-          />
-        )}
-        {sidebarColumn && sidebarCollapsed && shell.access.scopes.has('view') && <UsageEntry />}
-        {sidebarColumn && sidebarCollapsed && <ShellUpdateCheck shell={shell} />}
         <WorkbenchPanes shell={shell} />
         {/* The 对话 | 看板 switch is the shell's, drawn over this reserved end in both views. */}
         <span className="view-switch-space" aria-hidden="true" />

@@ -675,7 +675,10 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
               按文字重建，不是原样恢复 · 第一条消息会把重建的对话文字一起发给 <VisibleText text={seedService} />
             </span>
           </p>
-        ) : current && selectedId === current.summary.id ? (
+        ) : undefined
+      }
+      vitalsLead={
+        !seedService && current && selectedId === current.summary.id ? (
           <CodexTeam
             key={current.summary.id}
             detail={current}

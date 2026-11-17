@@ -88,7 +88,10 @@
   .app-shell > .titlebar:not([data-shut]) .titlebar-lead {
     background: var(--sidebar);
   }
-  /* 侧栏: the conversation's head is the title row; its foot (measured by the page) runs on over the right panel. */
+  /*
+   * --panel-top: where the right panel starts when it does not reach the window's top (a tablet's column, a sheet at
+   * any width). The conversation's head is the title row; its foot (measured by the page) runs on over the panel.
+   */
   .app-shell {
     --panel-top: max(calc(var(--title-row) - 1px), calc(var(--session-head) - 1px));
   }
@@ -112,5 +115,31 @@
 @media (min-width: 1024px) {
   .app-shell[data-sidebar='collapsed']:not([data-start]) {
     --panel-top: calc(var(--title-row) + max(var(--title-row), var(--session-head)) - 1px);
+  }
+}
+/*
+ * From 1024 the right panel's column reaches the window's top, as one side of a split editor does: its strip is that
+ * column's top row, as tall as the title row, and its hairline runs from the window's top to the status bar. The
+ * window's controls (the title row's end, drawn over the column) stand at the strip's end; the strip keeps their
+ * measured width (--window-controls, AppShell) clear, so its tabs go into the overflow menu before they reach them.
+ * A sheet still floats under the head (--panel-top). On the desktop app the strip's empty space moves the window.
+ */
+@media (min-width: 1024px) {
+  .app-shell:not([data-inspector='sheet']) .inspector-column {
+    padding-top: 0;
+  }
+  .app-shell:not([data-inspector='sheet']) .inspector-column-inner {
+    border-block-start: 0;
+  }
+  .app-shell:not([data-inspector='sheet']) .inspector-column .session-panel-strip {
+    height: var(--title-row);
+    padding-inline-end: calc(var(--window-controls) + var(--sp-12));
+  }
+  .app-shell:not([data-inspector='sheet']) .inspector-column .session-panel-strip :is(button, [tabindex]),
+  .app-shell:not([data-inspector='sheet']) .inspector-resize {
+    -webkit-app-region: no-drag;
+  }
+  .app-shell:not([data-inspector='sheet']) .inspector-resize {
+    top: 0;
   }
 }

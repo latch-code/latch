@@ -177,6 +177,20 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
       frame.style.removeProperty('--session-head')
     }
   }, [appShell, main, phone, selectedId, board])
+  // The right panel's strip shares the window's top row with the title row's end, and keeps that end's width clear.
+  useLayoutEffect(() => {
+    const frame = appShell.current
+    const views = frame?.querySelector<HTMLElement>(':scope > .titlebar > .titlebar-views')
+    if (!frame || !views || phone) return undefined
+    const write = () => frame.style.setProperty('--window-controls', `${views.offsetWidth}px`)
+    write()
+    const observer = new ResizeObserver(write)
+    observer.observe(views)
+    return () => {
+      observer.disconnect()
+      frame.style.removeProperty('--window-controls')
+    }
+  }, [appShell, phone, board])
   // A phone's start screen is pushed over its session list: back goes to the list, not to a session kept under it.
   const toPhoneList = () => {
     setRoute({ entry: 'sessions' })

@@ -3,7 +3,78 @@
   padding: var(--sp-2) var(--sp-8) var(--sp-4);
 }
 .codex-team-entry {
-  gap: var(--sp-8);
+  gap: var(--sp-6);
+  color: var(--muted);
+}
+/*
+ * Beside the vitals, on the input's last line: the entry at its start, the vitals at its end, in the line's reserved
+ * height. The vitals keep their room; where both do not fit, the entry gives up its words and keeps its glyph (its
+ * name stays for assistive technology).
+ */
+.composer-foot {
+  container: composer-foot / inline-size;
+  display: flex;
+  align-items: center;
+  height: var(--sp-24);
+  min-width: 0;
+}
+.composer-foot > .codex-team-control {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 0 0 var(--sp-6);
+}
+.composer-foot .codex-team-entry {
+  min-width: 0;
+  max-width: 100%;
+}
+.composer-foot .codex-team-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/*
+ * Squeezed under a mouse, the words wrap onto a second line the entry's own height hides: they show whole or not at
+ * all. A touch screen keeps the ellipsis, since hiding the overflow would also cut its 44px tap area.
+ */
+@media (pointer: fine) {
+  .composer-foot .codex-team-entry {
+    flex-wrap: wrap;
+    align-content: flex-start;
+    row-gap: 0;
+    height: var(--sp-24);
+    overflow: hidden;
+  }
+  .composer-foot .codex-team-entry > svg {
+    margin-block: 5px;
+  }
+  .composer-foot .codex-team-label {
+    display: inline-flex;
+    align-items: center;
+    block-size: var(--sp-24);
+    overflow: visible;
+  }
+}
+.composer-foot > .vitals-strip {
+  flex: 1 0 auto;
+}
+@container composer-foot (max-width: 479.98px) {
+  .composer-foot .codex-team-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  /* The glyph alone: a square face, and on touch screens a 44 square to press. */
+  .composer-foot .codex-team-entry {
+    justify-content: center;
+    min-width: 28px;
+    padding-inline: var(--sp-6);
+  }
+  .composer-foot .codex-team-entry::before {
+    inset-inline: min(0px, calc((100% - 44px) / 2));
+  }
 }
 .codex-team-content {
   display: grid;
@@ -93,7 +164,6 @@
 }
 
 @media (max-width: 680px) {
-  .codex-team-entry,
   .codex-team-review,
   .codex-team-history .ui-select-button,
   .codex-team-result summary {

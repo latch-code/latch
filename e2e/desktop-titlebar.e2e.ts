@@ -102,7 +102,8 @@ async function rowLine(page: Page): Promise<{ centreY: number; start: number; dr
       centreY: first.top + first.height / 2,
       start: first.left,
       drag: region(bar),
-      noDrag: [...document.querySelectorAll('.titlebar button, .shell-view-switch')]
+      // The right panel's strip shares the row from 1024: its tabs, 「+」 and actions do not move the window either.
+      noDrag: [...document.querySelectorAll('.titlebar button, .shell-view-switch, .inspector-column .session-panel-strip button')]
         .filter(element => (element as HTMLElement).checkVisibility({ visibilityProperty: true }))
         .map(region),
     }

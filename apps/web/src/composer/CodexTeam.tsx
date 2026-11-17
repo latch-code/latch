@@ -79,9 +79,9 @@ export function CodexTeam({
   if (!detail.codexTeam && !group) return null
   return (
     <div className="codex-team-control">
-      <Button variant="ghost" size="sm" onClick={() => setOpen(true)} aria-haspopup="dialog" className="codex-team-entry">
-        <AgentsGlyph size={16} />
-        {group ? 'Agent 团队' : '用团队分工'}
+      <Button variant="ghost" size="xs" onClick={() => setOpen(true)} aria-haspopup="dialog" className="codex-team-entry">
+        <AgentsGlyph size={14} />
+        <span className="codex-team-label">{group ? 'Agent 团队' : '用团队分工'}</span>
         {waiting && <StatusWord tone="waiting">待审批</StatusWord>}
       </Button>
       <Dialog

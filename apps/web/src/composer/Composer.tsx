@@ -128,6 +128,7 @@ export function Composer({
   stepBack = false,
   below,
   vitals,
+  vitalsLead,
   status,
   location,
   locationPosition = 'top',
@@ -221,6 +222,8 @@ export function Composer({
   below?: ReactNode
   /** The last line, under everything: what an open session has done and used (`VitalsStrip`). */
   vitals?: ReactNode
+  /** At the start of that last line, the vitals at its end (its own row without them): an open session's own entry (the Codex team). */
+  vitalsLead?: ReactNode
   /** The frame's last row: where a new session will work and which way its model goes (`ComposerStatus`). */
   status?: ReactNode
   /** The workbench's project and execution location, inside the same input frame. */
@@ -724,7 +727,17 @@ export function Composer({
         {status}
       </form>
       {below}
-      {vitals}
+      {vitals && vitalsLead ? (
+        <div className="composer-foot">
+          {vitalsLead}
+          {vitals}
+        </div>
+      ) : (
+        <>
+          {vitalsLead}
+          {vitals}
+        </>
+      )}
     </div>
   )
 }

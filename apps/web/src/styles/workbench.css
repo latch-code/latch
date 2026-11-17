@@ -5,6 +5,27 @@
   align-self: flex-start;
   height: var(--title-row);
 }
+/*
+ * The sidebar's foot while it is shut (设置, 额度与用量, 检查更新): before the window's controls, or, beside an open right
+ * panel whose strip holds the row's end, at the conversation's end of the row, clear of the panel's edge.
+ */
+.titlebar-foot {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  align-self: flex-start;
+  height: var(--title-row);
+  margin-left: auto;
+  z-index: 3;
+}
+.titlebar-foot + .titlebar-views {
+  margin-left: 0;
+}
+@media (min-width: 1024px) {
+  .app-shell:not([data-inspector='sheet']) .titlebar-foot {
+    margin-inline-end: max(0px, calc(var(--inspector-width) - var(--window-controls) + var(--sp-8)));
+  }
+}
 .workbench-pane-controls {
   flex: none;
   display: flex;

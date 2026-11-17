@@ -37,6 +37,8 @@
 }
 .app-shell {
   --workbench-pane-space: calc(var(--workbench-pane-count) * 32px);
+  /* The title row's end (panel toggles and the view switch), as AppShell measures it; this until it has. */
+  --window-controls: calc(168px + var(--workbench-pane-space));
 }
 @media (pointer: coarse) {
   .app-shell {
@@ -902,7 +904,7 @@
   .app-shell .titlebar {
     pointer-events: none;
   }
-  .app-shell .titlebar :is(.titlebar-lead, .titlebar-views, .titlebar-page) {
+  .app-shell .titlebar :is(.titlebar-lead, .titlebar-foot, .titlebar-views, .titlebar-page) {
     pointer-events: auto;
   }
   .app-shell .titlebar-page {
