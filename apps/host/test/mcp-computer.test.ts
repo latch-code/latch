@@ -62,6 +62,17 @@ const settled = (device: TestDevice, sessionId: string) =>
   )
 const lastText = (detail: TaskDetail) => detail.messages.filter(message => message.role === 'assistant').at(-1)?.text ?? ''
 
+/**
+ * What `mcp-list computer` lists in a chat with an Agent someone is in, once its automation has run. The chat's first
+ * turn leads with 「它做过什么」 (that run, on record), which the fake reads as its keyword; the note goes once per
+ * context, so the chat's next turn is the command alone, in the same session and with the same servers.
+ */
+async function listedInChat(device: TestDevice, sessionId: string): Promise<string> {
+  await settled(device, sessionId)
+  await device.json(`tasks/${sessionId}/prompt`, { body: { requestId: randomUUID(), prompt: 'mcp-list computer' } })
+  return lastText(await settled(device, sessionId))
+}
+
 async function audit(t: TestHost): Promise<Array<{ action: string; detail: Record<string, unknown> }>> {
   return (await readFile(join(t.dataDir, 'audit', 'audit.jsonl'), 'utf8'))
     .trim()
@@ -343,7 +354,7 @@ describe('「操控这台 Mac」 in sessions', () => {
       method: 'POST',
       body: { customAgentId: agent.id, prompt: 'mcp-list computer', requestId: randomUUID() },
     })
-    expect(lastText(await settled(desktop, chat.sessionId))).toBe('computer tools: echo,click')
+    expect(await listedInChat(desktop, chat.sessionId)).toBe('computer tools: echo,click')
   })
 
   it('is not given to an automation’s run whose agent starts while the session is still being created', async () => {
@@ -438,7 +449,7 @@ describe('「操控这台 Mac」 in sessions', () => {
       method: 'POST',
       body: { customAgentId: agent.id, prompt: 'mcp-list computer', requestId: randomUUID() },
     })
-    expect(lastText(await settled(desktop, chat.sessionId))).toBe('computer tools: click')
+    expect(await listedInChat(desktop, chat.sessionId)).toBe('computer tools: click')
   })
 })
 
