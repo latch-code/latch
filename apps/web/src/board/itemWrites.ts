@@ -21,7 +21,9 @@ export type ItemWriteState =
   | { state: 'unknown'; kind: ItemRequest['kind']; reason: string }
   | { state: 'refused'; kind: ItemRequest['kind']; reason: string; code?: string }
 
-export type ItemWriteResult = { ok: true; sessionId?: string } | { ok: false; reason?: string; unknown?: true }
+export type ItemWriteResult = { ok: true; sessionId?: string } | { ok: false; reason?: string; unknown?: true; blocked?: true }
+
+export const ITEM_WRITE_BLOCKED = '请先处理上一项操作'
 
 /** The Host already holds what an uncertain edit, delete or attend asked for, or moved on: the snapshot says which. */
 const settledOnRetry = (cause: unknown) =>
@@ -46,7 +48,9 @@ export function useItemWrites(refresh: () => Promise<void>) {
 
   const send = useCallback(
     async (id: string, request: ItemRequest, retry = false): Promise<ItemWriteResult> => {
-      if (flights.current.has(id)) return { ok: false }
+      const held = requests.current.get(id)
+      if (flights.current.has(id) || (retry ? held !== request : held !== undefined))
+        return { ok: false, blocked: true, reason: ITEM_WRITE_BLOCKED }
       flights.current.add(id)
       requests.current.set(id, request)
       set(id, { state: 'sending', kind: request.kind })

@@ -57,7 +57,7 @@ export function WorkBoardItemEdit({
     if (result.ok || (!result.ok && result.unknown)) onClose()
     else {
       // A refusal is said here, not on the card.
-      writes.dismiss(read.id)
+      if (!result.blocked) writes.dismiss(read.id)
       setError(result.reason ?? '没有保存')
       setBusy(false)
     }

@@ -42,7 +42,7 @@ import { useBoardRequests } from './requests.ts'
 import { WorkBoard } from './WorkBoard.tsx'
 import { WorkBoardCard } from './WorkBoardCard.tsx'
 import { AllFilters, FilterChips, FilterMenus } from './WorkBoardFilters.tsx'
-import { useItemWrites } from './itemWrites.ts'
+import { ITEM_WRITE_BLOCKED, useItemWrites } from './itemWrites.ts'
 import { WorkBoardItemCard, type ItemCard } from './WorkBoardItemCard.tsx'
 import { WorkBoardItemEdit } from './WorkBoardItemEdit.tsx'
 import { ItemPage } from './ItemPage.tsx'
@@ -209,68 +209,77 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
     await shell.refresh()
   }
   /** 优先级, 标签…, 编辑… while it has no session, 打开, 删除待办: the same on a card, a row and a phone row. */
-  const itemMenu = ({ item }: ItemCard): MenuSection[] => [
-    ...(canMark
-      ? boardMarkSections(item, {
-          setPriority: priority => {
-            void writes.patch(item, { priority: priority ?? 'mid' })
-          },
-          editTags: () => {
-            setTagging(item)
-          },
-        })
-      : []),
-    {
-      id: 'item',
-      items: [
-        ...(canMark && item.sessionIds.length === 0
-          ? [
-              {
-                id: 'edit',
-                label: '编辑…',
-                icon: EditGlyph,
-                onSelect: () => {
-                  setEditing(item)
+  const itemMenu = ({ item }: ItemCard): MenuSection[] => {
+    const state = writes.states.get(item.id)?.state
+    const sections: MenuSection[] = [
+      ...(canMark
+        ? boardMarkSections(item, {
+            setPriority: priority => {
+              void writes.patch(item, { priority: priority ?? 'mid' })
+            },
+            editTags: () => {
+              setTagging(item)
+            },
+          })
+        : []),
+      {
+        id: 'item',
+        items: [
+          ...(canMark && item.sessionIds.length === 0
+            ? [
+                {
+                  id: 'edit',
+                  label: '编辑…',
+                  icon: EditGlyph,
+                  onSelect: () => {
+                    setEditing(item)
+                  },
                 },
-              },
-            ]
-          : []),
-        ...(canMark
-          ? noteItems(
-              item.note,
-              () => setNoting({ kind: 'item', item }),
-              () => void writes.patch(item, { note: null }),
-            )
-          : []),
-        {
-          id: 'open',
-          label: '打开待办',
-          icon: ListTodo,
-          onSelect: () => {
-            openItem(item)
-          },
-        },
-      ],
-    },
-    ...(canMark
-      ? [
+              ]
+            : []),
+          ...(canMark
+            ? noteItems(
+                item.note,
+                () => setNoting({ kind: 'item', item }),
+                () => void writes.patch(item, { note: null }),
+              )
+            : []),
           {
-            id: 'danger',
-            items: [
-              {
-                id: 'delete',
-                label: '删除待办…',
-                icon: TrashGlyph,
-                danger: true,
-                onSelect: () => {
-                  setDeleting(item)
-                },
-              },
-            ],
+            id: 'open',
+            label: '打开待办',
+            icon: ListTodo,
+            onSelect: () => {
+              openItem(item)
+            },
           },
-        ]
-      : []),
-  ]
+        ],
+      },
+      ...(canMark
+        ? [
+            {
+              id: 'danger',
+              items: [
+                {
+                  id: 'delete',
+                  label: '删除待办…',
+                  icon: TrashGlyph,
+                  danger: true,
+                  onSelect: () => {
+                    setDeleting(item)
+                  },
+                },
+              ],
+            },
+          ]
+        : []),
+    ]
+    return state === 'sending' || state === 'unknown'
+      ? sections.map(section => ({
+          ...section,
+          items: section.items.map(action => (action.id === 'open' ? action : { ...action, disabledReason: ITEM_WRITE_BLOCKED })),
+        }))
+      : sections
+  }
   // Where 对话 stood before 新建: the new-session input targets a new session only on the start screen, so the dialog
   // moves 对话 there and puts it back once it closes.
   const beforeNew = useRef<ShellState['route'] | null>(null)
@@ -691,7 +700,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
           onSave={async tags => {
             const result = await writes.patch(tagging, { tags })
             if (!result.ok && !result.unknown) {
-              writes.dismiss(tagging.id)
+              if (!result.blocked) writes.dismiss(tagging.id)
               throw new MessageError(result.reason ?? '没有保存')
             }
           }}
@@ -736,7 +745,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
             }
             const result = await writes.patch(noting.item, { note })
             if (!result.ok && !result.unknown) {
-              writes.dismiss(noting.item.id)
+              if (!result.blocked) writes.dismiss(noting.item.id)
               throw new MessageError(result.reason ?? '没有保存')
             }
           }}
@@ -758,7 +767,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
           onConfirm={async () => {
             const result = await writes.remove(deleting)
             if (!result.ok && !result.unknown) {
-              writes.dismiss(deleting.id)
+              if (!result.blocked) writes.dismiss(deleting.id)
               throw new MessageError(result.reason ?? '没有删除')
             }
           }}

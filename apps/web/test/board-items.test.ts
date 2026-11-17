@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { readPending, submissionRequest, writePending } from '../src/core/api.ts'
 import { boardCounts } from '../src/sessions.ts'
+import { useItemWrites, type ItemWrites } from '../src/board/itemWrites.ts'
 import { itemTitle } from '../src/board/WorkBoardNew.tsx'
 
 const ITEM = 'itm_AAAAAAAAAAAAAAAAAAAAAA'
@@ -35,6 +38,38 @@ describe('starting a 待办 from the board', () => {
   it('titles a kept 待办 by the session-title rule, cut to 120 characters', () => {
     expect(itemTitle('> 引用\n修好登录\n第二行')).toBe('修好登录 第二行')
     expect(Array.from(itemTitle('长'.repeat(200))).length).toBe(120)
+  })
+
+  it('keeps the same start request when a card or row menu tries to change or delete the item', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+    fetcher.mockRejectedValueOnce(new TypeError('No response')).mockRejectedValueOnce(new TypeError('No response'))
+    fetcher.mockResolvedValueOnce(Response.json({}))
+    vi.stubGlobal('fetch', fetcher)
+    let writes: ItemWrites | undefined
+    function BoardWrites() {
+      writes = useItemWrites(async () => {})
+      return null
+    }
+    renderToStaticMarkup(createElement(BoardWrites))
+    const board = writes!
+    const item = { id: ITEM, revision: 3 }
+    expect(await board.start(item)).toMatchObject({ ok: false, unknown: true })
+    expect(await board.patch(item, { priority: 'high' })).toMatchObject({ ok: false, blocked: true })
+    expect(await board.remove(item)).toMatchObject({ ok: false, blocked: true })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    expect(await board.retry(ITEM)).toMatchObject({ ok: false, unknown: true })
+    const calls = fetcher.mock.calls
+    const original = calls[0]!
+    expect(JSON.parse(original[1]!.body as string)).toMatchObject({ requestId: expect.any(String), baseRevision: 3 })
+    expect(calls[1]?.[0]).toBe(original[0])
+    expect(calls[1]?.[1]?.body).toBe(original[1]?.body)
+
+    board.dismiss(ITEM)
+    expect(await board.patch(item, { note: '跟进' })).toEqual({ ok: true })
+    expect(calls[2]?.[1]).toMatchObject({ method: 'PATCH', body: JSON.stringify({ baseRevision: 3, note: '跟进' }) })
+    expect(await board.retry(ITEM)).toEqual({ ok: false })
+    expect(fetcher).toHaveBeenCalledTimes(3)
   })
 
   it('counts a 待办 once on the start screen, never its sessions', () => {
