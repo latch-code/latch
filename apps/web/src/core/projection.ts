@@ -49,13 +49,19 @@ export class ProjectionGuard {
     this.recent.delete(sessionId)
     if (this.sessionId === sessionId) this.reset()
   }
-  retain(snapshot: Pick<AppSnapshot, 'tasks' | 'tasksComplete' | 'revision'>): void {
-    if (!snapshot.tasksComplete) return
+  /** A complete, current listing can end the selected detail's visibility. Return its ID for the view to close. */
+  retain(snapshot: Pick<AppSnapshot, 'tasks' | 'tasksComplete' | 'revision'>): string | null {
+    if (!snapshot.tasksComplete || snapshot.revision === undefined) return null
     const listed = new Set(snapshot.tasks.map(task => task.id))
+    let removed: string | null = null
     for (const [id, { detail }] of this.recent) {
       // The snapshot request may have started before the session's first streamed detail.
-      if (!listed.has(id) && (detail.sync?.revision ?? -1) <= (snapshot.revision ?? -1)) this.recent.delete(id)
+      if (listed.has(id) || (detail.sync?.revision ?? -1) > snapshot.revision) continue
+      this.recent.delete(id)
+      if (id === this.sessionId) removed = id
     }
+    if (removed !== null) this.select(null)
+    return removed
   }
   accept(ticket: ProjectionTicket, detail: TaskDetail, source: DetailSource = 'http'): boolean {
     if (!this.current(ticket) || detail.summary.id !== this.sessionId) return false

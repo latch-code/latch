@@ -97,6 +97,25 @@ describe('authoritative stream projection', () => {
     expect(guard.select('3', true)).toBeNull()
   })
 
+  it('keeps a selection through older or partial listings, then rejects late replies when a complete list drops it', () => {
+    const guard = new ProjectionGuard()
+    guard.bind('host')
+    guard.select('A')
+    const ticket = guard.capture()
+    expect(guard.accept(ticket, detail('A', 20), 'stream')).toBe(true)
+    expect(guard.retain({ tasks: [], tasksComplete: true })).toBeNull()
+    expect(guard.retain({ tasks: [], tasksComplete: true, revision: 19 })).toBeNull()
+    expect(guard.current(ticket)).toBe(true)
+    expect(guard.retain({ tasks: [], revision: 21 })).toBeNull()
+    expect(guard.current(ticket)).toBe(true)
+    expect(guard.retain({ tasks: [], tasksComplete: true, revision: 20 })).toBe('A')
+    expect(guard.sessionId).toBeNull()
+    expect(guard.current(ticket)).toBe(false)
+    expect(guard.accept(ticket, detail('A', 21), 'stream')).toBe(false)
+    expect(guard.accept(ticket, detail('A', 21))).toBe(false)
+    expect(guard.select('A', true)).toBeNull()
+  })
+
   it('rejects older revisions, old Host instances and old selection generations, including A → B → A', () => {
     const guard = new ProjectionGuard()
     guard.bind('host')

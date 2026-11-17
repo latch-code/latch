@@ -602,7 +602,7 @@ export function useSessionController({
     }
   }, [toast])
   useEffect(() => {
-    if (harness.removed) setToast({ text: '会话已被删除', tone: 'ok' })
+    if (harness.removed) setToast({ text: harness.removed.deleted ? '会话已被删除' : '会话已不可见', tone: 'ok' })
   }, [harness.removed])
 
   // Per-device read markers; the selected session is read while it is open.

@@ -845,11 +845,57 @@ describe('streamed messages in the real workspace', () => {
       expect(removed.status()).toBe(200)
       await page.locator('.workbench-home').waitFor()
       await page.getByRole('textbox', { name: '新会话消息' }).waitFor()
-      await page.getByRole('status').filter({ hasText: '会话已被删除' }).waitFor()
+      await page.getByRole('status').filter({ hasText: '会话已不可见' }).waitFor()
       await connected(page)
       expect(await page.locator('.banner-region').count()).toBe(0)
       expect(await page.locator(`[data-task-id="${id}"]`).count()).toBe(0)
     } finally {
+      await context.close()
+    }
+  })
+
+  it('withdraws the open transcript when a new complete listing drops it and its detail cannot answer', async () => {
+    const { context, page } = await open(1280, 820)
+    let releaseDetail = () => {}
+    const blockedDetail = new Promise<void>(resolve => {
+      releaseDetail = resolve
+    })
+    try {
+      const { id, reply } = await start(page, '检查完整列表撤下当前会话')
+      const text = '最后读到的会话正文。'
+      reply.append(text)
+      reply.finish()
+      await expect.poll(async () => (await host.bridge.detail(id)).summary.status).toBe('idle')
+      const transcript = page.locator('.transcript').getByText(text, { exact: true })
+      await transcript.waitFor()
+      const owner = await testHost.enroll({ listener: 'unix' })
+      const task = `tasks/${encodeURIComponent(id)}`
+      const lastRead = await owner.json<TaskDetail>(task)
+      expect(lastRead.sync?.revision).toBeDefined()
+      await page.route(
+        url => url.pathname === `/link/api/${task}`,
+        async route => {
+          if (route.request().method() !== 'GET') return route.continue()
+          await blockedDetail
+          await route.abort('connectionreset').catch(() => {})
+        },
+      )
+      const complete = page.waitForResponse(async response => {
+        if (new URL(response.url()).pathname !== '/link/api/snapshot' || !response.ok()) return false
+        const snapshot = (await response.json()) as AppSnapshot
+        return (
+          snapshot.tasksComplete === true
+          && (snapshot.revision ?? -1) > lastRead.sync!.revision
+          && !snapshot.tasks.some(item => item.id === id)
+        )
+      })
+      expect((await owner.request(task, { method: 'DELETE' })).status).toBe(200)
+      await complete
+      await page.locator(`[data-task-id="${id}"]`).waitFor({ state: 'detached' })
+      await expect.poll(() => transcript.count(), { timeout: 3_000 }).toBe(0)
+      await homeInput(page).waitFor()
+    } finally {
+      releaseDetail()
       await context.close()
     }
   })

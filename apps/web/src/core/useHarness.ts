@@ -80,8 +80,8 @@ export function useHarness() {
     noticeRef.current = next
     setHostNotice(next)
   }, [])
-  /** Set each time the selected session disappears from the Host. */
-  const [removed, setRemoved] = useState<{ sessionId: string } | null>(null)
+  /** Set when the selected session disappears from this device's projection. */
+  const [removed, setRemoved] = useState<{ sessionId: string; deleted: boolean } | null>(null)
   /**
    * Counts the snapshots that replaced the state wholesale (the first load, a reconnect, a tab shown again) rather than
    * bringing a change as it happened. The page plays its one-shot indicators only for changes made in neither.
@@ -162,6 +162,17 @@ export function useHarness() {
       /* Selection stays functional when storage is unavailable. */
     }
   }, [])
+  const publishRemoval = useCallback(
+    (sessionId: string, deleted: boolean) => {
+      activeStream.current?.clear()
+      activeStream.current?.stream.close()
+      publishDetail(null)
+      setSelectedId(null)
+      storeSelection(null)
+      setRemoved({ sessionId, deleted })
+    },
+    [publishDetail, storeSelection],
+  )
 
   const signOut = useCallback(
     (state: AuthState) => {
@@ -239,9 +250,10 @@ export function useHarness() {
               setSelectedId(initial)
               publishDetail(null)
             }
-            guard.current.retain(next)
+            const unlisted = guard.current.retain(next)
+            if (unlisted !== null) publishRemoval(unlisted, next.device.dataScope === 'all')
             publishSnapshot(mergeTaskSnapshot(next, latestDetail.current.cached ? null : latestDetail.current.detail), currentResync)
-            // A list-only change that drops the selection is confirmed by the detail request below.
+            // An incomplete or older listing still leaves the detail to confirm the selection.
             if (currentMode === 'list' && guard.current.sessionId !== null && !next.tasks.some(task => task.id === guard.current.sessionId))
               pending.current = 'all'
             if (currentMode === 'all') {
@@ -260,10 +272,7 @@ export function useHarness() {
                   if (missingMeansDeleted(next)) {
                     guard.current.forget(detailTicket.sessionId)
                     guard.current.select(null)
-                    publishDetail(null)
-                    setSelectedId(null)
-                    storeSelection(null)
-                    setRemoved({ sessionId: detailTicket.sessionId })
+                    publishRemoval(detailTicket.sessionId, true)
                   }
                 } else if (guard.current.accept(detailTicket, nextDetail)) {
                   publishDetail(nextDetail)
@@ -298,7 +307,7 @@ export function useHarness() {
       })
       return running.current
     },
-    [publishDetail, publishSnapshot, storeSelection, signOut, renewal],
+    [publishDetail, publishRemoval, publishSnapshot, signOut, renewal],
   )
 
   /** Reloads state after something this page did, as a change it follows. */
