@@ -7,7 +7,7 @@
 const { randomUUID } = require('node:crypto')
 const { lstat, mkdir, open, readFile, rename, rm } = require('node:fs/promises')
 const { join } = require('node:path')
-const { attentionOf, sameName } = require('./notifications.cjs')
+const { attentionOf, sameName, sessionsOf } = require('./notifications.cjs')
 
 const FILE = 'computers.json'
 const COMPUTER_LIMIT = 16
@@ -271,6 +271,68 @@ function createViewSender(send) {
   return push
 }
 
+/**
+ * Which page an IPC call came from: `{ kind: 'full' }` for this Mac's own window, `{ kind: 'remote', hostId }` for a
+ * listed computer's own window, otherwise undefined (a child frame, another document, an unknown window).
+ * @param {{ homeOf: (contents: any) => string, isAppUrl: (url: string, home: string) => boolean, localHome: string, mainContents: () => any, remoteContents: (hostId: string) => any, has: (hostId: string) => boolean }} options
+ */
+function createSenderOf({ homeOf, isAppUrl, localHome, mainContents, remoteContents, has }) {
+  return event => {
+    const frame = event?.senderFrame
+    const contents = event?.sender
+    if (!frame || frame.parent || !contents) return undefined
+    const home = homeOf(contents)
+    if (typeof home !== 'string' || !isAppUrl(frame.url, home)) return undefined
+    if (home === localHome) return contents === mainContents() ? { kind: 'full' } : undefined
+    const hostId = home.slice(2)
+    return has(hostId) && remoteContents(hostId) === contents ? { kind: 'remote', hostId } : undefined
+  }
+}
+
+const FORBIDDEN = Object.freeze({ ok: false, error: 'forbidden', message: '只接受 Latch 页面的请求。' })
+const NO_GESTURE = Object.freeze({ ok: false, error: 'gesture-required', message: '请在 Latch 页面上点按后再试。' })
+const NOT_FOUND = Object.freeze({ ok: false, error: 'computer-not-found', message: '找不到这台电脑。' })
+
+/**
+ * `latch:computers:start` (新会话 on a computer): only from a Latch page, only after a real click or key on it, only for a
+ * listed computer; a remote computer's page only for itself or this Mac.
+ * @param {{ senderOf: (event: any) => ({ kind: string, hostId?: string } | undefined), gestureOf: (event: any) => boolean, has: (hostId: string) => boolean, localHostId: string, startOn: (hostId: string) => any }} options
+ */
+function createStartHandler({ senderOf, gestureOf, has, localHostId, startOn }) {
+  return (event, hostId) => {
+    const sender = senderOf(event)
+    if (!sender) return FORBIDDEN
+    // Everything that refuses without a gesture is checked first, so a refused call never uses one up.
+    if (typeof hostId !== 'string' || !has(hostId)) return NOT_FOUND
+    if (sender.kind === 'remote' && hostId !== sender.hostId && hostId !== localHostId) return FORBIDDEN
+    if (!gestureOf(event)) return NO_GESTURE
+    return startOn(hostId)
+  }
+}
+
+/**
+ * Sends to a window once its page has loaded, or now; a load that fails or a window that goes takes the wait with it,
+ * so no handler is left behind.
+ */
+function whenLoaded(contents, send) {
+  if (!contents.isLoading()) {
+    send()
+    return
+  }
+  const done = () => {
+    contents.removeListener('did-finish-load', loaded)
+    contents.removeListener('did-fail-load', done)
+    contents.removeListener('destroyed', done)
+  }
+  const loaded = () => {
+    done()
+    send()
+  }
+  contents.once('did-finish-load', loaded)
+  contents.once('did-fail-load', done)
+  contents.once('destroyed', done)
+}
+
 function refusal(status, error, message) {
   return { ok: false, status, error, message }
 }
@@ -315,7 +377,9 @@ function createComputers(options) {
   /**
    * `attention`: what waited on that computer at its last authenticated snapshot (attentionOf); kept while it is away,
    * so the page can say what waited before it went, and dropped when it removes this device.
-   * @type {Map<string, { record: any, store: any, proxy: any, status: any, failures: number, timer?: any, seenWritten: number, stopRenewal?: () => void, dueAt?: number, probing?: Promise<void>, attention?: { count: number, items: any[], running: number } }>}
+   * `sessions`: that computer's Code sessions at its last authenticated snapshot (sessionsOf), for this Mac's unified
+   * list; in memory only, kept while it is away and dropped when it removes this device.
+   * @type {Map<string, { record: any, store: any, proxy: any, status: any, failures: number, timer?: any, seenWritten: number, stopRenewal?: () => void, dueAt?: number, probing?: Promise<void>, attention?: { count: number, items: any[], running: number }, sessions?: any[] }>}
    */
   const entries = new Map()
   let damaged = false
@@ -390,7 +454,10 @@ function createComputers(options) {
     }
     if (after.state === 'online' || after.state === 'connecting') entry.failures = 0
     // A computer that removed this device: nothing it said before stands.
-    if (after.state === 'revoked') entry.attention = undefined
+    if (after.state === 'revoked') {
+      entry.attention = undefined
+      entry.sessions = undefined
+    }
     if (before.state !== after.state) {
       // A state that may change by itself is looked at again soon.
       schedule(entry)
@@ -438,8 +505,16 @@ function createComputers(options) {
         // A snapshot that cannot be read says nothing about what waits there; the last one stands.
         attention = entry.attention
       }
-      if (JSON.stringify(attention) !== JSON.stringify(entry.attention)) {
+      let sessions
+      try {
+        sessions = sessionsOf(result.snapshot)
+      } catch {
+        sessions = entry.sessions
+      }
+      if (JSON.stringify(attention) !== JSON.stringify(entry.attention) || JSON.stringify(sessions) !== JSON.stringify(entry.sessions)) {
         entry.attention = attention
+        entry.sessions = sessions
+        // Both are this Mac's page's alone: no other computer's window hears of the change.
         changed('attention')
       }
       try {
@@ -542,6 +617,8 @@ function createComputers(options) {
               running: entry.attention.running,
             }
           : {}),
+        // That computer's sessions for the unified list, for this Mac's own page only: never another computer's window.
+        ...(full && entry.sessions ? { sessions: entry.sessions } : {}),
       })),
     ]
     const computers = distinctNames(items)
@@ -678,9 +755,16 @@ function createComputers(options) {
     return total
   }
 
-  /** Whether `taskId` waits on that computer as main last read it: a page opens only these on another computer. */
+  /**
+   * Whether `taskId` is a session of that computer as main last read it (one that waits there, or one of its listed
+   * sessions): this Mac's page opens only these on another computer.
+   */
   function waits(hostId, taskId) {
-    return entries.get(hostId)?.attention?.items.some(item => item.taskId === taskId) === true
+    const entry = entries.get(hostId)
+    return (
+      entry?.attention?.items.some(item => item.taskId === taskId) === true
+      || entry?.sessions?.some(item => item.taskId === taskId) === true
+    )
   }
 
   /** A Latch window came to the front: computers that answer are looked at again at the faster rate. */
@@ -740,4 +824,7 @@ module.exports = {
   createWindowOpener,
   createViewSender,
   createComputers,
+  createSenderOf,
+  createStartHandler,
+  whenLoaded,
 }

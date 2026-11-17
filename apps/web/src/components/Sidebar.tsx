@@ -7,8 +7,8 @@ import { HARNESS_MARKS, harnessArt, presetOf } from '../brands.ts'
 import { GATEWAY_NAME } from '../composer/ModelControl.tsx'
 import { sessionHarness } from '../composerChoice.ts'
 import { hostView } from '../core/permissions.ts'
-import { otherWaiting, useComputers, type OtherWaiting } from '../core/computers.ts'
-import { OtherComputersWaiting } from './Computers.tsx'
+import { otherComputerLists, otherWaiting, useComputers, type OtherWaiting } from '../core/computers.ts'
+import { OtherComputersSessions, OtherComputersWaiting } from './Computers.tsx'
 import { relativeTime } from '../format.ts'
 import { useListMotion, usePresence } from '../hooks/useListMotion.ts'
 import { projectName } from '../projects.tsx'
@@ -544,6 +544,11 @@ function CodeList({
   const computers = useComputers()
   // Only this Mac's page holds what waits on other computers (main gives it to no other page).
   const others = archived ? [] : otherWaiting(computers, hostView(snapshot)?.hostId)
+  // The unified list's other computers (O2): only this Mac's page holds their sessions, in the Code space.
+  const elsewhere =
+    archived || space === 'agents'
+      ? []
+      : otherComputerLists(computers, hostView(snapshot)?.hostId).filter(list => list.count > 0 || !list.live)
   const grouped = groupSessions(visible, snapshot.catalog?.workspaces, {
     includeEmpty: projectSections,
     ...(archived || projectTree ? {} : { waitingFrom: own }),
@@ -557,6 +562,7 @@ function CodeList({
     + others
       .map(other => `|${other.computer.hostId}:${other.live ? other.items.map(item => item.taskId).join(',') : other.items.length}`)
       .join('')
+    + elsewhere.map(other => `|${other.hostId}:${folded.has(`computer:${other.hostId}`) ? '' : other.count}`).join('')
   const remeasure = useListMotion(list, context, signature)
   // 「项目」 heads the projects (and 无项目), after 等你处理; its + adds one.
   const headAt = groups.findIndex(group => group.id !== 'waiting')
@@ -614,6 +620,7 @@ function CodeList({
           </Fragment>
         ))
       )}
+      <OtherComputersSessions lists={elsewhere} now={now} folded={folded} onFold={toggleShelf} />
       {archivedCount > 0 && !archived && (
         <button
           type="button"

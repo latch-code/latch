@@ -20,6 +20,12 @@ let earlyRemoteSession
 const holdEarlyRemoteSession = (_event, sessionId) => {
   if (typeof sessionId === 'string' && SESSION_ID.test(sessionId)) earlyRemoteSession = sessionId
 }
+// 新会话 on this computer, asked from another window before this page subscribed: waits for the first subscriber.
+let earlyStart = false
+const holdEarlyStart = () => {
+  earlyStart = true
+}
+ipcRenderer.on('latch:computers:start-here', holdEarlyStart)
 const INVALID = Object.freeze({ status: 'failed', code: 'invalid' })
 const CANCELED = Object.freeze({ status: 'canceled' })
 const NOTIFICATION_CONSENT = new Set(['unasked', 'accepted', 'declined'])
@@ -355,6 +361,23 @@ const httpsOriginText = value => {
     return false
   }
 }
+const SESSION_STATUSES = new Set(['waiting', 'running', 'failed', 'idle'])
+const SESSION_LIMIT = 60
+const oneLine = (value, limit) => shortText(value, limit * 2) && [...value].length <= limit && !/[\p{C}]/u.test(value)
+/** One session of another computer for this Mac's unified list: its ID, title, status word, time and project only. */
+function sessionItem(value) {
+  if (!value || typeof value !== 'object' || typeof value.taskId !== 'string' || !SESSION_ID.test(value.taskId)) return undefined
+  if (!oneLine(value.title, 80) || !SESSION_STATUSES.has(value.status)) return undefined
+  if (!shortText(value.updatedAt, 40) || !Number.isFinite(Date.parse(value.updatedAt))) return undefined
+  const item = { taskId: value.taskId, title: value.title, status: value.status, updatedAt: value.updatedAt }
+  if (value.project !== undefined) {
+    const project = value.project
+    if (!project || typeof project !== 'object' || typeof project.id !== 'string' || !PROJECT_ID.test(project.id)) return undefined
+    if (!oneLine(project.name, 80) || project.name.length === 0) return undefined
+    item.project = { id: project.id, name: project.name }
+  }
+  return item
+}
 function computerItem(value) {
   if (!value || typeof value !== 'object' || typeof value.hostId !== 'string' || !HOST_ID.test(value.hostId)) return undefined
   if (!shortText(value.name, 90) || value.name.length === 0 || typeof value.local !== 'boolean' || !COMPUTER_STATES.has(value.state))
@@ -386,6 +409,10 @@ function computerItem(value) {
     item.waiting = waiting
     if (value.running !== undefined) item.running = value.running
   }
+  // That computer's sessions: anything malformed drops them for that computer alone.
+  const sessions =
+    !value.local && Array.isArray(value.sessions) && value.sessions.length <= SESSION_LIMIT ? value.sessions.map(sessionItem) : undefined
+  if (sessions && !sessions.some(entry => entry === undefined)) item.sessions = sessions
   return item
 }
 function computersView(value, full) {
@@ -397,6 +424,7 @@ function computersView(value, full) {
     for (const item of computers) {
       delete item.waiting
       delete item.running
+      delete item.sessions
     }
   const view = { computers }
   if (value.problem !== undefined) {
@@ -456,6 +484,23 @@ function computersApi(full) {
             .invoke('latch:computers:open', hostId, ...(full && typeof taskId === 'string' && SESSION_ID.test(taskId) ? [taskId] : []))
             .then(computerResult)
         : Promise.resolve(computerResult(undefined)),
+  }
+  /** 新会话 on that computer: its own window comes forward on its start screen; nothing typed goes along. */
+  api.start = hostId =>
+    typeof hostId === 'string' && HOST_ID.test(hostId)
+      ? ipcRenderer.invoke('latch:computers:start', hostId).then(computerResult)
+      : Promise.resolve(computerResult(undefined))
+  /** Another window asked this one to show its start screen. */
+  api.subscribeStart = callback => {
+    if (typeof callback !== 'function') return () => {}
+    const listener = () => callback()
+    ipcRenderer.removeListener('latch:computers:start-here', holdEarlyStart)
+    ipcRenderer.on('latch:computers:start-here', listener)
+    if (earlyStart) {
+      earlyStart = false
+      callback()
+    }
+    return () => ipcRenderer.removeListener('latch:computers:start-here', listener)
   }
   if (!full) ipcRenderer.on('latch:computers:session', holdEarlyRemoteSession)
   if (!full)

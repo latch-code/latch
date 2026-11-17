@@ -20,9 +20,12 @@ import {
   CONNECTION_WORDS,
   computerState,
   otherComputerRows,
+  type OtherComputerList,
   type OtherComputerRow,
   type OtherWaiting,
 } from '../core/computers.ts'
+import type { ComputerSession } from '@latch/protocol'
+import { ShelfHead } from './ProjectNavigation.tsx'
 import { hostView } from '../core/permissions.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { shellComputers, type ComputersView } from '../core/shell.ts'
@@ -293,5 +296,113 @@ export function OtherComputersWaiting({ others, now }: { others: readonly OtherW
         )}
       </ul>
     </div>
+  )
+}
+
+const SESSION_WORDS: Record<ComputerSession['status'], string | undefined> = {
+  waiting: '等你处理',
+  running: '运行中',
+  failed: '失败',
+  idle: undefined,
+}
+
+/**
+ * The unified list's other computers, after this computer's own projects: each computer a shelf of its own (its name,
+ * and its state when it does not answer), its sessions under their projects. A row opens that session in that
+ * computer's own window; nothing here reaches this page's Host. A computer that does not answer keeps its last rows,
+ * grey and without status words, under 「不是实时」.
+ */
+export function OtherComputersSessions({
+  lists,
+  now,
+  folded,
+  onFold,
+}: {
+  lists: readonly OtherComputerList[]
+  now: number
+  folded: ReadonlySet<string>
+  onFold: (id: string) => void
+}) {
+  const api = shellComputers()
+  if (!lists.length || !api) return null
+  return (
+    <>
+      {lists.map(list => {
+        const id = `computer:${list.hostId}`
+        const shut = folded.has(id)
+        return (
+          <section
+            key={list.hostId}
+            className="session-group other-computer"
+            aria-label={list.name}
+            data-other-computer={list.hostId}
+            data-stale={list.live ? undefined : ''}>
+            <ShelfHead
+              className="other-computer-head"
+              lead={
+                <LaptopGlyph className="other-computer-glyph" size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+              }
+              label={
+                <>
+                  <span className="other-computer-name">{list.name}</span>
+                  {!list.live && <span className="other-computer-state">{list.stateText}</span>}
+                </>
+              }
+              folded={shut}
+              onFold={() => onFold(id)}
+              count={list.count}
+            />
+            {!shut && (
+              <div className="other-computer-body">
+                {!list.live && list.count > 0 && <p className="other-computer-note">不是实时</p>}
+                {list.projects.map(project => (
+                  <div key={project.id ?? 'none'} className="other-computer-project" data-other-project={project.id ?? ''}>
+                    <p className="other-computer-project-name" title={project.name}>
+                      {project.name}
+                    </p>
+                    <ul>
+                      {project.sessions.map(session => {
+                        const title = session.title || '未命名会话'
+                        const word = list.live ? SESSION_WORDS[session.status] : undefined
+                        return (
+                          <li key={session.taskId} className="session-entry">
+                            <div className="session-item" data-computer-item={list.hostId} data-stale={list.live ? undefined : ''}>
+                              <button
+                                type="button"
+                                className="session-item-main"
+                                data-other-task={session.taskId}
+                                title={`${list.name} · ${title}`}
+                                onClick={() => void api.open(list.hostId, session.taskId)}>
+                                <span className="session-line">
+                                  <span className="session-title">{title}</span>
+                                  {word ? (
+                                    <span className="other-computer-status" data-status={session.status}>
+                                      {word}
+                                    </span>
+                                  ) : (
+                                    <span className="session-status ui-status-time">{relativeTime(session.updatedAt, new Date(now))}</span>
+                                  )}
+                                </span>
+                                <span className="sr-only">{`，${list.name}，${project.name}${word ? `，${word}` : ''}${list.live ? '' : '，不是实时'}`}</span>
+                              </button>
+                            </div>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                ))}
+                {list.count === 0 && <p className="other-computer-note">{list.live ? '没有会话' : list.stateText}</p>}
+                {list.capped && (
+                  <button type="button" className="other-computer-more" data-other-more="" onClick={() => void api.open(list.hostId)}>
+                    {`最近 ${list.count} 个 · 在 ${list.name} 上查看全部`}
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+        )
+      })}
+    </>
   )
 }

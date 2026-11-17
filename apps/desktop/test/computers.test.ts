@@ -73,6 +73,9 @@ const remote = require('../src/remote-proxy.cjs') as {
   }): RemoteProxy
 }
 const computers = require('../src/computers.cjs') as {
+  createSenderOf(options: Record<string, unknown>): (event: unknown) => { kind: string; hostId?: string } | undefined
+  createStartHandler(options: Record<string, unknown>): (event: unknown, hostId: unknown) => unknown
+  whenLoaded(contents: unknown, send: () => void): void
   parseComputers(value: unknown): { version: 1; computers: Array<Record<string, unknown>> } | undefined
   readComputers(directory: string): Promise<{ computers: Array<Record<string, unknown>>; damaged: boolean }>
   writeComputers(directory: string, list: unknown[], options?: { damaged?: boolean }): Promise<number>
@@ -1144,6 +1147,54 @@ describe('what waits on other computers', () => {
     expect(reg.view({ full: true }).computers.find(item => item.hostId === HOST_B)!.waiting).toBeUndefined()
   })
 
+  it('keeps each computer’s Code sessions for this Mac’s page alone: ID, title, status, time and project, nothing else', async () => {
+    const snapshot = {
+      catalog: {
+        workspaces: [
+          { id: 'web', name: '官网', path: '/secret/path/web' },
+          { id: 'default', name: '默认' },
+        ],
+      },
+      tasks: [
+        { id: 'a', title: '首页改版', status: 'running', workspaceId: 'web', cwd: '/secret/path/web', updatedAt: '2026-11-12T08:00:03Z' },
+        { id: 'b', title: '修登录\u202e', status: 'waiting-approval', updatedAt: '2026-11-12T08:00:02Z', model: { model: 'secret-model' } },
+        { id: 'c', title: '归档的', status: 'idle', archived: true, updatedAt: '2026-11-12T08:00:04Z' },
+        { id: 'd', title: '我的 Agent', status: 'idle', agent: { customAgentId: 'agt' }, updatedAt: '2026-11-12T08:00:05Z' },
+        { id: 'has space', title: 'x', status: 'idle', updatedAt: '2026-11-12T08:00:06Z' },
+        { id: 'e', title: '失败的', status: 'failed', workspaceId: 'gone', updatedAt: '2026-11-12T08:00:01Z' },
+      ],
+      approvals: [],
+    }
+    const answers = new Map<string, () => Answer>([
+      [HOST_B, () => ({ state: 'online', name: 'build-mini', snapshot })],
+      [HOST_C, () => ({ state: 'online', name: 'other', snapshot: snapshotOf(0) })],
+    ])
+    const { reg } = await registry(answers)
+    await reg.start()
+    await vi.waitFor(() => expect(reg.view({ full: true }).computers.find(item => item.hostId === HOST_B)!.sessions).toBeDefined())
+    const sessions = reg.view({ full: true }).computers.find(item => item.hostId === HOST_B)!.sessions
+    expect(sessions).toEqual([
+      { taskId: 'a', title: '首页改版', status: 'running', updatedAt: '2026-11-12T08:00:03.000Z', project: { id: 'web', name: '官网' } },
+      { taskId: 'b', title: '修登录', status: 'waiting', updatedAt: '2026-11-12T08:00:02.000Z' },
+      { taskId: 'e', title: '失败的', status: 'failed', updatedAt: '2026-11-12T08:00:01.000Z' },
+    ])
+    expect(JSON.stringify(reg.view({ full: true }))).not.toContain('/secret/path')
+    expect(JSON.stringify(reg.view({ full: true }))).not.toContain('secret-model')
+    for (const item of reg.view().computers) expect(item.sessions).toBeUndefined()
+    // Each computer's rows are its own; a session is opened on the computer main saw it on, never another.
+    expect(reg.waits(HOST_B, 'a')).toBe(true)
+    expect(reg.waits(HOST_C, 'a')).toBe(false)
+    expect(reg.waits(HOST_B, 'c')).toBe(false)
+    // Away, the rows stay as main last read them; removed, they go.
+    answers.set(HOST_B, () => ({ state: 'offline' }))
+    await reg.probe(HOST_B)
+    expect(reg.view({ full: true }).computers.find(item => item.hostId === HOST_B)!.sessions).toHaveLength(3)
+    answers.set(HOST_B, () => ({ state: 'revoked' }))
+    await reg.probe(HOST_B)
+    expect(reg.view({ full: true }).computers.find(item => item.hostId === HOST_B)!.sessions).toBeUndefined()
+    expect(reg.waits(HOST_B, 'a')).toBe(false)
+  })
+
   it('keeps looking at a computer whose snapshot is malformed or whose look fails, and applies its looks in order', async () => {
     let answer: () => Promise<Answer> | Answer = () => ({
       state: 'online',
@@ -1338,6 +1389,59 @@ describe('the computers preload', () => {
     expect(shell.computers.subscribeSession).toBeUndefined()
   })
 
+  it('gives this Mac’s page each computer’s sessions checked field by field, and another computer’s page none', async () => {
+    const session = {
+      taskId: 'a',
+      title: '首页改版',
+      status: 'running',
+      updatedAt: '2026-11-12T08:00:00.000Z',
+      project: { id: 'web', name: '官网' },
+    }
+    const withSessions = { computers: [view.computers[0], { ...view.computers[1], sessions: [session] }] }
+    const local = await load('latch://app/link/')
+    local.invoke.mockResolvedValueOnce(withSessions)
+    expect((await local.shell.computers.list())!.computers[1]!.sessions).toEqual([session])
+    for (const bad of [
+      { ...session, status: 'thinking' },
+      { ...session, title: 'a\u0000b' },
+      { ...session, taskId: '../x' },
+      { ...session, project: { id: 'a/b', name: 'x' } },
+      { ...session, project: { id: 'web', name: '' } },
+      { ...session, updatedAt: 'soon' },
+    ]) {
+      local.invoke.mockResolvedValueOnce({ computers: [view.computers[0], { ...view.computers[1], sessions: [bad] }] })
+      const listed = await local.shell.computers.list()
+      expect(listed!.computers[1]!.sessions, JSON.stringify(bad)).toBeUndefined()
+      expect(listed!.computers[1]!.waiting).toEqual([item])
+    }
+    local.invoke.mockResolvedValueOnce({ computers: [{ ...view.computers[0], sessions: [session] }] })
+    expect((await local.shell.computers.list())!.computers[0]!.sessions).toBeUndefined()
+    const remote = await load(`latch://h-${HOST_B}/link/`)
+    remote.invoke.mockResolvedValueOnce(withSessions)
+    expect((await remote.shell.computers.list())!.computers.every(computer => computer.sessions === undefined)).toBe(true)
+  })
+
+  it('starts a new session on a computer from any window, and holds a start asked before the page listens', async () => {
+    const { shell, invoke, listeners } = await load(`latch://h-${HOST_B}/link/`)
+    const computers = shell.computers as Shell['computers'] & {
+      start(hostId: string): Promise<unknown>
+      subscribeStart(callback: () => void): () => void
+    }
+    await computers.start(HOST_A)
+    expect(invoke).toHaveBeenLastCalledWith('latch:computers:start', HOST_A)
+    invoke.mockClear()
+    await computers.start('not a host')
+    expect(invoke).not.toHaveBeenCalled()
+    listeners.get('latch:computers:start-here')!({}, undefined)
+    const started = vi.fn()
+    const stop = computers.subscribeStart(started)
+    expect(started).toHaveBeenCalledTimes(1)
+    listeners.get('latch:computers:start-here')!({}, undefined)
+    expect(started).toHaveBeenCalledTimes(2)
+    stop()
+    expect(listeners.has('latch:computers:start-here')).toBe(false)
+  })
+
   it('never gives another computer’s page what waits elsewhere, and opens there only sessions main sends', async () => {
     const { shell, invoke, listeners } = await load(`latch://h-${HOST_B}/link/`)
     expect(shell.remote).toBe(true)
@@ -1356,5 +1460,99 @@ describe('the computers preload', () => {
     expect(opened.mock.calls).toEqual([['wait-1'], ['wait-2']])
     stop()
     expect(listeners.has('latch:computers:session')).toBe(false)
+  })
+})
+
+describe('main’s 新会话 on a computer (latch:computers:start)', () => {
+  const { isAppUrl } = require('../src/proxy.cjs') as { isAppUrl(url: string, home?: string): boolean }
+  const mainContents = { id: 'main' }
+  const bContents = { id: 'b' }
+  const homes = new Map<unknown, string>([
+    [mainContents, 'app'],
+    [bContents, `h-${HOST_B}`],
+  ])
+  const senderOf = computers.createSenderOf({
+    homeOf: (contents: unknown) => homes.get(contents) ?? 'app',
+    isAppUrl,
+    localHome: 'app',
+    mainContents: () => mainContents,
+    remoteContents: (hostId: string) => (hostId === HOST_B ? bContents : undefined),
+    has: (hostId: string) => hostId === HOST_A || hostId === HOST_B || hostId === HOST_C,
+  })
+  const HOST_C = 'c'.repeat(52)
+  const event = (sender: unknown, url: string, parent: unknown = null) => ({ sender, senderFrame: { url, parent } })
+  function handler(gesture = true) {
+    const started: string[] = []
+    const start = computers.createStartHandler({
+      senderOf,
+      gestureOf: () => gesture,
+      has: (hostId: string) => hostId === HOST_A || hostId === HOST_B || hostId === HOST_C,
+      localHostId: HOST_A,
+      startOn: (hostId: string) => {
+        started.push(hostId)
+        return { ok: true }
+      },
+    })
+    return { start, started }
+  }
+
+  it('starts on a listed computer from this Mac’s page after a real gesture', () => {
+    const { start, started } = handler()
+    expect(start(event(mainContents, 'latch://app/link/'), HOST_B)).toEqual({ ok: true })
+    expect(start(event(bContents, `latch://h-${HOST_B}/link/`), HOST_A)).toEqual({ ok: true })
+    expect(start(event(bContents, `latch://h-${HOST_B}/link/`), HOST_B)).toEqual({ ok: true })
+    expect(started).toEqual([HOST_B, HOST_A, HOST_B])
+  })
+
+  it('refuses an unknown frame, a child frame, a null origin, no gesture, an unknown computer and another’s computer', () => {
+    const { start, started } = handler()
+    const refused = { ok: false, error: 'forbidden' }
+    expect(start(event({ id: 'stranger' }, 'latch://app/link/'), HOST_B)).toMatchObject(refused)
+    expect(start(event(mainContents, 'latch://app/link/', { url: 'latch://app/link/' }), HOST_B)).toMatchObject(refused)
+    expect(start(event(mainContents, 'null'), HOST_B)).toMatchObject(refused)
+    expect(start(event(mainContents, 'about:blank'), HOST_B)).toMatchObject(refused)
+    expect(start(event(mainContents, `latch://h-${HOST_B}/link/`), HOST_B)).toMatchObject(refused)
+    expect(start({ sender: mainContents }, HOST_B)).toMatchObject(refused)
+    expect(start(event(mainContents, 'latch://app/link/'), 'z'.repeat(52))).toMatchObject({ error: 'computer-not-found' })
+    expect(start(event(mainContents, 'latch://app/link/'), 42)).toMatchObject({ error: 'computer-not-found' })
+    // A remote computer's page starts only on itself or this Mac, never on a third computer.
+    expect(start(event(bContents, `latch://h-${HOST_B}/link/`), HOST_C)).toMatchObject(refused)
+    expect(handler(false).start(event(mainContents, 'latch://app/link/'), HOST_B)).toMatchObject({ error: 'gesture-required' })
+    expect(started).toEqual([])
+  })
+
+  it('checks the computer before it uses up the gesture', () => {
+    let gestures = 1
+    const start = computers.createStartHandler({
+      senderOf,
+      gestureOf: () => gestures-- > 0,
+      has: (hostId: string) => hostId === HOST_A || hostId === HOST_B,
+      localHostId: HOST_A,
+      startOn: () => ({ ok: true }),
+    })
+    expect(start(event(mainContents, 'latch://app/link/'), 'z'.repeat(52))).toMatchObject({ error: 'computer-not-found' })
+    expect(start(event(bContents, `latch://h-${HOST_B}/link/`), 'c'.repeat(52))).toMatchObject({ error: 'computer-not-found' })
+    expect(start(event(mainContents, 'latch://app/link/'), HOST_B)).toEqual({ ok: true })
+  })
+
+  it('sends once a page loads, and leaves no handler behind when the load fails or the window goes', async () => {
+    const { EventEmitter } = await import('node:events')
+    const make = (loading: boolean) => Object.assign(new EventEmitter(), { isLoading: () => loading })
+    const sent: string[] = []
+    const now = make(false)
+    computers.whenLoaded(now, () => sent.push('now'))
+    const later = make(true)
+    computers.whenLoaded(later, () => sent.push('later'))
+    expect(sent).toEqual(['now'])
+    later.emit('did-finish-load')
+    expect(sent).toEqual(['now', 'later'])
+    for (const ending of ['did-fail-load', 'destroyed']) {
+      const failing = make(true)
+      computers.whenLoaded(failing, () => sent.push(ending))
+      failing.emit(ending)
+      expect(failing.eventNames()).toEqual([])
+    }
+    expect(later.eventNames()).toEqual([])
+    expect(sent).toEqual(['now', 'later'])
   })
 })

@@ -295,7 +295,7 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
         })
         expect(remoteShell).toEqual({
           keys: ['computers', 'devMode', 'kind', 'lights', 'platform', 'remote', 'spaces'],
-          computers: ['list', 'open', 'subscribe', 'subscribeSession'],
+          computers: ['list', 'open', 'start', 'subscribe', 'subscribeSession', 'subscribeStart'],
           remote: true,
         })
         const remoteView = await bPage.evaluate(() =>

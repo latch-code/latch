@@ -883,3 +883,103 @@
     display: none;
   }
 }
+
+/*
+ * The unified list's other computers, after this computer's projects: a shelf per computer (laptop glyph, name, and its
+ * state only when it does not answer), its projects as quiet captions. A computer that does not answer is grey: no
+ * amber, red or running words, its rows marked 「不是实时」.
+ */
+.other-computer {
+  margin-top: var(--sp-8);
+}
+.other-computer-glyph {
+  flex-shrink: 0;
+  margin-inline-end: var(--sp-4);
+  color: var(--muted);
+}
+.other-computer-head .shelf-label {
+  flex: 1;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-6);
+}
+.other-computer-head .shelf-toggle {
+  flex: 1;
+}
+.other-computer-head .shelf-tail {
+  flex: none;
+}
+/* The name keeps its room; a long state gives way first. */
+.other-computer-name {
+  flex-shrink: 0;
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.other-computer-head .other-computer-state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.other-computer-state,
+.other-computer-note {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.other-computer-note {
+  margin: var(--sp-2) 0;
+  padding: 0 10px;
+}
+.other-computer-body {
+  margin-left: var(--sp-12);
+  border-left: 1px solid var(--line);
+}
+.other-computer-project-name {
+  margin: var(--sp-6) 0 var(--sp-2);
+  padding: 0 10px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.other-computer ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.other-computer-status {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.other-computer-status[data-status='waiting'] {
+  color: var(--amber);
+}
+.other-computer-status[data-status='failed'] {
+  color: var(--red);
+}
+.other-computer-more {
+  display: block;
+  width: 100%;
+  margin-top: var(--sp-4);
+  padding: var(--sp-4) 10px;
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-align: start;
+}
+@media (hover: hover) {
+  .other-computer-more:hover {
+    background: var(--hover);
+    color: var(--ink-2);
+  }
+}

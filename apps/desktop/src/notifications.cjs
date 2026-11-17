@@ -149,6 +149,48 @@ function attentionOf(snapshot, { limit = ATTENTION_LIMIT, now = Date.now() } = {
   const running = tasks.filter(task => task.status === 'running' && !waiting.has(task.id) && !stopped.has(task.id)).length
   return { count: items.length, items: items.slice(0, limit), running: Math.min(running, RUNNING_LIMIT) }
 }
+/** How many of another computer's sessions this Mac's unified list holds. */
+const SESSION_LIMIT = 60
+const PROJECT_ID = /^[A-Za-z0-9_-]{1,64}$/u
+/**
+ * Another computer's Code sessions for this Mac's unified list: not archived, not 我的 Agent's, newest first, at most
+ * `limit`. Each keeps its ID, title, one status word, when it changed and its saved project's ID and name; nothing else
+ * of the snapshot (no message, folder, path, argument or model) is kept.
+ */
+function sessionsOf(snapshot, { limit = SESSION_LIMIT } = {}) {
+  const listed = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+  const projects = new Map()
+  for (const project of Array.isArray(snapshot?.catalog?.workspaces) ? snapshot.catalog.workspaces : [])
+    if (listed(project) && typeof project.id === 'string' && PROJECT_ID.test(project.id) && project.id !== 'default') {
+      const name = attentionTitle(project.name)
+      if (name) projects.set(project.id, name)
+    }
+  const items = []
+  for (const task of Array.isArray(snapshot?.tasks) ? snapshot.tasks : []) {
+    if (!listed(task) || typeof task.id !== 'string' || !SESSION_ID.test(task.id)) continue
+    if (task.archived === true || task.agent || task.generalChat === true) continue
+    const updated = stamp(task.updatedAt)
+    if (updated === undefined) continue
+    const status =
+      task.status === 'waiting-approval' || task.pendingQuestions > 0
+        ? 'waiting'
+        : task.status === 'running'
+          ? 'running'
+          : task.status === 'failed'
+            ? 'failed'
+            : 'idle'
+    const projectName = typeof task.workspaceId === 'string' ? projects.get(task.workspaceId) : undefined
+    items.push({
+      taskId: task.id,
+      title: attentionTitle(task.title),
+      status,
+      updatedAt: new Date(updated).toISOString(),
+      ...(projectName ? { project: { id: task.workspaceId, name: projectName } } : {}),
+    })
+  }
+  items.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+  return items.slice(0, limit)
+}
 /** The per-Agent switch each kind of notification answers to (CustomAgent.notifications). */
 const AGENT_SETTING = Object.freeze({ completion: 'completed', failure: 'failed', approval: 'waiting', question: 'waiting' })
 /**
@@ -357,6 +399,8 @@ module.exports = {
   validPreferences,
   handleNotificationRequests,
   attentionOf,
+  sessionsOf,
+  SESSION_LIMIT,
   agentSilenced,
   attentionTitle,
   sameName,

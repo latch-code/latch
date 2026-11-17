@@ -14,7 +14,7 @@ electron-main：CommonJS，不导 TS 源码，只依赖 `@latch/protocol`；构�
 - 应用页无网络与凭据；顶层用 `latch:`，固定文档入口用无凭据的 `latch-frame:`。权限只给本窗口来源顶层页的 `clipboard-sanitized-write`（`h-` 页另需 5 秒内真实手势）；其余与子框、未知 frame 的 API 都拒（`execCommand` 复制不经权限）。
 - 每个 webContents 加载前禁用非代理 WebRTC UDP；应用 session 用实际监听的回环黑洞代理并关隐式回环绕过。HTML 脚本开关只由有此二限的壳声明（DOCUMENT-PREVIEWS）。
 - 顶层只在窗口所属电脑的来源：`latch://app/` 或 `latch://h-<hostId>/`（自有分区，按来源选凭据并固定证书）。本机页凭真实点击开网页与邮件链接，远程页与脚本外链先确认，别的协议拒绝。
-- preload 只暴露 `latchShell`，IPC 只接受主窗口 `latch://app/` 顶层页；`latch://h-<hostId>/` 顶层页只到 computers 的 list/subscribe/open/subscribeSession 、`spaces`（名进布尔出）与全屏布尔；add/remove/open 需该页一秒内的真实手势。生命周期参数只收布尔。`/pairings` 只由 macOS 主进程申请，链接不进页面或日志。
+- preload 只暴露 `latchShell`，IPC 只接受主窗口 `latch://app/` 顶层页；`latch://h-<hostId>/` 顶层页只到 computers 的 list/open/start/subscribe*、`spaces`（名进布尔出）与全屏布尔；add/remove/open/start 需该页一秒内的真实手势。生命周期参数只收布尔。`/pairings` 只由 macOS 主进程申请，链接不进页面或日志。
 - 通知只读 Host 状态，取消/中断不冒充完成；首个后台结束时开通知；偏好串行存，标题默认隐藏（NOTIFICATIONS）。
 - 主进程只按 `desktop-launch.json` 启动本仓库 `dist/start.js`，Node 无额外参数，属当前用户或 root、他人不可写；`--disable-sigusr1` 在前，环境无 `LATCH_*`。睡眠与停止只由主进程报告（页面 403）。
 - 设备密钥与凭据只在主进程，safeStorage 加密存 0600 文件，无安全存储不存。

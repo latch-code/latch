@@ -237,6 +237,10 @@ export interface ShellComputers {
   open(hostId: string, taskId?: string): Promise<ComputerResult>
   /** Another computer's page: a session of its own Host that main was asked to open. */
   subscribeSession?(callback: (sessionId: string) => void): () => void
+  /** 新会话 on that computer: its own window comes forward on its start screen; nothing typed goes along. */
+  start?(hostId: string): Promise<ComputerResult>
+  /** Another window asked this page to show its start screen. */
+  subscribeStart?(callback: () => void): () => void
   add?(source: 'clipboard' | 'file'): Promise<ComputerResult>
   cancelAdd?(): Promise<ComputerResult>
   trustCertificate?(hostId: string): Promise<ComputerResult>

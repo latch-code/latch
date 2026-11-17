@@ -311,6 +311,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     }
     focusNextFrame(homeComposerRef)
   })
+  // The desktop app's 电脑 choice on another window's start screen: this window shows its own start screen.
+  useEffect(() => currentShell()?.computers?.subscribeStart?.(showHome), [showHome])
   const seenProjectRequest = useRef(session.projectAsk.request)
   useEffect(() => {
     if (seenProjectRequest.current === session.projectAsk.request) return

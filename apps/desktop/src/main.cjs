@@ -39,7 +39,7 @@ const { readHostStateFile, inspectHostState: inspectHostRecord, readBody, socket
 const { openCredentialStore, secureStorageProblem } = require('./credentials.cjs')
 // Through the module objects, so the multi-computer end-to-end test's bootstrap can trust its test certificate.
 const remotes = require('./remote-proxy.cjs')
-const { createComputers, createViewSender, createWindowOpener } = require('./computers.cjs')
+const { createComputers, createSenderOf, createStartHandler, createViewSender, createWindowOpener, whenLoaded } = require('./computers.cjs')
 const { createFolderActions, isTrustedSender } = require('./folders.cjs')
 const {
   createNotifications,
@@ -866,6 +866,10 @@ const COMPUTER_CHANNELS = Object.freeze({
   list: 'latch:computers:list',
   open: 'latch:computers:open',
   session: 'latch:computers:session',
+  /** Page → main: start a new session on that computer (its own window, on its start screen). */
+  start: 'latch:computers:start',
+  /** Main → a window: show your start screen. */
+  startHere: 'latch:computers:start-here',
   add: 'latch:computers:add',
   cancelAdd: 'latch:computers:cancel-add',
   trustCertificate: 'latch:computers:trust-certificate',
@@ -946,8 +950,24 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
       const send = () => {
         if (!window.isDestroyed()) window.webContents.send(COMPUTER_CHANNELS.session, session)
       }
-      if (window.webContents.isLoading()) window.webContents.once('did-finish-load', send)
-      else send()
+      whenLoaded(window.webContents, send)
+    }
+    return { ok: true }
+  }
+
+  /**
+   * 新会话 on a computer: brings its own window forward and has it show its start screen. Nothing typed goes along: each
+   * window keeps its own draft, and only that window's page reads its Host's projects, Harnesses and models.
+   */
+  async function startOn(hostId) {
+    const opened = await openComputer(hostId, undefined)
+    if (!opened.ok) return opened
+    const window = hostId === localHostId ? mainWindow : remoteWindows.get(hostId)
+    if (window && !window.isDestroyed()) {
+      const send = () => {
+        if (!window.isDestroyed()) window.webContents.send(COMPUTER_CHANNELS.startHere)
+      }
+      whenLoaded(window.webContents, send)
     }
     return { ok: true }
   }
@@ -1013,16 +1033,18 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
   })
 
   /** `full` for this Mac's page, `remote` for a listed computer's own window, otherwise undefined. */
-  function senderOf(event) {
-    const frame = event?.senderFrame
-    const contents = event?.sender
-    if (!frame || frame.parent || !contents) return undefined
-    const home = homeOf(contents)
-    if (!isAppUrl(frame.url, home)) return undefined
-    if (home === LOCAL_HOME) return contents === mainWindow?.webContents ? 'full' : undefined
-    const window = remoteWindows.get(home.slice(2))
-    return window && !window.isDestroyed() && window.webContents === contents && computers.has(home.slice(2)) ? 'remote' : undefined
-  }
+  const senderCheck = createSenderOf({
+    homeOf,
+    isAppUrl,
+    localHome: LOCAL_HOME,
+    mainContents: () => mainWindow?.webContents,
+    remoteContents: hostId => {
+      const window = remoteWindows.get(hostId)
+      return window && !window.isDestroyed() ? window.webContents : undefined
+    },
+    has: hostId => computers.has(hostId),
+  })
+  const senderOf = event => senderCheck(event)?.kind
   const refused = { ok: false, error: 'forbidden', message: '只接受 Latch 页面的请求。' }
   const noGesture = { ok: false, error: 'gesture-required', message: '请在 Latch 页面上点按后再试。' }
   const gestureOf = event => gestures.get(event.sender)?.take() === true
@@ -1038,10 +1060,14 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
     // A page may not pull a window to the front on its own: only after a click or key on it.
     if (!gestureOf(event)) return noGesture
     if (typeof hostId !== 'string' || !computers.has(hostId)) return { ok: false, error: 'computer-not-found', message: '找不到这台电脑。' }
-    // Only this Mac's page opens a session on another computer, and only one main last saw waiting there.
+    // Only this Mac's page opens a session on another computer, and only one main last saw there (waiting or listed).
     const session = sender === 'full' && typeof taskId === 'string' && computers.waits(hostId, taskId) ? taskId : undefined
     return openComputer(hostId, session)
   })
+  ipcMain.handle(
+    COMPUTER_CHANNELS.start,
+    createStartHandler({ senderOf: senderCheck, gestureOf, has: hostId => computers.has(hostId), localHostId, startOn }),
+  )
   ipcMain.handle(COMPUTER_CHANNELS.add, async (event, source) => {
     if (senderOf(event) !== 'full') return refused
     if (!gestureOf(event)) return noGesture

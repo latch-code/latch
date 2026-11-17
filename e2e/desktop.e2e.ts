@@ -432,7 +432,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         editors: ['protocolVersion', 'list', 'choose'],
         notifications: ['get', 'set', 'subscribeState', 'subscribe'],
         updates: ['get', 'check', 'download', 'install', 'cancelWaiting', 'setAutoDownload', 'onChange', 'onShow'],
-        computers: ['list', 'subscribe', 'open', 'add', 'cancelAdd', 'trustCertificate', 'remove'],
+        computers: ['list', 'subscribe', 'open', 'start', 'subscribeStart', 'add', 'cancelAdd', 'trustCertificate', 'remove'],
         spaces: ['onShow'],
         // Where the traffic lights end (a number) and whether the window is in full screen (a boolean out, nothing in).
         lights: { end: 'number', fullScreen: 'function', onFullScreen: 'function' },

@@ -716,8 +716,8 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 
 **远程页面能做的事。** 凭据、登记、配对链接、睡眠与停止报告、更新、会话文件与添加文件夹的路由在远程来源上一律 403 `shell-managed`。
 
-- 远程页面的 `latchShell` 只有 `{ kind: 'electron', remote: true, devMode, platform, computers: { list, subscribe, open, subscribeSession }, spaces: { onShow }, lights? }`：没有文件夹、文件、预览浏览器、生命周期、通知与更新；那台 Host 判定 `access.local` 为 false。
-- 这台 Mac 的页面另有 `add`、`cancelAdd`、`remove`、`trustCertificate`。`open`、`add`、`remove` 与 `trustCertificate` 只接受该页面一秒内的真实点按或按键；同一台电脑同时多次 `open` 只开一个窗口。
+- 远程页面的 `latchShell` 只有 `{ kind: 'electron', remote: true, devMode, platform, computers: { list, subscribe, open, start, subscribeSession, subscribeStart }, spaces: { onShow }, lights? }`：没有文件夹、文件、预览浏览器、生命周期、通知与更新；那台 Host 判定 `access.local` 为 false。
+- 这台 Mac 的页面另有 `add`、`cancelAdd`、`remove`、`trustCertificate`。`open`、`start`、`add`、`remove` 与 `trustCertificate` 只接受该页面一秒内的真实点按或按键；同一台电脑同时多次 `open` 只开一个窗口。
 - 跨电脑交给页面的只有电脑名、状态、上次在线、版本与 Host 宣布的停止原因。
 
 **状态。** `online`、`connecting`、`offline`、`stopping` / `sleeping`（来自 `host-state`，到 `retryAfter` 前不算离线）、`revoked`（那台 Host 撤销或凭据过期，本地凭据随即删除）、`wrong-host`、`cert-error`、`cert-changed`、`outdated`（`health` 没有 hostId，不发凭据）。有 Latch 窗口在前台时主进程每 15 秒、没有时每 60 秒看一次在线的电脑；离线时从 15 秒退避到 5 分钟，`revoked` 不再看。
@@ -727,8 +727,21 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 - 标题去掉控制、格式（含双向覆盖）、行与段分隔符和默认可忽略字符，截到 80 个码点；每台最多最新 50 条，另有运行数（上限 100,000）。读不懂的快照被忽略；同一台电脑的读取一次一个。
 - 条目只进这台 Mac 窗口的列表（`ComputerSummary.waiting` 与 `running`）；其他电脑的窗口拿到的列表没有这两项（主进程不发，preload 也删掉）。快照本身不交给任何页面。
 - 看起来相同的电脑名（按 NFKC、去掉不可见字符并忽略大小写比较）都加 hostId 前 4 位；拉丁字母与有拉丁形近字的文字混写的名字总是加。
-- 代价（接受并记录）：这台 Mac 页面里运行的代码能读到其他电脑等你处理的标题，所以只给标题与种类，不给消息、路径、审批参数或项目。插件页面在隔离框里，拿不到 `latchShell`。
+- 代价（接受并记录）：这台 Mac 页面里运行的代码能读到其他电脑等你处理的标题，所以这里只给标题与种类，不给消息、路径或审批参数；项目名只随下面「一个会话列表」的行给出。插件页面在隔离框里，拿不到 `latchShell`。
 - 系统通知与 Dock 见 [NOTIFICATIONS.md](NOTIFICATIONS.md)。
+
+**一个会话列表。** 这台 Mac 窗口的 Code 侧栏在自己的项目之后，按电脑再按项目列出其他电脑的会话；点按一行，经 `open(hostId, taskId)` 在那台电脑自己的窗口里打开。
+
+- 行由主进程从每台电脑经它自己的连接读到的已认证快照算出（`notifications.cjs` 的 `sessionsOf`）：未归档、不属于我的 Agent 的会话，每台最多最新 60 条，只留 `{ taskId, title, status: 'waiting' | 'running' | 'failed' | 'idle', updatedAt, project?: { id, name } }`；不留消息、文件夹、路径、参数或模型。只在内存，那台电脑撤销本设备时清除。
+- 列表在页面里拼起来：每台电脑的行只来自它自己的快照，一台电脑的任何内容都不发给另一台 Host，Host 上也不合并任何东西。其他电脑的行不进这台 Mac 的会话状态（不选中、不读详情、不进菜单与未读），点按只经主进程。
+- 行只进这台 Mac 的窗口（`ComputerSummary.sessions`），其他电脑的窗口拿不到（主进程不发，preload 也删掉）；preload 逐字段核对，一条不合格只丢那台电脑的行。`open` 只接受主进程最近一次在那台电脑上看到的会话。
+- 不在线的电脑保留上次读到的行，整组变灰、不显示状态词，标「不是实时」，组头写它的状态（例如「离线 · 上次在线 10:42」）。
+- 代价与等你处理相同：这台 Mac 页面里运行的代码能读到其他电脑的会话标题与项目名。
+
+**在哪台电脑上开始。** 列表里多于一台电脑时，开始页在项目前多一个「电脑」选择，值是这个窗口自己的电脑；只在两台以上在线时出现，不在线的电脑列出但不可选。选另一台经 `start(hostId)`：主进程把那台电脑的窗口带到前面，并让它显示自己的开始页（`latch:computers:start-here`，页面订阅前到达的留到第一次订阅）。
+
+- 那台电脑的项目、Harness 与模型都由它自己的页面向它自己的 Host 读取；草稿仍按各自来源分开保存，输入的内容不随切换带走，发送前不发往任何地方。
+- 浏览器页面始终只连一台电脑（同源），手机端不变。
 
 **移除。** 能以原身份连上时先 `DELETE /devices/current` 撤销这台设备；然后删除凭据文件、列表记录与分区存储，并关闭这个分区里的所有窗口。不在列表中的 `Partitions/latch-host-*` 在下次启动时删除。
 

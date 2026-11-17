@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { isLoopbackHost, type AttentionItem, type AttentionKind, type ComputerSummary } from '@latch/protocol'
+import { isLoopbackHost, type AttentionItem, type AttentionKind, type ComputerSession, type ComputerSummary } from '@latch/protocol'
 import { shellComputers, type ComputersView } from './shell.ts'
 
 /** A state colour for the status words: the tones of `StatusWord` in @latch/ui. */
@@ -160,4 +160,74 @@ export function olderVersion(a: string | undefined, b: string | undefined): bool
     if (difference !== 0) return difference < 0
   }
   return left.pre && !right.pre
+}
+
+/** One project of another computer in the unified list, with its sessions newest first; `id` null for 无项目. */
+export interface OtherProject {
+  id: string | null
+  name: string
+  sessions: ComputerSession[]
+}
+/** Another computer's part of the unified list: its sessions by project, live only while it answers. */
+export interface OtherComputerList {
+  hostId: string
+  name: string
+  state: ComputerSummary['state']
+  /** 在线, or how it stands when it does not answer (离线 · 上次在线 10:42). */
+  stateText: string
+  /** What it lists answers now; otherwise these are the rows main read before it went. */
+  live: boolean
+  projects: OtherProject[]
+  count: number
+  /** Main keeps only the newest sessions of a computer; the rest are on that computer. */
+  capped: boolean
+}
+
+/** How many sessions of one computer main keeps for the list (`SESSION_LIMIT` in apps/desktop/src/notifications.cjs). */
+export const COMPUTER_SESSION_LIMIT = 60
+
+/**
+ * The unified list's other computers, in the list's order: each one's own sessions, composed here from what main read
+ * from that computer alone. This page's own Host is never one of them, and nothing of one computer goes to another.
+ * A computer whose sessions main never read (it has not answered since the app started) still has its row, empty.
+ */
+export function otherComputerLists(view: ComputersView | undefined, hostId: string | undefined): OtherComputerList[] {
+  if (!view) return []
+  return view.computers.flatMap(computer => {
+    if (computer.local || computer.hostId === hostId) return []
+    const sessions = computer.sessions ?? []
+    const byProject = new Map<string, OtherProject>()
+    for (const session of sessions) {
+      const key = session.project ? `p:${session.project.id}` : 'none'
+      let project = byProject.get(key)
+      if (!project) {
+        project = { id: session.project?.id ?? null, name: session.project?.name ?? '无项目', sessions: [] }
+        byProject.set(key, project)
+      }
+      project.sessions.push(session)
+    }
+    for (const project of byProject.values()) project.sessions.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    // Projects by their newest session; 无项目 last, as on the computer's own page.
+    const projects = [...byProject.values()].sort(
+      (a, b) =>
+        Number(a.id === null) - Number(b.id === null) || Date.parse(b.sessions[0]!.updatedAt) - Date.parse(a.sessions[0]!.updatedAt),
+    )
+    return [
+      {
+        hostId: computer.hostId,
+        name: computer.name,
+        state: computer.state,
+        stateText: computerState(computer).text,
+        live: computer.state === 'online',
+        projects,
+        count: sessions.length,
+        capped: sessions.length >= COMPUTER_SESSION_LIMIT,
+      },
+    ]
+  })
+}
+
+/** The computer choice on the start screen: shown only while more than one computer answers. */
+export function startComputers(view: ComputersView | undefined): ComputerSummary[] {
+  return view && view.computers.filter(computer => computer.local || computer.state === 'online').length > 1 ? view.computers : []
 }

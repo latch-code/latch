@@ -47,6 +47,8 @@ import { WorkspaceRecovery } from '../composer/WorkspaceRecovery.tsx'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { ModeSwitch, ProjectPicker } from '../components/Pickers.tsx'
 import { HarnessInstallCard, SetupCard } from '../newSession/NewSession.tsx'
+import { StartComputer } from '../newSession/StartComputer.tsx'
+import { hostView } from '../core/permissions.ts'
 import { DraftLoginNotice } from '../components/HarnessLogin.tsx'
 import { loginSurface } from '../panel/terminal/loginRuns.ts'
 import { SendingMessage } from '../components/SendingMessage.tsx'
@@ -629,6 +631,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       location={
         home ? (
           <div className="home-composer-location">
+            <StartComputer hostId={hostView(base.snapshot)?.hostId} disabled={newChoicesLocked} />
             <HomeProject shell={base} />
             {worktreeOffer && (
               <FolderControl
