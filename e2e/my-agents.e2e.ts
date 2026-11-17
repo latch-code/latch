@@ -545,14 +545,13 @@ it('keeps the Agent, the topic and what was typed through a layout change, and p
     await draft.fill('写到一半的话')
     await page.screenshot({ path: `${OUT}/layout-roster-1440.png` })
 
-    // 我的 Agent's own 总览 from the sidebar; its 最近结果 leads back to the same topic and the same words.
+    // 我的 Agent's own 总览 from the sidebar; the helper's row there, with what it last worked on, leads back to the same
+    // topic and the same words.
     await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
     await expect.poll(() => page.locator('.agents-page').getAttribute('data-view')).toBe('home')
-    await page
-      .locator('.agents-home')
-      .getByRole('region', { name: '最近结果', exact: true })
-      .locator(`[data-work-session="${topic!.id}"]`)
-      .click()
+    const helper = page.getByRole('navigation', { name: '全部 Agent', exact: true }).getByRole('button', { name: /^晨报/u })
+    expect(await helper.locator('.space-agent-line').textContent()).toBe(topic!.title)
+    await helper.click()
     await expect.poll(() => page.locator('.app-shell').getAttribute('data-entry')).toBe('sessions')
     await expect.poll(() => current.count()).toBe(1)
     expect(await draft.inputValue()).toBe('写到一半的话')

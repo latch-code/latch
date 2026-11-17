@@ -154,23 +154,26 @@ function Roster({
   frozen,
   menu,
   page = false,
+  label,
 }: {
   shell: ShellState
   rows: RosterRow[]
   frozen: boolean
   menu: AgentRowMenu
+  label: string
   /** A page of its own (the 总览, a phone's root): larger faces, what each is doing or last did, and when. */
   page?: boolean
 }) {
   const current = page ? undefined : currentAgent(shell)
   return (
-    <ul className="agent-roster" aria-label="我的 Agent" data-page={page ? '' : undefined}>
+    <ul className="agent-roster" aria-label={label} data-page={page ? '' : undefined}>
       {rows.map(row => (
         <li key={row.id} className="agent-row">
           <button
             type="button"
             className="space-agent"
-            data-agent-id={row.id}
+            // The roster's rows are the Agents' handles; a second list beside it (the 总览's) names its own apart.
+            {...(label === '我的 Agent' ? { 'data-agent-id': row.id } : { 'data-helper-id': row.id })}
             data-gone={row.gone || row.confirming ? '' : undefined}
             data-unavailable={row.unavailable && row.state === 'idle' ? '' : undefined}
             data-state={page ? row.state : undefined}
@@ -286,7 +289,7 @@ export function AgentsSpaceList({
           <LockedAgents />
         ) : (
           <>
-            <Roster shell={shell} rows={rows} frozen={frozen} menu={menu} page={page} />
+            <Roster shell={shell} rows={rows} frozen={frozen} menu={menu} page={page} label={label} />
             {snapshot.customAgents === undefined ? (
               <p className="space-quiet" role="status">
                 正在确认上一项修改
