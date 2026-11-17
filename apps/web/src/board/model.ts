@@ -6,9 +6,11 @@ import {
   type TaskSummary,
   type WorkItemPlace,
   type WorkItemSummary,
+  type WorkProposalSummary,
   type WorkspaceInfo,
 } from '@latch/protocol'
 import { projectOf } from '../sessions.ts'
+import { todoProposals, type TodoProposal } from './proposals.ts'
 
 /**
  * The board: every card the Host gives, in the group the Host gave it. A card is one thing: a 待办 with its sessions
@@ -40,6 +42,9 @@ const REASON_RANK: Record<BoardReason, number> = { approval: 0, question: 1, unk
 
 export const NO_PROJECT = '~none'
 export const WHO_CODE = '~code'
+/** 来源: a proposal or a card with a suggestion waiting (`proposed`), or a 待办 an agent proposed and a person accepted. */
+export const ORIGIN_PROPOSED = 'proposed'
+export const ORIGIN_AGENT = 'agent'
 
 export interface BoardFilters {
   projects: string[]
@@ -47,8 +52,9 @@ export interface BoardFilters {
   /** WHO_CODE, `general` (通用) or a custom Agent's id. */
   who: string[]
   tags: string[]
+  origin: string[]
 }
-export const NO_FILTERS: BoardFilters = { projects: [], harnesses: [], who: [], tags: [] }
+export const NO_FILTERS: BoardFilters = { projects: [], harnesses: [], who: [], tags: [], origin: [] }
 export type FilterKey = keyof BoardFilters
 
 export type BoardView = 'board' | 'list'
@@ -60,10 +66,14 @@ export interface BoardMemory {
   filters: BoardFilters
 }
 
-/** One card: a session of no 待办, or a 待办 with the sessions of it this device lists, in the order they joined. */
+/**
+ * One card: a session of no 待办, a 待办 with the sessions of it this device lists (in the order they joined), or an
+ * agent's proposal of 待办 waiting for the person in 未开始, which is not a 待办.
+ */
 export type BoardCard =
   | { kind: 'session'; id: string; task: TaskSummary }
   | { kind: 'item'; id: string; item: WorkItemSummary; sessions: TaskSummary[] }
+  | { kind: 'proposal'; id: string; proposal: TodoProposal }
 
 const isCard = (task: TaskSummary): boolean => task.board?.card === true
 
@@ -79,7 +89,7 @@ const itemProjectKey = (item: WorkItemSummary): string => (item.projectId && ite
 
 /** The card's column. An archived session has no place from the Host; the list's 已归档 reads it as ended. */
 export const groupOf = (card: BoardCard): BoardColumnGroup =>
-  card.kind === 'item' ? card.item.board.group : (card.task.board?.group ?? 'done')
+  card.kind === 'proposal' ? 'todo' : card.kind === 'item' ? card.item.board.group : (card.task.board?.group ?? 'done')
 
 const sessionCard = (task: TaskSummary): BoardCard => ({ kind: 'session', id: task.id, task })
 
@@ -88,13 +98,45 @@ interface CardFacets {
   harnesses: string[]
   who: string[]
   tags: string[]
+  origin: string[]
 }
 
-/** What a card is filtered by: a 待办 by its own project and tags and by its sessions, or (before it has one) its suggestions. */
-function facetsOf(card: BoardCard, workspaces: readonly WorkspaceInfo[]): CardFacets {
+/** Cards with a suggestion waiting: their sessions' and 待办's ids. */
+export function suggested(proposals: readonly WorkProposalSummary[]): ReadonlySet<string> {
+  return new Set(
+    proposals.flatMap(row =>
+      row.kind === 'change' && row.change?.state === 'pending'
+        ? ['sessionId' in row.change.target ? row.change.target.sessionId : row.change.target.itemId]
+        : [],
+    ),
+  )
+}
+
+/**
+ * What a card is filtered by: a 待办 by its own project and tags and by its sessions, or (before it has one) its
+ * suggestions; a proposal by what it suggests and who proposed it.
+ */
+function facetsOf(card: BoardCard, workspaces: readonly WorkspaceInfo[], waiting: ReadonlySet<string> = new Set()): CardFacets {
+  const pendingChange = waiting.has(card.id) ? [ORIGIN_PROPOSED] : []
+  if (card.kind === 'proposal') {
+    const { entries, from } = card.proposal
+    return {
+      projects: [...new Set(entries.map(entry => (entry.projectId && entry.projectId !== 'default' ? entry.projectId : NO_PROJECT)))],
+      harnesses: entries.flatMap(entry => (entry.harnessId ? [entry.harnessId] : [])),
+      who: [from.customAgentId ?? WHO_CODE],
+      tags: [...new Set(entries.flatMap(entry => entry.tags ?? []))],
+      origin: [ORIGIN_PROPOSED],
+    }
+  }
   if (card.kind === 'session') {
     const { task } = card
-    return { projects: [projectKey(task, workspaces)], harnesses: [task.harnessId ?? ''], who: [whoOf(task)], tags: task.tags ?? [] }
+    return {
+      projects: [projectKey(task, workspaces)],
+      harnesses: [task.harnessId ?? ''],
+      who: [whoOf(task)],
+      tags: task.tags ?? [],
+      origin: pendingChange,
+    }
   }
   const { item, sessions } = card
   const started = item.sessionIds.length > 0
@@ -106,16 +148,22 @@ function facetsOf(card: BoardCard, workspaces: readonly WorkspaceInfo[]): CardFa
     // A 待办's sessions are Code sessions, and so is the one it would start.
     who: started ? sessions.map(whoOf) : [WHO_CODE],
     tags: item.tags ?? [],
+    origin: [...pendingChange, ...(item.from ? [ORIGIN_AGENT] : [])],
   }
 }
 
 export const filtering = (filters: BoardFilters): boolean => Object.values(filters).some(values => values.length > 0)
 
-function matchesFilters(card: BoardCard, filters: BoardFilters, workspaces: readonly WorkspaceInfo[]): boolean {
+function matchesFilters(
+  card: BoardCard,
+  filters: BoardFilters,
+  workspaces: readonly WorkspaceInfo[],
+  waiting: ReadonlySet<string> = new Set(),
+): boolean {
   if (!filtering(filters)) return true
-  const facets = facetsOf(card, workspaces)
+  const facets = facetsOf(card, workspaces, waiting)
   // Or within a dimension, and between them.
-  for (const key of ['projects', 'harnesses', 'who', 'tags'] as const)
+  for (const key of ['projects', 'harnesses', 'who', 'tags', 'origin'] as const)
     if (filters[key].length && !facets[key].some(value => filters[key].includes(value))) return false
   return true
 }
@@ -123,19 +171,28 @@ function matchesFilters(card: BoardCard, filters: BoardFilters, workspaces: read
 const updated = (task: Pick<TaskSummary, 'updatedAt'>) => Date.parse(task.updatedAt) || 0
 /** A 待办 changes when it or any of its sessions does. */
 export const cardUpdated = (card: BoardCard): number =>
-  card.kind === 'session' ? updated(card.task) : Math.max(updated(card.item), ...card.sessions.map(updated))
+  card.kind === 'session'
+    ? updated(card.task)
+    : card.kind === 'proposal'
+      ? updated(card.proposal)
+      : Math.max(updated(card.item), ...card.sessions.map(updated))
 /** When the card last changed, as the Host wrote it. */
 export const cardUpdatedAt = (card: BoardCard): string => new Date(cardUpdated(card)).toISOString()
-const cardPriority = (card: BoardCard) => priorityOf(card.kind === 'item' ? card.item : card.task)
+const cardPriority = (card: BoardCard) => (card.kind === 'proposal' ? 'mid' : priorityOf(card.kind === 'item' ? card.item : card.task))
 const cardReason = (card: BoardCard): BoardReason | undefined => {
+  if (card.kind === 'proposal') return undefined
   const reason = card.kind === 'item' ? card.item.board.reason : card.task.board?.reason
   return reason === 'settled' ? undefined : reason
 }
 
-/** Priority first (高, 中, 低), then within 等你处理 the Host's reason in rule order, then the newest change first. */
+/**
+ * Proposals first in 未开始 (they wait for the person, and have no priority: only a person sets one), then priority (高,
+ * 中, 低), then within 等你处理 the Host's reason in rule order, then the newest change first.
+ */
 function compareCards(a: BoardCard, b: BoardCard): number {
   return (
-    PRIORITY_RANK[cardPriority(a)] - PRIORITY_RANK[cardPriority(b)]
+    Number(b.kind === 'proposal') - Number(a.kind === 'proposal')
+    || PRIORITY_RANK[cardPriority(a)] - PRIORITY_RANK[cardPriority(b)]
     || (groupOf(a) === 'attention' && groupOf(b) === 'attention'
       ? REASON_RANK[cardReason(a) ?? 'silent'] - REASON_RANK[cardReason(b) ?? 'silent']
       : 0)
@@ -157,11 +214,16 @@ const outsideItems = (items: readonly WorkItemSummary[]) => {
   return (task: TaskSummary) => !held.has(task.id)
 }
 
-/** Every card the snapshot holds, unfiltered and in no order: its 待办 and the sessions of none. */
-export function boardCards(tasks: readonly TaskSummary[], items: readonly WorkItemSummary[] = []): BoardCard[] {
+/** Every card the snapshot holds, unfiltered and in no order: its proposals, its 待办 and the sessions of none. */
+export function boardCards(
+  tasks: readonly TaskSummary[],
+  items: readonly WorkItemSummary[] = [],
+  proposals: readonly WorkProposalSummary[] = [],
+): BoardCard[] {
   const byId = new Map(tasks.map(task => [task.id, task]))
   const outside = outsideItems(items)
   return [
+    ...todoProposals(proposals).map((proposal): BoardCard => ({ kind: 'proposal', id: proposal.id, proposal })),
     ...items.map((item): BoardCard => ({
       kind: 'item',
       id: item.id,
@@ -189,13 +251,15 @@ export function boardColumns(
   workspaces: readonly WorkspaceInfo[],
   now: number,
   items: readonly WorkItemSummary[] = [],
+  proposals: readonly WorkProposalSummary[] = [],
 ): BoardColumn[] {
-  const cards = boardCards(tasks, items).filter(card => onBoard(card, now))
+  const cards = boardCards(tasks, items, proposals).filter(card => onBoard(card, now))
+  const waiting = suggested(proposals)
   return BOARD_GROUPS.map(group => {
     const own = cards.filter(card => groupOf(card) === group)
     return {
       group,
-      cards: own.filter(card => matchesFilters(card, filters, workspaces)).toSorted(compareCards),
+      cards: own.filter(card => matchesFilters(card, filters, workspaces, waiting)).toSorted(compareCards),
       total: own.length,
     }
   })
@@ -206,9 +270,10 @@ export function groupCounts(
   tasks: readonly TaskSummary[],
   now: number,
   items: readonly WorkItemSummary[] = [],
+  proposals: readonly WorkProposalSummary[] = [],
 ): Record<BoardColumnGroup, number> {
   const counts: Record<BoardColumnGroup, number> = { todo: 0, attention: 0, running: 0, deliver: 0, done: 0 }
-  for (const card of boardCards(tasks, items)) if (onBoard(card, now)) counts[groupOf(card)]++
+  for (const card of boardCards(tasks, items, proposals)) if (onBoard(card, now)) counts[groupOf(card)]++
   return counts
 }
 
@@ -234,11 +299,15 @@ export function listRows(
   workspaces: readonly WorkspaceInfo[],
   order: 'group' | 'time',
   items: readonly WorkItemSummary[] = [],
+  proposals: readonly WorkProposalSummary[] = [],
 ): BoardCard[] {
   const cards =
-    state === 'archived' ? archivedCards(tasks, items) : boardCards(tasks, items).filter(card => state === 'all' || groupOf(card) === state)
+    state === 'archived'
+      ? archivedCards(tasks, items)
+      : boardCards(tasks, items, proposals).filter(card => state === 'all' || groupOf(card) === state)
+  const waiting = suggested(proposals)
   return cards
-    .filter(card => matchesFilters(card, filters, workspaces))
+    .filter(card => matchesFilters(card, filters, workspaces, waiting))
     .toSorted((a, b) =>
       order === 'time'
         ? cardUpdated(b) - cardUpdated(a) || a.id.localeCompare(b.id)
@@ -247,6 +316,13 @@ export function listRows(
           : groupRank(a) - groupRank(b) || compareCards(a, b),
     )
 }
+
+/**
+ * What 全部开始 starts, in the column's order: the 待办 of 未开始, never a proposal (not a 待办), and never one whose 要求
+ * an agent wrote from outside content: each of those starts on its own, its 要求 read first.
+ */
+export const startAllItems = (cards: readonly BoardCard[]): WorkItemSummary[] =>
+  cards.flatMap(card => (card.kind === 'item' && card.item.board.group === 'todo' && !card.item.from?.external ? [card.item] : []))
 
 /** The phone's first state: 等你处理, or 进行中 when nothing waits. */
 export const firstPhoneState = (counts: Record<BoardColumnGroup, number>): BoardColumnGroup =>
@@ -264,10 +340,13 @@ export function filterOptions(
   tasks: readonly TaskSummary[],
   snapshot: Pick<AppSnapshot, 'catalog' | 'customAgents'>,
   items: readonly WorkItemSummary[] = [],
+  proposals: readonly WorkProposalSummary[] = [],
 ): Record<FilterKey, FilterOption[]> {
   const workspaces = snapshot.catalog?.workspaces ?? []
   const harnesses = snapshot.catalog?.harnesses ?? []
-  const facets = [...boardCards(tasks, items), ...archivedCards(tasks, items)].map(card => facetsOf(card, workspaces))
+  const waiting = suggested(proposals)
+  const facets = [...boardCards(tasks, items, proposals), ...archivedCards(tasks, items)].map(card => facetsOf(card, workspaces, waiting))
+  const origins = new Set(facets.flatMap(facet => facet.origin))
   const projects = unique(facets.flatMap(facet => facet.projects)).map(id => ({
     value: id,
     label: id === NO_PROJECT ? '无项目' : (workspaces.find(item => item.id === id)?.name ?? id),
@@ -292,6 +371,10 @@ export function filterOptions(
     tags: unique(facets.flatMap(facet => facet.tags))
       .toSorted((a, b) => a.localeCompare(b))
       .map(tag => ({ value: tag, label: tag })),
+    origin: [
+      ...(origins.has(ORIGIN_PROPOSED) ? [{ value: ORIGIN_PROPOSED, label: '提议' }] : []),
+      ...(origins.has(ORIGIN_AGENT) ? [{ value: ORIGIN_AGENT, label: 'Agent 提的' }] : []),
+    ],
   }
 }
 
@@ -331,6 +414,7 @@ export function readBoardMemory(key: string): BoardMemory {
         harnesses: strings(filters.harnesses),
         who: strings(filters.who),
         tags: strings(filters.tags),
+        origin: strings(filters.origin),
       },
     }
   } catch {

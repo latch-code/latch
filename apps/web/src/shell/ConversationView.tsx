@@ -26,6 +26,7 @@ import { TargetHandoffDock } from '../handoffs/TargetHandoff.tsx'
 import { ReturnedResult } from '../handoffs/ReturnedResult.tsx'
 import { placeByTime, quotedSummary } from '../handoffs/model.ts'
 import { useTopicProposals } from '../agents/TopicProposals.tsx'
+import { useSessionBoardProposals } from '../board/SessionProposals.tsx'
 import { SideQuestionPanel, useSideQuestion } from '../conversation/SideQuestion.tsx'
 import { useTopicResults } from '../agents/TopicResults.tsx'
 import { speakerOf } from '../agents/model.ts'
@@ -92,6 +93,7 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
   const speaker = current ? speakerOf(snapshot, current.summary) : undefined
   const placeProposals = useTopicProposals(shell, current)
   const placeResults = useTopicResults(shell, current)
+  const placeBoard = useSessionBoardProposals(shell, current)
   const [handoffRequest, setHandoffRequest] = useState<HandoffRequest | null>(null)
   const [rebuilding, setRebuilding] = useState(false)
   // A session brought in as it was whose Harness lost it: rebuilt as text, through the same choice as an import.
@@ -340,13 +342,16 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
                             })}
                         onReveal={reading.reveal}
                         {...(handing ? { onHandoff: handOff } : {})}
-                        {...(returned.length || placeProposals || placeResults
+                        {...(returned.length || placeProposals || placeResults || placeBoard
                           ? {
                               placed: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) =>
                                 // After a turn, what it proposed comes first (想定时), then the results of what was
                                 // set up since, which can only come later.
                                 joinPlaced(
-                                  joinPlaced(returned.length ? placeReturned(turns) : undefined, placeProposals?.(turns)),
+                                  joinPlaced(
+                                    joinPlaced(returned.length ? placeReturned(turns) : undefined, placeProposals?.(turns)),
+                                    placeBoard?.(turns),
+                                  ),
                                   placeResults?.(turns),
                                 ),
                             }

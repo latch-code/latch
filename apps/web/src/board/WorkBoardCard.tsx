@@ -1,6 +1,7 @@
 import { memo, type ReactNode } from 'react'
 import { GENERAL_AGENT_ID, escapeSecurityText, type TaskSummary, type WorkbenchDeliveryEntry } from '@latch/protocol'
 import { IconButton, Icon, MoreGlyph, RunningEdge, ScheduleGlyph, StatusWord, type StatusTone } from '@latch/ui'
+import { StickyNote } from 'lucide-react'
 import { AgentAvatar } from '../agents/AgentAvatar.tsx'
 import { BoardPlace } from './BoardPlace.tsx'
 import { Menu, rowOf, type MenuSection } from '../components/overlays.tsx'
@@ -62,6 +63,17 @@ export function PriorityMark({ task, reserve = false }: { task: Pick<TaskSummary
   return <span className="work-board-priority" data-priority={priority} role="img" aria-label={`优先级${PRIORITY_LABELS[priority]}`} />
 }
 
+/** A card's one-line note: shown as text only. */
+export function CardNote({ note }: { note: string | undefined }) {
+  if (!note) return null
+  return (
+    <span className="work-board-card-note">
+      <Icon icon={StickyNote} size={12} />
+      <span>{escapeSecurityText(note)}</span>
+    </span>
+  )
+}
+
 export function TagChips({ tags }: { tags: readonly string[] | undefined }) {
   if (!tags?.length) return null
   return (
@@ -109,6 +121,8 @@ export interface CardProps {
   onRetry?: ((id: string) => void) | undefined
   /** Absent for a stop: it has 重试 only. */
   onDismiss?: ((id: string) => void) | undefined
+  /** An agent's suggestion for this card, waiting for the person. */
+  suggestion?: ReactNode
 }
 
 /**
@@ -128,6 +142,7 @@ export const WorkBoardCard = memo(function WorkBoardCard({
   write,
   onRetry,
   onDismiss,
+  suggestion,
 }: CardProps) {
   const connected = shell.connection === 'connected'
   const live = task.status === 'running' || task.status === 'waiting-approval'
@@ -178,6 +193,7 @@ export const WorkBoardCard = memo(function WorkBoardCard({
             {state.words}
           </StatusWord>
           {task.tags?.length ? <TagChips tags={task.tags} /> : null}
+          <CardNote note={task.note} />
           {source && (
             <span className="work-board-card-source">
               {source.kind === 'schedule' && <Icon icon={ScheduleGlyph} size={12} />}
@@ -187,6 +203,7 @@ export const WorkBoardCard = memo(function WorkBoardCard({
           {running && <RunningEdge />}
         </button>
       )}
+      {!decision && suggestion}
       {write && write.state !== 'sending' && (
         <div className="work-board-item-foot">
           <ItemWriteLine

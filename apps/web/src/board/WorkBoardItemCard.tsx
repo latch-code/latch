@@ -11,7 +11,7 @@ import {
   StatusWord,
   type StatusTone,
 } from '@latch/ui'
-import { ListTodo } from 'lucide-react'
+import { Lightbulb, ListTodo } from 'lucide-react'
 import { BoardBranch, BoardHarness, BoardPlace } from './BoardPlace.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { api, errorMessage } from '../core/api.ts'
@@ -22,8 +22,9 @@ import { projectOf } from '../sessions.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { ItemWriteState } from './itemWrites.ts'
 import { cardUpdatedAt, GROUP_LABELS, type BoardCard } from './model.ts'
-import { cardState, PriorityMark, TagChips } from './WorkBoardCard.tsx'
+import { CardNote, cardState, PriorityMark, TagChips } from './WorkBoardCard.tsx'
 import { ItemWriteLine } from './WriteLine.tsx'
+import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
 
 export type ItemCard = Extract<BoardCard, { kind: 'item' }>
 
@@ -136,6 +137,8 @@ export interface ItemCardProps {
   decision?: ReactNode
   /** Sessions started from it that the Host could not add (it was full): they stand as cards of their own. */
   outside?: number
+  /** An agent's suggestion for this 待办's card, waiting for the person. */
+  suggestion?: ReactNode
 }
 
 /**
@@ -157,6 +160,7 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
   onDismiss,
   decision,
   outside = 0,
+  suggestion,
 }: ItemCardProps) {
   const { item, sessions } = card
   const connected = shell.connection === 'connected'
@@ -223,6 +227,14 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
           </StatusWord>
         )}
         {item.tags?.length ? <TagChips tags={item.tags} /> : null}
+        <CardNote note={item.note} />
+        {item.from && (
+          <span className="work-board-proposal-line">
+            <Icon icon={Lightbulb} size={12} className="work-board-proposal-glyph" />
+            <ProposedBy proposal={{ from: item.from }} shell={shell} />
+            {item.from.external && <ExternalMark />}
+          </span>
+        )}
         {outside > 0 && (
           <StatusWord className="work-board-card-state" tone="warn">
             {`${outside} 个未加入`}
@@ -240,6 +252,7 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
         </ul>
       )}
       {decision && <div className="work-board-item-decision">{decision}</div>}
+      {suggestion}
       {(write || todo || canFinish) && (
         <div className="work-board-item-foot" data-float={floatFoot ? '' : undefined}>
           {todo && (

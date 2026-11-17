@@ -2,8 +2,8 @@ import { escapeSecurityText } from '@latch/protocol'
 import { Button, Checkbox, CloseGlyph, Icon, Popover } from '@latch/ui'
 import { NO_FILTERS, type BoardFilters, type FilterKey, type FilterOption } from './model.ts'
 
-const FILTER_LABELS: Record<FilterKey, string> = { projects: '项目', harnesses: 'Harness', who: '谁在做', tags: '标签' }
-const FILTER_KEYS: readonly FilterKey[] = ['projects', 'harnesses', 'who', 'tags']
+const FILTER_LABELS: Record<FilterKey, string> = { projects: '项目', harnesses: 'Harness', who: '谁在做', tags: '标签', origin: '来源' }
+const FILTER_KEYS: readonly FilterKey[] = ['projects', 'harnesses', 'who', 'tags', 'origin']
 
 function toggle(filters: BoardFilters, key: FilterKey, value: string): BoardFilters {
   const values = filters[key]

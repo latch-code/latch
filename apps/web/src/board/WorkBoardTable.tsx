@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { escapeSecurityText, type TaskSummary, type WorkItemSummary } from '@latch/protocol'
 import { ChevronDownGlyph, ChevronRightGlyph, FilterPills, Icon, IconButton, MoreGlyph, StatusWord } from '@latch/ui'
-import { ListTodo } from 'lucide-react'
+import { Lightbulb, ListTodo } from 'lucide-react'
 import { MarkTile } from '../components/BrandTile.tsx'
 import { Menu, rowOf, type MenuSection } from '../components/overlays.tsx'
 import { hostNow, useTicker } from '../core/hostClock.ts'
@@ -13,6 +13,8 @@ import { cardUpdatedAt, GROUP_LABELS, whoOf, WHO_CODE, type BoardCard, type List
 import { cardState, PriorityMark, TagChips, WhoMark } from './WorkBoardCard.tsx'
 import { itemState, type ItemCard } from './WorkBoardItemCard.tsx'
 import { ItemWriteLine } from './WriteLine.tsx'
+import { pendingEntries, type TodoProposal } from './proposals.ts'
+import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
 
 export const LIST_STATES: readonly ListState[] = ['all', 'todo', 'attention', 'running', 'deliver', 'done', 'archived']
 const STATE_LABELS: Record<ListState, string> = { all: '全部', ...GROUP_LABELS, archived: '已归档' }
@@ -216,6 +218,54 @@ function ItemRow({
   )
 }
 
+/** An agent's proposal in the list: dashed and marked 提议, by who proposed it; it opens 审阅. Never a 待办's row. */
+function ProposalRow({
+  card,
+  shell,
+  onReview,
+}: {
+  card: Extract<BoardCard, { kind: 'proposal' }>
+  shell: ShellState
+  onReview: ((proposal: TodoProposal) => void) | undefined
+}) {
+  const { proposal } = card
+  const entries = pendingEntries(proposal)
+  const title = escapeSecurityText(proposal.goal ?? entries[0]?.title ?? '')
+  const updatedAt = cardUpdatedAt(card)
+  return (
+    <li className="work-board-row" data-kind="proposal" data-work-proposal={proposal.id} data-external={proposal.external ? '' : undefined}>
+      <button
+        type="button"
+        className="work-board-row-main"
+        disabled={!onReview}
+        onClick={() => {
+          onReview?.(proposal)
+        }}>
+        <span className="work-board-row-title">
+          <PriorityMark task={{}} reserve />
+          <Icon icon={Lightbulb} size={14} className="work-board-proposal-glyph" />
+          <span className="work-board-card-title">{title}</span>
+          {entries.length > 1 && <span className="work-board-row-count">{entries.length}</span>}
+        </span>
+        <span className="work-board-row-state work-board-proposal-line">
+          <StatusWord tone="neutral" className="work-board-proposal-word">
+            提议
+          </StatusWord>
+          {proposal.external && <ExternalMark />}
+        </span>
+        <span className="work-board-row-project" />
+        <span className="work-board-row-harness" />
+        <span className="work-board-row-who">
+          <ProposedBy proposal={proposal} shell={shell} />
+        </span>
+        <time className="work-board-row-time" dateTime={updatedAt}>
+          {relativeTime(updatedAt, new Date(hostNow()))}
+        </time>
+      </button>
+    </li>
+  )
+}
+
 /**
  * The list: one row per card, 已结束 in full and 已归档 under its own state; a 待办's sessions are indented under it and
  * fold away. By group, priority and time, or (the time heading pressed) by time alone. A row opens and has the same
@@ -237,6 +287,7 @@ export function WorkBoardTable({
   onRetry,
   onDismiss,
   onOpen,
+  onReview,
 }: {
   rows: readonly BoardCard[]
   shell: ShellState
@@ -253,6 +304,8 @@ export function WorkBoardTable({
   onRetry: (id: string) => void
   onDismiss: (id: string) => void
   onOpen: (id: string) => void
+  /** 审阅 a proposal; absent where this device may not decide. */
+  onReview?: ((proposal: TodoProposal) => void) | undefined
 }) {
   useTicker(shell.connection === 'connected' ? 'minute' : false)
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set())
@@ -288,7 +341,9 @@ export function WorkBoardTable({
       {rows.length ? (
         <ul className="work-board-rows" aria-label={STATE_LABELS[state]}>
           {rows.map(card =>
-            card.kind === 'session' ? (
+            card.kind === 'proposal' ? (
+              <ProposalRow key={card.id} card={card} shell={shell} onReview={onReview} />
+            ) : card.kind === 'session' ? (
               <Row key={card.id} task={card.task} shell={shell} marked={marked === card.id} menu={menuFor(card.task)} onOpen={onOpen} />
             ) : (
               <ItemRow

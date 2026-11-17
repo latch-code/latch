@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { escapeSecurityText, type TaskSummary, type WorkItemSummary } from '@latch/protocol'
-import { Button, EditGlyph, FilterPills, MessageGlyph, NewSessionGlyph, SegmentedControl, TrashGlyph } from '@latch/ui'
-import { ListTodo } from 'lucide-react'
+import { CARD_NOTE_CHARS, escapeSecurityText, type TaskSummary, type WorkItemSummary } from '@latch/protocol'
+import { Button, EditGlyph, FilterPills, MessageGlyph, NewSessionGlyph, PromptDialog, SegmentedControl, TrashGlyph } from '@latch/ui'
+import { ListTodo, StickyNote } from 'lucide-react'
 import type { SendingMessage } from '../core/sendingMessage.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { ConfirmDialog, type MenuSection } from '../components/overlays.tsx'
 import { knownTags, SessionTagsDialog } from '../components/SessionTagsDialog.tsx'
-import { errorMessage, isUncertain, MessageError } from '../core/api.ts'
+import { api, errorMessage, isUncertain, MessageError } from '../core/api.ts'
 import { WorkbenchDecision } from '../shell/WorkbenchDecision.tsx'
 import { useWorkbenchDelivery } from '../shell/useWorkbenchEvidence.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
@@ -23,6 +23,7 @@ import {
   listRows,
   NO_FILTERS,
   readBoardMemory,
+  startAllItems,
   writeBoardMemory,
   type BoardCard,
   type BoardColumnGroup,
@@ -49,6 +50,10 @@ import { ItemThreadFor } from './ItemThread.tsx'
 import { closeItemPage, openItemPage, useItemPage } from './itemPage.ts'
 import { WorkBoardNew, type NewMode } from './WorkBoardNew.tsx'
 import { WorkBoardTable } from './WorkBoardTable.tsx'
+import { changeFor, useProposalWrites, type ChangeProposal, type TodoProposal } from './proposals.ts'
+import { WorkBoardProposalCard } from './WorkBoardProposalCard.tsx'
+import { CardSuggestion } from './CardSuggestion.tsx'
+import { ProposalReview } from './ProposalReview.tsx'
 
 /** Below this width the board is one list with a state filter (two 240px columns, their gap and the sides). */
 const NARROW = 524
@@ -107,7 +112,10 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   const [tagging, setTagging] = useState<WorkItemSummary | null>(null)
   const [editing, setEditing] = useState<WorkItemSummary | null>(null)
   const [deleting, setDeleting] = useState<WorkItemSummary | null>(null)
+  const [noting, setNoting] = useState<{ kind: 'item'; item: WorkItemSummary } | { kind: 'session'; task: TaskSummary } | null>(null)
+  const [reviewing, setReviewing] = useState<TodoProposal | null>(null)
   const writes = useItemWrites(shell.refresh)
+  const proposalWrites = useProposalWrites(shell.refresh)
   /** Sessions this page started from a 待办: one the snapshot lists outside it was not added (the 待办 was full). */
   const [startedFrom, setStartedFrom] = useState<ReadonlyArray<{ itemId: string; sessionId: string }>>([])
   const noteStarted = useCallback((itemId: string, sessionId: string) => {
@@ -119,13 +127,14 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   const now = hostNow()
   const tasks = snapshot.tasks
   const items = useMemo(() => snapshot.items ?? [], [snapshot.items])
+  const proposals = useMemo(() => snapshot.workProposals ?? [], [snapshot.workProposals])
   const workspaces = shell.catalog?.workspaces ?? []
   const filters = memory.filters
   const filtered = filtering(filters)
-  const columns = boardColumns(tasks, filters, workspaces, now, items)
+  const columns = boardColumns(tasks, filters, workspaces, now, items, proposals)
   const column = (group: BoardColumnGroup) => columns.find(item => item.group === group)!
-  const counts = groupCounts(tasks, now, items)
-  const options = useMemo(() => filterOptions(tasks, snapshot, items), [tasks, snapshot, items])
+  const counts = groupCounts(tasks, now, items, proposals)
+  const options = useMemo(() => filterOptions(tasks, snapshot, items, proposals), [tasks, snapshot, items, proposals])
   const marked = started ?? shell.selectedId
   /** A 待办's card is marked for itself, or for its session that was last opened or just started. */
   const markedCard = (card: BoardCard) =>
@@ -173,6 +182,13 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         id: 'session',
         items: [
           ...session,
+          ...(marks
+            ? noteItems(
+                task.note,
+                () => setNoting({ kind: 'session', task }),
+                () => void noteSession(task, null),
+              )
+            : []),
           {
             id: 'open',
             label: '在对话中打开',
@@ -187,6 +203,11 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   }
   const canStart = shell.homeComposerState.gate.kind === 'open'
   const canMark = shell.catalog !== undefined && shell.access.scopes.has('run')
+  /** A session card's note, through the session's own metadata route. */
+  const noteSession = async (task: TaskSummary, note: string | null) => {
+    await api(`tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: { note } })
+    await shell.refresh()
+  }
   /** 优先级, 标签…, 编辑… while it has no session, 打开, 删除待办: the same on a card, a row and a phone row. */
   const itemMenu = ({ item }: ItemCard): MenuSection[] => [
     ...(canMark
@@ -213,6 +234,13 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
                 },
               },
             ]
+          : []),
+        ...(canMark
+          ? noteItems(
+              item.note,
+              () => setNoting({ kind: 'item', item }),
+              () => void writes.patch(item, { note: null }),
+            )
           : []),
         {
           id: 'open',
@@ -309,7 +337,9 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   const waitingOf = (card: BoardCard): TaskSummary | undefined =>
     card.kind === 'session'
       ? card.task
-      : card.sessions.find(task => task.board?.group === 'attention' && answerable(task, snapshot.approvals))
+      : card.kind === 'proposal'
+        ? undefined
+        : card.sessions.find(task => task.board?.group === 'attention' && answerable(task, snapshot.approvals))
   const decisionCard = column('attention').cards.find(card => {
     const task = waitingOf(card)
     return task !== undefined && answerable(task, snapshot.approvals)
@@ -376,7 +406,48 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
     return refused === undefined ? undefined : { state: 'refused', reason: refused }
   }
 
+  /** An agent's suggestion for a card, waiting for the person: 接受 makes it, 不要 drops it. */
+  const suggestionFor = (target: { sessionId: string } | { itemId: string }) => {
+    const proposal = changeFor(proposals, target)
+    if (!proposal) return undefined
+    return (
+      <CardSuggestion
+        proposal={proposal}
+        shell={shell}
+        write={proposalWrites.states.get(proposal.id)}
+        canDecide={canMark}
+        onAccept={(row: ChangeProposal) => {
+          void proposalWrites.accept(row)
+        }}
+        onDismiss={(row: ChangeProposal) => {
+          void proposalWrites.dismiss(row)
+        }}
+        onRetry={id => {
+          void proposalWrites.retry(id)
+        }}
+        onForget={proposalWrites.forget}
+      />
+    )
+  }
   const renderCard = (card: BoardCard, decide = false) => {
+    if (card.kind === 'proposal')
+      return (
+        <WorkBoardProposalCard
+          card={card}
+          shell={shell}
+          write={proposalWrites.states.get(card.id)}
+          canDecide={canMark}
+          onReview={setReviewing}
+          onDismiss={proposal => {
+            void proposalWrites.dismiss(proposal)
+          }}
+          onRetry={id => {
+            void proposalWrites.retry(id)
+          }}
+          onForget={proposalWrites.forget}
+          onOpenSession={open}
+        />
+      )
     if (card.kind === 'item') {
       const waiting = decide ? waitingOf(card) : undefined
       return (
@@ -401,6 +472,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
           }}
           onDismiss={writes.dismiss}
           decision={waiting ? <WorkbenchDecision task={waiting} shell={decisionShell} /> : undefined}
+          suggestion={suggestionFor({ itemId: card.id })}
           outside={
             startedFrom.filter(
               entry =>
@@ -431,10 +503,12 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
           else stop(id)
         }}
         onDismiss={writes.states.has(task.id) ? writes.dismiss : stopRefused.has(task.id) && !stopUnknown(task.id) ? forgetStop : undefined}
+        suggestion={suggestionFor({ sessionId: task.id })}
       />
     )
   }
-  const unstarted = column('todo').cards.flatMap(card => (card.kind === 'item' ? [card.item] : []))
+  // 全部开始 passes by a 待办 whose 要求 came from outside content: each of those is started on its own, read first.
+  const unstarted = startAllItems(column('todo').cards)
   const startAll =
     canStart && unstarted.length > 1 ? (
       <Button
@@ -480,7 +554,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   let body
   if (narrow) {
     const shownDone = new Set(column('done').cards.map(card => card.id))
-    const rows = listRows(tasks, phoneGroup, filters, workspaces, 'group', items).filter(
+    const rows = listRows(tasks, phoneGroup, filters, workspaces, 'group', items, proposals).filter(
       card => phoneGroup !== 'done' || shownDone.has(card.id),
     )
     body = (
@@ -525,11 +599,14 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
     )
   } else if (memory.view === 'list') {
     const listCounts = Object.fromEntries(
-      (['all', ...BOARD_GROUPS] as const).map(state => [state, listRows(tasks, state, NO_FILTERS, workspaces, 'group', items).length]),
+      (['all', ...BOARD_GROUPS] as const).map(state => [
+        state,
+        listRows(tasks, state, NO_FILTERS, workspaces, 'group', items, proposals).length,
+      ]),
     )
     body = (
       <WorkBoardTable
-        rows={listRows(tasks, listState, filters, workspaces, order, items)}
+        rows={listRows(tasks, listState, filters, workspaces, order, items, proposals)}
         shell={shell}
         state={listState}
         onState={setListState}
@@ -540,6 +617,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         menuFor={menuFor}
         itemMenu={itemMenu}
         writes={writes.states}
+        onReview={canMark ? setReviewing : undefined}
         onOpenItem={openItem}
         onRetry={id => {
           void writes.retry(id)
@@ -629,6 +707,41 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
           }}
         />
       )}
+      {reviewing && (
+        <ProposalReview
+          proposal={reviewing}
+          writes={proposalWrites}
+          shell={shell}
+          onClose={() => {
+            setReviewing(null)
+          }}
+          onAccepted={ids => {
+            if (ids[0]) setStarted(ids[0])
+          }}
+        />
+      )}
+      {noting && (
+        <PromptDialog
+          title="备注"
+          label="备注"
+          initial={(noting.kind === 'item' ? noting.item.note : noting.task.note) ?? ''}
+          maxLength={CARD_NOTE_CHARS}
+          onClose={() => {
+            setNoting(null)
+          }}
+          onSubmit={async note => {
+            if (noting.kind === 'session') {
+              await noteSession(noting.task, note)
+              return
+            }
+            const result = await writes.patch(noting.item, { note })
+            if (!result.ok && !result.unknown) {
+              writes.dismiss(noting.item.id)
+              throw new MessageError(result.reason ?? '没有保存')
+            }
+          }}
+        />
+      )}
       {deleting && (
         <ConfirmDialog
           title="删除待办"
@@ -653,6 +766,14 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
       )}
     </section>
   )
+}
+
+/** 备注… and, with one, 清除备注: the same on a session's card and a 待办's. */
+function noteItems(note: string | undefined, edit: () => void, clear: () => void): MenuSection['items'] {
+  return [
+    { id: 'note', label: note ? '修改备注…' : '备注…', icon: StickyNote, onSelect: edit },
+    ...(note ? [{ id: 'note-clear', label: '清除备注', icon: StickyNote, onSelect: clear }] : []),
+  ]
 }
 
 /**

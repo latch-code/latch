@@ -1033,3 +1033,210 @@
 .work-board-new-tag-field::placeholder {
   color: var(--faint);
 }
+
+/* ---- Agents' proposals: never drawn like accepted work ---------------------------------------------------------- */
+/* A proposal in 未开始: no fill and no shadow, a dashed edge; it is a suggestion until the person accepts it. */
+.work-board-card[data-kind='proposal'] {
+  flex-direction: column;
+  background: transparent;
+  box-shadow: none;
+  outline: 1px dashed var(--line-strong);
+  outline-offset: -1px;
+}
+.work-board-card[data-kind='proposal'] .work-board-card-title {
+  color: var(--ink-2);
+}
+.work-board-proposal-glyph {
+  flex: none;
+  color: var(--faint);
+}
+.work-board-proposal-entries {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0;
+  padding-inline-start: var(--sp-16);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-proposal-entries > li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-proposal-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  min-width: 0;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-card[data-kind='proposal'] > .work-board-proposal-line {
+  flex-wrap: nowrap;
+  padding: 0 var(--sp-12) var(--sp-6);
+}
+/* One line: 提议, who (cut short first), then 来自外部内容 whole. */
+.work-board-proposal-line > .work-board-proposed-by {
+  flex: 0 1 auto;
+}
+.work-board-proposal-line > .work-board-external {
+  flex: none;
+  white-space: nowrap;
+}
+.work-board-proposal-word {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--fs-caption);
+}
+.work-board-proposed-by {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+}
+button.work-board-proposed-by {
+  cursor: pointer;
+}
+@media (hover: hover) {
+  button.work-board-proposed-by:hover .work-board-proposed-name {
+    color: var(--ink-2);
+    text-decoration: underline;
+  }
+}
+button.work-board-proposed-by:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: var(--r-4);
+}
+.work-board-proposed-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 来自外部内容: amber, the colour that only ever warns. */
+.work-board-external {
+  color: var(--amber);
+}
+.work-board-card-note {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-card-note > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A suggestion for a card: inside it, dashed, under what the card already says. */
+.work-board-card:has(> .work-board-suggestion) {
+  flex-direction: column;
+}
+.work-board-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  margin: 0 var(--sp-8) var(--sp-8);
+  padding: var(--sp-6) var(--sp-8);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-6);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-suggestion-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-6);
+  min-width: 0;
+}
+.work-board-suggestion-title {
+  overflow: hidden;
+  color: var(--ink-2);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-suggestion-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-6);
+}
+/* The list: a proposal's row is dashed too. */
+.work-board-row[data-kind='proposal'] {
+  outline: 1px dashed var(--line-strong);
+  outline-offset: -2px;
+  border-radius: var(--r-6);
+}
+.work-board-row[data-kind='proposal'] .work-board-card-title {
+  color: var(--ink-2);
+}
+/* 审阅: each proposed 待办 a section; one left out is dimmed. */
+.work-board-proposal-review .ui-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-12);
+}
+.work-board-proposal-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  padding-top: var(--sp-12);
+  border-top: 1px solid var(--hairline);
+}
+.work-board-proposal-entry[data-off] > :not(:first-child) {
+  opacity: 0.5;
+}
+.work-board-proposal-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-6);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+.work-board-new-from {
+  padding: 0 var(--sp-4) var(--sp-8);
+}
+/* In the session that made them: one quiet line per proposal after its turn. */
+.work-board-session-proposals {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  margin-block: var(--sp-8);
+}
+.work-board-session-proposal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-6) var(--sp-10);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-8);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.work-board-session-proposal-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-board-session-proposals > .work-board-suggestion {
+  margin: 0;
+}

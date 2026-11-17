@@ -19,6 +19,7 @@ import { servicePick, findHarness } from '../composerChoice.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { SessionComposer } from '../shell/SessionComposers.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
+import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
 import { PRIORITY_LABELS } from './model.ts'
 
 /** What 新建 does: start a session (or, 先不开始, keep a 待办), or start one from a 待办 that has none yet (开始). */
@@ -237,6 +238,13 @@ export function WorkBoardNew({
         : shell
   return (
     <Dialog open={open} onClose={onClose} size="lg" title={starting ? '开始' : '新建'} className="work-board-new">
+      {open && ready && starting?.from && (
+        // An agent wrote this 要求: who, and whether its turn read outside content, above the text it will send.
+        <div className="work-board-proposal-line work-board-new-from">
+          <ProposedBy proposal={{ from: starting.from }} shell={shell} />
+          {starting.from.external && <ExternalMark />}
+        </div>
+      )}
       {open && ready && (
         // The start screen's own wrapper: the composer lays its row out by this width, as it does there.
         <div className="workbench-home-composer">

@@ -47,6 +47,7 @@ import { ItemPageStart } from './ItemPageStart.tsx'
 import { bringReply, joinableSessions, placeWords } from './items.ts'
 import { PRIORITY_LABELS } from './model.ts'
 import { cardState, TagChips } from './WorkBoardCard.tsx'
+import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
 
 const PLACE_TONE: Record<WorkItemSummary['board']['group'], StatusTone> = {
   todo: 'neutral',
@@ -285,6 +286,25 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
                 />
               </dd>
             </div>
+            {item.note && (
+              <div>
+                <dt>备注</dt>
+                <dd>{escapeSecurityText(item.note)}</dd>
+              </div>
+            )}
+            {item.from && (
+              <div>
+                <dt>来自</dt>
+                <dd className="work-board-proposal-line">
+                  <ProposedBy
+                    proposal={{ from: item.from }}
+                    shell={shell}
+                    onOpenSession={shell.snapshot.tasks.some(task => task.id === item.from?.sessionId) ? openSession : undefined}
+                  />
+                  {item.from.external && <ExternalMark />}
+                </dd>
+              </div>
+            )}
             <div>
               <dt>创建</dt>
               <dd>

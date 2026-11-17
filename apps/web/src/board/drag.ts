@@ -34,6 +34,8 @@ export function dropAction(card: BoardCard, target: BoardColumnGroup, facts: Dro
   const from = groupOf(card)
   if (target === from || target === 'attention' || target === 'deliver' || target === 'todo') return null
   if (facts.unconfirmed) return null
+  // A proposal is not a 待办: it is accepted or dismissed, never moved.
+  if (card.kind === 'proposal') return null
   if (card.kind === 'item') {
     const { item } = card
     if (from === 'todo') return target === 'running' && facts.canStart ? { kind: 'start', item } : null
