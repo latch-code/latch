@@ -181,6 +181,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
                     else openFile({ sessionId: summary.id, reference: path, ...(root ? { rootId: root } : {}) })
                   }}
                   onCompose={canCompose ? compose : undefined}
+                  sync={catalog?.features?.gitSync === true}
                 />
               </FillPlace.Provider>
             ),

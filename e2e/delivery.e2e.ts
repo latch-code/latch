@@ -402,7 +402,7 @@ touch '${control}/commit-ran'`,
     // Your Git's fetch gives the behind count its time.
     git(repo, 'fetch', '-q', 'origin')
     await comeBack(page)
-    await back.getByText('领先 1 · 落后 1 · 刚刚拉取', { exact: true }).waitFor(SLOW)
+    await back.getByText('领先 1 · 落后 1 · 刚刚获取', { exact: true }).waitFor(SLOW)
     await shots(page, 'non-fast-forward')
 
     for (const item of [desk, phone, locked]) await item.context.close()

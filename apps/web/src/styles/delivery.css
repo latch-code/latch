@@ -134,7 +134,11 @@
 .delivery-card[data-tone='red'] .delivery-card-head > strong {
   color: var(--red);
 }
-.delivery-card-head > strong {
+.delivery-card[data-tone='amber'] .delivery-card-head > svg {
+  color: var(--amber-icon);
+}
+.delivery-card-head > strong,
+.delivery-card-head strong {
   font-weight: 500;
 }
 .delivery-card-meta {
@@ -268,6 +272,13 @@
 }
 .delivery-stage-all {
   display: flex;
+  padding: var(--sp-6) var(--sp-12) 0;
+}
+/* 获取 and 拉取, under the remote's line. */
+.delivery-sync {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
   padding: var(--sp-6) var(--sp-12) 0;
 }
 

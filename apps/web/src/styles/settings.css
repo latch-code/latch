@@ -2177,3 +2177,36 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+
+/* 克隆仓库 beside 添加项目, and the clone's one line above the projects. */
+.workspaces-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+}
+.clone-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+  margin-bottom: var(--sp-12);
+  padding: var(--sp-8) var(--sp-12);
+  border-radius: var(--r-8);
+  background: var(--sunken);
+  color: var(--ink);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.clone-status-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+}
+.clone-status-progress {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.clone-status-space {
+  flex: 1;
+}

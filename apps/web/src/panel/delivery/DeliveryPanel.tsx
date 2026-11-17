@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { CircleHelp, GitPullRequest, MessageSquarePlus, Upload, Webhook } from 'lucide-react'
+import { ArrowDownToLine, CircleHelp, GitPullRequest, MessageSquarePlus, RefreshCw, Upload, Webhook } from 'lucide-react'
 import type { GitDeliveryState, TaskSummary } from '@latch/protocol'
 import {
   Button,
+  ConfirmDialog,
   Hint,
   ICON_STROKE,
   Spinner,
@@ -23,7 +24,17 @@ import { computerName, SETUP_COPY } from '../../core/securityCopy.ts'
 import { TerminalFillButton } from '../../components/TerminalFillButton.tsx'
 import { dateTime } from '../../format.ts'
 import {
+  abortable,
+  abortReason,
   aheadBehind,
+  conflictPrompt,
+  diverged,
+  divergedPrompt,
+  fetchReason,
+  OPERATION_WORD,
+  pullReason,
+  REASON,
+  type WriteLimits,
   canPush,
   changedCount,
   checksSummary,
@@ -72,6 +83,8 @@ export interface DeliveryPanelProps {
   onCompose?: ((text: string) => void) | undefined
   /** A commit or push the Host answered as done, for a page that leads somewhere after it. */
   onOutcome?: ((kind: 'committed' | 'pushed') => void) | undefined
+  /** The Host fetches, pulls (fast-forward only) and aborts an operation under way (`features.gitSync`). */
+  sync?: boolean
 }
 
 const STEP_ORDER = ['stage', 'commit', 'push', 'pr'] as const
@@ -224,12 +237,15 @@ function UnknownLine({
 
 /** The right panel's 交付 tab: stage, commit and push the session's repository. */
 export function DeliveryPanel(props: DeliveryPanelProps) {
-  const { summary, revision, open, canRun, hostName, offline, phone, onOpenFile, onCompose, onOutcome } = props
+  const { summary, revision, open, canRun, hostName, offline, phone, onOpenFile, onCompose, onOutcome, sync = false } = props
   const delivery = useDelivery({ sessionId: summary.id, status: summary.status, revision, open, offline })
   const { read, pending, writing, failure, unknown, outcome, writes } = delivery
   useEffect(() => {
-    if (outcome) onOutcome?.(outcome.kind)
+    if (outcome?.kind === 'committed' || outcome?.kind === 'pushed') onOutcome?.(outcome.kind)
   }, [outcome, onOutcome])
+  const [aborting, setAborting] = useState(false)
+  /** 保持原样 on the diverged card: hidden until the counts change. */
+  const [leftAt, setLeftAt] = useState<string>()
   const [message, setMessage] = useState('')
   const [skipHooks, setSkipHooks] = useState(false)
   const [showOutput, setShowOutput] = useState(false)
@@ -243,6 +259,10 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
   const blocked = offline || !canWrite || !!state?.gitOperation
   const fileWrites = !blocked && !turnRunning && !hostRunning
   const frozen = writing === 'commit' || unknown?.kind === 'commit'
+  const limits: WriteLimits = { offline, canWrite: canRun, readOnly, busy, turnRunning }
+  const divergedKey = state ? `${state.ahead}:${state.behind}:${state.fetchedAt ?? ''}` : ''
+  const divergedShown =
+    !!state && !!state.branch && !!state.upstream && (failure?.code === 'git-pull-diverged' || diverged(state)) && leftAt !== divergedKey
   // A device that cannot list the files still sees and makes the pull request: the Host says what it may read.
   const prEnabled = read.kind === 'denied' || (!!state && prAvailable(state))
   const pull = usePullRequest({
@@ -332,10 +352,31 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
           这个会话只读
         </Line>
       )}
-      {state?.gitOperation && (
+      {state?.gitOperation && !(sync && abortable(state)) && (
         <Line tone="amber" icon={WarningGlyph}>
           {operationNote(state.gitOperation)}
         </Line>
+      )}
+      {sync && state && abortable(state) && (
+        <OperationCard
+          state={state}
+          reason={abortReason(state, limits)}
+          aborting={writing === 'abort'}
+          onCompose={onCompose}
+          onAbort={() => setAborting(true)}
+        />
+      )}
+      {sync && state && divergedShown && (
+        <DivergedCard
+          state={state}
+          ahead={failure?.code === 'git-pull-diverged' ? (failure.ahead ?? state.ahead) : state.ahead}
+          behind={failure?.code === 'git-pull-diverged' ? (failure.behind ?? state.behind) : state.behind}
+          onCompose={onCompose}
+          onLeave={() => {
+            setLeftAt(divergedKey)
+            if (failure?.code === 'git-pull-diverged') delivery.dismiss()
+          }}
+        />
       )}
       {turnRunning && !state?.gitOperation && canWrite && (
         <Line tone="muted" icon={InfoGlyph} hover detail={failureCopy('git-turn-running')?.detail}>
@@ -356,7 +397,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       )}
       {failure?.code === 'git-hook-failed' ? (
         <HookCard failure={failure} onCompose={onCompose} />
-      ) : failure && !(failure.code === 'git-turn-running' && turnRunning) ? (
+      ) : failure && failure.code !== 'git-pull-diverged' && !(failure.code === 'git-turn-running' && turnRunning) ? (
         <FailureLine failure={failure} state={state} />
       ) : null}
       {outcome?.kind === 'committed' && (
@@ -376,6 +417,26 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       {outcome?.kind === 'committed' && showOutput && outcome.result.hookOutput && (
         <Output text={outcome.result.hookOutput} label="钩子输出" />
       )}
+      {outcome?.kind === 'fetched' && (
+        <Line icon={CheckGlyph}>
+          已获取{' '}
+          <code className="delivery-sha">
+            <VisibleText text={outcome.result.remote} />
+          </code>
+        </Line>
+      )}
+      {outcome?.kind === 'pulled' && (
+        <Line icon={CheckGlyph}>
+          {outcome.result.updated ? (
+            <>
+              已拉取 {outcome.result.commits} 个提交 · <code className="delivery-sha">{shortSha(outcome.result.head)}</code>
+            </>
+          ) : (
+            '已是最新'
+          )}
+        </Line>
+      )}
+      {outcome?.kind === 'aborted' && <Line icon={CheckGlyph}>已中止{OPERATION_WORD[outcome.result.operation]}</Line>}
       {outcome?.kind === 'pushed' && (
         <Line icon={CheckGlyph}>
           已推送到{' '}
@@ -494,9 +555,25 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
   const upstreamOther = !!state.upstream && !!state.remote && !!state.branch && state.upstream !== `${state.remote}/${state.branch}`
   const pushable = canPush(state) && !upstreamOther
   const total = state.staged.length + changedCount(state)
+  // Known to have diverged: a push would be refused as not a fast-forward, so it waits for the two to be brought together.
+  const pushOff = sync && diverged(state) ? REASON.diverged : undefined
+  const pushButton = (
+    <Button
+      size="xs"
+      variant="outline"
+      icon={Upload}
+      loading={writing === 'push'}
+      loadingLabel="推送中…"
+      disabled={blocked || busy || unknown?.kind === 'push' || pushOff !== undefined}
+      tooltip={pushOff}
+      onClick={() => void writes.push()}>
+      {pushLabel(state)}
+    </Button>
+  )
   const primaryBlocked =
     blocked
     || busy
+    || (primary?.kind === 'push' && pushOff !== undefined)
     || (primary?.kind !== 'push' && turnRunning)
     || (primary?.kind === 'commit' && (!message.trim() || state.conflicted.length > 0))
     || unknown?.kind === primary?.kind
@@ -624,7 +701,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
                 <span
                   className="delivery-count"
                   title={
-                    state.upstream ? (state.fetchedAt ? `最近拉取 ${dateTime(state.fetchedAt)}` : '还没有拉取过，落后数未知') : undefined
+                    state.upstream ? (state.fetchedAt ? `最近获取 ${dateTime(state.fetchedAt)}` : '还没有获取过，落后数未知') : undefined
                   }>
                   {aheadBehind(state)}
                 </span>
@@ -638,25 +715,35 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
                   上游是另一个分支
                 </Line>
               )}
-              {pushable && primary?.kind !== 'push' && (
-                <div className="delivery-stage-all">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    icon={Upload}
-                    loading={writing === 'push'}
-                    loadingLabel="推送中…"
-                    disabled={blocked || busy || unknown?.kind === 'push'}
-                    onClick={() => void writes.push()}>
-                    {pushLabel(state)}
-                  </Button>
-                </div>
-              )}
+              {pushable && primary?.kind !== 'push' && !sync && <div className="delivery-stage-all">{pushButton}</div>}
             </>
           )}
         </section>
+        {sync && (
+          <SyncRow
+            push={pushable && primary?.kind !== 'push' ? pushButton : undefined}
+            state={state}
+            fetchOff={fetchReason(state, limits)}
+            pullOff={pullReason(state, limits)}
+            writing={writing}
+            onFetch={() => void writes.fetch()}
+            onPull={() => void writes.pull()}
+          />
+        )}
         {prSection}
       </div>
+      {aborting && abortable(state) && (
+        <ConfirmDialog
+          title={`中止${OPERATION_WORD[abortable(state)!]}？`}
+          message={`回到这次${OPERATION_WORD[abortable(state)!]}开始之前。已解决的冲突和它带来的改动都会丢失，不能撤销。`}
+          confirmLabel={`中止${OPERATION_WORD[abortable(state)!]}`}
+          danger
+          onConfirm={async () => {
+            await writes.abort(abortable(state)!)
+          }}
+          onClose={() => setAborting(false)}
+        />
+      )}
       <div className="delivery-foot">
         <FootNote state={state} step={step} />
         <span className="delivery-space" />
@@ -669,7 +756,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
             loading={writing === primary.kind || (primary.kind === 'stage' && pending.size > 0)}
             loadingLabel={primary.kind === 'stage' ? '暂存中…' : RUNNING_WORD[primary.kind]}
             disabled={primaryBlocked}
-            tooltip={primary.kind === 'commit' && !message.trim() ? '先写提交信息' : undefined}
+            tooltip={primary.kind === 'commit' && !message.trim() ? '先写提交信息' : primary.kind === 'push' ? pushOff : undefined}
             onClick={runPrimary}>
             {primary.label}
           </Button>
@@ -705,4 +792,149 @@ function FootNote({ state, step }: { state: GitDeliveryState; step: DeliveryStep
     )
   if (state.head && !state.remote) return <span className="delivery-foot-note">已提交，未推送</span>
   return null
+}
+
+/** 获取 and 拉取, each disabled with its reason as the hover. */
+function SyncRow({
+  push,
+  state,
+  fetchOff,
+  pullOff,
+  writing,
+  onFetch,
+  onPull,
+}: {
+  push?: ReactNode
+  state: GitDeliveryState
+  fetchOff: string | undefined
+  pullOff: string | undefined
+  writing: string | undefined
+  onFetch: () => void
+  onPull: () => void
+}) {
+  const behind = !!state.fetchedAt && state.behind > 0 && !diverged(state)
+  return (
+    <div className="delivery-sync" role="group" aria-label="同步">
+      {push}
+      <Button
+        size="xs"
+        variant="outline"
+        icon={RefreshCw}
+        loading={writing === 'fetch'}
+        loadingLabel="获取中…"
+        disabled={fetchOff !== undefined}
+        tooltip={fetchOff}
+        onClick={onFetch}>
+        获取
+      </Button>
+      <Button
+        size="xs"
+        variant={behind && pullOff === undefined ? 'primary' : 'outline'}
+        icon={ArrowDownToLine}
+        loading={writing === 'pull'}
+        loadingLabel="拉取中…"
+        disabled={pullOff !== undefined}
+        tooltip={pullOff ?? '只快进；分叉时不合并也不变基'}
+        onClick={onPull}>
+        {behind ? `拉取 ${state.behind} 个提交` : '拉取'}
+      </Button>
+    </div>
+  )
+}
+
+/** A merge, rebase, cherry-pick or revert under way: its conflicted files go to the Agent, or the operation is aborted. */
+function OperationCard({
+  state,
+  reason,
+  aborting,
+  onCompose,
+  onAbort,
+}: {
+  state: GitDeliveryState
+  reason: string | undefined
+  aborting: boolean
+  onCompose?: ((text: string) => void) | undefined
+  onAbort: () => void
+}) {
+  const operation = abortable(state)!
+  const word = OPERATION_WORD[operation]
+  const count = state.conflicted.length
+  const title = count ? `${word}有冲突` : `${word}进行中`
+  return (
+    <section className="delivery-card" data-tone="amber" aria-label={title}>
+      <header className="delivery-card-head">
+        <WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <strong>{title}</strong>
+        {count > 0 && <span className="delivery-card-meta">{count} 个文件</span>}
+      </header>
+      <div className="delivery-card-foot">
+        <span className="delivery-space" />
+        {onCompose && count > 0 && (
+          <Button
+            size="xs"
+            variant="outline"
+            icon={MessageSquarePlus}
+            onClick={() => {
+              onCompose(conflictPrompt({ operation, paths: state.conflicted, ...(state.more ? { more: state.more } : {}) }))
+            }}>
+            交给 Agent 解决
+          </Button>
+        )}
+        <Button
+          size="xs"
+          variant="outline"
+          loading={aborting}
+          loadingLabel="中止中…"
+          disabled={reason !== undefined}
+          tooltip={reason}
+          onClick={onAbort}>
+          中止{word}
+        </Button>
+      </div>
+    </section>
+  )
+}
+
+/** The branch and its upstream have diverged: nothing is merged or rebased here; the Agent can be asked, or it is left. */
+function DivergedCard({
+  state,
+  ahead,
+  behind,
+  onCompose,
+  onLeave,
+}: {
+  state: GitDeliveryState
+  ahead: number
+  behind: number
+  onCompose?: ((text: string) => void) | undefined
+  onLeave: () => void
+}) {
+  return (
+    <section className="delivery-card" data-tone="amber" aria-label="与上游已分叉">
+      <header className="delivery-card-head">
+        <WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+        <strong>与上游已分叉</strong>
+        <span className="delivery-card-meta">
+          领先 {ahead} · 落后 {behind}
+        </span>
+      </header>
+      <div className="delivery-card-foot">
+        <span className="delivery-space" />
+        {onCompose && (
+          <Button
+            size="xs"
+            variant="outline"
+            icon={MessageSquarePlus}
+            onClick={() => {
+              onCompose(divergedPrompt({ branch: state.branch ?? '', upstream: state.upstream ?? '', ahead, behind }))
+            }}>
+            交给 Agent
+          </Button>
+        )}
+        <Button size="xs" variant="ghost" onClick={onLeave}>
+          保持原样
+        </Button>
+      </div>
+    </section>
+  )
 }

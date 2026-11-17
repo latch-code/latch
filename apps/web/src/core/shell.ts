@@ -28,7 +28,16 @@ export interface ShellFolders {
   reveal: (workspaceId: string, folderId?: string) => Promise<RevealResult>
   revealAgentHome?: (agentId: string) => Promise<RevealResult>
   saveSessionFolder?: (sessionId: string) => Promise<FolderResult>
+  /** 克隆: main asks where with the native panel; the clone then goes on in the Host (`/workspaces/clone/:id`). */
+  clone?: (url: string) => Promise<CloneStart>
 }
+
+/** What asking main to clone came to: the clone under way, or why it did not start. */
+export type CloneStart =
+  | { status: 'cloning'; id: string; name: string }
+  | { status: 'canceled' }
+  | { status: 'busy' }
+  | { status: 'failed'; code: string; refused?: Array<{ path: string; status: number; code: string; message?: string }> }
 
 /** What main answers when asked to open this Host's page in the default browser. */
 type OpenInBrowserResult = { ok: true } | { ok: false; status: number; error: string; message: string; retryAfter?: number }

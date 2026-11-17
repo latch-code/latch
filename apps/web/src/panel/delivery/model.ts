@@ -41,15 +41,15 @@ export function nothingToMerge(state: Pick<GitDeliveryState, 'base'>): boolean {
 }
 
 /**
- * The line beside the remote: 新分支, 领先 and 落后, or 已是最新. Behind is counted from the last fetch, so it shows only
- * with that time, which goes with it; without one nothing says the branch is up to date.
+ * The line beside the remote: 新分支, 领先 and 落后, or 已是最新. Behind is counted from the last fetch (获取), so it
+ * shows only with that time, which goes with it; without one nothing says the branch is up to date.
  */
 export function aheadBehind(state: Pick<GitDeliveryState, 'upstream' | 'ahead' | 'behind' | 'fetchedAt'>, now = new Date()): string {
   if (!state.upstream) return '新分支'
   const ahead = state.ahead ? `领先 ${state.ahead}` : ''
   if (state.fetchedAt === undefined) return ahead || '已推送'
   const when = relativeTime(state.fetchedAt, now)
-  const fetched = /(分钟|小时|天)$/u.test(when) ? `${when}前拉取` : /^\d/u.test(when) ? `${when} 拉取` : `${when}拉取`
+  const fetched = /(分钟|小时|天)$/u.test(when) ? `${when}前获取` : /^\d/u.test(when) ? `${when} 获取` : `${when}获取`
   return [ahead, state.behind ? `落后 ${state.behind}` : '', !ahead && !state.behind ? '已是最新' : '', fetched].filter(Boolean).join(' · ')
 }
 
@@ -108,9 +108,14 @@ export const OPERATION_WORD: Record<GitOperation, string> = {
   unmerged: '合并',
 }
 
-/** The one line that says why nothing can be written now. */
-export function operationNote(operation: GitOperation | undefined): string {
-  return operation && operation !== 'unmerged' ? `${OPERATION_WORD[operation]}进行中，在终端里完成` : '合并/变基进行中，在终端里完成'
+/**
+ * The one line that says why nothing can be written now. `abortable`: the Host can abort it (`features.gitSync`), so
+ * the panel offers that instead of the terminal.
+ */
+export function operationNote(operation: GitOperation | undefined, abortable = false): string {
+  if (operation && operation !== 'unmerged')
+    return abortable ? `${OPERATION_WORD[operation]}进行中` : `${OPERATION_WORD[operation]}进行中，在终端里完成`
+  return '合并/变基进行中，在终端里完成'
 }
 
 export const RUNNING_WORD: Record<GitDeliveryKind, string> = {
@@ -119,6 +124,9 @@ export const RUNNING_WORD: Record<GitDeliveryKind, string> = {
   commit: '提交中…',
   push: '推送中…',
   pr: '创建 PR 中…',
+  fetch: '获取中…',
+  pull: '拉取中…',
+  abort: '中止中…',
 }
 
 export function runningLabel(running: Pick<GitDeliveryRunning, 'kind' | 'hook'>): string {
@@ -133,6 +141,9 @@ export interface FailureDetails {
   remoteLines?: string[]
   running?: GitDeliveryRunning
   remoteSha?: string
+  /** `git-pull-diverged`: the branch's own commits and the upstream's. */
+  ahead?: number
+  behind?: number
 }
 
 export function failureDetails(details: Readonly<Record<string, unknown>>): FailureDetails {
@@ -150,6 +161,8 @@ export function failureDetails(details: Readonly<Record<string, unknown>>): Fail
       ...(typeof running.hook === 'string' ? { hook: running.hook } : {}),
     }
   if (typeof details.remoteSha === 'string') out.remoteSha = details.remoteSha
+  if (typeof details.ahead === 'number') out.ahead = details.ahead
+  if (typeof details.behind === 'number') out.behind = details.behind
   return out
 }
 
@@ -258,6 +271,40 @@ export function failureCopy(code: string, operation?: GitOperation): FailureCopy
       return { label: '标题或基线无效', tone: 'failed', detail: '标题一行、最多 256 个字符；基线是分支名。' }
     case 'pr-check-not-found':
       return { label: '这个检查已不在 PR 上', tone: 'neutral' }
+    case 'git-no-upstream':
+      return { label: REASON.noUpstream, tone: 'neutral', detail: '先推送一次，这个分支就有了上游。' }
+    case 'git-remote-form':
+      return {
+        label: '这个远端不能在这里获取',
+        tone: 'neutral',
+        detail: '只经 https、http、ssh 或本机路径获取，获取规则只写远端跟踪分支与标签。在终端里获取。',
+      }
+    case 'git-fetch-auth':
+      return { label: '远端不接受凭据', tone: 'failed', detail: '在终端里检查这个仓库的登录或 SSH 密钥。' }
+    case 'git-fetch-host-key':
+      return { label: '远端主机密钥没有通过验证', tone: 'failed', detail: '在终端里连一次这个远端，核对并记下主机密钥。' }
+    case 'git-fetch-unreachable':
+      return { label: '连不上远端', tone: 'failed' }
+    case 'git-fetch-timeout':
+      return { label: '获取超时', tone: 'failed' }
+    case 'git-fetch-failed':
+      return { label: '获取失败', tone: 'failed' }
+    case 'git-pull-diverged':
+      return { label: REASON.diverged, tone: 'warn' }
+    case 'git-pull-local-changes':
+      return { label: '未提交的改动会被覆盖', tone: 'warn', detail: '上游改了同样的文件。先提交或暂存这些改动，再拉取。' }
+    case 'git-pull-failed':
+      return { label: '拉取失败，仓库保持原样', tone: 'failed' }
+    case 'git-drivers':
+      return { label: REASON.drivers, tone: 'neutral', detail: '在终端里完成这一步，filter 与合并驱动才会照常运行。' }
+    case 'git-no-operation':
+      return { label: '已没有进行中的操作', tone: 'neutral' }
+    case 'git-operation-changed':
+      return { label: '进行中的操作变了，没有中止', tone: 'warn' }
+    case 'git-abort-failed':
+      return { label: '没有中止', tone: 'failed', detail: '在终端里查看仓库的状态。' }
+    case 'sync-unanswered':
+      return { label: '没有收到答复，已重新读取仓库', tone: 'neutral' }
     default:
       return undefined
   }
@@ -440,3 +487,104 @@ export function commentExcerpt(input: { number: number; comment: GitPrComment })
 
 /** What to run after a push the remote refused as not a fast-forward: the upstream's commits, merged or rebased as your Git is set. */
 export const PULL_COMMAND = 'git pull'
+
+/**
+ * Why a control is off, one wording everywhere: the control is disabled and this is its hover. The same words head the
+ * fixed reasons above where a refusal says the same thing.
+ */
+export const REASON = {
+  offline: '这台电脑不在线',
+  permission: '这台设备没有这项权限',
+  readOnly: '这个会话只读',
+  busy: '另一个交付操作正在进行',
+  turn: 'Agent 正在改这个文件夹',
+  noRemote: '这个仓库没有远端',
+  detached: '不在任何分支上',
+  noUpstream: '这个分支没有上游',
+  notFetched: '还没有获取过，先获取',
+  diverged: '与上游已分叉',
+  drivers: '仓库配置了 filter 或合并驱动',
+  upToDate: '已是最新',
+  ghLoggedOut: 'gh 未登录',
+  ghMissing: '没有 gh',
+} as const
+
+export function operationReason(operation: GitOperation): string {
+  return `${OPERATION_WORD[operation]}进行中`
+}
+
+/** The page's own limits on a write, before the repository's: undefined when none applies. */
+export interface WriteLimits {
+  offline: boolean
+  canWrite: boolean
+  readOnly: boolean
+  busy: boolean
+  turnRunning: boolean
+}
+
+function limitReason(limits: WriteLimits, turnSensitive: boolean): string | undefined {
+  if (limits.offline) return REASON.offline
+  if (limits.readOnly) return REASON.readOnly
+  if (!limits.canWrite) return REASON.permission
+  if (limits.busy) return REASON.busy
+  if (turnSensitive && limits.turnRunning) return REASON.turn
+  return undefined
+}
+
+/** The branch and its upstream each have commits the other lacks, as of the last fetch. */
+export function diverged(state: Pick<GitDeliveryState, 'upstream' | 'ahead' | 'behind' | 'fetchedAt'>): boolean {
+  return !!state.upstream && !!state.fetchedAt && state.ahead > 0 && state.behind > 0
+}
+
+/** Why 获取 is off, or undefined when it may be pressed. A fetch changes only refs: a turn or an operation does not stop it. */
+export function fetchReason(state: GitDeliveryState, limits: WriteLimits): string | undefined {
+  return limitReason(limits, false) ?? (!state.remote && !state.upstream ? REASON.noRemote : undefined)
+}
+
+/**
+ * Why 拉取 is off, or undefined when it may be pressed. It fetches first, then only fast-forwards, so it needs an
+ * upstream, a fetch to say how far behind the branch is, and no commits of its own the upstream lacks.
+ */
+export function pullReason(state: GitDeliveryState, limits: WriteLimits): string | undefined {
+  const limit = limitReason(limits, true)
+  if (limit) return limit
+  if (state.gitOperation) return state.gitOperation === 'unmerged' ? operationReason('merge') : operationReason(state.gitOperation)
+  if (!state.branch) return REASON.detached
+  if (!state.remote && !state.upstream) return REASON.noRemote
+  if (!state.upstream) return REASON.noUpstream
+  if (state.filters) return REASON.drivers
+  if (!state.fetchedAt) return REASON.notFetched
+  if (diverged(state)) return REASON.diverged
+  return undefined
+}
+
+/** Why 中止 is off, or undefined when it may be pressed. */
+export function abortReason(state: GitDeliveryState, limits: WriteLimits): string | undefined {
+  return limitReason(limits, true) ?? (state.filters ? REASON.drivers : undefined)
+}
+
+/** The operation that 中止 ends, when one is under way and its kind is known. */
+export function abortable(state: Pick<GitDeliveryState, 'gitOperation'>): Exclude<GitOperation, 'unmerged'> | undefined {
+  return state.gitOperation && state.gitOperation !== 'unmerged' ? state.gitOperation : undefined
+}
+
+const CONTINUE: Record<Exclude<GitOperation, 'unmerged'>, string> = {
+  merge: 'git merge --continue',
+  rebase: 'git rebase --continue',
+  'cherry-pick': 'git cherry-pick --continue',
+  revert: 'git revert --continue',
+}
+
+/** 交给 Agent 解决: the conflicted files and what to do, for the composer draft; never sent by itself. */
+export function conflictPrompt(input: { operation: Exclude<GitOperation, 'unmerged'>; paths: readonly string[]; more?: number }): string {
+  const list = input.paths.join('\n')
+  const fence = fenceFor(list)
+  const more = input.more ? `\n（还有 ${input.more} 个没有列出）` : ''
+  const word = OPERATION_WORD[input.operation]
+  return `仓库正在${word}，这些文件有冲突：\n\n${fence}text\n${list}\n${fence}${more}\n\n请解决这些冲突，保留两边需要的改动；解决后暂存这些文件并完成这次${word}（${CONTINUE[input.operation]}），再告诉我结果。不要中止，也不要强制推送。`
+}
+
+/** 交给 Agent: a branch that diverged from its upstream, for the composer draft; how to bring them together is asked. */
+export function divergedPrompt(input: { branch: string; upstream: string; ahead: number; behind: number }): string {
+  return `分支 ${input.branch} 与上游 ${input.upstream} 已分叉：这里有 ${input.ahead} 个上游没有的提交，上游有 ${input.behind} 个这里没有的提交。请把上游的提交整合进来，用合并还是变基先问我；有冲突就解决。不要强制推送。`
+}

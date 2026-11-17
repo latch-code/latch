@@ -50,9 +50,9 @@ describe('the delivery tab', () => {
     expect(aheadBehind(state({ ahead: 2, behind: 3 }))).toBe('领先 2')
     const now = new Date('2026-11-16T09:00:00.000Z')
     const fetched = { fetchedAt: '2026-11-16T08:55:00.000Z' }
-    expect(aheadBehind(state({ ...fetched }), now)).toBe('已是最新 · 5 分钟前拉取')
-    expect(aheadBehind(state({ ...fetched, ahead: 2, behind: 3 }), now)).toBe('领先 2 · 落后 3 · 5 分钟前拉取')
-    expect(aheadBehind(state({ fetchedAt: '2026-10-01T08:00:00.000Z' }), now)).toBe('已是最新 · 10/01 拉取')
+    expect(aheadBehind(state({ ...fetched }), now)).toBe('已是最新 · 5 分钟前获取')
+    expect(aheadBehind(state({ ...fetched, ahead: 2, behind: 3 }), now)).toBe('领先 2 · 落后 3 · 5 分钟前获取')
+    expect(aheadBehind(state({ fetchedAt: '2026-10-01T08:00:00.000Z' }), now)).toBe('已是最新 · 10/01 获取')
     expect(aheadBehind(state({ upstream: undefined }))).toBe('新分支')
   })
   it('moves the one blue button from 暂存全部 to 提交 N 个文件 to 推送', () => {

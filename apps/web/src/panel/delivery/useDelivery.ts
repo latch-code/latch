@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { GitCommitResult, GitDeliveryState, GitPushResult, GitStageResult } from '@latch/protocol'
+import type {
+  GitAbortResult,
+  GitCommitResult,
+  GitDeliveryState,
+  GitFetchResult,
+  GitPullResult,
+  GitPushResult,
+  GitStageResult,
+} from '@latch/protocol'
 import { api, ApiError, errorMessage, isUncertain, newRequestId } from '../../core/api.ts'
 import { failureDetails, unknownAfter, writeEnd, type FailureDetails, type WriteEnd } from './model.ts'
 
 /** The Host gives a commit with its hooks 10 minutes, a push and a stage 2; the page waits a little longer than that. */
-const WAIT_MS = { stage: 150_000, commit: 630_000, push: 150_000 } as const
+const WAIT_MS = { stage: 150_000, commit: 630_000, push: 150_000, fetch: 150_000, pull: 300_000, abort: 150_000 } as const
 /** Only while a write is under way and the tab is on screen: the hook Git is running changes without an event. */
 const FOLLOW_MS = 1_500
 const ACTIVE = new Set(['running', 'waiting-approval'])
@@ -25,8 +33,11 @@ export type DeliveryRead =
 export interface DeliveryFailure extends FailureDetails {
   code: string
   text: string
-  kind: 'stage' | 'unstage' | 'commit' | 'push'
+  kind: 'stage' | 'unstage' | 'commit' | 'push' | SyncKind
 }
+
+/** The writes that are safe to repeat: no receipt, and an answer that never came is settled by reading the state again. */
+export type SyncKind = 'fetch' | 'pull' | 'abort'
 
 /** A commit or push whose answer never came: the retry sends the same request, body and all. */
 export interface UnknownWrite {
@@ -39,12 +50,18 @@ export interface UnknownWrite {
 export type DeliveryOutcome =
   | { kind: 'committed'; result: GitCommitResult; at: number }
   | { kind: 'pushed'; result: GitPushResult; at: number }
+  | { kind: 'fetched'; result: GitFetchResult; at: number }
+  | { kind: 'pulled'; result: GitPullResult; at: number }
+  | { kind: 'aborted'; result: GitAbortResult; at: number }
 
 export interface DeliveryWrites {
   stage(paths: string[]): void
   unstage(paths: string[]): void
   commit(message: string, skipHooks: boolean): Promise<WriteEnd>
   push(): Promise<void>
+  fetch(): Promise<'done' | 'failed'>
+  pull(): Promise<'done' | 'failed'>
+  abort(operation: GitAbortResult['operation']): Promise<'done' | 'failed'>
   /** Undefined when nothing was pending. */
   retry(): Promise<WriteEnd | undefined>
   abandon(): void
@@ -73,7 +90,7 @@ export function useDelivery(input: {
   const base = `tasks/${encodeURIComponent(sessionId)}/git`
   const [read, setRead] = useState<DeliveryRead>({ kind: 'loading' })
   const [queue, setQueue] = useState<Queued[]>([])
-  const [writing, setWriting] = useState<'commit' | 'push' | undefined>()
+  const [writing, setWriting] = useState<'commit' | 'push' | SyncKind | undefined>()
   const [failure, setFailure] = useState<DeliveryFailure>()
   const [unknown, setUnknown] = useState<UnknownWrite>()
   const [outcome, setOutcome] = useState<DeliveryOutcome>()
@@ -224,6 +241,38 @@ export function useDelivery(input: {
     [base, load],
   )
 
+  /** 获取, 拉取 and 中止: each a new request; the state read after it shows what took, whatever the answer. */
+  const sync = useCallback(
+    async (kind: SyncKind, body: Record<string, unknown> = {}): Promise<'done' | 'failed'> => {
+      setWriting(kind)
+      setFailure(undefined)
+      setOutcome(undefined)
+      try {
+        const result = await api<GitFetchResult | GitPullResult | GitAbortResult>(`${base}/${kind}`, {
+          method: 'POST',
+          body: { requestId: newRequestId(), ...body },
+          timeoutMs: WAIT_MS[kind],
+        })
+        const at = Date.now()
+        setOutcome(
+          kind === 'fetch'
+            ? { kind: 'fetched', result: result as GitFetchResult, at }
+            : kind === 'pull'
+              ? { kind: 'pulled', result: result as GitPullResult, at }
+              : { kind: 'aborted', result: result as GitAbortResult, at },
+        )
+        return 'done'
+      } catch (cause) {
+        setFailure(uncertainWrite(cause) ? { kind, code: 'sync-unanswered', text: '' } : failureOf(kind, cause))
+        return 'failed'
+      } finally {
+        setWriting(undefined)
+        await load()
+      }
+    },
+    [base, load],
+  )
+
   const writes: DeliveryWrites = {
     stage(paths) {
       if (paths.length) setQueue(previous => [...previous, { kind: 'stage', paths, requestId: newRequestId() }])
@@ -236,6 +285,9 @@ export function useDelivery(input: {
     async push() {
       await send({ kind: 'push', requestId: newRequestId(), body: {} })
     },
+    fetch: () => sync('fetch'),
+    pull: () => sync('pull'),
+    abort: operation => sync('abort', { operation }),
     retry: async () => (unknown ? send(unknown, true) : undefined),
     /** Lets go of the unknown result on this page only, so a new request can be made; the Host's receipt stays unknown. */
     abandon: () => {

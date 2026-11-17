@@ -23,6 +23,7 @@ import {
 } from '@latch/ui'
 import { FoldRows, IconTile, Loading, MiddleEllipsis, moreButton, NoteLine, ObjectRow, SettingsGroup, SettingsRow } from './common.tsx'
 import { ProjectEditor } from './ProjectEditor.tsx'
+import { useCloneProject } from './CloneProject.tsx'
 import { SettingsPages } from './navigation.tsx'
 
 /** On another device: where projects are added, by the computer's name. */
@@ -287,14 +288,22 @@ export function WorkspacesSettings({
       }
     : {}
 
+  const cloning = useCloneProject(snapshot.catalog?.features?.gitSync === true ? folders : null, workspaceId => {
+    onChanged()
+    void load()
+    if (snapshot.catalog?.projectFolders) setEditing(workspaceId)
+  })
   const defaultId = snapshot.catalog?.defaults.workspaceId
   const start = workspaces?.find(workspace => workspace.id === 'default')
   const projects = workspaces?.filter(workspace => workspace.id !== 'default') ?? []
   const caption = folders ? undefined : desktop && owner ? RESTART_CAPTION : lockedCaption(snapshot.hostName)
   const addAction = folders ? (
-    <Button variant="outline" icon={FolderPlus} loading={picking} onClick={() => void pick()}>
-      {picking ? '选择中…' : '添加项目'}
-    </Button>
+    <span className="workspaces-actions">
+      {cloning.button}
+      <Button variant="outline" icon={FolderPlus} loading={picking} onClick={() => void pick()}>
+        {picking ? '选择中…' : '添加项目'}
+      </Button>
+    </span>
   ) : undefined
   const multi = snapshot.catalog?.projectFolders !== undefined
   const main = (
@@ -307,6 +316,7 @@ export function WorkspacesSettings({
         )
       ) : (
         <>
+          {cloning.status}
           {refused && (
             <RefusedNotice
               result={refused}

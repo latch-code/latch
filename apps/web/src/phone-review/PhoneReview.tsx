@@ -159,6 +159,7 @@ export function PhoneReview(props: PhoneReviewProps) {
               {...(snapshot.hostName ? { hostName: snapshot.hostName } : {})}
               offline={props.offline}
               phone
+              sync={snapshot.catalog?.features?.gitSync === true}
               onOpenFile={path => {
                 const root = summary.folders?.[0]?.id
                 onTarget({ ...target, level: 'changes', scope: 'uncommitted', file: { path, ...(root ? { root } : {}) } })
