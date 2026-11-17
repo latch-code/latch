@@ -1,3 +1,4 @@
+import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { MessagesSquare, SquareKanban } from 'lucide-react'
 import { Count, Icon, SegmentedControl, useLivePrevious } from '@latch/ui'
 import { currentShell } from '../core/shell.ts'
@@ -24,6 +25,7 @@ export function ViewSwitch({
   className?: string
   icons?: boolean
 }) {
+  useShortcutBindings()
   const keys = shortcutKeys('view', currentShell() !== null)
   const waitingBefore = useLivePrevious(waiting)
   const option = (view: WorkView) => ({

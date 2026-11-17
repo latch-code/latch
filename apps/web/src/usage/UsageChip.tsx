@@ -1,3 +1,4 @@
+import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { useEffect } from 'react'
 import type { HarnessInfo, QuotaState } from '@latch/protocol'
 import { AlertGlyph, Icon, Tooltip } from '@latch/ui'
@@ -33,6 +34,7 @@ function LimitChip({
   reset: string | undefined
   request: UsageRequest
 }) {
+  useShortcutBindings()
   const keys = shortcutKeys('usage', currentShell() !== null) ?? undefined
   const words = `${name}${figure}`
   return (

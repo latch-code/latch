@@ -145,6 +145,12 @@ const spacesApi = Object.freeze({
       ipcRenderer.send('latch:space:ready', false)
     }
   },
+  /** The page's keys for the two items, as chords (`Mod+Shift+Digit1`); only short strings or null cross, main checks them. */
+  setKeys: keys => {
+    if (!keys || typeof keys !== 'object') return
+    const chord = value => (typeof value === 'string' && value.length <= 32 && /^[A-Za-z0-9+]+$/u.test(value) ? value : null)
+    ipcRenderer.send('latch:space:keys', { code: chord(keys.code), agents: chord(keys.agents) })
+  },
 })
 
 /** Absent is null; a given ID must match, otherwise undefined and the call is refused here. */

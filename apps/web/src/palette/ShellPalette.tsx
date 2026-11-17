@@ -1,3 +1,4 @@
+import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { useCallback, useMemo } from 'react'
 import { readsProjectFiles } from '@latch/protocol'
 import {
@@ -64,6 +65,7 @@ const SETTINGS_ROWS: ReadonlyArray<{ section: SettingsSection; keywords?: string
 
 /** The palette over the shell: what this device can reach now, and only that. */
 export function ShellPalette({ shell }: { shell: ShellState }) {
+  useShortcutBindings()
   const {
     snapshot,
     catalog,

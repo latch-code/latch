@@ -418,7 +418,11 @@ export interface LatchShell {
   /** The 浏览器 tab's tabs; version 1 shells (no sessions, no list) are not used. Never on another computer's page. */
   browser?: ShellBrowser
   /** Code or 我的 Agent chosen in the menu bar. Shells from before the two places do not have it. */
-  spaces?: { onShow(callback: (space: 'code' | 'agents') => void): () => void }
+  spaces?: {
+    onShow(callback: (space: 'code' | 'agents') => void): () => void
+    /** The menu bar's keys for Code and 我的 Agent in this window; main checks them again. Absent in older desktop apps. */
+    setKeys?(keys: { code: string | null; agents: string | null }): void
+  }
 }
 
 declare global {

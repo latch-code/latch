@@ -1,3 +1,4 @@
+import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { ArrowLeft } from 'lucide-react'
 import {
   Count,
@@ -32,6 +33,7 @@ import type { ShellState } from './useShellLayout.tsx'
  * 检查更新. On the desktop app the row moves the window, except over its controls.
  */
 export function TitleBar({ shell }: { shell: ShellState }) {
+  useShortcutBindings()
   const {
     titlebar,
     route,

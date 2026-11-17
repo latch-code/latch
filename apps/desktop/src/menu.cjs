@@ -9,10 +9,18 @@ const { isAppUrl } = require('./proxy.cjs')
  * itself answers to (⇧⌘1, ⇧⌘2). They start disabled: main enables them while the focused window's page has said it has
  * the two places (`SPACE_ITEMS`). 「用默认外观打开」 is always on: it is the way back when a customised page cannot be
  * used, so it asks nothing of the page.
- * @param {{ packaged: boolean, onCheckForUpdates: () => void, onSpace?: (space: 'code' | 'agents') => void, onSafeMode?: () => void }} input
+ * The two items' keys are the focused window's own bindings (`spaceAccelerator`); the template is built again when they
+ * change.
+ * @param {{ packaged: boolean, onCheckForUpdates: () => void, onSpace?: (space: 'code' | 'agents') => void, onSafeMode?: () => void, accelerators?: SpaceAccelerators }} input
  * @returns {import('electron').MenuItemConstructorOptions[]}
  */
-function menuTemplate({ packaged, onCheckForUpdates, onSpace = () => {}, onSafeMode = () => {} }) {
+function menuTemplate({
+  packaged,
+  onCheckForUpdates,
+  onSpace = () => {},
+  onSafeMode = () => {},
+  accelerators = DEFAULT_SPACE_ACCELERATORS,
+}) {
   return [
     {
       label: 'Latch',
@@ -44,8 +52,20 @@ function menuTemplate({ packaged, onCheckForUpdates, onSpace = () => {}, onSafeM
     {
       label: '显示',
       submenu: [
-        { label: 'Code', id: 'space-code', accelerator: 'Shift+CmdOrCtrl+1', enabled: false, click: () => onSpace('code') },
-        { label: '我的 Agent', id: 'space-agents', accelerator: 'Shift+CmdOrCtrl+2', enabled: false, click: () => onSpace('agents') },
+        {
+          label: 'Code',
+          id: 'space-code',
+          ...(accelerators.code ? { accelerator: accelerators.code } : {}),
+          enabled: false,
+          click: () => onSpace('code'),
+        },
+        {
+          label: '我的 Agent',
+          id: 'space-agents',
+          ...(accelerators.agents ? { accelerator: accelerators.agents } : {}),
+          enabled: false,
+          click: () => onSpace('agents'),
+        },
         { type: 'separator' },
         { label: '用默认外观打开', id: 'safe-mode', click: () => onSafeMode() },
         { role: 'reload', label: '重新载入' },
@@ -72,6 +92,104 @@ function menuTemplate({ packaged, onCheckForUpdates, onSpace = () => {}, onSafeM
   ]
 }
 
+/** @typedef {{ code: string | null, agents: string | null }} SpaceAccelerators */
+
+/** @type {SpaceAccelerators} */
+const DEFAULT_SPACE_ACCELERATORS = Object.freeze({ code: 'Shift+CmdOrCtrl+1', agents: 'Shift+CmdOrCtrl+2' })
+
+/**
+ * Keys no page may give the two items, the same lists `packages/protocol/src/shortcuts.ts` refuses (checked by
+ * `apps/desktop/test/menu-shortcuts.test.ts`): the system's, the menu's roles' and the page's fixed keys.
+ */
+const RESERVED_CHORDS = new Set([
+  // The system's.
+  'Mod+Space',
+  'Mod+Alt+Space',
+  'Mod+Tab',
+  'Mod+Shift+Tab',
+  'Mod+Backquote',
+  'Mod+KeyQ',
+  'Mod+KeyH',
+  'Mod+Alt+KeyH',
+  'Mod+KeyM',
+  'Mod+Alt+KeyD',
+  'Mod+Alt+Escape',
+  'Mod+Shift+Digit3',
+  'Mod+Shift+Digit4',
+  'Mod+Shift+Digit5',
+  // The menu's roles.
+  'Mod+KeyZ',
+  'Mod+Shift+KeyZ',
+  'Mod+KeyX',
+  'Mod+KeyC',
+  'Mod+KeyV',
+  'Mod+KeyA',
+  'Mod+KeyR',
+  'Mod+Alt+KeyI',
+  'Mod+Digit0',
+  'Mod+Equal',
+  'Mod+Shift+Equal',
+  'Mod+Minus',
+  'Mod+KeyW',
+  // The page's fixed keys.
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(digit => `Mod+Digit${digit}`),
+  ...[1, 2, 3, 4].map(digit => `Mod+Alt+Digit${digit}`),
+  'Mod+Backslash',
+  'Mod+Shift+Backslash',
+  'Mod+Alt+BracketRight',
+  'Mod+Alt+BracketLeft',
+  'Mod+Enter',
+  'Mod+Alt+Shift+Digit0',
+])
+
+/**
+ * Every key code a chord may end in (`KEY_CODES` of `packages/protocol/src/shortcuts.ts`, checked equal by
+ * `apps/desktop/test/menu-shortcuts.test.ts`) and its Electron accelerator key. A Map, so no name reaches a prototype:
+ * `constructor`, `toString` or `__proto__` is simply not a key.
+ * @type {ReadonlyMap<string, string>}
+ */
+const ACCELERATOR_KEYS = new Map([
+  ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(letter => /** @type {[string, string]} */ ([`Key${letter}`, letter])),
+  ...'0123456789'.split('').map(digit => /** @type {[string, string]} */ ([`Digit${digit}`, digit])),
+  ['Comma', ','],
+  ['Period', '.'],
+  ['Slash', '/'],
+  ['Backslash', '\\'],
+  ['BracketLeft', '['],
+  ['BracketRight', ']'],
+  ['Semicolon', ';'],
+  ['Quote', "'"],
+  ['Minus', '-'],
+  ['Equal', '='],
+  ['Backquote', '`'],
+  ['Enter', 'Enter'],
+  ['Space', 'Space'],
+  ['Tab', 'Tab'],
+  ['Escape', 'Escape'],
+  ['Backspace', 'Backspace'],
+  ['ArrowUp', 'Up'],
+  ['ArrowDown', 'Down'],
+  ['ArrowLeft', 'Left'],
+  ['ArrowRight', 'Right'],
+  ...Array.from({ length: 12 }, (_, index) => /** @type {[string, string]} */ ([`F${index + 1}`, `F${index + 1}`])),
+])
+
+/**
+ * A page's chord for Code or 我的 Agent as an Electron accelerator, or null when it is not one main gives the menu:
+ * outside the grammar (`Mod`, `Alt`, `Shift` in that order, then one key code of the list above, with `Mod` or `Alt`)
+ * or reserved. Main checks every chord itself, whatever the preload already did.
+ * @param {unknown} chord
+ * @returns {string | null}
+ */
+function spaceAccelerator(chord) {
+  if (typeof chord !== 'string' || chord.length > 32) return null
+  const match = /^(Mod\+)?(Alt\+)?(Shift\+)?([A-Za-z0-9]+)$/u.exec(chord)
+  if (!match || (!match[1] && !match[2]) || RESERVED_CHORDS.has(chord)) return null
+  const key = ACCELERATOR_KEYS.get(match[4])
+  if (key === undefined) return null
+  return [match[3] && 'Shift', match[2] && 'Alt', match[1] && 'CmdOrCtrl', key].filter(Boolean).join('+')
+}
+
 /** The menu items main enables only for a page that has Code and 我的 Agent. */
 const SPACE_ITEMS = ['space-code', 'space-agents']
 
@@ -80,13 +198,21 @@ const SPACE_ITEMS = ['space-code', 'space-agents']
  * its window loads another document: `did-navigate` fires for a top-level, cross-document navigation only, so a frame
  * (an 应用 page, a preview) or a same-document history entry (a phone layer's pushState) leaves it standing; the page
  * says it again once the new document subscribes.
- * @param {{ focused: () => import('electron').WebContents | null | undefined, item: (id: string) => { enabled: boolean } | null | undefined }} input
+ * @param {{ focused: () => import('electron').WebContents | null | undefined, item: (id: string) => { enabled: boolean } | null | undefined, rebuild?: (accelerators: SpaceAccelerators) => void }} input
  */
-function spaceMenu({ focused, item }) {
+function spaceMenu({ focused, item, rebuild = () => {} }) {
   const pages = new WeakSet()
   const watched = new WeakSet()
+  /** @type {WeakMap<object, SpaceAccelerators>} */
+  const keysOf = new WeakMap()
+  let shown = DEFAULT_SPACE_ACCELERATORS
   const sync = () => {
     const contents = focused()
+    const wanted = (contents && keysOf.get(contents)) ?? DEFAULT_SPACE_ACCELERATORS
+    if (wanted.code !== shown.code || wanted.agents !== shown.agents) {
+      shown = wanted
+      rebuild(wanted)
+    }
     const enabled = Boolean(contents && pages.has(contents))
     for (const id of SPACE_ITEMS) {
       const entry = item(id)
@@ -99,6 +225,7 @@ function spaceMenu({ focused, item }) {
       watched.add(contents)
       contents.on('did-navigate', () => {
         pages.delete(contents)
+        keysOf.delete(contents)
         sync()
       })
     }
@@ -106,7 +233,17 @@ function spaceMenu({ focused, item }) {
     else pages.delete(contents)
     sync()
   }
-  return { ready, sync }
+  /**
+   * A page's keys for the two items. Each is checked here again (`spaceAccelerator`); one that is not given or does not
+   * pass leaves that item without keys rather than with keys the page did not ask for.
+   * @param {import('electron').WebContents} contents @param {unknown} value
+   */
+  const keys = (contents, value) => {
+    const record = value && typeof value === 'object' ? /** @type {Record<string, unknown>} */ (value) : {}
+    keysOf.set(contents, { code: spaceAccelerator(record.code), agents: spaceAccelerator(record.agents) })
+    sync()
+  }
+  return { ready, sync, keys }
 }
 
 /**
@@ -166,4 +303,14 @@ function openSafeMode(contents, { home, wait = setTimeout } = {}) {
   return true
 }
 
-module.exports = { menuTemplate, SPACE_ITEMS, spaceMenu, safeModeUrl, openSafeMode }
+module.exports = {
+  menuTemplate,
+  SPACE_ITEMS,
+  spaceMenu,
+  spaceAccelerator,
+  ACCELERATOR_KEYS,
+  RESERVED_CHORDS,
+  DEFAULT_SPACE_ACCELERATORS,
+  safeModeUrl,
+  openSafeMode,
+}

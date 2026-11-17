@@ -1,5 +1,5 @@
 ---
-description: 自定义：一台 Host 一份外观文档（数据，不是代码），校验与展开、修订与回执、只写名单内令牌的样式表、安全界面的令牌锁与钉住的标记、安全模式与恢复默认。
+description: 自定义：一台 Host 一份外观文档（数据，不是代码），校验与展开、修订与回执、只写名单内令牌的样式表、安全界面的令牌锁与钉住的标记、安全模式与恢复默认；每台设备自己的快捷键文档。
 sources:
   - packages/protocol/src/customization.ts
   - packages/ui/src/custom.ts
@@ -15,6 +15,14 @@ sources:
   - apps/web/src/components/SafeModeBanner.tsx
   - apps/web/src/settings/CustomizationSettings.tsx
   - apps/desktop/src/menu.cjs
+  - packages/protocol/src/shortcuts.ts
+  - apps/host/src/shortcuts.ts
+  - apps/host/src/routes/shortcuts.ts
+  - apps/web/src/core/shortcutBindings.ts
+  - apps/web/src/workbenchShortcuts.ts
+  - apps/web/src/settings/ShortcutsSettings.tsx
+  - apps/desktop/src/main.cjs
+  - apps/desktop/src/preload.cjs
 ---
 
 # 自定义
@@ -25,7 +33,7 @@ sources:
 - 页面只把值写进名单内的令牌（`CUSTOM_TOKENS`）；安全界面的令牌被锁住，不参与自定义。
 - 自由 CSS 不提供：它可以盖住、藏起或仿造审批，这一条无法靠逐项封堵来保证。
 
-已实现的只有外观，其余见「尚未实现」。
+已实现的是外观与每台设备自己的[快捷键](#快捷键)，其余见「尚未实现」。
 
 ## 文档
 
@@ -143,6 +151,78 @@ Host 的文档已经是默认外观时，按键与 `#safe` 不进入安全模式
 
 横幅的「恢复默认」按当前修订写入默认外观并保留历史。没有 `admin` 的设备不能恢复，只能放弃等待；页面完全不能用时用命令行的 `customization reset`。
 
+## 快捷键
+
+快捷键是每台设备自己的：同一台 Host 上，桌面端和每个浏览器各有一份，互不影响。
+
+**文档。** 类型、规则与默认键都在 [`packages/protocol/src/shortcuts.ts`](../packages/protocol/src/shortcuts.ts)。
+
+```json
+{ "schema": 1, "client": "desktop", "bindings": { "new": "Mod+Shift+KeyY" } }
+```
+
+- `client`：`desktop` 或 `browser`。两种客户端的默认键不同，只有与页面自己的种类相同的文档才生效。
+- `bindings`：只写改过的操作。省略的就是默认键（`DEFAULT_SHORTCUTS`）；写成默认键会被拒绝。
+- 一个键是可选的 `Mod`、`Alt`、`Shift`（按这个顺序）加一个 `KeyboardEvent.code`，例如 `Mod+Alt+KeyB`。`Mod` 在 Mac 上是 ⌘，在其他系统上是 Ctrl，按下 ⌘ 或 Ctrl 都算。
+- 至少要有 `Mod` 或 `Alt`。单独一个键或只加 Shift 是在打字，不收。
+
+**能改的操作**（`SHORTCUT_ACTIONS`）：设置、新会话、Code、我的 Agent、搜索、侧栏、侧边面板、在侧边面板打开…、切换对话与看板、改动、终端、浏览器、选取元素、在会话中查找、搜索文件、浏览文件、关闭当前文件、上一个和下一个会话、下一个等你处理的请求、聚焦输入框、额度与用量、快捷键。
+
+**固定的**（`FIXED_SHORTCUTS`），设置里标「固定」：
+
+- 成组的键：第 N 个会话、输入框的四个控件。
+- 终端的分屏与窗格。
+- 允许或拒绝选中的请求。改键不能让「允许」更容易按到。
+- 撤销归档，以及 `⌘⌥⇧0` 安全模式。
+- 输入框里的按键：Esc Esc、↑、Space、回车。
+
+**拒绝，不修正。** Host 与页面用同一个 `shortcutRefusal`。下面这些键都拒绝，提示里说明原因：
+
+| 原因 | 提示 |
+| --- | --- |
+| 已被另一个操作（含改过的）或固定的键使用 | 「已用于「搜索」」 |
+| 系统保留：`SYSTEM_RESERVED`，如 ⌘Space、⌘Tab、⌘Q、⌘H、⌘M、⇧⌘3/4/5 | 「系统保留」 |
+| 浏览器保留，只对浏览器：`BROWSER_RESERVED`，即标签页、窗口、历史、地址栏、编辑、缩放、开发者工具、打印与保存 | 「浏览器保留」 |
+| 菜单占用，只对桌面端：`MENU_RESERVED`，即 `menu.cjs` 里各角色的键 | 「菜单占用」 |
+
+操作自己的默认键总是接受。⌘W 在桌面端是关闭当前文件，而菜单的「关闭窗口」也用 ⌘W：这个默认键先于规则存在，改回默认就是恢复。
+
+文档里有未知字段、未知操作或语法外的键时，整份文档以 400 `shortcuts-invalid` 拒绝，消息里带上操作名和原因。
+
+**Host。** 存储在数据目录的 `shortcuts.json`（0600，原子写入，strict schema；[`apps/host/src/shortcuts.ts`](../apps/host/src/shortcuts.ts)），按设备 ID 分开：
+
+- 每台设备一项：`{ revision, at, doc, receipts }`，最多保留 16 条回执。
+- 最多 256 台设备；超出时先删最久没写的。
+- 打开时删去 Host 已不登记的设备。读不出或通不过规则的文件改名为 `shortcuts.json.unreadable-<时间>` 留着，各设备按默认键启动。
+
+| 接口 | 权限 | 作用 |
+| --- | --- | --- |
+| `GET /link/api/shortcuts` | `view` | 这台设备自己的 `{ revision, doc }`；没有保存过时是 `{ revision: 0, doc: null }` |
+| `POST /link/api/shortcuts` `{ requestId, baseRevision, doc }` | `view` | 保存这台设备的文档 |
+| `POST /link/api/shortcuts/reset` `{ requestId, baseRevision }` | `view` | 全部恢复默认 |
+
+- **只读写自己的。** 设备取自凭据，不取自请求；设备读不到、也写不了别的设备的快捷键。
+- **回执与冲突。** 回执和基版的规则与外观相同：同一请求得到原先的回答（`replayed: true`），同一编号用于另一次修改回 409 `request-id-reused`，基版过期回 409 `shortcuts-conflict`。
+- **结果未知。** 文件已替换而目录同步失败时回 503 `shortcuts-write-unknown`，原请求重试时补完。在这之前同一台设备的其他写入回 503 `shortcuts-write-pending`；别的设备照常写入，以已替换的文件为准，它自己的同步一并补完。
+- **没有变化不写。** 与当前相同的文档（包括已是默认时的恢复默认）不写文件，回当前修订号。
+- **权限复核。** 入口、排队后与文件替换前各核对一次设备。
+- **限速。** 保存与恢复默认都计入 `classC`。拒绝的原因最多点名 4 个未知字段或操作，每个截到 40 字。
+- **不审计，不弹本机确认。** 改键只改变这台设备自己的页面响应哪些键，不授予任何能力。快照的 `catalog.features.shortcuts` 为真时，页面才提供改键。
+
+**页面。**
+
+- **状态。** [`shortcutBindings.ts`](../apps/web/src/core/shortcutBindings.ts) 在每次连上一台 Host、换一台设备时重新读取，读到之前用默认键。
+- **生效范围。** 改键同时作用于按键的匹配（`workbenchShortcut`、`shortcutMatches`）和所有显示快捷键的地方：按钮与提示、`⌘/` 一览、搜索面板、设置。
+- **结果未知。** 原请求按 Host 与设备保留在页面内，可以重试同一请求或放弃等待；在它之前不接受新的修改。
+- **改键。** 设置 › 快捷键里点按键开始记录：按下新的组合键，Esc 取消。被拒绝时在行内写出原因并继续记录。改过的行旁边有「恢复默认」，页尾有「全部恢复默认」。
+
+**桌面端菜单。**
+
+- 「显示 › Code」「显示 › 我的 Agent」是菜单项，用聚焦窗口自己的键。页面经 `latchShell.spaces.setKeys` 把两个键交给主进程。
+- 主进程用 `menu.cjs` 的 `spaceAccelerator` 再核对一次语法与保留键，然后重建菜单。没通过的项不给键，不会沿用页面没要的键。
+- 其他窗口或新载入的页面回到默认键。保留键与页面同源，由 `apps/desktop/test/menu-shortcuts.test.ts` 核对。
+
+
 ## 尚未实现
 
 - 底色、侧栏、文字的种子色，等宽字体与背景效果档位。
@@ -160,3 +240,7 @@ Host 的文档已经是默认外观时，按键与 `#safe` 不进入安全模式
 | 校验、修订、回执、审计、权限、限速、命令行 | `apps/host/test/customization.test.ts` |
 | 展开用的原值与 `tokens.css` 一致、`resolvableTokens` 与 `CUSTOM_TOKENS` 等值、以 Host 为准、安全模式入口 | `apps/web/test/customization.test.ts` |
 | 桌面端菜单项、同来源主框与精确目标 | `apps/desktop/test/safe-mode.test.ts`、`e2e/desktop.e2e.ts` |
+| 快捷键的规则、默认键各自通过、按设备存储与路由、只读写自己的 | `apps/host/test/shortcuts.test.ts` |
+| 改键后的匹配与显示、默认键不变、记录、结果未知后重试同一请求 | `apps/web/test/shortcut-bindings.test.ts`、`apps/web/test/workbench-shortcuts.test.ts` |
+| 菜单的 Code 与我的 Agent 用聚焦窗口的键，保留键与页面一致 | `apps/desktop/test/menu-shortcuts.test.ts` |
+| 浏览器与桌面端里改键、使用、刷新后仍在、恢复默认 | `e2e/shortcuts-rebind.e2e.ts`、`e2e/desktop-shortcuts.e2e.ts` |

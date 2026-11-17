@@ -356,6 +356,7 @@ import { standardHarnessDriver } from './plugins/standard/index.ts'
 import { createWorkspacePlugin } from './plugins/tools/workspace-files/index.ts'
 import { PromptTemplateStore } from './prompt-templates.ts'
 import { CustomizationStore } from './customization.ts'
+import { ShortcutsStore } from './shortcuts.ts'
 import { createSessionRoutes } from './session-routes.ts'
 import { createFileRoutes } from './files/index.ts'
 import { FileDirectoryReader } from './files/directory.ts'
@@ -2597,6 +2598,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     const templateStore = await PromptTemplateStore.open(dataDir)
     const customization = await CustomizationStore.open(dataDir, { now, log })
+    const shortcuts = await ShortcutsStore.open(dataDir, { now, log, known: id => devices.get(id) !== undefined })
     const modelUsageRoutes = createModelUsageRoutes<Caller>({
       ledger: usageLedger,
       turns: turnLog,
@@ -2943,6 +2945,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       routes,
     } = createRoutes(routeContext, {
       customization: { store: () => customization, auditFailed },
+      shortcuts: { store: () => shortcuts },
       native: {
         options,
         identity,

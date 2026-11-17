@@ -10,6 +10,8 @@ export interface HostFeatures {
   configReceipts?: true
   /** `/customization`: one appearance document for the Host, with revisions (docs/CUSTOMIZATION.md). */
   customization?: true
+  /** `/shortcuts`: each device's own key bindings (docs/CUSTOMIZATION.md#快捷键). */
+  shortcuts?: true
   /** `POST /tasks/:id/config-requests/:requestId/check`: an unknown config change settled from the agent's own reading. */
   configCheck?: true
   promptTemplates?: true

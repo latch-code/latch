@@ -74,6 +74,7 @@ const LOCKED_SOURCES: ReadonlyArray<[file: string, what: string, needle: RegExp]
   ['panel/delivery/parts.tsx', '交付的一行', /className="delivery-line" data-tone=\{tone\} data-lock=\{locked \? '' : undefined\}/u],
   ['panel/delivery/DeliveryPanel.tsx', '提交或推送结果未知', /<Line\s+locked\s[\s\S]+?\{what\}结果未知/u],
   ['panel/delivery/PullRequestSection.tsx', 'PR 结果未知', /<Line\s+locked\s[\s\S]+?PR 结果未知/u],
+  ['settings/ShortcutsSettings.tsx', '快捷键修改结果未知', /className="shortcut-unknown" data-lock=""/u],
   ['phone-review/PhoneReview.tsx', '发送结果未知', /className="phone-review-foot-text" data-lock="">[\s\S]{0,160}发送结果未知/u],
   ['shell/ConversationView.tsx', '权限漂移与权限没确认的停止行', /className="composer-stop"\s+data-secure=""/u],
   ['composer/ApprovalDrawer.tsx', '审批卡（Drawer 的 secure 渲染 data-secure）', /<Drawer\s+className="approval-panel"\s+secure\s/u],

@@ -569,6 +569,9 @@ async function startLifecycle({ supervisor, hooks }) {
  * and installs through the gate; the page only sees its view. 「检查更新…」 in the app menu checks and shows
  * Settings › 关于.
  */
+/** @type {(accelerators?: { code: string | null, agents: string | null }) => void} */
+let buildMenu = () => {}
+
 async function startUpdates({ proxy, supervisor }) {
   const userData = app.getPath('userData')
   const config = updates.configuration()
@@ -677,12 +680,22 @@ async function startUpdates({ proxy, supervisor }) {
     const contents = window?.webContents
     if (contents) menus.openSafeMode(contents, { home: homeOf(contents) })
   }
-  if (process.platform === 'darwin')
+  // The menu bar, built again when the focused window's keys for Code and 我的 Agent differ (`menus.spaceMenu`).
+  buildMenu = accelerators => {
+    if (process.platform !== 'darwin') return
     Menu.setApplicationMenu(
       Menu.buildFromTemplate(
-        menus.menuTemplate({ packaged: app.isPackaged, onCheckForUpdates: showUpdates, onSpace: showSpace, onSafeMode: openSafeMode }),
+        menus.menuTemplate({
+          packaged: app.isPackaged,
+          onCheckForUpdates: showUpdates,
+          onSpace: showSpace,
+          onSafeMode: openSafeMode,
+          ...(accelerators ? { accelerators } : {}),
+        }),
       ),
     )
+  }
+  buildMenu()
 
   // The same gate for a quit the user starts: an install at quit waits for nothing that runs; a waiting install is given
   // up. A quit macOS starts (logout, restart, shutdown) is never held; the update waits for the next time.
@@ -1076,11 +1089,17 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
       return window && !window.isDestroyed() ? window.webContents : null
     },
     item: id => Menu.getApplicationMenu()?.getMenuItemById(id),
+    rebuild: accelerators => buildMenu(accelerators),
   })
   const syncSpaceMenu = spaceMenu.sync
   ipcMain.on('latch:space:ready', (event, ready) => {
     if (!senderOf(event) || typeof ready !== 'boolean') return
     spaceMenu.ready(event.sender, ready)
+  })
+  // The page's keys for Code and 我的 Agent; menu.cjs checks each again and gives a refused one no keys.
+  ipcMain.on('latch:space:keys', (event, keys) => {
+    if (!senderOf(event)) return
+    spaceMenu.keys(event.sender, keys)
   })
   app.on('browser-window-blur', syncSpaceMenu)
   app.on('will-quit', () => computers.stop())

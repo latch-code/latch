@@ -290,6 +290,65 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+/* A rebindable row: its keys are the button that records new ones; a moved one has 恢复默认 beside it. */
+.shortcut-trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+.shortcut-edit {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--sp-2) var(--sp-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-4);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.shortcut-edit:hover:not(:disabled) {
+  background: var(--hover);
+}
+.shortcut-edit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.shortcut-edit:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.shortcut-recording {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-2) var(--sp-6);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-4);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.shortcut-fixed {
+  color: var(--faint);
+  font-size: var(--fs-caption);
+}
+.shortcut-refusal {
+  color: var(--amber);
+}
+.shortcut-unknown,
+.shortcut-reset-all {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8);
+  margin-top: var(--sp-12);
+}
+.shortcut-unknown-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+}
 
 /*
  * The shortcuts over the session (⌘/): an xl dialog, the search in the title row beside the close button, the rows in

@@ -1,3 +1,4 @@
+import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { useRef, type ReactNode, type RefObject } from 'react'
 import { appRef, listedApps, originTitle } from '../plugin-pages/model.ts'
 import { FolderGit2, GitCompare, ListTodo } from 'lucide-react'
@@ -96,6 +97,7 @@ function TitleStatus({ summary, cancelling, frozen }: { summary: TaskSummary; ca
  * after its glyph and the key that toggles it as caps; before that it is the plain toggle, and nothing is guessed.
  */
 function ChangesToggle({ toggle, totals }: { toggle: HeaderToggle; totals?: ChangeTotals | undefined }) {
+  useShortcutBindings()
   if (!totals?.files) return <Toggle toggle={toggle} />
   const keys = shortcutButtonKeys('changes', currentShell() !== null)
   return (

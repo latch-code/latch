@@ -1,3 +1,4 @@
+import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { fileContextKey } from '../preview/fileContext.ts'
 import { readsProjectFiles } from '@latch/protocol'
 import { ProfileSlot } from '../agents/AgentProfile.tsx'
@@ -24,6 +25,7 @@ import { shortcutKeys } from '../workbenchShortcuts.ts'
 
 /** The session's panels: the same surfaces in the column beside the conversation and in the page over it. */
 export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagingWrites: ReturnType<typeof useStagingWrites> }) {
+  useShortcutBindings()
   const {
     current,
     summary,

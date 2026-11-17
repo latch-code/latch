@@ -1,3 +1,4 @@
+import { shortcutMatches } from '../../workbenchShortcuts.ts'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { Camera, Hand, Monitor, Moon, RotateCw, Smartphone, SquareDashedMousePointer, Sun, SunMoon, Tablet } from 'lucide-react'
 import type { TerminalSummary } from '@latch/protocol'
@@ -493,7 +494,7 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
         stopPicking()
         return
       }
-      if (event.code === 'KeyS' && event.shiftKey && (event.metaKey || event.ctrlKey) && !event.altKey && showsView && onCompose) {
+      if (shortcutMatches(event, 'pick', true) && showsView && onCompose) {
         event.preventDefault()
         setPicking(value => !value)
       }

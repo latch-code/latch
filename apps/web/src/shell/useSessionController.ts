@@ -1,3 +1,4 @@
+import { shortcutMatches } from '../workbenchShortcuts.ts'
 import { isPersonalChat, personalChatModel, topicOwner } from '../agents/chat.ts'
 import { sessionAgent } from '../agents/model.ts'
 import { parseModelChoice, readsProjectFiles, type AppSnapshot } from '@latch/protocol'
@@ -805,12 +806,7 @@ export function useSessionController({
   }, [approvalFocusRow, approvalFocusSession, current?.summary.id])
   useEffect(() => {
     const handle = (event: KeyboardEvent) => {
-      if (
-        event.code === 'KeyA'
-        && event.altKey
-        && (currentShell() ? event.metaKey : event.shiftKey)
-        && !document.querySelector('dialog[open]')
-      ) {
+      if (shortcutMatches(event, 'next-approval', currentShell() !== null) && !document.querySelector('dialog[open]')) {
         event.preventDefault()
         nextApproval()
       }

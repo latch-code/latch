@@ -1,3 +1,4 @@
+import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import type { ComponentProps } from 'react'
 import {
   Button,
@@ -148,6 +149,7 @@ function shellTransport(shell: ShellState): string {
 
 /** Uses the connection of this page and the computers this desktop has actually listed. */
 export function WorkbenchConnection({ shell, inert }: { shell: ShellState; inert: boolean }) {
+  useShortcutBindings()
   const computers = useComputers()
   const desktop = currentShell()
   const connected = shell.connection === 'connected'

@@ -6,6 +6,7 @@ import { CustomizationActionsContext, CustomizationWrites, useCustomizationActio
 import { deviceAccess } from './core/permissions.ts'
 import { computerLabel } from './core/securityCopy.ts'
 import { currentShell } from './core/shell.ts'
+import { shortcutBindings, useShortcutBindings } from './core/shortcutBindings.ts'
 import { useHarness } from './core/useHarness.ts'
 import { AppShell } from './shell/AppShell.tsx'
 import { ConnectScreen, CrashScreen, EnrollmentPage } from './components/EnrollmentPage.tsx'
@@ -35,6 +36,19 @@ export function App() {
   useEffect(() => {
     customization().markRendered()
   }, [])
+  // This device's key bindings, read again from each Host and device it connects as.
+  const hostId = snapshot?.host.hostId
+  const deviceId = snapshot?.device.id
+  const shortcutsFeature = snapshot?.catalog?.features?.shortcuts === true
+  useEffect(() => {
+    void shortcutBindings.load(hostId !== undefined && deviceId !== undefined ? { hostId, deviceId } : null, shortcutsFeature)
+  }, [hostId, deviceId, shortcutsFeature])
+  // The desktop app's menu bar shows and answers Code and 我的 Agent with this window's keys for them.
+  const bindings = useShortcutBindings()
+  useEffect(() => {
+    const keys = shortcutBindings.effective()
+    currentShell()?.spaces?.setKeys?.({ code: keys.get('space-code') ?? null, agents: keys.get('space-agents') ?? null })
+  }, [bindings])
   const safe = custom.safe !== null
   useLayoutEffect(() => {
     if (safe) document.documentElement.dataset.safeMode = ''

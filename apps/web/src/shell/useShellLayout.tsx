@@ -30,7 +30,7 @@ import { setSessionOpener } from '../core/blocking.ts'
 import { ArchiveUndo } from '../components/ArchiveUndo.tsx'
 import { basename } from '../format.ts'
 import { readPreferences, setPreference, switchWorkView, toggleWorkView, usePreferences } from '../preferences.ts'
-import { shortcutWorksOnPage, workbenchShortcut, type TerminalPaneAction } from '../workbenchShortcuts.ts'
+import { shortcutMatches, shortcutWorksOnPage, workbenchShortcut, type TerminalPaneAction } from '../workbenchShortcuts.ts'
 import { frameShortcutAllowed } from '../plugin-pages/model.ts'
 import { conversationShown } from '../composer/useArmed.ts'
 import {
@@ -1027,9 +1027,9 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   }
 
   const searchShortcut = useStableCallback((event: KeyboardEvent) => {
+    const desktopKeys = currentShell() !== null
     if (
-      event.key.toLowerCase() === 'f'
-      && (event.metaKey || event.ctrlKey)
+      shortcutMatches(event, 'find', desktopKeys)
       && selectedId !== null
       && route.entry === 'sessions'
       && !route.start
@@ -1041,7 +1041,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       setFindFocus(value => value + 1)
       return
     }
-    if (event.key.toLowerCase() !== 'k' || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
+    if (!shortcutMatches(event, 'palette', desktopKeys)) return
     // The same keys put away the palette they opened; nothing opens over another dialog.
     if (commandOpen) {
       event.preventDefault()

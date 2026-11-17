@@ -13,6 +13,7 @@ import { createMcpRoutes, type McpRouteDeps } from './mcp.ts'
 import { createNativeRoutes, type NativeRouteDeps, type NativeRoutes } from './native.ts'
 import { RouteRegistry, type RouteContext } from './registry.ts'
 import { createReviewNoteRoutes, type ReviewNoteRouteDeps } from './review-notes.ts'
+import { createShortcutRoutes, type ShortcutRouteDeps } from './shortcuts.ts'
 import { createSimulatorRoutes } from './simulators.ts'
 import type { Simulators } from '../simulators.ts'
 import { createWorkItemRoutes, type WorkItemRouteDeps } from './work-items.ts'
@@ -41,6 +42,7 @@ export interface RouteDeps {
   simulators: Simulators
   mcp: McpRouteDeps
   customization: CustomizationRouteDeps
+  shortcuts: ShortcutRouteDeps
 }
 
 /**
@@ -95,6 +97,7 @@ export function createRoutes(
       workProposals.module,
       createHistoryRoutes(context, deps.history),
       customization,
+      createShortcutRoutes(context, deps.shortcuts),
       apps,
     ]),
   }

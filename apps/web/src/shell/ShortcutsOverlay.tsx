@@ -1,3 +1,4 @@
+import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { useState } from 'react'
 import { Button, Dialog, Kbd, SearchField } from '@latch/ui'
 import { currentShell } from '../core/shell.ts'
@@ -22,6 +23,7 @@ export function ShortcutsOverlay({
   /** This device can delegate (it runs sessions and reads Agents): ⌘N is also 委托 in 我的 Agent. */
   delegate?: boolean
 }) {
+  useShortcutBindings()
   const [query, setQuery] = useState('')
   const needle = query.trim().toLocaleLowerCase()
   const rows = shortcutRows(currentShell() !== null, undefined, { spaces, delegate }).filter(row =>

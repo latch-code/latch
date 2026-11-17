@@ -393,6 +393,7 @@ export function SettingsPage({
                         <ShortcutsSettings
                           spaces={snapshot.catalog?.features?.customAgents === true}
                           delegate={canDelegate(snapshot, access)}
+                          editable={snapshot.catalog?.features?.shortcuts === true}
                         />
                       )}
                       {panel === 'workspaces' && (

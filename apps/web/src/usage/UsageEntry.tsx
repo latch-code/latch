@@ -1,3 +1,4 @@
+import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { ChartNoAxesColumn } from 'lucide-react'
 import { IconButton } from '@latch/ui'
 import { currentShell } from '../core/shell.ts'
@@ -9,6 +10,7 @@ import { openUsage, useUsageRequest } from './surface.ts'
  * icon in the sidebar's foot beside 设置, the rail, the top bar or a phone's home. Opened by a click, never by hover.
  */
 export function UsageEntry() {
+  useShortcutBindings()
   const open = useUsageRequest() !== null
   const keys = shortcutKeys('usage', currentShell() !== null) ?? undefined
   return (

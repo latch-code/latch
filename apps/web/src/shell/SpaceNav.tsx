@@ -1,3 +1,4 @@
+import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { OverviewGlyph, ScheduleGlyph } from '@latch/ui'
 import type { ReactNode } from 'react'
 import type { AppSnapshot } from '@latch/protocol'
@@ -115,6 +116,7 @@ function capsOf(id: 'new' | 'palette', drawer: boolean) {
 
 /** Code's primary: 新会话, on (pressed) while the new-session page is open. */
 export function NewSessionRow({ onNew, active, drawer }: { onNew: () => void; active: boolean; drawer: boolean }) {
+  useShortcutBindings()
   return (
     <Button
       variant="ghost"
@@ -205,6 +207,7 @@ export function NavTop({
   onSchedules?: () => void
   computerAtFoot?: boolean
 }) {
+  useShortcutBindings()
   const computers = useComputers()
   const several = computers !== undefined && computers.computers.length > 1
   // 「这台电脑」 is only the Latch app on the Host's own socket; a loopback browser is told which computer it is reading.
@@ -280,6 +283,7 @@ export function NavFoot({
   awake?: ReactNode
   update?: ReactNode
 }) {
+  useShortcutBindings()
   const keys = shortcutKeys('settings', currentShell() !== null) ?? undefined
   return (
     <nav className="sidebar-foot" aria-label="主导航">
