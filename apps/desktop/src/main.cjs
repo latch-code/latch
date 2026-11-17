@@ -413,6 +413,7 @@ function handleFolders(proxy, store) {
   ipcMain.handle('latch:folders:reveal', (event, input) => (trusted(event) ? actions.revealFolder(input) : refusedFolders))
   ipcMain.handle('latch:folders:save-session', (event, input) => (trusted(event) ? actions.saveSessionFolder(input) : refusedFolders))
   ipcMain.handle('latch:folders:clone', (event, input) => (trusted(event) ? actions.cloneRepository(input) : refusedFolders))
+  ipcMain.handle('latch:folders:export', (event, input) => (trusted(event) ? actions.exportData(input) : refusedFolders))
 }
 
 /** One request to the Host over host.sock without a credential, as the command line makes it; resolves with the status. */

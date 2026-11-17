@@ -31,7 +31,7 @@ import { nextRun, scheduleDate, scheduleSchema } from './schedule.ts'
 
 const MAX_AUTOMATIONS = 128
 /** Real runs kept per schedule; missed and skipped times are kept apart, as many again, newest first. */
-const MAX_RUNS = 50
+export const MAX_RUNS = 50
 const DAY = 24 * 60 * 60 * 1000
 /** How far back a walk over missed times starts: enough for the newest `MAX_RUNS` of them, and never more. */
 const LOOKBACK: Record<AutomationSchedule['kind'], number> = { daily: 52 * DAY, weekdays: 75 * DAY, weekly: 52 * 7 * DAY }
@@ -47,7 +47,7 @@ const MAX_ATTEMPTS = 2
 /** Ticks (half a second each) a run's card waits for the files observed after it ended. */
 const SETTLE_WAITS = 12
 /** Result cards kept, over every owner; the oldest go first. */
-const MAX_RESULTS = 256
+export const MAX_RESULTS = 256
 /** Per owner; the oldest of that owner go first. */
 const OWNER_RESULTS = 64
 export const RESULT_LIMITS = { reply: 2000, files: 20, reason: 300 } as const

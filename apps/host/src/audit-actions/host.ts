@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { APPEARANCE_FIELDS } from '@latch/protocol'
+import { APPEARANCE_FIELDS, EXPORT_KINDS } from '@latch/protocol'
 import { AUDIT_FILE_TYPES } from '../files/kinds.ts'
 import { count, hex64, opaqueId, prefixed } from './fields.ts'
 
@@ -218,6 +218,23 @@ export const HOST_ACTIONS = {
   'file.list': z.strictObject({ ...fileContext, rootHash: hex64, dirHash: hex64, hidden: z.boolean(), count, truncated: z.boolean() }),
   /** 诊断导出: written before the bundle is answered; counts only, never what it holds. */
   'diagnostics.exported': z.strictObject({ logLines: count, errors: count, harnesses: count, plugins: count }),
+  /**
+   * 导出全部, written before anything is made: which export, a hash of the folder it goes into and the kinds it writes
+   * (never a path, a title or anything exported).
+   */
+  'data.exported': z.strictObject({
+    exportHash: hex64,
+    pathHash: hex64,
+    kinds: z.array(z.enum(EXPORT_KINDS)).min(1).max(EXPORT_KINDS.length),
+  }),
+  /** How it ended: files written, sessions that could not be read, and whether a stopped one's folder was removed. */
+  'data.export.result': z.strictObject({
+    exportHash: hex64,
+    outcome: z.enum(['done', 'failed', 'cancelled']),
+    files: count,
+    skipped: count,
+    removed: z.boolean().optional(),
+  }),
   /** Best-effort follow-up when an action audited before taking effect then failed to commit. */
   'action.failed': z.strictObject({ refSeq: z.number().int().min(1) }),
 } as const

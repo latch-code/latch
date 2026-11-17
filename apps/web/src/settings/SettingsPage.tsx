@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { canDelegate } from '../agents/model.ts'
-import { Blocks, Cable } from 'lucide-react'
+import { Blocks, Cable, Database } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
@@ -50,6 +50,7 @@ const ExtensionsSettings = deferredComponent(
   '扩展',
 )
 const McpSettings = deferredComponent(async () => ({ default: (await import('./McpSettings.tsx')).McpSettings }), 'MCP')
+const DataSettings = deferredComponent(async () => ({ default: (await import('./DataSettings.tsx')).DataSettings }), '数据')
 const ShortcutsSettings = deferredComponent(
   async () => ({ default: (await import('./ShortcutsSettings.tsx')).ShortcutsSettings }),
   '快捷键',
@@ -69,6 +70,7 @@ const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
   workspaces: '文件夹 添加项目 新建项目 快照',
   plugins: '工具 技能 页面 数据面板',
   shortcuts: '键盘',
+  data: '数据目录 保留 多久 大小 审计 记录 导出 隐私',
   devices: '设备 手机 连接手机 二维码 配对 重命名 移除 撤销 浏览器 在浏览器中打开 关于连接 policy 开始新会话',
   computers: '添加电脑 其他电脑 移除 切换 打开',
   about: '版本 许可与条款',
@@ -95,7 +97,9 @@ const sections: Array<{
   secured?: boolean
   shell?: boolean
   /** A Host feature the section's routes need. */
-  feature?: 'mcp' | 'extensions'
+  feature?: 'mcp' | 'extensions' | 'data'
+  /** Needs data scope `all`: it spans every session and device, private ones included. */
+  allData?: boolean
 }> = [
   { id: 'general', label: '通用', icon: SettingsGlyph, admin: false },
   { id: 'providers', label: '模型', icon: ModelGlyph, admin: true, catalog: true },
@@ -105,6 +109,7 @@ const sections: Array<{
   { id: 'workspaces', label: '项目', icon: FolderGlyph, admin: true, catalog: true },
   { id: 'plugins', label: '插件', icon: PluginsGlyph, admin: true },
   { id: 'devices', label: '设备', icon: DevicesGlyph, admin: false, secured: true },
+  { id: 'data', label: '数据', icon: Database, admin: true, catalog: true, feature: 'data', allData: true },
   { id: 'computers', label: '电脑', icon: LaptopGlyph, admin: false, shell: true },
   { id: 'shortcuts', label: '快捷键', icon: KeyboardGlyph, admin: false },
   { id: 'about', label: '关于', icon: InfoGlyph, admin: false },
@@ -128,7 +133,8 @@ export function settingsSections(snapshot: AppSnapshot, access: DeviceAccess = d
         && (snapshot.catalog || !section.catalog)
         && (!access.legacy || !section.secured)
         && (!section.shell || shellComputers() !== null)
-        && (!section.feature || snapshot.catalog?.features?.[section.feature] === true),
+        && (!section.feature || snapshot.catalog?.features?.[section.feature] === true)
+        && (!section.allData || access.device?.dataScope === 'all'),
     )
     .map(section => section.id)
 }
@@ -415,6 +421,7 @@ export function SettingsPage({
                         />
                       )}
                       {panel === 'devices' && <PhoneDevicesPage snapshot={snapshot} access={access} onChanged={onChanged} />}
+                      {panel === 'data' && <DataSettings />}
                       {panel === 'computers' && <ComputersSettings />}
                       {panel === 'about' && (
                         <AboutSettings

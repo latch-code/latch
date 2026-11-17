@@ -585,6 +585,10 @@ if (!REMOTE)
           if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return Promise.resolve(INVALID)
           return ipcRenderer.invoke('latch:folders:save-session', { sessionId })
         },
+        /** 设置 › 数据: Finder shows the Host's data directory, whose path main reads from the Host. */
+        revealData: () => ipcRenderer.invoke('latch:folders:reveal', { data: true }),
+        /** 导出全部: main asks where with the native panel, then the Host writes the export into a new folder there. */
+        exportData: () => ipcRenderer.invoke('latch:folders:export', {}),
         /** 克隆: main asks where with the native panel, then the Host clones the address into a new project folder. */
         clone: url => {
           if (typeof url !== 'string' || url.length === 0 || url.length > 2048) return Promise.resolve(INVALID)

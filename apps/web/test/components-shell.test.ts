@@ -193,6 +193,7 @@ describe('shell routes', () => {
       'workspaces',
       'plugins',
       'devices',
+      'data',
       'computers',
       'shortcuts',
       'about',
@@ -206,6 +207,7 @@ describe('shell routes', () => {
       'workspaces',
       'plugins',
       'devices',
+      'data',
       'computers',
       'about',
     ])

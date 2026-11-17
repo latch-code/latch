@@ -99,6 +99,8 @@ export interface TestDevice {
    * purpose signed with this device's key. `body` may alter what is signed, to test refusals.
    */
   registerBrowserProvider(input?: { signedBody?: (body: Record<string, unknown>) => Record<string, unknown> }): Promise<Response>
+  /** 导出全部 the way the desktop app's main process starts it: the folder its picker chose, signed. */
+  exportData(input: { parent: string; signedBody?: (body: Record<string, unknown>) => Record<string, unknown> }): Promise<Response>
 }
 
 export interface SaveSessionFolderInput {
@@ -353,6 +355,13 @@ export async function startHostFixture<H extends FixtureHost>(
         const signed = input.signedBody ? input.signedBody(body) : body
         const signature = key.sign(foldersSigningText(host.hostId, state.device.id, nonce, foldersBodyHash(signed)))
         return testDevice.request('workspaces/clone', { method: 'POST', body: { ...body, signature } })
+      },
+      async exportData(input) {
+        const { nonce } = await testDevice.json<{ nonce: string }>('folder-grants', { method: 'POST', body: {} })
+        const body: Record<string, unknown> = { nonce, via: 'export', parent: input.parent }
+        const signed = input.signedBody ? input.signedBody(body) : body
+        const signature = key.sign(foldersSigningText(host.hostId, state.device.id, nonce, foldersBodyHash(signed)))
+        return testDevice.request('data/export', { method: 'POST', body: { ...body, signature } })
       },
       async registerBrowserProvider(input = {}) {
         const { nonce } = await testDevice.json<{ nonce: string }>('browser-provider/nonce', { method: 'POST', body: {} })

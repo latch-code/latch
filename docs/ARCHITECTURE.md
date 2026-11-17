@@ -5,6 +5,8 @@ sources:
   - apps/host/scripts
   - apps/desktop/src
   - apps/web/src/core
+  - apps/web/src/settings/DataSettings.tsx
+  - apps/web/src/deletionCopy.ts
   - apps/web/vite.config.ts
   - packages/protocol/src
   - packages/sdk/src
@@ -604,6 +606,58 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 
 已确认的消息持久化；流式中的文字与思考暂存在内存，崩溃可能丢失尚未结算的部分。快照存储没有历史压缩、分页或自动备份。
 
+## 数据、保留与导出
+
+「设置 › 数据」说 Latch 在这台电脑上保存什么、在哪里、多大、留多久，可以读审计记录、导出全部。三者都只给有 `admin` 且数据范围为 `all` 的设备（`routes/data.ts`）：它们跨越每个会话、Agent 与设备，私有的也在内，所以更窄的设备什么也得不到，连有多少都不知道（403 `agent-scope-required`）。界面只在这样的设备上列出这个分区。
+
+**保存什么、留多久**（`data-inventory.ts`）。按种类列出数据目录里的条目、保留期与大小。保留期由各个存储自己用的常量拼出（`USAGE_KEEP_DAYS`、`PRUNE_AFTER`、`DEFAULT_LIMITS`、`MEMORY_UNDO_DAYS`、`ATTACHMENT_TTL` 等），没有任何东西让它过期的写「一直保留」：
+
+| 种类 | 条目 | 保留 |
+| --- | --- | --- |
+| 会话与对话记录 | `sessions/`、`harnesses/`、`sessions-meta.json`、`queues.json`、`questions.json`、`review-notes/`、`file-references/`、`session-folders.json` | 一直保留，直到删除会话 |
+| 改动快照 | `snapshots/` | 每个会话最近 20 轮、每个项目最多 2 GiB，超出先删最早的；删除会话时删除 |
+| 我的 Agent 与记忆 | `agents/` | 直到删除；删除的记忆文字可撤销 7 天 |
+| 待办与讨论 | `work/` | 直到删除待办 |
+| 附件 | `attachments/` | 随会话；没发出的 60 分钟，中断的上传 60 分钟 |
+| 定时任务与交接 | `automations.json`、`handoffs/` | 每个定时任务最近 50 次运行、结果 256 条；交接 256 个 |
+| 用量记录 | `gateway/`、`usage/` | 90 天，按月删去更早的 |
+| 审计记录 | `audit/` | 一直保留 |
+| 设备登记 | `auth/` | 撤销或凭据过期 90 天后删去登记；撤销记录一直保留 |
+| 插件与应用数据 | `plugin-packages/`、`plugin-data/` | 每个插件 5 个可回退版本、3 代应用数据 |
+| 设置 | `settings.json`、`policy.json`、`customization.json`、`shortcuts.json`、`prompt-templates.json`、`project-context.json` | 一直保留；外观 20 个修订 |
+| 密钥与连接凭据 | `providers.json`、`mcp/`、`identity/`、`native/` | 直到你删除；从不导出 |
+| 运行日志 | `host.log` | 一直保留，不轮转 |
+
+数据目录之外的工作树、Agent 的家、系统临时目录里的录屏与截图只写出位置与保留，不统计。各 Harness 自己保存的会话和模型服务那边的历史不归 Latch，页面在一个悬停里说明一次。
+
+- **大小**：`POST /link/api/data/sizes` 只走上表列出的条目名（不含分隔符，不出数据目录），用 `lstat`，链接只算它自己、从不跟随；每次最多 20 万个条目、16 层，到界限时标「至少」。结果留到下次统计：打开页面不走磁盘，本次运行还没统计过时页面才请求一次。计入设置类操作的限速。
+- **位置**：`GET /link/api/data` 回数据目录的路径。桌面端「在访达中显示」由主进程自己向 Host 取路径再显示，页面不传路径。
+
+### 审计记录
+
+`GET /link/api/audit/records?before&limit&kind&actor&since&until`（`audit-view.ts`），只读，新的在前。
+
+- **读什么**：`AuditLog.readBefore` 按自己记下的每行起点读已确认的行，逐行再过一遍记录与 detail 的 strict schema，读不通就停。每页最多看 5000 条、回 50 条（最多 100），过滤在分页之前；早于 `since` 即停。`next` 接着往前读。
+- **显示什么**：谁（设备的名称、Latch 或命令行）、何时、动作的中文名（`audit-labels.ts`，按类型覆盖每个动作，缺一个不能构建）与类别、对象（会话、设备、Agent、项目、Harness 按 Host 现在知道的名称，不知道的写短 ID）。detail 的每个字段按 `audit-fields.ts` 的标记显示：`show` 照写（枚举、布尔、计数），`short` 只写前 8 位（公开的 ID 与只算公开事实的哈希），`hidden` 不显示（从秘密材料算出的，例如中继的 `profile` 与手机设置的 `before`、`after`，以及 `keyHash`）。表按类型覆盖每个动作的每个字段，新字段不标记就不能构建；表里没有的字段一律不显示。不回原始 detail，不回完整哈希。每页计入设置类操作的限速。
+- **谁能读**：同上，`admin` 与数据范围 `all`；更窄的设备读不到任何一条，所以审计不会让它知道私有会话或其他设备的事。
+
+### 导出全部
+
+只在本机桌面端：页面先用对话框说明导出什么、不导出什么及原因，主进程用原生面板选文件夹，签名（与添加文件夹相同的 nonce 与设备签名，`via: 'export'`）后调 `POST /link/api/data/export`；页面自己的请求到这条路由会被代理拦下。进度与取消是 `GET /link/api/data/export/:id` 与 `POST …/:id/cancel`，只给发起它的设备。实现在 `data-export.ts`。
+
+- **按名单导出**：会话（每个一份 JSON 与一份 Markdown：标题、Harness、时间、你和 Agent 的消息文字、附件名称与大小；工具行只有名称与状态，不含输出，思考也不导出，因为里面可以有 Agent 读到的任何内容）、我的 Agent 与「通用」（指令与记忆）、待办与讨论、设置里的数据（外观、提示模板、项目与文件夹路径），再写 `manifest.json` 列出每个文件的路径、大小与 SHA-256、读不到的会话和不导出的种类。每种都从 Host 自己的记录按字段名取，不展开记录；会话经 hub 读 Latch 的记录，从不读 Harness 自己的文件。所有导出的文字再经 `redactKnownSecrets`，遮住 Host 已知的密钥值与可辨形状的凭据；形状不可辨的不会被遮住，对话框照实说。
+- **从不导出**：模型密钥、MCP 服务器定义与秘密值、Harness 的启动方式与环境变量、设备登记与凭据、连接码与中继密钥、Host 身份、审计记录（其中有从中继密钥算出的哈希）、附件与快照的内容、Harness 自己的会话。
+- **只写在选定的文件夹里**：先审计 `data.exported`（导出 ID 的哈希、文件夹路径的哈希、种类），写不进就不导出；再非递归地新建「Latch 导出 <时间>」，同名已存在（文件夹或链接）就换下一个名字，从不写进已有的；每个文件前核对这个文件夹的身份（设备号与 inode，不是链接），文件用 `O_EXCL | O_NOFOLLOW` 新建、0600，文件名只由 ID 构成。一次只导出一个；每个文件之间复查设备权限，被撤销或收窄就停止。失败或取消时只删除它新建的那个文件夹，结束写 `data.export.result`。
+
+### 删除说了什么
+
+删除会话、项目与 Agent 的确认都取自 `apps/web/src/deletionCopy.ts`，按实际行为写：
+
+- **会话**：删除 Latch 里的对话、附件与改动快照（每条删除路径都经 `removeSessionRecords`）。内置 Harness 只有 Latch 这一份；ACP Harness 支持 `session/delete` 时 Latch 也请它删除自己保存的副本，不支持时副本留在它那里（[HARNESSES](HARNESSES.md)）；接入的原会话从不删除。审计与用量记录保留；已发给模型服务的内容无法撤回。
+- **项目**：只从列表移除，文件、会话与快照都保留。
+- **Agent**：记忆、提议与撤销记录删除，聊天记录与家保留；外部 Harness 已收到的上下文留在原会话里。
+- 没有「删除全部数据」：停止 Host 后删除数据目录才是。
+
 ## 桌面端与其他电脑
 
 桌面端除了经 `host.sock` 连接这台 Mac 的 Host，还可以经 HTTPS 连接其他电脑的 Host（`apps/desktop/src/computers.cjs`、`remote-proxy.cjs`）。每台 Host 仍是自己会话的唯一权威，Host 之间互不登记，也没有跨电脑的会话。
@@ -720,6 +774,8 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `/native/pairing`、`/native/verification…`、`/native/revocation…`、`/native/address-book`、`/native/proximity`、`/native/bulk` | 原生连接上的设备 | 手机 App 的验证窗口、撤销通知、地址簿与文件传输 |
 | `GET`/`DELETE /confirmations/:id` | 发起确认的设备 | 查询或取消本机确认 |
 | `GET /audit/head`、`GET /audit/hash?seq=` | `view` | 审计检查点 |
+| `GET /audit/records`、`GET /data`、`POST /data/sizes` | `admin` 与数据范围 `all` | 审计记录、数据目录与保留、统计大小（[数据、保留与导出](#数据保留与导出)） |
+| `POST /data/export`、`GET /data/export/:id`、`POST /data/export/:id/cancel` | `admin`、`all`，本机桌面端，主进程签名 | 导出全部 |
 
 **会话**（`server.ts`、`session-routes.ts`）
 

@@ -45,7 +45,7 @@ export const CHALLENGE_TTL = 60_000
 export const FOLDER_GRANT_TTL = 60_000
 const MAX_FOLDER_GRANTS = 4
 export const LAST_SEEN_PERSIST = 5 * 60_000
-const PRUNE_AFTER = 90 * 24 * 60 * 60_000
+export const PRUNE_AFTER = 90 * 24 * 60 * 60_000
 /** Time to confirm an enrollment: the local confirmation's own lifetime, so the page counts down to the sheet closing. */
 export const ENROLLMENT_LIFETIME = 120_000
 /** Once confirmed, the new device has at least this long to sign, however late in the 120 s the person touched the sensor. */

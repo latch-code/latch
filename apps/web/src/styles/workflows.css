@@ -316,7 +316,7 @@
 }
 .shortcut-edit:disabled {
   cursor: default;
-  opacity: 0.6;
+  opacity: 0.45;
 }
 .shortcut-recording {
   display: inline-flex;

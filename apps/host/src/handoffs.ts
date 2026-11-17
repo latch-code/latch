@@ -30,7 +30,7 @@ import { ProtectedPaths, realRoots, resolveRecorded, type FileRoot } from './fil
 import { isInsidePath } from './paths.ts'
 import type { DeviceCaller } from './routes/registry.ts'
 
-const MAX_HANDOFFS = 256
+export const MAX_HANDOFFS = 256
 /** A new target's title, cut from the requirements or the first material: at most this many code points. */
 export const HANDOFF_TITLE_CHARS = 60
 /** Settled handoffs are pruned, oldest first, once the file passes this; the journal itself stops at 32 MB. */

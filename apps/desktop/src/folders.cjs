@@ -95,6 +95,8 @@ function parseDropInput(input) {
 
 /** `latch:folders:reveal`: a project and one of its folders by ID; `folderId: null` is the primary folder. */
 function parseRevealInput(input) {
+  // The data directory: its path comes from the Host (设置 › 数据), never from the page.
+  if (hasOnlyKeys(input, ['data'])) return input.data === true ? { data: true } : undefined
   if (hasOnlyKeys(input, ['agentId']))
     return typeof input.agentId === 'string' && AGENT_ID.test(input.agentId) ? { agentId: input.agentId } : undefined
   if (!hasOnlyKeys(input, ['projectId', 'folderId'])) return undefined
@@ -126,6 +128,22 @@ function cloneDialog({ defaultPath, url }) {
     title: '克隆到',
     buttonLabel: '克隆到这里',
     message: `${url}\n会在选择的文件夹里新建它的文件夹，克隆后作为项目。${READS}${REMOTE}`,
+    defaultPath,
+    properties: ['openDirectory', 'createDirectory'],
+  }
+}
+
+/**
+ * The native open panel for 导出全部: one folder, in which the Host makes the export's own folder. What is left out is
+ * said in the page's dialog before this opens.
+ * @param {{ defaultPath: string }} input
+ * @returns {Electron.OpenDialogOptions}
+ */
+function exportDialog({ defaultPath }) {
+  return {
+    title: '导出到',
+    buttonLabel: '导出到这里',
+    message: '会在选择的文件夹里新建「Latch 导出」文件夹，写入对话、记忆、待办与设置；不含 Latch 保存的密钥与凭据，也不含工具的输出。',
     defaultPath,
     properties: ['openDirectory', 'createDirectory'],
   }
@@ -436,6 +454,30 @@ function createFolderActions({ request, sign, pick, confirm, show, inspect, home
       })
     },
     /**
+     * 导出全部: the native panel picks the folder the export's folder is made in; main signs it and the Host starts the
+     * export. Progress and 取消 are the page's (`/data/export/:id`).
+     */
+    exportData(input) {
+      if (!hasOnlyKeys(input, [])) return Promise.resolve({ status: 'failed', code: 'invalid' })
+      return withDialog(async () => {
+        const chosen = await pick(exportDialog({ defaultPath: lastParent ?? home() }))
+        const filePaths = Array.isArray(chosen?.filePaths) ? chosen.filePaths : []
+        if (chosen?.canceled || filePaths.length === 0) return { status: 'canceled' }
+        if (filePaths.length !== 1) return { status: 'failed', code: 'invalid' }
+        const parent = filePaths[0]
+        const problem = pathProblem(parent)
+        if (problem) return { status: 'failed', code: problem === 'invalid' ? 'export-folder-invalid' : problem }
+        const grant = await request('POST', '/link/api/folder-grants', {})
+        if (grant.status !== 200 || typeof grant.json?.nonce !== 'string') return hostFailure(grant)
+        const body = { nonce: grant.json.nonce, via: 'export', parent }
+        const result = await request('POST', '/link/api/data/export', { ...body, signature: sign(body) })
+        const state = result.json?.export
+        if (result.status === 202 && isPlainObject(state) && typeof state.id === 'string' && typeof state.name === 'string')
+          return { status: 'exporting', id: state.id, name: state.name }
+        return hostFailure(result)
+      })
+    },
+    /**
      * 存为项目: the folder the Host made for a session becomes a new project's primary folder, after the native
      * confirmation shows it. The folder is the one the Host reports for the session, never one from the page.
      */
@@ -479,6 +521,16 @@ function createFolderActions({ request, sign, pick, confirm, show, inspect, home
       revealing = true
       lastReveal = now()
       try {
+        if (parsed.data) {
+          const result = await request('GET', '/link/api/data')
+          if (result.status !== 200) return hostFailure(result)
+          const path = result.json?.dataDir
+          if (!isPathShaped(path)) return { status: 'failed', code: 'invalid' }
+          const found = await inspect(path).catch(() => undefined)
+          if (!found?.directory) return { status: 'failed', code: 'missing' }
+          show(found.real)
+          return { status: 'shown' }
+        }
         if (parsed.agentId) {
           const result = await request('GET', `/link/api/custom-agents/${encodeURIComponent(parsed.agentId)}/home`)
           if (result.status !== 200) return hostFailure(result)
@@ -522,6 +574,7 @@ module.exports = {
   parseSaveSessionInput,
   parseCloneInput,
   cloneDialog,
+  exportDialog,
   pickDialog,
   dropDialog,
   saveSessionDialog,

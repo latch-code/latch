@@ -9,7 +9,7 @@ import type { z } from 'zod'
 
 export const DAY_MS = 86_400_000
 /** How long a use stays on record. */
-const USAGE_KEEP_DAYS = 90
+export const USAGE_KEEP_DAYS = 90
 /** Lines read for one summary; a period with more says so. */
 const MAX_READ_LINES = 400_000
 const MAX_LINE_CHARS = 4096

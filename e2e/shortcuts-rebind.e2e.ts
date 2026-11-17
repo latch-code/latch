@@ -26,7 +26,12 @@ describe('rebinding a shortcut in a browser', { timeout: 120_000 }, () => {
   })
 
   async function open(width: number, theme: 'light' | 'dark' = 'light'): Promise<{ context: BrowserContext; page: Page }> {
-    const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, reducedMotion: 'reduce', locale: 'zh-CN' })
+    const context = await browser.newContext({
+      viewport: { width, height: 900 },
+      colorScheme: theme,
+      reducedMotion: 'reduce',
+      locale: 'zh-CN',
+    })
     context.setDefaultTimeout(15_000)
     const page = await context.newPage()
     await enrollBrowser(page, host, { name: `改键 ${width} ${theme}`, scopes: ['view', 'run'] })

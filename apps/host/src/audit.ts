@@ -152,11 +152,14 @@ export class AuditLog {
   /** What full-access sessions started with: their launch fingerprints, definitions and harnesses. */
   private readonly started = { launches: new Set<string>(), definitions: new Set<string>(), harnesses: new Set<string>() }
   private bytes = 0
+  /** Where each record's line starts in the file, by `seq - 1`: what `readBefore` seeks to. */
+  private readonly offsets: number[] = []
   private poisoned = false
 
   private constructor(
     private readonly handle: AuditFileHandle,
     private readonly now: () => number,
+    private readonly path: string,
   ) {}
 
   static async open(directory: string, options: { now?: () => number; fs?: AuditFs } = {}): Promise<AuditLog> {
@@ -187,14 +190,17 @@ export class AuditLog {
     }
     const handle = await (options.fs ?? defaultFs).open(path)
     if (process.platform !== 'win32' && ((await stat(path)).mode & 0o077) !== 0) await chmod(path, 0o600)
-    const log = new AuditLog(handle, now)
+    const log = new AuditLog(handle, now, path)
     log.bytes = Buffer.byteLength(text) - tornBytes
     if (tornBytes) {
       await handle.truncate(log.bytes)
       await handle.sync()
     }
     log.headState = verified.head
-    for (const record of verified.records) {
+    let offset = 0
+    for (const [index, record] of verified.records.entries()) {
+      log.offsets.push(offset)
+      offset += Buffer.byteLength(lines[index]!) + 1
       log.hashes.push(record.hash)
       log.index(record)
     }
@@ -280,6 +286,40 @@ export class AuditLog {
     return this.latest([action])
   }
 
+  /**
+   * Up to `count` records just before `before` (a seq), oldest first, read from the file by the offsets this log keeps:
+   * only acknowledged lines, each checked against the record schema and its detail schema; a line that no longer reads
+   * as one (the file was changed underneath) ends the read there. For 审计记录 (`audit-view.ts`), read-only.
+   */
+  async readBefore(before: number, count: number): Promise<AuditRecord[]> {
+    const end = Math.min(before - 1, this.headState.seq)
+    const start = Math.max(1, end - Math.max(0, Math.floor(count)) + 1)
+    if (end < 1 || start > end) return []
+    const from = this.offsets[start - 1]!
+    const to = end === this.headState.seq ? this.bytes : this.offsets[end]!
+    const file = await open(this.path, 'r')
+    try {
+      const buffer = Buffer.alloc(to - from)
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, from)
+      const records: AuditRecord[] = []
+      for (const line of buffer.subarray(0, bytesRead).toString('utf8').split('\n')) {
+        if (!line) continue
+        let value: unknown
+        try {
+          value = JSON.parse(line)
+        } catch {
+          break
+        }
+        const parsed = recordSchema.safeParse(value)
+        if (!parsed.success || !AUDIT_DETAIL[parsed.data.action].safeParse(parsed.data.detail).success) break
+        records.push(parsed.data)
+      }
+      return records
+    } finally {
+      await file.close()
+    }
+  }
+
   /** Validation failures throw `audit-detail-invalid` (a programming error: the action must be refused). */
   append<A extends AuditAction>(event: {
     action: A
@@ -336,6 +376,7 @@ export class AuditLog {
       }
       throw unavailable()
     }
+    this.offsets.push(this.bytes)
     this.bytes += line.length
     this.headState = { seq: record.seq, hash: record.hash }
     this.hashes.push(record.hash)

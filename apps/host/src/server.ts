@@ -10,6 +10,8 @@ import {
   updateWindowInputSchema,
 } from './update-window.ts'
 import { CustomAgents, harnessFixed, rememberRequest, type AgentActor, type FirstChatStart } from './custom-agents.ts'
+import { DataExports } from './data-export.ts'
+import { DataInventoryService } from './data-inventory.ts'
 import { Automations, automationSummary, type AutomationStartInput } from './automations.ts'
 import { Handoffs } from './handoffs.ts'
 import { HistoryImports, HistoryReceipts } from './history-import.ts'
@@ -22,6 +24,7 @@ import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
 import {
   GENERAL_AGENT_ID,
+  outsideMemory,
   BOARD_SETTLE_CHARS,
   normalizeBoardTags,
   isMcpToolOn,
@@ -2599,6 +2602,71 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const templateStore = await PromptTemplateStore.open(dataDir)
     const customization = await CustomizationStore.open(dataDir, { now, log })
     const shortcuts = await ShortcutsStore.open(dataDir, { now, log, known: id => devices.get(id) !== undefined })
+    // 设置 › 数据 and 导出全部 (docs/ARCHITECTURE.md#数据保留与导出): what Latch keeps, and the person's own data out.
+    const dataInventory = new DataInventoryService({ dataDir, worktrees: worktreesDir, agents: agentsDir, now })
+    const dataExports = new DataExports({
+      log,
+      now,
+      sources: {
+        sessions: () => harnessHub.listTasks(),
+        detail: id => harnessHub.detail(id),
+        harnessName: id => harnessHub.info(id)?.capabilities.display.label,
+        owners: () => {
+          const memoriesOf = (owner: string) =>
+            customAgents.memories(owner).map(memory => ({
+              content: memory.content,
+              createdAt: memory.createdAt,
+              updatedAt: memory.updatedAt,
+              origin: memory.imported ? ('imported' as const) : (memory.source?.origin ?? ('user' as const)),
+              external: outsideMemory(memory),
+            }))
+          const general = customAgents.general()
+          return [
+            {
+              id: GENERAL_AGENT_ID,
+              name: '通用',
+              instructions: general.instructions,
+              memories: memoriesOf(GENERAL_AGENT_ID),
+            },
+            ...customAgents.list().map(agent => ({
+              id: agent.id,
+              name: agent.name,
+              description: agent.description,
+              instructions: agent.instructions,
+              harnessId: agent.harnessId,
+              memories: memoriesOf(agent.id),
+            })),
+          ]
+        },
+        workItems: () =>
+          workItems.list().map(item => ({
+            id: item.id,
+            title: item.title,
+            prompt: item.prompt,
+            ...(item.tags ? { tags: item.tags } : {}),
+            ...(item.priority ? { priority: item.priority } : {}),
+            ...(item.closedAt ? { closedAt: item.closedAt } : {}),
+            createdAt: item.createdAt,
+            updatedAt: item.updatedAt,
+            sessionIds: item.sessionIds,
+            posts: (workThreads.get(item.id)?.posts ?? []).map(post => ({
+              at: post.at,
+              text: post.text,
+              ...(post.target && 'sessionId' in post.target ? { sessionId: post.target.sessionId } : {}),
+              ...(post.target && 'customAgentId' in post.target ? { customAgentId: post.target.customAgentId } : {}),
+            })),
+          })),
+        settings: () => ({
+          appearance: customizationRoutes.state().doc,
+          templates: templateStore.list().map(template => ({
+            name: template.name,
+            content: template.content,
+            scope: template.scope.kind,
+          })),
+          projects: config.settings().workspaces.map(record => ({ name: record.name, folders: record.folders.map(folder => folder.path) })),
+        }),
+      },
+    })
     const modelUsageRoutes = createModelUsageRoutes<Caller>({
       ledger: usageLedger,
       turns: turnLog,
@@ -2955,6 +3023,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     } = createRoutes(routeContext, {
       customization: { store: () => customization, auditFailed },
       shortcuts: { store: () => shortcuts },
+      data: {
+        inventory: dataInventory,
+        exports: dataExports,
+        requireDesktop,
+        signedBody: signedFolderBody,
+        dataScope: id => devices.get(id)?.dataScope,
+        names: async () => {
+          const titles = new Map((await harnessHub.listTasks()).map(task => [task.id, task.title || '未命名会话']))
+          const agentNames = new Map<string, string>([
+            [GENERAL_AGENT_ID, '通用'],
+            ...customAgents.list().map(agent => [agent.id, agent.name] as [string, string]),
+          ])
+          const projectNames = new Map(config.settings().workspaces.map(record => [record.id, record.name]))
+          return {
+            session: id => titles.get(id),
+            device: id => devices.get(id)?.name,
+            agent: id => agentNames.get(id),
+            project: id => projectNames.get(id),
+            harness: id => harnessHub.info(id)?.capabilities.display.label,
+            devices: () => devices.list().map(device => ({ id: device.id, name: device.name })),
+          }
+        },
+      },
       native: {
         options,
         identity,
@@ -11688,6 +11779,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           await sessionLifecycle.hostStopping()
           // A clone under way ends and its folder goes: a half-made folder never becomes a project.
           await clones.close()
+          await dataExports.close()
           await nativeRoutes.close()
           clearInterval(heartbeat)
           clearTimeout(eventTimer)

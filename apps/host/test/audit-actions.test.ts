@@ -178,6 +178,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'file.open': fileAction,
   'file.editor': fileAction,
   'diagnostics.exported': { logLines: 12, errors: 1, harnesses: 2, plugins: 5 },
+  'data.exported': { exportHash: 'a'.repeat(64), pathHash: 'b'.repeat(64), kinds: ['sessions', 'memory', 'work', 'settings'] },
+  'data.export.result': { exportHash: 'a'.repeat(64), outcome: 'cancelled', files: 3, skipped: 1, removed: true },
   'file.view': { ...fileAction, bytes: 2048 },
   'file.edit': { sessionId, pathHash: hex, type: 'other', protection: 'none', before: 10, after: 12 },
   'file.list': { workspaceId: 'ws-1', rootHash: hex, dirHash: hex, hidden: false, count: 3, truncated: false },

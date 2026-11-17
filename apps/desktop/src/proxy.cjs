@@ -577,6 +577,8 @@ function isFolderAddRoute(method, lower) {
   if (/^\/link\/api\/workspaces\/[^/]+\/folders$/.test(lower)) return true
   // 克隆 makes a project folder where the native picker chose: main signs it too. Its progress and cancel are the page's.
   if (lower === '/link/api/workspaces/clone' && String(method).toUpperCase() === 'POST') return true
+  // 导出全部 writes where the native picker chose: main signs it too. Its progress and cancel are the page's.
+  if (lower === '/link/api/data/export' && String(method).toUpperCase() === 'POST') return true
   return lower === '/link/api/workspaces' && String(method).toUpperCase() === 'POST'
 }
 

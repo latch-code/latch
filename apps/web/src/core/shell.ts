@@ -30,7 +30,18 @@ export interface ShellFolders {
   saveSessionFolder?: (sessionId: string) => Promise<FolderResult>
   /** 克隆: main asks where with the native panel; the clone then goes on in the Host (`/workspaces/clone/:id`). */
   clone?: (url: string) => Promise<CloneStart>
+  /** 设置 › 数据: Finder shows the Host's data directory; main reads its path from the Host. */
+  revealData?: () => Promise<RevealResult>
+  /** 导出全部: main asks where with the native panel; the export then goes on in the Host (`/data/export/:id`). */
+  exportData?: () => Promise<ExportStart>
 }
+
+/** What asking main to export came to: the export under way, or why it did not start. */
+export type ExportStart =
+  | { status: 'exporting'; id: string; name: string }
+  | { status: 'canceled' }
+  | { status: 'busy' }
+  | { status: 'failed'; code: string }
 
 /** What asking main to clone came to: the clone under way, or why it did not start. */
 type CloneStart =

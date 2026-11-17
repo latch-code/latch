@@ -20,6 +20,7 @@ interface FolderActions {
   revealFolder(input: unknown): Promise<Result>
   saveSessionFolder(input: unknown): Promise<Result>
   cloneRepository(input: unknown): Promise<Result & { id?: string; name?: string }>
+  exportData(input: unknown): Promise<Result & { id?: string; name?: string }>
 }
 interface DialogOptions {
   title?: string
@@ -950,5 +951,36 @@ describe('desktop shell folders: 克隆', () => {
     canceled = true
     expect(await created.cloneRepository({ url: 'git@github.com:acme/widgets.git' })).toEqual({ status: 'canceled' })
     expect(host.requests).toEqual([])
+  })
+})
+
+describe('desktop shell folders: 导出全部 and the data directory', () => {
+  it('asks where with the native panel, then signs that one folder for the Host’s export route', async () => {
+    const host = fakeHost()
+    host.answer.set('POST /link/api/data/export', {
+      status: 202,
+      json: { export: { id: 'c1a2c3d4-0000-4000-8000-000000000000', name: 'Latch 导出 2026-11-17 2030', state: 'running' } },
+    })
+    const { created, asked, signed } = actions({}, host)
+    expect(await created.exportData({})).toEqual({
+      status: 'exporting',
+      id: 'c1a2c3d4-0000-4000-8000-000000000000',
+      name: 'Latch 导出 2026-11-17 2030',
+    })
+    expect(asked[0]).toMatchObject({ title: '导出到', buttonLabel: '导出到这里', properties: ['openDirectory', 'createDirectory'] })
+    expect(signed).toEqual([{ nonce: 'nonce-1', via: 'export', parent: '/Users/me/projects/app' }])
+    // The page names nothing: any input is refused before a panel opens.
+    expect(await created.exportData({ parent: '/tmp' })).toEqual({ status: 'failed', code: 'invalid' })
+    expect(asked).toHaveLength(1)
+  })
+
+  it('shows the data directory the Host names, never one the page sends', async () => {
+    const host = fakeHost()
+    host.answer.set('GET /link/api/data', { status: 200, json: { dataDir: '/Users/me/Library/Application Support/Latch/Host' } })
+    const { created, shown } = actions({}, host)
+    expect(await created.revealFolder({ data: true })).toEqual({ status: 'shown' })
+    expect(shown).toEqual(['/Users/me/Library/Application Support/Latch/Host'])
+    expect(folders.parseRevealInput({ data: '/etc' })).toBeUndefined()
+    expect(folders.parseRevealInput({ data: true, projectId: 'x' })).toBeUndefined()
   })
 })

@@ -12,6 +12,8 @@ export interface HostFeatures {
   customization?: true
   /** `/shortcuts`: each device's own key bindings (docs/CUSTOMIZATION.md#快捷键). */
   shortcuts?: true
+  /** 设置 › 数据: `/data`, `/audit/records` and the desktop's 导出全部 (docs/ARCHITECTURE.md#数据保留与导出). */
+  data?: true
   /** `POST /tasks/:id/config-requests/:requestId/check`: an unknown config change settled from the agent's own reading. */
   configCheck?: true
   promptTemplates?: true

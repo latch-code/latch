@@ -992,6 +992,9 @@ describe('desktop shell policy', () => {
       ['POST', '/link/api/workspaces/clone'],
       ['POST', '/link/api/Workspaces/Clone/'],
       ['POST', '/link/api/workspaces/%63lone'],
+      ['POST', '/link/api/data/export'],
+      ['POST', '/link/api/Data/Export/'],
+      ['POST', '/link/api/data/%65xport'],
     ] as const)
       expect(proxy.classifyRoute(method, path), `${method} ${path}`).toEqual({ kind: 'folders' })
     for (const [method, path] of [

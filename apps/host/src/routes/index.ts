@@ -5,6 +5,7 @@ import { createAutomationRoutes, type AutomationRouteDeps } from './automations.
 import { createBrowserRoutes, type BrowserRouteDeps } from './browser.ts'
 import { createChangeRoutes, type ChangeRoutes } from './changes.ts'
 import { createCustomizationRoutes, type CustomizationRouteDeps, type CustomizationRoutes } from './customization.ts'
+import { createDataRoutes, type DataRouteDeps } from './data.ts'
 import { createDeviceRoutes, type DeviceRouteDeps } from './devices.ts'
 import { createHandoffRoutes, type HandoffRouteDeps } from './handoffs.ts'
 import { createGitRoutes, type GitRouteOptions } from './git.ts'
@@ -43,6 +44,7 @@ export interface RouteDeps {
   mcp: McpRouteDeps
   customization: CustomizationRouteDeps
   shortcuts: ShortcutRouteDeps
+  data: DataRouteDeps
 }
 
 /**
@@ -98,6 +100,7 @@ export function createRoutes(
       createHistoryRoutes(context, deps.history),
       customization,
       createShortcutRoutes(context, deps.shortcuts),
+      createDataRoutes(context, deps.data),
       apps,
     ]),
   }
