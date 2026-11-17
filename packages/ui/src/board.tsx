@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { CheckGlyph, BlockedGlyph, SearchGlyph } from './glyphs/index.tsx'
 import { Icon, Spinner, type IconComponent } from './icon.tsx'
 import { cx, nextIndex, PHONE_QUERY, useMediaQuery } from './internal.ts'
@@ -324,6 +324,23 @@ export function PickerBoard<T extends string, L extends string>({
       if (!focusRow(column.current, 'checked')) focusRow(list.current, 'checked')
     } else if (target.to === 'search' || !focusRow(list.current, 'checked')) search.current?.focus()
   }, [target])
+  // A list that changes while the board is open (a Harness's models read in, a session's switch regrouping them) can
+  // remove the focused row, and focus falls to the page, where Escape and the arrows no longer reach the board. Put it
+  // back on the same value if it is still listed, else where the board would open; a surviving focus is left alone.
+  const lastFocus = useRef<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    const previous = lastFocus.current
+    if (!open || !previous || previous.isConnected) return
+    lastFocus.current = null
+    const active = document.activeElement
+    if (active !== null && active !== document.body) return
+    const inLevels = previous.classList.contains('ui-board-level')
+    const value = previous.dataset.value
+    const same = value === undefined ? null : list.current?.querySelector<HTMLElement>(`[data-value="${CSS.escape(value)}"]`)
+    if (same) same.focus({ preventScroll: true })
+    else if (inLevels ? focusRow(column.current, 'checked') : focusRow(list.current, 'checked')) return
+    else search.current?.focus({ preventScroll: true })
+  })
 
   const shownSource = sources.find(source => source.id === viewed) ?? sources[0]
   const match = (item: BoardItem<T>) =>
@@ -362,6 +379,9 @@ export function PickerBoard<T extends string, L extends string>({
     setHighlighted(first?.value)
   }
 
+  const noteFocus = (event: FocusEvent<HTMLDivElement>) => {
+    if (event.target instanceof HTMLElement) lastFocus.current = event.target
+  }
   const boardKeys = (event: KeyboardEvent<HTMLDivElement>) => {
     const index = pickIndex?.(event)
     if (index === undefined) return
@@ -542,7 +562,7 @@ export function PickerBoard<T extends string, L extends string>({
 
   if (phone)
     return (
-      <div className={cx('ui-board', className)} data-phone="" onKeyDown={boardKeys}>
+      <div className={cx('ui-board', className)} data-phone="" onKeyDown={boardKeys} onFocusCapture={noteFocus}>
         {withRail && (
           <div className="ui-board-tabs" role="tablist" aria-label="来源">
             {sources.map(source => (
@@ -580,7 +600,7 @@ export function PickerBoard<T extends string, L extends string>({
     )
 
   return (
-    <div className={cx('ui-board', className)} data-rail={withRail ? '' : undefined} onKeyDown={boardKeys}>
+    <div className={cx('ui-board', className)} data-rail={withRail ? '' : undefined} onKeyDown={boardKeys} onFocusCapture={noteFocus}>
       {withRail && (
         <div ref={rail} className="ui-board-rail" role="tablist" aria-orientation="vertical" aria-label="来源" onKeyDown={railKeys}>
           {sources.map(source => {

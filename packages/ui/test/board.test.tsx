@@ -181,6 +181,48 @@ describe('the picker board', () => {
     await expect.element(screen.getByRole('button', { name: /^模型/u })).toHaveFocus()
   })
 
+  it('keeps focus in the board when the list it was on is replaced while open, so Escape still closes it', async () => {
+    function Reading() {
+      const [read, setRead] = useState(false)
+      const sources = read
+        ? [{ id: 'own', label: 'Harness', icon: null, items: [{ value: 'own/large', label: 'Large' }] }]
+        : [{ id: 'own', label: 'Harness', icon: null, items: [{ value: 'own', label: '默认模型' }] }]
+      return (
+        <>
+          <ValuePicker
+            label="模型"
+            value="face"
+            options={[{ value: 'face', label: '默认模型' }]}
+            onValueChange={() => {}}
+            width="lg"
+            onOpenChange={open => {
+              // As a draft's panel does: opening it starts a read whose answer replaces the rows.
+              if (open) setTimeout(() => setRead(true), 50)
+            }}
+            panel={
+              <PickerBoard
+                label="模型"
+                levelsLabel="思考"
+                sources={sources}
+                value={read ? undefined : 'own'}
+                levels={() => ({ value: 'default', options: [{ value: 'default', label: '默认' }] })}
+                onItem={() => {}}
+                onLevel={() => {}}
+              />
+            }
+          />
+        </>
+      )
+    }
+    const screen = await render(<Reading />)
+    await screen.getByRole('button', { name: /^模型/u }).click()
+    await expect.element(screen.getByRole('menuitemradio', { name: '默认模型' })).toHaveFocus()
+    await expect.element(screen.getByRole('menuitemradio', { name: 'Large' })).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+    await expect.poll(() => document.querySelector('.ui-board')?.closest('[popover]')?.matches(':popover-open')).toBe(false)
+    await expect.element(screen.getByRole('button', { name: /^模型/u })).toHaveFocus()
+  })
+
   it('opens on the levels when its trigger asks', async () => {
     const screen = await render(
       <ValuePicker
