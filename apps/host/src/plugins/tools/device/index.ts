@@ -1,3 +1,4 @@
+import { SIMULATOR_INPUT_TOOLS } from '@latch/protocol'
 import type { HarnessPlugin, ToolDefinition, ToolResult } from '@latch/sdk'
 
 /** The tools' names, as the Host's classifier and audit know them. */
@@ -9,24 +10,14 @@ const DEVICE_TOOLS = [
   'device_rotate',
   'device_apps',
   'device_launch',
-  'device_tap',
-  'device_swipe',
-  'device_type_text',
-  'device_press_key',
-  'device_press_button',
+  ...SIMULATOR_INPUT_TOOLS,
 ] as const
 export type DeviceTool = (typeof DEVICE_TOOLS)[number]
 export const isDeviceTool = (name: string): name is DeviceTool => (DEVICE_TOOLS as readonly string[]).includes(name)
 /** Looking is R0 (the list, a picture, the apps); opening, turning, switching or starting acts on the device, R1. */
 export const DEVICE_READS: ReadonlySet<DeviceTool> = new Set(['device_list', 'device_screenshot', 'device_apps'])
 /** Tapping, swiping, typing and pressing: only for a full-access session a person started (see the Host). */
-export const DEVICE_INPUTS: ReadonlySet<DeviceTool> = new Set([
-  'device_tap',
-  'device_swipe',
-  'device_type_text',
-  'device_press_key',
-  'device_press_button',
-])
+export const DEVICE_INPUTS: ReadonlySet<DeviceTool> = new Set(SIMULATOR_INPUT_TOOLS)
 
 export type DeviceOutcome = { ok: true; text: string; image?: Buffer } | { ok: false; error: string; detail?: string }
 
@@ -68,6 +59,7 @@ const FAILURES: Record<string, string> = {
   'simulator-input-rate': '输入太快了，稍后再试。',
   'not-full-access-input':
     '设备输入工具只给完全访问的外部 Harness 会话。The device input tools run only in a full-access session of an external harness.',
+  'personal-input': '我的 Agent 的会话不能向模拟器输入。My Agent sessions cannot send input to a simulator.',
   unattended: '没有人值守的运行不能向设备输入。Unattended runs cannot send input to a device.',
   'no-project': '这个会话没有项目，设备工具不可用。',
   'not-full-access': '这个会话不是完全访问的外部 Harness 会话，Latch 的设备工具不经这里给它。',

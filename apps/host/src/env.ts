@@ -24,6 +24,7 @@ type LatchEnvName =
   | 'E2E_CLIPBOARD'
   | 'E2E_SIMULATOR'
   | 'E2E_LIVE_DEVICE'
+  | 'E2E_LIVE_UDID'
 
 /** `LATCH_<name>`. An empty value counts as set: callers decide what an empty value means. */
 export function latchEnv(env: NodeJS.ProcessEnv, name: LatchEnvName): string | undefined {

@@ -1,7 +1,6 @@
-// The 设备 panel in the real desktop app with the real `xcrun simctl`, on one simulator whose name starts with `latch-`
-// only: every simctl call that names any other device is refused before it runs. Skipped where Xcode or such a device
-// is missing. The device is shut down at the end, and Device Hub is never opened.
-import { _electron, type ElectronApplication, type Page } from '@playwright/test'
+// The 设备 panel in the real desktop app. Real simulator tests require an explicitly named, dedicated `latch-` device.
+// Every simctl call naming another device is refused. The test never opens Device Hub.
+import { _electron, chromium, type ElectronApplication, type Page } from '@playwright/test'
 import { spawn as spawnChild } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
@@ -16,7 +15,9 @@ import { attachSimulatorHelper } from '@latch/host/simulator-live'
 import { spawnSimctl, xcrunDevicectl, xcrunSimctl, type SimctlChild, type SimctlRunner, type SimctlSpawner } from '@latch/host/simulators'
 import type { McpServerView } from '@latch/protocol'
 import { FAKE_ACP_AGENT, fakeIdbCompanion, fakeSimulatorLive } from '@latch/testkit'
+import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
+import { noHorizontalOverflow, openSession } from './helpers/layout.ts'
 
 const electronE2E = latchEnv(process.env, 'ELECTRON_E2E') === '1'
 const OUT = 'test-results/desktop-device'
@@ -27,30 +28,36 @@ function shellEnvironment(): Record<string, string> {
   )
 }
 
-/** A `latch-` simulator that is shut down, or undefined where there is none (or no Xcode). */
+/** The explicitly named test simulator, shut down. */
 async function testDevice(): Promise<{ udid: string; name: string } | undefined> {
-  if (process.platform !== 'darwin') return undefined
+  const name = latchEnv(process.env, 'E2E_SIMULATOR')
+  if (process.platform !== 'darwin' || !name?.startsWith('latch-')) return undefined
   const listed = await xcrunSimctl(['list', 'devices', '--json', 'available'], { timeoutMs: 30_000, maxBytes: 4 * 1024 * 1024 })
   if (listed.code !== 0) return undefined
   const groups = (
     JSON.parse(listed.stdout.toString('utf8')) as { devices: Record<string, Array<{ udid: string; name: string; state: string }>> }
   ).devices
-  const all = Object.values(groups).flat()
-  // LATCH_E2E_SIMULATOR names the one `latch-` device a run may use; no other is then considered.
-  const pinned = latchEnv(process.env, 'E2E_SIMULATOR')
-  if (pinned !== undefined && !pinned.startsWith('latch-')) return undefined
-  const found = pinned
-    ? all.find(device => device.name === pinned && device.state === 'Shutdown')
-    : (all.find(device => device.name === 'latch-hands-on' && device.state === 'Shutdown')
-      ?? all.find(device => device.name.startsWith('latch-') && device.state === 'Shutdown'))
-  return found ? { udid: found.udid, name: found.name } : undefined
+  const matches = Object.values(groups)
+    .flat()
+    .filter(device => device.name === name)
+  return matches.length === 1 && matches[0]?.state === 'Shutdown' ? matches[0] : undefined
 }
 
 async function capture(page: Page, name: string) {
+  await page.emulateMedia({ colorScheme: 'light' })
   await page.screenshot({ path: `${OUT}/${name}.png`, animations: 'disabled' })
   await page.emulateMedia({ colorScheme: 'dark' })
   await page.screenshot({ path: `${OUT}/${name}-dark.png`, animations: 'disabled' })
   await page.emulateMedia({ colorScheme: 'light' })
+}
+
+async function captureDeviceWidths(app: ElectronApplication, page: Page, state: string) {
+  for (const width of [1100, 1440]) {
+    await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]!.setContentSize(size, 900), width)
+    await expect.poll(() => page.evaluate(() => innerWidth)).toBe(width)
+    await noHorizontalOverflow(page)
+    await capture(page, `${state}-${width}`)
+  }
 }
 
 const device = electronE2E ? await testDevice() : undefined
@@ -219,7 +226,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
         demo: true,
         hostName: '验收电脑',
         uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
-        simulators: { run: fakeSimctl(xcode) },
+        simulators: { run: fakeSimctl(xcode), live: fakeSimulatorLive().attach },
         xcodeBridge: { probe: async () => ({ bridge: true, version: '27.2' }), command: xcrun },
       })
       const { host } = testHost
@@ -266,7 +273,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       const { sessionId } = await none.testHost.host.bridge.createTask({ prompt: '看设备', requestId: randomUUID(), mode: 'chat' })
       const panel = await openPanel(none.page, sessionId)
       await panel.getByText('未安装 Xcode', { exact: true }).waitFor()
-      await capture(none.page, 'no-xcode')
+      await captureDeviceWidths(none.app, none.page, 'no-xcode')
     } finally {
       await none.app.close()
       await none.testHost.close()
@@ -294,7 +301,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       const failed = panel.getByText('失败', { exact: true })
       await failed.waitFor()
       expect(await panel.locator('[title*="Unable to boot device"]').count()).toBe(1)
-      await capture(page, 'failed')
+      await captureDeviceWidths(some.app, page, 'failed')
       // An agent's Xcode device session on the running one.
       await panel.locator('.sim-picker').click()
       await page.getByRole('menuitemradio', { name: /^latch-fake(?!-)/u }).click()
@@ -307,7 +314,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
         },
       })
       await panel.getByText('Agent 正在使用', { exact: true }).waitFor({ timeout: 15_000 })
-      await capture(page, 'agent-using')
+      await captureDeviceWidths(some.app, page, 'agent-using')
     } finally {
       await some.app.close()
       await some.testHost.close()
@@ -376,16 +383,20 @@ const TOOLBAR_TYPE = 'com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro'
 const TOOLBAR_RUNTIME = 'com.apple.CoreSimulator.SimRuntime.iOS-27-2'
 
 /** Stand-ins for the toolbar: one running device whose picture is Latch's icon, devicectl, and long children. */
-function toolbarFakes() {
+function toolbarFakes(booted = true) {
   const calls: string[][] = []
   let orientation = 'portrait'
   const run: SimctlRunner = async args => {
     calls.push([...args])
     const ok = (text = '') => ({ code: 0, stdout: Buffer.from(text), stderr: '' })
+    if (args[0] === 'boot') booted = true
+    if (args[0] === 'shutdown') booted = false
     if (args[0] === 'list' && args[1] === 'devices')
       return ok(
         JSON.stringify({
-          devices: { [TOOLBAR_RUNTIME]: [{ udid: TOOLBAR_UDID, name: 'latch-toolbar', state: 'Booted', isAvailable: true }] },
+          devices: {
+            [TOOLBAR_RUNTIME]: [{ udid: TOOLBAR_UDID, name: 'latch-toolbar', state: booted ? 'Booted' : 'Shutdown', isAvailable: true }],
+          },
         }),
       )
     if (args[0] === 'list' && args[1] === 'devicetypes')
@@ -550,12 +561,14 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
 })
 
 describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop shell: 设备 live picture and input', () => {
-  it('decodes the live picture with VideoDecoder, sends a click as a tap at the right point, keys and Home, and says when input is unavailable', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'latch-electron-device-live-'))
+  it('decodes the live picture, sends a tap at the correct point, and closes access when the scope is reduced', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ld-'))
     await mkdir(OUT, { recursive: true })
-    const fake = toolbarFakes()
+    const fake = toolbarFakes(false)
     const idb = fakeIdbCompanion()
     const live = fakeSimulatorLive()
+    let allowPicture!: () => void
+    const pictureReady = new Promise<void>(resolve => (allowPicture = resolve))
     const testHost = await startTestHost({
       demo: true,
       hostName: '验收电脑',
@@ -565,8 +578,11 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
         devicectl: fake.devicectl,
         spawn: fake.spawn,
         idleMs: 0,
-        live: live.attach,
-        idb: { locate: idb.locate, spawn: idb.spawn },
+        live: async udid => {
+          await pictureReady
+          return live.attach(udid)
+        },
+        idb: { locate: idb.locate, spawn: idb.spawn, tempDir: root },
       },
     })
     let application: ElectronApplication | undefined
@@ -576,11 +592,22 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       // The desktop app's page has WebCodecs, and the Host's page policy lets it decode and draw.
       expect(await page.evaluate(() => typeof VideoDecoder)).toBe('function')
       const panel = await openDevicePanel(page, testHost)
+      await panel
+        .getByRole('list', { name: '设备', exact: true })
+        .getByRole('button', { name: /^latch-toolbar/u })
+        .click()
+      await panel.getByText('未启动', { exact: true }).waitFor()
+      await captureDeviceWidths(app, page, 'live-shutdown')
+      await panel.getByRole('toolbar', { name: '设备', exact: true }).getByRole('button', { name: '启动', exact: true }).click()
+      await panel.getByText('启动中', { exact: true }).waitFor()
+      await captureDeviceWidths(app, page, 'live-connecting')
+      allowPicture()
       const screen = panel.locator('canvas.sim-live')
       await screen.waitFor()
       // Frames decoded from the recorded H.264 stream reach the canvas.
       await expect.poll(async () => Number(await screen.getAttribute('data-fps')), { timeout: 20_000 }).toBeGreaterThan(0)
       expect(await panel.locator('img.sim-screen').count()).toBe(0)
+      await panel.locator('[data-owner="none"]').waitFor()
       const tools = panel.getByRole('toolbar', { name: '设备工具', exact: true })
       // Every tool of the bar is there, the record and logs buttons too.
       for (const name of [
@@ -598,7 +625,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
         '在 Device Hub 中打开',
       ])
         await tools.getByRole('button', { name, exact: true }).waitFor()
-      await capture(page, 'live')
+      await captureDeviceWidths(app, page, 'live')
       // A click at (201, 160) points of the 402 × 874 screen: where the picture is drawn in the canvas (contain, by its
       // own 220 × 480 pixels), scaled.
       const box = await screen.evaluate(element => {
@@ -614,15 +641,31 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
           height,
         }
       })
-      await page.mouse.click(box.left + (box.width * 201) / 402, box.top + (box.height * 160) / 874)
+      const click = { x: box.left + (box.width * 201) / 402, y: box.top + (box.height * 160) / 874 }
+      await page.mouse.click(click.x, click.y)
       await expect.poll(() => idb.events.filter(event => event.kind === 'touch').length).toBe(2)
+      await panel.locator('[data-owner="you"]').waitFor()
+      const marker = panel.locator('.sim-touch-mark')
+      await expect.poll(() => marker.getAttribute('style')).toContain('left:')
+      const written = await marker.evaluate(node => {
+        const mark = node as HTMLElement
+        const stage = mark.parentElement!
+        const rect = stage.getBoundingClientRect()
+        return {
+          x: rect.left + stage.clientLeft - stage.scrollLeft + Number.parseFloat(mark.style.left),
+          y: rect.top + stage.clientTop - stage.scrollTop + Number.parseFloat(mark.style.top),
+        }
+      })
+      expect(Math.abs(written.x - click.x)).toBeLessThan(2)
+      expect(Math.abs(written.y - click.y)).toBeLessThan(2)
+      await marker.waitFor({ state: 'hidden' })
       const [down, up] = idb.events.filter(event => event.kind === 'touch') as Array<{ x: number; y: number; direction: string }>
       expect(down!.direction).toBe('down')
       expect(up!.direction).toBe('up')
       expect(Math.abs(down!.x - 201)).toBeLessThanOrEqual(1.5)
       expect(Math.abs(down!.y - 160)).toBeLessThanOrEqual(1.5)
       expect(idb.events.every(event => event.udid === TOOLBAR_UDID)).toBe(true)
-      // Home, and the keyboard toggle: Enter goes to the device as return; a letter does not.
+      // Home, and the keyboard toggle: Enter goes to the device as return.
       await tools.getByRole('button', { name: '主屏幕', exact: true }).click()
       await expect.poll(() => idb.events.some(event => event.kind === 'button' && event.button === 1)).toBe(true)
       await tools.getByRole('button', { name: '键盘输入到设备', exact: true }).click()
@@ -633,15 +676,40 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       expect(idb.events.filter(event => event.kind === 'key').map(event => (event as { code: number }).code)).toEqual(
         expect.arrayContaining([225, 4]),
       )
-      await capture(page, 'live-keyboard')
-      // A narrower window: the bar wraps, nothing is dropped.
+      await captureDeviceWidths(app, page, 'live-keyboard')
       await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(1100, 800))
+      await expect.poll(() => page.evaluate(() => innerWidth)).toBe(1100)
+      const ownerBounds = (await panel.locator('[data-owner="you"]').boundingBox())!
+      expect(ownerBounds.y + ownerBounds.height).toBeLessThan((await screen.boundingBox())!.y)
       for (const name of ['录屏', '日志', '在 Device Hub 中打开'])
         expect(await tools.getByRole('button', { name, exact: true }).isVisible()).toBe(true)
-      await capture(page, 'live-narrow')
+      expect(
+        await tools.evaluate(
+          toolbar => new Set([...toolbar.querySelectorAll('button')].map(button => button.getBoundingClientRect().top)).size,
+        ),
+      ).toBe(1)
       expect(idb.starts).toHaveLength(1)
       expect(idb.starts[0]!.args).not.toContain('--grpc-port')
+      const desktop = testHost.host.security.devices.list().find(device => device.listener === 'unix')!
+      const admin = await testHost.enroll({ listener: 'unix', name: '另一台本机客户端' })
+      await admin.confirmedJson('agents', {
+        body: { id: 'device-agent', name: '设备验收', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_MCP: 'dsh' } },
+      })
+      const { sessionId } = await admin.confirmedJson<{ sessionId: string }>('tasks', {
+        body: { requestId: randomUUID(), harnessId: 'device-agent', prompt: 'echo hi' },
+      })
+      await expect.poll(async () => (await testHost.host.bridge.detail(sessionId)).summary.status, { timeout: 15_000 }).toBe('idle')
+      const steps = [{ tool: 'device_tap', args: { udid: TOOLBAR_UDID, x: 25, y: 25, holdMs: 5000 } }]
+      await admin.json(`tasks/${sessionId}/prompt`, { body: { requestId: randomUUID(), prompt: `browser ${JSON.stringify(steps)}` } })
+      await panel.locator('[data-owner="agent"]').waitFor()
+      await captureDeviceWidths(app, page, 'live-agent')
+      await panel.locator('[data-owner="you"]').waitFor()
+      expect((await admin.request(`devices/${desktop.id}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
+      await panel.waitFor({ state: 'hidden' })
+      await expect.poll(() => live.closed).toBe(live.attached.length)
+      await captureDeviceWidths(app, page, 'live-scope-reduced')
     } finally {
+      allowPicture()
       await application?.close()
       await testHost.close()
       await rm(root, { recursive: true, force: true })
@@ -651,7 +719,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
   }, 300_000)
 
   it('shows 输入不可用 with the install command in its hover when idb_companion is not installed', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'latch-electron-device-noinput-'))
+    const root = await mkdtemp(join(tmpdir(), 'ld-'))
     await mkdir(OUT, { recursive: true })
     const fake = toolbarFakes()
     const idb = fakeIdbCompanion({ installed: false })
@@ -665,7 +733,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
         spawn: fake.spawn,
         idleMs: 0,
         live: fakeSimulatorLive().attach,
-        idb: { locate: idb.locate, spawn: idb.spawn },
+        idb: { locate: idb.locate, spawn: idb.spawn, tempDir: root },
       },
     })
     let application: ElectronApplication | undefined
@@ -678,8 +746,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await screen.click()
       const state = panel.locator('.ui-status-word', { hasText: '输入不可用' })
       await state.waitFor()
-      expect(await state.getAttribute('title')).toContain('brew install idb-companion')
-      await capture(page, 'live-input-unavailable')
+      expect(await state.getAttribute('title')).toContain('brew install meta/fb/idb-companion')
+      expect(await panel.locator('.sim-touch-mark').getAttribute('style')).toBeNull()
+      await captureDeviceWidths(app, page, 'live-input-unavailable')
       expect(idb.starts).toEqual([])
     } finally {
       await application?.close()
@@ -687,20 +756,49 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await rm(root, { recursive: true, force: true })
     }
   }, 300_000)
+
+  it('offers no device controls on a phone-width browser', async () => {
+    const fake = toolbarFakes()
+    const live = fakeSimulatorLive()
+    const testHost = await startTestHost({
+      hostName: '验收电脑',
+      uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
+      simulators: { run: fake.run, live: live.attach },
+    })
+    try {
+      const browser = await chromium.launch(browserLaunchOptions())
+      try {
+        const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+        await enrollBrowser(page, testHost, { name: '验收手机', dataScope: 'work' })
+        const { sessionId } = await testHost.host.bridge.createTask({ prompt: '看设备', requestId: randomUUID(), mode: 'chat' })
+        await openSession(page, sessionId)
+        expect(await page.getByRole('region', { name: '设备', exact: true }).count()).toBe(0)
+        expect(await page.evaluate(async () => (await fetch('/link/api/simulators', { credentials: 'same-origin' })).status)).toBe(403)
+        expect(live.attached).toEqual([])
+        await noHorizontalOverflow(page)
+        await capture(page, 'live-phone-390')
+      } finally {
+        await browser.close()
+      }
+    } finally {
+      await testHost.close()
+    }
+  })
 })
 
-/** A booted `latch-` device named by LATCH_E2E_LIVE_DEVICE, for the live picture and input with the real helper and idb. */
+/** The booted `latch-` device created and identified by the person running the test. */
 async function liveDevice(): Promise<{ udid: string; name: string } | undefined> {
   const name = latchEnv(process.env, 'E2E_LIVE_DEVICE')
-  if (process.platform !== 'darwin' || !name?.startsWith('latch-')) return undefined
+  const udid = latchEnv(process.env, 'E2E_LIVE_UDID')
+  if (process.platform !== 'darwin' || !name?.startsWith('latch-') || !udid) return undefined
   const listed = await xcrunSimctl(['list', 'devices', '--json', 'available'], { timeoutMs: 30_000, maxBytes: 4 * 1024 * 1024 })
   if (listed.code !== 0) return undefined
   const all = Object.values(
     (JSON.parse(listed.stdout.toString('utf8')) as { devices: Record<string, Array<{ udid: string; name: string; state: string }>> })
       .devices,
   ).flat()
-  const found = all.find(item => item.name === name && item.state === 'Booted')
-  return found ? { udid: found.udid, name: found.name } : undefined
+  const matches = all.filter(item => item.name === name)
+  return matches.length === 1 && matches[0]?.udid === udid && matches[0].state === 'Booted' ? matches[0] : undefined
 }
 
 const live = electronE2E ? await liveDevice() : undefined
@@ -731,7 +829,7 @@ async function clickPage(): Promise<{ server: Server; url: string; clicks: Array
 }
 
 /**
- * The live picture and input on a real booted `latch-` device (LATCH_E2E_LIVE_DEVICE), with the real latch-simulator and
+ * The live picture and input on a real booted `latch-` device (LATCH_E2E_LIVE_DEVICE and LATCH_E2E_LIVE_UDID), with the real latch-simulator and
  * the person's own idb_companion: the page in the device reports the click; a rotation turns the picture and taps still
  * land. Every simctl, devicectl, helper and companion must name that device or only list.
  */
@@ -741,10 +839,19 @@ describe.skipIf(!electronE2E || !live)('native desktop shell: 设备 live pictur
     const guard = (args: readonly string[], kind: string) => {
       if (!(kind === 'simctl' && args[0] === 'list') && !args.includes(target.udid)) throw new Error(`refused ${kind} ${args[0]}`)
     }
-    const run: SimctlRunner = async (args, options) => (guard(args, 'simctl'), xcrunSimctl(args, options))
+    const run: SimctlRunner = async (args, options) => {
+      guard(args, 'simctl')
+      const result = await xcrunSimctl(args, options)
+      if (result.code !== 0 || args[0] !== 'list' || !args.includes('devices')) return result
+      // The test Host and its window see only the simulator that belongs to this run.
+      const listed = JSON.parse(result.stdout.toString('utf8')) as { devices: Record<string, Array<{ udid: string }>> }
+      for (const [runtime, devices] of Object.entries(listed.devices))
+        listed.devices[runtime] = devices.filter(one => one.udid === target.udid)
+      return { ...result, stdout: Buffer.from(JSON.stringify(listed)) }
+    }
     const devicectl: SimctlRunner = async (args, options) => (guard(args, 'devicectl'), xcrunDevicectl(args, options))
     const page = await clickPage()
-    const root = await mkdtemp(join(tmpdir(), 'latch-electron-device-real-live-'))
+    const root = await mkdtemp(join(tmpdir(), 'ld-'))
     await mkdir(OUT, { recursive: true })
     const testHost = await startTestHost({
       demo: true,
@@ -761,6 +868,7 @@ describe.skipIf(!electronE2E || !live)('native desktop shell: 设备 live pictur
           return attachSimulatorHelper(udid)
         },
         idb: {
+          tempDir: root,
           spawn: (binary, args, options) => {
             guard(args, 'idb_companion')
             return spawnChild(binary, [...args], { cwd: options.cwd, env: options.env, stdio: ['ignore', 'pipe', 'ignore'] })
@@ -776,12 +884,8 @@ describe.skipIf(!electronE2E || !live)('native desktop shell: 设备 live pictur
       await panel.locator('.sim-picker').click()
       await window.getByRole('menuitemradio', { name: new RegExp(`^${target.name}`, 'u') }).click()
       const desktop = await testHost.enroll({ listener: 'unix', name: 'Opener' })
-      // Upright first: a run that stopped half way may have left the device turned.
-      for (let turn = 0; turn < 4; turn++) {
-        const { orientation } = await desktop.json<{ orientation: string | null }>(`simulators/${target.udid}/orientation`)
-        if (orientation === 'portrait') break
-        await desktop.json(`simulators/${target.udid}/rotate`, { body: { direction: 'left' } }).catch(() => undefined)
-      }
+      const { orientation } = await desktop.json<{ orientation: string | null }>(`simulators/${target.udid}/orientation`)
+      expect(orientation).toBe('portrait')
       await desktop.json(`simulators/${target.udid}/open-url`, { body: { url: page.url } })
       await expect.poll(() => page.loads.length, { timeout: 60_000 }).toBeGreaterThan(0)
       const screen = panel.locator('canvas.sim-live')

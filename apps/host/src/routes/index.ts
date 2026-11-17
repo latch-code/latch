@@ -73,6 +73,7 @@ export function createRoutes(
   const changes = createChangeRoutes(context)
   const customization = createCustomizationRoutes(context, deps.customization)
   const workProposals = createWorkProposalRoutes(context, deps.workProposals)
+  const simulators = createSimulatorRoutes(context, deps.simulators.simulators, deps.simulators.live, deps.simulators.control)
   return {
     native,
     terminal,
@@ -83,13 +84,20 @@ export function createRoutes(
     workProposals,
     routes: new RouteRegistry([
       native,
-      createDeviceRoutes(context, { ...deps.devices, deviceView: device => native.deviceView(device) }),
+      createDeviceRoutes(context, {
+        ...deps.devices,
+        deviceView: device => native.deviceView(device),
+        endDisallowedStreams() {
+          deps.devices.endDisallowedStreams()
+          simulators.endDisallowedStreams()
+        },
+      }),
       changes,
       createReviewNoteRoutes(context, deps.reviewNotes),
       createGitRoutes(context, deps.git),
       terminal,
       createBrowserRoutes(context, deps.browser),
-      createSimulatorRoutes(context, deps.simulators.simulators, deps.simulators.live, deps.simulators.control),
+      simulators,
       createMcpRoutes(context, deps.mcp),
       createAgentRoutes(context, deps.agents),
       agentLogin,

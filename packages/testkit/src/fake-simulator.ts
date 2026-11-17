@@ -138,6 +138,8 @@ export interface FakeIdb {
   signals: string[]
   /** Companions running now. */
   running(): number
+  /** HID streams that the receiving socket has not closed yet. */
+  openHid(): number
   /** Ends every running companion as if it crashed. */
   crash(): void
 }
@@ -222,8 +224,10 @@ export function fakeIdbCompanion(
     hang?: boolean
     /** Ends the first hid stream itself after its first event, as rotating the device does. */
     cut?: boolean
-    /** Says it listens on a TCP port instead of the socket. */
-    tcp?: boolean
+    /** Which TCP readiness field it reports instead of the socket. */
+    tcp?: 'grpc_port' | 'grpc_swift_port'
+    /** Chunks written to stdout before the socket readiness line. */
+    startupOutput?: string[]
     /** Sends message after message down every hid stream, never ending. */
     flood?: boolean
     /** Never answers describe. */
@@ -235,12 +239,14 @@ export function fakeIdbCompanion(
 ): FakeIdb {
   const screen = options.screen ?? { width: 402, height: 874 }
   const children = new Set<() => void>()
+  const openHid = new Set<http2.ServerHttp2Stream>()
   const fake: FakeIdb = {
     starts: [],
     events: [],
     signals: [],
     locate: async () => (options.installed === false ? undefined : '/opt/homebrew/bin/idb_companion'),
     running: () => children.size,
+    openHid: () => openHid.size,
     crash: () => {
       for (const end of children) end()
     },
@@ -265,6 +271,10 @@ export function fakeIdbCompanion(
       server.on('stream', (stream, headers) => {
         const path = headers[':path']
         const chunks: Buffer[] = []
+        if (path === '/idb.CompanionService/hid') {
+          openHid.add(stream)
+          stream.once('close', () => openHid.delete(stream))
+        }
         if (path === '/idb.CompanionService/hid' && options.stall) {
           stream.pause()
           return
@@ -318,9 +328,12 @@ export function fakeIdbCompanion(
         setImmediate(() => child.emit('close', 0))
       }
       children.add(end)
-      if (options.tcp) setImmediate(() => child.stdout.write('{"grpc_swift_port":10882,"grpc_port":10882}\n'))
+      if (options.tcp) setImmediate(() => child.stdout.write(`{"${options.tcp}":10882}\n`))
       else if (options.ready !== false)
-        server.listen(socket, () => child.stdout.write(`{"grpc_path":"${args[args.indexOf('--grpc-domain-sock') + 1]}"}\n`))
+        server.listen(socket, () => {
+          for (const chunk of options.startupOutput ?? []) child.stdout.write(chunk)
+          child.stdout.write(`{"grpc_path":"${args[args.indexOf('--grpc-domain-sock') + 1]}"}\n`)
+        })
       return child
     },
   }

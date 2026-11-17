@@ -757,6 +757,8 @@ Agent 在 `initialize` 的 `_meta.steering = { supported: true }` 声明后，�
 
 停止开始后不再追加。没有声明的 Agent 照常排队。语义见 [STREAMING.md](./STREAMING.md#追加到运行中的一轮)。
 
+模拟器工具按当前运行 ID 检查发起设备。Driver 在真正发出较窄范围的追加前暂停这一轮的设备工具授权，追加送达或结果未知时撤掉授权。旧回执的重放不会触发这一步。[设备工具](DEVICE-PREVIEW.md#agent)
+
 ## 清空上下文
 
 带 `freshContext` 的输入在新的 ACP 会话里开始（语义见 [STREAMING.md](./STREAMING.md#清空上下文)）。

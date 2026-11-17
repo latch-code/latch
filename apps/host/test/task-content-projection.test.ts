@@ -258,3 +258,109 @@ describe('work-scope file content projection', () => {
     noFileBody(next.approvals)
   })
 })
+
+it('projects only counts from saved simulator input rows to every device over HTTP and SSE', async () => {
+  const { host, owner, work, sessionId, approval } = await fixture()
+  const original = host.host.bridge.detail.bind(host.host.bridge)
+  const typed = 'minted horizon'
+  const userText = 'Please send a label to the simulator.'
+  const udid = '22222222-2222-4222-8222-222222222222'
+  const raw = JSON.stringify({ udid, text: typed })
+  const touch = JSON.stringify({ udid, x: 321.875, y: 180 })
+  const misleadingTitle = 'latch-browser.device_type_text'
+  const command = 'echo ordinary command'
+  const shellInput = JSON.stringify({ command })
+  vi.spyOn(host.host.bridge, 'detail').mockImplementation(async id => {
+    const detail = await original(id)
+    if (id !== sessionId) return detail
+    return {
+      ...detail,
+      approvals: [
+        ...detail.approvals,
+        {
+          id: 'simulator-approval',
+          sessionId,
+          toolName: 'latch-browser.device_type_text',
+          toolCallId: 'simulator-tool',
+          reason: `Type ${typed}`,
+          arguments: raw,
+          requestedAt: '2026-11-18T00:00:00.000Z',
+          risk: 'R2',
+          options: [{ id: 'input-once', label: `Type ${typed}`, kind: 'allow_once' }],
+        },
+        {
+          id: 'shell-approval',
+          sessionId,
+          toolName: 'shell',
+          reason: misleadingTitle,
+          arguments: shellInput,
+          requestedAt: '2026-11-18T00:00:00.000Z',
+          tool: { kind: 'execute', title: misleadingTitle, input: shellInput },
+        },
+      ],
+      messages: [
+        ...detail.messages,
+        { id: 'simulator-prompt', role: 'user', text: userText },
+        {
+          id: 'simulator-tool',
+          role: 'tool',
+          toolName: 'device_type_text',
+          state: 'completed',
+          text: raw,
+          tool: { title: 'latch-browser.device_type_text', input: raw, output: raw, locations: [typed] },
+        },
+        {
+          id: 'simulator-touch',
+          role: 'tool',
+          toolName: 'latch-browser.device_tap',
+          state: 'completed',
+          text: touch,
+          tool: { input: touch, output: touch },
+        },
+        {
+          id: 'shell-tool',
+          role: 'tool',
+          toolName: 'shell',
+          state: 'queued',
+          text: command,
+          tool: { kind: 'execute', title: misleadingTitle, input: shellInput },
+        },
+      ],
+    }
+  })
+  const subscriptions = await Promise.all(
+    [owner, work].map(async device => ({
+      detail: await device.json<TaskDetail>(`tasks/${sessionId}`),
+      live: await stream(device, sessionId),
+    })),
+  )
+  await allow(work, approval)
+  await settled(host, sessionId)
+  for (const { detail, live } of subscriptions) {
+    await expect.poll(() => live.events().some(event => event.detail.messages.some(message => message.id === 'simulator-tool'))).toBe(true)
+    for (const shown of [detail, ...live.events().map(event => event.detail)]) {
+      expect(shown.messages.find(message => message.id === 'simulator-prompt')?.text).toBe(userText)
+      expect(shown.messages.find(message => message.id === 'simulator-tool')).toMatchObject({
+        toolName: 'latch-browser.device_type_text',
+        text: '模拟器输入文字 · 14 个字符',
+        tool: { title: '模拟器输入文字', input: '14 个字符' },
+      })
+      expect(shown.messages.find(message => message.id === 'simulator-touch')?.tool?.input).toBe('1 个触点')
+      expect(shown.approvals.find(approval => approval.id === 'simulator-approval')).toMatchObject({
+        toolCallId: 'simulator-tool',
+        reason: '模拟器输入文字',
+        arguments: '14 个字符',
+        risk: 'R2',
+        options: [{ id: 'input-once', label: '允许一次', kind: 'allow_once' }],
+      })
+      expect(shown.messages.find(message => message.id === 'shell-tool')).toMatchObject({ toolName: 'shell', text: command })
+      expect(shown.approvals.find(approval => approval.id === 'shell-approval')).toMatchObject({
+        toolName: 'shell',
+        reason: misleadingTitle,
+        arguments: shellInput,
+      })
+      expect(JSON.stringify(shown)).not.toContain(typed)
+      expect(JSON.stringify(shown)).not.toContain('321.875')
+    }
+  }
+})

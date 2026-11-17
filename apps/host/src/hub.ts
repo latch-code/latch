@@ -1117,12 +1117,19 @@ export class HarnessHub implements Bridge {
   }
 
   /** Adds text to the session's running turn; `prompt-required` from a driver that cannot. */
-  async steer(sessionId: string, prompt: string, requestId: string): Promise<SteerOutcome> {
+  async steer(
+    sessionId: string,
+    prompt: string,
+    requestId: string,
+    beforeSteer?: (runId: string) => ((couldBeInjected: boolean) => void) | undefined,
+  ): Promise<SteerOutcome> {
     const member = await this.route(sessionId)
     const bridge = member.bridge
     if (!bridge.steer) return 'prompt-required'
     return await this.accept(member, () =>
-      withHarnessPromptSource({ method: 'steer', sessionId, requestId, text: prompt }, () => bridge.steer!(sessionId, prompt, requestId)),
+      withHarnessPromptSource({ method: 'steer', sessionId, requestId, text: prompt, ...(beforeSteer ? { beforeSteer } : {}) }, () =>
+        bridge.steer!(sessionId, prompt, requestId),
+      ),
     )
   }
 

@@ -1,5 +1,5 @@
 // The person's own idb_companion (facebook/idb, MIT), which delivers touches, keys and buttons to a simulator. Latch
-// never installs, updates or bundles it: it finds the binary where Homebrew or PATH put it and runs it with a fixed
+// never installs, updates or bundles it: it finds the binary in Homebrew's Cellar and runs it with a fixed
 // argument list for one validated UDID, listening on a Unix socket only, never TCP (`--grpc-port` listens on every
 // interface without authentication). The socket lives in a private 0700 directory; the companion ends with the
 // person's control, the device, the Host, or by itself once idle (so a crashed Host leaves none behind for long). The
@@ -17,7 +17,7 @@ import { AppError } from '@latch/sdk'
 import { GrpcReader, encodeHidEvent, grpcFrame, screenPoints, type HidEvent } from './simulator-idb-wire.ts'
 
 const UDID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/u
-/** Where Homebrew puts it on Apple silicon and on Intel; then the Host's own PATH, absolute entries only. */
+/** Where Homebrew links it on Apple silicon and Intel, paired with each installation's Cellar. */
 const KNOWN_PLACES = [
   { link: '/opt/homebrew/bin/idb_companion', cellar: '/opt/homebrew/Cellar' },
   { link: '/usr/local/bin/idb_companion', cellar: '/usr/local/Cellar' },
@@ -62,6 +62,17 @@ export interface IdbOptions {
   /** Where the private directories go; the system's temporary directory unless a test names one. */
   tempDir?: string
   readyMs?: number
+}
+
+/** Cancels an individual wait without cancelling work a different caller may still need. */
+export function waitForIdb<T>(result: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return result
+  return new Promise((resolve, reject) => {
+    const cancelled = () => reject(signal.reason)
+    if (signal.aborted) cancelled()
+    else signal.addEventListener('abort', cancelled, { once: true })
+    void result.then(resolve, reject).finally(() => signal.removeEventListener('abort', cancelled))
+  })
 }
 
 /** The companion's environment: the same few variables as simctl's, so nothing such as HID logging is passed in. */
@@ -204,10 +215,12 @@ function settle(request: http2.ClientHttp2Stream, count: number): Promise<CallRe
 export class HidStream {
   private readonly request: http2.ClientHttp2Stream
   private readonly result: Promise<CallResult>
+  private readonly closed: Promise<void>
   private failure: Error | undefined
 
   constructor(request: http2.ClientHttp2Stream) {
     this.request = request
+    this.closed = new Promise(resolve => request.once('close', resolve))
     // HIDResponse is one empty message, sent as the stream ends.
     this.result = settle(request, 1)
     this.result.then(
@@ -242,7 +255,13 @@ export class HidStream {
    * Ends the stream; resolves only once the companion answered status 0 for every event sent. One that has not answered
    * within five seconds is cancelled and counts as not delivered.
    */
-  async end(timeoutMs = END_MS): Promise<void> {
+  async end(timeoutMs = END_MS, signal?: AbortSignal): Promise<void> {
+    const cancel = () => {
+      this.cancel()
+      this.request.destroy()
+    }
+    if (signal?.aborted) cancel()
+    else signal?.addEventListener('abort', cancel, { once: true })
     if (!this.request.closed) this.request.end()
     let timer: NodeJS.Timeout | undefined
     const late = new Promise<never>((_resolve, reject) => {
@@ -252,10 +271,16 @@ export class HidStream {
       }, timeoutMs)
     })
     try {
-      const { status } = await Promise.race([this.result, late])
+      const answer = this.result.then(async result => {
+        await this.closed
+        return result
+      })
+      const { status } = await Promise.race([answer, late])
+      signal?.throwIfAborted()
       if (status !== 0) throw new Error(`idb_companion answered status ${status}`)
     } finally {
       clearTimeout(timer)
+      signal?.removeEventListener('abort', cancel)
     }
   }
 
@@ -264,6 +289,13 @@ export class HidStream {
     this.failure ??= new Error('cancelled')
     if (!this.request.closed) this.request.close(http2.constants.NGHTTP2_CANCEL)
     this.result.catch(() => undefined)
+  }
+
+  /** A cancelled gesture keeps the device until its local HTTP/2 stream has closed. */
+  async cancelAndWait(): Promise<void> {
+    this.cancel()
+    this.request.destroy()
+    await this.closed
   }
 }
 
@@ -305,11 +337,17 @@ export class IdbCompanion {
    * Starts a companion for a listed device and waits until its socket answers. Throws `IdbUnavailable` with the reason
    * when it is not installed, will not start or does not answer; whatever it started is ended first.
    */
-  static async start(udid: string, options: IdbOptions = {}): Promise<IdbCompanion> {
+  static async start(udid: string, options: IdbOptions = {}, signal?: AbortSignal): Promise<IdbCompanion> {
     if (!UDID.test(udid)) throw new AppError(400, 'invalid-input', '设备标识无效')
-    const binary = await (options.locate ?? locateIdbCompanion)()
+    signal?.throwIfAborted()
+    const binary = await waitForIdb((options.locate ?? locateIdbCompanion)(), signal)
+    signal?.throwIfAborted()
     if (!binary) throw new IdbUnavailable('idb-missing', '没有找到 idb_companion')
     const dir = await mkdtemp(join(options.tempDir ?? tmpdir(), 'latch-idb-'))
+    if (signal?.aborted) {
+      await rm(dir, { recursive: true, force: true })
+      signal.throwIfAborted()
+    }
     const socket = join(dir, SOCKET_NAME)
     if (Buffer.byteLength(socket) > SOCKET_PATH_LIMIT) {
       await rm(dir, { recursive: true, force: true })
@@ -344,35 +382,51 @@ export class IdbCompanion {
     child.once('close', () => exited())
     child.once('error', () => exited())
     const ended = () => stop(child, exit).finally(() => rm(dir, { recursive: true, force: true }))
-    // It prints `{"grpc_path":"c.sock"}` once it listens; nothing else of its output is read or kept.
-    // A companion that says it listens on a port instead (TCP: every interface, no authentication) is killed at once.
+    // Read only the bounded startup reports on stdout. A TCP report means an unauthenticated listener: stop it at once.
     let tcp = false
     const ready = await new Promise<boolean>(resolve => {
-      let text = ''
-      const timer = setTimeout(() => resolve(false), options.readyMs ?? READY_MS)
-      timer.unref()
-      child.stdout?.on('data', (chunk: Buffer) => {
-        if (text.length >= STDOUT_LIMIT) return
-        text += chunk.toString('utf8').slice(0, STDOUT_LIMIT - text.length)
-        if (/port/iu.test(text)) {
-          tcp = true
-          child.kill('SIGKILL')
-          clearTimeout(timer)
-          resolve(false)
-          return
-        }
-        if (text.includes(`"grpc_path":"${SOCKET_NAME}"`)) {
-          clearTimeout(timer)
-          resolve(true)
-        }
-      })
-      void exit.then(() => {
+      let pending = ''
+      let remaining = STDOUT_LIMIT
+      const finish = (ready: boolean) => {
         clearTimeout(timer)
-        resolve(false)
+        signal?.removeEventListener('abort', cancel)
+        resolve(ready)
+      }
+      const cancel = () => finish(false)
+      const timer = setTimeout(cancel, options.readyMs ?? READY_MS)
+      timer.unref()
+      if (signal?.aborted) cancel()
+      else signal?.addEventListener('abort', cancel, { once: true })
+      child.stdout?.on('data', (chunk: Buffer) => {
+        if (remaining === 0) return
+        const bytes = chunk.subarray(0, remaining)
+        remaining -= bytes.length
+        const lines = (pending + bytes.toString('utf8')).split('\n')
+        pending = lines.pop()!
+        let socketReady = false
+        for (const line of lines) {
+          let report: unknown
+          try {
+            report = JSON.parse(line)
+          } catch {
+            continue
+          }
+          if (!report || typeof report !== 'object') continue
+          if (Object.hasOwn(report, 'grpc_port') || Object.hasOwn(report, 'grpc_swift_port')) {
+            tcp = true
+            child.kill('SIGKILL')
+            finish(false)
+            return
+          }
+          if ('grpc_path' in report && report.grpc_path === SOCKET_NAME) socketReady = true
+        }
+        if (socketReady) finish(true)
       })
+      void exit.then(cancel)
     })
-    if (!ready) {
+    if (!ready || signal?.aborted) {
       await ended()
+      signal?.throwIfAborted()
       throw new IdbUnavailable('companion-failed', tcp ? 'idb_companion 要监听网络端口，已停止' : 'idb_companion 没有启动')
     }
     const session = http2.connect('http://localhost', { createConnection: () => net.connect(socket) })
@@ -382,10 +436,13 @@ export class IdbCompanion {
   }
 
   /** The screen in points, from `describe`: also the harmless call that proves the companion answers. */
-  async describe(timeoutMs = CALL_MS): Promise<{ width: number; height: number }> {
+  async describe(timeoutMs = CALL_MS, signal?: AbortSignal): Promise<{ width: number; height: number }> {
+    signal?.throwIfAborted()
     const request = this.call('/idb.CompanionService/describe')
     request.end(grpcFrame(Buffer.alloc(0)))
-    const timer = setTimeout(() => request.close(http2.constants.NGHTTP2_CANCEL), timeoutMs)
+    const cancel = () => request.close(http2.constants.NGHTTP2_CANCEL)
+    const timer = setTimeout(cancel, timeoutMs)
+    signal?.addEventListener('abort', cancel, { once: true })
     try {
       const { status, messages } = await settle(request, 1)
       const size = status === 0 && messages[0] ? screenPoints(messages[0]) : undefined
@@ -396,6 +453,7 @@ export class IdbCompanion {
       throw new IdbUnavailable('no-answer', 'idb_companion 没有回答')
     } finally {
       clearTimeout(timer)
+      signal?.removeEventListener('abort', cancel)
     }
   }
 

@@ -13,6 +13,7 @@ import {
   readSessionSkills,
   boundSessionSkills,
   type FileMention,
+  simulatorInputOptions,
 } from '@latch/protocol'
 import { checkedAttachments, promptBlocks } from './attachments.ts'
 import {
@@ -41,7 +42,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
 import { CommandCache, commandDirectory, commandScope } from './command-cache.ts'
-import { harnessPromptSource } from './prompt-source.ts'
+import { beginHarnessSteer, harnessPromptSource } from './prompt-source.ts'
 import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -3109,12 +3110,14 @@ export class AgentRuntime implements Bridge {
       await this.flush()
       return 'prompt-required'
     }
-    let outcome: string
+    let outcome = 'invalid'
     let added = false
+    const finishAuthority = beginHarnessSteer(run.taskId, requestId, run.id)
     // The agent may stream its reply to the text right behind its answer, in the same read: the turn splits before it.
     const add = (result: unknown): void => {
       if (added || steerResult.safeParse(result).data?.outcome !== 'injected') return
       added = true
+      finishAuthority?.(true)
       const task = this.state.tasks[run.taskId]
       if (!task) return
       if (this.runs.get(run.taskId) === run && run.segment) this.settleSegment(run, task, 'completed')
@@ -3144,6 +3147,8 @@ export class AgentRuntime implements Bridge {
       if (error instanceof RequestTimeout || error instanceof ConnectionClosed || error instanceof ConnectionStopping) throw steerUnknown()
       outcome = 'failed'
       this.limits.log(`${this.agent.name} 没有接受追加：${clip(this.redact(message(error)), 300)}`)
+    } finally {
+      finishAuthority?.(added || outcome === 'invalid')
     }
     if (outcome !== 'injected') {
       run.steers--
@@ -6003,6 +6008,7 @@ export class AgentRuntime implements Bridge {
     const run = this.runs.get(taskId)
     const context: ToolGatewayCallContext = { turn: !run?.sent ? 'none' : run.cancelRequested ? 'stopping' : 'running' }
     if (run) {
+      context.runId = run.id
       const key = `tools:${randomUUID()}`
       context.waitForUser = () => {
         run.clock.openWait(key)
@@ -7838,6 +7844,8 @@ export class AgentRuntime implements Bridge {
       if (!child) this.upsert(task, item)
       else if (row) upsertStep(row, item)
     }
+    const detail = toolDetail(state)
+    const toolTitle = state.simulatorInput ? detail.title : state.title
     if (child && !filtered.autoReject) {
       const offered = this.childOffer(task, state.kind, filtered.visible)
       if (!offered.some(option => option.kind === 'allow_once')) {
@@ -7846,7 +7854,7 @@ export class AgentRuntime implements Bridge {
         task.messages.push({
           id: randomUUID(),
           role: 'system',
-          text: `已拒绝：子 Agent「${child.title}」请求「${clip(this.redact(state.title || toolLabel(state)), 200)}」，${
+          text: `已拒绝：子 Agent「${child.title}」请求「${clip(this.redact(toolTitle || toolLabel(state)), 200)}」，${
             this.childBlockedByPlan(task, state.kind) ? '这个会话是「只看不改」' : '会把权限换得比这个会话宽，或换到 Latch 认不出的模式'
           }，Latch 没有交给你。`,
           createdAt: this.now(),
@@ -7876,22 +7884,23 @@ export class AgentRuntime implements Bridge {
       return Promise.resolve(filtered.autoReject.optionId ? selected(filtered.autoReject.optionId) : CANCELLED_OUTCOME)
     }
     state.awaiting++
+    const options = filtered.visible.map(option => ({
+      id: option.optionId,
+      label: clip(option.name, 200),
+      kind: option.kind as ApprovalOptionKind,
+    }))
     const approval: Approval = {
       id: randomUUID(),
       sessionId: taskId,
       toolName: toolLabel(state),
       // A subagent's call is no row of the session's own, so nothing links to it there.
       ...(child ? { subagent: row?.subagent?.title ?? child.title } : { toolCallId: state.id.slice('tool:'.length) }),
-      reason: clip(state.title || `${this.agent.name} 请求执行一项操作`, 1000),
-      ...(state.rawInput !== undefined ? { arguments: clip(pretty(state.rawInput), TOOL_TEXT_LIMIT) } : {}),
+      reason: clip(toolTitle || `${this.agent.name} 请求执行一项操作`, 1000),
+      ...(detail.input !== undefined ? { arguments: detail.input } : {}),
       requestedAt: this.now(),
-      options: filtered.visible.map(option => ({
-        id: option.optionId,
-        label: clip(option.name, 200),
-        kind: option.kind as ApprovalOptionKind,
-      })),
-      tool: toolDetail(state),
-      ...(state.plan ? { plan: clip(state.plan, TOOL_TEXT_LIMIT) } : {}),
+      options: state.simulatorInput ? simulatorInputOptions(options) : options,
+      tool: detail,
+      ...(detail.plan ? { plan: detail.plan } : {}),
       // The harness asks on its own terms in a full-access session: a prompt, not a security boundary.
       risk: 'R2',
       advisory: true,

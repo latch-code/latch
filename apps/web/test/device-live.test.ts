@@ -6,13 +6,16 @@ import {
   chooseCodec,
   deviceInput,
   deviceKey,
+  deviceToPointer,
   inputReason,
   parseControl,
   parseDescription,
+  parseOwner,
   pointerToDevice,
   streamQuery,
   uprightSize,
   uprightTransform,
+  writtenTouch,
 } from '../src/panel/device/live.ts'
 
 const PORTRAIT: SimulatorLiveDescription = {
@@ -125,9 +128,43 @@ describe('a pointer on the picture', () => {
     // pointer at that place of the picture is that point.
     expect(pointerToDevice({ x: 201 / 2, y: 160 / 2 }, { left: 0, top: 0, width: 437, height: 201 }, turned)).toEqual({ x: 201, y: 160 })
   })
+
+  it('puts the acknowledged touch on the turned, zoomed picture within its letterbox', () => {
+    const { points, pixels } = uprightSize({ ...PORTRAIT, orientation: 4 })
+    const box = { left: 30, top: 100, width: 950, height: 400 }
+    const point = { x: 201, y: 160 }
+    const pointer = deviceToPointer(point, box, points, pixels)!
+    expect(pointerToDevice(pointer, box, points, pixels)).toEqual(point)
+  })
 })
 
 describe('input to the Host', () => {
+  it('accepts the owner enum and only shows a point the receipt says was written', () => {
+    expect(parseOwner(new Uint8Array([0]))).toBe('none')
+    expect(parseOwner(new Uint8Array([1]))).toBe('you')
+    expect(parseOwner(new Uint8Array([2]))).toBe('other')
+    const [control] = new LiveReader().push(message(SIMULATOR_STREAM.control, 0, new Uint8Array([3])))
+    expect(parseOwner(control!.payload)).toBe('agent')
+    expect(parseOwner(new Uint8Array([4]))).toBeUndefined()
+    expect(parseOwner(new Uint8Array([1, 2]))).toBeUndefined()
+    expect(() => new LiveReader().push(message(SIMULATOR_STREAM.control, 0, new Uint8Array([1, 2])))).toThrow()
+    const events: SimulatorInputEvent[] = [
+      { type: 'touch', phase: 'down', x: 1, y: 2 },
+      { type: 'key', key: 'return' },
+      { type: 'touch', phase: 'up', x: 3, y: 4 },
+    ]
+    expect(writtenTouch({ written: 3, touchIndex: 2 }, events)).toBe(events[2])
+    for (const receipt of [
+      { written: 0, touchIndex: 0 },
+      { written: 2 },
+      { written: 4, touchIndex: 0 },
+      { written: 2, touchIndex: 1 },
+      { written: 2, touchIndex: 3 },
+      { written: 2, touchIndex: 0.5 },
+    ])
+      expect(writtenTouch(receipt, events)).toBeUndefined()
+  })
+
   it('keeps order, batches moves to one per frame, and never drops a down or an up', async () => {
     const posts: SimulatorInputEvent[][] = []
     let flush: (() => void) | undefined
@@ -230,7 +267,7 @@ describe('input to the Host', () => {
     expect(view.touch).toEqual({ available: false, reason: 'idb-missing' })
     expect(view.keys).toEqual({ available: true })
     expect(view.buttons).toEqual({ available: false, reason: 'companion-failed' })
-    expect(inputReason(view.touch)).toContain('brew install idb-companion')
+    expect(inputReason(view.touch)).toContain('brew install meta/fb/idb-companion')
     expect(inputReason({ available: true })).toBe('')
   })
 })

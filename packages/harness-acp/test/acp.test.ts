@@ -14,6 +14,7 @@ import {
   LADDER_MODE,
   ownChoice,
   serviceChoice,
+  simulatorInputTool,
   type DriverTaskDetail,
   type Message,
   type SessionConfigOption,
@@ -2576,6 +2577,20 @@ describe('ACP permission mode', () => {
 })
 
 describe('ACP turn mapping', () => {
+  it('requires corroborated simulator arguments and identity for a qualified ACP title', () => {
+    const title = 'mcp__latch-browser__device_type_text'
+    const input = { udid: '22222222-2222-4222-8222-222222222222', text: 'draft label' }
+    expect(simulatorInputTool('device_type_text', undefined, input, title)).toBe('device_type_text')
+    expect(simulatorInputTool('device_type_text', undefined, input)).toBeUndefined()
+    expect(simulatorInputTool('shell', undefined, input, title)).toBeUndefined()
+    expect(simulatorInputTool(undefined, 'execute', input, title)).toBeUndefined()
+    expect(simulatorInputTool(undefined, undefined, { ...input, command: 'echo draft' }, title)).toBeUndefined()
+    expect(
+      simulatorInputTool('device_type_text', undefined, { ...input, server: 'editing', tool: 'device_type_text' }, title),
+    ).toBeUndefined()
+    expect(simulatorInputTool(undefined, undefined, { udid: input.udid }, title)).toBeUndefined()
+  })
+
   it('streams a reply under one live message ID and settles it with that ID', async () => {
     const fixture = await setup()
     const bridge = await fixture.open()

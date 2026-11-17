@@ -1,8 +1,7 @@
 /*
  * The 设备 tab, laid out as a device pane: a 32 top bar (the device picker with its state word, the zoom, power), the
- * picture on the sunken surface in a plain frame, an optional pane (App or 日志) under it, and a 32 bottom bar with the
- * device's tools (rotate, screenshot, record, annotate | App, 日志, address, appearance | Device Hub). The picture is not
- * interactive and does not look it: no pointer cursor, no hover. Green only for the running dot.
+ * input status and picture on the sunken surface, an optional pane (App or 日志) under it, and a 32 bottom bar with
+ * the device's tools (rotate, screenshot, record, annotate | App, 日志, address, appearance | Device Hub).
  */
 .sim-panel {
   display: flex;
@@ -100,6 +99,42 @@
 }
 .sim-live[data-input]:focus-visible {
   border-color: var(--accent);
+}
+.sim-input-status {
+  display: flex;
+  flex: none;
+  padding: var(--sp-4) var(--sp-12) 0;
+  border-top: 1px solid var(--line);
+  background: var(--sunken);
+}
+.sim-input-status + .sim-canvas {
+  border-top: 0;
+}
+.sim-input-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-2) 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.sim-input-owner[data-owner='you'] {
+  color: var(--accent-ink);
+}
+.sim-input-owner[data-owner='agent'] {
+  color: var(--ink);
+}
+.sim-touch-mark {
+  position: absolute;
+  width: var(--sp-8);
+  height: var(--sp-8);
+  border: 2px solid var(--raised);
+  border-radius: var(--r-full);
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 .sim-quiet {
   color: var(--muted);

@@ -23,7 +23,7 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - 插件面板由 `SessionPanels` / `ClientPluginPanel` 挂载并随会话清理；可信代码没有隔离，`compose` 只追加草稿（`e2e/plugin-packages.e2e.ts`）。
 - 安全文案只按错误码从 `src/core/securityCopy.ts` 取，新安全错误码在此补（`test/client-security.test.ts`）。
 - `permissions.ts` 只是展示，Host 会再次检查；事件流用 `eventStream.ts`（fetch），不用 `EventSource`。
-- 本机按 `@latch/protocol` 的 `isLocalListener`；回环浏览器是远程。缺邀请指引领取，用掉后须新邀请（`e2e/enrollment.e2e.ts`）。
+- 本机按 `isLocalListener`，回环浏览器算远程。缺邀请或用掉后须重领（enrollment.e2e）。设备见 DEVICE-PREVIEW。
 - 回复里的文件引用渲染成路径标记，从不生成 `<a href>`；只有 http(s) 与 mailto 是链接（message-content.test）。
 - 确认走 `withConfirmation`；未知结果保留原请求，设置确认后解锁。草稿只存文字，按设备与会话存于浏览器，14 天过期；像凭据的只在内存，含摘录的要 `all`；删会话、撤权或退出即清。失效项目保留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
 - 用 `@latch/ui` 的令牌、层和原语，页面只调布局。对话与看板同底色，看板只滚各列（DESIGN、`packages/ui/AGENTS.md`、`test/styles.test.ts`）。

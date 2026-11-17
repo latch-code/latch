@@ -12,7 +12,7 @@ const direction = z.enum(['left', 'right'])
  * runtime identifiers but never the name the person typed. The panel's own frames are looking, not acting, and are not
  * recorded. `auto-shutdown` is the Host's own: a device it booted, shut down when idle or as the Host stops. The
  * person's taps are not recorded one by one: `control` once, when they take control of a device. An agent's input
- * call records how many points and which key or button, never where, and of text only its length.
+ * call records counts for touch points and text length.
  */
 export const SIMULATOR_ACTIONS = {
   'simulator.action': z
@@ -82,10 +82,10 @@ export const SIMULATOR_ACTIONS = {
     udid: udid.optional(),
     /** How many points a tap (1) or swipe (2) named; never the points. */
     points: z.number().int().min(0).max(2).optional(),
-    /** Whether a tap was held (a long press). */
-    held: z.boolean().optional(),
     /** The length of text an agent asked to type; never the text. */
     textLength: z.number().int().min(0).max(1000).optional(),
+    /** Older records may include these input selectors. New events record counts. */
+    held: z.boolean().optional(),
     key: z.enum(SIMULATOR_KEYS).optional(),
     button: z.enum(SIMULATOR_BUTTONS).optional(),
     risk: z.enum(['R0', 'R1', 'R2']),

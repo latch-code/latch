@@ -380,6 +380,8 @@ Driver 上的其他声明：
 | `readAttachment`、`saveAttachment` | 取本轮附件的内容、保存 Agent 输出的图片。持久化只存引用，不把附件复制到项目目录；Host 仍验证设备、会话、类型与限额 |
 | `trackFiles` | 见 [FILE-OUTPUTS.md](FILE-OUTPUTS.md) |
 
+ACP 的 `ToolGatewayCallContext.runId` 由 Driver 在收到工具调用时取自实际运行。Host 用它核对模拟器工具仍属于同一轮。设备身份留在 Host 内部。签名见 [harness.ts](../packages/sdk/src/harness.ts)。
+
 ### Bridge 契约
 
 签名以 [bridge.ts](../packages/sdk/src/bridge.ts) 为准，可选方法旧 Driver 可以不实现。

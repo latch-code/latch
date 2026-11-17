@@ -1379,6 +1379,7 @@ const scenarios = {
   // arguments as input; `ask` first asks the person through session/request_permission, as an agent in a mode that asks
   // before MCP tools does. `cancelAfterMs` sends `notifications/cancelled` for the call after that long. `title` reports
   // the row under another name (another server's tool); `twin` reports a second, identical row that is never called.
+  // `omitKind`, `name` and `resultTitle` vary the ACP fields without changing the call sent to the MCP server.
   browser: async ({ sessionId, input, say, tool, permission }) => {
     const server = mcpServers.get(sessionId)?.find(item => item.name === 'latch-browser')
     if (!server) {
@@ -1410,7 +1411,14 @@ const scenarios = {
       if (cancelled.has(sessionId)) return { stopReason: 'cancelled' }
       const args = Object.fromEntries(Object.entries(step.args ?? {}).map(([key, value]) => [key, resolve(value)]))
       const toolCallId = `browser_${index}_${Date.now()}`
-      const call = { toolCallId, title: step.title ?? `mcp__latch-browser__${step.tool}`, kind: 'other', status: 'pending', rawInput: args }
+      const call = {
+        toolCallId,
+        title: step.title ?? `mcp__latch-browser__${step.tool}`,
+        ...(step.omitKind ? {} : { kind: 'other' }),
+        ...(step.name ? { name: step.name } : {}),
+        status: 'pending',
+        rawInput: args,
+      }
       tool(call)
       if (step.twin) tool({ ...call, toolCallId: `${toolCallId}_twin` })
       if (step.ask) {
@@ -1442,6 +1450,7 @@ const scenarios = {
       tool(
         {
           toolCallId,
+          ...(step.resultTitle ? { title: step.resultTitle } : {}),
           status: reply.result?.isError ? 'failed' : 'completed',
           content: [{ type: 'content', content: { type: 'text', text } }],
         },

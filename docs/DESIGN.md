@@ -531,6 +531,8 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 
 ## 设备与权限
 
+右栏「设备」在画面上方用图标和短词表示输入归属。空闲为圆形，个人接管为手形，另一个本机窗口为窗口图标，Agent 手势用 `AgentsGlyph`。写入回执到达后，点按与拖动的落点短暂标在画面里。状态与输入回执见 [DEVICE-PREVIEW](DEVICE-PREVIEW.md#实时画面与输入)。
+
 界面按设备的权限隐藏或停用操作，只是为了不展示做不到的事；每条规则都由 Host 再次执行。门控集中在 [permissions.ts](../apps/web/src/core/permissions.ts)，安全文案集中在 [securityCopy.ts](../apps/web/src/core/securityCopy.ts)。审批卡与错误文案统一说「运行 Latch 的电脑」。
 
 **本机确认。** 只有 Host 的 `PRESENCE_ACTIONS` 里的操作要在这台 Mac 上确认：连接新设备与配对、为设备增加权限、首次使用自定义或本机模型服务地址、放宽出站策略、应用含代码的自定义插件、添加或放宽 MCP 服务器、手填或改过的 Harness 命令。预设 Harness 的原样命令与预设模型服务的 HTTPS 地址、开始会话、放宽权限模式、批准操作不弹窗。

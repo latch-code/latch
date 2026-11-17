@@ -1,9 +1,7 @@
 // Input to this Mac's simulators through the person's idb_companion: the person's taps, drags, keys and buttons from
 // the 设备 panel, and an agent's `device_*` input tools, on one path. Inputs to one device are serialised per gesture:
-// an agent's gesture waits for the person's finger to lift and the other way round; nobody is locked out. A delivery
-// that fails is an error, never a success. Text is not typed through the device keyboard (a Pinyin keyboard drops
-// spaces, CJK has no key codes) and pasting text from outside the device arrives empty on iOS 27.2, so text input is
-// reported unavailable. See docs/DEVICE-PREVIEW.md.
+// an agent waits for the person's finger to lift, and yields to a person who presses. Input failure is reported.
+// Printable ASCII is typed key by key on the device's English (US) keyboard. See docs/DEVICE-PREVIEW.md.
 import {
   SIMULATOR_BUTTONS,
   SIMULATOR_KEYS,
@@ -11,11 +9,13 @@ import {
   type SimulatorControlView,
   type SimulatorInputEvent,
   type SimulatorInputKind,
+  type SimulatorInputOwner,
+  type SimulatorInputReceipt,
   type SimulatorKey,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { z } from 'zod'
-import { HidStream, IdbCompanion, IdbUnavailable, type IdbOptions } from './simulator-idb.ts'
+import { HidStream, IdbCompanion, IdbUnavailable, waitForIdb, type IdbOptions } from './simulator-idb.ts'
 import { IDB_KEYS, asciiKeys, type HidEvent } from './simulator-idb-wire.ts'
 
 /** How long one gesture waits for another's to end. */
@@ -64,19 +64,12 @@ export function parseDeviceInput(tool: string, args: Record<string, unknown>): D
   return parsed.success ? parsed.data : undefined
 }
 
-/** What the audit keeps of an input call: counts and enums, never where, never the text. */
-export function deviceInputFacts(args: DeviceInputArgs): {
-  points?: number
-  held?: boolean
-  textLength?: number
-  key?: SimulatorKey
-  button?: SimulatorButton
-} {
-  if (args.tool === 'device_tap') return { points: 1, held: (args.holdMs ?? 0) > 500 }
+/** Input details recorded for audit are point or character counts. */
+export function deviceInputFacts(args: DeviceInputArgs): { points?: number; textLength?: number } {
+  if (args.tool === 'device_tap') return { points: 1 }
   if (args.tool === 'device_swipe') return { points: 2 }
   if (args.tool === 'device_type_text') return { textLength: args.text.length }
-  if (args.tool === 'device_press_key') return { key: args.key }
-  return { button: args.button }
+  return {}
 }
 
 const NOT_TWO: SimulatorInputKind = { available: false, reason: 'single-touch' }
@@ -114,18 +107,20 @@ type Owner = 'person' | 'agent'
 class Device {
   readonly udid: string
   companion: IdbCompanion | undefined
-  starting: Promise<IdbCompanion> | undefined
+  starting: { abort: AbortController; result: Promise<IdbCompanion> } | undefined
   /** The screen in points, portrait. */
   size: { width: number; height: number } | undefined
   /** The devices (of people) that took control of it, and when each last sent input. */
   readonly holders = new Map<string, number>()
+  /** A release invalidates every take already issued by that holder. */
+  readonly takes = new Map<string, { pending: number }>()
   /** The person's long-lived stream, shared by every holder. */
   person: HidStream | undefined
   /** Whose gesture holds the device now, and who waits. */
   owner: Owner | undefined
   readonly waiting: Array<{ owner: Owner; grant: () => void }> = []
-  /** Where the person's finger is down, if it is, and when it last moved. */
-  down: { x: number; y: number } | undefined
+  /** Where the person's finger is down and the window whose touch last wrote that position. */
+  down: { x: number; y: number; holder: string } | undefined
   downAt = 0
   /** Agent calls under way, and the gesture of the one holding the device, which the person's press stops. */
   agents = 0
@@ -146,12 +141,14 @@ export interface SimulatorControlOptions {
   /** How idb_companion is found and started; left out (tests, not macOS) there is no input at all. */
   idb?: IdbOptions
   /** The device's active keyboard (`Simulators.activeKeyboard`); left out, text is unavailable. */
-  keyboard?: (udid: string) => Promise<string | undefined>
+  keyboard?: (udid: string, signal?: AbortSignal) => Promise<string | undefined>
   now?: () => number
 }
 
 export class SimulatorControl {
   private readonly devices = new Map<string, Device>()
+  private readonly endings = new Map<string, Promise<unknown>>()
+  private readonly watchers = new Map<string, Set<() => void>>()
   private readonly idb: IdbOptions | undefined
   private readonly now: () => number
   private stopped = false
@@ -194,42 +191,117 @@ export class SimulatorControl {
     return this.devices.get(udid)?.holders.has(holder) === true
   }
 
+  ownerOf(udid: string, viewer: string): SimulatorInputOwner {
+    const device = this.devices.get(udid)
+    if (device?.owner === 'agent') return 'agent'
+    if (!device?.companion?.alive || device.holders.size === 0) return 'none'
+    if (device.down) return device.down.holder === viewer ? 'you' : 'other'
+    return device.holders.has(viewer) ? 'you' : 'other'
+  }
+
+  /** The current ownership and changes, projected for this panel without any other device or session IDs. */
+  watchOwner(udid: string, viewer: string, publish: (owner: SimulatorInputOwner) => void): () => void {
+    const watchers = this.watchers.get(udid) ?? new Set<() => void>()
+    this.watchers.set(udid, watchers)
+    let last: SimulatorInputOwner | undefined
+    const update = () => {
+      const owner = this.ownerOf(udid, viewer)
+      if (owner === last) return
+      last = owner
+      publish(owner)
+    }
+    watchers.add(update)
+    update()
+    return () => {
+      watchers.delete(update)
+      if (watchers.size === 0) this.watchers.delete(udid)
+    }
+  }
+
+  private ownerChanged(udid: string): void {
+    for (const update of this.watchers.get(udid) ?? []) update()
+  }
+
   /**
    * The person (`holder`, their device's ID) takes control: the companion is started if needed and probed with a
-   * harmless call, and the person's stream opened. Answers what each kind of input can do; never throws for idb itself.
+   * harmless call. A stream is opened on the next input. Answers what each kind of input can do.
    */
-  async take(udid: string, holder: string): Promise<SimulatorControlView> {
+  async take(udid: string, holder: string, authorize?: () => void, beforeStart?: () => Promise<void>): Promise<SimulatorControlView> {
     if (!this.idb || this.stopped) return unavailableView('unsupported')
+    authorize?.()
     const device = this.device(udid)
+    const take = device.takes.get(holder) ?? { pending: 0 }
+    take.pending++
+    device.takes.set(holder, take)
     device.lastUsed = this.now()
-    try {
-      await this.companionOf(device)
-      if (!device.person?.open) device.person = device.companion!.hid()
-      device.holders.set(holder, this.now())
-      device.lastUsed = this.now()
-      device.view = this.ready()
-    } catch (error) {
-      device.view = unavailableView(error instanceof IdbUnavailable ? error.reason : 'companion-failed')
+    const check = () => {
+      authorize?.()
+      if (this.devices.get(udid) !== device || device.takes.get(holder) !== take)
+        throw new AppError(409, 'simulator-control-required', '接管请求已经结束，请在面板里重新接管这台设备')
     }
-    return device.view
+    try {
+      if (beforeStart) await beforeStart()
+      check()
+      const view = await this.companionOf(device).then(
+        () => this.ready(),
+        error => unavailableView(error instanceof IdbUnavailable ? error.reason : 'companion-failed'),
+      )
+      check()
+      if (view.touch.available) {
+        device.holders.set(holder, this.now())
+        device.lastUsed = this.now()
+      }
+      device.view = view
+      this.ownerChanged(udid)
+      return device.view
+    } finally {
+      take.pending--
+      if (take.pending === 0 && device.takes.get(holder) === take) device.takes.delete(holder)
+      // An authority check can fail after the companion has already answered.
+      if (device.companion && this.devices.get(udid) === device && !this.inUse(device)) await this.end(device)
+    }
   }
 
   /** The person lets go: a finger still down is lifted; the companion ends once nobody holds or uses it. */
   async release(udid: string, holder: string): Promise<void> {
     const device = this.devices.get(udid)
-    if (!device || !device.holders.delete(holder)) return
+    if (!device) return
+    const taking = device.takes.delete(holder)
+    const held = device.holders.delete(holder)
+    if (!taking && !held) return
+    if (!held) {
+      if (!this.inUse(device)) await this.end(device)
+      return
+    }
+    if (device.down?.holder === holder || device.holders.size === 0) await this.liftPerson(device).catch(() => undefined)
+    this.ownerChanged(udid)
     if (device.holders.size > 0) return
-    await this.liftPerson(device)
     const stream = device.person
     device.person = undefined
-    await stream?.end().catch(() => stream.cancel())
-    if (device.agents === 0) await this.end(device)
+    await stream?.end().catch(() => stream.cancelAndWait())
+    if (this.devices.get(udid) === device && !this.inUse(device)) await this.end(device)
+  }
+
+  releaseDisallowedHolders(allowed: (holder: string) => boolean): void {
+    for (const device of this.devices.values())
+      for (const holder of new Set([...device.holders.keys(), ...device.takes.keys()]))
+        if (!allowed(holder)) void this.release(device.udid, holder).catch(() => undefined)
   }
 
   /** The person's events, in order. Fails, and says so, when they did not reach the companion. */
-  async input(udid: string, holder: string, events: readonly SimulatorInputEvent[]): Promise<void> {
+  async input(
+    udid: string,
+    holder: string,
+    events: readonly SimulatorInputEvent[],
+    authorize?: () => void,
+  ): Promise<SimulatorInputReceipt> {
     const device = this.devices.get(udid)
     if (!device?.holders.has(holder)) throw new AppError(409, 'simulator-control-required', '先在面板里接管这台设备')
+    const allowed = () => {
+      authorize?.()
+      if (!device.holders.has(holder) || this.devices.get(udid) !== device)
+        throw new AppError(409, 'simulator-control-required', '先在面板里接管这台设备')
+    }
     this.spend(device, events.length)
     if (!device.companion?.alive || !device.size) {
       device.view = unavailableView('companion-failed')
@@ -238,7 +310,13 @@ export class SimulatorControl {
     for (const event of events) if (event.type === 'touch') this.checkPoint(device, event.x, event.y)
     device.lastUsed = this.now()
     device.holders.set(holder, this.now())
-    for (const event of events) await this.personEvent(device, event)
+    const receipt: SimulatorInputReceipt = { written: 0 }
+    for (const [index, event] of events.entries()) {
+      if (!(await this.personEvent(device, holder, event, allowed))) continue
+      receipt.written++
+      if (event.type === 'touch') receipt.touchIndex = index
+    }
+    return receipt
   }
 
   // ── An agent's discrete actions: one short stream each, answered only once the companion said status 0 ──
@@ -276,11 +354,15 @@ export class SimulatorControl {
 
   /** Printable ASCII, key by key, only on the English (US) QWERTY keyboard; anything else is refused whole. */
   async typeText(udid: string, text: string, signal?: AbortSignal): Promise<void> {
-    await this.agent(udid, signal, async (device, stream) => stream.write(await this.textKeys(device, text, false)))
+    await this.agent(udid, signal, async (device, stream, gesture) => {
+      const keys = await this.textKeys(device, text, false, gesture)
+      gesture.throwIfAborted()
+      stream.write(keys)
+    })
   }
 
   /** The key presses for `text`, after checking every character and the device's keyboard. */
-  private async textKeys(device: Device, text: string, person: boolean): Promise<HidEvent[]> {
+  private async textKeys(device: Device, text: string, person: boolean, signal?: AbortSignal): Promise<HidEvent[]> {
     const keys = asciiKeys(text)
     if (!keys)
       throw new AppError(
@@ -292,7 +374,7 @@ export class SimulatorControl {
     const now = this.now()
     let keyboard = person && device.keyboard && now - device.keyboard.at < KEYBOARD_FRESH_MS ? device.keyboard.value : undefined
     if (keyboard === undefined) {
-      keyboard = await this.keyboard(device.udid)
+      keyboard = await this.keyboard(device.udid, signal)
       device.keyboard = { at: this.now(), value: keyboard }
     }
     if (!keyboard || !LATIN_KEYBOARD.test(keyboard)) throw textRefusal(keyboard)
@@ -328,6 +410,7 @@ export class SimulatorControl {
     const device = this.devices.get(udid)
     if (!device) return
     this.devices.delete(udid)
+    this.ownerChanged(udid)
     device.person?.cancel()
     for (const waiter of device.waiting.splice(0)) waiter.grant()
     void this.end(device)
@@ -339,13 +422,15 @@ export class SimulatorControl {
     clearInterval(this.timer)
     const devices = [...this.devices.values()]
     this.devices.clear()
-    await Promise.allSettled(
-      devices.map(async device => {
+    for (const device of devices) this.ownerChanged(device.udid)
+    await Promise.allSettled([
+      ...this.endings.values(),
+      ...devices.map(async device => {
         await this.liftPerson(device).catch(() => undefined)
         device.person?.cancel()
         await this.end(device)
       }),
-    )
+    ])
   }
 
   private device(udid: string): Device {
@@ -359,19 +444,21 @@ export class SimulatorControl {
 
   private async companionOf(device: Device): Promise<IdbCompanion> {
     if (device.companion?.alive && device.size) return device.companion
-    if (device.starting) return device.starting
-    device.starting = (async () => {
+    if (device.starting) return device.starting.result
+    const abort = new AbortController()
+    const { signal } = abort
+    const result = (async () => {
+      await this.endings.get(device.udid)
+      signal.throwIfAborted()
       const previous = device.companion
       device.companion = undefined
       device.person = undefined
       await previous?.close().catch(() => undefined)
-      const companion = await IdbCompanion.start(device.udid, this.idb)
-      if (this.stopped || this.devices.get(device.udid) !== device) {
-        await companion.close()
-        throw new IdbUnavailable('companion-failed', 'idb_companion 已停止')
-      }
+      const companion = await IdbCompanion.start(device.udid, this.idb, signal)
       try {
-        device.size = await companion.describe()
+        device.size = await companion.describe(undefined, signal)
+        signal.throwIfAborted()
+        if (this.stopped || this.devices.get(device.udid) !== device) throw new IdbUnavailable('companion-failed', 'idb_companion 已停止')
       } catch (error) {
         await companion.close()
         throw error
@@ -383,12 +470,15 @@ export class SimulatorControl {
         device.person = undefined
         device.down = undefined
         device.view = unavailableView('companion-failed')
+        this.releaseOwner(device, 'person')
+        this.ownerChanged(device.udid)
       })
       return companion
     })().finally(() => {
       device.starting = undefined
     })
-    return device.starting
+    device.starting = { abort, result }
+    return result
   }
 
   /** Every point is checked against the screen, upright or turned. */
@@ -407,25 +497,35 @@ export class SimulatorControl {
     device.tokens -= count
   }
 
-  private async personEvent(device: Device, event: SimulatorInputEvent): Promise<void> {
+  private async personEvent(device: Device, holder: string, event: SimulatorInputEvent, authorize: () => void): Promise<boolean> {
     if (event.type === 'touch') {
       if (event.phase === 'down' || (event.phase === 'move' && device.down)) {
-        if (!device.down) await this.acquire(device, 'person')
-        this.personWrite(device, [{ kind: 'touch', x: event.x, y: event.y, direction: 'down' }])
-        device.down = { x: event.x, y: event.y }
+        const previous = device.down
+        if (!previous) await this.acquire(device, 'person')
+        try {
+          authorize()
+          this.personWrite(device, [{ kind: 'touch', x: event.x, y: event.y, direction: 'down' }])
+        } catch (error) {
+          if (!previous) this.releaseOwner(device, 'person')
+          throw error
+        }
+        device.down = { x: event.x, y: event.y, holder }
         device.downAt = this.now()
-        return
+        if (previous?.holder !== holder) this.ownerChanged(device.udid)
+        return true
       }
       if (event.phase === 'up' && device.down) {
+        authorize()
         device.down = undefined
         try {
           this.personWrite(device, [{ kind: 'touch', x: event.x, y: event.y, direction: 'up' }])
         } finally {
           this.releaseOwner(device, 'person')
         }
+        return true
       }
       // A move or an up without a finger down (it was already lifted) changes nothing.
-      return
+      return false
     }
     const presses =
       event.type === 'key'
@@ -434,15 +534,18 @@ export class SimulatorControl {
           ? buttonPress(event.button)
           : await this.textKeys(device, event.text, true)
     if (device.down) {
+      authorize()
       this.personWrite(device, presses)
-      return
+      return true
     }
     await this.acquire(device, 'person')
     try {
+      authorize()
       this.personWrite(device, presses)
     } finally {
       this.releaseOwner(device, 'person')
     }
+    return true
   }
 
   private personWrite(device: Device, events: HidEvent[]): void {
@@ -454,6 +557,8 @@ export class SimulatorControl {
       device.person.write(events)
     } catch {
       device.person = undefined
+      device.down = undefined
+      this.releaseOwner(device, 'person')
       throw new AppError(502, 'simulator-input-failed', '输入没有送到设备')
     }
   }
@@ -484,34 +589,37 @@ export class SimulatorControl {
     device.lastUsed = this.now()
     device.agents++
     try {
-      const companion = await this.companionOf(device)
+      const companion = await waitForIdb(this.companionOf(device), signal).catch(error => {
+        if (signal?.aborted) throw new AppError(499, 'cancelled', '调用已取消')
+        throw error
+      })
       device.view ??= this.ready()
       this.spend(device, 1)
-      await this.acquire(device, 'agent')
       const yielded = new AbortController()
-      device.agentGesture = yielded
+      await this.acquire(device, 'agent', yielded)
       const gesture = signal ? AbortSignal.any([signal, yielded.signal]) : yielded.signal
+      let stream: HidStream | undefined
       try {
-        if (gesture.aborted) throw new AppError(502, 'simulator-input-failed', '人在操作这台设备，Agent 的手势让给了人')
+        gesture.throwIfAborted()
         // The companion takes one hid stream at a time (checked on iOS 27.2: a second beside an open one is refused), so
         // the person's is ended first (no finger is down: the agent holds the device); their next input opens a new one.
         const held = device.person
         device.person = undefined
-        if (held) await held.end().catch(() => held.cancel())
-        const stream = companion.hid()
+        if (held) await held.end(undefined, gesture).catch(() => held.cancelAndWait())
+        gesture.throwIfAborted()
+        stream = companion.hid()
+        await act(device, stream, gesture)
+        gesture.throwIfAborted()
         try {
-          await act(device, stream, gesture)
-        } catch (error) {
-          stream.cancel()
-          if (yielded.signal.aborted) throw new AppError(502, 'simulator-input-failed', '人在操作这台设备，Agent 的手势让给了人')
-          if (signal?.aborted) throw new AppError(499, 'cancelled', '调用已取消')
-          throw error
-        }
-        try {
-          await stream.end()
+          await stream.end(undefined, gesture)
         } catch {
           throw new AppError(502, 'simulator-input-failed', '输入没有送到设备')
         }
+      } catch (error) {
+        await stream?.cancelAndWait()
+        if (yielded.signal.aborted) throw new AppError(502, 'simulator-input-failed', '人在操作这台设备，Agent 的手势让给了人')
+        if (signal?.aborted) throw new AppError(499, 'cancelled', '调用已取消')
+        throw error
       } finally {
         if (device.agentGesture === yielded) device.agentGesture = undefined
         this.releaseOwner(device, 'agent')
@@ -519,6 +627,7 @@ export class SimulatorControl {
     } finally {
       device.agents--
       device.lastUsed = this.now()
+      if (signal?.aborted && this.devices.get(udid) === device && !this.inUse(device)) await this.end(device)
     }
   }
 
@@ -526,9 +635,14 @@ export class SimulatorControl {
    * Waits until no other gesture holds the device; at most ten seconds. The person always wins: their press stops an
    * agent's gesture in progress and goes ahead of every agent waiting.
    */
-  private acquire(device: Device, owner: Owner): Promise<void> {
-    if (device.owner === undefined) {
+  private acquire(device: Device, owner: Owner, yielded?: AbortController): Promise<void> {
+    const grant = () => {
       device.owner = owner
+      device.agentGesture = yielded
+      this.ownerChanged(device.udid)
+    }
+    if (device.owner === undefined) {
+      grant()
       return Promise.resolve()
     }
     if (owner === 'person' && device.owner === 'agent') device.agentGesture?.abort()
@@ -537,7 +651,7 @@ export class SimulatorControl {
         owner,
         grant: () => {
           clearTimeout(timer)
-          device.owner = owner
+          grant()
           resolve()
         },
       }
@@ -557,16 +671,29 @@ export class SimulatorControl {
   private releaseOwner(device: Device, owner: Owner): void {
     if (device.owner !== owner) return
     device.owner = undefined
-    device.waiting.shift()?.grant()
+    const next = device.waiting.shift()
+    if (next) next.grant()
+    else this.ownerChanged(device.udid)
+  }
+
+  private inUse(device: Device): boolean {
+    return device.holders.size > 0 || device.takes.size > 0 || device.agents > 0
   }
 
   private async end(device: Device): Promise<void> {
     const companion = device.companion
+    const starting = device.starting
     device.companion = undefined
     device.person = undefined
     device.size = undefined
-    if (this.devices.get(device.udid) === device && device.holders.size === 0) this.devices.delete(device.udid)
-    await companion?.close().catch(() => undefined)
+    device.takes.clear()
+    if (this.devices.get(device.udid) === device) this.devices.delete(device.udid)
+    const ending = Promise.allSettled([this.endings.get(device.udid), starting?.result, companion?.close()])
+    this.endings.set(device.udid, ending)
+    starting?.abort.abort()
+    this.ownerChanged(device.udid)
+    await ending
+    if (this.endings.get(device.udid) === ending) this.endings.delete(device.udid)
   }
 
   /**
@@ -578,10 +705,11 @@ export class SimulatorControl {
     const now = this.now()
     for (const device of [...this.devices.values()]) {
       if (device.down && now - device.downAt >= FINGER_MS) await this.liftPerson(device).catch(() => undefined)
-      for (const [holder, at] of [...device.holders])
+      for (const [holder, at] of [...device.holders]) {
+        if (this.devices.get(device.udid) !== device) break
         if (now - at >= HOLD_MS) await this.release(device.udid, holder).catch(() => undefined)
-      // One still starting is someone's take or call under way.
-      if (device.holders.size === 0 && device.agents === 0 && !device.starting && now - device.lastUsed >= IDLE_MS) await this.end(device)
+      }
+      if (this.devices.get(device.udid) === device && !this.inUse(device) && now - device.lastUsed >= IDLE_MS) await this.end(device)
     }
   }
 }

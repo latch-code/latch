@@ -98,6 +98,7 @@ export interface QueueOptions {
       binding?: string
       queuedAt?: string
       itemId?: string
+      editor?: QueueActor
       authorize?: () => Promise<void>
     },
   ): Promise<void>
@@ -430,6 +431,7 @@ export class PromptQueues {
         requestId: item.sendRequestId,
         queuedAt: item.queuedAt,
         itemId: item.id,
+        ...(item.editor ? { editor: item.editor } : {}),
         ...(beforeSend ? { authorize: beforeSend } : {}),
         ...(item.model ? { model: item.model } : {}),
         ...(item.binding ? { binding: item.binding } : {}),

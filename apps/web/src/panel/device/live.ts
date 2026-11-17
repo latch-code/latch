@@ -1,10 +1,12 @@
 // The 设备 panel's live picture and input, without React: reading the Host's binary stream, which decoder to use, how
 // the screen's content is drawn upright, and where a pointer on the picture lands on the device, in points.
 import {
+  SIMULATOR_INPUT_OWNERS,
   SIMULATOR_STREAM,
   type SimulatorControlView,
   type SimulatorInputEvent,
   type SimulatorInputKind,
+  type SimulatorInputOwner,
   type SimulatorKey,
   type SimulatorLiveDescription,
 } from '@latch/protocol'
@@ -24,6 +26,7 @@ const KNOWN = new Set<number>([
   SIMULATOR_STREAM.key,
   SIMULATOR_STREAM.jpeg,
   SIMULATOR_STREAM.end,
+  SIMULATOR_STREAM.control,
 ])
 
 /** Splits the stream into messages whatever the chunk boundaries; throws on an unknown type or an oversize length. */
@@ -43,7 +46,8 @@ export class LiveReader {
       const type = view.getUint8(0)
       const timestamp = Number(view.getBigUint64(1))
       const length = view.getUint32(9)
-      if (!KNOWN.has(type) || length > MESSAGE_LIMIT) throw new RangeError('Unknown live message')
+      if (!KNOWN.has(type) || length > MESSAGE_LIMIT || (type === SIMULATOR_STREAM.control && length !== 1))
+        throw new RangeError('Unknown live message')
       if (this.buffer.length - at < head + length) break
       messages.push({ type, timestamp, payload: this.buffer.slice(at + head, at + head + length) })
       at += head + length
@@ -164,6 +168,42 @@ export function containedBox(
   return { left: box.left + (box.width - width) / 2, top: box.top + (box.height - height) / 2, width, height }
 }
 
+/** Where a written touch is shown, using the same picture geometry as the outgoing pointer. */
+export function deviceToPointer(
+  point: { x: number; y: number },
+  box: { left: number; top: number; width: number; height: number },
+  points: { width: number; height: number },
+  pixels: { width: number; height: number },
+): { x: number; y: number } | undefined {
+  const shown = containedBox(box, pixels)
+  if (!shown || points.width <= 0 || points.height <= 0) return undefined
+  return { x: shown.left + (point.x / points.width) * shown.width, y: shown.top + (point.y / points.height) * shown.height }
+}
+
+export function parseOwner(payload: Uint8Array): SimulatorInputOwner | undefined {
+  return payload.length === 1 ? SIMULATOR_INPUT_OWNERS[payload[0]!] : undefined
+}
+
+export function writtenTouch(
+  receipt: unknown,
+  events: readonly SimulatorInputEvent[],
+): Extract<SimulatorInputEvent, { type: 'touch' }> | undefined {
+  if (!receipt || typeof receipt !== 'object') return undefined
+  const written: unknown = Reflect.get(receipt, 'written')
+  const touchIndex: unknown = Reflect.get(receipt, 'touchIndex')
+  if (
+    typeof written !== 'number'
+    || !Number.isInteger(written)
+    || written < 1
+    || written > events.length
+    || typeof touchIndex !== 'number'
+    || !Number.isInteger(touchIndex)
+  )
+    return undefined
+  const event = events[touchIndex]
+  return event?.type === 'touch' ? event : undefined
+}
+
 /** The codec to ask for: H.264 where WebCodecs can decode it, else JPEG frames. */
 export function chooseCodec(environment: { VideoDecoder?: unknown }): 'h264' | 'jpeg' {
   return typeof environment.VideoDecoder === 'function' ? 'h264' : 'jpeg'
@@ -219,7 +259,8 @@ export function deviceKey(event: { key: string; metaKey: boolean; ctrlKey: boole
 }
 
 const REASONS: Record<string, string> = {
-  'idb-missing': '没有安装 idb_companion。在终端运行：brew tap facebook/fb && brew install idb-companion',
+  'idb-missing':
+    '没有安装 idb_companion。可运行 brew install meta/fb/idb-companion。若 Homebrew 要求信任此 tap，先运行 brew trust meta/fb。',
   'companion-failed': 'idb_companion 没有启动或已退出',
   'no-answer': 'idb_companion 没有回答',
   'socket-path': '临时目录的路径太长',

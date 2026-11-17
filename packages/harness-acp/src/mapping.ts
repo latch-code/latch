@@ -10,7 +10,9 @@ import type {
   ToolDetail,
   ToolJudgement,
   ToolKind,
+  SimulatorInputTool,
 } from '@latch/protocol'
+import { simulatorInputDetail, simulatorInputTool } from '@latch/protocol'
 import { z } from 'zod'
 import { configOption, toolContent, toolLocation, type ContentBlock, type SessionState, type ToolFields } from './protocol.ts'
 
@@ -70,6 +72,7 @@ export interface ToolState {
   kind?: string
   status?: string
   rawInput?: unknown
+  simulatorInput?: SimulatorInputTool
   rawOutput?: unknown
   outputWithoutFiles?: string
   content: unknown[]
@@ -114,6 +117,14 @@ export function mergeTool(state: ToolState, fields: ToolFields, at: string): voi
     }
   }
   if (fields.rawInput !== undefined) state.rawInput = fields.rawInput
+  // Later updates may change the display title while keeping the original, corroborated call identity.
+  const name =
+    state.simulatorInput && (state.name === undefined || state.name === state.simulatorInput)
+      ? `latch-browser.${state.simulatorInput}`
+      : state.name
+  const simulatorInput = simulatorInputTool(name, state.kind, state.rawInput, state.title)
+  if (simulatorInput) state.simulatorInput = simulatorInput
+  else delete state.simulatorInput
   // A new payload without provenance must not inherit the preceding result's safe summary.
   if (fields.content != null || fields.rawOutput !== undefined) delete state.outputWithoutFiles
   if (fields.outputWithoutFiles !== undefined) state.outputWithoutFiles = fields.outputWithoutFiles
@@ -189,6 +200,7 @@ export function toolKind(kind: string | undefined): ToolKind | undefined {
 
 /** The tool's own name; else its kind, unless that says only `other`, where the agent's title names it better. */
 export function toolLabel(state: ToolState): string {
+  if (state.simulatorInput) return `latch-browser.${state.simulatorInput}`
   const kind = state.kind === 'other' ? undefined : state.kind
   return clip(state.name || kind || state.title || state.kind || 'tool', 200)
 }
@@ -203,6 +215,15 @@ export function commandName(state: ToolState): string {
 }
 
 export function toolDetail(state: ToolState): ToolDetail {
+  const kind = toolKind(state.kind)
+  if (state.simulatorInput)
+    return simulatorInputDetail(state.simulatorInput, state.rawInput, {
+      ...(kind ? { kind } : {}),
+      ...(state.final ? { output: state.final.note } : {}),
+      ...(state.decision ? { decision: state.decision } : {}),
+      ...(state.judged ? { judged: state.judged } : {}),
+      ...(state.blocked ? { blocked: state.blocked } : {}),
+    })
   const texts: string[] = []
   const diffs: FileDiff[] = []
   for (const item of state.content) {
@@ -234,7 +255,6 @@ export function toolDetail(state: ToolState): ToolDetail {
       return [parsed.data.line != null ? `${parsed.data.path}:${parsed.data.line}` : parsed.data.path]
     })
     .slice(0, 64)
-  const kind = toolKind(state.kind)
   return {
     ...(kind ? { kind } : {}),
     ...(state.title ? { title: clip(state.title, 1000) } : {}),
@@ -281,7 +301,7 @@ export function toolMessage(state: ToolState): Message {
     role: 'tool',
     toolName: toolLabel(state),
     state: toolMessageState(state),
-    text: tool.output ?? tool.input ?? tool.title ?? '',
+    text: state.simulatorInput ? [tool.title, tool.input].filter(Boolean).join(' · ') : (tool.output ?? tool.input ?? tool.title ?? ''),
     tool,
     ...(state.createdAt ? { createdAt: state.createdAt } : {}),
     ...(state.startedAt ? { startedAt: state.startedAt } : {}),

@@ -1,8 +1,10 @@
 import {
   SIMULATOR_BUNDLE_ID,
+  SIMULATOR_INPUT_OWNERS,
   SIMULATOR_LOG_LIMITS,
   type SimulatorAppView,
   type SimulatorCatalogView,
+  type SimulatorInputOwner,
   type SimulatorOrientationView,
   type SimulatorRecordingView,
 } from '@latch/protocol'
@@ -19,6 +21,7 @@ export interface SimulatorView {
   shown?: true
   /** An agent's device session through Xcode's tools holds it. */
   agent?: true
+  inputOwner?: SimulatorInputOwner
 }
 
 export interface SimulatorList {
@@ -49,6 +52,8 @@ export function parseSimulators(value: unknown): SimulatorList {
     const state: unknown = Reflect.get(item, 'state')
     if (typeof udid !== 'string' || !UDID.test(udid) || typeof name !== 'string' || typeof os !== 'string') continue
     if (typeof state !== 'string' || !STATES.has(state)) continue
+    const owner: unknown = Reflect.get(item, 'inputOwner')
+    const inputOwner = SIMULATOR_INPUT_OWNERS.find(value => value === owner)
     devices.push({
       udid,
       name: name.slice(0, 120),
@@ -57,6 +62,7 @@ export function parseSimulators(value: unknown): SimulatorList {
       ours: Reflect.get(item, 'ours') === true,
       ...(Reflect.get(item, 'shown') === true ? { shown: true as const } : {}),
       ...(Reflect.get(item, 'agent') === true ? { agent: true as const } : {}),
+      ...(inputOwner ? { inputOwner } : {}),
     })
   }
   const abilities: unknown = Reflect.get(value, 'abilities')

@@ -1588,6 +1588,54 @@ describe('Codex over its app-server', () => {
     })
   })
 
+  it('keeps only simulator input counts in native Codex tool rows, approvals and saved history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-codex-input-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const gate = join(root, 'ask')
+    const t = await computer({ FAKE_CODEX_SIMULATOR_APPROVAL_GATE: gate })
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'tool-simulator-input')
+    const noInput = (value: unknown) => {
+      const shown = JSON.stringify(value)
+      for (const argument of ['violet ocean note', '91.125', '213.375', '197.25', '433.625']) expect(shown).not.toContain(argument)
+    }
+    const rows = (detail: DriverTaskDetail) => detail.messages.filter(message => message.role === 'tool')
+    try {
+      const started = await until(bridge, id, detail => rows(detail).length === 3)
+      expect(rows(started).map(row => row.tool?.input)).toEqual(['17 个字符', '1 个触点', '2 个触点'])
+      noInput(rows(started))
+    } finally {
+      await writeFile(gate, '')
+    }
+    const waiting = await until(bridge, id, detail => detail.approvals.length === 3)
+    noInput(rows(waiting))
+    noInput(waiting.approvals)
+    const calls = waiting.approvals.map(approval => ({
+      id: approval.toolCallId,
+      tool: approval.toolName,
+      decision: approval.toolName.endsWith('.device_tap') ? ('reject' as const) : ('allow' as const),
+    }))
+    expect(waiting.approvals.map(approval => approval.arguments)).toEqual(['17 个字符', '1 个触点', '2 个触点'])
+    expect(waiting.approvals.every(approval => approval.risk === 'R2' && approval.advisory)).toBe(true)
+    for (const approval of [...waiting.approvals].reverse()) {
+      expect(rows(waiting).find(row => row.id === `tool:${approval.toolCallId}`)?.toolName).toBe(approval.toolName)
+      const decision = calls.find(call => call.id === approval.toolCallId)!.decision
+      await bridge.decide(approval.id, decision)
+    }
+    const done = await settled(bridge, id)
+    noInput(rows(done))
+    for (const call of calls)
+      expect(rows(done).find(row => row.id === `tool:${call.id}`)).toMatchObject({
+        toolName: call.tool,
+        tool: { decision: { outcome: call.decision === 'allow' ? 'allowed' : 'rejected' } },
+        state: call.decision === 'allow' ? 'completed' : 'failed',
+      })
+    await bridge.close()
+    const saved = await readFile(join(t.root, 'data', 'acp.json'), 'utf8')
+    noInput(saved)
+    expect(saved).toContain('17 个字符')
+  })
+
   it.each([
     { prompt: 'tool-fail', action: 'allow', state: 'failed', unknown: 0 },
     { prompt: 'tool', action: 'reject', state: 'failed', unknown: 0 },

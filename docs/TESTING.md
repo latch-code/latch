@@ -66,7 +66,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 ```
 
 - `-t` 匹配以 ` > ` 连接的完整用例名。
-- e2e 的环境变量：`LATCH_BROWSER_PATH`（已安装的 Chrome）、`LATCH_E2E_UI_DIR`（页面目录，默认 `dist/web`）、`LATCH_ELECTRON_E2E=1`（Electron 用例）、`LATCH_E2E_SIMULATOR=<latch- 开头的名字>`（`desktop-device.e2e.ts` 只用这台真实模拟器，并跑公开命令的真实用例）、`LATCH_E2E_LIVE_DEVICE=<运行中的 latch- 设备>`（同一文件用真实的 `latch-simulator` 与人装的 `idb_companion` 在它上面点按与旋转）。
+- e2e 的环境变量包括 `LATCH_BROWSER_PATH`（已安装的 Chrome）、`LATCH_E2E_UI_DIR`（页面目录，默认 `dist/web`）、`LATCH_ELECTRON_E2E=1`（Electron 用例）。`desktop-device.e2e.ts` 的真实模拟器用例须明确指定本次新建的唯一 `latch-` 设备。公开命令用 `LATCH_E2E_SIMULATOR=<已关机的设备名>`，实时画面与输入用 `LATCH_E2E_LIVE_DEVICE=<运行中的设备名>` 和 `LATCH_E2E_LIVE_UDID=<本次新建的 UDID>`。测试完成后由创建者清理该设备。
 - 构建与原生链路的用例需要 Go 1.26.x ≥ 1.26.10 或 1.27.x ≥ 1.27.3，其他版本编出的 TLS 组件被拒收。`LATCH_RELAY_GO=/absolute/path/to/go` 只选择编译器；构建不下载 Go 模块。
 
 ### 测试位置
@@ -139,6 +139,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | 插件资产与生命周期 | `plugin-assets.test.ts`、`plugin-packages.test.ts`、`tests/registry.test.ts` |
 | MCP 与工具网关 | `mcp-remote.test.ts`、`mcp-oauth.test.ts`、`tool-gateway.test.ts`、`browser-broker.test.ts` |
 | 终端 | `terminal-service.test.ts`、`terminal-routes.test.ts`、`terminal-environment.test.ts` |
+| 模拟器画面、输入与归属 | `simulator-live.test.ts`、`simulator-input.test.ts`、`simulator-helper.test.ts`、`simulators-public.test.ts`、`simulators.test.ts`、`apps/web/test/device-live.test.ts`、`e2e/desktop-device.e2e.ts` 的受影响用例 |
 | 客户端安全逻辑与开发代理 | `apps/web/test/` 的 `client-security.test.ts`、`client-devproxy.test.ts` |
 | 桌面端壳：转发、凭据、其他电脑、更新 | `apps/desktop/test/` 的 `desktop-proxy.test.ts`、`computers.test.ts`、`updater.test.ts`；Host 侧 `desktop-host.test.ts` |
 | 测试辅助（`packages/testkit`、各 `helpers/`） | 完整的 `pnpm test` 与 `pnpm test:e2e` |

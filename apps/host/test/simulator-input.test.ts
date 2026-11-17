@@ -166,12 +166,22 @@ describe('the companion', () => {
     expect(await locateIdbCompanion([{ link: join(dir, 'missing'), cellar }])).toBeUndefined()
   })
 
-  it('kills a companion that says it listens on a TCP port, at once', async () => {
+  it.each(['grpc_port', 'grpc_swift_port'] as const)('kills a companion that reports TCP via %s, at once', async tcp => {
     const tempDir = await scratch()
-    const fake = fakeIdbCompanion({ tcp: true })
+    const fake = fakeIdbCompanion({ tcp })
     await expect(IdbCompanion.start(UDID, { ...pick(fake), tempDir })).rejects.toMatchObject({ reason: 'companion-failed' })
     expect(fake.signals[0]).toBe('SIGKILL')
     expect(await readdir(tempDir)).toEqual([])
+  })
+
+  it('connects to the local socket after diagnostics that mention support or reports', async () => {
+    const tempDir = await scratch()
+    const fake = fakeIdbCompanion({ startupOutput: ['Simulator support rep', 'ort\n', '{"report":"port status unknown"}\n'] })
+    cleanups.push(() => fake.crash())
+    const companion = await IdbCompanion.start(UDID, { ...pick(fake), tempDir, readyMs: 1000 })
+    cleanups.push(() => companion.close())
+    expect(await companion.describe()).toEqual({ width: 402, height: 874 })
+    expect(fake.signals).toEqual([])
   })
 
   it('bounds what the companion may answer: a flood ends the stream, a silent describe is no answer', async () => {
@@ -334,6 +344,8 @@ describe('one input path for the person and agents', () => {
   it('lets the person win: their press stops an agent’s long press and goes ahead of every agent waiting', async () => {
     const { service, fake } = await control()
     await service.take(UDID, 'desk')
+    const owners: string[] = []
+    cleanups.push(service.watchOwner(UDID, 'desk', owner => owners.push(owner)))
     const started = Date.now()
     const agents = [1, 2, 3].map(index =>
       service.tap(UDID, index * 10, index * 10, 5000).then(
@@ -342,7 +354,9 @@ describe('one input path for the person and agents', () => {
       ),
     )
     await waitUntil(() => fake.events.some(event => event.kind === 'touch' && event.direction === 'down'))
+    expect(owners.at(-1)).toBe('agent')
     await service.input(UDID, 'desk', [{ type: 'touch', phase: 'down', x: 200, y: 200 }])
+    expect(owners.at(-1)).toBe('you')
     await service.input(UDID, 'desk', [{ type: 'touch', phase: 'up', x: 200, y: 200 }])
     await waitUntil(() => fake.events.some(event => 'x' in event && event.x === 200 && event.direction === 'up'))
     // Within one gesture's time, not after three five-second presses.
@@ -353,16 +367,38 @@ describe('one input path for the person and agents', () => {
     // The agent that was pressing answers that its input did not go through.
     const outcomes = await Promise.all(agents)
     expect(outcomes).toContain('simulator-input-failed')
+    expect(owners.at(-1)).toBe('you')
   }, 30_000)
 
+  it('yields to a person while the Agent is waiting for the companion’s status', async () => {
+    const { service, fake } = await control({ hang: true })
+    await service.take(UDID, 'desk')
+    const pressed = service.key(UDID, 'return').catch(error => error)
+    await waitUntil(() => fake.events.length === 2)
+    expect(service.ownerOf(UDID, 'desk')).toBe('agent')
+    const started = Date.now()
+    expect(await service.input(UDID, 'desk', [{ type: 'touch', phase: 'down', x: 12, y: 20 }])).toEqual({
+      written: 1,
+      touchIndex: 0,
+    })
+    expect(await pressed).toMatchObject({ code: 'simulator-input-failed' })
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(service.ownerOf(UDID, 'desk')).toBe('you')
+    await waitUntil(() => fake.events.length === 3)
+  })
+
   it('stops an agent’s gesture when its turn is cancelled', async () => {
-    const { service } = await control()
+    const { service, fake } = await control({ hang: true })
     const stop = new AbortController()
-    const tap = service.tap(UDID, 10, 10, 5000, stop.signal)
-    await new Promise(resolve => setTimeout(resolve, 200))
+    const tap = service.tap(UDID, 10, 10, 0, stop.signal)
+    await waitUntil(() => fake.events.length === 2)
+    expect(service.ownerOf(UDID, 'desk')).toBe('agent')
     const started = Date.now()
     stop.abort()
+    expect(service.ownerOf(UDID, 'desk')).toBe('agent')
     await expect(tap).rejects.toMatchObject({ code: 'cancelled' })
+    expect(service.ownerOf(UDID, 'desk')).toBe('none')
+    await waitUntil(() => fake.openHid() === 0)
     expect(Date.now() - started).toBeLessThan(1000)
   })
 
@@ -394,7 +430,12 @@ describe('one input path for the person and agents', () => {
     await good.service.key(UDID, 'delete')
     await good.service.button(UDID, 'lock')
     const silent = await control({ hang: true })
-    await expect(silent.service.key(UDID, 'return')).rejects.toMatchObject({ code: 'simulator-input-failed' })
+    const pending = silent.service.key(UDID, 'return')
+    const refused = expect(pending).rejects.toMatchObject({ code: 'simulator-input-failed' })
+    await waitUntil(() => silent.fake.events.length === 2)
+    expect(silent.service.ownerOf(UDID, 'desk')).toBe('agent')
+    await refused
+    expect(silent.service.ownerOf(UDID, 'desk')).toBe('none')
     // The device is not left held: the next call is not kept waiting behind it.
     await expect(silent.service.key(UDID, 'return')).rejects.toMatchObject({ code: 'simulator-input-failed' })
     const bad = await control({ status: 13 })
@@ -408,6 +449,60 @@ describe('one input path for the person and agents', () => {
     advance(61_000)
     await service.sweep()
     expect((await taking).touch).toEqual({ available: true })
+  })
+
+  it.each(['release', 'Host stop'])('cleans the only pending take and its directory on %s', async action => {
+    const { service, fake, tempDir } = await control({ ready: false })
+    const taking = expect(service.take(UDID, 'desk')).rejects.toMatchObject({ code: 'simulator-control-required' })
+    await waitUntil(() => fake.running() === 1)
+    if (action === 'release') await service.release(UDID, 'desk')
+    else await service.stop()
+    await taking
+    expect(service.holds(UDID, 'desk')).toBe(false)
+    expect(fake.running()).toBe(0)
+    expect(fake.signals).toContain('SIGTERM')
+    expect(await readdir(tempDir)).toEqual([])
+  })
+
+  it('shares startup with a second holder and an agent, and drops a take released during audit', async () => {
+    const tempDir = await scratch()
+    const fake = fakeIdbCompanion()
+    let ready!: (binary: string) => void
+    const promise = new Promise<string>(resolve => (ready = resolve))
+    const service = new SimulatorControl({ idb: { ...pick(fake), locate: () => promise, tempDir } })
+    cleanups.push(() => service.stop())
+    const first = expect(service.take(UDID, 'first')).rejects.toMatchObject({ code: 'simulator-control-required' })
+    const second = service.take(UDID, 'second')
+    const agent = service.tap(UDID, 31, 47)
+    try {
+      await service.release(UDID, 'first')
+    } finally {
+      ready((await fake.locate())!)
+    }
+    await first
+    expect((await second).touch).toEqual({ available: true })
+    await agent
+    expect(fake.starts).toHaveLength(1)
+    expect(fake.events).toHaveLength(2)
+    expect(service.holds(UDID, 'first')).toBe(false)
+    expect(service.holds(UDID, 'second')).toBe(true)
+    await service.release(UDID, 'second')
+    expect(fake.running()).toBe(0)
+    expect(await readdir(tempDir)).toEqual([])
+
+    let audited!: () => void
+    const audit = new Promise<void>(resolve => (audited = resolve))
+    const delayed = expect(service.take(UDID, 'first', undefined, () => audit)).rejects.toMatchObject({
+      code: 'simulator-control-required',
+    })
+    try {
+      await service.release(UDID, 'first')
+    } finally {
+      audited()
+    }
+    await delayed
+    expect(fake.starts).toHaveLength(1)
+    expect(await readdir(tempDir)).toEqual([])
   })
 
   it('lifts a finger left down and ends the companion on release, device shutdown and Host stop', async () => {

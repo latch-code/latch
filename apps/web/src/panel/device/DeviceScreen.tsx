@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState, type PointerEvent, type WheelEvent } from 'react'
-import { SIMULATOR_STREAM, type SimulatorInputEvent, type SimulatorLiveDescription } from '@latch/protocol'
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type WheelEvent } from 'react'
+import { SIMULATOR_STREAM, type SimulatorInputEvent, type SimulatorInputOwner, type SimulatorLiveDescription } from '@latch/protocol'
 import {
   LiveReader,
   chooseCodec,
   containedBox,
+  deviceToPointer,
   parseDescription,
+  parseOwner,
   pointerToDevice,
   streamQuery,
   uprightSize,
@@ -22,12 +24,14 @@ export interface DeviceScreenProps {
   pixelRatio: number
   /** The stream's state: the panel falls back to screenshots once it is unavailable. */
   onState: (state: LiveState, detail?: { reason?: string; size?: { width: number; height: number }; fps?: number }) => void
+  onOwner: (owner: SimulatorInputOwner | undefined) => void
   /** A touch, in device points; absent while input is off. */
-  onInput?: ((event: SimulatorInputEvent) => void) | undefined
+  onInput?: ((event: SimulatorInputEvent, written: () => void) => void) | undefined
 }
 
 /** How long a wheel gesture's finger stays down after the last wheel event. */
 const WHEEL_LIFT_MS = 150
+const TOUCH_MARK_MS = 300
 /** How long an H.264 stream stays quiet before the decoder is flushed to show its last frame. */
 const QUIET_MS = 150
 /** Reconnects after a stream ends that was not the device's doing, before falling back to screenshots. */
@@ -38,11 +42,26 @@ const RECONNECTS = 3
  * `createImageBitmap`, drawn upright on a canvas. A pointer on it is a finger: press, hold, drag; the wheel scrolls
  * with a short drag. Nothing here is kept: frames go straight to the canvas.
  */
-export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInput }: DeviceScreenProps) {
+export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onOwner, onInput }: DeviceScreenProps) {
   const canvas = useRef<HTMLCanvasElement>(null)
+  const touchMark = useRef<HTMLSpanElement>(null)
+  const hideMark = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const currentShape = useRef<SimulatorLiveDescription | undefined>(undefined)
   const [description, setDescription] = useState<SimulatorLiveDescription>()
   const stateRef = useRef(onState)
   stateRef.current = onState
+  const ownerRef = useRef(onOwner)
+  ownerRef.current = onOwner
+  const inputRef = useRef(onInput)
+  inputRef.current = onInput
+
+  const clearMark = () => {
+    clearTimeout(hideMark.current)
+    if (touchMark.current) touchMark.current.hidden = true
+  }
+  useLayoutEffect(() => {
+    clearMark()
+  }, [box.width, box.height, zoom, onInput !== undefined])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -137,11 +156,19 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInp
             // The helper repeats an unchanged description before keyframes: the decoder is kept for those.
             if (current && decoder?.state === 'configured' && JSON.stringify(current) === JSON.stringify(shape)) continue
             current = shape
+            currentShape.current = shape
+            clearMark()
             setDescription(shape)
             if (!(await configure(shape))) return 'jpeg'
             const upright = uprightSize(shape)
             stateRef.current('live', { size: upright.device })
             reconnects = 0
+            continue
+          }
+          if (message.type === SIMULATOR_STREAM.control) {
+            const owner = parseOwner(message.payload)
+            if (!owner) return 'retry'
+            ownerRef.current(owner)
             continue
           }
           if (message.type === SIMULATOR_STREAM.end) {
@@ -196,6 +223,7 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInp
 
     void (async () => {
       stateRef.current('connecting')
+      ownerRef.current(undefined)
       for (;;) {
         let outcome: Awaited<ReturnType<typeof run>>
         try {
@@ -205,6 +233,8 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInp
           outcome = codec === 'h264' ? 'jpeg' : 'retry'
         }
         closeDecoder()
+        ownerRef.current(undefined)
+        clearMark()
         if (outcome === 'stop' || outcome === 'device') {
           if (outcome === 'device') stateRef.current('unavailable', { reason: '设备已停止' })
           return
@@ -221,6 +251,8 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInp
     return () => {
       controller.abort()
       clearTimeout(quiet)
+      clearTimeout(wheel.current?.timer)
+      clearMark()
       closeDecoder()
     }
   }, [udid])
@@ -240,6 +272,25 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInp
       height: element.clientHeight,
     }
   }
+  const sendTouch = (event: Extract<SimulatorInputEvent, { type: 'touch' }>) => {
+    const shape = description
+    if (!shape || currentShape.current !== shape) return
+    onInput?.(event, () => {
+      const element = canvas.current
+      const stage = element?.parentElement
+      const mark = touchMark.current
+      if (!element || !stage || !mark || currentShape.current !== shape || !inputRef.current) return
+      const upright = uprightSize(shape)
+      const point = deviceToPointer(event, contentBox(element), upright.points, upright.pixels)
+      if (!point) return
+      const rect = stage.getBoundingClientRect()
+      mark.style.left = `${point.x - rect.left - stage.clientLeft + stage.scrollLeft}px`
+      mark.style.top = `${point.y - rect.top - stage.clientTop + stage.scrollTop}px`
+      mark.hidden = false
+      clearTimeout(hideMark.current)
+      hideMark.current = setTimeout(clearMark, TOUCH_MARK_MS)
+    })
+  }
   const toDevice = (clientX: number, clientY: number) => {
     const element = canvas.current
     if (!element || !description) return undefined
@@ -256,7 +307,7 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInp
     event.currentTarget.focus()
     down.current = event.pointerId
     last.current = point
-    onInput({ type: 'touch', phase: 'down', ...point })
+    sendTouch({ type: 'touch', phase: 'down', ...point })
   }
   const onPointerMove = (event: PointerEvent<HTMLCanvasElement>) => {
     if (!onInput || down.current !== event.pointerId || !description) return
@@ -268,12 +319,12 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInp
       x: Math.round(clamp(((event.clientX - shown.left) / shown.width) * points.width, points.width) * 10) / 10,
       y: Math.round(clamp(((event.clientY - shown.top) / shown.height) * points.height, points.height) * 10) / 10,
     }
-    onInput({ type: 'touch', phase: 'move', ...last.current })
+    sendTouch({ type: 'touch', phase: 'move', ...last.current })
   }
   const onPointerUp = (event: PointerEvent<HTMLCanvasElement>) => {
     if (down.current !== event.pointerId) return
     down.current = undefined
-    onInput?.({ type: 'touch', phase: 'up', ...last.current })
+    sendTouch({ type: 'touch', phase: 'up', ...last.current })
   }
   const onWheel = (event: WheelEvent<HTMLCanvasElement>) => {
     if (!onInput || !description || down.current !== undefined) return
@@ -287,17 +338,17 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInp
       if (!start) return
       gesture = { ...start, dx: 0, dy: 0, timer: setTimeout(() => undefined, 0) }
       wheel.current = gesture
-      onInput({ type: 'touch', phase: 'down', x: start.x, y: start.y })
+      sendTouch({ type: 'touch', phase: 'down', x: start.x, y: start.y })
     }
     // The finger moves against the wheel, as a trackpad scrolls content.
     gesture.dx -= event.deltaX / scale
     gesture.dy -= event.deltaY / scale
     const at = { x: clamp(gesture.x + gesture.dx, points.width), y: clamp(gesture.y + gesture.dy, points.height) }
-    onInput({ type: 'touch', phase: 'move', ...at })
+    sendTouch({ type: 'touch', phase: 'move', ...at })
     clearTimeout(gesture.timer)
     gesture.timer = setTimeout(() => {
       wheel.current = undefined
-      onInput({ type: 'touch', phase: 'up', ...at })
+      sendTouch({ type: 'touch', phase: 'up', ...at })
     }, WHEEL_LIFT_MS)
   }
 
@@ -305,27 +356,30 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInp
   const upright = description ? uprightSize(description).device : { width: 0, height: 0 }
   const size = screenSize(zoom, upright, box, pixelRatio)
   return (
-    <canvas
-      ref={canvas}
-      className="sim-screen sim-live"
-      role="img"
-      aria-label={`${name} 的实时画面`}
-      tabIndex={onInput ? 0 : -1}
-      data-input={onInput ? '' : undefined}
-      data-orientation={description?.orientation}
-      style={
-        upright.width === 0
-          ? { visibility: 'hidden' }
-          : zoom === 'fit'
-            ? { aspectRatio: `${upright.width} / ${upright.height}`, width: size.width, height: size.height }
-            : { width: size.width, height: size.height, maxWidth: 'none', maxHeight: 'none' }
-      }
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      onWheel={onWheel}
-      onContextMenu={event => event.preventDefault()}
-    />
+    <>
+      <canvas
+        ref={canvas}
+        className="sim-screen sim-live"
+        role="img"
+        aria-label={`${name} 的实时画面`}
+        tabIndex={onInput ? 0 : -1}
+        data-input={onInput ? '' : undefined}
+        data-orientation={description?.orientation}
+        style={
+          upright.width === 0
+            ? { visibility: 'hidden' }
+            : zoom === 'fit'
+              ? { aspectRatio: `${upright.width} / ${upright.height}`, width: size.width, height: size.height }
+              : { width: size.width, height: size.height, maxWidth: 'none', maxHeight: 'none' }
+        }
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onWheel={onWheel}
+        onContextMenu={event => event.preventDefault()}
+      />
+      <span ref={touchMark} className="sim-touch-mark" hidden aria-hidden="true" />
+    </>
   )
 }

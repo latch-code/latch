@@ -2,7 +2,13 @@
 // when the last one leaves, the device shuts down or the Host stops. Each watcher has its own small queue drained as
 // its socket takes bytes; one that falls behind loses frames (and, for H.264, waits for the next keyframe), never
 // memory. Frames go only to the watching panel's response: never to a log, the audit, the Host's SSE or disk.
-import { SIMULATOR_STREAM, type SimulatorLiveDescription, type SimulatorLiveEnd } from '@latch/protocol'
+import {
+  SIMULATOR_INPUT_OWNERS,
+  SIMULATOR_STREAM,
+  type SimulatorInputOwner,
+  type SimulatorLiveDescription,
+  type SimulatorLiveEnd,
+} from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { SimulatorHelper, type SimulatorStreamEvent, type StreamSettings } from './simulator-helper.ts'
 
@@ -53,6 +59,7 @@ class Watcher {
   readonly frames: Buffer[] = []
   bytes = 0
   description: Buffer | undefined
+  inputOwner: Buffer | undefined
   /** Frames are dropped until the next keyframe. */
   skipping = false
   ended: SimulatorLiveEnd | undefined
@@ -86,6 +93,7 @@ class Feed {
 export interface LiveWatch {
   /** The next message to write, or undefined once the stream has ended. */
   next(): Promise<Buffer | undefined>
+  inputOwner(owner: SimulatorInputOwner): void
   close(): void
 }
 
@@ -146,6 +154,12 @@ export class SimulatorLive {
     const current = feed
     return {
       next: () => this.read(watcher),
+      inputOwner: owner => {
+        if (watcher.ended) return
+        // One slot per panel; a slow reader only needs the latest ownership and never holds old changes.
+        watcher.inputOwner = liveMessage(SIMULATOR_STREAM.control, 0, Buffer.from([SIMULATOR_INPUT_OWNERS.indexOf(owner)]))
+        watcher.wake()
+      },
       close: () => this.leave(current, watcher),
     }
   }
@@ -259,6 +273,11 @@ export class SimulatorLive {
         const description = watcher.description
         watcher.description = undefined
         return description
+      }
+      if (watcher.inputOwner) {
+        const owner = watcher.inputOwner
+        watcher.inputOwner = undefined
+        return owner
       }
       const frame = watcher.frames.shift()
       if (frame) {

@@ -2,6 +2,8 @@
 // name and the bounds the Host keeps. The Host checks every request body with zod against these; the panel reads the
 // answers defensively. See docs/DEVICE-PREVIEW.md.
 
+import type { ApprovalOption, ToolDetail } from './sessions.ts'
+
 /** The services `simctl privacy` may change for one listed app. `all` is left out: one app, one service at a time. */
 export const SIMULATOR_PRIVACY_SERVICES = [
   'calendar',
@@ -90,6 +92,8 @@ export const SIMULATOR_STREAM = {
   jpeg: 0x04,
   /** JSON `{ reason }`: the stream ends here. */
   end: 0x05,
+  /** One byte, the index into SIMULATOR_INPUT_OWNERS, for the device watching this stream. */
+  control: 0x06,
 } as const
 
 /** What a live stream may ask for; the Host refuses anything outside. */
@@ -115,7 +119,7 @@ export interface SimulatorLiveDescription {
 
 export type SimulatorLiveEnd = 'device' | 'host' | 'closed' | 'failed'
 
-/** Single keys the panel and agents may press; text is not typed through the device keyboard. */
+/** Single named keys the panel and agents may press. Printable text has its own checked input event. */
 export const SIMULATOR_KEYS = ['return', 'delete', 'tab', 'escape', 'left', 'right', 'up', 'down'] as const
 export type SimulatorKey = (typeof SIMULATOR_KEYS)[number]
 /** Hardware buttons. Apple Pay is not offered: idb answers it is not implemented on this transport. */
@@ -124,6 +128,124 @@ export type SimulatorButton = (typeof SIMULATOR_BUTTONS)[number]
 
 /** `POST /simulators/:udid/input`: at most this many events, in order, in device points; text per event; text per agent call. */
 export const SIMULATOR_INPUT_LIMITS = { events: 64, textChars: 64, agentTextChars: 1000 } as const
+
+export const SIMULATOR_INPUT_TOOLS = ['device_tap', 'device_swipe', 'device_type_text', 'device_press_key', 'device_press_button'] as const
+export type SimulatorInputTool = (typeof SIMULATOR_INPUT_TOOLS)[number]
+
+function qualifiedSimulatorInput(label: string | undefined): SimulatorInputTool | undefined {
+  const name = label?.trim()
+  return SIMULATOR_INPUT_TOOLS.find(
+    tool => name === `mcp__latch-browser__${tool}` || name === `latch-browser.${tool}` || name === `latch-browser: ${tool}`,
+  )
+}
+
+const SIMULATOR_INPUT_TITLES: Record<SimulatorInputTool, string> = {
+  device_tap: '模拟器点按',
+  device_swipe: '模拟器滑动',
+  device_type_text: '模拟器输入文字',
+  device_press_key: '模拟器按键',
+  device_press_button: '模拟器按按钮',
+}
+
+function recordedObject(input: unknown): Record<string, unknown> | undefined {
+  if (typeof input === 'string' && input.length <= 65_536) {
+    try {
+      input = JSON.parse(input)
+    } catch {
+      return undefined
+    }
+  }
+  return input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : undefined
+}
+
+/** An unstructured ACP title needs corroboration from the simulator tool's arguments. */
+function hasSimulatorArguments(tool: SimulatorInputTool, input: Record<string, unknown> | undefined): boolean {
+  if (typeof input?.udid !== 'string' || !/^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/u.test(input.udid)) return false
+  const only = (...fields: string[]) => Object.keys(input).every(key => key === 'udid' || fields.includes(key))
+  const point = (value: unknown) => typeof value === 'number' && value >= 0 && value <= 10_000
+  const duration = (value: unknown, min: number) =>
+    value === undefined || (typeof value === 'number' && Number.isInteger(value) && value >= min && value <= 5_000)
+  switch (tool) {
+    case 'device_tap':
+      return only('x', 'y', 'holdMs') && point(input.x) && point(input.y) && duration(input.holdMs, 0)
+    case 'device_swipe':
+      return (
+        only('fromX', 'fromY', 'toX', 'toY', 'durationMs')
+        && [input.fromX, input.fromY, input.toX, input.toY].every(point)
+        && duration(input.durationMs, 50)
+      )
+    case 'device_type_text':
+      return only('text') && typeof input.text === 'string' && input.text.length <= SIMULATOR_INPUT_LIMITS.agentTextChars
+    case 'device_press_key':
+      return only('key') && SIMULATOR_KEYS.some(key => key === input.key)
+    case 'device_press_button':
+      return only('button') && SIMULATOR_BUTTONS.some(button => button === input.button)
+  }
+}
+
+/** Structured call identity comes first. Some ACP agents put their only qualified name in the title. */
+export function simulatorInputTool(
+  name: string | undefined,
+  kind?: string,
+  rawInput?: unknown,
+  title?: string,
+): SimulatorInputTool | undefined {
+  if (kind !== undefined && kind !== 'other' && kind !== 'think') return undefined
+  const input = recordedObject(rawInput)
+  if (input?.command !== undefined) return undefined
+  const named = qualifiedSimulatorInput(name)
+  if (typeof input?.server === 'string' && typeof input.tool === 'string') {
+    const qualified = `${input.server}.${input.tool}`
+    const declared = qualifiedSimulatorInput(qualified)
+    const agrees = name === undefined || named === declared || name === input.tool || name === `调用 ${qualified}`
+    return agrees ? declared : undefined
+  }
+  if (named) return named
+  const titled = qualifiedSimulatorInput(title)
+  if (!titled || (kind !== undefined && kind !== 'other') || (name !== undefined && name !== titled)) return undefined
+  return hasSimulatorArguments(titled, input) ? titled : undefined
+}
+
+/** Only operation, counts and trusted status fields are stored or sent to a device. Raw arguments stay in execution. */
+export function simulatorInputDetail(
+  tool: SimulatorInputTool,
+  rawInput: unknown,
+  state: Pick<ToolDetail, 'kind' | 'output' | 'decision' | 'judged' | 'blocked'> = {},
+): ToolDetail & { title: string; input: string } {
+  let input = '1 次'
+  if (tool === 'device_tap' || tool === 'device_swipe') input = tool === 'device_tap' ? '1 个触点' : '2 个触点'
+  if (tool === 'device_type_text') {
+    const parsed = recordedObject(rawInput)
+    const text = parsed?.text ?? recordedObject(parsed?.arguments)?.text
+    input = typeof text === 'string' ? `${text.length} 个字符` : '输入文字'
+    // Device projection sees counts already produced when a tool row was saved.
+    if (typeof rawInput === 'string' && /^\d{1,8} 个字符$/u.test(rawInput)) input = rawInput
+  }
+  const output = state.output?.includes('TOOL_OUTCOME_UNKNOWN:')
+    ? 'TOOL_OUTCOME_UNKNOWN: 结果未知，请先核对它做了什么。Latch 不会自动重做。'
+    : state.output?.includes('TOOL_NOT_STARTED:')
+      ? 'TOOL_NOT_STARTED: 本轮已结束，工具没有开始执行。'
+      : undefined
+  return {
+    kind: state.kind ?? 'other',
+    title: SIMULATOR_INPUT_TITLES[tool],
+    input,
+    ...(output ? { output } : {}),
+    ...(state.decision ? { decision: state.decision } : {}),
+    ...(state.judged ? { judged: { by: state.judged.by, outcome: state.judged.outcome } } : {}),
+    ...(state.blocked ? { blocked: { by: state.blocked.by, source: state.blocked.source } } : {}),
+  }
+}
+
+export function simulatorInputOptions(options: ApprovalOption[]): ApprovalOption[] {
+  const labels: Record<ApprovalOption['kind'], string> = {
+    allow_once: '允许一次',
+    allow_always: '始终允许',
+    reject_once: '拒绝',
+    reject_always: '始终拒绝',
+  }
+  return options.map(option => ({ id: option.id, kind: option.kind, label: labels[option.kind] }))
+}
 export type SimulatorInputEvent =
   /** One finger: down, moves while down, up. A second finger is not available. */
   | { type: 'touch'; phase: 'down' | 'move' | 'up'; x: number; y: number }
@@ -134,6 +256,17 @@ export type SimulatorInputEvent =
    * refused with the reason, never typed half.
    */
   | { type: 'text'; text: string }
+
+/** The device's input lease or the active Agent gesture, from the viewing device's point of view. */
+export const SIMULATOR_INPUT_OWNERS = ['none', 'you', 'other', 'agent'] as const
+export type SimulatorInputOwner = (typeof SIMULATOR_INPUT_OWNERS)[number]
+
+/** `POST /simulators/:udid/input`: events put on the companion stream, before its delivery status. */
+export interface SimulatorInputReceipt {
+  written: number
+  /** Index of the last written touch in this request. A lift or move without a finger can be ignored. */
+  touchIndex?: number
+}
 
 /** Why a kind of input is unavailable; the panel shows it in a hover. */
 export type SimulatorInputReason =

@@ -109,6 +109,8 @@ export interface ModelGateway {
 
 /** What the Host may learn from a driver about a tool call that reached its tool gateway. */
 export interface ToolGatewayCallContext {
+  /** The running turn observed by the driver at tool-call admission, when one is known. */
+  runId?: string
   /** The driver's ID of the call, as its row and `approval.decided` name it, when the driver can tell which call it is. */
   toolCallId?: string
   /** The approval the person gave that call through the harness's own ask. */

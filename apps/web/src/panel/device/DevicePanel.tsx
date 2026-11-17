@@ -3,6 +3,7 @@ import {
   AppWindow,
   Camera,
   Circle,
+  Hand,
   House,
   Keyboard,
   LayoutGrid,
@@ -25,9 +26,11 @@ import type {
   SimulatorAppView,
   SimulatorControlView,
   SimulatorInputEvent,
+  SimulatorInputOwner,
   SimulatorPrivacyAction,
   SimulatorPrivacyService,
 } from '@latch/protocol'
+import { AgentsGlyph } from '../../agents/AgentAvatar.tsx'
 import { ApiError, api, errorMessage } from '../../core/api.ts'
 import { currentShell } from '../../core/shell.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
@@ -35,7 +38,7 @@ import { DeviceAnnotate, type AnnotateImage } from './DeviceAnnotate.tsx'
 import { DeviceApps, SERVICE_LABELS } from './DeviceApps.tsx'
 import { DeviceLogs } from './DeviceLogs.tsx'
 import { DeviceScreen, type LiveState } from './DeviceScreen.tsx'
-import { InputSender, deviceInput, inputReason, parseControl } from './live.ts'
+import { InputSender, deviceInput, inputReason, parseControl, writtenTouch } from './live.ts'
 import { NewDeviceDialog } from './NewDeviceDialog.tsx'
 import {
   frameDelay,
@@ -63,6 +66,13 @@ export interface DevicePanelProps {
 }
 
 type Pending = 'boot' | 'shutdown' | 'appearance' | 'shot' | 'url' | 'hub' | 'rotate' | 'record' | 'annotate'
+
+const INPUT_OWNER = {
+  none: { icon: Circle, label: '空闲', title: '模拟器输入空闲' },
+  you: { icon: Hand, label: '你', title: '你已接管模拟器输入' },
+  other: { icon: AppWindow, label: '本机', title: '其他本机窗口已接管模拟器输入' },
+  agent: { icon: AgentsGlyph, label: 'Agent', title: 'Agent 正在向模拟器输入' },
+} as const
 
 /** Hands a file to the person: into the draft when it takes one, else as a download. */
 function deliver(file: File, onAttach: DevicePanelProps['onAttach']): void {
@@ -108,6 +118,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   const [box, setBox] = useState({ width: 0, height: 0 })
   /** The live picture of a device: connecting, on, or unavailable (then screenshots). */
   const [live, setLive] = useState<{ udid: string; state: LiveState; reason?: string; size?: { width: number; height: number } }>()
+  const [liveOwner, setLiveOwner] = useState<{ udid: string; value: SimulatorInputOwner }>()
   /** What input can do on the device, once the person took control of it. */
   const [control, setControl] = useState<{ udid: string; view: SimulatorControlView }>()
   const [inputFailure, setInputFailure] = useState<{ udid: string; text: string; textOnly?: true }>()
@@ -211,14 +222,20 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   const controlRef = useRef(control)
   controlRef.current = control
   const sender = useRef<{ udid: string; sender: InputSender } | undefined>(undefined)
+  const feedback = useRef(new WeakMap<SimulatorInputEvent, () => void>())
 
   const senderFor = (target: string): InputSender => {
     if (sender.current?.udid === target) return sender.current.sender
-    const created = new InputSender(
+    const created: InputSender = new InputSender(
       async events => {
-        await api(`simulators/${target}/input`, { method: 'POST', body: { events }, timeoutMs: 15_000 })
+        if (sender.current?.sender !== created) return
+        const receipt = await api<unknown>(`simulators/${target}/input`, { method: 'POST', body: { events }, timeoutMs: 15_000 })
+        if (sender.current?.sender !== created) return
+        const touch = writtenTouch(receipt, events)
+        if (touch) feedback.current.get(touch)?.()
       },
       error => {
+        if (sender.current?.sender !== created) return
         // Text the device's keyboard would change is refused whole; control stays.
         const code = error instanceof ApiError ? error.code : undefined
         if (code === 'simulator-text-unavailable' || code === 'simulator-text-unsupported') {
@@ -227,7 +244,8 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
         }
         setInputFailure({ udid: target, text: errorMessage(error) })
         // Control lapsed (the Host restarted or the companion stopped): the next touch takes it again.
-        if (sender.current?.udid === target) sender.current = undefined
+        sender.current = undefined
+        controlRef.current = undefined
         setControl(current => (current?.udid === target ? undefined : current))
       },
     )
@@ -235,9 +253,10 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     return created
   }
 
-  const sendInput = (event: SimulatorInputEvent) => {
-    if (!udid) return
+  const sendInput = (event: SimulatorInputEvent, written?: () => void) => {
+    if (!udid || !shown || !running) return
     const target = udid
+    if (written) feedback.current.set(event, written)
     const held = controlRef.current
     if (held?.udid === target) {
       const kind =
@@ -263,14 +282,20 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     setInputFailure(undefined)
     void api<unknown>(`simulators/${target}/control`, { method: 'POST', body: { action: 'take' }, timeoutMs: 45_000 })
       .then(answer => {
+        if (takingRef.current !== taking) {
+          if (takingRef.current?.udid !== target && controlRef.current?.udid !== target)
+            void api(`simulators/${target}/control`, { method: 'POST', body: { action: 'release' } }).catch(() => undefined)
+          return
+        }
         const view = parseControl(answer)
         controlRef.current = { udid: target, view }
         setControl({ udid: target, view })
-        if (takingRef.current === taking) takingRef.current = undefined
+        takingRef.current = undefined
         for (const waiting of taking.waiting) sendInput(waiting)
       })
       .catch(error => {
-        if (takingRef.current === taking) takingRef.current = undefined
+        if (takingRef.current !== taking) return
+        takingRef.current = undefined
         setInputFailure({ udid: target, text: errorMessage(error) })
       })
   }
@@ -282,6 +307,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     return () => {
       sender.current = undefined
       takingRef.current = undefined
+      controlRef.current = undefined
       setControl(undefined)
       setInputFailure(undefined)
       setKeysOn(false)
@@ -591,6 +617,8 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   const liveOn = running && liveHere?.state === 'live'
   // Running, but no picture yet: still starting as far as anyone can see.
   const pictured = liveOn || (running && frame !== undefined && frame.udid === udid)
+  const owner = (liveOff ? device?.inputOwner : liveOwner?.udid === udid ? liveOwner?.value : undefined) ?? 'none'
+  const ownerLabel = INPUT_OWNER[owner]
   const controlHere = control && control.udid === udid ? control.view : undefined
   const inputFailed = inputFailure && inputFailure.udid === udid && !inputFailure.textOnly ? inputFailure.text : undefined
   const textFailed = inputFailure && inputFailure.udid === udid && inputFailure.textOnly ? inputFailure.text : undefined
@@ -721,6 +749,14 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
           />
         </form>
       )}
+      {pictured && desktop && !annotating && (owner !== 'none' || !inputOff) && (
+        <div className="sim-input-status">
+          <span className="sim-input-owner" data-owner={owner} role="status" aria-label={ownerLabel.title}>
+            <Icon icon={ownerLabel.icon} size={12} />
+            {ownerLabel.label}
+          </span>
+        </div>
+      )}
       <div
         ref={canvas}
         className="sim-canvas"
@@ -740,6 +776,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
           />
         ) : running && shown && udid && device && !liveOff ? (
           <DeviceScreen
+            key={udid}
             udid={udid}
             name={device.name}
             zoom={zoom}
@@ -748,6 +785,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
             onState={(state, detail) =>
               setLive({ udid, state, ...(detail?.reason ? { reason: detail.reason } : {}), ...(detail?.size ? { size: detail.size } : {}) })
             }
+            onOwner={value => setLiveOwner(value ? { udid, value } : undefined)}
             onInput={desktop ? sendInput : undefined}
           />
         ) : running && frame && frame.udid === udid ? (

@@ -416,16 +416,27 @@ async function play(text) {
       'tool-child',
       'tool-missing-fields',
       'tool-not-started',
+      'tool-simulator-input',
     ].includes(word)
   ) {
     // Codex starts the MCP call, then asks whether to run it, as the server's elicitation it marks as an approval.
-    const calls = (['tool-parallel', 'tool-ambiguous', 'tool-child'].includes(word) ? [0, 1] : [0]).map(index => ({
+    const simulator = word === 'tool-simulator-input'
+    const tools = simulator
+      ? [
+          { server: 'latch-browser', tool: 'device_type_text', arguments: { text: 'violet ocean note' } },
+          { server: 'latch-browser', tool: 'device_tap', arguments: { x: 91.125, y: 213.375 } },
+          { server: 'latch-browser', tool: 'device_swipe', arguments: { fromX: 197.25, fromY: 433.625, toX: 81.125, toY: 193.375 } },
+        ]
+      : (['tool-parallel', 'tool-ambiguous', 'tool-child'].includes(word) ? [0, 1] : [0]).map(index => ({
+          server: 'docs',
+          tool: 'search',
+          arguments: { q: word === 'tool-parallel' ? `latch-${index}` : 'latch' },
+        }))
+    const calls = tools.map(tool => ({
       type: 'mcpToolCall',
       id: `mcp-${randomUUID()}`,
-      server: 'docs',
-      tool: 'search',
-      arguments: { q: word === 'tool-parallel' ? `latch-${index}` : 'latch' },
       status: 'inProgress',
+      ...tool,
     }))
     if (word === 'tool-child') calls[1].id = calls[0].id
     if (word === 'tool-missing-fields') {
@@ -436,6 +447,7 @@ async function play(text) {
     const callThread = call => (word === 'tool-child' && call === calls[1] ? 'thread-mcp-child' : thread.id)
     if (word !== 'tool-not-started')
       for (const call of calls) notify('item/started', { threadId: callThread(call), turnId: turn.id, startedAtMs: Date.now(), item: call })
+    if (simulator && env.FAKE_CODEX_SIMULATOR_APPROVAL_GATE) while (!existsSync(env.FAKE_CODEX_SIMULATOR_APPROVAL_GATE)) await sleep(10)
     const answers = await Promise.all(
       calls.map(call =>
         ask('mcpServer/elicitation/request', {
@@ -443,7 +455,7 @@ async function play(text) {
           turnId: word === 'tool-wrong-turn' ? 'another-turn' : turn.id,
           serverName: call.server,
           mode: 'form',
-          message: 'Allow the docs tool?',
+          message: simulator ? `Allow ${JSON.stringify(call.arguments)}?` : 'Allow the docs tool?',
           requestedSchema: { type: 'object', properties: {} },
           _meta: { codex_approval_kind: 'mcp_tool_call', tool_name: call.tool, tool_params: call.arguments },
         }),

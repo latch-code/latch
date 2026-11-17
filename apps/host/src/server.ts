@@ -51,6 +51,7 @@ import { AttachmentUploads } from './attachment-uploads.ts'
 import type { AttachmentSelection, AttachmentCapabilities, AttachmentRef } from '@latch/protocol'
 import type { LatchWorktree, WorktreeBase, WorktreeInventory, WorktreeRemoval } from '@latch/protocol'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 export { loadPluginPackage } from './plugin-packages.ts'
 import { existsSync, realpathSync, statSync, type BigIntStats } from 'node:fs'
@@ -2025,22 +2026,42 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           .catch(error => logNoted('audit-write-failed', { error }, `审计记录写入失败：${errorText(error)}`))
       },
     })
-    /**
-     * Whether the device that last sent a session input sees all data: a simulator's picture enters the session, where
-     * every device that may read it sees it, so the device tools run only for a turn such a device asked for. A turn
-     * nobody sent (an automation's) has no entry and gets none.
-     */
-    const turnScopes = new Map<string, boolean>()
-    const noteTurnScope = (sessionId: string, caller: DeviceCaller) => {
-      turnScopes.delete(sessionId)
-      turnScopes.set(sessionId, devices.get(caller.device.id)?.dataScope === 'all')
-      // Bounded: the oldest sessions go first.
-      if (turnScopes.size > 2000) turnScopes.delete(turnScopes.keys().next().value!)
+    // Bind authority before the engine receives its first prompt. Receipt replays and waiting queue entries never
+    // announce a new run. Background starts have no initiating device here.
+    const simulatorPromptDevices = new AsyncLocalStorage<readonly string[] | undefined>()
+    const simulatorRuns = new Map<
+      string,
+      { runId: string; deviceIds: readonly string[]; abort: AbortController; pendingSteers: number; personal: boolean }
+    >()
+    function personalSimulatorSession(sessionId: string): boolean {
+      return (
+        simulatorRuns.get(sessionId)?.personal === true
+        || hub?.agentOf(sessionId) !== undefined
+        || hub?.personalOf(sessionId) !== undefined
+        || hub?.generalChatOf(sessionId) === true
+      )
     }
+    function simulatorDeviceAllowed(deviceId: string): boolean {
+      const device = devices.get(deviceId)
+      return device?.dataScope === 'all' && device.scopes.includes('run') && devices.isActive(deviceId)
+    }
+    function withSimulatorPrompt<T>(deviceIds: readonly string[], restricted: boolean, start: () => T): T {
+      return simulatorPromptDevices.run(!restricted && deviceIds.every(simulatorDeviceAllowed) ? deviceIds : undefined, start)
+    }
+    function removeSimulatorRun(sessionId: string, runId?: string): void {
+      const current = simulatorRuns.get(sessionId)
+      if (!current || (runId !== undefined && current.runId !== runId)) return
+      simulatorRuns.delete(sessionId)
+      current.abort.abort()
+    }
+    function endDisallowedSimulatorRuns(): void {
+      for (const [sessionId, { deviceIds }] of simulatorRuns) if (!deviceIds.every(simulatorDeviceAllowed)) removeSimulatorRun(sessionId)
+    }
+    devices.onRevoked(endDisallowedSimulatorRuns)
     startupCleanup.push(() => simulators.stop())
     // The live picture (latch-simulator) and input (the person's idb_companion) end with the device and the Host.
     const simulatorControl = new SimulatorControl(
-      options.simulators?.idb ? { idb: options.simulators.idb, keyboard: udid => simulators.activeKeyboard(udid) } : {},
+      options.simulators?.idb ? { idb: options.simulators.idb, keyboard: (udid, signal) => simulators.activeKeyboard(udid, signal) } : {},
     )
     const simulatorLive = new SimulatorLive({
       ...(options.simulators?.live ? { attach: options.simulators.live } : {}),
@@ -2082,12 +2103,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             // when it next resumes. Sessions without a project are left out by the driver, and refused on every call.
             admits: () => browserBroker.available(),
             // The simulator tools join while the last list found Xcode on this Mac.
-            tools: () =>
+            tools: sessionId =>
               [
                 ...BROWSER_TOOL_DEFINITIONS,
                 ...(simulators.ready
                   ? DEVICE_TOOL_DEFINITIONS.filter(
-                      definition => simulatorControl.offered || !DEVICE_INPUTS.has(definition.name as DeviceTool),
+                      definition =>
+                        !DEVICE_INPUTS.has(definition.name as DeviceTool)
+                        || (simulatorControl.offered
+                          && (sessionId === undefined || (!personalSimulatorSession(sessionId) && !hub?.unattended(sessionId)))),
                     )
                   : []),
               ].map(({ name, description, parameters }) => ({
@@ -2219,6 +2243,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     const sessionLifecycle = new SessionLifecycle({ log, ...(options.lifecycleBounds ? { bounds: options.lifecycleBounds } : {}) })
     const lifecycleListeners = sessionLifecycle.listenOnly()
+    lifecycleListeners.on('runStarted', ({ sessionId, runId }) => {
+      const deviceIds = simulatorPromptDevices.getStore()
+      removeSimulatorRun(sessionId)
+      if (!deviceIds?.length || !deviceIds.every(simulatorDeviceAllowed)) return
+      simulatorRuns.set(sessionId, {
+        runId,
+        deviceIds,
+        abort: new AbortController(),
+        pendingSteers: 0,
+        personal: hub?.startingAgentId() !== undefined,
+      })
+      if (simulatorRuns.size > 2000) removeSimulatorRun(simulatorRuns.keys().next().value!)
+    })
+    lifecycleListeners.on('runSettled', ({ sessionId, runId }) => removeSimulatorRun(sessionId, runId))
+    lifecycleListeners.on('sessionDeleted', ({ sessionId }) => removeSimulatorRun(sessionId))
+    lifecycleListeners.on('hostStopping', () => {
+      for (const sessionId of simulatorRuns.keys()) removeSimulatorRun(sessionId)
+    })
     /** The sessions with an approval pending, read once per turn of the event loop: a listing presents every session. */
     let approvalMemo: ReadonlySet<string> | undefined
     function approvalSessions(): ReadonlySet<string> {
@@ -2877,11 +2919,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const turn = await queuedAgentTurn(sessionId, actor.dataScope)
         if (turn?.binding !== input.binding) throw queueContextChanged()
         const agentContext = turn?.agentContext
-        await harnessHub.prompt(sessionId, input.text, input.requestId, {
-          ...(agentContext ? { agentContext } : {}),
-          ...(input.model ? { model: input.model } : {}),
-          ...(input.queuedAt ? { queuedAt: input.queuedAt } : {}),
-        })
+        await withSimulatorPrompt(
+          input.editor ? [actor.deviceId, input.editor.deviceId] : [actor.deviceId],
+          actor.dataScope !== 'all' || (input.editor !== undefined && input.editor.dataScope !== 'all'),
+          () =>
+            harnessHub.prompt(sessionId, input.text, input.requestId, {
+              ...(agentContext ? { agentContext } : {}),
+              ...(input.model ? { model: input.model } : {}),
+              ...(input.queuedAt ? { queuedAt: input.queuedAt } : {}),
+            }),
+        )
         if (input.itemId) queueAudits.delete(input.itemId)
         // Only now is it the person's message in the session; a withdrawn one never gets here.
         await rememberFromPerson(
@@ -3101,6 +3148,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               forgetStream(stream)
             }
           terminalRoutes.endDisallowedStreams()
+          endDisallowedSimulatorRuns()
         },
       },
       terminals,
@@ -5202,6 +5250,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       return runDeviceCall({
         sessionId: context.sessionId,
+        runId: summary.runId,
         tool,
         args,
         signal: context.signal,
@@ -5226,6 +5275,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         .catch(() => undefined)
       const refusal = gatewayRefusal(summary, summary && hub!.trustOf(summary.harnessId), context.turn)
       if (refusal || !summary) return failed({ ok: false, error: refusal ?? 'no-project' })
+      if (!context.runId || summary.runId !== context.runId) return failed({ ok: false, error: 'no-turn' })
       try {
         await assertSessionWorkspace(sessionId)
       } catch {
@@ -5233,6 +5283,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       const outcome = await runDeviceCall({
         sessionId,
+        runId: context.runId,
         tool,
         args,
         signal,
@@ -5252,6 +5303,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     /** Checks a simulator call's arguments, records it, then runs simctl through the Host's module. */
     async function runDeviceCall(input: {
       sessionId: string
+      runId: string | undefined
       tool: DeviceTool
       args: Record<string, unknown>
       signal: AbortSignal
@@ -5261,7 +5313,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }): Promise<DeviceOutcome> {
       const { tool, args } = input
       if (!simulators.supported) return { ok: false, error: 'simulator-unavailable' }
-      if (turnScopes.get(input.sessionId) !== true) return { ok: false, error: 'device-scope' }
+      const grant = simulatorRuns.get(input.sessionId)
+      const allowed = () =>
+        grant !== undefined
+        && grant.runId === input.runId
+        && grant.pendingSteers === 0
+        && simulatorRuns.get(input.sessionId) === grant
+        && grant.deviceIds.every(simulatorDeviceAllowed)
+      if (!grant || !allowed()) return { ok: false, error: 'device-scope' }
+      const signal = AbortSignal.any([input.signal, grant.abort.signal])
       // The panel's own condition: this Mac's desktop app is open.
       if (!browserBroker.available()) return { ok: false, error: 'device-unavailable' }
       const udid = args.udid
@@ -5295,12 +5355,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           .detail(input.sessionId)
           .then(detail => detail.summary)
           .catch(() => undefined)
-        if (!summary || hub!.levelOf(summary.harnessId) !== 'L3') return { ok: false, error: 'not-full-access-input' }
+        if (summary?.runId !== input.runId || !summary || !ACTIVE_STATUSES.has(summary.status)) return { ok: false, error: 'no-turn' }
+        if (summary.agent || personalSimulatorSession(input.sessionId)) return { ok: false, error: 'personal-input' }
+        if (hub!.levelOf(summary.harnessId) !== 'L3') return { ok: false, error: 'not-full-access-input' }
         if (!simulatorControl.offered) return { ok: false, error: 'simulator-input-unavailable' }
         const parsed = parseDeviceInput(tool, args)
         if (!parsed) return { ok: false, error: 'invalid-input' }
         inputArgs = parsed
       }
+      if (!allowed()) return { ok: false, error: 'device-scope' }
       try {
         await audit.append({
           action: 'simulator.call',
@@ -5325,10 +5388,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       } catch {
         return { ok: false, error: 'audit-failed' }
       }
-      if (input.signal.aborted) return { ok: false, error: 'cancelled' }
+      if (!allowed()) return { ok: false, error: 'device-scope' }
+      if (signal.aborted) return { ok: false, error: 'cancelled' }
       try {
         if (tool === 'device_list') {
           const { xcode, devices: found } = await simulators.list()
+          if (!allowed()) return { ok: false, error: 'device-scope' }
           if (!xcode) return { ok: false, error: 'simulator-unavailable' }
           const shown = simulators.shown()
           const lines = found.map(device =>
@@ -5344,29 +5409,31 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         if (tool === 'device_screenshot') {
           const image = await simulators.picture(udid, 'png')
+          if (!allowed()) return { ok: false, error: 'device-scope' }
           return { ok: true, text: `Screenshot of ${String(udid)}.`, image }
         }
         if (tool === 'device_open_url') {
-          await simulators.openUrl(udid, address!.url)
+          await simulators.openUrl(udid, address!.url, signal)
           return { ok: true, text: `Opened in ${String(udid)}.` }
         }
         if (tool === 'device_rotate') {
-          const orientation = await simulators.rotate(udid, direction)
+          const orientation = await simulators.rotate(udid, direction, signal)
           if (typeof udid === 'string') simulatorControl.displayChanged(udid)
           return { ok: true, text: `${String(udid)} is now ${orientation}.` }
         }
         if (tool === 'device_apps') {
           const apps = await simulators.appList(udid)
+          if (!allowed()) return { ok: false, error: 'device-scope' }
           const lines = apps.map(app => [app.bundleId, escapeSecurityText(app.name), app.kind].join(' · '))
           return { ok: true, text: lines.length ? lines.join('\n') : 'No apps.' }
         }
         if (inputArgs) {
           const device = await simulators.device(inputArgs.udid)
+          if (!allowed()) return { ok: false, error: 'device-scope' }
           if (device.state !== 'booted') return { ok: false, error: 'simulator-not-booted' }
           simulators.touch(device.udid)
-          simulators.agentCall(input.sessionId, 'start', device.udid)
           if (inputArgs.tool === 'device_tap') {
-            await simulatorControl.tap(device.udid, inputArgs.x, inputArgs.y, inputArgs.holdMs, input.signal)
+            await simulatorControl.tap(device.udid, inputArgs.x, inputArgs.y, inputArgs.holdMs, signal)
             return { ok: true, text: inputArgs.holdMs && inputArgs.holdMs > 500 ? 'Long-pressed.' : 'Tapped.' }
           }
           if (inputArgs.tool === 'device_swipe') {
@@ -5375,28 +5442,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               { x: inputArgs.fromX, y: inputArgs.fromY },
               { x: inputArgs.toX, y: inputArgs.toY },
               inputArgs.durationMs,
-              input.signal,
+              signal,
             )
             return { ok: true, text: 'Swiped.' }
           }
           if (inputArgs.tool === 'device_press_key') {
-            await simulatorControl.key(device.udid, inputArgs.key, input.signal)
+            await simulatorControl.key(device.udid, inputArgs.key, signal)
             return { ok: true, text: `Pressed ${inputArgs.key}.` }
           }
           if (inputArgs.tool === 'device_type_text') {
-            await simulatorControl.typeText(device.udid, inputArgs.text, input.signal)
+            await simulatorControl.typeText(device.udid, inputArgs.text, signal)
             return { ok: true, text: `Typed ${inputArgs.text.length} characters; take a screenshot to check the field.` }
           }
-          await simulatorControl.button(device.udid, inputArgs.button, input.signal)
+          await simulatorControl.button(device.udid, inputArgs.button, signal)
           return { ok: true, text: `Pressed ${inputArgs.button}.` }
         }
         if (tool === 'device_launch') {
-          await simulators.launch(udid, bundleId)
+          await simulators.launch(udid, bundleId, signal)
           return { ok: true, text: `Launched ${String(bundleId)} on ${String(udid)}.` }
         }
-        await simulators.setAppearance(udid, appearance)
+        await simulators.setAppearance(udid, appearance, signal)
         return { ok: true, text: `Appearance of ${String(udid)} is ${String(appearance)}.` }
       } catch (error) {
+        if (!allowed()) return { ok: false, error: 'device-scope' }
         if (error instanceof AppError) return { ok: false, error: error.code, detail: error.message }
         return { ok: false, error: 'simulator-failed', detail: errorText(error) }
       }
@@ -8726,13 +8794,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // A retry of a start this Host has in flight or accepted gets its original answer, window or not; only new starts
       // are refused (a handoff's start is keyed by its own start request ID). A start that failed is forgotten.
       const startKey = `${caller.device.id}:${start.requestId}`
-      const started = (result: { sessionId: string }) => {
-        noteTurnScope(result.sessionId, caller)
-        return result
-      }
-      if (startRequests.has(startKey)) return startSessionChecked(caller, start, res, dispatched).then(started)
+      const begin = () =>
+        withSimulatorPrompt(
+          [caller.device.id],
+          start.withoutPrivateContext === true || start.pageStart === true || caller.device.dataScope !== 'all',
+          () => startSessionChecked(caller, start, res, dispatched),
+        )
+      if (startRequests.has(startKey)) return begin()
       refuseWhileUpdating('session')
-      return tracked(startRequests, startKey, () => startSessionChecked(caller, start, res, dispatched)).then(started)
+      return tracked(startRequests, startKey, begin)
     }
 
     async function startSessionChecked(
@@ -9244,18 +9314,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // The install window: a retry of a turn this Host has on record gets its original answer; a new plain message, and a
       // queued or steered one on a session that is not running (it would start a turn at once), are refused.
       const turnKey = `${id}:${caller.device.id}:${input.requestId}`
-      const sent = <T>(result: T) => {
-        noteTurnScope(id, caller)
-        return result
-      }
       if (turnRequests.has(turnKey) || promptQueues.knows(id, caller.device.id, input.requestId))
-        return sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent).then(sent)
+        return sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent)
       if (updateWindow.isOpen()) {
         if (!(input.queue || input.steer)) refuseWhileUpdating('turn')
         const status = (await hub!.summary(id)).status
         if (status !== 'running' && status !== 'waiting-approval') refuseWhileUpdating('turn')
       }
-      return tracked(turnRequests, turnKey, () => sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent)).then(sent)
+      return tracked(turnRequests, turnKey, () => sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent))
     }
 
     async function sendPromptChecked(
@@ -9322,7 +9388,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (input.queue || input.steer) await assertQueueable(id, input.prompt)
       if (input.steer && !input.model && input.prompt) {
         recheck(caller, 'run')
-        if ((await hub!.steer(id, input.prompt, input.requestId)) === 'injected') return 'steered'
+        const maySeeAll = !withoutPrivateContext && caller.device.dataScope === 'all' && simulatorDeviceAllowed(caller.device.id)
+        const steered = await hub!.steer(id, input.prompt, input.requestId, runId => {
+          if (maySeeAll && simulatorDeviceAllowed(caller.device.id)) return
+          const grant = simulatorRuns.get(id)
+          if (grant?.runId !== runId) return
+          // A lower-scope steer blocks new device calls while its actual send is unsettled.
+          grant.pendingSteers++
+          let settled = false
+          return couldBeInjected => {
+            if (settled) return
+            settled = true
+            grant.pendingSteers--
+            if (couldBeInjected) removeSimulatorRun(id, runId)
+          }
+        })
+        if (steered === 'injected') return 'steered'
       }
       if (input.queue || input.steer) return { queued: await promptQueues.submit(queueActor(caller), id, input) }
       // An existing session whose Harness is now too old is refused as a new one would be, before the turn is recorded.
@@ -9365,14 +9446,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         recheck(caller, 'run')
         if (fileRefs.length && !projectFiles(caller)) throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
         if (agentTurn) agentAccess(caller, true)
-        await hub!.prompt(id, input.prompt, input.requestId, {
-          ...(agentTurn ? { agentContext: agentTurn } : {}),
-          ...(fileRefs.length ? { fileRefs } : {}),
-          ...(input.model ? { model: input.model } : {}),
-          ...(attachments.length ? { attachments } : {}),
-          ...(input.freshContext ? { freshContext: true as const } : {}),
-          ...(outsideContent ? { outsideContent: true as const } : {}),
-        })
+        await withSimulatorPrompt([caller.device.id], withoutPrivateContext || caller.device.dataScope !== 'all', () =>
+          hub!.prompt(id, input.prompt, input.requestId, {
+            ...(agentTurn ? { agentContext: agentTurn } : {}),
+            ...(fileRefs.length ? { fileRefs } : {}),
+            ...(input.model ? { model: input.model } : {}),
+            ...(attachments.length ? { attachments } : {}),
+            ...(input.freshContext ? { freshContext: true as const } : {}),
+            ...(outsideContent ? { outsideContent: true as const } : {}),
+          }),
+        )
       } catch (cause) {
         if (cause instanceof AppError && refusedBeforeAccepting(cause.status, cause.code) && attachments.length)
           await attachmentStore.releaseClaim(caller.device.id, input.attachmentIds!, input.requestId, id)

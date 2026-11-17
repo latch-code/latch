@@ -3,6 +3,7 @@
 // a recording goes only as a bounded binary answer to the panel that asked, and log lines only down that panel's own
 // event stream; never over the Host's SSE, into a log, the audit or the data directory. See docs/DEVICE-PREVIEW.md.
 import { createHash } from 'node:crypto'
+import { once } from 'node:events'
 import type { ServerResponse } from 'node:http'
 import { z } from 'zod'
 import {
@@ -101,13 +102,26 @@ function frame<E extends keyof SimulatorLogEvents>(event: E, data: SimulatorLogE
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
 }
 
+interface SimulatorRoutes extends RouteModule {
+  endDisallowedStreams(): void
+}
+
 export function createSimulatorRoutes(
   context: RouteContext,
   simulators: Simulators,
   live: SimulatorLive,
   control: SimulatorControl,
-): RouteModule {
+): SimulatorRoutes {
   const { devices, lifecycle } = context
+  const liveStreams = new Set<() => boolean>()
+  function endDisallowedStreams(): void {
+    for (const closeIfDisallowed of liveStreams) closeIfDisallowed()
+    control.releaseDisallowedHolders(id => {
+      const device = devices.get(id)
+      return device?.dataScope === 'all' && device.scopes.includes('run') && isLocalListener(device.listener) && devices.isActive(id)
+    })
+  }
+  devices.onRevoked(endDisallowedStreams)
   lifecycle.on('hostStopping', async () => {
     await Promise.all([simulators.stop(), live.stop(), control.stop()])
   })
@@ -216,16 +230,22 @@ export function createSimulatorRoutes(
     const { credentialHash } = caller
     if (!credentialHash) throw authFailure('unauthorized')
     const deviceId = caller.device.id
-    const allowed = () => {
+    const closeIfDisallowed = () => {
       const device = devices.get(deviceId)
-      return device?.dataScope === 'all' && device.scopes.includes('run') && devices.streamAllowed(deviceId, credentialHash)
+      if (device?.dataScope === 'all' && device.scopes.includes('run') && devices.streamAllowed(deviceId, credentialHash)) return false
+      // Destroy the response to discard queued bytes, even if this client never reads enough to emit drain.
+      res.destroy()
+      gone.abort()
+      return true
     }
     const watch = await live.watch(udid, { codec: settings.codec, maxFps: settings.fps, maxDimension: settings.size })
-    if (gone.signal.aborted || res.destroyed) {
+    if (gone.signal.aborted || res.destroyed || closeIfDisallowed()) {
       watch.close()
       return
     }
-    gone.signal.addEventListener('abort', () => watch.close(), { once: true })
+    const closeWatch = () => watch.close()
+    gone.signal.addEventListener('abort', closeWatch, { once: true })
+    const unwatchOwner = control.watchOwner(udid, deviceId, owner => watch.inputOwner(owner))
     res.writeHead(200, {
       'content-type': 'application/octet-stream',
       'cache-control': 'no-store, no-transform',
@@ -235,33 +255,32 @@ export function createSimulatorRoutes(
     simulators.watching(udid)
     // Also on a still screen, when no frame comes to check against: a device no longer allowed loses the picture.
     const marking = setInterval(() => {
-      if (!allowed()) watch.close()
-      else simulators.watching(udid)
+      if (!closeIfDisallowed()) simulators.watching(udid)
     }, WATCHING_EVERY_MS)
     marking.unref()
+    liveStreams.add(closeIfDisallowed)
     try {
       for (;;) {
         const message = await watch.next()
-        if (!message || res.destroyed || gone.signal.aborted || !allowed()) break
+        if (!message || res.destroyed || gone.signal.aborted || closeIfDisallowed()) break
         if (!res.write(message))
-          await new Promise<void>(resolve => {
-            const done = () => {
-              res.off('drain', done)
-              gone.signal.removeEventListener('abort', done)
-              resolve()
-            }
-            res.on('drain', done)
-            gone.signal.addEventListener('abort', done, { once: true })
+          await once(res, 'drain', { signal: gone.signal }).catch(error => {
+            if (!gone.signal.aborted) throw error
           })
       }
     } finally {
+      liveStreams.delete(closeIfDisallowed)
+      unwatchOwner()
       clearInterval(marking)
-      watch.close()
-      if (!res.writableEnded) res.end()
+      gone.signal.removeEventListener('abort', closeWatch)
+      closeWatch()
+      if (!res.destroyed && !res.writableEnded) res.end()
     }
   }
 
   return {
+    endDisallowedStreams,
+
     async route({ req, res, caller, path, method }) {
       if (path !== '/link/api/simulators' && !path.startsWith('/link/api/simulators/')) return false
       context.requireLocal(caller)
@@ -287,6 +306,7 @@ export function createSimulatorRoutes(
           xcode,
           devices: list.map(device => ({
             ...device,
+            inputOwner: device.state === 'booted' ? control.ownerOf(device.udid, caller.device.id) : 'none',
             ...(device.udid === shown ? { shown: true } : {}),
             ...(using.some(held => held.udid === device.udid) ? { agent: true } : {}),
           })),
@@ -375,9 +395,10 @@ export function createSimulatorRoutes(
         authorize(caller)
         if (device.state !== 'booted') throw new AppError(409, 'simulator-not-booted', '设备未启动')
         simulators.touch(device.udid)
-        await control.input(device.udid, owner, events)
+        const receipt = await control.input(device.udid, owner, events, () => authorize(caller))
         // Written to the companion's stream in order; the device's own confirmation comes only as a stream ends.
-        json(res, { written: events.length })
+        authorize(caller)
+        json(res, receipt)
         return true
       }
       if (action === 'keyframe') {
@@ -400,8 +421,10 @@ export function createSimulatorRoutes(
         }
         if (device.state !== 'booted') throw new AppError(409, 'simulator-not-booted', '设备未启动')
         // The person's taps are not recorded one by one: once, as they take control.
-        if (!control.holds(device.udid, owner)) await audited(caller, { action: 'control', udid: device.udid })
-        json(res, { control: await control.take(device.udid, owner) })
+        const record = control.holds(device.udid, owner) ? undefined : () => audited(caller, { action: 'control', udid: device.udid })
+        const view = await control.take(device.udid, owner, () => authorize(caller), record)
+        authorize(caller)
+        json(res, { control: view })
         return true
       }
       if (action === 'boot') {

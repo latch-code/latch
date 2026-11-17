@@ -10,6 +10,7 @@ import {
   escapeSecurityText,
   readSessionSkills,
   boundSessionSkills,
+  simulatorInputTool,
   type HarnessMcpServer,
   type HarnessMcpState,
   type SessionSkill,
@@ -270,6 +271,12 @@ function mcpOrigin(value: unknown): string | undefined {
 function toolCount(tools: unknown): number | undefined {
   const count = Array.isArray(tools) ? tools.length : isRecord(tools) ? Object.keys(tools).length : undefined
   return count === undefined ? undefined : Math.min(count, 100_000)
+}
+
+function nativeSimulatorInputName(server: unknown, tool: unknown): string | undefined {
+  if (server !== 'latch-browser' || typeof tool !== 'string') return undefined
+  const name = `${server}.${tool}`
+  return simulatorInputTool(name) ? name : undefined
 }
 
 /**
@@ -1747,11 +1754,13 @@ export class CodexWire implements AgentWire {
             ? `search ${typeof item.query === 'string' ? item.query : ''}`.trim()
             : `${typeof item.server === 'string' ? item.server : 'mcp'}.${typeof item.tool === 'string' ? item.tool : 'tool'}`
         // Codex starts an MCP call before it asks about it: pending until it is seen to have run.
+        const input = item.type === 'mcpToolCall' ? nativeSimulatorInputName(item.server, item.tool) : undefined
         if (!done)
           return emit({
             sessionUpdate: 'tool_call',
             toolCallId: id,
             title: clip(title, 500),
+            ...(input ? { name: input } : {}),
             kind: item.type === 'webSearch' ? 'fetch' : 'other',
             status: 'pending',
             ...(item.arguments !== undefined ? { rawInput: item.arguments } : {}),
@@ -1793,6 +1802,7 @@ export class CodexWire implements AgentWire {
     const id = `guardian_assessment:${clip(params.reviewId, 400)}`
     const review = isRecord(params.review) ? params.review : {}
     const action = isRecord(params.action) ? params.action : {}
+    const input = action.type === 'mcpToolCall' ? nativeSimulatorInputName(action.server, action.toolName) : undefined
     const subject =
       action.type === 'command'
         ? `运行 ${said(action.command)}`
@@ -1814,7 +1824,14 @@ export class CodexWire implements AgentWire {
                 : '一项请求'
     const update = (value: Record<string, unknown> & { sessionUpdate: string }) => this.update(this.marked(value, child))
     if (!done) {
-      update({ sessionUpdate: 'tool_call', toolCallId: id, title: clip(subject, 500), kind: 'think', status: 'in_progress' })
+      update({
+        sessionUpdate: 'tool_call',
+        toolCallId: id,
+        title: clip(subject, 500),
+        ...(input ? { name: input } : {}),
+        kind: 'think',
+        status: 'in_progress',
+      })
       return
     }
     const status = typeof review.status === 'string' ? review.status : 'aborted'
@@ -2266,6 +2283,7 @@ export class CodexWire implements AgentWire {
       typeof value === 'string' && value ? escapeSecurityText(clip(value, limit)) : undefined
     const server = safe(params.serverName, 200) ?? 'MCP'
     const tool = safe(meta.tool_name, 200) ?? '工具'
+    const input = nativeSimulatorInputName(params.serverName, meta.tool_name)
     const args = meta.tool_params === undefined ? undefined : escapeSecurityText(clip(JSON.stringify(meta.tool_params), 2000))
     const answer = await this.handlers
       .request(
@@ -2276,6 +2294,7 @@ export class CodexWire implements AgentWire {
             {
               toolCallId: call?.id ?? `mcp-approval-${String(id)}`,
               title: clip(`调用 ${server}.${tool}`, 500),
+              ...(input ? { name: input } : {}),
               kind: 'other',
               status: 'pending',
               rawInput: {

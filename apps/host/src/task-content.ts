@@ -1,3 +1,4 @@
+import { simulatorInputDetail, simulatorInputOptions, simulatorInputTool } from '@latch/protocol'
 import type { Approval, Message, TaskDetail, ToolDetail } from '@latch/protocol'
 
 const PATH_KEYS = new Set([
@@ -172,7 +173,42 @@ function projectedChild(message: Message, project: (message: Message) => Message
   return steps === message.subagent.steps ? message.subagent : { ...message.subagent, steps }
 }
 
+/** Older tool rows can still carry the original arguments. This is a response-only projection. */
+function simulatorInputMessage(message: Message, child: (message: Message) => Message): Message | undefined {
+  if (message.role !== 'tool') return undefined
+  const input = simulatorInputTool(message.toolName, message.tool?.kind, message.tool?.input, message.tool?.title)
+  if (!input) return undefined
+  const tool = simulatorInputDetail(input, message.tool?.input, message.tool)
+  const { attachments: _attachments, ...rest } = message
+  const subagent = projectedChild(message, child)
+  return {
+    ...rest,
+    toolName: `latch-browser.${input}`,
+    text: `${tool.title} · ${tool.input}`,
+    tool,
+    ...(subagent ? { subagent } : {}),
+  }
+}
+
+function simulatorInputApproval(approval: Approval): Approval | undefined {
+  const args = approval.tool?.input ?? approval.arguments
+  const input = simulatorInputTool(approval.toolName, approval.tool?.kind, args)
+  if (!input) return undefined
+  const tool = simulatorInputDetail(input, args, approval.tool)
+  const { plan: _plan, ...rest } = approval
+  return {
+    ...rest,
+    toolName: `latch-browser.${input}`,
+    reason: tool.title,
+    arguments: tool.input,
+    tool,
+    ...(approval.options ? { options: simulatorInputOptions(approval.options) } : {}),
+  }
+}
+
 function shownMessage(message: Message, child: (message: Message) => Message = shownMessage): Message {
+  const simulator = simulatorInputMessage(message, child)
+  if (simulator) return simulator
   const tool = message.tool && shownTool(message.tool, message.toolName)
   const editing = isFileEdit(message.tool, message.toolName)
   let text = message.text
@@ -194,6 +230,8 @@ function allTool(tool: ToolDetail): ToolDetail {
 }
 
 function allMessage(message: Message, child: (message: Message) => Message = allMessage): Message {
+  const simulator = simulatorInputMessage(message, child)
+  if (simulator) return simulator
   const tool = message.tool && allTool(message.tool),
     subagent = projectedChild(message, child)
   if (tool === message.tool && subagent === message.subagent) return message
@@ -201,6 +239,8 @@ function allMessage(message: Message, child: (message: Message) => Message = all
 }
 
 export function allApproval(approval: Approval): Approval {
+  const simulator = simulatorInputApproval(approval)
+  if (simulator) return simulator
   const tool = approval.tool && allTool(approval.tool)
   return tool === approval.tool ? approval : { ...approval, tool }
 }
@@ -217,6 +257,8 @@ export function allTaskContent(detail: TaskDetail): TaskDetail {
 
 /** Called only at a response boundary, after classification and the final current-device authorization check. */
 export function workApproval(approval: Approval): Approval {
+  const simulator = simulatorInputApproval(approval)
+  if (simulator) return simulator
   const editing = isFileEdit(approval.tool, approval.toolName)
   const { arguments: original, ...rest } = approval
   const args = original !== undefined && editing ? filePayload(original) : original

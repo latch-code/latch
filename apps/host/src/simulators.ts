@@ -753,19 +753,27 @@ export class Simulators {
     return shown && this.now() - shown.at <= SHOWN_FOR_MS ? shown.udid : undefined
   }
 
-  private simctl(args: readonly string[], timeoutMs: number, maxBytes = OUTPUT_LIMIT): Promise<SimctlResult> {
-    return this.exec(this.run, args, timeoutMs, maxBytes)
+  private simctl(args: readonly string[], timeoutMs: number, maxBytes = OUTPUT_LIMIT, signal?: AbortSignal): Promise<SimctlResult> {
+    return this.exec(this.run, args, timeoutMs, maxBytes, signal)
   }
 
   /** One run-to-completion child of either runner, in the shared queue of four. */
-  private async exec(run: SimctlRunner | undefined, args: readonly string[], timeoutMs: number, maxBytes: number): Promise<SimctlResult> {
+  private async exec(
+    run: SimctlRunner | undefined,
+    args: readonly string[],
+    timeoutMs: number,
+    maxBytes: number,
+    signal?: AbortSignal,
+  ): Promise<SimctlResult> {
     if (!run || this.stopped) throw new AppError(503, 'simulator-unavailable', '这台电脑上没有可用的模拟器')
+    signal?.throwIfAborted()
     if (this.running.size >= MAX_RUNNING) await new Promise<void>(resolve => this.queue.push(resolve))
     if (this.stopped) throw new AppError(503, 'simulator-unavailable', '这台电脑上没有可用的模拟器')
     const controller = new AbortController()
     this.running.add(controller)
     try {
-      return await run(args, { timeoutMs, maxBytes, signal: controller.signal })
+      signal?.throwIfAborted()
+      return await run(args, { timeoutMs, maxBytes, signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal })
     } finally {
       this.running.delete(controller)
       this.queue.shift()?.()
@@ -901,17 +909,17 @@ export class Simulators {
     if (result.code !== 0) throw this.failed(result)
   }
 
-  async openUrl(udid: unknown, url: unknown): Promise<void> {
+  async openUrl(udid: unknown, url: unknown, signal?: AbortSignal): Promise<void> {
     const address = simulatorUrl(url)
     const device = await this.bootedDevice(udid)
-    const result = await this.simctl(['openurl', device.udid, address], TIMEOUTS.action)
+    const result = await this.simctl(['openurl', device.udid, address], TIMEOUTS.action, OUTPUT_LIMIT, signal)
     if (result.code !== 0) throw this.failed(result)
   }
 
-  async setAppearance(udid: unknown, appearance: unknown): Promise<void> {
+  async setAppearance(udid: unknown, appearance: unknown, signal?: AbortSignal): Promise<void> {
     if (appearance !== 'light' && appearance !== 'dark') throw new AppError(400, 'invalid-input', '外观只能是浅色或深色')
     const device = await this.bootedDevice(udid)
-    const result = await this.simctl(['ui', device.udid, 'appearance', appearance], TIMEOUTS.action)
+    const result = await this.simctl(['ui', device.udid, 'appearance', appearance], TIMEOUTS.action, OUTPUT_LIMIT, signal)
     if (result.code !== 0) throw this.failed(result)
   }
 
@@ -968,11 +976,13 @@ export class Simulators {
    * `zh_Hans-Pinyin@sw=Pinyin-Simplified;hw=Automatic`. Checked on iOS 27.2: it changes the moment the person switches
    * keyboards. Undefined when the device has not used a keyboard yet or the answer is anything else.
    */
-  async activeKeyboard(udid: unknown): Promise<string | undefined> {
+  async activeKeyboard(udid: unknown, signal?: AbortSignal): Promise<string | undefined> {
     const device = await this.bootedDevice(udid)
     const result = await this.simctl(
       ['spawn', device.udid, 'defaults', 'read', 'com.apple.keyboard.preferences', 'KeyboardLastUsed'],
       TIMEOUTS.action,
+      OUTPUT_LIMIT,
+      signal,
     )
     const text = result.stdout.toString('utf8').trim()
     return result.code === 0 && /^[A-Za-z0-9_.@=;-]{1,120}$/u.test(text) ? text : undefined
@@ -981,8 +991,8 @@ export class Simulators {
   // ── Rotation: `devicectl device orientation`, which addresses a simulator by its UDID once it is running ──
 
   /** devicectl's orientation answer: its `result`, or undefined when it failed or did not say. */
-  private async orientationCall(args: readonly string[]): Promise<SimulatorOrientation | undefined> {
-    const result = await this.exec(this.devicectl, args, TIMEOUTS.action + 5_000, OUTPUT_LIMIT)
+  private async orientationCall(args: readonly string[], signal?: AbortSignal): Promise<SimulatorOrientation | undefined> {
+    const result = await this.exec(this.devicectl, args, TIMEOUTS.action + 5_000, OUTPUT_LIMIT, signal)
     if (result.code !== 0) return undefined
     let parsed: unknown
     try {
@@ -1008,25 +1018,17 @@ export class Simulators {
   }
 
   /** A quarter turn; refused unless devicectl reads back a different orientation afterwards. */
-  async rotate(udid: unknown, direction: unknown): Promise<SimulatorOrientation> {
+  async rotate(udid: unknown, direction: unknown, signal?: AbortSignal): Promise<SimulatorOrientation> {
     if (direction !== 'left' && direction !== 'right') throw new AppError(400, 'invalid-input', '只能向左或向右转')
     const device = await this.bootedDevice(udid)
     if (!this.devicectl) throw new AppError(409, 'simulator-rotate-unsupported', '这台设备不能旋转')
     return this.exclusive(device.udid, async () => {
-      const before = await this.orientationCall(['device', 'orientation', 'get', '--device', device.udid, '-t', '20', '-j', '-'])
+      const before = await this.orientationCall(['device', 'orientation', 'get', '--device', device.udid, '-t', '20', '-j', '-'], signal)
       if (!before) throw new AppError(409, 'simulator-rotate-unsupported', '这台设备不能旋转')
-      const after = await this.orientationCall([
-        'device',
-        'orientation',
-        'rotate',
-        '--device',
-        device.udid,
-        direction,
-        '-t',
-        '20',
-        '-j',
-        '-',
-      ])
+      const after = await this.orientationCall(
+        ['device', 'orientation', 'rotate', '--device', device.udid, direction, '-t', '20', '-j', '-'],
+        signal,
+      )
       if (!after || after === before) throw new AppError(502, 'simulator-rotate-failed', '设备没有转动')
       return after
     })
@@ -1077,10 +1079,10 @@ export class Simulators {
   }
 
   /** Starts a listed app by its bundle id alone: no arguments, no console, no output files. */
-  async launch(udid: unknown, bundleId: unknown): Promise<void> {
+  async launch(udid: unknown, bundleId: unknown, signal?: AbortSignal): Promise<void> {
     const device = await this.bootedDevice(udid)
     const app = await this.listedApp(device.udid, bundleId)
-    const result = await this.simctl(['launch', device.udid, app.bundleId], TIMEOUTS.action)
+    const result = await this.simctl(['launch', device.udid, app.bundleId], TIMEOUTS.action, OUTPUT_LIMIT, signal)
     if (result.code !== 0) throw this.failed(result)
   }
 

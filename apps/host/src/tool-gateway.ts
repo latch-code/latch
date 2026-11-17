@@ -168,7 +168,8 @@ export interface ToolGatewayOptions {
   socketPath: string
   /** Whether a session gets the tools when it opens now; false: no token, and its agent gets no server this time. */
   admits?(sessionId: string): boolean
-  tools(): GatewayTool[]
+  /** The listing takes the binding's session; without it this is the fixed set of names allowed on the wire. */
+  tools(sessionId?: string): GatewayTool[]
   /** One call; the Host classifies, audits and runs it. Never rejects with the token or the arguments in its words. */
   call(input: GatewayCall): Promise<GatewayResult>
   /** Latch's MCP servers, through `latch-mcp` bridges; without it a session gets none. */
@@ -627,7 +628,7 @@ export class ToolGatewayServer implements ToolGateway {
           continue
         }
         if (method === 'tools/list') {
-          reply({ id, result: { tools: this.options.tools() } })
+          reply({ id, result: { tools: this.options.tools(binding.sessionId) } })
           continue
         }
         if (method !== 'tools/call') {
