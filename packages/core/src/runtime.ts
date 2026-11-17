@@ -3,7 +3,18 @@ import { z } from 'zod'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
-import { MODEL_EFFORT, fileMentionContext, isAttachmentRef, escapeSecurityText, promptTitle, rejectionNote } from '@latch/protocol'
+import {
+  MODEL_EFFORT,
+  fileMentionContext,
+  isAttachmentRef,
+  escapeSecurityText,
+  promptTitle,
+  rejectionNote,
+  PROPOSE_CARD_GUIDE,
+  PROPOSE_TODO_GUIDE,
+  PROPOSE_TODOS_GUIDE,
+  WORK_PROPOSAL_LIMITS,
+} from '@latch/protocol'
 import type {
   AttachmentRef,
   Approval,
@@ -48,6 +59,8 @@ import {
   type MemoryRecallInput,
   type MemoryRecallResult,
   type ScheduleProposalInput,
+  type WorkProposalInput,
+  type WorkTodoProposal,
   type HarnessTurnRecord,
 } from '@latch/sdk'
 import { errorCodeOf, HOST_STOPPED, interruptedNote, runEndRecord } from './run-end.ts'
@@ -150,6 +163,11 @@ export interface RuntimeOptions {
    */
   proposeSchedule?(input: ScheduleProposalInput): Promise<void>
   /**
+   * Where `propose_todo`, `propose_todos` and `propose_card` send what they propose, for sessions created with
+   * `workProposals`. Without it no run offers them. Nothing is created, changed or started until the person accepts.
+   */
+  proposeWork?(input: WorkProposalInput): Promise<void>
+  /**
    * Where `recall_memory` asks, for the same runs. Without it no run offers that tool. Read-only: the Host answers the
    * session owner's confirmed memories, bounded, and counts the query.
    */
@@ -167,6 +185,10 @@ export const PROPOSE_MEMORY_TOOL = 'propose_memory'
 export const PROPOSE_SCHEDULE_TOOL = 'propose_schedule'
 /** The tool the same runs may call to search their agent's saved memories; it reads only those and changes nothing. */
 export const RECALL_MEMORY_TOOL = 'recall_memory'
+/** The tools a session created with `workProposals` may call to propose for the board; they create nothing. */
+export const PROPOSE_TODO_TOOL = 'propose_todo'
+export const PROPOSE_TODOS_TOOL = 'propose_todos'
+export const PROPOSE_CARD_TOOL = 'propose_card'
 /** How many of the newest tool images a request carries; older ones are a note in their result's text. */
 export const TOOL_IMAGES_SENT = 3
 const OLDER_TOOL_IMAGES = '（这次结果的截图较早，已不再发送；需要时请重新截图。）'
@@ -916,7 +938,7 @@ class HarnessRuntime implements Bridge {
           throw new AppError(400, 'file-reference-invalid', '文件引用无效。')
         }
         if (fileRefs.length && mode === 'chat') throw new AppError(415, 'file-references-unavailable', '只对话模式不能引用项目文件。')
-        run = this.allocateRun(`task-${randomUUID()}`, mode, selection, cwd, folders, agentContext)
+        run = this.allocateRun(`task-${randomUUID()}`, mode, selection, cwd, folders, agentContext, input.workProposals === true)
         this.assertAttachments(run, attachments)
         const sessionId = run.sessionId
         const at = isoTime(run.clock.startedAt)
@@ -954,6 +976,7 @@ class HarnessRuntime implements Bridge {
           ],
           history: [{ role: 'user', content: context, ...(attachments.length ? { attachmentRefs: attachments } : {}) }],
           ...(skillContext(run.lease) ? { skillContext: skillContext(run.lease) } : {}),
+          ...(input.workProposals ? { workProposals: true as const } : {}),
           revision: 1,
         }
         draft.receipts[key] = { taskId: sessionId, payloadHash }
@@ -1029,6 +1052,7 @@ class HarnessRuntime implements Bridge {
           recorded,
           foldersOf(task.summary, recorded),
           agentContext,
+          task.workProposals === true,
         )
         let context: string
         try {
@@ -1108,6 +1132,8 @@ class HarnessRuntime implements Bridge {
     cwd: string,
     folders: ProjectFolder[],
     agentContext?: AgentExecutionContext,
+    /** The session was created with `workProposals`: its runs offer the board's proposal tools. */
+    workProposals = false,
   ): Run {
     if (this.closed) throw new AppError(503, 'runtime-closed', '运行节点已关闭')
     // Chat runs never use tools, so they must not pin tool plugins either.
@@ -1157,8 +1183,9 @@ class HarnessRuntime implements Bridge {
       lastEventAt: clock.startedAt,
     }
     if (agentContext?.unattended) run.unattended = true
-    if (agentContext?.proposals) {
-      // Memories and schedules share the session's count, as they share the skills server's file.
+    const board = workProposals && this.options.proposeWork !== undefined
+    if (agentContext?.proposals || board) {
+      // Memories, schedules and board proposals share the session's count, as they share the skills server's file.
       const session = {
         outside: () => this.state.tasks[run.sessionId]?.outsideRead === true,
         // A recalled memory that came from outside content is in the context now, like anything else read from outside.
@@ -1175,10 +1202,12 @@ class HarnessRuntime implements Bridge {
             task.proposals = used + 1
           }),
       }
+      const agent = agentContext?.proposals === true
       const own = [
-        ...(this.options.proposeMemory ? [proposeMemoryTool(run, this.options.proposeMemory, session)] : []),
-        ...(this.options.proposeSchedule ? [proposeScheduleTool(run, this.options.proposeSchedule, session)] : []),
-        ...(this.options.recallMemory ? [recallMemoryTool(run, this.options.recallMemory, session)] : []),
+        ...(agent && this.options.proposeMemory ? [proposeMemoryTool(run, this.options.proposeMemory, session)] : []),
+        ...(agent && this.options.proposeSchedule ? [proposeScheduleTool(run, this.options.proposeSchedule, session)] : []),
+        ...(agent && this.options.recallMemory ? [recallMemoryTool(run, this.options.recallMemory, session)] : []),
+        ...(board ? boardTools(run, this.options.proposeWork!, session) : []),
       ]
       if (own.length) run.proposals = own
     }
@@ -1845,6 +1874,135 @@ interface ProposalSession {
   outside(): boolean
   markOutside(): Promise<void>
   reserve(): Promise<void>
+}
+
+const todoProperties = {
+  title: { type: 'string', maxLength: WORK_PROPOSAL_LIMITS.titleChars, description: 'A short imperative title, one line.' },
+  prompt: {
+    type: 'string',
+    maxLength: WORK_PROPOSAL_LIMITS.promptChars,
+    description: 'The complete first message for a fresh session that has none of this conversation.',
+  },
+  project: { type: 'string', maxLength: 64, description: "A registered project's id; leave it out for this session's project." },
+  harness: { type: 'string', maxLength: 64, description: 'A Harness id to suggest; leave it out unless you know it fits.' },
+  tags: { type: 'array', maxItems: 8, items: { type: 'string', maxLength: 24 }, description: 'Short labels.' },
+} as const
+
+/** A proposed 待办 as the model sent it, before the Host checks it: only these fields are taken. */
+function todoArgs(value: unknown): WorkTodoProposal {
+  const args = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>
+  const title = typeof args.title === 'string' ? args.title.trim() : ''
+  const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : ''
+  if (!title || !prompt) throw new Error('title and prompt must not be empty.')
+  const tags = Array.isArray(args.tags) ? args.tags.filter((tag): tag is string => typeof tag === 'string') : undefined
+  return {
+    title,
+    prompt,
+    ...(typeof args.project === 'string' && args.project.trim() ? { project: args.project.trim() } : {}),
+    ...(typeof args.harness === 'string' && args.harness.trim() ? { harness: args.harness.trim() } : {}),
+    ...(tags?.length ? { tags } : {}),
+  }
+}
+
+/**
+ * The board's proposal tools for one run: a 待办, a group of them, or a change to this session's card. Each hands the Host
+ * a proposal with the turn it came from and whether that turn may have read outside content; nothing is created.
+ */
+function boardTools(run: Run, propose: NonNullable<RuntimeOptions['proposeWork']>, session: ProposalSession): ToolDefinition[] {
+  const send = async (input: Pick<WorkProposalInput, 'todo' | 'card'>, sessionId: string, key: string) => {
+    await propose({
+      sessionId,
+      messageId: run.userMessageId,
+      ...input,
+      external: run.outside === true || run.unattended === true || session.outside(),
+      key,
+    })
+  }
+  const done = 'Proposed. It waits on the board for the user, who accepts, edits or dismisses it; nothing is created or started yet.'
+  return [
+    {
+      name: PROPOSE_TODO_TOOL,
+      title: '提议待办',
+      kind: 'other',
+      description: PROPOSE_TODO_GUIDE,
+      requiresApproval: false,
+      parameters: { type: 'object', additionalProperties: false, required: ['title', 'prompt'], properties: todoProperties },
+      async execute(args, context) {
+        const todo = todoArgs(args)
+        await session.reserve()
+        await send({ todo }, context.sessionId, `call:${run.id}:${context.callId}`)
+        return { text: done }
+      },
+    },
+    {
+      name: PROPOSE_TODOS_TOOL,
+      title: '提议一组待办',
+      kind: 'other',
+      description: PROPOSE_TODOS_GUIDE,
+      requiresApproval: false,
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['goal', 'items'],
+        properties: {
+          goal: { type: 'string', maxLength: WORK_PROPOSAL_LIMITS.goalChars, description: 'What the items achieve together, one line.' },
+          items: {
+            type: 'array',
+            minItems: 2,
+            maxItems: WORK_PROPOSAL_LIMITS.entries,
+            items: { type: 'object', additionalProperties: false, required: ['title', 'prompt'], properties: todoProperties },
+          },
+        },
+      },
+      async execute(args, context) {
+        const goal = typeof args.goal === 'string' ? args.goal.trim() : ''
+        const items = Array.isArray(args.items) ? args.items.map(todoArgs) : []
+        if (!goal) throw new Error('goal must not be empty.')
+        if (items.length < 2 || items.length > WORK_PROPOSAL_LIMITS.entries)
+          throw new Error(`items must hold 2 to ${WORK_PROPOSAL_LIMITS.entries} to-dos.`)
+        // One of the session's proposals per item, as the skills server counts a line per item.
+        for (let index = 0; index < items.length; index++) await session.reserve()
+        const label = `call:${run.id}:${context.callId}`
+        // One proposal: the Host gathers the items by the call's own label, which is only ever this session's.
+        for (const [index, todo] of items.entries())
+          await send({ todo: { ...todo, group: { label, goal } } }, context.sessionId, `${label}:${index}`)
+        return { text: done }
+      },
+    },
+    {
+      name: PROPOSE_CARD_TOOL,
+      title: '提议卡片修改',
+      kind: 'other',
+      description: PROPOSE_CARD_GUIDE,
+      requiresApproval: false,
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['target'],
+        properties: {
+          target: { type: 'string', enum: ['session', 'todo'] },
+          title: { type: 'string', maxLength: WORK_PROPOSAL_LIMITS.titleChars },
+          tags: todoProperties.tags,
+          note: { type: 'string', maxLength: WORK_PROPOSAL_LIMITS.noteChars, description: 'One line.' },
+        },
+      },
+      async execute(args, context) {
+        const target = args.target === 'todo' ? 'todo' : args.target === 'session' ? 'session' : undefined
+        if (!target) throw new Error('target must be "session" or "todo".')
+        const title = typeof args.title === 'string' ? args.title.trim() : ''
+        const note = typeof args.note === 'string' ? args.note.trim() : ''
+        const tags = Array.isArray(args.tags) ? args.tags.filter((tag): tag is string => typeof tag === 'string') : undefined
+        if (!title && !note && !tags?.length) throw new Error('Propose a title, tags or a note.')
+        await session.reserve()
+        await send(
+          { card: { target, ...(title ? { title } : {}), ...(tags?.length ? { tags } : {}), ...(note ? { note } : {}) } },
+          context.sessionId,
+          `call:${run.id}:${context.callId}`,
+        )
+        return { text: done }
+      },
+    },
+  ]
 }
 
 /**

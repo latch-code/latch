@@ -1,6 +1,7 @@
 import type { BoardGroup, BoardPriority, BoardReason } from './board.ts'
 import type { FileMention } from './file-refs.ts'
 import type { ModelRef } from './settings.ts'
+import type { WorkItemOrigin } from './work-proposals.ts'
 
 /**
  * Where the Host puts a 待办 on the board: `todo` (未开始) while it has no session, otherwise from its sessions
@@ -29,6 +30,10 @@ export interface WorkItemSummary {
   tags?: string[]
   /** Set by a person only; absent is 中. */
   priority?: BoardPriority
+  /** One line on the card (`CARD_NOTE_CHARS`): display only, never sent to a session or an agent. */
+  note?: string
+  /** An agent proposed it and a person accepted it: the proposing session, and whether its turn read outside content. */
+  from?: WorkItemOrigin
   /** At most 16, in the order they joined. Code sessions only. */
   sessionIds: string[]
   /** Readable with the full data scope only: a session of it is or was private. Never cleared. */
@@ -83,6 +88,8 @@ export interface WorkItemPatchInput {
   tags?: string[] | null
   /** `mid` is the default: the field goes. */
   priority?: BoardPriority | 'mid'
+  /** null or empty removes it. */
+  note?: string | null
   /** 完成 (true) or 重新打开 (false). */
   closed?: boolean
 }

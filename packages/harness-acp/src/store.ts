@@ -84,6 +84,8 @@ export interface AcpRecord {
   skills?: true
   /** Its agent may propose memories through the skills server (`proposals.jsonl` in that directory). */
   proposals?: true
+  /** Its agent may propose for the board through the same server and file (`CreateTaskInput.workProposals`). */
+  workProposals?: true
   /** How many lines of that file the Host has been handed. */
   proposalsRead?: number
   /** Byte offset in that file just past the last line handed over. */
@@ -528,6 +530,7 @@ const stateSchema = z.object({
         skills: z.literal(true).optional(),
         /** Its agent may propose memories through the skills server; the Host has read this many of its lines. */
         proposals: z.literal(true).optional(),
+        workProposals: z.literal(true).optional(),
         proposalsRead: z.number().int().min(0).max(1000).optional(),
         proposalsOffset: z.number().int().min(0).max(1_048_576).optional(),
         proposalsCleared: z.number().int().min(0).max(1000).optional(),

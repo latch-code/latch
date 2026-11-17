@@ -544,9 +544,11 @@ describe('「操控这台 Mac」: Latch’s guide for the agent', () => {
       { id: COMPUTER_GUIDE_SKILL.id, name: COMPUTER_GUIDE_SKILL.name, description: COMPUTER_GUIDE_SKILL.description },
     ])
     // Written only in the Host's own data directory, never into a CLI's skills folder or the project; the rules alone.
+    // One per session that has latch-skills: the chat, and the Code session before it, which has it for the board's tools.
     const found = (await readdir(t.dataDir, { recursive: true })).filter(path => path.endsWith('guides.json'))
-    expect(found).toHaveLength(1)
-    expect(JSON.parse(await readFile(join(t.dataDir, found[0]!), 'utf8'))[0].content).toBe(computerRules(COMPUTER_TOOLS_OFF))
+    expect(found).toHaveLength(2)
+    for (const path of found)
+      expect(JSON.parse(await readFile(join(t.dataDir, path), 'utf8'))[0].content).toBe(computerRules(COMPUTER_TOOLS_OFF))
     expect((await readdir(t.workspaceRoot, { recursive: true })).filter(path => /skill|guide/iu.test(path))).toEqual([])
   })
 

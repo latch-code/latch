@@ -4986,7 +4986,9 @@ describe('agent context', () => {
     // A line still being written waits; the next read goes on from the stored offset; a bad line is skipped by kind.
     await writeFile(file, '{"content":"one"}\nnot json\n{"content":"bell\\u0007"}\n{"content":"tw', { mode: 0o600 })
     const first = await readProposals(directory, start)
-    expect(first.lines.map(line => (line.kind === undefined ? line.content : line.name))).toEqual(['one'])
+    expect(first.lines.map(line => (line.kind === undefined ? line.content : line.kind === 'schedule' ? line.name : line.kind))).toEqual([
+      'one',
+    ])
     expect(first.skipped).toEqual(['not-json', 'invalid'])
     expect(first.next).toEqual({ line: 3, offset: Buffer.byteLength('{"content":"one"}\nnot json\n{"content":"bell\\u0007"}\n') })
     await writeFile(file, 'o"}\n', { flag: 'a' })
@@ -5166,7 +5168,8 @@ describe('agent context', () => {
     const propose = (args: unknown) => ask('tools/call', { name: 'propose_memory', arguments: args })
     expect((await propose({ content: '' })).result).toMatchObject({ isError: true })
     expect((await propose({ content: 'x'.repeat(4001) })).result).toMatchObject({ isError: true })
-    expect((await propose({ content: '一'.repeat(3000) })).result).toMatchObject({ isError: true })
+    // A whole 4000-character proposal in CJK text fits one line; the board's tools are not offered without `board`.
+    expect(listed.tools.map(tool => tool.name)).not.toContain('propose_todo')
     for (let index = 0; index < PROPOSAL_LIMITS.count; index++)
       expect((await propose({ content: `第 ${index} 条`, extra: 'ignored' })).result).not.toMatchObject({ isError: true })
     expect((await propose({ content: '再一条' })).result).toMatchObject({ isError: true })
@@ -5178,6 +5181,84 @@ describe('agent context', () => {
     const all = await readProposals(directory, { line: 0, offset: 0 })
     expect(all.next.line).toBe(PROPOSAL_LIMITS.count)
     expect(await readProposals(directory, all.next)).toEqual({ lines: [], next: all.next, skipped: [] })
+  })
+
+  it('the skills server with board offers only the board tools, refuses priority and extra fields, and writes a group as lines', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'latch-board-'))
+    cleanups.push(() => rm(directory, { recursive: true, force: true }))
+    await writeFile(join(directory, 'skills.json'), '[]')
+    // No driver answers here: a short wait, after which the server says it was written.
+    const server = skillsServer(directory, false, 0, true, 50)
+    const child = spawn(server.command, server.args, { stdio: ['pipe', 'pipe', 'inherit'] })
+    const lines: Array<Record<string, unknown>> = []
+    let buffer = ''
+    child.stdout.on('data', chunk => {
+      buffer += String(chunk)
+      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+        lines.push(JSON.parse(buffer.slice(0, end)) as Record<string, unknown>)
+        buffer = buffer.slice(end + 1)
+      }
+    })
+    let next = 1
+    const ask = async (method: string, params?: unknown) => {
+      const id = next++
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
+      await vi.waitFor(() => expect(lines.some(line => line.id === id)).toBe(true))
+      return lines.find(line => line.id === id)!
+    }
+    await ask('initialize', { protocolVersion: '2025-06-18' })
+    const listed = (await ask('tools/list')).result as { tools: Array<{ name: string; description: string }> }
+    expect(listed.tools.map(tool => tool.name)).toEqual(['list_skills', 'read_skill', 'propose_todo', 'propose_todos', 'propose_card'])
+    // The guidance travels in the tool's own description.
+    expect(listed.tools.find(tool => tool.name === 'propose_todo')!.description).toContain('nothing starts, until the user accepts')
+    const call = (name: string, args: unknown) => ask('tools/call', { name, arguments: args })
+    expect((await call('propose_memory', { content: 'x' })).error).toBeDefined()
+    expect((await call('propose_todo', { title: 'x', prompt: 'y', priority: 'high' })).result).toMatchObject({ isError: true })
+    expect((await call('propose_card', { target: 'session', priority: 'high' })).result).toMatchObject({ isError: true })
+    expect((await call('propose_card', { target: 'other', note: 'x' })).result).toMatchObject({ isError: true })
+    expect((await call('propose_todo', { title: '一行\n两行', prompt: 'y' })).result).toMatchObject({ isError: true })
+    expect((await call('propose_todo', { title: '加一节', prompt: '一'.repeat(4000), tags: ['文档'] })).result).not.toMatchObject({
+      isError: true,
+    })
+    const items = [
+      { title: '甲', prompt: '做甲' },
+      { title: '乙', prompt: '做乙' },
+    ]
+    expect((await call('propose_todos', { goal: '两步', items })).result).not.toMatchObject({ isError: true })
+    expect((await call('propose_card', { target: 'todo', note: '还差文档' })).result).not.toMatchObject({ isError: true })
+    // Tabs and CRLF stay in a 要求, as the Host keeps them; a format character is refused at once.
+    expect((await call('propose_todo', { title: '缩进', prompt: 'run:\r\n\tpnpm test' })).result).not.toMatchObject({ isError: true })
+    expect((await call('propose_todo', { title: '藏字', prompt: 'a\u200bb' })).result).toMatchObject({ isError: true })
+    // With the driver's answers, the agent hears whether the board took it, and never why.
+    await writeFile(
+      join(directory, 'answers.jsonl'),
+      `${JSON.stringify({ line: 5, ok: true })}\n${JSON.stringify({ line: 6, ok: false })}\n`,
+      { mode: 0o600 },
+    )
+    const taken = (await call('propose_todo', { title: '再一条', prompt: 'p' })).result as { content: Array<{ text: string }> }
+    expect(taken.content[0]!.text).toMatch(/^Proposed\./u)
+    const refusedAnswer = (await call('propose_card', { target: 'session', note: 'n' })).result as {
+      isError?: boolean
+      content: Array<{ text: string }>
+    }
+    expect(refusedAnswer).toMatchObject({ isError: true })
+    expect(refusedAnswer.content[0]!.text).not.toContain('n"')
+    child.stdin.end()
+    await once(child, 'exit')
+    const read = await readProposals(directory, { line: 0, offset: 0 })
+    expect(read.skipped).toEqual([])
+    expect(read.lines.map(line => line.kind)).toEqual(['todo', 'todo', 'todo', 'card', 'todo', 'todo', 'card'])
+    expect((read.lines[4] as Extract<(typeof read.lines)[number], { kind: 'todo' }>).todo.prompt).toBe('run:\r\n\tpnpm test')
+    const [single, first, second] = read.lines as Array<Extract<(typeof read.lines)[number], { kind: 'todo' }>>
+    expect(single!.todo).toEqual({ title: '加一节', prompt: '一'.repeat(4000), tags: ['文档'] })
+    expect(first!.todo.group).toEqual({ label: second!.todo.group!.label, goal: '两步' })
+    // A line naming priority is refused whole when the Host reads it, whoever wrote it.
+    await writeFile(
+      join(directory, 'proposals.jsonl'),
+      `${JSON.stringify({ kind: 'todo', title: 'x', prompt: 'y', priority: 'high' })}\n`,
+      { flag: 'a' },
+    )
+    expect((await readProposals(directory, read.next)).skipped).toEqual(['invalid'])
   })
 
   it('attaches no server without skills', async () => {

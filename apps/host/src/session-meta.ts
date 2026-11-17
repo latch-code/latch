@@ -5,6 +5,7 @@ import { AppError } from '@latch/sdk'
 import {
   BOARD_SETTLE_CHARS,
   BOARD_TAG_CHARS,
+  CARD_NOTE_CHARS,
   BOARD_TAG_LIMIT,
   type BoardPriority,
   type GitPrBinding,
@@ -151,6 +152,11 @@ const tagText = z.string().refine(value => {
   return length >= 1 && length <= BOARD_TAG_CHARS && !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value)
 })
 
+const noteText = z.string().refine(value => {
+  const length = [...value].length
+  return length >= 1 && length <= CARD_NOTE_CHARS && value === value.trim() && !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value)
+})
+
 /** One session's entry; `update` checks each change against it, so the file never holds what it cannot read back. */
 const sessionEntrySchema = z.object({
   id: z.string().min(1).max(256),
@@ -159,6 +165,8 @@ const sessionEntrySchema = z.object({
   archived: z.literal(true).optional(),
   tags: z.array(tagText).min(1).max(BOARD_TAG_LIMIT).optional(),
   priority: z.enum(['high', 'low']).optional(),
+  /** One line on the card (`CARD_NOTE_CHARS`), as `checkedNote` keeps it. */
+  note: noteText.optional(),
   /** The person opened this settlement's failed run, or checked its unknown results (`POST /tasks/:id/attend`). */
   attended: z
     .strictObject({
@@ -172,6 +180,10 @@ const sessionEntrySchema = z.object({
   automationId: z.string().min(1).max(64).optional(),
   generalChat: z.literal(true).optional(),
   proposals: z.literal(true).optional(),
+  /** Started with the board's proposal tools (`CreateTaskInput.workProposals`). */
+  workProposals: z.literal(true).optional(),
+  /** Started from a 待办 whose 要求 came from outside content: what it proposes is external. */
+  outsideStart: z.literal(true).optional(),
   origin: z
     .strictObject({
       app: z.string().regex(APP_REF),
@@ -263,6 +275,10 @@ export interface StoredMeta {
   generalChat?: true
   /** Started with `propose_memory`: only such a session's driver may hand the Host proposals. */
   proposals?: true
+  /** Started with the board's proposal tools: only such a session's driver may hand the Host board proposals. */
+  workProposals?: true
+  /** Started from a 待办 marked as from outside content (`WorkItemOrigin.external`). */
+  outsideStart?: true
   /** The plugin page that started the session, with the page's own request ID. */
   origin?: PageOrigin
   agentPrivate?: true
@@ -272,6 +288,7 @@ export interface StoredMeta {
   /** Free tags the person gave, as `normalizeBoardTags` keeps them. */
   tags?: string[]
   priority?: BoardPriority
+  note?: string
   /** The Host's markers on one settlement of the session (`BoardAttended`). */
   attended?: { settle: string; opened?: true; checked?: true }
   workspaceId?: string

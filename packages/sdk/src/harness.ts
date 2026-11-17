@@ -263,6 +263,12 @@ export interface HarnessHostOptions {
    */
   proposeSchedule?(input: ScheduleProposalInput): Promise<void>
   /**
+   * A session created with `CreateTaskInput.workProposals`: its agent proposed 待办 for the board, or a change to its own
+   * card (`propose_todo`, `propose_todos`, `propose_card`). The Host keeps it pending for the person; nothing is created,
+   * changed or started by it. Rejects, in English for the agent, when it is refused (a secret, too long, too many).
+   */
+  proposeWork?(input: WorkProposalInput): Promise<void>
+  /**
    * The built-in harness, the same sessions: its agent searched its own saved memories (`recall_memory`). Read-only. The Host finds the owner
    * from its own records of `sessionId`, answers only that owner's confirmed memories, bounded in count and size, and
    * counts the query in the owner's activity. Rejects when the session may not recall.
@@ -307,6 +313,37 @@ export interface ScheduleProposalInput {
   plan: unknown
   /** What each run would be sent. */
   prompt: string
+  /** A tool that read outside content ran in that turn before it, or the driver could not tell. */
+  external: boolean
+  /** Unique within the session's own channel, so a proposal read twice is kept once. */
+  key: string
+}
+
+/** A proposed 待办, as the agent wrote it. `group` ties the items of one `propose_todos` call; only the session's. */
+export interface WorkTodoProposal {
+  title: string
+  prompt: string
+  project?: string
+  harness?: string
+  tags?: string[]
+  group?: { label: string; goal: string }
+}
+
+/** A proposed change to the proposing session's own card (`session`) or to its 待办 (`todo`). Never priority. */
+export interface WorkCardProposal {
+  target: 'session' | 'todo'
+  title?: string
+  tags?: string[]
+  note?: string
+}
+
+/** What an agent proposed for the board. Only `todo` or `card` come from the agent; the session is the driver's own. */
+export interface WorkProposalInput {
+  sessionId: string
+  /** The user message of the turn it came from. */
+  messageId?: string
+  todo?: WorkTodoProposal
+  card?: WorkCardProposal
   /** A tool that read outside content ran in that turn before it, or the driver could not tell. */
   external: boolean
   /** Unique within the session's own channel, so a proposal read twice is kept once. */

@@ -1335,6 +1335,43 @@ const scenarios = {
     say(reply.result?.content?.[0]?.text ?? JSON.stringify(reply.error ?? reply))
     return END
   },
+  // `board <json>`: calls one of the board's proposal tools on the session's `latch-skills` server, reporting the call as a
+  // tool row, and says what came back. `<json>` is `{ "tool": "propose_todo" | "propose_todos" | "propose_card", "args": {…},
+  // "fetch": true }`, or `{ "calls": [{ "tool", "args" }, …] }` for several in one turn; `fetch` first reports a completed
+  // web fetch, as after reading a page.
+  board: async ({ sessionId, input, say, tool }) => {
+    const server = mcpServers.get(sessionId)?.find(item => item.name === 'latch-skills')
+    if (!server) {
+      say('no MCP server')
+      return END
+    }
+    let call
+    try {
+      // The first line only: a delivery quotes more after it.
+      call = JSON.parse(
+        input
+          .trim()
+          .split('\n')[0]
+          .replace(/^board\s*/u, ''),
+      )
+    } catch {
+      say('board needs JSON')
+      return END
+    }
+    if (call.fetch) tool({ toolCallId: `fetch_${Date.now()}`, title: 'Fetch https://example.com', kind: 'fetch', status: 'completed' })
+    // `calls`: several in the one turn, each its own tool row; the answers are said one per line.
+    const calls = Array.isArray(call.calls) ? call.calls : [call]
+    const answers = []
+    for (const [index, one] of calls.entries()) {
+      const id = `board_${Date.now()}_${index}`
+      tool({ toolCallId: id, title: `latch-skills: ${one.tool}`, kind: 'other', status: 'in_progress', rawInput: {} })
+      const reply = await server.ask('tools/call', { name: one.tool, arguments: one.args ?? {} })
+      tool({ toolCallId: id, status: reply.result?.isError ? 'failed' : 'completed' }, 'tool_call_update')
+      answers.push(reply.result?.content?.[0]?.text ?? JSON.stringify(reply.error ?? reply))
+    }
+    say(answers.join('\n'))
+    return END
+  },
   // `browser <steps>`: calls the session's `latch-browser` server once per step, as an agent calling an MCP tool would,
   // and says what each call returned. `<steps>` is JSON: `[{ "tool": "browser_open", "args": { "url": "5173" }, "ask": true }]`.
   // In arguments, `"$tab"` stands for the latest tab ID a result named and `"$ref:<words>"` for the reference the latest

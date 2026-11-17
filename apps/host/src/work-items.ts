@@ -6,10 +6,12 @@ import { AppError } from '@latch/sdk'
 import {
   BOARD_TAG_CHARS,
   BOARD_TAG_LIMIT,
+  CARD_NOTE_CHARS,
   containsSecret,
   DATA_SCOPES,
   MODEL_EFFORT,
   WORK_ITEM_LIMITS,
+  WORK_PROPOSAL_LIMITS,
   type DataScope,
   type GitPrStatus,
   type TaskSummary,
@@ -55,6 +57,18 @@ const tagText = z.string().refine(value => {
   const length = [...value].length
   return length >= 1 && length <= BOARD_TAG_CHARS && !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value)
 })
+const noteText = z.string().refine(value => {
+  const length = [...value].length
+  return length >= 1 && length <= CARD_NOTE_CHARS && value === value.trim() && !TITLE_REFUSED.test(value)
+})
+const PROPOSAL_ID = /^wpp_[A-Za-z0-9_-]{22}$/u
+/** Where an accepted 待办 came from: the proposing session and Agent, the proposal, and whether its turn read outside content. */
+const originSchema = z.strictObject({
+  sessionId: sessionIdText,
+  customAgentId: z.string().min(1).max(128).optional(),
+  proposalId: z.string().regex(PROPOSAL_ID),
+  external: z.literal(true).optional(),
+})
 export const modelRefSchema = z.strictObject({
   providerId: z.string().regex(PROJECT_ID),
   model: z.string().trim().min(1).max(200),
@@ -72,6 +86,8 @@ const itemSchema = z.strictObject({
   worktree: z.enum(['new', 'project']).optional(),
   tags: z.array(tagText).min(1).max(BOARD_TAG_LIMIT).optional(),
   priority: z.enum(['high', 'low']).optional(),
+  note: noteText.optional(),
+  from: originSchema.optional(),
   sessionIds: z.array(sessionIdText).max(WORK_ITEM_LIMITS.sessions),
   /**
    * The narrowest data scope of the devices that wrote what a start takes from the 待办 (prompt, project, Harness, model,
@@ -89,10 +105,14 @@ const itemSchema = z.strictObject({
  * A start is `pending` from before the session is asked for until its membership is written with it.
  */
 const receiptSchema = z.strictObject({
-  kind: z.enum(['create', 'start']),
+  kind: z.enum(['create', 'start', 'accept', 'dismiss']),
   deviceId: z.string().min(1).max(64),
   requestId: requestIdText,
-  itemId: z.string().regex(ITEM_ID),
+  /** Absent only on a proposal's receipt that made no 待办 (a dismiss, or an accepted change to a session's card). */
+  itemId: z.string().regex(ITEM_ID).optional(),
+  /** An accept's or a dismiss's proposal, and the 待办 an accept made. */
+  proposalId: z.string().regex(PROPOSAL_ID).optional(),
+  itemIds: z.array(z.string().regex(ITEM_ID)).max(WORK_PROPOSAL_LIMITS.entries).optional(),
   sessionId: sessionIdText.optional(),
   /** The request as sent; a retry must send the same. */
   requestHash: hex64,
@@ -103,11 +123,65 @@ const receiptSchema = z.strictObject({
   outside: z.enum(['item-full', 'item-gone']).optional(),
   at: isoTime,
 })
+const entryState = z.enum(['pending', 'accepted', 'dismissed'])
+/**
+ * One proposed 待办. Its text is kept only while it is pending: once decided, the 待办 holds what was accepted and a
+ * dismissed one keeps nothing but its state.
+ */
+const proposalEntrySchema = z
+  .strictObject({
+    /** The line or call it came from, hashed with its session: read twice, kept once. */
+    key: hex64,
+    state: entryState,
+    title: titleText.optional(),
+    prompt: promptText.max(WORK_PROPOSAL_LIMITS.promptChars).optional(),
+    projectId: z.string().regex(PROJECT_ID).optional(),
+    harnessId: z.string().regex(HARNESS_ID).optional(),
+    tags: z.array(tagText).min(1).max(BOARD_TAG_LIMIT).optional(),
+    itemId: z.string().regex(ITEM_ID).optional(),
+  })
+  .refine(entry => entry.state !== 'pending' || (entry.title !== undefined && entry.prompt !== undefined))
+  .refine(entry => (entry.state === 'accepted') === (entry.itemId !== undefined))
+const changeSchema = z
+  .strictObject({
+    target: z.union([z.strictObject({ sessionId: sessionIdText }), z.strictObject({ itemId: z.string().regex(ITEM_ID) })]),
+    state: entryState,
+    title: titleText.optional(),
+    tags: z.array(tagText).min(1).max(BOARD_TAG_LIMIT).optional(),
+    note: noteText.optional(),
+  })
+  .refine(change => change.state !== 'pending' || change.title !== undefined || change.tags !== undefined || change.note !== undefined)
+/** An agent's proposal for the board (docs/ARCHITECTURE.md#agent-的提议): never a 待办 until a person accepts it. */
+const proposalSchema = z
+  .strictObject({
+    id: z.string().regex(PROPOSAL_ID),
+    kind: z.enum(['todo', 'change']),
+    key: hex64,
+    /** The items of one `propose_todos` call gather here: a hash of the session and the call's own label. */
+    group: hex64.optional(),
+    from: z.strictObject({
+      sessionId: sessionIdText,
+      customAgentId: z.string().min(1).max(128).optional(),
+      messageId: z.string().min(1).max(256).optional(),
+    }),
+    external: z.boolean(),
+    /** The proposing session was private: only the full data scope reads it, and what it becomes is private. Never cleared. */
+    private: z.literal(true).optional(),
+    goal: titleText.optional(),
+    entries: z.array(proposalEntrySchema).min(1).max(WORK_PROPOSAL_LIMITS.entries).optional(),
+    change: changeSchema.optional(),
+    createdAt: isoTime,
+    updatedAt: isoTime,
+    revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  })
+  .refine(row => (row.kind === 'todo') === (row.entries !== undefined) && (row.kind === 'change') === (row.change !== undefined))
 const fileSchema = z
   .strictObject({
     version: z.literal(1),
     items: z.array(itemSchema).max(WORK_ITEMS_STORED),
     receipts: z.array(receiptSchema).max(MAX_WORK_RECEIPTS),
+    /** Absent in files written before agents could propose. */
+    proposals: z.array(proposalSchema).max(WORK_PROPOSAL_LIMITS.stored).optional(),
   })
   .superRefine((file, ctx) => {
     if (new Set(file.items.map(item => item.id)).size !== file.items.length) ctx.addIssue({ code: 'custom', message: 'duplicate item' })
@@ -118,10 +192,17 @@ const fileSchema = z
 
 export type WorkItemRecord = z.infer<typeof itemSchema>
 export type WorkReceipt = z.infer<typeof receiptSchema>
+export type WorkProposalRecord = z.infer<typeof proposalSchema>
+export type WorkProposalEntryRecord = z.infer<typeof proposalEntrySchema>
 interface State {
   items: Map<string, WorkItemRecord>
   receipts: WorkReceipt[]
+  proposals: WorkProposalRecord[]
 }
+
+/** A proposal still waiting for the person: an entry or its change is pending. */
+export const proposalPending = (row: WorkProposalRecord): boolean =>
+  row.entries ? row.entries.some(entry => entry.state === 'pending') : row.change?.state === 'pending'
 
 /** The narrower of two data scopes. */
 export const narrowerScope = (a: DataScope, b: DataScope): DataScope => (DATA_SCOPES.indexOf(a) <= DATA_SCOPES.indexOf(b) ? a : b)
@@ -134,6 +215,15 @@ export function checkedTitle(raw: string): string {
   if (!titleText.safeParse(title).success) throw new AppError(400, 'item-title-invalid', '标题要 1–120 个字，只占一行，不能有控制字符。')
   if (containsSecret(title)) throw new AppError(400, 'item-secret', '标题看起来含有密钥，没有保存。')
   return title
+}
+
+/** A card note as the Host keeps it: trimmed, one line of 1–140 code points, nothing shaped like a credential. */
+export function checkedNote(raw: string): string {
+  const note = raw.trim()
+  if (!noteText.safeParse(note).success)
+    throw new AppError(400, 'note-invalid', `备注要 1–${CARD_NOTE_CHARS} 个字，只占一行，不能有控制字符。`)
+  if (containsSecret(note)) throw new AppError(400, 'note-secret', '备注看起来含有密钥，没有保存。')
+  return note
 }
 
 /** A prompt as the Host keeps it: trimmed as a session's first message is, at most 16,000 characters, no credential. */
@@ -156,6 +246,8 @@ export interface MemberFacts {
   prState: (sessionId: string) => GitPrStatus | undefined
   /** Its thread's revision, while it has one (`work-threads.ts`). */
   thread?: (itemId: string) => number | undefined
+  /** Whether the reading device may learn which session proposed it; absent is yes. */
+  originVisible?: (sessionId: string) => boolean
 }
 
 export function itemSummary(record: WorkItemRecord, facts: MemberFacts, isPrivate: boolean): WorkItemSummary {
@@ -165,8 +257,14 @@ export function itemSummary(record: WorkItemRecord, facts: MemberFacts, isPrivat
     return place ? [{ place, prMerged: facts.prState(id) === 'merged' }] : []
   })
   const thread = facts.thread?.(record.id)
+  // A proposing session that is private now is not named to a device that may not read it: only that an agent proposed it.
+  const from =
+    rest.from && facts.originVisible?.(rest.from.sessionId) === false
+      ? { proposalId: rest.from.proposalId, ...(rest.from.external ? { external: true as const } : {}) }
+      : rest.from
   return {
     ...structuredClone(rest),
+    ...(from ? { from: structuredClone(from) } : {}),
     sessionIds: [...record.sessionIds],
     ...(prompt ? { hasPrompt: true as const } : {}),
     ...(isPrivate ? { private: true as const } : {}),
@@ -214,7 +312,7 @@ export class WorkItemStore {
     } catch (error) {
       if (codeOf(error) !== 'ENOENT') throw error
     }
-    const state: State = { items: new Map(), receipts: [] }
+    const state: State = { items: new Map(), receipts: [], proposals: [] }
     if (text !== undefined) {
       let parsed: z.infer<typeof fileSchema>
       try {
@@ -224,6 +322,7 @@ export class WorkItemStore {
       }
       for (const item of parsed.items) state.items.set(item.id, item)
       state.receipts = parsed.receipts.toSorted((a, b) => a.at.localeCompare(b.at))
+      state.proposals = parsed.proposals ?? []
     }
     return new WorkItemStore(path, join(dataDir, 'work'), state, options.now ?? Date.now, text !== undefined)
   }
@@ -234,6 +333,14 @@ export class WorkItemStore {
 
   get(id: string): WorkItemRecord | undefined {
     return this.state.items.get(id)
+  }
+
+  proposals(): WorkProposalRecord[] {
+    return this.state.proposals
+  }
+
+  proposal(id: string): WorkProposalRecord | undefined {
+    return this.state.proposals.find(row => row.id === id)
   }
 
   /** The 待办 a session belongs to. */
@@ -258,12 +365,18 @@ export class WorkItemStore {
       const draft: State = {
         items: new Map([...this.state.items].map(([id, item]) => [id, structuredClone(item)])),
         receipts: [...this.state.receipts],
+        proposals: structuredClone(this.state.proposals),
       }
       const at = new Date(this.now()).toISOString()
       const { result, changed } = change(draft, at)
       if (!changed) return result
       this.prune(draft)
-      const file = { version: 1 as const, items: [...draft.items.values()], receipts: draft.receipts }
+      const file = {
+        version: 1 as const,
+        items: [...draft.items.values()],
+        receipts: draft.receipts,
+        ...(draft.proposals.length ? { proposals: draft.proposals } : {}),
+      }
       if (!fileSchema.safeParse(file).success) throw new AppError(500, 'item-invalid', '待办无法保存：内容不符合格式，没有写入。')
       try {
         await mkdir(this.dir, { recursive: true, mode: 0o700 })
@@ -367,6 +480,12 @@ export class WorkItemStore {
   }
 
   private prune(draft: State): void {
+    // Room among proposals comes from decided ones, oldest first; pending ones wait for the person.
+    while (draft.proposals.length > WORK_PROPOSAL_LIMITS.stored) {
+      const index = draft.proposals.findIndex(row => !proposalPending(row))
+      if (index < 0) break
+      draft.proposals.splice(index, 1)
+    }
     const oldest = new Date(this.now() - WORK_RECEIPT_TTL_MS).toISOString()
     let receipts = draft.receipts.filter(receipt => receipt.at >= oldest)
     const perDevice = new Map<string, number>()

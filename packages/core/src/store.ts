@@ -37,6 +37,8 @@ export interface StoredTask {
   outsideRead?: true
   /** How many memories this session has proposed through `propose_memory`. */
   proposals?: number
+  /** Created with `workProposals`: its runs offer the board's proposal tools. */
+  workProposals?: true
 }
 
 export interface RequestReceipt {
@@ -237,6 +239,7 @@ const stateSchema = z.object({
       allowedTools: z.array(z.string()).optional(),
       outsideRead: z.literal(true).optional(),
       proposals: z.number().int().min(0).max(1000).optional(),
+      workProposals: z.literal(true).optional(),
     }),
   ),
   receipts: z.record(z.string(), z.object({ taskId: z.string(), payloadHash: z.string() })),

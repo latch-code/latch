@@ -15,6 +15,7 @@ import { Handoffs } from './handoffs.ts'
 import { HistoryImports, HistoryReceipts } from './history-import.ts'
 import { ReviewNotes } from './review-notes.ts'
 import { AgentPlans, canPropose } from './agent-plans.ts'
+import { workProposalInputSchema } from './routes/work-proposals.ts'
 import { agentDigest } from './agent-digest.ts'
 import { resultContent } from './agent-activity.ts'
 import { agentPluginRevision } from './agent-revisions.ts'
@@ -130,6 +131,7 @@ import {
   type MemoryRecallInput,
   type MemoryRecallResult,
   type ScheduleProposalInput,
+  type WorkProposalInput,
   type HostProject,
   type ModelProvider,
   type ModelRoute,
@@ -316,7 +318,7 @@ import {
 import type { HarnessKind } from './harness-trust.ts'
 import { HarnessHub, listSignature, runEndOutline, type HubCreateInput } from './hub.ts'
 import { BoardDelivery, boardPlace, type DeliveryTarget } from './board.ts'
-import { itemIsPrivate, itemSummary, WorkItemStore, type WorkItemRecord } from './work-items.ts'
+import { checkedNote, itemIsPrivate, itemSummary, WorkItemStore, type WorkItemRecord, type WorkProposalRecord } from './work-items.ts'
 import { WorkThreadStore } from './work-threads.ts'
 import { SessionLifecycle, projectIdOf, type LifecycleBounds, type LifecycleListeners } from './session-lifecycle.ts'
 import { RUN_ID, type ApprovalRecord, type CancelRecord } from './session-meta.ts'
@@ -496,6 +498,18 @@ const createTaskSchema = promptSchema.extend({
     .refine(entries => new Set(entries.map(entry => entry.configId)).size === entries.length, '每个设置只能选一次')
     .optional(),
 })
+/**
+ * A start as the Host takes it: the request's choices and the Host's own marks. `pageStart`: a plugin page started it
+ * (no board proposals). `outsideStart`: its first message came from outside content (a 待办 an agent proposed from it).
+ */
+type SessionStart = z.infer<typeof createTaskSchema> & {
+  privateFrom?: string
+  title?: string
+  withoutPrivateContext?: true
+  seed?: string
+  pageStart?: true
+  outsideStart?: true
+}
 const taskPatchSchema = z
   .object({
     title: z.string().trim().min(1).max(120).nullable().optional(),
@@ -505,6 +519,8 @@ const taskPatchSchema = z
     tags: z.array(z.string().max(256)).max(64).nullable().optional(),
     /** `mid` is the default: the field goes. */
     priority: z.enum(['high', 'mid', 'low']).optional(),
+    /** One line on the board card; null or empty removes it. */
+    note: z.string().max(4096).nullable().optional(),
   })
   .refine(
     value =>
@@ -512,7 +528,8 @@ const taskPatchSchema = z
       || value.pinned !== undefined
       || value.archived !== undefined
       || value.tags !== undefined
-      || value.priority !== undefined,
+      || value.priority !== undefined
+      || value.note !== undefined,
     '没有要修改的内容',
   )
 const attendSchema = z
@@ -2897,7 +2914,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await assertWorkspaceUsable(record)
       },
       startText: (caller, { requestId, seed, harnessId, workspaceId, title, privateFrom }, res) =>
-        startSession(caller, { requestId, prompt: '', seed, harnessId, workspaceId, mode: 'agent', title, privateFrom }, res),
+        // A rebuilt record came from outside Latch: what the new session proposes is external.
+        startSession(
+          caller,
+          { requestId, prompt: '', seed, harnessId, workspaceId, mode: 'agent', title, privateFrom, outsideStart: true },
+          res,
+        ),
     })
     startupCleanup.push(() => historyImports.close())
     const {
@@ -2907,6 +2929,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       apps: appRoutes,
       changes: changeRoutes,
       customization: customizationRoutes,
+      workProposals: workProposalRoutes,
       routes,
     } = createRoutes(routeContext, {
       customization: { store: () => customization, auditFailed },
@@ -2990,12 +3013,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       handoffs: { handoffs: () => handoffs },
       workItems: {
         store: workItems,
-        start: (req, caller, body, res, { withoutPrivateContext }) =>
-          startPersonSession(req, caller, createTaskSchema.parse(body), res, withoutPrivateContext),
+        start: (req, caller, body, res, { withoutPrivateContext, privateFrom, outsideStart }) =>
+          startPersonSession(req, caller, createTaskSchema.parse(body), res, withoutPrivateContext, { privateFrom, outsideStart }),
         projectExists: id => id === 'default' || savedProject(id) !== undefined,
         changed: itemChanged,
         threadRevision: id => workThreads.revisionOf(id),
-        deleted: id => workThreads.remove(id),
+        deleted: async id => {
+          await workThreads.remove(id)
+          await workProposalRoutes.itemDeleted(id)
+        },
+      },
+      workProposals: {
+        store: workItems,
+        projectExists: id => id === 'default' || savedProject(id) !== undefined,
+        harnessExists: id => hub?.info(id) !== undefined,
+        // As `PATCH /tasks/:id`: the session must be readable by this device, and the change goes through its metadata.
+        async changeSession(caller, sessionId, change) {
+          checkPrivateSession(caller, sessionId, true)
+          recheck(caller, 'run')
+          await hub!.updateMeta(sessionId, change)
+          checkPrivateSession(caller, sessionId, true)
+        },
+        itemChanged,
+        changed: proposalChanged,
       },
       workThreads: {
         threads: workThreads,
@@ -3004,7 +3044,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         async deliver(caller, sessionId, input, agent) {
           const parsed = queuedPromptSchema.safeParse(input)
           if (!parsed.success) throw new AppError(400, 'post-invalid', '这条发言连同引用太长，没有发出。')
-          const sent = await sendPrompt(caller, sessionId, parsed.data, false, agent !== undefined)
+          // The quoted replies are model output: any session that can propose marks its context as holding outside content.
+          const sent = await sendPrompt(caller, sessionId, parsed.data, false, agent !== undefined || hub!.workProposalsOf(sessionId))
           if (agent && typeof sent !== 'object' && sent !== 'replayed')
             await rememberFromPerson({ deviceId: caller.device.id, actor: actorOf(caller) }, sessionId, agent.remember, input.requestId)
         },
@@ -3310,6 +3351,43 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       refresh()
     }
     /**
+     * A driver's `propose_todo`, `propose_todos` or `propose_card`, for a session the Host created with `workProposals`
+     * and the driver owns (Code sessions, 我的 Agent's and 通用's alike). Who proposed it, whether it is private and
+     * whether its turn may have read outside content come from the Host's records; the driver's word that it read nothing
+     * counts only from Latch's own loops. Kept pending for the person: nothing is created, changed or started here.
+     */
+    async function proposeWorkFromAgent(driver: HarnessDriver, raw: WorkProposalInput): Promise<void> {
+      const parsed = workProposalInputSchema.safeParse(raw)
+      if (!parsed.success) throw new AppError(400, 'proposal-invalid', 'The proposal is not in the expected form.')
+      const input = parsed.data
+      const own = () => hub?.ownerOf(input.sessionId) === driver.id && hub.workProposalsOf(input.sessionId)
+      for (let attempt = 0; !own() && attempt < 50; attempt++) await new Promise(resolve => setTimeout(resolve, 100))
+      if (!own() || hub!.pageOriginOf(input.sessionId) || hub!.personalOf(input.sessionId))
+        throw new AppError(409, 'proposal-session', 'This session cannot propose to the board.')
+      const owner = sessionOwner(input.sessionId)
+      const trusted = kindOf(driver) !== 'plugin'
+      const external =
+        input.external
+        || !trusted
+        // Nobody watched a scheduled run; a session started from outside content has it in its context from the start.
+        || hub!.automationOf(input.sessionId) !== undefined
+        || hub!.unattended(input.sessionId)
+        || hub!.outsideStartOf(input.sessionId)
+        || (owner !== undefined && customAgents.hasOutsideMemories(owner))
+      await workProposalRoutes.intake(
+        {
+          sessionId: input.sessionId,
+          ...(input.messageId ? { messageId: input.messageId } : {}),
+          ...(owner ? { customAgentId: owner } : {}),
+          external,
+          private: hub!.agentPrivate(input.sessionId),
+          ...(hub!.projectOf(input.sessionId) ? { projectId: hub!.projectOf(input.sessionId)! } : {}),
+        },
+        { key: input.key, ...(input.todo ? { todo: input.todo } : {}), ...(input.card ? { card: input.card } : {}) },
+      )
+      refresh(input.sessionId)
+    }
+    /**
      * A driver's `recall_memory`, read-only: the same session check as a proposal, then only that owner's confirmed
      * memories, bounded. The query is counted in the owner's activity; a count that cannot be written fails nothing.
      */
@@ -3533,6 +3611,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           automationId,
           initialTitle: title,
           ...(plan.agentContext ? { agentContext: plan.agentContext } : {}),
+          // Only where memory and schedule proposals are already allowed (an Agent's schedule): all it proposes is external.
+          ...(plan.agentContext?.proposals && canPropose(harness) ? { workProposals: true as const } : {}),
         }
         const folders = chosen?.folders.map(({ id, path }) => ({ id, path }))
         const own = !chosen
@@ -3659,13 +3739,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(target.worktree ? { worktree: true as const } : {}),
             ...(privateFrom ? { privateFrom } : {}),
             ...(title ? { title } : {}),
+            // The handed-over material is another session's output, not the person's words: what it proposes is external.
+            outsideStart: true as const,
           },
           res,
         ),
       async send(caller, id, { requestId, prompt, fileRefs }) {
-        // Into an Agent's or 通用's chat, the handed-over material is not the person's words: what that context proposes
-        // from now on is marked external, as a 待办 thread's delivery is. Code sessions propose nothing.
-        await sendPrompt(caller, id, { requestId, prompt, ...(fileRefs.length ? { fileRefs } : {}) }, false, sessionOwner(id) !== undefined)
+        // The handed-over material is not the person's words: in any session that can propose (an Agent's, 通用's, or a
+        // Code session with the board's tools), what that context proposes from now on is external, as a thread's delivery.
+        await sendPrompt(
+          caller,
+          id,
+          { requestId, prompt, ...(fileRefs.length ? { fileRefs } : {}) },
+          false,
+          sessionOwner(id) !== undefined || hub!.workProposalsOf(id),
+        )
       },
       listTasks: () => hub!.listTasks(),
       detail: id => hub!.detail(id),
@@ -3691,6 +3779,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const reviewNotes = await ReviewNotes.open({ dataDir, now, log })
     startupCleanup.push(() => reviewNotes.close())
     lifecycleListeners.on('sessionDeleted', ({ sessionId }) => handoffs.sessionDeleted(sessionId))
+    // What a deleted session proposed and nobody decided goes with it, as does a change waiting for its card.
+    lifecycleListeners.on('sessionDeleted', ({ sessionId }) => {
+      void workProposalRoutes.sessionDeleted(sessionId).catch(error => log(`会话 ${sessionId} 删除后提议没有更新：${errorText(error)}`))
+    })
     // A deleted session leaves its 待办; an archived one stays in it.
     lifecycleListeners.on('sessionDeleted', ({ sessionId }) => {
       if (!workItems.itemOf(sessionId)) return
@@ -5716,6 +5808,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             },
             proposeMemory: input => proposeFromAgent(driver, input),
             proposeSchedule: input => proposeScheduleFromAgent(driver, input),
+            proposeWork: input => proposeWorkFromAgent(driver, input),
             // Only Latch 内置 searches memories: other Harnesses get them in their first-turn block, as before.
             ...(driver.id === STANDARD ? { recallMemory: (input: MemoryRecallInput) => recallFromAgent(driver, input) } : {}),
             // Only a driver that says it can be pointed at a service gets tokens for one.
@@ -7890,6 +7983,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
 
     /** A 待办 changed: clients read the snapshot again, and each named session's summary (its `itemId`). */
+    /** A proposal changed: as a 待办's change, a private one only reaches the full data scope's connections. */
+    function proposalChanged(row: WorkProposalRecord): void {
+      // The same rule as reading it: its session, or the card it waits for, private now.
+      if (workProposalRoutes.isPrivate(row)) refreshPrivate()
+      else refresh()
+    }
     function itemChanged(item: WorkItemRecord, sessionIds: readonly string[]): void {
       const isPrivate = itemIsPrivate(item, id => hub!.agentPrivate(id))
       if (isPrivate) refreshPrivate()
@@ -8199,7 +8298,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         throw new AppError(409, 'assistant-removed', '这条消息是发给已移除的 Agent 的，没有发出。')
       if (typeof body === 'object' && body !== null && 'via' in body) {
         const started = await appRoutes.start(caller, body, start =>
-          startSession(caller, { ...createTaskSchema.parse(start), withoutPrivateContext: true }, res),
+          startSession(caller, { ...createTaskSchema.parse(start), withoutPrivateContext: true, pageStart: true }, res),
         )
         json(res, started, 201)
         return
@@ -8264,12 +8363,26 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       res: ServerResponse,
       /** What a narrower device wrote is started as that device's own start would be: no private context. */
       withoutPrivateContext = false,
+      /**
+       * A 待办's start: `privateFrom` makes the session as private as the 待办 it starts from (its 要求 may hold what a
+       * private session wrote); `outsideStart` marks its context as holding outside content from its first turn.
+       */
+      from: { privateFrom?: string; outsideStart?: boolean } = {},
     ): Promise<{ sessionId: string }> {
       if (input.customAgentId) throw new AppError(400, 'invalid-input', '这里只开始 Code 会话。')
       if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
       await bindUnconfirmedHarness(req, caller, input.harnessId ?? config.settings().defaults.harnessId)
-      return startSession(caller, withoutPrivateContext ? { ...input, withoutPrivateContext: true } : input, res)
+      return startSession(
+        caller,
+        {
+          ...input,
+          ...(withoutPrivateContext ? { withoutPrivateContext: true as const } : {}),
+          ...(from.privateFrom ? { privateFrom: from.privateFrom } : {}),
+          ...(from.outsideStart ? { outsideStart: true as const } : {}),
+        },
+        res,
+      )
     }
 
     const firstChatsInFlight = new Map<string, Promise<{ sessionId: string }>>()
@@ -8412,7 +8525,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      */
     async function startSession(
       caller: DeviceCaller,
-      start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string; withoutPrivateContext?: true; seed?: string },
+      start: SessionStart,
       res: ServerResponse,
       dispatched?: () => void,
     ): Promise<{ sessionId: string }> {
@@ -8430,12 +8543,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
 
     async function startSessionChecked(
       caller: DeviceCaller,
-      start: z.infer<typeof createTaskSchema> & { privateFrom?: string; title?: string; withoutPrivateContext?: true; seed?: string },
+      start: SessionStart,
       res: ServerResponse,
       dispatched?: () => void,
     ): Promise<{ sessionId: string }> {
       // A plugin page's start carries no private context, as from a device without all data: its reply goes back to the page.
-      const { privateFrom, title, withoutPrivateContext, seed, ...requested } = start
+      const { privateFrom, title, withoutPrivateContext, seed, pageStart, outsideStart, ...requested } = start
       let input = requested
       // A request's folder or worktree is its device's: another device naming the same request ID gets one of its own.
       const folderRequest = `${caller.device.id}:${input.requestId}`
@@ -8688,6 +8801,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           requestId: input.requestId,
           ...(agentContext ? { agentContext } : {}),
           ...(generalChat ? { generalChat: true as const } : {}),
+          // Its agent may propose for the board, where the Harness takes the tools; never a plugin page's session.
+          ...(!pageStart && canPropose(harness) ? { workProposals: true as const } : {}),
+          // A fork's first message holds the source's record: outside content when that record carries any tool output,
+          // or when the source itself ran unwatched or started from outside content.
+          ...(outsideStart
+          || (fork
+            && (fork.outside
+              || fork.source.automationId !== undefined
+              || hub!.outsideStartOf(fork.source.id)
+              || hub!.unattended(fork.source.id)))
+            ? { outsideStart: true as const }
+            : {}),
           harnessId,
           workspaceId,
           ...(input.mode ? { mode: input.mode } : {}),
@@ -9320,7 +9445,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       if (method === 'PATCH' && !action) {
         requireScope(caller, 'run')
-        const { tags: rawTags, priority, ...input } = taskPatchSchema.parse(await jsonBody(req))
+        const { tags: rawTags, priority, note: rawNote, ...input } = taskPatchSchema.parse(await jsonBody(req))
+        const note = rawNote === null || rawNote?.trim() === '' ? null : rawNote !== undefined ? checkedNote(rawNote) : undefined
         const normalized = rawTags?.length ? normalizeBoardTags(rawTags) : undefined
         if (normalized && 'problem' in normalized) throw new AppError(400, normalized.problem, TAG_PROBLEMS[normalized.problem])
         // The answer carries the session's summary and board place: a private session's only to a device that may read it.
@@ -9334,6 +9460,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...input,
           ...(rawTags !== undefined ? { tags: normalized && 'tags' in normalized ? normalized.tags : null } : {}),
           ...(priority !== undefined ? { priority: priority === 'mid' ? null : priority } : {}),
+          ...(note !== undefined ? { note } : {}),
         })
         checkPrivateSession(caller, id, true)
         if (input.archived) memoryRefusals.delete(id)
@@ -10882,12 +11009,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           return [
             itemSummary(
               record,
-              { summary: id => listedById.get(id), prState: id => boardDelivery.prState(id), thread: id => workThreads.revisionOf(id) },
+              {
+                summary: id => listedById.get(id),
+                prState: id => boardDelivery.prState(id),
+                thread: id => workThreads.revisionOf(id),
+                originVisible: id => scope === 'all' || !hub!.agentPrivate(id),
+              },
               isPrivate,
             ),
           ]
         })
         if (items.length) snapshot.items = items
+        const proposals = workProposalRoutes.summaries(scope)
+        if (proposals.length) snapshot.workProposals = proposals
         traffic.response('snapshot', json(res, snapshot))
         return
       }

@@ -68,6 +68,8 @@ export interface HubCreateInput extends CreateTaskInput {
   automationId?: string
   /** A conversation with 通用 in 我的 Agent; kept in the Host's session metadata, never sent to the driver. */
   generalChat?: true
+  /** Started from a 待办 whose 要求 came from outside content; kept in the Host's metadata, never sent to the driver. */
+  outsideStart?: true
 }
 
 /** Host-level session metadata; it applies to every harness. `title: null` removes an override. */
@@ -77,6 +79,8 @@ export interface SessionMetaPatch {
   archived?: boolean
   /** Normalised tags (`normalizeBoardTags`); null or empty removes them. */
   tags?: string[] | null
+  /** A checked card note (`checkedNote`); null removes it. */
+  note?: string | null
   /** null is 中: the field goes. */
   priority?: BoardPriority | null
 }
@@ -256,6 +260,8 @@ export class HarnessHub implements Bridge {
   private readonly briefSessions = new Set<string>()
   /** Sessions started with `propose_memory`, in memory as soon as they start. */
   private readonly proposalSessions = new Set<string>()
+  private readonly workProposalSessions = new Set<string>()
+  private readonly outsideStarts = new Set<string>()
   /** Conversations with 通用, in memory as soon as they start, before their record is written. */
   private readonly generalChats = new Set<string>()
   /** Approvals seen only through `detail()`, for drivers that do not list them in `approvals()`. */
@@ -662,6 +668,7 @@ export class HarnessHub implements Bridge {
       initialTitle,
       automationId,
       generalChat,
+      outsideStart,
       ...rest
     } = input
     const id = harnessId ?? this.options.defaultId()
@@ -691,6 +698,19 @@ export class HarnessHub implements Bridge {
       await this.meta
         .update(result.sessionId, current => ({ ...current, automationId, ...(initialTitle ? { title: initialTitle.slice(0, 120) } : {}) }))
         .catch(error => this.log(`会话 ${result.sessionId} 的定时任务记录写入失败：${message(error)}`))
+    if (outsideStart) {
+      // In memory before any write: its first turn may propose before the record is on disk.
+      this.outsideStarts.add(result.sessionId)
+      await this.meta
+        .update(result.sessionId, current => ({ ...current, outsideStart: true as const }))
+        .catch(error => this.log(`会话 ${result.sessionId} 的外部内容标记写入失败：${message(error)}`))
+    }
+    if (input.workProposals) {
+      this.workProposalSessions.add(result.sessionId)
+      await this.meta
+        .update(result.sessionId, current => ({ ...current, workProposals: true as const }))
+        .catch(error => this.log(`会话 ${result.sessionId} 的看板提议标记写入失败：${message(error)}`))
+    }
     if (input.agentContext?.proposals) {
       // In memory before the write: its first turn may propose before the record is on disk.
       this.proposalSessions.add(result.sessionId)
@@ -792,6 +812,20 @@ export class HarnessHub implements Bridge {
   /** Whether the session was started with `proposals` in its context. */
   proposalsOf(sessionId: string): boolean {
     return this.proposalSessions.has(sessionId) || this.meta.get(sessionId)?.proposals === true
+  }
+  /** Whether the session was started with the board's proposal tools (`CreateTaskInput.workProposals`). */
+  workProposalsOf(sessionId: string): boolean {
+    return this.workProposalSessions.has(sessionId) || this.meta.get(sessionId)?.workProposals === true
+  }
+  /** Started from a 待办 whose 要求 came from outside content: what its context proposes is external. */
+  outsideStartOf(sessionId: string): boolean {
+    const meta = this.meta.get(sessionId)
+    // A session brought in from a CLI's own record holds whatever was ever in it.
+    return this.outsideStarts.has(sessionId) || meta?.outsideStart === true || meta?.imported !== undefined
+  }
+  /** Started by a plugin page: it proposes nothing to the board. */
+  pageOriginOf(sessionId: string): boolean {
+    return this.meta.get(sessionId)?.origin !== undefined
   }
   /** A conversation with 通用 in 我的 Agent; known before its record is written. */
   generalChatOf(sessionId: string): boolean {
@@ -1274,6 +1308,10 @@ export class HarnessHub implements Bridge {
         if (patch.priority) next.priority = patch.priority
         else delete next.priority
       }
+      if (patch.note !== undefined) {
+        if (patch.note) next.note = patch.note
+        else delete next.note
+      }
       // Updates run one at a time, so of two requests to archive the same session only one archives it.
       archived = next.archived === true && current.archived !== true
       return next
@@ -1416,6 +1454,7 @@ export class HarnessHub implements Bridge {
       origin: _origin,
       tags: _tags,
       priority: _priority,
+      note: _note,
       board: _board,
       itemId: _itemId,
       runId,
@@ -1442,6 +1481,7 @@ export class HarnessHub implements Bridge {
       ...(meta?.archived ? { archived: true } : {}),
       ...(meta?.tags?.length ? { tags: [...meta.tags] } : {}),
       ...(meta?.priority ? { priority: meta.priority } : {}),
+      ...(meta?.note ? { note: meta.note } : {}),
       ...(meta?.workspaceId ? { workspaceId: meta.workspaceId } : {}),
       ...(meta?.forkOf ? { forkOf: meta.forkOf } : {}),
       ...(meta?.imported

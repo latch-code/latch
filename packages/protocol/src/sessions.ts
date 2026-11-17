@@ -178,6 +178,8 @@ export interface DriverTaskSummary {
   tags?: string[]
   /** 高 or 低; absent is 中. Set by a person only. Host metadata; a driver's claim is dropped. */
   priority?: BoardPriority
+  /** One line on its board card (`CARD_NOTE_CHARS`), set by a person; display only, never sent to the session. */
+  note?: string
   /** The Host's group for this session, which rows, counts and the board read. Host-derived; a driver's claim is dropped. */
   board?: BoardPlace
   /**

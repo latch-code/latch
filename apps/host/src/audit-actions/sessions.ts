@@ -57,6 +57,25 @@ export const SESSION_ACTIONS = {
     target: z.enum(['none', 'session', 'agent']),
     sessionId: opaqueId.optional(),
   }),
+  /**
+   * An agent proposed for the board (docs/ARCHITECTURE.md#agent-的提议), written before the proposal is kept; never its
+   * text. `entries`: how many 待办 the proposal holds with this one (a group's later items add to the same proposal).
+   */
+  'work.proposal.made': z.strictObject({
+    proposalId: prefixed('wpp'),
+    kind: z.enum(['todo', 'change']),
+    entries: count,
+    external: z.boolean(),
+    sessionId: opaqueId,
+    customAgentId: opaqueId.optional(),
+  }),
+  /** A person accepted or dismissed `count` of a proposal's entries (or its change), written before the decision. */
+  'work.proposal.decided': z.strictObject({
+    proposalId: prefixed('wpp'),
+    op: z.enum(['accepted', 'dismissed']),
+    count,
+    external: z.boolean(),
+  }),
   /** A person marked the 待办 done (`closed`) or reopened it. */
   'work.item.closed': z.strictObject({ itemId: prefixed('itm'), closed: z.boolean() }),
   'task.question.answered': z.strictObject({ sessionId: opaqueId, questionId: opaqueId }),

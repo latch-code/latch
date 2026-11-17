@@ -9,7 +9,12 @@ export function forkSeed(
   upToMessageId: string,
   /** What the record is introduced as; a fork names the session and the turn it forks after. */
   heading: (title: string, turn: number) => string = (title, turn) => `以下是会话「${title}」到第 ${turn} 轮为止的记录`,
-): { text: string; context: NonNullable<TaskSummary['forkOf']> } {
+): {
+  text: string
+  context: NonNullable<TaskSummary['forkOf']>
+  /** The record carries what a tool returned (or a subagent, or a fetched prompt): not the person's words. */
+  outside: boolean
+} {
   const end = detail.messages.findIndex(message => message.id === upToMessageId)
   if (end < 0) throw new AppError(400, 'fork-position', '找不到要分叉的位置，请重新打开原会话')
   const lastUser = detail.messages.findLastIndex(message => message.role === 'user' && !message.steered)
@@ -22,6 +27,7 @@ export function forkSeed(
   let length = 0
   let truncated = false
   let turn = 0
+  let outside = false
   // What the agent knew there: nothing from before the last new context.
   const start = Math.max(
     0,
@@ -31,6 +37,7 @@ export function forkSeed(
     const message = detail.messages[index]!
     if (message.role === 'user' && !message.steered) turn++
     if (index < start) continue
+    if (message.role === 'tool' || message.subagent || message.origin === 'mcp-prompt') outside = true
     // Hidden reasoning and raw tool parameters are not required to continue the conversation.
     const block = `\n\n${{ user: '你', assistant: '助手', tool: '工具结果', system: '会话说明' }[message.role]}：\n${message.text}`
     pieces.push(block.length > FORK_CONTEXT_LIMIT ? block.slice(-FORK_CONTEXT_LIMIT) : block)
@@ -58,6 +65,7 @@ export function forkSeed(
   const text = `${label}\n${truncated ? '（较早的记录已截断，只保留最后 20 万字符。）\n' : ''}<会话记录>${transcript}\n</会话记录>\n\n请将以上内容作为背景，继续处理后面的请求。\n\n`
   return {
     text,
+    outside,
     context: {
       taskId: detail.summary.id,
       upToMessageId,

@@ -407,9 +407,9 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 
 ### 待办
 
-待办是一件事：标题、要求、建议的项目、Harness、模型与工作树、标签、优先级，和 0 到 16 个 Code 会话。没有待办的会话自己成卡，不建记录。只由人新建、修改、开始、标完成与重新打开；Agent 与插件页面不能。
+待办是一件事：标题、要求、建议的项目、Harness、模型与工作树、标签、优先级、备注，和 0 到 16 个 Code 会话。没有待办的会话自己成卡，不建记录。只由人新建、修改、开始、标完成与重新打开；Agent 与插件页面不能，Agent 只能提议（见「Agent 的提议」），人接受后才成为待办。
 
-**记录。** 数据目录的 `work/items.json`（目录 0700，文件 0600，原子写，一次一个改动，写成功之后才在内存中生效）。schema 是 strict：读到不认识的字段、同一会话在两条待办里、超过上限都拒绝启动并保留原文件（500 `config-corrupt`）。一台设备最多新建到它能读的 2 000 条（409 `item-limit`，只按它能读的计数，所以数据范围较窄的设备数不出私有待办）；文件本身最多 4 000 条，满了是另一个较粗的拒绝 409 `item-store-full`。每条最多 16 个会话；标题 1–120 个码点且只占一行，要求最多 16 000 个字符（与会话的第一条消息相同），都去掉首尾空白、拒控制字符，像密钥 400 `item-secret`；标签与优先级与会话同一规则。`revision` 随每次改动（含加入、移出会话）增加。`startScope` 记下写过开始要用的值（要求、项目、Harness、模型、工作树）的设备中最窄的数据范围，只会变窄。同一文件保存新建与开始的回执（按设备与 `requestId`，7 天，每设备 10 000 条），重试同一请求得到同一条待办或同一个会话，换了内容 409 `request-conflict`。写入失败时 503 `item-write-unknown`，状态不变，重试同一请求即可。
+**记录。** 数据目录的 `work/items.json`（目录 0700，文件 0600，原子写，一次一个改动，写成功之后才在内存中生效）。schema 是 strict：读到不认识的字段、同一会话在两条待办里、超过上限都拒绝启动并保留原文件（500 `config-corrupt`）。一台设备最多新建到它能读的 2 000 条（409 `item-limit`，只按它能读的计数，所以数据范围较窄的设备数不出私有待办）；文件本身最多 4 000 条，满了是另一个较粗的拒绝 409 `item-store-full`。每条最多 16 个会话；标题 1–120 个码点且只占一行，要求最多 16 000 个字符（与会话的第一条消息相同），都去掉首尾空白、拒控制字符，像密钥 400 `item-secret`；标签与优先级与会话同一规则；备注（`note`）1–140 个码点只占一行，像密钥 400 `note-secret`，只显示，从不发给会话或 Agent（会话的备注同样存在 `sessions-meta.json`，经 `PATCH /tasks/:id` 的 `note`）。由提议接受而来的待办带 `from`（提议的会话、我的 Agent 之一、提议 ID、`external`），之后不能改。`revision` 随每次改动（含加入、移出会话）增加。`startScope` 记下写过开始要用的值（要求、项目、Harness、模型、工作树）的设备中最窄的数据范围，只会变窄。同一文件保存新建与开始的回执（按设备与 `requestId`，7 天，每设备 10 000 条），重试同一请求得到同一条待办或同一个会话，换了内容 409 `request-conflict`。写入失败时 503 `item-write-unknown`，状态不变，重试同一请求即可。
 
 **会话一侧。** `TaskSummary.itemId` 由 `present()` 从待办文件在内存里的索引填入，不另存在 `sessions-meta.json`，所以没有两处要对齐；Driver 自报的被丢弃。私有待办里不私有的会话不带 `itemId`。删除会话（`sessionDeleted`）把它从待办中移出；归档的会话仍是成员。Host 启动约 2 秒后列出全部会话，只在列表完整（每个 Harness 都已挂载并列出）时移出列表里已经没有的成员。删除待办只删记录，会话不动。
 
@@ -445,9 +445,43 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 
 **私有。** 一条待办只要有一个成员此刻是私有的（`hub.agentPrivate`：例如有完整数据范围的设备带着「通用」的上下文开始或继续了它），就是私有：Host 在读到时（快照、会话摘要、路由）和删除这个成员之前写下 `private`，此后不再取消（移出私有会话也不变：标题与要求里可能已写进私有内容）。加入私有会话要求完整数据范围。数据范围不是 `all` 的设备：快照里没有私有待办，也不计数；每个路由对私有待办的回答与不存在的待办相同（404 `item-not-found`）；它能读的会话不带私有待办的 `itemId`。
 
+**开始时的私有与外部内容。** 私有待办开始的会话以 `privateFrom` 开始，与它一样私有，不论带不带私有上下文：要求里可能有私有会话写下的东西。`from.external` 的待办开始的会话记 `outsideStart`，它之后提议的一律标外部。
+
 **审计**（detail 只有 ID、哈希、计数与枚举）。`work.item.changed`（`itemId`、`revision`、`op`：`created`、`edited`、`deleted`、`joined`、`left`，`sessionId?`，`titleHash`），`work.item.started`（`itemId`、`requestHash`），`work.item.closed`（`itemId`、`closed`），`work.item.posted`（见「待办的讨论」）。开始与加入私有会话先写审计，写不进就不做；其余写不进照做并带 `x-latch-audit: failed`。会话被删除而移出不写审计。
 
 **通知。** 待办的变化走现有的刷新：不私有的待办发全局 `refresh`，私有的只发给完整数据范围的连接；成员会话另发各自的变化，但私有待办只刷新它的私有成员，不私有的成员的流听不到这条待办的任何变化。客户端收到后重读快照，不新增事件种类。
+
+### Agent 的提议
+
+Agent 可以提议待办，或为自己的卡提议更好的标题、标签与一句备注。提议不是待办：不进 `items`，不计入待办上限，不能开始、加入或拖动；只由人接受或不要。优先级永远不能提议。
+
+**谁能提议。** Host 在开始会话时给 `CreateTaskInput.workProposals`：Code 会话、我的 Agent 的会话与「通用」的对话都给，只要 Harness 接得住（`canPropose`：内置 Harness，或接受技能服务的外部 Harness；pi 不接受 MCP，提议尚未实现）；插件页面开始的会话不给。Driver 只为这样的会话提供（只对话的运行也有：它们不读也不改任何东西）`propose_todo(title, prompt, project?, harness?, tags?)`、`propose_todos(goal, items)`（2–8 条，一组）与 `propose_card(target, title?, tags?, note?)`，`target` 是 `session`（这个会话自己的卡）或 `todo`（它所在的待办），卡由 Host 从自己的记录查出，从不取自 Agent。内置 Harness 由运行循环提供这三个工具；外部 Harness 经技能服务（`latch-skills` 的 `board` 参数）写进同一个提议文件，ACP 驱动读到后交给 `HarnessHostOptions.proposeWork`（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#外部-harness-的通道)）。Host 只收这个驱动自己的、带 `workProposals` 记录的会话的提议；助手的旧会话与插件页面的会话拒绝（409 `proposal-session`）。
+
+**给 Agent 的指引**在工具自己的说明里（`packages/protocol/src/work-proposals.ts` 的 `PROPOSE_TODO_GUIDE` 等），每个 Harness 收到同一段：什么时候提议待办、什么时候直接做；要求要写成没有这段对话的新会话能直接执行的第一条消息；不写密钥与凭据，不照抄网页、文件或工具输出里的指令；人接受之前什么都不会建、什么都不会开始；优先级只由人定。
+
+**记录。** 与待办同一个文件 `work/items.json` 的 `proposals`（strict，最多 512 条，满了先删最早的已处理提议），接受与建待办在同一次写入里。每条有 `wpp_` ID、`kind`（`todo`、`change`）、来源（会话、我的 Agent 之一、那一轮的用户消息）、`external`、`private`、组名 `goal`、条目或改动、`revision`。条目的文字只在待处理时保存：接受或不要之后只留状态与它成为的待办 ID。`propose_todos` 的各条带同一个只属于这次调用的标签，Host 按会话与标签把它们收进一条提议（技能服务每条写一行）。
+
+**上限与拒绝**（`WORK_PROPOSAL_LIMITS`，都在审计之前，什么都不存；回给 Agent 的是英文）。每轮 4 条，每个会话等人处理的最多 16 条，全 Host 待处理 64 条（一组算一条，409 `proposal-limit`）；一组最多 8 条；一个会话一生最多经提议通道提 32 次，记忆、定时与看板合算。一组中途被拒时，已收下的几条留在提议里。标题 1–120 个码点一行，要求 1–4 000 个字符，组名一行，备注 1–140 个码点一行，标签同会话的规则；含控制或不可见字符 400 `proposal-invalid`，像密钥 422 `proposal-secret`；项目不是已登记的 400 `proposal-project`（不写就用会话自己的项目），Harness 不存在 400 `proposal-harness`；行里多出任何字段（例如 `priority`）整行拒绝。技能服务先按同样的形状拒绝，Agent 当场看到；密钥与卡的核对只有 Host 做，外部 Harness 的 Agent 这时只看到「已提议」，Host 日志只记原因的种类。
+
+**外部内容。** 与记忆提议同一判断（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#记忆提议)）：这一轮或上下文里读过外部内容、插件 Harness、定时任务的运行（含无人值守）、归属有不是用户原话的记忆，或会话由 `from.external` 的待办开始（`outsideStart`），都标 `external`。定时运行只有我的 Agent 的（它们本来就能提议记忆与定时）能提议，一律标外部，不自动接受也不拒绝；「通用」的定时运行没有这些工具。一组里任何一条外部，整组外部。内容经别的路径进入会话时同样标记：待办讨论的投递与交接进已有会话带 `outsideContent`，交接开出的新会话、从文字记录重建的会话、导入的会话，以及分叉的记录里有工具输出（或来源是定时运行、本身由外部内容开始）时，分叉出的会话都记 `outsideStart`。接受时 `external` 记进待办的 `from` 且不再改：看板、待办页与开始框写「来自外部内容」，「全部开始」跳过它，它开始的会话按 `outsideStart` 继续标外部。
+
+**驱动交来的提议**先按 strict 的 zod（`workProposalInputSchema`）整份核对：类型、长度（`messageId` 与文件同一上限，所以审计行不会写给存不下的提议）、`todo` 与 `card` 恰好一个、`card.target` 只能是两个值；没有所在一轮的用户消息的提议拒绝（每轮的上限要靠它数）。外部 Harness 的看板工具在 Host 决定之后才回答 Agent：驱动把每行收下与否写进会话目录的 `answers.jsonl`，技能服务等到它（最多 15 秒）；被拒时只说没有收下及可能的几类原因，不复述内容、不说是哪张卡。
+
+**私有。** 提议的会话此刻私有（`hub.agentPrivate`：我的 Agent、「通用」、带私有上下文的 Code 会话、定时任务的运行）时，提议记 `private` 且不再取消，它接受成的待办也私有。数据范围不是 `all` 的设备：快照的 `workProposals` 里没有它，每个路由对它的回答与不存在的提议相同（404 `proposal-not-found`）。私有提议的变化只通知完整数据范围的连接（等着的卡此刻私有也算）。接受来的待办上，提议的会话此刻私有时，数据范围不是 `all` 的设备看到的 `from` 只有提议 ID 与 `external`，不带会话与 Agent。
+
+**接受的待办开始时不带私有上下文。** 它的要求是模型写的：无论哪台设备接受、之后谁改过，`startScope` 都是 `work`（只会变窄）。项目文件夹里的文件是数据范围较窄的设备也能写的，要求可能照着这样的文件写出；带着「通用」的私有内容开始，就可能把它写回较窄设备读得到的地方。开始框显示的就是这个修订的要求（`baseRevision`），私有待办开始的会话照样私有（`privateFrom`）。
+
+**路由**（`routes/work-proposals.ts`）。
+
+| 路由 | 做什么 | 权限 |
+| --- | --- | --- |
+| `GET /work/proposals/:id` | 带要求的整条提议 | `view` |
+| `POST /work/proposals/:id/accept` | `{ requestId, baseRevision, entries? }`。待办提议：`entries` 是 `{ index, title?, prompt?, projectId?, harnessId?, tags? }`（人先改过的值，`null` 清除建议），不写就是全部待处理条目；一次写入里建成未开始的待办（带 `from`，`startScope: 'work'`，私有随提议），答 `{ proposal, itemIds }`。改动提议：写到它的卡（待办在同一次写入里改，会话经 `updateMeta`） | `run` |
+| `POST /work/proposals/:id/dismiss` | `{ requestId, baseRevision, entries? }`：所选条目或全部待处理的 | `run` |
+
+`baseRevision` 不符 409 `proposal-changed`，已处理的条目 409 `proposal-decided`。接受与不要按设备与 `requestId` 记回执（与待办同一份，7 天），重试答同样的结果、不再建待办，换内容 409 `request-conflict`。会话删除时，它提的、还没处理的提议与等着它的卡的改动一起删除（一组里已有条目处理过的，剩下的记为不要，记录留给重试的回执）；接受会话卡的改动时先在写入里把提议记为已接受，再改会话，改不成就退回待处理；组里什么都处理完后组名也删去；待办删除时，等着它的改动删除。快照的 `workProposals` 只列还有待处理内容的提议，不带要求，也不带已接受条目成为的待办 ID；`catalog.features.workProposals` 表示 Host 有这些路由。提议的文字从不进任何 Agent 的提示：它只在看板与提出它的会话里显示，人接受后成为待办的要求，由人开始才发出。
+
+**审计。** `work.proposal.made`（`proposalId`、`kind`、`entries`、`external`、`sessionId`、`customAgentId?`）在保存之前写，写不进就不收（503 `audit-unavailable`）；`work.proposal.decided`（`proposalId`、`op`：`accepted`、`dismissed`，`count`、`external`）在决定之前写：接受写不进就不接受，并为每条建成的待办先写 `work.item.changed`（`created`）；不要写不进照做并带 `x-latch-audit: failed`。不含任何文字。
 
 ### 待办的讨论
 
@@ -463,6 +497,8 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 **顺序。** 可见性（与待办相同，私有的对较窄设备 404 `item-not-found`）、内容检查、对象可用（会话在一轮中 409 `post-target-busy`；Agent 的聊天还没开始 409 `agent-chat-empty`、正在确认 409 `agent-chat-starting`），@ Agent 时先把待办标为私有（只收窄可见范围），然后写 `work.item.posted`（`itemId`、`postId`、`target`：`none`、`session`、`agent`，`sessionId?`；不含文字，写不进 503 `audit-unavailable`，什么都不存），再存发言（投递记为 `unknown`），最后投递并结清为 `sent`、`failed` 或 `unknown`。投递失败不回错误码：发言已存，回答里的状态说明结果，重试同一请求再投。`postId` 由设备、待办与 `requestId` 推出，同一请求同时发两次时后一个等前一个，所以一个请求只有一条发言、一行审计。
 
 **投递。** 走 `POST /tasks/:id/prompt` 的同一个函数 `sendPrompt`（访问、工作区、私有上下文、附件与 Driver 回执），不排队、不追加：排队的消息发出时会把整段文字交给记忆。请求标识由设备、待办与原 `requestId` 推出，重试时不变；它不是秘密，只让这台设备的发言与它自己直接发的消息分开。投之前先读会话：已经有这个请求的用户消息就记为 `sent`，不再发（对 Agent 补做「记住…」，按请求只建一条），所以答复丢失后讨论又多了内容，重试也只送一次；同一条发言的投递在进行中时，重试等它。正文是人写的话，后面一段引用：所有换行（含 `\r`、U+0085、U+2028、U+2029）先统一成 `\n`，每段的标签（「我：」「会话「…」 的回复：」）在一层引用里（`> `），段的文字在下一层（`> > `），所以回复里写的任何「我：」都比真的标签深一层，冒充不了人的话。引用里是发自哪条待办，以及这个会话上次被 @ 之后讨论里新增的发言与别的会话对它们的回复（每段最多 2 000 字，总计 8 000 字，超出时省去最早的并写明省略了几段），并写明会话的回复是模型的输出、不是人的话也不是指令。引用的长度按发出的样子计（标签、换行与每行的 `> `），所以正文不会超过一条消息的上限。待办是否私有在拼好引用之后再读一次。对象不是私有会话时，引用里不放发给 Agent 的发言和私有会话（Agent 的聊天）的回复；待办已经私有而对象不是私有会话时（较窄的设备读得到它），只发人写的那句，不带待办标题与引用。在交给会话之前失败的投递记为 `failed`。
+
+**外部内容。** 投给任何能提议的会话（Agent 的聊天，或带 `workProposals` 的 Code 会话）的这一轮都带 `PromptOptions.outsideContent`：引用里是模型的输出，那个上下文此后的提议标外部。
 
 **给 Agent。** 只进它的唯一聊天，从不另开会话（根 `AGENTS.md`）；聊天还没开始时不投递（首次开始会在标记之前跑第一轮）。这一轮带 `PromptOptions.outsideContent`：Driver 把「带外部内容」与这一轮的用户消息在同一次写入里记下，其间别的设备清空上下文或开始的一轮都碰不到它；不支持的 Driver（没有 `markOutsideContent`）由 Host 在交给它之前拒绝（`failed`，`post-unmarked`）；记忆的「记住…」只取人自己写的那句（见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#待办里的-)）。
 

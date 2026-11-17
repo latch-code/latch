@@ -111,6 +111,11 @@ export interface CreateTaskInput {
    * nothing reaches the model service until the person sends.
    */
   seed?: string
+  /**
+   * Set by the Host only: the session's agent may propose for the board (`HarnessHostOptions.proposeWork`). The driver keeps
+   * it for the session's life and offers only those tools for it; it gives no other permission.
+   */
+  workProposals?: true
   /** L3 drivers: the launch fingerprint this start recorded. ACP refuses when absent (409 l3-confirmation-missing) or different (409 agent-definition-changed). */
   expectedLaunchHash?: string
 }

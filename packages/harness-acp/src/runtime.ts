@@ -21,6 +21,7 @@ import {
   removeSessionSkills,
   skillsDirectory,
   skillsServer,
+  writeAnswer,
   writeSessionGuides,
   writeSessionSkills,
 } from './skills-server.ts'
@@ -922,6 +923,8 @@ export class AgentRuntime implements Bridge {
   private readonly tools = new Map<string, { seq: number; calls: Map<string, ToolState> }>()
   /** Each session's read of its proposals file, one at a time. */
   private readonly proposalReads = new Map<string, Promise<void>>()
+  /** Sessions whose board proposal is in flight: their file is read until it ends (`watchProposals`). */
+  private readonly proposalWatches = new Map<string, ReturnType<typeof setTimeout>>()
   /** Assistant text that arrived outside a turn and is being appended to a settled message. */
   private readonly stray = new Map<string, { id: string; acpMessageId?: string }>()
   /** What each compaction row says so far, by session and compaction ID; the row itself is the record. */
@@ -1142,6 +1145,8 @@ export class AgentRuntime implements Bridge {
     return (this.closing ??= (async () => {
       this.closed = true
       this.lifetime.abort()
+      for (const timer of this.proposalWatches.values()) clearTimeout(timer)
+      this.proposalWatches.clear()
       await this.started?.catch(() => {})
       this.fileTracking.dispose()
       const runs = [...this.runs.values()]
@@ -2637,6 +2642,7 @@ export class AgentRuntime implements Bridge {
       ...(route ? { route } : {}),
       ...(fork ? { fork } : {}),
       ...(input.seed ? { seed: input.seed } : {}),
+      ...(input.workProposals && this.options.proposeWork ? { workProposals: true as const } : {}),
     }
     if (scope?.passed?.via !== 'acp') return this.record(create)
     // Whether the agent takes the other folders is known only once it has started, so it starts before the session
@@ -2681,6 +2687,8 @@ export class AgentRuntime implements Bridge {
     route?: ModelRoute
     fork?: NonNullable<AcpRecord['fork']>
     seed?: string
+    /** The Host lets this session's agent propose for the board (`CreateTaskInput.workProposals`). */
+    workProposals?: true
   }): Promise<{ sessionId: string }> {
     const { sessionId, prompt, cwd, launch, scope, attachments, fileRefs = [], agentContext, startConfig, route, fork } = create
     this.assertOpen()
@@ -2691,7 +2699,7 @@ export class AgentRuntime implements Bridge {
     } catch {
       throw new AppError(400, 'file-reference-invalid', '文件引用无效。')
     }
-    if (agentContext?.skillBodies?.length || this.proposing(agentContext))
+    if (agentContext?.skillBodies?.length || this.proposing(agentContext) || create.workProposals)
       await writeSessionSkills(skillsDirectory(this.options.dataDir, sessionId), agentContext?.skillBodies ?? [])
     const run = this.reserve(sessionId, 1, context, create.userText)
     run.attachments = attachments
@@ -2738,6 +2746,7 @@ export class AgentRuntime implements Bridge {
         ...(scope?.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
         ...(agentContext?.skillBodies?.length ? { skills: true as const } : {}),
         ...(this.proposing(agentContext) ? { proposals: true as const } : {}),
+        ...(create.workProposals ? { workProposals: true as const } : {}),
         // Whether or not it may propose: an unattended run also keeps Code's idle reclaim (`idleFor`).
         ...(agentContext?.unattended ? { unattended: true as const } : {}),
         ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
@@ -2767,7 +2776,7 @@ export class AgentRuntime implements Bridge {
   /** A session recorded with no turn: its seed waits for the first message, so nothing is sent until the person sends. */
   private async recordSeeded(create: Parameters<AgentRuntime['record']>[0] & { seed: string }): Promise<{ sessionId: string }> {
     const { sessionId, cwd, launch, scope, agentContext, startConfig, route } = create
-    if (agentContext?.skillBodies?.length || this.proposing(agentContext))
+    if (agentContext?.skillBodies?.length || this.proposing(agentContext) || create.workProposals)
       await writeSessionSkills(skillsDirectory(this.options.dataDir, sessionId), agentContext?.skillBodies ?? [])
     const at = this.now()
     this.state.tasks[sessionId] = {
@@ -2799,6 +2808,7 @@ export class AgentRuntime implements Bridge {
         ...(scope?.passed ? { folders: [...scope.passed.paths], folderVia: scope.passed.via } : {}),
         ...(agentContext?.skillBodies?.length ? { skills: true as const } : {}),
         ...(this.proposing(agentContext) ? { proposals: true as const } : {}),
+        ...(create.workProposals ? { workProposals: true as const } : {}),
         // Whether or not it may propose: an unattended run also keeps Code's idle reclaim (`idleFor`).
         ...(agentContext?.unattended ? { unattended: true as const } : {}),
         ...(agentContext?.brief ? { brief: agentContext.brief } : {}),
@@ -3210,7 +3220,8 @@ export class AgentRuntime implements Bridge {
     const { acpSessionId, earlierSessionIds = [], cwd, deletable } = task.acp
     const recorded = structuredClone(task)
     this.fileTracking.dispose(sessionId)
-    if (task.acp.skills || task.acp.proposals) await removeSessionSkills(skillsDirectory(this.options.dataDir, sessionId))
+    if (task.acp.skills || task.acp.proposals || task.acp.workProposals)
+      await removeSessionSkills(skillsDirectory(this.options.dataDir, sessionId))
     delete this.state.tasks[sessionId]
     this.commandCache.forget(sessionId)
     for (const [key, receipt] of Object.entries(this.state.receipts)) {
@@ -3946,7 +3957,8 @@ export class AgentRuntime implements Bridge {
     const next = previous.then(async () => {
       const task = this.state.tasks[taskId]
       const propose = this.options.proposeMemory
-      if (!task?.acp.proposals || !propose) return
+      const board = task?.acp.workProposals === true ? this.options.proposeWork : undefined
+      if (!task || !((task.acp.proposals && propose) || board)) return
       // What the session had done when the lines were written, taken before anything else can change it.
       const turn = proposalTurn(task)
       const from = { line: task.acp.proposalsRead ?? 0, offset: task.acp.proposalsOffset ?? 0 }
@@ -3960,17 +3972,31 @@ export class AgentRuntime implements Bridge {
           external: turn.external || task.acp.unattended === true,
           key: `line:${line.index}`,
         }
-        const schedule = this.options.proposeSchedule
+        const schedule = task.acp.proposals ? this.options.proposeSchedule : undefined
+        const memory = task.acp.proposals ? propose : undefined
         const handed =
-          line.kind === 'schedule'
-            ? schedule
-              ? schedule({ ...common, name: line.name, plan: line.plan, prompt: line.prompt })
-              : Promise.reject(new Error('Schedules cannot be proposed here.'))
-            : propose({ ...common, content: line.content, ...(line.reason ? { reason: line.reason } : {}) })
-        await handed.catch((error: unknown) => {
-          // The Host's reasons never quote the proposal.
-          this.limits.log(`${this.agent.name} 会话 ${taskId} 的提议没有收下：${clip(this.redact(message(error)), 200)}`)
-        })
+          line.kind === 'todo' || line.kind === 'card'
+            ? board
+              ? board({ ...common, ...(line.kind === 'todo' ? { todo: line.todo } : { card: line.card }) })
+              : Promise.reject(new Error('The board cannot be proposed to here.'))
+            : line.kind === 'schedule'
+              ? schedule
+                ? schedule({ ...common, name: line.name, plan: line.plan, prompt: line.prompt })
+                : Promise.reject(new Error('Schedules cannot be proposed here.'))
+              : memory
+                ? memory({ ...common, content: line.content, ...(line.reason ? { reason: line.reason } : {}) })
+                : Promise.reject(new Error('Memories cannot be proposed here.'))
+        const ok = await handed.then(
+          () => true,
+          (error: unknown) => {
+            // The Host's reasons never quote the proposal.
+            this.limits.log(`${this.agent.name} 会话 ${taskId} 的提议没有收下：${clip(this.redact(message(error)), 200)}`)
+            return false
+          },
+        )
+        // The board's tools wait for this before they answer the agent: taken or not, never why.
+        if (line.kind === 'todo' || line.kind === 'card')
+          await writeAnswer(skillsDirectory(this.options.dataDir, taskId), line.index, ok).catch(() => {})
       }
       const current = this.state.tasks[taskId]
       if (!current) return
@@ -3983,6 +4009,25 @@ export class AgentRuntime implements Bridge {
     void settled.then(() => {
       if (this.proposalReads.get(taskId) === settled) this.proposalReads.delete(taskId)
     })
+  }
+
+  /** Reads the proposals file every 200 ms for up to 20 s while a board proposal of the session is in flight. */
+  private watchProposals(taskId: string): void {
+    if (this.proposalWatches.has(taskId)) return
+    const until = this.clock() + 20_000
+    const tick = () => {
+      const task = this.state.tasks[taskId]
+      const flying = task?.messages.some(
+        item => item.role === 'tool' && boardTool(item) && (item.state === 'running' || item.state === 'awaiting-approval'),
+      )
+      if (!task || !flying || this.clock() >= until || this.closed) {
+        this.proposalWatches.delete(taskId)
+        return
+      }
+      this.collectProposals(taskId)
+      this.proposalWatches.set(taskId, setTimeout(tick, 200))
+    }
+    this.proposalWatches.set(taskId, setTimeout(tick, 100))
   }
 
   /**
@@ -5264,7 +5309,7 @@ export class AgentRuntime implements Bridge {
     }
     const task = this.state.tasks[run.taskId]
     let outputMessageId: string | undefined
-    if (task?.acp.proposals) this.collectProposals(run.taskId)
+    if (task?.acp.proposals || task?.acp.workProposals) this.collectProposals(run.taskId)
     if (task) {
       const at = this.now()
       if (run.segment) this.settleSegment(run, task, status === 'idle' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed')
@@ -6009,10 +6054,11 @@ export class AgentRuntime implements Bridge {
     // ACP wants the whole list again for every new, resumed or loaded session: omitting it would drop the folders.
     const passed = storedFolders(task.acp)
     const directories = passed?.via === 'acp' ? { additionalDirectories: [...passed.paths] } : {}
-    if (task.acp.proposals) await this.clearProposals(taskId)
-    const skilled = task.acp.skills === true || task.acp.proposals === true
+    const board = task.acp.workProposals === true && this.options.proposeWork !== undefined
+    if (task.acp.proposals || board) await this.clearProposals(taskId)
+    const skilled = task.acp.skills === true || task.acp.proposals === true || board
     const mcpServers: unknown[] = skilled
-      ? [skillsServer(skillsDirectory(this.options.dataDir, taskId), task.acp.proposals === true, task.acp.proposalsCleared ?? 0)]
+      ? [skillsServer(skillsDirectory(this.options.dataDir, taskId), task.acp.proposals === true, task.acp.proposalsCleared ?? 0, board)]
       : []
     const tools = this.openTools(taskId, live)
     if (tools) mcpServers.push(browserServer(tools))
@@ -7325,7 +7371,10 @@ export class AgentRuntime implements Bridge {
     mergeTool(state, fields, this.now())
     this.judge(task, state, fields.toolCallId, denial)
     this.upsert(task, toolMessage(state))
-    if (task.acp.proposals && (state.status === 'completed' || state.status === 'failed')) this.collectProposals(task.summary.id)
+    if ((task.acp.proposals || task.acp.workProposals) && (state.status === 'completed' || state.status === 'failed'))
+      this.collectProposals(task.summary.id)
+    // A board proposal in flight waits for the Host's answer: read its lines while it runs, not only when it ends.
+    else if (task.acp.workProposals && boardTool(toolMessage(state))) this.watchProposals(task.summary.id)
     if (run) run.lastOutputAt = this.clock()
     if (run && !run.cancelRequested && !this.openApprovals(task.summary.id).length) {
       if (state.status === 'in_progress') {
@@ -7971,7 +8020,22 @@ export class AgentRuntime implements Bridge {
 }
 
 /** The server's own tools: calling them reads nothing from outside. Compared by exact name, after the server's prefix. */
-const OWN_TOOLS: ReadonlySet<string> = new Set(['propose_memory', 'propose_schedule', 'list_skills', 'read_skill'])
+/** One of the skills server's board tools, by the same exact-name rule as `ownTool`. */
+function boardTool(message: Pick<Message, 'toolName' | 'tool'>): boolean {
+  if (!ownTool(message)) return false
+  const own = (message.toolName ?? message.tool?.title)?.trim().replace(SERVER_PREFIX, '')
+  return own === 'propose_todo' || own === 'propose_todos' || own === 'propose_card'
+}
+
+const OWN_TOOLS: ReadonlySet<string> = new Set([
+  'propose_memory',
+  'propose_schedule',
+  'propose_todo',
+  'propose_todos',
+  'propose_card',
+  'list_skills',
+  'read_skill',
+])
 /** How agents name an MCP tool of `latch-skills`: Claude Code's `mcp__latch-skills__x`, others' `latch-skills: x` and similar. */
 const SERVER_PREFIX = /^(?:mcp__latch[-_]skills__|latch[-_]skills(?:\s*[:/.]\s*|__))/u
 /** Kinds that name what they touch in `locations`; any other kind (fetch, search, execute, think, other) may read anything. */

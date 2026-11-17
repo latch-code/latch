@@ -14,6 +14,7 @@ import {
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { json, jsonBody, KIB, safeDecode } from '../http-util.ts'
 import {
+  checkedNote,
   checkedPrompt,
   checkedTitle,
   fullItem,
@@ -41,7 +42,13 @@ export interface WorkItemRouteDeps {
     caller: DeviceCaller,
     body: Record<string, unknown>,
     res: ServerResponse,
-    options: { withoutPrivateContext: boolean },
+    options: {
+      withoutPrivateContext: boolean
+      /** The 待办 is private: the session starts as private as it, whatever context it carries. */
+      privateFrom?: string
+      /** An agent proposed it from a turn that read outside content: the session's context holds outside content. */
+      outsideStart?: boolean
+    },
   ) => Promise<{ sessionId: string }>
   /** A saved project, or `default`. */
   projectExists: (projectId: string) => boolean
@@ -101,6 +108,11 @@ const patchSchema = z
     worktree: suggestions.worktree.nullable().optional(),
     tags: z.array(z.string().max(256)).max(64).nullable().optional(),
     priority: z.enum(['high', 'mid', 'low']).optional(),
+    note: z
+      .string()
+      .max(4 * KIB)
+      .nullable()
+      .optional(),
     closed: z.boolean().optional(),
   })
   .refine(value => Object.keys(value).some(key => key !== 'baseRevision'), '没有要修改的内容')
@@ -163,7 +175,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
     return item
   }
 
-  async function present(item: WorkItemRecord): Promise<WorkItem> {
+  async function present(item: WorkItemRecord, caller: DeviceCaller): Promise<WorkItem> {
     const summaries = new Map<string, TaskSummary>()
     await Promise.all(
       item.sessionIds.map(async id => {
@@ -179,6 +191,8 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
         summary: id => summaries.get(id),
         prState: id => context.board.prState(id),
         ...(deps.threadRevision ? { thread: deps.threadRevision } : {}),
+        // Who proposed it, while that session is private now, only to a device that may read it.
+        originVisible: id => fullData(caller) || !sessionPrivate(id),
       },
       priv,
     )
@@ -201,8 +215,8 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
     if (projectId && !deps.projectExists(projectId)) throw new AppError(400, 'workspace-unavailable', '找不到所选项目')
   }
 
-  async function answer(res: ServerResponse, item: WorkItemRecord, status = 200): Promise<void> {
-    json(res, { item: await present(item) } satisfies WorkItemAnswer, status)
+  async function answer(res: ServerResponse, item: WorkItemRecord, caller: DeviceCaller, status = 200): Promise<void> {
+    json(res, { item: await present(item, caller) } satisfies WorkItemAnswer, status)
   }
 
   async function create(req: IncomingMessage, res: ServerResponse, caller: DeviceCaller): Promise<void> {
@@ -213,7 +227,8 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
     const prior = store.receipt('create', caller.device.id, request)
     if (prior) {
       if (prior.payloadHash !== payloadHash) throw conflict()
-      return answer(res, visible(caller, prior.itemId))
+      if (!prior.itemId) throw notFound()
+      return answer(res, visible(caller, prior.itemId), caller)
     }
     const title = checkedTitle(body.title)
     const prompt = checkedPrompt(body.prompt ?? '')
@@ -236,7 +251,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
       )
       if (again) {
         if (again.payloadHash !== payloadHash) throw conflict()
-        const existing = draft.items.get(again.itemId)
+        const existing = again.itemId ? draft.items.get(again.itemId) : undefined
         if (!existing) throw notFound()
         return { result: existing, changed: false }
       }
@@ -276,7 +291,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
       return { result: record, changed: true }
     })
     deps.changed(item, [])
-    return answer(res, item, 201)
+    return answer(res, item, caller, 201)
   }
 
   async function patch(req: IncomingMessage, res: ServerResponse, caller: DeviceCaller, id: string): Promise<void> {
@@ -285,6 +300,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
     const current = visible(caller, id)
     const title = body.title !== undefined ? checkedTitle(body.title) : undefined
     const prompt = body.prompt !== undefined ? checkedPrompt(body.prompt) : undefined
+    const note = body.note === null || body.note?.trim() === '' ? null : body.note !== undefined ? checkedNote(body.note) : undefined
     const tags = tagsOf(body.tags)
     projectOf(body.projectId)
     if (current.revision !== body.baseRevision) throw changedError()
@@ -326,6 +342,8 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
       else if (tags !== undefined) record.tags = tags
       if (body.priority === 'mid') delete record.priority
       else if (body.priority !== undefined) record.priority = body.priority
+      if (note === null) delete record.note
+      else if (note !== undefined) record.note = note
       if (closed === true) record.closedAt ??= at
       else if (closed === false) delete record.closedAt
       record.updatedAt = at
@@ -333,7 +351,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
       return { result: record, changed: true }
     })
     deps.changed(item, item.sessionIds)
-    return answer(res, item)
+    return answer(res, item, caller)
   }
 
   async function remove(req: IncomingMessage, res: ServerResponse, caller: DeviceCaller, id: string): Promise<void> {
@@ -381,7 +399,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
       throw new AppError(409, 'item-session-kind', '只有 Code 会话可以加入待办。')
     const owner = store.itemOf(sessionId)
     if (owner && owner.id !== id) throw taken(caller, owner)
-    if (owner?.id === id) return answer(res, owner)
+    if (owner?.id === id) return answer(res, owner, caller)
     const current = visible(caller, id)
     if (current.sessionIds.length + (starting.get(id) ?? 0) >= WORK_ITEM_LIMITS.sessions)
       throw new AppError(409, 'item-full', `一条待办最多 ${WORK_ITEM_LIMITS.sessions} 个会话。`)
@@ -404,13 +422,13 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
       return { result: record, changed: true }
     })
     deps.changed(item, [sessionId])
-    return answer(res, item)
+    return answer(res, item, caller)
   }
 
   async function leave(res: ServerResponse, caller: DeviceCaller, id: string, sessionId: string): Promise<void> {
     writing(caller)
     const current = visible(caller, id)
-    if (!current.sessionIds.includes(sessionId)) return answer(res, current)
+    if (!current.sessionIds.includes(sessionId)) return answer(res, current, caller)
     context.recheck(caller, 'run')
     await context.audited(
       {
@@ -434,7 +452,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
       return { result: record, changed: true }
     })
     deps.changed(item, [sessionId])
-    return answer(res, item)
+    return answer(res, item, caller)
   }
 
   /**
@@ -513,7 +531,11 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
         draft.receipts.push(receipt)
         return { result: undefined, changed: true }
       })
-      started = await deps.start(req, caller, input, res, { withoutPrivateContext })
+      started = await deps.start(req, caller, input, res, {
+        withoutPrivateContext,
+        ...(isPrivate(current) ? { privateFrom: `item:${id}` } : {}),
+        ...(current.from?.external ? { outsideStart: true } : {}),
+      })
     } catch (error) {
       // Refused before anything started: the request is forgotten, as `POST /tasks` forgets a failed start.
       if (error instanceof AppError && error.status >= 400 && error.status < 500 && error.status !== 408)
@@ -575,7 +597,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
     outside: 'item-full' | 'item-gone' | undefined,
   ): Promise<void> {
     const record = store.get(id)
-    const item = record && (fullData(caller) || !isPrivate(record)) ? await present(record) : undefined
+    const item = record && (fullData(caller) || !isPrivate(record)) ? await present(record, caller) : undefined
     json(res, { sessionId, ...(item ? { item } : {}), ...(outside ? { outside } : {}) } satisfies WorkItemStartAnswer, 201)
   }
 
@@ -645,7 +667,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
         member = match[3] === undefined ? undefined : safeDecode(match[3])
       if (member !== undefined && member.length > 256) throw new AppError(400, 'invalid-session', '会话标识过长')
       if (!action && method === 'GET') {
-        const item = await present(visible(caller, id))
+        const item = await present(visible(caller, id), caller)
         context.recheck(caller, 'view')
         visible(caller, id)
         json(res, { item } satisfies WorkItemAnswer)

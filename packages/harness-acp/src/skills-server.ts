@@ -4,12 +4,18 @@ import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { writeFileAtomic } from '@latch/core/node-kit'
-import type { AgentSkillBody } from '@latch/protocol'
+import type { WorkCardProposal, WorkTodoProposal } from '@latch/sdk'
+import { PROPOSE_CARD_GUIDE, PROPOSE_TODO_GUIDE, PROPOSE_TODOS_GUIDE, WORK_PROPOSAL_LIMITS, type AgentSkillBody } from '@latch/protocol'
 
-/** The file `propose_memory` and `propose_schedule` append to, one JSON line per call, in the session's private directory. */
+/** The file the proposal tools append to, one JSON line per proposal (per item of a group), in the session's private directory. */
 export const PROPOSALS_FILE = 'proposals.jsonl'
-/** Per session: calls, bytes of one line, bytes of the file. The server refuses a call past any of them. */
-export const PROPOSAL_LIMITS = { count: 32, line: 8 * 1024, bytes: 128 * 1024 } as const
+/**
+ * Per session: lines, bytes of one line, bytes of the file. The server refuses a call past any of them. A line holds one
+ * proposed 要求 of up to 4000 characters, which in CJK text is three bytes each.
+ */
+export const PROPOSAL_LIMITS = { count: 32, line: 16 * 1024, bytes: 192 * 1024 } as const
+/** Where the driver writes the Host's word on each board line, `{ line, ok }`, for the server to answer the agent. */
+export const ANSWERS_FILE = 'answers.jsonl'
 
 /**
  * MCP over stdio for one session: it lists an agent's skills and returns their text, and, started with `propose`, has two
@@ -27,10 +33,23 @@ try {
   for (const skill of JSON.parse(readFileSync(join(directory, 'guides.json'), 'utf8')))
     if (skill && typeof skill.id === 'string' && !skills.some(item => item.id === skill.id)) skills.push(skill)
 } catch {}
-const proposing = process.argv[2] === 'propose'
+// 'propose': memories and schedules (one of 我的 Agent's sessions or 通用's); 'board': 待办 and card changes for the board.
+const modes = String(process.argv[2] || '').split(',')
+const proposing = modes.includes('propose')
+const board = modes.includes('board')
 // Lines the Host already took from earlier copies of the file count toward the session's limit.
 const earlier = Math.max(0, Math.min(Number(process.argv[3]) || 0, 1000))
+// How long a board proposal waits for the Host's answer (the driver writes it to answers.jsonl), in milliseconds.
+const WAIT = Math.max(0, Math.min(Number(process.argv[4]) || 15000, 60000))
 const LIMITS = ${JSON.stringify(PROPOSAL_LIMITS)}
+const WORK = ${JSON.stringify(WORK_PROPOSAL_LIMITS)}
+const todoProperties = {
+  title: { type: 'string', maxLength: WORK.titleChars, description: 'A short imperative title, one line.' },
+  prompt: { type: 'string', maxLength: WORK.promptChars, description: 'The complete first message for a fresh session that has none of this conversation.' },
+  project: { type: 'string', maxLength: 64, description: "A registered project's id; leave it out for this session's project." },
+  harness: { type: 'string', maxLength: 64, description: 'A Harness id to suggest; leave it out unless you know it fits.' },
+  tags: { type: 'array', maxItems: 8, items: { type: 'string', maxLength: 24 }, description: 'Short labels.' },
+}
 const MAX_LINE = 1024 * 1024
 const tools = [
   { name: 'list_skills', description: 'List the skills this agent may use.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -82,6 +101,48 @@ const tools = [
         },
       ]
     : []),
+  ...(board
+    ? [
+        {
+          name: 'propose_todo',
+          description: ${JSON.stringify(PROPOSE_TODO_GUIDE)},
+          inputSchema: { type: 'object', properties: todoProperties, required: ['title', 'prompt'], additionalProperties: false },
+        },
+        {
+          name: 'propose_todos',
+          description: ${JSON.stringify(PROPOSE_TODOS_GUIDE)},
+          inputSchema: {
+            type: 'object',
+            properties: {
+              goal: { type: 'string', maxLength: WORK.goalChars, description: 'What the items achieve together, one line.' },
+              items: {
+                type: 'array',
+                minItems: 2,
+                maxItems: WORK.entries,
+                items: { type: 'object', properties: todoProperties, required: ['title', 'prompt'], additionalProperties: false },
+              },
+            },
+            required: ['goal', 'items'],
+            additionalProperties: false,
+          },
+        },
+        {
+          name: 'propose_card',
+          description: ${JSON.stringify(PROPOSE_CARD_GUIDE)},
+          inputSchema: {
+            type: 'object',
+            properties: {
+              target: { type: 'string', enum: ['session', 'todo'] },
+              title: { type: 'string', maxLength: WORK.titleChars },
+              tags: todoProperties.tags,
+              note: { type: 'string', maxLength: WORK.noteChars, description: 'One line.' },
+            },
+            required: ['target'],
+            additionalProperties: false,
+          },
+        },
+      ]
+    : []),
 ]
 const text = value => ({ content: [{ type: 'text', text: value }] })
 const refused = value => ({ ...text(value), isError: true })
@@ -112,8 +173,125 @@ function propose(args) {
   if (!content || content.length > 4000 || reason.length > 500) return refused('content must be 1 to 4000 characters, reason at most 500.')
   return append(JSON.stringify(reason ? { content, reason } : { content }) + '\n', 'Proposed. The user decides whether to save it; nothing is saved yet.')
 }
-function append(line, done) {
-  if (Buffer.byteLength(line) > LIMITS.line) return refused('This proposal is too long.')
+// Controls and invisible format characters, as the Host refuses them; a 要求 keeps tabs and line ends.
+const ONE_LINE = /[\u0000-\u001f\u007f\u2028\u2029\p{Cf}]/u
+const PROMPT_REFUSED = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\p{Cf}]/u
+// Only these fields are written; priority or anything else the agent sends is refused, never carried.
+function todo(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return 'Each to-do must be an object.'
+  const extra = Object.keys(args).filter(key => !['title', 'prompt', 'project', 'harness', 'tags'].includes(key))
+  if (extra.length) return 'Only title, prompt, project, harness and tags can be proposed; priority is the user\'s alone.'
+  const title = typeof args.title === 'string' ? args.title.trim() : ''
+  const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : ''
+  if (!title || [...title].length > WORK.titleChars || ONE_LINE.test(title)) return 'title must be one line of 1 to ' + WORK.titleChars + ' characters.'
+  if (!prompt || prompt.length > WORK.promptChars || PROMPT_REFUSED.test(prompt)) return 'prompt must be 1 to ' + WORK.promptChars + ' characters.'
+  const value = { title, prompt }
+  for (const key of ['project', 'harness'])
+    if (args[key] !== undefined) {
+      if (typeof args[key] !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(args[key])) return key + ' must be an id.'
+      value[key] = args[key]
+    }
+  if (args.tags !== undefined) {
+    if (!Array.isArray(args.tags) || args.tags.length > 8 || args.tags.some(tag => typeof tag !== 'string' || !tag.trim() || [...tag].length > 24))
+      return 'tags must be at most 8 labels of 1 to 24 characters.'
+    if (args.tags.length) value.tags = args.tags
+  }
+  return value
+}
+function proposeTodo(args) {
+  const value = todo(args)
+  if (typeof value === 'string') return refused(value)
+  return append([JSON.stringify({ kind: 'todo', ...value })], 'Proposed. It waits on the board for the user, who accepts, edits or dismisses it; nothing is created or started yet.', true)
+}
+function proposeTodos(args) {
+  const goal = typeof args?.goal === 'string' ? args.goal.trim() : ''
+  if (!goal || [...goal].length > WORK.goalChars || ONE_LINE.test(goal)) return refused('goal must be one line of 1 to ' + WORK.goalChars + ' characters.')
+  const items = Array.isArray(args?.items) ? args.items : []
+  if (items.length < 2 || items.length > WORK.entries) return refused('items must hold 2 to ' + WORK.entries + ' to-dos.')
+  const values = items.map(todo)
+  const wrong = values.find(value => typeof value === 'string')
+  if (wrong) return refused(wrong)
+  // A label of this call only: the Host gathers the lines into one proposal by it, within this session.
+  const label = require('node:crypto').randomBytes(9).toString('base64url')
+  return append(
+    values.map(value => JSON.stringify({ kind: 'todo', ...value, group: { label, goal } })),
+    'Proposed as one group. It waits on the board for the user, who accepts all, some or none; nothing is created or started yet.',
+    true,
+  )
+}
+function proposeCard(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return refused('Arguments must be an object.')
+  if (Object.keys(args).some(key => !['target', 'title', 'tags', 'note'].includes(key)))
+    return refused('Only a title, tags or a note can be proposed; priority is the user\'s alone.')
+  if (args.target !== 'session' && args.target !== 'todo') return refused('target must be "session" or "todo".')
+  const value = { target: args.target }
+  const title = typeof args.title === 'string' ? args.title.trim() : ''
+  const note = typeof args.note === 'string' ? args.note.trim() : ''
+  if (title) {
+    if ([...title].length > WORK.titleChars || ONE_LINE.test(title)) return refused('title must be one line of at most ' + WORK.titleChars + ' characters.')
+    value.title = title
+  }
+  if (note) {
+    if ([...note].length > WORK.noteChars || ONE_LINE.test(note)) return refused('note must be one line of at most ' + WORK.noteChars + ' characters.')
+    value.note = note
+  }
+  if (args.tags !== undefined) {
+    if (!Array.isArray(args.tags) || args.tags.length > 8 || args.tags.some(tag => typeof tag !== 'string' || !tag.trim() || [...tag].length > 24))
+      return refused('tags must be at most 8 labels of 1 to 24 characters.')
+    if (args.tags.length) value.tags = args.tags
+  }
+  if (!value.title && !value.note && !value.tags) return refused('Propose a title, tags or a note.')
+  return append([JSON.stringify({ kind: 'card', ...value })], 'Proposed. The user sees it on the card and accepts or dismisses it; nothing changes yet.', true)
+}
+// The Host's word on lines from first on: the driver appends {"line": n, "ok": bool} to answers.jsonl once it decided.
+function answers(first, count) {
+  let fd
+  try {
+    fd = openSync(join(directory, 'answers.jsonl'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  } catch {
+    return undefined
+  }
+  try {
+    const stat = fstatSync(fd)
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > 1024 * 1024) return undefined
+    const found = new Map()
+    for (const row of readFileSync(fd, 'utf8').split('\n')) {
+      try {
+        const parsed = JSON.parse(row)
+        if (Number.isInteger(parsed?.line) && parsed.line >= first && parsed.line < first + count) found.set(parsed.line, parsed.ok === true)
+      } catch {}
+    }
+    return found.size === count ? [...found.values()] : undefined
+  } finally {
+    closeSync(fd)
+  }
+}
+// Answers a board proposal once the Host has taken or refused it; a refusal names nothing of what was proposed.
+function settled(first, count, done) {
+  const until = Date.now() + WAIT
+  return new Promise(resolve => {
+    const look = () => {
+      const got = answers(first, count)
+      if (got) {
+        if (got.every(Boolean)) return resolve(text(done))
+        if (!got.some(Boolean))
+          return resolve(
+            refused(
+              'Not proposed: the board did not take it. It may look like a secret, name an unknown project, Harness or card, or too many proposals may be waiting. Do not retry with the same content.',
+            ),
+          )
+        return resolve(text('Only part of the group was proposed; the board did not take ' + got.filter(ok => !ok).length + ' of its items. Nothing is created or started yet.'))
+      }
+      if (Date.now() >= until) return resolve(text('Written for the board; if it is taken, it waits there for the user. Nothing is created or started yet.'))
+      setTimeout(look, 100)
+    }
+    look()
+  })
+}
+function append(lines, done, wait = false) {
+  if (typeof lines === 'string') lines = [lines.replace(/\n$/, '')]
+  if (lines.some(line => Buffer.byteLength(line) + 1 > LIMITS.line)) return refused('This proposal is too long.')
+  const line = lines.map(item => item + '\n').join('')
   let fd
   try {
     fd = openSync(
@@ -130,9 +308,10 @@ function append(line, done) {
     const size = stat.size
     if (size + Buffer.byteLength(line) > LIMITS.bytes) return refused('This session has proposed as much as it may.')
     const held = size ? readFileSync(fd, 'utf8') : ''
-    if (earlier + held.split('\n').filter(Boolean).length >= LIMITS.count)
-      return refused('This session has proposed as much as it may.')
+    const before = earlier + held.split('\n').filter(Boolean).length
+    if (before + lines.length > LIMITS.count) return refused('This session has proposed as much as it may.')
     writeSync(fd, line)
+    if (wait) return settled(before, lines.length, done)
   } finally {
     closeSync(fd)
   }
@@ -146,6 +325,9 @@ function call(params) {
   }
   if (proposing && params?.name === 'propose_memory') return propose(params.arguments)
   if (proposing && params?.name === 'propose_schedule') return schedule(params.arguments)
+  if (board && params?.name === 'propose_todo') return proposeTodo(params.arguments)
+  if (board && params?.name === 'propose_todos') return proposeTodos(params.arguments)
+  if (board && params?.name === 'propose_card') return proposeCard(params.arguments)
   throw Object.assign(new Error('Unknown tool'), { code: -32602 })
 }
 function answer(method, params) {
@@ -164,13 +346,14 @@ function handle(line) {
     return
   }
   if (request?.id === undefined) return
-  let reply
-  try {
-    reply = { result: answer(request.method, request.params) }
-  } catch (error) {
-    reply = { error: { code: error.code ?? -32603, message: error.message } }
-  }
-  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, ...reply }) + '\n')
+  // A board proposal answers once the Host has decided, so replies may come out of order: each carries its id.
+  Promise.resolve()
+    .then(() => answer(request.method, request.params))
+    .then(
+      result => ({ result }),
+      error => ({ error: { code: error.code ?? -32603, message: error.message } }),
+    )
+    .then(reply => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, ...reply }) + '\n'))
 }
 let buffer = ''
 process.stdin.setEncoding('utf8')
@@ -212,19 +395,30 @@ export async function removeSessionSkills(directory: string): Promise<void> {
 }
 
 /**
- * An entry of `mcpServers` in ACP's session/new, session/resume and session/load. `propose` adds `propose_memory` and `propose_schedule`, for a
- * session of one of 我的 Agent or a conversation with 通用.
+ * An entry of `mcpServers` in ACP's session/new, session/resume and session/load. `propose` adds `propose_memory` and
+ * `propose_schedule`, for a session of one of 我的 Agent or a conversation with 通用; `board` adds `propose_todo`,
+ * `propose_todos` and `propose_card`, for a session the Host created with `workProposals`.
  */
 export function skillsServer(
   directory: string,
   propose = false,
   /** Lines the Host has already taken and cleared from the file: they still count toward the session's limit. */
   taken = 0,
+  board = false,
+  /** How long a board proposal waits for the Host's answer before saying it was written; tests shorten it. */
+  waitMs = 15_000,
 ): { name: string; command: string; args: string[]; env: never[] } {
+  const modes = [...(propose ? ['propose'] : []), ...(board ? ['board'] : [])]
   return {
     name: 'latch-skills',
     command: process.execPath,
-    args: ['--disable-sigusr1', '-e', SERVER_SOURCE, directory, ...(propose ? ['propose', String(taken)] : [])],
+    args: [
+      '--disable-sigusr1',
+      '-e',
+      SERVER_SOURCE,
+      directory,
+      ...(modes.length ? [modes.join(','), String(taken), ...(board ? [String(waitMs)] : [])] : []),
+    ],
     env: [],
   }
 }
@@ -241,12 +435,33 @@ export async function clearTakenProposals(directory: string, offset: number): Pr
       const stat = await file.stat()
       if (!stat.isFile() || stat.nlink !== 1 || stat.mode & 0o077 || stat.size !== offset || offset === 0) return false
       await file.truncate(0)
+      // Their answers went with them: the server of the new start reads only answers to lines it writes.
+      await rm(join(directory, ANSWERS_FILE), { force: true })
       return true
     } finally {
       await file.close()
     }
   } catch {
     return false
+  }
+}
+
+/**
+ * The Host's word on one board line, for the server waiting to answer the agent: appended to `answers.jsonl` (0600, no
+ * symlink, one link only). Only whether it was taken; never why, so nothing of what was proposed is repeated.
+ */
+export async function writeAnswer(directory: string, line: number, ok: boolean): Promise<void> {
+  const file = await open(
+    join(directory, ANSWERS_FILE),
+    constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    0o600,
+  )
+  try {
+    const stat = await file.stat()
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > 512 * 1024) return
+    await file.write(`${JSON.stringify({ line, ok })}\n`)
+  } finally {
+    await file.close()
   }
 }
 
@@ -272,7 +487,59 @@ const proposalLine = z.object({
     .refine(value => !/[\p{Cc}\p{Cf}]/u.test(value.replaceAll('\n', ' ')))
     .optional(),
 })
-/** One line of the file: a memory, or (`kind: 'schedule'`) a schedule. */
+const idText = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u)
+const tagList = z.array(z.string().max(64)).max(8)
+// Strict: a line naming anything else (priority above all) is refused whole, never carried in part.
+const todoLine = z.strictObject({
+  kind: z.literal('todo'),
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(WORK_PROPOSAL_LIMITS.titleChars * 2)
+    .refine(printable),
+  // As the Host keeps a 要求: tabs and line ends stay (an indented snippet, CRLF); other controls are refused.
+  prompt: z
+    .string()
+    .trim()
+    .min(1)
+    .max(WORK_PROPOSAL_LIMITS.promptChars)
+    .refine(value => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\p{Cf}]/u.test(value)),
+  project: idText.optional(),
+  harness: idText.optional(),
+  tags: tagList.optional(),
+  group: z
+    .strictObject({
+      label: z.string().regex(/^[A-Za-z0-9_-]{8,32}$/u),
+      goal: z
+        .string()
+        .trim()
+        .min(1)
+        .max(WORK_PROPOSAL_LIMITS.goalChars * 2)
+        .refine(printable),
+    })
+    .optional(),
+})
+const cardLine = z.strictObject({
+  kind: z.literal('card'),
+  target: z.enum(['session', 'todo']),
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(WORK_PROPOSAL_LIMITS.titleChars * 2)
+    .refine(printable)
+    .optional(),
+  tags: tagList.optional(),
+  note: z
+    .string()
+    .trim()
+    .min(1)
+    .max(WORK_PROPOSAL_LIMITS.noteChars * 2)
+    .refine(printable)
+    .optional(),
+})
+/** One line of the file: a memory, a schedule, a proposed 待办 (one item of a group), or a change to the session's card. */
 export type ProposalLine =
   | {
       /** Its position in the file, from 0. */
@@ -282,6 +549,8 @@ export type ProposalLine =
       reason?: string
     }
   | { index: number; kind: 'schedule'; name: string; plan: unknown; prompt: string }
+  | { index: number; kind: 'todo'; todo: WorkTodoProposal }
+  | { index: number; kind: 'card'; card: WorkCardProposal }
 /** Where the Host has read up to: lines handed over and the byte just past the last of them. */
 export interface ProposalCursor {
   line: number
@@ -346,6 +615,22 @@ export async function readProposals(
       raw = JSON.parse(text)
     } catch {
       skipped.push('not-json')
+      continue
+    }
+    if (raw && typeof raw === 'object' && 'kind' in raw && (raw.kind === 'todo' || raw.kind === 'card')) {
+      if (raw.kind === 'todo') {
+        const parsed = todoLine.safeParse(raw)
+        if (parsed.success) {
+          const { kind: _kind, ...todo } = parsed.data
+          lines.push({ index, kind: 'todo', todo })
+        } else skipped.push('invalid')
+      } else {
+        const parsed = cardLine.safeParse(raw)
+        if (parsed.success) {
+          const { kind: _kind, ...card } = parsed.data
+          lines.push({ index, kind: 'card', card })
+        } else skipped.push('invalid')
+      }
       continue
     }
     if (raw && typeof raw === 'object' && 'kind' in raw) {

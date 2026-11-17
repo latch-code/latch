@@ -194,7 +194,7 @@ Agent 的工具结果写明原因。人的「记住…」被拒绝时消息照�
 
 - 内置 Harness：Host 分级为 R2 的调用（任何插件的工具、会话文件夹以外的文件），或查到一条标外部的记忆，记在会话上（`outsideRead`）。之后的只对话运行继承这个标记。
 - 外部 Harness 只能看 Agent 自报的工具行，所以从宽判定。`fetch`、`search`、`execute`、`think`、`other` 或没有 `kind` 的调用、子 Agent，以及没有 `locations` 或位置在会话文件夹之外的读写都算外部。位置先解析 `..` 与符号链接。
-- 技能服务自己的四个工具（`propose_memory`、`propose_schedule`、`list_skills`、`read_skill`）不算：只看没有特定种类的工具行的名称字段，去掉服务前缀后确切相等才算；提议工具必须带前缀。
+- 技能服务自己的工具（`propose_memory`、`propose_schedule`、`propose_todo`、`propose_todos`、`propose_card`、`list_skills`、`read_skill`）不算：只看没有特定种类的工具行的名称字段，去掉服务前缀后确切相等才算；提议工具必须带前缀。
 - 驱动只能把提议交给 Host 在它自己的会话里；插件 Harness 说的 `external: false` 不被采信。
 - 后台定时的运行（`unattended`）与所有带 `automationId` 的会话（含手动「立即运行」和人在其中继续的轮次）的提议一律标外部。这只标记来源，不自动保存或拒绝。
 - 人的「记住…」从不标外部。
@@ -238,12 +238,16 @@ Agent 的工具结果写明原因。人的「记住…」被拒绝时消息照�
 - 定时任务记下 `proposalId`，创建时在同一次写入里拒绝已经由它保存过的（409 `agent-proposal-decided`），所以同时的两次保存只建一个。
 - 之后提议标为已保存并记下 `automationId`。这一步失败时，同一请求的重试按两边的回执补上标记；另一个请求的保存被拒绝，并用第一个定时任务补上标记。
 
+### 提议待办
+
+我的 Agent 与「通用」的会话也能提议待办和自己卡上的标题、标签与备注，与 Code 会话同一套工具、上限、外部内容标记与审计（[ARCHITECTURE.md](ARCHITECTURE.md#agent-的提议)）。它们的会话私有，所以提议私有，接受成的待办也私有。Agent 从不开始待办，也不定优先级：只有人按下开始。
+
 ### 外部 Harness 的通道
 
-技能服务以 `propose` 参数启动时多两个写工具，其余只读、不联网。每次调用往会话私有目录（0700）里的 `proposals.jsonl` 追加一行：`{ content, reason? }` 或 `{ kind: 'schedule', name, plan, prompt }`。
+技能服务以 `propose` 参数启动时多两个写工具，以 `board` 参数启动时多看板的三个（`propose_todo`、`propose_todos`、`propose_card`，见 [ARCHITECTURE.md](ARCHITECTURE.md#agent-的提议)），其余只读、不联网。每次调用往会话私有目录（0700）里的 `proposals.jsonl` 追加一行：`{ content, reason? }`、`{ kind: 'schedule', name, plan, prompt }`、`{ kind: 'todo', title, prompt, project?, harness?, tags?, group? }`（一组每条一行，带同一个 `group`）或 `{ kind: 'card', target, title?, tags?, note? }`。看板的行在服务里先按形状检查（多出的字段，例如 `priority`，当场拒绝），Host 读到时用 strict 的 zod 再查一次。Code 会话只有 `board`，没有记忆与定时的工具；技能服务为此也接到没有技能的 Code 会话上。
 
-- **文件**：0600，以 `O_NOFOLLOW`、`O_NONBLOCK` 打开，只接受只有一个链接的普通文件。每行不超过 8 KB，每个会话最多 32 行、128 KB（`PROPOSAL_LIMITS`），超出时工具返回错误。
-- **读取**：ACP 驱动在每个工具调用结束和每轮结束时，从上次的偏移读新增的完整行（会话记录的 `proposalsRead`、`proposalsOffset`），逐行交给 `HarnessHostOptions.proposeMemory` 或 `proposeSchedule`。不跟随链接、不读 FIFO、只读打开时的大小。
+- **文件**：0600，以 `O_NOFOLLOW`、`O_NONBLOCK` 打开，只接受只有一个链接的普通文件。每行不超过 16 KB（放得下一条 4 000 字的中文要求），每个会话最多 32 行、192 KB（`PROPOSAL_LIMITS`），记忆、定时与看板合算，超出时工具返回错误。
+- **读取**：ACP 驱动在每个工具调用结束和每轮结束时，从上次的偏移读新增的完整行（会话记录的 `proposalsRead`、`proposalsOffset`），逐行交给 `HarnessHostOptions.proposeMemory`、`proposeSchedule` 或 `proposeWork`：记忆与定时只收开始时带 `proposals` 的会话的，看板只收带 `workProposals` 的。不跟随链接、不读 FIFO、只读打开时的大小。
 - **只取内容**：行里只取上面几个字段，经 zod 和密钥检查。会话来自目录本身，归属由 Host 从自己的会话记录查出，从不取自文件。Host 只收这个驱动自己的、开始时上下文带 `proposals` 的会话的提议。
 - **无效的行**跳过，Host 日志只记种类（`not-json`、`invalid`）；被拒绝的行照样算读过。
 - **清空**：每次会话的服务启动前，Host 已取走全部完整的行就清空文件，取走的行数仍计入上限。删除会话时一并删除目录。

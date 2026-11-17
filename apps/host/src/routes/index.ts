@@ -17,6 +17,7 @@ import { createSimulatorRoutes } from './simulators.ts'
 import type { Simulators } from '../simulators.ts'
 import { createWorkItemRoutes, type WorkItemRouteDeps } from './work-items.ts'
 import { createWorkThreadRoutes, type WorkThreadRouteDeps } from './work-threads.ts'
+import { createWorkProposalRoutes, type WorkProposalRouteDeps, type WorkProposalRoutes } from './work-proposals.ts'
 import { createTerminalRoutes, type TerminalRoutes, type TerminalWorkspaceOperation } from './terminal.ts'
 import type { TerminalService } from '../terminal/service.ts'
 
@@ -31,6 +32,7 @@ export interface RouteDeps {
   handoffs: HandoffRouteDeps
   workItems: WorkItemRouteDeps
   workThreads: WorkThreadRouteDeps
+  workProposals: WorkProposalRouteDeps
   history: HistoryRouteDeps
   reviewNotes: ReviewNoteRouteDeps
   git?: GitRouteOptions
@@ -55,6 +57,7 @@ export function createRoutes(
   apps: AppRoutes
   changes: ChangeRoutes
   customization: CustomizationRoutes
+  workProposals: WorkProposalRoutes
   routes: RouteRegistry
 } {
   const native = createNativeRoutes(context, deps.native)
@@ -63,6 +66,7 @@ export function createRoutes(
   const agentLogin = createAgentLoginRoutes(context, { ...deps.agentLogin, terminals: deps.terminals })
   const changes = createChangeRoutes(context)
   const customization = createCustomizationRoutes(context, deps.customization)
+  const workProposals = createWorkProposalRoutes(context, deps.workProposals)
   return {
     native,
     terminal,
@@ -70,6 +74,7 @@ export function createRoutes(
     apps,
     changes,
     customization,
+    workProposals,
     routes: new RouteRegistry([
       native,
       createDeviceRoutes(context, { ...deps.devices, deviceView: device => native.deviceView(device) }),
@@ -87,6 +92,7 @@ export function createRoutes(
       // Before the 待办's own routes, which answer every other path under them.
       createWorkThreadRoutes(context, deps.workThreads),
       createWorkItemRoutes(context, deps.workItems),
+      workProposals.module,
       createHistoryRoutes(context, deps.history),
       customization,
       apps,

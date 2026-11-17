@@ -12,6 +12,7 @@ import type { ProviderSummary, SessionDefaults, UnusableProvider, WorkspaceInfo 
 import type { TaskStreamStamp } from './task-delta.ts'
 import type { CustomizationState } from './customization.ts'
 import type { WorkItemSummary } from './work-items.ts'
+import type { WorkProposalSummary } from './work-proposals.ts'
 
 export interface HostView {
   hostId: string
@@ -86,6 +87,8 @@ export interface AppSnapshot {
   apps?: AppSummary[]
   /** 待办 this device may read: a private one only with data scope `all`. Absent on older Hosts. */
   items?: WorkItemSummary[]
+  /** Agents' proposals for the board still waiting for the person, under the same rule as `items`. Absent on older Hosts. */
+  workProposals?: WorkProposalSummary[]
   /** Line feedback counts of sessions among `tasks` that have any; the notes themselves need data scope `all`. */
   reviewNotes?: ReviewNoteCounts[]
   /** The Host's customisation in force (docs/CUSTOMIZATION.md); absent on older Hosts. */

@@ -50,7 +50,7 @@ Host 依次检查，任何一项不通过都不留记录、不写审计：
 
 1. 材料与要求不能都为空（400 `handoff-empty`）；目标不能是来源自己（400 `handoff-same-session`）。
 2. 调用方能读来源会话，与 `GET /tasks/:id` 相同：私有会话要求数据范围 `all`，否则 403 `agent-scope-required`。
-3. 目标：新会话的 Harness 已启用并就绪、项目存在；已有会话要通过与输入相同的检查。已有会话是某个 Agent 或「通用」的聊天时，这一轮带 `PromptOptions.outsideContent`：交来的材料不是人的话，这个上下文此后提出的记忆与定时都标「来自外部内容」（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#记忆提议)）。来源是私有会话时，已有会话也必须是私有的（403 `handoff-private-target`）；新会话则与分叉一样随来源成为私有会话。
+3. 目标：新会话的 Harness 已启用并就绪、项目存在；已有会话要通过与输入相同的检查。已有会话能提议时（某个 Agent 或「通用」的聊天，或带看板提议工具的 Code 会话），这一轮带 `PromptOptions.outsideContent`：交来的材料不是人的话，这个上下文此后提出的记忆、定时与待办都标「来自外部内容」（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#记忆提议)）。新会话同理记 `outsideStart`，它提出的一律标外部。来源是私有会话时，已有会话也必须是私有的（403 `handoff-private-target`）；新会话则与分叉一样随来源成为私有会话。
 4. 每项材料仍是选定时的版本，否则 409 `handoff-material-changed`，`materials` 列出变化的序号。消息不在来源里时 404 `handoff-material-missing`。
 
 文件材料另有规则：
