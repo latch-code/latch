@@ -104,6 +104,33 @@ function parseRevealInput(input) {
   return { projectId, folderId }
 }
 
+/** An address of at most this many characters: the Host checks what it is. */
+const URL_LIMIT = 2048
+
+/** `latch:folders:clone`: an address to clone, printable and without spaces; the Host checks its form. */
+function parseCloneInput(input) {
+  if (!hasOnlyKeys(input, ['url']) || typeof input.url !== 'string') return undefined
+  const url = input.url.trim()
+  if (url.length === 0 || url.length > URL_LIMIT || /\s/u.test(url) || !isPrintable(url)) return undefined
+  return { url }
+}
+
+/**
+ * The native open panel for where a clone goes: one folder, in which the repository's own folder is made. The address
+ * is shown as it was typed (it passed R8), so the panel says what is cloned.
+ * @param {{ defaultPath: string; url: string }} input
+ * @returns {Electron.OpenDialogOptions}
+ */
+function cloneDialog({ defaultPath, url }) {
+  return {
+    title: '克隆到',
+    buttonLabel: '克隆到这里',
+    message: `${url}\n会在选择的文件夹里新建它的文件夹，克隆后作为项目。${READS}${REMOTE}`,
+    defaultPath,
+    properties: ['openDirectory', 'createDirectory'],
+  }
+}
+
 /** `latch:folders:save-session`: one session by ID; its folder comes from the Host. */
 function parseSaveSessionInput(input) {
   if (!hasOnlyKeys(input, ['sessionId'])) return undefined
@@ -381,6 +408,34 @@ function createFolderActions({ request, sign, pick, confirm, show, inspect, home
       })
     },
     /**
+     * 克隆: the native panel picks the folder the repository's folder is made in; main signs the address and that folder
+     * and the Host starts the clone. Progress and 取消 are the page's (`/workspaces/clone/:id`).
+     */
+    cloneRepository(input) {
+      const parsed = parseCloneInput(input)
+      if (!parsed) return Promise.resolve({ status: 'failed', code: 'clone-url-invalid' })
+      return withDialog(async () => {
+        const chosen = await pick(cloneDialog({ defaultPath: lastParent ?? home(), url: parsed.url }))
+        const filePaths = Array.isArray(chosen?.filePaths) ? chosen.filePaths : []
+        if (chosen?.canceled || filePaths.length === 0) return { status: 'canceled' }
+        if (filePaths.length !== 1) return { status: 'failed', code: 'invalid' }
+        const parent = filePaths[0]
+        const problem = pathProblem(parent)
+        if (problem) return { status: 'failed', code: problem === 'invalid' ? 'workspace-invalid' : problem }
+        lastParent = parent
+        const grant = await request('POST', '/link/api/folder-grants', {})
+        if (grant.status !== 200 || typeof grant.json?.nonce !== 'string') return hostFailure(grant)
+        const body = { nonce: grant.json.nonce, via: 'clone', url: parsed.url, parent }
+        const result = await request('POST', '/link/api/workspaces/clone', { ...body, signature: sign(body) })
+        const clone = result.json?.clone
+        if (result.status === 202 && isPlainObject(clone) && typeof clone.id === 'string' && typeof clone.name === 'string')
+          return { status: 'cloning', id: clone.id, name: clone.name }
+        if (result.status === 409 && result.json?.error === 'workspace-folders-refused')
+          return { status: 'failed', code: 'workspace-folders-refused', refused: hostRefusals(result.json.refused) }
+        return hostFailure(result)
+      })
+    },
+    /**
      * 存为项目: the folder the Host made for a session becomes a new project's primary folder, after the native
      * confirmation shows it. The folder is the one the Host reports for the session, never one from the page.
      */
@@ -465,6 +520,8 @@ module.exports = {
   parseDropInput,
   parseRevealInput,
   parseSaveSessionInput,
+  parseCloneInput,
+  cloneDialog,
   pickDialog,
   dropDialog,
   saveSessionDialog,

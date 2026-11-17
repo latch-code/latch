@@ -19,6 +19,7 @@ interface FolderActions {
   dropFolders(input: unknown): Promise<Result>
   revealFolder(input: unknown): Promise<Result>
   saveSessionFolder(input: unknown): Promise<Result>
+  cloneRepository(input: unknown): Promise<Result & { id?: string; name?: string }>
 }
 interface DialogOptions {
   title?: string
@@ -896,5 +897,58 @@ describe('desktop shell folders against the Host', () => {
       detail: { via: 'session', folderCount: 1 },
     })
     expect(host.config.settings().workspaces.map(record => [record.id, record.name, record.path])).toEqual([[id, '改版落地页', real]])
+  })
+})
+
+describe('desktop shell folders: 克隆', () => {
+  it('asks where with the native panel showing the address, then signs the address and that one folder', async () => {
+    const host = fakeHost()
+    host.answer.set('POST /link/api/workspaces/clone', {
+      status: 202,
+      json: { clone: { id: 'b1a2c3d4-0000-4000-8000-000000000000', name: 'widgets', state: 'running' } },
+    })
+    const { created, asked, signed } = actions({}, host)
+    const url = 'git@github.com:acme/widgets.git'
+    expect(await created.cloneRepository({ url })).toEqual({
+      status: 'cloning',
+      id: 'b1a2c3d4-0000-4000-8000-000000000000',
+      name: 'widgets',
+    })
+    expect(asked).toHaveLength(1)
+    expect(asked[0]).toMatchObject({ title: '克隆到', buttonLabel: '克隆到这里', properties: ['openDirectory', 'createDirectory'] })
+    expect(asked[0]?.message?.split('\n')[0]).toBe(url)
+    expect(signed).toEqual([{ nonce: 'nonce-1', via: 'clone', url, parent: '/Users/me/projects/app' }])
+    expect(host.requests.filter(item => item.method === 'POST').map(item => item.path)).toEqual([
+      '/link/api/folder-grants',
+      '/link/api/workspaces/clone',
+    ])
+  })
+
+  it('refuses an address it could not show as it is, and sends nothing when the panel is cancelled', async () => {
+    const host = fakeHost()
+    let canceled = false
+    const { created, asked } = actions(
+      {
+        pick: async options => {
+          asked.push(options)
+          return canceled ? { canceled: true, filePaths: [] } : { canceled: false, filePaths: ['/Users/me/a', '/Users/me/b'] }
+        },
+      },
+      host,
+    )
+    for (const input of [
+      { url: '' },
+      { url: 'a b' },
+      { url: 'https://x\u202e/y' },
+      { url: 'x'.repeat(2049) },
+      { url: 1 },
+      { url: 'x', extra: 1 },
+    ])
+      expect(await created.cloneRepository(input)).toEqual({ status: 'failed', code: 'clone-url-invalid' })
+    expect(asked).toEqual([])
+    expect(await created.cloneRepository({ url: 'git@github.com:acme/widgets.git' })).toEqual({ status: 'failed', code: 'invalid' })
+    canceled = true
+    expect(await created.cloneRepository({ url: 'git@github.com:acme/widgets.git' })).toEqual({ status: 'canceled' })
+    expect(host.requests).toEqual([])
   })
 })

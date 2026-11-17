@@ -579,6 +579,11 @@ if (!REMOTE)
           if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return Promise.resolve(INVALID)
           return ipcRenderer.invoke('latch:folders:save-session', { sessionId })
         },
+        /** 克隆: main asks where with the native panel, then the Host clones the address into a new project folder. */
+        clone: url => {
+          if (typeof url !== 'string' || url.length === 0 || url.length > 2048) return Promise.resolve(INVALID)
+          return ipcRenderer.invoke('latch:folders:clone', { url })
+        },
       }),
       // Main makes a one-time invitation and opens the browser with it; the renderer only learns whether that worked.
       openInBrowser: () => ipcRenderer.invoke('latch:open-in-browser'),

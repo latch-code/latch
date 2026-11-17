@@ -568,13 +568,15 @@ function isPublicRoute(method, pathname, normalized) {
 }
 
 /**
- * The routes that add folders to projects (new project, add or re-select a folder, and their nonce). Only main calls
+ * The routes that add folders to projects (new project, add or re-select a folder, a clone, and their nonce). Only main calls
  * them, after a native picker or confirmation and with its own signature; the page asks main through
  * `latchShell.folders`. `lower` is the decoded, slash-collapsed, lower-case path.
  */
 function isFolderAddRoute(method, lower) {
   if (lower === '/link/api/folder-grants' || lower.startsWith('/link/api/folder-grants/')) return true
   if (/^\/link\/api\/workspaces\/[^/]+\/folders$/.test(lower)) return true
+  // 克隆 makes a project folder where the native picker chose: main signs it too. Its progress and cancel are the page's.
+  if (lower === '/link/api/workspaces/clone' && String(method).toUpperCase() === 'POST') return true
   return lower === '/link/api/workspaces' && String(method).toUpperCase() === 'POST'
 }
 

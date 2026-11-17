@@ -989,6 +989,9 @@ describe('desktop shell policy', () => {
       ['POST', '/link/api/workspaces/shop%2Ffolders'],
       ['POST', '/link/api/Workspaces/shop/Folders/'],
       ['POST', '/link/api/workspaces//shop//folders'],
+      ['POST', '/link/api/workspaces/clone'],
+      ['POST', '/link/api/Workspaces/Clone/'],
+      ['POST', '/link/api/workspaces/%63lone'],
     ] as const)
       expect(proxy.classifyRoute(method, path), `${method} ${path}`).toEqual({ kind: 'folders' })
     for (const [method, path] of [
@@ -996,6 +999,9 @@ describe('desktop shell policy', () => {
       ['PATCH', '/link/api/workspaces/shop'],
       ['DELETE', '/link/api/workspaces/shop'],
       ['DELETE', '/link/api/workspaces/shop/folders/api'],
+      // A clone's progress and its cancel are the page's.
+      ['GET', '/link/api/workspaces/clone/0b5c7a8e-3d2f-4a5b-9c1d-2e3f4a5b6c7d'],
+      ['POST', '/link/api/workspaces/clone/0b5c7a8e-3d2f-4a5b-9c1d-2e3f4a5b6c7d/cancel'],
     ] as const)
       expect(proxy.classifyRoute(method, path), `${method} ${path}`).toEqual({ kind: 'forward' })
   })
