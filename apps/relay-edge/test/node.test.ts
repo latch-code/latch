@@ -7,6 +7,7 @@ import {
   issuePass,
   makeProof,
   registrationInput,
+  registrationMac,
   registrationWorkInput,
   encodeMessage,
   REGISTRATION_WORK,
@@ -49,6 +50,7 @@ function setup(overrides: Partial<EdgeEnv> = {}) {
   }
   const env: EdgeEnv = {
     RELAY_ID: hex(relayId),
+    OPEN_REGISTRATION: 'true',
     RELAY_SIGNING_SEED: hex(relaySeed),
     DAILY_MESSAGES: '100000',
     MONTHLY_MESSAGES: '1000000',
@@ -273,7 +275,14 @@ describe('edge relay node', () => {
       const t = setup(env)
       expect((await t.open('host')).closed).toBe(4304)
     }
-    for (const env of [{ RELAY_SIGNING_SEED: 'aa' }, { RELAY_ID: undefined }, { LIMITS: '{"maxPairs":-1}' }]) {
+    for (const env of [
+      { RELAY_SIGNING_SEED: 'aa' },
+      { RELAY_ID: undefined },
+      { LIMITS: '{"maxPairs":-1}' },
+      // Open registration is never a default: no token and no explicit choice, or both at once, is not a configuration.
+      { OPEN_REGISTRATION: undefined },
+      { REGISTRATION_TOKEN: 'ab'.repeat(32) },
+    ]) {
       const t = setup(env)
       const node = await t.objects.object('n')
       expect(
@@ -281,6 +290,39 @@ describe('edge relay node', () => {
       ).toBe(503)
       expect((await node.fetch(request('https://node/health'))).status).toBe(503)
     }
+  })
+
+  it('registers only Hosts holding the registration token of a personal relay', async () => {
+    const token = new Uint8Array(32).fill(4)
+    const t = setup({ OPEN_REGISTRATION: undefined, REGISTRATION_TOKEN: hex(token) })
+    const value = await t.credentials()
+    const without = await t.open('host')
+    const challenge = await t.hello(without, 'host')
+    expect(challenge.requiresToken).toBe(true)
+    without.send({
+      type: 'register',
+      previous: new Uint8Array(32),
+      day: value.day,
+      routePub: value.publicKey,
+      signature: await nodeCrypto.sign(value.key, registrationInput(relayId, challenge.nonce, value.day, value.publicKey)),
+      regMac: new Uint8Array(16),
+      alternate: false,
+    })
+    await t.clock.advance(40)
+    expect(without.closed).toBe(4100)
+    const host = await t.open('host')
+    const second = await t.hello(host, 'host')
+    const input = registrationInput(relayId, second.nonce, value.day, value.publicKey)
+    host.send({
+      type: 'register',
+      previous: new Uint8Array(32),
+      day: value.day,
+      routePub: value.publicKey,
+      signature: await nodeCrypto.sign(value.key, input),
+      regMac: await registrationMac(nodeCrypto, token, input),
+      alternate: false,
+    })
+    expect(await host.next(t.clock, 1)).toMatchObject({ type: 'registered' })
   })
 
   it('keeps DENY tags in storage across an object reset', async () => {

@@ -22,6 +22,7 @@ function setup(overrides: Partial<EdgeEnv> = {}) {
     NODE_HOSTS: 'latch-relay-ne.example.workers.dev, ne.relay.example',
     LOCATION_HINT: 'apac-ne',
     RELAY_ID: hex(new Uint8Array(16).fill(7)),
+    OPEN_REGISTRATION: 'true',
     RELAY_SIGNING_SEED: hex(new Uint8Array(32).fill(9)),
     DAILY_MESSAGES: '1000',
     MONTHLY_MESSAGES: '10000',

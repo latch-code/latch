@@ -71,6 +71,7 @@ async function edgeServer(seed: Uint8Array): Promise<{ url: URL; objects: FakeOb
     NODE_HOSTS: 'localhost',
     LOCATION_HINT: 'apac-ne',
     RELAY_ID: hex(relayId),
+    OPEN_REGISTRATION: 'true',
     RELAY_SIGNING_SEED: hex(seed),
     DAILY_MESSAGES: '1000000',
     MONTHLY_MESSAGES: '10000000',

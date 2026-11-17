@@ -193,7 +193,8 @@ export class EdgeNode {
     const token = env.REGISTRATION_TOKEN ? hexBytes(env.REGISTRATION_TOKEN, 32) : undefined
     const daily = positive(env.DAILY_MESSAGES),
       monthly = positive(env.MONTHLY_MESSAGES)
-    this.configured = Boolean(relayId && seed && parsed && (!env.REGISTRATION_TOKEN || token))
+    const open = env.OPEN_REGISTRATION === 'true'
+    this.configured = Boolean(relayId && seed && parsed && (token ? !open : open && !env.REGISTRATION_TOKEN))
     void state.blockConcurrencyWhile(async () => {
       const now = platform.now()
       this.budget = new EdgeBudget(state.storage.sql, daily && monthly ? { day: daily, month: monthly } : undefined)

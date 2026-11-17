@@ -102,6 +102,11 @@ export interface EdgeEnv {
   RELAY_SIGNING_SEED?: string
   /** Secret: the bearer token of the admin routes, at least 32 characters. */
   ADMIN_TOKEN?: string
-  /** Secret, optional: a 32-byte registration token (64 hex). Absent means open registration with the work challenge. */
+  /** Secret: a 32-byte registration token (64 hex), the one in the relay file. Only Hosts holding it may register. */
   REGISTRATION_TOKEN?: string
+  /**
+   * `true` admits any Host (with the work challenge above the soft threshold), as the official relay does. Without a
+   * registration token and without this, the node refuses to serve: open registration is never a default.
+   */
+  OPEN_REGISTRATION?: string
 }
