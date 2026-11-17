@@ -1,7 +1,8 @@
 // The few idb_companion messages the Host sends, encoded by hand: the `hid` client stream's touch, button and key
 // presses, and the empty `describe` request. Field numbers are those of idb's public proto (package `idb`, service
 // `CompanionService`), checked against the bytes the idb client itself sends (the Host's input tests). Nothing here
-// decodes a picture or carries text: text goes to the device's pasteboard through simctl and is pasted with a key chord.
+// decodes a picture. Text is typed key by key, printable ASCII only, as a US keyboard's keys; the Host first checks that
+// the device's own keyboard is the English (US) QWERTY one, where those keys mean those characters.
 
 /** idb's `HIDEvent.HIDButtonType`: only the buttons Latch offers (APPLE_PAY fails on this transport; the rest are media). */
 export const IDB_BUTTONS = { home: 1, lock: 2, side: 3, siri: 4 } as const
@@ -19,9 +20,6 @@ export const IDB_KEYS = {
   up: 82,
 } as const
 export type IdbKey = keyof typeof IDB_KEYS
-/** The left Command key and V, for paste. */
-export const KEY_COMMAND = 227
-export const KEY_V = 25
 
 export type HidEvent =
   | { kind: 'touch'; x: number; y: number; direction: 'down' | 'up' }
@@ -165,4 +163,49 @@ function field(data: Buffer, number: number): Buffer | undefined {
 function varintField(data: Buffer, number: number): number | undefined {
   const found = fields(data)?.find(item => item.field === number && item.type === 0)
   return typeof found?.value === 'number' ? found.value : undefined
+}
+
+/** The left Shift key. */
+const KEY_SHIFT = 225
+/** Printable ASCII on a US keyboard: the key and whether Shift is held. */
+const US_KEYS: ReadonlyMap<string, { code: number; shift: boolean }> = (() => {
+  const keys = new Map<string, { code: number; shift: boolean }>()
+  for (let index = 0; index < 26; index++) {
+    keys.set(String.fromCharCode(97 + index), { code: 4 + index, shift: false })
+    keys.set(String.fromCharCode(65 + index), { code: 4 + index, shift: true })
+  }
+  ;[...'1234567890'].forEach((digit, index) => keys.set(digit, { code: 30 + index, shift: false }))
+  ;[...'!@#$%^&*()'].forEach((symbol, index) => keys.set(symbol, { code: 30 + index, shift: true }))
+  const pairs: Array<[string, string, number]> = [
+    ['-', '_', 45],
+    ['=', '+', 46],
+    ['[', '{', 47],
+    [']', '}', 48],
+    ['\\', '|', 49],
+    [';', ':', 51],
+    ["'", '"', 52],
+    ['`', '~', 53],
+    [',', '<', 54],
+    ['.', '>', 55],
+    ['/', '?', 56],
+  ]
+  for (const [plain, shifted, code] of pairs) {
+    keys.set(plain, { code, shift: false })
+    keys.set(shifted, { code, shift: true })
+  }
+  keys.set(' ', { code: 44, shift: false })
+  return keys
+})()
+
+/** The key presses that type `text` on a US keyboard; undefined when any character is not printable ASCII. */
+export function asciiKeys(text: string): HidEvent[] | undefined {
+  const events: HidEvent[] = []
+  for (const character of text) {
+    const key = US_KEYS.get(character)
+    if (!key) return undefined
+    if (key.shift) events.push({ kind: 'key', code: KEY_SHIFT, direction: 'down' })
+    events.push({ kind: 'key', code: key.code, direction: 'down' }, { kind: 'key', code: key.code, direction: 'up' })
+    if (key.shift) events.push({ kind: 'key', code: KEY_SHIFT, direction: 'up' })
+  }
+  return events
 }

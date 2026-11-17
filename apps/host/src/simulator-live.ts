@@ -94,8 +94,12 @@ export class SimulatorLive {
   private readonly feeds = new Map<string, Feed>()
   private stopped = false
 
-  constructor(options: { attach?: LiveAttach } = {}) {
+  private readonly displayChanged: ((udid: string) => void) | undefined
+
+  /** `displayChanged`: told when a device's picture changes form (it turned), for input to follow. */
+  constructor(options: { attach?: LiveAttach; displayChanged?: (udid: string) => void } = {}) {
     this.attach = options.attach
+    this.displayChanged = options.displayChanged
   }
 
   get offered(): boolean {
@@ -144,6 +148,17 @@ export class SimulatorLive {
       next: () => this.read(watcher),
       close: () => this.leave(current, watcher),
     }
+  }
+
+  /**
+   * A panel's decoder needs a keyframe (it flushed on a still screen, or fell behind): the helper is asked once, for
+   * every watcher of the device.
+   */
+  keyframe(udid: string): boolean {
+    const feed = this.feeds.get(udid)
+    if (!feed) return false
+    this.askKeyframe(feed)
+    return true
   }
 
   /** The device shut down: its feed ends. */
@@ -195,6 +210,7 @@ export class SimulatorLive {
   private dispatch(feed: Feed, event: SimulatorStreamEvent): void {
     if (event.type === 'description') {
       const message = liveMessage(SIMULATOR_STREAM.description, 0, Buffer.from(JSON.stringify(liveDescription(event.description))))
+      if (feed.description && !feed.description.equals(message)) this.displayChanged?.(feed.udid)
       feed.description = message
       // A newer form makes everything unread before it stale; the helper sends one only before a keyframe.
       for (const watcher of feed.watchers) {

@@ -28,6 +28,8 @@ export interface DeviceScreenProps {
 
 /** How long a wheel gesture's finger stays down after the last wheel event. */
 const WHEEL_LIFT_MS = 150
+/** How long an H.264 stream stays quiet before the decoder is flushed to show its last frame. */
+const QUIET_MS = 150
 /** Reconnects after a stream ends that was not the device's doing, before falling back to screenshots. */
 const RECONNECTS = 3
 
@@ -50,6 +52,21 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInp
     let current: SimulatorLiveDescription | undefined
     let waitingKey = true
     let drawing = false
+    let quiet: ReturnType<typeof setTimeout> | undefined
+    let asked = 0
+    /** At most once a second: the Host asks the helper for a keyframe for every panel on the device. */
+    const askKeyframe = () => {
+      if (performance.now() - asked < 1000) return
+      asked = performance.now()
+      void fetch(`/link/api/simulators/${udid}/keyframe`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+        signal: controller.signal,
+      }).catch(() => undefined)
+    }
     const frames: number[] = []
     const draw = (source: CanvasImageSource, sourceWidth: number, sourceHeight: number) => {
       const element = canvas.current
@@ -117,6 +134,8 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInp
           if (message.type === SIMULATOR_STREAM.description) {
             const shape = parseDescription(message.payload)
             if (!shape) return 'retry'
+            // The helper repeats an unchanged description before keyframes: the decoder is kept for those.
+            if (current && decoder?.state === 'configured' && JSON.stringify(current) === JSON.stringify(shape)) continue
             current = shape
             setDescription(shape)
             if (!(await configure(shape))) return 'jpeg'
@@ -150,14 +169,27 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInp
           }
           if (!decoder || decoder.state !== 'configured') continue
           const key = message.type === SIMULATOR_STREAM.key
-          if (waitingKey && !key) continue
+          if (waitingKey && !key) {
+            askKeyframe()
+            continue
+          }
           waitingKey = false
           // A decoder that falls behind skips to the next keyframe rather than holding frames.
           if (decoder.decodeQueueSize > 8) {
             waitingKey = true
+            askKeyframe()
             continue
           }
           decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: message.timestamp, data: message.payload }))
+          // The decoder holds its last frame until more arrive; a screen that stops changing sends no more, so after a
+          // short quiet the decoder is flushed to show it. After a flush it needs a keyframe, which is asked for.
+          clearTimeout(quiet)
+          const flushing = decoder
+          quiet = setTimeout(() => {
+            if (flushing.state !== 'configured') return
+            waitingKey = true
+            void flushing.flush().catch(() => undefined)
+          }, QUIET_MS)
         }
       }
     }
@@ -188,6 +220,7 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onInp
     })()
     return () => {
       controller.abort()
+      clearTimeout(quiet)
       closeDecoder()
     }
   }, [udid])

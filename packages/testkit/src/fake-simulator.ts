@@ -65,7 +65,7 @@ export function fakeSimulatorLive(options: { unsupported?: string; orientation?:
         let timestamp = 0
         try {
           const jpeg = settings.codec === 'jpeg'
-          yield {
+          const description = (): FakeEvent => ({
             type: 'description',
             description: jpeg
               ? {
@@ -78,9 +78,11 @@ export function fakeSimulatorLive(options: { unsupported?: string; orientation?:
                   orientation: options.orientation ?? 1,
                 }
               : { ...H264.description, orientation: options.orientation ?? 1 },
-          }
+          })
           for (let index = 0; !state.closed; index++) {
             const frame = jpeg ? undefined : H264.frames[index % H264.frames.length]!
+            // As the real helper: the description again before each H.264 keyframe, unchanged.
+            if (frame?.key || index === 0) yield description()
             timestamp += Math.round(1_000_000 / settings.maxFps)
             yield frame
               ? { type: 'frame', keyframe: frame.key, timestamp, data: Buffer.from(frame.data, 'base64') }
@@ -209,10 +211,27 @@ function messageField(field: number, body: Buffer): Buffer {
 
 /**
  * An idb_companion stand-in. `installed: false` is a Mac without it; `ready: false` one that never listens; `status` the
- * gRPC status every hid stream ends with (0 delivered).
+ * gRPC status every hid stream ends with (0 delivered); `hang` one that never answers the end of a hid stream; the
+ * rest as their notes say.
  */
 export function fakeIdbCompanion(
-  options: { installed?: boolean; ready?: boolean; status?: number; screen?: { width: number; height: number } } = {},
+  options: {
+    installed?: boolean
+    ready?: boolean
+    status?: number
+    hang?: boolean
+    /** Ends the first hid stream itself after its first event, as rotating the device does. */
+    cut?: boolean
+    /** Says it listens on a TCP port instead of the socket. */
+    tcp?: boolean
+    /** Sends message after message down every hid stream, never ending. */
+    flood?: boolean
+    /** Never answers describe. */
+    silent?: boolean
+    /** Stops reading hid streams. */
+    stall?: boolean
+    screen?: { width: number; height: number }
+  } = {},
 ): FakeIdb {
   const screen = options.screen ?? { width: 402, height: 874 }
   const children = new Set<() => void>()
@@ -246,6 +265,18 @@ export function fakeIdbCompanion(
       server.on('stream', (stream, headers) => {
         const path = headers[':path']
         const chunks: Buffer[] = []
+        if (path === '/idb.CompanionService/hid' && options.stall) {
+          stream.pause()
+          return
+        }
+        if (path === '/idb.CompanionService/describe' && options.silent) return
+        if (path === '/idb.CompanionService/hid' && options.flood) {
+          stream.respond({ ':status': 200, 'content-type': 'application/grpc' })
+          const flood = setInterval(() => {
+            if (stream.closed || stream.destroyed) clearInterval(flood)
+            else stream.write(grpc(Buffer.alloc(1000, 1)))
+          }, 1)
+        }
         stream.on('data', (chunk: Buffer) => {
           chunks.push(chunk)
           if (path !== '/idb.CompanionService/hid') return
@@ -253,12 +284,17 @@ export function fakeIdbCompanion(
           while (buffer.length >= 5 && buffer.length >= 5 + buffer.readUInt32BE(1)) {
             fake.events.push({ ...decodeHid(buffer.subarray(5, 5 + buffer.readUInt32BE(1))), udid })
             buffer = buffer.subarray(5 + buffer.readUInt32BE(1))
+            if (options.cut && !cutDone) {
+              cutDone = true
+              stream.respond({ ':status': 200, 'content-type': 'application/grpc', 'grpc-status': '13' }, { endStream: true })
+              return
+            }
           }
           chunks.length = 0
           if (buffer.length) chunks.push(buffer)
         })
         stream.on('end', () => {
-          if (stream.closed) return
+          if (stream.closed || stream.headersSent || (options.hang && path === '/idb.CompanionService/hid')) return
           stream.respond({ ':status': 200, 'content-type': 'application/grpc' }, { waitForTrailers: true })
           stream.on('wantTrailers', () =>
             stream.sendTrailers({ 'grpc-status': String(path === '/idb.CompanionService/hid' ? (options.status ?? 0) : 0) }),
@@ -271,6 +307,7 @@ export function fakeIdbCompanion(
         stream.on('error', () => undefined)
       })
       let ended = false
+      let cutDone = false
       function end() {
         if (ended) return
         ended = true
@@ -281,7 +318,8 @@ export function fakeIdbCompanion(
         setImmediate(() => child.emit('close', 0))
       }
       children.add(end)
-      if (options.ready !== false)
+      if (options.tcp) setImmediate(() => child.stdout.write('{"grpc_swift_port":10882,"grpc_port":10882}\n'))
+      else if (options.ready !== false)
         server.listen(socket, () => child.stdout.write(`{"grpc_path":"${args[args.indexOf('--grpc-domain-sock') + 1]}"}\n`))
       return child
     },

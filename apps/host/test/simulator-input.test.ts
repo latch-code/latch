@@ -1,7 +1,7 @@
 // Input to simulators through idb_companion: the hand-written messages against bytes the idb client itself sent to the
 // real companion (fixtures/idb-companion.json), the companion's supervision and its private socket, and the shared
 // path of the person's and an agent's input, against the test kit's stand-in companion. Nothing here runs idb.
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { fakeIdbCompanion } from '@latch/testkit'
 import { SimulatorControl } from '../src/simulator-control.ts'
 import { IdbCompanion, locateIdbCompanion, removeStaleIdbDirs } from '../src/simulator-idb.ts'
-import { GrpcReader, KEY_COMMAND, encodeHidEvent, grpcFrame, screenPoints } from '../src/simulator-idb-wire.ts'
+import { GrpcReader, encodeHidEvent, grpcFrame, screenPoints } from '../src/simulator-idb-wire.ts'
 
 const UDID = '02FFBCE5-9E76-4A5F-935D-69BBC2B2C7E6'
 const fixture = JSON.parse(await readFile(new URL('./fixtures/idb-companion.json', import.meta.url), 'utf8')) as {
@@ -60,7 +60,6 @@ describe('the hand-written messages', () => {
     expect(hex(encodeHidEvent({ kind: 'touch', x: 0, y: 0, direction: 'down' }))).toBe('0a060a040a020a00')
     expect(() => encodeHidEvent({ kind: 'touch', x: Number.NaN, y: 1, direction: 'down' })).toThrow()
     expect(() => encodeHidEvent({ kind: 'key', code: -1, direction: 'down' })).toThrow()
-    expect(KEY_COMMAND).toBe(227)
   })
 
   it('read the screen in points from the companion’s own describe answer, and refuse compressed or oversize messages', () => {
@@ -147,17 +146,46 @@ describe('the companion', () => {
     await expect(hid.end()).rejects.toThrow('status 3')
   })
 
-  it('is found where Homebrew or PATH put it, and only as an executable file', async () => {
+  it('is found only in Homebrew’s places, and only when it resolves into Homebrew’s Cellar', async () => {
     const dir = await scratch()
-    const plain = join(dir, 'plain')
-    const tools = join(dir, 'tools')
-    await mkdir(plain)
-    await mkdir(tools)
-    await writeFile(join(plain, 'idb_companion'), '')
-    await writeFile(join(tools, 'idb_companion'), '', { mode: 0o755 })
-    expect(await locateIdbCompanion(`relative:${plain}`, [])).toBeUndefined()
-    expect(await locateIdbCompanion(`relative:${plain}:${tools}`, [])).toBe(join(tools, 'idb_companion'))
-    expect(await locateIdbCompanion('', [join(tools, 'idb_companion')])).toBe(join(tools, 'idb_companion'))
+    const cellar = join(dir, 'Cellar')
+    await mkdir(join(cellar, 'idb-companion', '1.7.8', 'bin'), { recursive: true })
+    await mkdir(join(dir, 'bin'))
+    const real = join(cellar, 'idb-companion', '1.7.8', 'bin', 'idb_companion')
+    await writeFile(real, '', { mode: 0o755 })
+    await symlink(real, join(dir, 'bin', 'idb_companion'))
+    expect(await locateIdbCompanion([{ link: join(dir, 'bin', 'idb_companion'), cellar }])).toBe(await realpath(real))
+    // Somewhere else, even executable and named the same (a project's node_modules/.bin): never.
+    const elsewhere = join(dir, 'node_modules', '.bin')
+    await mkdir(elsewhere, { recursive: true })
+    await writeFile(join(elsewhere, 'idb_companion'), '', { mode: 0o755 })
+    expect(await locateIdbCompanion([{ link: join(elsewhere, 'idb_companion'), cellar }])).toBeUndefined()
+    await rm(join(dir, 'bin', 'idb_companion'))
+    await symlink(join(elsewhere, 'idb_companion'), join(dir, 'bin', 'idb_companion'))
+    expect(await locateIdbCompanion([{ link: join(dir, 'bin', 'idb_companion'), cellar }])).toBeUndefined()
+    expect(await locateIdbCompanion([{ link: join(dir, 'missing'), cellar }])).toBeUndefined()
+  })
+
+  it('kills a companion that says it listens on a TCP port, at once', async () => {
+    const tempDir = await scratch()
+    const fake = fakeIdbCompanion({ tcp: true })
+    await expect(IdbCompanion.start(UDID, { ...pick(fake), tempDir })).rejects.toMatchObject({ reason: 'companion-failed' })
+    expect(fake.signals[0]).toBe('SIGKILL')
+    expect(await readdir(tempDir)).toEqual([])
+  })
+
+  it('bounds what the companion may answer: a flood ends the stream, a silent describe is no answer', async () => {
+    const tempDir = await scratch()
+    const flood = await IdbCompanion.start(UDID, { ...pick(fakeIdbCompanion({ flood: true })), tempDir })
+    cleanups.push(() => flood.close())
+    const hid = flood.hid()
+    hid.write([{ kind: 'key', code: 40, direction: 'down' }])
+    await waitUntil(() => !hid.open)
+    expect(() => hid.write([{ kind: 'key', code: 40, direction: 'up' }])).toThrow()
+    await expect(hid.end()).rejects.toThrow()
+    const silent = await IdbCompanion.start(UDID, { ...pick(fakeIdbCompanion({ silent: true })), tempDir })
+    cleanups.push(() => silent.close())
+    await expect(silent.describe(100)).rejects.toMatchObject({ reason: 'no-answer' })
   })
 
   it('leaves another Host’s live socket, and removes only stale private directories of this user', async () => {
@@ -196,7 +224,7 @@ describe('one input path for the person and agents', () => {
       touch: { available: true },
       keys: { available: true },
       buttons: { available: true },
-      text: { available: false, reason: 'paste-refused' },
+      text: { available: false, reason: 'unsupported' },
       twoFingers: { available: false, reason: 'single-touch' },
     })
     expect(service.holds(UDID, 'desk')).toBe(true)
@@ -250,6 +278,94 @@ describe('one input path for the person and agents', () => {
     expect(fake.events.some(event => 'x' in event && event.x === 403)).toBe(false)
   })
 
+  it('fails the person’s input once the companion stops reading and 64 KiB wait unread', async () => {
+    const { service, advance } = await control({ stall: true })
+    await service.take(UDID, 'desk')
+    let failure: unknown
+    await service.input(UDID, 'desk', [{ type: 'touch', phase: 'down', x: 1, y: 1 }])
+    // Past HTTP/2's own 64 KiB window, then 64 KiB more waiting unread.
+    for (let round = 0; round < 400 && !failure; round++)
+      await service
+        .input(
+          UDID,
+          'desk',
+          Array.from({ length: 64 }, (_, index) => ({ type: 'touch' as const, phase: 'move' as const, x: 1 + (index % 50), y: 1 + round })),
+        )
+        .catch((error: unknown) => (failure = error))
+        .finally(() => advance(1000))
+    expect(failure).toMatchObject({ code: 'simulator-input-failed' })
+  })
+
+  it('types printable ASCII only on the English (US) keyboard, and refuses anything else whole', async () => {
+    const tempDir = await scratch()
+    const fake = fakeIdbCompanion()
+    let keyboard: string | undefined = 'en_US@sw=QWERTY;hw=Automatic'
+    const service = new SimulatorControl({ idb: { ...pick(fake), tempDir }, keyboard: async () => keyboard })
+    cleanups.push(() => service.stop())
+    expect((await service.take(UDID, 'desk')).text).toEqual({ available: true })
+    await service.typeText(UDID, 'Hi 1!')
+    const codes = () =>
+      fake.events
+        .filter(event => event.kind === 'key')
+        .map(event => `${(event as { code: number }).code}${event.direction === 'down' ? '+' : '-'}`)
+    // H is Shift+h; space is 44; ! is Shift+1.
+    expect(codes()).toEqual(['225+', '11+', '11-', '225-', '12+', '12-', '44+', '44-', '30+', '30-', '225+', '30+', '30-', '225-'])
+    const before = fake.events.length
+    await expect(service.typeText(UDID, 'hi 你好')).rejects.toMatchObject({ code: 'simulator-text-unsupported' })
+    keyboard = 'zh_Hans-Pinyin@sw=Pinyin-Simplified;hw=Automatic'
+    await expect(service.typeText(UDID, 'hello')).rejects.toMatchObject({
+      code: 'simulator-text-unavailable',
+      message: expect.stringContaining('zh_Hans-Pinyin'),
+    })
+    keyboard = 'fr_FR@sw=AZERTY;hw=Automatic'
+    await expect(service.typeText(UDID, 'a')).rejects.toMatchObject({ code: 'simulator-text-unavailable' })
+    keyboard = undefined
+    await expect(service.typeText(UDID, 'a')).rejects.toMatchObject({ code: 'simulator-text-unavailable' })
+    // The person's text, the same way; nothing at all was typed for the refusals.
+    await expect(service.input(UDID, 'desk', [{ type: 'text', text: 'x' }])).rejects.toMatchObject({ code: 'simulator-text-unavailable' })
+    expect(fake.events.length).toBe(before)
+    keyboard = 'en_US@sw=QWERTY'
+    await new Promise(resolve => setTimeout(resolve, 1_100))
+    await service.input(UDID, 'desk', [{ type: 'text', text: 'ok' }])
+    await waitUntil(() => fake.events.length === before + 4)
+    expect(new SimulatorControl({ idb: pick(fake) }).viewOf(UDID).text.available).toBe(false)
+  })
+
+  it('lets the person win: their press stops an agent’s long press and goes ahead of every agent waiting', async () => {
+    const { service, fake } = await control()
+    await service.take(UDID, 'desk')
+    const started = Date.now()
+    const agents = [1, 2, 3].map(index =>
+      service.tap(UDID, index * 10, index * 10, 5000).then(
+        () => 'done',
+        error => error.code,
+      ),
+    )
+    await waitUntil(() => fake.events.some(event => event.kind === 'touch' && event.direction === 'down'))
+    await service.input(UDID, 'desk', [{ type: 'touch', phase: 'down', x: 200, y: 200 }])
+    await service.input(UDID, 'desk', [{ type: 'touch', phase: 'up', x: 200, y: 200 }])
+    await waitUntil(() => fake.events.some(event => 'x' in event && event.x === 200 && event.direction === 'up'))
+    // Within one gesture's time, not after three five-second presses.
+    expect(Date.now() - started).toBeLessThan(2000)
+    const firstAgentDown = fake.events.findIndex(event => event.kind === 'touch' && event.direction === 'down')
+    const personDown = fake.events.findIndex(event => 'x' in event && event.x === 200 && event.direction === 'down')
+    expect(personDown).toBeGreaterThan(firstAgentDown)
+    // The agent that was pressing answers that its input did not go through.
+    const outcomes = await Promise.all(agents)
+    expect(outcomes).toContain('simulator-input-failed')
+  }, 30_000)
+
+  it('stops an agent’s gesture when its turn is cancelled', async () => {
+    const { service } = await control()
+    const stop = new AbortController()
+    const tap = service.tap(UDID, 10, 10, 5000, stop.signal)
+    await new Promise(resolve => setTimeout(resolve, 200))
+    const started = Date.now()
+    stop.abort()
+    await expect(tap).rejects.toMatchObject({ code: 'cancelled' })
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
+
   it('serialises gestures: an agent’s tap waits for the person’s finger to lift, and nobody is locked out', async () => {
     const { service, fake } = await control()
     await service.take(UDID, 'desk')
@@ -277,9 +393,21 @@ describe('one input path for the person and agents', () => {
     expect(touches.length).toBeGreaterThan(4)
     await good.service.key(UDID, 'delete')
     await good.service.button(UDID, 'lock')
+    const silent = await control({ hang: true })
+    await expect(silent.service.key(UDID, 'return')).rejects.toMatchObject({ code: 'simulator-input-failed' })
+    // The device is not left held: the next call is not kept waiting behind it.
+    await expect(silent.service.key(UDID, 'return')).rejects.toMatchObject({ code: 'simulator-input-failed' })
     const bad = await control({ status: 13 })
     await expect(bad.service.tap(UDID, 1, 1)).rejects.toMatchObject({ code: 'simulator-input-failed' })
     await expect(bad.service.tap(UDID, 9_999, 1)).rejects.toMatchObject({ status: 400 })
+  }, 30_000)
+
+  it('never ends a companion that is still starting for someone', async () => {
+    const { service, advance } = await control()
+    const taking = service.take(UDID, 'desk')
+    advance(61_000)
+    await service.sweep()
+    expect((await taking).touch).toEqual({ available: true })
   })
 
   it('lifts a finger left down and ends the companion on release, device shutdown and Host stop', async () => {
@@ -301,6 +429,44 @@ describe('one input path for the person and agents', () => {
     expect(fake.running()).toBe(0)
     expect((await readdir(tempDir)).filter(name => name.startsWith('latch-idb-'))).toEqual([])
     expect((await service.take(UDID, 'desk')).touch).toEqual({ available: false, reason: 'unsupported' })
+  })
+
+  it('lifts a finger left without events, and lets a person’s control lapse after two minutes without input', async () => {
+    const { service, fake, advance } = await control()
+    await service.take(UDID, 'desk')
+    await service.input(UDID, 'desk', [{ type: 'touch', phase: 'down', x: 5, y: 5 }])
+    advance(11_000)
+    await service.sweep()
+    await waitUntil(() => fake.events.at(-1)?.direction === 'up')
+    // The device is free again: an agent's tap does not wait.
+    await service.tap(UDID, 20, 20)
+    expect(service.holds(UDID, 'desk')).toBe(true)
+    advance(121_000)
+    await service.sweep()
+    expect(service.holds(UDID, 'desk')).toBe(false)
+    await expect(service.input(UDID, 'desk', [{ type: 'key', key: 'return' }])).rejects.toMatchObject({
+      code: 'simulator-control-required',
+    })
+  })
+
+  it('opens a new stream when the companion ended the person’s (as a rotation does), and delivers on it', async () => {
+    const { service, fake } = await control({ cut: true })
+    await service.take(UDID, 'desk')
+    await service.input(UDID, 'desk', [{ type: 'button', button: 'home' }])
+    await new Promise(resolve => setTimeout(resolve, 50))
+    await service.input(UDID, 'desk', [{ type: 'key', key: 'return' }])
+    await waitUntil(() => fake.events.some(event => event.kind === 'key'))
+  })
+
+  it('drops the person’s stream when the display changes, and opens a new one with the next input', async () => {
+    const { service, fake } = await control()
+    await service.take(UDID, 'desk')
+    await service.input(UDID, 'desk', [{ type: 'touch', phase: 'down', x: 5, y: 5 }])
+    service.displayChanged(UDID)
+    // The finger is forgotten with the old stream: an agent is not kept waiting for it.
+    await service.tap(UDID, 20, 20)
+    await service.input(UDID, 'desk', [{ type: 'key', key: 'return' }])
+    await waitUntil(() => fake.events.some(event => event.kind === 'key'))
   })
 
   it('says so when the companion stops under the person', async () => {

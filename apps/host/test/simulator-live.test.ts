@@ -4,8 +4,8 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { SIMULATOR_STREAM, type TaskDetail } from '@latch/protocol'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { SIMULATOR_STREAM, type Automation, type AutomationDetail, type CustomAgent, type TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin, ModelMessage, ToolDefinition } from '@latch/sdk'
 import { FAKE_ACP_AGENT, fakeIdbCompanion, fakeSimulatorLive, type TestDevice } from '@latch/testkit'
 import type { SimulatorStreamEvent, StreamSettings } from '../src/simulator-helper.ts'
@@ -228,6 +228,7 @@ describe('the live and input routes', () => {
     for (const elsewhere of [browser, phone, viewer, work]) {
       expect((await elsewhere.request(`simulators/${UDID}/stream?codec=h264&fps=30&size=1280`)).status).toBe(403)
       expect((await elsewhere.request(`simulators/${UDID}/control`, { body: { action: 'take' } })).status).toBe(403)
+      expect((await elsewhere.request(`simulators/${UDID}/keyframe`, { body: {} })).status).toBe(403)
       expect((await elsewhere.request(`simulators/${UDID}/input`, { body: { events: [{ type: 'key', key: 'return' }] } })).status).toBe(403)
     }
     expect(idb.starts).toEqual([])
@@ -258,6 +259,9 @@ describe('the live and input routes', () => {
     ])
     const types = await readMessages(response, 3)
     expect(types).toEqual([SIMULATOR_STREAM.description, SIMULATOR_STREAM.key, SIMULATOR_STREAM.delta])
+    // A panel whose decoder flushed on a still screen asks for a keyframe; nothing is recorded.
+    expect(await desktop.json(`simulators/${UDID}/keyframe`, { body: {} })).toEqual({ asked: true })
+    expect(live.keyframes).toBeGreaterThan(0)
     stop.abort()
     await expect.poll(() => live.closed).toBe(1)
     expect(live.returned).toBe(1)
@@ -287,9 +291,9 @@ describe('the live and input routes', () => {
       body: { action: 'take' },
     })
     expect(taken.control.touch.available).toBe(true)
-    expect(taken.control.text).toEqual({ available: false, reason: 'paste-refused' })
+    expect(taken.control.text).toEqual({ available: true })
     await desktop.json(`simulators/${UDID}/control`, { body: { action: 'take' } })
-    expect(await desktop.json(`simulators/${UDID}/input`, { body: { events } })).toEqual({ delivered: 2 })
+    expect(await desktop.json(`simulators/${UDID}/input`, { body: { events } })).toEqual({ written: 2 })
     expect((await other.request(`simulators/${UDID}/input`, { body: { events } })).status).toBe(409)
     for (const body of [
       { events: [] },
@@ -298,7 +302,8 @@ describe('the live and input routes', () => {
       { events: [{ type: 'button', button: 'apple_pay' }] },
       { events: [{ type: 'touch', phase: 'down', x: -1, y: 0 }] },
       { events: [{ type: 'touch', phase: 'down', x: 1, y: 1, finger: 2 }] },
-      { events: [{ type: 'text', text: 'hi' }] },
+      { events: [{ type: 'text', text: 'x'.repeat(65) }] },
+      { events: [{ type: 'text', text: '' }] },
       { events, more: true },
     ])
       expect((await desktop.request(`simulators/${UDID}/input`, { body })).status).toBe(400)
@@ -369,7 +374,7 @@ describe('agent input tools', () => {
     const said = done.messages.filter(message => message.role === 'assistant').at(-1)!.text
     expect(said).toContain('device_tap: ok: Long-pressed.')
     expect(said).toContain('device_swipe: ok: Swiped.')
-    expect(said).toContain('device_type_text: error: 文字输入不可用')
+    expect(said).toContain('device_type_text: error: 只能输入可打印的 ASCII 字符')
     expect(said).toContain('device_press_key: ok: Pressed return.')
     expect(said).toContain('device_press_button: ok: Pressed home.')
     expect(said).toMatch(/device_tap: error: .*坐标/u)
@@ -386,12 +391,75 @@ describe('agent input tools', () => {
     const text = JSON.stringify(await audit(t))
     expect(text).not.toContain('zebra')
     expect(text).not.toContain('120.5')
-    // The panel shows that an agent uses the device.
-    expect(
-      (await desktop.json<{ devices: Array<{ udid: string; agent?: boolean }> }>('simulators')).devices.find(item => item.udid === UDID)
-        ?.agent,
-    ).toBe(undefined)
   })
+
+  /** One `device_tap` from the fake agent in a new session of `device-agent`, sent by `sender`; what the agent said. */
+  async function tapFrom(desktop: TestDevice, sender: TestDevice = desktop, before?: () => void): Promise<string> {
+    const created = await desktop.confirmed('tasks', { body: { prompt: 'echo hi', requestId: randomUUID(), harnessId: 'device-agent' } })
+    const { sessionId } = (await created.json()) as { sessionId: string }
+    await settled(desktop, sessionId)
+    before?.()
+    const steps = [{ tool: 'device_tap', args: { udid: UDID, x: 10, y: 10 } }]
+    await sender.json(`tasks/${sessionId}/prompt`, {
+      method: 'POST',
+      body: { requestId: randomUUID(), prompt: `browser ${JSON.stringify(steps)}` },
+    })
+    const done = await settled(desktop, sessionId)
+    return done.messages.filter(message => message.role === 'assistant').at(-1)!.text
+  }
+
+  it('are refused for an unattended run, a Harness below full access and a turn from a device that does not see all data', async () => {
+    const { t, desktop, idb } = await agentHost()
+    // The gate itself: a run the Host counts as unattended, in a full-access session a person opened.
+    // Only where the device tools ask: elsewhere an unattended session would not even get latch-browser.
+    const unattended = vi.spyOn(t.host.bridge, 'unattended')
+    const asked = () => unattended.mockImplementation(() => new Error('probe').stack?.includes('runDeviceCall') === true)
+    expect(await tapFrom(desktop, desktop, asked)).toContain('device_tap: error: 没有人值守的运行不能向设备输入')
+    unattended.mockRestore()
+    // A Harness the Host does not count as full access.
+    const level = vi.spyOn(t.host.bridge, 'levelOf')
+    expect(await tapFrom(desktop, desktop, () => level.mockReturnValue('L1'))).toContain(
+      'device_tap: error: 设备输入工具只给完全访问的外部 Harness 会话',
+    )
+    level.mockRestore()
+    // A turn sent from a device whose data scope is narrower: the picture would reach devices that may not see it.
+    const narrower = await t.enroll({ listener: 'unix', name: 'Files window' })
+    expect((await desktop.request(`devices/${narrower.id}`, { method: 'PATCH', body: { dataScope: 'files' } })).status).toBe(200)
+    expect(await tapFrom(desktop, narrower)).toMatch(/device_tap: error: .*(全部数据|device-scope|sees all data)/u)
+    // An automation's run: it never gets as far as the device.
+    const agent = await desktop.json<CustomAgent>('custom-agents', {
+      method: 'POST',
+      body: {
+        requestId: randomUUID(),
+        name: '定时',
+        description: '',
+        harnessId: 'device-agent',
+        mode: 'agent',
+        instructions: '',
+        skills: [],
+      },
+    })
+    const automation = await desktop.json<Automation>('automations', {
+      method: 'POST',
+      body: {
+        requestId: randomUUID(),
+        name: '每天点一下',
+        customAgentId: agent.id,
+        prompt: `browser ${JSON.stringify([{ tool: 'device_tap', args: { udid: UDID, x: 10, y: 10 } }])}`,
+        schedule: { kind: 'daily', time: '09:00' },
+        notify: false,
+        enabled: false,
+      },
+    })
+    await desktop.json(`automations/${automation.id}/run`, { method: 'POST', body: { requestId: randomUUID() } })
+    for (let attempt = 0; attempt < 400; attempt++) {
+      const detail = await desktop.json<AutomationDetail>(`automations/${automation.id}`)
+      if (detail.automation.lastRun?.state && detail.automation.lastRun.state !== 'running') break
+      await tick(25)
+    }
+    expect(idb.starts).toEqual([])
+    expect((await audit(t)).filter(record => record.action === 'simulator.call')).toEqual([])
+  }, 60_000)
 
   it('are not given to the built-in harness, and a call it makes anyway acts on nothing', async () => {
     const seen: string[][] = []

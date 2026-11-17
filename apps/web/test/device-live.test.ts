@@ -4,6 +4,7 @@ import {
   InputSender,
   LiveReader,
   chooseCodec,
+  deviceInput,
   deviceKey,
   inputReason,
   parseControl,
@@ -169,6 +170,40 @@ describe('input to the Host', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(failures).toHaveLength(1)
     expect(sender.waiting).toBe(0)
+  })
+
+  it('sends printable ASCII as text, refuses other characters out loud, and leaves shortcuts alone', () => {
+    const input = (value: string, modifiers: Partial<{ metaKey: boolean; ctrlKey: boolean; altKey: boolean }> = {}) =>
+      deviceInput({ key: value, metaKey: false, ctrlKey: false, altKey: false, ...modifiers })
+    expect(input('a')).toEqual({ type: 'text', text: 'a' })
+    expect(input(' ')).toEqual({ type: 'text', text: ' ' })
+    expect(input('@')).toEqual({ type: 'text', text: '@' })
+    expect(input('Enter')).toEqual({ type: 'key', key: 'return' })
+    expect(input('你')).toBe('refused')
+    expect(input('é')).toBe('refused')
+    expect(input('Process')).toBe('refused')
+    expect(input('a', { metaKey: true })).toBeUndefined()
+    expect(input('Shift')).toBeUndefined()
+  })
+
+  it('joins typed characters that wait into one text event', async () => {
+    const posts: SimulatorInputEvent[][] = []
+    let release: (() => void) | undefined
+    const sender = new InputSender(
+      async events => {
+        posts.push(events.map(event => ({ ...event })))
+        await new Promise<void>(resolve => (release = resolve))
+      },
+      () => undefined,
+      run => run(),
+    )
+    sender.send({ type: 'text', text: 'a' })
+    sender.send({ type: 'text', text: 'b' })
+    sender.send({ type: 'text', text: 'c' })
+    release!()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(posts).toEqual([[{ type: 'text', text: 'a' }], [{ type: 'text', text: 'bc' }]])
+    release!()
   })
 
   it('sends only named keys, never printable characters or shortcuts', () => {

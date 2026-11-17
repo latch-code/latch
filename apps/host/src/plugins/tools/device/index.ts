@@ -63,8 +63,8 @@ const FAILURES: Record<string, string> = {
     '这台设备现在不能输入（需要人在这台 Mac 上安装 idb_companion，或它没有回答）；不要重复调用，请人在设备面板里操作。Input is unavailable on this device; do not retry, ask the person.',
   'simulator-input-failed':
     '输入没有送到设备；不要重复发送，先截图核对。The input did not reach the device; take a screenshot before anything else.',
-  'simulator-text-unavailable':
-    '文字输入不可用：设备拒绝来自 Latch 的粘贴，而逐键输入在拼音键盘上会丢空格、中文没有键码。请人输入，或用 device_press_key 发单个按键。Text input is unavailable; ask the person to type.',
+  'simulator-text-unsupported':
+    '只能输入可打印的 ASCII 字符（字母、数字、常用标点、空格），这段文字里有别的字符，一个字都没有输入；请人在 Device Hub 里输入。Only printable ASCII can be typed; nothing was typed.',
   'simulator-input-rate': '输入太快了，稍后再试。',
   'not-full-access-input':
     '设备输入工具只给完全访问的外部 Harness 会话。The device input tools run only in a full-access session of an external harness.',
@@ -193,7 +193,7 @@ export const DEVICE_TOOL_DEFINITIONS: readonly Definition[] = [
     title: '在模拟器上输入文字',
     kind: 'other',
     description:
-      'Not available yet: the simulator refuses text pasted from outside it, and typing key by key drops spaces on a Pinyin keyboard and cannot type Chinese. The call answers an error; ask the person to type, or press single keys with device_press_key.',
+      "Type printable ASCII (letters, digits, common punctuation, spaces) key by key into the focused field, at most 1000 characters. Only while the device's own keyboard is English (US) QWERTY: on any other keyboard (Pinyin, other layouts) or with any other character the call is refused whole and says why; nothing is typed in part. Tap the field first, then take a screenshot to check the result (the device may auto-correct or capitalise).",
     parameters: object({ udid, text: { type: 'string', maxLength: 1000 } }, ['udid', 'text']),
   },
   {

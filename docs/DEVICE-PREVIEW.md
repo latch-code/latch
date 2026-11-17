@@ -119,6 +119,7 @@ sources:
 | `POST …/boot`、`…/shutdown`、`…/screenshot`（PNG）、`…/open-url`、`…/appearance`、`…/device-hub`、`…/rotate`、`…/launch`、`…/terminate`、`…/privacy` | 先写审计，再执行 |
 | `POST …/record` | `{ action: 'start' }` 先写审计；`'stop'` 回答 `video/mp4`；`'discard'` |
 | `GET …/stream?codec=h264\|jpeg&fps=1～60&size=160～4096` | `application/octet-stream` 的实时画面（`SIMULATOR_STREAM`）；参数各只一次，多余的拒绝；只给运行中的设备 |
+| `POST …/keyframe` | `{}`：页面的解码器要一个关键帧（静止画面上冲刷过、或落后了），让组件为这台设备的所有面板出一个；不写审计（是看） |
 | `POST …/control` | `{ action: 'take' }`：第一次先写审计 `control`，再启动并探测 `idb_companion`，回答各类输入能否用（`SimulatorControlView`）；`'release'` |
 | `POST …/input` | `{ events: [...] }`，1～64 个，按顺序：`touch`（`down`/`move`/`up`，设备点）、`key`、`button`；只收已接管这台设备的那台设备的 |
 
@@ -137,28 +138,33 @@ sources:
 
 - **流。** `GET …/stream` 回答 `application/octet-stream`，自己分帧：13 字节的头（类型、自开始的微秒、载荷长度，都是大端）和载荷。类型：流描述（JSON，编码、`avc1.xxxxxx` 与 avcC、编码尺寸、点数、方向）、H.264 关键帧与非关键帧（AVCC）、JPEG、结束（`device`、`host`、`closed`、`failed`）。第二个面板要同样的设置才共用，不同就 409，不悄悄改别人的。
 - **背压到底。** 路由每写完一条、等套接字 `drain` 后才取下一条；每个面板自己的队列最多 4 帧、8 MiB，满了就清掉，H.264 等下一个关键帧（每台设备同时只要一次），JPEG 直接接着画。组件那边的包装另有上限（见下）。停住不读的页面不让 Host 涨内存。
-- 开着的流每 5 秒把设备标成「面板正在显示」并算使用（闲置关机、录屏都按它）；每条消息前复查设备的范围与凭据。帧只进这个回答：不进日志、审计、主事件流或磁盘。
+- 开着的流每 5 秒把设备标成「面板正在显示」并算使用，同时复查设备的范围与凭据（画面静止、没有消息可查时也查），不再允许就结束；每条消息前也复查。帧只进这个回答：不进日志、审计、主事件流或磁盘。
 - **页面。** 有 WebCodecs 的 `VideoDecoder` 时要 H.264（30 帧、最长边 1280），用 `isConfigSupported` 核对后解码，画到画布上；没有或解码失败就重连要 JPEG（20 帧、最长边 960），用 `createImageBitmap` 画，正在解的没完就跳过新的一张；流回答不可用（组件不在、这个 Xcode 不支持）时退回原来的截图轮询。桌面端页面经 `latch://` 打开（安全上下文），Electron e2e 里核对过 `VideoDecoder` 存在、能解出录下的 H.264；CSP 不用改（画布不需要 `img-src` 以外的来源）。
+- **静止的画面。** 组件在画面不变时只补一帧，而 `VideoDecoder` 会留着最后一帧等后面的数据；所以 150 ms 没有新数据时页面冲刷解码器，把最后一帧画出来。冲刷后解码器要从关键帧开始，页面再收到非关键帧时经 `POST …/keyframe` 要一个（每秒最多一次）。2026-11-17 在真实设备上看到：不冲刷时静止的页面一帧都画不出。
 - **方向。** 组件的帧总是屏幕本身的竖向帧缓冲，内容随界面转。2026-11-17 在 iOS 27.2 上看到：方向 3 时内容的顶边在帧缓冲的左边，4 时在右边；回到主屏幕（iPhone 主屏幕不转）就回到 1。页面按它把画布转正。
 
-**输入。** `SimulatorControl` 只经 `idb_companion`（facebook/idb，MIT）。这是人自己装的：`brew tap facebook/fb && brew install idb-companion`；Latch 只找它（`/opt/homebrew/bin`、`/usr/local/bin`，再 Host 的 PATH 里的绝对目录），不安装、不更新、不随包带，也不需要 Python 的 `idb` 客户端。
+**输入。** `SimulatorControl` 只经 `idb_companion`（facebook/idb，MIT）。这是人自己装的：`brew tap facebook/fb && brew install idb-companion`；Latch 不安装、不更新、不随包带，也不需要 Python 的 `idb` 客户端。只在 Homebrew 的两个位置找它（`/opt/homebrew/bin`、`/usr/local/bin`），并且 `realpath` 之后必须落在同一个 Homebrew 的 `Cellar` 里；从不查 PATH（项目的 `node_modules/.bin` 里同名的程序不然会在第一次接管时运行）。找不到就是「输入不可用」，悬停里有安装命令。
 
-- **只有 Unix 套接字，从不 TCP。** `--grpc-port` 会无认证地监听所有网卡（实测 `TCP *:10899`），所以从不使用。每个伴随进程在 `mkdtemp` 新建的 0700 目录（`latch-idb-xxxxxx`）里以它为工作目录启动，套接字名是相对的 `c.sock`；绝对路径超过 103 字节时报「不可用」（Host 自己连接时也受这个限制）。参数固定：`--udid <列出的 UDID> --grpc-domain-sock c.sock --only simulator --terminate-offline true --idle-shutdown-time 120 --log-level info --log-hid-details false`；环境只有 `PATH`、`HOME`、`DEVELOPER_DIR`、`USER`、`LOGNAME`（不带 `FBSIMULATORCONTROL_*`，那会把坐标写进它的日志）；标准输入关闭，标准错误丢掉，标准输出只读开头 4 KiB 里的就绪行 `{"grpc_path":"c.sock"}`。
+- **只有 Unix 套接字，从不 TCP。** `--grpc-port` 会无认证地监听所有网卡（实测 `TCP *:10899`），所以从不使用。每个伴随进程在 `mkdtemp` 新建的 0700 目录（`latch-idb-xxxxxx`）里以它为工作目录启动，套接字名是相对的 `c.sock`；绝对路径超过 103 字节时报「不可用」（Host 自己连接时也受这个限制）。参数固定：`--udid <列出的 UDID> --grpc-domain-sock c.sock --only simulator --terminate-offline true --idle-shutdown-time 120 --log-level info --log-hid-details false`；环境只有 `PATH`、`HOME`、`DEVELOPER_DIR`、`USER`、`LOGNAME`（不带 `FBSIMULATORCONTROL_*`，那会把坐标写进它的日志）；标准输入关闭，标准错误丢掉，标准输出只读开头 4 KiB 里的就绪行 `{"grpc_path":"c.sock"}`。 伴随进程的标准输出一出现端口（`port`）而不是 `grpc_path`，Host 立即 SIGKILL 并报不可用，不等就绪超时。**同一用户的任何进程**在伴随进程活着时都能连上这个套接字、直接发 HID，不经 Latch 的工具门与审计：应用层的检查不是 OS 沙箱；这样的进程本来也能自己运行 `idb_companion` 或 `simctl`。
 - **结束。** 人放手（`release`）且没有 Agent 在用、设备关机、Host 停止时 SIGTERM（它自己删掉套接字和 `$TMPDIR/IDB/<uuid>`），2 秒不退就 SIGKILL，再删目录；没人持有、Agent 一分钟没用的也结束。Host 崩溃时连接随进程断开，伴随进程 120 秒没有请求就自己退出（实测：开着的 `hid` 流算活动，断开后 5 秒的设置 5 秒后退出），设备关机时也退出。Host 启动时删除崩溃留下的 `latch-idb-xxxxxx`：只删本用户的、名字完全符合、不是链接、里面的套接字已经连不上的；另一个 Host 正在用的不动。
-- **线上的格式。** Host 用 `node:http2` 连这个套接字，自己编码需要的几条消息（`idb.CompanionService/hid` 的 `HIDEvent`：触摸按下与抬起到一个点、按钮、键码；`describe` 的空请求），字段号取自 idb 公开的 proto，并逐字节对过 idb 客户端发给真实伴随进程的消息（`apps/host/test/fixtures/idb-companion.json`）。没有 gRPC 或 protobuf 的库。
-- **探测与能力。** 人第一次在画面上按下、按 Home 或锁屏、或按下发到设备的键时接管（先写审计）：启动伴随进程，用 `describe`（无害，顺便读出以点计的屏幕尺寸）证明它回答，再开一条长连的 `hid` 流。回答按类给出：触摸、按键、按钮可用或不可用及原因（`idb-missing`、`companion-failed`、`no-answer`、`socket-path`）；文字不可用（`paste-refused`）；两指不可用（`single-touch`）。不可用时面板写「输入不可用」，原因与安装命令在悬停里，「在 Device Hub 中打开」照旧。
-- **人的输入。** 页面把指针的移动按动画帧合成一条，按顺序一次一个 `POST …/input`（同终端的输入）；Host 按顺序写进那条 `hid` 流（再按下一个新点就是移动，实测拖动连续）。坐标是设备点，在屏幕内（竖着或横着）才收；每台设备每秒 240 个事件、最多攒 480 个，超出 429。这条流只回答「已写出」：流断了或伴随进程退出，这次就报错并改成不可用，从不报成功；放手时还按着的手指先抬起。
-- **人与 Agent 共用。** 同一台设备的输入按手势串行：Agent 的手势等人的手指抬起，人的按下也等 Agent 的手势做完，各最多等 10 秒（`simulator-busy`）；谁都不被锁住。
+- **线上的格式。** Host 用 `node:http2` 连这个套接字，自己编码需要的几条消息（`idb.CompanionService/hid` 的 `HIDEvent`：触摸按下与抬起到一个点、按钮、键码；`describe` 的空请求），字段号取自 idb 公开的 proto，并逐字节对过 idb 客户端发给真实伴随进程的消息（`apps/host/test/fixtures/idb-companion.json`）。没有 gRPC 或 protobuf 的库。 伴随进程的回答有界：`hid` 流最多一条消息、`describe` 一条，全部不超过 256 KiB；超出就取消这次调用并报错，坏掉或伪装的程序只让这次输入失败，不让 Host 涨内存。`describe` 10 秒不回答就是 `no-answer`。
+- **探测与能力。** 人第一次在画面上按下、按 Home 或锁屏、或按下发到设备的键时接管（先写审计）：启动伴随进程，用 `describe`（无害，顺便读出以点计的屏幕尺寸）证明它回答，再开一条长连的 `hid` 流。回答按类给出：触摸、按键、按钮、文字可用或不可用及原因（`idb-missing`、`companion-failed`、`no-answer`、`socket-path`）；两指不可用（`single-touch`）。不可用时面板写「输入不可用」，原因与安装命令在悬停里，「在 Device Hub 中打开」照旧。本机的几台设备（`run` 加 `all`）可以同时接管同一台模拟器，各记一次审计；它们共用一条流、一个手指状态与一个限速，后按下的会移动先按着的手指。
+- **人的输入。** 页面把指针的移动按动画帧合成一条，按顺序一次一个 `POST …/input`（同终端的输入）；Host 按顺序写进那条 `hid` 流（再按下一个新点就是移动，实测拖动连续）。坐标是设备点，在屏幕内（竖着或横着）才收；每台设备每秒 240 个事件、最多攒 480 个，超出 429。`POST …/input` 回答 `{ written }`：只表示按顺序写进了伴随进程的流，不表示设备已经收到（设备的确认只在流结束时来）：流断了或伴随进程退出，这次就报错并改成不可用，从不报成功；放手时还按着的手指先抬起。
+- **放手与超时。** 关掉窗口时页面来不及放手，所以一台设备两分钟没有输入就当作放手；按下的手指 10 秒没有新事件就抬起，丢掉的抬起不会一直占着设备。一条 `hid` 流 5 秒内没有回答状态就取消并当作没送到。
+- **转向。** 设备一转，`idb_companion` 就结束开着的 `hid` 流（日志：「Simulator display changed during the operation」），却不告诉客户端，之后写进去的事件都丢了。所以 Host 在画面的方向或尺寸变了、或经面板与 Agent 旋转之后丢掉人的那条流，下一个输入开新的。2026-11-17 在真实设备上用 Electron 验证：转到横向后点按仍落在页面上对的地方。
+- **人与 Agent 共用，人总是优先。** 同一台设备的输入按手势串行。人一按下，Agent 正在做的手势立即停下（取消它的流，伴随进程抬起手指），那次调用回答 `simulator-input-failed`，人接着就用；人的等待排在所有等着的 Agent 前面。Agent 的手势等人的手指抬起，最多等 10 秒（`simulator-busy`）。伴随进程一次只接一条 `hid` 流（实测：人的长连流开着时 Agent 的短流被拒），所以 Agent 的手势先结束人的流，人下一次输入再开新的。Agent 的手势也随这一轮的取消停下（抬起手指）。
 - **Agent 的输入**每次开一条短的 `hid` 流，写完结束，伴随进程回答状态 0 才算成功，否则 `simulator-input-failed`。
-- **文字不可用，如实说。** 不逐键打字：键盘是拼音时空格会被吞（实测 `ui text "ab c"` 成了 `abc`），中文没有键码。改走「`simctl pbcopy` 写进设备剪贴板、再粘贴」也不可靠：2026-11-17 在 iOS 27.2 上，经 idb 送的 ⌘V 在 Safari 网页和设置的搜索框里都触发了粘贴，但从设备外写进的内容到了 App 里是空的（同一设备里复制的内容用 ⌘V 能贴出来，人用编辑菜单的「粘贴」也能贴出空格与中文）。编辑菜单的位置随界面与语言变化，不能可靠地点到，所以文字报「不可用」（`device_type_text` 回答错误）；面板的键盘开关只发 ⏎ ⌫ ⇥ ⎋ 与方向键，不发字符。另外，`simctl pbcopy` 在没有 UTF-8 `LANG` 的环境里会失败（退出码 5）。
+- **文字：只在 English (US) 键盘上逐键输入可打印的 ASCII。** 不粘贴：2026-11-17 在 iOS 27.2 上，经 idb 送的 ⌘V 触发了粘贴，但从设备外（`simctl pbcopy`）写进的内容到了 App 里是空的。逐键输入在拼音键盘上会被组字吞掉空格（实测 `ab c` 成了 `abc`），在别的布局上同一个键是别的字符；所以每次输入前读设备当前的键盘：`simctl spawn <UDID> defaults read com.apple.keyboard.preferences KeyboardLastUsed`。实测（`latch-text-check`）：它随人切换键盘立即变（`en_US@sw=QWERTY;hw=Automatic` 与 `zh_Hans-Pinyin@sw=Pinyin-Simplified;hw=Automatic` 来回）；设备还没用过键盘时没有这个值。只有它是 `en_US@sw=QWERTY`（硬件布局自动或 US）时才逐键输入，`Hello World 1@#, ok.` 原样到了页面；拼音时整段拒绝并说出当前键盘，有非 ASCII 字符时整段拒绝，读不到键盘时拒绝并请人先点一下输入框——从不输入一半，也不悄悄丢字。Agent 每次重新读；人的打字一秒内复用上一次的读数。经 idb 的 accessibility 描述也能看到键盘，但「下一个键盘」按钮的值是下一个、不是当前的，所以不用它。设备自己的自动更正与首字母大写照常起作用，Agent 应截图核对。
 - **按钮**：Home、锁屏、侧键、Siri（Apple Pay 在这条通道上 idb 回答未实现，不提供）。**旋转**仍走公开的 `devicectl`。**两指与捏合不可用**：idb 的触摸只带一个点、没有手指编号。
 
 **实测**（2026-11-17，Xcode 27.2、iOS 27.2，`latch-live-check`（iPhone 17 Pro）上自己建的设备，经测试 Host 与真实路由，设备里 Safari 打开 127.0.0.1 的测试页由页面回报事件，这台 Mac 负载 15～87）：
-- 接管：触摸、按键、按钮可用，文字 `paste-refused`，两指 `single-touch`；`lsof -nP -iTCP -sTCP:LISTEN` 里没有 idb。
+- 接管：触摸、按键、按钮可用，两指 `single-touch`；`lsof -nP -iTCP -sTCP:LISTEN` 里没有 idb。（文字当时不可用；后来按键盘检测开放，见上。）
 - 点按：10 次，从发出 `POST …/input` 到页面的 `touchstart` 中位 15 ms（3～861 ms，最慢的是第一次，含打开 `hid` 流），点在页面 (201, 98)，即屏幕 (201, 160) 减去 62 点的状态栏。
 - 拖动：一次 `touchstart`、19 次 `touchmove`（20 个请求、每个两点）、一次 `touchend`，页面跟着滚动。
 - 按键：先点输入框，⌫ 与 ⏎ 到达页面（`Backspace`、`Enter`）。Home：页面变为隐藏，画面随之换成主屏幕。
-- 画面（测试页上有持续转动的方块）：H.264 最长边 1280，首帧 0.7 s，约 34 帧/秒、约 50 KB/s；JPEG 最长边 960，首帧 1.4 s，约 26 帧/秒、约 685 KB/s。按页面算的帧率比所求的上限略高，是组件按节拍补帧与这里计时的误差，没有细究。
+- 画面（测试页上有持续转动的方块）：H.264 最长边 1280，首帧 0.7 s，约 34 帧/秒、约 50 KB/s；JPEG 最长边 960，首帧 1.4 s，约 26 帧/秒、约 685 KB/s。按到达时间算的帧率比所求的上限略高；按流里的时间戳算，H.264 在 30 帧的上限下是 29.8 帧/秒（147 帧、4.9 s，相邻两帧最短 30.6 ms），上限是守住的，多出来的是到达的抖动。
+- 人接管着设备、手指按着、画面开着时设备关机（`simctl shutdown`）：伴随进程自己退出（`--terminate-offline`），画面以 `device` 结束，之后的输入回答 409，组件也不在了。
+- 人的长连流开着时，Agent 的短流被伴随进程拒绝（回答非 0）；所以 Agent 的手势先结束人的流，人下一次输入再开新的。这样人点、Agent 点（约 200 ms，含等状态）、人再点，三次都到了页面。
 - Host 停止后：没有 `idb_companion`、`latch-simulator`，临时文件夹里没有 `latch-idb-`、`latch-sim-`、`latch-rec-` 目录。审计只有打开地址与一次 `control`。
 
 ## 面板
@@ -167,9 +173,9 @@ sources:
 
 - **顶栏：** 设备选择（名字 · 系统版本，运行中的带绿点；菜单末尾「新建设备…」），紧跟一个状态词：未启动、启动中、运行中、关机中、录屏 0:07、Agent 正在使用、失败（原因在悬停里）。右边是缩放（缩小、「适应」或百分比、放大）与启动或关机。关机只对 Latch 启动的设备可用，其他运行中的设备悬停写「只关闭 Latch 启动的设备」。设备在运行但还没有第一帧画面时仍写「启动中」；Host 的启动在 `simctl bootstatus` 报告系统起来之后才返回。
 - **中间：** 运行中的设备画面（实时画面的画布，没有实时画面时是截图）放在凹陷底色上，一圈细边。在实时画面上：按一下是点按，按住是长按，拖动是实时拖动（离开画面时贴着屏幕边），滚轮是一次短的拖动（滚轮停 150 ms 后抬起）；指针按缩放、转向与留边换算成设备点。其他时候是设备列表，选中的一行末尾有「启动」，按钮位置始终保留，不跳动。
-- **状态词**另有「输入不可用」（琥珀色，原因与安装命令在悬停里）；「运行中」的悬停说是实时画面还是截图画面。
+- **状态词**另有「输入不可用」（琥珀色，原因与安装命令在悬停里）与「文字未输入」（琥珀色，悬停里是原因，如设备当前的键盘）；「运行中」的悬停说是实时画面还是截图画面，以及两指不可用。
 - **缩放：** 「适应」按面板缩小（不超过 1:1）；点数值在适应与 1:1 之间切换；1:1 是一个设备像素对一个屏幕像素（按 `devicePixelRatio`）；放大缩小按 25%～200% 的档位，比适应还小就回到适应。放大后画面在面板里滚动。每台设备的缩放记在这个浏览器里（`latch.device-zoom.<UDID>`），读写失败就只对这次有效。
-- **底栏：** 向左旋转、向右旋转（各 90°，Host 有 devicectl 时才有；这台设备不能转时不可用）、截图、录屏、主屏幕、锁屏、键盘输入到设备、标注截图 | App、日志、打开地址、外观 | 「在 Device Hub 中打开」（悬停：在 Device Hub 里查看和点按）。键盘开关打开时，焦点不在 Latch 的输入框里，⏎ ⌫ ⇥ ⎋ 与方向键发到设备；字母、空格和中文不发（文字不可用，原因在悬停里）。面板隐藏、换设备或设备停止时放手（`release`），键盘开关也关掉。窄面板里底栏换行。
+- **底栏：** 向左旋转、向右旋转（各 90°，Host 有 devicectl 时才有；这台设备不能转时不可用）、截图、录屏、主屏幕、锁屏、键盘输入到设备、标注截图 | App、日志、打开地址、外观 | 「在 Device Hub 中打开」（悬停：在 Device Hub 里查看和点按）。键盘开关打开时，焦点在设备面板里、不在 Latch 的输入框里，⏎ ⌫ ⇥ ⎋ 与方向键发到设备，可打印的 ASCII 字符作为文字发到设备（只在设备的 English (US) 键盘上输入，否则「文字未输入」并说明）；重音字母、中文与输入法组字不发，并写「文字未输入」。录屏与日志只在 Host 能运行长期的 simctl 子进程时出现（启动脚本给了），和以前一样。面板隐藏、换设备或设备停止时放手（`release`），键盘开关也关掉。窄面板里底栏换行。
 - **新建设备：** 对话框里填名字，选系统与设备类型（iPhone、iPad、其他分组）；新设备出现在列表里并被选中，不启动。
 - **App：** 画面下面的窗格，列出设备上不隐藏的 App（人的在前，标「你的」，bundle id 在悬停里），每个有启动、结束和一个盾牌：对窗格顶上选的那一项权限「允许、拒绝、重置」。预先授权解决不了已经弹出的系统对话框。
 - **日志：** 同一位置的窗格：顶上选「全部进程」或一个 App，状态词（实时、已结束、失败），读得慢时写「少 N 行」；暂停（新行先留着）、清空、关闭。只留最新的 1000 行，只在这里显示，不保存；关闭窗格、换设备或隐藏面板就结束流。
@@ -204,11 +210,12 @@ sources:
 | `device_launch` | R1 | 按 `device_apps` 里的 bundle id 启动，不带参数 |
 | `device_tap` | R1 | 在一个点（设备点）点按；`holdMs` 超过 500 是长按 |
 | `device_swipe` | R1 | 一指从一点拖到另一点，`durationMs` 默认 300、最长 5000 |
-| `device_type_text` | R1 | 现在总是回答错误：文字不可用（见[实时画面与输入](#实时画面与输入)）；请人输入 |
+| `device_type_text` | R1 | 逐键输入可打印的 ASCII（≤ 1000 字符），只在设备当前的键盘是 English (US) 时；否则整段拒绝并说明（见[实时画面与输入](#实时画面与输入)） |
 | `device_press_key` | R1 | return、delete、tab、escape 或方向键 |
 | `device_press_button` | R1 | home、lock、side、siri |
 
 - **输入工具只给完全访问的会话**：外部 Harness 在 L3、由人发起（同上一条的数据范围规则）的一轮，经 `latch-browser` 与工具网关；没有人值守的运行（我的 Agent 的定时运行）、内置 Harness（L1，从来不是完全访问）都没有。内置 Harness 的工具列表里不列它们，网关只在 Host 能找 idb（启动脚本给了 `idb`）时列出。和人的输入走同一条路径、按手势串行；先写审计再执行，设备要在列表里且在运行；送不到就报错。
+- **看的是 Harness 的档位，不是会话里选的权限模式**：外部 ACP Harness 一律是 L3，即使人在会话里选了更严的模式，Agent 仍拿得到输入工具，是否先问由 Agent 自己的 CLI 决定（同浏览器工具）。**「只在这台 Mac」指面板的画面与输入路由**；数据范围是「全部」的手机发起的一轮，在桌面端开着时 L3 的 Agent 仍能点按，截图进入会话（同现有的 `device_screenshot`）。
 - **有了输入，`device_open_url` 的本机地址规则对这些会话就不再是界限**：能点按的 Agent 可以在 Safari 里打开任何地址。这条规则只对没有输入工具的会话还有意义；完全访问会话的 shell 本来也能运行 `simctl openurl`。
 
 - **没有 `device_record`。** 工具结果只能带文字与图片，录下的视频进不了会话，也不该落进项目文件夹；有 shell 的 Agent 可以自己运行 `xcrun simctl io <UDID> recordVideo`，指引里也这样说，或请人在面板里录。
@@ -252,7 +259,7 @@ Xcode 自带的 MCP 桥 `xcrun mcpbridge`（Apple 文档：Giving external agent
 
 ## 尚未实现
 
-- **文字输入：不可用。** 原因见[实时画面与输入](#实时画面与输入)：逐键会丢空格、打不出中文，从设备外粘贴到了 App 里是空的。文字请在 Device Hub 的窗口里输入。
+- **中文与其他非 ASCII 文字、拼音等键盘上的文字：不可用。** 原因见[实时画面与输入](#实时画面与输入)：没有键码，粘贴到 App 里是空的，组字会改写逐键输入。请在 Device Hub 的窗口里输入。
 - **两指与捏合：不可用。** idb 的触摸只有一个点。
 - **没装 idb_companion 时的输入。** Latch 不替人安装；悬停里给出安装命令，点按在 Device Hub 的窗口里。
 - **接手与交还 Xcode 的设备会话。** Xcode 的调用由 Agent 进程里的桥直接交给 `mcpbridge`，结果不经 Host，Host 拦不住在途的点按，所以只显示状态，不提供接手；面板的画面也不从 Agent 的工具结果更新，只来自 simctl 截图。
@@ -273,9 +280,9 @@ Xcode 自带的 MCP 桥 `xcrun mcpbridge`（Apple 文档：Giving external agent
 | 面板模型与「+」、缩放、标注、日志的行数上限、快捷键 | `apps/web/test/device-panel.test.ts` |
 | 真实 Electron 与真实 simctl（只用名字以 `latch-` 开头的设备，没有 Xcode 时跳过）；替身下的底栏：缩放、旋转、录屏下载、标注、App、日志、新建对话框、⌘S；`LATCH_E2E_SIMULATOR` 指定的真实 `latch-` 设备上的公开命令 | `e2e/desktop-device.e2e.ts` |
 | 画面组件的分帧（畸形、超长、未知类型）、包装的监管、背压与关闭升级（替身组件）、真实组件的三个自检（协议拒绝、超长请求、只写不读、方法改变；不连设备） | `apps/host/test/simulator-helper.test.ts` |
-| 实时画面的分帧、停住的读者有上限、只等下一个关键帧且只要一次、共享与不同设置被拒、关闭时生成器 `return()` 与组件 `close()`、设备关机与 Host 停止；新路由只收 `host.sock` 上 `run` 加 `all`、参数校验、`control` 先审计且只一次、只收接管者的输入、坐标与事件校验、没装 idb 时回答不可用；Agent 的输入工具：完全访问的外部 Harness 经网关、审计只有计数、文字回答错误、内置 Harness 没有 | `apps/host/test/simulator-live.test.ts` |
-| 手写的消息与 idb 客户端发给真实伴随进程的字节逐字节相同、读真实的 `describe` 回答；伴随进程的固定参数（没有 `--grpc-port`）、0700 目录、环境、套接字路径太长、没装、不就绪、拒绝的投递报错；崩溃遗留目录只删连不上的；人与 Agent 的串行、限速、放手时抬起手指、关机与 Host 停止时结束 | `apps/host/test/simulator-input.test.ts` |
+| 实时画面的分帧、停住的读者有上限、只等下一个关键帧且只要一次、共享与不同设置被拒、关闭时生成器 `return()` 与组件 `close()`、设备关机与 Host 停止；新路由只收 `host.sock` 上 `run` 加 `all`、参数校验、`control` 先审计且只一次、只收接管者的输入、坐标与事件校验、没装 idb 时回答不可用；Agent 的输入工具：完全访问的外部 Harness 经网关、审计只有计数、非 ASCII 文字整段拒绝、内置 Harness 没有；无人值守的一轮、低于 L3 的 Harness、数据范围不是「全部」的设备发起的一轮都被拒绝，不启动伴随进程、不写 `simulator.call` | `apps/host/test/simulator-live.test.ts` |
+| 手写的消息与 idb 客户端发给真实伴随进程的字节逐字节相同、读真实的 `describe` 回答；伴随进程的固定参数（没有 `--grpc-port`）、0700 目录、环境、套接字路径太长、没装、不就绪、拒绝的投递报错；崩溃遗留目录只删连不上的；人与 Agent 的串行、人总是优先（三个 Agent 长按时人的点按在一个手势之内落下）、这一轮取消时 Agent 停下、限速、放手时抬起手指、关机与 Host 停止时结束；只认 Homebrew 的 Cellar、说要监听端口就立即 SIGKILL、回答超量或 `describe` 不回答即失败、伴随进程不读时积压 64 KiB 后报错；文字只在 English (US) 键盘上逐键输入，别的键盘、读不到键盘或非 ASCII 整段拒绝 | `apps/host/test/simulator-input.test.ts` |
 | 页面：流的分帧、描述校验、解码器的选择、转向的画法、指针在缩放与留边与横屏下换算成设备点、输入按帧合并且不丢按下抬起、只发命名的键 | `apps/web/test/device-live.test.ts` |
-| Electron：`VideoDecoder` 解出录下的 H.264、点击变成正确设备点的点按、Home 与按键、没装 idb 时的「输入不可用」与悬停（替身组件与替身伴随进程，来自 `@latch/testkit`，不进 `dist/`） | `e2e/desktop-device.e2e.ts` |
+| Electron：`VideoDecoder` 解出录下的 H.264、点击变成正确设备点的点按、Home 与按键、没装 idb 时的「输入不可用」与悬停（替身组件与替身伴随进程，来自 `@latch/testkit`，不进 `dist/`）；`LATCH_E2E_LIVE_DEVICE` 指定的运行中 `latch-` 设备上用真实组件与 `idb_companion`：设备里的页面回报点击位置，转向后画面转正、点按仍落在对的地方 | `e2e/desktop-device.e2e.ts` |
 
 这些用例不证明 Xcode 的设备交互真的能用：2026-11-17 在 Xcode 设置允许外部 Agent、打开一个临时示例工程后，桥从 Xcode 之外回答了 `initialize` 与 `tools/list`（54 个工具），但第一次 `DeviceInteractionStartSession` 回答「This agent isn't approved to use Xcode's tools yet. Call XcodeOpenWorkspace or XcodeNewProject first」——批准要由人在 Xcode 弹出的提示里做，还没有做，所以点按、输入与截图都没有真实验证。

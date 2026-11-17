@@ -28,14 +28,14 @@ import type {
   SimulatorPrivacyAction,
   SimulatorPrivacyService,
 } from '@latch/protocol'
-import { api, errorMessage } from '../../core/api.ts'
+import { ApiError, api, errorMessage } from '../../core/api.ts'
 import { currentShell } from '../../core/shell.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
 import { DeviceAnnotate, type AnnotateImage } from './DeviceAnnotate.tsx'
 import { DeviceApps, SERVICE_LABELS } from './DeviceApps.tsx'
 import { DeviceLogs } from './DeviceLogs.tsx'
 import { DeviceScreen, type LiveState } from './DeviceScreen.tsx'
-import { InputSender, deviceKey, inputReason, parseControl } from './live.ts'
+import { InputSender, deviceInput, inputReason, parseControl } from './live.ts'
 import { NewDeviceDialog } from './NewDeviceDialog.tsx'
 import {
   frameDelay,
@@ -110,7 +110,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   const [live, setLive] = useState<{ udid: string; state: LiveState; reason?: string; size?: { width: number; height: number } }>()
   /** What input can do on the device, once the person took control of it. */
   const [control, setControl] = useState<{ udid: string; view: SimulatorControlView }>()
-  const [inputFailure, setInputFailure] = useState<{ udid: string; text: string }>()
+  const [inputFailure, setInputFailure] = useState<{ udid: string; text: string; textOnly?: true }>()
   const [keysOn, setKeysOn] = useState(false)
   const addressInput = useRef<HTMLInputElement>(null)
   const canvas = useRef<HTMLDivElement>(null)
@@ -219,6 +219,12 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
         await api(`simulators/${target}/input`, { method: 'POST', body: { events }, timeoutMs: 15_000 })
       },
       error => {
+        // Text the device's keyboard would change is refused whole; control stays.
+        const code = error instanceof ApiError ? error.code : undefined
+        if (code === 'simulator-text-unavailable' || code === 'simulator-text-unsupported') {
+          setInputFailure({ udid: target, text: errorMessage(error), textOnly: true })
+          return
+        }
         setInputFailure({ udid: target, text: errorMessage(error) })
         // Control lapsed (the Host restarted or the companion stopped): the next touch takes it again.
         if (sender.current?.udid === target) sender.current = undefined
@@ -234,8 +240,18 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     const target = udid
     const held = controlRef.current
     if (held?.udid === target) {
-      const kind = event.type === 'touch' ? held.view.touch : event.type === 'key' ? held.view.keys : held.view.buttons
+      const kind =
+        event.type === 'touch'
+          ? held.view.touch
+          : event.type === 'key'
+            ? held.view.keys
+            : event.type === 'text'
+              ? held.view.text
+              : held.view.buttons
+      if (event.type === 'text') setInputFailure(current => (current?.textOnly ? undefined : current))
       if (kind.available) senderFor(target).send(event)
+      // Not sent, and said so: never dropped without a word.
+      else setInputFailure({ udid: target, text: inputReason(kind), ...(event.type === 'text' ? { textOnly: true as const } : {}) })
       return
     }
     if (takingRef.current?.udid === target) {
@@ -273,16 +289,21 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     }
   }, [shown, udid, running])
 
-  // Keys to the device while the toggle is on, never while a field of Latch's has focus.
+  // Keys to the device while the toggle is on and focus is in the panel, never while a field of Latch's has focus.
+  const section = useRef<HTMLElement>(null)
   useEffect(() => {
     if (!keysOn || !running) return
     const onKey = (event: globalThis.KeyboardEvent) => {
-      if (isEditable(event.target)) return
-      const key = deviceKey(event)
-      if (!key) return
+      if (isEditable(event.target) || !(event.target instanceof Node) || !section.current?.contains(event.target)) return
+      const input = deviceInput(event)
+      if (!input) return
       event.preventDefault()
       event.stopPropagation()
-      sendInput({ type: 'key', key })
+      if (input === 'refused') {
+        if (udid) setInputFailure({ udid, text: '只能逐键输入可打印的 ASCII 字符；中文等请在 Device Hub 里输入', textOnly: true })
+        return
+      }
+      sendInput(input)
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
@@ -571,7 +592,8 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   // Running, but no picture yet: still starting as far as anyone can see.
   const pictured = liveOn || (running && frame !== undefined && frame.udid === udid)
   const controlHere = control && control.udid === udid ? control.view : undefined
-  const inputFailed = inputFailure && inputFailure.udid === udid ? inputFailure.text : undefined
+  const inputFailed = inputFailure && inputFailure.udid === udid && !inputFailure.textOnly ? inputFailure.text : undefined
+  const textFailed = inputFailure && inputFailure.udid === udid && inputFailure.textOnly ? inputFailure.text : undefined
   const inputOff = controlHere && !controlHere.touch.available ? inputReason(controlHere.touch) : inputFailed
   const booting = pending === 'boot' || device?.state === 'booting' || (running && !pictured && !failed)
   const stopping = pending === 'shutdown' || device?.state === 'shutting-down'
@@ -593,12 +615,22 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     <StatusWord tone="running" title="一个会话的 Agent 正经 Xcode 的设备工具使用它">
       Agent 正在使用
     </StatusWord>
+  ) : pictured && textFailed ? (
+    <StatusWord tone="warn" title={textFailed}>
+      文字未输入
+    </StatusWord>
   ) : pictured && inputOff ? (
     <StatusWord tone="warn" title={`${inputOff} · 可在 Device Hub 中点按`}>
       输入不可用
     </StatusWord>
   ) : pictured ? (
-    <StatusWord tone="done" title={liveOn ? '实时画面' : `截图画面${liveHere?.reason ? ` · ${liveHere.reason}` : ''}`}>
+    <StatusWord
+      tone="done"
+      title={
+        liveOn
+          ? `实时画面 · 两指不可用：${inputReason(controlHere?.twoFingers ?? { available: false, reason: 'single-touch' })}`
+          : `截图画面${liveHere?.reason ? ` · ${liveHere.reason}` : ''}`
+      }>
       运行中
     </StatusWord>
   ) : device ? (
@@ -617,7 +649,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   const tools = running && !annotating
 
   return (
-    <section className="sim-panel" aria-label="设备" tabIndex={-1} onKeyDown={onKeyDown}>
+    <section ref={section} className="sim-panel" aria-label="设备" tabIndex={-1} onKeyDown={onKeyDown}>
       <div className="sim-toolbar" role="toolbar" aria-label="设备">
         <Menu
           label="选择设备"
@@ -834,11 +866,16 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
           tooltip={
             controlHere && !controlHere.keys.available
               ? inputReason(controlHere.keys)
-              : `⏎ ⌫ ⇥ ⎋ 与方向键发到设备 · 文字：${inputReason(controlHere?.text ?? { available: false, reason: 'paste-refused' })}`
+              : controlHere && !controlHere.text.available
+                ? `⏎ ⌫ ⇥ ⎋ 与方向键发到设备 · 文字：${inputReason(controlHere.text)}`
+                : '按键与 ASCII 文字发到设备 · 文字只在设备的 English (US) 键盘上输入'
           }
           pressed={keysOn}
           disabled={!tools || !desktop || (controlHere !== undefined && !controlHere.keys.available)}
-          onClick={() => setKeysOn(value => !value)}
+          onClick={() => {
+            setKeysOn(value => !value)
+            section.current?.querySelector<HTMLElement>('canvas.sim-live')?.focus()
+          }}
         />
         <IconButton
           size="xs"

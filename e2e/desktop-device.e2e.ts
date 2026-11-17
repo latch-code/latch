@@ -2,7 +2,9 @@
 // only: every simctl call that names any other device is refused before it runs. Skipped where Xcode or such a device
 // is missing. The device is shut down at the end, and Device Hub is never opened.
 import { _electron, type ElectronApplication, type Page } from '@playwright/test'
+import { spawn as spawnChild } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { createServer, type Server } from 'node:http'
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -10,6 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
+import { attachSimulatorHelper } from '@latch/host/simulator-live'
 import { spawnSimctl, xcrunDevicectl, xcrunSimctl, type SimctlChild, type SimctlRunner, type SimctlSpawner } from '@latch/host/simulators'
 import type { McpServerView } from '@latch/protocol'
 import { FAKE_ACP_AGENT, fakeIdbCompanion, fakeSimulatorLive } from '@latch/testkit'
@@ -401,6 +404,7 @@ function toolbarFakes() {
       )
     if (args[0] === 'io') await copyFile(resolve('apps/web/public/icon.png'), args.at(-1)!)
     if (args[0] === 'ui' && args.length === 3) return ok('light\n')
+    if (args[0] === 'spawn' && args.includes('KeyboardLastUsed')) return ok('en_US@sw=QWERTY;hw=Automatic\n')
     return ok()
   }
   const devicectl: SimctlRunner = async args => {
@@ -578,7 +582,22 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await expect.poll(async () => Number(await screen.getAttribute('data-fps')), { timeout: 20_000 }).toBeGreaterThan(0)
       expect(await panel.locator('img.sim-screen').count()).toBe(0)
       const tools = panel.getByRole('toolbar', { name: '设备工具', exact: true })
-      for (const name of ['主屏幕', '锁屏', '键盘输入到设备']) await tools.getByRole('button', { name, exact: true }).waitFor()
+      // Every tool of the bar is there, the record and logs buttons too.
+      for (const name of [
+        '向左旋转',
+        '向右旋转',
+        '截图',
+        '录屏',
+        '主屏幕',
+        '锁屏',
+        '键盘输入到设备',
+        '标注截图',
+        'App',
+        '日志',
+        '打开地址',
+        '在 Device Hub 中打开',
+      ])
+        await tools.getByRole('button', { name, exact: true }).waitFor()
       await capture(page, 'live')
       // A click at (201, 160) points of the 402 × 874 screen: where the picture is drawn in the canvas (contain, by its
       // own 220 × 480 pixels), scaled.
@@ -607,11 +626,19 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await tools.getByRole('button', { name: '主屏幕', exact: true }).click()
       await expect.poll(() => idb.events.some(event => event.kind === 'button' && event.button === 1)).toBe(true)
       await tools.getByRole('button', { name: '键盘输入到设备', exact: true }).click()
-      await page.keyboard.press('a')
+      // Printable ASCII is typed on the device's English (US) keyboard: Shift+a is A.
+      await page.keyboard.press('Shift+A')
       await page.keyboard.press('Enter')
       await expect.poll(() => idb.events.some(event => event.kind === 'key' && event.code === 40)).toBe(true)
-      expect(idb.events.some(event => event.kind === 'key' && event.code === 4)).toBe(false)
+      expect(idb.events.filter(event => event.kind === 'key').map(event => (event as { code: number }).code)).toEqual(
+        expect.arrayContaining([225, 4]),
+      )
       await capture(page, 'live-keyboard')
+      // A narrower window: the bar wraps, nothing is dropped.
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(1100, 800))
+      for (const name of ['录屏', '日志', '在 Device Hub 中打开'])
+        expect(await tools.getByRole('button', { name, exact: true }).isVisible()).toBe(true)
+      await capture(page, 'live-narrow')
       expect(idb.starts).toHaveLength(1)
       expect(idb.starts[0]!.args).not.toContain('--grpc-port')
     } finally {
@@ -657,6 +684,147 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
     } finally {
       await application?.close()
       await testHost.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 300_000)
+})
+
+/** A booted `latch-` device named by LATCH_E2E_LIVE_DEVICE, for the live picture and input with the real helper and idb. */
+async function liveDevice(): Promise<{ udid: string; name: string } | undefined> {
+  const name = latchEnv(process.env, 'E2E_LIVE_DEVICE')
+  if (process.platform !== 'darwin' || !name?.startsWith('latch-')) return undefined
+  const listed = await xcrunSimctl(['list', 'devices', '--json', 'available'], { timeoutMs: 30_000, maxBytes: 4 * 1024 * 1024 })
+  if (listed.code !== 0) return undefined
+  const all = Object.values(
+    (JSON.parse(listed.stdout.toString('utf8')) as { devices: Record<string, Array<{ udid: string; name: string; state: string }>> })
+      .devices,
+  ).flat()
+  const found = all.find(item => item.name === name && item.state === 'Booted')
+  return found ? { udid: found.udid, name: found.name } : undefined
+}
+
+const live = electronE2E ? await liveDevice() : undefined
+
+/** A page for the device's Safari on 127.0.0.1 that reports where it was clicked. */
+async function clickPage(): Promise<{ server: Server; url: string; clicks: Array<{ x: number; y: number; id: string }>; loads: number[] }> {
+  const clicks: Array<{ x: number; y: number; id: string }> = []
+  const loads: number[] = []
+  const page = `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><style>body{margin:0}#tap{height:200px;background:#cde}</style><div id="tap">TAP</div><script>addEventListener('load',()=>navigator.sendBeacon('/r','{"load":1}'));document.addEventListener('click',e=>navigator.sendBeacon('/r',JSON.stringify({x:e.clientX,y:e.clientY,id:e.target.id})))</script>`
+  const server = createServer((req, res) => {
+    if (req.method === 'POST') {
+      let body = ''
+      req.on('data', chunk => (body += chunk))
+      req.on('end', () => {
+        const event = JSON.parse(body) as { load?: number; x: number; y: number; id: string }
+        if (event.load) loads.push(Date.now())
+        else clicks.push(event)
+        res.end()
+      })
+      return
+    }
+    res.writeHead(200, { 'content-type': 'text/html' })
+    res.end(page)
+  })
+  await new Promise<void>(done => server.listen(0, '127.0.0.1', done))
+  const address = server.address()
+  return { server, url: `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}/`, clicks, loads }
+}
+
+/**
+ * The live picture and input on a real booted `latch-` device (LATCH_E2E_LIVE_DEVICE), with the real latch-simulator and
+ * the person's own idb_companion: the page in the device reports the click; a rotation turns the picture and taps still
+ * land. Every simctl, devicectl, helper and companion must name that device or only list.
+ */
+describe.skipIf(!electronE2E || !live)('native desktop shell: 设备 live picture on the latch- device', () => {
+  it('shows the real picture, taps where the person clicks, and keeps doing so turned sideways', async () => {
+    const target = live!
+    const guard = (args: readonly string[], kind: string) => {
+      if (!(kind === 'simctl' && args[0] === 'list') && !args.includes(target.udid)) throw new Error(`refused ${kind} ${args[0]}`)
+    }
+    const run: SimctlRunner = async (args, options) => (guard(args, 'simctl'), xcrunSimctl(args, options))
+    const devicectl: SimctlRunner = async (args, options) => (guard(args, 'devicectl'), xcrunDevicectl(args, options))
+    const page = await clickPage()
+    const root = await mkdtemp(join(tmpdir(), 'latch-electron-device-real-live-'))
+    await mkdir(OUT, { recursive: true })
+    const testHost = await startTestHost({
+      demo: true,
+      hostName: '验收电脑',
+      uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
+      simulators: {
+        run,
+        devicectl,
+        // Recording and logs, so the whole bottom bar is there as the start script gives it.
+        spawn: (args, options) => (guard(args, 'simctl'), spawnSimctl(args, options)),
+        idleMs: 0,
+        live: async udid => {
+          guard([udid], 'helper')
+          return attachSimulatorHelper(udid)
+        },
+        idb: {
+          spawn: (binary, args, options) => {
+            guard(args, 'idb_companion')
+            return spawnChild(binary, [...args], { cwd: options.cwd, env: options.env, stdio: ['ignore', 'pipe', 'ignore'] })
+          },
+        },
+      },
+    })
+    let application: ElectronApplication | undefined
+    try {
+      const { app, page: window } = await launchDesktop(testHost, join(root, 'electron'))
+      application = app
+      const panel = await openDevicePanel(window, testHost)
+      await panel.locator('.sim-picker').click()
+      await window.getByRole('menuitemradio', { name: new RegExp(`^${target.name}`, 'u') }).click()
+      const desktop = await testHost.enroll({ listener: 'unix', name: 'Opener' })
+      // Upright first: a run that stopped half way may have left the device turned.
+      for (let turn = 0; turn < 4; turn++) {
+        const { orientation } = await desktop.json<{ orientation: string | null }>(`simulators/${target.udid}/orientation`)
+        if (orientation === 'portrait') break
+        await desktop.json(`simulators/${target.udid}/rotate`, { body: { direction: 'left' } }).catch(() => undefined)
+      }
+      await desktop.json(`simulators/${target.udid}/open-url`, { body: { url: page.url } })
+      await expect.poll(() => page.loads.length, { timeout: 60_000 }).toBeGreaterThan(0)
+      const screen = panel.locator('canvas.sim-live')
+      await expect.poll(async () => Number(await screen.getAttribute('data-fps')), { timeout: 30_000 }).toBeGreaterThan(0)
+      await new Promise(done => setTimeout(done, 3000))
+      // Where content point (x, y) is drawn: the picture's box inside the canvas, scaled by the content's size in points.
+      const at = async (x: number, y: number, size: { width: number; height: number }) => {
+        const box = await screen.evaluate(element => {
+          const canvas = element as HTMLCanvasElement
+          const rect = canvas.getBoundingClientRect()
+          const scale = Math.min(canvas.clientWidth / canvas.width, canvas.clientHeight / canvas.height)
+          return {
+            left: rect.left + canvas.clientLeft + (canvas.clientWidth - canvas.width * scale) / 2,
+            top: rect.top + canvas.clientTop + (canvas.clientHeight - canvas.height * scale) / 2,
+            width: canvas.width * scale,
+            height: canvas.height * scale,
+          }
+        })
+        await window.mouse.click(box.left + (box.width * x) / size.width, box.top + (box.height * y) / size.height)
+      }
+      await at(201, 160, { width: 402, height: 874 })
+      await expect.poll(() => page.clicks.length, { timeout: 15_000 }).toBeGreaterThan(0)
+      expect(page.clicks[0]).toMatchObject({ id: 'tap' })
+      expect(Math.abs(page.clicks[0]!.x - 201)).toBeLessThanOrEqual(3)
+      const tools0 = panel.getByRole('toolbar', { name: '设备工具', exact: true })
+      for (const name of ['录屏', '日志', '主屏幕', '锁屏', '键盘输入到设备'])
+        await tools0.getByRole('button', { name, exact: true }).waitFor()
+      await capture(window, 'real-live')
+      // Turned: a new description arrives with the content sideways, the canvas turns, and a click still lands.
+      const tools = panel.getByRole('toolbar', { name: '设备工具', exact: true })
+      await tools.getByRole('button', { name: '向右旋转', exact: true }).click()
+      await expect.poll(() => screen.getAttribute('data-orientation'), { timeout: 30_000 }).toMatch(/^[34]$/u)
+      await new Promise(done => setTimeout(done, 2000))
+      await at(437, 200, { width: 874, height: 402 })
+      await expect.poll(() => page.clicks.length, { timeout: 15_000 }).toBeGreaterThan(1)
+      expect(page.clicks[1]).toMatchObject({ id: 'tap' })
+      await capture(window, 'real-live-turned')
+      await tools.getByRole('button', { name: '向左旋转', exact: true }).click()
+      await expect.poll(() => screen.getAttribute('data-orientation'), { timeout: 30_000 }).toBe('1')
+    } finally {
+      await application?.close()
+      await testHost.close()
+      page.server.close()
       await rm(root, { recursive: true, force: true })
     }
   }, 300_000)

@@ -85,7 +85,7 @@ export const SIMULATOR_ACTIONS = {
     /** Whether a tap was held (a long press). */
     held: z.boolean().optional(),
     /** The length of text an agent asked to type; never the text. */
-    textLength: z.number().int().min(0).max(1_000_000).optional(),
+    textLength: z.number().int().min(0).max(1000).optional(),
     key: z.enum(SIMULATOR_KEYS).optional(),
     button: z.enum(SIMULATOR_BUTTONS).optional(),
     risk: z.enum(['R0', 'R1', 'R2']),

@@ -2039,8 +2039,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
     startupCleanup.push(() => simulators.stop())
     // The live picture (latch-simulator) and input (the person's idb_companion) end with the device and the Host.
-    const simulatorLive = new SimulatorLive(options.simulators?.live ? { attach: options.simulators.live } : {})
-    const simulatorControl = new SimulatorControl(options.simulators?.idb ? { idb: options.simulators.idb } : {})
+    const simulatorControl = new SimulatorControl(
+      options.simulators?.idb ? { idb: options.simulators.idb, keyboard: udid => simulators.activeKeyboard(udid) } : {},
+    )
+    const simulatorLive = new SimulatorLive({
+      ...(options.simulators?.live ? { attach: options.simulators.live } : {}),
+      displayChanged: udid => simulatorControl.displayChanged(udid),
+    })
     simulators.onDeviceEnded(udid => {
       simulatorLive.deviceEnded(udid)
       simulatorControl.deviceEnded(udid)
@@ -5347,6 +5352,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         if (tool === 'device_rotate') {
           const orientation = await simulators.rotate(udid, direction)
+          if (typeof udid === 'string') simulatorControl.displayChanged(udid)
           return { ok: true, text: `${String(udid)} is now ${orientation}.` }
         }
         if (tool === 'device_apps') {
@@ -5355,13 +5361,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           return { ok: true, text: lines.length ? lines.join('\n') : 'No apps.' }
         }
         if (inputArgs) {
-          if (inputArgs.tool === 'device_type_text') return { ok: false, error: 'simulator-text-unavailable' }
           const device = await simulators.device(inputArgs.udid)
           if (device.state !== 'booted') return { ok: false, error: 'simulator-not-booted' }
           simulators.touch(device.udid)
           simulators.agentCall(input.sessionId, 'start', device.udid)
           if (inputArgs.tool === 'device_tap') {
-            await simulatorControl.tap(device.udid, inputArgs.x, inputArgs.y, inputArgs.holdMs)
+            await simulatorControl.tap(device.udid, inputArgs.x, inputArgs.y, inputArgs.holdMs, input.signal)
             return { ok: true, text: inputArgs.holdMs && inputArgs.holdMs > 500 ? 'Long-pressed.' : 'Tapped.' }
           }
           if (inputArgs.tool === 'device_swipe') {
@@ -5370,14 +5375,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               { x: inputArgs.fromX, y: inputArgs.fromY },
               { x: inputArgs.toX, y: inputArgs.toY },
               inputArgs.durationMs,
+              input.signal,
             )
             return { ok: true, text: 'Swiped.' }
           }
           if (inputArgs.tool === 'device_press_key') {
-            await simulatorControl.key(device.udid, inputArgs.key)
+            await simulatorControl.key(device.udid, inputArgs.key, input.signal)
             return { ok: true, text: `Pressed ${inputArgs.key}.` }
           }
-          await simulatorControl.button(device.udid, inputArgs.button)
+          if (inputArgs.tool === 'device_type_text') {
+            await simulatorControl.typeText(device.udid, inputArgs.text, input.signal)
+            return { ok: true, text: `Typed ${inputArgs.text.length} characters; take a screenshot to check the field.` }
+          }
+          await simulatorControl.button(device.udid, inputArgs.button, input.signal)
           return { ok: true, text: `Pressed ${inputArgs.button}.` }
         }
         if (tool === 'device_launch') {

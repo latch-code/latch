@@ -174,7 +174,26 @@ export function streamQuery(codec: 'h264' | 'jpeg'): string {
   return codec === 'h264' ? 'codec=h264&fps=30&size=1280' : 'codec=jpeg&fps=20&size=960'
 }
 
-/** The panel's keys to the device: only named single keys; printable characters are not sent (text is unavailable). */
+/**
+ * What a key press in the panel sends while keys go to the device: a printable ASCII character as text (the Host types
+ * it only on the device's English (US) keyboard and says so otherwise), or one of the named keys. Anything else typed
+ * (an accented letter, an input method's composition) is `refused`, never dropped without a word.
+ */
+export function deviceInput(event: {
+  key: string
+  metaKey: boolean
+  ctrlKey: boolean
+  altKey: boolean
+}): SimulatorInputEvent | 'refused' | undefined {
+  const key = deviceKey(event)
+  if (key) return { type: 'key', key }
+  if (event.metaKey || event.ctrlKey) return undefined
+  if (event.key === 'Process' || event.key === 'Dead') return 'refused'
+  if ([...event.key].length !== 1) return undefined
+  return /^[\x20-\x7e]$/u.test(event.key) && !event.altKey ? { type: 'text', text: event.key } : 'refused'
+}
+
+/** The panel's named single keys. */
 export function deviceKey(event: { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean }): SimulatorKey | undefined {
   if (event.metaKey || event.ctrlKey || event.altKey) return undefined
   switch (event.key) {
@@ -204,7 +223,7 @@ const REASONS: Record<string, string> = {
   'companion-failed': 'idb_companion 没有启动或已退出',
   'no-answer': 'idb_companion 没有回答',
   'socket-path': '临时目录的路径太长',
-  'paste-refused': '设备拒绝来自 Latch 的粘贴；逐键输入会丢空格、打不出中文',
+  keyboard: '文字只在设备的 English (US) 键盘上逐键输入可打印的 ASCII；拼音等键盘会改写它',
   'single-touch': 'idb 的触摸只有一个点',
   unsupported: '这台电脑上没有输入',
 }
@@ -257,6 +276,12 @@ export class InputSender {
 
   send(event: SimulatorInputEvent): void {
     const last = this.queue.at(-1)
+    // Typed characters waiting together go as one text event.
+    if (event.type === 'text' && last?.type === 'text' && last.text.length + event.text.length <= 64) {
+      last.text += event.text
+      void this.drain()
+      return
+    }
     if (event.type === 'touch' && event.phase === 'move' && last?.type === 'touch' && last.phase === 'move') {
       this.queue[this.queue.length - 1] = event
     } else this.queue.push(event)

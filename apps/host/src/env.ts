@@ -16,7 +16,14 @@ export const HOST_ENV_NAMES = [
 ] as const
 
 /** Every variable Latch reads through `latchEnv`: the Host's settings and the test runner's own switches. */
-type LatchEnvName = (typeof HOST_ENV_NAMES)[number] | 'BROWSER_PATH' | 'E2E_UI_DIR' | 'ELECTRON_E2E' | 'E2E_CLIPBOARD' | 'E2E_SIMULATOR'
+type LatchEnvName =
+  | (typeof HOST_ENV_NAMES)[number]
+  | 'BROWSER_PATH'
+  | 'E2E_UI_DIR'
+  | 'ELECTRON_E2E'
+  | 'E2E_CLIPBOARD'
+  | 'E2E_SIMULATOR'
+  | 'E2E_LIVE_DEVICE'
 
 /** `LATCH_<name>`. An empty value counts as set: callers decide what an empty value means. */
 export function latchEnv(env: NodeJS.ProcessEnv, name: LatchEnvName): string | undefined {

@@ -6,11 +6,11 @@
 // Host speaks HTTP/2 to it with `node:http2` and hand-encodes the few messages it needs (simulator-idb-wire.ts).
 import { spawn } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access, lstat, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
+import { access, lstat, mkdtemp, readdir, realpath, rm, stat } from 'node:fs/promises'
 import http2 from 'node:http2'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
-import { delimiter, isAbsolute, join } from 'node:path'
+import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import type { SimulatorInputReason } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
@@ -18,7 +18,10 @@ import { GrpcReader, encodeHidEvent, grpcFrame, screenPoints, type HidEvent } fr
 
 const UDID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/u
 /** Where Homebrew puts it on Apple silicon and on Intel; then the Host's own PATH, absolute entries only. */
-const KNOWN_PLACES = ['/opt/homebrew/bin/idb_companion', '/usr/local/bin/idb_companion']
+const KNOWN_PLACES = [
+  { link: '/opt/homebrew/bin/idb_companion', cellar: '/opt/homebrew/Cellar' },
+  { link: '/usr/local/bin/idb_companion', cellar: '/usr/local/Cellar' },
+]
 /** A Unix socket's name is at most 104 bytes on macOS, with its terminating zero. */
 const SOCKET_PATH_LIMIT = 103
 const SOCKET_NAME = 'c.sock'
@@ -29,6 +32,8 @@ const CLOSE_MS = 2_000
 /** The companion exits by itself after this long with no request: what bounds one left by a Host that crashed. */
 const IDLE_SECONDS = 120
 const STDOUT_LIMIT = 4096
+/** How long the end of a hid stream may wait for the companion's status. */
+const END_MS = 5_000
 /** A hid stream whose writes are not taken past this is broken. */
 const WRITE_BACKLOG = 64 * 1024
 
@@ -82,16 +87,22 @@ async function executable(path: string): Promise<boolean> {
   }
 }
 
-/** The installed companion: Homebrew's places first, then each absolute directory on the Host's PATH. */
-export async function locateIdbCompanion(path = process.env.PATH ?? '', places = KNOWN_PLACES): Promise<string | undefined> {
-  const candidates = [
-    ...places,
-    ...path
-      .split(delimiter)
-      .filter(isAbsolute)
-      .map(dir => join(dir, 'idb_companion')),
-  ]
-  for (const candidate of candidates) if (await executable(candidate)) return candidate
+/**
+ * The installed companion: only Homebrew's two places, and only when the program there resolves into Homebrew's own
+ * Cellar. Never PATH: a same-named program in a project's `node_modules/.bin` would otherwise run on first control.
+ */
+export async function locateIdbCompanion(
+  places: ReadonlyArray<{ link: string; cellar: string }> = KNOWN_PLACES,
+): Promise<string | undefined> {
+  for (const { link, cellar } of places) {
+    try {
+      const target = await realpath(link)
+      const root = await realpath(cellar)
+      if (target.startsWith(`${root}/`) && (await executable(target))) return target
+    } catch {
+      // Not there.
+    }
+  }
   return undefined
 }
 
@@ -146,10 +157,18 @@ interface CallResult {
   messages: Buffer[]
 }
 
-/** One gRPC call's answer: its messages, and its status from the trailers (or the headers, for a trailers-only answer). */
-function settle(request: http2.ClientHttp2Stream, limit: number): Promise<CallResult> {
-  const reader = new GrpcReader(limit)
+/** What one call's answer may hold, whoever is at the socket: so many messages, so many bytes in all. */
+const ANSWER_BYTES = 256 * 1024
+
+/**
+ * One gRPC call's answer: its messages, and its status from the trailers (or the headers, for a trailers-only answer).
+ * An answer past `count` messages or 256 KiB in all is cancelled and fails: a broken or impostor program at the socket
+ * costs this call, never the Host's memory.
+ */
+function settle(request: http2.ClientHttp2Stream, count: number): Promise<CallResult> {
+  const reader = new GrpcReader(ANSWER_BYTES)
   const messages: Buffer[] = []
+  let bytes = 0
   return new Promise((resolve, reject) => {
     let status: number | undefined
     const read = (headers: http2.IncomingHttpHeaders) => {
@@ -160,17 +179,24 @@ function settle(request: http2.ClientHttp2Stream, limit: number): Promise<CallRe
     request.on('trailers', read)
     request.on('data', (chunk: Buffer) => {
       try {
+        bytes += chunk.length
+        if (bytes > ANSWER_BYTES) throw new RangeError('idb_companion answered too much')
         messages.push(...reader.push(chunk))
+        if (messages.length > count) throw new RangeError('idb_companion answered too many messages')
       } catch (error) {
         request.close(http2.constants.NGHTTP2_CANCEL)
         reject(error)
       }
     })
     request.on('error', reject)
-    request.on('close', () => {
+    // The answer is complete once the companion ended its side, even while ours is still open: a hid stream it ended
+    // (checked: rotating the device ends one with「Simulator display changed」) must not take more events silently.
+    const done = () => {
       if (status === undefined) reject(new Error('idb_companion closed the call without a status'))
       else resolve({ status, messages })
-    })
+    }
+    request.on('end', done)
+    request.on('close', done)
   })
 }
 
@@ -182,10 +208,13 @@ export class HidStream {
 
   constructor(request: http2.ClientHttp2Stream) {
     this.request = request
-    this.result = settle(request, 1024)
+    // HIDResponse is one empty message, sent as the stream ends.
+    this.result = settle(request, 1)
     this.result.then(
       ({ status }) => {
-        if (status !== 0) this.failure ??= new Error(`idb_companion answered status ${status}`)
+        // Ended by the companion, whatever the status: nothing more can be delivered on it.
+        this.failure ??= new Error(`idb_companion ended the hid stream (status ${status})`)
+        if (!this.request.closed) this.request.close(http2.constants.NGHTTP2_CANCEL)
       },
       error => {
         this.failure ??= error instanceof Error ? error : new Error(String(error))
@@ -209,11 +238,25 @@ export class HidStream {
     }
   }
 
-  /** Ends the stream; resolves only once the companion answered status 0 for every event sent. */
-  async end(): Promise<void> {
+  /**
+   * Ends the stream; resolves only once the companion answered status 0 for every event sent. One that has not answered
+   * within five seconds is cancelled and counts as not delivered.
+   */
+  async end(timeoutMs = END_MS): Promise<void> {
     if (!this.request.closed) this.request.end()
-    const { status } = await this.result
-    if (status !== 0) throw new Error(`idb_companion answered status ${status}`)
+    let timer: NodeJS.Timeout | undefined
+    const late = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        this.cancel()
+        reject(new Error('idb_companion did not answer'))
+      }, timeoutMs)
+    })
+    try {
+      const { status } = await Promise.race([this.result, late])
+      if (status !== 0) throw new Error(`idb_companion answered status ${status}`)
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /** Abandons it: the companion lifts a finger left down when a stream is cancelled. */
@@ -302,6 +345,8 @@ export class IdbCompanion {
     child.once('error', () => exited())
     const ended = () => stop(child, exit).finally(() => rm(dir, { recursive: true, force: true }))
     // It prints `{"grpc_path":"c.sock"}` once it listens; nothing else of its output is read or kept.
+    // A companion that says it listens on a port instead (TCP: every interface, no authentication) is killed at once.
+    let tcp = false
     const ready = await new Promise<boolean>(resolve => {
       let text = ''
       const timer = setTimeout(() => resolve(false), options.readyMs ?? READY_MS)
@@ -309,6 +354,13 @@ export class IdbCompanion {
       child.stdout?.on('data', (chunk: Buffer) => {
         if (text.length >= STDOUT_LIMIT) return
         text += chunk.toString('utf8').slice(0, STDOUT_LIMIT - text.length)
+        if (/port/iu.test(text)) {
+          tcp = true
+          child.kill('SIGKILL')
+          clearTimeout(timer)
+          resolve(false)
+          return
+        }
         if (text.includes(`"grpc_path":"${SOCKET_NAME}"`)) {
           clearTimeout(timer)
           resolve(true)
@@ -321,7 +373,7 @@ export class IdbCompanion {
     })
     if (!ready) {
       await ended()
-      throw new IdbUnavailable('companion-failed', 'idb_companion 没有启动')
+      throw new IdbUnavailable('companion-failed', tcp ? 'idb_companion 要监听网络端口，已停止' : 'idb_companion 没有启动')
     }
     const session = http2.connect('http://localhost', { createConnection: () => net.connect(socket) })
     const companion = new IdbCompanion(udid, child, dir, session, exit)
@@ -330,12 +382,12 @@ export class IdbCompanion {
   }
 
   /** The screen in points, from `describe`: also the harmless call that proves the companion answers. */
-  async describe(): Promise<{ width: number; height: number }> {
+  async describe(timeoutMs = CALL_MS): Promise<{ width: number; height: number }> {
     const request = this.call('/idb.CompanionService/describe')
     request.end(grpcFrame(Buffer.alloc(0)))
-    const timer = setTimeout(() => request.close(http2.constants.NGHTTP2_CANCEL), CALL_MS)
+    const timer = setTimeout(() => request.close(http2.constants.NGHTTP2_CANCEL), timeoutMs)
     try {
-      const { status, messages } = await settle(request, 256 * 1024)
+      const { status, messages } = await settle(request, 1)
       const size = status === 0 && messages[0] ? screenPoints(messages[0]) : undefined
       if (!size) throw new IdbUnavailable('no-answer', 'idb_companion 没有回答')
       return size

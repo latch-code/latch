@@ -122,13 +122,18 @@ export type SimulatorKey = (typeof SIMULATOR_KEYS)[number]
 export const SIMULATOR_BUTTONS = ['home', 'lock', 'side', 'siri'] as const
 export type SimulatorButton = (typeof SIMULATOR_BUTTONS)[number]
 
-/** `POST /simulators/:udid/input`: at most this many events, in order, in device points. */
-export const SIMULATOR_INPUT_LIMITS = { events: 64 } as const
+/** `POST /simulators/:udid/input`: at most this many events, in order, in device points; text per event; text per agent call. */
+export const SIMULATOR_INPUT_LIMITS = { events: 64, textChars: 64, agentTextChars: 1000 } as const
 export type SimulatorInputEvent =
   /** One finger: down, moves while down, up. A second finger is not available. */
   | { type: 'touch'; phase: 'down' | 'move' | 'up'; x: number; y: number }
   | { type: 'key'; key: SimulatorKey }
   | { type: 'button'; button: SimulatorButton }
+  /**
+   * Printable ASCII typed key by key, only while the device's own keyboard is English (US) QWERTY: anything else is
+   * refused with the reason, never typed half.
+   */
+  | { type: 'text'; text: string }
 
 /** Why a kind of input is unavailable; the panel shows it in a hover. */
 export type SimulatorInputReason =
@@ -140,8 +145,8 @@ export type SimulatorInputReason =
   | 'no-answer'
   /** The private socket's path is too long for this Mac. */
   | 'socket-path'
-  /** The device refuses pasted text from outside it (checked on iOS 27.2). */
-  | 'paste-refused'
+  /** Text is typed only on the English (US) QWERTY keyboard (checked when it is typed): this keyboard is another. */
+  | 'keyboard'
   /** idb's touch carries one point and no finger number. */
   | 'single-touch'
   /** This Host was started without input (tests, or not macOS). */

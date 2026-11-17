@@ -962,6 +962,22 @@ export class Simulators {
     }
   }
 
+  /**
+   * The keyboard the device last used, as iOS keeps it (`KeyboardLastUsed` in `com.apple.keyboard.preferences`, read
+   * with `simctl spawn … defaults read`): such as `en_US@sw=QWERTY;hw=Automatic` or
+   * `zh_Hans-Pinyin@sw=Pinyin-Simplified;hw=Automatic`. Checked on iOS 27.2: it changes the moment the person switches
+   * keyboards. Undefined when the device has not used a keyboard yet or the answer is anything else.
+   */
+  async activeKeyboard(udid: unknown): Promise<string | undefined> {
+    const device = await this.bootedDevice(udid)
+    const result = await this.simctl(
+      ['spawn', device.udid, 'defaults', 'read', 'com.apple.keyboard.preferences', 'KeyboardLastUsed'],
+      TIMEOUTS.action,
+    )
+    const text = result.stdout.toString('utf8').trim()
+    return result.code === 0 && /^[A-Za-z0-9_.@=;-]{1,120}$/u.test(text) ? text : undefined
+  }
+
   // ── Rotation: `devicectl device orientation`, which addresses a simulator by its UDID once it is running ──
 
   /** devicectl's orientation answer: its `result`, or undefined when it failed or did not say. */

@@ -17,15 +17,23 @@ import {
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { authFailure } from '../access.ts'
-import { json, jsonBody, safeDecode } from '../http-util.ts'
-import { SIMULATOR_RUNTIME_ID, SIMULATOR_TYPE_ID, isBundleId, simulatorName, simulatorUrl, type Simulators } from '../simulators.ts'
+import { json, jsonBody, optionalJsonBody, safeDecode } from '../http-util.ts'
+import {
+  SIMULATOR_RUNTIME_ID,
+  SIMULATOR_TYPE_ID,
+  isBundleId,
+  isSimulatorUdid,
+  simulatorName,
+  simulatorUrl,
+  type Simulators,
+} from '../simulators.ts'
 import type { AuditDetail } from '../audit.ts'
 import type { SimulatorControl } from '../simulator-control.ts'
 import type { SimulatorLive } from '../simulator-live.ts'
 import type { Caller, DeviceCaller, RouteContext, RouteModule } from './registry.ts'
 
 const SIMULATOR_PATH =
-  /^\/link\/api\/simulators\/([^/]+)\/(frame|screenshot|boot|shutdown|open-url|appearance|device-hub|orientation|rotate|record|apps|launch|terminate|privacy|logs|stream|control|input)$/u
+  /^\/link\/api\/simulators\/([^/]+)\/(frame|screenshot|boot|shutdown|open-url|appearance|device-hub|orientation|rotate|record|apps|launch|terminate|privacy|logs|stream|keyframe|control|input)$/u
 const openSchema = z.strictObject({ url: z.string().max(2048) })
 const appearanceSchema = z.strictObject({ appearance: z.enum(['light', 'dark']) })
 const rotateSchema = z.strictObject({ direction: z.enum(['left', 'right']) })
@@ -55,6 +63,7 @@ const inputSchema = z.strictObject({
         z.strictObject({ type: z.literal('touch'), phase: z.enum(['down', 'move', 'up']), x: coordinate, y: coordinate }),
         z.strictObject({ type: z.literal('key'), key: z.enum(SIMULATOR_KEYS) }),
         z.strictObject({ type: z.literal('button'), button: z.enum(SIMULATOR_BUTTONS) }),
+        z.strictObject({ type: z.literal('text'), text: z.string().min(1).max(SIMULATOR_INPUT_LIMITS.textChars) }),
       ]),
     )
     .min(1)
@@ -224,7 +233,11 @@ export function createSimulatorRoutes(
       'x-accel-buffering': 'no',
     })
     simulators.watching(udid)
-    const marking = setInterval(() => simulators.watching(udid), WATCHING_EVERY_MS)
+    // Also on a still screen, when no frame comes to check against: a device no longer allowed loses the picture.
+    const marking = setInterval(() => {
+      if (!allowed()) watch.close()
+      else simulators.watching(udid)
+    }, WATCHING_EVERY_MS)
     marking.unref()
     try {
       for (;;) {
@@ -363,7 +376,16 @@ export function createSimulatorRoutes(
         if (device.state !== 'booted') throw new AppError(409, 'simulator-not-booted', '设备未启动')
         simulators.touch(device.udid)
         await control.input(device.udid, owner, events)
-        json(res, { delivered: events.length })
+        // Written to the companion's stream in order; the device's own confirmation comes only as a stream ends.
+        json(res, { written: events.length })
+        return true
+      }
+      if (action === 'keyframe') {
+        // Looking, not acting: no body to speak of, no record; only a device with a live picture now.
+        await optionalJsonBody(req)
+        if (!isSimulatorUdid(udid)) throw new AppError(400, 'invalid-input', '设备标识无效')
+        authorize(caller)
+        json(res, { asked: live.keyframe(udid) })
         return true
       }
       const device = await simulators.device(udid)
@@ -426,7 +448,9 @@ export function createSimulatorRoutes(
         const { direction } = rotateSchema.parse(await jsonBody(req))
         authorize(caller)
         await audited(caller, { action: 'rotate', udid: device.udid, direction })
-        json(res, { orientation: await simulators.rotate(device.udid, direction) })
+        const orientation = await simulators.rotate(device.udid, direction)
+        control.displayChanged(device.udid)
+        json(res, { orientation })
         return true
       }
       if (action === 'record') {
