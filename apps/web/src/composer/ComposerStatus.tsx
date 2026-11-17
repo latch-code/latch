@@ -6,10 +6,10 @@ import { ProviderTile } from '../components/BrandTile.tsx'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { findProvider, harnessName } from '../composerChoice.ts'
 import { formatTokens } from '../format.ts'
-import { ROUTE_NOTE, routeService } from './ModelControl.tsx'
+import { GATEWAY_NAME, ROUTE_NOTE, routeService } from './ModelControl.tsx'
 import { costClause, type SessionTotals } from './sessionTotals.ts'
 
-/** Which way the model goes, in the words its menu uses: 「OpenAI · 经 Latch」, or the Harness and its model, 「Codex · GPT-5.5」. */
+/** Which way the model goes, in the words its menu uses: 「OpenAI · 经 Latch 网关」, or the Harness and its model, 「Codex · GPT-5.5」. */
 export interface StatusRoute {
   text: string
   /** The menu's sentence about it, for the tooltip. */
@@ -37,13 +37,13 @@ export function statusRoute(
     const service = routeService(catalog, input.route)
     const provider = findProvider(catalog, input.route.providerId)
     return {
-      text: `${service.name} · ${service.unusable?.words ?? '经 Latch'}`,
+      text: `${service.name} · ${service.unusable?.words ?? `经 ${GATEWAY_NAME}`}`,
       note: service.unusable?.note ?? ROUTE_NOTE(name).detail,
       ...(provider ? { provider } : {}),
     }
   }
   const provider = input.picked ? findProvider(catalog, input.picked.providerId) : undefined
-  if (provider) return { text: `${provider.name} · 经 Latch`, note: ROUTE_NOTE(name).detail, provider }
+  if (provider) return { text: `${provider.name} · 经 ${GATEWAY_NAME}`, note: ROUTE_NOTE(name).detail, provider }
   return { text: input.model ? `${name} · ${input.model}` : name }
 }
 

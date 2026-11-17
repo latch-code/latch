@@ -162,16 +162,40 @@ export interface BoardItem<T extends string> {
   disabledReason?: string
 }
 
-export interface BoardSource<T extends string> {
+/** A headed group of a source's items, for a source that holds several (a gateway, each service it forwards to). */
+export interface BoardGroup<T extends string> {
   id: string
-  /** Its full name, over the list while it is shown and the rail button's tooltip. */
   label: string
-  /** A 16px tile or glyph for the rail. */
-  icon: ReactNode
-  /** More about the source (where its requests go): on hover of its rail entry and heading; on a phone, under the row of sources while it is chosen. */
+  /** A 16px tile before the heading. */
+  media?: ReactNode
+  /** Right after the heading's name: a short mark such as 实验性. */
+  tag?: ReactNode
+  /** More about the group: on hover of its heading; on a phone, tapping the heading shows it. Never a row. */
   hint?: string | undefined
   items: Array<BoardItem<T>>
 }
+
+export interface BoardSource<T extends string> {
+  id: string
+  /** Its name: the rail entry's accessible name, and the list's heading while it has no groups. */
+  label: string
+  /** The rail entry's tooltip when it says a few words more than the name (「Latch 网关 · 实验性」). */
+  tip?: string | undefined
+  /** A 16px tile or glyph for the rail. */
+  icon: ReactNode
+  /** More about the source, on its heading as a group's `hint` is; never on the rail. */
+  hint?: string | undefined
+  /** Its items under one heading, its name; or `groups`, each under its own. */
+  items?: Array<BoardItem<T>>
+  groups?: Array<BoardGroup<T>>
+}
+
+/** A source's items as headed groups: its own groups, or its items under its name. */
+function groupsOf<T extends string>(source: BoardSource<T>): Array<BoardGroup<T>> {
+  if (source.groups) return source.groups
+  return [{ id: source.id, label: source.label, ...(source.hint ? { hint: source.hint } : {}), items: source.items ?? [] }]
+}
+const itemsOf = <T extends string>(source: BoardSource<T>) => groupsOf(source).flatMap(group => group.items)
 
 export interface BoardLevel<L extends string> {
   value: L
@@ -280,7 +304,7 @@ export function PickerBoard<T extends string, L extends string>({
   const phone = useMediaQuery(PHONE_QUERY) || layout === 'sheet'
   const open = useLayerOpen()
   const close = useLayerClose()
-  const home = sources.find(source => source.items.some(item => item.value === value))?.id ?? sources[0]?.id
+  const home = sources.find(source => itemsOf(source).some(item => item.value === value))?.id ?? sources[0]?.id
   const [viewed, setViewed] = useState(home)
   const [query, setQuery] = useState(request?.query ?? '')
   const [highlighted, setHighlighted] = useState<T | undefined>(value)
@@ -294,11 +318,15 @@ export function PickerBoard<T extends string, L extends string>({
   // A search asked for (a slash argument) fills the field, now if the board is open, or when it next opens.
   const [seenRequest, setSeenRequest] = useState(request)
   const [asked, setAsked] = useState<string | undefined>(undefined)
+  // The search the board was opened on (a slash argument): Escape closes over it, as over an empty field; only what the
+  // person typed is cleared first.
+  const [given, setGiven] = useState('')
   let waiting = asked
   if (request !== seenRequest) {
     setSeenRequest(request)
     if (request && open) {
       setQuery(request.query)
+      setGiven(request.query)
       setTarget({ to: request.query ? 'search' : 'list' })
     } else if (request) {
       waiting = request.query
@@ -313,6 +341,7 @@ export function PickerBoard<T extends string, L extends string>({
     if (open) {
       setViewed(home)
       setQuery(waiting ?? '')
+      setGiven(waiting ?? '')
       setAsked(undefined)
       setHighlighted(value)
       setTarget({ to: waiting ? 'search' : focus })
@@ -345,11 +374,18 @@ export function PickerBoard<T extends string, L extends string>({
   const shownSource = sources.find(source => source.id === viewed) ?? sources[0]
   const match = (item: BoardItem<T>) =>
     searchMatch ? searchMatch(item, query) : item.label.toLowerCase().includes(query.trim().toLowerCase())
+  // A heading per group: while searching, every source's groups that match, each with its source's mark.
   const sections = query.trim()
-    ? sources.map(source => ({ source, items: source.items.filter(match) })).filter(section => section.items.length)
+    ? sources
+        .flatMap(source =>
+          groupsOf(source).map(group => ({ key: `${source.id}\u0000${group.id}`, source, group, items: group.items.filter(match) })),
+        )
+        .filter(section => section.items.length)
     : shownSource
-      ? [{ source: shownSource, items: shownSource.items }]
+      ? groupsOf(shownSource).map(group => ({ key: `${shownSource.id}\u0000${group.id}`, source: shownSource, group, items: group.items }))
       : []
+  // On a phone, which has no hover: the heading whose note is shown, tapped open.
+  const [noted, setNoted] = useState<string | undefined>(undefined)
   const visible = sections.flatMap(section => section.items)
   const now = highlighted !== undefined && visible.some(item => item.value === highlighted) ? highlighted : value
   const shownLevels = levels(now)
@@ -375,7 +411,8 @@ export function PickerBoard<T extends string, L extends string>({
     setViewed(sourceId)
     setQuery('')
     const source = sources.find(item => item.id === sourceId)
-    const first = source?.items.find(item => item.value === value) ?? source?.items[0]
+    const listed = source ? itemsOf(source) : []
+    const first = listed.find(item => item.value === value) ?? listed[0]
     setHighlighted(first?.value)
   }
 
@@ -427,7 +464,7 @@ export function PickerBoard<T extends string, L extends string>({
       event.preventDefault()
       const first = visible.find(item => item.disabledReason === undefined)
       if (first) chooseItem(first)
-    } else if (event.key === 'Escape' && query) {
+    } else if (event.key === 'Escape' && query && query !== given) {
       event.preventDefault()
       event.stopPropagation()
       setQuery('')
@@ -444,60 +481,85 @@ export function PickerBoard<T extends string, L extends string>({
 
   // Each row's place in the whole list, for the keys printed on the first nine.
   const offsets = sections.map((_, index) => sections.slice(0, index).reduce((sum, section) => sum + section.items.length, 0))
-  const items = sections.map((section, sectionIndex) => (
-    <div
-      key={section.source.id}
-      className="ui-board-section"
-      role="group"
-      aria-label={section.source.label}
-      {...(section.source.hint ? { 'aria-description': section.source.hint } : {})}>
-      <Tooltip content={section.source.hint}>
-        <div className="ui-board-heading" aria-hidden="true">
-          {query.trim() && section.source.icon}
-          <span>{section.source.label}</span>
-        </div>
-      </Tooltip>
-      {section.items.map((item, itemIndex) => {
-        const row = (offsets[sectionIndex] ?? 0) + itemIndex
-        const caps = row < 9 ? keyCaps?.(row) : undefined
-        const disabled = item.disabledReason !== undefined
-        return (
-          <Tooltip key={item.value} content={item.disabledReason}>
+  const items = sections.map((section, sectionIndex) => {
+    const { group } = section
+    const mark = group.media ?? (query.trim() ? section.source.icon : undefined)
+    const heading = (
+      <>
+        {mark}
+        <span>{group.label}</span>
+        {group.tag}
+      </>
+    )
+    return (
+      <div
+        key={section.key}
+        className="ui-board-section"
+        role="group"
+        aria-label={group.label}
+        {...(group.hint ? { 'aria-description': group.hint } : {})}>
+        {phone && group.hint ? (
+          <>
             <button
               type="button"
-              role="menuitemradio"
-              tabIndex={item.value === stop ? 0 : -1}
-              className="ui-menu-item ui-board-item"
-              data-value={item.value}
-              data-label={item.label}
-              data-media={item.media ? '' : undefined}
-              data-highlight={item.value === now ? '' : undefined}
-              aria-checked={item.value === value}
-              aria-disabled={disabled || undefined}
-              aria-labelledby={`${id}-item-${row}`}
-              onFocus={() => {
-                setHighlighted(item.value)
-              }}
+              className="ui-board-heading ui-board-heading-toggle"
+              aria-expanded={noted === section.key}
               onClick={() => {
-                chooseItem(item)
+                setNoted(noted === section.key ? undefined : section.key)
               }}>
-              <span className="ui-menu-item-lead">
-                {item.value === value && <Icon icon={CheckGlyph} size={14} className="ui-menu-check" />}
-              </span>
-              {item.media && <span className="ui-menu-item-media">{item.media}</span>}
-              <span className="ui-menu-item-text">
-                <span id={`${id}-item-${row}`} className="ui-menu-item-label">
-                  <span className="ui-menu-item-title">{item.label}</span>
-                  {item.tag}
-                </span>
-              </span>
-              <span className="ui-menu-item-meta">{disabled ? <Icon icon={BlockedGlyph} size={12} /> : caps && <Kbd>{caps}</Kbd>}</span>
+              {heading}
             </button>
+            {noted === section.key && <p className="ui-board-hint">{group.hint}</p>}
+          </>
+        ) : (
+          <Tooltip content={group.hint}>
+            <div className="ui-board-heading" aria-hidden="true">
+              {heading}
+            </div>
           </Tooltip>
-        )
-      })}
-    </div>
-  ))
+        )}
+        {section.items.map((item, itemIndex) => {
+          const row = (offsets[sectionIndex] ?? 0) + itemIndex
+          const caps = row < 9 ? keyCaps?.(row) : undefined
+          const disabled = item.disabledReason !== undefined
+          return (
+            <Tooltip key={item.value} content={item.disabledReason}>
+              <button
+                type="button"
+                role="menuitemradio"
+                tabIndex={item.value === stop ? 0 : -1}
+                className="ui-menu-item ui-board-item"
+                data-value={item.value}
+                data-label={item.label}
+                data-media={item.media ? '' : undefined}
+                data-highlight={item.value === now ? '' : undefined}
+                aria-checked={item.value === value}
+                aria-disabled={disabled || undefined}
+                aria-labelledby={`${id}-item-${row}`}
+                onFocus={() => {
+                  setHighlighted(item.value)
+                }}
+                onClick={() => {
+                  chooseItem(item)
+                }}>
+                <span className="ui-menu-item-lead">
+                  {item.value === value && <Icon icon={CheckGlyph} size={14} className="ui-menu-check" />}
+                </span>
+                {item.media && <span className="ui-menu-item-media">{item.media}</span>}
+                <span className="ui-menu-item-text">
+                  <span id={`${id}-item-${row}`} className="ui-menu-item-label">
+                    <span className="ui-menu-item-title">{item.label}</span>
+                    {item.tag}
+                  </span>
+                </span>
+                <span className="ui-menu-item-meta">{disabled ? <Icon icon={BlockedGlyph} size={12} /> : caps && <Kbd>{caps}</Kbd>}</span>
+              </button>
+            </Tooltip>
+          )
+        })}
+      </div>
+    )
+  })
 
   const levelRows = shownLevels.options.map(level => (
     <Tooltip key={level.value} content={level.disabledReason}>
@@ -582,7 +644,6 @@ export function PickerBoard<T extends string, L extends string>({
             ))}
           </div>
         )}
-        {withRail && shownSource?.hint && !query.trim() && <p className="ui-board-hint">{shownSource.hint}</p>}
         {searchField}
         {listColumn(false)}
         <div className="ui-board-phone-levels" role="menu" aria-label={levelsLabel} ref={column} onKeyDown={levelKeys}>
@@ -606,20 +667,7 @@ export function PickerBoard<T extends string, L extends string>({
           {sources.map(source => {
             const selectedTab = source.id === shownSource?.id && !query.trim()
             return (
-              <Tooltip
-                key={source.id}
-                content={
-                  source.hint ? (
-                    <>
-                      <strong>{source.label}</strong>
-                      <br />
-                      {source.hint}
-                    </>
-                  ) : (
-                    source.label
-                  )
-                }
-                describe={source.hint !== undefined}>
+              <Tooltip key={source.id} content={source.tip ?? source.label} describe={source.tip !== undefined}>
                 <button
                   type="button"
                   role="tab"

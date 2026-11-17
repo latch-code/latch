@@ -87,11 +87,11 @@ it.each(['opencode', 'dsh', 'pi'] as const)(
         .first()
     const row = (name: string | RegExp) =>
       page.getByRole('menuitemradio', { name }).or(page.getByRole('option', { name })).or(page.getByRole('radio', { name })).first()
-    // The model panel lists one source at a time (66e1b331): the service's models are on its own entry of the rail.
+    // The model panel lists one source at a time (66e1b331): the service's models are under Latch 网关 on the rail.
     const serviceSource = async () =>
       page
         .getByRole('tablist', { name: '来源', exact: true })
-        .getByRole('tab', { name: /^Temporary Chat /u })
+        .getByRole('tab', { name: 'Latch 网关', exact: true })
         .filter({ visible: true })
         .first()
         .click()

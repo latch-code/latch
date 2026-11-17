@@ -223,6 +223,62 @@ describe('the picker board', () => {
     await expect.element(screen.getByRole('button', { name: /^模型/u })).toHaveFocus()
   })
 
+  it('lists a source of several groups under each one’s heading, its note on the heading and only its name on the rail', async () => {
+    const hint = '请求由 Latch 在这台 Mac 上转发，用设置里的密钥。'
+    const screen = await render(
+      <ValuePicker
+        label="模型"
+        value="face"
+        options={[{ value: 'face', label: 'own' }]}
+        onValueChange={() => {}}
+        width="lg"
+        panel={
+          <PickerBoard
+            label="模型"
+            levelsLabel="思考"
+            sources={[
+              { id: 'own', label: 'Harness', icon: null, items: [{ value: 'own', label: '默认模型' }] },
+              {
+                id: 'gateway',
+                label: 'Latch 网关',
+                tip: 'Latch 网关 · 实验性',
+                icon: null,
+                groups: [
+                  {
+                    id: 'deepseek',
+                    label: 'DeepSeek',
+                    tag: <span className="ui-badge">实验性</span>,
+                    hint,
+                    items: [{ value: 'd/1', label: 'deepseek-chat' }],
+                  },
+                  { id: 'relay', label: 'Relay', hint, items: [{ value: 'r/1', label: 'relay-model' }] },
+                ],
+              },
+            ]}
+            value="own"
+            levels={() => ({ value: 'default', options: [{ value: 'default', label: '默认' }] })}
+            onItem={() => {}}
+            onLevel={() => {}}
+          />
+        }
+      />,
+    )
+    await screen.getByRole('button', { name: /^模型/u }).click()
+    const tab = screen.getByRole('tab', { name: 'Latch 网关', exact: true })
+    await expect.element(tab).toHaveAccessibleDescription('Latch 网关 · 实验性')
+    await tab.click()
+    expect(Array.from(document.querySelectorAll('.ui-board-section'), section => section.getAttribute('aria-label'))).toEqual([
+      'DeepSeek',
+      'Relay',
+    ])
+    expect(document.querySelector('.ui-board-heading')?.textContent).toBe('DeepSeek实验性')
+    await expect.element(screen.getByRole('group', { name: 'Relay' })).toHaveAccessibleDescription(hint)
+    // Typing searches every group, each under its own heading.
+    await userEvent.keyboard('{ArrowRight}')
+    await userEvent.keyboard('model')
+    expect(Array.from(document.querySelectorAll('.ui-board-section'), section => section.getAttribute('aria-label'))).toEqual(['Relay'])
+  })
+
   it('opens on the levels when its trigger asks', async () => {
     const screen = await render(
       <ValuePicker
@@ -284,6 +340,9 @@ describe('the picker board', () => {
     await expect.element(search).toHaveFocus()
     await expect.element(search).toHaveValue('gam')
     expect(Array.from(document.querySelectorAll('.ui-board-item .ui-menu-item-title'), item => item.textContent)).toEqual(['gamma'])
+    // The search it was asked to open on is not the person's typing: Escape closes the board over it at once.
+    await userEvent.keyboard('{Escape}')
+    await expect.poll(() => document.querySelector('.ui-board')?.closest('[popover]')?.matches(':popover-open')).toBe(false)
   })
 
   it('opens in one place from either of two triggers placed against the same element', async () => {

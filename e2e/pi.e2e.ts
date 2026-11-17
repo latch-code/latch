@@ -425,8 +425,8 @@ describe('pi over its own RPC mode', () => {
       await modelAction(page, '刷新模型列表').waitFor()
       // Latch forwards pi to no service, so no service is listed or folded into a row of ones it cannot use.
       for (const gone of ['pi 自己的模型', '服务用不了', 'Relay']) expect(await inMenu(gone).count()).toBe(0)
-      // Nothing here goes through Latch, so the menu does not explain 「经 Latch」.
-      expect(await page.getByText(/「经 Latch」/u).count()).toBe(0)
+      // Nothing here goes through Latch, so the menu does not explain 「经 Latch 网关」.
+      expect(await page.getByText(/「经 Latch( 网关)?」/u).count()).toBe(0)
       await noHorizontalOverflow(page)
       await shot(page, `services-${width}-dark`)
       await page.context().close()

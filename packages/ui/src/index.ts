@@ -88,6 +88,7 @@ export { ActionMenu, ActionSheet, type ActionMenuSection } from './action-menu.t
 export {
   ModeStrip,
   PickerBoard,
+  type BoardGroup,
   type BoardItem,
   type BoardLevel,
   type BoardLevels,

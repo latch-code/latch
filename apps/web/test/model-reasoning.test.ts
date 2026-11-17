@@ -884,7 +884,7 @@ describe('the service a session started on through Latch', () => {
 
   it('names the service and where requests go while the catalog offers it', () => {
     const on = { ...catalog, harnesses: [info], providers: [openai] }
-    expect(header(on, route)).toMatchObject({ label: 'OpenAI · 经 Latch', options: [{ value: 'gpt-5' }] })
+    expect(header(on, route)).toMatchObject({ label: 'OpenAI', gateway: { experimental: false }, options: [{ value: 'gpt-5' }] })
     expect(header(on, route).options[0]).not.toHaveProperty('disabledReason')
     expect(routeService(on, route)).toEqual({ name: 'OpenAI' })
   })

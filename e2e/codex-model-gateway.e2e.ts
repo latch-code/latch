@@ -67,11 +67,11 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
         .filter({ visible: true })
         .first()
     const modelSurface = page.getByRole('menu', { name: '模型', exact: true }).or(page.getByRole('dialog', { name: '模型', exact: true }))
-    // The model panel lists one source at a time (a rail of the Harness's own models and each service): open the service's.
+    // The model panel lists one source at a time (a rail of the Harness's own models and Latch 网关): open the gateway's.
     const serviceSource = () =>
       page
         .getByRole('tablist', { name: '来源', exact: true })
-        .getByRole('tab', { name: new RegExp(`^Temporary ${wire} `, 'u') })
+        .getByRole('tab', { name: 'Latch 网关', exact: true })
         .filter({ visible: true })
         .first()
     const serviceRow = async (name: string) => {

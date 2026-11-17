@@ -78,7 +78,7 @@ function SettledFacts({
   const routedUsage = !stepUsage && route?.usage ? route : undefined
   const requests = route
     ? [
-        `这一轮经 Latch ${route.requests} 次请求`,
+        `这一轮经 Latch 网关 ${route.requests} 次请求`,
         ...route.models.map(modelLine),
         ...(route.thinkingAdjusted ? ['思考档位：已按服务声明调整'] : []),
       ]
@@ -134,7 +134,7 @@ function SettledFacts({
           <Lines lines={requests} />
         </Popover>
       )}
-      {route && !routedUsage && <Fact tip={<Lines lines={requests} />}>经 Latch {route.requests} 次请求</Fact>}
+      {route && !routedUsage && <Fact tip={<Lines lines={requests} />}>经 Latch 网关 {route.requests} 次请求</Fact>}
       {!usage && !person && context !== undefined && <Fact>上下文 {tokenAmount(context)}</Fact>}
     </>
   )

@@ -377,7 +377,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 
 - 这个凭据不是模型服务的密钥：它只能在这台电脑的回环端口上使用这个会话选定的服务与候选，进程退出或服务设置变化后失效。会话本来就是 L3。
 - goose 的凭据放在它规定的变量里，会读这些变量的工具可能把它发给真实厂商：在那里没有用，但离开了这台电脑。
-- 模型菜单「经 Latch」的说明为这三者多写一句（`HarnessCapabilities.models.credentialInherited`）。其余 Harness 各有清理办法，见 [Harness 交付](MODEL-GATEWAY.md#harness-交付)。
+- 模型面板「Latch 网关」下服务组名的悬停说明为这三者多写一句（`HarnessCapabilities.models.credentialInherited`）。其余 Harness 各有清理办法，见 [Harness 交付](MODEL-GATEWAY.md#harness-交付)。
 
 **各自去不掉的限制**（依据与出处在 MODEL-GATEWAY.md 的 [Qwen Code](MODEL-GATEWAY.md#qwen-code)、[goose](MODEL-GATEWAY.md#goose)、[Grok Build](MODEL-GATEWAY.md#grok-build)）：
 

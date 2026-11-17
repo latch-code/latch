@@ -90,7 +90,12 @@ it.skipIf(!live).each(['anthropic', 'openai-compatible', 'openai-responses'] as 
       await chip('模型').click()
       await row(names[0]!).waitFor()
       if (kind !== 'anthropic')
-        await page.getByText(`${serviceName} · 实验性 · 经 Latch`, { exact: true }).filter({ visible: true }).first().waitFor()
+        await page
+          .getByRole('group', { name: serviceName, exact: true })
+          .filter({ visible: true })
+          .first()
+          .locator('.ui-board-heading', { hasText: '实验性' })
+          .waitFor()
       await page.screenshot({ path: `${output}/draft.png`, animations: 'disabled' })
       await row(names[0]!).click()
       const draft = page.getByRole('textbox', { name: '新会话消息', exact: true })

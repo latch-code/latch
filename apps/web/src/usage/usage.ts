@@ -24,7 +24,7 @@ export type AnyRow = ModelUsageRow & { by?: UsageSource; turns?: number; split?:
 
 export const OWN_LOGIN = '自己登录'
 export const PLUGIN_SERVICE = '插件服务'
-export const SOURCE_NAMES: Readonly<Record<UsageSource, string>> = { gateway: '经 Latch 服务', own: OWN_LOGIN, plugin: PLUGIN_SERVICE }
+export const SOURCE_NAMES: Readonly<Record<UsageSource, string>> = { gateway: '经 Latch 网关', own: OWN_LOGIN, plugin: PLUGIN_SERVICE }
 
 const PARTS = ['cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const
 

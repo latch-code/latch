@@ -172,8 +172,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await page.getByRole('menuitemradio', { name: 'Large', exact: true }).click()
         await page.getByRole('button', { name: /模型：.*结果未知/u }).waitFor()
         expect((await owner.json<TaskDetail>('tasks/' + sessionId)).config?.find(item => item.id === 'model')?.currentValue).toBe('large')
-        await modelPicker.click()
-        await page.getByRole('menu', { name: '模型', exact: true }).getByRole('button', { name: '核对', exact: true }).click()
+        // A session's switch keeps the panel open on the new model (d0ccdd6e): its unknown result is checked right there.
+        const modelMenu = page.getByRole('menu', { name: '模型', exact: true })
+        expect(await modelMenu.isVisible()).toBe(true)
+        await modelMenu.getByRole('button', { name: '核对', exact: true }).click()
         await page.getByRole('button', { name: '模型：Large', exact: true }).waitFor()
         await page.getByRole('button', { name: '思考：Low', exact: true }).waitFor()
         expect(await page.evaluate(() => Reflect.get(window, 'configurationChanges').length)).toBe(1)
@@ -186,11 +188,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           }, width)
           await page.waitForFunction(value => innerWidth === value, width)
           await page.emulateMedia({ colorScheme: width === 900 ? 'dark' : 'light' })
-          // 思考 is its own control; a level is a row of its menu (a sheet on a phone), which closes on the choice.
+          // 思考 opens the model panel on its levels (a sheet on a phone), which closes on the choice. Each chip draws
+          // its own panel, so the level is the one shown.
           await thinkingPicker.click()
           const effort = width === 900 ? 'Low' : 'High'
           await page
-            .getByRole(width === 390 ? 'radio' : 'menuitemradio', { name: new RegExp(`^${effort}`, 'u') })
+            .getByRole('menuitemradio', { name: new RegExp(`^${effort}`, 'u') })
+            .filter({ visible: true })
             .first()
             .click()
           await expect

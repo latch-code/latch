@@ -110,8 +110,19 @@ it.each(cases)('$id launch settings keep their provenance in a $width $theme men
       currentValue: 'agent-force',
       source: 'launch',
     })
+    // Where the mode comes from is the chip's fine print, on hover and read with it (753f8ab4), not a row of the menu.
+    await expect
+      .poll(() =>
+        chip(control).evaluate(element =>
+          (element.getAttribute('aria-describedby') ?? '')
+            .split(' ')
+            .map(id => document.getElementById(id)?.textContent ?? '')
+            .join(''),
+        ),
+      )
+      .toContain('启动设置 · 未独立读回')
     await chip(control).click()
-    await page.getByText('启动设置 · 未独立读回', { exact: true }).filter({ visible: true }).waitFor()
+    await row(page, 'Agent').waitFor()
     await noHorizontalOverflow(page)
     await page.screenshot({ path: `${output}/${id}-${width}-${theme}.png`, animations: 'disabled' })
     await row(page, 'Agent').click()

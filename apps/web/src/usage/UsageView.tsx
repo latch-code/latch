@@ -64,7 +64,7 @@ const PERIODS: Array<{ value: UsagePeriod; label: string }> = [
 ]
 const SOURCES: Array<{ value: UsageSource | 'all'; label: string }> = [
   { value: 'all', label: '全部来源' },
-  { value: 'gateway', label: '经 Latch 服务' },
+  { value: 'gateway', label: SOURCE_NAMES.gateway },
   { value: 'own', label: OWN_LOGIN },
   { value: 'plugin', label: PLUGIN_SERVICE },
 ]

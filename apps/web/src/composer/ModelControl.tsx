@@ -454,11 +454,22 @@ function serviceReason(harness: HarnessInfo, provider: ProviderSummary): string 
   return MODEL_MENU_COPY.notRouted(name)
 }
 
+/** The one name of Latch's model gateway wherever a page shows it: the panel's source, the composer's status, a turn's footer. */
+export const GATEWAY_NAME = 'Latch 网关'
+/** On a service group's heading: the route is a protocol translation, or the Harness's forwarding is not yet proven. */
+export const EXPERIMENTAL = '实验性'
+
+/**
+ * A group of the model panel. `gateway`: a service's models that go through Latch's gateway, all of which the panel
+ * shows under the one 「Latch 网关」 source, each service under its own name.
+ */
+export type ModelGroup = PickerGroup<string> & { gateway?: { experimental: boolean } }
+
 // Only a turn with no request through the gateway can be told apart; a turn that sends some elsewhere cannot.
 export const ROUTE_NOTE = (name: string, computer?: string, inherited?: boolean): Brief & { detail: string } => ({
-  label: '经 Latch 转发',
+  label: `经 ${GATEWAY_NAME}转发`,
   detail: `${onComputer(
-    `「经 Latch」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。${name} 有一整轮没有经过 Latch 时，会话里会告诉你。`,
+    `「经 ${GATEWAY_NAME}」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。${name} 有一整轮没有经过 Latch 时，会话里会告诉你。`,
     computer,
   )}${inherited ? credentialInherited(name) : ''}`,
 })
@@ -524,8 +535,8 @@ function serviceHint(
 }
 
 /**
- * A Harness with its own models lists them first, then each saved service it can use, each service's models under
- * 「经 Latch」; the ones it cannot use are not groups here but `unusableServices`, folded into one row. A Harness that uses
+ * A Harness with its own models lists them first, then each saved service it can use, each service's models in its own
+ * group marked `gateway` (the panel's 「Latch 网关」); the ones it cannot use are not groups here but `unusableServices`, folded into one row. A Harness that uses
  * only models it knows is offered only those its own list names, once read. A session lists the same: on a service, its
  * service's models are what the session reports and the Harness's own are those its list names (`ownChoice`); another
  * service's models move the session there (`serviceChoice`). A Harness that cannot move a session that way has those
@@ -537,7 +548,7 @@ export function ownModelGroups(
   own: Array<PickerGroup<string>['options'][number]>,
   session?: { route?: TaskSummary['modelRoute'] },
   computer?: string,
-): Array<PickerGroup<string>> {
+): ModelGroup[] {
   const name = harness ? harnessName(harness) : 'Harness'
   // What it read of its own models, without the IDs a person typed for it.
   const listed = harness?.catalogue?.options.find(option => option.category === 'model')
@@ -563,15 +574,16 @@ export function ownModelGroups(
         }
       })
     : own
-  const groups: Array<PickerGroup<string>> = [{ id: '~own', label: name, ...media, options: ownOptions }]
+  const groups: ModelGroup[] = [{ id: '~own', label: name, ...media, options: ownOptions }]
   // The session's own service: what it reports, as it always did; failing, every choice says the next turn fails.
-  const routeGroup = (provider: ProviderSummary | undefined): PickerGroup<string> => {
+  const routeGroup = (provider: ProviderSummary | undefined): ModelGroup => {
     const health = routed && !routed.unusable ? menuHealth(provider) : undefined
     const pair = harness && provider ? pairRoute(harness.capabilities, provider) : undefined
-    const experimental = pair?.kind === 'translate' || harness?.capabilities.models.experimental ? '实验性 · ' : ''
+    const experimental = pair?.kind === 'translate' || harness?.capabilities.models.experimental === true
     return {
       id: `~service-${route!.providerId}`,
-      label: `${nameWithHealth(routed!.name, health)} · ${routed!.unusable?.words ?? `${experimental}经 Latch`}`,
+      label: routed!.unusable ? `${routed!.name} · ${routed!.unusable.words}` : nameWithHealth(routed!.name, health),
+      gateway: { experimental: experimental && !routed!.unusable },
       ...(health ? { media: <HealthDot words={health} /> } : {}),
       hint: serviceHint(harness, name, provider, computer, route),
       options: routed!.unusable ? own.map(option => ({ ...option, disabledReason: `下一轮会失败：服务${routed!.unusable!.words}` })) : own,
@@ -588,13 +600,14 @@ export function ownModelGroups(
     // Without a Harness nothing can be forwarded; `unusableServices` says so.
     if (!harness || serviceReason(harness, provider) !== undefined) continue
     const pair = pairRoute(harness.capabilities, provider)
-    const experimental = pair.kind === 'translate' || harness.capabilities.models.experimental ? '实验性 · ' : ''
+    const experimental = pair.kind === 'translate' || harness.capabilities.models.experimental === true
     const health = menuHealth(provider)
     const tile = <ProviderTile provider={provider} size={16} />
     const reason = locked(!route)
     groups.push({
       id: `~service-${provider.id}`,
-      label: `${nameWithHealth(provider.name, health)} · ${experimental}经 Latch`,
+      label: nameWithHealth(provider.name, health),
+      gateway: { experimental },
       ...(health ? { media: <HealthDot words={health} /> } : {}),
       hint: serviceHint(harness, name, provider, computer),
       options: serviceModels(provider).map(model => {

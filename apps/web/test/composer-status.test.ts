@@ -91,16 +91,16 @@ describe('the composer status line', () => {
 
   it('says a routed session goes through Latch by the service’s name, and the words its menu uses once the service is off', () => {
     const route = { providerId: 'openai', model: 'gpt-5.5', name: 'OpenAI' }
-    expect(statusRoute(catalog, codex, { route })).toMatchObject({ text: 'OpenAI · 经 Latch', provider: { id: 'openai' } })
+    expect(statusRoute(catalog, codex, { route })).toMatchObject({ text: 'OpenAI · 经 Latch 网关', provider: { id: 'openai' } })
     // A turn that did not go through Latch is said in the conversation; the route keeps its words.
-    expect(statusRoute(catalog, codex, { route: { ...route, bypassed: true } })?.text).toBe('OpenAI · 经 Latch')
+    expect(statusRoute(catalog, codex, { route: { ...route, bypassed: true } })?.text).toBe('OpenAI · 经 Latch 网关')
     const off = { ...catalog, providers: [] }
     expect(statusRoute(off, codex, { route: { ...route, off: true } })).toMatchObject({
       text: 'OpenAI · 已停用',
       note: '这个会话开始时用的「OpenAI」已停用，下一轮会失败。在设置 › 模型里重新打开它，或新开一个会话。',
     })
     // A draft says the service it picked, or the Harness with the real name of its own model, as its menu does.
-    expect(statusRoute(catalog, codex, { picked: { providerId: 'openai', model: 'gpt-5.5' } })?.text).toBe('OpenAI · 经 Latch')
+    expect(statusRoute(catalog, codex, { picked: { providerId: 'openai', model: 'gpt-5.5' } })?.text).toBe('OpenAI · 经 Latch 网关')
     expect(statusRoute(catalog, codex, { model: 'GPT-5.5' })?.text).toBe('Codex · GPT-5.5')
     expect(statusRoute(catalog, codex, {})?.text).toBe('Codex')
     expect(statusRoute(catalog, undefined, {})).toBeUndefined()
@@ -142,7 +142,7 @@ describe('the composer status line', () => {
     expect(segments(markup)).toEqual([
       ['folder', 'latch'],
       ['branch', 'feat/enroll-check'],
-      ['route', 'OpenAI · 经 Latch'],
+      ['route', 'OpenAI · 经 Latch 网关'],
     ])
   })
 

@@ -17,6 +17,7 @@ import {
   ownModelGroups,
   ROUTE_NOTE,
   SessionHarnessControl,
+  type ModelGroup,
   unusableServices,
   UnusableServices,
 } from '../src/composer/ModelControl.tsx'
@@ -67,6 +68,10 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/** A group's heading, and for a service's models that they go through Latch's gateway and whether it is experimental. */
+const heads = (groups: ModelGroup[]) =>
+  groups.map(group => (group.gateway ? `${group.label} · 网关${group.gateway.experimental ? ' · 实验性' : ''}` : group.label))
+
 describe('the services a Harness cannot use, folded into one row', () => {
   it('gives each the reason in the words decided for it: which protocols the Harness speaks, and which the service does', () => {
     const chat = chatOnly()
@@ -78,12 +83,12 @@ describe('the services a Harness cannot use, folded into one row', () => {
     expect(unusableServices(catalogOf(info), info)).toEqual([])
     // Supported services are listed with their models; the Harness's own models remain under its name.
     const groups = ownModelGroups(catalogOf(info), info, [{ value: 'own', label: 'gpt-5.5' }])
-    expect(groups.map(group => group.label)).toEqual([
+    expect(heads(groups)).toEqual([
       'Codex',
-      'OpenAI · 实验性 · 经 Latch',
-      'DeepSeek · 实验性 · 经 Latch',
-      'Ollama 本地 · 实验性 · 经 Latch',
-      'Anthropic · 实验性 · 经 Latch',
+      'OpenAI · 网关 · 实验性',
+      'DeepSeek · 网关 · 实验性',
+      'Ollama 本地 · 网关 · 实验性',
+      'Anthropic · 网关 · 实验性',
     ])
     expect(JSON.stringify(groups)).not.toContain('尚未实现')
   })
@@ -116,12 +121,7 @@ describe('the services a Harness cannot use, folded into one row', () => {
     const catalog = catalogOf(info, { providers: [openai, deepseek, anthropic] })
     const groups = ownModelGroups(catalog, info, [{ value: 'own', label: 'its own model' }])
     // Its own group first, under its own name: that one needs its login. The services need none of it.
-    expect(groups.map(group => group.label)).toEqual([
-      label,
-      'OpenAI · 实验性 · 经 Latch',
-      'DeepSeek · 实验性 · 经 Latch',
-      'Anthropic · 实验性 · 经 Latch',
-    ])
+    expect(heads(groups)).toEqual([label, 'OpenAI · 网关 · 实验性', 'DeepSeek · 网关 · 实验性', 'Anthropic · 网关 · 实验性'])
     expect(groups[0]!.options.map(option => option.label)).toEqual(['its own model'])
     expect(groups.slice(1).every(group => group.options.every(option => option.disabledReason === undefined))).toBe(true)
     expect(unusableServices(catalog, info)).toEqual([])
@@ -140,12 +140,12 @@ describe('the services a Harness cannot use, folded into one row', () => {
     const info = testHarness('claude-agent', { label: 'Claude Agent' })
     info.capabilities.models = { ...info.capabilities.models, wires: ['anthropic-messages'] }
     const catalog = catalogOf(info)
-    expect(ownModelGroups(catalog, info, []).map(group => group.label)).toEqual([
+    expect(heads(ownModelGroups(catalog, info, []))).toEqual([
       'Claude Agent',
-      'OpenAI · 实验性 · 经 Latch',
-      'DeepSeek · 实验性 · 经 Latch',
-      'Ollama 本地 · 实验性 · 经 Latch',
-      'Anthropic · 经 Latch',
+      'OpenAI · 网关 · 实验性',
+      'DeepSeek · 网关 · 实验性',
+      'Ollama 本地 · 网关 · 实验性',
+      'Anthropic · 网关',
     ])
     expect(unusableServices(catalog, info)).toEqual([])
   })
@@ -167,12 +167,12 @@ describe('the services a Harness cannot use, folded into one row', () => {
     const own = [{ value: 'openai-model', label: 'openai-model' }]
     // A Harness that cannot move a session keeps the rule a session started with.
     const fixed = ownModelGroups(catalog, info, own, { route })
-    expect(fixed.map(group => group.label)).toEqual([
+    expect(heads(fixed)).toEqual([
       'Codex',
-      'OpenAI · 实验性 · 经 Latch',
-      'Relay · 实验性 · 经 Latch',
-      'DeepSeek · 实验性 · 经 Latch',
-      'Anthropic · 实验性 · 经 Latch',
+      'OpenAI · 网关 · 实验性',
+      'Relay · 网关 · 实验性',
+      'DeepSeek · 网关 · 实验性',
+      'Anthropic · 网关 · 实验性',
     ])
     expect(fixed.find(group => group.id === '~service-relay')?.options).toMatchObject([
       { value: serviceChoice({ providerId: 'relay', model: 'relay-model' }), disabledReason: '开始后不能换服务' },
@@ -252,11 +252,12 @@ describe('the services a Harness cannot use, folded into one row', () => {
         disabled: false,
       }),
     )
-    expect(html).toContain('DeepSeek · 经 Latch')
+    // The services it can use are one source, the gateway, named alone: no service's name or paragraph on the rail.
+    expect(html).toContain('aria-label="Latch 网关"')
+    expect(html).not.toContain('经 Latch')
+    expect(html).not.toContain('请求由 Latch')
     expect(html).toContain('2 个服务用不了')
-    expect(html.indexOf('2 个服务用不了')).toBeGreaterThan(html.indexOf('Ollama 本地 · 经 Latch'))
-    // Options only: what 「经 Latch」 means is on the heading, with no row of its own.
-    expect(html).not.toContain('经 Latch 转发')
+    expect(html.indexOf('2 个服务用不了')).toBeGreaterThan(html.indexOf('aria-label="Latch 网关"'))
   })
 })
 
@@ -407,12 +408,12 @@ describe("Latch's own sentences on another computer's page", () => {
     expect(onComputer('能读写这台 Mac 上的文件并运行命令', 'studio-mini')).toBe('能读写 studio-mini 上的文件并运行命令')
     expect(onComputer('能读写这台 Mac 上的文件并运行命令', undefined)).toBe('能读写这台 Mac 上的文件并运行命令')
     expect(ROUTE_NOTE('Codex', 'studio-mini')).toEqual({
-      label: '经 Latch 转发',
-      detail: '「经 Latch」表示请求由 Latch 在 studio-mini 上转发，用设置里的密钥。Codex 有一整轮没有经过 Latch 时，会话里会告诉你。',
+      label: '经 Latch 网关转发',
+      detail: '「经 Latch 网关」表示请求由 Latch 在 studio-mini 上转发，用设置里的密钥。Codex 有一整轮没有经过 Latch 时，会话里会告诉你。',
     })
     // A Harness that cannot keep its environment from the commands it runs says what they can read, in the same ⓘ.
     expect(ROUTE_NOTE('Qwen Code', undefined, true).detail).toBe(
-      '「经 Latch」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。Qwen Code 有一整轮没有经过 Latch 时，会话里会告诉你。Qwen Code 运行的命令读得到这个会话的转发凭据，不是密钥。',
+      '「经 Latch 网关」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。Qwen Code 有一整轮没有经过 Latch 时，会话里会告诉你。Qwen Code 运行的命令读得到这个会话的转发凭据，不是密钥。',
     )
     expect(ROUTE_NOTE('Codex', undefined, false).detail).not.toContain('读得到')
   })

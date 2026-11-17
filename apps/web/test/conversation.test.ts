@@ -1044,7 +1044,7 @@ describe('a settled turn', () => {
     expect(footer).not.toContain('由模型服务在回复里报告，Latch 转发时读取')
     // Requests by model remain reachable on demand without repeating token totals on hover.
     expect(footer).toContain('aria-label="请求记录"')
-    expect(footer).toContain('这一轮经 Latch 3 次请求')
+    expect(footer).toContain('这一轮经 Latch 网关 3 次请求')
     expect(footer).not.toMatch(/class="turn-fact"[^>]*>经 Latch/u)
     expect(footer).toContain('gpt-x：2 次 · 输入 1.2k tokens · 输出 300 tokens')
     expect(footer).toContain('gpt-mini：1 次，1 次没有完成')
@@ -1103,7 +1103,7 @@ describe('a settled turn', () => {
         harnessName: 'Codex',
       }),
     )
-    expect(failed).toMatch(/class="turn-fact"[^>]*>经 Latch 1 次请求/u)
+    expect(failed).toMatch(/class="turn-fact"[^>]*>经 Latch 网关 1 次请求/u)
     expect(failed).toContain('gpt-x：1 次，1 次没有完成')
     expect(failed).not.toContain('输入')
     // A turn with no record from Latch shows none of it.

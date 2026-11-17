@@ -17,6 +17,8 @@ import {
   Icon,
   ModelGlyph,
   PlusGlyph,
+  Badge,
+  type BoardItem,
   type BoardLevels,
   type BoardSource,
   type PickerGroup,
@@ -57,7 +59,10 @@ import {
 import {
   defaultModelOf,
   defaultTag,
+  EXPERIMENTAL,
+  GATEWAY_NAME,
   OWN_MODEL,
+  type ModelGroup,
   ownModelGroups,
   routeService,
   serviceRef,
@@ -113,7 +118,7 @@ interface ChipFace {
 export interface Board {
   model: ChipFace
   thinking: ChipFace
-  groups: Array<PickerGroup<string>>
+  groups: ModelGroup[]
   value: string | undefined
   levels: (value: string | undefined) => BoardLevels<string>
   onModel: (value: string) => void
@@ -134,20 +139,52 @@ function sourceIcon(group: PickerGroup<string>): ReactNode {
   return <Icon icon={group.id === '~recent' ? HistoryGlyph : ModelGlyph} size={16} />
 }
 
-function boardSources(groups: ReadonlyArray<PickerGroup<string>>): Array<BoardSource<string>> {
-  return groups.map(group => ({
-    id: group.id,
-    label: group.label ?? '',
-    icon: sourceIcon(group),
-    ...(group.hint ? { hint: group.hint } : {}),
-    items: group.options.map(option => ({
-      value: option.value,
-      label: option.label,
-      ...(option.media ? { media: option.media } : {}),
-      ...(option.tag ? { tag: option.tag } : {}),
-      ...(option.disabledReason ? { disabledReason: option.disabledReason } : {}),
-    })),
+const boardItems = (group: PickerGroup<string>): Array<BoardItem<string>> =>
+  group.options.map(option => ({
+    value: option.value,
+    label: option.label,
+    ...(option.media ? { media: option.media } : {}),
+    ...(option.tag ? { tag: option.tag } : {}),
+    ...(option.disabledReason ? { disabledReason: option.disabledReason } : {}),
   }))
+
+/**
+ * The panel's sources: each group its own, except the services whose requests go through Latch's gateway, which are one
+ * source, 「Latch 网关」, in the place of the first of them, each service a group headed by its name. Where its requests
+ * go and what a translation leaves out stay on the hover of that heading; the rail says only the name.
+ */
+export function boardSources(groups: ReadonlyArray<ModelGroup>): Array<BoardSource<string>> {
+  const gateway = groups.filter(group => group.gateway)
+  const sources: Array<BoardSource<string>> = []
+  for (const group of groups) {
+    if (!group.gateway) {
+      sources.push({
+        id: group.id,
+        label: group.label ?? '',
+        icon: sourceIcon(group),
+        ...(group.hint ? { hint: group.hint } : {}),
+        items: boardItems(group),
+      })
+      continue
+    }
+    if (group !== gateway[0]) continue
+    const experimental = gateway.every(item => item.gateway?.experimental)
+    sources.push({
+      id: '~gateway',
+      label: GATEWAY_NAME,
+      ...(experimental ? { tip: `${GATEWAY_NAME} · ${EXPERIMENTAL}` } : {}),
+      icon: <Icon icon={ModelGlyph} size={16} />,
+      groups: gateway.map(item => ({
+        id: item.id,
+        label: item.label ?? '',
+        ...(item.media ? { media: item.media } : {}),
+        ...(item.gateway?.experimental ? { tag: <Badge>{EXPERIMENTAL}</Badge> } : {}),
+        ...(item.hint ? { hint: item.hint } : {}),
+        items: boardItems(item),
+      })),
+    })
+  }
+  return sources
 }
 
 /**
@@ -225,6 +262,8 @@ function BoardChip({ board, kind }: { board: Board; kind: 'model' | 'thinking' }
         {...(face.hint ? { hint: face.hint } : face.valueText && face.valueText.length > LONG_NAME ? { hint: face.valueText } : {})}
         {...(board.onOpenChange ? { onOpenChange: board.onOpenChange } : {})}
         onValueChange={() => {}}
+        // A slash argument (/model <query>) opens the panel on that search; the board fills its own field from it.
+        {...(kind === 'model' && request ? { searchRequest: request } : {})}
         panel={
           board.panel ?? (
             <PickerBoard

@@ -109,7 +109,8 @@
 
 /*
  * The picker board: a fixed block (--board-height) in three tracks, a 44px rail of sources, the list, and a column of
- * levels (--board-levels) on the sunken face, so nothing moves or resizes while the highlight moves. The list scrolls
+ * levels (--board-levels), so nothing moves or resizes while the highlight moves. One surface, the layer's own: the
+ * tracks are parted by hairlines only, and the chosen source and the highlighted row take the menus' quiet fill. The list scrolls
  * inside; its footer rows sit under it. The search row is a borderless field on a hairline. On phones it is a column:
  * the sources as a scrolling row of chips, the search, the list and the levels as a row of chips.
  */
@@ -151,7 +152,7 @@
   }
 }
 .ui-board-source[aria-selected='true'] {
-  background: var(--selected);
+  background: var(--hover);
   color: var(--ink);
 }
 /* The source the chosen item comes from: a short bar on the rail's edge. */
@@ -235,6 +236,22 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.ui-board-heading > .ui-badge {
+  flex-shrink: 0;
+}
+/* A phone's heading with a note: tapped, its note shows under it. */
+.ui-board-heading-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--fs-caption);
+  text-align: start;
+}
+.ui-board-heading-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .ui-board-item[data-highlight]:not(:focus-visible) {
   background: var(--hover);
 }
@@ -258,7 +275,6 @@
   grid-template-rows: 40px minmax(0, 1fr) auto auto;
   min-height: 0;
   border-left: 1px solid var(--line);
-  background: var(--sunken);
 }
 .ui-board-levels-head {
   justify-content: space-between;
@@ -367,9 +383,10 @@
   padding: 0;
   border: 0;
 }
-/* A chosen source's note on a phone, which has no hover: one muted paragraph under the row of sources. */
+/* A group's note on a phone, which has no hover: one muted paragraph under its heading, once tapped. */
 .ui-board-hint {
   margin: 0;
+  padding: 0 var(--sp-10) var(--sp-6);
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
