@@ -4,7 +4,7 @@ import type { SendingMessage as SendingView } from '../core/sendingMessage.ts'
 import { MessageRow } from './MessageRow.tsx'
 
 /** The text is immediate; the quiet delivery label waits 500ms to avoid flicker on a fast acknowledgement. */
-export function SendingMessage({ view }: { view: SendingView }) {
+export function SendingMessage({ view, showUnknown = true }: { view: SendingView; showUnknown?: boolean }) {
   const [slow, setSlow] = useState(false)
   useEffect(() => {
     setSlow(false)
@@ -29,7 +29,7 @@ export function SendingMessage({ view }: { view: SendingView }) {
           已添加 <Count value={attachments} /> 个附件
         </p>
       )}
-      {(view.state === 'unknown' || (view.state === 'sending' && slow)) && (
+      {((view.state === 'unknown' && showUnknown) || (view.state === 'sending' && slow)) && (
         <div className="sending-message-status" data-state={view.state} role="status">
           {view.state === 'unknown' ? '未确认送达 · 在输入框重试或放弃这次提交' : '发送中…'}
         </div>

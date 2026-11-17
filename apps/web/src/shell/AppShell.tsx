@@ -67,7 +67,7 @@ type Harness = ReturnType<typeof useHarness>
 export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
   const shell = useShellLayout({ harness, snapshot })
   const {
-    phoneSession,
+    phoneSession: selectedPhoneSession,
     phoneReview,
     folding,
     route,
@@ -158,11 +158,19 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const board = shell.board
   // 对话's start screen: the new session's input over the session kept under it. Under 看板 it is not drawn at all, so
   // only one new-session input is ever mounted (看板's 新建 holds it then).
-  const start = route.entry === 'sessions' && route.start === true && !board
+  const startRoute = route.entry === 'sessions' && route.start === true && !board
+  const pendingStart = startRoute && catalog?.features?.messageIdentity && submission.startingMessage
+  const start = startRoute && !pendingStart
+  const phoneSession = selectedPhoneSession || (phone && !!pendingStart)
+  const pendingStartId = pendingStart ? pendingStart.submission.requestId : undefined
   const homeShell = { ...shell, ...shell.homeComposerState }
   const panes = workbenchPanes(shell)
   const counts = useMemo(() => boardCounts(listed.tasks, listed.items), [listed.tasks, listed.items])
   const hasConnectionStrip = !phone && route.entry === 'sessions'
+  useLayoutEffect(() => {
+    if (!pendingStartId || settings || document.activeElement !== document.body) return
+    main.current?.querySelector<HTMLElement>(phone ? '.topbar-back' : '.transcript')?.focus({ preventScroll: true })
+  }, [main, pendingStartId, phone, settings])
   // The right panel's strip starts where the session's head ends, so the head's foot runs on as one line.
   useLayoutEffect(() => {
     const frame = appShell.current
@@ -197,12 +205,12 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
     // The session was parked when the start screen covered it; letting go of it here keeps the new session's draft.
     if (selectedId !== null) harness.select(null)
   }
-  useBackLayer(phone && start, toPhoneList)
+  useBackLayer(phone && startRoute, toPhoneList)
   // False whenever 看板 is in front: the conversation under it is kept, not seen.
   const visibleConversation = conversationInFront({
     entry: route.entry,
     selectedId,
-    start,
+    start: startRoute,
     board,
     settings: !!settings,
     panelPage: !!(pageMode && infoPage),
@@ -413,8 +421,9 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                         dropAttachments(event, attachmentDraft)
                       else if ([...event.dataTransfer.types].includes('Files')) event.preventDefault()
                     }}
-                    className={`workspace ${selectedId === null ? 'is-new' : 'has-task'}`}
-                    data-backdrop-hidden={visibleConversation ? undefined : ''}
+                    className={`workspace ${selectedId === null && !pendingStart ? 'is-new' : 'has-task'}`}
+                    data-backdrop-hidden={visibleConversation || (pendingStart && !settings) ? undefined : ''}
+                    data-pending-start={pendingStartId}
                     data-info-page={pageMode && infoPage ? '' : undefined}
                     data-pushed={phone && pushed ? '' : undefined}
                     data-leaving={phone && popping ? '' : undefined}>
@@ -425,9 +434,14 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     )}
                     {/* Under the panel's page the conversation cannot be reached until the page is closed. */}
                     <div className="workspace-view" inert={(pageMode && infoPage) || undefined}>
-                      <ConversationHeader shell={shell} />
+                      <ConversationHeader shell={shell} starting={pendingStart || null} onStartBack={toPhoneList} />
                       {/* The conversation's paper: on phones it rises under the header on the ground. */}
-                      <ConversationView shell={shell} visible={visibleConversation} backdrop={backdropEnabled ? level : 'off'} />
+                      <ConversationView
+                        shell={shell}
+                        visible={visibleConversation}
+                        starting={pendingStart || null}
+                        backdrop={backdropEnabled ? level : 'off'}
+                      />
                     </div>
                     {page.present && (summary || filesVisible) && (
                       <section

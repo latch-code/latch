@@ -10,10 +10,12 @@ export function ArchiveBatch({
   tasks,
   harnesses,
   onChanged,
+  onDeleted,
 }: {
   tasks: TaskSummary[]
   harnesses: readonly HarnessInfo[]
   onChanged: () => Promise<unknown>
+  onDeleted: (id: string) => void
 }) {
   const [active, setActive] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -27,6 +29,7 @@ export function ArchiveBatch({
     setError('')
     try {
       const result = await api<SessionBatchResult>('tasks/batch', { method: 'POST', body: { action, ids: [...selected] } })
+      if (action === 'delete') for (const item of result.results) if (item.ok) onDeleted(item.id)
       const failed = result.results.filter(item => !item.ok)
       setSelected(new Set(failed.map(item => item.id)))
       if (failed.length) setError(`${failed.length} 个会话未处理：${failed.map(item => (item.ok ? '' : item.message)).join('；')}`)

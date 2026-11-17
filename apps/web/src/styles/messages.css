@@ -36,6 +36,13 @@
 .message-user + .turn-reply {
   margin-top: var(--sp-32);
 }
+.transcript-skeleton .turn-reply {
+  display: grid;
+  gap: var(--sp-8);
+}
+.transcript-skeleton .message-user > .ui-skeleton {
+  border-radius: var(--r-16) var(--r-16) var(--r-4) var(--r-16);
+}
 
 /*
  * Arrival, only for what the page saw appear (never on a load, a reconnect or a session switch): the person's bubble

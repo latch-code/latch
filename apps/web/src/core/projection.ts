@@ -5,11 +5,15 @@ export interface ProjectionTicket {
   sessionId: string | null
 }
 
+type DetailSource = 'http' | 'stream'
+const RECENT_DETAILS = 8
+
 /** Selection generations and Host-scoped revisions protect async replacements. */
 export class ProjectionGuard {
   private generation = 0
   private revision = -1
   private sourcePriority = 0
+  private readonly recent = new Map<string, { detail: TaskDetail; source: DetailSource }>()
   instanceId: string | null = null
   sessionId: string | null = null
 
@@ -19,22 +23,41 @@ export class ProjectionGuard {
   current(ticket: ProjectionTicket): boolean {
     return ticket.generation === this.generation && ticket.sessionId === this.sessionId
   }
-  invalidate(): void {
+  private reset(): void {
     this.generation++
     this.revision = -1
     this.sourcePriority = 0
+  }
+  /** A change of authority (or sign-out) also invalidates every cached detail. */
+  invalidate(): void {
+    this.reset()
+    this.recent.clear()
   }
   bind(instanceId: string | null): void {
     if (this.instanceId === instanceId) return
     this.instanceId = instanceId
     this.invalidate()
   }
-  select(sessionId: string | null): void {
-    if (this.sessionId === sessionId) return
+  select(sessionId: string | null, warm = false): TaskDetail | null {
+    if (this.sessionId === sessionId) return null
     this.sessionId = sessionId
-    this.invalidate()
+    this.reset()
+    const saved = warm && sessionId !== null ? this.recent.get(sessionId) : undefined
+    return saved && this.accept(this.capture(), saved.detail, saved.source) ? saved.detail : null
   }
-  accept(ticket: ProjectionTicket, detail: TaskDetail, source: 'http' | 'stream' = 'http'): boolean {
+  forget(sessionId: string): void {
+    this.recent.delete(sessionId)
+    if (this.sessionId === sessionId) this.reset()
+  }
+  retain(snapshot: Pick<AppSnapshot, 'tasks' | 'tasksComplete' | 'revision'>): void {
+    if (!snapshot.tasksComplete) return
+    const listed = new Set(snapshot.tasks.map(task => task.id))
+    for (const [id, { detail }] of this.recent) {
+      // The snapshot request may have started before the session's first streamed detail.
+      if (!listed.has(id) && (detail.sync?.revision ?? -1) <= (snapshot.revision ?? -1)) this.recent.delete(id)
+    }
+  }
+  accept(ticket: ProjectionTicket, detail: TaskDetail, source: DetailSource = 'http'): boolean {
     if (!this.current(ticket) || detail.summary.id !== this.sessionId) return false
     if (detail.sync) {
       if (detail.sync.instanceId !== this.instanceId || detail.sync.revision < this.revision) return false
@@ -45,13 +68,20 @@ export class ProjectionGuard {
       this.revision = detail.sync.revision
       this.sourcePriority = priority
     } else if (this.revision >= 0) return false
+    this.recent.delete(detail.summary.id)
+    this.recent.set(detail.summary.id, { detail, source })
+    if (this.recent.size > RECENT_DETAILS) this.recent.delete(this.recent.keys().next().value!)
     return true
   }
 }
 
 /** The selected slice wins ties; a strictly newer snapshot owns its summaries. */
+export function detailOwnsSummary(snapshot: Pick<AppSnapshot, 'instanceId' | 'revision'>, detail: TaskDetail | null): boolean {
+  return detail?.sync?.instanceId === snapshot.instanceId && detail.sync.revision >= (snapshot.revision ?? -1)
+}
+
 export function mergeTaskSnapshot(snapshot: AppSnapshot, detail: TaskDetail | null): AppSnapshot {
-  if (!detail || detail.sync?.instanceId !== snapshot.instanceId || detail.sync.revision < (snapshot.revision ?? -1)) return snapshot
+  if (!detail || !detailOwnsSummary(snapshot, detail)) return snapshot
   const tasks = snapshot.tasks.filter(task => task.id !== detail.summary.id)
   tasks.push(detail.summary)
   tasks.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))

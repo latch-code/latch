@@ -224,6 +224,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
               next.delete(deleting.id)
               return next
             })
+            shell.harness.forgetSession(deleting.id)
             // Still open here: the Host's own report of the deletion may have closed it already, and pressing 新会话
             // on 新会话 would start that draft over.
             if (deleting.id === draftSessionId.current) choose(null)

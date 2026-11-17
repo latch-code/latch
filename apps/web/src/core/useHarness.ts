@@ -19,7 +19,18 @@ import { forgetStoredDrafts } from './sessionDrafts.ts'
 export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'offline'
 type SyncMode = 'list' | 'all'
 const streamAuthority = (snapshot: AppSnapshot) =>
-  JSON.stringify([snapshot.instanceId, snapshot.device.id, snapshot.device.dataScope, snapshot.device.scopes.toSorted()])
+  JSON.stringify([
+    snapshot.instanceId,
+    snapshot.host?.hostId,
+    snapshot.device.id,
+    snapshot.device.status,
+    snapshot.device.listener,
+    snapshot.device.dataScope,
+    snapshot.device.scopes.toSorted(),
+  ])
+
+type DetailView = { detail: TaskDetail | null; cached: boolean }
+const EMPTY_DETAIL: DetailView = { detail: null, cached: false }
 
 /** Why the page needs (re-)enrollment, plus the old device name for the legacy re-confirmation page. */
 export interface AuthState {
@@ -55,7 +66,7 @@ const BODY_LIST_PACE_MS = 1000
  */
 export function useHarness() {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
-  const [detail, setDetail] = useState<TaskDetail | null>(null)
+  const [detailView, setDetailView] = useState(EMPTY_DETAIL)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [auth, setAuth] = useState<AuthState | null>(null)
   const [error, setError] = useState('')
@@ -79,7 +90,7 @@ export function useHarness() {
   const [refreshHints, setRefreshHints] = useState(0)
   const guard = useRef(new ProjectionGuard())
   const latestSnapshot = useRef<AppSnapshot | null>(null)
-  const latestDetail = useRef<TaskDetail | null>(null)
+  const latestDetail = useRef(EMPTY_DETAIL)
   const restoredDevice = useRef<string | null>(null)
   const alive = useRef(true)
   const running = useRef<Promise<boolean> | null>(null)
@@ -103,9 +114,9 @@ export function useHarness() {
   const signedOut = useRef(false)
   const lastSyncFailure = useRef<unknown>(null)
 
-  const publishDetail = useCallback((next: TaskDetail | null) => {
-    latestDetail.current = next
-    setDetail(next)
+  const publishDetail = useCallback((next: TaskDetail | null, cached = false) => {
+    latestDetail.current = next === null ? EMPTY_DETAIL : { detail: next, cached }
+    setDetailView(latestDetail.current)
   }, [])
   const publishSnapshot = useCallback((next: AppSnapshot | null, resync: boolean) => {
     latestSnapshot.current = next
@@ -124,7 +135,7 @@ export function useHarness() {
   const [drawBody] = useState(() =>
     frameGate(() => {
       if (!alive.current) return
-      setDetail(latestDetail.current)
+      setDetailView(latestDetail.current)
       if (listTimer.current !== null) return
       setSnapshot(latestSnapshot.current)
       listTimer.current = setTimeout(() => {
@@ -135,7 +146,7 @@ export function useHarness() {
   )
   const publishBody = useCallback(
     (next: TaskDetail, merged: AppSnapshot | null) => {
-      latestDetail.current = next
+      latestDetail.current = { detail: next, cached: false }
       if (merged) latestSnapshot.current = merged
       drawBody()
     },
@@ -228,7 +239,8 @@ export function useHarness() {
               setSelectedId(initial)
               publishDetail(null)
             }
-            publishSnapshot(mergeTaskSnapshot(next, latestDetail.current), currentResync)
+            guard.current.retain(next)
+            publishSnapshot(mergeTaskSnapshot(next, latestDetail.current.cached ? null : latestDetail.current.detail), currentResync)
             // A list-only change that drops the selection is confirmed by the detail request below.
             if (currentMode === 'list' && guard.current.sessionId !== null && !next.tasks.some(task => task.id === guard.current.sessionId))
               pending.current = 'all'
@@ -246,6 +258,7 @@ export function useHarness() {
                 // proves the session is gone. Until then it stays selected with what was last read.
                 if (nextDetail === null) {
                   if (missingMeansDeleted(next)) {
+                    guard.current.forget(detailTicket.sessionId)
                     guard.current.select(null)
                     publishDetail(null)
                     setSelectedId(null)
@@ -318,15 +331,23 @@ export function useHarness() {
   const select = useCallback(
     (id: string | null) => {
       if (id !== guard.current.sessionId) {
-        guard.current.select(id)
+        const listed = id !== null && latestSnapshot.current?.tasks.some(task => task.id === id) === true
+        const cached = guard.current.select(id, listed)
         request.current?.abort()
-        publishDetail(null)
+        publishDetail(cached, cached !== null)
         setSelectedId(id)
       }
       storeSelection(id)
       void synchronize('all')
     },
     [synchronize, publishDetail, storeSelection],
+  )
+  const forgetSession = useCallback(
+    (id: string) => {
+      guard.current.forget(id)
+      if (guard.current.sessionId === id) publishDetail(null)
+    },
+    [publishDetail],
   )
 
   useEffect(
@@ -530,9 +551,11 @@ export function useHarness() {
 
   return {
     snapshot,
-    detail,
+    detail: detailView.detail,
+    cachedDetail: detailView.cached,
     selectedId,
     select,
+    forgetSession,
     refresh,
     resync,
     confirmEnrollment,

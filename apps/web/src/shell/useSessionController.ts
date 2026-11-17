@@ -24,6 +24,7 @@ import { provideSessionLinks } from '../core/sessionLinks.ts'
 import { exportFileName, saveText, transcriptMarkdown } from '../exportMarkdown.ts'
 import { isActive } from '../format.ts'
 import { approvalActions, composerGate, deviceAccess, hostView } from '../core/permissions.ts'
+import { detailOwnsSummary } from '../core/projection.ts'
 import { setPreference } from '../preferences.ts'
 import { requestLeave } from '../preview/editDrafts.ts'
 import {
@@ -101,6 +102,7 @@ export function useSessionController({
   harness,
   snapshot,
   inputTarget = 'session',
+  atStart,
   onBeforeSelect,
   onForegroundSent,
 }: {
@@ -108,12 +110,13 @@ export function useSessionController({
   snapshot: AppSnapshot
   /** The home edits a new draft while the selected conversation stays mounted and subscribed. */
   inputTarget?: 'session' | 'new'
+  atStart: () => boolean
   /** Runs as the selection changes, for what the shell keeps per open session. */
   onBeforeSelect: (id: string | null) => void
   /** A message went out from this page and its session is now the open one. */
   onForegroundSent: () => void
 }) {
-  const { selectedId, detail, select, refresh } = harness
+  const { selectedId, detail, cachedDetail, select, refresh } = harness
   const inputId = inputTarget === 'new' ? null : selectedId
   const privateVisible = snapshot.device.dataScope === 'all' && snapshot.device.scopes.includes('view')
   const [initialDrafts] = useState(() => {
@@ -127,7 +130,9 @@ export function useSessionController({
   const draftDevice = useRef(snapshot.device.id)
   const privateDraftId = useRef<string | null>(null)
   const current = detail?.summary.id === selectedId && (!privateSession(detail.summary) || privateVisible) ? detail : null
-  const summary = current?.summary ?? snapshot.tasks.find(task => task.id === selectedId && (!privateSession(task) || privateVisible))
+  const listed = snapshot.tasks.find(task => task.id === selectedId && (!privateSession(task) || privateVisible))
+  const preferDetail = current !== null && !cachedDetail && (current.sync === undefined || detailOwnsSummary(snapshot, current))
+  const summary = preferDetail ? current.summary : (listed ?? current?.summary)
   if (summary && privateSession(summary) && selectedId) privateDraftId.current = selectedId
   else if (privateDraftId.current !== selectedId) privateDraftId.current = null
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -175,8 +180,8 @@ export function useSessionController({
       harness.connection === 'connected' && (access.legacy || (access.scopes.has('view') && (!choice.note || access.scopes.has('run')))),
   )
   const approvals = useMemo(
-    () => current?.approvals ?? snapshot.approvals.filter(approval => approval.sessionId === selectedId),
-    [current, snapshot.approvals, selectedId],
+    () => (preferDetail ? current.approvals : snapshot.approvals.filter(approval => approval.sessionId === selectedId)),
+    [current, preferDetail, snapshot.approvals, selectedId],
   )
   const active = isActive(summary?.status)
   /** The running turn takes what is sent now; read from the open session, since it is agreed per run. */
@@ -184,13 +189,6 @@ export function useSessionController({
   const harnessInfo = sessionHarness(catalog, summary)
   const harnessName = harnessInfo ? harnessLabel(harnessInfo) : (summary?.harnessId ?? snapshot.harness?.name ?? 'Latch')
 
-  const reading = useReadingPosition({
-    sessionId: selectedId,
-    ready: current !== null,
-    contentVersion: `${current?.cursor ?? 0}:${current?.liveText.length ?? 0}:${current?.liveReasoning?.length ?? 0}:${approvals.length}`,
-  })
-  // Fade the content, not the masked scroller: animating the latter can leave Chromium's hit-test region empty.
-  useSwitchFade(reading.contentRef, current?.summary.id ?? null)
   const stopSession = (sessionId: string, cause: unknown, what: RefusedInput) => {
     if (cause instanceof ApiError && cause.code === 'workspace-changed') {
       setWorkspaceChanged(previous => new Set(previous).add(sessionId))
@@ -220,6 +218,7 @@ export function useSessionController({
     snapshot,
     access,
     selectedId: inputId,
+    atStart,
     select,
     refresh,
     onSent: (sessionId, sent, { foreground, consumedDraft, memoryRefused }) => {
@@ -245,6 +244,15 @@ export function useSessionController({
         )
     },
   })
+  const startingFromHome = inputTarget === 'new' && catalog?.features?.messageIdentity && submission.startingMessage !== null
+  const reading = useReadingPosition({
+    sessionId: selectedId,
+    // The pending start temporarily owns the transcript space. Reconnect the reading observer when the session returns.
+    ready: current !== null && !startingFromHome,
+    contentVersion: `${current?.cursor ?? 0}:${current?.liveText.length ?? 0}:${current?.liveReasoning?.length ?? 0}:${approvals.length}`,
+  })
+  // Fade the content, not the masked scroller: animating the latter can leave Chromium's hit-test region empty.
+  useSwitchFade(reading.contentRef, current?.summary.id ?? null, cachedDetail)
   /**
    * The open session can start its next prompt on a new context: the harness takes it and this device may send. Not
    * when the Host has cleared it already, since nothing is left to keep, nor in a session that only opens to be read.

@@ -3,8 +3,9 @@ import { useRef, type ReactNode, type RefObject } from 'react'
 import { appRef, listedApps, originTitle } from '../plugin-pages/model.ts'
 import { FolderGit2, GitCompare, ListTodo } from 'lucide-react'
 import { escapeSecurityText, type ChangeTotals, type HarnessInfo, type RunLive, type TaskSummary } from '@latch/protocol'
-import { harnessName } from '../composerChoice.ts'
+import { harnessName, usesDemoModel } from '../composerChoice.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
+import type { SendingMessage } from '../core/sendingMessage.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
 import { connectionLabels, connectionProblem } from '../components/Sidebar.tsx'
@@ -297,6 +298,7 @@ function ImportedMark({ mark }: { mark: HeaderImported }) {
  */
 function PhoneTopBar({
   summary,
+  startingTitle,
   source,
   cancelling,
   demo,
@@ -322,6 +324,7 @@ function PhoneTopBar({
   from?: HeaderSource | undefined
   imported?: HeaderImported | undefined
   summary?: TaskSummary
+  startingTitle?: string | undefined
   source?: string
   cancelling: boolean
   demo: boolean
@@ -333,7 +336,7 @@ function PhoneTopBar({
   menu: MenuSection[]
   connection: ConnectionStatus
 }) {
-  const title = summary ? summary.title || '未命名会话' : '新会话'
+  const title = summary ? summary.title || '未命名会话' : (startingTitle ?? '新会话')
   // The header is the one place a session's state is written, on a phone as on a wide window.
   const state = summary && <TitleStatus summary={summary} cancelling={cancelling} frozen={connectionProblem(connection)} />
   const where = summary && source
@@ -407,6 +410,7 @@ function Toggle({ toggle }: { toggle: HeaderToggle }) {
  */
 export function SessionHeader({
   summary,
+  startingTitle,
   harness,
   project,
   computer,
@@ -448,6 +452,7 @@ export function SessionHeader({
   /** What the breadcrumb's popover says of this session, beyond its branch. */
   crumb?: { folders?: ReactNode; after?: ReactNode }
   summary?: TaskSummary
+  startingTitle?: string | undefined
   harness?: Pick<HarnessInfo, 'capabilities' | 'status'> | undefined
   /** The basename of the session's working directory. */
   project?: string
@@ -478,6 +483,7 @@ export function SessionHeader({
     return (
       <PhoneTopBar
         summary={summary}
+        startingTitle={startingTitle}
         source={harness ? [harnessName(harness), project].filter(Boolean).join(' · ') : undefined}
         cancelling={cancelling}
         demo={demo}
@@ -523,6 +529,13 @@ export function SessionHeader({
   return (
     <header className="topbar">
       <div className="topbar-title">
+        {startingTitle && (
+          <div className="topbar-title-line">
+            <h1 title={startingTitle}>
+              <TitleMenu title={startingTitle} sections={[]} />
+            </h1>
+          </div>
+        )}
         {summary && frame}
         {summary && !frame && (
           <>
@@ -578,7 +591,15 @@ export function SessionHeader({
 const HEAD_FOLD_WIDTH = 600
 
 /** The session header with the shell's state. */
-export function ConversationHeader({ shell }: { shell: ShellState }) {
+export function ConversationHeader({
+  shell,
+  starting,
+  onStartBack,
+}: {
+  shell: ShellState
+  starting: SendingMessage | null
+  onStartBack: () => void
+}) {
   const {
     summary,
     panelToggle,
@@ -649,6 +670,25 @@ export function ConversationHeader({ shell }: { shell: ShellState }) {
     && !!current?.messages
       .slice(current.messages.findLastIndex(message => message.role === 'user'))
       .some(message => message.outputs?.length)
+  if (starting) {
+    const { harnessId, workspaceId, model } = starting.submission
+    const harness = snapshot.catalog?.harnesses.find(item => item.id === harnessId)
+    const place = snapshot.catalog?.workspaces.find(item => item.id === workspaceId && item.id !== 'default')
+    return (
+      <SessionHeader
+        startingTitle={`${harness ? harnessName(harness) : '新会话'} · ${place ? escapeSecurityText(place.name) : '不选项目'}`}
+        cancelling={false}
+        demo={usesDemoModel(snapshot, harnessId, model?.providerId)}
+        phone={phone}
+        onBack={onStartBack}
+        panelOpen={false}
+        onPanel={() => {}}
+        sessionMenu={[]}
+        menu={[]}
+        connection={connection}
+      />
+    )
+  }
   return (
     <SessionHeader
       panelRef={panelToggle}

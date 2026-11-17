@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { chromium } from '@playwright/test'
@@ -8,7 +8,8 @@ import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { openSession } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSession } from './helpers/layout.ts'
+import { homeInput } from './helpers/workbench.ts'
 
 test('shows immediate text, delays delivery wording and retries an uncertain input with the same identity on three widths', async () => {
   const host = await startTestHost({ uiDir: resolve('dist/web') }),
@@ -405,52 +406,153 @@ test('only a message the Host lists by this requestId counts as delivered, from 
   }
 }, 90_000)
 
-test('a new full-access session shows what was sent at once, as any other start does', async () => {
+test('opens the new-session transcript on send, keeps the lost receipt, and opens three warm transcripts without reading again', async () => {
   // Only this empty directory is searched, and nothing is detected: no agent installed here can be found or started.
   const bin = await mkdtemp(join(tmpdir(), 'latch-e2e-sending-'))
-  const host = await startTestHost({ uiDir: resolve('dist/web'), commandDirectories: () => [bin], detectPreset: () => ({ found: false }) }),
+  const host = await startTestHost({
+      uiDir: resolve('dist/web'),
+      hostName: '验收电脑',
+      commandDirectories: () => [bin],
+      detectPreset: () => ({ found: false }),
+    }),
     browser = await chromium.launch(browserLaunchOptions())
   try {
     const owner = await host.enroll({ listener: 'unix' })
+    const permission = '核对每一次文件编辑和终端命令执行'
     const saved = await owner.confirmed('agents', {
       method: 'POST',
-      body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: {} },
+      body: {
+        id: 'fake',
+        name: 'Fake',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: `${permission},plan` },
+      },
     })
     expect(saved.status).toBe(201)
-    // A saved agent comes first, so the new draft starts on it.
     expect((await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === 'fake')?.level).toBe('L3')
-    const context = await browser.newContext({ viewport: { width: 1280, height: 860 }, reducedMotion: 'reduce' }),
-      page = await context.newPage()
-    await enrollBrowser(page, host, { name: '完全访问开始' })
-    await connected(page)
-    let release!: () => void
-    const delayed = new Promise<void>(resolve => {
-        release = resolve
+    const prior = await Promise.all(
+      ['已打开的记录甲', '已打开的记录乙'].map(async title => {
+        const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+          method: 'POST',
+          body: { prompt: title, requestId: randomUUID(), harnessId: 'standard' },
+        })
+        await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+        return { sessionId, title }
       }),
-      starts: Array<{ prompt: string; harnessId?: string }> = []
-    await page.route('**/link/api/tasks', async route => {
-      if (route.request().method() !== 'POST') return route.continue()
-      starts.push(route.request().postDataJSON() as { prompt: string; harnessId?: string })
-      await delayed
-      return route.continue()
-    })
-    const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
-    await input.fill('echo 完全访问的第一条')
-    await input.press('Meta+Enter')
-    const pending = page.locator('.sending-message').filter({ visible: true })
-    await expect.poll(() => pending.getByText('echo 完全访问的第一条', { exact: true }).isVisible()).toBe(true)
-    await expect.poll(() => pending.getByText('发送中…', { exact: true }).isVisible()).toBe(true)
-    expect(starts).toMatchObject([{ prompt: 'echo 完全访问的第一条', harnessId: 'fake' }])
-    await page.screenshot({ path: 'test-results/sending-full-access-start.png', fullPage: true })
-    release()
-    await expect.poll(() => pending.count(), { timeout: 20_000 }).toBe(0)
-    expect(await page.locator('.user-bubble').getByText('echo 完全访问的第一条', { exact: true }).count()).toBe(1)
-    const [task] = (await owner.json<AppSnapshot>('snapshot')).tasks
-    expect((await owner.json<TaskDetail>(`tasks/${task!.id}`)).messages.filter(message => message.role === 'user')).toHaveLength(1)
-    await context.close()
+    )
+    const output = 'test-results/composer-rest'
+    await mkdir(output, { recursive: true })
+    for (const width of [1440, 1100, 768, 390]) {
+      const context = await browser.newContext({
+        viewport: { width, height: width === 390 ? 844 : 900 },
+        hasTouch: width <= 768,
+        isMobile: width === 390,
+        reducedMotion: 'reduce',
+        deviceScaleFactor: 1,
+      })
+      let release = () => {}
+      try {
+        const page = await context.newPage()
+        await enrollBrowser(page, host, { name: `开始会话 ${width}` })
+        await connected(page)
+        if (width === 390) await page.locator('.phone-list').getByRole('button', { name: '新建会话', exact: true }).first().click()
+        await homeInput(page).waitFor()
+        const delayed = new Promise<void>(resolve => {
+          release = resolve
+        })
+        const starts: Array<{ prompt: string; requestId: string; harnessId?: string }> = []
+        await page.route('**/link/api/tasks', async route => {
+          if (route.request().method() !== 'POST') return route.continue()
+          starts.push(route.request().postDataJSON() as (typeof starts)[number])
+          if (starts.length !== 1) return route.continue()
+          const accepted = await route.fetch()
+          await delayed
+          await route.abort(accepted.ok() ? 'connectionreset' : 'failed')
+          await accepted.dispose()
+        })
+        const title = `echo 一条新消息 ${width}`
+        await homeInput(page).fill(title)
+        const sending = page.locator('main.workspace[data-pending-start]:not([inert])')
+        const send = page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true })
+        await send.click()
+        await sending.getByRole('heading', { name: 'Fake · 不选项目', exact: true }).waitFor()
+        const bubble = sending.locator('.transcript .user-bubble')
+        expect(await bubble.getByText(title, { exact: true }).isVisible()).toBe(true)
+        await page.waitForTimeout(2_000)
+        await sending.getByText('发送中…', { exact: true }).waitFor()
+
+        const shot = async (state: string) => {
+          for (const colorScheme of ['light', 'dark'] as const) {
+            await page.emulateMedia({ colorScheme })
+            await noHorizontalOverflow(page)
+            await page.screenshot({ path: `${output}/${state}--${colorScheme}--${width}.png`, animations: 'disabled' })
+          }
+        }
+        await shot('first-message-sending')
+        release()
+        const retry = sending.getByRole('button', { name: '重试这次提交', exact: true })
+        await retry.waitFor()
+        const input = sending.locator('form[hidden] textarea')
+        expect(await input.inputValue()).toBe(title)
+        expect(await input.isVisible()).toBe(false)
+        expect(await sending.locator('.pending-submission').getByText(title, { exact: true }).count()).toBe(0)
+        const [request] = starts
+        expect(request).toMatchObject({ prompt: title, harnessId: 'fake', requestId: expect.any(String) })
+        expect(await sending.getAttribute('data-pending-start')).toBe(request!.requestId)
+        await shot('first-message-unknown')
+        await retry.click()
+        await sending.waitFor({ state: 'detached' })
+        const real = page.locator('main.workspace:not([inert]) .transcript')
+        await real.locator('.user-bubble').getByText(title, { exact: true }).waitFor()
+        expect(starts).toEqual([request, request])
+        const matches = (await owner.json<AppSnapshot>('snapshot')).tasks.filter(task => task.title === title)
+        expect(matches).toHaveLength(1)
+        const task = matches[0]!
+        expect((await owner.json<TaskDetail>(`tasks/${task.id}`)).messages.filter(message => message.role === 'user')).toHaveLength(1)
+        if (width === 390) {
+          const chip = page.locator('.composer-line').getByRole('button', { name: `权限：${permission}`, exact: true })
+          await chip.waitFor()
+          expect(
+            await chip.locator('.chip-text').evaluate(element => ({
+              horizontal: element.scrollWidth <= element.clientWidth + 1,
+              vertical: element.getBoundingClientRect().height <= element.closest('button')!.getBoundingClientRect().height,
+            })),
+          ).toEqual({ horizontal: true, vertical: true })
+          const sendBox = (await page.locator('.composer-line .composer-slot').boundingBox())!
+          const permissionBox = (await chip.boundingBox())!
+          expect(sendBox.x - (permissionBox.x + permissionBox.width)).toBeLessThan(12)
+        }
+        await shot('first-message-confirmed')
+        if (width === 1440 || width === 390) {
+          await context.setOffline(true)
+          await page.locator('.app-shell[data-connection="offline"]').waitFor()
+          await openSession(page, prior[0]!.sessionId)
+          await real.locator('.transcript-skeleton').waitFor()
+          await shot('cold-transcript')
+          await context.setOffline(false)
+          await connected(page)
+          for (const entry of prior) {
+            await openSession(page, entry.sessionId)
+            await real.getByText(entry.title, { exact: true }).waitFor()
+          }
+          await context.setOffline(true)
+          await page.locator('.app-shell[data-connection="offline"]').waitFor()
+          for (const entry of [...prior, { sessionId: task.id, title }]) {
+            await openSession(page, entry.sessionId)
+            expect(await real.getByText(entry.title, { exact: true }).isVisible()).toBe(true)
+            expect(await real.locator('.transcript-skeleton').count()).toBe(0)
+          }
+          await shot('cached-transcript-offline')
+        }
+      } finally {
+        release()
+        await context.close()
+      }
+    }
   } finally {
     await browser.close()
     await host.close()
     await rm(bin, { recursive: true, force: true })
   }
-}, 60_000)
+}, 100_000)

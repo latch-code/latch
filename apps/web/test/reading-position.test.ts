@@ -138,6 +138,33 @@ it('restores each session independently after its content becomes ready', () => 
   expect(f.geometry.top).toBe(430)
 })
 
+it('restores independent offsets when switching directly between three cached transcripts', () => {
+  const f = fixture()
+  for (const [session, offset] of [
+    ['a', 230],
+    ['b', 414],
+    ['c', 573],
+  ] as const) {
+    f.controller.sync(session, true, f.viewport)
+    f.controller.input(-1, f.viewport)
+    f.userScroll(offset)
+  }
+  for (const [session, expected] of [
+    ['a', 230],
+    ['c', 573],
+    ['b', 414],
+    ['a', 230],
+  ] as const) {
+    f.controller.sync(session, true, f.viewport)
+    expect(f.geometry.top).toBe(expected)
+  }
+  f.rows[0]!.height += 60
+  for (const row of f.rows.slice(1)) row.top += 60
+  f.geometry.extent += 60
+  f.controller.sync('a', true, f.viewport, true)
+  expect(f.viewport.anchor()).toEqual({ messageId: 'message-2', offset: -30 })
+})
+
 it('publishes the selected message identity only when reading reaches a different anchor', () => {
   const f = fixture()
   const observed: Array<string | null> = []

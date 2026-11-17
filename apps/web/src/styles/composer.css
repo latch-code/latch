@@ -60,6 +60,9 @@
   border-radius: var(--r-16);
   background: var(--raised);
 }
+.composer[hidden] {
+  display: none;
+}
 .composer::before,
 .composer::after {
   content: '';

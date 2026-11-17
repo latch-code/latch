@@ -195,7 +195,15 @@ function useDraftHarnessCommands(shell: ShellState, enabled: boolean) {
 }
 
 /** The input of the open session, or the home's, which starts one. */
-export function SessionComposer({ shell: base, home = false }: { shell: ShellState; home?: boolean }) {
+export function SessionComposer({
+  shell: base,
+  home = false,
+  pendingInTranscript = false,
+}: {
+  shell: ShellState
+  home?: boolean
+  pendingInTranscript?: boolean
+}) {
   const shell = home
     ? { ...base, ...base.homeComposerState, composerRef: base.homeComposerRef }
     : base.inputTarget === 'new'
@@ -571,6 +579,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       draft={submission.draft}
       onDraft={setSubmissionDraft}
       pending={submission.pending}
+      pendingInTranscript={pendingInTranscript}
       {...(pendingHome === undefined || pendingHome === selectedId
         ? {}
         : {

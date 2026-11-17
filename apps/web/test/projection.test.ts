@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppSnapshot, CurrentDevice, HostView, TaskDetail } from '@latch/protocol'
 import { api, ApiTimeoutError } from '../src/core/api.ts'
-import { mergeTaskSnapshot, parseTaskState, ProjectionGuard } from '../src/core/projection.ts'
+import { detailOwnsSummary, mergeTaskSnapshot, parseTaskState, ProjectionGuard } from '../src/core/projection.ts'
 
 const device: CurrentDevice = {
   id: 'dev_owner',
@@ -42,6 +42,61 @@ afterEach(() => {
 })
 
 describe('authoritative stream projection', () => {
+  it('warms three recent sessions in selection order without accepting old HTTP responses or stream frames', () => {
+    const guard = new ProjectionGuard()
+    guard.bind('host')
+    const a = detail('A', 22)
+    const b = detail('B', 25)
+    const c = detail('C', 27)
+    guard.select('A')
+    const oldA = guard.capture()
+    expect(guard.accept(oldA, a, 'stream')).toBe(true)
+    guard.select('B')
+    const oldB = guard.capture()
+    expect(guard.accept(oldB, b)).toBe(true)
+    guard.select('C')
+    expect(guard.accept(guard.capture(), c)).toBe(true)
+    expect(guard.select('A', true)).toBe(a)
+    expect(guard.accept(oldA, detail('A', 51))).toBe(false)
+    expect(guard.accept(guard.capture(), detail('A', 21))).toBe(false)
+    expect(guard.accept(guard.capture(), detail('A', 22))).toBe(false)
+    const fresh = detail('A', 28)
+    expect(guard.accept(guard.capture(), fresh)).toBe(true)
+    expect(guard.select('B', true)).toBe(b)
+    expect(guard.accept(oldB, detail('B', 52), 'stream')).toBe(false)
+    expect(guard.select('C', true)).toBe(c)
+    expect(guard.select('A', true)).toBe(fresh)
+  })
+
+  it('retains eight details by recent use and removes them on deletion or a change of authority', () => {
+    const guard = new ProjectionGuard()
+    guard.bind('host')
+    const details = Array.from({ length: 9 }, (_, index) => detail(String(index), 2))
+    for (const row of details.slice(0, 8)) {
+      expect(guard.select(row.summary.id, true)).toBeNull()
+      expect(guard.accept(guard.capture(), row)).toBe(true)
+    }
+    expect(guard.select('0', true)).toBe(details[0])
+    expect(guard.select('8', true)).toBeNull()
+    expect(guard.accept(guard.capture(), details[8]!)).toBe(true)
+    expect(guard.select('1', true)).toBeNull()
+    guard.retain({ tasks: [], revision: 3 }) // A partial listing does not remove anything.
+    expect(guard.select('0', true)).toBe(details[0])
+    const deleted = guard.capture()
+    guard.forget('0')
+    expect(guard.accept(deleted, detail('0', 3), 'stream')).toBe(false)
+    guard.retain({ tasks: [details[3]!.summary], tasksComplete: true, revision: 3 })
+    expect(guard.select('2', true)).toBeNull()
+    expect(guard.select('3', true)).toBe(details[3])
+    expect(guard.select('0', true)).toBeNull()
+    guard.invalidate() // Scope changes and sign-out use the same invalidation.
+    expect(guard.select('3', true)).toBeNull()
+    expect(guard.accept(guard.capture(), details[3]!)).toBe(true)
+    guard.bind('another-host')
+    guard.select('0')
+    expect(guard.select('3', true)).toBeNull()
+  })
+
   it('rejects older revisions, old Host instances and old selection generations, including A → B → A', () => {
     const guard = new ProjectionGuard()
     guard.bind('host')
@@ -104,6 +159,7 @@ describe('authoritative stream projection', () => {
     }
     // The detail is newer than the previous detail, but older than the summary.
     expect(guard.accept(ticket, delayed, 'stream')).toBe(true)
+    expect(detailOwnsSummary(snapshot, delayed)).toBe(false)
     expect(mergeTaskSnapshot(snapshot, delayed)).toEqual(snapshot)
   })
 

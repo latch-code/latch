@@ -87,6 +87,7 @@ export function useSubmission({
   snapshot,
   access,
   selectedId,
+  atStart,
   select,
   refresh,
   onSent,
@@ -96,6 +97,8 @@ export function useSubmission({
   snapshot: AppSnapshot
   access: Pick<DeviceAccess, 'legacy' | 'local'>
   selectedId: string | null
+  /** Whether Code still has the new-session input open, including under settings or the board. */
+  atStart: () => boolean
   select: (id: string | null) => void
   refresh: () => Promise<void>
   onSent: (
@@ -454,7 +457,7 @@ export function useSubmission({
       const foreground =
         mounted.current && destination.current.epoch === origin.epoch && destination.current.selectedId === (submission.sessionId ?? null)
       // Started from the board: the draft is used up as from the home's input, but the session is not opened.
-      const shown = foreground && !origin.stay
+      const shown = foreground && !origin.stay && (submission.sessionId !== undefined || atStart())
       if (shown) select(sessionId)
       if (mounted.current)
         onSent(sessionId, submission, {
@@ -565,6 +568,8 @@ export function useSubmission({
     delivered,
     sending,
     sendingMessage,
+    startingMessage:
+      sendingMessage?.sessionId === null && !requestOrigins.current.get(sendingMessage.submission.requestId)?.stay ? sendingMessage : null,
     error,
     /** The Host's code for the refusal `error` says, while it says it. */
     errorCode: failed.current?.text === error ? failed.current.code : undefined,

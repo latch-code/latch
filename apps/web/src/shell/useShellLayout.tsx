@@ -189,6 +189,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     harness,
     snapshot,
     inputTarget: route.start ? 'new' : 'session',
+    atStart: () => {
+      const place = routeRef.current
+      return place.entry === 'sessions' && place.start === true
+    },
     onBeforeSelect: id => {
       // A session opens in 对话, from a card, a notification, the palette or a key alike.
       if (id !== null) leaveBoard()
@@ -1594,7 +1598,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     search.trim() && catalog?.features?.search ? <SessionSearchResults state={contentSearch} onSelect={selectSearchHit} /> : undefined
   const archiveBatch =
     filter === 'archived' && catalog?.features?.sessionBatch && access.scopes.has('run') ? (
-      <ArchiveBatch tasks={snapshot.tasks} harnesses={snapshot.catalog?.harnesses ?? []} onChanged={refresh} />
+      <ArchiveBatch
+        tasks={snapshot.tasks}
+        harnesses={snapshot.catalog?.harnesses ?? []}
+        onChanged={refresh}
+        onDeleted={harness.forgetSession}
+      />
     ) : undefined
   const archiveUndo = archivedLast ? <ArchiveUndo key={archivedLast.id} onUndo={undoArchive} onExpire={forgetArchive} /> : undefined
   const findReveal = useStableCallback((messageId: string, offset?: number) => {

@@ -17,7 +17,7 @@ import { FillPlace } from '../panel/terminal/fills.ts'
 import { isLive, liveMessageId, renderedMessages } from '../conversation.ts'
 import { ChangesLinkContext } from '../conversation/changesLink.ts'
 import { useTranscriptProjection } from '../conversation/useTranscriptProjection.ts'
-import { Backdrop, Button, Hint, InlineNotice, Loading, HistoryGlyph, ShieldAlertGlyph, type BackdropLevel } from '@latch/ui'
+import { Backdrop, Button, Hint, InlineNotice, Skeleton, HistoryGlyph, ShieldAlertGlyph, type BackdropLevel } from '@latch/ui'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { DEVICE_FAILURE_STEPS, OWNER_FAILURE_STEPS, SendingBubble, SessionComposer, takeFailureStep } from './SessionComposers.tsx'
 import type { ShellState } from './useShellLayout.tsx'
@@ -33,9 +33,37 @@ import { speakerOf } from '../agents/model.ts'
 import { loginSurface } from '../panel/terminal/loginRuns.ts'
 import { useOpenedMark } from '../core/attend.ts'
 import { useEditFrom } from '../conversation/EditFrom.tsx'
+import type { SendingMessage as SendingView } from '../core/sendingMessage.ts'
+import { SendingMessage } from '../components/SendingMessage.tsx'
+
+/** A typical first turn's bubble and reply in the same content column as the loaded transcript. */
+function TranscriptSkeleton() {
+  return (
+    <div className="transcript-skeleton" role="status" aria-label="正在读取会话记录">
+      <div className="message-user">
+        <Skeleton width="48%" height={40} />
+      </div>
+      <div className="turn-reply">
+        <Skeleton width={88} height={16} />
+        <Skeleton width="89%" height={18} />
+        <Skeleton width="72%" height={18} />
+      </div>
+    </div>
+  )
+}
 
 /** Under the top bar: the notices and the conversation (or the new session). Phones draw it as paper. */
-export function ConversationView({ shell, visible, backdrop }: { shell: ShellState; visible: boolean; backdrop: BackdropLevel }) {
+export function ConversationView({
+  shell,
+  visible,
+  backdrop,
+  starting,
+}: {
+  shell: ShellState
+  visible: boolean
+  backdrop: BackdropLevel
+  starting: SendingView | null
+}) {
   const {
     current,
     summary,
@@ -249,11 +277,25 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
     <div className={showBackdrop ? 'workspace-body ui-backdrop-host' : 'workspace-body'}>
       {showBackdrop && <Backdrop className="workbench-backdrop" level={backdrop} running={active && frozenAt === undefined ? 1 : 0} />}
       <ConnectionBanners shell={shell} />
-      <Banner show={Boolean(sessionBlock) && !workspaceChanged.has(selectedId ?? '')} scope={selectedId ?? ''}>
-        {sessionBlock && <InlineNotice tone="neutral">{sessionBlock}</InlineNotice>}
-      </Banner>
-      {/* Without an open session the home covers this view; 新会话 is the home's input. */}
-      {selectedId === null ? null : (
+      {!starting && (
+        <Banner show={Boolean(sessionBlock) && !workspaceChanged.has(selectedId ?? '')} scope={selectedId ?? ''}>
+          {sessionBlock && <InlineNotice tone="neutral">{sessionBlock}</InlineNotice>}
+        </Banner>
+      )}
+      {starting ? (
+        <div className="conversation" key={starting.submission.requestId}>
+          <div className="transcript-shell">
+            <div className="transcript" tabIndex={0} aria-label="会话记录">
+              <div className="transcript-content">
+                <SendingMessage view={starting} showUnknown={false} />
+              </div>
+            </div>
+          </div>
+          <div className="composer-dock">
+            <SessionComposer shell={shell} home pendingInTranscript />
+          </div>
+        </div>
+      ) : selectedId === null ? null : (
         <div className="conversation">
           <div className="transcript-shell">
             {showBackdrop && <span className="transcript-backdrop-clear" data-backdrop-clear="" aria-hidden="true" />}
@@ -288,7 +330,7 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
               <div className="transcript-content" ref={reading.contentRef}>
                 {current === null ? (
                   <>
-                    <Loading label="正在读取会话记录…" />
+                    {!shell.sendingView && <TranscriptSkeleton />}
                     <SendingBubble shell={shell} />
                   </>
                 ) : (

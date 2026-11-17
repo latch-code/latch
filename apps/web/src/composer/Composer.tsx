@@ -100,6 +100,7 @@ export function Composer({
   draft,
   onDraft,
   pending,
+  pendingInTranscript = false,
   onOpenPending,
   sending,
   error,
@@ -170,6 +171,8 @@ export function Composer({
   draft: string
   onDraft: (value: string) => void
   pending: PendingSubmission | null
+  /** The new-session transcript already shows this submission. Keep the retry actions below it. */
+  pendingInTranscript?: boolean
   /** The pending submission belongs to another session or to 新会话: this input is held for it, and this opens it. */
   onOpenPending?: () => void
   sending: boolean
@@ -631,7 +634,7 @@ export function Composer({
         <div className="pending-submission" data-tint="warn" role="status">
           <div className="pending-submission-text">
             <strong>{onOpenPending ? '另一个会话有消息未确认送达' : '未确认送达'}</strong>
-            <p>{pending.prompt || `${pending.attachmentIds?.length ?? 0} 个附件`}</p>
+            {!pendingInTranscript && <p>{pending.prompt || `${pending.attachmentIds?.length ?? 0} 个附件`}</p>}
             <Hint inline className="pending-submission-reason" label={pendingReason || '没有收到电脑的答复'}>
               {pending.sessionId === undefined
                 ? '重试沿用同一请求，电脑已经收到的不会再开一个会话。放弃这次提交只在这台设备上放下它，文字回到输入框；电脑如果其实已经收到，那个会话会出现在列表里，再发送会开始另一个会话，可能另建一个工作树。'
@@ -661,6 +664,7 @@ export function Composer({
       <DrawerStack className="composer-drawers">{drawers}</DrawerStack>
       <form
         ref={commandAnchor}
+        hidden={pendingInTranscript}
         className={`composer ${run ? 'is-running' : ''}`}
         data-inline={inline ? '' : undefined}
         data-location-position={desktopLocation ? locationPosition : undefined}
