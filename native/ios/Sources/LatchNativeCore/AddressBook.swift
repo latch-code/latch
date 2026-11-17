@@ -70,6 +70,11 @@ public struct NativeAddressBook: Codable, Sendable {
 }
 /** Relays in the Host's measured region first, then the rest in signed order (link-wire `orderRelays`). */
 public enum NativeRelayOrder {
+    // Match the Host's Workers release gate, including address books already stored on this phone.
+    static let edgeAvailable = false
+    public static func available(_ book: NativeAddressBook?) -> [NativeRelayAddress] {
+        ordered(book).filter { $0.edge == nil || edgeAvailable }
+    }
     public static func ordered(_ book: NativeAddressBook?) -> [NativeRelayAddress] {
         guard let book else { return [] }
         guard let near = book.hostRegion else { return book.relays }

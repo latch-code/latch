@@ -1,11 +1,14 @@
 import type { NativeLinkInfo, NativeRelayTest } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
+import { EDGE_RELAY_AVAILABLE } from '@latch/link-wire'
 import type { startNativeHost } from './native.ts'
 import { classify, type HostRelayController } from './relay/controller.ts'
 import { selectAutoDirect } from './native-network.ts'
 import type { NativeNetworkSnapshot } from './native-network-backend.ts'
 import {
+  assertRelayAvailable,
+  relayAvailable,
   relayKeyHash,
   relayNodeFields,
   type RelayProfiles,
@@ -39,8 +42,8 @@ export class NativeSettings {
       managedDirect?: { host: string; port: number }
       /** The Host runs from a source checkout with the relay setup commands. */
       sourceCheckout?: boolean
-      /** When a phone last received an address book naming a relay. */
-      deliveredAt?(relayId: string): number | undefined
+      /** When this Host last signed a book containing a relay's current configuration. */
+      bookIssuedAt?(relayId: string): number | undefined
       /** A QR is out, or a phone it let in has not finished. */
       pairing(): boolean
       /** A paired phone exists, or a removed one has yet to read its tombstone. */
@@ -59,12 +62,13 @@ export class NativeSettings {
       listening: this.options.native.direct,
       directory: Boolean(state.directory),
       ...(this.options.sourceCheckout ? { sourceCheckout: true } : {}),
+      ...(EDGE_RELAY_AVAILABLE ? { edgeRelayAvailable: true } : {}),
       official: {
-        deployed: state.profiles.some(item => item.builtIn),
+        deployed: state.profiles.some(item => item.builtIn && relayAvailable(item)),
         enabled: !state.officialOff,
         ownFirst: Boolean(state.ownFirst),
         nodes: state.profiles
-          .filter(item => item.builtIn)
+          .filter(item => item.builtIn && relayAvailable(item))
           .map(item => {
             const status = statuses.find(value => value.relayId === item.relayId)
             return {
@@ -79,26 +83,26 @@ export class NativeSettings {
             pendingRelay: {
               requestId: state.pendingRelay.requestId,
               url: state.pendingRelay.profile.url,
-              canRetry: state.pendingRelay.deviceId === deviceId,
+              canRetry: state.pendingRelay.deviceId === deviceId && relayAvailable(state.pendingRelay.profile),
             },
           }
         : {}),
       relays: state.profiles
         .filter(item => !item.builtIn)
-        .map(item => {
+        .map<NativeLinkInfo['relays'][number]>(item => {
           const status = statuses.find(value => value.relayId === item.relayId)
-          const delivered = this.options.deliveredAt?.(item.relayId)
+          const bookIssuedAt = this.options.bookIssuedAt?.(item.relayId)
           return {
             relayId: item.relayId,
             url: item.url,
             kind: item.kind ?? 'self',
-            status: item.disabled ? ('disabled' as const) : (status?.status ?? 'connecting'),
+            status: item.disabled ? 'disabled' : !relayAvailable(item) ? 'unsupported' : (status?.status ?? 'connecting'),
             ...(status?.retryAt === undefined || item.disabled ? {} : { retryAt: status.retryAt }),
             ...(status?.connectedAt === undefined ? {} : { connectedAt: status.connectedAt }),
             ...(status?.latencyMs === undefined || item.disabled ? {} : { latencyMs: status.latencyMs }),
             addresses: 1 + (item.extraUrls?.length ?? 0),
             keyHash: relayKeyHash(relayNodeFields(item)),
-            ...(delivered === undefined ? {} : { deliveredAt: delivered }),
+            ...(bookIssuedAt === undefined ? {} : { bookIssuedAt }),
           }
         }),
     }
@@ -165,6 +169,7 @@ export class NativeSettings {
       if (pending.requestId !== requestId) throw new AppError(409, 'native-relay-pending', '请先继续或放弃未确认的中继。')
       if (pending.deviceId !== deviceId) throw new AppError(403, 'native-relay-owner', '请使用开始添加的设备继续。')
       if (requestHash !== undefined && pending.requestHash !== requestHash) throw this.relayConflict()
+      assertRelayAvailable(pending.profile)
       const { registrationKey } = pending.profile
       return {
         base: profiles.configHash(),
@@ -270,6 +275,7 @@ export class NativeSettings {
     authorize()
     const profile = this.options.profiles.snapshot().profiles.find(item => item.relayId === relayId)
     if (!profile) throw new AppError(404, 'native-relay-missing', '中继配置已移除')
+    assertRelayAvailable(profile)
     const hash = sha256Hex(canonicalJson(profile))
     await this.options.audit.append({
       action: 'native.relay.test',
@@ -286,8 +292,8 @@ export class NativeSettings {
     current()
     const result = await this.options.controller.test(profile, current)
     current()
-    const delivered = this.options.deliveredAt?.(relayId)
-    return { ...result, ...(delivered === undefined ? {} : { deliveredAt: delivered }) }
+    const bookIssuedAt = this.options.bookIssuedAt?.(relayId)
+    return { ...result, ...(bookIssuedAt === undefined ? {} : { bookIssuedAt }) }
   }
   /** The official relay switch. Off only removes an observer; on restores the default. Both are audited. */
   setOfficial(

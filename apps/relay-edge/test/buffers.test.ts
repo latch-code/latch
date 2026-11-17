@@ -105,7 +105,28 @@ it('retains queued writes through the close event and received work until it set
   expect(buffers.size).toBe(1)
   buffers.received(socket, 100)
   expect(buffers.status()).toEqual({ bytes: 0, messages: 0 })
-  expect(buffers.size).toBe(0)
+  expect(buffers.size).toBe(1)
+})
+
+it.each([false, true])('keeps the old FIFO and the ambiguous write when send throws (enqueued=%s)', enqueued => {
+  const buffers = new EdgeBuffers(),
+    socket = new Socket()
+  expect(buffers.accept(socket)).toBe(true)
+  for (let index = 0; index < 100; index++) {
+    expect(buffers.queue(socket, 1)).toBe(true)
+    buffers.write(socket, Uint8Array.of(0))
+  }
+  socket.send = payload => {
+    if (enqueued) socket.bufferedAmount! += payload.byteLength
+    throw new Error('send failed')
+  }
+  expect(buffers.queue(socket, 1024)).toBe(true)
+  expect(() => buffers.write(socket, new Uint8Array(1024))).toThrow('send failed')
+  buffers.closed(socket)
+  expect(buffers.status()).toEqual({ bytes: 1124, messages: 101 })
+  socket.bufferedAmount = 0
+  expect(buffers.status()).toEqual({ bytes: 0, messages: 0 })
+  expect(buffers.size).toBe(1)
 })
 
 it('bounds the object’s message metadata even when every payload is one byte', () => {

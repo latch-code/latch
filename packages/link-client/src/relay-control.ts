@@ -29,6 +29,7 @@ export interface RelaySetup {
 /** One control socket, one receive pump, at most eight route memberships and eight queued/authenticating opens. */
 export class RelayControl {
   readonly closed: Promise<Error>
+  readonly permitted: () => boolean
   private resolveClosed!: (error: Error) => void
   private readonly peer: RelaySocket
   private readonly options: RelayEndpoint & { registrationToken?: Uint8Array }
@@ -39,6 +40,7 @@ export class RelayControl {
   private readonly opens: Open[] = []
   private readonly waiters: Array<{ resolve(value: Open): void; reject(error: Error): void }> = []
   private readonly attaching = new Set<RelaySocket>()
+  private readonly pendingData = new AbortController()
   private readonly denials = new Map<
     string,
     {
@@ -73,11 +75,13 @@ export class RelayControl {
     options: RelayEndpoint & { registrationToken?: Uint8Array },
     nonce: Uint8Array,
     roundTripMs: number,
+    permitted: () => boolean,
   ) {
     this.peer = peer
     this.options = options
     this.nonce = nonce
     this.roundTripMs = roundTripMs
+    this.permitted = permitted
     this.closed = new Promise(resolve => {
       this.resolveClosed = resolve
     })
@@ -87,10 +91,10 @@ export class RelayControl {
     options: RelayEndpoint & { registrationToken?: Uint8Array; signal?: AbortSignal; guardWrites?: () => boolean },
   ): Promise<RelayControl> {
     const started = performance.now()
-    const { peer, hello } = await openRelay(options, 'host', options.signal, options.guardWrites)
+    const { peer, hello, permitted } = await openRelay(options, 'host', options.signal, options.guardWrites)
     try {
       if (!hello || (hello.requiresToken && options.registrationToken?.length !== 32)) throw new Error('Relay challenge rejected')
-      return new RelayControl(peer, options, hello.nonce, performance.now() - started)
+      return new RelayControl(peer, options, hello.nonce, performance.now() - started, permitted)
     } catch (error) {
       peer.close()
       throw error
@@ -99,6 +103,7 @@ export class RelayControl {
   private fail(error: Error): void {
     if (this.failure) return
     this.failure = error
+    this.pendingData.abort()
     let stopping = Promise.resolve()
     for (const pending of this.denials.values()) {
       clearTimeout(pending.timer)
@@ -318,7 +323,7 @@ export class RelayControl {
     try {
       const route = this.routes.get(hex(request.routeId))
       if (!route || this.failure) throw new Error('Relay route unavailable')
-      data = (await openRelay({ ...this.options, profile: request.profile }, 'data')).peer
+      data = (await openRelay({ ...this.options, profile: request.profile }, 'data', this.pendingData.signal)).peer
       this.attaching.add(data)
       if (this.failure) throw this.failure
       const nonce = nodeCrypto.random(16)

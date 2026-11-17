@@ -888,7 +888,7 @@ import UIKit
                 })
             }
         }
-        for endpoint in NativeRelayOrder.ordered(book) {
+        for endpoint in NativeRelayOrder.available(book) {
             let expiresAt = book?.expiresAt ?? 0
             guard (try? NativeRelayAdmission.current(endpoint: endpoint, bookExpiresAt: expiresAt, nowMs: now)) != nil else { continue }
             guard let workspace else { throw NativeFailure.unavailable }

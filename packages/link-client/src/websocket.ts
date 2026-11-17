@@ -28,6 +28,7 @@ export class RelayClosed extends Error {
 interface RelaySocketPolicy {
   version?: RelayWireVersion
   outerPadding?: boolean
+  permitted?(): boolean
   beforeReceive?(bytes: number): Promise<boolean>
   beforeWrite?(bytes: number): Promise<boolean>
   sendHighWaterMark?(): number
@@ -84,7 +85,7 @@ export class RelaySocket {
       this.outer = new RelayOuterPadding({
         client,
         write: bytes => this.writeFrame(bytes),
-        valid: () => this.validWrite(),
+        valid: () => this.canWrite(),
         fail: () => this.close(4302),
         maximumTickBytes: () => this.policy.sendHighWaterMark?.() ?? 32_768,
       })
@@ -108,6 +109,7 @@ export class RelaySocket {
   }
   private feed(chunk: Uint8Array): void {
     try {
+      if (this.policy.permitted?.() === false) throw new Error('Relay egress unavailable')
       for (const frame of this.parser.feed(chunk)) {
         const frameBytes =
           frame.payload.length + (frame.payload.length <= 125 ? 2 : frame.payload.length <= 65535 ? 4 : 10) + (this.outgoingMask ? 0 : 4)
@@ -164,6 +166,10 @@ export class RelaySocket {
         if (this.policy.beforeReceive && !(await this.policy.beforeReceive(this.receivedBytes.get(message)!))) {
           this.close(4302)
           throw new Error('Relay traffic unavailable')
+        }
+        if (this.policy.permitted?.() === false) {
+          this.close(4302)
+          throw new Error('Relay egress unavailable')
         }
         if (message.type === 'pad' && this.outgoingMask) continue
         return message
@@ -228,7 +234,7 @@ export class RelaySocket {
     this.queuedSendBytes += frame.length
     const work = this.sends
       .then(async () => {
-        if (this.failure || !this.validWrite()) {
+        if (this.failure || !this.canWrite()) {
           this.close(4302)
           throw this.failure ?? new Error('Relay write unavailable')
         }
@@ -236,7 +242,7 @@ export class RelaySocket {
           this.close(4302)
           throw new Error('Relay traffic unavailable')
         }
-        if (this.failure || !this.validWrite()) {
+        if (this.failure || !this.canWrite()) {
           this.close(4302)
           throw this.failure ?? new Error('Relay write unavailable')
         }
@@ -300,6 +306,9 @@ export class RelaySocket {
   guardWrites(valid: () => boolean): void {
     this.validWrite = valid
   }
+  private canWrite(): boolean {
+    return this.policy.permitted?.() !== false && this.validWrite()
+  }
   private finish(error: Error): void {
     if (this.failure) return
     this.failure = error
@@ -313,6 +322,10 @@ export class RelaySocket {
   close(code = 1000): void {
     if (this.failure) return
     this.finish(new RelayClosed(code))
+    if (this.policy.permitted?.() === false) {
+      this.stream.destroy()
+      return
+    }
     const payload = new Uint8Array([code >> 8, code & 255])
     this.stream.end(encodeFrame({ opcode: 8, payload }, this.outgoingMask ? randomBytes(4) : undefined))
     const timer = setTimeout(() => this.stream.destroy(), 1000)
@@ -323,6 +336,14 @@ export class RelaySocket {
 
 export function acceptKey(key: string): string {
   return createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
+}
+
+export interface RelayDialLease {
+  readonly origin: string
+  readonly address: string
+  readonly revoked: AbortSignal
+  permitted(): boolean
+  release(): void
 }
 
 /**
@@ -337,9 +358,14 @@ export async function connectRelay(options: {
   timeoutMs?: number
   signal?: AbortSignal
   address?: string
+  lease?: RelayDialLease
   profile?: RelayTransportProfile
 }): Promise<RelaySocket> {
-  const { url } = options
+  const { url, lease } = options
+  const permitted = () => lease === undefined || (!lease.revoked.aborted && lease.permitted())
+  const signal = lease ? (options.signal ? AbortSignal.any([options.signal, lease.revoked]) : lease.revoked) : options.signal
+  if ((lease && lease.origin !== url.origin) || !permitted()) throw new Error('Relay egress unavailable')
+  signal?.throwIfAborted()
   const version = relayWireVersion(options.profile),
     protocol = `latch-relay.${version}`
   if (
@@ -354,11 +380,13 @@ export async function connectRelay(options: {
   )
     throw new RangeError('Invalid relay endpoint')
   const key = randomBytes(16).toString('base64')
-  if (options.address !== undefined && !isIP(options.address)) throw new RangeError('Invalid relay dial address')
-  const lookup: LookupFunction | undefined = options.address
+  const address = lease?.address ?? options.address
+  if (address !== undefined && !isIP(address)) throw new RangeError('Invalid relay dial address')
+  const hostname = url.hostname.replace(/^\[|\]$/gu, '')
+  if (lease && isIP(hostname) && hostname !== address) throw new RangeError('Invalid relay dial address')
+  const lookup: LookupFunction | undefined = address
     ? (_hostname, lookupOptions, callback) => {
-        const address = options.address!,
-          family = isIP(address)
+        const family = isIP(address)
         if (typeof lookupOptions === 'object' && lookupOptions.all) callback(null, [{ address, family }])
         else callback(null, address, family)
       }
@@ -366,7 +394,7 @@ export async function connectRelay(options: {
   return new Promise((resolve, reject) => {
     const req = request(url, {
       agent: false,
-      signal: options.signal,
+      signal,
       ca: options.ca,
       ...(lookup ? { lookup } : {}),
       minVersion: 'TLSv1.3',
@@ -402,7 +430,9 @@ export async function connectRelay(options: {
     req.once('upgrade', (response, socket, head) => {
       clearTimeout(timer)
       if (
-        response.statusCode !== 101
+        signal?.aborted
+        || !permitted()
+        || response.statusCode !== 101
         || response.headers['sec-websocket-accept'] !== acceptKey(key)
         || response.headers['sec-websocket-protocol'] !== protocol
         || response.headers['sec-websocket-extensions']
@@ -411,8 +441,14 @@ export async function connectRelay(options: {
         reject(new Error('Invalid relay upgrade'))
         return
       }
+      if (lease) {
+        const revoke = () => socket.destroy()
+        lease.revoked.addEventListener('abort', revoke, { once: true })
+        socket.once('close', () => lease.revoked.removeEventListener('abort', revoke))
+      }
       resolve(
         new RelaySocket(socket, true, head, {
+          ...(lease ? { permitted } : {}),
           pingIntervalMs: options.edge ? EDGE_RELAY.pingIntervalMs : 25_000,
           deadAfterMs: options.edge ? EDGE_RELAY.clientDeadAfterMs : 60_000,
           applicationPing: Boolean(options.edge),

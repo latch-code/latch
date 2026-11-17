@@ -886,6 +886,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       relayKeys: [vectors.edgeRelay.relayKey, ''],
       urls: [['https://latch-relay-ne.example.workers.dev/', 'https://ne.relay.example/'], ['https://relay.example/']],
       order: [vectors.relayId, '33'.repeat(16)],
+      available: ['33'.repeat(16)],
       hostRegion: 'apac-ne',
     })
     const result = await invoke({ ...vectors, operation: 'edgeRelay' })
@@ -934,13 +935,23 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       rows: [
         { winner: 'o0.example', fast: true },
         { winner: 'o1.example', fast: true },
-        // A silent first address does not hold the winner back; it loses its claim when it finally answers.
+        // The silent first attempt cancels promptly when the second one succeeds.
         { winner: 'o1.example', fast: true },
         { winner: '', fast: true },
         { winner: 'o0.example', fast: true },
       ],
       // Only one origin per node ever claims it, so there is never a second connection to close.
       closed: 0,
+    })
+  })
+  it('cancels the pre-dial and staggered attempts and closes a late success before returning', async () => {
+    expect(await invoke({ operation: 'edgeRaceCancellation' })).toEqual({
+      winner: false,
+      preCancelledWinner: false,
+      dialled: 1,
+      cancelled: true,
+      claimed: false,
+      closed: 1,
     })
   })
   it('keeps both directory floors through encrypted restart, revoked online keys and unknown commits in Swift', async () => {

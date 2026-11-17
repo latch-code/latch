@@ -126,7 +126,7 @@ public actor NativeListWatcher {
         let now = UInt64(max(0, Date().timeIntervalSince1970 * 1000))
         guard let book = try? AddressBookCodec.verify(device.signedAddressBook, rootSpki: device.rootSpki, deviceId: device.deviceId,
             nowMs: now, priorGeneration: device.bookGeneration, priorHash: device.bookHash) else { return [] }
-        return NativeRelayOrder.ordered(book).prefix(1).compactMap { endpoint in
+        return NativeRelayOrder.available(book).prefix(1).compactMap { endpoint in
             guard let pass = try? NativeRelayAdmission.current(endpoint: endpoint, bookExpiresAt: book.expiresAt, nowMs: now) else { return nil }
             return try? NativePathCandidate(id: "relay-" + LinkBytes.hex(endpoint.relayId), kind: .relay) {
                 try await NativeHTTPConnection.relay(endpoint: endpoint, admission: pass, rootSpki: device.rootSpki, knockKey: device.knockKey, identity: keys.identity())

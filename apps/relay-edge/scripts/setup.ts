@@ -1,11 +1,12 @@
-import { spawn } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { nodeCrypto } from '@latch/link-client/crypto'
+import { EDGE_RELAY_AVAILABLE } from '@latch/link-wire'
 import { buildEdgeBundle } from './bundle.ts'
 import { runSetup, SetupError } from './setup-core.ts'
+import { wranglerRunner } from './wrangler.ts'
 
 /**
  * `pnpm relay-edge:setup --region ne|se --out <absolute path>`: the source checkout's entry to the setup module. It builds
@@ -16,36 +17,33 @@ const { values } = parseArgs({
   options: { region: { type: 'string' }, out: { type: 'string' }, wrangler: { type: 'string' } },
   strict: true,
 })
-const fail = (message: string): never => {
+const fail = (message: string): void => {
   process.stderr.write(`${message}\n`)
-  process.exit(1)
+  process.exitCode = 1
 }
-if (values.region !== 'ne' && values.region !== 'se') fail('--region 应为 ne（东京）或 se（新加坡）')
-const program = values.wrangler ?? 'wrangler'
+const region = values.region
+if (!EDGE_RELAY_AVAILABLE) {
+  fail('Cloudflare Workers 中继尚未实现：平台暂无法提供消息组装前大小与连接释放约束。')
+  process.exit()
+}
+if (region !== 'ne' && region !== 'se') {
+  fail('--region 应为 ne（东京）或 se（新加坡）')
+  process.exit()
+}
 const bundles = await mkdtemp(join(tmpdir(), 'latch-relay-bundle-'))
 try {
   process.stdout.write('构建 Worker\n')
   await buildEdgeBundle(bundles)
   await runSetup(
     {
-      region: values.region as 'ne' | 'se',
+      region,
       out: values.out ?? '',
       workerBundle: join(bundles, 'worker.js'),
       workBundle: join(bundles, 'work.js'),
       workDir: join(homedir(), '.latch-relay'),
     },
     {
-      wrangler: (args, options) =>
-        new Promise(resolve => {
-          const child = spawn(program, args, { cwd: options.cwd, stdio: ['pipe', 'pipe', 'inherit'] })
-          let stdout = ''
-          child.stdout.on('data', (chunk: Buffer) => {
-            stdout += chunk.toString()
-          })
-          child.once('error', () => resolve({ code: -1, stdout: '' }))
-          child.once('close', code => resolve({ code: code ?? -1, stdout }))
-          child.stdin.end(options.input ?? '')
-        }),
+      wrangler: wranglerRunner(values.wrangler ?? 'wrangler'),
       status: url =>
         fetch(url, { signal: AbortSignal.timeout(10_000) }).then(
           response => response.status,

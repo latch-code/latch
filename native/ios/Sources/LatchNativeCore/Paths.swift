@@ -18,20 +18,34 @@ public actor NativePathOwner {
     private var failures: [String: ContinuousClock.Instant] = [:]
     private weak var workspace: NativeWorkspace?
     public init() {}
-    public func networkChanged() async { failures.removeAll(); generation = UUID(); round?.cancel(); round = nil; await workspace?.cancelFileTransfer() }
+    public func networkChanged() async {
+        failures.removeAll()
+        let current = UUID(); generation = current
+        let previous = round
+        previous?.cancel()
+        await workspace?.cancelFileTransfer()
+        if let previous { _ = await previous.result }
+        if generation == current { round = nil }
+    }
     public func close() async { await networkChanged() }
     public func migrate(_ candidates: [NativePathCandidate], workspace: NativeWorkspace) async throws -> NativeJSON {
-        self.workspace = workspace
         guard candidates.count <= 12 else { throw NativeFailure.invalidRecord }
-        round?.cancel()
+        self.workspace = workspace
         let current = UUID(); generation = current
+        let previous = round
+        previous?.cancel()
+        if let previous { _ = await previous.result }
+        guard generation == current, !Task.isCancelled else { throw NativeFailure.unavailable }
+        round = nil
         let available = candidates.filter { failures[$0.id].map { ContinuousClock.now >= $0 } ?? true }
         let selected = Array(available.filter { $0.kind == .direct }.prefix(2)) + Array(available.filter { $0.kind == .relay }.prefix(1))
         guard !selected.isEmpty else { throw NativeFailure.unavailable }
         let task = Task { try await self.dial(selected, workspace: workspace, generation: current) }
         round = task
         do {
-            let result = try await task.value
+            let result = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: { task.cancel() }
             guard generation == current else { throw NativeFailure.unavailable }
             round = nil; return result
         } catch { if generation == current { round = nil }; throw error }

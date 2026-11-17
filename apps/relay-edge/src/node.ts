@@ -244,6 +244,7 @@ export class EdgeNode {
           maxPerPrefix: this.limits.maxPerPrefix,
           maxRoutesPerPrefix: this.limits.maxRoutesPerPrefix,
           maxPreauthConnections: this.limits.maxPreauthConnections,
+          maxDenialTags: 16_384,
           denials: this.denials,
           registrationWork: {
             softRoutesPerPrefix: this.limits.softRoutesPerPrefix,

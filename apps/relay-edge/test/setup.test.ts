@@ -1,14 +1,16 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { runSetup, SetupError, type SetupDeps } from '../scripts/setup-core.ts'
+import { wranglerRunner } from '../scripts/wrangler.ts'
 
 const folders: string[] = []
 afterEach(async () => {
+  vi.unstubAllEnvs()
   for (const folder of folders.splice(0)) await rm(folder, { recursive: true, force: true })
 })
 
@@ -115,4 +117,55 @@ it('writes no relay file when the node never answers /healthz', async () => {
   const t = await fixture({ status: async () => 503 })
   await expect(runSetup(t.input, t.deps)).rejects.toThrow(/healthz/u)
   await expect(stat(t.input.out)).rejects.toThrow()
+})
+
+it('runs an executable with a clean diagnostics environment and discards all secret command output', async () => {
+  const t = await fixture()
+  const diagnostics = join(t.root, 'inherited.log')
+  vi.stubEnv('NODE_DEBUG', 'http,https')
+  vi.stubEnv('WRANGLER_LOG', 'debug')
+  vi.stubEnv('WRANGLER_LOG_SANITIZE', 'false')
+  vi.stubEnv('WRANGLER_LOG_PATH', diagnostics)
+  vi.stubEnv('WRANGLER_OUTPUT_FILE_PATH', diagnostics)
+  vi.stubEnv('WRANGLER_OUTPUT_FILE_DIRECTORY', t.root)
+  const tool = join(t.root, 'wrangler')
+  await writeFile(
+    tool,
+    String.raw`#!/bin/sh
+set -eu
+case "$1" in
+  --version) printf '4.164.0\n' ;;
+  deploy) printf 'https://latch-relay-ne.fixture.workers.dev\n' ;;
+  secret)
+    test "$5" = 'wrangler.jsonc'
+    test "$6" = '--env-file'
+    test "$7" = '/dev/null'
+    test "$WRANGLER_LOG" = 'none'
+    test "$WRANGLER_LOG_SANITIZE" = 'true'
+    test "$WRANGLER_SEND_METRICS" = 'false'
+    test "$NODE_OPTIONS" = '--disable-sigusr1'
+    test -z "$(printenv NODE_DEBUG || true)"
+    test -z "$(printenv WRANGLER_OUTPUT_FILE_DIRECTORY || true)"
+    test "$WRANGLER_OUTPUT_FILE_PATH" = '/dev/null'
+    test "$(readlink "$WRANGLER_LOG_PATH")" = '/dev/null'
+    input=$(cat)
+    printf '%s\n' "$input" >> "$WRANGLER_LOG_PATH"
+    printf '%s\n' "$input" >> "$WRANGLER_OUTPUT_FILE_PATH"
+    printf '%s\n' "$input"
+    printf '%s\n' "$input" >&2
+    printf '%s\n' "$3" >> verified.calls
+    if [ "$input" = 'synthetic-failure-marker' ]; then exit 23; fi ;;
+  *) exit 9 ;;
+esac
+`,
+    { mode: 0o700 },
+  )
+  const wrangler = wranglerRunner(tool)
+  await runSetup(t.input, { ...t.deps, wrangler })
+  const cwd = join(t.input.workDir, 'latch-relay-ne')
+  expect(await readFile(join(cwd, 'verified.calls'), 'utf8')).toBe('RELAY_SIGNING_SEED\nREGISTRATION_TOKEN\nADMIN_TOKEN\n')
+  const failed = await wrangler(['secret', 'put', 'REGISTRATION_TOKEN', '-c', 'wrangler.jsonc'], { cwd, input: 'synthetic-failure-marker' })
+  expect(failed).toEqual({ code: 23, stdout: '' })
+  expect(t.lines.join('\n')).not.toContain('synthetic-failure-marker')
+  await expect(stat(diagnostics)).rejects.toMatchObject({ code: 'ENOENT' })
 })

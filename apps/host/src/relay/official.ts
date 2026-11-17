@@ -18,9 +18,8 @@ export type OfficialRelay =
   | { relayId: string; kind: 'self'; url: string; spkiHash: string }
 
 /**
- * The deployed official nodes. EMPTY until the owner deploys apps/relay-edge and fills in each node's relay ID, relay
- * key, region and origins (workers.dev origins first) as its deploy guide describes. While empty, no Host uses an
- * official relay and nothing points at an undeployed one.
+ * The official Workers nodes. Keep this empty until the platform release gate is satisfied, the owner deploys the
+ * nodes, and their IDs, keys, regions and origins have been verified.
  *
  * Shape of one entry, with placeholders:
  *   { relayId: '<32 hex>', kind: 'edge', relayKey: '<64 hex>', region: 'apac-ne',

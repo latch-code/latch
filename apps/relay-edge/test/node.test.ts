@@ -428,7 +428,7 @@ describe('edge relay node', () => {
     expect(client.closed).toBe(4302)
   })
 
-  it('bounds a continuous slow reader and retains its memory and slot until pending writes drain after close', async () => {
+  it('bounds a continuous slow reader and retains its slot even after the close event and payload drains', async () => {
     const t = setup({ LIMITS: JSON.stringify({ maxConnections: 3 }) })
     const { client, data } = await t.join(await t.credentials())
     await t.clock.advance(3100)
@@ -444,7 +444,6 @@ describe('edge relay node', () => {
     const node = await t.objects.object('n')
     expect(node.status().buffered).toMatchObject({ bytes: expect.any(Number) })
     expect((node.status().buffered as { bytes: number }).bytes).toBeGreaterThan(0)
-    await t.open('host', '203.0.113.0/24')
     expect((await t.attempt('host', '203.0.113.0/24')).status).toBe(503)
     data.close()
     await settle()
@@ -452,7 +451,9 @@ describe('edge relay node', () => {
     data.server.paused = false
     data.server.flush()
     await settle()
-    expect((await t.attempt('host', '203.0.113.0/24')).status).toBe(101)
+    expect(data.server.bufferedAmount).toBe(0)
+    expect((node.status().buffered as { bytes: number }).bytes).toBeLessThan(EDGE_BUFFER_LIMITS.socketBytes)
+    expect((await t.attempt('host', '203.0.113.0/24')).status).toBe(503)
   })
 
   it.each([undefined, -1, Number.NaN, Number.POSITIVE_INFINITY])('refuses an upgrade when bufferedAmount is %s', async amount => {

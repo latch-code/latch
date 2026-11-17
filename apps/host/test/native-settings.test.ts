@@ -15,10 +15,9 @@ afterEach(async () => {
 it('audits a relay test before DNS or connection work, for the local device and anonymous CLI alike', async () => {
   const node = {
     relayId: 'a'.repeat(32),
-    kind: 'edge' as const,
-    urls: ['https://relay.example/'],
-    relayKey: 'b'.repeat(64),
-    region: 'apac-ne',
+    kind: 'self' as const,
+    url: 'https://relay.example/',
+    spkiHash: 'b'.repeat(64),
   }
   const lookup = vi.fn<LookupFunction>((_hostname, _options, callback) => callback(new Error('fixture refuses network'), []))
   const host = await startTestHost({ officialRelays: [node], egressLookup: lookup })
@@ -50,8 +49,8 @@ it('audits a relay test before DNS or connection work, for the local device and 
     stepup: 'none',
     detail: { relayHash: expect.stringMatching(/^[a-f0-9]{64}$/u), profile: expect.stringMatching(/^[a-f0-9]{64}$/u) },
   })
-  expect(JSON.stringify(entry)).not.toContain(node.urls[0])
-  expect(JSON.stringify(entry)).not.toContain(node.relayKey)
+  expect(JSON.stringify(entry)).not.toContain(node.url)
+  expect(JSON.stringify(entry)).not.toContain(node.spkiHash)
 })
 
 it('reports phone access and no settings form: the listener is the Host start option here, and config and pause are gone', async () => {
@@ -81,10 +80,9 @@ it('reports phone access and no settings form: the listener is the Host start op
 it('switches the official relay and the order on this Mac, audited, and reports both', async () => {
   const node = {
     relayId: 'a'.repeat(32),
-    kind: 'edge' as const,
-    urls: ['https://latch-relay-ne.example.workers.dev/'],
-    relayKey: 'b'.repeat(64),
-    region: 'apac-ne',
+    kind: 'self' as const,
+    url: 'https://relay.example/',
+    spkiHash: 'b'.repeat(64),
   }
   const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 }, officialRelays: [node] })
   cleanup.push(() => host.close())
@@ -95,7 +93,7 @@ it('switches the official relay and the order on this Mac, audited, and reports 
     deployed: true,
     enabled: true,
     ownFirst: false,
-    nodes: [{ relayId: node.relayId, region: 'apac-ne', status: 'connecting' }],
+    nodes: [{ relayId: node.relayId, region: '', status: 'connecting' }],
   })
   const off = await desktop.json<NativeLinkInfo>('native/official-relay', { method: 'PUT', body: { enabled: false } })
   expect(off.official).toMatchObject({ enabled: false, nodes: [{ status: 'off' }] })

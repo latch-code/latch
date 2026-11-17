@@ -12,10 +12,12 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { encodeFrame, invitationCode, parsePairingPayload, WebSocketParser } from '@latch/link-wire'
 import { createTransportCertificate, nodeCrypto, openNativeHttp, verifyAddressBook } from '@latch/link-client'
 import { acceptKey } from '@latch/link-client/websocket'
+import { openRelay } from '@latch/link-client'
 import { createEdgeWorker } from '@latch/relay-edge/edge'
 import { EdgeNode } from '@latch/relay-edge/node'
 import type { EdgeEnv, EdgePlatform, EdgeRequest, EdgeResponse, EdgeSubtle, EdgeWebSocket } from '@latch/relay-edge/platform'
-import type { NativeLinkInfo, NativeRelayTest } from '@latch/protocol'
+import type { NativeLinkInfo } from '@latch/protocol'
+import { startRelay } from '@latch/relay'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
@@ -23,9 +25,8 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 import { openEntry } from './helpers/layout.ts'
 
 /**
- * 添加中继 for a person's own edge relay, end to end on this Mac: the real Host adds it from a relay file (with the local
- * confirmation the test backend answers), dials it through real TLS and WebSocket framing, tests it, turns it off and on,
- * refuses a file whose key does not match, and removes it. The node is the real edge adapter on a fake Workers platform.
+ * The edge protocol fixture uses real TLS and WebSocket framing over a local Workers adapter. The desktop exercises
+ * the production import flow with a Linux relay and rejects a Workers relay file.
  */
 const cleanup: Array<() => void | Promise<void>> = []
 afterEach(async () => {
@@ -228,21 +229,63 @@ async function phoneAddressBook(host: TestHost) {
   }
 }
 
-it('adds an own edge relay from its file, tests it, turns it off and on, refuses a wrong key and removes it', async () => {
+it('closes the winning edge origin when its exact lease is revoked and rejects a Workers profile in the real Host', async () => {
   const seed = nodeCrypto.random(32),
     token = nodeCrypto.random(32),
     relayId = Buffer.from(nodeCrypto.random(16)).toString('hex')
   const relay = await edgeRelay(seed, relayId, token)
+  const first = createServer({ cert: relay.certificate.cert, key: relay.certificate.key })
+  const pending = new Set<Duplex>()
+  first.on('secureConnection', socket => {
+    pending.add(socket)
+    socket.once('close', () => pending.delete(socket))
+  })
+  first.listen(0, '127.0.0.1')
+  await once(first, 'listening')
+  cleanup.push(async () => {
+    for (const socket of pending) socket.destroy()
+    await new Promise(resolve => first.close(resolve))
+  })
+  const a = new URL(`https://localhost:${(first.address() as AddressInfo).port}/`)
+  const b = new URL(`https://localhost:${relay.port}/`)
+  const aRevoked = new AbortController()
+  const bRevoked = new AbortController()
+  const releases: string[] = []
+  const path = await openRelay(
+    {
+      url: a,
+      extraUrls: [b],
+      relayId: Buffer.from(relayId, 'hex'),
+      edge: { relayKey: await nodeCrypto.publicKey(seed), shard: 0 },
+      profile: 'outer-pad-v2',
+      ca: relay.certificate.cert,
+      resolveAddress: async url => {
+        const revoked = (url.origin === a.origin ? aRevoked : bRevoked).signal
+        return {
+          origin: url.origin,
+          address: '127.0.0.1',
+          revoked,
+          permitted: () => !revoked.aborted,
+          release: () => {
+            releases.push(url.origin)
+          },
+        }
+      },
+    },
+    'data',
+  )
+  expect(path.permitted()).toBe(true)
+  bRevoked.abort()
+  await path.peer.closed
+  expect(path.permitted()).toBe(false)
+  expect(aRevoked.signal.aborted).toBe(false)
+  await vi.waitFor(() => expect(releases.sort()).toEqual([a.origin, b.origin].sort()))
+
   const host = await startTestHost({
     native: { host: '127.0.0.1', port: 0 },
-    nativeRelayCa: relay.certificate.cert,
-    egressLookup: (_hostname, _options, callback) => callback(null, [{ address: '127.0.0.1', family: 4 }]),
   })
   cleanup.push(() => host.close())
   const desktop = await host.enroll({ listener: 'unix' })
-  expect(
-    (await desktop.confirmed('policy', { method: 'PATCH', body: { hostEgressAllow: { add: [`localhost:${relay.port}`] } } })).status,
-  ).toBe(200)
   const file = {
     relayId,
     url: `https://localhost:${relay.port}/`,
@@ -251,59 +294,38 @@ it('adds an own edge relay from its file, tests it, turns it off and on, refuses
     registrationKey: `lrt1.${Buffer.from(token).toString('base64url')}`,
   }
 
-  // A file naming another key: the node's signature does not match, and the step says so.
-  const wrong = {
-    requestId: crypto.randomUUID(),
-    profile: { ...file, relayKey: Buffer.from(await nodeCrypto.publicKey(nodeCrypto.random(32))).toString('hex') },
-  }
-  const refused = await desktop.confirmed('native/relays', { method: 'POST', body: wrong })
+  const refused = await desktop.request('native/relays', { method: 'POST', body: { requestId: crypto.randomUUID(), profile: file } })
   expect(refused.status).toBe(503)
-  expect(((await refused.json()) as { error: string }).error).toBe('native-relay-key-mismatch')
-  expect((await desktop.request(`native/relay-requests/${wrong.requestId}`, { method: 'DELETE' })).status).toBe(200)
-
-  const added = await desktop.confirmed('native/relays', { method: 'POST', body: { requestId: crypto.randomUUID(), profile: file } })
-  expect(added.status).toBe(201)
-  const info = (await added.json()) as NativeLinkInfo
-  const keyHash = Buffer.from(await crypto.subtle.digest('SHA-256', Buffer.from(file.relayKey, 'hex')))
-    .toString('hex')
-    .slice(0, 8)
-  expect(info.relays).toMatchObject([{ relayId, kind: 'edge', addresses: 1, keyHash }])
-  expect(JSON.stringify(info).includes(file.registrationKey)).toBe(false)
-  await vi.waitFor(
-    async () =>
-      expect((await desktop.json<NativeLinkInfo>('native/info')).relays[0]).toMatchObject({
-        status: 'connected',
-        latencyMs: expect.any(Number),
-      }),
-    { timeout: 10_000 },
-  )
-
-  const tested = await desktop.json<NativeRelayTest>(`native/relays/${relayId}/test`, { method: 'POST', body: {} })
-  expect(tested).toMatchObject({ reached: 'registered', latencyMs: expect.any(Number) })
-  expect(tested.failure).toBeUndefined()
-
-  expect(
-    (await desktop.json<NativeLinkInfo>(`native/relays/${relayId}`, { method: 'PATCH', body: { disabled: true } })).relays[0],
-  ).toMatchObject({
-    status: 'disabled',
-  })
-  expect(
-    (await desktop.json<NativeLinkInfo>(`native/relays/${relayId}`, { method: 'PATCH', body: { disabled: false } })).relays[0]?.status,
-  ).not.toBe('disabled')
-
-  expect((await desktop.json<NativeLinkInfo>(`native/relays/${relayId}`, { method: 'DELETE' })).relays).toEqual([])
+  expect(await refused.json()).toMatchObject({ error: 'native-relay-platform-unavailable' })
+  expect((await desktop.json<NativeLinkInfo>('native/info')).relays).toEqual([])
+  expect(host.presence.requests).toHaveLength(0)
 }, 60_000)
 
 it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'imports through the real desktop and Host, confirms locally, and retries a lost success with the identical request',
   async () => {
-    const seed = nodeCrypto.random(32),
-      token = nodeCrypto.random(32),
+    const token = nodeCrypto.random(32),
       relayId = Buffer.from(nodeCrypto.random(16)).toString('hex')
-    const relay = await edgeRelay(seed, relayId, token)
+    const certificate = createTransportCertificate(Date.now(), 3_600_000, 'localhost')
+    const relay = await startRelay({
+      host: '127.0.0.1',
+      port: 0,
+      cert: certificate.cert,
+      key: certificate.key,
+      relayId: Buffer.from(relayId, 'hex'),
+      registrationToken: token,
+      gateway: {
+        binary: resolve('dist/relay/latch-relay-tls'),
+        maxHandshakes: 8,
+        handshakesPerSecond: 100,
+        handshakeBurst: 8,
+        prefixFraction: 1,
+      },
+    })
+    cleanup.push(() => relay.close())
     const host = await startTestHost({
       native: { host: '127.0.0.1', port: 0 },
-      nativeRelayCa: relay.certificate.cert,
+      nativeRelayCa: certificate.cert,
       egressAllow: [`localhost:${relay.port}`],
       egressLookup: (_hostname, _options, callback) => callback(null, [{ address: '127.0.0.1', family: 4 }]),
       hostName: '中继测试电脑',
@@ -348,16 +370,16 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       const profile = {
         relayId,
         url: `https://localhost:${relay.port}/`,
-        kind: 'edge',
-        relayKey: Buffer.from(await nodeCrypto.publicKey(seed)).toString('hex'),
+        spkiHash: createHash('sha256').update(certificate.spki).digest('hex'),
         registrationKey: `lrt1.${Buffer.from(token).toString('base64url')}`,
       }
       await page.getByRole('button', { name: '添加中继', exact: true }).click()
       const sheet = page.locator('.relay-add-dialog')
+      expect(await sheet.getByRole('button', { name: /Cloudflare Workers/u }).getAttribute('aria-disabled')).toBe('true')
       await sheet.getByRole('button', { name: '已有中继文件', exact: true }).click()
       await sheet
         .getByTestId('relay-file')
-        .setInputFiles({ name: 'relay.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ version: 2, profile })) })
+        .setInputFiles({ name: 'relay.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ version: 1, profile })) })
       await sheet.getByText('已包含', { exact: true }).waitFor()
       const capture = async (stage: string) => {
         for (const [width, height] of [
@@ -420,18 +442,20 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       })
       await sheet.getByRole('button', { name: '确认并连接', exact: true }).click()
       const confirmation = await host.presence.waitForRequest()
-      const keyHash = createHash('sha256').update(Buffer.from(profile.relayKey, 'hex')).digest('hex').slice(0, 8)
+      const keyHash = profile.spkiHash.slice(0, 8)
       expect(confirmation.preview.subject).toMatchObject({
         form: 'relay.add',
         slots: { count: '1', target: `localhost:${relay.port}`, hash: keyHash },
       })
       expect(JSON.stringify(confirmation.preview).includes(profile.registrationKey)).toBe(false)
       await sheet.getByText('在系统窗口中确认', { exact: true }).waitFor()
+      expect(await sheet.getByText('Host 已签发', { exact: true }).count()).toBe(0)
       await capture('import-waiting')
       await sheet.getByText('在系统窗口中确认', { exact: true }).waitFor()
       host.presence.approveNext()
       await sheet.getByRole('button', { name: '重试', exact: true }).waitFor()
       await sheet.getByText('添加结果待确认', { exact: true }).waitFor()
+      expect(await sheet.getByText('Host 已签发', { exact: true }).count()).toBe(0)
       await capture('import-unknown')
       // Closing the dialog does not discard an unknown request or its original profile.
       await sheet.getByRole('button', { name: '关闭', exact: true }).click()
@@ -453,7 +477,6 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       expect(saved.profiles.map(profile => profile.relayId)).toEqual([relayId])
       expect(saved.configReceipts.filter(receipt => receipt.requestId === requests[0]!.requestId)).toHaveLength(1)
       await capture('import-connected')
-      await sheet.getByRole('button', { name: '完成', exact: true }).click()
       await expect
         .poll(async () => {
           const response = await host.raw('unix', 'api/native/info')
@@ -464,7 +487,10 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       expect(book.relays.map(node => ({ relayId: Buffer.from(node.relayId).toString('hex'), url: node.url }))).toEqual([
         { relayId, url: profile.url },
       ])
-      expect(Buffer.from(book.relays[0]!.edge!.relayKey).toString('hex')).toBe(profile.relayKey)
+      expect(Buffer.from(book.relays[0]!.spkiHash).toString('hex')).toBe(profile.spkiHash)
+      await sheet.getByText('Host 已签发', { exact: true }).waitFor()
+      await capture('import-issued')
+      await sheet.getByRole('button', { name: '完成', exact: true }).click()
     } finally {
       await application?.close()
       await rm(root, { recursive: true, force: true })

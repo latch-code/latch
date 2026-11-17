@@ -177,3 +177,51 @@ it('rechecks global route capacity after asynchronous denial restoration complet
   expect([first, second].filter(value => value.messages.some(message => message.type === 'registered'))).toHaveLength(1)
   expect([first, second].filter(value => value.closed === 4302)).toHaveLength(1)
 })
+
+it('shares denial capacity across live and retained routes, and only restores what fits', async () => {
+  const now = Date.now()
+  const day = Math.floor(now / 1000 / UTC_DAY)
+  const relayId = nodeCrypto.random(16),
+    tag = nodeCrypto.random(16)
+  const restored = [tag]
+  const limits: number[] = []
+  const core = new RelayCore({
+    crypto: nodeCrypto,
+    relayId,
+    openRegistration: true,
+    now: () => now,
+    maxDenialTags: 2,
+    denials: {
+      get: (_route, _day, limit) => {
+        limits.push(limit)
+        return limits.length === 1 ? restored : []
+      },
+      add: async (_route, _day, tags) => new Set(tags).size,
+    },
+  })
+  const a = peer(1),
+    b = peer(2),
+    c = peer(3)
+  const data = await route(relayId, day)
+  const first = await register(core, a, await route(relayId, day), relayId)
+  const second = await register(core, b, data, relayId)
+  expect(first?.type).toBe('registered')
+  if (second?.type !== 'registered') throw new Error('No registration')
+  core.disconnect(a.id)
+  await core.receive(b.id, { type: 'deny', routeId: second.routeId, tags: [tag] })
+  expect(b.messages.at(-1)?.type).toBe('deny-ack')
+  expect(await register(core, c, await route(relayId, day), relayId)).toMatchObject({ type: 'registered' })
+  expect(limits).toEqual([2, 1, 0])
+  await core.receive(b.id, { type: 'deny', routeId: second.routeId, tags: [tag] })
+  const acknowledged = b.messages.filter(message => message.type === 'deny-ack').length
+  await core.receive(b.id, { type: 'deny', routeId: second.routeId, tags: [nodeCrypto.random(16)] })
+  expect(b.closed).toBe(4400)
+  expect(b.messages.filter(message => message.type === 'deny-ack')).toHaveLength(acknowledged)
+  const resumed = peer(4)
+  expect(await register(core, resumed, data, relayId, second.token)).toMatchObject({ type: 'registered' })
+  const client = peer(5)
+  const holderKey = nodeCrypto.random(32)
+  core.connect(client, 'client')
+  await core.receive(client.id, { type: 'admit', proof: await makeProof(nodeCrypto, holderKey, await pass(data, relayId, holderKey), now) })
+  expect(client.closed).toBe(4100)
+})

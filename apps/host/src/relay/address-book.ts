@@ -13,17 +13,19 @@ import { nodeCrypto, signAddressBook } from '@latch/link-client'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import type { HostIdentity } from '../identity.ts'
-import { bookRelays, RelayProfiles, secretBytes } from './profiles.ts'
+import { bookRelays, profileFingerprint, RelayProfiles, secretBytes } from './profiles.ts'
 
 export class HostAddressBooks {
   private readonly profiles: RelayProfiles
   private readonly identity: HostIdentity
   private readonly lan: () => readonly NativeLanAddress[]
   private readonly issuing = new Map<string, Promise<string>>()
-  /** When a phone last received a book naming each relay (this run of the Host only): 手机已拿到. */
-  private readonly delivered = new Map<string, number>()
-  deliveredAt(relayId: string): number | undefined {
-    return this.delivered.get(relayId)
+  /** When this Host last signed a book containing the currently configured relay. */
+  private readonly issued = new Map<string, { fingerprint: string; at: number }>()
+  bookIssuedAt(relayId: string): number | undefined {
+    const profile = bookRelays(this.profiles.snapshot()).find(profile => profile.relayId === relayId)
+    const issued = this.issued.get(relayId)
+    return profile && issued?.fingerprint === profileFingerprint(profile) ? issued.at : undefined
   }
   constructor(
     profiles: RelayProfiles,
@@ -138,7 +140,9 @@ export class HostAddressBooks {
     )
       throw new AppError(409, 'native-book-changed', '中继配置已变化，请重新取得连接簿')
     const signed = signAddressBook(book, this.identity)
-    for (const profile of relays) this.delivered.set(profile.relayId, Date.now())
+    for (const id of this.issued.keys()) if (!current.profiles.some(profile => profile.relayId === id)) this.issued.delete(id)
+    const at = Date.now()
+    for (const profile of relays) this.issued.set(profile.relayId, { fingerprint: profileFingerprint(profile), at })
     return signed
   }
 }

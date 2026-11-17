@@ -16,15 +16,14 @@ interface Buffered {
   queuedMessages: number
   writtenBytes: number
   written: number[]
+  failedWriteBytes: number
   closing: boolean
-  closeReceived: boolean
 }
 
 /**
  * Accounts for received work, outer-cover queues and workerd's outgoing queue together. The close event can precede
- * the output pump finishing, so retain the written allocation until the runtime reports it drained. After a failed
- * write, bufferedAmount can stay nonzero even after teardown. The workerd read loop and pump both hold the socket
- * alive while pending, so a weak reference also lets us reclaim a discarded queue after collection.
+ * the output pump finishing. A zero payload count settles bytes, but gives no evidence of the Close frame. Keep the
+ * slot while its runtime socket remains reachable. A supported deployment also needs a native close-settlement signal.
  */
 export class EdgeBuffers {
   private readonly sockets = new WeakMap<EdgeWebSocket, Buffered>()
@@ -52,8 +51,8 @@ export class EdgeBuffers {
       queuedMessages: 0,
       writtenBytes: 0,
       written: [],
+      failedWriteBytes: 0,
       closing: false,
-      closeReceived: false,
     }
     this.sockets.set(socket, state)
     this.active.add(state)
@@ -64,7 +63,16 @@ export class EdgeBuffers {
     const state = this.sockets.get(socket)
     if (!state) return false
     const amount = this.amount(socket)
-    if (amount === undefined || amount > state.writtenBytes) return false
+    if (amount === undefined) return false
+    if (state.failedWriteBytes) {
+      // send() may have thrown on either side of enqueue. The old FIFO's drain cannot be inferred in that case.
+      if (amount !== 0) return false
+      state.written.length = 0
+      state.writtenBytes = 0
+      state.failedWriteBytes = 0
+      return true
+    }
+    if (amount > state.writtenBytes) return false
     let drained = state.writtenBytes - amount
     while (drained > 0) {
       const first = state.written[0]
@@ -75,7 +83,6 @@ export class EdgeBuffers {
       else state.written[0] = first - consumed
     }
     state.writtenBytes = amount
-    if (state.closeReceived && amount === 0 && state.inputMessages === 0) this.active.delete(state)
     return true
   }
   private refresh(state: Buffered): void {
@@ -85,8 +92,8 @@ export class EdgeBuffers {
   }
   private usage(state: Buffered): { bytes: number; messages: number } {
     return {
-      bytes: state.inputBytes + state.queuedBytes + state.writtenBytes,
-      messages: state.inputMessages + state.queuedMessages + state.written.length,
+      bytes: state.inputBytes + state.queuedBytes + state.writtenBytes + state.failedWriteBytes,
+      messages: state.inputMessages + state.queuedMessages + state.written.length + Number(state.failedWriteBytes > 0),
     }
   }
   status(): { bytes: number; messages: number } {
@@ -128,7 +135,6 @@ export class EdgeBuffers {
     if (!state) return
     state.inputBytes -= bytes
     state.inputMessages--
-    if (state.closeReceived && state.inputMessages === 0) this.current(socket)
   }
   queue(socket: EdgeWebSocket, bytes: number): boolean {
     const state = this.reserve(socket, bytes)
@@ -144,9 +150,14 @@ export class EdgeBuffers {
       throw new Error('Relay output unavailable')
     state.queuedBytes -= payload.length
     state.queuedMessages--
+    try {
+      socket.send(payload)
+    } catch (error) {
+      state.failedWriteBytes = payload.length
+      throw error
+    }
     state.writtenBytes += payload.length
     state.written.push(payload.length)
-    socket.send(payload)
   }
   close(socket: EdgeWebSocket): void {
     const state = this.sockets.get(socket)
@@ -157,10 +168,7 @@ export class EdgeBuffers {
     state.queuedMessages = 0
   }
   closed(socket: EdgeWebSocket): void {
-    const state = this.sockets.get(socket)
-    if (!state) return
     this.close(socket)
-    state.closeReceived = true
     this.current(socket)
   }
 }

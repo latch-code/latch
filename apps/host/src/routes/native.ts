@@ -678,9 +678,9 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       ...(options.native ? { managedDirect: options.native } : {}),
       pairing: () => enrollments.nativePairingOpen(),
       reachable: () => devices.nativeReachable(),
-      deliveredAt: relayId => addressBooks.deliveredAt(relayId),
+      bookIssuedAt: relayId => addressBooks.bookIssuedAt(relayId),
       // The relay setup scripts exist only in a source checkout; a packaged app ships without apps/.
-      sourceCheckout: existsSync(join(codeRoot, 'apps/relay-edge/scripts/setup.ts')),
+      sourceCheckout: existsSync(join(codeRoot, 'apps/relay/src/cli.ts')),
       changed: () => nativeNetwork?.invalidate(),
       resolveDirect: async (direct, current) => {
         if (!nativeNetwork) throw new AppError(409, 'native-no-lan', '这台 Mac 没有连接 Wi‑Fi 或有线网络。')

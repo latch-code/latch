@@ -15,7 +15,7 @@ import {
   type RelayTransportProfile,
 } from '@latch/link-wire'
 import { nodeCrypto } from './crypto.ts'
-import { connectRelay, type RelaySocket } from './websocket.ts'
+import { connectRelay, type RelayDialLease, type RelaySocket } from './websocket.ts'
 import { solveRegistrationWork } from './registration-work.ts'
 
 export class RelayTunnel extends Duplex {
@@ -26,6 +26,7 @@ export class RelayTunnel extends Duplex {
     super({ highWaterMark: 16_384 })
     this.peer = peer
     this.transportClosed = peer.closed
+    void this.transportClosed.then(() => this.destroy())
     peer.markSpliced()
   }
   override _read(): void {
@@ -76,9 +77,10 @@ export interface RelayEndpoint {
   /** Edge kind: further origins of the same node, raced with `url` (relay-identity binds the node, not the hostname). */
   extraUrls?: URL[]
   /** The checked dial address for one role URL; on an edge node each origin is resolved on its own. */
-  resolveAddress?(url: URL): Promise<string>
+  resolveAddress?(url: URL, signal?: AbortSignal): Promise<string | RelayDialLease>
 }
 type Hello = { nonce: Uint8Array; timeMs: number; requiresToken: boolean }
+type RelayPath = { peer: RelaySocket; permitted(): boolean }
 /** The origin of each edge node that last passed the identity check, tried first next time. Never more than 64. */
 const lastGood = new Map<string, string>()
 /** Staggered start of the further origins of one edge node, as the path race staggers its relay slot. */
@@ -99,30 +101,50 @@ export async function openRelay(
   role: EdgeRole,
   signal?: AbortSignal,
   guardWrites?: () => boolean,
-): Promise<{ peer: RelaySocket; hello?: Hello }> {
-  const open = async (origin: URL) => {
+): Promise<RelayPath & { hello?: Hello }> {
+  const open = async (origin: URL, attemptSignal?: AbortSignal) => {
+    attemptSignal?.throwIfAborted()
     const url = relayRoleUrl({ url: origin, edge: options.edge }, role)
-    const address = options.resolveAddress ? await options.resolveAddress(url) : undefined
-    if (signal?.aborted) throw new Error('Relay setup cancelled')
-    const peer = await connectRelay({
-      url,
-      ...(options.edge ? { edge: options.edge } : { spki: options.spki }),
-      ca: options.ca,
-      profile: options.profile,
-      ...(address === undefined ? {} : { address }),
-      ...(signal ? { signal } : {}),
-    })
+    const resolved = await options.resolveAddress?.(url, attemptSignal)
+    const lease = typeof resolved === 'object' ? resolved : undefined
+    let peer: RelaySocket
+    try {
+      attemptSignal?.throwIfAborted()
+      peer = await connectRelay({
+        url,
+        ...(options.edge ? { edge: options.edge } : { spki: options.spki }),
+        ca: options.ca,
+        profile: options.profile,
+        ...(typeof resolved === 'string' ? { address: resolved } : {}),
+        ...(lease ? { lease } : {}),
+        ...(attemptSignal ? { signal: attemptSignal } : {}),
+      })
+    } catch (error) {
+      lease?.release()
+      throw error
+    }
+    if (lease) void peer.closed.then(() => lease.release())
     if (guardWrites) peer.guardWrites(guardWrites)
-    return peer
+    const abort = () => peer.close()
+    attemptSignal?.addEventListener('abort', abort, { once: true })
+    if (attemptSignal?.aborted) abort()
+    return {
+      peer,
+      permitted: () => lease === undefined || (!lease.revoked.aborted && lease.permitted()),
+      detachAbort: () => attemptSignal?.removeEventListener('abort', abort),
+    }
   }
   if (!options.edge) {
-    const peer = await open(options.url)
-    if (role === 'data') return { peer }
+    const path = await open(options.url, signal)
     try {
-      return { peer, hello: await challenge(peer, options.relayId) }
+      const hello = role === 'data' ? undefined : await challenge(path.peer, options.relayId)
+      if (signal?.aborted || !path.permitted()) throw new Error('Relay setup cancelled')
+      return { ...path, hello }
     } catch (error) {
-      peer.close()
+      path.peer.close()
       throw error
+    } finally {
+      path.detachAbort()
     }
   }
   const key = Buffer.from(options.relayId).toString('hex'),
@@ -134,29 +156,48 @@ export async function openRelay(
       failed = 0,
       mismatched = false
     const timers: Array<ReturnType<typeof setTimeout>> = []
+    const attempts = origins.map(() => new AbortController())
+    const stop = (winner?: number) => {
+      settled = true
+      signal?.removeEventListener('abort', abort)
+      for (const timer of timers) clearTimeout(timer)
+      attempts.forEach((controller, index) => {
+        if (index !== winner) controller.abort()
+      })
+    }
+    const abort = () => {
+      stop()
+      reject(new Error('Relay setup cancelled'))
+    }
+    if (signal?.aborted) {
+      abort()
+      return
+    }
+    signal?.addEventListener('abort', abort, { once: true })
     origins.forEach((origin, index) => {
       const attempt = async () => {
         if (settled || signal?.aborted) throw new Error('Relay setup cancelled')
-        const peer = await open(origin)
+        const path = await open(origin, attempts[index]!.signal)
         try {
-          if (settled) throw new Error('Relay race settled')
-          const hello = await edgeHandshake(peer, options, role)
-          if (settled) throw new Error('Relay race settled')
-          settled = true
-          for (const timer of timers) clearTimeout(timer)
+          if (settled || signal?.aborted) throw new Error('Relay race settled')
+          const hello = await edgeHandshake(path.peer, options, role)
+          if (settled || signal?.aborted || !path.permitted()) throw new Error('Relay race settled')
+          stop(index)
           if (lastGood.size >= 64 && !lastGood.has(key)) lastGood.delete(lastGood.keys().next().value!)
           lastGood.set(key, origin.origin)
-          resolve({ peer, hello })
+          resolve({ ...path, hello })
         } catch (error) {
-          peer.close()
+          path.peer.close()
           if (error instanceof Error && error.message === 'Relay identity rejected') mismatched = true
           throw error
+        } finally {
+          path.detachAbort()
         }
       }
       const run = () =>
         void attempt().catch(() => {
           if (++failed === origins.length && !settled) {
-            settled = true
+            stop()
             // An origin that answered with another key is reported as such: the person's file and the node disagree.
             reject(new Error(mismatched ? 'Relay identity rejected' : 'Relay unavailable'))
           }

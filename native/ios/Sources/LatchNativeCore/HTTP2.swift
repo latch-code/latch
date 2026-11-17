@@ -25,6 +25,10 @@ private final class NativeConnectionCancellation: @unchecked Sendable {
         lock.lock(); cancelled = true; let channel = self.channel; lock.unlock()
         channel?.close(promise: nil)
     }
+    func waitForClose() async {
+        let bound = lock.withLock { channel }
+        if let bound { try? await bound.closeFuture.get() }
+    }
 }
 
 /** One authenticated inner TLS/HTTP2 channel; replacement is owned by the workspace, never by a write request. */
@@ -68,13 +72,11 @@ public actor NativeHTTPConnection {
         let window = fileTransferBuffer ? 262_144 : 65_535
         let group = NIOTSEventLoopGroup(loopCount: 1)
         let completion = group.next().makePromise(of: Void.self), gate = HostProofGate(state: state, completion: completion)
-        var established: (any Channel)?
         do {
             let channel = try await NIOTSConnectionBootstrap(group: group).connectTimeout(.seconds(8))
                 .channelOption(ChannelOptions.writeBufferWaterMark, value: .init(low: 16_384, high: 32_768))
                 .channelInitializer { channel in channel.pipeline.addHandler(gate).map { cancellation.bind(channel) } }
                 .withExistingNWConnection(connection).get()
-            established = channel
             guard !Task.isCancelled else { throw CancellationError() }
             try NativeTLS.validate(state)
             try await completion.futureResult.get()
@@ -90,7 +92,7 @@ public actor NativeHTTPConnection {
             return NativeHTTPConnection(channel: channel, streams: streams, group: group, padding: padding)
         } catch {
             cancellation.cancel()
-            if let established { try? await established.close().get() }
+            await cancellation.waitForClose()
             try? await group.shutdownGracefully()
             connection.cancel()
             if Task.isCancelled { throw CancellationError() }
@@ -139,6 +141,7 @@ public actor NativeHTTPConnection {
         closed = true
         let task = Task { [channel, group] in
             try? await channel.close().get()
+            try? await channel.closeFuture.get()
             try? await group.shutdownGracefully()
         }
         closeTask = task; await task.value

@@ -852,6 +852,7 @@ do {
             result["relayKeys"] = book.relays.map { $0.edge.map { LinkBytes.hex($0.relayKey) } ?? "" }
             result["urls"] = book.relays.map { $0.urls.map(\.absoluteString) }
             result["order"] = NativeRelayOrder.ordered(book).map { LinkBytes.hex($0.relayId) }
+            result["available"] = NativeRelayOrder.available(book).map { LinkBytes.hex($0.relayId) }
             result["hostRegion"] = book.hostRegion ?? ""
         }
     case "bookPathChange":
@@ -903,8 +904,49 @@ do {
             let elapsed = started.duration(to: .now).components
             rows.append(["winner": won?.0 ?? "", "fast": elapsed.seconds < 1])
         }
-        try await Task.sleep(for: .milliseconds(1500))
         result = ["rows": rows, "closed": await closed.count]
+    case "edgeRaceCancellation":
+        actor SignatureCheck {
+            var attempts = 0, closed = 0
+            var cancelled = false, claimed = false
+            var waiting: CheckedContinuation<Void, Never>?, started: CheckedContinuation<Void, Never>?
+            func hold() async {
+                attempts += 1
+                await withCheckedContinuation { continuation in
+                    waiting = continuation
+                    started?.resume(); started = nil
+                }
+            }
+            func waitForStart() async {
+                if waiting == nil { await withCheckedContinuation { started = $0 } }
+            }
+            func release() { waiting?.resume(); waiting = nil }
+            func record(cancelled: Bool, claimed: Bool) { self.cancelled = cancelled; self.claimed = claimed }
+            func close() { closed += 1 }
+        }
+        let signature = SignatureCheck()
+        let urls = [URL(string: "https://first.example/")!, URL(string: "https://later.example/")!]
+        let runner = Task {
+            await NativeEdgeOrigins.race(urls, stagger: .seconds(30), attempt: { origin, race in
+                await signature.hold()
+                await signature.record(cancelled: Task.isCancelled, claimed: race.claim())
+                return origin
+            }, close: { _ in await signature.close() })
+        }
+        await signature.waitForStart()
+        runner.cancel()
+        await signature.release()
+        let won = await runner.value
+        let beforeDial = Task {
+            try? await Task.sleep(for: .seconds(30))
+            return await NativeEdgeOrigins.race(urls, attempt: { origin, _ in
+                await signature.record(cancelled: false, claimed: true)
+                return origin
+            }, close: { _ in await signature.close() })
+        }
+        beforeDial.cancel()
+        result = ["winner": won != nil, "preCancelledWinner": await beforeDial.value != nil, "dialled": await signature.attempts,
+            "cancelled": await signature.cancelled, "claimed": await signature.claimed, "closed": await signature.closed]
     case "edgeRelay":
         func value(_ text: Any?) throws -> Data { try LinkBytes.unhex(text as? String ?? "invalid") }
         let edge = input["edgeRelay"] as? [String: Any] ?? [:], time = (input["timeMs"] as? NSNumber)?.uint64Value ?? 0

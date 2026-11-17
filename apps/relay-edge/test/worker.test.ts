@@ -5,6 +5,7 @@ import { nodeCrypto } from '@latch/link-client/crypto'
 import { addressPrefix } from '@latch/relay'
 import { webLinkCrypto } from '../src/crypto.ts'
 import { createEdgeWorker } from '../src/edge.ts'
+import releasedWorker from '../src/worker.ts'
 import { edgeAddressPrefix } from '../src/prefix.ts'
 import { checkWork, encodeWorkRequest, scrypt } from '../src/scrypt.ts'
 import type { EdgeEnv, EdgeSubtle } from '../src/platform.ts'
@@ -43,6 +44,13 @@ const upgrade = (extra: Record<string, string | undefined> = {}) =>
   )
 
 describe('edge Worker front', () => {
+  it('refuses a checked upgrade at the published entry before reaching the Durable Object', async () => {
+    const t = setup()
+    const url = 'https://latch-relay-ne.example.workers.dev'
+    expect((await releasedWorker.fetch(request(`${url}/v1/c/0`, 'GET', upgrade()), t.env)).status).toBe(503)
+    expect((await releasedWorker.fetch(request(`${url}/healthz`, 'GET'), t.env)).status).toBe(503)
+    expect(t.objects.requests).toEqual([])
+  })
   it('routes a checked upgrade to the shard object near its hint and passes only the role and the prefix', async () => {
     const t = setup({ SHARDS: '2' })
     for (const host of ['latch-relay-ne.example.workers.dev', 'ne.relay.example']) {

@@ -2,7 +2,7 @@ import { createPublicKey, randomBytes, X509Certificate } from 'node:crypto'
 import { connect, isIP } from 'node:net'
 import { once } from 'node:events'
 import { z } from 'zod'
-import { decodePass, equal, nativeRecoverySecret, nativeVerificationText, routeId } from '@latch/link-wire'
+import { decodePass, EDGE_RELAY_AVAILABLE, equal, nativeRecoverySecret, nativeVerificationText, routeId } from '@latch/link-wire'
 import { nodeCrypto } from './crypto.ts'
 import { NativeHttpClient, openNativeHttp } from './http2.ts'
 import { PathManager, type PathCandidate } from './paths.ts'
@@ -118,6 +118,7 @@ export function nativeRelayCandidate(
   path: Extract<NativePath, { kind: 'relay' }>,
   identity: NativeIdentity,
 ): PathCandidate<NativeHttpClient> {
+  if (path.endpoint.edge && !EDGE_RELAY_AVAILABLE) throw new RangeError('Workers relay unavailable')
   const pass = decodePass(path.pass)
   if (!equal(pass.relayId, path.endpoint.relayId)) throw new RangeError('Native relay identity mismatch')
   const options = connectionOptions(identity)

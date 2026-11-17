@@ -10,15 +10,14 @@ export class EdgeDenials {
       'CREATE TABLE IF NOT EXISTS deny (route TEXT NOT NULL, day INTEGER NOT NULL, tag TEXT NOT NULL, PRIMARY KEY (route, day, tag))',
     )
   }
-  get(route: Uint8Array, day: number): Promise<Uint8Array[]> {
-    const rows = this.sql.exec('SELECT tag FROM deny WHERE route = ? AND day = ? LIMIT 8193', hex(route), day).toArray()
-    return Promise.resolve(
-      rows.map(row => {
-        const text = String(row.tag)
-        if (!/^[a-f0-9]{32}$/u.test(text)) throw new Error('Invalid denial state')
-        return Uint8Array.from(text.match(/../gu)!, byte => Number.parseInt(byte, 16))
-      }),
-    )
+  get(route: Uint8Array, day: number, limit: number): Uint8Array[] {
+    const rows = this.sql.exec('SELECT tag FROM deny WHERE route = ? AND day = ? LIMIT ?', hex(route), day, limit + 1).toArray()
+    if (rows.length > limit) throw new Error('Denial capacity exceeded')
+    return rows.map(row => {
+      const text = String(row.tag)
+      if (!/^[a-f0-9]{32}$/u.test(text)) throw new Error('Invalid denial state')
+      return Uint8Array.from(text.match(/../gu)!, byte => Number.parseInt(byte, 16))
+    })
   }
   add(route: Uint8Array, day: number, tags: readonly Uint8Array[]): Promise<number> {
     const key = hex(route)

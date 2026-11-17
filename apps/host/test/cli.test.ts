@@ -1075,23 +1075,27 @@ describe('latch CLI', () => {
       extraUrls: ['https://relay.mine.example/'],
       registrationKey: key,
     }
+    const own = { relayId: 'c'.repeat(32), url: 'https://relay.mine.example/', spkiHash: 'd'.repeat(64), registrationKey: key }
     const self = { relayId: 'e'.repeat(32), url: 'https://home.example/', spkiHash: 'f'.repeat(64) }
     await writeFile(join(directory, 'edge.json'), JSON.stringify({ version: 2, profile: edge }), { mode: 0o600 })
+    await writeFile(join(directory, 'own.json'), JSON.stringify({ version: 1, profile: own }), { mode: 0o600 })
     await writeFile(join(directory, 'self.json'), JSON.stringify({ version: 1, profile: self }), { mode: 0o600 })
 
     // Piped input cannot confirm; a wrong expected ID changes nothing.
     const piped = cli({ cwd: directory })
-    expect(await piped.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir)).toBe(1)
-    expect(await piped.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir, '--expect-key', '00000000')).toBe(1)
+    expect(await piped.latch('relay', 'add', '--file', 'own.json', '--data-dir', dataDir)).toBe(1)
+    expect(await piped.latch('relay', 'add', '--file', 'own.json', '--data-dir', dataDir, '--expect-key', '00000000')).toBe(1)
     // A device or anything that is not a regular file is refused without being read to its end.
     expect(await piped.latch('relay', 'add', '--file', '/dev/zero', '--data-dir', dataDir, '--expect-key', '00000000')).toBe(1)
     const typed = cli({ cwd: directory, typed: true, answer: 'y' })
-    const added = await typed.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir)
+    expect(await typed.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir)).toBe(1)
+    expect(typed.output.stderr).toContain('Cloudflare Workers 中继尚未实现')
+    expect(typed.output.asked).toEqual([])
+    const added = await typed.latch('relay', 'add', '--file', 'own.json', '--data-dir', dataDir)
     expect(added).toBe(0)
-    expect(typed.output.asked[0]!.shown).toContain(`中继公钥：${edge.relayKey}`)
-    expect(typed.output.asked[0]!.shown).toContain('地址：https://relay.mine.example/')
-    const edgeHash = createHash('sha256').update(Buffer.from(edge.relayKey, 'hex')).digest('hex').slice(0, 8)
-    expect(typed.output.asked[0]!.shown).toContain(`密钥短哈希：${edgeHash}`)
+    expect(typed.output.asked[0]!.shown).toContain(`证书公钥 SHA-256：${own.spkiHash}`)
+    expect(typed.output.asked[0]!.shown).toContain(`地址：${own.url}`)
+    expect(typed.output.asked[0]!.shown).toContain(`密钥短哈希：${own.spkiHash.slice(0, 8)}`)
     expect(`${typed.output.stdout}${typed.output.stderr}`).not.toContain(key)
     const selfRun = cli({ cwd: directory })
     const selfAdded = await selfRun.latch(
@@ -1114,7 +1118,7 @@ describe('latch CLI', () => {
     expect(JSON.parse(list.output.stdout)).toEqual({
       official: { deployed: false, enabled: true, ownFirst: false },
       relays: [
-        { relayId: edge.relayId, kind: 'edge', urls: [edge.url, ...edge.extraUrls], unverified: true },
+        { relayId: own.relayId, kind: 'self', urls: [own.url], unverified: true },
         { relayId: self.relayId, kind: 'self', urls: [self.url], unverified: true },
       ],
       // Not until each node has proved its key at the next Host start.
@@ -1124,8 +1128,8 @@ describe('latch CLI', () => {
     expect(await cli().latch('relay', 'order', 'own', '--data-dir', dataDir)).toBe(0)
     expect(await cli().latch('relay', 'official', 'off', '--data-dir', dataDir)).toBe(0)
     expect(await cli().latch('relay', 'official', 'maybe', '--data-dir', dataDir)).toBe(1)
-    expect(await cli().latch('relay', 'remove', edge.relayId, '--data-dir', dataDir)).toBe(0)
-    expect(await cli().latch('relay', 'remove', edge.relayId, '--data-dir', dataDir)).toBe(1)
+    expect(await cli().latch('relay', 'remove', own.relayId, '--data-dir', dataDir)).toBe(0)
+    expect(await cli().latch('relay', 'remove', own.relayId, '--data-dir', dataDir)).toBe(1)
     const saved = JSON.parse(await readFile(join(dataDir, 'native', 'relays.json'), 'utf8')) as {
       officialOff?: boolean
       ownFirst?: boolean
@@ -1154,10 +1158,9 @@ describe('latch CLI', () => {
   it('tests a relay through the running Host with the anonymous Unix audit actor', async () => {
     const relay = {
       relayId: 'a'.repeat(32),
-      kind: 'edge' as const,
-      urls: ['https://relay.example/'],
-      relayKey: 'b'.repeat(64),
-      region: 'apac-ne',
+      kind: 'self' as const,
+      url: 'https://relay.example/',
+      spkiHash: 'b'.repeat(64),
     }
     const host = await runningHost({
       officialRelays: [relay],

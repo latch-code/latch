@@ -128,9 +128,15 @@ private final class RelayFramer: NWProtocolFramerImplementation {
         let authority = host + (setup.origin.port.map { ":\($0)" } ?? "")
         let protocolName = setup.endpoint.profile == .outerPadV2 ? "latch-relay.2" : "latch-relay.1"
         let request = "GET \(setup.path) HTTP/1.1\r\nHost: \(authority)\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: \(setup.key)\r\nSec-WebSocket-Protocol: \(protocolName)\r\n\r\n"
-        framer.writeOutput(data: Data(request.utf8))
+        do { try write(Data(request.utf8), framer: framer) }
+        catch { framer.markFailed(error: .posix(.ECANCELED)); return .willMarkReady }
         framer.scheduleWakeup(wakeupTime: .milliseconds(8000))
         return .willMarkReady
+    }
+    private func write(_ bytes: Data, framer: NWProtocolFramer.Instance) throws {
+        if let race = setup?.race {
+            guard race.whileActive({ framer.writeOutput(data: bytes) }) else { throw CancellationError() }
+        } else { framer.writeOutput(data: bytes) }
     }
     private func send(_ payload: Data, opcode: UInt8 = 2, framer: NWProtocolFramer.Instance) throws {
         guard !stopped else { throw NativeFailure.unavailable }
@@ -138,10 +144,10 @@ private final class RelayFramer: NWProtocolFramerImplementation {
         if outer != nil {
             try outer!.enqueue(frame)
             if elapsedMs > NativeRelayOuterPadding.durationMs {
-                while let batch = try outer!.batch(elapsedMs: elapsedMs) { framer.writeOutput(data: batch) }
+                while let batch = try outer!.batch(elapsedMs: elapsedMs) { try write(batch, framer: framer) }
                 outer = nil
             }
-        } else { framer.writeOutput(data: frame) }
+        } else { try write(frame, framer: framer) }
     }
     private var elapsedMs: UInt64 {
         guard let outerStart else { return 0 }
@@ -232,14 +238,15 @@ private final class RelayFramer: NWProtocolFramerImplementation {
                 if let edge {
                     guard needsToken == 0, NativeEdgeChallenge.verify(relayKey: edge.relayKey, relayId: setup.endpoint.relayId, clientNonce: setup.clientNonce,
                         relayNonce: relayNonce, timeMs: relayTime, requiresToken: false, signature: signature) else { throw NativeFailure.identityMismatch }
-                    // Another origin of the same node already passed: only one connection sends a proof and joins.
-                    guard setup.race?.claim() ?? true else { throw NativeFailure.unavailable }
                 }
                 let now = Date().timeIntervalSince1970 * 1000, pass = try AdmissionPass.decode(setup.admission.bytes)
                 guard needsToken <= 1, abs(Double(relayTime) - now) <= 86_400_000,
                       now / 1000 >= Double(pass.notBefore), now / 1000 <= Double(pass.notAfter) else { throw NativeFailure.expired }
                 if edge != nil {
-                    try send(Data([0x11]) + setup.admission.boundAdmission(timeMs: relayTime, nonce: LinkBytes.random(16), relayNonce: relayNonce), framer: framer)
+                    // Check again after signing. The batch write also checks cancellation before sending anything.
+                    let admit = try Data([0x11]) + setup.admission.boundAdmission(timeMs: relayTime, nonce: LinkBytes.random(16), relayNonce: relayNonce)
+                    guard setup.race?.claim() ?? true else { throw NativeFailure.unavailable }
+                    try send(admit, framer: framer)
                 } else {
                     try send(Data([0x10]) + setup.admission.admission(timeMs: relayTime, nonce: LinkBytes.random(16)), framer: framer)
                 }
@@ -277,9 +284,9 @@ private final class RelayFramer: NWProtocolFramerImplementation {
         guard !stopped else { return }
         do {
             if outer != nil {
-                if let batch = try outer!.batch(elapsedMs: elapsedMs) { framer.writeOutput(data: batch) }
+                if let batch = try outer!.batch(elapsedMs: elapsedMs) { try write(batch, framer: framer) }
                 if elapsedMs >= NativeRelayOuterPadding.durationMs {
-                    while let batch = try outer!.batch(elapsedMs: NativeRelayOuterPadding.durationMs + 1) { framer.writeOutput(data: batch) }
+                    while let batch = try outer!.batch(elapsedMs: NativeRelayOuterPadding.durationMs + 1) { try write(batch, framer: framer) }
                     outer = nil
                 }
                 schedule(framer: framer); return
@@ -307,19 +314,26 @@ extension NativeHTTPConnection {
      */
     public static func relay(endpoint: NativeRelayAddress, admission: NativeRelayPass, rootSpki: Data, knockKey: Data,
         identity: PlatformIdentity? = nil, trustAnchor: Data? = nil) async throws -> NativeHTTPConnection {
+        try Task.checkCancellation()
         guard endpoint.edge != nil else {
             return try await relay(endpoint: endpoint, origin: endpoint.url, admission: admission, rootSpki: rootSpki, knockKey: knockKey, identity: identity, trustAnchor: trustAnchor, dialAddress: nil)
         }
+        guard NativeRelayOrder.edgeAvailable else { throw NativeFailure.unavailable }
         let origins = NativeEdgeOrigins.ordered(endpoint)
         guard let (winner, origin) = await NativeEdgeOrigins.race(origins, attempt: { origin, race in
             try await relay(endpoint: endpoint, origin: origin, admission: admission, rootSpki: rootSpki, knockKey: knockKey,
                 identity: identity, trustAnchor: trustAnchor, dialAddress: nil, race: race)
-        }, close: { await $0.close() }) else { throw NativeFailure.unavailable }
+        }, close: { await $0.close() }) else {
+            try Task.checkCancellation()
+            throw NativeFailure.unavailable
+        }
+        guard !Task.isCancelled else { await winner.close(); throw CancellationError() }
         NativeEdgeOrigins.remember(endpoint, origin: origin)
         return winner
     }
     private static func relay(endpoint: NativeRelayAddress, origin: URL, admission: NativeRelayPass, rootSpki: Data, knockKey: Data,
         identity: PlatformIdentity?, trustAnchor: Data?, dialAddress: String?, race: NativeEdgeRace? = nil) async throws -> NativeHTTPConnection {
+        try Task.checkCancellation()
         _ = try AddressBookCodec.relayURL(origin.absoluteString)
         guard let hostname = origin.host, endpoint.spkiHash.count == 32, endpoint.relayId.count == 16,
               LinkBytes.equal(try AdmissionPass.decode(admission.bytes).relayId, endpoint.relayId) else { throw NativeFailure.invalidRecord }
@@ -386,58 +400,59 @@ public enum NativeEdgeOrigins {
 public final class NativeEdgeRace: @unchecked Sendable {
     private let lock = NSLock()
     private var claimed = false
+    private var cancelled = false
     public init() {}
     public func claim() -> Bool {
         lock.lock(); defer { lock.unlock() }
-        if claimed { return false }
+        if cancelled || claimed { return false }
         claimed = true; return true
     }
-}
-
-private final class NativeRaceState<T: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<(T, URL)?, Never>?
-    private var remaining: Int
-    init(count: Int, continuation: CheckedContinuation<(T, URL)?, Never>) { remaining = count; self.continuation = continuation }
-    var resolved: Bool { lock.lock(); defer { lock.unlock() }; return continuation == nil }
-    /** True for the first result: it is handed to the caller; any later result is the caller's to close. */
-    func win(_ value: (T, URL)) -> Bool {
-        lock.lock()
-        guard let continuation else { remaining -= 1; lock.unlock(); return false }
-        self.continuation = nil; remaining -= 1; lock.unlock()
-        continuation.resume(returning: value); return true
+    func whileActive(_ operation: () -> Void) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !cancelled else { return false }
+        operation(); return true
     }
-    func fail() {
-        lock.lock(); remaining -= 1
-        let finished = remaining == 0 ? continuation : nil
-        if finished != nil { continuation = nil }
-        lock.unlock()
-        finished?.resume(returning: nil)
+    func cancel() {
+        lock.lock(); defer { lock.unlock() }
+        cancelled = true
     }
 }
 
 extension NativeEdgeOrigins {
     /**
-     * Starts each origin 250 ms after the previous one and returns as soon as one succeeds, without waiting for the rest.
-     * Every child failure, cancellation included, counts as a loss; a late success is closed, never leaked.
+     * The first success cancels the other attempts. Wait for the cancelled transports and any late successes to close.
      */
     public static func race<T: Sendable>(_ origins: [URL], stagger: Duration = .milliseconds(250),
         attempt: @escaping @Sendable (URL, NativeEdgeRace) async throws -> T,
         close: @escaping @Sendable (T) async -> Void) async -> (T, URL)? {
         guard !origins.isEmpty else { return nil }
         let race = NativeEdgeRace()
-        return await withCheckedContinuation { continuation in
-            let state = NativeRaceState<T>(count: origins.count, continuation: continuation)
-            for (index, origin) in origins.enumerated() {
-                Task {
-                    if index > 0 { try? await Task.sleep(for: stagger * index) }
-                    guard !state.resolved else { state.fail(); return }
-                    do {
-                        let value = try await attempt(origin, race)
-                        if !state.win((value, origin)) { await close(value) }
-                    } catch { state.fail() }
+        let result = await withTaskCancellationHandler {
+            await withTaskGroup(of: (T, URL)?.self) { group in
+                for (index, origin) in origins.enumerated() {
+                    group.addTask {
+                        do {
+                            if index > 0 { try await Task.sleep(for: stagger * index) }
+                            try Task.checkCancellation()
+                            return (try await attempt(origin, race), origin)
+                        } catch { return nil }
+                    }
                 }
+                var winner: (T, URL)?
+                while let next = await group.next() {
+                    guard let result = next else { continue }
+                    if winner == nil, !Task.isCancelled {
+                        winner = result
+                        group.cancelAll()
+                    } else { await close(result.0) }
+                }
+                return winner
             }
+        } onCancel: { race.cancel() }
+        if Task.isCancelled, let result {
+            await close(result.0)
+            return nil
         }
+        return result
     }
 }

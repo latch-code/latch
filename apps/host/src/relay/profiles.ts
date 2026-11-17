@@ -6,6 +6,7 @@ import { isIP } from 'node:net'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, syncDirectory, writeFileAtomic } from '@latch/core/node-kit'
+import { EDGE_RELAY_AVAILABLE } from '@latch/link-wire'
 import { OFFICIAL_RELAYS, type OfficialRelay } from './official.ts'
 import {
   directoryConfigSchema,
@@ -61,6 +62,17 @@ export const relayProfileInput = z
   ])
   .refine(value => !('extraUrls' in value) || !value.extraUrls?.includes(value.url))
 export type RelayProfileInput = z.infer<typeof relayProfileInput>
+export function relayAvailable(profile: { kind?: 'edge' } | RelayProfileInput): boolean {
+  return !('kind' in profile && profile.kind === 'edge') || EDGE_RELAY_AVAILABLE
+}
+export function assertRelayAvailable(profile: { kind?: 'edge' } | RelayProfileInput): void {
+  if (!relayAvailable(profile))
+    throw new AppError(
+      503,
+      'native-relay-platform-unavailable',
+      'Cloudflare Workers 中继尚未实现：平台暂无法提供消息组装前大小与连接释放约束。',
+    )
+}
 export const nativeDirectSchema = z.strictObject({
   host: z
     .string()
@@ -245,7 +257,11 @@ export class RelayProfiles {
   relayReceipt(requestId: string): z.infer<typeof receiptSchema> | undefined {
     return this.state.configReceipts?.find(item => item.requestId === requestId)
   }
-  assertNewRelay(input: Pick<RelayProfileInput, 'relayId' | 'url'>, official: readonly OfficialRelay[] = OFFICIAL_RELAYS): void {
+  assertNewRelay(
+    input: Pick<RelayProfileInput, 'relayId' | 'url'> & { kind?: 'edge' },
+    official: readonly OfficialRelay[] = OFFICIAL_RELAYS,
+  ): void {
+    assertRelayAvailable(input)
     if (official.some(item => item.relayId === input.relayId))
       throw new AppError(409, 'native-relay-official', '这个中继标识属于官方中继，不能作为自己的中继添加。')
     const urls = (value: { url: string; extraUrls?: string[] }) => [value.url, ...(value.extraUrls ?? [])]
@@ -423,6 +439,7 @@ export class RelayProfiles {
       this.advanceConfiguration(draft, receipt)
       const builtIn = draft.profiles.filter(item => item.builtIn)
       const custom = checked.map(item => {
+        assertRelayAvailable(item)
         const previous = draft.profiles.find(old => old.relayId === item.relayId)
         return {
           ...relayNodeFields(item),
@@ -545,6 +562,7 @@ export class RelayProfiles {
       authorize()
       const node = draft.profiles.find(profile => profile.relayId === relayId && !profile.builtIn)
       if (!node) throw new AppError(404, 'native-relay-missing', '中继配置已移除')
+      if (!disabled) assertRelayAvailable(node)
       const before = this.hashConfiguration(draft)
       if (disabled) node.disabled = true
       else delete node.disabled
@@ -558,15 +576,16 @@ export class RelayProfiles {
     }, authorize)
   }
   /** The node proved its key and registered a route: a CLI-added relay may now enter address books. */
-  markVerified(relayId: string): Promise<void> {
-    if (!this.state.profiles.some(profile => profile.relayId === relayId && profile.unverified)) return Promise.resolve()
+  markVerified(profile: RelayProfile, authorize: () => void): Promise<void> {
+    const fingerprint = profileFingerprint(profile)
     return this.change(draft => {
-      const node = draft.profiles.find(profile => profile.relayId === relayId)
-      if (!node?.unverified) return
+      authorize()
+      const node = draft.profiles.find(item => item.relayId === profile.relayId)
+      if (!node?.unverified || profileFingerprint(node) !== fingerprint) return
       delete node.unverified
       if (draft.generation >= Number.MAX_SAFE_INTEGER) throw new AppError(503, 'native-generation-exhausted', '连接簿代次已耗尽')
       draft.generation++
-    })
+    }, authorize)
   }
   /** Floors come only from verified cache evidence, never from the settings request. Keep them through source removal. */
   saveDirectoryFloor(expectedSourceHash: string, floor: DirectoryFloor): Promise<void> {
@@ -629,8 +648,9 @@ export class RelayProfiles {
 
 /** The relays an address book offers, in the person's order of preference, at most four; never an unverified one. */
 export function bookRelays(state: Pick<z.infer<typeof schema>, 'profiles' | 'officialOff' | 'ownFirst'>): RelayProfile[] {
-  const official = state.officialOff ? [] : state.profiles.filter(profile => profile.builtIn),
-    own = state.profiles.filter(profile => !profile.builtIn && !profile.unverified && !profile.disabled)
+  const available = state.profiles.filter(relayAvailable)
+  const official = state.officialOff ? [] : available.filter(profile => profile.builtIn),
+    own = available.filter(profile => !profile.builtIn && !profile.unverified && !profile.disabled)
   return (state.ownFirst ? [...own, ...official] : [...official, ...own]).slice(0, 4)
 }
 

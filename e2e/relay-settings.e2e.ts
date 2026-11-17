@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { chromium, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -28,7 +27,13 @@ const edge = {
   relayKey: 'f'.repeat(64),
   registrationKey: `lrt1.${'K'.repeat(43)}`,
 }
-const keyHash = createHash('sha256').update(Buffer.from(edge.relayKey, 'hex')).digest('hex').slice(0, 8)
+const self = {
+  url: 'https://relay.example/',
+  relayId: 'a'.repeat(32),
+  spkiHash: 'b'.repeat(64),
+  registrationKey: edge.registrationKey,
+}
+const keyHash = self.spkiHash.slice(0, 8)
 type Relay = NativeLinkInfo['relays'][number]
 const row = (relayId: string, status: Relay['status'], extra: Partial<Relay> = {}): Relay => ({
   relayId,
@@ -41,10 +46,11 @@ const row = (relayId: string, status: Relay['status'], extra: Partial<Relay> = {
 })
 const ALL_STATES: Relay[] = [
   row('1'.repeat(32), 'connecting'),
-  row('2'.repeat(32), 'connected', { kind: 'edge', latencyMs: 38, connectedAt: Date.UTC(2026, 10, 18, 2) }),
-  row('3'.repeat(32), 'mismatch', { kind: 'edge' }),
+  row('2'.repeat(32), 'connected', { latencyMs: 38, connectedAt: Date.UTC(2026, 10, 18, 2) }),
+  row('3'.repeat(32), 'mismatch'),
   row('4'.repeat(32), 'waiting', { retryAt: Date.UTC(2026, 10, 18, 3) }),
   row('5'.repeat(32), 'disabled'),
+  row('6'.repeat(32), 'unsupported', { kind: 'edge' }),
 ]
 
 async function scripted(page: Page, local: boolean, relays: Relay[], listening = true) {
@@ -76,7 +82,7 @@ async function scripted(page: Page, local: boolean, relays: Relay[], listening =
   await page.route('**/link/api/native/info', route => route.fulfill({ json: info() }))
   await page.route('**/link/api/native/relays', route => {
     state.posted.push(route.request().postDataJSON())
-    state.relays = [...state.relays, { ...row(edge.relayId, 'connected', { kind: 'edge', latencyMs: 41 }), url: edge.url, keyHash }]
+    state.relays = [...state.relays, { ...row(self.relayId, 'connected', { latencyMs: 41 }), url: self.url, keyHash }]
     return route.fulfill({ status: 201, json: info() })
   })
   await page.route('**/link/api/native/relays/*', route => {
@@ -132,7 +138,7 @@ describe('设置 › 中继', () => {
           await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
         }
         await page.getByTestId('relay-direct').getByText('可用').waitFor()
-        for (const word of ['连接中', '已连接 · 38 ms', '密钥不符', '连不上', '已停用'])
+        for (const word of ['连接中', '已连接 · 38 ms', '密钥不符', '连不上', '已停用', '尚未实现'])
           await page.getByText(word, { exact: true }).first().waitFor()
         await expect.poll(() => page.getByText('官方中继').count()).toBe(0)
         await capture('relays-states')
@@ -155,10 +161,7 @@ describe('设置 › 中继', () => {
         const sheet = page.locator('.relay-add-dialog')
         await sheet.getByTestId('relay-ways').waitFor()
         await capture('relays-add-ways')
-        await sheet.getByRole('button', { name: 'Cloudflare Workers' }).click()
-        await sheet.getByText('wrangler login', { exact: true }).waitFor()
-        await capture('relays-add-cloudflare')
-        await sheet.getByRole('button', { name: '返回' }).click()
+        expect(await sheet.getByRole('button', { name: /Cloudflare Workers/u }).getAttribute('aria-disabled')).toBe('true')
         await sheet.getByRole('button', { name: '已有中继文件' }).click()
         await sheet
           .getByTestId('relay-file')
@@ -170,16 +173,22 @@ describe('设置 › 中继', () => {
           mimeType: 'application/json',
           buffer: Buffer.from(JSON.stringify({ version: 2, profile: edge })),
         })
+        await sheet.getByText(/Cloudflare Workers 中继尚未实现/u).waitFor()
+        await sheet.getByTestId('relay-file').setInputFiles({
+          name: 'latch-relay.json',
+          mimeType: 'application/json',
+          buffer: Buffer.from(JSON.stringify({ version: 1, profile: self })),
+        })
         const card = sheet.getByTestId('relay-candidate')
         await card.getByText(keyHash, { exact: true }).waitFor()
         await card.getByText('已包含', { exact: true }).waitFor()
-        expect((await sheet.innerText()).includes(edge.registrationKey)).toBe(false)
+        expect((await sheet.innerText()).includes(self.registrationKey)).toBe(false)
         await capture('relays-check-card')
         await card.getByRole('button', { name: '确认并连接' }).click()
         await card.getByText('注册', { exact: true }).waitFor()
         await sheet.getByRole('button', { name: '完成' }).waitFor()
         expect(state.posted).toHaveLength(1)
-        expect((state.posted[0] as { profile: unknown }).profile).toEqual(edge)
+        expect((state.posted[0] as { profile: unknown }).profile).toEqual(self)
         await capture('relays-connected')
       } finally {
         await context.close()
@@ -191,7 +200,7 @@ describe('设置 › 中继', () => {
     try {
       const page = await context.newPage()
       await enrollBrowser(page, host, { name: '只读设备', scopes: ['admin'] })
-      await scripted(page, false, [row('2'.repeat(32), 'connected', { kind: 'edge', latencyMs: 38 })], false)
+      await scripted(page, false, [row('2'.repeat(32), 'connected', { latencyMs: 38 })], false)
       await page.reload()
       await connected(page)
       await openEntry(page, '中继')

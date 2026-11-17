@@ -91,6 +91,7 @@ const hostOf = (url: string) => {
 const at = (time: number | undefined) => (time === undefined ? '' : new Date(time).toLocaleString())
 
 type Relay = NativeLinkInfo['relays'][number]
+const EDGE_UNAVAILABLE = 'Cloudflare 暂无法在消息组装前限制大小，也无法确认连接已释放。'
 /** A relay's state: a few words in the tone they mean, the detail in the hover. */
 function relayState(relay: Relay): { tone: StatusTone; word: string; detail?: string } {
   switch (relay.status) {
@@ -110,12 +111,14 @@ function relayState(relay: Relay): { tone: StatusTone; word: string; detail?: st
       return { tone: 'warn', word: '需要检查', detail: '同一天两次路由冲突' }
     case 'disabled':
       return { tone: 'neutral', word: '已停用' }
+    case 'unsupported':
+      return { tone: 'neutral', word: '尚未实现', detail: EDGE_UNAVAILABLE }
     default:
       return { tone: 'running', word: '连接中' }
   }
 }
 
-/** 连上 / 密钥相符 / 注册 / 手机已拿到, each done, failed or still to come. */
+/** Only this Host's signing operation is represented by the last step. */
 export function RelaySteps({ test, busy = false }: { test: NativeRelayTest | null; busy?: boolean }) {
   const reached = test ? ['none', 'identity', 'registered'].indexOf(test.reached) : -1
   const failedAt = !test?.failure ? -1 : test.failure === 'refused' ? 2 : test.failure === 'mismatch' ? 1 : 0
@@ -123,7 +126,7 @@ export function RelaySteps({ test, busy = false }: { test: NativeRelayTest | nul
     [test?.latencyMs === undefined ? '连上' : `连上 ${test.latencyMs} ms`, reached >= 1, failedAt === 0],
     ['密钥相符', reached >= 1, failedAt === 1],
     ['注册', reached >= 2, failedAt === 2],
-    ['手机已拿到', test?.deliveredAt !== undefined, false],
+    [test?.bookIssuedAt === undefined ? '连接簿签发' : 'Host 已签发', test?.bookIssuedAt !== undefined, false],
   ]
   const first = steps.findIndex(([, done, failed]) => !done && !failed)
   return (
@@ -280,18 +283,24 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
                           {
                             id: 'relay',
                             items: [
-                              { id: 'test', label: '测试', onSelect: () => void test(relay.relayId) },
-                              {
-                                id: 'toggle',
-                                label: relay.status === 'disabled' ? '启用' : '停用',
-                                onSelect: () =>
-                                  void run(() =>
-                                    api(`native/relays/${relay.relayId}`, {
-                                      method: 'PATCH',
-                                      body: { disabled: relay.status !== 'disabled' },
-                                    }),
-                                  ),
-                              },
+                              ...(relay.kind !== 'edge' || info.edgeRelayAvailable
+                                ? [{ id: 'test', label: '测试', onSelect: () => void test(relay.relayId) }]
+                                : []),
+                              ...(relay.kind !== 'edge' || info.edgeRelayAvailable || relay.status !== 'disabled'
+                                ? [
+                                    {
+                                      id: 'toggle',
+                                      label: relay.status === 'disabled' ? '启用' : '停用',
+                                      onSelect: () =>
+                                        void run(() =>
+                                          api(`native/relays/${relay.relayId}`, {
+                                            method: 'PATCH',
+                                            body: { disabled: relay.status !== 'disabled' },
+                                          }),
+                                        ),
+                                    },
+                                  ]
+                                : []),
                               {
                                 id: 'remove',
                                 label: '移除',
@@ -308,10 +317,7 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
               />
               {shown && (
                 <div className="relay-row-test">
-                  <RelaySteps
-                    test={shown.test ? { ...shown.test, ...(relay.deliveredAt ? { deliveredAt: relay.deliveredAt } : {}) } : null}
-                    busy={shown.busy}
-                  />
+                  <RelaySteps test={shown.test ? { ...shown.test, bookIssuedAt: relay.bookIssuedAt } : null} busy={shown.busy} />
                 </div>
               )}
             </div>
@@ -366,8 +372,9 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
         <AddRelay
           open={adding}
           sourceCheckout={info.sourceCheckout === true}
+          edgeAvailable={info.edgeRelayAvailable === true}
           pending={info.pendingRelay?.canRetry ? info.pendingRelay.requestId : undefined}
-          delivered={id => info.relays.find(relay => relay.relayId === id)?.deliveredAt}
+          bookIssuedAt={id => info.relays.find(relay => relay.relayId === id)?.bookIssuedAt}
           onClose={() => {
             setAdding(false)
             void reload()
@@ -381,14 +388,13 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
 
 type Way = 'edge' | 'self' | 'file'
 
-/** One command the person runs: shown, copied, or typed in at the prompt of a Latch terminal on this Mac's desktop. */
-function Command({ command }: { command: string }) {
+function Command({ command, copyOnly = false }: { command: string; copyOnly?: boolean }) {
   return (
     <span className="relay-command">
       <code>{command}</code>
       <span className="command-actions">
         <CopyButton text={command} label="复制命令" size="xs" />
-        <TerminalFillButton command={command} detached />
+        {!copyOnly && <TerminalFillButton command={command} detached />}
       </span>
     </span>
   )
@@ -413,17 +419,19 @@ function Step({ index, title, children }: { index: number; title: string; childr
 function AddRelay({
   open,
   sourceCheckout,
+  edgeAvailable,
   pending,
-  delivered,
+  bookIssuedAt,
   onClose,
   onInfo,
 }: {
   open: boolean
   /** The Host runs from a source checkout, where the guided commands exist. */
   sourceCheckout: boolean
+  edgeAvailable: boolean
   /** A request whose result is unknown: 重试 continues it with the same request ID and no file. */
   pending: string | undefined
-  delivered: (relayId: string) => number | undefined
+  bookIssuedAt: (relayId: string) => number | undefined
   onClose: () => void
   onInfo: (info: NativeLinkInfo) => void
 }) {
@@ -434,7 +442,7 @@ function AddRelay({
   const [server, setServer] = useState('')
   const [domain, setDomain] = useState('')
   const [candidate, setCandidate] = useState<{ requestId: string; profile: NativeRelayProfile; hash: string } | null>(null)
-  const [rejected, setRejected] = useState(false)
+  const [rejected, setRejected] = useState<'file' | 'edge' | null>(null)
   const [progress, setProgress] = useState<{
     requestId: string
     test: NativeRelayTest | null
@@ -451,21 +459,25 @@ function AddRelay({
     confirmation?.actions.dismiss()
     setWay(null)
     setCandidate(null)
-    setRejected(false)
+    setRejected(null)
     setProgress(null)
     setLoggedIn(false)
   }
   const read = async (chosen: File | undefined) => {
-    setRejected(false)
+    setRejected(null)
     setCandidate(null)
     setProgress(null)
     if (!chosen) return
     try {
       if (chosen.size > 4096) throw new Error('too large')
       const profile = readRelayProfile(await chosen.text())
+      if ('kind' in profile && !edgeAvailable) {
+        setRejected('edge')
+        return
+      }
       setCandidate({ requestId: crypto.randomUUID(), profile, hash: await relayKeyHash(profile) })
     } catch {
-      setRejected(true)
+      setRejected('file')
     }
   }
   const connect = async ({ requestId, profile }: { requestId: string; profile?: NativeRelayProfile }) => {
@@ -478,10 +490,9 @@ function AddRelay({
       )
       onInfo(info)
       const relayId = body.profile?.relayId ?? info.relays.at(-1)?.relayId
-      const added = info.relays.find(relay => relay.relayId === relayId)
       setProgress({
         requestId,
-        test: { reached: 'registered', ...(added?.deliveredAt ? { deliveredAt: added.deliveredAt } : {}) },
+        test: { reached: 'registered' },
         busy: false,
         ...(relayId ? { relayId } : {}),
       })
@@ -503,7 +514,7 @@ function AddRelay({
     void read(event.dataTransfer.files[0])
   }
   const relayId = progress?.relayId
-  const shown = progress && relayId && delivered(relayId) ? { ...progress.test!, deliveredAt: delivered(relayId)! } : progress?.test
+  const shown = progress?.test && relayId ? { ...progress.test, bookIssuedAt: bookIssuedAt(relayId) } : progress?.test
   const fileStep = (
     <div className="relay-drop" data-testid="relay-drop" onDragOver={event => event.preventDefault()} onDrop={drop}>
       <Icon icon={FileUp} size={16} />
@@ -536,6 +547,7 @@ function AddRelay({
           <Checkbox checked={loggedIn} onChange={event => setLoggedIn(event.currentTarget.checked)} label="已登录" />
         </Step>
         <Step index={2} title="部署">
+          <span>在这台 Mac 的 Latch 源码目录运行。</span>
           <SegmentedControl
             label="地区"
             value={region}
@@ -546,7 +558,7 @@ function AddRelay({
             onValueChange={setRegion}
           />
           {commands.deploy.map(command => (
-            <Command key={command} command={command} />
+            <Command key={command} command={command} copyOnly />
           ))}
         </Step>
         <Step index={3} title="连接">
@@ -567,6 +579,7 @@ function AddRelay({
           ))}
         </Step>
         <Step index={2} title="部署">
+          <span>登录后进入服务器上的 Latch 源码目录，再运行这些命令。</span>
           <TextField
             label="域名"
             placeholder="relay.example.com"
@@ -574,7 +587,7 @@ function AddRelay({
             onChange={event => setDomain(event.currentTarget.value.trim().toLowerCase())}
           />
           {commands.deploy.map(command => (
-            <Command key={command} command={command} />
+            <Command key={command} command={command} copyOnly />
           ))}
         </Step>
         <Step index={3} title="连接">
@@ -626,8 +639,8 @@ function AddRelay({
       {way === null && !progress && (
         <div className="relay-ways" data-testid="relay-ways">
           {(['edge', 'self', 'file'] as const).map(option => {
-            // The guided steps run this checkout's commands; an installed app has none yet, so only a file works there.
-            const missing = option !== 'file' && !sourceCheckout
+            const platformUnavailable = option === 'edge' && !edgeAvailable
+            const missing = platformUnavailable || (option !== 'file' && !sourceCheckout)
             const row = (
               <button
                 key={option}
@@ -643,7 +656,9 @@ function AddRelay({
               </button>
             )
             return missing ? (
-              <Tooltip key={option} content="引导部署需要 Latch 的命令行工具，安装版还没有提供；部署好后用「已有中继文件」添加">
+              <Tooltip
+                key={option}
+                content={platformUnavailable ? EDGE_UNAVAILABLE : '安装版尚未提供引导部署命令。部署好后用「已有中继文件」添加。'}>
                 {row}
               </Tooltip>
             ) : (
@@ -655,7 +670,7 @@ function AddRelay({
       {!candidate && steps}
       {rejected && (
         <InlineNotice tone="error" secure>
-          这个文件不是中继导出的连接配置。
+          {rejected === 'edge' ? `Cloudflare Workers 中继尚未实现。${EDGE_UNAVAILABLE}` : '这个文件不是中继导出的连接配置。'}
         </InlineNotice>
       )}
       {candidate && (

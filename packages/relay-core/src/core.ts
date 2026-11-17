@@ -74,6 +74,7 @@ type Route = {
   departed?: 1 | 2 | 3
   since: number
   deny: Set<string>
+  denialBlocked?: boolean
 }
 type Pending = { client: number; route: string; nonce: Set<string>; opened: number }
 export interface RelayCoreOptions {
@@ -89,8 +90,9 @@ export interface RelayCoreOptions {
   maxRoutesPerPrefix?: number
   maxPreauthConnections?: number
   maxPerPrefix?: number
+  maxDenialTags?: number
   denials?: {
-    get(route: Uint8Array, day: number): Promise<Uint8Array[]>
+    get(route: Uint8Array, day: number, limit: number): Uint8Array[] | Promise<Uint8Array[]>
     add(route: Uint8Array, day: number, tags: readonly Uint8Array[]): Promise<number>
   }
   canAdmit?(): boolean
@@ -125,6 +127,7 @@ export class RelayCore {
   private lastSweepAt = Number.NEGATIVE_INFINITY
   private draining = false
   private readonly registering = new Map<string, Connection>()
+  private denialTags = 0
   constructor(options: RelayCoreOptions) {
     if (options.relayId.length !== 16 || (!options.openRegistration && options.registrationToken?.length !== 32))
       throw new RangeError('A private relay requires a registration token')
@@ -432,7 +435,10 @@ export class RelayCore {
       }
       this.registering.set(key, connection)
       try {
-        const restored = (await this.options.denials?.get(route, message.day)) ?? []
+        // SQLite restores within this turn. Do not allocate a full route's tags if their reservation cannot fit.
+        const limit = Math.min(8192, this.denialCapacity() + (previous?.deny.size ?? 0))
+        const stored = this.options.denials?.get(route, message.day, limit)
+        const restored = Array.isArray(stored) ? stored : ((await stored) ?? [])
         if (restored.length > 8192 || restored.some(tag => tag.length !== 16)) throw new Error('Invalid denial state')
         if (
           this.connections.get(connection.peer.id) !== connection
@@ -455,7 +461,14 @@ export class RelayCore {
           this.close(connection.peer.id, 4302)
           return
         }
+        const deny = new Set(latest?.deny)
+        for (const tag of restored) deny.add(hex(tag))
+        if (deny.size > Math.min(8192, this.denialCapacity() + (latest?.deny.size ?? 0))) {
+          this.close(connection.peer.id, 4302)
+          return
+        }
         const token = crypto.random(32)
+        this.denialTags += deny.size - (latest?.deny.size ?? 0)
         this.routes.set(key, {
           control: connection.peer.id,
           publicKey: message.routePub.slice(),
@@ -465,7 +478,8 @@ export class RelayCore {
           token,
           day: message.day,
           since: this.options.now(),
-          deny: new Set([...(previous?.deny ?? []), ...restored.map(hex)]),
+          deny,
+          ...(latest?.denialBlocked ? { denialBlocked: true } : {}),
         })
         owned.add(key)
         connection.work = undefined
@@ -481,13 +495,19 @@ export class RelayCore {
       const routeKey = hex(message.routeId),
         route = this.routes.get(routeKey)
       if (!route || route.control !== connection.peer.id || !connection.controlRoutes?.has(routeKey)) throw new RangeError('Invalid DENY')
-      if (new Set([...route.deny, ...message.tags.map(hex)]).size > 8192) throw new RangeError('DENY limit')
-      for (const tag of message.tags) {
-        const key = hex(tag)
-        route.deny.add(key)
-        for (const active of this.connections.values())
-          if (active.route === routeKey && active.tag === key) this.close(active.peer.id, 4100)
+      const tags = new Set(message.tags.map(hex))
+      const added = [...tags].filter(tag => !route.deny.has(tag))
+      if (added.length + route.deny.size > 8192 || added.length > this.denialCapacity()) {
+        if (this.options.maxDenialTags !== undefined) {
+          route.denialBlocked = true
+          for (const active of this.connections.values()) if (active.route === routeKey) this.close(active.peer.id, 4100)
+        }
+        throw new RangeError('DENY limit')
       }
+      for (const tag of added) route.deny.add(tag)
+      this.denialTags += added.length
+      for (const active of this.connections.values())
+        if (active.route === routeKey && active.tag !== undefined && tags.has(active.tag)) this.close(active.peer.id, 4100)
       if (this.options.denials) {
         const count = await this.options.denials.add(message.routeId, route.day, message.tags)
         const digest = await denyBatchDigest(crypto, message.routeId, message.tags)
@@ -516,6 +536,9 @@ export class RelayCore {
       return
     }
     throw new RangeError('Unexpected control message')
+  }
+  private denialCapacity(): number {
+    return (this.options.maxDenialTags ?? Infinity) - this.denialTags
   }
   /** The nonce is kept on the connection: a host signs REGISTER over it and a client's admission proof is bound to it. */
   private async edgeChallenge(connection: Connection, clientNonce: Uint8Array): Promise<void> {
@@ -569,6 +592,7 @@ export class RelayCore {
           (this.replayPrefixes.get(prefix) ?? 0) >= prefixLimit || (!holder && (this.holderPrefixes.get(prefix) ?? 0) >= prefixLimit),
       )
       || !route
+      || route.denialBlocked
       || route.deny.has(tag)
     ) {
       this.close(connection.peer.id, 4100)
@@ -736,7 +760,12 @@ export class RelayCore {
         decrement(this.routeHolders, value.route)
         for (const prefix of value.prefixes) decrement(this.holderPrefixes, prefix)
       }
-    for (const [key, route] of this.routes) if (route.control === undefined && now - route.since > 86_400_000) this.routes.delete(key)
+    for (const [key, route] of this.routes) {
+      if (route.control === undefined && now - route.since > 86_400_000) {
+        this.denialTags -= route.deny.size
+        this.routes.delete(key)
+      }
+    }
   }
   drain(): void {
     if (this.draining) return

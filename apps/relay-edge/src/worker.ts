@@ -1,3 +1,4 @@
+import { EDGE_RELAY_AVAILABLE } from '@latch/link-wire'
 import { createEdgeWorker } from './edge.ts'
 import { EdgeNode } from './node.ts'
 import type { EdgeEnv, EdgePlatform, EdgeRequest, EdgeResponse, EdgeState, EdgeSubtle, EdgeWebSocket } from './platform.ts'
@@ -34,18 +35,24 @@ const platform: EdgePlatform = {
   clearInterval: handle => runtime.clearInterval(handle),
 }
 
-export default createEdgeWorker(platform)
+const notAvailable = () => platform.respond(503, undefined, { 'Cache-Control': 'no-store' })
+const worker = createEdgeWorker(platform)
+export default {
+  fetch(request: EdgeRequest, env: EdgeEnv): Promise<EdgeResponse> {
+    return EDGE_RELAY_AVAILABLE ? worker.fetch(request, env) : Promise.resolve(notAvailable())
+  },
+}
 
 /** The node object class bound as `NODE`. Plain fetch and alarm handlers: no RPC, no hibernation API. */
 export class RelayNode {
-  private readonly node: EdgeNode
+  private readonly node?: EdgeNode
   constructor(state: EdgeState, env: EdgeEnv) {
-    this.node = new EdgeNode(state, env, platform)
+    if (EDGE_RELAY_AVAILABLE) this.node = new EdgeNode(state, env, platform)
   }
   fetch(request: EdgeRequest): Promise<EdgeResponse> {
-    return this.node.fetch(request)
+    return this.node?.fetch(request) ?? Promise.resolve(notAvailable())
   }
   alarm(): Promise<void> {
-    return this.node.alarm()
+    return this.node?.alarm() ?? Promise.resolve()
   }
 }

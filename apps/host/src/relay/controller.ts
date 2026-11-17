@@ -1,14 +1,23 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import type { Duplex } from 'node:stream'
 import { ascii, hex, holder, routeId, routeKey, UTC_DAY, type KnockBinding } from '@latch/link-wire'
-import { nodeCrypto, RelayClosed, RelayControl } from '@latch/link-client'
+import { nodeCrypto, RelayClosed, RelayControl, type RelayDialLease } from '@latch/link-client'
 import { sha256Hex } from '@latch/core/node-kit'
 import type { AuditLog } from '../audit.ts'
 import type { DeviceStore } from '../auth.ts'
-import { profileFingerprint, relayEndpointOf, RelayProfiles, secretBytes, type RelayProfile } from './profiles.ts'
+import {
+  assertRelayAvailable,
+  profileFingerprint,
+  relayAvailable,
+  relayEndpointOf,
+  RelayProfiles,
+  secretBytes,
+  type RelayProfile,
+} from './profiles.ts'
 import type { HostRelayDirectory } from './directory.ts'
 
 type Lease = { address: string; permitted(): boolean }
+const MAX_DIAL_LEASES = 256
 /** How far a 测试 got: `identity` means connected and the node proved its key; `registered` means all of it. */
 export interface RelayTest {
   reached: 'none' | 'identity' | 'registered'
@@ -27,7 +36,6 @@ interface NodeState {
   abort: AbortController
   done: Promise<void>
   control?: RelayControl
-  leases: Lease[]
   tokens: Map<string, Uint8Array>
   status: 'connecting' | 'connected' | 'waiting' | 'attention' | 'refused' | 'mismatch'
   retryAt?: number
@@ -55,8 +63,9 @@ export class HostRelayController {
   private readonly nodes = new Map<string, NodeState>()
   private readonly retiring = new Map<string, Promise<void>>()
   private readonly resumeTokens = new Map<string, { fingerprint: string; tokens: Map<string, Uint8Array> }>()
+  private readonly dialLeases = new Map<RelayDialLease, AbortController>()
   private readonly timer: ReturnType<typeof setInterval>
-  private checking?: { state: Pick<NodeState, 'abort' | 'leases'>; done: Promise<Verification> }
+  private checking?: { abort: AbortController; done: Promise<Verification> }
   private stopped = false
   private region?: string
   constructor(options: RelayControllerOptions) {
@@ -95,12 +104,14 @@ export class HostRelayController {
   /** Called synchronously after policy/config updates; old sockets cannot keep an allowance that was removed. */
   reconcile(): void {
     if (this.stopped) return
-    if (this.checking?.state.leases.some(lease => !lease.permitted())) this.checking.state.abort.abort()
+    for (const [lease, abort] of this.dialLeases) if (!lease.permitted()) abort.abort()
     // The built-in relays run while a phone can use them, and only a phone paired on the LAN can get here; never while
     // the person has turned the official relay off.
     const reachable = this.options.devices.nativeReachable()
     const snapshot = this.options.profiles.snapshot()
-    const profiles = snapshot.profiles.filter(profile => !profile.disabled && (!profile.builtIn || (reachable && !snapshot.officialOff)))
+    const profiles = snapshot.profiles.filter(
+      profile => relayAvailable(profile) && !profile.disabled && (!profile.builtIn || (reachable && !snapshot.officialOff)),
+    )
     for (const [id, retained] of this.resumeTokens) {
       const profile =
         profiles.find(item => item.relayId === id)
@@ -109,7 +120,7 @@ export class HostRelayController {
     }
     for (const [id, state] of this.nodes) {
       const profile = profiles.find(item => item.relayId === id)
-      if (!profile || state.fingerprint !== profileFingerprint(profile) || state.leases.some(lease => !lease.permitted())) {
+      if (!profile || state.fingerprint !== profileFingerprint(profile)) {
         state.abort.abort()
         state.control?.close()
         this.options.closePaths(Buffer.from(id, 'hex'))
@@ -127,13 +138,12 @@ export class HostRelayController {
       if (this.nodes.has(profile.relayId) || this.retiring.has(profile.relayId) || this.retiring.size >= 16) continue
       const fingerprint = profileFingerprint(profile),
         retained = this.resumeTokens.get(profile.relayId) ?? { fingerprint, tokens: new Map<string, Uint8Array>() }
-      // A temporary egress removal closes every path, but must not make the same configured node look like a hostile takeover.
+      // Reconnecting a configured node after egress changes must retain its route tokens.
       this.resumeTokens.set(profile.relayId, retained)
       const state: NodeState = {
         fingerprint,
         abort: new AbortController(),
         done: Promise.resolve(),
-        leases: [],
         tokens: retained.tokens,
         status: 'connecting',
         ...(profile.region ? { region: profile.region } : {}),
@@ -143,10 +153,13 @@ export class HostRelayController {
     }
   }
   private async resolve(
-    state: Pick<NodeState, 'abort' | 'leases'>,
+    signal: AbortSignal,
     url: URL,
     fixed?: { address: string; permitted(): boolean },
-  ): Promise<string> {
+    lifetime?: AbortSignal,
+  ): Promise<RelayDialLease> {
+    signal.throwIfAborted()
+    if (this.stopped || this.dialLeases.size >= MAX_DIAL_LEASES) throw new Error('Relay egress unavailable')
     const operation = fixed
       ? (this.options
           .resolvePublic?.(url, fixed.address)
@@ -158,27 +171,37 @@ export class HostRelayController {
     try {
       lease = await Promise.race([
         operation,
-        delay(5000, undefined, { signal: AbortSignal.any([state.abort.signal, timeout.signal]), ref: false }).then(() => {
+        delay(5000, undefined, { signal: AbortSignal.any([signal, timeout.signal]), ref: false }).then(() => {
           throw new Error('Relay address deadline')
         }),
       ])
     } finally {
       timeout.abort()
     }
-    if (state.abort.signal.aborted || !lease.permitted()) throw new Error('Relay egress unavailable')
-    // Only distinct checked addresses matter; this set is bounded even under a hostile DNS answer sequence.
-    if (!state.leases.some(item => item.address === lease.address && item.permitted())) {
-      if (state.leases.length >= 16) throw new Error('Relay address churn limit')
-      state.leases.push(lease)
+    if (signal.aborted || this.stopped || !lease.permitted() || this.dialLeases.size >= MAX_DIAL_LEASES)
+      throw new Error('Relay egress unavailable')
+    const abort = new AbortController()
+    const stop = () => abort.abort()
+    lifetime?.addEventListener('abort', stop, { once: true })
+    const path: RelayDialLease = {
+      origin: url.origin,
+      address: lease.address,
+      revoked: abort.signal,
+      permitted: () => !abort.signal.aborted && lease.permitted(),
+      release: () => {
+        lifetime?.removeEventListener('abort', stop)
+        this.dialLeases.delete(path)
+      },
     }
-    return lease.address
+    this.dialLeases.set(path, abort)
+    return path
   }
   /** Proves outbound policy, pin, relay ID and real registration before this profile can enter a signed address book. */
   async verify(profile: RelayProfile, authorize: () => void): Promise<Verification> {
-    const state = { abort: new AbortController(), leases: [] as Lease[] }
+    const abort = new AbortController()
     if (this.stopped || this.checking) throw new Error('Relay verification unavailable')
-    const done = this.verifyRegistration(profile, authorize, state)
-    this.checking = { state, done }
+    const done = this.verifyRegistration(profile, authorize, abort.signal)
+    this.checking = { abort, done }
     try {
       return await done
     } finally {
@@ -190,14 +213,14 @@ export class HostRelayController {
    * throwaway route, never this Host's own, so the live control connection is not superseded.
    */
   async test(profile: RelayProfile, authorize: () => void): Promise<RelayTest> {
-    const state = { abort: new AbortController(), leases: [] as Lease[] }
+    const abort = new AbortController()
     if (this.stopped) return { reached: 'none', failure: 'unreachable' }
-    const timer = setTimeout(() => state.abort.abort(), 15_000)
+    const timer = setTimeout(() => abort.abort(), 15_000)
     timer.unref()
     const started = performance.now()
     const progress: { stage: RelayTest['reached'] } = { stage: 'none' }
     try {
-      await this.verifyRegistration(profile, authorize, state, {
+      await this.verifyRegistration(profile, authorize, abort.signal, {
         probe: true,
         onIdentity: () => {
           progress.stage = 'identity'
@@ -214,12 +237,13 @@ export class HostRelayController {
   private async verifyRegistration(
     profile: RelayProfile,
     authorize: () => void,
-    state: Pick<NodeState, 'abort' | 'leases'>,
+    signal: AbortSignal,
     options: { probe?: boolean; onIdentity?: () => void } = {},
   ): Promise<Verification> {
+    assertRelayAvailable(profile)
     const relayId = Buffer.from(profile.relayId, 'hex')
-    const signal = state.abort.signal
-    const permitted = () => !signal.aborted && !this.stopped && state.leases.every(lease => lease.permitted())
+    let transportPermitted = () => true
+    const permitted = () => !signal.aborted && !this.stopped && transportPermitted()
     const check = () => {
       authorize()
       if (!permitted()) throw new Error('Relay egress unavailable')
@@ -228,10 +252,9 @@ export class HostRelayController {
     const control = await RelayControl.connect({
       ...relayEndpointOf(profile),
       profile: 'outer-pad-v2',
-      resolveAddress: async url => {
-        const address = await this.resolve(state, url)
+      resolveAddress: (url, attemptSignal) => {
         check()
-        return address
+        return this.resolve(attemptSignal ?? signal, url)
       },
       ...(this.options.ca ? { ca: this.options.ca } : {}),
       registrationToken: profile.registrationKey ? secretBytes(profile.registrationKey) : undefined,
@@ -245,6 +268,7 @@ export class HostRelayController {
       },
       signal,
     })
+    transportPermitted = control.permitted
     options.onIdentity?.()
     const abort = () => control.close()
     signal.addEventListener('abort', abort, { once: true })
@@ -273,7 +297,7 @@ export class HostRelayController {
     this.resumeTokens.set(profile.relayId, { fingerprint, tokens })
   }
   cancelVerification(): void {
-    this.checking?.state.abort.abort()
+    this.checking?.abort.abort()
   }
   private async connect(profile: RelayProfile, state: NodeState): Promise<RelayControl> {
     const create = (url: string, fixed?: { address: string; permitted(): boolean }) =>
@@ -282,7 +306,8 @@ export class HostRelayController {
         url: new URL(url),
         profile: 'outer-pad-v2',
         // Each origin of an edge node is resolved and checked against the outbound policy on its own.
-        resolveAddress: target => this.resolve(state, fixed ? new URL(url) : target, fixed),
+        resolveAddress: (target, signal) =>
+          this.resolve(signal ? AbortSignal.any([state.abort.signal, signal]) : state.abort.signal, target, fixed, state.abort.signal),
         ...(this.options.ca ? { ca: this.options.ca } : {}),
         registrationToken: profile.registrationKey ? secretBytes(profile.registrationKey) : undefined,
         signal: state.abort.signal,
@@ -368,6 +393,10 @@ export class HostRelayController {
     while (!state.abort.signal.aborted && !control.isClosed()) {
       const setup = await control.accept()
       try {
+        if (state.abort.signal.aborted) {
+          setup.stream.destroy()
+          return
+        }
         const member = members.get(hex(setup.routeId))
         if (!member) {
           setup.stream.destroy()
@@ -381,7 +410,7 @@ export class HostRelayController {
             break
           }
         }
-        if (!expected) {
+        if (!expected || state.abort.signal.aborted) {
           setup.stream.destroy()
           continue
         }
@@ -407,11 +436,17 @@ export class HostRelayController {
         const members = await this.register(profile, state, control)
         const delivered = new Set<string>()
         await this.synchronizeDenials(profile, control, members, delivered)
+        if (!control.permitted()) throw new Error('Relay egress unavailable')
         state.status = 'connected'
         state.connectedAt = Date.now()
         attempts = 0
         // A relay added with the Host stopped enters address books only now that the node has proved its key.
-        if (profile.unverified) await this.options.profiles.markVerified(profile.relayId).catch(() => {})
+        if (profile.unverified)
+          await this.options.profiles
+            .markVerified(profile, () => {
+              if (state.abort.signal.aborted || control.isClosed() || !control.permitted()) throw new Error('Relay egress unavailable')
+            })
+            .catch(() => {})
         const workers = Array.from({ length: 4 }, () => this.serve(profile, state, control, members).catch(() => control.close()))
         const date = Math.floor(Date.now() / 1000 / UTC_DAY)
         let syncing = false
@@ -472,7 +507,8 @@ export class HostRelayController {
     this.stopped = true
     clearInterval(this.timer)
     const checking = this.checking
-    checking?.state.abort.abort()
+    checking?.abort.abort()
+    for (const abort of this.dialLeases.values()) abort.abort()
     const states = [...this.nodes.values()]
     for (const state of states) {
       state.abort.abort()

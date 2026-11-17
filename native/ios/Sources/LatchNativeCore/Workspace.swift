@@ -201,7 +201,7 @@ public actor NativeWorkspace {
     }
     /** The PathOwner remains the only retry owner; each invocation rechecks the current signed book and admission date. */
     public func relayCandidate(relayId: Data) throws -> NativePathCandidate {
-        guard relayId.count == 16, let endpoint = try currentBook().relays.first(where: { LinkBytes.equal($0.relayId, relayId) }) else { throw NativeFailure.invalidRecord }
+        guard relayId.count == 16, let endpoint = try NativeRelayOrder.available(currentBook()).first(where: { LinkBytes.equal($0.relayId, relayId) }) else { throw NativeFailure.invalidRecord }
         let pin = endpoint.spkiHash, profile = endpoint.profile, edge = endpoint.edge
         return try NativePathCandidate(id: LinkBytes.hex(relayId), kind: .relay) { [weak self] in
             guard let self else { throw NativeFailure.unavailable }; return try await self.connectRelay(relayId: relayId, spkiHash: pin, profile: profile, edge: edge)

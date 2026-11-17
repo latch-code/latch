@@ -6,6 +6,7 @@ import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { AuditLog, type AuditActor } from '../src/audit.ts'
 import {
   bookRelays,
+  relayAvailable,
   relayKeyHash,
   relayNodeFields,
   relayProfileInput,
@@ -16,9 +17,9 @@ import {
 export const RELAY_USAGE = `  relay list [--json]                      列出官方中继与自己的中继、顺序与开关（Host 已停止）
   relay add --file <中继文件> [--expect-key <密钥短哈希>]
                                            添加自己的中继（Host 已停止）：先列出地址与密钥短哈希，再输入 y 确认；
-                                           非交互环境用 --expect-key。Host 启动后核对节点密钥并登记成功，才把它发给手机；
+                                           非交互环境用 --expect-key。Host 启动后核对密钥并登记成功，才签发含该中继的连接簿；
                                            文件里的注册令牌只交给 Host，不显示
-  relay test <节点标识>                      现在测试一个中继：连上、密钥相符、注册、手机已拿到（Host 运行中）
+  relay test <节点标识>                      测试中继的连接、密钥、登记，显示 Host 签发状态（Host 运行中）
   relay remove <节点标识>                    移除自己的中继（Host 已停止）
   relay official on|off                    打开或关闭官方中继（Host 已停止）
   relay order official|own                 优先使用官方中继或自己的中继（Host 已停止）
@@ -104,7 +105,7 @@ export async function runRelayCommand(input: {
     out(`${mark(reached >= 1, failedAt === 0)} 连上${result.latencyMs === undefined ? '' : `（${result.latencyMs} ms）`}`)
     out(`${mark(reached >= 1, failedAt === 1)} 密钥相符`)
     out(`${mark(reached >= 2, failedAt === 2)} 注册`)
-    out(`${mark(result.deliveredAt !== undefined, false)} 手机已拿到`)
+    out(result.bookIssuedAt === undefined ? '· 连接簿签发' : '✓ Host 已签发')
     if (result.failure) {
       out(
         result.failure === 'mismatch'
@@ -123,7 +124,11 @@ export async function runRelayCommand(input: {
     try {
       const state = (await RelayProfiles.open(dataDir)).snapshot()
       const view = {
-        official: { deployed: state.profiles.some(item => item.builtIn), enabled: !state.officialOff, ownFirst: Boolean(state.ownFirst) },
+        official: {
+          deployed: state.profiles.some(item => item.builtIn && relayAvailable(item)),
+          enabled: !state.officialOff,
+          ownFirst: Boolean(state.ownFirst),
+        },
         relays: state.profiles
           .filter(item => !item.builtIn)
           .map(item => ({
@@ -131,6 +136,7 @@ export async function runRelayCommand(input: {
             kind: item.kind ?? 'self',
             urls: [item.url, ...(item.extraUrls ?? [])],
             ...(item.unverified ? { unverified: true } : {}),
+            ...(!relayAvailable(item) ? { unsupported: true } : {}),
           })),
         inAddressBook: bookRelays(state).map(item => item.relayId),
       }
@@ -139,7 +145,9 @@ export async function runRelayCommand(input: {
         out(`官方中继：${!view.official.deployed ? '尚未部署' : view.official.enabled ? '已开启' : '已关闭'}`)
         out(`优先使用：${view.official.ownFirst ? '自己的中继' : '官方中继'}`)
         for (const relay of view.relays)
-          out(`${relay.relayId}  ${relay.kind === 'edge' ? 'Workers' : '自建服务器'}  ${relay.urls.join(' ')}`)
+          out(
+            `${relay.relayId}  ${relay.kind === 'edge' ? 'Workers' : '自建服务器'}  ${relay.urls.join(' ')}${relay.unsupported ? '  尚未实现' : ''}`,
+          )
         if (!view.relays.length) out('没有自己的中继')
       }
     } finally {
@@ -197,7 +205,7 @@ export async function runRelayCommand(input: {
           detail: { base, profile: sha256Hex(canonicalJson(relay)) },
         })
         await profiles.addUnverified(relay, base, detail => record(detail, false))
-        out('已保存。Host 启动后核对节点的密钥并登记成功，才会把它发给手机；结果在设置与 relay list 中可见。')
+        out('已保存。Host 启动后核对节点密钥并登记成功，才会签发含该中继的连接簿；结果在设置与 relay list 中可见。')
         return 0
       }
       if (command === 'remove') {
