@@ -23,6 +23,7 @@ export function DraftFilePanel({ shell, inline = false }: { shell: ShellState; i
       treeView={tabs.treeView}
       onTreeViewChange={tabs.setTreeView}
       fileSearch={shell.catalog?.features?.fileSearch === true}
+      contentSearch={shell.catalog?.features?.fileContentSearch === true}
       onSearchFiles={shell.searchFiles}
       open={['files']}
       active="files"

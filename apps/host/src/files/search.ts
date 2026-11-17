@@ -2,12 +2,14 @@ import { watch, type FSWatcher } from 'node:fs'
 import { lstat, opendir, realpath, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AppError } from '@latch/sdk'
-import { isGitignored, readIgnoreRules, type IgnoreRules } from './gitignore.ts'
+import { ignoreVerdict, matchBudget, readIgnoreRules, type IgnoreRules } from './gitignore.ts'
 import { IGNORED_NAMES } from './ignore.ts'
 import { resolveRecorded, type FileRoot, type ProtectedPaths } from './resolve.ts'
 import { isInsidePath } from '../paths.ts'
 
 const NEVER_LISTED = new Set(['.git', '.ds_store'])
+/** The longest a walk runs before it lets the event loop turn. */
+const YIELD_MS = 8
 // Only in a folder without .git: in a repository these can be real source, and .gitignore says which they are.
 const LIKELY_OUTPUT = new Set(['target', 'out', 'vendor', 'coverage', '.cache', '.gradle', '.nuxt', '.svelte-kit', '.turbo'])
 const SOURCE_EXTENSIONS = new Set(
@@ -34,6 +36,8 @@ interface Snapshot {
   skipped: readonly string[]
   partial: boolean
   truncated: boolean
+  /** Entries whose ignore check was cut short (budget, time or a file not kept whole): treated as ignored. */
+  undecided: number
   current?(): boolean
   skippedNames?(cancelled: () => boolean, check: Check): Promise<IgnoredNames>
 }
@@ -170,6 +174,30 @@ export class FileSearchIndex {
       this.operations.delete(operation)
     }
   }
+  /**
+   * The files of one folder from the cached scan the name search keeps for this identity, scanning it if needed (the
+   * scan is the same bounded walk); undefined when the scan was cut short or changed meanwhile, so the caller walks.
+   */
+  async files(root: FileRoot, guard: ProtectedPaths, identity: string, cancelled: () => boolean, check: Check = () => {}) {
+    if (this.closed) throw unavailable()
+    const info = await stat(root.path, { bigint: true }).catch(() => undefined)
+    check()
+    if (!info?.isDirectory()) return undefined
+    const key = JSON.stringify([identity, JSON.stringify([root.id, root.path, String(info.dev), String(info.ino)])])
+    const operation = this.load(root, guard, key, cancelled, check).then(
+      snapshot => (snapshot.current && !snapshot.current() ? undefined : snapshot),
+      (cause: unknown) => {
+        if (cause instanceof IndexChanged) return undefined
+        throw cause
+      },
+    )
+    this.operations.add(operation)
+    try {
+      return await operation
+    } finally {
+      this.operations.delete(operation)
+    }
+  }
   async close(): Promise<void> {
     this.closed = true
     for (const [key, entry] of this.entries) this.invalidate(key, entry)
@@ -196,7 +224,7 @@ export class FileSearchIndex {
     }
     const entry: Entry = {
       guard,
-      promise: Promise.resolve({ paths: [], ignored: [], skipped: [], partial: false, truncated: false }),
+      promise: Promise.resolve({ paths: [], ignored: [], skipped: [], partial: false, truncated: false, undecided: 0 }),
       watchers: [],
       dirty: false,
       fullyWatched: true,
@@ -262,12 +290,12 @@ export class FileSearchIndex {
   }
 }
 
-interface Budget {
+export interface Budget {
   visited: number
   maxVisited: number
   deadline: number
 }
-const freshBudget = (milliseconds: number, maxVisited: number): Budget => ({
+export const freshBudget = (milliseconds: number, maxVisited: number): Budget => ({
   visited: 0,
   maxVisited,
   deadline: performance.now() + milliseconds,
@@ -287,7 +315,7 @@ const repositoryAt = (root: FileRoot) =>
  * A bounded BFS, with at most two MiB each of queued directory paths and cached file paths. With `honourIgnores`
  * it leaves build output and ignored files for `walkSkipped`, so they cannot spend the budget that source needs.
  */
-async function walk(
+export async function walk(
   root: FileRoot,
   guard: ProtectedPaths,
   cancelled: () => boolean,
@@ -306,11 +334,27 @@ async function walk(
     queueBytes = 0,
     truncated = false,
     partial = false,
+    undecided = 0,
     at = 0
   const checked = async <T>(operation: Promise<T>) => {
     const result = await operation
     check()
     return result
+  }
+  const matching = matchBudget(budget.deadline)
+  /** Ignored, kept, or undecided (counted, and then treated as ignored: never brought forward on a cut-short check). */
+  const ignoredHere = (rules: IgnoreRules | undefined, relative: string, isDirectory: boolean) => {
+    const verdict = ignoreVerdict(rules, relative, isDirectory, matching)
+    if (verdict === 'undecided') undecided++
+    return verdict !== 'kept'
+  }
+  // The event loop gets a turn every few milliseconds of walking, however the entries come in.
+  let turned = performance.now()
+  const turn = async () => {
+    if (performance.now() - turned < YIELD_MS) return
+    await new Promise(resolve => setImmediate(resolve))
+    turned = performance.now()
+    check()
   }
   const inRepository = honourIgnores && (await checked(repositoryAt(root)))
   while (at < queue.length && !cancelled()) {
@@ -337,6 +381,7 @@ async function walk(
       throw cause
     }
     for await (const item of directory) {
+      await turn()
       check()
       if (++budget.visited > budget.maxVisited || performance.now() > budget.deadline || cancelled()) {
         truncated = true
@@ -353,7 +398,7 @@ async function walk(
       if (item.isDirectory()) {
         if (
           honourIgnores
-          && (IGNORED_NAMES.has(lower) || (!inRepository && LIKELY_OUTPUT.has(lower)) || isGitignored(rules, relative, true))
+          && (IGNORED_NAMES.has(lower) || (!inRepository && LIKELY_OUTPUT.has(lower)) || ignoredHere(rules, relative, true))
         ) {
           if (skipped.length < MAX_SKIPPED_DIRECTORIES) skipped.push(relative)
           else partial = true
@@ -362,7 +407,7 @@ async function walk(
           queueBytes += size
         } else truncated = true
       } else if (item.isFile() && accept(relative)) {
-        if (honourIgnores && isGitignored(rules, relative, false)) {
+        if (honourIgnores && ignoredHere(rules, relative, false)) {
           if (ignored.length < MAX_IGNORED_FILES) ignored.push(relative)
           else partial = true
           continue
@@ -381,7 +426,7 @@ async function walk(
     }
   }
   if (cancelled()) truncated = true
-  return { paths, ignored, skipped, partial, truncated }
+  return { paths, ignored, skipped, partial, truncated, undecided }
 }
 
 const scan = (root: FileRoot, guard: ProtectedPaths, cancelled: () => boolean, check: Check, observe: (path: string) => void) =>

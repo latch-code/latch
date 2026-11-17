@@ -799,6 +799,165 @@
 .file-tree-search-gap {
   flex: 1;
 }
+/* 搜索内容: stands in for the tree in the same column; the matches are marked as transcript find marks them. */
+.content-search {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.content-search-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-4) var(--sp-8) var(--sp-4) var(--sp-12);
+}
+.content-search-head .ui-search {
+  flex: 1;
+  min-width: 0;
+  margin-inline-end: var(--sp-2);
+}
+.content-search-status {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 20px;
+  padding: 0 var(--sp-16) var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.content-search-status:empty {
+  display: none;
+}
+.content-search-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+}
+.content-search-summary {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.content-search-partial {
+  color: var(--amber);
+}
+.content-search-results {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0 var(--sp-6) var(--sp-12);
+  overflow: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+/* The previous answer stays while the next one is read, its lines in muted ink. */
+.content-search-results[data-stale] :is(.content-search-name, .content-search-file-head, .content-search-line, mark) {
+  color: var(--muted);
+}
+.content-search-results ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.content-search-file-head,
+.content-search-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  text-align: start;
+  cursor: default;
+}
+.content-search-file-head {
+  height: 24px;
+  padding: 0 var(--sp-6);
+}
+.content-search-file-head > svg {
+  flex: none;
+  color: var(--muted);
+}
+.content-search-name {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.content-search-folder {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: start;
+}
+.content-search-count {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+.content-search-line {
+  align-items: baseline;
+  min-height: 22px;
+  padding: var(--sp-2) var(--sp-6) var(--sp-2) var(--sp-24);
+}
+.content-search-number {
+  flex: none;
+  min-width: 3ch;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+.content-search-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+.content-search-text mark {
+  border-radius: var(--r-2);
+  background: var(--accent-soft);
+  box-shadow: inset 0 -1px 0 var(--accent);
+  color: var(--ink);
+}
+.content-search-cut {
+  color: var(--faint);
+}
+@media (hover: hover) {
+  .content-search-file-head:hover,
+  .content-search-line:hover {
+    background: var(--hover);
+  }
+}
+.content-search-file-head:focus-visible,
+.content-search-line:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .file-tree-items {
   flex: 1;
   min-height: 0;

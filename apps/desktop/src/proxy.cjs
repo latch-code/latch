@@ -610,7 +610,7 @@ function classifyRoute(method, pathname) {
     || /^\/link\/api\/(?:tasks|workspaces)\/.+\/files(?:\/|$)/.test(lower)
   ) {
     const content = (method === 'GET' || method === 'HEAD') && /^\/link\/api\/files\/[A-Za-z0-9_-]{22}(?:\/meta)?$/.test(decoded)
-    const reference = method === 'POST' && /^\/link\/api\/(?:tasks|workspaces)\/[^/]+\/files\/(?:resolve|search)$/.test(decoded)
+    const reference = method === 'POST' && /^\/link\/api\/(?:tasks|workspaces)\/[^/]+\/files\/(?:resolve|search|grep)$/.test(decoded)
     const listing = method === 'GET' && /^\/link\/api\/(?:tasks|workspaces)\/[^/]+\/files\/list$/.test(decoded)
     // The person's edit of a file they opened: the Host checks the handle, the version and the audit as for any device.
     const edit = method === 'PUT' && FILE_EDIT_PATH.test(decoded)

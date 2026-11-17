@@ -7402,6 +7402,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           modelUsage: true,
           providerUpdateTarget: true,
           fileSearch: true,
+          fileContentSearch: true,
           ...(directoryReader.available ? { fileTree: true as const } : {}),
           filePreview: true,
           configReceipts: true,

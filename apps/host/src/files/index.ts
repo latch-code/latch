@@ -34,6 +34,7 @@ import { isReferenced, isReferenceListed, sessionReferences } from './references
 import { openContent, sendContent } from './read.ts'
 import { FileReadQuota } from './quota.ts'
 import { FileSearchIndex } from './search.ts'
+import { GREP_LIMITS, GREP_QUERY_MAX, grepFiles, type GrepLimits } from './grep.ts'
 import {
   ProtectedPaths,
   fileVerdicts,
@@ -70,6 +71,13 @@ const EDIT_RECEIPTS = 512
 const EDIT_RECEIPT_MS = 60 * 60 * 1000
 const workspaceResolveSchema = resolveSchema.extend({ harnessId: z.string().min(1).max(128) })
 const workspaceSearchSchema = searchSchema.extend({ harnessId: z.string().min(1).max(128) })
+/** The text to find is data: literal, one line, never a pattern or an option. */
+const grepSchema = z.strictObject({
+  q: z.string().min(1).max(GREP_QUERY_MAX),
+  caseSensitive: z.boolean().default(false),
+  wholeWord: z.boolean().default(false),
+})
+const workspaceGrepSchema = grepSchema.extend({ harnessId: z.string().min(1).max(128) })
 const actSchema = z
   .strictObject({
     sessionId: z.string().min(1).max(256).optional(),
@@ -160,6 +168,10 @@ export interface FileRoutesOptions {
   hooks?: ResolveOptions['hooks']
   /** Test seam only: runs after an edit's temporary file is written, before the final check and the rename. */
   editHooks?: { beforeRename?(): Promise<void> }
+  /** Test seam only: smaller bounds for the content search. */
+  grepLimits?: GrepLimits
+  /** Test seam only: how long a content search may hold its slot. */
+  grepSlotMs?: number
 }
 
 /** Desktop app on host.sock, a device with the scope and the data scope `all` (the whole of the session's folders). */
@@ -215,6 +227,48 @@ export function createFileRoutes(options: FileRoutesOptions) {
   const pendingListAudits = new Map<string, Promise<void>>()
   let activeEnumerations = 0
   const enumeratingDevices = new Map<string, number>()
+
+  /**
+   * Content searches have slots of their own, apart from the tree and the name search: one per device, two at a time for
+   * remote callers and two for this Mac's own, so remote searches never leave the local window waiting.
+   */
+  const searchingDevices = new Set<string>()
+  const searchingTotal = { local: 0, remote: 0 }
+  /**
+   * A search holds its slot at most this long, even when a read or a directory listing never settles (a hung mount):
+   * then it is aborted, the slot is freed and the caller is told; whatever was still waiting ends when it settles.
+   */
+  const slotMs = () => options.grepSlotMs ?? (options.grepLimits?.ms ?? GREP_LIMITS.ms) + 7000
+  async function searching(caller: FileCaller, operation: (signal: AbortSignal) => Promise<void>): Promise<void> {
+    admitRead(caller)
+    if (!readsProjectFiles(caller.device.dataScope))
+      throw new AppError(403, 'file-scope', '这台设备只能打开本会话提到过的文件，不能搜索文件内容')
+    const id = caller.device.id,
+      side = isLocalListener(caller.connection.listener) ? 'local' : 'remote'
+    if (searchingDevices.has(id) || searchingTotal[side] >= 2)
+      throw new AppError(429, 'file-grep-busy', '正在进行的内容搜索过多，请稍后再试')
+    searchingDevices.add(id)
+    searchingTotal[side]++
+    const hard = new AbortController()
+    let timer: NodeJS.Timeout | undefined
+    const expired = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        hard.abort()
+        reject(new AppError(503, 'file-grep-timeout', '内容搜索没有及时结束，请稍后再试'))
+      }, slotMs())
+      timer.unref()
+    })
+    const running = operation(hard.signal)
+    running.catch(() => {})
+    expired.catch(() => {})
+    try {
+      await Promise.race([running, expired])
+    } finally {
+      clearTimeout(timer)
+      searchingTotal[side]--
+      searchingDevices.delete(id)
+    }
+  }
 
   async function enumerate(caller: FileCaller, operation: () => Promise<void>): Promise<void> {
     admitRead(caller)
@@ -314,6 +368,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
     context: FileContext,
     file: ResolvedFile,
     limit: number,
+    grep?: { lines: number },
   ): Promise<void> {
     if (isLocalListener(caller.connection.listener)) return
     const key = JSON.stringify([caller.device.id, context, file.rootId, file.relativePath])
@@ -332,6 +387,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
         pathHash: sha256Hex(file.realPath),
         type: auditType(file.ext),
         bytes: Math.min(file.size, limit),
+        ...(grep ? { via: 'grep' as const, lines: grep.lines } : {}),
       },
     })
     if (audited.size >= 4096) audited.delete(audited.keys().next().value!)
@@ -844,6 +900,81 @@ export function createFileRoutes(options: FileRoutesOptions) {
     json(res, result)
   }
 
+  /**
+   * `POST …/files/grep { q, caseSensitive, wholeWord }`: the lines of the context's text files that hold `q`, under the
+   * same rules as the name search (data scope, private sessions, the folders' identity), within fixed bounds. It ends as
+   * soon as the request goes away, so a query replaced by the next keystroke frees its slot. Like the name search it
+   * records only a `file.list` per folder (counts), never the text searched for or what was found.
+   */
+  /** The body is read and checked by the caller before a slot is taken, so a slow body never holds one. */
+  async function grep(
+    req: IncomingMessage,
+    res: ServerResponse,
+    caller: FileCaller,
+    context: FileContext,
+    input: z.infer<typeof grepSchema>,
+    slot: AbortSignal,
+  ): Promise<void> {
+    admitRead(caller)
+    if (!readsProjectFiles(caller.device.dataScope))
+      throw new AppError(403, 'file-scope', '这台设备只能打开本会话提到过的文件，不能搜索文件内容')
+    options.limiter.take(caller.device.id)
+    // Bytes read count against the device's read budget, as previews do (remote callers only). Taken before any
+    // listener is attached, so a refusal here leaves nothing behind.
+    const lease = quota.begin(caller.device.id, isLocalListener(caller.connection.listener))
+    // Ends with the request on every path: a closed response (HTTP/1, an HTTP/2 stream reset on the relay and native
+    // connections), an aborted request, the connection's own signal, or the slot's hard time-out.
+    const abort = new AbortController()
+    const cancel = () => abort.abort()
+    const signal = options.requestSignal?.(caller)
+    try {
+      req.once('aborted', cancel)
+      res.once('close', cancel)
+      signal?.addEventListener('abort', cancel, { once: true })
+      slot.addEventListener('abort', cancel, { once: true })
+      if (req.aborted || res.destroyed || signal?.aborted || slot.aborted) abort.abort()
+      const cancelled = () => abort.signal.aborted
+      const access = await contextLease(caller, context)
+      const identity = JSON.stringify([context, access.hash, access.revision])
+      const found: Array<{ file: ResolvedFile; lines: number }> = []
+      const result = await grepFiles(access.roots, guard, input, cancelled, access.check, options.grepLimits, {
+        consume: lease.consume,
+        found: (file, lines) => found.push({ file, lines }),
+        list: (root, late, check) => searchIndex.files(root, guard, identity, late, check),
+        ...(options.hooks ? { resolve: options.hooks } : {}),
+      })
+      if (cancelled()) return
+      await access.recheck()
+      // Exactly the files returned (at most the result cap, 500), so the records below are bounded by the answer.
+      if (found.length !== result.files.length) throw new AppError(500, 'file-grep-failed', '内容搜索失败')
+      // Lines of a file's content leave the Host: each such file is recorded as read, as opening it would be.
+      for (const { file, lines } of found) {
+        if (cancelled()) return
+        await auditRead(caller, context, file, file.size, { lines })
+        access.check()
+      }
+      for (const root of access.roots)
+        await auditList(
+          caller,
+          context,
+          root,
+          '',
+          false,
+          result.files.filter(file => file.root === root.id).length,
+          result.stopped !== undefined,
+          access.check,
+        )
+      await access.recheck()
+      if (!res.destroyed && !cancelled()) json(res, result)
+    } finally {
+      lease.release()
+      req.off('aborted', cancel)
+      res.off('close', cancel)
+      signal?.removeEventListener('abort', cancel)
+      slot.removeEventListener('abort', cancel)
+    }
+  }
+
   async function list(req: IncomingMessage, res: ServerResponse, caller: FileCaller, kind: FileContext['kind'], id: string): Promise<void> {
     admitRead(caller)
     if (!readsProjectFiles(caller.device.dataScope))
@@ -942,7 +1073,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
         await enumerate(caller, () => list(req, res, caller, directoryRoute[1] === 'tasks' ? 'session' : 'workspace', id))
         return true
       }
-      const workspaceRoute = /^\/link\/api\/workspaces\/([^/]+)\/files\/(resolve|search)$/u.exec(path)
+      const workspaceRoute = /^\/link\/api\/workspaces\/([^/]+)\/files\/(resolve|search|grep)$/u.exec(path)
       if (workspaceRoute && method === 'POST') {
         admitRead(caller)
         if (!readsProjectFiles(caller.device.dataScope)) throw new AppError(403, 'file-scope', '此设备不能浏览项目文件夹')
@@ -952,6 +1083,9 @@ export function createFileRoutes(options: FileRoutesOptions) {
         if (workspaceRoute[2] === 'resolve') {
           const { harnessId, ...input } = workspaceResolveSchema.parse(body)
           await resolveFiles(req, res, caller, { kind: 'workspace', workspaceId, harnessId }, input)
+        } else if (workspaceRoute[2] === 'grep') {
+          const { harnessId, ...input } = workspaceGrepSchema.parse(body)
+          await searching(caller, slot => grep(req, res, caller, { kind: 'workspace', workspaceId, harnessId }, input, slot))
         } else {
           const { harnessId, ...input } = workspaceSearchSchema.parse(body)
           await enumerate(caller, () => search(req, res, caller, { kind: 'workspace', workspaceId, harnessId }, input))
@@ -964,11 +1098,18 @@ export function createFileRoutes(options: FileRoutesOptions) {
           await read(req, res, caller, safeDecode(content[1]!), content[2] !== undefined)
           return true
         }
-        const searchRoute = /^\/link\/api\/tasks\/([^/]+)\/files\/search$/u.exec(path)
+        const searchRoute = /^\/link\/api\/tasks\/([^/]+)\/files\/(search|grep)$/u.exec(path)
         if (searchRoute && method === 'POST') {
           const sessionId = safeDecode(searchRoute[1]!)
           if (sessionId.length > 256) throw new AppError(400, 'invalid-session', '会话标识过长')
-          await enumerate(caller, () => search(req, res, caller, sessionContext(sessionId)))
+          const context = sessionContext(sessionId)
+          if (searchRoute[2] === 'grep') {
+            admitRead(caller)
+            if (!readsProjectFiles(caller.device.dataScope))
+              throw new AppError(403, 'file-scope', '这台设备只能打开本会话提到过的文件，不能搜索文件内容')
+            const input = grepSchema.parse(await jsonBody(req))
+            await searching(caller, slot => grep(req, res, caller, context, input, slot))
+          } else await enumerate(caller, () => search(req, res, caller, context))
           return true
         }
       }

@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
-import { Link2, MessageSquareQuote } from 'lucide-react'
+import { Link2, MessageSquareQuote, TextSearch } from 'lucide-react'
 import { isFileDirectoryListing, type FileChange, type FileContext, type FileDirectoryListing, type FileMention } from '@latch/protocol'
 import {
   Button,
@@ -7,6 +7,7 @@ import {
   IconButton,
   InlineNotice,
   Kbd,
+  keyGlyphs,
   Loading,
   Menu,
   Tooltip,
@@ -31,6 +32,7 @@ import { editorLabel, openInEditor, useEditors } from '../components/OpenInEdito
 import { FileOpenContext, fileContextBody, fileContextKey, fileRoute, targetIn } from './fileContext.ts'
 import { readTreeFile, soleFolder, treeChanges, treeFullPath, treeKey as branchKey, treeLocation, type FileTreeView } from './treeFiles.ts'
 import { rowOf } from '../components/overlays.tsx'
+import { ContentSearch } from './ContentSearch.tsx'
 
 type Branch = { listing?: FileDirectoryListing; loading?: boolean; error?: string; shown: number }
 type TreeRow = {
@@ -51,6 +53,7 @@ const CACHE_LIMIT = 32
 export function FileTree({
   context,
   onSearch,
+  contentSearch = false,
   onMention,
   local = false,
   folders,
@@ -64,6 +67,8 @@ export function FileTree({
   context: FileContext
   /** Opens ⌘P; absent on a device that cannot search. */
   onSearch?(): void
+  /** 搜索内容 (⇧⌘F while the panel has focus): only where the Host offers it and this device may search. */
+  contentSearch?: boolean
   /** The folder itself, through the desktop shell's folder bridge; absent elsewhere. */
   /** The action for a root that can be shown in the file manager as the folder this tree is listing. */
   rootReveal?(rootId: string): (() => void) | undefined
@@ -85,6 +90,8 @@ export function FileTree({
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(initialView?.expanded ?? []))
   const [selected, setSelected] = useState<string | undefined>(initialView?.selected)
   const [showHidden, setShowHidden] = useState(initialView?.showHidden ?? false)
+  /** 搜索内容 stands in for the tree while open; the tree keeps what it had expanded. `count` refocuses the field. */
+  const [contentOpen, setContentOpen] = useState<{ count: number } | null>(null)
   const changedView = useRef(onViewChange)
   changedView.current = onViewChange
   useEffect(() => {
@@ -471,8 +478,31 @@ export function FileTree({
         : []),
     ]
   }
+  const openContent = () => {
+    setContentOpen(previous => ({ count: (previous?.count ?? 0) + 1 }))
+  }
+  const panelKeys = (event: KeyboardEvent<HTMLElement>) => {
+    if (!contentSearch || event.code !== 'KeyF' || !event.shiftKey || event.altKey || !(event.metaKey || event.ctrlKey)) return
+    event.preventDefault()
+    event.stopPropagation()
+    openContent()
+  }
+  if (contentSearch && contentOpen)
+    return (
+      <section className="file-tree" aria-label="项目文件" onKeyDown={panelKeys}>
+        <ContentSearch
+          key={contextKey}
+          context={context}
+          focus={contentOpen.count}
+          onClose={() => {
+            setContentOpen(null)
+            requestAnimationFrame(() => tree.current?.querySelector<HTMLElement>('[tabindex="0"], [role="treeitem"]')?.focus())
+          }}
+        />
+      </section>
+    )
   return (
-    <section className="file-tree" aria-label="项目文件">
+    <section className="file-tree" aria-label="项目文件" onKeyDown={panelKeys}>
       <header className="file-tree-head">
         {onSearch ? (
           <button type="button" className="file-tree-search" aria-label="搜索文件" onClick={onSearch}>
@@ -482,6 +512,9 @@ export function FileTree({
           </button>
         ) : (
           <span className="file-tree-search-gap" />
+        )}
+        {contentSearch && (
+          <IconButton size="xs" label="搜索内容" icon={TextSearch} shortcut={keyGlyphs('shift+mod+f')} onClick={openContent} />
         )}
         <Menu
           label="文件显示选项"

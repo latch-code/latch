@@ -677,7 +677,7 @@ export function FilePreview({
                     <Loading label="正在读取内容…" />
                   )
                 ) : (
-                  <TextPreview text={text} path={file.path} line={tab.target.line} sensitive />
+                  <TextPreview text={text} path={file.path} line={tab.target.line} lineRequest={tab.target} sensitive />
                 )
               ) : ['pptx', 'docx', 'xlsx', 'pdf', 'csv'].includes(file.kind) ? (
                 <DocumentPreview
@@ -697,7 +697,7 @@ export function FilePreview({
                 textFailed ? null : (
                   <Loading label="正在读取内容…" />
                 )
-              ) : file.kind === 'html' ? (
+              ) : file.kind === 'html' && tab.target.line === undefined ? (
                 <HtmlPreview
                   text={text}
                   path={file.path}
@@ -705,7 +705,7 @@ export function FilePreview({
                   local={local}
                   preferenceKey={deviceId ? `latch.html-scripts.${deviceId}.${contextKey}.${file.root}.${file.path}` : undefined}
                 />
-              ) : file.kind === 'markdown' && !sourceMode ? (
+              ) : file.kind === 'markdown' && !sourceMode && tab.target.line === undefined ? (
                 <div className="file-markdown">
                   <MarkdownPreview
                     text={text}
@@ -716,7 +716,7 @@ export function FilePreview({
                   />
                 </div>
               ) : (
-                <TextPreview text={text} path={file.path} line={tab.target.line} />
+                <TextPreview text={text} path={file.path} line={tab.target.line} lineRequest={tab.target} />
               )}
             </div>
           )}

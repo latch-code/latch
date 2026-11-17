@@ -8,11 +8,14 @@ export function TextPreview({
   text,
   path,
   line = 1,
+  lineRequest,
   sensitive = false,
 }: {
   text: string
   path?: string
   line?: number
+  /** A new value asks for `line` again, so choosing the same line twice comes back to it. */
+  lineRequest?: unknown
   sensitive?: boolean
 }) {
   const lines = useMemo(() => text.split(/\r?\n/u), [text])
@@ -20,6 +23,7 @@ export function TextPreview({
   const search = useRef<HTMLInputElement>(null)
   const content = useRef<HTMLPreElement>(null)
   const requestedLine = useRef(line)
+  const lastRequest = useRef(lineRequest)
   const [start, setStart] = useState(Math.max(0, line - 1)),
     [query, setQuery] = useState(''),
     [wrap, setWrap] = useState(false),
@@ -57,10 +61,11 @@ export function TextPreview({
     },
   ])
   useEffect(() => {
-    const changed = requestedLine.current !== line
+    const changed = requestedLine.current !== line || lastRequest.current !== lineRequest
     requestedLine.current = line
+    lastRequest.current = lineRequest
     setStart(previous => Math.max(0, Math.min(lines.length - 1, changed ? line - 1 : previous)))
-  }, [line, lines.length])
+  }, [line, lineRequest, lines.length])
   const find = () => {
     if (!query) return
     const index = lines.findIndex((value, index) => index > start && value.toLocaleLowerCase().includes(query.toLocaleLowerCase()))

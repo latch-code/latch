@@ -19,7 +19,7 @@ electron-main：CommonJS，不导 TS 源码，只依赖 `@latch/protocol`；构�
 - 主进程只按 `desktop-launch.json` 启动本仓库 `dist/start.js`，Node 无额外参数，属当前用户或 root、他人不可写；`--disable-sigusr1` 在前，环境无 `LATCH_*`。睡眠与停止只由主进程报告（页面 403）。
 - 设备密钥与凭据只在主进程，safeStorage 加密存 0600 文件，无安全存储不存。
 - 文件夹操作需 `folders.protocolVersion: 1`，只回应主窗口顶层页，有焦点才开原生对话框；路径只来自面板、经原生确认的拖入或 Host 已知会话目录。主进程取 nonce 用设备私钥签名，页面添加 403；访达只用 `showItemInFolder`。显示家只收 Agent ID，经 Host 核对 owner 与可用性，再查真实目录（CUSTOM-AGENTS）。
-- 文件操作只收顶层页会话引用或句柄（v2 含项目/Harness），经 Host 授权与审计。主进程查类型、文件头，仅 `openPath`、`previewFile`、`showItemInFolder` 或白名单编辑器（真实手势、固定模板、无 shell），不开目录。页面限 resolve/search/list、句柄 GET/meta/PUT，拒 `Origin:null`（ARCHITECTURE）。
+- 文件操作只收顶层页会话引用或句柄（v2 含项目/Harness），经 Host 授权与审计。主进程查类型、文件头，仅 `openPath`、`previewFile`、`showItemInFolder` 或白名单编辑器（真实手势、固定模板、无 shell），不开目录。页面限 resolve/search/grep/list、句柄 GET/meta/PUT，拒 `Origin:null`（ARCHITECTURE）。
 - 只经 `host.json` + `host.sock` 找到并核对 Host，URL 与凭据不经环境变量或参数。`host.cjs` 与 `host-state.ts` 同改。
 - 主进程不显示、不批准本机确认（`PresenceService`），页面只读与取消票据。
 - 预览标签（`browser.cjs`）不可信，到不了 Host 与模型网关，重载只隐藏。主进程经 host.sock 签名登记为浏览器提供者（页面请求 403）；Agent 动作（`browser-agent.cjs`）是与页面接口分开的固定白名单，只用显示着的本机标签；其输入不算手势，它用过的标签本轮不离本机（[PREVIEW-BROWSER](../../docs/PREVIEW-BROWSER.md)）。

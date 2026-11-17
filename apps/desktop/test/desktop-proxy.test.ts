@@ -954,6 +954,8 @@ describe('desktop shell policy', () => {
       ['GET', '/link/api/workspaces/project-1/files/list'],
       ['POST', '/link/api/workspaces/project-1/files/resolve'],
       ['POST', '/link/api/workspaces/project-1/files/search'],
+      ['POST', '/link/api/tasks/task-1/files/grep'],
+      ['POST', '/link/api/workspaces/project-1/files/grep'],
       ['GET', '/link/api/files/AAAAAAAAAAAAAAAAAAAAAA'],
       ['HEAD', '/link/api/files/AAAAAAAAAAAAAAAAAAAAAA/meta'],
       ['PUT', '/link/api/tasks/task-1/files/AAAAAAAAAAAAAAAAAAAAAA'],

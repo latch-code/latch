@@ -97,6 +97,7 @@ export function SessionPanels({
   onSearchFiles,
   rootReveal,
   fileSearch = false,
+  contentSearch = false,
   onMention,
   onQuote,
   folders,
@@ -155,6 +156,8 @@ export function SessionPanels({
   onSearchFiles?(): void
   rootReveal?(rootId: string): (() => void) | undefined
   fileSearch?: boolean
+  /** 搜索内容 in the files panel (`features.fileContentSearch` and a data scope that reads project files). */
+  contentSearch?: boolean
   onMention?(mention: FileMention): void
   onQuote?(quote: FileQuote): void
   folders?: Array<{ id: string; path: string }>
@@ -296,6 +299,7 @@ export function SessionPanels({
             initialView={treeView}
             onViewChange={onTreeViewChange}
             {...(fileSearch ? { onSearch: () => onSearchFiles?.() } : {})}
+            contentSearch={contentSearch}
             {...(rootReveal ? { rootReveal } : {})}
             onMention={onMention}
           />

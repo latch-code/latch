@@ -279,6 +279,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
           }
         : {})}
       fileSearch={catalog?.features?.fileSearch === true && readsProjectFiles(snapshot.device.dataScope)}
+      contentSearch={catalog?.features?.fileContentSearch === true && readsProjectFiles(snapshot.device.dataScope)}
       onMention={mentionChoice.enabled && !active && !submission.pending ? mentionFile : undefined}
       onQuote={active ? undefined : quoteFile}
       folders={workspaceForFiles?.folders}

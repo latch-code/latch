@@ -204,7 +204,8 @@ export const HOST_ACTIONS = {
   'file.quicklook': fileAction,
   'file.open': fileAction,
   'file.editor': fileAction,
-  'file.view': fileAction.extend({ bytes: count }),
+  /** `via: 'grep'`: lines of the file returned by 搜索内容, and how many; never what was searched for. */
+  'file.view': fileAction.extend({ bytes: count, via: z.literal('grep').optional(), lines: count.optional() }),
   /** Written before the person's edit of a session file replaces it; sizes only, never the content. */
   'file.edit': z.strictObject({
     sessionId: opaqueId,

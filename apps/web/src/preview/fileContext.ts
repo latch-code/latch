@@ -14,7 +14,7 @@ export function fileContextKey(context: FileContext): string {
     ? `session:${context.sessionId}`
     : `workspace:${JSON.stringify([context.workspaceId, context.harnessId])}`
 }
-export function fileRoute(context: FileContext, action: 'list' | 'resolve' | 'search'): string {
+export function fileRoute(context: FileContext, action: 'list' | 'resolve' | 'search' | 'grep'): string {
   return `${context.kind === 'session' ? `tasks/${encodeURIComponent(context.sessionId)}` : `workspaces/${encodeURIComponent(context.workspaceId)}`}/files/${action}`
 }
 export function fileContextBody(context: FileContext): { harnessId?: string } {

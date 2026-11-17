@@ -18,6 +18,8 @@ export interface HostFeatures {
   configCheck?: true
   promptTemplates?: true
   fileSearch?: true
+  /** `POST …/files/grep`: the lines of a project's text files that hold a literal text (docs/ARCHITECTURE.md#会话文件). */
+  fileContentSearch?: true
   fileTree?: true
   pluginPackages?: true
   filePreview?: true
