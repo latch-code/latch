@@ -6,6 +6,7 @@ import { buildNetworkHelper } from './build-network.ts'
 import { buildNativeTlsHelper } from './build-native-tls.ts'
 import { buildFilesHelper } from './build-files.ts'
 import { buildTerminalHelper } from './build-terminal.ts'
+import { buildSimulatorHelper } from './build-simulator.ts'
 
 // Entry points and dist/ are paths in the repository root whatever the working directory: package.json's exports and
 // the start:built and desktop scripts find the bundles there.
@@ -32,3 +33,4 @@ await buildNativeTlsHelper(REPOSITORY_ROOT)
 await buildNetworkHelper(REPOSITORY_ROOT)
 await buildFilesHelper(REPOSITORY_ROOT)
 await buildTerminalHelper(REPOSITORY_ROOT)
+await buildSimulatorHelper(REPOSITORY_ROOT)

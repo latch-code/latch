@@ -14,10 +14,14 @@ sources:
   - apps/host/test/mcp-xcode.test.ts
   - apps/web/test/device-panel.test.ts
   - e2e/desktop-device.e2e.ts
+  - native/macos/LatchSimulator.swift
+  - apps/host/src/simulator-helper.ts
+  - apps/host/scripts/build-simulator.ts
+  - apps/host/test/simulator-helper.test.ts
 ---
 # 设备预览
 
-右栏「+」里的「设备」（字母键 V）显示这台 Mac 上一台 iOS 模拟器的画面，并提供启动、关机、截图、打开地址、外观与「在 Device Hub 中打开」。只用 Apple 公开的 `xcrun simctl` 与 `open`，不加载私有框架，不下载，不加依赖。
+右栏「+」里的「设备」（字母键 V）显示这台 Mac 上一台 iOS 模拟器的画面，并提供启动、关机、截图、打开地址、外观与「在 Device Hub 中打开」。面板只用 Apple 公开的 `xcrun simctl` 与 `open`；唯一加载私有框架的是还没有接入面板的画面组件 `latch-simulator`（见[实时画面组件](#实时画面组件)）。不下载，不加依赖。
 
 | 部分 | 位置 |
 | --- | --- |
@@ -114,13 +118,27 @@ Xcode 自带的 MCP 桥 `xcrun mcpbridge`（Apple 文档：Giving external agent
 - **指引。** 桥用 Latch 的一段替换 Xcode 自己的 `instructions`（Xcode 的原话只有一句「Request Xcode perform the action you specify.」，附在末尾）：先用 `XcodeOpenWorkspace` 打开工程，等人在 Xcode 里批准；用面板显示的那台设备的 UDID；先开设备会话、用完结束；每步之前读返回的截图与 UI 层级，按无障碍标识、标签、层级里的 hitPoint 点，估算坐标放最后；用 Xcode 的工具构建安装运行；在检查点核对；遇到登录、付款或系统权限对话框就停下请人处理；不抹掉、删除或关闭设备；Latch 的 `device_*` 负责列表、截图、开地址与外观，Xcode 的工具负责构建、安装、运行与输入；改文件与运行代码的工具在 Latch 里关着。
 - 同一段指引也作为 `latch-skills` 的内置技能交给有它的会话（同「操控这台 Mac」的指南）。
 
+## 实时画面组件
+
+`latch-simulator`（`native/macos/LatchSimulator.swift`）读一台运行中模拟器的画面，编成 H.264（不可用时 JPEG），经标准输入输出交给 Host。**它用 Apple 的私有框架取画面**（主人 2026-11-17 同意，只限这个组件）：运行时 `dlopen` CoreSimulator（系统位置，或 `xcode-select` 选中的 Xcode 里的那份），经 Objective-C 运行时找到设备、`SimScreenAdapter` 列出的主屏，再用 `SimScreen` 的帧回调拿到 IOSurface；编码用公开的 VideoToolbox。SimulatorKit 与 CoreDevice 都不加载。Host 的其余部分仍只用公开的 `xcrun`。
+
+- **会随 Xcode 失效。** 调用前逐一核对类、协议与方法的类型编码，缺一个或变了就报告「不支持」并给出简短原因（如 `no-xcode`、`changed-method:…`，≤ 128 字符），不去调用。回调块在编码里只是 `@?`，块自身的参数类型核对不到。那时面板退回 simctl 截图。没有链接期依赖，没有 Xcode 的 Mac 上它也能启动并报告不支持。
+- **不要系统权限。** 不用 ScreenCaptureKit、CGEvent 或辅助功能。组件自己的代码不启动子进程、不写文件、不联网；进程内的 CoreSimulator 经 XPC 连 CoreSimulatorService（必要时由 launchd 拉起），并写它自己的日志。经环境变量（`DEVELOPER_DIR`）选的 Xcode 一律不用。构建同其他组件：`swiftc`，`codesign --sign - --options runtime`，没有 entitlements。
+- **一台设备一个进程**，参数只有 `--udid <大写 UUID>`；另有 `--version` 与三个不连任何设备的自检：`--self-test`（解析框架、类与编码器，打印能力表）、`--self-test changed-interface`（改动一个方法的预期编码，验证报告「不支持」）、`--self-test protocol`（从标准输入读请求，按请求校验逐个回答）。标准输入关闭、设备关机或 SIGTERM 时退出；从启动起就读标准输入、SIGTERM 保持默认，所以 Host 在组件连设备期间退出也不会留下它。
+- **协议**在 Swift 文件开头：类型字节、4 字节长度、载荷。Host 发开始（编码、最高帧率 1～60、最长边 160～4096 像素）、停止、要关键帧、ping；`0x10`～`0x3f` 留给以后的输入，这一版一律回答 `unsupported`。组件发能力（帧是否可用及原因；所有输入能力都是不可用）、流描述（编码、avcC、编码尺寸、设备像素、每点像素数、方向）、帧（关键帧标记、微秒时间戳、AVCC 或 JPEG，≤ 8 MiB）、逐个请求的结果、设备离开。帧内容不进标准错误。超过 64 KiB 的请求回 id 0 并退出（状态 2）；最多 64 个请求待处理（之后不再读标准输入），最多 64 条消息待写出，Host 只写不读时组件退出（状态 3）。
+- **节流与背压。** 按最高帧率的节拍，只在画面变了时编码，画面停下半秒后再补一帧，静止的屏幕几乎不发。一帧还没写出时跳过节拍（在编码之前跳，H.264 的参照链不断）；Host 读得慢，组件就少发，从不无限缓存。
+- **Host 的包装** `apps/host/src/simulator-helper.ts`：固定路径 `dist/native/latch-simulator` 与固定参数，每类消息都有长度上限，能力里声称有输入的组件被拒绝；`attach`、`frames()`（异步迭代）、`keyframe`、`close`。读得慢时只留最多 8 帧（≤ 16 MiB）加最新的一条流描述，多出的帧丢掉，同一时间至多一个关键帧请求；组件超过 32 个请求未回答或标准输入积压超过 1 MiB 时按损坏处理（SIGKILL）。未知的方向值照传。组件崩溃只让在途调用失败，不影响 Host。**还没有任何路由用它**，面板仍是每秒约 0.4～0.6 帧的截图。
+
+**实测**（2026-11-17，Xcode 27.2、iOS 27.2，iPhone 17 模拟器 `latch-frames-check`，这台 Mac 负载 400～500）：页面动画时 H.264 最长边 1280（588×1280）稳定 30 帧/秒，约 35～87 KB/s，组件 CPU 约 4%（10 秒 0.38 s）；JPEG 同尺寸 30 帧/秒约 0.9 MB/s；JPEG 全尺寸 1206×2622 最高 60 帧/秒时约 3.2 MB/s；静止的主屏 10 秒 4 帧。H.264 用 ffprobe 解出 588×1280 的 Main 档画面，内容与设备一致；读取方暂停 3 秒时组件内存保持约 42 MB。
+
 ## 浏览器面板的手机视图
 
 见 [PREVIEW-BROWSER.md](PREVIEW-BROWSER.md#视口外观控制台与网络)：多了小屏手机、大屏手机、Android 手机三个预设与各自的像素比，手机预设外面有 Latch 画的外框与安全区示意。
 
 ## 尚未实现
 
-- **在 Latch 面板里点按、实时视频。** `simctl` 没有点按，实时取帧只能经私有框架（CoreSimulator、SimulatorKit），这一期不用；实时画面与点按在 Device Hub 的窗口里。
+- **在 Latch 面板里点按。** 尚未实现：`simctl` 没有点按，`latch-simulator` 这一版只读画面、不发任何输入；点按在 Device Hub 的窗口里。
+- **面板里的实时视频。** 尚未实现：`latch-simulator` 已能出画面，但还没有路由与面板解码接入，面板仍用截图。
 - **接手与交还 Xcode 的设备会话。** Xcode 的调用由 Agent 进程里的桥直接交给 `mcpbridge`，结果不经 Host，Host 拦不住在途的点按，所以只显示状态，不提供接手；面板的画面也不从 Agent 的工具结果更新，只来自 simctl 截图。
 - **手机与其他电脑上看模拟器。** 要把这台 Mac 的画面传到别的设备，需要单独的安全审阅；那些设备上没有入口。
 - **Android 与真机。** 不列出，不操作。
@@ -138,5 +156,6 @@ Xcode 自带的 MCP 桥 `xcrun mcpbridge`（Apple 文档：Giving external agent
 | 桥：Latch 的指引在前、只交出设备 UDID | `packages/harness-acp/test/mcp-bridge.test.ts` |
 | 面板模型与「+」 | `apps/web/test/device-panel.test.ts` |
 | 真实 Electron 与真实 simctl（只用名字以 `latch-` 开头的设备，没有 Xcode 时跳过） | `e2e/desktop-device.e2e.ts` |
+| 画面组件的分帧（畸形、超长、未知类型）、包装的监管、背压与关闭升级（替身组件）、真实组件的三个自检（协议拒绝、超长请求、只写不读、方法改变；不连设备） | `apps/host/test/simulator-helper.test.ts` |
 
 这些用例不证明 Xcode 的设备交互真的能用：2026-11-17 在 Xcode 设置允许外部 Agent、打开一个临时示例工程后，桥从 Xcode 之外回答了 `initialize` 与 `tools/list`（54 个工具），但第一次 `DeviceInteractionStartSession` 回答「This agent isn't approved to use Xcode's tools yet. Call XcodeOpenWorkspace or XcodeNewProject first」——批准要由人在 Xcode 弹出的提示里做，还没有做，所以点按、输入与截图都没有真实验证。
