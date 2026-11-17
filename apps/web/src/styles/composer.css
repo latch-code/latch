@@ -259,38 +259,57 @@
 .composer-input[data-marks]:has(> textarea:disabled) > .composer-command-mirror {
   color: var(--ink-2);
 }
-/* No padding, border or weight: a mark never moves a character. Its tint reaches past the text as shadow. */
+/*
+ * No padding, border or weight: a mark never moves a character. The sigil (`$` 0.6em, `/` 0.3em) is narrower than the
+ * glyph drawn for it, so glyph and tint end at the sigil's right edge and reach left over the whitespace, line start or
+ * input padding that the Host's rules always put before a token (prompt-tokens.ts); 0.85em keeps the glyph's ink at
+ * about cap height and inside a space before `$`. The name carries the rest of the tint, one layer, never doubled.
+ */
 .prompt-mark {
-  position: relative;
-  border-radius: var(--r-4);
-  background: var(--content-path-tint);
-  box-shadow:
-    -3px 0 0 var(--content-path-tint),
-    2px 0 0 var(--content-path-tint);
   color: var(--content-path-ink);
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
 }
 .prompt-mark-sigil {
   position: relative;
   color: transparent;
 }
+.prompt-mark-sigil::before {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: max(100%, 0.85em);
+  border-start-start-radius: var(--r-4);
+  border-end-start-radius: var(--r-4);
+  background: var(--content-path-tint);
+  content: '';
+}
 .prompt-mark-sigil > svg {
   position: absolute;
   inset-inline-end: 0;
   top: 50%;
-  width: 0.8em;
-  height: 0.8em;
+  width: 0.85em;
+  height: 0.85em;
   color: var(--content-path-ink);
   transform: translateY(-50%);
+}
+/* The code glyph's ink is shorter than the book's; a command is the draft's first word, with the padding before it. */
+.prompt-mark[data-kind='command'] > .prompt-mark-sigil::before {
+  width: max(100%, 1em);
+}
+.prompt-mark[data-kind='command'] > .prompt-mark-sigil > svg {
+  width: 1em;
+  height: 1em;
+}
+.prompt-mark-name {
+  border-start-end-radius: var(--r-4);
+  border-end-end-radius: var(--r-4);
+  background: var(--content-path-tint);
+  box-shadow: 2px 0 0 var(--content-path-tint);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 .composer-command-chip {
   border-radius: var(--r-4);
   background: var(--hover);
-}
-.composer-input[data-command] > textarea {
-  font-family: var(--mono);
-  font-size: var(--fs-mono);
 }
 .composer-command-hint {
   color: var(--muted);
@@ -856,9 +875,6 @@
   }
   .composer-input > textarea {
     padding-inline-start: var(--sp-12);
-  }
-  .composer-input[data-command] > textarea {
-    font-size: var(--fs-input);
   }
   .composer-slash-button {
     display: inline-flex;

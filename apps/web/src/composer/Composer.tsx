@@ -479,7 +479,7 @@ export function Composer({
         </p>
       )
     ) : (
-      <div className="composer-input" data-command={commandChip ? '' : undefined} data-marks={marks.shown ? '' : undefined}>
+      <div className="composer-input" data-marks={marks.shown ? '' : undefined}>
         {(commandChip || marks.shown) && (
           <div ref={commandMirror} className="composer-command-mirror" aria-hidden="true">
             {marks.shown ? (

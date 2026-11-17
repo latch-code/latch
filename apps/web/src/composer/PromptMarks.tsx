@@ -128,9 +128,9 @@ export function PromptMirrorText({ text, marks, hint }: { text: string; marks: r
       <span key={mark.start} className="prompt-mark" data-kind={mark.kind} data-start={mark.start}>
         <span className="prompt-mark-sigil">
           {text[mark.start]}
-          <Icon icon={mark.kind === 'skill' ? BookOpen : CodeGlyph} size={12} />
+          <Icon icon={mark.kind === 'skill' ? BookOpen : CodeGlyph} size={14} />
         </span>
-        {text.slice(mark.start + 1, mark.end)}
+        <span className="prompt-mark-name">{text.slice(mark.start + 1, mark.end)}</span>
       </span>,
     )
     at = mark.end

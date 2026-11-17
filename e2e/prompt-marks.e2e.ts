@@ -47,6 +47,50 @@ async function caretAfterGlyph(page: Page, input: Locator, index: number): Promi
   return input.evaluate(element => (element as HTMLTextAreaElement).selectionStart)
 }
 
+/**
+ * Every mark's glyph at about the text's cap height, inside the mirror (so the input's padding holds it at a line's
+ * start) and never left of the whitespace before it, so it covers no earlier character. Returns what breaks that.
+ */
+async function glyphRoom(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const mirror = document.querySelector<HTMLElement>('.composer-input[data-marks] > .composer-command-mirror')!
+    const box = mirror.getBoundingClientRect()
+    const inner = box.left + mirror.clientLeft
+    const size = parseFloat(getComputedStyle(mirror).fontSize)
+    const text = mirror.textContent!
+    const charRect = (at: number) => {
+      const walker = document.createTreeWalker(mirror, NodeFilter.SHOW_TEXT)
+      let left = at
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const length = node.textContent!.length
+        if (left < length) {
+          const range = document.createRange()
+          range.setStart(node, left)
+          range.setEnd(node, left + 1)
+          return range.getBoundingClientRect()
+        }
+        left -= length
+      }
+      return undefined
+    }
+    const problems: string[] = []
+    for (const mark of mirror.querySelectorAll<HTMLElement>('.prompt-mark')) {
+      const start = Number(mark.dataset.start)
+      const glyph = mark.querySelector('svg')!.getBoundingClientRect()
+      const tint = getComputedStyle(mark.querySelector('.prompt-mark-sigil')!, '::before')
+      const sigil = mark.querySelector('.prompt-mark-sigil')!.getBoundingClientRect()
+      const tintLeft = sigil.right - Math.max(sigil.width, parseFloat(tint.width))
+      const before = start > 0 && text[start - 1] !== '\n' ? charRect(start - 1) : undefined
+      const floor = before && Math.abs(before.top - sigil.top) < 2 ? before.left : inner
+      if (glyph.height < size * 0.8) problems.push(`${start}: glyph ${glyph.height}px at ${size}px text`)
+      if (Math.min(glyph.left, tintLeft) < floor - 0.5)
+        problems.push(`${start}: reaches ${floor - Math.min(glyph.left, tintLeft)}px past its room`)
+      if (glyph.right > sigil.right + 0.5) problems.push(`${start}: glyph runs into the name`)
+    }
+    return problems
+  })
+}
+
 it.each(['chromium', 'webkit'] as const)('draws skill and command tokens as marks while the draft stays text on %s', async engine => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-prompt-marks-')))
   let host: Awaited<ReturnType<typeof startTestHost>> | undefined
@@ -168,6 +212,31 @@ it.each(['chromium', 'webkit'] as const)('draws skill and command tokens as mark
         )
         await page.screenshot({ path: `${output}/mixed-${width}-${theme}.png`, animations: 'disabled' })
         await frame.screenshot({ path: `${output}/input-${width}-${theme}.png`, animations: 'disabled' })
+        // A leading command keeps the UI font; the glyph reads at the text's size and stays in its own room.
+        const fonts = await input.evaluate(element => [getComputedStyle(element).fontFamily, getComputedStyle(document.body).fontFamily])
+        expect(fonts[0]).toBe(fonts[1])
+        expect(fonts[0]).not.toMatch(/Menlo|monospace/u)
+        expect(await caretAfterGlyph(page, input, '/compact'.length - 1)).toBe('/compact'.length)
+        expect(await glyphRoom(page)).toEqual([])
+
+        // A mark at the start of a soft-wrapped line: grow the text before ` $check` until the mark wraps.
+        let wrapped = false
+        for (let filler = 1; filler < 80 && !wrapped; filler++) {
+          await input.fill(`/compact ${'整理'.repeat(filler).slice(0, filler)} $check 检查一遍`)
+          await frame.locator('.prompt-mark[data-kind="skill"]').waitFor()
+          wrapped = await page.evaluate(() => {
+            const mirror = document.querySelector<HTMLElement>('.composer-input[data-marks] > .composer-command-mirror')!
+            const sigil = mirror.querySelector('.prompt-mark[data-kind="skill"] .prompt-mark-sigil')!.getBoundingClientRect()
+            const first = mirror.querySelector('.prompt-mark[data-kind="command"]')!.getBoundingClientRect()
+            return sigil.top > first.top + 2
+          })
+        }
+        expect(wrapped).toBe(true)
+        expect(await glyphRoom(page)).toEqual([])
+        const value = await input.inputValue()
+        const wrapEnd = value.indexOf('$check') + '$check'.length
+        expect(await caretAfterGlyph(page, input, wrapEnd - 1)).toBe(wrapEnd)
+        await frame.screenshot({ path: `${output}/wrapped-${width}-${theme}.png`, animations: 'disabled' })
       } catch (error) {
         await page.screenshot({ path: `${output}/failure-${width}-${theme}.png`, animations: 'disabled' }).catch(() => {})
         throw error
