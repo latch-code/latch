@@ -101,7 +101,7 @@ shell 自行退出时，组件再读取最多 0.5 秒输出，然后报告退出
 
 - **从 Host 原样带入**：`HOME`、`USER`、`LOGNAME`、`TMPDIR`、`LANG`、`SSH_AUTH_SOCK`、`__CF_USER_TEXT_ENCODING` 与 `LC_*`。
 - **固定**：`PATH=/usr/bin:/bin:/usr/sbin:/sbin`（其余由 profile 添加）、`SHELL`、`PWD`、`TERM=xterm-256color`、`COLORTERM=truecolor`。
-- **应用包**：初始 PATH 最前面是包内的 `Contents/Resources/bin`，无需在外部终端安装链接就能运行 `latch`；其余环境与秘密过滤不变。用户 profile 仍可自行改写 PATH。
+- **应用包**在初始 PATH 前加包内的 `Contents/Resources/bin`。系统 `path_helper`、用户 profile 或其他同名命令会影响登录后的解析。设置复制的包内命令使用带引号的绝对路径，可以直接在 Latch 终端运行。环境仍遵循下方秘密过滤规则。
 - **标记**：`TERM_PROGRAM=Latch` 与 `LC_TERMINAL=Latch`（ssh 默认把后者带到远端）。`latch` 与源码入口 `pnpm latch` 都据此要求用 `--code-file` 写出配对链接与离线连接码。标记只防无意显示，不防有意绕过。
 - **区域**：没有区域设置时设 `LANG=en_US.UTF-8`，否则中文输入输出会被当作单字节。
 - **最后去掉**（不分大小写的前缀）：保留前缀（`RESERVED_ENV_PREFIXES`，含 `LATCH_`，模型密钥在其中）、`NODE_`、`ELECTRON_`。模型密钥、设备凭据与 Host 设置都不进入 shell。

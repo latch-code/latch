@@ -19,6 +19,7 @@ const OUTPUT = 'test-results/enrollment'
 /** What `pnpm latch device invite --loopback` lets a browser ask for. */
 const BROWSER_CEILING: DeviceScope[] = ['view', 'run', 'approve:standard', 'approve:elevated', 'admin']
 const UI_DIR = resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web')
+const PACKAGED_UI_DIR = process.env.LATCH_PACKAGE_APP ? join(process.env.LATCH_PACKAGE_APP, 'Contents/Resources/app/dist/web') : undefined
 const SIZES = [
   { width: 1440, height: 1000, label: 'desktop' },
   { width: 768, height: 1024, label: 'tablet' },
@@ -132,7 +133,7 @@ describe('device enrollment in the browser', () => {
     // Loopback is not this computer: without an invitation the page only says where to get one.
     await page.goto(`${testHost.host.loopbackOrigin}/link/`)
     await page.getByText(/^这个浏览器还没连接到 Latch。.*在浏览器中打开/).waitFor()
-    await page.getByText('latch device invite --loopback', { exact: true }).waitFor()
+    await page.getByText('pnpm latch device invite --loopback', { exact: true }).waitFor()
     expect(await page.getByRole('button').count()).toBe(0)
     await captureSizes(page, 'invitation')
 
@@ -189,6 +190,13 @@ describe('device enrollment in the browser', () => {
     await connected(page)
     expect(await page.evaluate(() => document.cookie)).toBe('')
     expect(await page.evaluate(() => JSON.stringify(localStorage)).then(text => /ldc1\./.test(text))).toBe(false)
+  })
+
+  it.runIf(PACKAGED_UI_DIR !== undefined)('shows the installed command on the packaged enrollment page', async () => {
+    const testHost = await host({ uiDir: PACKAGED_UI_DIR! })
+    const page = await (await context()).newPage()
+    await page.goto(`${testHost.host.loopbackOrigin}/link/`)
+    await page.getByText('latch device invite --loopback', { exact: true }).waitFor()
   })
 
   it('never asks for management a person was not shown: the desktop link, 不要 and a read that failed', async () => {

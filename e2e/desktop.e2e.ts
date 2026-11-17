@@ -1830,7 +1830,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       // way in: its intro points to the code, and nothing on it promises Touch ID.
       await page.getByRole('heading', { name: 'Latch', exact: true }).waitFor()
       await page.getByText('用离线连接码连接', { exact: true }).waitFor()
-      await page.getByText(/^Mac 现在不能确认：.*在 Mac 上运行 latch device enroll --offline，把生成的离线连接码填在下面。$/u).waitFor()
+      await page
+        .getByText(/^Mac 现在不能确认：.*在 Mac 上运行 pnpm latch device enroll --offline，把生成的离线连接码填在下面。$/u)
+        .waitFor()
       expect(await page.getByText(/Touch ID/u).count()).toBe(0)
       expect(await page.getByRole('button', { name: '继续', exact: true }).count()).toBe(0)
       const submit = page.getByRole('button', { name: '使用离线连接码', exact: true })

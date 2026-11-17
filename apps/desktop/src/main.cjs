@@ -457,7 +457,7 @@ function hostSupervisor(hostId, statePath, hooks) {
     },
     inspect: state => inspectHostState(state),
     alive: isAlive,
-    readLaunch: () => readLaunchRecord(dataDir, { script: HOST_SCRIPT }),
+    readLaunch: () => readLaunchRecord(dataDir, { script: HOST_SCRIPT, usePackagedNode: app.isPackaged }),
     writeLaunch: record => writeLaunchRecord(dataDir, record),
     startHost: async launch =>
       spawnHost(app.isPackaged ? { ...launch, node: await packagedNode(PACKAGED_CLI) } : launch, { dataDir, env: process.env }),
@@ -1180,7 +1180,7 @@ async function start() {
   if (!checked?.ok) {
     // Not running: the launch record left by an earlier start says how to start it (after a crash, or at login). One
     // attempt, by the supervisor that then watches this Host; when it fails, the page below says so.
-    const record = await readLaunchRecord(dirname(hostStatePath), { script: HOST_SCRIPT })
+    const record = await readLaunchRecord(dirname(hostStatePath), { script: HOST_SCRIPT, usePackagedNode: app.isPackaged })
     if (record?.launch) {
       supervisedId = record.hostId
       supervisor = hostSupervisor(record.hostId, hostStatePath, hooks)

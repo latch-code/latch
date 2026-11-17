@@ -223,19 +223,19 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 
 `pnpm package:desktop` 在已完成的 `dist/web` 与本机组件上生成 macOS `Latch.app`，拒绝覆盖已有输出。`Contents/Resources/app` 是独立的代码根：Host、CLI 与启动器打包依赖，构建插件页面需要的 esbuild、TypeScript 原生编译器与声明文件按本机已安装的精确版本复制。Electron 源自锁文件中的安装，不访问注册表。应用没有内置 Node、源码目录、pnpm 或测试确认后端；入口不在运行时编译本机组件。
 
-`Contents/Resources/bin/latch` 是原生入口。它从固定 Homebrew、fnm、nvm 安装目录查找 Node，不解析工作目录或 PATH 上的同名程序；解析真实路径后限制在安装根内，检查文件与父目录的属主、写权限与 Mach-O 头，再在空工作目录中用过滤后的环境探测受支持的安全版本。缺失、过旧或不可核对时只提示安装。Host 与 CLI 始终带 `--disable-sigusr1`，不使用 Electron 的 Node 模式。桌面端首次启动与每次重启均通过该入口重新核对系统 Node。
+`Contents/Resources/bin/latch` 是原生入口。它从固定 Homebrew、fnm、nvm 安装目录查找 Node，不解析工作目录或 PATH 上的同名程序；解析真实路径后限制在安装根内，检查文件与父目录的属主、写权限与 Mach-O 头，再在空工作目录中用过滤后的环境探测受支持的安全版本。缺失、过旧或不可核对时只提示安装。Host 与 CLI 始终带 `--disable-sigusr1`。桌面端首次启动与每次包内重启均通过该入口重新核对系统 Node。旧 Node 路径已移除时仍按合法启动记录恢复，成功启动就记录实际选中的新路径。
 
-正式 CLI 默认使用平台数据目录，忽略调用目录下的旧 `.runtime`；显式 `--data-dir` 与 `LATCH_DATA_DIR` 仍适用。源码的 `pnpm latch` 保留原兼容规则。`status` 经 `host.sock` 核对后报告运行状态与构建是否一致，`stop` 复用同一身份核验、忙时保护与 SIGTERM 流程；其他在线命令发现 Host 构建不同则要求重启 Latch。应用自己的终端将包内 `bin` 放入初始 PATH。
+安装包 CLI 默认使用平台数据目录，忽略调用目录下的旧 `.runtime`；显式 `--data-dir` 与 `LATCH_DATA_DIR` 仍适用。源码的 `pnpm latch` 保留原兼容规则。网页按自身构建来自源码或应用包选择对应命令。`status` 经 `host.sock` 核对后报告运行状态与构建是否一致，`stop` 复用同一身份核验、忙时保护与 SIGTERM 流程；其他在线命令统一核对 Host 构建。应用自己的终端将包内 `bin` 放入初始 PATH，登录 shell 可重新排序。本机设置复制的命令使用包内绝对路径。
 
 设置中的命令行链接只接受本机主窗口的真实手势。只在当前用户拥有、他人不可写、非符号链接的 `~/.local/bin` 中独占创建 `latch` 链接；已有相同目标读作已链接，其他文件或链接读作占用，均不改写。更新同一路径的应用后链接自然指向新版本。移动应用后旧链接需所有者自行移除再重新链接。不会修改 profile 或 shell 配置。
 
-**确认组件身份。** 源码与本机 ad-hoc 签名应用继续固定 CDHash。发布构建将 Apple Developer ID Application 证书类别、公开 Team ID 与 `dev.latch.presence` 标识符编译为固定 requirement，运行时环境和 `policy.json` 均不能提供身份。策略严格校验 `mode`（旧文件缺省为 `cdhash`）与 `identityHash`，不保存可更改的 requirement。第一次发布安装先审计再固定；已有 CDHash 记录须停止 Host，显式运行 `presence repin` 并确认迁移；审计失败不迁移。丢失记录拒绝自动固定，换团队拒绝自动迁移，使用开发构建也不能降低已有身份模式。
+**确认组件身份。** 源码与本机 ad-hoc 签名应用继续固定 CDHash。发布身份构建将 Apple Developer ID Application 证书类别、公开 Team ID 与 `dev.latch.presence` 标识符编译为固定 requirement，运行时环境和 `policy.json` 均不能提供身份。策略严格校验 `mode`（旧文件缺省为 `cdhash`）与 `identityHash`，不保存可更改的 requirement。策略与审计均无旧固定记录时，首次使用先审计再固定。任一侧的身份记录缺失，或存在旧 CDHash 记录时，须停止 Host，显式运行 `presence repin` 并确认。审计失败不迁移，换团队拒绝自动迁移，开发构建不能降低已有身份模式。
 
 每次确认前核对 helper 与同团队的 `dev.latch.presence-launch` 签名和权限。原生启动器以 `POSIX_SPAWN_START_SUSPENDED` 创建确认进程，随后用 Security.framework 对实际子进程进行动态 requirement 校验，成功后才恢复执行；未核验的进程不能读取预览或写出批准。子进程未被回收期间 PID 不会复用。预览、摘要、nonce 与返回协议不变。
 
 信任起点仍是安装的应用与 Host 代码。Host 对启动器本身先做磁盘校验、再按路径执行，二者之间的竞态尚未消除；这不是对启动器实际进程的动态校验。启动器的动态校验覆盖其 helper 在文件检查后、创建进程前被替换，以及恢复执行前的身份不确定，不能用于宣称所有执行替换竞态都已消除。可以改写应用或 Host 的同用户恶意进程不在此边界之内，这仍不是操作系统隔离。
 
-当前产物用 ad-hoc 签名供本机验证，构建时先签内层框架与辅助进程，再签外层应用并递归验证。Electron 进程带 JIT 与库校验例外，以加载没有 Team ID 的本机框架。正式发行要用同一 Team ID 重新签名 Electron 与框架，并去除该 ad-hoc 库校验例外。发布签名、公证、更新源和 asar 完整性尚未完成。`--release` 缺少 Team ID 时直接拒绝；带 Team ID 的产物仍需所有者完成签名，未经正确签名的确认组件拒绝工作。
+当前产物用 ad-hoc 签名供本机验证。打包器在框架签名前关闭 RunAsNode、NodeOptions 和 NodeCliInspect，递归验证签名并读回开关。Electron 外壳与辅助进程带 JIT 与库校验例外，以加载没有 Team ID 的本机框架。正式发行要用同一 Team ID 重新签名 Electron 与框架，并去除该 ad-hoc 库校验例外。当前打包器拒绝 `--release`，发行仍需固定公开 Team ID、Developer ID 签名、公证、更新源和 asar 完整性验证。`--presence-team` 仅构建待所有者签名的身份验证产物。
 
 ## 会话级别与审批风险
 

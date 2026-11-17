@@ -231,7 +231,7 @@ describe('a Host older than the page', () => {
         expect(await notice.getByRole('button', { name: '重启 Latch' }).count()).toBe(0)
         await notice.getByRole('button', { name: '怎么重启' }).click()
         await notice
-          .getByText('在 studio-mini 上停止 Latch 服务；开发确认组件更新后运行 latch presence repin；再启动 Latch。', { exact: true })
+          .getByText('在 studio-mini 上停止 Latch 服务；开发确认组件更新后运行 pnpm latch presence repin；再启动 Latch。', { exact: true })
           .waitFor()
         await captureBothThemes(page, `old-host-${label}`, title)
       } finally {

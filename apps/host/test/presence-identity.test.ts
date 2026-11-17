@@ -56,6 +56,28 @@ describe('release presence identity', () => {
       status: 'unavailable',
       reason: 'helper-signature',
     })
+    expect(reopened.get().presence.mode).not.toBe('identity')
+    await reopened.pinHelperIdentity(identity.hash, true)
+    expect(reopened.get().presence).toMatchObject({ mode: 'identity', identityHash: identity.hash })
+    expect(audit.latest(['presence.helper.identity-pinned'])).toMatchObject({ stepup: 'offline' })
+  })
+
+  it('requires an offline repin when the policy has an identity and the audit has no previous pin', async () => {
+    const { root, audit } = await fixture()
+    const present = { backend: 'macos-helper', mode: 'identity', helperCdhash: null, identityHash: identity.hash }
+    await writeFile(join(root, 'policy.json'), JSON.stringify({ ...defaultPolicy('darwin'), presence: present }))
+    const reopened = await PolicyStore.open({ dataDir: root, audit, platform: 'darwin' })
+    await expect(reopened.pinHelperIdentity(identity.hash)).rejects.toMatchObject({ code: 'presence-repin-required' })
+    expect(reopened.get().presence).toEqual(present)
+    expect(audit.latest(['presence.helper.identity-pinned'])).toBeUndefined()
+    await expect(reopened.pinHelperCdhash('b'.repeat(40))).rejects.toMatchObject({ code: 'presence-identity-required' })
+
+    await reopened.pinHelperIdentity(identity.hash, true)
+    expect(audit.latest(['presence.helper.identity-pinned'])).toMatchObject({
+      stepup: 'offline',
+      detail: { identityHash: identity.hash, migration: true },
+    })
+    await expect(reopened.pinHelperIdentity(identity.hash)).resolves.toBeUndefined()
   })
 
   it('does not change trust when its audit fails', async () => {

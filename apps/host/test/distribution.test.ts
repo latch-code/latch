@@ -8,6 +8,8 @@ import { defaultPolicy } from '../src/policy.ts'
 
 const run = promisify(execFile)
 const packageApp = process.env.LATCH_PACKAGE_APP
+const presenceChildSource = resolve('native/macos/LatchPresenceChild.swift')
+const swiftEnvironment = { PATH: '/usr/bin:/bin', TMPDIR: tmpdir() }
 const cleanup: Array<() => Promise<unknown>> = []
 afterEach(async () => {
   for (const clean of cleanup.splice(0).reverse()) await clean()
@@ -56,6 +58,20 @@ describe.runIf(process.platform === 'darwin' && packageApp !== undefined)('appli
     expect(record.launch).toMatchObject({ script: await realpath(join(resources, 'app/dist/start.js')), nodeArgs: [] })
     expect((await run('/bin/ps', ['-p', String(status.pid), '-o', 'command='])).stdout).toContain('--disable-sigusr1')
     expect((await cli(['device', 'list', '--json', '--data-dir', data])).stdout.trim()).toBe('[]')
+
+    await writeFile(join(resources, 'app/dist/web/build.json'), JSON.stringify({ build: '20000101T000000Z-abcdef' }))
+    const olderHost = JSON.parse((await cli(['status', '--json', '--data-dir', data])).stdout)
+    expect(olderHost).toMatchObject({ status: 'running', pid: status.pid, needsRestart: true })
+    for (const args of [
+      ['device', 'list'],
+      ['customization', 'reset'],
+      ['presence', 'status'],
+      ['presence', 'test'],
+    ])
+      await expect(cli([...args, '--data-dir', data])).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining('运行中的 Host 与此 Latch 应用版本不一致'),
+      })
     expect((await cli(['stop', '--data-dir', data])).stdout).toContain('已停止')
   }, 120_000)
 })
@@ -77,16 +93,50 @@ describe.runIf(process.platform === 'darwin')('native release presence launcher'
         '-o',
         launcher,
         resolve('native/macos/LatchPresenceLaunch.swift'),
+        presenceChildSource,
         generated,
         '-framework',
         'Security',
       ],
-      { env: { PATH: '/usr/bin:/bin', TMPDIR: tmpdir() }, timeout: 120_000 },
+      { env: swiftEnvironment, timeout: 120_000 },
     )
     await cp('/bin/echo', join(directory, 'latch-presence'))
     await expect(run(launcher, [], { env: {}, timeout: 5_000 })).rejects.toMatchObject({
       code: 1,
       stdout: '{"result":"error","error":"helper-identity"}\n',
+    })
+  }, 120_000)
+
+  it('verifies the suspended child by PID and kills and reaps it before it runs if the identity is wrong', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'latch-presence-child-'))
+    cleanup.push(() => rm(directory, { recursive: true, force: true }))
+    const childSource = join(directory, 'Child.swift')
+    const child = join(directory, 'child')
+    await writeFile(childSource, 'print("fixture child ran")\n')
+    await run('/usr/bin/xcrun', ['swiftc', '-o', child, childSource], { env: swiftEnvironment, timeout: 120_000 })
+    const identifier = 'dev.latch.presence.child-fixture'
+    await run('/usr/bin/codesign', ['--force', '--sign', '-', '--identifier', identifier, child], { env: {}, timeout: 10_000 })
+
+    const runner = join(directory, 'runner')
+    await run(
+      '/usr/bin/xcrun',
+      [
+        'swiftc',
+        '-swift-version',
+        '6',
+        '-parse-as-library',
+        '-o',
+        runner,
+        presenceChildSource,
+        resolve('apps/host/test/fixtures/PresenceChildFixture.swift'),
+        '-framework',
+        'Security',
+      ],
+      { env: swiftEnvironment, timeout: 120_000 },
+    )
+    await expect(run(runner, [child, identifier], { env: {}, timeout: 10_000 })).resolves.toMatchObject({
+      stdout: 'rejected and reaped\nfixture child ran\naccepted and reaped\n',
+      stderr: '',
     })
   }, 120_000)
 })

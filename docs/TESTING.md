@@ -445,9 +445,9 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 
 先 `pnpm build`，再运行 `pnpm package:desktop -- --out <新的绝对路径/Latch.app>`。`LATCH_PACKAGE_APP=<该路径> pnpm exec vitest run --config vitest.config.ts apps/host/test/distribution.test.ts` 将包内运行代码与 CLI 复制到临时目录，从不含源码的工作目录启动，使用停用本机确认的临时数据目录、演示模型、端口 0，并经 `latch status`、`device list`、`stop` 核对。它另在项目 PATH 放假 Node、设置假的加载器变量，验证没有执行项目里的程序或 Node 加载器。没有 `LATCH_PACKAGE_APP` 时该部分明确跳过。
 
-同一文件编译原生发布启动器，验证不符固定身份的组件被拒绝，不运行真实确认表单。`presence-identity.test.ts` 验证首次固定、显式迁移、审计失败、身份变化、记录丢失、禁止降级，以及每次调用前重新检查。Apple Team ID 尚未提供时不能完成真实 Developer ID 正向验证与 Touch ID 验收。
+同一文件编译原生发布启动器，另外用 ad-hoc 夹具验证挂起子进程的动态检查和失败回收。错误身份会在子进程写出任何内容前被终止并回收，正确的夹具身份才恢复执行。`presence-identity.test.ts` 验证首次固定、显式迁移、审计失败、身份变化、两侧记录分别缺失、禁止降级，以及每次调用前重新检查。Developer ID 正向验证与 Touch ID 由所有者验收。
 
-`desktop-cli.e2e.ts` 的三种链接状态、三种宽度与浅深色截图默认写 `test-results/desktop-cli`；`LATCH_PACKAGE_SHOTS` 可指定验收目录。用户命令与 shell 配置只用测试自己的临时 home，真实 `~/.local/bin` 不变。
+`desktop-cli.e2e.ts` 的三种链接状态、三种宽度与浅深色截图默认写 `test-results/desktop-cli`，可用 `LATCH_PACKAGE_SHOTS` 指定验收目录。复制用内存剪贴板，登录 shell 使用临时 profile 和同名命令，核对含空格与单引号的包内绝对路径仍执行正确的程序。链接只写测试自己的临时目录。`enrollment.e2e.ts` 在指定 `LATCH_PACKAGE_APP` 时也核对包内页面显示安装命令。
 
 ## 构建产物检查
 

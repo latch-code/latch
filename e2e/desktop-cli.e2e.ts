@@ -1,7 +1,9 @@
 import { _electron, type ElectronApplication } from '@playwright/test'
+import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readlink, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
@@ -9,20 +11,24 @@ import { startTestHost } from './helpers/host.ts'
 import { openSection, openSettings } from './helpers/layout.ts'
 import { stillMotion } from './helpers/visual.ts'
 
+const run = promisify(execFile)
+
 describe.skipIf(process.env.LATCH_ELECTRON_E2E !== '1' || process.platform !== 'darwin')('desktop command link', () => {
   it('shows occupied, unlinked and linked states and creates only the requested temporary link', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-desktop-cli-'))
     const home = join(root, 'home')
     const bin = join(home, '.local/bin')
-    const target = join(root, 'latch')
+    const targetDir = join(root, "Sample's Latch.app")
+    const target = join(targetDir, 'latch')
     const output = process.env.LATCH_PACKAGE_SHOTS ?? resolve('test-results/desktop-cli')
     const appRoot = process.env.LATCH_PACKAGE_APP ? join(process.env.LATCH_PACKAGE_APP, 'Contents/Resources/app') : process.cwd()
-    const host = await startTestHost({ hostName: '这台 Mac' })
+    const host = await startTestHost({ hostName: '这台 Mac', uiDir: join(appRoot, 'dist/web') })
     let application: ElectronApplication | undefined
     try {
       await mkdir(bin, { recursive: true })
       await mkdir(output, { recursive: true })
-      await writeFile(target, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+      await mkdir(targetDir)
+      await writeFile(target, '#!/bin/sh\nprintf "bundle command\\n"\n', { mode: 0o755 })
       await writeFile(join(bin, 'latch'), 'another command')
       await writeFile(join(home, '.zprofile'), 'unchanged')
       const bootstrap = join(root, 'bootstrap.cjs')
@@ -82,6 +88,32 @@ require(${JSON.stringify(join(appRoot, 'apps/desktop/src/main.cjs'))});\n`,
       await page.getByText('被其他命令占用', { exact: true }).waitFor()
       await capture('occupied')
       expect(await readFile(join(bin, 'latch'), 'utf8')).toBe('another command')
+      await page.evaluate(() => {
+        Object.defineProperty(navigator, 'clipboard', {
+          value: { writeText: async (command: string) => (document.documentElement.dataset.copiedCommand = command) },
+        })
+      })
+      await page.getByRole('button', { name: '复制命令', exact: true }).click()
+      await page.getByRole('button', { name: '已复制', exact: true }).waitFor()
+      const command = await page.evaluate(() => document.documentElement.dataset.copiedCommand)
+      expect(command).toContain('--help')
+      const profile = join(root, 'login-profile')
+      const shadow = join(root, 'collision')
+      await mkdir(profile)
+      await mkdir(shadow)
+      await writeFile(join(shadow, 'latch'), '#!/bin/sh\nexit 66\n', { mode: 0o755 })
+      await writeFile(join(profile, '.zprofile'), 'export PATH="$LATCH_TEST_SHADOW_DIR:$PATH"\n')
+      const result = await run(
+        '/bin/zsh',
+        ['-l', '-c', `[[ "$(command -v latch)" == "$LATCH_TEST_SHADOW_DIR/latch" ]] || exit 65\n${command}`],
+        {
+          cwd: root,
+          env: { ZDOTDIR: profile, PATH: '/usr/bin:/bin', LATCH_TEST_SHADOW_DIR: shadow },
+          timeout: 5_000,
+        },
+      )
+      expect(result.stdout).toBe('bundle command\n')
+
       await rm(join(bin, 'latch'))
       await page.reload()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()

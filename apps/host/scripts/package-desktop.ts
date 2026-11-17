@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access, chmod, copyFile, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, copyFile, cp, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
 import { build } from 'esbuild'
@@ -13,6 +13,10 @@ import { hostBundleOptions, REPOSITORY_ROOT } from './host-bundle.ts'
 const run = promisify(execFile)
 const require = createRequire(import.meta.url)
 const Manifest = z.object({ name: z.string(), version: z.string(), license: z.string(), engines: z.object({ node: z.string() }) })
+const FUSE_SENTINEL = Buffer.from('dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX')
+const NODE_FUSES = [0, 2, 3] // v1: RunAsNode, EnableNodeOptionsEnvironmentVariable, EnableNodeCliInspectArguments
+const FUSE_OFF = 0x30
+const FUSE_ON = 0x31
 
 function option(name: string): string | undefined {
   const index = process.argv.indexOf(name)
@@ -36,6 +40,36 @@ async function signAdHoc(path: string, flags: string[] = []): Promise<void> {
     timeout: 120_000,
     maxBuffer: 1024 * 1024,
   })
+}
+
+/** Electron documents the v1 wire in its binary. Patch the copied framework before signing and read it back afterwards. */
+async function electronNodeFuses(contents: string, operation: 'disable' | 'verify'): Promise<void> {
+  const executable = await realpath(join(contents, 'Frameworks/Electron Framework.framework/Versions/Current/Electron Framework'))
+  if (!executable.startsWith((await realpath(contents)) + sep)) throw new Error('Electron 框架位于应用包之外，无法设置安全开关。')
+  const file = await open(executable, operation === 'disable' ? 'r+' : 'r')
+  try {
+    const bytes = await file.readFile()
+    const sentinel = bytes.indexOf(FUSE_SENTINEL)
+    const header = sentinel + FUSE_SENTINEL.length
+    const wire = header + 2
+    // This package uses the already installed Electron for the current architecture, with one v1 fuse wire.
+    if (sentinel < 0 || bytes.indexOf(FUSE_SENTINEL, header) !== -1 || bytes[header] !== 1)
+      throw new Error('无法识别本机 Electron 的 v1 安全开关。')
+    const length = bytes[header + 1] ?? 0
+    if (length < 4 || wire + length > bytes.length) throw new Error('Electron 安全开关数据不完整。')
+    const values = bytes.subarray(wire, wire + length)
+    for (const index of NODE_FUSES) {
+      const value = values[index]
+      if (value !== FUSE_OFF && (operation === 'verify' || value !== FUSE_ON)) throw new Error('Electron 的 Node 调试入口未能关闭。')
+      values[index] = FUSE_OFF
+    }
+    if (operation === 'disable') {
+      if ((await file.write(values, 0, values.length, wire)).bytesWritten !== values.length) throw new Error('Electron 安全开关未写完整。')
+      await file.sync()
+    }
+  } finally {
+    await file.close()
+  }
 }
 
 async function signLocalElectronApp(app: string, temporary: string): Promise<void> {
@@ -115,8 +149,9 @@ async function copyBundledLicenses(inputs: string[], root: string): Promise<void
 
 async function packageDesktop(): Promise<void> {
   if (process.platform !== 'darwin') throw new Error('Latch.app 的打包只支持 macOS')
+  if (process.argv.some(argument => argument === '--release' || argument.startsWith('--release=')))
+    throw new Error('此命令仅生成本机验收包。正式发布需固定公开 Apple Team ID、使用 Developer ID 签名、验证应用资源完整性并完成公证。')
   const team = option('--presence-team')
-  if (process.argv.includes('--release') && !team) throw new Error('发布构建缺少 --presence-team <Apple Team ID>；不会使用开发信任模式代替')
   if (team) presenceIdentity(team)
   const output = resolve(option('--out') ?? join(REPOSITORY_ROOT, 'out', 'Latch.app'))
   if (
@@ -178,6 +213,11 @@ async function packageDesktop(): Promise<void> {
     })
     await copyBundledLicenses(Object.keys(built.metafile!.inputs), root)
     await cp(join(REPOSITORY_ROOT, 'dist/web'), join(root, 'dist/web'), { recursive: true })
+    const indexPath = join(root, 'dist/web/index.html')
+    const index = await readFile(indexPath, 'utf8')
+    const sourceMarker = 'data-latch-distribution="source"'
+    if (!index.includes(sourceMarker)) throw new Error('网页产物缺少命令行分发标记，请重新构建网页。')
+    await writeFile(indexPath, index.replace(sourceMarker, 'data-latch-distribution="installed"'))
     await mkdir(join(root, 'dist/native'), { recursive: true })
     for (const file of nativeFiles) await copyFile(join(REPOSITORY_ROOT, 'dist/native', file), join(root, 'dist/native', file))
     // The desktop modules use only Node, Electron, and one another. No source workspace or development dependencies ship.
@@ -222,6 +262,7 @@ async function packageDesktop(): Promise<void> {
       await writeFile(identity, `enum ReleaseTeam { static let id = "${team}" }\n`)
       await compile(join(REPOSITORY_ROOT, 'native/macos/LatchPresenceLaunch.swift'), join(root, 'dist/native/latch-presence-launch'), [
         identity,
+        join(REPOSITORY_ROOT, 'native/macos/LatchPresenceChild.swift'),
         '-framework',
         'Security',
       ])
@@ -238,7 +279,9 @@ async function packageDesktop(): Promise<void> {
       CFBundleShortVersionString: manifest.version,
     }))
       await run('/usr/bin/plutil', ['-replace', key, '-string', value, plist], { env: {} })
+    await electronNodeFuses(contents, 'disable')
     await signLocalElectronApp(app, temporary)
+    await electronNodeFuses(contents, 'verify')
     // The local package uses ad-hoc signing. Release identity mode deliberately fails closed until its native components
     // are signed by the owner; no signing identity, keychain, account, updater, or notarization is accessed here.
     await rename(app, output)

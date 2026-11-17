@@ -14,7 +14,7 @@ Latch 在你的电脑上运行一个 Host。Host 持有会话、执行权限、�
 
 macOS 可在构建后运行 `pnpm package:desktop -- --out /绝对路径/Latch.app` 生成供本机验收的 ad-hoc 签名应用。它包含 Host、页面、本机组件与 `latch`，运行时不需要源码或 pnpm。请自行安装满足下表版本要求的系统 Node，应用启动时会检测。正式签名、公证和发布下载尚未提供。
 
-包内命令位于 `Latch.app/Contents/Resources/bin/latch`。设置 › 通用 › 这台 Mac › 命令行可将它链接到 `~/.local/bin/latch`；已有命令不会被覆盖，shell 配置不会被修改。应用自己的终端直接可用。`latch status` 查看节点，`latch stop` 停止节点，`latch --help` 列出其他命令；源码入口 `pnpm latch` 保留。关闭应用不等于停止 Host。
+包内命令位于 `Latch.app/Contents/Resources/bin/latch`。设置 › 通用 › 这台 Mac › 命令行可将它链接到 `~/.local/bin/latch`，并保留已有命令和 shell 配置。应用终端会把包内目录加入初始 PATH，登录 shell 仍可重新排序。链接成功或遇到占用时，可从设置复制包含包内绝对路径的命令。`latch status` 查看节点，`latch stop` 停止节点，`latch --help` 列出其他命令。源码入口是 `pnpm latch`。关闭应用后 Host 继续运行。
 
 ## 要求
 

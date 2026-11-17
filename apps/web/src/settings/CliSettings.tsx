@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Button, Hint, InlineNotice } from '@latch/ui'
+import { Button, Hint, InlineNotice, writeClipboard } from '@latch/ui'
+import { latchExecutableWord } from '../core/commands.ts'
 import { currentShell, type ShellCli } from '../core/shell.ts'
 import { SettingsRow } from './common.tsx'
 
@@ -9,7 +10,7 @@ export function CliSettings() {
   const cli = currentShell()?.cli
   const [view, setView] = useState<ShellCli>()
   const [busy, setBusy] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'command' | 'path'>()
   useEffect(() => {
     let active = true
     void cli
@@ -23,7 +24,14 @@ export function CliSettings() {
     }
   }, [cli])
   if (!cli || !view || view.status === 'unavailable') return null
+  const unlinked = view.status === 'unlinked'
+  const launcher = latchExecutableWord(view.target)
   const label = view.status === 'linked' ? '已链接' : view.status === 'occupied' ? '被其他命令占用' : '未链接'
+  function copy(text: string, kind: 'command' | 'path') {
+    void writeClipboard(text)
+      .then(() => setCopied(kind))
+      .catch(() => setView(current => current && { ...current, error: '没有复制命令，请重试。' }))
+  }
   return (
     <>
       <SettingsRow
@@ -36,8 +44,12 @@ export function CliSettings() {
             <Button
               size="sm"
               variant="secondary"
-              disabled={busy || view.status !== 'unlinked'}
+              disabled={busy || (!unlinked && !launcher)}
               onClick={() => {
+                if (!unlinked) {
+                  if (launcher) copy(`${launcher} --help`, 'command')
+                  return
+                }
                 setBusy(true)
                 void cli
                   .install()
@@ -47,7 +59,7 @@ export function CliSettings() {
                   .catch(() => setView({ ...view, error: '没有完成命令行链接，请重试。' }))
                   .finally(() => setBusy(false))
               }}>
-              {busy ? '正在链接…' : '链接 latch'}
+              {unlinked ? (busy ? '正在链接…' : '链接 latch') : copied === 'command' ? '已复制' : '复制命令'}
             </Button>
           </>
         }
@@ -56,19 +68,9 @@ export function CliSettings() {
         <SettingsRow
           title={<Hint label={<code>{PATH_LINE}</code>}>复制后由你在终端中运行；Latch 不修改 shell 配置。</Hint>}
           trailing={
-            <>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  void navigator.clipboard
-                    .writeText(PATH_LINE)
-                    .then(() => setCopied(true))
-                    .catch(() => setView({ ...view, error: '没有复制命令，请手动选择后复制。' }))
-                }}>
-                {copied ? '已复制' : '复制'}
-              </Button>
-            </>
+            <Button size="sm" variant="secondary" onClick={() => copy(PATH_LINE, 'path')}>
+              {copied === 'path' ? '已复制' : '复制'}
+            </Button>
           }
         />
       )}

@@ -83,12 +83,15 @@ const lifecycle = require('../src/lifecycle.cjs') as {
   BACKUP_EXCLUSION_ATTRIBUTE: string
   BACKUP_EXCLUSION_VALUE: string
   parseLaunchRecord(value: unknown, options: { dataDir: string; script: string }): LaunchRecord | undefined
-  readLaunchRecord(dataDir: string, options: { script: string }): Promise<LaunchRecord | undefined>
+  readLaunchRecord(dataDir: string, options: { script: string; usePackagedNode?: boolean }): Promise<LaunchRecord | undefined>
   writeLaunchRecord(dataDir: string, record: LaunchRecord): Promise<void>
   readLifecyclePreferences(directory: string): Promise<{ keepAwake: boolean }>
   writeLifecyclePreferences(directory: string, preferences: { keepAwake: boolean }): Promise<void>
   hostEnvironment(env: NodeJS.ProcessEnv): Record<string, string>
-  spawnHost(launch: Launch, options: { dataDir: string; env: NodeJS.ProcessEnv }): Promise<{ pid: number; exited: Promise<void> }>
+  spawnHost(
+    launch: Launch,
+    options: { dataDir: string; env: NodeJS.ProcessEnv },
+  ): Promise<{ pid: number; exited: Promise<void>; launch: Launch }>
   backoff(crashes: number): number
   createHostSupervisor(options: Record<string, unknown>): Supervisor
   createKeepAwake(options: Record<string, unknown>): KeepAwake
@@ -186,6 +189,20 @@ describe('desktop launch record', () => {
     expect(await lifecycle.readLaunchRecord(dataDir, { script: SCRIPT })).toBeUndefined()
   })
 
+  it('keeps a packaged launch record when its former Node was removed', async () => {
+    const dataDir = await directory()
+    const record: LaunchRecord = {
+      version: 1,
+      pid: 7,
+      hostId: HOST_ID,
+      launch: launch({ node: join(dataDir, 'uninstalled-node'), args: ['--data-dir', dataDir] }),
+    }
+    await lifecycle.writeLaunchRecord(dataDir, record)
+    expect(await lifecycle.readLaunchRecord(dataDir, { script: SCRIPT })).toBeUndefined()
+    expect(await lifecycle.readLaunchRecord(dataDir, { script: SCRIPT, usePackagedNode: true })).toEqual(record)
+    expect(await lifecycle.readLaunchRecord(dataDir, { script: '/other/start.js', usePackagedNode: true })).toBeUndefined()
+  })
+
   it('keeps the desktop preference in its own 0600 file and keeps the Mac awake by default', async () => {
     const userData = await directory()
     expect(await lifecycle.readLifecyclePreferences(userData)).toEqual({ keepAwake: true })
@@ -245,7 +262,7 @@ console.log('started')`,
 })
 
 /** A pretend Mac: host.json, live processes and the launch record, with a Host that comes up when started. */
-function world() {
+function world(replacementNode?: string) {
   let nextPid = 100
   const alive = new Set<number>()
   const reports: Array<{ socketPath: string; body: unknown }> = []
@@ -268,7 +285,7 @@ function world() {
     terminated: [] as number[],
   }
   const exits = new Map<number, () => void>()
-  const startHost = vi.fn(async (_launch: Launch) => {
+  const startHost = vi.fn(async (requested: Launch) => {
     state.starts++
     const pid = nextPid++
     alive.add(pid)
@@ -280,7 +297,7 @@ function world() {
         exits.get(pid)?.()
       } else if (mode === 'up') state.hostJson = { pid, hostId: HOST_ID, instanceId: `instance-${pid}`, socketPath: `/run/${pid}.sock` }
     }, 300)
-    return { pid, exited }
+    return { pid, exited, launch: { ...requested, node: replacementNode ?? requested.node } }
   })
   const supervisor = lifecycle.createHostSupervisor({
     hostId: HOST_ID,
@@ -362,6 +379,19 @@ describe('Host supervision', () => {
     expect(w.state.hostJson!.pid).not.toBe(first)
     expect(w.state.record).toEqual({ version: 1, pid: w.state.hostJson!.pid, hostId: HOST_ID, launch: launch() })
     expect(w.views.map(view => view.status)).toEqual(['running', 'restarting', 'starting', 'running'])
+  })
+
+  it('records the Node actually used when a crashed Host starts with a new runtime', async () => {
+    vi.useFakeTimers()
+    const w = world('/usr/local/bin/replacement-node')
+    const previous = launch({ node: '/removed/node' })
+    w.launched({ launch: previous })
+    w.crash()
+    await w.supervisor.check()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(w.startHost).toHaveBeenCalledWith(previous)
+    expect(w.state.record).toMatchObject({ pid: w.state.hostJson!.pid, launch: { ...previous, node: '/usr/local/bin/replacement-node' } })
+    expect(w.supervisor.view()).toMatchObject({ status: 'running', supervised: true })
   })
 
   it('leaves a Host that stopped in order, or that it did not start, as it is', async () => {

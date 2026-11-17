@@ -219,16 +219,25 @@ function connectable(socketPath: string): Promise<boolean> {
   })
 }
 
-async function runningHost(dataDir: string): Promise<{ state: HostState; info: HostInfo }> {
+async function hostMatchesInstalledBuild(info: HostInfo): Promise<boolean> {
+  const root = latchCodeRoot()
+  const build = await readCodeBuild(join(root, 'dist/start.js'), join(root, 'dist/web'))
+  return build !== undefined && info.build === build
+}
+
+async function compatibleHost(dataDir: string): Promise<{ state: HostState; info: HostInfo } | undefined> {
   const state = await readHostState(dataDir)
   const info = state && (await verifyHostState(state))
-  if (!state || !info) throw new CliError(`没有可确认的运行中 Host（${dataDir}）。请先启动 Host。`)
-  if (PACKAGED) {
-    const root = latchCodeRoot()
-    const build = await readCodeBuild(join(root, 'dist/start.js'), join(root, 'dist/web'))
-    if (!build || info.build !== build) throw new CliError('运行中的 Host 与此 Latch 应用版本不一致，请重启 Latch 后重试。')
-  }
+  if (!state || !info) return undefined
+  if (PACKAGED && !(await hostMatchesInstalledBuild(info)))
+    throw new CliError('运行中的 Host 与此 Latch 应用版本不一致，请重启 Latch 后重试。')
   return { state, info }
+}
+
+async function runningHost(dataDir: string): Promise<{ state: HostState; info: HostInfo }> {
+  const host = await compatibleHost(dataDir)
+  if (!host) throw new CliError(`没有可确认的运行中 Host（${dataDir}）。请先启动 Host。`)
+  return host
 }
 
 /**
@@ -764,11 +773,7 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
         || (lock && (!lock.holder || lock.held))
         || (recorded?.present && (recorded.pid === undefined || processAlive(recorded.pid)))
       const status = info ? 'running' : unknown ? 'unverified' : 'stopped'
-      let needsRestart = false
-      if (info && program === 'latch') {
-        const build = await readCodeBuild(join(latchCodeRoot(), 'dist/start.js'), join(latchCodeRoot(), 'dist/web'))
-        needsRestart = build === undefined || info.build !== build
-      }
+      const needsRestart = Boolean(info && PACKAGED && !(await hostMatchesInstalledBuild(info)))
       out(
         flags.has('--json')
           ? JSON.stringify({ status, dataDir, ...(info ? { version: info.version, pid: info.pid, needsRestart } : {}) })
@@ -1028,8 +1033,9 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
       return (await removeProjectFolder(key === 'project remove-folder', rest, flags, dataDir, io, out)) ? 0 : 1
     if (key === 'customization reset') {
       // The way out when a page cannot be used: a new revision holding the default, on this data directory only.
-      const state = await readHostState(dataDir)
-      if (state && (await verifyHostState(state))) {
+      const host = await compatibleHost(dataDir)
+      if (host) {
+        const { state } = host
         const { revision: baseRevision } = (await api(state, 'GET', 'customization')) as CustomizationView
         const input = { requestId: randomUUID(), baseRevision }
         const receipt = await retryCustomizationReset(async () => {
@@ -1080,10 +1086,9 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
       return 0
     }
     if (key === 'presence status') {
-      const state = await readHostState(dataDir)
-      const info = state && (await verifyHostState(state))
+      const host = await compatibleHost(dataDir)
       let presence: HostInfo['presence']
-      if (info) presence = info.presence
+      if (host) presence = host.info.presence
       else {
         // The check may pin the helper (an audited policy change), so it runs only with the data dir locked.
         const lock = await lockStopped(dataDir)
@@ -1143,12 +1148,11 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
       return 0
     }
     if (key === 'presence test') {
-      const state = await readHostState(dataDir)
-      const info = state && (await verifyHostState(state))
-      if (info) {
+      const host = await compatibleHost(dataDir)
+      if (host) {
         // The running Host owns the audit log and policy.json: read them only, and never pin from here.
         const backend = createPresenceBackend({ codeRoot: latchCodeRoot(), policy: await readOnlyPolicy(dataDir) })
-        await presenceTest(backend, async () => info.hostId, out)
+        await presenceTest(backend, async () => host.info.hostId, out)
         return 0
       }
       const lock = await lockStopped(dataDir)

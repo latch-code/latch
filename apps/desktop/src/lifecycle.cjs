@@ -68,12 +68,14 @@ function argumentList(value, limit) {
   )
 }
 
+/** @typedef {{ node: string, nodeArgs: string[], script: string, args: string[], cwd: string }} HostLaunch */
+
 /**
  * Strict parse of desktop-launch.json. The launch must start `script` (this checkout's Host start script) for
  * `dataDir`, with an absolute Node executable and working directory and no extra Node arguments (the launcher records
  * none; any would be a way to load other code or open a debugger); anything else reads as no record, so the desktop app
  * never starts something it was not given by the launcher.
- * @returns {{ version: 1, pid: number, hostId: string, launch: null | { node: string, nodeArgs: string[], script: string, args: string[], cwd: string } } | undefined}
+ * @returns {{ version: 1, pid: number, hostId: string, launch: HostLaunch | null } | undefined}
  */
 function parseLaunchRecord(value, { dataDir, script }) {
   if (!plainObject(value) || Object.keys(value).some(key => !LAUNCH_KEYS.includes(key))) return undefined
@@ -121,7 +123,7 @@ async function readOwnFile(path, uid) {
   }
 }
 
-async function readLaunchRecord(dataDir, { script, uid = /** @type {() => number} */ (process.getuid)() }) {
+async function readLaunchRecord(dataDir, { script, usePackagedNode = false, uid = /** @type {() => number} */ (process.getuid)() }) {
   const text = await readOwnFile(join(dataDir, LAUNCH_FILE), uid)
   if (text === undefined) return undefined
   let record
@@ -130,7 +132,8 @@ async function readLaunchRecord(dataDir, { script, uid = /** @type {() => number
   } catch {
     return undefined
   }
-  if (record?.launch && !(await usableNode(record.launch.node, uid))) return undefined
+  // Packaged starts rediscover Node through the native launcher. The last path is only historical in that mode.
+  if (record?.launch && !usePackagedNode && !(await usableNode(record.launch.node, uid))) return undefined
   return record
 }
 
@@ -194,7 +197,8 @@ function hostEnvironment(env) {
 /**
  * Starts the Host as the launcher does: detached, `--disable-sigusr1` first, output appended to the 0600 host.log
  * (never through a symbolic link), and an environment without Host settings.
- * @returns {Promise<{ pid: number, exited: Promise<void> }>}
+ * @param {HostLaunch} launch
+ * @returns {Promise<{ pid: number, exited: Promise<void>, launch: HostLaunch }>}
  */
 async function spawnHost(launch, { dataDir, env }) {
   const log = await open(
@@ -216,7 +220,7 @@ async function spawnHost(launch, { dataDir, env }) {
       child.once('error', reject)
     })
     child.unref()
-    return { pid: /** @type {number} */ (child.pid), exited }
+    return { pid: /** @type {number} */ (child.pid), exited, launch }
   } finally {
     await log.close()
   }
@@ -399,7 +403,7 @@ function createHostSupervisor(options) {
       return false
     }
     supervision = { supervised: true }
-    await writeLaunch({ version: 1, pid: child.pid, hostId, launch }).catch(error => {
+    await writeLaunch({ version: 1, pid: child.pid, hostId, launch: child.launch }).catch(error => {
       log(`无法记录 Host 的启动方式：${error instanceof Error ? error.message : '未知错误'}`)
     })
     const outcome = { exited: false }
@@ -424,7 +428,7 @@ function createHostSupervisor(options) {
     if (!outcome.exited) signal(child.pid)
     countedPid = child.pid
     log(outcome.exited ? 'Host 启动后立即退出。' : 'Host 没有在 60 秒内启动，已停止它。')
-    failed(launch, retry)
+    failed(child.launch, retry)
     return false
   }
 
