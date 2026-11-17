@@ -12,7 +12,7 @@ export function AgentHome({ home, local, admin }: { home: Home | undefined; loca
   return (
     <section className="agent-form-section">
       <h3>家</h3>
-      <Hint label={home?.reason ?? '默认工作文件夹'} moreLabel="家的位置与说明">
+      <Hint label={home?.reason ?? '默认工作文件夹'}>
         {home && (
           <>
             <VisibleText text={home.path} />

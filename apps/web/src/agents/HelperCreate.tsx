@@ -12,6 +12,7 @@ import {
   StatusWord,
   TextAreaField,
   TextField,
+  Tooltip,
   FileGlyph,
   HistoryGlyph,
   MessageGlyph,
@@ -19,7 +20,6 @@ import {
   PluginsGlyph,
   TerminalGlyph,
   WarningGlyph,
-  ShieldAlertGlyph,
   ChevronRightGlyph,
   type IconComponent,
 } from '@latch/ui'
@@ -306,10 +306,15 @@ export function HelperCreate({
         void create()
       }}>
       <div className="helper-chosen">
-        <HarnessTile harness={harness} size={16} />
-        <span>
-          选了 <strong>{harnessName(harness)}</strong>
-        </span>
+        {/* That Latch does not isolate it is the choice's tooltip, where the person decides; 不先问你 is said in words, amber. */}
+        <Tooltip content={isolation && !chosen.unasked ? `${isolation.label}。${isolation.detail}` : undefined}>
+          <span className="helper-chosen-name" tabIndex={isolation && !chosen.unasked ? 0 : undefined}>
+            <HarnessTile harness={harness} size={16} />
+            <span>
+              选了 <strong>{harnessName(harness)}</strong>
+            </span>
+          </span>
+        </Tooltip>
         <Button
           size="xs"
           variant="ghost"
@@ -319,19 +324,11 @@ export function HelperCreate({
           }}>
           换
         </Button>
-        {/* That Latch does not isolate it stays where the person decides, behind ⓘ; 不先问你 is said in words, amber. */}
-        {isolation && (
+        {isolation && chosen.unasked && (
           <Hint
-            className={chosen.unasked ? 'helper-isolation agent-permission-note is-warn' : 'helper-isolation'}
-            label={chosen.unasked ? '不先问你' : ''}
-            lead={
-              chosen.unasked ? (
-                <WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
-              ) : (
-                <ShieldAlertGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
-              )
-            }
-            moreLabel="不隔离：说明">
+            className="helper-isolation agent-permission-note is-warn"
+            label="不先问你"
+            lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
             {isolation.label}。{isolation.detail}
           </Hint>
         )}
@@ -430,9 +427,7 @@ export function HelperCreate({
             <dt>在哪做</dt>
             <dd>
               {!draft.defaultProjectId && (
-                <Hint label="它自己的文件夹" moreLabel="在哪做：说明">
-                  不是隔离：它仍能读写这台 Mac 上别处的文件。选了项目，首次聊天就在项目里做。
-                </Hint>
+                <Hint label="它自己的文件夹">不是隔离：它仍能读写这台 Mac 上别处的文件。选了项目，首次聊天就在项目里做。</Hint>
               )}
               <ProjectPicker
                 catalog={catalog}

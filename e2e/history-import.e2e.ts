@@ -8,7 +8,7 @@ import type { AppSnapshot, HistoryImportResult, HistoryList } from '@latch/proto
 import { FAKE_ACP_AGENT, FAKE_HISTORY_SECRETS, fakeConversation, writeFakeHistory, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, tooltipText } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/history-import'
 const CODEX_ENV = {
@@ -256,10 +256,10 @@ describe('接入已有会话 from the home', () => {
     await dialog.getByRole('button', { name: '接入', exact: true }).click()
     await dialog.waitFor({ state: 'detached' })
     await page.locator('.topbar-imported', { hasText: '已接入 · 按文字重建' }).waitFor()
-    await page
-      .locator('.composer-seed')
-      .getByText(/第一条消息会把重建的对话文字一起发给/u)
-      .waitFor()
+    // Where the rebuilt text goes is the short line's tooltip.
+    const seed = page.locator('.composer-seed')
+    await seed.getByText('按文字重建，不是原样恢复', { exact: true }).waitFor()
+    expect(await seed.getByRole('tooltip', { includeHidden: true }).textContent()).toMatch(/第一条消息会把重建的对话文字一起发给/u)
     await shot(page, 'rebuilt-waiting-1440-dark')
     const sent = async () => (await readLog(plainLog)).filter(entry => entry.event === 'recv' && entry.method === 'session/prompt')
     expect(await sent()).toHaveLength(0)
@@ -357,8 +357,7 @@ describe('接入已有会话 from the home', () => {
     const locked = page.locator('.history-entry[data-locked]')
     await locked.getByText('接入已有会话', { exact: true }).waitFor()
     expect(await page.getByRole('button', { name: '接入已有会话', exact: true }).count()).toBe(0)
-    await locked.getByRole('button', { name: '为什么不能接入', exact: true }).click()
-    await locked.getByText(/开启「也能看私有内容」后可用/u).waitFor()
+    expect(await tooltipText(page, locked.getByText('接入已有会话', { exact: true }))).toMatch(/开启「也能看私有内容」后可用/u)
     // Nor does it see the sessions brought in, which are private.
     const listed = (await page.evaluate(() => [...document.querySelectorAll('[data-task-id]')].map(item => item.textContent))).join('\n')
     expect(listed).not.toContain('Login bug')

@@ -116,7 +116,7 @@ function PartialNote({ list }: { list: ChangeList | undefined }) {
   if (!list?.partial) return null
   return (
     <div className="changed-files-partial">
-      <Hint lead={<WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label={PARTIAL_NOTE.label}>
+      <Hint inline lead={<WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label={PARTIAL_NOTE.label}>
         {PARTIAL_NOTE.detail}
       </Hint>
     </div>

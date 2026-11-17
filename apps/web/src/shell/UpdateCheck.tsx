@@ -163,7 +163,7 @@ export function UpdateCheckBody({
           <span className="update-check-text">
             <span className="update-check-title">{words.title}</span>
             {!restart && (
-              <Hint lead={<Icon icon={RefreshGlyph} size={12} />} label={words.label} moreLabel="怎么重启">
+              <Hint inline lead={<Icon icon={RefreshGlyph} size={12} />} label={words.label} moreLabel="怎么重启">
                 {words.detail}
               </Hint>
             )}

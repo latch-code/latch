@@ -8,6 +8,7 @@ import { AGENT_PRESETS, type AppSnapshot, type TaskDetail } from '@latch/protoco
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
+import { tooltipText } from './helpers/layout.ts'
 
 describe('conversation forks', () => {
   it('opens a selectable new session, folds authoritative context and returns to its source at desktop, tablet and phone widths', async () => {
@@ -34,11 +35,10 @@ describe('conversation forks', () => {
         await palette.getByRole('option').filter({ hasText: '讨论另一个方案' }).first().click()
         await page.locator('.turn-reply').first().hover()
         await page.getByRole('button', { name: '从这里分叉', exact: true }).first().click()
-        // A short label; that files are not copied or rolled back stays behind its ⓘ.
+        // A short label; that files are not copied or rolled back is its tooltip.
         const forking = page.locator('.fork-notice')
         await forking.getByText('从「', { exact: false }).waitFor()
-        await forking.getByRole('button', { name: '说明', exact: true }).click()
-        await forking.getByText('文件不会复制或回滚', { exact: false }).waitFor()
+        expect(await tooltipText(page, forking.locator('.ui-hint-label'))).toContain('文件不会复制或回滚')
         // The fork lets go of its source and lands on the home, whose input holds the sentence.
         const home = page.locator('.workbench-home')
         expect(await forking.evaluate(element => element.closest('.workbench-home') !== null)).toBe(true)
@@ -146,9 +146,8 @@ describe('conversation forks', () => {
       await expect
         .poll(() => notice.locator('.fork-missed').allInnerTexts(), { timeout: 20_000 })
         .toContain('权限「按规则放行」→ 更严的「先问你」')
-      // That files are not copied or rolled back stays one press away on the notice.
-      await notice.getByRole('button', { name: '说明', exact: true }).click()
-      await notice.getByText('文件不会复制或回滚；同一项目中的会话共用项目文件夹。', { exact: true }).waitFor()
+      // That files are not copied or rolled back is the notice's tooltip.
+      expect(await tooltipText(page, notice.locator('.ui-hint-label'))).toBe('文件不会复制或回滚；同一项目中的会话共用项目文件夹。')
       await expect
         .poll(async () =>
           page

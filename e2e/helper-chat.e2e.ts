@@ -8,7 +8,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, tooltipText } from './helpers/layout.ts'
 import { stillMotion } from './helpers/visual.ts'
 
 const OUT = 'test-results/helper-chat'
@@ -664,7 +664,7 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
     // Step two: who it is. The Harness is said once, here, with 换; the model, 做事前 and the project are under 更多.
     await cards.first().click()
     const form = page.getByRole('form', { name: '新建 Agent' })
-    await form.getByText('选了').waitFor()
+    await form.locator('.helper-chosen').getByText('选了').waitFor()
     await form.getByLabel('名字').fill('晨报')
     expect(await form.getByRole('button', { name: '资料整理', exact: true }).count()).toBe(0)
     expect(await form.getByLabel('名字').inputValue()).toBe('晨报')
@@ -731,10 +731,11 @@ it('creates a helper in two steps, talks to it as a person, and changes its mode
     // A helper on the fake ACP Harness: the same two steps; its permission cannot be read back, and the frame says so.
     await page.locator('button:not([inert] *):visible', { hasText: '新建 Agent' }).first().click()
     await page.getByRole('list', { name: '候选' }).getByRole('button', { name: 'Fake Agent', exact: true }).click()
-    const boundary = page.getByRole('form', { name: '新建 Agent' }).locator('.helper-isolation')
-    await boundary.getByRole('button', { name: '不隔离：说明', exact: true }).click()
-    expect(await boundary.locator('.ui-hint-detail').innerText()).toContain('运行命令')
-    await boundary.getByRole('button', { name: '不隔离：说明', exact: true }).click()
+    // That Latch does not isolate it is the chosen Harness's tooltip, where the person decides.
+    const boundary = page.getByRole('form', { name: '新建 Agent' }).locator('.helper-chosen-name')
+    const said = await tooltipText(page, boundary)
+    expect(said).toContain('Latch 不隔离')
+    expect(said).toContain('运行命令')
     await page.getByRole('form', { name: '新建 Agent' }).getByLabel('名字').fill('小抄')
     await page.getByRole('form', { name: '新建 Agent' }).getByRole('button', { name: '创建', exact: true }).click()
     const fakeInput = page.getByRole('textbox', { name: '给小抄发消息', exact: true })

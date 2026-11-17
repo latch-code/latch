@@ -7,7 +7,7 @@ import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { backToSection, openEntry, openSettings } from './helpers/layout.ts'
+import { backToSection, openEntry, openSettings, tooltipText } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/phone-page'
 const SIZES = [
@@ -252,10 +252,8 @@ describe('设置 › 设备', () => {
       await page.getByText('iPhone App 还没有可安装的版本', { exact: true }).waitFor()
       const missing = page.locator('.ui-hint', { hasText: '另一台电脑：尚未实现' })
       await missing.waitFor()
-      // The reason is one press away, by touch too.
-      await missing.getByRole('button', { name: '说明', exact: true }).click()
-      await missing.getByText(/今天的安装包打不开这个入口/u).waitFor()
-      await missing.getByRole('button', { name: '说明', exact: true }).click()
+      // The reason is the label's tooltip: a hover, or a press and hold by touch.
+      expect(await tooltipText(page, missing.locator('.ui-hint-label'), phone)).toMatch(/今天的安装包打不开这个入口/u)
       await capture('list')
       // The ways to connect hand out links, so styles added to the page cannot hide, recolour or shrink them.
       if (size.label === 'desktop')
@@ -279,10 +277,9 @@ describe('设置 › 设备', () => {
       // What the files switch opens is named in its visible line.
       await page.getByText('文件、改动与 @ 文件', { exact: true }).waitFor()
       await capture('browser-device')
-      // What managing opens is one press away; opening it leaves the switch as it was.
+      // What managing opens is the line's tooltip; opening it leaves the switch as it was.
       const manageHint = page.locator('[data-secure] .ui-hint', { hasText: '能改设置，密钥除外' })
-      await manageHint.getByRole('button', { name: '说明', exact: true }).click()
-      await manageHint.getByText(/密钥和连接新地址仍只能在 Mac 上操作/u).waitFor()
+      expect(await tooltipText(page, manageHint.locator('.ui-hint-label'), phone)).toMatch(/密钥和连接新地址仍只能在 Mac 上操作/u)
       expect(await page.getByRole('switch', { name: '可以管理这台 Mac', exact: true }).getAttribute('aria-checked')).toBe('false')
       // The switches grant what the device may do: their words, notes, track and thumb keep their look under added styles.
       if (size.label === 'desktop')
@@ -295,10 +292,7 @@ describe('设置 › 设备', () => {
           '[data-secure] .ui-hint',
           '[data-secure] .ui-hint-lead',
           '[data-secure] .ui-hint-label',
-          '[data-secure] .ui-hint > .ui-icon-button',
-          '[data-secure] .ui-hint-detail',
         ])
-      await manageHint.getByRole('button', { name: '说明', exact: true }).click()
       // A device is a page inside 设备 at every width; its way back names the section.
       if (phone) await page.getByRole('button', { name: '返回设备', exact: true }).click()
       else await page.locator('.settings-back').getByText('设备', { exact: true }).click()

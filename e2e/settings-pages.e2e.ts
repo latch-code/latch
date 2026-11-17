@@ -8,7 +8,7 @@ import { latchEnv } from '@latch/host/env'
 import type { ProviderSettings } from '@latch/protocol'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSection, openSettings, tooltipText } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/settings-pages'
 const VIEWPORTS = [
@@ -161,10 +161,9 @@ describe('settings pages', () => {
         }
 
         await openSection(settings, '关于')
-        // A browser is another device: the detail behind ⓘ names the computer, never 「这台」.
+        // A browser is another device: the label's tooltip names the computer, never 「这台」.
         const runsAsYou = settings.locator('.ui-hint', { hasText: 'Harness 和插件以你的权限运行' })
-        await runsAsYou.getByRole('button', { name: '说明', exact: true }).click()
-        await runsAsYou.getByText(/^它们在 .+ 上运行，Latch 不隔离它们。$/).waitFor()
+        expect(await tooltipText(page, runsAsYou.locator('.ui-hint-label'))).toMatch(/^它们在 .+ 上运行，Latch 不隔离它们。$/u)
         await noHorizontalOverflow(page, settings)
         await shot('about')
 

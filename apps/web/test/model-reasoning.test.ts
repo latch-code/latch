@@ -701,9 +701,10 @@ describe('thinking on the built-in Harness', () => {
     expect(named(none, '思考')).toBe('默认')
     // Still a button that opens, without the arrow.
     expect(none).toMatch(/<button[^>]*class="ui-value-picker thinking-picker is-fixed"[^>]*aria-haspopup="menu"/u)
-    // A short label; where to set it stays behind its ⓘ.
+    // A short label; where to set it is its tooltip.
     expect(none).toContain('用模型默认值')
-    expect(none).toContain('aria-label="说明"')
+    expect(none).toMatch(/用模型默认值<\/span><span[^>]*role="tooltip"/u)
+    expect(none).not.toContain('aria-label="说明"')
     const gone = { providerId: 'lab', model: 'alpha', effort: 'max' }
     expect(named(thinking(gone, gone), '思考')).toBe('最高')
     expect(thinking(gone, gone)).toContain('这个模型不再设置「最高」，重新选一个后再发送。')

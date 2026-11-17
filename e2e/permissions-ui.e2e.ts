@@ -447,8 +447,8 @@ describe('permission states in a browser', () => {
     await page.keyboard.press('Enter')
     const card = page.locator('[data-approval-id]')
     await card.waitFor()
-    // The first start of a launch says once what it can do, in the timeline.
-    await page.locator('.session-start-note').waitFor()
+    // The timeline keeps no row for what it can do: that Latch does not isolate it is its reply's author line tooltip.
+    expect(await page.locator('.session-start-note').count()).toBe(0)
     // The fact in view on the card, the sentence behind its ⓘ.
     const advisory = card.locator('.approval-note')
     await advisory.getByText('拒绝只会转达，拦不住它', { exact: true }).waitFor()

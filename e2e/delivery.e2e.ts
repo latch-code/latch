@@ -10,7 +10,7 @@ import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, installFakeGh, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openPanelTab, openSession, settleShell } from './helpers/layout.ts'
+import { noHorizontalOverflow, openPanelTab, openSession, settleShell, tooltipText } from './helpers/layout.ts'
 
 const OUT = 'test-results/delivery'
 const SLOW = { timeout: 30_000 }
@@ -198,8 +198,7 @@ touch '${control}/commit-ran'`,
 
     // The hook marker and its fine print; the commit waits for a message.
     await panel.getByText('运行仓库钩子').waitFor()
-    await panel.getByRole('button', { name: '钩子说明' }).click()
-    await panel.getByText('仓库的钩子：pre-commit、pre-push。', { exact: false }).waitFor()
+    expect(await tooltipText(page, panel.getByText('运行仓库钩子'))).toContain('仓库的钩子：pre-commit、pre-push。')
     expect(await primary.getAttribute('aria-disabled')).toBe('true')
     await panel.getByLabel('提交信息').fill('add the agent edit')
     await shots(page, 'staged', true)

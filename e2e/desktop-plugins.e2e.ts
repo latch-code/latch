@@ -8,7 +8,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { writeHostState } from '@latch/host/host-state'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
-import { backToSection, noHorizontalOverflow, openSection, openSettings, reachable } from './helpers/layout.ts'
+import { backToSection, noHorizontalOverflow, openSection, openSettings, reachable, tooltipText } from './helpers/layout.ts'
 
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'custom plugin editor in the native desktop',
@@ -139,11 +139,10 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await importBundle('react-ui', 'my-plugin-panel')
         await editor.getByRole('textbox', { name: '插件名称' }).fill('我的工作笔记')
         // The form says where a panel's code runs, which devices receive it and that nothing isolates it, before anything
-        // is applied; the full sentence is behind ⓘ.
+        // is applied; the full sentence is the label's tooltip.
         await editor.getByRole('heading', { name: '代码在哪里运行', exact: true }).waitFor()
         const reach = editor.locator('.ui-hint', { hasText: '每台能看会话的设备，不隔离' })
-        await reach.getByRole('button', { name: '说明', exact: true }).click()
-        await reach.getByText('代码会发到每台能查看会话的设备', { exact: false }).waitFor()
+        expect(await tooltipText(page, reach.locator('.ui-hint-label'))).toContain('代码会发到每台能查看会话的设备')
         await page.screenshot({ path: 'test-results/plugin-editor/panel-form.png', animations: 'disabled' })
         await editor.getByRole('button', { name: '保存并应用', exact: true }).click()
         const request = await host.presence.waitForRequest(15000)

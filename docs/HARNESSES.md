@@ -66,7 +66,7 @@ ACP Agent 是本机可信代码，Latch 不给它加操作系统沙箱，也不�
 - Host 只为确认过、且仍解析到同一路径的定义运行 `--version`。
 - `startServer` 只有收到 `detectPreset`（启动脚本传入）才找预设的命令；测试不传，所以运行测试的电脑上装的 Agent 不会被选中。
 
-**首启提示。** 一个启动指纹在这台 Host 上第一次启动时，`sessions-meta.json` 记 `firstStart`；每台设备只在一个 Harness 的第一次时在会话最上面一行写明 Latch 不隔离它、权限是它自己的设置。Driver 收不到这一项。
+**首启提示。** 一个启动指纹在这台 Host 上第一次启动时，`sessions-meta.json` 记 `firstStart`；网页不再为它写一行：Latch 不隔离它、权限是它自己的设置，是每一轮回复开头 Harness 图标与名字的提示框。Driver 收不到这一项。
 
 ### 直连优先
 

@@ -162,14 +162,14 @@ function Line({
   children: ReactNode
   /** A list under the line. */
   sub?: ReactNode
-  /** The fine print, behind ⓘ: the line becomes a Hint. */
+  /** A warning's fine print, behind ⓘ on the line: the line becomes an inline Hint. */
   detail?: string
   action?: ReactNode
 }) {
   if (detail)
     return (
       <div className="changes-line" data-tone={tone}>
-        <Hint {...(Glyph ? { lead: <Glyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} /> } : {})} label={children}>
+        <Hint inline {...(Glyph ? { lead: <Glyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} /> } : {})} label={children}>
           {detail}
         </Hint>
         {action}

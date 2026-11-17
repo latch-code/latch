@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { TerminalSummary } from '@latch/protocol'
-import { Button, ConfirmDialog, Dialog, Hint, Icon, InlineNotice, ShieldGlyph, Spinner } from '@latch/ui'
+import { Button, ConfirmDialog, Dialog, InlineNotice, Spinner, Tooltip } from '@latch/ui'
 import { errorMessage, MessageError } from '../../core/api.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
 import { endedText } from './model.ts'
 import { loginRuns, useDetachedLogin, type LoginRun } from './loginRuns.ts'
-import { TerminalScreen } from './TerminalPanel.tsx'
+import { ACCOUNT_NOTE, TerminalScreen } from './TerminalPanel.tsx'
 
 /**
  * A Harness's login command outside any session (设置, a new session's draft): one Latch terminal in a dialog, in the home
@@ -50,14 +50,16 @@ function DetachedLogin({ run }: { run: LoginRun }) {
         open
         size="xl"
         className="login-terminal-dialog"
-        title={<VisibleText text={name} />}
+        title={
+          // Whose account the shell runs as is the title's tooltip, as on the terminal's foot; it takes no room.
+          <Tooltip content={ACCOUNT_NOTE}>
+            <span className="login-terminal-title" tabIndex={0}>
+              <VisibleText text={name} />
+            </span>
+          </Tooltip>
+        }
         closeLabel="关闭终端"
         onClose={() => void close()}
-        note={
-          <Hint lead={<Icon icon={ShieldGlyph} size={12} />} label="你的账户，不是沙箱">
-            终端是这台 Mac 上以你的账户运行的登录 shell，和「终端」App 相同。Latch 的审批、路径检查与出站策略都不适用于其中的命令。
-          </Hint>
-        }
         footer={
           ended ? (
             <>

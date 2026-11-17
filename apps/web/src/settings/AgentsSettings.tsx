@@ -26,9 +26,9 @@ import {
   SwitchRow,
   TextAreaField,
   TextField,
+  Tooltip,
   CopyButton,
   AlertGlyph,
-  InfoGlyph,
   CircleCheckGlyph,
   ExternalGlyph,
   PlusGlyph,
@@ -878,10 +878,10 @@ function FoundRow({ preset, onOpen }: { preset: AgentPresetSettings; onOpen: () 
           '需要升级'
         ) : unread ? (
           // Not run for its version until it is confirmed: 已找到 says only that the program is there.
-          <span className="agent-found-unread" title={VERSION_UNREAD}>
-            已找到
-            <Icon icon={InfoGlyph} size={12} />
-          </span>
+          // The row's name already says it to assistive tech; pointer and touch get it as the word's tooltip.
+          <Tooltip content={VERSION_UNREAD} describe={false}>
+            <span className="agent-found-unread">已找到</span>
+          </Tooltip>
         ) : (
           '已找到'
         )

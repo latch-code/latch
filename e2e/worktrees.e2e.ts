@@ -9,7 +9,7 @@ import { AGENT_PRESETS, type AppSnapshot, type TaskDetail } from '@latch/protoco
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, tooltipText } from './helpers/layout.ts'
 
 const OUT = 'test-results/worktrees'
 
@@ -144,12 +144,12 @@ it('starts a session in a new worktree from the draft, keeps showing it, and say
     expect(await page.locator('.session-worktree').first().getAttribute('aria-label')).toBe(label)
     // A session's input has no status line: the title row above is the one place that says the worktree.
     expect(await page.locator('main.workspace .composer-status [data-seg="branch"]').count()).toBe(0)
-    // The count is the label; that Git LFS files stay pointers and what to run stays behind its ⓘ.
+    // The count is the label; that Git LFS files stay pointers and what to run is its tooltip.
     const unfiltered = page.locator('.session-start-note .ui-hint', { hasText: '1 个文件的 filter 没有运行' })
     await unfiltered.waitFor()
-    await unfiltered.getByRole('button', { name: '说明', exact: true }).click()
-    await unfiltered.getByText('新工作树里这些文件的 filter（例如 Git LFS）没有运行', { exact: false }).waitFor()
-    await unfiltered.getByText('在终端里运行 git lfs pull', { exact: false }).waitFor()
+    const why = await tooltipText(page, unfiltered.locator('.ui-hint-label'))
+    expect(why).toContain('新工作树里这些文件的 filter（例如 Git LFS）没有运行')
+    expect(why).toContain('在终端里运行 git lfs pull')
     expect(existsSync(join(directory, 'filter-ran'))).toBe(false)
     // The project folder is untouched: the agent's files are in the worktree.
     expect(existsSync(join(project, 'agent-edit.txt'))).toBe(false)

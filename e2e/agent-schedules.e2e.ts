@@ -8,7 +8,7 @@ import type { TestDevice } from '@latch/testkit'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, tooltipText } from './helpers/layout.ts'
 
 const OUT = 'test-results/agent-schedules'
 
@@ -189,11 +189,8 @@ it('creates, runs, pauses and resumes a schedule, shows a missed time, and deliv
     await expect.poll(async () => (await detailOf(saved!.id)).runs[0]?.state, { timeout: 10_000 }).toBe('missed')
     await card.getByText('错过 1 次').waitFor()
     await card.getByText('没有运行', { exact: true }).waitFor()
-    await card.getByRole('button', { name: '错过的时间' }).click()
-    await card
-      .getByText(/关机、睡眠或 Latch 没有运行/u)
-      .first()
-      .waitFor()
+    // When and why are the count's tooltip.
+    expect(await tooltipText(page, card.locator('.agent-schedule-missed .ui-hint-label'))).toMatch(/关机、睡眠或 Latch 没有运行/u)
     expect((await automations())[0]).toMatchObject({ enabled: true, state: 'ready' })
     expect((await detailOf(saved!.id)).runs.filter(item => item.sessionId)).toHaveLength(1)
     await page.screenshot({ path: `${OUT}/missed-1440.png` })

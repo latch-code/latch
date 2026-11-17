@@ -125,7 +125,10 @@ it.each([true, false])('keeps one accessible helper boundary before and after it
     expect((await owner.json<TaskDetail>(`tasks/${code.sessionId}`)).summary.firstStart).toBe(true)
     await page.getByRole('radio', { name: 'Code', exact: true }).filter({ visible: true }).click()
     await openSession(page, code.sessionId)
-    await page.locator('.transcript .session-start-note').filter({ hasText: '不隔离' }).waitFor()
+    // A Code session says it on its reply's mark and name, as their tooltip, and keeps no row for it.
+    await page.locator('.transcript .assistant-meta-who[tabindex]').first().waitFor()
+    expect(await page.locator('.transcript .assistant-meta-who + [role="tooltip"]').first().textContent()).toContain('不隔离')
+    expect(await page.locator('.transcript .session-start-note').count()).toBe(0)
     expect(await page.locator('.agent-frame .agent-boundary-trigger').filter({ visible: true }).count()).toBe(0)
     await page.screenshot({ path: join(output, 'code-preserved-1440-light.png'), animations: 'disabled' })
   } finally {

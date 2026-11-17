@@ -36,13 +36,13 @@ export function SectionHeading({ title, description, action }: { title: string; 
 }
 
 /**
- * A fact in a few words with the rest behind ⓘ (`Hint`), under a group's card or in a form: a glyph that says what kind
- * of fact it is (a lock for 「only there」), the label, and at most one action after it.
+ * A fact in a few words with the fine print as its tooltip (`Hint`), under a group's card or in a form: a glyph only where
+ * it says what kind of fact it is (a lock for 「only there」), the label, and at most one action after it.
  */
-export function NoteLine({ brief, icon = InfoGlyph, action }: { brief: Brief; icon?: IconComponent; action?: ReactNode }) {
+export function NoteLine({ brief, icon, action }: { brief: Brief; icon?: IconComponent; action?: ReactNode }) {
   return (
     <div className="settings-note">
-      <Hint lead={<Icon icon={icon} size={12} />} label={brief.label}>
+      <Hint {...(icon ? { lead: <Icon icon={icon} size={12} /> } : {})} label={brief.label}>
         {brief.detail}
       </Hint>
       {action && <span className="settings-note-action">{action}</span>}
@@ -58,7 +58,7 @@ export function SettingsGroup({
   title,
   meta,
   caption,
-  captionIcon = 'info',
+  captionIcon = null,
   note,
   bare = false,
   secure = false,
@@ -67,8 +67,9 @@ export function SettingsGroup({
   title?: string
   meta?: ReactNode
   caption?: ReactNode
+  /** A glyph before the caption only where it says what kind of fact it is: a lock for 「only there」. */
   captionIcon?: 'info' | 'lock' | null
-  /** Fine print as a `NoteLine`: the label shows, the rest is behind ⓘ. */
+  /** Fine print as a `NoteLine`: the label shows, the rest is its tooltip. */
   note?: ReactNode
   /** The children lay out themselves instead of as rows. */
   bare?: boolean

@@ -273,8 +273,7 @@ export function AgentForm({
             {/* Fixed at creation: another Harness is another Agent. Latch does not isolate it either way. */}
             <Hint
               label={`由 ${harness ? harnessName(harness) : draft.harnessId} 运行`}
-              lead={harness ? <HarnessTile harness={harness} size={14} /> : undefined}
-              moreLabel="由谁运行：说明">
+              lead={harness ? <HarnessTile harness={harness} size={14} /> : undefined}>
               建好后不能换 Harness，要用别的就新建一个 Agent。
               {isolation ? ` ${isolation.label}。${isolation.detail}` : ''}
             </Hint>

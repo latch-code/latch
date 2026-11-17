@@ -80,9 +80,11 @@ describe('the composer status line', () => {
       ['route', 'OpenCode'],
       ['context', '上下文 41k / 256k'],
       ['tokens', '输入 212k 输出 9.4k'],
-      ['cost', 'US$0.21 由 OpenCode 报告，不是账单'],
+      ['cost', 'US$0.21'],
       ['time', '6 分 12 秒 · 2 轮'],
     ])
+    // Who reported the cost is the value's tooltip.
+    expect(markup).toMatch(/role="tooltip"[^>]*><span>由 OpenCode(?:<!-- -->)? 报告，不是账单/u)
     expect(markup).toContain('role="meter"')
     expect(markup).toContain('aria-valuetext="41k / 256k"')
   })
@@ -120,8 +122,10 @@ describe('the composer status line', () => {
       harness: codex,
     })
     const markup = line({ totals })
-    expect(segments(markup)).toContainEqual(['context', '上下文 74.2k Codex 未报告上下文总量。'])
-    expect(markup).toContain('aria-label="用量说明"')
+    expect(segments(markup)).toContainEqual(['context', '上下文 74.2k'])
+    // The qualification is the value's tooltip, not an ⓘ beside it.
+    expect(markup).toMatch(/role="tooltip"[^>]*><span>Codex(?:<!-- -->)? 未报告上下文总量。/u)
+    expect(markup).not.toContain('用量说明')
     expect(markup).not.toContain('role="meter"')
   })
 

@@ -2,12 +2,17 @@ import type { ReactNode } from 'react'
 import { Hint, ICON_STROKE, type IconComponent } from '@latch/ui'
 import { VisibleText } from '../../components/VisibleText.tsx'
 
-/** One line of the 交付 tab: an icon and short words in a tone, the fine print behind a Hint, and an action. */
+/**
+ * One line of the 交付 tab: an icon and short words in a tone, the fine print, and an action. A failure or an unknown
+ * result keeps its fine print on the line, behind an ⓘ, since it says what happened and what to do next; a state's fine
+ * print (`hover`) is the words' tooltip.
+ */
 export function Line({
   tone = 'plain',
   icon: Glyph,
   children,
   detail,
+  hover = false,
   action,
   locked = false,
 }: {
@@ -15,6 +20,8 @@ export function Line({
   icon?: IconComponent
   children: ReactNode
   detail?: string | undefined
+  /** The detail explains a state rather than a failure: it is the words' tooltip, not an ⓘ on the line. */
+  hover?: boolean
   action?: ReactNode
   /** A line that says a result is unknown: the product's own tokens under every customisation (tokens.css). */
   locked?: boolean
@@ -23,7 +30,7 @@ export function Line({
   return (
     <div className="delivery-line" data-tone={tone} data-lock={locked ? '' : undefined}>
       {detail ? (
-        <Hint {...(glyph ? { lead: glyph } : {})} label={children}>
+        <Hint {...(glyph ? { lead: glyph } : {})} inline={!hover} label={children}>
           {detail}
         </Hint>
       ) : (

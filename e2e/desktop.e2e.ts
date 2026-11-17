@@ -16,7 +16,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { closeSettings, layersInWindow, openSection, openSettings, reachable, settleShell } from './helpers/layout.ts'
+import { closeSettings, layersInWindow, openSection, openSettings, reachable, settleShell, tooltipText } from './helpers/layout.ts'
 
 const MARK_TOOL = 'mark_release'
 const R2_PROMPT = '标记发布版本'
@@ -1089,8 +1089,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         // Listing a local address waits for its confirmation; the save button is the one lock on screen.
         await sheet.getByRole('button', { name: '检测连接', exact: true }).click()
         const localAddress = sheet.locator('.ui-hint', { hasText: '这台 Mac 或局域网地址，保存时确认' })
-        await localAddress.getByRole('button', { name: '说明', exact: true }).click()
-        await localAddress.getByText(`确认后 Latch 才会访问 ${models.allow}。`, { exact: true }).waitFor()
+        expect(await tooltipText(page, localAddress.locator('.ui-hint-label'))).toBe(`确认后 Latch 才会访问 ${models.allow}。`)
         expect(await sheet.getByRole('button', { name: /Touch ID/u }).allInnerTexts()).toEqual(['用 Touch ID 保存'])
         await captureThemes(page, 'native-desktop-provider-local-address')
         // One press: the confirmation, then the listing, and a single model saves at once.

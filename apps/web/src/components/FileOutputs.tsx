@@ -76,7 +76,7 @@ export function OutputNotes({ truncated, unavailable }: { truncated?: boolean | 
   if (!truncated && !unavailable) return null
   return (
     <div className="output-notes">
-      <Hint lead={<WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label="记录不完整">
+      <Hint inline lead={<WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label="记录不完整">
         {[
           truncated ? '只记录了部分变化；目录过大、观察中断或部分路径无法读取。' : '',
           unavailable ? '本轮未能完整观察文件变化，请在项目目录中核对结果。' : '',

@@ -77,15 +77,13 @@ export function McpSection({
       <header className="agent-profile-heading">
         <h3>MCP</h3>
         {note ? (
-          <Hint label={note} moreLabel="MCP">
+          <Hint label={note}>
             {builtin
               ? '命令交给 Claude Agent、Codex 等外部 Harness；内置 Harness 要由 Latch 自己在这台 Mac 上运行命令，尚未实现。远程地址由 Latch 调用，每次都要你确认。'
               : 'pi 的 RPC 模式不接收 MCP 服务器。'}
           </Hint>
         ) : (
-          <Hint label="在设置 › MCP 里添加" moreLabel="MCP">
-            这个 Agent 的会话每次启动时拿到这里列出的服务器。挂上或取下只改服务器的「用在」。
-          </Hint>
+          <Hint label="在设置 › MCP 里添加">这个 Agent 的会话每次启动时拿到这里列出的服务器。挂上或取下只改服务器的「用在」。</Hint>
         )}
       </header>
       {used.length === 0 && others.length === 0 && <p className="agent-mcp-empty">没有 MCP 服务器</p>}

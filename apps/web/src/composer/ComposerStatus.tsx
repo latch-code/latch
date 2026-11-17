@@ -1,7 +1,7 @@
 import { Fragment, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { FolderGit2 } from 'lucide-react'
 import type { HarnessInfo, HostCatalog, ModelRef, ProviderSummary, TaskSummary } from '@latch/protocol'
-import { ICON_STROKE, Meter, Tooltip, Popover, IconButton, InfoGlyph, FolderGlyph, BranchGlyph } from '@latch/ui'
+import { ICON_STROKE, Meter, Tooltip, FolderGlyph, BranchGlyph } from '@latch/ui'
 import { ProviderTile } from '../components/BrandTile.tsx'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { findProvider, harnessName } from '../composerChoice.ts'
@@ -139,18 +139,15 @@ function breakable(text: string): ReactNode {
 /** Least needed first: what a narrow line lets go of, in turn, before anything overflows. */
 const DROPS = 4
 
-/** The row's width stays fixed while a necessary qualification opens above it. */
+/** A value with a necessary qualification as its tooltip: the row's width never changes for it. */
 function StatusNote({ label, children }: { label: string; children: ReactNode }) {
   return (
     <span className="composer-status-note">
-      <span className="composer-status-value">{label}</span>
-      <Popover
-        label="用量说明"
-        side="top"
-        size="sm"
-        trigger={props => <IconButton {...props} size="xs" label="用量说明" icon={InfoGlyph} />}>
-        <p className="composer-status-note-body">{children}</p>
-      </Popover>
+      <Tooltip content={children}>
+        <span className="composer-status-value" tabIndex={0}>
+          {label}
+        </span>
+      </Tooltip>
     </span>
   )
 }

@@ -219,6 +219,14 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+/* The mark and the name, one focus stop when they carry the Harness's boundary as their tooltip. */
+.assistant-meta-who {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--sp-8);
+  border-radius: var(--r-4);
+}
 .assistant-meta-name {
   flex-shrink: 0;
   color: var(--ink);

@@ -130,7 +130,8 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await expect.poll(() => rows.innerText()).toContain('Press Enter to finish:')
       expect(await rows.innerText()).toContain(CODE)
       await dialog.getByText('登录中', { exact: true }).waitFor()
-      await dialog.getByText('你的账户，不是沙箱', { exact: true }).waitFor()
+      // Whose account the shell runs as is the title's tooltip; no line of its own.
+      expect(await dialog.getByRole('tooltip', { includeHidden: true }).filter({ hasText: '不是沙箱' }).count()).toBe(1)
       expect(await notice.locator('.harness-login-state').innerText()).toBe('登录中')
       expect(host.security.audit.lastOf('terminal.open')).toMatchObject({ detail: { sessionId: HARNESS_LOGIN_SESSION } })
       await capture(page, 'draft-dialog-running-1440')

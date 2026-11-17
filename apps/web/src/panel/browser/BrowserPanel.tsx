@@ -4,7 +4,6 @@ import type { TerminalSummary } from '@latch/protocol'
 import {
   Button,
   ConfirmDialog,
-  Hint,
   Icon,
   IconButton,
   InlineNotice,
@@ -24,7 +23,7 @@ import {
   MoreGlyph,
   PlusGlyph,
   RefreshGlyph,
-  ShieldGlyph,
+  Tooltip,
 } from '@latch/ui'
 import { AgentsGlyph } from '../../agents/AgentAvatar.tsx'
 import { api, MessageError } from '../../core/api.ts'
@@ -119,6 +118,8 @@ type Picked = { rect: BrowserRect; tag: string }
  * Agent out of it.
  */
 const TOOLTIP = '[role="tooltip"]'
+/** Where a project's web logins live, on the foot's state: it is a partition in memory, not a sandbox. */
+const PARTITION_NOTE = '这个项目的网页登录只在内存里，退出 Latch 即清除；它不是沙箱。'
 
 export function overlayCovers(canvas: HTMLElement, doc: Pick<Document, 'elementFromPoint' | 'querySelectorAll'> = document): boolean {
   const area = canvas.getBoundingClientRect()
@@ -970,24 +971,24 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
         ) : picking ? (
           <span className="browser-foot-pick">选取元素 · 点按一个元素，⇧ 点按可多选，esc 结束</span>
         ) : (
-          <button
-            type="button"
-            className="browser-foot-logs"
-            aria-expanded={drawer}
-            disabled={!current || blank}
-            onClick={() => setDrawer(value => !value)}>
-            {parts.map((part, index) => (
-              <span key={index} data-tone={part.tone} className={part.tone ? undefined : 'browser-foot-label'}>
-                {index > 0 && !part.tone && <span className="browser-foot-dot">·</span>}
-                {part.text}
-              </span>
-            ))}
-          </button>
+          // Where the project's logins live is the foot's tooltip: it takes no room beside the page's state.
+          <Tooltip content={PARTITION_NOTE}>
+            <button
+              type="button"
+              className="browser-foot-logs"
+              aria-expanded={drawer}
+              disabled={!current || blank}
+              onClick={() => setDrawer(value => !value)}>
+              {parts.map((part, index) => (
+                <span key={index} data-tone={part.tone} className={part.tone ? undefined : 'browser-foot-label'}>
+                  {index > 0 && !part.tone && <span className="browser-foot-dot">·</span>}
+                  {part.text}
+                </span>
+              ))}
+            </button>
+          </Tooltip>
         )}
         <span className="browser-space" />
-        <Hint className="browser-hint" lead={<Icon icon={ShieldGlyph} size={12} />} label="内存分区，不是沙箱">
-          这个项目的网页登录只在内存里，退出 Latch 即清除；它不是沙箱。
-        </Hint>
       </footer>
       {clearing && (
         <ConfirmDialog

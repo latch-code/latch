@@ -123,7 +123,7 @@ export function AgentProbe({
             </p>
             {result.program?.unchecked && (
               <InlineNotice tone="warn" title="这个组合 Latch 没有核对过">
-                <Hint label="仍可以开始会话">
+                <Hint inline label="仍可以开始会话">
                   <VisibleText text={`会话出现异常时，可能与适配器和 ${result.program.name} 的版本不配套有关。`} />
                 </Hint>
               </InlineNotice>

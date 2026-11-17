@@ -54,7 +54,7 @@ export function ConnectionBanners({ shell }: { shell: ShellState }) {
                 </Button>
               ) : undefined
             }>
-            <Hint lead={<Icon icon={RefreshGlyph} size={12} />} label={oldHost.label} moreLabel="怎么重启">
+            <Hint inline lead={<Icon icon={RefreshGlyph} size={12} />} label={oldHost.label} moreLabel="怎么重启">
               {oldHost.detail}
             </Hint>
           </InlineNotice>

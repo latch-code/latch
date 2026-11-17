@@ -57,7 +57,8 @@ import { useTerminals } from './useTerminals.ts'
 import { useTerminalFill, type ScreenHandle } from './useTerminalFill.ts'
 
 /** The terminal's one fine print, on the foot's label: what the shell is, and that Latch's checks do not apply in it. */
-const ACCOUNT_NOTE = '以你的账户运行的登录 shell，和「终端」App 相同，不是沙箱：Latch 的审批、路径检查与出站策略都不适用于其中的命令。'
+export const ACCOUNT_NOTE =
+  '以你的账户运行的登录 shell，和「终端」App 相同，不是沙箱：Latch 的审批、路径检查与出站策略都不适用于其中的命令。'
 
 /** The line height of the terminal role (--lh-term over --fs-term), as xterm's multiple of the font's own height. */
 const LINE_HEIGHT = 1.2

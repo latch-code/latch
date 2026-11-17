@@ -471,7 +471,7 @@ export function Composer({
     readOnly !== undefined ? (
       readOnlyReason ? (
         <div className="composer-readonly" role="note" data-lock="">
-          <Hint lead={<LockGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label={readOnly}>
+          <Hint inline lead={<LockGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label={readOnly}>
             {readOnlyReason}
           </Hint>
         </div>
@@ -629,7 +629,7 @@ export function Composer({
           <div className="pending-submission-text">
             <strong>{onOpenPending ? '另一个会话有消息未确认送达' : '未确认送达'}</strong>
             <p>{pending.prompt || `${pending.attachmentIds?.length ?? 0} 个附件`}</p>
-            <Hint className="pending-submission-reason" label={pendingReason || '没有收到电脑的答复'}>
+            <Hint inline className="pending-submission-reason" label={pendingReason || '没有收到电脑的答复'}>
               {pending.sessionId === undefined
                 ? '重试沿用同一请求，电脑已经收到的不会再开一个会话。放弃这次提交只在这台设备上放下它，文字回到输入框；电脑如果其实已经收到，那个会话会出现在列表里，再发送会开始另一个会话，可能另建一个工作树。'
                 : '重试沿用同一请求，电脑已经收到的不会再算一次。放弃这次提交只在这台设备上放下它，文字回到输入框，附件和文件引用要重新添加；电脑如果其实已经收到，它会出现在会话里，再发送就是第二条消息。'}
@@ -794,9 +794,13 @@ function ConfigUnknownBar({ state }: { state?: ConfigUnknownState | undefined })
             <span className="run-bar-dot" aria-hidden="true">
               ·
             </span>
-            <button type="button" className="run-bar-action" disabled={state.checking} onClick={state.onCheck}>
-              核对
-            </button>
+            {/* What 核对 does is the button's tooltip: the bar keeps its one line. */}
+            <Tooltip
+              content={`核对会先结束这个会话的 ${state.harness} 进程，再让它重新打开会话、报告现在的设置；不会再发送一次修改。会话运行中、等你处理或子 Agent 可能还在运行时不核对。`}>
+              <button type="button" className="run-bar-action" disabled={state.checking} onClick={state.onCheck}>
+                核对
+              </button>
+            </Tooltip>
             <span className="run-bar-dot" aria-hidden="true">
               ·
             </span>
@@ -814,14 +818,6 @@ function ConfigUnknownBar({ state }: { state?: ConfigUnknownState | undefined })
               </>
             )}
           </span>
-          <Hint
-            className="run-bar-hint"
-            lead={<span />}
-            label={<span className="sr-only">核对会重启 {state.harness}</span>}
-            moreLabel="核对说明">
-            核对会先结束这个会话的 {state.harness} 进程，再让它重新打开会话、报告现在的设置；不会再发送一次修改。会话运行中、等你处理或子
-            Agent 可能还在运行时不核对。
-          </Hint>
         </div>
       )}
     </Collapse>

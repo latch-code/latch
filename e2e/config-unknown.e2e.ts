@@ -119,11 +119,11 @@ describe('a config change the Harness never answers', () => {
     expect(await page.locator('[data-tone="error"], .action-error').filter({ hasText: '结果' }).count()).toBe(0)
     await noHorizontalOverflow(page)
     await page.screenshot({ path: `${OUTPUT}/unknown--light--1440.png`, animations: 'disabled' })
-    // What 核对 does is behind the ⓘ: it restarts the Harness's process.
-    await bar.getByRole('button', { name: '核对说明', exact: true }).click()
-    await page.getByText('核对会先结束这个会话的 OpenCode 进程').waitFor()
+    // What 核对 does is the button's tooltip: it restarts the Harness's process.
+    await bar.getByRole('button', { name: '核对', exact: true }).hover()
+    await page.locator('.ui-tooltip:popover-open', { hasText: '核对会先结束这个会话的 OpenCode 进程' }).waitFor()
     await page.screenshot({ path: `${OUTPUT}/check-hint--light--1440.png`, animations: 'disabled' })
-    await bar.getByRole('button', { name: '核对说明', exact: true }).click()
+    await page.mouse.move(0, 0)
     // 重试同一请求 answers from the Host's receipt: still unknown, nothing sent again.
     await bar.getByRole('button', { name: '重试同一请求', exact: true }).click()
     await bar.waitFor()

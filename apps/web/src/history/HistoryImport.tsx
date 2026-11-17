@@ -69,7 +69,7 @@ function HistoryEntryButton({ entry, computer, onOpen }: { entry: HistoryEntry; 
   if (entry.kind === 'locked')
     return (
       <div className="history-entry" data-locked="">
-        <Hint lead={<Icon icon={LockGlyph} size={12} />} label={HISTORY_COPY.entry} moreLabel="为什么不能接入">
+        <Hint lead={<Icon icon={LockGlyph} size={12} />} label={HISTORY_COPY.entry}>
           {HISTORY_COPY.locked(computer)}
         </Hint>
       </div>
@@ -270,7 +270,7 @@ function ScopeLine({
           {source.label}
         </span>
       )}
-      <Hint lead={<Icon icon={ListFilter} size={12} />} label="主文件夹里的会话" moreLabel="列出哪些会话">
+      <Hint lead={<Icon icon={ListFilter} size={12} />} label="主文件夹里的会话">
         只列出在这个项目主文件夹（或它下面）开始的会话，不加载内容。
         {/* Codex's own listing is of its current model provider; no other Harness that lists has such a limit. */}
         {source.mark === 'codex' && `${source.label} 只列出它当前模型服务下的会话。`}
@@ -566,7 +566,7 @@ function PreviewLevel({
       <div className="history-preview">
         <div className="history-preview-meta">
           <span>{[preview.model, `${preview.turns} 轮`].filter(Boolean).join(' · ')}</span>
-          <Hint lead={<Icon icon={EyeOff} size={12} />} label="工具输出和思考不显示" moreLabel="预览里有什么">
+          <Hint lead={<Icon icon={EyeOff} size={12} />} label="工具输出和思考不显示">
             只显示最后 {preview.messages.length} 条对话和工具名称；像密钥的文字已替换。{source.label}{' '}
             会重新打开这个会话，在它自己的列表里可能排到前面。
             {preview.useUnknown && `${source.label} 不报告会话是否正在别处使用，Latch 看不出来。`}
@@ -661,14 +661,14 @@ export function TargetChoice({
       </div>
       {target?.mode === 'text' ? (
         <div className="history-mode" data-tint="warn">
-          <Hint lead={<Icon icon={WarningGlyph} size={12} />} label="按文字重建，不是原样恢复" moreLabel="按文字重建是什么">
+          <Hint lead={<Icon icon={WarningGlyph} size={12} />} label="按文字重建，不是原样恢复">
             {target.label} 只看到对话文字，看不到工具结果、思考和 {sourceLabel}{' '}
             的压缩记录；文件以现在磁盘上的为准。第一条消息会把这段文字发给它用的模型服务。
           </Hint>
         </div>
       ) : (
         <div className="history-mode">
-          <Hint lead={<Icon icon={HistoryGlyph} size={12} />} label="原样接入" moreLabel="原样接入是什么">
+          <Hint lead={<Icon icon={HistoryGlyph} size={12} />} label="原样接入">
             {sourceLabel} 带着它自己的完整记录继续；按 Latch 的默认权限继续，不沿用原会话的权限。
           </Hint>
         </div>

@@ -205,7 +205,7 @@ interface TurnViewProps {
   speaker?: Speaker
   /** How to log in to this session's harness, shown when a turn ends for want of it. */
   login?: { harnessId: string; login: HarnessLogin; surface: LoginSurface } | undefined
-  harness?: Pick<HarnessInfo, 'capabilities'> | undefined
+  harness?: Pick<HarnessInfo, 'capabilities' | 'level' | 'permission'> | undefined
   /** The model that answered, or that the run uses before its first step records one, and its service's name. */
   model?: string
   provider?: string
@@ -695,7 +695,7 @@ interface TranscriptProps {
   /** How to log in to this session's harness, shown when a turn ends for want of it. */
   login?: { harnessId: string; login: HarnessLogin; surface: LoginSurface } | undefined
   /** The session's harness, for the tile on each turn's author line. */
-  harness?: Pick<HarnessInfo, 'capabilities'> | undefined
+  harness?: Pick<HarnessInfo, 'capabilities' | 'level' | 'permission'> | undefined
   /** The demo model answers, and every turn says so. */
   demo?: boolean
   /** The session is running; its latest turn is not finished. */

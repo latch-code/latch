@@ -262,3 +262,26 @@ export async function openFileFind(page: Page): Promise<void> {
   await page.getByRole('menuitem', { name: '查找', exact: true }).click()
   await page.getByRole('searchbox', { name: '查找文件内容' }).waitFor()
 }
+
+/**
+ * Opens the tooltip that explains `trigger` the way its device would, and returns its text: a hover with a pointer, a
+ * press and hold by touch (which has no hover). The tooltip closes again before this returns.
+ */
+export async function tooltipText(page: Page, trigger: Locator, touch = false): Promise<string> {
+  await trigger.scrollIntoViewIfNeeded()
+  if (touch) {
+    const box = (await trigger.boundingBox())!
+    const at = { pointerType: 'touch', isPrimary: true, bubbles: true, clientX: box.x + 4, clientY: box.y + box.height / 2 }
+    await trigger.dispatchEvent('pointerdown', at)
+    await page.locator('.ui-tooltip:popover-open').waitFor()
+    await trigger.dispatchEvent('pointerup', at)
+    await trigger.dispatchEvent('pointerleave', at)
+  } else await trigger.hover()
+  const open = page.locator('.ui-tooltip:popover-open')
+  await open.waitFor()
+  const text = (await open.textContent()) ?? ''
+  if (touch) await page.locator('body').dispatchEvent('pointerdown', { pointerType: 'touch', bubbles: true })
+  else await page.mouse.move(0, 0)
+  await open.waitFor({ state: 'hidden' })
+  return text
+}

@@ -59,7 +59,7 @@ export function ComputerSection({
           <Icon icon={Laptop} size={16} className="agent-computer-icon" />
           <span className="agent-computer-name">{hostName}</span>
           {view.awakeFor ? (
-            <Hint className="agent-computer-awake" label={view.status.label} moreLabel="为什么保持唤醒">
+            <Hint className="agent-computer-awake" label={view.status.label}>
               {view.awakeFor}
             </Hint>
           ) : (
@@ -71,11 +71,7 @@ export function ComputerSection({
         {read.state === 'failed' && <p className="agent-computer-meta">{read.message}</p>}
         {view.missedTotal > 0 && (
           <div className="agent-computer-missed">
-            <Hint
-              className="agent-schedule-missed"
-              label={`错过 ${view.missedTotal} 次`}
-              lead={<Icon icon={AlertGlyph} size={12} />}
-              moreLabel="错过的时间">
+            <Hint className="agent-schedule-missed" label={`错过 ${view.missedTotal} 次`} lead={<Icon icon={AlertGlyph} size={12} />}>
               Mac 睡眠、关机或 Latch 没有运行时，定时任务不会运行，醒来后也不补跑。
             </Hint>
             <ul className="agent-computer-misses" aria-label="错过的定时">
@@ -124,10 +120,7 @@ export function ComputerSection({
             className="agent-computer-switch"
             title="到点前后保持唤醒"
             description={
-              <Hint
-                className={view.keepAwakeNote ? 'agent-computer-note' : undefined}
-                label={view.keepAwakeNote ?? 'Latch 应用运行时有效'}
-                moreLabel="到点前后保持唤醒">
+              <Hint className={view.keepAwakeNote ? 'agent-computer-note' : undefined} label={view.keepAwakeNote ?? 'Latch 应用运行时有效'}>
                 从这个 Agent 的定时任务前 2 分钟起不让这台 Mac 闲置睡眠，直到这次运行结束，最长 32 分钟。已经睡眠或合上盖子的 Mac
                 不会被唤醒，也不改系统的唤醒计划。
               </Hint>
@@ -167,7 +160,7 @@ export function NotificationSection({
     <div className="agent-profile-section" aria-label="通知" role="group">
       <header className="agent-profile-heading">
         <h3>通知</h3>
-        <Hint label="Mac 上的 Latch 应用" moreLabel="通知">
+        <Hint label="Mac 上的 Latch 应用">
           这个 Agent 的话题和定时运行完成、失败或等你处理时，Mac 上的 Latch 应用按这里发通知；iPhone 与 iPad 尚未按 Agent 区分。
         </Hint>
       </header>

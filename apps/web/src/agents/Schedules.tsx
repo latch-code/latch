@@ -262,7 +262,7 @@ function RunRow({ run, onOpen }: { run: AutomationRun; onOpen: (id: string) => v
         <span className="agent-schedule-meta">{reason ? '没有运行' : run.trigger === 'manual' ? '立即运行' : '按时运行'}</span>
       </span>
       {reason ? (
-        <Hint label={RUN_WORDS[run.state]} lead={<Icon icon={BlockedGlyph} size={12} />} moreLabel="为什么没有运行">
+        <Hint label={RUN_WORDS[run.state]} lead={<Icon icon={BlockedGlyph} size={12} />}>
           {reason}
         </Hint>
       ) : (
@@ -377,16 +377,12 @@ function ScheduleCard({
         </div>
         <span className="agent-schedule-state">
           {missed.length > 0 && (
-            <Hint
-              className="agent-schedule-missed"
-              label={`错过 ${missed.length} 次`}
-              lead={<Icon icon={AlertGlyph} size={12} />}
-              moreLabel="错过的时间">
+            <Hint className="agent-schedule-missed" label={`错过 ${missed.length} 次`} lead={<Icon icon={AlertGlyph} size={12} />}>
               {missed.map(run => `${whenWords(run.at)}：${runReason(run)}`).join(' ')}
             </Hint>
           )}
           {status.reason ? (
-            <Hint className="agent-schedule-paused" label={status.label} lead={<Icon icon={CirclePause} size={12} />} moreLabel="暂停原因">
+            <Hint className="agent-schedule-paused" label={status.label} lead={<Icon icon={CirclePause} size={12} />}>
               {status.reason}
             </Hint>
           ) : (

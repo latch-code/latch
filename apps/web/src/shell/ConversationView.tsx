@@ -2,11 +2,10 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { readsProjectFiles, type HarnessInfo } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
-import { readStorage } from '../core/storageKeys.ts'
 import { sessionReadOnly } from '../core/permissions.ts'
 import { projectFor } from '../composerChoice.ts'
 import { forkSource } from '../forkChoice.ts'
-import { APPROVAL_COPY, MODE_COPY, RECOVERY_COPY } from '../core/securityCopy.ts'
+import { APPROVAL_COPY, RECOVERY_COPY } from '../core/securityCopy.ts'
 import { FindBar } from '../components/FindBar.tsx'
 import { RebuildLostDialog } from '../history/RebuildLost.tsx'
 import { harnessName as harnessLabel } from '../composerChoice.ts'
@@ -18,8 +17,7 @@ import { FillPlace } from '../panel/terminal/fills.ts'
 import { isLive, liveMessageId, renderedMessages } from '../conversation.ts'
 import { ChangesLinkContext } from '../conversation/changesLink.ts'
 import { useTranscriptProjection } from '../conversation/useTranscriptProjection.ts'
-import { Backdrop, Button, Hint, ICON_STROKE, InlineNotice, Loading, HistoryGlyph, ShieldAlertGlyph, type BackdropLevel } from '@latch/ui'
-import { MarkTile } from '../components/BrandTile.tsx'
+import { Backdrop, Button, Hint, InlineNotice, Loading, HistoryGlyph, ShieldAlertGlyph, type BackdropLevel } from '@latch/ui'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { DEVICE_FAILURE_STEPS, OWNER_FAILURE_STEPS, SendingBubble, SessionComposer, takeFailureStep } from './SessionComposers.tsx'
 import type { ShellState } from './useShellLayout.tsx'
@@ -92,7 +90,6 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
   const handing = catalog?.features?.handoffs === true && current !== null && !current.summary.personal
   // A topic of 我的 Agent is a conversation with the helper: it answers, under its own face and name.
   const speaker = current ? speakerOf(snapshot, current.summary) : undefined
-  const helperBoundary = speaker && shell.entries.includes('agents') && summary?.id === current?.summary.id && harnessInfo?.level === 'L3'
   const placeProposals = useTopicProposals(shell, current)
   const placeResults = useTopicResults(shell, current)
   const [handoffRequest, setHandoffRequest] = useState<HandoffRequest | null>(null)
@@ -265,15 +262,6 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
                   <FillPlace.Provider
                     value={shell.canTerminal && shell.terminalTarget?.sessionId === current.summary.id ? current.summary.id : undefined}>
                     <ChangesLinkContext.Provider value={changesLink}>
-                      {/* A helper's frame already keeps this boundary reachable, including its permission warning. */}
-                      {current.summary.firstStart && harnessInfo && !helperBoundary && (
-                        <FirstStartNote
-                          key={harnessInfo.bound?.id ?? harnessInfo.id}
-                          hostId={snapshot.host.hostId}
-                          harness={harnessInfo}
-                          {...(speaker ? { who: speaker.name } : {})}
-                        />
-                      )}
                       {current.summary.worktree?.unfiltered !== undefined && (
                         <div className="session-start-note" role="note">
                           <Hint label={`${current.summary.worktree.unfiltered} 个文件的 filter 没有运行`}>
@@ -462,43 +450,6 @@ export function ConversationView({ shell, visible, backdrop }: { shell: ShellSta
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-/**
- * The timeline's first row in an external Harness's first session on this device: the Harness's mark and that Latch does
- * not isolate it, what it can do behind ⓘ. Said once per program a Harness is bound to, per device; afterwards the
- * permission menu's ⓘ says it.
- */
-function FirstStartNote({ hostId, harness, who }: { hostId: string; harness: HarnessInfo; who?: string }) {
-  // Keyed by the program it is bound to: bound to another, it is said again.
-  const key = `latch.boundary-seen.${hostId}.${harness.bound?.id ?? harness.id}`
-  const [shown] = useState(() => readStorage('localStorage', key) === null)
-  useEffect(() => {
-    if (!shown) return
-    try {
-      localStorage.setItem(key, '1')
-    } catch {
-      // Storage that refuses it shows the row again next time.
-    }
-  }, [key, shown])
-  if (!shown) return null
-  const name = who ?? harness.capabilities.display.label
-  const note = harness.permission?.approvals === 'none' ? MODE_COPY.firstStartUnasked(name) : MODE_COPY.firstStart(name)
-  return (
-    <div className="session-start-note" role="note">
-      <Hint
-        lead={
-          who ? (
-            <ShieldAlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />
-          ) : (
-            <MarkTile mark={harness.capabilities.display.mark} size={14} />
-          )
-        }
-        label={note.label}>
-        {note.detail}
-      </Hint>
     </div>
   )
 }

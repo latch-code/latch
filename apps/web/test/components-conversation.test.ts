@@ -5,7 +5,7 @@ import type { Approval, AppSnapshot, Message, TaskDetail, TaskSummary, ToolKind 
 import { sha256Hex } from '@latch/core/node-kit'
 import { hashDisplay } from '@latch/host/crypto'
 import { SessionFacts } from '../src/shell/SessionEnvironment.tsx'
-import { MessageRow, ThinkingRow } from '../src/components/MessageRow.tsx'
+import { AuthorLine, MessageRow, ThinkingRow } from '../src/components/MessageRow.tsx'
 import { PlanList } from '../src/components/PlanCard.tsx'
 import { DiffView } from '../src/components/DiffView.tsx'
 import { ApprovalDrawer } from '../src/composer/ApprovalDrawer.tsx'
@@ -502,6 +502,27 @@ describe('assistant messages', () => {
     expect([...html.matchAll(/data-message-id="([^"]+)"/g)].map(match => match[1])).toEqual(['u1', 'tool:c1', 'a2', 'u2', 'a3'])
     expect(html.match(/class="assistant-meta"/g)).toHaveLength(2)
     expect(html).toContain('data-message-id="a3" aria-label="正在生成的回复"')
+  })
+})
+
+describe('the author line', () => {
+  const display = { label: 'Claude Agent', mark: 'claude' }
+  const line = (harness: Parameters<typeof AuthorLine>[0]['harness']) =>
+    renderToStaticMarkup(createElement(AuthorLine, { name: 'Claude Agent', harness }))
+
+  it('says on the mark and name of an external Harness that Latch does not isolate it, as their tooltip', () => {
+    const html = line({ capabilities: { display } as never, level: 'L3', permission: undefined })
+    // One focus stop, described by the tooltip; no row and no ⓘ of its own.
+    expect(html).toMatch(
+      /<span class="assistant-meta-who" tabindex="0">.*<\/span><span[^>]*role="tooltip"[^>]*><span>Latch 不隔离 Claude Agent。Claude Agent 能读写这台 Mac 上的文件并运行命令。权限是 Claude Agent 自己的设置。<\/span>/u,
+    )
+    expect(html).not.toContain('aria-label="说明"')
+  })
+
+  it('says nothing of the kind for Latch 内置, which Latch checks call by call', () => {
+    const html = line({ capabilities: { display: { label: 'Latch 内置' } } as never, level: 'L1', permission: undefined })
+    expect(html).not.toContain('role="tooltip"')
+    expect(html).not.toContain('tabindex')
   })
 })
 

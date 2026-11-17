@@ -426,7 +426,10 @@ describe('the topic header', () => {
     const idle = { snapshot: { ...snapshot([topic('m1', 'man', 9)], old), automations: [] } }
     const html = frame(idle as never, old)
     expect(html).toContain('不可用')
-    expect(html).toContain('为什么不可用')
+    // The Host's reason is the word's tooltip, not an ⓘ beside it.
+    expect(html).toMatch(
+      /class="ui-hint-label" tabindex="0">不可用<\/span><span[^>]*role="tooltip"[^>]*><span>OpenCode 需要 1.2 或更高版本/u,
+    )
     expect(html).toContain('去修复')
     // A device that cannot change 设置 is told where, without a button it could not use.
     expect(frame({ ...idle, owner: false } as never, old)).not.toContain('去修复')

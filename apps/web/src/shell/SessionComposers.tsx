@@ -669,12 +669,12 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
             </Collapse>
           </>
         ) : seedService ? (
-          <p className="composer-notice composer-seed" data-tint="warn" role="note">
-            <Icon icon={HistoryGlyph} size={14} />
-            <span>
-              按文字重建，不是原样恢复 · 第一条消息会把重建的对话文字一起发给 <VisibleText text={seedService} />
-            </span>
-          </p>
+          <div className="composer-notice composer-seed" data-tint="warn" role="note">
+            {/* Where the rebuilt text goes is the words' tooltip; the short line keeps its amber. */}
+            <Hint className="agent-permission-note is-warn" lead={<Icon icon={HistoryGlyph} size={14} />} label="按文字重建，不是原样恢复">
+              第一条消息会把重建的对话文字一起发给 <VisibleText text={seedService} />
+            </Hint>
+          </div>
         ) : undefined
       }
       vitalsLead={

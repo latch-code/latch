@@ -320,13 +320,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await page.locator('.transcript').getByText('echo: 修一下测试', { exact: true }).waitFor()
         expect(host.presence.requests).toHaveLength(asked)
         expect(await found.count()).toBe(0)
-        // This device's first session on the Harness says Latch does not isolate it; what it can do is behind its ⓘ.
-        const startNote = page.locator('.session-start-note')
-        await startNote.getByText('Latch 不隔离 Codex', { exact: true }).waitFor()
-        await startNote.getByRole('button', { name: '说明', exact: true }).click()
-        await startNote.getByText('Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置。', { exact: true }).waitFor()
+        // That Latch does not isolate it and what it can do is the reply's mark and name's tooltip, on every session.
+        expect(await page.locator('.transcript .assistant-meta-who + [role="tooltip"]').first().textContent()).toBe(
+          'Latch 不隔离 Codex。Codex 能读写这台 Mac 上的文件并运行命令。权限是 Codex 自己的设置。',
+        )
+        expect(await page.locator('.session-start-note').count()).toBe(0)
 
-        // The next session on it does not repeat it.
+        // The next session has no row for it either.
         await application.evaluate(({ dialog }) => {
           dialog.showMessageBox = (async () => ({ response: 1, checkboxChecked: false })) as typeof dialog.showMessageBox
         })
@@ -334,7 +334,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await input.fill('再来一个')
         await input.press('Meta+Enter')
         await page.locator('.transcript').getByText('echo: 再来一个', { exact: true }).waitFor()
-        expect(await startNote.count()).toBe(0)
+        expect(await page.locator('.session-start-note').count()).toBe(0)
 
         // 不选项目 works too: a new empty folder, nothing refused.
         await startNew(page, 1440)

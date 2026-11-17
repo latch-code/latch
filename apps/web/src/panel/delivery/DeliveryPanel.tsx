@@ -338,7 +338,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
         </Line>
       )}
       {turnRunning && !state?.gitOperation && canWrite && (
-        <Line tone="muted" icon={InfoGlyph} detail={failureCopy('git-turn-running')?.detail}>
+        <Line tone="muted" icon={InfoGlyph} hover detail={failureCopy('git-turn-running')?.detail}>
           Agent 正在改这个文件夹
         </Line>
       )}
@@ -407,8 +407,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       <div className="delivery-hooks">
         <Hint
           lead={<Webhook size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}
-          label={skipHooks ? '这次不运行提交钩子' : '运行仓库钩子'}
-          moreLabel="钩子说明">
+          label={skipHooks ? '这次不运行提交钩子' : '运行仓库钩子'}>
           {state ? hooksDetail(state) : HOOKS_UNLISTED}
         </Hint>
         <span className="delivery-space" />
@@ -634,6 +633,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
                 <Line
                   tone="muted"
                   icon={InfoGlyph}
+                  hover
                   detail={`${failureCopy('git-upstream-other-branch')?.detail ?? ''} 上游：${state.upstream ?? ''}`}>
                   上游是另一个分支
                 </Line>
@@ -683,7 +683,7 @@ function FailureCopyLine({ code }: { code: string }) {
   const copy = failureCopy(code)
   if (!copy) return null
   return (
-    <Line tone="muted" icon={InfoGlyph} detail={copy.detail}>
+    <Line tone="muted" icon={InfoGlyph} hover detail={copy.detail}>
       {copy.label}
     </Line>
   )

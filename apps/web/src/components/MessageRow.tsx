@@ -11,6 +11,7 @@ import { absoluteTime, formatDuration, messageTime } from '../format.ts'
 import { usePacedText } from '../hooks/usePacedText.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { AgentAvatar } from '../agents/AgentAvatar.tsx'
+import { isolationBrief } from '../agents/helpers.ts'
 import { THOUGHT_WORDS } from '../agents/personWords.ts'
 import type { AgentAvatar as AgentAvatarValue } from '@latch/protocol'
 import { VisibleText } from './VisibleText.tsx'
@@ -219,7 +220,7 @@ export function AuthorLine({
   name: string
   /** The engine's name, when it is not already the word. */
   engine?: string
-  harness?: Pick<HarnessInfo, 'capabilities'> | undefined
+  harness?: Pick<HarnessInfo, 'capabilities' | 'level' | 'permission'> | undefined
   model?: string
   /** The model service's name, for the model's tooltip. */
   provider?: string
@@ -229,11 +230,17 @@ export function AuthorLine({
   fallback?: string | undefined
 }) {
   const detail = [engine, fallback, model].filter(Boolean).join(' · ')
+  // An external Harness: that Latch does not isolate it is the mark and name's tooltip, on every turn, taking no room.
+  const boundary = harness && isolationBrief(harness)
   return (
     <div className="assistant-meta">
-      {/* The turn's source, not the harness's state now: the tile never draws readiness here. */}
-      <MarkTile mark={harness?.capabilities.display.mark} size={16} />
-      <span className="assistant-meta-name">{name}</span>
+      <Tooltip content={boundary && [boundary.label, boundary.detail].filter(Boolean).join('。')}>
+        <span className="assistant-meta-who" tabIndex={boundary ? 0 : undefined}>
+          {/* The turn's source, not the harness's state now: the tile never draws readiness here. */}
+          <MarkTile mark={harness?.capabilities.display.mark} size={16} />
+          <span className="assistant-meta-name">{name}</span>
+        </span>
+      </Tooltip>
       {detail && (
         <Tooltip content={provider}>
           <span className="assistant-meta-model">{detail}</span>

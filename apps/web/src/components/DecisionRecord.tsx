@@ -36,6 +36,7 @@ export function DecisionRecord({ decision }: { decision: ToolDecision }) {
   const { text, title } = decisionLine(decision, now)
   return (
     <Hint
+      inline
       className="tool-decision"
       lead={
         <span title={title}>

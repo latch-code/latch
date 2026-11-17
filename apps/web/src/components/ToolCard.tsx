@@ -651,7 +651,7 @@ export const ToolCard = memo(
                     </p>
                   )}
                   {judgedNote && (
-                    <Hint className="tool-judged-note" label={judgedNote.label}>
+                    <Hint inline className="tool-judged-note" label={judgedNote.label}>
                       {judgedNote.detail}
                     </Hint>
                   )}

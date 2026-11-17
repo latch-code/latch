@@ -369,9 +369,6 @@
 .browser-space {
   flex: 1;
 }
-.browser-hint {
-  flex: none;
-}
 
 /* The 浏览器 page away from the Mac: the session's tabs there, read-only. */
 .browser-list {

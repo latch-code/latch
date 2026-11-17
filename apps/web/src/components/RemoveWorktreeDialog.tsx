@@ -86,6 +86,7 @@ function Facts({ facts }: { facts: WorktreeInventory }) {
       <Line label="分支">
         {facts.branch ? <VisibleText text={facts.branch} /> : '分离 HEAD'}
         <Hint
+          inline
           label={
             !facts.ownBranch ? '保留' : facts.merged?.into === 'default' ? '已合并，会删除' : facts.merged ? '没有新提交，会删除' : '保留'
           }>

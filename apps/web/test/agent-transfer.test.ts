@@ -222,10 +222,12 @@ describe('a memory that is not the person’s words, in the memory panel', () =>
       memory('e', { source: { ...source, external: false } }),
     ])
     expect(html.match(/设为我说的<\/button>/gu)).toHaveLength(2)
-    expect(html.match(/作为资料/gu)).toHaveLength(2)
+    // The panel's own fine print (a tooltip) also says 作为资料; the marks are the rest.
+    const marks = html.replace(/<span[^>]*role="tooltip"[^>]*><span>[^<]*<\/span><\/span>/gu, '')
+    expect(marks.match(/作为资料/gu)).toHaveLength(2)
     expect(html.match(/已设为你说的/gu)).toHaveLength(1)
     const plain = panel([memory('a', {}), memory('e', { source: { ...source, external: false } })])
     expect(plain).not.toContain('设为我说的</button>')
-    expect(plain).not.toContain('作为资料')
+    expect(plain.replace(/<span[^>]*role="tooltip"[^>]*><span>[^<]*<\/span><\/span>/gu, '')).not.toContain('作为资料')
   })
 })

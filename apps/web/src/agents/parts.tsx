@@ -36,11 +36,7 @@ export function Availability({ available, reason, offline }: { available: boolea
       </span>
     )
   return (
-    <Hint
-      className="agent-availability"
-      label="不可用"
-      lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}
-      moreLabel="为什么不可用">
+    <Hint className="agent-availability" label="不可用" lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
       {reason}
     </Hint>
   )
@@ -53,11 +49,7 @@ export function Availability({ available, reason, offline }: { available: boolea
 export function Unavailable({ reason, onRepair }: { reason?: string | undefined; onRepair?: (() => void) | undefined }) {
   return (
     <span className="agent-unavailable">
-      <Hint
-        className="agent-availability"
-        label="不可用"
-        lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}
-        moreLabel="为什么不可用">
+      <Hint className="agent-availability" label="不可用" lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
         {reason ?? '现在不能开始聊天。'}
         {!onRepair && ' 在这台 Mac 的 设置 里修复。'}
       </Hint>
@@ -135,8 +127,7 @@ export function BeforeActing({ harness, mode }: { harness: HarnessInfo; mode: Ta
         ) : (
           <ShieldGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
         )
-      }
-      moreLabel="做事前：说明">
+      }>
       {isolation ? `${isolation.label}。${isolation.detail} ` : ''}其他档位在开始时设置尚未实现。
     </Hint>
   )
@@ -157,6 +148,7 @@ export function RouteWarning({ catalog, route }: { catalog: HostCatalog; route: 
   return (
     <div className="composer-notice" data-tint="warn" role="note">
       <Hint
+        inline
         className="agent-permission-note is-warn"
         label={brief.label}
         lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}

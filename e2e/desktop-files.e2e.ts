@@ -10,7 +10,7 @@ import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
-import { closeActiveFile } from './helpers/layout.ts'
+import { closeActiveFile, tooltipText } from './helpers/layout.ts'
 
 /** What the test records in main instead of showing Finder or Quick Look, opening an app or the browser. */
 interface ShellRecord {
@@ -231,9 +231,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       // A presentation opens with its app; Quick Look is not offered for it yet, and the menu says why.
       await open('deck.pptx')
       expect(await items()).toEqual(['用默认应用打开', '在访达中显示', '复制路径'])
-      await menu.getByText('暂不快速查看这种文件', { exact: true }).waitFor()
-      await menu.getByRole('button', { name: '说明', exact: true }).click()
-      await menu.getByText('还没有确认系统的预览不会加载文件里引用的网络资源。', { exact: true }).waitFor()
+      expect(await tooltipText(page, menu.getByText('暂不快速查看这种文件', { exact: true }))).toBe(
+        '还没有确认系统的预览不会加载文件里引用的网络资源。',
+      )
       await close()
       const deck = join(workspace, 'out', 'deck.pptx')
       await choose('deck.pptx', '用默认应用打开')
@@ -273,9 +273,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       // An HTML file can open as text in an editor. The default app is refused because a browser could use the network.
       await open('page.html')
       expect(await items()).toEqual(['在编辑器中打开…', '在访达中显示', '复制路径'])
-      await menu.getByText('Latch 不直接打开', { exact: true }).waitFor()
-      await menu.getByRole('button', { name: '说明', exact: true }).click()
-      await menu.getByText('网页和 SVG 用浏览器打开时可以联网；可以在访达中显示后自己打开。', { exact: true }).waitFor()
+      expect(await tooltipText(page, menu.getByText('Latch 不直接打开', { exact: true }))).toBe(
+        '网页和 SVG 用浏览器打开时可以联网；可以在访达中显示后自己打开。',
+      )
       // The lock marks what Latch refuses on purpose, never a plain failure.
       expect(await menu.locator('.file-chip-note .ui-hint-lead svg').getAttribute('class')).toContain('latch-glyph-lock')
       await close()
@@ -287,9 +287,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       // Outside the session's folder, or not there at all: only the path to copy, and the reason.
       await open('outside.md')
       expect(await items()).toEqual(['复制路径'])
-      await menu.getByText('不在会话的文件夹里', { exact: true }).waitFor()
-      await menu.getByRole('button', { name: '说明', exact: true }).click()
-      await menu.getByText('Latch 不替你打开它。复制路径后，可以在访达中按 ⇧⌘G 前往。', { exact: true }).waitFor()
+      expect(await tooltipText(page, menu.getByText('不在会话的文件夹里', { exact: true }))).toBe(
+        'Latch 不替你打开它。复制路径后，可以在访达中按 ⇧⌘G 前往。',
+      )
       await captureThemes(page, 'native-desktop-file-menu-outside')
       await close()
       // 复制路径 copies the whole path on this computer, from the session's folder, ready for Finder's 「前往文件夹」.

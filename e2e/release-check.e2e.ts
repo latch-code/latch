@@ -393,7 +393,9 @@ describe('发布检查, the example page, from an Agent session to the phone', (
     const again = await openPage(page)
     await again.getByRole('button', { name: '再查一次' }).focus()
     await page.keyboard.press('Tab')
-    expect(await again.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('说明')
+    // The hint's label is the stop: its detail is the tooltip, open while it has the focus.
+    expect(await again.evaluate(() => document.activeElement?.textContent)).toBe('开一个真实会话')
+    await again.locator('.ui-tooltip:popover-open').waitFor()
     await page.keyboard.press('Tab')
     expect(await again.evaluate(() => document.activeElement?.textContent)).toBe('编辑')
     await page.screenshot({ path: `${OUTPUT}/focus-reduced-1440.png` })
