@@ -69,13 +69,13 @@ export function CodexTeam({
   const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState<string>()
   const group = groups.find(entry => entry.id === selected) ?? groups[0]
-  const currentRequest = group?.userMessageId ? detail.messages.find(message => message.id === group.userMessageId)?.text : undefined
+  const delegationRequest = group?.userMessageId ? detail.messages.find(message => message.id === group.userMessageId)?.text : undefined
   const available = detail.codexTeam === 'available'
   const canAdd = canPrepare && available
   const approvals = detail.approvals
   const waiting = approvals.some(approval => approval.subagentId !== undefined)
   const conflict = draft.trimStart().startsWith('/')
-  const teamRun = group && detail.activity ? run : undefined
+  const currentRun = groups.length > 0 && detail.activity ? run : undefined
   if (!detail.codexTeam && !group) return null
   return (
     <div className="codex-team-control">
@@ -101,10 +101,17 @@ export function CodexTeam({
         }
         className="codex-team-dialog"
         footer={
-          teamRun ? (
-            <Button variant="outline" disabled={teamRun.cancel === 'cancelling'} onClick={teamRun.onCancel}>
-              {teamRun.cancel === 'cancelling' ? '正在停止本轮…' : teamRun.cancel === 'uncertain' ? '核对停止请求' : '停止本轮'}
-            </Button>
+          currentRun ? (
+            <div className="codex-team-current-run" role="group" aria-label="当前会话">
+              <span>当前会话</span>
+              <Button variant="outline" disabled={currentRun.cancel === 'cancelling'} onClick={currentRun.onCancel}>
+                {currentRun.cancel === 'cancelling'
+                  ? '正在停止当前运行…'
+                  : currentRun.cancel === 'uncertain'
+                    ? '核对当前运行的停止请求'
+                    : '停止当前运行'}
+              </Button>
+            </div>
           ) : (
             canAdd && (
               <Button
@@ -156,9 +163,9 @@ export function CodexTeam({
                   />
                 </div>
               )}
-              {currentRequest && (
+              {delegationRequest && (
                 <p className="codex-team-request">
-                  <VisibleText text={currentRequest.replace(REQUEST, '').trim() || currentRequest} />
+                  <VisibleText text={delegationRequest.replace(REQUEST, '').trim() || delegationRequest} />
                 </p>
               )}
               <ul className="codex-team-members" aria-label="实际成员">

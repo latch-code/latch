@@ -37,7 +37,7 @@ import { SessionVitalsLine } from '../composer/VitalsStrip.tsx'
 import { DraftHarnessControl, FORK_BUSY, SessionHarnessControl, type SessionFork } from '../composer/ModelControl.tsx'
 import { DraftModelControl, DraftThinkingControl, SessionModelControl, SessionThinkingControl } from '../composer/ModelPanel.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
-import { composerOptions, configUnknownBar, modelWords, ownModelName } from '../composer/modelReasoning.ts'
+import { composerOptions, configUnknownBar, ownModelName } from '../composer/modelReasoning.ts'
 import { draftPermission, draftRead, permissionView } from '../composer/permission.ts'
 import { helperPermissionBlocked } from '../agents/personWords.ts'
 import { readOnSelect, readsOnPermission, useReading } from '../composer/harnessCatalogue.tsx'
@@ -343,7 +343,6 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
   const switchSessionModel = (model: ModelRef | undefined) => {
     if (!summary) return
     submission.setOverride(summary.id, model && sameModel(model, currentModel) ? undefined : model)
-    if (model) setToast({ text: `下一轮起用 ${modelWords(model)}`, tone: 'ok' })
   }
   const otherOptions = composerOptions(current?.config ?? [], harnessInfo?.capabilities.models.owner === 'latch')
   // A new-context send that did not start has cleared it on the Host already: there is nothing left to keep.
@@ -729,6 +728,30 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
       // The limit arrives seconds after a turn starts and leaves with the Host's memory: last before send at every width,
       // so the controls before it stay where they are.
       usage={showControls ? usageChip : undefined}
+      permission={
+        showControls && catalog && (selectedId === null || summary) ? (
+          <ComposerControl name="permission">
+            {permission ? (
+              <PermissionChip
+                view={permission}
+                onChoose={chooseOption}
+                // A draft's modes come from the same read as its model list, so opening this first asks as well.
+                {...(selectedId === null && !newChoicesLocked
+                  ? {
+                      onOpenChange: (open: boolean) => {
+                        if (open && readsOnPermission(chosenHarness, access)) readOnSelect(chosenHarness, refresh)
+                      },
+                    }
+                  : {})}
+              />
+            ) : (
+              <button type="button" className="chip chip-permission" disabled>
+                <span className="chip-text">权限</span>
+              </button>
+            )}
+          </ComposerControl>
+        ) : undefined
+      }
       controls={
         !showControls ? null : !catalog ? (
           selectedId === null ? (
@@ -783,7 +806,7 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
             <>
               {harnessInfo && (
                 <ComposerControl name="harness">
-                  <SessionHarnessControl harness={harnessInfo} onNewSession={startNew} fork={fork} />
+                  <SessionHarnessControl harness={harnessInfo} admin={access.admin} onNewSession={startNew} fork={fork} />
                 </ComposerControl>
               )}
               <ComposerControl name="model">
@@ -845,26 +868,6 @@ export function SessionComposer({ shell: base, home = false }: { shell: ShellSta
                   reported={summary?.model}
                   computer={computer}
                 />
-              )}
-            </ComposerControl>
-            <ComposerControl name="permission">
-              {permission ? (
-                <PermissionChip
-                  view={permission}
-                  onChoose={chooseOption}
-                  // A draft's modes come from the same read as its model list, so opening this first asks as well.
-                  {...(selectedId === null && !newChoicesLocked
-                    ? {
-                        onOpenChange: (open: boolean) => {
-                          if (open && readsOnPermission(chosenHarness, access)) readOnSelect(chosenHarness, refresh)
-                        },
-                      }
-                    : {})}
-                />
-              ) : (
-                <button type="button" className="chip chip-permission" disabled>
-                  <span className="chip-text">权限</span>
-                </button>
               )}
             </ComposerControl>
             {phone && selectedId !== null && <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />}

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { chromium } from '@playwright/test'
 import { expect, it } from 'vitest'
-import type { TaskDetail } from '@latch/protocol'
+import type { CancelReceipt, TaskDetail } from '@latch/protocol'
 import { FAKE_CODEX_APP_SERVER } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { noHorizontalOverflow, openSession, reachable } from './helpers/layout.ts'
@@ -47,6 +47,7 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     })
     const path = `tasks/${sessionId}`
     const read = () => owner.json<TaskDetail>(path)
+    const teamMembers = async () => (await read()).messages.filter(message => message.subagent?.team)
     await expect.poll(async () => (await read()).summary.status).toBe('idle')
     await owner.json(`${path}/config`, {
       method: 'POST',
@@ -59,6 +60,18 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     await openSession(page, sessionId)
     const open = (name: '用团队分工' | 'Agent 团队') => page.getByRole('button', { name: new RegExp(name, 'u') }).filter({ visible: true })
     const dialog = page.getByRole('dialog', { name: 'Agent 团队', exact: true })
+    const currentRun = dialog.getByRole('group', { name: '当前会话', exact: true })
+    const stop = currentRun.getByRole('button', { name: '停止当前运行', exact: true })
+    const history = dialog.getByRole('button', { name: '委派记录', exact: true })
+    const selectDelegation = async (number: number) => {
+      await history.tap()
+      await page
+        .getByRole('menu', { name: '委派记录', exact: true })
+        .getByRole('menuitemradio', { name: `第 ${number} 次委派`, exact: true })
+        .tap()
+    }
+    const cancelResponse = () =>
+      page.waitForResponse(response => response.url().endsWith(`/${path}/cancel`) && response.request().method() === 'POST')
     const input = page.getByRole('textbox', { name: '继续对话', exact: true })
     await input.fill('核对移动端和审批回执')
     await open('用团队分工').click()
@@ -129,6 +142,7 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     for (const item of ordered.slice(1)) await reject(item.id)
     await expect.poll(async () => (await read()).summary.status).toBe('idle')
 
+    const historicalMembers = await teamMembers()
     await owner.json(`${path}/prompt`, {
       method: 'POST',
       body: { prompt: 'team 后台停止夹具', requestId: randomUUID() },
@@ -146,23 +160,27 @@ it('delegates from the same Codex chat, opens the actual member approval and res
       })
       .toBe('running')
     const runId = (await read()).summary.runId
+    expect(runId).toEqual(expect.any(String))
     await teamEntry.click()
     await cedar.getByText('运行中', { exact: true }).waitFor()
-    const stop = dialog.getByRole('button', { name: '停止本轮', exact: true })
-    await reachable(stop)
+    await selectDelegation(1)
+    await dialog.getByText('核对移动端和审批回执', { exact: true }).waitFor()
+    await cedar.getByText('已完成', { exact: true }).waitFor()
     if (output) await page.screenshot({ path: join(output, 'team-parent-completed-390-dark.png'), animations: 'disabled' })
-    const write = page.waitForResponse(response => response.url().endsWith(`/${path}/cancel`) && response.request().method() === 'POST')
+    expect(await stop.count()).toBe(1)
+    await reachable(stop)
+    const write = cancelResponse()
     await stop.tap()
     await expect.poll(async () => (await readFile(trace, 'utf8')).includes('background-member-interrupted')).toBe(true)
     expect((await read()).summary.status).toBe('running')
-    await dialog.getByRole('button', { name: '正在停止本轮…', exact: true }).waitFor()
+    await currentRun.getByRole('button', { name: '正在停止当前运行…', exact: true }).waitFor()
     await writeFile(stopGate, '', { flag: 'wx' })
     const response = await write
     expect(response.ok()).toBe(true)
     const payload = response.request().postDataJSON() as { runId: string; requestId: string }
     expect(payload).toMatchObject({ runId, requestId: expect.any(String) })
-    const first = (await response.json()) as { receipt: { outcome: string; status: string } }
-    expect(first.receipt).toMatchObject({ outcome: 'stopped', status: 'cancelled' })
+    const first = (await response.json()) as { receipt: CancelReceipt }
+    expect(first.receipt).toMatchObject({ ...payload, outcome: 'stopped', status: 'cancelled' })
     const replay = (await page.evaluate(
       async ({ path, payload }) =>
         (
@@ -176,9 +194,9 @@ it('delegates from the same Codex chat, opens the actual member approval and res
       { path, payload },
     )) as { receipt: { replay?: true } }
     expect(replay.receipt).toEqual({ ...first.receipt, replay: true })
-    expect(
-      (await read()).messages.filter(message => message.subagent?.team).filter(message => message.subagent?.status === 'cancelled'),
-    ).toHaveLength(1)
+    const afterDelegation = await teamMembers()
+    expect(afterDelegation.filter(message => historicalMembers.some(previous => previous.id === message.id))).toEqual(historicalMembers)
+    expect(afterDelegation.filter(message => message.subagent?.status === 'cancelled')).toHaveLength(1)
     await dialog.getByRole('button', { name: '关闭', exact: true }).click()
 
     await owner.json(`${path}/prompt`, {
@@ -198,18 +216,37 @@ it('delegates from the same Codex chat, opens the actual member approval and res
       })
       .toBe('running')
     await teamEntry.click()
+    await selectDelegation(4)
     await cedar.getByText('已完成', { exact: true }).waitFor()
     await maple.getByText('已完成', { exact: true }).waitFor()
-    const history = dialog.getByRole('button', { name: '委派记录', exact: true })
-    await history.tap()
-    const work = page.getByRole('menu', { name: '委派记录', exact: true })
-    await work.getByRole('menuitemradio', { name: '第 4 次委派', exact: true }).tap()
     await reachable(stop)
-    const nestedCancel = page.waitForResponse(
-      response => response.url().endsWith(`/${path}/cancel`) && response.request().method() === 'POST',
-    )
+    const nestedCancel = cancelResponse()
     await stop.tap()
     expect((await (await nestedCancel).json()).receipt).toMatchObject({ outcome: 'stopped', status: 'cancelled' })
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+
+    const settledMembers = await teamMembers()
+    await owner.json(`${path}/prompt`, {
+      method: 'POST',
+      body: { prompt: 'sleep 普通会话运行', requestId: randomUUID() },
+    })
+    await expect.poll(async () => (await read()).summary.status).toBe('running')
+    const ordinaryRunId = (await read()).summary.runId
+    expect(ordinaryRunId).toEqual(expect.any(String))
+    expect(ordinaryRunId).not.toBe(runId)
+    await teamEntry.click()
+    await selectDelegation(1)
+    await dialog.getByText('核对移动端和审批回执', { exact: true }).waitFor()
+    await reachable(stop)
+    if (output) await page.screenshot({ path: join(output, 'team-history-ordinary-run-390-dark.png'), animations: 'disabled' })
+    const ordinaryCancel = cancelResponse()
+    await stop.tap()
+    const ordinaryResponse = await ordinaryCancel
+    expect(ordinaryResponse.ok()).toBe(true)
+    const ordinaryPayload = ordinaryResponse.request().postDataJSON() as { runId: string; requestId: string }
+    expect(ordinaryPayload).toMatchObject({ runId: ordinaryRunId, requestId: expect.any(String) })
+    expect((await ordinaryResponse.json()).receipt).toMatchObject({ ...ordinaryPayload, outcome: 'stopped', status: 'cancelled' })
+    expect(await teamMembers()).toEqual(settledMembers)
   } finally {
     await browser?.close()
     await host?.close()

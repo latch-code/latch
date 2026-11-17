@@ -83,6 +83,7 @@
   overflow-wrap: anywhere;
 }
 .codex-team-history,
+.codex-team-current-run,
 .codex-team-member-heading {
   display: flex;
   align-items: center;
@@ -90,10 +91,14 @@
   gap: var(--sp-8) var(--sp-16);
   flex-wrap: wrap;
 }
-.codex-team-history {
+.codex-team-history,
+.codex-team-current-run {
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
+}
+.codex-team-current-run {
+  width: 100%;
 }
 .codex-team-request,
 .codex-team-empty,
@@ -164,6 +169,7 @@
 }
 
 @media (max-width: 680px) {
+  .codex-team-current-run .ui-button,
   .codex-team-review,
   .codex-team-history .ui-select-button,
   .codex-team-result summary {

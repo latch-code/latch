@@ -368,8 +368,7 @@
   display: none;
 }
 /*
- * A phone: what the message goes with (the place on the home, then Harness, 模型, 思考, 权限) is one row of chips that
- * scrolls sideways; under it one line of ＋, the input and send.
+ * A phone: the place, Harness, 模型 and 思考 can scroll sideways. 权限 stays beside the send key.
  */
 .composer-chips {
   display: flex;
@@ -397,18 +396,37 @@
   flex: 0 0 auto;
 }
 .composer-line {
-  display: flex;
-  align-items: flex-end;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: end;
   gap: var(--sp-2);
   min-width: 0;
   padding: var(--sp-2) var(--sp-6) var(--sp-6);
 }
-.composer-line > .composer-input {
-  flex: 1 1 auto;
+.composer-line > :is(.composer-input, .composer-readonly) {
+  grid-column: 1 / -1;
+}
+.composer-line > [data-composer-control='permission'] {
+  grid-column: 2;
+  justify-self: end;
   min-width: 0;
+  max-width: 100%;
+}
+.composer-line > .composer-slot {
+  grid-column: 3;
+}
+.composer-line .chip-permission {
+  min-width: 0;
+  min-height: 44px;
+  height: auto;
+  padding-block: var(--sp-4);
+}
+.composer-line .chip-permission > .chip-text {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
 }
 .composer-line > :is(.ui-icon-button, .composer-slot, .ui-button) {
-  flex: 0 0 auto;
   margin-bottom: var(--sp-2);
 }
 .composer-meta > * {
@@ -546,6 +564,11 @@
 .chip-permission.is-amber:hover:not(:disabled) {
   background: var(--amber-soft);
   color: var(--amber);
+}
+.harness-bound-path {
+  min-width: 0;
+  padding: var(--sp-8) var(--sp-12);
+  color: var(--muted);
 }
 /* The model control's popover: 思考 under the models, then the ways to add and manage. */
 .model-footer {

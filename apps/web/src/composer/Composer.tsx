@@ -117,6 +117,7 @@ export function Composer({
   coarse,
   controls,
   trailing,
+  permission,
   run,
   configUnknown,
   readOnly,
@@ -193,8 +194,10 @@ export function Composer({
   coarse: boolean
   /** The toolbar's start, after 「+」: who does the work and with which model (Harness, 模型). */
   controls: ReactNode
-  /** The toolbar's end, before 「⋯」 and send: how hard and how careful (思考, 权限). */
+  /** The trailing controls, such as 思考. */
   trailing?: ReactNode
+  /** On phones the permission stays beside the send key when the other controls scroll. */
+  permission?: ReactNode
   run?: RunState
   configUnknown?: ConfigUnknownState
   /** This device may watch, reject and cancel but not type: the text replaces the input. */
@@ -688,7 +691,7 @@ export function Composer({
         )}
         {inline ? (
           <>
-            {/* A phone: what the message goes with is one row of chips that scrolls sideways; under it ＋, the input, send. */}
+            {/* The other choices scroll sideways. The current permission stays beside the send key. */}
             {(location || controls || trailing || meta || usage) && (
               <div className="composer-chips" role="group" aria-label="会话选项">
                 {location}
@@ -701,8 +704,9 @@ export function Composer({
               </div>
             )}
             <div className="composer-line">
-              {add}
               {input}
+              {add}
+              {permission}
               {action}
             </div>
           </>
@@ -716,6 +720,7 @@ export function Composer({
                 {slashButton}
                 {controls}
                 {trailing}
+                {permission}
                 {usage}
               </div>
               <div className="composer-end">

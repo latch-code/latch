@@ -49,8 +49,9 @@ const REPORT_NOTE = {
 }
 
 const CODE_NOTE = {
-  label: '可信的本机代码，不隔离',
-  detail: '这些插件在 Host 进程里运行，能做 Latch 能做的一切。只给在这台 Mac 上开发插件的人；其他人用数据插件、MCP 定义与页面。',
+  label: '可信的本机代码',
+  detail:
+    '这些插件在 Host 进程里运行，能做 Latch 能做的一切。Latch 不隔离它们。只给在这台 Mac 上开发插件的人；其他人用数据插件、MCP 定义与页面。',
 }
 
 const LATCH_NOTE = {

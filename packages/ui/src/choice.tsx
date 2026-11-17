@@ -1,4 +1,4 @@
-import { useId, useRef, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react'
+import { useId, useRef, type ComponentProps, type KeyboardEvent, type ReactElement, type ReactNode } from 'react'
 import { BlockedGlyph, ShieldAlertGlyph } from './glyphs/index.tsx'
 import { Icon } from './icon.tsx'
 import { cx, nextIndex } from './internal.ts'
@@ -51,7 +51,7 @@ export interface ChoiceOption<T extends string> {
   value: T
   title: string
   /** One sentence: what choosing it means. */
-  description?: string
+  description?: string | ReactElement
   /** Right after the title, for example the 默认 small badge; read with the title. */
   tag?: ReactNode
   /** A level with real risk: once it is the selected one, a shield-alert follows its description. */

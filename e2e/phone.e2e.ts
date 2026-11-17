@@ -161,8 +161,7 @@ describe('the phone stack', () => {
       await reachable(header.getByRole('button', { name: '返回会话列表', exact: true }))
       await reachable(header.getByRole('button', { name: '侧边面板', exact: true }))
       await reachable(header.locator('.topbar-title-button'))
-      // The four controls are one row of chips over the input's line (＋, the text, send); the row scrolls sideways by
-      // itself, and nothing of them is left outside the frame.
+      // The chips scroll above the full-width input. The permission stays beside the send key below it.
       const composer = page.locator('.composer-dock form.composer')
       expect(await composer.locator('.composer-toolbar, [data-rows], .composer-prompt').count()).toBe(0)
       expect(await composer.getByRole('button', { name: '／', exact: true }).count()).toBe(0)
@@ -179,7 +178,7 @@ describe('the phone stack', () => {
           control('harness'),
           control('model'),
           control('thinking'),
-          control('permission'),
+          box('.composer-line [data-composer-control="permission"]'),
           box('.composer-line .send-button'),
           box('.composer-line .attachment-button, .composer-line button'),
           box('.composer-line'),
@@ -190,10 +189,11 @@ describe('the phone stack', () => {
         const scroller = form.querySelector('.composer-chips')!
         return {
           found: [input, harness, model, thinking, permission, send, add, line, row].every(Boolean),
-          oneRow: level(harness, model) && level(model, thinking) && level(thinking, permission),
-          inOrder: harness!.right <= model!.left + 1 && model!.right <= thinking!.left + 1 && thinking!.right <= permission!.left + 1,
+          oneRow: level(harness, model) && level(model, thinking),
+          inOrder: harness!.right <= model!.left + 1 && model!.right <= thinking!.left + 1,
           chipsOverLine: row!.bottom <= line!.top + 1,
-          line: add!.right <= input!.left + 1 && input!.right <= send!.left + 1,
+          inputOverActions: input!.bottom <= add!.top + 1 && input!.bottom <= permission!.top + 1,
+          permissionBesideSend: add!.right <= permission!.left + 1 && Math.abs(permission!.right - send!.left) < 12,
           sendAtEnd: frame.right - send!.right < 16,
           scrolls: /auto|scroll/u.test(getComputedStyle(scroller).overflowX),
           inside: row!.left >= frame.left && row!.right <= frame.right && send!.right <= frame.right,
@@ -204,7 +204,8 @@ describe('the phone stack', () => {
         oneRow: true,
         inOrder: true,
         chipsOverLine: true,
-        line: true,
+        inputOverActions: true,
+        permissionBesideSend: true,
         sendAtEnd: true,
         scrolls: true,
         inside: true,

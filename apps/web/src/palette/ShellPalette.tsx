@@ -37,7 +37,7 @@ import { HARNESS_MARKS, presetOf } from '../brands.ts'
 import { harnessName } from '../composerChoice.ts'
 import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
 import { currentShell } from '../core/shell.ts'
-import { BACKDROP_CHOICES, DENSITY_CHOICES, MOTION_CHOICES, setPreference, toggleWorkView } from '../preferences.ts'
+import { BACKDROP_CHOICES, DENSITY_CHOICES, MOTION_CHOICES, backdropLevel, setPreference, toggleWorkView } from '../preferences.ts'
 import { projectOf } from '../sessions.ts'
 import { sectionLabel, settingsSections } from '../settings/SettingsPage.tsx'
 import { settingsSectionsAt, type SettingsSection } from '../shell/routes.ts'
@@ -407,6 +407,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     ...(['system', 'light', 'dark'] as const).map(theme => ({
       id: `theme:${theme}`,
       label: `外观：${{ system: '跟随系统', light: '浅色', dark: '深色' }[theme]}`,
+      ...(shell.preferences.theme === theme ? { sub: '当前' } : {}),
       icon: glyph(SunMoon),
       run: () => {
         setPreference('theme', theme)
@@ -415,6 +416,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     ...BACKDROP_CHOICES.map(({ value, label }) => ({
       id: `backdrop:${value}`,
       label: `背景效果：${label}`,
+      ...(backdropLevel(shell.preferences, shell.phone) === value ? { sub: '当前' } : {}),
       keywords: '外观 粒子',
       icon: glyph(SunMoon),
       run: () => setPreference('backdrop', value),
@@ -422,6 +424,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     ...MOTION_CHOICES.map(({ value, label }) => ({
       id: `motion:${value}`,
       label: `动效：${label}`,
+      ...(shell.preferences.motion === value ? { sub: '当前' } : {}),
       keywords: '外观 动画',
       icon: glyph(SunMoon),
       run: () => setPreference('motion', value),
@@ -429,6 +432,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     ...DENSITY_CHOICES.map(({ value, label }) => ({
       id: `density:${value}`,
       label: `密度：${label}`,
+      ...(shell.preferences.density === value ? { sub: '当前' } : {}),
       keywords: '外观',
       icon: glyph(SunMoon),
       run: () => setPreference('density', value),

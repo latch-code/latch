@@ -178,4 +178,20 @@ describe('the composer status line', () => {
     // Another session's detail is never read as this one's.
     expect(sessionTotals({ summary: summary({ id: 'other', usage }), detail: open, harness: opencode })).not.toHaveProperty('cost')
   })
+
+  it.each([
+    [0, '轮数', '1 轮'],
+    [999, '轮数', '1 轮'],
+    [1000, '用时', '1 秒 · 1 轮'],
+  ])('labels the session facts for a settled turn with %i ms of work', (activeMs, label, value) => {
+    const owner = summary()
+    const open = detail(
+      { messages: [{ id: 'u1', role: 'user', text: '一', createdAt: at(1), turn: { endedAt: at(2), activeMs, waitMs: 0 } }] },
+      owner,
+    )
+    const popover = renderToStaticMarkup(
+      createElement(SessionFacts, { summary: owner, detail: open, harness: builtin, gate: { kind: 'open' } }),
+    )
+    expect(popover).toContain(`<span class="crumb-label">${label}</span><div class="crumb-value">${value}</div>`)
+  })
 })

@@ -51,6 +51,7 @@ import { HarnessTile, ProviderTile } from '../components/BrandTile.tsx'
 import { HealthDot, menuHealth, nameWithHealth } from '../components/ServiceHealth.tsx'
 import { AgentPresetList, AgentSetupPanel } from '../components/SetupPanels.tsx'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
+import { MiddleEllipsis } from '../settings/common.tsx'
 import { isolationBrief } from '../agents/helpers.ts'
 import { agentConfigValues, DEFAULT_MODEL } from './modelReasoning.ts'
 import { ValuePicker } from './ComposerControl.tsx'
@@ -238,7 +239,12 @@ export function DraftHarnessControl({
       options={entries.map(entry => ({
         value: entry.harness.id,
         label: entry.label,
-        description: entry.harness.statusMessage ? onComputer(entry.harness.statusMessage, computer) : undefined,
+        description:
+          access.admin && entry.harness.bound?.path ? (
+            <MiddleEllipsis text={escapeHiddenCharacters(entry.harness.bound.path)} className="settings-mono" />
+          ) : entry.harness.statusMessage ? (
+            onComputer(entry.harness.statusMessage, computer)
+          ) : undefined,
         media: <HarnessTile harness={entry.harness} size={20} />,
         ...(entry.disabledReason ? { disabledReason: entry.disabledReason } : {}),
       }))}
@@ -313,10 +319,12 @@ export interface SessionFork {
  */
 export function SessionHarnessControl({
   harness,
+  admin,
   onNewSession,
   fork,
 }: {
   harness: HarnessInfo
+  admin: boolean
   onNewSession: () => void
   fork?: SessionFork | undefined
 }) {
@@ -336,6 +344,11 @@ export function SessionHarnessControl({
         </Tooltip>
       )}>
       <div className="model-footer">
+        {admin && harness.bound?.path && (
+          <div className="harness-bound-path">
+            <MiddleEllipsis text={escapeHiddenCharacters(harness.bound.path)} className="settings-mono" />
+          </div>
+        )}
         {fork && <ForkRow fork={fork} />}
         <MenuFooterLink icon={PlusGlyph} chevron={false} closes onClick={onNewSession}>
           新会话

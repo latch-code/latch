@@ -396,14 +396,14 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 - 资料面板跨桌面、平板与手机是同一个实例：未保存的设置、当前页签和待确认的写入不复制、不丢失；撤权与换设备时卸载私有内容。
 - 记忆与定时的提议、定时结果是对话里的卡，不是消息：没有头像与作者行，没有动画，一处只有一个蓝色主按钮。来自外部内容的提议带琥珀状态词。
 
-**输入框上的四个控件。** Harness、模型、思考、权限平铺在输入框上（[Composer.tsx](../apps/web/src/composer/Composer.tsx)），每个只写值，在任何宽度都看得见，放不下就换行，不收进菜单。每个控件外层带 `data-composer-control`（`harness`、`model`、`thinking`、`permission`）。
+**输入框上的四个控件。** Harness、模型、思考、权限平铺在输入框上（[Composer.tsx](../apps/web/src/composer/Composer.tsx)），每个只写值。每个控件外层带 `data-composer-control`（`harness`、`model`、`thinking`、`permission`）。手机上项目、Harness、模型和思考在输入框上方横向滚动。文字区独占一行，当前权限在发送键左边，长名称在控件内换行。
 
-「＋」在每种输入框里都是控件行的第一个，项目与分支等小片排在它后面或上一行；提示只写「添加文件」。控件行按输入框自己的宽度排（容器查询，不按窗口宽度）：一行放不下时项目与位置的小片在上一行。控件行分两块：选择（「＋」、Harness、模型、思考、权限，再是额度小片）与末端（「⋯」与发送）；末端始终在选择最后一行的右端，发送从不单独成行、下面不压任何东西。变窄时依次让出：额度小片先只留短条（字在悬停里），再整个不画（从不截成半截）；然后选择整枚换行（从后往前）；最后单独一枚仍放不下时值截断。没有控件被藏起（`e2e/composer-row.e2e.ts`，`e2e/harness-quota.e2e.ts` 从 320 到 1100 每 20px 检查一次）。
+「＋」是输入行的第一个控件，项目与分支等小片排在它后面或上一行。宽屏上的控件行按输入框自己的宽度排。一行放不下时，项目与位置的小片放在上一行。Harness、模型、思考、权限和额度是一组，「⋯」与发送在最后一行的右端。变窄时额度小片先只留短条，再让出位置，然后其他控件从后往前整枚换行。单独一枚仍放不下时，值省略末尾。
 
-- **Harness**（[ModelControl.tsx](../apps/web/src/composer/ModelControl.tsx)）：开始后不能换，菜单写明并给「分叉」与「新会话」；选模型从不换 Harness。最新一轮运行或等你处理时分叉不可按并写原因。
+- **Harness**（[ModelControl.tsx](../apps/web/src/composer/ModelControl.tsx)）开始后不能换，菜单写明并给「分叉」与「新会话」。最新一轮运行或等你处理时分叉不可按并写原因。管理设备收到 Host 下发的绑定命令路径时，开始前显示在 Harness 选项下，开始后显示在 Harness 弹层里。长路径中间省略，悬停看到完整路径。
 - **新会话默认**：「设为新会话默认」只在这台电脑上生效，其他设备看不到也收不回。它的 Harness 或模型用不了时默认不生效，也不替它换一个。
 - **模型与思考是同一个面板**（[ModelPanel.tsx](../apps/web/src/composer/ModelPanel.tsx)，`PickerBoard`）：两个控件点开同一个固定大小的面板，焦点分别落在模型列表或思考列。左栏是来源（这个 Harness 自己的模型、「Latch 网关」、有记录时的最近使用；只有一个来源时不画），中间是搜索与该来源的模型，前九行印着与「跳到第 N 个会话」同一组键（面板开着时归面板，只在桌面端印出），右栏是高亮模型的思考档位与 Harness 报告的其他模型设置。在列表里移动只换右栏，不改尺寸；选有档位的模型后焦点进右栏，选档位即关闭。手机上来源与档位各是一行。三栏是浮层自己的同一块底色，只以细线分开；左栏显示中的来源用浅填充加边上一条短竖线，列表里只有选中的模型（带对勾）用浅填充，键盘焦点另是一圈 1px 主色细线、不填充；换到没有选中模型的来源时不高亮任何一行，右栏仍是选中模型的档位。思考列只有「默认」时，它是谁的默认（「用 Codex 的默认值」「这个模型没有思考档位」）在那一行与思考控件的悬停里，不写在栏底。「Latch 网关」在左栏用路线图形。
-- **模型**：只写模型。Harness 还没报告的模型写「默认模型」。能经 Latch 转发的服务都在「Latch 网关」下，每个服务一组，组名只写服务名，实验性的带「实验性」标记；左栏悬停只写名字（全部实验性时「Latch 网关 · 实验性」），请求去哪、协议转换略去什么只在组名的悬停里；手机点按组名先显示一句（去哪、用谁的密钥、是否协议转换），略去或受限的各项折在其下一行里，点开才列出。输入框状态、轮次与用量写「经 Latch 网关」；有一轮没经过 Latch 时用琥珀色写明。用不了的服务折成一行，展开后每个写原因（[MODEL-CONFIGURATION.md](./MODEL-CONFIGURATION.md)）。
+- **模型**只写模型。Harness 还没报告的模型写「默认模型」。切换后待发送的模型显示在原控件的「下一条」标签中。能经 Latch 转发的服务都在「Latch 网关」下，每个服务一组，组名只写服务名，实验性的带「实验性」标记；左栏悬停只写名字（全部实验性时「Latch 网关 · 实验性」），请求去哪、协议转换略去什么只在组名的悬停里；手机点按组名先显示一句（去哪、用谁的密钥、是否协议转换），略去或受限的各项折在其下一行里，点开才列出。输入框状态、轮次与用量写「经 Latch 网关」；有一轮没经过 Latch 时用琥珀色写明。用不了的服务折成一行，展开后每个写原因（[MODEL-CONFIGURATION.md](./MODEL-CONFIGURATION.md)）。
 - **服务的健康**：只在不正常时出现，状态点加状态词。会自己过去的（变慢、额度用完、请求过多）是琥珀，真实失败（出错中、密钥无效）是红。由备选服务回答的一轮带中性「备选」徽标，它不是警告。
 - **思考**（[ThinkingControl.tsx](../apps/web/src/composer/ThinkingControl.tsx)）：只列 Harness 或模型声明的档位，Latch 不替没声明的模型编档位；没有值时写「默认」，仍能点开。
 - **权限**：始终显示、始终能点开。开始前来自 `HarnessInfo.permission`，开始后列 Harness 报告的模式（[HARNESSES.md](./HARNESSES.md#权限菜单)）。
@@ -501,7 +501,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 - 桌面默认 Enter 发送、Shift+Enter 换行（「设置 › 通用」可改）；触屏 Enter 换行；⌘/Ctrl+Enter 总是发送；输入法组字时不发送。
 - 只有新会话的草稿有状态行（[ComposerStatus.tsx](../apps/web/src/composer/ComposerStatus.tsx)）：项目名（不写路径）、分支与模型走哪条路。
 
-**会话用量。** 打开的会话在输入框下有一行固定高度的用量（[VitalsStrip.tsx](../apps/web/src/composer/VitalsStrip.tsx)、[vitals.ts](../apps/web/src/composer/vitals.ts)）：轮数与工具步数、运行中一轮的 tok/s（`TurnStats.stream`：只写文字与推理的模型调用的输出 tokens ÷ Harness 自己计的流出时间；目前只有 Codex 报告）、会话 tokens 与缓存命中（缓存读取 ÷ 输入）、上下文环与百分比（80% 起琥珀）。每项只在有来源时出现，没有任何一项时也占住高度；Codex 会话的「用团队分工」在同一行左端，放不下时只留图标；悬停给分项，点 tokens 打开「额度与用量」。手机上留 tokens 与上下文，轮数收进点按。费用与用时在项目弹层，注明由谁报告（[sessionTotals.ts](../apps/web/src/composer/sessionTotals.ts)）。
+**会话用量。** 打开的会话在输入框下有一行固定高度的用量（[VitalsStrip.tsx](../apps/web/src/composer/VitalsStrip.tsx)、[vitals.ts](../apps/web/src/composer/vitals.ts)）：轮数与工具步数、运行中一轮的 tok/s（`TurnStats.stream`：只写文字与推理的模型调用的输出 tokens ÷ Harness 自己计的流出时间；目前只有 Codex 报告）、会话 tokens 与缓存命中（缓存读取 ÷ 输入）、上下文环与百分比（80% 起琥珀）。每项只在有来源时出现，没有任何一项时也占住高度；Codex 会话的「用团队分工」在同一行左端，放不下时只留图标；悬停给分项，点 tokens 打开「额度与用量」。手机上留 tokens 与上下文，轮数收进点按。费用与用时在项目弹层，注明由谁报告（[sessionTotals.ts](../apps/web/src/composer/sessionTotals.ts)）。已结算轮次的计时合计不足一秒时，项目弹层在「轮数」下显示计数。
 
 **额度与用量。** 一个界面、一套组件、一套词（[apps/web/src/usage/](../apps/web/src/usage)）。来源见 [HARNESSES.md](HARNESSES.md#额度) 与 [MODEL-GATEWAY.md](MODEL-GATEWAY.md#用量花费与预算)。
 
@@ -517,7 +517,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 - 模型服务的状态来自打开页面时的模型列表请求（不消耗 tokens），不从是否存了密钥推断。缺密钥与地址未确认是琥珀色，拒绝密钥与连不上是红色。
 - 单价、预算与用量见 [MODEL-CONFIGURATION.md](MODEL-CONFIGURATION.md#单价预算与用量)。
 - Harness：找到了程序但还没有定义的预设只写「已找到」，不画成可用，不用绿色。Latch 不安装任何东西，只给安装命令与「重新检测」。
-- 不隔离的说明出现在 Harness 列表、外部 Harness 的页与添加表单、关于页，文字只在 [securityCopy.ts](../apps/web/src/core/securityCopy.ts)。
+- 添加 Harness 时明确写出「Latch 不隔离它」。已添加的 Harness、项目里的文件夹范围、关于页与扩展页把这条说明放在提示框里。Harness 相关文字见 [securityCopy.ts](../apps/web/src/core/securityCopy.ts)。
 - 「数据」只给有「管理此 Host」且数据范围为「全部」的设备：每种数据一行，保留期是描述，大小在行尾，条目名在悬停里；「审计记录」是分区里的一页（时间、谁、类别三个筛选，一行一条，展开看字段）；「导出全部」只在桌面端，对话框列出导出与不导出的内容（这里留字）。删除的确认文字只在 [deletionCopy.ts](../apps/web/src/deletionCopy.ts)，见 [ARCHITECTURE.md](ARCHITECTURE.md#删除说了什么)。
 
 **插件包界面。** 机制见 [PLUGIN-DEVELOPMENT.md](PLUGIN-DEVELOPMENT.md#应用内的自定义插件资产)。
@@ -727,6 +727,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 **命令面板**（`apps/web/src/palette/`）。
 
 - 危险动作只从它自己的页面执行；缺少权限或 Host 能力的入口不列。
+- 外观、背景、动效和密度的已用选项标「当前」。键盘高亮表示下次回车选择的行。底部状态栏留着命令面板的键位。
 - 进行中、失败与结果不全都明说；只有 Host 答完才写没有结果。
 - Esc 先清空输入，再退回上一层，最后关闭。回车打开看到的那一行，迟到的结果不换掉它；输入法组合期间不触发。
 - 关闭面板或查找条后 500ms 内的 Esc 与按住不放的 Esc，不停止运行、不拒绝请求（[escapeGrace.ts](../apps/web/src/escapeGrace.ts)）。

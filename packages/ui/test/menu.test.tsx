@@ -120,6 +120,31 @@ describe('ValuePicker placement', () => {
 })
 
 describe('value picker', () => {
+  it('keeps the whole accessible description when an option uses markup', async () => {
+    const screen = await render(
+      <ValuePicker
+        label="Harness"
+        value="sample"
+        options={[
+          {
+            value: 'sample',
+            label: 'Sample',
+            description: (
+              <span>
+                <span>/tools/bin/</span>
+                <span>agent</span>
+              </span>
+            ),
+          },
+          { value: 'other', label: 'Other' },
+        ]}
+        onValueChange={() => {}}
+      />,
+    )
+    await screen.getByRole('button', { name: 'Harness：Sample' }).click()
+    await expect.element(screen.getByRole('menuitemradio', { name: 'Sample' })).toHaveAccessibleDescription('/tools/bin/agent')
+  })
+
   it.each(['hidden', 'inert', 'visibility'] as const)('does not open a modal for a request on a %s retained page', async hiddenBy => {
     const picker = (request: number, covered = true) => (
       <div

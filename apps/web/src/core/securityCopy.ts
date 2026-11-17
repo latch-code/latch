@@ -79,10 +79,10 @@ export const SETUP_COPY = {
   /** The add-Harness panel: that Latch does not isolate it stays in sight, what it can reach one press away. */
   agentFullAccess: { label: 'Latch 不隔离它', detail: '它可以读写这台 Mac 上的文件并运行命令。' } satisfies Brief,
   /** 设置 › Harness, a definition's page: what a session started with it is. */
-  externalNote: { label: '外部 Harness，Latch 不隔离', detail: '用它开始的会话由它自己决定执行范围。' } satisfies Brief,
+  externalNote: { label: '外部 Harness', detail: '用它开始的会话由它自己决定执行范围，Latch 不隔离它。' } satisfies Brief,
   /** 设置 › 项目, a project's folders for each Harness. */
   externalFolders: {
-    label: '由各 Harness 自己执行，不隔离',
+    label: '由各 Harness 执行',
     detail: '外部 Harness 的文件夹范围由它自己执行，Latch 不隔离它。',
   } satisfies Brief,
 } as const

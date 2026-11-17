@@ -220,7 +220,7 @@ describe('the composer without a status line', () => {
     }
   })
 
-  it('lays a phone’s input out as one row of chips over ＋, the text and send, with no line under it', async () => {
+  it('keeps a phone’s input full width below the chips and above the send row, with no status line', async () => {
     for (const [width, theme] of [
       [390, 'light'],
       [390, 'dark'],
@@ -245,7 +245,8 @@ describe('the composer without a status line', () => {
           line.locator('.send-button').boundingBox(),
         ])
         expect(chipsBox!.y + chipsBox!.height).toBeLessThanOrEqual(lineBox!.y + 1)
-        expect(inputBox!.x + inputBox!.width).toBeLessThanOrEqual(sendBox!.x + 1)
+        expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(sendBox!.y + 1)
+        expect(inputBox!.width).toBeGreaterThan(lineBox!.width - 20)
         expect(await line.locator('.send-button').getAttribute('aria-label')).toBe('发送')
         await noHorizontalOverflow(page)
         if (width === 390) await shot(page, `phone-composer--390--${theme}`)

@@ -207,7 +207,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       const { sessionId } = await host.bridge.createTask({
         prompt: '打开终端',
         requestId: randomUUID(),
-        mode: 'chat',
+        mode: 'agent',
         model: { providerId: 'e2e-terminal', model: 'e2e' },
       })
       await waitFor(async () => (await host.bridge.detail(sessionId)).summary.status === 'idle')
@@ -515,6 +515,13 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await tabletPanelToggle.click()
       await expect.poll(() => tabletPanelToggle.getAttribute('aria-pressed')).toBe('false')
       await resize(1440)
+      const settledTurn = (await host.bridge.detail(sessionId)).messages.find(message => message.role === 'user')?.turn
+      expect(settledTurn?.activeMs).toBeLessThan(1000)
+      await page.locator('.topbar-crumb-button').filter({ visible: true }).click()
+      const roundCount = page.locator('.crumb-body').locator('.crumb-row').filter({ hasText: '轮数' })
+      await roundCount.getByText('1 轮', { exact: true }).waitFor()
+      await capture(page, 'short-turn-count-1440')
+      await page.keyboard.press('Escape')
 
       // ⌘J from inside the terminal folds the dock.
       await screen.locator('.xterm').click()

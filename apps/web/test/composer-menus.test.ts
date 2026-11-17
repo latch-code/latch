@@ -437,7 +437,7 @@ describe('the keys on the menu titles', () => {
 
 describe('分叉 in the session Harness popover', () => {
   const render = (fork?: Parameters<typeof SessionHarnessControl>[0]['fork']) =>
-    renderToStaticMarkup(createElement(SessionHarnessControl, { harness: codex(), onNewSession() {}, fork }))
+    renderToStaticMarkup(createElement(SessionHarnessControl, { harness: codex(), admin: false, onNewSession() {}, fork }))
 
   it('offers a fork of the latest turn, with the lock on the chip as its tooltip and no line under the row', () => {
     const html = render({ onFork() {} })

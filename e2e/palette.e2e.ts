@@ -52,11 +52,11 @@ it('applies appearance commands locally and reads the same choices back in setti
       await palette.getByRole('searchbox').fill(query)
       const option = palette.getByRole('option', { name: label, exact: true })
       await option.waitFor()
-      if (search) {
-        await search
-        await mkdir(OUTPUT, { recursive: true })
-        await page.screenshot({ path: `${OUTPUT}/appearance-density-1440-light.png`, animations: 'disabled' })
-      }
+      expect(await option.getAttribute('aria-description')).toBeNull()
+      await expect
+        .poll(() => palette.getByRole('group', { name: '命令', exact: true }).getByRole('option').filter({ hasText: '当前' }).count())
+        .toBe(1)
+      if (search) await search
       await option.click()
       await palette.waitFor({ state: 'detached' })
     }
@@ -84,6 +84,24 @@ it('applies appearance commands locally and reads the same choices back in setti
       expect(await choice.getAttribute('aria-checked')).toBe('true')
     }
     await closeSettings(settings)
+    const strip = page.locator('.workbench-connection')
+    await connected(page)
+    const connection = strip.locator('.ui-status-strip-fact').first()
+    await connection.waitFor({ state: 'visible' })
+    await expect.poll(() => connection.textContent()).toMatch(/已连接$/u)
+    await strip.getByText(/⌘.*K/u).waitFor()
+    await page.keyboard.press('Meta+k')
+    await palette.getByRole('searchbox').fill('密度')
+    const standard = palette.getByRole('option', { name: '密度：标准', exact: true })
+    const compact = palette.getByRole('option', { name: '密度：紧凑', exact: true })
+    await expect.poll(() => standard.getAttribute('aria-selected')).toBe('true')
+    expect(await compact.getAttribute('aria-description')).toBe('当前')
+    expect(await compact.getAttribute('aria-selected')).toBe('false')
+    await mkdir(OUTPUT, { recursive: true })
+    await page.screenshot({ path: `${OUTPUT}/appearance-density-1440-light.png`, animations: 'disabled' })
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
+    await palette.waitFor({ state: 'detached' })
     await writeFile(`${OUTPUT}/appearance-non-get.json`, JSON.stringify(nonGet, null, 2))
     expect(nonGet.baseline).toContain(readAttachmentCapabilities)
     expect(nonGet.commands).toContain(readSearch)

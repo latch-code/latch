@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactElement,
   type ReactNode,
   type Ref,
   type RefObject,
@@ -262,7 +263,7 @@ export interface MenuItem {
   id: string
   label: string
   /** One line under the label. */
-  description?: string
+  description?: string | ReactElement
   /** Action menus: a leading 14px glyph. Selection menus put the check in this slot instead. */
   icon?: IconComponent
   /** Right after the label, for example the 默认 small badge. */
@@ -712,7 +713,7 @@ export function Menu({
 export interface PickerOption<T extends string> {
   value: T
   label: string
-  description?: string
+  description?: string | ReactElement
   /** Right after the label, for example the 默认 small badge. */
   tag?: ReactNode
   meta?: ReactNode

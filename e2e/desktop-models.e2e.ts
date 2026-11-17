@@ -12,7 +12,8 @@ import { writeHostState } from '@latch/host/host-state'
 import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
-import { openSection, openSettings } from './helpers/layout.ts'
+import { backToPhoneSessions, openSection, openSession, openSettings, reachable } from './helpers/layout.ts'
+import { homeInput } from './helpers/workbench.ts'
 
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'actual Agent model and reasoning controls',
@@ -98,7 +99,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
     })
     it('reads actual ACP options at three sizes and reconciles a lost response without sending again', async () => {
       const root = await mkdtemp(join(tmpdir(), 'latch-electron-models-')),
-        host = await startTestHost()
+        host = await startTestHost({ hostName: '验收电脑' })
       let application: ElectronApplication | undefined
       try {
         const owner = await host.enroll({ listener: 'unix' })
@@ -210,6 +211,35 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           await page.screenshot({ path: 'test-results/model-controls/agent-' + width + '.png', animations: 'disabled' })
         }
         expect(host.presence.requests.length).toBe(beforePresence)
+        const path = (await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(item => item.id === agent.id)?.bound?.path
+        expect(path).toBeTruthy()
+        for (const width of [1440, 390]) {
+          await application.evaluate(({ BrowserWindow }, value) => {
+            BrowserWindow.getAllWindows()[0]!.setSize(value, 900)
+          }, width)
+          await page.waitForFunction(value => innerWidth === value, width)
+          await openSession(page, sessionId)
+          const showPath = async (state: string, selector: string) => {
+            await page.getByRole('button', { name: 'Harness：配置测试 Harness', exact: true }).filter({ visible: true }).click()
+            const bound = page.locator(selector).filter({ visible: true })
+            await reachable(bound)
+            expect(await bound.getAttribute('title')).toBe(path)
+            for (const colorScheme of ['light', 'dark'] as const) {
+              await page.emulateMedia({ colorScheme })
+              await page.screenshot({
+                path: `test-results/model-controls/harness-${state}--${colorScheme}--${width}.png`,
+                animations: 'disabled',
+                scale: 'css',
+              })
+            }
+            await page.keyboard.press('Escape')
+          }
+          await showPath('session', '.harness-bound-path .middle-ellipsis')
+          if (width === 390) await backToPhoneSessions(page)
+          await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
+          await homeInput(page).waitFor()
+          await showPath('new', ':is(.ui-menu-item-description, .ui-choice-description) .middle-ellipsis')
+        }
       } finally {
         await application?.close()
         await host.close()

@@ -137,6 +137,7 @@
 }
 .ui-choice-text {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
 .ui-choice-label {
@@ -155,6 +156,7 @@
 }
 .ui-choice-notes {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 .ui-choice-description,
 .ui-choice-reason {

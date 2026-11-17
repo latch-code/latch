@@ -246,7 +246,7 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
           <InstallRows preset={preset} />
         </SettingsGroup>
       )}
-      <SettingsGroup title="启动方式" note={FULL_ACCESS_NOTE}>
+      <SettingsGroup title="启动方式" note={<NoteLine icon={ShieldGlyph} brief={SETUP_COPY.agentFullAccess} />}>
         <div className="settings-card-body settings-fields">
           <TextField
             label="名称"
@@ -351,7 +351,6 @@ function DefinitionDialog({
       open={open}
       size="lg"
       title="编辑启动方式"
-      subtitle={SETUP_COPY.externalNote.label}
       onClose={() => {
         if (!busy) onClose()
       }}
@@ -371,6 +370,7 @@ function DefinitionDialog({
         onSubmit={event => {
           void submit(event)
         }}>
+        {FULL_ACCESS_NOTE}
         <TextField
           label="启动命令"
           value={command}

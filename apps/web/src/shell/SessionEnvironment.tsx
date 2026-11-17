@@ -11,7 +11,7 @@ import { errorMessage } from '../core/api.ts'
 import type { ComposerGate } from '../core/permissions.ts'
 import { parseTime, useTicker } from '../core/hostClock.ts'
 import { currentShell, revealLabel, shellFolders } from '../core/shell.ts'
-import { absoluteTime, basename, messageTime, tokenAmount } from '../format.ts'
+import { absoluteTime, basename, formatDuration, messageTime, tokenAmount } from '../format.ts'
 import { folderAccessText, projectFolders } from '../projects.tsx'
 import { projectOf } from '../sessions.ts'
 
@@ -140,7 +140,7 @@ function SessionUsage({
           {cost.text} · {costClause(cost.reporter)}
         </CrumbRow>
       )}
-      {time && <CrumbRow label="用时">{time.text}</CrumbRow>}
+      {time && <CrumbRow label={formatDuration(time.ms) === undefined ? '轮数' : '用时'}>{time.text}</CrumbRow>}
       {created !== undefined && (
         <CrumbRow label="开始于">
           <Tooltip content={absoluteTime(created)}>
