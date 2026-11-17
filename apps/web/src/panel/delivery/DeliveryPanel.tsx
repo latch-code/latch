@@ -34,6 +34,7 @@ import {
   OPERATION_WORD,
   pullReason,
   REASON,
+  repoConfigReason,
   type WriteLimits,
   canPush,
   changedCount,
@@ -175,7 +176,11 @@ function FailureLine({ failure, state }: { failure: DeliveryFailure; state?: Git
       </Line>
     )
   const label =
-    failure.code === 'git-push-failed' && failure.exitCode !== undefined ? `${copy.label} · 退出码 ${failure.exitCode}` : copy.label
+    failure.code === 'git-push-failed' && failure.exitCode !== undefined
+      ? `${copy.label} · 退出码 ${failure.exitCode}`
+      : failure.code === 'git-repo-config' && failure.repoKind
+        ? repoConfigReason(failure.repoKind)
+        : copy.label
   return (
     <Line
       tone={copy.tone === 'failed' ? 'red' : copy.tone === 'warn' ? 'amber' : 'muted'}
@@ -735,7 +740,11 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       {aborting && abortable(state) && (
         <ConfirmDialog
           title={`中止${OPERATION_WORD[abortable(state)!]}？`}
-          message={`回到这次${OPERATION_WORD[abortable(state)!]}开始之前。已解决的冲突和它带来的改动都会丢失，不能撤销。`}
+          message={
+            abortable(state) === 'rebase'
+              ? '回到这次变基开始之前。已解决的冲突、停下的这一步里还没提交的修改和变基带来的改动都会丢失，不能撤销。'
+              : `回到这次${OPERATION_WORD[abortable(state)!]}开始之前。已解决的冲突和它带来的改动都会丢失，不能撤销。`
+          }
           confirmLabel={`中止${OPERATION_WORD[abortable(state)!]}`}
           danger
           onConfirm={async () => {

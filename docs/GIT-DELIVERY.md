@@ -1,5 +1,5 @@
 ---
-description: 交付：会话仓库的状态、按文件、按块与按行暂存与取消暂存、提交记录与基线比较、提交与推送、获取与只快进的拉取、冲突与中止、克隆成新项目，以及经你的 gh 创建或绑定 PR、读检查与评论；Git 进程的种类（受限读写、以你的账户运行的交付、以你的账户运行而不运行仓库代码的获取与克隆）、环境、权限与审计、每个仓库一次一个写入、回执与结果未知、固定的失败原因。
+description: 交付：会话仓库的状态、按文件、按块与按行暂存与取消暂存、提交记录与基线比较、提交与推送、获取与只快进的拉取、冲突与中止、克隆成新项目，以及经你的 gh 创建或绑定 PR、读检查与评论；Git 进程的种类（受限读写、以你的账户运行的交付、以你的账户运行而关掉钩子与 filter 的获取与克隆）、环境、权限与审计、每个仓库一次一个写入、回执与结果未知、固定的失败原因。
 sources:
   - apps/host/src/git-delivery.ts
   - apps/host/src/git-pr.ts
@@ -51,7 +51,7 @@ sources:
 
 ## Git 进程
 
-Host 不运行仓库里的程序，交付除外：读取与多数索引写入用受限的 Git，只有人按下的提交、推送与带 filter 的暂存以你的账户运行 Git。获取与克隆也以你的账户运行（要用你的凭据），但不运行仓库的代码（[不运行仓库代码的你的 Git](#不运行仓库代码的你的-git)）。
+Host 不运行仓库里的程序，交付除外：读取与多数索引写入用受限的 Git，只有人按下的提交、推送与带 filter 的暂存以你的账户运行 Git。获取与克隆也以你的账户运行（要用你的凭据），但钩子与 filter 关掉（[关掉钩子的你的 Git](#关掉钩子的你的-git)）。
 
 ### 受限的 Git
 
@@ -93,14 +93,26 @@ filter 驱动的名单在暂存之前读一次，名单为空就由受限的 Git
 - **钩子名。** `GIT_TRACE2_EVENT` 写到同一个临时文件夹，Host 每 0.5 秒读顶层 Git 的 `child_start`/`child_exit` 事件，得到正在运行与失败的钩子名。
 - **时限。** 提交（含钩子）10 分钟，推送与暂存各 2 分钟；超时向整个进程组发 SIGTERM，5 秒后 SIGKILL。钩子留下的后台进程拿着输出管道时，Git 退出 1 秒后关闭管道，不等它们。
 
-### 不运行仓库代码的你的 Git
+### 关掉钩子的你的 Git
 
-获取（含拉取里的获取）与克隆要用你的凭据，所以与推送同一个运行器、同一个环境（登录 shell、终端的环境、没有提示）；不同的是仓库的代码一样也不运行：
+获取（含拉取里的获取）与克隆要用你的凭据，所以与推送同一个运行器、同一个环境（登录 shell、终端的环境、没有提示）；不同的是钩子、filter、子模块与其他由仓库触发的程序都不运行：
 
 - **钩子。** `-c core.hooksPath=/dev/null`；配置里的钩子先在同一个环境里用你的 Git 列出全部配置（`config --null --name-only --list`），每个名字加 `-c hook.<名>.enabled=false`，形状不认识的同样不运行。
 - **其他程序。** `core.fsmonitor=`、`gc.auto=0`、`maintenance.auto=false`、`submodule.recurse=false`、`fetch.recurseSubmodules=false`、`transfer.bundleURI=false`、`core.alternateRefsCommand=`。
 - **只开一种传输。** profile 之后设 `GIT_ALLOW_PROTOCOL=<传输>`：它盖过任何作用域里的 `protocol.*.allow`（包括仓库配置的 `protocol.ext.allow=always`），所以 `ext::`、`fd::` 与其他远端助手都用不上。传输由 Host 先从地址判断。
-- **凭据。** 你的凭据助手、SSH 配置与代理照常运行，与在终端里相同；Latch 不读取、不保存、不审计凭据，不把地址放进参数或审计。
+- **仓库自己的配置。** 获取与拉取在审计之前用受限的 Git 读一遍配置（`config --null --list --show-scope`）：`local` 或 `worktree` 作用域（含从它们 include 进来的）设了下列任何一项就 409 `git-repo-config`，带种类 `kind`，从不带值：
+  - `program`：`core.sshCommand`、`core.askPass`、`core.gitProxy`、`ssh.variant`
+  - `credential`：`credential.*`
+  - `proxy`：`http.proxy`、`http.<地址>.proxy*`、`remote.<名>.proxy*`
+  - `tls`：`http.*sslVerify`、`sslCAInfo`、`sslCAPath`
+  - `header`：`http.*extraHeader`、`cookieFile`
+  - `rewrite`：`url.*.insteadOf`、`pushInsteadOf`
+
+  你的 Git 启动之前（列出配置钩子之后）再读一次，这时出现的同样拒绝，并记 `git.result`。剩下的窗口：这次读取与你的 Git 自己读配置之间的片刻，回合中的 Agent 在这之间写进去的仍会生效。
+- **你的全局配置照常生效。** 同样的设置写在你的全局或系统配置里时，获取照常使用（凭据助手、SSH、代理），与在终端里相同。Latch 不读取、不保存、不审计凭据，不把地址放进参数或审计。
+- **克隆。** 新文件夹在克隆之前没有仓库配置；克隆写下的 `.git/config` 只有 Git 自己从参数生成的远端与分支，远端仓库的配置不会传过来。检出时工作区里的 `.gitattributes` 能点名的 filter 都已置空，`.gitmodules` 不递归。
+
+**推送与获取的区别。** 推送是交付的例外：它运行仓库的钩子与认证程序（凭据助手、`core.sshCommand`，包括仓库自己配置里的），与在终端里推送相同。获取与拉取两者都不运行，仓库自己的配置设了认证程序或改变凭据去向的设置时拒绝。
 
 ## 权限
 
@@ -262,8 +274,9 @@ Git 会把换行转成 LF 的文件（`text`、`eol` 属性或 `core.autocrlf`�
 请求 `{ requestId }`，不接受远端名或地址；成功回答 `{ remote, fetchedAt }`。重复安全，没有回执。从不在后台获取：只有人按下才获取。
 
 - **哪个远端。** 有上游时是上游的远端；没有时是推送会去的远端（同「推送」的规则）；分离 HEAD 时是 `origin`。都没有 409 `git-no-remote`。
-- **先看配置，什么也不连接。** 受限的 Git 读出地址：只有一个，且是 `https`、`http`、`ssh`（`ssh://` 或 `user@host:path`）或本机路径（`file://`）；`git://`（它的 `core.gitProxy` 是程序）、远端助手（`<名>::`、`remote.<名>.vcs`）与不认识的形式都是 409 `git-remote-form`。获取规则（`remote.<名>.fetch`）只能写 `refs/remotes/` 与 `refs/tags/`，写本地分支的同样 409。
-- **审计**之后以[不运行仓库代码的你的 Git](#不运行仓库代码的你的-git) 运行 `fetch --upload-pack=git-upload-pack --no-auto-maintenance --no-recurse-submodules --no-write-commit-graph --end-of-options <远端>`。经本机路径时 `remote.<名>.uploadpack` 是在这里运行的程序，`--upload-pack` 盖过配置里的（`-c` 不行：Git 取配置的第一个）。
+- **先看配置，什么也不连接。** 受限的 Git 读出地址：只有一个，且是 `https`、`ssh`（`ssh://` 或 `user@host:path`）、本机路径（`file://`），或指向这台电脑（`localhost`、`127.*`、`[::1]`）的 `http`；其他主机的明文 `http`、`git://`（它的 `core.gitProxy` 是程序）、远端助手（`<名>::`、`remote.<名>.vcs`）与不认识的形式都是 409 `git-remote-form`。获取规则（`remote.<名>.fetch`）只能写 `refs/remotes/` 与 `refs/tags/`，写本地分支的同样 409。
+- **仓库自己的配置**设了认证程序或改变凭据去向的设置：409 `git-repo-config`（见上）。
+- **审计**之后以[关掉钩子的你的 Git](#关掉钩子的你的-git) 运行 `fetch --upload-pack=git-upload-pack --no-auto-maintenance --no-recurse-submodules --no-write-commit-graph --end-of-options <远端>`。经本机路径时 `remote.<名>.uploadpack` 是在这里运行的程序，`--upload-pack` 盖过配置里的（`-c` 不行：Git 取配置的第一个）。
 - **时间。** `fetchedAt` 是 `FETCH_HEAD` 的时间，也是状态里落后数的测量时间。
 - **失败**（都是 422，超时 504）：`git-fetch-auth`、`git-fetch-host-key`、`git-fetch-unreachable`、`git-fetch-timeout`（2 分钟）、`git-fetch-failed`，原始输出不给客户端。
 - 不改工作区：回合运行中、合并或变基进行中也可以。
@@ -295,8 +308,8 @@ Git 会把换行转成 LF 的文件（`text`、`eol` 属性或 `core.autocrlf`�
 
 - **谁能克隆。** 与添加项目同一条路：`host.sock` 上 `admin` 的桌面端；主进程取一次性 nonce，用设备密钥签名 `{ nonce, via: 'clone', url, parent }`，页面自己请求这条路由时桌面代理拒绝。进度与取消（`GET`/`POST …/clone/:id`）只给开始它的设备。
 - **地址。** 只收 `https://主机[:端口]/路径`、`ssh://[用户@]主机[:端口]/路径` 与 `[用户@]主机:路径`。本机路径、`file://`、`git://`、`http://`、`ext::` 与其他远端助手、选项形状（以 `-` 开头）、查询、片段、`..` 段、空白与控制字符都是 400 `clone-url-invalid`。带凭据的地址（https 里任何用户名，那是放令牌的地方；ssh 里的密码）是 400 `clone-url-credentials`。错误信息从不复述地址。
-- **文件夹。** 名字取地址的最后一段（去掉 `.git`），不合格是 400 `clone-name-invalid`。Host 在所选文件夹的真实路径里以非递归的 `mkdir` 新建它：已存在 409 `clone-folder-exists`，从不沿用。新文件夹先过项目的[文件夹规则](ARCHITECTURE.md#文件夹规则)，不通过时删掉它，什么也不运行。
-- **审计** `git.clone`（传输，以及地址、主机与新文件夹路径的哈希）之后，才以[不运行仓库代码的你的 Git](#不运行仓库代码的你的-git) 在新文件夹里运行 `clone --template= --progress --no-recurse-submodules -- <地址> .`：没有模板（不从你的模板目录复制钩子），配置里的每个 filter 驱动置空且非必需（用 Git LFS 的仓库得到指针文件，之后在终端里 `git lfs pull`），只开地址的那一种传输，`GIT_CEILING_DIRECTORIES` 让外层文件夹的仓库配置不起作用。
+- **文件夹。** 名字取地址的最后一段（去掉 `.git`），不合格是 400 `clone-name-invalid`。已存在时 409 `clone-folder-exists`，从不沿用。之后先写审计 `git.clone`（传输，以及地址、主机与新文件夹路径的哈希），再在所选文件夹的真实路径里以非递归的 `mkdir` 新建它，Host 在这之间停止也不会留下没有记录的文件夹；新文件夹过项目的[文件夹规则](ARCHITECTURE.md#文件夹规则)，不通过时删掉它并记 `git.clone.result`（`clone-folder-refused`），什么也不运行。
+- 然后以[关掉钩子的你的 Git](#关掉钩子的你的-git) 在新文件夹里运行 `clone --template= --progress --no-recurse-submodules -- <地址> .`：没有模板（不从你的模板目录复制钩子），配置里的每个 filter 驱动置空且非必需（用 Git LFS 的仓库得到指针文件，之后在终端里 `git lfs pull`），只开地址的那一种传输，`GIT_CEILING_DIRECTORIES` 让外层文件夹的仓库配置不起作用。
 - **进度与取消。** 进度来自 Git 的标准错误（阶段与百分比）。取消向整个进程组发 SIGTERM，5 秒后 SIGKILL，等它退出，再删除那个文件夹：只在它仍是 Host 新建的那一个（同一个设备号与 inode）时删除，别的什么也不删。失败与超时（60 分钟）同样删除。Host 停止时取消所有克隆。
 - **成为项目。** 成功后经与添加项目相同的检查与审计（`workspace.added`，`via: 'clone'`）加为项目；加不进去时文件夹保留，状态是 `done` 与 `notAdded`。之后 `git.clone.result` 记结果（`done`、`failed`、`cancelled`，固定原因，是否删除了文件夹）。
 - 一次只克隆一个（409 `clone-busy`）；安装更新等它结束。
@@ -465,9 +478,9 @@ PR 只做 GitHub，只经你的 `gh`（GitHub CLI）；其他平台尚未实现�
 **同步、冲突与不可用的原因**（Host 有 `gitSync` 时）：
 
 - 远端那一行下面是「获取」与「拉取」；落后时拉取写「拉取 N 个提交」。行上的领先落后写着获取的时间（「5 分钟前获取」），没有获取过就不写落后数。
-- 用不了的按钮停用，悬停写原因，各处同一套措辞（`model.ts` 的 `REASON`）：不在线、没有权限、只读、另一个交付操作正在进行、Agent 正在改这个文件夹（拉取与中止）、没有远端、不在任何分支上、没有上游、还没有获取过、与上游已分叉、合并等进行中、配置了 filter 或合并驱动。
+- 用不了的按钮停用，悬停写原因，各处同一套措辞（`model.ts` 的 `REASON`）：不在线、没有权限、只读、另一个交付操作正在进行、Agent 正在改这个文件夹（拉取与中止）、没有远端、不在任何分支上、没有上游、还没有获取过、与上游已分叉、合并等进行中、配置了 filter 或合并驱动、仓库配置里有获取不使用的设置（写出种类）。
 - 分叉时是一张琥珀色的卡：领先与落后数，「交给 Agent」把整合的请求（合并还是变基先问人、不强制推送）放进输入框草稿，不发送；「保持原样」收起它，直到数目变化。
-- 合并、变基、拣选或还原进行中是一张卡：有冲突时写文件数，「交给 Agent 解决」把冲突文件清单（围栏比路径里最长的反引号多一个）和完成这次操作的命令放进草稿；「中止合并」等先弹确认（说明不能撤销），确认后才发请求。
+- 合并、变基、拣选或还原进行中是一张卡：有冲突时写文件数，「交给 Agent 解决」把冲突文件清单（围栏比路径里最长的反引号多一个）和完成这次操作的命令放进草稿；「中止合并」等先弹确认（说明不能撤销；变基另说停下那一步里没提交的修改也会丢失），确认后才发请求。
 - 获取、拉取与中止没有回执：没有答复时写「没有收到答复，已重新读取仓库」，读回的状态说明了结果。
 - 「设置 › 项目」的「克隆仓库」在桌面端的原生面板选位置，之后那一行显示阶段与百分比和「取消」；完成后列表里出现新项目，失败写固定原因，细节在悬停里。
 

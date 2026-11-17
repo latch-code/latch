@@ -42,6 +42,7 @@ export const RESULT_CODES = [
   'git-pull-local-changes',
   'git-pull-failed',
   'git-abort-failed',
+  'git-repo-config',
 ] as const
 /** Why a clone did not become a project. */
 export const CLONE_CODES = [
@@ -53,6 +54,8 @@ export const CLONE_CODES = [
   'clone-failed',
   'clone-cancelled',
   'clone-not-added',
+  'clone-folder-exists',
+  'clone-folder-refused',
 ] as const
 const remoteVia = z.enum(['upstream', 'push-remote', 'origin'])
 /** The one transport your Git was let use. */

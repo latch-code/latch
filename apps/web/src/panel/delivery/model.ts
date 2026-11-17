@@ -14,6 +14,7 @@ import type {
   GitPullRequest,
   GitReviewDecision,
   GitReviewState,
+  GitRepoConfigKind,
 } from '@latch/protocol'
 
 export type DeliveryStep = 'stage' | 'commit' | 'push' | 'pr' | 'done'
@@ -144,6 +145,8 @@ export interface FailureDetails {
   /** `git-pull-diverged`: the branch's own commits and the upstream's. */
   ahead?: number
   behind?: number
+  /** `git-repo-config`: the kind of setting. */
+  repoKind?: GitRepoConfigKind
 }
 
 export function failureDetails(details: Readonly<Record<string, unknown>>): FailureDetails {
@@ -163,6 +166,7 @@ export function failureDetails(details: Readonly<Record<string, unknown>>): Fail
   if (typeof details.remoteSha === 'string') out.remoteSha = details.remoteSha
   if (typeof details.ahead === 'number') out.ahead = details.ahead
   if (typeof details.behind === 'number') out.behind = details.behind
+  if (typeof details.kind === 'string' && details.kind in REPO_CONFIG_WORD) out.repoKind = details.kind as GitRepoConfigKind
   return out
 }
 
@@ -277,7 +281,7 @@ export function failureCopy(code: string, operation?: GitOperation): FailureCopy
       return {
         label: '这个远端不能在这里获取',
         tone: 'neutral',
-        detail: '只经 https、http、ssh 或本机路径获取，获取规则只写远端跟踪分支与标签。在终端里获取。',
+        detail: '只经 https、ssh、本机路径或这台电脑上的 http 获取，获取规则只写远端跟踪分支与标签。在终端里获取。',
       }
     case 'git-fetch-auth':
       return { label: '远端不接受凭据', tone: 'failed', detail: '在终端里检查这个仓库的登录或 SSH 密钥。' }
@@ -289,6 +293,13 @@ export function failureCopy(code: string, operation?: GitOperation): FailureCopy
       return { label: '获取超时', tone: 'failed' }
     case 'git-fetch-failed':
       return { label: '获取失败', tone: 'failed' }
+    case 'git-repo-config':
+      return {
+        label: REASON.repoConfig,
+        tone: 'warn',
+        detail:
+          '仓库自己的 .git/config 里有获取时会运行的程序、凭据、代理、证书校验、请求头或地址改写设置。获取与拉取不使用它们；在终端里获取，或去掉这些设置。',
+      }
     case 'git-pull-diverged':
       return { label: REASON.diverged, tone: 'warn' }
     case 'git-pull-local-changes':
@@ -507,9 +518,24 @@ export const REASON = {
   upToDate: '已是最新',
   ghLoggedOut: 'gh 未登录',
   ghMissing: '没有 gh',
+  repoConfig: '仓库配置里有获取不使用的设置',
 } as const
 
-export function operationReason(operation: GitOperation): string {
+/** The kind of setting, for the hover: never its value. */
+export const REPO_CONFIG_WORD: Record<GitRepoConfigKind, string> = {
+  program: '会运行程序的设置',
+  credential: '凭据设置',
+  proxy: '代理设置',
+  tls: '证书校验设置',
+  header: '附加请求头或 Cookie',
+  rewrite: '地址改写（insteadOf）',
+}
+
+export function repoConfigReason(kind: GitRepoConfigKind): string {
+  return `仓库配置里有${REPO_CONFIG_WORD[kind]}`
+}
+
+function operationReason(operation: GitOperation): string {
   return `${OPERATION_WORD[operation]}进行中`
 }
 
@@ -538,7 +564,10 @@ export function diverged(state: Pick<GitDeliveryState, 'upstream' | 'ahead' | 'b
 
 /** Why 获取 is off, or undefined when it may be pressed. A fetch changes only refs: a turn or an operation does not stop it. */
 export function fetchReason(state: GitDeliveryState, limits: WriteLimits): string | undefined {
-  return limitReason(limits, false) ?? (!state.remote && !state.upstream ? REASON.noRemote : undefined)
+  return (
+    limitReason(limits, false)
+    ?? (!state.remote && !state.upstream ? REASON.noRemote : state.repoConfig ? repoConfigReason(state.repoConfig) : undefined)
+  )
 }
 
 /**
@@ -553,6 +582,7 @@ export function pullReason(state: GitDeliveryState, limits: WriteLimits): string
   if (!state.remote && !state.upstream) return REASON.noRemote
   if (!state.upstream) return REASON.noUpstream
   if (state.filters) return REASON.drivers
+  if (state.repoConfig) return repoConfigReason(state.repoConfig)
   if (!state.fetchedAt) return REASON.notFetched
   if (diverged(state)) return REASON.diverged
   return undefined

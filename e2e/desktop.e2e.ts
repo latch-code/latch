@@ -40,6 +40,7 @@ interface PageShell {
     reveal(projectId: unknown, folderId?: string | null): Promise<unknown>
     revealAgentHome(agentId: unknown): Promise<unknown>
     saveSessionFolder(sessionId: unknown): Promise<unknown>
+    clone(url: unknown): Promise<unknown>
   }
 }
 
@@ -422,7 +423,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         devMode: true,
         platform: 'darwin',
         previews: { protocolVersion: 1, htmlScripts: true },
-        folders: ['protocolVersion', 'pick', 'drop', 'reveal', 'revealAgentHome', 'saveSessionFolder'],
+        folders: ['protocolVersion', 'pick', 'drop', 'reveal', 'revealAgentHome', 'saveSessionFolder', 'clone'],
         openInBrowser: 'function',
         copyComputerLink: 'function',
         lifecycle: { get: 'function', setLoginItem: 'function', setKeepAwake: 'function', restartHost: 'function', subscribe: 'function' },
@@ -1229,6 +1230,35 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await reveal('../etc')).toEqual({ status: 'failed', code: 'invalid' })
       expect(await reveal(42)).toEqual({ status: 'failed', code: 'invalid' })
       expect((await folderRecord()).shown).toEqual([await realpath(picked), await realpath(pickedDocs)])
+
+      // 克隆 rides the same path: main shows the address in the panel, signs it with the folder the panel chose, and the
+      // Host checks both before any Git runs. Neither address below reaches a network: one is refused for its credentials,
+      // the other names a folder that is there already.
+      const clone = (url: unknown) =>
+        page.evaluate(target => {
+          const shell: PageShell = Reflect.get(globalThis, 'latchShell')
+          return shell.folders.clone(target)
+        }, url)
+      const panels = (await folderRecord()).panels.length
+      await application.evaluate(
+        ({ dialog }, parent) => {
+          dialog.showOpenDialog = async (...args: unknown[]) => {
+            const record: FolderRecord = Reflect.get(globalThis, 'folderRecord')
+            record.panels.push(args.at(-1))
+            return { canceled: false, filePaths: [parent] }
+          }
+        },
+        join(root, 'projects'),
+      )
+      expect(await clone('https://token@example.invalid/acme/widgets.git')).toEqual({ status: 'failed', code: 'clone-url-credentials' })
+      expect(await clone('ssh://git@example.invalid/acme/picked-project.git')).toEqual({ status: 'failed', code: 'clone-folder-exists' })
+      expect(await clone('ext::sh -c touch')).toEqual({ status: 'failed', code: 'clone-url-invalid' })
+      expect((await folderRecord()).panels.slice(panels)).toEqual([
+        expect.objectContaining({ title: '克隆到', buttonLabel: '克隆到这里', properties: ['openDirectory', 'createDirectory'] }),
+        expect.objectContaining({ title: '克隆到' }),
+      ])
+      // The page cannot start one itself: the route is main's.
+      expect(await page.evaluate(async () => (await fetch('/link/api/workspaces/clone', { method: 'POST', body: '{}' })).status)).toBe(403)
 
       // A helper home is revealed by its owner ID only; it never becomes a public project through this bridge.
       const homeAgent = await helper.json<{ id: string }>('custom-agents', {

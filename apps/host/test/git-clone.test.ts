@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -9,6 +9,7 @@ import { AppError } from '@latch/sdk'
 import { findGit } from '../src/changes/git.ts'
 import { GitClones, parseCloneUrl, progressOf, type CloneHooks } from '../src/git-clone.ts'
 import { RepositoryHolds } from '../src/git-delivery.ts'
+import { configHookGit } from './helpers/config-hooks.ts'
 import { installFakeSsh } from './helpers/fake-ssh.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -107,7 +108,7 @@ describe('clone addresses', () => {
  * the clone goes through the ssh transport exactly as it would to a host, without a network. Hooks, a template and a
  * filter in your configuration write a marker if they ever run.
  */
-async function fixture() {
+async function fixture(options: { git?: string } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-git-clone-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const home = join(root, 'home'),
@@ -149,7 +150,9 @@ async function fixture() {
   await chmod(join(home, 'hooks', 'post-checkout'), 0o755)
   gitIn(home, 'config', '--global', 'init.templateDir', template)
   gitIn(home, 'config', '--global', 'core.hooksPath', join(home, 'hooks'))
-  gitIn(home, 'config', '--global', 'hook.mark.command', join(home, 'hooks', 'post-checkout'))
+  await writeFile(join(home, 'config-hook'), mark('config-post-checkout'))
+  await chmod(join(home, 'config-hook'), 0o755)
+  gitIn(home, 'config', '--global', 'hook.mark.command', join(home, 'config-hook'))
   gitIn(home, 'config', '--global', 'hook.mark.event', 'post-checkout')
   gitIn(home, 'config', '--global', 'filter.mark.smudge', `sh -c 'echo ran >> ${join(marks, 'smudge')}; cat'`)
   gitIn(home, 'config', '--global', 'filter.mark.clean', 'cat')
@@ -174,6 +177,7 @@ async function fixture() {
     ...overrides,
   })
   const clones = new GitClones({
+    ...(options.git ? { git: options.git } : {}),
     holds: new RepositoryHolds(),
     hostEnv: { HOME: home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: root },
     shell: fake.shell,
@@ -249,6 +253,33 @@ describe('clone', () => {
     expect(existsSync(folder)).toBe(false)
   })
 
+  for (const swap of ['directory', 'link'] as const)
+    it(`deletes nothing when the folder it made was swapped for a ${swap} during the clone`, SLOW, async () => {
+      const f = await fixture()
+      await writeFile(f.hang, '')
+      const started = await f.clones.start({
+        deviceId: 'dev_test',
+        address: parseCloneUrl('git@example.test:remote.git'),
+        parent: f.parent,
+        hooks: f.hooks(),
+      })
+      await expect.poll(async () => existsSync(join(f.marks, 'ssh-calls')), { timeout: 10_000 }).toBe(true)
+      const folder = join(f.parent, 'remote')
+      // Someone else's folder now stands where the clone's was.
+      await rename(folder, join(f.root, 'moved-away'))
+      const elsewhere = join(f.root, 'elsewhere')
+      await mkdir(elsewhere)
+      await writeFile(join(elsewhere, 'keep.txt'), 'keep\n')
+      if (swap === 'directory') {
+        await mkdir(folder)
+        await writeFile(join(folder, 'keep.txt'), 'keep\n')
+      } else await symlink(elsewhere, folder)
+      expect(await f.clones.cancel('dev_test', started.id)).toMatchObject({ state: 'cancelled' })
+      expect(await readFile(join(folder, 'keep.txt'), 'utf8')).toBe('keep\n')
+      expect(await readFile(join(elsewhere, 'keep.txt'), 'utf8')).toBe('keep\n')
+      expect(f.results).toEqual([{ cloneHash: expect.any(String), outcome: 'cancelled', code: 'clone-cancelled', removed: false }])
+    })
+
   it('never takes a folder that exists, and runs nothing when the check or the audit refuses', SLOW, async () => {
     const f = await fixture()
     await mkdir(join(f.parent, 'remote'))
@@ -308,5 +339,29 @@ describe('clone', () => {
       f.clones.start({ deviceId: 'dev_test', address: parseCloneUrl('git@example.test:other.git'), parent: f.parent, hooks: f.hooks() }),
     ).rejects.toMatchObject({ code: 'clone-busy' })
     await f.clones.cancel('dev_test', first.id)
+  })
+})
+
+const hookGit = configHookGit()
+describe.skipIf(!hookGit)('clone with hooks from configuration (Git 2.54 and later)', () => {
+  it('runs none of your configured hooks, which this Git otherwise runs on a clone', SLOW, async () => {
+    const f = await fixture({ git: hookGit! })
+    // The fixture's global `hook.mark` runs on post-checkout with this Git: a plain clone sets it off.
+    const plain = join(f.root, 'plain')
+    execFileSync(hookGit!, ['-c', 'protocol.file.allow=always', 'clone', '-q', join(f.root, 'served', 'remote.git'), plain], {
+      env: { HOME: f.home, PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1' },
+      stdio: 'ignore',
+    })
+    expect(await f.marked()).toContain('config-post-checkout')
+    await rm(f.marks, { recursive: true, force: true })
+    await mkdir(f.marks)
+    const started = await f.clones.start({
+      deviceId: 'dev_test',
+      address: parseCloneUrl('git@example.test:remote.git'),
+      parent: f.parent,
+      hooks: f.hooks(),
+    })
+    expect(await f.settled(started)).toMatchObject({ state: 'done' })
+    expect(await f.marked()).toEqual([])
   })
 })

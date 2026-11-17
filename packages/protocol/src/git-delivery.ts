@@ -48,7 +48,10 @@ export interface GitDeliveryState {
   conflicted: string[]
   /** Entries left out past 2,000 in all. */
   more?: number
-  /** Merge, rebase, cherry-pick or revert under way: every write is refused until it is finished in the terminal. */
+  /**
+   * Merge, rebase, cherry-pick or revert under way: every write but a fetch, a pull request and `abort` is refused until it
+   * is finished (in the terminal) or aborted.
+   */
   gitOperation?: GitOperation
   running?: GitDeliveryRunning
   /** Executable hooks Git would run here, by name (from `core.hooksPath` or the Git directory's `hooks/`). */
@@ -57,7 +60,15 @@ export interface GitDeliveryState {
   filters: boolean
   /** The remote a push goes to: the upstream's, else `origin`; absent when there is neither. */
   remote?: string
+  /**
+   * The repository's own configuration sets something a fetch would run or send credentials through (this kind of
+   * setting, never its value): 获取 and 拉取 are refused (409 `git-repo-config`) until it is removed.
+   */
+  repoConfig?: GitRepoConfigKind
 }
+
+/** A kind of setting in a repository's own configuration that makes 获取 and 拉取 refuse it. */
+export type GitRepoConfigKind = 'program' | 'credential' | 'proxy' | 'tls' | 'header' | 'rewrite'
 
 export interface GitStageResult {
   files: number
@@ -243,6 +254,7 @@ export type GitDeliveryError =
   | 'git-receipt-unsaved'
   | 'git-failed'
   | 'git-no-upstream'
+  | 'git-repo-config'
   | 'git-remote-form'
   | 'git-fetch-auth'
   | 'git-fetch-host-key'

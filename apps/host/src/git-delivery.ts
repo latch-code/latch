@@ -16,6 +16,7 @@ import type {
   GitFetchResult,
   GitOperation,
   GitPullResult,
+  GitRepoConfigKind,
   GitCommitDiff,
   GitCommitFileDiff,
   GitCommitResult,
@@ -425,6 +426,39 @@ export function remoteProblem(stderr: string): 'host-key' | 'auth' | 'unreachabl
   return undefined
 }
 
+const REPO_CONFIG_WORD: Readonly<Record<GitRepoConfigKind, string>> = {
+  program: '会运行程序的设置（如 core.sshCommand、core.askPass）',
+  credential: '凭据设置（credential.*）',
+  proxy: '代理设置',
+  tls: '证书校验设置',
+  header: '附加请求头或 Cookie 设置',
+  rewrite: '地址改写设置（insteadOf）',
+}
+
+/**
+ * 获取 and 拉取 run none of the repository's own programs: a repository whose own configuration sets one, or something
+ * that changes where its credentials go, is refused. Your global configuration is yours and applies as it does in a
+ * terminal. The refusal names the kind of setting, never its value.
+ */
+function assertQuietConfig(config: RepositoryConfig): void {
+  if (!config.fetchUnsafe) return
+  throw refuse(
+    'git-repo-config',
+    `仓库自己的配置里有${REPO_CONFIG_WORD[config.fetchUnsafe]}，没有获取。在终端里获取，或从 .git/config 去掉它。`,
+    { kind: config.fetchUnsafe },
+  )
+}
+
+/** An http address to this computer itself. */
+function loopbackUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname
+    return host === 'localhost' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/u.test(host)
+  } catch {
+    return false
+  }
+}
+
 /**
  * The transport a remote's URL (as `ls-remote --get-url` resolves it, `insteadOf` applied) uses, when it is one your Git
  * may fetch over here: `https`, `http`, `ssh` (`ssh://` or `user@host:path`) or `file` (a path or `file://`). Anything
@@ -637,6 +671,7 @@ export class GitDelivery {
         hooks,
         filters: config.drivers.length > 0,
         ...(remote && REMOTE_NAME.test(remote) ? { remote } : {}),
+        ...(config.fetchUnsafe ? { repoConfig: config.fetchUnsafe } : {}),
       }
     } catch (error) {
       if (error instanceof GitError) throw gitFailed()
@@ -1460,6 +1495,7 @@ export class GitDelivery {
       return this.hold(caller, layout, 'fetch', input.requestId, async (running, common) => {
         const config = await this.config(layout)
         const plan = await this.fetchPlan(layout, config)
+        assertQuietConfig(config)
         await caller.authorize('fetch')
         await caller.audit({ action: 'git.fetch', detail: this.fetchDetail(caller, input.requestId, plan) })
         const fetchedAt = await this.quietFetch(caller, layout, running, common, plan, 'fetch')
@@ -1483,6 +1519,7 @@ export class GitDelivery {
         if (!config.upstream) throw refuse('git-no-upstream', '这个分支没有上游，没有可以拉取的。')
         await this.assertNoDrivers(layout, config)
         const plan = await this.fetchPlan(layout, config)
+        assertQuietConfig(config)
         const preHead = await git.commit(layout, 'HEAD').catch(() => undefined)
         await caller.authorize('pull')
         await caller.audit({
@@ -1687,7 +1724,9 @@ export class GitDelivery {
     } catch {
       throw gitFailed()
     }
-    const transport = url.length === 1 ? transportOf(url[0]!) : undefined
+    const found = url.length === 1 ? transportOf(url[0]!) : undefined
+    // Plain http sends whatever a server asks for in the clear; only to this computer.
+    const transport = found === 'http' && !loopbackUrl(url[0]!) ? undefined : found
     const local = (spec: string) => {
       if (spec.startsWith('^')) return true
       const colon = spec.indexOf(':')
@@ -1736,6 +1775,14 @@ export class GitDelivery {
       if (listing.timedOut || listing.code !== 0) throw new GitError('failed')
       hooksOff = configHookArgs(listing.stdout.toString('utf8'))
     } catch {
+      throw await failed('git-fetch-failed', new AppError(422, 'git-fetch-failed', '读不出 Git 的配置，没有获取。'))
+    }
+    // Read again right before your Git starts: a turn in the folder may have written the repository's configuration
+    // since the plan. What remains is the moment between this read and your Git reading it.
+    try {
+      assertQuietConfig(await this.config(layout))
+    } catch (error) {
+      if (error instanceof AppError && error.code === 'git-repo-config') throw await failed('git-repo-config', error)
       throw await failed('git-fetch-failed', new AppError(422, 'git-fetch-failed', '读不出 Git 的配置，没有获取。'))
     }
     const outcome = await this.runAs(
@@ -2208,6 +2255,8 @@ export async function runAsYou(input: {
   env?: Record<string, string>
   /** Git's standard error as it comes, for its progress lines. */
   onStderr?: (chunk: Buffer) => void
+  /** The process group has started: a stop asked for before it existed is carried out now. */
+  onSpawn?: (pid: number) => void
 }): Promise<Outcome> {
   const { program, binary, running } = input
   const folder = await mkdtemp(join(tmpdir(), 'latch-git-'))
@@ -2255,6 +2304,7 @@ export async function runAsYou(input: {
         detached: true,
       })
       running.pid = child.pid
+      if (child.pid) input.onSpawn?.(child.pid)
       const output = new Tail(TAIL_LIMIT),
         // `gh` answers in JSON, read whole; Git's output is only classified.
         stdout = new Tail(program === 'gh' ? 8 * 1024 * 1024 : 256 * 1024),

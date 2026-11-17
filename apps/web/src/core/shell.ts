@@ -33,7 +33,7 @@ export interface ShellFolders {
 }
 
 /** What asking main to clone came to: the clone under way, or why it did not start. */
-export type CloneStart =
+type CloneStart =
   | { status: 'cloning'; id: string; name: string }
   | { status: 'canceled' }
   | { status: 'busy' }

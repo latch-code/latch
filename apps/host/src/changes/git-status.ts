@@ -5,7 +5,7 @@
 import { constants } from 'node:fs'
 import { access, lstat, readdir, stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import { escapeSecurityText, type GitDeliveryFile, type GitFileStatus } from '@latch/protocol'
+import { escapeSecurityText, type GitDeliveryFile, type GitFileStatus, type GitRepoConfigKind } from '@latch/protocol'
 import { redactSecrets, sha256Hex } from '@latch/core/node-kit'
 import type { GitLayout } from '../branch-reader.ts'
 import { codeOf } from '../http-util.ts'
@@ -63,6 +63,27 @@ export interface RepositoryConfig {
   configuredUpstream?: { remote?: string; ref?: string }
   /** Where a push goes instead of the upstream's remote: `branch.<branch>.pushRemote`, else `remote.pushDefault`. */
   pushRemote?: string
+  /**
+   * The first kind of setting the repository's own configuration (`local` or `worktree` scope, includes from them too)
+   * gives that would run a program or change where credentials go during a fetch: 获取 and 拉取 refuse it.
+   */
+  fetchUnsafe?: GitRepoConfigKind
+}
+
+/**
+ * Settings of the repository's own configuration a fetch would act on: programs it runs (`program`), credentials
+ * (`credential`), a proxy (`proxy`), what TLS trusts (`tls`), headers and cookies it sends (`header`), and address
+ * rewrites (`rewrite`). Keys as `config --list` prints them: section and name lower-cased.
+ */
+export function fetchUnsafeKind(key: string): GitRepoConfigKind | undefined {
+  const lower = key.toLowerCase()
+  if (/^(?:core\.(?:sshcommand|askpass|gitproxy)|ssh\.variant)$/u.test(lower)) return 'program'
+  if (lower.startsWith('credential.')) return 'credential'
+  if (/^(?:http\.(?:[\s\S]*\.)?proxy[a-z]*|remote\.[\s\S]+\.proxy[a-z]*)$/u.test(lower)) return 'proxy'
+  if (/^http\.(?:[\s\S]*\.)?(?:sslverify|sslcainfo|sslcapath)$/u.test(lower)) return 'tls'
+  if (/^http\.(?:[\s\S]*\.)?(?:extraheader|cookiefile)$/u.test(lower)) return 'header'
+  if (/^url\.[\s\S]+\.(?:insteadof|pushinsteadof)$/u.test(lower)) return 'rewrite'
+  return undefined
 }
 
 /** Every filter driver emptied and made optional for one Git process, through the environment's configuration. */
@@ -91,6 +112,7 @@ export async function readRepositoryConfig(git: GitReader, layout: GitLayout): P
   const drivers = new Set<string>(),
     remotes = new Set<string>()
   const values = new Map<string, string>()
+  let fetchUnsafe: GitRepoConfigKind | undefined
   const fields = out.toString('utf8').split('\0')
   // `--show-scope --null`: the scope, then `key\nvalue`. The restricted runner's own `-c` options are the command scope.
   for (let at = 0; at + 1 < fields.length; at += 2) {
@@ -100,6 +122,8 @@ export async function readRepositoryConfig(git: GitReader, layout: GitLayout): P
     const newline = record.indexOf('\n')
     const key = newline < 0 ? record : record.slice(0, newline),
       value = newline < 0 ? 'true' : record.slice(newline + 1)
+    // An entry included from the repository's configuration carries the scope of the file that included it.
+    if ((scope === 'local' || scope === 'worktree') && fetchUnsafe === undefined) fetchUnsafe = fetchUnsafeKind(key)
     const filter = /^filter\.([\s\S]+)\.(?:clean|smudge|process|required)$/u.exec(key)
     if (filter) drivers.add(filter[1]!)
     const remote = /^remote\.([\s\S]+)\.url$/u.exec(key)
@@ -120,6 +144,7 @@ export async function readRepositoryConfig(git: GitReader, layout: GitLayout): P
       ? { configuredUpstream: { ...(remote !== undefined ? { remote } : {}), ...(merge !== undefined ? { ref: merge } : {}) } }
       : {}),
     ...(pushRemote !== undefined ? { pushRemote } : {}),
+    ...(fetchUnsafe ? { fetchUnsafe } : {}),
     ...(remote && merge && remotes.has(remote) && REMOTE_NAME.test(remote) && /^refs\/heads\/\S+$/u.test(merge)
       ? { upstream: { remote, ref: merge } }
       : {}),

@@ -171,16 +171,15 @@ export class GitClones {
       const info = parent === undefined ? undefined : await lstat(parent).catch(() => undefined)
       if (!parent || !info?.isDirectory()) throw new AppError(400, 'workspace-invalid', '选择的位置不是一个文件夹。')
       const folder = join(parent, input.address.name)
-      try {
-        await mkdir(folder, { mode: 0o755 })
-      } catch (error) {
-        if (error instanceof Error && 'code' in error && error.code === 'EEXIST')
-          throw new AppError(409, 'clone-folder-exists', `这个位置已有「${input.address.name}」，没有克隆。换一个位置。`)
-        throw new AppError(409, 'workspace-permission', '不能在这个位置新建文件夹。')
-      }
-      const stat = await lstat(folder)
-      made = { folder, identity: { dev: stat.dev, ino: stat.ino } }
-      await input.hooks.check(folder)
+      const exists = () => new AppError(409, 'clone-folder-exists', `这个位置已有「${input.address.name}」，没有克隆。换一个位置。`)
+      if (
+        await lstat(folder).then(
+          () => true,
+          () => false,
+        )
+      )
+        throw exists()
+      // Audited before anything is made: a Host that stops right after leaves no folder without a record.
       const id = randomUUID()
       const cloneHash = sha256Hex(id)
       await input.hooks.audit({
@@ -190,6 +189,29 @@ export class GitClones {
         hostHash: sha256Hex(input.address.host),
         pathHash: sha256Hex(folder),
       })
+      try {
+        await mkdir(folder, { mode: 0o755 })
+      } catch (error) {
+        const taken = error instanceof Error && 'code' in error && error.code === 'EEXIST'
+        await this.report(input.hooks, {
+          cloneHash,
+          outcome: 'failed',
+          code: taken ? 'clone-folder-exists' : 'clone-failed',
+          removed: false,
+        })
+        if (taken) throw exists()
+        throw new AppError(409, 'workspace-permission', '不能在这个位置新建文件夹。')
+      }
+      const stat = await lstat(folder)
+      made = { folder, identity: { dev: stat.dev, ino: stat.ino } }
+      try {
+        await input.hooks.check(folder)
+      } catch (error) {
+        const removed = await this.remove(folder, made.identity)
+        made = undefined
+        await this.report(input.hooks, { cloneHash, outcome: 'failed', code: 'clone-folder-refused', removed })
+        throw error
+      }
       const state: GitCloneState = {
         id,
         state: 'running',
@@ -255,6 +277,13 @@ export class GitClones {
     setTimeout(() => signal(pid, 'SIGKILL'), KILL_GRACE_MS).unref()
   }
 
+  /** A cancel that came while no Git was running (between the two runs, or before one started) ends it as it starts. */
+  private stopIfCancelled(job: Job, pid: number): void {
+    if (!job.cancelled) return
+    signal(pid, 'SIGTERM')
+    setTimeout(() => signal(pid, 'SIGKILL'), KILL_GRACE_MS).unref()
+  }
+
   private forgetOld(): void {
     for (const [id, job] of this.jobs)
       if (job.state.state !== 'running' && this.now() - Date.parse(job.state.startedAt) > KEEP_MS) this.jobs.delete(id)
@@ -283,6 +312,7 @@ export class GitClones {
         running: job.running,
         timeoutMs: 60_000,
         env,
+        onSpawn: pid => this.stopIfCancelled(job, pid),
       })
       if (job.cancelled) return await end('cancelled', 'clone-cancelled')
       if (listing.timedOut || listing.code !== 0) return await end('failed', 'clone-failed')
@@ -315,6 +345,7 @@ export class GitClones {
         timeoutMs: this.options.timeoutMs ?? CLONE_MS,
         allowProtocol: address.transport,
         env,
+        onSpawn: pid => this.stopIfCancelled(job, pid),
         onStderr: chunk => {
           const progress = progressOf(chunk.toString('utf8'))
           if (progress && job.state.state === 'running') job.state.progress = progress
@@ -373,7 +404,11 @@ export class GitClones {
         this.options.log('克隆的文件夹已被替换，没有删除。')
         return false
       }
-      await rm(folder, { recursive: true, force: true })
+      // A process of the stopped clone may still be writing there for a moment: once more after a short wait.
+      await rm(folder, { recursive: true, force: true }).catch(async () => {
+        await new Promise(resolve => setTimeout(resolve, 500))
+        await rm(folder, { recursive: true, force: true })
+      })
       return true
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return true

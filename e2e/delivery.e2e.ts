@@ -322,7 +322,7 @@ touch '${control}/commit-ran'`,
     await owner.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'permission', requestId: randomUUID() } })
     await expect.poll(async () => (await detail()).approvals.length, SLOW).toBe(1)
     await comeBack(page)
-    await panel.getByText('Agent 正在改这个文件夹').waitFor()
+    await panel.locator('.delivery-line').getByText('Agent 正在改这个文件夹').waitFor()
     const during = panel.getByRole('checkbox', { name: '暂存 during.txt', exact: true })
     await during.waitFor()
     expect(await during.getAttribute('aria-disabled')).toBe('true')
@@ -338,7 +338,7 @@ touch '${control}/commit-ran'`,
     // Phones, while the turn waits: the same tab at 390, nothing wider than the window.
     const small = await openDelivery(phone.page)
     await small.getByText('during.txt').waitFor()
-    await small.getByText('Agent 正在改这个文件夹').waitFor()
+    await small.locator('.delivery-line').getByText('Agent 正在改这个文件夹').waitFor()
     await noHorizontalOverflow(phone.page)
     await shots(phone.page, 'turn-running')
     await owner.json(`tasks/${sessionId}/cancel`, { method: 'POST', body: {} }).catch(() => undefined)

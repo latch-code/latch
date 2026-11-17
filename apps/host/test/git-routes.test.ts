@@ -413,6 +413,14 @@ describe('git delivery routes', () => {
         status: 409,
         error: 'git-turn-running',
       })
+      // An abort loses resolved conflicts: it waits for the turn too, with the merge it names under way.
+      const mergeHead = join(t.workspaceRoot, '.git', 'MERGE_HEAD')
+      await writeFile(mergeHead, `${git('rev-parse', 'HEAD')}\n`)
+      expect(await errorOf(await post(owner, `${path}/abort`, { requestId: randomUUID(), operation: 'merge' }))).toEqual({
+        status: 409,
+        error: 'git-turn-running',
+      })
+      await rm(mergeHead)
       expect((await post(owner, `${path}/fetch`, { requestId: randomUUID() })).status).toBe(200)
       await owner.json(`tasks/${sessionId}/cancel`, { method: 'POST', body: {} })
       await expect.poll(async () => (await t.host.bridge.summary(sessionId)).status, SLOW).not.toBe('running')

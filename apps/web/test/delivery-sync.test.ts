@@ -107,3 +107,15 @@ describe('克隆仓库', () => {
     expect(cloneProgress({})).toBe('克隆中')
   })
 })
+
+describe('仓库自己的配置', () => {
+  it('turns 获取 and 拉取 off with the kind of setting, never its value', () => {
+    const risky = state({ repoConfig: 'program', behind: 1 })
+    expect(fetchReason(risky, free)).toBe('仓库配置里有会运行程序的设置')
+    expect(pullReason(risky, free)).toBe('仓库配置里有会运行程序的设置')
+    expect(fetchReason(state({ repoConfig: 'rewrite' }), free)).toBe('仓库配置里有地址改写（insteadOf）')
+    expect(failureDetails({ kind: 'proxy' }).repoKind).toBe('proxy')
+    expect(failureDetails({ kind: 'value-or-anything' }).repoKind).toBeUndefined()
+    expect(failureCopy('git-repo-config')?.tone).toBe('warn')
+  })
+})

@@ -1,12 +1,15 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AppError } from '@latch/sdk'
 import { GitDelivery, transportOf, type DeliveryAuditEvent, type DeliveryCaller } from '../src/git-delivery.ts'
 import { SessionMetaStore } from '../src/session-meta.ts'
+import { configHookGit } from './helpers/config-hooks.ts'
+import { installFakeSsh } from './helpers/fake-ssh.ts'
+import { findGit } from '../src/changes/git.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -61,9 +64,10 @@ async function fixture() {
     gitIn(other, 'push', '-q', 'origin', 'main')
     return gitIn(other, 'rev-parse', 'HEAD')
   }
-  const delivery = async () => {
+  const delivery = async (git?: string) => {
     const store = await SessionMetaStore.open(dataDir)
     return new GitDelivery({
+      ...(git ? { git } : {}),
       receipts: store,
       home,
       hostEnv: { HOME: home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: root, GIT_CONFIG_NOSYSTEM: '1' },
@@ -350,5 +354,155 @@ describe('conflicts and abort', () => {
     expect(await delivery.abort(f.caller(), { requestId: id(), operation: 'cherry-pick' })).toMatchObject({ operation: 'cherry-pick' })
     expect(existsSync(join(f.repo, '.git', 'CHERRY_PICK_HEAD'))).toBe(false)
     expect(f.git('rev-parse', 'HEAD')).toBe(f.head)
+  })
+})
+
+const hookGit = configHookGit()
+describe.skipIf(!hookGit)('hooks from configuration (Git 2.54 and later)', () => {
+  it('runs none in a fetch or a pull, from the repository or your global configuration', SLOW, async () => {
+    const f = await fixture()
+    const trap = async (name: string) => {
+      const path = join(f.root, `${name}.sh`)
+      await writeFile(path, `#!/bin/sh\necho ran >> '${join(f.marks, name)}'\n`)
+      await chmod(path, 0o755)
+      return path
+    }
+    f.git('config', 'hook.refs.event', 'reference-transaction')
+    f.git('config', 'hook.refs.command', await trap('local-refs'))
+    f.git('config', 'hook.merged.event', 'post-merge')
+    f.git('config', 'hook.merged.command', await trap('local-merge'))
+    f.gitIn(f.home, 'config', '--global', 'hook.global.event', 'reference-transaction')
+    f.gitIn(f.home, 'config', '--global', 'hook.global.command', await trap('global-refs'))
+    // This Git does run them: an update of a ref here sets the markers off.
+    execFileSync(hookGit!, ['update-ref', 'refs/heads/probe', 'HEAD'], {
+      cwd: f.repo,
+      env: { HOME: f.home, PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1' },
+    })
+    expect(existsSync(join(f.marks, 'local-refs'))).toBe(true)
+    expect(existsSync(join(f.marks, 'global-refs'))).toBe(true)
+    await rm(f.marks, { recursive: true, force: true })
+    await mkdir(f.marks)
+    const tip = await f.upstreamCommit('tracked.txt', 'one\ntwo\n')
+    await rm(f.marks, { recursive: true, force: true })
+    await mkdir(f.marks)
+    const delivery = await f.delivery(hookGit)
+    await delivery.fetch(f.caller(), { requestId: id() })
+    expect((await delivery.pull(f.caller(), { requestId: id() })).head).toBe(tip)
+    expect(await readdir(f.marks)).toEqual([])
+  })
+})
+
+describe('the repository’s own configuration', () => {
+  /** A command that leaves a marker if it ever runs. */
+  const trapCommand = (f: Awaited<ReturnType<typeof fixture>>, name: string) => `sh -c 'touch ${join(f.marks, name)}'`
+
+  it('refuses 获取 and 拉取 before the audit when it sets a program, credentials or where they go, by kind', SLOW, async () => {
+    const f = await fixture()
+    await f.upstreamCommit('tracked.txt', 'one\ntwo\n')
+    const delivery = await f.delivery()
+    const cases: Array<[key: string, value: string, kind: string]> = [
+      ['core.sshCommand', trapCommand(f, 'ssh'), 'program'],
+      ['core.askPass', trapCommand(f, 'askpass'), 'program'],
+      ['core.gitProxy', trapCommand(f, 'gitproxy'), 'program'],
+      ['ssh.variant', 'simple', 'program'],
+      ['credential.helper', `!${trapCommand(f, 'helper')}`, 'credential'],
+      ['credential.https://github.com.username', 'someone', 'credential'],
+      ['http.proxy', 'http://127.0.0.1:9', 'proxy'],
+      ['http.https://github.com.proxy', 'http://127.0.0.1:9', 'proxy'],
+      ['remote.origin.proxy', 'http://127.0.0.1:9', 'proxy'],
+      ['http.sslVerify', 'false', 'tls'],
+      ['http.https://github.com.sslCAInfo', '/tmp/ca.pem', 'tls'],
+      ['http.sslCAPath', '/tmp/ca', 'tls'],
+      ['http.extraHeader', 'Authorization: Bearer x', 'header'],
+      ['http.cookieFile', '/tmp/cookies', 'header'],
+      ['url.https://evil.example/.insteadOf', 'https://github.com/', 'rewrite'],
+      ['url.https://evil.example/.pushInsteadOf', 'https://github.com/', 'rewrite'],
+    ]
+    for (const [key, value, kind] of cases) {
+      f.git('config', key, value)
+      expect((await delivery.state(f.repo)).repoConfig, key).toBe(kind)
+      const caller = f.caller()
+      for (const run of [() => delivery.fetch(caller, { requestId: id() }), () => delivery.pull(caller, { requestId: id() })]) {
+        const error = await refusal(run())
+        expect([key, error.status, error.code, error.details]).toEqual([key, 409, 'git-repo-config', { kind }])
+        expect(error.message).not.toContain(value)
+      }
+      expect(caller.audits, key).toEqual([])
+      f.git('config', '--unset-all', key)
+    }
+    expect(existsSync(join(f.repo, '.git', 'FETCH_HEAD'))).toBe(false)
+    expect(await readdir(f.marks)).toEqual([])
+    // Gone again: fetched as before.
+    expect((await delivery.state(f.repo)).repoConfig).toBeUndefined()
+    await delivery.fetch(f.caller(), { requestId: id() })
+  })
+
+  it('counts what the repository’s configuration includes, and its worktree configuration', SLOW, async () => {
+    const f = await fixture()
+    const delivery = await f.delivery()
+    const included = join(f.root, 'included.gitconfig')
+    await writeFile(included, `[credential]\n\thelper = !${trapCommand(f, 'included')}\n`)
+    f.git('config', 'include.path', included)
+    expect(await refusal(delivery.fetch(f.caller(), { requestId: id() }))).toMatchObject({
+      code: 'git-repo-config',
+      details: { kind: 'credential' },
+    })
+    f.git('config', '--unset', 'include.path')
+    f.git('config', 'extensions.worktreeConfig', 'true')
+    f.git('config', '--worktree', 'core.sshCommand', trapCommand(f, 'worktree'))
+    expect(await refusal(delivery.fetch(f.caller(), { requestId: id() }))).toMatchObject({
+      code: 'git-repo-config',
+      details: { kind: 'program' },
+    })
+    expect(await readdir(f.marks)).toEqual([])
+  })
+
+  it('refuses a setting written after the plan, right before your Git starts', SLOW, async () => {
+    const f = await fixture()
+    await f.upstreamCommit('tracked.txt', 'one\ntwo\n')
+    const delivery = await f.delivery()
+    const caller = f.caller({
+      // A turn writing the repository's configuration while the fetch is on its way.
+      audit: async event => {
+        caller.audits.push(event)
+        f.git('config', 'core.sshCommand', trapCommand(f, 'late'))
+      },
+    })
+    expect(await refusal(delivery.fetch(caller, { requestId: id() }))).toMatchObject({ code: 'git-repo-config' })
+    expect(caller.results).toEqual([{ operation: 'fetch', outcome: 'failed', code: 'git-repo-config' }])
+    expect(existsSync(join(f.repo, '.git', 'FETCH_HEAD'))).toBe(false)
+  })
+
+  it('honours the same settings in your global configuration, as a terminal does', SLOW, async () => {
+    const f = await fixture()
+    const fake = await installFakeSsh({ root: f.root, served: f.root, marks: f.marks, git: findGit()! })
+    // Your own ssh command, from your global configuration: the fetch goes through it.
+    f.gitIn(f.home, 'config', '--global', 'core.sshCommand', join(f.root, 'fake-ssh-bin', 'ssh'))
+    f.gitIn(f.home, 'config', '--global', 'http.proxy', 'http://127.0.0.1:9')
+    f.gitIn(f.home, 'config', '--global', 'credential.helper', 'cache')
+    f.git('remote', 'set-url', 'origin', 'git@example.test:remote.git')
+    const tip = await f.upstreamCommit('tracked.txt', 'one\ntwo\n')
+    const store = await SessionMetaStore.open(join(f.root, 'data'))
+    const delivery = new GitDelivery({
+      receipts: store,
+      home: f.home,
+      hostEnv: { HOME: f.home, USER: 'tester', PATH: '/usr/bin:/bin', TMPDIR: f.root, GIT_CONFIG_NOSYSTEM: '1' },
+      shell: fake.shell,
+      log: () => {},
+    })
+    expect((await delivery.state(f.repo)).repoConfig).toBeUndefined()
+    await delivery.fetch(f.caller(), { requestId: id() })
+    expect(f.git('rev-parse', 'refs/remotes/origin/main')).toBe(tip)
+    expect(existsSync(join(f.marks, 'ssh-calls'))).toBe(true)
+  })
+
+  it('fetches over plain http only from this computer', SLOW, async () => {
+    const f = await fixture()
+    const delivery = await f.delivery()
+    f.git('remote', 'set-url', 'origin', 'http://example.test/remote.git')
+    expect(await refusal(delivery.fetch(f.caller(), { requestId: id() }))).toMatchObject({ code: 'git-remote-form' })
+    f.git('remote', 'set-url', 'origin', 'http://127.0.0.1:9/remote.git')
+    // Planned and run: nothing listens there.
+    expect(await refusal(delivery.fetch(f.caller(), { requestId: id() }))).toMatchObject({ code: 'git-fetch-unreachable' })
   })
 })
