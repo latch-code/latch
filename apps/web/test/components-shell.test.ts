@@ -193,6 +193,7 @@ describe('shell routes', () => {
       'workspaces',
       'plugins',
       'devices',
+      'relays',
       'data',
       'computers',
       'shortcuts',
@@ -207,6 +208,7 @@ describe('shell routes', () => {
       'workspaces',
       'plugins',
       'devices',
+      'relays',
       'data',
       'computers',
       'about',
@@ -250,6 +252,7 @@ describe('设置 sections', () => {
       'workspaces',
       'plugins',
       'devices',
+      'relays',
       'shortcuts',
       'about',
     ])

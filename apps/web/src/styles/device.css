@@ -125,7 +125,7 @@
 .sim-input-owner[data-owner='agent'] {
   color: var(--ink);
 }
-.sim-touch-mark {
+.sim-touch-mark[inert] {
   position: absolute;
   width: var(--sp-8);
   height: var(--sp-8);

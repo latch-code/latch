@@ -177,7 +177,8 @@ describe('with the connection down', () => {
     const request = approval({ toolName: 'execute', arguments: '{"command":"ls"}' })
     const command = tool({ toolName: 'execute', tool: { kind: 'execute', title: 'Run ls', input: '{"command":"ls"}' } })
     const html = renderToStaticMarkup(createElement(Drawer, { message: command, approval: request, requester: '小抄' }))
-    expect(html).toContain('小抄 想运行一条命令')
+    expect(html).toContain('<span class="approval-object is-command" tabindex="0">ls</span>')
+    expect(html).toContain('<span>小抄</span>')
     expect(html).toContain('Run ls')
     expect(html).toContain('execute')
     expect(html).toContain('data-approval-id="ap1"')
@@ -208,15 +209,19 @@ describe('with the connection down', () => {
     // The wrapper is named exactly as it was reported, directory and all.
     expect(html).toContain('<span class="approval-shell">经 /bin/zsh -lc</span>')
     const asked = renderToStaticMarkup(createElement(Drawer, { message: command, approval: request, requester: '小抄' }))
-    expect(asked).toContain(`<span class="approval-command" tabindex="0">${inner}</span>`)
+    expect(asked).toContain(`<span class="approval-object is-command" tabindex="0">${inner}</span>`)
+    expect(asked).toContain('<span>小抄</span>')
     expect(asked).toContain('经 /bin/zsh -lc')
     // An unwrapped command is whole too, and names no wrapper.
+    const bareInput = JSON.stringify({ command: 'ls -la' })
     const bare = tool({
       toolName: 'shell',
       state: 'awaiting-approval',
-      tool: { kind: 'execute', title: 'ls -la', input: '{"command":"ls -la"}' },
+      tool: { kind: 'execute', title: 'ls -la', input: bareInput },
     })
-    const plain = renderToStaticMarkup(createElement(Drawer, { message: bare, approval: approval({ toolName: 'shell' }) }))
+    const plain = renderToStaticMarkup(
+      createElement(Drawer, { message: bare, approval: approval({ toolName: 'shell', arguments: bareInput }) }),
+    )
     expect(plain).toContain('<span class="approval-object is-command" tabindex="0">ls -la</span>')
     expect(plain).not.toContain('approval-shell')
     // A shell that is not the system's is some other program: the card shows the line as reported, whole.
@@ -226,12 +231,18 @@ describe('with the connection down', () => {
       '/bin/../tmp/sh -c ls',
       './bash -c ls',
     ]) {
+      const reportedInput = JSON.stringify({ command: reportedLine })
       const other = tool({
         toolName: 'shell',
         state: 'awaiting-approval',
-        tool: { kind: 'execute', title: reportedLine, input: JSON.stringify({ command: reportedLine }) },
+        tool: { kind: 'execute', title: reportedLine, input: reportedInput },
       })
-      const card = renderToStaticMarkup(createElement(Drawer, { message: other, approval: approval({ toolName: 'shell' }) }))
+      const card = renderToStaticMarkup(
+        createElement(Drawer, {
+          message: other,
+          approval: approval({ toolName: 'shell', arguments: reportedInput }),
+        }),
+      )
       expect(card).toContain(`>${reportedLine.replaceAll("'", '&#x27;')}</span>`)
       expect(card).not.toContain('approval-shell')
     }
@@ -329,20 +340,20 @@ describe('tool cards', () => {
     expect(html).toContain('>允许</button>')
   })
 
-  it('shows the proposed diff in the approval and disables every option while one is in flight', () => {
-    const html = renderToStaticMarkup(
-      createElement(Drawer, {
-        message: tool(),
-        busy: 'allow_once',
-        onDecide: noop,
-        approval: approval({ arguments: '{"path":"a.ts"}', tool: { diffs: [{ path: 'a.ts', oldText: 'x\n', newText: 'y\n' }] } }),
-      }),
-    )
-    // The diff's file header names the path, so it is not repeated as an argument.
-    expect(html).toContain('<span class="diff-path" title="a.ts"><span class="diff-path-name">a.ts</span></span>')
-    expect(html).not.toContain('<dt>path</dt>')
-    expect(html).toContain('class="diff-stat-add">+1</span>')
-    expect(html).toContain('class="diff-stat-remove">−1</span>')
+  it('summarizes an ordinary diff, expands a high-risk diff and disables decisions in flight', () => {
+    const proposed = approval({ arguments: '{"path":"a.ts"}', tool: { diffs: [{ path: 'a.ts', oldText: 'x\n', newText: 'y\n' }] } })
+    const render = (request: Approval) =>
+      renderToStaticMarkup(createElement(Drawer, { message: tool(), busy: 'allow_once', onDecide: noop, approval: request }))
+    const html = render(proposed)
+    expect(html).toContain('查看改动')
+    expect(html).toContain('class="stat-add">+1</span>')
+    expect(html).toContain('class="stat-del"> −1</span>')
+    expect(html).not.toContain('class="diff-path"')
+    const expanded = render({ ...proposed, risk: 'R2' })
+    expect(expanded).toContain('<span class="diff-path" title="a.ts"><span class="diff-path-name">a.ts</span></span>')
+    expect(expanded).not.toContain('<dt>path</dt>')
+    expect(expanded).toContain('class="diff-stat-add">+1</span>')
+    expect(expanded).toContain('class="diff-stat-remove">−1</span>')
     // The chosen option runs; the other stays focusable but takes no click.
     expect(html.match(/<button[^>]*class="ui-button"[^>]*aria-disabled="true"/g)).toHaveLength(1)
     expect(html.match(/<button[^>]*class="ui-button"[^>]*aria-busy="true"/g)).toHaveLength(1)

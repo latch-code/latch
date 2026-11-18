@@ -150,6 +150,8 @@ describe('page stylesheets', () => {
       item => item.selector.includes(':focus-visible') && item.property === 'outline-offset' && item.value === '2px',
     )
     const missing = filled.filter(item => {
+      // A simple selector that requires inert on its subject cannot match a focusable control.
+      if (/^\.[\w-]+\[inert\]$/u.test(item.selector)) return false
       const name = firstClass(item.selector)
       return !name || !ringed.some(ring => ring.selector.includes(name))
     })

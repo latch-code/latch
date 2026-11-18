@@ -379,7 +379,7 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onOwn
         onWheel={onWheel}
         onContextMenu={event => event.preventDefault()}
       />
-      <span ref={touchMark} className="sim-touch-mark" hidden aria-hidden="true" />
+      <span ref={touchMark} className="sim-touch-mark" hidden inert aria-hidden="true" />
     </>
   )
 }
