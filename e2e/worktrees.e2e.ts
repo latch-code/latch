@@ -169,7 +169,7 @@ it('starts a session in a new worktree from the draft, keeps showing it, and say
     git('config', 'includeIf.gitdir:/nowhere/.path', '/nowhere')
     await input.fill('hello')
     await input.press('Enter')
-    await page.getByText('仓库配置（.git/config）里有 includeIf', { exact: false }).first().waitFor()
+    await page.getByText('仓库配置（.git/config）里有 includeIf', { exact: false }).filter({ visible: true }).first().waitFor()
     expect(await input.inputValue()).toBe('hello')
     expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(1)
     // Disabled can precede the async reason. Hold the real Host reply to distinguish loading from a settled refusal.
