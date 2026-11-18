@@ -130,7 +130,7 @@ extension PhoneModel {
     }
     /** A tapped notification: opened now, or once the store is open again after the App comes back. */
     func requestOther(computer: String, session: String) async {
-        guard storeReady, store != nil else { pendingOther = (computer, session); return }
+        guard storeState == .ready, store != nil else { pendingOther = (computer, session); return }
         await openOther(computer: computer, session: session)
     }
     /** The computer menu: a plain switch, which an item of 其他电脑 still being opened gives way to. */

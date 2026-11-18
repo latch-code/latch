@@ -33,7 +33,7 @@ import UIKit
         }
         model.staged = true
         model.snapshot = value
-        model.storeReady = true
+        model.storeState = .ready
         model.connected = true
         model.verifiedUntil = .distantFuture
         _ = model.privateSnapshot.adopt(model.snapshot, captured: model.privateSnapshot.epoch, windowOpen: true)

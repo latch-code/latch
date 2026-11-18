@@ -13,10 +13,24 @@ struct PhoneRootView: View {
     }
     var body: some View {
         Group {
-            if !model.storeReady { PhoneTheme.canvas.ignoresSafeArea() }
-            else if !hasComputers {
-                PairingWelcome { scan = true }.padding(32).frame(maxWidth: 460)
-            } else { RootTabs(addComputer: { scan = true }) }
+            switch model.storeState {
+            case .opening: PhoneTheme.canvas.ignoresSafeArea()
+            case .unavailable:
+                ContentUnavailableView {
+                    Label("无法打开安全存储", systemImage: "lock.circle")
+                } description: {
+                    #if targetEnvironment(simulator)
+                    Text("请在 iPhone 或 iPad 真机上打开 Latch。连接电脑需要设备的安全存储。")
+                    #else
+                    Text("请解锁这台设备，再试一次。")
+                    #endif
+                } actions: {
+                    Button("重试") { Task { await model.open() } }
+                }
+            case .ready:
+                if hasComputers { RootTabs(addComputer: { scan = true }) }
+                else { PairingWelcome { scan = true }.padding(32).frame(maxWidth: 460) }
+            }
         }
         #if LATCH_SCREENS
         .overlay {

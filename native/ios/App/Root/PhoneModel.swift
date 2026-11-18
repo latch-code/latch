@@ -35,6 +35,8 @@ import UIKit
     }
 }
 
+enum PhoneStoreState: Equatable { case opening, ready, unavailable }
+
 @MainActor final class PhoneModel: ObservableObject {
     @Published var hosts: [RegisteredHost] = []
     @Published var selectedHost: RegisteredHost?
@@ -63,7 +65,7 @@ import UIKit
         }
     }
     /** The store has answered, so an empty host list means this phone has none. */
-    @Published var storeReady = false
+    @Published var storeState: PhoneStoreState = .opening
     /** Reaching the Mac has failed at least once; the list shows what it last knew. */
     @Published var offline = false
     /** The last time this phone heard the Mac. */
@@ -243,6 +245,7 @@ import UIKit
     }
     private func prepareStore(_ current: UUID) async {
         guard canOpenStore(current) else { return }
+        storeState = .opening
         PreviewFiles.purgeAbandoned()
         // Copies a document picker left when its callback never came.
         PhoneAttachLoader.purgeInbox(temporary: FileManager.default.temporaryDirectory)
@@ -253,7 +256,7 @@ import UIKit
             guard canOpenStore(current) else { await opened.lock(); return }
             let saved = await opened.list(), pending = try await opened.draft()
             guard canOpenStore(current) else { await opened.lock(); return }
-            store = opened; hosts = saved; draft = pending; storeReady = true
+            store = opened; hosts = saved; draft = pending; storeState = .ready
             observeNetwork()
             if pending != nil { resumePairing() }
             else {
@@ -267,7 +270,7 @@ import UIKit
             }
         } catch {
             await provisional?.lock()
-            if canOpenStore(current) { storeReady = true; report(error) }
+            if canOpenStore(current) { storeState = .unavailable }
         }
     }
     /** The Mac this phone last used, or the first saved one. */
@@ -294,7 +297,7 @@ import UIKit
         cancelPreview()
         detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
         agentPath = []; appPath = []; resetWorkItems(); proposals.clear(); agentResults.clear(); resetSessionActions(); resetReview()
-        connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; storeReady = false; busy = false; verifying = false; status = "正在连接…"
+        connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; storeState = .opening; busy = false; verifying = false; status = "正在连接…"
         PreviewFiles.clear(); clearAttachments()
     }
     private func closeConnection(_ previous: NativeWorkspace?, hostId: String?) async {

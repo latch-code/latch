@@ -92,26 +92,27 @@ private struct AgentList: View {
             case .ready:
                 if let receipt = model.createdHelper {
                     if entries.contains(where: { $0.id == receipt.id }) {
-                        Button("打开新建的 Agent") { selection = receipt.id; model.createdHelper = nil }.plainAgentRow()
+                        Button("打开新建的 Agent") { selection = receipt.id; model.createdHelper = nil }.foregroundStyle(PhoneTheme.ink).plainAgentRow()
                     } else {
                         HStack {
                             Text("已创建 · 列表暂未更新").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
                             Spacer()
-                            Button("刷新列表") { Task { await model.refresh() } }.font(PhoneTheme.caption)
+                            Button("刷新列表") { Task { await model.refresh() } }.foregroundStyle(PhoneTheme.ink).font(PhoneTheme.caption)
                         }.plainAgentRow()
                     }
                 }
                 ForEach(entries) { entry in
-                    AgentRow(entry: entry).tag(entry.id)
-                        .listRowInsets(EdgeInsets(top: 10, leading: 20, bottom: 10, trailing: 20)).listRowBackground(Color.clear)
+                    AgentRow(entry: entry, selected: entry.id == selection).tag(entry.id)
+                        .listRowInsets(EdgeInsets(top: 10, leading: 20, bottom: 10, trailing: 20))
                 }
                 if entries.count == 1 {
-                    Button("新建 Agent") { creating = true }.buttonStyle(.bordered).buttonBorderShape(.capsule)
+                    Button("新建 Agent") { creating = true }.buttonStyle(.bordered).foregroundStyle(PhoneTheme.ink).buttonBorderShape(.capsule)
                         .frame(maxWidth: .infinity).padding(.top, 32).plainAgentRow().disabled(!model.canRun)
                 }
             }
         }
         .listStyle(.plain)
+        .tint(PhoneTheme.selectedRow)
         .scrollContentBackground(.hidden)
         .background(PhoneTheme.canvas)
         .navigationTitle("我的 Agent")
@@ -149,18 +150,19 @@ struct ClosedAgents: View {
 }
 
 extension View {
-    func plainAgentRow() -> some View { listRowSeparator(.hidden).listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)) }
+    func plainAgentRow() -> some View { tint(PhoneTheme.ink).listRowSeparator(.hidden).listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)) }
 }
 
 private struct AgentRow: View {
     @EnvironmentObject private var model: PhoneModel
     let entry: PhoneAgentEntry
+    let selected: Bool
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             AgentFace(avatar: entry.avatar, size: 40, face: entry.face)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(entry.name).font(PhoneTheme.row).foregroundStyle(PhoneTheme.ink).lineLimit(1)
+                    Text(entry.name).font(.system(size: 15, weight: selected ? .semibold : .medium)).foregroundStyle(PhoneTheme.ink).lineLimit(1)
                     if entry.general { BuiltInMark() }
                 }
                 if !entry.duty.isEmpty { Text(entry.duty).font(.system(size: 14)).foregroundStyle(PhoneTheme.ink2).lineLimit(1) }

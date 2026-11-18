@@ -19,6 +19,7 @@ enum PhoneTheme {
     static let sunken = dynamic(0xF7F7F8, 0x0E0E10)
     static let bubble = dynamic(0xF1F1F3, 0x1E1E21)
     static let line = dynamic(0xEBEBED, 0x2A2A2D)
+    static let selectedRow = dynamic(0xF7F7F8, 0x2A2A2D)
     static let lineStrong = dynamic(0xDCDCE0, 0x38383B)
     static let accent = dynamic(0x2461E0, 0x2F6FEB)
     static let amber = dynamic(0xB45309, 0xFBBF24)

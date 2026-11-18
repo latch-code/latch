@@ -3,7 +3,6 @@ import SwiftUI
 
 struct WorkItemList: View {
     @EnvironmentObject private var model: PhoneModel
-    @Environment(\.colorScheme) private var scheme
     private var selection: Binding<String?> { Binding(get: { model.workItemId }, set: model.selectWorkItem) }
 
     var body: some View {
@@ -35,7 +34,7 @@ struct WorkItemList: View {
         }
         .listStyle(.plain).scrollContentBackground(.hidden)
         // A split-view list uses its tint for the selected row's fill. Keep the tab's ink tint out of that surface.
-        .tint(scheme == .dark ? PhoneTheme.line : PhoneTheme.sunken)
+        .tint(PhoneTheme.selectedRow)
         .background(PhoneTheme.canvas).navigationTitle("待办").navigationBarTitleDisplayMode(.large)
         .refreshable { await model.refresh() }
     }
@@ -166,7 +165,12 @@ private struct WorkItemContents: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 22) {
-                if !model.connected { WorkConnectionLine() }
+                if !model.connected {
+                    VStack(alignment: .leading, spacing: 4) {
+                        WorkConnectionLine()
+                        Text("连接恢复后可查看讨论和交付证据。").font(.subheadline).foregroundStyle(PhoneTheme.muted)
+                    }
+                }
                 if let item = model.workItem(itemId) { WorkItemHeading(item: item).id(itemId) }
                 if let failure {
                     WorkReadNotice(title: failure) { await load() }

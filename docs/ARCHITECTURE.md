@@ -932,8 +932,8 @@ Latch 不再提供个人助手、助手群聊与它们的定时任务，数据�
 | Linux（polkit）与 Windows（Windows Hello）本机确认 | 未实现；这些系统上本机确认不可用，可用离线连接码登记桌面端，回环与 HTTPS 上的登记无法完成 |
 | 在 macOS 以外从桌面端打开浏览器 | 未实现；改用 `pnpm latch device invite --loopback` |
 | 无界面服务器的确认通道（独立系统用户、命令行确认） | 未实现，`policy.json` 的 `operators` 被忽略；Linux 服务器建议用独立系统用户运行 Host |
-| 正式安装包 | 本机未签名 Latch.app 可构建；签名、公证与发布下载尚未提供，登录项只登记应用包 |
-| Electron fuses、asar 完整性、Secure Enclave 设备密钥 | 尚未实现；当前为开发版 |
+| 正式安装包 | 本机 ARM64 Latch.app 使用 ad-hoc 签名，正式 Developer ID 签名、公证与发布下载尚未提供，登录项只登记应用包 |
+| asar 完整性、桌面设备的 Secure Enclave 密钥 | 打包已验证 RunAsNode、NodeOptions 和 NodeCliInspect 关闭。发行包的 asar 校验与桌面硬件密钥仍待实现 |
 | 系统 Keychain 保存 Host 身份与密钥 | 需要签名的 Host 程序；目前为数据目录内的 0600 文件 |
 | 远程客户端的公钥固定、仅 mTLS 入口、证书自动申请与续期、可信反向代理配置 | 未实现；证书由运营者提供并续期（文件更新后 Host 自动重新加载）；从不读取代理请求头 |
 | 操作系统沙箱、Agent 出站代理、项目配置中和、托管安装 | 未实现；因此每个 ACP 与插件 Harness 会话都是 L3 |

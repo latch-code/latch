@@ -116,7 +116,7 @@ struct InboxView: View {
                     if workWaiting && shelf.id == "waiting" { workWaitingLink.plainRow() }
                     ForEach(shelf.tasks, id: \.id) { task in
                         InboxRow(task: task, frozen: frozen, inWaiting: shelf.id == "waiting", project: shelf.id == "waiting" ? PhoneSessions.project(of: task, workspaces: workspaces)?["name"].string ?? "对话" : nil)
-                            .tag(task.id).listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20)).listRowBackground(Color.clear)
+                            .tag(task.id).listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
                             .sessionActions(task, model: model)
                     }
                 } header: { if !shelf.label.isEmpty { ShelfHeader(label: shelf.label, count: shelf.id == "waiting" ? shelf.tasks.count : nil) } }
@@ -129,6 +129,7 @@ struct InboxView: View {
             }
         }
         .listStyle(.plain)
+        .tint(PhoneTheme.selectedRow)
         .scrollContentBackground(.hidden)
         .background(PhoneTheme.canvas)
         .navigationTitle("会话")
@@ -153,14 +154,14 @@ struct InboxView: View {
         else if model.connected {
             VStack(spacing: 8) {
                 Text("还没有会话").font(PhoneTheme.body).foregroundStyle(PhoneTheme.ink)
-                Button("新会话") { creating = true }.font(PhoneTheme.body)
+                Button("新会话") { creating = true }.font(PhoneTheme.body).foregroundStyle(PhoneTheme.ink)
             }.frame(maxWidth: .infinity).padding(.top, 48)
         }
     }
 }
 
 private extension View {
-    func plainRow() -> some View { listRowSeparator(.hidden).listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)) }
+    func plainRow() -> some View { tint(PhoneTheme.ink).listRowSeparator(.hidden).listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)) }
     /** The session menu held down, and swiped: 置顶 from the leading edge, 归档 and 删除 from the trailing one. */
     @ViewBuilder func sessionActions(_ task: NativeJSON, model: PhoneModel) -> some View {
         if PhoneSessionMenu.sections(task, canRun: model.canRun).isEmpty { self }
@@ -249,11 +250,12 @@ struct InboxRow: View {
     let inWaiting: Bool
     let project: String?
     private var status: PhoneRowStatus { PhoneSessions.rowStatus(task, frozen: frozen) }
+    private var selected: Bool { model.sessionId == task.id }
     private var strong: Bool { if case .read = status { return false }; return true }
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text(task["title"].string ?? "会话").font(strong ? PhoneTheme.row : .system(size: 15)).foregroundStyle(strong ? PhoneTheme.ink : PhoneTheme.ink2).lineLimit(1)
+                Text(task["title"].string ?? "会话").font(.system(size: 15, weight: selected ? .semibold : strong ? .medium : .regular)).foregroundStyle(selected || strong ? PhoneTheme.ink : PhoneTheme.ink2).lineLimit(1)
                 Spacer(minLength: 4)
                 RowStatusSlot(task: task, status: status, frozenAt: model.lastConfirmed)
             }

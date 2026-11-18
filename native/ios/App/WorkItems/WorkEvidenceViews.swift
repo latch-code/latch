@@ -17,7 +17,7 @@ struct WorkEvidenceView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("本地 HEAD").font(.subheadline.weight(.medium)).foregroundStyle(PhoneTheme.muted)
                     if let head = evidence.head {
-                        WorkSha(value: head)
+                        WorkSha(value: head, other: evidence.pr?.sha)
                         WorkRouteLink(title: "查看提交差异", icon: "arrow.triangle.branch", destination: .commit(session: sessionId, sha: head), subrow: true)
                             .disabled(!model.connected)
                         if let at = evidence.observedAt {
@@ -285,9 +285,26 @@ private struct WorkEvidencePage<Value, Content: View>: View {
 
 private struct WorkSha: View {
     let value: String
+    var other: String? = nil
+    @State private var expanded = false
+
+    private var abbreviation: String {
+        // When two versions share the usual prefix, include the first character that distinguishes them.
+        let shared = other.flatMap { $0 == value ? nil : zip(value, $0).prefix(while: { $0.0 == $0.1 }).count } ?? 0
+        return String(value.prefix(max(12, shared + 1)))
+    }
+
     var body: some View {
-        ConversationText(text: value, monospaced: true, size: 14)
-            .font(.caption).accessibilityLabel("提交 " + value)
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                ConversationText(text: value, monospaced: true, size: 14)
+                Button("复制完整提交号", systemImage: "doc.on.doc") { LocalClipboard.copy(value) }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text(abbreviation).font(.subheadline.monospaced()).foregroundStyle(PhoneTheme.ink)
+                .accessibilityLabel("提交 " + value)
+        }
+        .tint(PhoneTheme.ink2)
     }
 }
 
@@ -298,11 +315,11 @@ private struct WorkPRVersion: View {
     var body: some View {
         if let sha = pr.sha {
             Text("PR 检查提交").font(.subheadline.weight(.medium)).foregroundStyle(PhoneTheme.muted)
-            WorkSha(value: sha)
+            WorkSha(value: sha, other: head)
             if let head, head != sha {
                 Label("检查对应另一提交", systemImage: "exclamationmark.circle").font(.subheadline).foregroundStyle(PhoneTheme.amber)
                 Text("本地 HEAD").font(.subheadline.weight(.medium)).foregroundStyle(PhoneTheme.muted)
-                WorkSha(value: head)
+                WorkSha(value: head, other: sha)
             } else if head == nil {
                 Text("本地 HEAD 尚未确认").font(.subheadline).foregroundStyle(PhoneTheme.muted)
             }
