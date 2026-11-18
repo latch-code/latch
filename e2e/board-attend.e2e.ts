@@ -167,12 +167,13 @@ it('marks a failed run opened only when it is really shown, and checks unknown r
     // 已核对: the detail says the Host holds the session for one unknown result; the first answer is lost, the same
     // request goes again, and the button goes once the Host has answered.
     const settle = 'run-unknown'
+    const endedAt = new Date().toISOString()
     const held = (summary: TaskSummary): TaskSummary => ({
       ...summary,
       status: 'interrupted',
       runEnd: {
         reason: 'forced-stop',
-        at: new Date().toISOString(),
+        at: endedAt,
         unknownResultCount: 1,
         unknownResults: [{ messageId: 'gone', name: 'pnpm deploy' }],
       },
@@ -194,10 +195,21 @@ it('marks a failed run opened only when it is really shown, and checks unknown r
       answered = { ...held(summary), board: { group: 'done', settle } }
       return route.fulfill({ json: { summary: answered } })
     })
-    await row(failed).click()
-    await row(done).click()
-    const end = page.locator('.run-end')
-    await end.getByText('这 1 条命令结果未知，请核对', { exact: false }).waitFor()
+    const openWithFreshDetail = async () => {
+      await row(failed).click()
+      await page.locator('main.workspace:not([inert]) .user-bubble').getByText('这一轮会失败', { exact: true }).first().waitFor()
+      // Switching back to an already open conversation can use its warm detail. Reload to observe the scripted read.
+      await page.reload()
+      await connected(page)
+      const readDetail = page.waitForResponse(
+        response => response.url().endsWith(`/link/api/tasks/${done}`) && response.request().method() === 'GET',
+      )
+      await row(done).click()
+      expect((await readDetail).ok()).toBe(true)
+    }
+    await openWithFreshDetail()
+    const end = page.locator('main.workspace:not([inert]) .run-end')
+    await end.getByText('已强制停止 · 这 1 条命令结果未知，请核对', { exact: true }).waitFor()
     const check = end.getByRole('button', { name: '已核对', exact: true })
     await shot(page, 'run-end-check', 1440, 'light')
     await shot(page, 'run-end-check', 390, 'dark')
@@ -210,9 +222,8 @@ it('marks a failed run opened only when it is really shown, and checks unknown r
     ])
     await check.waitFor({ state: 'detached' })
     // Read again, the Host's answer has the line say so.
-    await row(failed).click()
-    await row(done).click()
-    await end.getByText('这 1 条命令结果未知 · 已核对', { exact: false }).waitFor()
+    await openWithFreshDetail()
+    await end.getByText('已强制停止 · 这 1 条命令结果未知 · 已核对', { exact: true }).waitFor()
     expect(await end.getByRole('button', { name: '已核对', exact: true }).count()).toBe(0)
     await shot(page, 'run-end-checked', 1440, 'light')
 

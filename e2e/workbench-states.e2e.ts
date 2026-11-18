@@ -191,6 +191,7 @@ it('draws the board empty, crowded, limited, read-only and offline from the real
     const request = (await owner.json<TaskDetail>(`tasks/${newest}`)).approvals[0]!
     const writes: Array<{ decision: string; requestId: string; optionId?: string }> = []
     await page.route(`**/link/api/approvals/${request.id}`, async route => {
+      if (route.request().method() !== 'POST') return route.continue()
       writes.push(route.request().postDataJSON())
       if (writes.length === 1) await route.abort('connectionreset')
       else await route.continue()
@@ -198,16 +199,15 @@ it('draws the board empty, crowded, limited, read-only and offline from the real
     await expect.poll(() => decision.getByRole('button', { name: '允许', exact: true }).isDisabled()).toBe(false)
     await decision.getByRole('button', { name: '允许', exact: true }).click()
     await decision.getByText('「允许」的结果未知', { exact: true }).waitFor()
-    // Neither answer can be sent again while the first one's result is unknown.
-    for (const name of ['拒绝', '允许'])
-      expect(
-        await decision
-          .getByRole('button', { name, exact: true })
-          .evaluate(button => (button as HTMLButtonElement).disabled || button.getAttribute('aria-disabled') === 'true'),
-      ).toBe(true)
+    // The card shows the existing decision's retry while it awaits a receipt.
+    for (const name of ['拒绝', '允许']) expect(await decision.getByRole('button', { name, exact: true }).count()).toBe(0)
+    const retry = decision.getByRole('button', { name: '重试', exact: true })
+    expect(await retry.isEnabled()).toBe(true)
     await shot(page, 'board-decision-unknown', 1440, 'dark')
     expect(writes).toHaveLength(1)
-    await decision.getByRole('button', { name: '重试', exact: true }).click()
+    expect(writes[0]).toMatchObject({ decision: 'allow', requestId: expect.any(String) })
+    expect((await owner.json<TaskDetail>(`tasks/${newest}`)).approvals.map(approval => approval.id)).toEqual([request.id])
+    await retry.click()
     await expect.poll(() => readFile(join(folder, 'settings-10.ts'), 'utf8')).toBe('export const keep = true\n')
     expect(writes).toHaveLength(2)
     expect(writes[1]).toEqual(writes[0])
