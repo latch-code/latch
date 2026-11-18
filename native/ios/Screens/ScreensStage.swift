@@ -698,7 +698,7 @@ extension ScreensStage {
             {"id":"work-input","role":"user","text":"修改分屏下的审阅布局，保留过期反馈警告。"},
             {"id":"work-reply","role":"assistant","text":"已定位文件栏占宽。接下来需要明确窄屏下的文件选择方式。"}
          ],"questions":\#(reason == "question" ? #"[{"id":"question-work","state":"pending","toolCallId":"pick","prompt":"窄屏的文件列表如何打开？","questions":[{"id":"layout","label":"窄屏文件列表","options":[{"id":"sheet","label":"用弹出列表选择"},{"id":"inline","label":"展开内嵌列表"}]}]}]"# : "[]"),
-         "approvals":\#(reason == "approval" ? #"[{"id":"approval-work","sessionId":"ses_review","risk":"R1","toolName":"apply_patch","reason":"为审阅页新增文件选择器","arguments":"修改 native/ios/App/Review/ReviewView.swift"}]"# : "[]"),"queue":[]}
+         "approvals":\#(reason == "approval" ? #"[{"id":"approval-work","sessionId":"ses_review","risk":"R1","toolName":"apply_patch","reason":"为审阅页新增文件选择器","arguments":"修改 native/ios/App/Review/ReviewView.swift","tool":{"kind":"edit","locations":["native/ios/App/Review/ReviewView.swift"]}}]"# : "[]"),"queue":[]}
         """#)
     }
 

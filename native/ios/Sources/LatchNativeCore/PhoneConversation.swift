@@ -275,14 +275,24 @@ public enum PhoneConversation {
         if let name = message["toolName"].string { return PhoneToolLabel(verb: nil, object: name, mono: true) }
         return PhoneToolLabel(verb: nil, object: "工具调用", mono: false)
     }
+    private static let approvalToolNames = ["apply_patch": "修改文件", "write_file": "写入文件", "shell": "运行命令"]
     /** A request that touches several places says how many: the first alone would read as all of it. */
     public static func toolHeading(_ tool: NativeJSON, toolName: String?) -> String {
-        let places = tool["locations"].array.count, more = places > 1 ? " 等 \(places) 处" : ""
-        if let title = tool["toolTitle"].string {
+        let targets = tool["locations"].array.compactMap(\.string) + tool["diffs"].array.compactMap { $0["path"].string }
+        let count = Set(targets.filter { !$0.isEmpty }).count
+        let target = targets.first { !$0.isEmpty }.map { visible($0, preservingLayout: false) }
+        let more = count > 1 ? " 等 \(count) 处" : ""
+        if let title = tool["toolTitle"].string, !title.isEmpty, title != toolName {
+            if let target { return title + " " + target + more }
             if let found = titledObject(tool) { return title + " " + found.object + more }
             return title + more
         }
-        return (tool["title"].string ?? toolName ?? "工具调用") + more
+        if let title = tool["title"].string, !title.isEmpty, title != toolName { return title + more }
+        let name = toolName ?? "工具调用"
+        let action = approvalToolNames[name] ?? tool["kind"].string.flatMap { verbs[$0] }
+        let label = action.map { toolName == nil ? $0 : "\($0) · \(name)" } ?? name
+        // Only targets the Host supplied explicitly belong in the fallback heading.
+        return label + (target.map { " · " + $0 } ?? "") + more
     }
     private static func lines(_ text: String) -> [String] {
         if text.isEmpty { return [] }
@@ -462,10 +472,12 @@ public enum PhoneConversation {
         }
     }
     /** The text with each hidden character drawn as `\u{XXXX}`, as the web marks them. */
-    public static func visible(_ text: String) -> String {
+    public static func visible(_ text: String) -> String { visible(text, preservingLayout: true) }
+    private static func visible(_ text: String, preservingLayout: Bool) -> String {
         var result = ""
         for scalar in text.unicodeScalars {
-            if hidden(scalar) { result += "\\u{" + String(scalar.value, radix: 16, uppercase: true) + "}" } else { result.unicodeScalars.append(scalar) }
+            let layoutControl = !preservingLayout && (scalar == "\n" || scalar == "\t" || scalar == "\r")
+            if hidden(scalar) || layoutControl { result += "\\u{" + String(scalar.value, radix: 16, uppercase: true) + "}" } else { result.unicodeScalars.append(scalar) }
         }
         return result
     }

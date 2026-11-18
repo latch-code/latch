@@ -1830,6 +1830,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       canRun: true,
       approvals: [
         { toolName: 'write_file', risk: 'R1', tool: { toolTitle: '写入', locations: ['src/a.ts'] } },
+        {
+          toolName: 'write_file',
+          risk: 'R1',
+          tool: { toolTitle: '写入文件', diffs: [{ path: 'src/new.ts', newText: 'private diff text' }] },
+        },
         { toolName: 'write_file', risk: 'R1', tool: { toolTitle: '写入', locations: ['src/a.ts', 'src/b.ts', 'src/c.ts'] } },
         {
           toolName: 'write_file',
@@ -1844,6 +1849,23 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         { toolName: 'shell', advisory: true, risk: 'R2' },
         { toolName: 'write_file' },
         { toolName: 'Edit', advisory: true, risk: 'R2', subagent: '跑测试', tool: { kind: 'edit', title: 'Edit a.txt' } },
+        {
+          toolName: 'apply_patch',
+          risk: 'R1',
+          tool: { kind: 'edit', title: 'apply_patch', locations: ['src/review.ts', 'src/files.ts'] },
+        },
+        {
+          toolName: 'apply_patch',
+          risk: 'R1',
+          reason: 'unprojected explanation',
+          arguments: '{"path":"unprojected.ts"}',
+          tool: { input: '{"path":"unprojected.ts"}' },
+        },
+        {
+          toolName: 'apply_patch',
+          risk: 'R1',
+          tool: { kind: 'edit', locations: ['src/odd\u202e\n\t.ts'] },
+        },
       ],
       inputs: [
         { summary: { level: 'L1' }, canRun: true, connected: true },
@@ -1965,14 +1987,18 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     ])
     expect(result.approvals).toEqual([
       { heading: '写入 src/a.ts', canAllow: true, option: '', refusal: '', clause: '' },
+      { heading: '写入文件 src/new.ts', canAllow: true, option: '', refusal: '', clause: '' },
       { heading: '写入 src/a.ts 等 3 处', canAllow: true, option: '', refusal: '', clause: '' },
-      { heading: 'write_file', canAllow: true, option: 'o1', refusal: '', clause: '' },
+      { heading: '写入文件 · write_file', canAllow: true, option: 'o1', refusal: '', clause: '' },
       // As the web: an ordinary step offers what the Host gave, so its only allow is the session-wide one.
-      { heading: 'write_file', canAllow: true, option: 'o2', refusal: '', clause: '' },
-      { heading: 'write_file', canAllow: true, option: '', refusal: '', clause: '在项目文件夹之外' },
-      { heading: 'shell', canAllow: true, option: '', refusal: '', clause: '' },
-      { heading: 'write_file', canAllow: true, option: '', refusal: '', clause: '高风险' },
+      { heading: '写入文件 · write_file', canAllow: true, option: 'o2', refusal: '', clause: '' },
+      { heading: '写入文件 · write_file', canAllow: true, option: '', refusal: '', clause: '在项目文件夹之外' },
+      { heading: '运行命令 · shell', canAllow: true, option: '', refusal: '', clause: '' },
+      { heading: '写入文件 · write_file', canAllow: true, option: '', refusal: '', clause: '高风险' },
       { heading: '子 Agent 跑测试 · Edit a.txt', canAllow: true, option: '', refusal: '', clause: '' },
+      { heading: '修改文件 · apply_patch · src/review.ts 等 2 处', canAllow: true, option: '', refusal: '', clause: '' },
+      { heading: '修改文件 · apply_patch', canAllow: true, option: '', refusal: '', clause: '' },
+      { heading: '修改文件 · apply_patch · src/odd\\u{202E}\\u{A}\\u{9}.ts', canAllow: true, option: '', refusal: '', clause: '' },
     ])
     expect(result.engines).toEqual([
       { id: 'standard', name: 'Latch 内置' },
