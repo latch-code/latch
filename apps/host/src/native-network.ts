@@ -1,4 +1,5 @@
 import { AppError } from '@latch/sdk'
+import { createSocket } from 'node:dgram'
 import { isIP } from 'node:net'
 import { nodeCrypto } from '@latch/link-client'
 import {
@@ -39,6 +40,35 @@ interface NetworkOptions {
   rebind?(snapshot: NativeNetworkSnapshot): Promise<void>
   /** Closes a listener nobody wants, which must not wait for the network component. */
   release?(): Promise<void>
+  /** Makes the system resolve the LAN router's hardware address; by default one datagram to it from the LAN address. */
+  wake?(gateway: string, local: string): Promise<void>
+}
+
+/**
+ * One byte to the router's discard port, from the LAN address, then a moment for the answer. The system only knows a
+ * neighbour it has talked to, and a Mac whose default route is another interface (a cable beside Wi-Fi, a hotspot
+ * joined for pairing) never talks to this LAN's router.
+ */
+async function wakeGateway(gateway: string, local: string): Promise<void> {
+  const family = isIP(gateway)
+  if (!family || family !== isIP(local)) return
+  await new Promise<void>(resolve => {
+    const socket = createSocket(family === 4 ? 'udp4' : 'udp6')
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      try {
+        socket.close()
+      } catch {
+        // Already closed.
+      }
+      resolve()
+    }
+    socket.once('error', finish)
+    socket.bind(0, local, () => socket.send(new Uint8Array(1), 9, gateway, () => setTimeout(finish, 150).unref()))
+    setTimeout(finish, 1000).unref()
+  })
 }
 function physical(row: NativeNetworkInterface): boolean {
   return row.kind !== 'tunnel' && /^en[0-9]+$/u.test(row.name) && isPrivateDiscoveryAddress(row.address)
@@ -133,6 +163,15 @@ export class NativeNetwork {
     this.snapshot = undefined
     for (const remove of this.remove.splice(0)) remove()
     await backend?.close()
+  }
+  /** The neighbour entries for `source`, asking the router to show itself when the system has not met it yet. */
+  private async neighbours(backend: NativeNetworkBackend, row: NativeNetworkInterface, source: string, epoch: string) {
+    let observed = await backend.neighbors(row.index, source)
+    for (let attempt = 0; attempt < 2 && row.gateway && !observed.gatewayMac && observed.epoch === epoch && !this.stopping; attempt++) {
+      await (this.options.wake ?? wakeGateway)(row.gateway, row.address).catch(() => {})
+      observed = await backend.neighbors(row.index, source)
+    }
+    return observed
   }
   private rows(): NativeNetworkInterface[] {
     const direct = this.options.direct()
@@ -238,7 +277,7 @@ export class NativeNetwork {
       }
       let cached = this.routers.get(`${row.index}:${row.address}`)
       if (!cached || cached.epoch !== snapshot.epoch || this.now() - cached.at >= 30_000) {
-        const neighbor = await backend.neighbors(row.index, row.address)
+        const neighbor = await this.neighbours(backend, row, row.address, snapshot.epoch)
         if (neighbor.epoch !== snapshot.epoch) return
         cached =
           neighbor.gatewayMac && neighbor.gateway && sameIp(neighbor.gateway, row.gateway)
@@ -357,7 +396,7 @@ export class NativeNetwork {
     if (!row?.gateway || phoneGatewayHash.byteLength !== 32) return undefined
     const expected = await gatewayHash(nodeCrypto, row.address, row.prefixLength, row.gateway)
     if (!equal(expected, phoneGatewayHash)) return undefined
-    const observed = await backend.neighbors(row.index, opening.source)
+    const observed = await this.neighbours(backend, row, opening.source, snapshot.epoch)
     recheck()
     if (
       this.stopping

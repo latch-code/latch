@@ -75,6 +75,7 @@ async function setup() {
   let pairing = false,
     ready = true,
     direct: { host: string; port: number } | null = { host: row.address, port: 4319 }
+  const hooks = { wake: async (_gateway: string, _local: string): Promise<void> => {} }
   const controller = new NativeNetwork({
     profiles,
     networks,
@@ -83,6 +84,7 @@ async function setup() {
     direct: () => direct,
     pairing: () => pairing,
     discoveryReady: () => ready,
+    wake: (gateway, local) => hooks.wake(gateway, local),
   })
   cleanups.push(() => controller.close())
   await vi.waitFor(() => expect(controller.lan()).toHaveLength(1))
@@ -95,6 +97,7 @@ async function setup() {
   }
   const hash = await gatewayHash(nodeCrypto, row.address, row.prefixLength, row.gateway)
   return {
+    hooks,
     directory,
     profiles,
     networks,
@@ -328,6 +331,24 @@ it('proves a pairing socket only for a neighbour on this interface, and remember
   s.backend.peerMac = '00:22:33:44:55:66'
   s.backend.gatewayMac = null
   expect(await s.controller.pairingNearby(pairingOpening('192.168.1.9'), s.hash)).toBe(false)
+})
+it('asks the router to show itself when the system has not met it, as on a Mac whose default route is a cable', async () => {
+  const s = await setup()
+  const known = s.backend.gatewayMac!
+  s.backend.gatewayMac = null
+  const asked: string[] = []
+  s.hooks.wake = async (gateway, local) => {
+    asked.push(`${local}>${gateway}`)
+    s.backend.gatewayMac = known
+  }
+  expect(await s.controller.pairingNearby(pairingOpening('192.168.1.9'), s.hash)).toBe(knownNetworkHash(row, known))
+  expect(asked).toEqual([`${row.address}>${row.gateway}`])
+  // A router that never answers still fails closed, after two tries.
+  s.backend.gatewayMac = null
+  asked.length = 0
+  s.hooks.wake = async gateway => void asked.push(gateway)
+  expect(await s.controller.pairingNearby(pairingOpening('192.168.1.8'), s.hash)).toBe(false)
+  expect(asked).toEqual([row.gateway, row.gateway])
 })
 it('accepts the gateway as the peer only when the peer really is the gateway, and only for pairing', async () => {
   const s = await setup()
