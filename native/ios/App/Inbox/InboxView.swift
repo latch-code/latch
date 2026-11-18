@@ -16,43 +16,21 @@ struct InboxView: View {
     }
     var body: some View {
         NavigationSplitView(preferredCompactColumn: $column) {
-            let workspaces = model.snapshot["catalog"]["workspaces"].array
-            // Code lists its own sessions; 我的 Agent's topics are in their conversations, as on the web.
-            let tasks = PhoneSpaces.tasks(model.snapshot, in: .code)
-            let shelves = model.showArchived ? PhoneSessions.archivedShelves(tasks, query: query) : model.shelves(query: query)
-            let searching = PhoneSearch.query(query) != nil && model.canSearchContent && !model.showArchived
-            List(selection: selection) {
-                if showConnecting { Text("正在连接…").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).listRowSeparator(.hidden) }
-                if let notice = model.hostNotice, !model.connected { HostNoticeBanner(words: notice.words(computer: model.selectedHost.map(model.computerName) ?? "Mac")).plainRow() }
-                else if model.offline, let host = model.selectedHost { OfflineBanner(host: model.computerName(host)).plainRow() }
-                if model.showArchived {
-                    Button { model.showArchived = false } label: { ArchivedLine(back: true, count: PhoneSessions.archived(tasks).count) }.buttonStyle(.plain).plainRow()
-                }
-                let others = model.showArchived || !query.isEmpty ? [] : model.otherComputerGroups
-                if !others.isEmpty, shelves.first?.id != "waiting" { OtherComputersSection(groups: others) }
-                ForEach(shelves, id: \.id) { shelf in
-                    Section {
-                        ForEach(shelf.tasks, id: \.id) { task in
-                            InboxRow(task: task, frozen: frozen, inWaiting: shelf.id == "waiting", project: shelf.id == "waiting" ? PhoneSessions.project(of: task, workspaces: workspaces)?["name"].string ?? "对话" : nil)
-                                .tag(task.id).listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20)).listRowBackground(Color.clear)
-                                .sessionActions(task, model: model)
-                        }
-                    } header: { if !shelf.label.isEmpty { ShelfHeader(label: shelf.label, count: shelf.id == "waiting" ? shelf.tasks.count : nil) } }
-                    if shelf.id == "waiting", !others.isEmpty { OtherComputersSection(groups: others) }
-                }
-                if shelves.isEmpty && !searching { emptyState.plainRow() }
-                if searching { ContentSearchSection(query: query) }
-                if !model.showArchived, query.isEmpty, case let count = PhoneSessions.archived(tasks).count, count > 0 {
-                    Button { model.showArchived = true } label: { ArchivedLine(back: false, count: count) }.buttonStyle(.plain).plainRow()
+            Group {
+                if model.workItemsShown && model.offersWorkItems { WorkItemList() }
+                else { sessionList }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if model.offersWorkItems {
+                    Picker("Code 视图", selection: Binding(get: { model.workItemsShown }, set: model.showWorkItems)) {
+                        Text("会话").tag(false)
+                        Text("待办").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16).padding(.vertical, 8)
+                    .background(PhoneTheme.canvas)
                 }
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(PhoneTheme.canvas)
-            .navigationTitle("会话")
-            .navigationBarTitleDisplayMode(.large)
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索")
-            .refreshable { await model.refresh() }
             .toolbar {
                 if model.hosts.count > 1 {
                     ToolbarItem(placement: .topBarLeading) {
@@ -60,32 +38,49 @@ struct InboxView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("新会话", systemImage: "square.and.pencil") { creating = true }.labelStyle(.iconOnly).disabled(!model.connected)
+                    if !model.workItemsShown {
+                        Button("新会话", systemImage: "square.and.pencil") { creating = true }.labelStyle(.iconOnly).disabled(!model.connected)
+                    }
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { VStack(spacing: 6) { PendingWritesBar(); ControlPendingBar() } }
         } detail: {
             // The review is the detail column's own stack, so 提交 is pushed on top of it; a destination of the list
             // replaces the detail column and cannot push again.
-            if let target = model.reviewTarget { NavigationStack { ReviewView(target: target) }.id(target.sessionId) }
+            if model.workItemsShown && model.offersWorkItems {
+                if let id = model.workItemId { WorkItemStack(itemId: id).id(id) }
+                else {
+                    ContentUnavailableView("选择待办", systemImage: "checklist")
+                        .foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, maxHeight: .infinity).background(PhoneTheme.canvas)
+                }
+            } else if let target = model.reviewTarget { NavigationStack { ReviewView(target: target) }.id(target.sessionId) }
             else if let id = model.sessionId { ConversationView(id: id) }
             else { PhoneTheme.canvas.ignoresSafeArea() }
         }
         .sheet(isPresented: $creating, onDismiss: { model.openPendingImport() }) { NewSessionSheet().presentationCornerRadius(28) }
         .onChange(of: model.reviewTarget?.sessionId) { _, id in if id != nil { column = .detail } else if model.sessionId == nil { column = .sidebar } }
         // Back to the list from the review leaves it.
-        .onChange(of: column) { _, now in if now == .sidebar, model.reviewTarget != nil { model.reviewTarget = nil } }
+        .onChange(of: model.workItemId, initial: true) { _, id in
+            if model.workItemsShown { column = id == nil ? .sidebar : .detail }
+        }
+        .onChange(of: model.offersWorkItems) { _, supported in if !supported { model.resetWorkItems() } }
+        .onChange(of: column) { _, now in
+            if now == .sidebar {
+                if model.workItemsShown { model.selectWorkItem(nil) }
+                else if model.reviewTarget != nil { model.reviewTarget = nil }
+            }
+        }
         .modifier(SessionDialogs())
         #if LATCH_SCREENS
         .onAppear { if model.staged, !ScreensStage.query.isEmpty { query = ScreensStage.query } }
         .task(id: model.staged) { if model.staged, ScreensStage.creating { creating = true } }
         #endif
         // The Host searches once the typing settles; a later query or a closed window drops what an earlier one finds.
-        .task(id: [query, model.verifiedUntil == nil ? "closed" : "open"]) {
+        .task(id: [query, model.verifiedUntil == nil ? "closed" : "open", model.workItemsShown ? "work" : "sessions"]) {
             #if LATCH_SCREENS
             if model.staged { return }
             #endif
-            guard PhoneSearch.query(query) != nil, model.canSearchContent, !model.showArchived else { model.contentSearch = PhoneContentSearch(); return }
+            guard !model.workItemsShown, PhoneSearch.query(query) != nil, model.canSearchContent, !model.showArchived else { model.contentSearch = PhoneContentSearch(); return }
             try? await Task.sleep(for: .milliseconds(300))
             if !Task.isCancelled { await model.searchContent(query) }
         }
@@ -97,6 +92,61 @@ struct InboxView: View {
             if !Task.isCancelled { showConnecting = true }
         }
     }
+    private var sessionList: some View {
+        let workspaces = model.snapshot["catalog"]["workspaces"].array
+        // Code lists its own sessions; 我的 Agent's topics are in their conversations, as on the web.
+        let tasks = PhoneSpaces.tasks(model.snapshot, in: .code)
+        let shelves = model.showArchived ? PhoneSessions.archivedShelves(tasks, query: query) : model.shelves(query: query)
+        let searching = PhoneSearch.query(query) != nil && model.canSearchContent && !model.showArchived
+        return List(selection: selection) {
+            if showConnecting { Text("正在连接…").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).listRowSeparator(.hidden) }
+            if let notice = model.hostNotice, !model.connected { HostNoticeBanner(words: notice.words(computer: model.selectedHost.map(model.computerName) ?? "Mac")).plainRow() }
+            else if model.offline, let host = model.selectedHost { OfflineBanner(host: model.computerName(host)).plainRow() }
+            if model.showArchived {
+                Button { model.showArchived = false } label: { ArchivedLine(back: true, count: PhoneSessions.archived(tasks).count) }.buttonStyle(.plain).plainRow()
+            }
+            let others = model.showArchived || !query.isEmpty ? [] : model.otherComputerGroups
+            if !others.isEmpty, shelves.first?.id != "waiting" { OtherComputersSection(groups: others) }
+            let workWaiting = model.workItems.contains { $0.group == .attention }
+            if workWaiting && shelves.first?.id != "waiting" {
+                Section { workWaitingLink.plainRow() } header: { ShelfHeader(label: "等你处理", count: nil) }
+            }
+            ForEach(shelves, id: \.id) { shelf in
+                Section {
+                    if workWaiting && shelf.id == "waiting" { workWaitingLink.plainRow() }
+                    ForEach(shelf.tasks, id: \.id) { task in
+                        InboxRow(task: task, frozen: frozen, inWaiting: shelf.id == "waiting", project: shelf.id == "waiting" ? PhoneSessions.project(of: task, workspaces: workspaces)?["name"].string ?? "对话" : nil)
+                            .tag(task.id).listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20)).listRowBackground(Color.clear)
+                            .sessionActions(task, model: model)
+                    }
+                } header: { if !shelf.label.isEmpty { ShelfHeader(label: shelf.label, count: shelf.id == "waiting" ? shelf.tasks.count : nil) } }
+                if shelf.id == "waiting", !others.isEmpty { OtherComputersSection(groups: others) }
+            }
+            if shelves.isEmpty && !searching { emptyState.plainRow() }
+            if searching { ContentSearchSection(query: query) }
+            if !model.showArchived, query.isEmpty, case let count = PhoneSessions.archived(tasks).count, count > 0 {
+                Button { model.showArchived = true } label: { ArchivedLine(back: false, count: count) }.buttonStyle(.plain).plainRow()
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(PhoneTheme.canvas)
+        .navigationTitle("会话")
+        .navigationBarTitleDisplayMode(.large)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索")
+        .refreshable { await model.refresh() }
+    }
+
+    private var workWaitingLink: some View {
+        Button { model.showWorkItems(true) } label: {
+            HStack {
+                Label("待办", systemImage: "checklist").foregroundStyle(PhoneTheme.ink)
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(PhoneTheme.muted)
+            }.frame(minHeight: 44).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityHint("打开待办中的等你处理")
+    }
+
     @ViewBuilder private var emptyState: some View {
         if model.showArchived { Text("没有已归档的会话").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.top, 48) }
         else if !query.isEmpty { Text("没有符合的会话").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.top, 48) }
@@ -262,7 +312,7 @@ struct TightLabel: LabelStyle {
  * A write whose answer never came blocks every later one until it is sent again, so the list offers it too, not only the
  * conversation it belongs to.
  */
-private struct PendingWritesBar: View {
+struct PendingWritesBar: View {
     @EnvironmentObject private var model: PhoneModel
     @State private var checked: String?
     var body: some View {

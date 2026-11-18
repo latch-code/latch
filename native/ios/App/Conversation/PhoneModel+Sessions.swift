@@ -11,8 +11,8 @@ extension PhoneModel {
     }
     private static func cancelPath(_ id: String) -> String { "/link/api/tasks/\(id)/cancel" }
     static func approvalPath(_ id: String) -> String { "/link/api/approvals/" + id }
-    private func performControl(path: String, fields: [String: NativeJSON]) async {
-        guard let workspace else { return }
+    private func performControl(path: String, fields: [String: NativeJSON], work: PhoneWorkDecisionContext? = nil) async {
+        guard let workspace, permitsWorkDecision(work) else { return }
         let current = generation, previous = controlTail
         controlsInFlight.insert(path)
         let turn = Task { @MainActor in
@@ -29,6 +29,7 @@ extension PhoneModel {
                     }
                     body = saved["fields"].object
                 }
+                guard permitsWorkDecision(work) else { return }
                 _ = try await workspace.freeAction(path: path, fields: body)
                 guard generation == current else { return }
                 await refreshControlPending(); _ = await refresh()
@@ -215,38 +216,39 @@ extension PhoneModel {
         if delivered, case let .session(id) = PhonePending.kind(request) { clearing.remove(id) }
         return delivered ? .delivered : .text(text, queuedTwin: twin != nil)
     }
-    @discardableResult func mutate(_ method: NativeHTTPMethod, path: String, fields: [String: NativeJSON]) async -> Bool {
+    @discardableResult func mutate(_ method: NativeHTTPMethod, path: String, fields: [String: NativeJSON], work: PhoneWorkDecisionContext? = nil) async -> Bool {
+        guard permitsWorkDecision(work) else { return false }
         let current = generation, reading = contentGeneration
         do {
             // Turning a request down reduces what runs, so the Host asks only that the device can see it.
             let declining = fields["decision"] == .string("reject") && connected && snapshot["device"]["status"].string == "active"
             guard declining || (path.hasPrefix("/link/api/approvals/") ? canApproveStandard || canApproveElevated || canRun : canRun) else { throw NativeFailure.forbidden }
             try await ensureVerified()
-            guard current == generation, contentGeneration == reading else { return false }
+            guard current == generation, contentGeneration == reading, permitsWorkDecision(work) else { return false }
             guard pending.isEmpty else { throw NativeFailure.resultUnknown }
             return await submit(try NativePendingWrite(method: method, path: path, fields: fields))
         }
         catch { report(error); return false }
     }
-    func stop() async {
-        guard workspace != nil, let id = sessionId else { return }
+    func stop(work: PhoneWorkDecisionContext? = nil) async {
+        guard workspace != nil, let id = sessionId, permitsWorkDecision(work) else { return }
         var fields: [String: NativeJSON] = ["requestId": .string(UUID().uuidString)]
         let summary = snapshot["tasks"].array.first { $0["id"].string == id } ?? detail["summary"]
-        if let run = summary["runId"].string { fields["runId"] = .string(run) }
-        await performControl(path: Self.cancelPath(id), fields: fields)
+        if let run = work?.source.runId ?? summary["runId"].string { fields["runId"] = .string(run) }
+        await performControl(path: Self.cancelPath(id), fields: fields, work: work)
     }
-    func reject(_ id: String) async {
+    func reject(_ id: String, work: PhoneWorkDecisionContext? = nil) async {
         guard workspace != nil else { return }
-        await performControl(path: Self.approvalPath(id), fields: ["decision": .string("reject"), "requestId": .string(UUID().uuidString)])
+        await performControl(path: Self.approvalPath(id), fields: ["decision": .string("reject"), "requestId": .string(UUID().uuidString)], work: work)
     }
-    func allow(_ id: String, option: String?) async {
+    func allow(_ id: String, option: String?, work: PhoneWorkDecisionContext? = nil) async {
         var fields: [String: NativeJSON] = ["decision": .string("allow")]
         if let option { fields["optionId"] = .string(option) }
-        await mutate(.post, path: "/link/api/approvals/" + id, fields: fields)
+        await mutate(.post, path: "/link/api/approvals/" + id, fields: fields, work: work)
     }
     /** One of 更多's choices: the option the Host named, kept with its requestId until it is answered. */
-    func decide(_ id: String, option: String, allows: Bool) async {
-        await mutate(.post, path: "/link/api/approvals/" + id, fields: ["decision": .string(allows ? "allow" : "reject"), "optionId": .string(option)])
+    func decide(_ id: String, option: String, allows: Bool, work: PhoneWorkDecisionContext? = nil) async {
+        await mutate(.post, path: "/link/api/approvals/" + id, fields: ["decision": .string(allows ? "allow" : "reject"), "optionId": .string(option)], work: work)
     }
     /** 继续等 only ever asks the Host for a longer threshold; it doubles what the request saw. */
     func keepWaiting() async {

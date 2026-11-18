@@ -26,6 +26,14 @@ public enum CacheKeychain {
     }
 }
 
+/** An offline projection of a checkpoint the Workspace accepted on its active transport. */
+struct NativeSnapshotWrite: Sendable {
+    let order: UInt64
+    let instance: String
+    let revision: UInt64
+    let bytes: Data
+}
+
 /** Authenticated ciphertext only. Body reads require the original, live App-opening lease, including offline reads. */
 public actor EncryptedVault {
     private static let maximumFile = 8 * 1024 * 1024
@@ -37,6 +45,10 @@ public actor EncryptedVault {
     private let inode: UInt64
     private let binding: Data
     private var key: SymmetricKey?
+    private var snapshotOrder: UInt64 = 0
+    private var storedSnapshotOrder: UInt64 = 0
+    private var snapshotFloor: (instance: String, revision: UInt64)?
+    private var snapshotFloorLoaded = false
 
     public init(directory: URL, key: Data, binding: String) throws {
         guard directory.isFileURL, directory.path.hasPrefix("/"), key.count == 32,
@@ -68,6 +80,31 @@ public actor EncryptedVault {
 
     public func storeMetadata(_ data: Data, name: String) throws { try store(data, name: name, body: false) }
     public func metadata(name: String) throws -> Data? { try read(name: name, body: false) }
+
+    /** The actor can receive newer writes before older callers cross their await. Check and replace in one turn. */
+    func storeSnapshot(_ write: NativeSnapshotWrite) throws {
+        guard write.order >= snapshotOrder, write.order != storedSnapshotOrder else { return }
+        snapshotOrder = write.order
+        if !snapshotFloorLoaded {
+            if let cached = try? read(name: "snapshot", body: false), let value = try? NativeJSON.decode(cached),
+               let instance = value["instanceId"].string, let revision = value["revision"].integer {
+                snapshotFloor = (instance, revision)
+            }
+            snapshotFloorLoaded = true
+        }
+        if let floor = snapshotFloor, floor.instance == write.instance, floor.revision > write.revision {
+            throw NativeFailure.invalidRecord
+        }
+        do {
+            try store(write.bytes, name: "snapshot", body: false)
+        } catch {
+            // A known superseded public projection must not serve as the fallback for a failed save.
+            try? remove(name: "snapshot", body: false)
+            throw error
+        }
+        snapshotFloor = (write.instance, write.revision)
+        storedSnapshotOrder = write.order
+    }
     public func storeBody(_ data: Data, name: String, lease: BodyLease) throws {
         try lease.requireValid(); try store(data, name: name, body: true); try lease.requireValid()
     }

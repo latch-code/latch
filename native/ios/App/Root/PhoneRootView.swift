@@ -72,6 +72,7 @@ private struct RootTabs: View {
         let dot = PhoneTabs.codeDot(model.snapshot, current: shown), agentsDot = PhoneTabs.agentsDot(model.snapshot, current: shown)
         TabView(selection: Binding(get: { shown }, set: { next in
             // Code shows Code's sessions: a topic of 我的 Agent left open there is closed on the way back, as the web's switch does.
+            if next != .code && model.workItemsShown { model.setWorkPath([]) }
             if next == .code, PhoneSpaces.belongsElsewhere(model.snapshot, sessionId: model.sessionId, from: .code) { model.closeSession() }
             model.tab = next
         })) {

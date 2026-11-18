@@ -15,12 +15,29 @@ import LatchNativeCore
     guard approved else { throw NativeFailure.unavailable }
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("latch-swift-workspace-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let vault = try EncryptedVault(directory: directory, key: LinkBytes.random(32), binding: invitation.hostId)
+    let vaultKey = try LinkBytes.random(32)
+    let pairingVault = try EncryptedVault(directory: directory, key: vaultKey, binding: invitation.hostId)
     let device = try await pairing.complete(on: temporary) { device in
-        try await vault.storeMetadata(JSONEncoder().encode(device), name: "device")
+        try await pairingVault.storeMetadata(JSONEncoder().encode(device), name: "device")
     }
     await temporary.close()
-    let workspace = try NativeWorkspace(device: device, keys: keys, vault: vault)
+    let transports = WorkTransportFixture()
+    let vault: EncryptedVault
+    let profile: (store: NativeProfileStore, host: NativeRegisteredHost)?
+    if input["workCacheLockOpen"] as? Bool == true {
+        let store = try await NativeProfileStore.open(directory: directory, key: vaultKey, eraseKeys: { _ in })
+        let reference = DeviceKeyReference(connectionTag: Data("fixture.work-cache.connection".utf8),
+            verificationTag: Data("fixture.work-cache.verification".utf8), connectionSpki: keys.connectionSpki,
+            verificationSpki: keys.verificationSpki)
+        let host = NativeRegisteredHost(name: "Swift workspace fixture", device: device, keys: reference, prepared: false)
+        try await store.save(host)
+        vault = try await store.hostVault(host)
+        profile = (store, host)
+    } else {
+        vault = pairingVault
+        profile = nil
+    }
+    let workspace = try NativeWorkspace(device: device, keys: keys, vault: vault, onTransportInstalled: { transports.record($0) })
     do {
         _ = try await workspace.install {
             try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: device.rootSpki,
@@ -35,6 +52,23 @@ import LatchNativeCore
         catch { cacheNeedsWindow = (error as? NativeFailure) == .expired }
         guard cacheNeedsWindow else { throw NativeFailure.identityMismatch }
         let lease = try await workspace.verify()
+        if let profile, let itemId = input["workCacheItem"] as? String {
+            return try await transports.exerciseLockOpen(workspace, vault: vault, keys: keys, store: profile.store,
+                host: profile.host, directory: directory, vaultKey: vaultKey, itemId: itemId)
+        }
+        if let itemId = input["workCacheItem"] as? String, let markers = input["workCacheMarkers"] as? String {
+            return try await transports.exerciseCache(workspace, vault: vault, keys: keys, directory: directory,
+                vaultKey: vaultKey, itemId: itemId, markers: URL(fileURLWithPath: markers, isDirectory: true)) {
+                try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: device.rootSpki,
+                    knockKey: device.knockKey, identity: keys.identity())
+            }
+        }
+        if let itemId = input["workTransportItem"] as? String {
+            return try await transports.exercise(workspace, keys: keys, lease: lease, itemId: itemId) {
+                try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: device.rootSpki,
+                    knockKey: device.knockKey, identity: keys.identity())
+            }
+        }
         if input["helperReceipt"] as? Bool == true {
             let catalog = try await workspace.snapshot()["catalog"]
             var draft = try PhoneHelperCreate.choose(catalog, harnessId: "standard", agents: [])

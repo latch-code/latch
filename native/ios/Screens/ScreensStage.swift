@@ -138,6 +138,7 @@ import UIKit
         case "app-page": model.tab = .apps; model.appPath = ["release-check/main"]
         case "pairing": scanning = true
         case _ where stageComputers(model, name): break
+        case _ where stageWork(model, name): break
         case _ where stageReview(model, name, snapshot: value): break
         case _ where stageHistory(model, name, snapshot: value): break
         case _ where stageAttachments(model, name): break
@@ -437,7 +438,14 @@ import UIKit
                 }
                 .onChange(of: phase) { _, next in
                     guard PhoneLive.isOn else { return }
-                    Task { if next == .background { await model.lock() }; if next == .active { await model.open() } }
+                    if next == .background { model.lock() }
+                    if next == .active { Task { await model.open() } }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
+                    if PhoneLive.isOn { model.protectedDataChanged(available: false) }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
+                    if PhoneLive.isOn { model.protectedDataChanged(available: true) }
                 }
         }
     }
@@ -493,6 +501,7 @@ extension ScreensStage {
     }
     /** The review's canned Host answers, by route. */
     static func review(_ path: String) throws -> NativeJSON {
+        let fileName = scene == "work-review" ? workLongFile : "native/ios/Sources/LatchNativeCore/PhoneAgents.swift"
         if path.contains("/changes/file") {
             var lines: [String] = []
             for index in 1...12 { lines.append(#"{"kind":"context","text":"    line \#(index)","oldLine":\#(index),"newLine":\#(index)}"#) }
@@ -501,13 +510,13 @@ extension ScreensStage {
             lines.append(#"{"kind":"add","text":"        fields[\"model\"] = model.json","newLine":14}"#)
             lines.append(#"{"kind":"add","text":"    }","newLine":15}"#)
             for index in 14...24 { lines.append(#"{"kind":"context","text":"    tail \#(index)","oldLine":\#(index),"newLine":\#(index + 2)}"#) }
-            return json(#"{"scope":"turn","file":{"root":"latch","path":"native/ios/Sources/LatchNativeCore/PhoneAgents.swift","status":"M"},"hunks":[{"oldStart":1,"oldLines":24,"newStart":1,"newLines":26,"lines":["# + lines.joined(separator: ",") + "]}]}")
+            return json(#"{"scope":"turn","file":{"root":"latch","path":"\#(fileName)","status":"M"},"hunks":[{"oldStart":1,"oldLines":24,"newStart":1,"newLines":26,"lines":["# + lines.joined(separator: ",") + "]}]}")
         }
         if path.contains("/changes") {
-            return json(#"{"scope":"turn","turnId":"turn_1","totals":{"files":3,"add":12,"del":4},"files":[{"root":"latch","path":"native/ios/Sources/LatchNativeCore/PhoneAgents.swift","status":"M","add":3,"del":1},{"root":"latch","path":"native/ios/App/Agents/AgentsView.swift","status":"M","add":8,"del":3},{"root":"latch","path":"docs/CUSTOM-AGENTS.md","status":"M","add":1,"del":0,"byCommand":true}]}"#)
+            return json(#"{"scope":"turn","turnId":"turn_1","totals":{"files":3,"add":12,"del":4},"files":[{"root":"latch","path":"\#(fileName)","status":"M","add":3,"del":1},{"root":"latch","path":"native/ios/App/Agents/AgentsView.swift","status":"M","add":8,"del":3},{"root":"latch","path":"docs/CUSTOM-AGENTS.md","status":"M","add":1,"del":0,"byCommand":true}]}"#)
         }
         if path.contains("/review-notes") {
-            return json(##"{"revision":3,"notes":[{"id":"n1","root":"latch","path":"native/ios/Sources/LatchNativeCore/PhoneAgents.swift","range":{"start":15,"end":15},"side":"new","anchor":{"scope":"turn","linesHash":"h","lines":["    }"]},"text":"这里漏了 else：模型服务不可用时应该报错，而不是静默不发。","status":"pending","createdBy":{"deviceId":"d","name":"iPhone"},"createdAt":"{{-60}}","updatedAt":"{{-60}}"},{"id":"n2","root":"latch","path":"native/ios/Sources/LatchNativeCore/PhoneAgents.swift","range":{"start":3,"end":3},"side":"new","anchor":{"scope":"turn","linesHash":"h","lines":["    let removed = something that is not here anymore"]},"text":"这一行后来被删了吗？","status":"sent","messageId":"m9","createdBy":{"deviceId":"d","name":"iPhone"},"createdAt":"{{-600}}","updatedAt":"{{-500}}"},{"id":"n3","root":"latch","path":"docs/OTHER.md","range":{"start":1,"end":1},"side":"new","anchor":{"scope":"session","linesHash":"h","lines":["# 其他"]},"text":"这份文档也要跟着改。","status":"pending","createdBy":{"deviceId":"d","name":"iPhone"},"createdAt":"{{-60}}","updatedAt":"{{-60}}"}]}"##)
+            return json(##"{"revision":3,"notes":[{"id":"n1","root":"latch","path":"\##(fileName)","range":{"start":15,"end":15},"side":"new","anchor":{"scope":"turn","linesHash":"h","lines":["    }"]},"text":"这里漏了 else：模型服务不可用时应该报错，而不是静默不发。","status":"pending","createdBy":{"deviceId":"d","name":"iPhone"},"createdAt":"{{-60}}","updatedAt":"{{-60}}"},{"id":"n2","root":"latch","path":"\##(fileName)","range":{"start":3,"end":3},"side":"new","anchor":{"scope":"turn","linesHash":"h","lines":["    let removed = something that is not here anymore"]},"text":"这一行后来被删了吗？","status":"sent","messageId":"m9","createdBy":{"deviceId":"d","name":"iPhone"},"createdAt":"{{-600}}","updatedAt":"{{-500}}"},{"id":"n3","root":"latch","path":"docs/OTHER.md","range":{"start":1,"end":1},"side":"new","anchor":{"scope":"session","linesHash":"h","lines":["# 其他"]},"text":"这份文档也要跟着改。","status":"pending","createdBy":{"deviceId":"d","name":"iPhone"},"createdAt":"{{-60}}","updatedAt":"{{-60}}"}]}"##)
         }
         if path.hasSuffix("/git") {
             return json(#"{"branch":"step/ios-review","head":"f36f0060aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","upstream":"origin/step/ios-review","ahead":0,"behind":0,"staged":[{"path":"native/ios/Sources/LatchNativeCore/PhoneAgents.swift","status":"M"}],"unstaged":[{"path":"native/ios/App/Agents/AgentsView.swift","status":"M"}],"untracked":["native/ios/App/Review/Notes.swift"],"conflicted":[],"hooks":["pre-commit"],"filters":false,"remote":"origin"}"#)
@@ -616,5 +625,184 @@ extension ScreensStage {
         model.tab = name == "computers" ? .code : .settings
         if name == "computers-settings" { UserDefaults.standard.set(true, forKey: PhoneComputerNotices.key) }
         return true
+    }
+}
+
+/** Static work-item scenes use the same read adapter and navigation as the product. */
+extension ScreensStage {
+    private static let workId = "itm_aaaaaaaaaaaaaaaaaaaaaa"
+    private static let workPrivate = "itm_bbbbbbbbbbbbbbbbbbbbbb"
+    private static let workPost = "pst_aaaaaaaaaaaaaaaaaaaaaa"
+    private static let workRun = "turn_1"
+    private static let workSession = "ses_review"
+    private static let workHead = String(repeating: "a", count: 40)
+    private static let prHead = String(repeating: "b", count: 40)
+    private static let workLongFile = "native/ios/Sources/LatchNativeCore/ConversationAndWorkItemEvidence/PhoneNativeReviewCoordinates.swift"
+
+    fileprivate static func stageWork(_ model: PhoneModel, _ name: String) -> Bool {
+        guard name.hasPrefix("work-") else { return false }
+        model.tab = .code
+        model.snapshot = workSnapshot()
+        model.showWorkItems(true)
+        if name == "work-locked" {
+            model.verifiedUntil = nil
+            model.privateSnapshot.clear()
+            model.snapshot = PhoneAgents.withoutPrivate(model.snapshot)
+            return true
+        }
+        if name == "work-list" || name == "work-empty" { return true }
+        model.selectWorkItem(workId)
+        guard let source = PhoneWorkPost(workPostValue())?.source else { return true }
+        switch name {
+        case "work-question", "work-approval", "work-read-only":
+            model.setWorkPath([.source(source)])
+        case "work-reply":
+            model.setWorkPath([.reply(post: workPost, message: "work-reply", source: source)])
+        case "work-evidence":
+            model.setWorkPath([.evidence(session: workSession)])
+        case "work-pr":
+            model.setWorkPath([.evidence(session: workSession), .pullRequest(session: workSession, number: 42)])
+        case "work-log":
+            model.setWorkPath([.checkLog(session: workSession, number: 42, sha: prHead, job: "128")])
+        case "work-commit":
+            model.setWorkPath([.commit(session: workSession, sha: workHead)])
+        case "work-review":
+            reviewSelection = PhoneLineSelection(side: .new, start: 13, end: 14, anchor: 13)
+            model.setWorkPath([.review(session: workSession, turn: workRun)])
+        case "work-offline":
+            model.connected = false
+            model.offline = true
+        default: break
+        }
+        return true
+    }
+
+    static func openWorkWindow(_ model: PhoneModel) {
+        model.verifiedUntil = .distantFuture
+        model.privateSnapshot.clear()
+        if let opened = model.privateSnapshot.adopt(workSnapshot(), captured: model.privateSnapshot.epoch, windowOpen: true) {
+            model.snapshot = opened
+        }
+    }
+
+    static func openWorkSession(_ id: String, model: PhoneModel) {
+        guard id == workSession else { return }
+        let reason = scene == "work-approval" ? "approval" : "question"
+        model.sessionId = id
+        model.detail = json(#"""
+        {"summary":{"id":"ses_review","title":"调整并验证原生审阅","status":"waiting-approval","runId":"turn_1","harnessId":"codex","workspaceId":"latch","pendingQuestions":1},
+         "sync":{"instanceId":"screens","revision":42},
+         "messages":[
+            {"id":"earlier","role":"user","text":"查看已有审阅页面。"},
+            {"id":"earlier-reply","role":"assistant","text":"已找到文件栏。"},
+            {"id":"work-input","role":"user","text":"修改分屏下的审阅布局，保留过期反馈警告。"},
+            {"id":"work-reply","role":"assistant","text":"已定位文件栏占宽。接下来需要明确窄屏下的文件选择方式。"}
+         ],"questions":\#(reason == "question" ? #"[{"id":"question-work","state":"pending","toolCallId":"pick","prompt":"窄屏的文件列表如何打开？","questions":[{"id":"layout","label":"窄屏文件列表","options":[{"id":"sheet","label":"用弹出列表选择"},{"id":"inline","label":"展开内嵌列表"}]}]}]"# : "[]"),
+         "approvals":\#(reason == "approval" ? #"[{"id":"approval-work","sessionId":"ses_review","risk":"R1","toolName":"apply_patch","reason":"为审阅页新增文件选择器","arguments":"修改 native/ios/App/Review/ReviewView.swift"}]"# : "[]"),"queue":[]}
+        """#)
+    }
+
+    static func workRead(_ read: PhoneWorkRead) throws -> NativeJSON {
+        switch read {
+        case .item: return .object(["item": workItemValue()])
+        case .posts: return .object(["posts": .array([workPostValue()]), "revision": .number(2)])
+        case .post: return .object(["post": workPostValue()])
+        case .reply:
+            return .object(["turn": workTurn(), "messageId": .string("work-reply"), "text": .string("""
+                已定位文件栏占宽。窄屏应先保留差异的阅读空间，让文件从列表里挑选。
+
+                ## 验收
+                - 在 iPad 分屏下仍能读到警告和行级反馈。
+                - 在加大字后，文件路径与操作可以换行。
+                - 提交差异、PR 检查与本次会话保持关联。
+                """)])
+        case .delivery:
+            return .object(["entries": .array([.object(["sessionId": .string(workSession), "observedAt": json(#""{{-600}}""#),
+                "prObservedAt": json(#""{{-600}}""#), "state": .object(["head": .string(workHead)]), "pr": workPR()])])])
+        case let .commit(_, sha, file):
+            if let file {
+                return json(#"{"sha":"\#(sha)","file":{"path":"\#(file)","status":"M","add":2,"del":1},"hunks":[{"lines":[{"kind":"remove","oldLine":13,"text":"if wide { fileList }"},{"kind":"add","newLine":13,"text":"if let width = fileColumnWidth { fileList.frame(width: width) }"}]}]}"#)
+            }
+            return json(#"{"sha":"\#(sha)","files":[{"path":"\#(workLongFile)","status":"M","add":12,"del":4},{"path":"docs/GIT-DELIVERY.md","status":"M","add":2,"del":0}],"totals":{"files":2,"add":14,"del":4}}"#)
+        case .pullRequest: return workPR()
+        case .checkLog:
+            return .object(["name": .string("native-simulator"), "truncated": .bool(true), "text": .string("""
+                [验证 iPad 布局]
+                失败：分屏时反馈警告无法完整显示。
+                [上传截图]
+                已保存失败场景的截图。
+                """)])
+        }
+    }
+
+    private static func workSnapshot() -> NativeJSON {
+        patched(snapshot()) { object in
+            var catalog = object["catalog"]!.object, features = catalog["features"]!.object
+            for key in ["workItems", "workItemTurns", "changes", "reviewNotes", "gitDelivery"] { features[key] = .bool(true) }
+            catalog["features"] = .object(features); object["catalog"] = .object(catalog)
+            let item = patched(workItemValue()) { $0.removeValue(forKey: "prompt") }
+            object["items"] = .array(scene == "work-empty" ? [] : [
+                item,
+                json(#"{"id":"\#(workPrivate)","title":"升级通知与内部发布检查","private":true,"projectId":"latch","sessionIds":[],"revision":1,"updatedAt":"{{-300}}","board":{"group":"running"}}"#),
+                json(#"{"id":"itm_cccccccccccccccccccccc","title":"整理连接说明","projectId":"latch","sessionIds":[],"revision":1,"updatedAt":"{{-900}}","board":{"group":"todo"}}"#),
+            ])
+            object["tasks"] = .array(object["tasks"]!.array.map { task in
+                guard task["id"].string == workSession else { return task }
+                return patched(task) { fields in
+                    fields["itemId"] = .string(workId)
+                    fields["title"] = .string("调整并验证原生审阅")
+                    fields["status"] = .string(scene == "work-review" ? "idle" : "waiting-approval")
+                    fields["runId"] = .string(workRun)
+                    fields["pendingQuestions"] = .number(1)
+                }
+            })
+            if scene == "work-read-only" {
+                var device = object["device"]!.object; device["scopes"] = .array([.string("view")]); device["dataScope"] = .string("work")
+                object["device"] = .object(device)
+            }
+        }
+    }
+
+    private static func workItemValue() -> NativeJSON {
+        let group = switch scene { case "work-running": "running"; case "work-evidence", "work-pr", "work-commit", "work-review": "deliver"; default: "attention" }
+        let reason = switch scene { case "work-approval": "approval"; case "work-failed": "failed"; case "work-unknown": "unknown"; default: "question" }
+        let board = group == "attention" ? json(#"{"group":"attention","reason":"\#(reason)","postId":"\#(workPost)"}"#) : .object(["group": .string(group)])
+        return patched(json(#"""
+        {"id":"\#(workId)","title":"让 iPad 分屏里的改动更好读","projectId":"latch","sessionIds":["\#(workSession)"],
+          "revision":2,"threadRevision":2,"updatedAt":"{{-150}}",
+          "prompt":"窄屏时保留差异宽度。检查横竖屏、分屏以及较大的字体，并完整显示过期反馈警告。"}
+        """#)) { $0["board"] = board }
+    }
+
+    private static func workTurn() -> NativeJSON {
+        .object(["sessionId": .string(workSession), "userMessageId": .string("work-input"), "runId": .string(workRun)])
+    }
+
+    private static func workPostValue() -> NativeJSON {
+        let approval = scene == "work-approval"
+        return patched(json(#"""
+        {"id":"\#(workPost)","at":"{{-150}}","text":"修改分屏下的审阅布局，保留过期反馈警告。",
+         "delivery":{"sessionId":"\#(workSession)","state":"sent"},
+         "attention":{"reason":"\#(approval ? "approval" : "question")","decisionId":"\#(approval ? "approval-work" : "question-work")"},
+         "reply":{"messageId":"work-reply","text":"已定位文件栏占宽。接下来需要明确窄屏下的文件选择方式。","more":true}}
+        """#)) { fields in
+            fields["turn"] = workTurn()
+            if scene == "work-unknown" || scene == "work-failed" {
+                let unknown = scene == "work-unknown"
+                fields["delivery"] = .object(["state": .string(unknown ? "unknown" : "failed"), "sessionId": .string(workSession),
+                    "reason": .string(unknown ? "没有确认送达。" : "会话正在运行，发言没有送达。")])
+                fields["turn"] = nil; fields["reply"] = nil
+                fields["attention"] = .object(["reason": .string(unknown ? "unknown" : "failed")])
+            }
+        }
+    }
+
+    private static func workPR() -> NativeJSON {
+        json(#"""
+        {"pr":{"number":42,"title":"让 iPad 分屏审阅保持足够宽度","state":"open","draft":false,
+               "url":"https://example.invalid/acme/latch/pull/42","headSha":"\#(prHead)","reviewDecision":"changes-requested"},
+         "checks":[{"name":"native-simulator","state":"fail","job":"128"},{"name":"types","state":"pass"},{"name":"screenshots","state":"pending"}],
+         "discussion":[{"kind":"line","review":"commented","author":"审阅者","path":"\#(workLongFile)","line":31,"body":"请保留长路径的完整内容，并在分屏下复核。"}],"discussionCapped":true}
+        """#)
     }
 }

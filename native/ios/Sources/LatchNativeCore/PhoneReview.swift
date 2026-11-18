@@ -400,6 +400,13 @@ public enum PhoneReview {
     /** The record does not cover every file. */
     public static let partialWords = "列表可能不完整"
 
+    /** The detail column is measured after the system split view has laid out its sidebar. */
+    public static func fileColumnWidth(detail: Double, accessibility: Bool) -> Double? {
+        guard !accessibility, detail.isFinite, detail >= 780 else { return nil }
+        let files = min(280, max(224, (detail * 0.29).rounded(.down)))
+        return detail - files >= 520 ? files : nil
+    }
+
     // MARK: routes
 
     private static func session(_ id: String) throws -> String {
@@ -411,7 +418,10 @@ public enum PhoneReview {
         return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
     }
     public static func turnsPath(_ id: String) throws -> String { try session(id) + "/changes/turns" }
-    public static func listPath(_ id: String, scope: PhoneReviewScope) throws -> String { try session(id) + "/changes?scope=" + scope.rawValue }
+    public static func listPath(_ id: String, scope: PhoneReviewScope, turnId: String? = nil) throws -> String {
+        if let turnId, scope != .turn || PhoneWorkItems.message(.string(turnId)) == nil { throw NativeFailure.invalidRecord }
+        return try session(id) + "/changes?scope=" + scope.rawValue + (turnId.map { "&turn=" + PhoneWorkItems.query($0) } ?? "")
+    }
     /** Whole-file context, as the web asks: the page folds what it does not show and opens it without asking again. */
     public static func filePath(_ id: String, scope: PhoneReviewScope, turnId: String?, root: String, path: String) throws -> String {
         guard !root.isEmpty, root.utf8.count <= 160, !path.isEmpty, path.utf8.count <= 1024 else { throw NativeFailure.invalidRecord }

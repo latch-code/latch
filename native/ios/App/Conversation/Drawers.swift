@@ -33,6 +33,7 @@ struct ApprovalDrawer: View {
     @EnvironmentObject private var model: PhoneModel
     let approval: NativeJSON
     let total: Int
+    var work: PhoneWorkDecisionContext? = nil
     @State private var details = false
     /** Counted once per request: this view redraws on every update of the session. */
     @State private var stat: PhoneDiffStat?
@@ -82,20 +83,20 @@ struct ApprovalDrawer: View {
                     if !gate.more.isEmpty, let id {
                         Menu {
                             ForEach(gate.more) { choice in
-                                Button(choice.label) { Task { await model.decide(id, option: choice.id, allows: choice.allows) } }
+                                Button(choice.label) { Task { await model.decide(id, option: choice.id, allows: choice.allows, work: work) } }
                             }
-                            Button("停止这一轮") { Task { await model.stop() } }
+                            Button("停止这一轮") { Task { await model.stop(work: work) } }
                         } label: {
                             Text("更多").font(.system(size: 15, weight: .medium)).foregroundStyle(PhoneTheme.ink).padding(.horizontal, 14).frame(height: 40)
                                 .overlay(Capsule().stroke(PhoneTheme.lineStrong)).contentShape(Capsule())
                         }.disabled(rejecting || model.stoppingCurrent)
                     }
                     // A stop on its way answers this request too, so a rejection could only be told it came second.
-                    button(rejecting ? "正在拒绝…" : "拒绝", prominent: false) { if let id { Task { await model.reject(id) } } }.disabled(rejecting || model.stoppingCurrent)
+                    button(rejecting ? "正在拒绝…" : "拒绝", prominent: false) { if let id { Task { await model.reject(id, work: work) } } }.disabled(rejecting || model.stoppingCurrent)
                     if gate.canAllow {
-                        button(gate.allowLabel, prominent: !gate.hidden) { if let id { Task { await model.allow(id, option: gate.allowOption) } } }.disabled(model.stoppingCurrent)
+                        button(gate.allowLabel, prominent: !gate.hidden) { if let id { Task { await model.allow(id, option: gate.allowOption, work: work) } } }.disabled(model.stoppingCurrent)
                     } else {
-                        button(model.stoppingCurrent ? "正在停止…" : "停止", prominent: false) { Task { await model.stop() } }.disabled(model.stoppingCurrent)
+                        button(model.stoppingCurrent ? "正在停止…" : "停止", prominent: false) { Task { await model.stop(work: work) } }.disabled(model.stoppingCurrent)
                     }
                 }.disabled(model.busy)
             }
@@ -120,6 +121,7 @@ struct QuestionDrawer: View {
     let total: Int
     /** Who asks: the session's Harness, by the name the list shows. */
     let asker: String
+    var work: PhoneWorkDecisionContext? = nil
     @State private var page = 0
     @State private var choices: [String: Set<String>] = [:]
     @State private var other: [String: String] = [:]
@@ -148,13 +150,16 @@ struct QuestionDrawer: View {
                     } else { Button("其他…") { writing = true }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).padding(.top, 2) }
                 }
             }
+            if work != nil && !model.canRun && model.connected {
+                Text("回答需要运行权限").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+            }
             HStack {
                 Spacer()
                 if page < items.count - 1 {
                     Button("下一个") { writing = false; page += 1 }.buttonStyle(.bordered).buttonBorderShape(.capsule).tint(PhoneTheme.ink).disabled(!answered(item))
                 } else {
                     Button("提交回答") { answer() }.buttonStyle(.borderedProminent).buttonBorderShape(.capsule).tint(PhoneTheme.accent)
-                        .disabled(!items.allSatisfy(answered) || model.busy || question["state"].string != "pending" || !model.connected)
+                        .disabled(!items.allSatisfy(answered) || model.busy || question["state"].string != "pending" || !model.canRun)
                 }
             }
         }
@@ -189,7 +194,7 @@ struct QuestionDrawer: View {
             if let text = other[id], !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields["other"] = .string(text) }
             return .object(fields)
         }
-        Task { await model.mutate(.post, path: "/link/api/tasks/\(sessionId)/questions/\(id)/answer", fields: ["answers": .array(answers)]) }
+        Task { await model.mutate(.post, path: "/link/api/tasks/\(sessionId)/questions/\(id)/answer", fields: ["answers": .array(answers)], work: work) }
     }
 }
 

@@ -56,7 +56,12 @@ import UIKit
     @Published var removedByMac = false
     @Published var status = "选择一台电脑"
     @Published var error: String?
-    @Published var connected = false { didSet { if connected { offline = false; hostNotice = nil; lastConfirmed = Date() } } }
+    @Published var connected = false {
+        didSet {
+            if connected { offline = false; hostNotice = nil; lastConfirmed = Date() }
+            else if oldValue { withdrawDisconnectedWork() }
+        }
+    }
     /** The store has answered, so an empty host list means this phone has none. */
     @Published var storeReady = false
     /** Reaching the Mac has failed at least once; the list shows what it last knew. */
@@ -76,6 +81,14 @@ import UIKit
     /** Result cards waiting for an owner's next topic, read inside a content window and dropped with it. */
     @Published var agentResults = PhoneResultStore()
     @Published var appPath: [String] = []
+    @Published var workItemsShown = false
+    @Published var workItemId: String?
+    @Published var workPath: [PhoneWorkDestination] = [] {
+        didSet { if oldValue != workPath { workPathGeneration = UUID() } }
+    }
+    var workSelection = UUID()
+    var workConnection = UUID()
+    var workPathGeneration = UUID()
     /** The clipboard's change count when a pairing code was pasted, so a successful pairing clears it only if it still holds that code. */
     var pastedPairing: Int?
     #if LATCH_SCREENS
@@ -169,6 +182,12 @@ import UIKit
     @Published var privateSnapshot = PhonePrivateSnapshot()
     @Published var createdHelper: CreatedHelper?
     private var bodyLease: BodyLease?
+    var hasContentWindow: Bool {
+        #if LATCH_SCREENS
+        if staged { return verifiedUntil.map { $0 > Date() } ?? false }
+        #endif
+        return bodyLease?.valid == true
+    }
     @Published var contentGeneration = UUID() { didSet { if oldValue != contentGeneration { clearBodyReading() } } }
     private var bodyRead: PhoneBodyRead?
     private var bodyOpening: (id: UUID, host: UUID, selection: UUID, content: UUID, session: String, lease: BodyLease, workspace: NativeWorkspace, task: Task<NativeBodyReading, Error>)?
@@ -178,6 +197,10 @@ import UIKit
     func hasScope(_ scope: String) -> Bool { snapshot["device"]["scopes"].array.contains(.string(scope)) }
     private(set) var store: PhoneStore?
     private(set) var workspace: NativeWorkspace?
+    private let storageOpening = NativeStorageOpening()
+    private var protectedDataLocked = false
+    private var offlineCacheBlocked: Set<String> = []
+    @Published private(set) var installedTransport: NativeTransportEpoch?
     let paths = NativePathOwner()
     private let discovery = NativeDiscovery()
     private(set) var generation = UUID()
@@ -200,66 +223,106 @@ import UIKit
     private var proximityTask: Task<Void, Never>?
     private var bookRefresher: NativeBookRefresher?
 
+    private var storageAvailable: Bool {
+        !protectedDataLocked && UIApplication.shared.isProtectedDataAvailable && UIApplication.shared.applicationState != .background
+    }
+    func protectedDataChanged(available: Bool) {
+        protectedDataLocked = !available
+        if available { Task { await open() } }
+        else { lock() }
+    }
     func open() async {
-        guard store == nil, UIApplication.shared.isProtectedDataAvailable else { return }
+        guard store == nil, storageAvailable else { return }
+        let current = generation
+        await storageOpening.open(when: { self.canOpenStore(current) }) {
+            await self.prepareStore(current)
+        }
+    }
+    private func canOpenStore(_ current: UUID) -> Bool {
+        generation == current && store == nil && storageAvailable && !Task.isCancelled
+    }
+    private func prepareStore(_ current: UUID) async {
+        guard canOpenStore(current) else { return }
         PreviewFiles.purgeAbandoned()
         // Copies a document picker left when its callback never came.
         PhoneAttachLoader.purgeInbox(temporary: FileManager.default.temporaryDirectory)
-        let current = generation
+        var provisional: PhoneStore?
         do {
             let opened = try await PhoneStore.open()
-            guard generation == current, UIApplication.shared.applicationState != .background else { await opened.lock(); return }
-            store = opened
+            provisional = opened
+            guard canOpenStore(current) else { await opened.lock(); return }
             let saved = await opened.list(), pending = try await opened.draft()
-            guard generation == current else { await opened.lock(); return }
-            hosts = saved; draft = pending; storeReady = true
+            guard canOpenStore(current) else { await opened.lock(); return }
+            store = opened; hosts = saved; draft = pending; storeReady = true
             observeNetwork()
             if pending != nil { resumePairing() }
-            else if let other = pendingOther, hosts.contains(where: { $0.id == other.computer }) {
-                pendingOther = nil; await openOther(computer: other.computer, session: other.session)
-            } else { pendingOther = nil; await connectLast() }
-        } catch { storeReady = true; report(error) }
+            else {
+                Task {
+                    guard generation == current, store === opened, storageAvailable else { return }
+                    let other = pendingOther; pendingOther = nil
+                    if let other, hosts.contains(where: { $0.id == other.computer }) {
+                        await openOther(computer: other.computer, session: other.session)
+                    } else { await connectLast() }
+                }
+            }
+        } catch {
+            await provisional?.lock()
+            if canOpenStore(current) { storeReady = true; report(error) }
+        }
     }
     /** The Mac this phone last used, or the first saved one. */
     func connectLast() async {
         if let host = hosts.first(where: { $0.id == lastHostId }) ?? hosts.first { await connect(host) }
     }
-    func lock() async {
-        if let sessionId { resumeSession = sessionId }
+    func lock() {
+        if let sessionId, !workPath.contains(where: { $0.openedSession == sessionId }) { resumeSession = sessionId }
         if let selectedHost { lastHostId = selectedHost.id }
         generation = UUID(); eventTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel(); pairingTask?.cancel()
         monitorGeneration = UUID(); monitor?.cancel(); monitor = nil
         currentNetworkPath = nil; proximityTask?.cancel(); proximityTask = nil
         resetBookRefresh(); stopWatching(forget: true)
         discovery.stop(); freshPairings.removeAll()
-        let previous = workspace, link = pairingConnection, previousStore = store
-        store = nil; workspace = nil; pairingConnection = nil
+        let previous = workspace, link = pairingConnection, previousStore = store, previousHost = selectedHost?.id
+        if previous != nil || link != nil || previousStore != nil {
+            storageOpening.close {
+                await self.closeConnection(previous, hostId: previousHost)
+                await link?.close()
+                await previousStore?.lock()
+            }
+        } else { storageOpening.close() }
+        store = nil; workspace = nil; installedTransport = nil; pairingConnection = nil
         cancelPreview()
         detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
-        agentPath = []; appPath = []; proposals.clear(); agentResults.clear(); resetSessionActions(); resetReview()
+        agentPath = []; appPath = []; resetWorkItems(); proposals.clear(); agentResults.clear(); resetSessionActions(); resetReview()
         connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; storeReady = false; busy = false; verifying = false; status = "正在连接…"
         PreviewFiles.clear(); clearAttachments()
-        await paths.close(); await previous?.closeOpening(); await link?.close(); await previousStore?.lock()
+    }
+    private func closeConnection(_ previous: NativeWorkspace?, hostId: String?) async {
+        await paths.close()
+        if let previous, !(await previous.closeOpening()), let hostId { offlineCacheBlocked.insert(hostId) }
     }
     func connect(_ host: RegisteredHost) async {
-        guard let store, !busy else { return }
-        busy = true; defer { busy = false }
+        guard let store, !busy, storageAvailable else { return }
+        busy = true
         generation = UUID(); let current = generation
+        defer { if generation == current { busy = false } }
         eventRetryAttempt = 0
         eventTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel()
         resetBookRefresh()
-        let previous = workspace; workspace = nil
-        clearPrivateContent(); resetSessionActions(); resetReview(); snapshot = .null; sessionId = nil; agentPath = []; appPath = []; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; verifiedUntil = nil; connected = false; offline = false
+        let previous = workspace, previousHost = selectedHost?.id
+        storageOpening.close { await self.closeConnection(previous, hostId: previousHost) }
+        workspace = nil; installedTransport = nil
+        clearPrivateContent(); resetWorkItems(); resetSessionActions(); resetReview(); snapshot = .null; sessionId = nil; agentPath = []; appPath = []; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; verifiedUntil = nil; connected = false; offline = false
         let resume = resumeSession; resumeSession = nil
         selectedHost = host; lastHostId = host.id; status = "正在连接…"; error = nil
         watchOthers()
-        await paths.close(); await previous?.closeOpening()
-        guard generation == current else { return }
+        guard await storageOpening.waitForClose(), generation == current, self.store === store, storageAvailable else { return }
         do {
             let vault = try await store.hostVault(host)
-            guard generation == current else { await vault.lock(); return }
+            guard generation == current, self.store === store, storageAvailable, !Task.isCancelled else { await vault.lock(); return }
             let next = try NativeWorkspace(device: host.device, keys: PhoneKeys.provider(host.keys, askOwner: { PhoneFaceID.isOn }), vault: vault,
-                onRevoked: { [weak self, store] proof in Task { @MainActor in await self?.retire(host, proof: proof, retiredStore: store) } })
+                onRevoked: { [weak self, store] proof in Task { @MainActor in await self?.retire(host, proof: proof, retiredStore: store) } },
+                onTransportInstalled: { [weak self] path in self?.adoptTransport(path, current: current) })
             workspace = next
             bookRefresher = NativeBookRefresher(workspace: next, persist: { device in
                 var saved = host; saved.device = device; saved.prepared = false
@@ -271,22 +334,42 @@ import UIKit
             }, failed: { [weak self] failure in
                 await self?.bookFailed(failure, current: current)
             })
-            if let cached = try await next.cachedSnapshot() {
-                guard generation == current else { return }; adoptSnapshot(cached, live: false)
+            if !offlineCacheBlocked.contains(host.id) {
+                let cached = try await next.cachedSnapshot()
+                guard generation == current, self.store === store, storageAvailable else { return }
+                if let cached, !offlineCacheBlocked.contains(host.id) { adoptSnapshot(cached, live: false) }
             }
             try startDiscovery(host)
             let candidates = try await candidates(host)
-            let value = try await paths.migrate(candidates, workspace: next)
-            guard generation == current else { return }
-            adoptSnapshot(value); connected = true; status = "已连接"
-            await refreshControlPending(); startEvents()
-            if let resume, snapshot["tasks"].array.contains(where: { $0["id"].string == resume }) { await openSession(resume) }
+            guard generation == current, storageAvailable, workspace === next else { return }
+            _ = try await paths.migrate(candidates, workspace: next)
+            guard generation == current, storageAvailable else { return }
+            await refreshControlPending()
+            if generation == current, storageAvailable, let resume,
+               snapshot["tasks"].array.contains(where: { $0["id"].string == resume }) { await openSession(resume) }
         } catch {
-            guard generation == current else { return }
-            if let workspace, let proof = await workspace.verifiedRevocation() { await retire(host, proof: proof); return }
+            guard generation == current, storageAvailable else { return }
+            if let workspace, let proof = await workspace.verifiedRevocation() { await retire(host, proof: proof, retiredStore: store); return }
+            guard generation == current, storageAvailable else { return }
             connected = false; offline = true; status = "不在线"
             if !Self.outOfReach(error) { report(error) }
             startReconnect()
+        }
+    }
+    private func adoptTransport(_ path: NativeInstalledTransport, current: UUID) {
+        guard generation == current, storageAvailable else { return }
+        _ = path.epoch.whileCurrent {
+            _ = withdrawWorkSessionBody()
+            let restored = path.lease.map { (try? bindBodyLease($0, current: current)) != nil } ?? false
+            if !restored {
+                if verifiedUntil != nil { clearPrivateContent() }
+                verifiedUntil = nil; expiryTask?.cancel()
+            }
+            installedTransport = path.epoch
+            if let selectedHost { offlineCacheBlocked.remove(selectedHost.id) }
+            adoptSnapshot(path.snapshot, windowOpen: bodyLease?.valid == true)
+            connected = true; status = "已连接"
+            startEvents()
         }
     }
     func refreshControlPending() async {
@@ -337,6 +420,7 @@ import UIKit
 #endif
             // Verification does not change the caller's selected session, draft or attachments.
             privateSnapshot.clear()
+            clearWorkContent()
             createdHelper = nil
             detail = .null; detailFailed = nil; PreviewFiles.clear()
             snapshot = PhoneAgents.takeDown(snapshot, proposals: &proposals, results: &agentResults)
@@ -363,6 +447,7 @@ import UIKit
         guard current == generation, connected, verifiedUntil == nil, !verifying else { return }
         if let lastReopen, lastReopen.duration(to: .now) < .seconds(60) { return }
         lastReopen = .now
+        if tab == .code, workItemsShown { await openWorkWindow(); return }
         let selectedTab = tab, selectedPath = agentPath, selected = sessionId, reading = contentGeneration
         let target: PhoneContentReopen = tab == .agents ? .agents(sessionId: agentPath.isEmpty ? nil : selected)
             : selected.map(PhoneContentReopen.session) ?? .none
@@ -520,11 +605,12 @@ import UIKit
     }
     @discardableResult func refresh() async -> Bool {
         guard let workspace else { return false }
-        let current = generation, selected = sessionId
+        let current = generation, selected = sessionId, transport = installedTransport
+        func sameConnection() -> Bool { generation == current && installedTransport === transport && transport?.valid != false }
         var reading = privateSnapshot.epoch
         do {
             let lease = await workspace.lease()
-            guard current == generation else { return false }
+            guard sameConnection() else { return false }
             if let lease { try bindBodyLease(lease, current: current) }
             else {
                 if let bodyLease { closeBodyWindow(bodyLease, current: current) }
@@ -534,19 +620,19 @@ import UIKit
             }
             reading = privateSnapshot.epoch
             let value = try await workspace.snapshot()
-            guard current == generation else { return false }
+            guard sameConnection() else { return false }
             guard privateSnapshot.accepts(reading) else { return true }
             adoptSnapshot(value, captured: reading, windowOpen: lease?.valid == true)
             await refreshControlPending()
-            guard current == generation, privateSnapshot.accepts(reading) else { return false }
+            guard sameConnection(), privateSnapshot.accepts(reading) else { return false }
             if let selected, lease?.valid == true {
                 let reading = contentGeneration
-                guard try await readSelectedBody(selected, workspace: workspace), current == generation,
+                guard try await readSelectedBody(selected, workspace: workspace), sameConnection(),
                       sessionId == selected, contentGeneration == reading, lease?.valid == true else { return false }
             }
             return true
         } catch {
-            guard current == generation, privateSnapshot.accepts(reading), !Task.isCancelled, !(error is CancellationError) else { return false }
+            guard sameConnection(), privateSnapshot.accepts(reading), !Task.isCancelled, !(error is CancellationError) else { return false }
             if !wentAway(error) {
                 report(error)
                 if selected == sessionId, detail == .null, verifiedUntil != nil { detailFailed = selected }
@@ -777,15 +863,11 @@ import UIKit
                     }
                     guard current == generation else { return }
                     let available = try await candidates(host)
-                    let reading = privateSnapshot.epoch
-                    let value = try await paths.migrate(available, workspace: workspace)
+                    _ = try await paths.migrate(available, workspace: workspace)
                     guard current == generation else { return }
                     await bookRefresher?.connectionChanged()
                     guard current == generation else { return }
-                    if let lease = await workspace.lease() { try bindBodyLease(lease, current: current) }
-                    guard current == generation else { return }
-                    adoptSnapshot(value, captured: reading, windowOpen: bodyLease?.valid == true); connected = true; status = "已连接"
-                    _ = await refresh(); startEvents(); scheduleProximity(workspace); return
+                    _ = await refresh(); scheduleProximity(workspace); return
                 } catch {
                     if Task.isCancelled || current != generation { return }
                     if let proof = await workspace.verifiedRevocation() { await retire(host, proof: proof); return }
@@ -849,15 +931,11 @@ import UIKit
         guard let newBook, NativeBookPathChange.requiresMigration(previous: oldBook, current: newBook), let workspace else { return }
         do {
             if oldKey != newBook.discoveryKey { try startDiscovery(saved) }
-            let reading = privateSnapshot.epoch
-            let value = try await paths.migrate(candidates(saved), workspace: workspace)
+            _ = try await paths.migrate(candidates(saved), workspace: workspace)
             guard generation == current else { return }
             await bookRefresher?.connectionChanged()
             guard generation == current else { return }
-            if let lease = await workspace.lease() { try bindBodyLease(lease, current: current) }
-            guard generation == current else { return }
-            adoptSnapshot(value, captured: reading, windowOpen: bodyLease?.valid == true); connected = true; status = "已连接"
-            _ = await refresh(); startEvents()
+            _ = await refresh()
         } catch { if generation == current, !Task.isCancelled { startReconnect() } }
     }
     private func bookFailed(_ failure: NativeFailure, current: UUID) {
@@ -901,21 +979,32 @@ import UIKit
     }
     func retire(_ host: RegisteredHost, proof: VerifiedNativeRevocation, retiredStore: PhoneStore? = nil, removedHere: Bool = false) async {
         let currentStore = retiredStore ?? store, isCurrent = selectedHost?.id == host.id
+        let old = isCurrent ? workspace : nil
+        offlineCacheBlocked.insert(host.id)
         if isCurrent {
             generation = UUID(); reconnectTask?.cancel(); eventTask?.cancel(); expiryTask?.cancel()
-            clearPrivateContent(); controlPending = .null; snapshot = .null; verifiedUntil = nil; selectedHost = nil; connected = false
+            clearPrivateContent(); resetWorkItems(); controlPending = .null; snapshot = .null; verifiedUntil = nil; selectedHost = nil; connected = false
             PreviewFiles.clear(); clearAttachments(); discovery.stop(); freshPairings.removeValue(forKey: host.id)
-            let old = workspace; workspace = nil
-            await paths.close(); await old?.closeOpening()
+            workspace = nil; installedTransport = nil; busy = false
         }
-        do {
-            try await currentStore?.retire(host, proof: proof)
-            if let store, store === currentStore {
-                let saved = await store.list()
-                if self.store === store { hosts = saved; forgetNotices(host); if !isCurrent { watchOthers() } }
+        let current = generation
+        let remove = { @MainActor in
+            do { try await currentStore?.retire(host, proof: proof) }
+            catch { if self.generation == current { self.report(error) } }
+        }
+        if isCurrent {
+            storageOpening.close {
+                await self.closeConnection(old, hostId: host.id)
+                await remove()
             }
+            guard await storageOpening.waitForClose() else { return }
+        } else { await remove() }
+        guard generation == current, storageAvailable else { return }
+        if let store, store === currentStore {
+            let saved = await store.list()
+            guard generation == current, self.store === store, storageAvailable else { return }
+            hosts = saved; forgetNotices(host); if !isCurrent { watchOthers() }
         }
-        catch { report(error) }
         if isCurrent || selectedHost == nil {
             removedByMac = !removedHere
             status = "选择一台电脑"
@@ -932,8 +1021,13 @@ import UIKit
         } else if (failure as? NativeFailure) == .forbidden || (failure as? NativeFailure) == .contextChanged { clearPrivateContent() }
         error = (failure as? NativeFailure)?.errorDescription ?? "暂时无法完成，请稍后重试。"
     }
+    func withdrawWorkContent() {
+        clearPrivateContent()
+        Task { await refresh() }
+    }
     private func clearPrivateContent() {
         privateSnapshot.clear()
+        clearWorkContent()
         createdHelper = nil
         cancelPreview()
         detail = .null; detailFailed = nil; pending = []; contentGeneration = UUID(); PreviewFiles.clear(); clearAttachments()
@@ -949,10 +1043,14 @@ import UIKit
            let revision = value["revision"].integer, let applied = snapshot["revision"].integer, revision < applied { return }
         let keys = ["status", "scopes", "dataScope"]
         let changedScope = snapshot != .null && keys.contains(where: { snapshot["device"][$0] != value["device"][$0] })
-        if changedScope { clearPrivateContent(); heldDrafts = [:] }
-        guard let projected = privateSnapshot.adopt(value, captured: changedScope ? privateSnapshot.epoch : captured ?? privateSnapshot.epoch,
-            windowOpen: windowOpen && !changedScope) else { return }
+        let changedInstance = snapshot["instanceId"].string.map { $0 != value["instanceId"].string } ?? false
+        let withdraw = changedScope || changedInstance
+        if withdraw { clearPrivateContent(); heldDrafts = [:] }
+        guard let projected = privateSnapshot.adopt(value, captured: withdraw ? privateSnapshot.epoch : captured ?? privateSnapshot.epoch,
+            windowOpen: windowOpen && !withdraw) else { return }
+        let previousSources = workItemsShown ? snapshot["tasks"].array : []
         snapshot = PhoneSessions.projectingCurrentSummary(snapshot: projected, detail: detail, sessionId: sessionId, cached: detailCached)
+        reconcileWorkSources(previousSources)
         if live { refreshReviewShortcuts() }
         if let hostTime = PhoneTime.parse(value["hostTime"]) {
             // A cached list is old by definition: it says when it was true, not what the Host's clock reads now.

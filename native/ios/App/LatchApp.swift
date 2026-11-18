@@ -14,13 +14,14 @@ import UserNotifications
             PhoneRootView().environmentObject(model).tint(.blue)
                 .task { await model.open() }
                 .onChange(of: phase) { _, next in
-                    Task { if next == .background { await model.lock() }; if next == .active { await model.open() } }
+                    if next == .background { model.lock() }
+                    if next == .active { Task { await model.open() } }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
-                    Task { await model.lock() }
+                    model.protectedDataChanged(available: false)
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
-                    Task { await model.open() }
+                    model.protectedDataChanged(available: true)
                 }
         }
     }

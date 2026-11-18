@@ -81,7 +81,7 @@ public actor NativeVerification {
         }
     }
     public func restore(on connection: NativeHTTPConnection) async throws -> Bool {
-        try installPrepared(prepare: await prepareRestore(on: connection), on: connection)
+        try installPrepared(prepare: await prepareRestore(on: connection), on: connection) != nil
     }
     /** A companion resumes the original receipt without changing which connection owns system confirmation. */
     func attachCompanion(on connection: NativeHTTPConnection) async throws -> BodyLease {
@@ -123,17 +123,17 @@ public actor NativeVerification {
         }
         return PreparedWindowRestore(opening: current, version: expected, state: .none)
     }
-    @discardableResult func installPrepared(prepare: PreparedWindowRestore, on connection: NativeHTTPConnection) throws -> Bool {
+    func installPrepared(prepare: PreparedWindowRestore, on connection: NativeHTTPConnection) throws -> BodyLease? {
         guard opening == prepare.opening, version == prepare.version else { throw NativeFailure.expired }
         switch prepare.state {
         case let .existing(token, until):
             guard let window, window.token == token, window.until == until, window.lease.valid else { throw NativeFailure.expired }
-            windowConnection = ObjectIdentifier(connection); return true
+            windowConnection = ObjectIdentifier(connection); return window.lease
         case let .recovered(token, until, expectedProof):
             guard proof == expectedProof else { throw NativeFailure.expired }
-            _ = accept((token, until), connection: connection); return true
+            return accept((token, until), connection: connection)
         case .none:
-            window = nil; windowConnection = nil; return false
+            window = nil; windowConnection = nil; return nil
         }
     }
     private func verifyOnce(on connection: NativeHTTPConnection, opening current: String, sign: @escaping @Sendable (Data) async throws -> Data) async throws -> BodyLease {

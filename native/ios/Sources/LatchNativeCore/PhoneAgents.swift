@@ -182,7 +182,7 @@ public enum PhoneAgents {
     public static func withoutPrivate(_ snapshot: NativeJSON) -> NativeJSON {
         guard case var .object(value) = snapshot else { return snapshot }
         for key in ["customAgents", "agentChats", "automations", "agentProposals", "agentResults", "computer"] { value.removeValue(forKey: key) }
-        return .object(value)
+        return PhoneWorkItems.withoutBody(.object(value))
     }
     public static func validId(_ id: String) -> Bool { id == generalId || LinkBytes.matches(id, "agt_[a-f0-9-]{36}") }
     /** 通用 first, then the Host's order. */

@@ -7,6 +7,9 @@ struct PhoneReviewTarget: Identifiable, Hashable {
     var scope: PhoneReviewScope = .turn
     /** A file to land on, from 提交's list. */
     var file: String?
+    var turnId: String?
+    var work: PhoneWorkReadStamp?
+    var taskReview: Bool { work != nil }
     var id: String { sessionId }
 }
 
@@ -152,13 +155,36 @@ extension PhoneModel {
         } catch { return nil }
     }
     /** A read of the review's routes inside the window; errors are the caller's to show. */
-    func reviewRead(_ path: String) async throws -> NativeJSON {
+    func reviewRead(_ path: String, work: PhoneWorkReadStamp? = nil) async throws -> NativeJSON {
         #if LATCH_SCREENS
         if staged { return try ScreensStage.review(path) }
         #endif
         guard let workspace else { throw NativeFailure.unavailable }
-        try await ensureVerified()
-        return try await workspace.read(path, body: true)
+        if work == nil { try await ensureVerified() }
+        guard hasContentWindow else { throw NativeFailure.expired }
+        let host = generation, network = networkGeneration, window = privateSnapshot.epoch
+        let route = workPath.last, navigation = workPathGeneration
+        func currentWork() -> Bool {
+            guard let work else { return true }
+            guard let itemId = workItemId, let route, case .review = route,
+                  work == workStamp(itemId), navigation == workPathGeneration else { return false }
+            return workDestinationAllowed(route, itemId: itemId)
+        }
+        guard currentWork() else { throw CancellationError() }
+        let value = try await workspace.read(path, body: true, on: work?.transport)
+        guard !Task.isCancelled, host == generation, network == networkGeneration,
+              privateSnapshot.accepts(window), hasContentWindow, currentWork() else { throw CancellationError() }
+        return value
+    }
+
+    @discardableResult func publishReview(_ work: PhoneWorkReadStamp?, _ apply: () -> Void) -> Bool {
+        if let work {
+            guard let itemId = workItemId, let route = workPath.last, case .review = route,
+                  workDestinationAllowed(route, itemId: itemId) else { return false }
+            return publishWork(work, itemId: itemId, apply)
+        }
+        guard !Task.isCancelled else { return false }
+        apply(); return true
     }
 
     // MARK: seen, and the list's shortcut

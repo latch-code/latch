@@ -65,6 +65,9 @@ const nativeDrop = vi.hoisted(() => new Set<string>())
 const nativeReadFaults = vi.hoisted(() => new Map<string, Array<{ status: number; code: string }>>())
 const nativeEventFaults = vi.hoisted(() => [] as Array<'end' | 'server' | 'transport' | 'metadata' | 'invalid'>)
 const nativeMalformedSuccess = vi.hoisted(() => new Set<string>())
+const workCacheRace = vi.hoisted(() => ({
+  current: undefined as { markers?: string; itemId: string; reads: number; firstRevision?: number; lockOpen?: boolean } | undefined,
+}))
 /** Replaces successful bodies only after the real Host authorizes the route, for native protocol-ordering fixtures. */
 const nativeBodyScripts = vi.hoisted(
   () =>
@@ -97,6 +100,50 @@ vi.mock('../src/native.ts', async importOriginal => {
         async handler(req, res, opening) {
           nativeSeen.push({ deviceId: opening.deviceId, method: req.method ?? '', path: req.url ?? '' })
           const key = `${req.method ?? ''} ${req.url ?? ''}`
+          const work = workCacheRace.current
+          if (work && key === 'GET /link/api/snapshot') {
+            const end = res.end.bind(res)
+            res.end = ((...args: Parameters<typeof res.end>) => {
+              if (res.statusCode !== 200 || typeof args[0] !== 'string') return end(...args)
+              const snapshot = JSON.parse(args[0]) as AppSnapshot
+              const read = ++work.reads
+              const base = (work.firstRevision ??= snapshot.revision ?? 0)
+              const privateRow = read >= (work.lockOpen ? 2 : 4)
+              const restarted = !work.lockOpen && read >= 5
+              const item = {
+                id: work.itemId,
+                title: 'Public before scope change',
+                sessionIds: [],
+                updatedAt: '2026-11-18T00:00:00.000Z',
+                revision: privateRow ? 2 : 1,
+                board: { group: 'todo' },
+                ...(privateRow ? { private: true } : {}),
+              }
+              const response = JSON.stringify({
+                ...snapshot,
+                instanceId: restarted ? 'fixture-restarted' : snapshot.instanceId,
+                revision: restarted ? 1 : base + Math.max(0, read - (work.lockOpen ? 1 : 2)),
+                device: { ...snapshot.device, dataScope: privateRow ? 'work' : read === 3 ? 'files' : 'all' },
+                catalog: { ...snapshot.catalog, features: { ...snapshot.catalog?.features, workItems: true, workItemTurns: true } },
+                items: restarted ? [] : [item],
+              })
+              const markers = work.markers
+              if (!markers || read !== 2) return end(response)
+              // The candidate holds a usable but older response while the selected connection adopts two checkpoints.
+              void (async () => {
+                await writeFile(join(markers, 'candidate-read'), '')
+                for (let i = 0; i < 200 && !res.destroyed; i++) {
+                  if (existsSync(join(markers, 'release-candidate'))) {
+                    end(response)
+                    return
+                  }
+                  await new Promise(resolve => setTimeout(resolve, 25))
+                }
+                res.destroy()
+              })().catch(() => res.destroy())
+              return res
+            }) as typeof res.end
+          }
           if (nativeMalformedSuccess.has(key)) {
             const end = res.end.bind(res)
             res.end = ((...args: Parameters<typeof res.end>) => {
@@ -4126,6 +4173,263 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { allow: '这个会话都允许这类操作', option: 'o2', more: [], hidden: true, places: ['src/a\\u{200B}.ts'] },
     ])
   })
+  it('keeps native work-item cache at the accepted checkpoint across waiting writes and a path swap', async () => {
+    const markers = await mkdtemp(join(tmpdir(), 'latch-native-work-cache-'))
+    try {
+      const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+      try {
+        const owner = await host.enroll({ listener: 'unix' })
+        const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+        const itemId = 'itm_' + 'e'.repeat(22)
+        const race = { markers, itemId, reads: 0 }
+        workCacheRace.current = race
+        expect(
+          await invoke({
+            operation: 'nativeWorkspace',
+            payload: invitation.payload,
+            port: host.host.nativePort,
+            workCacheItem: itemId,
+            workCacheMarkers: markers,
+          }),
+        ).toEqual({
+          publicCacheExisted: true,
+          vaultWasHeld: true,
+          acceptedLatestDuringInstall: true,
+          offlinePrivateRowWithdrawn: true,
+          offlineRevisionKept: true,
+          newInstanceResetFloor: true,
+        })
+        expect(race.reads).toBe(5)
+      } finally {
+        workCacheRace.current = undefined
+        await host.close()
+      }
+    } finally {
+      await rm(markers, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  it('keeps native work-item cache private across a quick lock and offline reopen with a paused vault', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      const itemId = 'itm_' + 'f'.repeat(22)
+      const race = { itemId, reads: 0, lockOpen: true }
+      workCacheRace.current = race
+      expect(
+        await invoke({
+          operation: 'nativeWorkspace',
+          payload: invitation.payload,
+          port: host.host.nativePort,
+          workCacheItem: itemId,
+          workCacheLockOpen: true,
+        }),
+      ).toEqual({
+        waitedWhileOldVaultHeld: true,
+        oldStoreLockedBeforeReopening: true,
+        canceledAndProtectedReopensSkipped: true,
+        offlinePrivateRowWithdrawn: true,
+        offlineRevisionKept: true,
+      })
+      expect(race.reads).toBe(2)
+    } finally {
+      workCacheRace.current = undefined
+      await host.close()
+    }
+  }, 30_000)
+
+  it('keeps native work-item reads on one installed transport across a restored window', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const { item } = await owner.json<{ item: { id: string } }>('work/items', {
+        method: 'POST',
+        body: { requestId: randomUUID(), title: 'Native transport work fixture', prompt: 'Read only' },
+      })
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      expect(
+        await invoke({
+          operation: 'nativeWorkspace',
+          workTransportItem: item.id,
+          payload: invitation.payload,
+          port: host.host.nativePort,
+        }),
+      ).toEqual({
+        originalRead: true,
+        sameInstanceCheckpoint: true,
+        restoredWindow: true,
+        withoutNewSignature: true,
+        oldEpochWithdrawnDuringInstall: true,
+        oldPublicationRejected: true,
+        oldCompositionRejected: true,
+        currentCompositionAccepted: true,
+        closeWithdrawn: true,
+      })
+    } finally {
+      await host.close()
+    }
+  }, 30_000)
+
+  it('keeps native work-item reads within the window, exact turn, decision and commit', async () => {
+    const at = '2026-11-18T12:00:00.000Z'
+    const sessionId = 'session-code'
+    const itemId = `itm_${'a'.repeat(22)}`
+    const privateId = `itm_${'b'.repeat(22)}`
+    const postId = `pst_${'c'.repeat(22)}`
+    const sha = 'a'.repeat(40)
+    const messageId = 'reply-selected'
+    const userMessageId = 'user-selected'
+    const olderMessage = 'user-older'
+    const runId = 'run-current'
+    const job = '123'
+    const item = {
+      id: itemId,
+      title: '复核手机分屏',
+      updatedAt: at,
+      note: '只在窗口显示的备注',
+      revision: 3,
+      threadRevision: 2,
+      sessionIds: [sessionId],
+      board: { group: 'attention', reason: 'question', postId },
+    }
+    const privateItem = { ...item, id: privateId, title: '私有待办', private: true }
+    const turn = { sessionId, userMessageId, runId }
+    const post = {
+      id: postId,
+      at,
+      text: '核对这轮改动',
+      delivery: { sessionId, state: 'sent' },
+      turn,
+      attention: { reason: 'question', decisionId: 'question-selected' },
+      reply: { messageId, text: '本轮回复', more: true },
+    }
+    const detail = {
+      summary: { id: sessionId, runId, status: 'waiting-approval', pendingQuestions: 2 },
+      messages: [
+        { id: olderMessage, role: 'user' },
+        { id: 'reply-older', role: 'assistant' },
+        { id: userMessageId, role: 'user' },
+        { id: 'user-steered', role: 'user', steered: true },
+        { id: messageId, role: 'assistant' },
+      ],
+      questions: [
+        { id: 'question-unrelated', state: 'pending' },
+        { id: 'question-selected', state: 'pending' },
+      ],
+    }
+    const pr = {
+      number: 42,
+      title: '修复分屏',
+      state: 'open',
+      url: 'https://example.invalid/acme/latch/pull/42',
+      draft: false,
+    }
+    const check = { name: 'iPad screenshots', state: 'fail', job }
+    const evidence = (headSha?: string) => ({
+      entries: [{ sessionId, observedAt: at, state: { head: sha }, pr: { pr: { ...pr, headSha }, checks: [check] } }],
+    })
+    const result = await invoke({
+      operation: 'phoneWorkItems',
+      snapshot: {
+        catalog: { features: { workItems: true, workItemTurns: true } },
+        device: { status: 'active', scopes: ['view'], dataScope: 'files' },
+        items: [item, privateItem],
+        tasks: [{ id: sessionId, itemId: privateId }],
+        workProposals: [{ id: 'private-origin' }],
+      },
+      privateDetail: { ...privateItem, prompt: '只向有权设备显示' },
+      post,
+      detail,
+      approvalPost: { ...post, attention: { reason: 'approval', decisionId: 'approval-selected' } },
+      approvalDetail: {
+        ...detail,
+        approvals: [
+          { id: 'approval-unrelated', sessionId },
+          { id: 'approval-selected', sessionId },
+        ],
+      },
+      page: { posts: [post], before: postId, revision: 2 },
+      olderPostId: 'pst_' + 'd'.repeat(22),
+      reply: { turn, messageId, text: '🧪'.repeat(16_000), nextOffset: 16_000 },
+      olderMessage,
+      evidence: evidence('b'.repeat(40)),
+      equalEvidence: evidence(sha),
+      unboundEvidence: { entries: [{ sessionId, observedAt: at, state: { head: sha }, pr: { checks: [] } }] },
+      missingSHAEvidence: evidence(),
+      discussion: {
+        discussion: [
+          { author: 'qa', body: '宽'.repeat(3000) },
+          { author: 'qa', body: '宽'.repeat(8193) },
+        ],
+      },
+      sha,
+      job,
+      commit: { sha, files: [{ path: 'src/PhoneNativeReview.swift', status: 'M' }] },
+    })
+    expect(result).toEqual({
+      window: {
+        oldHostDisabled: true,
+        publicCount: 1,
+        openCount: 2,
+        closedCount: 1,
+        referenceWithdrawn: true,
+        postWithdrawn: true,
+        noteWithdrawn: true,
+        proposalWithdrawn: true,
+        oldSnapshotRejected: true,
+        privateReadDenied: true,
+        invalidRouteRejected: true,
+        files: true,
+        offlineWithdrawn: true,
+        expiredWithdrawn: true,
+        sameNetworkNewConnection: true,
+      },
+      source: {
+        startsReadable: true,
+        completeMissing: 'unavailable',
+        partialMissing: 'unconfirmed',
+        withdrawn: true,
+        humanPostPreserved: true,
+        stillWithdrawnAfterSourceReturns: true,
+        keepsEarlierWhileOmitted: true,
+        olderCursorRestored: true,
+        turn: userMessageId,
+        decision: 'question-selected',
+        approval: 'approval-selected',
+        legacyTurn: userMessageId,
+        legacyCannotAnswer: true,
+        oldRunRejected: true,
+        answeredRejected: true,
+        wrongMessageRejected: true,
+        pageBefore: postId,
+        pageLimit: true,
+        offset: 16_000,
+        replyMismatch: true,
+        replyWrongTurn: true,
+        replyWrongOffset: true,
+        replyQuery: `/link/api/work/items/${itemId}/posts/${postId}/reply?messageId=%E5%9B%9E%E5%A4%8D%26offset%3D2&offset=16000`,
+        routeRejected: true,
+        shaRejected: true,
+      },
+      evidence: {
+        deliveryRead: 'POST',
+        deliveryIds: [sessionId],
+        different: true,
+        same: true,
+        unbound: true,
+        missingSHA: true,
+        commentsPreserved: [3000],
+        commentLimitApplied: true,
+        matchedCheck: 'iPad screenshots',
+        wrongCheckRejected: true,
+        commitFiles: 1,
+        wrongCommitRejected: true,
+      },
+      reviewWidths: [true, true, true, true],
+    })
+  })
+
   it('derives the review, 提交, editing, handoff and notice decisions the phone shows and the writes it sends for them', async () => {
     const at = (m: string) => `2026-11-01T${m}:00.000Z`
     const counts = (sessionId: string, pending: number, sent = 0, claimed = 0) => ({

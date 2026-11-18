@@ -8,6 +8,7 @@ struct ConversationView: View {
     var back: (() -> Void)? = nil
     /** A topic of 我的 Agent: the Agent's frame takes the header, and its memory proposals follow their turns. */
     var frame: AgentFrame? = nil
+    var work: PhoneWorkDecisionContext? = nil
     @State private var preview: PreviewItem?
     @State private var previewTask: Task<Void, Never>?
     @State private var previewRequest: UUID?
@@ -19,7 +20,10 @@ struct ConversationView: View {
     @AppStorage(PhoneFaceID.key) private var faceID = false
     private var summary: NativeJSON { model.currentSummary }
     private var engine: String { model.engineName(summary["harnessId"].string) }
-    private var hasContent: Bool { model.detail["summary"]["id"].string == id }
+    private var hasContent: Bool {
+        model.sessionId == id && model.detail["summary"]["id"].string == id
+            && (work.map { model.workStamp($0.itemId) == $0.stamp && model.workDestinationAllowed(.source($0.source), itemId: $0.itemId) } ?? true)
+    }
     private var inputReason: String? {
         if let reason = PhoneConversation.inputGate(summary: summary, permission: model.detail["permission"], canRun: model.canRun, connected: model.connected) { return reason }
         if PhoneAgentChat.owner(summary) != nil, !PhoneAgentChat.isCurrent(model.snapshot, task: summary) {
@@ -30,7 +34,10 @@ struct ConversationView: View {
     }
     var body: some View {
         Group {
-            if hasContent { transcript }
+            if hasContent {
+                if let work { workTranscript(work) }
+                else { transcript }
+            }
             else if model.verifiedUntil == nil && !model.verifying { locked }
             else if model.detailFailed == id { unreadable }
             else if !model.connected && !model.verifying { macAway }
@@ -42,7 +49,7 @@ struct ConversationView: View {
         .toolbar { header }
         // Beside the list on an iPad the tabs stay; a pushed conversation on a phone needs the room.
         .toolbar(width == .compact ? .hidden : .automatic, for: .tabBar)
-        .safeAreaInset(edge: .bottom, spacing: 0) { dock }
+        .safeAreaInset(edge: .bottom, spacing: 0) { if let work { workDock(work) } else { dock } }
         .sheet(item: $preview, onDismiss: { PreviewFiles.clear() }) { NativePreviewView(item: $0) }
         .sheet(isPresented: Binding(get: { fileList != nil }, set: { if !$0 { fileList = nil } })) {
             SessionFilesSheet(files: fileList ?? [], open: { path, root in fileList = nil; openFile(path, root) })
@@ -73,7 +80,7 @@ struct ConversationView: View {
     /** The title opens the session menu, as the web's title row does; a phone that may not run sessions has none. */
     @ViewBuilder private var titleMenu: some View {
         let task = summary
-        if !PhoneSessionMenu.sections(task, canRun: model.canRun).isEmpty {
+        if work == nil && !PhoneSessionMenu.sections(task, canRun: model.canRun).isEmpty {
             Menu { SessionMenuButtons(task: task, open: true) } label: { title }.accessibilityHint("会话操作")
         } else { title }
     }
@@ -84,7 +91,7 @@ struct ConversationView: View {
         let imported = PhoneHistory.mark(current, sourceLabel: current["imported"]["from"].string.flatMap { from in
             model.engineInfo(from) != .null ? model.engineName(from) : nil
         })
-        return HeaderTitle(title: model.detail["summary"]["title"].string ?? summary["title"].string ?? "会话",
+        return HeaderTitle(title: (hasContent ? model.detail["summary"]["title"].string : nil) ?? model.summary(of: id)["title"].string ?? "会话",
             subtitle: (([delegated, imported?.label].compactMap { $0 }) + line.parts, line.neverAsks), detail: imported?.detail)
     }
     /** After a declined Face ID or a closed window: the session's name stays, and one plain way back in. There is no unlock screen before the first try. */
@@ -113,6 +120,14 @@ struct ConversationView: View {
         let canFork = model.connected && model.canFork && summary["personal"] == .null
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
+                if !model.workItemsShown, model.tab == .code, let itemId = summary["itemId"].string, let item = model.workItem(itemId) {
+                    Button {
+                        model.showWorkItems(true)
+                        model.selectWorkItem(item.id)
+                    } label: {
+                        Label(PhoneConversation.visible(item.title), systemImage: "checklist").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+                    }.buttonStyle(.plain).accessibilityHint("打开关联待办")
+                }
                 if let origin = PhoneForkDraft.origin(model.detail["summary"]) {
                     Button { Task { await model.openSession(origin.taskId) } } label: {
                         Label(origin.words, systemImage: "arrow.triangle.branch").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
@@ -154,6 +169,56 @@ struct ConversationView: View {
         .defaultScrollAnchor(.bottom)
         .refreshable { await model.refresh() }
     }
+    private func workTranscript(_ work: PhoneWorkDecisionContext) -> some View {
+        let turns = PhoneConversation.turns(PhoneConversation.rendered(model.detail))
+        let turn = work.source.locate(in: turns)
+        let status = summary["status"].string
+        let live = work.source.runId.map { run in
+            run.utf8.elementsEqual((summary["runId"].string ?? "").utf8)
+                && ["running", "waiting-approval"].contains(status ?? "") && turn?.id == turns.last?.id
+        } ?? false
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                WorkConnectionLine()
+                if let item = model.workItem(work.itemId) {
+                    Label(PhoneConversation.visible(item.title), systemImage: "checklist").font(.subheadline).foregroundStyle(PhoneTheme.muted)
+                }
+                if let turn {
+                    TurnView(turn: turn, latest: live, status: live ? status : nil, running: live, frozen: !model.connected,
+                        delivery: live ? PhoneConversation.delivery(model.detail, turn: turn) : nil, switched: nil,
+                        mark: model.engineMark(summary["harnessId"].string), engine: engine, fileScope: PhoneFileScope(model.detail["summary"]),
+                        endSaid: false, open: { openFile($0, $1) }).equatable()
+                    if let run = work.source.runId, PhoneWorkItems.canReadFiles(model.snapshot), model.snapshot["catalog"]["features"]["changes"].bool {
+                        WorkRouteLink(title: "本轮改动与反馈", icon: "list.bullet.rectangle", destination: .review(session: id, turn: run), subrow: true)
+                            .disabled(!model.connected)
+                    }
+                    WorkRouteLink(title: "打开会话", icon: "bubble.left", destination: .session(id), subrow: true)
+                        .disabled(!model.connected)
+                } else {
+                    WorkReadNotice(title: "这个回合已不可用")
+                }
+            }.padding(18).frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity)
+        }.refreshable { await model.refresh() }
+    }
+    @ViewBuilder private func workDock(_ work: PhoneWorkDecisionContext) -> some View {
+        VStack(spacing: 8) {
+            ControlPendingBar()
+            PendingWritesBar()
+            if hasContent, let decision = work.source.decision {
+                if let record = work.source.currentDecision(detail: model.detail, summary: summary), !model.detailCached {
+                    switch decision.kind {
+                    case .question:
+                        QuestionDrawer(question: record, sessionId: id, total: 1, asker: engine, work: work)
+                    case .approval:
+                        ApprovalDrawer(approval: record, total: 1, work: work)
+                    }
+                } else if model.connected {
+                    Text("这项决定已不在本轮等待").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).padding(.vertical, 8)
+                }
+            }
+        }.frame(maxWidth: 760).frame(maxWidth: .infinity)
+    }
+
     @ViewBuilder private var dock: some View {
         VStack(spacing: 8) {
             ControlPendingBar()

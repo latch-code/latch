@@ -1,13 +1,13 @@
 import Foundation
 import LatchNativeCore
 
-private final class FixtureVaultPause: @unchecked Sendable {
+final class FixtureVaultPause: @unchecked Sendable {
     let entered = DispatchSemaphore(value: 0)
     let release = DispatchSemaphore(value: 0)
     func hasEntered() -> Bool { entered.wait(timeout: .now()) == .success }
 }
 
-private extension EncryptedVault {
+extension EncryptedVault {
     // This method exists only in Testkit. Blocking this owned actor models pending storage work, not an App callback.
     func fixturePause(_ pause: FixtureVaultPause) -> Bool {
         pause.entered.signal()

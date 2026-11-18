@@ -15,6 +15,52 @@ public struct NativePairingDraft: Codable, Sendable {
     public init(payload: String, keys: DeviceKeyReference, name: String) { self.payload = payload; self.keys = keys; self.name = name }
 }
 
+/** A new App opening must not read from the same directory while the previous opening is closing. */
+@MainActor public final class NativeStorageOpening {
+    private struct Operation {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+    private var opening: Operation?
+    private var closing: Operation?
+
+    public init() {}
+
+    public func close(_ release: (@MainActor () async -> Void)? = nil) {
+        let preparing = opening?.task
+        guard preparing != nil || release != nil else { return }
+        opening = nil
+        preparing?.cancel()
+        let previous = closing?.task, id = UUID()
+        closing = Operation(id: id, task: Task {
+            await previous?.value
+            await preparing?.value
+            await release?()
+            if closing?.id == id { closing = nil }
+        })
+    }
+
+    /** Wait for any close appended while an older one was draining. A canceled reader never cancels the close. */
+    public func waitForClose() async -> Bool {
+        while let closing {
+            guard !Task.isCancelled else { return false }
+            await closing.task.value
+        }
+        return !Task.isCancelled
+    }
+
+    public func open(when allowed: () -> Bool, prepare: @escaping @MainActor () async -> Void) async {
+        guard await waitForClose(), allowed(), opening == nil else { return }
+        let id = UUID()
+        let task = Task { if !Task.isCancelled { await prepare() } }
+        opening = Operation(id: id, task: task)
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: { task.cancel() }
+        if opening?.id == id { opening = nil }
+    }
+}
+
 public actor NativeProfileStore {
     private let root: URL
     private var key: Data?

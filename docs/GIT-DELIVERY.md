@@ -447,6 +447,10 @@ PR 只做 GitHub，只经你的 `gh`（GitHub CLI）；其他平台尚未实现�
 | `pr-create-failed`（422） | 带经脱敏的 `gh` 输出最后 20 行、最多 4 KiB |
 | `pr-exists-elsewhere`、`pr-not-pushed`、`pr-nothing-ahead`、`pr-input-invalid`、`pr-check-not-found` | 见上 |
 
+### 原生待办的证据
+
+关联会话的「交付证据」读取 Host 已观察到的本地 HEAD 与绑定 PR。提交差异固定查询所选完整 SHA，文件差异同时核对 SHA 与路径。PR 的审阅与评论附在 PR 页，检查随 `pr.headSha` 展示。 评论按 Host 的 UTF-16 字符上限与原生响应的总字节上限处理。 Host 将原生 PR 响应限制在 960 KiB，保留 PR 和检查，从最旧的讨论开始裁剪。原生页面用 `discussionCapped` 标明省略的讨论。已解绑的 PR 留在未绑定状态，已读回的本地 HEAD 仍可打开提交差异。与本地 HEAD 不同或版本未确认时明确标记。读取失败日志前后核对 PR 编号、头提交与失败任务 ID，Host 回报检查已变化时撤下原结果。项目文件范围和正文窗口要求沿用现有读路由。待办审阅中的反馈仍走会话的原有接口。
+
 ## 验证
 
 用例与运行方式见 [TESTING.md](TESTING.md#按改动选择回归) 的「Git 受限运行器、工作树与交付」一行。夹具的边界：
