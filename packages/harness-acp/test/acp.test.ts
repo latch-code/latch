@@ -8376,12 +8376,13 @@ describe('the browser tools for ACP sessions', () => {
     })
     expect(approval).toMatchObject({ toolName: 'mcp__latch-browser__browser_click', advisory: true })
     await bridge.decide(approval.id, 'allow')
-    await settled(bridge, sessionId)
+    const { runId } = (await settled(bridge, sessionId)).summary
+    expect(runId).toEqual(expect.any(String))
     expect(gateway.calls).toEqual([
       {
         tool: 'browser_click',
         args: { tabId: TAB, ref: 'e1' },
-        context: { turn: 'running', toolCallId: approval.toolCallId, approvalId: approval.id },
+        context: { turn: 'running', runId, toolCallId: approval.toolCallId, approvalId: approval.id },
       },
     ])
   })
@@ -8402,13 +8403,17 @@ describe('the browser tools for ACP sessions', () => {
     const click = { tool: 'browser_click', args: { tabId: TAB, ref: 'e1' }, ask: true }
     const { sessionId } = await bridge.createTask({ prompt: `browser ${JSON.stringify([{ ...click, twin: true }])}`, requestId: rid() })
     const twin = await allow()
-    await settled(bridge, sessionId)
+    const firstRun = (await settled(bridge, sessionId)).summary.runId
+    expect(firstRun).toEqual(expect.any(String))
     // The oldest row is named; the approval is not, since its twin could be the call that ran.
-    expect(gateway.calls[0]!.context).toEqual({ turn: 'running', toolCallId: twin.toolCallId })
+    expect(gateway.calls[0]!.context).toEqual({ turn: 'running', runId: firstRun, toolCallId: twin.toolCallId })
     await bridge.prompt(sessionId, `browser ${JSON.stringify([{ ...click, title: 'mcp__playwright__browser_click' }])}`, rid(), {})
     await allow()
-    await settled(bridge, sessionId)
-    expect(gateway.calls[1]!.context).toEqual({ turn: 'running' })
+    const secondRun = (await settled(bridge, sessionId)).summary.runId
+    expect(secondRun).toEqual(expect.any(String))
+    expect(secondRun).not.toBe(firstRun)
+    expect(gateway.calls).toHaveLength(2)
+    expect(gateway.calls[1]!.context).toEqual({ turn: 'running', runId: secondRun })
   })
 
   it('confirms a stop only once the browser call settled, and says when its result is unknown', async () => {
