@@ -86,7 +86,7 @@ struct WorkItemStack: View {
         VStack(alignment: .leading, spacing: 16) {
             WorkItemHeading(item: item)
             if model.connected { WorkUnlock(label: "查看待办") }
-            else { WorkConnectionLine() }
+            else { WorkConnectionLine(detail: "当前只显示已保存的待办摘要。打开讨论需要连接电脑。") }
             Spacer(minLength: 0)
         }.padding(20).frame(maxWidth: 720, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -165,12 +165,7 @@ private struct WorkItemContents: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 22) {
-                if !model.connected {
-                    VStack(alignment: .leading, spacing: 4) {
-                        WorkConnectionLine()
-                        Text("连接恢复后可查看讨论和交付证据。").font(.subheadline).foregroundStyle(PhoneTheme.muted)
-                    }
-                }
+                if !model.connected { WorkConnectionLine(detail: "打开讨论和交付证据需要连接电脑。") }
                 if let item = model.workItem(itemId) { WorkItemHeading(item: item).id(itemId) }
                 if let failure {
                     WorkReadNotice(title: failure) { await load() }
@@ -457,10 +452,14 @@ struct WorkUnlock: View {
 
 struct WorkConnectionLine: View {
     @EnvironmentObject private var model: PhoneModel
+    var detail: String? = nil
     var body: some View {
         if !model.connected {
-            Label((model.selectedHost.map(model.computerName) ?? "Mac") + " 不在线", systemImage: "wifi.slash")
-                .font(.subheadline).foregroundStyle(PhoneTheme.amber)
+            VStack(alignment: .leading, spacing: 4) {
+                Label((model.selectedHost.map(model.computerName) ?? "Mac") + " 不在线", systemImage: "wifi.slash")
+                    .font(.subheadline).foregroundStyle(PhoneTheme.amber)
+                if let detail { Text(detail).font(.subheadline).foregroundStyle(PhoneTheme.muted) }
+            }
         }
     }
 }
