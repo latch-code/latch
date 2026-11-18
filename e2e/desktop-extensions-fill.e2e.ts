@@ -99,7 +99,9 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await settings.getByRole('button', { name: /^Codex/u }).click()
       const mcp = settings.locator('[data-extensions-harness="codex"]').getByRole('region', { name: 'MCP', exact: true })
       const row = mcp.locator('[data-harness-mcp="files"]')
-      await row.getByText('Harness 自带', { exact: true }).waitFor()
+      await mcp.getByRole('heading', { name: 'Harness 自带', exact: true }).waitFor()
+      await row.waitFor()
+      expect(await row.getByText('Harness 自带', { exact: true }).count()).toBe(0)
       await page.screenshot({ path: `${OUTPUT}/codex-1440.png`, animations: 'disabled' })
 
       // ---- 卸载 a listed server: exactly the vendor's command, typed in and not run ----
