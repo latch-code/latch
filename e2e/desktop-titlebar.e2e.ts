@@ -110,12 +110,15 @@ async function rowLine(page: Page): Promise<{ centreY: number; start: number; dr
       .toSorted((a, b) => a.left - b.left)
     const first = things[0]!
     const region = (element: Element) => getComputedStyle(element).getPropertyValue('-webkit-app-region')
+    // The strip's controls also occupy the draggable title row when the panel reaches the top.
+    const panelControls = matchMedia('(min-width: 1280px)').matches
+      ? ', .app-shell[data-inspector="open"] .inspector-column .session-panel-strip button'
+      : ''
     return {
       centreY: first.top + first.height / 2,
       start: first.left,
       drag: region(bar),
-      // The right panel's strip shares the row from 1024: its tabs, 「+」 and actions do not move the window either.
-      noDrag: [...document.querySelectorAll('.titlebar button, .shell-view-switch, .inspector-column .session-panel-strip button')]
+      noDrag: [...document.querySelectorAll(`.titlebar button, .shell-view-switch${panelControls}`)]
         .filter(element => (element as HTMLElement).checkVisibility({ visibilityProperty: true }))
         .map(region),
     }

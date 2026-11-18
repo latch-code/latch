@@ -176,13 +176,15 @@ describe('tiles', () => {
     expect(screen.container.textContent).toBe('')
   })
 
-  it('draws a mark on the raised surface, a glyph in ink on the hover fill, both under a hairline ring, and a plain glyph in ink-2', async () => {
+  it('draws a mark on the raised surface, a glyph in ink on the hover fill, both under a hairline ring, and a bare glyph in ink-2', async () => {
     const screen = await render(
       <div className="canvas" style={{ background: 'var(--canvas)' }}>
-        <Tile size={16} plain icon={ShieldCheck} />
+        <Tile size={16} bare icon={ShieldCheck} />
         <Tile size={32} icon={ShieldCheck} />
         <Tile size={32} mark={{ src: MONO_MARK, mono: true }} />
         <Tile size={32} mark={{ src: COLOUR_MARK }} />
+        <Tile size={20} bare mark={{ src: MONO_MARK, mono: true }} />
+        <Tile size={20} bare mark={{ src: COLOUR_MARK }} />
       </div>,
     )
     // A one-colour mark is the file as a mask, filled with ink; a coloured one is the file itself. Neither is markup.
@@ -200,6 +202,13 @@ describe('tiles', () => {
         ink,
       ])
       expect([bare?.backgroundColor, bare?.color]).toEqual(['rgba(0, 0, 0, 0)', ink2])
+      const inline = [...screen.container.querySelectorAll('.ui-tile[data-bare] .ui-tile-face')].slice(1)
+      for (const face of inline) {
+        expect(getComputedStyle(face).backgroundColor).toBe('rgba(0, 0, 0, 0)')
+        expect(getComputedStyle(face, '::after').content).toBe('none')
+        expect(face.firstElementChild?.getBoundingClientRect().width).toBe(20)
+      }
+      expect(getComputedStyle(inline[0]!.firstElementChild!).backgroundColor).toBe(ink)
       // The ring lies over the artwork, not under it.
       const ring = getComputedStyle(screen.container.querySelectorAll('.ui-tile-face')[2]!, '::after')
       expect(ring.boxShadow).toBe(`${line} 0px 0px 0px 1px inset`)
@@ -217,7 +226,7 @@ describe('tiles', () => {
         {([16, 20, 24, 32, 40, 56] as const).map(size => (
           <Tile key={size} size={size} icon={ShieldCheck} />
         ))}
-        <Tile size={16} plain icon={ShieldCheck} />
+        <Tile size={16} bare icon={ShieldCheck} />
       </div>,
     )
     // A glyph is 60% of its tile (9.6 to 33.6px), but its line is set on the screen, not scaled with it: a Lucide glyph

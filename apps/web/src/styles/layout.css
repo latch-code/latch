@@ -1025,7 +1025,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
 /*
  * The right panel beside the conversation: a flat column of the same canvas, divided from it by one hairline that is
  * also its resize edge (the handle shows the line stronger on hover and while dragged). Its first row is its own strip:
- * from 1024 at the window's top, beside the title row; on a tablet and as a sheet --panel-top is where it starts
+ * from 1280 at the window's top, beside the title row; below that and as a sheet --panel-top is where it starts
  * (work-surface.css). Its content keeps the open width and is clipped while the column slides shut.
  */
 .inspector-column {

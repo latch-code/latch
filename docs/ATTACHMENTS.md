@@ -56,6 +56,7 @@ sources:
 - 页面只在 Host 声明 `catalog.features.attachments` 时显示上传与模型设置里的图片开关。
 - `HarnessInfo.attachmentsReported` 把「报告过没有」带给页面，页面在它或 Harness 状态变化时重读能力。没启动过时页面说明发出第一条消息后才能添加文件。
 - `POST /attachments/capabilities` 同时给出这条连接每个文件与每张图片的上限（`fileBytes`、`imageBytes`），文本另有 `textBytes`。
+- 网页会话与起始页的附件能力读取随连接横幅暂停和恢复。能力请求无应答由横幅提示。Host 明确回答的读取错误、上传与发送的操作回执各自保留。
 - 内置的三种协议各自生成图片块（Chat Completions 的 `image_url`、Responses 的 `input_image`、Anthropic 的 base64 `image`），仍只调用 Host 注入的出站 fetch，密钥绑定与出站策略不变。
 
 ## 单请求上传

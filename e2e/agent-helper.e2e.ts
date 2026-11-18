@@ -85,8 +85,8 @@ it('an Agent speaks first, knows what you told 通用, and knows what its schedu
     await connected(page)
     await page.getByRole('radio', { name: '我的 Agent', exact: true }).filter({ visible: true }).click()
 
-    // The page is a list of helpers: faces, what each does or last did; no lanes of zeros.
-    const people = page.getByRole('navigation', { name: '全部 Agent', exact: true })
+    // The wide roster lives beside the overview.
+    const people = page.getByRole('navigation', { name: '我的 Agent', exact: true }).filter({ visible: true })
     await people.getByRole('button', { name: /^小林/u }).waitFor()
     expect(await page.locator('.work-overview-group-heading').filter({ hasText: '在工作' }).count()).toBe(0)
     expect(await page.getByText('等你处理', { exact: true }).filter({ visible: true }).count()).toBe(0)
@@ -157,17 +157,18 @@ it('an Agent speaks first, knows what you told 通用, and knows what its schedu
       .first()
       .waitFor()
     await page.screenshot({ path: join(OUTPUT, 'chat-digest--1440-light.png'), animations: 'disabled' })
-    // Back on the page: the helper that has talked shows what it last worked on, and when.
+    // The overview stays quiet after ordinary chat and a manual run.
     await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).click()
-    const row = page.getByRole('navigation', { name: '全部 Agent', exact: true }).getByRole('button', { name: /^小林/u })
+    const home = page.locator('.agents-home')
+    await home.getByText('没有待处理事项', { exact: true }).waitFor()
+    expect(await home.getByRole('region', { name: '最近定时结果', exact: true }).count()).toBe(0)
+    expect(await home.getByRole('button', { name: '发给谁', exact: true }).count()).toBe(0)
+    // The phone keeps the Agent's latest topic and time on its roster row.
+    await page.setViewportSize({ width: 390, height: 844 })
+    const row = page.locator(`.agents-root [data-agent-id="${agent.id}"]`)
     await row.locator('time').waitFor()
     expect(await row.locator('.space-agent-line').textContent()).toBe('今晚吃什么')
-    // One action per row: its chat, while nothing waits.
-    expect(
-      await page.locator(`[data-helper-id="${agent.id}"]`).locator('xpath=..').getByRole('button', { name: '聊天', exact: true }).count(),
-    ).toBe(1)
-    // No detached chip and input above the list.
-    expect(await page.locator('.agents-home').getByRole('button', { name: '发给谁', exact: true }).count()).toBe(0)
+    expect(await row.locator('xpath=..').getByRole('button', { name: '聊天', exact: true }).count()).toBe(0)
     await shoot(page, 'agents-page-after', [
       [1440, 'light'],
       [1440, 'dark'],

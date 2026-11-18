@@ -346,7 +346,9 @@ export function useSessionController({
   const attachHarness = selectedId === null ? findHarness(catalog, choice.harnessId ?? catalog?.defaults.harnessId) : harnessInfo
   const effectiveModel = submission.override ?? personalChatModel(snapshot, summary) ?? sessionModel(summary)
   const attachmentModel = selectedId === null ? choice.model : effectiveModel
+  const connectionReported = harness.connection === 'offline' || harness.connection === 'reconnecting'
   const sessionAttachments = useAttachments({
+    connectionReported,
     // A Harness that just started, or was just tested, may take files now: read again without a reload.
     revision: JSON.stringify([attachHarness?.status, attachHarness?.attachmentsReported ?? null]),
     enabled: catalog?.features?.attachments === true && access.scopes.has('run'),
@@ -368,6 +370,7 @@ export function useSessionController({
   })
   const draftHarness = findHarness(catalog, choice.harnessId ?? catalog?.defaults.harnessId)
   const newAttachments = useAttachments({
+    connectionReported,
     revision: JSON.stringify([draftHarness?.status, draftHarness?.attachmentsReported ?? null]),
     enabled: catalog?.features?.attachments === true && access.scopes.has('run'),
     selection: {

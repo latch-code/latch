@@ -200,19 +200,17 @@ describe('the space’s own 总览', () => {
     { ...topic('code', '', 11, { status: 'waiting-approval' }), agent: undefined },
   ] as TaskSummary[]
 
-  it('groups only topics: what waits for you (approvals first), who works, and the runs that completed', () => {
+  it('groups only topics: what waits for you (approvals first) and who works', () => {
     const work = agentsOverview(tasks)
     expect(work.attention.map(task => task.id)).toEqual(['wait', 'ask', 'fail'])
     expect(work.running.map(task => task.id)).toEqual(['run'])
-    // A topic never run, one that was stopped and an archived one are not results.
-    expect(work.results.map(task => task.id)).toEqual(['done', 'done-old'])
   })
 
   it('keeps a stop that has not settled among those working, and a topic in one group only', () => {
     const work = agentsOverview(tasks, new Set(['wait']))
     expect(work.attention.map(task => task.id)).toEqual(['ask', 'fail'])
     expect(work.running.map(task => task.id)).toEqual(['wait', 'run'])
-    const all = [...work.attention, ...work.running, ...work.results].map(task => task.id)
+    const all = [...work.attention, ...work.running].map(task => task.id)
     expect(new Set(all).size).toBe(all.length)
   })
 

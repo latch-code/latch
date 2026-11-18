@@ -117,12 +117,12 @@
   display: none;
 }
 /*
- * Compact while the right panel's strip shares the window's top row (from 1024, work-surface.css): each view's glyph
+ * Compact while the right panel's strip shares the window's top row (from 1280, work-surface.css): each view's glyph
  * instead of its word, the word staying its name and tooltip, so the strip keeps room for its tabs. The reserved end
  * narrows with it, and the strip reads that width (--window-controls). Same control, same keys; the full words come
  * back when the panel shuts.
  */
-@media (min-width: 1024px) {
+@media (min-width: 1280px) {
   .app-shell[data-inspector='open']:not([data-view='board']) > .shell-view-switch {
     width: 60px;
   }

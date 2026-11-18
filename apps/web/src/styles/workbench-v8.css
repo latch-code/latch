@@ -202,9 +202,8 @@
   display: none;
 }
 /*
- * The row's Harness icon, 16 as the board's tiles draw it, with the state on its top-right corner cut out of the row
- * (as a tile's failure dot is): a 12 disc in the row's own background, at rest, on hover and selected, holding an 8
- * dot in the state's colour, or the running spinner at 10.
+ * The state on the 16px Harness mark uses a 10px shape in a 12px disc. An outline in the sidebar's surface separates
+ * the disc from the brand's artwork.
  */
 @media (hover: hover) {
   .sidebar .session-item:hover {
@@ -238,15 +237,10 @@
   border-radius: 50%;
   background-color: var(--row-base, var(--sidebar));
   background-image: linear-gradient(var(--row-tint, transparent), var(--row-tint, transparent));
+  box-shadow: 0 0 0 1px var(--sidebar);
 }
 .sidebar .session-row-state > :is(.ui-status-glyph, svg) {
   zoom: calc(10 / 12);
-}
-.session-row-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: currentColor;
 }
 .sidebar .session-row-glyph[data-tone='running'] .session-row-state {
   color: var(--work-running);

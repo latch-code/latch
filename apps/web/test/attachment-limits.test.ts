@@ -12,7 +12,14 @@ import {
   shrunkName,
   type ShrinkAttempt,
 } from '../src/hooks/imageShrink.ts'
-import { addRefusal, attachmentLimits, refusedUpload, shrinkLimit, type AttachmentDraftController } from '../src/hooks/useAttachments.ts'
+import {
+  addRefusal,
+  attachmentDraftError,
+  attachmentLimits,
+  refusedUpload,
+  shrinkLimit,
+  type AttachmentDraftController,
+} from '../src/hooks/useAttachments.ts'
 
 const controller = (patch: Partial<AttachmentDraftController>) => ({ checking: false, ...patch }) as AttachmentDraftController
 
@@ -34,6 +41,15 @@ describe('what the attach button says before anything is uploaded', () => {
     ).toBe('这个 Harness 不接收图片和文件。')
     expect(attachmentBlock(controller({ checking: true }))).toContain('正在确认')
     expect(attachmentBlock(controller({ checking: false }))).toBe('暂时不能添加文件。')
+  })
+  it('uses the connection notice for an unanswered capability read and keeps operation failures', () => {
+    const unanswered = { text: '连不上这台电脑上的 Latch', noAnswer: true }
+    const refused = { text: '这台设备没有会话的访问权限。', noAnswer: false }
+    const uploadError = '没有收到上传确认，可以重试上传。'
+    expect(attachmentDraftError('', unanswered, true)).toBe('')
+    expect(attachmentDraftError('', unanswered, false)).toBe(unanswered.text)
+    expect(attachmentDraftError('', refused, true)).toBe(refused.text)
+    expect(attachmentDraftError(uploadError, unanswered, true)).toBe(uploadError)
   })
   it('says a Harness that takes no attachments takes none, not that a small file is too large', () => {
     const png = { name: 'a.png', size: 70 }

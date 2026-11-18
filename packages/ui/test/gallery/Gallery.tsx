@@ -1767,8 +1767,8 @@ function Tiles() {
         <Cell caption="32">
           <Tile size={32} mark={COLOUR_MARK} />
         </Cell>
-        <Cell caption="20">
-          <Tile size={20} mark={COLOUR_MARK} />
+        <Cell caption="去底 20">
+          <Tile size={20} bare mark={COLOUR_MARK} />
         </Cell>
         <Cell caption="浅色与深色两份 32">
           <Tile size={32} mark={THEMED_MARK} />
@@ -1790,11 +1790,11 @@ function Tiles() {
         <Cell caption="20">
           <Tile size={20} icon={PluginsGlyph} />
         </Cell>
-        <Cell caption="plain 16">
-          <Tile size={16} plain icon={Plug} />
+        <Cell caption="去底 16">
+          <Tile size={16} bare icon={Plug} />
         </Cell>
-        <Cell caption="单色 plain 16">
-          <Tile size={16} plain mark={MONO_MARK} />
+        <Cell caption="单色去底 16">
+          <Tile size={16} bare mark={MONO_MARK} />
         </Cell>
       </Row>
       <Row label="就绪度">

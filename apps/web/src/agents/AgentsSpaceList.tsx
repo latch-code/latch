@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 
-import { GENERAL_AGENT_ID, type CustomAgentSummary, type TaskSummary } from '@latch/protocol'
+import { GENERAL_AGENT_ID, type AutomationSummary, type CustomAgentSummary, type TaskSummary } from '@latch/protocol'
 import {
   Button,
   ICON_STROKE,
@@ -30,7 +30,6 @@ import { AgentAvatar } from './AgentAvatar.tsx'
 import type { AvatarState } from './avatarFace.ts'
 import { ownerName, topicOwner } from './chat.ts'
 import { generalChoice, readsAgents } from './model.ts'
-import type { AutomationSummary } from '@latch/protocol'
 import { LockedAgents } from './parts.tsx'
 import { rosterRows, waitingTopic, type RosterRow, type RosterState } from './roster.ts'
 import { whenWords } from './scheduleModel.ts'
@@ -121,30 +120,27 @@ export function helperLine(row: Pick<RosterRow, 'state' | 'word' | 'unavailable'
 }
 
 /** The next time one of this helper's schedules that is on will run, when any will. */
-export function nextRun(automations: readonly AutomationSummary[] | undefined, owner: string): string | undefined {
+function nextRun(automations: readonly AutomationSummary[] | undefined, owner: string): string | undefined {
   return (automations ?? [])
     .filter(item => item.enabled && item.nextRunAt && (owner === GENERAL_AGENT_ID ? !item.customAgentId : item.customAgentId === owner))
     .map(item => item.nextRunAt!)
     .toSorted()[0]
 }
 
-/**
- * A helper row's one action on a page of its own: what waits for the person opens the topic that waits; otherwise its
- * chat. The row itself opens the chat too; this says what the click is for.
- */
+/** The row itself opens the Agent's chat. A waiting run has its own destination. */
 function RowAction({ shell, row, frozen }: { shell: ShellState; row: RosterRow; frozen: boolean }) {
-  if (row.gone || row.confirming) return null
-  const waiting = !frozen && row.state === 'waiting' ? waitingTopic(row, shell.stopping) : undefined
+  if (row.gone || row.confirming || frozen || row.state !== 'waiting') return null
+  const waiting = waitingTopic(row, shell.stopping)
+  if (!waiting) return null
   return (
     <Button
       size="sm"
-      variant={waiting ? 'secondary' : 'ghost'}
+      variant="secondary"
       className="agent-row-action"
       onClick={() => {
-        if (waiting) shell.choose(waiting.id, () => shell.setRoute({ entry: 'sessions' }))
-        else openRow(shell, row)
+        shell.choose(waiting.id, () => shell.setRoute({ entry: 'sessions' }))
       }}>
-      {waiting ? '去处理' : '聊天'}
+      去处理
     </Button>
   )
 }
@@ -155,60 +151,64 @@ function Roster({
   frozen,
   menu,
   page = false,
-  label,
 }: {
   shell: ShellState
   rows: RosterRow[]
   frozen: boolean
   menu: AgentRowMenu
-  label: string
-  /** A page of its own (the 总览, a phone's root): larger faces, what each is doing or last did, and when. */
+  /** A phone's root: larger faces, recent activity and the next scheduled run. */
   page?: boolean
 }) {
   const current = page ? undefined : currentAgent(shell)
   return (
-    <ul className="agent-roster" aria-label={label} data-page={page ? '' : undefined}>
-      {rows.map(row => (
-        <li key={row.id} className="agent-row">
-          <button
-            type="button"
-            className="space-agent"
-            // The roster's rows are the Agents' handles; a second list beside it (the 总览's) names its own apart.
-            {...(label === '我的 Agent' ? { 'data-agent-id': row.id } : { 'data-helper-id': row.id })}
-            data-gone={row.gone || row.confirming ? '' : undefined}
-            data-unavailable={row.unavailable && row.state === 'idle' ? '' : undefined}
-            data-state={page ? row.state : undefined}
-            aria-current={row.id === current ? 'page' : undefined}
-            onClick={() => openRow(shell, row)}>
-            <AgentAvatar avatar={row.avatar} size={page ? 36 : 22} state={faceState(row, frozen)} />
-            {page ? (
-              <span className="space-agent-text">
+    <ul className="agent-roster" aria-label="我的 Agent" data-page={page ? '' : undefined}>
+      {rows.map(row => {
+        const next = page ? nextRun(shell.snapshot.automations, row.id) : undefined
+        return (
+          <li key={row.id} className="agent-row">
+            <button
+              type="button"
+              className="space-agent"
+              data-agent-id={row.id}
+              data-gone={row.gone || row.confirming ? '' : undefined}
+              data-unavailable={row.unavailable && row.state === 'idle' ? '' : undefined}
+              data-state={page && !frozen ? row.state : undefined}
+              aria-current={row.id === current ? 'page' : undefined}
+              onClick={() => openRow(shell, row)}>
+              <AgentAvatar avatar={row.avatar} size={page ? 36 : 22} state={faceState(row, frozen)} />
+              {page ? (
+                <span className="space-agent-text">
+                  <span className="space-agent-name">
+                    <VisibleText text={row.name} />
+                  </span>
+                  <span className="space-agent-meta">
+                    <span className="space-agent-line">
+                      <VisibleText text={helperLine(row, frozen)} />
+                    </span>
+                    {next && (
+                      <time className="space-agent-next" dateTime={next}>
+                        下次 {whenWords(next, shell.now)}
+                      </time>
+                    )}
+                  </span>
+                </span>
+              ) : (
                 <span className="space-agent-name">
                   <VisibleText text={row.name} />
                 </span>
-                <span className="space-agent-line">
-                  <VisibleText text={helperLine(row, frozen)} />
-                </span>
-                {nextRun(shell.snapshot.automations, row.id) && (
-                  <span className="space-agent-next">下次 {whenWords(nextRun(shell.snapshot.automations, row.id)!, shell.now)}</span>
-                )}
-              </span>
-            ) : (
-              <span className="space-agent-name">
-                <VisibleText text={row.name} />
-              </span>
-            )}
-            {page && row.updatedAt && (
-              <time className="space-agent-time" dateTime={row.updatedAt}>
-                {relativeTime(row.updatedAt, new Date(shell.now))}
-              </time>
-            )}
-            <RosterMark state={row.state} frozen={frozen} unavailable={row.unavailable} words={row.word?.words} />
-          </button>
-          {page && <RowAction shell={shell} row={row} frozen={frozen} />}
-          {menu(row)}
-        </li>
-      ))}
+              )}
+              {page && row.updatedAt && (
+                <time className="space-agent-time" dateTime={row.updatedAt}>
+                  {relativeTime(row.updatedAt, new Date(shell.now))}
+                </time>
+              )}
+              <RosterMark state={row.state} frozen={frozen} unavailable={row.unavailable} words={row.word?.words} />
+            </button>
+            {page && <RowAction shell={shell} row={row} frozen={frozen} />}
+            {menu(row)}
+          </li>
+        )
+      })}
     </ul>
   )
 }
@@ -217,16 +217,7 @@ function Roster({
  * 我的 Agent's people, wherever the shell draws them (the sidebar, 我的 Agent's own pane, a phone's root page): the
  * roster. Drawn from the snapshot's summaries, so it is the same wherever it stands.
  */
-export function AgentsSpaceList({
-  shell,
-  page = false,
-  label = '我的 Agent',
-}: {
-  shell: ShellState
-  page?: boolean
-  /** The list's name; the 总览 beside the sidebar's roster names its own apart. */
-  label?: string
-}) {
+export function AgentsSpaceList({ shell, page = false }: { shell: ShellState; page?: boolean }) {
   const { snapshot, connection } = shell
   const frozen = useLastConfirmed(connection, snapshot) !== null
   const locked = !readsAgents(snapshot)
@@ -279,7 +270,7 @@ export function AgentsSpaceList({
     )
   }
   return (
-    <nav className="space-list" aria-label={label} data-people="roster" data-page={page ? '' : undefined}>
+    <nav className="space-list" aria-label="我的 Agent" data-people="roster" data-page={page ? '' : undefined}>
       <section className="space-group" aria-label="Agent">
         {!page && (
           <h2 className="space-head">
@@ -290,7 +281,7 @@ export function AgentsSpaceList({
           <LockedAgents />
         ) : (
           <>
-            <Roster shell={shell} rows={rows} frozen={frozen} menu={menu} page={page} label={label} />
+            <Roster shell={shell} rows={rows} frozen={frozen} menu={menu} page={page} />
             {snapshot.customAgents === undefined ? (
               <p className="space-quiet" role="status">
                 正在确认上一项修改

@@ -8,7 +8,7 @@ import { MarkTile } from '../components/BrandTile.tsx'
 export function BoardHarness({ mark, label }: { mark: string | undefined; label: string | undefined }) {
   return (
     <span className="work-board-harness" title={label || undefined}>
-      <MarkTile mark={mark} size={16} className="bare-mark" label={label || undefined} />
+      <MarkTile mark={mark} size={16} bare label={label || undefined} />
     </span>
   )
 }

@@ -6,7 +6,7 @@
   min-height: 0;
 }
 /*
- * A dock's head, the same for the right panel and the terminal: 40 tall (the right panel's column from 1024 is as tall as
+ * A dock's head, the same for the right panel and the terminal: 40 tall (the right panel's column from 1280 is as tall as
  * the title row, work-surface.css), its tabs from 12 in and its few actions at the end, over one hairline. The dock
  * itself has no close button: its toggle in the title row (and its key) shuts it.
  */

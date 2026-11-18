@@ -69,11 +69,11 @@ function Mark({ mark }: { mark: TileMark }) {
 /** What the tile shows: a brand's mark, or a glyph where the thing has no icon of its own. Never a letter. */
 export type TileArt = { mark: TileMark; icon?: undefined } | { icon: IconComponent; mark?: undefined }
 
-/** The tile holds a glyph at 60% of its size; a plain tile is the glyph alone. */
-const glyphSize = (size: TileSize, plain: boolean) => (plain ? size : size * 0.6)
+/** The tile holds a glyph at 60% of its size; a bare tile is the glyph alone. */
+const glyphSize = (size: TileSize, bare: boolean) => (bare ? size : size * 0.6)
 
 /** A glyph's line is the icon scale's on the screen: 1.5px, and 1.2px in the smallest tiles, where it is 10px across. */
-const glyphStroke = (size: TileSize, plain: boolean) => (size <= 16 && !plain ? ICON_STROKE[12] : ICON_STROKE[16])
+const glyphStroke = (size: TileSize, bare: boolean) => (size <= 16 && !bare ? ICON_STROKE[12] : ICON_STROKE[16])
 
 function Glyph({ icon: Drawn, size, strokeWidth }: { icon: IconComponent; size: number; strokeWidth: number }) {
   return <Drawn size={size} strokeWidth={strokeWidth} nonScalingStroke aria-hidden="true" />
@@ -107,8 +107,7 @@ function ProgressRing({ size, progress }: { size: TileSize; progress: number | u
 /**
  * The square tile of an agent or a model: a 1px line ring laid over it and corners of round(size × 0.225). It shows
  * the brand's `mark` on the raised surface, or, for something without an icon of its own, the caller's `icon` (a
- * Lucide glyph at 60%, in ink on the hover fill). `plain` (14 or 16)
- * is the glyph alone, without the tile. The tile is decorative next to the name unless `label` names it, and its
+ * Lucide glyph at 60%, in ink on the hover fill). `bare` shows the mark or glyph at full size without the plate or ring. The tile is decorative next to the name unless `label` names it, and its
  * state must also be said in words wherever it matters.
  */
 export function Tile({
@@ -117,7 +116,7 @@ export function Tile({
   mark,
   state = 'ready',
   progress,
-  plain = false,
+  bare = false,
   label,
   className,
 }: TileArt & {
@@ -125,7 +124,7 @@ export function Tile({
   state?: TileState
   /** 0 to 1 while arriving; absent means indeterminate. */
   progress?: number
-  plain?: boolean
+  bare?: boolean
   label?: string
   className?: string
 }) {
@@ -134,15 +133,15 @@ export function Tile({
       className={cx('ui-tile', className)}
       data-size={size}
       data-state={state}
-      data-plain={plain ? '' : undefined}
+      data-bare={bare ? '' : undefined}
       data-glyph={mark ? undefined : ''}
       data-app-icon={mark?.tile ? '' : undefined}
       data-margin={mark?.margin ? '' : undefined}
       {...(label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true })}>
       <span className="ui-tile-face">
-        {mark ? <Mark mark={mark} /> : <Glyph icon={icon} size={glyphSize(size, plain)} strokeWidth={glyphStroke(size, plain)} />}
+        {mark ? <Mark mark={mark} /> : <Glyph icon={icon} size={glyphSize(size, bare)} strokeWidth={glyphStroke(size, bare)} />}
       </span>
-      {state === 'arriving' && !plain && <ProgressRing size={size} progress={progress} />}
+      {state === 'arriving' && !bare && <ProgressRing size={size} progress={progress} />}
       {state === 'failed' && <span className="ui-tile-dot" />}
     </span>
   )

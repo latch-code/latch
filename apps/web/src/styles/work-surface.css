@@ -112,19 +112,20 @@
     border-block-start: 1px solid var(--line);
   }
 }
+/* The collapsed sidebar puts the conversation head below the title row at this breakpoint. */
 @media (min-width: 1024px) {
   .app-shell[data-sidebar='collapsed']:not([data-start]) {
     --panel-top: calc(var(--title-row) + max(var(--title-row), var(--session-head)) - 1px);
   }
 }
 /*
- * From 1024 the right panel's column reaches the window's top, as one side of a split editor does: its strip is that
+ * From 1280 the right panel's column reaches the window's top, as one side of a split editor does: its strip is that
  * column's top row, as tall as the title row, and its hairline runs from the window's top to the status bar. The
  * window's controls (the title row's end, drawn over the column) stand at the strip's end; the strip keeps their
  * measured width (--window-controls, AppShell) clear, so its tabs go into the overflow menu before they reach them.
  * A sheet still floats under the head (--panel-top). On the desktop app the strip's empty space moves the window.
  */
-@media (min-width: 1024px) {
+@media (min-width: 1280px) {
   .app-shell:not([data-inspector='sheet']) .inspector-column {
     padding-top: 0;
   }

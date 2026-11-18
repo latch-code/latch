@@ -1,16 +1,16 @@
 # @latch/web
 
-Host 在 `/link/` 提供的 React 页面，桌面端共用；构建到 `dist/web`。
+桌面共用 React 页面，`dist/web` 由 Host 在 `/link/` 提供。
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/core/` | 无布局的客户端核心：API、事件流与增量影子、同步、阅读位置、凭据、设备登记、权限、确认与桌面桥接 |
+| `src/core/` | API、事件流与增量影子、同步、阅读位置、设备身份、权限、确认、桌面桥接 |
 | `src/shell/` | 壳层：`AppShell`、`routes.ts`、`panelLayout.ts`、`slots.ts`、`useSessionController` |
-| `src/agents/` | 我的 Agent（docs/CUSTOM-AGENTS.md） |
+| `src/agents/` | 我的 Agent：总览取 Host 待处理与定时摘要（CUSTOM-AGENTS.md） |
 | `src/handoffs/` | 交接（docs/HANDOFFS.md） |
 | `src/markdown/` | 流式 Markdown |
 | `src/` | `main.tsx` → `App.tsx` → `shell/AppShell.tsx`；品牌 `brands.ts` |
-| `index.html`、`public/`、`vite.config.ts` | 页面入口；图标与 manifest；Vite 配置与 `pnpm dev:web` 的开发代理 |
+| `index.html`、`public/`、`vite.config.ts` | 页面、图标与 manifest、Vite 开发代理 |
 | `test/` | `pnpm test --project @latch/web` |
 
 browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
@@ -37,6 +37,6 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 
 设置留会话草稿和本次授权读回（CLIENT-LOADING）；准备原号（DESIGN）；终端折叠保活（TERMINAL）；暂存回执（GIT-DELIVERY）。ProfileLayer跨断点同实例，保留草稿/焦点/未知写，撤权卸载（CUSTOM-AGENTS）。
 
-- 附件专用上传，未知提交保留原请求与引用；裸 `@` 无预选（ATTACHMENTS.md）。
+- 附件专用上传，未知提交保留原请求与引用；读能力的断线提示归连接横幅；裸 `@` 无预选（ATTACHMENTS.md）。
 - Slash 透传 Harness 命令；技能只补全，pi 限开头（HARNESSES.md）。
 - 外观未知写在同页按 Host 与设备保留，设置和安全模式共用（CUSTOMIZATION）。

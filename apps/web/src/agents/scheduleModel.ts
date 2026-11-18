@@ -9,6 +9,7 @@ import type {
   FileMention,
   HostCatalog,
   Message,
+  TaskSummary,
 } from '@latch/protocol'
 import { worksIn } from './model.ts'
 import { DEVICE_OFFLINE } from '../core/hostState.ts'
@@ -112,6 +113,23 @@ export function whenWords(at: string, now = Date.now()): string {
   if (key === offset(-1)) return `昨天 ${clock}`
   const year = date.getFullYear() === today.getFullYear() ? '' : `${date.getFullYear()}年`
   return `${year}${date.getMonth() + 1}月${date.getDate()}日 ${clock}`
+}
+
+/** The Host's run records and next times, with waiting sessions already represented by decision cards. */
+export function scheduleOverview(automations: readonly AutomationSummary[] = [], attention: readonly Pick<TaskSummary, 'id'>[] = []) {
+  const waiting = new Set(attention.map(task => task.id))
+  const results = automations
+    .flatMap(automation => {
+      const run = automation.lastRun
+      if (!run || run.trigger !== 'schedule' || (run.sessionId && waiting.has(run.sessionId))) return []
+      if (run.state === 'running' || run.state === 'waiting' || run.state === 'missed' || run.state === 'skipped') return []
+      return [{ automation, run }]
+    })
+    .toSorted((a, b) => b.run.at.localeCompare(a.run.at))
+  const upcoming = automations
+    .flatMap(automation => (automation.enabled && automation.nextRunAt ? [{ automation, at: automation.nextRunAt }] : []))
+    .toSorted((a, b) => a.at.localeCompare(b.at))
+  return { results, upcoming }
 }
 
 /** The automation's state in a word and a tone, with the Host's reason for a pause. */

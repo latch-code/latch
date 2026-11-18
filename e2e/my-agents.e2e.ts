@@ -257,15 +257,14 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     expect(await instructions.inputValue()).toBe('只用中文回答，结论放最前。')
     expect(await page.getByText('已在别处修改').count()).toBe(0)
     expect((await owner.json<CustomAgentDetail>(`custom-agents/${agent.id}`)).agent.instructions).toBe('只用中文回答。')
-    // The profile's head is the right column's top row, under the window's controls: its close button stays clear of
-    // them at every desktop width, with the sidebar open and shut.
+    // Close stays reachable under the window controls in the sheet, the separate column and the shared title row.
     const closeProfile = panel.getByRole('button', { name: '关闭资料', exact: true })
     const closeOnTop = () =>
       closeProfile.evaluate(button => {
         const box = button.getBoundingClientRect()
         return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.closest('button') === button
       })
-    for (const width of [1024, 1440]) {
+    for (const width of [1024, 1100, 1280, 1440]) {
       await page.setViewportSize({ width, height: 900 })
       await expect.poll(closeOnTop, { message: `${width}` }).toBe(true)
       await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
@@ -360,12 +359,12 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
       })
     const retryAgent = await fresh('核对助手')
     await expect.poll(() => agentRow(page, retryAgent.id).count()).toBe(1)
-    // 新会话 in 我的 Agent opens the chat of the Agent last spoken with; the 总览 lists everyone with one action each.
+    // 新会话 opens the most recently used Agent's chat. From 总览, the sidebar opens another Agent's chat.
     await page.keyboard.press('Alt+KeyN')
     await page.locator('.agent-frame').filter({ visible: true }).first().waitFor()
     await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
     await expect.poll(() => page.locator('.agents-page').getAttribute('data-view')).toBe('home')
-    await page.getByRole('navigation', { name: '全部 Agent', exact: true }).locator(`[data-helper-id="${retryAgent.id}"]`).click()
+    await agentRow(page, retryAgent.id).click()
     const retryInput = page.getByRole('textbox', { name: '给核对助手发消息', exact: true })
     await retryInput.fill('写了一半')
     await page.screenshot({ path: `${OUT}/home-1440.png` })
@@ -564,9 +563,7 @@ it('keeps the Agent, the topic and what was typed through a layout change, and p
     // topic and the same words.
     await page.getByRole('button', { name: '总览', exact: true }).filter({ visible: true }).first().click()
     await expect.poll(() => page.locator('.agents-page').getAttribute('data-view')).toBe('home')
-    const helper = page.getByRole('navigation', { name: '全部 Agent', exact: true }).getByRole('button', { name: /^晨报/u })
-    expect(await helper.locator('.space-agent-line').textContent()).toBe(topic!.title)
-    await helper.click()
+    await agentRow(page, agent.id).click()
     await expect.poll(() => page.locator('.app-shell').getAttribute('data-entry')).toBe('sessions')
     await expect.poll(() => current.count()).toBe(1)
     expect(await draft.inputValue()).toBe('写到一半的话')

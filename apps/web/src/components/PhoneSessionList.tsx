@@ -185,7 +185,7 @@ const PhoneRow = memo(function PhoneRow({
         </span>
         <span className="phone-row-meta" aria-hidden="true">
           <span className="session-mark">
-            <MarkTile mark={harness.mark} size={16} className="bare-mark" />
+            <MarkTile mark={harness.mark} size={16} bare />
           </span>
           <span className="phone-row-meta-text">{[engine, meta].filter(Boolean).join(' · ')}</span>
           {handoffWaits && <span className="session-handoff">待交回</span>}

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AttachmentCapabilities, AttachmentRef, AttachmentSelection } from '@latch/protocol'
-import { api, ApiError, errorMessage, MessageError, newRequestId, uploadAttachment } from '../core/api.ts'
+import { api, ApiError, ApiTimeoutError, errorMessage, MessageError, newRequestId, NoAnswerError, uploadAttachment } from '../core/api.ts'
 import { looksLikeImage, SHRINK_INPUT_BYTES, ShrinkRefusal, shrinkImage } from './imageShrink.ts'
 
 export interface DraftAttachment {
@@ -121,6 +121,22 @@ export function addRefusal(
   return undefined
 }
 
+interface CapabilityReadFailure {
+  text: string
+  noAnswer: boolean
+}
+
+/** A connection notice covers unanswered capability reads. An attempted attachment operation owns its own feedback. */
+export function attachmentDraftError(
+  operationError: string,
+  readFailure: CapabilityReadFailure | undefined,
+  connectionReported: boolean,
+): string {
+  if (operationError) return operationError
+  if (!readFailure || (connectionReported && readFailure.noAnswer)) return ''
+  return readFailure.text
+}
+
 /** Files remain immutable for a request ID; the Host is the authority for type and capability checks. */
 export function useAttachments({
   enabled,
@@ -128,6 +144,7 @@ export function useAttachments({
   sessionId,
   locked,
   revision = '',
+  connectionReported = false,
   heldBack,
   heldRefs = false,
 }: {
@@ -137,6 +154,8 @@ export function useAttachments({
   locked: boolean
   /** Changes when what the Harness takes may have changed (it started, or was tested): capabilities are read again. */
   revision?: string
+  /** The composer already shows the interruption and its connection retry. */
+  connectionReported?: boolean
   /** Why what is attached cannot go with the message being written now, said before sending. */
   heldBack?: string
   /** File references in the text, which `heldBack` also holds back. */
@@ -149,6 +168,7 @@ export function useAttachments({
   const [note, setNote] = useState('')
   const [noteDetail, setNoteDetail] = useState('')
   const [error, setError] = useState('')
+  const [readFailure, setReadFailure] = useState<CapabilityReadFailure>()
   const [preparing, setPreparing] = useState(false)
   const [dragging, setDragging] = useState(false)
   const state = useRef(items)
@@ -173,32 +193,41 @@ export function useAttachments({
   }
   const known = useRef(context)
   useEffect(() => {
-    const controller = new AbortController()
-    // A new selection starts unknown; the same one read again keeps what it knew until the answer comes.
-    if (known.current !== context) setCaps(undefined)
+    // Capabilities and any refusal belong to the selection they were read for.
+    if (known.current !== context) {
+      setCaps(undefined)
+      setReadFailure(undefined)
+    }
     known.current = context
     setNote('')
-    setChecking(enabled)
-    if (enabled)
-      void api<{ capabilities: AttachmentCapabilities }>('attachments/capabilities', {
-        method: 'POST',
-        body: JSON.parse(context) as object,
-        signal: controller.signal,
+    const read = enabled && !connectionReported
+    setChecking(read)
+    if (!read) {
+      if (connectionReported) setReadFailure(previous => (previous?.noAnswer ? undefined : previous))
+      return
+    }
+
+    const controller = new AbortController()
+    void api<{ capabilities: AttachmentCapabilities }>('attachments/capabilities', {
+      method: 'POST',
+      body: JSON.parse(context) as object,
+      signal: controller.signal,
+    })
+      .then(result => {
+        if (controller.signal.aborted) return
+        setCaps(result.capabilities)
+        setReadFailure(undefined)
       })
-        .then(result => {
-          if (!controller.signal.aborted) setCaps(result.capabilities)
-        })
-        .catch(cause => {
-          if (!controller.signal.aborted) {
-            setCaps(undefined)
-            setError(errorMessage(cause))
-          }
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) setChecking(false)
-        })
+      .catch(cause => {
+        if (controller.signal.aborted) return
+        setCaps(undefined)
+        setReadFailure({ text: errorMessage(cause), noAnswer: cause instanceof NoAnswerError || cause instanceof ApiTimeoutError })
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setChecking(false)
+      })
     return () => controller.abort()
-  }, [enabled, context, revision])
+  }, [enabled, context, revision, connectionReported])
   const scope = sessionId ?? 'new'
   const previousContext = useRef(scope)
   useLayoutEffect(() => {
@@ -458,7 +487,7 @@ export function useAttachments({
       setNoteDetail(detail)
     },
     heldBack: heldBack && (items.length > 0 || heldRefs) ? heldBack : undefined,
-    error,
+    error: attachmentDraftError(error, readFailure, connectionReported),
     preparing,
     add,
     reuse,

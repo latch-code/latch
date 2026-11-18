@@ -391,7 +391,7 @@
   position: relative;
   z-index: 3;
 }
-/* It runs on over the right panel's strip, which from 1024 shares the title row: only what it holds takes clicks. */
+/* It runs on over the right panel's strip, which from 1280 shares the title row: only what it holds takes clicks. */
 .app-shell[data-start] .titlebar .titlebar-page {
   pointer-events: none;
 }

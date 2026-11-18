@@ -743,10 +743,10 @@ button.agent-memory-topic:hover {
   justify-content: flex-start;
 }
 /*
- * In the right panel's column from 1024 the head is that column's top row, under the window's controls (work-surface.css):
+ * In the right panel's column from 1280 the head is that column's top row, under the window's controls (work-surface.css):
  * as tall as the title row, with their measured width kept clear, so 关闭资料 is never under them.
  */
-@media (min-width: 1024px) {
+@media (min-width: 1280px) {
   .app-shell:not([data-inspector='sheet']) .inspector-column .agent-profile-head {
     height: var(--title-row);
     padding-inline-end: calc(var(--window-controls) + var(--sp-12));
@@ -1681,63 +1681,44 @@ button.helper-card:focus-visible {
   min-height: 0;
   margin: 0;
 }
-.agents-home-to {
+.agents-home-content {
+  display: grid;
+  gap: var(--sp-24);
+  width: 100%;
+  max-width: var(--content-width);
+  margin-inline: auto;
+}
+.agents-home-waiting.work-overview {
+  padding: 0;
+}
+.agents-home-schedule-row,
+.agents-home-schedule-row.ui-button {
   display: flex;
-  align-items: center;
-  margin-bottom: var(--sp-8);
-}
-.agents-home-chip.ui-button {
-  gap: var(--sp-6);
-}
-.agents-home-readonly {
-  display: flex;
-  align-items: center;
   gap: var(--sp-8);
-  margin: 0;
-  padding: var(--sp-16);
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  color: var(--muted);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-}
-.agents-home-who {
-  display: inline-flex;
   align-items: center;
-  gap: var(--sp-8);
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: var(--touch);
+  padding: var(--sp-8);
+  border-radius: var(--r-8);
+  text-align: start;
+  white-space: normal;
+}
+.agents-home-schedule-row > .ui-status-word,
+.agents-home-schedule-row time {
+  flex-shrink: 0;
+}
+.agents-home-schedule-text {
+  display: grid;
+  flex: 1;
   min-width: 0;
 }
-/* The helpers as a page: one row each, its face, what it is doing or last did, and when. */
-.agents-home-people,
-.agents-home-waiting {
-  width: 100%;
-  /* Under the input, as wide as it. */
-  max-width: 1088px;
-  margin-block-start: var(--sp-24);
-}
-.agents-home-waiting {
+.agents-home-empty .ui-empty-title {
   display: grid;
   gap: var(--sp-8);
-  margin-block-end: var(--sp-24);
-}
-.agents-home-people {
-  display: grid;
-  gap: var(--sp-12);
-  justify-items: start;
-}
-.agents-home-people > .space-list {
-  width: 100%;
-}
-/* Wide, the helpers stand on one card, a hairline between rows. */
-.agents-home-people .space-list[data-page] .agent-roster {
-  gap: 0;
-  padding: var(--sp-4);
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  background: var(--card);
-}
-.agents-home-people .space-list[data-page] .agent-row + .agent-row {
-  border-top: 1px solid var(--line);
+  color: var(--muted);
 }
 .space-list[data-page] .agent-roster {
   display: grid;
@@ -1760,7 +1741,14 @@ button.helper-card:focus-visible {
 .space-agent-text > .space-agent-name {
   font-weight: 600;
 }
+.space-agent-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-4);
+  min-width: 0;
+}
 .space-agent-line {
+  min-width: 0;
   overflow: hidden;
   color: var(--muted);
   font-size: var(--fs-caption);
@@ -1774,7 +1762,12 @@ button.helper-card:focus-visible {
 .space-agent[data-state='waiting'] .space-agent-line {
   color: var(--amber);
 }
+.space-agent[data-state='failed'] .space-agent-line {
+  color: var(--red);
+}
 .space-agent-next {
+  flex-shrink: 0;
+  max-width: 80%;
   overflow: hidden;
   color: var(--muted);
   font-size: var(--fs-caption);
@@ -1782,7 +1775,11 @@ button.helper-card:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The row's one action sits before its ⋯, outside the row's own button. */
+.space-agent-next::before {
+  content: '·';
+  margin-inline-end: var(--sp-4);
+}
+/* The waiting run's action is separate from the chat row. */
 .space-list[data-page] .agent-row {
   display: flex;
   align-items: center;

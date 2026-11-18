@@ -4,19 +4,20 @@ import { harnessArt, providerArt, type BrandArt } from '../brands.ts'
 import { BrandMark } from './ui.tsx'
 
 /**
- * The tile of a harness or a model service: its brand's icon on the shared plate, Latch's own app icon (unaltered) for
- * the built-in harness, or a neutral glyph where there is no icon (alone, without the plate, at 16 and below). Decorative next to
- * the name unless `label` names it.
+ * Harness and provider marks are bare at inline sizes. Larger tiles use the shared plate. Latch's own app icon
+ * stands whole at every size. Labels are optional when the name is already drawn beside the tile.
  */
 function BrandTile({
   art,
   size = 20,
+  bare = size <= 20,
   state,
   label,
   className,
 }: {
   art: BrandArt
   size?: TileSize
+  bare?: boolean
   state?: TileState
   label?: string
   className?: string
@@ -27,42 +28,35 @@ function BrandTile({
         <BrandMark size={size} />
       </span>
     )
-  if (art.kind === 'mark') return <Tile size={size} mark={art.mark} state={state} label={label} className={className} />
-  // On the plate a glyph is 60% of the tile, unreadable from 16 down: it stands alone at full size, as other small icons do.
-  return <Tile size={size} icon={art.icon} plain={size <= 16} state={state} label={label} className={className} />
+  if (art.kind === 'mark') return <Tile size={size} mark={art.mark} bare={bare} state={state} label={label} className={className} />
+  return <Tile size={size} icon={art.icon} bare={bare} state={state} label={label} className={className} />
 }
 
-interface HarnessTileProps {
+interface BrandTileProps {
   size?: TileSize
+  bare?: boolean
   label?: string
   className?: string
 }
 
 /** The tile of a harness key: a preset that is no Harness yet, or a session whose Harness is no longer listed. */
-export function MarkTile({ mark, cold, size, label, className }: HarnessTileProps & { mark: string | undefined; cold?: boolean }) {
-  return <BrandTile art={harnessArt(mark)} size={size} state={cold ? 'cold' : undefined} label={label} className={className} />
+export function MarkTile({ mark, cold, ...tile }: BrandTileProps & { mark: string | undefined; cold?: boolean }) {
+  return <BrandTile art={harnessArt(mark)} state={cold ? 'cold' : undefined} {...tile} />
 }
 
 /** A harness's tile; an unavailable harness is drawn faint, and its reason is said in words beside it. */
 export function HarnessTile({
   harness,
   ...tile
-}: HarnessTileProps & { harness: Pick<HarnessInfo, 'capabilities'> & Partial<Pick<HarnessInfo, 'status'>> }) {
+}: BrandTileProps & { harness: Pick<HarnessInfo, 'capabilities'> & Partial<Pick<HarnessInfo, 'status'>> }) {
   return <MarkTile mark={harness.capabilities.display.mark} cold={harness.status === 'unavailable'} {...tile} />
 }
 
 export function ProviderTile({
   provider,
-  size,
-  label,
-  className,
-}: {
-  provider: Pick<ProviderSummary, 'id'> & { kind?: ProviderSummary['kind']; presetId?: string }
-  size?: TileSize
-  label?: string
-  className?: string
-}) {
-  return <BrandTile art={providerArt(provider)} size={size} label={label} className={className} />
+  ...tile
+}: BrandTileProps & { provider: Pick<ProviderSummary, 'id'> & { kind?: ProviderSummary['kind']; presetId?: string } }) {
+  return <BrandTile art={providerArt(provider)} {...tile} />
 }
 
 /** The tile of 我的 Agent, which has no brand: a neutral glyph, on the plate wherever that stays readable. */
@@ -77,5 +71,5 @@ export function GlyphTile({
   label?: string
   className?: string
 }) {
-  return <Tile size={size} icon={icon} plain={size <= 16} label={label} className={className} />
+  return <Tile size={size} icon={icon} bare={size <= 16} label={label} className={className} />
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AppSnapshot, RunLive } from '@latch/protocol'
-import { CheckGlyph, Icon, StatusGlyph, StatusSlot, type SlotStatus } from '@latch/ui'
+import { AlertGlyph, CheckGlyph, Icon, StatusGlyph, StatusSlot, WaitingGlyph, type SlotStatus } from '@latch/ui'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { useSteady } from '../hooks/useSteady.ts'
@@ -45,8 +45,8 @@ const statusKey = (status: RowStatus) => (status.kind === 'ended' ? `ended:${sta
 
 /**
  * The sidebar row's leading icon: the session's Harness (the neutral glyph where it has none), with the row's state on
- * its top-right corner, cut out of the row as a tile's failure dot is: the spinner while it runs, an amber dot while it
- * waits on you, a red one when it failed, a muted check for a new answer. The row's accessible words name the Harness and the exact state.
+ * its top-right corner: the spinner while it runs, a flag while it waits on you, an alert when it failed, and a muted
+ * check for a new answer. The row's accessible words name the Harness and the exact state.
  */
 export function SessionRowGlyph({ status, mark }: { status: RowStatus; mark: string | undefined }) {
   const state = rowMark(status)
@@ -56,15 +56,13 @@ export function SessionRowGlyph({ status, mark }: { status: RowStatus; mark: str
       data-tone={
         state === undefined || state === 'unread' ? 'neutral' : state === 'running' ? 'running' : state === 'failed' ? 'failed' : 'waiting'
       }>
-      <MarkTile mark={mark} size={16} className="bare-mark" />
+      <MarkTile mark={mark} size={16} bare />
       {state !== undefined && (
-        <span className="session-row-state" data-state={state}>
+        <span className="session-row-state" data-state={state} aria-hidden="true">
           {state === 'running' ? (
             <StatusGlyph running state={state} />
-          ) : state === 'unread' ? (
-            <Icon icon={CheckGlyph} size={12} />
           ) : (
-            <span className="session-row-dot" />
+            <Icon icon={state === 'failed' ? AlertGlyph : state === 'unread' ? CheckGlyph : WaitingGlyph} size={12} />
           )}
         </span>
       )}

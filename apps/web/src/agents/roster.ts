@@ -142,33 +142,14 @@ export function rosterTopics(rows: readonly RosterRow[]): TaskSummary[] {
 /** How many rows of a group of the space's 总览 show before 「还有 N 件」. */
 export const OVERVIEW_ROWS = 5
 
-export interface AgentsOverview {
-  /** Topics that wait for you (an approval, a question, silence) or ended in a failure or an unknown result. */
-  attention: TaskSummary[]
-  /** Topics that are working. */
-  running: TaskSummary[]
-  /** Topics whose latest run completed, newest first. */
-  results: TaskSummary[]
-}
-
-/**
- * The space's own 总览, grouped as Code's is (the same rule decides what waits and what runs), with 最近结果 in the place
- * of 可交付: a topic has no delivery, and what the Host does report is that its latest run completed.
- */
-export function agentsOverview(tasks: readonly TaskSummary[], cancelling: ReadonlySet<string> = new Set()): AgentsOverview {
-  const { attention, running } = topicGroups(tasks, cancelling)
-  const taken = new Set([...attention, ...running].map(task => task.id))
-  const results = tasks
-    .filter(task => topicOwner(task) && !task.archived && !taken.has(task.id) && task.status === 'idle' && task.runOutcome === 'completed')
-    .toSorted(newestFirst)
-  return { attention, running, results }
-}
-
 /**
  * 我的 Agent's unarchived topics that wait for you and that work, by the Host's group (`board`), newest first; approvals
  * lead 等你处理, then what else a live run waits on. A stop this device asked for moves a live topic to the working ones.
  */
-function topicGroups(tasks: readonly TaskSummary[], cancelling: ReadonlySet<string>): { attention: TaskSummary[]; running: TaskSummary[] } {
+export function agentsOverview(
+  tasks: readonly TaskSummary[],
+  cancelling: ReadonlySet<string> = new Set(),
+): { attention: TaskSummary[]; running: TaskSummary[] } {
   const attention: TaskSummary[] = []
   const running: TaskSummary[] = []
   const live = (task: TaskSummary) => task.status === 'running' || task.status === 'waiting-approval'
@@ -209,7 +190,7 @@ export function addressee(rows: readonly RosterRow[], picked: string): RosterRow
  * first, then questions and silence, newest first within each).
  */
 export function waitingTopic(row: Pick<RosterRow, 'topics'>, cancelling: ReadonlySet<string> = new Set()): TaskSummary | undefined {
-  return topicGroups(row.topics, cancelling).attention.find(task => waitsOnYou(task))
+  return agentsOverview(row.topics, cancelling).attention.find(task => waitsOnYou(task))
 }
 
 /** The Agent a topic's row is signed with: its roster row, found by the topic's owner. */

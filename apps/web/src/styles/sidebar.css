@@ -569,20 +569,6 @@
 .session-meta .session-mark {
   zoom: calc(12 / 14);
 }
-/*
- * A Harness's mark bare, as list rows and the board draw it: the brand's file alone across the whole box, without the
- * tile's plate and ring, so it stays readable on any surface in both themes.
- */
-:is(.session-meta .session-mark, .bare-mark) .ui-tile-face {
-  background: none;
-}
-:is(.session-meta .session-mark, .bare-mark) .ui-tile-face::after {
-  content: none;
-}
-:is(.session-meta .session-mark, .bare-mark) .ui-tile-face > :is(img, .ui-tile-mark) {
-  width: 100%;
-  height: 100%;
-}
 /* A model ID is data: mono, and the part that gives way when the line is short. */
 .session-model {
   min-width: 0;
@@ -735,17 +721,18 @@
 }
 
 /*
- * Code | 我的 Agent: the segmented control across the sidebar, its two places equal; the other place's amber dot sits
- * after its name while something waits there.
+ * The two places share the sidebar's width, with room for each label and the state mark on its glyph.
  */
 .sidebar-top .space-switch {
   display: grid;
+  grid-auto-columns: minmax(max-content, 1fr);
   flex: 1;
   min-width: 0;
 }
-.space-switch .ui-segmented-option {
+.sidebar-top .space-switch .ui-segmented-option {
+  gap: var(--sp-4);
   min-width: 0;
-  padding-inline: var(--sp-8);
+  padding-inline: var(--sp-6);
 }
 /* The glyph carries the dot on its top-right corner, clear of the glyph and of the place's name. */
 .space-glyph {

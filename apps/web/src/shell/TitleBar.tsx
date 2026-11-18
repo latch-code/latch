@@ -28,7 +28,7 @@ import type { ShellState } from './useShellLayout.tsx'
 /**
  * The 52px row spanning the window. Its left zone holds the traffic lights' inset and ◧, with 新建会话 once the panel is
  * shut; its end is kept free for the shell's 对话 | 看板 switch; the rest of the row is the conversation's header, or the
- * title of a page. From 1024 an open right panel's strip shares the row: the panel's column starts at the window's top
+ * title of a page. From 1280 an open right panel's strip shares the row: the panel's column starts at the window's top
  * and its strip keeps this end clear. Over 看板 it holds the computer and the sidebar foot's 设置, 额度与用量 and
  * 检查更新. On the desktop app the row moves the window, except over its controls.
  */

@@ -15,6 +15,7 @@ import {
   scheduleBlock,
   scheduleCreate,
   scheduleDraftOf,
+  scheduleOverview,
   schedulePatch,
   scheduleProblem,
   scheduleStatus,
@@ -39,6 +40,32 @@ const automation = (extra: Partial<Automation> = {}): Automation => ({
 })
 
 const run = (state: AutomationRun['state'], at = '2026-11-10T01:00:00.000Z'): AutomationRun => ({ at, state, trigger: 'schedule' })
+
+it('shows settled scheduled runs and enabled next times from the Host', () => {
+  const today = '2026-11-18T01:00:00.000Z'
+  const tomorrow = '2026-11-19T01:00:00.000Z'
+  const later = '2026-11-20T01:00:00.000Z'
+  const schedules = [
+    automation({ id: 'weekly', lastRun: run('completed'), nextRunAt: later }),
+    automation({ id: 'daily', lastRun: run('failed', today), nextRunAt: tomorrow }),
+    automation({ id: 'unknown', lastRun: run('unknown', today), enabled: false, nextRunAt: later }),
+    automation({ id: 'waiting', lastRun: { ...run('failed', today), sessionId: 'needs-review' } }),
+    automation({ id: 'manual', lastRun: { ...run('completed', today), trigger: 'manual' } }),
+    automation({ id: 'missed', lastRun: run('missed', today) }),
+    automation({ id: 'working', lastRun: run('running', today) }),
+    automation({ id: 'saved' }),
+  ]
+  const { results, upcoming } = scheduleOverview(schedules, [{ id: 'needs-review' }])
+  expect(results.map(({ automation, run: latest }) => [automation.id, latest.state])).toEqual([
+    ['daily', 'failed'],
+    ['unknown', 'unknown'],
+    ['weekly', 'completed'],
+  ])
+  expect(upcoming.map(({ automation, at }) => [automation.id, at])).toEqual([
+    ['daily', tomorrow],
+    ['weekly', later],
+  ])
+})
 
 describe('the 定时 form', () => {
   it('needs a name, a time, an available work location and an input', () => {

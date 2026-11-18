@@ -5,7 +5,7 @@ import { AGENT_PRESETS, PROVIDER_PRESETS } from '@latch/protocol'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { GLYPHS, HARNESS_MARKS, PROVIDER_MARKS, harnessArt, presetOf, providerArt } from '../src/brands.ts'
-import { GlyphTile, ProviderTile } from '../src/components/BrandTile.tsx'
+import { GlyphTile, MarkTile, ProviderTile } from '../src/components/BrandTile.tsx'
 
 const assets = new URL('../src/assets/brands/', import.meta.url)
 const files = readdirSync(assets).filter(name => !name.startsWith('.'))
@@ -18,15 +18,13 @@ const named = new Set(
 )
 
 describe('brand icons', () => {
-  it('draws a glyph without the plate wherever the plate would make it unreadable', () => {
-    const plate = (element: Parameters<typeof renderToStaticMarkup>[0]) => !renderToStaticMarkup(element).includes('data-plain')
-    for (const [size, shown] of [
-      [14, false],
-      [16, false],
-      [20, true],
-    ] as const) {
-      expect(plate(createElement(GlyphTile, { icon: GLYPHS.agent, size }))).toBe(shown)
-      expect(plate(createElement(ProviderTile, { provider: { id: 'someone-else' }, size }))).toBe(shown)
+  it('uses the bare tile for inline Harness and provider marks and the plate at larger sizes', () => {
+    const isBare = (element: Parameters<typeof renderToStaticMarkup>[0]) => renderToStaticMarkup(element).includes('data-bare')
+    for (const size of [14, 16, 20, 24, 32] as const) {
+      expect(isBare(createElement(MarkTile, { mark: 'claude-agent', size }))).toBe(size <= 20)
+      expect(isBare(createElement(ProviderTile, { provider: { id: 'openai' }, size }))).toBe(size <= 20)
+      expect(isBare(createElement(ProviderTile, { provider: { id: 'someone-else' }, size }))).toBe(size <= 20)
+      expect(isBare(createElement(GlyphTile, { icon: GLYPHS.agent, size }))).toBe(size <= 16)
     }
   })
 
