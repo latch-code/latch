@@ -101,9 +101,11 @@ describe('the thread’s @', () => {
       { id: 'p2', at: '', text: 'b', delivery: { sessionId: 's1', state: 'sent' as const } },
       { id: 'p3', at: '', text: 'c' },
     ]
-    const before = replySources(posts, { tasks: [task('s1')] })
-    expect(before).toBe('s1:2026-11-17T00:00:00.000Z')
+    const snapshot = { tasks: [task('s1')] }
+    const before = replySources(posts, snapshot)
+    expect(before).toBe(replySources(posts.slice(0, 1), snapshot))
     expect(replySources(posts, { tasks: [task('s1', { updatedAt: '2026-11-17T00:00:01.000Z' })] })).not.toBe(before)
+    expect(replySources(posts, { tasks: [task('s1', { runId: 'next-run' })] })).not.toBe(before)
     expect(replySources(null, { tasks: [] })).toBe('')
   })
 })
