@@ -1,12 +1,13 @@
 import { useState, type ReactNode } from 'react'
 import { escapeSecurityText, type TaskDetail, type WorkProposalSummary } from '@latch/protocol'
 import { Button, Icon, StatusWord } from '@latch/ui'
-import { Lightbulb } from 'lucide-react'
+import { Lightbulb, ListTodo } from 'lucide-react'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { CardSuggestion } from './CardSuggestion.tsx'
 import { ProposalReview } from './ProposalReview.tsx'
-import { pendingEntries, todoProposals, useProposalWrites, type ChangeProposal, type TodoProposal } from './proposals.ts'
+import { pendingEntries, todoProposals, type ChangeProposal, type TodoProposal } from './proposals.ts'
 import { ExternalMark } from './WorkBoardProposalCard.tsx'
+import { ProposalRecovery } from './ProposalRecovery.tsx'
 
 /** A proposal this session made, after the turn it came from: what it proposed, and 审阅 or the suggestion's own buttons. */
 function TodoRow({ proposal, canDecide, onReview }: { proposal: TodoProposal; canDecide: boolean; onReview: (row: TodoProposal) => void }) {
@@ -41,12 +42,14 @@ export function useSessionBoardProposals(
   shell: ShellState,
   detail: TaskDetail | null,
 ): ((turns: ReadonlyArray<{ key: string }>) => ReadonlyMap<string, ReactNode>) | undefined {
-  const writes = useProposalWrites(shell.refresh)
+  const writes = shell.proposalWrites
   const [reviewing, setReviewing] = useState<TodoProposal | null>(null)
   if (!detail) return undefined
   const sessionId = detail.summary.id
   const own = (shell.snapshot.workProposals ?? []).filter(row => row.from.sessionId === sessionId)
-  if (!own.length && !reviewing) return undefined
+  const accepted = (shell.snapshot.items ?? []).filter(item => item.from?.sessionId === sessionId)
+  const hasUnconfirmed = [...writes.states.values()].some(state => state.state !== 'refused' && state.sessionId === sessionId)
+  if (!own.length && !accepted.length && !hasUnconfirmed && !reviewing) return undefined
   const canDecide = shell.catalog !== undefined && shell.access.scopes.has('run')
   const row = (proposal: WorkProposalSummary) =>
     proposal.kind === 'change' && proposal.change ? (
@@ -82,7 +85,36 @@ export function useSessionBoardProposals(
           })}
         </div>,
       )
-    if (reviewing)
+    for (const item of accepted) {
+      const key = item.from?.messageId && keys.has(item.from.messageId) ? item.from.messageId : last
+      nodes.set(
+        key,
+        <>
+          {nodes.get(key)}
+          <div className="work-board-session-proposal" key={item.id}>
+            <Button size="xs" variant="ghost" icon={ListTodo} onClick={() => shell.openWorkItem(item.id)}>
+              {escapeSecurityText(item.title)}
+            </Button>
+          </div>
+        </>,
+      )
+    }
+    if (hasUnconfirmed)
+      nodes.set(
+        last,
+        <>
+          {nodes.get(last)}
+          <ProposalRecovery
+            snapshot={shell.snapshot}
+            writes={writes}
+            sessionId={sessionId}
+            onAccepted={ids => {
+              if (ids[0]) shell.openWorkItem(ids[0])
+            }}
+          />
+        </>,
+      )
+    if (reviewing?.from.sessionId === sessionId && !shell.board)
       nodes.set(
         last,
         <>

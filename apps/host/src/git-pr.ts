@@ -8,6 +8,7 @@ import type {
   GitCheckState,
   GitPrBinding,
   GitPrComment,
+  GitPrState,
   GitPrStatus,
   GitPullRequest,
   GitReviewDecision,
@@ -18,11 +19,13 @@ import { redactKnownSecrets } from '@latch/core/node-kit'
 /** A failed job's log: at most this many of its last lines, and this many bytes. */
 export const LOG_LINES = 200
 export const LOG_BYTES = 32 * 1024
-/** One review or comment's text. */
+/** One review or comment's text, in UTF-16 code units including the ellipsis. */
 export const COMMENT_LIMIT = 8 * 1024
 /** Reviews and comments together, and checks. */
 const DISCUSSION_LIMIT = 200
 const CHECKS_LIMIT = 200
+/** Whole PR response over native HTTP, below the native client's 1 MiB JSON limit. */
+const NATIVE_PR_RESPONSE_BYTES = 960 * 1024
 export const TITLE_LIMIT = 256
 export const BODY_LIMIT = 64 * 1024
 
@@ -104,9 +107,13 @@ export function plainText(text: string): string {
   )
 }
 
+const graphemes = new Intl.Segmenter('und', { granularity: 'grapheme' })
+
 function capped(text: string, limit: number): string {
   const clean = plainText(text).trim()
-  return clean.length > limit ? `${clean.slice(0, limit)}…` : clean
+  if (clean.length <= limit) return clean
+  const end = graphemes.segment(clean).containing(limit - 1)?.index ?? limit - 1
+  return `${clean.slice(0, end)}…`
 }
 
 /** One line of a name: no newlines, at most `limit` characters. */
@@ -180,7 +187,7 @@ const review = z.object({
 const comment = z.object({ author: login, body: z.string().max(1_000_000).nullish(), createdAt: time })
 const prView = z.object({
   number: z.number().int().positive(),
-  url: z.string().regex(PR_URL),
+  url: z.string().max(512).regex(PR_URL),
   title: z.string().max(10_000).nullish(),
   state: z.string().max(40),
   isDraft: z.boolean().nullish(),
@@ -369,6 +376,27 @@ export const LINE_COMMENTS = 100
 export function discussionOf(items: GitPrComment[], leftOut = false): { items: GitPrComment[]; capped: boolean } {
   const sorted = items.toSorted((a, b) => (a.at ?? '').localeCompare(b.at ?? ''))
   return { items: sorted.slice(-DISCUSSION_LIMIT), capped: leftOut || sorted.length > DISCUSSION_LIMIT }
+}
+
+/** Keep the latest discussion that fits alongside the already bounded PR and checks. */
+export function nativePrState(state: GitPrState): GitPrState {
+  const { discussion } = state
+  if (!discussion?.length) return state
+
+  const empty = { ...state, discussion: [] }
+  const capped = { ...empty, discussionCapped: true as const }
+  const available = NATIVE_PR_RESPONSE_BYTES - Buffer.byteLength(JSON.stringify(empty))
+  const withOmission = NATIVE_PR_RESPONSE_BYTES - Buffer.byteLength(JSON.stringify(capped))
+  let bytes = 0
+  let start = discussion.length
+  for (let index = discussion.length - 1; index >= 0; index--) {
+    // Each entry adds its encoded JSON and, except for the first one, one comma.
+    bytes += Buffer.byteLength(JSON.stringify(discussion[index]!)) + (index === discussion.length - 1 ? 0 : 1)
+    if (bytes > available) break
+    if (index === 0) return state
+    if (bytes <= withOmission) start = index
+  }
+  return { ...capped, discussion: discussion.slice(start) }
 }
 
 /** A branch name the session metadata holds for display: 1–256 characters, no control characters. */

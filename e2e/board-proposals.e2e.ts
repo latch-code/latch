@@ -148,6 +148,8 @@ it('an agent proposes 待办: shown as proposed, edited and accepted, started at
         return accepted?.board.group
       })
       .toBe('todo')
+    await page.locator(`.item-page[data-item-id="${accepted!.id}"]`).waitFor()
+    await page.locator('.item-page-back').click()
     await itemCard(page, accepted!.id).waitFor()
     await proposalCard(page, single.proposal.id).waitFor({ state: 'hidden' })
 
@@ -157,6 +159,9 @@ it('an agent proposes 待办: shown as proposed, edited and accepted, started at
     await groupReview.getByRole('checkbox', { name: '收下第 3 条' }).click()
     await groupReview.getByRole('button', { name: '接受 2 条' }).click()
     await groupReview.waitFor({ state: 'hidden' })
+    const acceptedGroup = page.getByRole('dialog', { name: '已收下的待办' })
+    await acceptedGroup.getByRole('button', { name: '拆出账号面板' }).waitFor()
+    await acceptedGroup.getByRole('button', { name: '关闭' }).click()
     await proposalCard(page, group.proposal.id).getByText('提议 1 条', { exact: true }).waitFor()
     await proposalCard(page, group.proposal.id).getByRole('button', { name: '不要', exact: true }).click()
     await proposalCard(page, group.proposal.id).waitFor({ state: 'hidden' })
@@ -180,6 +185,8 @@ it('an agent proposes 待办: shown as proposed, edited and accepted, started at
         return external?.from?.external
       })
       .toBe(true)
+    await page.locator(`.item-page[data-item-id="${external!.id}"]`).waitFor()
+    await page.locator('.item-page-back').click()
     await itemCard(page, external!.id).getByText('来自外部内容').waitFor()
     await shot(page, 'accepted', 1440, 'light')
     await shot(page, 'accepted', 820, 'dark')

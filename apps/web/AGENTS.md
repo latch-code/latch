@@ -18,7 +18,7 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 不变量：
 
 - `src/core/` 只导入本目录的文件、`react` 与 `@latch/protocol`，不依赖布局组件（`.oxlintrc.json`）。
-- 正文滚动仅 `useReadingPosition` 写，消息和工具行用 `data-message-id`。刻度列单独滚动，定位走 `reveal`。检查上翻、重排、回到最新和切换（`test/reading-position.test.ts`）。缓存见 STREAMING。
+- 正文滚动仅 `useReadingPosition` 写，消息和工具行用 `data-message-id`。刻度列单独滚动，定位（含待办回合）走 `reveal`。检查上翻、重排、回到最新和切换（`test/reading-position.test.ts`）。缓存见 STREAMING。
 - 文件预览只经授权句柄，项目预览不伪造会话；文件树懒加载。不透明文档框与可信插件分开，见 `src/preview/AGENTS.md`。
 - 插件面板由 `SessionPanels` / `ClientPluginPanel` 挂载并随会话清理；可信代码没有隔离，`compose` 只追加草稿（`e2e/plugin-packages.e2e.ts`）。
 - 安全文案只按错误码从 `src/core/securityCopy.ts` 取，新安全错误码在此补（`test/client-security.test.ts`）。

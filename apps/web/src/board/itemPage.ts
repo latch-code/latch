@@ -14,6 +14,17 @@ interface Stored {
   itemId: string
 }
 
+export interface WorkItemSessionTarget {
+  sessionId: string
+  messageId?: string
+  userMessageId?: string
+  runId?: string
+  decision?: { kind: 'approval' | 'question'; id: string; runId: string }
+  panel?: 'changes' | 'delivery'
+  commitSha?: string
+  pullRequest?: true
+}
+
 const listeners = new Set<() => void>()
 let current: Stored | null | undefined
 const stored = (): Stored | null => (current === undefined ? (current = read()) : current)

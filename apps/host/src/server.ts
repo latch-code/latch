@@ -3093,6 +3093,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       changes: changeRoutes,
       customization: customizationRoutes,
       workProposals: workProposalRoutes,
+      workThreads: workThreadRoutes,
       routes,
     } = createRoutes(routeContext, {
       customization: { store: () => customization, auditFailed },
@@ -3249,6 +3250,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           return chat.state === 'ready' ? { state: 'ready', sessionId: chat.sessionId } : { state: chat.state }
         },
         agentName: id => (id === GENERAL_AGENT_ID ? '通用' : (customAgents.list().find(agent => agent.id === id)?.name ?? 'Agent')),
+        questions: id => questions.view(id),
         agentAccess: caller => {
           agentAccess(caller, true)
         },
@@ -11243,6 +11245,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const listing = await hub!.listTasksProven()
         if (privateAgentView(caller) && !customAgents.hasPending())
           await migrateAgentChats(caller, listing).catch(error => log(`Agent 聊天未能核对：${errorText(error)}`))
+        const hasBodyWindow = () => !nativeOpening || nativeRoutes.verifiedUntil(nativeOpening) > now()
+        const itemRecords = workItems
+          .list()
+          .filter(record => privateAgentView(caller) || !itemIsPrivate(record, id => hub!.agentPrivate(id)))
+        const postAttention = hasBodyWindow() ? await workThreadRoutes.attention(caller, itemRecords, listing.tasks) : undefined
         const tasks = listing.tasks.filter(task => privateVisible(caller, task)).map(questionSummary)
         const whole = wholeListing(listing)
         const snapshot: AppSnapshot = {
@@ -11287,33 +11294,44 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (privateAgentView(caller) && !customAgents.hasPending()) snapshot.agentChats = customAgents.chats()
         snapshot.tasks = snapshot.tasks.filter(task => privateVisible(caller, task))
         snapshot.approvals = snapshot.approvals.filter(approval => snapshot.tasks.some(task => task.id === approval.sessionId))
-        const scope = devices.get(caller.device.id)?.dataScope
+        const scope = currentDevice(caller).dataScope
         snapshot.approvals = snapshot.approvals.map(approval => {
           if (scope === 'all') return allApproval(approval)
           const task = snapshot.tasks.find(item => item.id === approval.sessionId)
           return scope === 'files' && task ? filesApproval(approval, insideSession(task)) : workApproval(approval)
         })
-        // 待办 are placed from every session as listed, private ones too; a private 待办 goes to the full data scope only.
+        // Private task metadata is shown alongside its discussion, only within the native body window.
+        const canReadPrivateItems = () => scope === 'all' && hasBodyWindow()
         const listedById = new Map(listing.tasks.map(task => [task.id, task]))
         const items = workItems.list().flatMap(record => {
           const isPrivate = itemIsPrivate(record, id => hub!.agentPrivate(id))
           if (isPrivate) workItems.notePrivate(record.id, log)
-          if (isPrivate && scope !== 'all') return []
-          return [
-            itemSummary(
-              record,
-              {
-                summary: id => listedById.get(id),
-                prState: id => boardDelivery.prState(id),
-                thread: id => workThreads.revisionOf(id),
-                originVisible: id => scope === 'all' || !hub!.agentPrivate(id),
-              },
-              isPrivate,
-            ),
-          ]
+          if (isPrivate && !canReadPrivateItems()) return []
+          const attention = hasBodyWindow() ? postAttention?.get(record.id) : undefined
+          const summary = itemSummary(
+            record,
+            {
+              summary: id => listedById.get(id),
+              prState: id => boardDelivery.prState(id),
+              thread: id => workThreads.revisionOf(id),
+              originVisible: id => canReadPrivateItems() || !hub!.agentPrivate(id),
+              ...(attention ? { postAttention: attention } : {}),
+            },
+            isPrivate,
+          )
+          if (!hasBodyWindow()) delete summary.note
+          return [summary]
         })
         if (items.length) snapshot.items = items
-        const proposals = workProposalRoutes.summaries(scope)
+        if (!hasBodyWindow()) {
+          const itemIds = new Set(items.map(item => item.id))
+          snapshot.tasks = snapshot.tasks.map(task => {
+            if (!task.itemId || itemIds.has(task.itemId)) return task
+            const { itemId: _item, ...rest } = task
+            return rest
+          })
+        }
+        const proposals = hasBodyWindow() ? workProposalRoutes.summaries(scope) : []
         if (proposals.length) snapshot.workProposals = proposals
         traffic.response('snapshot', json(res, snapshot))
         return

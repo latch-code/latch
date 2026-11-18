@@ -82,6 +82,8 @@ import { rowOf } from '../../components/overlays.tsx'
 /** Where the conversation sends the person: a turn and, when it names one, a file of it. */
 export interface ChangesTarget {
   turnId?: string
+  /** A task evidence link names the observed Git commit. */
+  commitSha?: string
   /** 交付 opens a file in 未提交, the work tree against HEAD. */
   scope?: 'uncommitted'
   /** A line of the conversation does not always know which session folder its file is in. */
@@ -134,6 +136,7 @@ type GitPane = { kind: 'staging'; view: GitStagingView } | { kind: 'history'; mo
 
 function paneLabel(pane: GitPane, base: string | undefined): string {
   if (pane.kind === 'staging') return pane.view === 'unstaged' ? '未暂存' : '已暂存'
+  if (pane.mode.kind === 'commit') return `提交 ${pane.mode.sha.slice(0, 7)}`
   return pane.mode.kind === 'commits' ? '提交' : pane.mode.kind === 'compare' ? `分支与 ${base ?? '主分支'}` : '文件历史'
 }
 
@@ -686,6 +689,10 @@ function ReadableChanges({
   // A link from the conversation goes to its turn and file, and the file opens.
   useEffect(() => {
     if (!target) return
+    if (target.commitSha) {
+      setGit({ kind: 'history', mode: { kind: 'commit', sha: target.commitSha } })
+      return
+    }
     setGit(undefined)
     if (target.turnId) setChoice({ kind: 'turn', turnId: target.turnId })
     else if (target.scope === 'uncommitted') setChoice({ kind: 'uncommitted' })

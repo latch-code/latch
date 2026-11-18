@@ -306,6 +306,7 @@ export function QuestionDrawer({
     <Drawer
       ref={card}
       className="question-card"
+      data-question-id={question.id}
       // A question waits for the person: it keeps the product's own tokens under every customisation (tokens.css).
       data-lock=""
       data-presentation={presentation}

@@ -8,7 +8,7 @@ import { fileId } from './model.ts'
 import { commitRow, historyFile, historyTitle } from './staging.ts'
 
 /** 提交: the session's commits. 文件历史: the commits that changed one file. 分支与基线: HEAD against where it left main. */
-export type HistoryMode = { kind: 'commits' } | { kind: 'file'; path: string } | { kind: 'compare' }
+export type HistoryMode = { kind: 'commits' } | { kind: 'file'; path: string } | { kind: 'compare' } | { kind: 'commit'; sha: string }
 
 export interface GitHistoryViewProps {
   sessionId: string
@@ -180,7 +180,7 @@ export function GitHistoryView(props: GitHistoryViewProps) {
   const { sessionId, mode, poke, offline, onBack } = props
   const base = `tasks/${encodeURIComponent(sessionId)}/git`
   const listPath =
-    mode.kind === 'compare'
+    mode.kind === 'compare' || mode.kind === 'commit'
       ? undefined
       : mode.kind === 'file'
         ? `${base}/history?${new URLSearchParams({ path: mode.path }).toString()}`
@@ -196,6 +196,19 @@ export function GitHistoryView(props: GitHistoryViewProps) {
     onOpenFile: props.onOpenFile,
     onHistory: props.onHistory,
   }
+  if (mode.kind === 'commit')
+    return (
+      <div className="changes-body">
+        <div className="changes-list">
+          <div className="changes-line" data-tone="muted">
+            <span className="changes-line-text">
+              提交 <code>{mode.sha.slice(0, 7)}</code>
+            </span>
+          </div>
+          <TreeFiles key={mode.sha} {...shared} base={`${base}/history/${mode.sha}`} query={mode.sha} />
+        </div>
+      </div>
+    )
   if (mode.kind === 'compare')
     return (
       <div className="changes-body">

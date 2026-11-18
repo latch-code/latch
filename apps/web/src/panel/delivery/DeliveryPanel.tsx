@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ArrowDownToLine, CircleHelp, GitPullRequest, MessageSquarePlus, RefreshCw, Upload, Webhook } from 'lucide-react'
 import type { GitDeliveryState, TaskSummary } from '@latch/protocol'
 import {
@@ -74,6 +74,8 @@ export interface DeliveryPanelProps {
   revision?: number | undefined
   /** The tab is on screen: it reads only then. */
   open: boolean
+  focusPr?: boolean
+  canReadFiles: boolean
   canRun: boolean
   hostName?: string
   offline: boolean
@@ -244,7 +246,8 @@ function UnknownLine({
 export function DeliveryPanel(props: DeliveryPanelProps) {
   const { summary, revision, open, canRun, hostName, offline, phone, onOpenFile, onCompose, onOutcome, sync = false } = props
   const delivery = useDelivery({ sessionId: summary.id, status: summary.status, revision, open, offline })
-  const { read, pending, writing, failure, unknown, outcome, writes } = delivery
+  const { pending, writing, failure, unknown, outcome, writes } = delivery
+  const read = props.canReadFiles ? delivery.read : ({ kind: 'denied' } as const)
   useEffect(() => {
     if (outcome?.kind === 'committed' || outcome?.kind === 'pushed') onOutcome?.(outcome.kind)
   }, [outcome, onOutcome])
@@ -270,11 +273,22 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
     !!state && !!state.branch && !!state.upstream && (failure?.code === 'git-pull-diverged' || diverged(state)) && leftAt !== divergedKey
   // A device that cannot list the files still sees and makes the pull request: the Host says what it may read.
   const prEnabled = read.kind === 'denied' || (!!state && prAvailable(state))
+  const prSectionRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (!props.focusPr || !open || !prEnabled) return
+    const frame = requestAnimationFrame(() => {
+      const section = prSectionRef.current
+      const body = section?.closest<HTMLElement>('.delivery-body')
+      if (section && body) body.scrollTop += section.getBoundingClientRect().top - body.getBoundingClientRect().top
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [props.focusPr, open, prEnabled])
   const pull = usePullRequest({
     sessionId: summary.id,
     enabled: prEnabled,
     open,
     offline,
+    canReadFiles: props.canReadFiles,
     pushed: outcome?.kind === 'pushed' ? outcome.result.sha : undefined,
   })
   const prState = pull.read.kind === 'ready' ? pull.read.state : undefined
@@ -287,6 +301,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
   const prReady = !!prState && !!prInput(prForm, prState).title && !!prInput(prForm, prState).base
   const prSection = prEnabled ? (
     <PullRequestSection
+      sectionRef={prSectionRef}
       read={pull.read}
       head={state?.head}
       branch={state?.branch}
@@ -299,7 +314,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       failure={pull.failure}
       unknown={pull.unknown}
       retryDisabled={offline || !canWrite || busy || pull.creating}
-      logs={pull.logs}
+      logs={props.canReadFiles ? pull.logs : {}}
       onReload={() => void pull.reload()}
       onRetry={() => void pull.retry()}
       onAbandon={pull.abandon}
@@ -556,7 +571,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
 
   const step = deliveryStep(state, { bound: !prUnbound })
   const primary = primaryAction(state, { bound: !prUnbound, justCommitted: phone && outcome?.kind === 'committed' })
-  const summaryWord = prState?.pr ? checksSummary(prState.checks) : undefined
+  const summaryWord = state?.head && prState?.pr?.headSha === state.head ? checksSummary(prState.checks) : undefined
   const upstreamOther = !!state.upstream && !!state.remote && !!state.branch && state.upstream !== `${state.remote}/${state.branch}`
   const pushable = canPush(state) && !upstreamOther
   const total = state.staged.length + changedCount(state)

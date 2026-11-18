@@ -30,6 +30,7 @@ import {
   WORK_ITEMS_STORED,
 } from '../work-items.ts'
 import type { AuditEvent, DeviceCaller, RouteContext, RouteModule } from './registry.ts'
+import type { WorkThreadRoutes } from './work-threads.ts'
 
 export interface WorkItemRouteDeps {
   store: WorkItemStore
@@ -56,6 +57,7 @@ export interface WorkItemRouteDeps {
   changed: (item: WorkItemRecord, sessionIds: readonly string[]) => void
   /** Its thread's revision, while it has one. */
   threadRevision?: (itemId: string) => number | undefined
+  postAttention?: WorkThreadRoutes['attention']
   /** The 待办 was deleted: what belongs to it goes too (its thread). */
   deleted?: (itemId: string) => Promise<void>
 }
@@ -183,6 +185,9 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
         if (summary) summaries.set(id, summary)
       }),
     )
+    const postAttention = (await deps.postAttention?.(caller, [item]))?.get(item.id)
+    context.recheck(caller, 'view')
+    visible(caller, item.id)
     const priv = isPrivate(item)
     if (priv) store.notePrivate(item.id, context.log)
     return fullItem(
@@ -191,6 +196,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
         summary: id => summaries.get(id),
         prState: id => context.board.prState(id),
         ...(deps.threadRevision ? { thread: deps.threadRevision } : {}),
+        ...(postAttention ? { postAttention } : {}),
         // Who proposed it, while that session is private now, only to a device that may read it.
         originVisible: id => fullData(caller) || !sessionPrivate(id),
       },

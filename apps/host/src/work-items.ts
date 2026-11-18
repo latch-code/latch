@@ -19,7 +19,7 @@ import {
   type WorkItemSummary,
 } from '@latch/protocol'
 import { writeFileAtomic } from '@latch/core/node-kit'
-import { workItemPlace, type WorkItemMember } from './board.ts'
+import { workItemPlace, type WorkItemMember, type WorkItemPostAttention } from './board.ts'
 
 export const WORK_ITEMS_FILE = join('work', 'items.json')
 /** A receipt answers retries for this long. */
@@ -66,6 +66,7 @@ const PROPOSAL_ID = /^wpp_[A-Za-z0-9_-]{22}$/u
 const originSchema = z.strictObject({
   sessionId: sessionIdText,
   customAgentId: z.string().min(1).max(128).optional(),
+  messageId: z.string().min(1).max(256).optional(),
   proposalId: z.string().regex(PROPOSAL_ID),
   external: z.literal(true).optional(),
 })
@@ -248,6 +249,7 @@ export interface MemberFacts {
   thread?: (itemId: string) => number | undefined
   /** Whether the reading device may learn which session proposed it; absent is yes. */
   originVisible?: (sessionId: string) => boolean
+  postAttention?: WorkItemPostAttention
 }
 
 export function itemSummary(record: WorkItemRecord, facts: MemberFacts, isPrivate: boolean): WorkItemSummary {
@@ -268,7 +270,7 @@ export function itemSummary(record: WorkItemRecord, facts: MemberFacts, isPrivat
     sessionIds: [...record.sessionIds],
     ...(prompt ? { hasPrompt: true as const } : {}),
     ...(isPrivate ? { private: true as const } : {}),
-    board: workItemPlace(record, record.sessionIds.length, members),
+    board: workItemPlace(record, record.sessionIds.length, members, facts.postAttention),
     ...(thread !== undefined ? { threadRevision: thread } : {}),
   }
 }

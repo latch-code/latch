@@ -1,6 +1,7 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   GENERAL_AGENT_ID,
+  containsSecret,
   type AppSnapshot,
   type TaskSummary,
   type WorkProposalAnswer,
@@ -9,6 +10,9 @@ import {
 } from '@latch/protocol'
 import { api, ApiError, errorMessage, newRequestId } from '../core/api.ts'
 import { unconfirmedReason } from '../core/sendingMessage.ts'
+import { readStorage } from '../core/storageKeys.ts'
+import { storageDeviceCurrent } from '../core/deviceStorageScope.ts'
+import { holdsExcerpt } from '../core/sessionDrafts.ts'
 
 /**
  * Agents' proposals for the board as this device was given them (`AppSnapshot.workProposals`): pending ones only, a
@@ -59,13 +63,43 @@ export function proposerName(
 
 /** A proposal's write as its card shows it: sending, or unknown (重试 sends the same request), or refused with why. */
 export type ProposalWriteState =
-  | { state: 'sending' }
-  | { state: 'unknown'; reason: string }
+  | { state: 'sending'; sessionId?: string }
+  | { state: 'unknown'; reason: string; sessionId?: string }
   | { state: 'refused'; reason: string; code?: string }
 
 interface ProposalRequest {
-  path: string
+  action: 'accept' | 'dismiss'
   body: Record<string, unknown>
+  sessionId?: string
+  private?: true
+}
+
+type ProposalTarget = Pick<WorkProposalSummary, 'id' | 'revision'> & Partial<Pick<WorkProposalSummary, 'from' | 'private'>>
+const PROPOSAL_ID = /^wpp_[A-Za-z0-9_-]{22}$/u
+const MAX_STORED = 256_000
+
+function readRequests(key: string, deviceId: string, all: boolean): Map<string, ProposalRequest> {
+  const stored = new Map<string, ProposalRequest>()
+  try {
+    if (!storageDeviceCurrent(location.origin, deviceId)) return stored
+    const raw = readStorage('sessionStorage', key)
+    if (!raw || raw.length > MAX_STORED || containsSecret(raw)) return stored
+    const rows = JSON.parse(raw) as Array<[string, ProposalRequest]>
+    for (const [id, request] of rows) {
+      if (
+        PROPOSAL_ID.test(id)
+        && (request.action === 'accept' || request.action === 'dismiss')
+        && typeof request.body?.requestId === 'string'
+        && typeof request.body?.baseRevision === 'number'
+        && (request.sessionId === undefined || typeof request.sessionId === 'string')
+        && (request.private === undefined || (all && request.private === true))
+      )
+        stored.set(id, request)
+    }
+  } catch {
+    // A tab can come back without its previous storage.
+  }
+  return stored
 }
 
 export type ProposalWriteResult = { ok: true; itemIds?: string[] } | { ok: false; reason?: string; unknown?: true }
@@ -74,10 +108,54 @@ export type ProposalWriteResult = { ok: true; itemIds?: string[] } | { ok: false
  * 接受 and 不要 for proposals, one unsettled write per proposal, retried as it was sent (same requestId) and never
  * replaced by another meanwhile. Each names the revision the person saw.
  */
-export function useProposalWrites(refresh: () => Promise<void>) {
-  const [states, setStates] = useState<ReadonlyMap<string, ProposalWriteState>>(() => new Map())
-  const requests = useRef(new Map<string, ProposalRequest>())
+export function useProposalWrites(refresh: () => Promise<void>, { device, tasks }: Pick<AppSnapshot, 'device' | 'tasks'>) {
+  const key = `latch.board.proposals.${location.origin}.${device.id}`
+  const all = device.dataScope === 'all'
+  const [saved] = useState(() => readRequests(key, device.id, all))
+  const [states, setStates] = useState<ReadonlyMap<string, ProposalWriteState>>(
+    () =>
+      new Map(
+        [...saved].map(([id, request]) => [
+          id,
+          {
+            state: 'unknown',
+            reason: '没有收到电脑的答复',
+            ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+          } satisfies ProposalWriteState,
+        ]),
+      ),
+  )
+  const requests = useRef(saved)
   const flights = useRef(new Set<string>())
+  const authority = useRef({ all, tasks })
+  authority.current = { all, tasks }
+  const allowed = (request: ProposalRequest) =>
+    authority.current.all
+    || (!request.private && (!request.sessionId || authority.current.tasks.some(task => task.id === request.sessionId)))
+  const save = useCallback(() => {
+    try {
+      if (!storageDeviceCurrent(location.origin, device.id)) return
+      const rows = [...requests.current].filter(([, request]) => {
+        const encoded = JSON.stringify(request)
+        const edits = request.action === 'accept' ? (request.body.entries as WorkProposalEntryEdit[] | undefined) : undefined
+        return allowed(request) && !containsSecret(encoded) && !edits?.some(edit => edit.prompt && holdsExcerpt(edit.prompt))
+      })
+      const raw = JSON.stringify(rows)
+      if (rows.length && raw.length <= MAX_STORED) sessionStorage.setItem(key, raw)
+      else sessionStorage.removeItem(key)
+    } catch {
+      // The current tab still has the requests if storage is unavailable.
+    }
+  }, [device.id, key])
+  useEffect(() => {
+    if (!all)
+      for (const [id, request] of requests.current) {
+        if (allowed(request)) continue
+        requests.current.delete(id)
+        set(id, undefined)
+      }
+    save()
+  }, [all, tasks, save])
   const set = (id: string, state: ProposalWriteState | undefined) => {
     setStates(previous => {
       const next = new Map(previous)
@@ -87,46 +165,64 @@ export function useProposalWrites(refresh: () => Promise<void>) {
     })
   }
   const send = useCallback(
-    async (id: string, request: ProposalRequest): Promise<ProposalWriteResult> => {
-      if (flights.current.has(id)) return { ok: false }
+    async (id: string, request: ProposalRequest, retry = false): Promise<ProposalWriteResult> => {
+      const original = requests.current.get(id)
+      if (flights.current.has(id) || (original !== undefined && original !== request))
+        return { ok: false, ...(original ? { unknown: true } : {}) }
+      if (!allowed(request)) return { ok: false }
       flights.current.add(id)
       requests.current.set(id, request)
-      set(id, { state: 'sending' })
+      save()
+      const source = request.sessionId ? { sessionId: request.sessionId } : {}
+      set(id, { state: 'sending', ...source })
       try {
-        const answer = await api<WorkProposalAnswer>(request.path, { method: 'POST', body: request.body })
+        const answer = await api<WorkProposalAnswer>(`work/proposals/${encodeURIComponent(id)}/${request.action}`, {
+          method: 'POST',
+          body: request.body,
+        })
         requests.current.delete(id)
+        save()
         set(id, undefined)
-        await refresh()
+        await refresh().catch(() => {})
+        if (!allowed(request)) return { ok: false }
         return { ok: true, ...(answer.itemIds ? { itemIds: answer.itemIds } : {}) }
       } catch (cause) {
+        if (!allowed(request)) return { ok: false }
         const reason = unconfirmedReason(cause)
-        if (reason !== null) {
-          set(id, { state: 'unknown', reason })
-          return { ok: false, reason, unknown: true }
+        if (reason !== null || retry) {
+          const explanation = reason ?? errorMessage(cause)
+          set(id, { state: 'unknown', reason: explanation, ...source })
+          return { ok: false, reason: explanation, unknown: true }
         }
         requests.current.delete(id)
+        save()
         const refused = errorMessage(cause)
         set(id, { state: 'refused', reason: refused, ...(cause instanceof ApiError ? { code: cause.code } : {}) })
-        if (cause instanceof ApiError && (cause.code === 'proposal-changed' || cause.code === 'proposal-decided')) await refresh()
+        if (cause instanceof ApiError && (cause.code === 'proposal-changed' || cause.code === 'proposal-decided'))
+          await refresh().catch(() => {})
         return { ok: false, reason: refused }
       } finally {
         flights.current.delete(id)
       }
     },
-    [refresh],
+    [refresh, save],
   )
   const accept = useCallback(
-    (proposal: Pick<WorkProposalSummary, 'id' | 'revision'>, entries?: WorkProposalEntryEdit[]) =>
+    (proposal: ProposalTarget, entries?: WorkProposalEntryEdit[]) =>
       send(proposal.id, {
-        path: `work/proposals/${encodeURIComponent(proposal.id)}/accept`,
+        action: 'accept',
+        ...(proposal.from ? { sessionId: proposal.from.sessionId } : {}),
+        ...(proposal.private ? { private: true } : {}),
         body: { requestId: newRequestId(), baseRevision: proposal.revision, ...(entries?.length ? { entries } : {}) },
       }),
     [send],
   )
   const dismiss = useCallback(
-    (proposal: Pick<WorkProposalSummary, 'id' | 'revision'>, entries?: number[]) =>
+    (proposal: ProposalTarget, entries?: number[]) =>
       send(proposal.id, {
-        path: `work/proposals/${encodeURIComponent(proposal.id)}/dismiss`,
+        action: 'dismiss',
+        ...(proposal.from ? { sessionId: proposal.from.sessionId } : {}),
+        ...(proposal.private ? { private: true } : {}),
         body: { requestId: newRequestId(), baseRevision: proposal.revision, ...(entries?.length ? { entries } : {}) },
       }),
     [send],
@@ -134,15 +230,19 @@ export function useProposalWrites(refresh: () => Promise<void>) {
   const retry = useCallback(
     (id: string) => {
       const request = requests.current.get(id)
-      return request ? send(id, request) : Promise.resolve<ProposalWriteResult>({ ok: false })
+      return request ? send(id, request, true) : Promise.resolve<ProposalWriteResult>({ ok: false })
     },
     [send],
   )
-  const forget = useCallback((id: string) => {
-    if (flights.current.has(id)) return
-    requests.current.delete(id)
-    set(id, undefined)
-  }, [])
+  const forget = useCallback(
+    (id: string) => {
+      if (flights.current.has(id)) return
+      requests.current.delete(id)
+      save()
+      set(id, undefined)
+    },
+    [save],
+  )
   return { states, accept, dismiss, retry, forget }
 }
 

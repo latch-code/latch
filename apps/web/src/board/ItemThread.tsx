@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import {
   escapeSecurityText,
   WORK_THREAD_LIMITS,
+  type AppSnapshot,
   type WorkItemSummary,
   type WorkPost,
   type WorkPostAnswer,
+  type WorkPostReply,
+  type WorkPostReplyAnswer,
   type WorkPostTarget,
   type WorkThreadAnswer,
 } from '@latch/protocol'
@@ -17,17 +20,19 @@ import { api, ApiError, errorMessage, newRequestId } from '../core/api.ts'
 import { unconfirmedReason } from '../core/sendingMessage.ts'
 import { hostNow } from '../core/hostClock.ts'
 import { dateTime, relativeTime } from '../format.ts'
-import { switchWorkView } from '../preferences.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import {
   deliveryWords,
   matchTargets,
   mentionAt,
+  postPreview,
   postTarget,
   replySources,
   targetLabel,
   threadTargets,
   withoutMention,
+  withoutMissingPostSources,
+  withoutPostSource,
   type ThreadTarget,
 } from './itemThread.ts'
 
@@ -43,25 +48,64 @@ interface Pending {
 }
 
 /** The thread as the Host has it, read again when it changes or a session it reads a reply from moves. */
-function useThread(item: WorkItemSummary, sources: (posts: WorkPost[] | null) => string) {
-  const [posts, setPosts] = useState<WorkPost[] | null>(null)
+function useThread(item: WorkItemSummary, scope: string, snapshot: AppSnapshot) {
+  const [state, setState] = useState<{ scope: string; answer: WorkThreadAnswer } | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
+  const request = useRef<AbortController | null>(null)
   const read = useCallback(async () => {
+    request.current?.abort()
+    const controller = new AbortController()
+    request.current = controller
     try {
-      const answer = await api<WorkThreadAnswer>(postsPath(item.id))
-      setPosts(answer.posts)
+      const answer = await api<WorkThreadAnswer>(postsPath(item.id), { signal: controller.signal })
+      if (controller.signal.aborted) return
+      setState(previous => (previous?.scope === scope && previous.answer.revision > answer.revision ? previous : { scope, answer }))
       setFailed(null)
     } catch (cause) {
-      // A 待办 no longer readable here closes its page; nothing to say.
+      if (controller.signal.aborted) return
+      if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) setState(null)
       if (cause instanceof ApiError && cause.status === 404) return
       setFailed(errorMessage(cause))
     }
-  }, [item.id])
-  const replies = sources(posts)
+  }, [item.id, scope])
+  const posts = state?.scope === scope ? state.answer.posts : null
+  const visiblePosts = useMemo(
+    () => (posts ? withoutMissingPostSources(posts, snapshot) : posts),
+    [posts, snapshot.tasksComplete, snapshot.tasks],
+  )
+  useLayoutEffect(() => {
+    if (!visiblePosts || visiblePosts === posts) return
+    // Evict the content before a partial listing can make a still-cached reply visible again.
+    request.current?.abort()
+    setState(previous =>
+      previous?.answer.posts === posts ? { ...previous, answer: { ...previous.answer, posts: visiblePosts } } : previous,
+    )
+  }, [posts, visiblePosts])
+  const refuseReply = useCallback(
+    (postId: string, messageId: string) => {
+      request.current?.abort()
+      setState(
+        previous =>
+          previous && {
+            ...previous,
+            answer: {
+              ...previous.answer,
+              posts: previous.answer.posts.map(post =>
+                post.id === postId && post.reply?.messageId === messageId ? withoutPostSource(post) : post,
+              ),
+            },
+          },
+      )
+      void read()
+    },
+    [read],
+  )
+  const replies = replySources(posts, snapshot)
   useEffect(() => {
     void read()
+    return () => request.current?.abort()
   }, [read, item.threadRevision, replies])
-  return { posts, failed, read }
+  return { posts: visiblePosts, failed, read, refuseReply }
 }
 
 /**
@@ -73,7 +117,8 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
   const { snapshot } = shell
   const canWrite = shell.access.scopes.has('run')
   const targets = useMemo(() => threadTargets(snapshot, item), [snapshot, item])
-  const { posts, failed, read } = useThread(item, list => replySources(list, snapshot))
+  const authority = [snapshot.device.id, snapshot.device.dataScope, snapshot.device.scopes.join(',')].join('|')
+  const { posts, failed, read, refuseReply } = useThread(item, authority, snapshot)
   const [draft, setDraft] = useState('')
   const [target, setTarget] = useState<ThreadTarget | null>(null)
   const [pending, setPending] = useState<Pending | null>(null)
@@ -83,6 +128,8 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
   const [active, setActive] = useState(0)
   const field = useRef<HTMLTextAreaElement>(null)
   const anchor = useRef<HTMLDivElement>(null)
+  const sending = useRef<string | null>(null)
+  const observed = useRef(new Set<string>())
   const id = useId()
 
   const mention = mentionAt(draft, caret)
@@ -99,9 +146,17 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
     if (!loaded) return
     // Only the page's own scroll moves: scrollIntoView would also shift the shell, which hides its overflow.
     const body = anchor.current?.closest('.item-page-body')
-    if (seen.current !== null && count > seen.current && body) body.scrollTop = body.scrollHeight
+    if (shell.board && seen.current !== null && count > seen.current && body && posts?.at(-1)?.requestId === sending.current)
+      body.scrollTop = body.scrollHeight
     seen.current = count
-  }, [count, loaded])
+  }, [count, loaded, shell.board, posts])
+  useEffect(() => {
+    observed.current = new Set((posts ?? []).flatMap(post => (post.requestId ? [post.requestId] : [])))
+    if (!pending || !observed.current.has(pending.requestId)) return
+    setPending(null)
+    setDraft('')
+    setTarget(null)
+  }, [pending, posts])
 
   const choose = (choice: ThreadTarget) => {
     if (!mention) return
@@ -118,6 +173,7 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
   }
 
   const send = async (request: Pending) => {
+    sending.current = request.requestId
     setPending({ ...request, state: 'sending' })
     setRefused(null)
     try {
@@ -130,6 +186,7 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
       setTarget(null)
       await read()
     } catch (cause) {
+      if (observed.current.has(request.requestId)) return
       const reason = unconfirmedReason(cause)
       if (reason !== null) {
         setPending({ ...request, state: 'unknown', reason })
@@ -149,7 +206,7 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
 
   /** 重发 of a kept post whose delivery failed or is unknown: the same request; the Host sends it at most once. */
   const resend = async (post: WorkPost) => {
-    if (!post.requestId) return
+    if (!post.requestId || !post.target) return
     try {
       await api<WorkPostAnswer>(postsPath(item.id), {
         method: 'POST',
@@ -161,16 +218,15 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
     await read()
   }
 
-  const open = (post: WorkPost) => {
-    const sessionId = post.delivery?.sessionId
-    if (!sessionId) return
-    if (post.target && 'customAgentId' in post.target) {
-      switchWorkView('chat')
-      shell.openMyAgent({ id: post.target.customAgentId })
-      return
-    }
-    shell.choose(sessionId)
-    switchWorkView('chat')
+  const open = (post: WorkPost, messageId?: string) => {
+    const turn = post.turn
+    if (!turn) return
+    const action = post.attention
+    const decision =
+      action?.decisionId && turn.runId && (action.reason === 'question' || action.reason === 'approval')
+        ? { kind: action.reason, id: action.decisionId, runId: turn.runId }
+        : undefined
+    shell.openWorkItemSession(item.id, { ...turn, ...(messageId ? { messageId } : {}), ...(decision ? { decision } : {}) })
   }
 
   const keydown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -219,26 +275,18 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
             const name = label(post)
             const state = deliveryWords(post, escapeSecurityText(name))
             const reply = post.reply
+            const task = post.turn && snapshot.tasks.find(task => task.id === post.turn?.sessionId)
+            const attention =
+              task?.runId && task.runId === post.turn?.runId && task.board?.reason === post.attention?.reason ? post.attention : undefined
+            const decision = attention?.reason === 'approval' ? '查看审批' : attention?.reason === 'question' ? '查看问题' : '查看原回合'
             return (
               <li key={post.id} className="item-thread-post" data-post-id={post.id} data-delivery={post.delivery?.state}>
-                {post.target ? (
-                  <div className="item-thread-post-head">
-                    <TargetChip target={post.target} name={name} shell={shell} />
-                    <time dateTime={post.at} title={dateTime(post.at)}>
-                      {relativeTime(post.at, now)}
-                    </time>
-                  </div>
-                ) : null}
-                <div className="item-thread-post-line">
-                  <div className="item-thread-post-text">
-                    <VisibleText text={post.text} />
-                  </div>
-                  {!post.target && (
-                    <time dateTime={post.at} title={dateTime(post.at)}>
-                      {relativeTime(post.at, now)}
-                    </time>
-                  )}
-                </div>
+                <ThreadPostContent
+                  text={post.text}
+                  target={post.target ? <TargetChip target={post.target} name={name} shell={shell} /> : undefined}
+                  at={post.at}
+                  now={now}
+                />
                 {state && (
                   <div className="item-thread-post-state">
                     {post.delivery?.reason ? (
@@ -250,20 +298,29 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
                     ) : (
                       <StatusWord tone={state.tone}>{state.words}</StatusWord>
                     )}
-                    {(post.delivery?.state === 'unknown' || post.delivery?.state === 'failed') && post.requestId && canWrite && (
-                      <Button size="xs" variant="ghost" onClick={() => void resend(post)}>
-                        重试
+                    {(post.delivery?.state === 'unknown' || post.delivery?.state === 'failed')
+                      && post.target
+                      && post.requestId
+                      && canWrite && (
+                        <Button size="xs" variant="ghost" onClick={() => void resend(post)}>
+                          重试
+                        </Button>
+                      )}
+                    {task && (!reply || attention) && (
+                      <Button className="item-thread-action" size="xs" variant="ghost" onClick={() => open(post)}>
+                        {decision}
                       </Button>
                     )}
                   </div>
                 )}
                 {reply && (
                   <ThreadReply
-                    text={reply.more ? `${reply.text}…` : reply.text}
-                    live={reply.live === true}
-                    onOpen={() => {
-                      open(post)
-                    }}
+                    key={reply.messageId}
+                    path={`${postsPath(item.id)}/${encodeURIComponent(post.id)}/reply`}
+                    postId={post.id}
+                    reply={reply}
+                    onDenied={refuseReply}
+                    onOpen={task ? () => open(post, reply.messageId) : undefined}
                   />
                 )}
               </li>
@@ -271,14 +328,15 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
           })}
           {pending && (
             <li className="item-thread-post" data-pending={pending.state}>
-              {pending.target && (
-                <div className="item-thread-post-head">
-                  <TargetChip target={pending.target} name={targetLabel(pending.target, targets)} shell={shell} />
-                </div>
-              )}
-              <div className="item-thread-post-text">
-                <VisibleText text={pending.text} />
-              </div>
+              <ThreadPostContent
+                text={pending.text}
+                target={
+                  pending.target ? (
+                    <TargetChip target={pending.target} name={targetLabel(pending.target, targets)} shell={shell} />
+                  ) : undefined
+                }
+                now={now}
+              />
               <div className="item-thread-post-state">
                 {pending.state === 'sending' ? (
                   <StatusWord tone="running">发送中</StatusWord>
@@ -383,6 +441,45 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
   )
 }
 
+function ThreadPostContent({ text, target, at, now }: { text: string; target?: ReactNode; at?: string; now: Date }) {
+  const [expanded, setExpanded] = useState(false)
+  const id = useId()
+  const preview = useMemo(() => postPreview(text), [text])
+  const separateHead = target || preview
+  const time = at && (
+    <time dateTime={at} title={dateTime(at)}>
+      {relativeTime(at, now)}
+    </time>
+  )
+  return (
+    <>
+      {separateHead && (
+        <div className="item-thread-post-head">
+          {target}
+          {preview && (
+            <Button
+              className="item-thread-post-fold"
+              size="xs"
+              variant="ghost"
+              aria-controls={id}
+              aria-expanded={expanded}
+              onClick={() => setExpanded(open => !open)}>
+              {expanded ? '收起发言' : '展开全文'}
+            </Button>
+          )}
+          {time}
+        </div>
+      )}
+      <div className="item-thread-post-line">
+        <div id={preview ? id : undefined} className="item-thread-post-text">
+          <VisibleText text={expanded ? text : (preview ?? text)} />
+        </div>
+        {!separateHead && time}
+      </div>
+    </>
+  )
+}
+
 function TargetMedia({ target, shell }: { target: WorkPostTarget; shell: ShellState }) {
   if ('customAgentId' in target) {
     const agent = shell.snapshot.customAgents?.find(entry => entry.id === target.customAgentId)
@@ -406,30 +503,101 @@ function TargetChip({ target, name, shell }: { target: WorkPostTarget; name: str
 /** The thread of the 待办 the snapshot lists; nothing while it does not. */
 export function ItemThreadFor({ shell, itemId }: { shell: ShellState; itemId: string }) {
   const item = shell.snapshot.items?.find(entry => entry.id === itemId)
-  return item ? <ItemThread key={item.id} shell={shell} item={item} /> : null
+  return item ? (
+    <ItemThread key={`${item.id}:${shell.snapshot.device.dataScope}:${shell.snapshot.device.scopes}`} shell={shell} item={item} />
+  ) : null
 }
 
-/** A long reply shows its first lines; 展开 shows the rest of what the Host gave (up to 2,000 characters). */
 const longReply = (text: string) => text.length > 360 || text.split('\n').length > 7
 
-function ThreadReply({ text, live, onOpen }: { text: string; live: boolean; onOpen: () => void }) {
+/** Each continuation names the same post and assistant message. */
+function ThreadReply({
+  path,
+  postId,
+  reply,
+  onDenied,
+  onOpen,
+}: {
+  path: string
+  postId: string
+  reply: WorkPostReply
+  onDenied: (postId: string, messageId: string) => void
+  onOpen?: (() => void) | undefined
+}) {
   const [open, setOpen] = useState(false)
-  const long = longReply(text)
+  const [full, setFull] = useState<{ text: string; nextOffset?: number }>()
+  const [failed, setFailed] = useState<string>()
+  const [loading, setLoading] = useState(false)
+  const request = useRef<AbortController | null>(null)
+  const read = useCallback(
+    async (offset?: number) => {
+      request.current?.abort()
+      const controller = new AbortController()
+      request.current = controller
+      setLoading(true)
+      setFailed(undefined)
+      try {
+        const query = new URLSearchParams({ messageId: reply.messageId, ...(offset ? { offset: String(offset) } : {}) })
+        const answer = await api<WorkPostReplyAnswer>(`${path}?${query}`, { signal: controller.signal })
+        if (controller.signal.aborted || answer.messageId !== reply.messageId) return
+        setFull(previous => ({
+          text: (offset ? (previous?.text ?? '') : '') + answer.text,
+          ...(answer.nextOffset !== undefined ? { nextOffset: answer.nextOffset } : {}),
+        }))
+      } catch (cause) {
+        if (controller.signal.aborted) return
+        if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) {
+          controller.abort()
+          onDenied(postId, reply.messageId)
+          return
+        }
+        setFailed(errorMessage(cause))
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
+      }
+    },
+    [path, postId, reply.messageId, onDenied],
+  )
+  useLayoutEffect(() => () => request.current?.abort(), [])
+  useEffect(() => {
+    if (!open || !reply.more) return
+    void read()
+    return () => request.current?.abort()
+  }, [open, read, reply.more, reply.live])
+  const text = open && full ? full.text : reply.more ? `${reply.text}…` : reply.text
+  const long = !!reply.more || longReply(text)
+  const content = <VisibleText text={text} />
   return (
     <div className="item-thread-reply-box">
-      <button
-        type="button"
-        className="item-thread-reply"
-        data-live={live ? '' : undefined}
-        data-clipped={long && !open ? '' : undefined}
-        onClick={onOpen}>
-        <VisibleText text={text} />
-      </button>
-      {long && (
-        <Button className="item-thread-reply-more" size="xs" variant="ghost" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {open ? '收起' : '展开'}
-        </Button>
+      {onOpen ? (
+        <button
+          type="button"
+          className="item-thread-reply"
+          aria-label="查看原回复"
+          data-live={reply.live ? '' : undefined}
+          data-clipped={long && !open ? '' : undefined}
+          onClick={onOpen}>
+          {content}
+        </button>
+      ) : (
+        <div className="item-thread-reply" data-clipped={long && !open ? '' : undefined}>
+          {content}
+        </div>
       )}
+      <div className="item-thread-reply-actions">
+        {long && (
+          <Button size="xs" variant="ghost" aria-expanded={open} onClick={() => setOpen(!open)}>
+            {open ? '收起' : '展开回复'}
+          </Button>
+        )}
+        {open && (full?.nextOffset !== undefined || failed) && (
+          <Button size="xs" variant="ghost" loading={loading} onClick={() => void read(full?.nextOffset)}>
+            {failed ? '重试读取' : '继续读取'}
+          </Button>
+        )}
+        {open && loading && full?.nextOffset === undefined && <StatusWord tone="neutral">读取中</StatusWord>}
+      </div>
+      {open && failed && <StatusWord tone="failed">{failed}</StatusWord>}
     </div>
   )
 }

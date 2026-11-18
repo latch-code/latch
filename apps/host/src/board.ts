@@ -69,6 +69,16 @@ export function boardPlace(task: TaskSummary, facts: BoardFacts): BoardPlace {
 /** Waiting reasons in the rule order: a 待办 waiting on several sessions shows the first. */
 const REASON_ORDER: readonly BoardReason[] = ['approval', 'question', 'unrecognized', 'silent', 'unknown', 'failed']
 
+export interface WorkItemPostAttention {
+  postId: string
+  reason: BoardReason
+}
+
+export function setPostAttention(items: Map<string, WorkItemPostAttention>, itemId: string, next: WorkItemPostAttention): void {
+  const previous = items.get(itemId)
+  if (!previous || REASON_ORDER.indexOf(next.reason) < REASON_ORDER.indexOf(previous.reason)) items.set(itemId, next)
+}
+
 /** One session of a 待办 as the Host read it now: its place, and whether its bound pull request was last read as merged. */
 export interface WorkItemMember {
   place: BoardPlace
@@ -80,12 +90,18 @@ export interface WorkItemMember {
  * the Host could read now, archived ones included; `count` is how many the 待办 lists. A session not read (its Harness is
  * not listing) counts for nothing but keeps it out of `todo` and out of rule 6.
  */
-export function workItemPlace(item: { closedAt?: string }, count: number, members: readonly WorkItemMember[]): WorkItemPlace {
+export function workItemPlace(
+  item: { closedAt?: string },
+  count: number,
+  members: readonly WorkItemMember[],
+  post?: WorkItemPostAttention,
+): WorkItemPlace {
   if (item.closedAt) return { group: 'done' }
-  if (count === 0) return { group: 'todo' }
   const waiting = members.flatMap(member => (member.place.group === 'attention' && member.place.reason ? [member.place.reason] : []))
-  if (members.some(member => member.place.group === 'attention'))
-    return { group: 'attention', ...(waiting.length ? { reason: REASON_ORDER.find(reason => waiting.includes(reason))! } : {}) }
+  const reason = REASON_ORDER.find(reason => post?.reason === reason || waiting.includes(reason))
+  if (post && post.reason === reason) return { group: 'attention', ...post }
+  if (count === 0) return { group: 'todo' }
+  if (members.some(member => member.place.group === 'attention')) return { group: 'attention', ...(reason ? { reason } : {}) }
   if (members.some(member => member.place.group === 'running')) return { group: 'running' }
   if (members.some(member => member.place.group === 'deliver')) return { group: 'deliver' }
   if (members.length === count && members.every(member => member.prMerged)) return { group: 'done' }

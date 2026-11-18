@@ -83,6 +83,7 @@ import {
   knownGitHub,
   LINE_COMMENTS,
   LINE_COMMENTS_JQ,
+  TITLE_LIMIT,
   sameRepo,
   ghFailure,
   logExcerpt,
@@ -2015,7 +2016,13 @@ export class GitDelivery {
     const out = await this.git()
       .run(layout, ['log', '-1', '--no-show-signature', '--format=%s', 'HEAD', '--'], { maxBytes: 64 * 1024 })
       .catch(() => undefined)
-    const subject = out?.toString('utf8').trim().replace(/\s+/gu, ' ').slice(0, 256)
+    // A title ending in half a surrogate pair is unreadable to the native JSON decoder.
+    const subject = out
+      ?.toString('utf8')
+      .trim()
+      .replace(/\s+/gu, ' ')
+      .slice(0, TITLE_LIMIT)
+      .replace(/[\uD800-\uDBFF]$/u, '')
     return subject && validTitle(subject) ? subject : undefined
   }
 

@@ -20,7 +20,7 @@ import type { Simulators } from '../simulators.ts'
 import type { SimulatorControl } from '../simulator-control.ts'
 import type { SimulatorLive } from '../simulator-live.ts'
 import { createWorkItemRoutes, type WorkItemRouteDeps } from './work-items.ts'
-import { createWorkThreadRoutes, type WorkThreadRouteDeps } from './work-threads.ts'
+import { createWorkThreadRoutes, type WorkThreadRouteDeps, type WorkThreadRoutes } from './work-threads.ts'
 import { createWorkProposalRoutes, type WorkProposalRouteDeps, type WorkProposalRoutes } from './work-proposals.ts'
 import { createTerminalRoutes, type TerminalRoutes, type TerminalWorkspaceOperation } from './terminal.ts'
 import type { TerminalService } from '../terminal/service.ts'
@@ -64,6 +64,7 @@ export function createRoutes(
   changes: ChangeRoutes
   customization: CustomizationRoutes
   workProposals: WorkProposalRoutes
+  workThreads: WorkThreadRoutes
   routes: RouteRegistry
 } {
   const native = createNativeRoutes(context, deps.native)
@@ -73,6 +74,7 @@ export function createRoutes(
   const changes = createChangeRoutes(context)
   const customization = createCustomizationRoutes(context, deps.customization)
   const workProposals = createWorkProposalRoutes(context, deps.workProposals)
+  const workThreads = createWorkThreadRoutes(context, deps.workThreads)
   const simulators = createSimulatorRoutes(context, deps.simulators.simulators, deps.simulators.live, deps.simulators.control)
   return {
     native,
@@ -82,6 +84,7 @@ export function createRoutes(
     changes,
     customization,
     workProposals,
+    workThreads,
     routes: new RouteRegistry([
       native,
       createDeviceRoutes(context, {
@@ -104,8 +107,8 @@ export function createRoutes(
       createAutomationRoutes(context, deps.automations),
       createHandoffRoutes(context, deps.handoffs),
       // Before the 待办's own routes, which answer every other path under them.
-      createWorkThreadRoutes(context, deps.workThreads),
-      createWorkItemRoutes(context, deps.workItems),
+      workThreads,
+      createWorkItemRoutes(context, { ...deps.workItems, postAttention: workThreads.attention }),
       workProposals.module,
       createHistoryRoutes(context, deps.history),
       customization,

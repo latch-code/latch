@@ -57,7 +57,7 @@ async function openBrowser(browser: Browser, host: TestHost, owner: TestDevice, 
   expect((await owner.confirmed(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
   await page.reload()
   await choose(page, sessionId)
-  return { context, page }
+  return { context, page, deviceId: id }
 }
 
 async function openDelivery(page: Page): Promise<Locator> {
@@ -253,6 +253,78 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
       .toBe("PR #1 · reviewer · src/filters/CurrencyFilter.tsx:18：\n\n```text\n'formatCode' is declared but never used\n```")
     await draft.fill('')
     await shots(page, 'reviews')
+
+    // A cached log and an authorized response already in flight both expire on a scope reduction, even on the same SHA.
+    await gh.update(state => {
+      const pr = state.prs[0]!
+      pr.statusCheckRollup = [
+        ...pr.statusCheckRollup,
+        {
+          __typename: 'CheckRun',
+          name: 'late check',
+          status: 'COMPLETED',
+          conclusion: 'FAILURE',
+          detailsUrl: 'https://github.com/acme/widgets/actions/runs/7/job/43',
+        },
+      ]
+      state.logs['43'] = 'late check\tTest\t2026-11-12T10:01:11.0000000Z Previous authorized result.\n'
+    })
+    await section.getByRole('button', { name: '刷新' }).click()
+    const lateCheck = section.locator('.delivery-check').filter({ hasText: 'late check' })
+    const openLog = lateCheck.getByRole('button', { name: '查看日志' })
+    const logPath = `**/link/api/tasks/${first}/git/pr/checks/43/log`
+    let release!: () => void
+    let finish!: () => void
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const finished = new Promise<void>(resolve => {
+      finish = resolve
+    })
+    let authorized: number | undefined
+    await page.route(logPath, async route => {
+      try {
+        const response = await route.fetch()
+        authorized = response.status()
+        await gate
+        // The page may already have aborted the intercepted request.
+        await route.fulfill({ response }).catch(() => {})
+      } finally {
+        finish()
+      }
+    })
+    try {
+      await openLog.click()
+      await expect.poll(() => authorized, SLOW).toBe(200)
+      await log.waitFor()
+      await owner.json(`devices/${desk.deviceId}`, { method: 'PATCH', body: { dataScope: 'work' } })
+      await panel.getByText('这台设备看不到会话文件夹里的文件').waitFor()
+      await log.waitFor({ state: 'hidden' })
+      await comment.waitFor({ state: 'hidden' })
+      expect((await owner.confirmed(`devices/${desk.deviceId}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+      await openLog.waitFor()
+      await expect.poll(() => openLog.getAttribute('aria-expanded'), SLOW).toBe('false')
+      expect(await log.count()).toBe(0)
+    } finally {
+      release()
+      if (authorized !== undefined) await finished
+      await page.unroute(logPath)
+    }
+    await settleShell(page)
+    expect(await section.locator('.delivery-log').count()).toBe(0)
+    expect(await openLog.getAttribute('aria-expanded')).toBe('false')
+    await gh.update(state => {
+      state.logs['43'] = 'late check\tTest\t2026-11-12T10:02:11.0000000Z Fresh authorized result.\n'
+    })
+    await openLog.click()
+    const fresh = section.getByLabel('late check 的日志')
+    await expect.poll(() => fresh.innerText(), SLOW).toContain('Fresh authorized result.')
+    expect(await fresh.innerText()).not.toContain('Previous authorized result.')
+    // Subsequent views of the same PR exercise its original three checks.
+    await gh.update(state => {
+      const pr = state.prs[0]!
+      pr.statusCheckRollup = pr.statusCheckRollup.slice(0, 3)
+    })
 
     // The Agent commits again here: the checks are of the older commit until GitHub reports the new one.
     git('commit', '-q', '--allow-empty', '-m', 'Round JPY')

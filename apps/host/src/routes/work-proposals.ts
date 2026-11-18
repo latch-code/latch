@@ -429,8 +429,17 @@ export function createWorkProposalRoutes(context: RouteContext, deps: WorkPropos
     return { sessionId }
   }
 
-  async function answer(res: ServerResponse, row: WorkProposalRecord, itemIds?: string[], status = 200): Promise<void> {
-    json(res, { proposal: full(row, isPrivate(row)), ...(itemIds?.length ? { itemIds } : {}) } satisfies WorkProposalAnswer, status)
+  function answer(res: ServerResponse, caller: DeviceCaller, row: WorkProposalRecord, itemIds?: string[], status = 200): void {
+    context.recheck(caller, 'view')
+    visible(caller, row.id)
+    const readable = (id: string) => {
+      const item = store.get(id)
+      return item !== undefined && (fullData(caller) || !itemPrivate(item))
+    }
+    const proposal = full(row, isPrivate(row))
+    for (const entry of proposal.entries ?? []) if (entry.itemId && !readable(entry.itemId)) delete entry.itemId
+    const visibleIds = itemIds?.filter(readable)
+    json(res, { proposal, ...(visibleIds?.length ? { itemIds: visibleIds } : {}) } satisfies WorkProposalAnswer, status)
   }
 
   function replayed(caller: DeviceCaller, kind: 'accept' | 'dismiss', request: string, payloadHash: string, id: string) {
@@ -453,7 +462,7 @@ export function createWorkProposalRoutes(context: RouteContext, deps: WorkPropos
     const payloadHash = sha256Hex(canonicalJson({ id, ...fields }))
     const row = visible(caller, id)
     const prior = replayed(caller, 'accept', request, payloadHash, id)
-    if (prior) return answer(res, row, prior.itemIds)
+    if (prior) return answer(res, caller, row, prior.itemIds)
     if (row.revision !== body.baseRevision) throw changedError()
     if (row.change) return acceptChange(res, caller, row, request, payloadHash)
     const pending = row.entries!.flatMap((entry, index) => (entry.state === 'pending' ? [index] : []))
@@ -519,6 +528,7 @@ export function createWorkProposalRoutes(context: RouteContext, deps: WorkPropos
           from: {
             sessionId: target.from.sessionId,
             ...(target.from.customAgentId ? { customAgentId: target.from.customAgentId } : {}),
+            ...(target.from.messageId ? { messageId: target.from.messageId } : {}),
             proposalId: target.id,
             ...(target.external ? { external: true as const } : {}),
           },
@@ -556,6 +566,7 @@ export function createWorkProposalRoutes(context: RouteContext, deps: WorkPropos
     deps.changed(result.row)
     return answer(
       res,
+      caller,
       result.row,
       result.made.map(item => item.id),
     )
@@ -652,7 +663,7 @@ export function createWorkProposalRoutes(context: RouteContext, deps: WorkPropos
       }
     if (result.edited) deps.itemChanged(result.edited, result.edited.sessionIds)
     deps.changed(result.proposal)
-    return answer(res, result.proposal)
+    return answer(res, caller, result.proposal)
   }
 
   /** 不要: the named entries, or all still pending. Its audit line comes first; a missing one does not stop it. */
@@ -663,7 +674,7 @@ export function createWorkProposalRoutes(context: RouteContext, deps: WorkPropos
     const { requestId: request, ...fields } = body
     const payloadHash = sha256Hex(canonicalJson({ id, ...fields }))
     const row = visible(caller, id)
-    if (replayed(caller, 'dismiss', request, payloadHash, id)) return answer(res, row)
+    if (replayed(caller, 'dismiss', request, payloadHash, id)) return answer(res, caller, row)
     if (row.revision !== body.baseRevision) throw changedError()
     const pending = row.entries
       ? row.entries.flatMap((entry, index) => (entry.state === 'pending' ? [index] : []))
@@ -710,7 +721,7 @@ export function createWorkProposalRoutes(context: RouteContext, deps: WorkPropos
       return { result: target, changed: true }
     })
     deps.changed(result)
-    return answer(res, result)
+    return answer(res, caller, result)
   }
 
   /**
@@ -774,10 +785,7 @@ export function createWorkProposalRoutes(context: RouteContext, deps: WorkPropos
       const id = match[1]!,
         action = match[2]
       if (!action && method === 'GET') {
-        const row = visible(caller, id)
-        context.recheck(caller, 'view')
-        visible(caller, id)
-        json(res, { proposal: full(row, isPrivate(row)) } satisfies WorkProposalAnswer)
+        answer(res, caller, visible(caller, id))
       } else if (action === 'accept' && method === 'POST') await accept(res, caller, id, await jsonBody(req, BODY_LIMIT))
       else if (action === 'dismiss' && method === 'POST') await dismiss(res, caller, id, await jsonBody(req, BODY_LIMIT))
       else throw new AppError(404, 'not-found', '接口不存在。')

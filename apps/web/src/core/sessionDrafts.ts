@@ -91,6 +91,17 @@ export function forgetStoredDrafts(origin: string, keep?: string): void {
   } catch {
     /* Nothing was stored. */
   }
+  try {
+    const prefix = `latch.board.proposals.${origin}.`
+    const stale: string[] = []
+    for (let index = 0; index < sessionStorage.length; index++) {
+      const key = sessionStorage.key(index)
+      if (key?.startsWith(prefix) && key !== `${prefix}${keep ?? ''}`) stale.push(key)
+    }
+    for (const key of stale) sessionStorage.removeItem(key)
+  } catch {
+    /* Nothing was stored. */
+  }
 }
 
 function parse(value: string | null): Map<string, Draft> {

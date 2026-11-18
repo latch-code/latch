@@ -1,7 +1,6 @@
 /*
  * A 待办's page in 看板's place: its head (← 看板, title, 完成 or 重新打开, ⋯), then 要求 and 会话 beside a facts card.
- * It reflows by the board's own width (the `work-board` container): the facts card goes above everything below 720px,
- * as the phone's pushed page has it. The discussion (package H) takes `.item-page-thread` under 会话.
+ * Below 900px of board width, the body gets the full width and the facts card folds into its status row above it.
  */
 .item-page {
   display: flex;
@@ -93,23 +92,51 @@
   min-width: 0;
 }
 .item-page-facts {
+  display: grid;
   grid-area: facts;
   position: sticky;
   top: 0;
+  gap: var(--sp-8);
   padding: var(--sp-12);
   border-radius: var(--r-12);
   background: var(--sunken);
 }
-@container work-board (max-width: 719px) {
+.item-page-facts > .item-page-facts-toggle {
+  display: none;
+}
+.item-page-fact-status {
+  flex-wrap: wrap;
+}
+@container work-board (max-width: 899px) {
   .item-page-body {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       'facts'
       'main';
-    padding-inline: var(--sp-12);
   }
   .item-page-facts {
     position: static;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .item-page-facts > .item-page-facts-toggle {
+    display: flex;
+  }
+  .item-page-facts-details {
+    grid-column: 1 / -1;
+  }
+  .item-page-facts:not([data-facts-open]) > .item-page-facts-details {
+    display: none;
+  }
+}
+@media (pointer: coarse) {
+  .item-page-facts > .item-page-facts-toggle {
+    min-height: var(--touch);
+  }
+}
+@container work-board (max-width: 719px) {
+  .item-page-body {
+    padding-inline: var(--sp-12);
   }
   .item-page-head {
     padding-inline: var(--sp-12);
@@ -225,6 +252,33 @@
   border-radius: var(--r-8);
   background: var(--card);
   box-shadow: var(--work-card-shadow);
+}
+.item-page-session {
+  align-items: stretch;
+  flex-direction: column;
+}
+.item-page-session-line,
+.item-evidence {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.item-evidence {
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-6);
+  padding: 0 var(--sp-8) var(--sp-6);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+.item-conversation-back {
+  padding: 0 var(--sp-12) var(--sp-4);
+}
+.item-accepted-links {
+  display: grid;
+  gap: var(--sp-6);
+}
+.work-board-proposal-recovery {
+  padding: var(--sp-4) var(--sp-12);
 }
 .item-page-row[data-marked] {
   box-shadow:

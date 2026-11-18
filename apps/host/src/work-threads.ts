@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
-import { WORK_THREAD_LIMITS, type Message, type WorkPostReply } from '@latch/protocol'
+import { WORK_THREAD_LIMITS, type Message, type TaskDetail, type WorkPostReply, type WorkPostTurn } from '@latch/protocol'
 import { writeFileAtomic } from '@latch/core/node-kit'
 
 export const WORK_THREADS_DIR = join('work', 'threads')
@@ -78,18 +78,27 @@ function codeOf(error: unknown): unknown {
 
 const writeUnknown = () => new AppError(503, 'post-write-unknown', '发言没有确认保存，请重试同一次发送。')
 
+interface WorkDeliveryLink {
+  itemId: string
+  post: WorkPostRecord & { delivery: NonNullable<WorkPostRecord['delivery']> }
+}
+
 /**
  * `work/threads/<itemId>.json`, one file per 待办 with a thread: its posts, oldest first, at most 500. Written atomically
  * (0600) one change at a time; a change is published in memory only once the file holds it. Deleted with its 待办.
  */
 export class WorkThreadStore {
   private queue: Promise<void> = Promise.resolve()
+  private readonly bySession = new Map<string, Map<string, WorkDeliveryLink>>()
+  private readonly uncertain = new Map<string, WorkDeliveryLink[]>()
 
   private constructor(
     private readonly dir: string,
     private readonly threads: Map<string, WorkThreadRecord>,
     private readonly now: () => number,
-  ) {}
+  ) {
+    for (const thread of threads.values()) this.index(thread)
+  }
 
   static async open(dataDir: string, options: { now?: () => number } = {}): Promise<WorkThreadStore> {
     const dir = join(dataDir, WORK_THREADS_DIR)
@@ -124,6 +133,39 @@ export class WorkThreadStore {
     return this.threads.get(itemId)?.revision
   }
 
+  deliveriesIn(sessionId: string): ReadonlyMap<string, WorkDeliveryLink> | undefined {
+    return this.bySession.get(sessionId)
+  }
+
+  unknownIn(itemId: string): readonly WorkDeliveryLink[] {
+    return this.uncertain.get(itemId) ?? []
+  }
+
+  private index(thread: WorkThreadRecord): void {
+    const unknown: WorkDeliveryLink[] = []
+    for (const post of thread.posts) {
+      const { delivery } = post
+      if (!delivery) continue
+      const link: WorkDeliveryLink = { itemId: thread.itemId, post: { ...post, delivery } }
+      const session = this.bySession.get(delivery.sessionId) ?? new Map<string, WorkDeliveryLink>()
+      session.set(delivery.requestId, link)
+      this.bySession.set(delivery.sessionId, session)
+      if (delivery.state === 'unknown') unknown.push(link)
+    }
+    if (unknown.length) this.uncertain.set(thread.itemId, unknown)
+  }
+
+  private unindex(thread: WorkThreadRecord | undefined): void {
+    if (!thread) return
+    this.uncertain.delete(thread.itemId)
+    for (const { delivery } of thread.posts) {
+      if (!delivery) continue
+      const session = this.bySession.get(delivery.sessionId)
+      session?.delete(delivery.requestId)
+      if (session?.size === 0) this.bySession.delete(delivery.sessionId)
+    }
+  }
+
   /** The post a device's request made, if any. */
   find(itemId: string, deviceId: string, requestId: string): WorkPostRecord | undefined {
     return this.threads.get(itemId)?.posts.find(post => post.deviceId === deviceId && post.requestId === requestId)
@@ -146,7 +188,9 @@ export class WorkThreadStore {
       } catch {
         throw writeUnknown()
       }
+      this.unindex(current)
       this.threads.set(itemId, file)
+      this.index(file)
       return result
     })
     this.queue = run.then(
@@ -161,6 +205,7 @@ export class WorkThreadStore {
     if (!ITEM_ID.test(itemId)) return Promise.resolve()
     const run = this.queue.then(async () => {
       await rm(join(this.dir, `${itemId}.json`), { force: true })
+      this.unindex(this.threads.get(itemId))
       this.threads.delete(itemId)
     })
     this.queue = run.then(
@@ -203,6 +248,30 @@ export function replyTo(messages: readonly Message[], requestId: string, running
   if (!reply) return undefined
   const shown = cut(reply.text.trim(), WORK_THREAD_LIMITS.replyChars)
   return { messageId: reply.id, text: shown.text, ...(shown.more ? { more: true as const } : {}), ...(live ? { live: true as const } : {}) }
+}
+
+/** The request identifies the input. A later non-steered input always starts a different turn. */
+export function workPostTurn(detail: TaskDetail, requestId: string) {
+  const { messages, summary } = detail
+  const isInput = (message: Message) => message.role === 'user' && !message.steered && message.requestId === requestId
+  const start = messages.findIndex(isInput)
+  if (start < 0 || messages.findLastIndex(isInput) !== start) return undefined
+  const input = messages[start]!
+  const next = messages.findIndex((message, index) => index > start && message.role === 'user' && !message.steered)
+  const current =
+    next === -1
+    && input.turnId !== undefined
+    && input.turnId === summary.runId
+    && (summary.live === undefined || summary.live.runId === input.turnId)
+  const live = current && (summary.status === 'running' || summary.status === 'waiting-approval')
+  const turn: WorkPostTurn = { sessionId: summary.id, userMessageId: input.id, ...(input.turnId ? { runId: input.turnId } : {}) }
+  const rows = messages.slice(start + 1, next === -1 ? messages.length : next)
+  const replies = rows
+    .filter(message => message.role === 'assistant' && message.text.trim())
+    .map(message => ({ messageId: message.id, text: message.text }))
+  if (live && detail.liveMessageId && detail.liveText.trim() && !replies.some(message => message.messageId === detail.liveMessageId))
+    replies.push({ messageId: detail.liveMessageId, text: detail.liveText })
+  return { turn, current, live, replies, rows }
 }
 
 /** The session holds the message: the delivery happened, whatever its answer said. */

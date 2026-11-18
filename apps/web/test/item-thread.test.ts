@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import type { CustomAgentSummary, TaskSummary } from '@latch/protocol'
+import type { CustomAgentSummary, TaskSummary, WorkPost } from '@latch/protocol'
 import {
   deliveryWords,
   matchTargets,
   mentionAt,
+  postPreview,
   postTarget,
   replySources,
   targetLabel,
   threadTargets,
   withoutMention,
+  withoutMissingPostSources,
 } from '../src/board/itemThread.ts'
 
 const task = (id: string, extra: Partial<TaskSummary> = {}): TaskSummary => ({
@@ -20,6 +22,36 @@ const task = (id: string, extra: Partial<TaskSummary> = {}): TaskSummary => ({
   ...extra,
 })
 const agent = (id: string, name: string) => ({ id, name }) as CustomAgentSummary
+
+it('leaves short posts intact and shows the first lines or complete characters of long posts', () => {
+  expect(postPreview('发布说明已核对。')).toBeUndefined()
+  expect(postPreview('版本\r\n 变更\n审阅\n回滚')).toBe('版本\r\n 变更\n审阅…')
+  const first = '审'.repeat(95) + '👩‍💻'
+  expect(postPreview(first + '回滚')).toBe(`${first}…`)
+})
+
+it('evicts the missing source from a complete listing while keeping the post and the delivery receipt', () => {
+  const kept = { id: 'kept', at: '', text: '人的发言' }
+  const linked: WorkPost = {
+    id: 'post',
+    at: '',
+    text: '请核对版本',
+    requestId: 'request-1',
+    target: { sessionId: 's1' },
+    delivery: { state: 'sent', sessionId: 's1' },
+    turn: { sessionId: 's1', userMessageId: 'input' },
+    reply: { messageId: 'reply', text: '审阅结果' },
+  }
+  const posts = [kept, linked]
+  expect(withoutMissingPostSources(posts, { tasks: [] })).toBe(posts)
+  expect(withoutMissingPostSources(posts, { tasks: [task('s1')], tasksComplete: true })).toBe(posts)
+  const hidden = withoutMissingPostSources(posts, { tasks: [], tasksComplete: true })
+  expect(hidden).toEqual([
+    kept,
+    { id: 'post', at: '', text: '请核对版本', requestId: 'request-1', delivery: { state: 'sent', sessionId: 's1' } },
+  ])
+  expect(withoutMissingPostSources(hidden, { tasks: [] })).toBe(hidden)
+})
 
 describe('the thread’s @', () => {
   it('offers the 待办’s listed sessions, then 通用 and 我的 Agent only where this device may read them', () => {

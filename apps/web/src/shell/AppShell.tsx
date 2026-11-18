@@ -435,6 +435,13 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     {/* Under the panel's page the conversation cannot be reached until the page is closed. */}
                     <div className="workspace-view" inert={(pageMode && infoPage) || undefined}>
                       <ConversationHeader shell={shell} starting={pendingStart || null} onStartBack={toPhoneList} />
+                      {shell.itemReturn && !phone && (
+                        <div className="item-conversation-back">
+                          <Button size="xs" variant="ghost" icon={ChevronLeftGlyph} onClick={shell.returnToWorkItem}>
+                            返回待办
+                          </Button>
+                        </div>
+                      )}
                       {/* The conversation's paper: on phones it rises under the header on the ground. */}
                       <ConversationView
                         shell={shell}
@@ -456,7 +463,11 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                           }
                         }}>
                         <header className="info-page-head">
-                          {phone ? (
+                          {shell.itemReturn ? (
+                            <Button ref={infoBack} size="sm" variant="ghost" icon={ChevronLeftGlyph} onClick={shell.returnToWorkItem}>
+                              返回待办
+                            </Button>
+                          ) : phone ? (
                             <IconButton ref={infoBack} size="lg" label="返回" icon={ChevronLeftGlyph} onClick={closeInfoPage} />
                           ) : (
                             <Button ref={infoBack} variant="ghost" icon={ChevronLeftGlyph} onClick={closeInfoPage}>
@@ -604,7 +615,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   <ViewSwitch value={shell.preferences.workView} waiting={counts.attention} />
                 </div>
               )}
-              {board && <BoardSurface shell={shell} />}
+              {(board || shell.itemReturn) && <BoardSurface shell={shell} />}
               {hasConnectionStrip && <WorkbenchConnection shell={shell} inert={drawer.open || !!settings} />}
               {route.entry === 'agents' && <AgentsPage shell={shell} />}
               {route.entry === 'apps' && <AppsPage shell={shell} />}

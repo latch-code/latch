@@ -156,6 +156,7 @@ export function PhoneReview(props: PhoneReviewProps) {
               summary={summary}
               open={delivering && !leaving}
               canRun={props.canRun}
+              canReadFiles={readsProjectFiles(snapshot.device.dataScope)}
               {...(snapshot.hostName ? { hostName: snapshot.hostName } : {})}
               offline={props.offline}
               phone

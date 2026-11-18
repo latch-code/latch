@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { TextQuote } from 'lucide-react'
 import {
   WORK_ITEM_LIMITS,
   escapeSecurityText,
+  readsProjectFiles,
   type BoardPriority,
   type TaskDetail,
   type TaskSummary,
@@ -10,12 +11,14 @@ import {
   type WorkItemAnswer,
   type WorkItemPatchInput,
   type WorkItemSummary,
+  type WorkbenchDeliveryEntry,
 } from '@latch/protocol'
 import {
   Button,
   CheckGlyph,
   ChevronLeftGlyph,
   EditGlyph,
+  FoldHeader,
   IconButton,
   LockGlyph,
   MessageGlyph,
@@ -39,8 +42,8 @@ import { handDraft } from '../core/draftHandoff.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { dateTime, relativeTime } from '../format.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
-import { switchWorkView } from '../preferences.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
+import { useWorkbenchDelivery } from '../shell/useWorkbenchEvidence.ts'
 import { closeItemPage } from './itemPage.ts'
 import { ItemPagePick } from './ItemPagePick.tsx'
 import { ItemPageStart } from './ItemPageStart.tsx'
@@ -48,6 +51,7 @@ import { bringReply, joinableSessions, placeWords } from './items.ts'
 import { PRIORITY_LABELS } from './model.ts'
 import { cardState, TagChips } from './WorkBoardCard.tsx'
 import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
+import { ItemEvidence } from './ItemEvidence.tsx'
 
 const PLACE_TONE: Record<WorkItemSummary['board']['group'], StatusTone> = {
   todo: 'neutral',
@@ -101,9 +105,10 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
   useEffect(() => {
     if (!listed && snapshot.items !== undefined) close()
   }, [listed, snapshot.items, close])
-  useBackLayer(true, close)
+  useBackLayer(shell.board, close)
   // Esc on the page itself goes back; a dialog, a menu or a field takes its own Esc first.
   useEffect(() => {
+    if (!shell.board) return
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
       const target = event.target instanceof HTMLElement ? event.target : null
@@ -120,8 +125,13 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
     return () => {
       document.removeEventListener('keydown', onKey, true)
     }
-  }, [close])
+  }, [close, shell.board])
 
+  const canReadFiles = readsProjectFiles(snapshot.device.dataScope)
+  const evidence = useWorkbenchDelivery(snapshot, shell.connection, shell.board && item !== undefined, item?.sessionIds ?? [])
+
+  const factsId = useId()
+  const [factsOpen, setFactsOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [tagging, setTagging] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -175,8 +185,7 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
     await shell.refresh()
   }
   const openSession = (id: string) => {
-    shell.choose(id)
-    switchWorkView('chat')
+    shell.openWorkItemSession(itemId, { sessionId: id })
   }
   /**
    * 带过去: the source's last settled reply goes into the target's input as a quote, and the target opens in 对话. Nothing
@@ -243,14 +252,32 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
         </div>
       </header>
       <div className="item-page-body">
-        <aside className="item-page-facts" aria-label="属性">
+        <aside className="item-page-facts" aria-label="属性" data-facts-open={factsOpen ? '' : undefined}>
           <dl>
             <div>
               <dt>状态</dt>
-              <dd>
+              <dd className="item-page-fact-status">
                 <StatusWord tone={closed ? 'neutral' : PLACE_TONE[item.board.group]}>{placeWords(item.board)}</StatusWord>
+                {item.board.postId && (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => {
+                      const post = root.current?.querySelector<HTMLElement>(`[data-post-id="${CSS.escape(item.board.postId!)}"]`)
+                      if (!post) return
+                      post.scrollIntoView({ block: 'nearest' })
+                      post.querySelector<HTMLElement>('.item-thread-action, .item-thread-post-state button')?.focus({ preventScroll: true })
+                    }}>
+                    查看发言
+                  </Button>
+                )}
               </dd>
             </div>
+          </dl>
+          <FoldHeader className="item-page-facts-toggle" open={factsOpen} onOpenChange={setFactsOpen} aria-controls={factsId}>
+            待办属性
+          </FoldHeader>
+          <dl className="item-page-facts-details" id={factsId}>
             <div>
               <dt>项目</dt>
               <dd>{project ? escapeSecurityText(project.name) : '无项目'}</dd>
@@ -299,7 +326,12 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
                   <ProposedBy
                     proposal={{ from: item.from }}
                     shell={shell}
-                    onOpenSession={shell.snapshot.tasks.some(task => task.id === item.from?.sessionId) ? openSession : undefined}
+                    onOpenSession={id =>
+                      shell.openWorkItemSession(item.id, {
+                        sessionId: id,
+                        ...(item.from?.messageId ? { messageId: item.from.messageId } : {}),
+                      })
+                    }
                   />
                   {item.from.external && <ExternalMark />}
                 </dd>
@@ -357,6 +389,7 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
                       key={id}
                       task={task}
                       shell={shell}
+                      {...(canReadFiles ? { evidence: evidence.entries.get(task.id), itemId: item.id } : {})}
                       others={members.flatMap(other => (other.task && other.id !== id ? [other.task] : []))}
                       canWrite={canWrite}
                       bringing={bringing === id}
@@ -590,6 +623,8 @@ export function ItemPrompt({
 function SessionRow({
   task,
   shell,
+  itemId,
+  evidence,
   others,
   canWrite,
   bringing,
@@ -599,6 +634,8 @@ function SessionRow({
 }: {
   task: TaskSummary
   shell: ShellState
+  itemId?: string
+  evidence?: WorkbenchDeliveryEntry | undefined
   others: TaskSummary[]
   canWrite: boolean
   bringing: boolean
@@ -635,59 +672,66 @@ function SessionRow({
     ...(canWrite ? [{ id: 'leave', items: [{ id: 'leave', label: '移出待办', icon: UndoGlyph, onSelect: onLeave }] }] : []),
   ]
   return (
-    <li className="item-page-row" data-work-session={task.id} data-tone={state.tone} data-marked={marked ? '' : undefined}>
-      <button type="button" className="item-page-row-main" aria-current={marked ? 'true' : undefined} onClick={() => onOpen(task.id)}>
-        <MarkTile mark={harness?.capabilities.display.mark ?? task.harnessId} size={16} label={harness?.capabilities.display.label} />
-        <span className="item-page-row-title">{title}</span>
-        <StatusWord className="item-page-row-state" tone={state.tone}>
-          {state.words}
-        </StatusWord>
-        {branch && (
-          <span className="item-page-row-branch">
-            {task.worktree && <FolderGit2 size={12} aria-label="工作树" />}
-            <span>{escapeSecurityText(branch)}</span>
-          </span>
-        )}
-        <time dateTime={task.updatedAt}>{relativeTime(task.updatedAt, new Date(now))}</time>
-      </button>
-      <span className="item-page-row-actions">
-        {canWrite && others.length > 0 && (
+    <li
+      className="item-page-row item-page-session"
+      data-work-session={task.id}
+      data-tone={state.tone}
+      data-marked={marked ? '' : undefined}>
+      <div className="item-page-session-line">
+        <button type="button" className="item-page-row-main" aria-current={marked ? 'true' : undefined} onClick={() => onOpen(task.id)}>
+          <MarkTile mark={harness?.capabilities.display.mark ?? task.harnessId} size={16} label={harness?.capabilities.display.label} />
+          <span className="item-page-row-title">{title}</span>
+          <StatusWord className="item-page-row-state" tone={state.tone}>
+            {state.words}
+          </StatusWord>
+          {branch && (
+            <span className="item-page-row-branch">
+              {task.worktree && <FolderGit2 size={12} aria-label="工作树" />}
+              <span>{escapeSecurityText(branch)}</span>
+            </span>
+          )}
+          <time dateTime={task.updatedAt}>{relativeTime(task.updatedAt, new Date(now))}</time>
+        </button>
+        <span className="item-page-row-actions">
+          {canWrite && others.length > 0 && (
+            <Menu
+              label={`带过去：${title}`}
+              placement="bottom-end"
+              sections={[
+                {
+                  id: 'targets',
+                  label: '带到',
+                  items: others.map(other => ({
+                    id: `bring-${other.id}`,
+                    label: escapeSecurityText(other.title || '未命名会话'),
+                    onSelect: () => onBring(other.id),
+                  })),
+                },
+              ]}
+              trigger={props => (
+                <Button
+                  {...props}
+                  className="item-page-row-bring"
+                  size="xs"
+                  variant="ghost"
+                  icon={TextQuote}
+                  loading={bringing}
+                  disabled={bringing}>
+                  带过去
+                </Button>
+              )}
+            />
+          )}
           <Menu
-            label={`带过去：${title}`}
+            label={`会话操作：${title}`}
             placement="bottom-end"
-            sections={[
-              {
-                id: 'targets',
-                label: '带到',
-                items: others.map(other => ({
-                  id: `bring-${other.id}`,
-                  label: escapeSecurityText(other.title || '未命名会话'),
-                  onSelect: () => onBring(other.id),
-                })),
-              },
-            ]}
-            trigger={props => (
-              <Button
-                {...props}
-                className="item-page-row-bring"
-                size="xs"
-                variant="ghost"
-                icon={TextQuote}
-                loading={bringing}
-                disabled={bringing}>
-                带过去
-              </Button>
-            )}
+            context={rowOf('.item-page-row')}
+            sections={sections}
+            trigger={props => <IconButton {...props} size="xs" label={`更多操作：${title}`} tooltip="更多操作" icon={MoreGlyph} />}
           />
-        )}
-        <Menu
-          label={`会话操作：${title}`}
-          placement="bottom-end"
-          context={rowOf('.item-page-row')}
-          sections={sections}
-          trigger={props => <IconButton {...props} size="xs" label={`更多操作：${title}`} tooltip="更多操作" icon={MoreGlyph} />}
-        />
-      </span>
+        </span>
+      </div>
+      {itemId && <ItemEvidence itemId={itemId} task={task} entry={evidence} shell={shell} />}
     </li>
   )
 }

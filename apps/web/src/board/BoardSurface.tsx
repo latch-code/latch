@@ -32,7 +32,7 @@ import {
   type BoardView,
   type ListState,
 } from './model.ts'
-import { switchWorkView } from '../preferences.ts'
+import { readPreferences, switchWorkView } from '../preferences.ts'
 import { DropConfirm } from './DropConfirm.tsx'
 import { dropTargets, type DropAction } from './drag.ts'
 import { useBoardDrag } from './useBoardDrag.ts'
@@ -50,10 +50,11 @@ import { ItemThreadFor } from './ItemThread.tsx'
 import { closeItemPage, openItemPage, useItemPage } from './itemPage.ts'
 import { WorkBoardNew, type NewMode } from './WorkBoardNew.tsx'
 import { WorkBoardTable } from './WorkBoardTable.tsx'
-import { changeFor, useProposalWrites, type ChangeProposal, type TodoProposal } from './proposals.ts'
+import { changeFor, type ChangeProposal, type TodoProposal } from './proposals.ts'
+import { ProposalRecovery } from './ProposalRecovery.tsx'
 import { WorkBoardProposalCard } from './WorkBoardProposalCard.tsx'
 import { CardSuggestion } from './CardSuggestion.tsx'
-import { ProposalReview } from './ProposalReview.tsx'
+import { AcceptedItems, ProposalReview } from './ProposalReview.tsx'
 
 /** Below this width the board is one list with a state filter (two 240px columns, their gap and the sides). */
 const NARROW = 524
@@ -114,8 +115,14 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   const [deleting, setDeleting] = useState<WorkItemSummary | null>(null)
   const [noting, setNoting] = useState<{ kind: 'item'; item: WorkItemSummary } | { kind: 'session'; task: TaskSummary } | null>(null)
   const [reviewing, setReviewing] = useState<TodoProposal | null>(null)
+  const [acceptedItems, setAcceptedItems] = useState<string[]>([])
   const writes = useItemWrites(shell.refresh)
-  const proposalWrites = useProposalWrites(shell.refresh)
+  const proposalWrites = shell.proposalWrites
+  const showAccepted = (ids: string[]) => {
+    if (readPreferences().workView !== 'board') return
+    if (ids.length > 1) setAcceptedItems(ids)
+    else if (ids[0]) shell.openWorkItem(ids[0])
+  }
   /** Sessions this page started from a 待办: one the snapshot lists outside it was not added (the 待办 was full). */
   const [startedFrom, setStartedFrom] = useState<ReadonlyArray<{ itemId: string; sessionId: string }>>([])
   const noteStarted = useCallback((itemId: string, sessionId: string) => {
@@ -346,7 +353,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   const waitingOf = (card: BoardCard): TaskSummary | undefined =>
     card.kind === 'session'
       ? card.task
-      : card.kind === 'proposal'
+      : card.kind === 'proposal' || card.item.board.postId
         ? undefined
         : card.sessions.find(task => task.board?.group === 'attention' && answerable(task, snapshot.approvals))
   const decisionCard = column('attention').cards.find(card => {
@@ -451,7 +458,9 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
             void proposalWrites.dismiss(proposal)
           }}
           onRetry={id => {
-            void proposalWrites.retry(id)
+            void proposalWrites.retry(id).then(result => {
+              if (result.ok && result.itemIds) showAccepted(result.itemIds)
+            })
           }}
           onForget={proposalWrites.forget}
           onOpenSession={open}
@@ -654,6 +663,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
       ref={root}
       className="board-surface work-board"
       aria-label="看板"
+      hidden={!shell.board}
       data-narrow={narrow ? '' : undefined}
       data-view={memory.view}>
       {showItem ? (
@@ -661,6 +671,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
       ) : (
         <>
           {!narrow && header}
+          <ProposalRecovery snapshot={snapshot} writes={proposalWrites} onAccepted={showAccepted} />
           <div className="work-board-body">{body}</div>
         </>
       )}
@@ -716,7 +727,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
           }}
         />
       )}
-      {reviewing && (
+      {shell.board && reviewing && tasks.some(task => task.id === reviewing.from.sessionId) && (
         <ProposalReview
           proposal={reviewing}
           writes={proposalWrites}
@@ -724,11 +735,9 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
           onClose={() => {
             setReviewing(null)
           }}
-          onAccepted={ids => {
-            if (ids[0]) setStarted(ids[0])
-          }}
         />
       )}
+      {shell.board && acceptedItems.length > 0 && <AcceptedItems ids={acceptedItems} shell={shell} onClose={() => setAcceptedItems([])} />}
       {noting && (
         <PromptDialog
           title="备注"

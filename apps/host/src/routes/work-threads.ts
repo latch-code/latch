@@ -5,21 +5,27 @@ import {
   containsSecret,
   refusedBeforeAccepting,
   WORK_THREAD_LIMITS,
+  type AgentQuestion,
   type DataScope,
+  type HostFeatures,
   type TaskDetail,
   type TaskSummary,
   type WorkPost,
   type WorkPostAnswer,
+  type WorkPostReplyAnswer,
   type WorkThreadAnswer,
 } from '@latch/protocol'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
+import { setPostAttention, type WorkItemPostAttention } from '../board.ts'
 import { json, jsonBody, KIB } from '../http-util.ts'
 import { itemIsPrivate, type WorkItemRecord, type WorkItemStore } from '../work-items.ts'
 import {
+  cut,
   checkedPostText,
   delivered,
   deliveryText,
   replyTo,
+  workPostTurn,
   type QuotedPart,
   type WorkPostRecord,
   type WorkThreadStore,
@@ -50,13 +56,25 @@ export interface WorkThreadRouteDeps {
   agentChat: (caller: DeviceCaller, customAgentId: string) => Promise<AgentChatSlot | undefined>
   /** The name a quote gives an Agent. */
   agentName: (customAgentId: string) => string
+  /** The Host's question IDs; the discussion never includes their prompts or options. */
+  questions: (sessionId: string) => readonly AgentQuestion[]
   /** 我的 Agent hold private memory: the full data scope and `run`, as any write to one. */
   agentAccess: (caller: DeviceCaller) => void
   /** Clients read the 待办 (and so its thread) again; a private one tells devices with the full data scope only. */
   changed: (item: WorkItemRecord) => void
 }
 
-const ONE = /^\/link\/api\/work\/items\/(itm_[A-Za-z0-9_-]{22})\/posts$/u
+export interface WorkThreadRoutes extends RouteModule {
+  attention(
+    caller: DeviceCaller,
+    records: readonly WorkItemRecord[],
+    tasks?: readonly TaskSummary[],
+  ): Promise<ReadonlyMap<string, WorkItemPostAttention>>
+}
+
+const POSTS = /^\/link\/api\/work\/items\/(itm_[A-Za-z0-9_-]{22})\/posts(?:\/(pst_[A-Za-z0-9_-]{22})(\/reply)?)?$/u
+const POSTS_PAGE = 32
+const REPLY_PAGE = 16_000
 const POST_BODY_LIMIT = 32 * KIB
 const BUSY = new Set<TaskSummary['status']>(['running', 'waiting-approval'])
 const postSchema = z.strictObject({
@@ -71,7 +89,23 @@ const postSchema = z.strictObject({
 })
 
 const notFound = () => new AppError(404, 'item-not-found', '找不到这条待办。')
+const replyNotFound = () => new AppError(404, 'post-reply-not-found', '找不到这条回复。')
 const conflict = () => new AppError(409, 'request-conflict', '同一个请求标识不能用于不同内容。')
+const postIdSchema = z.string().regex(/^pst_[A-Za-z0-9_-]{22}$/u)
+const replyQuerySchema = z.strictObject({
+  messageId: z.string().min(1).max(256).optional(),
+  offset: z
+    .string()
+    .regex(/^\d{1,9}$/u)
+    .transform(Number)
+    .optional(),
+})
+
+function queryOf(req: IncomingMessage): Record<string, string> {
+  const query = new URL(req.url ?? '/', 'http://latch.invalid').searchParams
+  if (query.size !== new Set(query.keys()).size) throw new AppError(400, 'post-query-invalid', '讨论读取位置无效。')
+  return Object.fromEntries(query)
+}
 
 /**
  * The session-side request of a post's delivery, derived from the device, the 待办 and the post's request, so a retry
@@ -96,7 +130,7 @@ function deliveryRequestId(deviceId: string, itemId: string, requestId: string):
  * nothing in a reply wakes anyone. Reading and posting follow the 待办's own visibility: a private one, and so its
  * thread, is a missing one to a device without the full data scope.
  */
-export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRouteDeps): RouteModule {
+export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRouteDeps): WorkThreadRoutes {
   const { threads, items } = deps
   /** Deliveries under way, by post: a retry meanwhile waits for the same one instead of sending again. */
   const sending = new Map<string, Promise<void>>()
@@ -105,6 +139,7 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
   const scopeOf = (caller: DeviceCaller): DataScope => context.devices.get(caller.device.id)?.dataScope ?? 'work'
   const fullData = (caller: DeviceCaller) => scopeOf(caller) === 'all'
   const sessionPrivate = (id: string) => context.hub.agentPrivate(id)
+  const seesSession = (caller: DeviceCaller, id: string) => fullData(caller) || !sessionPrivate(id)
 
   /** As `GET /work/items/:id`: a private 待办 to the full data scope only, else as if it did not exist. */
   function visible(caller: DeviceCaller, id: string): WorkItemRecord {
@@ -117,45 +152,168 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
     return context.hub.detail(sessionId).catch(() => undefined)
   }
 
-  function present(caller: DeviceCaller, post: WorkPostRecord, reply?: WorkPost['reply'], held?: boolean): WorkPost {
-    const { deviceId, requestId, payloadHash: _hash, delivery, ...rest } = post
+  function sourceVisible(caller: DeviceCaller, detail: TaskDetail): boolean {
+    const { id, harnessId } = detail.summary
+    return context.hub.ownerOf(id) === harnessId && seesSession(caller, id)
+  }
+
+  async function readSource(caller: DeviceCaller, sessionId: string): Promise<TaskDetail | undefined> {
+    if (!seesSession(caller, sessionId)) return undefined
+    const detail = await detailOf(sessionId)
+    if (!detail || detail.summary.id !== sessionId || !sourceVisible(caller, detail)) return undefined
+    // A driver can return a detail it read before a delete. Confirm the source without reading its body again.
+    const summary = await context.hub.summary(sessionId).catch(() => undefined)
+    return summary?.harnessId === detail.summary.harnessId && sourceVisible(caller, detail) ? detail : undefined
+  }
+
+  async function attention(caller: DeviceCaller, records: readonly WorkItemRecord[], tasks?: readonly TaskSummary[]) {
+    const openItems = new Set(records.filter(item => !item.closedAt).map(item => item.id))
+    const unknown = [...openItems].flatMap(id =>
+      threads.unknownIn(id).filter(({ post }) => !sending.has(post.id) && seesSession(caller, post.delivery.sessionId)),
+    )
+    const sources = new Set(unknown.map(({ post }) => post.delivery.sessionId))
+    if (tasks) {
+      for (const task of tasks) {
+        if (task.board?.group !== 'attention' || !task.runId || !seesSession(caller, task.id)) continue
+        const links = threads.deliveriesIn(task.id)
+        if (links && [...links.values()].some(link => openItems.has(link.itemId))) sources.add(task.id)
+      }
+    } else {
+      for (const itemId of openItems) {
+        for (const { delivery } of threads.get(itemId)?.posts ?? [])
+          if (delivery && seesSession(caller, delivery.sessionId)) sources.add(delivery.sessionId)
+      }
+    }
+    const result = new Map<string, WorkItemPostAttention>()
+    const held = new Set<string>()
+    const ids = [...sources]
+    for (let offset = 0; offset < ids.length; offset += 4) {
+      const details = await Promise.all(ids.slice(offset, offset + 4).map(detailOf))
+      for (const detail of details) {
+        if (!detail || !seesSession(caller, detail.summary.id)) continue
+        const links = threads.deliveriesIn(detail.summary.id)
+        if (!links) continue
+        const input = detail.messages.findLast(message => message.role === 'user' && !message.steered)
+        const link = input?.requestId ? links.get(input.requestId) : undefined
+        const { summary } = detail
+        if (
+          link
+          && openItems.has(link.itemId)
+          && summary.board?.group === 'attention'
+          && summary.board.reason
+          && workPostTurn(detail, link.post.delivery.requestId)?.current
+        )
+          setPostAttention(result, link.itemId, { postId: link.post.id, reason: summary.board.reason })
+        for (const message of detail.messages) {
+          if (message.role !== 'user' || message.steered || !message.requestId) continue
+          const found = links.get(message.requestId)
+          if (found?.post.delivery.state === 'unknown') held.add(found.post.id)
+        }
+      }
+    }
+    for (const { itemId, post } of unknown) {
+      if (
+        !held.has(post.id)
+        && seesSession(caller, post.delivery.sessionId)
+        && !sending.has(post.id)
+        && threads.unknownIn(itemId).some(link => link.post.id === post.id)
+      )
+        setPostAttention(result, itemId, { postId: post.id, reason: 'unknown' })
+    }
+    // The caller rechecks its own view/window before publishing this. A source can turn private during a later read.
+    for (const [itemId, place] of result) {
+      const delivery = threads.get(itemId)?.posts.find(post => post.id === place.postId)?.delivery
+      if (!delivery || !seesSession(caller, delivery.sessionId)) result.delete(itemId)
+    }
+    return result
+  }
+
+  function present(caller: DeviceCaller, post: WorkPostRecord, detail?: TaskDetail): WorkPost {
+    const { deviceId, requestId, payloadHash: _hash, delivery, target, ...rest } = post
+    const source = delivery && detail?.summary.id === delivery.sessionId && sourceVisible(caller, detail) ? detail : undefined
+    const reading = delivery && source ? workPostTurn(source, delivery.requestId) : undefined
+    const held = reading !== undefined
+    const state = delivery ? (held ? 'sent' : sending.has(post.id) ? 'sending' : delivery.state) : undefined
+    const lastReply = reading?.replies.at(-1)
+    const preview = lastReply && cut(lastReply.text, WORK_THREAD_LIMITS.replyChars)
+    const reason = reading?.current && source?.summary.board?.group === 'attention' ? source.summary.board.reason : undefined
+    const decisionId =
+      reason === 'approval'
+        ? source?.approvals.find(approval => approval.sessionId === delivery?.sessionId)?.id
+        : reason === 'question' && source
+          ? deps.questions(source.summary.id).find(question => reading?.rows.some(row => row.id === `tool:${question.toolCallId}`))?.id
+          : undefined
     return {
       ...structuredClone(rest),
+      ...(target && source ? { target: structuredClone(target) } : {}),
       ...(deviceId === caller.device.id ? { requestId } : {}),
-      ...(delivery
+      ...(delivery && state
         ? {
             delivery: {
-              sessionId: delivery.sessionId,
-              state: sending.has(post.id) ? 'sending' : held ? 'sent' : delivery.state,
-              ...(delivery.reason && !held ? { reason: delivery.reason } : {}),
-              ...(delivery.code && !held ? { code: delivery.code } : {}),
+              ...(source ? { sessionId: delivery.sessionId } : {}),
+              state,
+              ...(source && delivery.reason && !held ? { reason: delivery.reason } : {}),
+              ...(source && delivery.code && !held ? { code: delivery.code } : {}),
             },
           }
         : {}),
-      ...(reply ? { reply } : {}),
+      ...(reading ? { turn: reading.turn } : {}),
+      ...(preview && lastReply
+        ? {
+            reply: {
+              messageId: lastReply.messageId,
+              text: preview.text,
+              ...(preview.more ? { more: true as const } : {}),
+              ...(reading?.live ? { live: true as const } : {}),
+            },
+          }
+        : {}),
+      ...(reason || state === 'unknown' ? { attention: { reason: reason ?? 'unknown', ...(decisionId ? { decisionId } : {}) } } : {}),
     }
   }
 
-  async function list(caller: DeviceCaller, id: string): Promise<WorkThreadAnswer> {
+  async function list(caller: DeviceCaller, id: string, before: string | undefined): Promise<WorkThreadAnswer> {
     visible(caller, id)
     const thread = threads.get(id)
     const posts = thread?.posts ?? []
-    const details = new Map<string, Promise<TaskDetail | undefined>>()
-    const shown = await Promise.all(
-      posts.map(async post => {
-        const delivery = post.delivery
-        // A session this device may not read gives no reply here; it would not be listed for it either.
-        if (!delivery || (sessionPrivate(delivery.sessionId) && !fullData(caller))) return present(caller, post)
-        if (!details.has(delivery.sessionId)) details.set(delivery.sessionId, detailOf(delivery.sessionId))
-        const detail = await details.get(delivery.sessionId)
-        if (!detail) return present(caller, post)
-        const held = delivery.state !== 'sent' && !sending.has(post.id) && delivered(detail.messages, delivery.requestId)
-        return present(caller, post, replyTo(detail.messages, delivery.requestId, BUSY.has(detail.summary.status)), held)
-      }),
-    )
+    const end = before ? posts.findIndex(post => post.id === before) : posts.length
+    if (end < 0) throw new AppError(404, 'post-page-not-found', '找不到这页发言。')
+    const start = before || caller.nativeOpening ? Math.max(0, end - POSTS_PAGE) : 0
+    const page = posts.slice(start, end)
+    const ids = new Set(page.flatMap(post => (post.delivery ? [post.delivery.sessionId] : [])))
+    const details = new Map(await Promise.all([...ids].map(async sessionId => [sessionId, await readSource(caller, sessionId)] as const)))
     context.recheck(caller, 'view')
     visible(caller, id)
-    return { posts: shown, revision: thread?.revision ?? 0 }
+    return {
+      posts: page.map(post => present(caller, post, post.delivery && details.get(post.delivery.sessionId))),
+      revision: thread?.revision ?? 0,
+      ...(start > 0 ? { before: page[0]!.id } : {}),
+    }
+  }
+
+  async function reply(caller: DeviceCaller, itemId: string, postId: string, req: IncomingMessage): Promise<WorkPostReplyAnswer> {
+    visible(caller, itemId)
+    const query = replyQuerySchema.parse(queryOf(req))
+    const offset = query.offset ?? 0
+    if (offset > 0 && !query.messageId) throw new AppError(400, 'post-query-invalid', '讨论读取位置无效。')
+    const delivery = threads.get(itemId)?.posts.find(post => post.id === postId)?.delivery
+    if (!delivery) throw replyNotFound()
+    const detail = await readSource(caller, delivery.sessionId)
+    context.recheck(caller, 'view')
+    visible(caller, itemId)
+    if (!detail || !sourceVisible(caller, detail)) throw replyNotFound()
+    const reading = workPostTurn(detail, delivery.requestId)
+    const message = query.messageId ? reading?.replies.find(row => row.messageId === query.messageId) : reading?.replies.at(-1)
+    if (!reading || !message) throw replyNotFound()
+    const text = [...message.text]
+    if (offset >= text.length) throw new AppError(400, 'post-query-invalid', '讨论读取位置无效。')
+    const next = offset + REPLY_PAGE
+    return {
+      turn: reading.turn,
+      messageId: message.messageId,
+      text: text.slice(offset, next).join(''),
+      ...(next < text.length ? { nextOffset: next } : {}),
+    }
   }
 
   /**
@@ -380,22 +538,35 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
   }
 
   async function answerFor(caller: DeviceCaller, id: string, postId: string): Promise<WorkPost> {
-    const shown = (await list(caller, id)).posts.find(entry => entry.id === postId)
-    if (!shown) throw notFound()
-    return shown
+    visible(caller, id)
+    const post = threads.get(id)?.posts.find(entry => entry.id === postId)
+    if (!post) throw new AppError(404, 'post-not-found', '找不到这条发言。')
+    const delivery = post.delivery
+    const detail = delivery ? await readSource(caller, delivery.sessionId) : undefined
+    context.recheck(caller, 'view')
+    visible(caller, id)
+    return present(caller, post, detail)
   }
 
   return {
+    attention,
+    features: () => ({ workItemTurns: true }) satisfies HostFeatures,
     async route({ req, res, caller, path, method }) {
-      const match = ONE.exec(path)
+      const match = POSTS.exec(path)
       if (!match) return false
       context.requireScope(caller, 'view')
       const id = match[1]!
       if (method === 'GET') {
-        json(res, await list(caller, id))
+        if (match[2] && match[3]) json(res, await reply(caller, id, match[2], req))
+        else if (match[2]) json(res, { post: await answerFor(caller, id, match[2]) } satisfies WorkPostAnswer)
+        else {
+          visible(caller, id)
+          const { before } = z.strictObject({ before: postIdSchema.optional() }).parse(queryOf(req))
+          json(res, await list(caller, id, before))
+        }
         return true
       }
-      if (method !== 'POST') throw new AppError(404, 'not-found', '接口不存在。')
+      if (method !== 'POST' || match[2]) throw new AppError(404, 'not-found', '接口不存在。')
       const { post: answer, status } = await post(req, caller, id)
       json(res, { post: answer } satisfies WorkPostAnswer, status)
       return true

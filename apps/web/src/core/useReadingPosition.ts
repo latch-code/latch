@@ -216,7 +216,7 @@ export class ReadingPositionController {
    * Brings a row to the top margin of the viewport, e.g. an approval the reader asked to see. `offset` places its top
    * elsewhere, above the viewport for a place inside a tall row.
    */
-  reveal(messageId: string, viewport: ReadingViewport | null, offset: number = REVEAL_MARGIN): void {
+  reveal(messageId: string, viewport: ReadingViewport | null, offset: number = REVEAL_MARGIN, hold = false): void {
     const position = this.position
     if (!position) return
     const anchor = { messageId, offset }
@@ -225,7 +225,7 @@ export class ReadingPositionController {
       const target = viewport.positionFor(anchor)
       if (target === null) return
       // A row already within reach of the bottom is simply the latest content.
-      if (target >= bottom(viewport.measure()) - 4) {
+      if (!hold && target >= bottom(viewport.measure()) - 4) {
         this.jumpToLatest(viewport)
         return
       }
@@ -450,8 +450,8 @@ export function useReadingPosition({
 
   const jumpToLatest = useCallback(() => controller.jumpToLatest(viewport), [controller, viewport])
   const reveal = useCallback(
-    (messageId: string, offset?: number) => {
-      controller.reveal(messageId, viewport, offset)
+    (messageId: string, offset?: number, hold?: boolean) => {
+      controller.reveal(messageId, viewport, offset, hold)
     },
     [controller, viewport],
   )

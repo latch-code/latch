@@ -1,4 +1,5 @@
 import { CircleDashed, CircleHelp, CircleMinus, GitPullRequest, MessageSquarePlus } from 'lucide-react'
+import type { Ref } from 'react'
 import type { GitCheck, GitPrComment, GitPrState, GitPullRequest as PullRequest } from '@latch/protocol'
 import {
   Badge,
@@ -43,6 +44,7 @@ export interface PrForm {
 }
 
 export interface PullRequestSectionProps {
+  sectionRef?: Ref<HTMLElement>
   read: PrRead
   /** The commit the branch is at here: checks of another one are 「旧提交」. */
   head?: string | undefined
@@ -233,7 +235,7 @@ export function PullRequestSection(props: PullRequestSectionProps) {
   const copy = read.kind === 'failed' ? failureCopy(read.code) : undefined
 
   return (
-    <section className="delivery-section" aria-label="PR">
+    <section ref={props.sectionRef} className="delivery-section" aria-label="PR">
       <div className="delivery-section-head">
         <h3 className="delivery-heading">PR</h3>
         <span className="delivery-space" />

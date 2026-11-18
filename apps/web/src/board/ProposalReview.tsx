@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   escapeSecurityText,
   WORK_ITEM_LIMITS,
@@ -12,8 +12,34 @@ import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { TodoProposal, ProposalWrites } from './proposals.ts'
 import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
 import { TagChips } from './WorkBoardCard.tsx'
+import { ItemWriteLine } from './WriteLine.tsx'
 
 const chars = (text: string) => Array.from(text).length
+
+export function AcceptedItems({ ids, shell, onClose }: { ids: readonly string[]; shell: ShellState; onClose: () => void }) {
+  const visible = ids.flatMap(id => {
+    const item = shell.snapshot.items?.find(row => row.id === id)
+    return item ? [item] : []
+  })
+  return (
+    <Modal label="已收下的待办" variant={shell.phone ? 'sheet' : 'dialog'} onClose={onClose} className="work-board-proposal-review">
+      <ModalHeader title="已收下的待办" onClose={onClose} />
+      <div className="ui-modal-body item-accepted-links">
+        {visible.map(item => (
+          <Button
+            key={item.id}
+            variant="outline"
+            onClick={() => {
+              shell.openWorkItem(item.id)
+              onClose()
+            }}>
+            {escapeSecurityText(item.title)}
+          </Button>
+        ))}
+      </div>
+    </Modal>
+  )
+}
 
 interface Draft {
   index: number
@@ -33,18 +59,26 @@ export function ProposalReview({
   writes,
   shell,
   onClose,
-  onAccepted,
 }: {
   proposal: TodoProposal
   writes: ProposalWrites
   shell: ShellState
   onClose: () => void
-  onAccepted?: (itemIds: readonly string[]) => void
 }) {
   const [read, setRead] = useState<WorkProposal | null>(null)
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [accepted, setAccepted] = useState<string[]>([])
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  const write = writes.states.get(proposal.id)
+  const unknown = write?.state === 'unknown'
   useEffect(() => {
     let live = true
     api<WorkProposalAnswer>(`work/proposals/${encodeURIComponent(proposal.id)}`)
@@ -79,7 +113,7 @@ export function ProposalReview({
     setDrafts(previous => previous.map(draft => (draft.index === index ? { ...draft, ...change } : draft)))
   }
   const finish = async (action: 'accept' | 'dismiss') => {
-    if (!read || busy) return
+    if (!read || busy || unknown) return
     setBusy(true)
     setError('')
     const result =
@@ -94,21 +128,36 @@ export function ProposalReview({
             }),
           )
         : await writes.dismiss(read)
+    if (!mounted.current) return
     if (result.ok) {
-      if (action === 'accept' && result.itemIds) onAccepted?.(result.itemIds)
-      onClose()
-    } else if (result.unknown) onClose()
-    else {
+      showAccepted(result.itemIds)
+    } else if (!result.unknown) {
       writes.forget(read.id)
       setError(result.reason ?? '没有保存')
-      setBusy(false)
     }
+    setBusy(false)
+  }
+  const showAccepted = (ids: string[] | undefined) => {
+    if (ids && ids.length > 1) {
+      setAccepted(ids)
+      return
+    }
+    if (ids?.[0]) shell.openWorkItem(ids[0])
+    onClose()
+  }
+  const retry = async () => {
+    setBusy(true)
+    const result = await writes.retry(proposal.id)
+    if (!mounted.current) return
+    setBusy(false)
+    if (result.ok) showAccepted(result.itemIds)
   }
   const close = () => {
     if (!busy) onClose()
   }
   const group = read?.goal !== undefined
   const heading = group ? escapeSecurityText(read.goal!) : '提议的待办'
+  if (accepted.length) return <AcceptedItems ids={accepted} shell={shell} onClose={close} />
   return (
     <Modal
       label="审阅提议"
@@ -148,7 +197,7 @@ export function ProposalReview({
                     <Checkbox
                       label={`收下第 ${draft.index + 1} 条`}
                       checked={draft.chosen}
-                      disabled={busy}
+                      disabled={busy || unknown}
                       onChange={() => {
                         edit(draft.index, { chosen: !draft.chosen })
                       }}
@@ -157,7 +206,7 @@ export function ProposalReview({
                   <TextField
                     label="标题"
                     value={draft.title}
-                    disabled={busy || !draft.chosen}
+                    disabled={busy || unknown || !draft.chosen}
                     autoComplete="off"
                     error={titleLong ? `${chars(draft.title.trim())} / ${WORK_ITEM_LIMITS.titleChars}` : undefined}
                     onChange={event => {
@@ -168,7 +217,7 @@ export function ProposalReview({
                     label="要求"
                     value={draft.prompt}
                     rows={drafts.length > 1 ? 5 : 8}
-                    disabled={busy || !draft.chosen}
+                    disabled={busy || unknown || !draft.chosen}
                     error={promptLong ? `${draft.prompt.length} / ${WORK_ITEM_LIMITS.promptChars}` : undefined}
                     onChange={event => {
                       edit(draft.index, { prompt: event.target.value })
@@ -186,18 +235,24 @@ export function ProposalReview({
             })
           )}
           {error && <InlineNotice tone="error">{error}</InlineNotice>}
+          {unknown && <ItemWriteLine state={write} onRetry={() => void retry()} onDismiss={() => writes.forget(proposal.id)} />}
         </div>
         <footer className="ui-modal-footer">
           <Button
             size="md"
             variant="ghost"
-            disabled={busy || read === null}
+            disabled={busy || unknown || read === null}
             onClick={() => {
               void finish('dismiss')
             }}>
             {drafts.length > 1 ? '全部不要' : '不要'}
           </Button>
-          <Button size="md" variant="primary" type="submit" disabled={busy || read === null || !chosen.length || invalid} loading={busy}>
+          <Button
+            size="md"
+            variant="primary"
+            type="submit"
+            disabled={busy || unknown || read === null || !chosen.length || invalid}
+            loading={busy}>
             {drafts.length > 1 ? `接受 ${chosen.length} 条` : '接受'}
           </Button>
         </footer>

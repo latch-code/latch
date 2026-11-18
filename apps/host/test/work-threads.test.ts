@@ -12,11 +12,12 @@ import type {
   WorkItemAnswer,
   WorkItemStartAnswer,
   WorkPostAnswer,
+  WorkPostReplyAnswer,
   WorkThreadAnswer,
 } from '@latch/protocol'
 import { AppError, type HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
-import { deliveryText, replyTo } from '../src/work-threads.ts'
+import { deliveryText, replyTo, workPostTurn } from '../src/work-threads.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const cleanups: Array<() => Promise<unknown> | unknown> = []
@@ -116,6 +117,175 @@ async function audit(t: TestHost, action: string): Promise<Array<Record<string, 
 }
 
 describe('a 待办’s thread', () => {
+  it('withdraws the source of a discussion read or retry when its session is deleted during a detail read', SLOW, async () => {
+    const { t, owner } = await fixture()
+    const { item: made, sessionId } = await item(owner, 'echo 开始')
+    const input = { requestId: randomUUID(), text: 'echo 保留发言', target: { sessionId } }
+    const post = await posted(owner, made.id, input)
+    const original = await settled(owner, sessionId)
+    const root = `work/items/${made.id}/posts`
+    expect((await owner.json<WorkPostAnswer>(`${root}/${post.id}`)).post.reply?.text).toContain('echo: echo 保留发言')
+
+    const realDetail = t.host.bridge.detail.bind(t.host.bridge)
+    let release!: () => void
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    let paused = 0
+    vi.spyOn(t.host.bridge, 'detail').mockImplementation(async id => {
+      if (id !== sessionId) return realDetail(id)
+      ++paused
+      await gate
+      return original
+    })
+    const reads = Promise.all([
+      owner.request(root),
+      owner.request(`${root}/${post.id}`),
+      owner.request(root, { method: 'POST', body: input }),
+      owner.request(`${root}/${post.id}/reply`),
+    ])
+    try {
+      await vi.waitFor(() => expect(paused).toBeGreaterThanOrEqual(4))
+      expect((await owner.request(`tasks/${sessionId}`, { method: 'DELETE' })).status).toBe(200)
+    } finally {
+      release()
+    }
+    const [list, one, replay, reply] = await reads
+    const kept = ((await list.json()) as WorkThreadAnswer).posts
+    expect(kept).toHaveLength(1)
+    for (const answer of [kept[0], ((await one.json()) as WorkPostAnswer).post, ((await replay.json()) as WorkPostAnswer).post]) {
+      expect(answer).toEqual({
+        id: post.id,
+        at: post.at,
+        text: input.text,
+        requestId: input.requestId,
+        delivery: { state: 'sent' },
+      })
+    }
+    expect(reply.status).toBe(404)
+    expect(await reply.json()).toMatchObject({ error: 'post-reply-not-found' })
+  })
+
+  it('reassembles exact reply pages, including code indentation, Unicode and trailing blank lines', SLOW, async () => {
+    const { t, owner } = await fixture()
+    const { item: made, sessionId } = await item(owner, 'echo 开始')
+    const post = await posted(owner, made.id, { text: 'echo 给我看示例', target: { sessionId } })
+    await settled(owner, sessionId)
+    const root = `work/items/${made.id}/posts/${post.id}`
+    const messageId = (await owner.json<WorkPostAnswer>(root)).post.reply!.messageId
+    const stored = '    first()\r\n' + '    x(🪴)\n'.repeat(2000) + '    last()\n\t \n'
+    const realDetail = t.host.bridge.detail.bind(t.host.bridge)
+    vi.spyOn(t.host.bridge, 'detail').mockImplementation(async id => {
+      const detail = await realDetail(id)
+      return id === sessionId
+        ? { ...detail, messages: detail.messages.map(message => (message.id === messageId ? { ...message, text: stored } : message)) }
+        : detail
+    })
+    const path = `${root}/reply?messageId=${encodeURIComponent(messageId)}`
+    const first = await owner.json<WorkPostReplyAnswer>(path)
+    expect(first).toMatchObject({ messageId, nextOffset: 16_000 })
+    expect([...first.text]).toHaveLength(16_000)
+    const second = await owner.json<WorkPostReplyAnswer>(`${path}&offset=${first.nextOffset}`)
+    expect(second.messageId).toBe(messageId)
+    expect(second.turn).toEqual(first.turn)
+    expect(second.nextOffset).toBeUndefined()
+    expect(first.text + second.text).toBe(stored)
+  })
+
+  it('links questions and replies to the delivered input and ignores a later unrelated private run', SLOW, async () => {
+    const { t, owner } = await fixture()
+    const narrow = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'], dataScope: 'work' })
+    const agent = await owner.json<CustomAgent>('custom-agents', {
+      method: 'POST',
+      body: { requestId: randomUUID(), name: '设计助手', harnessId: 'fake' },
+    })
+    const { item: made } = await owner.json<WorkItemAnswer>('work/items', {
+      method: 'POST',
+      body: { requestId: randomUUID(), title: '核对发布范围' },
+    })
+    const { sessionId: chat } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { requestId: randomUUID(), customAgentId: agent.id, prompt: 'echo 你好' },
+    })
+    await settled(owner, chat)
+    const target = { customAgentId: agent.id }
+    const long = await posted(owner, made.id, { text: `echo 本次答复 ${'内容'.repeat(1200)} 尾句`, target })
+    await settled(owner, chat)
+    const root = `work/items/${made.id}/posts`
+    const longPost = (await owner.json<WorkPostAnswer>(`${root}/${long.id}`)).post
+    expect(longPost.reply?.more).toBe(true)
+    expect(longPost.turn).toMatchObject({ sessionId: chat, userMessageId: expect.any(String), runId: expect.any(String) })
+    const replyPath = `${root}/${long.id}/reply?messageId=${encodeURIComponent(longPost.reply!.messageId)}`
+    expect((await owner.json<WorkPostReplyAnswer>(replyPath)).text).toContain('尾句')
+
+    const waiting = await posted(owner, made.id, { text: 'elicit 请确认选择', target })
+    const readWaiting = () => owner.json<WorkPostAnswer>(`${root}/${waiting.id}`).then(answer => answer.post)
+    await expect.poll(async () => (await readWaiting()).attention?.decisionId, { timeout: 20_000 }).toEqual(expect.any(String))
+    const before = await readWaiting()
+    expect(before.attention?.reason).toBe('question')
+    expect((await owner.json<AppSnapshot>('snapshot')).items?.find(row => row.id === made.id)?.board).toEqual({
+      group: 'attention',
+      reason: 'question',
+      postId: waiting.id,
+    })
+    const active = await owner.json<TaskDetail>(`tasks/${chat}`)
+    expect(before.turn?.runId).toBe(active.summary.runId)
+    const question = active.questions![0]!
+    expect(before.attention?.decisionId).toBe(question.id)
+    await owner.json(`tasks/${chat}/questions/${question.id}/answer`, {
+      method: 'POST',
+      body: {
+        requestId: randomUUID(),
+        answers: question.questions.map(part => ({
+          questionId: part.id,
+          optionIds: part.options.slice(0, 1).map(option => option.id),
+          ...(!part.options.length ? { other: '发布说明' } : {}),
+        })),
+      },
+    })
+    await settled(owner, chat)
+    await owner.json(`tasks/${chat}/prompt`, { method: 'POST', body: { requestId: randomUUID(), prompt: 'elicit 无关的私聊' } })
+    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${chat}`)).questions?.[0]?.id).not.toBeUndefined()
+    const after = await readWaiting()
+    expect(after.turn).toEqual(before.turn)
+    expect(after.attention).toBeUndefined()
+    expect((await owner.json<AppSnapshot>('snapshot')).items?.find(row => row.id === made.id)?.board).toEqual({ group: 'todo' })
+    expect((await owner.json<WorkPostReplyAnswer>(replyPath)).text).toContain('尾句')
+    const wrong = await owner.request(`${root}/${long.id}/reply?messageId=${encodeURIComponent(after.reply!.messageId)}`)
+    expect(wrong.status).toBe(404)
+    expect(await wrong.json()).toMatchObject({ error: 'post-reply-not-found' })
+    expect((await narrow.json<AppSnapshot>('snapshot')).items ?? []).toEqual([])
+    const hidden = await narrow.request(replyPath)
+    expect(hidden.status).toBe(404)
+    expect(await hidden.json()).toMatchObject({ error: 'item-not-found' })
+    await owner.json(`tasks/${chat}/cancel`, {
+      method: 'POST',
+      body: { requestId: randomUUID(), runId: (await owner.json<TaskDetail>(`tasks/${chat}`)).summary.runId },
+    })
+    await settled(owner, chat)
+    const approvalPost = await posted(owner, made.id, { text: 'permission 请审核', target })
+    const approve = () => owner.json<WorkPostAnswer>(`${root}/${approvalPost.id}`).then(answer => answer.post)
+    await expect.poll(async () => (await approve()).attention?.reason, { timeout: 20_000 }).toBe('approval')
+    const approval = (await owner.json<TaskDetail>(`tasks/${chat}`)).approvals[0]!
+    expect((await approve()).attention?.decisionId).toBe(approval.id)
+    await owner.json(`approvals/${approval.id}`, { method: 'POST', body: { requestId: randomUUID(), decision: 'reject' } })
+    await settled(owner, chat)
+
+    vi.spyOn(t.host.bridge, 'prompt').mockRejectedValueOnce(new AppError(503, 'host-busy', '没有确认'))
+    const input = { requestId: randomUUID(), text: 'echo 等待收据', target }
+    const uncertain = await posted(owner, made.id, input)
+    expect(uncertain.delivery?.state).toBe('unknown')
+    expect(uncertain.turn).toBeUndefined()
+    expect((await owner.json<WorkItemAnswer>(`work/items/${made.id}`)).item.board).toEqual({
+      group: 'attention',
+      reason: 'unknown',
+      postId: uncertain.id,
+    })
+    const retry = await posted(owner, made.id, input)
+    expect(retry.delivery?.state).toBe('sent')
+    expect(retry.id).toBe(uncertain.id)
+  })
+
   it(
     'keeps posts, delivers only the person’s post to one session with what was added since, and never wakes anyone from a reply',
     SLOW,
@@ -517,5 +687,27 @@ describe('what a delivery says', () => {
     expect(replyTo(messages, 'r1', true)).toEqual({ messageId: 'a2', text: '好了' })
     expect(replyTo(messages, 'r2', true)).toEqual({ messageId: 'a3', text: '别的', live: true })
     expect(replyTo(messages, 'r3', false)).toBeUndefined()
+  })
+
+  it('takes live text only from the matching run and keeps legacy input anchors historical', () => {
+    const detail = {
+      summary: { id: 'session', runId: 'next', status: 'waiting-approval' },
+      messages: [
+        { id: 'input', role: 'user', text: '请核对', requestId: 'post', turnId: 'original' },
+        { id: 'steered', role: 'user', text: '补充', requestId: 'added', steered: true },
+        { id: 'answer', role: 'assistant', text: '答复' },
+      ],
+      liveText: '后续运行',
+      liveMessageId: 'next-assistant',
+    } as TaskDetail
+    expect(workPostTurn(detail, 'post')).toMatchObject({
+      turn: { sessionId: 'session', userMessageId: 'input', runId: 'original' },
+      current: false,
+      live: false,
+      replies: [{ messageId: 'answer', text: '答复' }],
+    })
+    expect(workPostTurn(detail, 'added')).toBeUndefined()
+    delete detail.messages[0]!.turnId
+    expect(workPostTurn(detail, 'post')).toMatchObject({ turn: { userMessageId: 'input' }, current: false })
   })
 })

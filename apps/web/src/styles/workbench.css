@@ -185,6 +185,9 @@
   overflow: hidden;
   background: var(--canvas);
 }
+.board-surface[hidden] {
+  display: none;
+}
 .app-shell[data-view='board']
   > :is(.sidebar, .sidebar-resize, main, .inspector-column, .inspector-resize, .terminal-dock, .workbench-tablet-rail, .phone-list) {
   visibility: hidden;

@@ -4,7 +4,7 @@ import { readsProjectFiles, type GitDeliveryKind } from '@latch/protocol'
 import { AppError, type ProjectFolder } from '@latch/sdk'
 import { sha256Hex } from '@latch/core/node-kit'
 import { GitDelivery, MESSAGE_LIMIT, type DeliveryCaller, type GitDeliveryOptions } from '../git-delivery.ts'
-import { BODY_LIMIT, TITLE_LIMIT } from '../git-pr.ts'
+import { BODY_LIMIT, TITLE_LIMIT, nativePrState } from '../git-pr.ts'
 import { RANGE_LIMIT, validRanges } from '../changes/git-hunks.ts'
 import { json, jsonBody, safeDecode } from '../http-util.ts'
 import { isInsidePath } from '../paths.ts'
@@ -307,7 +307,7 @@ export function createGitRoutes(context: RouteContext, options: GitRouteOptions 
         delete state.discussionCapped
         if (state.draft) delete state.draft.title
       }
-      json(res, state)
+      json(res, caller.nativeOpening ? nativePrState(state) : state)
       return true
     }
     if (method === 'GET' && part === undefined) {

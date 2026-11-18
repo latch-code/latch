@@ -125,7 +125,7 @@ export interface WorkProposalAnswer {
  * Where an accepted 待办 came from (`WorkItemSummary.from`). `sessionId` and `customAgentId` are absent to a device that
  * may not read the proposing session now (it turned private).
  */
-export interface WorkItemOrigin extends Partial<WorkProposalFrom> {
+export interface WorkItemOrigin extends Partial<WorkProposalSource> {
   proposalId: string
   /** The proposing turn may have read outside content: its 要求 is not the person's words, and 全部开始 passes it by. */
   external?: true

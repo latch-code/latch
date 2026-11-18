@@ -30,6 +30,8 @@ import { setSessionOpener } from '../core/blocking.ts'
 import { ArchiveUndo } from '../components/ArchiveUndo.tsx'
 import { basename } from '../format.ts'
 import { readPreferences, setPreference, switchWorkView, toggleWorkView, usePreferences } from '../preferences.ts'
+import { openItemPage, type WorkItemSessionTarget } from '../board/itemPage.ts'
+import { useProposalWrites } from '../board/proposals.ts'
 import { shortcutMatches, shortcutWorksOnPage, workbenchShortcut, type TerminalPaneAction } from '../workbenchShortcuts.ts'
 import { frameShortcutAllowed } from '../plugin-pages/model.ts'
 import { conversationShown } from '../composer/useArmed.ts'
@@ -130,6 +132,19 @@ function focusNextFrame(target: RefObject<HTMLElement | null>) {
 /** Everything the signed-in shell holds beside the open session: its columns, its pages, its keys and its lists. */
 export function useShellLayout({ harness, snapshot }: { harness: Harness; snapshot: AppSnapshot }) {
   const { selectedId, refresh, resync, connection } = harness
+  const proposalWrites = useProposalWrites(refresh, snapshot)
+  const [itemVisit, setItemVisit] = useState<{
+    itemId: string
+    target: WorkItemSessionTarget
+    previous?: { body: HTMLElement; top: number; control: HTMLElement; offset: number }
+  }>()
+  const itemReturn =
+    itemVisit
+    && selectedId === itemVisit.target.sessionId
+    && snapshot.items?.some(item => item.id === itemVisit.itemId)
+    && snapshot.tasks.some(task => task.id === itemVisit.target.sessionId)
+      ? itemVisit
+      : undefined
   const viewport = useViewport()
   const phone = viewport === 'phone'
   const [storedRoute, updateRoute] = useState<ShellRoute>(() =>
@@ -769,6 +784,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
    * motion, or when the browser has already drawn the way back (its own edge swipe).
    */
   const back = (instant = false): void => {
+    if (itemReturn) {
+      returnToWorkItem()
+      return
+    }
     const id = selectedId
     // Keep the page in place while its unsaved editor asks; only an accepted leave starts the exit animation.
     if (id !== null && requestLeave(id, () => back(instant))) return
@@ -1564,15 +1583,87 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
    * Shows a row of the conversation: a row inside a closed disclosure (the folded process of a turn) is opened first,
    * as the browser's find would open it, and the reading position keeps the row in place while it opens.
    */
-  const revealRow = (messageId: string, offset?: number) => {
+  const revealRow = (messageId: string, offset?: number, hold?: boolean) => {
     const row = document.querySelector(`.transcript [data-message-id="${CSS.escape(messageId)}"]`)
     for (let hidden = row?.closest('[hidden="until-found"]'); hidden; hidden = hidden.parentElement?.closest('[hidden="until-found"]')) {
       hidden.dispatchEvent(new Event('beforematch'))
     }
     requestAnimationFrame(() => {
-      reveal(messageId, offset)
+      reveal(messageId, offset, hold)
     })
   }
+  const returnToWorkItem = useStableCallback(() => {
+    if (!itemReturn) return
+    const restore = () => {
+      openItemPage(snapshot.device.id, itemReturn.itemId)
+      switchWorkView('board')
+      const previous = itemReturn.previous
+      requestAnimationFrame(() => {
+        if (previous?.body.isConnected) {
+          const { body, control } = previous
+          body.scrollTop = control.isConnected
+            ? body.scrollTop + control.getBoundingClientRect().top - body.getBoundingClientRect().top - previous.offset
+            : previous.top
+          if (control.isConnected) control.focus({ preventScroll: true })
+        }
+        setItemVisit(undefined)
+      })
+    }
+    if (!requestLeave(itemReturn.target.sessionId, restore)) restore()
+  })
+  const openWorkItem = useStableCallback((id: string) => {
+    setRoute({ entry: 'sessions' })
+    openItemPage(snapshot.device.id, id)
+    switchWorkView('board')
+  })
+  const openWorkItemSession = useStableCallback((itemId: string, target: WorkItemSessionTarget) => {
+    if (!snapshot.items?.some(item => item.id === itemId) || !snapshot.tasks.some(task => task.id === target.sessionId)) return
+    const control = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
+    const body = control?.closest<HTMLElement>('.item-page-body')
+    const previous =
+      control && body
+        ? { body, top: body.scrollTop, control, offset: control.getBoundingClientRect().top - body.getBoundingClientRect().top }
+        : undefined
+    choose(target.sessionId, () => {
+      setItemVisit({ itemId, target, ...(previous ? { previous } : {}) })
+      switchWorkView('chat')
+    })
+  })
+  const jumpedItemVisit = useRef<typeof itemVisit>(undefined)
+  useEffect(() => {
+    if (itemVisit && (!itemReturn || route.entry !== 'sessions')) setItemVisit(undefined)
+  }, [itemVisit, itemReturn, route.entry])
+  useEffect(() => {
+    if (
+      !itemReturn
+      || !conversationVisible
+      || jumpedItemVisit.current === itemReturn
+      || current?.summary.id !== itemReturn.target.sessionId
+    )
+      return
+    const { target } = itemReturn
+    const frame = requestAnimationFrame(() => {
+      const transcript = document.querySelector('.workspace-view .transcript')
+      const ids = [target.messageId, target.userMessageId].filter(id => id !== undefined)
+      const anchor = ids.find(id => transcript?.querySelector(`[data-message-id="${CSS.escape(id)}"]`))
+      if (ids.length && !anchor) {
+        returnToWorkItem()
+        setToast({ text: '原回合已不可用', tone: 'error' })
+        return
+      }
+      jumpedItemVisit.current = itemReturn
+      if (anchor) revealRow(anchor, undefined, true)
+      if (target.panel === 'changes') openChangesTab(target.commitSha ? { commitSha: target.commitSha } : undefined)
+      if (target.panel === 'delivery') showSurface({ kind: 'delivery' })
+      const decision = target.decision
+      if (decision && current.summary.runId === decision.runId) {
+        const attribute = decision.kind === 'approval' ? 'data-approval-id' : 'data-question-id'
+        const card = document.querySelector<HTMLElement>(`.workspace-view [${attribute}="${CSS.escape(decision.id)}"]`)
+        card?.querySelector<HTMLElement>('button:not(:disabled)')?.focus({ preventScroll: true })
+      }
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [itemReturn, conversationVisible, current])
   useEffect(() => {
     if (!searchTarget || current?.summary.id !== searchTarget.sessionId) return
     const frame = requestAnimationFrame(() => {
@@ -1852,7 +1943,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     askBoardNew,
     entries,
     goEntry,
-    phoneBackLabel: '返回会话列表',
+    phoneBackLabel: itemReturn ? '返回待办' : '返回会话列表',
     space,
     goSpace,
     waits,
@@ -2053,6 +2144,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     workbenchKeys,
     resizeInspector,
     revealRow,
+    itemReturn,
+    returnToWorkItem,
+    openWorkItem,
+    openWorkItemSession,
+    proposalWrites,
     selectSearchHit,
     searchResults,
     archiveBatch,

@@ -329,6 +329,36 @@ describe('agents propose for the board', () => {
     expect((await work.request(`tasks/${run}`)).status).toBe(403)
   })
 
+  it('replays acceptance without naming a task that has since become private', SLOW, async () => {
+    const { t, owner } = await fixture()
+    const sessionId = await codeSession(owner, board('propose_todo', TODO))
+    const summary = await proposalFrom(owner, sessionId)
+    const work = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'], dataScope: 'work' })
+    const path = `work/proposals/${summary.id}`
+    const accept = { requestId: randomUUID(), baseRevision: summary.revision }
+    const { itemIds } = await work.json<WorkProposalAnswer>(`${path}/accept`, { method: 'POST', body: accept })
+    expect(itemIds).toHaveLength(1)
+    const itemId = itemIds![0]!
+    const agent = await owner.json<CustomAgent>('custom-agents', {
+      method: 'POST',
+      body: { requestId: randomUUID(), name: '助理', harnessId: 'fake' },
+    })
+    const { sessionId: chat } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { requestId: randomUUID(), customAgentId: agent.id, prompt: 'echo 你好' },
+    })
+    await settled(owner, chat)
+    await owner.json(`work/items/${itemId}/posts`, {
+      method: 'POST',
+      body: { requestId: randomUUID(), text: 'echo 请核对', target: { customAgentId: agent.id } },
+    })
+    const replay = await work.json<WorkProposalAnswer>(`${path}/accept`, { method: 'POST', body: accept })
+    expect(replay.itemIds).toBeUndefined()
+    expect(JSON.stringify(replay)).not.toContain(itemId)
+    expect(JSON.stringify(await work.json<WorkProposalAnswer>(path))).not.toContain(itemId)
+    expect((await work.json<AppSnapshot>('snapshot')).items ?? []).toEqual([])
+  })
+
   it('a change to its own card or to its 待办 is shown pending and made only when accepted', SLOW, async () => {
     const { owner } = await fixture()
     const sessionId = await codeSession(

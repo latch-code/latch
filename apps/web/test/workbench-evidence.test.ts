@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkbenchDeliveryEntry } from '@latch/protocol'
 import { deliveryChecks, deliveryCheckSummary, hasDelivery } from '../src/shell/useWorkbenchEvidence.ts'
+import { itemCheckWords } from '../src/board/ItemEvidence.tsx'
 
 const entry = (id: string, extra: Partial<WorkbenchDeliveryEntry> = {}): WorkbenchDeliveryEntry => ({
   sessionId: id,
@@ -20,6 +21,15 @@ const pr = {
 }
 
 describe('workbench delivery evidence', () => {
+  it('task checks require a known local and remote commit and keep a former success on its original SHA', () => {
+    const checks = [{ name: 'CI', state: 'pass' as const }]
+    const read = entry('fixture', { pr: { pr, checks } })
+    expect(itemCheckWords(read)).toBe('检查通过 1/1')
+    expect(itemCheckWords({ ...read, state: { ...read.state!, head: 'another' } })).toBe('检查对应旧提交')
+    expect(itemCheckWords({ ...read, state: undefined })).toBe('检查版本待核对')
+    const { headSha: _sha, ...withoutSha } = pr
+    expect(itemCheckWords({ ...read, pr: { pr: withoutSha, checks } })).toBe('检查版本待核对')
+  })
   it('requires actual changes, unpublished commits or an open PR, never a completed task or closed PR alone', () => {
     expect(hasDelivery(undefined)).toBe(false)
     expect(hasDelivery(entry('none', { state: undefined }))).toBe(false)

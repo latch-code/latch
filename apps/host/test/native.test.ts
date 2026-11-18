@@ -26,7 +26,15 @@ import {
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import type { TestDevice } from '@latch/testkit'
-import type { AppSnapshot, TaskDetail } from '@latch/protocol'
+import type {
+  AppSnapshot,
+  GitPrState,
+  TaskDetail,
+  WorkItemAnswer,
+  WorkPostAnswer,
+  WorkPostReplyAnswer,
+  WorkThreadAnswer,
+} from '@latch/protocol'
 import type { Bridge, HarnessPlugin } from '@latch/sdk'
 import type { PresenceBackend } from '../src/presence.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -35,6 +43,7 @@ import { loadOrCreateHostIdentity } from '../src/identity.ts'
 import { NativeReplay } from '../src/native-replay.ts'
 import { FileDirectoryReader } from '../src/files/directory.ts'
 import { buildFilesHelper } from '../scripts/build-files.ts'
+import { GitDelivery } from '../src/git-delivery.ts'
 import { messageCarrierFixture } from './helpers/message-carrier.ts'
 import { connectPluginTransport } from '../src/native-transports.ts'
 
@@ -140,6 +149,100 @@ async function verifyDevice(
   return { ...receipt, appOpenId: challenge.appOpenId }
 }
 describe('native Host entry with existing authorization', () => {
+  it('fits the newest PR discussion within the native JSON budget after checking the current scope', { timeout: 20_000 }, async () => {
+    const limit = 960 * 1024
+    let time = Date.now()
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 }, now: () => time })
+    cleanup.push(() => host.close())
+    const owner = await desktopOf(host)
+    const registered = await pair(host, owner)
+    const { sessionId } = await host.host.bridge.createTask({ prompt: 'Check delivery', requestId: randomUUID(), mode: 'chat' })
+    const path = `tasks/${sessionId}/git/pr`
+    const nativePath = `/link/api/${path}`
+    const draft: GitPrState = { checks: [], draft: { title: 'Add the filter', base: 'main' } }
+    const read = vi.spyOn(GitDelivery.prototype, 'prState').mockResolvedValue(draft)
+
+    expect((await registered.client.request('GET', nativePath)).status).toBe(403)
+    const window = await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+    expect(body(await registered.client.request('GET', nativePath))).toEqual(draft)
+
+    const texts = ['注'.repeat(7500), '🙂'.repeat(3700), '\t审阅"\\\n'.repeat(1200)]
+    const discussion: NonNullable<GitPrState['discussion']> = Array.from({ length: 84 }, (_, index) => ({
+      kind: 'comment',
+      author: 'reviewer',
+      body: `${index}: ${texts[index % texts.length]!}`,
+    }))
+    const state = {
+      pr: {
+        number: 7,
+        url: 'https://github.com/acme/widgets/pull/7',
+        title: 'Add the filter',
+        base: 'main',
+        head: 'feature',
+        headSha: 'a'.repeat(40),
+        state: 'open',
+        reviewDecision: 'changes-requested',
+        draft: false,
+      },
+      checks: [
+        { name: 'lint', state: 'pass' },
+        { name: 'tests', state: 'fail', job: '82' },
+      ],
+      discussion,
+    } satisfies GitPrState
+    read.mockImplementation(async () => structuredClone(state))
+
+    const web = await host.enroll({ listener: 'loopback-tcp', scopes: ['view'], dataScope: 'files' })
+    const webResponse = await web.request(path, { headers: { 'x-latch-native': '1' } })
+    expect(webResponse.status).toBe(200)
+    const webJson = await webResponse.text()
+    expect(Buffer.byteLength(webJson)).toBeGreaterThan(1024 * 1024)
+    expect(JSON.parse(webJson)).toEqual(state)
+
+    const session = Reflect.get(registered.client, 'session') as ClientHttp2Session
+    const response = session.request({ ':method': 'GET', ':path': nativePath })
+    let status = 0
+    response.once('response', headers => {
+      status = Number(headers[':status'])
+    })
+    response.end()
+    const chunks: Buffer[] = []
+    for await (const chunk of response) chunks.push(chunk as Buffer)
+    const wire = Buffer.concat(chunks)
+    expect(status).toBe(200)
+    expect(wire.length).toBeLessThanOrEqual(limit)
+    const native = JSON.parse(wire.toString('utf8')) as GitPrState
+    expect(native.pr).toEqual(state.pr)
+    expect(native.checks).toEqual(state.checks)
+    expect(native.discussionCapped).toBe(true)
+    expect(native.discussion!.length).toBeGreaterThan(0)
+    const first = discussion.length - native.discussion!.length
+    expect(first).toBeGreaterThan(0)
+    expect(native.discussion).toEqual(discussion.slice(first))
+    expect(Buffer.byteLength(JSON.stringify({ ...native, discussion: discussion.slice(first - 1) }))).toBeGreaterThan(limit)
+
+    const upstream = { ...state, discussion: discussion.slice(-1), discussionCapped: true as const }
+    read.mockResolvedValueOnce(upstream)
+    expect(body(await registered.client.request('GET', nativePath))).toEqual(upstream)
+
+    read.mockImplementationOnce(async input => {
+      expect(input.discussion).toBe(true)
+      expect((await owner.request(`devices/${registered.deviceId}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
+      return { ...structuredClone(state), discussionCapped: true }
+    })
+    expect(body(await registered.client.request('GET', nativePath))).toEqual({ pr: state.pr, checks: state.checks })
+    let expiredDuringRead = false
+    read.mockImplementationOnce(async input => {
+      expect(input.discussion).toBe(false)
+      time = Date.parse(window.verifiedUntil) + 1
+      expiredDuringRead = true
+      return { pr: state.pr, checks: state.checks }
+    })
+    const expired = await registered.client.request('GET', nativePath).catch(() => undefined)
+    expect(expiredDuringRead).toBe(true)
+    if (expired) expect(body(expired, 403)).toMatchObject({ error: 'native-verification-required' })
+  })
+
   it.each([false, true])(
     'keeps a legal large tool result readable to all-data native clients with a private summary: %s',
     async marked => {
@@ -1686,6 +1789,67 @@ describe('native Host entry with existing authorization', () => {
     await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
     const renewed = body<{ device: { scopes: string[] } }>(await registered.client.request('GET', '/link/api/snapshot'))
     expect(renewed.device.scopes).toContain('run')
+  })
+  it('guards private work items and checks the window again after reading an exact reply', async () => {
+    let now = Date.now()
+    const host = await startTestHost({ demo: true, native: { host: '127.0.0.1', port: 0 }, now: () => now })
+    cleanup.push(() => host.close())
+    const owner = await desktopOf(host)
+    const registered = await pair(host, owner)
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { requestId: randomUUID(), customAgentId: 'general', prompt: '你好' },
+    })
+    const detail = () => owner.json<TaskDetail>(`tasks/${sessionId}`)
+    await vi.waitFor(async () => expect((await detail()).summary.status).toBe('idle'))
+    const { item } = await owner.json<WorkItemAnswer>('work/items', {
+      method: 'POST',
+      body: { requestId: randomUUID(), title: '私有待办标题', prompt: '私有待办要求' },
+    })
+    const root = `work/items/${item.id}`
+    for (let index = 0; index < 33; index++)
+      await owner.json(`${root}/posts`, { method: 'POST', body: { requestId: randomUUID(), text: `讨论 ${index}` } })
+    const { post } = await owner.json<WorkPostAnswer>(`${root}/posts`, {
+      method: 'POST',
+      body: { requestId: randomUUID(), text: '私有讨论正文', target: { customAgentId: 'general' } },
+    })
+    await vi.waitFor(async () => expect((await detail()).summary.status).toBe('idle'))
+    const snapshot = async () => body<AppSnapshot>(await registered.client.request('GET', '/link/api/snapshot'))
+    const reply = `/link/api/${root}/posts/${post.id}/reply`
+    expect((await snapshot()).items ?? []).toEqual([])
+    expect((await registered.client.request('GET', reply)).status).toBe(403)
+    const verification = await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+    expect((await snapshot()).items?.find(row => row.id === item.id)?.title).toBe(item.title)
+    expect(body<WorkItemAnswer>(await registered.client.request('GET', `/link/api/${root}`)).item.prompt).toBe(item.prompt)
+    const first = body<WorkThreadAnswer>(await registered.client.request('GET', `/link/api/${root}/posts`))
+    expect(first.posts).toHaveLength(32)
+    expect(first.posts.at(-1)?.id).toBe(post.id)
+    const prior = body<WorkThreadAnswer>(await registered.client.request('GET', `/link/api/${root}/posts?before=${first.before}`))
+    expect(prior.posts.map(row => row.text)).toEqual(['讨论 0', '讨论 1'])
+    expect(body<WorkPostReplyAnswer>(await registered.client.request('GET', reply)).turn.sessionId).toBe(sessionId)
+
+    let read = false
+    let release!: () => void
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const saved = host.host.bridge.detail.bind(host.host.bridge)
+    vi.spyOn(host.host.bridge, 'detail').mockImplementationOnce(async id => {
+      const found = await saved(id)
+      read = true
+      await gate
+      return found
+    })
+    const late = registered.client.request('GET', reply)
+    try {
+      await vi.waitFor(() => expect(read).toBe(true))
+      now = Date.parse(verification.verifiedUntil) + 1
+    } finally {
+      release()
+    }
+    expect(body<{ error: string }>(await late, 403).error).toBe('native-verification-required')
+    expect((await snapshot()).items ?? []).toEqual([])
+    expect((await registered.client.request('GET', `/link/api/${root}/posts/${post.id}`)).status).toBe(403)
   })
   it('retains the native identity across Host restart while invalidating window receipts', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'latch-native-restart-'))

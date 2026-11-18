@@ -25,6 +25,7 @@ import { cardUpdatedAt, GROUP_LABELS, type BoardCard } from './model.ts'
 import { CardNote, cardState, PriorityMark, TagChips } from './WorkBoardCard.tsx'
 import { ItemWriteLine } from './WriteLine.tsx'
 import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
+import { placeWords } from './items.ts'
 
 export type ItemCard = Extract<BoardCard, { kind: 'item' }>
 
@@ -36,6 +37,12 @@ export function itemState(card: ItemCard, connected: boolean, now: number): { to
     case 'todo':
       return undefined
     case 'attention': {
+      if (place.postId) {
+        const words = placeWords(place)
+        return connected
+          ? { tone: place.reason === 'failed' ? 'failed' : 'waiting', words }
+          : { tone: 'neutral', words: `上次状态：${words}` }
+      }
       // The session the Host's reason comes from says it in its own words.
       const waiting = sessions.find(task => task.board?.group === 'attention' && task.board.reason === place.reason)
       if (waiting) return cardState(waiting, { connected, now, stopping: false, sharedFolder: false })
@@ -186,7 +193,7 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
   }, [stale])
   const promptShown = todo && (showPrompt || stale)
   // With one session its row says where things stand; the head says it only for what the row cannot (done).
-  const headState = state && !(sessions.length === 1 && unlisted === 0 && item.board.group !== 'done') ? state : undefined
+  const headState = state && (item.board.postId || sessions.length !== 1 || unlisted > 0 || item.board.group === 'done') ? state : undefined
   const canFinish = !todo && onDone !== undefined && item.board.reason === 'settled'
   // 完成 alone sits on the project's line, so it adds no row of its own; a write's state takes the foot as before.
   const floatFoot = canFinish && (!write || write.state === 'sending')

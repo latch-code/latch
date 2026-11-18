@@ -166,7 +166,7 @@ export interface GitPrComment {
   /** Line comments: the file and line they are on. */
   path?: string
   line?: number
-  /** Redacted, control characters removed, at most 8 KiB. */
+  /** Redacted, control characters removed, at most 8192 UTF-16 code units including the ellipsis. */
   body: string
   at?: string
 }
@@ -179,7 +179,7 @@ export interface GitPrState {
   checks: GitCheck[]
   /** Reviews and comments, oldest first, for devices whose data scope covers the session's files. */
   discussion?: GitPrComment[]
-  /** Older reviews or comments were left out: only the newest are listed. */
+  /** Older reviews or comments were omitted by the discussion bounds, including the native response byte budget. */
   discussionCapped?: true
   /** Without a pull request: what 创建 PR starts from (the last commit's subject, the repository's default branch). */
   draft?: { title?: string; base?: string }

@@ -7,7 +7,19 @@ import type { GitPrBinding } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { installFakeGh, type FakeGh, type FakeGhState } from '@latch/testkit'
 import { GitDelivery, type DeliveryAuditEvent, type DeliveryCaller } from '../src/git-delivery.ts'
-import { ghFailure, logExcerpt, LOG_BYTES, readPrList, readPrView, repoOfPr, repoOfUrl } from '../src/git-pr.ts'
+import {
+  COMMENT_LIMIT,
+  ghFailure,
+  logExcerpt,
+  LOG_BYTES,
+  readDiscussion,
+  readLineComments,
+  readPrList,
+  readPrView,
+  repoOfPr,
+  repoOfUrl,
+  TITLE_LIMIT,
+} from '../src/git-pr.ts'
 import { SessionMetaStore } from '../src/session-meta.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -200,6 +212,17 @@ describe('the pull request step', () => {
       ['docs', 'skipped', undefined],
       ['ci/legacy', 'fail', undefined],
     ])
+  })
+
+  it('counts the ellipsis in the comment limit and keeps complete emoji and graphemes', () => {
+    const fits = '注'.repeat(COMMENT_LIMIT - 2) + '🙂'
+    const prefix = '注'.repeat(COMMENT_LIMIT - 2)
+    const talk = readDiscussion(JSON.stringify({ comments: [{ body: fits }, { body: prefix + '🙂尾' }] }))
+    expect(talk.items.map(item => item.body)).toEqual([fits, prefix + '…'])
+    const line = readLineComments(JSON.stringify([{ body: prefix + '👩‍💻尾' }]))[0]!
+    expect(line.body).toBe(prefix + '…')
+    const longer = readDiscussion(JSON.stringify({ reviews: [{ state: 'COMMENTED', body: '注'.repeat(COMMENT_LIMIT + 1) }] }))
+    expect(longer.items[0]!.body).toBe('注'.repeat(COMMENT_LIMIT - 1) + '…')
   })
 
   it('cuts a failed log to its last 200 lines and 32 KiB, without control sequences or secrets', () => {
@@ -508,10 +531,11 @@ describe('the pull request step', () => {
     // Merged, nothing new pushed: still bound.
     expect((await delivery.prState({ sessionId: 'session-1', folder: f.repo, discussion: false, title: false })).pr?.state).toBe('merged')
     await writeFile(join(f.repo, 'a.txt'), 'three\n')
-    f.git('commit', '-q', '-am', 'More')
+    const subject = '续'.repeat(TITLE_LIMIT - 1)
+    f.git('commit', '-q', '-am', `${subject}🙂后续`)
     f.git('push', '-q')
     const next = await delivery.prState({ sessionId: 'session-1', folder: f.repo, discussion: false, title: true })
-    expect(next).toEqual({ checks: [], draft: { title: 'More', base: 'main' } })
+    expect(next).toEqual({ checks: [], draft: { title: subject, base: 'main' } })
     expect(f.bindings.size).toBe(0)
     expect((await delivery.createPr(f.caller(), { requestId: id(2), ...input })).pr.number).toBe(2)
   })

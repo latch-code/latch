@@ -1,4 +1,4 @@
-import type { AppSnapshot, Message, TaskDetail, TaskSummary, WorkItemPlace, WorkItemSummary } from '@latch/protocol'
+import type { AppSnapshot, BoardReason, Message, TaskDetail, TaskSummary, WorkItemPlace, WorkItemSummary } from '@latch/protocol'
 import { quotedSummary } from '../handoffs/model.ts'
 import { GROUP_LABELS } from './model.ts'
 
@@ -30,8 +30,18 @@ export function openItems(snapshot: Pick<AppSnapshot, 'items'>, limit: number): 
     .toSorted((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0))
 }
 
-/** The group the Host gave the 待办, in the board's words. */
+const POST_ATTENTION: Record<BoardReason, string> = {
+  approval: '等待审批',
+  question: '等待回答',
+  unrecognized: '请求不受支持',
+  silent: '没有动静',
+  unknown: '结果未知',
+  failed: '本轮失败',
+}
+
+/** The group the Host gave the 待办 and the reason of an addressed post, when it supplied one. */
 export function placeWords(place: WorkItemPlace): string {
+  if (place.postId && place.reason && place.reason !== 'settled') return POST_ATTENTION[place.reason]
   if (place.group === 'todo') return '未开始'
   return GROUP_LABELS[place.group]
 }

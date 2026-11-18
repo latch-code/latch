@@ -50,6 +50,20 @@ export function withoutMention(text: string, start: number, caret: number): stri
   return (text.slice(0, start) + text.slice(caret)).replace(/^\s+/u, '')
 }
 
+const postGraphemes = new Intl.Segmenter('zh-CN', { granularity: 'grapheme' })
+
+/** A short excerpt for long posts, keeping the original line breaks and complete characters. */
+export function postPreview(text: string): string | undefined {
+  const preview = text.split('\n', 4).slice(0, 3).join('\n')
+  if (preview.length > 96) {
+    let count = 0
+    for (const { index } of postGraphemes.segment(preview)) {
+      if (count++ === 96) return `${preview.slice(0, index).trimEnd()}…`
+    }
+  }
+  return preview.length < text.length ? `${preview.trimEnd()}…` : undefined
+}
+
 export const targetKey = (target: WorkPostTarget): string => ('sessionId' in target ? `s:${target.sessionId}` : `a:${target.customAgentId}`)
 
 export function postTarget(target: ThreadTarget): WorkPostTarget {
@@ -82,8 +96,37 @@ export function deliveryWords(
   }
 }
 
+/** Keep the human post and delivery receipt. The source ID is only used to decide when to read it again. */
+export function withoutPostSource(post: WorkPost): WorkPost {
+  const { target: _target, turn: _turn, reply: _reply, attention: _attention, delivery, ...note } = post
+  return {
+    ...note,
+    ...(delivery ? { delivery: { state: delivery.state, ...(delivery.sessionId ? { sessionId: delivery.sessionId } : {}) } } : {}),
+  }
+}
+
+/** A partial listing cannot establish that a reply's source has gone. */
+export function withoutMissingPostSources(posts: WorkPost[], snapshot: Pick<AppSnapshot, 'tasks' | 'tasksComplete'>): WorkPost[] {
+  if (!snapshot.tasksComplete) return posts
+  const listed = new Set(snapshot.tasks.map(task => task.id))
+  const next = posts.map(post => {
+    const source = post.turn?.sessionId ?? post.delivery?.sessionId
+    return source
+      && !listed.has(source)
+      && (post.reply || post.turn || post.target || post.attention || post.delivery?.reason || post.delivery?.code)
+      ? withoutPostSource(post)
+      : post
+  })
+  return next.some((post, index) => post !== posts[index]) ? next : posts
+}
+
 /** What the thread shows of the sessions it reads replies from: a change there reads the thread again. */
 export function replySources(posts: readonly WorkPost[] | null, snapshot: Pick<AppSnapshot, 'tasks'>): string {
-  const ids = [...new Set((posts ?? []).flatMap(post => (post.delivery ? [post.delivery.sessionId] : [])))]
-  return ids.map(id => `${id}:${snapshot.tasks.find(task => task.id === id)?.updatedAt ?? ''}`).join('|')
+  const ids = [...new Set((posts ?? []).flatMap(post => (post.delivery?.sessionId ? [post.delivery.sessionId] : [])))]
+  return ids
+    .map(id => {
+      const task = snapshot.tasks.find(task => task.id === id)
+      return `${id}:${task?.updatedAt ?? ''}:${task?.runId ?? ''}:${task?.board?.reason ?? ''}:${task?.pendingQuestions ?? 0}`
+    })
+    .join('|')
 }

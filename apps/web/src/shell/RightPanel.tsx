@@ -173,6 +173,8 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
                   summary={summary}
                   revision={current?.summary.id === summary.id ? current.sync?.revision : undefined}
                   open={showing('delivery')}
+                  focusPr={shell.itemReturn?.target.pullRequest === true}
+                  canReadFiles={readsProjectFiles(snapshot.device.dataScope)}
                   canRun={access.scopes.has('run')}
                   {...(snapshot.hostName ? { hostName: snapshot.hostName } : {})}
                   offline={offline}

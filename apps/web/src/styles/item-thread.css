@@ -44,6 +44,13 @@
   line-height: var(--lh-meta);
   font-variant-numeric: tabular-nums;
 }
+.item-thread-post-fold {
+  flex: none;
+  margin-inline-start: auto;
+}
+.item-thread-post-head > .item-thread-post-fold + time {
+  margin-inline-start: 0;
+}
 .item-thread-target {
   display: inline-flex;
   align-items: center;
@@ -78,7 +85,7 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
-/* A post with no @: its time on the line of its text. */
+/* A short post with no @: its time on the line of its text. */
 .item-thread-post-line {
   display: flex;
   align-items: baseline;
@@ -103,6 +110,12 @@
   align-items: flex-start;
   gap: var(--sp-2);
   min-width: 0;
+}
+.item-thread-reply-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
 }
 .item-thread-reply {
   display: block;

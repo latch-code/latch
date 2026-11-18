@@ -115,7 +115,9 @@ export function ConversationView({
   const showTranscript = visible && !(phone && sideQuestion)
   const showBackdrop = showTranscript && backdrop !== 'off'
   // Only a conversation in view marks a failed run opened: not under the start page, settings, a page or the board.
-  useOpenedMark(current?.summary, visible && (access.legacy || access.scopes.has('view')), connection === 'connected')
+  const source = shell.itemReturn?.target
+  const canMarkOpened = !source || (!source.messageId && !source.userMessageId) || (source.runId && current?.summary.runId === source.runId)
+  useOpenedMark(current?.summary, !!canMarkOpened && visible && (access.legacy || access.scopes.has('view')), connection === 'connected')
   const projection = useTranscriptProjection(current)
   const handing = catalog?.features?.handoffs === true && current !== null && !current.summary.personal
   // A topic of 我的 Agent is a conversation with the helper: it answers, under its own face and name.

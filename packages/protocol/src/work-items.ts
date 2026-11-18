@@ -4,12 +4,14 @@ import type { ModelRef } from './settings.ts'
 import type { WorkItemOrigin } from './work-proposals.ts'
 
 /**
- * Where the Host puts a 待办 on the board: `todo` (未开始) while it has no session, otherwise from its sessions
- * (docs/ARCHITECTURE.md#待办). `settled`: every session ended and the person has not marked it done.
+ * Where the Host puts a 待办 on the board, from its sessions and addressed posts (docs/ARCHITECTURE.md#待办).
+ * `settled`: every session ended and the person has not marked it done.
  */
 export interface WorkItemPlace {
   group: 'todo' | BoardGroup
   reason?: BoardReason | 'settled'
+  /** When an addressed post is the reason for attention, open that post in the discussion. */
+  postId?: string
 }
 
 /** A 待办 as the snapshot lists it: everything but its prompt, which `GET /work/items/:id` and every write answer carry. */
@@ -152,8 +154,8 @@ export type WorkPostTarget = { sessionId: string } | { customAgentId: string }
  * could not be told (重试 sends the same request, and is never delivered twice); `failed` when it certainly was not.
  */
 export interface WorkPostDelivery {
-  /** The session it went to: for an Agent, its chat at the time. */
-  sessionId: string
+  /** The session it went to, while available to this device. For an Agent, its chat at the time. */
+  sessionId?: string
   state: 'sending' | 'sent' | 'unknown' | 'failed'
   /** Why it failed or is unknown, in the Host's words; never the text. */
   reason?: string
@@ -170,6 +172,28 @@ export interface WorkPostReply {
   live?: true
 }
 
+/** The input held by the delivery's original session, identified by the Host from the recorded request. */
+export interface WorkPostTurn {
+  sessionId: string
+  userMessageId: string
+  runId?: string
+}
+
+export interface WorkPostAttention {
+  reason: BoardReason
+  /** Pending question or approval ID, when the Host can link a decision to this run. */
+  decisionId?: string
+}
+
+/** GET /work/items/:id/posts/:postId/reply returns a bounded portion of one assistant message in this turn. */
+export interface WorkPostReplyAnswer {
+  turn: WorkPostTurn
+  messageId: string
+  text: string
+  /** Pass this with the same messageId to continue reading this reply. Offsets count Unicode code points. */
+  nextOffset?: number
+}
+
 /** One post of a 待办's thread: only a person writes one. A reply is shown under it, never copied into the thread. */
 export interface WorkPost {
   /** `pst_` and 22 base64url characters. */
@@ -179,7 +203,9 @@ export interface WorkPost {
   text: string
   target?: WorkPostTarget
   delivery?: WorkPostDelivery
+  turn?: WorkPostTurn
   reply?: WorkPostReply
+  attention?: WorkPostAttention
   /** Only on the reading device's own posts: the request that made it, so 重试 can send it again. */
   requestId?: string
 }
@@ -188,6 +214,8 @@ export interface WorkPost {
 export interface WorkThreadAnswer {
   posts: WorkPost[]
   revision: number
+  /** The next page of older posts, exclusive. Omitted when there is no older page. */
+  before?: string
 }
 
 /**
