@@ -127,7 +127,7 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
   if (!showChanges && !showChecks && !showDelivery)
     return (
       <div className="session-overview">
-        <p className="session-overview-empty">还没有改动</p>
+        <p className="session-overview-empty">本轮未记录文件改动</p>
       </div>
     )
   return (

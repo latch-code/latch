@@ -93,7 +93,7 @@ it('keeps an ordinary folder, refused Git metadata and a change the session did 
     if ((await page.locator('.app-shell').getAttribute('data-inspector')) !== 'open') await page.keyboard.press('Alt+Shift+b')
     await expect.poll(() => page.locator('.app-shell').getAttribute('data-inspector')).toBe('open')
     const overview = page.locator('.session-overview')
-    await overview.locator('.session-overview-empty').getByText('还没有改动', { exact: true }).waitFor()
+    await overview.locator('.session-overview-empty').getByText('本轮未记录文件改动', { exact: true }).waitFor()
     expect(await overview.getByText(/不支持 Git 交付|尚未观察到文件改动|本轮没有命令记录/u).count()).toBe(0)
     expect(await overview.getByRole('button', { name: '刷新', exact: true }).count()).toBe(0)
     expect(await overview.locator('.ui-notice[data-tone="warn"]').count()).toBe(0)
