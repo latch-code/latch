@@ -162,7 +162,7 @@ async function packageDesktop(): Promise<void> {
   )
     throw new Error('输出路径已存在；请使用新的 --out <Latch.app> 路径')
   const manifest = Manifest.parse(JSON.parse(await readFile(join(REPOSITORY_ROOT, 'package.json'), 'utf8')))
-  const nativeFiles = ['latch-presence', 'latch-network', 'latch-files', 'latch-pty', 'latch-simulator', 'latch-native-tls']
+  const nativeFiles = ['latch-presence', 'latch-network', 'latch-files', 'latch-home', 'latch-pty', 'latch-simulator', 'latch-native-tls']
   for (const file of nativeFiles) await access(join(REPOSITORY_ROOT, 'dist/native', file), constants.X_OK)
   await access(join(REPOSITORY_ROOT, 'dist/web/index.html'))
   await mkdir(dirname(output), { recursive: true })

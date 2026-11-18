@@ -109,7 +109,7 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       await more.click()
       await actions.getByRole('menuitem', { name: '删除 Agent', exact: true }).click()
       const confirm = page.getByRole('dialog', { name: '删除「桌面资料助手」？' })
-      await confirm.getByText('它的记忆会删除，聊天记录和文件夹会保留。').waitFor()
+      await confirm.getByText('它的记忆和空文件夹会删除，聊天记录保留。').waitFor()
       await confirm.getByRole('button', { name: '取消', exact: true }).click()
       await confirm.waitFor({ state: 'hidden' })
       expect((await snapshot()).customAgents?.some(item => item.id === agent.id)).toBe(true)

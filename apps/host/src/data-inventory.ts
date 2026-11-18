@@ -110,7 +110,7 @@ export function dataKinds(): Array<Omit<DataKind, 'bytes' | 'files' | 'truncated
 function dataElsewhere(paths: { worktrees: string; agents: string }): DataElsewhere[] {
   return [
     { label: '会话的工作树', where: paths.worktrees, retention: '一直保留，直到你在「项目」里移除' },
-    { label: 'Agent 的家', where: paths.agents, retention: '一直保留；删除 Agent 时也保留' },
+    { label: 'Agent 安装目录', where: paths.agents, retention: '一直保留' },
     { label: '录屏、截图与临时文件', where: '系统临时目录', retention: '用完后删除，Latch 启动时清理残留' },
   ]
 }

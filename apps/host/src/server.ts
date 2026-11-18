@@ -11,6 +11,7 @@ import {
 } from './update-window.ts'
 import { CustomAgents, harnessFixed, rememberRequest, type AgentActor, type FirstChatStart } from './custom-agents.ts'
 import { DataExports } from './data-export.ts'
+import { AgentFolders, HomeHelper, archiveLabel } from './agent-folders.ts'
 import { DataInventoryService } from './data-inventory.ts'
 import { Automations, automationSummary, type AutomationStartInput } from './automations.ts'
 import { Handoffs } from './handoffs.ts'
@@ -33,6 +34,7 @@ import {
   parseModelChoice,
   refusedBeforeAccepting,
   type AgentExecutionContext,
+  type AgentHome,
   type AgentNote,
   type AutomationConfig,
   type ModelChoice,
@@ -827,6 +829,8 @@ export interface ServerOptions {
   agentsDir?: string
   /** Where sessions' Git worktrees go; default beside the start directory (`LATCH_WORKTREES_DIR` replaces it). */
   worktreesDir?: string
+  /** Tests: the `latch-home` binary; default `dist/native/latch-home`. */
+  homeHelper?: string
   /** Dependency injection; default `createPresenceBackend(...)`. */
   presence?: PresenceBackend
   /** Process-local extra 'host:port' entries. */
@@ -2689,6 +2693,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const shortcuts = await ShortcutsStore.open(dataDir, { now, log, known: id => devices.get(id) !== undefined })
     // 设置 › 数据 and 导出全部 (docs/ARCHITECTURE.md#数据保留与导出): what Latch keeps, and the person's own data out.
     const dataInventory = new DataInventoryService({ dataDir, worktrees: worktreesDir, agents: agentsDir, now })
+    // An Agent's home after the Agent is deleted: removed for good or exported first (docs/CUSTOM-AGENTS.md#删除-agent).
+    let homeHelper: Promise<HomeHelper> | undefined
+    const agentFolders = new AgentFolders({
+      folders: ownFolders,
+      helper: () => (homeHelper ??= HomeHelper.open(options.homeHelper)),
+      sessionFolders: async () => (await harnessHub.listTasks()).flatMap(task => (task.cwd ? [task.cwd] : [])),
+      async inUse(path) {
+        if (terminals.openInside(path)) return true
+        for (const task of await harnessHub.listTasks()) {
+          if (task.status !== 'running' && task.status !== 'waiting-approval') continue
+          const cwd = task.cwd && (await canonicalPath(task.cwd).catch(() => undefined))
+          if (cwd && isInsidePath(cwd, path)) return true
+        }
+        return false
+      },
+      now,
+      log,
+    })
     const dataExports = new DataExports({
       log,
       now,
@@ -3120,6 +3142,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         requireDesktop,
         signedBody: signedFolderBody,
         dataScope: id => devices.get(id)?.dataScope,
+        agentFolders,
+        agentIds: () => new Set(customAgents.list().map(agent => agent.id)),
         names: async () => {
           const titles = new Map((await harnessHub.listTasks()).map(task => [task.id, task.title || '未命名会话']))
           const agentNames = new Map<string, string>([
@@ -3186,37 +3210,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         sessionFiles: id => changeRoutes.sessionFiles(id),
         computer: () => computer,
         home: async owner => {
-          const record = owner === GENERAL_AGENT_ID ? customAgents.general() : customAgents.get(owner)
-          // Where the allocator keeps it under this start directory: the plain name or this data directory's tagged one.
-          const { path } = ownFolders.homeOf(owner)
-          // Reads only: the next message sets up a home that is not there yet (`helperState`), never this view.
-          const refused = {
-            owner,
-            path,
-            available: false,
-            state: 'refused' as const,
-            reason: '工作位置无法确认，原文件已保留；请在这台 Mac 上检查',
-          }
-          try {
-            const state = await ownFolders.helperState(owner)
-            if (state === 'absent') {
-              // Before it is made: the path this Host will make, never another data directory's home under the plain name.
-              const planned = await ownFolders.plannedHome(owner)
-              return {
-                owner,
-                ...(planned ? { path: planned.path } : {}),
-                available: false,
-                state: 'pending',
-                reason: record.home ? '下次发消息时重新建立' : '第一次发消息时建立',
-              }
-            }
-            if (state !== 'ready') return refused
-            await assertHelperHome(path)
-            return { owner, path: await realpath(path), available: true, state: 'ready' }
-          } catch {
-            return refused
-          }
+          const view = await agentHomeView(owner)
+          if (owner === GENERAL_AGENT_ID) return view
+          // What deleting it would find: on any doubt, `files`, so the person is asked before anything is removed.
+          return { ...view, contents: await agentFolders.contents(owner).catch(() => 'files' as const) }
         },
+        folders: agentFolders,
+        requireDesktop,
+        signedBody: signedFolderBody,
+        archiveLabel: owner => archiveLabel(customAgents.list().find(agent => agent.id === owner)?.name),
         warm: (owner, caller) => warmAgentChat(owner, caller),
       },
       automations: {
@@ -8709,6 +8711,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * and if the record cannot be written nothing is made.
      */
     async function prepareHelperHome(owner: string, actor: { actor: AuditActor; authorize(): void }) {
+      // A deleted Agent's home is never made again, whoever asks: its record may be gone, which would read as a first one.
+      if (owner !== GENERAL_AGENT_ID && !customAgents.list().some(agent => agent.id === owner))
+        throw new AppError(409, 'agent-deleted', '这个 Agent 已删除，可以查看旧聊天。')
       let made = false
       const folder = await ownFolders.helperHome(
         owner,
@@ -8736,6 +8741,41 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       actor.authorize()
       if (!(await ownFolders.verify(folder.path))) throw workspaceChanged()
       return folder
+    }
+
+    /** 工作位置 in an Agent's profile: where its home is or will be, reading only. */
+    async function agentHomeView(owner: string): Promise<AgentHome> {
+      const record = owner === GENERAL_AGENT_ID ? customAgents.general() : customAgents.get(owner)
+
+      // Where the allocator keeps it under this start directory: the plain name or this data directory's tagged one.
+      const { path } = ownFolders.homeOf(owner)
+      // Reads only: the next message sets up a home that is not there yet (`helperState`), never this view.
+      const refused = {
+        owner,
+        path,
+        available: false,
+        state: 'refused' as const,
+        reason: '工作位置无法确认，原文件已保留；请在这台 Mac 上检查',
+      }
+      try {
+        const state = await ownFolders.helperState(owner)
+        if (state === 'absent') {
+          // Before it is made: the path this Host will make, never another data directory's home under the plain name.
+          const planned = await ownFolders.plannedHome(owner)
+          return {
+            owner,
+            ...(planned ? { path: planned.path } : {}),
+            available: false,
+            state: 'pending',
+            reason: record.home ? '下次发消息时重新建立' : '第一次发消息时建立',
+          }
+        }
+        if (state !== 'ready') return refused
+        await assertHelperHome(path)
+        return { owner, path: await realpath(path), available: true, state: 'ready' }
+      } catch {
+        return refused
+      }
     }
 
     /**
@@ -12405,6 +12445,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           // A clone under way ends and its folder goes: a half-made folder never becomes a project.
           await clones.close()
           await dataExports.close()
+          await agentFolders.close()
           await nativeRoutes.close()
           clearInterval(heartbeat)
           clearTimeout(eventTimer)

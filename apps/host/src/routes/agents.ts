@@ -19,13 +19,14 @@ import type {
 import { AGENT_AVATAR_IMAGE, AGENT_FILE_BYTES, GENERAL_AGENT_ID, isNativeListener } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { parseAgentFile, type AgentActor, type AgentMutation, type CustomAgents } from '../custom-agents.ts'
+import type { AgentFolders } from '../agent-folders.ts'
 import type { AgentPlans } from '../agent-plans.ts'
 import type { Automations } from '../automations.ts'
 import type { HostComputer } from '../computer.ts'
 import { activityPage, libraryPage, sessionOwner } from '../agent-activity.ts'
 import { AvatarImages } from '../avatar-image.ts'
 import { json, jsonBody } from '../http-util.ts'
-import { CONFIG_BODY_LIMIT, type Caller, type RouteContext, type RouteModule } from './registry.ts'
+import { CONFIG_BODY_LIMIT, type Caller, type DeviceCaller, type RouteContext, type RouteModule } from './registry.ts'
 
 export interface AgentRouteDeps {
   agents: CustomAgents
@@ -44,9 +45,32 @@ export interface AgentRouteDeps {
   home: (owner: string) => Promise<AgentHome>
   /** Starts the process of the Agent's one chat ahead of the next message; false when nothing was started. */
   warm?: (owner: string, caller: Caller) => Promise<boolean>
+  /** The Agent's homes after it is deleted: removed for good, or exported first (desktop only). */
+  folders: AgentFolders
+  /** The desktop app on this computer: a device enrolled on host.sock, calling over host.sock. */
+  requireDesktop: (caller: DeviceCaller) => void
+  /** A body only the desktop's main process can sign, after its native picker. */
+  signedBody: (req: Parameters<NonNullable<RouteModule['route']>>[0]['req'], caller: DeviceCaller) => Promise<Record<string, unknown>>
+  /** The archive's name for an Agent: its own name, made safe for a file name. */
+  archiveLabel: (owner: string) => string
 }
 
 const deletion = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) })
+/**
+ * Deleting an Agent: `folder: 'delete'` removes its homes for good. Without it (a page from before this choice, which
+ * still says the folder stays) the homes are kept, and 设置 › 数据 lists them.
+ */
+const agentDeletion = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u), folder: z.literal('delete').optional() })
+/** 导出后删除, signed by the desktop's main process after its native picker chose `parent`. */
+const folderExport = z.strictObject({
+  nonce: z.string(),
+  via: z.literal('agent-folder'),
+  agentId: z.string().regex(/^agt_[a-f0-9-]{36}$/u),
+  requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+  parent: z.string().min(1).max(4096),
+})
+const FOLDER_EXPORT = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36})\/folder-export$/u
+const FOLDER_EXPORT_STATE = /^\/link\/api\/custom-agents\/folder-exports\/([A-Za-z0-9_-]{8,128})(\/cancel)?$/u
 const AGENT = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)(?:\/memories(?:\/(mem_[a-f0-9-]{36})(\/undo|\/own)?)?)?$/u
 const PROPOSALS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/proposals(?:\/(prp_[a-f0-9-]{36})\/(save|dismiss))?$/u
 /** Read-only views of an owner's own records: result cards waiting for a topic, 动态, 资料库 and 电脑. */
@@ -379,6 +403,53 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
         } else throw new AppError(404, 'not-found', '接口不存在。')
         return true
       }
+      const exporting = FOLDER_EXPORT.exec(path)
+      if (exporting && method === 'POST') {
+        const owner = exporting[1]!
+        context.requireDevice(caller)
+        deps.requireDesktop(caller)
+        const input = folderExport.parse(await deps.signedBody(req, caller))
+        if (input.agentId !== owner) throw new AppError(400, 'invalid-request', '请求与 Agent 不一致。')
+        actor.authorize()
+        agents.get(owner)
+        // The deletion that follows the export would be refused now: say so before anything is written.
+        if (agents.chats()[owner]?.state === 'starting')
+          throw new AppError(409, 'agent-chat-starting', '这个 Agent 的聊天还在确认是否开始。')
+        const state = await deps.folders.startExport({
+          deviceId: caller.device.id,
+          requestId: input.requestId,
+          target: { owner },
+          label: deps.archiveLabel(owner),
+          parent: input.parent,
+          audit: event => context.audited({ ...event, actor: actor.actor, target: owner }).then(() => {}),
+          recheck: () => actor.authorize(),
+          // Every archive is verified: the Agent goes as any deletion does, under this request's ID.
+          then: async () => {
+            const removal = await deps.automations().edit(
+              owner,
+              actor,
+              () => agents.remove(owner, input.requestId, actor),
+              () => agents.definitionHash(owner),
+            )
+            if (!removal.audited) context.log('删除 Agent 的审计记录没有写入')
+            context.refresh()
+            sweepAvatars()
+            await deps.removed?.(owner)
+          },
+        })
+        json(res, { export: state }, 202)
+        return true
+      }
+      const followed = FOLDER_EXPORT_STATE.exec(path)
+      if (followed && ((method === 'GET' && !followed[2]) || (method === 'POST' && followed[2]))) {
+        context.requireDevice(caller)
+        deps.requireDesktop(caller)
+        const requestId = followed[1]!
+        const state = followed[2] ? await deps.folders.cancel(caller.device.id, requestId) : deps.folders.get(caller.device.id, requestId)
+        if (state.state === 'done') context.refresh()
+        json(res, { export: state })
+        return true
+      }
       const match = AGENT.exec(path)
       if (!match) throw new AppError(404, 'not-found', '接口不存在。')
       const id = match[1]!,
@@ -444,10 +515,28 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
           sweepAvatars()
         }
       } else if (method === 'DELETE' && !general) {
-        const { requestId } = deletion.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
-        await edit(id, () => agents.remove(id, requestId, actor))
+        const { requestId, folder } = agentDeletion.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
+        // Only this request's own deletion removes homes: a request for an Agent already gone (its homes kept by an older
+        // page) never reaches them; those are 设置 › 数据's, for `admin` and `all`. A retry gets its first answer.
+        const existed = agents.list().some(agent => agent.id === id)
+        const result = await deps.automations().edit(
+          id,
+          actor,
+          () => agents.remove(id, requestId, actor),
+          () => agents.definitionHash(id),
+        )
         sweepAvatars()
         await deps.removed?.(id)
+        // The Agent is gone whatever its homes do: they are dealt with after, never on a path a client named.
+        const folders = agents.list().some(agent => agent.id === id)
+          ? undefined
+          : await deps.folders.afterDeletion(id, requestId, existed ? folder : undefined, event =>
+              context.audited({ ...event, actor: actor.actor, target: id }).then(() => {}),
+            )
+        actor.authorize()
+        if (!result.audited) res.setHeader('x-latch-audit', 'failed')
+        context.refresh()
+        json(res, { ...result.value, ...(folders ? { folder: folders } : {}) })
       } else throw new AppError(404, 'not-found', '接口不存在。')
       return true
     },

@@ -36,8 +36,10 @@ describe('deletion wording', () => {
     expect(text).toContain('从 Harness 接入的原会话不会删除。')
   })
 
-  it('keeps an Agent’s conversations and folder', () => {
+  it('keeps an Agent’s conversations and says what happens to its folder', () => {
     expect(agentDeletionMessage('/x/home')).toContain('文件夹：/x/home')
-    expect(agentDeletionMessage()).toContain('它的记忆会删除，聊天记录和文件夹会保留。')
+    expect(agentDeletionMessage()).toContain('它的记忆会删除，聊天记录保留。')
+    expect(agentDeletionMessage(undefined, 'files')).toContain('文件夹无法恢复')
+    expect(agentDeletionMessage(undefined, 'empty')).toContain('空文件夹会删除')
   })
 })

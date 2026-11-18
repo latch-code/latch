@@ -456,10 +456,10 @@ export function AgentProfile({
             disabled={held}
             onSaved={settle}
             onOptionsRead={settle}
-            homePath={home.value?.path}
-            onDeleted={() => {
+            onDeleted={notice => {
               onClose()
               shell.openMyAgent()
+              if (notice) shell.setToast({ text: notice, tone: 'error' })
             }}
             onReload={() => {
               writes.clear()

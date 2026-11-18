@@ -530,7 +530,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 - 单价、预算与用量见 [MODEL-CONFIGURATION.md](MODEL-CONFIGURATION.md#单价预算与用量)。
 - Harness：找到了程序但还没有定义的预设只写「已找到」，不画成可用，不用绿色。Latch 只给安装命令与「重新检测」。手机上先显示完整命令，再显示复制和重新检测。
 - 添加 Harness 时明确写出「Latch 不隔离它」。已添加的 Harness、项目里的文件夹范围、关于页与扩展页把这条说明放在提示框里。Harness 相关文字见 [securityCopy.ts](../apps/web/src/core/securityCopy.ts)。
-- 「数据」只给有「管理此 Host」且数据范围为「全部」的设备：每种数据一行，保留期是描述，大小在行尾，条目名在悬停里；「安全记录」是分区里的一页（时间、谁、类别三个筛选，一行一条，展开看字段）；「导出全部」只在桌面端，对话框列出导出与不导出的内容（这里留字）。删除的确认文字只在 [deletionCopy.ts](../apps/web/src/deletionCopy.ts)，见 [ARCHITECTURE.md](ARCHITECTURE.md#删除说了什么)。
+- 「数据」只给有「管理此 Host」且数据范围为「全部」的设备：每种数据一行，保留期是描述，大小在行尾，条目名在悬停里；「安全记录」是分区里的一页（时间、谁、类别三个筛选，一行一条，展开看字段）；「导出全部」只在桌面端，对话框列出导出与不导出的内容（这里留字）。有已删除 Agent 的文件夹时才出现「已删除 Agent 的文件夹（N）」，每行路径、「导出后删除」（桌面端）与「永久删除」（再确认）。删除 Agent 的对话框在它的文件夹有文件时给「导出后删除」与「永久删除」两个动作，一行写明文件夹无法恢复、聊天记录保留；导出只在桌面端，其他地方是一个悬停说明。删除的确认文字只在 [deletionCopy.ts](../apps/web/src/deletionCopy.ts)，见 [ARCHITECTURE.md](ARCHITECTURE.md#删除说了什么)。
 
 **插件包界面。** 机制见 [PLUGIN-DEVELOPMENT.md](PLUGIN-DEVELOPMENT.md#应用内的自定义插件资产)。
 

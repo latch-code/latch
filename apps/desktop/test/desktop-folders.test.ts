@@ -21,6 +21,7 @@ interface FolderActions {
   saveSessionFolder(input: unknown): Promise<Result>
   cloneRepository(input: unknown): Promise<Result & { id?: string; name?: string }>
   exportData(input: unknown): Promise<Result & { id?: string; name?: string }>
+  exportAgentFolder(input: unknown): Promise<Result>
 }
 interface DialogOptions {
   title?: string
@@ -972,6 +973,34 @@ describe('desktop shell folders: 导出全部 and the data directory', () => {
     // The page names nothing: any input is refused before a panel opens.
     expect(await created.exportData({ parent: '/tmp' })).toEqual({ status: 'failed', code: 'invalid' })
     expect(asked).toHaveLength(1)
+  })
+
+  it('导出后删除: signs the Agent, the page’s request ID and the one folder the panel chose', async () => {
+    const host = fakeHost()
+    const agentId = 'agt_00000000-0000-4000-8000-000000000001'
+    const requestId = 'req-agent-folder-1'
+    host.answer.set(`POST /link/api/custom-agents/${agentId}/folder-export`, {
+      status: 202,
+      json: { export: { requestId, state: 'running', phase: 'export' } },
+    })
+    host.answer.set('POST /link/api/data/agent-folders/0123456789abcdef0123456789abcdef/export', {
+      status: 202,
+      json: { export: { requestId, state: 'running', phase: 'export' } },
+    })
+    const { created, asked, signed } = actions({}, host)
+    expect(await created.exportAgentFolder({ agentId, requestId })).toEqual({ status: 'exporting' })
+    expect(asked[0]).toMatchObject({ title: '导出 Agent 的文件夹到', properties: ['openDirectory', 'createDirectory'] })
+    expect(signed).toEqual([{ nonce: 'nonce-1', via: 'agent-folder', agentId, requestId, parent: '/Users/me/projects/app' }])
+    expect(await created.exportAgentFolder({ folder: '0123456789abcdef0123456789abcdef', requestId })).toEqual({ status: 'exporting' })
+    // The page never names a folder, and 通用 has no folder to export.
+    for (const input of [
+      { agentId, requestId, parent: '/tmp' },
+      { agentId: 'general', requestId },
+      { agentId, requestId: 'x' },
+      { folder: '../x', requestId },
+    ])
+      expect(await created.exportAgentFolder(input)).toEqual({ status: 'failed', code: 'invalid' })
+    expect(asked).toHaveLength(2)
   })
 
   it('shows the data directory the Host names, never one the page sends', async () => {

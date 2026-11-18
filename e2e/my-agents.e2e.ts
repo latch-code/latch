@@ -794,7 +794,7 @@ it('opens the Agent row actions by keyboard and retries a lost deletion response
     await page.screenshot({ path: `${OUT}/agent-menu-1440.png`, animations: 'disabled' })
     await menu.getByRole('menuitem', { name: '删除 Agent' }).click()
     const confirm = page.getByRole('dialog', { name: `删除「${agent.name}」？` })
-    await confirm.getByText('它的记忆会删除，聊天记录和文件夹会保留。').waitFor()
+    await confirm.getByText('它的记忆和空文件夹会删除，聊天记录保留。').waitFor()
     await page.screenshot({ path: `${OUT}/agent-delete-1440.png` })
     await confirm.getByRole('button', { name: '取消', exact: true }).click()
     await confirm.waitFor({ state: 'hidden' })

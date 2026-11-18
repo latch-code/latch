@@ -3,9 +3,10 @@ import type { HostFeatures } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { auditPage, parseAuditQuery, type AuditNames } from '../audit-view.ts'
 import type { DataExports } from '../data-export.ts'
+import type { AgentFolders, FolderAudit } from '../agent-folders.ts'
 import type { DataInventoryService } from '../data-inventory.ts'
-import { json } from '../http-util.ts'
-import type { Caller, DeviceCaller, RouteContext, RouteModule } from './registry.ts'
+import { json, jsonBody } from '../http-util.ts'
+import { CONFIG_BODY_LIMIT, type Caller, type DeviceCaller, type RouteContext, type RouteModule } from './registry.ts'
 
 export interface DataRouteDeps {
   inventory: DataInventoryService
@@ -17,10 +18,23 @@ export interface DataRouteDeps {
   signedBody: (req: Parameters<NonNullable<RouteModule['route']>>[0]['req'], caller: DeviceCaller) => Promise<Record<string, unknown>>
   /** The device's data scope as the Host holds it now. */
   dataScope: (deviceId: string) => string | undefined
+  /** Homes of Agents already deleted: listed, exported or removed only when the person presses. */
+  agentFolders: AgentFolders
+  /** The Agents there are now; throws while a write to them is unconfirmed, so nothing is taken for gone. */
+  agentIds: () => ReadonlySet<string>
 }
 
 const exportSchema = z.strictObject({ nonce: z.string(), via: z.literal('export'), parent: z.string().min(1).max(4096) })
 const EXPORT_PATH = /^\/link\/api\/data\/export\/([0-9a-f-]{36})(\/cancel)?$/u
+const LEFTOVER = /^\/link\/api\/data\/agent-folders\/([0-9a-f]{32})(\/export)?$/u
+const leftoverRemoval = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) })
+const leftoverExport = z.strictObject({
+  nonce: z.string(),
+  via: z.literal('agent-folder'),
+  folder: z.string().regex(/^[0-9a-f]{32}$/u),
+  requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+  parent: z.string().min(1).max(4096),
+})
 
 /**
  * 设置 › 数据 and 审计记录 (docs/ARCHITECTURE.md#数据保留与导出). All of it is administrative and spans every session,
@@ -84,6 +98,46 @@ export function createDataRoutes(context: RouteContext, deps: DataRouteDeps): Ro
             },
             recheck: () => recheck(caller),
           },
+        })
+        json(res, { export: state }, 202)
+        return true
+      }
+      if (path === '/link/api/data/agent-folders' && method === 'GET') {
+        allowed(caller)
+        const folders = (await deps.agentFolders.leftovers(deps.agentIds)).map(({ key, path: where, contents }) => ({
+          key,
+          path: where,
+          contents,
+        }))
+        recheck(caller)
+        json(res, { folders })
+        return true
+      }
+      const leftover = LEFTOVER.exec(path)
+      if (leftover && ((method === 'DELETE' && !leftover[2]) || (method === 'POST' && leftover[2]))) {
+        const device = allowed(caller)
+        const key = leftover[1]!
+        const audit: FolderAudit = event =>
+          context.audited({ ...event, actor: context.actorOf(caller), target: event.detail.customAgentId }).then(() => {})
+        if (method === 'DELETE') {
+          leftoverRemoval.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
+          const result = await deps.agentFolders.removeLeftover(key, deps.agentIds, audit)
+          recheck(caller)
+          json(res, { folder: result })
+          return true
+        }
+        deps.requireDesktop(device)
+        const input = leftoverExport.parse(await deps.signedBody(req, device))
+        if (input.folder !== key) throw new AppError(400, 'invalid-request', '请求与文件夹不一致。')
+        recheck(caller)
+        const state = await deps.agentFolders.startExport({
+          deviceId: device.device.id,
+          requestId: input.requestId,
+          target: { key, agents: deps.agentIds },
+          label: 'Agent',
+          parent: input.parent,
+          audit,
+          recheck: () => recheck(caller),
         })
         json(res, { export: state }, 202)
         return true

@@ -46,6 +46,58 @@ export interface AgentHome {
   /** `pending`: the next message sets it up (first time, or again where nothing is at its path); `refused`: kept as is. */
   state?: 'ready' | 'pending' | 'refused'
   reason?: string
+  /**
+   * What deleting the Agent would find in the homes the Host can still touch: `none` when there is no such home,
+   * `empty`, or `files` (then the person chooses to export them first or delete them for good).
+   */
+  contents?: 'none' | 'empty' | 'files'
+}
+
+/**
+ * What became of one of an Agent's homes after it was deleted: removed for good, found gone, or left where it was
+ * (not the home recorded, in use, another device below it, too large, no component to do it, the record not
+ * written, or the removal failed partway).
+ */
+export type AgentHomeOutcome =
+  | 'deleted'
+  | 'absent'
+  | 'unverified'
+  | 'in-use'
+  | 'mount'
+  | 'too-large'
+  | 'unavailable'
+  | 'audit-failed'
+  | 'failed'
+
+/**
+ * The Agent's homes after its deletion, as one answer: `deleted` (removed for good), `none` (nothing there), `kept`
+ * (the request did not ask: a page from before the choice existed), `left` (`reason` says why the first was left).
+ */
+export interface AgentFolderResult {
+  outcome: 'deleted' | 'none' | 'kept' | 'left'
+  reason?: AgentHomeOutcome
+  removed: number
+  left: number
+}
+
+/** 导出后删除 as its own device follows it: writing the archives, then deleting. */
+export interface AgentFolderExport {
+  requestId: string
+  state: 'running' | 'done' | 'failed' | 'cancelled'
+  phase: 'export' | 'delete'
+  /** The archive files' names in the chosen folder; emptied when an export fails (its archives are removed). */
+  archives?: string[]
+  folder?: AgentFolderResult
+  code?: string
+  /** `agent-folder-too-large`: the bytes counted before it stopped. */
+  bytes?: number
+}
+
+/** The home of an Agent that is already deleted, found where its record says: 设置 › 数据 can export or remove it. */
+export interface LeftoverAgentFolder {
+  key: string
+  path: string
+  contents: 'empty' | 'files'
 }
 
 /** 名称、图标、说明、指令、技能、Harness 与模型 of one of 我的 Agent. */

@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AUDIT_KINDS, type AuditEntry, type AuditKind, type AuditPage, type DataExportState, type DataInventory } from '@latch/protocol'
-import { ActionMenu, Button, Dialog, Hint, InlineNotice, SelectButton, Spinner, StatusWord, FilterPills } from '@latch/ui'
-import { api, errorMessage } from '../core/api.ts'
+import {
+  AUDIT_KINDS,
+  type AgentFolderResult,
+  type AuditEntry,
+  type AuditKind,
+  type AuditPage,
+  type DataExportState,
+  type DataInventory,
+  type LeftoverAgentFolder,
+} from '@latch/protocol'
+import { ActionMenu, Button, ConfirmDialog, Dialog, Hint, InlineNotice, SelectButton, Spinner, StatusWord, FilterPills } from '@latch/ui'
+import { api, errorMessage, MessageError, newRequestId } from '../core/api.ts'
+import { folderNotice, useFolderExport } from '../agents/AgentDeleteDialog.tsx'
 import { shellFolders } from '../core/shell.ts'
 import { absoluteTime, formatSize, relativeTime } from '../format.ts'
 import { Loading, MiddleEllipsis, NavRow, SettingsGroup, SettingsRow } from './common.tsx'
@@ -275,6 +285,7 @@ function DataMain({ onAudit }: { onAudit: () => void }) {
       <div className="settings-note">
         <Hint label={COPY.external}>{COPY.externalData}</Hint>
       </div>
+      <LeftoverFolders />
       <SettingsGroup title={COPY.recordsAndExport}>
         <NavRow title={COPY.audit} description={COPY.auditHint} onClick={onAudit} />
         {folders?.exportData && <ExportRow start={folders.exportData} />}
@@ -283,6 +294,109 @@ function DataMain({ onAudit }: { onAudit: () => void }) {
     </div>
   )
 }
+
+/**
+ * 已删除 Agent 的文件夹: homes whose Agent is already gone, still where the Host made them. Shown only when there are
+ * some; each goes only when the person presses, exported first (the desktop app) or for good.
+ */
+function LeftoverFolders() {
+  const [folders, setFolders] = useState<LeftoverAgentFolder[]>([])
+  const read = useCallback(() => {
+    void api<{ folders: LeftoverAgentFolder[] }>('data/agent-folders')
+      .then(({ folders: found }) => setFolders(found))
+      .catch(() => setFolders([]))
+  }, [])
+  useEffect(read, [read])
+  if (!folders.length) return null
+  return (
+    <SettingsGroup title={LEFTOVER_COPY.title(formatNumber(folders.length))}>
+      {folders.map(folder => (
+        <LeftoverRow key={folder.key} folder={folder} onDone={read} />
+      ))}
+    </SettingsGroup>
+  )
+}
+
+function LeftoverRow({ folder, onDone }: { folder: LeftoverAgentFolder; onDone: () => void }) {
+  const [confirming, setConfirming] = useState(false)
+  const [notice, setNotice] = useState('')
+  const exporting = useFolderExport({ folder: folder.key }, result => {
+    setNotice(folderNotice(result) ?? '')
+    onDone()
+  })
+  const remove = async () => {
+    const { folder: result } = await api<{ folder: AgentFolderResult }>(`data/agent-folders/${folder.key}`, {
+      method: 'DELETE',
+      body: { requestId: newRequestId() },
+    })
+    const left = folderNotice(result)
+    if (left) throw new MessageError(left)
+    onDone()
+  }
+  return (
+    <>
+      <SettingsRow
+        className="data-leftover"
+        title={<MiddleEllipsis text={folder.path} />}
+        description={
+          exporting.running ? (
+            <span className="data-export-status" role="status">
+              <Spinner size={12} /> {exporting.state?.phase === 'delete' ? LEFTOVER_COPY.deleting : LEFTOVER_COPY.exporting}
+            </span>
+          ) : folder.contents === 'empty' ? (
+            LEFTOVER_COPY.empty
+          ) : undefined
+        }
+        trailing={
+          <span className="data-leftover-actions">
+            {folder.contents === 'files' && exporting.available && (
+              <Button size="sm" variant="outline" disabled={exporting.running} onClick={() => void exporting.start()}>
+                {LEFTOVER_COPY.exportThenDelete}
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" disabled={exporting.running} onClick={() => setConfirming(true)}>
+              {LEFTOVER_COPY.deleteForGood}
+            </Button>
+          </span>
+        }
+      />
+      {(exporting.error || notice) && <InlineNotice tone="error">{exporting.error || notice}</InlineNotice>}
+      {confirming && (
+        <ConfirmDialog
+          title={LEFTOVER_COPY.confirmTitle}
+          message={LEFTOVER_COPY.confirmMessage}
+          danger
+          confirmLabel={LEFTOVER_COPY.deleteForGood}
+          onClose={() => setConfirming(false)}
+          onConfirm={remove}
+        />
+      )}
+    </>
+  )
+}
+
+const LEFTOVER_COPY = defineCopy(
+  {
+    title: (count: string) => `已删除 Agent 的文件夹（${count}）`,
+    empty: '空文件夹',
+    exportThenDelete: '导出后删除',
+    deleteForGood: '永久删除',
+    exporting: '正在导出…',
+    deleting: '正在删除…',
+    confirmTitle: '永久删除这个文件夹？',
+    confirmMessage: '文件夹和里面的文件会删除，无法恢复。',
+  },
+  {
+    title: (count: string) => `Folders of deleted Agents (${count})`,
+    empty: 'Empty folder',
+    exportThenDelete: 'Export, then delete',
+    deleteForGood: 'Delete permanently',
+    exporting: 'Exporting…',
+    deleting: 'Deleting…',
+    confirmTitle: 'Delete this folder permanently?',
+    confirmMessage: 'The folder and the files in it are deleted and can’t be recovered.',
+  },
+)
 
 /** 导出全部: what goes and what never does, then the native picker; progress and 取消 while it runs. */
 function ExportRow({ start }: { start: NonNullable<NonNullable<ReturnType<typeof shellFolders>>['exportData']> }) {

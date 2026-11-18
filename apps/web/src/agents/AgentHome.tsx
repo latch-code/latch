@@ -10,7 +10,7 @@ const COPY = defineCopy(
   {
     title: '家',
     folder: '默认工作文件夹',
-    purpose: '家是它默认干活的文件夹，不是隔离。选了项目时，那个话题在项目里做；删除 Agent 后文件夹留着。',
+    purpose: '家是它默认干活的文件夹，不是隔离。选了项目时，那个话题在项目里做；删除 Agent 时，你选择先导出再删除，或永久删除。',
     failed: '工作位置无法确认，请同步后重试。',
     pending: '下次发消息时建立',
     refused: '工作文件夹不可用，原文件已保留',
@@ -19,7 +19,7 @@ const COPY = defineCopy(
     title: 'Home',
     folder: 'Default work folder',
     purpose:
-      'The Agent works here by default. The folder offers no isolation. Topics with a project run in that project. Deleting the Agent keeps the folder.',
+      'The Agent works here by default. The folder offers no isolation. Topics with a project run in that project. When you delete the Agent, you choose to export the folder first or delete it for good.',
     failed: 'The work location couldn’t be confirmed. Sync and try again.',
     pending: 'Set up with the next message',
     refused: 'Work folder unavailable; files kept',

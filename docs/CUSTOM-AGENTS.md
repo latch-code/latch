@@ -1,5 +1,5 @@
 ---
-description: 我的 Agent 与「通用」：定义、唯一聊天、记忆与提议、导出导入、头像、家、各 Harness 如何收到指令、记忆和技能。
+description: 我的 Agent 与「通用」：定义、唯一聊天、记忆与提议、导出导入、头像、家与删除、各 Harness 如何收到指令、记忆和技能。
 sources:
   - apps/host/src/custom-agents.ts
   - apps/host/src/agent-plans.ts
@@ -99,7 +99,9 @@ Agent 是一份定义（名称、头像、说明、指令、技能、Harness、�
 | `GET …/proposals`，`POST …/proposals/:pid/save`、`…/dismiss` | 提议：列出、保存为记忆、不要 |
 | `GET …/results` | 还没有聊天时等着的定时结果卡（[AUTOMATIONS.md](AUTOMATIONS.md#结果回到对话)） |
 | `GET …/activity?before=`、`…/library?before=` | 动态（每页 30 条）与资料库（每页最多 8 组） |
-| `GET …/computer`、`…/home` | 「电脑」；家的路径与可用性 |
+| `GET …/computer`、`…/home` | 「电脑」；家的路径、可用性与 `contents`（删除时它有没有文件） |
+| `POST /custom-agents/:id/folder-export`，`GET`、`POST /custom-agents/folder-exports/:requestId`（`/cancel`） | 导出后删除：桌面端签名的开始、进度与取消（见「删除 Agent」） |
+| `GET /data/agent-folders`，`DELETE /data/agent-folders/:key`，`POST …/:key/export` | 已删除 Agent 的文件夹：列出、永久删除、导出后删除 |
 | `POST /custom-agents/:id/warm` | 打开聊天时预热它的进程（见「回得快」） |
 | `PUT`、`DELETE /custom-agents/:id/avatar-image`，`GET /custom-agents/avatar-images/:hash` | 图片头像 |
 | `GET /custom-agents/:id/export`、`…/export/preview` | 导出 |
@@ -404,7 +406,7 @@ Host 在 `custom.json` 的 `chats` 里为每个 Agent 与「通用」保留一�
   - **先查**：旧聊天还有进行中、等审批、排队的消息或没人核对的结果时，409 `agent-chat-move-pending`，什么都不变（人先移除排队项、处理审批或标记已核对）。安装窗口、Agent 或 Harness 不可用、Harness 未在这台 Mac 上确认、模型不可用时照常拒绝，也什么都不变。随后在当前起始目录下备好家。
   - **换槽**：先写审计 `agent.chat.retired`（`reason: home-moved`），再在同一次写入里把槽从这条聊天直接记为这条消息的 `starting`，并记下 `replaces`（旧聊天）。同一个请求随后走首次开始的路径与回执，回答 `{ accepted: true, sessionId }`（新聊天）。开始之前被拒绝（附件、项目队列等），或重启后完整清单证明它没开始而重放又被确定地拒绝时，槽回到原来的 `ready`（旧聊天），并以发起请求的设备写 `agent.chat.restored`（`reason: start-refused`）；换槽的写入没有落下时写 `reason: not-committed`，不留单独的 `retired`。这是退回，审计写不进也照常退回。结果仍未知的开始（已交给驱动、清单不完整）保持 `starting`，由原设备重试同一次提交确认。我的 Agent 换槽时带了项目是 409 `agent-chat-move-project`。
   - **重试**：同设备同请求（槽已 `ready` 或仍在 `starting`）按槽里的首条消息回答同一会话；别的设备或别的内容不是原请求（409）。旧聊天留着查看。当前起始目录下的家缺失、被替换、模式变宽或是链接都不算：设备说什么也不能让健康的聊天被换下，这不是绕过 `agent-chat-retained` 的路。引用文件的消息是 409 `file-reference-refused`。
-- **删除 Agent**：保留会话和文件夹，清除记忆、提议、可撤销的修改与查询记录。
+- **删除 Agent**：保留会话，清除记忆、提议、可撤销的修改与查询记录；它的家按人的选择导出后删除或永久删除（见「删除 Agent」）。
 - **定时运行**仍是各自的会话，成果卡交给当前聊天；首次聊天之前结算的卡先等着。
 
 定义的修改何时到达这条聊天：
@@ -436,7 +438,7 @@ Host 在 `custom.json` 的 `chats` 里为每个 Agent 与「通用」保留一�
 - **重新建立**：Agent 在当前起始目录下有记录的家而它的路径上什么都没有时（家被删了），按原规则在同一路径重新建一个空的家，`helpers` 缺失时一并建；已有的 `helpers` 必须是记录里的那个（或本次刚建的），换过的不接管（409 `helper-home-unavailable`）；只有本数据目录在这个起始目录下记录的家一个都不在了时（另一个 Host 删了又建了 `helpers`），才在其中重新建各自的家，因为那里没有可能被换进来的、属于本 Host 的东西。会建家的只有：首次开始、人的一轮（`sendPromptChecked`：聊天里的消息、待办里的投递、审阅意见、交接发送；不排队、不追加，且这一轮能被无副作用拒绝的检查都已通过：空消息、模型、只读、清空上下文、仍在运行）与定时运行。每次都先写审计 `agent.home.assigned`，写不进就什么都不建；`recreated: true` 只表示这个起始目录下记录过的家被重新建出，换到新起始目录后的第一个家是首次分配。同一会话随后在同一路径继续。读取、预热、文件句柄、工具调用、终端与输入框的能力读取从不建目录。
 - **拒绝**：路径上已有东西却不是记录的那个家（替换的同名目录、链接、更宽的模式），或与数据、程序、已登记项目重叠，都拒绝（409 `helper-home-unavailable`、`helper-home-overlap`），不移动、覆盖、接管或删除原文件；聊天保持原样。家在另一个起始目录下的会话是 409 `helper-home-moved`（聊天本身见「唯一聊天」）。
 - **记录**：`home` 只由分配器写入 `custom.json`，记的是当前起始目录下的目录名（不带或带本数据目录的后缀），先审计（`agent.home.assigned`，只有哈希；分配器建目录前已写的不再重复），不改变定义的 revision。已分配的家不能再登记为公共项目。
-- **共用**：聊天与没有显式项目的定时运行共用一个家；历史会话保留记录的 cwd。删除 Agent 从不删除家。
+- **共用**：聊天与没有显式项目的定时运行共用一个家；历史会话保留记录的 cwd。删除 Agent 时的家见「删除 Agent」。
 - **读取**：`GET …/home` 只读当前身份与策略，返回路径、可用性、`state`（`ready`、`pending`：下一条消息会建立，`refused`）和原因，不因读取而建目录。
 - **界面**：Agent 的聊天从不显示项目选择或「在新会话中继续」；家被拒绝时输入框上方是一行短状态（图标、「工作文件夹不可用」、重试），原因在悬停里。文件内容仍只经所属私有会话的授权句柄读取。
 - **在访达中显示**：桌面端只向主进程交 Agent ID；主进程凭自己的设备身份读上面的接口，核对真实目录后调用 `showItemInFolder`，不接受页面给的路径。
@@ -449,6 +451,20 @@ Host 在 `custom.json` 的 `chats` 里为每个 Agent 与「通用」保留一�
 - 外部 Harness 的默认项（`engineOptions`）怎样在开始时设置与读回，见「字段」。
 
 资料面板（`ProfileLayer`）跨桌面、平板与手机只挂载一个实例；切换设备、撤权或关闭资料时卸载私有内容。
+
+## 删除 Agent
+
+删除 Agent 没有撤销。它的会话留着、只读；它的家（每个起始目录下各一个）不悄悄留下：
+
+- **问一次**：`GET …/home` 的 `contents` 说删除时会碰到什么：`none`（没有能碰的家）、`empty` 或 `files`。只有 `files` 时对话框问：「导出后删除」或「永久删除」，并在一行里写明文件夹删除后无法恢复、聊天记录保留；其余只是普通的删除确认。`contents` 读不到时按 `files` 问。
+- **永久删除**：`DELETE /custom-agents/:id` 带 `{ requestId, folder: "delete" }`。Agent 先照常删除（删除从不因家而受阻，原有的拒绝不变），再处理它的家；回答 `{ id, folder }`，`folder.outcome` 是 `deleted`、`none`、`kept` 或 `left`（`reason` 说第一个留下的原因）。不带 `folder` 的旧页面仍说文件夹保留，所以家照旧保留（`kept`），之后在 设置 › 数据 里列出。同一请求的重试得到同一个回答。
+- **只碰记录的那个**：Host 只按 `session-folders.json` 里本数据目录记录的家找它。当前起始目录下按路径；其他起始目录的路径没有记录，只从 Host 自己记下的该 Agent 会话的 `cwd` 推出，且其起始目录的规范路径的哈希须是记录的那个。然后起始目录、`helpers` 与家的设备号和 inode 须与记录相同，`helpers` 与家须是本人的 0700 目录、不是链接，家的规范路径须在起始目录的 `helpers/` 下。对不上（替换的目录、链接、更宽的模式、另一个数据目录的家、找不到路径的其他起始目录）就不动它，报告 `unverified`。路径上什么都没有是 `absent`，记录随之移除。
+- **在用时不删**：有会话在运行或等审批、或终端打开在家里时，家留下（`in-use`）；导出后删除在开始前就拒绝（409 `agent-folder-in-use`）。
+- **怎样删**：在 `latch-home`（`native/macos/LatchHome.swift`）里进行，Host 只交给它起始目录的真实路径、名称和三个身份。它从 `/` 逐级 `openat(O_NOFOLLOW)` 打开起始目录，在句柄上核对身份，此后只经 `openat`、`fstatat(AT_SYMLINK_NOFOLLOW)`、`unlinkat` 操作：先只读地数一遍（最多 50 万项、64 层，下面有另一个设备就整体拒绝 `mount`），再删；链接只删链接本身，从不跟随；子目录先打开、核对与刚才读到的是同一个再清空，删目录前再核对一次，被换成链接或别的目录就停下；最后核对家仍是记录的那个才删它、再确认它不在了。`helpers` 从不删除。途中失败的家可能只删了一部分，记录保留，可以再按一次。没有这个组件（非 macOS 或构建缺失）时家留下（`unavailable`）。
+- **导出后删除**：只在这台 Mac 的桌面端：主进程用原生面板选文件夹，签名 `{ via: "agent-folder", agentId, requestId, parent }`，Host 在那里以 `O_CREAT|O_EXCL|O_NOFOLLOW`、0600 新建 `<Agent 名> <时间>.zip`（同名时加序号），把文件描述符交给 `latch-home` 写入。zip 只含家里的普通文件与目录（不压缩，UTF-8 文件名，顶层是 Agent 名），链接与其他类型不写入；先数一遍，超过 2 GiB 或 5 万项就拒绝（`agent-folder-too-large`，带已数到的字节数），不写半个文件。写完 Host 用同一句柄读回 zip 的中央目录，条目数与字节数须与组件读到的相同，文件仍是它新建的那个；之后才删除 Agent，再删除家，删除前再数一遍，须与导出的相同（不同则 `unverified`，什么都不删）。导出失败、取消或太大时只删它自己新建的 zip，Agent 与家都不动。zip 里没有记忆、指令、会话或密钥：只有 Agent 的工作文件夹；需要 Agent 本身请用「导出」。浏览器、手机与其他电脑上不提供导出，对话框在悬停里说明。
+- **审计**：先写后做。永久删除每个家先写 `agent.folder.removing`，写不进就留下它（`audit-failed`），之后写 `agent.folder.removed`（结果、删除的项数）；导出先写 `agent.folder.exporting`（写不进就不开始），结束写 `agent.folder.exported`（结果、项数、字节数）。detail 只有 Agent ID、家名与起始目录的哈希、导出与目标文件夹的哈希、枚举和计数，没有路径与文件名。
+- **不再建出**：会建家的路径（首次开始、人的一轮、定时运行）先确认 Agent 还在，已删除的 Agent 从不重新得到家（409 `agent-deleted`）。它的会话的文件树、搜索、改动、终端、附件能力与预热在家不在时照常拒绝或返回空，不建目录。
+- **已删除 Agent 的文件夹**：设置 › 数据 只在有时显示「已删除 Agent 的文件夹（N）」：记录里 Agent 已不在 `custom.json`、且此刻核对得上的家（Agent 的写入结果未知时不列）。每个文件夹各有「导出后删除」（桌面端）与「永久删除」，只在人按下时进行，规则同上。
 
 ## 各 Harness 如何收到
 

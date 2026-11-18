@@ -9,7 +9,6 @@ import {
   AlertGlyph,
   ArchiveGlyph,
   BlockedGlyph,
-  ConfirmDialog,
   IconButton,
   MoreGlyph,
   SettingsGlyph,
@@ -21,10 +20,9 @@ import { useLastConfirmed } from '../components/SessionStatus.tsx'
 import { Menu, rowOf } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { startBlock } from '../composerChoice.ts'
-import { MessageError } from '../core/api.ts'
 import { defineCopy, formatNumber } from '../core/i18n.ts'
 import { relativeTime } from '../format.ts'
-import { agentDeletionMessage } from '../deletionCopy.ts'
+import { AgentDeleteDialog } from './AgentDeleteDialog.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { WriteNotice } from './AgentForm.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
@@ -51,10 +49,6 @@ const COPY = defineCopy(
     moreActions: (name: string) => `更多操作：${name}`,
     archivedCount: (count: number) => `已归档的话题（${formatNumber(count)}）`,
     archived: '已归档',
-    deleteTitle: (name: string) => `删除「${name}」？`,
-    retry: '重试同一请求',
-    delete: '删除',
-    deleteUnknown: '没有收到删除确认，请重试或返回列表查看。',
   },
   {
     state: { waiting: 'Waiting for you', running: 'Working', failed: 'Failed' },
@@ -70,10 +64,6 @@ const COPY = defineCopy(
     moreActions: (name: string) => `More actions for ${name}`,
     archivedCount: (count: number) => `Archived topics (${formatNumber(count)})`,
     archived: 'Archived',
-    deleteTitle: (name: string) => `Delete “${name}”?`,
-    retry: 'Retry the same request',
-    delete: 'Delete',
-    deleteUnknown: 'Deletion hasn’t been confirmed. Retry or check the list.',
   },
 )
 
@@ -360,17 +350,12 @@ export function AgentsSpaceList({ shell, page = false, hideEmpty = false }: { sh
         <WriteNotice state={writes.state} onRetry={() => void writes.retry()} onAbandon={writes.clear} />
       )}
       {canDelete && removing && (
-        <ConfirmDialog
-          title={COPY.deleteTitle(removing.name)}
-          message={agentDeletionMessage()}
-          danger
-          confirmLabel={writes.held ? COPY.retry : COPY.delete}
+        <AgentDeleteDialog
+          agent={removing}
+          writes={writes}
           onClose={() => setRemoving(null)}
-          onConfirm={async () => {
-            const done = writes.held
-              ? await writes.retry()
-              : await writes.run(`agent:${removing.id}`, `custom-agents/${encodeURIComponent(removing.id)}`, 'DELETE', {})
-            if (done === undefined) throw new MessageError(COPY.deleteUnknown)
+          onDeleted={notice => {
+            if (notice) shell.setToast({ text: notice, tone: 'error' })
           }}
         />
       )}

@@ -2346,6 +2346,17 @@
   gap: var(--sp-8);
   font-variant-numeric: tabular-nums;
 }
+.data-leftover-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--sp-8);
+}
+.data-leftover .settings-row-title {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+}
 .data-export-dialog {
   display: grid;
   gap: var(--sp-8);

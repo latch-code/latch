@@ -1,29 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type { CustomAgent, CustomAgentDetail, CustomAgentList, GeneralAgentDetail, HostCatalog } from '@latch/protocol'
-import {
-  Button,
-  Checkbox,
-  ConfirmDialog,
-  Hint,
-  ICON_STROKE,
-  InlineNotice,
-  StatusWord,
-  TextAreaField,
-  TextField,
-  ShieldGlyph,
-  TrashGlyph,
-} from '@latch/ui'
+import { Button, Checkbox, Hint, ICON_STROKE, InlineNotice, StatusWord, TextAreaField, TextField, ShieldGlyph, TrashGlyph } from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ProjectPicker } from '../components/Pickers.tsx'
 import { harnessName } from '../composerChoice.ts'
-import { agentDeletionMessage } from '../deletionCopy.ts'
+import { AgentDeleteDialog } from './AgentDeleteDialog.tsx'
 import { defineCopy } from '../core/i18n.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { draftOf, normalizedDraft, patchOf, rebaseDraft, saveWaits, type AgentDraft } from './model.ts'
 import { isolationBrief } from './helpers.ts'
 import { writeFor, type AgentWrites, type WriteState } from './useAgentWrites.ts'
-import { MessageError } from '../core/api.ts'
 import { AgentDefaults } from './AgentDefaults.tsx'
 import { BudgetControl, useModelSpend } from '../settings/ModelSpend.tsx'
 import { AGENT_SPACE_COPY } from './spaceCopy.ts'
@@ -69,8 +56,6 @@ const COPY = defineCopy(
     cancel: '取消',
     conflictTip: '已在别处修改，载入最新后再保存',
     save: '保存',
-    deleteTitle: (name: string) => `删除「${name}」？`,
-    deleteFailed: '没有删除，原因见页面下方。',
   },
   {
     effect: 'When changes take effect',
@@ -114,8 +99,6 @@ const COPY = defineCopy(
     cancel: 'Cancel',
     conflictTip: 'Changed elsewhere. Load the latest version before saving.',
     save: 'Save',
-    deleteTitle: (name: string) => `Delete “${name}”?`,
-    deleteFailed: 'The Agent wasn’t deleted. See the reason below.',
   },
 )
 
@@ -253,7 +236,6 @@ export function AgentForm({
   onReload,
   onManageProviders,
   onOptionsRead,
-  homePath,
 }: {
   catalog: HostCatalog
   access: DeviceAccess
@@ -263,12 +245,12 @@ export function AgentForm({
   /** Offline or held by another write. */
   disabled: boolean
   onSaved: (agent: CustomAgent) => void
-  onDeleted?: () => void
+  /** After the deletion; `notice` when its folder stayed where it was. */
+  onDeleted?: (notice?: string) => void
   onCancel?: () => void
   onReload?: () => void
   onManageProviders?: () => void
   onOptionsRead?: () => void | Promise<void>
-  homePath?: string | undefined
 }) {
   const base = useMemo(() => draftOf(agent), [agent])
   // The Agent's monthly budget is kept beside its definition, not in it: it saves on its own and needs no 保存 here.
@@ -509,19 +491,13 @@ export function AgentForm({
         </Button>
       </div>
       {deleting && agent && onDeleted && (
-        <ConfirmDialog
-          title={COPY.deleteTitle(agent.name)}
-          danger
-          confirmLabel={COPY.delete}
-          message={agentDeletionMessage(homePath)}
+        <AgentDeleteDialog
+          agent={agent}
+          writes={writes}
           onClose={() => {
             setDeleting(false)
           }}
-          onConfirm={async () => {
-            const done = await writes.run(`agent:${agent.id}`, `custom-agents/${encodeURIComponent(agent.id)}`, 'DELETE', {})
-            if (done === undefined) throw new MessageError(COPY.deleteFailed)
-            onDeleted()
-          }}
+          onDeleted={onDeleted}
         />
       )}
     </form>

@@ -80,6 +80,31 @@ async function entryState(path: string): Promise<'absent' | 'present' | 'error'>
 
 const sameDirectory = (left: Identity, right: Identity) => left.dev === right.dev && left.ino === right.ino
 
+/** A directory (not a link) of this user that only this user can open. */
+const privateDirectoryOf = (info: { isDirectory(): boolean; isSymbolicLink(): boolean; mode: bigint; uid: bigint }) =>
+  info.isDirectory()
+  && !info.isSymbolicLink()
+  && !(Number(info.mode) & 0o077)
+  && (process.getuid === undefined || info.uid === BigInt(process.getuid()))
+
+/** A home as recorded: its owner, the start directory's hash, its directory name and identities. */
+export interface RecordedHome {
+  rootHash: string
+  owner: string
+  /** `owner` or the tagged name, without `helpers/`. */
+  name: string
+  identity: HelperIdentity
+}
+
+/** A recorded home found where its record says, as it is now: the link-free start directory and each identity. */
+export interface LocatedHome extends RecordedHome {
+  /** The start directory's real path, without links. */
+  root: string
+  path: string
+  /** `dev:ino` of the start directory, `helpers` and the home, as just read. */
+  ids: { root: string; helpers: string; home: string }
+}
+
 /**
  * A new private directory at `path`, made by this call: `mkdir` without `recursive` (an entry that is there, whatever it
  * is, is refused), then everything else through the directory it opened without following a link. The opened directory
@@ -578,6 +603,89 @@ export class SessionFolders {
     } catch {
       return false
     }
+  }
+
+  /** Every home this data directory recorded, under any start directory: the identities only, never a path. */
+  async recordedHomes(): Promise<RecordedHome[]> {
+    await this.start()
+    const homes: RecordedHome[] = []
+    for (const [rootHash, owners] of this.homes)
+      for (const [owner, identity] of owners) homes.push({ rootHash, owner, name: identity.name ?? owner, identity })
+    return homes
+  }
+
+  /**
+   * Where a recorded home is now, checked against its record and reading only. The path comes from the Host itself:
+   * the current start directory, or (for another start directory, whose path is not recorded) a `cwd` the Host recorded
+   * for one of the owner's sessions, used only when its start directory resolves to the recorded one. `absent`: the start
+   * directory is there and nothing is at the home's path. Anything else that does not match is `unverified`.
+   */
+  async locateHome(home: RecordedHome, sessionFolders: readonly string[]): Promise<LocatedHome | 'absent' | 'unverified'> {
+    await this.start()
+    const recorded = this.homes.get(home.rootHash)?.get(home.owner)
+    if (!recorded || (recorded.name ?? home.owner) !== home.name || this.unrecordedHelpers.has(home.owner)) return 'unverified'
+    home = { ...home, identity: recorded }
+    const candidates: string[] = []
+    if (home.rootHash === this.rootHash) {
+      if (!(await this.rootPinned())) return 'unverified'
+      candidates.push(this.options.root)
+    } else
+      for (const folder of sessionFolders)
+        if (basename(folder) === home.name && basename(dirname(folder)) === 'helpers') candidates.push(dirname(dirname(folder)))
+    for (const candidate of candidates) {
+      const canonicalRoot = await canonicalPath(candidate).catch(() => undefined)
+      if (canonicalRoot === undefined || sha256Hex(canonicalRoot) !== home.rootHash) continue
+      // Without links: the helper walks it component by component and never follows one.
+      const root = await realpath(candidate).catch(() => undefined)
+      if (root === undefined) continue
+      try {
+        const rootInfo = await lstat(root, { bigint: true })
+        if (!rootInfo.isDirectory() || !sameDirectory(home.identity.root, { dev: String(rootInfo.dev), ino: String(rootInfo.ino) }))
+          return 'unverified'
+        const parentPath = join(root, 'helpers'),
+          path = join(parentPath, home.name)
+        const parentState = await entryState(parentPath)
+        if (parentState === 'absent') return 'absent'
+        const parent = await lstat(parentPath, { bigint: true })
+        if (!privateDirectoryOf(parent) || !sameDirectory(home.identity.parent, { dev: String(parent.dev), ino: String(parent.ino) }))
+          return 'unverified'
+        const entry = await entryState(path)
+        if (entry === 'absent') return 'absent'
+        if (entry === 'error') return 'unverified'
+        const info = await lstat(path, { bigint: true })
+        if (!privateDirectoryOf(info) || !sameDirectory(home.identity.directory, { dev: String(info.dev), ino: String(info.ino) }))
+          return 'unverified'
+        if ((await canonicalPath(path)) !== join(canonicalRoot, 'helpers', home.name)) return 'unverified'
+        return {
+          ...home,
+          root,
+          path,
+          ids: {
+            root: `${rootInfo.dev}:${rootInfo.ino}`,
+            helpers: `${parent.dev}:${parent.ino}`,
+            home: `${info.dev}:${info.ino}`,
+          },
+        }
+      } catch {
+        return 'unverified'
+      }
+    }
+    return 'unverified'
+  }
+
+  /** A home that was removed (or found gone) is no longer recorded: nothing will look for it, heal it or list it again. */
+  async forgetHome(home: Pick<RecordedHome, 'rootHash' | 'owner'>): Promise<void> {
+    await this.start()
+    const write = this.writes.then(async () => {
+      if (!this.homes.get(home.rootHash)?.has(home.owner)) return
+      const next = new Map([...this.homes].map(([hash, owners]) => [hash, new Map(owners)]))
+      next.get(home.rootHash)!.delete(home.owner)
+      if (!next.get(home.rootHash)!.size) next.delete(home.rootHash)
+      if (this.options.dataDir) await writeFileAtomic(join(this.options.dataDir, RECORD_FILE), this.recordText(this.recorded, next))
+      this.homes = next
+    })
+    this.writes = write.catch(() => {})
+    await write
   }
 
   /** The folder for a start request: made on the first ask, the same one for a retry with the same request ID. */

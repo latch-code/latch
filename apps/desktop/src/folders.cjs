@@ -31,6 +31,8 @@ const COPY = defineCopy(
     exportHere: '导出到这里',
     exportDetails:
       '会在选择的文件夹里新建「Latch 导出」文件夹，写入对话、记忆、待办与设置；不含 Latch 保存的密钥与凭据，也不含工具的输出。',
+    agentFolderTo: '导出 Agent 的文件夹到',
+    agentFolderDetails: '会在选择的文件夹里新建一个 zip 文件，只含这个 Agent 的工作文件夹；不含它的记忆、指令和对话。导出完成后才删除。',
     reselect: '重新选择文件夹',
     reselectNamed: name => `重新选择「${name}」`,
     choose: '选择',
@@ -61,6 +63,9 @@ const COPY = defineCopy(
     exportHere: 'Export here',
     exportDetails:
       'Latch writes chats, memories, to-dos and settings in a new “Latch 导出” folder. The export excludes saved keys, credentials and tool output.',
+    agentFolderTo: 'Export Agent folder to',
+    agentFolderDetails:
+      'Latch writes a new zip file in the selected folder with this Agent’s working folder only, not its memory, instructions or conversations. Deletion follows only once the export is done.',
     reselect: 'Choose folder again',
     reselectNamed: name => `Choose “${name}” again`,
     choose: 'Choose',
@@ -210,6 +215,41 @@ function exportDialog({ defaultPath }) {
     defaultPath,
     properties: ['openDirectory', 'createDirectory'],
   }
+}
+
+/**
+ * The native open panel for 导出后删除: one folder, in which the Host writes the Agent folder's zip archive.
+ * @param {{ defaultPath: string }} input
+ * @returns {Electron.OpenDialogOptions}
+ */
+function agentFolderDialog({ defaultPath }) {
+  return {
+    title: COPY.agentFolderTo,
+    buttonLabel: COPY.exportHere,
+    message: COPY.agentFolderDetails,
+    defaultPath,
+    properties: ['openDirectory', 'createDirectory'],
+  }
+}
+
+const REQUEST_ID = /^[A-Za-z0-9_-]{8,128}$/
+const FOLDER_KEY = /^[0-9a-f]{32}$/
+
+/**
+ * `latch:folders:export-agent`: an Agent (by ID) or the home of one already deleted (`folder`, its key in 设置 › 数据),
+ * and the page's request ID, which a retry reuses.
+ */
+function parseAgentFolderInput(input) {
+  if (!isPlainObject(input) || typeof input.requestId !== 'string' || !REQUEST_ID.test(input.requestId)) return undefined
+  if (hasOnlyKeys(input, ['agentId', 'requestId']))
+    return typeof input.agentId === 'string' && AGENT_ID.test(input.agentId) && input.agentId !== 'general'
+      ? { agentId: input.agentId, requestId: input.requestId }
+      : undefined
+  if (hasOnlyKeys(input, ['folder', 'requestId']))
+    return typeof input.folder === 'string' && FOLDER_KEY.test(input.folder)
+      ? { folder: input.folder, requestId: input.requestId }
+      : undefined
+  return undefined
 }
 
 /** `latch:folders:save-session`: one session by ID; its folder comes from the Host. */
@@ -541,6 +581,35 @@ function createFolderActions({ request, sign, pick, confirm, show, inspect, home
       })
     },
     /**
+     * 导出后删除: the native panel picks the folder the archive is written in; main signs it with the Agent (or the
+     * leftover folder) and the page's request ID, and the Host exports, verifies, then deletes. Progress is the page's.
+     */
+    exportAgentFolder(input) {
+      const parsed = parseAgentFolderInput(input)
+      if (!parsed) return Promise.resolve({ status: 'failed', code: 'invalid' })
+      return withDialog(async () => {
+        const chosen = await pick(agentFolderDialog({ defaultPath: lastParent ?? home() }))
+        const filePaths = Array.isArray(chosen?.filePaths) ? chosen.filePaths : []
+        if (chosen?.canceled || filePaths.length === 0) return { status: 'canceled' }
+        if (filePaths.length !== 1) return { status: 'failed', code: 'invalid' }
+        const parent = filePaths[0]
+        const problem = pathProblem(parent)
+        if (problem) return { status: 'failed', code: problem === 'invalid' ? 'export-folder-invalid' : problem }
+        const grant = await request('POST', '/link/api/folder-grants', {})
+        if (grant.status !== 200 || typeof grant.json?.nonce !== 'string') return hostFailure(grant)
+        const body = parsed.agentId
+          ? { nonce: grant.json.nonce, via: 'agent-folder', agentId: parsed.agentId, requestId: parsed.requestId, parent }
+          : { nonce: grant.json.nonce, via: 'agent-folder', folder: parsed.folder, requestId: parsed.requestId, parent }
+        const target = parsed.agentId
+          ? `/link/api/custom-agents/${encodeURIComponent(parsed.agentId)}/folder-export`
+          : `/link/api/data/agent-folders/${parsed.folder}/export`
+        const result = await request('POST', target, { ...body, signature: sign(body) })
+        const state = result.json?.export
+        if (result.status === 202 && isPlainObject(state) && state.requestId === parsed.requestId) return { status: 'exporting' }
+        return hostFailure(result)
+      })
+    },
+    /**
      * 存为项目: the folder the Host made for a session becomes a new project's primary folder, after the native
      * confirmation shows it. The folder is the one the Host reports for the session, never one from the page.
      */
@@ -638,6 +707,8 @@ module.exports = {
   parseCloneInput,
   cloneDialog,
   exportDialog,
+  agentFolderDialog,
+  parseAgentFolderInput,
   pickDialog,
   dropDialog,
   saveSessionDialog,

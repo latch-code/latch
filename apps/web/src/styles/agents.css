@@ -2072,3 +2072,23 @@ button.helper-card:focus-visible {
   flex-wrap: wrap;
   gap: var(--sp-8);
 }
+/* Deleting an Agent: the question, the export hint, and the export's progress. */
+.agent-delete-body {
+  display: grid;
+  min-width: 0;
+  gap: var(--sp-12);
+}
+.agent-delete-body .ui-confirm-message {
+  min-width: 0;
+  margin: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.agent-delete-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-ui);
+}

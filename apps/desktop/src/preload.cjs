@@ -649,6 +649,15 @@ if (!REMOTE)
         revealData: () => ipcRenderer.invoke('latch:folders:reveal', { data: true }),
         /** 导出全部: main asks where with the native panel, then the Host writes the export into a new folder there. */
         exportData: () => ipcRenderer.invoke('latch:folders:export', {}),
+        /** 导出后删除: main asks where with the native panel, then the Host writes the Agent folder's archive there and deletes. */
+        exportAgentFolder: target => {
+          if (typeof target !== 'object' || target === null || typeof target.requestId !== 'string') return Promise.resolve(INVALID)
+          const input =
+            typeof target.agentId === 'string'
+              ? { agentId: target.agentId, requestId: target.requestId }
+              : { folder: target.folder, requestId: target.requestId }
+          return ipcRenderer.invoke('latch:folders:export-agent', input)
+        },
         /** 克隆: main asks where with the native panel, then the Host clones the address into a new project folder. */
         clone: url => {
           if (typeof url !== 'string' || url.length === 0 || url.length > 2048) return Promise.resolve(INVALID)

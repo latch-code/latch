@@ -5,6 +5,7 @@ import { hostBundleOptions, REPOSITORY_ROOT } from './host-bundle.ts'
 import { buildNetworkHelper } from './build-network.ts'
 import { buildNativeTlsHelper } from './build-native-tls.ts'
 import { buildFilesHelper } from './build-files.ts'
+import { buildHomeHelper } from './build-home.ts'
 import { buildTerminalHelper } from './build-terminal.ts'
 import { buildSimulatorHelper } from './build-simulator.ts'
 
@@ -32,5 +33,6 @@ await buildNativeTlsHelper(REPOSITORY_ROOT)
 
 await buildNetworkHelper(REPOSITORY_ROOT)
 await buildFilesHelper(REPOSITORY_ROOT)
+await buildHomeHelper(REPOSITORY_ROOT)
 await buildTerminalHelper(REPOSITORY_ROOT)
 await buildSimulatorHelper(REPOSITORY_ROOT)

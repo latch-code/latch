@@ -91,6 +91,10 @@ export const AUDIT_LABELS: Readonly<Record<AuditAction, readonly [AuditKind, str
   'app.task.start': ['sessions', '确认：插件页面开始会话'],
   // Agent
   'agent.home.assigned': ['agents', '分配 Agent 的家'],
+  'agent.folder.removing': ['agents', '永久删除 Agent 的文件夹'],
+  'agent.folder.removed': ['agents', 'Agent 文件夹的删除结果'],
+  'agent.folder.exporting': ['agents', '导出 Agent 的文件夹'],
+  'agent.folder.exported': ['agents', 'Agent 文件夹的导出结果'],
   'agent.chat.retired': ['agents', 'Agent 的聊天换到新的家'],
   'agent.chat.restored': ['agents', 'Agent 的聊天换家未成，原聊天保留'],
   'agent.changed': ['agents', '修改 Agent 或记忆'],

@@ -441,6 +441,10 @@ test('the phone app may export by its scope but never imports: the route refuses
       sessionFiles: async () => undefined,
       computer: () => ({}) as never,
       home: async () => ({}) as never,
+      folders: {} as never,
+      requireDesktop: () => {},
+      signedBody: async () => ({}),
+      archiveLabel: () => 'Agent',
     },
   )
   const call = async (listener: string, method: string, path: string) => {

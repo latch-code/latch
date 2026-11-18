@@ -49,7 +49,15 @@ export interface ShellFolders {
   revealData?: () => Promise<RevealResult>
   /** 导出全部: main asks where with the native panel; the export then goes on in the Host (`/data/export/:id`). */
   exportData?: () => Promise<ExportStart>
+  /**
+   * 导出后删除: main asks where with the native panel; the Host writes the archive, then deletes the Agent (or the
+   * leftover folder) and its home (`/custom-agents/folder-exports/:requestId`).
+   */
+  exportAgentFolder?: (target: { agentId: string; requestId: string } | { folder: string; requestId: string }) => Promise<AgentFolderStart>
 }
+
+/** What asking main to export an Agent's folder came to. */
+export type AgentFolderStart = { status: 'exporting' } | { status: 'canceled' } | { status: 'busy' } | { status: 'failed'; code: string }
 
 /** What asking main to export came to: the export under way, or why it did not start. */
 type ExportStart =

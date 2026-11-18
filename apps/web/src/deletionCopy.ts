@@ -15,7 +15,9 @@ export const DELETION_COPY = defineCopy(
     sessionKept: '项目文件夹里的文件不受影响。审计与用量记录保留。已发给模型服务的内容无法撤回。此操作无法撤销。',
     projectRemoval: '只从项目列表移除。文件夹里的文件、项目的会话与改动快照都保留；已有会话仍可查看，但不能继续。',
     folderRemoval: '文件夹里的文件不会删除。在这个项目中使用这个文件夹的已有会话仍可查看，但不能继续。',
-    agent: '它的记忆会删除，聊天记录和文件夹会保留。',
+    agent: '它的记忆会删除，聊天记录保留。',
+    agentFolder: '它的记忆和文件夹会删除，文件夹无法恢复；聊天记录保留。',
+    agentEmptyFolder: '它的记忆和空文件夹会删除，聊天记录保留。',
     agentPending: (path?: string) =>
       `待保存的提议和可撤销的修改一并删除；它在内置 Harness 上的会话不再接受输入。${path ? `文件夹：${path}` : ''}`,
     agentExternal: '外部 Harness 已收到的上下文留在原会话里，直到清空上下文。已发给模型服务的内容无法撤回。此操作无法撤销。',
@@ -31,7 +33,9 @@ export const DELETION_COPY = defineCopy(
     projectRemoval:
       'Removes the project from the list. Files, sessions, and change snapshots are kept. Existing sessions become read-only.',
     folderRemoval: 'Files in this folder are kept. Existing sessions that used this folder in the project become read-only.',
-    agent: 'The Agent’s memory is deleted. Its chat history and folders are kept.',
+    agent: 'The Agent’s memory is deleted. Its chat history is kept.',
+    agentFolder: 'The Agent’s memory and folder are deleted, and the folder can’t be recovered. Its chat history is kept.',
+    agentEmptyFolder: 'The Agent’s memory and its empty folder are deleted. Its chat history is kept.',
     agentPending: (path?: string) =>
       `Pending proposals and reversible changes are deleted. Sessions in the built-in Harness stop accepting input.${path ? ` Folder: ${path}` : ''}`,
     agentExternal:
@@ -71,7 +75,12 @@ export function sessionDeletionMessage(sessions: readonly SessionTarget[], harne
   return [DELETION_COPY.deletion(title), ...externalCopies(sessions, harnesses), DELETION_COPY.sessionKept].join('\n')
 }
 
-/** Deleting one of 我的 Agent: its memory goes; its conversations, folder and what it already sent stay. */
-export function agentDeletionMessage(homePath?: string): string {
-  return [DELETION_COPY.agent, DELETION_COPY.agentPending(homePath), DELETION_COPY.agentExternal].join('\n')
+/**
+ * Deleting one of 我的 Agent: its memory goes, and its folder with it (`files`: for good, after the person chose; `empty`:
+ * nothing in it); its conversations and what it already sent stay.
+ */
+export function agentDeletionMessage(homePath?: string, contents?: 'none' | 'empty' | 'files'): string {
+  const first =
+    contents === 'files' ? DELETION_COPY.agentFolder : contents === 'empty' ? DELETION_COPY.agentEmptyFolder : DELETION_COPY.agent
+  return [first, DELETION_COPY.agentPending(homePath), DELETION_COPY.agentExternal].join('\n')
 }
