@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { runSetup, SetupError, type SetupDeps } from '../scripts/setup-core.ts'
+import { runSetup, SetupError, setupPaths, type SetupDeps } from '../scripts/setup-core.ts'
 import { wranglerRunner } from '../scripts/wrangler.ts'
 
 const folders: string[] = []
@@ -118,6 +118,91 @@ it('creates the working directory before starting the version check in a real ch
   expect((await stat(t.input.workDir)).isDirectory()).toBe(true)
 })
 
+it('refuses an admin header left beside a deleted relay file before deploying anything', async () => {
+  const t = await fixture()
+  await writeFile(`${t.input.out}.admin-header`, 'Authorization: Bearer kept\n', { mode: 0o600 })
+  await expect(runSetup(t.input, t.deps)).rejects.toThrow(/\.admin-header 已存在，不覆盖。再次部署会换新的中继密钥与令牌/u)
+  expect(t.calls).toEqual([])
+  expect(await readFile(`${t.input.out}.admin-header`, 'utf8')).toBe('Authorization: Bearer kept\n')
+})
+
+it('writes into ~/.latch/relays by default: <region>.json, its admin header and <region>/deploy, all private', async () => {
+  const t = await fixture()
+  const home = join(t.root, 'home')
+  await mkdir(home)
+  const paths = await setupPaths({ region: 'ne', home })
+  const relays = join(home, '.latch', 'relays')
+  expect(paths).toEqual({
+    out: join(relays, 'ne.json'),
+    workDir: join(relays, 'ne', 'deploy'),
+    next: 'pnpm relay-edge:accept --name ne',
+    notes: [],
+  })
+  for (const directory of [join(home, '.latch'), relays, join(relays, 'ne'), paths.workDir])
+    expect((await stat(directory)).mode & 0o777).toBe(0o700)
+  await runSetup({ ...t.input, ...paths }, t.deps)
+  expect((await stat(paths.out)).mode & 0o777).toBe(0o600)
+  expect((await stat(`${paths.out}.admin-header`)).mode & 0o777).toBe(0o600)
+  expect((await readdir(paths.workDir)).sort()).toEqual(['work.js', 'work.wrangler.jsonc', 'worker.js', 'wrangler.jsonc'])
+  expect(t.lines.at(-1)).toBe('下一步：pnpm relay-edge:accept --name ne')
+
+  // A second run for the region refuses before deploying: it would rotate the node and leave the file dead.
+  const again = setupPaths({ region: 'ne', home })
+  await expect(again).rejects.toBeInstanceOf(SetupError)
+  await expect(again).rejects.toThrow('~/.latch/relays/ne.json 已存在，不覆盖')
+  await expect(again).rejects.toThrow(/--out/u)
+  await rm(paths.out)
+  await expect(setupPaths({ region: 'ne', home })).rejects.toThrow('~/.latch/relays/ne.json.admin-header 已存在')
+  // An explicit file elsewhere still works; the deploy directory stays the region's.
+  const elsewhere = await setupPaths({ region: 'ne', home, out: join(t.root, 'mine.json') })
+  expect(elsewhere).toMatchObject({ out: join(t.root, 'mine.json'), workDir: paths.workDir })
+  expect(elsewhere.next).toBe(`pnpm relay-edge:accept --file ${join(t.root, 'mine.json')}`)
+  await expect(setupPaths({ region: 'se', home, out: 'relative.json' })).rejects.toThrow(/绝对路径/u)
+})
+
+it('refuses a ~/.latch that is a link or that others can open', async () => {
+  const t = await fixture()
+  const wide = join(t.root, 'wide')
+  await mkdir(join(wide, '.latch'), { recursive: true })
+  await chmod(join(wide, '.latch'), 0o755)
+  await expect(setupPaths({ region: 'ne', home: wide })).rejects.toThrow('~/.latch 必须是你自己的目录，权限 0700，不能是链接')
+  const linked = join(t.root, 'linked')
+  await mkdir(join(linked, 'target'), { recursive: true, mode: 0o700 })
+  await symlink(join(linked, 'target'), join(linked, '.latch'))
+  await expect(setupPaths({ region: 'ne', home: linked })).rejects.toBeInstanceOf(SetupError)
+  expect(await readdir(join(linked, 'target'))).toEqual([])
+  // runSetup itself refuses a work directory others can open.
+  const open = join(t.root, 'open')
+  await mkdir(open, { mode: 0o755 })
+  await chmod(open, 0o755)
+  await expect(runSetup({ ...t.input, workDir: open }, t.deps)).rejects.toThrow(/部署目录/u)
+  expect(t.calls).toEqual([])
+})
+
+it('keeps using an earlier ~/.latch-relay deploy directory, never moving it, and says how to move it', async () => {
+  const t = await fixture()
+  const home = join(t.root, 'home')
+  const legacy = join(home, '.latch-relay', 'latch-relay-ne')
+  await mkdir(legacy, { recursive: true, mode: 0o700 })
+  await writeFile(join(legacy, 'wrangler.jsonc'), '{}', { mode: 0o600 })
+  const paths = await setupPaths({ region: 'ne', home })
+  expect(paths.workDir).toBe(legacy)
+  expect(paths.out).toBe(join(home, '.latch', 'relays', 'ne.json'))
+  expect(paths.notes).toEqual([
+    '部署配置仍在早先的 ~/.latch-relay，照常使用。移到 ~/.latch/relays：(umask 077 && mkdir -p ~/.latch/relays/ne) && mv -n ~/.latch-relay/latch-relay-ne ~/.latch/relays/ne/deploy，再 rmdir ~/.latch-relay',
+  ])
+  await runSetup({ ...t.input, ...paths }, t.deps)
+  expect((await readdir(legacy)).sort()).toEqual(['work.js', 'work.wrangler.jsonc', 'worker.js', 'wrangler.jsonc'])
+  await expect(stat(join(home, '.latch', 'relays', 'ne'))).rejects.toMatchObject({ code: 'ENOENT' })
+  // Once the new deploy directory exists, the earlier one is no longer used (and still not touched).
+  await mkdir(join(home, '.latch', 'relays', 'ne', 'deploy'), { recursive: true, mode: 0o700 })
+  expect(await setupPaths({ region: 'ne', home, out: join(t.root, 'second.json') })).toMatchObject({
+    workDir: join(home, '.latch', 'relays', 'ne', 'deploy'),
+    notes: [],
+  })
+  expect(await readdir(legacy)).toHaveLength(4)
+})
+
 it('writes no relay file when the node never answers /healthz', async () => {
   const t = await fixture({ status: async () => 503 })
   await expect(runSetup(t.input, t.deps)).rejects.toThrow(/healthz/u)
@@ -167,7 +252,7 @@ esac
   )
   const wrangler = wranglerRunner(tool)
   await runSetup(t.input, { ...t.deps, wrangler })
-  const cwd = join(t.input.workDir, 'latch-relay-ne')
+  const cwd = t.input.workDir
   expect(await readFile(join(cwd, 'verified.calls'), 'utf8')).toBe('RELAY_SIGNING_SEED\nREGISTRATION_TOKEN\nADMIN_TOKEN\n')
   const failed = await wrangler(['secret', 'put', 'REGISTRATION_TOKEN', '-c', 'wrangler.jsonc'], { cwd, input: 'synthetic-failure-marker' })
   expect(failed).toEqual({ code: 23, stdout: '' })

@@ -49,6 +49,7 @@ function cli(
     secret?: string
     cwd?: string
     env?: NodeJS.ProcessEnv
+    home?: string
     program?: 'latch' | 'pnpm latch'
   } = {},
 ) {
@@ -77,6 +78,8 @@ function cli(
     ...(options.answer !== undefined ? { confirm: async () => options.answer === true } : {}),
     env: options.env ?? {},
     cwd: options.cwd ?? tmpdir(),
+    // Never the real ~/.latch/relays.
+    home: options.home ?? join(tmpdir(), 'lt-cli-no-home'),
     ...(options.program ? { program: options.program } : {}),
   }
   return { io, output, latch: (...argv: string[]) => runLatch(argv, io) }
@@ -1119,6 +1122,36 @@ describe('latch CLI', () => {
     expect(linux.output.stderr).toContain('尚未提供 Linux 中继发布物')
     await expect(stat(dataDir)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(stat(out)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('adds the only relay file in ~/.latch/relays when no file is named, and asks for a name when there are several', async () => {
+    const home = await temporaryDirectory()
+    const relays = join(home, '.latch', 'relays')
+    await mkdir(join(home, '.latch'), { mode: 0o700 })
+    await mkdir(relays, { mode: 0o700 })
+    const self = { relayId: 'e'.repeat(32), url: 'https://home.example/', spkiHash: 'f'.repeat(64) }
+    await writeFile(join(relays, 'home-example.json'), JSON.stringify({ version: 1, profile: self }), { mode: 0o600 })
+    const keyHash = self.spkiHash.slice(0, 8)
+    const one = cli({ home })
+    expect(await one.latch('relay', 'add', '--data-dir', await stoppedDataDir(), '--expect-key', keyHash)).toBe(0)
+    expect(one.output.stdout).toContain(`地址：${self.url}`)
+
+    await writeFile(join(relays, 'ne.json'), JSON.stringify({ version: 1, profile: { ...self, relayId: 'a'.repeat(32) } }), {
+      mode: 0o600,
+    })
+    const several = cli({ home })
+    expect(await several.latch('relay', 'add', '--data-dir', await stoppedDataDir(), '--expect-key', keyHash)).toBe(1)
+    expect(several.output.stderr).toContain('home-example、ne')
+    expect(several.output.stderr).not.toContain(self.url)
+    const named = cli({ home })
+    expect(await named.latch('relay', 'add', '--name', 'home-example', '--data-dir', await stoppedDataDir(), '--expect-key', keyHash)).toBe(
+      0,
+    )
+    // A ~/.latch others can read is refused, not listed.
+    await chmod(join(home, '.latch'), 0o755)
+    const wide = cli({ home })
+    expect(await wide.latch('relay', 'add', '--data-dir', await stoppedDataDir(), '--expect-key', keyHash)).toBe(1)
+    expect(wide.output.stderr).toContain('~/.latch 必须是你自己的目录，权限 0700')
   })
 
   it('adds, lists and removes relays with the Host stopped, never showing a registration key', async () => {

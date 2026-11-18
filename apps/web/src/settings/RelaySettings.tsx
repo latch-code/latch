@@ -26,7 +26,7 @@ import { ConfirmationContent } from '../components/InlineConfirm.tsx'
 import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { IconTile, SettingsGroup, SettingsRow } from './common.tsx'
-import { relaySetupCommands } from './relayCommands.ts'
+import { RELAYS_DIR, relaySetupCommands } from './relayCommands.ts'
 import { currentLocale, defineCopy, formatNumber, useLocale } from '../core/i18n.ts'
 
 const COPY = defineCopy(
@@ -75,6 +75,8 @@ const COPY = defineCopy(
     copyCommand: '复制命令',
     dropFile: '拖入配置文件',
     chooseFile: '选择文件',
+    relaysFolderDetail:
+      '中继文件在这个文件夹。选择窗口里按 ⌘⇧G 输入它。添加后可以删除中继文件；Workers 中继的 .admin-header 留着，查看状态要用。',
     logIn: '登录',
     loggedIn: '已登录',
     deploy: '部署',
@@ -151,6 +153,8 @@ const COPY = defineCopy(
     copyCommand: 'Copy command',
     dropFile: 'Drop a relay file',
     chooseFile: 'Choose file',
+    relaysFolderDetail:
+      'Relay files are kept in this folder. In the file dialog, press ⌘⇧G and enter it. Once the relay is added you can delete the relay file; keep a Workers relay’s .admin-header, which checking its status needs.',
     logIn: 'Log in',
     loggedIn: 'Logged in',
     deploy: 'Deploy',
@@ -683,6 +687,11 @@ function AddRelay({
     <div className="relay-drop" data-testid="relay-drop" onDragOver={event => event.preventDefault()} onDrop={drop}>
       <Icon icon={FileUp} size={16} />
       <span>{COPY.dropFile}</span>
+      <Tooltip content={COPY.relaysFolderDetail}>
+        <code className="relay-folder" tabIndex={0}>
+          {RELAYS_DIR}
+        </code>
+      </Tooltip>
       <Button size="sm" onClick={() => file.current?.click()}>
         {COPY.chooseFile}
       </Button>
@@ -729,6 +738,9 @@ function AddRelay({
           ))}
         </Step>
         <Step index={3} title={COPY.connect}>
+          {commands.fetch.map(command => (
+            <Command key={command} command={command} />
+          ))}
           {fileStep}
         </Step>
       </ol>

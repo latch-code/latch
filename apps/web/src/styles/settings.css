@@ -2529,6 +2529,7 @@
 }
 .relay-drop {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-8);
   padding: var(--sp-12);
@@ -2538,6 +2539,14 @@
 }
 .relay-drop > span {
   flex: 1;
+}
+.relay-folder {
+  flex-shrink: 0;
+  border-radius: var(--r-4);
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+  cursor: default;
 }
 .relay-check {
   display: grid;

@@ -2,6 +2,7 @@ import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { EDGE_RELAY_AVAILABLE } from '@latch/link-wire'
+import { chooseRelayFile, RelayFilesError } from '@latch/link-client/relay-files'
 import type { NativeRelayTest } from '@latch/protocol'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { AuditLog, type AuditActor } from '../src/audit.ts'
@@ -17,13 +18,14 @@ import {
 } from '../src/relay/profiles.ts'
 
 export const RELAY_USAGE = `  relay list [--json]                      列出自己的中继与状态（Host 已停止）
-  relay add --file <中继文件> [--expect-key <密钥短哈希>]
-                                           添加自己的中继（Host 已停止）：先列出地址与密钥短哈希，再输入 y 确认；
+  relay add [--name <名称> | --file <中继文件>] [--expect-key <密钥短哈希>]
+                                           添加自己的中继（Host 已停止）；不给文件时用 ~/.latch/relays 里唯一的中继文件，
+                                           --name 选其中的 <名称>.json。先列出地址与密钥短哈希，再输入 y 确认；
                                            非交互环境用 --expect-key。Host 启动后核对密钥并登记成功，才签发含该中继的连接簿；
                                            文件里的注册令牌只交给 Host，不显示
   relay test <节点标识>                      测试中继的连接、密钥、登记，显示 Host 签发状态（Host 运行中）
   relay remove <节点标识>                    移除自己的中继（Host 已停止）
-  relay setup cloudflare                  尚未实现：安装版不带 Workers 部署包，源码目录用 pnpm relay-edge:setup
+  relay setup cloudflare                  尚未实现：安装版不带 Workers 部署包，在 Latch 源码目录部署后导入
   relay setup linux                       尚未提供 Linux 中继发布物；可在服务器源码目录部署后导入
 `
 type Out = (text: string) => void
@@ -94,6 +96,8 @@ export async function runRelayCommand(input: {
   stopped(): Promise<{ release(): Promise<void> }>
   /** The running Host's API through host.sock. */
   running(method: string, path: string): Promise<unknown>
+  /** Where ~/.latch/relays is looked up; `os.homedir()` when absent. */
+  home?: string
 }): Promise<number | undefined> {
   const { command, rest, flags, dataDir, io, out } = input
   if (command === 'setup') {
@@ -188,9 +192,19 @@ export async function runRelayCommand(input: {
         }
       }
       if (command === 'add') {
-        const path = flags.get('--file')
-        if (typeof path !== 'string') throw new RelayCliError('请用 --file <中继文件> 指定要添加的中继')
-        const relay = await readRelayFile(resolve(io.cwd, path))
+        const path = flags.get('--file'),
+          name = flags.get('--name')
+        if (path !== undefined && name !== undefined) throw new RelayCliError('--file 与 --name 只用一个')
+        const file =
+          typeof path === 'string'
+            ? resolve(io.cwd, path)
+            : await chooseRelayFile({
+                ...(typeof name === 'string' ? { name } : {}),
+                ...(input.home === undefined ? {} : { home: input.home }),
+              }).catch((error: unknown) => {
+                throw new RelayCliError(error instanceof RelayFilesError ? error.message : '读不到 ~/.latch/relays')
+              })
+        const relay = await readRelayFile(file)
         profiles.assertNewRelay(relay)
         for (const line of relayFacts(relay)) out(line)
         const expected = flags.get('--expect-key')

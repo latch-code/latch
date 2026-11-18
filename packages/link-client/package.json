@@ -7,6 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./crypto": "./src/crypto.ts",
+    "./private-directory": "./src/private-directory.ts",
+    "./relay-files": "./src/relay-files.ts",
     "./build-native-tls": "./src/native-helper-build.ts",
     "./websocket": "./src/websocket.ts"
   },

@@ -333,6 +333,8 @@ describe('workspace guard', () => {
   it('lists the documented sensitive home paths', () => {
     expect(DENY_READ_HOME_PATHS).toContain('.ssh')
     expect(DENY_READ_HOME_PATHS).toContain('Library/Keychains')
+    // The person's own relay files (registration and admin tokens).
+    expect(DENY_READ_HOME_PATHS).toContain('.latch')
   })
 
   it('finds the code root of this checkout', () => {

@@ -15,6 +15,8 @@ sources:
   - apps/relay-edge/scripts/setup-core.ts
   - apps/relay-edge/scripts/wrangler.ts
   - apps/relay-edge/scripts/accept-core.ts
+  - apps/relay-edge/scripts/accept.ts
+  - packages/link-client/src/relay-files.ts
   - apps/web/src/settings/RelaySettings.tsx
   - apps/web/src/settings/relayCommands.ts
   - packages/protocol/src/relay-endpoint.ts
@@ -62,7 +64,7 @@ sources:
 
 ### 方式 A：Linux 服务器（self）
 
-「添加转发服务」› Linux 服务器同样是三步：登录（`ssh` 到你的服务器）、部署（下面的命令，在服务器上运行）、连接（用 `scp` 把中继文件取回这台 Mac，再拖进来）。部署命令需要在服务器上的 Latch 源码目录运行，应复制到登录服务器的终端。安装版用「已有配置文件」导入。在公网 Linux 上运行 Latch Relay：
+「添加转发服务」› Linux 服务器同样是三步：登录（`ssh` 到你的服务器）、部署（下面的命令，在服务器上运行）、连接（用 `scp` 把中继文件取回这台 Mac 的 `~/.latch/relays`，再拖进来）。部署命令需要在服务器上的 Latch 源码目录运行，应复制到登录服务器的终端。安装版用「已有配置文件」导入。在公网 Linux 上运行 Latch Relay：
 
 **准备服务器。** 需要一台可直达的 Linux 服务器、指向它的域名与证书。
 
@@ -107,7 +109,13 @@ pnpm relay health --data-dir /srv/latch-relay
 pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8443 --output /srv/latch-relay/latch-connection.json
 ```
 
-`--url` 是 https origin（小写域名或 IPv6、可选端口，不带路径、`?`、`#` 或下划线：手机连接簿只认这种地址），证书须与主机名相符；`--output` 是新文件的绝对路径，以 0600 写出，命令只打印写入结果与密钥短哈希，供在 Mac 的确认窗口里对照。文件（版本 1）含地址、节点 ID、证书公钥指纹，没有开放登记时还含注册令牌。
+`--url` 是 https origin（小写域名或 IPv6、可选端口，不带路径、`?`、`#` 或下划线：手机连接簿只认这种地址），证书须与主机名相符；`--output` 是新文件的绝对路径，以 0600 写出，命令只打印写入结果与密钥短哈希，供在 Mac 的确认窗口里对照。文件（版本 1）含地址、节点 ID、证书公钥指纹，没有开放登记时还含注册令牌。`--output` 没有默认值：这个命令以服务用户身份读私有数据目录，那个用户的主目录不是你的。
+
+取回到这台 Mac 的 `~/.latch/relays`（名称用域名，点换成连字符）：
+
+```sh
+(umask 077 && mkdir -p ~/.latch/relays) && scp user@server:/srv/latch-relay/latch-connection.json ~/.latch/relays/relay-example-com.json
+```
 
 ### 方式 B：自己的 Cloudflare 账户（edge）
 
@@ -116,11 +124,26 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 在 Latch 的源码目录依次运行：
 
 1. **登录**：`wrangler login`，在自己的终端由你本人完成。Free 计划可以运行：节点对象从不休眠，一个节点一天约用 10,800 GB-s，Free 每天 13,000 GB-s 与 100,000 次对象请求（收到的消息按 20 条计 1 次），超出后到 UTC 0 点前连接失败；长期使用选 Workers Paid（[价格](https://developers.cloudflare.com/durable-objects/platform/pricing/)）。Free 计划上，陌生人只要知道地址、每秒约 1.2 次升级请求就能用完当天的请求额度（被拒绝的升级同样计数）。Latch 不替你登录，也不读、不存 Cloudflare 的令牌。部署命令要求 wrangler 4.164.0，不在 PATH 上就停下，不代装。
-2. **部署**：`pnpm relay-edge:setup --region ne --out /绝对路径/latch-relay-ne.json`（`se` 为新加坡）。它构建两个 Worker，部署注册挑战校验 Worker 与节点，生成中继密钥、注册令牌与管理令牌，经同一个加固的 wrangler 调用器从标准输入写进 secret（不进命令行参数、屏幕或日志），填好地址与节点标识后再部署一次，检查 `/healthz`，最后写出中继文件与旁边的 `.admin-header`（都是新建的 0600 文件）。屏幕上只有进度、中继密钥短哈希和下一步命令。
-3. **验收**：`pnpm relay-edge:accept --file /绝对路径/latch-relay-ne.json`。在任何 Mac 添加它之前对刚部署的节点运行，逐项打印通过、失败或跳过，不打印令牌或地址；有失败项时退出码为 1，不要添加这个中继。各项见下文「Workers 的界限与验收」。
-4. **添加**：在 Mac 的「设置 › 连接转发 › 添加转发服务 › 已有配置文件」选这个文件，对照核对卡、系统确认窗口与第 2 步打印的密钥短哈希。
+2. **部署**：`pnpm relay-edge:setup --region ne`（`se` 为新加坡）。它构建两个 Worker，部署注册挑战校验 Worker 与节点，生成中继密钥、注册令牌与管理令牌，经同一个加固的 wrangler 调用器从标准输入写进 secret（不进命令行参数、屏幕或日志），填好地址与节点标识后再部署一次，检查 `/healthz`，最后写出中继文件 `~/.latch/relays/ne.json` 与旁边的 `ne.json.admin-header`（都是新建的 0600 文件，已存在时在部署前停下，不覆盖）。`--out <绝对路径>` 把中继文件写到别处。屏幕上只有进度、中继密钥短哈希和下一步命令。
+3. **验收**：`pnpm relay-edge:accept --name ne`。`~/.latch/relays` 里只有一个中继文件时可省略 `--name`；有几个时它只列出名称；其他位置用 `--file <绝对路径>`。在任何 Mac 添加它之前对刚部署的节点运行，逐项打印通过、失败或跳过，不打印令牌或地址；有失败项时退出码为 1，不要添加这个中继。各项见下文「Workers 的界限与验收」。
+4. **添加**：在 Mac 的「设置 › 连接转发 › 添加转发服务 › 已有配置文件」选 `~/.latch/relays/ne.json`（访达隐藏这个文件夹：`open ~/.latch/relays` 后拖进来，或在选择窗口按 ⌘⇧G 输入路径），对照核对卡、系统确认窗口与第 2 步打印的密钥短哈希。
 
-- 再次运行部署命令会换新的中继密钥、注册令牌与节点标识，旧中继文件随之失效：这也是收回某人使用权的办法，之后只把新文件交给仍要用的人。
+**你的中继文件放在哪里。** 都在 `~/.latch/relays`：`~/.latch` 与 `relays` 都是 0700，命令逐级创建，是链接、不归你或组与其他用户可访问时拒绝使用。
+
+| 文件 | 内容 | 添加之后 |
+| --- | --- | --- |
+| `<名称>.json` | 中继文件：地址、节点身份、注册令牌 | 可以删除：Host 已保存需要的部分；要给另一台 Mac 用或重新验收时再保留 |
+| `<名称>.json.admin-header` | Workers 中继的管理令牌（`Authorization` 头） | 留着：查看状态与排空要用；重新验收还需要中继文件 |
+| `<地区>/deploy/` | 部署命令生成的 wrangler 配置与 Worker 副本，不含秘密 | 留着，`wrangler deploy -c` 或 `wrangler delete` 时用 |
+
+部署目录按地区命名，因为 Worker 按地区命名（`latch-relay-ne`）：同一地区再次部署就是重新部署同一个 Worker。早先版本把部署目录放在 `~/.latch-relay/latch-relay-<地区>`，中继文件放在 `--out` 指定处；新位置没有这个地区的部署目录时，部署命令照常使用旧目录并打印一行搬移命令，从不自动移动或删除。以东京节点为例，搬移是两条命令：
+
+```sh
+(umask 077 && mkdir -p ~/.latch/relays/ne) && mv -n ~/latch-relay-ne.json ~/.latch/relays/ne.json && mv -n ~/latch-relay-ne.json.admin-header ~/.latch/relays/ne.json.admin-header
+mv -n ~/.latch-relay/latch-relay-ne ~/.latch/relays/ne/deploy && rmdir ~/.latch-relay
+```
+
+- 再次运行部署命令会换新的中继密钥、注册令牌与节点标识，旧中继文件随之失效：这也是收回某人使用权的办法，之后只把新文件交给仍要用的人。默认位置已有 `ne.json` 或 `ne.json.admin-header` 时它在部署前停下：先在 Mac 上移除旧中继并删除这两个文件，或用 `--out` 把新文件写到别处。
 - 每次部署都会让经过这个节点的连接断开一次，Mac 自动重新登记，手机自动重连。删除：先在 Mac 上移除这个中继，再 `wrangler delete --name latch-relay-ne`。
 - 设置里的「Cloudflare Workers」方式在源码目录运行的 Latch 里给出同样的命令。安装版的 `latch relay setup cloudflare` 尚未实现：安装包不带 Worker 部署包；在源码目录部署后仍可用「已有配置文件」添加。
 - 自定义域名作为同一节点的另一个地址尚未接入部署命令。
@@ -132,7 +155,7 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 - 只有这台 Mac 上有 `admin` 的设备能添加、停用、移除；其他有 `admin` 的设备只看得到列表与状态。
 - 每个节点只能添加一次，至多四个自己的中继。
 - 地址只接受连接簿的格式：`https://` 加小写域名或 IPv6、可选端口，末尾至多一个 `/`。设置、`latch relay add` 与 Host 都按同一份规则拒绝其他写法（[relay-endpoint.ts](../packages/protocol/src/relay-endpoint.ts)）。
-- Host 停止时可用 `latch relay add --file <中继文件> --data-dir <目录>`、`relay list` 和 `relay remove <节点标识>`。源码运行使用 `pnpm latch`。添加时终端列出每个地址与密钥短哈希，核对后输入 y，非交互用 `--expect-key <密钥短哈希>`。先写审计再保存为待核对，Host 启动后节点证明密钥并接受登记，才可进入签名连接簿。Host 运行时可用 `relay test <节点标识>` 检查连通性、身份与登记，并查看 Host 签发状态。`relay setup linux` 显示服务器发布物尚未提供，Linux 源码部署流程见上文。
+- Host 停止时可用 `latch relay add --data-dir <目录>`（读 `~/.latch/relays` 里唯一的中继文件；`--name <名称>` 选其中一个，`--file <中继文件>` 指定其他位置）、`relay list` 和 `relay remove <节点标识>`。源码运行使用 `pnpm latch`。添加时终端列出每个地址与密钥短哈希，核对后输入 y，非交互用 `--expect-key <密钥短哈希>`。先写审计再保存为待核对，Host 启动后节点证明密钥并接受登记，才可进入签名连接簿。Host 运行时可用 `relay test <节点标识>` 检查连通性、身份与登记，并查看 Host 签发状态。`relay setup linux` 显示服务器发布物尚未提供，Linux 源码部署流程见上文。
 
 **Host 做什么。**
 
@@ -189,4 +212,4 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 | 需要检查 | 同一天两次报告路由冲突 | 移除后重新添加 |
 | 地址无效 | 早先保存的地址不符合连接簿格式（带 `?`、`#`、下划线等），不拨号、不进连接簿，其他中继照常签发 | 移除后用新的中继文件添加 |
 
-公开的 `/healthz` 只说明节点接受连接（Linux）或 Worker 已配置（Workers）；Workers 节点是否可用看 `/admin/status`（`curl -H @<中继文件>.admin-header`）。完整的验证要用手机在另一个网络实际连接、重连与撤销。
+公开的 `/healthz` 只说明节点接受连接（Linux）或 Worker 已配置（Workers）；Workers 节点是否可用看 `/admin/status`（`curl -H @"$HOME/.latch/relays/ne.json.admin-header" <地址>/admin/status`）。完整的验证要用手机在另一个网络实际连接、重连与撤销。

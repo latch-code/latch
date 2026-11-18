@@ -83,6 +83,8 @@ export interface CliIO {
   readLine(prompt: string): Promise<string>
   env: NodeJS.ProcessEnv
   cwd: string
+  /** HOME for the person's own files (~/.latch/relays); `os.homedir()` when absent. */
+  home?: string
   program?: 'latch' | 'pnpm latch'
 }
 
@@ -1181,6 +1183,7 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
         actor: CLI_ACTOR,
         stopped: () => lockStopped(dataDir),
         running: async (method, path) => api((await runningHost(dataDir)).state, method, path),
+        ...(io.home === undefined ? {} : { home: io.home }),
       })
       if (handled !== undefined) return handled
     }

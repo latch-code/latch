@@ -1,7 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
-import { copyFile, mkdir, open, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, open, writeFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
+import { makePrivateDirectory, ownedDirectory } from '@latch/link-client/private-directory'
+import { legacyDeployDir, prepareRelayDeployDir, prepareRelaysDir, RELAYS_DISPLAY, RelayFilesError } from '@latch/link-client/relay-files'
 
 /**
  * One relay node on the person's own Cloudflare account, end to end: deploy the work Worker and the node, generate the
@@ -14,13 +16,18 @@ import { isAbsolute, join } from 'node:path'
  */
 export interface SetupInput {
   region: 'ne' | 'se'
-  /** Absolute path of the relay file to create; it must not exist. */
+  /** Absolute path of the relay file to create; neither it nor `<out>.admin-header` may exist. */
   out: string
   /** The Worker bundles (worker.js and work.js). */
   workerBundle: string
   workBundle: string
-  /** Where the generated wrangler configs and bundle copies live (outside any repository); created if missing. */
+  /**
+   * Where the generated wrangler configs and bundle copies live (outside any repository): created 0700 if missing (its
+   * parent must exist), and refused unless it is this user's private directory.
+   */
   workDir: string
+  /** The acceptance command printed as the next step; by default the one naming `out`. */
+  next?: string
 }
 export interface SetupDeps {
   /** Runs wrangler with these arguments in `cwd`, writing `input` to its standard input. Resolves its exit code and stdout. */
@@ -32,6 +39,61 @@ export interface SetupDeps {
   wait(ms: number): Promise<void>
 }
 export class SetupError extends Error {}
+
+/**
+ * Where a setup run writes, by default all under `~/.latch/relays`: the relay file `<region>.json` beside its
+ * `.admin-header`, and the deploy configs in `<region>/deploy/`. The deploy directory is keyed by region because the
+ * Worker is (`latch-relay-<region>`): a second run for a region redeploys the same Worker. `out` writes the relay file
+ * elsewhere. A work directory from an earlier version (`~/.latch-relay/latch-relay-<region>`) is used while the new one
+ * does not exist, and never moved or deleted; `notes` then holds the one line with the commands to move it.
+ */
+export async function setupPaths(input: {
+  region: 'ne' | 'se'
+  out?: string
+  home?: string
+}): Promise<{ out: string; workDir: string; next: string; notes: string[] }> {
+  try {
+    if (input.out !== undefined && !isAbsolute(input.out)) throw new SetupError('--out 应为一个新文件的绝对路径')
+    const relays = await prepareRelaysDir(input.home)
+    const out = input.out ?? join(relays, `${input.region}.json`)
+    await refuseExisting(out, input.out === undefined ? `${RELAYS_DISPLAY}/${input.region}.json` : out)
+    const deploy = join(relays, input.region, 'deploy')
+    const present = await lstat(deploy).then(
+      () => true,
+      () => false,
+    )
+    const legacy = present ? undefined : await legacyDeployDir(input.region, input.home)
+    const next = input.out === undefined ? `pnpm relay-edge:accept --name ${input.region}` : `pnpm relay-edge:accept --file ${out}`
+    if (legacy)
+      return {
+        out,
+        workDir: legacy,
+        next,
+        notes: [
+          `部署配置仍在早先的 ~/.latch-relay，照常使用。移到 ${RELAYS_DISPLAY}：(umask 077 && mkdir -p ${RELAYS_DISPLAY}/${input.region}) && mv -n ~/.latch-relay/latch-relay-${input.region} ${RELAYS_DISPLAY}/${input.region}/deploy，再 rmdir ~/.latch-relay`,
+        ],
+      }
+    const workDir = await prepareRelayDeployDir(input.region, input.home)
+    return { out, workDir, next, notes: [] }
+  } catch (error) {
+    if (error instanceof RelayFilesError) throw new SetupError(error.message)
+    throw error
+  }
+}
+
+/** Refuses before anything is deployed: a new run would rotate the node's secrets and leave an existing file dead. */
+async function refuseExisting(out: string, shown: string): Promise<void> {
+  for (const path of [out, `${out}.admin-header`]) {
+    const exists = await lstat(path).then(
+      () => true,
+      () => false,
+    )
+    if (exists)
+      throw new SetupError(
+        `${shown}${path === out ? '' : '.admin-header'} 已存在，不覆盖。再次部署会换新的中继密钥与令牌，旧文件随之失效：先在 Mac 上移除这个中继，删除 ${shown} 与 ${shown}.admin-header 后重试；或用 --out <新文件的绝对路径> 写到别处`,
+      )
+  }
+}
 
 const HINT = { ne: 'apac-ne', se: 'apac-se' } as const
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex')
@@ -92,25 +154,18 @@ async function writeNew(path: string, text: string): Promise<void> {
 
 export async function runSetup(input: SetupInput, deps: SetupDeps): Promise<{ url: string; relayId: string }> {
   if (!isAbsolute(input.out)) throw new SetupError('--out 应为一个新文件的绝对路径')
-  // Refuse an existing relay file before anything is deployed.
-  const probe = await open(input.out, constants.O_RDONLY).then(
-    async handle => {
-      await handle.close()
-      return true
-    },
-    () => false,
-  )
-  if (probe) throw new SetupError(`${input.out} 已存在，换一个路径`)
-  await mkdir(input.workDir, { recursive: true, mode: 0o700 })
-  const version = await deps.wrangler(['--version'], { cwd: input.workDir }).catch(error => {
+  // Refuse an existing relay file or admin header before anything is deployed.
+  await refuseExisting(input.out, input.out)
+  const dir = input.workDir
+  if (!isAbsolute(dir) || !(await makePrivateDirectory(dir)) || !(await ownedDirectory(dir, process.getuid?.() ?? -1, 0o077)))
+    throw new SetupError(`部署目录 ${dir} 必须是你自己的目录，权限 0700，不能是链接`)
+  const version = await deps.wrangler(['--version'], { cwd: dir }).catch(error => {
     if (error instanceof SetupError) throw error
     return { code: -1 }
   })
   if (version.code !== 0) throw new SetupError('没有找到 wrangler。请先安装 Cloudflare 的 wrangler 并运行 wrangler login，再重试。')
 
   const name = `latch-relay-${input.region}`
-  const dir = join(input.workDir, name)
-  await mkdir(dir, { recursive: true, mode: 0o700 })
   await copyFile(input.workerBundle, join(dir, 'worker.js'))
   await copyFile(input.workBundle, join(dir, 'work.js'))
   await writeFile(join(dir, 'work.wrangler.jsonc'), WORK_CONFIG, { mode: 0o600 })
@@ -166,7 +221,7 @@ export async function runSetup(input: SetupInput, deps: SetupDeps): Promise<{ ur
     deps.progress(`已写入中继文件 ${input.out}（含注册令牌，只交给你的 Mac）`)
     // Public: the short hash the Mac's confirmation sheet shows for this relay key.
     deps.progress(`中继密钥短哈希 ${createHash('sha256').update(Buffer.from(relayKey, 'hex')).digest('hex').slice(0, 8)}`)
-    deps.progress(`下一步：pnpm relay-edge:accept --file ${input.out}`)
+    deps.progress(`下一步：${input.next ?? `pnpm relay-edge:accept --file ${input.out}`}`)
     return { url: `${url}/`, relayId }
   } finally {
     seed.fill(0)

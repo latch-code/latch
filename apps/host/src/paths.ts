@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { lstat, mkdir, opendir, realpath, stat } from 'node:fs/promises'
+import { lstat, opendir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { makePrivateDirectory as makeOneDirectory, ownedDirectory } from '@latch/link-client/private-directory'
 import { AppError } from '@latch/sdk'
 import { latchEnv } from './env.ts'
 import { PACKAGED } from './distribution.ts'
@@ -137,21 +138,11 @@ function insecureRuntime(path: string): AppError {
 
 /** A directory we own: real directory (not a symlink), owned by `uid`, and with no group/other bits in `mask`. */
 async function requireOwnedDirectory(path: string, uid: number, mask: number): Promise<void> {
-  let info
-  try {
-    info = await lstat(path)
-  } catch {
-    throw insecureRuntime(path)
-  }
-  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid || (info.mode & mask) !== 0) throw insecureRuntime(path)
+  if (!(await ownedDirectory(path, uid, mask))) throw insecureRuntime(path)
 }
 
 async function makePrivateDirectory(path: string): Promise<void> {
-  try {
-    await mkdir(path, { mode: 0o700 })
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw insecureRuntime(path)
-  }
+  if (!(await makeOneDirectory(path))) throw insecureRuntime(path)
 }
 
 function darwinUserTemp(): string {
@@ -337,6 +328,8 @@ export const DENY_READ_HOME_PATHS: readonly string[] = [
   '.config/opencode',
   '.pi',
   '.config/goose',
+  // The person's own relay files: registration and admin tokens.
+  '.latch',
 ]
 
 /** Relative to HOME. Files placed here start at login, so these directories are never projects either. */

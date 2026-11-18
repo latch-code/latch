@@ -3,16 +3,19 @@ import { open } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { parseArgs } from 'node:util'
 import { isRelayEndpoint } from '@latch/link-wire'
+import { chooseRelayFile, RelayFilesError } from '@latch/link-client/relay-files'
 import { runAcceptance, type AcceptanceItem } from './accept-core.ts'
 
 /**
- * `pnpm relay-edge:accept --file <relay file>`: the acceptance run against a freshly deployed edge relay, before any
- * Mac uses it. Reads the relay file `pnpm relay-edge:setup` wrote and, beside it, `<file>.admin-header`. Prints one line
- * per item and nothing secret; exits 0 only when no item failed.
+ * `pnpm relay-edge:accept [--name <name> | --file <relay file>]`: the acceptance run against a freshly deployed edge
+ * relay, before any Mac uses it. Reads the relay file `pnpm relay-edge:setup` wrote (by default the only one in
+ * ~/.latch/relays, or `<name>.json` there) and, beside it, `<file>.admin-header`. Prints one line per item and nothing
+ * secret; exits 0 only when no item failed.
  */
 const { values } = parseArgs({
   options: {
     file: { type: 'string' },
+    name: { type: 'string' },
     'admin-header': { type: 'string' },
     sockets: { type: 'string' },
     'slow-seconds': { type: 'string' },
@@ -40,7 +43,12 @@ async function readSmall(path: string, limit = 4096, secret = false): Promise<st
     await handle.close()
   }
 }
-const path = values.file ?? ''
+if (values.file !== undefined && values.name !== undefined) fail('--file 与 --name 只用一个')
+const path =
+  values.file
+  ?? (await chooseRelayFile(values.name === undefined ? {} : { name: values.name }).catch((error: unknown) =>
+    fail(error instanceof RelayFilesError ? error.message : '读不到 ~/.latch/relays'),
+  ))
 if (!isAbsolute(path)) fail('--file 应为 pnpm relay-edge:setup 写出的中继文件的绝对路径')
 const text = await readSmall(path)
 let profile: Record<string, unknown> | undefined
