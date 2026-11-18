@@ -205,17 +205,14 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await notice.getByRole('button', { name: '在终端里登录' }).click()
         await notice.getByText('没有打开终端。请自己在终端里运行这条命令。').waitFor()
         terminal.fails = false
-        // This stand-in runs the login before the request answers, where a real terminal app only opens. The request is
-        // waited for, so that the check below is asked after the Host dropped what it knew, and cannot join a check that
-        // started while the login still ran; the login itself starts a program, which takes more than a second on a busy
-        // machine.
-        const answered = page.waitForResponse(
-          response => response.request().method() === 'POST' && response.url().endsWith('/login-terminal') && response.ok(),
-        )
-        await notice.getByRole('button', { name: '在终端里登录' }).click()
-        await expect.poll(() => scripts.length).toBe(1)
-        await expect.poll(() => existsSync(loginFile), { timeout: 15_000 }).toBe(true)
-        await answered
+        // The stand-in completes the login before the Host replies, so that reply also signals the login cache was cleared.
+        const [answered] = await Promise.all([
+          page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/login-terminal')),
+          notice.getByRole('button', { name: '在终端里登录' }).click(),
+        ])
+        expect(answered.ok()).toBe(true)
+        expect(scripts).toHaveLength(1)
+        expect(existsSync(loginFile)).toBe(true)
         expect(scripts[0]).toContain(`'${join(bin, 'codex')}' 'login'`)
 
         // Coming back to the window is enough.
