@@ -310,9 +310,10 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
         await expect.poll(() => page.locator('html').getAttribute('lang')).toBe(locale)
       }
       await language('en')
-      const englishFailure = panel.getByText('Failed', { exact: true })
+      const englishPanel = page.getByRole('region', { name: 'Devices', exact: true })
+      const englishFailure = englishPanel.getByText('Failed', { exact: true })
       await expect.poll(() => englishFailure.getAttribute('title')).toBe('The simulator could not start. Try again shortly.')
-      expect(await panel.locator('[title*="Unable to boot device"]').count()).toBe(0)
+      expect(await englishPanel.locator('[title*="Unable to boot device"]').count()).toBe(0)
       await language('zh-CN')
       await captureDeviceWidths(some.app, page, 'failed')
       // An agent's Xcode device session on the running one.
