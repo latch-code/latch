@@ -283,6 +283,29 @@ describe('streaming render', () => {
     expect(await page.evaluate(() => window.renders.ConversationRail)).toBe(railRenders)
   })
 
+  it('says what the live turn waits on beside its author, and takes it away when text arrives', async () => {
+    await open()
+    const user: Message = { id: 'user-wait', role: 'user', text: '继续' }
+    const waitingOnModel = detail([user], { running: true, liveId: 'reply-wait', cursor: 1 })
+    const since = new Date(Date.now() - 12_000).toISOString()
+    waitingOnModel.summary.live = { runId: 'run-wait', activity: 'model', since, runStartedAt: since, lastEventAt: since }
+    await show(waitingOnModel)
+    const status = page.locator('.assistant-meta .assistant-meta-status')
+    await expect.poll(() => status.textContent()).toMatch(/^在等模型 0:1\d$/u)
+    // Its spinner is the running glyph, on the author's own line.
+    const [line, word] = await Promise.all([page.locator('.assistant-meta').last().boundingBox(), status.boundingBox()])
+    expect(word!.y).toBeGreaterThanOrEqual(line!.y - 1)
+    expect(word!.y + word!.height).toBeLessThanOrEqual(line!.y + line!.height + 1)
+    await mkdir('test-results/reply-waiting', { recursive: true })
+    await page.screenshot({ path: 'test-results/reply-waiting/waiting.png', animations: 'disabled' })
+    const writing = detail([user], { running: true, liveId: 'reply-wait', liveText: '开始回答', cursor: 2 })
+    writing.summary.live = waitingOnModel.summary.live
+    await show(writing)
+    await page.locator('[data-message-id="reply-wait"]').getByText('开始回答').waitFor()
+    await expect.poll(() => status.count()).toBe(0)
+    await page.screenshot({ path: 'test-results/reply-waiting/writing.png', animations: 'disabled' })
+  })
+
   it('keeps history settled while a new run locks and restores editing', async () => {
     await open()
     await page.evaluate(() => {

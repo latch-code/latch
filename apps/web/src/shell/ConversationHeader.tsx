@@ -75,12 +75,6 @@ const HEADER_COPY = defineCopy(
   },
 )
 
-/** The clock's leaf: only these words re-render each second, and the shared ticker stops while the page is hidden. */
-function RunningWords({ live }: { live: RunLive | undefined }) {
-  useTicker('second')
-  return <>{runningWords(live, hostNow())}</>
-}
-
 function SilentWords({ live }: { live: RunLive | undefined }) {
   useTicker('second')
   return <>{silentWords(live, hostNow())}</>
@@ -105,12 +99,9 @@ function TitleStatus({ summary, cancelling, frozen }: { summary: TaskSummary; ca
           <SilentWords live={live} />
         </StatusWord>
       )
+    // What a running turn waits on is said in the conversation, beside the reply's author.
     case 'running':
-      return (
-        <StatusWord tone="running">
-          <RunningWords live={live} />
-        </StatusWord>
-      )
+      return null
     case 'failed':
       return <StatusPill tone="err">{SHELL_COPY.failed}</StatusPill>
     case 'ended':

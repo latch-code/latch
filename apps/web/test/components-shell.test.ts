@@ -51,7 +51,7 @@ describe('top bar', () => {
     expect(renderToStaticMarkup(createElement(SessionHeader, topBar))).not.toContain('connection-pill')
   })
 
-  it('says the state in the title row, running with its clock, and where the session runs', () => {
+  it('says the state in the title row, leaves a running turn to the conversation, and says where the session runs', () => {
     vi.useFakeTimers({ now: Date.parse('2026-11-11T10:01:12Z'), toFake: ['Date'] })
     const pill = (extra: Partial<TaskSummary>, { cancelling = false, connection = 'connected' as 'connected' | 'offline' } = {}) => {
       const html = renderToStaticMarkup(createElement(SessionHeader, { ...topBar, summary: session(extra), cancelling, connection }))
@@ -66,8 +66,9 @@ describe('top bar', () => {
       runStartedAt: '2026-11-11T10:00:00Z',
       lastEventAt: '2026-11-11T10:01:10Z',
     }
-    expect(pill({ status: 'running', live })).toEqual(['running', '在等模型 1:12'])
-    expect(pill({ status: 'running' })).toEqual(['running', '运行中'])
+    // What a running turn waits on is beside the reply's author, not here.
+    expect(pill({ status: 'running', live })).toBeNull()
+    expect(pill({ status: 'running' })).toBeNull()
     expect(pill({ status: 'idle' })).toBeNull()
     expect(pill({ status: 'waiting-approval' })).toEqual(['waiting', '等你处理'])
     expect(pill({ status: 'running', pendingQuestions: 1 })).toEqual(['waiting', '等你处理'])

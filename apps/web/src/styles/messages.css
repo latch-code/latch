@@ -249,6 +249,12 @@
   white-space: nowrap;
 }
 /* 备选: a small tag after the service and model that answered, never shrunk away. */
+/* What the live turn waits on, at the end of the author line. */
+.assistant-meta-status {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
 .assistant-meta-fallback {
   display: inline-flex;
   flex-shrink: 0;

@@ -36,7 +36,7 @@ const COPY = defineCopy(
  * The clock's leaf: only this re-renders each second, and the shared ticker stops while the page is hidden. A topic of
  * 我的 Agent says it as the helper does (在想, 在跑命令), never 在等模型.
  */
-function RunningWords({ live, person }: { live: RunLive | undefined; person: boolean }) {
+export function RunningWords({ live, person = false }: { live: RunLive | undefined; person?: boolean }) {
   useTicker('second')
   const words = runningWords(live, hostNow())
   const said = person ? personActivity(live)?.words : undefined

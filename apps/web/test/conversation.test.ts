@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FileDiff, Message, RunLive, TaskDetail, TaskStatus, TaskSummary } from '@latch/protocol'
 import type { Turn } from '../src/conversation.ts'
 import {
@@ -1108,6 +1108,44 @@ describe('a settled turn', () => {
     expect(failed).not.toContain('输入')
     // A turn with no record from Latch shows none of it.
     expect(settledTranscript([user('u'), reply('a', '好', { model: 'Fake Model' })], 'idle')).not.toContain('经 Latch')
+  })
+
+  it('says what a running turn waits on beside its author until text arrives', () => {
+    vi.useFakeTimers({ now: Date.parse('2026-11-11T10:01:12Z'), toFake: ['Date'] })
+    const live = {
+      runId: 'r',
+      activity: 'model' as const,
+      since: '2026-11-11T10:01:00Z',
+      runStartedAt: '2026-11-11T10:00:00Z',
+      lastEventAt: '2026-11-11T10:01:10Z',
+    }
+    const turn = (status: TaskStatus, liveText: string) =>
+      renderToStaticMarkup(
+        createElement(Transcript, {
+          detail: {
+            ...detail([user('u')], { liveText, liveMessageId: 'live' }, status),
+            summary: {
+              harnessId: 'standard',
+              id: 's',
+              title: 't',
+              status,
+              updatedAt: '',
+              model: 'fixture-large',
+              providerId: 'fixture',
+              live,
+            },
+          },
+          approvals: [],
+          harnessName: 'Latch',
+          active: status === 'running',
+        }),
+      )
+    const waiting = turn('running', '')
+    expect(waiting).toMatch(/class="assistant-meta-status">.*在等模型 1:12/u)
+    // Once the reply writes, its text speaks for itself; a turn at rest says nothing either.
+    expect(turn('running', '正在写')).not.toContain('assistant-meta-status')
+    expect(turn('idle', '')).not.toContain('assistant-meta-status')
+    vi.useRealTimers()
   })
 
   it('names the model of a running turn from the run before its first step records one', () => {

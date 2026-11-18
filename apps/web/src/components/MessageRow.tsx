@@ -221,8 +221,11 @@ export function AuthorLine({
   provider,
   chosen,
   fallback,
+  status,
 }: {
   name: string
+  /** What the live turn is doing while no text arrives (在等模型 0:10), at the end of the line. */
+  status?: ReactNode
   /** The engine's name, when it is not already the word. */
   engine?: string
   harness?: Pick<HarnessInfo, 'capabilities' | 'level' | 'permission'> | undefined
@@ -266,6 +269,7 @@ export function AuthorLine({
           </span>
         </Tooltip>
       )}
+      {status && <span className="assistant-meta-status">{status}</span>}
     </div>
   )
 }
