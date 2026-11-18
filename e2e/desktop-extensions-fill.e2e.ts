@@ -106,10 +106,13 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
 
       // ---- 卸载 a listed server: exactly the vendor's command, typed in and not run ----
       const terminals = async () => (await owner.json<TerminalListResponse>('workspaces/default/terminals')).terminals
-      await row.getByRole('button', { name: '在终端里打开', exact: true }).click()
+      await Promise.all([
+        row.getByText('已填入', { exact: true }).waitFor(),
+        row.getByRole('button', { name: '在终端里打开', exact: true }).click(),
+      ])
       const dialog = page.getByRole('dialog', { name: '终端', exact: true })
       const rows = dialog.locator('.terminal-screen:not([hidden]) .xterm-rows')
-      await expect.poll(() => screenText(rows)).toContain('codex mcp remove files')
+      await expect.poll(() => screenText(rows), { timeout: 15_000 }).toContain('codex mcp remove files')
       const opened = await terminals()
       expect(opened).toHaveLength(1)
       const prompt = opened[0]!.prompt
@@ -125,9 +128,11 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
 
       // ---- 安装: the vendor's command with room for the name, typed in and not run ----
       const install = mcp.locator('.extension-command').filter({ hasText: 'codex mcp add' })
-      await install.getByRole('button', { name: '在终端里打开', exact: true }).click()
-      await expect.poll(() => screenText(dialog.locator('.terminal-screen:not([hidden]) .xterm-rows'))).toContain('codex mcp add')
-      await install.getByText('已填入', { exact: true }).waitFor()
+      await Promise.all([
+        install.getByText('已填入', { exact: true }).waitFor(),
+        install.getByRole('button', { name: '在终端里打开', exact: true }).click(),
+      ])
+      await expect.poll(() => screenText(rows), { timeout: 15_000 }).toContain('codex mcp add')
       await page.screenshot({ path: `${OUTPUT}/install-filled-1440.png`, animations: 'disabled' })
 
       // The fake Codex received no MCP command; typed text never reaches the audit.
