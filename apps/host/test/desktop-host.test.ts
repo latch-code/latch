@@ -148,6 +148,59 @@ describe('desktop Host launch', () => {
     for (const marker of SECRET_MARKERS) expect(hostJson).not.toContain(marker)
   }, 90_000)
 
+  // The move itself is macOS's (data-home.test.ts covers its rules on every platform).
+  it.runIf(process.platform === 'darwin')(
+    'moves the old default data directory before starting a Host, and leaves a running one where it is',
+    async () => {
+      // A short home: the stand-in Host listens on a socket inside the data directory, and a socket path is at most 103 bytes.
+      const home = await mkdtemp('/tmp/lh-')
+      cleanups.push(() => rm(home, { recursive: true, force: true }))
+      const cwd = join(home, 'cwd')
+      await mkdir(cwd)
+      const old = join(home, 'Library', 'Application Support', 'Latch', 'Host')
+      const now = join(home, '.latch', 'host')
+      await mkdir(old, { recursive: true, mode: 0o700 })
+      await writeFile(join(old, 'kept.json'), '{}', { mode: 0o600 })
+      const script = await fakeHostScript()
+      const env = cleanEnvironment()
+      // As `pnpm desktop` with no flag finds it: the old place, not named by the person.
+      const found = { ...desktopLaunchOptions(['--data-dir', old], cwd, env), dataDirExplicit: false }
+
+      // A Host still running from the old place is reused there: nothing moves under it.
+      const running = await ensureDesktopHost(found, { script })
+      stopLater(running.pid)
+      const again = await ensureDesktopHost(found, { script, home })
+      expect(again).toMatchObject({ pid: running.pid, reused: true, hostStatePath: join(old, 'host.json') })
+      expect((await lstat(old)).isDirectory()).toBe(true)
+      // The packaged app asks for the new place while that Host runs: refused, nothing created there.
+      await expect(ensureDesktopHost(desktopLaunchOptions(['--data-dir', now], cwd, env), { script, home })).rejects.toMatchObject({
+        code: 'data-dir-move-busy',
+      })
+      await expect(lstat(now)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      // A new build: the launcher stops that Host, moves the directory, and starts and waits for the Host at the new
+      // place (not at the old one, where nothing will ever appear).
+      await writeFile(script, `${FAKE_HOST}\n// a newer build\n`)
+      const moved = await ensureDesktopHost(found, { script, home, timeoutMs: 15_000 })
+      stopLater(moved.pid)
+      expect(alive(running.pid)).toBe(false)
+      expect(moved.reused).toBe(false)
+      expect(moved.hostStatePath).toBe(join(now, 'host.json'))
+      expect(moved.notice).toContain(now)
+      expect(moved.notice).toContain(REBUILT_NOTICE)
+      expect(await readFile(join(now, 'kept.json'), 'utf8')).toBe('{}')
+      expect((await lstat(old)).isFile()).toBe(true)
+      const launched = JSON.parse(await readFile(join(now, `launch-${moved.pid}.json`), 'utf8')) as { argv: string[] }
+      expect(launched.argv.slice(0, 2)).toEqual(['--data-dir', now])
+      expect(alive(moved.pid)).toBe(true)
+
+      // A launch that still names the old place (a record from before the move) reaches the Host where the data is.
+      const stale = await ensureDesktopHost(desktopLaunchOptions(['--data-dir', old], cwd, env), { script, home })
+      expect(stale).toMatchObject({ pid: moved.pid, reused: true, hostStatePath: join(now, 'host.json') })
+    },
+    90_000,
+  )
+
   it('launches the Host without adding a URL or token to its environment', async () => {
     const root = await directory()
     const dataDir = join(root, 'data')

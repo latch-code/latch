@@ -202,7 +202,7 @@ pnpm desktop -- --tailnet \
 
 1. `--data-dir` 或 `LATCH_DATA_DIR`；
 2. 当前目录下已存在的 `.runtime`（旧位置，继续使用并打印迁移提示）；
-3. 平台默认：macOS `~/Library/Application Support/Latch/Host`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`。
+3. 平台默认：macOS `~/.latch/host`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`。macOS 上原先在 `~/Library/Application Support/Latch/Host` 的数据，由 Host 在下一次启动时整体移到新位置（一次改名，不复制），原位置留下一个说明文件。
 
 **启动目录**：`--workspace` → `LATCH_WORKSPACE` → 数据目录内已存在的 `workspace`（旧布局）→ `~/Latch/workspace`（需要时创建）。
 

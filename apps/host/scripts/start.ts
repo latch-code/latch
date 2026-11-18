@@ -20,6 +20,7 @@ import { latchEnv } from '../src/env.ts'
 import { COMPUTER_APP } from '../src/mcp-computer.ts'
 import { openInDeviceHub, spawnSimctl, xcrunDevicectl, xcrunSimctl } from '../src/simulators.ts'
 import { attachSimulatorHelper } from '../src/simulator-live.ts'
+import { settleDataHome } from '../src/data-home.ts'
 import { latchCodeRoot, resolveLatchPaths } from '../src/paths.ts'
 import { presenceHelperPath } from '../src/presence.ts'
 import { buildPresenceHelper } from './presence-helper.ts'
@@ -186,7 +187,19 @@ async function refuseHostWithoutLock(dataDir: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const paths = resolveLatchPaths({ dataDir: option('--data-dir'), workspace: option('--workspace'), env, cwd: process.cwd() })
+  const resolved = resolveLatchPaths({ dataDir: option('--data-dir'), workspace: option('--workspace'), env, cwd: process.cwd() })
+  // The default data location moved to ~/.latch/host: a start moves the old directory there once, before the lock and
+  // before anything is created at either place.
+  const dataHome = await settleDataHome({
+    dataDir: resolved.dataDir,
+    explicit: resolved.dataDirSource === 'flag' || resolved.dataDirSource === 'env',
+    env,
+  })
+  const paths = {
+    ...resolved,
+    dataDir: dataHome.dataDir,
+    warnings: dataHome.note ? [...resolved.warnings, dataHome.note] : resolved.warnings,
+  }
   const tls = tlsOptions()
   const nativeHost = option('--native-host'),
     nativePortText = option('--native-port')

@@ -2,12 +2,20 @@ import { createRequire } from 'node:module'
 import { describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { packagedNode, startPackagedHost } = require('../src/packaged.cjs') as {
+const { packagedHostDataDir, packagedNode, startPackagedHost } = require('../src/packaged.cjs') as {
+  packagedHostDataDir(input?: { platform?: string; home?: string; appData?: string }): string
   packagedNode(launcher: string, run: (path: string, args: string[]) => Promise<string>): Promise<string>
   startPackagedHost(input: { launcher: string; dataDir: string; run: (path: string, args: string[]) => Promise<string> }): Promise<string>
 }
 
 describe('packaged bootstrap', () => {
+  it('names the Host’s default data directory exactly as the Host does', () => {
+    // apps/host/test/paths.test.ts expects the same path from `defaultDataDir('darwin', '/Users/me', {})`.
+    expect(packagedHostDataDir({ platform: 'darwin', home: '/Users/me', appData: '/Users/me/Library/Application Support' })).toBe(
+      '/Users/me/.latch/host',
+    )
+  })
+
   it('uses the native launcher and a fixed Host entry with an explicit directory and ephemeral port', async () => {
     const run = vi.fn().mockResolvedValue('{"hostStatePath":"/temporary/data/host.json"}')
     await expect(

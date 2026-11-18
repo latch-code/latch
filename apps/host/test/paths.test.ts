@@ -18,6 +18,8 @@ import {
   isProtectedWorkspacePath,
   latchCodeRoot,
   prepareRuntimeDir,
+  defaultDataDir,
+  legacyDataDir,
   resolveLatchPaths,
   type WorkspaceGuardContext,
 } from '../src/paths.ts'
@@ -51,10 +53,10 @@ describe('resolveLatchPaths', () => {
     const legacy = resolveLatchPaths({ ...base, exists: path => path === '/work/.runtime' })
     expect(legacy).toMatchObject({ dataDir: '/work/.runtime', dataDirSource: 'legacy-runtime' })
     expect(legacy.warnings[0]).toBe(
-      '正在使用旧的数据目录 /work/.runtime。新安装默认使用 /Users/me/Library/Application Support/Latch/Host；如需迁移，请停止 Host 后移动目录并用 --data-dir 指定。',
+      '正在使用旧的数据目录 /work/.runtime。新安装默认使用 /Users/me/.latch/host；如需迁移，请停止 Host 后移动目录并用 --data-dir 指定。',
     )
-    expect(resolveLatchPaths(base)).toMatchObject({
-      dataDir: '/Users/me/Library/Application Support/Latch/Host',
+    expect(resolveLatchPaths({ ...base, isDirectory: none })).toMatchObject({
+      dataDir: '/Users/me/.latch/host',
       dataDirSource: 'default',
       agentsDir: '/Users/me/Library/Application Support/Latch/Agents',
       warnings: [],
@@ -101,13 +103,40 @@ describe('resolveLatchPaths', () => {
       },
     })
     expect(paths.dataDirSource).toBe('default')
-    expect(paths.dataDir).toBe('/Users/me/Library/Application Support/Latch/Host')
+    expect(paths.dataDir).toBe('/Users/me/.latch/host')
     expect(visited).not.toContain('/project/.runtime')
   })
 
+  it('keeps the old macOS data directory in use until a start moves it, and the new one afterwards', () => {
+    const old = '/Users/me/Library/Application Support/Latch/Host'
+    const base = { env: {}, cwd: '/work', home: '/Users/me', platform: 'darwin' as const, legacyRuntime: false }
+    // Not moved yet: every command finds the data where it still is.
+    expect(resolveLatchPaths({ ...base, exists: none, isDirectory: path => path === old })).toMatchObject({
+      dataDir: old,
+      dataDirSource: 'legacy-default',
+    })
+    // Moved: the file left at the old place is not a directory, and the new one exists.
+    expect(resolveLatchPaths({ ...base, exists: path => path === '/Users/me/.latch/host', isDirectory: none })).toMatchObject({
+      dataDir: '/Users/me/.latch/host',
+      dataDirSource: 'default',
+    })
+    // Both there: the new one is used; a start says so (data-home.ts).
+    expect(
+      resolveLatchPaths({ ...base, exists: path => path === '/Users/me/.latch/host', isDirectory: path => path === old }).dataDir,
+    ).toBe('/Users/me/.latch/host')
+    // A flag or a variable is the person's choice: the old default plays no part.
+    expect(resolveLatchPaths({ ...base, dataDir: '/srv/d', exists: none, isDirectory: path => path === old }).dataDir).toBe('/srv/d')
+    // Agent installs did not move, and no other platform's default did.
+    expect(resolveLatchPaths({ ...base, exists: none, isDirectory: none }).agentsDir).toBe(
+      '/Users/me/Library/Application Support/Latch/Agents',
+    )
+    expect(defaultDataDir('darwin', '/Users/me', {})).toBe('/Users/me/.latch/host')
+    expect(legacyDataDir('linux', '/home/me')).toBeUndefined()
+  })
+
   it('gives the desktop app’s data directory one start directory, whichever build starts its Host', () => {
-    // The packaged app passes --data-dir <appData>/Latch/Host; a checkout's desktop launch finds the same default.
-    const dataDir = '/Users/me/Library/Application Support/Latch/Host'
+    // The packaged app passes --data-dir ~/.latch/host (apps/desktop/src/packaged.cjs); a checkout's launch finds the same default.
+    const dataDir = '/Users/me/.latch/host'
     for (const legacy of [false, true]) {
       const exists = (path: string) => legacy && path === `${dataDir}/workspace`
       const roots = ['/Users/me/src/latch', '/Applications/Latch.app/Contents/Resources/app'].map(

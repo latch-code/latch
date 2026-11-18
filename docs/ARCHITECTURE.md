@@ -255,13 +255,22 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 
 | 路径 | 解析顺序 |
 | --- | --- |
-| 数据目录 | `--data-dir` → `LATCH_DATA_DIR` → 源码入口当前目录下已存在的 `.runtime`（打印迁移提示；应用包忽略）→ macOS `~/Library/Application Support/Latch/Host`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`，Windows `%APPDATA%\Latch\Host` |
+| 数据目录 | `--data-dir` → `LATCH_DATA_DIR` → 源码入口当前目录下已存在的 `.runtime`（打印迁移提示；应用包忽略）→ macOS `~/.latch/host`（原位置的数据见下），Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`，Windows `%APPDATA%\Latch\Host` |
 | 启动目录 | `--workspace` → `LATCH_WORKSPACE` → 数据目录内已存在的 `workspace`（打印提示）→ `~/Latch/workspace` |
 | 工作树目录 | `LATCH_WORKTREES_DIR` → 启动目录旁边的 `worktrees`（见 [BRANCHES.md](BRANCHES.md#新建工作树)） |
 | Agent 安装目录 | `LATCH_AGENTS_DIR` → macOS `~/Library/Application Support/Latch/Agents`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/agents`，Windows `%APPDATA%\Latch\Agents`（只用于重叠检查） |
 | 运行目录 | macOS 的 `DARWIN_USER_TEMP_DIR`（否则 `TMPDIR`）、Linux 的 `XDG_RUNTIME_DIR`，都没有时 `/tmp/latch-<uid>`；其下的 `latch-<hostId 前 8 位>/` 放 `host.sock` 与会话临时目录 |
 
 - 有命令行参数时不读对应的环境变量。相对的 `XDG_DATA_HOME` 被忽略。
+- **macOS 数据目录的一次性移动**（`apps/host/src/data-home.ts`）。默认位置原为 `~/Library/Application Support/Latch/Host`。
+  - 只有启动 Host 的入口移动，并且在新建任何目录之前：`start.ts`；桌面启动器在没有 Host 运行时，以及为新构建停掉旧 Host 之后。其余命令在移动之前照旧使用原位置（`dataDirSource: 'legacy-default'`）。
+  - `--data-dir` 与 `LATCH_DATA_DIR` 指向别处的目录从不移动。用它们指明原位置时，数据还在就原地运行、不移动；数据已经移走就转到新位置（解析器与启动入口相同）。
+  - 一次同盘改名，不复制：先确认原目录属于当前用户、没有 Host 在其中应答、`host.json` 记录的进程不在运行，持有原目录的数据目录锁，再改名；`~/.latch` 以 0700 创建，是链接、属主不同或对他人开放都拒绝。新位置只是一个空目录时由这次改名替换。
+  - 不移动并说明：原位置是指向目录的链接（继续在原处使用）；数据目录内有旧的默认文件夹 `workspace`。
+  - 拒绝启动、什么都不动：两处都有数据（409 `data-dir-both`，不替人选）；原目录还有 Host 在运行或无法确认（409 `data-dir-move-busy`、`data-dir-locked`）；两处不在同一个磁盘（409 `data-dir-move-volume`）；目录不安全（409 `data-dir-move-refused`）。
+  - 移动后原位置留一个普通文件。仍以原位置为默认的旧版本无法在那里建目录，启动失败，不会新建一份空数据和新的 Host 身份；留不下这个文件时启动信息里明说。
+  - 桌面应用包按同一个默认位置找 `host.json`（`apps/desktop/src/packaged.cjs` 的 `packagedHostDataDir`，与 `defaultDataDir` 各有测试钉住同一路径），数据留在原位置时也接受原位置的 `host.json`。Agent 安装目录与桌面端自己的数据不移动。
+  - 移动本身不写审计：审计日志在被移动的目录里。
 - 数据目录必须是当前用户拥有的目录（不是符号链接），否则拒绝启动（500 `data-dir-insecure`）；权限收紧到 0700。启动目录不存在时以 0700 创建。
 - 运行目录及其父目录必须是当前用户拥有的真实目录，运行目录与其中的 `tmp/` 不带组与其他人的权限位（500 `runtime-dir-insecure`）；`host.sock` 路径超过 103 字节时 500 `runtime-dir-too-long`；Windows 上 500 `runtime-dir-unsupported`。`host.sock` 只靠这个目录的属主与权限保护。
 - Host 从不自己选一个位于 Latch 程序目录内的启动目录：数据目录内的 `workspace` 与程序目录重叠时改用 `~/Latch/workspace`，原目录中的文件不移动。`--workspace` 与 `LATCH_WORKSPACE` 是所有者自己的选择，照样使用。

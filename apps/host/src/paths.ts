@@ -11,7 +11,8 @@ import { PACKAGED } from './distribution.ts'
 
 export interface LatchPaths {
   dataDir: string
-  dataDirSource: 'flag' | 'env' | 'legacy-runtime' | 'default'
+  /** `legacy-default`: the platform location from before `~/.latch/host`, still in use until the Host next starts and moves it. */
+  dataDirSource: 'flag' | 'env' | 'legacy-runtime' | 'legacy-default' | 'default'
   workspaceRoot: string
   workspaceSource: 'flag' | 'env' | 'legacy-data' | 'default'
   agentsDir: string
@@ -27,11 +28,35 @@ function pathApi(platform: NodeJS.Platform) {
 
 function platformData(platform: NodeJS.Platform, home: string, env: NodeJS.ProcessEnv, leaf: 'Host' | 'Agents'): string {
   const path = pathApi(platform)
+  // On macOS the Host's data lives with the person's other Latch files in `~/.latch`; agent installs stay where they were.
+  if (platform === 'darwin' && leaf === 'Host') return path.join(home, '.latch', 'host')
   if (platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Latch', leaf)
   if (platform === 'win32') return path.join(env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Latch', leaf)
   // XDG requires an absolute base; a relative value is ignored.
   const xdg = env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : path.join(home, '.local', 'share')
   return path.join(xdg, 'latch', leaf.toLowerCase())
+}
+
+/** The macOS data directory from before `~/.latch/host`; undefined where the default never moved. */
+export function legacyDataDir(platform: NodeJS.Platform, home: string): string | undefined {
+  return platform === 'darwin' ? pathApi(platform).join(home, 'Library', 'Application Support', 'Latch', 'Host') : undefined
+}
+
+/** The platform's default data directory, whatever flags or variables say. */
+export function defaultDataDir(platform: NodeJS.Platform, home: string, env: NodeJS.ProcessEnv): string {
+  return platformData(platform, home, env, 'Host')
+}
+
+/** A directory, or a link to one; the file a move leaves at the old place is neither. */
+function isDirectoryNow(path: string): boolean {
+  try {
+    return statSync(path).isDirectory()
+  } catch (error) {
+    // Only "nothing there" means no data. A directory that cannot be examined just now still counts, so that no
+    // command takes the new place for a fresh install and creates it empty.
+    const code = error instanceof Error && 'code' in error ? error.code : undefined
+    return code !== 'ENOENT' && code !== 'ENOTDIR'
+  }
 }
 
 /** Realpath when the path exists, else the path itself. */
@@ -70,6 +95,8 @@ export function resolveLatchPaths(input: {
   codeRoot?: string
   /** Installed commands never discover a checkout's old data from the caller's working directory. */
   legacyRuntime?: boolean
+  /** Tests; whether a path is a directory or a link to one (the marker file a move leaves behind is neither). */
+  isDirectory?: (path: string) => boolean
 }): LatchPaths {
   const platform = input.platform ?? process.platform
   const path = pathApi(platform)
@@ -81,11 +108,17 @@ export function resolveLatchPaths(input: {
   let dataDirSource: LatchPaths['dataDirSource']
   const platformDefault = platformData(platform, home, input.env, 'Host')
   const dataDirEnv = input.dataDir ? undefined : latchEnv(input.env, 'DATA_DIR')
+  // A flag or a variable that still names the old macOS place after its data moved finds the data where it is now.
+  const relocated = (named: string) => {
+    const legacy = legacyDataDir(platform, home)
+    const isDirectory = input.isDirectory ?? isDirectoryNow
+    return named === legacy && !isDirectory(named) && isDirectory(platformDefault) ? platformDefault : named
+  }
   if (input.dataDir) {
-    dataDir = path.resolve(input.cwd, input.dataDir)
+    dataDir = relocated(path.resolve(input.cwd, input.dataDir))
     dataDirSource = 'flag'
   } else if (dataDirEnv) {
-    dataDir = path.resolve(input.cwd, dataDirEnv)
+    dataDir = relocated(path.resolve(input.cwd, dataDirEnv))
     dataDirSource = 'env'
   } else if ((input.legacyRuntime ?? !PACKAGED) && exists(path.join(input.cwd, '.runtime'))) {
     dataDir = path.join(input.cwd, '.runtime')
@@ -94,8 +127,17 @@ export function resolveLatchPaths(input: {
       `正在使用旧的数据目录 ${dataDir}。新安装默认使用 ${platformDefault}；如需迁移，请停止 Host 后移动目录并用 --data-dir 指定。`,
     )
   } else {
-    dataDir = platformDefault
-    dataDirSource = 'default'
+    // Data from before the default moved stays in use where it is until the Host next starts and moves it
+    // (data-home.ts): commands that only read, or that reach a Host still running from there, must find it.
+    const legacy = legacyDataDir(platform, home)
+    const isDirectory = input.isDirectory ?? isDirectoryNow
+    if (legacy !== undefined && !exists(platformDefault) && isDirectory(legacy)) {
+      dataDir = legacy
+      dataDirSource = 'legacy-default'
+    } else {
+      dataDir = platformDefault
+      dataDirSource = 'default'
+    }
   }
 
   let workspaceRoot: string

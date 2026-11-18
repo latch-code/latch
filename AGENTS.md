@@ -88,7 +88,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 ## 本机运行安全
 
 - 不停止、重启或向已运行的 Host 发信号，不读取、修改或删除 `.runtime*/`。
-- 每个命令显式指定临时目录：`pnpm start` / `start:demo` 带 `--data-dir`、`--workspace` 与 `--port 0`；`pnpm latch`、`pnpm stop` 带同一个 `--data-dir`；`pnpm dev:web` 用 `LATCH_DATA_DIR`。省略时落到用户数据：当前目录的旧 `.runtime/`、平台默认数据目录（macOS 为 `~/Library/Application Support/Latch/Host`）、`~/Latch/workspace` 与端口 4317。
+- 每个命令显式指定临时目录：`pnpm start` / `start:demo` 带 `--data-dir`、`--workspace` 与 `--port 0`；`pnpm latch`、`pnpm stop` 带同一个 `--data-dir`；`pnpm dev:web` 用 `LATCH_DATA_DIR`。省略时落到用户数据：当前目录的旧 `.runtime/`、平台默认数据目录（macOS 为 `~/.latch/host`）、`~/Latch/workspace` 与端口 4317。
 - 只停自己启动的节点：`pnpm stop -- --data-dir <目录>` 经 `host.sock` 核对后才发 SIGTERM，有运行中或待审批的会话时拒绝（`--force` 仍停止）。不删其他节点的 `host.lock` 与 `.host-lock-*`（[文档](docs/ARCHITECTURE.md#hostjson-与数据目录锁)）。
 - 不运行 `git clean -x`、`git clean -X` 与 `git stash -a`：被忽略的目录里有用户数据，后者还会把它们写进对象库。
 - 审阅外部 PR 时，在独立 worktree 检出，每个 git 命令都带 `-c core.hooksPath=/dev/null`，因为已装的钩子执行检出的 `lefthook.yml`。该目录里不运行 `pnpm install`、任何 `pnpm` 脚本、测试、构建或 Agent：PR 能改包脚本、依赖、安装策略、构建测试配置和 Agent 指令，运行任一项都执行 PR 作者的代码。改这类文件的 PR 由所有者审阅（`.github/CODEOWNERS`）。

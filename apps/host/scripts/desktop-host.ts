@@ -8,6 +8,7 @@ import { writeFileAtomic } from '@latch/core/node-kit'
 import { z } from 'zod'
 import { HOST_ENV_NAMES, latchEnv } from '../src/env.ts'
 import { processAlive, readHostState, unixRequest, verifyHostState, type HostInfo, type HostState } from '../src/host-state.ts'
+import { settleDataHome } from '../src/data-home.ts'
 import { resolveLatchPaths } from '../src/paths.ts'
 import { readCodeBuild } from '../src/ui-build.ts'
 
@@ -58,6 +59,8 @@ export function desktopLaunchOptions(argv: string[], cwd = process.cwd(), env: N
   for (const name of DROPPED_ENV) delete hostEnv[name]
   return {
     dataDir,
+    /** Named by `--data-dir` or `LATCH_DATA_DIR`: such a directory is used where it is (data-home.ts). */
+    dataDirExplicit: paths.dataDirSource === 'flag' || paths.dataDirSource === 'env',
     hostStatePath: join(dataDir, 'host.json'),
     args: ['--data-dir', dataDir, ...args],
     cwd,
@@ -172,13 +175,42 @@ async function stopForRebuild(host: DesktopHost, timeoutMs = STOP_TIMEOUT_MS): P
   }
 }
 
+/** The same launch against another data directory: where the Host's data is after its one-time move (data-home.ts). */
+function atDataDir(options: DesktopLaunchOptions, dataDir: string): DesktopLaunchOptions {
+  const at = options.args.indexOf('--data-dir')
+  return {
+    ...options,
+    dataDir,
+    hostStatePath: join(dataDir, 'host.json'),
+    args: options.args.map((arg, index) => (index === at + 1 ? dataDir : arg)),
+  }
+}
+
 export async function ensureDesktopHost(
-  options: DesktopLaunchOptions,
-  startup: { script?: string; nodeArgs?: string[]; timeoutMs?: number; stopTimeoutMs?: number } = {},
+  requested: DesktopLaunchOptions,
+  startup: { script?: string; nodeArgs?: string[]; timeoutMs?: number; stopTimeoutMs?: number; home?: string } = {},
 ): Promise<DesktopHost & { reused: boolean; hostStatePath: string; notice?: string }> {
-  await mkdir(options.dataDir, { recursive: true, mode: 0o700 })
+  let options = requested
+  let existing = await probeDesktopHost(options.dataDir)
+  let movedNote: string | undefined
+  // A default location that has not moved yet is moved before anything is created, never shadowed by an empty one.
+  // Only with no Host running there: one that answers is reused where it is.
+  const settle = async () => {
+    const home = await settleDataHome({
+      dataDir: options.dataDir,
+      explicit: options.dataDirExplicit,
+      env: options.env,
+      ...(startup.home ? { home: startup.home } : {}),
+    })
+    movedNote = home.note
+    if (home.dataDir !== options.dataDir) options = atDataDir(options, home.dataDir)
+  }
+  if (!existing) {
+    const asked = options.dataDir
+    await settle()
+    if (options.dataDir !== asked) existing = await probeDesktopHost(options.dataDir)
+  }
   const script = startup.script ?? resolve(options.cwd, 'dist/start.js')
-  const existing = await probeDesktopHost(options.dataDir)
   let restarted = false
   if (existing) {
     const decision = await rebuildDecision(existing, options, script)
@@ -188,12 +220,15 @@ export async function ensureDesktopHost(
         ...existing,
         reused: true,
         hostStatePath: options.hostStatePath,
-        notice: decision.action === 'keep' ? `${decision.reason}\n${reuse}` : reuse,
+        notice: [movedNote, decision.action === 'keep' ? `${decision.reason}\n${reuse}` : reuse].filter(Boolean).join('\n'),
       }
     }
     await stopForRebuild(existing, startup.stopTimeoutMs)
     restarted = true
+    // The Host that was running from the old place has stopped: this is the start that moves it.
+    await settle()
   }
+  await mkdir(options.dataDir, { recursive: true, mode: 0o700 })
   const logPath = join(options.dataDir, 'host.log')
   const log = await openHostLog(logPath)
   const child = spawn(process.execPath, [...HOST_NODE_ARGS, ...(startup.nodeArgs ?? []), script, ...options.args], {
@@ -221,7 +256,9 @@ export async function ensureDesktopHost(
           ? { node: process.execPath, nodeArgs: [...(startup.nodeArgs ?? [])], script, args: options.args, cwd: options.cwd }
           : null,
       }
-      const notice = [restarted ? REBUILT_NOTICE : undefined, await recordLaunch(options.dataDir, record)].filter(Boolean).join('\n')
+      const notice = [movedNote, restarted ? REBUILT_NOTICE : undefined, await recordLaunch(options.dataDir, record)]
+        .filter(Boolean)
+        .join('\n')
       return { ...state, reused: false, hostStatePath: options.hostStatePath, ...(notice ? { notice } : {}) }
     }
     await delay(100)

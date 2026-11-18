@@ -50,7 +50,7 @@ const {
 const { createFileActions } = require('./files.cjs')
 const { createEditors, readEditorChoice, writeEditorChoice } = require('./editors.cjs')
 const { execFile } = require('node:child_process')
-const { packagedNode, startPackagedHost } = require('./packaged.cjs')
+const { packagedHostDataDir, packagedLegacyHostDataDir, packagedNode, startPackagedHost } = require('./packaged.cjs')
 const { createCliLink } = require('./cli-link.cjs')
 const { createNetworkSink } = require('./network.cjs')
 const { createPreviewBrowser, handleBrowserRequests } = require('./browser.cjs')
@@ -1192,7 +1192,12 @@ async function start() {
   if (storageProblem) return fatal(storageProblem, STARTUP_EN.secureStorage)
   if (app.isPackaged && !hostStatePath) {
     try {
-      hostStatePath = await startPackagedHost({ launcher: PACKAGED_CLI, dataDir: join(app.getPath('appData'), 'Latch', 'Host') })
+      const appData = app.getPath('appData')
+      hostStatePath = await startPackagedHost({
+        launcher: PACKAGED_CLI,
+        dataDir: packagedHostDataDir({ appData }),
+        legacyDataDir: packagedLegacyHostDataDir({ appData }),
+      })
     } catch (error) {
       return fatal(error instanceof Error ? error.message : '无法启动 Latch。', STARTUP_EN.packagedBoot)
     }
