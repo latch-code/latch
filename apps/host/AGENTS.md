@@ -30,4 +30,4 @@
 - 插件草稿与应用分离，批准执行摘要后才导入，旧租约真实释放后回收（PLUGIN-DEVELOPMENT、`test/plugin-package-api.test.ts`）。
 - 准备及配置回执见 ARCHITECTURE。外观写入需基版与回执，替换前复核权限，目录同步未确认复用原请求（CUSTOMIZATION）。受限 Git 与交付见 GIT-DELIVERY。
 - 插件连接仅随原生入口启用；远程 review/正文窗口与真实关闭见 [STREAMING](../../docs/STREAMING.md#原生客户端的流)。
-- 家只由分配器生成并核对原目录身份；默认项走 startConfig。后台按实际等级核上限，手动运行不授后台权（CUSTOM-AGENTS、AUTOMATIONS）。
+- 家只由分配器生成并核对身份，空路径时重建；默认项走 startConfig。后台按实际等级核上限，手动运行不授后台权（CUSTOM-AGENTS、AUTOMATIONS）。

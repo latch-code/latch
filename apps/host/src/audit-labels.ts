@@ -91,6 +91,8 @@ export const AUDIT_LABELS: Readonly<Record<AuditAction, readonly [AuditKind, str
   'app.task.start': ['sessions', '确认：插件页面开始会话'],
   // Agent
   'agent.home.assigned': ['agents', '分配 Agent 的家'],
+  'agent.chat.retired': ['agents', 'Agent 的聊天换到新的家'],
+  'agent.chat.restored': ['agents', 'Agent 的聊天换家未成，原聊天保留'],
   'agent.changed': ['agents', '修改 Agent 或记忆'],
   'agent.exported': ['agents', '导出 Agent'],
   'agent.imported': ['agents', '导入 Agent'],

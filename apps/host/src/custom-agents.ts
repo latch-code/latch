@@ -50,7 +50,7 @@ import {
 import { AgentJournal } from './agent-journal.ts'
 import type { AuditActor, AuditLog } from './audit.ts'
 import { scheduleSchema } from './schedule.ts'
-import { HELPER_HOME_NAME } from './session-folders.ts'
+import { HELPER_HOME_NAME, homeBelongsTo } from './session-folders.ts'
 
 export const CUSTOM_AGENT_ID = /^agt_[a-f0-9-]{36}$/u
 const MAX_AGENTS = 64
@@ -319,7 +319,10 @@ const recallSchema = z.strictObject({
 })
 const generalSchema = z.strictObject({
   id: z.literal(GENERAL_AGENT_ID),
-  home: z.literal('helpers/general').optional(),
+  home: z
+    .string()
+    .regex(/^helpers\/general(?:-[0-9a-f]{8})?$/u)
+    .optional(),
   instructions,
   skills: skills.optional(),
   revision,
@@ -343,7 +346,8 @@ export type FirstChatStart = z.infer<typeof firstChatStartSchema>
 const chatSessionId = z.string().min(1).max(256)
 const chatSlotSchema = z.discriminatedUnion('state', [
   z.strictObject({ state: z.literal('empty') }),
-  z.strictObject({ state: z.literal('starting'), first: firstChatStartSchema }),
+  /** `replaces`: the chat this first message is to replace (its home moved); a start that never begins gives it back. */
+  z.strictObject({ state: z.literal('starting'), first: firstChatStartSchema, replaces: chatSessionId.optional() }),
   z.strictObject({ state: z.literal('ready'), sessionId: chatSessionId, first: firstChatStartSchema.optional() }),
 ])
 
@@ -364,7 +368,7 @@ const stateSchema = z
     if (Buffer.byteLength(JSON.stringify(state.agents)) > 2 * 1024 * 1024) ctx.addIssue({ code: 'custom', message: 'Definition capacity' })
     if (new Set(state.agents.map(agent => agent.id)).size !== state.agents.length)
       ctx.addIssue({ code: 'custom', message: 'Duplicate identity' })
-    if (state.agents.some(agent => agent.home !== undefined && agent.home !== `helpers/${agent.id}`))
+    if (state.agents.some(agent => agent.home !== undefined && !homeBelongsTo(agent.home, agent.id)))
       ctx.addIssue({ code: 'custom', message: 'Home owner mismatch' })
     for (const rows of Object.values(state.memories)) {
       if (rows.reduce((size, row) => size + Buffer.byteLength(row.content), 0) > 256 * 1024)
@@ -455,27 +459,29 @@ export class CustomAgents {
   general(): GeneralAgent {
     return this.journal.read().general as GeneralAgent
   }
-  /** Only the Host's allocator calls this, after verifying the directory and the caller's current authority. */
-  async recordHome(owner: string, home: string, actor: { actor: AuditActor; authorize(): void }): Promise<void> {
+  /**
+   * Only the Host's allocator calls this, after verifying the directory and the caller's current authority. The home is
+   * where the allocator put it under the current start directory (its plain name or this data directory's tagged one),
+   * so it may differ after a change of start directory. `audited`: the allocator recorded `agent.home.assigned` before
+   * it made the directory; otherwise this records it before writing.
+   */
+  async recordHome(owner: string, home: string, actor: { actor: AuditActor; authorize(): void }, audited = false): Promise<void> {
     memoryOwner.parse(owner)
-    if (!HELPER_HOME_NAME.test(home) || home !== `helpers/${owner}`)
-      throw new AppError(409, 'helper-home-unavailable', 'Agent 的家无法确认。')
+    if (!homeBelongsTo(home, owner)) throw new AppError(409, 'helper-home-unavailable', 'Agent 的家无法确认。')
     await this.journal.change(
       digest(['home', owner]),
       digest(home),
       async state => {
         const target = owner === GENERAL_AGENT_ID ? state.general : state.agents.find(agent => agent.id === owner)
         if (!target) throw missing()
-        if (target.home !== undefined) {
-          if (target.home !== home) throw new AppError(409, 'helper-home-unavailable', 'Agent 的家已改变，原文件已保留。')
-          return { value: null, changed: false }
-        }
-        await this.options.audit.append({
-          action: 'agent.home.assigned',
-          actor: actor.actor,
-          target: owner,
-          detail: { homeHash: digest(home) },
-        })
+        if (target.home === home) return { value: null, changed: false }
+        if (!audited)
+          await this.options.audit.append({
+            action: 'agent.home.assigned',
+            actor: actor.actor,
+            target: owner,
+            detail: { homeHash: digest(home) },
+          })
         target.home = home
         return { value: null }
       },
@@ -1267,15 +1273,24 @@ export class CustomAgents {
     )
   }
 
+  /**
+   * Holds the slot for a first message. `retire`: the Host found, from its own records, that the chat in the slot can
+   * never run again (its home is under another start directory). Only that exact chat, still in the slot, is retired:
+   * audited first (`agent.chat.retired`), then the slot goes from it straight to this first message in one write, and
+   * keeps it as `replaces`: if the start is refused before it begins, `settleChat` gives the slot back to it. No moment
+   * leaves the Agent without a chat or the message without a slot. The old session stays, to read.
+   */
   async reserveChat(
     owner: string,
     first: FirstChatStart,
     authorize: () => void,
+    retire?: { sessionId: string; actor: AuditActor },
   ): Promise<{ state: 'starting'; fresh: boolean } | { state: 'ready'; sessionId: string }> {
-    return this.journal.change<{ state: 'starting'; fresh: boolean } | { state: 'ready'; sessionId: string }>(
+    let retired = false
+    const reserved = this.journal.change<{ state: 'starting'; fresh: boolean } | { state: 'ready'; sessionId: string }>(
       digest(['chat-start', owner, first.deviceId, first.requestId]),
       first.hash,
-      state => {
+      async state => {
         this.assertOwner(state, owner)
         const slot = state.chats[owner]
         if (!slot) throw new AppError(503, 'agent-chat-history-unknown', '旧会话尚未核对完成，请稍后再试。')
@@ -1285,6 +1300,17 @@ export class CustomAgents {
         }
         const original = slot.first?.deviceId === first.deviceId && slot.first.requestId === first.requestId
         if (original && slot.first?.hash !== first.hash) throw new AppError(409, 'request-conflict', '同一个请求标识不能用于不同输入。')
+        if (retire && !original && slot.state === 'ready' && slot.sessionId === retire.sessionId) {
+          await this.options.audit.append({
+            action: 'agent.chat.retired',
+            actor: retire.actor,
+            target: owner,
+            detail: { customAgentId: owner, sessionId: retire.sessionId, reason: 'home-moved' },
+          })
+          retired = true
+          state.chats[owner] = { state: 'starting', first, replaces: retire.sessionId }
+          return { value: { state: 'starting', fresh: true } }
+        }
         if (slot.state === 'ready') {
           if (original) return { value: { state: 'ready', sessionId: slot.sessionId }, changed: false }
           throw new AppError(409, 'agent-chat-exists', '这个 Agent 已有聊天，请在其中继续。', { sessionId: slot.sessionId })
@@ -1294,14 +1320,43 @@ export class CustomAgents {
       },
       authorize,
     )
+    try {
+      return await reserved
+    } catch (error) {
+      // The retire was recorded but its change did not commit (the caller lost access, the write failed): the chat
+      // never left the slot, and the record says so.
+      // A write whose outcome is unknown may still land: then nothing is said until it is known.
+      if (retired && retire && !this.journal.hasPending()) {
+        const slot = this.journal.read().chats[owner]
+        if (!(slot?.state === 'starting' && slot.first.requestId === first.requestId && slot.first.deviceId === first.deviceId))
+          await this.options.audit
+            .append({
+              action: 'agent.chat.restored',
+              actor: retire.actor,
+              target: owner,
+              detail: { customAgentId: owner, sessionId: retire.sessionId, reason: 'not-committed' },
+            })
+            .catch(() => undefined)
+      }
+      throw error
+    }
   }
 
-  /** Record what the driver durably accepted. A caller that has since lost access still receives no session ID. */
-  async settleChat(owner: string, first: FirstChatStart, sessionId?: string): Promise<void> {
+  /**
+   * Record what the driver durably accepted. A caller that has since lost access still receives no session ID. A start
+   * that never began gives the slot back to the chat it was to replace, with `agent.chat.restored` after the
+   * `agent.chat.retired` that announced it; giving back narrows nothing, so a failed record does not stop it.
+   */
+  async settleChat(
+    owner: string,
+    first: FirstChatStart,
+    sessionId?: string,
+    actor: AuditActor = { listener: 'host', via: 'startup' },
+  ): Promise<void> {
     await this.journal.change(
       digest(['chat-settle', owner, first.deviceId, first.requestId]),
       digest([first.hash, sessionId ?? null]),
-      state => {
+      async state => {
         const slot = state.chats[owner]
         if (
           slot?.state === 'starting'
@@ -1309,7 +1364,21 @@ export class CustomAgents {
           && slot.first.requestId === first.requestId
           && slot.first.hash === first.hash
         ) {
-          state.chats[owner] = sessionId ? { state: 'ready', sessionId, first } : { state: 'empty' }
+          const replaced = slot.replaces
+          if (!sessionId && replaced)
+            await this.options.audit
+              .append({
+                action: 'agent.chat.restored',
+                actor,
+                target: owner,
+                detail: { customAgentId: owner, sessionId: replaced, reason: 'start-refused' },
+              })
+              .catch(() => undefined)
+          state.chats[owner] = sessionId
+            ? { state: 'ready', sessionId, first }
+            : replaced
+              ? { state: 'ready', sessionId: replaced }
+              : { state: 'empty' }
           return { value: undefined }
         }
         if (sessionId && (slot?.state !== 'ready' || slot.sessionId !== sessionId))

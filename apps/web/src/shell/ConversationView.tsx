@@ -18,7 +18,7 @@ import { FillPlace } from '../panel/terminal/fills.ts'
 import { isLive, liveMessageId, renderedMessages } from '../conversation.ts'
 import { ChangesLinkContext } from '../conversation/changesLink.ts'
 import { useTranscriptProjection } from '../conversation/useTranscriptProjection.ts'
-import { Backdrop, Button, Hint, InlineNotice, Skeleton, HistoryGlyph, ShieldAlertGlyph, type BackdropLevel } from '@latch/ui'
+import { Backdrop, Button, FolderGlyph, Hint, InlineNotice, Skeleton, HistoryGlyph, ShieldAlertGlyph, type BackdropLevel } from '@latch/ui'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { DEVICE_FAILURE_STEPS, OWNER_FAILURE_STEPS, SendingBubble, SessionComposer, takeFailureStep } from './SessionComposers.tsx'
 import type { ShellState } from './useShellLayout.tsx'
@@ -44,12 +44,14 @@ const COPY = defineCopy(
     unfiltered: (count: number) => `${count} 个文件的 filter 没有运行`,
     unfilteredHint:
       '新工作树里这些文件的 filter（例如 Git LFS）没有运行，留成了 Git 里存的样子；要用 Git LFS 文件时，在终端里运行 git lfs pull。',
+    homeUnavailable: '工作文件夹不可用',
   },
   {
     openRebuilt: (title: string) => `Open “${title}”`,
     unfiltered: (count: number) => `Filters skipped for ${count} files`,
     unfilteredHint:
       'Git filters such as Git LFS were skipped for these files in the new worktree. The files contain the data stored in Git. To get the Git LFS files, run git lfs pull in the terminal.',
+    homeUnavailable: 'Work folder unavailable',
   },
 )
 
@@ -104,6 +106,8 @@ export function ConversationView({
     stopText,
     stopRetry,
     retryStopped,
+    homeStop,
+    retryHome,
     refusedInput,
     sessionBlock,
     cancelState,
@@ -501,6 +505,16 @@ export function ConversationView({
                   {RECOVERY_COPY.continueInNew}
                 </Button>
               </p>
+            )}
+            {homeStop && !rebuiltInto && !stopCode && (
+              <div className="composer-stop" role="status">
+                <Hint label={COPY.homeUnavailable} lead={<FolderGlyph size={14} aria-hidden="true" />}>
+                  {homeStop.reason}
+                </Hint>
+                <Button size="xs" onClick={retryHome}>
+                  {APPROVAL_COPY.retry}
+                </Button>
+              </div>
             )}
             {rebuilding && lostImport && current && catalog && (
               <RebuildLostDialog

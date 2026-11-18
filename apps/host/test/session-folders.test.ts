@@ -1,10 +1,10 @@
-import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { basename, join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AppError } from '@latch/sdk'
 import { canonicalPath } from '../src/paths.ts'
-import { SESSION_FOLDER_NAME, SessionFolders, sessionFolderName } from '../src/session-folders.ts'
+import { SESSION_FOLDER_NAME, SessionFolders, helperIdentitySchema, sessionFolderName } from '../src/session-folders.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -68,9 +68,10 @@ describe('folders of their own for sessions outside a project', () => {
     expect(await restarted.verify(a.path)).toBe(true)
     const otherRoot = join(base, 'other-workspace')
     await mkdir(otherRoot)
+    // Another start directory gets a home of its own there; the first one's record and files stay as they are.
     const moved = new SessionFolders({ ...options, root: otherRoot, canonicalRoot: await canonicalPath(otherRoot) })
-    await expect(moved.helperHome(owner, guard)).rejects.toMatchObject({ code: 'helper-home-unavailable' })
-    expect(await readdir(otherRoot)).toEqual([])
+    expect(await moved.helperHome(owner, guard)).toEqual({ name: `helpers/${owner}`, path: join(otherRoot, 'helpers', owner) })
+    expect(await new SessionFolders(options).helperHome(owner, guard)).toEqual(a)
     const movedHome = join(base, 'moved-home')
     await rename(a.path, movedHome)
     await symlink(movedHome, a.path)
@@ -114,7 +115,7 @@ describe('folders of their own for sessions outside a project', () => {
     },
   )
 
-  it('refuses unowned helper entries, links and a fresh policy denial without touching them', async () => {
+  it('never adopts unowned helper entries or links, and refuses a fresh policy denial without touching anything', async () => {
     const { base, root, helper } = await folders()
     const guard = async () => {}
     await expect(helper.helperHome('../escape', guard)).rejects.toMatchObject({ code: 'helper-home-unavailable' })
@@ -124,7 +125,10 @@ describe('folders of their own for sessions outside a project', () => {
     await mkdir(join(root, 'helpers'), { mode: 0o700 })
     await mkdir(join(root, 'helpers', 'general'))
     await writeFile(join(root, 'helpers', 'general', 'mine.txt'), 'not allocated by Host')
-    await expect(helper.helperHome('general', guard)).rejects.toMatchObject({ code: 'helper-home-unavailable' })
+    // The plain name is someone else's: this allocator's first home goes beside it, under its own tag.
+    const tagged = await helper.helperHome('general', guard)
+    expect(tagged.name).toMatch(/^helpers\/general-[0-9a-f]{8}$/u)
+    expect(await readdir(tagged.path)).toEqual([])
     expect(await readFile(join(root, 'helpers', 'general', 'mine.txt'), 'utf8')).toBe('not allocated by Host')
     const owner = 'agt_22222222-2222-4222-8222-222222222222'
     await expect(
@@ -132,7 +136,7 @@ describe('folders of their own for sessions outside a project', () => {
         throw new AppError(409, 'helper-home-overlap', '这里已经是项目')
       }),
     ).rejects.toMatchObject({ code: 'helper-home-overlap' })
-    expect(await readdir(join(root, 'helpers'))).toEqual(['general'])
+    expect((await readdir(join(root, 'helpers'))).toSorted()).toEqual(['general', basename(tagged.path)].toSorted())
   })
 
   it('refuses a start root replaced before the first helper allocation', async () => {
@@ -142,6 +146,193 @@ describe('folders of their own for sessions outside a project', () => {
     await mkdir(root, { mode: 0o700 })
     await expect(helper.helperHome('general', async () => {})).rejects.toMatchObject({ code: 'helper-home-unavailable' })
     expect(await readdir(root)).toEqual([])
+  })
+
+  it('makes an absent recorded home again only for a caller that opts in, recording first', async () => {
+    const { base, root } = await folders()
+    const dataDir = join(base, 'data')
+    await mkdir(dataDir)
+    const options = { dataDir, root, canonicalRoot: await canonicalPath(root), clock: Date.now, now: Date.now, log: () => {} }
+    const allocator = new SessionFolders(options)
+    const home = await allocator.helperHome('general', async () => {})
+    await rm(home.path, { recursive: true })
+    expect(await allocator.helperState('general')).toBe('absent')
+    await expect(allocator.helperHome('general', async () => {})).rejects.toMatchObject({ code: 'helper-home-unavailable' })
+    await expect(stat(home.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    const refused = vi.fn(async () => {
+      throw new AppError(500, 'audit-failed', 'no record')
+    })
+    await expect(allocator.helperHome('general', async () => {}, { recreate: true, beforeCreate: refused })).rejects.toMatchObject({
+      code: 'audit-failed',
+    })
+    expect(refused).toHaveBeenCalledOnce()
+    await expect(stat(home.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    const order: string[] = []
+    const recreate = vi.fn(async (made: { name: string; recreated: boolean }) => {
+      expect(made).toEqual({ name: 'helpers/general', recreated: true })
+      order.push(
+        (await stat(home.path)
+          .then(() => 'exists')
+          .catch(() => 'absent')) as string,
+      )
+    })
+    expect(await allocator.helperHome('general', async () => {}, { recreate: true, beforeCreate: recreate })).toEqual(home)
+    expect(order).toEqual(['absent'])
+    expect((await stat(home.path)).mode & 0o777).toBe(0o700)
+    // Recorded: a restart verifies it without being asked to make anything.
+    const restarted = new SessionFolders(options)
+    expect(await restarted.helperHome('general', async () => {})).toEqual(home)
+    expect(await restarted.helperState('general')).toBe('ready')
+    // An entry that is there is never made again, even when asked.
+    await rm(home.path, { recursive: true })
+    await mkdir(home.path, { mode: 0o700 })
+    expect(await restarted.helperState('general')).toBe('refused')
+    await expect(restarted.helperHome('general', async () => {}, { recreate: true, beforeCreate: recreate })).rejects.toMatchObject({
+      code: 'helper-home-unavailable',
+    })
+    expect(recreate).toHaveBeenCalledOnce()
+  })
+
+  it('keeps each start directory’s homes, so returning to one finds its home as it was', async () => {
+    const { base, root } = await folders()
+    const dataDir = join(base, 'data')
+    await mkdir(dataDir)
+    const otherRoot = join(base, 'other')
+    await mkdir(otherRoot, { mode: 0o700 })
+    const at = async (path: string) =>
+      new SessionFolders({ dataDir, root: path, canonicalRoot: await canonicalPath(path), clock: Date.now, now: Date.now, log: () => {} })
+    const home = await (await at(root)).helperHome('general', async () => {})
+    await writeFile(join(home.path, 'kept.txt'), 'first')
+    const other = await (await at(otherRoot)).helperHome('general', async () => {})
+    expect(other.path).toBe(join(otherRoot, 'helpers', 'general'))
+    expect(await (await at(root)).helperHome('general', async () => {})).toEqual(home)
+    expect(await readFile(join(home.path, 'kept.txt'), 'utf8')).toBe('first')
+    expect(await (await at(otherRoot)).helperHome('general', async () => {})).toEqual(other)
+  })
+
+  it('reads homes recorded in the earlier one-per-owner layout', async () => {
+    const { base, root } = await folders()
+    const dataDir = join(base, 'data')
+    await mkdir(dataDir)
+    const options = { dataDir, root, canonicalRoot: await canonicalPath(root), clock: Date.now, now: Date.now, log: () => {} }
+    const home = await new SessionFolders(options).helperHome('general', async () => {})
+    const file = join(dataDir, 'session-folders.json')
+    const current = JSON.parse(await readFile(file, 'utf8')) as { homes: Record<string, Record<string, object>> }
+    const [[rootHash, owners]] = Object.entries(current.homes)
+    await writeFile(file, JSON.stringify({ version: 1, folders: {}, helpers: { general: { rootHash, ...owners.general } } }))
+    expect(await new SessionFolders(options).helperHome('general', async () => {})).toEqual(home)
+  })
+
+  it('pins a start directory that was not there at startup when it is first used', async () => {
+    const { base } = await folders()
+    const root = join(base, 'later')
+    const helper = new SessionFolders({
+      root,
+      canonicalRoot: join(await canonicalPath(base), 'later'),
+      clock: Date.now,
+      now: Date.now,
+      log: () => {},
+    })
+    await helper.start()
+    const home = await helper.helperHome('general', async () => {})
+    expect((await stat(home.path)).mode & 0o777).toBe(0o700)
+  })
+
+  it('keeps the home record strict, also after dropping the start directory hash', () => {
+    const identity = { dev: '1', ino: '2' }
+    const home = { root: identity, parent: identity, directory: identity }
+    expect(helperIdentitySchema.safeParse(home).success).toBe(true)
+    expect(helperIdentitySchema.safeParse({ ...home, rootHash: 'a'.repeat(64) }).success).toBe(false)
+    expect(helperIdentitySchema.safeParse({ ...home, extra: true }).success).toBe(false)
+    expect(helperIdentitySchema.safeParse({ ...home, name: '../escape' }).success).toBe(false)
+  })
+
+  it('never makes a home again inside a replaced helpers folder that still holds one of its home names', async () => {
+    const { base, root } = await folders()
+    const dataDir = join(base, 'data')
+    await mkdir(dataDir)
+    const options = { dataDir, root, canonicalRoot: await canonicalPath(root), clock: Date.now, now: Date.now, log: () => {} }
+    const allocator = new SessionFolders(options)
+    const home = await allocator.helperHome('general', async () => {})
+    const agent = 'agt_33333333-3333-4333-8333-333333333333'
+    await allocator.helperHome(agent, async () => {})
+    await rename(join(root, 'helpers'), join(base, 'old-helpers'))
+    await mkdir(join(root, 'helpers'), { mode: 0o700 })
+    // Something under one of this Host's recorded names is in the new folder: it could have been swapped in.
+    await mkdir(join(root, 'helpers', agent), { mode: 0o700 })
+    for (const current of [allocator, new SessionFolders(options)]) {
+      expect(await current.helperState('general')).toBe('refused')
+      await expect(current.helperHome('general', async () => {}, { recreate: true })).rejects.toMatchObject({
+        code: 'helper-home-unavailable',
+      })
+    }
+    expect(await readdir(join(root, 'helpers'))).toEqual([agent])
+    // None of its homes is there any more (another Host made helpers again): each one is set up new in it.
+    await rm(join(root, 'helpers', agent), { recursive: true })
+    expect(await allocator.helperState('general')).toBe('absent')
+    expect(await allocator.helperHome('general', async () => {}, { recreate: true })).toEqual(home)
+    // A helpers folder that is simply gone is made again with the home.
+    await rm(join(root, 'helpers'), { recursive: true })
+    expect(await new SessionFolders(options).helperHome('general', async () => {}, { recreate: true })).toEqual(home)
+  })
+
+  it('leaves the home unrecorded when helpers is swapped for a link just before the home is made', async () => {
+    const { base, root, helper } = await folders()
+    const elsewhere = join(base, 'elsewhere')
+    await mkdir(elsewhere, { mode: 0o700 })
+    let calls = 0
+    const swap = async () => {
+      // The last check before the home's mkdir: the helpers folder made a moment ago becomes a link.
+      if (++calls === 3) {
+        await rename(join(root, 'helpers'), join(base, 'made-helpers'))
+        await symlink(elsewhere, join(root, 'helpers'))
+      }
+    }
+    await expect(helper.helperHome('general', swap)).rejects.toMatchObject({ code: 'helper-home-unavailable' })
+    expect(calls).toBeGreaterThanOrEqual(3)
+    expect(await helper.helperState('general')).toBe('refused')
+    expect(helper.helperNames()).toEqual([])
+  })
+
+  it('reads the record file only as a private regular file, and refuses a crafted one', async () => {
+    const { base, root } = await folders()
+    const dataDir = join(base, 'data')
+    await mkdir(dataDir)
+    const file = join(dataDir, 'session-folders.json')
+    const options = { dataDir, root, canonicalRoot: await canonicalPath(root), clock: Date.now, now: Date.now, log: () => {} }
+    const identity = { dev: '1', ino: '2' }
+    const legacy = { rootHash: 'a'.repeat(64), root: identity, parent: identity, directory: identity }
+    for (const [text, mode] of [
+      [JSON.stringify({ version: 1, folders: {}, helpers: { general: { ...legacy, extra: 1 } } }), 0o600],
+      [JSON.stringify({ version: 1, folders: {}, helpers: { '../x': legacy } }), 0o600],
+      [JSON.stringify({ version: 1, folders: {}, homes: { ['a'.repeat(64)]: { general: { ...legacy } } } }), 0o600],
+      [JSON.stringify({ version: 1, folders: {}, tag: 'XYZ' }), 0o600],
+      [JSON.stringify({ version: 1, folders: {} }), 0o644],
+    ] as const) {
+      await rm(file, { force: true })
+      await writeFile(file, text, { mode })
+      await chmod(file, mode)
+      await expect(new SessionFolders(options).start()).rejects.toMatchObject({ code: 'config-corrupt' })
+    }
+    await rm(file)
+    await writeFile(join(base, 'real.json'), JSON.stringify({ version: 1, folders: {} }), { mode: 0o600 })
+    await symlink(join(base, 'real.json'), file)
+    await expect(new SessionFolders(options).start()).rejects.toMatchObject({ code: 'config-corrupt' })
+  })
+
+  it('prefers the newer layout when both name a home for the same owner and start directory', async () => {
+    const { base, root } = await folders()
+    const dataDir = join(base, 'data')
+    await mkdir(dataDir)
+    const options = { dataDir, root, canonicalRoot: await canonicalPath(root), clock: Date.now, now: Date.now, log: () => {} }
+    const home = await new SessionFolders(options).helperHome('general', async () => {})
+    const file = join(dataDir, 'session-folders.json')
+    const current = JSON.parse(await readFile(file, 'utf8')) as { homes: Record<string, Record<string, object>> }
+    const [[rootHash, owners]] = Object.entries(current.homes)
+    const stale = { rootHash, root: { dev: '9', ino: '9' }, parent: { dev: '9', ino: '9' }, directory: { dev: '9', ino: '9' } }
+    await writeFile(file, JSON.stringify({ ...current, helpers: { general: stale } }), { mode: 0o600 })
+    void owners
+    expect(await new SessionFolders(options).helperHome('general', async () => {})).toEqual(home)
   })
 
   it('persists started request mappings, restores them before listing roots, and binds them to the original start directory', async () => {

@@ -1974,6 +1974,13 @@ const HOST_REFUSALS: Readonly<Record<string, string>> = defineCopy<Record<string
     'task-running': '请等这一轮结束。',
     'queue-full': '排队已满。请删除不需要的旧会话后再试。',
     'port-in-use': '端口已被占用，Latch 没有启动。',
+    // A session's folder, and an Agent's work folder (its home), which the Host sets up itself.
+    'workspace-changed': '这个会话的文件夹已不在项目中或找不到了，不能继续。',
+    'helper-home-unavailable': 'Agent 的工作文件夹被改动过（权限、替换或链接），Latch 不会接手它。原文件已保留，请在这台 Mac 上检查。',
+    'helper-home-overlap': 'Agent 的工作文件夹与一个项目重叠，请在这台 Mac 上检查项目。',
+    'helper-home-moved': 'Agent 的工作文件夹在另一个默认文件夹里，请在它的聊天里重新发送。',
+    'agent-chat-move-pending': '旧聊天里还有进行中、排队或结果未核对的消息。处理完再发送。',
+    'agent-chat-move-project': '这个 Agent 的聊天要先在它的家里重新开始。这条消息不选项目再发送。',
     // Opening a terminal.
     'terminal-limit': '这里的终端已到上限，请先关掉一个。',
     'terminal-total-limit': '这台电脑上打开的终端太多了，请先关掉不用的。',
@@ -2052,6 +2059,14 @@ const HOST_REFUSALS: Readonly<Record<string, string>> = defineCopy<Record<string
     'task-running': 'Wait for this turn to end.',
     'queue-full': 'The queue is full. Delete old sessions you no longer need, then try again.',
     'port-in-use': 'The port is in use, so Latch did not start.',
+    'workspace-changed': 'This session’s folder is no longer in the project or cannot be found, so it cannot continue.',
+    'helper-home-unavailable':
+      'The Agent’s work folder was changed (permissions, replaced or a link), so Latch will not take it over. The files are kept; check it on this Mac.',
+    'helper-home-overlap': 'The Agent’s work folder overlaps a project. Check the projects on this Mac.',
+    'helper-home-moved': 'The Agent’s work folder is in another default folder. Send the message again in its chat.',
+    'agent-chat-move-pending':
+      'The old chat still has a turn under way, a queued message or an unchecked result. Deal with it, then send again.',
+    'agent-chat-move-project': 'This Agent’s chat restarts in its home first. Send this message without a project.',
     'terminal-limit': 'This has reached its terminal limit. Close one first.',
     'terminal-total-limit': 'Too many terminals are open on this computer. Close ones you don’t use.',
     'terminal-folder-unavailable': 'The folder is no longer available, so the terminal cannot open here.',

@@ -463,7 +463,8 @@ export function useSubmission({
           ...(confirmation ? { confirmation } : {}),
         }),
       )
-      const sessionId = submission.sessionId ?? result.sessionId
+      // An Agent's chat the Host had to start anew (its home moved) answers a message with the chat that took it.
+      const sessionId = result.sessionId ?? submission.sessionId
       if (sessionId === undefined) throw new Error('missing session id')
       setSendingMessage(
         submission.queue || submission.steer

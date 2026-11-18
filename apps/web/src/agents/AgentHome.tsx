@@ -12,6 +12,8 @@ const COPY = defineCopy(
     folder: '默认工作文件夹',
     purpose: '家是它默认干活的文件夹，不是隔离。选了项目时，那个话题在项目里做；删除 Agent 后文件夹留着。',
     failed: '工作位置无法确认，请同步后重试。',
+    pending: '下次发消息时建立',
+    refused: '工作文件夹不可用，原文件已保留',
   },
   {
     title: 'Home',
@@ -19,8 +21,18 @@ const COPY = defineCopy(
     purpose:
       'The Agent works here by default. The folder offers no isolation. Topics with a project run in that project. Deleting the Agent keeps the folder.',
     failed: 'The work location couldn’t be confirmed. Sync and try again.',
+    pending: 'Set up with the next message',
+    refused: 'Work folder unavailable; files kept',
   },
 )
+
+/** What the row says: the Host sets the home up itself, so a home not there yet is only waiting for the next message. */
+function homeLabel(home: Home | undefined): string {
+  if (home?.state === 'pending') return COPY.pending
+  if (home?.state === 'refused') return COPY.refused
+  if (home?.state === 'ready') return COPY.folder
+  return home?.reason ?? COPY.folder
+}
 
 export function AgentHome({ home, local, admin }: { home: Home | undefined; local: boolean; admin: boolean }) {
   const [failure, setFailure] = useState<{ unverified: true } | { cause: unknown }>()
@@ -30,8 +42,8 @@ export function AgentHome({ home, local, admin }: { home: Home | undefined; loca
   return (
     <section className="agent-form-section">
       <h3>{COPY.title}</h3>
-      <Hint label={home?.reason ?? COPY.folder}>
-        {home && (
+      <Hint label={homeLabel(home)}>
+        {home?.path && (
           <>
             <VisibleText text={home.path} />
             <br />

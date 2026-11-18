@@ -26,6 +26,7 @@ import {
   GENERAL_AGENT_ID,
   outsideMemory,
   BOARD_SETTLE_CHARS,
+  boardSettleOf,
   normalizeBoardTags,
   isMcpToolOn,
   onModelChoice,
@@ -198,6 +199,7 @@ import {
   DENY_READ_HOME_PATHS,
   PROJECT_FOLDER_LIMIT,
   canonicalPath,
+  pathKey,
   insideRootsSync,
   checkFolderCandidate,
   checkPrivateFile,
@@ -331,7 +333,7 @@ import { WorkThreadStore } from './work-threads.ts'
 import { SessionLifecycle, projectIdOf, type LifecycleBounds, type LifecycleListeners } from './session-lifecycle.ts'
 import { RUN_ID, type ApprovalRecord, type CancelRecord } from './session-meta.ts'
 import { sendNotFoundPage } from './not-found.ts'
-import { SessionFolders } from './session-folders.ts'
+import { SessionFolders, homeBelongsTo } from './session-folders.ts'
 import { WORKTREE_NAME, Worktrees, type Worktree } from './worktrees.ts'
 import { RepositoryHolds } from './git-delivery.ts'
 import { writeProjectContext } from './project-context.ts'
@@ -2378,7 +2380,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       } catch (error) {
         if (
           error instanceof AppError
-          && ['workspace-changed', 'workspace-disabled', 'worktree-removed', 'worktree-removing'].includes(error.code)
+          && [
+            'workspace-changed',
+            'workspace-disabled',
+            'worktree-removed',
+            'worktree-removing',
+            'helper-home-unavailable',
+            'helper-home-moved',
+            'helper-home-overlap',
+          ].includes(error.code)
         )
           return 'removed'
         throw error
@@ -2460,7 +2470,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await assertSessionAccess(caller, sessionId)
         assertWritable(sessionId)
         const detail = await hub!.detail(sessionId)
-        await assertSessionWorkspace(sessionId)
+        await assertSessionWorkspace(sessionId, { absentHome: true })
         selected = {
           harnessId: detail.summary.harnessId,
           ...(detail.summary.workspaceId ? { workspaceId: detail.summary.workspaceId } : {}),
@@ -3175,14 +3185,34 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         computer: () => computer,
         home: async owner => {
           const record = owner === GENERAL_AGENT_ID ? customAgents.general() : customAgents.get(owner)
-          const path = join(workspaceRoot, 'helpers', owner)
-          if (!record.home) return { owner, path, available: false, reason: '第一次开始话题时建立' }
+          // Where the allocator keeps it under this start directory: the plain name or this data directory's tagged one.
+          const { path } = ownFolders.homeOf(owner)
+          // Reads only: the next message sets up a home that is not there yet (`helperState`), never this view.
+          const refused = {
+            owner,
+            path,
+            available: false,
+            state: 'refused' as const,
+            reason: '工作位置无法确认，原文件已保留；请在这台 Mac 上检查',
+          }
           try {
-            if (record.home !== `helpers/${owner}` || !(await ownFolders.verify(path))) throw workspaceChanged()
+            const state = await ownFolders.helperState(owner)
+            if (state === 'absent') {
+              // Before it is made: the path this Host will make, never another data directory's home under the plain name.
+              const planned = await ownFolders.plannedHome(owner)
+              return {
+                owner,
+                ...(planned ? { path: planned.path } : {}),
+                available: false,
+                state: 'pending',
+                reason: record.home ? '下次发消息时重新建立' : '第一次发消息时建立',
+              }
+            }
+            if (state !== 'ready') return refused
             await assertHelperHome(path)
-            return { owner, path: await realpath(path), available: true }
+            return { owner, path: await realpath(path), available: true, state: 'ready' }
           } catch {
-            return { owner, path, available: false, reason: '工作位置无法确认，原文件已保留；请在这台 Mac 上检查' }
+            return refused
           }
         },
         warm: (owner, caller) => warmAgentChat(owner, caller),
@@ -6991,22 +7021,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * (else `workspace-changed`). A session from before projects had several folders is refused while its directory is
      * the primary folder of an unusable project.
      */
-    async function assertSessionWorkspace(sessionId: string, options: { task?: TaskSummary; fresh?: true } = {}): Promise<void> {
+    async function assertSessionWorkspace(
+      sessionId: string,
+      options: { task?: TaskSummary; fresh?: true; absentHome?: true } = {},
+    ): Promise<void> {
       const task = options.task ?? (await sessionTask(sessionId))
-      if (task?.sessionFolder && !(await ownFolders.verify(task.cwd))) throw workspaceChanged()
-      const helperOwner = task?.agent?.customAgentId ?? (task?.generalChat ? GENERAL_AGENT_ID : undefined)
-      // A driver's first turn can reach a tool before createTask has returned and the Host's folder marker is durable.
-      const helper =
-        task?.cwd
-        && (hub!.sessionFolderOf(sessionId)?.startsWith('helpers/')
-          || (helperOwner
-            && (!task.workspaceId || task.workspaceId === 'default')
-            && basename(task.cwd) === helperOwner
-            && basename(dirname(task.cwd)) === 'helpers'))
-      if (helper && task?.cwd) {
-        if (!(await ownFolders.verify(task.cwd))) throw workspaceChanged()
-        await assertHelperHome(task.cwd)
-      }
+      if (task && helperSession(task)) await assertAgentHomeOf(task, options.absentHome)
+      else if (task?.sessionFolder && !(await ownFolders.verify(task.cwd))) throw workspaceChanged()
       // A worktree session needs its project, and the worktree still Latch's and this session's, where it started.
       const worktree = task && hub!.worktreeOf(task.id)
       if (task && worktree) {
@@ -7034,6 +7055,84 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (state.failure && (await canonicalSet(record.folders.map(folder => folder.path))).has(root))
           throw workspaceDisabled(record, state)
       }
+    }
+
+    /** The Agent whose home a session may work in, by the Host's records: its Agent, or 通用 for a chat with it. */
+    const homeOwnerOf = (task: Pick<TaskSummary, 'agent' | 'generalChat'>) =>
+      task.agent?.customAgentId ?? (task.generalChat ? GENERAL_AGENT_ID : undefined)
+
+    /** Whether a session works in an Agent's home (`helpers/<owner>`, or its tagged name), by the Host's own records. */
+    function helperSession(task: TaskSummary): boolean {
+      if (!task.cwd) return false
+      const owner = homeOwnerOf(task)
+      // A driver's first turn can reach a tool before createTask has returned and the Host's folder marker is durable.
+      return (
+        hub!.sessionFolderOf(task.id)?.startsWith('helpers/') === true
+        || (owner !== undefined
+          && (!task.workspaceId || task.workspaceId === 'default')
+          && basename(dirname(task.cwd)) === 'helpers'
+          && homeBelongsTo(`helpers/${basename(task.cwd)}`, owner))
+      )
+    }
+
+    /** `path` resolved through its deepest ancestor that is there now: where an entry that is gone would be. */
+    async function canonicalThroughAncestor(path: string): Promise<string | undefined> {
+      const rest: string[] = []
+      let current = resolve(path)
+      for (;;) {
+        const real = await canonicalPath(current).catch(() => undefined)
+        // The missing part takes the same comparison form as the resolved one (case-folded where volumes ignore case).
+        if (real !== undefined) return rest.length ? join(real, pathKey(join(...rest))) : real
+        const parent = dirname(current)
+        if (parent === current) return undefined
+        rest.unshift(basename(current))
+        current = parent
+      }
+    }
+
+    /**
+     * Whether an Agent's home at `cwd` lies under another start directory than the Host's now. Only the Host's facts: the
+     * path the session recorded and the start directory this Host runs with. Moved when that start directory, resolved
+     * through whatever of it is still there, is not this one: a deleted old start directory is moved too. A spelling
+     * difference (`/var` and `/private/var`, a driver that records the real path, a linked start directory) resolves to
+     * the same place and is not moved; nor is an absent, replaced or widened home under the current start directory. An
+     * old start directory on a volume that is not mounted counts as moved: the chat moves on, the old one stays to read.
+     */
+    async function homeMoved(cwd: string): Promise<boolean> {
+      const root = dirname(dirname(cwd))
+      if (resolve(root) === resolve(workspaceRoot)) return false
+      const real = await canonicalThroughAncestor(root)
+      return real !== undefined && real !== canonicalWorkspace
+    }
+
+    /** Whether `cwd` lies under this Host's start directory: as spelled, or resolved through what is still there. */
+    async function underStartDirectory(cwd: string): Promise<boolean> {
+      const root = dirname(dirname(cwd))
+      return resolve(root) === resolve(workspaceRoot) || (await canonicalThroughAncestor(root)) === canonicalWorkspace
+    }
+
+    /** Whether `task`'s home is, by name and place, the one the allocator keeps for its Agent under this start directory. */
+    async function currentHomeOf(task: TaskSummary): Promise<string | undefined> {
+      const owner = homeOwnerOf(task)
+      if (!owner || !task.cwd || !(await underStartDirectory(task.cwd))) return undefined
+      return ownFolders.homeOf(owner).name === `helpers/${basename(task.cwd)}` ? owner : undefined
+    }
+
+    /**
+     * A turn, tool call or file read in an Agent's home: it must be the allocator's home, as recorded, now. `absentHome`:
+     * only for what the input box may take next, a home the person's next message sets up again (nothing at its path)
+     * passes; nothing is created here.
+     */
+    async function assertAgentHomeOf(task: TaskSummary, absentHome?: true): Promise<void> {
+      const cwd = task.cwd!
+      if (await homeMoved(cwd)) throw new AppError(409, 'helper-home-moved', 'Agent 的家在另一个默认文件夹里，这个会话不能继续。')
+      if (absentHome) {
+        const owner = await currentHomeOf(task)
+        if (owner && (await ownFolders.helperState(owner)) === 'absent') return
+      }
+      if (!(await ownFolders.verify(cwd)))
+        throw new AppError(409, 'helper-home-unavailable', 'Agent 的家无法确认，原文件已保留；请在这台 Mac 上检查工作文件夹。')
+      await assertHelperHome(cwd)
     }
 
     /**
@@ -8528,13 +8627,37 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
+    /**
+     * The Agent's home for a turn that may set it up: a first start, a person's next message in its chat (`healAgentHome`)
+     * and a scheduled run, never a read or a warm-up. An Agent that already has a home gets it made again only when
+     * nothing is at its path (the allocator's rule); that is recorded first (`agent.home.assigned` with `recreated`),
+     * and if the record cannot be written nothing is made.
+     */
     async function prepareHelperHome(owner: string, actor: { actor: AuditActor; authorize(): void }) {
-      const folder = await ownFolders.helperHome(owner, async path => {
-        actor.authorize()
-        await assertHelperHome(path)
-        actor.authorize()
-      })
-      await customAgents.recordHome(owner, folder.name, actor)
+      let made = false
+      const folder = await ownFolders.helperHome(
+        owner,
+        async path => {
+          actor.authorize()
+          await assertHelperHome(path)
+          actor.authorize()
+        },
+        {
+          recreate: true,
+          // Audited before the allocator creates anything, the first allocation as much as a re-creation.
+          beforeCreate: async ({ name, recreated }) => {
+            actor.authorize()
+            await audited({
+              action: 'agent.home.assigned',
+              actor: actor.actor,
+              target: owner,
+              detail: { homeHash: sha256Hex(canonicalJson(name)), ...(recreated ? { recreated: true as const } : {}) },
+            })
+            made = true
+          },
+        },
+      )
+      await customAgents.recordHome(owner, folder.name, actor, made)
       actor.authorize()
       if (!(await ownFolders.verify(folder.path))) throw workspaceChanged()
       return folder
@@ -8585,6 +8708,16 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, await startPersonSession(req, caller, input, res), 201)
         return
       }
+      json(res, await startAgentChatRequest(req, res, caller, input), 201)
+    }
+
+    /** A person's message that starts an Agent's one chat: `POST /tasks` with `customAgentId`, or a moved chat's message. */
+    async function startAgentChatRequest(
+      req: IncomingMessage,
+      res: ServerResponse,
+      caller: DeviceCaller,
+      input: z.infer<typeof createTaskSchema>,
+    ): Promise<{ sessionId: string; memoryRefused?: string }> {
       if (!input.prompt && !input.forkOf && !input.attachmentIds?.length)
         throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
       if (input.customAgentId) agentAccess(caller, true)
@@ -8624,7 +8757,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             )
           : undefined
       if (input.customAgentId) agentAccess(caller, true)
-      json(res, { ...started, ...(refused ? { memoryRefused: refused } : {}) }, 201)
+      return { ...started, ...(refused ? { memoryRefused: refused } : {}) }
     }
 
     /**
@@ -8740,7 +8873,26 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (existing) return existing
         throw agentChatUnconfirmed()
       }
-      const held = await customAgents.reserveChat(owner, first, actor.authorize)
+      // The chat in the slot may never run again (its home is under another start directory): this person's message,
+      // which found that, starts the new chat in the home under the current one. The new home is established first.
+      const slot = customAgents.chats()[owner]
+      const retire = slot?.state === 'ready' && (await chatHomeMoved(owner, slot.sessionId)) ? slot.sessionId : undefined
+      if (retire) {
+        if (input.workspaceId !== undefined && input.workspaceId !== 'default')
+          throw owner === GENERAL_AGENT_ID
+            ? new AppError(400, 'general-chat-project', '和通用的对话不带项目、工作树或分叉。')
+            : new AppError(409, 'agent-chat-move-project', '这个 Agent 的聊天要先在它的家里重新开始：这条消息不选项目再发送。')
+        await assertChatMovable(retire)
+        precheckMovedStart(owner, input)
+        await prepareHelperHome(owner, actor)
+        actor.authorize()
+      }
+      const held = await customAgents.reserveChat(
+        owner,
+        first,
+        actor.authorize,
+        retire ? { sessionId: retire, actor: actor.actor } : undefined,
+      )
       if (held.state === 'ready') return { sessionId: held.sessionId }
       const inFlight = firstChatsInFlight.get(owner)
       if (inFlight) {
@@ -8750,8 +8902,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
       const run = async () => {
         let dispatched = false
+        // A replay of a held start whose earlier attempt the whole inventory shows never began (`findAgentChatStart`).
+        let provenAbsent = false
         try {
           const recovered = held.fresh ? undefined : await findAgentChatStart(owner, actor, input)
+          provenAbsent = !held.fresh && recovered === undefined
           actor.authorize()
           if (recovered && input.attachmentIds?.length)
             await attachmentStore.bind(first.deviceId, input.attachmentIds, recovered.sessionId, first.requestId)
@@ -8760,16 +8915,20 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ?? (await start(() => {
               dispatched = true
             }))
-          await customAgents.settleChat(owner, first, created.sessionId)
+          await customAgents.settleChat(owner, first, created.sessionId, actor.actor)
           refresh()
           return created
         } catch (error) {
-          if (held.fresh && !dispatched) {
-            await customAgents.settleChat(owner, first)
+          // Settled as not started (an empty slot, or the chat it was to replace given back) only when nothing began:
+          // a fresh start or a proven-absent replay refused before dispatch, or refused definitively with no trace of
+          // it. A start whose outcome is still unknown stays held for the original device's retry.
+          const definite = held.fresh || provenAbsent
+          if (definite && !dispatched) {
+            await customAgents.settleChat(owner, first, undefined, actor.actor)
             refresh()
           } else if (error instanceof AppError && refusedBeforeAccepting(error.status, error.code)) {
-            if (!held.fresh || (await findAgentChatStart(owner, actor, input))) throw agentChatUnconfirmed()
-            await customAgents.settleChat(owner, first)
+            if (!definite || (await findAgentChatStart(owner, actor, input))) throw agentChatUnconfirmed()
+            await customAgents.settleChat(owner, first, undefined, actor.actor)
             refresh()
           }
           throw error
@@ -8782,6 +8941,127 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const created = await operation
       actor.authorize()
       return created
+    }
+
+    /**
+     * Whether the chat `sessionId` in `owner`'s slot can never run again: by the Host's own records it works in that
+     * Agent's home and the home lies under another start directory than this Host's (`homeMoved`). A home that is merely
+     * absent, replaced, widened or a link under the current start directory is never this: a device cannot make a
+     * healthy chat look moved, so this is no way around `agent-chat-retained`.
+     */
+    async function chatHomeMoved(owner: string, sessionId: string): Promise<boolean> {
+      const task = await sessionTask(sessionId)
+      if (!task?.cwd || task.personal || !helperSession(task) || homeOwnerOf(task) !== owner) return false
+      return homeMoved(task.cwd)
+    }
+
+    /**
+     * A moved chat is replaced only once nothing in it is still on its way or unaccounted for: no turn running or waiting
+     * for an approval, no queued message (the person removes it from the queue), and no result of its last run that
+     * nobody has checked (the person marks it 已核对). Refused with nothing changed; the chat stays in the slot.
+     */
+    async function assertChatMovable(sessionId: string): Promise<void> {
+      const summary = await hub!.summary(sessionId)
+      const settle = boardSettleOf(summary)
+      const attended = hub!.attendedOf(sessionId)
+      const unknown =
+        (summary.runEnd?.unknownResultCount ?? summary.runEnd?.unknownResults?.length ?? 0) > 0
+        && !(settle !== undefined && attended?.settle === settle && attended.checked === true)
+      if (summary.status === 'running' || summary.status === 'waiting-approval' || promptQueues.view(sessionId).length || unknown)
+        throw new AppError(409, 'agent-chat-move-pending', '旧聊天里还有进行中、排队或结果未核对的消息，处理完再发送。')
+    }
+
+    /**
+     * What would refuse the new chat's start before it begins, checked before the old chat is given up: the update
+     * window, the Agent and its Harness, a Harness not yet confirmed on this Mac, and the model. A refusal later still
+     * gives the slot back (`settleChat`); this keeps the common ones from writing a retire at all.
+     */
+    function precheckMovedStart(owner: string, input: z.infer<typeof createTaskSchema>): void {
+      refuseWhileUpdating('session')
+      const harnessId = owner === GENERAL_AGENT_ID ? STANDARD : customAgents.get(owner).harnessId
+      if (owner !== GENERAL_AGENT_ID) {
+        const reason = agentPlans.unavailable(customAgents.get(owner))
+        if (reason) throw new AppError(409, 'agent-unavailable', reason)
+      }
+      const harness = hub!.info(harnessId)
+      if (!harness || !hub!.has(harnessId) || harness.status !== 'ready')
+        throw new AppError(409, 'harness-unavailable', harness?.statusMessage ?? `Harness ${harnessId} 当前不可用`)
+      if (config.settings().agents.find(agent => agent.id === harnessId && agent.confirmedCommand === undefined))
+        throw new AppError(409, 'harness-unconfirmed', '这个 Harness 还没有在这台 Mac 上确认过，请先在这台 Mac 上用它开始一个会话')
+      if (input.model) assertModel(input.model)
+    }
+
+    /**
+     * A person's message to an Agent's one chat that the Host must start anew (`chatHomeMoved`), or a retry of such a
+     * message after its answer was lost (the slot's first message is this device's request, settled or still being
+     * confirmed). The same request goes the first-start way, with its receipts: answered with the new chat's ID. Anything
+     * else is not this, and continues as a normal message.
+     */
+    async function movedChatInput(
+      caller: DeviceCaller,
+      id: string,
+      input: z.infer<typeof queuedPromptSchema>,
+    ): Promise<z.infer<typeof createTaskSchema> | undefined> {
+      if (input.queue || input.steer) return undefined
+      const owner = hub!.agentOf(id)?.customAgentId ?? (hub!.generalChatOf(id) ? GENERAL_AGENT_ID : undefined)
+      if (!owner || customAgents.hasPending()) return undefined
+      const slot = customAgents.chats()[owner]
+      const retry =
+        (slot?.state === 'starting' || (slot?.state === 'ready' && slot.sessionId !== id))
+        && customAgents.knowsChatStart(owner, caller.device.id, input.requestId)
+      if (!retry && (slot?.state !== 'ready' || slot.sessionId !== id || !(await chatHomeMoved(owner, id)))) return undefined
+      await assertSessionAccess(caller, id)
+      checkPrivateSession(caller, id, true)
+      agentAccess(caller, true)
+      // A file named in the old home is not in the new one.
+      if (input.fileRefs?.length) throw new AppError(409, 'file-reference-refused', '引用的文件不在这个 Agent 新的家里，请重新选择。')
+      if (!retry) await assertChatMovable(id)
+      const summary = await hub!.summary(id)
+      const model =
+        input.model ?? (summary.providerId && summary.model ? { providerId: summary.providerId, model: summary.model } : undefined)
+      return createTaskSchema.parse({
+        customAgentId: owner,
+        requestId: input.requestId,
+        prompt: input.prompt,
+        ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
+        ...(owner === GENERAL_AGENT_ID ? { harnessId: STANDARD, mode: 'agent', workspaceId: 'default' } : {}),
+        ...(model && owner === GENERAL_AGENT_ID ? { model } : {}),
+      })
+    }
+
+    /**
+     * What would refuse a person's turn without side effects, run before an absent home is set up again, so a refused
+     * request creates nothing and audits nothing. The same checks run again on the way (`sendPromptChecked`, the driver).
+     */
+    async function precheckTurn(id: string, input: z.infer<typeof queuedPromptSchema>): Promise<void> {
+      if (input.model) {
+        const harness = hub!.info(await hub!.harnessOf(id))
+        if (harness?.capabilities.models.owner !== 'latch')
+          throw new AppError(400, 'model-unsupported', '该会话的 Harness 自行管理模型，不能切换模型服务')
+        assertModel(input.model)
+      }
+      if (!input.prompt && !input.attachmentIds?.length) throw new AppError(400, 'invalid-prompt', '请输入任务内容或添加附件。')
+      assertWritable(id)
+      if (input.freshContext && !(await hub!.detail(id)).clearContext)
+        throw new AppError(409, 'clear-context-unsupported', '这个会话不能清空上下文。')
+      const status = (await hub!.summary(id)).status
+      if (status === 'running' || status === 'waiting-approval') throw new AppError(409, 'task-running', '任务仍在运行，请等待完成或先取消')
+    }
+
+    /**
+     * An Agent whose chat lost its home: on a person's turn (`sendPromptChecked`: a message, a 待办 delivery, a review
+     * note, a handoff), once the request has passed every check that can refuse it without side effects, the same home
+     * is made again where nothing is at its path (the allocator's rule) and the same session continues there. Everything
+     * else is left to `assertSessionWorkspace`, which refuses it.
+     */
+    async function healAgentHome(caller: DeviceCaller, id: string, input: z.infer<typeof queuedPromptSchema>): Promise<void> {
+      const task = await sessionTask(id)
+      if (!task?.cwd || task.personal || !helperSession(task) || (await homeMoved(task.cwd))) return
+      const owner = await currentHomeOf(task)
+      if (!owner || (owner !== GENERAL_AGENT_ID && !customAgents.list().some(agent => agent.id === owner))) return
+      if ((await ownFolders.helperState(owner)) !== 'absent') return
+      await precheckTurn(id, input)
+      await prepareHelperHome(owner, agentAccess(caller, true))
     }
 
     // Old General starts had no Host selection receipt. Native and Standard chat requests cannot be replayed through
@@ -9404,6 +9684,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         agentAccess(caller, true)
         return 'replayed'
       }
+      if (!input.queue && !input.steer) await healAgentHome(caller, id, input)
       await assertSessionWorkspace(id)
       if (input.model) {
         const harness = hub!.info(await hub!.harnessOf(id))
@@ -9870,6 +10151,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           throw new AppError(400, 'queue-attachments-unsupported', '附件暂不支持排队，请等本轮结束后发送')
         if (input.freshContext && (input.queue || input.steer))
           throw new AppError(400, 'fresh-context-queued', '清空上下文的消息不能排队或追加，请等本轮结束后发送。')
+        const moved = await movedChatInput(caller, id, input)
+        if (moved) {
+          // The Agent's chat starts anew in its current home: the answer names the chat that took the message.
+          json(res, { accepted: true, ...(await startAgentChatRequest(req, res, caller, moved)) })
+          return true
+        }
         const sent = await sendPrompt(caller, id, input)
         // A queued message proposes when it is sent from the queue, not now.
         const refused =

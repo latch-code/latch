@@ -27,7 +27,14 @@ import { approvalActions, composerGate, deviceAccess, hostView } from '../core/p
 import { detailOwnsSummary } from '../core/projection.ts'
 import { setPreference } from '../preferences.ts'
 import { requestLeave } from '../preview/editDrafts.ts'
-import { NOTICE_COPY, isSessionStopCode, SESSION_STOP_LABEL, stopLocksInput, type SessionStopCode } from '../core/securityCopy.ts'
+import {
+  NOTICE_COPY,
+  describeFailure,
+  isSessionStopCode,
+  SESSION_STOP_LABEL,
+  stopLocksInput,
+  type SessionStopCode,
+} from '../core/securityCopy.ts'
 import { retryOfRefused, type RefusedInput } from '../core/refusedInput.ts'
 import { sessionMenuSections, type BoardMarkActions, type SessionPatch } from '../sessionMenu.ts'
 import { askJoinItem, leaveItem } from '../board/ItemPageJoin.tsx'
@@ -63,6 +70,9 @@ import { toolRowId } from '../conversation.ts'
 import { rebuiltFrom } from '../history/model.ts'
 import { failureAction } from '../conversation/failureAction.ts'
 import { defineCopy, useLocale } from '../core/i18n.ts'
+
+/** Refusals of an Agent's home: shown as the chat's own short state, never as a project to pick. */
+const AGENT_HOME_CODES = new Set(['workspace-changed', 'helper-home-unavailable', 'helper-home-overlap', 'helper-home-moved'])
 
 const COPY = defineCopy(
   {
@@ -242,6 +252,8 @@ export function useSessionController({
   /** Sessions that stopped accepting input, learned from the Host's refusal. */
   const [stopped, setStopped] = useState<ReadonlyMap<string, SessionStopCode>>(new Map())
   const [refused, setRefused] = useState<ReadonlyMap<string, RefusedInput>>(new Map())
+  /** An Agent's chat whose home the Host refused: the code, until a retry or a message gets through. */
+  const [homeRefused, setHomeRefused] = useState<ReadonlyMap<string, string>>(new Map())
   const decisions = useRef(new DecisionRequests())
   const cancels = useRef(new CancelRequests())
 
@@ -272,7 +284,24 @@ export function useSessionController({
   const harnessInfo = sessionHarness(catalog, summary)
   const harnessName = harnessInfo ? harnessLabel(harnessInfo) : (summary?.harnessId ?? snapshot.harness?.name ?? 'Latch')
 
+  /**
+   * Whether a refused session is an Agent's chat, from what the refusal and this page know of it, not only the session
+   * list: a code about an Agent's home says so itself; a chat may be missing from the list just after it was started
+   * (a moved chat's new one), yet be the Host's chat for its Agent or the detail open now.
+   */
+  const agentSession = (sessionId: string, code: string) =>
+    code.startsWith('helper-home-')
+    || topicOwner(snapshot.tasks.find(task => task.id === sessionId)) !== undefined
+    || Object.values(snapshot.agentChats ?? {}).some(chat => chat.state === 'ready' && chat.sessionId === sessionId)
+    || (detail?.summary.id === sessionId && topicOwner(detail.summary) !== undefined)
   const stopSession = (sessionId: string, cause: unknown, what: RefusedInput) => {
+    // An Agent's chat has no folder for a person to pick: the Host sets its home up. What it refuses is said as such.
+    if (cause instanceof ApiError && AGENT_HOME_CODES.has(cause.code) && agentSession(sessionId, cause.code)) {
+      const code = cause.code
+      setHomeRefused(previous => new Map(previous).set(sessionId, code))
+      setRefused(previous => new Map(previous).set(sessionId, what))
+      return true
+    }
     if (cause instanceof ApiError && cause.code === 'workspace-changed') {
       setWorkspaceChanged(previous => new Set(previous).add(sessionId))
       return true
@@ -283,6 +312,13 @@ export function useSessionController({
       setRefused(previous => new Map(previous).set(sessionId, what))
     }
   }
+  const clearHomeRefused = (sessionId: string) =>
+    setHomeRefused(previous => {
+      if (!previous.has(sessionId)) return previous
+      const next = new Map(previous)
+      next.delete(sessionId)
+      return next
+    })
   /** A mode that could not be read this once clears when something is tried again; the Host says if it still cannot. */
   const clearUnverified = (sessionId: string) => {
     if (stopped.get(sessionId) !== 'permission-unverified') return
@@ -305,6 +341,7 @@ export function useSessionController({
     select,
     refresh,
     onSent: (sessionId, sent, { foreground, consumedDraft, memoryRefused }) => {
+      if (sent.sessionId !== undefined) clearHomeRefused(sent.sessionId)
       if (consumedDraft) sessionDrafts.current.remove(sent.sessionId ?? NEW_SESSION_DRAFT)
       // The message went; only its 「记住…」 was not kept, and the Host says why.
       if (memoryRefused) setToast({ text: memoryRefused, tone: 'error' })
@@ -1434,6 +1471,16 @@ export function useSessionController({
     if (stopRetry?.kind === 'draft') void sendDraft()
     else if (stopRetry?.kind === 'prompt') void resend(stopRetry.prompt)
   }
+  const homeCode = selectedId === null ? undefined : homeRefused.get(selectedId)
+  /** A short state above an Agent chat's input: the reason behind its hover, and 重试 for what was refused. */
+  const homeStop = homeCode ? { reason: describeFailure(409, homeCode) } : undefined
+  const retryHome = () => {
+    if (selectedId === null) return
+    const again = retryOfRefused(refusedInput, { draft: submission.draft, attachments: attachmentDraft.items.length })
+    clearHomeRefused(selectedId)
+    if (again?.kind === 'draft') void sendDraft()
+    else if (again?.kind === 'prompt') void submission.resend(again.prompt)
+  }
   // Rebuilt as text into another session: this one stays to read, and links there.
   const rebuiltInto = summary ? rebuiltFrom(snapshot.tasks, summary.id) : undefined
   const personalOwner = topicOwner(summary)
@@ -1830,6 +1877,8 @@ export function useSessionController({
     stopRetry,
     rebuiltInto,
     retryStopped,
+    homeStop,
+    retryHome,
     refusedInput,
     gate,
     sessionBlock,

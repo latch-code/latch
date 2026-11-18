@@ -3,7 +3,19 @@ import { count, hex64, opaqueId } from './fields.ts'
 
 /** Engine definitions and their probes; 我的 Agent and 通用; 定时任务. */
 export const AGENT_ACTIONS = {
-  'agent.home.assigned': z.strictObject({ homeHash: hex64 }),
+  /** `recreated`: the Agent already had a home and nothing was at its path, so it is made again, new and empty. */
+  'agent.home.assigned': z.strictObject({ homeHash: hex64, recreated: z.literal(true).optional() }),
+  /**
+   * The Agent's one chat can never run again because its home is under another start directory than the Host's now:
+   * the chat stays to read and the person's message that found this starts the new chat (`sessionId` is the old one).
+   */
+  'agent.chat.retired': z.strictObject({ customAgentId: opaqueId, sessionId: opaqueId, reason: z.enum(['home-moved']) }),
+  /** The retire above did not happen after all: the new chat's start was refused before it began, so `sessionId` is back. */
+  'agent.chat.restored': z.strictObject({
+    customAgentId: opaqueId,
+    sessionId: opaqueId,
+    reason: z.enum(['start-refused', 'not-committed']),
+  }),
   'agent.changed': z.strictObject({
     kind: z.enum(['agent', 'general', 'memory', 'proposal']),
     operation: z.enum(['create', 'update', 'delete']),

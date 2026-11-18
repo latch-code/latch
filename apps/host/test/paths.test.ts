@@ -105,6 +105,20 @@ describe('resolveLatchPaths', () => {
     expect(visited).not.toContain('/project/.runtime')
   })
 
+  it('gives the desktop app’s data directory one start directory, whichever build starts its Host', () => {
+    // The packaged app passes --data-dir <appData>/Latch/Host; a checkout's desktop launch finds the same default.
+    const dataDir = '/Users/me/Library/Application Support/Latch/Host'
+    for (const legacy of [false, true]) {
+      const exists = (path: string) => legacy && path === `${dataDir}/workspace`
+      const roots = ['/Users/me/src/latch', '/Applications/Latch.app/Contents/Resources/app'].map(
+        codeRoot =>
+          resolveLatchPaths({ dataDir, env: {}, cwd: '/', home: '/Users/me', platform: 'darwin', exists, codeRoot, legacyRuntime: false })
+            .workspaceRoot,
+      )
+      expect(new Set(roots).size).toBe(1)
+    }
+  })
+
   it('resolves the workspace and agents directory', () => {
     const base = { cwd: '/w', home: '/home/me', platform: 'linux' as const, exists: none }
     expect(resolveLatchPaths({ ...base, env: {}, workspace: 'proj' })).toMatchObject({ workspaceRoot: '/w/proj', workspaceSource: 'flag' })

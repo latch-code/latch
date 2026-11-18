@@ -361,7 +361,7 @@ export interface WorkspaceGuardContext {
 export type WorkspaceVerdict = { ok: true; realPath: string } | { ok: false; error: AppError }
 
 /** macOS and Windows volumes are usually case-insensitive; comparing case-folded can only add overlaps. */
-function pathKey(path: string): string {
+export function pathKey(path: string): string {
   return process.platform === 'darwin' || process.platform === 'win32' ? path.normalize('NFC').toLowerCase() : path
 }
 

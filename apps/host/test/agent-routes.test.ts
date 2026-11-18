@@ -453,7 +453,7 @@ test('refuses a client-chosen home, a registered project collision and a replace
     body: { prompt: 'No replacement', requestId: randomUUID() },
   })
   expect(followup.status).toBe(409)
-  expect(await followup.json()).toMatchObject({ error: 'workspace-changed' })
+  expect(await followup.json()).toMatchObject({ error: 'helper-home-unavailable' })
   expect(seen).toHaveLength(1)
 })
 

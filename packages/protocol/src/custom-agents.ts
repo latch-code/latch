@@ -40,8 +40,11 @@ export const GENERAL_FACT_LIMITS = { count: 24, bytes: 6 * 1024 } as const
 /** The Host's verified home hint, visible only to devices allowed to read this Agent's private data. */
 export interface AgentHome {
   owner: string
-  path: string
+  /** Absent before the first allocation when the Host cannot say yet where it will make it. */
+  path?: string
   available: boolean
+  /** `pending`: the next message sets it up (first time, or again where nothing is at its path); `refused`: kept as is. */
+  state?: 'ready' | 'pending' | 'refused'
   reason?: string
 }
 
