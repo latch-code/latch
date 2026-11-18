@@ -105,7 +105,15 @@ describe('what this computer can take back', () => {
     local = await host.enroll({ listener: 'unix', name: '本机桌面端' })
   })
   afterEach(async () => {
-    await host?.close()
+    try {
+      for (const context of browser?.contexts() ?? []) {
+        for (const page of context.pages()) await page.unrouteAll({ behavior: 'wait' })
+        await context.unrouteAll({ behavior: 'wait' })
+        await context.close()
+      }
+    } finally {
+      await host?.close()
+    }
   })
 
   const confirmService = () =>
@@ -197,7 +205,8 @@ describe('what this computer can take back', () => {
           const writing = page.waitForRequest(request => request.url().endsWith('/link/api/policy') && request.method() === 'PATCH')
           await remove.click()
           await writing
-          await expect.poll(() => remove.isEnabled()).toBe(false)
+          await expect.poll(() => remove.getAttribute('aria-busy')).toBe('true')
+          expect(await dialog.getByRole('button', { name: '取消', exact: true }).isDisabled()).toBe(true)
           expect(await failure.count()).toBe(0)
           await shot('remove-progress')
         } finally {

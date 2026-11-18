@@ -110,7 +110,14 @@ it.each([
       await page.mouse.wheel(0, -1500)
       await expect.poll(() => transcript.evaluate(element => element.scrollTop)).toBeLessThan(bottom)
       await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-      const position = await transcript.evaluate(element => element.scrollTop)
+      const reading = await transcript.evaluate(element => {
+        const top = element.getBoundingClientRect().top
+        const paragraphs = [...element.querySelectorAll('p')].map(paragraph => paragraph.getBoundingClientRect().top)
+        const index = paragraphs.findIndex(y => y >= top + 24)
+        return index < 0 ? undefined : { index, offset: paragraphs[index]! - top }
+      })
+      if (!reading) throw new Error('No paragraph at the reading position')
+      const readingLine = await transcript.locator('p').nth(reading.index).elementHandle()
       const mounted = await transcript.elementHandle()
       await page.locator('.sidebar [data-space-primary]').click()
       const home = page.locator('.workbench-home')
@@ -157,7 +164,16 @@ it.each([
       await page.locator(`.sidebar [data-task-id="${sessionId}"]`).filter({ visible: true }).click()
       expect(await input.inputValue()).toBe('只属于原会话的草稿')
       expect(await mounted!.evaluate(element => element.isConnected)).toBe(true)
-      expect(await transcript.evaluate(element => element.scrollTop)).toBe(position)
+      expect(await readingLine.evaluate(element => element.isConnected)).toBe(true)
+      // The same paragraph should stay in the reading viewport, allowing for pixel rounding after resizing.
+      await expect
+        .poll(async () => {
+          const offset = await readingLine.evaluate(
+            element => element.getBoundingClientRect().top - element.closest('.transcript')!.getBoundingClientRect().top,
+          )
+          return Math.abs(offset - reading.offset)
+        })
+        .toBeLessThanOrEqual(2)
       expect(await edit.isVisible()).toBe(true)
       expect(await edit.inputValue()).toBe('尚未保存的原会话编辑。')
       await edit.fill('文件预览在总览背后保留。')
