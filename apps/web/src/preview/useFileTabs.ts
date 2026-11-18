@@ -259,9 +259,15 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
         if (context)
           update(context, state => ({
             ...state,
-            tabs: state.tabs.map(tab =>
-              tab.id === id ? { ...tab, file, target: { ...tab.target, reference: file.path, rootId: file.root } } : tab,
-            ),
+            tabs: state.tabs.map(tab => {
+              if (tab.id !== id) return tab
+              // Metadata refreshes keep the reading position; opening a reference can request a line again.
+              const target =
+                tab.target.reference === file.path && tab.target.rootId === file.root
+                  ? tab.target
+                  : { ...tab.target, reference: file.path, rootId: file.root }
+              return { ...tab, file, target }
+            }),
           }))
       },
     }
