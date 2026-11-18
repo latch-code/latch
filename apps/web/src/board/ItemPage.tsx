@@ -236,8 +236,7 @@ export function ItemPage({ shell, itemId }: { shell: ShellState; itemId: string 
   const [joining, setJoining] = useState(false)
   const [starting, setStarting] = useState(false)
   const [bringing, setBringing] = useState<string | null>(null)
-  /** Sessions this page started: one the Host could not put in the 待办 (it filled up meanwhile) stays in view as such. */
-  const [started, setStarted] = useState<string[]>([])
+  const [startedOutside, setStartedOutside] = useState<string[]>([])
   const fail = (cause: unknown) => {
     shell.setToast({ text: errorMessage(cause), tone: 'error' })
   }
@@ -314,7 +313,7 @@ export function ItemPage({ shell, itemId }: { shell: ShellState; itemId: string 
   const decision = decisionPost && thread.decisions.get(decisionPost.id)
   const members = item.sessionIds.map(id => ({ id, task: snapshot.tasks.find(task => task.id === id) }))
   const full = item.sessionIds.length >= WORK_ITEM_LIMITS.sessions
-  const outside = started.flatMap(id => {
+  const outside = startedOutside.flatMap(id => {
     const task = snapshot.tasks.find(entry => entry.id === id)
     return task && !item.sessionIds.includes(id) && !snapshot.items?.some(other => other.sessionIds.includes(id)) ? [task] : []
   })
@@ -605,7 +604,7 @@ export function ItemPage({ shell, itemId }: { shell: ShellState; itemId: string 
           shell={shell}
           item={record}
           revision={item.revision}
-          onStarted={sessionId => setStarted(previous => [...previous, sessionId])}
+          onStartedOutside={sessionId => setStartedOutside(previous => [...previous, sessionId])}
           onClose={() => setStarting(false)}
         />
       )}

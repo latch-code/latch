@@ -14,14 +14,14 @@ export function ItemPageStart({
   shell,
   item,
   revision,
-  onStarted,
+  onStartedOutside,
   onClose,
 }: {
   shell: ShellState
   item: WorkItem
   /** The revision the page shows: the start names it, and a stale one is refused (409 `item-changed`) until sent again. */
   revision: number
-  onStarted: (sessionId: string) => void
+  onStartedOutside: (sessionId: string) => void
   onClose: () => void
 }) {
   const { submission } = shell
@@ -31,8 +31,8 @@ export function ItemPageStart({
   const kept = useRef<string | null>(null)
   const [filled, setFilled] = useState(false)
   const sent = useRef(false)
-  const latest = useRef({ shell, onClose, onStarted })
-  latest.current = { shell, onClose, onStarted }
+  const latest = useRef({ shell, onClose, onStartedOutside })
+  latest.current = { shell, onClose, onStartedOutside }
   // Opening moves 对话 to its start screen, where the new-session input lives, and puts it back on close.
   useEffect(() => {
     const { shell: opened } = latest.current
@@ -82,7 +82,7 @@ export function ItemPageStart({
     if (!sending || sending === since.current) return
     if (sending.state !== 'accepted' || sending.submission.itemId !== item.id || !sending.sessionId) return
     sent.current = true
-    latest.current.onStarted(sending.sessionId)
+    if (sending.itemOutside) latest.current.onStartedOutside(sending.sessionId)
     latest.current.onClose()
   }, [sending, item.id])
   return (

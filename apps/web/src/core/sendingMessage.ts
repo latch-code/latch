@@ -1,4 +1,4 @@
-import { looksSecret, splitChangeNote, type AppSnapshot, type TaskDetail } from '@latch/protocol'
+import { looksSecret, splitChangeNote, type AppSnapshot, type TaskDetail, type WorkItemStartAnswer } from '@latch/protocol'
 import { errorMessage, inlineError, isUncertain, readPending, writePending, type PendingSubmission } from './api.ts'
 import { CONNECTION_COPY } from './hostState.ts'
 
@@ -8,6 +8,8 @@ export interface SendingMessage {
   sessionId: string | null
   state: 'sending' | 'unknown' | 'accepted'
   startedAt: number
+  /** The Host started the session and reported that it could not join its task. */
+  itemOutside?: WorkItemStartAnswer['outside']
 }
 
 export function sendingMessageFor(

@@ -291,7 +291,24 @@ it('opens a 待办 inside 看板 with its sessions, starts another, brings a rep
     await itemPage(page).getByRole('textbox', { name: '标题' }).fill('给 README 加安装一节')
     await itemPage(page).getByRole('textbox', { name: '标题' }).press('Enter')
     await expect.poll(async () => (await itemOf(todo.id)).title).toBe('给 README 加安装一节')
-    await itemPage(page).getByRole('button', { name: '开始', exact: true }).waitFor()
+    const start = itemPage(page).getByRole('button', { name: '开始', exact: true })
+    // A start receipt that says the session could not join keeps its standalone session reachable here.
+    const startPath = `**/link/api/work/items/${todo.id}/start`
+    await page.route(startPath, async route => {
+      if (route.request().method() !== 'POST') return route.continue()
+      return route.fulfill({
+        status: 201,
+        json: { sessionId: loose, outside: 'item-full', item: await itemOf(todo.id) } satisfies WorkItemStartAnswer,
+      })
+    })
+    await start.click()
+    const startDialog = page.getByRole('dialog', { name: '给 README 加安装一节', exact: true })
+    await startDialog.getByRole('button', { name: '发送', exact: true }).click()
+    await startDialog.waitFor({ state: 'hidden' })
+    const outside = row(page, loose).getByText('未加入', { exact: true })
+    await outside.waitFor()
+    expect((await itemOf(todo.id)).sessionIds).toEqual([])
+    await page.unroute(startPath)
 
     // Done: 重新打开 in the head, no 再开一个.
     await openItem(page, finished.id)

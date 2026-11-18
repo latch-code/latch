@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { type AppSnapshot, type ModelRef, type FileMention, type WorktreeStart } from '@latch/protocol'
+import { type AppSnapshot, type ModelRef, type FileMention, type WorkItemStartAnswer, type WorktreeStart } from '@latch/protocol'
 import {
   api,
   fromInput,
@@ -455,7 +455,7 @@ export function useSubmission({
       const { path, body } = submissionRequest(submission)
       // A Harness saved before confirmations is confirmed on this Mac at its first start; the same request goes again.
       const result = await withConfirmation(confirmation =>
-        api<{ sessionId?: string; queued?: { id: string }; memoryRefused?: string }>(path, {
+        api<{ sessionId?: string; queued?: { id: string }; memoryRefused?: string; outside?: WorkItemStartAnswer['outside'] }>(path, {
           method: 'POST',
           body,
           ...(confirmation ? { confirmation } : {}),
@@ -463,7 +463,17 @@ export function useSubmission({
       )
       const sessionId = submission.sessionId ?? result.sessionId
       if (sessionId === undefined) throw new Error('missing session id')
-      setSendingMessage(submission.queue || submission.steer ? null : { submission, sessionId, state: 'accepted', startedAt: Date.now() })
+      setSendingMessage(
+        submission.queue || submission.steer
+          ? null
+          : {
+              submission,
+              sessionId,
+              state: 'accepted',
+              startedAt: Date.now(),
+              ...(submission.itemId && result.outside ? { itemOutside: result.outside } : {}),
+            },
+      )
       const foreground =
         mounted.current && destination.current.epoch === origin.epoch && destination.current.selectedId === (submission.sessionId ?? null)
       // Started from the board: the draft is used up as from the home's input, but the session is not opened.
