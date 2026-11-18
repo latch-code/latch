@@ -198,6 +198,7 @@ const sessionEntrySchema = z.object({
     })
     .optional(),
   agentPrivate: z.literal(true).optional(),
+  extensionReportSource: z.literal(true).optional(),
   workspaceId: z
     .string()
     .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/u)
@@ -282,6 +283,8 @@ export interface StoredMeta {
   /** The plugin page that started the session, with the page's own request ID. */
   origin?: PageOrigin
   agentPrivate?: true
+  /** The Host registered this session as a candidate for its ordinary-session extension reports. */
+  extensionReportSource?: true
   title?: string
   pinned?: true
   archived?: true

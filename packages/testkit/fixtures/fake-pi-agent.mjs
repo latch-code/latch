@@ -11,6 +11,7 @@
 // It keeps each session's entries as pi does, a tree with IDs, parents and times, in a JSONL file under FAKE_PI_SESSIONS
 // when that is set, so another process can switch to it, list it and fork or clone it. "recall" replies with the user
 // messages on the branch before it; a session whose first message says "no-fork" has an extension cancel its forks.
+// FAKE_PI_COMMANDS_FILE can add a JSON array of discoverable commands.
 // Given `-e <dir>/latch-permission.ts`, it acts as Latch's permission extension does in pi (it never loads the file):
 // `/latch-permission <level>` sets the level and every level is reported as a status; before a tool runs, `plan`
 // blocks anything but reading, `ask` confirms the rest, `rule` lets edits and writes through. "write" in a prompt writes
@@ -466,16 +467,19 @@ function handle(record) {
     }
     case 'get_commands':
       return ok(type, id, {
-        commands: gate
-          ? [
-              {
-                name: 'latch-permission',
-                description: 'Set by Latch',
-                source: 'extension',
-                sourceInfo: { path: gatePath, source: 'cli', scope: 'temporary', origin: 'top-level' },
-              },
-            ]
-          : [],
+        commands: [
+          ...(gate
+            ? [
+                {
+                  name: 'latch-permission',
+                  description: 'Set by Latch',
+                  source: 'extension',
+                  sourceInfo: { path: gatePath, source: 'cli', scope: 'temporary', origin: 'top-level' },
+                },
+              ]
+            : []),
+          ...(env.FAKE_PI_COMMANDS_FILE ? JSON.parse(readFileSync(env.FAKE_PI_COMMANDS_FILE, 'utf8')) : []),
+        ],
       })
     case 'prompt':
       {

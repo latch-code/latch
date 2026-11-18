@@ -12,6 +12,7 @@ import type {
   ModelWire,
   HarnessCatalogue,
   HarnessCommandCatalogue,
+  HarnessPluginReport,
   HarnessOwnMcp,
   HarnessQuota,
   HarnessQuotaRead,
@@ -67,6 +68,8 @@ export interface ModelRouteFallback {
 export interface CreateTaskInput {
   /** Authoritative Host-only agent context, transient for this run. */
   agentContext?: AgentExecutionContext
+  /** Host-only: the ordinary report source may be checked once this session's Host metadata has settled. */
+  extensionReportReady?: Promise<void>
   fileRefs?: FileMention[]
   attachments?: AttachmentRef[]
   prompt: string
@@ -358,12 +361,23 @@ export interface Bridge {
   }): Promise<{ sourceSessionId: string; catalogue: HarnessCommandCatalogue } | undefined>
   /**
    * Optional, with `commandCatalogue`. The newest cached real-session report of the current definition from any folder,
-   * whose source session `accept` takes, with the project that session ran in. Never starts a process or probes; the
-   * Host rechecks the source after awaiting it.
+   * whose source session passes synchronous `accept` and asynchronous `verifySource` if supplied. Never starts a
+   * process or probes. The Host can only publish reports that supply `current`, a synchronous check of the definition,
+   * report, source and real directory. The source session ID and the check never leave the Host.
    */
   latestCommandReport?(
     accept?: (sourceSessionId: string) => boolean,
-  ): Promise<{ sourceSessionId: string; workspaceId?: string; catalogue: HarnessCommandCatalogue } | undefined>
+    verifySource?: (sourceSessionId: string) => Promise<boolean>,
+  ): Promise<
+    | {
+        sourceSessionId: string
+        workspaceId?: string
+        catalogue: HarnessCommandCatalogue
+        plugins?: HarnessPluginReport
+        current?(): boolean
+      }
+    | undefined
+  >
   /** Optional. What the harness offered when a session of its current definition last started; see `HarnessCatalogue`. */
   catalogue?(): HarnessCatalogue | undefined
   /**

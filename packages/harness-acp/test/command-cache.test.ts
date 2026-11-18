@@ -121,6 +121,25 @@ it('evicts whole older catalogues to bound entry count and encoded file size', a
   expect(saved.entries.some(item => item.order === 1)).toBe(false)
 })
 
+it('bounds ordinary candidates by source within one scope, independently of the draft cache', async () => {
+  const root = await directory()
+  const draft = new CommandCache(root)
+  const extensions = new CommandCache(root, 'extensions')
+  for (let order = 1; order <= 65; order++) extensions.remember(record({ sourceSessionId: `session-${order}`, order }))
+  draft.remember(record({ sourceSessionId: 'session-private' }))
+  extensions.forget('session-65')
+  await Promise.all([draft.close(), extensions.close()])
+
+  const restored = new CommandCache(root, 'extensions')
+  await restored.load()
+  const reports = restored.reportsOf(hash('c'))
+  expect(reports.map(report => report.sourceSessionId)).toEqual(Array.from({ length: 63 }, (_, index) => `session-${64 - index}`))
+  expect(restored.isCurrent(reports[0]!)).toBe(true)
+  restored.forget('session-64')
+  expect(restored.isCurrent(reports[0]!)).toBe(false)
+  await restored.close()
+})
+
 it.each(['corrupt', 'oversized', 'unknown-field', 'duplicate-scope'])('treats %s stored data as a cache miss', async kind => {
   const root = await directory()
   const item = record()

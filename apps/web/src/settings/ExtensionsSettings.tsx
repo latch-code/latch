@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type {
   AppSnapshot,
   ExtensionCommands,
@@ -8,7 +8,7 @@ import type {
   PluginInfo,
   PluginPackageSummary,
 } from '@latch/protocol'
-import { Badge, Button, CopyButton, FoldHeader, Collapse, Hint, InlineNotice } from '@latch/ui'
+import { Badge, Button, CopyButton, FoldHeader, Collapse, Hint, InlineNotice, Tooltip } from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
 import { harnessName } from '../composerChoice.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
@@ -19,20 +19,21 @@ import { HarnessMcpGroup } from './HarnessMcp.tsx'
 import { Loading, NavRow, NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 import {
-  MARK_LABEL,
   NONE,
   NOT_REPORTED,
   NOT_IMPLEMENTED,
   NOT_YET,
+  READING_REPORT,
+  REPORT_UNAVAILABLE,
   UNREAD,
   extensionHarnesses,
+  extensionReportKey,
   harnessKinds,
   harnessSummary,
   latchPlugins,
   pluginProvides,
   takesLatchServers,
   type ExtensionEntry,
-  type ExtensionMark,
   type KindView,
   type LatchContext,
 } from './extensions.ts'
@@ -44,9 +45,10 @@ const COMMANDS_NOTE = (source: string) => ({
 
 const REPORT_NOTE = {
   label: '只列 Harness 报告的',
-  detail:
-    '命令与技能来自这个 Harness 最近一次普通会话的报告（我的 Agent 的会话不算）；Latch 不读任何 CLI 的配置或文件。项目里的技能随项目而变。',
+  detail: '命令、技能与插件名称来自最近一次普通会话的报告。报告随项目而变。',
 }
+
+const REPORT_ACTION = '用这个 Harness 新建普通会话并发送消息。收到报告后会在这里显示。'
 
 const CODE_NOTE = {
   label: '可信的本机代码',
@@ -60,8 +62,22 @@ const LATCH_NOTE = {
     '技能与指引经 latch-skills 服务器给 Harness；MCP 服务器经每个会话的 MCP 列表（Codex 为线程配置）给；提示词模板由 Latch 填进输入框。数据面板与页面在 Latch 里显示，不交给 Harness。',
 }
 
-function Mark({ mark }: { mark: ExtensionMark }) {
-  return <Badge data-mark={mark}>{MARK_LABEL[mark]}</Badge>
+const NO_PAGES: ReadonlyMap<string, number> = new Map()
+
+function ExtensionSource({ children }: { children: string }) {
+  return <h4 className="extension-source">{children}</h4>
+}
+
+function LatchEntries({ entries }: { entries: readonly ExtensionEntry[] }) {
+  if (!entries.length) return null
+  return (
+    <>
+      <ExtensionSource>Latch 提供</ExtensionSource>
+      {entries.map(entry => (
+        <EntryRow key={entry.key} entry={entry} />
+      ))}
+    </>
+  )
 }
 
 /** A command the person runs: copy, and typed in at the prompt of a Latch terminal on this Mac's desktop. */
@@ -106,18 +122,29 @@ function kindNote(view: KindView): ReactNode {
   )
 }
 
-function EntryRow({ entry }: { entry: ExtensionEntry }) {
+function EntryRow({ entry, plugin = false }: { entry: ExtensionEntry; plugin?: boolean }) {
   return (
     <div data-extension={entry.key}>
       <SettingsRow
-        title={<span className="extension-name">{entry.name}</span>}
+        title={
+          plugin ? (
+            <Tooltip content={entry.name} describe={false}>
+              <span className="extension-plugin-name" tabIndex={0}>
+                {entry.name}
+              </span>
+            </Tooltip>
+          ) : (
+            <span className="extension-name">{entry.name}</span>
+          )
+        }
         description={entry.description}
         trailing={
-          <span className="extension-trailing">
-            {entry.detail && <span className="settings-row-value">{entry.detail}</span>}
-            <Mark mark={entry.mark} />
-            {entry.remove && <CommandButtons command={entry.remove} label={`复制卸载 ${entry.name} 的命令`} />}
-          </span>
+          (entry.detail || entry.remove) && (
+            <span className="extension-trailing">
+              {entry.detail && <span className="settings-row-value">{entry.detail}</span>}
+              {entry.remove && <CommandButtons command={entry.remove} label={`复制卸载 ${entry.name} 的命令`} />}
+            </span>
+          )
         }
       />
     </div>
@@ -140,13 +167,16 @@ function KindGroup({ view, caption, lead }: { view: KindView; caption?: string; 
           {kindNote(view)}
         </>
       }>
+      <ExtensionSource>Harness 自带</ExtensionSource>
       {view.status === 'not-reported' && <SettingsRow dim title={NOT_REPORTED} />}
-      {view.status === 'not-yet' && <SettingsRow dim title={NOT_YET} />}
+      {view.status === 'not-yet' && <SettingsRow dim title={<Hint label={NOT_YET}>{REPORT_ACTION}</Hint>} />}
+      {view.status === 'reading' && <Loading label={READING_REPORT} />}
+      {view.status === 'unavailable' && <SettingsRow dim title={REPORT_UNAVAILABLE} />}
       {view.status === 'unread' && <SettingsRow dim title={UNREAD} />}
       {view.status === 'not-implemented' && <SettingsRow dim title={<Hint label={NOT_IMPLEMENTED}>{view.reason}</Hint>} />}
-      {view.status === 'reported' && view.own.length === 0 && <SettingsRow dim title={NONE} />}
+      {view.status === 'reported' && view.own.length === 0 && !view.truncated && <SettingsRow dim title={view.empty ?? NONE} />}
       {own.map(entry => (
-        <EntryRow key={entry.key} entry={entry} />
+        <EntryRow key={entry.key} entry={entry} plugin={view.kind === 'plugins'} />
       ))}
       {view.own.length > SHOWN && (
         <SettingsRow
@@ -158,11 +188,9 @@ function KindGroup({ view, caption, lead }: { view: KindView; caption?: string; 
           }
         />
       )}
-      {view.truncated && <SettingsRow dim title="只列出一部分" />}
-      {view.latch.map(entry => (
-        <EntryRow key={entry.key} entry={entry} />
-      ))}
+      {view.truncated && <SettingsRow dim title={view.own.length ? '只列出一部分' : '没有可显示的条目'} />}
       <CommandRows commands={view.commands} />
+      <LatchEntries entries={view.latch} />
     </SettingsGroup>
   )
 }
@@ -192,16 +220,14 @@ function HarnessPage({
             title={view.title}
             run={run}
             latchNames={mcp.latch.map(entry => entry.name)}
-            mark={<Mark mark="harness" />}
+            sourceHeading={<ExtensionSource>Harness 自带</ExtensionSource>}
             remove={name => {
               const entry = mcp.own.find(item => item.name === name)
               return entry?.remove ? <CommandButtons command={entry.remove} label={`复制卸载 ${name} 的命令`} /> : undefined
             }}
             note={kindNote(view)}>
-            {view.latch.map(entry => (
-              <EntryRow key={entry.key} entry={entry} />
-            ))}
             <CommandRows commands={view.commands} />
+            <LatchEntries entries={view.latch} />
           </HarnessMcpGroup>
         ) : (
           <KindGroup
@@ -323,8 +349,7 @@ function LatchProvides({
 }
 
 /**
- * 设置 › 扩展: per Harness, the skills, commands, MCP servers and plugins it reports and what Latch gives it, each
- * marked; the vendor's own commands to change the Harness's part, typed into Latch's terminal for the person to run.
+ * 设置 › 扩展: reported skills, commands, MCP servers and plugins, grouped by source for each Harness.
  */
 export function ExtensionsSettings({
   snapshot,
@@ -336,53 +361,97 @@ export function ExtensionsSettings({
   onSection?: (section: 'mcp' | 'plugins') => void
 }) {
   const [open, setOpen] = useState<string | undefined>(initialHarness)
-  const [reports, setReports] = useState<ExtensionsResponse>()
-  const [servers, setServers] = useState<McpServersResponse>()
-  const [plugins, setPlugins] = useState<PluginInfo[]>()
-  const [pages, setPages] = useState<ReadonlyMap<string, number>>(new Map())
-  const [error, setError] = useState('')
+  const [reportRead, setReportRead] = useState<{ key: string; reports?: ExtensionsResponse; error?: string }>()
+  const [provisions, setProvisions] = useState<{
+    key: string
+    servers: McpServersResponse | undefined
+    plugins: PluginInfo[] | undefined
+    pages: ReadonlyMap<string, number>
+  }>()
   const templates = usePromptTemplates(snapshot.catalog?.features?.promptTemplates === true, snapshot.catalog?.promptTemplatesVersion)
   const mcp = snapshot.catalog?.features?.mcp === true
-  const catalogKey = JSON.stringify(snapshot.catalog?.harnesses.map(harness => [harness.id, harness.ownMcp?.last?.at]))
-
-  const load = useCallback(async () => {
-    try {
-      setReports(await api<ExtensionsResponse>('extensions'))
-      setError('')
-    } catch (cause) {
-      setError(inlineError(cause))
-    }
-    if (mcp) setServers(await api<McpServersResponse>('mcp/servers').catch(() => undefined))
-    setPlugins(
-      await api<{ plugins: PluginInfo[] }>('plugins').then(
-        reply => reply.plugins,
-        () => undefined,
-      ),
-    )
-    const packages = await api<{ packages: PluginPackageSummary[] }>('plugin-packages').then(
-      reply => reply.packages,
-      () => [],
-    )
-    setPages(new Map(packages.map(item => [item.id, item.pages ?? 0])))
-  }, [mcp])
+  const harnesses = extensionHarnesses(snapshot.catalog?.harnesses ?? [])
+  const admin = snapshot.device.scopes.includes('admin')
+  const reportKey = admin ? extensionReportKey(snapshot, harnesses) : undefined
+  const provisionsKey = JSON.stringify([
+    snapshot.instanceId,
+    snapshot.host.hostId,
+    snapshot.device.id,
+    snapshot.device.dataScope,
+    snapshot.device.scopes.toSorted(),
+    snapshot.catalog?.harnesses.map(harness => [harness.id, harness.ownMcp?.last?.at]),
+  ])
 
   useEffect(() => {
-    void load()
-  }, [load, catalogKey])
+    setReportRead(undefined)
+    if (!reportKey) return
+    let pending: AbortController | undefined
+    const read = () => {
+      if (document.hidden) return
+      pending?.abort()
+      const controller = new AbortController()
+      pending = controller
+      void api<ExtensionsResponse>('extensions', { signal: controller.signal }).then(
+        reports => {
+          if (!controller.signal.aborted) setReportRead({ key: reportKey, reports })
+        },
+        cause => {
+          if (!controller.signal.aborted) setReportRead({ key: reportKey, error: inlineError(cause) })
+        },
+      )
+    }
+    const visibility = () => {
+      if (document.hidden) pending?.abort()
+      else read()
+    }
+    read()
+    // A directory can be replaced on disk without a snapshot changing.
+    const timer = window.setInterval(read, 30_000)
+    document.addEventListener('visibilitychange', visibility)
+    return () => {
+      pending?.abort()
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', visibility)
+    }
+  }, [reportKey])
+
+  useEffect(() => {
+    if (!admin) return
+    const controller = new AbortController()
+    const options = { signal: controller.signal }
+    void Promise.all([
+      mcp ? api<McpServersResponse>('mcp/servers', options).catch(() => undefined) : undefined,
+      api<{ plugins: PluginInfo[] }>('plugins', options).catch(() => undefined),
+      api<{ packages: PluginPackageSummary[] }>('plugin-packages', options).catch(() => undefined),
+    ]).then(([servers, plugins, packages]) => {
+      if (controller.signal.aborted) return
+      setProvisions({
+        key: provisionsKey,
+        servers,
+        plugins: plugins?.plugins,
+        pages: new Map((packages?.packages ?? []).map(item => [item.id, item.pages ?? 0])),
+      })
+    })
+    return () => controller.abort()
+  }, [admin, mcp, provisionsKey])
+
   useEffect(() => {
     setOpen(initialHarness)
   }, [initialHarness])
 
-  if (!reports && !error) return <Loading />
-  const harnesses = extensionHarnesses(snapshot.catalog?.harnesses ?? [])
+  // Hide an obsolete result on the first render, before its effect cleanup runs.
+  const read = reportKey && reportRead?.key === reportKey ? reportRead : undefined
+  const reportState = read?.error ? 'unavailable' : reportKey && !read ? 'reading' : undefined
+  const currentProvisions = provisions?.key === provisionsKey ? provisions : undefined
+  const servers = currentProvisions?.servers
   const latch: LatchContext = { ...(servers ? { mcpServers: servers.servers } : {}), templates }
-  const reportOf = (id: string) => reports?.harnesses.find(item => item.harnessId === id)?.report
+  const reportOf = (id: string) => read?.reports?.harnesses.find(item => item.harnessId === id)?.report
   const projectName = (id: string | undefined) => snapshot.catalog?.workspaces.find(workspace => workspace.id === id)?.name
   const run = snapshot.device.scopes?.includes('run') === true
 
   const main = (
     <>
-      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {read?.error && <InlineNotice tone="error">{read.error}</InlineNotice>}
       <SettingsGroup title="Harness">
         {harnesses.length === 0 && <SettingsRow dim title="没有外部 Harness" />}
         {harnesses.map(harness => (
@@ -392,7 +461,7 @@ export function ExtensionsSettings({
             leading={<HarnessTile harness={harness} size={24} />}
             record
             title={harnessName(harness)}
-            description={harnessSummary(harnessKinds(harness, reportOf(harness.id), latch))}
+            description={harnessSummary(harnessKinds(harness, reportOf(harness.id), latch, reportState))}
             onClick={() => {
               setOpen(harness.id)
             }}
@@ -402,8 +471,8 @@ export function ExtensionsSettings({
       <LatchProvides
         harnesses={harnesses}
         latch={latch}
-        plugins={plugins}
-        pages={pages}
+        plugins={currentProvisions?.plugins}
+        pages={currentProvisions?.pages ?? NO_PAGES}
         {...(onSection && mcp ? { onMcp: () => onSection('mcp') } : {})}
         {...(onSection ? { onPlugins: () => onSection('plugins') } : {})}
       />
@@ -424,7 +493,7 @@ export function ExtensionsSettings({
       content: (
         <HarnessPage
           harness={chosen}
-          kinds={harnessKinds(chosen, report, latch)}
+          kinds={harnessKinds(chosen, report, latch, reportState)}
           {...(report?.reportedAt ? { reportedAt: report.reportedAt } : {})}
           {...(project ? { project } : {})}
           run={run}

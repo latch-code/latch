@@ -51,3 +51,4 @@ export { isFileMention, fileMentionContext, type FileMention } from './file-refs
 export { isFileChange } from './file-changes.ts'
 export * from './secrets.ts'
 export * from './extensions.ts'
+export { isHarnessPluginName, MAX_HARNESS_PLUGINS, readHarnessPluginReport } from './harness-plugin-report.ts'

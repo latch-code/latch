@@ -10,6 +10,7 @@ import {
   parseModelChoice,
   promptTitle,
   type ModelChoice,
+  readHarnessPluginReport,
   readSessionSkills,
   boundSessionSkills,
   type FileMention,
@@ -41,7 +42,7 @@ import {
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
-import { CommandCache, commandDirectory, commandScope } from './command-cache.ts'
+import { CommandCache, commandDirectory, commandDirectoryNow, commandScope, type CommandCacheEntry } from './command-cache.ts'
 import { beginHarnessSteer, harnessPromptSource } from './prompt-source.ts'
 import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
@@ -64,6 +65,7 @@ import type {
   HarnessCatalogue,
   HarnessCommandCatalogue,
   HarnessMcpReport,
+  HarnessPluginReport,
   ServiceModelOptions,
   HarnessOwnMcp,
   HarnessQuota,
@@ -275,7 +277,7 @@ interface Live {
   /** Started by `warm` and not yet used by a turn: its failures do not count toward the Harness's crash pause. */
   warmOnly?: true
   wire: AgentWire
-  commandCache?: { directory: string; confirmed: Confirmed; ordinal: number }
+  commandCache?: { directory: string; confirmed: Confirmed; ordinal: number; plugins?: HarnessPluginReport }
   initialized: boolean
   capabilities: {
     resume: boolean
@@ -910,6 +912,8 @@ export class AgentRuntime implements Bridge {
   private readonly fileTracking: RunFileTracking
   private readonly store: AcpStore
   private readonly commandCache: CommandCache
+  private readonly extensionReports: CommandCache
+  private readonly pendingReportSources = new Map<string, Promise<void>>()
   private readonly workspaceRoot: string
   private readonly redact: (text: string) => string
   /** Every gateway token a process of this runtime was given, so that none is repeated in what it says. */
@@ -1014,6 +1018,7 @@ export class AgentRuntime implements Bridge {
   ) {
     this.store = createAcpStore(options.dataDir)
     this.commandCache = new CommandCache(options.dataDir)
+    this.extensionReports = new CommandCache(options.dataDir, 'extensions')
     this.fileTracking = new RunFileTracking({
       track: options.trackFiles,
       current: (id, runId) => this.state.tasks[id]?.summary.runId === runId,
@@ -1103,7 +1108,7 @@ export class AgentRuntime implements Bridge {
         this.quotaDefinition = this.state.quota.definitionHash
         this.quotaFacts.restore(this.state.quota.value)
       }
-      await this.commandCache.load()
+      await Promise.all([this.commandCache.load(), this.extensionReports.load()])
       this.loaded = true
       let changed = false
       for (const task of Object.values(this.state.tasks)) {
@@ -1167,7 +1172,7 @@ export class AgentRuntime implements Bridge {
       // Turns whose tokens the Host is still reading are recorded before the driver is gone.
       await Promise.allSettled([...this.usageReads])
       if (this.loaded) await this.flush().catch(() => {})
-      await this.commandCache.close()
+      await Promise.all([this.commandCache.close(), this.extensionReports.close()])
       try {
         await this.store.close()
       } finally {
@@ -1366,37 +1371,50 @@ export class AgentRuntime implements Bridge {
   }
 
   /**
-   * The newest cached report of the current definition from any folder, for 设置 › 扩展: only what a real session of it
-   * reported, still matching that session's own record. Reads the cache in memory; never starts or probes a program.
+   * The newest cached report of the current definition across folders, including plugin names, for 设置 › 扩展.
+   * The report still has to match the session that supplied it. This neither starts nor probes a program.
    */
   async latestCommandReport(
     accept: (sourceSessionId: string) => boolean = () => true,
-  ): Promise<{ sourceSessionId: string; workspaceId?: string; catalogue: HarnessCommandCatalogue } | undefined> {
+    verifySource?: (sourceSessionId: string) => Promise<boolean>,
+  ): ReturnType<NonNullable<Bridge['latestCommandReport']>> {
     await this.ready()
     this.assertOpen()
     const definitionHash = this.definitionNow(true)
     if (!definitionHash) return undefined
-    for (const record of this.commandCache.reportsOf(definitionHash)) {
+    for (const record of this.extensionReports.reportsOf(definitionHash)) {
       const source = this.state.tasks[record.sourceSessionId]
-      if (
-        !source?.acp.commandContext
-        || source.acp.launchHash !== record.launchHash
-        || !isDeepStrictEqual(source.commands, record.commands)
-        || !isDeepStrictEqual(source.skills, record.skills)
-        || source.skillsTruncated !== record.skillsTruncated
-        || !accept(record.sourceSessionId)
-      )
-        continue
-      const workspaceId = source.acp.commandContext.workspaceId
+      const workspaceId = this.options.extensionReportProject?.(record.sourceSessionId)
+      if (!source?.acp.commandContext || workspaceId === undefined) continue
+      const { cwd, commandContext } = source.acp
+      const reportMatches = () =>
+        !this.closed
+        && this.state.tasks[record.sourceSessionId] === source
+        && this.extensionReports.isCurrent(record)
+        && source.acp.cwd === cwd
+        && source.acp.commandContext === commandContext
+        && source.acp.launchHash === record.launchHash
+        && this.options.extensionReportProject?.(record.sourceSessionId) === workspaceId
+        && accept(record.sourceSessionId)
+        && isDeepStrictEqual(source.commands, record.commands)
+        && isDeepStrictEqual(source.skills, record.skills)
+        && source.skillsTruncated === record.skillsTruncated
+        && this.definitionNow(true) === definitionHash
+      if (!reportMatches()) continue
+      const directory = await commandDirectory(cwd)
+      if (directory === undefined || commandScope(directory, workspaceId) !== record.scope || !reportMatches()) continue
+      if (verifySource && (!(await verifySource(record.sourceSessionId)) || !reportMatches())) continue
       return {
         sourceSessionId: record.sourceSessionId,
-        ...(workspaceId ? { workspaceId } : {}),
+        workspaceId,
+        ...(record.plugins ? { plugins: record.plugins } : {}),
         catalogue: {
           commands: record.commands,
           ...(record.skills ? { skills: record.skills, ...(record.skillsTruncated ? { skillsTruncated: true } : {}) } : {}),
           reportedAt: record.reportedAt,
           source: 'previous-session',
         },
+        current: () => reportMatches() && commandDirectoryNow(cwd) === directory,
       }
     }
     return undefined
@@ -2611,6 +2629,11 @@ export class AgentRuntime implements Bridge {
     const launch = this.currentLaunch(project, scope?.passed, route, this.startProcessMode(config))
     if (launch.hash !== input.expectedLaunchHash) throw this.launchRefusal(input.expectedLaunchHash, launch, scope?.passed)
     const sessionId = `task-${randomUUID()}`
+    if (input.extensionReportReady) {
+      this.pendingReportSources.set(sessionId, input.extensionReportReady)
+      const settled = () => this.pendingReportSources.delete(sessionId)
+      void input.extensionReportReady.then(settled, settled)
+    }
     // Profiles without folder support previously ignored malformed optional SDK scope values; do not persist them.
     const commandContext =
       input.workspaceId === undefined
@@ -3238,6 +3261,7 @@ export class AgentRuntime implements Bridge {
       await removeSessionSkills(skillsDirectory(this.options.dataDir, sessionId))
     delete this.state.tasks[sessionId]
     this.commandCache.forget(sessionId)
+    this.extensionReports.forget(sessionId)
     for (const [key, receipt] of Object.entries(this.state.receipts)) {
       if (receipt.taskId !== sessionId) continue
       if (receipt.kind === 'create') receipt.deleted = true
@@ -7160,6 +7184,11 @@ export class AgentRuntime implements Bridge {
         if (skills && (update.skillsTruncated === true || bounded?.skillsTruncated || reported?.length !== skills.length))
           task.skillsTruncated = true
         else delete task.skillsTruncated
+        if (this.selection.profile?.wire === 'pi' && live.commandCache) {
+          const plugins = readHarnessPluginReport(update.plugins)
+          if (plugins) live.commandCache.plugins = plugins
+          else delete live.commandCache.plugins
+        }
         this.noteCommandCatalogue(live, task)
         break
       }
@@ -7982,11 +8011,15 @@ export class AgentRuntime implements Bridge {
     if (!cache || !context || !task.commands) return
     const ordinal = ++cache.ordinal
     const order = this.commandCache.nextOrder()
+    const reportOrder = this.extensionReports.nextOrder()
     const commands = structuredClone(task.commands)
     const skills = task.skills ? structuredClone(task.skills) : undefined
     const skillsTruncated = skills && task.skillsTruncated
+    const plugins = cache.plugins
     const reportedAt = this.now()
     return (async () => {
+      const ready = this.pendingReportSources.get(task.summary.id)
+      if (ready) await ready
       const launch = await this.assertLaunch(task.acp.cwd, cache.confirmed)
       const directory = await commandDirectory(task.acp.cwd)
       await this.assertLaunch(task.acp.cwd, cache.confirmed)
@@ -8002,7 +8035,7 @@ export class AgentRuntime implements Bridge {
         || this.definitionNow(true) !== launch.definitionHash
       )
         return
-      this.commandCache.remember({
+      const record: CommandCacheEntry = {
         scope: commandScope(cache.directory, context.workspaceId),
         launchHash: launch.hash,
         definitionHash: launch.definitionHash,
@@ -8012,7 +8045,18 @@ export class AgentRuntime implements Bridge {
         commands,
         ...(skills ? { skills } : {}),
         ...(skillsTruncated ? { skillsTruncated: true } : {}),
-      })
+      }
+      this.commandCache.remember(record)
+      const project = this.options.extensionReportProject?.(task.summary.id)
+      if (project !== undefined) {
+        this.extensionReports.retainDefinition(launch.definitionHash)
+        this.extensionReports.remember({
+          ...record,
+          scope: commandScope(cache.directory, project),
+          order: reportOrder,
+          ...(plugins ? { plugins } : {}),
+        })
+      }
     })()
       .catch(() => {
         /* A suggestion cannot make a real turn fail, or revive a changed launch. */

@@ -7,11 +7,12 @@ import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
-import { readSessionSkills, boundSessionSkills, type SessionSkill } from '@latch/protocol'
+import { readSessionSkills, boundSessionSkills, type HarnessPluginReport, type SessionSkill } from '@latch/protocol'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { commandsUpdate, FORK_METHOD, RPC, RpcError, STEER_METHOD, SESSION_SKILLS_UPDATE, type TurnTokens } from '../protocol.ts'
 import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
 import { GATE_COMMAND, GATE_LEVELS, GATE_MARK, writeGate } from './pi-gate.ts'
+import { piPlugins } from './pi-plugins.ts'
 import { PI_GATEWAY_PROVIDER } from '../profiles/pi-gateway.ts'
 import { ForkRefused, type AgentWire, type WireHandlers } from './types.ts'
 
@@ -273,6 +274,8 @@ export class PiWire implements AgentWire {
   private commands: z.infer<typeof commandsUpdate>['availableCommands'] = [COMPACT]
   private skills?: SessionSkill[]
   private skillsTruncated?: true
+  private pluginReport?: HarnessPluginReport
+  private readonly redact: SpawnSpec['redact']
   readonly forks = true
   private readonly process: AgentProcess
   private nextId = 0
@@ -310,6 +313,7 @@ export class PiWire implements AgentWire {
     private readonly handlers: WireHandlers,
     private readonly routed = false,
   ) {
+    this.redact = spec.redact
     // In the process's own temporary directory, written afresh: every start loads the gate as Latch wrote it.
     const tmp = spec.env.TMPDIR
     if (tmp) this.gatePath = writeGate(tmp)
@@ -504,7 +508,9 @@ export class PiWire implements AgentWire {
    */
   private async readGate(timeoutMs?: number, signal?: AbortSignal): Promise<void> {
     const listed = await this.send({ type: 'get_commands' }, timeoutMs, signal).catch(() => undefined)
-    const commands = isRecord(listed) && Array.isArray(listed.commands) ? listed.commands : []
+    const reportedCommands: unknown[] | undefined = isRecord(listed) && Array.isArray(listed.commands) ? listed.commands : undefined
+    const commands = reportedCommands ?? []
+    this.pluginReport = reportedCommands ? piPlugins(reportedCommands, this.gatePath, this.redact) : undefined
     this.commands = [COMPACT]
     const skills: SessionSkill[] = []
     this.idleCommands.clear()
@@ -539,7 +545,7 @@ export class PiWire implements AgentWire {
       if (item.source === 'extension') this.idleCommands.add(name)
     }
     const bounded = boundSessionSkills(skills)
-    this.skills = isRecord(listed) && Array.isArray(listed.commands) ? bounded.skills : undefined
+    this.skills = reportedCommands ? bounded.skills : undefined
     this.skillsTruncated = this.skills && bounded.skillsTruncated
     if (!this.gatePath) return
     const own = commands.find(
@@ -734,6 +740,7 @@ export class PiWire implements AgentWire {
         sessionUpdate: SESSION_SKILLS_UPDATE,
         skills: this.skills ?? null,
         ...(this.skillsTruncated ? { skillsTruncated: true } : {}),
+        ...(this.pluginReport ? { plugins: this.pluginReport } : {}),
       })
     }
     const compact = images.length ? undefined : compactCommand(texts.join('\n\n'))

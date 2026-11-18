@@ -16,13 +16,13 @@
 - 出站经注入的 `fetch` 和策略，限预置或已确认地址；密钥限绑定的源和路径，更新前与锁内复核所见目标（MODEL-CONFIGURATION、`test/providers.test.ts`）。
 - Standard 由 `classifyStandardCall` 分级；`requiresApproval` 不能降级，未列工具（含插件工具）、异常或未知值均按 R2（`test/risk.test.ts`）。
 - 插件目录只用 `@latch/sdk`、`@latch/protocol`、本目录与种类目录下的共用文件，不导入 Host 或其他插件目录；只有 `standard` 用 `@latch/core`（`.oxlintrc.json`）。
-- `latchCodeRoot()` 定位代码根，不随项目目录（ARCHITECTURE）。
+- `latchCodeRoot()` 固定代码根，不随项目。
 - 同项目的变更与启动串行、跨项目不等，撤销和收紧仍可并行；旧会话保留冻结目录（`test/project-regressions.test.ts`）。分支与工作树见 BRANCHES。
 - 确认只经 `PresenceService`，无设备签名批准。开发固定 CDHash，发布固定身份与审计，缺一须离线重新固定，运行前核验子进程（ARCHITECTURE）。
 - 终端限 `host.sock`、`all`，复核目录身份，环境用 `terminalEnvironment`（[TERMINAL](../../docs/TERMINAL.md)）。
 - 本机 MCP 提示先审计、持久化来源再转发；远程拒绝（MCP.md）。
 - 构建禁测试代码；组件自检。私有框架限画面，输入限 idb Unix (DEVICE-PREVIEW)。
-- `work` 不见文件差异；输出投影不改执行参数、回执和终态（STREAMING）。
+- `work` 不见文件差异；扩展报告限 `admin`、普通来源。投影不改执行参数、回执、终态（STREAMING）。
 - `src/paths.ts`、`host-state.ts`、`env.ts` 只用可擦除语法（`tsconfig.strip.json`），供 Vite 与 Vitest 配置直接加载。
 - 附件字节只进私有存储，消息与 SSE 只存引用；上传逐块复查设备，下载句柄绑定设备（`test/attachment-routes.test.ts`）。
 - 文件树/搜索限 `files`、`all`；macOS 仅经 `latch-files` 描述符。索引不存权限，预览绑定 Harness/根身份/版本，晚回复查设备与正文窗口（ARCHITECTURE）。

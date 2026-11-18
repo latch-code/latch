@@ -2211,7 +2211,18 @@
   flex: 1;
 }
 
-/* 设置 › 扩展: an entry's scope or route, its mark and its vendor command at the row's end; Harnesses as small tiles. */
+/* 设置 › 扩展 */
+.extension-source {
+  margin: 0;
+  padding-top: var(--sp-8);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.extension-source:not(:first-child) {
+  border-top: 1px solid var(--line);
+}
 .extension-trailing,
 .extension-meta,
 .extension-receivers {
@@ -2231,6 +2242,12 @@
 }
 .extension-name {
   overflow-wrap: anywhere;
+}
+.extension-plugin-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .extension-command .settings-row-description code {
   overflow-wrap: anywhere;

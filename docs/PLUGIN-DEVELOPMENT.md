@@ -379,6 +379,7 @@ Driver 上的其他声明：
 | `recallMemory` | 只给内置 Harness；只读，只回该归属已确认的记忆（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#查记忆)） |
 | `readAttachment`、`saveAttachment` | 取本轮附件的内容、保存 Agent 输出的图片。持久化只存引用，不把附件复制到项目目录；Host 仍验证设备、会话、类型与限额 |
 | `trackFiles` | 见 [FILE-OUTPUTS.md](FILE-OUTPUTS.md) |
+| `extensionReportProject` | Host 已登记且当前仍为普通会话时返回项目 ID。新会话可等 `CreateTaskInput.extensionReportReady` 结算后核对归属 |
 
 ACP 的 `ToolGatewayCallContext.runId` 由 Driver 在收到工具调用时取自实际运行。Host 用它核对模拟器工具仍属于同一轮。设备身份留在 Host 内部。签名见 [harness.ts](../packages/sdk/src/harness.ts)。
 
@@ -409,7 +410,7 @@ ACP 的 `ToolGatewayCallContext.runId` 由 Driver 在收到工具调用时取自
 | `readCatalogue?` | 不发提示读取开始前的选项，同时只有一次读取。是否自动读取由 `catalogueRead()` 决定，不在需人请求的 Harness 上自动运行 |
 | `classifyConfigChange?` | 修改相对会话预期权限模式是 `neutral`、`stricter` 还是 `wider`；Host 只用它决定是否写放宽模式的审计 |
 | `commandCatalogue?` | 只读上次真实会话报告的命令，不启动或探测程序。`sourceSessionId` 只供 Host 复查来源与草稿授权，不交给设备；目录不授予能力或执行权限（[HARNESSES.md](HARNESSES.md#会话命令)） |
-| `latestCommandReport?(accept?)` | 与 `commandCatalogue` 同一份缓存，不限文件夹：当前定义下最新一份、来源会话被 `accept` 接受的报告，附那次会话的 `workspaceId`；给「设置 › 扩展」，不启动或探测程序（[HARNESSES.md](HARNESSES.md#扩展)） |
+| `latestCommandReport?(accept?, verifySource?)` | 从普通会话缓存选最新有效报告，附 `workspaceId`。`accept` 同步核对来源，`verifySource` 异步核对项目。项目不可用时继续查下一份。只有 `current()` 能在发送前同步确认报告、定义和真实目录，Host 才发布该 Harness 的报告。声明 `extensionSupport.plugins: 'command-sources'` 时可附 `plugins`（短名和可选截断标记），供「设置 › 扩展」显示。见 [HARNESSES.md](HARNESSES.md#扩展) |
 | `launchPreview?` | L3 Driver：描述新建会话将启动什么，用于启动指纹与审计；环境变量只给名字 |
 | `promptCapabilities?` | 能力要启动后才知道的 Driver 返回最近一次为当前定义启动时报告的 `{ images, text }`；返回了就以它为准，之前返回 `undefined` 时用声明 |
 | `listExternalSessions?` 等 | 与 `historyImport` 一起，见 [HARNESSES.md](HARNESSES.md#接入已有会话) |

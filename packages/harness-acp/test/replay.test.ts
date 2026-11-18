@@ -70,6 +70,10 @@ const SCENARIOS: Record<string, (detail: DriverTaskDetail, transcript: Transcrip
     const thinking = chunkText(transcript, 'agent_thought_chunk')
     if (thinking) expect(assistants(detail)[0]!.reasoning).toBe(thinking)
     expect(detail.config?.some(option => option.category === 'model')).toBe(true)
+    if (transcript.header.harness === 'pi') {
+      expect(detail.commands?.map(command => command.name)).toEqual(['compact', 'check-project'])
+      expect(JSON.stringify(detail.commands)).not.toContain('/extensions/')
+    }
     // Where Latch reads the mode back, the agent reported the one Latch expects before the turn, and nothing drifted.
     if (detail.permission?.readback === 'mode') {
       expect(detail.permission.drift).toBeUndefined()

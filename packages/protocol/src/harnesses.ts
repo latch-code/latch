@@ -1,4 +1,5 @@
 import type { AgentPreset, HelperCard } from './agent-presets.ts'
+import type { HarnessExtensionSupport } from './extensions.ts'
 import type { AgentProbeResult } from './features.ts'
 import type { HarnessOwnMcp } from './mcp.ts'
 import type { HarnessQuota, HarnessQuotaRead } from './quota.ts'
@@ -275,6 +276,8 @@ export interface HarnessInfo {
   catalogueRead?: CatalogueRead
   /** A read-only previous-session command cache exists. Generation changes when its Host driver is replaced. */
   commandCatalogue?: { generation: string }
+  /** Extension reports available from this mounted adapter, including when a plugin list is unavailable. */
+  extensionSupport?: HarnessExtensionSupport
   /** Model IDs a person typed for this harness, offered with its own models; a session sends one even when not listed. */
   customModels?: string[]
   /**

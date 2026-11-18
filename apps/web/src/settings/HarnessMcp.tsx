@@ -42,7 +42,7 @@ export function HarnessMcpGroup({
   title,
   run,
   latchNames = [],
-  mark,
+  sourceHeading,
   remove,
   meta,
   note,
@@ -54,8 +54,8 @@ export function HarnessMcpGroup({
   run: boolean
   /** Latch's own servers: one of the same name replaces the Harness's in Latch's sessions. */
   latchNames?: readonly string[]
-  /** 设置 › 扩展: each of the Harness's servers carries this badge. */
-  mark?: ReactNode
+  /** 设置 › 扩展: a heading for the Harness's group. */
+  sourceHeading?: ReactNode
   /** The vendor's command that removes a server, typed in for the person; absent for none. */
   remove?: (name: string) => ReactNode
   /** Beside 读取 in the head. */
@@ -71,6 +71,7 @@ export function HarnessMcpGroup({
   if (!own)
     return (
       <SettingsGroup title={title} {...(meta ? { meta } : {})} {...(note ? { note } : {})}>
+        {sourceHeading}
         <SettingsRow dim title={NOT_REPORTED} />
         {children}
       </SettingsGroup>
@@ -120,6 +121,7 @@ export function HarnessMcpGroup({
           {note}
         </>
       }>
+      {sourceHeading}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {!error && own.failed && (!last || own.failed.at > last.at) && (
         <InlineNotice tone="error">{`读取失败：${own.failed.message}`}</InlineNotice>
@@ -136,9 +138,8 @@ export function HarnessMcpGroup({
               title={<code className="settings-mono">{server.name}</code>}
               description={shadowed.has(server.name.toLowerCase()) ? '会话里用 Latch 的同名服务器' : server.origin}
               trailing={
-                last.namesOnly && !mark && !remove ? undefined : (
+                last.namesOnly && !remove ? undefined : (
                   <span className="extension-trailing">
-                    {mark}
                     {!last.namesOnly && <StatusWord tone={word.tone}>{word.text}</StatusWord>}
                     {remove?.(server.name)}
                   </span>

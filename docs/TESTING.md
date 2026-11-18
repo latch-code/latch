@@ -138,6 +138,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | 会话文件与预览 | `files.test.ts`、`file-content.test.ts`、`file-tree.test.ts` |
 | 插件页面框 | `app-frame.test.ts`、`app-pages.test.ts`（Host 与 `apps/web/test/` 各一份）、`apps/desktop/test/desktop-frames.test.ts`、`e2e/app-pages.e2e.ts` |
 | 插件资产与生命周期 | `plugin-assets.test.ts`、`plugin-packages.test.ts`、`tests/registry.test.ts` |
+| Harness 扩展报告 | `extensions.test.ts`、`packages/harness-acp/test/pi-plugins.test.ts`、`command-cache.test.ts`（ACP）和 `e2e/harness-extensions.e2e.ts` |
 | MCP 与工具网关 | `mcp-remote.test.ts`、`mcp-oauth.test.ts`、`tool-gateway.test.ts`、`browser-broker.test.ts` |
 | 终端 | `terminal-service.test.ts`、`terminal-routes.test.ts`、`terminal-environment.test.ts` |
 | 模拟器画面、输入与归属 | `simulator-live.test.ts`、`simulator-input.test.ts`、`simulator-helper.test.ts`、`simulators-public.test.ts`、`simulators.test.ts`、`apps/web/test/device-live.test.ts`、`e2e/desktop-device.e2e.ts` 的受影响用例 |

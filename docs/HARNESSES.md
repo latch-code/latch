@@ -3,6 +3,8 @@ description: Latch 怎样启动并驱动用户本机的 Agent（ACP、Codex 的 
 sources:
   - packages/harness-acp/src
   - packages/protocol/src/agent-presets.ts
+  - packages/protocol/src/extensions.ts
+  - packages/protocol/src/harness-plugin-report.ts
   - apps/host/src/hub.ts
 ---
 # 接入外部 Harness（ACP）
@@ -987,23 +989,28 @@ Harness 报告的命令透传，是否报告与执行由 Harness 决定。
 
 ## 扩展
 
-「设置 › 扩展」（`admin`，与「Harness」「MCP」相同）按 Harness 列出它的技能、命令、MCP 与插件，每一项标「Harness 自带」或「Latch 提供」，再列 Latch 自己提供的部分。
+「设置 › 扩展」（`admin`，与「Harness」「MCP」相同）按 Harness 列出技能、命令、MCP 与插件。「Harness 自带」和「Latch 提供」各用一处标题标明来源。
 
-**只列报告的。** Latch 不读写任何 CLI 的配置或存储来填这一页，只用两样：
+- `GET /extensions` 给每个外部 Harness 当前定义下最新一份普通会话的报告（`Bridge.latestCommandReport`），附报告时间与项目。Host 在会话创建后登记普通来源，等待登记结束才收报告。我的 Agent、通用、导入、定时及归属未登记的会话不能成为来源。
+- `harness-extensions.json` 在 Driver 的数据目录里按普通会话各保留最新一份报告（0600，最多 64 份、2 MiB，原子写入）。同一目录下可有多个普通来源。删除来源、把来源变为私有或项目不可用时，查找下一份有效的普通报告。读取与发送前核对 Driver、来源、项目和实际目录身份（设备号与 inode）。在同一路径重建目录后不沿用旧报告。
+- 扩展页从升级后登记的普通会话开始收录。用想查看的 Harness 新建普通会话并发送消息，收到报告后这里会更新。
+- 页面根据 Driver 代次、可见会话的报告版本和项目状态撤下旧记录并取消在途读取。页面可见时每 30 秒复查一次，以发现没有通知的目录变化。读取只用 Latch 的缓存，不启动 CLI。
+- Harness 自己的 MCP 来自 `HarnessInfo.ownMcp`。「读取」只在人按下时启动 Harness。
 
-- 命令与技能：`GET /extensions`（`admin`）给每个外部 Harness 当前定义下、最新一份普通会话的报告（「上次会话的目录」那份缓存，`Bridge.latestCommandReport`），附报告时间与那次会话所在的项目。我的 Agent、通用、导入与定时的会话（`hub.agentPrivate`）不算；来源会话删掉、启动定义变了或项目目录不再可用时不返回。只读内存，不启动、不探测程序。
-- MCP：`HarnessInfo.ownMcp`（见「Codex 的 app-server」）；「读取」照旧只在人按下时启动它。
-
-每一类有三种说法，不用空列表代替：报告了就列出（报告为空写「没有」）；这个 Harness 报告这一类、但当前定义还没有普通会话时写「还没有会话报告」；它的适配器不报告这一类时写「这个 Harness 没有报告」。报告了命令却没读到技能目录（Codex 的 `skills/list` 失败）写「上次会话没有读到」，不写「没有」。
+Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别与插件清单不可用的原因。报告为空会明确显示。支持报告且还没有普通会话的类别显示「还没有会话报告」。有普通会话报告但这项未读到时显示「上次会话没有读到」。当前适配器没有报告的类别显示「这个 Harness 没有报告」。
 
 | Harness | 报告 |
 | --- | --- |
-| Codex 直连 | 命令（`/compact`：Codex 自己的压缩，经它的协议执行，标「Harness 自带」）、技能（`skills/list`）、MCP（`mcpServerStatus/list`） |
-| pi | 命令与技能（`get_commands`） |
-| 其他 ACP Harness | 命令（`available_commands_update`）；技能常作为命令报告 |
-| 都不报告 | 插件。Codex 的 app-server 有 `plugin/installed`，Latch 尚未接入（要在会话或「读取」里多一次请求），所以 Codex 的插件写「尚未实现」，原因在悬停里 |
+| Codex 直连 | 命令（`/compact`）、技能（`skills/list`）、MCP（`mcpServerStatus/list`） |
+| pi | 命令、技能与注册过命令的扩展（`get_commands`） |
+| DeepSeek Harness | 此页没有已知的报告类别 |
+| 其他 ACP Harness（含 Codex ACP） | 收到的命令（`available_commands_update`）。有些 Harness 把技能作为命令报告 |
 
-**安装、更新、卸载。** 只给厂商写明的命令（`HARNESS_EXTENSIONS`，`packages/protocol/src/extensions.ts`，每项记来源：厂商页面或 CLI 自己的 `--help` 及版本）。安装与卸载以空格结尾，人补上名字或来源；列出的项的卸载命令只在名字只含字母、数字、`.`、`_`、`-` 且不以 `-` 开头时给出（`namedExtensionCommand`），否则不给。命令经「在终端里打开」填进 Latch 的终端（[TERMINAL.md](TERMINAL.md)），由人按回车：Host 不运行它们，也不改 CLI 的文件。没有文档化命令的类别不给按钮，原因在悬停里。没有市场：不列第三方目录、不下载、不搜索远端。
+**pi 的插件一栏。** 按 `sourceInfo` 聚合扩展命令，显示包或扩展目录的最后一段，独立文件显示文件名去掉代码后缀。精确排除 Latch 的权限扩展，也略过 pi 内置扩展。不同来源同名时省略该名称并标出清单不完整。最多 200 个名称，每个最多 200 字符。完整路径和安装来源只参与线内归组。清理后的名称只进入普通会话的扩展报告。空报告表示没有扩展命令。
+
+**Codex 直连的插件清单尚未实现。** Codex 0.169.0 的 `plugin/installed` 会尝试同步账号已装插件，可能下载或更新本机插件包。这个版本的协议没有纯读取清单的接口。Codex 自己启动时亦可能同步，清单请求可以再触发一次。ACP 适配器没有插件报告。[Codex 0.169.0 的清单处理](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/app-server/src/request_processors/plugins.rs#L847)
+
+**安装、更新、卸载。** `HARNESS_EXTENSIONS`（`packages/protocol/src/extensions.ts`）记录厂商文档或 CLI 帮助给出的命令。命令经「在终端里打开」填进 Latch 的终端（[TERMINAL.md](TERMINAL.md)），由人补全参数后按回车。Codex 卸载须指定市场和插件，pi 卸载须指定原安装来源。名称只用于显示。MCP 的单项卸载命令只接受 `namedExtensionCommand` 校验过的名称。没有文档化命令时，悬停可查看原因。
 
 **Latch 提供的。** 都是数据：我的 Agent 的技能与「操控这台 Mac」的规则经 `latch-skills`；预览浏览器的工具经 `latch-browser`（桌面端开着时）；Latch 的 MCP 服务器经会话的 `mcpServers`（Codex 为线程配置），只给 `HarnessInfo.skills === 'server'` 的 Harness；提示词模板由 Latch 填进输入框（全部 Harness 的与只给这个 Harness 的）；数据插件（技能与数据面板）与页面在 Latch 里，不交给 Harness。含代码的插件（工具、面板模块、模型、Harness、连接）只在折叠的「本机开发者」里，标「可信的本机代码」，不隔离。Latch 内置的插件（项目文件、演示的工具与模型，`PluginInfo.builtIn`）不列。Latch 自己的 MCP 与插件仍在「设置 › MCP」「设置 › 插件」里管理，改动照旧本机确认；「设置 › MCP」与 Harness 页只留一行通往「扩展」。
 

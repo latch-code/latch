@@ -884,7 +884,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `GET`/`POST /agents`、`PUT`/`DELETE /agents/:id` | `admin`；新增与改命令、参数、变量要本机与本机确认 | ACP Agent 定义；环境变量只返回名称 |
 | `POST /agents/:id/probe` | `admin` 与 `run` | 检测一个 Agent 定义 |
 | `POST /agents/:id/commands` | `view` | 读取 Harness 的命令目录 |
-| `GET /extensions` | `admin` | 每个外部 Harness 最新一份普通会话报告的命令与技能（[HARNESSES.md](./HARNESSES.md#扩展)） |
+| `GET /extensions` | `admin` | 每个外部 Harness 最新一份普通会话报告的命令、技能与可用的插件短名（[HARNESSES.md](./HARNESSES.md#扩展)） |
 | `POST /agents/:id/catalogue`、`POST /agents/:id/mcp`、`PUT /agents/:id/models` | `run` | 不开始会话读取模型与选项、Harness 自己的 MCP；保存自己填写的模型 ID（[HARNESSES.md](./HARNESSES.md#开始前的选项)） |
 | `POST /quota/refresh` | `run` | 有人看「额度」时在后台读已绑定 Harness 缺失或过时的额度，不起模型轮次，立即回答 `asked`（[HARNESSES.md](./HARNESSES.md#额度)） |
 | `GET /workspaces` | `view` | 项目列表，含文件夹与不可用原因 |

@@ -192,7 +192,7 @@ import { UsageLedger } from './model-usage.ts'
 import { TurnLog, turnLine } from './turn-usage.ts'
 import { createModelUsageRoutes } from './model-usage-routes.ts'
 import { scheduledProvider, scheduledRequest, type ProviderCandidate } from './scheduled-provider.ts'
-import { readSessionSkills, type SessionSkill } from '@latch/protocol'
+import { readHarnessPluginReport, readSessionSkills, type SessionSkill } from '@latch/protocol'
 import type { ExtensionsResponse, HarnessExtensionReport } from '@latch/protocol'
 import {
   DENY_READ_HOME_PATHS,
@@ -6038,6 +6038,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           driver.create({
             dataDir: driver.id === STANDARD ? join(dataDir, 'sessions') : join(dataDir, 'harnesses', driver.id),
             workspaceRoot,
+            extensionReportProject: sessionId => hub?.extensionReportProjectOf(driver.id, sessionId),
             workspaces: usablePrimaries,
             // A driver that brings sessions in checks their directory against the project too.
             ...(driver.projectFolders === 'all' || driver.historyImport ? { projects: usableProjects } : {}),
@@ -6978,8 +6979,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * (else `workspace-changed`). A session from before projects had several folders is refused while its directory is
      * the primary folder of an unusable project.
      */
-    async function assertSessionWorkspace(sessionId: string): Promise<void> {
-      const task = await sessionTask(sessionId)
+    async function assertSessionWorkspace(sessionId: string, options: { task?: TaskSummary; fresh?: true } = {}): Promise<void> {
+      const task = options.task ?? (await sessionTask(sessionId))
       if (task?.sessionFolder && !(await ownFolders.verify(task.cwd))) throw workspaceChanged()
       const helperOwner = task?.agent?.customAgentId ?? (task?.generalChat ? GENERAL_AGENT_ID : undefined)
       // A driver's first turn can reach a tool before createTask has returned and the Host's folder marker is durable.
@@ -7001,7 +7002,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (worktrees.busy(worktree.path) === 'removing') throw new AppError(409, 'worktree-removing', '正在移除这个会话的工作树。')
         const record = savedProject(task.workspaceId)
         if (!record || task.cwd !== worktree.path || (await worktrees.sessionOf(worktree.path)) !== task.id) throw workspaceChanged()
-        const state = await projectState(record)
+        const state = await projectState(record, options)
         if (state.failure) throw workspaceDisabled(record, state)
         return
       }
@@ -7009,7 +7010,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (task.workspaceId !== undefined) {
         const record = savedProject(task.workspaceId)
         if (!record || !(await foldersStillIn(task, record))) throw workspaceChanged()
-        const state = await projectState(record)
+        const state = await projectState(record, options)
         if (state.failure) throw workspaceDisabled(record, state)
         return
       }
@@ -7017,7 +7018,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const root = await canonicalPath(task.cwd ?? workspaceRoot).catch(() => undefined)
       if (root === undefined || root === canonicalWorkspace) return
       for (const record of config.settings().workspaces) {
-        const state = await projectState(record)
+        const state = await projectState(record, options)
         if (state.failure && (await canonicalSet(record.folders.map(folder => folder.path))).has(root))
           throw workspaceDisabled(record, state)
       }
@@ -10712,46 +10713,83 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         json(res, { catalogue: publicResult.success ? publicResult.data : null })
         return true
       }
-      // 设置 › 扩展: per Harness, the newest commands and skills an ordinary session of its current definition reported.
+      // 设置 › 扩展: the newest report from an ordinary session of each external Harness's current definition.
       // Only Latch's own records: no CLI's configuration or storage is read, and no program is started or probed.
       if (path === '/link/api/extensions' && method === 'GET') {
         requireScope(caller, 'admin')
         limits.classC.take(caller.device.id)
-        const ordinary = (sessionId: string) => !hub!.agentPrivate(sessionId)
-        const harnesses: HarnessExtensionReport[] = []
-        for (const harness of hub!.drivers()) {
-          if (harness.capabilities.permission.enforcement === 'latch') continue
-          const found = await hub!.latestCommandReportOf(harness.id, ordinary).catch(() => undefined)
-          recheck(caller, 'admin')
-          const source = found?.current() ? await sessionTask(found.sourceSessionId).catch(() => undefined) : undefined
-          const usable =
-            !!source
-            && !!found
-            && found.current()
-            && (await assertSessionWorkspace(found.sourceSessionId).then(
-              () => true,
-              () => false,
-            ))
-          recheck(caller, 'admin')
-          const report = usable && found?.current() ? publicCommandCatalogue.safeParse(found.catalogue) : undefined
-          const projectId =
-            found?.workspaceId && found.workspaceId !== 'default' && savedProject(found.workspaceId) ? found.workspaceId : undefined
-          harnesses.push({
-            harnessId: harness.id,
-            ...(report?.success
-              ? {
-                  report: {
-                    commands: report.data.commands,
-                    ...(report.data.skills ? { skills: report.data.skills } : {}),
-                    ...(report.data.skillsTruncated ? { skillsTruncated: true as const } : {}),
-                    reportedAt: report.data.reportedAt,
-                    ...(projectId ? { projectId } : {}),
-                  },
-                }
-              : {}),
-          })
-        }
-        json(res, { harnesses } satisfies ExtensionsResponse)
+        // Listing claims restored sessions under their mounted Driver and applies the Host's privacy metadata.
+        const tasks = new Map((await hub!.listTasks()).map(task => [task.id, task]))
+        recheck(caller, 'admin')
+        const harnesses = hub!.drivers().filter(harness => harness.capabilities.permission.enforcement !== 'latch')
+        const projects = new Set(config.settings().workspaces.map(project => project.id))
+        const reports = await Promise.all(
+          harnesses.map(async harness => {
+            const empty = () => ({ harnessId: harness.id })
+            const acceptsSource = (id: string) => {
+              const task = tasks.get(id)
+              return (
+                task?.harnessId === harness.id
+                && !task.worktree?.removed
+                && (task.workspaceId === 'default' || (task.workspaceId !== undefined && projects.has(task.workspaceId)))
+              )
+            }
+            const verified = new Map<string, () => boolean>()
+            const verifySource = async (id: string) => {
+              const source = tasks.get(id)
+              const workspaceId = source?.workspaceId
+              if (!source || workspaceId === undefined || !acceptsSource(id)) return false
+              const project = savedProject(workspaceId)
+              const projectKey = project && stateKey(project)
+              const current = () => {
+                if (workspaceId === 'default') return true
+                const saved = savedProject(workspaceId)
+                return !!saved && stateKey(saved) === projectKey && !unusableProjects.has(workspaceId)
+              }
+              const usable = await assertSessionWorkspace(source.id, { task: source, fresh: true }).then(
+                () => true,
+                () => false,
+              )
+              if (!usable || !current()) return false
+              verified.set(id, current)
+              return true
+            }
+            const found = await hub!.latestCommandReportOf(harness.id, acceptsSource, verifySource).catch(() => undefined)
+            if (!found || tasks.get(found.sourceSessionId)?.workspaceId !== found.workspaceId) return empty
+            // A Driver may return a guarded report without using the optional candidate verifier.
+            if (!verified.has(found.sourceSessionId)) await verifySource(found.sourceSessionId)
+            const projectCurrent = verified.get(found.sourceSessionId)
+            if (!projectCurrent) return empty
+            const report = publicCommandCatalogue.safeParse(found.catalogue)
+            if (!report.success) return empty
+            const plugins = harness.extensionSupport?.plugins === 'command-sources' ? readHarnessPluginReport(found.plugins) : undefined
+            const names = plugins?.names.filter(name => redactKnownSecrets(name) === name)
+            return (): HarnessExtensionReport => {
+              // A report may have changed while a different Harness or its project was being read.
+              if (
+                !projectCurrent()
+                || hub!.info(harness.id)?.commandCatalogue?.generation !== harness.commandCatalogue?.generation
+                || !found.current()
+              )
+                return empty()
+              return {
+                harnessId: harness.id,
+                report: {
+                  commands: report.data.commands,
+                  ...(report.data.skills ? { skills: report.data.skills } : {}),
+                  ...(report.data.skillsTruncated ? { skillsTruncated: true } : {}),
+                  ...(plugins && names
+                    ? { plugins: { names, ...(plugins.truncated || names.length !== plugins.names.length ? { truncated: true } : {}) } }
+                    : {}),
+                  reportedAt: report.data.reportedAt,
+                  ...(found.workspaceId !== 'default' ? { projectId: found.workspaceId } : {}),
+                },
+              }
+            }
+          }),
+        )
+        recheck(caller, 'admin')
+        json(res, { harnesses: reports.map(read => read()) } satisfies ExtensionsResponse)
         return true
       }
       // What a Harness offers, read before a session: the same gate as starting one, since it starts the same program.

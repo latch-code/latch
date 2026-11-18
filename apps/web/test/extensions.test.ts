@@ -5,6 +5,7 @@ import {
   HARNESS_EXTENSIONS,
   isShellSafeName,
   namedExtensionCommand,
+  type AppSnapshot,
   type HarnessInfo,
   type McpServerView,
   type PluginInfo,
@@ -15,6 +16,7 @@ import {
   NOT_REPORTED,
   NOT_YET,
   extensionHarnesses,
+  extensionReportKey,
   harnessKinds,
   harnessSummary,
   latchPlugins,
@@ -47,18 +49,47 @@ const server = (name: string, preset?: 'computer'): McpServerView =>
 const kind = (views: ReturnType<typeof harnessKinds>, name: string) => views.find(view => view.kind === name)!
 
 describe('设置 › 扩展 model', () => {
+  it('invalidates a report for a different source version, driver mount, project, or audience', () => {
+    const pi = harness({ commandCatalogue: { generation: 'mount-a' } }, 'pi')
+    const source = { id: 'session-a', harnessId: 'pi', workspaceId: 'project-a', commandsVersion: 'report-a', status: 'idle' as const }
+    const workspace = { id: 'project-a', name: '项目', path: '/work/project-a' }
+    const snapshot = {
+      instanceId: 'host-run',
+      host: { hostId: 'host' },
+      device: { id: 'device', scopes: ['view', 'admin'], dataScope: 'work' },
+      tasks: [source],
+      catalog: { workspaces: [workspace] },
+    } as unknown as AppSnapshot
+    const key = extensionReportKey(snapshot, [pi])
+    const withSource = (task: Partial<AppSnapshot['tasks'][number]>) => ({ ...snapshot, tasks: [{ ...snapshot.tasks[0]!, ...task }] })
+    expect(extensionReportKey(withSource({ status: 'running' }), [pi])).toBe(key)
+    expect(extensionReportKey(withSource({ commandsVersion: 'report-b' }), [pi])).not.toBe(key)
+    expect(extensionReportKey(withSource({ agentPrivate: true }), [pi])).toBe(extensionReportKey({ ...snapshot, tasks: [] }, [pi]))
+    expect(extensionReportKey({ ...snapshot, tasks: [] }, [pi])).not.toBe(key)
+    expect(extensionReportKey(snapshot, [{ ...pi, commandCatalogue: { generation: 'mount-b' } }])).not.toBe(key)
+    expect(extensionReportKey({ ...snapshot, catalog: { ...snapshot.catalog!, workspaces: [] } }, [pi])).not.toBe(key)
+    expect(extensionReportKey({ ...snapshot, device: { ...snapshot.device, dataScope: 'all' } }, [pi])).not.toBe(key)
+  })
+
   it('tells apart a kind the Harness does not report, one it reports with no session yet, and one reported empty', () => {
     // An ACP preset: commands only; nothing yet.
-    const claude = harnessKinds(harness({}, 'claude-agent'), undefined, {})
+    const claude = harnessKinds(harness({ extensionSupport: { reports: ['commands'] } }, 'claude-agent'), undefined, {})
     expect(kind(claude, 'skills').status).toBe('not-reported')
     expect(kind(claude, 'commands').status).toBe('not-yet')
     expect(kind(claude, 'mcp').status).toBe('not-reported')
     expect(kind(claude, 'plugins').status).toBe('not-reported')
 
     // Codex reports skills and its own MCP: before a session both are 「not yet」, never 「none」.
-    const before = harnessKinds(harness({ ownMcp: {} }), undefined, {})
+    const direct = { reports: ['commands', 'skills'], plugins: 'requires-sync' } as const
+    const before = harnessKinds(harness({ extensionSupport: direct, ownMcp: {} }), undefined, {})
     expect(kind(before, 'skills').status).toBe('not-yet')
     expect(kind(before, 'mcp').status).toBe('not-yet')
+    expect(kind(before, 'plugins')).toMatchObject({ status: 'not-implemented', reason: expect.stringContaining('下载或更新') })
+    const mcpOnly = harnessKinds(harness({ ownMcp: {} }), undefined, {})
+    expect(kind(mcpOnly, 'skills').status).toBe('not-reported')
+    expect(kind(mcpOnly, 'plugins').status).toBe('not-reported')
+    const pluginUnavailable = harnessKinds(harness({ extensionSupport: direct }), undefined, {})
+    expect(kind(pluginUnavailable, 'plugins').status).toBe('not-implemented')
     expect(harnessSummary(before)).toBe(NOT_YET)
 
     const reported = harnessKinds(
@@ -70,18 +101,27 @@ describe('设置 › 扩展 model', () => {
       expect(kind(reported, name).status).toBe('reported')
       expect(kind(reported, name).own).toEqual([])
     }
-    // Codex's protocol has its plugins and Latch does not read them yet: said so, never 「not reported」.
-    expect(kind(reported, 'plugins').status).toBe('not-implemented')
-    expect(kind(reported, 'plugins').reason).toContain('plugin/installed')
-    expect(kind(claude, 'plugins').status).toBe('not-reported')
+    expect(harnessSummary(reported)).toBe('没有')
 
     // A session that could not read Codex's skill directory reports commands but no skills: unknown, not none.
-    const unread = harnessKinds(harness(), { commands: [], reportedAt: '2026-11-17T00:00:00.000Z' }, {})
+    const report = { commands: [], reportedAt: '2026-11-17T00:00:00.000Z' }
+    const unread = harnessKinds(harness({ extensionSupport: direct }), report, {})
     expect(kind(unread, 'skills').status).toBe('unread')
     expect(kind(unread, 'skills').own).toEqual([])
+
+    const pi = harness({ extensionSupport: { reports: ['commands', 'skills'], plugins: 'command-sources' } }, 'pi')
+    expect(kind(harnessKinds(pi, undefined, {}), 'plugins').status).toBe('not-yet')
+    expect(kind(harnessKinds(pi, report, {}), 'plugins').status).toBe('unread')
+    const piEmpty = kind(harnessKinds(pi, { ...report, plugins: { names: [] } }, {}), 'plugins')
+    expect(piEmpty).toMatchObject({ status: 'reported', own: [], empty: '没有扩展命令' })
+
+    const dsh = harnessKinds(harness({}, 'dsh'), undefined, {})
+    expect(harnessSummary(dsh)).toBe(NOT_REPORTED)
+    expect(kind(dsh, 'commands').status).toBe('not-reported')
+    expect(kind(dsh, 'plugins').status).toBe('not-reported')
   })
 
-  it('marks what the Harness reported as its own and what Latch gives it as Latch’s, with the scope and route', () => {
+  it('keeps the reported and Latch-provided items in separate lists with their scope and route', () => {
     const templates: PromptTemplate[] = [
       { id: 'a', name: '审查', content: 'x', scope: { kind: 'all' } },
       { id: 'b', name: '只给 Codex', content: 'x', scope: { kind: 'agent', id: 'codex' } },
@@ -96,15 +136,27 @@ describe('设置 › 扩展 model', () => {
       },
       { mcpServers: [server('github'), server('computer', 'computer')], templates },
     )
-    expect(kind(views, 'skills').own).toEqual([{ key: 'skill:$review', name: 'review', mark: 'harness', detail: '项目' }])
-    expect(kind(views, 'skills').latch.map(entry => [entry.name, entry.mark, entry.detail])).toEqual([
-      ['我的 Agent 的技能', 'latch', '经 latch-skills'],
-      ['latch-operate-this-mac', 'latch', '经 latch-skills'],
+    expect(kind(views, 'skills').own).toEqual([{ key: 'skill:$review', name: 'review', detail: '项目' }])
+    expect(kind(views, 'skills').latch.map(entry => [entry.name, entry.detail])).toEqual([
+      ['我的 Agent 的技能', '经 latch-skills'],
+      ['latch-operate-this-mac', '经 latch-skills'],
     ])
     expect(kind(views, 'commands').own.map(entry => entry.name)).toEqual(['/compact'])
     expect(kind(views, 'commands').latch.map(entry => entry.name)).toEqual(['审查', '只给 Codex'])
-    expect(kind(views, 'mcp').own).toEqual([{ key: 'mcp:files', name: 'files', mark: 'harness', remove: 'codex mcp remove files' }])
+    expect(kind(views, 'mcp').own).toEqual([{ key: 'mcp:files', name: 'files', remove: 'codex mcp remove files' }])
     expect(kind(views, 'mcp').latch.map(entry => entry.name)).toEqual(['github', 'computer'])
+  })
+
+  it('presents plugin names as labels without using them as uninstall selectors', () => {
+    const report = { commands: [], plugins: { names: ['review-tools'], truncated: true as const }, reportedAt: '2026-11-17T00:00:00.000Z' }
+    const capabilities = { reports: ['commands', 'skills'], plugins: 'command-sources' } as const
+    const plugins = kind(harnessKinds(harness({ extensionSupport: capabilities }, 'pi'), report, {}), 'plugins')
+    expect(plugins).toMatchObject({
+      status: 'reported',
+      truncated: true,
+      own: [{ key: 'plugin:review-tools', name: 'review-tools' }],
+    })
+    expect(plugins.own[0]?.remove).toBeUndefined()
   })
 
   it('gives a Harness that takes no Latch MCP servers none of them', () => {

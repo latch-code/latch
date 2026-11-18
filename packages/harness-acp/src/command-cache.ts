@@ -1,9 +1,9 @@
-import { constants } from 'node:fs'
+import { constants, lstatSync, realpathSync, type BigIntStats } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
-import { readSessionSkills, type SessionSkill } from '@latch/protocol'
+import { readHarnessPluginReport, readSessionSkills, type HarnessPluginReport, type SessionSkill } from '@latch/protocol'
 
 const MAX_BYTES = 2 * 1024 * 1024
 const MAX_ENTRIES = 64
@@ -28,6 +28,10 @@ const entry = z.strictObject({
   commands: z.array(command).max(200),
   skills: z.custom<SessionSkill[]>(value => readSessionSkills(value) !== undefined).optional(),
   skillsTruncated: z.literal(true).optional(),
+  plugins: z
+    .custom<HarnessPluginReport>(value => readHarnessPluginReport(value) !== undefined)
+    .transform(value => readHarnessPluginReport(value)!)
+    .optional(),
 })
 const state = z.strictObject({ version: z.literal(1), entries: z.array(entry).max(MAX_ENTRIES) })
 export type CommandCacheEntry = z.infer<typeof entry>
@@ -37,14 +41,31 @@ export async function commandDirectory(cwd: string): Promise<string | undefined>
   try {
     const path = await realpath(cwd)
     const before = await lstat(path, { bigint: true })
-    if (!before.isDirectory()) return undefined
     const current = await realpath(cwd)
     const after = await lstat(path, { bigint: true })
-    if (before.dev !== after.dev || before.ino !== after.ino || current !== path) return undefined
-    return sha256Hex(JSON.stringify([path, before.dev.toString(), before.ino.toString()]))
+    return directoryIdentity(path, current, before, after)
   } catch {
     return undefined
   }
+}
+
+/** The last folder check before the Host sends a previously validated report, with no intervening await. */
+export function commandDirectoryNow(cwd: string): string | undefined {
+  try {
+    const path = realpathSync.native(cwd)
+    const before = lstatSync(path, { bigint: true })
+    const current = realpathSync.native(cwd)
+    const after = lstatSync(path, { bigint: true })
+    return directoryIdentity(path, current, before, after)
+  } catch {
+    return undefined
+  }
+}
+
+function directoryIdentity(path: string, current: string, before: BigIntStats, after: BigIntStats): string | undefined {
+  if (!before.isDirectory() || !after.isDirectory() || before.dev !== after.dev || before.ino !== after.ino || current !== path)
+    return undefined
+  return sha256Hex(JSON.stringify([path, before.dev.toString(), before.ino.toString()]))
 }
 
 export function commandScope(directory: string, workspaceId?: string): string {
@@ -54,14 +75,16 @@ export function commandScope(directory: string, workspaceId?: string): string {
 /** Derived suggestions, under the driver's already-held ACP data lock; never a session/CLI authority. */
 export class CommandCache {
   private readonly file: string
+  private readonly keyOf: (record: CommandCacheEntry) => string
   private readonly entries = new Map<string, CommandCacheEntry>()
   private order = 0
   private dirty = false
   private writing?: Promise<void>
   private closed = false
 
-  constructor(dataDir: string) {
-    this.file = join(dataDir, 'harness-commands.json')
+  constructor(dataDir: string, kind: 'draft' | 'extensions' = 'draft') {
+    this.file = join(dataDir, kind === 'extensions' ? 'harness-extensions.json' : 'harness-commands.json')
+    this.keyOf = kind === 'extensions' ? record => record.sourceSessionId : record => record.scope
   }
 
   async load(): Promise<void> {
@@ -80,9 +103,9 @@ export class CommandCache {
         const after = await handle.stat()
         if (used !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs) return
         const read = state.parse(JSON.parse(bytes.subarray(0, used).toString('utf8')))
-        if (new Set(read.entries.map(item => item.scope)).size !== read.entries.length) return
+        if (new Set(read.entries.map(this.keyOf)).size !== read.entries.length) return
         for (const item of read.entries) {
-          this.entries.set(item.scope, item)
+          this.entries.set(this.keyOf(item), item)
           this.order = Math.max(this.order, item.order)
         }
       } finally {
@@ -101,8 +124,9 @@ export class CommandCache {
   remember(value: CommandCacheEntry): void {
     if (this.closed) return
     const read = entry.safeParse(value)
-    if (!read.success || (this.entries.get(value.scope)?.order ?? 0) >= value.order) return
-    this.entries.set(value.scope, read.data)
+    const key = this.keyOf(value)
+    if (!read.success || (this.entries.get(key)?.order ?? 0) >= value.order) return
+    this.entries.set(key, read.data)
     this.trim()
     this.schedule()
   }
@@ -112,12 +136,16 @@ export class CommandCache {
     return known?.launchHash === launchHash && known.definitionHash === definitionHash ? structuredClone(known) : undefined
   }
 
-  /** Every scope's report of this definition, newest first, for an overview that is not tied to one draft's folder. */
+  /** Candidate reports of this definition, newest first. */
   reportsOf(definitionHash: string): CommandCacheEntry[] {
     return [...this.entries.values()]
       .filter(entry => entry.definitionHash === definitionHash)
       .sort((a, b) => b.order - a.order)
       .map(entry => structuredClone(entry))
+  }
+
+  isCurrent(record: CommandCacheEntry): boolean {
+    return !this.closed && this.entries.get(this.keyOf(record))?.order === record.order
   }
 
   forget(sourceSessionId: string): void {
@@ -157,7 +185,7 @@ export class CommandCache {
     while (this.entries.size > MAX_ENTRIES || Buffer.byteLength(this.serialized()) > MAX_BYTES) {
       const item = oldest.shift()
       if (!item) break
-      this.entries.delete(item.scope)
+      this.entries.delete(this.keyOf(item))
     }
   }
 

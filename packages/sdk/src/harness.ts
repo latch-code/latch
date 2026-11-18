@@ -4,6 +4,7 @@ import type {
   AttachmentRef,
   FileChange,
   HarnessCapabilities,
+  HarnessExtensionSupport,
   HarnessInfo,
   ModelRef,
   ModelCapabilities,
@@ -201,6 +202,8 @@ export interface ToolGateway {
 
 /** Host capabilities offered to a driver, without prescribing its loop or persistence. */
 export interface HarnessHostOptions {
+  /** The project of a current, ordinary source registered by the Host for 设置 › 扩展. */
+  extensionReportProject?(sessionId: string): string | undefined
   trackFiles?: (input: FileTrackingInput) => Promise<FileTrackingHandle>
   readAttachment?: (ref: AttachmentRef, signal?: AbortSignal) => Promise<AttachmentContent>
   saveAttachment?: (input: { sessionId: string; mime: string; data: string }) => Promise<AttachmentRef>
@@ -418,6 +421,8 @@ export interface HarnessDriver {
   agentContext?: 'private' | 'first-turn'
   /** How an agent's skills reach the engine: `skillIds` for `native`, `skillBodies` for `server`. Absent: they do not. */
   skills?: 'native' | 'server'
+  /** What the driver exposes through `Bridge.latestCommandReport`, including a plugin list's availability. */
+  extensionSupport?: HarnessExtensionSupport
   id: string
   name: string
   version: string

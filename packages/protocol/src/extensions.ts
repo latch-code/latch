@@ -6,7 +6,21 @@ import type { SessionCommand, SessionSkill } from './sessions.ts'
  */
 export type ExtensionKind = 'skills' | 'commands' | 'mcp' | 'plugins'
 
-/** `GET /extensions`: per external Harness, the newest commands and skills an ordinary session of its current definition reported. */
+/** What the mounted adapter can report for the extension settings. Its MCP report has its own state. */
+export interface HarnessExtensionSupport {
+  reports: readonly ('skills' | 'commands')[]
+  /** Command sources list extensions that register commands. An installed-bundle sync is unavailable here. */
+  plugins?: 'command-sources' | 'requires-sync'
+}
+
+/** Public labels only. No CLI paths, plugin sources or executable selectors. */
+export interface HarnessPluginReport {
+  names: string[]
+  /** Some reported entries could not be identified or shown. */
+  truncated?: true
+}
+
+/** `GET /extensions`: the newest report from an ordinary session of each external Harness's current definition. */
 export interface HarnessExtensionReport {
   harnessId: string
   /** Absent: no ordinary session of its current definition has reported since it was saved. */
@@ -15,6 +29,8 @@ export interface HarnessExtensionReport {
     /** Absent: that session reported no skills, as most Harnesses do not. */
     skills?: SessionSkill[]
     skillsTruncated?: true
+    /** Absent: the session did not obtain a plugin report. Empty names means it reported an empty list. */
+    plugins?: HarnessPluginReport
     reportedAt: string
     /** The saved project that session ran in; absent for the default folder or a project since removed. */
     projectId?: string
@@ -42,26 +58,22 @@ export interface ExtensionCommands {
  * commands has none documented, and the page says so. Each entry's `source` is the vendor's page or the CLI's own `--help`
  * (codex-cli 0.169.0, pi 1.5.0, qwen 0.26.8, opencode 2.2.6, goose 1.57.0, grok 1.0.77, agy 1.5.9), read 2026-11-17.
  */
-export interface HarnessExtensionProfile {
-  /** Kinds its adapter reports. `mcp` is reported only where `HarnessInfo.ownMcp` says so; listed for the label. */
-  reports: readonly ExtensionKind[]
+export interface HarnessExtensionProfile extends HarnessExtensionSupport {
   commands: Partial<Record<ExtensionKind, ExtensionCommands>>
-  /** Kinds its protocol could report and Latch does not read yet, with why: said as 尚未实现, never as 没有报告. */
-  unread?: Partial<Record<ExtensionKind, string>>
 }
 
 /** ACP adapters report slash commands (`available_commands_update`); nothing else of these kinds. */
-const ACP_ONLY: readonly ExtensionKind[] = ['commands']
+const ACP_ONLY: HarnessExtensionSupport['reports'] = ['commands']
 
 export const HARNESS_EXTENSIONS: Readonly<Record<string, HarnessExtensionProfile>> = {
   codex: {
-    // The app-server's `skills/list` and `mcpServerStatus/list` (docs/HARNESSES.md#codex-的-app-server).
-    reports: ['commands', 'skills', 'mcp'],
+    // The direct app-server's `plugin/installed` can sync installed plugin bundles.
+    reports: ['commands', 'skills'],
+    plugins: 'requires-sync',
     commands: {
       mcp: { install: 'codex mcp add ', remove: 'codex mcp remove ', source: 'https://learn.chatgpt.com/docs/extend/mcp?surface=cli' },
       plugins: { install: 'codex plugin add ', remove: 'codex plugin remove ', source: 'codex plugin --help' },
     },
-    unread: { plugins: 'Codex 的 app-server 有 plugin/installed，Latch 还没有接入：要在会话或「读取」里多发一次请求' },
   },
   'claude-agent': {
     reports: ACP_ONLY,
@@ -77,11 +89,13 @@ export const HARNESS_EXTENSIONS: Readonly<Record<string, HarnessExtensionProfile
   pi: {
     // pi's RPC `get_commands` lists its extension commands, prompt templates and skills.
     reports: ['commands', 'skills'],
+    plugins: 'command-sources',
     commands: {
       mcp: { install: 'pi mcp add ', remove: 'pi mcp remove ', source: 'pi mcp --help' },
-      plugins: { install: 'pi install ', remove: 'pi remove ', update: 'pi update --extensions', source: 'pi --help' },
+      plugins: { install: 'pi install ', remove: 'pi remove ', update: 'pi update --extensions', source: 'pi update --help' },
     },
   },
+  dsh: { reports: [], commands: {} },
   opencode: {
     reports: ACP_ONLY,
     commands: {

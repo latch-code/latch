@@ -499,22 +499,55 @@ export class HarnessHub implements Bridge {
     return current() ? { ...result, current } : undefined
   }
 
-  /** 设置 › 扩展: the newest previous-session report of the harness's current definition, from a session `accept` takes. */
+  /** 设置 › 扩展: the latest report from a registered ordinary session of this driver. */
   async latestCommandReportOf(
     harnessId: string,
-    accept: (sourceSessionId: string) => boolean,
-  ): Promise<{ sourceSessionId: string; workspaceId?: string; catalogue: HarnessCommandCatalogue; current(): boolean } | undefined> {
+    acceptsSource: (sessionId: string) => boolean,
+    verifySource: (sessionId: string) => Promise<boolean>,
+  ) {
     const member = this.member(harnessId)
     if (!member?.bridge.latestCommandReport) return undefined
-    const result = await member.bridge.latestCommandReport(accept)
+    const accept = (sessionId: string) =>
+      this.member(harnessId) === member && this.extensionReportProjectOf(harnessId, sessionId) !== undefined && acceptsSource(sessionId)
+    const result = await member.bridge.latestCommandReport(accept, async sessionId => accept(sessionId) && (await verifySource(sessionId)))
     if (!result) return undefined
-    const current = () =>
-      !this.closing
-      && this.member(harnessId) === member
-      && this.ownerOf(result.sourceSessionId) === harnessId
-      && this.meta.has(result.sourceSessionId)
-      && accept(result.sourceSessionId)
-    return current() ? { ...result, current } : undefined
+    const { sourceSessionId, workspaceId, current: guard } = result
+    if (workspaceId === undefined || typeof guard !== 'function') return undefined
+    const source = this.meta.get(sourceSessionId)
+    if (!source || source.workspaceId !== workspaceId || !accept(sourceSessionId)) return undefined
+    const current = () => {
+      const meta = this.meta.get(sourceSessionId)
+      if (
+        !meta
+        || meta.workspaceId !== workspaceId
+        || meta.sessionFolder !== source.sessionFolder
+        || meta.worktree !== source.worktree
+        || !accept(sourceSessionId)
+      )
+        return false
+      try {
+        return guard.call(result) === true
+      } catch {
+        return false
+      }
+    }
+    return { ...result, sourceSessionId, workspaceId, current }
+  }
+
+  /** A missing registration, including an early report for a session still being created, confers no source authority. */
+  extensionReportProjectOf(harnessId: string, sessionId: string): string | undefined {
+    const member = this.member(harnessId)
+    const meta = this.meta.get(sessionId)
+    if (
+      this.closing
+      || !member
+      || member.detaching
+      || this.ownerOf(sessionId) !== harnessId
+      || !meta?.extensionReportSource
+      || meta.worktree?.removed
+    )
+      return undefined
+    return this.agentPrivate(sessionId) ? undefined : meta.workspaceId
   }
 
   info(id: string): HarnessInfo | undefined {
@@ -669,14 +702,23 @@ export class HarnessHub implements Bridge {
       automationId,
       generalChat,
       outsideStart,
+      extensionReportReady: _extensionReportReady,
       ...rest
     } = input
     const id = harnessId ?? this.options.defaultId()
     const entry = this.entries.get(id)
     if (!entry?.bridge) throw new AppError(409, 'harness-unavailable', `Harness ${id} 当前不可用`)
     const allFolders = entry.driver.projectFolders === 'all'
+    const ordinary = entry.bridge.latestCommandReport && workspaceId && !input.agentContext && !automationId && !generalChat && !input.seed
+    let settleReportSource: (() => void) | undefined
+    const extensionReportReady = ordinary
+      ? new Promise<void>(resolve => {
+          settleReportSource = resolve
+        })
+      : undefined
     const task: CreateTaskInput = {
       ...rest,
+      ...(extensionReportReady ? { extensionReportReady } : {}),
       ...((allFolders ? folders !== undefined : entry.bridge.commandCatalogue) && workspaceId !== undefined ? { workspaceId } : {}),
       ...(allFolders && workspaceId !== undefined && folders !== undefined ? { folders } : {}),
     }
@@ -687,8 +729,12 @@ export class HarnessHub implements Bridge {
           () => bridge.createTask(task),
         ),
       ),
-    )
+    ).catch((error: unknown) => {
+      settleReportSource?.()
+      throw error
+    })
     if (!this.claim(id, result.sessionId)) {
+      settleReportSource?.()
       throw new AppError(502, 'session-id-collision', `Harness ${id} 返回的会话标识已属于另一个 Harness`)
     }
     if (input.agentContext?.agent) await this.recordAgent(result.sessionId, input.agentContext.agent)
@@ -729,6 +775,9 @@ export class HarnessHub implements Bridge {
         .update(result.sessionId, current => ({
           ...current,
           ...(workspaceId ? { workspaceId } : {}),
+          ...(ordinary && this.member(id) === entry && !this.agentPrivate(result.sessionId)
+            ? { extensionReportSource: true as const }
+            : {}),
           ...(sessionFolder ? { sessionFolder } : {}),
           ...(worktree
             ? {
@@ -741,6 +790,7 @@ export class HarnessHub implements Bridge {
             : {}),
           ...(firstStart ? { firstStart } : {}),
         }))
+        .finally(settleReportSource)
         .catch(error => this.log(`会话 ${result.sessionId} 的项目记录写入失败：${message(error)}`))
     if (forkOf)
       await this.meta.update(result.sessionId, current => {
@@ -789,7 +839,9 @@ export class HarnessHub implements Bridge {
   }
   /** Mark private before awaiting storage; a failed write never reclassifies a real session as ordinary. */
   private async recordPrivate(sessionId: string): Promise<void> {
+    const withdrawReport = this.meta.get(sessionId)?.extensionReportSource && !this.agentPrivate(sessionId)
     this.briefSessions.add(sessionId)
+    if (withdrawReport) this.emit(sessionId)
     if (!this.meta.get(sessionId)?.agentPrivate) await this.meta.update(sessionId, current => ({ ...current, agentPrivate: true as const }))
   }
   /** As recordPrivate: private in memory before the write, so a failed write never leaves it readable by a smaller scope. */
@@ -1618,6 +1670,9 @@ export class HarnessHub implements Bridge {
       ...(serviceOptions?.length ? { serviceOptions: structuredClone(serviceOptions) } : {}),
       ...(catalogueRead ? { catalogueRead: structuredClone(catalogueRead) } : {}),
       ...(entry.bridge?.commandCatalogue ? { commandCatalogue: { generation: entry.generation } } : {}),
+      ...(entry.bridge?.latestCommandReport && driver.extensionSupport
+        ? { extensionSupport: structuredClone(driver.extensionSupport) }
+        : {}),
       ...(customModels?.length ? { customModels: [...customModels] } : {}),
       ...(ownMcp ? { ownMcp: structuredClone(ownMcp) } : {}),
       ...(quota ? { quota: structuredClone(quota) } : {}),

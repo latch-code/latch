@@ -1,6 +1,7 @@
 import { basename, isAbsolute } from 'node:path'
 import {
   AGENT_PRESETS,
+  extensionProfile,
   isHarnessMark,
   isRetiredAgentPreset,
   type AgentPreset,
@@ -247,7 +248,9 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
   const limits = resolveOptions(options)
   const record: AgentRecord = structuredClone(agent)
   const retired = isRetiredAgentPreset(record.presetId)
-  const wire = selectProfile(record).profile?.wire
+  const selection = selectProfile(record)
+  const wire = selection.profile?.wire
+  const { reports, plugins } = extensionProfile(wire ?? (selection.preset?.id === 'dsh' ? 'dsh' : undefined))
   const protocol = wire === 'pi' ? 'pi 的 RPC 模式' : wire === 'codex' ? 'Codex 的 app-server' : 'ACP'
   const description = `通过 ${protocol} 运行 ${commandLine(record)}；模型、登录与工具权限由该 Harness 自身管理。`
   return {
@@ -276,6 +279,7 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
         },
         agentContext: 'first-turn',
         ...skillsOf(record.presetId),
+        extensionSupport: { reports, ...(plugins ? { plugins } : {}) },
         ...folderDeclaration(selectProfile(record).profile),
         ...permissionDeclaration(selectProfile(record).profile),
         ...(selectProfile(record).profile?.historyImport && selectProfile(record).profile?.wire !== 'pi'
