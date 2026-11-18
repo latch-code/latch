@@ -240,9 +240,10 @@ it('keeps 待办 in 未开始, starts them as one card with their sessions, and 
     const outsidePath = `**/link/api/work/items/${release.id}/start`
     await page.route(outsidePath, async route => {
       if (route.request().method() !== 'POST') return route.continue()
+      const { item } = await owner.json<WorkItemAnswer>(`work/items/${release.id}`)
       return route.fulfill({
         status: 201,
-        json: { sessionId: session, outside: 'item-full', item: await itemOf(release.id) } satisfies WorkItemStartAnswer,
+        json: { sessionId: session, outside: 'item-full', item } satisfies WorkItemStartAnswer,
       })
     })
     await itemCard(page, release.id).getByRole('button', { name: '开始', exact: true }).click()

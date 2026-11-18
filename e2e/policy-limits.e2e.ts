@@ -412,7 +412,9 @@ describe('what this computer can take back', () => {
         expect((await local.json<TaskDetail>(detailPath)).summary.pinned).toBeFalsy()
         await clearOfComposer('toast-wrapped')
       } finally {
-        await narrow.evaluate(style => style.remove())
+        await narrow.evaluate(style => {
+          style.parentNode?.removeChild(style)
+        })
       }
       const waiting = await local.json<{ sessionId: string }>('tasks', {
         method: 'POST',

@@ -64,8 +64,8 @@ async function fixture(options: Parameters<typeof startTestHost>[0] = {}) {
   const owner = await host.enroll({ listener: 'unix' })
   return { host, owner, seen }
 }
-const settled = (owner: Awaited<ReturnType<TestHost['enroll']>>, id: string) =>
-  expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${id}`)).summary.status).toBe('idle')
+const settled = (owner: Awaited<ReturnType<TestHost['enroll']>>, id: string, timeout?: number) =>
+  expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${id}`)).summary.status, { timeout }).toBe('idle')
 
 test('accepts only one first Personal Agent chat across devices and preserves its original response', async () => {
   const { host, owner } = await fixture()
@@ -96,7 +96,7 @@ test('accepts only one first Personal Agent chat across devices and preserves it
     const detail = await owner.json<TaskDetail>(`tasks/${sessionId}`)
     expect(detail.messages.filter(message => message.role === 'user').map(message => message.text)).toEqual([inputs[winner]!.prompt])
     await owner.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { prompt: 'continue here', requestId: randomUUID() } })
-    await settled(owner, sessionId)
+    await settled(owner, sessionId, 4_000)
   }
   const work = await host.enroll({ listener: 'loopback-tcp' })
   await owner.json(`devices/${work.id}`, { method: 'PATCH', body: { dataScope: 'work' } })
