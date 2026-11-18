@@ -168,6 +168,7 @@ import {
   setCommandSearch,
   setLoginPrograms,
   validateAgentDefinition,
+  isRetiredAdapterDefinition,
 } from '@latch/harness-acp'
 import { AuditLog, type AuditActor, type StepupMethod } from './audit.ts'
 import { excludeFromBackup } from './backup.ts'
@@ -2211,6 +2212,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           .catch(error =>
             logNoted('provider-load-failed', { id: record.id, error: error }, `模型服务 ${record.id} 启用失败：${errorText(error)}`),
           )
+    }
+    // A definition a preset saved for an adapter it no longer runs through (pi's): removed like any other removal, so the
+    // preset is offered again as the program installed here. Nothing is bound in its place; the person's next use does that.
+    for (const stale of config.settings().agents.filter(isRetiredAdapterDefinition)) {
+      try {
+        await audit.append({ action: 'agent.deleted', actor: startupActor, target: stale.id, detail: { agentId: stale.id } })
+        await config.updateSettings(draft => {
+          draft.agents = draft.agents.filter(agent => agent.id !== stale.id)
+        })
+        log(`Harness ${stale.id} 的定义指向已不再使用的适配器，已移除；它会按现在的方式重新出现。`)
+      } catch (error) {
+        logNoted('agent-load-failed', { id: stale.id, error: error }, `Agent ${stale.id} 的旧定义未能移除：${errorText(error)}`)
+      }
     }
     for (const agent of config.settings().agents)
       await installAgent(agent).catch(error =>

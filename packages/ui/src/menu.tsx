@@ -284,6 +284,8 @@ export interface MenuItem {
   danger?: boolean
   /** Why it cannot be chosen. It stays focusable, dims, and the reason (read out with it) stays at full strength. */
   disabledReason?: string
+  /** More about the item on hover, kept off the row: where a program is, a whole name. */
+  hint?: string
   onSelect: () => void
 }
 
@@ -460,6 +462,7 @@ function MenuRow({ item, selection, onChoose }: { item: MenuItem; selection: boo
       tabIndex={-1}
       role={selection ? 'menuitemradio' : 'menuitem'}
       className="ui-menu-item"
+      title={item.hint}
       data-label={item.label}
       data-two-line={item.description || disabled ? '' : undefined}
       data-media={item.media ? '' : undefined}
@@ -724,6 +727,8 @@ export interface PickerOption<T extends string> {
   disabledReason?: string
   /** The value's own picture in the menu (a 20px tile), after the check slot. */
   media?: ReactNode
+  /** More about the value on hover (`MenuItem.hint`). */
+  hint?: string
 }
 
 export interface PickerGroup<T extends string> {
@@ -1007,6 +1012,7 @@ export function ValuePicker<T extends string>({
       media: option.media,
       checked: option.value === value,
       disabledReason: option.disabledReason,
+      hint: option.hint,
       onSelect: () => {
         choose(option.value)
       },

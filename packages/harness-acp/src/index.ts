@@ -33,7 +33,7 @@ export { checkLogin, harnessLogin, loginCheckAddsDate, loginTerminalScript, pres
 export { loadLoginShell, loginShellValues } from './login-shell.ts'
 export { compareVersions, onVersionChange } from './version.ts'
 export { personCommandDirectories, personPathDirectories, resolveCommand, setCommandSearch } from './command.ts'
-export { commandName, launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
+export { commandName, isRetiredAdapterDefinition, launchHash, selectProfile, validateAgentDefinition } from './permission.ts'
 export type { AcpAgentOptions, AgentRecord } from './types.ts'
 export type { QuotaReport } from './quota.ts'
 export { withHarnessPromptSource, harnessPromptSource } from './prompt-source.ts'

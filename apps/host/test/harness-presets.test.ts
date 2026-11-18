@@ -198,6 +198,33 @@ describe("a preset's own command", () => {
     expect((await audit(t)).filter(item => item.action === 'agent.defined').at(-1)).toMatchObject({ stepup: 'preset' })
   })
 
+  it('removes at start the definition pi saved for its old adapter, and keeps a command of the person’s own', async () => {
+    const root = await folder('latch-preset-')
+    await program(join(root, 'bin'), 'goose', root)
+    const adapter = await program(join(root, 'bin'), 'pi-acp', root)
+    const dataDir = join(root, 'data')
+    const first = await presetHost(() => [join(root, 'bin')], dataDir)
+    await first.desktop.json('agents', { body: GOOSE })
+    await first.t.close()
+    // As a Host from before pi ran its own program left it: the pi preset bound to the adapter, nothing else set.
+    const file = join(dataDir, 'settings.json')
+    const settings = JSON.parse(await readFile(file, 'utf8'))
+    const goose = settings.agents[0] as AgentRecord
+    const stale = { ...goose, id: 'pi', name: 'pi', presetId: 'pi', command: adapter, args: [], env: {}, confirmedCommand: adapter }
+    const own = { ...stale, id: 'pi-mine', name: 'my pi', args: ['--mine'] }
+    settings.agents = [goose, stale, own]
+    await writeFile(file, JSON.stringify(settings))
+    const { t } = await presetHost(() => [join(root, 'bin')], dataDir)
+    const ids = () => readFile(file, 'utf8').then(text => (JSON.parse(text).agents as AgentRecord[]).map(agent => agent.id))
+    // The adapter does not answer pi's own protocol: its definition is gone before anything could start it.
+    expect(await ids()).toEqual(['goose', 'pi-mine'])
+    expect((await audit(t)).filter(item => item.action === 'agent.deleted')).toMatchObject([{ detail: { agentId: 'pi' } }])
+    // Nothing was bound in its place.
+    expect(JSON.parse(await readFile(file, 'utf8')).agents.some((agent: AgentRecord) => agent.presetId === 'pi' && agent.id === 'pi')).toBe(
+      false,
+    )
+  })
+
   it("takes the preset's adapter as the preset too", async () => {
     const root = await folder('latch-preset-')
     const path = await program(join(root, 'bin'), 'codex-acp', root)

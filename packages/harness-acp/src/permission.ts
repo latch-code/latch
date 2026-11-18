@@ -59,6 +59,21 @@ function matchesName(patterns: readonly string[], name: string): boolean {
   )
 }
 
+/**
+ * Adapters a preset ran through before it spoke its own protocol to its own program. A definition the preset saved
+ * then still names the adapter, which does not answer that protocol: the Host removes such a definition at start, so
+ * the preset is offered again as installed and bound to its own command on first use.
+ */
+const RETIRED_PRESET_ADAPTERS: Readonly<Record<string, string>> = { pi: 'pi-acp' }
+
+/** Exactly what the preset saved for its adapter: the adapter's command, no arguments and no variables of the person's. */
+export function isRetiredAdapterDefinition(record: Pick<AgentRecord, 'presetId' | 'command' | 'args' | 'env'>): boolean {
+  const adapter = record.presetId !== undefined ? RETIRED_PRESET_ADAPTERS[record.presetId] : undefined
+  return (
+    adapter !== undefined && commandName(record.command) === adapter && record.args.length === 0 && Object.keys(record.env).length === 0
+  )
+}
+
 /** By `presetId`, else by the command's file name. The profile's environment applies even when not verified. */
 export function selectProfile(record: AgentRecord, locate: CommandLocator = resolveCommand): ProfileSelection {
   const name = commandName(record.command)

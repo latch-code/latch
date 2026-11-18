@@ -219,11 +219,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           }, width)
           await page.waitForFunction(value => innerWidth === value, width)
           await openSession(page, sessionId)
-          const showPath = async (state: string, selector: string) => {
-            await page.getByRole('button', { name: 'Harness：配置测试 Harness', exact: true }).filter({ visible: true }).click()
-            const bound = page.locator(selector).filter({ visible: true })
-            await reachable(bound)
-            expect(await bound.getAttribute('title')).toBe(path)
+          // Where the program is stays off the menu's rows: it is the hover of the session's Harness chip and of each
+          // Harness in a new session's menu. A sheet (the narrow window) has no hover and shows no path.
+          const shots = async (state: string) => {
             for (const colorScheme of ['light', 'dark'] as const) {
               await page.emulateMedia({ colorScheme })
               await page.screenshot({
@@ -232,13 +230,28 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
                 scale: 'css',
               })
             }
-            await page.keyboard.press('Escape')
+            await page.emulateMedia({ colorScheme: 'light' })
           }
-          await showPath('session', '.harness-bound-path .middle-ellipsis')
+          const chip = page.getByRole('button', { name: 'Harness：配置测试 Harness', exact: true }).filter({ visible: true })
+          if (width === 1440) {
+            await chip.hover()
+            await page.getByText(path!, { exact: true }).filter({ visible: true }).waitFor()
+            await shots('session')
+          }
+          await chip.click()
+          expect(await page.locator('.harness-bound-path').count()).toBe(0)
+          await page.keyboard.press('Escape')
           if (width === 390) await backToPhoneSessions(page)
           await page.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
           await homeInput(page).waitFor()
-          await showPath('new', ':is(.ui-menu-item-description, .ui-choice-description) .middle-ellipsis')
+          await page.getByRole('button', { name: 'Harness：配置测试 Harness', exact: true }).filter({ visible: true }).click()
+          expect(await page.locator(':is(.ui-menu-item-description, .ui-choice-description) .middle-ellipsis').count()).toBe(0)
+          if (width === 1440) {
+            const row = page.getByRole('menuitemradio', { name: /配置测试 Harness/u }).filter({ visible: true })
+            expect(await row.getAttribute('title')).toBe(path)
+          }
+          await shots('new')
+          await page.keyboard.press('Escape')
         }
       } finally {
         await application?.close()

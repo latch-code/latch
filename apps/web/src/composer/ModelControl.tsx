@@ -51,7 +51,6 @@ import { HarnessTile, ProviderTile } from '../components/BrandTile.tsx'
 import { HealthDot, menuHealth, nameWithHealth } from '../components/ServiceHealth.tsx'
 import { AgentPresetList, AgentSetupPanel } from '../components/SetupPanels.tsx'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
-import { MiddleEllipsis } from '../settings/common.tsx'
 import { isolationBrief } from '../agents/helpers.ts'
 import { agentConfigValues, REASONING_COPY } from './modelReasoning.ts'
 import { ValuePicker } from './ComposerControl.tsx'
@@ -341,12 +340,9 @@ export function DraftHarnessControl({
       options={entries.map(entry => ({
         value: entry.harness.id,
         label: entry.label,
-        description:
-          access.admin && entry.harness.bound?.path ? (
-            <MiddleEllipsis text={escapeHiddenCharacters(entry.harness.bound.path)} className="settings-mono" />
-          ) : entry.harness.statusMessage ? (
-            onComputer(entry.harness.statusMessage, computer)
-          ) : undefined,
+        // Where its program is belongs to the hover, not to a line under every name.
+        description: entry.harness.statusMessage ? onComputer(entry.harness.statusMessage, computer) : undefined,
+        ...(access.admin && entry.harness.bound?.path ? { hint: escapeHiddenCharacters(entry.harness.bound.path) } : {}),
         media: <HarnessTile harness={entry.harness} size={20} />,
         ...(entry.disabledReason ? { disabledReason: entry.disabledReason } : {}),
       }))}
@@ -438,7 +434,18 @@ export function SessionHarnessControl({
       size="sm"
       side="top"
       trigger={props => (
-        <Tooltip content={boundary ? COPY.fixedHarnessDetail(boundary) : COPY.fixedHarness}>
+        <Tooltip
+          content={
+            <>
+              {boundary ? COPY.fixedHarnessDetail(boundary) : COPY.fixedHarness}
+              {admin && harness.bound?.path && (
+                <>
+                  <br />
+                  <span className="settings-mono">{escapeHiddenCharacters(harness.bound.path)}</span>
+                </>
+              )}
+            </>
+          }>
           <button {...props} type="button" className="chip chip-harness" aria-label={`Harness：${name}`}>
             <HarnessTile harness={harness} size={16} />
             <span className="chip-text">{name}</span>
@@ -446,11 +453,6 @@ export function SessionHarnessControl({
         </Tooltip>
       )}>
       <div className="model-footer">
-        {admin && harness.bound?.path && (
-          <div className="harness-bound-path">
-            <MiddleEllipsis text={escapeHiddenCharacters(harness.bound.path)} className="settings-mono" />
-          </div>
-        )}
         {fork && <ForkRow fork={fork} />}
         <MenuFooterLink icon={PlusGlyph} chevron={false} closes onClick={onNewSession}>
           {COPY.newSession}
