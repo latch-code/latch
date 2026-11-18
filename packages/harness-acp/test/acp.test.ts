@@ -40,7 +40,7 @@ import { FAKE_ACP_AGENT, FAKE_PI_AGENT, startFakeModels, type FakeModels } from 
 import { AcpWire } from '../src/wires/acp.ts'
 import { PROPOSAL_LIMITS, readProposals, skillsServer } from '../src/skills-server.ts'
 import { ownTool, proposalTurn } from '../src/runtime.ts'
-import { ConnectionStopping } from '../src/wires/process.ts'
+import { ConnectionStopping, isRecord } from '../src/wires/process.ts'
 import { agentEnvironment, programPaths } from '../src/environment.ts'
 import { commandName } from '../src/mapping.ts'
 import {
@@ -5381,9 +5381,18 @@ describe('what a Harness offers before a session, and choosing it before the fir
           FAKE_ACP_CAPS: 'resume',
           FAKE_ACP_CONFIG_ANSWER_FILE: answerFile,
         },
-        { requestTimeoutMs: 150, configTimeoutMs: 150, idleMs: 60_000 },
+        { idleMs: 60_000 },
       )
       const bridge = await fixture.open()
+      // Give only the unanswered write a short deadline. Handshake and recovery still use the regular fixture timeouts.
+      const request = AcpWire.prototype.request
+      const deadline = vi.spyOn(AcpWire.prototype, 'request').mockImplementation(function (this: AcpWire, ...args) {
+        const [method, params] = args
+        if (method === 'session/set_config_option' && isRecord(params) && params.configId === 'effort' && params.value === 'high')
+          args[2] = 150
+        return request.apply(this, args)
+      })
+      cleanups.push(() => void deadline.mockRestore())
       const { sessionId } = await bridge.createTask({
         prompt: 'echo first',
         requestId: rid(),
@@ -5393,15 +5402,29 @@ describe('what a Harness offers before a session, and choosing it before the fir
         ],
       })
       expect((await settled(bridge, sessionId)).summary.status).toBe('failed')
-      expect(received(await fixture.log(), 'session/prompt')).toHaveLength(0)
+      await vi.waitFor(async () => {
+        const log = await fixture.log()
+        const unanswered = received(log, 'session/set_config_option').find(entry => entry.params?.configId === 'effort')
+        expect(unanswered?.params?.value).toBe('high')
+        expect(unanswered?.id).toEqual(expect.any(Number))
+        expect(received(log, '$/cancel_request')).toContainEqual(expect.objectContaining({ params: { requestId: unanswered?.id } }))
+        expect(received(log, 'session/prompt')).toHaveLength(0)
+      })
+      deadline.mockRestore()
       await writeFile(answerFile, '')
       await bridge.setConfig!(sessionId, 'mode', value)
+      const selected = await bridge.detail(sessionId)
+      expect(selected.permission?.expectedMode).toBe(value)
+      expect(selected.config?.find(item => item.category === 'mode')?.currentValue).toBe(value)
+
       await bridge.prompt(sessionId, 'echo retry', rid())
       const next = await settled(bridge, sessionId)
       expect(next.summary.status).toBe('idle')
       expect(next.permission?.expectedMode).toBe(value)
       expect(next.config?.find(item => item.category === 'mode')?.currentValue).toBe(value)
-      expect(set(await fixture.log()).some(([id, selected]) => id === 'mode' && selected === 'agent-full-access')).toBe(false)
+      const log = await fixture.log()
+      expect(received(log, 'session/prompt')).toHaveLength(1)
+      expect(set(log).some(([id, selected]) => id === 'mode' && selected === 'agent-full-access')).toBe(false)
     },
   )
 
