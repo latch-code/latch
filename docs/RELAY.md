@@ -1,6 +1,7 @@
 ---
 description: 手机在其他网络连回 Mac：先直连，否则经自己的中继（Linux 服务器），三步接入、在 Mac 上核对与测试、两种类型的身份与谁能看到什么、按状态排查。
 sources:
+  - apps/relay/gateway/main.go
   - apps/relay/src/cli.ts
   - apps/relay/src/config.ts
   - apps/relay/deploy/compose.yaml
@@ -64,7 +65,7 @@ sources:
 **准备服务器。** 需要一台可直达的 Linux 服务器、指向它的域名与证书。
 
 - **证书。** 证书链须受 Mac 与手机的系统信任，名称与中继地址一致。用同一把证书密钥续期时公钥指纹不变；公钥变了要重新导出并导入配置。
-- **TLS 由 Latch 的 Go 网关直接处理**（`latch-relay-tls`）。域名指向这台服务器的服务端口（`init` 写出的是 8443）；也可以由操作者核对后在同机配置 TCP 转发。
+- **TLS 由 Latch 的 Go 网关直接处理**（`latch-relay-tls`）。域名指向这台服务器的服务端口（`init` 写出的是 8443），也可以由操作者核对后在同机配置 TCP 转发。公网连接或私有 Unix socket 任一端断开，网关关闭另一端，等待两个转发方向结束后释放连接槽。
 - **运行身份。** 单独的系统用户，绝对路径的私有数据目录：目录 0700、文件 0600，由服务用户持有。下面用 `/srv/latch-relay`。
 - **源码方式**需要 `.node-version` 与 `.go-version` 的工具链和锁定的依赖。
 

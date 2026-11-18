@@ -523,7 +523,7 @@ it('pairs on the LAN only, then uses a private relay, and preserves recovery and
   ).toBe(200)
   expect(host.presence.requests.length).toBe(confirmations)
   await vi.waitFor(() => expect(registered.isClosed()).toBe(true), { timeout: 3000 })
-  await vi.waitFor(() => expect(relay.status().connections).toBe(0), { timeout: 3000 })
+  await vi.waitFor(() => expect(relay.status()).toMatchObject({ connections: 0, gateway: { connections: 0 } }), { timeout: 3000 })
   expect(host.host.security.devices.get(prepared.deviceId)?.status).toBe('active')
   host.presence.mode = 'approve'
   expect(
@@ -581,7 +581,7 @@ it('pairs on the LAN only, then uses a private relay, and preserves recovery and
   expect(
     (await desktop.request('policy', { method: 'PATCH', body: { hostEgressAllow: { remove: [`localhost:${relay.port}`] } } })).status,
   ).toBe(200)
-  await vi.waitFor(() => expect(relay.status().connections).toBe(0), { timeout: 3000 })
+  await vi.waitFor(() => expect(relay.status()).toMatchObject({ connections: 0, gateway: { connections: 0 } }), { timeout: 3000 })
   deny.mockClear()
   expect(
     (await desktop.confirmed('policy', { method: 'PATCH', body: { hostEgressAllow: { add: [`localhost:${relay.port}`] } } })).status,
@@ -684,12 +684,12 @@ it('registers a built-in relay from the first phone until the last one has read 
     verifyAddressBook(prepared.addressBook, payload.rootSpki, { hostId: host.host.hostId, deviceId: prepared.deviceId }).relays,
   ).toHaveLength(1)
   ok(await pairing.request('POST', `/link/api/enrollments/${enrollment.id}/complete`, { signature }))
-  await vi.waitFor(() => expect(relay.status().routes).toBe(3), { timeout: 5000 })
+  await vi.waitFor(() => expect(relay.status()).toMatchObject({ routes: 3, gateway: { connections: 1 } }), { timeout: 5000 })
 
   // Removing the last phone keeps the relay until that phone has read its removal, so it learns away from home too.
   await host.host.security.devices.revoke(prepared.deviceId, 'manual', { listener: 'host' })
   await new Promise(done => setTimeout(done, 1500))
-  expect(relay.status().connections).toBe(1)
+  expect(relay.status()).toMatchObject({ connections: 1, gateway: { connections: 1 } })
   const client = await open({
     rootSpki: payload.rootSpki,
     knockKey: await nodeCrypto.hash(await nativeKnockSecret(nodeCrypto, knockKey, device.spki, verificationSpki)),
@@ -705,5 +705,5 @@ it('registers a built-in relay from the first phone until the last one has read 
         .digest('hex'),
     }),
   )
-  await vi.waitFor(() => expect(relay.status().connections).toBe(0), { timeout: 5000 })
+  await vi.waitFor(() => expect(relay.status()).toMatchObject({ connections: 0, gateway: { connections: 0 } }), { timeout: 5000 })
 })

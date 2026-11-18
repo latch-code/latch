@@ -304,15 +304,18 @@ func (g *gateway) serve(raw net.Conn, groups []netip.Prefix, cfg *tls.Config) {
 		return
 	}
 	_ = backend.SetWriteDeadline(time.Time{})
-	finished := make(chan struct{}, 1)
-	// Fixed 16 KiB buffers in each direction. A goroutine blocks only its own stream.
+	copyUntilClosed := func(to, from net.Conn) {
+		_, _ = io.CopyBuffer(boundedWriter{to, &g.bytes}, onlyReader{from}, make([]byte, 16*1024))
+		// The other side may still be waiting for bytes after this side disconnected.
+		_ = raw.Close()
+		_ = backend.Close()
+	}
+	finished := make(chan struct{})
 	go func() {
-		_, _ = io.CopyBuffer(boundedWriter{backend, &g.bytes}, onlyReader{secure}, make([]byte, 16*1024))
-		finished <- struct{}{}
+		defer close(finished)
+		copyUntilClosed(backend, secure)
 	}()
-	_, _ = io.CopyBuffer(boundedWriter{secure, &g.bytes}, onlyReader{backend}, make([]byte, 16*1024))
-	_ = raw.Close()
-	_ = backend.Close()
+	copyUntilClosed(secure, backend)
 	<-finished
 }
 func (g *gateway) stop(force bool) {
