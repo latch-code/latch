@@ -216,7 +216,10 @@ export function CommandPalette({
       <div ref={list} id="palette-results" className="palette-results" role="listbox" aria-label="搜索结果">
         {groups.map(group => (
           <section key={group.label} role="group" aria-label={group.label}>
-            <h3>{group.label}</h3>
+            <h3>
+              {group.label}
+              {group.space && ` · ${group.space}`}
+            </h3>
             {group.rows.map(row => (
               <button
                 type="button"

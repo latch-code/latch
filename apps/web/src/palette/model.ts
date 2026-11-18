@@ -7,6 +7,8 @@ export type PaletteLevel = 'root' | 'files'
 export interface PaletteEntry {
   id: string
   label: string
+  /** The plain Code workspace, when Agent conversations also appear in search. */
+  codeSession?: boolean
   /** Quiet text after the label. */
   sub?: string
   /** `sub` is a path: it gives up its middle before its last folder. */
@@ -35,6 +37,7 @@ export interface PaletteNote {
 
 export interface PaletteGroup {
   label: string
+  space?: string
   rows: PaletteRow[]
   notes?: PaletteNote[]
 }
@@ -97,6 +100,14 @@ function searchNotes(
 
 const shown = (group: PaletteGroup) => group.rows.length > 0 || (group.notes?.length ?? 0) > 0
 
+function sessionGroup(label: string, rows: PaletteRow[]): PaletteGroup {
+  if (rows.length && rows.every(row => row.codeSession)) return { label, space: 'Code', rows }
+  return {
+    label,
+    rows: rows.map(row => (row.codeSession ? { ...row, sub: row.sub ? `Code · ${row.sub}` : 'Code' } : row)),
+  }
+}
+
 const SESSION_ROWS = 20
 
 const FILE_WORDS = { loading: '正在查找文件…', failed: '文件搜索失败', truncated: '只显示了部分文件，请缩小搜索范围。' }
@@ -132,15 +143,11 @@ export function paletteGroups({
     return [{ label: '文件', rows: state.rows, notes: searchNotes(state, { ...FILE_WORDS, none: '没有匹配的文件' }) }]
   }
   if (!typed)
-    return [
-      { label: '最近会话', rows: [...recent] },
-      { label: '命令', rows: commands.filter(command => command.root) },
-    ].filter(shown)
+    return [sessionGroup('最近会话', [...recent]), { label: '命令', rows: commands.filter(command => command.root) }].filter(shown)
   const matchedSessions = matchEntries(sessions, typed)
   return [
     {
-      label: '会话',
-      rows: matchedSessions.slice(0, SESSION_ROWS),
+      ...sessionGroup('会话', matchedSessions.slice(0, SESSION_ROWS)),
       notes: matchedSessions.length > SESSION_ROWS ? [{ text: '只显示了部分会话，请缩小搜索范围。' }] : [],
     },
     { label: '文件', rows: files?.rows ?? [], notes: files ? searchNotes({ ...files, loading: false }, FILE_WORDS) : [] },

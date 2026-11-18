@@ -43,6 +43,16 @@ describe('palette groups', () => {
     expect(groups[1]!.rows.map(row => row.id)).toEqual(['new'])
   })
 
+  it('shows a shared Code workspace once while keeping mixed-source results distinguishable', () => {
+    const code = entry('c', 'release', { codeSession: true, sub: 'latch' })
+    const agent = entry('a', 'release checks', { sub: 'Reviewer' })
+    const [recent] = paletteGroups({ ...none, level: 'root', query: '', recent: [code] })
+    expect(recent).toMatchObject({ space: 'Code', rows: [{ sub: 'latch' }] })
+    const [mixed] = paletteGroups({ ...none, level: 'root', query: 'release', sessions: [code, agent] })
+    expect(mixed?.space).toBeUndefined()
+    expect(mixed?.rows.map(row => row.sub)).toEqual(['Code · latch', 'Reviewer'])
+  })
+
   it('orders typed results with messages last, and leaves out what found nothing', () => {
     const groups = paletteGroups({
       level: 'root',
