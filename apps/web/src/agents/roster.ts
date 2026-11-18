@@ -78,7 +78,7 @@ function rowOf(
 
 /**
  * The roster in the Host's order: your Agents, then 通用 (built in, on a device that may read Agents), then one row for
- * each deleted Agent whose topics remain, so every open topic hangs under exactly one row. `generalBlocked` is why 通用
+ * each deleted Agent that still has a topic running or waiting for you. `generalBlocked` is why 通用
  * cannot start a topic now.
  */
 export function rosterRows(
@@ -122,16 +122,18 @@ export function rosterRows(
   // While the Host withholds the list nobody is known to be deleted: the topics keep a neutral row each, so one that
   // waits for you is still drawn and still reachable.
   const listed = snapshot.customAgents !== undefined
-  for (const [owner, topics] of byOwner)
-    if (!known.has(owner))
-      rows.push({
-        ...rowOf(
-          { id: owner, name: listed ? AGENT_SPACE_COPY.deletedAgent : 'Agent', avatar: 'general', duty: '', gone: listed },
-          topics.toSorted(newestFirst),
-          asking,
-        ),
-        ...(listed ? {} : { confirming: true as const }),
-      })
+  for (const [owner, topics] of byOwner) {
+    if (known.has(owner)) continue
+    const row = rowOf(
+      { id: owner, name: listed ? AGENT_SPACE_COPY.deletedAgent : 'Agent', avatar: 'general', duty: '', gone: listed },
+      topics.toSorted(newestFirst),
+      asking,
+    )
+    // A deleted Agent leaves the roster. It is listed only while a topic of it still runs or waits for you, so that
+    // one stays reachable and can be answered or stopped; its settled topics are history, found by search.
+    if (listed && row.state !== 'waiting' && row.state !== 'running') continue
+    rows.push({ ...row, ...(listed ? {} : { confirming: true as const }) })
+  }
   return rows
 }
 

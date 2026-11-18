@@ -126,18 +126,17 @@ describe('the roster of 我的 Agent', () => {
     expect('unavailable' in rosterRows(snapshot([], agents))[0]).toBe(false)
   })
 
-  it('keeps the topics of a deleted Agent under one row', () => {
-    const tasks = [topic('x1', 'gone', 1), topic('x2', 'gone', 2), topic('m1', 'man', 3)]
+  it('lists a deleted Agent only while a topic of it still runs or waits for you', () => {
+    // Settled topics of a deleted Agent are history: no row.
+    const settled = rosterRows(snapshot([topic('x1', 'gone', 1), topic('x2', 'gone', 2), topic('m1', 'man', 3)], agents))
+    expect(settled.some(row => row.gone)).toBe(false)
+    expect(rosterTopics(settled).map(task => task.id)).toEqual(['m1'])
+    // One still running keeps its row, with all of that Agent's open topics under it, until it settles.
+    const tasks = [topic('x1', 'gone', 1), topic('x2', 'gone', 2, { status: 'running' }), topic('m1', 'man', 3)]
     const rows = rosterRows(snapshot(tasks, agents))
     const gone = rows.at(-1)!
-    expect(gone).toMatchObject({ id: 'gone', name: '已删除的 Agent', gone: true })
+    expect(gone).toMatchObject({ id: 'gone', name: '已删除的 Agent', gone: true, state: 'running' })
     expect(gone.topics.map(task => task.id)).toEqual(['x2', 'x1'])
-    // Every open topic hangs under exactly one row.
-    expect(
-      rosterTopics(rows)
-        .map(task => task.id)
-        .toSorted(),
-    ).toEqual(['m1', 'x1', 'x2'])
   })
 
   it('keeps every topic in sight while the Host withholds the list of Agents, under a neutral row, never called deleted', () => {
