@@ -167,14 +167,15 @@ describe('slash suggestions in the real composer', () => {
               await input.press('Escape')
               await list.waitFor({ state: 'hidden' })
               if (width === 390) {
-                const options = page.getByRole('group', { name: '会话选项', exact: true })
-                const permission = options.getByRole('button', { name: /^权限：/u })
-                await permission.scrollIntoViewIfNeeded()
-                const rail = (await options.boundingBox())!
+                expect(await input.evaluate(element => element === document.activeElement)).toBe(true)
+                const line = page.locator('main.workspace:not([inert]) .composer-line')
+                const permission = line.locator('[data-composer-control="permission"]').getByRole('button', { name: /^权限：/u })
+                await permission.waitFor()
+                const rail = (await line.boundingBox())!
                 const chip = (await permission.boundingBox())!
                 expect(chip.x).toBeGreaterThanOrEqual(rail.x - 1)
                 expect(chip.x + chip.width).toBeLessThanOrEqual(rail.x + rail.width + 1)
-                await permission.click()
+                await permission.press('Enter')
                 const sheet = page.getByRole('dialog', { name: '权限', exact: true })
                 await sheet.getByRole('radio').first().waitFor()
                 await page.screenshot({ path: `test-results/slash/permission-${engine}-${width}-${theme}.png`, animations: 'disabled' })
