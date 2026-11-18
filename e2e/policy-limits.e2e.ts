@@ -378,22 +378,29 @@ describe('what this computer can take back', () => {
         await page.screenshot({ path: `${OUTPUT}/${name}--${viewport.name}.png` })
       }
       await clearOfComposer('toast')
+      await toast.waitFor({ state: 'detached' })
       const detailPath = `tasks/${created.sessionId}`
       await page.route(`**/link/api/${detailPath}`, route =>
         route.request().method() === 'PATCH'
           ? route.fulfill({ status: 500, json: { error: 'internal-error', message: '没有保存这次改动' } })
           : route.continue(),
       )
-      await page.locator('.topbar-title-button').click()
-      await page.getByRole('menuitem', { name: /置顶/u }).click()
-      await toast.getByText(INCOMPLETE_REQUEST, { exact: true }).waitFor()
-      expect(await toast.getByText('没有保存这次改动', { exact: true }).count()).toBe(0)
-      expect((await local.json<TaskDetail>(detailPath)).summary.pinned).toBeFalsy()
-      // Narrow only the error toast so the same fixed copy exercises a second line at every viewport.
-      const flatHeight = (await toast.boundingBox())!.height
-      const narrow = await page.addStyleTag({ content: '.toast { max-width: 12rem }' })
+      // Start with a wrapped toast so its first layout must account for the composer behind it.
+      const narrow = await page.addStyleTag({ content: '.toast[data-tone="error"] { max-width: 12rem }' })
       try {
-        await expect.poll(async () => (await toast.boundingBox())?.height).toBeGreaterThan(flatHeight)
+        await page.locator('.topbar-title-button').click()
+        await page.getByRole('menuitem', { name: /置顶/u }).click()
+        const failure = toast.getByText(INCOMPLETE_REQUEST, { exact: true })
+        await failure.waitFor()
+        expect(
+          await failure.evaluate(element => {
+            const text = document.createRange()
+            text.selectNodeContents(element)
+            return text.getClientRects().length
+          }),
+        ).toBeGreaterThan(1)
+        expect(await toast.getByText('没有保存这次改动', { exact: true }).count()).toBe(0)
+        expect((await local.json<TaskDetail>(detailPath)).summary.pinned).toBeFalsy()
         await clearOfComposer('toast-wrapped')
       } finally {
         await narrow.evaluate(style => style.remove())
