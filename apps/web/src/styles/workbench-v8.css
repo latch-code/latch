@@ -19,7 +19,7 @@
   --fs-caption: var(--fs-work-caption);
   --lh-caption: var(--lh-work-caption);
   --sh-lift: var(--work-card-shadow);
-  --content-width: 700px;
+  --content-width: 860px;
   --gutter: 40px;
   background: var(--canvas);
 }

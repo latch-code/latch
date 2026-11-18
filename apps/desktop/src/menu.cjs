@@ -75,11 +75,12 @@ const COPY = defineCopy(
  * used, so it asks nothing of the page.
  * The two items' keys are the focused window's own bindings (`spaceAccelerator`); the template is built again when they
  * change.
- * @param {{ packaged: boolean, onCheckForUpdates: () => void, onSpace?: (space: 'code' | 'agents') => void, onSafeMode?: () => void, accelerators?: SpaceAccelerators }} input
+ * @param {{ packaged: boolean, onAbout?: () => void, onCheckForUpdates: () => void, onSpace?: (space: 'code' | 'agents') => void, onSafeMode?: () => void, accelerators?: SpaceAccelerators }} input
  * @returns {import('electron').MenuItemConstructorOptions[]}
  */
 function menuTemplate({
   packaged,
+  onAbout = () => {},
   onCheckForUpdates,
   onSpace = () => {},
   onSafeMode = () => {},
@@ -89,7 +90,8 @@ function menuTemplate({
     {
       label: 'Latch',
       submenu: [
-        { role: 'about', label: COPY.about },
+        // The app's own 设置 › 关于, not the system panel, which names the runtime when Latch runs from source.
+        { label: COPY.about, id: 'about', click: () => onAbout() },
         { label: COPY.updates, id: 'check-for-updates', click: () => onCheckForUpdates() },
         { type: 'separator' },
         { role: 'services', label: COPY.services },

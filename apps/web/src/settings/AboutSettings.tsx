@@ -526,19 +526,13 @@ export function AboutSettings({
   const main = (
     <>
       <header className="about-head">
-        <BrandMark size={56} />
-        <div>
-          <h2>
-            Latch
-            {dev && <DevMark description={DEVICE_PERMISSION_COPY.devMode} />}
-          </h2>
-          {snapshot.version && !desktop && (
-            <p>
-              {COPY.versions} {snapshot.version}
-            </p>
-          )}
-          {dev && <Hint lead={<Icon icon={WarningGlyph} size={12} />} label={RUNS_AS_YOU_COPY.devMode.label} />}
-        </div>
+        <BrandMark size={72} />
+        <h2>
+          Latch
+          {dev && <DevMark description={DEVICE_PERMISSION_COPY.devMode} />}
+        </h2>
+        {(updates.view?.appVersion ?? snapshot.version) && <p className="about-version">{updates.view?.appVersion ?? snapshot.version}</p>}
+        {dev && <Hint lead={<Icon icon={WarningGlyph} size={12} />} label={RUNS_AS_YOU_COPY.devMode.label} />}
       </header>
       {host?.presence.status === 'unavailable' && <InlineNotice tone="warn">{presenceUnavailableText(host.presence.message)}</InlineNotice>}
       {desktop && updates.view && (

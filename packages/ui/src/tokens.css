@@ -217,8 +217,8 @@
      * (read, search, edit, run, web, sub-agent). ansi-*: the colours a command's output asked for; red and green are the
      * state colours, because a test runner's red and green mean failed and passed. */
     --syn-flag: #9c3f6a;
-    --content-code-ink: #8d3a62;
-    --content-code-tint: rgba(141, 58, 98, 0.08);
+    --content-code-ink: #2f4f8f;
+    --content-code-tint: rgba(47, 79, 143, 0.08);
     --content-path-ink: #1d52c4;
     --content-path-tint: rgba(36, 97, 224, 0.07);
     --kind-read: #4d6b86;
@@ -623,8 +623,8 @@
       --syn-function: #79d0d6;
       --syn-constant: #f2a072;
       --syn-flag: #e899bd;
-      --content-code-ink: #f0a3c6;
-      --content-code-tint: rgba(240, 163, 198, 0.1);
+      --content-code-ink: #a9c1f5;
+      --content-code-tint: rgba(150, 178, 240, 0.12);
       --content-path-ink: #80aafb;
       --content-path-tint: rgba(107, 155, 250, 0.12);
       --kind-read: #9db4cc;
@@ -745,8 +745,8 @@
     --syn-function: #79d0d6;
     --syn-constant: #f2a072;
     --syn-flag: #e899bd;
-    --content-code-ink: #f0a3c6;
-    --content-code-tint: rgba(240, 163, 198, 0.1);
+    --content-code-ink: #a9c1f5;
+    --content-code-tint: rgba(150, 178, 240, 0.12);
     --content-path-ink: #80aafb;
     --content-path-tint: rgba(107, 155, 250, 0.12);
     --kind-read: #9db4cc;
@@ -917,8 +917,8 @@
     --syn-constant: #ad4f19 !important;
     --syn-punctuation: var(--ink-2) !important;
     --syn-flag: #9c3f6a !important;
-    --content-code-ink: #8d3a62 !important;
-    --content-code-tint: rgba(141, 58, 98, 0.08) !important;
+    --content-code-ink: #2f4f8f !important;
+    --content-code-tint: rgba(47, 79, 143, 0.08) !important;
     --content-path-ink: #1d52c4 !important;
     --content-path-tint: rgba(36, 97, 224, 0.07) !important;
     --kind-read: #4d6b86 !important;
@@ -1118,8 +1118,8 @@
       --syn-function: #79d0d6 !important;
       --syn-constant: #f2a072 !important;
       --syn-flag: #e899bd !important;
-      --content-code-ink: #f0a3c6 !important;
-      --content-code-tint: rgba(240, 163, 198, 0.1) !important;
+      --content-code-ink: #a9c1f5 !important;
+      --content-code-tint: rgba(150, 178, 240, 0.12) !important;
       --content-path-ink: #80aafb !important;
       --content-path-tint: rgba(107, 155, 250, 0.12) !important;
       --kind-read: #9db4cc !important;
@@ -1240,8 +1240,8 @@
     --syn-function: #79d0d6 !important;
     --syn-constant: #f2a072 !important;
     --syn-flag: #e899bd !important;
-    --content-code-ink: #f0a3c6 !important;
-    --content-code-tint: rgba(240, 163, 198, 0.1) !important;
+    --content-code-ink: #a9c1f5 !important;
+    --content-code-tint: rgba(150, 178, 240, 0.12) !important;
     --content-path-ink: #80aafb !important;
     --content-path-tint: rgba(107, 155, 250, 0.12) !important;
     --kind-read: #9db4cc !important;

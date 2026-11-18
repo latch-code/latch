@@ -690,8 +690,8 @@ async function startUpdates({ proxy, supervisor }) {
     }),
   )
 
-  const showUpdates = () => {
-    void updater.check()
+  // 关于 Latch and 检查更新…: the main window comes forward on 设置 › 关于; only the second starts a check.
+  const showAbout = () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       if (!ready) return
       openWindow()
@@ -702,6 +702,10 @@ async function startUpdates({ proxy, supervisor }) {
     mainWindow.show()
     mainWindow.focus()
     mainWindow.webContents.send(channels.show)
+  }
+  const showUpdates = () => {
+    void updater.check()
+    showAbout()
   }
   // Code and 我的 Agent from the menu: the focused window's page goes there; only the place's name crosses.
   const showSpace = space => {
@@ -722,6 +726,7 @@ async function startUpdates({ proxy, supervisor }) {
       Menu.buildFromTemplate(
         menus.menuTemplate({
           packaged: app.isPackaged,
+          onAbout: showAbout,
           onCheckForUpdates: showUpdates,
           onSpace: showSpace,
           onSafeMode: openSafeMode,
