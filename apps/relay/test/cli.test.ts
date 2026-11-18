@@ -50,6 +50,39 @@ it('creates a private registration token without printing it and validates opera
   await chmod(join(directory, 'key.pem'), 0o644)
   await expect(run(process.execPath, [...args, 'check', '--data-dir', directory])).rejects.toMatchObject({ code: 1 })
 })
+it('writes a public configuration from the form answers that check accepts unchanged', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'latch-relay-cli-'))
+  directories.push(directory)
+  const data = join(directory, 'data'),
+    cert = createTransportCertificate(Date.now(), 3_600_000, 'relay.example.com')
+  await writeFile(join(directory, 'chain.pem'), cert.cert, { mode: 0o600 })
+  await writeFile(join(directory, 'key.pem'), cert.key, { mode: 0o600 })
+  // Stands in for the Go gateway, answering the one question `check` asks of it.
+  const gateway = join(directory, 'gateway')
+  await writeFile(gateway, '#!/bin/sh\necho \'{"protocol":2,"go":"go1.26.10"}\'\n', { mode: 0o755 })
+  const answers = ['--cert', join(directory, 'chain.pem'), '--key', join(directory, 'key.pem'), '--iface', 'eth0', '--gateway', gateway]
+  // Nothing is created for an address no phone could dial, or for options without a domain.
+  for (const bad of [
+    ['--domain', 'Relay.example.com'],
+    ['--domain', 'a_b.example.com'],
+    ['--domain', 'relay.example.com', '--port', '0'],
+    [],
+  ])
+    await expect(run(process.execPath, [...args, 'init', '--data-dir', data, ...bad, ...answers])).rejects.toMatchObject({ code: 1 })
+  await expect(stat(join(data, 'registration-token'))).rejects.toMatchObject({ code: 'ENOENT' })
+  const initialized = await run(process.execPath, [...args, 'init', '--data-dir', data, '--domain', 'relay.example.com', ...answers])
+  expect(JSON.parse(initialized.stdout)).toMatchObject({
+    initialized: true,
+    origin: 'https://relay.example.com:8443/',
+    assumed: { iface: 'eth0' },
+  })
+  const configuration = JSON.parse(await readFile(join(data, 'relay.json'), 'utf8'))
+  expect(configuration).toMatchObject({ host: '0.0.0.0', port: 8443, openRegistration: false, quota: { iface: 'eth0' } })
+  expect((await run(process.execPath, [...args, 'check', '--data-dir', data])).stdout).toBe('{"valid":true}\n')
+  const output = join(directory, 'connection.json')
+  await run(process.execPath, [...args, 'profile', '--data-dir', data, '--url', 'https://relay.example.com:8443', '--output', output])
+  expect(JSON.parse(await readFile(output, 'utf8')).profile.url).toBe('https://relay.example.com:8443/')
+})
 it('requires an explicit data directory before any operation', async () => {
   await expect(run(process.execPath, [...args, 'init'])).rejects.toMatchObject({ code: 1 })
 })

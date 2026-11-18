@@ -1,10 +1,12 @@
 import { createHash, randomBytes, X509Certificate } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { isIP } from 'node:net'
-import { resolve, join, isAbsolute } from 'node:path'
+import { dirname, resolve, join, isAbsolute } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { isRelayEndpoint } from '@latch/link-wire'
 import { loadRelayConfig } from './config.ts'
+import { defaultRouteInterface, PUBLIC_DEFAULTS, publicOrigin, publicRelayFields } from './init-config.ts'
 import { startRelay } from './server.ts'
 import { requestPrivateAdmin } from './admin.ts'
 import { superviseRelay, verifyWorkerLease } from './supervisor.ts'
@@ -23,6 +25,34 @@ function assertPrivateRuntime(): void {
   if (!process.execArgv.includes('--disable-sigusr1')) throw new Error('Start the relay with --disable-sigusr1')
 }
 
+const INIT_FLAGS = ['domain', 'port', 'cert', 'key', 'iface', 'gateway'] as const
+
+/** The form's answers for a public relay: a domain phones can dial, the operator's TLS files, and this machine's gateway and NIC. */
+async function publicInit(values: Partial<Record<(typeof INIT_FLAGS)[number], string>>) {
+  const { domain, cert, key } = values
+  if (!domain || !cert || !key || !isAbsolute(cert) || !isAbsolute(key)) throw new Error('Public relay requires --domain, --cert and --key')
+  if (values.port !== undefined && !/^\d{1,5}$/u.test(values.port)) throw new Error('Invalid relay port')
+  const port = values.port === undefined ? 8443 : Number(values.port)
+  publicOrigin(domain, port)
+  const here = dirname(fileURLToPath(import.meta.url))
+  // Beside the bundled CLI, or the build output of a source checkout.
+  const candidates = values.gateway
+    ? [values.gateway]
+    : [join(here, 'latch-relay-tls'), resolve(here, '../../../dist/relay/latch-relay-tls')]
+  let gateway: string | undefined
+  for (const candidate of candidates) {
+    if (!isAbsolute(candidate)) continue
+    const info = await lstat(candidate).catch(() => undefined)
+    if (info?.isFile()) {
+      gateway = candidate
+      break
+    }
+  }
+  const iface = values.iface ?? (await defaultRouteInterface())
+  if (!gateway || !iface) throw new Error('Gateway executable or public interface not found')
+  return { domain, port, certificateFile: cert, keyFile: key, gateway, iface }
+}
+
 async function main(): Promise<void> {
   if (process.argv[2] === 'directory') {
     assertPrivateRuntime()
@@ -37,13 +67,20 @@ async function main(): Promise<void> {
       config: { type: 'string' },
       url: { type: 'string' },
       output: { type: 'string' },
+      domain: { type: 'string' },
+      port: { type: 'string' },
+      cert: { type: 'string' },
+      key: { type: 'string' },
+      iface: { type: 'string' },
+      gateway: { type: 'string' },
       help: { type: 'boolean' },
       worker: { type: 'boolean' },
     },
   })
   if (values.help) {
     process.stdout.write(
-      'latch-relay init|check|start|status|health|drain|reload-tls|quota set-used <bytes> --data-dir <absolute-directory> [--config <absolute-file>]\n'
+      'latch-relay init --data-dir <absolute-directory> [--domain <name> --cert <absolute-file> --key <absolute-file> [--port <port>] [--iface <interface>] [--gateway <absolute-file>]]\n'
+        + 'latch-relay check|start|status|health|drain|reload-tls|quota set-used <bytes> --data-dir <absolute-directory> [--config <absolute-file>]\n'
         + 'latch-relay profile --data-dir <absolute-directory> [--config <absolute-file>] --url <https-origin> --output <new-absolute-file>\n'
         + 'latch-relay directory --help\n',
     )
@@ -58,6 +95,7 @@ async function main(): Promise<void> {
     (!quotaCommand && positionals.length !== 1)
     || !['init', 'check', 'profile', 'start', 'status', 'health', 'drain', 'reload-tls', 'quota'].includes(command ?? '')
     || (command !== 'profile' && (values.url !== undefined || values.output !== undefined))
+    || (command !== 'init' && INIT_FLAGS.some(flag => values[flag] !== undefined))
   )
     throw new Error('Invalid relay command')
   assertPrivateRuntime()
@@ -67,13 +105,28 @@ async function main(): Promise<void> {
     if (!root.isDirectory() || root.isSymbolicLink() || root.mode & 0o077) throw new Error('Private data directory required')
     const tokenFile = join(directory, 'registration-token'),
       configFile = join(directory, 'relay.json')
+    // Everything about the public interface is settled before the registration secret exists.
+    const open = values.domain === undefined ? undefined : await publicInit(values)
+    if (!open && INIT_FLAGS.some(flag => values[flag] !== undefined)) throw new Error('Public relay options require --domain')
     await writeFile(tokenFile, randomBytes(32), { flag: 'wx', mode: 0o600 })
-    await writeFile(
-      configFile,
-      `${JSON.stringify({ version: 1, host: '127.0.0.1', port: 8443, adminPort: 8444, relayId: randomBytes(16).toString('hex'), certificateFile: join(directory, 'certificate.pem'), keyFile: join(directory, 'key.pem'), registrationTokenFile: tokenFile, openRegistration: false }, null, 2)}\n`,
-      { flag: 'wx', mode: 0o600 },
+    const base = { version: 1, adminPort: 8444, relayId: randomBytes(16).toString('hex'), registrationTokenFile: tokenFile }
+    const config = open
+      ? { ...base, ...publicRelayFields(open), openRegistration: false }
+      : {
+          ...base,
+          host: '127.0.0.1',
+          port: 8443,
+          certificateFile: join(directory, 'certificate.pem'),
+          keyFile: join(directory, 'key.pem'),
+          openRegistration: false,
+        }
+    await writeFile(configFile, `${JSON.stringify(config, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
+    process.stdout.write(
+      open
+        ? // What was assumed for this machine, so the operator knows which lines of relay.json are theirs to change.
+          `${JSON.stringify({ initialized: true, origin: publicOrigin(open.domain, open.port), assumed: { iface: open.iface, monthlyBytes: PUBLIC_DEFAULTS.quota.monthlyBytes, resetDay: PUBLIC_DEFAULTS.quota.resetDay, timezone: PUBLIC_DEFAULTS.quota.timezone, maxConnections: PUBLIC_DEFAULTS.maxConnections, maxRoutes: PUBLIC_DEFAULTS.maxRoutes } })}\n`
+        : '{"initialized":true}\n',
     )
-    process.stdout.write('{"initialized":true}\n')
     return
   }
   if (command === 'status' || command === 'health' || command === 'drain' || command === 'reload-tls' || quotaCommand) {
