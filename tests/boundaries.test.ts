@@ -57,7 +57,7 @@ describe('workspace boundaries', () => {
       './package.json：仓库根不声明 latch.env',
       'packages/shared/package.json：latch.env 应为 "isomorphic"，现为 未声明',
       'packages/kit/package.json：latch.env 应为 "node"，现为 "browser"',
-      'packages/page/package.json：latch.env 应为 "browser"，现为 "web"（可用：isomorphic、browser、node、electron-main）',
+      'packages/page/package.json：latch.env 应为 "browser"，现为 "web"（可用：isomorphic、browser、node、electron-main、workerd）',
     ])
   })
 
