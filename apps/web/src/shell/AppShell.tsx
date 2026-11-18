@@ -566,7 +566,12 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     else if ([...event.dataTransfer.types].includes('Files')) event.preventDefault()
                   }}>
                   {homeBackdrop && (
-                    <Backdrop className="workbench-backdrop" level={level} running={connection === 'connected' ? counts.running : 0} />
+                    <Backdrop
+                      className="workbench-backdrop"
+                      ambient
+                      level={level}
+                      running={connection === 'connected' ? counts.running : 0}
+                    />
                   )}
                   {/* Files dropped anywhere on the start screen go to its input, as they go to the open session's elsewhere. */}
                   {attachmentDraft.dragging && (

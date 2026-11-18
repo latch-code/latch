@@ -78,13 +78,14 @@ const holdsHole = (node: Node): boolean => node instanceof Element && (node.matc
 
 /**
  * The background layer: 点阵 (`grid`: a fine dot grid that drifts, with a slow band of light), 粒子场 (`field`: points
- * at several depths, the near ones linked by thin lines) or 柔光 (`glow`: one faint light), on a single canvas that is
+ * and a few 0s and 1s at several depths that drift and twinkle, the near ones linked by thin lines and reaching for the
+ * pointer) or 柔光 (`glow`: one faint light), on a single canvas that is
  * its own layer behind the content of the element it is placed in (which gets `ui-backdrop-host`, or any positioned
  * element that isolates its stacking). It is decoration and says nothing by itself. It is given three real states,
  * each also written in the foreground:
  *
  * - `running`: how many sessions the Host reports as running; with more, the field moves a little faster (up to 5),
- *   and with none it comes to rest after a few seconds.
+ *   and with none it comes to rest after a few seconds, unless it is an `ambient` field.
  * - `focus`: the input holds the focus (专注输入); the field gathers round `focusTarget` and everything else quiets.
  * - `resolved`: a decision was just resolved at this point of the window; one ring widens from there. A new `id` is
  *   a new ring.
@@ -105,6 +106,7 @@ export function Backdrop({
   focusTarget,
   resolved = null,
   fixed = false,
+  ambient = false,
   className,
   onStats,
 }: {
@@ -117,6 +119,8 @@ export function Backdrop({
   resolved?: { id: string | number; x: number; y: number } | null
   /** Fills the window instead of the element it is placed in. */
   fixed?: boolean
+  /** The field keeps drifting slowly while nothing runs: for a page with no text set over it (the start screen). */
+  ambient?: boolean
   className?: string
   /** For measurement and tests: receives a function that reads the engine's counters. */
   onStats?: (read: (() => BackdropStats) | null) => void
@@ -140,7 +144,7 @@ export function Backdrop({
     const element = canvas.current
     // Never inside a security surface, whatever a caller passes.
     if (level === 'off' || !element || element.closest('[data-secure]')) return undefined
-    const created = createBackdropEngine(element, kind, level)
+    const created = createBackdropEngine(element, kind, level, ambient)
     engine.current = created
     created.setRunning(inputs.current.running)
     stats.current?.(() => created.stats())
@@ -174,7 +178,9 @@ export function Backdrop({
         bottom: (at.bottom - box.top) / sy,
       })
       toCanvas.current = (x, y) => ({ x: (x - box.left) / sx, y: (y - box.top) / sy })
-      created.setInk(inkOf(element), getComputedStyle(element).colorScheme !== 'dark')
+      const style = getComputedStyle(element)
+      created.setInk(inkOf(element), style.colorScheme !== 'dark')
+      created.setFont(style.getPropertyValue('--mono').trim())
       const holes: Hole[] = []
       const found = new Set<Element>()
       const soft = host?.querySelectorAll(`${SOFT_HOLES}:not(${HARD_HOLES})`) ?? []
@@ -232,6 +238,17 @@ export function Backdrop({
       }
     })
     marks.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: HOLE_ATTRIBUTES })
+    // The field's near points reach for the pointer; it is read as it moves and costs no frame of its own.
+    const moved = (event: PointerEvent) => {
+      if (event.pointerType === 'mouse') created.setPointer(toCanvas.current(event.clientX, event.clientY))
+    }
+    const left = () => {
+      created.setPointer(null)
+    }
+    if (kind === 'field') {
+      window.addEventListener('pointermove', moved, { passive: true })
+      document.documentElement.addEventListener('pointerleave', left)
+    }
     window.addEventListener('scroll', onScroll, { capture: true, passive: true })
     window.addEventListener('resize', schedule)
 
@@ -293,6 +310,10 @@ export function Backdrop({
       theme.disconnect()
       scheme.removeEventListener('change', schedule)
       density?.removeEventListener('change', densityChanged)
+      if (kind === 'field') {
+        window.removeEventListener('pointermove', moved)
+        document.documentElement.removeEventListener('pointerleave', left)
+      }
       window.removeEventListener('scroll', onScroll, { capture: true })
       window.removeEventListener('resize', schedule)
       window.removeEventListener('blur', blurred)
@@ -306,7 +327,7 @@ export function Backdrop({
       remeasure.current = () => {}
       stats.current?.(null)
     }
-  }, [kind, level])
+  }, [kind, level, ambient])
 
   useEffect(() => {
     engine.current?.setRunning(running)

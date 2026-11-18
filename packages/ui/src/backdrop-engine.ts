@@ -5,11 +5,12 @@
  * the foreground in words.
  *
  * Limits: at most 30 frames a second, each armed by one timer and one animation frame (never an animation frame per
- * display refresh); the number of points follows the viewport's area and is capped (60 for 轻, 110 for 标准); nothing
+ * display refresh); the number of points follows the viewport's area and is capped (90 for 轻, 180 for 标准); nothing
  * is drawn inside a hole (a security surface, or a region whose words sit straight on the canvas), with a feather
  * round it; the canvas is its own layer and the loop only writes its pixels, so no layout or paint of content is
- * caused. When nothing it follows is happening (no session runs, no ring widens, the focus has settled) it stops after
- * a few seconds on the frame it has, and draws again when told something. Whoever owns the engine pauses it (tab
+ * caused. An ambient field keeps drifting while it is looked at; otherwise the layer stops a few seconds after the last thing
+ * it follows (a running session, a widening ring, the focus settling) and draw again when told something. Whoever owns
+ * the engine pauses it (tab
  * hidden, window in the background, a reply streaming in view, reduced motion, low battery); paused, it holds one
  * still frame.
  */
@@ -57,6 +58,10 @@ export interface BackdropEngine {
   setRunning(count: number): void
   setFocus(target: Box | null): void
   ripple(x: number, y: number): void
+  /** Where the pointer is over the layer, or null when it left: the field's near points reach for it. */
+  setPointer(point: { x: number; y: number } | null): void
+  /** The monospace family the field sets its digits in. */
+  setFont(family: string): void
   pause(reason: string): void
   resume(reason: string): void
   stats(): BackdropStats
@@ -72,10 +77,12 @@ const STEPS = 16
 const FEATHER = 56
 const FOCUS_FEATHER = 40
 const PITCH = 28
-const LINK = 120
+const LINK = 140
+/** How far the pointer reaches into the field. */
+const REACH = 170
 const CAPS: Record<BackdropStrength, { most: number; area: number }> = {
-  light: { most: 60, area: 24_000 },
-  standard: { most: 110, area: 14_000 },
+  light: { most: 90, area: 13_000 },
+  standard: { most: 180, area: 7000 },
 }
 
 /** How many particles a viewport gets: one per `area` square pixels, capped. */
@@ -86,8 +93,16 @@ export function particleCount(width: number, height: number, strength: BackdropS
 
 /** Six numbers per particle: x, y, depth, vx, vy, and its angle on the ring it gathers to. */
 const STRIDE = 6
+/** Five per visible particle of a frame: x, y, depth, alpha, and 0 for a point, 1 or 2 for the digit it shows. */
+const VISIBLE = 5
 
-export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKind, strength: BackdropStrength): BackdropEngine {
+/** `ambient`: the field keeps drifting while nothing it follows happens, for a page with no text over it. */
+export function createBackdropEngine(
+  canvas: HTMLCanvasElement,
+  kind: BackdropKind,
+  strength: BackdropStrength,
+  ambient = false,
+): BackdropEngine {
   const context = canvas.getContext('2d', { alpha: true })
   let width = 0
   let height = 0
@@ -101,7 +116,7 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
   let running = 0
   let ripples: Array<{ x: number; y: number; r: number; t: number }> = []
   let particles = new Float32Array(0)
-  // Positions and alphas of this frame's visible particles: x, y, depth, alpha.
+  // This frame's visible particles, VISIBLE numbers each.
   let visible = new Float32Array(0)
   const buckets: number[][] = Array.from({ length: STEPS + 1 }, () => [])
   const lineBuckets: number[][] = Array.from({ length: STEPS + 1 }, () => [])
@@ -122,6 +137,9 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
   let glowY = 0
   let glowSet = false
   let dirty = true
+  let pointer: { x: number; y: number } | null = null
+  let mono = 'monospace'
+  const glyphs: Array<Array<[string, number, number, number]>> = Array.from({ length: STEPS + 1 }, () => [])
 
   const alphaScale = () => (lightTheme ? 0.9 : 1) * power
 
@@ -149,8 +167,14 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
    * the same every time, also after the layer shrank and grew back.
    */
   const sequenceFor = (index: number) => {
-    let sequence = ((index + 1) * 48271) % 2147483647 || 7
-    return () => (sequence = (sequence * 16807) % 2147483647) / 2147483647
+    // mulberry32: successive draws of a linear generator fall on a lattice, which shows as rows of points.
+    let state = Math.imul(index + 1, 0x9e3779b1) >>> 0
+    return () => {
+      state = (state + 0x6d2b79f5) >>> 0
+      let mixed = Math.imul(state ^ (state >>> 15), state | 1)
+      mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61)
+      return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296
+    }
   }
   /**
    * Sets the particles for the size the layer has now. The ones it had keep their place in proportion (a resized
@@ -181,7 +205,7 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
       next[at + 5] = random() * 6.28
     }
     particles = next
-    visible = new Float32Array(count * 4)
+    visible = new Float32Array(count * VISIBLE)
   }
 
   /** Called in bitmap coordinates so a fractional box clears every physical pixel it touches. */
@@ -193,8 +217,14 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
     target.clearRect(left, top, right - left, bottom - top)
   }
 
-  function drawField(target: CanvasRenderingContext2D, dt: number): void {
-    const speed = (0.45 + Math.min(running, 5) * 0.2) * dt
+  /**
+   * The field: points at several depths that drift and twinkle, the near ones linked by thin lines, every third one
+   * a 0 or a 1 that turns over now and then, and the points near the pointer reaching for it. `seconds` is fixed for a
+   * held frame, so a still is the same every time.
+   */
+  function drawField(target: CanvasRenderingContext2D, dt: number, seconds: number, held: boolean): void {
+    const speed = (1.3 + Math.min(running, 5) * 0.35) * dt
+    const reach = !held && pointer && clear(pointer.x, pointer.y) > 0.5 ? pointer : null
     const cx = focus ? (focus.left + focus.right) / 2 : width / 2
     const cy = focus ? (focus.top + focus.bottom) / 2 : height / 2
     const scale = alphaScale()
@@ -225,29 +255,56 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
           boost += push * 0.5
         }
       }
+      if (reach) {
+        const dx = x - reach.x
+        const dy = y - reach.y
+        const distance = Math.hypot(dx, dy)
+        if (distance < REACH) {
+          const near = 1 - distance / REACH
+          // Leans a little out of the pointer's way and brightens.
+          x += (dx / (distance || 1)) * 9 * near * depth
+          y += (dy / (distance || 1)) * 9 * near * depth
+          boost += near * 0.35
+        }
+      }
       const amount = clear(x, y)
       if (amount <= 0.02) continue
+      const twinkle = 0.78 + 0.22 * Math.sin(seconds * (0.5 + depth) + angle * 3)
       visible[shown] = x
       visible[shown + 1] = y
       visible[shown + 2] = depth
-      visible[shown + 3] = (0.16 + depth * 0.34 + boost) * amount * scale
-      shown += 4
+      visible[shown + 3] = (0.2 + depth * 0.5 + boost) * amount * scale * twinkle
+      // Every third point is a digit; which one turns over every few seconds, each on its own beat.
+      visible[shown + 4] = (at / STRIDE) % 3 === 0 ? 1 + (Math.floor(seconds * 0.35 + angle) & 1) : 0
+      shown += VISIBLE
     }
-    points = shown / 4
+    points = shown / VISIBLE
     for (const bucket of buckets) bucket.length = 0
     for (const bucket of lineBuckets) bucket.length = 0
-    for (let a = 0; a < shown; a += 4) {
+    for (const bucket of glyphs) bucket.length = 0
+    for (let a = 0; a < shown; a += VISIBLE) {
       const step = Math.min(STEPS, Math.round(Math.min(1, visible[a + 3]!) * STEPS))
-      if (step > 0) buckets[step]!.push(visible[a]!, visible[a + 1]!, 1 + visible[a + 2]! * 1.4)
+      const digit = visible[a + 4]!
+      if (step > 0) {
+        if (digit > 0) glyphs[step]!.push([digit === 1 ? '0' : '1', visible[a]!, visible[a + 1]!, 10 + visible[a + 2]! * 5])
+        else buckets[step]!.push(visible[a]!, visible[a + 1]!, 1.2 + visible[a + 2]! * 1.8)
+      }
+      if (reach) {
+        const dx = visible[a]! - reach.x
+        const dy = visible[a + 1]! - reach.y
+        const distance = Math.sqrt(dx * dx + dy * dy)
+        const line = Math.round((1 - distance / REACH) * 0.5 * visible[a + 3]! * STEPS * 4)
+        if (distance < REACH && line > 0) lineBuckets[Math.min(STEPS, line)]!.push(visible[a]!, visible[a + 1]!, reach.x, reach.y)
+      }
       if (visible[a + 2]! < 0.6) continue
-      for (let b = a + 4; b < shown; b += 4) {
+      for (let b = a + VISIBLE; b < shown; b += VISIBLE) {
         if (visible[b + 2]! < 0.6) continue
         const dx = visible[a]! - visible[b]!
         const dy = visible[a + 1]! - visible[b + 1]!
         if (dx > LINK || dx < -LINK || dy > LINK || dy < -LINK) continue
         const distance = Math.sqrt(dx * dx + dy * dy)
         if (distance >= LINK) continue
-        const line = Math.round((1 - distance / LINK) * 0.32 * Math.min(visible[a + 3]!, visible[b + 3]!) * STEPS * 4)
+        const line = Math.round((1 - distance / LINK) * 0.55 * Math.min(visible[a + 3]!, visible[b + 3]!) * STEPS * 4)
         if (line > 0) lineBuckets[Math.min(STEPS, line)]!.push(visible[a]!, visible[a + 1]!, visible[b]!, visible[b + 1]!)
       }
     }
@@ -274,6 +331,23 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
         target.rect(dots[at]! - size / 2, dots[at + 1]! - size / 2, size, size)
       }
       target.fill()
+    }
+    // Digits by size then alpha: a font change per size, a fill change per step.
+    target.textAlign = 'center'
+    target.textBaseline = 'middle'
+    let size = 0
+    for (let step = 1; step <= STEPS; step++) {
+      const digits = glyphs[step]!
+      if (digits.length === 0) continue
+      target.fillStyle = `rgba(${ink}, ${step / STEPS})`
+      for (const [text, x, y, px] of digits) {
+        const rounded = Math.round(px)
+        if (rounded !== size) {
+          size = rounded
+          target.font = `${size}px ${mono}`
+        }
+        target.fillText(text, x, y)
+      }
     }
     if (holes.length > 0 || focus) {
       // A link can cross a hole even when both of its endpoints survived the feather.
@@ -376,7 +450,7 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
     context.clearRect(0, 0, width, height)
     let moving = false
     if (ink === null) points = 0
-    else if (kind === 'field') drawField(context, held ? 0 : dt)
+    else if (kind === 'field') drawField(context, held ? 0 : dt, held ? 9 : (now - started) / 1000, held)
     else if (kind === 'grid') drawGrid(context, held ? started + 9000 : now)
     else moving = drawGlow(context, dt, held)
     if (frames > 0 && last > 0 && !held) minGap = Math.min(minGap, now - last)
@@ -385,6 +459,8 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
     last = held ? 0 : now
     dirty = false
     if (kind === 'glow') return moving
+    // An ambient field drifts for as long as nothing holds it still.
+    if (kind === 'field' && ambient) return true
     return running > 0 || ripples.length > 0 || Math.abs(to - gather) > 0.01
   }
 
@@ -503,6 +579,15 @@ export function createBackdropEngine(canvas: HTMLCanvasElement, kind: BackdropKi
       if (paused.size > 0 || kind === 'glow') return
       ripples.push({ x, y, r: 30, t: 0 })
       wake()
+    },
+    setPointer(point) {
+      if (kind !== 'field' || (point === null && pointer === null)) return
+      pointer = point
+    },
+    setFont(family) {
+      if (family === mono || family === '') return
+      mono = family
+      changed()
     },
     pause(reason) {
       if (paused.has(reason)) return

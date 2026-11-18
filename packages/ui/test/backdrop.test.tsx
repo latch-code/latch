@@ -27,6 +27,7 @@ function Stage({
   secure = false,
   clear = false,
   resolved = null,
+  ambient = false,
   stats,
   children,
   style,
@@ -38,6 +39,7 @@ function Stage({
   secure?: boolean
   clear?: boolean
   resolved?: { id: number; x: number; y: number } | null
+  ambient?: boolean
   stats: Reader
   children?: ReactNode
   style?: CSSProperties
@@ -52,6 +54,7 @@ function Stage({
         focus={focus}
         focusTarget={card}
         resolved={resolved}
+        ambient={ambient}
         onStats={read => {
           stats.read = read
         }}
@@ -189,6 +192,17 @@ describe('the background layer', () => {
     // The loop writes pixels only: no attribute, style, class or node changed anywhere, the canvas included.
     expect(changes.map(record => `${record.type} ${record.target.nodeName} ${record.attributeName ?? ''}`)).toEqual([])
     expect(screen.container.querySelector('canvas')!.getAttribute('style')).toBeNull()
+  })
+
+  it('keeps an ambient field drifting while nothing runs', async () => {
+    const stats = reader()
+    const screen = await render(<Stage ambient running={0} stats={stats} />)
+    await expect.poll(() => stats.read?.().frames ?? 0).toBeGreaterThan(1)
+    const before = stats.read!().frames
+    await pause(600)
+    expect(stats.read!().frames).toBeGreaterThan(before + 5)
+    expect(stats.read!().idle).toBe(false)
+    expect(drawn(screen.container.querySelector('canvas')!, WHOLE)).toBeGreaterThan(0)
   })
 
   it('comes to rest on its frame when nothing runs, and moves again when something does', { timeout: 20_000 }, async () => {
