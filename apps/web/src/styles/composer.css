@@ -1480,6 +1480,19 @@ button.vitals-item {
   flex-direction: column;
   min-width: 0;
 }
+/*
+ * The search row sits on the layer's own edge and stays there while the branches scroll under it, as in a searchable
+ * picker (packages/ui menu.css). With the layer's 6px inside left in place, rows showed in the strip above the row.
+ */
+.ui-popover:has(> .branch-list) {
+  padding: 0;
+}
+.branch-list > .ui-menu-search {
+  background: var(--pop);
+}
+.branch-list > .ui-menu {
+  padding: var(--sp-6);
+}
 .branch-list-state {
   display: flex;
   align-items: center;
@@ -1489,7 +1502,7 @@ button.vitals-item {
   color: var(--muted);
 }
 .branch-list-notice {
-  margin: var(--sp-4) var(--sp-4) 0;
+  margin: var(--sp-6) var(--sp-6) 0;
 }
 .branch-list-more {
   color: var(--muted);
