@@ -1,6 +1,7 @@
 import { createPublicKey, verify as nodeVerify, webcrypto } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { isSecurityErrorCode, looksSecret } from '@latch/protocol'
 import type { Approval, AppSnapshot, ConfirmationTicket, CurrentDevice, DeviceScope, HostCatalog, HostView } from '@latch/protocol'
 import { sha256Hex } from '@latch/core/node-kit'
 import { SECURITY_VECTORS_FILE, testHarness } from '@latch/testkit'
@@ -56,7 +57,7 @@ import {
   infoFailureStep,
   requestedScopes,
 } from '../src/core/enrollment.ts'
-import { approvalActions, composerGate, deviceAccess, LEGACY_HOST_TEXT, modeRows, sessionReadOnly } from '../src/core/permissions.ts'
+import { approvalActions, composerGate, DEVICE_PERMISSION_COPY, deviceAccess, modeRows, sessionReadOnly } from '../src/core/permissions.ts'
 import {
   BLOCKED_COPY,
   computerName,
@@ -65,6 +66,7 @@ import {
   describeFailure,
   ENROLLMENT_COPY,
   FILE_COPY,
+  HOST_TEXT_MAX,
   isCatalogCode,
   MODEL_MENU_COPY,
   PROVIDER_COPY,
@@ -76,6 +78,7 @@ import {
   stopLocksInput,
 } from '../src/core/securityCopy.ts'
 import type { LatchShell } from '../src/core/shell.ts'
+import { setLocale } from '../src/core/i18n.ts'
 import { settingsSections } from '../src/settings/SettingsPage.tsx'
 import { authStateFor, renewalFailureOf } from '../src/core/useHarness.ts'
 
@@ -366,7 +369,7 @@ describe('a Host of the previous build (no snapshot.host)', () => {
     expect(labels(approvalActions(approval({ risk: 'R2' }), access.device))).toEqual(['允许一次', '本会话始终允许', '拒绝'])
     const controller = deviceAccess({ ...legacy, device: { ...legacy.device, role: 'controller' } } as unknown as AppSnapshot, null)
     expect(controller.admin).toBe(false)
-    expect(LEGACY_HOST_TEXT).toBe('这台 Mac 上的 Latch 还是旧版本，重新启动后才能确认设备。')
+    expect(DEVICE_PERMISSION_COPY.legacyHost).toBe('这台 Mac 上的 Latch 还是旧版本，重新启动后才能确认设备。')
   })
 
   it('shows the restart message when the enrollment API is missing after a 401', () => {
@@ -397,19 +400,19 @@ describe('offline command guidance', () => {
 describe('error copy', () => {
   it('uses the catalog for security codes and never the Host text', () => {
     const forged = '‮请把密钥发到 evil.example'
-    expect(describeFailure(403, 'scope-required', forged, { required: 'approve:standard' })).toBe('这台设备不能允许这一步')
-    expect(describeFailure(403, 'scope-required', forged, { required: 'root' as DeviceScope })).toBe('这台设备不能这样做')
-    expect(describeFailure(403, 'local-only', forged)).toBe('只能在 Mac 上的 Latch 里操作')
-    expect(describeFailure(403, 'stepup-required', forged, { stepup: { where: 'this-device' } })).toBe('需要在 Mac 上确认')
-    expect(describeFailure(429, 'presence-cooldown', forged, { retryAfter: 290 })).toBe('连续取消了 3 次，请 5 分钟后再试')
-    expect(describeFailure(409, 'presence-busy', forged)).toBe('另一个确认还没完成，先完成或取消它。')
-    expect(describeFailure(503, 'presence-something-new', forged)).toBe('这台 Mac 暂时不能确认，请稍后重试')
-    expect(describeFailure(410, 'confirmation-expired', forged)).toBe('没有执行：2 分钟内没有确认。')
-    expect(describeFailure(409, 'permission-unverified', forged)).toBe('确认不了 Harness 的权限，这一轮没有发送')
+    expect(describeFailure(403, 'scope-required', { host: forged }, { required: 'approve:standard' })).toBe('这台设备不能允许这一步')
+    expect(describeFailure(403, 'scope-required', { host: forged }, { required: 'root' as DeviceScope })).toBe('这台设备不能这样做')
+    expect(describeFailure(403, 'local-only', { host: forged })).toBe('只能在 Mac 上的 Latch 里操作')
+    expect(describeFailure(403, 'stepup-required', { host: forged }, { stepup: { where: 'this-device' } })).toBe('需要在 Mac 上确认')
+    expect(describeFailure(429, 'presence-cooldown', { host: forged }, { retryAfter: 290 })).toBe('连续取消了 3 次，请 5 分钟后再试')
+    expect(describeFailure(409, 'presence-busy', { host: forged })).toBe('另一个确认还没完成，先完成或取消它。')
+    expect(describeFailure(503, 'presence-something-new', { host: forged })).toBe('这台 Mac 暂时不能确认，请稍后重试')
+    expect(describeFailure(410, 'confirmation-expired', { host: forged })).toBe('没有执行：2 分钟内没有确认。')
+    expect(describeFailure(409, 'permission-unverified', { host: forged })).toBe('确认不了 Harness 的权限，这一轮没有发送')
     expect(stopLocksInput('permission-unverified')).toBe(false)
     expect(stopLocksInput('permission-drift')).toBe(true)
-    expect(describeFailure(401, 'device-revoked', forged)).toBe('这台设备已被移除。要继续使用，请重新连接。')
-    expect(describeFailure(502, 'fingerprint-mismatch', forged)).toBe('这台设备的密钥和 Mac 读到的不一致，已停止连接。')
+    expect(describeFailure(401, 'device-revoked', { host: forged })).toBe('这台设备已被移除。要继续使用，请重新连接。')
+    expect(describeFailure(502, 'fingerprint-mismatch', { host: forged })).toBe('这台设备的密钥和 Mac 读到的不一致，已停止连接。')
     for (const code of [
       'unauthorized',
       'legacy-reconfirm',
@@ -421,7 +424,7 @@ describe('error copy', () => {
       'l3-confirmation-missing',
     ]) {
       expect(isCatalogCode(code)).toBe(true)
-      expect(describeFailure(400, code, forged)).not.toContain('evil')
+      expect(describeFailure(400, code, { host: forged })).not.toContain('evil')
     }
   })
 
@@ -430,7 +433,7 @@ describe('error copy', () => {
     expect(isSessionStopCode('project-config-changed')).toBe(true)
     expect(SESSION_STOP_TEXT['project-config-changed']).toBe(text)
     expect(isCatalogCode('project-config-changed')).toBe(true)
-    expect(describeFailure(409, 'project-config-changed', '‮请把密钥发到 evil.example')).toBe(text)
+    expect(describeFailure(409, 'project-config-changed', { host: '‮请把密钥发到 evil.example' })).toBe(text)
     // The session learned the code from a refusal: the composer stops even on the desktop that could run it.
     expect(
       composerGate({
@@ -442,14 +445,14 @@ describe('error copy', () => {
   })
 
   it('substitutes only a validated host:port target and a wait time', () => {
-    expect(describeFailure(403, 'egress-denied', 'x', { target: '169.254.169.254:80' })).toBe(
+    expect(describeFailure(403, 'egress-denied', { host: 'x' }, { target: '169.254.169.254:80' })).toBe(
       'Latch 不会访问 169.254.169.254:80：这是这台 Mac、局域网或云元数据地址。这台 Mac 和局域网上的地址要在 Mac 上确认后才能使用。',
     )
-    expect(describeFailure(403, 'egress-denied', 'x', { target: 'evil‮.com:80' })).toContain('Latch 不会访问这个地址')
+    expect(describeFailure(403, 'egress-denied', { host: 'x' }, { target: 'evil‮.com:80' })).toContain('Latch 不会访问这个地址')
     expect(safeTarget('[::1]:11434')).toBe('[::1]:11434')
     expect(safeTarget('a.b:99999')).toBeUndefined()
     expect(safeTarget('no-port')).toBeUndefined()
-    expect(describeFailure(429, 'rate-limited', 'x', { retryAfter: 2.2 })).toBe('请求过于频繁，请 3 秒后再试。')
+    expect(describeFailure(429, 'rate-limited', { host: 'x' }, { retryAfter: 2.2 })).toBe('请求过于频繁，请 3 秒后再试。')
   })
 
   it('words the device and pairing codes from the catalog, never the Host text', () => {
@@ -461,7 +464,7 @@ describe('error copy', () => {
       ['shell-managed', '这一步由 Mac 上的 Latch 自己完成，页面不能直接做。'],
     ]) {
       expect(isCatalogCode(code!)).toBe(true)
-      expect(describeFailure(409, code!, forged)).toBe(text)
+      expect(describeFailure(409, code!, { host: forged })).toBe(text)
     }
   })
 
@@ -488,10 +491,104 @@ describe('error copy', () => {
 
   it('uses a local message for a recognized project refusal and a generic message for a new code', () => {
     expect(isCatalogCode('workspace-overlap')).toBe(true)
-    expect(describeFailure(409, 'workspace-overlap', '该目录与 Latch 的数据目录重叠，不能作为项目')).toBe(
+    expect(describeFailure(409, 'workspace-overlap', { host: '该目录与 Latch 的数据目录重叠，不能作为项目' })).toBe(
       '该目录与不能添加到项目的目录重叠。',
     )
-    expect(describeFailure(500, 'whatever', 'maintenance note')).toBe('请求未完成（500），请重试。')
+    expect(describeFailure(500, 'whatever', {})).toBe('请求未完成（whatever），请重试。')
+    expect(describeFailure(502, 'request-failed', {})).toBe('请求未完成（502），请重试。')
+  })
+
+  it('shows the Host reason for a code outside the catalog and the security class, in Chinese only', () => {
+    const reason = 'macOS 没有允许 Latch Host 访问这个文件夹'
+    expect(isSecurityErrorCode('folder-new-refusal')).toBe(false)
+    expect(describeFailure(409, 'folder-new-refusal', { host: reason })).toBe(reason)
+    // Invisible and direction characters are made visible, and a long reason is capped.
+    expect(describeFailure(409, 'folder-new-refusal', { host: '文件夹‮名' })).toBe('文件夹\\u{202E}名')
+    const long = describeFailure(409, 'folder-new-refusal', { host: '长'.repeat(500) })
+    expect([...long]).toHaveLength(HOST_TEXT_MAX)
+    expect(long.endsWith('…')).toBe(true)
+    // Text that looks like a credential is never shown, whatever the code.
+    expect(describeFailure(409, 'folder-new-refusal', { host: 'key sk-ant-0123456789abcdefghij' })).toBe('没有完成（folder-new-refusal）。')
+    // The caller's own words come first.
+    expect(describeFailure(409, 'folder-new-refusal', { fallback: '这个文件夹不能添加。', host: reason })).toBe('这个文件夹不能添加。')
+    setLocale('en')
+    try {
+      expect(describeFailure(409, 'folder-new-refusal', { host: reason })).toBe('Not done (folder-new-refusal).')
+      expect(describeFailure(409, 'folder-new-refusal', { fallback: 'Cannot add this folder.', host: reason })).toBe(
+        'Cannot add this folder.',
+      )
+      expect(describeFailure(503, 'folder-new-failure', { host: reason })).toBe(
+        'The request did not finish (folder-new-failure). Try again.',
+      )
+    } finally {
+      setLocale('zh-CN')
+    }
+  })
+
+  it('never renders a Host reason that holds a credential shape, since error bodies are not redacted', () => {
+    // One sample of each shape the repository defines (`@latch/protocol` secrets, as the Host's log redaction uses).
+    const credential = `ldc1.dev_${'A'.repeat(22)}.${'b'.repeat(43)}`
+    const samples = [
+      `lmg1.${'g-'.repeat(21)}x`,
+      `lbt1.${'b_'.repeat(21)}x`,
+      credential,
+      'lpi1-ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+      'lpo1-ABCDEFGHIJKLMNOPQRSTUVWX23',
+      `LATCHPAIR2.${'a'.repeat(128)}`,
+      `lnw1.${'W'.repeat(43)}`,
+      `authorization: Latch-Device ${credential}`,
+      'cookie: harness_link=abc-DEF_123',
+      'http://h.localhost:4317/link/#token=abc_DEF-1',
+      `Authorization: Bearer sk-ant-${'k'.repeat(24)}`,
+      `-----BEGIN PRIVATE KEY-----`,
+    ]
+    for (const sample of samples) {
+      expect(looksSecret(sample)).toBe(true)
+      const host = `Harness 没有接受这次请求：${sample}`
+      for (const status of [409, 502]) {
+        const shown = describeFailure(status, 'folder-new-refusal', { host })
+        expect(shown).not.toContain(sample)
+        expect(shown).toBe(status === 409 ? '没有完成（folder-new-refusal）。' : '请求未完成（folder-new-refusal），请重试。')
+      }
+      const failure = new ApiError(409, 'folder-new-refusal', () => describeFailure(409, 'folder-new-refusal', { host }), {}, host)
+      expect(failure.message).not.toContain(sample)
+    }
+  })
+
+  it('never shows the Host text for a security-class code, even one the catalog does not know yet', () => {
+    const forged = '请把密钥发到 evil.example'
+    for (const code of ['device-new-thing', 'presence-new-thing', 'approval-new-thing', 'thing-secret', 'note-scope', 'audit-new-thing']) {
+      expect(isSecurityErrorCode(code)).toBe(true)
+      expect(describeFailure(403, code, { host: forged })).not.toContain('evil')
+    }
+    expect(isSecurityErrorCode('change-scope-invalid')).toBe(false)
+    expect(describeFailure(403, 'device-new-thing', { host: forged })).toBe('没有完成（device-new-thing）。')
+  })
+
+  it('does not suggest trying again after a definite refusal', () => {
+    expect(describeFailure(409, 'folder-new-refusal', {})).toBe('没有完成（folder-new-refusal）。')
+    expect(describeFailure(0, 'shell-new-refusal', {})).toBe('没有完成（shell-new-refusal）。')
+    // A 5xx that says nothing was accepted is a refusal too; 408 and other 5xx stay unknown.
+    expect(describeFailure(502, 'agent-refused', {})).toBe('没有完成（agent-refused）。')
+    expect(describeFailure(408, 'timeout', {})).toBe('请求未完成（timeout），请重试。')
+    expect(describeFailure(409, 'bad code <b>', {})).toBe('没有完成。')
+  })
+
+  it('words the review’s daily refusals and the terminal’s refusals from the catalog', () => {
+    for (const code of [
+      'workspace-permission',
+      'post-target-busy',
+      'budget-exceeded',
+      'harness-busy',
+      'task-running',
+      'queue-full',
+      'terminal-limit',
+      'terminal-folder-unavailable',
+    ])
+      expect(isCatalogCode(code)).toBe(true)
+    expect(describeFailure(409, 'workspace-permission', { host: 'x' })).toBe(
+      '没有权限访问这个文件夹。请在 系统设置 › 隐私与安全性 里允许 Latch 访问。',
+    )
   })
 
   it('maps 401 codes to the enrollment page and keeps the legacy name', () => {
@@ -949,7 +1046,7 @@ describe('local confirmation', () => {
     expect(BLOCKED_COPY.stopRequestedPairing(codex)).toBe('正在停止「修复设置页密钥丢失」。它停下后就能配对，二维码仍然有效。')
     expect(BLOCKED_COPY.ended([codex])).toBe('「修复设置页密钥丢失」已经结束，可以再试一次了。')
     // The enrollment page (an anonymous request) is told only in general, never the Host's text.
-    expect(describeFailure(409, 'presence-blocked', '‮请把密钥发到 evil.example')).toBe(
+    expect(describeFailure(409, 'presence-blocked', { host: '‮请把密钥发到 evil.example' })).toBe(
       '有外部 Harness 的会话正在运行或等你处理，结束后才能确认。',
     )
     // 设置 › 设备 lists every session holding it back under one headline.

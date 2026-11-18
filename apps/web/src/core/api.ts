@@ -40,7 +40,10 @@ const COPY = defineCopy(
   },
 )
 
-/** An explicit server rejection; network errors remain distinguishable. `details` carries the rest of the error body. */
+/**
+ * An explicit server rejection; network errors remain distinguishable. `details` carries the rest of the error body;
+ * `hostMessage` is the body's own `message`, for `describeFailure` to weigh when the message is read.
+ */
 export class ApiError extends Error {
   readonly details: Readonly<Partial<ApiFailure>>
   constructor(
@@ -48,6 +51,7 @@ export class ApiError extends Error {
     readonly code: string,
     message: string | (() => string),
     details: Partial<ApiFailure> = {},
+    readonly hostMessage?: string,
   ) {
     super(typeof message === 'string' ? message : undefined)
     if (typeof message === 'function') Object.defineProperty(this, 'message', { configurable: true, get: message })
@@ -164,9 +168,11 @@ async function failureOf(response: Response): Promise<ApiError> {
     /* Non-JSON proxy failures use the HTTP status below. */
   }
   const code = typeof failure.error === 'string' ? failure.error : 'request-failed'
-  const { error: _code, message: _message, ...details } = failure
+  const { error: _code, message, ...details } = failure
   const status = response.status
-  return new ApiError(status, code, () => describeFailure(status, code, '', details), details)
+  // Read on display, so the words follow the page's language; only describeFailure decides whether the Host's show.
+  const host = typeof message === 'string' ? message.slice(0, 4096) : undefined
+  return new ApiError(status, code, () => describeFailure(status, code, host === undefined ? {} : { host }, details), details, host)
 }
 
 /** Cookie-authenticated API (the desktop shell adds its own header). Credentials never enter a URL or browser storage. */
@@ -264,13 +270,13 @@ export async function uploadAgentAvatar<T>(
     }
     xhr.onload = () => {
       if (xhr.status < 200 || xhr.status > 599 || xhr.responseText.length > 1024 * 1024) {
-        reject(new ClientError(COPY.avatarResponse, 'agent-avatar-response', { definitive: false }))
+        reject(new ClientError(() => COPY.avatarResponse, 'agent-avatar-response', { definitive: false }))
         return
       }
       resolve(new Response(xhr.responseText, { status: xhr.status, headers: { 'content-type': 'application/json' } }))
     }
     xhr.onerror = () => {
-      reject(new ClientError(COPY.avatarInterrupted, 'agent-avatar-upload', { definitive: false }))
+      reject(new ClientError(() => COPY.avatarInterrupted, 'agent-avatar-upload', { definitive: false }))
     }
     xhr.ontimeout = () => {
       reject(new ApiTimeoutError())
@@ -292,13 +298,13 @@ export async function uploadAttachment(
   options: { signal?: AbortSignal; onProgress?: (loaded: number, total: number) => void; retried?: boolean } = {},
 ): Promise<AttachmentRef> {
   if (metadata.size !== file.size || file.size <= 0 || file.size > 25 * 1024 * 1024)
-    throw new ClientError(COPY.attachmentSize, 'attachment-too-large')
+    throw new ClientError(() => COPY.attachmentSize, 'attachment-too-large')
   const bytes = new TextEncoder().encode(JSON.stringify(metadata)),
     header = btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join(''))
       .replaceAll('+', '-')
       .replaceAll('/', '_')
       .replace(/=+$/u, '')
-  if (header.length > 4096) throw new ClientError(COPY.attachmentMetadata, 'attachment-invalid')
+  if (header.length > 4096) throw new ClientError(() => COPY.attachmentMetadata, 'attachment-invalid')
   const response = await new Promise<Response>((resolve, reject) => {
     const xhr = new XMLHttpRequest(),
       abort = () => xhr.abort()
@@ -314,14 +320,14 @@ export async function uploadAttachment(
     xhr.onload = () => {
       cleanup()
       if (xhr.status < 200 || xhr.status > 599 || xhr.responseText.length > 65_536) {
-        reject(new ClientError(COPY.attachmentRetry, 'attachment-response', { definitive: false }))
+        reject(new ClientError(() => COPY.attachmentRetry, 'attachment-response', { definitive: false }))
         return
       }
       resolve(new Response(xhr.responseText, { status: xhr.status, headers: { 'content-type': 'application/json' } }))
     }
     xhr.onerror = () => {
       cleanup()
-      reject(new ClientError(COPY.attachmentInterrupted, 'attachment-upload', { definitive: false }))
+      reject(new ClientError(() => COPY.attachmentInterrupted, 'attachment-upload', { definitive: false }))
     }
     xhr.ontimeout = () => {
       cleanup()
@@ -341,7 +347,8 @@ export async function uploadAttachment(
   })
   if (response.ok) {
     const value = (await response.json()) as { attachment?: unknown }
-    if (!isAttachmentRef(value.attachment)) throw new ClientError(COPY.attachmentResponse, 'attachment-response', { definitive: false })
+    if (!isAttachmentRef(value.attachment))
+      throw new ClientError(() => COPY.attachmentResponse, 'attachment-response', { definitive: false })
     return value.attachment
   }
   const failure = await failureOf(response)
@@ -369,7 +376,7 @@ export function fileBytes(
     || (start !== undefined && (!Number.isSafeInteger(start) || start < 0))
     || (end !== undefined && (!Number.isSafeInteger(end) || end < (start ?? 0)))
   )
-    return Promise.reject(new ClientError(COPY.fileRange, 'file-range'))
+    return Promise.reject(new ClientError(() => COPY.fileRange, 'file-range'))
   return api<ArrayBuffer>(source === 'attachment' ? `attachments/${handle}/content` : `files/${handle}`, {
     response: 'bytes',
     ...(etag && /^"[a-f0-9]{32}"$/u.test(etag) ? { ifMatch: etag } : {}),

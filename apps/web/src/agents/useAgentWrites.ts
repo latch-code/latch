@@ -154,7 +154,8 @@ export function useAgentWrites(
         const execute = async () => {
           if (!current() || (store && !mounted.current)) return undefined
           if (store) {
-            if (write.path !== 'custom-agents' || write.method !== 'POST') throw new ClientError(COPY.invalid, 'agent-creation-invalid')
+            if (write.path !== 'custom-agents' || write.method !== 'POST')
+              throw new ClientError(() => COPY.invalid, 'agent-creation-invalid')
             replaying = store.read() !== null
             try {
               store.begin(write.body as unknown as CustomAgentCreate)

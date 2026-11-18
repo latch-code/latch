@@ -48,6 +48,7 @@
     "agents:sync": "tsx scripts/agents-sync.ts",
     "docs:affected": "tsx scripts/docs-affected.ts",
     "i18n:coverage": "tsx scripts/i18n-coverage.ts",
+    "error-copy": "tsx scripts/error-copy-coverage.ts",
     "security:scan": "tsx scripts/security-scan.ts",
     "knip": "knip && knip --strict --include unlisted,unresolved --no-config-hints",
     "check:workflows": "tsx scripts/check-workflows.ts",

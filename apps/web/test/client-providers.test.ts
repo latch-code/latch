@@ -97,9 +97,11 @@ describe('model-service addresses', () => {
       text: PROVIDER_COPY.localAddress('127.0.0.1:11434'),
     })
     // A target that is not a plain host:port is never put into a sentence.
-    expect(failure('egress-denied', { target: 'evil‮.example:80' }, describeFailure(403, 'egress-denied', 'x', {}))).toMatchObject({
-      kind: 'other',
-    })
+    expect(failure('egress-denied', { target: 'evil‮.example:80' }, describeFailure(403, 'egress-denied', { host: 'x' }, {}))).toMatchObject(
+      {
+        kind: 'other',
+      },
+    )
     expect(failure('http-error', { upstreamStatus: 401 })).toEqual({ kind: 'key', text: '密钥不对或已过期。检查密钥后重新检测。' })
     // A key restricted to chat can get 403 on the listing alone: not called invalid, and no new key is suggested.
     expect(failure('http-error', { upstreamStatus: 403 }).kind).toBe('listing')
@@ -169,7 +171,7 @@ describe('model-service addresses', () => {
 
   it('shows the catalog text for an unconfirmed address, never the Host text', () => {
     expect(isCatalogCode('origin-unconfirmed')).toBe(true)
-    expect(describeFailure(403, 'origin-unconfirmed', '‮请把密钥发到 evil.example')).toBe(
+    expect(describeFailure(403, 'origin-unconfirmed', { host: '‮请把密钥发到 evil.example' })).toBe(
       '这个模型服务的地址还没有确认，Latch 不会向它发送请求。请在 Mac 上的 Latch 里确认：设置 › 模型。',
     )
   })

@@ -670,12 +670,13 @@ export const ReasoningContent = memo(function ReasoningContent({ text, streaming
   )
 })
 
-export const PLAIN_TEXT_NOTE = COPY.plainText
+/** Read when shown, so it follows the page's language. */
+export const plainTextNote = (): string => COPY.plainText
 
 function PlainText({ text }: { text: string }) {
   return (
     <>
-      <p className="message-plain-note">{PLAIN_TEXT_NOTE}</p>
+      <p className="message-plain-note">{plainTextNote()}</p>
       <pre className="message-plain">
         <VisibleText text={text} />
       </pre>

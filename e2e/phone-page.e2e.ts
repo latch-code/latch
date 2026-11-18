@@ -73,7 +73,7 @@ async function asDesktop(page: Page, state: PageState, options: { tls?: boolean 
   })
   await page.route('**/link/api/devices', route =>
     state.listFails
-      ? route.fulfill({ status: 500, json: { error: 'internal', code: 'internal', message: '读取失败' } })
+      ? route.fulfill({ status: 500, json: { error: 'internal', code: 'internal', message: '设备列表暂时读不到' } })
       : route.fulfill({ json: { devices: state.devices } }),
   )
   await page.route('**/link/api/devices/*', async route => {
@@ -392,7 +392,8 @@ describe('设置 › 设备', () => {
     it('does not say no phone is connected when the list failed to load', async () => {
       const state = base({ listFails: true })
       const { context, page } = await open(state)
-      const failure = page.getByText('请求未完成（500），请重试。', { exact: true })
+      // A code the page has no words for: in Chinese the Host's own reason is shown.
+      const failure = page.getByText('设备列表暂时读不到', { exact: true })
       await failure.waitFor()
       expect(await page.getByText('读取失败', { exact: true }).count()).toBe(0)
       expect(await page.getByText('还没有别的设备连接这台 Mac。', { exact: true }).count()).toBe(0)

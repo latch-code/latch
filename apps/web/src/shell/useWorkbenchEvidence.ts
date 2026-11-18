@@ -251,7 +251,7 @@ export function hasDelivery(entry: WorkbenchDeliveryEntry | undefined): boolean 
 export function deliveryCheckSummary(
   entry: WorkbenchDeliveryEntry,
 ): { text: string; segments?: { passed: number; failed: number; total: number } } | undefined {
-  if (entry.prError) return { text: describeFailure(0, entry.prError.code, entry.prError.message) }
+  if (entry.prError) return { text: describeFailure(0, entry.prError.code, { host: entry.prError.message }) }
   const pr = entry.pr?.pr
   if (!pr) return undefined
   if (pr.state === 'merged') return { text: COPY.merged }

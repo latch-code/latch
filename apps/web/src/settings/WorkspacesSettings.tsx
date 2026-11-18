@@ -230,7 +230,7 @@ function RefusedNotice({ result, onClose }: { result: Extract<FolderResult, { st
         {result.refused.map(item => (
           <span key={item.path} className="folder-refused-line">
             <code className="settings-mono">{item.path}</code>
-            <span>{describeFailure(item.status, item.code, item.message ?? '')}</span>
+            <span>{describeFailure(item.status, item.code, item.message === undefined ? {} : { host: item.message })}</span>
           </span>
         ))}
       </span>

@@ -3,7 +3,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import Markdown from 'react-markdown'
 import remarkMath from 'remark-math'
-import { MessageContent, PLAIN_TEXT_NOTE } from '../src/MessageContent.tsx'
+import { MessageContent, plainTextNote } from '../src/MessageContent.tsx'
 import { SyntaxLine } from '../src/preview/HighlightedCode.tsx'
 import { TextPreview } from '../src/preview/TextPreview.tsx'
 import { canHighlight, isSyntaxLines, languageForPath } from '../src/preview/highlight-protocol.ts'
@@ -72,7 +72,7 @@ describe('math syntax in replies', () => {
       throw new Error('Fixture parser failure')
     })
     const actual = renderToStaticMarkup(createElement(MessageContent, { text: '<script>原文</script>\u202E' }))
-    expect(actual).toContain(PLAIN_TEXT_NOTE)
+    expect(actual).toContain(plainTextNote())
     expect(actual).toContain('&lt;script&gt;原文&lt;/script&gt;')
     expect(actual).toContain('\\u{202E}')
     expect(actual).not.toContain('<script>')

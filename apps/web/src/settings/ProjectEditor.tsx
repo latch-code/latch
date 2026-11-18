@@ -230,7 +230,7 @@ export function ProjectEditor({
   const nativeResult = async (result: FolderResult) => {
     if (result.status === 'added') setRefused(result.refused.length ? result : null)
     else if (result.status === 'busy') setError(COPY.systemDialog)
-    else if (result.status === 'failed') setError(describeFailure(0, result.code, COPY.folderActionFailed))
+    else if (result.status === 'failed') setError(describeFailure(0, result.code, { fallback: COPY.folderActionFailed }))
   }
   const pick = (replace?: string) => {
     if (shell) void execute(async () => nativeResult(await shell.pick(project.id, replace)))
@@ -406,7 +406,7 @@ export function ProjectEditor({
                 <code>
                   <VisibleText text={item.path} />
                 </code>
-                <span>{describeFailure(item.status, item.code, item.message ?? '')}</span>
+                <span>{describeFailure(item.status, item.code, item.message === undefined ? {} : { host: item.message })}</span>
               </span>
             ))}
           </span>

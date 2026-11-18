@@ -230,7 +230,7 @@ export function FilePreview({
       })
       const answer = result.files[0]
       if (!answer || answer.status !== 'ok' || !isFileMetadata(answer.file))
-        throw new MessageError(answer?.code ? describeFailure(403, answer.code, COPY.cannotRead) : COPY.cannotRead)
+        throw new MessageError(() => (answer?.code ? describeFailure(403, answer.code, { fallback: COPY.cannotRead }) : COPY.cannotRead))
       if (signal?.aborted) return
       setFile(answer.file)
       if (announce) {
@@ -560,7 +560,9 @@ export function FilePreview({
           </span>
         )}
         <span className="file-preview-actions">
-          {editRefusal && <IconButton size="xs" label={describeFailure(403, editRefusal, COPY.editRestricted)} icon={EditGlyph} disabled />}
+          {editRefusal && (
+            <IconButton size="xs" label={describeFailure(403, editRefusal, { fallback: COPY.editRestricted })} icon={EditGlyph} disabled />
+          )}
           {canEdit && (
             <IconButton
               size="xs"
@@ -740,7 +742,7 @@ export function FilePreview({
             </InlineNotice>
           ) : !file.actions.preview ? (
             <InlineNotice>
-              {file.refused?.preview ? describeFailure(403, file.refused.preview, COPY.cannotPreview) : COPY.unsupported}
+              {file.refused?.preview ? describeFailure(403, file.refused.preview, { fallback: COPY.cannotPreview }) : COPY.unsupported}
             </InlineNotice>
           ) : (
             <div

@@ -496,6 +496,8 @@ grep -rnE 'createTestPresence|startHostFixture|latch-test\.localhost|(tests?|e2e
 
 这些命令检查仓库自身的结构，不运行产品代码；文件按 git 的列表读取，被忽略的文件不在其中。
 
+**错误文案。** `pnpm error-copy` 列出 Host、core 与 harness-acp 抛出的每个 `AppError` 错误码，按有文案、显示 Host 原因分开计数；安全类错误码缺文案，或有抛出处认不出错误码（不在 `PASSED_ON` 里）时失败。`-- --list` 输出明细。`tests/error-copy-coverage.test.ts` 在真实代码上运行同一检查。
+
 **界面语言。** `pnpm i18n:coverage` 扫描 Web、UI 与桌面源码的待迁移文案。用 `pnpm i18n:coverage -- --report` 查看每个文件的数量。首次建立名单用 `pnpm i18n:coverage -- --init`。每当文案迁移减少时用 `pnpm i18n:coverage -- --write` 更新，单个文件的待迁移数量增长会失败。Vitest 验证扫描和增长判断的行为。
 
 - **`pnpm check:quick` 与 `pnpm check`**（`scripts/check.ts`）：依次运行各项，一项失败也继续，最后逐项写出结果，有失败时以状态 1 结束。

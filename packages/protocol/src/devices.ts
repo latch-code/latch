@@ -359,6 +359,66 @@ export function refusedBeforeAccepting(status: number, code: string | undefined)
   return status >= 500 && code !== undefined && NOT_ACCEPTED_5XX.has(code)
 }
 
+/**
+ * Error codes in the security class: connecting a device and its credential, what a device may do (scopes), confirming
+ * on the Mac, approvals, outbound addresses, secrets, plugin page capabilities and the audit log. A client words these
+ * only from its own catalogue and never shows the Host's free-text `message` for them; `scripts/error-copy-coverage.ts`
+ * fails when one the Host throws has no catalogue entry.
+ */
+const SECURITY_PREFIXES = [
+  'enrollment-',
+  'invitation-',
+  'pairing-',
+  'device-',
+  'credential-',
+  'renewal-',
+  'listener-',
+  'fingerprint-',
+  'offline-code-',
+  'native-identity-',
+  'native-verification-',
+  'native-credential-',
+  'presence-',
+  'confirmation-',
+  'stepup-',
+  'permission-',
+  'scope-',
+  'approval-',
+  'egress-',
+  'origin-',
+  'origins-',
+  'audit-',
+]
+/** Words that put a code in the class wherever they stand: `item-secret`, `clone-url-credentials`. */
+const SECURITY_WORDS = new Set(['secret', 'credentials', 'capability', 'capabilities', 'untrusted'])
+const SECURITY_CODES = new Set([
+  'unauthorized',
+  'legacy-reconfirm',
+  'local-only',
+  'l3-confirmation-missing',
+  'invalid-signature',
+  'invalid-public-key',
+  'invalid-pairing',
+  'invalid-origin',
+  'key-origin-mismatch',
+  'current-device',
+  'revocation-not-persisted',
+  'harness-unconfirmed',
+  'mcp-unconfirmed',
+])
+
+export function isSecurityErrorCode(code: string): boolean {
+  const words = code.split('-')
+  return (
+    SECURITY_CODES.has(code)
+    || SECURITY_PREFIXES.some(prefix => code.startsWith(prefix))
+    || words.some(word => SECURITY_WORDS.has(word))
+    // A device's scope: `terminal-scope`, `agent-scope-required`, `invalid-data-scope`; not `change-scope-invalid`.
+    || words.at(-1) === 'scope'
+    || /-scope-(?:required|changed)$/u.test(code)
+  )
+}
+
 export interface ApiFailure {
   error: string
   message: string

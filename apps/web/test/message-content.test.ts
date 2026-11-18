@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { MessageContent, PLAIN_TEXT_NOTE, renderMarkdown } from '../src/MessageContent.tsx'
+import { MessageContent, plainTextNote, renderMarkdown } from '../src/MessageContent.tsx'
 import { ErrorBoundary } from '../src/components/ErrorBoundary.tsx'
 import { exceedsMarkdownNesting, MAX_LINE_CONTAINERS, MAX_OPEN_DELIMITERS, MAX_TREE_DEPTH } from '../src/markdownNesting.ts'
 
@@ -225,7 +225,7 @@ describe('message markdown', () => {
     ['lists that survive the first check', '- '.repeat(MAX_LINE_CONTAINERS) + 'a'],
   ])('shows deeply nested %s as plain text instead of overflowing the stack', (_name, text) => {
     const html = render(text, true)
-    expect(html).toContain(`<p class="message-plain-note">${PLAIN_TEXT_NOTE}</p><pre class="message-plain">`)
+    expect(html).toContain(`<p class="message-plain-note">${plainTextNote()}</p><pre class="message-plain">`)
     expect(html).not.toMatch(/<(blockquote|ul|ol|em|strong)>/)
   })
 

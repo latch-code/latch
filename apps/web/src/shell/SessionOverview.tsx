@@ -200,7 +200,7 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
   const state = entry?.state
   const pr = entry?.pr?.pr
   const checks = entry ? deliveryChecks(entry) : undefined
-  const failure = evidence.error ?? (entry?.error && describeFailure(0, entry.error.code, entry.error.message))
+  const failure = evidence.error ?? (entry?.error && describeFailure(0, entry.error.code, { host: entry.error.message }))
   // While the connection is lost, what is shown is what was last seen, and says when.
   const seen = !connected && entry ? COPY.last(clock(entry.observedAt)) : undefined
   const next = state?.conflicted

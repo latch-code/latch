@@ -102,7 +102,7 @@ export function ComputersSettings() {
   const [view, setView] = useState<ComputersView | undefined>()
   const [errorCode, setError] = useState('')
   const [removedComputer, setNotice] = useState('')
-  const error = errorCode === 'list-failed' ? COPY.readFailed : errorCode ? describeFailure(0, errorCode, '') : ''
+  const error = errorCode === 'list-failed' ? COPY.readFailed : errorCode ? describeFailure(0, errorCode) : ''
   const notice = removedComputer ? COPY.removeThere(removedComputer) : ''
   const [removing, setRemoving] = useState<ComputerView | null>(null)
   useEffect(() => {
@@ -267,7 +267,7 @@ export function ComputersSettings() {
           }}
           onConfirm={async () => {
             const result = await api.remove!(removing.hostId)
-            if (!result.ok) throw new MessageError(() => describeFailure(0, result.error, ''))
+            if (!result.ok) throw new MessageError(() => describeFailure(0, result.error))
             if (!result.revokedThere) setNotice(removing.name)
           }}
         />

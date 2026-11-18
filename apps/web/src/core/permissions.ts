@@ -85,7 +85,6 @@ export const DEVICE_PERMISSION_COPY = defineCopy(
     legacyHost: 'Latch on this Mac is out of date. Restart Latch to confirm devices.',
   },
 )
-export const LEGACY_HOST_TEXT = DEVICE_PERMISSION_COPY.legacyHost
 
 export interface ApprovalGate {
   /**

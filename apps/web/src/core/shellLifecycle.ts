@@ -140,7 +140,7 @@ export function useShellLifecycle() {
   const run = useCallback(async (action: () => Promise<ShellLifecycleResult>): Promise<string> => {
     try {
       const result = await action()
-      if (!result.ok) return describeFailure(0, result.error, result.message)
+      if (!result.ok) return describeFailure(0, result.error)
       setView(result.lifecycle)
       return ''
     } catch {

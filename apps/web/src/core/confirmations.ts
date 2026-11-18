@@ -107,7 +107,12 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
   } catch (error) {
     const paused = error instanceof ApiError ? pausedReason(error) : undefined
     if (paused !== undefined && error instanceof ApiError) {
-      const message = describeFailure(error.status, error.code, error.message, error.details)
+      const message = describeFailure(
+        error.status,
+        error.code,
+        error.hostMessage === undefined ? {} : { host: error.hostMessage },
+        error.details,
+      )
       const wait = error.details.retryAfter
       presenter.show(
         {
@@ -157,7 +162,10 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
       if (confirmation.id === ticket.id) ticket = confirmation
     } catch (error) {
       if (error instanceof ApiError && error.status !== 429 && error.status < 500)
-        fail('error', describeFailure(error.status, error.code, error.message, error.details))
+        fail(
+          'error',
+          describeFailure(error.status, error.code, error.hostMessage === undefined ? {} : { host: error.hostMessage }, error.details),
+        )
       // Network trouble and rate limits: keep polling until the Host reports the outcome or the ticket lapses.
       if (Date.now() > Date.parse(ticket.expiresAt) + 10_000) fail('expired', CONFIRMATION_RESULT_TEXT.expired)
       continue
@@ -179,7 +187,10 @@ export async function withConfirmation<T>(send: (confirmation?: string) => Promi
     return result
   } catch (error) {
     if (error instanceof ApiError && error.code.startsWith('confirmation-'))
-      fail('error', describeFailure(error.status, error.code, error.message, error.details))
+      fail(
+        'error',
+        describeFailure(error.status, error.code, error.hostMessage === undefined ? {} : { host: error.hostMessage }, error.details),
+      )
     presenter.close()
     throw error
   }

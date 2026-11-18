@@ -41,7 +41,7 @@ export function StartComputer({ hostId, disabled = false }: { hostId: string | u
             if (!result.ok) setFailed(result.error)
           })
         }}
-        {...(failed ? { hint: describeFailure(0, failed, '') } : {})}
+        {...(failed ? { hint: describeFailure(0, failed) } : {})}
       />
     </span>
   )

@@ -2,6 +2,9 @@ import { LATCH_COMMAND, localLatchCommand } from './commands.ts'
 import {
   escapeSecurityText,
   isAcceptableDeviceName,
+  isSecurityErrorCode,
+  looksSecret,
+  refusedBeforeAccepting,
   RISK_REASON_TEXT,
   type ApiFailure,
   type ApprovalOptionKind,
@@ -9,13 +12,14 @@ import {
   type DeviceScope,
   type PresenceAction,
 } from '@latch/protocol'
-import { defineCopy, formatList, plural } from './i18n.ts'
+import { currentLocale, defineCopy, formatList, plural } from './i18n.ts'
 
 /**
- * Security-related text comes from this catalog, chosen by the Host's error code; the Host's free-text `message` is never
- * shown for these codes. The only values substituted in are a wait time and a validated `host:port` target. Codes
- * outside the catalog use a generic notice in both languages. The catalog follows the interface glossary
- * (`scripts/glossary.ts`).
+ * Error text comes from this catalog, chosen by the Host's error code. For a code in the security class
+ * (`isSecurityErrorCode`) the Host's free-text `message` is never shown; the only values substituted in are a wait time
+ * and a validated `host:port` target. A code outside both takes the caller's own words, then in Chinese the Host's
+ * reason (escaped and capped, see `describeFailure`), else a generic sentence with the code. The catalog follows the
+ * interface glossary (`scripts/glossary.ts`).
  */
 
 /** Why this browser is on the enrollment page: the Host's 401 code or a local cause. */
@@ -1886,6 +1890,174 @@ const EXTRA_FAILURES: Readonly<Record<string, string>> = defineCopy(
   },
 )
 
+/**
+ * The security class (`isSecurityErrorCode`) that has no entry above, and Host refusals a person meets in daily use:
+ * worded here so both languages say what happened and what to do. `pnpm error-copy` fails on a security-class code the
+ * Host throws without an entry.
+ */
+const HOST_REFUSALS: Readonly<Record<string, string>> = defineCopy<Record<string, string>>(
+  {
+    // Connecting a device and its credential.
+    'credential-rotated': '凭据已在另一个页面续期，请刷新。',
+    'current-device': '这是正在使用的设备，不能这样移除。',
+    'device-not-found': '找不到这台设备。',
+    'device-scope-changed': '这台设备的权限刚变了，请重试。',
+    'invalid-pairing': '连接方式无效。',
+    'invalid-public-key': '设备密钥无效。',
+    'invalid-signature': '签名没有通过校验，请重新连接。',
+    'invalid-origin': 'Latch 不接受来自其他网站的请求。',
+    'pairing-contended': '有两台设备扫了同一个二维码，都已取消。请重新扫码。',
+    'pairing-device-unknown': '找不到这次连接的设备，请在设备列表里移除它。',
+    'pairing-not-nearby': '手机要和这台 Mac 连同一个 Wi‑Fi。',
+    'revocation-not-persisted': '已撤销，但没能写入磁盘。重启 Latch 前请检查数据目录。',
+    'native-credential-route': '手机身份不能用浏览器凭据续期。',
+    'native-identity-conflict': '手机身份有冲突，请重新配对。',
+    'native-identity-invalid': '手机身份无效，请重新配对。',
+    'native-identity-required': '手机连接缺少身份，请重新配对。',
+    'native-verification-invalid': '验证已过期或无效，请在手机上重新验证。',
+    'native-verification-superseded': '这次验证已被更新的一次替换，请在手机上重新验证。',
+    // What a device may see and do.
+    'agent-scope-required': '这台设备不能看全部数据。',
+    'file-scope': '这台设备不能浏览项目文件。',
+    'history-scope': '接入已有会话需要这台设备能查看全部数据。',
+    'invalid-data-scope': '设备能看的范围无效。',
+    'invalid-scope': '未知的设备权限。',
+    'plugin-package-scope': '这台设备已不能编辑插件。',
+    'simulator-scope': '这台设备不能使用模拟器。',
+    'terminal-scope': '这台设备不能打开终端。',
+    // Confirmation on the Mac, approvals and plugin pages.
+    'harness-unconfirmed': '这个 Harness 还没在 Mac 上确认。先在 Mac 上用它开始一个会话。',
+    'mcp-unconfirmed': '这个 MCP 服务器还没在 Mac 上确认。',
+    'plugin-package-untrusted': '请先在 Mac 上批准插件的代码。',
+    'plugin-package-capabilities': '页面要的能力还没在 Mac 上确认。',
+    'app-capability-denied': '这个插件页面没有这项能力。',
+    'approval-always-unavailable': '高风险操作不能始终允许。',
+    'approval-option-hidden': '这个选项会长期保存授权，Latch 不提供。',
+    'approval-option-invalid': '这个审批选项不存在。',
+    'approval-option-mismatch': '审批选项和决定不一致。',
+    'approval-option-required': '请选一个具体的选项。',
+    // Outbound addresses and the audit log.
+    'egress-full': '允许访问的地址已满（64 个）。请在 设置 › 模型 › 已确认的地址 里移除不用的。',
+    'origins-full': '已确认的模型服务地址已满（256 个）。请在 设置 › 模型 › 已确认的地址 里移除不用的。',
+    'key-origin-mismatch': '保存的密钥只发往保存时的地址，请重新输入密钥。',
+    'audit-unavailable': '没能写入记录，这一步没有执行。请稍后再试。',
+    'audit-failed': '没能写入记录，这次调用没有执行。',
+    'audit-chain-broken': '记录无法核对，这一步没有执行。请在 Mac 上检查 Latch 的数据目录。',
+    'audit-detail-invalid': '记录内容无效，这一步没有执行。',
+    // Secrets.
+    'agent-export-secret': '定义里有像密钥的内容，没有导出。改掉后再导出。',
+    'agent-import-secret': '文件里有像密钥的内容，没有导入。',
+    'agent-memory-secret': '内容像密钥，没有记下。',
+    'app-import-secret': '草稿里有文件像含有密钥，没有导入。',
+    'clone-url-credentials': '地址里带有凭据，没有克隆。请用这台电脑上 Git 自己的登录。',
+    'file-secret': '这个文件可能含密钥，只能在 Mac 上确认后显示。',
+    'item-secret': '标题像含有密钥，没有保存。',
+    'mcp-secret-not-allowed': '这个变量决定加载什么，或它的值像路径或地址。请作为普通变量填写，它会出现在确认里。',
+    'note-secret': '备注像含有密钥，没有保存。',
+    'post-secret': '发言像含有密钥，没有发出。',
+    'proposal-secret': '内容像密钥，没有提出。',
+    'tag-secret': '标签像密钥，没有保存。',
+    // Daily refusals.
+    'workspace-permission': '没有权限访问这个文件夹。请在 系统设置 › 隐私与安全性 里允许 Latch 访问。',
+    'workspace-folder-chars': '路径含逗号、* 或 ? 的文件夹只能作为主文件夹。',
+    'post-target-busy': '它正在运行，这一轮结束后再发。',
+    'budget-exceeded': '本月预算已用完。',
+    'harness-busy': 'Harness 正忙，请稍后再试。',
+    'task-running': '请等这一轮结束。',
+    'queue-full': '排队已满。请删除不需要的旧会话后再试。',
+    'port-in-use': '端口已被占用，Latch 没有启动。',
+    // Opening a terminal.
+    'terminal-limit': '这里的终端已到上限，请先关掉一个。',
+    'terminal-total-limit': '这台电脑上打开的终端太多了，请先关掉不用的。',
+    'terminal-folder-unavailable': '文件夹已不可用，不能在这里打开终端。',
+    'terminal-personal-session': '这个会话没有项目文件夹，不能打开终端。',
+    'terminal-session-archived': '会话已归档，不能打开终端。',
+    'terminal-shell-unavailable': '没能启动 shell，终端没有打开。',
+    'terminal-start-failed': '终端没有启动，请重试。',
+    'terminal-unsupported': '终端尚未实现：目前只支持 macOS。',
+    'terminal-unavailable': '终端组件不可用，请重新构建 Latch。',
+    'terminal-stopping': 'Latch 正在停止，不能打开终端。',
+    'terminal-closed': '终端已关闭。',
+  },
+  {
+    'credential-rotated': 'The credential was renewed in another page. Reload.',
+    'current-device': 'This is the device in use, so it cannot be removed this way.',
+    'device-not-found': 'This device could not be found.',
+    'device-scope-changed': 'This device’s permissions just changed. Try again.',
+    'invalid-pairing': 'Invalid connection method.',
+    'invalid-public-key': 'The device key is invalid.',
+    'invalid-signature': 'The signature did not pass the check. Connect again.',
+    'invalid-origin': 'Latch does not accept requests from other sites.',
+    'pairing-contended': 'Two devices scanned the same code, so both were cancelled. Scan again.',
+    'pairing-device-unknown': 'The device for this connection could not be found. Remove it from the device list.',
+    'pairing-not-nearby': 'The phone must be on the same Wi‑Fi as this Mac.',
+    'revocation-not-persisted': 'Revoked, but it could not be saved to disk. Check the data folder before restarting Latch.',
+    'native-credential-route': 'A phone identity cannot be renewed with a browser credential.',
+    'native-identity-conflict': 'The phone identity conflicts. Pair again.',
+    'native-identity-invalid': 'The phone identity is invalid. Pair again.',
+    'native-identity-required': 'The phone connection has no identity. Pair again.',
+    'native-verification-invalid': 'Verification expired or is invalid. Verify again on the phone.',
+    'native-verification-superseded': 'A newer verification replaced this one. Verify again on the phone.',
+    'agent-scope-required': 'This device cannot view all data.',
+    'file-scope': 'This device cannot browse project files.',
+    'history-scope': 'Adding existing sessions needs a device that can view all data.',
+    'invalid-data-scope': 'Invalid device access.',
+    'invalid-scope': 'Unknown device permission.',
+    'plugin-package-scope': 'This device can no longer edit plugins.',
+    'simulator-scope': 'This device cannot use simulators.',
+    'terminal-scope': 'This device cannot open the terminal.',
+    'harness-unconfirmed': 'This Harness is not confirmed on the Mac yet. Start a session with it on the Mac first.',
+    'mcp-unconfirmed': 'This MCP server is not confirmed on the Mac yet.',
+    'plugin-package-untrusted': 'Approve the plugin’s code on the Mac first.',
+    'plugin-package-capabilities': 'The page’s capabilities are not confirmed on the Mac yet.',
+    'app-capability-denied': 'This plugin page does not have this capability.',
+    'approval-always-unavailable': 'High-risk actions cannot be always allowed.',
+    'approval-option-hidden': 'This option would keep the permission, so Latch does not offer it.',
+    'approval-option-invalid': 'This approval option does not exist.',
+    'approval-option-mismatch': 'The approval option does not match the decision.',
+    'approval-option-required': 'Choose a specific option.',
+    'egress-full': 'The allowed addresses are full (64). Remove unused ones in Settings › Models › Confirmed addresses.',
+    'origins-full': 'The confirmed model service addresses are full (256). Remove unused ones in Settings › Models › Confirmed addresses.',
+    'key-origin-mismatch': 'A saved key is sent only to the address it was saved for. Enter the key again.',
+    'audit-unavailable': 'No record could be written, so this was not done. Try again shortly.',
+    'audit-failed': 'No record could be written, so this call was not made.',
+    'audit-chain-broken': 'The records could not be verified, so this was not done. Check the Latch data folder on the Mac.',
+    'audit-detail-invalid': 'The record was invalid, so this was not done.',
+    'agent-export-secret': 'The definition contains something that looks like a key, so it was not exported. Change it and export again.',
+    'agent-import-secret': 'The file contains something that looks like a key, so it was not imported.',
+    'agent-memory-secret': 'It looks like a key, so it was not kept.',
+    'app-import-secret': 'A file in the draft looks like it contains a key, so nothing was imported.',
+    'clone-url-credentials': 'The address contains credentials, so nothing was cloned. Use Git’s own sign-in on this computer.',
+    'file-secret': 'This file may contain keys. It is shown only after confirming on the Mac.',
+    'item-secret': 'The title looks like it contains a key, so it was not saved.',
+    'mcp-secret-not-allowed':
+      'This variable decides what loads, or its value looks like a path or address. Add it as a plain variable; it shows in the confirmation.',
+    'note-secret': 'The note looks like it contains a key, so it was not saved.',
+    'post-secret': 'The post looks like it contains a key, so it was not sent.',
+    'proposal-secret': 'It looks like a key, so it was not proposed.',
+    'tag-secret': 'A tag looks like a key, so it was not saved.',
+    'workspace-permission': 'Latch has no access to this folder. Allow it in System Settings › Privacy & Security.',
+    'workspace-folder-chars': 'A folder whose path contains a comma, * or ? can only be the main folder.',
+    'post-target-busy': 'It is running. Send when this turn ends.',
+    'budget-exceeded': 'This month’s budget is used up.',
+    'harness-busy': 'The Harness is busy. Try again shortly.',
+    'task-running': 'Wait for this turn to end.',
+    'queue-full': 'The queue is full. Delete old sessions you no longer need, then try again.',
+    'port-in-use': 'The port is in use, so Latch did not start.',
+    'terminal-limit': 'This has reached its terminal limit. Close one first.',
+    'terminal-total-limit': 'Too many terminals are open on this computer. Close ones you don’t use.',
+    'terminal-folder-unavailable': 'The folder is no longer available, so the terminal cannot open here.',
+    'terminal-personal-session': 'This session has no project folder, so the terminal cannot open.',
+    'terminal-session-archived': 'This session is archived, so the terminal cannot open.',
+    'terminal-shell-unavailable': 'The shell did not start, so the terminal did not open.',
+    'terminal-start-failed': 'The terminal did not start. Try again.',
+    'terminal-unsupported': 'Terminal is not implemented yet: only macOS is supported.',
+    'terminal-unavailable': 'The terminal component is unavailable. Rebuild Latch.',
+    'terminal-stopping': 'Latch is stopping, so the terminal cannot open.',
+    'terminal-closed': 'The terminal is closed.',
+  },
+)
+
 const FIXED_SHARED: Record<string, () => string> = {
   'history-session-busy': () => HISTORY_COPY.busy,
   'file-image-dimensions': () => fileNote('file-image-dimensions').text,
@@ -1935,7 +2107,10 @@ const FAILURE_COPY = defineCopy(
     presenceFamily: '这台 Mac 暂时不能确认，请稍后重试',
     enrollmentFamily: '连接未完成，请重新提交',
     invitationFamily: '配对码无效或已过期',
-    unknown: (status: number) => (status > 0 ? `请求未完成（${status}），请重试。` : '请求未完成，请重试。'),
+    /** A result that may be unknown, by the Host's code or else the HTTP status. */
+    unknown: (label?: string | number) => (label === undefined ? '请求未完成，请重试。' : `请求未完成（${label}），请重试。`),
+    /** A definite refusal without words of its own: trying again would not help. */
+    refused: (code?: string) => (code === undefined ? '没有完成。' : `没有完成（${code}）。`),
   } as const,
   {
     attachmentClaimed: 'The attachment is held for another submission. Retry that submission, or remove the attachment and add it again.',
@@ -1965,8 +2140,9 @@ const FAILURE_COPY = defineCopy(
     presenceFamily: 'This Mac cannot confirm right now. Try again shortly',
     enrollmentFamily: 'The connection did not finish. Send it again',
     invitationFamily: 'The pairing code is invalid or has expired',
-    unknown: (status: number) =>
-      status > 0 ? `The request did not finish (${status}). Try again.` : 'The request did not finish. Try again.',
+    unknown: (label?: string | number) =>
+      label === undefined ? 'The request did not finish. Try again.' : `The request did not finish (${label}). Try again.`,
+    refused: (code?: string) => (code === undefined ? 'Not done.' : `Not done (${code}).`),
   },
 )
 
@@ -2004,6 +2180,7 @@ export function isCatalogCode(code: string): boolean {
   return (
     Object.hasOwn(FIXED, code)
     || Object.hasOwn(EXTRA_FAILURES, code)
+    || Object.hasOwn(HOST_REFUSALS, code)
     || Object.hasOwn(FIXED_SHARED, code)
     || code === 'scope-required'
     || code === 'stepup-required'
@@ -2018,8 +2195,37 @@ export function isCatalogCode(code: string): boolean {
   )
 }
 
-/** The text a page shows for a Host or shell error. */
-export function describeFailure(status: number, code: string, _message: string, details: Partial<ApiFailure> = {}): string {
+/** Where a failure's words come from when the catalog has none for its code. */
+export interface FailureWords {
+  /** This page's own words for the case, in the page's language; used before anything from the Host. */
+  fallback?: string
+  /** The Host's own `message` (`ApiFailure.message`): shown only in Chinese, only outside the security class. */
+  host?: string
+}
+
+/** The longest Host reason shown, in code points; longer ones end in `…`. */
+export const HOST_TEXT_MAX = 200
+const SHOWN_CODE = /^[A-Za-z0-9_-]{1,64}$/u
+
+/**
+ * The Host's reason as the page may show it: the Host sends `message` as it is (its log redaction does not apply to
+ * error bodies), so text that looks like a credential is dropped, invisible and direction characters are made visible,
+ * and it is capped.
+ */
+function hostReason(message: string | undefined): string | undefined {
+  const text = typeof message === 'string' ? message.trim() : ''
+  if (!text || looksSecret(text)) return undefined
+  const points = [...escapeSecurityText(text)]
+  return points.length > HOST_TEXT_MAX ? `${points.slice(0, HOST_TEXT_MAX - 1).join('')}…` : points.join('')
+}
+
+/**
+ * The text a page shows for a Host or shell error: the catalog for a known code; otherwise the caller's `fallback`; then,
+ * in Chinese and outside the security class, the Host's reason; else a generic sentence. A definite refusal (a 4xx but
+ * 408, a 5xx in `NOT_ACCEPTED_5XX`, or a shell's answer with no status) says it was not done, with the code, and does
+ * not suggest trying again; a result that may be unknown keeps 「请重试」.
+ */
+export function describeFailure(status: number, code: string, words: FailureWords = {}, details: Partial<ApiFailure> = {}): string {
   switch (code) {
     case 'attachment-claimed':
       return FAILURE_COPY.attachmentClaimed
@@ -2048,5 +2254,12 @@ export function describeFailure(status: number, code: string, _message: string, 
   if (fixed !== undefined) return fixed
   const family = FAMILY_FALLBACK.find(([prefix]) => code.startsWith(prefix))
   if (family) return family[1]()
-  return Object.hasOwn(EXTRA_FAILURES, code) ? EXTRA_FAILURES[code]! : FAILURE_COPY.unknown(status)
+  if (Object.hasOwn(EXTRA_FAILURES, code)) return EXTRA_FAILURES[code]!
+  if (Object.hasOwn(HOST_REFUSALS, code)) return HOST_REFUSALS[code]!
+  if (words.fallback) return words.fallback
+  const reason = isSecurityErrorCode(code) || currentLocale() !== 'zh-CN' ? undefined : hostReason(words.host)
+  if (reason !== undefined) return reason
+  const shown = code !== 'request-failed' && SHOWN_CODE.test(code) ? code : undefined
+  if (status <= 0 || refusedBeforeAccepting(status, code)) return FAILURE_COPY.refused(shown)
+  return FAILURE_COPY.unknown(shown ?? status)
 }

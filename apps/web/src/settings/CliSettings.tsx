@@ -58,7 +58,7 @@ export function CliSettings() {
   const unlinked = view.status === 'unlinked'
   const launcher = latchExecutableWord(view.target)
   const label = COPY.status[view.status]
-  const error = actionError ? COPY[actionError] : view.error && describeFailure(0, 'cli-link-failed', view.error)
+  const error = actionError ? COPY[actionError] : view.error && describeFailure(0, 'cli-link-failed')
   function copy(text: string, kind: 'command' | 'path') {
     setActionError(undefined)
     void writeClipboard(text)

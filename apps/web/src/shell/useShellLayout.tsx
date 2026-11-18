@@ -1189,7 +1189,11 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
           if (refused) {
             const refusal = COPY.folderRefused(
               basename(refused.path),
-              describeFailure(refused.status, refused.code, refused.message ?? COPY.folderRejected),
+              describeFailure(
+                refused.status,
+                refused.code,
+                refused.message ? { host: refused.message } : { fallback: COPY.folderRejected },
+              ),
             )
             // The list that says so stands on the new-session page; over a session it would say nothing.
             if (selectedId === null) askProject(refusal)

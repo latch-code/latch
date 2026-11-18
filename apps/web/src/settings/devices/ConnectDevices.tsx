@@ -41,16 +41,9 @@ function useShellAction(run: ShellAction, failure: string, keepMs: number) {
       const result = await run()
       if (result.ok) setDone(true)
       else
-        setError(
-          describeFailure(
-            result.status,
-            result.error,
-            result.message,
-            result.retryAfter === undefined ? {} : { retryAfter: result.retryAfter },
-          ),
-        )
+        setError(describeFailure(result.status, result.error, {}, result.retryAfter === undefined ? {} : { retryAfter: result.retryAfter }))
     } catch {
-      setError(describeFailure(502, failure, ''))
+      setError(describeFailure(502, failure))
     } finally {
       setBusy(false)
     }

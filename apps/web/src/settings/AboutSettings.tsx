@@ -454,11 +454,11 @@ function Licences() {
   )
 }
 
-/** Said once, where a device has no 终端 tab: there is no dead entry to explain it. */
-const TERMINAL_ELSEWHERE = {
+/** Said once, where a device has no 终端 tab: there is no dead entry to explain it. Read when shown, in the page's language. */
+const terminalElsewhere = () => ({
   label: COPY.terminalLocation,
   detail: COPY.terminalDetail,
-}
+})
 
 type DiagnosticsExport = NonNullable<NonNullable<ReturnType<typeof currentShell>>['diagnostics']>['export']
 
@@ -604,7 +604,7 @@ export function AboutSettings({
         />
       </SettingsGroup>
       {!snapshot.catalog?.features?.terminal && (
-        <SettingsGroup bare note={<NoteLine icon={TerminalGlyph} brief={TERMINAL_ELSEWHERE} />}>
+        <SettingsGroup bare note={<NoteLine icon={TerminalGlyph} brief={terminalElsewhere()} />}>
           {null}
         </SettingsGroup>
       )}
