@@ -58,6 +58,7 @@ const { createAgentRunner, createBrowserProvider } = require('./browser-agent.cj
 // Through the module objects, so the end-to-end test's bootstrap can give the updater a local feed and a fake installer.
 const updates = require('./updater.cjs')
 const menus = require('./menu.cjs')
+const { ABOUT_BACKGROUND, ABOUT_SIZE, aboutCopy, aboutUrl } = require('./about.cjs')
 const { createLocale, currentLocale, defineCopy } = require('./locale.cjs')
 const {
   LIFECYCLE_CHANNELS,
@@ -253,6 +254,61 @@ const gestures = new WeakMap()
 /** Other computers' windows by hostId; each in its own partition. */
 const remoteWindows = new Map()
 const partitionOf = hostId => `persist:latch-host-${hostId}`
+
+/**
+ * 关于 Latch (about.cjs): one small window with a static page main wrote. It has no preload and runs no script, uses the
+ * app session (whose only route is the black-hole proxy), and the navigation guard of every window keeps it where it is.
+ */
+let aboutWindow
+/** The window a menu command acts on: the focused one that shows a Latch page (never 关于), else this Mac's. */
+function focusedAppWindow() {
+  const focused = BrowserWindow.getFocusedWindow()
+  const window = focused && focused !== aboutWindow ? focused : mainWindow
+  return window && !window.isDestroyed() ? window : null
+}
+function showAbout() {
+  if (aboutWindow && !aboutWindow.isDestroyed()) {
+    aboutWindow.show()
+    aboutWindow.focus()
+    return
+  }
+  const window = new BrowserWindow({
+    ...ABOUT_SIZE,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    show: false,
+    title: aboutCopy.title,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? ABOUT_BACKGROUND.dark : ABOUT_BACKGROUND.light,
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' } : {}),
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      javascript: false,
+      webviewTag: false,
+      spellcheck: false,
+      devTools: false,
+    },
+  })
+  aboutWindow = window
+  window.setMenuBarVisibility(false)
+  window.once('ready-to-show', () => window.show())
+  window.once('closed', () => {
+    if (aboutWindow === window) aboutWindow = undefined
+  })
+  // The page takes no keys of its own: Escape closes it, as ⌘W does through the menu.
+  window.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') {
+      event.preventDefault()
+      window.close()
+    }
+  })
+  void window.loadURL(
+    aboutUrl({ version: app.isPackaged ? app.getVersion() : DESKTOP_VERSION, icon: icon.resize({ width: 168, height: 168 }).toDataURL() }),
+  )
+}
 
 /** main as its Host's browser provider (browser-agent.cjs), from `start`; it runs only while the window is open. */
 let browserProvider
@@ -690,8 +746,9 @@ async function startUpdates({ proxy, supervisor }) {
     }),
   )
 
-  // 关于 Latch and 检查更新…: the main window comes forward on 设置 › 关于; only the second starts a check.
-  const showAbout = () => {
+  // 检查更新…: the main window comes forward on 设置 › 关于, and a check starts.
+  const showUpdates = () => {
+    void updater.check()
     if (!mainWindow || mainWindow.isDestroyed()) {
       if (!ready) return
       openWindow()
@@ -703,19 +760,15 @@ async function startUpdates({ proxy, supervisor }) {
     mainWindow.focus()
     mainWindow.webContents.send(channels.show)
   }
-  const showUpdates = () => {
-    void updater.check()
-    showAbout()
-  }
   // Code and 我的 Agent from the menu: the focused window's page goes there; only the place's name crosses.
   const showSpace = space => {
     if (space !== 'code' && space !== 'agents') return
-    const window = BrowserWindow.getFocusedWindow() ?? (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
+    const window = focusedAppWindow()
     window?.webContents.send('latch:space', space)
   }
   // 用默认外观打开: the focused window's page is loaded again with `#safe` (menu.cjs).
   const openSafeMode = () => {
-    const window = BrowserWindow.getFocusedWindow() ?? (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
+    const window = focusedAppWindow()
     const contents = window?.webContents
     if (contents) menus.openSafeMode(contents, { home: homeOf(contents) })
   }
@@ -1154,8 +1207,7 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
   const spaceMenu = menus.spaceMenu({
     // The window the items act on: the focused one, else this Mac's (as showSpace does).
     focused: () => {
-      const window = BrowserWindow.getFocusedWindow() ?? mainWindow
-      return window && !window.isDestroyed() ? window.webContents : null
+      return focusedAppWindow()?.webContents ?? null
     },
     item: id => Menu.getApplicationMenu()?.getMenuItemById(id),
     rebuild: accelerators => buildMenu(accelerators),

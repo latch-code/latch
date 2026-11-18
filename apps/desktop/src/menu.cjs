@@ -90,7 +90,7 @@ function menuTemplate({
     {
       label: 'Latch',
       submenu: [
-        // The app's own 设置 › 关于, not the system panel, which names the runtime when Latch runs from source.
+        // The app's own window (about.cjs), not the system panel, which names the runtime when Latch runs from source.
         { label: COPY.about, id: 'about', click: () => onAbout() },
         { label: COPY.updates, id: 'check-for-updates', click: () => onCheckForUpdates() },
         { type: 'separator' },
