@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { HostFeatures } from '@latch/protocol'
+import type { HostFeatures, LeftoverAgentFolder } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { auditPage, parseAuditQuery, type AuditNames } from '../audit-view.ts'
 import type { DataExports } from '../data-export.ts'
@@ -27,7 +27,12 @@ export interface DataRouteDeps {
 const exportSchema = z.strictObject({ nonce: z.string(), via: z.literal('export'), parent: z.string().min(1).max(4096) })
 const EXPORT_PATH = /^\/link\/api\/data\/export\/([0-9a-f-]{36})(\/cancel)?$/u
 const LEFTOVER = /^\/link\/api\/data\/agent-folders\/([0-9a-f]{32})(\/export)?$/u
-const leftoverRemoval = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) })
+/** What the row showed: removed only if the folder still holds exactly that. */
+const leftoverRemoval = z.strictObject({
+  requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+  entries: z.number().int().nonnegative().max(1_000_000_000),
+  bytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+})
 const leftoverExport = z.strictObject({
   nonce: z.string(),
   via: z.literal('agent-folder'),
@@ -103,12 +108,17 @@ export function createDataRoutes(context: RouteContext, deps: DataRouteDeps): Ro
         return true
       }
       if (path === '/link/api/data/agent-folders' && method === 'GET') {
-        allowed(caller)
-        const folders = (await deps.agentFolders.leftovers(deps.agentIds)).map(({ key, path: where, contents }) => ({
-          key,
-          path: where,
-          contents,
-        }))
+        const device = allowed(caller)
+        // Each home is located and counted by the helper: counted like a settings write.
+        context.limits.classC.take(device.device.id)
+        const folders: LeftoverAgentFolder[] = (await deps.agentFolders.leftovers(deps.agentIds)).map(
+          ({ key, path: where, contents, entries, bytes }) => ({
+            key,
+            path: where,
+            contents,
+            ...(entries === undefined ? {} : { entries, bytes }),
+          }),
+        )
         recheck(caller)
         json(res, { folders })
         return true
@@ -116,12 +126,13 @@ export function createDataRoutes(context: RouteContext, deps: DataRouteDeps): Ro
       const leftover = LEFTOVER.exec(path)
       if (leftover && ((method === 'DELETE' && !leftover[2]) || (method === 'POST' && leftover[2]))) {
         const device = allowed(caller)
+        context.limits.classC.take(device.device.id)
         const key = leftover[1]!
         const audit: FolderAudit = event =>
           context.audited({ ...event, actor: context.actorOf(caller), target: event.detail.customAgentId }).then(() => {})
         if (method === 'DELETE') {
-          leftoverRemoval.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
-          const result = await deps.agentFolders.removeLeftover(key, deps.agentIds, audit)
+          const { entries, bytes } = leftoverRemoval.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
+          const result = await deps.agentFolders.removeLeftover(key, { entries, bytes }, deps.agentIds, audit)
           recheck(caller)
           json(res, { folder: result })
           return true

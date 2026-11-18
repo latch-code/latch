@@ -2708,6 +2708,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         return false
       },
+      forbidden: () => [realDataDir, join(home, '.latch')],
       now,
       log,
     })
@@ -3210,10 +3211,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         sessionFiles: id => changeRoutes.sessionFiles(id),
         computer: () => computer,
         home: async owner => {
-          const view = await agentHomeView(owner)
-          if (owner === GENERAL_AGENT_ID) return view
-          // What deleting it would find: on any doubt, `files`, so the person is asked before anything is removed.
-          return { ...view, contents: await agentFolders.contents(owner).catch(() => 'files' as const) }
+          return agentHomeView(owner)
         },
         folders: agentFolders,
         requireDesktop,

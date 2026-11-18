@@ -114,7 +114,7 @@ Provider 负责模型协议转换；Tool 执行一种操作；HarnessDriver 提�
 - **只剥离类型加载的模块。** Vite 把 `vite.config.ts` 引到的 workspace 包与 `@latch/host/paths`、`host-state`、`env` 留给 Node 只剥离类型后加载，所以这些代码开启 `erasableSyntaxOnly`：不用 enum、namespace 与构造函数参数属性。
 - **程序目录。** `latchCodeRoot()` 从模块所在目录向上找根包的 `package.json`（名称见「兼容标识」），越过各项目自己的 `package.json`。
 - **目录组件。** `latch-files` 构建到临时文件，签名并自检通过后才原子替换旧产物；自检失败保留旧版本。
-- **家组件。** `latch-home` 只为 Agent 的家做两件事：写成 zip（不压缩）与永久删除；同样构建到临时文件、临时签名（`dev.latch.home`）、自检通过才替换。自检在临时目录里打包、在删除途中把一个子目录换成指向外部的链接，确认外部文件仍在。它不在本机确认组件的固定身份里，构建它不影响 `latch-presence`。见 [CUSTOM-AGENTS](CUSTOM-AGENTS.md#删除-agent)。
+- **家组件。** `latch-home` 只为 Agent 的家做三件事：计数、写成 zip（不压缩）与按预期计数永久删除；同样构建到临时文件、临时签名（`dev.latch.home`）、自检通过才替换。自检在临时目录里打包、在删除途中把一个子目录换成指向外部的链接，确认外部文件仍在。它不在本机确认组件的固定身份里，构建它不影响 `latch-presence`。见 [CUSTOM-AGENTS](CUSTOM-AGENTS.md#删除-agent)。
 
 ### 插件与能力组合
 

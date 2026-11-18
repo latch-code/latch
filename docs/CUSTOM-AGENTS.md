@@ -99,7 +99,7 @@ Agent 是一份定义（名称、头像、说明、指令、技能、Harness、�
 | `GET …/proposals`，`POST …/proposals/:pid/save`、`…/dismiss` | 提议：列出、保存为记忆、不要 |
 | `GET …/results` | 还没有聊天时等着的定时结果卡（[AUTOMATIONS.md](AUTOMATIONS.md#结果回到对话)） |
 | `GET …/activity?before=`、`…/library?before=` | 动态（每页 30 条）与资料库（每页最多 8 组） |
-| `GET …/computer`、`…/home` | 「电脑」；家的路径、可用性与 `contents`（删除时它有没有文件） |
+| `GET …/computer`、`…/home`、`…/folders` | 「电脑」；家的路径与可用性；删除时会碰到的家（`contents` 与每个家的计数） |
 | `POST /custom-agents/:id/folder-export`，`GET`、`POST /custom-agents/folder-exports/:requestId`（`/cancel`） | 导出后删除：桌面端签名的开始、进度与取消（见「删除 Agent」） |
 | `GET /data/agent-folders`，`DELETE /data/agent-folders/:key`，`POST …/:key/export` | 已删除 Agent 的文件夹：列出、永久删除、导出后删除 |
 | `POST /custom-agents/:id/warm` | 打开聊天时预热它的进程（见「回得快」） |
@@ -454,17 +454,17 @@ Host 在 `custom.json` 的 `chats` 里为每个 Agent 与「通用」保留一�
 
 ## 删除 Agent
 
-删除 Agent 没有撤销。它的会话留着、只读；它的家（每个起始目录下各一个）不悄悄留下：
+删除 Agent 没有撤销。它的会话留着、只读；它的家（每个起始目录下各一个）只按人看到并确认的删除，从不悄悄删掉，也不悄悄留下：
 
-- **问一次**：`GET …/home` 的 `contents` 说删除时会碰到什么：`none`（没有能碰的家）、`empty` 或 `files`。只有 `files` 时对话框问：「导出后删除」或「永久删除」，并在一行里写明文件夹删除后无法恢复、聊天记录保留；其余只是普通的删除确认。`contents` 读不到时按 `files` 问。
-- **永久删除**：`DELETE /custom-agents/:id` 带 `{ requestId, folder: "delete" }`。Agent 先照常删除（删除从不因家而受阻，原有的拒绝不变），再处理它的家；回答 `{ id, folder }`，`folder.outcome` 是 `deleted`、`none`、`kept` 或 `left`（`reason` 说第一个留下的原因）。不带 `folder` 的旧页面仍说文件夹保留，所以家照旧保留（`kept`），之后在 设置 › 数据 里列出。同一请求的重试得到同一个回答。
+- **问一次**：对话框读 `GET …/folders`：`contents` 是 `none`（没有能碰的家）、`empty` 或 `files`，`homes` 是每个此刻能碰的家（键与计数：其下的项数、普通文件的字节数，由 `latch-home` 数出）。只有 `files` 时问「导出后删除」或「永久删除」，并在一行里写明文件夹删除后无法恢复、聊天记录保留；`empty` 是普通删除确认，写明空文件夹一并删除；`none` 不提文件夹。读不到时按 `files` 问，且不列任何家。导出只在这台 Mac 的桌面端；浏览器、手机和其他电脑上有删除权限的设备能永久删除文件夹，但不能导出，对话框在悬停里说明。
+- **只删给人看过的**：`DELETE /custom-agents/:id` 带 `{ requestId, folder: "delete", seen }`，`seen` 是对话框收到的 `homes` 原样。Agent 先照常删除（删除从不因家而受阻，原有的拒绝不变），再处理它的家：`seen` 里的家只在仍是记录的那个、且此刻的项数与字节数与 `seen` 相同时删除（组件先数再删）；多了或少了是 `changed`，留下；`seen` 之外的家（对话框打开后才找得到的，或那时数不出的）是 `unconfirmed`，留下。不带 `folder`（`contents` 为 `none`，或旧页面）家都保留（`kept`）。`folder` 与 `seen` 必须同时出现，否则 400，什么都不变。回答 `{ id, folder }`，`folder.outcome` 是 `deleted`、`none`、`kept` 或 `left`（`reason` 说第一个留下的原因）。同一请求的重试得到同一个回答；Host 重启后的重试只得到 `kept`，页面照样说文件夹留在原处。对一个已不在的 Agent 的删除请求从不碰它的家（那是 设置 › 数据 的事）。
 - **只碰记录的那个**：Host 只按 `session-folders.json` 里本数据目录记录的家找它。当前起始目录下按路径；其他起始目录的路径没有记录，只从 Host 自己记下的该 Agent 会话的 `cwd` 推出，且其起始目录的规范路径的哈希须是记录的那个。然后起始目录、`helpers` 与家的设备号和 inode 须与记录相同，`helpers` 与家须是本人的 0700 目录、不是链接，家的规范路径须在起始目录的 `helpers/` 下。对不上（替换的目录、链接、更宽的模式、另一个数据目录的家、找不到路径的其他起始目录）就不动它，报告 `unverified`。路径上什么都没有是 `absent`，记录随之移除。
-- **在用时不删**：有会话在运行或等审批、或终端打开在家里时，家留下（`in-use`）；导出后删除在开始前就拒绝（409 `agent-folder-in-use`）。
-- **怎样删**：在 `latch-home`（`native/macos/LatchHome.swift`）里进行，Host 只交给它起始目录的真实路径、名称和三个身份。它从 `/` 逐级 `openat(O_NOFOLLOW)` 打开起始目录，在句柄上核对身份，此后只经 `openat`、`fstatat(AT_SYMLINK_NOFOLLOW)`、`unlinkat` 操作：先只读地数一遍（最多 50 万项、64 层，下面有另一个设备就整体拒绝 `mount`），再删；链接只删链接本身，从不跟随；子目录先打开、核对与刚才读到的是同一个再清空，删目录前再核对一次，被换成链接或别的目录就停下；最后核对家仍是记录的那个才删它、再确认它不在了。`helpers` 从不删除。途中失败的家可能只删了一部分，记录保留，可以再按一次。没有这个组件（非 macOS 或构建缺失）时家留下（`unavailable`）。
-- **导出后删除**：只在这台 Mac 的桌面端：主进程用原生面板选文件夹，签名 `{ via: "agent-folder", agentId, requestId, parent }`，Host 在那里以 `O_CREAT|O_EXCL|O_NOFOLLOW`、0600 新建 `<Agent 名> <时间>.zip`（同名时加序号），把文件描述符交给 `latch-home` 写入。zip 只含家里的普通文件与目录（不压缩，UTF-8 文件名，顶层是 Agent 名），链接与其他类型不写入；先数一遍，超过 2 GiB 或 5 万项就拒绝（`agent-folder-too-large`，带已数到的字节数），不写半个文件。写完 Host 用同一句柄读回 zip 的中央目录，条目数与字节数须与组件读到的相同，文件仍是它新建的那个；之后才删除 Agent，再删除家，删除前再数一遍，须与导出的相同（不同则 `unverified`，什么都不删）。导出失败、取消或太大时只删它自己新建的 zip，Agent 与家都不动。zip 里没有记忆、指令、会话或密钥：只有 Agent 的工作文件夹；需要 Agent 本身请用「导出」。浏览器、手机与其他电脑上不提供导出，对话框在悬停里说明。
-- **审计**：先写后做。永久删除每个家先写 `agent.folder.removing`，写不进就留下它（`audit-failed`），之后写 `agent.folder.removed`（结果、删除的项数）；导出先写 `agent.folder.exporting`（写不进就不开始），结束写 `agent.folder.exported`（结果、项数、字节数）。detail 只有 Agent ID、家名与起始目录的哈希、导出与目标文件夹的哈希、枚举和计数，没有路径与文件名。
+- **在用时不删**：有会话在运行或等审批、或终端打开在家里时，家留下（`in-use`）；导出后删除在开始前就拒绝（409 `agent-folder-in-use`）。正在导出的 Agent 的家不能另行永久删除（409 `agent-folder-exporting`，Agent 也不删），无论来自哪台设备或 设置 › 数据。
+- **怎样删**：在 `latch-home`（`native/macos/LatchHome.swift`）里进行，Host 只交给它起始目录的真实路径、名称、三个身份和预期的计数。它从 `/` 逐级 `openat(O_NOFOLLOW)` 打开起始目录，在句柄上核对身份，此后只经 `openat`、`fstatat(AT_SYMLINK_NOFOLLOW)`、`unlinkat` 操作：先只读地数一遍（最多 50 万项、64 层，下面有另一个设备就整体拒绝 `mount`），与预期不同就什么都不删（`changed`），再删；链接只删链接本身，从不跟随；子目录先打开、核对与刚才读到的是同一个再清空，删目录前再核对一次，被换成链接或别的目录就停下；最后核对家仍是记录的那个才删它、再确认它不在了。`helpers` 从不删除。途中失败的家可能只删了一部分，记录保留，可以再按一次。没有这个组件（非 macOS 或构建缺失）时家留下（`unavailable`）。计数只比项数与字节数，不比内容：导出后被改写成同样大小的文件会随家删除，zip 里是导出时的样子。
+- **导出后删除**：主进程用原生面板选文件夹，签名 `{ via: "agent-folder", agentId, requestId, parent }`。目标不能在要导出的家、它的 `helpers`、数据目录或 `~/.latch` 里（400 `export-folder-invalid`）。开始时此刻能碰的家就固定下来：读不了的家让导出失败（`agent-folder-unreadable`），空的记为空，其余各写进一个 zip。zip 先写进所选文件夹里一个以 `O_CREAT|O_EXCL|O_NOFOLLOW`、0600 新建的隐藏临时文件，由 `latch-home` 经文件描述符写入；只含普通文件与目录（不压缩，UTF-8 文件名，名字里的反斜杠换成 `∖`，顶层是 Agent 名，按字节截到 120 字节），链接与其他类型不写入；先数一遍，超过 2 GiB 或 5 万项就拒绝（`agent-folder-too-large`，带已数到的字节数）。写完 Host 用同一句柄读回 zip 的中央目录，条目数与字节数须与组件读到的相同，之后才以硬链接给它正式的名字 `<Agent 名> <本机时间>.zip`（同名时加序号，从不覆盖），再去掉临时名；崩溃只会留下隐藏的临时文件。全部核对后（在这之前取消仍有效）才删除 Agent，再只删除开始时固定的那些家，各按导出的计数（空的按 0）核对；之后才出现或才找得到的家留下（`unconfirmed`）。导出失败、取消、读不了或太大时只删它自己建的文件，Agent 与家都不动；删除阶段出错而 Agent 已删除时，进度里带 `agentDeleted`，页面照实说。zip 里没有记忆、指令、会话或密钥：只有 Agent 的工作文件夹；需要 Agent 本身请用「导出」。
+- **审计**：先写后做。永久删除每个家先写 `agent.folder.removing`，写不进就留下它（`audit-failed`），之后写 `agent.folder.removed`（结果、删除的项数）。这是「删除从不因审计失败受阻」的唯一例外：家里的文件删了就回不来，所以没有记录就不删；Agent 本身的删除照旧不受阻。导出先写 `agent.folder.exporting`（写不进就不开始），结束写 `agent.folder.exported`（结果、项数、字节数）。detail 只有 Agent ID、家名与起始目录的哈希、导出与目标文件夹的哈希、枚举和计数，没有路径与文件名。
 - **不再建出**：会建家的路径（首次开始、人的一轮、定时运行）先确认 Agent 还在，已删除的 Agent 从不重新得到家（409 `agent-deleted`）。它的会话的文件树、搜索、改动、终端、附件能力与预热在家不在时照常拒绝或返回空，不建目录。
-- **已删除 Agent 的文件夹**：设置 › 数据 只在有时显示「已删除 Agent 的文件夹（N）」：记录里 Agent 已不在 `custom.json`、且此刻核对得上的家（Agent 的写入结果未知时不列）。每个文件夹各有「导出后删除」（桌面端）与「永久删除」，只在人按下时进行，规则同上。
+- **已删除 Agent 的文件夹**：设置 › 数据 只在有时显示「已删除 Agent 的文件夹（N）」：记录里 Agent 已不在 `custom.json`、且此刻核对得上的家（Agent 的写入结果未知时不列），每行带计数。「永久删除」送回这一行显示的计数，不同就留下（`changed`）；数不出计数（没有组件）的行不能在这里删除或导出。「导出后删除」（桌面端）规则同上。只在人按下时进行；列出与删除按设置写入限速。
 
 ## 各 Harness 如何收到
 

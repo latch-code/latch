@@ -12,14 +12,22 @@
 // is audited before it runs; if that record cannot be written the home is left (nothing is lost, and 设置 › 数据 can
 // remove it later). Deleting the Agent itself never waits for or depends on its home.
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
-import { join } from 'node:path'
+import { link, lstat, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { z } from 'zod'
-import type { AgentFolderExport, AgentFolderResult, AgentHomeOutcome, LeftoverAgentFolder } from '@latch/protocol'
+import type {
+  AgentFolderCounts,
+  AgentFolderExport,
+  AgentFolderResult,
+  AgentFolderView,
+  AgentHomeOutcome,
+  LeftoverAgentFolder,
+} from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
-import { canonicalPath, latchCodeRoot } from './paths.ts'
+import { canonicalPath, isInsidePath, latchCodeRoot } from './paths.ts'
 import type { LocatedHome, RecordedHome, SessionFolders } from './session-folders.ts'
 
 /** How long a removal may take in the helper, and an export. */
@@ -37,6 +45,7 @@ const archiveSchema = z.strictObject({
   skipped: z.number().int().nonnegative(),
 })
 const removeSchema = z.strictObject({ removed: z.number().int().nonnegative() })
+const countSchema = z.strictObject({ entries: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() })
 const failureSchema = z.strictObject({
   error: z.enum(['invalid-input', 'changed', 'unreadable', 'mount', 'busy', 'budget', 'mismatch', 'unwritable', 'too-large']),
   entries: z.number().int().nonnegative().optional(),
@@ -79,8 +88,14 @@ export class HomeHelper {
     return this.run({ op: 'archive', ...request, top, seconds: EXPORT_SECONDS }, archiveSchema, output, signal)
   }
 
-  remove(request: HomeHelperRequest, expect?: { entries: number; bytes: number }) {
-    return this.run({ op: 'remove', ...request, seconds: REMOVE_SECONDS, ...(expect ? { expect } : {}) }, removeSchema)
+  /** Removes the home only if it holds exactly `expect`: what the person was shown or what was archived. */
+  remove(request: HomeHelperRequest, expect: AgentFolderCounts) {
+    return this.run({ op: 'remove', ...request, seconds: REMOVE_SECONDS, expect }, removeSchema)
+  }
+
+  /** What a removal would count now, reading only. */
+  count(request: HomeHelperRequest) {
+    return this.run({ op: 'count', ...request, seconds: REMOVE_SECONDS }, countSchema)
   }
 
   private run<T>(
@@ -175,8 +190,13 @@ export function archiveLabel(name: string | undefined): string {
     .trim()
     .replace(/^\.+/u, '')
     .trim()
-  const short = [...cleaned].slice(0, 60).join('').trim()
-  return short || 'Agent'
+  // `latch-home` takes at most 128 bytes; a long name in CJK or emoji is cut by bytes, never refused.
+  let short = ''
+  for (const character of cleaned) {
+    if (Buffer.byteLength(short + character) > 120) break
+    short += character
+  }
+  return short.trim() || 'Agent'
 }
 
 /** A home's audit identity: the hashes of its directory name and of its start directory; never a path. */
@@ -211,25 +231,29 @@ export interface AgentFolderDeps {
   sessionFolders: () => Promise<string[]>
   /** Whether a running or waiting session, or a terminal, uses this canonical path or anything inside it. */
   inUse: (canonical: string) => Promise<boolean>
+  /** Where an archive is never written: the data directory and `~/.latch` (the homes themselves are added per export). */
+  forbidden: () => string[]
   now?: () => number
   log: (text: string) => void
 }
 
+type Counts = AgentFolderCounts
+
 interface ExportJob {
   state: AgentFolderExport
   deviceId: string
+  /** Owners whose homes this export reads and then deletes: no other removal touches them meanwhile. */
+  owners: ReadonlySet<string>
   controller: AbortController
   ended: Promise<void>
   at: number
 }
 
-interface Archived {
-  home: LocatedHome
-  entries: number
-  bytes: number
-}
-
-/** Agent homes: what is in them, removing them, exporting them, and the ones whose Agent is already gone. */
+/**
+ * Agent homes: what is in them, removing them, exporting them, and the ones whose Agent is already gone. A home is
+ * only ever removed against counts the person was shown or that were archived (`Plan`): one that appeared, became
+ * locatable or changed since is left and reported.
+ */
 export class AgentFolders {
   private readonly results = new Map<string, { at: number; result: Promise<AgentFolderResult> }>()
   private readonly jobs = new Map<string, ExportJob>()
@@ -250,49 +274,73 @@ export class AgentFolders {
     return (await this.deps.folders.recordedHomes()).filter(home => home.owner === owner)
   }
 
-  /** Whether the Agent's homes that can be touched hold anything: `none` when there is no such home. */
-  async contents(owner: string): Promise<'none' | 'empty' | 'files'> {
-    let found: 'none' | 'empty' | 'files' = 'none'
-    for (const home of await this.homesOf(owner)) {
-      const located = await this.locate(home)
-      if (typeof located === 'string') continue
-      const names = await readdir(located.path).catch(() => ['?'])
-      if (names.length) return 'files'
-      found = 'empty'
-    }
-    return found
+  /** Counts through the helper, as a removal would; undefined when it cannot be told. */
+  private async counted(home: LocatedHome): Promise<Counts | undefined> {
+    const helper = await this.deps.helper()
+    if (!helper.available) return undefined
+    return helper.count(requestOf(home)).catch(() => undefined)
   }
 
   /**
-   * After the Agent is gone: each of its recorded homes removed (`delete`), or kept as they are (no choice: a page
-   * from before this choice existed, which still says the folder stays). A retry of the same request gets the same
-   * answer instead of a second pass.
+   * What deleting the Agent would find, for the dialog to show and send back: each home that can be touched now, by
+   * key, with its counts. A home whose counts cannot be read is not listed, so it is never removed on this answer.
    */
-  afterDeletion(owner: string, requestId: string, choice: 'delete' | undefined, audit: FolderAudit): Promise<AgentFolderResult> {
+  async view(owner: string): Promise<AgentFolderView> {
+    const homes: AgentFolderView['homes'] = []
+    for (const home of await this.homesOf(owner)) {
+      const located = await this.locate(home)
+      if (typeof located === 'string') continue
+      const counts = await this.counted(located)
+      if (counts) homes.push({ key: homeKey(home), ...counts })
+    }
+    const contents = !homes.length ? 'none' : homes.some(home => home.entries > 0) ? 'files' : 'empty'
+    return { contents, homes }
+  }
+
+  /** A removal of `owner`'s homes while an export reads them is refused before anything happens. */
+  assertIdle(owner: string): void {
+    for (const job of this.jobs.values())
+      if (job.state.state === 'running' && job.owners.has(owner))
+        throw new AppError(409, 'agent-folder-exporting', '这个文件夹正在导出，等导出结束后再删除。')
+  }
+
+  /**
+   * After the Agent is gone: the homes the person was shown (`seen`, key and counts) are removed if they still hold
+   * exactly that; every other home stays. Without `seen` (nothing was shown, or a page from before the choice) every
+   * home stays. A retry of the same request gets the same answer instead of a second pass.
+   */
+  afterDeletion(owner: string, requestId: string, seen: readonly AgentFolderView['homes'][number][] | undefined, audit: FolderAudit) {
     for (const [key, kept] of this.results) if (this.now() - kept.at > KEEP_MS) this.results.delete(key)
     const key = `${owner}:${requestId}`
     const known = this.results.get(key)
     if (known) return known.result
-    const result =
-      choice === 'delete'
-        ? this.removeAll(owner, audit)
-        : this.homesOf(owner).then(homes => (homes.length ? { outcome: 'kept' as const, removed: 0, left: homes.length } : none()))
+    const result = seen ? this.removeAll(owner, audit, new Map(seen.map(home => [home.key, home]))) : this.kept(owner)
     this.results.set(key, { at: this.now(), result })
     result.catch(() => this.results.delete(key))
     return result
   }
 
-  private async removeAll(owner: string, audit: FolderAudit, expect?: Map<string, Archived>): Promise<AgentFolderResult> {
+  /** The homes stay: said as such, with whether any of them can be found (and so removed later in 设置 › 数据). */
+  private async kept(owner: string): Promise<AgentFolderResult> {
+    const homes = await this.homesOf(owner)
+    if (!homes.length) return none()
+    let located = false
+    for (const home of homes) if (typeof (await this.locate(home)) !== 'string') located = true
+    return { outcome: 'kept', reason: located ? 'unconfirmed' : 'unverified', removed: 0, left: homes.length }
+  }
+
+  /** Each recorded home of `owner`: removed against its planned counts, or (not in the plan) left and reported. */
+  private async removeAll(owner: string, audit: FolderAudit, plan: ReadonlyMap<string, Counts>): Promise<AgentFolderResult> {
     const outcomes: AgentHomeOutcome[] = []
-    for (const home of await this.homesOf(owner)) {
-      const archived = expect?.get(home.rootHash)
-      outcomes.push(await this.removeOne(home, audit, archived && { entries: archived.entries, bytes: archived.bytes }))
-    }
+    for (const home of await this.homesOf(owner)) outcomes.push(await this.removeOne(home, audit, plan.get(homeKey(home))))
     return summarize(outcomes)
   }
 
-  /** One recorded home: removed if it is still the one recorded and nothing uses it, else left and reported. */
-  private async removeOne(home: RecordedHome, audit: FolderAudit, expect?: { entries: number; bytes: number }): Promise<AgentHomeOutcome> {
+  /**
+   * One recorded home: removed if it is still the one recorded, nothing uses it and it holds exactly `expect`. Without
+   * `expect` (the person was never shown it, or it was not exported) it is left: `unconfirmed` when it is there.
+   */
+  private async removeOne(home: RecordedHome, audit: FolderAudit, expect: Counts | undefined): Promise<AgentHomeOutcome> {
     const report = async (outcome: AgentHomeOutcome, entries = 0) => {
       await audit({ action: 'agent.folder.removed', detail: { ...homeDetail(home), outcome, entries } }).catch(error =>
         this.deps.log(`Agent 文件夹的删除结果没有写入审计：${error instanceof Error ? error.message : String(error)}`),
@@ -305,17 +353,18 @@ export class AgentFolders {
       return report('absent')
     }
     if (located === 'unverified') return report('unverified')
+    if (!expect) return report('unconfirmed')
     if (await this.deps.inUse(await canonicalPath(located.path).catch(() => located.path))) return report('in-use')
     const helper = await this.deps.helper()
     if (!helper.available) return report('unavailable')
     try {
       await audit({ action: 'agent.folder.removing', detail: homeDetail(home) })
     } catch {
-      // Removing for good leaves a record first; without one the folder stays, to be removed from 设置 › 数据 later.
+      // The one exception to 删除从不因审计失败受阻: these files go for good, so without a record first they stay.
       return report('audit-failed')
     }
     try {
-      const { removed } = await helper.remove(requestOf(located), expect)
+      const { removed } = await helper.remove(requestOf(located), { entries: expect.entries, bytes: expect.bytes })
       await this.deps.folders
         .forgetHome(home)
         .catch(error => this.deps.log(`已删除的 Agent 文件夹没有从记录中移除：${error instanceof Error ? error.message : String(error)}`))
@@ -326,8 +375,9 @@ export class AgentFolders {
   }
 
   /**
-   * The homes of Agents that are gone, that can be touched now. Only from a store read in full: while a write to the
-   * Agents is unconfirmed (`agents` throws) nothing is listed, so no home is ever taken for one whose Agent is gone.
+   * The homes of Agents that are gone, that can be touched now, with their counts. Only from a store read in full:
+   * while a write to the Agents is unconfirmed (`agents` throws) nothing is listed, so no home is ever taken for one
+   * whose Agent is gone. Without the helper a home is listed without counts and cannot be removed from here.
    */
   async leftovers(agents: () => ReadonlySet<string>): Promise<Array<LeftoverAgentFolder & { home: RecordedHome }>> {
     const existing = agents()
@@ -336,24 +386,27 @@ export class AgentFolders {
       if (home.owner === 'general' || existing.has(home.owner)) continue
       const located = await this.locate(home)
       if (typeof located === 'string') continue
-      const names = await readdir(located.path).catch(() => undefined)
-      if (names === undefined) continue
-      found.push({ key: leftoverKey(home), path: located.path, contents: names.length ? 'files' : 'empty', home })
+      const counts = await this.counted(located)
+      if (counts) found.push({ key: homeKey(home), path: located.path, contents: counts.entries ? 'files' : 'empty', ...counts, home })
+      else found.push({ key: homeKey(home), path: located.path, contents: 'files', home })
     }
     return found
   }
 
-  /** 设置 › 数据: one leftover home removed for good, if its Agent is still gone. */
-  async removeLeftover(key: string, agents: () => ReadonlySet<string>, audit: FolderAudit): Promise<AgentFolderResult> {
+  /** 设置 › 数据: one leftover home removed for good, if its Agent is still gone and it holds what the person was shown. */
+  async removeLeftover(key: string, seen: Counts, agents: () => ReadonlySet<string>, audit: FolderAudit): Promise<AgentFolderResult> {
     const found = (await this.leftovers(agents)).find(item => item.key === key)
     if (!found) throw new AppError(404, 'agent-folder-not-found', '找不到这个文件夹，或它已不能删除。')
-    return summarize([await this.removeOne(found.home, audit)])
+    this.assertIdle(found.home.owner)
+    return summarize([await this.removeOne(found.home, audit, seen)])
   }
 
   /**
-   * 导出后删除: each home of `owner` (or the one leftover `key`) that holds anything is written into a new zip archive in
-   * `parent`; once every archive is verified, `then` runs (the Agent's deletion) and the homes are removed, each only if
-   * it still holds what was archived. A failed or cancelled export removes its own archive and deletes nothing.
+   * 导出后删除: the homes of `owner` (or the one leftover `key`) that can be touched now are fixed when the export starts.
+   * Each that holds anything is written into a zip in `parent`; once every archive is verified, `then` runs (the
+   * Agent's deletion) and exactly those homes are removed, each only if it still holds what was archived (an empty one:
+   * still nothing). Any other home stays. A failed, unreadable or cancelled export removes its own archives and deletes
+   * nothing.
    */
   async startExport(input: {
     deviceId: string
@@ -364,6 +417,8 @@ export class AgentFolders {
     audit: FolderAudit
     recheck: () => void
     then?: () => Promise<void>
+    /** After a failure while deleting: whether the Agent is already gone, so the page says what really happened. */
+    gone?: () => boolean
   }): Promise<AgentFolderExport> {
     if (this.closing) throw new AppError(503, 'host-closing', '运行节点正在关闭')
     this.forgetOld()
@@ -393,6 +448,13 @@ export class AgentFolders {
           throw new AppError(409, 'agent-folder-in-use', '这个 Agent 还有会话在运行或打开着终端，结束后再导出。')
         located.push(found)
       }
+      // Never into what it exports or removes, the Host's own data or the person's relay files.
+      const target = await canonicalPath(parent)
+      for (const place of [...located.flatMap(home => [home.path, dirname(home.path)]), ...this.deps.forbidden()]) {
+        const canonical = await canonicalPath(place).catch(() => undefined)
+        if (canonical && isInsidePath(target, canonical))
+          throw new AppError(400, 'export-folder-invalid', '不能导出到这个文件夹里，换一个位置。')
+      }
       const helper = await this.deps.helper()
       if (located.length && !helper.available)
         throw new AppError(503, 'agent-folder-unavailable', '这台 Host 没有导出 Agent 文件夹的组件。')
@@ -406,6 +468,7 @@ export class AgentFolders {
       const job: ExportJob = {
         state: { requestId: input.requestId, state: 'running', phase: 'export', archives: [] },
         deviceId: input.deviceId,
+        owners: new Set(homes.map(home => home.owner)),
         controller: new AbortController(),
         ended: Promise.resolve(),
         at: this.now(),
@@ -457,28 +520,39 @@ export class AgentFolders {
       audit: FolderAudit
       recheck: () => void
       then?: () => Promise<void>
+      gone?: () => boolean
       target: { owner: string } | { key: string }
     },
   ): Promise<void> {
-    const archived = new Map<string, Archived>()
+    /** The homes fixed at the start, by key, with what each held: only these are removed, each against its counts. */
+    const plan = new Map<string, Counts>()
     const made: Array<{ path: string; dev: number; ino: number }> = []
-    let current: Archived | undefined
-    const stamp = new Date(this.now()).toISOString().slice(0, 16).replace('T', ' ').replace(':', '')
+    const stamp = localStamp(new Date(this.now()))
+    const exported = new Set<string>()
     try {
       for (const home of homes) {
         if (job.controller.signal.aborted) throw new HomeHelperFailure('cancelled')
         input.recheck()
-        if (!(await readdir(home.path).catch(() => [])).length) continue
-        const { handle, path, name } = await createArchive(input.parent, `${input.label} ${stamp}`)
+        // A folder that cannot be read is a failed export, never an empty one.
+        const names = await readdir(home.path).catch(() => {
+          throw new HomeHelperFailure('unreadable')
+        })
+        if (!names.length) {
+          plan.set(homeKey(home), { entries: 0, bytes: 0 })
+          exported.add(home.rootHash)
+          continue
+        }
+        const { handle, temporary } = await createTemporary(input.parent)
         const info = await handle.stat()
-        made.push({ path, dev: info.dev, ino: info.ino })
+        made.push({ path: temporary, dev: info.dev, ino: info.ino })
         try {
           const result = await helper.archive(requestOf(home), input.label, handle, job.controller.signal)
           if (!(await verifyArchive(handle, result))) throw new HomeHelperFailure('changed')
-          const atPath = await lstat(path).catch(() => undefined)
-          if (!atPath?.isFile() || atPath.dev !== info.dev || atPath.ino !== info.ino) throw new HomeHelperFailure('changed')
-          current = { home, entries: result.entries, bytes: result.bytes }
-          archived.set(home.rootHash, current)
+          // Verified: only now does it get its name, without replacing anything there.
+          const name = await publish(input.parent, temporary, `${input.label} ${stamp}`, info)
+          made.push({ path: join(input.parent, name), dev: info.dev, ino: info.ino })
+          plan.set(homeKey(home), { entries: result.entries, bytes: result.bytes })
+          exported.add(home.rootHash)
           job.state.archives!.push(name)
           await input
             .audit({
@@ -490,9 +564,11 @@ export class AgentFolders {
           await handle.close()
         }
       }
+      // A cancel that came after the last archive was written still cancels: nothing has been deleted yet.
+      if (job.controller.signal.aborted) throw new HomeHelperFailure('cancelled')
     } catch (error) {
       const failure = error instanceof HomeHelperFailure ? error : new HomeHelperFailure('unavailable')
-      const failed = homes.find(home => !archived.has(home.rootHash))
+      const failed = homes.find(home => !exported.has(home.rootHash)) ?? homes.at(-1)
       if (failed)
         await input
           .audit({
@@ -506,7 +582,7 @@ export class AgentFolders {
             },
           })
           .catch(() => this.deps.log('Agent 文件夹的导出结果没有写入审计'))
-      // Only the archives this export made, each still the file it created.
+      // Only the files this export made, each still the file it created.
       for (const file of made) {
         const info = await lstat(file.path).catch(() => undefined)
         if (info?.isFile() && info.dev === file.dev && info.ino === file.ino) await unlink(file.path).catch(() => {})
@@ -521,18 +597,29 @@ export class AgentFolders {
       job.at = this.now()
       return
     }
-    // Every archive is closed and verified: only now is anything deleted.
+    // Every archive is named and verified: only now is anything deleted, and only what the plan holds.
     job.state.phase = 'delete'
     try {
       input.recheck()
       await input.then?.()
       const result =
         'owner' in input.target
-          ? await this.removeAll(input.target.owner, input.audit, archived)
-          : summarize([await this.removeOne(homes[0]!, input.audit, current && { entries: current.entries, bytes: current.bytes })])
+          ? await this.removeAll(input.target.owner, input.audit, plan)
+          : summarize(await Promise.all(homes.map(home => this.removeOne(home, input.audit, plan.get(homeKey(home))))))
       job.state = { ...job.state, state: 'done', folder: result }
     } catch (error) {
-      job.state = { ...job.state, state: 'failed', code: error instanceof AppError ? error.code : 'agent-delete-failed' }
+      let agentDeleted = false
+      try {
+        agentDeleted = input.gone?.() ?? false
+      } catch {
+        agentDeleted = false
+      }
+      job.state = {
+        ...job.state,
+        state: 'failed',
+        code: error instanceof AppError ? error.code : 'agent-delete-failed',
+        ...(agentDeleted ? { agentDeleted: true } : {}),
+      }
     }
     job.at = this.now()
   }
@@ -542,14 +629,19 @@ function requestOf(home: LocatedHome): HomeHelperRequest {
   return { root: home.root, rootId: home.ids.root, helpersId: home.ids.helpers, name: home.name, homeId: home.ids.home }
 }
 
-/** A new archive file in `parent`, created exclusively and privately, never through a link: `<label> <time>.zip`, then ` 2`… */
-async function createArchive(parent: string, base: string): Promise<{ handle: FileHandle; path: string; name: string }> {
-  for (let index = 1; index <= NAME_TRIES; index++) {
-    const name = `${base}${index > 1 ? ` ${index}` : ''}.zip`
-    const path = join(parent, name)
+/** The archive's time in its name: the Host's local date and time, `2026-11-18 1910`. */
+function localStamp(at: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}${pad(at.getMinutes())}`
+}
+
+/** A new hidden file in `parent` the archive is written to, created exclusively and privately, never through a link. */
+async function createTemporary(parent: string): Promise<{ handle: FileHandle; temporary: string }> {
+  for (let attempt = 0; attempt < NAME_TRIES; attempt++) {
+    const temporary = join(parent, `.latch-export-${randomBytes(8).toString('hex')}.partial`)
     try {
-      const handle = await open(path, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
-      return { handle, path, name }
+      const handle = await open(temporary, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+      return { handle, temporary }
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw new HomeHelperFailure('unwritable')
     }
@@ -557,12 +649,39 @@ async function createArchive(parent: string, base: string): Promise<{ handle: Fi
   throw new HomeHelperFailure('unwritable')
 }
 
-function leftoverKey(home: Pick<RecordedHome, 'rootHash' | 'owner'>): string {
+/**
+ * The verified archive under its name: `<label> <time>.zip`, then ` 2`…, each a hard link that never replaces an
+ * entry already there; then the temporary name goes. Both names must be the file this export wrote.
+ */
+async function publish(parent: string, temporary: string, base: string, written: { dev: number; ino: number }): Promise<string> {
+  const same = async (path: string) => {
+    const info = await lstat(path).catch(() => undefined)
+    return !!info?.isFile() && info.dev === written.dev && info.ino === written.ino
+  }
+  if (!(await same(temporary))) throw new HomeHelperFailure('changed')
+  for (let index = 1; index <= NAME_TRIES; index++) {
+    const name = `${base}${index > 1 ? ` ${index}` : ''}.zip`
+    try {
+      await link(temporary, join(parent, name))
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'EEXIST') continue
+      throw new HomeHelperFailure('unwritable')
+    }
+    if (!(await same(join(parent, name)))) throw new HomeHelperFailure('changed')
+    if (await same(temporary)) await unlink(temporary).catch(() => {})
+    return name
+  }
+  throw new HomeHelperFailure('unwritable')
+}
+
+/** A home's key, the same in the dialog, the deletion and 设置 › 数据: its start directory's hash and owner, hashed. */
+function homeKey(home: Pick<RecordedHome, 'rootHash' | 'owner'>): string {
   return sha256Hex(`${home.rootHash}/${home.owner}`).slice(0, 32)
 }
 
 function helperOutcome(code: HomeHelperFailure['code']): AgentHomeOutcome {
-  if (code === 'changed' || code === 'mismatch' || code === 'invalid-input') return 'unverified'
+  if (code === 'mismatch') return 'changed'
+  if (code === 'changed' || code === 'invalid-input') return 'unverified'
   if (code === 'mount') return 'mount'
   if (code === 'unavailable') return 'unavailable'
   if (code === 'too-large') return 'too-large'
@@ -582,6 +701,7 @@ function exportCode(code: HomeHelperFailure['code']): string {
   if (code === 'changed' || code === 'mismatch') return 'agent-folder-changed'
   if (code === 'mount') return 'agent-folder-mount'
   if (code === 'unwritable') return 'export-folder-invalid'
+  if (code === 'unreadable') return 'agent-folder-unreadable'
   return 'export-failed'
 }
 

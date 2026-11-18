@@ -123,15 +123,13 @@ private struct Request {
   init(_ data: Data) throws {
     guard !data.isEmpty, data.count <= inputLimit,
       let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let operation = value["op"] as? String, operation == "archive" || operation == "remove",
+      let operation = value["op"] as? String, ["archive", "remove", "count"].contains(operation),
       let root = value["root"] as? String, let rootId = (value["rootId"] as? String).flatMap(Identity.init),
       let helpersId = (value["helpersId"] as? String).flatMap(Identity.init),
       let name = value["name"] as? String, let homeId = (value["homeId"] as? String).flatMap(Identity.init),
       let seconds = value["seconds"] as? Int, seconds > 0, seconds <= 900 else { throw Failure.invalidInput }
-    let allowed: Set<String> =
-      operation == "archive"
-      ? ["op", "root", "rootId", "helpersId", "name", "homeId", "seconds", "top"]
-      : ["op", "root", "rootId", "helpersId", "name", "homeId", "seconds", "expect"]
+    let common: Set<String> = ["op", "root", "rootId", "helpersId", "name", "homeId", "seconds"]
+    let allowed = operation == "archive" ? common.union(["top"]) : operation == "remove" ? common.union(["expect"]) : common
     guard Set(value.keys).isSubset(of: allowed) else { throw Failure.invalidInput }
     // The start directory as the Host resolved it: absolute, no `.` or `..`, nothing below it but `helpers/<name>`.
     let pieces = root.split(separator: "/", omittingEmptySubsequences: false)
@@ -291,6 +289,14 @@ private func remove(_ request: Request, step: Step? = nil) throws -> [String: An
   guard unlinkat(home.helpers, request.name, AT_REMOVEDIR) == 0 else { throw errno == ENOTEMPTY ? Failure.busy : Failure.unreadable }
   guard try entry(home.helpers, request.name) == nil else { throw Failure.changed }
   return ["removed": removed]
+}
+
+/** What a removal would count now, changing nothing: what the person is shown before choosing. */
+private func count(_ request: Request) throws -> [String: Any] {
+  let home = try Home(request)
+  var totals = Totals()
+  try survey(home.home, device: home.device, depth: 0, limit: removeEntries, deadline: request.deadline, into: &totals)
+  return ["entries": totals.entries, "bytes": totals.bytes]
 }
 
 // MARK: Archive
@@ -465,7 +471,8 @@ private func pack(_ directory: Int32, prefix: String, device: UInt64, depth: Int
   for name in try names(directory) {
     guard ContinuousClock.now < deadline else { throw Failure.budget }
     guard let found = try entry(directory, name) else { throw Failure.changed }
-    let path = prefix + "/" + name
+    // A backslash is a separator to some extractors: it never reaches the archive as one.
+    let path = prefix + "/" + name.replacingOccurrences(of: "\\", with: "\u{2216}")
     guard path.utf8.count <= pathLimit else { throw Failure.unreadable }
     totals.entries += 1
     switch kind(found) {
@@ -542,6 +549,8 @@ private func selfTest(_ scratch: String) throws {
     for (key, item) in extra { value[key] = item }
     return try Request(JSONSerialization.data(withJSONObject: value))
   }
+  let counted = try count(try request("count"))
+  guard counted["entries"] as? Int == 3, counted["bytes"] as? UInt64 == 4 else { throw Failure.mismatch }
   let zip = Darwin.open(root + "/out.zip", O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
   guard zip >= 0 else { throw Failure.unwritable }
   defer { Darwin.close(zip) }
@@ -612,7 +621,12 @@ private func failure(_ error: Error) -> Never {
       }
       let request = try Request(input)
       // The archive goes to descriptor 3, a new empty file the Host opened (O_EXCL, 0600) where the person chose.
-      let result = request.operation == "archive" ? try archive(request, output: 3) : try remove(request)
+      let result: [String: Any]
+      switch request.operation {
+      case "archive": result = try archive(request, output: 3)
+      case "remove": result = try remove(request)
+      default: result = try count(request)
+      }
       reply(result, status: 0)
     } catch { failure(error) }
   }

@@ -325,9 +325,10 @@ function LeftoverRow({ folder, onDone }: { folder: LeftoverAgentFolder; onDone: 
     onDone()
   })
   const remove = async () => {
+    // What this row showed: the folder goes only if it still holds exactly that.
     const { folder: result } = await api<{ folder: AgentFolderResult }>(`data/agent-folders/${folder.key}`, {
       method: 'DELETE',
-      body: { requestId: newRequestId() },
+      body: { requestId: newRequestId(), entries: folder.entries, bytes: folder.bytes },
     })
     const left = folderNotice(result)
     if (left) throw new MessageError(left)
@@ -349,12 +350,16 @@ function LeftoverRow({ folder, onDone }: { folder: LeftoverAgentFolder; onDone: 
         }
         trailing={
           <span className="data-leftover-actions">
-            {folder.contents === 'files' && exporting.available && (
+            {folder.contents === 'files' && folder.entries !== undefined && exporting.available && (
               <Button size="sm" variant="outline" disabled={exporting.running} onClick={() => void exporting.start()}>
                 {LEFTOVER_COPY.exportThenDelete}
               </Button>
             )}
-            <Button size="sm" variant="ghost" disabled={exporting.running} onClick={() => setConfirming(true)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={exporting.running || folder.entries === undefined}
+              onClick={() => setConfirming(true)}>
               {LEFTOVER_COPY.deleteForGood}
             </Button>
           </span>

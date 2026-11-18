@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AgentFolderExport, AgentFolderResult, AgentHome } from '@latch/protocol'
+import type { AgentFolderExport, AgentFolderResult, AgentFolderView, AgentHome } from '@latch/protocol'
 import { Button, Dialog, Hint, InlineNotice, Spinner } from '@latch/ui'
 import { api, ApiError, errorMessage, newRequestId } from '../core/api.ts'
 import { shellFolders, type AgentFolderStart } from '../core/shell.ts'
@@ -17,7 +17,7 @@ const FOLDER_COPY = defineCopy(
     exportThenDelete: '导出后删除',
     exportWhat: 'zip 里只有它的工作文件夹，不含记忆、指令和对话。导出完成并核对后才删除。',
     exportElsewhere: '需要导出？',
-    exportOnMac: '导出文件夹只能在这台 Mac 的 Latch 桌面端进行。',
+    exportOnMac: '导出文件夹只能在这台 Mac 的 Latch 桌面端进行；在这里只能永久删除。',
     exporting: '正在导出…',
     deleting: '正在删除…',
     stopExport: '取消导出',
@@ -26,15 +26,20 @@ const FOLDER_COPY = defineCopy(
     changed: '导出时文件夹有变化，什么都没有删除。请重试。',
     exportFailed: '导出没有完成，什么都没有删除。',
     exportedNotDeleted: '已导出到所选文件夹；Agent 和文件夹都没有删除。',
+    exportedAgentGone: '已导出到所选文件夹，Agent 已删除；文件夹没有删除，可在 设置 › 数据 里删除。',
+    unreadable: '读不了文件夹，没有导出，什么都没有删除。',
     badDirectory: '选择的位置不能用来导出，换一个文件夹。',
     busy: '另一次导出还在进行，等它结束后再试。',
     inUse: '还有会话在运行或打开着终端，结束后再导出；什么都没有删除。',
     unknown: '删除结果尚未确认。',
     unknownExport: '还不知道导出是否开始；再按一次会核对同一次导出。',
     left: (why: string) => `已删除 Agent，文件夹保留在原处：${why}`,
+    kept: '已删除 Agent，文件夹保留在原处。',
     later: '可在 设置 › 数据 里删除。',
     exportHolds: '导出只含文件夹',
     leftWhy: {
+      changed: '文件夹在你确认后有了变化，没有删除。',
+      unconfirmed: '这个文件夹没有给你看过或没有导出，没有删除。',
       unverified: '文件夹已不是 Latch 建的那个，没有动它。',
       'in-use': '还有会话在运行或打开着终端。',
       mount: '文件夹里有另一个磁盘。',
@@ -54,7 +59,7 @@ const FOLDER_COPY = defineCopy(
     exportWhat:
       'The zip holds its working folder only, not its memory, instructions or conversations. Deletion follows once the export is checked.',
     exportElsewhere: 'Need an export?',
-    exportOnMac: 'Exporting the folder works only in the Latch desktop app on this Mac.',
+    exportOnMac: 'Exporting the folder works only in the Latch desktop app on this Mac. Here it can only be deleted permanently.',
     exporting: 'Exporting…',
     deleting: 'Deleting…',
     stopExport: 'Cancel export',
@@ -63,15 +68,20 @@ const FOLDER_COPY = defineCopy(
     changed: 'The folder changed during the export. Nothing was deleted. Try again.',
     exportFailed: 'The export didn’t finish. Nothing was deleted.',
     exportedNotDeleted: 'Exported to the chosen folder. The Agent and its folder weren’t deleted.',
+    exportedAgentGone: 'Exported to the chosen folder and the Agent was deleted. Its folder wasn’t; you can delete it in Settings › Data.',
+    unreadable: 'The folder couldn’t be read. Nothing was exported or deleted.',
     badDirectory: 'That location can’t be used for the export. Choose another folder.',
     busy: 'Another export is running. Try again when it ends.',
     inUse: 'A session is still running or a terminal is open. Export once it ends. Nothing was deleted.',
     unknown: 'The deletion result is unknown.',
     unknownExport: 'It isn’t known yet whether the export started. Press again to check the same export.',
     left: (why: string) => `Agent deleted. Its folder was kept: ${why}`,
+    kept: 'Agent deleted. Its folder was kept.',
     later: ' You can delete it in Settings › Data.',
     exportHolds: 'The export holds the folder only',
     leftWhy: {
+      changed: 'The folder changed after you confirmed, so it wasn’t deleted.',
+      unconfirmed: 'This folder wasn’t shown to you or wasn’t exported, so it wasn’t deleted.',
       unverified: 'The folder is no longer the one Latch made, so it was left alone.',
       'in-use': 'A session is still running or a terminal is open.',
       mount: 'Another disk is mounted inside the folder.',
@@ -86,9 +96,10 @@ const FOLDER_COPY = defineCopy(
 const GB = 1024 * 1024 * 1024
 
 /** What an export that did not end in deletion says: nothing was deleted, and why. */
-function exportFailure(state: Pick<AgentFolderExport, 'state' | 'phase' | 'code' | 'bytes'>): string {
+function exportFailure(state: Pick<AgentFolderExport, 'state' | 'phase' | 'code' | 'bytes' | 'agentDeleted'>): string {
   if (state.state === 'cancelled' || state.code === 'export-cancelled') return FOLDER_COPY.cancelled
-  if (state.phase === 'delete') return FOLDER_COPY.exportedNotDeleted
+  if (state.phase === 'delete') return state.agentDeleted ? FOLDER_COPY.exportedAgentGone : FOLDER_COPY.exportedNotDeleted
+  if (state.code === 'agent-folder-unreadable') return FOLDER_COPY.unreadable
   if (state.code === 'agent-folder-too-large')
     return FOLDER_COPY.tooLarge(state.bytes === undefined ? '> 2 GB' : `${formatNumber(Math.ceil((state.bytes / GB) * 10) / 10)} GB`)
   if (state.code === 'agent-folder-changed' || state.code === 'agent-folder-mount') return FOLDER_COPY.changed
@@ -105,11 +116,12 @@ function startFailure(result: AgentFolderStart): string {
 
 /** A short line after the deletion when the folder stayed; nothing when it went (the dialog said so) or there was none. */
 export function folderNotice(result: AgentFolderResult | undefined): string | undefined {
-  if (result?.outcome !== 'left') return undefined
+  if (result?.outcome !== 'left' && result?.outcome !== 'kept') return undefined
+  // Every folder that is still the one Latch made is listed in 设置 › 数据; one that is not never is.
+  const later = result.reason !== 'unverified' ? FOLDER_COPY.later : ''
+  if (result.outcome === 'kept') return `${FOLDER_COPY.kept}${later}`
   const why = (result.reason && FOLDER_COPY.leftWhy[result.reason]) ?? FOLDER_COPY.leftWhy.failed
-  // Only a folder that may still be the one Latch made is listed in 设置 › 数据 to delete later.
-  const later = result.reason === 'in-use' || result.reason === 'audit-failed' || result.reason === 'failed'
-  return `${FOLDER_COPY.left(why)}${later ? FOLDER_COPY.later : ''}`
+  return `${FOLDER_COPY.left(why)}${later}`
 }
 
 /**
@@ -207,14 +219,19 @@ export function AgentDeleteDialog({
   onDeleted: (notice?: string) => void
 }) {
   const [home, setHome] = useState<AgentHome | null>(null)
+  const [folders, setFolders] = useState<AgentFolderView | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
     let live = true
-    void api<AgentHome>(`custom-agents/${encodeURIComponent(agent.id)}/home`)
+    const id = encodeURIComponent(agent.id)
+    void api<AgentHome>(`custom-agents/${id}/home`)
       .then(value => live && setHome(value))
-      // Unknown: ask as if it held files, so nothing goes without the choice.
-      .catch(() => live && setHome({ owner: agent.id, available: false, contents: 'files' }))
+      .catch(() => {})
+    void api<AgentFolderView>(`custom-agents/${id}/folders`)
+      .then(value => live && setFolders(value))
+      // Unknown: ask as if it held files, and show (so send) no home: none is removed on this answer.
+      .catch(() => live && setFolders({ contents: 'files', homes: [] }))
     return () => {
       live = false
     }
@@ -224,7 +241,7 @@ export function AgentDeleteDialog({
     onClose()
   }
   const exporting = useFolderExport({ agentId: agent.id }, finish)
-  const contents = home?.contents ?? (home ? 'none' : undefined)
+  const contents = folders?.contents
   const choose = contents === 'files'
   const remove = async () => {
     setBusy(true)
@@ -232,9 +249,13 @@ export function AgentDeleteDialog({
     try {
       const done = writes.held
         ? await writes.retry<{ folder?: AgentFolderResult }>()
-        : await writes.run<{ folder?: AgentFolderResult }>(`agent:${agent.id}`, `custom-agents/${encodeURIComponent(agent.id)}`, 'DELETE', {
-            folder: 'delete',
-          })
+        : await writes.run<{ folder?: AgentFolderResult }>(
+            `agent:${agent.id}`,
+            `custom-agents/${encodeURIComponent(agent.id)}`,
+            'DELETE',
+            // Exactly the homes this dialog showed, with their counts: a home that appeared or changed since stays.
+            contents === 'none' || !folders ? {} : { folder: 'delete', seen: folders.homes },
+          )
       if (done === undefined) {
         setError(FOLDER_COPY.unknown)
         setBusy(false)

@@ -21,11 +21,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
-import type { AgentFolderExport, AgentFolderResult, AgentHome, LeftoverAgentFolder, TaskDetail } from '@latch/protocol'
+import type { AgentFolderExport, AgentFolderResult, AgentFolderView, LeftoverAgentFolder, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { AppError } from '@latch/sdk'
 import { latchCodeRoot } from '../src/paths.ts'
 import { buildHomeHelper } from '../scripts/build-home.ts'
+import { archiveLabel } from '../src/agent-folders.ts'
 import type { LaunchTerminal } from '../src/terminal/helper.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
@@ -161,8 +162,18 @@ async function auditRows(host: TestHost) {
     .map(line => JSON.parse(line) as { action: string; target?: string; detail?: Record<string, unknown> })
 }
 
-const remove = (owner: Device, id: string, folder?: 'delete', requestId = randomUUID()) =>
-  owner.request(`custom-agents/${id}`, { method: 'DELETE', body: { requestId, ...(folder ? { folder } : {}) } })
+/** What the dialog shows before deleting: each home it may remove, by key, with its counts. */
+const view = async (owner: Device, id: string): Promise<AgentFolderView> => {
+  const response = await owner.request(`custom-agents/${id}/folders`)
+  return response.ok ? ((await response.json()) as AgentFolderView) : { contents: 'none', homes: [] }
+}
+
+/** Deletes as the dialog does: `delete` sends back what it was shown (`seen`, read now unless given). */
+const remove = async (owner: Device, id: string, folder?: 'delete', requestId = randomUUID(), seen?: AgentFolderView['homes']) =>
+  owner.request(`custom-agents/${id}`, {
+    method: 'DELETE',
+    body: { requestId, ...(folder ? { folder, seen: seen ?? (await view(owner, id)).homes } : {}) },
+  })
 
 async function exported(owner: Device, requestId: string): Promise<AgentFolderExport> {
   let state: AgentFolderExport | undefined
@@ -203,7 +214,10 @@ describe.skipIf(process.platform !== 'darwin')('an Agent’s home when the Agent
 
   test('永久删除 removes the home for good, never what a link in it points at, audited before and after', async () => {
     const { host, owner, agent, home, outside, sessionId } = await agentWithHome()
-    expect((await owner.json<AgentHome>(`custom-agents/${agent.id}/home`)).contents).toBe('files')
+    expect(await view(owner, agent.id)).toEqual({
+      contents: 'files',
+      homes: [{ key: expect.stringMatching(/^[0-9a-f]{32}$/u), entries: 4, bytes: 11 }],
+    })
     const response = await remove(owner, agent.id, 'delete')
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ id: agent.id, folder: { outcome: 'deleted', removed: 1, left: 0 } })
@@ -231,7 +245,7 @@ describe.skipIf(process.platform !== 'darwin')('an Agent’s home when the Agent
     const { owner, agent, home } = await agentWithHome()
     const requestId = randomUUID()
     const first = (await (await remove(owner, agent.id, undefined, requestId)).json()) as { folder: AgentFolderResult }
-    expect(first.folder).toEqual({ outcome: 'kept', removed: 0, left: 1 })
+    expect(first.folder).toEqual({ outcome: 'kept', reason: 'unconfirmed', removed: 0, left: 1 })
     const retry = (await (await remove(owner, agent.id, undefined, requestId)).json()) as { folder: AgentFolderResult }
     expect(retry.folder).toEqual(first.folder)
     expect(await readFile(join(home, 'b.md'), 'utf8')).toBe('bravo!')
@@ -481,15 +495,204 @@ describe.skipIf(process.platform !== 'darwin')('an Agent’s home when the Agent
     expect((await auditRows(host)).filter(row => row.action === 'agent.home.assigned' && row.target === agent.id)).toHaveLength(1)
   })
 
+  test('a plain delete removes only what the dialog showed: a file added after it opened keeps the folder', async () => {
+    const { owner, agent, home } = await agentWithHome()
+    for (const name of ['notes', 'b.md', 'link']) await rm(join(home, name), { recursive: true })
+    const shown = await view(owner, agent.id)
+    expect(shown.contents).toBe('empty')
+    await writeFile(join(home, 'arrived.txt'), 'late')
+    const body = (await (await remove(owner, agent.id, 'delete', randomUUID(), shown.homes)).json()) as { folder: AgentFolderResult }
+    expect(body.folder).toEqual({ outcome: 'left', reason: 'changed', removed: 0, left: 1 })
+    expect(await readFile(join(home, 'arrived.txt'), 'utf8')).toBe('late')
+    expect((await owner.request(`custom-agents/${agent.id}`)).status).toBe(404)
+    // Asking to delete without saying what was shown is refused before anything happens.
+    const second = await agentWithHome()
+    const bare = await second.owner.request(`custom-agents/${second.agent.id}`, {
+      method: 'DELETE',
+      body: { requestId: randomUUID(), folder: 'delete' },
+    })
+    expect(bare.status).toBe(400)
+    expect((await second.owner.request(`custom-agents/${second.agent.id}`)).status).toBe(200)
+  })
+
+  test('导出后删除 never deletes what it did not export: an empty home that gains a file, an unreadable one', async () => {
+    // Empty when exported, a file arrives before the deletion: the home is left, the file with it.
+    const empty = await agentWithHome()
+    for (const name of ['notes', 'b.md', 'link']) await rm(join(empty.home, name), { recursive: true })
+    const parent = join(empty.root, 'picked')
+    await mkdir(parent)
+    const append = empty.host.host.security.audit.append.bind(empty.host.host.security.audit)
+    vi.spyOn(empty.host.host.security.audit, 'append').mockImplementation(async event => {
+      // Between the verified export and the removal: as the Agent itself is deleted.
+      if (event.action === 'agent.changed' && (event.detail as { operation?: string }).operation === 'delete')
+        await writeFile(join(empty.home, 'arrived.txt'), 'late')
+      return append(event)
+    })
+    let requestId = randomUUID()
+    await empty.owner.signedFolderRequest(`custom-agents/${empty.agent.id}/folder-export`, {
+      via: 'agent-folder',
+      agentId: empty.agent.id,
+      requestId,
+      parent,
+    })
+    expect(await exported(empty.owner, requestId)).toMatchObject({ state: 'done', folder: { outcome: 'left', reason: 'changed' } })
+    expect(await readFile(join(empty.home, 'arrived.txt'), 'utf8')).toBe('late')
+    vi.restoreAllMocks()
+
+    // A home it cannot read is a failed export: nothing is deleted.
+    const closed = await agentWithHome()
+    const picked = join(closed.root, 'picked')
+    await mkdir(picked)
+    await chmod(closed.home, 0o300)
+    requestId = randomUUID()
+    await closed.owner.signedFolderRequest(`custom-agents/${closed.agent.id}/folder-export`, {
+      via: 'agent-folder',
+      agentId: closed.agent.id,
+      requestId,
+      parent: picked,
+    })
+    expect(await exported(closed.owner, requestId)).toMatchObject({ state: 'failed', code: 'agent-folder-unreadable', archives: [] })
+    await chmod(closed.home, 0o700)
+    expect(await readdir(picked)).toEqual([])
+    expect(await readFile(join(closed.home, 'b.md'), 'utf8')).toBe('bravo!')
+    expect((await closed.owner.request(`custom-agents/${closed.agent.id}`)).status).toBe(200)
+  })
+
+  test('导出后删除 leaves a home under another start directory that was not there when the export began', async () => {
+    const first = await agentWithHome()
+    await stop(first.host)
+    const moved = await boot(first.root, 'other-workspace')
+    const owner = rebind(moved, first.owner.credential)
+    const sent = await owner.json<{ sessionId: string }>(`tasks/${first.sessionId}/prompt`, {
+      method: 'POST',
+      body: { prompt: 'moved', requestId: randomUUID() },
+    })
+    await settled(owner, sent.sessionId)
+    const second = join(first.root, 'other-workspace', 'helpers', first.agent.id)
+    await writeFile(join(second, 'here.txt'), 'here')
+    // The first start directory is away (an unmounted disk) when the export starts, and back before the deletion.
+    const away = join(first.root, 'workspace-away')
+    await rename(join(first.root, 'workspace'), away)
+    const append = moved.host.security.audit.append.bind(moved.host.security.audit)
+    vi.spyOn(moved.host.security.audit, 'append').mockImplementation(async event => {
+      if (event.action === 'agent.changed' && (event.detail as { operation?: string }).operation === 'delete')
+        await rename(away, join(first.root, 'workspace'))
+      return append(event)
+    })
+    const parent = join(first.root, 'picked')
+    await mkdir(parent)
+    const requestId = randomUUID()
+    // The desktop app on this Mac, as the second Host knows it.
+    const desk = await moved.enroll({ listener: 'unix' })
+    const started = await desk.signedFolderRequest(`custom-agents/${first.agent.id}/folder-export`, {
+      via: 'agent-folder',
+      agentId: first.agent.id,
+      requestId,
+      parent,
+    })
+    expect(started.status).toBe(202)
+    const state = await exported(desk, requestId)
+    expect(state).toMatchObject({ state: 'done', folder: { outcome: 'left', reason: 'unconfirmed', removed: 1, left: 1 } })
+    expect(await gone(second)).toBe(true)
+    expect(await readFile(join(first.home, 'b.md'), 'utf8')).toBe('bravo!')
+  })
+
+  test('a removal waits for an export of the same Agent, and a cancel after the last archive still cancels', async () => {
+    const { host, owner, agent, home, root } = await agentWithHome()
+    const parent = join(root, 'picked')
+    await mkdir(parent)
+    // Refused while the export runs.
+    await truncate(join(home, 'b.md'), 1536 * 1024 * 1024)
+    let requestId = randomUUID()
+    await owner.signedFolderRequest(`custom-agents/${agent.id}/folder-export`, {
+      via: 'agent-folder',
+      agentId: agent.id,
+      requestId,
+      parent,
+    })
+    const during = await remove(owner, agent.id, 'delete', randomUUID(), [])
+    expect(during.status).toBe(409)
+    expect(await during.json()).toMatchObject({ error: 'agent-folder-exporting' })
+    await owner.json(`custom-agents/folder-exports/${requestId}/cancel`, { method: 'POST', body: {} })
+    await truncate(join(home, 'b.md'), 6)
+    // The cancel lands after the last archive was written and checked, before anything is deleted.
+    const append = host.host.security.audit.append.bind(host.host.security.audit)
+    const second = randomUUID()
+    vi.spyOn(host.host.security.audit, 'append').mockImplementation(async event => {
+      if (event.action === 'agent.folder.exported' && (event.detail as { outcome?: string }).outcome === 'done') {
+        void owner.request(`custom-agents/folder-exports/${second}/cancel`, { method: 'POST', body: {} })
+        await new Promise(resolve => setTimeout(resolve, 300))
+      }
+      return append(event)
+    })
+    requestId = second
+    await owner.signedFolderRequest(`custom-agents/${agent.id}/folder-export`, {
+      via: 'agent-folder',
+      agentId: agent.id,
+      requestId,
+      parent,
+    })
+    expect(await exported(owner, requestId)).toMatchObject({ state: 'cancelled', archives: [] })
+    expect(await readdir(parent)).toEqual([])
+    expect(await readFile(join(home, 'b.md'), 'utf8')).toBe('bravo!')
+    expect((await owner.request(`custom-agents/${agent.id}`)).status).toBe(200)
+  })
+
+  test('the archive goes nowhere it exports or removes, keeps a backslash out of its names, and a long name still exports', async () => {
+    const { host, owner, agent, home, root } = await agentWithHome()
+    for (const parent of [home, join(root, 'workspace', 'helpers'), host.dataDir]) {
+      const refused = await owner.signedFolderRequest(`custom-agents/${agent.id}/folder-export`, {
+        via: 'agent-folder',
+        agentId: agent.id,
+        requestId: randomUUID(),
+        parent,
+      })
+      expect(refused.status, parent).toBe(400)
+    }
+    expect(Buffer.byteLength(archiveLabel('整理'.repeat(40)))).toBeLessThanOrEqual(120)
+    expect(Buffer.byteLength(archiveLabel('🗂️'.repeat(80)))).toBeLessThanOrEqual(120)
+    const long = archiveLabel('长'.repeat(80))
+    expect(long.length).toBeGreaterThan(30)
+    await writeFile(join(home, 'a\\b.txt'), 'slash')
+    const parent = join(root, 'picked')
+    await mkdir(parent)
+    const requestId = randomUUID()
+    await owner.signedFolderRequest(`custom-agents/${agent.id}/folder-export`, {
+      via: 'agent-folder',
+      agentId: agent.id,
+      requestId,
+      parent,
+    })
+    const state = await exported(owner, requestId)
+    expect(state).toMatchObject({ state: 'done' })
+    // Only the named archive, under the Host's local time: the temporary file it was written under is gone.
+    expect(await readdir(parent)).toEqual(state.archives)
+    const now = new Date()
+    expect(state.archives![0]).toContain(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
+    const unpacked = join(root, 'unpacked')
+    await run('/usr/bin/ditto', ['-x', '-k', join(parent, state.archives![0]!), unpacked], { env: {} })
+    const [top] = await readdir(unpacked)
+    expect((await readdir(join(unpacked, top!))).sort()).toEqual(['a∖b.txt', 'b.md', 'notes'])
+  })
+
   test('设置 › 数据 lists the homes of Agents already deleted and removes one only when asked', async () => {
     const { owner, agent, home } = await agentWithHome()
     await remove(owner, agent.id)
     const { folders } = await owner.json<{ folders: LeftoverAgentFolder[] }>('data/agent-folders')
-    expect(folders).toEqual([{ key: expect.stringMatching(/^[0-9a-f]{32}$/u), path: home, contents: 'files' }])
+    expect(folders).toEqual([{ key: expect.stringMatching(/^[0-9a-f]{32}$/u), path: home, contents: 'files', entries: 4, bytes: 11 }])
     expect(await readFile(join(home, 'b.md'), 'utf8')).toBe('bravo!')
+    // What the row showed must still hold: one more file and it stays.
+    await writeFile(join(home, 'later.txt'), 'x')
+    const changed = await owner.json<{ folder: AgentFolderResult }>(`data/agent-folders/${folders[0]!.key}`, {
+      method: 'DELETE',
+      body: { requestId: randomUUID(), entries: folders[0]!.entries, bytes: folders[0]!.bytes },
+    })
+    expect(changed.folder).toMatchObject({ outcome: 'left', reason: 'changed' })
+    expect(await readFile(join(home, 'later.txt'), 'utf8')).toBe('x')
+    await rm(join(home, 'later.txt'))
     const removed = await owner.json<{ folder: AgentFolderResult }>(`data/agent-folders/${folders[0]!.key}`, {
       method: 'DELETE',
-      body: { requestId: randomUUID() },
+      body: { requestId: randomUUID(), entries: folders[0]!.entries, bytes: folders[0]!.bytes },
     })
     expect(removed.folder.outcome).toBe('deleted')
     expect(await gone(home)).toBe(true)

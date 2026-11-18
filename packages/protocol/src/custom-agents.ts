@@ -46,20 +46,18 @@ export interface AgentHome {
   /** `pending`: the next message sets it up (first time, or again where nothing is at its path); `refused`: kept as is. */
   state?: 'ready' | 'pending' | 'refused'
   reason?: string
-  /**
-   * What deleting the Agent would find in the homes the Host can still touch: `none` when there is no such home,
-   * `empty`, or `files` (then the person chooses to export them first or delete them for good).
-   */
-  contents?: 'none' | 'empty' | 'files'
 }
 
 /**
- * What became of one of an Agent's homes after it was deleted: removed for good, found gone, or left where it was
- * (not the home recorded, in use, another device below it, too large, no component to do it, the record not
- * written, or the removal failed partway).
+ * What became of one of an Agent's homes after it was deleted: removed for good, found gone, or left where it was:
+ * `changed` (it no longer holds what was shown or exported), `unconfirmed` (the person was never shown it, or it was
+ * not exported), not the home recorded, in use, another device below it, too large, no component to do it, the
+ * record not written, or the removal failed partway.
  */
 export type AgentHomeOutcome =
   | 'deleted'
+  | 'changed'
+  | 'unconfirmed'
   | 'absent'
   | 'unverified'
   | 'in-use'
@@ -80,6 +78,22 @@ export interface AgentFolderResult {
   left: number
 }
 
+/** What a home held when counted: every entry below it, and the bytes of its regular files. */
+export interface AgentFolderCounts {
+  entries: number
+  bytes: number
+}
+
+/**
+ * What deleting an Agent would find, for its dialog: `none` (no home the Host can touch), `empty` or `files`, and each
+ * such home by key with its counts. The page sends `homes` back as `seen`; only those are removed, each only if it
+ * still holds exactly that.
+ */
+export interface AgentFolderView {
+  contents: 'none' | 'empty' | 'files'
+  homes: Array<AgentFolderCounts & { key: string }>
+}
+
 /** 导出后删除 as its own device follows it: writing the archives, then deleting. */
 export interface AgentFolderExport {
   requestId: string
@@ -91,6 +105,8 @@ export interface AgentFolderExport {
   code?: string
   /** `agent-folder-too-large`: the bytes counted before it stopped. */
   bytes?: number
+  /** A failure after the archives were written: the Agent was deleted all the same. */
+  agentDeleted?: boolean
 }
 
 /** The home of an Agent that is already deleted, found where its record says: 设置 › 数据 can export or remove it. */
@@ -98,6 +114,9 @@ export interface LeftoverAgentFolder {
   key: string
   path: string
   contents: 'empty' | 'files'
+  /** Its counts, sent back to remove it; absent when they cannot be read (then it cannot be removed from here). */
+  entries?: number
+  bytes?: number
 }
 
 /** 名称、图标、说明、指令、技能、Harness 与模型 of one of 我的 Agent. */

@@ -57,10 +57,27 @@ export interface AgentRouteDeps {
 
 const deletion = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u) })
 /**
- * Deleting an Agent: `folder: 'delete'` removes its homes for good. Without it (a page from before this choice, which
- * still says the folder stays) the homes are kept, and 设置 › 数据 lists them.
+ * Deleting an Agent: `folder: 'delete'` with `seen` removes for good the homes the dialog showed, each only if it still
+ * holds what it showed. Without it (nothing was shown, or a page from before this choice) the homes are kept, and
+ * 设置 › 数据 lists them.
  */
-const agentDeletion = z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u), folder: z.literal('delete').optional() })
+const agentDeletion = z
+  .strictObject({
+    requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+    folder: z.literal('delete').optional(),
+    /** The homes the dialog showed (`GET …/folders`), by key with their counts: only these, only if unchanged, go. */
+    seen: z
+      .array(
+        z.strictObject({
+          key: z.string().regex(/^[0-9a-f]{32}$/u),
+          entries: z.number().int().nonnegative().max(1_000_000_000),
+          bytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+        }),
+      )
+      .max(64)
+      .optional(),
+  })
+  .refine(body => (body.folder === 'delete') === (body.seen !== undefined), { message: 'folder and seen go together' })
 /** 导出后删除, signed by the desktop's main process after its native picker chose `parent`. */
 const folderExport = z.strictObject({
   nonce: z.string(),
@@ -74,7 +91,7 @@ const FOLDER_EXPORT_STATE = /^\/link\/api\/custom-agents\/folder-exports\/([A-Za
 const AGENT = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)(?:\/memories(?:\/(mem_[a-f0-9-]{36})(\/undo|\/own)?)?)?$/u
 const PROPOSALS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/proposals(?:\/(prp_[a-f0-9-]{36})\/(save|dismiss))?$/u
 /** Read-only views of an owner's own records: result cards waiting for a topic, 动态, 资料库 and 电脑. */
-const VIEWS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/(results|activity|library|computer|home)$/u
+const VIEWS = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36}|general)\/(results|activity|library|computer|home|folders)$/u
 
 /** A picture for an Agent: put in the face's place, or cleared. */
 const AVATAR = /^\/link\/api\/custom-agents\/(agt_[a-f0-9-]{36})\/avatar-image$/u
@@ -332,6 +349,16 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
           which = view[2]!
         // Each answers only for an owner that exists, and only to a device that may read Agents (the access above).
         agents.memories(owner)
+        if (which === 'folders') {
+          // What deleting it would find, counted by the helper: one process per home, so counted like a settings write.
+          if (owner === GENERAL_AGENT_ID) throw new AppError(404, 'not-found', '接口不存在。')
+          context.requireDevice(caller)
+          context.limits.classC.take(caller.device.id)
+          const folders = await deps.folders.view(owner)
+          actor.authorize()
+          json(res, folders)
+          return true
+        }
         if (which === 'home') {
           const hint = await deps.home(owner)
           actor.authorize()
@@ -436,6 +463,7 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
             sweepAvatars()
             await deps.removed?.(owner)
           },
+          gone: () => !agents.list().some(agent => agent.id === owner),
         })
         json(res, { export: state }, 202)
         return true
@@ -515,7 +543,9 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
           sweepAvatars()
         }
       } else if (method === 'DELETE' && !general) {
-        const { requestId, folder } = agentDeletion.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
+        const { requestId, folder, seen } = agentDeletion.parse(await jsonBody(req, CONFIG_BODY_LIMIT))
+        // A home being exported is not removed under that export: nothing happens, the Agent included.
+        if (folder === 'delete') deps.folders.assertIdle(id)
         // Only this request's own deletion removes homes: a request for an Agent already gone (its homes kept by an older
         // page) never reaches them; those are 设置 › 数据's, for `admin` and `all`. A retry gets its first answer.
         const existed = agents.list().some(agent => agent.id === id)
@@ -530,7 +560,7 @@ export function createAgentRoutes(context: RouteContext, deps: AgentRouteDeps): 
         // The Agent is gone whatever its homes do: they are dealt with after, never on a path a client named.
         const folders = agents.list().some(agent => agent.id === id)
           ? undefined
-          : await deps.folders.afterDeletion(id, requestId, existed ? folder : undefined, event =>
+          : await deps.folders.afterDeletion(id, requestId, existed ? seen : undefined, event =>
               context.audited({ ...event, actor: actor.actor, target: id }).then(() => {}),
             )
         actor.authorize()
