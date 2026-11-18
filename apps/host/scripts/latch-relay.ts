@@ -1,8 +1,8 @@
-import { constants } from 'node:fs'
-import { open } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
-import { EDGE_RELAY_AVAILABLE } from '@latch/link-wire'
-import { chooseRelayFile, RelayFilesError } from '@latch/link-client/relay-files'
+import { spawn } from 'node:child_process'
+import { stat } from 'node:fs/promises'
+import { isAbsolute, join, resolve } from 'node:path'
+import { EDGE_RELAY_AVAILABLE, isRelayLocation, RELAY_LOCATIONS } from '@latch/link-wire'
+import { chooseRelayFile, RELAY_NAME, RelayFilesError } from '@latch/link-client/relay-files'
 import type { NativeRelayTest } from '@latch/protocol'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { AuditLog, type AuditActor } from '../src/audit.ts'
@@ -12,10 +12,10 @@ import {
   relayAvailable,
   relayKeyHash,
   relayNodeFields,
-  relayProfileInput,
   RelayProfiles,
   type RelayProfileInput,
 } from '../src/relay/profiles.ts'
+import { loadRelayFile } from '../src/relay/relay-files.ts'
 
 export const RELAY_USAGE = `  relay list [--json]                      列出自己的中继与状态（Host 已停止）
   relay add [--name <名称> | --file <中继文件>] [--expect-key <密钥短哈希>]
@@ -25,7 +25,10 @@ export const RELAY_USAGE = `  relay list [--json]                      列出自
                                            文件里的注册令牌只交给 Host，不显示
   relay test <节点标识>                      测试中继的连接、密钥、登记，显示 Host 签发状态（Host 运行中）
   relay remove <节点标识>                    移除自己的中继（Host 已停止）
-  relay setup cloudflare                  尚未实现：安装版不带 Workers 部署包，在 Latch 源码目录部署后导入
+  relay setup cloudflare --name <名称> [--location <位置>] [--out <绝对路径>]
+                                           在你自己的 Cloudflare 账户部署一个中继并验收（需要已登录的 wrangler）；
+                                           写出 ~/.latch/relays/<名称>.json，不打印任何秘密。位置不给时由 Cloudflare 就近放置。
+                                           安装版尚未附带 Workers 部署包：尚未实现，在 Latch 源码目录运行
   relay setup linux                       尚未提供 Linux 中继发布物；可在服务器源码目录部署后导入
 `
 type Out = (text: string) => void
@@ -34,38 +37,30 @@ interface RelayCliIO {
   stdin: { isTTY?: boolean }
   stderr: { write(text: string): unknown }
   readLine(prompt: string): Promise<string>
+  runEntry?(file: string, args: string[]): Promise<number>
+}
+
+/** The setup entry as a child with this process's hardening flags and terminal: wrangler's progress shows as it runs. */
+function runEntry(file: string, args: string[], cwd: string): Promise<number> {
+  return new Promise(done => {
+    const child = spawn(process.execPath, ['--disable-sigusr1', '--import', 'tsx', file, ...args], { cwd, stdio: 'inherit' })
+    child.once('error', () => done(1))
+    child.once('exit', code => done(code ?? 1))
+  })
 }
 export class RelayCliError extends Error {}
 
 /** A relay file as the self-hosted relay CLI (version 1) or apps/relay-edge (version 2, edge) writes it. */
 export async function readRelayFile(path: string): Promise<RelayProfileInput> {
-  // At most 4 KiB plus one byte is read, whatever the path names (a device, a pipe, a huge file).
-  const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK).catch(() => {
-    throw new RelayCliError('读不到这个中继文件')
-  })
-  let text: string
-  try {
-    if (!(await handle.stat()).isFile()) throw new RelayCliError('这个文件不是中继导出的连接配置')
-    const buffer = Buffer.alloc(4097)
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
-    if (bytesRead > 4096) throw new RelayCliError('这个文件不是中继导出的连接配置')
-    text = buffer.subarray(0, bytesRead).toString('utf8')
-  } finally {
-    await handle.close()
-  }
-  let file: { version?: unknown; profile?: Record<string, unknown> }
-  try {
-    file = JSON.parse(text) as typeof file
-  } catch {
-    throw new RelayCliError('这个文件不是中继导出的连接配置')
-  }
-  const profile = file.profile ?? {}
-  if (file.version === 1 && 'kind' in profile) throw new RelayCliError('这个文件不是中继导出的连接配置')
-  if (file.version === 2 && profile.kind !== 'edge') throw new RelayCliError('这个文件不是中继导出的连接配置')
-  if (file.version !== 1 && file.version !== 2) throw new RelayCliError('不认识这个中继文件的版本')
-  const parsed = relayProfileInput.safeParse(profile)
-  if (!parsed.success) throw new RelayCliError('这个文件不是中继导出的连接配置')
-  return parsed.data
+  const read = await loadRelayFile(path)
+  if ('profile' in read) return read.profile
+  throw new RelayCliError(
+    read.failure === 'unreadable'
+      ? '读不到这个中继文件'
+      : read.failure === 'version'
+        ? '不认识这个中继文件的版本'
+        : '这个文件不是中继导出的连接配置',
+  )
 }
 /** What the person checks before adding: every address and the key the node must prove. Never the registration key. */
 export function relayFacts(input: RelayProfileInput): string[] {
@@ -98,14 +93,37 @@ export async function runRelayCommand(input: {
   running(method: string, path: string): Promise<unknown>
   /** Where ~/.latch/relays is looked up; `os.homedir()` when absent. */
   home?: string
+  /** The Latch code root, where a source checkout keeps the Workers deploy entry. */
+  codeRoot?: string
+  program?: 'latch' | 'pnpm latch'
 }): Promise<number | undefined> {
   const { command, rest, flags, dataDir, io, out } = input
   if (command === 'setup') {
     if (rest[0] === 'cloudflare') {
       if (!EDGE_RELAY_AVAILABLE) throw new RelayCliError('这个版本关闭了 Cloudflare Workers 中继。')
-      throw new RelayCliError(
-        '尚未实现：安装版不带 Workers 部署包。请在 Latch 源码目录运行 pnpm relay-edge:setup，再导入它写出的中继文件。',
-      )
+      const name = flags.get('--name'),
+        location = flags.get('--location'),
+        target = flags.get('--out')
+      if (typeof name !== 'string' || !RELAY_NAME.test(name) || name.length > 40)
+        throw new RelayCliError('用法：relay setup cloudflare --name <名称> [--location <位置>]；名称用小写字母、数字与连字符')
+      if (location !== undefined && !isRelayLocation(location))
+        throw new RelayCliError(`--location 是 ${RELAY_LOCATIONS.join('、')} 之一；不给时由 Cloudflare 放在离第一次请求最近的地方`)
+      if (target !== undefined && (typeof target !== 'string' || !isAbsolute(target)))
+        throw new RelayCliError('--out 应为一个新文件的绝对路径')
+      // The deploy entry lives in the source checkout; the installed app carries no Worker bundles yet.
+      const entry = join(input.codeRoot ?? '', 'apps/relay-edge/scripts/setup.ts')
+      const present =
+        input.codeRoot !== undefined
+        && (await stat(entry).then(
+          info => info.isFile(),
+          () => false,
+        ))
+      if (!present)
+        throw new RelayCliError(
+          '尚未实现：安装版不带 Workers 部署包。请在 Latch 源码目录运行 pnpm latch relay setup cloudflare，再在设置里添加它写出的中继文件。',
+        )
+      const args = ['--name', name, ...(location ? ['--location', location] : []), ...(target ? ['--out', target] : []), '--check']
+      return io.runEntry ? io.runEntry(entry, args) : runEntry(entry, args, input.codeRoot!)
     }
     if (rest[0] === 'linux') throw new RelayCliError('尚未提供 Linux 中继发布物。请在服务器上的 Latch 源码目录部署，再导入中继文件。')
     throw new RelayCliError('用法：relay setup cloudflare|linux')

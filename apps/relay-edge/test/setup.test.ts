@@ -40,7 +40,7 @@ async function fixture(overrides: Partial<SetupDeps> = {}) {
     ...overrides,
   }
   const input = {
-    region: 'ne' as const,
+    name: 'ne',
     out: join(root, 'relay.json'),
     workerBundle: join(root, 'worker.js'),
     workBundle: join(root, 'work.js'),
@@ -70,7 +70,9 @@ it('deploys, puts every secret through standard input only, and writes a 0600 re
   }
   // The first deploy has no hostname yet; the second names the workers.dev host it got.
   const configs = t.calls.filter(call => call.args[0] === 'deploy' && call.config).map(call => JSON.parse(call.config!).vars)
-  expect(configs[0]).toMatchObject({ NODE_HOSTS: '', LOCATION_HINT: 'apac-ne', OPEN_REGISTRATION: 'false' })
+  expect(configs[0]).toMatchObject({ NODE_HOSTS: '', OPEN_REGISTRATION: 'false' })
+  // No location was asked for, so the platform places the node.
+  expect(configs[0]).not.toHaveProperty('LOCATION_HINT')
   expect(configs[1]).toMatchObject({ NODE_HOSTS: 'latch-relay-ne.example-sub.workers.dev', RELAY_ID: result.relayId })
 
   const file = JSON.parse(await readFile(t.input.out, 'utf8')) as { version: number; profile: Record<string, string> }
@@ -130,7 +132,7 @@ it('writes into ~/.latch/relays by default: <region>.json, its admin header and 
   const t = await fixture()
   const home = join(t.root, 'home')
   await mkdir(home)
-  const paths = await setupPaths({ region: 'ne', home })
+  const paths = await setupPaths({ name: 'ne', home })
   const relays = join(home, '.latch', 'relays')
   expect(paths).toEqual({
     out: join(relays, 'ne.json'),
@@ -147,17 +149,17 @@ it('writes into ~/.latch/relays by default: <region>.json, its admin header and 
   expect(t.lines.at(-1)).toBe('下一步：pnpm relay-edge:accept --name ne')
 
   // A second run for the region refuses before deploying: it would rotate the node and leave the file dead.
-  const again = setupPaths({ region: 'ne', home })
+  const again = setupPaths({ name: 'ne', home })
   await expect(again).rejects.toBeInstanceOf(SetupError)
   await expect(again).rejects.toThrow('~/.latch/relays/ne.json 已存在，不覆盖')
   await expect(again).rejects.toThrow(/--out/u)
   await rm(paths.out)
-  await expect(setupPaths({ region: 'ne', home })).rejects.toThrow('~/.latch/relays/ne.json.admin-header 已存在')
+  await expect(setupPaths({ name: 'ne', home })).rejects.toThrow('~/.latch/relays/ne.json.admin-header 已存在')
   // An explicit file elsewhere still works; the deploy directory stays the region's.
-  const elsewhere = await setupPaths({ region: 'ne', home, out: join(t.root, 'mine.json') })
+  const elsewhere = await setupPaths({ name: 'ne', home, out: join(t.root, 'mine.json') })
   expect(elsewhere).toMatchObject({ out: join(t.root, 'mine.json'), workDir: paths.workDir })
   expect(elsewhere.next).toBe(`pnpm relay-edge:accept --file ${join(t.root, 'mine.json')}`)
-  await expect(setupPaths({ region: 'se', home, out: 'relative.json' })).rejects.toThrow(/绝对路径/u)
+  await expect(setupPaths({ name: 'se', home, out: 'relative.json' })).rejects.toThrow(/绝对路径/u)
 })
 
 it('refuses a ~/.latch that is a link or that others can open', async () => {
@@ -165,11 +167,11 @@ it('refuses a ~/.latch that is a link or that others can open', async () => {
   const wide = join(t.root, 'wide')
   await mkdir(join(wide, '.latch'), { recursive: true })
   await chmod(join(wide, '.latch'), 0o755)
-  await expect(setupPaths({ region: 'ne', home: wide })).rejects.toThrow('~/.latch 必须是你自己的目录，权限 0700，不能是链接')
+  await expect(setupPaths({ name: 'ne', home: wide })).rejects.toThrow('~/.latch 必须是你自己的目录，权限 0700，不能是链接')
   const linked = join(t.root, 'linked')
   await mkdir(join(linked, 'target'), { recursive: true, mode: 0o700 })
   await symlink(join(linked, 'target'), join(linked, '.latch'))
-  await expect(setupPaths({ region: 'ne', home: linked })).rejects.toBeInstanceOf(SetupError)
+  await expect(setupPaths({ name: 'ne', home: linked })).rejects.toBeInstanceOf(SetupError)
   expect(await readdir(join(linked, 'target'))).toEqual([])
   // runSetup itself refuses a work directory others can open.
   const open = join(t.root, 'open')
@@ -185,7 +187,7 @@ it('keeps using an earlier ~/.latch-relay deploy directory, never moving it, and
   const legacy = join(home, '.latch-relay', 'latch-relay-ne')
   await mkdir(legacy, { recursive: true, mode: 0o700 })
   await writeFile(join(legacy, 'wrangler.jsonc'), '{}', { mode: 0o600 })
-  const paths = await setupPaths({ region: 'ne', home })
+  const paths = await setupPaths({ name: 'ne', home })
   expect(paths.workDir).toBe(legacy)
   expect(paths.out).toBe(join(home, '.latch', 'relays', 'ne.json'))
   expect(paths.notes).toEqual([
@@ -196,7 +198,7 @@ it('keeps using an earlier ~/.latch-relay deploy directory, never moving it, and
   await expect(stat(join(home, '.latch', 'relays', 'ne'))).rejects.toMatchObject({ code: 'ENOENT' })
   // Once the new deploy directory exists, the earlier one is no longer used (and still not touched).
   await mkdir(join(home, '.latch', 'relays', 'ne', 'deploy'), { recursive: true, mode: 0o700 })
-  expect(await setupPaths({ region: 'ne', home, out: join(t.root, 'second.json') })).toMatchObject({
+  expect(await setupPaths({ name: 'ne', home, out: join(t.root, 'second.json') })).toMatchObject({
     workDir: join(home, '.latch', 'relays', 'ne', 'deploy'),
     notes: [],
   })

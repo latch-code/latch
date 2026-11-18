@@ -31,6 +31,7 @@ import { HostRelayController } from '../relay/controller.ts'
 import type { HostRelayDirectory } from '../relay/directory.ts'
 import { OFFICIAL_RELAYS, type OfficialRelay } from '../relay/official.ts'
 import { relayKeyHash, relayNodeFields, relayProfileInput, relayUsable, type RelayProfiles } from '../relay/profiles.ts'
+import { listRelayFiles, relayFileByName } from '../relay/relay-files.ts'
 import { signatureSchema } from './devices.ts'
 import { type Caller, type CallerRequest, type RouteContext, type RouteModule, type RouteRequest } from './registry.ts'
 
@@ -44,6 +45,8 @@ export interface NativeRouteDeps {
     egressLookup?: LookupFunction
     nativeNearby?: (opening: NativeOpening, gatewayHash: Uint8Array) => boolean | Promise<boolean>
     officialRelays?: readonly OfficialRelay[]
+    /** HOME for the person's relay files (~/.latch/relays); `os.homedir()` when absent. */
+    relayFilesHome?: string
   }
   identity: HostIdentity
   /** Process-level outbound entries, allowed beside the policy's. */
@@ -453,14 +456,30 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       json(res, { removed: true })
       return true
     }
+    if (path === '/link/api/native/relay-files' && method === 'GET') {
+      // The person's own relay files, for this Mac's local administrator alone: names, addresses and key hashes.
+      requireLocal(caller)
+      requireScope(caller, 'admin')
+      const known = new Set(relayProfiles.snapshot().profiles.map(item => item.relayId))
+      const files = await listRelayFiles(known, options.relayFilesHome)
+      recheck(caller, 'admin')
+      json(res, { files })
+      return true
+    }
     if (path === '/link/api/native/relays' && method === 'POST') {
       requireLocal(caller)
       requireScope(caller, 'admin')
       if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
       const settings = nativeSettings
-      const { requestId, profile } = z
-        .strictObject({ requestId: z.uuid(), profile: relayProfileInput.optional() })
+      const body = z
+        .strictObject({ requestId: z.uuid(), profile: relayProfileInput.optional(), file: z.string().max(64).optional() })
+        .refine(value => value.profile === undefined || value.file === undefined)
         .parse(await jsonBody(req, 4 * KIB))
+      const { requestId } = body
+      // A file is named, never sent: the Host reads `~/.latch/relays/<name>.json` itself, so its token stays off the page.
+      const profile = body.file === undefined ? body.profile : await relayFileByName(body.file, options.relayFilesHome)
+      if (body.file !== undefined && !profile)
+        throw new AppError(400, 'native-relay-file-invalid', '这个配置文件不在 ~/.latch/relays，或不是转发服务导出的连接配置。')
       const current = () => {
         if (closing()) throw new AppError(503, 'host-closing', '电脑正在停止，请稍后查询原请求。')
         recheck(caller, 'admin')

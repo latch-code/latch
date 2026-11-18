@@ -86,6 +86,8 @@ export interface CliIO {
   /** HOME for the person's own files (~/.latch/relays); `os.homedir()` when absent. */
   home?: string
   program?: 'latch' | 'pnpm latch'
+  /** Runs a Node entry of this checkout with the CLI's own hardening flags and terminal; tests replace it. */
+  runEntry?(file: string, args: string[]): Promise<number>
 }
 
 class CliError extends Error {
@@ -181,6 +183,7 @@ function parseArgs(argv: string[]): { positional: string[]; flags: Map<string, s
     '--file',
     '--expect-key',
     '--region',
+    '--location',
   ])
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!
@@ -1183,6 +1186,8 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
         actor: CLI_ACTOR,
         stopped: () => lockStopped(dataDir),
         running: async (method, path) => api((await runningHost(dataDir)).state, method, path),
+        codeRoot: latchCodeRoot(),
+        program: io.program ?? 'latch',
         ...(io.home === undefined ? {} : { home: io.home }),
       })
       if (handled !== undefined) return handled

@@ -1,10 +1,17 @@
 import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { Cloud, FileUp, Radio, Server } from 'lucide-react'
-import { isRelayEndpoint, type NativeLinkInfo, type NativeRelayProfile, type NativeRelayTest } from '@latch/protocol'
+import {
+  isRelayEndpoint,
+  RELAY_LOCATIONS,
+  type NativeLinkInfo,
+  type NativeRelayFile,
+  type NativeRelayProfile,
+  type NativeRelayTest,
+  type RelayLocation,
+} from '@latch/protocol'
 import {
   ActionMenu,
   Button,
-  Checkbox,
   CopyButton,
   Dialog,
   Icon,
@@ -16,6 +23,7 @@ import {
   Switch,
   TextField,
   Tooltip,
+  ValuePicker,
   type IconComponent,
   type StatusTone,
 } from '@latch/ui'
@@ -26,12 +34,13 @@ import { ConfirmationContent } from '../components/InlineConfirm.tsx'
 import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { IconTile, SettingsGroup, SettingsRow } from './common.tsx'
-import { RELAYS_DIR, relaySetupCommands } from './relayCommands.ts'
+import { RELAYS_DIR, relaySetupCommands, validRelayName } from './relayCommands.ts'
+import { localLatchCommand } from '../core/commands.ts'
 import { currentLocale, defineCopy, formatNumber, useLocale } from '../core/i18n.ts'
 
 const COPY = defineCopy(
   {
-    serverKind: 'Linux 服务器',
+    serverKind: '自己的服务器',
     tokyo: '东京',
     singapore: '新加坡',
     edgeUnavailable: '这个版本的 Host 关闭了 Cloudflare Workers 转发服务。',
@@ -73,18 +82,37 @@ const COPY = defineCopy(
     savedAddresses: '已保存的地址目录',
     addRelay: '添加转发服务',
     copyCommand: '复制命令',
-    dropFile: '拖入配置文件',
+    dropFile: '等待配置文件',
+    review: '核对并连接',
+    name: '名称',
+    nameRule: '小写字母、数字与连字符',
+    location: '位置',
+    automatic: '自动',
+    locations: {
+      apac: '亚太',
+      'apac-ne': '亚太东北',
+      'apac-se': '亚太东南',
+      wnam: '北美西部',
+      enam: '北美东部',
+      sam: '南美',
+      weur: '西欧',
+      eeur: '东欧',
+      oc: '大洋洲',
+      afr: '非洲',
+      me: '中东',
+    },
+    configure: '配置',
+    port: '端口',
+    certificate: '证书链',
+    privateKey: '私钥',
     chooseFile: '选择文件',
     relaysFolderDetail:
-      '中继文件在这个文件夹。选择窗口里按 ⌘⇧G 输入它。添加后可以删除中继文件；Workers 中继的 .admin-header 留着，查看状态要用。',
+      '配置文件写到这个文件夹后会出现在这里。选择窗口里按 ⌘⇧G 可输入它。添加后可以删除配置文件；Workers 转发服务的 .admin-header 留着，查看状态要用。',
     logIn: '登录',
-    loggedIn: '已登录',
     deploy: '部署',
-    deployFromMac: '在这台 Mac 的 Latch 源码目录运行。',
-    region: '地区',
     connect: '连接',
     server: '服务器',
-    deployFromServer: '登录后进入服务器上的 Latch 源码目录，再运行这些命令。',
+    deployFromServer: '在服务器上的 Latch 源码目录运行',
     domain: '服务器地址',
     existingFile: '已有配置文件',
     back: '返回',
@@ -109,7 +137,7 @@ const COPY = defineCopy(
     edgeRelayUnavailable: 'Cloudflare Workers 转发服务尚未实现。',
   },
   {
-    serverKind: 'Linux server',
+    serverKind: 'Your own server',
     tokyo: 'Tokyo',
     singapore: 'Singapore',
     edgeUnavailable: 'This Host build has Cloudflare Workers relays turned off.',
@@ -151,18 +179,37 @@ const COPY = defineCopy(
     savedAddresses: 'Saved address books',
     addRelay: 'Add relay',
     copyCommand: 'Copy command',
-    dropFile: 'Drop a relay file',
+    dropFile: 'Waiting for a relay file',
+    review: 'Review and connect',
+    name: 'Name',
+    nameRule: 'Lowercase letters, digits and hyphens',
+    location: 'Location',
+    automatic: 'Automatic',
+    locations: {
+      apac: 'Asia-Pacific',
+      'apac-ne': 'Northeast Asia-Pacific',
+      'apac-se': 'Southeast Asia-Pacific',
+      wnam: 'Western North America',
+      enam: 'Eastern North America',
+      sam: 'South America',
+      weur: 'Western Europe',
+      eeur: 'Eastern Europe',
+      oc: 'Oceania',
+      afr: 'Africa',
+      me: 'Middle East',
+    },
+    configure: 'Configure',
+    port: 'Port',
+    certificate: 'Certificate chain',
+    privateKey: 'Private key',
     chooseFile: 'Choose file',
     relaysFolderDetail:
-      'Relay files are kept in this folder. In the file dialog, press ⌘⇧G and enter it. Once the relay is added you can delete the relay file; keep a Workers relay’s .admin-header, which checking its status needs.',
+      'A relay file written to this folder appears here. In the file dialog, press ⌘⇧G to enter it. Once the relay is added you can delete the relay file; keep a Workers relay’s .admin-header, which checking its status needs.',
     logIn: 'Log in',
-    loggedIn: 'Logged in',
     deploy: 'Deploy',
-    deployFromMac: 'Run from the Latch source folder on this Mac.',
-    region: 'Region',
     connect: 'Connect',
     server: 'Server',
-    deployFromServer: 'Log in and open the Latch source folder on the server, then run these commands.',
+    deployFromServer: 'Run from the Latch source folder on the server',
     domain: 'Domain',
     existingFile: 'Use a relay file',
     back: 'Back',
@@ -605,11 +652,25 @@ function AddRelay({
 }) {
   const file = useRef<HTMLInputElement>(null)
   const [way, setWay] = useState<Way | null>(null)
-  const [region, setRegion] = useState<'ne' | 'se'>('ne')
-  const [loggedIn, setLoggedIn] = useState(false)
+  const [name, setName] = useState('relay')
+  const [location, setLocation] = useState<RelayLocation | 'auto'>('auto')
   const [server, setServer] = useState('')
   const [domain, setDomain] = useState('')
-  const [candidate, setCandidate] = useState<{ requestId: string; profile: NativeRelayProfile; hash: string } | null>(null)
+  const [port, setPort] = useState('8443')
+  const [cert, setCert] = useState('')
+  const [key, setKey] = useState('')
+  const [files, setFiles] = useState<NativeRelayFile[]>([])
+  // Either a file the page read (its profile is sent) or one the Host found (only its name is sent, the Host reads it).
+  const [candidate, setCandidate] = useState<{
+    requestId: string
+    profile?: NativeRelayProfile
+    file?: string
+    kind: 'self' | 'edge'
+    urls: string[]
+    hash: string
+    fullKey?: string
+    token: boolean
+  } | null>(null)
   const [rejected, setRejected] = useState<'file' | 'edge' | null>(null)
   const [progress, setProgress] = useState<{
     requestId: string
@@ -629,7 +690,6 @@ function AddRelay({
     setCandidate(null)
     setRejected(null)
     setProgress(null)
-    setLoggedIn(false)
   }
   const read = async (chosen: File | undefined) => {
     setRejected(null)
@@ -643,21 +703,29 @@ function AddRelay({
         setRejected('edge')
         return
       }
-      setCandidate({ requestId: crypto.randomUUID(), profile, hash: await relayKeyHash(profile) })
+      setCandidate({
+        requestId: crypto.randomUUID(),
+        profile,
+        kind: 'kind' in profile ? 'edge' : 'self',
+        urls: [profile.url, ...('extraUrls' in profile ? (profile.extraUrls ?? []) : [])],
+        hash: await relayKeyHash(profile),
+        fullKey: 'relayKey' in profile ? profile.relayKey : profile.spkiHash,
+        token: profile.registrationKey !== undefined,
+      })
     } catch {
       setRejected('file')
     }
   }
-  const connect = async ({ requestId, profile }: { requestId: string; profile?: NativeRelayProfile }) => {
+  const connect = async ({ requestId, profile, file }: { requestId: string; profile?: NativeRelayProfile; file?: string }) => {
     confirmation?.actions.dismiss()
-    const body = { requestId, ...(profile ? { profile } : {}) }
+    const body = { requestId, ...(file ? { file } : profile ? { profile } : {}) }
     setProgress({ requestId, test: null, busy: true })
     try {
       const info = await withConfirmation(confirmation =>
         api<NativeLinkInfo>('native/relays', { method: 'POST', body, ...(confirmation ? { confirmation } : {}) }),
       )
       onInfo(info)
-      const relayId = body.profile?.relayId ?? info.relays.at(-1)?.relayId
+      const relayId = profile?.relayId ?? info.relays.at(-1)?.relayId
       setProgress({
         requestId,
         test: { reached: 'registered' },
@@ -677,6 +745,24 @@ function AddRelay({
       })
     }
   }
+  // While a way is open and nothing is being checked, the Host looks in ~/.latch/relays for files not added yet.
+  const watching = open && way !== null && !candidate && !progress
+  useEffect(() => {
+    if (!watching) return
+    const controller = new AbortController()
+    const look = () =>
+      api<{ files: NativeRelayFile[] }>('native/relay-files', { signal: controller.signal })
+        .then(value => {
+          if (!controller.signal.aborted) setFiles(value.files.filter(found => found.kind !== 'edge' || edgeAvailable))
+        })
+        .catch(() => {})
+    void look()
+    const timer = window.setInterval(() => void look(), 3000)
+    return () => {
+      window.clearInterval(timer)
+      controller.abort()
+    }
+  }, [watching, edgeAvailable])
   const drop = (event: DragEvent) => {
     event.preventDefault()
     void read(event.dataTransfer.files[0])
@@ -684,35 +770,64 @@ function AddRelay({
   const relayId = progress?.relayId
   const shown = progress?.test && relayId ? { ...progress.test, bookIssuedAt: bookIssuedAt(relayId) } : progress?.test
   const fileStep = (
-    <div className="relay-drop" data-testid="relay-drop" onDragOver={event => event.preventDefault()} onDrop={drop}>
-      <Icon icon={FileUp} size={16} />
-      <span>{COPY.dropFile}</span>
-      <Tooltip content={COPY.relaysFolderDetail}>
-        <code className="relay-folder" tabIndex={0}>
-          {RELAYS_DIR}
-        </code>
-      </Tooltip>
-      <Button size="sm" onClick={() => file.current?.click()}>
-        {COPY.chooseFile}
-      </Button>
-      <input
-        ref={file}
-        type="file"
-        accept=".json,application/json"
-        hidden
-        data-testid="relay-file"
-        onChange={event => {
-          const chosen = event.currentTarget.files?.[0]
-          event.currentTarget.value = ''
-          void read(chosen)
-        }}
-      />
-    </div>
+    <>
+      {files.map(found => (
+        <div key={found.name} className="relay-found" data-testid="relay-found">
+          <Icon icon={KIND[found.kind].icon} size={16} />
+          <b>{found.name}</b>
+          <Tooltip content={found.urls.join(' · ')}>
+            <span>{hostOf(found.urls[0] ?? '')}</span>
+          </Tooltip>
+          <code>{found.keyHash}</code>
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() =>
+              setCandidate({
+                requestId: crypto.randomUUID(),
+                file: found.name,
+                kind: found.kind,
+                urls: found.urls,
+                hash: found.keyHash,
+                token: found.hasRegistrationKey,
+              })
+            }>
+            {COPY.review}
+          </Button>
+        </div>
+      ))}
+      <div className="relay-drop" data-testid="relay-drop" onDragOver={event => event.preventDefault()} onDrop={drop}>
+        <Icon icon={FileUp} size={16} />
+        <span>{COPY.dropFile}</span>
+        <Tooltip content={COPY.relaysFolderDetail}>
+          <code className="relay-folder" tabIndex={0}>
+            {RELAYS_DIR}
+          </code>
+        </Tooltip>
+        <Button size="sm" onClick={() => file.current?.click()}>
+          {COPY.chooseFile}
+        </Button>
+        <input
+          ref={file}
+          type="file"
+          accept=".json,application/json"
+          hidden
+          data-testid="relay-file"
+          onChange={event => {
+            const chosen = event.currentTarget.files?.[0]
+            event.currentTarget.value = ''
+            void read(chosen)
+          }}
+        />
+      </div>
+    </>
   )
   const commands =
-    sourceCheckout && (way === 'self' || (way === 'edge' && edgeAvailable))
-      ? relaySetupCommands(way, { region, server, domain })
-      : undefined
+    way === 'self' && sourceCheckout
+      ? relaySetupCommands('self', { server, domain, port, cert, key })
+      : way === 'edge' && edgeAvailable
+        ? relaySetupCommands('edge', { latch: localLatchCommand(), name, location: location === 'auto' ? undefined : location })
+        : undefined
   const steps =
     way === 'edge' && commands ? (
       <ol className="relay-steps-list">
@@ -720,27 +835,33 @@ function AddRelay({
           {commands.login.map(command => (
             <Command key={command} command={command} />
           ))}
-          <Checkbox checked={loggedIn} onChange={event => setLoggedIn(event.currentTarget.checked)} label={COPY.loggedIn} />
         </Step>
         <Step index={2} title={COPY.deploy}>
-          <span>{COPY.deployFromMac}</span>
-          <SegmentedControl
-            label={COPY.region}
-            value={region}
-            options={[
-              { value: 'ne', label: COPY.tokyo },
-              { value: 'se', label: COPY.singapore },
-            ]}
-            onValueChange={setRegion}
-          />
+          <span className="relay-fields">
+            <TextField
+              label={COPY.name}
+              value={name}
+              error={validRelayName(name) ? undefined : COPY.nameRule}
+              onChange={event => setName(event.currentTarget.value.trim().toLowerCase())}
+            />
+            <span className="relay-field">
+              <span className="relay-field-label">{COPY.location}</span>
+              <ValuePicker
+                label={COPY.location}
+                value={location}
+                options={[
+                  { value: 'auto' as const, label: COPY.automatic },
+                  ...RELAY_LOCATIONS.map(value => ({ value, label: COPY.locations[value] })),
+                ]}
+                onValueChange={setLocation}
+              />
+            </span>
+          </span>
           {commands.deploy.map(command => (
-            <Command key={command} command={command} copyOnly />
+            <Command key={command} command={command} />
           ))}
         </Step>
         <Step index={3} title={COPY.connect}>
-          {commands.fetch.map(command => (
-            <Command key={command} command={command} />
-          ))}
           {fileStep}
         </Step>
       </ol>
@@ -757,17 +878,42 @@ function AddRelay({
             <Command key={command} command={command} />
           ))}
         </Step>
-        <Step index={2} title={COPY.deploy}>
-          <span>{COPY.deployFromServer}</span>
-          <TextField
-            label={COPY.domain}
-            placeholder="relay.example.com"
-            value={domain}
-            onChange={event => setDomain(event.currentTarget.value.trim().toLowerCase())}
-          />
-          {commands.deploy.map(command => (
-            <Command key={command} command={command} copyOnly />
-          ))}
+        <Step index={2} title={COPY.configure}>
+          <span className="relay-fields">
+            <TextField
+              label={COPY.domain}
+              placeholder="relay.example.com"
+              value={domain}
+              onChange={event => setDomain(event.currentTarget.value.trim().toLowerCase())}
+            />
+            <TextField
+              label={COPY.port}
+              inputMode="numeric"
+              value={port}
+              onChange={event => setPort(event.currentTarget.value.replace(/[^0-9]/gu, '').slice(0, 5))}
+            />
+            <TextField
+              label={COPY.certificate}
+              placeholder="/etc/ssl/relay/fullchain.pem"
+              value={cert}
+              onChange={event => setCert(event.currentTarget.value.trim())}
+            />
+            <TextField
+              label={COPY.privateKey}
+              placeholder="/etc/ssl/relay/key.pem"
+              value={key}
+              onChange={event => setKey(event.currentTarget.value.trim())}
+            />
+          </span>
+          {commands.deploy.length > 0 && (
+            <Tooltip content={COPY.deployFromServer}>
+              <span className="relay-commands">
+                {commands.deploy.map(command => (
+                  <Command key={command} command={command} copyOnly />
+                ))}
+              </span>
+            </Tooltip>
+          )}
         </Step>
         <Step index={3} title={COPY.connect}>
           {commands.fetch.map(command => (
@@ -853,25 +999,25 @@ function AddRelay({
       {candidate && (
         <div className="relay-check" data-testid="relay-candidate">
           <SettingsRow
-            leading={<IconTile icon={KIND['kind' in candidate.profile ? 'edge' : 'self'].icon} />}
-            title={KIND['kind' in candidate.profile ? 'edge' : 'self'].label}
+            leading={<IconTile icon={KIND[candidate.kind].icon} />}
+            title={candidate.file ?? KIND[candidate.kind].label}
             record
           />
           <dl className="relay-facts">
             <dt>{COPY.address}</dt>
             <dd>
-              {[candidate.profile.url, ...('extraUrls' in candidate.profile ? (candidate.profile.extraUrls ?? []) : [])].map(url => (
+              {candidate.urls.map(url => (
                 <span key={url}>{hostOf(url)}</span>
               ))}
             </dd>
             <dt>{COPY.key}</dt>
             <dd>
-              <Tooltip content={'relayKey' in candidate.profile ? candidate.profile.relayKey : candidate.profile.spkiHash}>
+              <Tooltip content={candidate.fullKey}>
                 <span>{candidate.hash}</span>
               </Tooltip>
             </dd>
             <dt>{COPY.registrationToken}</dt>
-            <dd>{candidate.profile.registrationKey ? COPY.included : COPY.none}</dd>
+            <dd>{candidate.token ? COPY.included : COPY.none}</dd>
           </dl>
           {progress ? (
             <>

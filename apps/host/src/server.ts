@@ -819,6 +819,8 @@ export interface ServerOptions {
   agentPlugin?: (agent: AgentRecord) => HarnessPlugin
   tls?: TlsListenerOptions
   native?: { host: string; port: number }
+  /** HOME for the person's relay files (~/.latch/relays); `os.homedir()` when absent. Tests point it at a temporary folder. */
+  relayFilesHome?: string
   /** Private platform discovery backend; tests disable it explicitly. */
   nativeNetwork?: false | (() => Promise<NativeNetworkBackend>)
   /** Extra platform trust anchors for privately operated relay TLS, supplied only by the Host operator. */

@@ -30,6 +30,8 @@ export function startTestHost(options: TestHostOptions = {}): Promise<TestHost> 
         nativeNetwork: false,
         // A loopback socket cannot prove it is on the Mac's network; the gate's own tests inject a refusal or a fake backend.
         nativeNearby: () => true,
+        // Never the person's own ~/.latch/relays: a folder of the fixture, empty unless a test fills it.
+        relayFilesHome: setup.runtimeParent,
         ...rest,
         dataDir: setup.dataDir,
         workspaceRoot: setup.workspaceRoot,

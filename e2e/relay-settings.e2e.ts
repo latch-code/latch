@@ -84,6 +84,12 @@ async function scripted(page: Page, local: boolean, relays: Relay[], listening =
     await route.fulfill({ response, json: snapshot })
   })
   await page.route('**/link/api/native/info', route => route.fulfill({ json: info() }))
+  // What the Host found in ~/.latch/relays: a name, addresses and a key hash, never a token.
+  await page.route('**/link/api/native/relay-files', route =>
+    route.fulfill({
+      json: { files: [{ name: 'home', kind: 'edge', urls: [edge.url], keyHash: edgeHash, hasRegistrationKey: true }] },
+    }),
+  )
   await page.route('**/link/api/native/relays', route => {
     state.posted.push(route.request().postDataJSON())
     state.relays = [...state.relays, { ...row(self.relayId, 'connected', { latencyMs: 41 }), url: self.url, keyHash }]
@@ -172,6 +178,34 @@ describe('设置 › 连接转发', () => {
         await sheet.getByTestId('relay-ways').waitFor()
         await capture('relays-add-ways')
         expect(await sheet.getByRole('button', { name: /Cloudflare Workers/u }).getAttribute('aria-disabled')).toBeNull()
+        // Cloudflare Workers: a name and a location of the person's own, one latch command, then the file the Host found.
+        await sheet.getByRole('button', { name: /Cloudflare Workers/u }).click()
+        await sheet.getByText('pnpm latch relay setup cloudflare --name relay', { exact: true }).waitFor()
+        await sheet.getByLabel('名称').fill('home')
+        await sheet.getByText('pnpm latch relay setup cloudflare --name home', { exact: true }).waitFor()
+        expect(await sheet.getByText(/东京|新加坡|relay-edge/u).count()).toBe(0)
+        const found = sheet.getByTestId('relay-found')
+        await found.getByText(edgeHash, { exact: true }).waitFor()
+        await capture('relays-cloudflare')
+        await found.getByRole('button', { name: '核对并连接' }).click()
+        await sheet.getByTestId('relay-candidate').getByText('已包含', { exact: true }).waitFor()
+        await capture('relays-check-card-found')
+        await sheet.getByTestId('relay-candidate').getByRole('button', { name: '确认并连接' }).click()
+        await sheet.getByRole('button', { name: '完成' }).click()
+        // Only the name went to the Host, which reads the file itself.
+        expect(state.posted.at(-1)).toMatchObject({ file: 'home' })
+        expect(state.posted.at(-1)).not.toHaveProperty('profile')
+        state.posted.length = 0
+        // 自己的服务器: the form's answers become the commands.
+        await page.getByRole('button', { name: '添加转发服务' }).click()
+        await sheet.getByRole('button', { name: '自己的服务器' }).click()
+        await sheet.getByLabel('服务器', { exact: true }).fill('me@relay.example.com')
+        await sheet.getByLabel('服务器地址').fill('relay.example.com')
+        await sheet.getByLabel('证书链').fill('/etc/ssl/relay/fullchain.pem')
+        await sheet.getByLabel('私钥').fill('/etc/ssl/relay/key.pem')
+        await sheet.getByText(/pnpm relay init --data-dir \/srv\/latch-relay --domain relay\.example\.com --port 8443/u).waitFor()
+        await capture('relays-server')
+        await sheet.getByRole('button', { name: '返回', exact: true }).click()
         await sheet.getByRole('button', { name: '已有配置文件' }).click()
         await sheet
           .getByTestId('relay-file')

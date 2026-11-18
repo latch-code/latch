@@ -1,4 +1,4 @@
-import { EDGE_RELAY } from '@latch/link-wire'
+import { EDGE_RELAY, isRelayLocation } from '@latch/link-wire'
 import { EDGE_PROTOCOL, hexBytes, pathOf } from './node.ts'
 import type { EdgeEnv, EdgePlatform, EdgeRequest, EdgeResponse } from './platform.ts'
 import { edgeAddressPrefix } from './prefix.ts'
@@ -60,7 +60,8 @@ export function createEdgeWorker(platform: EdgePlatform): { fetch(request: EdgeR
       if (
         !env.NODE
         || !(env.NODE_HOSTS ?? '').split(',').some(name => name.trim() === host)
-        || !env.LOCATION_HINT
+        // No hint lets the platform place the node near its first request; a hint must be one the platform knows.
+        || (env.LOCATION_HINT !== undefined && !isRelayLocation(env.LOCATION_HINT))
         || !hexBytes(env.RELAY_ID, 16)
         || !hexBytes(env.RELAY_SIGNING_SEED, 32)
         || !shards
@@ -68,7 +69,10 @@ export function createEdgeWorker(platform: EdgePlatform): { fetch(request: EdgeR
         return empty(platform, 503)
       const namespace = env.NODE
       const stub = (shard: number) =>
-        namespace.get(namespace.idFromName(`${env.RELAY_ID}:${env.OBJECT_EPOCH ?? '1'}:${shard}`), { locationHint: env.LOCATION_HINT })
+        namespace.get(
+          namespace.idFromName(`${env.RELAY_ID}:${env.OBJECT_EPOCH ?? '1'}:${shard}`),
+          env.LOCATION_HINT === undefined ? undefined : { locationHint: env.LOCATION_HINT },
+        )
       // Answered here, never by a node object: probing health costs no object request and wakes no object.
       if (path === '/healthz' && request.method === 'GET') return platform.respond(200, 'ok\n', { 'Cache-Control': 'no-store' })
       if (path === '/admin/status' || path === '/admin/drain') {

@@ -2538,6 +2538,48 @@
   font-size: var(--fs-caption);
   white-space: nowrap;
 }
+.relay-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--sp-8) var(--sp-12);
+}
+.relay-field {
+  display: grid;
+  gap: var(--sp-4);
+  align-content: start;
+}
+.relay-field-label {
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  line-height: 16px;
+}
+.relay-commands {
+  display: grid;
+  gap: var(--sp-8);
+}
+.relay-found {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  padding: var(--sp-8) var(--sp-12);
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+}
+.relay-found > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.relay-found > code {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+}
 .relay-drop {
   display: flex;
   flex-wrap: wrap;

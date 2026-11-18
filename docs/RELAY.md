@@ -64,7 +64,7 @@ sources:
 
 ### 方式 A：Linux 服务器（self）
 
-「添加转发服务」› Linux 服务器同样是三步：登录（`ssh` 到你的服务器）、部署（下面的命令，在服务器上运行）、连接（用 `scp` 把中继文件取回这台 Mac 的 `~/.latch/relays`，再拖进来）。部署命令需要在服务器上的 Latch 源码目录运行，应复制到登录服务器的终端。安装版用「已有配置文件」导入。在公网 Linux 上运行 Latch Relay：
+「添加转发服务」› 自己的服务器是三步：登录（`ssh` 到你的服务器）、配置（填域名、端口、证书链与私钥的路径，页面据此给出下面的命令，在服务器上的 Latch 源码目录运行）、连接（用 `scp` 把中继文件取回这台 Mac 的 `~/.latch/relays`，它随即出现在页面里）。安装版尚未附带服务器程序，这一项标「尚未实现」，仍可添加已有的配置文件。在公网 Linux 上运行 Latch Relay：
 
 **准备服务器。** 需要一台可直达的 Linux 服务器、指向它的域名与证书。
 
@@ -76,20 +76,20 @@ sources:
 ```sh
 pnpm install --frozen-lockfile
 pnpm build:relay
-pnpm relay init --data-dir /srv/latch-relay
+pnpm relay init --data-dir /srv/latch-relay --domain relay.example.com --port 8443 --cert /etc/ssl/relay/fullchain.pem --key /etc/ssl/relay/key.pem
 ```
 
-`init` 生成随机节点 ID、32 字节的注册令牌和只绑定本机（`127.0.0.1`）的起始配置 `relay.json`。把完整证书链与私钥以 0600 放到配置指定的文件，再编辑 `relay.json`。
+`init` 生成随机节点 ID 与 32 字节的注册令牌，不打印它。带 `--domain` 时写出完整的公网配置 `relay.json`：监听 `0.0.0.0` 与给定端口，证书链与私钥用给定的绝对路径（文件须 0600，`check` 时才读），其余字段按一台小服务器、自己和少数手机使用取保守值，并在输出的 `assumed` 里列出替你假定的几项。域名须是连接簿接受的写法（小写、无下划线），否则什么都不创建。`--iface` 指定计量流量的公网网卡（Linux 上默认取默认路由的网卡），`--gateway` 指定 `latch-relay-tls` 的位置（默认用构建产物）。不带 `--domain` 时只写出绑定 `127.0.0.1` 的起始配置。
 
-监听地址不是回环时，配置必须同时给出 `gateway`、`quota`、`fairness`、`memory`、`maxStateBytes` 与 `registrationWork`，否则 `check` 失败：
+`init` 假定的值，按机器实测后在 `relay.json` 里改：
 
-| 设置 | 采用的值 |
+| 设置 | `init` 写入 |
 | --- | --- |
-| `host`、`port`、`gateway.binary` | 公网接口的 IP 或通配地址、服务端口、构建出的 `latch-relay-tls` 的绝对路径 |
-| `maxConnections`、`maxRoutes`、`maxPerPrefix`、`maxStateBytes` | 按节点实测容量定的连接、路由、每前缀与状态文件预算 |
-| `gateway.maxHandshakes`、`handshakesPerSecond`、`handshakeBurst`、`prefixFraction` | 实际机器压测得到的握手并发、速率、突发与前缀比例 |
-| `memory.bufferBytes`、`memory.limitBytes`、`registrationWork` | 实测的内存预算，注册挑战的软上限、计算槽与难度。缓冲加上各计算槽的内存必须低于预算的一半 |
-| `quota`、`fairness` | 套餐流量、结算日、时区、计量方向、公网网卡、突发预算、停发比例；每前缀的每日公平份额 |
+| `quota` | 每月 100 GiB、每月 1 日重置、UTC、收发都计；用到 90% 停发新流量。按套餐改 `monthlyBytes`、`resetDay`、`timezone` |
+| `maxConnections`、`maxRoutes`、`maxPerPrefix`、`maxStateBytes` | 256、64、64、1 MiB |
+| `gateway` | 握手并发 64、每秒 20、突发 32、每前缀 25% |
+| `memory`、`registrationWork` | 缓冲 16 MiB、预算 256 MiB；一个计算槽，难度 0–16 位 |
+| `fairness` | 每前缀每日至多用掉配额的一半 |
 
 字段与数值约束以 [config.ts](../apps/relay/src/config.ts) 和 [registration-work.ts](../apps/relay/src/registration-work.ts) 为准。默认只有持有注册令牌的 Host 能登记；`openRegistration` 是运营公共中继时才明确选择的设置。
 
@@ -121,12 +121,13 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 
 给你自己和少数持有中继文件的人用。只有持有注册令牌（在中继文件里）的 Mac 能登记；Latch 不设花费上限，也不做多用户公平分摊，在 Cloudflare 为账户设账单提醒。开放登记只在你明确把 `OPEN_REGISTRATION` 设为 `true` 且不设注册令牌时才有，部署命令不提供。
 
-在 Latch 的源码目录依次运行：
+在 Latch 的源码目录依次运行（设置里的「Cloudflare Workers」给出同样的两条命令，名称与位置在页面上填）：
 
 1. **登录**：`wrangler login`，在自己的终端由你本人完成。Free 计划可以运行：节点对象从不休眠，一个节点一天约用 10,800 GB-s，Free 每天 13,000 GB-s 与 100,000 次对象请求（收到的消息按 20 条计 1 次），超出后到 UTC 0 点前连接失败；长期使用选 Workers Paid（[价格](https://developers.cloudflare.com/durable-objects/platform/pricing/)）。Free 计划上，陌生人只要知道地址、每秒约 1.2 次升级请求就能用完当天的请求额度（被拒绝的升级同样计数）。Latch 不替你登录，也不读、不存 Cloudflare 的令牌。部署命令要求 wrangler 4.164.0，不在 PATH 上就停下，不代装。
-2. **部署**：`pnpm relay-edge:setup --region ne`（`se` 为新加坡）。它构建两个 Worker，部署注册挑战校验 Worker 与节点，生成中继密钥、注册令牌与管理令牌，经同一个加固的 wrangler 调用器从标准输入写进 secret（不进命令行参数、屏幕或日志），填好地址与节点标识后再部署一次，检查 `/healthz`，最后写出中继文件 `~/.latch/relays/ne.json` 与旁边的 `ne.json.admin-header`（都是新建的 0600 文件，已存在时在部署前停下，不覆盖）。`--out <绝对路径>` 把中继文件写到别处。屏幕上只有进度、中继密钥短哈希和下一步命令。
-3. **验收**：`pnpm relay-edge:accept --name ne`。`~/.latch/relays` 里只有一个中继文件时可省略 `--name`；有几个时它只列出名称；其他位置用 `--file <绝对路径>`。在任何 Mac 添加它之前对刚部署的节点运行，逐项打印通过、失败或跳过，不打印令牌或地址；有失败项时退出码为 1，不要添加这个中继。各项见下文「Workers 的界限与验收」。
-4. **添加**：在 Mac 的「设置 › 连接转发 › 添加转发服务 › 已有配置文件」选 `~/.latch/relays/ne.json`（访达隐藏这个文件夹：`open ~/.latch/relays` 后拖进来，或在选择窗口按 ⌘⇧G 输入路径），对照核对卡、系统确认窗口与第 2 步打印的密钥短哈希。
+2. **部署并验收**：`pnpm latch relay setup cloudflare --name home`。名称自己起（小写字母、数字与连字符，至多 40 个字符），它决定中继文件名、部署目录与 Worker 名（`latch-relay-home`）。`--location <位置>` 是 Cloudflare 的位置提示（`apac`、`apac-ne`、`apac-se`、`wnam`、`enam`、`sam`、`weur`、`eeur`、`oc`、`afr`、`me`），只是偏好；不给时不设提示，Cloudflare 把节点放在离第一次请求最近的地方。命令构建两个 Worker，部署注册挑战校验 Worker 与节点，生成中继密钥、注册令牌与管理令牌，经同一个加固的 wrangler 调用器从标准输入写进 secret（不进命令行参数、屏幕或日志），填好地址与节点标识后再部署一次，检查 `/healthz`，写出中继文件 `~/.latch/relays/home.json` 与旁边的 `home.json.admin-header`（都是新建的 0600 文件，已存在时在部署前停下，不覆盖；`--out <绝对路径>` 把中继文件写到别处），然后对刚部署的节点运行验收，逐项打印通过、失败或跳过，不打印令牌或地址。有失败项时退出码为 1，不要添加这个中继。各项见下文「Workers 的界限与验收」。
+3. **添加**：Mac 的「设置 › 连接转发 › 添加转发服务」第三步列出 `~/.latch/relays` 里尚未添加的配置文件（名称、地址、密钥短哈希）。选「核对并连接」，对照核对卡、系统确认窗口与第 2 步打印的密钥短哈希。页面只把文件名交给 Host，由 Host 读文件，注册令牌不经过页面。别处的文件用「选择文件」。
+
+`pnpm relay-edge:setup --name home [--location <位置>]` 与 `pnpm relay-edge:accept --name home` 是这一流程的两步，可分开运行；早先的 `--region ne|se` 仍可用，等同 `--name ne --location apac-ne` 与 `--name se --location apac-se`，沿用原来的部署目录。安装版的 `latch relay setup cloudflare` 尚未实现：安装包不带 Workers 部署包。
 
 **你的中继文件放在哪里。** 都在 `~/.latch/relays`：`~/.latch` 与 `relays` 都是 0700，命令逐级创建，是链接、不归你或组与其他用户可访问时拒绝使用。
 
@@ -134,9 +135,9 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 | --- | --- | --- |
 | `<名称>.json` | 中继文件：地址、节点身份、注册令牌 | 可以删除：Host 已保存需要的部分；要给另一台 Mac 用或重新验收时再保留 |
 | `<名称>.json.admin-header` | Workers 中继的管理令牌（`Authorization` 头） | 留着：查看状态与排空要用；重新验收还需要中继文件 |
-| `<地区>/deploy/` | 部署命令生成的 wrangler 配置与 Worker 副本，不含秘密 | 留着，`wrangler deploy -c` 或 `wrangler delete` 时用 |
+| `<名称>/deploy/` | 部署命令生成的 wrangler 配置与 Worker 副本，不含秘密 | 留着，`wrangler deploy -c` 或 `wrangler delete` 时用 |
 
-部署目录按地区命名，因为 Worker 按地区命名（`latch-relay-ne`）：同一地区再次部署就是重新部署同一个 Worker。早先版本把部署目录放在 `~/.latch-relay/latch-relay-<地区>`，中继文件放在 `--out` 指定处；新位置没有这个地区的部署目录时，部署命令照常使用旧目录并打印一行搬移命令，从不自动移动或删除。以东京节点为例，搬移是两条命令：
+部署目录按名称命名，因为 Worker 按名称命名（`latch-relay-<名称>`）：同一名称再次部署就是重新部署同一个 Worker。早先版本把部署目录放在 `~/.latch-relay/latch-relay-<地区>`，中继文件放在 `--out` 指定处；新位置没有这个名称的部署目录时，部署命令照常使用旧目录并打印一行搬移命令，从不自动移动或删除。以东京节点为例，搬移是两条命令：
 
 ```sh
 (umask 077 && mkdir -p ~/.latch/relays/ne) && mv -n ~/latch-relay-ne.json ~/.latch/relays/ne.json && mv -n ~/latch-relay-ne.json.admin-header ~/.latch/relays/ne.json.admin-header
@@ -145,12 +146,11 @@ mv -n ~/.latch-relay/latch-relay-ne ~/.latch/relays/ne/deploy && rmdir ~/.latch-
 
 - 再次运行部署命令会换新的中继密钥、注册令牌与节点标识，旧中继文件随之失效：这也是收回某人使用权的办法，之后只把新文件交给仍要用的人。默认位置已有 `ne.json` 或 `ne.json.admin-header` 时它在部署前停下：先在 Mac 上移除旧中继并删除这两个文件，或用 `--out` 把新文件写到别处。
 - 每次部署都会让经过这个节点的连接断开一次，Mac 自动重新登记，手机自动重连。删除：先在 Mac 上移除这个中继，再 `wrangler delete --name latch-relay-ne`。
-- 设置里的「Cloudflare Workers」方式在源码目录运行的 Latch 里给出同样的命令。安装版的 `latch relay setup cloudflare` 尚未实现：安装包不带 Worker 部署包；在源码目录部署后仍可用「已有配置文件」添加。
 - 自定义域名作为同一节点的另一个地址尚未接入部署命令。
 
 ### 在 Mac 上添加
 
-读入中继文件后出现核对卡：方式、地址、密钥短哈希（Linux 中继是证书公钥 SHA-256 的前 8 位十六进制，Workers 中继是中继公钥 SHA-256 的前 8 位）；注册令牌只写「已包含」。选「确认并连接」后这台 Mac 弹出系统确认，窗口写明第一个地址、地址总数与同一个密钥短哈希，对照后再确认。之后一行进度：连上、密钥相符、注册、签发连接信息。Host 签好包含当前中继配置的连接簿后显示「这台 Mac 已签发」。手机收到和使用连接簿的状态需要手机端的证据。任一步失败就停在那一步，写明原因并给「重试」（原 requestId 与原 profile，不重复添加）；结果未知时关闭对话框仍在本页内存中保留原请求，展示用的密钥短哈希不进入请求体。
+选中页面列出的配置文件，或用「选择文件」读入一个之后，出现核对卡：方式、地址、密钥短哈希（Linux 中继是证书公钥 SHA-256 的前 8 位十六进制，Workers 中继是中继公钥 SHA-256 的前 8 位）；注册令牌只写「已包含」。选「确认并连接」后这台 Mac 弹出系统确认，窗口写明第一个地址、地址总数与同一个密钥短哈希，对照后再确认。之后一行进度：连上、密钥相符、注册、签发连接信息。Host 签好包含当前中继配置的连接簿后显示「这台 Mac 已签发」。手机收到和使用连接簿的状态需要手机端的证据。任一步失败就停在那一步，写明原因并给「重试」（原 requestId 与原 profile，不重复添加）；结果未知时关闭对话框仍在本页内存中保留原请求，展示用的密钥短哈希不进入请求体。
 
 - 只有这台 Mac 上有 `admin` 的设备能添加、停用、移除；其他有 `admin` 的设备只看得到列表与状态。
 - 每个节点只能添加一次，至多四个自己的中继。

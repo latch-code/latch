@@ -969,7 +969,7 @@ Latch 不再提供个人助手、助手群聊与它们的定时任务，数据�
 | 跟随移动或改名的文件夹，运行中会话的文件夹变化 | 未实现；Latch 不是 App Sandbox 构建，Electron 只为 Mac App Store 构建创建安全范围书签 |
 | 按设备或文件夹的项目授权、只读文件夹、按文件夹的 Standard 风险级别 | 未实现；设备权限对所有项目生效 |
 | 官方中继 | 不提供；中继是运营者自己的 Linux 服务器或 Cloudflare 账户。见 [RELAY.md](RELAY.md) |
-| 安装版里引导部署中继 | 未实现；Linux 部署命令 `pnpm relay` 在服务器的源码目录运行，Workers 部署命令 `pnpm relay-edge:setup` 在 Mac 的源码目录运行，安装版可导入两种中继文件 |
+| 安装版里引导部署中继 | 未实现；Linux 部署命令 `pnpm relay` 在服务器的源码目录运行，Workers 部署命令 `pnpm latch relay setup cloudflare` 在 Mac 的源码目录运行（安装包不带 Workers 部署包），安装版可添加两种中继文件 |
 | edge 中继的花费上限 | 未实现；运营者在服务商处设的账单提醒就是上限 |
 | 向公众开放登记的 edge 中继 | 未实现；需要另行实现用户预算与接合数限制 |
 | edge 中继在 WebSocket 内对节点密钥的再一层加密 | 未实现；现在节点身份靠签名挑战，不绑定 TLS 会话，能为域名终止 TLS 的一方可实时转发并看到路由元数据（[RELAY.md](RELAY.md#中继协议的身份)） |

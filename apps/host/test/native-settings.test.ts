@@ -1,4 +1,6 @@
-import { readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { NativeLinkInfo } from '@latch/protocol'
@@ -109,4 +111,39 @@ it('switches the official relay and the order on this Mac, audited, and reports 
   expect(records.map(record => record.detail.lowering)).toEqual([true, false])
   const saved = JSON.parse(await readFile(join(host.dataDir, 'native', 'relays.json'), 'utf8')) as Record<string, unknown>
   expect(saved).toMatchObject({ officialOff: true, ownFirst: true })
+})
+
+it('lists the relay files that could be added without their tokens, and adds one by name only', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'latch-relay-files-'))
+  cleanup.push(() => rm(home, { recursive: true, force: true }))
+  const relays = join(home, '.latch', 'relays')
+  await mkdir(join(home, '.latch'), { mode: 0o700 })
+  await mkdir(relays, { mode: 0o700 })
+  const token = `lrt1.${'A'.repeat(43)}`
+  const edge = { relayId: 'c'.repeat(32), url: 'https://latch-relay-home.example.workers.dev/', kind: 'edge', relayKey: 'd'.repeat(64) }
+  await writeFile(join(relays, 'home.json'), JSON.stringify({ version: 2, profile: { ...edge, registrationKey: token } }), { mode: 0o600 })
+  await writeFile(join(relays, 'broken.json'), '{"version":2,"profile":{"kind":"edge"}}', { mode: 0o600 })
+  await writeFile(join(relays, 'home.json.admin-header'), 'Authorization: Bearer x\n', { mode: 0o600 })
+  const lookup = vi.fn<LookupFunction>((_hostname, _options, callback) => callback(new Error('fixture refuses network'), []))
+  const host = await startTestHost({ relayFilesHome: home, egressLookup: lookup })
+  cleanup.push(() => host.close())
+  const desktop = await host.enroll({ listener: 'unix' })
+  const listed = await desktop.request('native/relay-files')
+  expect(listed.status).toBe(200)
+  const text = await listed.text()
+  expect(text).not.toContain('lrt1.')
+  expect(text).not.toContain(edge.relayKey)
+  expect(JSON.parse(text)).toEqual({
+    files: [{ name: 'home', kind: 'edge', urls: [edge.url], keyHash: expect.stringMatching(/^[a-f0-9]{8}$/u), hasRegistrationKey: true }],
+  })
+  const add = (body: Record<string, unknown>) =>
+    desktop.request('native/relays', { method: 'POST', body: { requestId: randomUUID(), ...body } })
+  // A name is one path component the folder lists; nothing else is ever opened.
+  for (const file of ['../home', 'home.json', '/etc/hosts', 'broken', 'absent']) expect(await add({ file })).toMatchObject({ status: 400 })
+  expect(await add({ file: 'home', profile: edge })).toMatchObject({ status: 400 })
+  // The named file is read by the Host and goes on to this Mac's confirmation like a profile sent by the page.
+  const named = await add({ file: 'home' })
+  const sent = await add({ profile: { ...edge, relayId: 'e'.repeat(32) } })
+  expect(named.status).toBe(sent.status)
+  expect(named.status).not.toBe(400)
 })

@@ -51,6 +51,7 @@ function cli(
     env?: NodeJS.ProcessEnv
     home?: string
     program?: 'latch' | 'pnpm latch'
+    runEntry?: (file: string, args: string[]) => Promise<number>
   } = {},
 ) {
   const output = { stdout: '', stderr: '', asked: [] as Array<{ prompt: string; shown: string }>, secrets: 0 }
@@ -81,6 +82,7 @@ function cli(
     // Never the real ~/.latch/relays.
     home: options.home ?? join(tmpdir(), 'lt-cli-no-home'),
     ...(options.program ? { program: options.program } : {}),
+    ...(options.runEntry ? { runEntry: options.runEntry } : {}),
   }
   return { io, output, latch: (...argv: string[]) => runLatch(argv, io) }
 }
@@ -1109,14 +1111,33 @@ describe('latch CLI', () => {
     expect(verified.stdout).toMatch(/审计记录完整：共 \d+ 条/u)
   })
 
-  it('refuses unavailable relay setup before it creates output or Host data', async () => {
+  it('runs the Workers deploy entry with the name and location, and refuses bad input before creating anything', async () => {
     const directory = await temporaryDirectory()
     const dataDir = join(directory, 'absent-data')
     const out = join(directory, 'latch-relay.json')
-    const cloudflare = cli({ cwd: directory })
-    expect(await cloudflare.latch('relay', 'setup', 'cloudflare', '--region', 'ne', '--out', out, '--data-dir', dataDir)).toBe(1)
-    // The installed command ships no Worker bundles: the source checkout's pnpm relay-edge:setup deploys.
-    expect(cloudflare.output.stderr).toContain('安装版不带 Workers 部署包')
+    const runs: string[][] = []
+    const cloudflare = () =>
+      cli({ cwd: directory, runEntry: async (file, args) => (runs.push([file.split('/').slice(-3).join('/'), ...args]), 0) })
+    for (const bad of [
+      [],
+      ['--name', 'Bad_Name'],
+      ['--name', 'home', '--location', 'tokyo'],
+      ['--name', 'home', '--out', 'relative.json'],
+    ]) {
+      const refused = cloudflare()
+      expect(await refused.latch('relay', 'setup', 'cloudflare', ...bad, '--data-dir', dataDir)).toBe(1)
+    }
+    expect(runs).toEqual([])
+    const placed = cloudflare()
+    expect(
+      await placed.latch('relay', 'setup', 'cloudflare', '--name', 'home', '--location', 'apac', '--out', out, '--data-dir', dataDir),
+    ).toBe(0)
+    const automatic = cloudflare()
+    expect(await automatic.latch('relay', 'setup', 'cloudflare', '--name', 'home', '--data-dir', dataDir)).toBe(0)
+    expect(runs).toEqual([
+      ['relay-edge/scripts/setup.ts', '--name', 'home', '--location', 'apac', '--out', out, '--check'],
+      ['relay-edge/scripts/setup.ts', '--name', 'home', '--check'],
+    ])
     const linux = cli({ cwd: directory })
     expect(await linux.latch('relay', 'setup', 'linux', '--data-dir', dataDir)).toBe(1)
     expect(linux.output.stderr).toContain('尚未提供 Linux 中继发布物')

@@ -118,6 +118,14 @@ export interface NativeRelayTest {
   /** When this Host last signed a book containing this relay's current configuration. */
   bookIssuedAt?: number
 }
+/** A relay file in this Mac's ~/.latch/relays that could be added: what the check card shows, never its token or key. */
+export interface NativeRelayFile {
+  name: string
+  kind: 'self' | 'edge'
+  urls: string[]
+  keyHash: string
+  hasRegistrationKey: boolean
+}
 /** The local relay CLI exports this to a private file. The Host never sends it back to any client. */
 export type NativeRelayProfile =
   | { relayId: string; url: string; spkiHash: string; registrationKey?: string }

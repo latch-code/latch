@@ -92,7 +92,11 @@ describe('edge Worker front', () => {
     const minimal = upgrade({ 'sec-websocket-key': undefined, 'sec-websocket-version': undefined, connection: undefined })
     expect((await t.worker.fetch(request(`${url}/v1/h/0`, 'GET', minimal), t.env)).status).toBe(101)
     expect((await t.worker.fetch(request('https://other.example/v1/c/0', 'GET', upgrade()), t.env)).status).toBe(503)
-    for (const env of [{ RELAY_SIGNING_SEED: undefined }, { RELAY_ID: 'zz' }, { SHARDS: '17' }, { LOCATION_HINT: undefined }]) {
+    // Without a hint the platform places the node itself.
+    const unhinted = setup({ LOCATION_HINT: undefined })
+    expect((await unhinted.worker.fetch(request(`${url}/v1/c/0`, 'GET', upgrade()), unhinted.env)).status).toBe(101)
+    expect([...unhinted.objects.hints.values()]).toEqual([undefined])
+    for (const env of [{ RELAY_SIGNING_SEED: undefined }, { RELAY_ID: 'zz' }, { SHARDS: '17' }, { LOCATION_HINT: 'mars' }]) {
       const broken = setup(env)
       expect((await broken.worker.fetch(request(`${url}/v1/c/0`, 'GET', upgrade()), broken.env)).status).toBe(503)
     }
