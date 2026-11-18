@@ -58,7 +58,7 @@ const { createAgentRunner, createBrowserProvider } = require('./browser-agent.cj
 // Through the module objects, so the end-to-end test's bootstrap can give the updater a local feed and a fake installer.
 const updates = require('./updater.cjs')
 const menus = require('./menu.cjs')
-const { ABOUT_BACKGROUND, ABOUT_SIZE, aboutCopy, aboutUrl } = require('./about.cjs')
+const { ABOUT_BACKGROUND, ABOUT_SIZE, ABOUT_URL, aboutCopy, aboutResponse } = require('./about.cjs')
 const { createLocale, currentLocale, defineCopy } = require('./locale.cjs')
 const {
   LIFECYCLE_CHANNELS,
@@ -256,9 +256,14 @@ const remoteWindows = new Map()
 const partitionOf = hostId => `persist:latch-host-${hostId}`
 
 /**
- * 关于 Latch (about.cjs): one small window with a static page main wrote. It has no preload and runs no script, uses the
- * app session (whose only route is the black-hole proxy), and the navigation guard of every window keeps it where it is.
+ * 关于 Latch (about.cjs): one small window with a static page main serves at latch://app/about. It has no preload and
+ * runs no script, uses the app session (whose only route is the black-hole proxy), and the navigation guard of every
+ * window keeps it on Latch's own address.
  */
+const aboutInput = () => ({
+  version: app.isPackaged ? app.getVersion() : DESKTOP_VERSION,
+  icon: icon.resize({ width: 168, height: 168 }).toDataURL(),
+})
 let aboutWindow
 /** The window a menu command acts on: the focused one that shows a Latch page (never 关于), else this Mac's. */
 function focusedAppWindow() {
@@ -305,9 +310,7 @@ function showAbout() {
       window.close()
     }
   })
-  void window.loadURL(
-    aboutUrl({ version: app.isPackaged ? app.getVersion() : DESKTOP_VERSION, icon: icon.resize({ width: 168, height: 168 }).toDataURL() }),
-  )
+  void window.loadURL(ABOUT_URL)
 }
 
 /** main as its Host's browser provider (browser-agent.cjs), from `start`; it runs only while the window is open. */
@@ -780,6 +783,7 @@ async function startUpdates({ proxy, supervisor }) {
         menus.menuTemplate({
           packaged: app.isPackaged,
           onAbout: showAbout,
+          onSettings: () => focusedAppWindow()?.webContents.send('latch:settings:show'),
           onCheckForUpdates: showUpdates,
           onSpace: showSpace,
           onSafeMode: openSafeMode,
@@ -1327,7 +1331,7 @@ async function start() {
     // 「重启 Latch」, an update or a crash restart: the window shows it is reconnecting, and the log stays quiet.
     hostTransitioning: () => supervisor.transitioning(),
   })
-  protocol.handle('latch', request => proxy.handle(request))
+  protocol.handle('latch', request => aboutResponse(request, aboutInput()) ?? proxy.handle(request))
   protocol.handle('latch-frame', request => proxy.previewFrame(request))
   handleFolders(proxy, store)
   // Asked by a window's own top page only; a preview tab or a frame is no window and gets false.

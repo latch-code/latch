@@ -449,6 +449,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                         visible={visibleConversation}
                         starting={pendingStart || null}
                         backdrop={backdropEnabled ? level : 'off'}
+                        backdropKind={shell.preferences.backdropStyle}
                       />
                     </div>
                     {page.present && (summary || filesVisible) && (
@@ -568,6 +569,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   {homeBackdrop && (
                     <Backdrop
                       className="workbench-backdrop"
+                      kind={shell.preferences.backdropStyle}
                       ambient
                       level={level}
                       running={connection === 'connected' ? counts.running : 0}
@@ -590,7 +592,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   )}
                   <div className="code-home-input">
                     {usesDemoModel(snapshot, choice.harnessId, choice.model?.providerId) && (
-                      <p className="workbench-home-demo">
+                      <p className="workbench-home-demo" data-backdrop-clear="">
                         <StatusPill tone="warn">{SHELL_COPY.demoModel}</StatusPill>
                       </p>
                     )}

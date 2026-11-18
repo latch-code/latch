@@ -142,7 +142,7 @@ describe('the background layer', () => {
     expect(document.elementFromPoint(...corner(screen.getByTestId('host').element()))).toBe(screen.getByTestId('host').element())
   })
 
-  it.for(['grid', 'field', 'glow'] as const)('draws 点阵, 粒子场 and 柔光 on that canvas (%s)', async kind => {
+  it.for(['grid', 'field', 'digits', 'glow'] as const)('draws 点阵, 粒子, 01 and 柔光 on that canvas (%s)', async kind => {
     const stats = reader()
     const screen = await render(<Stage kind={kind} stats={stats} />)
     const canvas = screen.container.querySelector('canvas')!
@@ -194,9 +194,9 @@ describe('the background layer', () => {
     expect(screen.container.querySelector('canvas')!.getAttribute('style')).toBeNull()
   })
 
-  it('keeps an ambient field drifting while nothing runs', async () => {
+  it.for(['field', 'digits'] as const)('keeps an ambient layer moving while nothing runs (%s)', async kind => {
     const stats = reader()
-    const screen = await render(<Stage ambient running={0} stats={stats} />)
+    const screen = await render(<Stage kind={kind} ambient running={0} stats={stats} />)
     await expect.poll(() => stats.read?.().frames ?? 0).toBeGreaterThan(1)
     const before = stats.read!().frames
     await pause(600)
@@ -273,7 +273,7 @@ describe('the background layer', () => {
   })
 
   it('keeps a security surface clear of the soft light and of a focused field too', async () => {
-    for (const props of [{ kind: 'glow' as const }, { kind: 'grid' as const, focus: true }]) {
+    for (const props of [{ kind: 'glow' as const }, { kind: 'digits' as const }, { kind: 'grid' as const, focus: true }]) {
       const stats = reader()
       const screen = await render(<Stage {...props} secure stats={stats} />)
       const canvas = screen.container.querySelector('canvas')!

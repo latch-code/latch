@@ -1121,6 +1121,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     if (!document.querySelector('dialog:modal:not(.settings-overlay)')) openSettings('about')
   }
   useEffect(() => currentShell()?.updates?.onShow?.(() => showAbout.current()), [])
+  // 「设置…」 in the desktop app's menu.
+  const showSettings = useRef(() => {})
+  showSettings.current = () => {
+    if (!document.querySelector('dialog:modal')) openSettings()
+  }
+  useEffect(() => currentShell()?.settings?.onShow?.(() => showSettings.current()), [])
   // The desktop app reads the Host itself, so its notification can be ahead of this page, even about a session the page
   // already lists: go as soon as the session is known, and keep looking for its request until the page has read again.
   const [notified, setNotified] = useState<{ id: string; read: boolean; arrived: boolean } | null>(null)

@@ -9,7 +9,7 @@ it('restores only a valid dock height and an explicit open flag', () => {
   expect(parsePreferences('{"dockOpen":"true","dockHeight":680.5}').dockOpen).toBe(false)
   expect(parsePreferences('{"dockOpen":true,"dockHeight":139}').dockHeight).toBeUndefined()
 })
-import { BackdropTiles, DensityTiles, MotionChoice } from '../src/settings/AppearanceTiles.tsx'
+import { BackdropStyleTiles, BackdropTiles, DensityTiles, MotionChoice } from '../src/settings/AppearanceTiles.tsx'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -109,9 +109,14 @@ describe('对话 or 看板 on this device', () => {
   })
 
   it('draws the choices as named controls: three strengths, two densities, and 动效 as 跟随系统 or 减弱', () => {
-    const backdrop = renderToStaticMarkup(createElement(BackdropTiles, { value: 'standard', onValueChange: () => {} }))
+    const backdrop = renderToStaticMarkup(createElement(BackdropTiles, { value: 'standard', kind: 'field', onValueChange: () => {} }))
     expect(backdrop).toContain('aria-label="背景效果"')
     expect(['>关<', '>轻<', '>标准<'].every(label => backdrop.includes(label))).toBe(true)
+    const style = renderToStaticMarkup(createElement(BackdropStyleTiles, { value: 'digits', onValueChange: () => {} }))
+    expect(style).toContain('aria-label="背景样式"')
+    expect(['>粒子<', '>01<'].every(label => style.includes(label))).toBe(true)
+    expect(parsePreferences('{"backdropStyle":"digits"}').backdropStyle).toBe('digits')
+    expect(parsePreferences('{"backdropStyle":"rain"}').backdropStyle).toBe('field')
     expect(backdrop.match(/role="radio"/gu)).toHaveLength(3)
     // Each tile holds the real layer; 关 holds none.
     expect(backdrop.match(/class="ui-backdrop"/gu)).toHaveLength(2)

@@ -267,7 +267,7 @@ describe('the turn footer', () => {
 
 describe('设置', () => {
   it('keeps only configuration: what was used is in 额度与用量, not a section of its own', () => {
-    expect(settingsSections(snapshot(['view', 'run']))).toEqual(['general', 'devices', 'shortcuts', 'about'])
+    expect(settingsSections(snapshot(['view', 'run']))).toEqual(['general', 'appearance', 'devices', 'shortcuts', 'about'])
     expect(settingsSections(snapshot(['view', 'run', 'admin']))).not.toContain('usage')
   })
 })

@@ -1,5 +1,6 @@
 export type SettingsSection =
   | 'general'
+  | 'appearance'
   | 'providers'
   | 'engines'
   | 'mcp'
@@ -59,6 +60,7 @@ export interface MyAgentTarget {
 /** 设置's sections on wide windows, in their order; 设备 is one of them, its devices pages inside it. */
 const WIDE_SECTIONS: readonly SettingsSection[] = [
   'general',
+  'appearance',
   'providers',
   'engines',
   'mcp',

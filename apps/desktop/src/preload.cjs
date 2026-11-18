@@ -137,6 +137,15 @@ ipcRenderer.on('latch:updates:show', holdEarlyShow)
  * `spaces`: Code or 我的 Agent chosen in the menu bar, for any window's page. Only the two names cross; anything else
  * from main is dropped here.
  */
+/** `settings`: 设置… chosen in the menu bar, for any window's page. Nothing but the signal crosses. */
+const settingsApi = Object.freeze({
+  onShow: callback => {
+    if (typeof callback !== 'function') return () => {}
+    const listener = () => callback()
+    ipcRenderer.on('latch:settings:show', listener)
+    return () => ipcRenderer.removeListener('latch:settings:show', listener)
+  },
+})
 const spacesApi = Object.freeze({
   onShow: callback => {
     if (typeof callback !== 'function') return () => {}
@@ -584,6 +593,7 @@ if (REMOTE)
       platform: process.platform,
       computers: computersApi(false),
       spaces: spacesApi,
+      settings: settingsApi,
       ...(LIGHTS ? { lights: LIGHTS } : {}),
     }),
   )
@@ -599,6 +609,7 @@ if (!REMOTE)
       devMode: true,
       computers: computersApi(true),
       spaces: spacesApi,
+      settings: settingsApi,
       locale: Object.freeze({
         set: (preference, language) => {
           if (language !== 'zh-CN' && language !== 'en') return

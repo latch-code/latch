@@ -1,6 +1,6 @@
 'use strict'
-// 关于 Latch: one small window whose page main writes itself. The page is static: no script, no preload, no network
-// and nothing to navigate to; it shows the mark, the name, the version and the licence line, in the system's light or dark.
+// 关于 Latch: one small window whose page main writes itself and serves at latch://app/about. The page is static: no
+// script, no preload, no network and nothing to navigate to; it shows the mark, the name, the version and the licence line, in the system's light or dark.
 
 const { defineCopy, currentLocale } = require('./locale.cjs')
 
@@ -41,7 +41,16 @@ footer{color:var(--faint);font-size:11px;line-height:16px;text-align:center}
 </style></head><body><main>${mark}<h1>Latch</h1><p>${escapeHtml(COPY.version)} ${escapeHtml(version)}</p></main><footer>© 2026 The Latch Authors · ${escapeHtml(COPY.licence)}</footer></body></html>`
 }
 
-/** The page as the URL the window loads: its whole content, so there is no address to fetch or to change. */
-const aboutUrl = input => `data:text/html;charset=utf-8;base64,${Buffer.from(aboutPage(input), 'utf8').toString('base64')}`
+/** Where the window loads it: Latch's own address, the only kind the app session lets a window load. */
+const ABOUT_URL = 'latch://app/about'
 
-module.exports = { ABOUT_BACKGROUND, ABOUT_CSP, ABOUT_SIZE, aboutCopy: COPY, aboutPage, aboutUrl }
+/** The answer to a GET of ABOUT_URL, or undefined for any other request. */
+function aboutResponse(request, input) {
+  if (request.method !== 'GET' || request.url !== ABOUT_URL) return undefined
+  return new Response(aboutPage(input), {
+    status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': ABOUT_CSP, 'cache-control': 'no-store' },
+  })
+}
+
+module.exports = { ABOUT_BACKGROUND, ABOUT_CSP, ABOUT_SIZE, ABOUT_URL, aboutCopy: COPY, aboutPage, aboutResponse }

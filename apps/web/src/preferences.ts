@@ -22,6 +22,8 @@ export type WorkDisplay = 'all' | 'failures' | 'folded'
 export const VIEW_NAMES = defineCopy<Record<WorkView, string>>({ chat: '对话', board: '看板' }, { chat: 'Chat', board: 'Board' })
 /** 背景效果: 关, 轻 or 标准. */
 export type BackdropPreference = 'off' | 'light' | 'standard'
+/** 背景效果's look: 粒子 (`field`) or 01 (`digits`). */
+export type BackdropStyle = 'field' | 'digits'
 /**
  * 动效: 跟随系统 or 减弱. Forcing motion on against a system that asks for less is not offered until every older
  * reduced-motion rule follows the setting; a stored value other than these two reads as 跟随系统.
@@ -30,8 +32,17 @@ export type MotionPreference = 'system' | 'reduce'
 /** 密度: 标准 or 紧凑. */
 export type DensityPreference = 'standard' | 'compact'
 const APPEARANCE_COPY = defineCopy(
-  { off: '关', light: '轻', standard: '标准', system: '跟随系统', reduce: '减弱', compact: '紧凑' },
-  { off: 'Off', light: 'Light', standard: 'Standard', system: 'System', reduce: 'Reduced', compact: 'Compact' },
+  { off: '关', light: '轻', standard: '标准', system: '跟随系统', reduce: '减弱', compact: '紧凑', field: '粒子', digits: '01' },
+  {
+    off: 'Off',
+    light: 'Light',
+    standard: 'Standard',
+    system: 'System',
+    reduce: 'Reduced',
+    compact: 'Compact',
+    field: 'Particles',
+    digits: '01',
+  },
 )
 
 function appearanceOptions<T extends keyof typeof APPEARANCE_COPY>(values: readonly T[]) {
@@ -44,6 +55,7 @@ function appearanceOptions<T extends keyof typeof APPEARANCE_COPY>(values: reado
 }
 
 export const BACKDROP_CHOICES = appearanceOptions<BackdropPreference>(['off', 'light', 'standard'])
+export const BACKDROP_STYLE_CHOICES = appearanceOptions<BackdropStyle>(['field', 'digits'])
 export const MOTION_CHOICES = appearanceOptions<MotionPreference>(['system', 'reduce'])
 export const DENSITY_CHOICES = appearanceOptions<DensityPreference>(['standard', 'compact'])
 
@@ -65,6 +77,8 @@ export interface Preferences {
   workDisplay: WorkDisplay
   /** 背景效果 on this device; absent until the person chooses, so a phone starts lighter than a desktop (`backdropLevel`). */
   backdrop?: BackdropPreference
+  /** 粒子 or 01 behind the page, on this device. */
+  backdropStyle: BackdropStyle
   /** 动效 on this device. */
   motion: MotionPreference
   /** 密度 on this device. */
@@ -93,6 +107,7 @@ const defaults: Preferences = {
   locale: 'system',
   workView: 'chat',
   workDisplay: 'all',
+  backdropStyle: 'field',
   motion: 'system',
   density: 'standard',
   sendKey: 'enter',
@@ -142,6 +157,7 @@ export function parsePreferences(raw: string | null): Preferences {
       workView: storedView(item),
       workDisplay: item.workDisplay === 'failures' || item.workDisplay === 'folded' ? item.workDisplay : 'all',
       ...(item.backdrop === 'off' || item.backdrop === 'light' || item.backdrop === 'standard' ? { backdrop: item.backdrop } : {}),
+      backdropStyle: item.backdropStyle === 'digits' ? 'digits' : 'field',
       motion: item.motion === 'reduce' ? 'reduce' : 'system',
       density: item.density === 'compact' ? 'compact' : 'standard',
       sendKey: item.sendKey === 'mod-enter' ? 'mod-enter' : 'enter',

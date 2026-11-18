@@ -143,6 +143,7 @@ const SETTINGS_ROWS: ReadonlyArray<{ section: SettingsSection; keywords?: string
       return COPY.generalKeywords
     },
   },
+  { section: 'appearance' },
   {
     section: 'providers',
     get keywords() {

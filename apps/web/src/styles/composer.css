@@ -239,53 +239,21 @@
   color: var(--ink-2);
 }
 /*
- * No padding, border or weight: a mark never moves a character. The sigil (`$` 0.6em, `/` 0.3em) is narrower than the
- * glyph drawn for it, so glyph and tint end at the sigil's right edge and reach left over the whitespace, line start or
- * input padding that the Host's rules always put before a token (prompt-tokens.ts); 0.72em keeps the glyph's ink at
- * about cap height and leaves part of a space before `$` clear, so the mark does not touch the word before it. The
- * name carries the rest of the tint, one layer, never doubled.
+ * No padding, border or weight: a mark never moves a character. The token keeps its own letters, sigil included, in
+ * the mark's ink; the tint is one rounded layer that reaches 3px past the token on each side as a shadow, over the
+ * whitespace, line start or input padding the Host's rules always put round a token (prompt-tokens.ts), so the mark has
+ * room without taking any.
  */
 .prompt-mark {
-  color: var(--content-path-ink);
-}
-.prompt-mark-sigil {
-  position: relative;
-  color: transparent;
-}
-.prompt-mark-sigil::before {
-  position: absolute;
-  inset-block: 0;
-  inset-inline-end: 0;
-  width: max(100%, 0.72em);
-  border-start-start-radius: var(--r-4);
-  border-end-start-radius: var(--r-4);
+  border-radius: var(--r-4);
   background: var(--content-path-tint);
-  content: '';
-}
-.prompt-mark-sigil > svg {
-  position: absolute;
-  inset-inline-end: 0;
-  top: 50%;
-  width: 0.72em;
-  height: 0.72em;
-  color: var(--content-path-ink);
-  transform: translateY(-50%);
-}
-/* The code glyph's ink is shorter than the book's; a command is the draft's first word, with the padding before it. */
-.prompt-mark[data-kind='command'] > .prompt-mark-sigil::before {
-  width: max(100%, 1em);
-}
-.prompt-mark[data-kind='command'] > .prompt-mark-sigil > svg {
-  width: 1em;
-  height: 1em;
-}
-.prompt-mark-name {
-  border-start-end-radius: var(--r-4);
-  border-end-end-radius: var(--r-4);
-  background: var(--content-path-tint);
-  box-shadow: 2px 0 0 var(--content-path-tint);
+  box-shadow: 0 0 0 3px var(--content-path-tint);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
+  color: var(--content-path-ink);
+}
+.prompt-mark-sigil > svg {
+  display: none;
 }
 .composer-command-chip {
   border-radius: var(--r-4);

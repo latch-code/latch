@@ -270,7 +270,9 @@ describe('buttons', () => {
       </div>,
     )
     const label = screen.getByText('这台 Mac 的时间').element()
-    expect(screen.container.querySelectorAll('.ui-hint .ui-icon-button')).toHaveLength(1)
+    // The inline hint's ⓘ is a mark with a tooltip, not a button: nothing to press.
+    expect(screen.container.querySelectorAll('.ui-hint .ui-icon-button')).toHaveLength(0)
+    expect(screen.container.querySelectorAll('.ui-hint .ui-hint-more')).toHaveLength(1)
     expect(screen.container.querySelector('.ui-hint[data-tip] .ui-hint-lead')).toBeNull()
     await userEvent.keyboard('{Tab}')
     expect(document.activeElement).toBe(label)

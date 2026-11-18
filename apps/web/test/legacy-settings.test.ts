@@ -32,9 +32,10 @@ const legacy = {
 describe('older Host without a catalog', () => {
   it('offers only settings the Host can serve', () => {
     // The device page needs the newer device API, and model services the catalog, so both are hidden on such a Host.
-    expect(settingsSections(legacy)).toEqual(['general', 'plugins', 'shortcuts', 'about'])
+    expect(settingsSections(legacy)).toEqual(['general', 'appearance', 'plugins', 'shortcuts', 'about'])
     expect(settingsSections({ ...legacy, catalog })).toEqual([
       'general',
+      'appearance',
       'providers',
       'engines',
       'workspaces',

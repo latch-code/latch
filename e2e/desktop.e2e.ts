@@ -343,6 +343,91 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
     }
   })
 
+  it('opens 设置 and its own 关于 window from the app menu, and draws the chosen background on the start page', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'latch-electron-menu-'))
+    const testHost = await startTestHost({ demo: true, hostName: '桌面菜单验收', uiDir: resolve('dist/web') })
+    const { host } = testHost
+    let application: ElectronApplication | undefined
+    try {
+      await writeHostState(testHost.dataDir, {
+        version: 2,
+        pid: process.pid,
+        hostId: host.hostId,
+        instanceId: host.instanceId,
+        socketPath: host.socketPath,
+        loopbackOrigin: host.loopbackOrigin,
+        tlsOrigin: null,
+        startedAt: host.startedAt,
+        dataDir: testHost.dataDir,
+      })
+      application = await _electron.launch({
+        args: [
+          resolve('apps/desktop/src/main.cjs'),
+          `--latch-host-state=${join(testHost.dataDir, 'host.json')}`,
+          `--latch-user-data=${join(root, 'electron')}`,
+          '--use-mock-keychain',
+        ],
+        cwd: process.cwd(),
+        env: shellEnvironment(),
+        timeout: 30_000,
+      })
+      const page = await application.firstWindow()
+      page.setDefaultTimeout(20_000)
+      await enrollShell(page, testHost)
+      await mkdir('test-results/desktop-menu', { recursive: true })
+      const shot = (target: Page, name: string) => target.screenshot({ path: `test-results/desktop-menu/${name}.png` })
+      const click = (id: string) =>
+        application!.evaluate(({ Menu }, item) => {
+          Menu.getApplicationMenu()!.getMenuItemById(item)!.click()
+        }, id)
+
+      // 关于 Latch: a window of its own at Latch's address, with the name and the version and no script.
+      const opened = application.waitForEvent('window')
+      await click('about')
+      const about = await opened
+      await about.waitForLoadState('load')
+      expect(about.url()).toBe('latch://app/about')
+      await about.getByRole('heading', { name: 'Latch' }).waitFor()
+      expect(await about.locator('p').innerText()).toMatch(/^版本 \d+\.\d+\.\d+/u)
+      expect(await about.locator('img').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true)
+      expect(await about.locator('script').count()).toBe(0)
+      await shot(about, 'about')
+      // A second choice brings the same window forward; Escape closes it.
+      await click('about')
+      expect(application.windows().length).toBe(2)
+      const closed = about.waitForEvent('close')
+      // A key as the system delivers it to the window: main closes on Escape before the page (which takes no keys) sees it.
+      await application.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows().find(item => item.webContents.getURL() === 'latch://app/about')
+        window!.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
+      })
+      await closed
+
+      // The start page's background in both looks, as this device chooses them in 设置 › 外观.
+      await page.locator('canvas.ui-backdrop[data-kind="field"]').waitFor()
+      await page.waitForTimeout(1200)
+      await shot(page, 'start-particles')
+      // 设置… opens the page's settings.
+      await click('settings')
+      const settings = page.locator('.settings-overlay')
+      await settings.waitFor()
+      await settings.getByText('外观', { exact: true }).first().click()
+      await settings.getByRole('radiogroup', { name: '背景样式' }).waitFor()
+      await shot(page, 'settings-appearance')
+      await settings.getByRole('radio', { name: '01', exact: true }).click()
+      await page.keyboard.press('Escape')
+      await settings.waitFor({ state: 'detached' })
+      await page.locator('canvas.ui-backdrop[data-kind="digits"]').waitFor()
+      await page.waitForTimeout(1200)
+      await shot(page, 'start-digits')
+      expect(page.url()).toBe('latch://app/link/')
+    } finally {
+      await application?.close()
+      await testHost.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('enrolls over host.sock, keeps credentials in main, confines the renderer and leaves the Host running', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-'))
     const marks = { ran: 0 }

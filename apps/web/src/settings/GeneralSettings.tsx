@@ -14,12 +14,12 @@ import { NotificationSettings } from './NotificationSettings.tsx'
 import { chooseEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { PromptTemplatesSettings } from './PromptTemplatesSettings.tsx'
 import { CustomizationSettings } from './CustomizationSettings.tsx'
-import { BackdropTiles, DensityTiles, MotionChoice } from './AppearanceTiles.tsx'
+import { BackdropStyleTiles, BackdropTiles, DensityTiles, MotionChoice } from './AppearanceTiles.tsx'
 import { CliSettings } from './CliSettings.tsx'
 
 const COPY = defineCopy(
   {
-    appearance: '外观',
+    appearance: '主题',
     theme: { system: '跟随系统', light: '浅色', dark: '深色' },
     backdrop: '背景效果',
     density: '密度',
@@ -46,7 +46,7 @@ const COPY = defineCopy(
     awake: '有任务时保持 Mac 唤醒',
   },
   {
-    appearance: 'Appearance',
+    appearance: 'Theme',
     theme: { system: 'System', light: 'Light', dark: 'Dark' },
     backdrop: 'Background effects',
     density: 'Density',
@@ -213,47 +213,6 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
   const usage = !phone
   return (
     <>
-      <SettingsGroup title={COPY.appearance} bare>
-        <ThemeTiles
-          value={preferences.theme}
-          onValueChange={value => {
-            setPreference('theme', value)
-          }}
-        />
-        <div className="layout-choice-head">
-          <span>{COPY.backdrop}</span>
-          <span>{COPY.onlyHere}</span>
-        </div>
-        <BackdropTiles
-          value={backdropLevel(preferences, phone)}
-          onValueChange={value => {
-            setPreference('backdrop', value)
-          }}
-        />
-        <div className="layout-choice-head">
-          <span>{COPY.density}</span>
-          <span>{COPY.onlyHere}</span>
-        </div>
-        <DensityTiles
-          value={preferences.density}
-          onValueChange={value => {
-            setPreference('density', value)
-          }}
-        />
-        <div className="layout-choice-head">
-          <span>{COPY.motion}</span>
-          <span>{COPY.onlyHere}</span>
-        </div>
-        <MotionChoice
-          value={preferences.motion}
-          onValueChange={value => {
-            setPreference('motion', value)
-          }}
-        />
-      </SettingsGroup>
-      {snapshot.catalog?.features?.customization && (admin || writer.pending) && (
-        <CustomizationSettings admin={admin} writer={writer} onChanged={onChanged} />
-      )}
       <SettingsGroup title={COPY.use}>
         <SettingsRow
           title={COPY.language}
@@ -322,6 +281,65 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
       <NotificationSettings />
       <ThisMac hostName={snapshot.hostName} local={deviceAccess(snapshot, currentShell()).local} />
       {admin && snapshot.catalog?.features?.promptTemplates && <PromptTemplatesSettings snapshot={snapshot} onChanged={onChanged} />}
+    </>
+  )
+}
+
+/** 设置 › 外观: the theme, the background effect (its look and its strength), density and motion, then 自定义. */
+export function AppearanceSettings({ snapshot, admin, onChanged }: { snapshot: AppSnapshot; admin: boolean; onChanged: () => void }) {
+  const preferences = usePreferences()
+  const phone = useViewport() === 'phone'
+  const writer = useContext(CustomizationActionsContext)
+  return (
+    <>
+      <SettingsGroup title={COPY.appearance} bare>
+        <ThemeTiles
+          value={preferences.theme}
+          onValueChange={value => {
+            setPreference('theme', value)
+          }}
+        />
+        <div className="layout-choice-head">
+          <span>{COPY.backdrop}</span>
+          <span>{COPY.onlyHere}</span>
+        </div>
+        <BackdropStyleTiles
+          value={preferences.backdropStyle}
+          onValueChange={value => {
+            setPreference('backdropStyle', value)
+          }}
+        />
+        <BackdropTiles
+          kind={preferences.backdropStyle}
+          value={backdropLevel(preferences, phone)}
+          onValueChange={value => {
+            setPreference('backdrop', value)
+          }}
+        />
+        <div className="layout-choice-head">
+          <span>{COPY.density}</span>
+          <span>{COPY.onlyHere}</span>
+        </div>
+        <DensityTiles
+          value={preferences.density}
+          onValueChange={value => {
+            setPreference('density', value)
+          }}
+        />
+        <div className="layout-choice-head">
+          <span>{COPY.motion}</span>
+          <span>{COPY.onlyHere}</span>
+        </div>
+        <MotionChoice
+          value={preferences.motion}
+          onValueChange={value => {
+            setPreference('motion', value)
+          }}
+        />
+      </SettingsGroup>
+      {snapshot.catalog?.features?.customization && (admin || writer.pending) && (
+        <CustomizationSettings admin={admin} writer={writer} onChanged={onChanged} />
+      )}
     </>
   )
 }

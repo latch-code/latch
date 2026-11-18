@@ -1,5 +1,5 @@
 /*
- * The drawing of the background layer (Backdrop): three effects on one canvas, and the limits that keep it cheap. It
+ * The drawing of the background layer (Backdrop): four effects on one canvas, and the limits that keep it cheap. It
  * is decoration. It follows three real states it is told about (how many sessions run, whether the input holds the
  * focus, where a decision was just resolved) and carries no information of its own: each of them is also written in
  * the foreground in words.
@@ -15,7 +15,7 @@
  * still frame.
  */
 
-export type BackdropKind = 'grid' | 'field' | 'glow'
+export type BackdropKind = 'grid' | 'field' | 'digits' | 'glow'
 export type BackdropStrength = 'light' | 'standard'
 
 export interface Box {
@@ -93,10 +93,10 @@ export function particleCount(width: number, height: number, strength: BackdropS
 
 /** Six numbers per particle: x, y, depth, vx, vy, and its angle on the ring it gathers to. */
 const STRIDE = 6
-/** Five per visible particle of a frame: x, y, depth, alpha, and 0 for a point, 1 or 2 for the digit it shows. */
-const VISIBLE = 5
+/** Four per visible particle of a frame: x, y, depth, alpha. */
+const VISIBLE = 4
 
-/** `ambient`: the field keeps drifting while nothing it follows happens, for a page with no text over it. */
+/** `ambient`: the field or the digits keep moving while nothing they follow happens, for a page with no text over it. */
 export function createBackdropEngine(
   canvas: HTMLCanvasElement,
   kind: BackdropKind,
@@ -139,7 +139,7 @@ export function createBackdropEngine(
   let dirty = true
   let pointer: { x: number; y: number } | null = null
   let mono = 'monospace'
-  const glyphs: Array<Array<[string, number, number, number]>> = Array.from({ length: STEPS + 1 }, () => [])
+  const glyphs: number[][] = Array.from({ length: (STEPS + 1) * 2 }, () => [])
 
   const alphaScale = () => (lightTheme ? 0.9 : 1) * power
 
@@ -218,9 +218,8 @@ export function createBackdropEngine(
   }
 
   /**
-   * The field: points at several depths that drift and twinkle, the near ones linked by thin lines, every third one
-   * a 0 or a 1 that turns over now and then, and the points near the pointer reaching for it. `seconds` is fixed for a
-   * held frame, so a still is the same every time.
+   * The field: points at several depths that drift and twinkle, the near ones linked by thin lines, and the points near
+   * the pointer reaching for it. `seconds` is fixed for a held frame, so a still is the same every time.
    */
   function drawField(target: CanvasRenderingContext2D, dt: number, seconds: number, held: boolean): void {
     const speed = (1.3 + Math.min(running, 5) * 0.35) * dt
@@ -274,21 +273,14 @@ export function createBackdropEngine(
       visible[shown + 1] = y
       visible[shown + 2] = depth
       visible[shown + 3] = (0.2 + depth * 0.5 + boost) * amount * scale * twinkle
-      // Every third point is a digit; which one turns over every few seconds, each on its own beat.
-      visible[shown + 4] = (at / STRIDE) % 3 === 0 ? 1 + (Math.floor(seconds * 0.35 + angle) & 1) : 0
       shown += VISIBLE
     }
     points = shown / VISIBLE
     for (const bucket of buckets) bucket.length = 0
     for (const bucket of lineBuckets) bucket.length = 0
-    for (const bucket of glyphs) bucket.length = 0
     for (let a = 0; a < shown; a += VISIBLE) {
       const step = Math.min(STEPS, Math.round(Math.min(1, visible[a + 3]!) * STEPS))
-      const digit = visible[a + 4]!
-      if (step > 0) {
-        if (digit > 0) glyphs[step]!.push([digit === 1 ? '0' : '1', visible[a]!, visible[a + 1]!, 10 + visible[a + 2]! * 5])
-        else buckets[step]!.push(visible[a]!, visible[a + 1]!, 1.2 + visible[a + 2]! * 1.8)
-      }
+      if (step > 0) buckets[step]!.push(visible[a]!, visible[a + 1]!, 1.2 + visible[a + 2]! * 1.8)
       if (reach) {
         const dx = visible[a]! - reach.x
         const dy = visible[a + 1]! - reach.y
@@ -332,29 +324,88 @@ export function createBackdropEngine(
       }
       target.fill()
     }
-    // Digits by size then alpha: a font change per size, a fill change per step.
-    target.textAlign = 'center'
-    target.textBaseline = 'middle'
-    let size = 0
-    for (let step = 1; step <= STEPS; step++) {
-      const digits = glyphs[step]!
-      if (digits.length === 0) continue
-      target.fillStyle = `rgba(${ink}, ${step / STEPS})`
-      for (const [text, x, y, px] of digits) {
-        const rounded = Math.round(px)
-        if (rounded !== size) {
-          size = rounded
-          target.font = `${size}px ${mono}`
-        }
-        target.fillText(text, x, y)
-      }
-    }
     if (holes.length > 0 || focus) {
       // A link can cross a hole even when both of its endpoints survived the feather.
       target.resetTransform()
       for (const hole of holes) eraseFieldBox(target, hole)
       if (focus) eraseFieldBox(target, focus)
       target.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
+    }
+  }
+
+  /**
+   * 01: a lattice of 0s and 1s lit by slow shapes of light. Three soft bodies wander on paths that never repeat in step
+   * and a faint tide crosses the lattice; a cell's digit shows as bright as the light on it, turns over faster the
+   * brighter it is, and rests as a dim point where there is none. The pointer carries a small light of its own.
+   */
+  function drawDigits(target: CanvasRenderingContext2D, seconds: number, held: boolean): void {
+    const pitch = strength === 'standard' ? 22 : 30
+    const lively = Math.min(running, 5)
+    const t = seconds * (0.16 + lively * 0.04)
+    const span = Math.min(width, height)
+    const reach = !held && pointer ? pointer : null
+    const far = 1 - gather * 0.5
+    const scale = alphaScale() * far
+    for (const bucket of buckets) bucket.length = 0
+    for (const bucket of glyphs) bucket.length = 0
+    let shown = 0
+    for (let iy = 0, y = pitch / 2; y < height + pitch; iy++, y += pitch) {
+      for (let ix = 0, x = pitch / 2; x < width + pitch; ix++, x += pitch) {
+        const amount = clear(x, y)
+        if (amount <= 0.02) continue
+        let light = 0
+        for (let body = 0; body < 3; body++) {
+          const bx = width * (0.5 + 0.4 * Math.sin(t * (0.61 + body * 0.27) + body * 2.1))
+          const by = height * (0.5 + 0.38 * Math.cos(t * (0.47 + body * 0.33) + body * 1.3))
+          const radius = span * (0.3 + body * 0.07)
+          const d2 = ((x - bx) * (x - bx) + (y - by) * (y - by)) / (radius * radius)
+          if (d2 < 1) light += (1 - d2) * (1 - d2)
+        }
+        // The tide: a narrow crest that crosses on a slant.
+        const crest = Math.sin(x * 0.006 + y * 0.011 - t * 1.7)
+        if (crest > 0.86) light += (crest - 0.86) * 3
+        if (reach) {
+          const distance = Math.hypot(x - reach.x, y - reach.y)
+          if (distance < REACH) light += (1 - distance / REACH) * 0.7
+        }
+        for (const ring of ripples)
+          light += Math.max(0, 1 - Math.abs(Math.hypot(x - ring.x, y - ring.y) - ring.r) / 46) * (1 - ring.t) * 0.6
+        const hash = (Math.imul(Math.imul(ix + 1, 73856093) ^ Math.imul(iy + 1, 19349663), 0x9e3779b1) >>> 0) / 4294967296
+        if (light < 0.08) {
+          // Unlit: every other cell keeps a faint point, so the lattice is felt without being read.
+          if (hash < 0.5) {
+            const step = Math.round(0.1 * amount * scale * STEPS)
+            if (step > 0) buckets[step]!.push(x, y)
+          }
+          continue
+        }
+        const step = Math.min(STEPS, Math.round(Math.min(0.85, 0.12 + light * 0.6) * amount * scale * STEPS))
+        if (step === 0) continue
+        const digit = Math.floor(seconds * (0.3 + light * 1.6) + hash * 9) & 1
+        glyphs[step * 2 + digit]!.push(x, y)
+        shown++
+      }
+    }
+    points = shown
+    for (let step = 1; step <= STEPS; step++) {
+      const dots = buckets[step]!
+      if (dots.length === 0) continue
+      target.fillStyle = `rgba(${ink}, ${step / STEPS})`
+      target.beginPath()
+      for (let at = 0; at < dots.length; at += 2) target.rect(dots[at]! - 0.75, dots[at + 1]! - 0.75, 1.5, 1.5)
+      target.fill()
+    }
+    target.textAlign = 'center'
+    target.textBaseline = 'middle'
+    target.font = `${strength === 'standard' ? 12 : 13}px ${mono}`
+    for (let step = 1; step <= STEPS; step++) {
+      for (let digit = 0; digit < 2; digit++) {
+        const cells = glyphs[step * 2 + digit]!
+        if (cells.length === 0) continue
+        target.fillStyle = `rgba(${ink}, ${step / STEPS})`
+        const text = digit === 0 ? '0' : '1'
+        for (let at = 0; at < cells.length; at += 2) target.fillText(text, cells[at]!, cells[at + 1]!)
+      }
     }
   }
 
@@ -451,6 +502,7 @@ export function createBackdropEngine(
     let moving = false
     if (ink === null) points = 0
     else if (kind === 'field') drawField(context, held ? 0 : dt, held ? 9 : (now - started) / 1000, held)
+    else if (kind === 'digits') drawDigits(context, held ? 9 : (now - started) / 1000, held)
     else if (kind === 'grid') drawGrid(context, held ? started + 9000 : now)
     else moving = drawGlow(context, dt, held)
     if (frames > 0 && last > 0 && !held) minGap = Math.min(minGap, now - last)
@@ -460,7 +512,7 @@ export function createBackdropEngine(
     dirty = false
     if (kind === 'glow') return moving
     // An ambient field drifts for as long as nothing holds it still.
-    if (kind === 'field' && ambient) return true
+    if ((kind === 'field' || kind === 'digits') && ambient) return true
     return running > 0 || ripples.length > 0 || Math.abs(to - gather) > 0.01
   }
 
@@ -581,7 +633,7 @@ export function createBackdropEngine(
       wake()
     },
     setPointer(point) {
-      if (kind !== 'field' || (point === null && pointer === null)) return
+      if ((kind !== 'field' && kind !== 'digits') || (point === null && pointer === null)) return
       pointer = point
     },
     setFont(family) {

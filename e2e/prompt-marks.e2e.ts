@@ -48,51 +48,21 @@ async function caretAfterGlyph(page: Page, input: Locator, index: number): Promi
 }
 
 /**
- * Every mark's glyph at about the text's cap height, inside the mirror (so the input's padding holds it at a line's
- * start) and never left of the whitespace before it, so it covers no earlier character; after a space it leaves at
- * least 1px of that space clear, so the mark does not touch the word before it. Returns what breaks that.
+ * Each mark's tint as the page paints it: a rounded box that reaches past the token's own letters on both sides, without
+ * the token taking any more room than its text.
  */
-async function glyphRoom(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const mirror = document.querySelector<HTMLElement>('.composer-input[data-marks] > .composer-command-mirror')!
-    const box = mirror.getBoundingClientRect()
-    const inner = box.left + mirror.clientLeft
-    const size = parseFloat(getComputedStyle(mirror).fontSize)
-    const text = mirror.textContent!
-    const charRect = (at: number) => {
-      const walker = document.createTreeWalker(mirror, NodeFilter.SHOW_TEXT)
-      let left = at
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        const length = node.textContent!.length
-        if (left < length) {
-          const range = document.createRange()
-          range.setStart(node, left)
-          range.setEnd(node, left + 1)
-          return range.getBoundingClientRect()
-        }
-        left -= length
-      }
-      return undefined
-    }
-    const problems: string[] = []
-    for (const mark of mirror.querySelectorAll<HTMLElement>('.prompt-mark')) {
-      const start = Number(mark.dataset.start)
-      const glyph = mark.querySelector('svg')!.getBoundingClientRect()
-      const tint = getComputedStyle(mark.querySelector('.prompt-mark-sigil')!, '::before')
-      const sigil = mark.querySelector('.prompt-mark-sigil')!.getBoundingClientRect()
-      const tintLeft = sigil.right - Math.max(sigil.width, parseFloat(tint.width))
-      const before = start > 0 && text[start - 1] !== '\n' ? charRect(start - 1) : undefined
-      const floor = before && Math.abs(before.top - sigil.top) < 2 ? before.left : inner
-      if (glyph.height < size * 0.7) problems.push(`${start}: glyph ${glyph.height}px at ${size}px text`)
-      if (Math.min(glyph.left, tintLeft) < floor - 0.5)
-        problems.push(`${start}: reaches ${floor - Math.min(glyph.left, tintLeft)}px past its room`)
-      // A space before it on the same line: the word before stays clear of the mark.
-      if (before && text[start - 1] === ' ' && Math.abs(before.top - sigil.top) < 2 && Math.min(glyph.left, tintLeft) - before.left < 1)
-        problems.push(`${start}: touches the word before it (${Math.min(glyph.left, tintLeft) - before.left}px)`)
-      if (glyph.right > sigil.right + 0.5) problems.push(`${start}: glyph runs into the name`)
-    }
-    return problems
-  })
+async function markRoom(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>('.composer-command-mirror .prompt-mark')].flatMap((mark, index) => {
+      const style = getComputedStyle(mark)
+      const problems: string[] = []
+      if (!/3px/u.test(style.boxShadow)) problems.push(`${index}: no room round the mark`)
+      if (parseFloat(style.paddingLeft) || parseFloat(style.paddingRight) || parseFloat(style.borderLeftWidth))
+        problems.push(`${index}: the mark takes room of its own`)
+      if (parseFloat(style.borderTopLeftRadius) <= 0) problems.push(`${index}: square`)
+      return problems
+    }),
+  )
 }
 
 it.each(['chromium', 'webkit'] as const)('draws skill and command tokens as marks while the draft stays text on %s', async engine => {
@@ -221,7 +191,7 @@ it.each(['chromium', 'webkit'] as const)('draws skill and command tokens as mark
         expect(fonts[0]).toBe(fonts[1])
         expect(fonts[0]).not.toMatch(/Menlo|monospace/u)
         expect(await caretAfterGlyph(page, input, '/compact'.length - 1)).toBe('/compact'.length)
-        expect(await glyphRoom(page)).toEqual([])
+        expect(await markRoom(page)).toEqual([])
 
         // A mark at the start of a soft-wrapped line: grow the text before ` $check` until the mark wraps.
         let wrapped = false
@@ -236,7 +206,7 @@ it.each(['chromium', 'webkit'] as const)('draws skill and command tokens as mark
           })
         }
         expect(wrapped).toBe(true)
-        expect(await glyphRoom(page)).toEqual([])
+        expect(await markRoom(page)).toEqual([])
         const value = await input.inputValue()
         const wrapEnd = value.indexOf('$check') + '$check'.length
         expect(await caretAfterGlyph(page, input, wrapEnd - 1)).toBe(wrapEnd)

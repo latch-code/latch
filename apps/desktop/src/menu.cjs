@@ -7,6 +7,7 @@ const { defineCopy } = require('./locale.cjs')
 const COPY = defineCopy(
   {
     about: '关于 Latch',
+    settings: '设置…',
     updates: '检查更新…',
     services: '服务',
     hide: '隐藏 Latch',
@@ -37,6 +38,7 @@ const COPY = defineCopy(
   },
   {
     about: 'About Latch',
+    settings: 'Settings…',
     updates: 'Check for Updates…',
     services: 'Services',
     hide: 'Hide Latch',
@@ -75,12 +77,13 @@ const COPY = defineCopy(
  * used, so it asks nothing of the page.
  * The two items' keys are the focused window's own bindings (`spaceAccelerator`); the template is built again when they
  * change.
- * @param {{ packaged: boolean, onAbout?: () => void, onCheckForUpdates: () => void, onSpace?: (space: 'code' | 'agents') => void, onSafeMode?: () => void, accelerators?: SpaceAccelerators }} input
+ * @param {{ packaged: boolean, onAbout?: () => void, onSettings?: () => void, onCheckForUpdates: () => void, onSpace?: (space: 'code' | 'agents') => void, onSafeMode?: () => void, accelerators?: SpaceAccelerators }} input
  * @returns {import('electron').MenuItemConstructorOptions[]}
  */
 function menuTemplate({
   packaged,
   onAbout = () => {},
+  onSettings = () => {},
   onCheckForUpdates,
   onSpace = () => {},
   onSafeMode = () => {},
@@ -92,6 +95,8 @@ function menuTemplate({
       submenu: [
         // The app's own window (about.cjs), not the system panel, which names the runtime when Latch runs from source.
         { label: COPY.about, id: 'about', click: () => onAbout() },
+        { type: 'separator' },
+        { label: COPY.settings, id: 'settings', accelerator: 'CmdOrCtrl+,', click: () => onSettings() },
         { label: COPY.updates, id: 'check-for-updates', click: () => onCheckForUpdates() },
         { type: 'separator' },
         { role: 'services', label: COPY.services },

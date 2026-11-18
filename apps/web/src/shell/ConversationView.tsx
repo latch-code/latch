@@ -18,7 +18,18 @@ import { FillPlace } from '../panel/terminal/fills.ts'
 import { isLive, liveMessageId, renderedMessages } from '../conversation.ts'
 import { ChangesLinkContext } from '../conversation/changesLink.ts'
 import { useTranscriptProjection } from '../conversation/useTranscriptProjection.ts'
-import { Backdrop, Button, FolderGlyph, Hint, InlineNotice, Skeleton, HistoryGlyph, ShieldAlertGlyph, type BackdropLevel } from '@latch/ui'
+import {
+  Backdrop,
+  Button,
+  FolderGlyph,
+  Hint,
+  InlineNotice,
+  Skeleton,
+  HistoryGlyph,
+  ShieldAlertGlyph,
+  type BackdropKind,
+  type BackdropLevel,
+} from '@latch/ui'
 import { ConnectionBanners } from './ConnectionBanners.tsx'
 import { DEVICE_FAILURE_STEPS, OWNER_FAILURE_STEPS, SendingBubble, SessionComposer, takeFailureStep } from './SessionComposers.tsx'
 import type { ShellState } from './useShellLayout.tsx'
@@ -76,11 +87,14 @@ export function ConversationView({
   shell,
   visible,
   backdrop,
+  backdropKind,
   starting,
 }: {
   shell: ShellState
   visible: boolean
   backdrop: BackdropLevel
+  /** 粒子 or 01, as this device chose. */
+  backdropKind: BackdropKind
   starting: SendingView | null
 }) {
   const {
@@ -298,7 +312,9 @@ export function ConversationView({
   }
   return (
     <div className={showBackdrop ? 'workspace-body ui-backdrop-host' : 'workspace-body'}>
-      {showBackdrop && <Backdrop className="workbench-backdrop" level={backdrop} running={active && frozenAt === undefined ? 1 : 0} />}
+      {showBackdrop && (
+        <Backdrop className="workbench-backdrop" kind={backdropKind} level={backdrop} running={active && frozenAt === undefined ? 1 : 0} />
+      )}
       <ConnectionBanners shell={shell} />
       {!starting && (
         <Banner show={Boolean(sessionBlock) && !workspaceChanged.has(selectedId ?? '')} scope={selectedId ?? ''}>

@@ -77,9 +77,9 @@ function inkOf(element: Element): string | null {
 const holdsHole = (node: Node): boolean => node instanceof Element && (node.matches(HOLES) || node.querySelector(HOLES) !== null)
 
 /**
- * The background layer: 点阵 (`grid`: a fine dot grid that drifts, with a slow band of light), 粒子场 (`field`: points
- * and a few 0s and 1s at several depths that drift and twinkle, the near ones linked by thin lines and reaching for the
- * pointer) or 柔光 (`glow`: one faint light), on a single canvas that is
+ * The background layer: 点阵 (`grid`: a fine dot grid that drifts, with a slow band of light), 粒子 (`field`: points at
+ * several depths that drift and twinkle, the near ones linked by thin lines and reaching for the pointer), 01 (`digits`:
+ * a lattice of 0s and 1s lit by slow shapes of light) or 柔光 (`glow`: one faint light), on a single canvas that is
  * its own layer behind the content of the element it is placed in (which gets `ui-backdrop-host`, or any positioned
  * element that isolates its stacking). It is decoration and says nothing by itself. It is given three real states,
  * each also written in the foreground:
@@ -245,7 +245,7 @@ export function Backdrop({
     const left = () => {
       created.setPointer(null)
     }
-    if (kind === 'field') {
+    if (kind === 'field' || kind === 'digits') {
       window.addEventListener('pointermove', moved, { passive: true })
       document.documentElement.addEventListener('pointerleave', left)
     }
@@ -310,7 +310,7 @@ export function Backdrop({
       theme.disconnect()
       scheme.removeEventListener('change', schedule)
       density?.removeEventListener('change', densityChanged)
-      if (kind === 'field') {
+      if (kind === 'field' || kind === 'digits') {
         window.removeEventListener('pointermove', moved)
         document.documentElement.removeEventListener('pointerleave', left)
       }

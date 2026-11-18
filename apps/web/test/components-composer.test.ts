@@ -209,7 +209,7 @@ describe('decided approvals', () => {
     expect(stateSlot(html)).toBe('')
     // A Hint: the record and that the Harness reports it ran in view, where it was decided on the glyph, why behind ⓘ.
     expect(html).toMatch(
-      /<div class="ui-hint tool-decision">.*title="[^"]*在其他设备上决定".*<span class="ui-hint-label">已拒绝 · \d{2}:\d{2} · Harness 报告仍执行了<\/span><button[^>]*aria-label="说明"/u,
+      /<div class="ui-hint tool-decision">.*title="[^"]*在其他设备上决定".*<span class="ui-hint-label">已拒绝 · \d{2}:\d{2} · Harness 报告仍执行了<\/span><span class="ui-hint-more"[^>]*aria-label="说明"/u,
     )
   })
 
@@ -732,9 +732,9 @@ describe('approval cards', () => {
     // The red reason, then the short fact; the Host's sentence is word for word behind ⓘ, not repeated in the details.
     expect(html).toContain('<div class="approval-clause"><span class="approval-clause-reason">高风险</span>')
     expect(html).toMatch(/class="ui-hint approval-clause-sentence"[^>]*>.*?每次都要确认/u)
-    // Folded, the sentence is nowhere else on the card: only its ⓘ shows it.
-    expect(html).toMatch(/class="ui-hint approval-clause-sentence"(?:(?!<\/div>).)*aria-expanded="false"/u)
-    expect(html.match(/写入需要确认/gu) ?? []).toHaveLength(0)
+    // The sentence is nowhere else on the card: only its ⓘ shows it, on hover or focus.
+    expect(html).toMatch(/class="ui-hint approval-clause-sentence"(?:(?!<\/div>).)*class="ui-hint-more"/u)
+    expect(html.match(/写入需要确认/gu) ?? []).toHaveLength(1)
     expect(html).toMatch(/data-variant="primary"[^>]*>(?:(?!<\/button>).)*?允许<\/button>/u)
   })
 

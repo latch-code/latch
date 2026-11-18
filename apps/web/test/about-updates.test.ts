@@ -132,7 +132,7 @@ describe('the About page', () => {
 
   it('shows only the Host’s version in a browser or on a phone, with nothing to install', () => {
     const html = page(false)
-    expect(html).toContain('版本 0.1.0')
+    expect(html).toContain('<p class="about-version">0.1.0</p>')
     expect(html).not.toContain('检查更新')
     expect(html).not.toContain('Latch 应用')
   })

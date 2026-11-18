@@ -1184,3 +1184,9 @@
 .composer-status-note > .composer-status-value {
   border-radius: var(--r-4);
 }
+
+/* The start page's background begins under the title row: the computer's name and the row's controls sit on a clear strip. */
+.code-home > .workbench-backdrop {
+  inset-block-start: var(--title-row);
+  height: calc(100% - var(--title-row));
+}

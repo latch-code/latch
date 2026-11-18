@@ -51,6 +51,16 @@ const COPY = defineCopy(
 
 export { slashMatches, slashOptions, type SlashAction, type SlashOption } from './slash-options.ts'
 
+/**
+ * Whether Enter must leave the command in the input for its argument. A hint the Harness marks optional (`筛选（可选）`,
+ * `[filter]`, `filter (optional)`) does not hold Enter back: the command runs, and Tab still puts it in the input.
+ */
+export function needsInput(hint: string | undefined): boolean {
+  if (!hint) return false
+  const text = hint.trim()
+  return !(/可选|optional/iu.test(text) || /^\[[^\]]*\]$/u.test(text))
+}
+
 export function useSlashCommands({
   draft,
   caret = draft.length,
@@ -159,7 +169,7 @@ export function useSlashCommands({
     if ((event.key !== 'Enter' && event.key !== 'Tab') || event.shiftKey || !option) return false
     event.preventDefault()
     event.stopPropagation()
-    if (event.key === 'Enter' && option.kind === 'command' && !option.inputHint && !running && !previousSession && onCommand) {
+    if (event.key === 'Enter' && option.kind === 'command' && !needsInput(option.inputHint) && !running && !previousSession && onCommand) {
       remember(option)
       dismiss()
       onCommand(option.text.trimEnd())
@@ -182,7 +192,10 @@ export function useSlashCommands({
     previousSession,
     awaitingSession,
     skillsTruncated,
-    enterLabel: options[active]?.kind === 'command' && !options[active]?.inputHint && !running && !previousSession ? COPY.run : COPY.choose,
+    enterLabel:
+      options[active]?.kind === 'command' && !needsInput(options[active]?.inputHint) && !running && !previousSession
+        ? COPY.run
+        : COPY.choose,
     reportedCommands: commands.length,
     setActive: (index: number) => {
       const option = options[index]

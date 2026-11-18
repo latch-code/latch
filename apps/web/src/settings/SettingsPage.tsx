@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { canDelegate } from '../agents/model.ts'
-import { Radio, Blocks, Cable, Database } from 'lucide-react'
+import { Radio, Blocks, Cable, Database, Palette } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
 import { defineCopy } from '../core/i18n.ts'
@@ -40,6 +40,7 @@ export type { SettingsSection }
 const SECTION_LABELS = defineCopy<Record<SettingsSection, string>>(
   {
     general: '通用',
+    appearance: '外观',
     providers: '模型',
     engines: 'Harness',
     mcp: 'MCP',
@@ -55,6 +56,7 @@ const SECTION_LABELS = defineCopy<Record<SettingsSection, string>>(
   },
   {
     general: 'General',
+    appearance: 'Appearance',
     providers: 'Models',
     engines: 'Harness',
     mcp: 'MCP',
@@ -115,6 +117,10 @@ const GeneralSettings = deferredComponent(
   async () => ({ default: (await import('./GeneralSettings.tsx')).GeneralSettings }),
   () => COPY.generalLoading,
 )
+const AppearanceSettings = deferredComponent(
+  async () => ({ default: (await import('./GeneralSettings.tsx')).AppearanceSettings }),
+  () => SECTION_LABELS.appearance,
+)
 const PluginsSettings = deferredComponent(
   async () => ({ default: (await import('./PluginsSettings.tsx')).PluginsSettings }),
   () => COPY.pluginsLoading,
@@ -147,8 +153,8 @@ const WorkspacesSettings = deferredComponent(
 /** What each section holds, so 搜索设置 finds a setting by the words on its row. */
 const SEARCH_TERMS = defineCopy<Partial<Record<SettingsSection, string>>>(
   {
-    general:
-      '外观 主题 深色 浅色 自定义 主色 圆角 字号 恢复默认 布局 侧栏 顶栏 按项目 按状态 发送消息 回车 新文档 自动打开 通知 唤醒 名称 语言 界面语言',
+    general: '布局 侧栏 顶栏 按项目 按状态 发送消息 回车 新文档 自动打开 通知 唤醒 名称 语言 界面语言',
+    appearance: '主题 深色 浅色 背景 背景效果 粒子 01 密度 紧凑 动效 自定义 主色 圆角 字号 恢复默认',
     providers: '服务 密钥 key 添加服务 添加模型服务 单价 预算 显示的模型 已确认的地址 地址 出站',
     engines: '已安装 可以安装 怎么装 自定义启动方式 启动方式 环境变量 命令 agent',
     mcp: 'mcp 服务器 工具 连接器 npx 命令',
@@ -163,8 +169,8 @@ const SEARCH_TERMS = defineCopy<Partial<Record<SettingsSection, string>>>(
     about: '版本 许可与条款',
   },
   {
-    general:
-      'appearance theme dark light customize accent corners fonts defaults layout sidebar title bar project status send enter documents auto open notification awake name language',
+    general: 'layout sidebar title bar project status send enter documents auto open notification awake name language',
+    appearance: 'theme dark light background effects particles 01 density compact motion customize accent corners fonts defaults',
     providers: 'service key add model service price spend budget visible models confirmed addresses',
     engines: 'installed install how to install startup command environment variables Agent',
     mcp: 'mcp server tools connector npx command',
@@ -205,6 +211,7 @@ const sections: Array<{
   allData?: boolean
 }> = [
   { id: 'general', icon: SettingsGlyph, admin: false },
+  { id: 'appearance', icon: Palette, admin: false },
   { id: 'providers', icon: ModelGlyph, admin: true, catalog: true },
   { id: 'engines', icon: HarnessGlyph, admin: true, catalog: true },
   { id: 'mcp', icon: Cable, admin: true, catalog: true, feature: 'mcp' },
@@ -495,6 +502,7 @@ export function SettingsPage({
                       {/* The section's name heads it; a page opened inside it names itself under its way back. */}
                       {!phone && depth === 0 && current && <h1 className="settings-title">{current.label}</h1>}
                       {panel === 'general' && <GeneralSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
+                      {panel === 'appearance' && <AppearanceSettings snapshot={snapshot} admin={access.admin} onChanged={onChanged} />}
                       {panel === 'providers' && (
                         <ProvidersSection key={reads.audience} snapshot={snapshot} access={access} reads={reads} onChanged={onChanged} />
                       )}

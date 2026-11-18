@@ -53,7 +53,9 @@ describe('optional settings loading', () => {
     ]
     expect(searchSections(list, '').map(item => item.id)).toEqual(['general', 'providers', 'shortcuts'])
     expect(searchSections(list, '模型').map(item => item.id)).toEqual(['providers'])
-    expect(searchSections(list, '深色').map(item => item.id)).toEqual(['general'])
+    // 深色 moved to 外观 with the theme; 通用 still answers to the words on its own rows.
+    expect(searchSections(list, '深色').map(item => item.id)).toEqual([])
+    expect(searchSections(list, '语言').map(item => item.id)).toEqual(['general'])
     expect(searchSections(list, 'KEY').map(item => item.id)).toEqual(['providers'])
     expect(searchSections(list, '没有这个')).toEqual([])
     expect(searchSections(list, '添加模型服务').map(item => item.id)).toEqual(['providers'])

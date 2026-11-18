@@ -364,7 +364,16 @@ describe('a Host of the previous build (no snapshot.host)', () => {
   it('falls back to the old rules: plain approvals, owner settings, no device pages, no L3 gating', () => {
     const access = deviceAccess(legacy, null)
     expect(access).toMatchObject({ legacy: true, local: false, admin: true, device: null })
-    expect(settingsSections(legacy, access)).toEqual(['general', 'providers', 'engines', 'workspaces', 'plugins', 'shortcuts', 'about'])
+    expect(settingsSections(legacy, access)).toEqual([
+      'general',
+      'appearance',
+      'providers',
+      'engines',
+      'workspaces',
+      'plugins',
+      'shortcuts',
+      'about',
+    ])
     expect(composerGate({ summary: {}, access })).toEqual({ kind: 'open' })
     expect(labels(approvalActions(approval({ risk: 'R2' }), access.device))).toEqual(['允许一次', '本会话始终允许', '拒绝'])
     const controller = deviceAccess({ ...legacy, device: { ...legacy.device, role: 'controller' } } as unknown as AppSnapshot, null)

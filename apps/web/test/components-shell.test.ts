@@ -186,6 +186,7 @@ describe('shell routes', () => {
   it('lists 设备 among the sections, before 快捷键, which a phone does not have', () => {
     expect(settingsSectionsAt(false)).toEqual([
       'general',
+      'appearance',
       'providers',
       'engines',
       'mcp',
@@ -201,6 +202,7 @@ describe('shell routes', () => {
     ])
     expect(settingsSectionsAt(true)).toEqual([
       'general',
+      'appearance',
       'providers',
       'engines',
       'mcp',
@@ -247,6 +249,7 @@ describe('设置 sections', () => {
   it('gives a device that manages this Mac every section, and one that does not 通用 · 设备 · 快捷键 · 关于', () => {
     expect(settingsSections(snapshotOf('loopback-tcp'))).toEqual([
       'general',
+      'appearance',
       'providers',
       'engines',
       'workspaces',
@@ -256,7 +259,13 @@ describe('设置 sections', () => {
       'shortcuts',
       'about',
     ])
-    expect(settingsSections(snapshotOf('loopback-tcp', ['view', 'run']))).toEqual(['general', 'devices', 'shortcuts', 'about'])
+    expect(settingsSections(snapshotOf('loopback-tcp', ['view', 'run']))).toEqual([
+      'general',
+      'appearance',
+      'devices',
+      'shortcuts',
+      'about',
+    ])
   })
 })
 
