@@ -1817,6 +1817,7 @@ const EXTRA_FAILURES: Readonly<Record<string, string>> = defineCopy(
     'workspace-code-root': '该目录与 Latch 程序目录重叠，不能作为项目',
     'terminal-open-failed': '没有打开终端。请自己在终端里运行这条命令。',
     'workspace-unprintable': '目录路径包含无法显示的字符，不能添加到项目。',
+    'worktree-include-if': '仓库配置（.git/config）里有 includeIf，未新建工作树。请把 includeIf 移到全局配置或删除后再试。',
     'preview-unavailable': '文档预览器不可用。',
     'app-frame-unavailable': '插件页面运行环境不可用。',
     'untrusted-frame': '文档预览不能访问工作台接口。',
@@ -1874,6 +1875,8 @@ const EXTRA_FAILURES: Readonly<Record<string, string>> = defineCopy(
     'workspace-code-root': 'This folder overlaps the Latch installation and cannot be added to a project.',
     'terminal-open-failed': 'Couldn’t open the terminal. Run this command in your terminal.',
     'workspace-unprintable': 'The folder path contains characters that cannot be displayed. It cannot be added to a project.',
+    'worktree-include-if':
+      'The repository configuration (.git/config) uses includeIf, so no worktree was created. Move includeIf to your global Git configuration or remove it, then try again.',
     'preview-unavailable': 'The document preview is unavailable.',
     'app-frame-unavailable': 'The app page runtime is unavailable.',
     'untrusted-frame': 'Document previews cannot access the workbench API.',
