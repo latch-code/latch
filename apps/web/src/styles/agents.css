@@ -573,11 +573,11 @@ button.agent-memory-topic:hover {
   text-align: left;
   transition: background-color var(--m-micro) var(--e-micro);
 }
-.agent-frame-who:hover {
-  background: var(--hover);
-}
-.agent-frame-who[aria-expanded='true'] {
-  background: var(--selected);
+/* No fill while the profile is open: the profile beside it says so, and a held fill read as a stuck selection. */
+@media (hover: hover) {
+  .agent-frame-who:hover {
+    background: var(--hover);
+  }
 }
 .agent-frame-who:focus-visible {
   outline: 2px solid var(--accent);

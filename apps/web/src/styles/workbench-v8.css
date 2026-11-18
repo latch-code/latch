@@ -697,11 +697,15 @@
 .agent-frame:not([data-phone]) {
   gap: var(--sp-16);
 }
+/* The face stays on the page's edge: the inset that gives the hover fill and the focus ring room is given back outside. */
 .agent-frame:not([data-phone]) .agent-frame-who {
   height: auto;
-  padding: 0;
+  margin-block: calc(-1 * var(--sp-6));
+  margin-inline-start: calc(-1 * var(--sp-6));
+  padding: var(--sp-6) var(--sp-12) var(--sp-6) var(--sp-6);
   gap: var(--sp-12);
   max-width: none;
+  border-radius: var(--r-8);
 }
 .agent-frame:not([data-phone]) .agent-frame-text {
   gap: var(--sp-4);
