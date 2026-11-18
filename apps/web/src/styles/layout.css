@@ -351,12 +351,16 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   max-width: 440px;
 }
 .topbar-crumb-worktree {
+  display: inline-flex;
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
-  text-overflow: ellipsis;
   white-space: nowrap;
   flex-shrink: 4;
+}
+.topbar-crumb-lead {
+  flex: none;
+  white-space: pre;
 }
 .crumb-body {
   display: grid;

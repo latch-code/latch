@@ -41,6 +41,8 @@ const segments = (markup: string) =>
       kind,
       inner!
         .replace(/<span[^>]*role="tooltip"[^>]*>.*?<\/span>/gu, ' ')
+        // A name cut in its middle is one word in two spans.
+        .replace(/<\/span><span class="middle-ellipsis-tail">/gu, '')
         .replace(/<[^>]+>/gu, ' ')
         .replace(/\s+/gu, ' ')
         .trim(),

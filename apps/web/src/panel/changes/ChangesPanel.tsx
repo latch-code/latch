@@ -25,6 +25,7 @@ import {
   UndoGlyph,
   writeClipboard,
 } from '@latch/ui'
+import { BranchName } from '../../components/MiddleEllipsis.tsx'
 import { escapeHiddenCharacters, VisibleText } from '../../components/VisibleText.tsx'
 import { errorMessage, MessageError } from '../../core/api.ts'
 import { sessionReadOnly } from '../../core/permissions.ts'
@@ -733,7 +734,7 @@ function LineFor({
         <Line tone="muted" icon={BranchGlyph}>
           {line.branch ? (
             <>
-              <VisibleText text={line.branch} />
+              <BranchName branch={line.branch} title />
               {COPY.compared(line.base ?? COPY.main)}
             </>
           ) : (

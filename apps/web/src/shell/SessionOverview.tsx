@@ -15,6 +15,7 @@ import {
   type IconComponent,
   type StatusTone,
 } from '@latch/ui'
+import { BranchName } from '../components/MiddleEllipsis.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { toolLabel, turnsOf } from '../conversation.ts'
 import { deliveryChecks, useWorkbenchDelivery } from './useWorkbenchEvidence.ts'
@@ -366,7 +367,7 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
                   </span>
                 }
                 {...(seen ? { time: seen } : {})}>
-                {state.branch ? <VisibleText text={state.branch} /> : COPY.branch}
+                {state.branch ? <BranchName branch={state.branch} title /> : COPY.branch}
                 {pr?.base && (
                   <span className="session-overview-base">
                     {' → '}

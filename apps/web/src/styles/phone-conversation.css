@@ -67,9 +67,10 @@
   flex-shrink: 0;
 }
 .topbar-branch {
+  display: inline-flex;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 767.98px) {

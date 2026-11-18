@@ -56,6 +56,7 @@ import { PRIORITY_LABELS } from './model.ts'
 import { BOARD_CARD_COPY, cardState, TagChips } from './WorkBoardCard.tsx'
 import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
 import { ItemEvidence } from './ItemEvidence.tsx'
+import { BranchName } from '../components/MiddleEllipsis.tsx'
 
 const COPY = defineCopy(
   {
@@ -797,7 +798,7 @@ function SessionRow({
           {branch && (
             <span className="item-page-row-branch">
               {task.worktree && <FolderGit2 size={12} aria-label={COPY.worktree} />}
-              <span>{escapeSecurityText(branch)}</span>
+              <BranchName branch={branch} title />
             </span>
           )}
           <time dateTime={task.updatedAt}>{relativeTime(task.updatedAt, new Date(now))}</time>

@@ -3,6 +3,7 @@ import { FolderGit2 } from 'lucide-react'
 import type { HarnessInfo, HostCatalog, ModelRef, ProviderSummary, TaskSummary } from '@latch/protocol'
 import { ICON_STROKE, Meter, Tooltip, FolderGlyph, BranchGlyph } from '@latch/ui'
 import { ProviderTile } from '../components/BrandTile.tsx'
+import { BranchName } from '../components/MiddleEllipsis.tsx'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { findProvider, harnessName } from '../composerChoice.ts'
 import { defineCopy } from '../core/i18n.ts'
@@ -145,8 +146,8 @@ export function BranchSegment({
         <span className="composer-status-cut composer-branch" tabIndex={0}>
           <BranchGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
           <span className="composer-status-value composer-branch-name" data-worktree={worktree ? '' : undefined}>
-            {worktree && lead}
-            <VisibleText text={branch} />
+            {worktree && <span className="composer-branch-lead">{lead}</span>}
+            <BranchName branch={branch} />
           </span>
         </span>
       </Tooltip>

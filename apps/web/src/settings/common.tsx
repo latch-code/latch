@@ -18,6 +18,8 @@ import {
 import type { Brief } from '../core/securityCopy.ts'
 import { SETTINGS_COPY } from './settings.copy.ts'
 
+export { MiddleEllipsis } from '../components/MiddleEllipsis.tsx'
+
 /**
  * The page's own layout for settings: groups of rows in a well sunk into the panel, divided by hairlines. Controls
  * inside are the design system's primitives; these only place them.
@@ -260,28 +262,6 @@ export function FoldRows<T>({
         </div>
       ))}
     </div>
-  )
-}
-
-/** Where a path or command is cut: before its last two parts when they are short, else before the last one. */
-function tailStart(text: string): number {
-  const parts = text.split('/')
-  const two = parts.slice(-2).join('/')
-  const tail = two.length <= 24 && parts.length > 2 ? two : (parts.at(-1) ?? '')
-  return Math.max(0, text.length - Math.min(tail.length + 1, 24))
-}
-
-/**
- * A path or command on one line that keeps its end in view: when the line is too narrow, the middle gives way to an
- * ellipsis. The whole text is the tooltip and is what assistive technology reads.
- */
-export function MiddleEllipsis({ text, className }: { text: string; className?: string }) {
-  const cut = tailStart(text)
-  return (
-    <span className={className ? `middle-ellipsis ${className}` : 'middle-ellipsis'} title={text}>
-      <span className="middle-ellipsis-head">{text.slice(0, cut)}</span>
-      <span className="middle-ellipsis-tail">{text.slice(cut)}</span>
-    </span>
   )
 }
 

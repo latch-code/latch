@@ -513,6 +513,35 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A branch name anywhere: one line inside whatever holds it, its middle giving way first (BranchName). */
+.middle-ellipsis.branch-name {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  vertical-align: bottom;
+}
+/* The middle gives way first, down to its ellipsis; then the tail's own end, so nothing is clipped without one. */
+.middle-ellipsis.branch-name > .middle-ellipsis-head:not(:empty) {
+  flex-shrink: 1000;
+  min-width: 1.6em;
+}
+.middle-ellipsis.branch-name > .middle-ellipsis-tail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A branch keeps its tail: 工作树 · then the name, whose middle gives way first. */
+.composer-branch-name {
+  display: flex;
+  align-items: baseline;
+}
+.composer-branch-lead {
+  flex: none;
+  white-space: pre;
 }
 .composer-status-value {
   color: var(--ink-2);

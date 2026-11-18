@@ -373,6 +373,11 @@
   min-width: 0;
   max-width: 16em;
 }
+/* A branch is read whole where the row has room; it gives way first, keeping its last word. */
+.workbench-home-composer .home-composer-location > [data-seg='branch'] {
+  flex-shrink: 4;
+  max-width: 32em;
+}
 /* In a phone's chip row the row scrolls instead: no chip gives way under its neighbour. */
 .workbench-home-composer .composer-chips .home-composer-location > * {
   flex-shrink: 0;

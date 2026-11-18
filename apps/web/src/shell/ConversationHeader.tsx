@@ -34,6 +34,7 @@ import {
 import { importedMark } from '../history/model.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { rowStatus, runningWords, silentWords } from '../sessions.ts'
+import { BranchName } from '../components/MiddleEllipsis.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { currentShell } from '../core/shell.ts'
 import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
@@ -218,7 +219,8 @@ function ProjectCrumb({
             )}
             {worktree && (
               <span className="topbar-crumb-worktree">
-                {lead} · <VisibleText text={worktree} />
+                <span className="topbar-crumb-lead">{lead} · </span>
+                <BranchName branch={worktree} />
               </span>
             )}
           </button>
@@ -237,11 +239,9 @@ function ProjectCrumb({
         </span>
       )}
       {!worktree && summary.branch && (
-        <span className="topbar-session-branch">
+        <span className="topbar-session-branch" title={escapeSecurityText(summary.branch)}>
           <Icon icon={BranchGlyph} size={14} />
-          <span className="topbar-crumb-text">
-            <VisibleText text={summary.branch} />
-          </span>
+          <BranchName branch={summary.branch} className="topbar-crumb-text" />
         </span>
       )}
     </span>
@@ -369,7 +369,7 @@ function PhoneTopBar({
   // The header is the one place a session's state is written, on a phone as on a wide window.
   const state = summary && <TitleStatus summary={summary} cancelling={cancelling} frozen={connectionProblem(connection)} />
   const where = summary && source
-  const branch = summary?.worktree ? HEADER_COPY.worktree(summary.branch ?? summary.worktree.branch) : summary?.branch
+  const branch = summary?.worktree ? (summary.branch ?? summary.worktree.branch) : summary?.branch
   // A conversation in 我的 Agent: its Agent's frame stands in the title's place, the topic under the name.
   if (frame)
     return (
@@ -400,7 +400,12 @@ function PhoneTopBar({
             {imported && <ImportedMark mark={imported} />}
             {where && <span className="topbar-source-text">{where}</span>}
             {state}
-            {branch && <span className="topbar-branch">{escapeSecurityText(branch)}</span>}
+            {branch && (
+              <span className="topbar-branch" title={escapeSecurityText(summary?.worktree ? HEADER_COPY.worktree(branch) : branch)}>
+                {summary?.worktree && <span className="topbar-crumb-lead">{HEADER_COPY.worktree('')}</span>}
+                <BranchName branch={branch} />
+              </span>
+            )}
             {demo && (
               <StatusPill tone="warn" title={SHELL_COPY.demoDetails}>
                 {SHELL_COPY.demo}

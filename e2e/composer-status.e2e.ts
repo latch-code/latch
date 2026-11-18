@@ -192,7 +192,7 @@ describe('the composer without a status line', () => {
       await shot(page, 'a-usage-menu-cost--1440--light')
       await page.keyboard.press('Escape')
       // The branch is the title row's, whole.
-      expect(await page.locator('.topbar .topbar-session-branch').locator('visible=true').first().innerText()).toBe(BRANCH)
+      expect(await page.locator('.topbar .topbar-session-branch').locator('visible=true').first().textContent()).toBe(BRANCH)
       await page.locator('.topbar .topbar-crumb-button').locator('visible=true').first().click()
       await page.getByText('由 Fake Agent 报告，不是账单', { exact: false }).locator('visible=true').first().waitFor()
       expect(await page.locator('.crumb-body').innerText()).toContain('US$0.21')

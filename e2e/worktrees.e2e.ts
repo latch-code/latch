@@ -140,7 +140,7 @@ it('starts a session in a new worktree from the draft, keeps showing it, and say
     expect(task.worktree?.branch).toMatch(/^latch\/\d{8}-[0-9a-f]{4}$/u)
     await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${task.id}`)).summary.status, { timeout: 30_000 }).toBe('idle')
     const label = `工作树 · ${task.worktree!.branch}`
-    expect(await page.locator('.topbar-crumb-worktree').innerText()).toBe(label)
+    expect(await page.locator('.topbar-crumb-worktree').textContent()).toBe(label)
     expect(await page.locator('.session-worktree').first().getAttribute('aria-label')).toBe(label)
     // A session's input has no status line: the title row above is the one place that says the worktree.
     expect(await page.locator('main.workspace .composer-status [data-seg="branch"]').count()).toBe(0)

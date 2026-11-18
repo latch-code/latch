@@ -4,6 +4,7 @@ import { BranchGlyph, FolderGlyph, Icon } from '@latch/ui'
 import { FolderGit2 } from 'lucide-react'
 import { MarkTile } from '../components/BrandTile.tsx'
 import { defineCopy } from '../core/i18n.ts'
+import { BranchName } from '../components/MiddleEllipsis.tsx'
 
 const COPY = defineCopy({ worktree: '工作树' }, { worktree: 'Worktree' })
 
@@ -21,7 +22,7 @@ export function BoardBranch({ branch, worktree = false }: { branch: string; work
   return (
     <span className="work-board-card-branch" title={branch}>
       {worktree ? <FolderGit2 size={12} aria-label={COPY.worktree} /> : <Icon icon={BranchGlyph} size={12} />}
-      <span>{branch}</span>
+      <BranchName branch={branch} />
     </span>
   )
 }
