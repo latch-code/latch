@@ -93,7 +93,7 @@ it('draws the board empty, crowded, limited, read-only and offline from the real
 
     // Empty: four heads and a quiet line each, no sentence.
     for (const name of ['等你处理', '进行中', '可交付', '已结束'])
-      await board.getByRole('region', { name, exact: true }).locator('.work-board-empty-line').waitFor()
+      await board.getByRole('region', { name, exact: true }).locator('[data-empty]').waitFor({ state: 'attached' })
     expect(await board.locator('.work-board-card').count()).toBe(0)
     for (const theme of ['light', 'dark'] as const) await shot(page, 'board-empty', 1440, theme)
 

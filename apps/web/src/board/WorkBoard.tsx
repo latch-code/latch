@@ -147,9 +147,7 @@ export function WorkBoard({
                 ))}
               </ul>
             ) : (
-              <div className="work-board-cards" data-empty="">
-                <span className="work-board-empty-line" aria-hidden="true" />
-              </div>
+              <div className="work-board-cards" data-empty="" />
             )}
             {column.group === 'running' && <Schedules schedules={schedules} now={now} />}
           </section>

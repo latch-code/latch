@@ -520,9 +520,7 @@ export function ItemPage({ shell, itemId, outside }: { shell: ShellState; itemId
                 )}
               </ul>
             ) : (
-              <div className="item-page-rows" data-empty="">
-                <span className="work-board-empty-line" aria-hidden="true" />
-              </div>
+              <div className="item-page-rows" data-empty="" />
             )}
           </section>
           {outside.length > 0 && (

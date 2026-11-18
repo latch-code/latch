@@ -399,9 +399,7 @@ export function WorkBoardTable({
           )}
         </ul>
       ) : (
-        <div className="work-board-rows" data-empty="">
-          <span className="work-board-empty-line" aria-hidden="true" />
-        </div>
+        <div className="work-board-rows" data-empty="" />
       )}
     </div>
   )

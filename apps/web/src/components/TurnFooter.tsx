@@ -6,7 +6,7 @@ import { formatDuration, formatTokens, tokenAmount, tokenParts } from '../format
 import { TimeLabel } from './MessageRow.tsx'
 import { Menu } from './overlays.tsx'
 import { budgetWords, turnCostWords } from '../settings/modelSpend.ts'
-import { Button, IconButton, Tooltip, Popover, StatusWord, InfoGlyph, CopyButton, CopyGlyph, EnterGlyph, MoreGlyph } from '@latch/ui'
+import { Button, Icon, IconButton, Tooltip, Popover, StatusWord, InfoGlyph, CopyButton, CopyGlyph, EnterGlyph, MoreGlyph } from '@latch/ui'
 import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 
 const COPY = defineCopy(
@@ -165,25 +165,19 @@ function SettledFacts({
           <StatusWord tone={budget.tone}>{budget.text}</StatusWord>
         </span>
       )}
+      {/* What stands behind a number is its hover, never something to press. */}
       {incomplete && (
-        <Popover
-          label={COPY.partial}
-          size="sm"
-          trigger={props => (
-            <Button {...props} size="xs" variant="ghost" icon={InfoGlyph}>
-              {COPY.partial}
-            </Button>
-          )}>
-          <Lines lines={[...routedSource(routedUsage), ...requests]} />
-        </Popover>
+        <Fact tip={<Lines lines={[...routedSource(routedUsage), ...requests]} />}>
+          <Icon icon={InfoGlyph} size={12} />
+          {COPY.partial}
+        </Fact>
       )}
       {routedUsage && !incomplete && (
-        <Popover
-          label={COPY.requests}
-          size="sm"
-          trigger={props => <IconButton {...props} icon={InfoGlyph} label={COPY.requests} size="xs" />}>
-          <Lines lines={requests} />
-        </Popover>
+        <Tooltip content={<Lines lines={requests} />}>
+          <span className="turn-fact turn-fact-more" tabIndex={0} role="img" aria-label={COPY.requests}>
+            <Icon icon={InfoGlyph} size={12} />
+          </span>
+        </Tooltip>
       )}
       {route && !routedUsage && <Fact tip={<Lines lines={requests} />}>{COPY.throughGateway(route.requests)}</Fact>}
       {!usage && !person && context !== undefined && (

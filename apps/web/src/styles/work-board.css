@@ -232,12 +232,6 @@
 .work-board-cards > li {
   flex: none;
 }
-.work-board-empty-line {
-  display: block;
-  height: 1px;
-  margin: var(--sp-16) var(--sp-12);
-  background: var(--line);
-}
 .work-board-schedules {
   display: flex;
   flex: none;

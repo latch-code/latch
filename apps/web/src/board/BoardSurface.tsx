@@ -667,9 +667,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
             ))}
           </ul>
         ) : (
-          <div className="work-board-phone-list" data-empty="">
-            <span className="work-board-empty-line" aria-hidden="true" />
-          </div>
+          <div className="work-board-phone-list" data-empty="" />
         )}
       </div>
     )

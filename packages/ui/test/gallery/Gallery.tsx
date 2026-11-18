@@ -1612,7 +1612,7 @@ function Notices() {
   return (
     <Section title="横幅与内联提示">
       <Hint label="OpenCode 自己的设置">Latch 只核对它选的是哪一项，不核对它实际怎么做，也不隔离它。</Hint>
-      <Hint inline label="仍可以开始会话" defaultOpen>
+      <Hint inline label="仍可以开始会话">
         会话出现异常时，可能与适配器和程序的版本不配套有关。
       </Hint>
       <Hint label="由 OpenCode 决定" />

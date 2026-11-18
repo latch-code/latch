@@ -61,12 +61,13 @@ export function InlineNotice({
 }
 
 /**
- * A fact in a few words, with the fine print on hover: an optional glyph or mark, a short label, and the detail as the
- * label's tooltip (hover, keyboard focus, or a press and hold on touch), so the explanation never takes room or moves
- * anything. The label says what the thing is; the detail is for whoever asks.
+ * A fact in a few words, with the fine print on hover: an optional glyph or mark, a short label, and the detail as a
+ * tooltip (hover, keyboard focus, or a press and hold on touch), so the explanation never takes room or moves anything
+ * and is never something to press. The label says what the thing is; the detail is for whoever asks.
  *
- * `inline` keeps the older form, an ⓘ that unfolds the detail under the label in place: only where the words belong
- * on the surface itself (an approval, a failure and what to do next, a security surface).
+ * By default the label itself carries the tooltip. `inline` is for a label that must stay plain words on the surface
+ * (an approval, a failure and what to do next, a security surface): the label is followed by an ⓘ, and the detail is
+ * that ⓘ's tooltip.
  */
 export function Hint({
   label,
@@ -74,7 +75,6 @@ export function Hint({
   children,
   inline = false,
   moreLabel = UI_COPY.more,
-  defaultOpen = false,
   locked = false,
   className,
 }: {
@@ -85,16 +85,13 @@ export function Hint({
   lead?: ReactNode
   /** The detail. Without it the hint is the label alone. */
   children?: ReactNode
-  /** The detail unfolds in place behind an ⓘ instead of being the label's tooltip. */
+  /** The detail is the tooltip of an ⓘ after the label, instead of the label's own. */
   inline?: boolean
+  /** What the ⓘ is called to a screen reader. */
   moreLabel?: string
-  /** Starts unfolded, as a static sheet of the design system shows it (`inline` only). */
-  defaultOpen?: boolean
   className?: string
 }) {
   useUiLocale()
-  const id = useId()
-  const [open, setOpen] = useState(defaultOpen)
   if (!inline)
     return (
       <div className={cx('ui-hint', className)} data-tip="" data-lock={locked ? '' : undefined}>
@@ -111,27 +108,17 @@ export function Hint({
       </div>
     )
   return (
-    <div className={cx('ui-hint', className)} data-open={open ? '' : undefined} data-lock={locked ? '' : undefined}>
+    <div className={cx('ui-hint', className)} data-lock={locked ? '' : undefined}>
       <span className="ui-hint-lead" aria-hidden="true">
         {lead ?? <Icon icon={InfoGlyph} size={12} />}
       </span>
       <span className="ui-hint-label">{label}</span>
       {children && (
-        <IconButton
-          label={moreLabel}
-          icon={InfoGlyph}
-          size="xs"
-          aria-expanded={open}
-          aria-controls={id}
-          onClick={() => {
-            setOpen(!open)
-          }}
-        />
-      )}
-      {children && open && (
-        <p id={id} className="ui-hint-detail">
-          {children}
-        </p>
+        <Tooltip content={children}>
+          <span className="ui-hint-more" tabIndex={0} role="img" aria-label={moreLabel}>
+            <Icon icon={InfoGlyph} size={12} />
+          </span>
+        </Tooltip>
       )}
     </div>
   )

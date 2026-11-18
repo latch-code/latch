@@ -196,10 +196,18 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ui-hint > .ui-icon-button {
+/* The ⓘ after an inline label: its tooltip is the detail. It is looked at, not pressed. */
+.ui-hint-more {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-4);
   color: var(--muted);
+  cursor: default;
 }
-.ui-hint[data-open] > .ui-icon-button {
+.ui-hint-more:hover,
+.ui-hint-more:focus-visible {
   color: var(--ink);
 }
 /* On hover: the lead and the label in one line; the detail is the label's tooltip and takes no room. */
@@ -210,10 +218,4 @@
 .ui-hint[data-tip] > .ui-hint-label[tabindex] {
   border-radius: var(--r-4);
   cursor: default;
-}
-.ui-hint-detail {
-  grid-column: 2 / -1;
-  padding-bottom: var(--sp-4);
-  color: var(--ink-2);
-  line-height: var(--lh-caption-para);
 }
