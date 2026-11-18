@@ -241,7 +241,7 @@ it.each([
         await palette.waitFor()
       }
       await open()
-      expect(await groupNames()).toEqual(['最近会话', '命令'])
+      expect(await groupNames()).toEqual(['最近会话 · Code', '命令'])
       expect(await palette.locator('section[aria-label="最近会话"] [role="option"]').count()).toBe(3)
       // A request waits, so the way to it is a command at hand.
       await palette.getByRole('option', { name: '下一个等你处理的请求', exact: true }).waitFor()
@@ -339,7 +339,7 @@ it.each([
       await shot(page, 'files')
       await files.getByRole('searchbox').press('Escape')
       await palette.waitFor()
-      expect(await groupNames()).toEqual(['最近会话', '命令'])
+      expect(await groupNames()).toEqual(['最近会话 · Code', '命令'])
       // The keys that opened it put it away.
       await page.keyboard.press('Meta+k')
       await palette.waitFor({ state: 'detached' })
