@@ -219,7 +219,7 @@
 }
 .settings-back {
   justify-self: start;
-  margin: calc(-1 * var(--sp-24)) 0 calc(-1 * var(--sp-8)) calc(-1 * var(--sp-8));
+  margin: calc(-1 * var(--sp-8)) 0 calc(-1 * var(--sp-8)) calc(-1 * var(--sp-8));
 }
 .settings-back > .ui-icon {
   color: var(--muted);
