@@ -102,6 +102,7 @@ declare global {
   interface Window {
     renders: Record<string, number>
     transcriptActions: string[]
+    transcriptEdits: Array<{ messageId: string; before: string | undefined }>
     placedTurnKeys: string[]
   }
 }
@@ -285,31 +286,35 @@ describe('streaming render', () => {
   it('keeps history settled while a new run locks and restores editing', async () => {
     await open()
     await page.evaluate(() => {
-      window.transcriptActions = []
-      window.showTranscriptOptions({ onFork: id => window.transcriptActions.push(id) })
+      window.transcriptEdits = []
+      window.showTranscriptOptions({
+        onEditFrom: (message, before) => window.transcriptEdits.push({ messageId: message.id, before }),
+      })
     })
     const past = prose(300, 1)
     await show(detail(past))
     const oldPrompt = page.locator('[data-message-id="user-298"]')
     const edit = oldPrompt.getByRole('button', { name: '从这里编辑', exact: true })
     await edit.waitFor()
+    expect(await edit.isEnabled()).toBe(true)
     const countTurns = () => page.evaluate(() => window.renders.TurnView ?? 0)
     const user: Message = { id: 'user-live', role: 'user', text: '继续' }
     const before = await countTurns()
     await show(detail([...past, user], { running: true, liveId: 'reply-live', liveText: '开始', cursor: 2 }))
     const reply = page.locator('[data-message-id="reply-live"]')
     await reply.waitFor()
-    expect(await edit.count()).toBe(0)
+    expect(await edit.isDisabled()).toBe(true)
+    expect(await page.evaluate(() => window.transcriptEdits)).toEqual([])
     const running = await countTurns()
     expect(running - before).toBeLessThanOrEqual(6)
 
     await show(detail([...past, user, { id: 'reply-live', role: 'assistant', text: '完成' }], { cursor: 3 }))
     await expect.poll(() => reply.textContent()).toContain('完成')
-    await edit.waitFor()
+    await expect.poll(() => edit.isEnabled()).toBe(true)
     expect((await countTurns()) - running).toBeLessThanOrEqual(6)
     await oldPrompt.hover()
     await edit.click()
-    expect(await page.evaluate(() => window.transcriptActions)).toEqual(['reply-297'])
+    expect(await page.evaluate(() => window.transcriptEdits)).toEqual([{ messageId: 'user-298', before: 'reply-297' }])
   })
 
   it.each([2, 23])('keeps the old tail DOM, work expansion and text selection after %i earlier turns', async rounds => {

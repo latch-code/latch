@@ -176,9 +176,9 @@ test('a retry that stays unconfirmed says why, and 放弃这次提交 lets go of
         requests.push(route.request().postDataJSON() as { requestId: string; prompt: string })
         if (!failing) return route.continue()
         return route.fulfill({
-          status: 502,
+          status: 504,
           contentType: 'application/json',
-          body: JSON.stringify({ error: 'harness-timeout', message: 'Harness 没有在时限内答复。' }),
+          body: JSON.stringify({ error: 'agent-timeout', message: '夹具：Agent 停止响应' }),
         })
       })
       const open = async (title: string) => {
@@ -196,6 +196,7 @@ test('a retry that stays unconfirmed says why, and 放弃这次提交 lets go of
       await input.press('Enter')
       const card = page.locator('.pending-submission').filter({ visible: true })
       await card.getByText('Harness 没有在时限内答复。', { exact: true }).waitFor()
+      expect(await card.getByText('夹具：Agent 停止响应', { exact: true }).count()).toBe(0)
       await card.getByRole('button', { name: '重试这次提交', exact: true }).click()
       await expect.poll(() => requests.length).toBe(2)
       expect(requests[1]).toEqual(requests[0])
@@ -285,8 +286,9 @@ test('a Harness that cannot start is a refusal, not an unconfirmed message: the 
       const text = `发给起不来的 Agent ${width}`
       await input.fill(text)
       await input.press('Enter')
-      const notice = page.locator('.composer-stack .ui-notice').filter({ hasText: 'Flaky Agent 启动失败' })
+      const notice = page.locator('.composer-stack .ui-notice').filter({ hasText: 'Harness 未能启动，消息没有发出。' })
       await notice.waitFor()
+      expect(await notice.getByText('Flaky Agent 启动失败', { exact: false }).count()).toBe(0)
       await notice.getByRole('button', { name: '打开设置 › Harness', exact: true }).waitFor()
       await notice.getByRole('button', { name: '重试', exact: true }).waitFor()
       expect(await page.locator('.pending-submission').filter({ visible: true }).count()).toBe(0)

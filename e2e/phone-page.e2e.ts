@@ -392,10 +392,13 @@ describe('设置 › 设备', () => {
     it('does not say no phone is connected when the list failed to load', async () => {
       const state = base({ listFails: true })
       const { context, page } = await open(state)
-      await page.getByText('读取失败', { exact: false }).waitFor()
+      const failure = page.getByText('请求未完成（500），请重试。', { exact: true })
+      await failure.waitFor()
+      expect(await page.getByText('读取失败', { exact: true }).count()).toBe(0)
       expect(await page.getByText('还没有别的设备连接这台 Mac。', { exact: true }).count()).toBe(0)
       state.listFails = false
       await page.locator('[data-device-id="dev_phone"]').waitFor()
+      await failure.waitFor({ state: 'hidden' })
       await context.close()
     })
 

@@ -406,18 +406,20 @@ describe('model and usage settings reads', () => {
       await pendingService.delivered
       await expect.poll(() => shown.getAttribute('aria-busy')).toBe('false')
 
-      const failure = '暂时无法读取这个期间的用量。'
+      const diagnostic = '暂时无法读取这个期间的用量。'
+      const failure = '请求未完成（503），请重试。'
       await page.route(
         '**/link/api/usage',
         route =>
           route.fulfill({
             status: 503,
-            json: { error: 'fixture-usage-unavailable', message: failure },
+            json: { error: 'fixture-usage-unavailable', message: diagnostic },
           }),
         { times: 1 },
       )
       await usage.getByRole('radio', { name: '7 天', exact: true }).click()
       await usage.getByText(failure).waitFor()
+      expect(await usage.getByText(diagnostic, { exact: true }).count()).toBe(0)
       // The failure says the last answer is still what is shown, and only that read is tried again.
       expect(await usage.locator('.ui-notice, [role="alert"], [role="status"]').filter({ hasText: failure }).textContent()).toContain(
         '当前显示上次读取结果',

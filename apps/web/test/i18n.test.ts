@@ -176,6 +176,20 @@ describe('the page language', () => {
     expect(describeFailure(500, 'unlisted-helper-error', '原始响应')).toBe('The request did not finish (500). Try again.')
   })
 
+  it('describes known send failures without displaying the server message', () => {
+    const raw = 'Server-only diagnostic'
+    expect(describeFailure(504, 'agent-timeout', raw)).toBe('Harness 没有在时限内答复。')
+    expect(describeFailure(503, 'agent-start-failed', raw)).toBe('Harness 未能启动，消息没有发出。')
+    expect(describeFailure(409, 'command-queued', raw)).toBe('这条命令不能排队或追加，请等本轮结束后发送。')
+
+    setLocale('en')
+    expect(describeFailure(504, 'agent-timeout', raw)).toBe('The Harness didn’t respond in time.')
+    expect(describeFailure(503, 'agent-start-failed', raw)).toBe('The Harness couldn’t start. The message was not sent.')
+    expect(describeFailure(409, 'command-queued', raw)).toBe(
+      'This command can’t be queued or added to a running turn. Send it when the turn finishes.',
+    )
+  })
+
   it('reads the display label for an audit action without translating its key', () => {
     const entry = { action: 'git.push', label: '推送' }
     expect(auditActionLabel(entry)).toBe('推送')

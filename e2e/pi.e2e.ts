@@ -300,7 +300,7 @@ describe('pi over its own RPC mode', () => {
     await expect.poll(() => menu.getByRole('option', { name: /^\/compact/u }).getAttribute('aria-disabled')).toBe('true')
     await composer(page).fill('/compact')
     await composer(page).press('Meta+Enter')
-    const refusal = page.getByText('/compact 不能排队或追加，请等本轮结束后发送。', { exact: true })
+    const refusal = page.getByText('这条命令不能排队或追加，请等本轮结束后发送。', { exact: true })
     await refusal.waitFor()
     const [notice, box] = await Promise.all([refusal.boundingBox(), page.locator('form.composer').boundingBox()])
     expect(notice!.y + notice!.height).toBeLessThanOrEqual(box!.y)

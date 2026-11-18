@@ -12,6 +12,9 @@ import { noHorizontalOverflow } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/harness-options'
 
+const phonePermission = (page: Page) =>
+  page.locator('.workbench-home .composer-line [data-composer-control="permission"]').getByRole('button')
+
 const refreshModels = (page: Page) =>
   page.getByRole('menuitem', { name: '刷新模型列表', exact: true }).or(page.getByRole('button', { name: '刷新模型列表', exact: true }))
 
@@ -508,19 +511,19 @@ describe("choosing a Harness's own options before the first message", () => {
     it(`lists the same on a phone, ${theme}`, async () => {
       const page = await open(390, theme)
       await openNew(page)
-      // A phone's options are the chips over the home's input; each opens its own sheet.
-      const sheet = page.locator('.workbench-home .composer-chips')
-      await sheet.waitFor()
-      await sheet.getByRole('button', { name: /^模型/u }).waitFor()
-      expect(await sheet.getByText('开始后可以换', { exact: false }).count()).toBe(0)
+      // Model selection is in the options row. Permission stays beside Send.
+      const chips = page.locator('.workbench-home .composer-chips')
+      const permission = phonePermission(page)
+      await chips.getByRole('button', { name: /^模型/u }).waitFor()
+      expect(await chips.getByText('开始后可以换', { exact: false }).count()).toBe(0)
       await shot(page, `chips-390-${theme}`)
-      await sheet.getByRole('button', { name: /^权限/u }).click()
+      await permission.click()
       // The same segments in the sheet, larger.
       await row(page, '由模型判断').waitFor()
       expect((await row(page, '按规则放行').boundingBox())!.height).toBeGreaterThanOrEqual(44)
       await shot(page, `sheet-permission-390-${theme}`)
       await row(page, '按规则放行').click()
-      await expect.poll(() => sheet.getByRole('button', { name: /^权限/u }).innerText()).toContain('按规则放行')
+      await expect.poll(() => permission.innerText()).toContain('按规则放行')
       await noHorizontalOverflow(page)
       await page.context().close()
     })
@@ -601,7 +604,7 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
       const sheet = page.locator('.workbench-home .composer-chips')
       await sheet.waitFor()
       expect(await sheet.getByRole('button', { name: /^Harness：/u }).getAttribute('aria-label')).toBe('Harness：Generic')
-      const permission = sheet.getByRole('button', { name: /^权限：/u })
+      const permission = phonePermission(page)
       await expect.poll(() => permission.getAttribute('aria-label')).toBe('权限：默认')
       expect(await page.getByText('开始后才知道', { exact: false }).count()).toBe(0)
       await shot(page, 'permission-before-read-390-dark')
