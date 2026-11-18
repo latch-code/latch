@@ -14,6 +14,7 @@ import {
   LADDER_MODE,
   ownChoice,
   serviceChoice,
+  simulatorInputName,
   simulatorInputTool,
   type DriverTaskDetail,
   type Message,
@@ -2589,6 +2590,33 @@ describe('ACP turn mapping', () => {
       simulatorInputTool('device_type_text', undefined, { ...input, server: 'editing', tool: 'device_type_text' }, title),
     ).toBeUndefined()
     expect(simulatorInputTool(undefined, undefined, { udid: input.udid }, title)).toBeUndefined()
+  })
+
+  it('shows a call named as simulator input with other arguments as any other tool, whichever way it is named', () => {
+    const udid = '22222222-2222-4222-8222-222222222222'
+    const tap = { udid, x: 10, y: 20 }
+    for (const name of ['latch-browser.device_tap', 'mcp__latch-browser__device_tap']) {
+      expect(simulatorInputTool(name, 'other', tap)).toBe('device_tap')
+      expect(simulatorInputTool(name, 'other', JSON.stringify(tap))).toBe('device_tap')
+      expect(simulatorInputTool(name, 'other', { ...tap, path: '/etc/hosts' })).toBeUndefined()
+      expect(simulatorInputTool(name, 'other', { command: 'rm -rf ~' })).toBeUndefined()
+      expect(simulatorInputTool(name, 'other', { x: 10, y: 20 })).toBeUndefined()
+      expect(simulatorInputTool(name, 'other', { udid: 'a2222222-2222-4222-8222-22222222222b', x: 10, y: 20 })).toBeUndefined()
+      expect(simulatorInputTool(name, 'other')).toBeUndefined()
+    }
+    // Codex's shape: server and tool, the arguments inside (as JSON text on its approvals).
+    const wrapped = (args: unknown) => ({ server: 'latch-browser', tool: 'device_tap', arguments: args })
+    expect(simulatorInputTool('latch-browser.device_tap', 'other', wrapped(tap))).toBe('device_tap')
+    expect(simulatorInputTool('调用 latch-browser.device_tap', 'other', wrapped(JSON.stringify(tap)))).toBe('device_tap')
+    expect(simulatorInputTool('latch-browser.device_tap', 'other', wrapped({ ...tap, note: 'other words' }))).toBeUndefined()
+    expect(simulatorInputTool(undefined, 'other', { server: 'latch-browser', tool: 'device_tap' })).toBeUndefined()
+    // A row saved earlier holds only its counts, which still read as that tool; anything else shows as it is.
+    expect(simulatorInputTool('latch-browser.device_tap', 'other', '1 个触点')).toBe('device_tap')
+    expect(simulatorInputTool('latch-browser.device_type_text', 'other', '12 个字符')).toBe('device_type_text')
+    expect(simulatorInputTool('latch-browser.device_tap', 'other', '12 个字符')).toBeUndefined()
+    // Identity alone, for a call's name: no say over how its row is shown.
+    expect(simulatorInputName('latch-browser.device_tap')).toBe('device_tap')
+    expect(simulatorInputName('latch-browser.device_list')).toBeUndefined()
   })
 
   it('streams a reply under one live message ID and settles it with that ID', async () => {

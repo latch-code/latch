@@ -31,6 +31,32 @@ const edit = (changes: Partial<Message> = {}): Message => ({
 })
 
 describe('restricted tool presentation', () => {
+  it('shows a call named as simulator input with its real arguments unless they have the tool’s exact shape', () => {
+    const approval = (args: Record<string, unknown>) => ({
+      id: 'approval-1',
+      sessionId: 'task',
+      toolName: 'latch-browser.device_tap',
+      reason: 'Tap',
+      arguments: JSON.stringify(args),
+      requestedAt: '2026-11-14T00:00:00.000Z',
+    })
+    const odd = approval({ udid: '22222222-2222-4222-8222-222222222222', x: 1, y: 1, path: '/etc/hosts' })
+    for (const project of [allApproval, workApproval]) {
+      expect(project(odd).arguments).toBe(odd.arguments)
+      expect(project(approval({ udid: '22222222-2222-4222-8222-222222222222', x: 1, y: 1 })).arguments).toBe('1 个触点')
+    }
+    const row: Message = {
+      id: 'tool-1',
+      role: 'tool',
+      toolName: 'latch-browser.device_type_text',
+      state: 'completed',
+      text: 'typed',
+      tool: { kind: 'other', input: JSON.stringify({ udid: 'not-a-udid', text: 'secret words' }) },
+    }
+    for (const project of [allTaskContent, workTaskContent])
+      expect(project(source([row])).messages[0]?.tool?.input).toContain('secret words')
+  })
+
   it('keeps projection provenance off every all-data message, child step and approval without changing original content', () => {
     const original = edit()
     original.tool!.outputWithoutFiles = 'PRIVATE_PROJECTION_HINT'

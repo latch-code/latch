@@ -42,6 +42,8 @@ const recordSchema = z.strictObject({
     .regex(/^[a-f0-9]{64}$/u)
     .optional(),
   editor: actorSchema.optional(),
+  /** Other devices whose words the text carries (review notes): a device-input grant needs each of them, at sending too. */
+  coauthors: z.array(id).min(1).max(256).optional(),
   binding: z
     .string()
     .regex(/^[a-f0-9]{64}$/u)
@@ -99,6 +101,7 @@ export interface QueueOptions {
       queuedAt?: string
       itemId?: string
       editor?: QueueActor
+      coauthors?: readonly string[]
       authorize?: () => Promise<void>
     },
   ): Promise<void>
@@ -196,7 +199,7 @@ export class PromptQueues {
   submit(
     actor: QueueActor,
     sessionId: string,
-    input: { prompt: string; requestId: string; model?: ModelRef },
+    input: { prompt: string; requestId: string; model?: ModelRef; coauthors?: readonly string[] },
     existingOnly = false,
   ): Promise<{ accepted: true } | { queued: { id: string } }> {
     return this.lock(async () => {
@@ -232,6 +235,7 @@ export class PromptQueues {
           state: 'sending',
           ...(model ? { model } : {}),
           ...(binding ? { binding } : {}),
+          ...(input.coauthors?.length ? { coauthors: [...input.coauthors] } : {}),
         }
         valid(immediate)
         next.set(immediate.id, immediate)
@@ -242,6 +246,7 @@ export class PromptQueues {
             text: input.prompt,
             requestId: input.requestId,
             itemId: immediate.id,
+            ...(immediate.coauthors ? { coauthors: immediate.coauthors } : {}),
             ...(model ? { model } : {}),
             ...(binding ? { binding } : {}),
           })
@@ -294,6 +299,7 @@ export class PromptQueues {
             : 'parked',
         ...(model ? { model } : {}),
         ...(binding ? { binding } : {}),
+        ...(input.coauthors?.length ? { coauthors: [...input.coauthors] } : {}),
       }
       if (item.state === 'parked') item.reason = '队列已暂停，请确认后发送'
       valid(item)
@@ -432,6 +438,7 @@ export class PromptQueues {
         queuedAt: item.queuedAt,
         itemId: item.id,
         ...(item.editor ? { editor: item.editor } : {}),
+        ...(item.coauthors ? { coauthors: item.coauthors } : {}),
         ...(beforeSend ? { authorize: beforeSend } : {}),
         ...(item.model ? { model: item.model } : {}),
         ...(item.binding ? { binding: item.binding } : {}),

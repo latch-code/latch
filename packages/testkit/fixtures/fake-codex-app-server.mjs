@@ -51,6 +51,8 @@ const env = process.env
 // Codex keeps its threads across processes; so does this fake, beside the fake ACP agent's state when no file is named.
 const STATE = env.FAKE_CODEX_STATE ?? (env.FAKE_ACP_STATE ? `${env.FAKE_ACP_STATE}.codex-threads.json` : undefined)
 const VERSION = env.FAKE_CODEX_VERSION ?? '0.167.0'
+// The simulator its latch-browser calls name, in the exact shape the Host's own tools take.
+const SIMULATOR_FIXTURE_UDID = '22222222-2222-4222-8222-222222222222'
 const args = process.argv.slice(2)
 if (args.includes('--version')) {
   process.stdout.write(`codex-cli ${VERSION}\n`)
@@ -423,9 +425,13 @@ async function play(text) {
     const simulator = word === 'tool-simulator-input'
     const tools = simulator
       ? [
-          { server: 'latch-browser', tool: 'device_type_text', arguments: { text: 'violet ocean note' } },
-          { server: 'latch-browser', tool: 'device_tap', arguments: { x: 91.125, y: 213.375 } },
-          { server: 'latch-browser', tool: 'device_swipe', arguments: { fromX: 197.25, fromY: 433.625, toX: 81.125, toY: 193.375 } },
+          { server: 'latch-browser', tool: 'device_type_text', arguments: { udid: SIMULATOR_FIXTURE_UDID, text: 'violet ocean note' } },
+          { server: 'latch-browser', tool: 'device_tap', arguments: { udid: SIMULATOR_FIXTURE_UDID, x: 91.125, y: 213.375 } },
+          {
+            server: 'latch-browser',
+            tool: 'device_swipe',
+            arguments: { udid: SIMULATOR_FIXTURE_UDID, fromX: 197.25, fromY: 433.625, toX: 81.125, toY: 193.375 },
+          },
         ]
       : (['tool-parallel', 'tool-ambiguous', 'tool-child'].includes(word) ? [0, 1] : [0]).map(index => ({
           server: 'docs',

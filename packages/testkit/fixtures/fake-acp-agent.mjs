@@ -1382,7 +1382,10 @@ const scenarios = {
   // arguments as input; `ask` first asks the person through session/request_permission, as an agent in a mode that asks
   // before MCP tools does. `cancelAfterMs` sends `notifications/cancelled` for the call after that long. `title` reports
   // the row under another name (another server's tool); `twin` reports a second, identical row that is never called.
-  // `omitKind`, `name` and `resultTitle` vary the ACP fields without changing the call sent to the MCP server.
+  // `omitKind`, `name` and `resultTitle` vary the ACP fields without changing the call sent to the MCP server. A step
+  // `{ "question": "choice" }` (or `"words"`) asks the person to pick a way (or to say something) through
+  // `elicitation/create` in the same turn, and calls nothing. Only the first paragraph is read: a delivery may append a
+  // quote after a blank line.
   browser: async ({ sessionId, input, say, tool, permission }) => {
     const server = mcpServers.get(sessionId)?.find(item => item.name === 'latch-browser')
     if (!server) {
@@ -1391,7 +1394,12 @@ const scenarios = {
     }
     let steps
     try {
-      steps = JSON.parse(input.trim().replace(/^browser\s*/u, ''))
+      steps = JSON.parse(
+        input
+          .trim()
+          .split(/\n\s*\n/u)[0]
+          .replace(/^browser\s*/u, ''),
+      )
     } catch {
       say('steps are not JSON')
       return END
@@ -1412,6 +1420,22 @@ const scenarios = {
     const lines = []
     for (const [index, step] of steps.entries()) {
       if (cancelled.has(sessionId)) return { stopReason: 'cancelled' }
+      if (step.question) {
+        const { result } = await request('elicitation/create', {
+          sessionId,
+          mode: 'form',
+          message: 'Which way?',
+          requestedSchema: {
+            type: 'object',
+            properties:
+              step.question === 'words'
+                ? { note: { type: 'string', title: 'Anything else?' } }
+                : { way: { type: 'string', title: 'Way', enum: ['left', 'right'] } },
+          },
+        })
+        lines.push(`question: ${result?.action ?? 'error'}`)
+        continue
+      }
       const args = Object.fromEntries(Object.entries(step.args ?? {}).map(([key, value]) => [key, resolve(value)]))
       const toolCallId = `browser_${index}_${Date.now()}`
       const call = {

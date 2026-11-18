@@ -181,6 +181,8 @@ export class Questions {
     raw: unknown,
     authorize: () => Promise<void>,
     audit: () => Promise<void>,
+    /** Called once, just before the answer goes to the agent: never for a refusal or for a retry of an answer it has. */
+    delivering?: () => void,
   ): Promise<QuestionReceipt> {
     const input = questionSubmissionSchema.parse(raw)
     const hash = sha256Hex(canonicalJson(input.answers))
@@ -257,6 +259,7 @@ export class Questions {
       })
       void wait.catch(() => undefined)
       this.receipts.set(questionId, { promise: wait, resolve: settle, reject: fail })
+      delivering?.()
       producer.resolve({ text: result })
       this.options.changed(sessionId)
       return { wait }

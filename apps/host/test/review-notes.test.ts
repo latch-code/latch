@@ -158,6 +158,24 @@ describe('the store', () => {
     expect(notes.list('s1').notes[0]!.sending).toBeUndefined()
   })
 
+  it('names every device that wrote a note’s text, keeps them on disk, and never shows them to a device', async () => {
+    const { dataDir, notes } = await store()
+    const created = await notes.create('s1', writer, input(randomUUID()))
+    const other = await notes.create('s1', writer, input(randomUUID(), '另一条'))
+    await notes.edit('s1', writer, created.id, { requestId: randomUUID(), text: '自己改' })
+    await notes.edit('s1', { deviceId: 'dev_b', name: '手机' }, created.id, { requestId: randomUUID(), text: '手机改' })
+    await notes.edit('s1', { deviceId: 'dev_b', name: '手机' }, created.id, { requestId: randomUUID(), text: '又改' })
+    expect(notes.writersOf('s1', [created.id])).toEqual(['dev_a', 'dev_b'])
+    expect(notes.writersOf('s1', [other.id])).toEqual(['dev_a'])
+    expect((await ReviewNotes.open({ dataDir })).writersOf('s1', [created.id, other.id])).toEqual(['dev_a', 'dev_b'])
+    expect(JSON.stringify(notes.list('s1'))).not.toContain('dev_b')
+    for (let index = 0; index < 15; index++)
+      await notes.edit('s1', { deviceId: `dev_${index}x`, name: '' }, created.id, { requestId: randomUUID(), text: `改 ${index}` })
+    await expect(
+      notes.edit('s1', { deviceId: 'dev_last', name: '' }, created.id, { requestId: randomUUID(), text: '再改' }),
+    ).rejects.toMatchObject({ code: 'review-note-editors' })
+  })
+
   it('refuses a message longer than the prompt path takes, and keeps nothing of it', async () => {
     const { dataDir, notes } = await store()
     const created = await notes.create('s1', writer, input(randomUUID()))

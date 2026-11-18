@@ -16,6 +16,8 @@ import { canonicalJson, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
 
 const MAX_RECEIPTS = 512
 const MAX_SENDS = 32
+// Devices besides its writer that may edit one note; past that a new note says the same.
+const MAX_EDITORS = 16
 
 /** The client's request ID: only the receipt key of a write here, never sent on to a session. */
 const rid = z.string().uuid()
@@ -54,6 +56,8 @@ const noteSchema = z
     /** The send the note is in while its result is open (`sends`); the note stays pending and locked meanwhile. */
     sendId: sendId.optional(),
     createdBy: z.strictObject({ deviceId: z.string().min(1).max(256), name: z.string().max(256) }),
+    /** Other devices that edited the text: what it says may be theirs as well (`writersOf`). Never sent to a device. */
+    editors: z.array(z.string().min(1).max(256)).min(1).max(MAX_EDITORS).optional(),
     createdAt: at,
     updatedAt: at,
   })
@@ -129,7 +133,7 @@ export interface Writer {
 }
 
 const view = (note: StoredNote, sends: readonly Send[] = []): ReviewNote => {
-  const { sendId, ...rest } = note
+  const { sendId, editors: _editors, ...rest } = note
   const queueId = sendId ? sends.find(send => send.id === sendId)?.queueId : undefined
   return { ...rest, ...(sendId ? { sending: true as const } : {}), ...(queueId ? { queueId } : {}) }
 }
@@ -316,6 +320,11 @@ export class ReviewNotes {
       file => {
         const note = this.noteIn(file, id)
         if (note.status !== 'pending' || note.sendId) throw new AppError(409, 'review-note-sent', '这条反馈已经发出，不能再改。')
+        const editors = note.editors ?? []
+        if (writer.deviceId !== note.createdBy.deviceId && !editors.includes(writer.deviceId)) {
+          if (editors.length >= MAX_EDITORS) throw new AppError(409, 'review-note-editors', '改过这条反馈的设备太多，请新建一条。')
+          note.editors = [...editors, writer.deviceId]
+        }
         note.text = input.text
         note.updatedAt = this.stamp()
         return { action: 'edit', noteId: id }
@@ -404,6 +413,13 @@ export class ReviewNotes {
       await this.save(file)
       return { open: send }
     })
+  }
+
+  /** Every device that wrote these notes' text, creators and editors, as recorded; a note that is gone names none. */
+  writersOf(sessionId: string, noteIds: readonly string[]): string[] {
+    const notes = this.cache.get(sessionId)?.notes ?? []
+    const writers = notes.filter(note => noteIds.includes(note.id)).flatMap(note => [note.createdBy.deviceId, ...(note.editors ?? [])])
+    return [...new Set(writers)]
   }
 
   /** Sends whose result is still open, for the caller to settle against the session's messages and queue. */

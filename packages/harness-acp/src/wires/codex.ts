@@ -10,7 +10,7 @@ import {
   escapeSecurityText,
   readSessionSkills,
   boundSessionSkills,
-  simulatorInputTool,
+  simulatorInputName,
   type HarnessMcpServer,
   type HarnessMcpState,
   type SessionSkill,
@@ -276,7 +276,7 @@ function toolCount(tools: unknown): number | undefined {
 function nativeSimulatorInputName(server: unknown, tool: unknown): string | undefined {
   if (server !== 'latch-browser' || typeof tool !== 'string') return undefined
   const name = `${server}.${tool}`
-  return simulatorInputTool(name) ? name : undefined
+  return simulatorInputName(name) ? name : undefined
 }
 
 /**

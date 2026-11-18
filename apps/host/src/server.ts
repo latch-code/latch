@@ -529,6 +529,8 @@ type SessionStart = z.infer<typeof createTaskSchema> & {
   pageStart?: true
   outsideStart?: true
 }
+/** Devices other than the sender whose words an input carries; see `sendPrompt`. */
+type TurnWriters = { coauthors?: readonly string[]; narrower?: boolean }
 const taskPatchSchema = z
   .object({
     title: z.string().trim().min(1).max(120).nullable().optional(),
@@ -2920,7 +2922,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (turn?.binding !== input.binding) throw queueContextChanged()
         const agentContext = turn?.agentContext
         await withSimulatorPrompt(
-          input.editor ? [actor.deviceId, input.editor.deviceId] : [actor.deviceId],
+          [actor.deviceId, ...(input.editor ? [input.editor.deviceId] : []), ...(input.coauthors ?? [])],
           actor.dataScope !== 'all' || (input.editor !== undefined && input.editor.dataScope !== 'all'),
           () =>
             harnessHub.prompt(sessionId, input.text, input.requestId, {
@@ -3230,11 +3232,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         threads: workThreads,
         items: workItems,
         // Never queued or steered: a queued message proposes from its whole text when it is sent.
-        async deliver(caller, sessionId, input, agent) {
+        async deliver(caller, sessionId, input, agent, writers) {
           const parsed = queuedPromptSchema.safeParse(input)
           if (!parsed.success) throw new AppError(400, 'post-invalid', '这条发言连同引用太长，没有发出。')
           // The quoted replies are model output: any session that can propose marks its context as holding outside content.
-          const sent = await sendPrompt(caller, sessionId, parsed.data, false, agent !== undefined || hub!.workProposalsOf(sessionId))
+          const sent = await sendPrompt(
+            caller,
+            sessionId,
+            parsed.data,
+            false,
+            agent !== undefined || hub!.workProposalsOf(sessionId),
+            writers,
+          )
           if (agent && typeof sent !== 'object' && sent !== 'replayed')
             await rememberFromPerson({ deviceId: caller.device.id, actor: actorOf(caller) }, sessionId, agent.remember, input.requestId)
         },
@@ -3259,8 +3268,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       history: { history: () => historyImports },
       reviewNotes: {
         notes: () => reviewNotes,
-        async send(caller, id, input) {
-          const answer = await sendPrompt(caller, id, input)
+        async send(caller, id, input, writers) {
+          const answer = await sendPrompt(caller, id, input, false, false, { coauthors: writers })
           // A queue that was empty with the run already over sends at once: the message is then in the session.
           return typeof answer === 'object' && 'queued' in answer.queued ? { queueId: answer.queued.queued.id } : {}
         },
@@ -7776,10 +7785,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const needed: DeviceScope =
         input.decision === 'reject' ? 'view' : approval.advisory ? 'run' : approval.risk === 'R2' ? 'approve:elevated' : 'approve:standard'
       // A note is model input. Check the same permissions again after the audit write, before handing it to the driver.
+      // Privacy is read live each time: a session may turn private meanwhile, and one the listing missed counts as private.
+      // A plain rejection never reaches this check, so it is never blocked.
       function checkDecisionAccess(): void {
         recheck(caller, needed)
         if (note !== undefined) recheck(caller, 'run')
-        if (input.decision === 'allow' || note !== undefined) privateAccess(caller, session)
+        if (input.decision === 'allow' || note !== undefined)
+          privateAccess(caller, session && !hub!.agentPrivate(approval.sessionId) ? session : { agentPrivate: true })
       }
       let previewHash: string | undefined
       if (input.decision === 'reject') limits.classC.take(caller.device.id)
@@ -7824,6 +7836,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         auditFailed(intent, caller)
         throw error
       }
+      // A note is text from this device into the running turn, as an added message is: from a narrower device the turn
+      // keeps no device-input grant.
+      if (note !== undefined && !simulatorDeviceAllowed(caller.device.id)) removeSimulatorRun(approval.sessionId)
       const accepted = await hub!.decide(approvalId, input.decision, {
         ...(input.optionId ? { optionId: input.optionId } : {}),
         // The decision record says only where the person was, never which device: names and ids stay in the audit.
@@ -9313,18 +9328,23 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       withoutPrivateContext = false,
       /** A 待办 thread's delivery: the turn carries outside content, recorded with it (`PromptOptions.outsideContent`). */
       outsideContent = false,
+      /**
+       * Other devices whose words this input carries (quoted posts, review notes): a device-input grant needs each of them
+       * as well, checked as the sender is. `narrower`: it carries words of a device it cannot name, so no grant.
+       */
+      writers: TurnWriters = {},
     ): Promise<'steered' | 'accepted' | 'replayed' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
       // The install window: a retry of a turn this Host has on record gets its original answer; a new plain message, and a
       // queued or steered one on a session that is not running (it would start a turn at once), are refused.
       const turnKey = `${id}:${caller.device.id}:${input.requestId}`
       if (turnRequests.has(turnKey) || promptQueues.knows(id, caller.device.id, input.requestId))
-        return sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent)
+        return sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent, writers)
       if (updateWindow.isOpen()) {
         if (!(input.queue || input.steer)) refuseWhileUpdating('turn')
         const status = (await hub!.summary(id)).status
         if (status !== 'running' && status !== 'waiting-approval') refuseWhileUpdating('turn')
       }
-      return tracked(turnRequests, turnKey, () => sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent))
+      return tracked(turnRequests, turnKey, () => sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent, writers))
     }
 
     async function sendPromptChecked(
@@ -9333,6 +9353,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       input: z.infer<typeof queuedPromptSchema>,
       withoutPrivateContext: boolean,
       outsideContent = false,
+      writers: TurnWriters = {},
     ): Promise<'steered' | 'accepted' | 'replayed' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
       recheck(caller, 'run')
       await assertSessionAccess(caller, id)
@@ -9352,8 +9373,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           })
         return 'accepted'
       }
+      const coauthors = [...new Set(writers.coauthors ?? [])].filter(deviceId => deviceId !== caller.device.id)
+      const queued = { ...input, ...(coauthors.length ? { coauthors } : {}) }
       if ((input.queue || input.steer) && promptQueues.knows(id, caller.device.id, input.requestId))
-        return { queued: await promptQueues.submit(queueActor(caller), id, input, true) }
+        return { queued: await promptQueues.submit(queueActor(caller), id, queued, true) }
       if (await historicalChat(caller, id)) {
         // A receipt from before migration may still be retried, including after a Host restart. Nothing new runs here.
         const detail = await hub!.detail(id)
@@ -9391,9 +9414,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (input.queue || input.steer) await assertQueueable(id, input.prompt)
       if (input.steer && !input.model && input.prompt) {
         recheck(caller, 'run')
-        const maySeeAll = !withoutPrivateContext && caller.device.dataScope === 'all' && simulatorDeviceAllowed(caller.device.id)
+        const allowed = () => !writers.narrower && simulatorDeviceAllowed(caller.device.id) && coauthors.every(simulatorDeviceAllowed)
+        const maySeeAll = !withoutPrivateContext && caller.device.dataScope === 'all' && allowed()
         const steered = await hub!.steer(id, input.prompt, input.requestId, runId => {
-          if (maySeeAll && simulatorDeviceAllowed(caller.device.id)) return
+          if (maySeeAll && allowed()) return
           const grant = simulatorRuns.get(id)
           if (grant?.runId !== runId) return
           // A lower-scope steer blocks new device calls while its actual send is unsettled.
@@ -9408,7 +9432,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         })
         if (steered === 'injected') return 'steered'
       }
-      if (input.queue || input.steer) return { queued: await promptQueues.submit(queueActor(caller), id, input) }
+      // `writers.narrower` comes only with a thread's delivery, which never queues; a queued item keeps its co-authors.
+      if (input.queue || input.steer) return { queued: await promptQueues.submit(queueActor(caller), id, queued) }
       // An existing session whose Harness is now too old is refused as a new one would be, before the turn is recorded.
       const sessionHarness = await hub!.harnessOf(id)
       await rereadOutdated(sessionHarness)
@@ -9449,15 +9474,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         recheck(caller, 'run')
         if (fileRefs.length && !projectFiles(caller)) throw new AppError(403, 'file-scope', '此设备的数据范围已变化。')
         if (agentTurn) agentAccess(caller, true)
-        await withSimulatorPrompt([caller.device.id], withoutPrivateContext || caller.device.dataScope !== 'all', () =>
-          hub!.prompt(id, input.prompt, input.requestId, {
-            ...(agentTurn ? { agentContext: agentTurn } : {}),
-            ...(fileRefs.length ? { fileRefs } : {}),
-            ...(input.model ? { model: input.model } : {}),
-            ...(attachments.length ? { attachments } : {}),
-            ...(input.freshContext ? { freshContext: true as const } : {}),
-            ...(outsideContent ? { outsideContent: true as const } : {}),
-          }),
+        await withSimulatorPrompt(
+          [caller.device.id, ...coauthors],
+          withoutPrivateContext || caller.device.dataScope !== 'all' || writers.narrower === true,
+          () =>
+            hub!.prompt(id, input.prompt, input.requestId, {
+              ...(agentTurn ? { agentContext: agentTurn } : {}),
+              ...(fileRefs.length ? { fileRefs } : {}),
+              ...(input.model ? { model: input.model } : {}),
+              ...(attachments.length ? { attachments } : {}),
+              ...(input.freshContext ? { freshContext: true as const } : {}),
+              ...(outsideContent ? { outsideContent: true as const } : {}),
+            }),
         )
       } catch (cause) {
         if (cause instanceof AppError && refusedBeforeAccepting(cause.status, cause.code) && attachments.length)
@@ -9714,13 +9742,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const input = await jsonBody(req, TASK_BODY_LIMIT)
       json(
         res,
-        await questions.answer(sessionId, questionId, caller.device.id, input, authorize, async () => {
-          try {
-            await audited({ action: 'task.question.answered', actor: actorOf(caller), detail: { sessionId, questionId } })
-          } catch {
-            throw new AppError(503, 'audit-unavailable', '审计记录暂时无法保存，本次回答尚未接收，请重试')
-          }
-        }),
+        await questions.answer(
+          sessionId,
+          questionId,
+          caller.device.id,
+          input,
+          authorize,
+          async () => {
+            try {
+              await audited({ action: 'task.question.answered', actor: actorOf(caller), detail: { sessionId, questionId } })
+            } catch {
+              throw new AppError(503, 'audit-unavailable', '审计记录暂时无法保存，本次回答尚未接收，请重试')
+            }
+          },
+          // Any answer, a choice too, is a narrower device steering the turn: the turn keeps no device-input grant.
+          () => {
+            if (!simulatorDeviceAllowed(caller.device.id)) removeSimulatorRun(sessionId)
+          },
+        ),
       )
       return true
     }

@@ -139,6 +139,14 @@ function qualifiedSimulatorInput(label: string | undefined): SimulatorInputTool 
   )
 }
 
+/**
+ * The simulator input tool a qualified name refers to, by name alone: a call's identity, never whether its row may be
+ * shown as counts (`simulatorInputTool` decides that from its arguments).
+ */
+export function simulatorInputName(label: string | undefined): SimulatorInputTool | undefined {
+  return qualifiedSimulatorInput(label)
+}
+
 const SIMULATOR_INPUT_TITLES: Record<SimulatorInputTool, string> = {
   device_tap: '模拟器点按',
   device_swipe: '模拟器滑动',
@@ -158,7 +166,7 @@ function recordedObject(input: unknown): Record<string, unknown> | undefined {
   return input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : undefined
 }
 
-/** An unstructured ACP title needs corroboration from the simulator tool's arguments. */
+/** A call's own arguments match the simulator tool's exact shape: only then may a row show counts in their place. */
 function hasSimulatorArguments(tool: SimulatorInputTool, input: Record<string, unknown> | undefined): boolean {
   if (typeof input?.udid !== 'string' || !/^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/u.test(input.udid)) return false
   const only = (...fields: string[]) => Object.keys(input).every(key => key === 'udid' || fields.includes(key))
@@ -183,7 +191,20 @@ function hasSimulatorArguments(tool: SimulatorInputTool, input: Record<string, u
   }
 }
 
-/** Structured call identity comes first. Some ACP agents put their only qualified name in the title. */
+/** A row saved earlier already holds only the counts `simulatorInputDetail` made: nothing of the call is left to hide. */
+function summarisedSimulatorInput(tool: SimulatorInputTool, rawInput: unknown): boolean {
+  if (typeof rawInput !== 'string') return false
+  if (tool === 'device_tap') return rawInput === '1 个触点'
+  if (tool === 'device_swipe') return rawInput === '2 个触点'
+  if (tool === 'device_type_text') return rawInput === '输入文字' || /^\d{1,8} 个字符$/u.test(rawInput)
+  return rawInput === '1 次'
+}
+
+/**
+ * Whether a call's row shows as simulator input (counts in place of its arguments). Structured call identity comes
+ * first; some ACP agents put their only qualified name in the title. Whatever names it, its arguments must have the
+ * tool's exact shape: a call named so with other arguments shows them, as any other tool does.
+ */
 export function simulatorInputTool(
   name: string | undefined,
   kind?: string,
@@ -193,17 +214,19 @@ export function simulatorInputTool(
   if (kind !== undefined && kind !== 'other' && kind !== 'think') return undefined
   const input = recordedObject(rawInput)
   if (input?.command !== undefined) return undefined
+  const shaped = (tool: SimulatorInputTool | undefined, args: Record<string, unknown> | undefined) =>
+    tool && (hasSimulatorArguments(tool, args) || summarisedSimulatorInput(tool, rawInput)) ? tool : undefined
   const named = qualifiedSimulatorInput(name)
   if (typeof input?.server === 'string' && typeof input.tool === 'string') {
     const qualified = `${input.server}.${input.tool}`
     const declared = qualifiedSimulatorInput(qualified)
     const agrees = name === undefined || named === declared || name === input.tool || name === `调用 ${qualified}`
-    return agrees ? declared : undefined
+    return agrees ? shaped(declared, recordedObject(input.arguments)) : undefined
   }
-  if (named) return named
+  if (named) return shaped(named, input)
   const titled = qualifiedSimulatorInput(title)
   if (!titled || (kind !== undefined && kind !== 'other') || (name !== undefined && name !== titled)) return undefined
-  return hasSimulatorArguments(titled, input) ? titled : undefined
+  return shaped(titled, input)
 }
 
 /** Only operation, counts and trusted status fields are stored or sent to a device. Raw arguments stay in execution. */

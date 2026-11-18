@@ -48,7 +48,12 @@ export interface WorkThreadRouteDeps {
     caller: DeviceCaller,
     sessionId: string,
     input: { requestId: string; prompt: string },
-    agent?: { remember: string },
+    agent: { remember: string } | undefined,
+    /**
+     * Whose words the prompt carries besides the caller's: the devices that wrote the posts it quotes, and `narrower`
+     * when the 待办 itself was written by a device below the full data scope. A device-input grant needs all of them.
+     */
+    writers: { coauthors: readonly string[]; narrower: boolean },
   ) => Promise<void>
   /** The person's 「记住…」 from a post already in the chat; keyed by device and request, so it is made once. */
   remember: (caller: DeviceCaller, sessionId: string, text: string, requestId: string) => Promise<void>
@@ -321,7 +326,11 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
    * other sessions gave to them. A target that is not private gets nothing that went to or came from a private one (an
    * Agent's chat), so a session a narrower device reads never carries it.
    */
-  async function increment(posts: readonly WorkPostRecord[], post: WorkPostRecord, sessionId: string): Promise<QuotedPart[]> {
+  async function increment(
+    posts: readonly WorkPostRecord[],
+    post: WorkPostRecord,
+    sessionId: string,
+  ): Promise<{ parts: QuotedPart[]; authors: string[] }> {
     const index = posts.findIndex(entry => entry.id === post.id)
     const before = posts.slice(0, index < 0 ? posts.length : index)
     const last = before.findLastIndex(
@@ -329,18 +338,21 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
     )
     const targetPrivate = sessionPrivate(sessionId)
     const parts: QuotedPart[] = []
+    // Every post quoted, though the delivery may later drop the oldest to fit: a superset of whose words go.
+    const authors = new Set<string>()
     for (const entry of before.slice(last + 1)) {
       const to = entry.target
       if (to && 'customAgentId' in to && !targetPrivate) continue
       const other = entry.delivery && entry.delivery.sessionId !== sessionId ? entry.delivery : undefined
       if (other && sessionPrivate(other.sessionId) && !targetPrivate) continue
       parts.push({ label: to ? `我（发给 ${await targetName(to)}）` : '我', text: entry.text })
+      authors.add(entry.deviceId)
       if (!other || other.state === 'failed') continue
       const detail = await detailOf(other.sessionId)
       const reply = detail && replyTo(detail.messages, other.requestId, false)
       if (reply) parts.push({ label: `${await targetName(entry.target!)} 的回复`, text: reply.text + (reply.more ? '\n…' : '') })
     }
-    return parts
+    return { parts, authors: [...authors] }
   }
 
   async function targetName(target: NonNullable<WorkPostRecord['target']>): Promise<string> {
@@ -413,14 +425,17 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
         // A private 待办's title and thread stay with devices that may read it: a session they cannot read gets only the
         // person's own words. Read again after the quotes are gathered, since the 待办 may have turned private meanwhile.
         const ownWords = () => itemIsPrivate(visible(caller, itemId), sessionPrivate) && !sessionPrivate(sessionId)
-        let prompt = ownWords()
-          ? post.text
-          : deliveryText(item.title, post.text, await increment(threads.get(itemId)?.posts ?? [], post, sessionId))
-        if (ownWords()) prompt = post.text
+        const quoted = ownWords() ? undefined : await increment(threads.get(itemId)?.posts ?? [], post, sessionId)
+        let prompt = quoted ? deliveryText(item.title, post.text, quoted.parts) : post.text
+        let writers = { coauthors: quoted?.authors ?? [], narrower: quoted !== undefined && item.startScope !== 'all' }
+        if (ownWords()) {
+          prompt = post.text
+          writers = { coauthors: [], narrower: false }
+        }
         context.recheck(caller, 'run')
         if (agent) deps.agentAccess(caller)
         handed = true
-        await deps.deliver(caller, sessionId, { requestId, prompt }, agent ? { remember: post.text } : undefined)
+        await deps.deliver(caller, sessionId, { requestId, prompt }, agent ? { remember: post.text } : undefined, writers)
         await settle(itemId, postId, { state: 'sent' })
       } catch (error) {
         const known = error instanceof AppError

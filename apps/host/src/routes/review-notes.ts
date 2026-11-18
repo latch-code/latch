@@ -24,11 +24,15 @@ import type { Caller, DeviceCaller, RouteContext, RouteModule } from './registry
 
 export interface ReviewNoteRouteDeps {
   notes: () => ReviewNotes
-  /** Every new input to a session goes through the Host's own prompt path, with its checks and the driver's receipt. */
+  /**
+   * Every new input to a session goes through the Host's own prompt path, with its checks and the driver's receipt.
+   * `writers`: the devices that wrote the notes' text, whom a device-input grant needs as well as the sender.
+   */
   send: (
     caller: DeviceCaller,
     sessionId: string,
     input: { requestId: string; prompt: string; queue?: true },
+    writers: readonly string[],
   ) => Promise<{ queueId?: string }>
   /** A queued item of the session, by its ID or by the request ID it was queued with. */
   queueItem: (
@@ -154,11 +158,16 @@ export function createReviewNoteRoutes(context: RouteContext, deps: ReviewNoteRo
       if ('dropped' in before) throw new AppError(409, 'review-send-dropped', '排队的消息已移除，反馈回到待发。')
       let queueId: string | undefined
       try {
-        ;({ queueId } = await deps.send(caller, sessionId, {
-          requestId: send.promptRequestId,
-          prompt: send.prompt,
-          ...(send.queue ? { queue: true as const } : {}),
-        }))
+        ;({ queueId } = await deps.send(
+          caller,
+          sessionId,
+          {
+            requestId: send.promptRequestId,
+            prompt: send.prompt,
+            ...(send.queue ? { queue: true as const } : {}),
+          },
+          notes.writersOf(sessionId, send.noteIds),
+        ))
       } catch (cause) {
         if (refused(cause) && !deps.promptHeld(sessionId, send.promptRequestId)) await notes.dropSend(sessionId, send.id, true)
         throw cause

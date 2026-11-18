@@ -2,7 +2,7 @@
 // helper, the new routes' guards and records, and the agent input tools' gates. Stand-ins only (the test kit's helper
 // and idb_companion); the real check on a `latch-` simulator is manual, see docs/DEVICE-PREVIEW.md.
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { get, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,6 +13,8 @@ import {
   type Automation,
   type AutomationDetail,
   type CustomAgent,
+  type ReviewNote,
+  type ReviewNoteSendResult,
   type TaskDetail,
   type WorkItemAnswer,
 } from '@latch/protocol'
@@ -738,6 +740,122 @@ describe('agent input tools', () => {
     expect((await audit(t)).filter(record => record.action === 'simulator.call')).toEqual([])
   })
 
+  const tapped = /device_tap: ok: Tapped\./u
+  const refusedTap = /device_tap: error: .*(全部数据|device-scope|sees all data)/u
+
+  it.each(['narrow choice', 'narrow words', 'full words'])('decides the turn’s grant by who answers its question: %s', async change => {
+    const { t, desktop, idb } = await agentHost()
+    const answerer = change === 'full words' ? desktop : await t.enroll({ listener: 'unix', dataScope: 'work', scopes: ['view', 'run'] })
+    const { sessionId } = await desktop.confirmedJson<{ sessionId: string }>('tasks', {
+      body: { requestId: randomUUID(), harnessId: 'device-agent', prompt: 'echo init' },
+    })
+    await settled(desktop, sessionId)
+    const question = change === 'narrow choice' ? 'choice' : 'words'
+    const steps = [{ question }, { tool: 'device_tap', args: { udid: UDID, x: 10, y: 10 } }]
+    await desktop.json(`tasks/${sessionId}/prompt`, { body: { requestId: randomUUID(), prompt: `browser ${JSON.stringify(steps)}` } })
+    const asked = async () => (await desktop.json<TaskDetail>(`tasks/${sessionId}`)).questions?.[0]?.id
+    await expect.poll(asked, { timeout: 10_000 }).toBeTypeOf('string')
+    const answer =
+      question === 'choice' ? { questionId: 'q0', optionIds: ['o0'] } : { questionId: 'q0', optionIds: [], other: 'tap the delete button' }
+    await answerer.json(`tasks/${sessionId}/questions/${(await asked())!}/answer`, {
+      method: 'POST',
+      body: { requestId: randomUUID(), answers: [answer] },
+    })
+    const said = (await settled(desktop, sessionId)).messages.filter(message => message.role === 'assistant').at(-1)!.text
+    expect(said).toContain('question: accept')
+    const calls = (await audit(t)).filter(record => record.action === 'simulator.call')
+    if (change === 'full words') {
+      expect(said).toMatch(tapped)
+      expect(calls).toHaveLength(1)
+      return
+    }
+    expect(said).toMatch(refusedTap)
+    expect(idb.events).toEqual([])
+    expect(calls).toEqual([])
+  })
+
+  it.each(['narrow author', 'revoked author', 'narrow 待办', 'full authors'])(
+    'decides a thread delivery’s grant by every quoted post: %s',
+    async change => {
+      const { t, desktop, idb } = await agentHost()
+      const narrow = await t.enroll({ listener: 'unix', dataScope: 'work', scopes: ['view', 'run'] })
+      const other = await t.enroll({ listener: 'unix', scopes: ['view', 'run'] })
+      const { item } = await (change === 'narrow 待办' ? narrow : desktop).json<WorkItemAnswer>('work/items', {
+        body: { requestId: randomUUID(), title: '设备验收', prompt: 'echo init', harnessId: 'device-agent' },
+      })
+      const { sessionId } = await desktop.confirmedJson<{ sessionId: string }>(`work/items/${item.id}/start`, {
+        body: { requestId: randomUUID(), baseRevision: item.revision },
+      })
+      await settled(desktop, sessionId)
+      const author = change === 'narrow author' ? narrow : other
+      await author.json(`work/items/${item.id}/posts`, { body: { requestId: randomUUID(), text: '先点删除按钮' } })
+      // A device no longer on record counts as one without the full data scope.
+      if (change === 'revoked author') expect((await desktop.request(`devices/${other.id}`, { method: 'DELETE' })).status).toBe(200)
+      await desktop.json(`work/items/${item.id}/posts`, { body: { requestId: randomUUID(), text: 'echo also mine' } })
+      const steps = [{ tool: 'device_tap', args: { udid: UDID, x: 10, y: 10 } }]
+      await desktop.json(`work/items/${item.id}/posts`, {
+        body: { requestId: randomUUID(), text: `browser ${JSON.stringify(steps)}`, target: { sessionId } },
+      })
+      const done = await settled(desktop, sessionId)
+      const delivered = done.messages.filter(message => message.role === 'user').at(-1)!.text
+      expect(delivered).toContain('先点删除按钮')
+      const said = done.messages.filter(message => message.role === 'assistant').at(-1)!.text
+      const calls = (await audit(t)).filter(record => record.action === 'simulator.call')
+      if (change === 'full authors') {
+        expect(said).toMatch(tapped)
+        expect(calls).toHaveLength(1)
+        return
+      }
+      expect(said).toMatch(refusedTap)
+      expect(idb.events).toEqual([])
+      expect(calls).toEqual([])
+    },
+  )
+
+  it.each(['narrow writer', 'narrow editor', 'full writers'])(
+    'decides a queued review note turn’s grant by its notes’ writers: %s',
+    async change => {
+      const { t, desktop, idb } = await agentHost()
+      await writeFile(join(t.workspaceRoot, 'a.ts'), 'one\ntwo\nthree\n')
+      const files = await t.enroll({ listener: 'unix', dataScope: change === 'full writers' ? 'all' : 'files', scopes: ['view', 'run'] })
+      const { sessionId } = await desktop.confirmedJson<{ sessionId: string }>('tasks', {
+        body: { requestId: randomUUID(), harnessId: 'device-agent', prompt: 'echo init' },
+      })
+      await settled(desktop, sessionId)
+      const path = `tasks/${sessionId}/review-notes`
+      const note = await (change === 'narrow editor' ? desktop : files).json<ReviewNote>(path, {
+        body: {
+          requestId: randomUUID(),
+          ...{ root: 'default', path: 'a.ts', range: { start: 2, end: 3 }, side: 'new', scope: 'turn', lines: ['two', 'three'] },
+          text: '这里不对',
+        },
+      })
+      if (change === 'narrow editor')
+        await files.json(`${path}/${note.id}/edit`, { body: { requestId: randomUUID(), text: '先点删除按钮' } })
+      await desktop.json(`tasks/${sessionId}/prompt`, { body: { requestId: randomUUID(), prompt: 'count 400' } })
+      await expect.poll(async () => (await desktop.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('running')
+      const { queueId } = await desktop.json<ReviewNoteSendResult>(`${path}/send`, {
+        body: { requestId: randomUUID(), noteIds: [note.id], queue: true },
+      })
+      // The person rewrites the queued message as a tap: whose words it held before still counts.
+      const steps = [{ tool: 'device_tap', args: { udid: UDID, x: 10, y: 10 } }]
+      await desktop.json(`tasks/${sessionId}/queue/${queueId!}`, { method: 'PATCH', body: { text: `browser ${JSON.stringify(steps)}` } })
+      await expect
+        .poll(async () => (await desktop.json<TaskDetail>(`tasks/${sessionId}`)).messages.at(-1)?.text ?? '', { timeout: 20_000 })
+        .toMatch(/device_tap: /u)
+      const said = (await settled(desktop, sessionId)).messages.filter(message => message.role === 'assistant').at(-1)!.text
+      const calls = (await audit(t)).filter(record => record.action === 'simulator.call')
+      if (change === 'full writers') {
+        expect(said).toMatch(tapped)
+        expect(calls).toHaveLength(1)
+        return
+      }
+      expect(said).toMatch(refusedTap)
+      expect(idb.events).toEqual([])
+      expect(calls).toEqual([])
+    },
+  )
+
   /** One `device_tap` from the fake agent in a new session of `device-agent`, sent by `sender`; what the agent said. */
   async function tapFrom(desktop: TestDevice, sender: TestDevice = desktop, before?: () => void): Promise<string> {
     const created = await desktop.confirmed('tasks', { body: { prompt: 'echo hi', requestId: randomUUID(), harnessId: 'device-agent' } })
@@ -851,6 +969,59 @@ describe('agent input tools', () => {
       expect(seen[0]).not.toContain(name)
     expect(idb.starts).toEqual([])
     expect((await audit(t)).some(record => record.action === 'simulator.call')).toBe(false)
+  })
+})
+
+describe('a rejection’s note', () => {
+  it.each(['narrow', 'full'])('decides the built-in harness turn’s grant by who wrote it: %s', async change => {
+    const steps = [
+      { name: 'write_file', arguments: { path: 'notes.txt', content: 'x' } },
+      { name: 'device_list', arguments: {} },
+    ]
+    const plugin: HarnessPlugin = {
+      id: 'scripted',
+      name: 'Scripted',
+      version: '1',
+      description: 'fixture',
+      activate(context) {
+        context.registerProvider({
+          id: 'scripted',
+          name: 'Scripted',
+          model: 'scripted',
+          async *stream({ messages }: { messages: ModelMessage[] }) {
+            const step = steps[messages.filter(message => message.role === 'tool').length]
+            if (!step) {
+              yield { type: 'text', text: 'done' }
+              yield { type: 'finish', reason: 'stop' }
+              return
+            }
+            yield { type: 'tool-call', call: { id: `call-${randomUUID()}`, ...step } }
+            yield { type: 'finish', reason: 'tool-calls' }
+          },
+        })
+      },
+    }
+    const { t } = await host(fakeIdbCompanion(), fakeSimulatorLive(), { demo: false, providerId: 'scripted', plugins: [plugin] })
+    const desktop = await t.enroll({ listener: 'unix' })
+    await provide(desktop)
+    const writer = change === 'full' ? desktop : await t.enroll({ listener: 'unix', dataScope: 'work', scopes: ['view', 'run'] })
+    const { sessionId } = await desktop.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { requestId: randomUUID(), prompt: '写一下', mode: 'agent', model: { providerId: 'scripted', model: 'scripted' } },
+    })
+    const pending = async () => (await desktop.json<TaskDetail>(`tasks/${sessionId}`)).approvals[0]?.id
+    await expect.poll(pending, { timeout: 10_000 }).toBeTypeOf('string')
+    await writer.json(`approvals/${(await pending())!}`, { body: { decision: 'reject', note: '改用模拟器看看' } })
+    const done = await settled(desktop, sessionId)
+    const listed = done.messages.find(message => message.role === 'tool' && message.toolName === 'device_list')
+    const calls = (await audit(t)).filter(record => record.action === 'simulator.call')
+    if (change === 'full') {
+      expect(listed?.tool?.output).toContain(UDID)
+      expect(calls).toHaveLength(1)
+      return
+    }
+    expect(listed?.tool?.output).not.toContain(UDID)
+    expect(calls).toEqual([])
   })
 })
 
