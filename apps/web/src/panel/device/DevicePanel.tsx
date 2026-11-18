@@ -57,7 +57,7 @@ import {
   type SimulatorList,
 } from './model.ts'
 import { fitScale, readZoom, screenSize, writeZoom, zoomIn, zoomLabel, zoomOut, type Zoom } from './zoom.ts'
-import { defineCopy } from '../../core/i18n.ts'
+import { defineCopy, useLocale } from '../../core/i18n.ts'
 
 const COPY = defineCopy(
   {
@@ -74,6 +74,7 @@ const COPY = defineCopy(
     devices: '设备',
     noXcode: '未安装 Xcode',
     failed: '失败',
+    bootFailed: '模拟器无法启动，请稍后重试。',
     booting: '启动中',
     shuttingDown: '关机中',
     recordingLimits: '最长 1 分钟或 25 MB · 关闭面板即丢弃',
@@ -153,6 +154,7 @@ const COPY = defineCopy(
     devices: 'Devices',
     noXcode: 'Xcode isn’t installed',
     failed: 'Failed',
+    bootFailed: 'The simulator could not start. Try again shortly.',
     booting: 'Starting',
     shuttingDown: 'Shutting down',
     recordingLimits: 'Up to 1 minute or 25 MB · Closing this panel discards the recording',
@@ -288,10 +290,11 @@ function deliver(file: File, onAttach: DevicePanelProps['onAttach']): void {
  * The bottom bar has the device's tools; each button is one Host action, recorded there.
  */
 export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
+  useLocale()
   const [list, setList] = useState<SimulatorList | null>(null)
   const [chosen, setChosen] = useState<string>()
   const [pending, setPending] = useState<Pending>()
-  const [failure, setFailure] = useState<{ udid: string; text: string }>()
+  const [failure, setFailure] = useState<{ udid: string } & ({ text: string } | { kind: 'boot' })>()
   const [frame, setFrame] = useState<{ udid: string; url: string; width: number; height: number }>()
   const [frameMs, setFrameMs] = useState<number>()
   /** Why the last frames did not come, once two in a row failed; the panel then asks less often. */
@@ -573,7 +576,11 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
       await api(`simulators/${udid}/${path}`, { method: 'POST', ...(body ? { body } : {}), timeoutMs: kind === 'boot' ? 150_000 : 60_000 })
       return true
     } catch (error) {
-      setFailure({ udid, text: errorMessage(error) })
+      setFailure(
+        kind === 'boot' && error instanceof ApiError && error.code === 'simulator-failed'
+          ? { udid, kind: 'boot' }
+          : { udid, text: errorMessage(error) },
+      )
       return false
     } finally {
       setPending(undefined)
@@ -803,8 +810,8 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
       </section>
     )
 
-  const failed =
-    (failure && (failure.udid === '' || failure.udid === udid) ? failure.text : undefined) ?? (running ? frameFailure : undefined)
+  const failureHere = failure?.udid === '' || failure?.udid === udid ? failure : undefined
+  const failed = failureHere ? ('text' in failureHere ? failureHere.text : COPY.bootFailed) : running ? frameFailure : undefined
   const liveHere = live?.udid === udid ? live : undefined
   const liveOn = running && liveHere?.state === 'live'
   // Running, but no picture yet: still starting as far as anyone can see.

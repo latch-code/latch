@@ -294,13 +294,26 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       })
       const { sessionId } = await testHost.host.bridge.createTask({ prompt: '看设备', requestId: randomUUID(), mode: 'chat' })
       const panel = await openPanel(page, sessionId)
-      // A device that will not start: 失败, with simctl's reason on hover.
+      // A device that will not start: a localized explanation without the raw simctl output.
       await panel.locator('.sim-picker').click()
       await page.getByRole('menuitemradio', { name: /^latch-fake-idle/u }).click()
       await panel.getByRole('button', { name: '启动', exact: true }).first().click()
       const failed = panel.getByText('失败', { exact: true })
       await failed.waitFor()
-      expect(await panel.locator('[title*="Unable to boot device"]').count()).toBe(1)
+      expect(await failed.getAttribute('title')).toBe('模拟器无法启动，请稍后重试。')
+      expect(await panel.locator('[title*="Unable to boot device"]').count()).toBe(0)
+      const language = async (locale: 'en' | 'zh-CN') => {
+        await page.evaluate(value => {
+          Object.defineProperty(navigator, 'languages', { configurable: true, get: () => [value] })
+          window.dispatchEvent(new Event('languagechange'))
+        }, locale)
+        await expect.poll(() => page.locator('html').getAttribute('lang')).toBe(locale)
+      }
+      await language('en')
+      const englishFailure = panel.getByText('Failed', { exact: true })
+      await expect.poll(() => englishFailure.getAttribute('title')).toBe('The simulator could not start. Try again shortly.')
+      expect(await panel.locator('[title*="Unable to boot device"]').count()).toBe(0)
+      await language('zh-CN')
       await captureDeviceWidths(some.app, page, 'failed')
       // An agent's Xcode device session on the running one.
       await panel.locator('.sim-picker').click()

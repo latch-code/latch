@@ -403,6 +403,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           const lifecycle = shell.lifecycle as Record<string, unknown>
           return {
             ...shell,
+            locale: Object.keys(shell.locale as object),
+            cli: Object.keys(shell.cli as object),
             folders: Object.keys(shell.folders as object),
             files: Object.keys(shell.files as object),
             notifications: Object.keys(shell.notifications as object),
@@ -423,7 +425,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         devMode: true,
         platform: 'darwin',
         previews: { protocolVersion: 1, htmlScripts: true },
-        folders: ['protocolVersion', 'pick', 'drop', 'reveal', 'revealAgentHome', 'saveSessionFolder', 'clone'],
+        locale: ['set'],
+        cli: ['get', 'install'],
+        folders: ['protocolVersion', 'pick', 'drop', 'reveal', 'revealAgentHome', 'saveSessionFolder', 'revealData', 'exportData', 'clone'],
         openInBrowser: 'function',
         copyComputerLink: 'function',
         lifecycle: { get: 'function', setLoginItem: 'function', setKeepAwake: 'function', restartHost: 'function', subscribe: 'function' },
@@ -433,7 +437,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         notifications: ['get', 'set', 'subscribeState', 'subscribe'],
         updates: ['get', 'check', 'download', 'install', 'cancelWaiting', 'setAutoDownload', 'onChange', 'onShow'],
         computers: ['list', 'subscribe', 'open', 'start', 'subscribeStart', 'add', 'cancelAdd', 'trustCertificate', 'remove'],
-        spaces: ['onShow'],
+        spaces: ['onShow', 'setKeys'],
         // Where the traffic lights end (a number) and whether the window is in full screen (a boolean out, nothing in).
         lights: { end: 'number', fullScreen: 'function', onFullScreen: 'function' },
         browser: [
