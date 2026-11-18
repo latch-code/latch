@@ -53,6 +53,7 @@ it('passes every item against the local edge and prints nothing secret', async (
     ['register', 'pass'],
     ['cover', 'pass'],
     ['unauthenticated', 'pass'],
+    ['oversized', 'pass'],
     ['slow-reader', 'pass'],
   ])
   const printed = JSON.stringify(items)
@@ -60,20 +61,35 @@ it('passes every item against the local edge and prints nothing secret', async (
     expect(printed).not.toContain(secret)
 }, 120_000)
 
-it('fails the identity item when the node answers with another relay key', async () => {
+it('stops before any load when the admin token does not prove the relay is the operator’s own', async () => {
   const certificate = createTransportCertificate(Date.now(), 3_600_000, 'localhost')
-  const relayId = nodeCrypto.random(16)
-  const edge = await startTlsEdge({ seed: nodeCrypto.random(32), relayId, certificate, env: { OPEN_REGISTRATION: 'true' } })
+  const relayId = nodeCrypto.random(16),
+    seed = nodeCrypto.random(32)
+  const edge = await startTlsEdge({ seed, relayId, certificate, env: { ADMIN_TOKEN: hex(nodeCrypto.random(32)) } })
   cleanup.push(() => edge.close())
   const items = await runAcceptance(
-    { url: edge.url, relayId, relayKey: nodeCrypto.random(32), shard: 0, sockets: 1, slowSeconds: 1, slowRate: 1024 },
+    {
+      url: edge.url,
+      relayId,
+      relayKey: await nodeCrypto.publicKey(seed),
+      shard: 0,
+      adminToken: hex(nodeCrypto.random(32)),
+      sockets: 4,
+      slowSeconds: 1,
+      slowRate: 1024,
+    },
     { ca: certificate.cert, address: '127.0.0.1' },
   )
-  // Every handshake that checks the key refuses this node; health and the hidden admin routes still answer.
-  expect(Object.fromEntries(items.map(item => [item.name, item.result]))).toMatchObject({
-    healthz: 'pass',
-    register: 'fail',
-    cover: 'fail',
-    'slow-reader': 'skipped',
-  })
+  expect(items.map(item => [item.name, item.result])).toEqual([
+    ['healthz', 'pass'],
+    ['admin', 'fail'],
+    ['wrong-key', 'skipped'],
+    ['register', 'skipped'],
+    ['cover', 'skipped'],
+    ['unauthenticated', 'skipped'],
+    ['oversized', 'skipped'],
+    ['slow-reader', 'skipped'],
+  ])
+  // Nothing reached a node object: no load ran against a relay that is not provably the operator's.
+  expect([...edge.objects.nodes.values()].every(node => node.status().sockets === 0)).toBe(true)
 }, 60_000)

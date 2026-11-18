@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { connect, type TLSSocket } from 'node:tls'
 import {
   decodeMessage,
@@ -22,12 +22,16 @@ import { nodeCrypto, RelayClosed, RelayControl, type RelayEndpoint } from '@latc
  *
  * - healthz: the Worker answers 200 without waking a node object.
  * - admin: the admin routes are 404 without the token and with a wrong one; with it they report each shard's start time.
+ *   Only a 200 with the operator's token proves the node is theirs: without it every later item is skipped.
  * - wrong key: a client expecting another relay key refuses the node before sending anything that depends on it, and a
  *   Host with a wrong registration token is refused.
  * - register: a Host with the relay file registers a route (the positive control).
  * - cover: an unauthenticated client gets about three seconds of 4 KiB-bucket cover, exact frames, then is closed.
- * - unauthenticated: N sockets that never read nor authenticate, some sending an oversized message, are refused or
- *   closed, and the node object is not reset (same start time) and still registers a Host afterwards.
+ * - unauthenticated: N sockets that never read nor authenticate are all refused or closed by the node, the object is
+ *   not reset (same start time) and it still registers a Host afterwards.
+ * - oversized: four unauthenticated 8 MiB messages are refused, health still answers and the object is not reset. It
+ *   does not cover the platform's 32 MiB message limit.
+ * Its routes are derived per relay and day from the admin token, so repeated runs reuse them.
  * - slow reader: a joined phone that stops reading while the Host streams is closed by the node, and the object is not
  *   reset. A pass needs the runtime to report the backlog; otherwise only the per-socket send budget bounds it.
  */
@@ -56,6 +60,8 @@ export interface AcceptanceItem {
 }
 
 const PROTOCOL = 'latch-relay.2'
+/** The size of each oversized unauthenticated message: 8 MiB, four of them, 32 MiB of upload in all. */
+export const OVERSIZED_BYTES = 8 * 1024 * 1024
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 function dial(input: AcceptanceInput, options: AcceptanceOptions): Promise<TLSSocket> {
@@ -299,19 +305,30 @@ export async function runAcceptance(input: AcceptanceInput, options: AcceptanceO
   })
 
   let baseline: number[] | undefined
+  let owned = false
   await attempt('admin', async () => {
     const none = await http(input, options, 'GET', '/admin/status')
     const wrong = await http(input, options, 'GET', '/admin/status', { Authorization: `Bearer ${randomBytes(32).toString('hex')}` })
     const hidden = none.status === 404 && wrong.status === 404
-    if (!input.adminToken) {
-      record('admin', hidden ? 'pass' : 'fail', `无令牌 ${none.status}，错误令牌 ${wrong.status}；没有管理令牌文件，未查看状态`)
-      return
-    }
     const status = await admin()
     baseline = status.startedAt
-    const ok = hidden && status.status === 200 && Boolean(baseline?.every(value => value > 0))
-    record('admin', ok ? 'pass' : 'fail', `无令牌 ${none.status}，错误令牌 ${wrong.status}，正确令牌 ${status.status}`)
+    // Only a node that accepts this admin token is the operator's own: nothing below runs against any other.
+    owned = status.status === 200 && Boolean(baseline?.every(value => value > 0))
+    record(
+      'admin',
+      hidden && owned ? 'pass' : 'fail',
+      `无令牌 ${none.status}，错误令牌 ${wrong.status}，正确令牌 ${input.adminToken ? status.status : '缺少'}`,
+    )
   })
+  const LOAD = ['wrong-key', 'register', 'cover', 'unauthenticated', 'oversized', 'slow-reader']
+  if (!owned) {
+    for (const name of LOAD) record(name, 'skipped', '管理令牌没有得到 200：不能确认这是你自己的中继，没有继续')
+    return items
+  }
+  const adminKey = input.adminToken!
+  const day = Math.floor(Date.now() / 1000 / UTC_DAY)
+  // The run's routes are derived per relay and day, so repeated runs reuse them instead of leaving new 24-hour routes.
+  const routeSeed = (label: string) => createHmac('sha256', adminKey).update(`latch-relay-accept-v1:${label}:${day}`).digest()
 
   await attempt('wrong-key', async () => {
     let identity = false
@@ -324,8 +341,7 @@ export async function runAcceptance(input: AcceptanceInput, options: AcceptanceO
     if (input.registrationToken) {
       const control = await RelayControl.connect({ ...endpoint(), registrationToken: nodeCrypto.random(32) })
       try {
-        const day = Math.floor(Date.now() / 1000 / UTC_DAY)
-        await control.register({ routeKey: await routeKey(nodeCrypto, nodeCrypto.random(32), input.relayId, day), day, alternate: false })
+        await control.register({ routeKey: await routeKey(nodeCrypto, routeSeed('refused'), input.relayId, day), day, alternate: false })
         token = false
       } catch (error) {
         token = error instanceof RelayClosed && error.closeCode === 4100
@@ -341,8 +357,7 @@ export async function runAcceptance(input: AcceptanceInput, options: AcceptanceO
   })
 
   // The Host side of the slow-reader test: one route, kept open.
-  const day = Math.floor(Date.now() / 1000 / UTC_DAY),
-    seed = nodeCrypto.random(32),
+  const seed = routeSeed('host'),
     key = await routeKey(nodeCrypto, seed, input.relayId, day)
   let control: RelayControl | undefined
   await attempt('register', async () => {
@@ -395,16 +410,16 @@ export async function runAcceptance(input: AcceptanceInput, options: AcceptanceO
     }
   })
 
+  const sockets = async () => ((await admin()).shards ?? []).reduce((sum, shard) => sum + Number(shard.sockets ?? 0), 0)
   await attempt('unauthenticated', async () => {
+    const before = await sockets()
     const opened = await Promise.all(Array.from({ length: input.sockets }, () => RawClient.open(input, options).catch(() => 0)))
     const clients = opened.filter((value): value is RawClient => typeof value !== 'number')
     const refused = opened.length - clients.length
-    clients.forEach((client, index) => {
-      // Half send a 256 KiB message, above the relay's 64 KiB limit; none ever reads past the upgrade.
-      if (index % 2 === 0) client.raw(new Uint8Array(262_144).fill(1))
-      client.socket.pause()
-    })
+    // None ever reads or authenticates; the node must refuse or close every one of them by itself.
+    for (const client of clients) client.socket.pause()
     await sleep(6000)
+    const left = (await sockets()) - before
     for (const client of clients) client.close()
     await sleep(1000)
     const after = await admin()
@@ -414,17 +429,38 @@ export async function runAcceptance(input: AcceptanceInput, options: AcceptanceO
         ...endpoint(),
         ...(input.registrationToken ? { registrationToken: input.registrationToken } : {}),
       })
-      await fresh.register({ routeKey: await routeKey(nodeCrypto, nodeCrypto.random(32), input.relayId, day), day, alternate: false })
+      await fresh.register({ routeKey: await routeKey(nodeCrypto, routeSeed('fresh'), input.relayId, day), day, alternate: false })
       fresh.close()
       registered = true
     } catch {
       registered = false
     }
-    const kept = input.adminToken ? sameObjects(baseline, after.startedAt) : undefined
+    const kept = sameObjects(baseline, after.startedAt)
     record(
       'unauthenticated',
-      registered && kept !== false ? 'pass' : 'fail',
-      `${input.sockets} 个未认证连接：${refused} 个被拒绝；${kept === undefined ? '没有管理令牌，未核对对象是否重置' : kept ? '节点对象未重置' : '节点对象已重置'}；之后${registered ? '仍可登记' : '无法登记'}`,
+      registered && kept && left <= 0 ? 'pass' : 'fail',
+      `${input.sockets} 个未认证连接：${refused} 个被拒绝，${left <= 0 ? '其余都被节点关闭' : `${left} 个 6 s 后仍未关闭`}；${kept ? '节点对象未重置' : '节点对象已重置'}；之后${registered ? '仍可登记' : '无法登记'}`,
+    )
+  })
+
+  await attempt('oversized', async () => {
+    // A few unauthenticated messages far above the relay's 64 KiB limit, each assembled by the platform before the node
+    // can refuse it. Kept to what an operator's own uplink sends in seconds; the platform's 32 MiB maximum is not tried.
+    const count = 4,
+      size = OVERSIZED_BYTES
+    const clients = (await Promise.all(Array.from({ length: count }, () => RawClient.open(input, options).catch(() => 0)))).filter(
+      (value): value is RawClient => typeof value !== 'number',
+    )
+    for (const client of clients) client.raw(new Uint8Array(size).fill(1))
+    const closed = await Promise.all(clients.map(client => client.closed(15_000)))
+    for (const client of clients) client.close()
+    const health = await http(input, options, 'GET', '/healthz')
+    const after = await admin()
+    const kept = sameObjects(baseline, after.startedAt)
+    record(
+      'oversized',
+      health.status === 200 && kept && closed.every(Boolean) ? 'pass' : 'fail',
+      `${clients.length} 条 ${size / 1024 / 1024} MiB 的未认证消息：${closed.every(Boolean) ? '连接被关闭' : '有连接未关闭'}，健康检查 ${health.status}，${kept ? '节点对象未重置' : '节点对象已重置'}；不代表 32 MiB 的情况`,
     )
   })
 

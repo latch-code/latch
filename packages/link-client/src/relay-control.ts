@@ -32,6 +32,7 @@ export class RelayControl {
   readonly permitted: () => boolean
   private resolveClosed!: (error: Error) => void
   private readonly peer: RelaySocket
+  private readonly markGood: () => void
   private readonly options: RelayEndpoint & { registrationToken?: Uint8Array }
   private readonly nonce: Uint8Array
   /** Milliseconds from HELLO to the node's challenge on this connection: the Host's nearest-region measurement. */
@@ -76,7 +77,9 @@ export class RelayControl {
     nonce: Uint8Array,
     roundTripMs: number,
     permitted: () => boolean,
+    markGood: () => void,
   ) {
+    this.markGood = markGood
     this.peer = peer
     this.options = options
     this.nonce = nonce
@@ -91,10 +94,10 @@ export class RelayControl {
     options: RelayEndpoint & { registrationToken?: Uint8Array; signal?: AbortSignal; guardWrites?: () => boolean },
   ): Promise<RelayControl> {
     const started = performance.now()
-    const { peer, hello, permitted } = await openRelay(options, 'host', options.signal, options.guardWrites)
+    const { peer, hello, permitted, markGood } = await openRelay(options, 'host', options.signal, options.guardWrites)
     try {
       if (!hello || (hello.requiresToken && options.registrationToken?.length !== 32)) throw new Error('Relay challenge rejected')
-      return new RelayControl(peer, options, hello.nonce, performance.now() - started, permitted)
+      return new RelayControl(peer, options, hello.nonce, performance.now() - started, permitted, markGood)
     } catch (error) {
       peer.close()
       throw error
@@ -141,6 +144,8 @@ export class RelayControl {
     pending.abort.abort()
     clearTimeout(pending.timer)
     this.routes.set(hex(message.routeId), message)
+    // A registered route: this origin is the one to try first next time.
+    this.markGood()
     pending.resolve(message)
   }
   private async receive(): Promise<void> {

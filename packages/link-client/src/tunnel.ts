@@ -101,7 +101,7 @@ export async function openRelay(
   role: EdgeRole,
   signal?: AbortSignal,
   guardWrites?: () => boolean,
-): Promise<RelayPath & { hello?: Hello }> {
+): Promise<RelayPath & { hello?: Hello; markGood(): void }> {
   const open = async (origin: URL, attemptSignal?: AbortSignal) => {
     attemptSignal?.throwIfAborted()
     const url = relayRoleUrl({ url: origin, edge: options.edge }, role)
@@ -139,7 +139,7 @@ export async function openRelay(
     try {
       const hello = role === 'data' ? undefined : await challenge(path.peer, options.relayId)
       if (signal?.aborted || !path.permitted()) throw new Error('Relay setup cancelled')
-      return { ...path, hello }
+      return { ...path, hello, markGood: () => {} }
     } catch (error) {
       path.peer.close()
       throw error
@@ -183,9 +183,12 @@ export async function openRelay(
           const hello = await edgeHandshake(path.peer, options, role)
           if (settled || signal?.aborted || !path.permitted()) throw new Error('Relay race settled')
           stop(index)
-          if (lastGood.size >= 64 && !lastGood.has(key)) lastGood.delete(lastGood.keys().next().value!)
-          lastGood.set(key, origin.origin)
-          resolve({ ...path, hello })
+          // Tried first next time only once the caller has a usable connection through it (`markGood`).
+          const markGood = () => {
+            if (lastGood.size >= 64 && !lastGood.has(key)) lastGood.delete(lastGood.keys().next().value!)
+            lastGood.set(key, origin.origin)
+          }
+          resolve({ ...path, hello, markGood })
         } catch (error) {
           path.peer.close()
           if (error instanceof Error && error.message === 'Relay identity rejected') mismatched = true
@@ -256,7 +259,7 @@ async function challenge(peer: RelaySocket, relayId: Uint8Array): Promise<Extrac
 export async function connectRelayTunnel(
   options: RelayEndpoint & { pass: Uint8Array; holderKey: Uint8Array; signal?: AbortSignal },
 ): Promise<RelayTunnel> {
-  const { peer, hello } = await openRelay(options, 'client', options.signal)
+  const { peer, hello, markGood } = await openRelay(options, 'client', options.signal)
   const abort = () => peer.close()
   options.signal?.addEventListener('abort', abort, { once: true })
   if (options.signal?.aborted) abort()
@@ -269,6 +272,7 @@ export async function connectRelayTunnel(
     )
     if ((await peer.receive(5000)).type !== 'admitted' || (await peer.receive(10_000)).type !== 'spliced')
       throw new Error('Relay connection unavailable')
+    markGood()
     return new RelayTunnel(peer)
   } catch (error) {
     peer.close()
@@ -286,7 +290,7 @@ export async function registerRelay(
   accept(): Promise<{ stream: RelayTunnel; passTag: Uint8Array }>
   close(): void
 }> {
-  const { peer, hello } = await openRelay(options, 'host')
+  const { peer, hello, markGood } = await openRelay(options, 'host')
   const abort = new AbortController()
   let work: Promise<Uint8Array> | undefined
   try {
@@ -334,6 +338,7 @@ export async function registerRelay(
       response = await reply
     }
     if (response.type !== 'registered' || !equal(response.routeId, expected)) throw new Error('Relay registration rejected')
+    markGood()
     return {
       token: response.token,
       routeId: response.routeId,

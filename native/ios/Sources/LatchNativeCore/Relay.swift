@@ -122,8 +122,8 @@ private final class RelayFramer: NWProtocolFramerImplementation {
     private var outerStart: ContinuousClock.Instant?
     private let started = ContinuousClock.now
     private var stopped = false
-    /** Edge kind: when this origin's claim on the node lapses unless the connection is ready by then. */
-    private var claimDeadline: ContinuousClock.Instant?
+    /** Edge kind: this origin holds the node's claim; the connection's end releases it (`NativeEdgeOrigins.race`). */
+    private var claimed = false
     required init(framer: NWProtocolFramer.Instance) { setup = framer.options["latch.relay"] as? RelaySetup }
     func start(framer: NWProtocolFramer.Instance) -> NWProtocolFramer.StartResult {
         guard let setup, let host = setup.origin.host else { framer.markFailed(error: .posix(.EAUTH)); return .willMarkReady }
@@ -164,12 +164,7 @@ private final class RelayFramer: NWProtocolFramerImplementation {
         else {
             let spent = started.duration(to: .now).components
             let milliseconds = spent.seconds * 1000 + spent.attoseconds / 1_000_000_000_000_000
-            var wait = max(1, 8000 - milliseconds)
-            if let claimDeadline {
-                let left = ContinuousClock.now.duration(to: claimDeadline).components
-                wait = min(wait, max(1, left.seconds * 1000 + left.attoseconds / 1_000_000_000_000_000))
-            }
-            framer.scheduleWakeup(wakeupTime: .milliseconds(UInt64(wait)))
+            framer.scheduleWakeup(wakeupTime: .milliseconds(UInt64(max(1, 8000 - milliseconds))))
         }
     }
     func handleInput(framer: NWProtocolFramer.Instance) -> Int {
@@ -254,9 +249,7 @@ private final class RelayFramer: NWProtocolFramerImplementation {
                     let admit = try Data([0x11]) + setup.admission.boundAdmission(timeMs: relayTime, nonce: LinkBytes.random(16), relayNonce: relayNonce)
                     if let race = setup.race {
                         guard race.claim(origin: setup.origin) else { throw NativeFailure.unavailable }
-                        // The claimant has its own short deadline: a stalled origin must not hold the node's other origins.
-                        claimDeadline = ContinuousClock.now + NativeEdgeRace.claimTimeout
-                        schedule(framer: framer)
+                        claimed = true
                     }
                     try send(admit, framer: framer)
                 } else {
@@ -294,7 +287,6 @@ private final class RelayFramer: NWProtocolFramerImplementation {
     }
     func wakeup(framer: NWProtocolFramer.Instance) {
         guard !stopped else { return }
-        if let claimDeadline, phase != .ready, ContinuousClock.now >= claimDeadline { framer.markFailed(error: .posix(.ETIMEDOUT)); return }
         do {
             if outer != nil {
                 if let batch = try outer!.batch(elapsedMs: elapsedMs) { try write(batch, framer: framer) }
@@ -313,7 +305,7 @@ private final class RelayFramer: NWProtocolFramerImplementation {
     func cleanup(framer: NWProtocolFramer.Instance) {
         stopped = true; outer?.clear(); outer = nil; setup?.outerSlot?.release()
         // The connection is gone: an unfinished race may let another origin of the node try.
-        if claimDeadline != nil, let setup { setup.race?.release(origin: setup.origin) }
+        if claimed, let setup { setup.race?.release(origin: setup.origin) }
     }
 }
 
@@ -415,29 +407,37 @@ public enum NativeEdgeOrigins {
 
 /**
  * The first origin of an edge node to pass the signature check claims the node and alone sends the admission proof.
- * The claim lapses with its connection (`claimTimeout` after claiming at most): another origin that was refused while it
- * was held then dials again, so a stalled origin cannot keep the node's other origins waiting for the outer timeout.
+ * When the node has more than one origin, a claimant that has not become a whole connection (relay join and the inner
+ * handshake) within `claimTimeout` is cancelled and its claim released; an origin refused meanwhile then dials again, so
+ * a stalled origin cannot keep the others waiting for the outer timeout. A lone origin keeps the outer timeout.
  */
 public final class NativeEdgeRace: @unchecked Sendable {
-    static let claimTimeout: Duration = .seconds(4)
     private let lock = NSLock()
+    private let claimTimeout: Duration
     private var holder: URL?
+    private var claimedAt: ContinuousClock.Instant?
     private var finished = false
     private var cancelled = false
     private var refused = Set<URL>()
     private var waiters: [(origin: URL, resume: CheckedContinuation<Bool, Never>)] = []
-    public init() {}
+    public init(claimTimeout: Duration = .seconds(4)) { self.claimTimeout = claimTimeout }
     public func claim(origin: URL) -> Bool {
         lock.lock(); defer { lock.unlock() }
         if cancelled || finished { return false }
         guard holder == nil else { refused.insert(origin); return false }
-        holder = origin; return true
+        holder = origin; claimedAt = .now; return true
+    }
+    /** `origin` has held the claim for `claimTimeout` without the race choosing it. */
+    func claimLapsed(origin: URL) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !finished, !cancelled, holder == origin, let claimedAt else { return false }
+        return claimedAt.duration(to: .now) >= claimTimeout
     }
     /** The holder's connection ended before the race chose it: origins refused meanwhile may try again. */
     public func release(origin: URL) {
         lock.lock()
         guard holder == origin, !finished else { lock.unlock(); return }
-        holder = nil
+        holder = nil; claimedAt = nil
         let ready = waiters; waiters.removeAll()
         lock.unlock()
         for waiter in ready { waiter.resume.resume(returning: true) }
@@ -472,11 +472,37 @@ extension NativeEdgeOrigins {
     /**
      * The first success cancels the other attempts. Wait for the cancelled transports and any late successes to close.
      */
-    public static func race<T: Sendable>(_ origins: [URL], stagger: Duration = .milliseconds(250),
+    public static func race<T: Sendable>(_ origins: [URL], stagger: Duration = .milliseconds(250), claimTimeout: Duration = .seconds(4),
         attempt: @escaping @Sendable (URL, NativeEdgeRace) async throws -> T,
         close: @escaping @Sendable (T) async -> Void) async -> (T, URL)? {
         guard !origins.isEmpty else { return nil }
-        let race = NativeEdgeRace()
+        let race = NativeEdgeRace(claimTimeout: claimTimeout), watched = origins.count > 1
+        /** One attempt; with other origins to fall back on, cancelled if its claim lapses (late successes are closed). */
+        @Sendable func run(_ origin: URL) async -> (T, URL)? {
+            await withTaskGroup(of: Optional<(T, URL)?>.self) { inner in
+                inner.addTask {
+                    do { return .some((try await attempt(origin, race), origin)) } catch { return .some(nil) }
+                }
+                if watched {
+                    inner.addTask {
+                        while !Task.isCancelled {
+                            try? await Task.sleep(for: .milliseconds(100))
+                            if race.claimLapsed(origin: origin) { return .none }
+                        }
+                        return .none
+                    }
+                }
+                var outcome: (T, URL)?, decided = false
+                while let next = await inner.next() {
+                    if !decided {
+                        decided = true
+                        inner.cancelAll()
+                        if case .some(let result) = next { outcome = result } else { race.release(origin: origin) }
+                    } else if case .some(.some(let late)) = next { await close(late.0) }
+                }
+                return outcome
+            }
+        }
         let result = await withTaskCancellationHandler {
             await withTaskGroup(of: (T, URL)?.self) { group in
                 for (index, origin) in origins.enumerated() {
@@ -487,8 +513,8 @@ extension NativeEdgeOrigins {
                             // claimant's connection ended before winning.
                             for round in 0..<2 {
                                 try Task.checkCancellation()
-                                do { return (try await attempt(origin, race), origin) }
-                                catch { guard round == 0, await race.retryAfterRelease(origin: origin) else { return nil } }
+                                if let won = await run(origin) { return won }
+                                guard round == 0, await race.retryAfterRelease(origin: origin) else { return nil }
                             }
                             return nil
                         } catch { return nil }

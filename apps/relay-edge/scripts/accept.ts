@@ -24,14 +24,18 @@ const fail = (message: string): never => {
   process.stderr.write(`${message}\n`)
   process.exit(1)
 }
-async function readSmall(path: string): Promise<string | undefined> {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK).catch(() => undefined)
+/** A regular file of at most `limit` bytes; `private` also needs mode 0600 and this user as owner. */
+async function readSmall(path: string, limit = 4096, secret = false): Promise<string | undefined> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW).catch(() => undefined)
   if (!handle) return undefined
   try {
-    if (!(await handle.stat()).isFile()) return undefined
-    const buffer = Buffer.alloc(4097)
+    const info = await handle.stat()
+    if (!info.isFile() || info.size > limit) return undefined
+    if (secret && ((info.mode & 0o777) !== 0o600 || (process.getuid && info.uid !== process.getuid())))
+      fail('管理令牌文件必须是你自己的、权限 0600 的文件')
+    const buffer = Buffer.alloc(limit + 1)
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
-    return bytesRead > 4096 ? undefined : buffer.subarray(0, bytesRead).toString('utf8')
+    return bytesRead > limit ? undefined : buffer.subarray(0, bytesRead).toString('utf8')
   } finally {
     await handle.close()
   }
@@ -58,7 +62,8 @@ const token =
     : undefined
 if (!profile || !url || !relayId || !relayKey || !Number.isInteger(shard) || shard < 0 || shard > 15)
   fail('这个文件不是 Workers 中继的中继文件')
-const header = await readSmall(values['admin-header'] ?? `${path}.admin-header`)
+const header = await readSmall(values['admin-header'] ?? `${path}.admin-header`, 512, true)
+if (!header) fail('需要部署时写出的管理令牌文件（<中继文件>.admin-header）：只对能证明是你自己的中继运行验收')
 const adminToken = header ? /^Authorization: Bearer ([\x21-\x7e]{32,256})\r?\n?$/u.exec(header)?.[1] : undefined
 const count = (value: string | undefined, fallback: number, max: number) => {
   const parsed = value === undefined ? fallback : Number(value)
@@ -71,7 +76,8 @@ const LABEL: Record<string, string> = {
   'wrong-key': '错误密钥与令牌被拒绝',
   register: '用中继文件登记',
   cover: '前三秒填充',
-  unauthenticated: '未认证连接的内存',
+  unauthenticated: '未认证连接被关闭',
+  oversized: '超限消息（8 MiB × 4）',
   'slow-reader': '不读的手机',
 }
 const items: AcceptanceItem[] = await runAcceptance(

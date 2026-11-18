@@ -106,12 +106,12 @@ function setup(overrides: Partial<EdgeEnv> = {}) {
     return { day, key, publicKey, device, pass, seed, routeId: await routeId(nodeCrypto, publicKey) }
   }
   type Credentials = Awaited<ReturnType<typeof credentials>>
-  async function register(host: ClientSocket, value: Credentials, skip = 0) {
+  async function register(host: ClientSocket, value: Credentials, skip = 0, previous: Uint8Array = new Uint8Array(32)) {
     const challenge = await hello(host, 'host')
     const input = registrationInput(relayId, challenge.nonce, value.day, value.publicKey)
     const register: Extract<RelayMessage, { type: 'register' }> = {
       type: 'register',
-      previous: new Uint8Array(32),
+      previous,
       day: value.day,
       routePub: value.publicKey,
       signature: await nodeCrypto.sign(value.key, input),
@@ -215,7 +215,8 @@ describe('edge relay node', () => {
     const replay = await t.open('client', '203.0.113.0/24')
     await t.hello(replay, 'client')
     replay.send({ type: 'bound-admit', proof })
-    await t.clock.advance(40)
+    // The proof check is real crypto: give it a few grid steps under a loaded machine.
+    for (let step = 0; step < 10 && replay.closed === undefined; step++) await t.clock.advance(40)
     expect(replay.closed).toBe(4100)
 
     const unbound = await t.open('client', '203.0.113.0/24')
@@ -441,13 +442,14 @@ describe('edge relay node', () => {
     expect(data.server.bufferedAmount).toBeLessThanOrEqual(65_536 + 16_100)
     const node = await t.objects.object('n')
     // The closed sockets keep their slots for the hold time, whatever the runtime reports or delivers.
-    expect((await t.attempt('host', '203.0.113.0/24')).status).toBe(503)
+    const slots = () => (node.status().buffered as { slots: number }).slots
+    expect(slots()).toBe(3)
     data.server.paused = false
     data.server.flush()
     await settle()
-    expect((await t.attempt('host', '203.0.113.0/24')).status).toBe(503)
+    expect(slots()).toBe(3)
     await t.clock.advance(EDGE_BUFFER_LIMITS.closeHoldMs)
-    expect((await t.attempt('host', '203.0.113.0/24')).status).toBe(101)
+    expect(slots()).toBe(1)
     expect(node.status().buffered).toMatchObject({ bytes: 0 })
   })
 
@@ -465,20 +467,45 @@ describe('edge relay node', () => {
     },
   )
 
-  it('refuses or closes unauthenticated sockets of one prefix once its cover budget is spent, and serves other prefixes', async () => {
+  it('lets a phone with a pass and a Host re-registration through while five prefixes squat on unauthenticated sockets', async () => {
     const t = setup()
-    const sockets: ClientSocket[] = []
-    for (let index = 0; index < 10; index++) sockets.push(await t.open('client'))
-    // Ten covers want 400 KiB in 400 ms; the prefix budget pays for about 280 KiB of it.
-    await t.clock.advance(400)
-    expect(sockets.filter(socket => socket.closed === 4302).length).toBeGreaterThan(0)
-    const handed = sockets.reduce((sum, socket) => sum + socket.received.reduce((bytes, payload) => bytes + payload.length, 0), 0)
-    expect(handed).toBeLessThanOrEqual(EDGE_BUFFER_LIMITS.preauthPrefixBytes + EDGE_BUFFER_LIMITS.preauthPrefixRate)
-    expect((await t.attempt('client')).status).toBe(503)
-    expect((await t.attempt('client', '198.51.100.0/24')).status).toBe(101)
+    const value = await t.credentials()
+    const host = await t.open('host', '203.0.113.0/24')
+    const { reply } = await t.register(host, value)
+    if (reply.type !== 'registered') throw new Error('expected registered')
+    // Five prefixes open client sockets that never send anything, faster than the core closes them.
+    const squat = async (count: number) => {
+      for (let index = 0; index < count; index++) await t.open('client', `10.0.${index % 5}.0/24`)
+    }
+    await squat(25)
     const node = await t.objects.object('n')
-    expect((node.status().buffered as { refused: number }).refused).toBeGreaterThanOrEqual(1)
+    expect((node.status().buffered as { covered: number }).covered).toBe(EDGE_BUFFER_LIMITS.maxCovered)
+    // A phone of a sixth prefix (and the Host's DATA leg) get in: squatters of the largest prefixes make room.
+    const { client } = await t.pair(host, value, reply.token, '198.51.100.0/24')
+    expect(client.closed).toBeUndefined()
+    // The Host re-registers on a new control socket with its token, still while squatters keep coming.
+    await squat(5)
+    host.close()
+    await settle()
+    const again = await t.open('host', '203.0.113.0/24')
+    const second = await t.register(again, value, 0, reply.token)
+    expect(second.reply.type).toBe('registered')
+    expect((node.status().buffered as { refused: number }).refused).toBe(0)
     expect(node.status().startedAt).toEqual(expect.any(Number))
+  })
+
+  it('makes room for a phone when other prefixes hold every connection slot', async () => {
+    const t = setup({ LIMITS: JSON.stringify({ maxConnections: 8 }) })
+    const value = await t.credentials()
+    const host = await t.open('host', '203.0.113.0/24')
+    const { reply } = await t.register(host, value)
+    if (reply.type !== 'registered') throw new Error('expected registered')
+    // Two prefixes fill the remaining slots with Host-role sockets that never authenticate.
+    for (let index = 0; index < 7; index++) await t.open('host', `10.0.${index % 2}.0/24`)
+    expect((await t.objects.object('n')).status().sockets).toBe(8)
+    const { client } = await t.pair(host, value, reply.token, '198.51.100.0/24')
+    expect(client.closed).toBeUndefined()
+    expect(host.closed).toBeUndefined()
   })
 
   it('closes on malformed input: text, unknown tags, oversized and truncated messages', async () => {

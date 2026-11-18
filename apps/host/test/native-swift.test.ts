@@ -981,6 +981,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           { delay: 0, valid: true, stall: 300 },
           { delay: 0, valid: true },
         ],
+        // The claimant never finishes (say, a relay-supplied SPLICED and no inner handshake): the race's deadline ends it.
+        [
+          { delay: 0, valid: true, hang: true },
+          { delay: 0, valid: true },
+        ],
       ],
     })
     expect(result).toEqual({
@@ -991,6 +996,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         { winner: 'o1.example', fast: true },
         { winner: '', fast: true },
         { winner: 'o0.example', fast: true },
+        { winner: 'o1.example', fast: true },
         { winner: 'o1.example', fast: true },
       ],
       // Only one origin per node holds the claim at a time, so there is never a second connection to close.

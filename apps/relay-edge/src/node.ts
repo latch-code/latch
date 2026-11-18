@@ -45,7 +45,7 @@ export interface EdgeLimits {
   maxPairs: number
   /**
    * A socket whose runtime reports more unsent bytes than this is closed (4302). Only used when the runtime reports a
-   * valid `bufferedAmount`; the send budget in buffers.ts bounds every socket either way.
+   * valid `bufferedAmount`; otherwise only the send budget in buffers.ts, a rate, applies.
    */
   maxBacklogBytes: number
 }
@@ -202,6 +202,7 @@ interface Socket {
 export class EdgeNode {
   private readonly platform: EdgePlatform
   private readonly sockets = new Map<number, Socket>()
+  private readonly byRuntime = new Map<EdgeWebSocket, Socket>()
   private readonly buffers: EdgeBuffers
   private readonly configured: boolean
   /** When this object started: a reset (deploy, runtime update, memory limit) shows as a new value in /admin/status. */
@@ -232,9 +233,9 @@ export class EdgeNode {
     this.startedAt = platform.now()
     this.buffers = new EdgeBuffers(() => platform.now(), {
       maxBacklogBytes: this.limits.maxBacklogBytes,
-      // Open sockets above the core's per-prefix limit evict that prefix's oldest unauthenticated one; held slots of
-      // closed sockets count here too, so a prefix that opens and closes fast holds at most twice its share.
-      maxPerPrefix: this.limits.maxPerPrefix * 2,
+      maxConnections: this.limits.maxConnections,
+      // Open and held slots together: the same number the core applies to open sockets of one prefix.
+      maxPerPrefix: this.limits.maxPerPrefix,
     })
     const relayId = hexBytes(env.RELAY_ID, 16),
       seed = hexBytes(env.RELAY_SIGNING_SEED, 32)
@@ -294,12 +295,16 @@ export class EdgeNode {
     return this.accept(this.core, role, prefix)
   }
   private accept(core: RelayCore, role: Role, prefix: string): EdgeResponse {
-    // Keep the existing connection capacity charged while transports close or their received work settles.
-    if (this.buffers.size >= this.limits.maxConnections) return this.platform.respond(503)
     const now = this.platform.now()
     const [client, ws] = this.platform.pair()
-    // Refused, not served without cover, when the prefix or the object has spent its unauthenticated output budget.
-    if (!this.buffers.accept(ws, prefix)) return this.platform.respond(503)
+    // A full object makes room by closing the oldest unauthenticated socket of the prefix holding the most, as the core
+    // does; a newcomer is refused only when its own prefix already holds its share.
+    const admission = this.buffers.accept(ws, prefix, role !== 'host')
+    for (const evicted of admission.evict) {
+      const holder = this.byRuntime.get(evicted)
+      if (holder) this.close(holder, 4302)
+    }
+    if (!admission.accepted) return this.platform.respond(503)
     try {
       ws.binaryType = 'arraybuffer'
       ws.accept()
@@ -341,6 +346,7 @@ export class EdgeNode {
         () => this.close(socket, 4302),
       )
     this.sockets.set(id, socket)
+    this.byRuntime.set(ws, socket)
     this.armAlarm()
     ws.addEventListener('message', event => this.receive(core, socket, event.data))
     ws.addEventListener('close', () => this.disconnect(socket))
@@ -365,13 +371,16 @@ export class EdgeNode {
   /** `queued`: the message held a cover-queue reservation, released as it goes to the runtime. */
   private write(socket: Socket, payload: Uint8Array, queued = false): void {
     if (socket.closed) return
-    const result = this.buffers.write(socket.ws, payload, { queued, authenticated: socket.authenticated })
+    const result = this.buffers.write(socket.ws, payload, { queued })
     if (result === 'written' || result === 'backlog') this.traffic.bytesOut += frameBytes(payload.length, false)
     if (result !== 'written') this.close(socket, 4302)
   }
   private send(socket: Socket, message: RelayMessage): Promise<void> {
     if (socket.closed) return Promise.reject(new Error('Relay socket closed'))
-    if (message.type === 'registered' || message.type === 'admitted' || message.type === 'attached') socket.authenticated = true
+    if (message.type === 'registered' || message.type === 'admitted' || message.type === 'attached') {
+      socket.authenticated = true
+      this.buffers.authenticate(socket.ws)
+    }
     if (message.type === 'registration-work') socket.workAsked = true
     const payload = encodeMessage(message, 2)
     if (socket.outer && !socket.outer.stopped) {
@@ -448,6 +457,7 @@ export class EdgeNode {
     socket.closed = true
     socket.outer?.stop(false)
     this.sockets.delete(socket.peer.id)
+    this.byRuntime.delete(socket.ws)
     this.buffers.close(socket.ws)
     this.core?.disconnect(socket.peer.id)
   }

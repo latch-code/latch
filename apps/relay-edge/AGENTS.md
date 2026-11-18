@@ -8,8 +8,8 @@ edge 中继：运营者自己 Cloudflare 账户上的 Workers 加 Durable Object
 - 不输出日志（无 `console`）、不存完整 IP：Worker 把 `CF-Connecting-IP` 折成 /24 或 /48 前缀后只把前缀交给节点对象。错误与拒绝不带原因、秘密或标识。
 - 签名私钥、管理令牌、可选注册令牌只作为 Workers secret；`wrangler.jsonc` 不写账户、秘密，`observability` 关闭。
 - 注册计算挑战的 scrypt 只在无状态的 `latch-relay-work` Worker 里算（服务绑定），节点对象只做有界并发与超时。
-- 内存界限只依赖节点持有和交给 `send()` 的字节（`buffers.ts`）：接收与填充队列硬上限；每连接发送预算按时间补充；未认证输出另花前缀与对象预算，不够时拒绝而不是去掉填充；关闭的连接按时钟保留连接槽。`bufferedAmount` 只能提前关闭，不能释放预算。这些上限不是费用配额或公平算法。
-- 组装前的平台内存、关闭后的平台队列与慢读积压只能在真实部署上检查：由 `scripts/accept-core.ts`（`pnpm relay-edge:accept`）逐项验收，docs/RELAY.md「Workers 的内存界限与验收」写明最坏情况。Node 夹具不能替代平台验收。
+- 界限只依赖节点持有和交给 `send()` 的字节（`buffers.ts`）：接收与填充队列字节上限；未认证带填充的连接全对象限数、每个限字节，满了关闭最大前缀里最旧的而不是拒绝新来者；连接槽每前缀限数、按时钟保留。每连接发送预算是速率不是内存上限：持有通行证的不读手机能让平台缓冲增长，除非平台报告并回落 `bufferedAmount`（它只能提前关闭，不能释放预算）。这些不是费用配额或公平算法。
+- 组装前的平台内存（任何知道地址的人可反复触发重置）、关闭后的平台队列与慢读积压只能在真实部署上检查：`scripts/accept-core.ts`（`pnpm relay-edge:accept`）先凭管理令牌确认是运营者自己的中继再逐项验收，docs/RELAY.md「Workers 的界限与验收」写明最坏情况。Node 夹具不能替代平台验收。
 - 部署模块经同一 Wrangler 调用器写秘密：只走 stdin，固定净化与弃置诊断，不能继承用户的诊断环境或输出。
 
 测试在 test/：Node 里用假平台（真实 WebCrypto 与 node:sqlite）驱动真实 core，并经真实 TLS 驱动 link-client 客户端。
