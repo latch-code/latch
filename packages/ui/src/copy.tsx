@@ -3,6 +3,7 @@ import { CheckGlyph, CopyGlyph } from './glyphs/index.tsx'
 import { IconButton } from './button.tsx'
 import { writeClipboard } from './clipboard.ts'
 import { pinLayer, setPopover } from './internal.ts'
+import { UI_COPY, useUiLocale } from './locale.ts'
 
 /** How long a copy says 「已复制」; a failure, which has more words, stays longer. */
 const COPIED_MS = 1000
@@ -44,7 +45,7 @@ export function useCopy(copiedMs: number = COPIED_MS): { state: 'idle' | 'copied
  */
 export function CopyButton({
   text,
-  label = '复制',
+  label = UI_COPY.copy,
   className,
   size,
 }: {
@@ -54,10 +55,11 @@ export function CopyButton({
   /** xs (24) in dense rows: a turn's footer, a message's meta row, a section header. */
   size?: 'xs' | 'sm'
 }) {
+  useUiLocale()
   const { state, copy } = useCopy()
   const button = useRef<HTMLButtonElement>(null)
   const bubble = useRef<HTMLSpanElement>(null)
-  const result = state === 'copied' ? '已复制' : state === 'failed' ? '复制不可用，请手动选择' : undefined
+  const result = state === 'copied' ? UI_COPY.copied : state === 'failed' ? UI_COPY.copyUnavailable : undefined
   useLayoutEffect(() => {
     const layer = bubble.current
     setPopover(layer, result !== undefined)
@@ -81,7 +83,7 @@ export function CopyButton({
         {result}
       </span>
       <span className="sr-only" role="status">
-        {state === 'copied' ? '已复制' : state === 'failed' ? '复制失败' : ''}
+        {state === 'copied' ? UI_COPY.copied : state === 'failed' ? UI_COPY.copyFailed : ''}
       </span>
     </>
   )

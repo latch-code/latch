@@ -4,6 +4,16 @@ import { Button, InlineNotice, useLayerClose } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { readModelOnSelect } from './harnessCatalogue.tsx'
 import type { SessionConfigFeedback } from './modelReasoning.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    check: '核对',
+  },
+  {
+    check: 'Check',
+  },
+)
 
 /** Reads what the model a draft picked offers, once, as soon as it is picked. Draws nothing. */
 export function ReadPickedModel({ harness, model }: { harness: HarnessInfo; model: string }) {
@@ -58,7 +68,7 @@ function RefreshConfig({ refresh }: { refresh: () => void | Promise<void> }) {
           .then(close)
           .catch(() => {})
       }}>
-      核对
+      {COPY.check}
     </Button>
   )
 }

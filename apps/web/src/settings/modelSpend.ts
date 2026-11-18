@@ -1,7 +1,6 @@
 // How prices, budgets and costs are written on screen, and how what a person types becomes one. No estimates here: an
 // amount is shown only when the Host has it.
 import {
-  COST_SIGNS,
   MAX_COST_BUDGET,
   MAX_MODEL_PRICE,
   MAX_TOKEN_BUDGET,
@@ -14,15 +13,50 @@ import {
   type TurnSpend,
 } from '@latch/protocol'
 import { formatTokens } from '../format.ts'
+import { currentLocale, defineCopy, formatNumber } from '../core/i18n.ts'
 
-export const CURRENCY_NAMES: Readonly<Record<CostCurrency, string>> = { USD: '美元', CNY: '人民币' }
-export const NOT_REPORTED = '未报告'
+const COPY = defineCopy(
+  {
+    notReported: '未报告',
+    usd: '美元',
+    cny: '人民币',
+    configuredPrices: '按你填的单价',
+    cost: (value1: string | number) => `花费 ${value1}`,
+    exhausted: '本月预算已用完',
+    near: '预算已用 80%',
+  },
+  {
+    notReported: 'Not reported',
+    usd: 'US dollar',
+    cny: 'Chinese yuan',
+    configuredPrices: 'Based on your unit prices',
+    cost: (value1: string | number) => `Cost ${value1}`,
+    exhausted: 'Monthly budget reached',
+    near: '80% of budget used',
+  },
+)
+
+export const CURRENCY_NAMES: Readonly<Record<CostCurrency, string>> = {
+  get USD() {
+    return COPY.usd
+  },
+  get CNY() {
+    return COPY.cny
+  },
+}
+export const notReported = () => COPY.notReported
 
 /** 「$0.0021」, 「¥12.50」: four places under a cent's hundred, two above, so a small request never reads as nothing. */
 export function costText(amount: Pick<CostAmount, 'currency' | 'micros'>): string {
   const value = amount.micros / 1_000_000
   const digits = value !== 0 && value < 1 ? 4 : 2
-  return `${COST_SIGNS[amount.currency]}${value.toFixed(digits)}`
+  return formatNumber(value, {
+    style: 'currency',
+    currencyDisplay: currentLocale() === 'zh-CN' ? 'narrowSymbol' : 'symbol',
+    currency: amount.currency,
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })
 }
 
 /** Every currency's amount, joined; undefined when no cost is known. */
@@ -32,23 +66,19 @@ export function costsText(cost: readonly CostAmount[] | undefined): string | und
 
 /** What a cost was worked out from, when not all of it is the service's own word. */
 export const pricedNote = (cost: readonly CostAmount[] | undefined): string | undefined =>
-  cost?.some(item => item.priced) ? '按你填的单价' : undefined
+  cost?.some(item => item.priced) ? COPY.configuredPrices : undefined
 
 /** A turn's cost for its footer: 「花费 $0.0021」, with 「按你填的单价」 when prices were used. */
 export function turnCostWords(spend: TurnSpend | undefined): { text: string; note?: string } | undefined {
   const text = costsText(spend?.cost)
   if (!text) return undefined
   const note = pricedNote(spend?.cost)
-  return { text: `花费 ${text}`, ...(note ? { note } : {}) }
+  return { text: COPY.cost(text), ...(note ? { note } : {}) }
 }
 
 /** What a budget's state reads as: amber at 80%, red when used up. */
 export function budgetWords(state: BudgetProgress['state']): { tone: 'warn' | 'failed'; text: string } | undefined {
-  return state === 'over'
-    ? { tone: 'failed', text: '本月预算已用完' }
-    : state === 'near'
-      ? { tone: 'warn', text: '预算已用 80%' }
-      : undefined
+  return state === 'over' ? { tone: 'failed', text: COPY.exhausted } : state === 'near' ? { tone: 'warn', text: COPY.near } : undefined
 }
 
 const amountOf = (budget: Pick<ModelBudget, 'unit' | 'currency'>, value: number): string =>
@@ -127,8 +157,8 @@ export function readBudget(fields: BudgetFields): Omit<ModelBudget, 'scope' | 'i
 
 /** A row's tokens for a column; 未报告 when no reply of the row reported any. */
 export function rowTokens(row: ModelUsageRow, part: 'inputTokens' | 'outputTokens'): string {
-  return row.usage ? formatTokens(row.usage[part]) : NOT_REPORTED
+  return row.usage ? formatTokens(row.usage[part]) : notReported()
 }
 
 /** A row's cost; 未报告 when none of its requests has one. */
-export const rowCost = (row: ModelUsageRow): string => costsText(row.cost) ?? NOT_REPORTED
+export const rowCost = (row: ModelUsageRow): string => costsText(row.cost) ?? notReported()

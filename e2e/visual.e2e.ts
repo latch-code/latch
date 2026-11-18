@@ -42,6 +42,14 @@ import {
  * frozen, so the captures are the same on every run on one machine.
  */
 
+async function useSystemLanguage(page: Page, locale: 'en' | 'zh-CN'): Promise<void> {
+  await page.evaluate(language => {
+    Object.defineProperty(navigator, 'languages', { configurable: true, get: () => [language] })
+    window.dispatchEvent(new Event('languagechange'))
+  }, locale)
+  await expect.poll(() => page.locator('html').getAttribute('lang')).toBe(locale)
+}
+
 const PROVIDER = 'visual-model'
 const MODEL = { providerId: PROVIDER, model: 'fixture-large' }
 const DEVICE_NAMES: Record<VisualViewport['name'], string> = { desktop: '我的电脑', tablet: '我的平板', phone: '我的手机' }
@@ -724,6 +732,13 @@ describe('visual capture of the real product', () => {
     await rowMenu.waitFor()
     for (const name of ['重命名', '置顶', '归档', '导出 Markdown', '删除'])
       await reachable(rowMenu.getByRole('menuitem', { name, exact: true }))
+    const focusedOption = await rowMenu.getByRole('menuitem', { name: '重命名', exact: true }).elementHandle()
+    await focusedOption.focus()
+    await useSystemLanguage(target, 'en')
+    await reachable(rowMenu.getByRole('menuitem', { name: 'Rename', exact: true }))
+    await reachable(rowMenu.getByRole('menuitem', { name: 'Export Markdown', exact: true }))
+    expect(await focusedOption.evaluate(element => element === document.activeElement)).toBe(true)
+    await useSystemLanguage(target, 'zh-CN')
     await settleMotion(target)
     await scrollList('top')
     await recorder.capture(target, viewport, 'navigation-row-menu', "a row's menu after a long press")
@@ -838,10 +853,10 @@ describe('visual capture of the real product', () => {
       await target.getByRole('heading', { name: '连接到 Latch', exact: true }).waitFor()
       await nameNextEnrollment(target, DEVICE_NAMES[viewport.name])
       // Every browser device here manages the Host (its invitation allows it), so each one reaches all settings.
-      await reachable(target.getByRole('button', { name: '连接这个浏览器', exact: true }))
+      await reachable(target.getByTestId('enroll-submit'))
       await recorder.capture(target, viewport, 'enrollment', 'form')
 
-      await target.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
+      await target.getByTestId('enroll-submit').click()
       await testHost.presence.waitForRequest()
       await target.getByRole('heading', { name: '在 Mac 上确认', exact: true }).waitFor()
       await reachable(target.getByRole('button', { name: '取消', exact: true }))
@@ -856,7 +871,7 @@ describe('visual capture of the real product', () => {
 
       await target.goto((await testHost.invite(['view', 'run', 'approve:standard', 'approve:elevated', 'admin'], 'loopback-tcp')).url)
       await nameNextEnrollment(target, DEVICE_NAMES[viewport.name])
-      await target.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
+      await target.getByTestId('enroll-submit').click()
       await testHost.presence.waitForRequest()
       await target.getByRole('heading', { name: '在 Mac 上确认', exact: true }).waitFor()
       testHost.presence.approveNext()
@@ -887,7 +902,7 @@ describe('visual capture of the real product', () => {
       await readOnly.goto((await testHost.invite(['view', 'run', 'approve:standard', 'approve:elevated'], 'loopback-tcp')).url)
       await readOnly.getByRole('heading', { name: '连接到 Latch', exact: true }).waitFor()
       await nameNextEnrollment(readOnly, `只读的${DEVICE_NAMES[viewport.name].replace(/^我的/, '')}`)
-      await readOnly.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
+      await readOnly.getByTestId('enroll-submit').click()
       await testHost.presence.waitForRequest()
       testHost.presence.approveNext()
       await connected(readOnly)
@@ -1468,6 +1483,13 @@ describe('visual capture of the real product', () => {
       await reachable(choices)
       await choices.click()
       await target.getByRole('menuitem', { name: /这个会话都允许这类操作/ }).waitFor()
+      await useSystemLanguage(target, 'en')
+      const scopeLabel = target
+        .getByRole('menuitem', { name: 'Allow this kind of action for this session', exact: true })
+        .locator('.ui-menu-item-title')
+      await scopeLabel.waitFor()
+      expect(await scopeLabel.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+      await useSystemLanguage(target, 'zh-CN')
       await recorder.capture(target, viewport, 'approval-r1-more', 'the other approval choices open')
       await target.keyboard.press('Escape')
       await target.getByRole('menuitem', { name: /这个会话都允许这类操作/ }).waitFor({ state: 'hidden' })
@@ -1513,7 +1535,11 @@ describe('visual capture of the real product', () => {
       await foldPreview()
 
       // A decision whose answer never arrived: the card offers to send the same choice again.
-      await target.route('**/link/api/approvals/**', route => route.abort('connectionreset'))
+      const requests: unknown[] = []
+      await target.route('**/link/api/approvals/**', async route => {
+        requests.push(route.request().postDataJSON())
+        await route.abort('connectionreset')
+      })
       // Typing says what to do instead: 拒绝 becomes 拒绝并发送, and the text goes with it.
       const answerBox = target.getByRole('textbox', { name: '拒绝并说明改做什么…', exact: true })
       await answerBox.fill('先写到草稿目录')
@@ -1527,6 +1553,16 @@ describe('visual capture of the real product', () => {
       expect(await r1.locator('.ui-button[data-variant="primary"]').count()).toBe(0)
       expect(await r1.locator('.approval-buttons, .approval-preview').count()).toBe(0)
       await reachable(r1.getByRole('button', { name: '重试', exact: true }))
+      if (viewport.name === 'phone') {
+        await useSystemLanguage(target, 'en')
+        await r1.locator('.approval-object', { hasText: 'Write file docs/notes.md' }).waitFor()
+        await r1.getByText('Result of “Deny” unknown', { exact: true }).waitFor()
+        await r1.getByRole('button', { name: 'Retry', exact: true }).click()
+        await expect.poll(() => requests.length).toBe(2)
+        expect(requests[1]).toEqual(requests[0])
+        await r1.getByText('Result of “Deny” unknown', { exact: true }).waitFor()
+        await useSystemLanguage(target, 'zh-CN')
+      }
       await recorder.capture(target, viewport, 'approval-uncertain', 'the outcome of a decision is unknown')
       await target.unroute('**/link/api/approvals/**')
 
@@ -1577,6 +1613,13 @@ describe('visual capture of the real product', () => {
       await advisory.locator('.approval-note').waitFor()
       // The agent's own words for its option stay in the tooltip; the button reads in the product's words.
       await reachable(advisory.getByRole('button', { name: '拒绝', exact: true }))
+      if (viewport.name === 'phone') {
+        await useSystemLanguage(target, 'en')
+        const warning = advisory.locator('.approval-note .ui-hint-label')
+        await expect.poll(() => warning.textContent()).toBe('Denying only tells it; it cannot stop it')
+        expect(await warning.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+        await useSystemLanguage(target, 'zh-CN')
+      }
       await recorder.capture(target, viewport, 'approval-advisory', 'full-access question shown as advisory')
 
       // The agent's plan is a work row; it opens to the list.

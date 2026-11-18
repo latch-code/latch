@@ -1,10 +1,26 @@
 import { FolderInput } from 'lucide-react'
 import { Button, Drawer, ICON_STROKE, ValuePicker } from '@latch/ui'
+import { defineCopy } from '../core/i18n.ts'
 import { RECOVERY_COPY } from '../core/securityCopy.ts'
 import { basename, middleEllipsis } from '../format.ts'
 import { ProjectIcon, projectName } from '../projects.tsx'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { workspaceRecovery, type WorkspaceRecoveryInput } from './workspaceRecovery.ts'
+
+const COPY = defineCopy(
+  {
+    region: '选择项目继续会话',
+    thisSession: '这个会话',
+    label: '继续会话的项目',
+    placeholder: '选择项目…',
+  },
+  {
+    region: 'Choose a project to continue',
+    thisSession: 'This session',
+    label: 'Project to continue in',
+    placeholder: 'Choose a project…',
+  },
+)
 
 export interface WorkspaceRecoveryProps extends WorkspaceRecoveryInput {
   onWorkspaceChange: (workspaceId: string) => void
@@ -18,17 +34,17 @@ export function WorkspaceRecovery(props: WorkspaceRecoveryProps) {
   const selected = state.workspaces.find(workspace => workspace.id === props.workspaceId)
   const locked = props.phase !== 'idle'
   return (
-    <Drawer className="recovery-drawer" label="选择项目继续会话">
+    <Drawer className="recovery-drawer" label={COPY.region}>
       <p className="recovery-line" role="status">
         <FolderInput size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
         {RECOVERY_COPY.folderMissing(
-          escapeHiddenCharacters(basename(props.source.summary.cwd ?? '') || props.source.summary.title || '这个会话'),
+          escapeHiddenCharacters(basename(props.source.summary.cwd ?? '') || props.source.summary.title || COPY.thisSession),
         )}
       </p>
       <div className="recovery-actions">
         <ValuePicker
-          label="继续会话的项目"
-          placeholder="选择项目…"
+          label={COPY.label}
+          placeholder={COPY.placeholder}
           value={selected?.id}
           searchable={state.workspaces.length > 6}
           options={state.workspaces.map(workspace => ({

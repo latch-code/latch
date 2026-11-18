@@ -38,6 +38,80 @@ import {
   type StagingRow,
 } from './staging.ts'
 import type { StagingEnd, useStaging } from './useStaging.ts'
+import { defineCopy, formatNumber, plural } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    staging: '暂存中…',
+    unstaging: '取消暂存中…',
+    more: (count: number) => `还有 ${formatNumber(count)} 个`,
+    stage: '暂存',
+    unstage: '取消暂存',
+    selected: (count: number) => `已选 ${formatNumber(count)} 行`,
+    changed: (count: number) => `${formatNumber(count)} 行改动`,
+    selectHunk: '选这一块',
+    clear: '清除',
+    all: '全选',
+    selection: '所选',
+    removed: (line: number) => `删除的第 ${formatNumber(line)} 行`,
+    added: (line: number) => `新增的第 ${formatNumber(line)} 行`,
+    conflict: '冲突',
+    untracked: '未跟踪',
+    writing: '正在写入',
+    open: '打开文件',
+    history: '文件历史',
+    file: '文件',
+    reading: '正在读取…',
+    unknown: ' · 暂存结果未知',
+    retrying: '重试中…',
+    retrySame: '重试同一请求',
+    verifyDismiss: '核对并放下',
+    unstagedCount: (count: number) => `未暂存 ${formatNumber(count)}`,
+    unstaged: '未暂存',
+    stagedCount: (count: number) => `已暂存 ${formatNumber(count)}`,
+    staged: '已暂存',
+    readFailed: '读不到暂存状态',
+    retry: '重试',
+    noUnstaged: '没有未暂存的改动',
+    noStaged: '没有已暂存的改动',
+    merge: '合并进行中，在终端里完成',
+  },
+  {
+    staging: 'Staging…',
+    unstaging: 'Unstaging…',
+    more: (count: number) => `${formatNumber(count)} more`,
+    stage: 'Stage',
+    unstage: 'Unstage',
+    selected: (count: number) => `${plural(count, { one: '{n} line', other: '{n} lines' })} selected`,
+    changed: (count: number) => `${formatNumber(count)} changed lines`,
+    selectHunk: 'Select this hunk',
+    clear: 'Clear',
+    all: 'Select all',
+    selection: ' selected',
+    removed: (line: number) => `Deleted line ${formatNumber(line)}`,
+    added: (line: number) => `Added line ${formatNumber(line)}`,
+    conflict: 'Conflict',
+    untracked: 'Untracked',
+    writing: 'Writing',
+    open: 'Open file',
+    history: 'File history',
+    file: ' file',
+    reading: 'Reading…',
+    unknown: ' · Staging outcome unknown',
+    retrying: 'Retrying…',
+    retrySame: 'Retry same request',
+    verifyDismiss: 'Check and dismiss',
+    unstagedCount: (count: number) => `Unstaged ${formatNumber(count)}`,
+    unstaged: 'Unstaged',
+    stagedCount: (count: number) => `Staged ${formatNumber(count)}`,
+    staged: 'Staged',
+    readFailed: 'Couldn’t read staging status',
+    retry: 'Retry',
+    noUnstaged: 'No unstaged changes',
+    noStaged: 'No staged changes',
+    merge: 'Merge in progress · Finish in Terminal',
+  },
+)
 
 export interface StagingViewProps {
   staging: ReturnType<typeof useStaging>
@@ -51,7 +125,14 @@ export interface StagingViewProps {
   onHistory: (path: string) => void
 }
 
-const VERB: Record<GitStagingView, string> = { unstaged: '暂存', staged: '取消暂存' }
+const VERB: Record<GitStagingView, string> = {
+  get unstaged() {
+    return COPY.stage
+  },
+  get staged() {
+    return COPY.unstage
+  },
+}
 
 /** One file's lines with a box on each changed line; the pick goes to the Host as line numbers. */
 export function PickableDiff({
@@ -96,7 +177,7 @@ export function PickableDiff({
   return (
     <div ref={body} className="staging-diff">
       <div className="staging-tools">
-        <span className="staging-count">{count ? `已选 ${count} 行` : `${order.length} 行改动`}</span>
+        <span className="staging-count">{count ? COPY.selected(count) : COPY.changed(order.length)}</span>
         <span className="changes-scope-space" />
         <Button
           size="xs"
@@ -105,7 +186,7 @@ export function PickableDiff({
           onClick={() => {
             if (pick.anchor) setPick(toggleBlock(pick, order, pick.anchor))
           }}>
-          选这一块
+          {COPY.selectHunk}
         </Button>
         <Button
           size="xs"
@@ -113,20 +194,21 @@ export function PickableDiff({
           onClick={() => {
             setPick(count === order.length ? EMPTY_PICK : pickAll(order))
           }}>
-          {count === order.length ? '清除' : '全选'}
+          {count === order.length ? COPY.clear : COPY.all}
         </Button>
         <Button
           size="xs"
           variant="primary"
           disabled={!count || !canWrite}
           loading={busy}
-          loadingLabel={`${VERB[view]}中…`}
+          loadingLabel={view === 'unstaged' ? COPY.staging : COPY.unstaging}
           onClick={() => {
             void onWrite(pick).then(end => {
               if (end === 'done' || end === 'stale') setPick(EMPTY_PICK)
             })
           }}>
-          {VERB[view]}所选
+          {VERB[view]}
+          {COPY.selection}
         </Button>
       </div>
       <DiffLines
@@ -139,15 +221,15 @@ export function PickableDiff({
         }}
         gutter={(line: DiffLine) => {
           const key = keyOf(line)
-          if (!key) return null
-          const checked = pick.lines.has(key)
           const number = line.kind === 'remove' ? line.oldLine : line.newLine
+          if (!key || number === undefined) return null
+          const checked = pick.lines.has(key)
           return (
             <button
               type="button"
               role="checkbox"
               aria-checked={checked}
-              aria-label={line.kind === 'remove' ? `删除的第 ${number} 行` : `新增的第 ${number} 行`}
+              aria-label={line.kind === 'remove' ? COPY.removed(number) : COPY.added(number)}
               className="staging-check"
               data-stage-key={key}
               onClick={press(key)}
@@ -212,7 +294,7 @@ function StagingFile({
     }
   }, [open, view, row.path, revision, readDiff])
   const whole = diff?.whole
-  const word = row.conflicted ? '冲突' : row.untracked ? '未跟踪' : STATUS_WORD[row.status]
+  const word = row.conflicted ? COPY.conflict : row.untracked ? COPY.untracked : STATUS_WORD[row.status]
   return (
     <section className="changes-file" data-open={open ? '' : undefined}>
       <div className="changes-file-head">
@@ -228,12 +310,12 @@ function StagingFile({
               {!!diff.del && <span className="changes-del">−{diff.del}</span>}
             </span>
           )}
-          {busy && <Spinner size={12} label="正在写入" />}
+          {busy && <Spinner size={12} label={COPY.writing} />}
           {note && <span className="changes-note">{note}</span>}
         </button>
         <span className="changes-file-actions staging-file-actions">
-          <IconButton size="xs" icon={FileGlyph} label="打开文件" onClick={onOpenFile} />
-          {!row.untracked && <IconButton size="xs" icon={HistoryGlyph} label="文件历史" onClick={onHistory} />}
+          <IconButton size="xs" icon={FileGlyph} label={COPY.open} onClick={onOpenFile} />
+          {!row.untracked && <IconButton size="xs" icon={HistoryGlyph} label={COPY.history} onClick={onHistory} />}
           {!row.conflicted && (
             <Button
               size="xs"
@@ -242,7 +324,8 @@ function StagingFile({
               onClick={() => {
                 void staging.writeWhole(view === 'unstaged' ? 'stage' : 'unstage', row.path)
               }}>
-              {VERB[view]}文件
+              {VERB[view]}
+              {COPY.file}
             </Button>
           )}
         </span>
@@ -252,7 +335,7 @@ function StagingFile({
           {!open ? null : error ? (
             <p className="changes-body-note">{error}</p>
           ) : !diff ? (
-            <p className="changes-body-note">正在读取…</p>
+            <p className="changes-body-note">{COPY.reading}</p>
           ) : whole ? (
             <p className="changes-body-note">{wholeNote(whole, view)}</p>
           ) : (
@@ -279,21 +362,22 @@ export function StagingFeedback({ staging, offline }: { staging: ReturnType<type
       <div className="changes-line staging-receipt" data-tone="muted">
         <UnknownGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <span className="changes-line-text">
-          <VisibleText text={unknown.path} /> · 暂存结果未知
+          <VisibleText text={unknown.path} />
+          {COPY.unknown}
         </span>
         <Button
           size="xs"
           variant="outline"
           disabled={offline}
           loading={busy === unknown.path}
-          loadingLabel="重试中…"
+          loadingLabel={COPY.retrying}
           onClick={() => {
             void staging.retry()
           }}>
-          重试同一请求
+          {COPY.retrySame}
         </Button>
         <Button size="xs" variant="ghost" disabled={busy !== undefined} onClick={staging.abandon}>
-          核对并放下
+          {COPY.verifyDismiss}
         </Button>
       </div>
       {note && (
@@ -322,26 +406,26 @@ export function StagingView({ staging, view, onView, canWrite, whyNot, onOpenFil
     <>
       <div className="changes-line staging-bar">
         <SegmentedControl
-          label="暂存"
+          label={COPY.stage}
           size="xs"
           value={view}
           options={[
-            { value: 'unstaged', label: counts ? `未暂存 ${counts.unstaged}` : '未暂存' },
-            { value: 'staged', label: counts ? `已暂存 ${counts.staged}` : '已暂存' },
+            { value: 'unstaged', label: counts ? COPY.unstagedCount(counts.unstaged) : COPY.unstaged },
+            { value: 'staged', label: counts ? COPY.stagedCount(counts.staged) : COPY.staged },
           ]}
           onValueChange={onView}
         />
-        {read.kind === 'ready' && read.state.more ? <span className="changes-why">还有 {read.state.more} 个</span> : null}
+        {read.kind === 'ready' && read.state.more ? <span className="changes-why">{COPY.more(read.state.more)}</span> : null}
         {!canWrite && whyNot && <span className="changes-why">{whyNot}</span>}
       </div>
       {read.kind === 'loading' ? (
         <div className="changes-empty">
-          <p className="changes-empty-title">正在读取…</p>
+          <p className="changes-empty-title">{COPY.reading}</p>
         </div>
       ) : read.kind === 'failed' ? (
         <div className="changes-empty">
           <div>
-            <p className="changes-empty-title">读不到暂存状态</p>
+            <p className="changes-empty-title">{COPY.readFailed}</p>
             <p className="changes-empty-detail">{read.text}</p>
             <Button
               size="xs"
@@ -349,13 +433,13 @@ export function StagingView({ staging, view, onView, canWrite, whyNot, onOpenFil
               onClick={() => {
                 void staging.reload()
               }}>
-              重试
+              {COPY.retry}
             </Button>
           </div>
         </div>
       ) : rows.length === 0 ? (
         <div className="changes-empty">
-          <p className="changes-empty-title">{view === 'unstaged' ? '没有未暂存的改动' : '没有已暂存的改动'}</p>
+          <p className="changes-empty-title">{view === 'unstaged' ? COPY.noUnstaged : COPY.noStaged}</p>
         </div>
       ) : (
         <div className="changes-body">
@@ -363,7 +447,7 @@ export function StagingView({ staging, view, onView, canWrite, whyNot, onOpenFil
             {read.state.gitOperation && (
               <div className="changes-line" data-tone="amber">
                 <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-                <span className="changes-line-text">合并进行中，在终端里完成</span>
+                <span className="changes-line-text">{COPY.merge}</span>
               </div>
             )}
             {rows.map(row => (

@@ -33,6 +33,42 @@ import {
   PlusGlyph,
   ModelGlyph,
 } from '@latch/ui'
+import { defineCopy, formatList, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    noProject: '不选项目',
+    folders: (names: readonly string[]) => `${formatNumber(names.length)} 个文件夹 · ${names.join('、')}`,
+    default: '默认',
+    recent: '最近使用',
+    model: '模型',
+    chooseModel: '选择模型',
+    addService: '添加模型服务…',
+    manageServices: '管理模型服务…',
+    folderLimit: (value1: string, limit: number) => `${value1} 最多使用 ${formatNumber(limit)} 个文件夹`,
+    project: '项目',
+    addProject: '添加项目…',
+    manageProjects: '管理项目…',
+    sessionMode: '会话模式',
+    chat: '对话',
+  },
+  {
+    noProject: 'No project',
+    folders: (names: readonly string[]) => `${formatNumber(names.length)} folders · ${formatList(names)}`,
+    default: 'Default',
+    recent: 'Recent',
+    model: 'Model',
+    chooseModel: 'Choose model',
+    addService: 'Add model service…',
+    manageServices: 'Manage model services…',
+    folderLimit: (value1: string, limit: number) => `${value1} can use up to ${plural(limit, { one: '{n} folder', other: '{n} folders' })}`,
+    project: 'Project',
+    addProject: 'Add project…',
+    manageProjects: 'Manage projects…',
+    sessionMode: 'Session mode',
+    chat: 'Chat',
+  },
+)
 
 /** A model as one value of a picker. */
 const modelOf = (key: string): ModelRef => {
@@ -100,7 +136,7 @@ export function modelGroups(
           provider.kind === 'demo' ? (
             <DemoMark compact />
           ) : isDefault(provider.id, provider.defaultModel, model) ? (
-            <Badge>默认</Badge>
+            <Badge>{COPY.default}</Badge>
           ) : undefined,
       }))
       .filter(option => !hidden.has(option.value) || selected === option.value),
@@ -108,7 +144,7 @@ export function modelGroups(
   const recent = (preferences?.recent ?? []).flatMap(key => groups.flatMap(group => group.options).filter(option => option.value === key))
   const keys = new Set(recent.map(option => option.value))
   return [
-    ...(recent.length ? [{ id: '~recent', label: '最近使用', options: recent }] : []),
+    ...(recent.length ? [{ id: '~recent', label: COPY.recent, options: recent }] : []),
     ...groups.map(group => ({ ...group, options: group.options.filter(option => !keys.has(option.value)) })),
   ].filter(group => group.options.length)
 }
@@ -149,8 +185,8 @@ export function ModelPicker({
   return (
     <ValuePicker
       variant={variant}
-      label="模型"
-      placeholder="选择模型"
+      label={COPY.model}
+      placeholder={COPY.chooseModel}
       value={value ? modelKey(value) : undefined}
       groups={groups}
       searchable={count > 8 && !adding}
@@ -176,14 +212,14 @@ export function ModelPicker({
               onClick={() => {
                 setAdding(true)
               }}>
-              添加模型服务…
+              {COPY.addService}
             </MenuFooterLink>
           ) : (
             count === 0 && <MenuFooterNote>{SETUP_COPY.addProviderElsewhere(computer)}</MenuFooterNote>
           )}
           {onManage && (
             <MenuFooterLink closes onClick={onManage}>
-              管理模型服务…
+              {COPY.manageServices}
             </MenuFooterLink>
           )}
         </>
@@ -241,8 +277,6 @@ export function ModelAddPanel({
   )
 }
 
-const NO_PROJECT = '不选项目'
-
 /**
  * The project of a new session: the saved projects with their paths (the default one marked) and going without, then
  * 添加项目… and 管理项目…. In the desktop app 添加项目… opens the system's folder panel and the folder becomes a project at
@@ -293,9 +327,7 @@ export function ProjectPicker({
     label,
     description:
       projectFolders(workspace).length > 1
-        ? `${projectFolders(workspace).length} 个文件夹 · ${projectFolders(workspace)
-            .map(folder => basename(folder.path))
-            .join('、')}`
+        ? COPY.folders(projectFolders(workspace).map(folder => basename(folder.path)))
         : middleEllipsis(workspace.path, 44),
     media: <ProjectIcon project={workspace} size={16} />,
     disabledReason:
@@ -303,12 +335,12 @@ export function ProjectPicker({
       ?? (harness?.projectFolders?.access === 'all'
       && harness.projectFolders.max !== undefined
       && projectFolders(workspace).length > harness.projectFolders.max
-        ? `${harness.capabilities.display.label} 最多使用 ${harness.projectFolders.max} 个文件夹`
+        ? COPY.folderLimit(harness.capabilities.display.label, harness.projectFolders.max)
         : undefined),
     tag: workspace.codeRoot ? (
       <Badge tone="warn">{CODE_ROOT_COPY.badge}</Badge>
     ) : workspace.id === catalog.defaults.workspaceId ? (
-      <Badge>默认</Badge>
+      <Badge>{COPY.default}</Badge>
     ) : undefined,
   })
   const groups: Array<PickerGroup<string>> = [
@@ -324,7 +356,7 @@ export function ProjectPicker({
             id: 'start',
             options: [
               {
-                ...option(start, defaultLocation?.label ?? NO_PROJECT),
+                ...option(start, defaultLocation?.label ?? COPY.noProject),
                 tag: undefined,
                 // The Host's own start directory gives each session a new folder; one the owner set is used as it is.
                 description:
@@ -338,7 +370,7 @@ export function ProjectPicker({
   return (
     <ValuePicker
       variant={variant}
-      label="项目"
+      label={COPY.project}
       className={inline ? 'project-inline' : variant === 'row' ? 'new-sheet-row' : undefined}
       menuChevron={variant !== 'row'}
       openRequest={openRequest}
@@ -353,8 +385,8 @@ export function ProjectPicker({
             ? (PROJECT_ICONS[workspaces.find(item => item.id === value)!.glyph!]?.icon ?? FolderGlyph)
             : FolderGlyph
       }
-      placeholder={NO_PROJECT}
-      header={{ title: '项目' }}
+      placeholder={COPY.noProject}
+      header={{ title: COPY.project }}
       width="sm"
       value={value}
       groups={groups}
@@ -365,14 +397,14 @@ export function ProjectPicker({
           {notice && <MenuFooterNote>{notice}</MenuFooterNote>}
           {onCreate ? (
             <MenuFooterLink icon={FolderPlus} chevron={false} closes onClick={onCreate}>
-              添加项目…
+              {COPY.addProject}
             </MenuFooterLink>
           ) : (
             <MenuFooterNote>{SETUP_COPY.addProjectElsewhere(computer)}</MenuFooterNote>
           )}
           {onManage && (
             <MenuFooterLink closes onClick={onManage}>
-              管理项目…
+              {COPY.manageProjects}
             </MenuFooterLink>
           )}
         </>
@@ -385,13 +417,13 @@ export function ProjectPicker({
 export function ModeSwitch({ value, onChange, disabled }: { value: TaskMode; onChange: (mode: TaskMode) => void; disabled?: boolean }) {
   return (
     <SegmentedControl
-      label="会话模式"
+      label={COPY.sessionMode}
       value={value}
       disabled={disabled}
       onValueChange={onChange}
       className="mode-switch"
       options={[
-        { value: 'chat', label: '对话' },
+        { value: 'chat', label: COPY.chat },
         { value: 'agent', label: 'Agent' },
       ]}
     />
@@ -404,7 +436,7 @@ export function workspaceSections(catalog: HostCatalog, value: string | undefine
       id: 'workspaces',
       items: startableWorkspaces(catalog).map(workspace => ({
         id: workspace.id,
-        label: workspace.id === 'default' ? NO_PROJECT : workspace.name || basename(workspace.path),
+        label: workspace.id === 'default' ? COPY.noProject : workspace.name || basename(workspace.path),
         description: middleEllipsis(workspace.path, 44),
         // A folder in Latch's program directory: every Latch 内置 write will ask on the Host's computer.
         tag: workspace.codeRoot ? <Badge tone="warn">{CODE_ROOT_COPY.badge}</Badge> : undefined,

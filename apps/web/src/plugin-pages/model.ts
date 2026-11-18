@@ -11,6 +11,16 @@ import type {
 import { APP_BRIDGE_METHODS, appScopeKind, type AppBridgeMethod } from '@latch/protocol'
 import { ApiError, ApiTimeoutError } from '../core/api.ts'
 import { waitsOnYou } from '../sessions.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    page: '插件页面',
+  },
+  {
+    page: 'Plugin page',
+  },
+)
 
 /** `<pluginId>/<appId>`, as `via.app` and a session's `origin.app` name a page. */
 export const appRef = (page: Pick<AppSummary, 'pluginId' | 'appId'>) => `${page.pluginId}/${page.appId}`
@@ -29,7 +39,7 @@ export function originTitle(task: Pick<TaskSummary, 'origin'>, snapshot: AppSnap
   const origin = task.origin?.app
   if (!origin) return undefined
   const page = snapshot.apps?.find(item => appRef(item) === origin)
-  return page?.title ?? '插件页面'
+  return page?.title ?? COPY.page
 }
 
 /** Sessions that carry private context never reach a page, whatever this device may read itself. */

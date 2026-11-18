@@ -8,13 +8,48 @@ import {
 } from '@latch/protocol'
 import { Button, Checkbox, InlineNotice, Loading, Modal, ModalHeader, TextAreaField, TextField } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
+import { harnessName } from '../core/harnessName.ts'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
+import { switchWorkView } from '../preferences.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { TodoProposal, ProposalWrites } from './proposals.ts'
 import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
-import { TagChips } from './WorkBoardCard.tsx'
+import { BOARD_CARD_COPY, TagChips } from './WorkBoardCard.tsx'
 import { ItemWriteLine } from './WriteLine.tsx'
 
 const chars = (text: string) => Array.from(text).length
+const COPY = defineCopy(
+  {
+    saveFailed: '没有保存',
+    heading: '提议的待办',
+    review: '审阅提议',
+    from: '提议自',
+    loading: '读取中',
+    choose: (position: number) => `收下第 ${formatNumber(position)} 条`,
+    title: '标题',
+    instructions: '要求',
+    dismissAll: '全部不要',
+    dismiss: '不要',
+    acceptCount: (count: number) => `接受 ${formatNumber(count)} 条`,
+    accept: '接受',
+    accepted: '已收下的待办',
+  },
+  {
+    saveFailed: 'Changes weren’t saved',
+    heading: 'Proposed task',
+    review: 'Review proposal',
+    from: 'Proposed by',
+    loading: 'Loading',
+    choose: (position: number) => `Accept task ${formatNumber(position)}`,
+    title: 'Title',
+    instructions: 'Instructions',
+    dismissAll: 'Dismiss all',
+    dismiss: 'Dismiss',
+    acceptCount: (count: number) => `Accept ${formatNumber(count)}`,
+    accept: 'Accept',
+    accepted: 'Accepted tasks',
+  },
+)
 
 export function AcceptedItems({ ids, shell, onClose }: { ids: readonly string[]; shell: ShellState; onClose: () => void }) {
   const visible = ids.flatMap(id => {
@@ -22,8 +57,8 @@ export function AcceptedItems({ ids, shell, onClose }: { ids: readonly string[];
     return item ? [item] : []
   })
   return (
-    <Modal label="已收下的待办" variant={shell.phone ? 'sheet' : 'dialog'} onClose={onClose} className="work-board-proposal-review">
-      <ModalHeader title="已收下的待办" onClose={onClose} />
+    <Modal label={COPY.accepted} variant={shell.phone ? 'sheet' : 'dialog'} onClose={onClose} className="work-board-proposal-review">
+      <ModalHeader title={COPY.accepted} onClose={onClose} />
       <div className="ui-modal-body item-accepted-links">
         {visible.map(item => (
           <Button
@@ -133,7 +168,7 @@ export function ProposalReview({
       showAccepted(result.itemIds)
     } else if (!result.unknown) {
       writes.forget(read.id)
-      setError(result.reason ?? '没有保存')
+      setError(result.reason ?? COPY.saveFailed)
     }
     setBusy(false)
   }
@@ -156,11 +191,11 @@ export function ProposalReview({
     if (!busy) onClose()
   }
   const group = read?.goal !== undefined
-  const heading = group ? escapeSecurityText(read.goal!) : '提议的待办'
+  const heading = group ? escapeSecurityText(read.goal!) : COPY.heading
   if (accepted.length) return <AcceptedItems ids={accepted} shell={shell} onClose={close} />
   return (
     <Modal
-      label="审阅提议"
+      label={COPY.review}
       variant={shell.phone ? 'sheet' : 'dialog'}
       dismissible={!busy}
       onClose={close}
@@ -173,12 +208,25 @@ export function ProposalReview({
         <ModalHeader title={heading} onClose={close} />
         <div className="ui-modal-body">
           <div className="work-board-proposal-line">
-            <span className="work-board-proposal-word">提议自</span>
-            <ProposedBy proposal={proposal} shell={shell} />
+            <span className="work-board-proposal-word">{COPY.from}</span>
+            <ProposedBy
+              proposal={proposal}
+              shell={shell}
+              details
+              onOpenSession={
+                busy
+                  ? undefined
+                  : id => {
+                      close()
+                      shell.choose(id, () => shell.setRoute({ entry: 'sessions' }))
+                      switchWorkView('chat')
+                    }
+              }
+            />
             {proposal.external && <ExternalMark />}
           </div>
           {read === null && !error ? (
-            <Loading label="读取中" />
+            <Loading label={COPY.loading} />
           ) : (
             drafts.map(draft => {
               const entry = read?.entries?.find(item => item.index === draft.index)
@@ -186,16 +234,15 @@ export function ProposalReview({
               const promptLong = draft.prompt.length > WORK_ITEM_LIMITS.promptChars
               const project = entry?.projectId
                 ? (shell.catalog?.workspaces.find(item => item.id === entry.projectId)?.name
-                  ?? (entry.projectId === 'default' ? '无项目' : entry.projectId))
+                  ?? (entry.projectId === 'default' ? BOARD_CARD_COPY.noProject : entry.projectId))
                 : undefined
-              const harness = entry?.harnessId
-                ? (shell.catalog?.harnesses.find(item => item.id === entry.harnessId)?.capabilities.display.label ?? entry.harnessId)
-                : undefined
+              const listed = shell.catalog?.harnesses.find(item => item.id === entry?.harnessId)
+              const harness = listed ? harnessName(listed) : entry?.harnessId
               return (
                 <section key={draft.index} className="work-board-proposal-entry" data-off={draft.chosen ? undefined : ''}>
                   {drafts.length > 1 && (
                     <Checkbox
-                      label={`收下第 ${draft.index + 1} 条`}
+                      label={COPY.choose(draft.index + 1)}
                       checked={draft.chosen}
                       disabled={busy || unknown}
                       onChange={() => {
@@ -204,21 +251,23 @@ export function ProposalReview({
                     />
                   )}
                   <TextField
-                    label="标题"
+                    label={COPY.title}
                     value={draft.title}
                     disabled={busy || unknown || !draft.chosen}
                     autoComplete="off"
-                    error={titleLong ? `${chars(draft.title.trim())} / ${WORK_ITEM_LIMITS.titleChars}` : undefined}
+                    error={
+                      titleLong ? `${formatNumber(chars(draft.title.trim()))} / ${formatNumber(WORK_ITEM_LIMITS.titleChars)}` : undefined
+                    }
                     onChange={event => {
                       edit(draft.index, { title: event.target.value.replace(/\n/gu, ' ') })
                     }}
                   />
                   <TextAreaField
-                    label="要求"
+                    label={COPY.instructions}
                     value={draft.prompt}
                     rows={drafts.length > 1 ? 5 : 8}
                     disabled={busy || unknown || !draft.chosen}
-                    error={promptLong ? `${draft.prompt.length} / ${WORK_ITEM_LIMITS.promptChars}` : undefined}
+                    error={promptLong ? `${formatNumber(draft.prompt.length)} / ${formatNumber(WORK_ITEM_LIMITS.promptChars)}` : undefined}
                     onChange={event => {
                       edit(draft.index, { prompt: event.target.value })
                     }}
@@ -245,7 +294,7 @@ export function ProposalReview({
             onClick={() => {
               void finish('dismiss')
             }}>
-            {drafts.length > 1 ? '全部不要' : '不要'}
+            {drafts.length > 1 ? COPY.dismissAll : COPY.dismiss}
           </Button>
           <Button
             size="md"
@@ -253,7 +302,7 @@ export function ProposalReview({
             type="submit"
             disabled={busy || unknown || read === null || !chosen.length || invalid}
             loading={busy}>
-            {drafts.length > 1 ? `接受 ${chosen.length} 条` : '接受'}
+            {drafts.length > 1 ? COPY.acceptCount(chosen.length) : COPY.accept}
           </Button>
         </footer>
       </form>

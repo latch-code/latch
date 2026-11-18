@@ -22,6 +22,7 @@ import { Menu, rowOf } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { startBlock } from '../composerChoice.ts'
 import { MessageError } from '../core/api.ts'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
 import { relativeTime } from '../format.ts'
 import { agentDeletionMessage } from '../deletionCopy.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
@@ -33,6 +34,48 @@ import { generalChoice, readsAgents } from './model.ts'
 import { LockedAgents } from './parts.tsx'
 import { rosterRows, waitingTopic, type RosterRow, type RosterState } from './roster.ts'
 import { whenWords } from './scheduleModel.ts'
+import { AGENT_SPACE_COPY } from './spaceCopy.ts'
+
+const COPY = defineCopy(
+  {
+    state: { waiting: '等你点头', running: '在工作', failed: '失败' },
+    unavailable: (message: string) => `不可用：${message}`,
+    previous: (state: string) => `上次状态：${state}`,
+    untitled: '未命名会话',
+    noChats: '还没聊过',
+    act: '去处理',
+    next: (time: string) => `下次 ${time}`,
+    actions: (name: string) => `${name} 的操作`,
+    settings: '设置',
+    deleteAgent: '删除 Agent',
+    moreActions: (name: string) => `更多操作：${name}`,
+    archivedCount: (count: number) => `已归档的话题（${formatNumber(count)}）`,
+    archived: '已归档',
+    deleteTitle: (name: string) => `删除「${name}」？`,
+    retry: '重试同一请求',
+    delete: '删除',
+    deleteUnknown: '没有收到删除确认，请重试或返回列表查看。',
+  },
+  {
+    state: { waiting: 'Waiting for you', running: 'Working', failed: 'Failed' },
+    unavailable: (message: string) => `Unavailable. ${message}`,
+    previous: (state: string) => `Last status: ${state}`,
+    untitled: 'Untitled session',
+    noChats: 'No chats yet',
+    act: 'Review',
+    next: (time: string) => `Next run ${time}`,
+    actions: (name: string) => `Actions for ${name}`,
+    settings: 'Settings',
+    deleteAgent: 'Delete Agent',
+    moreActions: (name: string) => `More actions for ${name}`,
+    archivedCount: (count: number) => `Archived topics (${formatNumber(count)})`,
+    archived: 'Archived',
+    deleteTitle: (name: string) => `Delete “${name}”?`,
+    retry: 'Retry the same request',
+    delete: 'Delete',
+    deleteUnknown: 'Deletion hasn’t been confirmed. Retry or check the list.',
+  },
+)
 
 /** The roster as the shell's snapshot gives it: your Agents, 通用 where this device reads Agents, and deleted ones with topics. */
 export function shellRoster(shell: Pick<ShellState, 'snapshot' | 'catalog'>): RosterRow[] {
@@ -56,8 +99,6 @@ export function faceState(row: Pick<RosterRow, 'state' | 'unavailable'>, frozen:
   return row.state
 }
 
-const STATE_LABEL: Record<Exclude<RosterState, 'idle'>, string> = { waiting: '等你点头', running: '在工作', failed: '失败' }
-
 /**
  * The icon at a row's end: the amber flag while it waits for you, the running arc while it works, the alert when its
  * latest run failed, a quiet mark when it cannot start, nothing at rest. Frozen (the Mac is not reachable), the last
@@ -78,12 +119,18 @@ export function RosterMark({
   if (state === 'idle') {
     if (!unavailable) return null
     return (
-      <span className="agent-mark" data-tone="neutral" role="img" aria-label={`不可用：${unavailable}`} title={`不可用：${unavailable}`}>
+      <span
+        className="agent-mark"
+        data-tone="neutral"
+        role="img"
+        aria-label={COPY.unavailable(unavailable)}
+        title={COPY.unavailable(unavailable)}>
         <Icon icon={BlockedGlyph} size={14} />
       </span>
     )
   }
-  const label = frozen ? `上次状态：${words ?? STATE_LABEL[state]}` : (words ?? STATE_LABEL[state])
+  const word = words ?? COPY.state[state]
+  const label = frozen ? COPY.previous(word) : word
   return (
     <span className="agent-mark" data-tone={frozen ? 'neutral' : state} role="img" aria-label={label} title={label}>
       <StatusGlyph running={state === 'running' && !frozen} state={frozen ? `frozen:${state}` : state} size={14}>
@@ -110,13 +157,13 @@ type AgentRowMenu = (row: RosterRow) => ReactNode
  */
 export function helperLine(row: Pick<RosterRow, 'state' | 'word' | 'unavailable' | 'topics' | 'duty'>, frozen: boolean): string {
   if (row.state !== 'idle') {
-    const words = row.word?.words ?? STATE_LABEL[row.state]
-    return frozen ? `上次状态：${words}` : words
+    const words = row.word?.words ?? COPY.state[row.state]
+    return frozen ? COPY.previous(words) : words
   }
-  if (row.unavailable) return '现在不能开始'
+  if (row.unavailable) return AGENT_SPACE_COPY.cannotStart
   const topic = row.topics[0]
-  if (topic) return topic.title || '未命名会话'
-  return row.duty || '还没聊过'
+  if (topic) return topic.title || COPY.untitled
+  return row.duty || COPY.noChats
 }
 
 /** The next time one of this helper's schedules that is on will run, when any will. */
@@ -140,7 +187,7 @@ function RowAction({ shell, row, frozen }: { shell: ShellState; row: RosterRow; 
       onClick={() => {
         shell.choose(waiting.id, () => shell.setRoute({ entry: 'sessions' }))
       }}>
-      去处理
+      {COPY.act}
     </Button>
   )
 }
@@ -161,7 +208,7 @@ function Roster({
 }) {
   const current = page ? undefined : currentAgent(shell)
   return (
-    <ul className="agent-roster" aria-label="我的 Agent" data-page={page ? '' : undefined}>
+    <ul className="agent-roster" aria-label={AGENT_SPACE_COPY.myAgents} data-page={page ? '' : undefined}>
       {rows.map(row => {
         const next = page ? nextRun(shell.snapshot.automations, row.id) : undefined
         return (
@@ -187,7 +234,7 @@ function Roster({
                     </span>
                     {next && (
                       <time className="space-agent-next" dateTime={next}>
-                        下次 {whenWords(next, shell.now)}
+                        {COPY.next(whenWords(next, shell.now))}
                       </time>
                     )}
                   </span>
@@ -234,7 +281,7 @@ export function AgentsSpaceList({ shell, page = false, hideEmpty = false }: { sh
     if (row.gone || row.confirming) return null
     return (
       <Menu
-        label={`${row.name} 的操作`}
+        label={COPY.actions(row.name)}
         placement="bottom-end"
         context={rowOf('.agent-row')}
         sections={[
@@ -243,7 +290,7 @@ export function AgentsSpaceList({ shell, page = false, hideEmpty = false }: { sh
             items: [
               {
                 id: 'settings',
-                label: '设置',
+                label: COPY.settings,
                 leading: <Icon icon={SettingsGlyph} size={14} />,
                 onSelect: () => shell.openMyAgent({ id: row.id, tab: 'settings' }),
               },
@@ -251,7 +298,7 @@ export function AgentsSpaceList({ shell, page = false, hideEmpty = false }: { sh
                 ? [
                     {
                       id: 'delete',
-                      label: '删除 Agent',
+                      label: COPY.deleteAgent,
                       danger: true,
                       leading: <Icon icon={TrashGlyph} size={14} />,
                       disabled: offline || writes.held || writes.saving,
@@ -265,16 +312,18 @@ export function AgentsSpaceList({ shell, page = false, hideEmpty = false }: { sh
             ],
           },
         ]}
-        trigger={props => <IconButton {...props} className="agent-row-more" icon={MoreGlyph} label={`更多操作：${row.name}`} size="xs" />}
+        trigger={props => (
+          <IconButton {...props} className="agent-row-more" icon={MoreGlyph} label={COPY.moreActions(row.name)} size="xs" />
+        )}
       />
     )
   }
   return (
-    <nav className="space-list" aria-label="我的 Agent" data-people="roster" data-page={page ? '' : undefined}>
+    <nav className="space-list" aria-label={AGENT_SPACE_COPY.myAgents} data-people="roster" data-page={page ? '' : undefined}>
       <section className="space-group" aria-label="Agent">
         {!page && (
           <h2 className="space-head">
-            <span>我的 Agent</span>
+            <span>{AGENT_SPACE_COPY.myAgents}</span>
           </h2>
         )}
         {locked ? (
@@ -284,10 +333,10 @@ export function AgentsSpaceList({ shell, page = false, hideEmpty = false }: { sh
             <Roster shell={shell} rows={rows} frozen={frozen} menu={menu} page={page} />
             {snapshot.customAgents === undefined ? (
               <p className="space-quiet" role="status">
-                正在确认上一项修改
+                {AGENT_SPACE_COPY.confirming}
               </p>
             ) : (
-              !hideEmpty && own.length === 0 && <p className="space-quiet">还没有自己的 Agent</p>
+              !hideEmpty && own.length === 0 && <p className="space-quiet">{AGENT_SPACE_COPY.noAgents}</p>
             )}
           </>
         )}
@@ -296,15 +345,15 @@ export function AgentsSpaceList({ shell, page = false, hideEmpty = false }: { sh
         <button
           type="button"
           className="archived-row"
-          aria-label={`已归档的话题（${archived}）`}
+          aria-label={COPY.archivedCount(archived)}
           onClick={() => {
             shell.openAgentTopics(true)
           }}>
           <span className="sidebar-row-icon">
             <ArchiveGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           </span>
-          <span>已归档</span>
-          <span className="archived-count">{archived}</span>
+          <span>{COPY.archived}</span>
+          <span className="archived-count">{formatNumber(archived)}</span>
         </button>
       )}
       {canDelete && writes.held && !removing && (
@@ -312,16 +361,16 @@ export function AgentsSpaceList({ shell, page = false, hideEmpty = false }: { sh
       )}
       {canDelete && removing && (
         <ConfirmDialog
-          title={`删除「${removing.name}」？`}
+          title={COPY.deleteTitle(removing.name)}
           message={agentDeletionMessage()}
           danger
-          confirmLabel={writes.held ? '重试同一请求' : '删除'}
+          confirmLabel={writes.held ? COPY.retry : COPY.delete}
           onClose={() => setRemoving(null)}
           onConfirm={async () => {
             const done = writes.held
               ? await writes.retry()
               : await writes.run(`agent:${removing.id}`, `custom-agents/${encodeURIComponent(removing.id)}`, 'DELETE', {})
-            if (done === undefined) throw new MessageError('没有收到删除确认，请重试或返回列表查看。')
+            if (done === undefined) throw new MessageError(COPY.deleteUnknown)
           }}
         />
       )}

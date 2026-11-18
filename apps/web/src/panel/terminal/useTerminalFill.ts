@@ -4,6 +4,28 @@ import { atPrompt, fillTab, pasteData } from './fill.ts'
 import { terminalFills, useFillAsk, type FillAsk } from './fills.ts'
 import type { TerminalTab } from './model.ts'
 import type { TerminalsRead } from './useTerminals.ts'
+import { defineCopy, formatNumber, plural } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    replaced: '已换成新的命令',
+    terminalLimit: (limit: number) => `已有 ${formatNumber(limit)} 个终端`,
+    notOpened: '终端没有打开',
+    closed: '终端已关闭',
+    ended: '终端已结束',
+    cannotFill: '这条命令不能填入',
+    unknown: '输入可能没有送达终端',
+  },
+  {
+    replaced: 'Replaced with a new command',
+    terminalLimit: (limit: number) => `There are already ${plural(limit, { one: '{n} terminal', other: '{n} terminals' })}`,
+    notOpened: 'The terminal didn’t open',
+    closed: 'Terminal closed',
+    ended: 'Terminal ended',
+    cannotFill: 'This command can’t be filled in',
+    unknown: 'Input may not have reached the terminal',
+  },
+)
 
 /** What a screen offers once its xterm is ready: input in order with the rest, and focus. */
 export interface ScreenHandle {
@@ -47,7 +69,7 @@ export function useTerminalFill(input: {
     if (!ask) return
     terminalFills.take(ask)
     setStep(previous => {
-      previous?.ask.settle('已换成新的命令')
+      previous?.ask.settle(COPY.replaced)
       return { ask, phase: 'choose' }
     })
     reveal.current?.()
@@ -68,10 +90,10 @@ export function useTerminalFill(input: {
       if (read.kind !== 'ready') return
       const tab = fillTab(tabs, active, filled.current)
       if (tab) return setStep({ ask: current, phase: 'wait', terminalId: tab.id })
-      if (tabs.length >= TERMINALS_PER_SESSION) return fail(`已有 ${TERMINALS_PER_SESSION} 个终端`)
+      if (tabs.length >= TERMINALS_PER_SESSION) return fail(COPY.terminalLimit(TERMINALS_PER_SESSION))
       setStep({ ask: current, phase: 'opening' })
       void open().then(id => {
-        if (id === undefined) return fail('终端没有打开')
+        if (id === undefined) return fail(COPY.notOpened)
         // A shell that never reaches a prompt with bracketed paste on gets nothing, and the terminal opened for it goes.
         current.onFail(() => {
           const opened = latest.current.find(item => item.id === id)
@@ -83,15 +105,15 @@ export function useTerminalFill(input: {
     }
     const { terminalId } = step
     const tab = tabs.find(item => item.id === terminalId)
-    if (!tab) return fail('终端已关闭')
-    if (tab.summary.status !== 'running') return fail('终端已结束')
+    if (!tab) return fail(COPY.closed)
+    if (tab.summary.status !== 'running') return fail(COPY.ended)
     // Until the shell waits at its prompt with bracketed paste on (a new one is still starting, or a program runs):
     // the request's deadline ends the wait.
     const handle = handles.current.get(tab.id)
     const prompt = tab.summary.prompt
     if (!atPrompt(tab.summary, filled.current) || !handle || prompt === undefined) return
     const data = pasteData(current.command)
-    if (data === undefined) return fail('这条命令不能填入')
+    if (data === undefined) return fail(COPY.cannotFill)
     setStep(undefined)
     setActive(tab.id)
     filled.current.set(tab.id, prompt)
@@ -100,7 +122,7 @@ export function useTerminalFill(input: {
         handle.focus()
         current.settle()
       },
-      (cause: unknown) => current.settle(cause instanceof Error ? cause.message : '输入可能没有送达终端'),
+      (cause: unknown) => current.settle(cause instanceof Error ? cause.message : COPY.unknown),
     )
   }, [step, tabs, active, read, unavailable, open, close, setActive, handleCount])
 

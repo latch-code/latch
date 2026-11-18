@@ -1,10 +1,23 @@
 import type { AgentPresetSettings, AgentSettings, CommandDetection } from '@latch/protocol'
+import { defineCopy } from './i18n.ts'
+
+const DETECTION_COPY = defineCopy(
+  {
+    adapterMissing: (program: string, adapter: string) => `已安装 ${program}，还差让 Latch 连接它的适配器 ${adapter}`,
+    notFound: (command: string) => `未找到命令 ${command}`,
+  } as const,
+  {
+    adapterMissing: (program: string, adapter: string) =>
+      `${program} is installed; the adapter that connects it to Latch, ${adapter}, is missing`,
+    notFound: (command: string) => `Command not found: ${command}`,
+  },
+)
 
 /** Explain only the locally detected command/adapter state, without loading the settings editor. */
 export function missingText(agent: Pick<AgentSettings, 'command' | 'detected'>): string | undefined {
   if (agent.detected.found) return undefined
   const known = agent.detected.agent
-  return known?.found ? `已安装 ${known.command}，还差让 Latch 连接它的适配器 ${agent.command}` : `未找到命令 ${agent.command}`
+  return known?.found ? DETECTION_COPY.adapterMissing(known.command, agent.command) : DETECTION_COPY.notFound(agent.command)
 }
 
 /** The program a person knows is here and only the adapter that connects it is not: what to call it, or undefined. */

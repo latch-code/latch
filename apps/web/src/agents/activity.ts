@@ -7,8 +7,48 @@ import type {
   ScheduleResult,
   ScheduleResultOutcome,
 } from '@latch/protocol'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 import { RUN_WORDS, scheduleWords } from './model.ts'
 import { NEW_SCHEDULE, type ScheduleDraft } from './scheduleModel.ts'
+
+const COPY = defineCopy(
+  {
+    completed: '已完成',
+    failed: '失败',
+    stopped: '已停止',
+    interrupted: '已中断',
+    unknown: '结果未知',
+    proposal: { pending: '等你决定', saved: '已保存', dismissed: '不要了' } satisfies Record<MemoryProposal['state'], string>,
+    memory: { added: '记忆 +1', updated: '记忆已修改', deleted: '记忆 −1' },
+    chat: '开始聊天',
+    untitled: '未命名会话',
+    scheduled: '定时',
+    result: '定时结果',
+    recall: '查记忆',
+    times: (count: number) => `${formatNumber(count)} 次`,
+    scheduleProposal: '提议定时',
+    memoryProposal: '提议记忆',
+    buckets: { today: '今天', week: '本周', earlier: '更早' },
+  },
+  {
+    completed: 'Done',
+    failed: 'Failed',
+    stopped: 'Stopped',
+    interrupted: 'Interrupted',
+    unknown: 'Outcome unknown',
+    proposal: { pending: 'Needs a decision', saved: 'Saved', dismissed: 'Dismissed' },
+    memory: { added: 'Memory added', updated: 'Memory edited', deleted: 'Memory removed' },
+    chat: 'Started a chat',
+    untitled: 'Untitled session',
+    scheduled: 'Scheduled run',
+    result: 'Scheduled result',
+    recall: 'Memory lookup',
+    times: (count: number) => plural(count, { one: '{n} time', other: '{n} times' }),
+    scheduleProposal: 'Proposed schedule',
+    memoryProposal: 'Proposed memory',
+    buckets: { today: 'Today', week: 'This week', earlier: 'Earlier' },
+  },
+)
 
 /**
  * What an Agent's result cards, schedule proposals, 动态 and 资料库 say, from the Host's records only: nothing here
@@ -19,15 +59,15 @@ import { NEW_SCHEDULE, type ScheduleDraft } from './scheduleModel.ts'
 export function outcomeWord(outcome: ScheduleResultOutcome): { word: string; tone: StatusTone } {
   switch (outcome) {
     case 'completed':
-      return { word: '已完成', tone: 'done' }
+      return { word: COPY.completed, tone: 'done' }
     case 'failed':
-      return { word: '失败', tone: 'failed' }
+      return { word: COPY.failed, tone: 'failed' }
     case 'cancelled':
-      return { word: '已停止', tone: 'neutral' }
+      return { word: COPY.stopped, tone: 'neutral' }
     case 'interrupted':
-      return { word: '已中断', tone: 'warn' }
+      return { word: COPY.interrupted, tone: 'warn' }
     default:
-      return { word: '结果未知', tone: 'warn' }
+      return { word: COPY.unknown, tone: 'warn' }
   }
 }
 
@@ -80,17 +120,14 @@ export function proposalDraft(proposal: Pick<MemoryProposal, 'schedule' | 'conte
   }
 }
 
-const PROPOSAL_STATE: Record<MemoryProposal['state'], string> = { pending: '等你决定', saved: '已保存', dismissed: '不要了' }
-const MEMORY_WORDS = { added: '记忆 +1', updated: '记忆已修改', deleted: '记忆 −1' } as const
-
 /** One 动态 row in words: a lead, what it is about, and a state with its tone. Never a memory's or a proposal's text. */
 export function activityWords(item: AgentActivityItem): { lead: string; subject?: string; state?: { word: string; tone: StatusTone } } {
   switch (item.kind) {
     case 'topic':
-      return { lead: '开始聊天', subject: item.title || '未命名会话' }
+      return { lead: COPY.chat, subject: item.title || COPY.untitled }
     case 'run':
       return {
-        lead: '定时',
+        lead: COPY.scheduled,
         subject: item.name,
         state: {
           word: RUN_WORDS[item.state],
@@ -107,15 +144,15 @@ export function activityWords(item: AgentActivityItem): { lead: string; subject?
         },
       }
     case 'result':
-      return { lead: '定时结果', subject: item.name, state: outcomeWord(item.outcome) }
+      return { lead: COPY.result, subject: item.name, state: outcomeWord(item.outcome) }
     case 'memory':
-      return { lead: MEMORY_WORDS[item.change] }
+      return { lead: COPY.memory[item.change] }
     case 'recall':
-      return { lead: '查记忆', subject: `${item.count} 次` }
+      return { lead: COPY.recall, subject: COPY.times(item.count) }
     case 'proposal':
       return {
-        lead: item.proposal === 'schedule' ? '提议定时' : '提议记忆',
-        state: { word: PROPOSAL_STATE[item.state], tone: item.state === 'pending' ? 'warn' : item.state === 'saved' ? 'done' : 'neutral' },
+        lead: item.proposal === 'schedule' ? COPY.scheduleProposal : COPY.memoryProposal,
+        state: { word: COPY.proposal[item.state], tone: item.state === 'pending' ? 'warn' : item.state === 'saved' ? 'done' : 'neutral' },
       }
   }
 }
@@ -138,30 +175,30 @@ export function activityTarget(item: AgentActivityItem): { session: string } | {
 }
 
 /** 今天 / 本周 / 更早, by this device's clock. */
-export function dayBucket(at: string, now = Date.now()): '今天' | '本周' | '更早' {
+export function dayBucket(at: string, now = Date.now()): keyof typeof COPY.buckets {
   const date = new Date(at)
   const today = new Date(now)
   const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
-  if (date.getTime() >= start) return '今天'
-  if (date.getTime() >= start - 6 * 86_400_000) return '本周'
-  return '更早'
+  if (date.getTime() >= start) return 'today'
+  if (date.getTime() >= start - 6 * 86_400_000) return 'week'
+  return 'earlier'
 }
 
 /** Rows split into 今天 / 本周 / 更早, in their order; empty buckets are left out. */
-export function bucketed<T extends { at: string }>(rows: readonly T[], now = Date.now()): Array<{ label: string; rows: T[] }> {
-  const buckets: Array<{ label: string; rows: T[] }> = []
+export function bucketed<T extends { at: string }>(rows: readonly T[], now = Date.now()): Array<{ key: string; label: string; rows: T[] }> {
+  const buckets: Array<{ key: string; label: string; rows: T[] }> = []
   for (const row of rows) {
-    const label = dayBucket(row.at, now)
+    const key = dayBucket(row.at, now)
     const last = buckets.at(-1)
-    if (last?.label === label) last.rows.push(row)
-    else buckets.push({ label, rows: [row] })
+    if (last?.key === key) last.rows.push(row)
+    else buckets.push({ key, label: COPY.buckets[key], rows: [row] })
   }
   return buckets
 }
 
 /** The 资料库 group's heading: the topic's title, or the schedule's name for a run. */
 export function groupTitle(group: Pick<AgentLibraryGroup, 'title'>): string {
-  return group.title || '未命名会话'
+  return group.title || COPY.untitled
 }
 
 /** What the snapshot says of an owner's result cards, so its reads are made again when one arrives or moves. */

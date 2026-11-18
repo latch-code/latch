@@ -18,14 +18,85 @@ import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { AppFrame, hostInfo } from '../plugin-pages/AppFrame.tsx'
 import { useSecureCover } from '../plugin-pages/secureCover.ts'
 import { useShellTheme } from '../hooks/useShellTheme.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    draft: '草稿',
+    build: '构建',
+    preview: '预览',
+    apply: '应用',
+    newApp: '新应用',
+    inDevelopment: '开发中',
+    progress: '进度',
+    sourceSession: '来自会话',
+    deletedSession: '已删除的会话',
+    refreshSession: '从会话更新',
+    buildTimedOut: '构建超时',
+    buildFailed: '构建没通过',
+    noCredentials: '无凭据',
+    previewScope: '预览不连接 Latch、不读密钥、不开会话；数据只在这一页里。',
+    previewNoSessions: '预览里不会开会话',
+    applied: '已应用',
+    open: '打开',
+    retrySame: '重试同一请求',
+    unknown: '结果尚未确认。',
+    builtInBuilder: '用 Latch 自带的工具构建',
+    buildScope: '构建只读导入时的快照，不运行草稿里的代码。',
+    approveOnMac: '应用要在这台 Mac 上确认一次',
+    approveScope: '能力变多时要确认；确认后侧栏出现入口。',
+    discard: '丢弃',
+    returnToAgent: '交回 Agent',
+    applyVersion: '应用新版本',
+    rebuild: '重新构建',
+    haveAgentBuild: '让 Agent 做',
+    start: '开始',
+    pageYouWant: '想要的页面',
+    noAgentHarness: '没有可以用 Agent 模式开始的 Harness。',
+    appId: (id: string) => `新应用 ${id}`,
+    allDiagnostics: (count: number) => `全部 ${formatNumber(count)} 条`,
+    previewFailed: (message: string) => `预览没有打开：${message}`,
+  },
+  {
+    draft: 'Draft',
+    build: 'Build',
+    preview: 'Preview',
+    apply: 'Apply',
+    newApp: 'New app',
+    inDevelopment: 'In development',
+    progress: 'Progress',
+    sourceSession: 'From session',
+    deletedSession: 'Deleted session',
+    refreshSession: 'Refresh from session',
+    buildTimedOut: 'Build timed out',
+    buildFailed: 'Build failed',
+    noCredentials: 'No credentials',
+    previewScope: 'The preview stays on this page. It cannot connect to Latch, read secrets or start sessions.',
+    previewNoSessions: 'The preview cannot start sessions',
+    applied: 'Applied',
+    open: 'Open',
+    retrySame: 'Retry same request',
+    unknown: 'Result unknown.',
+    builtInBuilder: 'Build with Latch tools',
+    buildScope: 'The builder reads the imported snapshot. Draft code does not run during the build.',
+    approveOnMac: 'Confirm on this Mac to apply',
+    approveScope: 'Additional capabilities require confirmation. The app appears in the sidebar after confirmation.',
+    discard: 'Discard',
+    returnToAgent: 'Hand back to Agent',
+    applyVersion: 'Apply new version',
+    rebuild: 'Rebuild',
+    haveAgentBuild: 'Have an Agent build it',
+    start: 'Start',
+    pageYouWant: 'Describe the page',
+    noAgentHarness: 'No Harness can start in Agent mode.',
+    appId: (id: string) => `New app ${id}`,
+    allDiagnostics: (count: number) => plural(count, { one: 'All {n} diagnostic', other: 'All {n} diagnostics' }),
+    previewFailed: (message: string) => `Couldn’t open the preview. ${message}`,
+  },
+)
 
 export type AppPhase = 'draft' | 'building' | 'build-failed' | 'preview' | 'confirm' | 'applied'
-const PHASES = [
-  { id: 'draft', label: '草稿' },
-  { id: 'build', label: '构建' },
-  { id: 'preview', label: '预览' },
-  { id: 'apply', label: '应用' },
-] as const
+const PHASES = ['draft', 'build', 'preview', 'apply'] as const
 const AT: Record<AppPhase, number> = { draft: 0, building: 1, 'build-failed': 1, preview: 2, confirm: 3, applied: 4 }
 
 /** Where a draft from a session stands: the four steps 草稿 › 构建 › 预览 › 应用. */
@@ -184,15 +255,15 @@ function AppDraftCard({
       : undefined
 
   return (
-    <section className="new-app-card" aria-label={`新应用 ${record.id}`} data-phase={phase}>
+    <section className="new-app-card" aria-label={COPY.appId(record.id)} data-phase={phase}>
       <header className="new-app-head">
-        <h3>新应用</h3>
+        <h3>{COPY.newApp}</h3>
         <span className="new-app-id">{record.id}</span>
         <span className="new-app-spacer" />
-        {source && <span className="new-app-dev">开发中</span>}
+        {source && <span className="new-app-dev">{COPY.inDevelopment}</span>}
         {source && (
           <Switch
-            label="开发中"
+            label={COPY.inDevelopment}
             checked={source.dev}
             disabled={busy !== null}
             onCheckedChange={dev => {
@@ -205,43 +276,43 @@ function AppDraftCard({
           />
         )}
       </header>
-      <ol className="new-app-phases" aria-label="进度">
+      <ol className="new-app-phases" aria-label={COPY.progress}>
         {PHASES.map((step, index) => (
           <li
-            key={step.id}
+            key={step}
             data-s={marks[index] || undefined}
             aria-current={marks[index] === 'now' || marks[index] === 'wait' ? 'step' : undefined}>
             <i aria-hidden="true" />
-            <span>{step.label}</span>
+            <span>{COPY[step]}</span>
           </li>
         ))}
       </ol>
       {source && (
         <div className="new-app-source">
           <Icon icon={AgentsGlyph} size={14} />
-          <span>来自会话</span>
+          <span>{COPY.sourceSession}</span>
           {onOpenSession && sessionTitle ? (
             <Button variant="ghost" size="xs" onClick={() => onOpenSession(source.sessionId)}>
               {sessionTitle.length > 32 ? `${sessionTitle.slice(0, 31)}…` : sessionTitle}
             </Button>
           ) : (
-            <span>{sessionTitle ?? '已删除的会话'}</span>
+            <span>{sessionTitle ?? COPY.deletedSession}</span>
           )}
           {sessionTitle && (
             <Button variant="ghost" size="xs" icon={RefreshGlyph} disabled={busy !== null} onClick={reimport}>
-              从会话更新
+              {COPY.refreshSession}
             </Button>
           )}
         </div>
       )}
       {(failed || (lines.length > 0 && phase !== 'applied')) && (
-        <InlineNotice tone="error" title={build?.status === 'timeout' ? '构建超时' : '构建没通过'} className="new-app-failure">
+        <InlineNotice tone="error" title={build?.status === 'timeout' ? COPY.buildTimedOut : COPY.buildFailed} className="new-app-failure">
           {lines.length > 0 && (
             <pre className="new-app-diagnostics">{(showAll ? lines : lines.slice(0, 5)).map(diagnosticLine).join('\n')}</pre>
           )}
           {lines.length > 5 && !showAll && (
             <Button variant="ghost" size="xs" onClick={() => setShowAll(true)}>
-              {`全部 ${lines.length} 条`}
+              {COPY.allDiagnostics(lines.length)}
             </Button>
           )}
         </InlineNotice>
@@ -249,8 +320,8 @@ function AppDraftCard({
       {pagePreview && phase !== 'applied' && (
         <div className="new-app-preview">
           <div className="new-app-preview-label">
-            <span className="new-app-tag">预览</span>
-            <Hint label="无凭据">预览不连接 Latch、不读密钥、不开会话；数据只在这一页里。</Hint>
+            <span className="new-app-tag">{COPY.preview}</span>
+            <Hint label={COPY.noCredentials}>{COPY.previewScope}</Hint>
           </div>
           <div ref={previewSurface} className="new-app-preview-frame">
             <AppFrame
@@ -261,7 +332,7 @@ function AppDraftCard({
               info={hostInfo(theme, true, false, { preview: true })}
               covered={covered}
               onOutcome={outcome => {
-                if (outcome.kind === 'failed') setNotice(`预览没有打开：${outcome.message}`)
+                if (outcome.kind === 'failed') setNotice(COPY.previewFailed(outcome.message))
               }}
               onOpenSession={() => {}}
               onShortcut={() => {}}
@@ -269,7 +340,7 @@ function AppDraftCard({
               preview={{
                 moduleUrl: `${route(record.id)}/builds/${pagePreview.bundleHash}.js`,
                 ...(app?.preview?.tasks ? { tasks: app.preview.tasks } : {}),
-                onPreviewOnly: () => setNotice('预览里不会开会话'),
+                onPreviewOnly: () => setNotice(COPY.previewNoSessions),
               }}
             />
           </div>
@@ -279,12 +350,12 @@ function AppDraftCard({
       {phase === 'applied' && (
         <div className="new-app-applied">
           <Icon icon={CheckGlyph} size={16} />
-          <strong>已应用</strong>
+          <strong>{COPY.applied}</strong>
           <span className="new-app-meta">{`· ${record.id} ${record.version}`}</span>
           <span className="new-app-spacer" />
           {app && onOpenApp && record.enabled && (
             <Button variant="ghost" onClick={() => onOpenApp({ pluginId: record.id, appId: app.id })}>
-              打开
+              {COPY.open}
             </Button>
           )}
         </div>
@@ -292,14 +363,14 @@ function AppDraftCard({
       {phase === 'confirm' && <InlineConfirm active rank={1} className="new-app-confirm" />}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {pending && !busy && (
-        <InlineNotice tone="warn" action={<Button onClick={() => void perform(pending)}>重试同一请求</Button>}>
-          结果尚未确认。
+        <InlineNotice tone="warn" action={<Button onClick={() => void perform(pending)}>{COPY.retrySame}</Button>}>
+          {COPY.unknown}
         </InlineNotice>
       )}
       {phase !== 'applied' && phase !== 'confirm' && (
         <footer className="new-app-foot">
-          {phase === 'building' && <Hint label="用 Latch 自带的工具构建">构建只读导入时的快照，不运行草稿里的代码。</Hint>}
-          {phase === 'preview' && <Hint label="应用要在这台 Mac 上确认一次">能力变多时要确认；确认后侧栏出现入口。</Hint>}
+          {phase === 'building' && <Hint label={COPY.builtInBuilder}>{COPY.buildScope}</Hint>}
+          {phase === 'preview' && <Hint label={COPY.approveOnMac}>{COPY.approveScope}</Hint>}
           <span className="new-app-spacer" />
           {!applied && (phase === 'draft' || failed) && (
             <Button
@@ -312,7 +383,7 @@ function AppDraftCard({
                   options: { method: 'DELETE', body: { requestId: newRequestId(), baseRevision: record.revision } },
                 })
               }}>
-              丢弃
+              {COPY.discard}
             </Button>
           )}
           {failed && source && sessionTitle ? (
@@ -323,7 +394,7 @@ function AppDraftCard({
                 handDraft(source.sessionId, handBackText(lines))
                 onOpenSession?.(source.sessionId)
               }}>
-              交回 Agent
+              {COPY.returnToAgent}
             </Button>
           ) : phase === 'preview' ? (
             <Button
@@ -337,7 +408,7 @@ function AppDraftCard({
                   options: { method: 'POST', body: { requestId: newRequestId(), revision: record.revision } },
                 })
               }}>
-              {applied ? '应用新版本' : '应用'}
+              {applied ? COPY.applyVersion : COPY.apply}
             </Button>
           ) : (
             <Button
@@ -351,7 +422,7 @@ function AppDraftCard({
                   options: { method: 'POST', timeoutMs: 90_000, body: { requestId: newRequestId(), revision: record.revision } },
                 })
               }}>
-              {failed ? '重新构建' : '构建'}
+              {failed ? COPY.rebuild : COPY.build}
             </Button>
           )}
         </footer>
@@ -403,7 +474,7 @@ function AgentDraftDialog({
   return (
     <Dialog
       open
-      title="让 Agent 做"
+      title={COPY.haveAgentBuild}
       size="lg"
       className="agent-draft-dialog"
       onClose={() => {
@@ -415,11 +486,17 @@ function AgentDraftDialog({
           loading={busy}
           disabled={!harnessId || prompt.trim() === DEFAULT_PROMPT.trim() || !prompt.trim()}
           onClick={() => void start()}>
-          开始
+          {COPY.start}
         </Button>
       }>
       <div className="settings-form">
-        <TextAreaField label="想要的页面" rows={4} value={prompt} maxLength={4000} onChange={event => setPrompt(event.target.value)} />
+        <TextAreaField
+          label={COPY.pageYouWant}
+          rows={4}
+          value={prompt}
+          maxLength={4000}
+          onChange={event => setPrompt(event.target.value)}
+        />
         {usable.length > 1 && (
           <div className="agent-draft-harness">
             <span className="ui-field-label">Harness</span>
@@ -432,7 +509,7 @@ function AgentDraftDialog({
             />
           </div>
         )}
-        {usable.length === 0 && <InlineNotice tone="warn">没有可以用 Agent 模式开始的 Harness。</InlineNotice>}
+        {usable.length === 0 && <InlineNotice tone="warn">{COPY.noAgentHarness}</InlineNotice>}
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
         <InlineConfirm active={busy} rank={1} />
       </div>
@@ -462,9 +539,9 @@ export function NewApps({
   return (
     <div className="new-apps">
       <div className="new-apps-head">
-        <h3>新应用</h3>
+        <h3>{COPY.newApp}</h3>
         <Button icon={AgentsGlyph} onClick={() => setAsking(true)}>
-          让 Agent 做
+          {COPY.haveAgentBuild}
         </Button>
       </div>
       {drafts.map(record => (

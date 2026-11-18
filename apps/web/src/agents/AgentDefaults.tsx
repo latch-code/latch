@@ -10,7 +10,35 @@ import type { DeviceAccess } from '../core/permissions.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { isPersonalChat, topicOwner } from './chat.ts'
 import { agentDefaultChoice, usesHostModels, withAgentDefaultChoice, type AgentDraft } from './model.ts'
-import { DEVICE_OFFLINE } from '../core/hostState.ts'
+import { CONNECTION_COPY } from '../core/hostState.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    model: '模型',
+    thinking: '思考',
+    beforeActing: '做事前',
+    confirmingWrite: '正在确认修改结果',
+    defaultModel: '用默认模型',
+    defaultHarness: '用 Harness 默认',
+    viewOnly: '这台设备只能查看',
+    afterTurn: '这一轮结束后可用',
+    confirmingOptions: '正在确认会话选项',
+    currentChat: '当前聊天',
+  },
+  {
+    model: 'Model',
+    thinking: 'Thinking',
+    beforeActing: 'Before acting',
+    confirmingWrite: 'Confirming the change',
+    defaultModel: 'Use default model',
+    defaultHarness: 'Use Harness default',
+    viewOnly: 'This device is read only',
+    afterTurn: 'Available after this turn',
+    confirmingOptions: 'Confirming session options',
+    currentChat: 'Current chat',
+  },
+)
 
 /** The same controls as a new Code session, saved as defaults without writing to any existing topic. */
 export function AgentDefaults({
@@ -44,7 +72,7 @@ export function AgentDefaults({
   }
   return (
     <>
-      <dt>模型</dt>
+      <dt>{COPY.model}</dt>
       <dd>
         <DraftModelControl
           catalog={catalog}
@@ -56,7 +84,7 @@ export function AgentDefaults({
           onManageModels={onManage}
         />
       </dd>
-      <dt>思考</dt>
+      <dt>{COPY.thinking}</dt>
       <dd>
         <DraftThinkingControl
           catalog={catalog}
@@ -68,12 +96,14 @@ export function AgentDefaults({
           onManageModels={onManage}
         />
       </dd>
-      <dt>做事前</dt>
+      <dt>{COPY.beforeActing}</dt>
       <dd>
         {permission && (
           <PermissionChip
             view={
-              disabled ? { ...permission, rows: permission.rows?.map(row => ({ ...row, disabledReason: '正在确认修改结果' })) } : permission
+              disabled
+                ? { ...permission, rows: permission.rows?.map(row => ({ ...row, disabledReason: COPY.confirmingWrite })) }
+                : permission
             }
             onChoose={(option, value) => update({ config: { ...choice.config, [option.id]: value } })}
             onOpenChange={open => {
@@ -92,7 +122,7 @@ export function AgentDefaults({
               const { model: _model, engineOptions: _options, ...rest } = draft
               onDraft(rest)
             }}>
-            {usesHostModels(harness) ? '用默认模型' : '用 Harness 默认'}
+            {usesHostModels(harness) ? COPY.defaultModel : COPY.defaultHarness}
           </Button>
         </dd>
       )}
@@ -117,13 +147,13 @@ export function CurrentAgentOptions({ shell, owner }: { shell: ShellState; owner
   const config = current.config ?? []
   if (!config.length && !feedback) return null
   const locked = !access.scopes.has('run')
-    ? '这台设备只能查看'
+    ? COPY.viewOnly
     : shell.connection === 'offline'
-      ? DEVICE_OFFLINE
+      ? CONNECTION_COPY.offline
       : shell.active
-        ? '这一轮结束后可用'
+        ? COPY.afterTurn
         : busy
-          ? '正在确认会话选项'
+          ? COPY.confirmingOptions
           : undefined
   const permission = permissionView({
     harness: harnessInfo,
@@ -147,9 +177,9 @@ export function CurrentAgentOptions({ shell, owner }: { shell: ShellState; owner
     onRefresh: shell.refreshConfig,
   }
   return (
-    <section className="agent-form-section" aria-label="当前聊天">
+    <section className="agent-form-section" aria-label={COPY.currentChat}>
       <header>
-        <h3>当前聊天</h3>
+        <h3>{COPY.currentChat}</h3>
       </header>
       {config.length > 0 && (
         <div className="agent-current-options">

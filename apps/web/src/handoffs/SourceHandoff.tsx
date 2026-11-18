@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MessageSquareQuote, TextQuote } from 'lucide-react'
 import { readsProjectFiles, type Handoff, type HandoffCreate, type HandoffList, type HostCatalog, type Message } from '@latch/protocol'
 import {
@@ -55,7 +55,117 @@ import {
   type WriteFailure,
 } from './model.ts'
 import { fileHash, unansweredCreate, type SessionHandoffs } from './useHandoffs.ts'
-import { DEVICE_OFFLINE } from '../core/hostState.ts'
+import { CONNECTION_COPY } from '../core/hostState.ts'
+import { defineCopy, formatList, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    unreadable: '读不到',
+    sendNamed: (value1: string | number) => `交给「${value1}」`,
+    sendExisting: '交给已有会话',
+    sendProject: (value1: string | number) => `交给 ${value1}`,
+    sendNew: '交给新会话',
+    missing: 'Mac 上还没有这次交接；重试同一请求不会多建一个会话。',
+    handoffToCode: '交给代码任务',
+    send: '交给',
+    newSession: '新会话',
+    existingSession: '已有会话',
+    noTargets: '没有可以交给的会话',
+    project: '项目',
+    readOnly: '只读',
+    location: '位置',
+    session: '会话',
+    chooseSession: '选择会话',
+    untitled: '未命名会话',
+    materials: '材料',
+    repliesCount: (count: number) => plural(count, { other: 'Agent 的回复 {n} 条' }),
+    openSession: (name: string) => `打开「${name}」`,
+    changedNames: (names: string[]) => names.map(name => `「${name}」`).join(''),
+    removeReplies: '去掉 Agent 的回复',
+    addFile: '添加文件',
+    noMaterials: '没有选中的材料',
+    requirements: '要求',
+    returnLabel: '回传',
+    returnScope: '回传范围',
+    failed: '没有交接',
+    viewOnly: '这台设备只能查看，不能开始会话',
+    useCurrent: '用现在的版本',
+    changed: (value1: string | number) => `${value1}在选定之后变化了`,
+    unknown: '交接结果未知',
+    unknownDetail: '已发出，Mac 没有回答；重试不会多建一个会话。',
+    offline: 'Mac 不在线',
+    afterReconnect: ' · 恢复后再交',
+    retrySame: '重试同一请求',
+    check: '查询',
+    cancel: '取消',
+    sending: '正在交接…',
+    version: (value1: string | number) => `版本 ${value1}`,
+    changedBadge: '已变化',
+    removeMaterial: (value1: string | number) => `去掉 ${value1}`,
+    decision: (value1: string | number) => `决定 ${value1}`,
+    removeDecision: (value1: string | number) => `去掉决定 ${value1}`,
+    decisions: '已定的决定',
+    handoff: '交接',
+    codeSession: '代码会话',
+    withdraw: '撤回',
+    retry: '重试',
+    collapse: '收起',
+    unknownCompact: '已发出，Mac 没有回答；重试不会多建一个会话',
+  },
+  {
+    unreadable: "Couldn't read",
+    sendNamed: (value1: string | number) => `Hand off to “${value1}”`,
+    sendExisting: 'Hand off to existing session',
+    sendProject: (value1: string | number) => `Hand off to ${value1}`,
+    sendNew: 'Hand off to new session',
+    missing: "The Mac has no record of this handoff. Retrying the same request won't create a duplicate session.",
+    handoffToCode: 'Hand off to code session',
+    send: 'Hand off',
+    newSession: 'New session',
+    existingSession: 'Existing session',
+    noTargets: 'No sessions available for handoff',
+    project: 'Project',
+    readOnly: 'Read only',
+    location: 'Location',
+    session: 'Session',
+    chooseSession: 'Choose a session',
+    untitled: 'Untitled session',
+    materials: 'Materials',
+    repliesCount: (count: number) => plural(count, { one: '{n} Agent reply', other: '{n} Agent replies' }),
+    openSession: (name: string) => `Open “${name}”`,
+    changedNames: (names: string[]) => formatList(names.map(name => `“${name}”`)),
+    removeReplies: 'Remove Agent replies',
+    addFile: 'Add file',
+    noMaterials: 'No materials selected',
+    requirements: 'Requirements',
+    returnLabel: 'Return',
+    returnScope: 'What to return',
+    failed: 'Handoff failed',
+    viewOnly: 'This device can view sessions only.',
+    useCurrent: 'Use current versions',
+    changed: (value1: string | number) => `${value1} changed after selection`,
+    unknown: 'Handoff outcome unknown',
+    unknownDetail: "The Mac hasn't responded. Retrying won't create a duplicate session.",
+    offline: 'Mac offline',
+    afterReconnect: ' · Try again when connected',
+    retrySame: 'Retry same request',
+    check: 'Check status',
+    cancel: 'Cancel',
+    sending: 'Handing off…',
+    version: (value1: string | number) => `Version ${value1}`,
+    changedBadge: 'Changed',
+    removeMaterial: (value1: string | number) => `Remove ${value1}`,
+    decision: (value1: string | number) => `Decision ${value1}`,
+    removeDecision: (value1: string | number) => `Remove decision ${value1}`,
+    decisions: 'Decisions made',
+    handoff: 'Handoff',
+    codeSession: 'Code session',
+    withdraw: 'Withdraw',
+    retry: 'Retry',
+    collapse: 'Show less',
+    unknownCompact: "The Mac hasn't responded. Retrying won't create a duplicate session",
+  },
+)
 
 /** 交给代码任务… from a message: which messages, and the text selected in them at the time. */
 export interface HandoffRequest {
@@ -120,7 +230,7 @@ export function SourceHandoffDock({
     const signal = pins.current.signal
     for (const chip of next) {
       if (chip.kind === 'text' || chip.hash) continue
-      const settle = (patch: { hash?: string; problem?: string }) => {
+      const settle = (patch: { hash?: string; problem?: () => string }) => {
         if (signal.aborted) return
         setChips(list =>
           list.map((item): MaterialChip => {
@@ -136,7 +246,7 @@ export function SourceHandoffDock({
           : fileHash(sourceId, chip.file, signal)
       void hashing.then(
         hash => settle({ hash }),
-        (cause: unknown) => settle({ problem: cause instanceof Error ? cause.message : '读不到' }),
+        (cause: unknown) => settle({ problem: () => (cause instanceof Error ? cause.message : COPY.unreadable) }),
       )
     }
   }
@@ -177,8 +287,7 @@ export function SourceHandoffDock({
     const id = from.current[0]
     const row = id ? document.querySelector(`.transcript [data-message-id="${CSS.escape(id)}"]`) : null
     const action =
-      row?.querySelector<HTMLElement>('button[aria-label="交给代码任务…"]')
-      ?? row?.closest('.turn')?.querySelector<HTMLElement>('button[aria-label="这一轮的更多操作"]')
+      row?.querySelector<HTMLElement>('[data-handoff-action]') ?? row?.closest('.turn')?.querySelector<HTMLElement>('[data-turn-actions]')
     action?.focus({ preventScroll: true })
   }
   const source = current.summary
@@ -210,11 +319,11 @@ export function SourceHandoffDock({
   const destination =
     target === 'session'
       ? chosenSession
-        ? `交给「${messageLine(chosenSession.title || '未命名会话', 12)}」`
-        : '交给已有会话'
+        ? COPY.sendNamed(messageLine(chosenSession.title || COPY.untitled, 12))
+        : COPY.sendExisting
       : project
-        ? `交给 ${project.name || basename(project.path)}`
-        : '交给新会话'
+        ? COPY.sendProject(project.name || basename(project.path))
+        : COPY.sendNew
 
   const send = async (body: HandoffCreate) => {
     if (busy.current) return
@@ -236,6 +345,9 @@ export function SourceHandoffDock({
       else unansweredCreate.set(sourceId, undefined)
       setFailure({
         ...outcome,
+        get message() {
+          return outcome.message
+        },
         ...(outcome.kind === 'refused' && outcome.code === 'handoff-material-changed'
           ? { chips: namedChips(chips, outcome.items).map(chip => chip.key) }
           : {}),
@@ -265,7 +377,13 @@ export function SourceHandoffDock({
         setShownId(found.id)
         setOpen(false)
         setChips([])
-      } else setFailure({ kind: 'unknown', message: 'Mac 上还没有这次交接；重试同一请求不会多建一个会话。' })
+      } else
+        setFailure({
+          kind: 'unknown',
+          get message() {
+            return COPY.missing
+          },
+        })
     } catch (error) {
       setFailure(writeFailure(error))
     }
@@ -304,27 +422,27 @@ export function SourceHandoffDock({
       ))}
       {open && (
         <Modal
-          label="交给代码任务"
+          label={COPY.handoffToCode}
           variant={shell.phone ? 'sheet' : 'dialog'}
           size="lg"
           dismissible={!sending}
           onClose={close}
           className="handoff-dialog">
           <ModalHeader
-            title="交给代码任务"
+            title={COPY.handoffToCode}
             {...(shell.phone
               ? {}
               : { leading: <EnterGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" /> })}
             actions={
               <SegmentedControl<Target>
-                label="交给"
+                label={COPY.send}
                 size="xs"
                 value={target}
                 disabled={locked}
                 onValueChange={setTarget}
                 options={[
-                  { value: 'new-session', label: '新会话' },
-                  { value: 'session', label: '已有会话', ...(targets.length ? {} : { disabled: true, title: '没有可以交给的会话' }) },
+                  { value: 'new-session', label: COPY.newSession },
+                  { value: 'session', label: COPY.existingSession, ...(targets.length ? {} : { disabled: true, title: COPY.noTargets }) },
                 ]}
               />
             }
@@ -334,7 +452,7 @@ export function SourceHandoffDock({
             <dl className="handoff-fields">
               {target === 'new-session' ? (
                 <>
-                  <dt>项目</dt>
+                  <dt>{COPY.project}</dt>
                   <dd>
                     <ProjectPicker
                       catalog={catalog}
@@ -347,11 +465,11 @@ export function SourceHandoffDock({
                         setWorktree(false)
                       }}
                     />
-                    {!canRun && <StatusWord tone="failed">只读</StatusWord>}
+                    {!canRun && <StatusWord tone="failed">{COPY.readOnly}</StatusWord>}
                   </dd>
                   {worktreeOffer && (
                     <>
-                      <dt>位置</dt>
+                      <dt>{COPY.location}</dt>
                       <dd>
                         <FolderControl
                           project={worktreeOffer}
@@ -391,22 +509,22 @@ export function SourceHandoffDock({
                 </>
               ) : (
                 <>
-                  <dt>会话</dt>
+                  <dt>{COPY.session}</dt>
                   <dd>
                     <ValuePicker
-                      label="已有会话"
-                      placeholder="选择会话"
+                      label={COPY.existingSession}
+                      placeholder={COPY.chooseSession}
                       value={sessionId}
                       disabled={locked}
                       width="sm"
                       menuChevron
-                      options={targets.slice(0, 50).map(task => ({ value: task.id, label: messageLine(task.title || '未命名会话', 48) }))}
+                      options={targets.slice(0, 50).map(task => ({ value: task.id, label: messageLine(task.title || COPY.untitled, 48) }))}
                       onValueChange={setSessionId}
                     />
                   </dd>
                 </>
               )}
-              <dt>材料</dt>
+              <dt>{COPY.materials}</dt>
               <dd className="handoff-chips">
                 {chips.map(chip => {
                   const single = (
@@ -433,11 +551,11 @@ export function SourceHandoffDock({
                           disabled={replies.open}
                           onClick={() => setRepliesOpen(!repliesOpen)}>
                           <MessageSquareQuote size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-                          <span className="handoff-chip-text">Agent 的回复 {replies.keys.size} 条</span>
+                          <span className="handoff-chip-text">{COPY.repliesCount(replies.keys.size)}</span>
                           <Icon icon={ChevronRightGlyph} size={12} />
                         </button>
                         <IconButton
-                          label="去掉 Agent 的回复"
+                          label={COPY.removeReplies}
                           icon={CloseGlyph}
                           size="xs"
                           disabled={locked}
@@ -468,7 +586,7 @@ export function SourceHandoffDock({
                 })}
                 {addable.length > 0 && (
                   <Menu
-                    label="添加文件"
+                    label={COPY.addFile}
                     sections={[
                       {
                         id: 'files',
@@ -484,15 +602,15 @@ export function SourceHandoffDock({
                         })),
                       },
                     ]}
-                    trigger={props => <IconButton {...props} label="添加文件" icon={PlusGlyph} size="xs" disabled={locked} />}
+                    trigger={props => <IconButton {...props} label={COPY.addFile} icon={PlusGlyph} size="xs" disabled={locked} />}
                   />
                 )}
-                {chips.length === 0 && addable.length === 0 && <span className="handoff-muted">没有选中的材料</span>}
+                {chips.length === 0 && addable.length === 0 && <span className="handoff-muted">{COPY.noMaterials}</span>}
               </dd>
             </dl>
             <TextAreaField
               className="handoff-requirements"
-              label="要求"
+              label={COPY.requirements}
               rows={3}
               data-autofocus=""
               value={requirements}
@@ -503,9 +621,9 @@ export function SourceHandoffDock({
             />
             <Decisions decisions={decisions} disabled={locked} onChange={setDecisions} />
             <div className="handoff-scope">
-              <span className="handoff-label">回传</span>
+              <span className="handoff-label">{COPY.returnLabel}</span>
               <SegmentedControl
-                label="回传范围"
+                label={COPY.returnScope}
                 size="xs"
                 value={scope}
                 disabled={locked}
@@ -517,39 +635,40 @@ export function SourceHandoffDock({
               </Hint>
             </div>
             {!canRun && (
-              <InlineNotice tone="error" title="没有交接">
-                这台设备只能查看，不能开始会话
+              <InlineNotice tone="error" title={COPY.failed}>
+                {COPY.viewOnly}
               </InlineNotice>
             )}
             {failure?.kind === 'denied' && (
-              <InlineNotice tone="error" title="没有交接">
+              <InlineNotice tone="error" title={COPY.failed}>
                 {failure.message}
               </InlineNotice>
             )}
             {failure?.kind === 'refused' && (
               <InlineNotice
                 tone="error"
-                title="没有交接"
+                title={COPY.failed}
                 action={
                   failure.chips?.length ? (
                     <Button size="xs" onClick={repin}>
-                      用现在的版本
+                      {COPY.useCurrent}
                     </Button>
                   ) : undefined
                 }>
-                {failure.chips?.length
-                  ? `${namedChips(chips, failure.items)
-                      .map(chip => `「${chipLabel(chip)}」`)
-                      .join('')}在选定之后变化了`
-                  : failure.message}
+                {failure.chips?.length ? COPY.changed(COPY.changedNames(namedChips(chips, failure.items).map(chipLabel))) : failure.message}
               </InlineNotice>
             )}
             {unknown && (
-              <InlineNotice tone="warn" title="交接结果未知">
-                {failure?.message ?? '已发出，Mac 没有回答；重试不会多建一个会话。'}
+              <InlineNotice tone="warn" title={COPY.unknown}>
+                {failure?.message ?? COPY.unknownDetail}
               </InlineNotice>
             )}
-            {offline && <p className="handoff-offline">{connection === 'offline' ? DEVICE_OFFLINE : 'Mac 不在线'} · 恢复后再交</p>}
+            {offline && (
+              <p className="handoff-offline">
+                {connection === 'offline' ? CONNECTION_COPY.offline : COPY.offline}
+                {COPY.afterReconnect}
+              </p>
+            )}
           </div>
           <footer className="ui-modal-footer handoff-foot">
             {problem && !unknown && <span className="handoff-muted">{problem}</span>}
@@ -557,10 +676,10 @@ export function SourceHandoffDock({
             {unknown ? (
               <>
                 <Button disabled={sending || offline} onClick={() => void send(unknown)}>
-                  重试同一请求
+                  {COPY.retrySame}
                 </Button>
                 <Button variant="primary" disabled={sending || offline} onClick={() => void query()}>
-                  查询
+                  {COPY.check}
                 </Button>
               </>
             ) : (
@@ -571,7 +690,7 @@ export function SourceHandoffDock({
                   onClick={() => {
                     close()
                   }}>
-                  取消
+                  {COPY.cancel}
                 </Button>
                 <Button
                   variant="primary"
@@ -579,7 +698,7 @@ export function SourceHandoffDock({
                   disabled={Boolean(problem) || offline || !canRun || sending}
                   pending={sending}
                   onClick={submit}>
-                  {sending ? '正在交接…' : destination}
+                  {sending ? COPY.sending : destination}
                 </Button>
               </>
             )}
@@ -599,14 +718,16 @@ function Chip({ chip, changed, disabled, onRemove }: { chip: MaterialChip; chang
     <span
       className="handoff-chip"
       data-state={changed ? 'changed' : state}
-      title={chip.kind !== 'text' && chip.hash ? `版本 ${chip.hash.slice(0, 12)}` : undefined}>
+      title={chip.kind !== 'text' && chip.hash ? COPY.version(chip.hash.slice(0, 12)) : undefined}>
       <Glyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
       <span className={chip.kind === 'file' ? 'handoff-chip-text is-mono' : 'handoff-chip-text'}>
         <VisibleText text={label} />
       </span>
-      {changed && <span className="handoff-chip-note">已变化</span>}
-      {!changed && chip.kind !== 'text' && chip.problem && <span className="handoff-chip-note">{chip.problem}</span>}
-      <IconButton label={`去掉 ${label}`} icon={CloseGlyph} size="xs" disabled={disabled} onClick={onRemove} />
+      {changed && <span className="handoff-chip-note">{COPY.changedBadge}</span>}
+      {!changed && chip.kind !== 'text' && chip.problem && (
+        <span className="handoff-chip-note">{typeof chip.problem === 'function' ? chip.problem() : chip.problem}</span>
+      )}
+      <IconButton label={COPY.removeMaterial(label)} icon={CloseGlyph} size="xs" disabled={disabled} onClick={onRemove} />
     </span>
   )
 }
@@ -620,7 +741,7 @@ function Decisions({ decisions, disabled, onChange }: { decisions: string[]; dis
           <span className="handoff-decision-n">{index + 1}</span>
           <input
             className="ui-input"
-            aria-label={`决定 ${index + 1}`}
+            aria-label={COPY.decision(formatNumber(index + 1))}
             value={value}
             maxLength={1000}
             disabled={disabled}
@@ -629,7 +750,7 @@ function Decisions({ decisions, disabled, onChange }: { decisions: string[]; dis
             }}
           />
           <IconButton
-            label={`去掉决定 ${index + 1}`}
+            label={COPY.removeDecision(formatNumber(index + 1))}
             icon={CloseGlyph}
             size="xs"
             disabled={disabled}
@@ -648,7 +769,7 @@ function Decisions({ decisions, disabled, onChange }: { decisions: string[]; dis
           onClick={() => {
             onChange([...decisions, ''])
           }}>
-          已定的决定
+          {COPY.decisions}
         </Button>
       )}
     </div>
@@ -721,15 +842,14 @@ function HandoffStatus({
   const fresh = retryBody(handoff, newRequestId())
   const locked = busy || sending || offline || !canRun
   return (
-    <section className="handoff-status" role="group" aria-label="交接" data-status={handoff.status}>
+    <section className="handoff-status" role="group" aria-label={COPY.handoff} data-status={handoff.status}>
       <div className="handoff-status-line">
         <EnterGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-        <span className="handoff-status-title">交接</span>
+        <span className="handoff-status-title">{COPY.handoff}</span>
         <StatusWord tone={words.tone}>{words.words}</StatusWord>
         {handoff.status === 'started' && handoff.targetSessionId && (
           <Button size="xs" variant="ghost" onClick={() => shell.choose(handoff.targetSessionId!)}>
-            打开「
-            <VisibleText text={target?.title || '代码会话'} />」
+            <VisibleText text={COPY.openSession(target?.title || COPY.codeSession)} />
           </Button>
         )}
         <span className="handoff-spacer" />
@@ -737,31 +857,32 @@ function HandoffStatus({
           <>
             {again && (
               <Button size="xs" disabled={locked} onClick={() => void onSend(again)}>
-                重试同一请求
+                {COPY.retrySame}
               </Button>
             )}
             <Button size="xs" variant="primary" disabled={busy || offline} onClick={() => void query()}>
-              查询
+              {COPY.check}
             </Button>
           </>
         )}
         {handoff.status === 'start-failed' && (
           <>
             <Button size="xs" disabled={locked} onClick={() => void withdraw()}>
-              撤回
+              {COPY.withdraw}
             </Button>
             {fresh && (
               <Button size="xs" variant="primary" disabled={locked} onClick={() => void onSend(fresh)}>
-                重试
+                {COPY.retry}
               </Button>
             )}
           </>
         )}
-        {onDismiss && handoff.status === 'started' && <IconButton label="收起" icon={CloseGlyph} size="xs" onClick={onDismiss} />}
+        {onDismiss && handoff.status === 'started' && <IconButton label={COPY.collapse} icon={CloseGlyph} size="xs" onClick={onDismiss} />}
       </div>
       {handoff.status === 'start-unknown' && (
         <p className="handoff-status-note">
-          已发出，Mac 没有回答；重试不会多建一个会话{handoff.failure ? ` · ${handoff.failure.message}` : ''}
+          {COPY.unknownCompact}
+          {handoff.failure ? ` · ${handoff.failure.message}` : ''}
         </p>
       )}
       {handoff.status === 'start-failed' && handoff.failure && <p className="handoff-status-note is-failed">{handoff.failure.message}</p>}

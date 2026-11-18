@@ -1,0 +1,19 @@
+{
+  "name": "Latch",
+  "short_name": "Latch",
+  "description": "An Agent workbench for desktop and phone.",
+  "lang": "en",
+  "start_url": "/link/",
+  "scope": "/link/",
+  "display": "standalone",
+  "background_color": "#ebebef",
+  "theme_color": "#ebebef",
+  "icons": [
+    {
+      "src": "/link/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

@@ -13,6 +13,27 @@ import {
 } from '@latch/protocol'
 import { APPROVAL_COPY, highRiskLabel, type Brief } from './securityCopy.ts'
 import type { LatchShell } from './shell.ts'
+import { defineCopy } from './i18n.ts'
+
+const COPY = defineCopy(
+  {
+    reject: '拒绝',
+    allowOnce: '允许一次',
+    oldAgent: '这个会话来自已移除的 Agent，只能查看',
+    readOnly: '只能查看',
+    removedWorktree: '工作树已移除：会话不能再运行、撤销本轮或添加文件。分支还在，可以在新会话里接着用它。',
+    cannotSend: '这台设备不能发送消息',
+  },
+  {
+    reject: 'Reject',
+    allowOnce: 'Allow once',
+    oldAgent: 'This session belongs to a removed Agent and is read-only',
+    readOnly: 'Read-only',
+    removedWorktree:
+      'The worktree was removed. This session can’t run, undo the current turn, or add files. You can continue from the branch in a new session.',
+    cannotSend: 'This device can’t send messages',
+  },
+)
 
 /**
  * What this device may do, for display only: the Host enforces every rule
@@ -57,8 +78,14 @@ export function deviceAccess(snapshot: AppSnapshot, shell: LatchShell | null): D
   return { legacy: false, local: isLocalDevice(device, shell), scopes, admin: scopes.has('admin'), device }
 }
 
-export const DEV_MODE_TEXT = '开发模式：这台 Mac 上的程序可以修改 Latch 的代码'
-export const LEGACY_HOST_TEXT = '这台 Mac 上的 Latch 还是旧版本，重新启动后才能确认设备。'
+export const DEVICE_PERMISSION_COPY = defineCopy(
+  { devMode: '开发模式：这台 Mac 上的程序可以修改 Latch 的代码', legacyHost: '这台 Mac 上的 Latch 还是旧版本，重新启动后才能确认设备。' },
+  {
+    devMode: 'Development mode: programs on this Mac can modify Latch code',
+    legacyHost: 'Latch on this Mac is out of date. Restart Latch to confirm devices.',
+  },
+)
+export const LEGACY_HOST_TEXT = DEVICE_PERMISSION_COPY.legacyHost
 
 export interface ApprovalGate {
   /**
@@ -81,8 +108,20 @@ export interface ApprovalGate {
 
 /** Allow once and reject for drivers that offer no explicit options; these send no optionId. */
 const FALLBACK_OPTIONS: ApprovalOption[] = [
-  { id: 'reject_once', label: '拒绝', kind: 'reject_once' },
-  { id: 'allow_once', label: '允许一次', kind: 'allow_once' },
+  {
+    id: 'reject_once',
+    get label() {
+      return COPY.reject
+    },
+    kind: 'reject_once',
+  },
+  {
+    id: 'allow_once',
+    get label() {
+      return COPY.allowOnce
+    },
+    kind: 'allow_once',
+  },
 ]
 
 const isAllow = (option: ApprovalOption) => option.kind.startsWith('allow')
@@ -141,9 +180,8 @@ export function sessionReadOnly(
   summary: Pick<TaskSummary, 'personal' | 'worktree'> | undefined,
 ): { text: string; reason?: string } | undefined {
   // Latch no longer runs an assistant's private context, so nothing can continue its session.
-  if (summary?.personal) return { text: '这个会话来自已移除的 Agent，只能查看' }
-  if (summary?.worktree?.removed)
-    return { text: '只能查看', reason: '工作树已移除：会话不能再运行、撤销本轮或添加文件。分支还在，可以在新会话里接着用它。' }
+  if (summary?.personal) return { text: COPY.oldAgent }
+  if (summary?.worktree?.removed) return { text: COPY.readOnly, reason: COPY.removedWorktree }
   return undefined
 }
 
@@ -158,7 +196,7 @@ export function composerGate(input: {
   if (readOnly) return { kind: 'read-only', ...readOnly }
   if (input.access.legacy) return { kind: 'open' }
   if (input.stopped || input.summary?.permissionDrift || input.permission?.drift) return { kind: 'stopped' }
-  if (!input.access.scopes.has('run')) return { kind: 'read-only', text: '这台设备不能发送消息' }
+  if (!input.access.scopes.has('run')) return { kind: 'read-only', text: COPY.cannotSend }
   return { kind: 'open' }
 }
 

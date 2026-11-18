@@ -43,16 +43,22 @@ async function shapeNextEnrollment(page: Page, extra: { name?: string; dataScope
 export async function enrollBrowser(
   page: Page,
   testHost: TestHost,
-  options: { name?: string; scopes?: DeviceScope[]; url?: string; dataScope?: DataScope } = {},
+  options: { name?: string; scopes?: DeviceScope[]; url?: string; dataScope?: DataScope; followSystemLanguage?: boolean } = {},
 ): Promise<void> {
   const wanted = options.scopes === undefined ? await noAdminYet(testHost) : options.scopes.includes('admin')
+  if (!options.followSystemLanguage) {
+    await page.addInitScript(() => {
+      // Existing UI assertions are in Chinese, independent of the machine's locale.
+      Object.defineProperty(navigator, 'languages', { configurable: true, get: () => ['zh-CN'] })
+    })
+  }
   await page.goto(options.url ?? (await testHost.invite([...(wanted ? ADMIN_CEILING : BASE_CEILING)], 'loopback-tcp')).url)
   if (options.name !== undefined || options.dataScope !== undefined)
     await shapeNextEnrollment(page, {
       ...(options.name !== undefined ? { name: options.name } : {}),
       ...(options.dataScope ? { dataScope: options.dataScope } : {}),
     })
-  await page.getByRole('button', { name: '连接这个浏览器', exact: true }).click()
+  await page.getByTestId('enroll-submit').click()
   if (testHost.presence.mode === 'manual') {
     await testHost.presence.waitForRequest()
     testHost.presence.approveNext()

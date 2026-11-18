@@ -2,6 +2,32 @@ import { rejectionNote, type Approval, type ApprovalOption, type ApprovalOptionK
 import { ApiError, isUncertain, newRequestId } from './api.ts'
 import type { ApprovalGate } from './permissions.ts'
 import { DECISION_COPY, safeDeviceName } from './securityCopy.ts'
+import { defineCopy } from './i18n.ts'
+
+const COPY = defineCopy(
+  {
+    allow: '允许',
+    reject: '拒绝',
+    allowOnce: '允许一次',
+    alwaysAllow: '始终允许',
+    alwaysReject: '始终拒绝',
+    closed: '该审批已结束',
+    conflict: (previous: string, attempted: string) => `此设备此前已选择「${previous}」，本次「${attempted}」未生效。`,
+    already: (previous: string) => `此设备此前已选择「${previous}」。`,
+    answered: (name: string) => `已由「${name}」处理`,
+  },
+  {
+    allow: 'Allow',
+    reject: 'Reject',
+    allowOnce: 'Allow once',
+    alwaysAllow: 'Always allow',
+    alwaysReject: 'Always reject',
+    closed: 'This approval is closed',
+    conflict: (previous: string, attempted: string) => `This device already chose “${previous}”. “${attempted}” was not applied.`,
+    already: (previous: string) => `This device already chose “${previous}”.`,
+    answered: (name: string) => `Answered by “${name}”`,
+  },
+)
 
 /** The exact choice sent before the Host's answer was lost. */
 export interface UncertainChoice {
@@ -65,13 +91,28 @@ export function rejectionNoteFor(text: string): { note?: string; problem?: strin
 /** `conflict`: this device had already chosen differently, so the choice just made did not take effect. */
 export type SettledOutcome = { applied: true } | { applied: false; message: string; conflict: boolean }
 
-const DECISION_LABELS = { allow: '允许', reject: '拒绝' } as const
+const DECISION_LABELS = {
+  get allow() {
+    return COPY.allow
+  },
+  get reject() {
+    return COPY.reject
+  },
+} as const
 const ONCE_KIND = { allow: 'allow_once', reject: 'reject_once' } as const
 const KIND_LABELS: Record<ApprovalOptionKind, string> = {
-  allow_once: '允许一次',
-  allow_always: '始终允许',
-  reject_once: '拒绝',
-  reject_always: '始终拒绝',
+  get allow_once() {
+    return COPY.allowOnce
+  },
+  get allow_always() {
+    return COPY.alwaysAllow
+  },
+  get reject_once() {
+    return COPY.reject
+  },
+  get reject_always() {
+    return COPY.alwaysReject
+  },
 }
 const kindLabel = (kind: unknown) =>
   typeof kind === 'string' && Object.hasOwn(KIND_LABELS, kind) ? KIND_LABELS[kind as ApprovalOptionKind] : undefined
@@ -104,33 +145,33 @@ export function settledOutcome(
   if (typeof decidedBy === 'object' && decidedBy !== null) {
     const record = decidedBy as { kind?: unknown; self?: unknown; deviceName?: unknown; decision?: unknown; optionKind?: unknown }
     if (record.kind === 'device' && record.self === true) {
-      if (record.decision !== 'allow' && record.decision !== 'reject') return { applied: false, message: '该审批已结束', conflict: true }
+      if (record.decision !== 'allow' && record.decision !== 'reject') return { applied: false, message: COPY.closed, conflict: true }
       const recorded = DECISION_LABELS[record.decision]
       if (record.decision !== attempted.decision) {
         return {
           applied: false,
-          message: `此设备此前已选择「${recorded}」，本次「${DECISION_LABELS[attempted.decision]}」未生效。`,
+          message: COPY.conflict(recorded, DECISION_LABELS[attempted.decision]),
           conflict: true,
         }
       }
       const kind = attempted.optionKind
-      if (kind === undefined) return { applied: false, message: `此设备此前已选择「${recorded}」。`, conflict: false }
+      if (kind === undefined) return { applied: false, message: COPY.already(recorded), conflict: false }
       if (record.optionKind === undefined) {
         return kind === ONCE_KIND[attempted.decision]
           ? { applied: true }
-          : { applied: false, message: `此设备此前已选择「${recorded}」。`, conflict: false }
+          : { applied: false, message: COPY.already(recorded), conflict: false }
       }
       if (record.optionKind === kind) return { applied: true }
       return {
         applied: false,
-        message: `此设备此前已选择「${kindLabel(record.optionKind) ?? recorded}」，本次「${KIND_LABELS[kind]}」未生效。`,
+        message: COPY.conflict(kindLabel(record.optionKind) ?? recorded, KIND_LABELS[kind]),
         conflict: true,
       }
     }
     if (record.kind === 'device') {
       const name = safeDeviceName(record.deviceName)
-      if (name !== undefined) return { applied: false, message: `已由「${name}」处理`, conflict: false }
+      if (name !== undefined) return { applied: false, message: COPY.answered(name), conflict: false }
     }
   }
-  return { applied: false, message: '该审批已结束', conflict: false }
+  return { applied: false, message: COPY.closed, conflict: false }
 }

@@ -3,6 +3,18 @@ import { BookOpen } from 'lucide-react'
 import { CodeGlyph, Icon } from '@latch/ui'
 import { escapeSecurityText } from '@latch/protocol'
 import { markBeforeCaret, promptMarks, type PromptCatalogue, type PromptMark } from './prompt-tokens.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    skill: '技能 · ',
+    command: '命令 · ',
+  },
+  {
+    skill: 'Skill · ',
+    command: 'Command · ',
+  },
+)
 
 /** What the mirror copies from the input, so its lines break where the input's do on every surface and at every zoom. */
 const METRICS = [
@@ -113,7 +125,7 @@ function markTip(mirror: HTMLElement | null, marks: readonly PromptMark[], x: nu
   )
   const mark = element && marks.find(item => String(item.start) === element.dataset.start)
   if (!mark) return ''
-  const head = (mark.kind === 'skill' ? '技能 · ' : '命令 · ') + mark.name
+  const head = (mark.kind === 'skill' ? COPY.skill : COPY.command) + mark.name
   return escapeSecurityText(mark.description ? `${head}\n${mark.description}` : head)
 }
 

@@ -3,6 +3,9 @@ import { escapeSecurityText } from '@latch/protocol'
 import { BranchGlyph, FolderGlyph, Icon } from '@latch/ui'
 import { FolderGit2 } from 'lucide-react'
 import { MarkTile } from '../components/BrandTile.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy({ worktree: '工作树' }, { worktree: 'Worktree' })
 
 /** The Harness's mark bare at 16, as the sidebar's rows draw it; its name on hover and for a screen reader. */
 export function BoardHarness({ mark, label }: { mark: string | undefined; label: string | undefined }) {
@@ -17,7 +20,7 @@ export function BoardHarness({ mark, label }: { mark: string | undefined; label:
 export function BoardBranch({ branch, worktree = false }: { branch: string; worktree?: boolean }) {
   return (
     <span className="work-board-card-branch" title={branch}>
-      {worktree ? <FolderGit2 size={12} aria-label="工作树" /> : <Icon icon={BranchGlyph} size={12} />}
+      {worktree ? <FolderGit2 size={12} aria-label={COPY.worktree} /> : <Icon icon={BranchGlyph} size={12} />}
       <span>{branch}</span>
     </span>
   )

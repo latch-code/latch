@@ -97,3 +97,4 @@ export {
   type ModeStripOption,
   type PickerBoardProps,
 } from './board.tsx'
+export { UI_COPY, setUiLocale, uiLocale, useUiLocale, type UiLocale } from './locale.ts'

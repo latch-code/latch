@@ -1,3 +1,4 @@
+import { SHELL_COPY } from './copy.ts'
 import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conversation/failureAction.ts'
 import { Eraser, GitFork } from 'lucide-react'
 import { NOT_ACCEPTED_5XX, type ModelRef, type SessionConfigOption, type TaskSummary } from '@latch/protocol'
@@ -16,9 +17,9 @@ import {
   worktreeProject,
 } from '../composerChoice.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
-import { forkSource } from '../forkChoice.ts'
+import { FORK_CONTINUATION_PROMPT, forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY, computerName } from '../core/securityCopy.ts'
-import { DEVICE_OFFLINE } from '../core/hostState.ts'
+import { CONNECTION_COPY } from '../core/hostState.ts'
 import { projectOf } from '../sessions.ts'
 import { seedWaiting } from '../history/model.ts'
 import { basename } from '../format.ts'
@@ -34,7 +35,7 @@ import { MoreMenu } from '../composer/Footer.tsx'
 import { FolderControl } from '../composer/FolderControl.tsx'
 import { BranchSegment, ComposerStatus, FolderSegment, statusRoute } from '../composer/ComposerStatus.tsx'
 import { SessionVitalsLine } from '../composer/VitalsStrip.tsx'
-import { DraftHarnessControl, FORK_BUSY, SessionHarnessControl, type SessionFork } from '../composer/ModelControl.tsx'
+import { DraftHarnessControl, forkBusy, SessionHarnessControl, type SessionFork } from '../composer/ModelControl.tsx'
 import { DraftModelControl, DraftThinkingControl, SessionModelControl, SessionThinkingControl } from '../composer/ModelPanel.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
 import { composerOptions, configUnknownBar, ownModelName } from '../composer/modelReasoning.ts'
@@ -56,6 +57,24 @@ import { askSideQuestion, sideQuestionBlock, sideQuestionOf, sideQuestionRefusal
 import type { ShellState } from './useShellLayout.tsx'
 import { speakerOf } from '../agents/model.ts'
 import { RouteWarning } from '../agents/parts.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COMPOSER_COPY = defineCopy(
+  {
+    service: (harness: string) => `${harness} 用的模型服务`,
+    project: (name: string) => `项目 ${name}`,
+    rebuild: '第一条消息会把重建的对话文字一起发给',
+    fork: (title: string) => `从「${title}」分叉`,
+    editFirst: (title: string) => `改写「${title}」的第一条`,
+  },
+  {
+    service: (harness: string) => `Model service used by ${harness}`,
+    project: (name: string) => `Project ${name}`,
+    rebuild: 'The first message sends the reconstructed conversation to',
+    fork: (title: string) => `Fork from “${title}”`,
+    editFirst: (title: string) => `Edit the first message of “${title}”`,
+  },
+)
 
 /** The message on its way, until the Host lists it. */
 export function SendingBubble({ shell }: { shell: ShellState }) {
@@ -70,7 +89,7 @@ const phoneWords = (words: string) => words.split('  ')[0]!
 /** The home input's project: the one chosen, or 不选项目, which starts in the Host's default folder. */
 function HomeProject({ shell }: { shell: ShellState }) {
   const { catalog, choice, newChoicesLocked, access, owner, openSettings, createProject, projectAsk, chooseProject } = shell
-  if (!catalog) return '新会话'
+  if (!catalog) return SHELL_COPY.newSession
   const project = catalog.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')
   return (
     <ProjectPicker
@@ -95,11 +114,10 @@ function HomeProject({ shell }: { shell: ShellState }) {
  */
 export function placeName(summary: Pick<TaskSummary, 'cwd' | 'workspaceId' | 'sessionFolder'>): string | undefined {
   if (!summary.cwd) return undefined
-  return summary.workspaceId === 'default' && !summary.sessionFolder ? '默认文件夹' : basename(summary.cwd)
+  return summary.workspaceId === 'default' && !summary.sessionFolder ? SHELL_COPY.defaultFolder : basename(summary.cwd)
 }
 
 /** The sentence a fork's input starts with, as a fork from a turn's footer does. */
-const FORK_PROMPT = '请接着这个会话继续。'
 
 /**
  * Opens one of the four controls once the page that holds it is drawn, as its key would: the new-session page mounts
@@ -282,7 +300,7 @@ export function SessionComposer({
   const seedService =
     current && current.summary.id === selectedId && seedWaiting(current.summary, current.messages)
       ? (current.summary.providerId && shell.providerName(current.summary.providerId))
-        || `${harnessInfo ? harnessName(harnessInfo) : 'Harness'} 用的模型服务`
+        || COMPOSER_COPY.service(harnessInfo ? harnessName(harnessInfo) : 'Harness')
       : undefined
   // Latch's own sentences name the computer on any page but the Latch app on it.
   const computer = access.local ? undefined : computerName(shell.snapshot.hostName)
@@ -292,9 +310,9 @@ export function SessionComposer({
   const fork: SessionFork | undefined =
     current && lastMessage && catalog?.features?.fork === true && access.scopes.has('run')
       ? {
-          ...(shell.active ? { blocked: FORK_BUSY } : {}),
+          ...(shell.active ? { blocked: forkBusy() } : {}),
           onFork: () => {
-            const draft = submission.draft.trim() ? submission.draft : FORK_PROMPT
+            const draft = submission.draft.trim() ? submission.draft : FORK_CONTINUATION_PROMPT
             shell.startNewDraft({ draft }, () => {
               submission.setFork({
                 taskId: current.summary.id,
@@ -337,7 +355,7 @@ export function SessionComposer({
             ...(current?.permission ? { permission: current.permission } : {}),
             config: current?.config ?? [],
             access,
-            ...(gate.kind === 'open' ? {} : { locked: gate.kind === 'read-only' ? gate.text : '该会话不再接受输入。' }),
+            ...(gate.kind === 'open' ? {} : { locked: gate.kind === 'read-only' ? gate.text : SHELL_COPY.noInput }),
           })
   const chooseOption = (option: SessionConfigOption, value: string) => {
     // A draft keeps the pick for its start; a session takes it now.
@@ -377,7 +395,10 @@ export function SessionComposer({
         />
       ) : project && choice.mode !== 'chat' ? (
         <>
-          <FolderSegment name={project.name || basename(project.path)} tip={`项目 ${project.name || basename(project.path)}`} />
+          <FolderSegment
+            name={project.name || basename(project.path)}
+            tip={COMPOSER_COPY.project(project.name || basename(project.path))}
+          />
           {project.branch && <BranchSegment branch={project.branch} />}
         </>
       ) : undefined
@@ -406,7 +427,7 @@ export function SessionComposer({
         runGate={
           access.scopes.has('run') && harnessInfo?.status === 'ready'
             ? { allowed: true }
-            : { allowed: false, reason: '请先恢复发起会话权限和可用的 Harness。' }
+            : { allowed: false, reason: SHELL_COPY.restoreAccess }
         }
         phase={submission.pending ? 'unknown' : submission.sending || cancelling.has(current.summary.id) ? 'busy' : 'idle'}
         onFork={(taskId, upToMessageId, workspaceId) => {
@@ -440,6 +461,7 @@ export function SessionComposer({
       <ApprovalDrawer
         key="approval"
         presentation="conversation"
+        builtin={summary?.harnessId === 'standard'}
         {...(speaker ? { requester: speaker.name } : {})}
         approvals={approvals}
         messages={current?.messages ?? []}
@@ -450,20 +472,20 @@ export function SessionComposer({
         statuses={statuses}
         onDecide={onDecide}
         canRetry={shell.canRetryApproval}
-        rejectLabel={noteComposer?.rejectLabel}
+        rejectWithNote={noteComposer?.rejectWithNote}
         {...(run ? { onStop: run.onCancel } : {})}
       />
     ),
     selectedId !== null && (submission.clearing || hostCleared) && (
-      <Drawer key="clearing" className="clearing-drawer" label="清空上下文">
+      <Drawer key="clearing" className="clearing-drawer" label={SHELL_COPY.clearContext}>
         <Icon icon={Eraser} size={14} />
         <p role="status">
-          <strong>下一条消息开始新的上下文</strong>
-          {hostCleared && <span>上下文已经清空</span>}
+          <strong>{SHELL_COPY.nextContext}</strong>
+          {hostCleared && <span>{SHELL_COPY.cleared}</span>}
         </p>
         {!hostCleared && (
           <Button size="xs" onClick={() => shell.armClear(false)}>
-            保留上下文
+            {SHELL_COPY.keepContext}
           </Button>
         )}
       </Drawer>
@@ -574,8 +596,8 @@ export function SessionComposer({
         selectedId === null ? choice.harnessId : summary?.harnessId,
       )}
       variant={selectedId === null ? 'new' : 'session'}
-      label={noteComposer ? APPROVAL_COPY.rejectPlaceholder : selectedId === null ? '新会话消息' : '继续对话'}
-      placeholder={home ? '想让 Agent 做什么？' : phone ? phoneWords(words) : words}
+      label={noteComposer ? APPROVAL_COPY.rejectPlaceholder : selectedId === null ? SHELL_COPY.message : SHELL_COPY.continueChat}
+      placeholder={home ? SHELL_COPY.composerPrompt : phone ? phoneWords(words) : words}
       draft={submission.draft}
       onDraft={setSubmissionDraft}
       pending={submission.pending}
@@ -596,7 +618,7 @@ export function SessionComposer({
             void sendDraft()
           })
         : {})}
-      pendingReason={offline ? DEVICE_OFFLINE : submission.pendingReason}
+      pendingReason={offline ? CONNECTION_COPY.offline : submission.pendingReason}
       onRetry={() => {
         void retryDraft()
       }}
@@ -604,10 +626,8 @@ export function SessionComposer({
         void abandonPending()
       }}
       abandoning={abandoning}
-      abandonHeld={submission.sendingElsewhere ? '另一个窗口正在重试' : undefined}
-      pendingNote={
-        pendingQueued === 'waiting' ? '队列里有同样的一条在等待' : pendingQueued === 'parked' ? '队列里有同样的一条已暂停' : undefined
-      }
+      abandonHeld={submission.sendingElsewhere ? SHELL_COPY.retryElsewhere : undefined}
+      pendingNote={pendingQueued === 'waiting' ? SHELL_COPY.queued : pendingQueued === 'parked' ? SHELL_COPY.parked : undefined}
       canSend={
         !offline
         && gate.kind === 'open'
@@ -615,14 +635,14 @@ export function SessionComposer({
         && !sideBlocked
         && !permissionBlocked
       }
-      blockReason={offline ? DEVICE_OFFLINE : (block?.message ?? sessionBlock ?? sideBlocked)}
+      blockReason={offline ? CONNECTION_COPY.offline : (block?.message ?? sessionBlock ?? sideBlocked)}
       readOnly={
         gate.kind === 'read-only'
           ? gate.text
           : gate.kind === 'stopped'
             ? placeholder
             : permissionBlocked
-              ? '权限没确认，暂不能发送'
+              ? SHELL_COPY.unverified
               : undefined
       }
       {...(gate.kind === 'read-only' && gate.reason ? { readOnlyReason: gate.reason } : {})}
@@ -683,8 +703,8 @@ export function SessionComposer({
         ) : seedService ? (
           <div className="composer-notice composer-seed" data-tint="warn" role="note">
             {/* Where the rebuilt text goes is the words' tooltip; the short line keeps its amber. */}
-            <Hint className="agent-permission-note is-warn" lead={<Icon icon={HistoryGlyph} size={14} />} label="按文字重建，不是原样恢复">
-              第一条消息会把重建的对话文字一起发给 <VisibleText text={seedService} />
+            <Hint className="agent-permission-note is-warn" lead={<Icon icon={HistoryGlyph} size={14} />} label={SHELL_COPY.rebuildWarning}>
+              {COMPOSER_COPY.rebuild} <VisibleText text={seedService} />
             </Hint>
           </div>
         ) : undefined
@@ -755,7 +775,7 @@ export function SessionComposer({
               />
             ) : (
               <button type="button" className="chip chip-permission" disabled>
-                <span className="chip-text">权限</span>
+                <span className="chip-text">{SHELL_COPY.permissions}</span>
               </button>
             )}
           </ComposerControl>
@@ -903,7 +923,7 @@ export function SetupNotices({ shell }: { shell: ShellState }) {
           className="fork-notice"
           action={
             <Button size="xs" variant="ghost" onClick={() => submission.setFork(null)}>
-              取消分叉
+              {SHELL_COPY.cancelFork}
             </Button>
           }>
           <Hint
@@ -912,12 +932,12 @@ export function SetupNotices({ shell }: { shell: ShellState }) {
               <VisibleText
                 text={
                   submission.fork.upToMessageId
-                    ? `从「${submission.fork.title ?? submission.fork.taskId}」分叉`
-                    : `改写「${submission.fork.title ?? submission.fork.taskId}」的第一条`
+                    ? COMPOSER_COPY.fork(submission.fork.title ?? submission.fork.taskId)
+                    : COMPOSER_COPY.editFirst(submission.fork.title ?? submission.fork.taskId)
                 }
               />
             }>
-            文件不会复制或回滚；同一项目中的会话共用项目文件夹。
+            {SHELL_COPY.forkFiles}
           </Hint>
           {submission.forkMissed.map(line => (
             <span key={line} className="fork-missed">

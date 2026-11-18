@@ -3,9 +3,12 @@ import { WORK_ITEM_LIMITS, type WorkItemAnswer } from '@latch/protocol'
 import { api, errorMessage, MessageError } from '../core/api.ts'
 import { relativeTime } from '../format.ts'
 import { hostNow } from '../core/hostClock.ts'
+import { defineCopy } from '../core/i18n.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { ItemPagePick } from './ItemPagePick.tsx'
 import { openItems } from './items.ts'
+
+const COPY = defineCopy({ title: '加入待办', empty: '没有未完成的待办' }, { title: 'Add to task', empty: 'No open tasks' })
 
 /** 加入待办… from a session's menu: which session asked, until the dialog closes. */
 let asking: string | null = null
@@ -47,9 +50,9 @@ export function ItemJoinDialog({ shell }: { shell: ShellState }) {
   const now = new Date(hostNow())
   return (
     <ItemPagePick
-      title="加入待办"
+      title={COPY.title}
       phone={shell.phone}
-      empty="没有未完成的待办"
+      empty={COPY.empty}
       options={openItems(shell.snapshot, WORK_ITEM_LIMITS.sessions).map(item => ({
         id: item.id,
         title: item.title,

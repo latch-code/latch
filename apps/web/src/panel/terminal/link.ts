@@ -2,6 +2,20 @@ import type { TerminalStreamEvents, TerminalSummary, TerminalTarget } from '@lat
 import { ApiError, MessageError, api } from '../../core/api.ts'
 import { backoffDelay, EventStreamParser } from '../../core/eventStream.ts'
 import { fromBase64, inputChunks, PARSE_HIGH_WATER, streamPath, terminalPath, toBase64 } from './model.ts'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    closed: '终端已关闭',
+    notAccepted: '终端没有接受输入',
+    unknown: '输入可能没有送达终端',
+  },
+  {
+    closed: 'Terminal closed',
+    notAccepted: 'The terminal didn’t accept input',
+    unknown: 'Input may not have reached the terminal',
+  },
+)
 
 /** Where a terminal's output and changes go: the screen, and the tab's state. */
 export interface TerminalSink {
@@ -69,7 +83,7 @@ export class TerminalLink {
   /** Stops reading and sending; the terminal itself keeps running on the Host. */
   close(): void {
     this.closedByPage = true
-    this.drop('终端已关闭')
+    this.drop(COPY.closed)
     this.request?.abort()
     this.wake?.()
   }
@@ -190,7 +204,7 @@ export class TerminalLink {
    */
   sendWhole(data: string): Promise<void> {
     const [bytes, ...more] = inputChunks(data)
-    if (this.closedByPage || !bytes || more.length) return Promise.reject(new MessageError('终端没有接受输入'))
+    if (this.closedByPage || !bytes || more.length) return Promise.reject(new MessageError(COPY.notAccepted))
     return new Promise((resolve, reject) => {
       this.queue.push({ bytes, settle: error => (error === undefined ? resolve() : reject(new MessageError(error))) })
       void this.pump()
@@ -219,7 +233,7 @@ export class TerminalLink {
             continue
           }
           // Ended, refused, or unknown: what follows would arrive out of order, so it is dropped with this one.
-          const message = error instanceof ApiError ? error.message : '输入可能没有送达终端'
+          const message = error instanceof ApiError ? error.message : COPY.unknown
           this.drop(message)
           if (!(error instanceof ApiError && error.code === 'terminal-ended')) this.sink.inputFailed(message)
         }

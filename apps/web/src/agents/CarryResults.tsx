@@ -6,6 +6,36 @@ import { api, errorMessage } from '../core/api.ts'
 import { relativeTime } from '../format.ts'
 import { fileName, messageLine, sessionFiles } from '../handoffs/model.ts'
 import { finalReply, type CarriedResult } from './scheduleModel.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    untitled: '未命名会话',
+    attach: '带入',
+    noTopics: '还没有话题',
+    previousTopics: '之前的话题',
+    scheduled: '定时',
+    loading: '正在读取',
+    lastReply: '最后的回复',
+    noReply: '还没有回复',
+    quotePrevious: '带入上次成果',
+    quoteGuidance: '作为引用文字放进输入框',
+    cancel: '取消',
+  },
+  {
+    untitled: 'Untitled session',
+    attach: 'Quote',
+    noTopics: 'No topics yet',
+    previousTopics: 'Previous topics',
+    scheduled: 'Scheduled',
+    loading: 'Loading',
+    lastReply: 'Last reply',
+    noReply: 'No reply yet',
+    quotePrevious: 'Quote previous work',
+    quoteGuidance: 'Add the selected text as a quote',
+    cancel: 'Cancel',
+  },
+)
 
 const SHOWN = 12
 const fileKey = (file: FileMention) => `${file.root}\u0000${file.path}`
@@ -89,7 +119,7 @@ export function CarryResults({
     if (!pick || got?.state !== 'ready') return []
     const files = got.files.filter(file => pick.files.has(fileKey(file)))
     if (!(pick.reply && got.reply) && !files.length) return []
-    return [{ title: task.title || '未命名会话', ...(pick.reply && got.reply ? { reply: got.reply } : {}), files }]
+    return [{ title: task.title || COPY.untitled, ...(pick.reply && got.reply ? { reply: got.reply } : {}), files }]
   })
   const loading = [...picks.keys()].some(id => reads.get(id)?.state !== 'ready' && reads.get(id)?.state !== 'failed')
   const carry = (
@@ -101,15 +131,15 @@ export function CarryResults({
         onCarry(results)
         close()
       }}>
-      带入
+      {COPY.attach}
     </Button>
   )
   const list = (
     <>
       {shown.length === 0 ? (
-        <EmptyState title="还没有话题" />
+        <EmptyState title={COPY.noTopics} />
       ) : (
-        <ul className="agent-carry" aria-label="之前的话题">
+        <ul className="agent-carry" aria-label={COPY.previousTopics}>
           {shown.map(task => {
             const pick = picks.get(task.id),
               got = reads.get(task.id)
@@ -119,11 +149,11 @@ export function CarryResults({
                   label={
                     task.automationId ? (
                       <>
-                        <Badge className="agent-run-tag">定时</Badge>
-                        {task.title || '未命名会话'}
+                        <Badge className="agent-run-tag">{COPY.scheduled}</Badge>
+                        {task.title || COPY.untitled}
                       </>
                     ) : (
-                      task.title || '未命名会话'
+                      task.title || COPY.untitled
                     )
                   }
                   description={relativeTime(task.updatedAt)}
@@ -139,13 +169,13 @@ export function CarryResults({
                     if (checked) read(task.id)
                   }}
                 />
-                {pick && got?.state === 'loading' && <Loading label="正在读取" />}
+                {pick && got?.state === 'loading' && <Loading label={COPY.loading} />}
                 {pick && got?.state === 'failed' && <p className="agent-form-empty">{got.message}</p>}
                 {pick && got?.state === 'ready' && (
                   <div className="agent-carry-parts">
                     {got.reply ? (
                       <Checkbox
-                        label="最后的回复"
+                        label={COPY.lastReply}
                         description={messageLine(got.reply, 60)}
                         checked={pick.reply}
                         onChange={event => {
@@ -154,7 +184,7 @@ export function CarryResults({
                         }}
                       />
                     ) : (
-                      <p className="agent-form-empty">还没有回复</p>
+                      <p className="agent-form-empty">{COPY.noReply}</p>
                     )}
                     {got.files.map(file => (
                       <Checkbox
@@ -190,11 +220,11 @@ export function CarryResults({
           onClick={() => {
             setOpen(true)
           }}>
-          带入上次成果
+          {COPY.quotePrevious}
         </Button>
       )}
       {phone ? (
-        <Sheet open={open} onClose={close} detent="large" title="带入上次成果" action={carry}>
+        <Sheet open={open} onClose={close} detent="large" title={COPY.quotePrevious} action={carry}>
           <div className="agent-carry-sheet">{list}</div>
         </Sheet>
       ) : (
@@ -202,12 +232,12 @@ export function CarryResults({
           open={open}
           onClose={close}
           size="lg"
-          title="带入上次成果"
-          subtitle="作为引用文字放进输入框"
+          title={COPY.quotePrevious}
+          subtitle={COPY.quoteGuidance}
           footer={
             <>
               <Button size="md" onClick={close}>
-                取消
+                {COPY.cancel}
               </Button>
               {carry}
             </>

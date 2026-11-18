@@ -1,5 +1,8 @@
 import { argumentView } from '../format.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { VisibleText } from './VisibleText.tsx'
+
+const COPY = defineCopy({ none: '无参数', inChanges: '内容见改动' }, { none: 'No arguments', inChanges: 'See changes' })
 
 /**
  * A tool call's arguments. `covered`: argument values another view already shows in full, such as a diff's path and
@@ -7,8 +10,8 @@ import { VisibleText } from './VisibleText.tsx'
  */
 export function ArgumentList({ text, covered = [], quiet = false }: { text?: string; covered?: string[]; quiet?: boolean }) {
   const view = argumentView(text)
-  if (view.kind === 'empty') return <p className="muted-line">无参数</p>
-  if (view.kind === 'text' && covered.includes(view.text)) return quiet ? null : <p className="muted-line">内容见改动</p>
+  if (view.kind === 'empty') return <p className="muted-line">{COPY.none}</p>
+  if (view.kind === 'text' && covered.includes(view.text)) return quiet ? null : <p className="muted-line">{COPY.inChanges}</p>
   if (view.kind === 'text')
     return (
       <pre className="tool-pre">
@@ -16,7 +19,7 @@ export function ArgumentList({ text, covered = [], quiet = false }: { text?: str
       </pre>
     )
   const entries = view.entries.filter(([, value]) => !covered.includes(value))
-  if (entries.length === 0) return quiet ? null : <p className="muted-line">内容见改动</p>
+  if (entries.length === 0) return quiet ? null : <p className="muted-line">{COPY.inChanges}</p>
   return (
     <dl className="argument-list">
       {entries.map(([key, value]) => (

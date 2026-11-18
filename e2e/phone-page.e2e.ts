@@ -202,7 +202,7 @@ describe('设置 › 设备', () => {
         ])
       // A saved relay is managed in its own section.
       expect(await page.getByText('relay.fixture.test', { exact: true }).count()).toBe(0)
-      await openEntry(page, '中继')
+      await openEntry(page, '连接转发')
       const relay = page.getByTestId('relay-own')
       await relay.getByText('relay.fixture.test', { exact: true }).waitFor()
       await capture('relays-saved')

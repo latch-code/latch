@@ -37,6 +37,54 @@ import { TerminalFillButton } from './components/TerminalFillButton.tsx'
 import { isShellLanguage } from './panel/terminal/fill.ts'
 import { FillPlace } from './panel/terminal/fills.ts'
 import { ICON_STROKE, CheckGlyph, ChevronDownGlyph, ChevronUpGlyph, CopyGlyph, writeClipboard } from '@latch/ui'
+import { defineCopy, plural, useLocale } from './core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    code: '代码',
+    invisibleTip: '显示时已用 \\\\u{…} 标出；复制的内容保留原字符',
+    invisible: '含不可见字符',
+    copyCode: '复制代码',
+    copied: '已复制',
+    copy: '复制',
+    foldedLines: (count: number) => `前 ${count} 行已收起`,
+    namedCode: (language: string) => `${language} 代码`,
+    codeContent: '代码内容',
+    collapse: '收起代码',
+    expand: (count: number) => `展开全部 ${count} 行`,
+    copiedStatus: '代码已复制到剪贴板',
+    copyFailed: '复制失败，请选中代码手动复制，或重试。',
+    image: '图片',
+    previewImage: (name: string) => `预览图片：${name}`,
+    externalImage: '外部图片：',
+    imagePrefix: '图片：',
+    table: '表格，可横向滚动',
+    footnotes: '注释',
+    plainText: '结构过深，按纯文本显示',
+  },
+  {
+    code: 'Code',
+    invisibleTip: 'Shown as \\u{…}. Copies keep the original characters',
+    invisible: 'Has invisible characters',
+    copyCode: 'Copy code',
+    copied: 'Copied',
+    copy: 'Copy',
+    foldedLines: (count: number) => plural(count, { one: 'First {n} line collapsed', other: 'First {n} lines collapsed' }),
+    namedCode: (language: string) => `${language} code`,
+    codeContent: 'Code',
+    collapse: 'Collapse code',
+    expand: (count: number) => `Show all ${count} lines`,
+    copiedStatus: 'Code copied to the clipboard',
+    copyFailed: 'Couldn’t copy. Select the code and copy it by hand, or try again.',
+    image: 'Image',
+    previewImage: (name: string) => `Preview image: ${name}`,
+    externalImage: 'External image: ',
+    imagePrefix: 'Image: ',
+    table: 'Table, scrolls sideways',
+    footnotes: 'Footnotes',
+    plainText: 'Nested too deep, shown as plain text',
+  },
+)
 
 export interface MarkdownFiles {
   path?: string
@@ -214,10 +262,10 @@ const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { c
   return (
     <div className={`message-code${collapsed ? ' is-collapsed' : ''}${closed ? '' : ' is-open'}${tail ? ' is-tail' : ''}`}>
       <div className="message-code-toolbar">
-        <span className="message-code-language">{language || '代码'}</span>
+        <span className="message-code-language">{language || COPY.code}</span>
         {hidden && (
-          <span className="message-code-hidden" title="显示时已用 \\u{…} 标出；复制的内容保留原字符">
-            含不可见字符
+          <span className="message-code-hidden" title={COPY.invisibleTip}>
+            {COPY.invisible}
           </span>
         )}
         {isShellLanguage(language) && <TerminalFillButton command={code} streaming={!closed} look="code" />}
@@ -226,8 +274,8 @@ const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { c
           className="message-code-copy"
           onClick={() => void copy()}
           disabled={copying || !code}
-          aria-label="复制代码"
-          title={copied ? '已复制' : '复制'}>
+          aria-label={COPY.copyCode}
+          title={copied ? COPY.copied : COPY.copy}>
           {copied ? (
             <CheckGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           ) : (
@@ -235,8 +283,8 @@ const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { c
           )}
         </button>
       </div>
-      {tail && <p className="message-code-tail-note">前 {lines - TAIL_LINES} 行已收起</p>}
-      <pre ref={pre} id={codeId} tabIndex={0} aria-label={language ? `${language} 代码` : '代码内容'}>
+      {tail && <p className="message-code-tail-note">{COPY.foldedLines(lines - TAIL_LINES)}</p>}
+      <pre ref={pre} id={codeId} tabIndex={0} aria-label={language ? COPY.namedCode(language) : COPY.codeContent}>
         <code>
           <HighlightedCode
             code={code}
@@ -254,7 +302,7 @@ const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { c
           aria-expanded={expanded}
           aria-controls={codeId}
           onClick={() => setExpanded(value => !value)}>
-          {expanded ? '收起代码' : `展开全部 ${lines} 行`}
+          {expanded ? COPY.collapse : COPY.expand(lines)}
           {expanded ? (
             <ChevronUpGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           ) : (
@@ -263,11 +311,11 @@ const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { c
         </button>
       )}
       <span className="message-copy-status" role="status" aria-live="polite">
-        {copied ? '代码已复制到剪贴板' : ''}
+        {copied ? COPY.copiedStatus : ''}
       </span>
       {failed && (
         <p className="message-copy-error" role="alert">
-          复制失败，请选中代码手动复制，或重试。
+          {COPY.copyFailed}
         </p>
       )}
     </div>
@@ -384,13 +432,20 @@ function MarkdownFile({
   }, [image, path, files.resolveImage])
   if (image && path && value?.path === path) {
     const picture = (
-      <img className="message-local-image" src={value.url} alt={alt || '图片'} width={value.width} height={value.height} loading="lazy" />
+      <img
+        className="message-local-image"
+        src={value.url}
+        alt={alt || COPY.image}
+        width={value.width}
+        height={value.height}
+        loading="lazy"
+      />
     )
     return files.onOpenFile ? (
       <button
         type="button"
         className="message-local-image-button"
-        aria-label={`预览图片：${alt || reference}`}
+        aria-label={COPY.previewImage(alt || reference)}
         onClick={() => files.onOpenFile?.(path)}>
         {picture}
       </button>
@@ -416,18 +471,22 @@ const components: Components = {
   },
   // Network images stay explicit links. Only the parent can resolve a local reference to authorized bytes.
   img({ node: _node, src, alt }) {
-    const label = alt?.trim() || '图片'
+    const label = alt?.trim() || COPY.image
     if (src && /^https?:/i.test(src))
       return (
         <a className="message-image" href={src} target="_blank" rel="noopener noreferrer">
-          外部图片：{label}
+          {COPY.externalImage}
+          {label}
         </a>
       )
     const path = src ? referenceText(src) : undefined
     return path ? (
       <MarkdownFile reference={path} image {...(alt?.trim() ? { alt: alt.trim() } : {})} />
     ) : (
-      <span className="message-image">图片：{label}</span>
+      <span className="message-image">
+        {COPY.imagePrefix}
+        {label}
+      </span>
     )
   },
   pre({ node, children }) {
@@ -442,7 +501,7 @@ const components: Components = {
   },
   table({ node: _node, ...props }) {
     return (
-      <div className="message-table-scroll" tabIndex={0} role="region" aria-label="表格，可横向滚动">
+      <div className="message-table-scroll" tabIndex={0} role="region" aria-label={COPY.table}>
         <table {...props} />
       </div>
     )
@@ -457,6 +516,7 @@ export const MessageContent = memo(function MessageContent({
   onOpenFile,
   resolveImage,
 }: MessageContentProps) {
+  useLocale()
   const id = useId()
   const session = useContext(FileSession),
     rootId = useContext(FileRootContext),
@@ -475,7 +535,8 @@ export const MessageContent = memo(function MessageContent({
   const effectiveImage = resolveImage ?? inherited.resolveImage
   const normalized = useMemo(() => normalizeMathDelimiters(text), [text])
   // Footnote ids must be unique across messages in the same conversation.
-  const remarkRehypeOptions = useMemo(() => ({ clobberPrefix: `${id}-`, footnoteLabel: '注释' }), [id])
+  const footnoteLabel = COPY.footnotes
+  const remarkRehypeOptions = useMemo(() => ({ clobberPrefix: `${id}-`, footnoteLabel }), [id, footnoteLabel])
   const messageComponents = useMemo<Components>(
     () => ({
       ...components,
@@ -609,7 +670,7 @@ export const ReasoningContent = memo(function ReasoningContent({ text, streaming
   )
 })
 
-export const PLAIN_TEXT_NOTE = '结构过深，按纯文本显示'
+export const PLAIN_TEXT_NOTE = COPY.plainText
 
 function PlainText({ text }: { text: string }) {
   return (

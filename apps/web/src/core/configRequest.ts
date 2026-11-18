@@ -1,5 +1,21 @@
 import type { SessionConfigOption } from '@latch/protocol'
 import { ApiError, isUncertain, newRequestId } from './api.ts'
+import { defineCopy } from './i18n.ts'
+
+const COPY = defineCopy(
+  {
+    running: '会话正在运行或等你处理，结束后再核对。',
+    subagent: '子 Agent 可能还在运行，结束后再核对。',
+    different: (harness: string) => `${harness} 现在用的既不是原来的值，也不是所选的值；结果仍未知。`,
+    missing: (harness: string) => `没有读到 ${harness} 的设置，稍后再核对。`,
+  },
+  {
+    running: 'The session is running or waiting for you. Check when it ends.',
+    subagent: 'A subagent may still be running. Check after it ends.',
+    different: (harness: string) => `${harness} is using a value other than the original or selected value. The outcome is still unknown.`,
+    missing: (harness: string) => `Couldn’t read settings from ${harness}. Check again later.`,
+  },
+)
 
 /** Unknown unless the Host says the change certainly did not apply, which a 5xx refusal of the Harness can say. */
 export function configUncertain(cause: unknown): boolean {
@@ -17,13 +33,13 @@ export interface ConfigRequest {
 export function checkReasonText(reason: string | undefined, harness: string): string {
   switch (reason) {
     case 'running':
-      return '会话正在运行或等你处理，结束后再核对。'
+      return COPY.running
     case 'subagents':
-      return '子 Agent 可能还在运行，结束后再核对。'
+      return COPY.subagent
     case 'neither':
-      return `${harness} 现在用的既不是原来的值，也不是所选的值；结果仍未知。`
+      return COPY.different(harness)
     default:
-      return `没有读到 ${harness} 的设置，稍后再核对。`
+      return COPY.missing(harness)
   }
 }
 

@@ -395,6 +395,26 @@ describe('another computer’s Host over HTTPS', () => {
     return { sent, request }
   }
 
+  it.each([
+    ['presence-busy', 'presence-busy'],
+    ['service-maintenance', 'add-failed'],
+  ])('reports a local enrollment failure for %s', async (remoteCode, expectedCode) => {
+    const link = remote.parseComputerLink((await a.invite()).url)!
+    const request: Send = (origin, init) => {
+      if (init.path !== '/link/api/enrollments') return remote.httpsRequest(origin, init)
+      const body = JSON.stringify({ error: remoteCode, message: 'Maintenance window' })
+      const response = Object.assign(Readable.from([Buffer.from(body)]), {
+        statusCode: 503,
+        headers: { 'content-type': 'application/json' },
+      })
+      return Promise.resolve({ request: { destroy() {} }, response })
+    }
+    await expect(remote.enrollRemote({ link, name: 'Test computer', request })).rejects.toMatchObject({
+      code: expectedCode,
+      message: '无法添加这台电脑，请重试。',
+    })
+  })
+
   async function addComputer(host: TestHost, request: Send) {
     const invitation = await host.invite()
     const link = remote.parseComputerLink(invitation.url)!

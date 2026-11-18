@@ -2,6 +2,18 @@ import { createContext, useMemo, useSyncExternalStore } from 'react'
 import type { CustomizationDocument, CustomizationReceipt, CustomizationView } from '@latch/protocol'
 import { api, ApiError, errorMessage, isUncertain, MessageError, newRequestId } from './api.ts'
 import { customization, type CustomizationStatus } from './customBoot.ts'
+import { defineCopy } from './i18n.ts'
+
+const COPY = defineCopy(
+  {
+    missingReceipt: '没有收到这次外观修改的回执。',
+    expired: '这次请求已无法重放，可以放弃等待。',
+  },
+  {
+    missingReceipt: 'No receipt for this appearance change.',
+    expired: 'This request can’t be replayed. You can stop waiting.',
+  },
+)
 
 const SERVER: CustomizationStatus = { safe: null, host: null, preview: null }
 
@@ -33,7 +45,7 @@ async function sendCustomization(request: CustomizationRequest) {
   const { kind, ...body } = request
   const path = kind === 'apply' ? 'customization' : `customization/${kind}`
   const receipt = await api<CustomizationReceipt>(path, { method: 'POST', body })
-  if (receipt?.requestId !== request.requestId) throw new MessageError('没有收到这次外观修改的回执。')
+  if (receipt?.requestId !== request.requestId) throw new MessageError(() => COPY.missingReceipt)
 }
 
 /** Both recovery entries share one original request for each Host and device. */
@@ -90,7 +102,7 @@ export class CustomizationWrites {
       const definite = code === 'customization-write-pending' || code === 'customization-write-unavailable'
       const conflict = code === 'customization-conflict' || code === 'request-id-reused'
       if (pending.unknown || (!definite && isUncertain(error))) {
-        const text = conflict ? '这次请求已无法重放，可以放弃等待。' : errorMessage(error)
+        const text = conflict ? COPY.expired : errorMessage(error)
         this.update(key, { ...pending, sending: false, unknown: { retryable: !conflict, text } })
         return { kind: 'unknown' }
       }

@@ -22,6 +22,101 @@ import { ProposalRow } from './ProposalRow.tsx'
 import { originWords } from './proposals.ts'
 import { writeFor, type AgentWrites } from './useAgentWrites.ts'
 import { MessageError } from '../core/api.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    external: '来自外部内容',
+    untitled: '未命名会话',
+    modified: '已修改',
+    generalFacts: '通用里你确认过的事',
+    generalEmpty: '通用里还没有',
+    facts: (total: number, sent?: number) => `${sent === undefined ? '' : `${formatNumber(sent)} / `}${formatNumber(total)} 条`,
+    shareGeneral: '带上「通用」里关于你的事',
+    shareDetail:
+      '你在「通用」里写下或保存的记忆，只读地带给这个 Agent，标明是你告诉 Latch 的。导入的和来自外部内容的不带。最多带最近的 24 条、6 KB。只有能查看全部内容的设备发出的对话才会带入。只在首轮收到上下文的 Harness 上，打开或关掉都在清空上下文后才生效。',
+    thisAgent: '只给这个 Agent',
+    memoryDetail:
+      '只有你能写，只有这个 Agent 会用，工具不会改写它。在这里删除只删 Latch 保存的这一条，不会抹掉上游服务里已有的记录。导入的和来自外部内容的记忆只作为资料带给 Agent，点「设为我说的」后才算你的话。',
+    add: '添加',
+    proposals: '提议',
+    newMemory: '新记忆',
+    cancel: '取消',
+    save: '保存',
+    empty: '还没有记忆',
+    memory: '记忆',
+    editMemory: '修改记忆',
+    saved: '已保存',
+    undone: '已撤销',
+    imported: '导入',
+    markedMine: '已设为你说的',
+    asReference: '作为资料',
+    markMine: '设为我说的',
+    undoEdit: '撤销修改',
+    edit: '修改',
+    delete: '删除',
+    deleted: '已删除',
+    deletedAt: '已删除 ·',
+    sevenDays: '7 天',
+    undoWindow: '7 天后或按「清除」后不能再撤销，记忆与它的提议里不再留这段文字；话题里的对话记录不变。',
+    undo: '撤销',
+    clear: '清除',
+    confirmClear: '清除这条记忆？',
+    permanent: '清除后不能再撤销。',
+    clearFailed: '没有清除，原因见页面上的说明。',
+    confirmDelete: '删除这条记忆？',
+    deleteDetail: '后续上下文不会收到这条记忆。外部 Harness 已收到的内容会保留在原上下文，直到清空上下文。',
+    deleteFailed: '没有删除，原因见页面上的说明。',
+  },
+  {
+    external: 'From external content',
+    untitled: 'Untitled session',
+    modified: 'Edited',
+    generalFacts: 'Facts you confirmed in General',
+    generalEmpty: 'No facts in General yet',
+    facts: (total: number, sent?: number) =>
+      sent === undefined
+        ? plural(total, { one: '{n} entry', other: '{n} entries' })
+        : `${formatNumber(sent)} of ${formatNumber(total)} entries`,
+    shareGeneral: 'Share your General memories',
+    shareDetail:
+      'Memories you wrote or saved in General are shared with this Agent as read-only facts you told Latch. Shared memories exclude imports and external content. Latch shares up to the latest 24 entries and 6 KB, only in conversations started by devices with full data access. For Harnesses that receive context only on the first turn, changes take effect after clearing the context.',
+    thisAgent: 'Used only by this Agent',
+    memoryDetail:
+      'Only you can write these memories, and this Agent is the only one that uses them. Tools cannot overwrite them. Deletion here removes Latch’s copy while upstream records are retained. Imported memories and external content are reference material until you choose Mark as my words.',
+    add: 'Add',
+    proposals: 'Proposals',
+    newMemory: 'New memory',
+    cancel: 'Cancel',
+    save: 'Save',
+    empty: 'No memories yet',
+    memory: 'Memory',
+    editMemory: 'Edit memory',
+    saved: 'Saved',
+    undone: 'Undone',
+    imported: 'Imported',
+    markedMine: 'Marked as your words',
+    asReference: 'Reference material',
+    markMine: 'Mark as my words',
+    undoEdit: 'Undo edit',
+    edit: 'Edit',
+    delete: 'Delete',
+    deleted: 'Deleted',
+    deletedAt: 'Deleted ·',
+    sevenDays: '7 days',
+    undoWindow:
+      'You can undo deletion within 7 days, until you choose Clear. After that, the memory and its proposal no longer contain the text. The conversation history is retained.',
+    undo: 'Undo',
+    clear: 'Clear',
+    confirmClear: 'Clear this memory?',
+    permanent: 'Clearing is permanent.',
+    clearFailed: 'Couldn’t clear the memory. See the explanation on this page.',
+    confirmDelete: 'Delete this memory?',
+    deleteDetail:
+      'Deletion removes this memory from future context. An external Harness keeps the copy it already received until you clear its context.',
+    deleteFailed: 'Couldn’t delete the memory. See the explanation on this page.',
+  },
+)
 
 /** A memory saved from a proposal: who it came from, its topic (a link while the topic is listed) and when. */
 function MemorySource({
@@ -39,7 +134,7 @@ function MemorySource({
   return (
     <span className="agent-memory-source">
       <span>{originWords(source.origin)}</span>
-      {source.external && <StatusWord tone="warn">来自外部内容</StatusWord>}
+      {source.external && <StatusWord tone="warn">{COPY.external}</StatusWord>}
       {title !== undefined
         && (onOpenTopic ? (
           <button
@@ -48,15 +143,15 @@ function MemorySource({
             onClick={() => {
               onOpenTopic(source.sessionId)
             }}>
-            <VisibleText text={title || '未命名会话'} />
+            <VisibleText text={title || COPY.untitled} />
           </button>
         ) : (
           <span className="agent-memory-topic">
-            <VisibleText text={title || '未命名会话'} />
+            <VisibleText text={title || COPY.untitled} />
           </span>
         ))}
       <time dateTime={source.proposedAt}>{relativeTime(source.proposedAt)}</time>
-      {memory.edited && <span>已修改</span>}
+      {memory.edited && <span>{COPY.modified}</span>}
     </span>
   )
 }
@@ -80,22 +175,17 @@ function KnowsYou({
   const facts = agent.generalFacts
   const state = writeFor(writes.state, `knows-you:${agent.id}`)
   const words = !facts
-    ? '通用里你确认过的事'
+    ? COPY.generalFacts
     : facts.total === 0
-      ? '通用里还没有'
+      ? COPY.generalEmpty
       : on && facts.sent < facts.total
-        ? `${facts.sent} / ${facts.total} 条`
-        : `${facts.total} 条`
+        ? COPY.facts(facts.total, facts.sent)
+        : COPY.facts(facts.total)
   return (
     <div className="agent-knows-you">
       <SwitchRow
-        title="带上「通用」里关于你的事"
-        description={
-          <Hint label={words}>
-            你在「通用」里写下或保存的记忆，只读地带给这个 Agent，标明是你告诉 Latch 的。导入的和来自外部内容的不带。最多带最近的 24 条、6
-            KB。只给有完整数据范围的设备发出的对话。只在首轮收到上下文的 Harness 上，打开或关掉都在清空上下文后才生效。
-          </Hint>
-        }
+        title={COPY.shareGeneral}
+        description={<Hint label={words}>{COPY.shareDetail}</Hint>}
         checked={on}
         disabled={!canRun || disabled || writes.saving || writes.held}
         onCheckedChange={next => {
@@ -171,10 +261,7 @@ export function MemoryTab({
     <div className="agent-memory">
       {knowsYou && <KnowsYou agent={knowsYou.agent} canRun={knowsYou.canRun} disabled={disabled} writes={writes} />}
       <div className="agent-memory-bar">
-        <Hint label="只给这个 Agent">
-          只有你能写，只有这个 Agent 会用，工具不会改写它。在这里删除只删 Latch
-          保存的这一条，不会抹掉上游服务里已有的记录。导入的和来自外部内容的记忆只作为资料带给 Agent，点「设为我说的」后才算你的话。
-        </Hint>
+        <Hint label={COPY.thisAgent}>{COPY.memoryDetail}</Hint>
         <TakesEffect />
         <span className="agent-form-spacer" />
         {!adding && (
@@ -184,14 +271,14 @@ export function MemoryTab({
             onClick={() => {
               setAdding(true)
             }}>
-            添加
+            {COPY.add}
           </Button>
         )}
       </div>
       {waiting.length > 0 && (
-        <section className="agent-memory-proposals" aria-label="提议">
+        <section className="agent-memory-proposals" aria-label={COPY.proposals}>
           <h4>
-            提议 <span className="agent-memory-count">{waiting.length}</span>
+            {COPY.proposals} <span className="agent-memory-count">{formatNumber(waiting.length)}</span>
           </h4>
           {waiting.map(proposal => (
             <ProposalRow key={proposal.id} owner={owner} proposal={proposal} writes={writes} effect={effect} disabled={disabled} compact />
@@ -206,7 +293,7 @@ export function MemoryTab({
             void add()
           }}>
           <TextAreaField
-            label="新记忆"
+            label={COPY.newMemory}
             value={text}
             rows={3}
             maxLength={4000}
@@ -225,22 +312,22 @@ export function MemoryTab({
                 setAdding(false)
                 setText('')
               }}>
-              取消
+              {COPY.cancel}
             </Button>
             <Button
               type="submit"
               variant="primary"
               disabled={locked || !text.trim()}
               loading={added !== null && 'phase' in added && added.phase === 'saving'}>
-              保存
+              {COPY.save}
             </Button>
           </div>
         </form>
       )}
       {memories.length === 0 && !adding ? (
-        <EmptyState title="还没有记忆" />
+        <EmptyState title={COPY.empty} />
       ) : (
-        <ul className="agent-memory-list" aria-label="记忆">
+        <ul className="agent-memory-list" aria-label={COPY.memory}>
           {memories.map(memory => {
             const state =
               writeFor(writes.state, `memory:${memory.id}`)
@@ -268,7 +355,7 @@ export function MemoryTab({
                         })
                     }}>
                     <TextAreaField
-                      label="修改记忆"
+                      label={COPY.editMemory}
                       value={editing.text}
                       rows={3}
                       maxLength={4000}
@@ -294,13 +381,13 @@ export function MemoryTab({
                         onClick={() => {
                           setEditing(null)
                         }}>
-                        取消
+                        {COPY.cancel}
                       </Button>
                       <Button
                         type="submit"
                         variant="primary"
                         disabled={locked || !editing.text.trim() || editing.text.trim() === memory.content}>
-                        保存
+                        {COPY.save}
                       </Button>
                     </div>
                   </form>
@@ -312,22 +399,22 @@ export function MemoryTab({
                   <p>{memory.content}</p>
                   <span className="agent-memory-meta">
                     {saved ? (
-                      <StatusWord tone="done">已保存</StatusWord>
+                      <StatusWord tone="done">{COPY.saved}</StatusWord>
                     ) : undone ? (
-                      <StatusWord tone="done">已撤销</StatusWord>
+                      <StatusWord tone="done">{COPY.undone}</StatusWord>
                     ) : memory.source ? (
                       <MemorySource memory={memory} topicTitle={topicTitle} onOpenTopic={onOpenTopic} />
                     ) : memory.imported ? (
                       <span className="agent-memory-source">
-                        <span>导入</span>
-                        {memory.imported.external && <StatusWord tone="warn">来自外部内容</StatusWord>}
+                        <span>{COPY.imported}</span>
+                        {memory.imported.external && <StatusWord tone="warn">{COPY.external}</StatusWord>}
                         <time dateTime={memory.createdAt}>{relativeTime(memory.createdAt)}</time>
                       </span>
                     ) : (
                       <time dateTime={memory.updatedAt}>{relativeTime(memory.updatedAt)}</time>
                     )}
-                    {memory.owned && <span>已设为你说的</span>}
-                    {material && <span>作为资料</span>}
+                    {memory.owned && <span>{COPY.markedMine}</span>}
+                    {material && <span>{COPY.asReference}</span>}
                   </span>
                   {material && (
                     <div>
@@ -337,7 +424,7 @@ export function MemoryTab({
                         onClick={() => {
                           void writes.run(`memory:${memory.id}:own`, `${base}/${memory.id}/own`, 'POST', { baseRevision: memory.revision })
                         }}>
-                        设为我说的
+                        {COPY.markMine}
                       </Button>
                     </div>
                   )}
@@ -346,7 +433,7 @@ export function MemoryTab({
                 {edited && (
                   <IconButton
                     size="sm"
-                    label="撤销修改"
+                    label={COPY.undoEdit}
                     icon={UndoGlyph}
                     disabled={locked}
                     onClick={() => {
@@ -356,7 +443,7 @@ export function MemoryTab({
                 )}
                 <IconButton
                   size="sm"
-                  label="修改"
+                  label={COPY.edit}
                   icon={EditGlyph}
                   disabled={locked}
                   onClick={() => {
@@ -366,7 +453,7 @@ export function MemoryTab({
                 />
                 <IconButton
                   size="sm"
-                  label="删除"
+                  label={COPY.delete}
                   icon={TrashGlyph}
                   disabled={locked}
                   onClick={() => {
@@ -379,7 +466,7 @@ export function MemoryTab({
         </ul>
       )}
       {deleted.length > 0 && (
-        <ul className="agent-memory-list agent-memory-deleted" aria-label="已删除">
+        <ul className="agent-memory-list agent-memory-deleted" aria-label={COPY.deleted}>
           {deleted.map(change => {
             const state = writeFor(writes.state, `memory:${change.memoryId}:undo`)
             return (
@@ -389,8 +476,8 @@ export function MemoryTab({
                     <VisibleText text={change.previous.content} />
                   </p>
                   <span className="agent-memory-meta">
-                    已删除 · <time dateTime={change.at}>{relativeTime(change.at)}</time>
-                    <Hint label="7 天">7 天后或按「清除」后不能再撤销，记忆与它的提议里不再留这段文字；话题里的对话记录不变。</Hint>
+                    {COPY.deletedAt} <time dateTime={change.at}>{relativeTime(change.at)}</time>
+                    <Hint label={COPY.sevenDays}>{COPY.undoWindow}</Hint>
                   </span>
                   <WriteNotice state={state} onRetry={() => void writes.retry()} onReload={onReload} />
                 </div>
@@ -403,7 +490,7 @@ export function MemoryTab({
                   onClick={() => {
                     undo(change.memoryId, change.previous.revision)
                   }}>
-                  撤销
+                  {COPY.undo}
                 </Button>
                 <Button
                   size="sm"
@@ -413,7 +500,7 @@ export function MemoryTab({
                   onClick={() => {
                     setClearing({ memoryId: change.memoryId, baseRevision: change.previous.revision })
                   }}>
-                  清除
+                  {COPY.clear}
                 </Button>
               </li>
             )
@@ -422,32 +509,32 @@ export function MemoryTab({
       )}
       {clearing && (
         <ConfirmDialog
-          title="清除这条记忆？"
+          title={COPY.confirmClear}
           danger
-          confirmLabel="清除"
-          message="清除后不能再撤销。"
+          confirmLabel={COPY.clear}
+          message={COPY.permanent}
           onClose={() => {
             setClearing(null)
           }}
           onConfirm={async () => {
             const { memoryId, baseRevision } = clearing
             const done = await writes.run(`memory:${memoryId}:undo`, `${base}/${memoryId}/undo`, 'DELETE', { baseRevision })
-            if (done === undefined) throw new MessageError('没有清除，原因见页面上的说明。')
+            if (done === undefined) throw new MessageError(COPY.clearFailed)
           }}
         />
       )}
       {deleting && (
         <ConfirmDialog
-          title="删除这条记忆？"
+          title={COPY.confirmDelete}
           danger
-          confirmLabel="删除"
-          message="后续上下文不会收到这条记忆。外部 Harness 已收到的内容会保留在原上下文，直到清空上下文。"
+          confirmLabel={COPY.delete}
+          message={COPY.deleteDetail}
           onClose={() => {
             setDeleting(null)
           }}
           onConfirm={async () => {
             const done = await writes.run(`memory:${deleting.id}`, `${base}/${deleting.id}`, 'DELETE', {})
-            if (done === undefined) throw new MessageError('没有删除，原因见页面上的说明。')
+            if (done === undefined) throw new MessageError(COPY.deleteFailed)
           }}
         />
       )}

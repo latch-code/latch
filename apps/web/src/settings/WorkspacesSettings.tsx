@@ -5,7 +5,7 @@ import type { DeviceAccess } from '../core/permissions.ts'
 import { api, errorMessage, MessageError } from '../core/api.ts'
 import { computerName, describeFailure, SETUP_COPY } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, shellFolders, type FolderResult, type ShellFolders } from '../core/shell.ts'
-import { PROJECT_REMOVAL } from '../deletionCopy.ts'
+import { DELETION_COPY } from '../deletionCopy.ts'
 import { basename } from '../format.ts'
 import { ProjectIcon, projectFolders } from '../projects.tsx'
 import { CodeRootNotice } from '../components/CodeRootNotice.tsx'
@@ -26,17 +26,77 @@ import { FoldRows, IconTile, Loading, MiddleEllipsis, moreButton, NoteLine, Obje
 import { ProjectEditor } from './ProjectEditor.tsx'
 import { useCloneProject } from './CloneProject.tsx'
 import { SettingsPages } from './navigation.tsx'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    restart: '重新启动 Latch 后，可以在这里添加项目。',
+    snapshotLimit: '快照保留 20 轮，最多 2 GB',
+    snapshotDetail: '每个会话保留最近 20 轮的文件快照，每个项目最多占用 2 GB，满了先删最早的。',
+    rename: '重命名…',
+    addFolder: '添加文件夹…',
+    edit: '编辑…',
+    remove: '移除…',
+    default: '默认',
+    unavailable: '不可用',
+    checkFailed: '本次检查没通过',
+    ok: '知道了',
+    notAdded: '没有添加项目：这次操作没有完成，请重试。',
+    choosing: '选择中…',
+    addProject: '添加项目',
+    projects: '项目',
+    dropFolders: '只能拖入文件夹',
+    dropToAdd: '松开以用这些文件夹添加项目',
+    noProjects: '还没有项目',
+    chooseFirst: '选择一个文件夹，或把文件夹拖到这里',
+    defaultFolder: '默认文件夹',
+    removeProject: '移除项目',
+    renameProject: '重命名项目',
+    name: '名称',
+    locked: (message: string) => `${message}。`,
+    manage: (name: string) => `管理项目：${name}`,
+    folders: (count: number) => `${formatNumber(count)} 个文件夹 ·`,
+    actions: (name: string) => `${name} 的操作`,
+    refused: (count: number) => `${formatNumber(count)} 个文件夹没有加入`,
+    otherAdded: (count: number) => `已加入其余 ${formatNumber(count)} 个。`,
+    confirmRemove: (name: string) => `移除「${name}」？`,
+  },
+  {
+    restart: 'Restart Latch to add projects here.',
+    snapshotLimit: 'Snapshots: 20 turns, up to 2 GB',
+    snapshotDetail: 'Each session keeps file snapshots of its last 20 turns. Each project uses up to 2 GB. The oldest snapshots go first.',
+    rename: 'Rename…',
+    addFolder: 'Add folder…',
+    edit: 'Edit…',
+    remove: 'Remove…',
+    default: 'Default',
+    unavailable: 'Unavailable',
+    checkFailed: 'Didn’t pass the last check',
+    ok: 'OK',
+    notAdded: 'Project not added: the action didn’t finish. Try again.',
+    choosing: 'Choosing…',
+    addProject: 'Add project',
+    projects: 'Projects',
+    dropFolders: 'Only folders can be dropped',
+    dropToAdd: 'Drop to add these folders as projects',
+    noProjects: 'No projects yet',
+    chooseFirst: 'Choose a folder, or drag one here',
+    defaultFolder: 'Default folder',
+    removeProject: 'Remove project',
+    renameProject: 'Rename project',
+    name: 'Name',
+    locked: (message: string) => `${message}.`,
+    manage: (name: string) => `Manage project ${name}`,
+    folders: (count: number) => `${plural(count, { one: '{n} folder', other: '{n} folders' })} ·`,
+    actions: (name: string) => `Actions for ${name}`,
+    refused: (count: number) => plural(count, { one: '{n} folder wasn’t added', other: '{n} folders weren’t added' }),
+    otherAdded: (count: number) => `Added the other ${plural(count, { one: '{n} folder', other: '{n} folders' })}.`,
+    confirmRemove: (name: string) => `Remove “${name}”?`,
+  },
+)
 
 /** On another device: where projects are added, by the computer's name. */
-const lockedCaption = (hostName?: string) => `${SETUP_COPY.addProjectElsewhere(computerName(hostName))}。`
-/** In the Latch app on this Mac, when it is too old to sign the request. */
-const RESTART_CAPTION = '重新启动 Latch 后，可以在这里添加项目。'
-
-/** Where a project's history stops, as the Host keeps it: the limits are the Host's own, not a setting. */
-const HISTORY_CAP = {
-  label: '快照保留 20 轮，最多 2 GB',
-  detail: '每个会话保留最近 20 轮的文件快照，每个项目最多占用 2 GB，满了先删最早的。',
-}
+const lockedCaption = (hostName?: string) => COPY.locked(SETUP_COPY.addProjectElsewhere(computerName(hostName)))
 
 /**
  * A project as one row: its glyph, its name, how many folders and where the first one is, and a ⋯ menu. A project the
@@ -75,7 +135,7 @@ export function ProjectRow({
           ? [
               {
                 id: 'rename',
-                label: '重命名…',
+                label: COPY.rename,
                 icon: EditGlyph,
                 onSelect: () => {
                   onRename(workspace)
@@ -83,7 +143,7 @@ export function ProjectRow({
               },
             ]
           : []),
-        ...(onAddFolder ? [{ id: 'add', label: '添加文件夹…', icon: FolderPlus, onSelect: onAddFolder }] : []),
+        ...(onAddFolder ? [{ id: 'add', label: COPY.addFolder, icon: FolderPlus, onSelect: onAddFolder }] : []),
         ...(folders && !disabled
           ? [
               {
@@ -96,7 +156,7 @@ export function ProjectRow({
               },
             ]
           : []),
-        ...(onEdit ? [{ id: 'edit', label: '编辑…', icon: EditGlyph, onSelect: onEdit }] : []),
+        ...(onEdit ? [{ id: 'edit', label: COPY.edit, icon: EditGlyph, onSelect: onEdit }] : []),
       ],
     },
     ...(owner
@@ -106,7 +166,7 @@ export function ProjectRow({
             items: [
               {
                 id: 'remove',
-                label: '移除…',
+                label: COPY.remove,
                 icon: TrashGlyph,
                 danger: true,
                 onSelect: () => {
@@ -122,22 +182,22 @@ export function ProjectRow({
     <>
       <ObjectRow
         className="project-row"
-        label={`管理项目：${name}`}
+        label={COPY.manage(name)}
         dim={disabled}
         leading={<ProjectIcon project={workspace} />}
         title={
           <span className="settings-row-name">
             {name}
-            {isDefault && <span className="settings-row-note">默认</span>}
-            {disabled && <StatusPill tone="warn">不可用</StatusPill>}
+            {isDefault && <span className="settings-row-note">{COPY.default}</span>}
+            {disabled && <StatusPill tone="warn">{COPY.unavailable}</StatusPill>}
           </span>
         }
         description={
           disabled ? (
-            <span className="workspace-unavailable">{workspace.unavailable || '本次检查没通过'}</span>
+            <span className="workspace-unavailable">{workspace.unavailable || COPY.checkFailed}</span>
           ) : (
             <span className="project-row-where">
-              <span>{members.length} 个文件夹 ·</span>
+              <span>{COPY.folders(members.length)}</span>
               <MiddleEllipsis text={path} />
             </span>
           )
@@ -145,7 +205,7 @@ export function ProjectRow({
         {...(onEdit ? { onOpen: onEdit } : {})}
         trailing={
           sections.some(section => section.items.length > 0) ? (
-            <Menu label={`${name} 的操作`} align="end" sections={sections} trigger={moreButton(`${name} 的操作`)} />
+            <Menu label={COPY.actions(name)} align="end" sections={sections} trigger={moreButton(COPY.actions(name))} />
           ) : undefined
         }
       />
@@ -161,12 +221,12 @@ function RefusedNotice({ result, onClose }: { result: Extract<FolderResult, { st
       tone="error"
       action={
         <Button size="xs" onClick={onClose}>
-          知道了
+          {COPY.ok}
         </Button>
       }>
       <span className="folder-refused">
-        <strong>{result.refused.length} 个文件夹没有加入</strong>
-        {result.added.length > 0 && <span>已加入其余 {result.added.length} 个。</span>}
+        <strong>{COPY.refused(result.refused.length)}</strong>
+        {result.added.length > 0 && <span>{COPY.otherAdded(result.added.length)}</span>}
         {result.refused.map(item => (
           <span key={item.path} className="folder-refused-line">
             <code className="settings-mono">{item.path}</code>
@@ -239,7 +299,7 @@ export function WorkspacesSettings({
         if (snapshot.catalog?.projectFolders) setEditing(result.added[0]!.workspaceId)
       }
       setRefused(result.refused.length > 0 ? result : null)
-    } else if (result.status === 'failed') setError('没有添加项目：这次操作没有完成，请重试。')
+    } else if (result.status === 'failed') setError(COPY.notAdded)
   }
   const pick = async () => {
     if (!folders || picking) return
@@ -297,12 +357,12 @@ export function WorkspacesSettings({
   const defaultId = snapshot.catalog?.defaults.workspaceId
   const start = workspaces?.find(workspace => workspace.id === 'default')
   const projects = workspaces?.filter(workspace => workspace.id !== 'default') ?? []
-  const caption = folders ? undefined : desktop && owner ? RESTART_CAPTION : lockedCaption(snapshot.hostName)
+  const caption = folders ? undefined : desktop && owner ? COPY.restart : lockedCaption(snapshot.hostName)
   const addAction = folders ? (
     <span className="workspaces-actions">
       {cloning.button}
       <Button variant="outline" icon={FolderPlus} loading={picking} onClick={() => void pick()}>
-        {picking ? '选择中…' : '添加项目'}
+        {picking ? COPY.choosing : COPY.addProject}
       </Button>
     </span>
   ) : undefined
@@ -326,17 +386,22 @@ export function WorkspacesSettings({
               }}
             />
           )}
-          <SettingsGroup title="项目" meta={addAction} caption={caption} captionIcon="lock" note={<NoteLine brief={HISTORY_CAP} />}>
+          <SettingsGroup
+            title={COPY.projects}
+            meta={addAction}
+            caption={caption}
+            captionIcon="lock"
+            note={<NoteLine brief={{ label: COPY.snapshotLimit, detail: COPY.snapshotDetail }} />}>
             {folders && drag !== 'none' && (
               <div className="project-drop" role="status">
-                {drag === 'files' ? '只能拖入文件夹' : '松开以用这些文件夹添加项目'}
+                {drag === 'files' ? COPY.dropFolders : COPY.dropToAdd}
               </div>
             )}
             {projects.length === 0 && (
               <SettingsRow
                 leading={<IconTile icon={FolderGlyph} />}
-                title="还没有项目"
-                {...(folders ? { description: '选择一个文件夹，或把文件夹拖到这里' } : {})}
+                title={COPY.noProjects}
+                {...(folders ? { description: COPY.chooseFirst } : {})}
               />
             )}
             <FoldRows items={projects} keyOf={workspace => workspace.id} className="project-rows">
@@ -363,9 +428,9 @@ export function WorkspacesSettings({
               <>
                 <ObjectRow
                   className="project-row"
-                  label="默认文件夹"
+                  label={COPY.defaultFolder}
                   leading={<IconTile icon={FolderGlyph} />}
-                  title={<span className="settings-row-name">默认文件夹</span>}
+                  title={<span className="settings-row-name">{COPY.defaultFolder}</span>}
                   description={<MiddleEllipsis text={escapeSecurityText(start.path)} />}
                   trailing={
                     folders ? (
@@ -400,10 +465,10 @@ export function WorkspacesSettings({
       {error && workspaces !== null && <InlineNotice tone="error">{error}</InlineNotice>}
       {removing && (
         <ConfirmDialog
-          title={`移除「${removing.name || basename(removing.path)}」？`}
-          confirmLabel="移除项目"
+          title={COPY.confirmRemove(removing.name || basename(removing.path))}
+          confirmLabel={COPY.removeProject}
           danger
-          message={PROJECT_REMOVAL}
+          message={DELETION_COPY.projectRemoval}
           onClose={() => {
             setRemoving(null)
           }}
@@ -420,8 +485,8 @@ export function WorkspacesSettings({
       )}
       {renaming && (
         <PromptDialog
-          title="重命名项目"
-          label="名称"
+          title={COPY.renameProject}
+          label={COPY.name}
           initial={renaming.name || basename(renaming.path)}
           maxLength={80}
           onClose={() => {

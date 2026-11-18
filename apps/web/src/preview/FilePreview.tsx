@@ -42,6 +42,84 @@ import { decodeEditable, editHash, mixedLineEndings } from './editText.ts'
 import { notePersonEdit } from './personEdits.ts'
 import { draftKey, editDraft, setEditDraft } from './editDrafts.ts'
 import { useViewport } from '../breakpoints.ts'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    largeFile: (size: number) => `文件较大，仅显示前 ${formatNumber(size)} MiB。`,
+    badAttachment: '附件响应无效。',
+    cannotRead: '无法读取这个文件。',
+    previous: '文件暂不可用；之前读到的内容仍保留在这里。',
+    busy: '上一个操作还没有完成，请稍后再试。',
+    preview: '文件预览',
+    sessionFolder: '会话文件夹',
+    updated: '已更新',
+    saved: '已保存',
+    editRestricted: '不能在这里编辑这个文件',
+    agentEditing: 'Agent 运行中，不能编辑',
+    edit: '编辑',
+    source: '源码',
+    quote: '引用到对话',
+    defaultApp: '用默认应用打开',
+    actions: '文件操作',
+    quickLook: '快速查看',
+    changes: '查看改动',
+    copy: '复制路径',
+    downloading: '正在下载',
+    download: '下载文件',
+    downloadingReason: '下载还未结束',
+    refresh: '更新预览',
+    copied: '已复制',
+    manualCopy: '复制不可用，请手动选择路径',
+    retry: '重试',
+    updating: '正在更新预览…',
+    readingInfo: '正在读取文件信息…',
+    show: '显示内容',
+    mayContainSecrets: '这个文件可能包含密钥。',
+    plain: '显示后，内容只以纯文本呈现。',
+    viewOnMac: '请在 Mac 上查看。',
+    cannotPreview: '不能在这里预览这个文件。',
+    unsupported: '这个文件尚不支持预览。',
+    reading: '正在读取内容…',
+  },
+  {
+    largeFile: (size: number) => `Large file · Showing the first ${formatNumber(size)} MiB.`,
+    badAttachment: 'Invalid attachment response.',
+    cannotRead: 'Can’t read this file.',
+    previous: 'File unavailable for now; what was read earlier stays here.',
+    busy: 'The last action hasn’t finished. Try again shortly.',
+    preview: 'File preview',
+    sessionFolder: 'Session folder',
+    updated: 'Updated',
+    saved: 'Saved',
+    editRestricted: 'This file can’t be edited here',
+    agentEditing: 'Editing is unavailable while the agent runs',
+    edit: 'Edit',
+    source: 'Source',
+    quote: 'Quote in chat',
+    defaultApp: 'Open in default app',
+    actions: 'File actions',
+    quickLook: 'Quick Look',
+    changes: 'View changes',
+    copy: 'Copy path',
+    downloading: 'Downloading',
+    download: 'Download file',
+    downloadingReason: 'Download in progress',
+    refresh: 'Refresh preview',
+    copied: 'Copied',
+    manualCopy: 'Can’t copy. Select the path by hand.',
+    retry: 'Retry',
+    updating: 'Updating preview…',
+    readingInfo: 'Reading file info…',
+    show: 'Show content',
+    mayContainSecrets: 'This file may contain secret keys.',
+    plain: ' Once shown, it appears as plain text only.',
+    viewOnMac: ' View it on the Mac.',
+    cannotPreview: 'This file can’t be previewed here.',
+    unsupported: 'Preview isn’t supported for this file yet.',
+    reading: 'Reading…',
+  },
+)
 
 interface ResolveResult {
   files: Array<{ status: string; code?: string; line?: number; file?: unknown }>
@@ -76,7 +154,7 @@ export function FilePreview({
   const editors = useEditors()
   const [file, setFile] = useState<FileMetadata>(),
     [error, setError] = useState(''),
-    [notice, setNotice] = useState(''),
+    [retained, setRetained] = useState(false),
     [version, setVersion] = useState(0),
     [showSecret, setShowSecret] = useState(false)
   const [sourceMode, setSourceMode] = useState(false)
@@ -132,12 +210,12 @@ export function FilePreview({
           method: 'POST',
           ...(signal ? { signal } : {}),
         })
-        if (!isFileMetadata(result.file) || result.file.source !== 'attachment') throw new MessageError('附件响应无效。')
+        if (!isFileMetadata(result.file) || result.file.source !== 'attachment') throw new MessageError(COPY.badAttachment)
         if (signal?.aborted) return
         setFile(result.file)
         resolved.current(result.file)
         setError('')
-        setNotice('')
+        setRetained(false)
         return
       }
       const result = await api<ResolveResult>(fileRoute(context, 'resolve'), {
@@ -152,7 +230,7 @@ export function FilePreview({
       })
       const answer = result.files[0]
       if (!answer || answer.status !== 'ok' || !isFileMetadata(answer.file))
-        throw new MessageError(answer?.code ? describeFailure(403, answer.code, '无法读取这个文件。') : '无法读取这个文件。')
+        throw new MessageError(answer?.code ? describeFailure(403, answer.code, COPY.cannotRead) : COPY.cannotRead)
       if (signal?.aborted) return
       setFile(answer.file)
       if (announce) {
@@ -161,7 +239,7 @@ export function FilePreview({
       }
       resolved.current(answer.file)
       setError('')
-      setNotice('')
+      setRetained(false)
     },
     [contextKey, reference, rootId, showSecret, attachmentId],
   )
@@ -198,7 +276,7 @@ export function FilePreview({
           if (controller.signal.aborted) return
           if (cause instanceof ApiError && cause.status === 410) {
             if (expiredRetry.current) {
-              setNotice('文件暂不可用；之前读到的内容仍保留在这里。')
+              setRetained(true)
               return
             }
             expiredRetry.current = true
@@ -209,7 +287,7 @@ export function FilePreview({
                 setText(undefined)
                 setSelection(undefined)
                 setError(errorMessage(cause))
-              } else setNotice('文件暂不可用；之前读到的内容仍保留在这里。')
+              } else setRetained(true)
             })
             return
           }
@@ -219,7 +297,7 @@ export function FilePreview({
             setError(errorMessage(cause))
             return
           }
-          setNotice('文件暂不可用；之前读到的内容仍保留在这里。')
+          setRetained(true)
         })
         .finally(() => {
           checking = false
@@ -350,7 +428,7 @@ export function FilePreview({
         { handle: file.handle },
       )
       if (result.status === 'refused' || result.status === 'failed') setError(fileRefusalText(result.code))
-      if (result.status === 'busy') setError('上一个操作还没有完成，请稍后再试。')
+      if (result.status === 'busy') setError(COPY.busy)
     } catch (cause) {
       setError(errorMessage(cause))
     }
@@ -437,7 +515,7 @@ export function FilePreview({
   return (
     <section
       className="file-preview"
-      aria-label="文件预览"
+      aria-label={COPY.preview}
       onKeyDown={event => {
         if (
           event.defaultPrevented
@@ -464,7 +542,7 @@ export function FilePreview({
         <FileBreadcrumb
           context={context}
           {...(file ? { root: file.root } : {})}
-          rootName={base ? basename(base) : '会话文件夹'}
+          rootName={base ? basename(base) : COPY.sessionFolder}
           path={file?.path ?? reference}
           name={file?.name ?? reference}
           attachment={file?.source === 'attachment' || attachmentId !== undefined}
@@ -473,22 +551,20 @@ export function FilePreview({
         />
         {updated && !saved && (
           <span className="file-preview-updated" role="status">
-            已更新
+            {COPY.updated}
           </span>
         )}
         {saved && (
           <span className="file-preview-updated" role="status">
-            已保存
+            {COPY.saved}
           </span>
         )}
         <span className="file-preview-actions">
-          {editRefusal && (
-            <IconButton size="xs" label={describeFailure(403, editRefusal, '不能在这里编辑这个文件')} icon={EditGlyph} disabled />
-          )}
+          {editRefusal && <IconButton size="xs" label={describeFailure(403, editRefusal, COPY.editRestricted)} icon={EditGlyph} disabled />}
           {canEdit && (
             <IconButton
               size="xs"
-              label={running ? 'Agent 运行中，不能编辑' : '编辑'}
+              label={running ? COPY.agentEditing : COPY.edit}
               icon={EditGlyph}
               disabled={running}
               onClick={() => {
@@ -499,7 +575,7 @@ export function FilePreview({
           {canToggleSource && (
             <IconButton
               size="xs"
-              label="源码"
+              label={COPY.source}
               icon={CodeGlyph}
               pressed={viewer.source ? viewer.source.showing : sourceMode}
               onClick={() => {
@@ -511,7 +587,7 @@ export function FilePreview({
           {quoteAction && (
             <IconButton
               size="xs"
-              label="引用到对话"
+              label={COPY.quote}
               icon={MessageSquareQuote}
               disabled={!quoteAction.ready}
               onPointerDown={event => event.preventDefault()}
@@ -531,7 +607,7 @@ export function FilePreview({
           {nativeFiles && file?.actions.open && (
             <IconButton
               size="xs"
-              label="用默认应用打开"
+              label={COPY.defaultApp}
               icon={ExternalGlyph}
               onClick={() => {
                 void native('open')
@@ -540,9 +616,9 @@ export function FilePreview({
           )}
           {file && (
             <Menu
-              label="文件操作"
+              label={COPY.actions}
               align="end"
-              trigger={props => <IconButton {...props} size="xs" label="文件操作" icon={MoreGlyph} />}
+              trigger={props => <IconButton {...props} size="xs" label={COPY.actions} icon={MoreGlyph} />}
               sections={[
                 { id: 'renderer', items: [...viewer.menu] },
                 {
@@ -561,7 +637,7 @@ export function FilePreview({
                                   : { workspaceId: context.workspaceId, harnessId: context.harnessId }
                               void openInEditor(owner, { handle: file.handle }, tab.target.line).then(result => {
                                 if (result.status === 'refused' || result.status === 'failed') setError(fileRefusalText(result.code))
-                                if (result.status === 'busy') setError('上一个操作还没有完成，请稍后再试。')
+                                if (result.status === 'busy') setError(COPY.busy)
                               })
                             },
                           },
@@ -571,7 +647,7 @@ export function FilePreview({
                       ? [
                           {
                             id: 'quicklook',
-                            label: '快速查看',
+                            label: COPY.quickLook,
                             icon: EyeGlyph,
                             onSelect: () => {
                               void native('quickLook')
@@ -579,12 +655,12 @@ export function FilePreview({
                           },
                         ]
                       : []),
-                    ...(onHistory ? [{ id: 'history', label: '查看改动', icon: GitCompare, onSelect: onHistory }] : []),
+                    ...(onHistory ? [{ id: 'history', label: COPY.changes, icon: GitCompare, onSelect: onHistory }] : []),
                     ...(file.source !== 'attachment'
                       ? [
                           {
                             id: 'copy',
-                            label: '复制路径',
+                            label: COPY.copy,
                             icon: CopyGlyph,
                             onSelect: () => {
                               void copied.copy(fullPath)
@@ -596,16 +672,16 @@ export function FilePreview({
                       ? [
                           {
                             id: 'download',
-                            label: downloading ? '正在下载' : '下载文件',
+                            label: downloading ? COPY.downloading : COPY.download,
                             icon: DownloadGlyph,
-                            ...(downloading ? { disabledReason: '下载还未结束' } : {}),
+                            ...(downloading ? { disabledReason: COPY.downloadingReason } : {}),
                             onSelect: () => {
                               void download()
                             },
                           },
                         ]
                       : []),
-                    { id: 'refresh', label: '更新预览', icon: RefreshGlyph, onSelect: refresh },
+                    { id: 'refresh', label: COPY.refresh, icon: RefreshGlyph, onSelect: refresh },
                   ] satisfies MenuItem[],
                 },
               ]}
@@ -613,18 +689,18 @@ export function FilePreview({
           )}
         </span>
         <span className="sr-only" role="status">
-          {copied.state === 'copied' ? '已复制' : copied.state === 'failed' ? '复制不可用，请手动选择路径' : ''}
+          {copied.state === 'copied' ? COPY.copied : copied.state === 'failed' ? COPY.manualCopy : ''}
         </span>
       </header>
-      {notice && (
+      {retained && (
         <InlineNotice
           tone="warn"
           action={
             <Button size="xs" onClick={refresh}>
-              更新预览
+              {COPY.refresh}
             </Button>
           }>
-          {notice}
+          {COPY.previous}
         </InlineNotice>
       )}
       {error && (
@@ -633,7 +709,7 @@ export function FilePreview({
           action={
             file && !textFailed ? undefined : (
               <Button size="xs" onClick={refresh}>
-                重试
+                {COPY.retry}
               </Button>
             )
           }>
@@ -642,28 +718,29 @@ export function FilePreview({
       )}
       {updatingText && text !== undefined && (
         <p className="file-preview-caption" role="status">
-          正在更新预览…
+          {COPY.updating}
         </p>
       )}
-      {!file && !error && <Loading label="正在读取文件信息…" />}
+      {!file && !error && <Loading label={COPY.readingInfo} />}
       {file && (
         <ViewerActionsProvider value={viewer.value}>
-          {file.truncated && <InlineNotice tone="warn">文件较大，仅显示前 {(file.limit / 1024 / 1024).toFixed(0)} MiB。</InlineNotice>}
+          {file.truncated && <InlineNotice tone="warn">{COPY.largeFile(Math.round(file.limit / 1024 / 1024))}</InlineNotice>}
           {file.secret && !showSecret ? (
             <InlineNotice
               tone="warn"
               action={
                 (local || file.source === 'attachment') && ['text', 'code', 'markdown', 'html', 'csv'].includes(file.kind) ? (
                   <Button size="xs" onClick={() => setShowSecret(true)}>
-                    显示内容
+                    {COPY.show}
                   </Button>
                 ) : undefined
               }>
-              这个文件可能包含密钥。{local || file.source === 'attachment' ? '显示后，内容只以纯文本呈现。' : '请在 Mac 上查看。'}
+              {COPY.mayContainSecrets}
+              {local || file.source === 'attachment' ? COPY.plain : COPY.viewOnMac}
             </InlineNotice>
           ) : !file.actions.preview ? (
             <InlineNotice>
-              {file.refused?.preview ? describeFailure(403, file.refused.preview, '不能在这里预览这个文件。') : '这个文件尚不支持预览。'}
+              {file.refused?.preview ? describeFailure(403, file.refused.preview, COPY.cannotPreview) : COPY.unsupported}
             </InlineNotice>
           ) : (
             <div
@@ -674,7 +751,7 @@ export function FilePreview({
               {file.secret ? (
                 text === undefined ? (
                   textFailed ? null : (
-                    <Loading label="正在读取内容…" />
+                    <Loading label={COPY.reading} />
                   )
                 ) : (
                   <TextPreview text={text} path={file.path} line={tab.target.line} lineRequest={tab.target} sensitive />
@@ -695,7 +772,7 @@ export function FilePreview({
                 <video {...mediaEvents} controls src={source} preload="metadata" playsInline />
               ) : text === undefined ? (
                 textFailed ? null : (
-                  <Loading label="正在读取内容…" />
+                  <Loading label={COPY.reading} />
                 )
               ) : file.kind === 'html' && tab.target.line === undefined ? (
                 <HtmlPreview

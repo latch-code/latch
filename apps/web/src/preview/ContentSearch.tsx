@@ -12,7 +12,8 @@ import {
   SearchField,
   Spinner,
 } from '@latch/ui'
-import { api, errorMessage, MessageError } from '../core/api.ts'
+import { api, errorMessage } from '../core/api.ts'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { fileContextBody, fileContextKey, fileRoute, FileOpenContext, targetIn } from './fileContext.ts'
 import {
@@ -25,11 +26,38 @@ import {
   type ContentResults,
 } from './contentSearch.ts'
 
+const COPY = defineCopy(
+  {
+    badReply: '内容搜索的响应无效。',
+    line: (file: string, number: number) => `${file} 第 ${formatNumber(number)} 行`,
+    search: '搜索内容',
+    matchCase: '区分大小写',
+    wholeWord: '全字匹配',
+    back: '返回文件树',
+    searching: '正在搜索',
+    more: '更多结果未显示',
+    skipped: '有跳过',
+    results: '搜索结果',
+  },
+  {
+    badReply: 'The file search response was invalid.',
+    line: (file: string, number: number) => `${file}, line ${formatNumber(number)}`,
+    search: 'Search file contents',
+    matchCase: 'Match case',
+    wholeWord: 'Match whole word',
+    back: 'Back to file tree',
+    searching: 'Searching',
+    more: 'More matches are available',
+    skipped: 'Some files were skipped',
+    results: 'Search results',
+  },
+)
+
 type State =
   | { phase: 'idle' }
   | { phase: 'searching'; previous?: ContentResults }
   | { phase: 'done'; results: ContentResults }
-  | { phase: 'failed'; message: string }
+  | { phase: 'failed'; error: 'invalid-reply' | { cause: unknown } }
 
 /**
  * Asks the Host once the typing pauses; a new query or option aborts the request before, which ends that search on the
@@ -53,11 +81,10 @@ function useContentSearch(context: FileContext, query: ContentQuery): State {
       })
         .then(reply => {
           const results = parseContentResults(reply)
-          if (!results) throw new MessageError('内容搜索的响应无效。')
-          if (!controller.signal.aborted) setState({ phase: 'done', results })
+          if (!controller.signal.aborted) setState(results ? { phase: 'done', results } : { phase: 'failed', error: 'invalid-reply' })
         })
         .catch(cause => {
-          if (!controller.signal.aborted) setState({ phase: 'failed', message: errorMessage(cause) })
+          if (!controller.signal.aborted) setState({ phase: 'failed', error: { cause } })
         })
     }, 250)
     return () => {
@@ -124,7 +151,7 @@ function FileResults({ file, context, roots }: { file: ContentFile; context: Fil
                 type="button"
                 className="content-search-line"
                 data-line={item.line}
-                aria-label={`${file.name} 第 ${item.line} 行`}
+                aria-label={COPY.line(file.name, item.line)}
                 onClick={() => open?.({ ...targetIn(context, file.path, file.root), line: item.line })}>
                 <span className="content-search-number">{item.line}</span>
                 <Line {...item} />
@@ -155,11 +182,11 @@ export function ContentSearch({ context, focus = 0, onClose }: { context: FileCo
   const summary = state.phase === 'done' ? resultSummary(state.results) : undefined
   const roots = new Set(results?.files.map(file => file.root)).size > 1
   return (
-    <div className="content-search" role="search" aria-label="搜索内容" data-searching={state.phase === 'searching' ? '' : undefined}>
+    <div className="content-search" role="search" aria-label={COPY.search} data-searching={state.phase === 'searching' ? '' : undefined}>
       <div className="content-search-head">
         <SearchField
           ref={field}
-          label="搜索内容"
+          label={COPY.search}
           value={q}
           maxLength={256}
           onValueChange={value => {
@@ -176,30 +203,30 @@ export function ContentSearch({ context, focus = 0, onClose }: { context: FileCo
         <IconButton
           size="xs"
           icon={CaseSensitive}
-          label="区分大小写"
+          label={COPY.matchCase}
           pressed={caseSensitive}
           onClick={() => setCaseSensitive(value => !value)}
         />
-        <IconButton size="xs" icon={WholeWord} label="全字匹配" pressed={wholeWord} onClick={() => setWholeWord(value => !value)} />
-        <IconButton size="xs" icon={CloseGlyph} label="返回文件树" onClick={onClose} />
+        <IconButton size="xs" icon={WholeWord} label={COPY.wholeWord} pressed={wholeWord} onClick={() => setWholeWord(value => !value)} />
+        <IconButton size="xs" icon={CloseGlyph} label={COPY.back} onClick={onClose} />
       </div>
       <div className="content-search-status" role="status">
         {state.phase === 'searching' && (
           <span className="content-search-busy">
             <Spinner size={12} />
-            正在搜索
+            {COPY.searching}
           </span>
         )}
         {summary && (
           <>
             <span className="content-search-summary">{summary.text}</span>
             {summary.partial && (
-              <Hint className="content-search-partial" label="更多结果未显示">
+              <Hint className="content-search-partial" label={COPY.more}>
                 {summary.partial}
               </Hint>
             )}
             {summary.skipped && (
-              <Hint className="content-search-skipped" label="有跳过">
+              <Hint className="content-search-skipped" label={COPY.skipped}>
                 {summary.skipped}
               </Hint>
             )}
@@ -211,9 +238,11 @@ export function ContentSearch({ context, focus = 0, onClose }: { context: FileCo
           </>
         )}
       </div>
-      {state.phase === 'failed' && <InlineNotice tone="error">{state.message}</InlineNotice>}
+      {state.phase === 'failed' && (
+        <InlineNotice tone="error">{state.error === 'invalid-reply' ? COPY.badReply : errorMessage(state.error.cause)}</InlineNotice>
+      )}
       {results && results.files.length > 0 && (
-        <ul className="content-search-results" aria-label="搜索结果" data-stale={state.phase === 'searching' ? '' : undefined}>
+        <ul className="content-search-results" aria-label={COPY.results} data-stale={state.phase === 'searching' ? '' : undefined}>
           {results.files.map(file => (
             <FileResults key={`${file.root}:${file.path}`} file={file} context={context} roots={roots} />
           ))}

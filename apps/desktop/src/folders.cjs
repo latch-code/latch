@@ -7,6 +7,7 @@
 // `POST /folder-grants`, then the body signed with the device key, which the renderer never holds. The Host checks
 // every path again (R1–R10 and the project rules); main checks only the shape of what it is handed.
 const nodePath = require('node:path')
+const { defineCopy } = require('./locale.cjs')
 
 const APP_PREFIX = 'latch://app/link/'
 /** As the preload checks them: project IDs the Host hands out, and folder IDs inside a project. */
@@ -21,8 +22,70 @@ const REVEAL_INTERVAL_MS = 500
 const NAME_LIMIT = 80
 /** R8, as the Host's paths.ts: C0 and C1 controls, DEL, line and paragraph separators, bidi controls, zero-width characters. */
 const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]/u
-const READS = 'Latch 内置可以读取其中的所有文件。'
-const REMOTE = '连接的设备也可以在这个项目中发起会话。'
+const COPY = defineCopy(
+  {
+    cloneTo: '克隆到',
+    cloneHere: '克隆到这里',
+    clonedProject: '会在选择的文件夹里新建它的文件夹，克隆后作为项目。',
+    exportTo: '导出到',
+    exportHere: '导出到这里',
+    exportDetails:
+      '会在选择的文件夹里新建「Latch 导出」文件夹，写入对话、记忆、待办与设置；不含 Latch 保存的密钥与凭据，也不含工具的输出。',
+    reselect: '重新选择文件夹',
+    reselectNamed: name => `重新选择「${name}」`,
+    choose: '选择',
+    addFolders: '添加文件夹',
+    addTo: name => `添加文件夹到「${name}」`,
+    add: '添加',
+    chooseSeveral: '可以选择多个文件夹。',
+    addProject: '添加项目',
+    createProject: '创建项目',
+    chooseDetails: '可以选择多个文件夹。之后可以在设置中更改主文件夹。',
+    addNamed: name => `把这些文件夹加入「${name}」？`,
+    addToProject: '把这些文件夹加入这个项目？',
+    addFromFolders: '用这些文件夹添加项目？',
+    save: '存为项目',
+    saveNamed: name => `把「${name}」的文件夹存为项目？`,
+    saveSession: '把这个会话的文件夹存为项目？',
+    saveDetails: '之后可以在这个项目中新建会话；这个会话本身不变。',
+    reads: 'Latch 内置可以读取其中的所有文件。',
+    remote: '连接的设备也可以在这个项目中发起会话。',
+    sentenceSpace: '',
+    cancel: '取消',
+  },
+  {
+    cloneTo: 'Clone to',
+    cloneHere: 'Clone here',
+    clonedProject: 'Latch creates a folder inside the selected folder and adds the clone as a project.',
+    exportTo: 'Export to',
+    exportHere: 'Export here',
+    exportDetails:
+      'Latch writes chats, memories, to-dos and settings in a new “Latch 导出” folder. The export excludes saved keys, credentials and tool output.',
+    reselect: 'Choose folder again',
+    reselectNamed: name => `Choose “${name}” again`,
+    choose: 'Choose',
+    addFolders: 'Add folders',
+    addTo: name => `Add folders to “${name}”`,
+    add: 'Add',
+    chooseSeveral: 'You can choose multiple folders.',
+    addProject: 'Add project',
+    createProject: 'Create project',
+    chooseDetails: 'You can choose multiple folders. Change the primary folder later in Settings.',
+    addNamed: name => `Add these folders to “${name}”?`,
+    addToProject: 'Add these folders to this project?',
+    addFromFolders: 'Create a project with these folders?',
+    save: 'Save as project',
+    saveNamed: name => `Save the folder for “${name}” as a project?`,
+    saveSession: 'Save this session’s folder as a project?',
+    saveDetails: 'You can start new sessions in this project. This session stays as it is.',
+    reads: 'Latch’s built-in Harness can read all files in these folders.',
+    remote: 'Connected devices can start sessions in this project.',
+    sentenceSpace: ' ',
+    cancel: 'Cancel',
+  },
+)
+
+const accessNotes = () => COPY.reads + COPY.sentenceSpace + COPY.remote
 const UNPRINTABLE_MESSAGE = '文件夹路径包含不可显示的字符，不能加入项目。'
 const INVALID_MESSAGE = '这个路径不能作为文件夹加入项目。'
 /** Per-path refusals carry a status only for the page's fallback wording. */
@@ -125,9 +188,9 @@ function parseCloneInput(input) {
  */
 function cloneDialog({ defaultPath, url }) {
   return {
-    title: '克隆到',
-    buttonLabel: '克隆到这里',
-    message: `${url}\n会在选择的文件夹里新建它的文件夹，克隆后作为项目。${READS}${REMOTE}`,
+    title: COPY.cloneTo,
+    buttonLabel: COPY.cloneHere,
+    message: `${url}\n${COPY.clonedProject}${COPY.sentenceSpace}${accessNotes()}`,
     defaultPath,
     properties: ['openDirectory', 'createDirectory'],
   }
@@ -141,9 +204,9 @@ function cloneDialog({ defaultPath, url }) {
  */
 function exportDialog({ defaultPath }) {
   return {
-    title: '导出到',
-    buttonLabel: '导出到这里',
-    message: '会在选择的文件夹里新建「Latch 导出」文件夹，写入对话、记忆、待办与设置；不含 Latch 保存的密钥与凭据，也不含工具的输出。',
+    title: COPY.exportTo,
+    buttonLabel: COPY.exportHere,
+    message: COPY.exportDetails,
     defaultPath,
     properties: ['openDirectory', 'createDirectory'],
   }
@@ -183,8 +246,8 @@ function pickDialog({ defaultPath, project, replacing }) {
   if (replacing) {
     const name = shownName(replacing.name)
     return {
-      title: name ? `重新选择「${name}」` : '重新选择文件夹',
-      buttonLabel: '选择',
+      title: name ? COPY.reselectNamed(name) : COPY.reselect,
+      buttonLabel: COPY.choose,
       defaultPath,
       properties: ['openDirectory', 'createDirectory'],
     }
@@ -192,17 +255,17 @@ function pickDialog({ defaultPath, project, replacing }) {
   if (project) {
     const name = shownName(project.name)
     return {
-      title: name ? `添加文件夹到「${name}」` : '添加文件夹',
-      buttonLabel: '添加',
-      message: `可以选择多个文件夹。${READS}${REMOTE}`,
+      title: name ? COPY.addTo(name) : COPY.addFolders,
+      buttonLabel: COPY.add,
+      message: COPY.chooseSeveral + COPY.sentenceSpace + accessNotes(),
       defaultPath,
       properties: ['openDirectory', 'createDirectory', 'multiSelections'],
     }
   }
   return {
-    title: '添加项目',
-    buttonLabel: '创建项目',
-    message: '可以选择多个文件夹。之后可以在设置中更改主文件夹。',
+    title: COPY.addProject,
+    buttonLabel: COPY.createProject,
+    message: COPY.chooseDetails,
     defaultPath,
     properties: ['openDirectory', 'createDirectory', 'multiSelections'],
   }
@@ -219,9 +282,9 @@ function dropDialog({ paths, project }) {
   return {
     type: 'question',
     title: 'Latch',
-    message: project ? (name ? `把这些文件夹加入「${name}」？` : '把这些文件夹加入这个项目？') : '用这些文件夹添加项目？',
-    detail: `${paths.join('\n')}\n\n${READS}${REMOTE}`,
-    buttons: [project ? '添加' : '添加项目', '取消'],
+    message: project ? (name ? COPY.addNamed(name) : COPY.addToProject) : COPY.addFromFolders,
+    detail: `${paths.join('\n')}\n\n${accessNotes()}`,
+    buttons: [project ? COPY.add : COPY.addProject, COPY.cancel],
     defaultId: 1,
     cancelId: 1,
     noLink: true,
@@ -239,9 +302,9 @@ function saveSessionDialog({ path, title }) {
   return {
     type: 'question',
     title: 'Latch',
-    message: name ? `把「${name}」的文件夹存为项目？` : '把这个会话的文件夹存为项目？',
-    detail: `${path}\n\n之后可以在这个项目中新建会话；这个会话本身不变。${READS}`,
-    buttons: ['存为项目', '取消'],
+    message: name ? COPY.saveNamed(name) : COPY.saveSession,
+    detail: `${path}\n\n${COPY.saveDetails}${COPY.sentenceSpace}${COPY.reads}`,
+    buttons: [COPY.save, COPY.cancel],
     defaultId: 1,
     cancelId: 1,
     noLink: true,

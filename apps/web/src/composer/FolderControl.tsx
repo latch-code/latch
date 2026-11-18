@@ -7,6 +7,26 @@ import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { BriefHint } from './BriefHint.tsx'
 import { BranchSegment, StatusSegment } from './ComposerStatus.tsx'
 import { WorktreeStartPanel } from './WorktreeStartPanel.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    fromBranch: (value1: string, value2: string) => `从 ${value1} 的 ${value2}`,
+    fromRef: (value1: string) => `从 ${value1}`,
+    checkout: (value1: string) => `检出 ${value1}`,
+    reuse: (value1: string) => `沿用 ${value1}`,
+    readingBranch: '正在读取分支…',
+    folderLabel: '文件夹',
+  },
+  {
+    fromBranch: (value1: string, value2: string) => `From ${value2} on ${value1}`,
+    fromRef: (value1: string) => `From ${value1}`,
+    checkout: (value1: string) => `Check out ${value1}`,
+    reuse: (value1: string) => `Reuse ${value1}`,
+    readingBranch: 'Reading branch…',
+    folderLabel: 'Folder',
+  },
+)
 
 type Where = 'folder' | 'worktree'
 
@@ -15,20 +35,29 @@ export type BaseState = { state: 'reading' } | { state: 'ready'; base: WorktreeB
 
 export const HEAD_START: WorktreeStart = { from: 'head' }
 
-const WORKTREE_COPY = {
-  folder: '当前文件夹',
-  worktree: '新工作树',
-  folderLine: '直接在项目文件夹里改',
-  uncommitted: '不带未提交的改动',
-  otherStart: '其他起点…',
-  /** A worktree separates files only: ports, processes and this computer's permissions stay shared (no isolation implied). */
-  shared: { label: '工作树只分开文件', detail: '端口、进程和这台电脑上的权限仍然共用。' },
-} as const
+const WORKTREE_COPY = defineCopy(
+  {
+    folder: '当前文件夹',
+    worktree: '新工作树',
+    folderLine: '直接在项目文件夹里改',
+    uncommitted: '不带未提交的改动',
+    otherStart: '其他起点…',
+    shared: { label: '工作树只分开文件', detail: '端口、进程和这台电脑上的权限仍然共用。' },
+  },
+  {
+    folder: 'Project folder',
+    worktree: 'New worktree',
+    folderLine: 'Edit in the project folder',
+    uncommitted: 'Leaves uncommitted changes in place',
+    otherStart: 'Other start point…',
+    shared: { label: 'Worktrees separate files only', detail: 'Ports, processes and permissions on this computer are shared.' },
+  },
+)
 
 /** 从 main 的 3f2a1c9; a detached HEAD has no branch to name. */
 export function baseWords(base: WorktreeBase): string {
   const commit = base.commit.slice(0, 7)
-  return base.branch ? `从 ${base.branch} 的 ${commit}` : `从 ${commit}`
+  return base.branch ? COPY.fromBranch(base.branch, commit) : COPY.fromRef(commit)
 }
 
 /** Where a start point begins, in a few words: 从 feature/x、检出 feature/x、沿用 20261112-ab12. */
@@ -38,12 +67,12 @@ export function startWords(start: WorktreeStart, base: WorktreeBase | undefined)
       return base && baseWords(base)
     case 'commit': {
       const branch = base?.branches?.find(item => item.name === start.ref)
-      return branch ? `从 ${branch.name} 的 ${branch.commit.slice(0, 7)}` : `从 ${start.ref}`
+      return branch ? COPY.fromBranch(branch.name, branch.commit.slice(0, 7)) : COPY.fromRef(start.ref)
     }
     case 'branch':
-      return `检出 ${start.branch}`
+      return COPY.checkout(start.branch)
     case 'reuse':
-      return `沿用 ${start.name}`
+      return COPY.reuse(start.name)
   }
 }
 
@@ -82,7 +111,7 @@ function worktreeLine(base: BaseState | undefined, start: WorktreeStart): string
   const words = startWords(start, base?.state === 'ready' ? base.base : undefined)
   if (start.from === 'reuse') return words
   // The warning first: a long branch name is what the ellipsis cuts, never the warning.
-  return `${WORKTREE_COPY.uncommitted} · ${words ?? '正在读取分支…'}`
+  return `${WORKTREE_COPY.uncommitted} · ${words ?? COPY.readingBranch}`
 }
 
 /**
@@ -121,7 +150,7 @@ export function FolderControl({
   const line = worktreeLine(base, start)
   const picker = (
     <ValuePicker<Where>
-      label="文件夹"
+      label={COPY.folderLabel}
       variant={variant}
       {...(variant === 'row' ? { className: 'new-sheet-row' } : { size: 'xs' as const })}
       leading={picked ? FolderGit2 : FolderGlyph}

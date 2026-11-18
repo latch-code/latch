@@ -1,6 +1,7 @@
 import { useId, useState, type FormEvent, type ReactNode } from 'react'
 import { Button, Dialog, InlineNotice, TextField } from '@latch/ui'
 import { InlineConfirm } from '../components/InlineConfirm.tsx'
+import { SETTINGS_COPY } from './settings.copy.ts'
 
 /**
  * A 560 dialog that changes one value of a settings row (a name, an address, a key). The value applies when the person
@@ -20,7 +21,7 @@ export function FieldDialog({
   hint,
   warning,
   maxLength,
-  confirmLabel = '保存',
+  confirmLabel,
   onSubmit,
   onClose,
 }: {
@@ -79,10 +80,10 @@ export function FieldDialog({
       footer={
         <>
           <Button size="md" disabled={busy} onClick={onClose}>
-            取消
+            {SETTINGS_COPY.cancel}
           </Button>
           <Button size="md" variant="primary" type="submit" form={form} disabled={!trimmed || trimmed === initial} loading={busy}>
-            {confirmLabel}
+            {confirmLabel ?? SETTINGS_COPY.save}
           </Button>
         </>
       }>

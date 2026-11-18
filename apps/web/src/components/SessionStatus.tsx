@@ -2,11 +2,35 @@ import { useEffect, useRef, useState } from 'react'
 import type { AppSnapshot, RunLive } from '@latch/protocol'
 import { AlertGlyph, CheckGlyph, Icon, StatusGlyph, StatusSlot, WaitingGlyph, type SlotStatus } from '@latch/ui'
 import { hostNow, useTicker } from '../core/hostClock.ts'
+import { currentLocale, defineCopy, plural, useLocale } from '../core/i18n.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { useSteady } from '../hooks/useSteady.ts'
 import { activityWords, rowMark, runningWords, silentWords, type RowStatus, type WaitKind } from '../sessions.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { personActivity } from '../agents/personWords.ts'
+
+const COPY = defineCopy(
+  {
+    stopping: '正在停止',
+    waiting: '等你处理',
+    failed: '失败',
+    fresh: '有新内容',
+    unknown: (count: number) => plural(count, { other: '{n} 条结果未知' }),
+    stale: '状态未更新',
+    lastConfirmed: (at: string) => `上次确认 ${at}`,
+    separator: '，',
+  },
+  {
+    stopping: 'Stopping',
+    waiting: 'Needs you',
+    failed: 'Failed',
+    fresh: 'New content',
+    unknown: (count: number) => plural(count, { one: '{n} unknown outcome', other: '{n} unknown outcomes' }),
+    stale: 'Status is out of date',
+    lastConfirmed: (at: string) => `Last confirmed at ${at}`,
+    separator: ', ',
+  },
+)
 
 /**
  * The clock's leaf: only this re-renders each second, and the shared ticker stops while the page is hidden. A topic of
@@ -99,7 +123,7 @@ export function SessionStatus({
     <StatusSlot
       className={className}
       status={shelved ? 'time' : shown.kind === 'ended' && shown.unknown > 0 ? 'attention' : SLOT[shown.kind]}
-      running={shown.kind === 'stopping' ? '正在停止' : <RunningWords live={live} person={person} />}
+      running={shown.kind === 'stopping' ? COPY.stopping : <RunningWords live={live} person={person} />}
       attention={attention}
       ended={shown.kind === 'ended' ? shown.word : undefined}
       time={time}
@@ -112,33 +136,36 @@ export function SessionStatus({
 export function statusLabel(status: RowStatus, live: RunLive | undefined, person = false): string {
   switch (status.kind) {
     case 'waiting':
-      return '等你处理'
+      return COPY.waiting
     case 'silent':
       return silentWords(live, hostNow())
     case 'stopping':
-      return '正在停止'
+      return COPY.stopping
     case 'running':
       return (person ? personActivity(live)?.words : undefined) ?? activityWords(live)
     case 'failed':
-      return '失败'
+      return COPY.failed
     case 'unread':
-      return '有新内容'
+      return COPY.fresh
     case 'ended':
-      return [status.word, status.unknown > 0 && `${status.unknown} 条结果未知`, status.unread && '有新内容'].filter(Boolean).join('，')
+      return [status.word, status.unknown > 0 && COPY.unknown(status.unknown), status.unread && COPY.fresh]
+        .filter(Boolean)
+        .join(COPY.separator)
     case 'frozen':
-      return '状态未更新'
+      return COPY.stale
     case 'read':
       return ''
   }
 }
 
-const timeOfDay = (at: number) => new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+const timeOfDay = (at: number) => new Date(at).toLocaleTimeString(currentLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
 
 /**
  * While the connection is down, 「上次确认 10:42」: the time of the last list that really came from the Host. Null while
  * connected. An idle connection still reads the list every 30 seconds, so this is that close.
  */
 export function useLastConfirmed(connection: ConnectionStatus, snapshot: Pick<AppSnapshot, 'tasks'>): string | null {
+  useLocale()
   const down = connection === 'reconnecting' || connection === 'offline'
   const last = useRef(Date.now())
   const [frozenAt, setFrozenAt] = useState<number | null>(null)
@@ -149,5 +176,5 @@ export function useLastConfirmed(connection: ConnectionStatus, snapshot: Pick<Ap
       setFrozenAt(null)
     }
   }, [down, snapshot])
-  return down ? `上次确认 ${timeOfDay(frozenAt ?? last.current)}` : null
+  return down ? COPY.lastConfirmed(timeOfDay(frozenAt ?? last.current)) : null
 }

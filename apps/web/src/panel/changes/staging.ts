@@ -12,6 +12,78 @@ import type {
   GitWholeReason,
 } from '@latch/protocol'
 import type { DiffLine } from '../../diff.ts'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    wholeStage: (reason: string) => `${reason} · 只能整个暂存`,
+    wholeUnstage: (reason: string) => `${reason} · 只能整个取消暂存`,
+    branch: '主分支',
+    afterBranch: (base: string) => `离开 ${base} 之后的提交`,
+    binary: '二进制',
+    large: '文件太大',
+    newFile: '新文件',
+    deleted: '已删除',
+    mode: '执行位变化',
+    link: '链接',
+    submodule: '子模块',
+    conflict: '有冲突',
+    filter: '经过滤器',
+    lineEndings: '换行会转换',
+    secret: '可能含密钥',
+    unchanged: '内容相同',
+    resolveConflict: '有冲突 · 在终端里解决',
+    indexChanged: '暂存区已变 · 已重新读取',
+    newHead: '有了新提交 · 已重新读取',
+    fileChanged: '文件已变 · 已重新读取',
+    linesChanged: '所选的行已变 · 已重新读取',
+    wholeFileReason: (value1: string | number) => `${value1} · 只能整个文件`,
+    wholeFile: '只能整个文件',
+    agentBusy: 'Agent 正在改这个文件夹',
+    deliveryBusy: '另一个交付操作正在进行',
+    merge: '合并进行中，在终端里完成',
+    updating: '这台电脑正在安装更新',
+    noFiles: '这台设备看不到会话文件',
+    unpushed: '还没推送的提交',
+    fileCommits: '改过这个文件的提交',
+    recent: '最近的提交',
+    mergeCommit: '合并',
+  },
+  {
+    wholeStage: (reason: string) => `${reason} · Stage the whole file only`,
+    wholeUnstage: (reason: string) => `${reason} · Unstage the whole file only`,
+    branch: 'main branch',
+    afterBranch: (base: string) => `Commits since branching from ${base}`,
+    binary: 'Binary',
+    large: 'File too large',
+    newFile: 'New file',
+    deleted: 'Deleted',
+    mode: 'Executable bit changed',
+    link: 'Symlink',
+    submodule: 'Submodule',
+    conflict: 'Conflict',
+    filter: 'Filtered',
+    lineEndings: 'Line endings will be converted',
+    secret: 'May contain secret keys',
+    unchanged: 'Same contents',
+    resolveConflict: 'Conflict · Resolve in Terminal',
+    indexChanged: 'Index changed · Reloaded',
+    newHead: 'New commit · Reloaded',
+    fileChanged: 'File changed · Reloaded',
+    linesChanged: 'Selected lines changed · Reloaded',
+    wholeFileReason: (value1: string | number) => `${value1} · Whole file only`,
+    wholeFile: 'Whole file only',
+    agentBusy: 'Agent is changing this folder',
+    deliveryBusy: 'Another delivery operation is in progress',
+    merge: 'Merge in progress · Finish in Terminal',
+    updating: 'This computer is installing an update',
+    noFiles: 'This device can’t see session files',
+    unpushed: 'Unpushed commits',
+    fileCommits: 'Commits that changed this file',
+    recent: 'Recent commits',
+    mergeCommit: 'Merge',
+  },
+)
 
 /** A changed line of a staging diff: `old:<n>` for a removed line, `new:<n>` for an added one. */
 export type LineKey = `old:${number}` | `new:${number}`
@@ -147,51 +219,73 @@ export function selectionOf(pick: LinePick): { old?: GitLineRange[]; new?: GitLi
 
 /** Why a file's lines cannot be picked, in a few words. */
 const WHOLE_WORD: Record<GitWholeReason, string> = {
-  binary: '二进制',
-  large: '文件太大',
-  new: '新文件',
-  deleted: '已删除',
-  mode: '执行位变化',
-  link: '链接',
-  submodule: '子模块',
-  conflicted: '有冲突',
-  filtered: '经过滤器',
-  converted: '换行会转换',
-  secret: '可能含密钥',
-  unchanged: '内容相同',
+  get binary() {
+    return COPY.binary
+  },
+  get large() {
+    return COPY.large
+  },
+  get new() {
+    return COPY.newFile
+  },
+  get deleted() {
+    return COPY.deleted
+  },
+  get mode() {
+    return COPY.mode
+  },
+  get link() {
+    return COPY.link
+  },
+  get submodule() {
+    return COPY.submodule
+  },
+  get conflicted() {
+    return COPY.conflict
+  },
+  get filtered() {
+    return COPY.filter
+  },
+  get converted() {
+    return COPY.lineEndings
+  },
+  get secret() {
+    return COPY.secret
+  },
+  get unchanged() {
+    return COPY.unchanged
+  },
 }
 
 /** What the row says for a whole file: the reason, then that it goes whole. A conflict is resolved in the terminal. */
 export function wholeNote(reason: GitWholeReason, view: GitStagingView): string {
-  if (reason === 'conflicted') return '有冲突 · 在终端里解决'
-  return `${WHOLE_WORD[reason]} · 只能整个${view === 'unstaged' ? '暂存' : '取消暂存'}`
+  if (reason === 'conflicted') return COPY.resolveConflict
+  return view === 'unstaged' ? COPY.wholeStage(WHOLE_WORD[reason]) : COPY.wholeUnstage(WHOLE_WORD[reason])
 }
 
 /** A refusal of a line write, in a few words; undefined for one the caller shows as it came. */
 export function lineRefusal(code: string, details: Readonly<Record<string, unknown>> = {}): string | undefined {
   switch (code) {
     case 'git-file-changed':
-      return details.changed === 'index'
-        ? '暂存区已变 · 已重新读取'
-        : details.changed === 'head'
-          ? '有了新提交 · 已重新读取'
-          : '文件已变 · 已重新读取'
+      return details.changed === 'index' ? COPY.indexChanged : details.changed === 'head' ? COPY.newHead : COPY.fileChanged
     case 'git-selection-invalid':
-      return '所选的行已变 · 已重新读取'
+      return COPY.linesChanged
     case 'git-file-whole': {
       const reason = details.whole
-      return typeof reason === 'string' && reason in WHOLE_WORD ? `${WHOLE_WORD[reason as GitWholeReason]} · 只能整个文件` : '只能整个文件'
+      return typeof reason === 'string' && reason in WHOLE_WORD
+        ? COPY.wholeFileReason(WHOLE_WORD[reason as GitWholeReason])
+        : COPY.wholeFile
     }
     case 'git-turn-running':
-      return 'Agent 正在改这个文件夹'
+      return COPY.agentBusy
     case 'git-busy':
-      return '另一个交付操作正在进行'
+      return COPY.deliveryBusy
     case 'git-operation-in-progress':
-      return '合并进行中，在终端里完成'
+      return COPY.merge
     case 'host-updating':
-      return '这台电脑正在安装更新'
+      return COPY.updating
     case 'file-scope':
-      return '这台设备看不到会话文件'
+      return COPY.noFiles
     default:
       return undefined
   }
@@ -256,13 +350,13 @@ export function historyFile(root: string, file: GitHistoryFile): ChangedFile {
 export function historyTitle(history: Pick<GitHistory, 'range' | 'base'>): string {
   switch (history.range) {
     case 'base':
-      return `离开 ${history.base ?? '主分支'} 之后的提交`
+      return COPY.afterBranch(history.base ?? COPY.branch)
     case 'upstream':
-      return '还没推送的提交'
+      return COPY.unpushed
     case 'file':
-      return '改过这个文件的提交'
+      return COPY.fileCommits
     default:
-      return '最近的提交'
+      return COPY.recent
   }
 }
 
@@ -275,6 +369,6 @@ export function commitRow(commit: GitCommitEntry): { label: string; meta: string
   const short = commit.sha.slice(0, 7)
   return {
     label: commit.subject ?? short,
-    meta: [commit.subject ? short : '', commit.author ?? '', when, commit.merge ? '合并' : ''].filter(Boolean).join(' · '),
+    meta: [commit.subject ? short : '', commit.author ?? '', when, commit.merge ? COPY.mergeCommit : ''].filter(Boolean).join(' · '),
   }
 }

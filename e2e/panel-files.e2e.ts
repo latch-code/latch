@@ -108,6 +108,45 @@ describe('the right panel', () => {
     await openPanelTab(page, '文件')
   }
 
+  it('keeps the open slide and notes while changing display language', async () => {
+    const page = await open(1440, 'light')
+    try {
+      await openFiles(page)
+      await row(page, 'deck.pptx').click()
+      const sandbox = page.locator('.file-sandbox iframe')
+      const frame = sandbox.contentFrame()
+      await page.getByRole('status').filter({ hasText: '1 / 6 页' }).waitFor()
+      await frame.getByText('备注', { exact: true }).first().click()
+      await frame.getByText('Speaker note', { exact: true }).first().waitFor()
+      await frame.locator('body').evaluate(body => {
+        body.tabIndex = -1
+        body.focus({ preventScroll: true })
+      })
+      await page.keyboard.press('ArrowRight')
+      await page.getByRole('status').filter({ hasText: '2 / 6 页' }).waitFor()
+      const frameElement = await sandbox.elementHandle()
+      const source = await sandbox.getAttribute('src')
+
+      await page.getByTestId('open-settings').filter({ visible: true }).first().click()
+      await page.locator('#settings-tab-general').click()
+      await page.getByTestId('display-language').getByRole('radio', { name: 'English' }).click()
+      await page.getByTestId('close-settings').click()
+
+      await page.getByRole('status').filter({ hasText: '2 / 6 pages' }).waitFor()
+      const notes = frame.locator('details[data-latch-notes][open] summary[aria-label="Notes"]').first()
+      await notes.waitFor()
+      expect(await notes.evaluate(element => getComputedStyle(element, '::after').content)).toBe('"Notes"')
+      expect(await notes.textContent()).toBe('备注')
+      expect(await frameElement.evaluate(node => node.isConnected)).toBe(true)
+      expect(await sandbox.getAttribute('src')).toBe(source)
+      await shot(page, 'pptx-en', 1440, 'light')
+      await page.getByRole('button', { name: 'Quote in chat', exact: true }).click()
+      await expect.poll(async () => page.locator('.composer-input textarea:visible').inputValue()).toContain('Page 2')
+    } finally {
+      await page.context().close()
+    }
+  })
+
   for (const [width, theme] of [
     [1440, 'light'],
     [1440, 'dark'],

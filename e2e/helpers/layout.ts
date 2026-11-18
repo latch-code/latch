@@ -226,7 +226,7 @@ export async function openSection(settings: Locator, name: string): Promise<void
 /** Closes the whole panel from any settings level. */
 export async function closeSettings(settings: Locator): Promise<void> {
   const panel = settings.and(settingsPage(settings.page()))
-  await panel.getByRole('button', { name: '关闭设置', exact: true }).click()
+  await panel.getByTestId('close-settings').click()
   await panel.waitFor({ state: 'detached' })
 }
 

@@ -27,7 +27,7 @@ import { api, errorMessage, isUncertain } from '../core/api.ts'
 import { computerName, describeFailure, SETUP_COPY } from '../core/securityCopy.ts'
 import { currentShell, revealLabel, type FolderResult, type ShellFolders } from '../core/shell.ts'
 import { basename, relativeTime, statusLabels } from '../format.ts'
-import { FOLDER_REMOVAL, PROJECT_REMOVAL } from '../deletionCopy.ts'
+import { DELETION_COPY } from '../deletionCopy.ts'
 import { recentProjectSessions } from '../sessions.ts'
 import { folderAccessText, PROJECT_ICONS, ProjectIcon, projectFolders, projectName, projectSessionCount } from '../projects.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
@@ -36,6 +36,129 @@ import { VisibleText } from '../components/VisibleText.tsx'
 import { modelFromKey, modelGroups, modelKey } from '../components/pickerOptions.tsx'
 import { LeftoverWorktrees } from './LeftoverWorktrees.tsx'
 import { IconTile, MiddleEllipsis, moreButton, NavRow, NoteLine, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
+import { harnessName } from '../core/harnessName.ts'
+import { defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    systemDialog: '另一个系统对话框还没结束，请稍后再试。',
+    folderActionFailed: '没有完成文件夹操作，请同步项目后重试。',
+    foldersOnly: '只能拖入文件夹。',
+    retry: '重试原操作',
+    details: '基本信息',
+    name: '名称',
+    rename: '重命名…',
+    icon: '图标',
+    projectIcon: '项目图标',
+    folder: '文件夹',
+    defaultModel: '默认模型',
+    defaultModelHint: '这个项目的新会话用',
+    unset: '不设',
+    unavailable: '现在不能用',
+    recent: '最近会话',
+    untitled: '未命名会话',
+    empty: '还没有可访问的会话',
+    restoreFolders: '恢复或重新选择之前不能新建会话',
+    ok: '知道了',
+    folderLimit: '每个项目最多 8 个文件夹',
+    addFolder: '添加文件夹…',
+    modelScope: '读到的内容会发给模型服务',
+    modelScopeDetail: 'Latch 内置可以读取这些文件夹中的文件，并把读到的内容发给模型服务；写入前会询问你。',
+    needsFolder: '项目至少要有一个文件夹',
+    folderInUse: '有正在运行或等待批准的会话使用它',
+    main: '主文件夹',
+    folderNotFound: '找不到这个文件夹，请同步项目后重试。',
+    copyPath: '复制路径',
+    makeMain: '设为主文件夹',
+    saving: '正在保存项目',
+    moveUp: '向上移动',
+    moveDown: '向下移动',
+    reselect: '重新选择…',
+    removeFolder: '从项目中移除…',
+    restart: '重新启动 Latch 后，可以在这里添加和重新选择文件夹。',
+    harnessFolders: '各 Harness 使用的文件夹',
+    remove: '移除项目',
+    projectInUse: '有会话正在项目中运行，请先结束',
+    removeAction: '移除项目…',
+    copied: '已复制路径',
+    copyFailed: '复制失败',
+    renameProject: '重命名项目',
+    removeConfirm: '移除',
+    moved: (name: string, position: number) => `${name} 已移到第 ${formatNumber(position)} 位${position === 1 ? '，现在是主文件夹' : ''}`,
+    sessions: (count: number) => `${formatNumber(count)} 个会话`,
+    openSession: (name: string) => `打开会话：${name}`,
+    archived: '已归档 · ',
+    foldersUnavailable: (count: number) => `${formatNumber(count)} 个文件夹不可用`,
+    refused: (count: number) => `${formatNumber(count)} 个文件夹没有加入`,
+    addedOthers: (count: number) => `已加入其余 ${formatNumber(count)} 个。`,
+    drop: (name: string) => `松开以添加到「${name}」`,
+    reorder: (name: string) => `调整 ${name} 的顺序`,
+    folderActions: (name: string) => `${name} 的更多操作`,
+    editOnHost: (name: string) => `添加项目和添加文件夹要在 ${name} 上的 Latch 里完成。`,
+    confirmProject: (name: string) => `移除项目「${name}」？`,
+    confirmFolder: (name: string) => `从项目中移除「${name}」？`,
+  },
+  {
+    systemDialog: 'Another system dialog is still open. Try again shortly.',
+    folderActionFailed: 'The folder action didn’t finish. Sync the project and try again.',
+    foldersOnly: 'Only folders can be dropped.',
+    retry: 'Retry original action',
+    details: 'Details',
+    name: 'Name',
+    rename: 'Rename…',
+    icon: 'Icon',
+    projectIcon: 'Project icon',
+    folder: 'Folder',
+    defaultModel: 'Default model',
+    defaultModelHint: 'Applies to new sessions in this project',
+    unset: 'None',
+    unavailable: 'Unavailable',
+    recent: 'Recent sessions',
+    untitled: 'Untitled session',
+    empty: 'No sessions you can open',
+    restoreFolders: 'Restore or reselect to start new sessions',
+    ok: 'OK',
+    folderLimit: 'Up to 8 folders per project',
+    addFolder: 'Add folder…',
+    modelScope: 'What it reads goes to the model service',
+    modelScopeDetail:
+      'Latch built-in can read files in these folders and sends what it reads to the model service. It asks you before writing.',
+    needsFolder: 'A project needs at least one folder',
+    folderInUse: 'A running session or one waiting for approval uses it',
+    main: 'Main folder',
+    folderNotFound: 'Folder not found. Sync the project and try again.',
+    copyPath: 'Copy path',
+    makeMain: 'Make main folder',
+    saving: 'Saving project',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
+    reselect: 'Reselect…',
+    removeFolder: 'Remove from project…',
+    restart: 'Restart Latch to add and reselect folders here.',
+    harnessFolders: 'Folders each Harness uses',
+    remove: 'Remove project',
+    projectInUse: 'End the running session in this project first.',
+    removeAction: 'Remove project…',
+    copied: 'Path copied',
+    copyFailed: 'Couldn’t copy',
+    renameProject: 'Rename project',
+    removeConfirm: 'Remove',
+    moved: (name: string, position: number) =>
+      position === 1 ? `${name} is now the main folder` : `Moved ${name} to position ${formatNumber(position)}`,
+    sessions: (count: number) => plural(count, { one: '{n} session', other: '{n} sessions' }),
+    openSession: (name: string) => `Open session ${name}`,
+    archived: 'Archived · ',
+    foldersUnavailable: (count: number) => plural(count, { one: '{n} folder unavailable', other: '{n} folders unavailable' }),
+    refused: (count: number) => plural(count, { one: '{n} folder wasn’t added', other: '{n} folders weren’t added' }),
+    addedOthers: (count: number) => plural(count, { one: 'The other folder was added.', other: 'The other {n} folders were added.' }),
+    drop: (name: string) => `Drop to add to “${name}”`,
+    reorder: (name: string) => `Reorder ${name}`,
+    folderActions: (name: string) => `More actions for ${name}`,
+    editOnHost: (name: string) => `Add projects and folders in Latch on ${name}.`,
+    confirmProject: (name: string) => `Remove the project “${name}”?`,
+    confirmFolder: (name: string) => `Remove “${name}” from the project?`,
+  },
+)
 
 /** 「不设」 in the project's 默认模型: the Harness's own default stands. */
 const NO_MODEL = '~none'
@@ -68,6 +191,7 @@ export function ProjectEditor({
   onRemoved(): void
   onOpenSession?(id: string): void
 }) {
+  useLocale()
   const folders = projectFolders(project)
   const name = projectName(project)
   const [busy, setBusy] = useState(false)
@@ -105,8 +229,8 @@ export function ProjectEditor({
   }
   const nativeResult = async (result: FolderResult) => {
     if (result.status === 'added') setRefused(result.refused.length ? result : null)
-    else if (result.status === 'busy') setError('另一个系统对话框还没结束，请稍后再试。')
-    else if (result.status === 'failed') setError(describeFailure(0, result.code, '没有完成文件夹操作，请同步项目后重试。'))
+    else if (result.status === 'busy') setError(COPY.systemDialog)
+    else if (result.status === 'failed') setError(describeFailure(0, result.code, COPY.folderActionFailed))
   }
   const pick = (replace?: string) => {
     if (shell) void execute(async () => nativeResult(await shell.pick(project.id, replace)))
@@ -118,7 +242,7 @@ export function ProjectEditor({
     ids.splice(to, 0, id!)
     void execute(async () => {
       await api(endpoint, { method: 'PATCH', body: { order: ids } })
-      setAnnouncement(`${basename(folders[from]!.path)} 已移到第 ${to + 1} 位${to === 0 ? '，现在是主文件夹' : ''}`)
+      setAnnouncement(COPY.moved(basename(folders[from]!.path), to + 1))
     })
   }
   const folderDrop = {
@@ -138,7 +262,7 @@ export function ProjectEditor({
       setOver(false)
       const items = Array.from(event.dataTransfer.items).filter(item => item.kind === 'file')
       if (!items.length || items.some(item => item.webkitGetAsEntry()?.isDirectory !== true)) {
-        setError('只能拖入文件夹。')
+        setError(COPY.foldersOnly)
         return
       }
       const files = Array.from(event.dataTransfer.files)
@@ -155,32 +279,32 @@ export function ProjectEditor({
           action={
             retry ? (
               <Button size="xs" loading={busy} onClick={() => void execute(retry.run)}>
-                重试原操作
+                {COPY.retry}
               </Button>
             ) : undefined
           }>
           {error}
         </InlineNotice>
       )}
-      <SettingsGroup title="基本信息">
+      <SettingsGroup title={COPY.details}>
         <SettingsRow
           leading={<ProjectIcon project={project} />}
-          title="名称"
+          title={COPY.name}
           description={<VisibleText text={name} />}
           trailing={
             owner ? (
               <Button onClick={() => setRenaming(true)} disabled={busy} icon={EditGlyph}>
-                重命名…
+                {COPY.rename}
               </Button>
             ) : undefined
           }
         />
         <SettingsRow
-          title="图标"
+          title={COPY.icon}
           trailing={
             owner ? (
               <ValuePicker
-                label="项目图标"
+                label={COPY.projectIcon}
                 value={project.glyph ?? 'folder'}
                 disabled={busy}
                 groups={[
@@ -198,24 +322,24 @@ export function ProjectEditor({
                 }}
               />
             ) : (
-              (PROJECT_ICONS[project.glyph ?? 'folder']?.label ?? '文件夹')
+              (PROJECT_ICONS[project.glyph ?? 'folder']?.label ?? COPY.folder)
             )
           }
         />
         {(owner || project.defaultModel) && snapshot.catalog && (
           <SettingsRow
-            title="默认模型"
+            title={COPY.defaultModel}
             trailing={
               owner ? (
                 <ValuePicker
-                  label="默认模型"
+                  label={COPY.defaultModel}
                   value={project.defaultModel ? modelKey(project.defaultModel) : NO_MODEL}
                   disabled={busy}
                   searchable={snapshot.catalog.providers.reduce((sum, provider) => sum + provider.models.length, 0) >= 8}
                   width="sm"
-                  header={{ title: '这个项目的新会话用' }}
+                  header={{ title: COPY.defaultModelHint }}
                   groups={[
-                    { id: '~none', options: [{ value: NO_MODEL, label: '不设' }] },
+                    { id: '~none', options: [{ value: NO_MODEL, label: COPY.unset }] },
                     ...modelGroups(snapshot.catalog).filter(group => group.options.length > 0),
                     // A saved model that is off or gone now is still shown as what is saved.
                     ...(project.defaultModel
@@ -225,7 +349,7 @@ export function ProjectEditor({
                       ? [
                           {
                             id: '~saved',
-                            label: '现在不能用',
+                            label: COPY.unavailable,
                             options: [{ value: modelKey(project.defaultModel), label: project.defaultModel.model }],
                           },
                         ]
@@ -243,27 +367,27 @@ export function ProjectEditor({
             }
           />
         )}
-        <SettingsRow title={`${projectSessionCount(project, snapshot.tasks)} 个会话`} />
+        <SettingsRow title={COPY.sessions(projectSessionCount(project, snapshot.tasks))} />
       </SettingsGroup>
       {onOpenSession && (
-        <SettingsGroup title="最近会话">
+        <SettingsGroup title={COPY.recent}>
           <div className="project-recent-sessions">
             {recent.map(task => (
               <NavRow
                 key={task.id}
-                title={<VisibleText text={task.title || '未命名会话'} />}
-                label={`打开会话：${escapeSecurityText(task.title || '未命名会话')}`}
-                description={`${task.archived ? '已归档 · ' : ''}${statusLabels[task.status]} · ${relativeTime(task.updatedAt)}`}
+                title={<VisibleText text={task.title || COPY.untitled} />}
+                label={COPY.openSession(escapeSecurityText(task.title || COPY.untitled))}
+                description={`${task.archived ? COPY.archived : ''}${statusLabels[task.status]} · ${relativeTime(task.updatedAt)}`}
                 onClick={() => onOpenSession(task.id)}
               />
             ))}
-            {recent.length === 0 && <SettingsRow title="还没有可访问的会话" />}
+            {recent.length === 0 && <SettingsRow title={COPY.empty} />}
           </div>
         </SettingsGroup>
       )}
       {missing.length > 0 && (
-        <InlineNotice tone="warn" title={`${missing.length} 个文件夹不可用`}>
-          恢复或重新选择之前不能新建会话
+        <InlineNotice tone="warn" title={COPY.foldersUnavailable(missing.length)}>
+          {COPY.restoreFolders}
         </InlineNotice>
       )}
       {refused && (
@@ -271,12 +395,12 @@ export function ProjectEditor({
           tone="error"
           action={
             <Button size="xs" onClick={() => setRefused(null)}>
-              知道了
+              {COPY.ok}
             </Button>
           }>
           <span className="folder-refused">
-            <strong>{refused.refused.length} 个文件夹没有加入</strong>
-            {refused.added.length > 0 && <span>已加入其余 {refused.added.length} 个。</span>}
+            <strong>{COPY.refused(refused.refused.length)}</strong>
+            {refused.added.length > 0 && <span>{COPY.addedOthers(refused.added.length)}</span>}
             {refused.refused.map(item => (
               <span key={item.path} className="folder-refused-line">
                 <code>
@@ -289,7 +413,7 @@ export function ProjectEditor({
         </InlineNotice>
       )}
       <SettingsGroup
-        title="文件夹"
+        title={COPY.folder}
         meta={
           shell ? (
             <Button
@@ -297,9 +421,9 @@ export function ProjectEditor({
               icon={FolderPlus}
               loading={busy}
               disabled={folders.length >= 8}
-              tooltip={folders.length >= 8 ? '每个项目最多 8 个文件夹' : undefined}
+              tooltip={folders.length >= 8 ? COPY.folderLimit : undefined}
               onClick={() => pick()}>
-              添加文件夹…
+              {COPY.addFolder}
             </Button>
           ) : undefined
         }
@@ -307,22 +431,21 @@ export function ProjectEditor({
           <NoteLine
             icon={Send}
             brief={{
-              label: '读到的内容会发给模型服务',
-              detail: 'Latch 内置可以读取这些文件夹中的文件，并把读到的内容发给模型服务；写入前会询问你。',
+              label: COPY.modelScope,
+              detail: COPY.modelScopeDetail,
             }}
           />
         }>
         <div className="project-folder-list" data-drop={over ? '' : undefined} {...folderDrop}>
           {over && (
             <p className="project-drop" role="status">
-              松开以添加到「
-              <VisibleText text={name} />」
+              <VisibleText text={COPY.drop(name)} />
             </p>
           )}
           {folders.map((folder, index) => {
             const base = basename(folder.path)
             const inUse = folderInUse(project, folder, snapshot)
-            const removeReason = folders.length === 1 ? '项目至少要有一个文件夹' : inUse ? '有正在运行或等待批准的会话使用它' : undefined
+            const removeReason = folders.length === 1 ? COPY.needsFolder : inUse ? COPY.folderInUse : undefined
             return (
               <div
                 className="project-folder"
@@ -342,7 +465,7 @@ export function ProjectEditor({
                 {owner && folders.length > 1 && (
                   <IconButton
                     className="project-folder-grip"
-                    label={`调整 ${escapeSecurityText(base)} 的顺序`}
+                    label={COPY.reorder(escapeSecurityText(base))}
                     icon={GripVertical}
                     disabled={busy}
                     draggable={!busy}
@@ -366,7 +489,7 @@ export function ProjectEditor({
                   title={
                     <span className="settings-row-name">
                       <VisibleText text={base} />
-                      {index === 0 && <Badge>主文件夹</Badge>}
+                      {index === 0 && <Badge>{COPY.main}</Badge>}
                     </span>
                   }
                   dim={folder.unavailable !== undefined}
@@ -381,9 +504,9 @@ export function ProjectEditor({
                   }
                   trailing={
                     <Menu
-                      label={`${escapeSecurityText(base)} 的更多操作`}
+                      label={COPY.folderActions(escapeSecurityText(base))}
                       align="end"
-                      trigger={moreButton(`${escapeSecurityText(base)} 的更多操作`)}
+                      trigger={moreButton(COPY.folderActions(escapeSecurityText(base)))}
                       sections={[
                         {
                           id: 'file',
@@ -397,7 +520,7 @@ export function ProjectEditor({
                                     onSelect: () => {
                                       void execute(async () => {
                                         const result = await shell.reveal(project.id, folder.id)
-                                        if (result.status === 'failed') setError('找不到这个文件夹，请同步项目后重试。')
+                                        if (result.status === 'failed') setError(COPY.folderNotFound)
                                       })
                                     },
                                   },
@@ -405,7 +528,7 @@ export function ProjectEditor({
                               : []),
                             {
                               id: 'copy',
-                              label: '复制路径',
+                              label: COPY.copyPath,
                               icon: CopyGlyph,
                               onSelect: () => {
                                 void copy.copy(folder.path)
@@ -422,8 +545,8 @@ export function ProjectEditor({
                                     ? [
                                         {
                                           id: 'primary',
-                                          label: '设为主文件夹',
-                                          disabledReason: busy ? '正在保存项目' : undefined,
+                                          label: COPY.makeMain,
+                                          disabledReason: busy ? COPY.saving : undefined,
                                           onSelect: () => order(index, 0),
                                         },
                                       ]
@@ -432,9 +555,9 @@ export function ProjectEditor({
                                     ? [
                                         {
                                           id: 'up',
-                                          label: '向上移动',
+                                          label: COPY.moveUp,
                                           icon: ArrowUp,
-                                          disabledReason: busy ? '正在保存项目' : undefined,
+                                          disabledReason: busy ? COPY.saving : undefined,
                                           onSelect: () => order(index, index - 1),
                                         },
                                       ]
@@ -443,9 +566,9 @@ export function ProjectEditor({
                                     ? [
                                         {
                                           id: 'down',
-                                          label: '向下移动',
+                                          label: COPY.moveDown,
                                           icon: ArrowDown,
-                                          disabledReason: busy ? '正在保存项目' : undefined,
+                                          disabledReason: busy ? COPY.saving : undefined,
                                           onSelect: () => order(index, index + 1),
                                         },
                                       ]
@@ -454,9 +577,9 @@ export function ProjectEditor({
                                     ? [
                                         {
                                           id: 'replace',
-                                          label: '重新选择…',
+                                          label: COPY.reselect,
                                           icon: FolderOpenGlyph,
-                                          disabledReason: busy ? '正在保存项目' : inUse ? '有正在运行或等待批准的会话使用它' : undefined,
+                                          disabledReason: busy ? COPY.saving : inUse ? COPY.folderInUse : undefined,
                                           onSelect: () => pick(folder.id),
                                         },
                                       ]
@@ -468,10 +591,10 @@ export function ProjectEditor({
                                 items: [
                                   {
                                     id: 'remove',
-                                    label: '从项目中移除…',
+                                    label: COPY.removeFolder,
                                     icon: TrashGlyph,
                                     danger: true,
-                                    disabledReason: busy ? '正在保存项目' : removeReason,
+                                    disabledReason: busy ? COPY.saving : removeReason,
                                     onSelect: () => setRemoving(folder),
                                   },
                                 ],
@@ -489,20 +612,18 @@ export function ProjectEditor({
       </SettingsGroup>
       {!shell && (
         <p className="settings-caption">
-          {currentShell() && currentShell()?.remote !== true && owner
-            ? '重新启动 Latch 后，可以在这里添加和重新选择文件夹。'
-            : `添加项目和添加文件夹要在 ${computerName(snapshot.hostName)} 上的 Latch 里完成。`}
+          {currentShell() && currentShell()?.remote !== true && owner ? COPY.restart : COPY.editOnHost(computerName(snapshot.hostName))}
         </p>
       )}
       {folders.length > 1 && (
-        <SettingsGroup title="各 Harness 使用的文件夹" note={<NoteLine icon={ShieldGlyph} brief={SETUP_COPY.externalFolders} />}>
+        <SettingsGroup title={COPY.harnessFolders} note={<NoteLine icon={ShieldGlyph} brief={SETUP_COPY.externalFolders} />}>
           {snapshot.catalog?.harnesses
             .filter(harness => harness.status === 'ready')
             .map(harness => (
               <SettingsRow
                 key={harness.id}
                 leading={<HarnessTile harness={harness} size={24} />}
-                title={harness.capabilities.display.label}
+                title={harnessName(harness)}
                 description={folderAccessText(harness, folders.length)}
               />
             ))}
@@ -514,26 +635,26 @@ export function ProjectEditor({
       {owner && (
         <SettingsGroup>
           <SettingsRow
-            title="移除项目"
+            title={COPY.remove}
             trailing={
               <Button
                 variant="danger"
                 disabled={busy || active}
-                tooltip={active ? '有会话正在项目中运行，请先结束' : undefined}
+                tooltip={active ? COPY.projectInUse : undefined}
                 onClick={() => setRemoving('project')}>
-                移除项目…
+                {COPY.removeAction}
               </Button>
             }
           />
         </SettingsGroup>
       )}
       <span className="sr-only" role="status">
-        {announcement || (copy.state === 'copied' ? '已复制路径' : copy.state === 'failed' ? '复制失败' : '')}
+        {announcement || (copy.state === 'copied' ? COPY.copied : copy.state === 'failed' ? COPY.copyFailed : '')}
       </span>
       {renaming && (
         <PromptDialog
-          title="重命名项目"
-          label="名称"
+          title={COPY.renameProject}
+          label={COPY.name}
           initial={name}
           maxLength={80}
           onClose={() => setRenaming(false)}
@@ -548,11 +669,11 @@ export function ProjectEditor({
         <ConfirmDialog
           title={
             removing === 'project'
-              ? `移除项目「${escapeSecurityText(name)}」？`
-              : `从项目中移除「${escapeSecurityText(basename(removing.path))}」？`
+              ? COPY.confirmProject(escapeSecurityText(name))
+              : COPY.confirmFolder(escapeSecurityText(basename(removing.path)))
           }
-          message={removing === 'project' ? PROJECT_REMOVAL : FOLDER_REMOVAL}
-          confirmLabel={removing === 'project' ? '移除项目' : '移除'}
+          message={removing === 'project' ? DELETION_COPY.projectRemoval : DELETION_COPY.folderRemoval}
+          confirmLabel={removing === 'project' ? COPY.remove : COPY.removeConfirm}
           danger
           onClose={() => setRemoving(null)}
           onConfirm={async () => {

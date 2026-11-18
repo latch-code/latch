@@ -7,6 +7,62 @@ import { TimeLabel } from './MessageRow.tsx'
 import { Menu } from './overlays.tsx'
 import { budgetWords, turnCostWords } from '../settings/modelSpend.ts'
 import { Button, IconButton, Tooltip, Popover, StatusWord, InfoGlyph, CopyButton, CopyGlyph, EnterGlyph, MoreGlyph } from '@latch/ui'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    throughGateway: (count: number) => `经 Latch 网关 ${formatNumber(count)} 次请求`,
+    modelRequests: (value1: string, count: number) => `${value1}：${formatNumber(count)} 次`,
+    incomplete: (count: number) => `${formatNumber(count)} 次没有完成`,
+    stillRunning: (count: number) => `${formatNumber(count)} 次在这一轮结束时还在进行`,
+    fallback: (count: number) => `${formatNumber(count)} 次由备选回答`,
+    used: (value1: string | number) => `服务说用的是 ${value1}`,
+    source: '由模型服务在回复里报告，Latch 转发时读取',
+    unmeasured: (count: number) => `另有 ${formatNumber(count)} 次回复没有报告用量，没有计入`,
+    open: (count: number) => `另有 ${formatNumber(count)} 次请求在这一轮结束时还在进行，没有计入`,
+    gatewayRequests: (count: number) => `这一轮经 Latch 网关 ${formatNumber(count)} 次请求`,
+    adjusted: '思考档位：已按服务声明调整',
+    input: (value1: string | number) => `输入 ${value1}`,
+    output: (value1: string | number) => `输出 ${value1}`,
+    partial: '用量不完整',
+    requests: '请求记录',
+    context: '上下文 ',
+    copy: '复制',
+    retry: '重试',
+    fork: '从这里分叉',
+    actions: '这一轮的操作',
+    handoff: '交给代码任务…',
+    transcript: '复制到这里为止的记录',
+    moreActions: '这一轮的更多操作',
+  },
+  {
+    throughGateway: (count: number) =>
+      plural(count, { one: '{n} request through the Latch gateway', other: '{n} requests through the Latch gateway' }),
+    modelRequests: (value1: string, count: number) => `${value1}: ${plural(count, { one: '{n} request', other: '{n} requests' })}`,
+    incomplete: (count: number) => `${formatNumber(count)} incomplete`,
+    stillRunning: (count: number) => `${formatNumber(count)} still running at the end of this turn`,
+    fallback: (count: number) => `${formatNumber(count)} answered by the fallback`,
+    used: (value1: string | number) => `The service reported using ${value1}`,
+    source: 'Reported by the model service as Latch forwarded its replies',
+    unmeasured: (count: number) => `${formatNumber(count)} other replies didn’t report usage and aren’t counted`,
+    open: (count: number) => `${formatNumber(count)} other requests were still running at the end of this turn and aren’t counted`,
+    gatewayRequests: (count: number) =>
+      `${plural(count, { one: '{n} request', other: '{n} requests' })} through the Latch gateway this turn`,
+    adjusted: 'Thinking level adjusted to the service’s supported levels',
+    input: (value1: string | number) => `Input ${value1}`,
+    output: (value1: string | number) => `Output ${value1}`,
+    partial: 'Incomplete usage',
+    requests: 'Request log',
+    context: 'Context ',
+    copy: 'Copy',
+    retry: 'Retry',
+    fork: 'Fork from here',
+    actions: 'Turn actions',
+    handoff: 'Hand off to a coding task…',
+    transcript: 'Copy transcript up to here',
+    moreActions: 'More turn actions',
+  },
+)
 
 /** A fact of the footer with its details in a tooltip; it takes keyboard focus so the details are reachable. */
 function Fact({ tip, className, children }: { tip?: ReactNode; className?: string; children: ReactNode }) {
@@ -31,21 +87,17 @@ const Lines = ({ lines }: { lines: string[] }) => (
 
 /** 「fake-model：3 次，1 次没有完成，服务说用的是 fake-model-2 · 输入 30 · 输出 15」 */
 function modelLine(entry: RoutedModel): string {
-  const parts = [`${entry.model}：${entry.requests} 次`]
-  if (entry.failed) parts.push(`${entry.failed} 次没有完成`)
-  if (entry.open) parts.push(`${entry.open} 次在这一轮结束时还在进行`)
-  if (entry.fallback) parts.push(`${entry.fallback} 次由备选回答`)
-  if (entry.used && modelIdKey(entry.used) !== modelIdKey(entry.model)) parts.push(`服务说用的是 ${entry.used}`)
+  const parts = [COPY.modelRequests(entry.model, entry.requests)]
+  if (entry.failed) parts.push(COPY.incomplete(entry.failed))
+  if (entry.open) parts.push(COPY.stillRunning(entry.open))
+  if (entry.fallback) parts.push(COPY.fallback(entry.fallback))
+  if (entry.used && modelIdKey(entry.used) !== modelIdKey(entry.model)) parts.push(COPY.used(entry.used))
   return parts.join('，') + (entry.usage ? ` · ${tokenParts(entry.usage).join(' · ')}` : '')
 }
 
 /** Where the tokens of a turn through Latch come from, and what they leave out. */
 function routedSource(route: TurnRoute): string[] {
-  return [
-    '由模型服务在回复里报告，Latch 转发时读取',
-    ...(route.unmeasured ? [`另有 ${route.unmeasured} 次回复没有报告用量，没有计入`] : []),
-    ...(route.open ? [`另有 ${route.open} 次请求在这一轮结束时还在进行，没有计入`] : []),
-  ]
+  return [COPY.source, ...(route.unmeasured ? [COPY.unmeasured(route.unmeasured)] : []), ...(route.open ? [COPY.open(route.open)] : [])]
 }
 
 /**
@@ -77,11 +129,7 @@ function SettledFacts({
   const usage = person ? undefined : (stepUsage ?? route?.usage)
   const routedUsage = !stepUsage && route?.usage ? route : undefined
   const requests = route
-    ? [
-        `这一轮经 Latch 网关 ${route.requests} 次请求`,
-        ...route.models.map(modelLine),
-        ...(route.thinkingAdjusted ? ['思考档位：已按服务声明调整'] : []),
-      ]
+    ? [COPY.gatewayRequests(route.requests), ...route.models.map(modelLine), ...(route.thinkingAdjusted ? [COPY.adjusted] : [])]
     : []
   const incomplete = routedUsage && (routedUsage.unmeasured > 0 || routedUsage.open > 0)
   const spent = outcome === 'interrupted' || times.activeMs === undefined ? undefined : formatDuration(times.activeMs)
@@ -101,13 +149,13 @@ function SettledFacts({
       {/* A phone drops the unit, which 输入 and 输出 already imply, so the pair fits beside the buttons. */}
       {usage && (
         <Fact>
-          {`输入 ${formatTokens(usage.inputTokens)}`}
+          {COPY.input(formatTokens(usage.inputTokens))}
           <span className="turn-fact-unit"> tokens</span>
         </Fact>
       )}
       {usage && (
         <Fact className="turn-fact-last">
-          {`输出 ${formatTokens(usage.outputTokens)}`}
+          {COPY.output(formatTokens(usage.outputTokens))}
           <span className="turn-fact-unit"> tokens</span>
         </Fact>
       )}
@@ -119,23 +167,31 @@ function SettledFacts({
       )}
       {incomplete && (
         <Popover
-          label="用量不完整"
+          label={COPY.partial}
           size="sm"
           trigger={props => (
             <Button {...props} size="xs" variant="ghost" icon={InfoGlyph}>
-              用量不完整
+              {COPY.partial}
             </Button>
           )}>
           <Lines lines={[...routedSource(routedUsage), ...requests]} />
         </Popover>
       )}
       {routedUsage && !incomplete && (
-        <Popover label="请求记录" size="sm" trigger={props => <IconButton {...props} icon={InfoGlyph} label="请求记录" size="xs" />}>
+        <Popover
+          label={COPY.requests}
+          size="sm"
+          trigger={props => <IconButton {...props} icon={InfoGlyph} label={COPY.requests} size="xs" />}>
           <Lines lines={requests} />
         </Popover>
       )}
-      {route && !routedUsage && <Fact tip={<Lines lines={requests} />}>经 Latch 网关 {route.requests} 次请求</Fact>}
-      {!usage && !person && context !== undefined && <Fact>上下文 {tokenAmount(context)}</Fact>}
+      {route && !routedUsage && <Fact tip={<Lines lines={requests} />}>{COPY.throughGateway(route.requests)}</Fact>}
+      {!usage && !person && context !== undefined && (
+        <Fact>
+          {COPY.context}
+          {tokenAmount(context)}
+        </Fact>
+      )}
     </>
   )
 }
@@ -187,25 +243,25 @@ export function TurnFooter({
             <SettledFacts turn={turn} outcome={outcome} context={context} worked={worked} person={person} />
           </span>
         )}
-        {text && <CopyButton text={text} label="复制" size="xs" />}
-        {!live && onRetry && <IconButton icon={RotateCcw} size="xs" label="重试" className="turn-retry" onClick={onRetry} />}
-        {!live && actions?.onFork && <IconButton icon={GitFork} size="xs" label="从这里分叉" onClick={actions.onFork} />}
+        {text && <CopyButton text={text} label={COPY.copy} size="xs" />}
+        {!live && onRetry && <IconButton icon={RotateCcw} size="xs" label={COPY.retry} className="turn-retry" onClick={onRetry} />}
+        {!live && actions?.onFork && <IconButton icon={GitFork} size="xs" label={COPY.fork} onClick={actions.onFork} />}
         {!live && actions && (
           <Menu
-            label="这一轮的操作"
+            label={COPY.actions}
             placement="top-end"
             sections={[
               {
                 id: 'turn-actions',
                 items: [
                   ...(actions.onHandoff
-                    ? [{ id: 'handoff', label: '交给代码任务…', leading: <EnterGlyph size={14} />, onSelect: actions.onHandoff }]
+                    ? [{ id: 'handoff', label: COPY.handoff, leading: <EnterGlyph size={14} />, onSelect: actions.onHandoff }]
                     : []),
-                  { id: 'copy-history', label: '复制到这里为止的记录', leading: <CopyGlyph size={14} />, onSelect: actions.onCopy },
+                  { id: 'copy-history', label: COPY.transcript, leading: <CopyGlyph size={14} />, onSelect: actions.onCopy },
                 ],
               },
             ]}
-            trigger={props => <IconButton {...props} icon={MoreGlyph} size="xs" label="这一轮的更多操作" />}
+            trigger={props => <IconButton {...props} icon={MoreGlyph} size="xs" label={COPY.moreActions} data-turn-actions="" />}
           />
         )}
       </div>

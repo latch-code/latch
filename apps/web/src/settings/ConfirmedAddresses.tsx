@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { Button, ConfirmDialog, InlineNotice } from '@latch/ui'
 import { errorMessage, MessageError } from '../core/api.ts'
 import { addressRows, readPolicy, removeFromPolicy, type PolicyView } from '../core/policyView.ts'
-import { AUDIT_NOT_RECORDED_TEXT, PROVIDER_COPY } from '../core/securityCopy.ts'
+import { NOTICE_COPY, PROVIDER_COPY } from '../core/securityCopy.ts'
 import { NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
+import { SETTINGS_COPY } from './settings.copy.ts'
 
 interface Removal {
   address?: string
@@ -49,7 +50,7 @@ export function ConfirmedAddresses({
               onClick={() => {
                 void load()
               }}>
-              重试
+              {SETTINGS_COPY.retry}
             </Button>
           }>
           {error}
@@ -74,11 +75,11 @@ export function ConfirmedAddresses({
                 setRemoving({
                   address: row.address,
                   ...(row.allowance ? { allowance: row.allowance } : {}),
-                  title: `移除 ${row.shown}？`,
+                  title: SETTINGS_COPY.removeTitle(row.shown),
                   message: PROVIDER_COPY.removeAddress(row.services),
                 })
               }}>
-              移除
+              {SETTINGS_COPY.remove}
             </Button>
           }
         />
@@ -92,19 +93,19 @@ export function ConfirmedAddresses({
           trailing={
             <Button
               onClick={() => {
-                setRemoving({ allowance: entry, title: `移除 ${entry}？`, message: PROVIDER_COPY.removeAllowance })
+                setRemoving({ allowance: entry, title: SETTINGS_COPY.removeTitle(entry), message: PROVIDER_COPY.removeAllowance })
               }}>
-              移除
+              {SETTINGS_COPY.remove}
             </Button>
           }
         />
       ))}
-      {auditMissing && <InlineNotice tone="error">{AUDIT_NOT_RECORDED_TEXT}</InlineNotice>}
+      {auditMissing && <InlineNotice tone="error">{NOTICE_COPY.auditNotRecorded}</InlineNotice>}
       {removing && (
         <ConfirmDialog
           title={removing.title}
           danger
-          confirmLabel="移除"
+          confirmLabel={SETTINGS_COPY.remove}
           message={removing.message}
           onClose={() => {
             setRemoving(null)

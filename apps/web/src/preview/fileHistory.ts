@@ -1,5 +1,11 @@
 import { isFileMention, type FileDiff, type FileOpenTarget, type TaskDetail } from '@latch/protocol'
 import { appliedDiffs } from '../conversation.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const FILE_HISTORY_COPY = defineCopy(
+  { projectFolder: '项目文件夹', toolEdit: '工具修改' },
+  { projectFolder: 'Project folder', toolEdit: 'Tool edit' },
+)
 export interface FileHistory {
   root: string
   folder: string
@@ -62,7 +68,7 @@ export function fileHistories(detail: Pick<TaskDetail, 'summary' | 'messages'>):
       const key = `${root.id}\n${relative}`
       const history = groups.get(key) ?? {
         root: root.id,
-        folder: root.path.split('/').at(-1) || '项目文件夹',
+        folder: root.path.split('/').at(-1) || FILE_HISTORY_COPY.projectFolder,
         path: relative,
         target: { sessionId: detail.summary.id, reference: relative, rootId: root.id, view: 'changes' as const },
         entries: [],
@@ -71,7 +77,7 @@ export function fileHistories(detail: Pick<TaskDetail, 'summary' | 'messages'>):
         id: `${message.id}:${index}`,
         toolId: message.id,
         ...(turnId ? { turnId } : {}),
-        tool: message.tool?.toolTitle ?? message.tool?.title ?? '工具修改',
+        tool: message.tool?.toolTitle ?? message.tool?.title ?? FILE_HISTORY_COPY.toolEdit,
         ...(message.startedAt ? { at: message.startedAt } : {}),
         diff,
       })

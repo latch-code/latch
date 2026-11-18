@@ -17,6 +17,16 @@ import { MODE_COPY } from '../core/securityCopy.ts'
 import { controlKeyCaps } from './modelReasoning.ts'
 import { capsText } from '../workbenchShortcuts.ts'
 import type { ModeIcon, PermissionRow, PermissionView } from './permission.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    permissions: '权限',
+  },
+  {
+    permissions: 'Permissions',
+  },
+)
 
 /** The one map from a mode's glyph name to what is drawn (permission.ts says which name a mode gets). */
 export const MODE_ICONS: Record<ModeIcon, typeof ShieldGlyph> = {
@@ -59,7 +69,7 @@ export function PermissionPanel({ view, onChoose }: { view: PermissionView; onCh
     // What a session may do without asking keeps the product's own tokens under every customisation (tokens.css).
     <div className="permission-panel" data-lock="">
       <ModeStrip
-        label={view.asksNothing ? '权限' : MODE_COPY.menuTitle}
+        label={view.asksNothing ? COPY.permissions : MODE_COPY.menuTitle}
         keys={keys && capsText(keys)}
         value={rows.find(row => row.current)?.value}
         options={rows.map(row => ({

@@ -1,6 +1,18 @@
 import { createContext, useContext, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { ModelBudget, ModelPrices, ModelSpendReceipt, ModelSpendWrite } from '@latch/protocol'
 import { api, ApiError, errorMessage, isUncertain, MessageError, newRequestId } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    missingReceipt: '没有读到这次保存的回执。',
+    expired: '这次请求无法再重放。可以读取当前设置，或放弃等待。',
+  },
+  {
+    missingReceipt: "Couldn't read the receipt for this save.",
+    expired: 'This request can no longer be retried. Load current settings or stop waiting.',
+  },
+)
 
 type PriceTarget = { path: 'model-prices'; providerId: string; model: string }
 type BudgetTarget = { path: 'model-budgets'; scope: ModelBudget['scope']; id: string }
@@ -33,7 +45,11 @@ const conflicting = new Set(['model-spend-conflict', 'request-conflict'])
 
 async function putSpend(request: SpendRequest): Promise<void> {
   const reply = await api<ModelSpendReceipt>(request.path, { method: 'PUT', body: request.body })
-  if (reply?.ok !== true) throw new MessageError('没有读到这次保存的回执。')
+  if (reply?.ok !== true) {
+    const error = new MessageError('')
+    Object.defineProperty(error, 'message', { configurable: true, get: () => COPY.missingReceipt })
+    throw error
+  }
 }
 
 /** One pending write per price or budget, for the lifetime of the signed-in device. */
@@ -93,12 +109,25 @@ export class ModelSpendWrites {
       const code = cause instanceof ApiError ? cause.code : ''
       const conflict = conflicting.has(code)
       if (pending.unknown || (!notAccepted.has(code) && (code === 'model-spend-write-unknown' || isUncertain(cause)))) {
-        const text = conflict ? '这次请求无法再重放。可以读取当前设置，或放弃等待。' : errorMessage(cause)
-        this.update(key, { ...pending, sending: false, unknown: { text, retryable: !conflict } })
+        this.update(key, {
+          ...pending,
+          sending: false,
+          unknown: {
+            get text() {
+              return conflict ? COPY.expired : errorMessage(cause)
+            },
+            retryable: !conflict,
+          },
+        })
         return { kind: 'unknown' }
       }
       this.update(key)
-      return { kind: conflict ? 'conflict' : 'refused', text: errorMessage(cause) }
+      return {
+        kind: conflict ? 'conflict' : 'refused',
+        get text() {
+          return errorMessage(cause)
+        },
+      }
     }
   }
 }

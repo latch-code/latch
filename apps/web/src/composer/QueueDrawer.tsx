@@ -3,7 +3,43 @@ import { createPortal } from 'react-dom'
 import type { PromptQueueItem } from '@latch/protocol'
 import { Button, Collapse, Dialog, Drawer, InlineNotice, MOTION, TextAreaField } from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
 import { VisibleText, escapeHiddenCharacters } from '../components/VisibleText.tsx'
+
+const COPY = defineCopy(
+  {
+    editTitle: '编辑排队内容',
+    cancel: '取消',
+    save: '保存',
+    message: '排队消息',
+    paused: '已暂停 · 请确认后发送',
+    checkQueue: '未发送 · 请检查排队内容',
+    next: (count: number) => `接下来 · ${formatNumber(count)}`,
+    removedUnknown: '排队项已移除；此前的发送结果仍未确认，请核对会话记录。',
+    queue: '排队发送',
+    notSent: (reason: string) => `未发送：${reason}`,
+    changed: '权限或会话已变化',
+    send: '发送',
+    edit: '编辑',
+    remove: '移除',
+  },
+  {
+    editTitle: 'Edit queued message',
+    cancel: 'Cancel',
+    save: 'Save',
+    message: 'Queued message',
+    paused: 'Paused · Confirm to send',
+    checkQueue: 'Unsent · Review the queue',
+    next: (count: number) => `Up next · ${formatNumber(count)}`,
+    removedUnknown: 'Removed from the queue. The earlier send is still unconfirmed. Check the conversation.',
+    queue: 'Queued messages',
+    notSent: (reason: string) => `Unsent · ${reason}`,
+    changed: 'Permissions or session changed',
+    send: 'Send',
+    edit: 'Edit',
+    remove: 'Remove',
+  },
+)
 
 function QueueRow({ open, arrived, children }: { open: boolean; arrived: boolean; children: ReactNode }) {
   const [entered, setEntered] = useState(!arrived)
@@ -71,7 +107,7 @@ function QueueEditor({ item, save, close }: { item: PromptQueueItem; save(text: 
   return (
     <Dialog
       open
-      title="编辑排队内容"
+      title={COPY.editTitle}
       size="lg"
       onClose={() => {
         if (!busy) close()
@@ -79,10 +115,10 @@ function QueueEditor({ item, save, close }: { item: PromptQueueItem; save(text: 
       footer={
         <>
           <Button onClick={close} disabled={busy}>
-            取消
+            {COPY.cancel}
           </Button>
           <Button variant="primary" form={form} type="submit" loading={busy} disabled={!text.trim() || text === item.text}>
-            保存
+            {COPY.save}
           </Button>
         </>
       }>
@@ -100,7 +136,7 @@ function QueueEditor({ item, save, close }: { item: PromptQueueItem; save(text: 
             setBusy(false)
           })
         }}>
-        <TextAreaField label="排队消息" value={text} rows={5} maxLength={16_000} onChange={event => setText(event.target.value)} />
+        <TextAreaField label={COPY.message} value={text} rows={5} maxLength={16_000} onChange={event => setText(event.target.value)} />
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
       </form>
     </Dialog>
@@ -123,7 +159,7 @@ export function QueueDrawer({
 }) {
   const [busy, setBusy] = useState<string | null>(null),
     [editing, setEditing] = useState<PromptQueueItem | null>(null),
-    [error, setError] = useState('')
+    [notice, setNotice] = useState<{ cause: unknown } | 'delivery-unknown'>()
   const [empty, setEmpty] = useState(items.length === 0)
   const [opening, setOpening] = useState(0)
   if (empty !== (items.length === 0)) {
@@ -132,23 +168,24 @@ export function QueueDrawer({
   }
   const paused = items.some(item => item.state !== 'waiting')
   const heading = items.some(item => item.state === 'parked')
-    ? '已暂停 · 请确认后发送'
+    ? COPY.paused
     : items.some(item => item.state === 'dropped')
-      ? '未发送 · 请检查排队内容'
-      : `接下来 · ${items.length}`
+      ? COPY.checkQueue
+      : COPY.next(items.length)
+  const error = notice === 'delivery-unknown' ? COPY.removedUnknown : notice && inlineError(notice.cause)
   const change = async (item: PromptQueueItem, action: 'send' | 'remove') => {
     if (busy) return
     setBusy(item.id)
-    setError('')
+    setNotice(undefined)
     try {
       const result = await api<{ deliveryUnknown?: boolean }>(
         `tasks/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(item.id)}${action === 'send' ? '/send' : ''}`,
         { method: action === 'send' ? 'POST' : 'DELETE' },
       )
-      if (result.deliveryUnknown) setError('排队项已移除；此前的发送结果仍未确认，请核对会话记录。')
+      if (result.deliveryUnknown) setNotice('delivery-unknown')
       await onChanged()
-    } catch (error) {
-      setError(inlineError(error))
+    } catch (cause) {
+      setNotice({ cause })
     } finally {
       setBusy(null)
     }
@@ -157,7 +194,7 @@ export function QueueDrawer({
     <>
       {/* Rows enter after the ancestor is open; reopening a skipped until-found subtree can freeze its transitions. */}
       <Collapse key={opening} open={items.length > 0}>
-        <Drawer className="prompt-queue" label="排队发送" data-paused={paused ? '' : undefined}>
+        <Drawer className="prompt-queue" label={COPY.queue} data-paused={paused ? '' : undefined}>
           <p className="prompt-queue-title" role="status">
             {heading}
           </p>
@@ -170,8 +207,7 @@ export function QueueDrawer({
                   <VisibleText text={item.text} />
                   {item.state === 'dropped' && (
                     <span className="prompt-queue-reason">
-                      未发送：
-                      <VisibleText text={item.reason ?? '权限或会话已变化'} />
+                      <VisibleText text={COPY.notSent(item.reason ?? COPY.changed)} />
                     </span>
                   )}
                   {item.state === 'parked' && item.reason && (
@@ -190,12 +226,12 @@ export function QueueDrawer({
                       onClick={() => {
                         void change(item, 'send')
                       }}>
-                      发送
+                      {COPY.send}
                     </Button>
                   )}
                   {canSend && item.state !== 'dropped' && (
                     <Button size="xs" variant="ghost" disabled={busy !== null} onClick={() => setEditing(item)}>
-                      编辑
+                      {COPY.edit}
                     </Button>
                   )}
                   {canRemove && (
@@ -207,7 +243,7 @@ export function QueueDrawer({
                       onClick={() => {
                         void change(item, 'remove')
                       }}>
-                      移除
+                      {COPY.remove}
                     </Button>
                   )}
                 </span>

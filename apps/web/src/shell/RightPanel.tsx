@@ -13,6 +13,7 @@ import { BrowserPanel } from '../panel/browser/BrowserPanel.tsx'
 import { BrowserTabList } from '../panel/browser/BrowserTabList.tsx'
 import { DevicePanel } from '../panel/device/DevicePanel.tsx'
 import { errorMessage } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { shellFolders } from '../core/shell.ts'
 import { projectOf } from '../sessions.ts'
 import { SessionFacts, SessionFolders, frozenFolders, liveFolder } from './SessionEnvironment.tsx'
@@ -22,6 +23,23 @@ import { SessionTerminal } from './TerminalDock.tsx'
 import type { PanelKey } from '../panel/panelTabs.ts'
 import { currentShell } from '../core/shell.ts'
 import { shortcutKeys } from '../workbenchShortcuts.ts'
+
+const COPY = defineCopy(
+  {
+    importedDraft: '已作为应用草稿导入',
+  },
+  {
+    importedDraft: 'Imported as an app draft',
+  },
+)
+
+const RIGHT_PANEL_COPY = defineCopy(
+  { revealFailed: '找不到这个文件夹，请同步后重试。', quoteStale: (name: string) => `${name} 已更新，引用可能过时` },
+  {
+    revealFailed: 'Can’t find this folder. Sync and try again.',
+    quoteStale: (name: string) => `${name} changed. The quote may be out of date.`,
+  },
+)
 
 /** The session's panels: the same surfaces in the column beside the conversation and in the page over it. */
 export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagingWrites: ReturnType<typeof useStagingWrites> }) {
@@ -149,7 +167,12 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
                           sessionId={summary.id}
                           revision={`${summary.updatedAt}:${summary.status}`}
                           onImported={() => {
-                            setToast({ text: '已作为应用草稿导入', tone: 'ok' })
+                            setToast({
+                              get text() {
+                                return COPY.importedDraft
+                              },
+                              tone: 'ok',
+                            })
                             shell.openSettings('plugins')
                           }}
                           onError={text => {
@@ -271,7 +294,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
                     void folderShell
                       .reveal(project.id, rootId)
                       .then(result => {
-                        if (result.status === 'failed') setToast({ text: '找不到这个文件夹，请同步后重试。', tone: 'error' })
+                        if (result.status === 'failed') setToast({ text: RIGHT_PANEL_COPY.revealFailed, tone: 'error' })
                       })
                       .catch(cause => {
                         setToast({ text: errorMessage(cause), tone: 'error' })
@@ -308,7 +331,7 @@ export function RightPanel({ shell, stagingWrites }: { shell: ShellState; stagin
         if (!fileContext) return
         const quote = quoteSnapshots.current.get(fileContextKey(fileContext) + '\n' + file.root + '\n' + file.path)
         if (quote && quote.etag !== file.etag && submission.draft.includes(quote.marker)) {
-          setToast({ text: file.name + ' 已更新，引用可能过时', tone: 'ok' })
+          setToast({ text: RIGHT_PANEL_COPY.quoteStale(file.name), tone: 'ok' })
           quote.etag = file.etag
         }
       }}

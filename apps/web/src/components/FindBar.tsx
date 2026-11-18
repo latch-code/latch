@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 
 import { IconButton, SearchField, ChevronDownGlyph, ChevronUpGlyph, CloseGlyph } from '@latch/ui'
 import type { Message } from '@latch/protocol'
+import { defineCopy, useLocale } from '../core/i18n.ts'
 import { textMatches } from '../textSearch.ts'
 import { overlayDismissed } from '../escapeGrace.ts'
 import {
@@ -16,6 +17,31 @@ import {
 
 const CLEARANCE = 'margin-block-start'
 const clearanceOn = (content: HTMLElement) => Number.parseFloat(content.style.getPropertyValue(CLEARANCE)) || 0
+
+const COPY = defineCopy(
+  {
+    region: '会话内查找',
+    label: '查找消息内容',
+    placeholder: '在会话中查找',
+    previousMatch: '上一个匹配',
+    previous: '上一个',
+    nextMatch: '下一个匹配',
+    next: '下一个',
+    closeFind: '关闭查找',
+    close: '关闭',
+  },
+  {
+    region: 'Find in session',
+    label: 'Find in messages',
+    placeholder: 'Find in session',
+    previousMatch: 'Previous match',
+    previous: 'Previous',
+    nextMatch: 'Next match',
+    next: 'Next',
+    closeFind: 'Close find',
+    close: 'Close',
+  },
+)
 
 interface Scanned {
   range?: Range
@@ -44,6 +70,7 @@ export function FindBar({
   onReveal: (id: string, offset?: number) => void
   onClose: () => void
 }) {
+  const locale = useLocale()
   const [query, setQuery] = useState(''),
     [found, setFound] = useState<Found[]>([]),
     [index, setIndex] = useState(0),
@@ -120,7 +147,7 @@ export function FindBar({
       setIndex(0)
       setMaterialized([])
     }
-  }, [query, sessionId, revision, messages, recoloured])
+  }, [query, sessionId, revision, messages, recoloured, locale])
   useEffect(() => {
     const root = document.querySelector('.transcript-content')
     if (!root || !query) return
@@ -209,7 +236,7 @@ export function FindBar({
       ref={bar}
       className="find-bar"
       role="search"
-      aria-label="会话内查找"
+      aria-label={COPY.region}
       onKeyDownCapture={event => {
         // These keys belong to the input method while it composes: Enter commits the text, Esc drops it.
         if (event.nativeEvent.isComposing || event.keyCode === 229) {
@@ -227,11 +254,11 @@ export function FindBar({
           next(event.shiftKey ? -1 : 1)
         }
       }}>
-      <SearchField ref={input} variant="ghost" label="查找消息内容" placeholder="在会话中查找" value={query} onValueChange={setQuery} />
+      <SearchField ref={input} variant="ghost" label={COPY.label} placeholder={COPY.placeholder} value={query} onValueChange={setQuery} />
       <span role="status">{query ? (found.length ? `${index + 1}/${found.length}${found.length === 500 ? '+' : ''}` : '0/0') : ''}</span>
       <IconButton
-        label="上一个匹配"
-        tooltip="上一个"
+        label={COPY.previousMatch}
+        tooltip={COPY.previous}
         shortcut="⇧⏎"
         size="xs"
         icon={ChevronUpGlyph}
@@ -241,8 +268,8 @@ export function FindBar({
         }}
       />
       <IconButton
-        label="下一个匹配"
-        tooltip="下一个"
+        label={COPY.nextMatch}
+        tooltip={COPY.next}
         shortcut="⏎"
         size="xs"
         icon={ChevronDownGlyph}
@@ -251,7 +278,7 @@ export function FindBar({
           next(1)
         }}
       />
-      <IconButton label="关闭查找" tooltip="关闭" shortcut="esc" size="xs" icon={CloseGlyph} onClick={onClose} />
+      <IconButton label={COPY.closeFind} tooltip={COPY.close} shortcut="esc" size="xs" icon={CloseGlyph} onClick={onClose} />
     </div>
   )
 }

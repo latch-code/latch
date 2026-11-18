@@ -366,17 +366,17 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       await page.getByRole('button', { name: '继续', exact: true }).click()
       await page.locator('.app-shell[data-connection="connected"]').waitFor()
       host.presence.mode = 'manual'
-      await openEntry(page, '中继')
+      await openEntry(page, '连接转发')
       const profile = {
         relayId,
         url: `https://localhost:${relay.port}/`,
         spkiHash: createHash('sha256').update(certificate.spki).digest('hex'),
         registrationKey: `lrt1.${Buffer.from(token).toString('base64url')}`,
       }
-      await page.getByRole('button', { name: '添加中继', exact: true }).click()
+      await page.getByRole('button', { name: '添加转发服务', exact: true }).click()
       const sheet = page.locator('.relay-add-dialog')
       expect(await sheet.getByRole('button', { name: /Cloudflare Workers/u }).getAttribute('aria-disabled')).toBe('true')
-      await sheet.getByRole('button', { name: '已有中继文件', exact: true }).click()
+      await sheet.getByRole('button', { name: '已有配置文件', exact: true }).click()
       await sheet
         .getByTestId('relay-file')
         .setInputFiles({ name: 'relay.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ version: 1, profile })) })
@@ -449,17 +449,17 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       })
       expect(JSON.stringify(confirmation.preview).includes(profile.registrationKey)).toBe(false)
       await sheet.getByText('在系统窗口中确认', { exact: true }).waitFor()
-      expect(await sheet.getByText('Host 已签发', { exact: true }).count()).toBe(0)
+      expect(await sheet.getByText('这台 Mac 已签发', { exact: true }).count()).toBe(0)
       await capture('import-waiting')
       await sheet.getByText('在系统窗口中确认', { exact: true }).waitFor()
       host.presence.approveNext()
       await sheet.getByRole('button', { name: '重试', exact: true }).waitFor()
       await sheet.getByText('添加结果待确认', { exact: true }).waitFor()
-      expect(await sheet.getByText('Host 已签发', { exact: true }).count()).toBe(0)
+      expect(await sheet.getByText('这台 Mac 已签发', { exact: true }).count()).toBe(0)
       await capture('import-unknown')
       // Closing the dialog does not discard an unknown request or its original profile.
       await sheet.getByRole('button', { name: '关闭', exact: true }).click()
-      await page.getByRole('button', { name: '添加中继', exact: true }).click()
+      await page.getByRole('button', { name: '添加转发服务', exact: true }).click()
       await sheet.getByRole('button', { name: '重试', exact: true }).click()
       await sheet.getByRole('button', { name: '完成', exact: true }).waitFor()
       expect(host.presence.requests).toHaveLength(1)
@@ -488,7 +488,7 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
         { relayId, url: profile.url },
       ])
       expect(Buffer.from(book.relays[0]!.spkiHash).toString('hex')).toBe(profile.spkiHash)
-      await sheet.getByText('Host 已签发', { exact: true }).waitFor()
+      await sheet.getByText('这台 Mac 已签发', { exact: true }).waitFor()
       await capture('import-issued')
       await sheet.getByRole('button', { name: '完成', exact: true }).click()
     } finally {

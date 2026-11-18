@@ -69,7 +69,7 @@ describe('refusing with text in the input', () => {
 
   it('never lets text that cannot go block 拒绝: it refuses plainly and leaves the text', () => {
     const { result, decided, events } = run(invalid)
-    expect(result.composer?.rejectLabel).toBe(APPROVAL_COPY.reject)
+    expect(result.composer?.rejectWithNote).toBe(false)
     result.reject(approval(), 'reject_once')
     expect(decided).toEqual([['reject_once', undefined]])
     expect(events).toEqual([])
@@ -83,7 +83,7 @@ describe('refusing with text in the input', () => {
 
   it('puts the note back when the rejection did not take effect', async () => {
     const { result, decided, events } = run('改写到 docs/', false)
-    expect(result.composer?.rejectLabel).toBe(APPROVAL_COPY.rejectAndSend)
+    expect(result.composer?.rejectWithNote).toBe(true)
     result.reject(approval(), 'reject_once')
     expect(decided).toEqual([['reject_once', '改写到 docs/']])
     await Promise.resolve()
@@ -123,7 +123,7 @@ describe('what is typed while an approval waits', () => {
   })
 
   it('turns the drawer’s 拒绝 into 拒绝并发送', () => {
-    const drawer = (rejectLabel?: string) =>
+    const drawer = (rejectWithNote?: boolean) =>
       renderToStaticMarkup(
         createElement(ApprovalDrawer, {
           approvals: [approval({ risk: 'R1' })],
@@ -134,11 +134,11 @@ describe('what is typed while an approval waits', () => {
           busy: new Map(),
           statuses: new Map(),
           onDecide: () => {},
-          rejectLabel,
+          rejectWithNote,
         }),
       )
-    expect(drawer(APPROVAL_COPY.reject)).toContain('>拒绝</button>')
-    expect(drawer(APPROVAL_COPY.rejectAndSend)).toContain('>拒绝并发送</button>')
+    expect(drawer(false)).toContain('>拒绝</button>')
+    expect(drawer(true)).toContain('>拒绝并发送</button>')
   })
 
   it('keeps stop in the slot and sends only with text', () => {

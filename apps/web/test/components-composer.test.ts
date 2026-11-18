@@ -7,9 +7,10 @@ import { useViewport } from '../src/breakpoints.ts'
 import { workspaceSections } from '../src/components/Pickers.tsx'
 import { Composer } from '../src/composer/Composer.tsx'
 import { SessionFolders } from '../src/shell/SessionEnvironment.tsx'
-import { DiffView, PREVIOUS_UNAVAILABLE_TEXT, PREVIOUS_UNKNOWN_TEXT } from '../src/components/DiffView.tsx'
+import { DiffView, PREVIOUS_NOTES } from '../src/components/DiffView.tsx'
 import { allowsByKey, approvalKeyCaps, ApprovalDrawer, type ApprovalStatus } from '../src/composer/ApprovalDrawer.tsx'
 import { ToolCard } from '../src/components/ToolCard.tsx'
+import { setLocale } from '../src/core/i18n.ts'
 import { approvalActions, type ApprovalGate } from '../src/core/permissions.ts'
 import { APPROVAL_COPY, CODE_ROOT_COPY, CONFIRMATION_COPY, CONFIRMATION_RESULT_TEXT } from '../src/core/securityCopy.ts'
 import { ConfirmationContent } from '../src/components/InlineConfirm.tsx'
@@ -49,6 +50,7 @@ const Drawer = ({
   busy,
   status,
   presentation,
+  builtin = false,
 }: {
   message: Message | null
   approval: Approval
@@ -56,10 +58,12 @@ const Drawer = ({
   busy?: string
   status?: ApprovalStatus
   presentation?: 'conversation'
+  builtin?: boolean
   onDecide?: unknown
 }) =>
   createElement(ApprovalDrawer, {
     ...(presentation ? { presentation } : {}),
+    builtin,
     approvals: [approval],
     messages: message ? [message] : [],
     index: 0,
@@ -360,6 +364,35 @@ describe('approval cards', () => {
     expect(buttonLabels(html)).toEqual(['重试'])
     expect(html).not.toContain('data-variant="primary"')
     expect(offersMore(html)).toBe(false)
+  })
+
+  it('localizes a restored built-in choice and write action without translating the reported path', () => {
+    const request = approval({
+      risk: 'R1',
+      options: [...ALWAYS],
+      tool: { kind: 'edit', toolTitle: '写入文件', locations: ['docs/发布.md'] },
+    })
+    const card = (builtin: boolean) =>
+      renderToStaticMarkup(
+        createElement(Drawer, {
+          message: null,
+          approval: request,
+          status: { uncertain: { decision: 'reject', optionId: 'reject_once' } },
+          builtin,
+        }),
+      )
+    try {
+      setLocale('en')
+      expect(card(true)).toContain('Result of “Deny” unknown')
+      expect(card(true)).toContain('Write file docs/发布.md')
+      expect(card(false)).toContain('写入文件 docs/发布.md')
+      expect(card(false)).toContain('Result of “拒绝” unknown')
+      setLocale('zh-CN')
+      expect(card(true)).toContain('「拒绝」的结果未知')
+      expect(card(true)).toContain('写入文件 docs/发布.md')
+    } finally {
+      setLocale('zh-CN')
+    }
   })
 
   it('keeps the unknown outcome visible after losing the original approval option', () => {
@@ -696,7 +729,7 @@ describe('approval cards', () => {
     // Focus outside the card (in the input, say): ⌘⏎ sends there, so 允许 shows none.
     expect(approvalKeyCaps({ ...now, inCard: false })).toEqual({ reject: ['esc'] })
     // Writing a note to send with the rejection, or focus in another field: Esc does not refuse.
-    expect(approvalKeyCaps({ ...now, rejectLabel: APPROVAL_COPY.rejectAndSend })).toEqual({ allow: ['mod', 'enter'] })
+    expect(approvalKeyCaps({ ...now, rejectWithNote: true })).toEqual({ allow: ['mod', 'enter'] })
     expect(approvalKeyCaps({ ...now, inCard: false, escapeRefuses: false })).toEqual({})
     // Not armed yet, or a choice on its way: no key does anything.
     expect(approvalKeyCaps({ ...now, shortcut: false, escapes: false })).toEqual({})
@@ -719,8 +752,8 @@ describe('approval cards', () => {
       }),
     )
     expect(html).not.toContain('>新文件<')
-    expect(html).toContain(`<span class="ui-status-word" data-tone="warn" data-lock="" title="${PREVIOUS_UNKNOWN_TEXT}">原内容未知</span>`)
-    expect(html).toContain(`<p class="approval-warning" role="note">${PREVIOUS_UNKNOWN_TEXT}</p>`)
+    expect(html).toContain(`<span class="ui-status-word" data-tone="warn" data-lock="" title="${PREVIOUS_NOTES.unknown}">原内容未知</span>`)
+    expect(html).toContain(`<p class="approval-warning" role="note">${PREVIOUS_NOTES.unknown}</p>`)
     expect(html).toContain('@@ +1,1 @@')
     expect(html).not.toContain('−0')
     expect(html).not.toContain('-0,0')
@@ -735,9 +768,9 @@ describe('approval cards', () => {
     expect(created).not.toContain('data-tone="warn"')
     const hidden = render({ previous: 'unavailable' })
     expect(hidden).toContain(
-      `<span class="ui-status-word" data-tone="warn" data-lock="" title="${PREVIOUS_UNAVAILABLE_TEXT}">原内容未显示</span>`,
+      `<span class="ui-status-word" data-tone="warn" data-lock="" title="${PREVIOUS_NOTES.unavailable}">原内容未显示</span>`,
     )
-    expect(hidden).toContain(`<p class="diff-note">${PREVIOUS_UNAVAILABLE_TEXT}</p>`)
+    expect(hidden).toContain(`<p class="diff-note">${PREVIOUS_NOTES.unavailable}</p>`)
     expect(hidden).toContain('@@ +1,1 @@')
     for (const html of [hidden, render({})]) expect(html).not.toContain('>新文件<')
     expect(render({})).toContain('>原内容未知</span>')
@@ -758,8 +791,8 @@ describe('approval cards', () => {
         }),
       }),
     )
-    expect(card).toContain(`<p class="approval-warning" role="note">${PREVIOUS_UNAVAILABLE_TEXT}</p>`)
-    expect(card).not.toContain(PREVIOUS_UNKNOWN_TEXT)
+    expect(card).toContain(`<p class="approval-warning" role="note">${PREVIOUS_NOTES.unavailable}</p>`)
+    expect(card).not.toContain(PREVIOUS_NOTES.unknown)
   })
 })
 

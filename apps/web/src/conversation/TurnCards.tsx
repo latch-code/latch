@@ -11,7 +11,6 @@ import { TurnSummaryOptions } from './summaryOptions.ts'
 import {
   firstOpenable,
   notRestoredLine,
-  PARTIAL_NOTE,
   changedOutputs,
   producedFiles,
   turnSummary,
@@ -20,6 +19,51 @@ import {
   type SummaryFile,
   type TurnUndo,
 } from './turnChanges.ts'
+import { TURN_CHANGES_COPY } from './turnChanges.copy.ts'
+import { defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    deleted: '已删除',
+    byCommand: '由命令修改',
+    undone: '已撤销本轮改动',
+    redoUnknownRetry: '恢复结果未知 · 重试',
+    redo: '恢复',
+    redoUnknown: ' · 恢复结果未知',
+    willTell: ' · 下一条消息会告诉 ',
+    outsideUndo: (count: number) => `${formatNumber(count)} 个文件不在撤销范围`,
+    outsideDetail: '它们在文件夹之外或被忽略。',
+    undoUnknown: '撤销结果未知',
+    unknownRetry: '结果未知 · 重试',
+    undo: '撤销本轮',
+    notRestored: (count: number) => `不会恢复 ${formatNumber(count)} 个文件`,
+    cancel: '取消',
+    changedFiles: '这一轮改动的文件',
+    changed: (count: number) => `改动了 ${formatNumber(count)} 个文件`,
+    showFiles: '显示文件',
+    openChanges: '打开改动',
+  },
+  {
+    deleted: 'Deleted',
+    byCommand: 'Changed by a command',
+    undone: 'Turn undone',
+    redoUnknownRetry: 'Redo outcome unknown · Retry',
+    redo: 'Redo',
+    redoUnknown: ' · Redo outcome unknown',
+    willTell: ' · The next message tells ',
+    outsideUndo: (count: number) => `${plural(count, { one: '{n} file', other: '{n} files' })} outside undo`,
+    outsideDetail: 'They are outside the folder or ignored.',
+    undoUnknown: 'Undo outcome unknown',
+    unknownRetry: 'Outcome unknown · Retry',
+    undo: 'Undo turn',
+    notRestored: (count: number) => plural(count, { one: 'Will leave {n} file as it is', other: 'Will leave {n} files as they are' }),
+    cancel: 'Cancel',
+    changedFiles: 'Files changed in this turn',
+    changed: (count: number) => plural(count, { one: 'Changed {n} file', other: 'Changed {n} files' }),
+    showFiles: 'Show files',
+    openChanges: 'Open changes',
+  },
+)
 
 /**
  * Reads the turn's list the first time the card comes into view, and again when the record moves or something else moved
@@ -90,8 +134,8 @@ function FileRow({ file, onOpen }: { file: SummaryFile; onOpen: () => void }) {
         )}
         <VisibleText text={file.path.slice(cut + 1)} />
       </span>
-      {file.deleted && <span className="summary-file-note">已删除</span>}
-      {file.byCommand && <span className="summary-file-note">由命令修改</span>}
+      {file.deleted && <span className="summary-file-note">{COPY.deleted}</span>}
+      {file.byCommand && <span className="summary-file-note">{COPY.byCommand}</span>}
       <Stat add={file.add} del={file.del} />
     </>
   )
@@ -116,8 +160,8 @@ function PartialNote({ list }: { list: ChangeList | undefined }) {
   if (!list?.partial) return null
   return (
     <div className="changed-files-partial">
-      <Hint inline lead={<WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label={PARTIAL_NOTE.label}>
-        {PARTIAL_NOTE.detail}
+      <Hint inline lead={<WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label={TURN_CHANGES_COPY.partialLabel}>
+        {TURN_CHANGES_COPY.partialDetail}
       </Hint>
     </div>
   )
@@ -191,7 +235,8 @@ export function TurnCards({
     }
   }, [list])
   const seen = outputs?.outputs
-  const summary = useMemo(() => turnSummary(turn, list, changedOutputs(usable, seen ?? [])), [turn, list, usable, seen])
+  const locale = useLocale()
+  const summary = useMemo(() => turnSummary(turn, list, changedOutputs(usable, seen ?? [])), [locale, turn, list, usable, seen])
   const produced = useMemo(() => producedFiles(seen ?? []), [seen])
   const turnId = record?.turnId
   const openable = firstOpenable(summary.files)
@@ -246,12 +291,12 @@ export function TurnCards({
     // The engine hears as soon as a turn begins, so nothing is still to be told once one runs.
     const noted = !active && (done && done.record === record ? done.receipt.noteNextTurn : record?.notePending === true)
     return (
-      <section ref={cardRef} className="undo-record" aria-label="已撤销本轮改动">
+      <section ref={cardRef} className="undo-record" aria-label={COPY.undone}>
         <p className="undo-record-line">
           <span className="process-slot" aria-hidden="true">
             <UndoGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />
           </span>
-          已撤销本轮改动
+          {COPY.undone}
           {canRedo && (
             <>
               {' · '}
@@ -263,13 +308,18 @@ export function TurnCards({
                 onClick={() => {
                   act('redo')
                 }}>
-                {unknown ? '恢复结果未知 · 重试' : '恢复'}
+                {unknown ? COPY.redoUnknownRetry : COPY.redo}
               </button>
             </>
           )}
-          {unknown && !canRedo && <span data-lock=""> · 恢复结果未知</span>}
+          {unknown && !canRedo && <span data-lock="">{COPY.redoUnknown}</span>}
           {why && <span> · {why}</span>}
-          {noted && <span> · 下一条消息会告诉 {engine}</span>}
+          {noted && (
+            <span>
+              {COPY.willTell}
+              {engine}
+            </span>
+          )}
         </p>
         <PartialNote list={list} />
         {((undoReceipt?.skipped ?? 0) > 0 || notCovered.length > 0) && (
@@ -277,7 +327,7 @@ export function TurnCards({
             {undoReceipt && <NotRestored receipt={undoReceipt} />}
             {notCovered.length > 0 && (
               <>
-                <Hint label={`${notCovered.length} 个文件不在撤销范围`}>它们在文件夹之外或被忽略。</Hint>
+                <Hint label={COPY.outsideUndo(notCovered.length)}>{COPY.outsideDetail}</Hint>
                 <ul>
                   {notCovered.map(path => (
                     <li key={path}>
@@ -318,7 +368,7 @@ export function TurnCards({
       {why && <span className="changed-files-why">{why}</span>}
       {unknown && !canUndo && (
         <span className="changed-files-why" data-lock="">
-          撤销结果未知
+          {COPY.undoUnknown}
         </span>
       )}
       {canUndo && (
@@ -332,7 +382,7 @@ export function TurnCards({
             if (exceptions.length > 0 && phase === 'idle') setPhase('confirm')
             else act('undo')
           }}>
-          {unknown ? '结果未知 · 重试' : '撤销本轮'}
+          {unknown ? COPY.unknownRetry : COPY.undo}
         </Button>
       )}
     </>
@@ -340,7 +390,7 @@ export function TurnCards({
   const confirm = (
     <Collapse open={phase === 'confirm'}>
       <div className="changed-files-confirm">
-        <p className="changed-files-warning">不会恢复 {exceptions.length} 个文件</p>
+        <p className="changed-files-warning">{COPY.notRestored(exceptions.length)}</p>
         <ul>
           {exceptions.map(line => (
             <li key={line}>
@@ -355,7 +405,7 @@ export function TurnCards({
             onClick={() => {
               setPhase('idle')
             }}>
-            取消
+            {COPY.cancel}
           </Button>
           <Button
             size="xs"
@@ -363,7 +413,7 @@ export function TurnCards({
             onClick={() => {
               act('undo')
             }}>
-            撤销本轮
+            {COPY.undo}
           </Button>
         </div>
       </div>
@@ -384,19 +434,19 @@ export function TurnCards({
   }
   return (
     <div className="turn-cards">
-      <section ref={cardRef} className="changed-files" aria-label="这一轮改动的文件" data-open={open ? '' : undefined}>
+      <section ref={cardRef} className="changed-files" aria-label={COPY.changedFiles} data-open={open ? '' : undefined}>
         <div className="changed-files-head">
-          <span className="changed-files-title">改动了 {count} 个文件</span>
+          <span className="changed-files-title">{COPY.changed(count)}</span>
           <Stat add={summary.add} del={summary.del} />
           <button
             type="button"
             className="changed-files-toggle"
-            aria-label="显示文件"
+            aria-label={COPY.showFiles}
             aria-expanded={open}
             onClick={() => {
               setOpen(!open)
             }}>
-            <span className="changed-files-toggle-word">显示文件</span>
+            <span className="changed-files-toggle-word">{COPY.showFiles}</span>
             <ChevronDownGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
           </button>
           <span className="process-fill" />
@@ -409,7 +459,7 @@ export function TurnCards({
               onClick={() => {
                 link.open(target())
               }}>
-              打开改动
+              {COPY.openChanges}
             </Button>
           )}
         </div>

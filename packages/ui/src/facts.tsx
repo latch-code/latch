@@ -11,6 +11,7 @@ import {
 import { LiveChanges, motionAllowed, useLiveChange } from './changes.ts'
 import { cx } from './internal.ts'
 import { MOTION, usePausedOffscreen, usePresence } from './motion.tsx'
+import { UI_COPY, useUiLocale } from './locale.ts'
 import { keyGlyphs } from './pill.tsx'
 
 /*
@@ -93,13 +94,11 @@ export function ChecksBar({
   label?: string
   className?: string
 }) {
+  useUiLocale()
   const whole = [passed, failed, total].every(count => Number.isInteger(count) && count >= 0)
   if (!whole || total === 0 || total > MOST_CHECKS || passed + failed > total) return null
   return (
-    <span
-      className={cx('ui-checks', className)}
-      role="img"
-      aria-label={label ?? `检查 ${passed}/${total} 通过${failed > 0 ? `，${failed} 项失败` : ''}`}>
+    <span className={cx('ui-checks', className)} role="img" aria-label={label ?? UI_COPY.checks(passed, total, failed)}>
       {Array.from({ length: total }, (_, index) => (
         <i key={index} data-state={index < passed ? 'passed' : index < passed + failed ? 'failed' : undefined} />
       ))}

@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeScope, ReviewNote, ReviewNoteList, ReviewNoteSendResult, ReviewNoteSide } from '@latch/protocol'
 import { api, errorMessage, isUncertain, newRequestId } from '../../core/api.ts'
-
-const UNCERTAIN = '不确定有没有完成。再按一次会核对，不会重复写入。'
+import { CHANGE_WRITE_COPY } from './write.copy.ts'
 
 interface NewNote {
   root: string
@@ -45,7 +44,8 @@ export function useReviewNotes(sessionId: string, options: { enabled: boolean; r
   const [notes, setNotes] = useState<ReviewNote[]>()
   const [open, setOpen] = useState<UnknownSend>()
   const [readError, setReadError] = useState<string>()
-  const [error, setError] = useState<string>()
+  const [failure, setError] = useState<{ cause: unknown }>()
+  const error = failure && (isUncertain(failure.cause) ? CHANGE_WRITE_COPY.uncertain : errorMessage(failure.cause))
   const [busy, setBusy] = useState(false)
   const asked = useRef(0)
   /** Request IDs of writes whose answer never came, by what they did. */
@@ -86,7 +86,7 @@ export function useReviewNotes(sessionId: string, options: { enabled: boolean; r
         return answer
       } catch (cause) {
         if (!isUncertain(cause)) unknown.current.delete(key)
-        setError(isUncertain(cause) ? UNCERTAIN : errorMessage(cause))
+        setError({ cause })
         return undefined
       } finally {
         await load()

@@ -1,9 +1,25 @@
 import type { HarnessInfo, MemoryOrigin, MemoryProposal, Message } from '@latch/protocol'
 import type { WriteState } from './useAgentWrites.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    fromUser: '你说的',
+    inferred: '它推断的',
+    effective: '已生效',
+    afterReset: '清空上下文后生效',
+  },
+  {
+    fromUser: 'From you',
+    inferred: 'Inferred by the Agent',
+    effective: 'In effect',
+    afterReset: 'Takes effect after clearing context',
+  },
+)
 
 /** Who a proposal or a memory came from, as its row says it. */
 export function originWords(origin: MemoryOrigin): string {
-  return origin === 'user' ? '你说的' : '它推断的'
+  return origin === 'user' ? COPY.fromUser : COPY.inferred
 }
 
 /**
@@ -11,7 +27,7 @@ export function originWords(origin: MemoryOrigin): string {
  * only with a topic's first turn. Nothing else is claimed.
  */
 export function effectWords(harness: Pick<HarnessInfo, 'agentContext'> | undefined): string {
-  return harness?.agentContext === 'private' ? '已生效' : '清空上下文后生效'
+  return harness?.agentContext === 'private' ? COPY.effective : COPY.afterReset
 }
 
 /**

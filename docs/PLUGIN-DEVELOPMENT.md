@@ -34,7 +34,7 @@ sources:
 
 签名以这些文件为准，本文只写签名说不出的规则。两个包只在本仓库的 workspace 中使用，带版本承诺的独立 SDK 包尚未发布；本地插件编译为 ESM `.mjs`。内置模型协议的 HTTP 辅助（[providers/http.ts](../apps/host/src/plugins/providers/http.ts)）不属于 SDK。
 
-「设置 › 扩展」把只有技能与数据面板的插件列为「Latch 提供」的数据；含 Host 模块、工具、面板模块、Provider、Harness 或连接载体的插件只列在折叠的「本机开发者」里，标「可信的本机代码」，不隔离（[HARNESSES.md](HARNESSES.md#扩展)）。
+「设置 › 扩展」把只有技能与数据面板的插件列为「Latch 提供」的数据；含 Host 模块、工具、面板模块、Provider、Harness 或连接载体的插件只列在折叠的「这台 Mac 上的开发者」里，标「可信的本地代码」，不隔离（[HARNESSES.md](HARNESSES.md#扩展)）。
 
 ## 加载插件
 

@@ -1,11 +1,17 @@
 import { escapeSecurityText } from '@latch/protocol'
 import { Button, Icon } from '@latch/ui'
 import { Lightbulb } from 'lucide-react'
+import { defineCopy } from '../core/i18n.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { ChangeProposal, ProposalWriteState } from './proposals.ts'
 import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
 import { CardNote, TagChips } from './WorkBoardCard.tsx'
 import { ItemWriteLine } from './WriteLine.tsx'
+
+const COPY = defineCopy(
+  { suggestion: '建议', dismiss: '不要', accept: '接受' },
+  { suggestion: 'Suggestion', dismiss: 'Dismiss', accept: 'Accept' },
+)
 
 /**
  * An agent's suggestion for this card, waiting for the person: the title, tags or note it would set, who suggested it,
@@ -37,7 +43,7 @@ export function CardSuggestion({
     <div className="work-board-suggestion" data-work-proposal={proposal.id} data-external={proposal.external ? '' : undefined}>
       <span className="work-board-suggestion-head">
         <Icon icon={Lightbulb} size={12} className="work-board-proposal-glyph" />
-        <span className="work-board-proposal-word">建议</span>
+        <span className="work-board-proposal-word">{COPY.suggestion}</span>
         {/* On the proposing session's own card, it is that session: no need to name it. */}
         {!('sessionId' in change.target && change.target.sessionId === proposal.from.sessionId) && (
           <ProposedBy proposal={proposal} shell={shell} />
@@ -67,7 +73,7 @@ export function CardSuggestion({
                 onClick={() => {
                   onDismiss(proposal)
                 }}>
-                不要
+                {COPY.dismiss}
               </Button>
               <Button
                 size="xs"
@@ -76,7 +82,7 @@ export function CardSuggestion({
                 onClick={() => {
                   onAccept(proposal)
                 }}>
-                接受
+                {COPY.accept}
               </Button>
             </>
           )}

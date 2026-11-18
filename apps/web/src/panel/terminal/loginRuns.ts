@@ -7,6 +7,16 @@ import {
   type TerminalSummary,
 } from '@latch/protocol'
 import { api, ApiError, MessageError, type ApiOptions } from '../../core/api.ts'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    notOpen: '终端没有打开，请重试',
+  },
+  {
+    notOpen: 'The terminal didn’t open. Try again.',
+  },
+)
 
 /**
  * Where 「在终端里登录」 runs. `latch`: one of Latch's own terminals, in the session's 终端 tab when a session is in view
@@ -113,7 +123,7 @@ export class LoginRuns {
         timeoutMs: 20_000,
       },
     )
-    if (!terminal) throw new MessageError('终端没有打开，请重试')
+    if (!terminal) throw new MessageError(COPY.notOpen)
     const run: LoginRun = {
       harnessId: input.harnessId,
       ...(input.method !== undefined ? { method: input.method } : {}),

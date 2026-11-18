@@ -9,8 +9,9 @@ import { layersInWindow } from './layout.ts'
  * test-results/visual/<surface>--<viewport>--<theme>.png with an index, and optionally compared with an earlier run.
  */
 
-export const VISUAL_OUTPUT = 'test-results/visual'
-export const VISUAL_DIFF_OUTPUT = 'test-results/visual-diff'
+const visualLanguage = process.env.LATCH_VISUAL_LOCALE === 'en' ? 'en' : 'zh-CN'
+export const VISUAL_OUTPUT = visualLanguage === 'en' ? 'test-results/visual-en' : 'test-results/visual'
+export const VISUAL_DIFF_OUTPUT = visualLanguage === 'en' ? 'test-results/visual-en-diff' : 'test-results/visual-diff'
 
 export type Theme = 'light' | 'dark'
 const THEMES: readonly Theme[] = ['light', 'dark']
@@ -157,15 +158,36 @@ export class VisualRecorder {
     this.started = true
   }
 
+  /** Uses the real system-language event so the captured state and focus stay mounted. */
+  private async captureLanguage(page: Page, locale: 'en' | 'zh-CN'): Promise<void> {
+    await page.evaluate(language => {
+      // The gallery has a document language, even though it has no app preference.
+      if (document.querySelector('.gallery-header')) {
+        document.documentElement.lang = language
+      } else {
+        Object.defineProperty(navigator, 'languages', { configurable: true, get: () => [language] })
+        window.dispatchEvent(new Event('languagechange'))
+      }
+    }, locale)
+    await expect.poll(() => page.locator('html').getAttribute('lang')).toBe(locale)
+  }
+
   /** The screenshot alone, as the recorder would write it. */
   async shot(page: Page, target?: Locator): Promise<Buffer> {
     // The cursor rests in the top-left corner, where no control sits, so nothing shows a hover state. Touch
     // viewports are driven with clicks too: an emulated tap leaves Chrome's tap highlight painted on the page.
-    await page.mouse.move(0, 0)
-    await settle(page)
-    const options = { animations: 'disabled', caret: 'hide', scale: 'css', style: CAPTURE_STYLE } as const
-    if (!target) return page.screenshot(options)
-    return target.screenshot(options)
+    const restore = visualLanguage === 'en' && (await page.locator('html').getAttribute('lang')) !== 'en'
+    if (restore) await this.captureLanguage(page, 'en')
+    try {
+      await page.mouse.move(0, 0)
+      await settle(page)
+      if (visualLanguage === 'en') await layersInWindow(page)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
+      const options = { animations: 'disabled', caret: 'hide', scale: 'css', style: CAPTURE_STYLE } as const
+      return await (target ? target.screenshot(options) : page.screenshot(options))
+    } finally {
+      if (restore) await this.captureLanguage(page, 'zh-CN')
+    }
   }
 
   /**

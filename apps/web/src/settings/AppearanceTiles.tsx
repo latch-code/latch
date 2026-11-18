@@ -1,5 +1,11 @@
 import { Backdrop, RunningEdge, SegmentedControl, Spinner, TileChoice, type BackdropLevel } from '@latch/ui'
+import { defineCopy } from '../core/i18n.ts'
 import { BACKDROP_CHOICES, DENSITY_CHOICES, MOTION_CHOICES, type DensityPreference, type MotionPreference } from '../preferences.ts'
+
+const COPY = defineCopy(
+  { backdrop: '背景效果', density: '密度', motion: '动效' },
+  { backdrop: 'Background effects', density: 'Density', motion: 'Motion' },
+)
 
 /**
  * 背景效果 as a small window: the real layer (粒子场) at this strength behind two opaque cards, drawn at two and a half
@@ -21,7 +27,7 @@ export function BackdropTiles({ value, onValueChange }: { value: BackdropLevel; 
   return (
     <TileChoice
       className="appearance-tiles"
-      label="背景效果"
+      label={COPY.backdrop}
       value={value}
       onValueChange={onValueChange}
       options={BACKDROP_CHOICES.map(option => ({ ...option, tile: <BackdropPreview level={option.value} /> }))}
@@ -47,7 +53,7 @@ export function DensityTiles({ value, onValueChange }: { value: DensityPreferenc
   return (
     <TileChoice
       className="appearance-tiles appearance-tiles-two"
-      label="密度"
+      label={COPY.density}
       value={value}
       onValueChange={onValueChange}
       options={DENSITY_CHOICES.map(option => ({ ...option, tile: <DensityPreview density={option.value} /> }))}
@@ -63,7 +69,7 @@ export function DensityTiles({ value, onValueChange }: { value: DensityPreferenc
 export function MotionChoice({ value, onValueChange }: { value: MotionPreference; onValueChange: (value: MotionPreference) => void }) {
   return (
     <div className="appearance-motion">
-      <SegmentedControl<MotionPreference> label="动效" value={value} options={MOTION_CHOICES} onValueChange={onValueChange} />
+      <SegmentedControl<MotionPreference> label={COPY.motion} value={value} options={MOTION_CHOICES} onValueChange={onValueChange} />
       <span className="appearance-motion-sample" aria-hidden="true">
         <Spinner size={12} />
         <i />

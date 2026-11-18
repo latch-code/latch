@@ -5,6 +5,36 @@ import { currentShell } from '../core/shell.ts'
 import { clientKind, shortcutBindings, useShortcutBindings, type Bindings } from '../core/shortcutBindings.ts'
 import { capsText, isRebindable, shortcutCaps, shortcutRows } from '../workbenchShortcuts.ts'
 import { SettingsGroup, SettingsRow } from './common.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    search: '搜索快捷键',
+    fixed: '固定',
+    fixedDetail: '范围、终端窗格、允许请求、撤销归档与输入框里的按键不能改',
+    record: '按下新的组合键',
+    noMatch: '没有匹配的快捷键',
+    unknown: '结果未知',
+    abandon: '放弃等待',
+    retry: '重试',
+    resetAll: '全部恢复默认',
+    edit: (label: string) => `改「${label}」的快捷键`,
+    reset: (label: string) => `「${label}」恢复默认`,
+  },
+  {
+    search: 'Search shortcuts',
+    fixed: 'Fixed',
+    fixedDetail: 'Shortcuts for scopes, terminal panes, allowing requests, undoing archive, and the input field are fixed.',
+    record: 'Press a new key combination',
+    noMatch: 'No matching shortcuts',
+    unknown: 'Outcome unknown',
+    abandon: 'Stop waiting',
+    retry: 'Retry',
+    resetAll: 'Reset all to default',
+    edit: (label: string) => `Change shortcut for ${label}`,
+    reset: (label: string) => `Reset shortcut for ${label}`,
+  },
+)
 
 /** A shortcut's keys as quiet text: alternatives apart with 「或」, the ends of a range with 「…」. */
 export function ShortcutCaps({ keys }: { keys: string }) {
@@ -98,7 +128,7 @@ export function ShortcutsSettings({
 
   return (
     <>
-      <SearchField className="shortcuts-search" label="搜索快捷键" value={query} onValueChange={setQuery} />
+      <SearchField className="shortcuts-search" label={COPY.search} value={query} onValueChange={setQuery} />
       <SettingsGroup>
         {rows.map(row => {
           const action = isRebindable(row.id) ? row.id : null
@@ -110,8 +140,8 @@ export function ShortcutsSettings({
               <span className="shortcut-trailing">
                 <ShortcutCaps keys={row.keys} />
                 {editable && (
-                  <Hint className="shortcut-fixed" label="固定">
-                    范围、终端窗格、允许请求、撤销归档与输入框里的按键不能改
+                  <Hint className="shortcut-fixed" label={COPY.fixed}>
+                    {COPY.fixedDetail}
                   </Hint>
                 )}
               </span>
@@ -119,14 +149,14 @@ export function ShortcutsSettings({
               <span className="shortcut-trailing">
                 {here ? (
                   <span className="shortcut-recording" role="status">
-                    按下新的组合键 <Kbd>{desktop ? 'esc' : 'Esc'}</Kbd>
+                    {COPY.record} <Kbd>{desktop ? 'esc' : 'Esc'}</Kbd>
                   </span>
                 ) : (
                   <button
                     type="button"
                     className="shortcut-edit"
                     disabled={busy}
-                    aria-label={`改「${row.label}」的快捷键`}
+                    aria-label={COPY.edit(row.label)}
                     onClick={() => {
                       setRefusal(null)
                       setRecording(action)
@@ -138,7 +168,7 @@ export function ShortcutsSettings({
                   <IconButton
                     size="xs"
                     icon={UndoGlyph}
-                    label={`「${row.label}」恢复默认`}
+                    label={COPY.reset(row.label)}
                     disabled={busy}
                     onClick={() => void save(action, rebound(bindings, action, null))}
                   />
@@ -155,22 +185,22 @@ export function ShortcutsSettings({
             />
           )
         })}
-        {!rows.length && <SettingsRow title="没有匹配的快捷键" dim />}
+        {!rows.length && <SettingsRow title={COPY.noMatch} dim />}
       </SettingsGroup>
       {editable && view.pending?.unknown && (
         <div className="shortcut-unknown" data-lock="">
-          <StatusWord tone="warn">结果未知</StatusWord>
+          <StatusWord tone="warn">{COPY.unknown}</StatusWord>
           <span className="shortcut-unknown-text">{view.pending.unknown.text}</span>
           <Button variant="ghost" onClick={() => shortcutBindings.abandon()}>
-            放弃等待
+            {COPY.abandon}
           </Button>
-          {view.pending.unknown.retryable && <Button onClick={() => void shortcutBindings.retry()}>重试</Button>}
+          {view.pending.unknown.retryable && <Button onClick={() => void shortcutBindings.retry()}>{COPY.retry}</Button>}
         </div>
       )}
       {editable && Object.keys(bindings).length > 0 && !view.pending?.unknown && (
         <div className="shortcut-reset-all">
           <Button variant="ghost" disabled={busy} onClick={() => void shortcutBindings.reset()}>
-            全部恢复默认
+            {COPY.resetAll}
           </Button>
         </div>
       )}

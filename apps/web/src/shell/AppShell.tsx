@@ -1,3 +1,4 @@
+import { SHELL_COPY } from './copy.ts'
 import { DETACHED, DetachedPlace } from '../panel/terminal/fills.ts'
 import { useLayoutEffect, useMemo } from 'react'
 import { dropAttachments } from '../composer/AttachmentDrafts.tsx'
@@ -253,7 +254,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               {viewport === 'tablet' && <TabletRail shell={shell} />}
               <Scrim
                 open={drawerMode && drawer.open}
-                label="关闭会话列表"
+                label={SHELL_COPY.closeSessions}
                 className="drawer-backdrop"
                 onDismiss={() => {
                   drawer.setOpen(false)
@@ -263,7 +264,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 <section
                   id="session-navigation"
                   className="phone-list"
-                  aria-label="会话"
+                  aria-label={SHELL_COPY.sessions}
                   data-covered={(phoneSession && !popping && !start) || (phoneReview.present && !phoneReview.leaving) ? '' : undefined}
                   inert={
                     (phoneSession && !popping && !start)
@@ -315,7 +316,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   id="session-navigation"
                   className={`sidebar ${drawer.open ? 'is-open' : ''}`}
                   inert={route.entry !== 'sessions' || board || undefined}
-                  aria-label="会话导航"
+                  aria-label={SHELL_COPY.sessionNavigation}
                   role={drawerMode && drawer.open ? 'dialog' : undefined}
                   aria-modal={drawerMode && drawer.open ? true : undefined}
                   tabIndex={-1}>
@@ -378,7 +379,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               {sidebarColumn && (
                 <ResizeHandle
                   className="sidebar-resize"
-                  label="调整侧栏宽度"
+                  label={SHELL_COPY.sidebarWidth}
                   value={sidebarCollapsed ? 0 : sidebarWidth}
                   min={SIDEBAR_MIN}
                   max={sidebarLimit}
@@ -429,7 +430,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     data-leaving={phone && popping ? '' : undefined}>
                     {attachmentDraft.dragging && !start && (
                       <div className="attachment-drop-mask" role="status">
-                        松开以添加到这条消息
+                        {SHELL_COPY.dropAttachments}
                       </div>
                     )}
                     {/* Under the panel's page the conversation cannot be reached until the page is closed. */}
@@ -438,7 +439,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       {shell.itemReturn && !phone && (
                         <div className="item-conversation-back">
                           <Button size="xs" variant="ghost" icon={ChevronLeftGlyph} onClick={shell.returnToWorkItem}>
-                            返回待办
+                            {SHELL_COPY.backToItem}
                           </Button>
                         </div>
                       )}
@@ -455,7 +456,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                         ref={infoPageRef}
                         className="info-page"
                         data-leaving={page.leaving ? '' : undefined}
-                        aria-label="侧边面板"
+                        aria-label={SHELL_COPY.sidePanel}
                         onKeyDown={event => {
                           if (event.key === 'Escape' && !event.defaultPrevented) {
                             event.preventDefault()
@@ -465,24 +466,24 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                         <header className="info-page-head">
                           {shell.itemReturn ? (
                             <Button ref={infoBack} size="sm" variant="ghost" icon={ChevronLeftGlyph} onClick={shell.returnToWorkItem}>
-                              返回待办
+                              {SHELL_COPY.backToItem}
                             </Button>
                           ) : phone ? (
-                            <IconButton ref={infoBack} size="lg" label="返回" icon={ChevronLeftGlyph} onClick={closeInfoPage} />
+                            <IconButton ref={infoBack} size="lg" label={SHELL_COPY.back} icon={ChevronLeftGlyph} onClick={closeInfoPage} />
                           ) : (
                             <Button ref={infoBack} variant="ghost" icon={ChevronLeftGlyph} onClick={closeInfoPage}>
-                              返回对话
+                              {SHELL_COPY.backToChat}
                             </Button>
                           )}
                           <div className="info-page-title">
                             <h2>
                               {fileTabs.active?.target.view === 'changes'
-                                ? '代码审阅'
+                                ? SHELL_COPY.codeReview
                                 : fileTabs.active
-                                  ? '文件预览'
-                                  : (shell.panelChoiceList.find(choice => choice.key === shell.panelSelected)?.label ?? '面板')}
+                                  ? SHELL_COPY.filePreview
+                                  : (shell.panelChoiceList.find(choice => choice.key === shell.panelSelected)?.label ?? SHELL_COPY.panel)}
                             </h2>
-                            <span>{summary?.title || workspaceForFiles?.name || '项目文件'}</span>
+                            <span>{summary?.title || workspaceForFiles?.name || SHELL_COPY.projectFiles}</span>
                           </div>
                         </header>
                         <div className="info-page-body">
@@ -495,7 +496,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 {placement !== null && placement.kind !== 'page' && (
                   <aside
                     className="inspector-column"
-                    aria-label="侧边面板"
+                    aria-label={SHELL_COPY.sidePanel}
                     inert={!columnOpen || route.entry !== 'sessions' || board || (start && !shell.homeInspectorOpen) || undefined}
                     onKeyDown={event => {
                       // Esc inside the panel shuts it, after what is inside had its turn; it never reaches a run or a request.
@@ -527,7 +528,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                 {placement !== null && placement.kind !== 'page' && columnOpen && sidebarColumn && (
                   <ResizeHandle
                     className="inspector-resize"
-                    label="调整侧边面板宽度"
+                    label={SHELL_COPY.panelWidth}
                     edge="start"
                     value={inspectorWidth}
                     min={RIGHT_PANEL_MIN}
@@ -541,7 +542,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               {start && (
                 <section
                   className={homeBackdrop ? 'workbench-home code-home ui-backdrop-host' : 'workbench-home code-home'}
-                  aria-label="新会话"
+                  aria-label={SHELL_COPY.newSession}
                   onDragEnter={event => {
                     if (
                       catalog?.features?.attachments === true
@@ -570,14 +571,14 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   {/* Files dropped anywhere on the start screen go to its input, as they go to the open session's elsewhere. */}
                   {attachmentDraft.dragging && (
                     <div className="attachment-drop-mask" role="status">
-                      松开以添加到这条消息
+                      {SHELL_COPY.dropAttachments}
                     </div>
                   )}
                   {phone && (
                     <header className="workbench-phone-heading">
-                      <IconButton size="lg" label="返回会话列表" icon={ChevronLeftGlyph} onClick={toPhoneList} />
-                      <h1>新会话</h1>
-                      <IconButton size="lg" label="搜索" icon={SearchGlyph} onClick={openSearch} />
+                      <IconButton size="lg" label={SHELL_COPY.backToSessions} icon={ChevronLeftGlyph} onClick={toPhoneList} />
+                      <h1>{SHELL_COPY.newSession}</h1>
+                      <IconButton size="lg" label={SHELL_COPY.search} icon={SearchGlyph} onClick={openSearch} />
                       {access.scopes.has('view') && <UsageEntry />}
                       <ShellUpdateCheck shell={shell} />
                     </header>
@@ -585,7 +586,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   <div className="code-home-input">
                     {usesDemoModel(snapshot, choice.harnessId, choice.model?.providerId) && (
                       <p className="workbench-home-demo">
-                        <StatusPill tone="warn">演示模型</StatusPill>
+                        <StatusPill tone="warn">{SHELL_COPY.demoModel}</StatusPill>
                       </p>
                     )}
                     <ConnectionBanners shell={shell} />
@@ -620,7 +621,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               {route.entry === 'agents' && <AgentsPage shell={shell} />}
               {route.entry === 'apps' && <AppsPage shell={shell} />}
               {settings && (
-                <Modal label="设置" variant="page" className="settings-overlay" onClose={closeSettings}>
+                <Modal label={SHELL_COPY.settings} variant="page" className="settings-overlay" onClose={closeSettings}>
                   <SettingsPage
                     snapshot={snapshot}
                     access={access}

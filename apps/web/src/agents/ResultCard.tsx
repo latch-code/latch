@@ -6,6 +6,38 @@ import { MessageContent } from '../MessageContent.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { outcomeWord, replyPreview } from './activity.ts'
 import { whenWords } from './scheduleModel.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    scheduled: '定时',
+    runDeleted: '运行的会话已删除',
+    collapse: '收起',
+    expand: '展开',
+    completeReply: '完整回复在运行的会话里',
+    files: '文件',
+    created: '新增',
+    deleted: '已删除',
+    modified: '修改',
+    openRun: '打开运行',
+    result: (name: string) => `定时结果：${name}`,
+    moreFiles: (count: number) => `另有 ${formatNumber(count)} 个文件`,
+  },
+  {
+    scheduled: 'Scheduled',
+    runDeleted: 'The run’s session was deleted',
+    collapse: 'Show less',
+    expand: 'Show more',
+    completeReply: 'Read the full reply in the run’s session',
+    files: 'Files',
+    created: 'Added',
+    deleted: 'Deleted',
+    modified: 'Edited',
+    openRun: 'Open run',
+    result: (name: string) => `Scheduled result for ${name}`,
+    moreFiles: (count: number) => plural(count, { one: '{n} more file', other: '{n} more files' }),
+  },
+)
 
 /**
  * 定时 · <name> in an Agent's conversation: a Host record of a run that settled, never a message, so no Harness receives
@@ -34,12 +66,12 @@ export function ResultCard({
     <section
       className="schedule-result"
       role="group"
-      aria-label={`定时结果：${result.name}`}
+      aria-label={COPY.result(result.name)}
       data-outcome={result.outcome}
       data-result-id={result.id}>
       <header className="schedule-result-head">
         <Icon icon={AlarmClock} size={14} />
-        <strong>定时</strong>
+        <strong>{COPY.scheduled}</strong>
         <span className="schedule-result-name">
           <VisibleText text={result.name} />
         </span>
@@ -48,7 +80,7 @@ export function ResultCard({
       </header>
       <div className="schedule-result-body">
         {result.contentRemoved ? (
-          <p className="schedule-result-muted">运行的会话已删除</p>
+          <p className="schedule-result-muted">{COPY.runDeleted}</p>
         ) : (
           <>
             {result.failure?.reason && (
@@ -70,12 +102,12 @@ export function ResultCard({
                 onClick={() => {
                   setOpen(value => !value)
                 }}>
-                {open ? '收起' : '展开'}
+                {open ? COPY.collapse : COPY.expand}
               </Button>
             )}
-            {open && result.replyTruncated && <p className="schedule-result-muted">完整回复在运行的会话里</p>}
+            {open && result.replyTruncated && <p className="schedule-result-muted">{COPY.completeReply}</p>}
             {files.length > 0 && (
-              <ul className="schedule-result-files" aria-label="文件">
+              <ul className="schedule-result-files" aria-label={COPY.files}>
                 {files.map(file => (
                   <li key={`${file.root}:${file.path}`} data-change={file.change}>
                     <Icon icon={FileGlyph} size={14} />
@@ -89,11 +121,11 @@ export function ResultCard({
                       </span>
                     )}
                     <span className="schedule-result-change">
-                      {file.change === 'created' ? '新增' : file.change === 'deleted' ? '已删除' : '修改'}
+                      {file.change === 'created' ? COPY.created : file.change === 'deleted' ? COPY.deleted : COPY.modified}
                     </span>
                   </li>
                 ))}
-                {result.filesMore ? <li className="schedule-result-muted">另有 {result.filesMore} 个文件</li> : null}
+                {result.filesMore ? <li className="schedule-result-muted">{COPY.moreFiles(result.filesMore)}</li> : null}
               </ul>
             )}
           </>
@@ -107,7 +139,7 @@ export function ResultCard({
             )}
             {onOpenRun && (
               <Button size="xs" variant="ghost" onClick={onOpenRun}>
-                打开运行
+                {COPY.openRun}
               </Button>
             )}
           </div>

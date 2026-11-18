@@ -4,6 +4,7 @@ import { InlineNotice } from './notice.tsx'
 import { Modal, ModalHeader } from './dialog.tsx'
 import { PHONE_QUERY, useMediaQuery } from './internal.ts'
 import { TextField } from './field.tsx'
+import { UI_COPY, useUiLocale } from './locale.ts'
 
 export function ConfirmDialog({
   title,
@@ -20,6 +21,7 @@ export function ConfirmDialog({
   onConfirm: () => Promise<void>
   onClose: () => void
 }) {
+  useUiLocale()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const phone = useMediaQuery(PHONE_QUERY)
@@ -30,7 +32,7 @@ export function ConfirmDialog({
       await onConfirm()
       onClose()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '操作未完成，请重试。')
+      setError(cause instanceof Error ? cause.message : UI_COPY.actionFailed)
       setBusy(false)
     }
   }
@@ -48,7 +50,7 @@ export function ConfirmDialog({
       </div>
       <footer className="ui-modal-footer">
         <Button size="md" disabled={busy} onClick={onClose}>
-          取消
+          {UI_COPY.cancel}
         </Button>
         <Button
           size="md"
@@ -69,7 +71,7 @@ export function PromptDialog({
   title,
   label,
   initial,
-  confirmLabel = '保存',
+  confirmLabel = UI_COPY.save,
   maxLength = 200,
   onSubmit,
   onClose,
@@ -82,6 +84,7 @@ export function PromptDialog({
   onSubmit: (value: string) => Promise<void>
   onClose: () => void
 }) {
+  useUiLocale()
   const [value, setValue] = useState(initial)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -98,7 +101,7 @@ export function PromptDialog({
       await onSubmit(value.trim())
       onClose()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '保存失败，请重试。')
+      setError(cause instanceof Error ? cause.message : UI_COPY.saveFailed)
       setBusy(false)
     }
   }
@@ -140,7 +143,7 @@ export function PromptDialog({
         <div className="ui-modal-body">{field}</div>
         <footer className="ui-modal-footer">
           <Button size="md" disabled={busy} onClick={onClose}>
-            取消
+            {UI_COPY.cancel}
           </Button>
           <Button size="md" type="submit" variant="primary" disabled={busy || !value.trim()} loading={busy}>
             {confirmLabel}

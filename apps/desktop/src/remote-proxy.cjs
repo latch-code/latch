@@ -1,4 +1,6 @@
 'use strict'
+
+const { defineCopy } = require('./locale.cjs')
 // Another computer's Host, reached over its HTTPS entry. Each one gets its own origin `latch://h-<hostId>/` in its own
 // session partition; main forwards that origin's requests to the Host and attaches only that Host's credential, picked
 // by the request's origin and never by which computer is chosen.
@@ -76,6 +78,7 @@ const DROPPED_REQUEST_HEADERS = new Set([
 ])
 /** Node's names for a certificate the system does not trust or that does not name the address. */
 const CERTIFICATE_ERROR = /CERT|SELF_SIGNED|UNABLE_TO_(?:GET|VERIFY)|ERR_TLS_|HOSTNAME|ALTNAME/u
+const STATE_UNAVAILABLE = '无法连接到这台电脑。'
 const REMOTE_MANAGED = '在这台电脑上由 Latch 应用处理'
 const HANDSHAKE_TIMEOUT_MS = 15_000
 /** The error code of a handshake that showed another certificate than the pinned one. */
@@ -99,6 +102,24 @@ const STATE_MESSAGES = {
   outdated: '这台电脑上的 Latch 版本较旧，请先在那台电脑上更新。',
   revoked: '这台电脑已移除这台设备，请重新添加。',
 }
+
+const REMOTE_PAGE_FAILURE = defineCopy(
+  { ...STATE_MESSAGES, unavailable: STATE_UNAVAILABLE },
+  {
+    offline: 'Couldn’t reach this computer. Check that it is on and running Latch.',
+    'cert-error': 'The HTTPS certificate is untrusted or does not match this address. The connection stopped.',
+    'cert-changed': 'The HTTPS certificate changed. Confirm it in Settings › Computers on this Mac to reconnect.',
+    'wrong-host': 'This address points to a different computer. The connection stopped.',
+    outdated: 'Update Latch on the other computer and try again.',
+    revoked: 'This computer removed this device. Add it again.',
+    unavailable: 'Couldn’t reach this computer.',
+  },
+)
+
+const REVOKED_PAGE = defineCopy(
+  { text: () => `${STATE_MESSAGES.revoked}在这台 Mac 的 设置 › 电脑 里移除后重新添加。` },
+  { text: () => 'This computer removed this device. Remove the computer in Settings › Computers on this Mac and add it again.' },
+)
 
 /**
  * The HTTPS origin and invitation code of a link for adding a computer: exactly `https://<host>[:port]/link/#pair=<code>`,
@@ -397,11 +418,23 @@ async function enrollRemote({ link, name, request = httpsRequest, onWaiting, sig
         : new RemoteError('offline', STATE_MESSAGES.offline)
     }
   }
+  // Enrollment failures cross into desktop IPC. Only recognized protocol codes can leave the remote response.
+  const publicFailures = new Set([
+    'invitation-invalid',
+    'invitation-required',
+    'enrollment-expired',
+    'enrollment-cancelled',
+    'presence-unavailable',
+    'presence-busy',
+    'presence-blocked',
+    'presence-cooldown',
+    'rate-limited',
+  ])
   const failed = result =>
     new ProxyError(
       result.status || 502,
-      typeof result.json?.error === 'string' ? result.json.error : 'add-failed',
-      typeof result.json?.message === 'string' ? result.json.message : '无法添加这台电脑，请重试。',
+      publicFailures.has(result.json?.error) ? result.json.error : 'add-failed',
+      '无法添加这台电脑，请重试。',
     )
   // Every enrollment has a key of its own: a key is never shared between two Hosts.
   const key = generateKey()
@@ -626,7 +659,7 @@ function createRemoteProxy(options) {
     // Without a credential the page could only reach an enrollment it cannot finish here: say what to do instead.
     if (!api && !credentialCookie() && request.method === 'GET' && (target.pathname === '/link/' || target.pathname === '/link')) {
       await discardRequestBody(request)
-      return new Response(htmlErrorPage(`${STATE_MESSAGES.revoked}在这台 Mac 的 设置 › 电脑 里移除后重新添加。`), {
+      return new Response(htmlErrorPage(REVOKED_PAGE.text()), {
         status: 200,
         headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': HTML_CSP, 'cache-control': 'no-store' },
       })
@@ -708,10 +741,12 @@ function createRemoteProxy(options) {
   }
 
   function refused(pathname, error) {
-    const message = error instanceof RemoteError ? error.message : '无法连接到这台电脑。'
+    const message = error instanceof RemoteError ? error.message : STATE_UNAVAILABLE
     const code = error instanceof RemoteError ? (error.state === 'offline' ? 'host-unavailable' : error.state) : 'host-unavailable'
     if (pathname.startsWith('/link/api/')) return errorResponse(502, code, message)
-    return new Response(htmlErrorPage(message), {
+    const display =
+      error instanceof RemoteError ? (REMOTE_PAGE_FAILURE[error.state] ?? REMOTE_PAGE_FAILURE.unavailable) : REMOTE_PAGE_FAILURE.unavailable
+    return new Response(htmlErrorPage(display), {
       status: 502,
       headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': HTML_CSP, 'cache-control': 'no-store' },
     })

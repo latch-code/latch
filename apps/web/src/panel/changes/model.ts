@@ -3,6 +3,128 @@
 import type { ChangedFile, ChangeHunk, ChangeList, ChangeScope, GitOperation, Message, NotRestoredFile, TurnChanges } from '@latch/protocol'
 import { turnUndo, type TurnUndo, type UndoRights } from '../../conversation/turnChanges.ts'
 import type { DiffHunk, DiffGap, DiffLine, LineDiff } from '../../diff.ts'
+import { defineCopy, formatList, formatNumber, plural } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    gitSide: '本轮和这个会话不受影响。',
+    written: (parts: string[]) => `${parts.join('，')}。`,
+    agedOut: (count: number) => `这一轮已不在保留的 ${formatNumber(count)} 轮内`,
+    noRecord: '这一轮没有记录到改动',
+    running: '运行中',
+    interrupted: '已中断',
+    undone: '已撤销',
+    fileCount: (count: number) => `${formatNumber(count)} 个文件`,
+    thisTurn: '这一轮',
+    turnNumber: (number: number) => `第 ${formatNumber(number)} 轮`,
+    base: (value1: string | number) => `与 ${value1} 比较`,
+    mainBase: '与主分支比较',
+    latest: '本轮',
+    session: '这个会话',
+    uncommitted: '未提交',
+    byCommand: '由命令修改',
+    byYou: '你的修改',
+    between: '两轮之间改动',
+    secret: '可能含密钥，只列路径',
+    notKept: '内容没有留存',
+    tooLarge: '超过 1 MB，打开文件查看',
+    binary: '二进制文件',
+    savedByYou: '你在 Latch 里编辑并保存的内容',
+    changedBetween: '在两轮之间改动的：可能是你，也可能是别的程序',
+    readOnly: '只读',
+    undoOffline: '离线时不能撤销',
+    sessionReadOnly: '这个会话只能查看',
+    deviceReadOnly: '这台设备只能查看',
+    macOnly: '只能在 Mac 的 Latch 中撤销',
+    undoRunning: '运行中不能撤销',
+    merge: '合并',
+    rebase: '变基',
+    cherryPick: '拣选提交',
+    revert: '还原提交',
+    resolving: '解决冲突',
+    undoConflict: '有冲突时不能撤销',
+    undoOperation: (value1: string | number) => `${value1}中不能撤销`,
+    conflictCount: (count: number) => `${formatNumber(count)} 个文件有冲突`,
+    resolved: '冲突已解决，还没有完成',
+    unresolved: (value1: string | number) => `仓库有未解决的冲突 · ${value1}`,
+    operation: (value1: string | number, value2: string | number) => `仓库正在${value1} · ${value2}`,
+    nothingInSession: '这个会话还没有记录到改动',
+    notRoot: '这个文件夹不是 Git 仓库的顶层',
+    noGit: '找不到 Git',
+    gitFailed: '读不到 Git 状态',
+    noCommits: '还没有提交',
+    noBase: '没有可比较的主分支',
+    noFilesYet: '还没有改动文件',
+    noFilesInTurn: '这一轮没有改动文件',
+    noChangesInSession: '这个会话没有留下改动',
+    noUncommitted: '没有未提交的改动',
+    noChangesSinceBranch: '和分叉点相比没有改动',
+    secretKept: '可能含密钥，不写也不删',
+    missingFolder: '文件夹已不在',
+    restoreCount: (count: number) => `写回 ${formatNumber(count)} 个文件`,
+    removeCount: (count: number) => `删除 ${formatNumber(count)} 个新文件`,
+    nothingToWrite: '没有需要写入的文件。',
+  },
+  {
+    gitSide: 'The current turn and session stay available.',
+    written: (parts: string[]) => `${formatList(parts)}.`,
+    agedOut: (count: number) => `This turn is outside the last ${formatNumber(count)} kept turns`,
+    noRecord: 'No changes recorded for this turn',
+    running: 'Running',
+    interrupted: 'Interrupted',
+    undone: 'Undone',
+    fileCount: (count: number) => `${plural(count, { one: '{n} file', other: '{n} files' })}`,
+    thisTurn: 'This turn',
+    turnNumber: (number: number) => `Turn ${formatNumber(number)}`,
+    base: (value1: string | number) => `Compare with ${value1}`,
+    mainBase: 'Compare with main branch',
+    latest: 'Latest turn',
+    session: 'This session',
+    uncommitted: 'Uncommitted',
+    byCommand: 'Changed by a command',
+    byYou: 'Your changes',
+    between: 'Changed between turns',
+    secret: 'May contain secret keys · Path only',
+    notKept: 'Contents weren’t kept',
+    tooLarge: 'Over 1 MB · Open the file to view it',
+    binary: 'Binary file',
+    savedByYou: 'You edited and saved this in Latch',
+    changedBetween: 'Changed between turns by you or another program',
+    readOnly: 'Read only',
+    undoOffline: 'Can’t undo while offline',
+    sessionReadOnly: 'This session is read only',
+    deviceReadOnly: 'This device is read only',
+    macOnly: 'Undo is available in Latch on the Mac',
+    undoRunning: 'Can’t undo while the agent is running',
+    merge: 'Merge',
+    rebase: 'Rebase',
+    cherryPick: 'Cherry-pick',
+    revert: 'Revert',
+    resolving: 'Conflict resolution',
+    undoConflict: 'Resolve conflicts before undoing',
+    undoOperation: (value1: string | number) => `Can’t undo while ${value1} is in progress`,
+    conflictCount: (count: number) => `${plural(count, { one: '{n} file', other: '{n} files' })} with conflicts`,
+    resolved: 'Conflicts resolved · Operation still in progress',
+    unresolved: (value1: string | number) => `Repository has unresolved conflicts · ${value1}`,
+    operation: (value1: string | number, value2: string | number) => `${value1} in progress · ${value2}`,
+    nothingInSession: 'No changes recorded in this session yet',
+    notRoot: 'This folder isn’t the root of a Git repository',
+    noGit: 'Git not found',
+    gitFailed: 'Couldn’t read Git status',
+    noCommits: 'No commits yet',
+    noBase: 'No main branch to compare',
+    noFilesYet: 'No files changed yet',
+    noFilesInTurn: 'No files changed in this turn',
+    noChangesInSession: 'No changes left in this session',
+    noUncommitted: 'No uncommitted changes',
+    noChangesSinceBranch: 'No changes since branching',
+    secretKept: 'May contain secret keys · Left alone',
+    missingFolder: 'Folder is gone',
+    restoreCount: (count: number) => `Restore ${plural(count, { one: '{n} file', other: '{n} files' })}`,
+    removeCount: (count: number) => `Delete ${formatNumber(count)} new files`,
+    nothingToWrite: 'No files need to be written.',
+  },
+)
 
 /** `latest` follows the session's newest turn; a picked turn stays until another is picked. */
 export type ScopeChoice = { kind: 'latest' } | { kind: 'turn'; turnId: string } | { kind: 'session' | 'uncommitted' | 'base' }
@@ -53,9 +175,7 @@ export function missingTurnTitle(
   turns: readonly Pick<TurnChanges, 'turnId'>[],
 ): string {
   const number = choice.kind === 'turn' ? numbers.get(choice.turnId) : undefined
-  return number !== undefined && number < oldestKept(numbers, turns) && turns.length > 0
-    ? `这一轮已不在保留的 ${KEPT_TURNS} 轮内`
-    : '这一轮没有记录到改动'
+  return number !== undefined && number < oldestKept(numbers, turns) && turns.length > 0 ? COPY.agedOut(KEPT_TURNS) : COPY.noRecord
 }
 
 const clock = (iso: string) => {
@@ -68,19 +188,22 @@ export function turnRow(turn: TurnChanges, numbers: ReadonlyMap<string, number>)
   const number = numbers.get(turn.turnId)
   const what =
     turn.state === 'running'
-      ? '运行中'
+      ? COPY.running
       : turn.state === 'interrupted'
-        ? '已中断'
+        ? COPY.interrupted
         : turn.undone
-          ? '已撤销'
+          ? COPY.undone
           : turn.files === undefined
             ? ''
-            : `${turn.files} 个文件`
-  return { label: number === undefined ? '这一轮' : `第 ${number} 轮`, meta: [clock(turn.startedAt), what].filter(Boolean).join(' · ') }
+            : COPY.fileCount(turn.files)
+  return {
+    label: number === undefined ? COPY.thisTurn : COPY.turnNumber(number),
+    meta: [clock(turn.startedAt), what].filter(Boolean).join(' · '),
+  }
 }
 
 /** Git's main branch is not always named main: a list says so; until one has, the menu does not guess. */
-export const baseLabel = (base: string | undefined) => (base ? `与 ${base} 比较` : '与主分支比较')
+export const baseLabel = (base: string | undefined) => (base ? COPY.base(base) : COPY.mainBase)
 
 /** A detached HEAD and the main branch itself have nothing to compare; anything else the answer decides. */
 export const offersBase = (branch: string | undefined) =>
@@ -89,15 +212,15 @@ export const offersBase = (branch: string | undefined) =>
 export function scopeLabel(choice: ScopeChoice, numbers: ReadonlyMap<string, number>, base: string | undefined): string {
   switch (choice.kind) {
     case 'latest':
-      return '本轮'
+      return COPY.latest
     case 'turn': {
       const number = numbers.get(choice.turnId)
-      return number === undefined ? '这一轮' : `第 ${number} 轮`
+      return number === undefined ? COPY.thisTurn : COPY.turnNumber(number)
     }
     case 'session':
-      return '这个会话'
+      return COPY.session
     case 'uncommitted':
-      return '未提交'
+      return COPY.uncommitted
     case 'base':
       return baseLabel(base)
   }
@@ -228,25 +351,21 @@ export const statusLetter = (file: Pick<ChangedFile, 'status' | 'conflicted'>) =
 
 /** The one short note on a file's row: why its content is absent if it is, otherwise who changed it. */
 export function fileNote(file: ChangedFile): { text: string; title?: string } | undefined {
-  const by = file.byCommand ? '由命令修改' : file.byPerson ? '你的修改' : file.byUser ? '两轮之间改动' : undefined
+  const by = file.byCommand ? COPY.byCommand : file.byPerson ? COPY.byYou : file.byUser ? COPY.between : undefined
   const absent = file.secret
-    ? '可能含密钥，只列路径'
+    ? COPY.secret
     : file.notRetained
-      ? '内容没有留存'
+      ? COPY.notKept
       : file.large
-        ? '超过 1 MB，打开文件查看'
+        ? COPY.tooLarge
         : file.binary
-          ? '二进制文件'
+          ? COPY.binary
           : undefined
   if (absent) return { text: absent, ...(by ? { title: by } : {}) }
   if (!by) return undefined
   return {
     text: by,
-    ...(file.byPerson
-      ? { title: '你在 Latch 里编辑并保存的内容' }
-      : file.byUser
-        ? { title: '在两轮之间改动的：可能是你，也可能是别的程序' }
-        : {}),
+    ...(file.byPerson ? { title: COPY.savedByYou } : file.byUser ? { title: COPY.changedBetween } : {}),
   }
 }
 
@@ -320,32 +439,42 @@ export interface ScopeRights extends UndoRights {
 /** The action or the reason there is none: always one place, the scope row. A turn reads as on its card. */
 export function scopeAction(list: ChangeList | undefined, turn: TurnChanges | undefined, rights: ScopeRights): ScopeAction {
   if (!list || list.unavailable) return { kind: 'none' }
-  if (list.scope === 'session' || list.scope === 'base') return { kind: 'why', text: '只读' }
+  if (list.scope === 'session' || list.scope === 'base') return { kind: 'why', text: COPY.readOnly }
   if (list.scope !== 'uncommitted') return turnUndo(list, turn, rights)
-  if (rights.offline) return { kind: 'why', text: '离线时不能撤销' }
+  if (rights.offline) return { kind: 'why', text: COPY.undoOffline }
   if (list.conflict) return { kind: 'why', text: conflictWhy(list.conflict.operation) }
-  if (rights.readOnly) return { kind: 'why', text: '这个会话只能查看' }
-  if (!rights.canRun) return { kind: 'why', text: '这台设备只能查看' }
-  if (!rights.local) return { kind: 'why', text: '只能在 Mac 的 Latch 中撤销' }
+  if (rights.readOnly) return { kind: 'why', text: COPY.sessionReadOnly }
+  if (!rights.canRun) return { kind: 'why', text: COPY.deviceReadOnly }
+  if (!rights.local) return { kind: 'why', text: COPY.macOnly }
   if (!list.files.length) return { kind: 'none' }
-  return rights.active ? { kind: 'why', text: '运行中不能撤销' } : { kind: 'discard' }
+  return rights.active ? { kind: 'why', text: COPY.undoRunning } : { kind: 'discard' }
 }
 
 const OPERATION_WORD: Record<GitOperation, string> = {
-  merge: '合并',
-  rebase: '变基',
-  'cherry-pick': '拣选提交',
-  revert: '还原提交',
-  unmerged: '解决冲突',
+  get merge() {
+    return COPY.merge
+  },
+  get rebase() {
+    return COPY.rebase
+  },
+  get 'cherry-pick'() {
+    return COPY.cherryPick
+  },
+  get revert() {
+    return COPY.revert
+  },
+  get unmerged() {
+    return COPY.resolving
+  },
 }
 
 function conflictWhy(operation: GitOperation): string {
-  return operation === 'unmerged' ? '有冲突时不能撤销' : `${OPERATION_WORD[operation]}中不能撤销`
+  return operation === 'unmerged' ? COPY.undoConflict : COPY.undoOperation(OPERATION_WORD[operation])
 }
 
 export function conflictLine(conflict: NonNullable<ChangeList['conflict']>): string {
-  const files = conflict.files ? `${conflict.files} 个文件有冲突` : '冲突已解决，还没有完成'
-  return conflict.operation === 'unmerged' ? `仓库有未解决的冲突 · ${files}` : `仓库正在${OPERATION_WORD[conflict.operation]} · ${files}`
+  const files = conflict.files ? COPY.conflictCount(conflict.files) : COPY.resolved
+  return conflict.operation === 'unmerged' ? COPY.unresolved(files) : COPY.operation(OPERATION_WORD[conflict.operation], files)
 }
 
 /**
@@ -399,45 +528,58 @@ export interface EmptyState {
   retry?: true
 }
 
-const GIT_SIDE = '本轮和这个会话不受影响。'
-
 export function emptyState(list: ChangeList | undefined): EmptyState | undefined {
   if (!list) return undefined
   switch (list.unavailable) {
     case 'no-turns':
-      return { title: '这个会话还没有记录到改动' }
+      return { title: COPY.nothingInSession }
     case 'not-git':
-      return { title: '这个文件夹不是 Git 仓库的顶层' }
+      return { title: COPY.notRoot }
     case 'git-missing':
-      return { title: '找不到 Git', detail: GIT_SIDE }
+      return { title: COPY.noGit, detail: COPY.gitSide }
     case 'git-failed':
-      return { title: '读不到 Git 状态', detail: GIT_SIDE, retry: true }
+      return { title: COPY.gitFailed, detail: COPY.gitSide, retry: true }
     case 'no-head':
-      return { title: '还没有提交' }
+      return { title: COPY.noCommits }
     case 'no-base':
-      return { title: '没有可比较的主分支' }
+      return { title: COPY.noBase }
     case undefined:
       break
   }
   if (list.files.length) return undefined
   if (list.scope === 'turn') {
-    if (list.running) return { title: '还没有改动文件' }
-    return { title: '这一轮没有改动文件' }
+    if (list.running) return { title: COPY.noFilesYet }
+    return { title: COPY.noFilesInTurn }
   }
-  if (list.scope === 'session') return { title: '这个会话没有留下改动' }
-  if (list.scope === 'uncommitted') return { title: '没有未提交的改动' }
-  return { title: '和分叉点相比没有改动' }
+  if (list.scope === 'session') return { title: COPY.noChangesInSession }
+  if (list.scope === 'uncommitted') return { title: COPY.noUncommitted }
+  return { title: COPY.noChangesSinceBranch }
 }
 
 // ---- undo: the warning and the receipt ---------------------------------------------------------------------------------
 
 const NOT_RESTORED_WHY: Record<NotRestoredFile['reason'], string> = {
-  'not-retained': '内容没有留存',
-  secret: '可能含密钥，不写也不删',
-  'folder-missing': '文件夹已不在',
+  get 'not-retained'() {
+    return COPY.notKept
+  },
+  get secret() {
+    return COPY.secretKept
+  },
+  get 'folder-missing'() {
+    return COPY.missingFolder
+  },
 }
-export const NOT_COVERED_WHY = '在文件夹之外或被忽略'
-export const SCOPE_NOTE = '撤销只覆盖会话文件夹内的文件。写到文件夹外的没有痕迹；.git、node_modules、dist、build 不记录。'
+export const UNDO_SCOPE_COPY = defineCopy(
+  {
+    outside: '在文件夹之外或被忽略',
+    notes: '撤销只覆盖会话文件夹内的文件。写到文件夹外的没有痕迹；.git、node_modules、dist、build 不记录。',
+  },
+  {
+    outside: 'Outside the folder or ignored',
+    notes:
+      'Undo covers files inside the session folders. Writes elsewhere and changes in .git, node_modules, dist or build aren’t recorded.',
+  },
+)
 
 export interface MissedFile {
   path: string
@@ -455,14 +597,14 @@ export function undoWarning(list: ChangeList): { restore: number; remove: number
     else if (file.status === 'A') remove++
     else restore++
   }
-  for (const path of list.notCovered ?? []) missed.push({ path, why: NOT_COVERED_WHY })
+  for (const path of list.notCovered ?? []) missed.push({ path, why: UNDO_SCOPE_COPY.outside })
   return { restore, remove, missed }
 }
 
 /** The words for what was written, reading the same in the warning and the receipt. */
 export function writtenWords(restore: number, remove: number): string {
-  const parts = [...(restore ? [`写回 ${restore} 个文件`] : []), ...(remove ? [`删除 ${remove} 个新文件`] : [])]
-  return parts.length ? `${parts.join('，')}。` : '没有需要写入的文件。'
+  const parts = [...(restore ? [COPY.restoreCount(restore)] : []), ...(remove ? [COPY.removeCount(remove)] : [])]
+  return parts.length ? COPY.written(parts) : COPY.nothingToWrite
 }
 
 export function missedFiles(
@@ -477,7 +619,7 @@ export function missedFiles(
   return {
     files: [
       ...notRestored.map(file => ({ path: file.path, why: NOT_RESTORED_WHY[file.reason] })),
-      ...notCovered.map(path => ({ path, why: NOT_COVERED_WHY })),
+      ...notCovered.map(path => ({ path, why: UNDO_SCOPE_COPY.outside })),
     ],
     more: Math.max(0, skipped - notRestored.length),
   }

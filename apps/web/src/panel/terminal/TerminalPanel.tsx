@@ -30,7 +30,7 @@ import { errorMessage, MessageError } from '../../core/api.ts'
 import { readStorage } from '../../core/storageKeys.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
 import { isTerminalPaneKey, shortcutKeys, type TerminalPaneAction } from '../../workbenchShortcuts.ts'
-import { draftText, endedText, keyLeavesTerminal, serviceLabel, tabLabel, tabName, type TerminalTab } from './model.ts'
+import { draftText, endedText, keyLeavesTerminal, serviceLabel, tabName, type TerminalTab } from './model.ts'
 import {
   evenPanes,
   paneMinShare,
@@ -55,10 +55,82 @@ import { loginRuns, useRevealedLogin } from './loginRuns.ts'
 import { terminalTheme } from './theme.ts'
 import { useTerminals } from './useTerminals.ts'
 import { useTerminalFill, type ScreenHandle } from './useTerminalFill.ts'
+import { defineCopy, formatNumber } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    account: '以你的账户运行的登录 shell，和「终端」App 相同，不是沙箱：Latch 的审批、路径检查与出站策略都不适用于其中的命令。',
+    sessionLimit: (limit: number) => `每个会话最多 ${formatNumber(limit)} 个终端`,
+    projectLimit: (limit: number) => `每个项目最多 ${formatNumber(limit)} 个终端`,
+    sideBySide: '左右分屏',
+    stacked: '上下分屏',
+    terminal: '终端',
+    noOutput: '没有可以加入的输出',
+    possibleSecret: '加入的内容可能含密钥，发送前检查草稿',
+    cannotSplit: '现在不能分屏',
+    crossed: '一个标签的窗格只排一个方向',
+    closeName: (value1: string | number) => `关闭${value1}`,
+    toPanel: '移到右侧面板',
+    toBottom: '移到底部',
+    localService: (value1: string | number) => `在浏览器标签里打开 ${value1} · ⌘ 点按用系统浏览器`,
+    openAddress: (value1: string | number) => `在浏览器中打开 ${value1}`,
+    selected: '把选中的输出加入草稿',
+    recent: '把最近的输出加入草稿',
+    attach: '加入对话',
+    newTerminal: '新终端',
+    copy: '复制',
+    close: '关闭',
+    reopen: '重新打开',
+    resizeWidth: '调整窗格宽度',
+    resizeHeight: '调整窗格高度',
+    retry: '重试',
+    opening: '正在打开终端…',
+    running: '程序运行中',
+    reconnecting: '正在重新连接…',
+    confirmClose: (value1: string | number) => `关闭${value1}？`,
+    namedProgram: (value1: string | number) => `「${value1}」还在运行，关闭会结束它。`,
+    program: '终端里还有程序在运行，关闭会结束它。',
+    closeTerminal: '关闭终端',
+  },
+  {
+    account:
+      'The login shell runs as your account, just as in the Terminal app. It has no sandbox. Latch approvals, path checks and outbound rules don’t apply to its commands.',
+    sessionLimit: (limit: number) => `Up to ${formatNumber(limit)} terminals per session`,
+    projectLimit: (limit: number) => `Up to ${formatNumber(limit)} terminals per project`,
+    sideBySide: 'Split side by side',
+    stacked: 'Split top and bottom',
+    terminal: 'Terminal',
+    noOutput: 'No output to add',
+    possibleSecret: 'The added content may contain secret keys. Check the draft before sending.',
+    cannotSplit: 'This terminal can’t be split now',
+    crossed: 'Panes in a tab can only line up in one direction',
+    closeName: (value1: string | number) => `Close ${value1}`,
+    toPanel: 'Move to side panel',
+    toBottom: 'Move to bottom',
+    localService: (value1: string | number) => `Open ${value1} in a browser tab · ⌘ click for the system browser`,
+    openAddress: (value1: string | number) => `Open ${value1} in browser`,
+    selected: 'Add selected output to the draft',
+    recent: 'Add recent output to the draft',
+    attach: 'Add to chat',
+    newTerminal: 'New terminal',
+    copy: 'Copy',
+    close: 'Close',
+    reopen: 'Reopen',
+    resizeWidth: 'Adjust pane width',
+    resizeHeight: 'Adjust pane height',
+    retry: 'Retry',
+    opening: 'Opening terminal…',
+    running: 'Program running',
+    reconnecting: 'Reconnecting…',
+    confirmClose: (value1: string | number) => `Close ${value1}?`,
+    namedProgram: (value1: string | number) => `“${value1}” is still running. Closing the terminal ends it.`,
+    program: 'A program is still running in the terminal. Closing ends it.',
+    closeTerminal: 'Close terminal',
+  },
+)
 
 /** The terminal's one fine print, on the foot's label: what the shell is, and that Latch's checks do not apply in it. */
-export const ACCOUNT_NOTE =
-  '以你的账户运行的登录 shell，和「终端」App 相同，不是沙箱：Latch 的审批、路径检查与出站策略都不适用于其中的命令。'
+export const terminalAccountNote = () => COPY.account
 
 /** The line height of the terminal role (--lh-term over --fs-term), as xterm's multiple of the font's own height. */
 const LINE_HEIGHT = 1.2
@@ -127,8 +199,20 @@ const tabIcon = (summaries: readonly TerminalSummary[]) =>
   summaries.some(summary => summary.status === 'running' && summary.busy) ? SquareActivity : TerminalGlyph
 
 const SPLIT = {
-  row: { label: '左右分屏', icon: Columns2, shortcut: 'terminal-split' },
-  column: { label: '上下分屏', icon: Rows2, shortcut: 'terminal-split-down' },
+  row: {
+    get label() {
+      return COPY.sideBySide
+    },
+    icon: Columns2,
+    shortcut: 'terminal-split',
+  },
+  column: {
+    get label() {
+      return COPY.stacked
+    },
+    icon: Rows2,
+    shortcut: 'terminal-split-down',
+  },
 } as const
 
 const readLayout = (key: string | undefined): PaneLayout => (key ? parseLayout(readStorage('localStorage', key)) : [])
@@ -302,12 +386,12 @@ export function TerminalPanel({
   }
   const paneTabName = (tab: PaneTab) => {
     const first = tabs.find(item => item.id === tab.key)
-    const name = first ? tabName(first) : '终端'
+    const name = first ? tabName(first) : COPY.terminal
     return tab.panes.length > 1 ? `${name} · ${tab.panes.length}` : name
   }
   const terminalName = (item: string) => {
     const tab = tabs.find(entry => entry.id === item)
-    return tab ? tabName(tab) : '终端'
+    return tab ? tabName(tab) : COPY.terminal
   }
 
   const attach = async (item: string | undefined = current?.id) => {
@@ -318,11 +402,11 @@ export function TerminalPanel({
     try {
       const extract = await terminals.extract(tab.id, selection[tab.id] ?? '')
       if (!extract.text.trim()) {
-        setNotice({ tone: 'warn', text: '没有可以加入的输出' })
+        setNotice({ tone: 'warn', text: COPY.noOutput })
         return
       }
-      usableCompose.current?.(draftText(tabLabel(tab.number), extract))
-      if (extract.mayContainSecret) setNotice({ tone: 'warn', text: '加入的内容可能含密钥，发送前检查草稿' })
+      usableCompose.current?.(draftText(`终端 ${tab.number}`, extract))
+      if (extract.mayContainSecret) setNotice({ tone: 'warn', text: COPY.possibleSecret })
     } catch (cause) {
       setNotice({ tone: 'error', text: errorMessage(cause) })
     } finally {
@@ -340,13 +424,13 @@ export function TerminalPanel({
     void terminals.open()
   }, [request, read.kind, opening, unavailable, tabs.length, terminals])
   const full = tabs.length >= TERMINALS_PER_SESSION
-  const limitNote = `每个${target.workspaceId === undefined ? '会话' : '项目'}最多 ${TERMINALS_PER_SESSION} 个终端`
+  const limitNote = target.workspaceId === undefined ? COPY.sessionLimit(TERMINALS_PER_SESSION) : COPY.projectLimit(TERMINALS_PER_SESSION)
   const blocked = opening || Boolean(unavailable) || read.kind !== 'ready'
   /** Why splitting `at` this way cannot happen now; undefined when it can. */
   const splitRefusal = (at: string | undefined, direction: SplitDirection): string | undefined => {
     if (full) return limitNote
-    if (at === undefined || blocked) return '现在不能分屏'
-    if (splitKind(layout, at, direction) === 'crossed') return '一个标签的窗格只排一个方向'
+    if (at === undefined || blocked) return COPY.cannotSplit
+    if (splitKind(layout, at, direction) === 'crossed') return COPY.crossed
     return undefined
   }
   /** A new terminal beside `at`, in its tab; a tab of four gets a new tab instead. */
@@ -423,14 +507,14 @@ export function TerminalPanel({
       label: name,
       icon: tabIcon(tab.panes.flatMap(item => tabs.find(entry => entry.id === item)?.summary ?? [])),
       controls: id,
-      closeLabel: `关闭${name}`,
+      closeLabel: COPY.closeName(name),
       menu: [
         ...splitItems(focused),
         ...(move
           ? [
               {
                 id: 'move',
-                label: move.to === 'panel' ? '移到右侧面板' : '移到底部',
+                label: move.to === 'panel' ? COPY.toPanel : COPY.toBottom,
                 icon: move.to === 'panel' ? PanelRight : PanelBottom,
                 onSelect: move.onSelect,
               },
@@ -447,9 +531,9 @@ export function TerminalPanel({
   const placed = [...tabs.map(tab => tab.id), ...[...replacing].filter(item => !tabs.some(tab => tab.id === item))]
 
   return (
-    <section className="terminal-panel" aria-label="终端" data-secure="">
+    <section className="terminal-panel" aria-label={COPY.terminal} data-secure="">
       <PanelTabs
-        label="终端"
+        label={COPY.terminal}
         className="terminal-tabs"
         value={currentTab?.key ?? ''}
         tabs={panelTabs}
@@ -472,9 +556,7 @@ export function TerminalPanel({
               </span>
             )}
             {services.map(service => (
-              <Tooltip
-                key={service.origin}
-                content={onOpenService ? `在浏览器标签里打开 ${service.origin} · ⌘ 点按用系统浏览器` : `在浏览器中打开 ${service.origin}`}>
+              <Tooltip key={service.origin} content={onOpenService ? COPY.localService(service.origin) : COPY.openAddress(service.origin)}>
                 <a
                   className="terminal-service"
                   href={service.origin}
@@ -496,9 +578,9 @@ export function TerminalPanel({
                 variant="ghost"
                 icon={MessageSquarePlus}
                 loading={attaching}
-                tooltip={selection[current.id] ? '把选中的输出加入草稿' : '把最近的输出加入草稿'}
+                tooltip={selection[current.id] ? COPY.selected : COPY.recent}
                 onClick={() => void attach()}>
-                加入对话
+                {COPY.attach}
               </Button>
             )}
             {(['row', 'column'] as const).map(direction => {
@@ -520,7 +602,7 @@ export function TerminalPanel({
             <IconButton
               size="xs"
               icon={PlusGlyph}
-              label="新终端"
+              label={COPY.newTerminal}
               {...(full ? { tooltip: limitNote } : {})}
               disabled={full || blocked}
               onClick={() => {
@@ -546,7 +628,7 @@ export function TerminalPanel({
         ref={screens}
         id={id}
         role="tabpanel"
-        aria-label={currentTab ? paneTabName(currentTab) : '终端'}
+        aria-label={currentTab ? paneTabName(currentTab) : COPY.terminal}
         data-split={splitShown ? currentTab!.direction : undefined}>
         {placed.map(item => {
           const tab = tabs.find(entry => entry.id === item)
@@ -601,17 +683,17 @@ export function TerminalPanel({
                       id: 'output',
                       items: [
                         ...(selection[item]
-                          ? [{ id: 'copy', label: '复制', icon: CopyGlyph, onSelect: () => void writeClipboard(selection[item]!) }]
+                          ? [{ id: 'copy', label: COPY.copy, icon: CopyGlyph, onSelect: () => void writeClipboard(selection[item]!) }]
                           : []),
                         ...(onCompose && !tab.summary.login
-                          ? [{ id: 'attach', label: '加入对话', icon: MessageSquarePlus, onSelect: () => void attach(item) }]
+                          ? [{ id: 'attach', label: COPY.attach, icon: MessageSquarePlus, onSelect: () => void attach(item) }]
                           : []),
                       ],
                     },
                     { id: 'split', items: splitItems(item) },
                     {
                       id: 'close',
-                      items: [{ id: 'close', label: '关闭', icon: CloseGlyph, onSelect: () => void close([item], terminalName(item)) }],
+                      items: [{ id: 'close', label: COPY.close, icon: CloseGlyph, onSelect: () => void close([item], terminalName(item)) }],
                     },
                   ].filter(section => section.items.length > 0)}
                 />
@@ -626,7 +708,7 @@ export function TerminalPanel({
                       </span>
                       {!tab.summary.login && (
                         <Button size="xs" variant="primary" icon={RotateCcw} loading={opening} onClick={() => reopen(tab)}>
-                          重新打开
+                          {COPY.reopen}
                         </Button>
                       )}
                     </>
@@ -636,7 +718,7 @@ export function TerminalPanel({
                     size="xs"
                     className="terminal-pane-close"
                     icon={CloseGlyph}
-                    label={`关闭${terminalName(item)}`}
+                    label={COPY.closeName(terminalName(item))}
                     tabIndex={-1}
                     onClick={() => void close([item], terminalName(item))}
                   />
@@ -656,7 +738,7 @@ export function TerminalPanel({
               <ResizeHandle
                 key={`${currentTab.key}-${item}`}
                 className="terminal-pane-resize"
-                label={currentTab.direction === 'row' ? '调整窗格宽度' : '调整窗格高度'}
+                label={currentTab.direction === 'row' ? COPY.resizeWidth : COPY.resizeHeight}
                 orientation={currentTab.direction === 'row' ? 'vertical' : 'horizontal'}
                 value={Math.round((currentTab.sizes[index] ?? 0) * total)}
                 min={Math.round(least * total)}
@@ -683,7 +765,7 @@ export function TerminalPanel({
                 tone="error"
                 action={
                   <Button size="xs" onClick={() => void terminals.list()}>
-                    重试
+                    {COPY.retry}
                   </Button>
                 }>
                 {read.text}
@@ -698,13 +780,13 @@ export function TerminalPanel({
                       setFocusScreen(true)
                       void terminals.open()
                     }}>
-                    重试
+                    {COPY.retry}
                   </Button>
                 }>
                 {failure}
               </InlineNotice>
             ) : (
-              <Loading label="正在打开终端…" />
+              <Loading label={COPY.opening} />
             )}
           </div>
         )}
@@ -719,14 +801,14 @@ export function TerminalPanel({
               {/* A login is started again from the row that offers it, never as a plain shell under the Harness's name. */}
               {!current.summary.login && (
                 <Button size="xs" variant="primary" icon={RotateCcw} loading={opening} onClick={() => reopen(current)}>
-                  重新打开
+                  {COPY.reopen}
                 </Button>
               )}
             </>
           ) : (
             <span className="terminal-facts">
               {/* Whose account it runs as is the label's tooltip, on hover and focus; it takes no room in the foot. */}
-              <Tooltip content={ACCOUNT_NOTE}>
+              <Tooltip content={terminalAccountNote()}>
                 <span className="terminal-where" tabIndex={0}>
                   <VisibleText text={`${current.summary.shell} · ${current.summary.folder}`} />
                 </span>
@@ -734,10 +816,10 @@ export function TerminalPanel({
               {current.summary.busy && (
                 <span className="terminal-running">
                   <Spinner size={12} />
-                  <VisibleText text={current.summary.foreground ?? '程序运行中'} />
+                  <VisibleText text={current.summary.foreground ?? COPY.running} />
                 </span>
               )}
-              {connection[current.id] === 'reconnecting' && <span className="terminal-reconnecting">正在重新连接…</span>}
+              {connection[current.id] === 'reconnecting' && <span className="terminal-reconnecting">{COPY.reconnecting}</span>}
             </span>
           )}
           <span className="terminal-space" />
@@ -745,9 +827,9 @@ export function TerminalPanel({
       )}
       {confirm && (
         <ConfirmDialog
-          title={`关闭${confirm.name}？`}
-          message={confirm.program ? `「${confirm.program}」还在运行，关闭会结束它。` : '终端里还有程序在运行，关闭会结束它。'}
-          confirmLabel="关闭终端"
+          title={COPY.confirmClose(confirm.name)}
+          message={confirm.program ? COPY.namedProgram(confirm.program) : COPY.program}
+          confirmLabel={COPY.closeTerminal}
           danger
           onConfirm={async () => {
             const done: string[] = []

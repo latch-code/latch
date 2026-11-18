@@ -8,6 +8,68 @@ import { useVisualViewportFit } from '../hooks/useVisualViewportFit.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { decodeEditable, editHash } from './editText.ts'
 import type { EditPhase as Phase, EditSent as Sent, EditTheirs as Theirs, EditorState } from './editDrafts.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    agentBusy: 'Agent 正在这个文件夹里运行，结束后再保存。',
+    saving: '正在保存',
+    unknown: '结果未知',
+    changed: '文件已在别处修改',
+    running: 'Agent 运行中',
+    unsaved: '未保存',
+    retry: '重试保存',
+    save: '保存',
+    edit: (value1: string | number) => `编辑 ${value1}`,
+    cancel: '取消',
+    current: '文件现在的内容',
+    reading: '正在读取…',
+    readFailed: '无法读取文件现在的内容。',
+    changes: '你的修改',
+    copied: '已复制',
+    copyUnavailable: '复制不可用',
+    copyChanges: '复制我的修改',
+    loadLatest: '载入最新',
+    fileContents: (value1: string | number) => `${value1} 的内容`,
+    conflict: '文件已在别处修改，你的修改还没有保存',
+    saveUnknown: '保存结果未知',
+    loadTitle: '载入最新？',
+    loadText: '你的修改会被替换，需要的话先复制。',
+    load: '载入',
+    discardTitle: '放弃你的修改？',
+    discardText: '还没有保存的修改会丢失。',
+    discard: '放弃',
+  },
+  {
+    agentBusy: 'The agent is running in this folder. Save once it finishes.',
+    saving: 'Saving',
+    unknown: 'Outcome unknown',
+    changed: 'File changed elsewhere',
+    running: 'Agent running',
+    unsaved: 'Not saved',
+    retry: 'Retry save',
+    save: 'Save',
+    edit: (value1: string | number) => `Edit ${value1}`,
+    cancel: 'Cancel',
+    current: 'Current file contents',
+    reading: 'Reading…',
+    readFailed: 'Couldn’t read the current file contents.',
+    changes: 'Your changes',
+    copied: 'Copied',
+    copyUnavailable: 'Can’t copy',
+    copyChanges: 'Copy my changes',
+    loadLatest: 'Load latest',
+    fileContents: (value1: string | number) => `Contents of ${value1}`,
+    conflict: 'The file changed elsewhere. Your changes haven’t been saved.',
+    saveUnknown: 'Save outcome unknown',
+    loadTitle: 'Load the latest version?',
+    loadText: 'This replaces your changes. Copy them first if you need them.',
+    load: 'Load',
+    discardTitle: 'Discard your changes?',
+    discardText: 'Unsaved changes will be lost.',
+    discard: 'Discard',
+  },
+)
 
 /**
  * A plain editor for a small text file of a session, opened from its preview: a monospace text area with line numbers,
@@ -109,7 +171,7 @@ export function FileEditor({
       setPhase(theirs ? 'conflict' : 'editing')
       const turn = cause instanceof ApiError && cause.code === 'file-turn-running'
       setWaiting(turn)
-      setError(turn ? 'Agent 正在这个文件夹里运行，结束后再保存。' : errorMessage(cause))
+      setError(turn ? COPY.agentBusy : errorMessage(cause))
     }
   }
 
@@ -161,21 +223,21 @@ export function FileEditor({
 
   const status =
     phase === 'saving' ? (
-      <StatusWord tone="running">正在保存</StatusWord>
+      <StatusWord tone="running">{COPY.saving}</StatusWord>
     ) : phase === 'unknown' ? (
-      <StatusWord tone="warn">结果未知</StatusWord>
+      <StatusWord tone="warn">{COPY.unknown}</StatusWord>
     ) : phase === 'conflict' ? (
-      <StatusWord tone="waiting">文件已在别处修改</StatusWord>
+      <StatusWord tone="waiting">{COPY.changed}</StatusWord>
     ) : running ? (
-      <StatusWord tone="neutral">Agent 运行中</StatusWord>
+      <StatusWord tone="neutral">{COPY.running}</StatusWord>
     ) : dirty ? (
-      <StatusWord tone="neutral">未保存</StatusWord>
+      <StatusWord tone="neutral">{COPY.unsaved}</StatusWord>
     ) : null
 
   const action =
     phase === 'unknown' && sent ? (
       <Button variant="primary" size={phone ? 'lg' : 'sm'} onClick={() => void send(sent)}>
-        重试保存
+        {COPY.retry}
       </Button>
     ) : phase === 'conflict' ? null : (
       <Button
@@ -183,17 +245,17 @@ export function FileEditor({
         size={phone ? 'lg' : 'sm'}
         disabled={running || !dirty}
         loading={busy}
-        loadingLabel="正在保存"
+        loadingLabel={COPY.saving}
         onClick={save}>
-        保存
+        {COPY.save}
       </Button>
     )
 
   return (
-    <section ref={root} className="file-editor" data-phone={phone ? '' : undefined} aria-label={`编辑 ${file.name}`} onKeyDown={keys}>
+    <section ref={root} className="file-editor" data-phone={phone ? '' : undefined} aria-label={COPY.edit(file.name)} onKeyDown={keys}>
       <header className="file-editor-bar">
         <Button variant="ghost" size={phone ? 'lg' : 'sm'} disabled={busy} onClick={cancel}>
-          取消
+          {COPY.cancel}
         </Button>
         <span className="file-editor-title">
           <span className="file-editor-name">
@@ -207,20 +269,20 @@ export function FileEditor({
       {phase === 'conflict' ? (
         <div className="file-editor-conflict">
           <div className="file-editor-versions">
-            <section className="file-editor-version" aria-label="文件现在的内容">
-              <h3 className="file-editor-version-title">文件现在的内容</h3>
+            <section className="file-editor-version" aria-label={COPY.current}>
+              <h3 className="file-editor-version-title">{COPY.current}</h3>
               {theirs === undefined ? (
-                <p className="file-editor-version-note">正在读取…</p>
+                <p className="file-editor-version-note">{COPY.reading}</p>
               ) : theirs.text === undefined ? (
-                <p className="file-editor-version-note">无法读取文件现在的内容。</p>
+                <p className="file-editor-version-note">{COPY.readFailed}</p>
               ) : (
                 <pre className="file-editor-version-text" tabIndex={0}>
                   {theirs.text}
                 </pre>
               )}
             </section>
-            <section className="file-editor-version" aria-label="你的修改">
-              <h3 className="file-editor-version-title">你的修改</h3>
+            <section className="file-editor-version" aria-label={COPY.changes}>
+              <h3 className="file-editor-version-title">{COPY.changes}</h3>
               <pre className="file-editor-version-text" tabIndex={0}>
                 {draft}
               </pre>
@@ -233,7 +295,7 @@ export function FileEditor({
               onClick={() => {
                 void copied.copy(draft)
               }}>
-              {copied.state === 'copied' ? '已复制' : copied.state === 'failed' ? '复制不可用' : '复制我的修改'}
+              {copied.state === 'copied' ? COPY.copied : copied.state === 'failed' ? COPY.copyUnavailable : COPY.copyChanges}
             </Button>
             <Button
               variant="primary"
@@ -243,7 +305,7 @@ export function FileEditor({
                 if (copied.state === 'copied' || theirs?.text === draft) loadLatest()
                 else setAsking('latest')
               }}>
-              载入最新
+              {COPY.loadLatest}
             </Button>
           </div>
         </div>
@@ -255,7 +317,7 @@ export function FileEditor({
           <textarea
             ref={area}
             className="file-editor-text"
-            aria-label={`${file.name} 的内容`}
+            aria-label={COPY.fileContents(file.name)}
             value={draft}
             readOnly={busy || phase === 'unknown'}
             spellCheck={false}
@@ -274,13 +336,13 @@ export function FileEditor({
         </div>
       )}
       <span className="sr-only" role="status">
-        {phase === 'conflict' ? '文件已在别处修改，你的修改还没有保存' : phase === 'unknown' ? '保存结果未知' : ''}
+        {phase === 'conflict' ? COPY.conflict : phase === 'unknown' ? COPY.saveUnknown : ''}
       </span>
       {asking === 'latest' && (
         <ConfirmDialog
-          title="载入最新？"
-          message="你的修改会被替换，需要的话先复制。"
-          confirmLabel="载入"
+          title={COPY.loadTitle}
+          message={COPY.loadText}
+          confirmLabel={COPY.load}
           danger
           onConfirm={async () => {
             setAsking(undefined)
@@ -291,9 +353,9 @@ export function FileEditor({
       )}
       {asking === 'discard' && (
         <ConfirmDialog
-          title="放弃你的修改？"
-          message="还没有保存的修改会丢失。"
-          confirmLabel="放弃"
+          title={COPY.discardTitle}
+          message={COPY.discardText}
+          confirmLabel={COPY.discard}
           danger
           onConfirm={async () => {
             setAsking(undefined)

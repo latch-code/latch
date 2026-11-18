@@ -3,6 +3,42 @@ import { Button, Hint, Icon, IconButton, Popover, RefreshGlyph, Spinner, useLaye
 import { PAGE_BUILD, buildStatus, buildStatusWords, oldHostWords, readServedBuild, shortBuild, type BuildStatus } from '../core/build.ts'
 import { useShellUpdates } from '../core/shellUpdates.ts'
 import type { ShellState } from './useShellLayout.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    check: '检查更新',
+    checking: '正在检查',
+    current: '已是最新',
+    build: (build: string) => `构建 ${build}`,
+    development: '开发运行',
+    noBuild: '无构建号',
+    failed: '未能检查',
+    page: '有新版页面',
+    reload: '重新载入',
+    updateVersion: (version: string) => `Latch ${version} 可更新`,
+    update: 'Latch 有更新',
+    view: '查看',
+    restartHelp: '怎么重启',
+    restart: '重启 Latch',
+  },
+  {
+    check: 'Check for updates',
+    checking: 'Checking…',
+    current: 'Up to date',
+    build: (build: string) => `Build ${build}`,
+    development: 'Development build',
+    noBuild: 'No build number',
+    failed: 'Couldn’t check for updates',
+    page: 'New page version',
+    reload: 'Reload',
+    updateVersion: (version: string) => `Latch ${version} available`,
+    update: 'Latch update available',
+    view: 'View',
+    restartHelp: 'How to restart',
+    restart: 'Restart Latch',
+  },
+)
 
 /**
  * The served build, read once per page and again on every click, shared by every 检查更新 on the page (the sidebar's
@@ -75,7 +111,7 @@ function UpdateCheck({
   const words = buildStatusWords(status)
   return (
     <Popover
-      label="检查更新"
+      label={COPY.check}
       side="auto"
       align="end"
       size="sm"
@@ -86,7 +122,7 @@ function UpdateCheck({
         <IconButton
           {...props}
           className="update-check"
-          label="检查更新"
+          label={COPY.check}
           icon={RefreshGlyph}
           tooltip={words.tooltip}
           busy={status.kind === 'checking'}
@@ -134,27 +170,27 @@ export function UpdateCheckBody({
       return (
         <div className="update-check-body" role="status">
           <Spinner size={14} />
-          <span className="update-check-title">正在检查</span>
+          <span className="update-check-title">{COPY.checking}</span>
         </div>
       )
     case 'current':
-      return row('已是最新', `构建 ${shortBuild(status.build)}`)
+      return row(COPY.current, COPY.build(shortBuild(status.build)))
     case 'dev':
-      return row('开发运行', '无构建号')
+      return row(COPY.development, COPY.noBuild)
     case 'failed':
-      return row('未能检查', `构建 ${shortBuild(status.build)}`)
+      return row(COPY.failed, COPY.build(shortBuild(status.build)))
     case 'page':
-      return row('有新版页面', undefined, {
-        label: '重新载入',
+      return row(COPY.page, undefined, {
+        label: COPY.reload,
         run: () => {
           window.location.reload()
         },
       })
     case 'app':
       return row(
-        status.version ? `Latch ${status.version} 可更新` : 'Latch 有更新',
+        status.version ? COPY.updateVersion(status.version) : COPY.update,
         undefined,
-        openAbout ? { label: '查看', run: openAbout } : undefined,
+        openAbout ? { label: COPY.view, run: openAbout } : undefined,
       )
     case 'host': {
       const words = oldHostWords(computer)
@@ -163,7 +199,7 @@ export function UpdateCheckBody({
           <span className="update-check-text">
             <span className="update-check-title">{words.title}</span>
             {!restart && (
-              <Hint inline lead={<Icon icon={RefreshGlyph} size={12} />} label={words.label} moreLabel="怎么重启">
+              <Hint inline lead={<Icon icon={RefreshGlyph} size={12} />} label={words.label} moreLabel={COPY.restartHelp}>
                 {words.detail}
               </Hint>
             )}
@@ -175,7 +211,7 @@ export function UpdateCheckBody({
                 close()
                 restart()
               }}>
-              重启 Latch
+              {COPY.restart}
             </Button>
           )}
         </div>

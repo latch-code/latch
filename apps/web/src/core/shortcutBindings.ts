@@ -11,6 +11,18 @@ import {
 } from '@latch/protocol'
 import { api, ApiError, errorMessage, isUncertain, MessageError, newRequestId } from './api.ts'
 import { currentShell } from './shell.ts'
+import { defineCopy } from './i18n.ts'
+
+const COPY = defineCopy(
+  {
+    missingReceipt: '没有收到这次快捷键修改的回执。',
+    expired: '这次请求已无法重放，可以放弃等待。',
+  },
+  {
+    missingReceipt: 'No receipt for this shortcut change.',
+    expired: 'This request can’t be replayed. You can stop waiting.',
+  },
+)
 
 /*
  * This device's key bindings (docs/CUSTOMIZATION.md#快捷键), as the Host keeps them for it. Until the Host answers, and
@@ -37,7 +49,7 @@ export const clientKind = (): ShortcutClient => (currentShell() !== null ? 'desk
 async function send(request: Pending['request']): Promise<ShortcutsReceipt> {
   const { kind, ...body } = request
   const receipt = await api<ShortcutsReceipt>(kind === 'apply' ? 'shortcuts' : 'shortcuts/reset', { method: 'POST', body })
-  if (receipt?.requestId !== request.requestId) throw new MessageError('没有收到这次快捷键修改的回执。')
+  if (receipt?.requestId !== request.requestId) throw new MessageError(() => COPY.missingReceipt)
   return receipt
 }
 
@@ -130,7 +142,7 @@ export class ShortcutBindings {
       const definite = code === 'shortcuts-write-pending' || code === 'shortcuts-write-unavailable'
       const conflict = code === 'shortcuts-conflict' || code === 'request-id-reused'
       if (pending.unknown || (!definite && isUncertain(error))) {
-        const text = conflict ? '这次请求已无法重放，可以放弃等待。' : errorMessage(error)
+        const text = conflict ? COPY.expired : errorMessage(error)
         if (this.view.identity === identity) this.setPending({ ...pending, sending: false, unknown: { retryable: !conflict, text } })
         return { kind: 'unknown' }
       }

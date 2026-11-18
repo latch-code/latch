@@ -1,4 +1,32 @@
 import type { AutomationSummary, HelperAbility, TaskMode } from '@latch/protocol'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    scheduleLast: (name: string) => `「${name}」上次怎么样`,
+    scheduleNext: (name: string) => `「${name}」要做什么`,
+    scheduleNew: '每天帮我做一件事',
+    project: (name: string) => `看看「${name}」`,
+    folder: '看看你的文件夹',
+    duty: '交给你一件事',
+    command: '帮我跑个命令',
+    remember: '记住一件事',
+    ask: '你能帮我做什么',
+    intro: '你在这台电脑上能做什么',
+  },
+  {
+    scheduleLast: (name: string) => `How did “${name}” go?`,
+    scheduleNext: (name: string) => `What will “${name}” do?`,
+    scheduleNew: 'Do something for me every day',
+    project: (name: string) => `Look at “${name}”`,
+    folder: 'Look in your folder',
+    duty: 'Give you a task',
+    command: 'Run a command for me',
+    remember: 'Remember something',
+    ask: 'What can you help with?',
+    intro: 'What can you do on this computer?',
+  },
+)
 
 /**
  * What an Agent offers before anyone writes to it: three things to ask, each derived from what it can do here. Fixed text, no model call; a click fills the input and sends nothing.
@@ -42,24 +70,24 @@ export function openingActions(input: OpeningInput): OpeningAction[] {
     const name = clip(latest.name, 16)
     actions.push(
       latest.lastRun
-        ? { id: 'schedule-last', label: `「${name}」上次怎么样`, text: `「${latest.name}」上次运行得怎么样？结果在哪？` }
-        : { id: 'schedule-next', label: `「${name}」要做什么`, text: `「${latest.name}」每次会做什么？` },
+        ? { id: 'schedule-last', label: COPY.scheduleLast(name), text: `「${latest.name}」上次运行得怎么样？结果在哪？` }
+        : { id: 'schedule-next', label: COPY.scheduleNext(name), text: `「${latest.name}」每次会做什么？` },
     )
   } else if (can('schedule') && input.canAutomate)
-    actions.push({ id: 'schedule-new', label: '每天帮我做一件事', text: '每个工作日早上 9 点，帮我' })
+    actions.push({ id: 'schedule-new', label: COPY.scheduleNew, text: '每个工作日早上 9 点，帮我' })
   if (input.mode !== 'chat' && can('files'))
     actions.push(
       input.project
-        ? { id: 'folder', label: `看看「${clip(input.project, 12)}」`, text: `看看「${input.project}」里有什么，挑要紧的说。` }
-        : { id: 'folder', label: '看看你的文件夹', text: '你的文件夹里现在有什么？列给我看。' },
+        ? { id: 'folder', label: COPY.project(clip(input.project, 12)), text: `看看「${input.project}」里有什么，挑要紧的说。` }
+        : { id: 'folder', label: COPY.folder, text: '你的文件夹里现在有什么？列给我看。' },
     )
   // What it is for, in its own words: the person finishes the sentence.
   const duty = input.general ? undefined : input.description?.replace(/\s+/gu, ' ').trim()
-  if (duty) actions.push({ id: 'duty', label: '交给你一件事', text: `${duty.replace(/[。.！!？?]+$/u, '')}：` })
-  if (input.mode !== 'chat' && can('commands')) actions.push({ id: 'command', label: '帮我跑个命令', text: '帮我跑一下 ' })
-  actions.push({ id: 'remember', label: '记住一件事', text: '记住：' })
-  if (actions.length < 3) actions.push({ id: 'ask', label: '你能帮我做什么', text: '你能帮我做什么？举三个例子。' })
-  if (actions.length < 3) actions.push({ id: 'intro', label: '你在这台电脑上能做什么', text: '你在这台电脑上能用哪些文件和工具？' })
+  if (duty) actions.push({ id: 'duty', label: COPY.duty, text: `${duty.replace(/[。.！!？?]+$/u, '')}：` })
+  if (input.mode !== 'chat' && can('commands')) actions.push({ id: 'command', label: COPY.command, text: '帮我跑一下 ' })
+  actions.push({ id: 'remember', label: COPY.remember, text: '记住：' })
+  if (actions.length < 3) actions.push({ id: 'ask', label: COPY.ask, text: '你能帮我做什么？举三个例子。' })
+  if (actions.length < 3) actions.push({ id: 'intro', label: COPY.intro, text: '你在这台电脑上能用哪些文件和工具？' })
   return actions.slice(0, 3)
 }
 

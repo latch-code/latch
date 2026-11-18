@@ -2,9 +2,22 @@ import { useEffect, useState } from 'react'
 import { WORK_ITEM_LIMITS, type WorkItem, type WorkItemSummary } from '@latch/protocol'
 import { Button, InlineNotice, Loading, Modal, ModalHeader, TextAreaField, TextField } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
 import type { ItemWrites } from './itemWrites.ts'
 
 const chars = (text: string) => Array.from(text).length
+const COPY = defineCopy(
+  { notSaved: '没有保存', edit: '编辑待办', loading: '读取中', title: '标题', prompt: '要求', cancel: '取消', save: '保存' },
+  {
+    notSaved: 'Changes weren’t saved',
+    edit: 'Edit task',
+    loading: 'Loading',
+    title: 'Title',
+    prompt: 'Instructions',
+    cancel: 'Cancel',
+    save: 'Save',
+  },
+)
 
 /**
  * 编辑 a 待办 that has not started: its title and prompt, read from the Host (the snapshot has no prompts). Saved with
@@ -58,7 +71,7 @@ export function WorkBoardItemEdit({
     else {
       // A refusal is said here, not on the card.
       if (!result.blocked) writes.dismiss(read.id)
-      setError(result.reason ?? '没有保存')
+      setError(result.reason ?? COPY.notSaved)
       setBusy(false)
     }
   }
@@ -66,34 +79,34 @@ export function WorkBoardItemEdit({
     if (!busy) onClose()
   }
   return (
-    <Modal label="编辑待办" variant={phone ? 'sheet' : 'dialog'} dismissible={!busy} onClose={close} className="work-board-item-edit">
+    <Modal label={COPY.edit} variant={phone ? 'sheet' : 'dialog'} dismissible={!busy} onClose={close} className="work-board-item-edit">
       <form
         onSubmit={event => {
           event.preventDefault()
           void save()
         }}>
-        <ModalHeader title="编辑待办" onClose={close} />
+        <ModalHeader title={COPY.edit} onClose={close} />
         <div className="ui-modal-body">
           {read === null && !error ? (
-            <Loading label="读取中" />
+            <Loading label={COPY.loading} />
           ) : (
             <>
               <TextField
-                label="标题"
+                label={COPY.title}
                 value={title}
                 disabled={busy || read === null}
                 autoComplete="off"
-                error={titleLong ? `${chars(title.trim())} / ${WORK_ITEM_LIMITS.titleChars}` : undefined}
+                error={titleLong ? `${formatNumber(chars(title.trim()))} / ${formatNumber(WORK_ITEM_LIMITS.titleChars)}` : undefined}
                 onChange={event => {
                   setTitle(event.target.value.replace(/\n/gu, ' '))
                 }}
               />
               <TextAreaField
-                label="要求"
+                label={COPY.prompt}
                 value={prompt}
                 rows={8}
                 disabled={busy || read === null}
-                error={promptLong ? `${prompt.length} / ${WORK_ITEM_LIMITS.promptChars}` : undefined}
+                error={promptLong ? `${formatNumber(prompt.length)} / ${formatNumber(WORK_ITEM_LIMITS.promptChars)}` : undefined}
                 onChange={event => {
                   setPrompt(event.target.value)
                 }}
@@ -104,7 +117,7 @@ export function WorkBoardItemEdit({
         </div>
         <footer className="ui-modal-footer">
           <Button size="md" disabled={busy} onClick={close}>
-            取消
+            {COPY.cancel}
           </Button>
           <Button
             size="md"
@@ -112,7 +125,7 @@ export function WorkBoardItemEdit({
             type="submit"
             disabled={busy || !changed || !title.trim() || titleLong || promptLong}
             loading={busy}>
-            保存
+            {COPY.save}
           </Button>
         </footer>
       </form>

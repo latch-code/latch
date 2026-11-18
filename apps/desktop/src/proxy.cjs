@@ -7,6 +7,17 @@
 const { createHash } = require('node:crypto')
 const { socketRequest, readBody } = require('./host.cjs')
 const { generateDeviceKey, enrollSigningText, renewSigningText } = require('./credentials.cjs')
+const { currentLocale, defineCopy } = require('./locale.cjs')
+
+const LINK_COPY = defineCopy(
+  { open: '打开', cancel: '取消', confirm: '在浏览器中打开以下链接？', unavailable: '无法连接到 Latch Host，请确认 Host 仍在运行。' },
+  {
+    open: 'Open',
+    cancel: 'Cancel',
+    confirm: 'Open this link in your browser?',
+    unavailable: 'Can’t reach Latch on this Mac. Check that it’s still running.',
+  },
+)
 
 const APP_ORIGIN = 'latch://app'
 const HTML_CSP =
@@ -307,9 +318,9 @@ function externalLinkDialog(url) {
   return {
     type: 'question',
     title: 'Latch',
-    message: '在浏览器中打开以下链接？',
+    message: LINK_COPY.confirm,
     detail: url,
-    buttons: ['打开', '取消'],
+    buttons: [LINK_COPY.open, LINK_COPY.cancel],
     defaultId: 1,
     cancelId: 1,
     noLink: true,
@@ -705,13 +716,13 @@ function escapeHtml(text) {
 }
 
 function htmlErrorPage(message) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Latch</title><style>body{font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;margin:48px;color:#18181b;background:#EBEBEF}@media (prefers-color-scheme:dark){body{color:#f4f4f5;background:#09090B}}</style></head><body><p>${escapeHtml(message)}</p></body></html>`
+  return `<!doctype html><html lang="${currentLocale()}"><head><meta charset="utf-8"><title>Latch</title><style>body{font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;margin:48px;color:#18181b;background:#EBEBEF}@media (prefers-color-scheme:dark){body{color:#f4f4f5;background:#09090B}}</style></head><body><p>${escapeHtml(message)}</p></body></html>`
 }
 
 function unavailableResponse(pathname) {
   const message = HOST_UNAVAILABLE
   if (pathname?.startsWith('/link/api/')) return errorResponse(502, 'host-unavailable', message)
-  return new Response(htmlErrorPage(message), {
+  return new Response(htmlErrorPage(LINK_COPY.unavailable), {
     status: 502,
     headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': HTML_CSP, 'cache-control': 'no-store' },
   })

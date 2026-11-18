@@ -2,6 +2,41 @@ import type { ReactNode } from 'react'
 import { MODEL_FAILURE_NAMES, SERVICE_HEALTH_NAMES, type ProviderSummary, type ServiceHealth } from '@latch/protocol'
 import { StatusDot, Tooltip } from '@latch/ui'
 import { dateTime, relativeTime } from '../format.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const STATES = defineCopy(SERVICE_HEALTH_NAMES, {
+  slow: 'Slow',
+  failing: 'Failing',
+  quota: 'Quota exhausted',
+  rate: 'Rate limited',
+  'key-invalid': 'Invalid key',
+})
+const FAILURES = defineCopy(MODEL_FAILURE_NAMES, {
+  request: 'Request rejected',
+  auth: 'Invalid key',
+  forbidden: 'Service refused the request',
+  quota: 'Quota exhausted',
+  rate: 'Too many requests',
+  server: 'Service error',
+  network: 'Connection failed',
+  timeout: 'No response',
+  stream: 'Reply interrupted',
+  unavailable: 'Unavailable',
+  'circuit-open': 'Requests paused',
+  budget: 'Budget exhausted',
+})
+const COPY = defineCopy(
+  {
+    last: (failure: string) => `最近一次：${failure}`,
+    when: (at: string, now: Date, recent: boolean) => (recent ? relativeTime(at, now) : `${relativeTime(at, now)}前`),
+    until: (time: string) => `${time} 前先用其他服务`,
+  },
+  {
+    last: (failure: string) => `Last failure: ${failure}`,
+    when: (at: string, _now: Date, recent: boolean) => (recent ? 'now' : dateTime(at)),
+    until: (time: string) => `Use another service until ${time}`,
+  },
+)
 
 /**
  * How a model service fares, as the Host's real requests showed it: a word, a colour and the fine print. Amber is for
@@ -18,14 +53,14 @@ export function healthWords(health: ServiceHealth | undefined, now = new Date())
   if (!health) return undefined
   // A state that ended by itself is no state any more, though the catalog was read before it did.
   if (health.until && Date.parse(health.until) <= now.getTime()) return undefined
-  const ago = health.at ? relativeTime(health.at, now) : ''
+  const failedAt = health.at ? Date.parse(health.at) : Number.NaN
   const facts = [
-    health.last ? `最近一次：${MODEL_FAILURE_NAMES[health.last]}` : '',
-    ago ? (ago === '刚刚' ? ago : `${ago}前`) : '',
-    (health.state === 'quota' || health.state === 'rate') && health.until ? `${dateTime(health.until)} 前先用其他服务` : '',
+    health.last ? COPY.last(FAILURES[health.last]) : '',
+    health.at && Number.isFinite(failedAt) ? COPY.when(health.at, now, now.getTime() - failedAt < 60_000) : '',
+    (health.state === 'quota' || health.state === 'rate') && health.until ? COPY.until(dateTime(health.until)) : '',
   ].filter(Boolean)
   return {
-    state: SERVICE_HEALTH_NAMES[health.state],
+    state: STATES[health.state],
     tone: health.state === 'failing' || health.state === 'key-invalid' ? 'err' : 'warn',
     detail: facts.join(' · '),
   }

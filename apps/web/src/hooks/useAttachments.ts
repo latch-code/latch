@@ -2,6 +2,42 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AttachmentCapabilities, AttachmentRef, AttachmentSelection } from '@latch/protocol'
 import { api, ApiError, ApiTimeoutError, errorMessage, MessageError, newRequestId, NoAnswerError, uploadAttachment } from '../core/api.ts'
 import { looksLikeImage, SHRINK_INPUT_BYTES, ShrinkRefusal, shrinkImage } from './imageShrink.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    badReply: '附件响应无效。',
+    imageLimit: (value1: string) => `图片 ${value1} 内`,
+    textLimit: (value1: string) => `文字文件 ${value1} 内`,
+    eight: '每条 8 个',
+    empty: '空文件不能添加。',
+    unsupported: '这个 Harness 不接收附件。',
+    tooLarge: (value1: string, value2: string, value3: string) => `「${value1}」超过 ${value2}，没有添加。${value3}`,
+    accepted: (limits: string) => `可以添加：${limits}。`,
+    cancelled: '已取消，可以重试。',
+    uploadCancelled: '上传已取消，可以重试。',
+    limit: '每条消息最多添加 8 个附件。',
+    refused: '有附件不能发送，请移除后再发送。',
+    notReady: '附件尚未准备好。请重试失败的文件，或移除后发送。',
+    notAccepted: '当前 Harness 不接受这些附件。请移除附件或更换模型。',
+  },
+  {
+    badReply: 'The attachment response was invalid.',
+    imageLimit: (value1: string) => `Images up to ${value1}`,
+    textLimit: (value1: string) => `Text files up to ${value1}`,
+    eight: '8 per message',
+    empty: 'Empty files cannot be added.',
+    unsupported: 'This Harness does not accept attachments.',
+    tooLarge: (value1: string, value2: string, value3: string) => `“${value1}” exceeds ${value2} and was not added.${value3}`,
+    accepted: (limits: string) => ` You can add ${limits}.`,
+    cancelled: 'Cancelled. You can retry.',
+    uploadCancelled: 'Upload cancelled. You can retry.',
+    limit: 'Add up to 8 attachments per message.',
+    refused: 'Some attachments cannot be sent. Remove them before sending.',
+    notReady: 'Attachments are not ready. Retry the failed files or remove them and send.',
+    notAccepted: 'The current Harness does not accept these attachments. Remove them or choose another model.',
+  },
+)
 
 export interface DraftAttachment {
   key: string
@@ -42,7 +78,7 @@ async function reuseAttachment(
     method: 'POST',
     signal,
   })
-  if (typeof file?.handle !== 'string') throw new MessageError('附件响应无效。')
+  if (typeof file?.handle !== 'string') throw new MessageError(COPY.badReply)
   const bytes = await api<ArrayBuffer>(`attachments/${encodeURIComponent(file.handle)}/content`, {
     response: 'bytes',
     signal,
@@ -79,9 +115,9 @@ export function attachmentLimits(caps: AttachmentCapabilities | undefined): stri
   if (!caps || (!caps.images && !caps.text)) return ''
   const file = caps.fileBytes ?? FILE_BYTES
   return [
-    caps.images ? `图片 ${sizeText(Math.min(caps.imageBytes ?? IMAGE_BYTES, file))} 内` : '',
-    caps.text ? `文字文件 ${sizeText(Math.min(caps.textBytes, file))} 内` : '',
-    '每条 8 个',
+    caps.images ? COPY.imageLimit(sizeText(Math.min(caps.imageBytes ?? IMAGE_BYTES, file))) : '',
+    caps.text ? COPY.textLimit(sizeText(Math.min(caps.textBytes, file))) : '',
+    COPY.eight,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -112,12 +148,14 @@ export function addRefusal(
   file: { name: string; size: number; type?: string },
   caps: AttachmentCapabilities | undefined,
 ): string | undefined {
-  if (!file.size) return '空文件不能添加。'
-  if (caps && !caps.images && !caps.text) return caps.reason ?? '这个 Harness 不接收附件。'
+  if (!file.size) return COPY.empty
+  if (caps && !caps.images && !caps.text) return caps.reason ?? COPY.unsupported
   if (shrinkLimit(file, caps) !== undefined) return undefined
   const largest = largestAccepted(caps) ?? FILE_BYTES
-  if (file.size > largest)
-    return `「${file.name}」超过 ${sizeText(largest)}，没有添加。${attachmentLimits(caps) ? `可以添加：${attachmentLimits(caps)}。` : ''}`
+  if (file.size > largest) {
+    const limits = attachmentLimits(caps)
+    return COPY.tooLarge(file.name, sizeText(largest), limits ? COPY.accepted(limits) : '')
+  }
   return undefined
 }
 
@@ -293,7 +331,7 @@ export function useAttachments({
                 ? {
                     ...entry,
                     status: confirm ? 'confirm' : gone || refusedUpload(cause) ? 'refused' : 'failed',
-                    error: controller.signal.aborted ? '已取消，可以重试。' : errorMessage(cause),
+                    error: controller.signal.aborted ? COPY.cancelled : errorMessage(cause),
                   }
                 : entry,
             ),
@@ -326,7 +364,7 @@ export function useAttachments({
               entry.key === key
                 ? cause instanceof ShrinkRefusal
                   ? { ...entry, status: 'refused', error: cause.message }
-                  : { ...entry, status: 'failed', error: controller.signal.aborted ? '已取消，可以重试。' : errorMessage(cause) }
+                  : { ...entry, status: 'failed', error: controller.signal.aborted ? COPY.cancelled : errorMessage(cause) }
                 : entry,
             ),
           )
@@ -383,7 +421,7 @@ export function useAttachments({
               ? {
                   ...entry,
                   status: confirm ? 'confirm' : refused ? 'refused' : 'failed',
-                  error: controller.signal.aborted ? '上传已取消，可以重试。' : errorMessage(cause),
+                  error: controller.signal.aborted ? COPY.uploadCancelled : errorMessage(cause),
                 }
               : entry,
           ),
@@ -397,7 +435,7 @@ export function useAttachments({
   const add = (files: File[], pastedText?: string) => {
     if (!enabled || locked || preparing) return
     if (state.current.length + files.length > 8) {
-      setError('每条消息最多添加 8 个附件。')
+      setError(COPY.limit)
       return
     }
     const accepted: DraftAttachment[] = []
@@ -433,7 +471,7 @@ export function useAttachments({
       status: 'uploading',
       progress: 0,
     }))
-    if (refs.length > room) setError('每条消息最多添加 8 个附件。')
+    if (refs.length > room) setError(COPY.limit)
     update(items => [...items, ...accepted])
     for (const item of accepted) start(item.key)
   }
@@ -456,15 +494,15 @@ export function useAttachments({
       await Promise.all([...jobs.current.values()].map(job => job.promise))
       if (current !== generation.current) return
       if (state.current.some(item => item.status === 'refused')) {
-        setError('有附件不能发送，请移除后再发送。')
+        setError(COPY.refused)
         return
       }
       if (state.current.some(item => item.status !== 'ready' || !item.ref)) {
-        setError('附件尚未准备好。请重试失败的文件，或移除后发送。')
+        setError(COPY.notReady)
         return
       }
       if (state.current.some(item => (item.ref?.kind === 'image' ? !caps?.images : !caps?.text || draftSize(item) > caps.textBytes))) {
-        setError(caps?.reason ?? '当前 Harness 不接受这些附件。请移除附件或更换模型。')
+        setError(caps?.reason ?? COPY.notAccepted)
         return
       }
       return state.current.map(item => item.ref!.id)
@@ -499,9 +537,7 @@ export function useAttachments({
       generation.current++
       for (const job of jobs.current.values()) job.controller.abort()
       jobs.current.clear()
-      update(items =>
-        items.map(item => (item.status === 'uploading' ? { ...item, status: 'failed', error: '上传已取消，可以重试。' } : item)),
-      )
+      update(items => items.map(item => (item.status === 'uploading' ? { ...item, status: 'failed', error: COPY.uploadCancelled } : item)))
       setPreparing(false)
     },
     clear: () => reset(true),

@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { leadingQuotaWindow, type BudgetProgress, type HarnessInfo, type HarnessQuota } from '@latch/protocol'
 import { LimitWindow } from '../src/usage/LimitWindow.tsx'
+import { setLocale } from '../src/core/i18n.ts'
 import { HarnessLimitChip } from '../src/usage/UsageChip.tsx'
 import { NoLimits } from '../src/usage/UsageSurface.tsx'
 import { budgetLimit, chipWords, harnessLimits, resetWords, usedWords, type LimitView } from '../src/usage/limits.ts'
@@ -256,4 +257,18 @@ describe('a Harness with no figure in 额度', () => {
     expect(text(row(undefined))).toBe('尚未报告额度')
     expect(text(row(undefined, { asks: false }))).toBe('尚未报告额度')
   })
+})
+
+it('localizes quota text and keeps a window without a reported figure free of meters', () => {
+  setLocale('en')
+  try {
+    const limits = harnessLimits(ok, NOW)!
+    expect(window(limits.windows[0]!)).toContain('aria-valuetext="12% used"')
+    expect(resetWords(at(HOUR + MINUTE), NOW)).toBe('Resets in 1 hour 1 minute')
+    const reported = harnessLimits({ ...ok, windows: [{ kind: 'five-hour', state: 'near' }] }, NOW)!
+    expect(text(window(reported.windows[0]!))).toBe('5 hours Nearly reached')
+    expect(window(reported.windows[0]!)).not.toContain('role="meter"')
+  } finally {
+    setLocale('zh-CN')
+  }
 })

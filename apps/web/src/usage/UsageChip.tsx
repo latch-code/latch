@@ -7,8 +7,24 @@ import { useTicker } from '../core/hostClock.ts'
 import { currentShell } from '../core/shell.ts'
 import { useModelSpend } from '../settings/ModelSpend.tsx'
 import { shortcutKeys } from '../workbenchShortcuts.ts'
-import { budgetLimit, chipParts, harnessLimits, usedWords } from './limits.ts'
+import { budgetLimit, chipParts, harnessLimits, limitWords, usedWords } from './limits.ts'
 import { openUsage, refreshLimits, type UsageRequest } from './surface.ts'
+import { defineCopy, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    quota: (value1: string | number) => `${value1} 额度`,
+    monthlyBudget: '本月预算',
+    chipLabel: (label: string, words: string) => `${label}：${words}`,
+    budget: (value1: string | number) => `${value1} 预算`,
+  },
+  {
+    quota: (value1: string | number) => `${value1} limits`,
+    monthlyBudget: 'Monthly budget',
+    chipLabel: (label: string, words: string) => `${label}: ${words}`,
+    budget: (value1: string | number) => `${value1} budget`,
+  },
+)
 
 /**
  * The composer's one word on a limit, last before send: the tightest window by name and how much of it is used, a short
@@ -36,7 +52,7 @@ function LimitChip({
 }) {
   useShortcutBindings()
   const keys = shortcutKeys('usage', currentShell() !== null) ?? undefined
-  const words = `${name}${figure}`
+  const words = limitWords(name, figure)
   return (
     <span className="composer-control composer-usage">
       {/* The words lead the hover too: a short row shows the bar alone (usage.css). */}
@@ -52,7 +68,7 @@ function LimitChip({
           type="button"
           className="chip usage-chip"
           data-state={state}
-          aria-label={`${label}：${words}${reset ? ` · ${reset}` : ''}`}
+          aria-label={COPY.chipLabel(label, reset ? `${words} · ${reset}` : words)}
           aria-haspopup="dialog"
           onClick={() => {
             openUsage(request)
@@ -76,6 +92,7 @@ function LimitChip({
 
 /** A Harness on its own login: what its own program last said about its subscription; nothing when it said nothing. */
 export function HarnessLimitChip({ harness }: { harness: HarnessInfo }) {
+  useLocale()
   const now = useTicker(harness.quota ? 'minute' : false)
   // Choosing a Harness is looking at it: its limits are asked for when missing or old.
   const reports = harness.capabilities.models.quota === true && harness.offer === undefined
@@ -87,7 +104,7 @@ export function HarnessLimitChip({ harness }: { harness: HarnessInfo }) {
   if (!limits || (!limits.tightest && !limits.account)) return null
   return (
     <LimitChip
-      label={`${harnessName(harness)} 额度`}
+      label={COPY.quota(harnessName(harness))}
       {...chipParts(limits)}
       state={limits.account || !limits.tightest ? 'limited' : limits.tightest.state}
       percent={limits.account ? undefined : limits.tightest?.percent}
@@ -102,13 +119,14 @@ export function HarnessLimitChip({ harness }: { harness: HarnessInfo }) {
  * window; nothing when it has none. Read again as each turn ends (`revision`).
  */
 export function ServiceBudgetChip({ providerId, name, revision }: { providerId: string; name: string; revision: unknown }) {
+  useLocale()
   const { spend } = useModelSpend(true, revision)
   const budget = spend?.budgets.find(item => item.scope === 'service' && item.id === providerId)
   if (!spend || !budget) return null
-  const view = budgetLimit(budget, '本月预算', spend.month)
+  const view = budgetLimit(budget, COPY.monthlyBudget, spend.month)
   return (
     <LimitChip
-      label={`${name} 预算`}
+      label={COPY.budget(name)}
       name={view.name}
       figure={usedWords(view)}
       state={view.state}

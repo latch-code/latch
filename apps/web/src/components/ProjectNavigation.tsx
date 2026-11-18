@@ -19,6 +19,43 @@ import { shellFolders } from '../core/shell.ts'
 import { ProjectIcon, projectFolders, projectName } from '../projects.tsx'
 import { VisibleText } from './VisibleText.tsx'
 import { rowOf } from './overlays.tsx'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    required: '请填写项目名称。',
+    newIn: (value1: string | number) => `在 ${value1} 中新建会话`,
+    newSession: '新会话',
+    actions: (value1: string | number) => `${value1} 的项目操作`,
+    rename: '重命名',
+    addFolder: '添加文件夹…',
+    saving: '正在保存项目',
+    maxFolders: '每个项目最多 8 个文件夹',
+    folderFailed: '没有完成文件夹操作，请在项目设置中重试。',
+    dialogOpen: '另一个系统对话框还没结束。',
+    foldersRefused: (count: number) => `${formatNumber(count)} 个文件夹没有加入。请在项目设置中查看文件夹。`,
+    manageFolders: '管理文件夹…',
+    projectName: '项目名称',
+    save: '保存',
+  },
+  {
+    required: 'Enter a project name.',
+    newIn: (value1: string | number) => `New session in ${value1}`,
+    newSession: 'New session',
+    actions: (value1: string | number) => `Project actions for ${value1}`,
+    rename: 'Rename',
+    addFolder: 'Add folder…',
+    saving: 'Saving project',
+    maxFolders: 'Up to 8 folders per project',
+    folderFailed: 'The folder change didn’t finish. Try again in project settings.',
+    dialogOpen: 'Another system dialog is still open.',
+    foldersRefused: (count: number) =>
+      `${plural(count, { one: '{n} folder wasn’t', other: '{n} folders weren’t' })} added. See the folders in project settings.`,
+    manageFolders: 'Manage folders…',
+    projectName: 'Project name',
+    save: 'Save',
+  },
+)
 
 export interface ProjectNavigationActions {
   onEditProject?: (id: string) => void
@@ -102,7 +139,7 @@ export function ProjectGroupHeading({
   }
   const save = () => {
     if (!name.trim()) {
-      setError('请填写项目名称。')
+      setError(COPY.required)
       return
     }
     void operation(async () => {
@@ -113,23 +150,23 @@ export function ProjectGroupHeading({
   const actions = !renaming && (
     <>
       {onNew && !project.unavailable && (
-        <IconButton size="xs" label={`在 ${projectName(project)} 中新建会话`} tooltip="新会话" icon={PlusGlyph} onClick={onNew} />
+        <IconButton size="xs" label={COPY.newIn(projectName(project))} tooltip={COPY.newSession} icon={PlusGlyph} onClick={onNew} />
       )}
       {onEditProject && (
         <Menu
-          label={`${projectName(project)} 的项目操作`}
+          label={COPY.actions(projectName(project))}
           align="end"
           context={rowOf('.shelf-head')}
-          trigger={props => <IconButton {...props} size="xs" label={`${projectName(project)} 的项目操作`} icon={MoreGlyph} />}
+          trigger={props => <IconButton {...props} size="xs" label={COPY.actions(projectName(project))} icon={MoreGlyph} />}
           sections={[
             {
               id: 'project',
               items: [
                 // The heading's hover + as an item too, so the right-click menu offers it.
-                ...(onNew && !project.unavailable ? [{ id: 'new', label: '新会话', icon: PlusGlyph, onSelect: onNew }] : []),
+                ...(onNew && !project.unavailable ? [{ id: 'new', label: COPY.newSession, icon: PlusGlyph, onSelect: onNew }] : []),
                 {
                   id: 'rename',
-                  label: '重命名',
+                  label: COPY.rename,
                   icon: EditGlyph,
                   onSelect: () => {
                     setName(projectName(project))
@@ -140,22 +177,22 @@ export function ProjectGroupHeading({
                   ? [
                       {
                         id: 'add',
-                        label: '添加文件夹…',
+                        label: COPY.addFolder,
                         icon: FolderPlus,
-                        disabledReason: busy ? '正在保存项目' : projectFolders(project).length >= 8 ? '每个项目最多 8 个文件夹' : undefined,
+                        disabledReason: busy ? COPY.saving : projectFolders(project).length >= 8 ? COPY.maxFolders : undefined,
                         onSelect: () => {
                           void operation(async () => {
                             const result = await folders.pick(project.id)
-                            if (result.status === 'failed') throw new MessageError('没有完成文件夹操作，请在项目设置中重试。')
-                            if (result.status === 'busy') throw new MessageError('另一个系统对话框还没结束。')
+                            if (result.status === 'failed') throw new MessageError(COPY.folderFailed)
+                            if (result.status === 'busy') throw new MessageError(COPY.dialogOpen)
                             if (result.status === 'added' && result.refused.length)
-                              throw new MessageError(`${result.refused.length} 个文件夹没有加入。请在项目设置中查看文件夹。`)
+                              throw new MessageError(COPY.foldersRefused(result.refused.length))
                           })
                         },
                       },
                     ]
                   : []),
-                { id: 'edit', label: '管理文件夹…', icon: SettingsGlyph, onSelect: () => onEditProject(project.id) },
+                { id: 'edit', label: COPY.manageFolders, icon: SettingsGlyph, onSelect: () => onEditProject(project.id) },
               ],
             },
           ]}
@@ -175,7 +212,7 @@ export function ProjectGroupHeading({
             }}>
             <TextField
               autoFocus
-              label="项目名称"
+              label={COPY.projectName}
               maxLength={80}
               value={name}
               disabled={busy}
@@ -189,7 +226,7 @@ export function ProjectGroupHeading({
               }}
             />
             <Button size="xs" loading={busy} type="submit">
-              保存
+              {COPY.save}
             </Button>
           </form>
         </div>

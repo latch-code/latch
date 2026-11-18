@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { createPortal } from 'react-dom'
 
 import { IconButton, MOTION, ChevronLeftGlyph } from '@latch/ui'
+import { defineCopy } from '../core/i18n.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import { BackLink } from './common.tsx'
 
@@ -47,6 +48,7 @@ function LevelEntry({ onBack }: { onBack: () => void }) {
 
 /** How long a phone page takes to slide away before it is dropped: --m-push, plus a frame. */
 const LEAVE_MS = MOTION.push + 20
+const COPY = defineCopy({ back: (page: string) => `返回${page}` }, { back: (page: string) => `Back to ${page}` })
 
 /**
  * A section's main content and the pages open inside it, the last one on top. Going back to the main content plays the
@@ -161,7 +163,7 @@ function PhoneLevels({ levels, section }: { levels: SettingsLevel[]; section: st
             ref={element => {
               backs.current.set(level.key, element)
             }}
-            label={`返回${previous}`}
+            label={COPY.back(previous)}
             icon={ChevronLeftGlyph}
             onClick={level.onBack}
           />

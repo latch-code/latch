@@ -19,24 +19,77 @@ import { VisibleText } from '../components/VisibleText.tsx'
 import { api, ApiError, errorMessage, newRequestId } from '../core/api.ts'
 import { unconfirmedReason } from '../core/sendingMessage.ts'
 import { hostNow } from '../core/hostClock.ts'
+import { defineCopy, formatNumber, useLocale } from '../core/i18n.ts'
 import { dateTime, relativeTime } from '../format.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import {
   deliveryWords,
   matchTargets,
   mentionAt,
+  postDecision,
   postPreview,
+  postSourceVersion,
   postTarget,
   replySources,
   targetLabel,
+  THREAD_COPY,
   threadTargets,
   withoutMention,
   withoutMissingPostSources,
   withoutPostSource,
+  type PostDecision,
   type ThreadTarget,
 } from './itemThread.ts'
 
 const postsPath = (id: string) => `work/items/${encodeURIComponent(id)}/posts`
+const COPY = defineCopy(
+  {
+    discussion: '讨论',
+    retry: '重试',
+    noAnswer: '没有收到电脑的答复',
+    removeTarget: '不发给它',
+    post: '发言',
+    placeholder: '@ 会话或 Agent',
+    abandon: '放弃',
+    send: '发送',
+    recipient: '发给',
+    session: '会话',
+    noChat: '还没有聊天',
+    noMatch: '没有匹配的会话或 Agent',
+    collapse: '收起',
+    expandReply: '展开回复',
+    viewTurn: '查看原回合',
+    collapsePost: '收起发言',
+    fullPost: '展开全文',
+    viewReply: '查看原回复',
+    retryRead: '重试读取',
+    readMore: '继续读取',
+    loading: '读取中',
+  },
+  {
+    discussion: 'Discussion',
+    retry: 'Retry',
+    noAnswer: 'The computer didn’t respond',
+    removeTarget: 'Remove recipient',
+    post: 'Post',
+    placeholder: '@ a session or Agent',
+    abandon: 'Abandon',
+    send: 'Send',
+    recipient: 'Send to',
+    session: 'Session',
+    noChat: 'No chat yet',
+    noMatch: 'No matching sessions or Agents',
+    collapse: 'Show less',
+    expandReply: 'Expand reply',
+    viewTurn: 'View original turn',
+    collapsePost: 'Collapse post',
+    fullPost: 'Read full post',
+    viewReply: 'View original reply',
+    retryRead: 'Retry loading',
+    readMore: 'Load more',
+    loading: 'Loading',
+  },
+)
 
 /** A post this device sent and the Host has not answered for certain: shown in its place, 重试 sends it as it was. */
 interface Pending {
@@ -47,28 +100,44 @@ interface Pending {
   reason?: string
 }
 
-/** The thread as the Host has it, read again when it changes or a session it reads a reply from moves. */
-function useThread(item: WorkItemSummary, scope: string, snapshot: AppSnapshot) {
-  const [state, setState] = useState<{ scope: string; answer: WorkThreadAnswer } | null>(null)
-  const [failed, setFailed] = useState<string | null>(null)
+/** The same authorized read feeds the thread and its current decision at the top of the page. */
+export function useItemThread(item: WorkItemSummary | undefined, snapshot: AppSnapshot, connected: boolean) {
+  const itemId = item?.id
+  const scope = JSON.stringify([snapshot.instanceId, snapshot.device.id, snapshot.device.dataScope, snapshot.device.scopes, itemId])
+  const [state, setState] = useState<{ scope: string; answer: WorkThreadAnswer; versions: Map<string, string> } | null>(null)
+  const [failure, setFailure] = useState<{ scope: string; message: string } | null>(null)
   const request = useRef<AbortController | null>(null)
+  const snapshotRef = useRef(snapshot)
+  snapshotRef.current = snapshot
   const read = useCallback(async () => {
+    if (!itemId) return
     request.current?.abort()
     const controller = new AbortController()
     request.current = controller
+    const tasks = snapshotRef.current.tasks
     try {
-      const answer = await api<WorkThreadAnswer>(postsPath(item.id), { signal: controller.signal })
+      const answer = await api<WorkThreadAnswer>(postsPath(itemId), { signal: controller.signal })
       if (controller.signal.aborted) return
-      setState(previous => (previous?.scope === scope && previous.answer.revision > answer.revision ? previous : { scope, answer }))
-      setFailed(null)
+      const versions = new Map<string, string>()
+      for (const post of answer.posts) {
+        const sessionId = post.turn?.sessionId
+        if (!post.attention?.decisionId || !sessionId) continue
+        const source = tasks.find(task => task.id === sessionId)
+        if (source) versions.set(post.id, postSourceVersion(source))
+      }
+      setState(previous =>
+        previous?.scope === scope && previous.answer.revision > answer.revision ? previous : { scope, answer, versions },
+      )
+      setFailure(null)
     } catch (cause) {
       if (controller.signal.aborted) return
       if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) setState(null)
       if (cause instanceof ApiError && cause.status === 404) return
-      setFailed(errorMessage(cause))
+      setFailure({ scope, message: errorMessage(cause) })
     }
-  }, [item.id, scope])
-  const posts = state?.scope === scope ? state.answer.posts : null
+  }, [itemId, scope])
+  const current = state?.scope === scope ? state : null
+  const posts = current?.answer.posts ?? null
   const visiblePosts = useMemo(
     () => (posts ? withoutMissingPostSources(posts, snapshot) : posts),
     [posts, snapshot.tasksComplete, snapshot.tasks],
@@ -84,28 +153,42 @@ function useThread(item: WorkItemSummary, scope: string, snapshot: AppSnapshot) 
   const refuseReply = useCallback(
     (postId: string, messageId: string) => {
       request.current?.abort()
-      setState(
-        previous =>
-          previous && {
-            ...previous,
-            answer: {
-              ...previous.answer,
-              posts: previous.answer.posts.map(post =>
-                post.id === postId && post.reply?.messageId === messageId ? withoutPostSource(post) : post,
-              ),
+      setState(previous =>
+        previous?.scope !== scope
+          ? previous
+          : {
+              ...previous,
+              answer: {
+                ...previous.answer,
+                posts: previous.answer.posts.map(post =>
+                  post.id === postId && post.reply?.messageId === messageId ? withoutPostSource(post) : post,
+                ),
+              },
             },
-          },
       )
       void read()
     },
-    [read],
+    [read, scope],
   )
   const replies = replySources(posts, snapshot)
   useEffect(() => {
+    if (!connected) {
+      setState(previous => (previous?.scope === scope && previous.versions.size ? { ...previous, versions: new Map() } : previous))
+      return
+    }
     void read()
     return () => request.current?.abort()
-  }, [read, item.threadRevision, replies])
-  return { posts: visiblePosts, failed, read, refuseReply }
+  }, [read, item?.threadRevision, replies, connected, scope])
+  const decisions = useMemo(() => {
+    const result = new Map<string, PostDecision>()
+    if (connected && current && visiblePosts)
+      for (const post of visiblePosts) {
+        const decision = postDecision(post, snapshot, current.versions.get(post.id))
+        if (decision) result.set(post.id, decision)
+      }
+    return result
+  }, [connected, current, visiblePosts, snapshot])
+  return { scope, posts: visiblePosts, failed: failure?.scope === scope ? failure.message : null, read, refuseReply, decisions }
 }
 
 /**
@@ -113,14 +196,21 @@ function useThread(item: WorkItemSummary, scope: string, snapshot: AppSnapshot) 
  * one of 我的 Agent; the post goes to that one only. Under a delivered post, 已交给 and the reply that turn gave, read from
  * the session (never copied); it opens where it is. Sending, an unknown result and a failure behave as the input's.
  */
-export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemSummary }) {
+export function ItemThread({
+  shell,
+  item,
+  thread: { posts, failed, read, refuseReply, decisions },
+}: {
+  shell: ShellState
+  item: WorkItemSummary
+  thread: ReturnType<typeof useItemThread>
+}) {
   const { snapshot } = shell
   const canWrite = shell.access.scopes.has('run')
-  const targets = useMemo(() => threadTargets(snapshot, item), [snapshot, item])
-  const authority = [snapshot.device.id, snapshot.device.dataScope, snapshot.device.scopes.join(',')].join('|')
-  const { posts, failed, read, refuseReply } = useThread(item, authority, snapshot)
+  const locale = useLocale()
+  const targets = useMemo(() => threadTargets(snapshot, item), [snapshot, item, locale])
   const [draft, setDraft] = useState('')
-  const [target, setTarget] = useState<ThreadTarget | null>(null)
+  const [target, setTarget] = useState<WorkPostTarget | null>(null)
   const [pending, setPending] = useState<Pending | null>(null)
   const [refused, setRefused] = useState<string | null>(null)
   const [caret, setCaret] = useState(0)
@@ -161,7 +251,7 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
   const choose = (choice: ThreadTarget) => {
     if (!mention) return
     const next = withoutMention(draft, mention.start, caret)
-    setTarget(choice)
+    setTarget(postTarget(choice))
     setDraft(next)
     setActive(0)
     requestAnimationFrame(() => {
@@ -201,7 +291,7 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
   const submit = () => {
     const text = draft.trim()
     if (!canWrite || !text || pending) return
-    void send({ requestId: newRequestId(), text, ...(target ? { target: postTarget(target) } : {}), state: 'sending' })
+    void send({ requestId: newRequestId(), text, ...(target ? { target } : {}), state: 'sending' })
   }
 
   /** 重发 of a kept post whose delivery failed or is unknown: the same request; the Host sends it at most once. */
@@ -218,14 +308,9 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
     await read()
   }
 
-  const open = (post: WorkPost, messageId?: string) => {
+  const open = (post: WorkPost, messageId?: string, decision?: PostDecision) => {
     const turn = post.turn
     if (!turn) return
-    const action = post.attention
-    const decision =
-      action?.decisionId && turn.runId && (action.reason === 'question' || action.reason === 'approval')
-        ? { kind: action.reason, id: action.decisionId, runId: turn.runId }
-        : undefined
     shell.openWorkItemSession(item.id, { ...turn, ...(messageId ? { messageId } : {}), ...(decision ? { decision } : {}) })
   }
 
@@ -263,22 +348,21 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
   const over = Array.from(draft.trim()).length > WORK_THREAD_LIMITS.postChars
 
   return (
-    <section className="item-thread" aria-label="讨论">
+    <section className="item-thread" aria-label={COPY.discussion}>
       <header className="item-page-section-head">
         <h2>
-          讨论 <span className="item-page-count">{count}</span>
+          {COPY.discussion} <span className="item-page-count">{formatNumber(count)}</span>
         </h2>
       </header>
       {(count > 0 || pending) && (
         <ol className="item-thread-posts">
           {posts?.map(post => {
             const name = label(post)
-            const state = deliveryWords(post, escapeSecurityText(name))
             const reply = post.reply
             const task = post.turn && snapshot.tasks.find(task => task.id === post.turn?.sessionId)
-            const attention =
-              task?.runId && task.runId === post.turn?.runId && task.board?.reason === post.attention?.reason ? post.attention : undefined
-            const decision = attention?.reason === 'approval' ? '查看审批' : attention?.reason === 'question' ? '查看问题' : '查看原回合'
+            const decision = decisions.get(post.id)
+            const waiting = decision && THREAD_COPY.waiting[decision.kind]
+            const state = waiting ? { tone: 'waiting' as const, words: waiting.status } : deliveryWords(post, escapeSecurityText(name))
             return (
               <li key={post.id} className="item-thread-post" data-post-id={post.id} data-delivery={post.delivery?.state}>
                 <ThreadPostContent
@@ -303,12 +387,12 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
                       && post.requestId
                       && canWrite && (
                         <Button size="xs" variant="ghost" onClick={() => void resend(post)}>
-                          重试
+                          {COPY.retry}
                         </Button>
                       )}
-                    {task && (!reply || attention) && (
-                      <Button className="item-thread-action" size="xs" variant="ghost" onClick={() => open(post)}>
-                        {decision}
+                    {task && (!reply || waiting) && (
+                      <Button className="item-thread-action" size="xs" variant="ghost" onClick={() => open(post, undefined, decision)}>
+                        {waiting?.action ?? COPY.viewTurn}
                       </Button>
                     )}
                   </div>
@@ -339,11 +423,11 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
               />
               <div className="item-thread-post-state">
                 {pending.state === 'sending' ? (
-                  <StatusWord tone="running">发送中</StatusWord>
+                  <StatusWord tone="running">{THREAD_COPY.sending}</StatusWord>
                 ) : (
-                  <Tooltip content={pending.reason ?? '没有收到电脑的答复'}>
+                  <Tooltip content={pending.reason ?? COPY.noAnswer}>
                     <StatusWord tone="warn" tabIndex={0}>
-                      未确认送达
+                      {THREAD_COPY.unknown}
                     </StatusWord>
                   </Tooltip>
                 )}
@@ -357,15 +441,21 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
         <div ref={anchor} className="item-thread-input" data-state={pending?.state}>
           {target && (
             <span className="item-thread-input-target">
-              <TargetChip target={postTarget(target)} name={target.label} shell={shell} />
-              <IconButton size="xs" label="不发给它" icon={CloseGlyph} disabled={pending !== null} onClick={() => setTarget(null)} />
+              <TargetChip target={target} name={targetLabel(target, targets)} shell={shell} />
+              <IconButton
+                size="xs"
+                label={COPY.removeTarget}
+                icon={CloseGlyph}
+                disabled={pending !== null}
+                onClick={() => setTarget(null)}
+              />
             </span>
           )}
           <textarea
             ref={field}
             className="item-thread-field"
-            aria-label="发言"
-            placeholder={target || pending ? '' : '@ 会话或 Agent'}
+            aria-label={COPY.post}
+            placeholder={target || pending ? '' : COPY.placeholder}
             rows={2}
             value={pending ? '' : draft}
             readOnly={pending !== null}
@@ -391,10 +481,10 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
             {unknown ? (
               <>
                 <Button size="sm" onClick={() => void send(pending)}>
-                  重试
+                  {COPY.retry}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setPending(null)}>
-                  放弃
+                  {COPY.abandon}
                 </Button>
               </>
             ) : (
@@ -405,13 +495,13 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
                 loading={pending?.state === 'sending'}
                 disabled={!draft.trim() || pending !== null || over}
                 onClick={submit}>
-                发送
+                {COPY.send}
               </Button>
             )}
           </div>
           <Suggest
             id={`${id}-targets`}
-            label="发给"
+            label={COPY.recipient}
             open={suggesting}
             anchorRef={anchor}
             activeId={matches.length ? optionId(chosenIndex) : undefined}
@@ -428,12 +518,12 @@ export function ItemThread({ shell, item }: { shell: ShellState; item: WorkItemS
                   id: optionId(index),
                   media: <TargetMedia target={postTarget(choice)} shell={shell} />,
                   label: <VisibleText text={choice.label} />,
-                  description: choice.kind === 'session' ? '会话' : 'Agent',
-                  ...(choice.kind === 'agent' && !choice.ready ? { disabled: true, hint: '还没有聊天' } : {}),
+                  description: choice.kind === 'session' ? COPY.session : 'Agent',
+                  ...(choice.kind === 'agent' && !choice.ready ? { disabled: true, hint: COPY.noChat } : {}),
                 })),
               },
             ]}
-            empty="没有匹配的会话或 Agent"
+            empty={COPY.noMatch}
           />
         </div>
       )}
@@ -464,7 +554,7 @@ function ThreadPostContent({ text, target, at, now }: { text: string; target?: R
               aria-controls={id}
               aria-expanded={expanded}
               onClick={() => setExpanded(open => !open)}>
-              {expanded ? '收起发言' : '展开全文'}
+              {expanded ? COPY.collapsePost : COPY.fullPost}
             </Button>
           )}
           {time}
@@ -498,14 +588,6 @@ function TargetChip({ target, name, shell }: { target: WorkPostTarget; name: str
       <span>{`@${escapeSecurityText(name)}`}</span>
     </span>
   )
-}
-
-/** The thread of the 待办 the snapshot lists; nothing while it does not. */
-export function ItemThreadFor({ shell, itemId }: { shell: ShellState; itemId: string }) {
-  const item = shell.snapshot.items?.find(entry => entry.id === itemId)
-  return item ? (
-    <ItemThread key={`${item.id}:${shell.snapshot.device.dataScope}:${shell.snapshot.device.scopes}`} shell={shell} item={item} />
-  ) : null
 }
 
 const longReply = (text: string) => text.length > 360 || text.split('\n').length > 7
@@ -573,7 +655,7 @@ function ThreadReply({
         <button
           type="button"
           className="item-thread-reply"
-          aria-label="查看原回复"
+          aria-label={COPY.viewReply}
           data-live={reply.live ? '' : undefined}
           data-clipped={long && !open ? '' : undefined}
           onClick={onOpen}>
@@ -587,15 +669,15 @@ function ThreadReply({
       <div className="item-thread-reply-actions">
         {long && (
           <Button size="xs" variant="ghost" aria-expanded={open} onClick={() => setOpen(!open)}>
-            {open ? '收起' : '展开回复'}
+            {open ? COPY.collapse : COPY.expandReply}
           </Button>
         )}
         {open && (full?.nextOffset !== undefined || failed) && (
           <Button size="xs" variant="ghost" loading={loading} onClick={() => void read(full?.nextOffset)}>
-            {failed ? '重试读取' : '继续读取'}
+            {failed ? COPY.retryRead : COPY.readMore}
           </Button>
         )}
-        {open && loading && full?.nextOffset === undefined && <StatusWord tone="neutral">读取中</StatusWord>}
+        {open && loading && full?.nextOffset === undefined && <StatusWord tone="neutral">{COPY.loading}</StatusWord>}
       </div>
       {open && failed && <StatusWord tone="failed">{failed}</StatusWord>}
     </div>

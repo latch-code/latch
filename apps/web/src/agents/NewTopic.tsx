@@ -11,12 +11,69 @@ import { useMounted } from '../hooks/useMounted.ts'
 import { useAttachments } from '../hooks/useAttachments.ts'
 import { projectFolders, projectName } from '../projects.tsx'
 import { CODE_ROOT_COPY } from '../core/securityCopy.ts'
-import { DEVICE_OFFLINE } from '../core/hostState.ts'
+import { CONNECTION_COPY } from '../core/hostState.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { generalSubmission, newTopicShowing, personalChat } from './chat.ts'
 import { agentHarnesses, agentSessions, delegationChoice, delegationSubmission, generalChoice } from './model.ts'
 import { CarryResults } from './CarryResults.tsx'
 import { carriedText } from './scheduleModel.ts'
+
+const COPY = defineCopy(
+  {
+    carry: '带入上次成果…',
+    noPrevious: '还没有之前的话题',
+    inProject: '在项目里做',
+    noProject: '不在项目里',
+    folderLimit: (limit: number, count: number) => `最多用 ${formatNumber(limit)} 个文件夹，这个项目有 ${formatNumber(count)} 个`,
+    more: '更多',
+    released: '已在 设置 › 设备 里释放，请移除后重新添加。',
+    cannotRun: '这台设备不能开始会话',
+    updateNeeded: 'Mac 需要更新后才能开始聊天',
+    confirming: '正在确认聊天',
+    continue: '打开聊天继续',
+    modelNeeded: '先在这台 Mac 的 设置 › 模型服务 接上一个',
+    cannotStart: '现在不能开始',
+    harnessNeeded: '先在这台 Mac 的 设置 › Harness 里准备一个',
+    openWithDraft: '带上草稿打开聊天',
+    open: '打开聊天',
+    attachmentsBeforeOpen: '打开聊天前请先在此移除附件，再到聊天中添加。',
+    message: (name: string) => `给${name}发消息`,
+    placeholder: (name: string) => `给${name}发消息…`,
+    refused: (message: string) => `没有开始：${message}`,
+    addAttachmentsAgain: '附件需要重新添加。',
+    placeLead: '在 ',
+    placeTail: ' 做',
+    removeProject: '不在这个项目里做',
+  },
+  {
+    carry: 'Bring in previous results…',
+    noPrevious: 'No earlier topics yet',
+    inProject: 'Work in a project',
+    noProject: 'No project',
+    folderLimit: (limit: number, count: number) =>
+      `This Harness supports up to ${plural(limit, { one: '{n} folder', other: '{n} folders' })}. This project has ${formatNumber(count)}.`,
+    more: 'More',
+    released: 'These attachments were released in Settings › Devices. Remove them and add them again.',
+    cannotRun: 'This device can’t start sessions',
+    updateNeeded: 'Update Latch on the Mac to start a chat',
+    confirming: 'Confirming chat',
+    continue: 'Open the chat to continue',
+    modelNeeded: 'Add a model service under Settings › Models on this Mac',
+    cannotStart: 'Can’t start right now',
+    harnessNeeded: 'Set up a Harness under Settings › Harness on this Mac',
+    openWithDraft: 'Open chat with draft',
+    open: 'Open chat',
+    attachmentsBeforeOpen: 'Remove attachments here before opening the chat, then add them there.',
+    message: (name: string) => `Message ${name}`,
+    placeholder: (name: string) => `Message ${name}…`,
+    refused: (message: string) => `Couldn’t start. ${message}`,
+    addAttachmentsAgain: 'Add the attachments again.',
+    placeLead: 'Working in ',
+    placeTail: '',
+    removeProject: 'Remove this project from the topic',
+  },
+)
 
 /**
  * A helper's ＋: 带入上次成果 from its earlier topics, and 在项目里做 for this one topic (a helper of yours only; 通用 has
@@ -46,9 +103,9 @@ function topicSections({
       items: [
         {
           id: 'carry',
-          label: '带入上次成果…',
+          label: COPY.carry,
           leading: <HistoryGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />,
-          ...(canCarry ? {} : { disabled: true, disabledReason: '还没有之前的话题' }),
+          ...(canCarry ? {} : { disabled: true, disabledReason: COPY.noPrevious }),
           onSelect: onCarry,
         },
       ],
@@ -57,11 +114,11 @@ function topicSections({
       ? [
           {
             id: 'project',
-            label: '在项目里做',
+            label: COPY.inProject,
             items: [
               {
                 id: 'default',
-                label: '不在项目里',
+                label: COPY.noProject,
                 checked: (workspaceId ?? 'default') === 'default',
                 onSelect: () => onProject('default'),
               },
@@ -70,8 +127,7 @@ function topicSections({
                 const folders = projectFolders(project).length
                 const limit = harness?.projectFolders?.access === 'all' ? harness.projectFolders.max : undefined
                 const blocked =
-                  project.unavailable
-                  ?? (limit !== undefined && folders > limit ? `最多用 ${limit} 个文件夹，这个项目有 ${folders} 个` : undefined)
+                  project.unavailable ?? (limit !== undefined && folders > limit ? COPY.folderLimit(limit, folders) : undefined)
                 return {
                   id: project.id,
                   label: projectName(project),
@@ -92,11 +148,11 @@ function topicSections({
 function TopicPlus({ sections, disabled }: { sections: MenuSection[]; disabled: boolean }) {
   return (
     <Menu
-      label="更多"
+      label={COPY.more}
       placement="top-start"
       sections={sections}
       className="agent-topic-plus"
-      trigger={props => <IconButton {...props} icon={PlusGlyph} label="更多" disabled={disabled} className="attachment-button" />}
+      trigger={props => <IconButton {...props} icon={PlusGlyph} label={COPY.more} disabled={disabled} className="attachment-button" />}
     />
   )
 }
@@ -175,7 +231,7 @@ export function NewTopic({
   }, [offline])
   useEffect(() => {
     if (refused?.code === 'attachment-released' && attachments.items.some(item => item.ref && item.status !== 'refused'))
-      attachments.markReleased('已在 设置 › 设备 里释放，请移除后重新添加。')
+      attachments.markReleased(COPY.released)
   }, [refused, attachments.items, attachments.markReleased])
   if (!catalog) return null
   const project = general ? undefined : worktreeProject(catalog, choice, false)
@@ -185,23 +241,23 @@ export function NewTopic({
   const available = agent ? agent.available : generalBlock === null
   const canStart = chat?.state === 'empty' && !offline && available && harness !== undefined && access.scopes.has('run')
   const blockReason = offline
-    ? DEVICE_OFFLINE
+    ? CONNECTION_COPY.offline
     : !access.scopes.has('run')
-      ? '这台设备不能开始会话'
+      ? COPY.cannotRun
       : catalog.features?.singleAgentChat !== true
-        ? 'Mac 需要更新后才能开始聊天'
+        ? COPY.updateNeeded
         : !chat || chat.state === 'starting'
-          ? '正在确认聊天'
+          ? COPY.confirming
           : chat.state === 'ready'
-            ? '打开聊天继续'
+            ? COPY.continue
             : !available
               ? (agent?.unavailableReason
-                ?? (generalBlock?.kind === 'model-required' ? '先在这台 Mac 的 设置 › 模型服务 接上一个' : generalBlock?.message)
-                ?? '现在不能开始')
+                ?? (generalBlock?.kind === 'model-required' ? COPY.modelNeeded : generalBlock?.message)
+                ?? COPY.cannotStart)
               : !harness
                 ? general
-                  ? '先在这台 Mac 的 设置 › Harness 里准备一个'
-                  : '现在不能开始'
+                  ? COPY.harnessNeeded
+                  : COPY.cannotStart
                 : undefined
   const opened = (sessionId: string | undefined) => {
     if (!sessionId || !mounted.current) return
@@ -241,9 +297,9 @@ export function NewTopic({
         variant="primary"
         disabled={attachments.items.length > 0}
         onClick={() => shell.choose(ready.sessionId, () => setDraft(''), draft.trim() ? { appendDraft: draft } : undefined)}>
-        {draft.trim() ? '带上草稿打开聊天' : '打开聊天'}
+        {draft.trim() ? COPY.openWithDraft : COPY.open}
       </Button>
-      {attachments.items.length > 0 && <p>打开聊天前请先在此移除附件，再到聊天中添加。</p>}
+      {attachments.items.length > 0 && <p>{COPY.attachmentsBeforeOpen}</p>}
     </div>
   ) : null
   return (
@@ -255,8 +311,8 @@ export function NewTopic({
           showSlashButton={false}
           textareaRef={input}
           variant="new"
-          label={`给${name}发消息`}
-          placeholder={`给${name}发消息…`}
+          label={COPY.message(name)}
+          placeholder={COPY.placeholder(name)}
           draft={draft}
           onDraft={setDraft}
           pending={pending}
@@ -268,7 +324,7 @@ export function NewTopic({
               }
             : {})}
           sending={delegation.sending}
-          error={refused ? `没有开始：${refused.message}` : ''}
+          error={refused ? COPY.refused(refused.message) : ''}
           {...(mine && delegation.reason ? { pendingReason: delegation.reason } : {})}
           onRetry={() => {
             void delegation.retry().then(opened)
@@ -280,7 +336,7 @@ export function NewTopic({
                   if (back) {
                     if (pending?.attachmentIds?.length) {
                       attachments.clear()
-                      attachments.explain('附件需要重新添加。')
+                      attachments.explain(COPY.addAttachmentsAgain)
                     }
                     setDraft(previous => (previous.trim() ? previous : back.text))
                   }
@@ -303,13 +359,15 @@ export function NewTopic({
                 <span className="agent-delegate-place">
                   <FolderGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
                   <span>
-                    在 <VisibleText text={projectName(place)} /> 做
+                    {COPY.placeLead}
+                    <VisibleText text={projectName(place)} />
+                    {COPY.placeTail}
                   </span>
                   {place.id !== agent?.defaultProjectId && (
                     <IconButton
                       icon={CloseGlyph}
                       size="xs"
-                      label="不在这个项目里做"
+                      label={COPY.removeProject}
                       disabled={draftLocked || offline}
                       onClick={() => {
                         chooseProject(agent?.defaultProjectId ?? 'default')

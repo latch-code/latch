@@ -31,6 +31,80 @@ import { basename } from '../format.ts'
 import { previousState } from '../diff.ts'
 import { renderMarkdown } from '../MessageContent.tsx'
 import remarkGfm from 'remark-gfm'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    excerpt: '拟写内容 · 摘录',
+    proposed: '拟写内容',
+    fullContent: '完整内容见原请求',
+    original: '核对材料 · 原文件内容',
+    fullDiff: '完整差异见原请求',
+    check: '核对',
+    retry: '重试',
+    view: '查看',
+    untitled: '未命名会话',
+    allowFile: (action: string, name: string) => `允许${action} ${name}？`,
+    write: '写入',
+    update: '更新',
+    checkOutcome: '核对结果',
+    viewRequest: '查看原请求',
+    viewQuestion: '查看问题',
+    viewFailure: '查看失败',
+    viewSession: '查看会话',
+    unknown: '结果未知',
+    awaiting: '等待审批',
+    loadFailed: '读取失败',
+    requestDetails: '请求说明',
+    questionContext: '问题背景',
+    reason: '失败原因',
+    loading: '正在读取请求',
+    noProject: '无项目',
+    answerUnknown: '回答结果未知',
+    answerOffline: '连接恢复后可以回答',
+    readOnly: '这台设备只能看',
+    decideOffline: '连接恢复后可以处理',
+    unconfirmed: '执行结果尚未确认',
+    topicFailure: '这一轮失败了，打开话题看原因',
+    sessionFailure: '本轮失败，打开会话查看原因',
+    viewTopic: '查看话题',
+  },
+  {
+    excerpt: 'Proposed content · excerpt',
+    proposed: 'Proposed content',
+    fullContent: 'See the original request for the full content',
+    original: 'Review material · original file contents',
+    fullDiff: 'See the original request for the full diff',
+    check: 'Check',
+    retry: 'Retry',
+    view: 'View',
+    untitled: 'Untitled session',
+    allowFile: (action: string, name: string) => `Allow ${action} to ${name}?`,
+    write: 'writes',
+    update: 'updates',
+    checkOutcome: 'Check outcome',
+    viewRequest: 'View original request',
+    viewQuestion: 'View question',
+    viewFailure: 'View failure',
+    viewSession: 'View session',
+    unknown: 'Outcome unknown',
+    awaiting: 'Awaiting approval',
+    loadFailed: 'Couldn’t load',
+    requestDetails: 'Request details',
+    questionContext: 'Question context',
+    reason: 'Reason for failure',
+    loading: 'Loading request',
+    noProject: 'No project',
+    answerUnknown: 'Answer outcome unknown',
+    answerOffline: 'Answer when connected',
+    readOnly: 'This device can only view',
+    decideOffline: 'Respond when connected',
+    unconfirmed: 'Execution outcome is still unknown',
+    topicFailure: 'This turn failed. Open the topic for details.',
+    sessionFailure: 'This turn failed. Open the session for details.',
+    viewTopic: 'View topic',
+  },
+)
 
 function DraftExcerpt({ path, text, previous }: { path: string; text: string; previous: string | undefined }) {
   const excerpt = text.slice(0, 900).split(/\r?\n/u).slice(0, 7).join('\n').trimEnd()
@@ -55,23 +129,23 @@ function DraftExcerpt({ path, text, previous }: { path: string; text: string; pr
         <code>
           <VisibleText text={path} />
         </code>
-        <span>{incomplete ? '拟写内容 · 摘录' : '拟写内容'}</span>
+        <span>{incomplete ? COPY.excerpt : COPY.proposed}</span>
       </header>
-      <div className="work-feature-material-body" role="region" aria-label="拟写内容" tabIndex={0}>
+      <div className="work-feature-material-body" role="region" aria-label={COPY.proposed} tabIndex={0}>
         {markdown ?? (
           <pre>
             <VisibleText text={excerpt} />
           </pre>
         )}
       </div>
-      {incomplete && <p className="work-feature-excerpt-note">完整内容见原请求</p>}
+      {incomplete && <p className="work-feature-excerpt-note">{COPY.fullContent}</p>}
       {previous?.trim() && (
         <details className="work-feature-reference">
-          <summary>核对材料 · 原文件内容</summary>
+          <summary>{COPY.original}</summary>
           <pre>
             <VisibleText text={previous.slice(0, 900)} />
           </pre>
-          {previous.length > 900 && <p>完整差异见原请求</p>}
+          {previous.length > 900 && <p>{COPY.fullDiff}</p>}
         </details>
       )}
     </div>
@@ -141,9 +215,9 @@ export function WorkbenchDecision({
   // A failed or unconfirmed run is titled by what the person does about it: the verb, then its object. The Host names no
   // object for either, so the object is the session, and its title is then not said a second time under it.
   const resultUnknown = !!task.runEnd?.unknownResultCount
-  const resultVerb = resultUnknown ? '核对' : status.tone === 'failed' ? (retryable ? '重试' : '查看') : undefined
+  const resultVerb = resultUnknown ? COPY.check : status.tone === 'failed' ? (retryable ? COPY.retry : COPY.view) : undefined
   const resultIcon = status.tone === 'failed' ? AlertGlyph : resultUnknown ? UnknownGlyph : WaitingGlyph
-  const sessionTitle = task.title || '未命名会话'
+  const sessionTitle = task.title || COPY.untitled
   const asker = person?.name ?? (harness ? harnessName(harness) : 'Agent')
   if (featured) {
     const original = approvalUnknown
@@ -173,11 +247,19 @@ export function WorkbenchDecision({
     const title = approvalUnknown
       ? APPROVAL_COPY.uncertainApproval
       : draft
-        ? `允许${previousState(draft) === 'none' ? '写入' : '更新'} ${basename(draft.path)}？`
+        ? COPY.allowFile(previousState(draft) === 'none' ? COPY.write : COPY.update, basename(draft.path))
         : (action ?? (question ? question.questions[0]?.label || question.prompt : undefined) ?? sessionTitle)
     const detailText = read.error ?? (approvalUnknown ? undefined : approval ? approval.reason : question?.prompt || failure?.text)
     const link =
-      approvalUnknown || resultUnknown ? '核对结果' : approval ? '查看原请求' : question ? '查看问题' : failed ? '查看失败' : '查看会话'
+      approvalUnknown || resultUnknown
+        ? COPY.checkOutcome
+        : approval
+          ? COPY.viewRequest
+          : question
+            ? COPY.viewQuestion
+            : failed
+              ? COPY.viewFailure
+              : COPY.viewSession
     const showText = !draft && detailText && detailText !== title
     // Keep approval material out of layout snapshots before and after the authorized detail arrives.
     const secureRequest = !!approval || approvalUnknown || task.status === 'waiting-approval' || !!question || !!task.pendingQuestions
@@ -202,11 +284,11 @@ export function WorkbenchDecision({
             )}
             <StatusWord tone={approvalUnknown ? 'warn' : status.tone}>
               {approvalUnknown
-                ? '结果未知'
+                ? COPY.unknown
                 : approval && enabled
                   ? approvalGate?.options.length
                     ? APPROVAL_COPY.waiting
-                    : '等待审批'
+                    : COPY.awaiting
                   : status.words}
             </StatusWord>
             {approval?.risk === 'R2' && !approvalUnknown && <StatusWord tone="failed">{APPROVAL_COPY.highRisk}</StatusWord>}
@@ -221,7 +303,7 @@ export function WorkbenchDecision({
             className="work-feature-material"
             data-secure={secureRequest ? '' : undefined}
             data-tone={read.error || failed ? 'failed' : undefined}>
-            <header>{read.error ? '读取失败' : approval ? '请求说明' : question ? '问题背景' : '失败原因'}</header>
+            <header>{read.error ? COPY.loadFailed : approval ? COPY.requestDetails : question ? COPY.questionContext : COPY.reason}</header>
             <div className="work-feature-material-body" tabIndex={0}>
               <p>
                 <VisibleText text={detailText} />
@@ -229,7 +311,7 @@ export function WorkbenchDecision({
             </div>
           </div>
         ) : read.loading ? (
-          <div className="work-feature-material" role="status" aria-label="正在读取请求">
+          <div className="work-feature-material" role="status" aria-label={COPY.loading}>
             <div className="work-feature-material-body">
               <Skeleton width="65%" height={16} />
             </div>
@@ -252,7 +334,7 @@ export function WorkbenchDecision({
   ) : (
     <span>
       <Icon icon={FolderGlyph} size={12} />
-      <VisibleText text={project?.name ?? '无项目'} />
+      <VisibleText text={project?.name ?? COPY.noProject} />
     </span>
   )
   const context = (
@@ -282,7 +364,7 @@ export function WorkbenchDecision({
       )}
     </div>
   )
-  const unknown = approvalUnknown ? APPROVAL_COPY.uncertainApproval : asked?.draft.pending ? '回答结果未知' : undefined
+  const unknown = approvalUnknown ? APPROVAL_COPY.uncertainApproval : asked?.draft.pending ? COPY.answerUnknown : undefined
   return (
     <article
       ref={read.element}
@@ -298,7 +380,7 @@ export function WorkbenchDecision({
           state={asked}
           asker={asker}
           canAnswer={canAnswer}
-          disabledReason={!enabled ? '连接恢复后可以回答' : '这台设备只能看'}
+          disabledReason={!enabled ? COPY.answerOffline : COPY.readOnly}
           onOther={() => shell.choose(task.id)}
         />
       ) : !expanded ? (
@@ -326,7 +408,7 @@ export function WorkbenchDecision({
               ) : (
                 <>
                   <Icon icon={FolderGlyph} size={12} />
-                  <VisibleText text={project?.name ?? '无项目'} />
+                  <VisibleText text={project?.name ?? COPY.noProject} />
                 </>
               )}
               {/* The title's verb and icon already say a failure; how many results are unconfirmed is still said. */}
@@ -338,13 +420,14 @@ export function WorkbenchDecision({
           </Button>
           {retryable && (
             <Button size="xs" variant="outline" onClick={() => shell.retryFromWorkbench(detail)}>
-              重试
+              {COPY.retry}
             </Button>
           )}
         </div>
       ) : approval ? (
         <ApprovalDrawer
           presentation="workbench"
+          builtin={detail.summary.harnessId === 'standard'}
           emphasis={emphasis}
           context={context}
           {...(person ? { requester: person.name } : {})}
@@ -352,9 +435,7 @@ export function WorkbenchDecision({
           messages={detail.messages}
           index={position}
           onIndex={setIndex}
-          gateFor={approval =>
-            enabled ? shell.gateFor(approval) : { ...shell.gateFor(approval), options: [], hint: '连接恢复后可以处理' }
-          }
+          gateFor={approval => (enabled ? shell.gateFor(approval) : { ...shell.gateFor(approval), options: [], hint: COPY.decideOffline })}
           busy={shell.approvalBusy}
           statuses={shell.statuses}
           onDecide={shell.onDecide}
@@ -367,7 +448,7 @@ export function WorkbenchDecision({
           state={asked}
           asker={asker}
           canAnswer={canAnswer}
-          disabledReason={!enabled ? '连接恢复后可以回答' : '这台设备只能看'}
+          disabledReason={!enabled ? COPY.answerOffline : COPY.readOnly}
           onOther={() => shell.choose(task.id)}
         />
       ) : (
@@ -393,13 +474,13 @@ export function WorkbenchDecision({
               tone="error"
               action={
                 <Button variant="outline" size="xs" onClick={read.retry}>
-                  重试
+                  {COPY.retry}
                 </Button>
               }>
               {read.error}
             </InlineNotice>
           ) : !detail && enabled ? (
-            <div className="work-decision-placeholder" aria-label={read.loading ? '正在读取请求' : undefined}>
+            <div className="work-decision-placeholder" aria-label={read.loading ? COPY.loading : undefined}>
               {read.loading && (
                 <>
                   <Skeleton width="80%" height={16} />
@@ -413,11 +494,11 @@ export function WorkbenchDecision({
                 text={
                   detail?.messages.findLast(message => message.role === 'system')?.text
                   ?? (task.runEnd?.unknownResultCount
-                    ? '执行结果尚未确认'
+                    ? COPY.unconfirmed
                     : task.status === 'failed' || task.runOutcome === 'failed'
                       ? person
-                        ? '这一轮失败了，打开话题看原因'
-                        : '本轮失败，打开会话查看原因'
+                        ? COPY.topicFailure
+                        : COPY.sessionFailure
                       : status.words)
                 }
               />
@@ -425,11 +506,11 @@ export function WorkbenchDecision({
           )}
           <div className="work-decision-result-actions">
             <Button size="sm" variant="outline" onClick={() => shell.choose(task.id)}>
-              {task.runEnd?.unknownResultCount ? '核对结果' : person ? '查看话题' : '查看会话'}
+              {task.runEnd?.unknownResultCount ? COPY.checkOutcome : person ? COPY.viewTopic : COPY.viewSession}
             </Button>
             {retryable && (
               <Button size="sm" variant="outline" onClick={() => shell.retryFromWorkbench(detail)}>
-                重试
+                {COPY.retry}
               </Button>
             )}
           </div>

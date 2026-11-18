@@ -155,7 +155,7 @@ describe('fill requests', () => {
     expect(bodies).toEqual(['l', '\x1b[200~pnpm test\x1b[201~'])
     refuse = true
     await expect(link.sendWhole(pasteData('pnpm build')!)).rejects.toThrow('正在安装更新')
-    expect(failures).toEqual(['正在安装更新'])
+    expect(failures).toEqual(['这台电脑正在安装更新，安装完成后再试。'])
   })
 })
 

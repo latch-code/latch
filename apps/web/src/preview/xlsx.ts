@@ -86,9 +86,11 @@ export function parseXlsx(files: Record<string, Uint8Array>): { sheets: ParsedSh
         node.getAttribute('r:id') ?? node.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id'),
       ),
       doc = path ? load(path) : undefined
+    const name = node.getAttribute('name')
     const info: SheetInfo = {
         id,
-        name: (node.getAttribute('name') ?? `工作表 ${id + 1}`).slice(0, 200),
+        name: (name ?? `工作表 ${id + 1}`).slice(0, 200),
+        ...(name === null ? { unnamed: true } : {}),
         rows: 0,
         cols: 0,
         hidden: ['hidden', 'veryHidden'].includes(node.getAttribute('state') ?? ''),
@@ -134,7 +136,8 @@ export function parseXlsx(files: Record<string, Uint8Array>): { sheets: ParsedSh
                   : 'FALSE'
                 : raw,
         numeric = false
-      if (formula && !descendants(cell, 'v').length) text = '无缓存值'
+      const noCachedValue = Boolean(formula && !descendants(cell, 'v').length)
+      if (noCachedValue) text = '无缓存值'
       if (!type || type === 'n') {
         const n = Number(raw)
         if (raw !== '' && Number.isFinite(n)) {
@@ -152,7 +155,12 @@ export function parseXlsx(files: Record<string, Uint8Array>): { sheets: ParsedSh
         rowCells = new Map()
         cells.set(row, rowCells)
       }
-      rowCells.set(col, { text: text.slice(0, 32767), ...(numeric ? { numeric: true } : {}), ...(formula ? { formula } : {}) })
+      rowCells.set(col, {
+        text: text.slice(0, 32767),
+        ...(numeric ? { numeric: true } : {}),
+        ...(formula ? { formula } : {}),
+        ...(noCachedValue ? { noCachedValue: true } : {}),
+      })
     }
     info.rows = Math.min(info.rows, cutoff)
     for (const item of descendants(doc, 'mergeCell').slice(0, 2000)) {

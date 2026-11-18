@@ -1,3 +1,21 @@
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    retry: '重试',
+    harness: '打开设置 › Harness',
+    model: '换个模型',
+    providers: '打开设置 › 模型服务',
+    continue: '在新会话中继续',
+  },
+  {
+    retry: 'Retry',
+    harness: 'Open Settings › Harness',
+    model: 'Choose another model',
+    providers: 'Open Settings › Model services',
+    continue: 'Continue in new session',
+  },
+)
 /**
  * The one next step a failure offers, chosen by the error code the Host recorded or answered with (`Message.errorCode`,
  * `ApiError.code`). The failure's own text is the reason; an unknown or absent code offers 重试.
@@ -48,9 +66,19 @@ export function failureAction(code: string | undefined): FailureAction {
 }
 
 export const FAILURE_ACTION_LABEL: Record<Exclude<FailureAction, 'none'>, string> = {
-  retry: '重试',
-  harness: '打开设置 › Harness',
-  model: '换个模型',
-  providers: '打开设置 › 模型服务',
-  continue: '在新会话中继续',
+  get retry() {
+    return COPY.retry
+  },
+  get harness() {
+    return COPY.harness
+  },
+  get model() {
+    return COPY.model
+  },
+  get providers() {
+    return COPY.providers
+  },
+  get continue() {
+    return COPY.continue
+  },
 }

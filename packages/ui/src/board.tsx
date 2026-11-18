@@ -1,3 +1,4 @@
+import { UI_COPY, useUiLocale } from './locale.ts'
 import {
   useEffect,
   useId,
@@ -369,6 +370,7 @@ export function PickerBoard<T extends string, L extends string>({
   layout = 'auto',
   className,
 }: PickerBoardProps<T, L>) {
+  useUiLocale()
   const id = useId()
   const phone = useMediaQuery(PHONE_QUERY) || layout === 'sheet'
   const open = useLayerOpen()
@@ -664,8 +666,8 @@ export function PickerBoard<T extends string, L extends string>({
       <input
         ref={search}
         type="search"
-        aria-label={`搜索${label}`}
-        placeholder="搜索"
+        aria-label={UI_COPY.searchIn(label)}
+        placeholder={UI_COPY.search}
         value={query}
         onChange={event => {
           setQuery(event.target.value)
@@ -681,7 +683,7 @@ export function PickerBoard<T extends string, L extends string>({
         {items}
         {visible.length === 0 && (
           <p className="ui-board-empty" role="none">
-            {query.trim() ? '没有匹配的' : '没有可选的'}
+            {query.trim() ? UI_COPY.noMatches : UI_COPY.noChoices}
           </p>
         )}
       </div>
@@ -697,7 +699,7 @@ export function PickerBoard<T extends string, L extends string>({
     return (
       <div className={cx('ui-board', className)} data-phone="" onKeyDown={boardKeys} onFocusCapture={noteFocus}>
         {withRail && (
-          <div className="ui-board-tabs" role="tablist" aria-label="来源">
+          <div className="ui-board-tabs" role="tablist" aria-label={UI_COPY.sources}>
             {sources.map(source => (
               <button
                 key={source.id}
@@ -734,7 +736,13 @@ export function PickerBoard<T extends string, L extends string>({
   return (
     <div className={cx('ui-board', className)} data-rail={withRail ? '' : undefined} onKeyDown={boardKeys} onFocusCapture={noteFocus}>
       {withRail && (
-        <div ref={rail} className="ui-board-rail" role="tablist" aria-orientation="vertical" aria-label="来源" onKeyDown={railKeys}>
+        <div
+          ref={rail}
+          className="ui-board-rail"
+          role="tablist"
+          aria-orientation="vertical"
+          aria-label={UI_COPY.sources}
+          onKeyDown={railKeys}>
           {sources.map(source => {
             const selectedTab = source.id === shownSource?.id && !query.trim()
             return (

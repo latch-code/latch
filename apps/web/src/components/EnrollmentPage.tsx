@@ -11,7 +11,8 @@ import {
   type EnrolledResult,
 } from '../core/enrollment.ts'
 import { useViewport } from '../breakpoints.ts'
-import { CONNECTION_DETAILS_COPY, DEVICE_NAME_INVALID_TEXT, ENROLLMENT_COPY, ENROLLMENT_REASON_TEXT } from '../core/securityCopy.ts'
+import { defineCopy } from '../core/i18n.ts'
+import { CONNECTION_DETAILS_COPY, ENROLLMENT_COPY, ENROLLMENT_REASON_TEXT, NOTICE_COPY } from '../core/securityCopy.ts'
 import type { AuthState } from '../core/useHarness.ts'
 import { Button, ICON_STROKE, InlineNotice, Loading, TextField, type ButtonSize, LaptopGlyph, RefreshGlyph } from '@latch/ui'
 import { ConnectionDetails } from './ConnectionDetails.tsx'
@@ -48,6 +49,11 @@ function Shell({ title, description, children }: { title: string; description?: 
   )
 }
 
+const CRASH_COPY = defineCopy(
+  { newSession: '回到新会话', reload: '重新加载', message: '界面出错，当前内容无法显示。' },
+  { newSession: 'Back to new session', reload: 'Reload', message: 'Something went wrong. This view can’t be shown.' },
+)
+
 /** The workspace failed to render; the device stays signed in and a new session view avoids the failing one. */
 export function CrashScreen({ onNewSession }: { onNewSession: () => void }) {
   return (
@@ -57,18 +63,18 @@ export function CrashScreen({ onNewSession }: { onNewSession: () => void }) {
         action={
           <span className="banner-actions">
             <Button variant="link" onClick={onNewSession}>
-              回到新会话
+              {CRASH_COPY.newSession}
             </Button>
             <Button
               variant="link"
               onClick={() => {
                 location.reload()
               }}>
-              重新加载
+              {CRASH_COPY.reload}
             </Button>
           </span>
         }>
-        界面出错，当前内容无法显示。
+        {CRASH_COPY.message}
       </InlineNotice>
     </Shell>
   )
@@ -293,7 +299,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
             autoComplete="off"
             maxLength={80}
             disabled={busy}
-            error={chosenName === null ? DEVICE_NAME_INVALID_TEXT : undefined}
+            error={chosenName === null ? NOTICE_COPY.deviceNameInvalid : undefined}
           />
         )}
         {offlineOffered && (offlineOnly || showOffline) && (
@@ -329,6 +335,7 @@ export function EnrollmentPage({ auth, onEnrolled }: { auth: AuthState; onEnroll
               block
               icon={outcome ? RefreshGlyph : undefined}
               loading={busy}
+              data-testid="enroll-submit"
               disabled={chosenName === null || blocked}>
               {legacy ? COPY.legacySubmit : electron ? COPY.desktopSubmit : COPY.connectBrowser}
             </Button>

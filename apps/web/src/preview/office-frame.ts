@@ -77,8 +77,19 @@ document.addEventListener(
   true,
 )
 for (const type of ['submit', 'drop', 'dragover']) document.addEventListener(type, event => event.preventDefault(), true)
+const notesWord = (locale: string) => (locale === 'en' ? 'Notes' : '备注')
+
+function setNotesLanguage(locale: 'zh-CN' | 'en') {
+  document.documentElement.lang = locale
+  for (const summary of root.querySelectorAll('[data-latch-notes] summary')) summary.setAttribute('aria-label', notesWord(locale))
+}
+
 function command(value: unknown) {
   if (!isFrameCommand(value)) return
+  if (value.type === 'language') {
+    setNotesLanguage(value.locale)
+    return
+  }
   if (value.type === 'quote') {
     const selected = window.getSelection()
     const selection =
@@ -165,6 +176,7 @@ async function render(kind: OfficeKind, data: ArrayBuffer, options: Record<strin
     return
   }
   document.documentElement.dataset.theme = options.theme === 'dark' ? 'dark' : 'light'
+  if (kind === 'pptx') setNotesLanguage(options.locale === 'en' ? 'en' : 'zh-CN')
   const sanitized = sanitizeOfficeZip(data)
   links = sanitized.links
   fit = options.fit !== false
@@ -240,7 +252,9 @@ async function render(kind: OfficeKind, data: ArrayBuffer, options: Record<strin
         summary = document.createElement('summary'),
         body = document.createElement('p')
       details.dataset.latchNotes = ''
-      summary.textContent = '备注'
+      // Keep the source-language text in excerpts. The visible English label is CSS-generated.
+      summary.textContent = notesWord('zh-CN')
+      summary.setAttribute('aria-label', notesWord(document.documentElement.lang))
       body.textContent = text
       details.append(summary, body)
       wrapper.append(details)

@@ -7,6 +7,42 @@ import { activityTarget, activityWords, bucketed, groupTitle } from './activity.
 import { LockedAgents } from './parts.tsx'
 import { whenWords } from './scheduleModel.ts'
 import { usePaged, type PagedRead } from './usePaged.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    loading: '正在读取',
+    failed: '读取失败',
+    retry: '重试',
+    more: '加载更多',
+    noActivity: '还没有动态',
+    noFiles: '还没有文件',
+    noFileAccess: '这台设备看不到项目文件',
+    provided: '你给的',
+    created: '新增',
+    deleted: '已删除',
+    modified: '修改',
+    activity: (bucket: string) => `${bucket}的动态`,
+    files: (group: string) => `${group} 的文件`,
+    moreFiles: (count: number) => `另有 ${formatNumber(count)} 个`,
+  },
+  {
+    loading: 'Loading',
+    failed: 'Couldn’t load',
+    retry: 'Retry',
+    more: 'Load more',
+    noActivity: 'No activity yet',
+    noFiles: 'No files yet',
+    noFileAccess: 'Project files aren’t visible on this device',
+    provided: 'Provided by you',
+    created: 'Added',
+    deleted: 'Deleted',
+    modified: 'Edited',
+    activity: (bucket: string) => `Activity · ${bucket}`,
+    files: (group: string) => `Files for ${group}`,
+    moreFiles: (count: number) => plural(count, { one: '{n} more file', other: '{n} more files' }),
+  },
+)
 
 /** The states a paged list shares: reading, locked to this device, failed, and 加载更多. */
 function PagedFrame<T>({
@@ -23,10 +59,10 @@ function PagedFrame<T>({
   children: React.ReactNode
 }) {
   if (read.state === 'locked') return <LockedAgents />
-  if (read.state === 'loading' && !read.items.length) return <Loading label="正在读取" />
+  if (read.state === 'loading' && !read.items.length) return <Loading label={COPY.loading} />
   if (read.state === 'failed' && !read.items.length)
     return (
-      <InlineNotice tone="error" title="读取失败" action={<Button onClick={onRetry}>重试</Button>}>
+      <InlineNotice tone="error" title={COPY.failed} action={<Button onClick={onRetry}>{COPY.retry}</Button>}>
         {read.message}
       </InlineNotice>
     )
@@ -36,7 +72,7 @@ function PagedFrame<T>({
       {children}
       {read.more && (
         <Button variant="ghost" size="sm" className="agent-profile-more" loading={read.loadingMore} onClick={onMore}>
-          加载更多
+          {COPY.more}
         </Button>
       )}
     </>
@@ -64,11 +100,11 @@ export function ActivityTab({
     page => page.items,
   )
   return (
-    <PagedFrame read={read} empty="还没有动态" onMore={loadMore} onRetry={reload}>
+    <PagedFrame read={read} empty={COPY.noActivity} onMore={loadMore} onRetry={reload}>
       {bucketed(read.items).map(bucket => (
-        <section key={bucket.label} className="agent-activity-bucket" aria-label={bucket.label}>
+        <section key={bucket.key} className="agent-activity-bucket" aria-label={bucket.label}>
           <h4>{bucket.label}</h4>
-          <ul className="agent-recent" aria-label={`${bucket.label}的动态`}>
+          <ul className="agent-recent" aria-label={COPY.activity(bucket.label)}>
             {bucket.rows.map(item => (
               <ActivityRow key={item.id} item={item} onOpenSession={onOpenSession} onMemory={onMemory} />
             ))}
@@ -150,8 +186,8 @@ export function LibraryTab({
     page => page.groups,
   )
   return (
-    <PagedFrame read={read} empty="还没有文件" onMore={loadMore} onRetry={reload}>
-      {!canOpen && <p className="agent-profile-quiet">这台设备看不到项目文件</p>}
+    <PagedFrame read={read} empty={COPY.noFiles} onMore={loadMore} onRetry={reload}>
+      {!canOpen && <p className="agent-profile-quiet">{COPY.noFileAccess}</p>}
       <div className="agent-library">
         {read.items.map(group => (
           <section key={group.sessionId} className="agent-library-group" aria-label={groupTitle(group)}>
@@ -162,7 +198,7 @@ export function LibraryTab({
               </span>
               <time dateTime={group.at}>{whenWords(group.at)}</time>
             </button>
-            <ul className="agent-library-files" aria-label={`${groupTitle(group)} 的文件`}>
+            <ul className="agent-library-files" aria-label={COPY.files(groupTitle(group))}>
               {group.items.map(item => {
                 const label = item.kind === 'file' ? item.path : item.attachment.name
                 const openable = canOpen && !(item.kind === 'file' && item.change === 'deleted')
@@ -191,17 +227,17 @@ export function LibraryTab({
                     )}
                     <span className="agent-library-kind">
                       {item.kind === 'attachment'
-                        ? '你给的'
+                        ? COPY.provided
                         : item.change === 'created'
-                          ? '新增'
+                          ? COPY.created
                           : item.change === 'deleted'
-                            ? '已删除'
-                            : '修改'}
+                            ? COPY.deleted
+                            : COPY.modified}
                     </span>
                   </li>
                 )
               })}
-              {group.more ? <li className="agent-profile-quiet">另有 {group.more} 个</li> : null}
+              {group.more ? <li className="agent-profile-quiet">{COPY.moreFiles(group.more)}</li> : null}
             </ul>
           </section>
         ))}

@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
 import { exportFileName, transcriptMarkdown } from '../src/exportMarkdown.ts'
+import { setLocale } from '../src/core/i18n.ts'
+
+afterEach(() => setLocale('zh-CN'))
 
 function detail(): TaskDetail {
   return {
@@ -64,6 +67,18 @@ describe('Markdown export', () => {
     expect(markdown).toContain('> 模型调用失败')
     expect(markdown).toContain('部分回复\n\n_已停止，保留了部分回复。_')
     expect(markdown.endsWith('\n')).toBe(true)
+  })
+
+  it('localizes the English export structure and keeps user text, paths, and tool output intact', () => {
+    setLocale('en')
+    const base = detail()
+    base.liveText = '## You\n\nThis came from the Agent.'
+    const markdown = transcriptMarkdown(base, { harness: 'Custom test harness' })
+    expect(markdown).toContain('## You\n\n登录按钮没反应')
+    expect(markdown).toContain('<summary>Tool: 写入 &lt;src/login.ts&gt; (Completed)</summary>')
+    expect(markdown).toContain('已写入 ```三个反引号```')
+    expect(markdown).toContain('- Project: `/work/app`')
+    expect(markdown).toContain('## Agent (generating)\n\n\\## You')
   })
 
   it('names a rejected call 已拒绝 with when and where it was decided, and leaves out the diff it never applied', () => {

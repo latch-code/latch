@@ -8,8 +8,35 @@ import {
   type WorkbenchDeliveryEntry,
 } from '@latch/protocol'
 import { api, ApiError, errorMessage } from '../core/api.ts'
+import { describeFailure } from '../core/securityCopy.ts'
 import { spaceOf } from '../sessions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    merged: '已合并',
+    draft: '草稿 PR',
+    noChecks: '没有检查结果',
+    stale: '检查对应旧提交',
+    passed: (count: number, skipped: string) => `${count} 项通过${skipped}`,
+    skipped: (count: number) => ` · ${count} 项跳过`,
+    failed: (count: number) => `${count} 项检查失败`,
+    pending: (count: number) => `${count} 项检查中`,
+    allPassed: (passed: number, total: number) => `检查通过 ${passed}/${total}`,
+  },
+  {
+    merged: 'Merged',
+    draft: 'Draft PR',
+    noChecks: 'No check results',
+    stale: 'Checks for an earlier commit',
+    passed: (count: number, skipped: string) => `${formatNumber(count)} passed${skipped}`,
+    skipped: (count: number) => ` · ${formatNumber(count)} skipped`,
+    failed: (count: number) => plural(count, { one: '{n} check failed', other: '{n} checks failed' }),
+    pending: (count: number) => plural(count, { one: '{n} check running', other: '{n} checks running' }),
+    allPassed: (passed: number, total: number) => `Checks passed ${passed}/${total}`,
+  },
+)
 
 export type { WorkbenchDeliveryEntry } from '@latch/protocol'
 const EMPTY_ENTRIES: ReadonlyMap<string, WorkbenchDeliveryEntry> = new Map()
@@ -102,7 +129,9 @@ export function useWorkbenchDelivery(
               previous?.scope === scope && !(cause instanceof ApiError && (cause.status === 401 || cause.status === 403))
                 ? previous.entries
                 : EMPTY_ENTRIES,
-            error: errorMessage(cause),
+            get error() {
+              return errorMessage(cause)
+            },
           }))
       } finally {
         busy = false
@@ -184,7 +213,13 @@ export function useWorkbenchSession<Element extends HTMLElement = HTMLElement>(
           repeat = !settling || settling(detail)
         })
         .catch(cause => {
-          if (!controller.signal.aborted) setRead({ key, error: errorMessage(cause) })
+          if (!controller.signal.aborted)
+            setRead({
+              key,
+              get error() {
+                return errorMessage(cause)
+              },
+            })
         })
         .finally(() => {
           busy = false
@@ -216,24 +251,24 @@ export function hasDelivery(entry: WorkbenchDeliveryEntry | undefined): boolean 
 export function deliveryCheckSummary(
   entry: WorkbenchDeliveryEntry,
 ): { text: string; segments?: { passed: number; failed: number; total: number } } | undefined {
-  if (entry.prError) return { text: entry.prError.message }
+  if (entry.prError) return { text: describeFailure(0, entry.prError.code, entry.prError.message) }
   const pr = entry.pr?.pr
   if (!pr) return undefined
-  if (pr.state === 'merged') return { text: '已合并' }
-  if (pr.draft) return { text: '草稿 PR' }
+  if (pr.state === 'merged') return { text: COPY.merged }
+  if (pr.draft) return { text: COPY.draft }
   const checks = entry.pr?.checks ?? []
-  if (!checks.length) return { text: '没有检查结果' }
+  if (!checks.length) return { text: COPY.noChecks }
   const head = entry.state?.head
-  if (pr.headSha && head && pr.headSha !== head) return { text: '检查对应旧提交' }
+  if (pr.headSha && head && pr.headSha !== head) return { text: COPY.stale }
 
   const counts = { pass: 0, fail: 0, pending: 0, skipped: 0 }
   for (const check of checks) counts[check.state]++
   const { pass: passed, fail: failed, pending, skipped } = counts
   const total = checks.length
-  let text = `${passed} 项通过${skipped ? ` · ${skipped} 项跳过` : ''}`
-  if (failed) text = `${failed} 项检查失败`
-  else if (pending) text = `${pending} 项检查中`
-  else if (passed === total) text = `检查通过 ${passed}/${total}`
+  let text = COPY.passed(passed, skipped ? COPY.skipped(skipped) : '')
+  if (failed) text = COPY.failed(failed)
+  else if (pending) text = COPY.pending(pending)
+  else if (passed === total) text = COPY.allPassed(passed, total)
   if (!head || head !== pr.headSha || entry.error) return { text }
   return { text, segments: { passed, failed, total } }
 }

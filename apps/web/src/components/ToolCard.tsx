@@ -66,6 +66,61 @@ import { stripAnsi } from '../conversation/ansi.ts'
 import { AnsiText, ShellLine } from '../conversation/CommandText.tsx'
 import { commandFolder, reportedFolder } from '../conversation/commandView.ts'
 import { KindGlyph, type RowKind } from '../conversation/KindGlyph.tsx'
+import { defineCopy, useLocale, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    cancelled: '已取消',
+    denied: '已拒绝',
+    expired: '已过期',
+    unknown: '结果未知',
+    copyOutput: '复制输出',
+    less: '收起',
+    allLines: (count: number) => `展开全部 ${formatNumber(count)} 行`,
+    copyRaw: (value1: string | number) => `复制原始命令：${value1}`,
+    copiedRaw: '已复制原始命令',
+    copyUnavailable: '复制不可用',
+    done: '完成',
+    failed: '失败',
+    noOutput: '没有输出',
+    copyCommand: '复制命令',
+    outsideControl: '直接运行 Cua，没有经过「操控这台 Mac」的开关与记录',
+    bypassedMac: '绕过操控这台 Mac',
+    interruptedUnknown: '已中断 · 结果未知',
+    interrupted: '已中断',
+    screenshotTitle: '截图会发给模型服务',
+    screenshotInfo: 'Agent 的截图作为工具结果交给模型服务；页面上的个人信息不会自动打码。',
+    retry: '重试',
+    open: '打开文件',
+    openChanges: '在改动中打开',
+  },
+  {
+    cancelled: 'Cancelled',
+    denied: 'Denied',
+    expired: 'Expired',
+    unknown: 'Outcome unknown',
+    copyOutput: 'Copy output',
+    less: 'Show less',
+    allLines: (count: number) => `Show all ${plural(count, { one: '{n} line', other: '{n} lines' })}`,
+    copyRaw: (value1: string | number) => `Copy original command: ${value1}`,
+    copiedRaw: 'Original command copied',
+    copyUnavailable: 'Can’t copy',
+    done: 'Done',
+    failed: 'Failed',
+    noOutput: 'No output',
+    copyCommand: 'Copy command',
+    outsideControl: 'Cua ran directly, outside the Control this Mac switch and activity log.',
+    bypassedMac: 'Bypassed Control this Mac',
+    interruptedUnknown: 'Interrupted · Outcome unknown',
+    interrupted: 'Interrupted',
+    screenshotTitle: 'Screenshots go to the model service',
+    screenshotInfo:
+      'Agent screenshots go to the model service as tool results. Personal information on the screen isn’t redacted automatically.',
+    retry: 'Retry',
+    open: 'Open file',
+    openChanges: 'Open in Changes',
+  },
+)
 
 type ToolState = NonNullable<Message['state']>
 /**
@@ -74,11 +129,21 @@ type ToolState = NonNullable<Message['state']>
  * harness refused itself (拦下, who and why on the line under it). A failed row says why on the line under it.
  */
 const stateWords: Partial<Record<ShownToolState, string>> = {
-  cancelled: '已取消',
-  rejected: '已拒绝',
-  expired: '已过期',
-  blocked: JUDGED_COPY.denied,
-  unknown: '结果未知',
+  get cancelled() {
+    return COPY.cancelled
+  },
+  get rejected() {
+    return COPY.denied
+  },
+  get expired() {
+    return COPY.expired
+  },
+  get blocked() {
+    return JUDGED_COPY.denied
+  },
+  get unknown() {
+    return COPY.unknown
+  },
 }
 
 const sameDiffs = (a: FileDiff[] | undefined, b: FileDiff[] | undefined) =>
@@ -194,7 +259,7 @@ function ToolOutput({ text, running, language, flush = false }: { text: string; 
         <pre className="tool-pre tool-output">
           {language ? <SourceOutput text={text} language={language} enabled={seen} /> : <AnsiText text={text} />}
         </pre>
-        {!running && <CopyButton text={plain} label="复制输出" size="xs" className="tool-output-copy" />}
+        {!running && <CopyButton text={plain} label={COPY.copyOutput} size="xs" className="tool-output-copy" />}
       </div>
       {long && (
         <button
@@ -205,7 +270,7 @@ function ToolOutput({ text, running, language, flush = false }: { text: string; 
           onClick={() => {
             setExpanded(!expanded)
           }}>
-          {expanded ? '收起' : `展开全部 ${lines} 行`}
+          {expanded ? COPY.less : COPY.allLines(lines)}
           {expanded ? (
             <ChevronUpGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
           ) : (
@@ -257,11 +322,11 @@ function ShellTag({ shell, reported }: { shell: string; reported: string }) {
       type="button"
       className="command-shell"
       title={reported}
-      aria-label={`复制原始命令：${reported}`}
+      aria-label={COPY.copyRaw(reported)}
       onClick={() => {
         void copy(reported)
       }}>
-      {state === 'copied' ? '已复制原始命令' : state === 'failed' ? '复制不可用' : shell.split('/').at(-1)}
+      {state === 'copied' ? COPY.copiedRaw : state === 'failed' ? COPY.copyUnavailable : shell.split('/').at(-1)}
     </button>
   )
 }
@@ -296,12 +361,12 @@ function CommandEvidence({
     state === 'completed' ? (
       <span className="command-ended is-ok">
         <CheckGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-        完成
+        {COPY.done}
       </span>
     ) : state === 'failed' ? (
       <span className="command-ended is-failed">
         <CloseGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-        失败
+        {COPY.failed}
       </span>
     ) : null
   return (
@@ -321,13 +386,13 @@ function CommandEvidence({
         </pre>
       )}
       {output !== undefined
-        && (output ? <ToolOutput text={output} running={running} flush /> : !running && <p className="command-empty">没有输出</p>)}
+        && (output ? <ToolOutput text={output} running={running} flush /> : !running && <p className="command-empty">{COPY.noOutput}</p>)}
       {settled && (
         <div className="command-foot">
           {ended}
           {line.shell && <ShellTag shell={line.shell} reported={line.reported} />}
           <span className="process-fill" />
-          <CopyButton text={line.command} label="复制命令" size="xs" />
+          <CopyButton text={line.command} label={COPY.copyCommand} size="xs" />
           <TerminalFillButton command={line.command} />
         </div>
       )}
@@ -364,6 +429,7 @@ export const ToolCard = memo(
     /** A step of a subagent: a command stays a row there, under its name, and is not a block of its own. */
     inline?: boolean
   }) {
+    useLocale()
     const bodyId = useId()
     const link = useChangesLink()
     const session = useContext(FileSession)
@@ -501,8 +567,8 @@ export const ToolCard = memo(
           </span>
         )}
         {kind === 'execute' && bypassesComputer(evidence?.command ?? object) && (
-          <Tooltip content="直接运行 Cua，没有经过「操控这台 Mac」的开关与记录">
-            <span className="process-bypass" data-computer-bypass="" tabIndex={0} aria-label="绕过操控这台 Mac">
+          <Tooltip content={COPY.outsideControl}>
+            <span className="process-bypass" data-computer-bypass="" tabIndex={0} aria-label={COPY.bypassedMac}>
               <Icon icon={WarningGlyph} size={12} />
             </span>
           </Tooltip>
@@ -520,7 +586,7 @@ export const ToolCard = memo(
           <DecisionWords decision={decision} />
         ) : (
           (stateWords[shown]
-          ?? (shown === 'interrupted' ? (state === 'failed' ? '已中断 · 结果未知' : '已中断') : undefined)
+          ?? (shown === 'interrupted' ? (state === 'failed' ? COPY.interruptedUnknown : COPY.interrupted) : undefined)
           ?? judgedWords)
         )}
       </StatusWords>
@@ -580,8 +646,8 @@ export const ToolCard = memo(
             {message?.attachments?.length ? (
               <div className="tool-images">
                 <MessageAttachments attachments={message.attachments} />
-                <Hint className="tool-images-note" lead={<Icon icon={Camera} size={12} />} label="截图会发给模型服务">
-                  Agent 的截图作为工具结果交给模型服务；页面上的个人信息不会自动打码。
+                <Hint className="tool-images-note" lead={<Icon icon={Camera} size={12} />} label={COPY.screenshotTitle}>
+                  {COPY.screenshotInfo}
                 </Hint>
               </div>
             ) : null}
@@ -596,7 +662,7 @@ export const ToolCard = memo(
                 {!reasonInTail && <VisibleText text={reason} />}
                 {onRetry && (
                   <Button size="xs" variant="ghost" icon={RotateCcw} onClick={onRetry}>
-                    重试
+                    {COPY.retry}
                   </Button>
                 )}
               </p>
@@ -633,7 +699,7 @@ export const ToolCard = memo(
                           onClick={() => {
                             openInChanges(diff)
                           }}>
-                          {previousState(diff) === 'none' ? '打开文件' : '在改动中打开'}
+                          {previousState(diff) === 'none' ? COPY.open : COPY.openChanges}
                         </Button>
                       )}
                     />
@@ -676,7 +742,7 @@ export const ToolCard = memo(
                     && (output ? (
                       <ToolOutput text={output} running={running} language={language} />
                     ) : (
-                      !running && <p className="muted-line">没有输出</p>
+                      !running && <p className="muted-line">{COPY.noOutput}</p>
                     ))}
                 </div>
               </Collapse>

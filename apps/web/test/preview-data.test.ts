@@ -81,6 +81,8 @@ describe('document data boundaries', () => {
   it('rejects extra fields, invalid indices, huge cell pages and prototype-shaped values on the bridge', () => {
     expect(isFrameCommand({ type: 'sheet-page', sheet: 0, start: 0, count: 1000 })).toBe(true)
     expect(isFrameCommand({ type: 'zoom', percent: 125 })).toBe(true)
+    expect(isFrameCommand({ type: 'language', locale: 'en' })).toBe(true)
+    expect(isFrameCommand({ type: 'language', locale: 'zh-CN' })).toBe(true)
     expect(isFrameEvent({ type: 'view', fit: false, zoomPercent: 125 })).toBe(true)
     for (const value of [
       { type: 'sheet-page', sheet: 0, start: 0, count: 1001 },
@@ -91,9 +93,15 @@ describe('document data boundaries', () => {
       { type: 'zoom', percent: 9 },
       { type: 'zoom', percent: 100.5 },
       { type: 'zoom', percent: 100, url: 'x' },
+      { type: 'language', locale: 'system' },
+      { type: 'language', locale: 'en', data: 'x' },
     ])
       expect(isFrameCommand(value)).toBe(false)
     expect(isFrameEvent({ type: 'sheet-page', sheet: 0, start: 0, rows: [[{ text: 'x', formula: '1+1' }]] })).toBe(true)
+    expect(
+      isFrameEvent({ type: 'sheet-page', sheet: 0, start: 0, rows: [[{ text: '无缓存值', formula: '1+1', noCachedValue: true }]] }),
+    ).toBe(true)
+    expect(isFrameEvent({ type: 'sheet-page', sheet: 0, start: 0, rows: [[{ text: 'x', noCachedValue: true }]] })).toBe(false)
     expect(isFrameEvent({ type: 'sheet-page', sheet: 0, start: 0, rows: [[{ text: 'x'.repeat(32768) }]] })).toBe(false)
     expect(isFrameEvent({ type: 'view', fit: true, zoomPercent: Infinity })).toBe(false)
     expect(isFrameEvent({ type: 'error', code: '<script>bad</script>' })).toBe(false)

@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react'
 import { Button, ScheduleGlyph, StatusWord } from '@latch/ui'
 import { api } from '../core/api.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { useLastConfirmed } from '../components/SessionStatus.tsx'
@@ -13,6 +14,12 @@ import { ActivityWord, IsolationNote, PermissionNote, Unavailable } from './part
 import { helperPermissionBlocked, permissionNote } from './personWords.ts'
 import { MODE_COPY } from '../core/securityCopy.ts'
 import { draftConfig, startBlock, withLadderMode, type ComposerChoice } from '../composerChoice.ts'
+import { AGENT_SPACE_COPY } from './spaceCopy.ts'
+
+const COPY = defineCopy(
+  { deleted: '已删除', schedules: (count: number) => `${formatNumber(count)} 个定时任务` },
+  { deleted: 'Deleted', schedules: (count: number) => plural(count, { one: '{n} scheduled task', other: '{n} scheduled tasks' }) },
+)
 
 /**
  * The frame of a conversation with `owner` as the shell draws it, on a topic (`current`) or on a new one (null): the face
@@ -97,7 +104,7 @@ export function TopicFrame({
   const repair = shell.owner && found && !found.available ? () => shell.openSettings('engines') : undefined
   const word = gone ? (
     <StatusWord tone="neutral" className="agent-activity">
-      已删除
+      {COPY.deleted}
     </StatusWord>
   ) : frozen === null && ACTIVITY_WORDS[state] ? (
     <ActivityWord state={state} live={agentLiveWord(snapshot, owner, current)} />
@@ -107,7 +114,7 @@ export function TopicFrame({
   return (
     <AgentFrame
       name={name}
-      duty={found ? dutyLine(found) : general ? '没选别的 Agent 的会话都带上它' : undefined}
+      duty={found ? dutyLine(found) : general ? AGENT_SPACE_COPY.generalDuty : undefined}
       avatar={found?.avatar ?? 'general'}
       state={frozen !== null && (state === 'running' || state === 'waiting') ? 'idle' : state}
       word={word}
@@ -134,7 +141,7 @@ export function TopicFrame({
               icon={ScheduleGlyph}
               onClick={() => shell.openMyAgent({ id: owner, tab: 'schedules' })}>
               <span className="agent-schedule-words">
-                {schedules.length === 1 && schedules[0].enabled ? scheduleWords(schedules[0].schedule) : `${schedules.length} 个定时任务`}
+                {schedules.length === 1 && schedules[0].enabled ? scheduleWords(schedules[0].schedule) : COPY.schedules(schedules.length)}
               </span>
             </Button>
           )}

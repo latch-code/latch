@@ -2,12 +2,18 @@ import { useState, type ReactNode } from 'react'
 import { escapeSecurityText, type TaskDetail, type WorkProposalSummary } from '@latch/protocol'
 import { Button, Icon, StatusWord } from '@latch/ui'
 import { Lightbulb, ListTodo } from 'lucide-react'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { CardSuggestion } from './CardSuggestion.tsx'
 import { ProposalReview } from './ProposalReview.tsx'
 import { pendingEntries, todoProposals, type ChangeProposal, type TodoProposal } from './proposals.ts'
 import { ExternalMark } from './WorkBoardProposalCard.tsx'
 import { ProposalRecovery } from './ProposalRecovery.tsx'
+
+const COPY = defineCopy(
+  { single: '提议待办', many: (count: number) => `提议 ${formatNumber(count)} 条待办`, review: '审阅' },
+  { single: 'Proposed task', many: (count: number) => `${formatNumber(count)} proposed tasks`, review: 'Review' },
+)
 
 /** A proposal this session made, after the turn it came from: what it proposed, and 审阅 or the suggestion's own buttons. */
 function TodoRow({ proposal, canDecide, onReview }: { proposal: TodoProposal; canDecide: boolean; onReview: (row: TodoProposal) => void }) {
@@ -16,7 +22,7 @@ function TodoRow({ proposal, canDecide, onReview }: { proposal: TodoProposal; ca
     <div className="work-board-session-proposal" data-work-proposal={proposal.id}>
       <Icon icon={Lightbulb} size={14} className="work-board-proposal-glyph" />
       <StatusWord tone="neutral" className="work-board-proposal-word">
-        {entries.length > 1 ? `提议 ${entries.length} 条待办` : '提议待办'}
+        {entries.length > 1 ? COPY.many(entries.length) : COPY.single}
       </StatusWord>
       <span className="work-board-session-proposal-title">{escapeSecurityText(proposal.goal ?? entries[0]?.title ?? '')}</span>
       {proposal.external && <ExternalMark />}
@@ -27,7 +33,7 @@ function TodoRow({ proposal, canDecide, onReview }: { proposal: TodoProposal; ca
           onClick={() => {
             onReview(proposal)
           }}>
-          审阅
+          {COPY.review}
         </Button>
       )}
     </div>

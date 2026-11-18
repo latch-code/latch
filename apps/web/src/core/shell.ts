@@ -1,5 +1,20 @@
 import { useEffect, useState } from 'react'
 import type { ComputerSummary } from '@latch/protocol'
+import { defineCopy } from './i18n.ts'
+
+const COPY = defineCopy(
+  {
+    finder: '在访达中显示',
+    explorer: '在资源管理器中显示',
+    fileManager: '在文件管理器中显示',
+  },
+  {
+    finder: 'Show in Finder',
+    explorer: 'Show in File Explorer',
+    fileManager: 'Show in file manager',
+  },
+)
+
 /** What adding folders as projects through the desktop shell came to. */
 export type FolderResult =
   | {
@@ -399,6 +414,7 @@ export interface LatchShell {
   kind: 'electron'
   devMode: boolean
   platform: string
+  locale?: { set(preference: import('./i18n.ts').LocalePreference, language: import('./i18n.ts').Locale): void }
   /** macOS: where the window's traffic lights end, in px from its left edge; the top row starts 12px after them. */
   lights?: {
     end: number
@@ -512,9 +528,9 @@ export function shellFrameUrl(kind: 'preview' | 'app', file: string): string {
 
 /** What showing a folder is called on this computer's system. */
 export function revealLabel(platform: string | undefined): string {
-  if (platform === 'darwin') return '在访达中显示'
-  if (platform === 'win32') return '在资源管理器中显示'
-  return '在文件管理器中显示'
+  if (platform === 'darwin') return COPY.finder
+  if (platform === 'win32') return COPY.explorer
+  return COPY.fileManager
 }
 
 /** The preview browser, only from a shell that ties tabs to sessions and lists them again (version 2 and later). */

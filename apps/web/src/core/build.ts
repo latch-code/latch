@@ -1,5 +1,37 @@
 import { LATCH_COMMAND } from './commands.ts'
 import type { UpdateState } from './shell.ts'
+import { defineCopy } from './i18n.ts'
+
+const COPY = defineCopy(
+  {
+    oldTitle: (computer: string) => `${computer} 上的 Latch 还是旧版本`,
+    oldLabel: '重启 Latch 后才能用新功能',
+    restart: (computer: string) =>
+      `在 ${computer} 上停止 Latch 服务；开发确认组件更新后运行 ${LATCH_COMMAND} presence repin；再启动 Latch。`,
+    checking: '正在检查更新…',
+    version: (version: string) => `Latch ${version} 可更新`,
+    available: 'Latch 有更新',
+    newPage: '有新版页面 · 重新载入',
+    oldService: 'Latch 服务是旧版本 · 重启 Latch',
+    development: '检查更新 · 开发运行，无构建号',
+    failed: (build: string) => `未能检查 · 构建 ${build}`,
+    current: (build: string) => `已是最新 · 构建 ${build}`,
+  },
+  {
+    oldTitle: (computer: string) => `Latch on ${computer} is out of date`,
+    oldLabel: 'Restart Latch to use new features',
+    restart: (computer: string) =>
+      `Stop the Latch service on ${computer}. If you updated the development confirmation helper, run ${LATCH_COMMAND} presence repin. Then start Latch again.`,
+    checking: 'Checking for updates…',
+    version: (version: string) => `Latch ${version} available`,
+    available: 'Latch update available',
+    newPage: 'New page version · Reload',
+    oldService: 'Latch service is out of date · Restart Latch',
+    development: 'Check for updates · Development build, no build number',
+    failed: (build: string) => `Couldn’t check for updates · Build ${build}`,
+    current: (build: string) => `Up to date · Build ${build}`,
+  },
+)
 
 declare const __LATCH_BUILD__: string | undefined
 
@@ -23,9 +55,9 @@ export function hostIsOlder(hostBuild: string | undefined, pageBuild: string = P
 /** The notice's words for `computer` (`computerLabel`): what, what to do, and how behind ⓘ. */
 export function oldHostWords(computer: string): { title: string; label: string; detail: string } {
   return {
-    title: `${computer} 上的 Latch 还是旧版本`,
-    label: '重启 Latch 后才能用新功能',
-    detail: `在 ${computer} 上停止 Latch 服务；开发确认组件更新后运行 ${LATCH_COMMAND} presence repin；再启动 Latch。`,
+    title: COPY.oldTitle(computer),
+    label: COPY.oldLabel,
+    detail: COPY.restart(computer),
   }
 }
 
@@ -91,18 +123,18 @@ export function buildStatus(input: {
 export function buildStatusWords(status: BuildStatus): { tooltip: string; dot: boolean } {
   switch (status.kind) {
     case 'checking':
-      return { tooltip: '正在检查更新…', dot: false }
+      return { tooltip: COPY.checking, dot: false }
     case 'app':
-      return { tooltip: status.version ? `Latch ${status.version} 可更新` : 'Latch 有更新', dot: true }
+      return { tooltip: status.version ? COPY.version(status.version) : COPY.available, dot: true }
     case 'page':
-      return { tooltip: '有新版页面 · 重新载入', dot: true }
+      return { tooltip: COPY.newPage, dot: true }
     case 'host':
-      return { tooltip: 'Latch 服务是旧版本 · 重启 Latch', dot: true }
+      return { tooltip: COPY.oldService, dot: true }
     case 'dev':
-      return { tooltip: '检查更新 · 开发运行，无构建号', dot: false }
+      return { tooltip: COPY.development, dot: false }
     case 'failed':
-      return { tooltip: `未能检查 · 构建 ${shortBuild(status.build)}`, dot: false }
+      return { tooltip: COPY.failed(shortBuild(status.build)), dot: false }
     case 'current':
-      return { tooltip: `已是最新 · 构建 ${shortBuild(status.build)}`, dot: false }
+      return { tooltip: COPY.current(shortBuild(status.build)), dot: false }
   }
 }

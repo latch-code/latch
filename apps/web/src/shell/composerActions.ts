@@ -1,5 +1,5 @@
 import { draftConfig, projectFor, thinkingLevels } from '../composerChoice.ts'
-import { forkSource } from '../forkChoice.ts'
+import { FORK_CONTINUATION_PROMPT, forkSource } from '../forkChoice.ts'
 import { askSideQuestion, sideQuestionRefusal } from '../conversation/SideQuestion.tsx'
 import { openControlWhenShown } from '../composer/ComposerControl.tsx'
 import { LATCH_ACTIONS, type LatchActionName } from '../composer/latchActions.ts'
@@ -7,6 +7,32 @@ import type { SlashAction } from '../composer/slash-options.ts'
 import type { SessionSelectionIntent } from './useSessionController.ts'
 import type { ShellState } from './useShellLayout.tsx'
 import { topicOwner } from '../agents/chat.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    check: '先核对未确认的提交',
+    sending: '正在发送',
+    readOnly: '这台设备只能查看',
+    locked: '当前暂不能更改选项',
+    afterTurn: '这一轮结束后可用',
+    unsupported: '这个 Harness 尚不支持',
+    cannotFork: '这个会话尚不能分叉',
+    noReasoning: '这个模型没有思考档位',
+    changesDenied: '这台设备看不到项目改动',
+  },
+  {
+    check: 'Check the unconfirmed submission first',
+    sending: 'Sending',
+    readOnly: 'This device can only view',
+    locked: 'Options can’t be changed right now',
+    afterTurn: 'Available after this turn',
+    unsupported: 'This Harness doesn’t support this yet',
+    cannotFork: 'This session can’t be forked yet',
+    noReasoning: 'This model has no reasoning levels',
+    changesDenied: 'This device can’t view project changes',
+  },
+)
 
 /** Call with the input's shell projection: Home's draft is not the session still mounted behind it. */
 export function composerActions(
@@ -22,13 +48,13 @@ export function composerActions(
       ? !!catalog && thinkingLevels(catalog, shell.effectiveModel ?? shell.choice.model).length > 0
       : (config?.find(option => option.category === 'thought_level')?.options.length ?? 0) > 0
   const blocked = submission.pending
-    ? '先核对未确认的提交'
+    ? COPY.check
     : submission.sending
-      ? '正在发送'
+      ? COPY.sending
       : !access.scopes.has('run')
-        ? '这台设备只能查看'
+        ? COPY.readOnly
         : undefined
-  const locked = blocked ?? (shell.newChoicesLocked ? '当前暂不能更改选项' : undefined)
+  const locked = blocked ?? (shell.newChoicesLocked ? COPY.locked : undefined)
   const focus = () => requestAnimationFrame(() => shell.composerRef.current?.focus())
   const intent = (draft: string): SessionSelectionIntent => ({
     ...(origin === 'slash' ? { consumeDraft: { inputId: shell.inputId, text: submission.draft } } : {}),
@@ -50,7 +76,7 @@ export function composerActions(
     fork: argument => {
       const last = current?.messages.at(-1)
       if (!current || !last) return
-      const first = argument || (origin === 'palette' ? submission.draft : '') || '请接着这个会话继续。'
+      const first = argument || (origin === 'palette' ? submission.draft : '') || FORK_CONTINUATION_PROMPT
       shell.startNewDraft(intent(first), () => {
         submission.setFork({
           taskId: current.summary.id,
@@ -84,20 +110,16 @@ export function composerActions(
     },
   }
   const reason: Partial<Record<LatchActionName, string | undefined>> = {
-    clear: blocked ?? (shell.active ? '这一轮结束后可用' : !shell.clearable ? '这个 Harness 尚不支持' : undefined),
+    clear: blocked ?? (shell.active ? COPY.afterTurn : !shell.clearable ? COPY.unsupported : undefined),
     btw: blocked ?? sideQuestionRefusal(catalog, harness),
     fork:
       blocked
-      ?? (shell.active
-        ? '这一轮结束后可用'
-        : catalog?.features?.fork !== true || !current?.messages.length
-          ? '这个会话尚不能分叉'
-          : undefined),
+      ?? (shell.active ? COPY.afterTurn : catalog?.features?.fork !== true || !current?.messages.length ? COPY.cannotFork : undefined),
     new: blocked,
     model: locked,
-    think: locked ?? (!thinking ? '这个模型没有思考档位' : undefined),
+    think: locked ?? (!thinking ? COPY.noReasoning : undefined),
     permissions: locked,
-    changes: !shell.canViewChanges ? '这台设备看不到项目改动' : undefined,
+    changes: !shell.canViewChanges ? COPY.changesDenied : undefined,
   }
   return LATCH_ACTIONS.flatMap(action => {
     if (action.name === 'new' && topicOwner(summary)) return []

@@ -1,4 +1,10 @@
 import { escapeSecurityText } from '@latch/protocol'
+import { defineCopy } from '../core/i18n.ts'
+
+const VISIBLE_TEXT_COPY = defineCopy(
+  { hidden: (code: string) => `不可见或改变显示方向的字符 U+${code}` },
+  { hidden: (code: string) => `Invisible or direction-changing character U+${code}` },
+)
 
 /**
  * Text in approvals and tool views follows the same rule as the Host's local confirmation preview
@@ -80,7 +86,7 @@ export function VisibleText({ text }: { text: string }) {
       {parts.map((segment, index) => {
         if (!segment.hidden) return segment.text
         const code = codePoint(segment.text)
-        return <span key={index} className="hidden-char" title={`不可见或改变显示方向的字符 U+${code}`}>{`\\u{${code}}`}</span>
+        return <span key={index} className="hidden-char" title={VISIBLE_TEXT_COPY.hidden(code)}>{`\\u{${code}}`}</span>
       })}
     </>
   )

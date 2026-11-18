@@ -1,5 +1,8 @@
 import { useLayoutEffect, useRef } from 'react'
 import { Button } from '@latch/ui'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy({ cancel: '取消' }, { cancel: 'Cancel' })
 
 /** Space kept between the confirm and the window's edges: the board's own gutter, so it never sits on the edge. */
 const MARGIN = 16
@@ -65,7 +68,7 @@ export function DropConfirm({
       <p>{question}</p>
       <div className="work-board-drop-confirm-actions">
         <Button size="xs" variant="ghost" onClick={onClose}>
-          取消
+          {COPY.cancel}
         </Button>
         <Button size="xs" variant="danger" data-confirm="" onClick={onConfirm}>
           {confirmLabel}

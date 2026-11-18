@@ -2,11 +2,49 @@ import { useMemo, useRef, useState } from 'react'
 import { BOARD_TAG_CHARS, BOARD_TAG_LIMIT, normalizeBoardTags, type BoardTagProblem, type TaskSummary } from '@latch/protocol'
 import { Button, CloseGlyph, IconButton, InlineNotice, Modal, ModalHeader, PlusGlyph, TextField } from '@latch/ui'
 import { VisibleText } from './VisibleText.tsx'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    invalid: (limit: number) => `1–${formatNumber(limit)} 个字，不含换行`,
+    secret: '像密钥',
+    limit: (limit: number) => `最多 ${formatNumber(limit)} 个`,
+    failed: '保存失败，请重试。',
+    tags: '标签',
+    existing: '已有标签',
+    remove: (value1: string | number) => `移除 ${value1}`,
+    newTag: '新标签',
+    example: '例如：发布前',
+    other: '其他会话的标签',
+    cancel: '取消',
+    save: '保存',
+  },
+  {
+    invalid: (limit: number) => `1–${formatNumber(limit)} characters with no line breaks`,
+    secret: 'Looks like a secret key',
+    limit: (limit: number) => `Up to ${plural(limit, { one: '{n} tag', other: '{n} tags' })}`,
+    failed: 'Couldn’t save. Try again.',
+    tags: 'Tags',
+    existing: 'Existing tags',
+    remove: (value1: string | number) => `Remove ${value1}`,
+    newTag: 'New tag',
+    example: 'e.g. Before release',
+    other: 'Tags from other sessions',
+    cancel: 'Cancel',
+    save: 'Save',
+  },
+)
 
 const PROBLEM_TEXT: Record<BoardTagProblem, string> = {
-  'tag-invalid': `1–${BOARD_TAG_CHARS} 个字，不含换行`,
-  'tag-secret': '像密钥',
-  'tag-limit': `最多 ${BOARD_TAG_LIMIT} 个`,
+  get 'tag-invalid'() {
+    return COPY.invalid(BOARD_TAG_CHARS)
+  },
+  get 'tag-secret'() {
+    return COPY.secret
+  },
+  get 'tag-limit'() {
+    return COPY.limit(BOARD_TAG_LIMIT)
+  },
 }
 
 /** Every tag the device's sessions carry, most used first: what the dialog offers to pick. */
@@ -72,7 +110,7 @@ export function SessionTagsDialog({
       await onSave(next.tags.length ? next.tags : null)
       onClose()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '保存失败，请重试。')
+      setError(cause instanceof Error ? cause.message : COPY.failed)
       setBusy(false)
     }
   }
@@ -80,23 +118,23 @@ export function SessionTagsDialog({
     if (!busy) onClose()
   }
   return (
-    <Modal label="标签" variant={phone ? 'sheet' : 'dialog'} dismissible={!busy} onClose={close} className="session-tags-dialog">
+    <Modal label={COPY.tags} variant={phone ? 'sheet' : 'dialog'} dismissible={!busy} onClose={close} className="session-tags-dialog">
       <form
         onSubmit={event => {
           event.preventDefault()
           if (draft.trim()) add(draft)
           else if (changed) void save()
         }}>
-        <ModalHeader title="标签" onClose={close} />
+        <ModalHeader title={COPY.tags} onClose={close} />
         <div className="ui-modal-body">
           {tags.length > 0 && (
-            <ul className="session-tags" aria-label="已有标签">
+            <ul className="session-tags" aria-label={COPY.existing}>
               {tags.map(tag => (
                 <li key={tag} className="session-tag">
                   <VisibleText text={tag} />
                   <IconButton
                     size="xs"
-                    label={`移除 ${tag}`}
+                    label={COPY.remove(tag)}
                     icon={CloseGlyph}
                     disabled={busy}
                     onClick={() => {
@@ -110,12 +148,12 @@ export function SessionTagsDialog({
           )}
           <TextField
             ref={input}
-            label="新标签"
+            label={COPY.newTag}
             value={draft}
             disabled={busy || full}
             autoComplete="off"
             enterKeyHint="done"
-            placeholder={full ? `最多 ${BOARD_TAG_LIMIT} 个` : '例如：发布前'}
+            placeholder={full ? COPY.limit(BOARD_TAG_LIMIT) : COPY.example}
             error={long ? `${Array.from(draft.trim()).length} / ${BOARD_TAG_CHARS}` : problem ? PROBLEM_TEXT[problem] : undefined}
             onChange={event => {
               setDraft(event.target.value)
@@ -123,7 +161,7 @@ export function SessionTagsDialog({
             }}
           />
           {offered.length > 0 && !full && (
-            <ul className="session-tags session-tags-known" aria-label="其他会话的标签">
+            <ul className="session-tags session-tags-known" aria-label={COPY.other}>
               {offered.map(tag => (
                 <li key={tag}>
                   <button
@@ -144,7 +182,7 @@ export function SessionTagsDialog({
         </div>
         <footer className="ui-modal-footer">
           <Button size="md" disabled={busy} onClick={close}>
-            取消
+            {COPY.cancel}
           </Button>
           <Button
             size="md"
@@ -154,7 +192,7 @@ export function SessionTagsDialog({
             onClick={() => {
               void save()
             }}>
-            保存
+            {COPY.save}
           </Button>
         </footer>
       </form>

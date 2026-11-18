@@ -7,6 +7,7 @@ import { hostNow, useTicker } from '../core/hostClock.ts'
 import { ConfirmDialog, type MenuSection } from '../components/overlays.tsx'
 import { knownTags, SessionTagsDialog } from '../components/SessionTagsDialog.tsx'
 import { api, errorMessage, isUncertain, MessageError } from '../core/api.ts'
+import { defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'
 import { WorkbenchDecision } from '../shell/WorkbenchDecision.tsx'
 import { useWorkbenchDelivery } from '../shell/useWorkbenchEvidence.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
@@ -42,11 +43,10 @@ import { useBoardRequests } from './requests.ts'
 import { WorkBoard } from './WorkBoard.tsx'
 import { WorkBoardCard } from './WorkBoardCard.tsx'
 import { AllFilters, FilterChips, FilterMenus } from './WorkBoardFilters.tsx'
-import { ITEM_WRITE_BLOCKED, useItemWrites } from './itemWrites.ts'
+import { ITEM_WRITE_COPY, useItemWrites } from './itemWrites.ts'
 import { WorkBoardItemCard, type ItemCard } from './WorkBoardItemCard.tsx'
 import { WorkBoardItemEdit } from './WorkBoardItemEdit.tsx'
 import { ItemPage } from './ItemPage.tsx'
-import { ItemThreadFor } from './ItemThread.tsx'
 import { closeItemPage, openItemPage, useItemPage } from './itemPage.ts'
 import { WorkBoardNew, type NewMode } from './WorkBoardNew.tsx'
 import { WorkBoardTable } from './WorkBoardTable.tsx'
@@ -60,6 +60,64 @@ import { AcceptedItems, ProposalReview } from './ProposalReview.tsx'
 const NARROW = 524
 /** The delivery facts are read for the top cards of 可交付 only, as many as one read takes. */
 const DELIVERY_READS = 12
+
+const COPY = defineCopy(
+  {
+    board: '看板',
+    openConversation: '在对话中打开',
+    edit: '编辑…',
+    openItem: '打开待办',
+    deleteItemMenu: '删除待办…',
+    stopUnknown: '没有收到停止的确认',
+    startAll: '全部开始',
+    view: '看法',
+    columns: '板',
+    list: '表',
+    create: '新建',
+    state: '状态',
+    stopSession: '停止会话',
+    askStop: (title: string) => `停止「${title}」？`,
+    untitled: '未命名会话',
+    stop: '停止',
+    notSaved: '没有保存',
+    note: '备注',
+    deleteItem: '删除待办',
+    delete: '删除',
+    askDelete: (title: string, count: number) => `删除待办「${title}」？${count ? `它的 ${formatNumber(count)} 个会话保留。` : ''}`,
+    notDeleted: '没有删除',
+    editNote: '修改备注…',
+    addNote: '备注…',
+    clearNote: '清除备注',
+  },
+  {
+    board: 'Board',
+    openConversation: 'Open conversation',
+    edit: 'Edit…',
+    openItem: 'Open to-do',
+    deleteItemMenu: 'Delete to-do…',
+    stopUnknown: 'The stop is still unconfirmed',
+    startAll: 'Start all',
+    view: 'View',
+    columns: 'Board',
+    list: 'List',
+    create: 'New',
+    state: 'Status',
+    stopSession: 'Stop session',
+    askStop: (title: string) => `Stop “${title}”?`,
+    untitled: 'Untitled session',
+    stop: 'Stop',
+    notSaved: 'Couldn’t save',
+    note: 'Note',
+    deleteItem: 'Delete to-do',
+    delete: 'Delete',
+    askDelete: (title: string, count: number) =>
+      `Delete “${title}”?${count ? ` ${plural(count, { one: '{n} session will remain.', other: '{n} sessions will remain.' })}` : ''}`,
+    notDeleted: 'Couldn’t delete',
+    editNote: 'Edit note…',
+    addNote: 'Add note…',
+    clearNote: 'Clear note',
+  },
+)
 
 /** Whether the board itself is narrower than two columns: its own width, not the window's. */
 function useNarrow(element: RefObject<HTMLElement | null>): boolean {
@@ -141,7 +199,8 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   const columns = boardColumns(tasks, filters, workspaces, now, items, proposals)
   const column = (group: BoardColumnGroup) => columns.find(item => item.group === group)!
   const counts = groupCounts(tasks, now, items, proposals)
-  const options = useMemo(() => filterOptions(tasks, snapshot, items, proposals), [tasks, snapshot, items, proposals])
+  const locale = useLocale()
+  const options = useMemo(() => filterOptions(tasks, snapshot, items, proposals), [tasks, snapshot, items, proposals, locale])
   const marked = started ?? shell.selectedId
   /** A 待办's card is marked for itself, or for its session that was last opened or just started. */
   const markedCard = (card: BoardCard) =>
@@ -198,7 +257,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
             : []),
           {
             id: 'open',
-            label: '在对话中打开',
+            label: COPY.openConversation,
             icon: MessageGlyph,
             onSelect: () => {
               open(task.id)
@@ -236,7 +295,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
             ? [
                 {
                   id: 'edit',
-                  label: '编辑…',
+                  label: COPY.edit,
                   icon: EditGlyph,
                   onSelect: () => {
                     setEditing(item)
@@ -253,7 +312,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
             : []),
           {
             id: 'open',
-            label: '打开待办',
+            label: COPY.openItem,
             icon: ListTodo,
             onSelect: () => {
               openItem(item)
@@ -268,7 +327,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
               items: [
                 {
                   id: 'delete',
-                  label: '删除待办…',
+                  label: COPY.deleteItemMenu,
                   icon: TrashGlyph,
                   danger: true,
                   onSelect: () => {
@@ -283,7 +342,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
     return state === 'sending' || state === 'unknown'
       ? sections.map(section => ({
           ...section,
-          items: section.items.map(action => (action.id === 'open' ? action : { ...action, disabledReason: ITEM_WRITE_BLOCKED })),
+          items: section.items.map(action => (action.id === 'open' ? action : { ...action, disabledReason: ITEM_WRITE_COPY.blocked })),
         }))
       : sections
   }
@@ -417,7 +476,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   const sessionWrite = (id: string): CardWriteLine | undefined => {
     const own = writes.states.get(id)
     if (own) return own
-    if (stopUnknown(id)) return { state: 'unknown', reason: '没有收到停止的确认' }
+    if (stopUnknown(id)) return { state: 'unknown', reason: COPY.stopUnknown }
     const refused = stopRefused.get(id)
     return refused === undefined ? undefined : { state: 'refused', reason: refused }
   }
@@ -536,7 +595,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         onClick={() => {
           void writes.startAll(unstarted, noteStarted)
         }}>
-        全部开始
+        {COPY.startAll}
       </Button>
     ) : undefined
   const header = (
@@ -547,11 +606,11 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
       </div>
       <div className="work-board-head-actions">
         <SegmentedControl
-          label="看法"
+          label={COPY.view}
           value={memory.view}
           options={[
-            { value: 'board', label: '板' },
-            { value: 'list', label: '表' },
+            { value: 'board', label: COPY.columns },
+            { value: 'list', label: COPY.list },
           ]}
           onValueChange={setView}
         />
@@ -563,7 +622,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
           onClick={() => {
             startNew()
           }}>
-          新建
+          {COPY.create}
         </Button>
       </div>
     </header>
@@ -580,9 +639,9 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         <div className="work-board-phone-bar">
           <FilterPills
             className="work-board-states"
-            label="状态"
+            label={COPY.state}
             value={phoneGroup}
-            options={BOARD_GROUPS.map(group => ({ value: group, label: `${GROUP_LABELS[group]} ${counts[group]}` }))}
+            options={BOARD_GROUPS.map(group => ({ value: group, label: `${GROUP_LABELS[group]} ${formatNumber(counts[group])}` }))}
             onValueChange={setPhoneState}
           />
           <div className="work-board-phone-actions">
@@ -597,7 +656,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
                 onClick={() => {
                   startNew()
                 }}>
-                新建
+                {COPY.create}
               </Button>
             </span>
           </div>
@@ -662,12 +721,12 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
     <section
       ref={root}
       className="board-surface work-board"
-      aria-label="看板"
+      aria-label={COPY.board}
       hidden={!shell.board}
       data-narrow={narrow ? '' : undefined}
       data-view={memory.view}>
       {showItem ? (
-        <ItemPage shell={shell} itemId={itemPage} thread={<ItemThreadFor shell={shell} itemId={itemPage} />} />
+        <ItemPage shell={shell} itemId={itemPage} />
       ) : (
         <>
           {!narrow && header}
@@ -686,9 +745,9 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
       />
       {stopAsk && (
         <DropConfirm
-          label="停止会话"
-          question={`停止「${escapeSecurityText(stopAsk.task.title || '未命名会话')}」？`}
-          confirmLabel="停止"
+          label={COPY.stopSession}
+          question={COPY.askStop(escapeSecurityText(stopAsk.task.title || COPY.untitled))}
+          confirmLabel={COPY.stop}
           point={stopAsk.point}
           onClose={() => {
             setStopAsk(null)
@@ -712,7 +771,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
             const result = await writes.patch(tagging, { tags })
             if (!result.ok && !result.unknown) {
               if (!result.blocked) writes.dismiss(tagging.id)
-              throw new MessageError(result.reason ?? '没有保存')
+              throw new MessageError(result.reason ?? COPY.notSaved)
             }
           }}
         />
@@ -740,8 +799,8 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
       {shell.board && acceptedItems.length > 0 && <AcceptedItems ids={acceptedItems} shell={shell} onClose={() => setAcceptedItems([])} />}
       {noting && (
         <PromptDialog
-          title="备注"
-          label="备注"
+          title={COPY.note}
+          label={COPY.note}
           initial={(noting.kind === 'item' ? noting.item.note : noting.task.note) ?? ''}
           maxLength={CARD_NOTE_CHARS}
           onClose={() => {
@@ -755,21 +814,17 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
             const result = await writes.patch(noting.item, { note })
             if (!result.ok && !result.unknown) {
               if (!result.blocked) writes.dismiss(noting.item.id)
-              throw new MessageError(result.reason ?? '没有保存')
+              throw new MessageError(result.reason ?? COPY.notSaved)
             }
           }}
         />
       )}
       {deleting && (
         <ConfirmDialog
-          title="删除待办"
+          title={COPY.deleteItem}
           danger
-          confirmLabel="删除"
-          message={
-            deleting.sessionIds.length
-              ? `删除待办「${escapeSecurityText(deleting.title)}」？它的 ${deleting.sessionIds.length} 个会话保留。`
-              : `删除待办「${escapeSecurityText(deleting.title)}」？`
-          }
+          confirmLabel={COPY.delete}
+          message={COPY.askDelete(escapeSecurityText(deleting.title), deleting.sessionIds.length)}
           onClose={() => {
             setDeleting(null)
           }}
@@ -777,7 +832,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
             const result = await writes.remove(deleting)
             if (!result.ok && !result.unknown) {
               if (!result.blocked) writes.dismiss(deleting.id)
-              throw new MessageError(result.reason ?? '没有删除')
+              throw new MessageError(result.reason ?? COPY.notDeleted)
             }
           }}
         />
@@ -789,8 +844,8 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
 /** 备注… and, with one, 清除备注: the same on a session's card and a 待办's. */
 function noteItems(note: string | undefined, edit: () => void, clear: () => void): MenuSection['items'] {
   return [
-    { id: 'note', label: note ? '修改备注…' : '备注…', icon: StickyNote, onSelect: edit },
-    ...(note ? [{ id: 'note-clear', label: '清除备注', icon: StickyNote, onSelect: clear }] : []),
+    { id: 'note', label: note ? COPY.editNote : COPY.addNote, icon: StickyNote, onSelect: edit },
+    ...(note ? [{ id: 'note-clear', label: COPY.clearNote, icon: StickyNote, onSelect: clear }] : []),
   ]
 }
 

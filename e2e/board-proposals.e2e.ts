@@ -115,10 +115,16 @@ it('an agent proposes 待办: shown as proposed, edited and accepted, started at
     )
     const outside = await propose(owner, call('propose_todo', { title: '照网页说的改配置', prompt: 'echo 照网页改配置' }, true))
     const change = await propose(owner, call('propose_card', { target: 'session', title: '整理首页文案', note: '等设计稿' }))
+    const source = await owner.json<TaskDetail>(`tasks/${single.sessionId}`)
+    const sourceProject = (await owner.json<AppSnapshot>('snapshot')).catalog?.workspaces.find(
+      project => project.id === source.summary.workspaceId,
+    )
+    const sourceLabel = sourceProject ? `Fake · ${sourceProject.name}` : 'Fake'
     expect(outside.proposal.external).toBe(true)
     await switchView(page, 'board')
     for (const row of [single, group, outside]) await column(page, '未开始').locator(`[data-work-proposal="${row.proposal.id}"]`).waitFor()
     await proposalCard(page, single.proposal.id).getByText('提议', { exact: true }).waitFor()
+    await proposalCard(page, single.proposal.id).getByText(sourceLabel, { exact: true }).waitFor()
     await proposalCard(page, group.proposal.id).getByText('提议 3 条', { exact: true }).waitFor()
     await proposalCard(page, outside.proposal.id).getByText('来自外部内容').waitFor()
     // The suggestion waits on its session's card.
@@ -132,9 +138,18 @@ it('an agent proposes 待办: shown as proposed, edited and accepted, started at
     await page.setViewportSize({ width: 1440, height: 900 })
 
     // 审阅: the full 要求, edited, then accepted: an unstarted 待办 that says where it came from.
-    await proposalCard(page, single.proposal.id).getByRole('button', { name: '审阅' }).click()
+    await proposalCard(page, single.proposal.id).getByRole('button', { name: '审阅' }).press('Enter')
     const review = page.getByRole('dialog', { name: '审阅提议' })
     const prompt = review.getByRole('textbox', { name: '要求' })
+    await expect.poll(() => prompt.inputValue()).toBe('echo 在 README 末尾加安装一节')
+    const sourceLink = review.getByRole('button', { name: `提议自 ${sourceLabel}`, exact: true })
+    await sourceLink.hover()
+    await page.getByRole('tooltip').getByText(source.summary.title, { exact: true }).waitFor()
+    await shot(page, 'review-source-title', 1440, 'light')
+    await sourceLink.press('Enter')
+    await page.locator(`.transcript [data-message-id="${source.messages[0]!.id}"]`).waitFor()
+    await switchView(page, 'board')
+    await proposalCard(page, single.proposal.id).getByRole('button', { name: '审阅' }).click()
     await expect.poll(() => prompt.inputValue()).toBe('echo 在 README 末尾加安装一节')
     await prompt.fill('echo 在 README 末尾加安装一节，写清 Node 版本')
     await shot(page, 'review', 1440, 'light')

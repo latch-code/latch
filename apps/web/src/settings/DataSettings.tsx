@@ -1,38 +1,192 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  AUDIT_KIND_LABELS,
-  AUDIT_KINDS,
-  type AuditEntry,
-  type AuditKind,
-  type AuditPage,
-  type DataExportState,
-  type DataInventory,
-} from '@latch/protocol'
+import { AUDIT_KINDS, type AuditEntry, type AuditKind, type AuditPage, type DataExportState, type DataInventory } from '@latch/protocol'
 import { ActionMenu, Button, Dialog, Hint, InlineNotice, SelectButton, Spinner, StatusWord, FilterPills } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { shellFolders } from '../core/shell.ts'
 import { absoluteTime, formatSize, relativeTime } from '../format.ts'
 import { Loading, MiddleEllipsis, NavRow, SettingsGroup, SettingsRow } from './common.tsx'
 import { SettingsPages } from './navigation.tsx'
+import { auditActionLabel, auditKindLabel } from './auditCopy.ts'
+import { currentLocale, defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    externalData:
+      '各 Harness 自己保存的会话（例如它的会话文件）和模型服务那边的历史不归 Latch 管：Latch 不读、不导出，删除会话时也只按「删除」里说的处理。',
+    audit: '安全记录',
+    onComputer: '保存在这台电脑上',
+    calculating: '正在统计',
+    recalculate: '重新统计',
+    dataDirectory: '数据目录',
+    reveal: '在访达中显示',
+    outsideDataDirectory: '数据目录之外',
+    external: '不归 Latch 管的',
+    recordsAndExport: '记录与导出',
+    auditHint: '谁在什么时候做了什么',
+    exportAgain: '没有导出，请重试。',
+    exportAll: '导出全部',
+    exported: '已导出',
+    cancelled: '已取消',
+    couldNotExport: '没有导出',
+    exportDescription: '会话、记忆、待办与设置，写成文件',
+    cancelling: '取消中…',
+    cancel: '取消',
+    export: '导出…',
+    chooseLocation: '选择位置…',
+    exportStructure: '在你选择的文件夹里新建「Latch 导出」文件夹，写入：',
+    exportSessions: '会话：你和 Agent 说的话，Markdown 与 JSON 各一份；工具只写名称与状态',
+    exportAgents: '我的 Agent 与「通用」：指令与记忆',
+    exportTasks: '待办与讨论',
+    exportSettings: '设置里的数据：外观、提示模板、项目与文件夹',
+    exportManifest: 'manifest.json：写了哪些文件',
+    excluded: '不导出：',
+    excludedSecrets: '模型密钥、MCP 服务器与它们的秘密值、Harness 的环境变量：里面可以有密钥',
+    excludedDevice: '设备连接记录、凭据、连接码与转发服务密钥：只在这台电脑上有效',
+    excludedAudit: '安全记录：保存在这台电脑上',
+    excludedTools: '工具的输出与模型的思考：里面可以有 Agent 读到的任何内容',
+    excludedFiles: '附件与改动快照的内容；Harness 自己保存的会话',
+    exportSecurity: '对话里形状可辨的密钥（Latch 知道的密钥值与常见的密钥格式）会被遮住，其他的不会。导出的文件不加密，放在哪里由你决定。',
+    badDirectory: '选择的位置不能用来导出，换一个文件夹。',
+    directoryExists: '这个位置已有同名的导出文件夹，换一个位置。',
+    busy: '另一次导出还在进行，等它结束后再试。',
+    invalidPath: '文件夹路径里有不可显示的字符，换一个文件夹。',
+    insufficientScope: '这台设备不能读取全部数据，不能导出。',
+    unreachable: '连不上 Latch 服务，请重试。',
+    all: '全部',
+    today: '今天',
+    sevenDays: '7 天',
+    thirtyDays: '30 天',
+    terminal: '命令行',
+    everyone: '所有人',
+    devices: '设备',
+    time: '时间',
+    who: '谁',
+    category: '类别',
+    allCategories: '全部类别',
+    noMatches: '没有符合条件的记录',
+    olderEntries: '更早的记录',
+    action: '操作',
+    confirmation: '确认',
+    preset: '内置选项，无需确认',
+    offlineCode: '离线连接码',
+    confirmedHere: '这台电脑上确认',
+    sequence: '序号',
+    yes: '是',
+    no: '否',
+    atLeast: (size: string) => `至少 ${size}`,
+    tallyAt: (time: string) => `统计于${time}`,
+    files: (count: number) => `${formatNumber(count)} 个文件`,
+    skipped: (count: number) => `${formatNumber(count)} 个会话读不到`,
+    removedDevice: (name: string) => `已移除的设备 ${name}`,
+  },
+  {
+    externalData:
+      'Each Harness and model service keeps its own session history. Latch cannot read or export it. Deletions follow the scope shown in Delete.',
+    audit: 'Audit log',
+    onComputer: 'Stored on this computer',
+    calculating: 'Calculating',
+    recalculate: 'Recalculate',
+    dataDirectory: 'Data directory',
+    reveal: 'Show in Finder',
+    outsideDataDirectory: 'Outside the data directory',
+    external: 'Managed elsewhere',
+    recordsAndExport: 'Logs and export',
+    auditHint: 'Who did what and when',
+    exportAgain: 'Couldn’t export. Try again.',
+    exportAll: 'Export all',
+    exported: 'Exported',
+    cancelled: 'Cancelled',
+    couldNotExport: 'Couldn’t export',
+    exportDescription: 'Export your sessions, memory, tasks and settings as files',
+    cancelling: 'Cancelling…',
+    cancel: 'Cancel',
+    export: 'Export…',
+    chooseLocation: 'Choose location…',
+    exportStructure: 'The export creates a folder named “Latch 导出” in the location you choose. It contains:',
+    exportSessions: 'Conversations with Agents in Markdown and JSON. Tools are listed by name and status.',
+    exportAgents: 'Instructions and memory for My Agents and General.',
+    exportTasks: 'Tasks and their discussions.',
+    exportSettings: 'Appearance, prompt templates, projects and folders.',
+    exportManifest: 'A manifest.json that lists the exported files.',
+    excluded: 'The export excludes the following items.',
+    excludedSecrets: 'Model keys, MCP servers and their secrets, and Harness environment variables that may contain keys.',
+    excludedDevice: 'Device enrollments, credentials, connection codes and relay keys, which only work on this computer.',
+    excludedAudit: 'This computer’s security audit log.',
+    excludedTools: 'Tool output and model reasoning that can contain anything an Agent read.',
+    excludedFiles: 'Attachment and change snapshot contents, and the sessions each Harness keeps.',
+    exportSecurity:
+      'Latch redacts known secret values and common key formats in conversations. Other values can remain. Exported files are unencrypted, so choose where you store them.',
+    badDirectory: 'Choose a different folder for the export.',
+    directoryExists: 'An export folder with that name already exists here. Choose a different location.',
+    busy: 'An export is already running. Wait for it to finish, then try again.',
+    invalidPath: 'The folder path has undisplayable characters. Choose a different folder.',
+    insufficientScope: 'Export requires access to all data on this device.',
+    unreachable: 'Couldn’t reach the Latch service. Try again.',
+    all: 'All',
+    today: 'Today',
+    sevenDays: '7 days',
+    thirtyDays: '30 days',
+    terminal: 'Command line',
+    everyone: 'Everyone',
+    devices: 'Devices',
+    time: 'Time',
+    who: 'Who',
+    category: 'Category',
+    allCategories: 'All categories',
+    noMatches: 'No matching entries',
+    olderEntries: 'Older entries',
+    action: 'Action',
+    confirmation: 'Confirmation',
+    preset: 'Built-in option, confirmation not required',
+    offlineCode: 'Offline connection code',
+    confirmedHere: 'Confirmed on this computer',
+    sequence: 'Sequence',
+    yes: 'Yes',
+    no: 'No',
+    atLeast: (size: string) => `At least ${size}`,
+    tallyAt: (time: string) => `Calculated ${time}`,
+    files: (count: number) => plural(count, { one: '{n} file', other: '{n} files' }),
+    skipped: (count: number) => plural(count, { one: '{n} unreadable session', other: '{n} unreadable sessions' }),
+    removedDevice: (name: string) => `Removed device ${name}`,
+  },
+)
+
+const KIND_COPY = defineCopy<Partial<Record<DataInventory['kinds'][number]['id'], string>>>(
+  {},
+  {
+    sessions: 'Sessions and conversations',
+    snapshots: 'Change snapshots',
+    memory: 'My Agents and memory',
+    work: 'Tasks and discussions',
+    attachments: 'Attachments',
+    automations: 'Schedules and handoffs',
+    usage: 'Usage records',
+    audit: 'Audit log',
+    devices: 'Device enrollment',
+    plugins: 'Plugins and app data',
+    settings: 'Settings',
+    secrets: 'Secrets and credentials',
+    logs: 'Logs',
+  },
+)
 
 /** What is not Latch's to keep or delete, said once where it matters. */
-const NOT_LATCH =
-  '各 Harness 自己保存的会话（例如它的会话文件）和模型服务那边的历史不归 Latch 管：Latch 不读、不导出，删除会话时也只按「删除」里说的处理。'
-
-/** 设置 › 数据: what Latch keeps on this Mac, where, how much and how long; 审计记录; 导出全部. */
+/** 设置 › 数据: what Latch keeps on this Mac, where, how much and how long; 安全记录; 导出全部. */
 export function DataSettings() {
+  useLocale()
   const [page, setPage] = useState<'audit' | null>(null)
   return (
     <SettingsPages
       main={<DataMain onAudit={() => setPage('audit')} />}
-      levels={page === 'audit' ? [{ key: 'audit', title: '审计记录', content: <AuditView />, onBack: () => setPage(null) }] : []}
+      levels={page === 'audit' ? [{ key: 'audit', title: COPY.audit, content: <AuditView />, onBack: () => setPage(null) }] : []}
     />
   )
 }
 
 function sizeText(kind: DataInventory['kinds'][number]): string | undefined {
   if (kind.bytes === undefined) return undefined
-  return `${kind.truncated ? '至少 ' : ''}${formatSize(kind.bytes)}`
+  const size = formatSize(kind.bytes)
+  return kind.truncated ? COPY.atLeast(size) : size
 }
 
 function DataMain({ onAudit }: { onAudit: () => void }) {
@@ -71,29 +225,29 @@ function DataMain({ onAudit }: { onAudit: () => void }) {
   return (
     <div className="data-settings">
       <SettingsGroup
-        title="保存在这台电脑上"
+        title={COPY.onComputer}
         meta={
           counting ? (
             <span className="data-sized">
-              <Spinner size={12} /> 正在统计
+              <Spinner size={12} /> {COPY.calculating}
             </span>
           ) : inventory.sizedAt ? (
             <span className="data-sized">
-              <span title={absoluteTime(Date.parse(inventory.sizedAt))}>统计于{relativeTime(inventory.sizedAt)}</span>
+              <span title={absoluteTime(Date.parse(inventory.sizedAt))}>{COPY.tallyAt(relativeTime(inventory.sizedAt))}</span>
               <Button size="xs" variant="ghost" onClick={() => void count()}>
-                重新统计
+                {COPY.recalculate}
               </Button>
             </span>
           ) : undefined
         }>
         <SettingsRow
           className="data-location"
-          title="数据目录"
+          title={COPY.dataDirectory}
           description={<MiddleEllipsis text={inventory.dataDir} />}
           trailing={
             folders?.revealData ? (
               <Button size="sm" variant="outline" onClick={() => void folders.revealData?.()}>
-                在访达中显示
+                {COPY.reveal}
               </Button>
             ) : undefined
           }
@@ -102,13 +256,13 @@ function DataMain({ onAudit }: { onAudit: () => void }) {
           <SettingsRow
             key={kind.id}
             className="data-kind"
-            title={<Hint label={kind.label}>{kind.entries.join('、')}</Hint>}
+            title={<Hint label={KIND_COPY[kind.id] ?? kind.label}>{kind.entries.join(currentLocale() === 'zh-CN' ? '、' : ', ')}</Hint>}
             description={kind.retention}
             trailing={sizeText(kind) !== undefined ? <span className="data-size">{sizeText(kind)}</span> : undefined}
           />
         ))}
       </SettingsGroup>
-      <SettingsGroup title="数据目录之外">
+      <SettingsGroup title={COPY.outsideDataDirectory}>
         {inventory.elsewhere.map(place => (
           <SettingsRow
             key={place.label}
@@ -119,10 +273,10 @@ function DataMain({ onAudit }: { onAudit: () => void }) {
         ))}
       </SettingsGroup>
       <div className="settings-note">
-        <Hint label="不归 Latch 管的">{NOT_LATCH}</Hint>
+        <Hint label={COPY.external}>{COPY.externalData}</Hint>
       </div>
-      <SettingsGroup title="记录与导出">
-        <NavRow title="审计记录" description="谁在什么时候做了什么" onClick={onAudit} />
+      <SettingsGroup title={COPY.recordsAndExport}>
+        <NavRow title={COPY.audit} description={COPY.auditHint} onClick={onAudit} />
         {folders?.exportData && <ExportRow start={folders.exportData} />}
       </SettingsGroup>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
@@ -155,7 +309,7 @@ function ExportRow({ start }: { start: NonNullable<NonNullable<ReturnType<typeof
     if (result.status === 'exporting') {
       setJob({ id: result.id, state: 'running', name: result.name, startedAt: new Date().toISOString(), progress: { done: 0, total: 0 } })
       poll(result.id)
-    } else if (result.status === 'failed') setError(EXPORT_FAILURES[result.code] ?? '没有导出，请重试。')
+    } else if (result.status === 'failed') setError(COPY[EXPORT_FAILURES[result.code] ?? 'exportAgain'])
   }
   const cancel = async () => {
     if (!job) return
@@ -175,7 +329,7 @@ function ExportRow({ start }: { start: NonNullable<NonNullable<ReturnType<typeof
     <>
       <SettingsRow
         className="data-export"
-        title="导出全部"
+        title={COPY.exportAll}
         description={
           job ? (
             <span className="data-export-status" role="status">
@@ -189,29 +343,31 @@ function ExportRow({ start }: { start: NonNullable<NonNullable<ReturnType<typeof
                 </>
               ) : job.state === 'done' ? (
                 <>
-                  <StatusWord tone="done">已导出</StatusWord>
+                  <StatusWord tone="done">{COPY.exported}</StatusWord>
                   <span>
-                    {job.name} · {job.files} 个文件{job.skipped ? ` · ${job.skipped} 个会话读不到` : ''}
+                    {job.name}
+                    {job.files === undefined ? '' : ` · ${COPY.files(job.files)}`}
+                    {job.skipped ? ` · ${COPY.skipped(job.skipped)}` : ''}
                   </span>
                 </>
               ) : (
                 <StatusWord tone={job.state === 'cancelled' ? 'neutral' : 'failed'}>
-                  {job.state === 'cancelled' ? '已取消' : '没有导出'}
+                  {job.state === 'cancelled' ? COPY.cancelled : COPY.couldNotExport}
                 </StatusWord>
               )}
             </span>
           ) : (
-            '会话、记忆、待办与设置，写成文件'
+            COPY.exportDescription
           )
         }
         trailing={
           running ? (
-            <Button size="sm" variant="ghost" loading={cancelling} loadingLabel="取消中…" onClick={() => void cancel()}>
-              取消
+            <Button size="sm" variant="ghost" loading={cancelling} loadingLabel={COPY.cancelling} onClick={() => void cancel()}>
+              {COPY.cancel}
             </Button>
           ) : (
             <Button size="sm" variant="outline" onClick={() => setAsking(true)}>
-              导出…
+              {COPY.export}
             </Button>
           )
         }
@@ -221,36 +377,36 @@ function ExportRow({ start }: { start: NonNullable<NonNullable<ReturnType<typeof
         <Dialog
           open
           size="lg"
-          title="导出全部"
+          title={COPY.exportAll}
           onClose={() => setAsking(false)}
           footer={
             <>
               <Button variant="ghost" onClick={() => setAsking(false)}>
-                取消
+                {COPY.cancel}
               </Button>
               <Button variant="primary" onClick={() => void begin()}>
-                选择位置…
+                {COPY.chooseLocation}
               </Button>
             </>
           }>
           <div className="data-export-dialog">
-            <p>在你选择的文件夹里新建「Latch 导出」文件夹，写入：</p>
+            <p>{COPY.exportStructure}</p>
             <ul>
-              <li>会话：你和 Agent 说的话，Markdown 与 JSON 各一份；工具只写名称与状态</li>
-              <li>我的 Agent 与「通用」：指令与记忆</li>
-              <li>待办与讨论</li>
-              <li>设置里的数据：外观、提示模板、项目与文件夹</li>
-              <li>manifest.json：写了哪些文件</li>
+              <li>{COPY.exportSessions}</li>
+              <li>{COPY.exportAgents}</li>
+              <li>{COPY.exportTasks}</li>
+              <li>{COPY.exportSettings}</li>
+              <li>{COPY.exportManifest}</li>
             </ul>
-            <p>不导出：</p>
+            <p>{COPY.excluded}</p>
             <ul>
-              <li>模型密钥、MCP 服务器与它们的秘密值、Harness 的环境变量：里面可以有密钥</li>
-              <li>设备登记、凭据、连接码与中继密钥：只在这台电脑上有效</li>
-              <li>审计记录：它是这台电脑的安全记录</li>
-              <li>工具的输出与模型的思考：里面可以有 Agent 读到的任何内容</li>
-              <li>附件与改动快照的内容；Harness 自己保存的会话</li>
+              <li>{COPY.excludedSecrets}</li>
+              <li>{COPY.excludedDevice}</li>
+              <li>{COPY.excludedAudit}</li>
+              <li>{COPY.excludedTools}</li>
+              <li>{COPY.excludedFiles}</li>
             </ul>
-            <p>对话里形状可辨的密钥（Latch 知道的密钥值与常见的密钥格式）会被遮住，其他的不会。导出的文件不加密，放在哪里由你决定。</p>
+            <p>{COPY.exportSecurity}</p>
           </div>
         </Dialog>
       )}
@@ -259,22 +415,18 @@ function ExportRow({ start }: { start: NonNullable<NonNullable<ReturnType<typeof
 }
 
 /** Why main or the Host did not start an export, in words. */
-const EXPORT_FAILURES: Partial<Record<string, string>> = {
-  'export-folder-invalid': '选择的位置不能用来导出，换一个文件夹。',
-  'export-folder-exists': '这个位置已有同名的导出文件夹，换一个位置。',
-  'export-busy': '另一次导出还在进行，等它结束后再试。',
-  'workspace-folder-unprintable': '文件夹路径里有不可显示的字符，换一个文件夹。',
-  'agent-scope-required': '这台设备不能读取全部数据，不能导出。',
-  'host-unavailable': '连不上 Host，请重试。',
+const EXPORT_FAILURES: Partial<
+  Record<string, 'badDirectory' | 'directoryExists' | 'busy' | 'invalidPath' | 'insufficientScope' | 'unreachable'>
+> = {
+  'export-folder-invalid': 'badDirectory',
+  'export-folder-exists': 'directoryExists',
+  'export-busy': 'busy',
+  'workspace-folder-unprintable': 'invalidPath',
+  'agent-scope-required': 'insufficientScope',
+  'host-unavailable': 'unreachable',
 }
 
 type Span = 'all' | 'day' | 'week' | 'month'
-const SPANS: ReadonlyArray<{ value: Span; label: string }> = [
-  { value: 'all', label: '全部' },
-  { value: 'day', label: '今天' },
-  { value: 'week', label: '7 天' },
-  { value: 'month', label: '30 天' },
-]
 const SPAN_MS: Record<Exclude<Span, 'all'>, number> = { day: 0, week: 7 * 864e5, month: 30 * 864e5 }
 
 function sinceOf(span: Span): string | undefined {
@@ -289,12 +441,13 @@ function sinceOf(span: Span): string | undefined {
 
 function actorText(entry: AuditEntry): string {
   if (entry.actor.kind === 'host') return 'Latch'
-  if (entry.actor.kind === 'cli') return '命令行'
-  return entry.actor.name ?? `已移除的设备 ${entry.actor.short ?? ''}`
+  if (entry.actor.kind === 'cli') return COPY.terminal
+  return entry.actor.name ?? COPY.removedDevice(entry.actor.short ?? '')
 }
 
-/** 审计记录: read-only, newest first, filtered by time, who and what, a page at a time. */
+/** 安全记录: read-only, newest first, filtered by time, who and what, a page at a time. */
 export function AuditView() {
+  useLocale()
   const [span, setSpan] = useState<Span>('all')
   const [actor, setActor] = useState<string>('')
   const [kind, setKind] = useState<AuditKind | ''>('')
@@ -331,27 +484,37 @@ export function AuditView() {
   }, [load])
   const actorLabel =
     actor === ''
-      ? '所有人'
+      ? COPY.everyone
       : actor === 'host'
         ? 'Latch'
         : actor === 'cli'
-          ? '命令行'
-          : (actors.find(item => item.id === actor)?.name ?? '设备')
+          ? COPY.terminal
+          : (actors.find(item => item.id === actor)?.name ?? COPY.devices)
   return (
     <div className="audit-view">
-      <h1 className="settings-title audit-title">审计记录</h1>
+      <h1 className="settings-title audit-title">{COPY.audit}</h1>
       <div className="audit-filters">
-        <FilterPills label="时间" value={span} options={SPANS} onValueChange={setSpan} />
+        <FilterPills
+          label={COPY.time}
+          value={span}
+          options={[
+            { value: 'all', label: COPY.all },
+            { value: 'day', label: COPY.today },
+            { value: 'week', label: COPY.sevenDays },
+            { value: 'month', label: COPY.thirtyDays },
+          ]}
+          onValueChange={setSpan}
+        />
         <ActionMenu
-          label="谁"
+          label={COPY.who}
           selection
           sections={[
             {
               id: 'who',
               items: [
-                { id: '', label: '所有人', checked: actor === '', onSelect: () => setActor('') },
+                { id: '', label: COPY.everyone, checked: actor === '', onSelect: () => setActor('') },
                 { id: 'host', label: 'Latch', checked: actor === 'host', onSelect: () => setActor('host') },
-                { id: 'cli', label: '命令行', checked: actor === 'cli', onSelect: () => setActor('cli') },
+                { id: 'cli', label: COPY.terminal, checked: actor === 'cli', onSelect: () => setActor('cli') },
                 ...actors.map(item => ({ id: item.id, label: item.name, checked: actor === item.id, onSelect: () => setActor(item.id) })),
               ],
             },
@@ -359,32 +522,32 @@ export function AuditView() {
           trigger={props => <SelectButton {...props}>{actorLabel}</SelectButton>}
         />
         <ActionMenu
-          label="类别"
+          label={COPY.category}
           selection
           sections={[
             {
               id: 'kind',
               items: [
-                { id: '', label: '全部类别', checked: kind === '', onSelect: () => setKind('') },
+                { id: '', label: COPY.allCategories, checked: kind === '', onSelect: () => setKind('') },
                 ...AUDIT_KINDS.map(item => ({
                   id: item,
-                  label: AUDIT_KIND_LABELS[item],
+                  label: auditKindLabel[item],
                   checked: kind === item,
                   onSelect: () => setKind(item),
                 })),
               ],
             },
           ]}
-          trigger={props => <SelectButton {...props}>{kind === '' ? '全部类别' : AUDIT_KIND_LABELS[kind]}</SelectButton>}
+          trigger={props => <SelectButton {...props}>{kind === '' ? COPY.allCategories : auditKindLabel[kind]}</SelectButton>}
         />
       </div>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {entries === null ? (
         <Loading />
       ) : entries.length === 0 ? (
-        <p className="audit-empty">没有符合条件的记录</p>
+        <p className="audit-empty">{COPY.noMatches}</p>
       ) : (
-        <ol className="audit-list" aria-label="审计记录">
+        <ol className="audit-list" aria-label={COPY.audit}>
           {entries.map(entry => (
             <AuditRow key={entry.seq} entry={entry} />
           ))}
@@ -392,7 +555,7 @@ export function AuditView() {
       )}
       {next !== undefined && entries !== null && (
         <Button variant="ghost" className="audit-more" loading={loading} onClick={() => void load(next)}>
-          更早的记录
+          {COPY.olderEntries}
         </Button>
       )}
     </div>
@@ -409,28 +572,28 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
             {relativeTime(entry.at)}
           </time>
           <span className="audit-actor">{actorText(entry)}</span>
-          <span className="audit-label">{entry.label}</span>
+          <span className="audit-label">{auditActionLabel(entry)}</span>
           {target && <span className="audit-target">{target}</span>}
         </summary>
         <dl className="audit-fields">
-          <dt>时间</dt>
+          <dt>{COPY.time}</dt>
           <dd>{absoluteTime(Date.parse(entry.at))}</dd>
-          <dt>类别</dt>
-          <dd>{AUDIT_KIND_LABELS[entry.kind]}</dd>
-          <dt>操作</dt>
+          <dt>{COPY.category}</dt>
+          <dd>{auditKindLabel[entry.kind]}</dd>
+          <dt>{COPY.action}</dt>
           <dd>
             <code>{entry.action}</code>
           </dd>
           {entry.stepup !== 'none' && (
             <>
-              <dt>确认</dt>
-              <dd>{entry.stepup === 'preset' ? '预设，无需确认' : entry.stepup === 'offline' ? '离线连接码' : '这台电脑上确认'}</dd>
+              <dt>{COPY.confirmation}</dt>
+              <dd>{entry.stepup === 'preset' ? COPY.preset : entry.stepup === 'offline' ? COPY.offlineCode : COPY.confirmedHere}</dd>
             </>
           )}
           {entry.fields.map(field => (
             <FieldRow key={field.name} name={field.name} value={field.value} />
           ))}
-          <dt>序号</dt>
+          <dt>{COPY.sequence}</dt>
           <dd>{entry.seq}</dd>
         </dl>
       </details>
@@ -444,7 +607,7 @@ function FieldRow({ name, value }: { name: string; value: string | number | bool
       <dt>
         <code>{name}</code>
       </dt>
-      <dd>{typeof value === 'boolean' ? (value ? '是' : '否') : String(value)}</dd>
+      <dd>{typeof value === 'boolean' ? (value ? COPY.yes : COPY.no) : String(value)}</dd>
     </>
   )
 }

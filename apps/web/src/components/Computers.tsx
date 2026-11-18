@@ -33,6 +33,56 @@ import type { ConnectionStatus } from '../core/useHarness.ts'
 import { relativeTime } from '../format.ts'
 import { listedDevices } from '../settings/devices/deviceRows.ts'
 import { Menu, rowOf } from './overlays.tsx'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    computer: '电脑',
+    thisMac: '这台 Mac',
+    otherComputers: '其他电脑',
+    connect: '连接新设备',
+    settings: '设置',
+    oldBuild: '版本较旧',
+    actions: (value1: string | number) => `${value1} 的操作`,
+    open: '打开',
+    devices: '设备',
+    deviceCount: (count: number) => `${formatNumber(count)} 台`,
+    untitled: '未命名会话',
+    offlineTitle: (value1: string | number) => `${value1} · 不是实时`,
+    offlineItems: (count: number) => `离线前 ${formatNumber(count)} 项`,
+    offlineState: (value1: string | number) => `，${value1}，不是实时`,
+    waiting: '等你处理',
+    running: '运行中',
+    failed: '失败',
+    notLive: '不是实时',
+    offlineLabel: '，不是实时',
+    noSessions: '没有会话',
+    recent: (count: number, value2: string) => `最近 ${formatNumber(count)} 个 · 在 ${value2} 上查看全部`,
+  },
+  {
+    computer: 'Computer',
+    thisMac: 'This Mac',
+    otherComputers: 'Other computers',
+    connect: 'Connect a device',
+    settings: 'Settings',
+    oldBuild: 'Outdated version',
+    actions: (value1: string | number) => `Actions for ${value1}`,
+    open: 'Open',
+    devices: 'Devices',
+    deviceCount: (count: number) => `${plural(count, { one: '{n} device', other: '{n} devices' })}`,
+    untitled: 'Untitled session',
+    offlineTitle: (value1: string | number) => `${value1} · not live`,
+    offlineItems: (count: number) => `${plural(count, { one: '{n} item', other: '{n} items' })} before going offline`,
+    offlineState: (value1: string | number) => `, ${value1}, not live`,
+    waiting: 'Needs you',
+    running: 'Running',
+    failed: 'Failed',
+    notLive: 'Not live',
+    offlineLabel: ', not live',
+    noSessions: 'No sessions',
+    recent: (count: number, value2: string) => `${formatNumber(count)} recent · See all on ${value2}`,
+  },
+)
 
 /** Where the computer popover's rows lead; each is absent where this device cannot go there. */
 export interface ComputerLinks {
@@ -84,7 +134,7 @@ export function ComputerChip({
   const how = [transport, address].filter(Boolean).join(' · ')
   return (
     <Popover
-      label="电脑"
+      label={COPY.computer}
       title={name}
       size="sm"
       side={side}
@@ -93,7 +143,7 @@ export function ComputerChip({
       trigger={props =>
         trigger(props, {
           name,
-          title: current?.local ? '这台 Mac' : name,
+          title: current?.local ? COPY.thisMac : name,
           state: current && current.state !== 'online' ? computerState(current).text : undefined,
           several: (view?.computers.length ?? 0) > 1,
         })
@@ -110,7 +160,7 @@ export function ComputerChip({
           {how && <span className="computer-pop-how">{how}</span>}
         </div>
         {others.length > 0 && computers && (
-          <div className="computer-pop-group" role="group" aria-label="其他电脑">
+          <div className="computer-pop-group" role="group" aria-label={COPY.otherComputers}>
             {others.map(row => (
               <OtherComputer key={row.hostId} row={row} onOpen={() => void computers.open(row.hostId)} onManage={links.settings} />
             ))}
@@ -121,12 +171,12 @@ export function ComputerChip({
             {links.devices && <DevicesRow open={open} links={links.devices} snapshot={snapshot} />}
             {links.connect && (
               <MenuFooterLink icon={PlusGlyph} chevron={false} closes onClick={links.connect}>
-                连接新设备
+                {COPY.connect}
               </MenuFooterLink>
             )}
             {links.settings && (
               <MenuFooterLink icon={SettingsGlyph} closes onClick={links.settings}>
-                设置
+                {COPY.settings}
               </MenuFooterLink>
             )}
           </div>
@@ -168,19 +218,21 @@ function OtherComputer({ row, onOpen, onManage }: { row: OtherComputerRow; onOpe
           <span className="computer-pop-other-state">{row.text}</span>
         </span>
         <span className="computer-pop-other-meta">
-          {row.older && <span className="computer-older">版本较旧</span>}
+          {row.older && <span className="computer-older">{COPY.oldBuild}</span>}
           {row.count > 0 && <span className="computer-count">{row.count}</span>}
         </span>
       </button>
       <Menu
-        label={`${row.name} 的操作`}
+        label={COPY.actions(row.name)}
         context={rowOf('.computer-pop-row')}
         sections={[
           {
             id: 'computer',
             items: [
-              { id: 'open', label: '打开', leading: <Icon icon={LaptopGlyph} size={14} />, onSelect: onOpen },
-              ...(onManage ? [{ id: 'manage', label: '设置', leading: <Icon icon={SettingsGlyph} size={14} />, onSelect: onManage }] : []),
+              { id: 'open', label: COPY.open, leading: <Icon icon={LaptopGlyph} size={14} />, onSelect: onOpen },
+              ...(onManage
+                ? [{ id: 'manage', label: COPY.settings, leading: <Icon icon={SettingsGlyph} size={14} />, onSelect: onManage }]
+                : []),
             ],
           },
         ]}
@@ -208,8 +260,8 @@ function DevicesRow({ open, links, snapshot }: { open: boolean; links: NonNullab
   return (
     <MenuFooterLink icon={DevicesGlyph} closes onClick={links.open}>
       <span className="computer-pop-devices">
-        设备
-        {count !== null && <span className="computer-pop-count">{`${count} 台`}</span>}
+        {COPY.devices}
+        {count !== null && <span className="computer-pop-count">{COPY.deviceCount(count)}</span>}
       </span>
     </MenuFooterLink>
   )
@@ -241,12 +293,12 @@ export function OtherComputersWaiting({ others, now }: { others: readonly OtherW
   if (others.length === 0 || !api) return null
   return (
     <div className="other-computers" data-other-computers="">
-      <p className="other-computers-label">其他电脑</p>
+      <p className="other-computers-label">{COPY.otherComputers}</p>
       <ul>
         {others.map(({ computer, items, live }) =>
           live ? (
             items.map(item => {
-              const title = item.title || '未命名会话'
+              const title = item.title || COPY.untitled
               const words = ATTENTION_WORDS[item.kind]
               return (
                 <li key={`${computer.hostId}:${item.taskId}`} className="session-entry">
@@ -278,17 +330,17 @@ export function OtherComputersWaiting({ others, now }: { others: readonly OtherW
                 <button
                   type="button"
                   className="session-item-main"
-                  title={`${computer.name} · 不是实时`}
+                  title={COPY.offlineTitle(computer.name)}
                   onClick={() => void api.open(computer.hostId)}>
                   <span className="session-line">
                     <span className="session-title">{computer.name}</span>
-                    <span className="other-computers-stale">{`离线前 ${items.length} 项`}</span>
+                    <span className="other-computers-stale">{COPY.offlineItems(items.length)}</span>
                   </span>
                   <span className="session-meta" aria-hidden="true">
                     <LaptopGlyph className="session-computer-icon" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
                     <span className="session-meta-rest">{computerState(computer).text}</span>
                   </span>
-                  <span className="sr-only">{`，${computerState(computer).text}，不是实时`}</span>
+                  <span className="sr-only">{COPY.offlineState(computerState(computer).text)}</span>
                 </button>
               </div>
             </li>
@@ -300,9 +352,15 @@ export function OtherComputersWaiting({ others, now }: { others: readonly OtherW
 }
 
 const SESSION_WORDS: Record<ComputerSession['status'], string | undefined> = {
-  waiting: '等你处理',
-  running: '运行中',
-  failed: '失败',
+  get waiting() {
+    return COPY.waiting
+  },
+  get running() {
+    return COPY.running
+  },
+  get failed() {
+    return COPY.failed
+  },
   idle: undefined,
 }
 
@@ -354,7 +412,7 @@ export function OtherComputersSessions({
             />
             {!shut && (
               <div className="other-computer-body">
-                {!list.live && list.count > 0 && <p className="other-computer-note">不是实时</p>}
+                {!list.live && list.count > 0 && <p className="other-computer-note">{COPY.notLive}</p>}
                 {list.projects.map(project => (
                   <div key={project.id ?? 'none'} className="other-computer-project" data-other-project={project.id ?? ''}>
                     <p className="other-computer-project-name" title={project.name}>
@@ -362,7 +420,7 @@ export function OtherComputersSessions({
                     </p>
                     <ul>
                       {project.sessions.map(session => {
-                        const title = session.title || '未命名会话'
+                        const title = session.title || COPY.untitled
                         const word = list.live ? SESSION_WORDS[session.status] : undefined
                         return (
                           <li key={session.taskId} className="session-entry">
@@ -383,7 +441,7 @@ export function OtherComputersSessions({
                                     <span className="session-status ui-status-time">{relativeTime(session.updatedAt, new Date(now))}</span>
                                   )}
                                 </span>
-                                <span className="sr-only">{`，${list.name}，${project.name}${word ? `，${word}` : ''}${list.live ? '' : '，不是实时'}`}</span>
+                                <span className="sr-only">{`，${list.name}，${project.name}${word ? `，${word}` : ''}${list.live ? '' : COPY.offlineLabel}`}</span>
                               </button>
                             </div>
                           </li>
@@ -392,10 +450,10 @@ export function OtherComputersSessions({
                     </ul>
                   </div>
                 ))}
-                {list.count === 0 && <p className="other-computer-note">{list.live ? '没有会话' : list.stateText}</p>}
+                {list.count === 0 && <p className="other-computer-note">{list.live ? COPY.noSessions : list.stateText}</p>}
                 {list.capped && (
                   <button type="button" className="other-computer-more" data-other-more="" onClick={() => void api.open(list.hostId)}>
-                    {`最近 ${list.count} 个 · 在 ${list.name} 上查看全部`}
+                    {COPY.recent(list.count, list.name)}
                   </button>
                 )}
               </div>

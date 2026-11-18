@@ -1,6 +1,6 @@
 import { looksSecret, splitChangeNote, type AppSnapshot, type TaskDetail } from '@latch/protocol'
 import { errorMessage, inlineError, isUncertain, readPending, writePending, type PendingSubmission } from './api.ts'
-import { DEVICE_OFFLINE } from './hostState.ts'
+import { CONNECTION_COPY } from './hostState.ts'
 
 /** Client presentation only. The Host's messages and receipt remain the authority. */
 export interface SendingMessage {
@@ -49,7 +49,7 @@ export function deliveredSubmission(pending: PendingSubmission | null, detail: T
 export function unconfirmedReason(cause: unknown, online = typeof navigator === 'undefined' || navigator.onLine !== false): string | null {
   if (!isUncertain(cause)) return null
   // No answer while this device has no network says nothing about the computer.
-  return online ? inlineError(cause) || errorMessage(cause) : DEVICE_OFFLINE
+  return online ? inlineError(cause) || errorMessage(cause) : CONNECTION_COPY.offline
 }
 
 /**

@@ -7,7 +7,63 @@ import { SheetGrid, type SheetView } from './SheetGrid.tsx'
 import { openDocumentLink } from './openLink.ts'
 import { DOCUMENT_PREVIEW_ERRORS } from '../core/securityCopy.ts'
 import { useViewerMenu, useViewerQuote, useViewerSource } from './viewerActions.tsx'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    readFailed: '文件暂时无法读取，请重新打开后重试。',
+    noQuote: '这一页没有可引用的文字。',
+    trackedChanges: '显示修订',
+    fitWidth: '适应宽度',
+    reading: '正在读取文档…',
+    pageCount: (index: number, count: number) => `${formatNumber(index)} / ${formatNumber(count)} 页`,
+    delimiters: { '': '自动识别', ',': '逗号', '\t': 'Tab', ';': '分号', '|': '竖线' },
+    updating: '正在更新文档…',
+    retained: ' 之前读到的内容仍保留在这里。',
+    truncated: '文件较大，部分行、列或单元格内容未显示。',
+    sheets: '工作表',
+    sheetName: (index: number) => `工作表 ${formatNumber(index)}`,
+    table: '表格',
+    invalidTable: '无法显示这个表格。',
+    fileUnavailable: '文件暂时无法读取。',
+    delimiter: (value1: string) => `分隔符：${value1}`,
+    tableTruncated: '表格较大，部分行、列或文字未显示。',
+    replaced: '部分字符无法识别，已用替代字符显示。',
+    tableUpdating: '正在更新表格…',
+    tableReading: '正在读取表格…',
+    notSupported: '这个文件不能在应用内预览。',
+    pdfLoading: '正在加载 PDF…',
+    unavailable: '暂时无法预览这个文件。',
+  },
+  {
+    readFailed: 'Could not read the file right now. Reopen it and try again.',
+    noQuote: 'There is no text to quote on this page.',
+    trackedChanges: 'Show tracked changes',
+    fitWidth: 'Fit width',
+    reading: 'Reading document…',
+    pageCount: (index: number, count: number) => `${formatNumber(index)} / ${plural(count, { one: '{n} page', other: '{n} pages' })}`,
+    delimiters: { '': 'Detect', ',': 'Comma', '\t': 'Tab', ';': 'Semicolon', '|': 'Pipe' },
+    updating: 'Updating document…',
+    retained: ' The previously read content stays here.',
+    truncated: 'Large file. Some rows, columns or cells are not shown.',
+    sheets: 'Sheets',
+    sheetName: (index: number) => `Sheet ${formatNumber(index)}`,
+    table: 'Table',
+    invalidTable: 'Could not show this table.',
+    fileUnavailable: 'Could not read the file right now.',
+    delimiter: (value1: string) => `Delimiter – ${value1}`,
+    tableTruncated: 'Large table. Some rows, columns or text are not shown.',
+    replaced: 'Some characters could not be read and were replaced.',
+    tableUpdating: 'Updating table…',
+    tableReading: 'Reading table…',
+    notSupported: 'This file cannot be previewed in the app.',
+    pdfLoading: 'Loading PDF…',
+    unavailable: 'This file cannot be previewed right now.',
+  },
+)
+
 const PdfPreview = lazy(() => import('./PdfPreview.tsx'))
+const sheetLabel = (sheet: SheetInfo) => (sheet.unnamed ? COPY.sheetName(sheet.id + 1) : sheet.name)
 type Pending = { resolve: (rows: GridCell[][]) => void; reject: () => void; timer: ReturnType<typeof setTimeout> }
 /** `system` pins no attribute on the page, so the frame reads what the media query decided. */
 const documentTheme = () =>
@@ -15,15 +71,16 @@ const documentTheme = () =>
 function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: DocumentPreviewProps) {
   const [data, setData] = useState<ArrayBuffer>(),
     [loadedKey, setLoadedKey] = useState(''),
-    [error, setError] = useState(''),
+    [problem, setProblem] = useState<keyof typeof DOCUMENT_PREVIEW_ERRORS | 'read-failed'>(),
     [sheets, setSheets] = useState<SheetInfo[]>([]),
     [selected, setSelected] = useState(0),
     [page, setPage] = useState({ index: 0, count: 0 }),
     [fit, setFit] = useState(true),
     [truncated, setTruncated] = useState(false),
     [changes, setChanges] = useState(false),
-    [quoteHint, setQuoteHint] = useState('')
+    [emptyQuote, setEmptyQuote] = useState(false)
   const [renderedKey, setRenderedKey] = useState('')
+  const error = problem === 'read-failed' ? COPY.readFailed : problem && DOCUMENT_PREVIEW_ERRORS[problem]
   const quoteCallback = useRef(onQuote),
     quoteRequest = useRef<{ id: string; version: string; source: 'selection' | 'page' } | undefined>(undefined)
   quoteCallback.current = onQuote
@@ -45,7 +102,7 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
   useEffect(() => {
     const controller = new AbortController()
     quoteRequest.current = undefined
-    setError('')
+    setProblem(undefined)
     void read(undefined, undefined, controller.signal).then(
       value => {
         if (!controller.signal.aborted) {
@@ -56,7 +113,7 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
         }
       },
       () => {
-        if (!controller.signal.aborted) setError('文件暂时无法读取，请重新打开后重试。')
+        if (!controller.signal.aborted) setProblem('read-failed')
       },
     )
     return () => {
@@ -110,11 +167,7 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
     if (!origin || origin.versionKey !== displayedKey.current || origin.data !== shown.current.data) return
     if (!isFrameEvent(value)) return
     if (value.type === 'error') {
-      setError(
-        value.code === 'zip-refused' || value.code === 'document-too-complex'
-          ? DOCUMENT_PREVIEW_ERRORS[value.code]
-          : DOCUMENT_PREVIEW_ERRORS.fallback,
-      )
+      setProblem(value.code === 'zip-refused' || value.code === 'document-too-complex' ? value.code : 'fallback')
       const previous = prior.current
       prior.current = undefined
       if (previous && previous.key !== displayedKey.current) {
@@ -142,9 +195,9 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
       // With nothing selected, the same button quotes the page in view.
       if (!value.text.trim() && asked === 'selection') quoteFrame.current('page')
       else if (value.text.trim()) {
-        setQuoteHint('')
+        setEmptyQuote(false)
         quoteCallback.current?.({ text: value.text, ...(value.page === undefined ? {} : { page: value.page }) })
-      } else setQuoteHint('这一页没有可引用的文字。')
+      } else setEmptyQuote(true)
     }
     if (value.type === 'page') {
       setPage({ index: value.index, count: value.count })
@@ -175,7 +228,7 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
   const requestQuote = (source: 'selection' | 'page') => {
     if (loadedKey !== loadKey || renderedKey !== loadedKey || !channel.current || !onQuote) return
     const id = crypto.randomUUID().replaceAll('-', '')
-    setQuoteHint('')
+    setEmptyQuote(false)
     quoteRequest.current = { id, version: loadKey, source }
     channel.current({ type: 'quote', id, source })
   }
@@ -187,7 +240,7 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
       ? [
           {
             id: 'changes',
-            label: '显示修订',
+            label: COPY.trackedChanges,
             checked: changes,
             onSelect: () => {
               setChanges(!changes)
@@ -199,7 +252,7 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
       ? [
           {
             id: 'fit',
-            label: '适应宽度',
+            label: COPY.fitWidth,
             checked: fit,
             onSelect: () => {
               view.current.fit = !fit
@@ -214,7 +267,7 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
   useViewerQuote(onQuote && file.kind !== 'xlsx' ? loadedKey === loadKey && renderedKey === loadedKey : undefined, () => {
     requestQuote('selection')
   })
-  if (!data) return error ? <InlineNotice tone="error">{error}</InlineNotice> : <p role="status">正在读取文档…</p>
+  if (!data) return error ? <InlineNotice tone="error">{error}</InlineNotice> : <p role="status">{COPY.reading}</p>
   const sheet = sheets.find(item => item.id === selected)
   return (
     <div
@@ -236,21 +289,26 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
       }}>
       {paged && (
         <span className="document-page-count" data-kind={file.kind} role="status">
-          {page.index + 1} / {page.count} 页
+          {COPY.pageCount(page.index + 1, page.count)}
         </span>
       )}
       {loadedKey !== loadKey && !error && (
         <span className="document-preview-caption" role="status">
-          正在更新文档…
+          {COPY.updating}
         </span>
       )}
-      {error && <InlineNotice tone="warn">{error} 之前读到的内容仍保留在这里。</InlineNotice>}
-      {quoteHint && (
+      {error && (
+        <InlineNotice tone="warn">
+          {error}
+          {COPY.retained}
+        </InlineNotice>
+      )}
+      {emptyQuote && (
         <span className="document-preview-caption" role="status">
-          {quoteHint}
+          {COPY.noQuote}
         </span>
       )}
-      {truncated && <InlineNotice>文件较大，部分行、列或单元格内容未显示。</InlineNotice>}
+      {truncated && <InlineNotice>{COPY.truncated}</InlineNotice>}
       <div className={file.kind === 'xlsx' ? 'document-parser-frame' : 'document-frame'}>
         {renderFrame({
           kind: file.kind as 'pptx' | 'docx' | 'xlsx',
@@ -267,6 +325,7 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
             <SheetGrid
               key={`${loadedKey}:${selected}`}
               sheet={sheet}
+              label={sheetLabel(sheet)}
               load={load}
               view={sheetViews.current[selected]}
               onView={view => {
@@ -275,12 +334,12 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
               onQuote={loadedKey === loadKey ? onQuote : undefined}
             />
           )}
-          <div className="sheet-tabs" role="tablist" aria-label="工作表">
+          <div className="sheet-tabs" role="tablist" aria-label={COPY.sheets}>
             {sheets
               .filter(item => !item.hidden)
               .map(item => (
                 <button type="button" role="tab" key={item.id} aria-selected={item.id === selected} onClick={() => setSelected(item.id)}>
-                  {item.name}
+                  {sheetLabel(item)}
                 </button>
               ))}
           </div>
@@ -289,16 +348,10 @@ function OfficePreview({ file, versionKey, read, renderFrame, onQuote }: Documen
     </div>
   )
 }
-const DELIMITERS: ReadonlyArray<readonly [string, string]> = [
-  ['', '自动识别'],
-  [',', '逗号'],
-  ['\t', 'Tab'],
-  [';', '分号'],
-  ['|', '竖线'],
-]
+const DELIMITERS = ['', ',', '\t', ';', '|'] as const
 function CsvPreview({ read, versionKey, onQuote }: DocumentPreviewProps) {
   const [info, setInfo] = useState<SheetInfo>(),
-    [error, setError] = useState(''),
+    [error, setError] = useState<'invalidTable' | 'fileUnavailable'>(),
     [truncated, setTruncated] = useState(false),
     [replacement, setReplacement] = useState(false),
     [delimiter, setDelimiter] = useState(''),
@@ -327,7 +380,7 @@ function CsvPreview({ read, versionKey, onQuote }: DocumentPreviewProps) {
   useEffect(() => {
     const controller = new AbortController(),
       instance = new Worker(trustedScriptUrl(csvWorkerUrl), { type: 'module' })
-    setError('')
+    setError(undefined)
     instance.onmessage = event => {
       if (controller.signal.aborted && instance !== worker.current) return
       const value = event.data as Record<string, unknown>
@@ -354,10 +407,10 @@ function CsvPreview({ read, versionKey, onQuote }: DocumentPreviewProps) {
           setTruncated(true)
           setInfo(previous => (previous ? { ...previous, rows: Math.min(previous.rows, value.start + value.rows.length) } : previous))
         }
-      } else if (value?.type === 'error') setError('无法显示这个表格。')
+      } else if (value?.type === 'error') setError('invalidTable')
     }
     instance.onerror = () => {
-      if (!controller.signal.aborted || worker.current === instance) setError('无法显示这个表格。')
+      if (!controller.signal.aborted || worker.current === instance) setError('invalidTable')
     }
     void read(undefined, undefined, controller.signal).then(
       bytes => {
@@ -368,7 +421,7 @@ function CsvPreview({ read, versionKey, onQuote }: DocumentPreviewProps) {
         instance.postMessage({ type: 'init', data: bytes, ...(delimiter ? { delimiter } : {}) }, [bytes])
       },
       () => {
-        if (!controller.signal.aborted) setError('文件暂时无法读取。')
+        if (!controller.signal.aborted) setError('fileUnavailable')
       },
     )
     return () => {
@@ -416,9 +469,9 @@ function CsvPreview({ read, versionKey, onQuote }: DocumentPreviewProps) {
     setSource(!source)
   })
   useViewerMenu(
-    DELIMITERS.map(([value, label]) => ({
-      id: `delimiter-${label}`,
-      label: `分隔符：${label}`,
+    DELIMITERS.map((value, index) => ({
+      id: `delimiter-${index}`,
+      label: COPY.delimiter(COPY.delimiters[value]),
       checked: delimiter === value,
       onSelect: () => {
         setDelimiter(value)
@@ -427,17 +480,17 @@ function CsvPreview({ read, versionKey, onQuote }: DocumentPreviewProps) {
   )
   return (
     <div className="document-preview">
-      {truncated && <InlineNotice>表格较大，部分行、列或文字未显示。</InlineNotice>}
-      {replacement && <InlineNotice>部分字符无法识别，已用替代字符显示。</InlineNotice>}
+      {truncated && <InlineNotice>{COPY.tableTruncated}</InlineNotice>}
+      {replacement && <InlineNotice>{COPY.replaced}</InlineNotice>}
       {error && (
         <InlineNotice tone={info ? 'warn' : 'error'}>
-          {error}
-          {info ? ' 之前读到的内容仍保留在这里。' : ''}
+          {COPY[error]}
+          {info ? COPY.retained : ''}
         </InlineNotice>
       )}
       {loadedVersion !== gridVersion && info && !error && (
         <span role="status" className="document-preview-caption">
-          正在更新表格…
+          {COPY.tableUpdating}
         </span>
       )}
       {source ? (
@@ -446,6 +499,7 @@ function CsvPreview({ read, versionKey, onQuote }: DocumentPreviewProps) {
         <SheetGrid
           key={loadedVersion}
           sheet={info}
+          label={COPY.table}
           load={load}
           view={sheetView.current}
           onView={value => {
@@ -454,22 +508,22 @@ function CsvPreview({ read, versionKey, onQuote }: DocumentPreviewProps) {
           onQuote={loadedVersion === gridVersion ? onQuote : undefined}
         />
       ) : (
-        <p role="status">正在读取表格…</p>
+        <p role="status">{COPY.tableReading}</p>
       )}
     </div>
   )
 }
 export function DocumentPreview(props: DocumentPreviewProps) {
   const identity = `${props.file.root}\n${props.file.path}\n${props.file.attachmentId ?? ''}`
-  if (props.file.secret || !props.file.actions.preview) return <InlineNotice>这个文件不能在应用内预览。</InlineNotice>
+  if (props.file.secret || !props.file.actions.preview) return <InlineNotice>{COPY.notSupported}</InlineNotice>
   if (props.file.kind === 'pdf')
     return (
-      <Suspense fallback={<p role="status">正在加载 PDF…</p>}>
+      <Suspense fallback={<p role="status">{COPY.pdfLoading}</p>}>
         <PdfPreview key={identity} {...props} />
       </Suspense>
     )
   if (props.file.kind === 'csv') return <CsvPreview key={identity} {...props} />
   if (['pptx', 'docx', 'xlsx'].includes(props.file.kind) && props.file.size <= 50 * 1024 * 1024)
     return <OfficePreview key={identity} {...props} />
-  return <InlineNotice>暂时无法预览这个文件。</InlineNotice>
+  return <InlineNotice>{COPY.unavailable}</InlineNotice>
 }

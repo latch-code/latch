@@ -2,6 +2,20 @@ import { useState } from 'react'
 import { Button, StatusWord } from '@latch/ui'
 import type { CustomizationActions } from '../core/customization.ts'
 import { CustomizationRecovery } from './CustomizationRecovery.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    restoreOn: (computer: string) => `在 ${computer} 上恢复`,
+    appearance: '默认外观',
+    reset: '恢复默认',
+  },
+  {
+    restoreOn: (computer: string) => `Restore on ${computer}`,
+    appearance: 'Default appearance',
+    reset: 'Restore defaults',
+  },
+)
 
 /** The row stays above the page and shares its recovery request with appearance settings. */
 export function SafeModeBanner({
@@ -25,8 +39,8 @@ export function SafeModeBanner({
     if (outcome.kind === 'conflict' || outcome.kind === 'refused') setError(outcome.text)
   }
   return (
-    <div className="safe-banner" data-lock="" role="status" aria-label="默认外观">
-      <span className="safe-banner-words">默认外观</span>
+    <div className="safe-banner" data-lock="" role="status" aria-label={COPY.appearance}>
+      <span className="safe-banner-words">{COPY.appearance}</span>
       {!writer.pending && error && <StatusWord tone="failed">{error}</StatusWord>}
       {writer.pending ? (
         <CustomizationRecovery writer={writer} admin={admin} onDone={onChanged} size="xs" />
@@ -37,10 +51,10 @@ export function SafeModeBanner({
           onClick={() => {
             void reset(baseRevision)
           }}>
-          恢复默认
+          {COPY.reset}
         </Button>
       ) : (
-        <span className="safe-banner-where">在 {computer} 上恢复</span>
+        <span className="safe-banner-where">{COPY.restoreOn(computer)}</span>
       )}
     </div>
   )

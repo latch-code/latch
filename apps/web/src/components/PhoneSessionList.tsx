@@ -5,6 +5,7 @@ import { memo, useMemo, useRef, useState, type PointerEvent, type ReactNode, typ
 import { FolderGit2 } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type TaskSummary } from '@latch/protocol'
 import { deviceAccess } from '../core/permissions.ts'
+import { useLocale } from '../core/i18n.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { currentShell } from '../core/shell.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
@@ -28,6 +29,7 @@ import { MarkTile } from './BrandTile.tsx'
 import { ActionSheet, type MenuSection } from './overlays.tsx'
 import { SessionStatus, statusLabel, useLastConfirmed } from './SessionStatus.tsx'
 import { taskHarness, type TaskHarness } from './Sidebar.tsx'
+import { SESSION_LIST_COPY as COPY } from './sessionList.copy.ts'
 import {
   Button,
   ICON_STROKE,
@@ -129,11 +131,12 @@ const PhoneRow = memo(function PhoneRow({
   onSelect: (id: string) => void
   onHold: (task: TaskSummary) => void
 }) {
-  const title = task.title || '未命名会话'
+  useLocale()
+  const title = task.title || COPY.untitled
   const time = relativeTime(task.updatedAt, new Date(now))
   const status = rowStatus(task, { unread, stopping, frozen: frozen !== null })
   const engine = harness.label
-  const meta = [rowMeta(task, status, inWaitingShelf ? (project ?? '无项目') : undefined), from && `来自 ${from}`]
+  const meta = [rowMeta(task, status, inWaitingShelf ? (project ?? COPY.noProject) : undefined), from && COPY.fromPage(from)]
     .filter(Boolean)
     .join(' · ')
   // While the connection is down the row says less, not that what it last knew stopped mattering.
@@ -144,6 +147,10 @@ const PhoneRow = memo(function PhoneRow({
     || showsUnread(status)
     || (status.kind === 'frozen' && waitsOnYou(task))
   const said = statusLabel(status, task.live)
+  const details = [engine, said, handoffWaits && COPY.returnPending, time]
+    .filter(Boolean)
+    .map(word => COPY.detailSeparator + word)
+    .join('')
   const hold = useHold(() => {
     onHold(task)
   })
@@ -163,14 +170,16 @@ const PhoneRow = memo(function PhoneRow({
           onHold(task)
         }}>
         <span className="phone-row-line">
-          {task.pinned && <PinGlyph className="session-pin" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label="已置顶" />}
+          {task.pinned && (
+            <PinGlyph className="session-pin" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label={COPY.pinned} />
+          )}
           {task.worktree && (
             <FolderGit2
               className="session-worktree"
               size={12}
               nonScalingStroke
               strokeWidth={ICON_STROKE[12]}
-              aria-label={`${task.worktree.removed ? '工作树已移除' : '工作树'} · ${escapeSecurityText(task.branch ?? task.worktree.branch)}`}
+              aria-label={`${task.worktree.removed ? COPY.worktreeRemoved : COPY.worktree} · ${escapeSecurityText(task.branch ?? task.worktree.branch)}`}
             />
           )}
           <span className="phone-row-title">{title}</span>
@@ -188,10 +197,10 @@ const PhoneRow = memo(function PhoneRow({
             <MarkTile mark={harness.mark} size={16} bare />
           </span>
           <span className="phone-row-meta-text">{[engine, meta].filter(Boolean).join(' · ')}</span>
-          {handoffWaits && <span className="session-handoff">待交回</span>}
+          {handoffWaits && <span className="session-handoff">{COPY.returnPending}</span>}
           {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
         </span>
-        <span className="sr-only">{`${engine ? `，${engine}` : ''}${said ? `，${said}` : ''}${handoffWaits ? '，待交回' : ''}${time ? `，${time}` : ''}`}</span>
+        <span className="sr-only">{details}</span>
       </button>
       {review && onReview && !leaving && (
         <div className="phone-row-review">
@@ -270,7 +279,7 @@ function PhoneGroup({
             <IconButton
               className="phone-group-new"
               size="xs"
-              label={`在 ${group.label} 中新建会话`}
+              label={COPY.newInProject(group.label)}
               icon={PlusGlyph}
               onClick={() => {
                 onNewIn(workspaceId)
@@ -379,6 +388,7 @@ export function PhoneSessionList({
   /** Code's tab where the Host has 我的 Agent: its own sessions, though a search finds delegations too. */
   space?: Space | undefined
 }) {
+  const locale = useLocale()
   const list = useRef<HTMLElement>(null)
   const [held, setHeld] = useState<TaskSummary | null>(null)
   const empty = inSpace(snapshot.tasks, space).length === 0
@@ -403,7 +413,7 @@ export function PhoneSessionList({
   const signature = groups.map(group => `${group.id}:${group.tasks.map(task => task.id).join(',')}`).join('|')
   const remeasure = useListMotion(list, context, signature)
   const heldTask = held ? snapshot.tasks.find(task => task.id === held.id) : undefined
-  const heldMenu = useMemo(() => (heldTask ? sessionMenu(heldTask) : null), [heldTask, sessionMenu])
+  const heldMenu = useMemo(() => (heldTask ? sessionMenu(heldTask) : null), [heldTask, sessionMenu, locale])
   const remote = !deviceAccess(snapshot, currentShell()).local
   return (
     <div className="phone-list-page">
@@ -415,15 +425,15 @@ export function PhoneSessionList({
           </p>
         ))}
       <header className="phone-list-head">
-        <h1>会话</h1>
-        <IconButton size="lg" label="新建会话" icon={NewSessionGlyph} onClick={onNew} />
+        <h1>{COPY.sessions}</h1>
+        <IconButton size="lg" label={COPY.create} icon={NewSessionGlyph} onClick={onNew} />
       </header>
       <div className="phone-search" data-searching={searching ? '' : undefined}>
         <SearchField
           ref={searchRef}
           className="phone-search-field"
-          label="搜索会话"
-          placeholder="搜索"
+          label={COPY.searchSessions}
+          placeholder={COPY.search}
           value={search}
           onValueChange={onSearch}
           onFocus={() => {
@@ -432,7 +442,7 @@ export function PhoneSessionList({
         />
         {searching && (
           <Button variant="ghost" onClick={closeSearch}>
-            取消
+            {COPY.cancel}
           </Button>
         )}
       </div>
@@ -445,22 +455,22 @@ export function PhoneSessionList({
               onFilter('all')
             }}>
             <ChevronLeftGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-            <span>已归档</span>
+            <span>{COPY.archived}</span>
             <span className="phone-archived-count">{archivedCount}</span>
           </button>
         )}
         {archiveBatch}
         {searchResults}
         {banners}
-        <nav ref={list} className="phone-sessions" aria-label="会话列表" data-session-filter={filter}>
+        <nav ref={list} className="phone-sessions" aria-label={COPY.navigation} data-session-filter={filter}>
           {groups.length === 0 ? (
             <div className="phone-empty">
-              <p>{search ? '没有匹配的会话' : empty ? '还没有会话' : archived ? '没有已归档的会话' : '暂无会话'}</p>
+              <p>{search ? COPY.noMatches : empty ? COPY.empty : archived ? COPY.noArchived : COPY.noSessions}</p>
               {empty && !search && (
                 <>
-                  <span>会话会保存在这里</span>
+                  <span>{COPY.savedHere}</span>
                   <Button size="xs" onClick={onNew}>
-                    新建会话
+                    {COPY.create}
                   </Button>
                 </>
               )}
@@ -494,19 +504,19 @@ export function PhoneSessionList({
           <button
             type="button"
             className="phone-archived-row"
-            aria-label={`已归档的会话（${archivedCount}）`}
+            aria-label={COPY.archivedCount(archivedCount)}
             onClick={() => {
               onFilter('archived')
             }}>
             <ArchiveGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-            <span>已归档</span>
+            <span>{COPY.archived}</span>
             <span className="phone-archived-count">{archivedCount}</span>
           </button>
         )}
       </div>
       {archiveUndo}
       <ActionSheet
-        label={heldTask ? heldTask.title || '未命名会话' : '会话操作'}
+        label={heldTask ? heldTask.title || COPY.untitled : COPY.actions}
         sections={heldMenu}
         onClose={() => {
           setHeld(null)

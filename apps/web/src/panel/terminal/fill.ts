@@ -1,5 +1,25 @@
 import { escapeSecurityText, type TerminalSummary } from '@latch/protocol'
 import type { TerminalTab } from './model.ts'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    streaming: '还在生成',
+    empty: '没有命令',
+    multiline: '多行命令，请复制',
+    long: '命令过长，请复制',
+    control: '含控制、不可见或改变方向的字符',
+    backslash: '以反斜杠结尾，请复制',
+  },
+  {
+    streaming: 'Still generating',
+    empty: 'No command',
+    multiline: 'Copy this multi-line command',
+    long: 'Copy this long command',
+    control: 'Contains control, invisible or direction-changing characters',
+    backslash: 'Ends with a backslash. Copy it instead.',
+  },
+)
 
 /**
  * 「在终端里打开」: a command typed in at the shell's prompt for the person, who presses Enter. Text a model wrote reaches
@@ -22,13 +42,13 @@ export function fillCommand(text: string): string {
  * Line breaks, tabs, controls, invisible and direction-changing characters all fail the security text check.
  */
 export function fillRefusal(text: string, streaming = false): string | undefined {
-  if (streaming) return '还在生成'
+  if (streaming) return COPY.streaming
   const command = fillCommand(text)
-  if (!command.trim()) return '没有命令'
-  if (/[\r\n\u2028\u2029]/u.test(command)) return '多行命令，请复制'
-  if (command.length > FILL_MAX_CHARS) return '命令过长，请复制'
-  if (escapeSecurityText(command) !== command) return '含控制、不可见或改变方向的字符'
-  if (command.trimEnd().endsWith('\\')) return '以反斜杠结尾，请复制'
+  if (!command.trim()) return COPY.empty
+  if (/[\r\n\u2028\u2029]/u.test(command)) return COPY.multiline
+  if (command.length > FILL_MAX_CHARS) return COPY.long
+  if (escapeSecurityText(command) !== command) return COPY.control
+  if (command.trimEnd().endsWith('\\')) return COPY.backslash
   return undefined
 }
 

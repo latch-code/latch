@@ -3,6 +3,60 @@ import { ArchiveGlyph, CheckGlyph, DownloadGlyph, CopyGlyph, EditGlyph, PinGlyph
 import type { BoardPriority, TaskSummary } from '@latch/protocol'
 import type { MenuSection } from './components/overlays.tsx'
 import { isActive } from './format.ts'
+import { defineCopy } from './core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    high: '高',
+    medium: '中',
+    low: '低',
+    tags: '标签…',
+    priority: '优先级',
+    export: '导出 Markdown',
+    rename: '重命名',
+    unpin: '取消置顶',
+    pin: '置顶',
+    unread: '标为未读',
+    join: '加入待办…',
+    leave: '移出待办',
+    copy: '复制为 Markdown',
+    keep: '保留上下文',
+    clear: '清空上下文',
+    clearBusy: '这一轮结束后才能清空上下文',
+    save: '存为项目…',
+    unarchive: '取消归档',
+    archive: '归档',
+    removeWorktree: '移除工作树…',
+    worktreeBusy: '这一轮结束后才能移除工作树',
+    delete: '删除',
+    deleteBusy: '运行中的会话需要先停止',
+  },
+  {
+    high: 'High',
+    medium: 'Medium',
+    low: 'Low',
+    tags: 'Tags…',
+    priority: 'Priority',
+    export: 'Export Markdown',
+    rename: 'Rename',
+    unpin: 'Unpin',
+    pin: 'Pin',
+    unread: 'Mark as unread',
+    join: 'Add to to-do…',
+    leave: 'Remove from to-do',
+    copy: 'Copy as Markdown',
+    keep: 'Keep context',
+    clear: 'Clear context',
+    clearBusy: 'Clear context after this turn ends',
+    save: 'Save as project…',
+    unarchive: 'Unarchive',
+    archive: 'Archive',
+    removeWorktree: 'Remove worktree…',
+    worktreeBusy: 'Remove the worktree after this turn ends',
+    delete: 'Delete',
+    deleteBusy: 'Stop the session before deleting',
+  },
+)
 
 /** What `PATCH /tasks/:id` changes from a menu; `priority: 'mid'` removes it. */
 export interface SessionPatch {
@@ -20,9 +74,27 @@ export interface BoardMarkActions {
 }
 
 const PRIORITIES: ReadonlyArray<{ value: BoardPriority | undefined; id: string; label: string }> = [
-  { value: 'high', id: 'priority-high', label: '高' },
-  { value: undefined, id: 'priority-mid', label: '中' },
-  { value: 'low', id: 'priority-low', label: '低' },
+  {
+    value: 'high',
+    id: 'priority-high',
+    get label() {
+      return COPY.high
+    },
+  },
+  {
+    value: undefined,
+    id: 'priority-mid',
+    get label() {
+      return COPY.medium
+    },
+  },
+  {
+    value: 'low',
+    id: 'priority-low',
+    get label() {
+      return COPY.low
+    },
+  },
 ]
 
 /**
@@ -31,10 +103,10 @@ const PRIORITIES: ReadonlyArray<{ value: BoardPriority | undefined; id: string; 
  */
 export function boardMarkSections(task: Pick<TaskSummary, 'priority'>, actions: BoardMarkActions): MenuSection[] {
   return [
-    { id: 'tags', items: [{ id: 'tags', label: '标签…', icon: Tag, onSelect: actions.editTags }] },
+    { id: 'tags', items: [{ id: 'tags', label: COPY.tags, icon: Tag, onSelect: actions.editTags }] },
     {
       id: 'priority',
-      label: '优先级',
+      label: COPY.priority,
       items: PRIORITIES.map(({ value, id, label }) => ({
         id,
         label,
@@ -77,15 +149,15 @@ export interface SessionActions {
  * remains there.
  */
 export function sessionMenuSections(task: TaskSummary, actions: SessionActions, manage: boolean): MenuSection[] {
-  const exportItem = { id: 'export', label: '导出 Markdown', icon: DownloadGlyph, onSelect: actions.export }
+  const exportItem = { id: 'export', label: COPY.export, icon: DownloadGlyph, onSelect: actions.export }
   if (!manage) return [{ id: 'manage', items: [exportItem] }]
   return [
     {
       id: 'manage',
       items: [
-        { id: 'rename', label: '重命名', icon: EditGlyph, onSelect: actions.rename },
-        { id: 'pin', label: task.pinned ? '取消置顶' : '置顶', icon: task.pinned ? UnpinGlyph : PinGlyph, onSelect: actions.pin },
-        ...(actions.unread ? [{ id: 'unread', label: '标为未读', icon: Mail, onSelect: actions.unread }] : []),
+        { id: 'rename', label: COPY.rename, icon: EditGlyph, onSelect: actions.rename },
+        { id: 'pin', label: task.pinned ? COPY.unpin : COPY.pin, icon: task.pinned ? UnpinGlyph : PinGlyph, onSelect: actions.pin },
+        ...(actions.unread ? [{ id: 'unread', label: COPY.unread, icon: Mail, onSelect: actions.unread }] : []),
       ],
     },
     ...(actions.marks ? boardMarkSections(task, actions.marks) : []),
@@ -95,15 +167,15 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
             id: 'item',
             items: [
               'join' in actions.item
-                ? { id: 'item-join', label: '加入待办…', icon: ListPlus, onSelect: actions.item.join }
-                : { id: 'item-leave', label: '移出待办', icon: ListMinus, onSelect: actions.item.leave },
+                ? { id: 'item-join', label: COPY.join, icon: ListPlus, onSelect: actions.item.join }
+                : { id: 'item-leave', label: COPY.leave, icon: ListMinus, onSelect: actions.item.leave },
             ],
           },
         ]
       : []),
     {
       id: 'share',
-      items: [...(actions.copy ? [{ id: 'copy', label: '复制为 Markdown', icon: CopyGlyph, onSelect: actions.copy }] : []), exportItem],
+      items: [...(actions.copy ? [{ id: 'copy', label: COPY.copy, icon: CopyGlyph, onSelect: actions.copy }] : []), exportItem],
     },
     ...(actions.saveProject || actions.clear
       ? [
@@ -114,15 +186,15 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
                 ? [
                     {
                       id: 'clear',
-                      label: actions.clearing ? '保留上下文' : '清空上下文',
+                      label: actions.clearing ? COPY.keep : COPY.clear,
                       icon: Eraser,
                       disabled: !actions.clearing && isActive(task.status),
-                      disabledReason: '这一轮结束后才能清空上下文',
+                      disabledReason: COPY.clearBusy,
                       onSelect: actions.clear,
                     },
                   ]
                 : []),
-              ...(actions.saveProject ? [{ id: 'save-project', label: '存为项目…', icon: FolderPlus, onSelect: actions.saveProject }] : []),
+              ...(actions.saveProject ? [{ id: 'save-project', label: COPY.save, icon: FolderPlus, onSelect: actions.saveProject }] : []),
             ],
           },
         ]
@@ -136,7 +208,7 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
                 ? [
                     {
                       id: 'archive',
-                      label: task.archived ? '取消归档' : '归档',
+                      label: task.archived ? COPY.unarchive : COPY.archive,
                       icon: task.archived ? ArchiveRestore : ArchiveGlyph,
                       onSelect: actions.archive,
                     },
@@ -147,10 +219,10 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
                 ? [
                     {
                       id: 'remove-worktree',
-                      label: '移除工作树…',
+                      label: COPY.removeWorktree,
                       icon: FolderX,
                       disabled: isActive(task.status),
-                      disabledReason: '这一轮结束后才能移除工作树',
+                      disabledReason: COPY.worktreeBusy,
                       onSelect: actions.removeWorktree,
                     },
                   ]
@@ -166,11 +238,11 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
             items: [
               {
                 id: 'delete',
-                label: '删除',
+                label: COPY.delete,
                 icon: TrashGlyph,
                 danger: true,
                 disabled: isActive(task.status),
-                disabledReason: '运行中的会话需要先停止',
+                disabledReason: COPY.deleteBusy,
                 onSelect: actions.remove,
               },
             ],

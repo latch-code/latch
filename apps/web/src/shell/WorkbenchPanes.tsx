@@ -1,6 +1,24 @@
 import { IconButton, PanelLeftGlyph, PanelRightGlyph, TerminalGlyph } from '@latch/ui'
 import { currentShell } from '../core/shell.ts'
 import type { ShellState } from './useShellLayout.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    panes: '工作台面板',
+    expandSidebar: '展开侧栏',
+    collapseSidebar: '收起侧栏',
+    terminal: '终端',
+    sidePanel: '侧边面板',
+  },
+  {
+    panes: 'Workbench panes',
+    expandSidebar: 'Expand sidebar',
+    collapseSidebar: 'Collapse sidebar',
+    terminal: 'Terminal',
+    sidePanel: 'Side panel',
+  },
+)
 
 export function workbenchPanes(shell: ShellState) {
   // 看板 has no session list, panel or terminal of its own.
@@ -16,11 +34,11 @@ export function WorkbenchPanes({ shell }: { shell: ShellState }) {
   const desktop = currentShell() !== null
   const panelOpen = (shell.columnOpen && !shell.profileColumn) || (shell.pageMode && shell.infoPage && !shell.route.start)
   return (
-    <div className="workbench-pane-controls" role="group" aria-label="工作台面板">
+    <div className="workbench-pane-controls" role="group" aria-label={COPY.panes}>
       {panes.left && (
         <IconButton
           ref={shell.sidebarToggle}
-          label={shell.sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
+          label={shell.sidebarCollapsed ? COPY.expandSidebar : COPY.collapseSidebar}
           icon={PanelLeftGlyph}
           shortcut={desktop ? '⌘B' : 'Alt B'}
           aria-controls="session-navigation"
@@ -31,7 +49,7 @@ export function WorkbenchPanes({ shell }: { shell: ShellState }) {
       {panes.terminal && (
         <IconButton
           ref={shell.terminalToggle}
-          label="终端"
+          label={COPY.terminal}
           icon={TerminalGlyph}
           shortcut={desktop ? '⌘J' : 'Alt J'}
           pressed={shell.terminalInPanel ? shell.panelVisible && shell.panelSelected === 'terminal' : shell.terminalOpen}
@@ -42,7 +60,7 @@ export function WorkbenchPanes({ shell }: { shell: ShellState }) {
       {panes.right && (
         <IconButton
           ref={shell.panelToggle}
-          label="侧边面板"
+          label={COPY.sidePanel}
           icon={PanelRightGlyph}
           shortcut={desktop ? '⌥⌘B' : 'Alt Shift B'}
           pressed={panelOpen}

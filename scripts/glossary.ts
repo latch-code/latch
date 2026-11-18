@@ -8,6 +8,17 @@ import { parseAst } from 'vite'
  * documentation is for developers and keeps these words. Latin words match case-sensitively, so an identifier-like
  * string such as `host-desktop` is not a hit.
  */
+const BANNED_ENGLISH_PHRASES = [
+  'agent engine',
+  'execution engine',
+  'execution host',
+  'execution computer',
+  'permission ceiling',
+  'data scope',
+  'egress allowlist',
+  'group chat',
+] as const
+
 export const BANNED_WORDS = [
   '引擎',
   '自动化',
@@ -51,6 +62,8 @@ export interface GlossaryAllowance {
   key: string
   /** Only these words are allowed there; all of them when left out. */
   words?: readonly string[]
+  /** When given, require this exact string content. */
+  text?: string
   why: string
 }
 
@@ -120,20 +133,28 @@ export function readableText(path: string, source: string): Array<{ key: string;
 /** 「在新会话中继续」 reads 中 + 继续, not 中继. */
 const contains = (text: string, word: string) => (word === '中继' ? /中继(?!续)/u.test(text) : text.includes(word))
 
-const allows = (allowance: GlossaryAllowance, path: string, key: string, word: string) =>
+const allows = (allowance: GlossaryAllowance, path: string, key: string, word: string, text: string) =>
   allowance.file === path
   && (/[.-]$/u.test(allowance.key) ? key.startsWith(allowance.key) : key === allowance.key)
   && (allowance.words === undefined || allowance.words.includes(word))
+  && (allowance.text === undefined || allowance.text === text)
 
 export function scanGlossary(path: string, source: string, allowances: readonly GlossaryAllowance[] = []): GlossaryFinding[] {
   return readableText(path, source).flatMap(({ key, line, text }) =>
-    BANNED_WORDS.filter(word => contains(text, word) && !allowances.some(allowance => allows(allowance, path, key, word))).map(word => ({
-      path,
-      line,
-      key,
-      word,
-      text,
-    })),
+    [
+      ...BANNED_WORDS.filter(word => contains(text, word)),
+      ...BANNED_ENGLISH_PHRASES.filter(word => {
+        return new RegExp('\\b' + word + '\\b', 'iu').test(text)
+      }),
+    ]
+      .filter(word => !allowances.some(allowance => allows(allowance, path, key, word, text)))
+      .map(word => ({
+        path,
+        line,
+        key,
+        word,
+        text,
+      })),
   )
 }
 
@@ -144,6 +165,13 @@ const CHAT_MODE = 'The chat-only mode keeps its name until it is removed.'
 export const GLOSSARY_SCOPE = { directories: ['apps/web/src'] } as const
 
 export const GLOSSARY_ALLOWANCES: readonly GlossaryAllowance[] = [
+  {
+    file: 'apps/web/src/settings/PluginsSettings.tsx',
+    key: 'BUILTIN_NAMES.browser.description',
+    words: ['本机'],
+    text: '内置 Agent 经这台 Mac 的 Latch 桌面端操作「浏览器」页签：只在本机地址上。',
+    why: 'Exact original description used to distinguish the built-in browser plugin from a third-party description.',
+  },
   {
     file: COPY_FILE,
     key: 'DEVICES_COPY.savedRelay',
@@ -164,7 +192,7 @@ export const GLOSSARY_ALLOWANCES: readonly GlossaryAllowance[] = [
   },
   {
     file: 'apps/web/src/core/computers.ts',
-    key: 'connectionTransport',
+    key: 'COPY.loopback',
     words: ['回环'],
     why: "The status bar names the loopback browser's transport 「回环 HTTP」 (docs/DESIGN.md, the workbench's foot).",
   },
@@ -173,6 +201,26 @@ export const GLOSSARY_ALLOWANCES: readonly GlossaryAllowance[] = [
     key: 'SETTINGS_ROWS.keywords',
     words: ['自动化'],
     why: 'Never drawn: someone searching the other common name still finds 定时任务.',
+  },
+  {
+    file: 'apps/web/src/settings/SettingsPage.tsx',
+    key: 'SEARCH_TERMS.data',
+    words: ['审计'],
+    text: '数据目录 保留 多久 大小 安全记录 审计 记录 导出 隐私',
+    why: 'Search aliases only. The setting displays its section label and never renders these words.',
+  },
+  {
+    file: 'apps/web/src/settings/SettingsPage.tsx',
+    key: 'SEARCH_TERMS.relays',
+    words: ['中继', '直连'],
+    text: '转发服务 中继 直连 直接连接 自建 cloudflare workers linux 服务器 配置文件 中继文件 添加中继',
+    why: 'Search aliases only. The setting displays its section label and never renders these words.',
+  },
+  {
+    file: 'apps/web/src/deletionCopy.ts',
+    key: 'DELETION_COPY.sessionKept',
+    words: ['审计'],
+    why: 'The deletion confirmation names the audit records so the person can see what is retained.',
   },
   {
     file: 'apps/web/src/core/contentHash.ts',

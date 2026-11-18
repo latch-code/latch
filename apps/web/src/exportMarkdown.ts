@@ -12,19 +12,121 @@ import {
 import { DECISION_COPY } from './core/securityCopy.ts'
 import { diffLines, knowsOldSide, previousState } from './diff.ts'
 import { dateTime, tokenText } from './format.ts'
+import { currentLocale, defineCopy } from './core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    queued: '等待执行',
+    awaiting: '待批准',
+    running: '执行中',
+    completed: '已完成',
+    failed: '失败',
+    stopped: '已停止',
+    rejected: '已拒绝',
+    expired: '已过期',
+    blocked: '拦下',
+    interrupted: 'Latch 重启时中断',
+    unknown: '结果未知',
+    oldUnavailable: '--- （原内容未显示）',
+    oldUnknown: '--- （原内容未知）',
+    tool: (title: string, state: string) => `<summary>工具：${title}${state}</summary>`,
+    toolName: (name: string) => `工具名：${name}`,
+    approval: (decision: string) => `审批：${decision}`,
+    parameters: '参数：',
+    changes: (path: string) => `改动：${path}`,
+    output: '输出：',
+    model: (model: string) => `模型：${model}`,
+    harness: (name: string) => `Harness：${name}`,
+    mode: (mode: string) => `模式：${mode}`,
+    toolState: (state: string) => `（${state}）`,
+    chat: '对话',
+    project: (path: string) => `项目：${path}`,
+    usage: (usage: string) => `用量：${usage}`,
+    exported: (date: string) => `导出于：${date}`,
+    untitled: '未命名会话',
+    you: '## 你',
+    reasoning: '<summary>思考过程</summary>',
+    stoppedPartial: '_已停止，保留了部分回复。_',
+    stoppedLine: '_已停止。_',
+    interruptedPartial: '_回复中断，保留了部分内容。_',
+    interruptedLine: '_回复中断。_',
+    messageUsage: (usage: string) => `_用量：${usage}_`,
+    live: '## Agent（生成中）',
+  },
+  {
+    queued: 'Queued',
+    awaiting: 'Awaiting approval',
+    running: 'Running',
+    completed: 'Completed',
+    failed: 'Failed',
+    stopped: 'Stopped',
+    rejected: 'Rejected',
+    expired: 'Expired',
+    blocked: 'Blocked',
+    interrupted: 'Interrupted when Latch restarted',
+    unknown: 'Outcome unknown',
+    oldUnavailable: '--- (Original content unavailable)',
+    oldUnknown: '--- (Original content unknown)',
+    tool: (title: string, state: string) => `<summary>Tool: ${title}${state}</summary>`,
+    toolName: (name: string) => `Tool name: ${name}`,
+    approval: (decision: string) => `Approval: ${decision}`,
+    parameters: 'Arguments:',
+    changes: (path: string) => `Changes: ${path}`,
+    output: 'Output:',
+    model: (model: string) => `Model: ${model}`,
+    harness: (name: string) => `Harness: ${name}`,
+    mode: (mode: string) => `Mode: ${mode}`,
+    toolState: (state: string) => ` (${state})`,
+    chat: 'Chat',
+    project: (path: string) => `Project: ${path}`,
+    usage: (usage: string) => `Usage: ${usage}`,
+    exported: (date: string) => `Exported: ${date}`,
+    untitled: 'Untitled session',
+    you: '## You',
+    reasoning: '<summary>Reasoning</summary>',
+    stoppedPartial: '_Stopped. Partial reply kept._',
+    stoppedLine: '_Stopped._',
+    interruptedPartial: '_Reply interrupted. Partial content kept._',
+    interruptedLine: '_Reply interrupted._',
+    messageUsage: (usage: string) => `_Usage: ${usage}_`,
+    live: '## Agent (generating)',
+  },
+)
 
 const toolStates: Record<ShownToolState, string> = {
-  queued: '等待执行',
-  'awaiting-approval': '待批准',
-  running: '执行中',
-  completed: '已完成',
-  failed: '失败',
-  cancelled: '已停止',
-  rejected: '已拒绝',
-  expired: '已过期',
-  blocked: '拦下',
-  interrupted: 'Latch 重启时中断',
-  unknown: '结果未知',
+  get queued() {
+    return COPY.queued
+  },
+  get 'awaiting-approval'() {
+    return COPY.awaiting
+  },
+  get running() {
+    return COPY.running
+  },
+  get completed() {
+    return COPY.completed
+  },
+  get failed() {
+    return COPY.failed
+  },
+  get cancelled() {
+    return COPY.stopped
+  },
+  get rejected() {
+    return COPY.rejected
+  },
+  get expired() {
+    return COPY.expired
+  },
+  get blocked() {
+    return COPY.blocked
+  },
+  get interrupted() {
+    return COPY.interrupted
+  },
+  get unknown() {
+    return COPY.unknown
+  },
 }
 
 /** A fence longer than any backtick run inside, so content can never close it early. */
@@ -48,6 +150,8 @@ const escapeHtml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '
 /** The export's own turn headings; the same heading inside model text is escaped so it cannot pose as a turn. */
 const TURN_NAME = /^(?:你|Agent(?:（生成中）)?)$/
 const ATX_TURN = /^ {0,3}#{1,6}[ \t]+(?:你|Agent(?:（生成中）)?)[ \t#\r]*$/
+const EN_TURN_NAME = /^(?:You|Agent(?: \(generating\))?)$/
+const EN_ATX_TURN = /^ {0,3}#{1,6}[ \t]+(?:You|Agent(?: \(generating\))?)[ \t#\r]*$/
 const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t\r]*$/
 /** Only fences at the start of a line are tracked: an indented one may belong to a list item that ends without closing it. */
 const FENCE_OPEN = /^(?:(`{3,})[^`]*|(~{3,}).*)$/
@@ -79,6 +183,8 @@ function inertInline(text: string): string {
 function inertMarkdown(text: string): string {
   let fence: string | null = null
   let previous = ''
+  const turnName = currentLocale() === 'en' ? EN_TURN_NAME : TURN_NAME
+  const turnHeading = currentLocale() === 'en' ? EN_ATX_TURN : ATX_TURN
   const lines = text.split('\n').map(line => {
     if (fence !== null) {
       const marker = FENCE_CLOSE.exec(line)?.[1]
@@ -92,7 +198,7 @@ function inertMarkdown(text: string): string {
       previous = ''
       return line
     }
-    const turn = ATX_TURN.test(line) || (SETEXT_UNDERLINE.test(line) && TURN_NAME.test(previous.trim()))
+    const turn = turnHeading.test(line) || (SETEXT_UNDERLINE.test(line) && turnName.test(previous.trim()))
     previous = line
     return turn ? `\\${inertInline(line.trimStart())}` : inertInline(line)
   })
@@ -100,7 +206,15 @@ function inertMarkdown(text: string): string {
   return lines.join('\n')
 }
 
-const OLD_SIDE_HEADER = { none: '--- /dev/null', unavailable: '--- （原内容未显示）', unknown: '--- （原内容未知）' } as const
+const OLD_SIDE_HEADER = {
+  none: '--- /dev/null',
+  get unavailable() {
+    return COPY.oldUnavailable
+  },
+  get unknown() {
+    return COPY.oldUnknown
+  },
+} as const
 
 function unifiedDiff(diff: FileDiff): string {
   const { path, newText } = diff
@@ -121,21 +235,21 @@ function unifiedDiff(diff: FileDiff): string {
 
 function toolBlock(message: Message): string[] {
   const title = toolHeading(message.tool, message.toolName)
-  const state = message.state ? `（${toolStates[shownToolState(message)]}）` : ''
-  const out = ['<details>', `<summary>工具：${escapeHtml(title)}${escapeHtml(state)}</summary>`, '']
-  if (message.toolName && message.toolName !== title) out.push(`工具名：${code(message.toolName)}`, '')
+  const state = message.state ? COPY.toolState(toolStates[shownToolState(message)]) : ''
+  const out = ['<details>', COPY.tool(escapeHtml(title), escapeHtml(state)), '']
+  if (message.toolName && message.toolName !== title) out.push(COPY.toolName(code(message.toolName)), '')
   // How its approval ended, with the full time and where it was decided (never which device).
   const decision = message.tool?.decision
   if (decision) {
     const record = decisionLine(decision, Date.now()).full
-    out.push(`审批：${escapeHtml(ranDespite(message) ? `${record} · ${DECISION_COPY.ranDespite}` : record)}`, '')
+    out.push(COPY.approval(escapeHtml(ranDespite(message) ? `${record} · ${DECISION_COPY.ranDespite}` : record)), '')
   }
   if (message.tool?.blocked) out.push(escapeHtml(blockedLine(message.tool.blocked)), '')
-  if (message.tool?.input) out.push('参数：', '', fence(message.tool.input, 'json'), '')
+  if (message.tool?.input) out.push(COPY.parameters, '', fence(message.tool.input, 'json'), '')
   // The diff of a call its approval kept from running changed nothing; one that started keeps its changes.
-  for (const diff of appliedDiffs(message)) out.push(`改动：${code(diff.path)}`, '', fence(unifiedDiff(diff), 'diff'), '')
+  for (const diff of appliedDiffs(message)) out.push(COPY.changes(code(diff.path)), '', fence(unifiedDiff(diff), 'diff'), '')
   const output = shownToolOutput(message)
-  if (output) out.push('输出：', '', fence(output), '')
+  if (output) out.push(COPY.output, '', fence(output), '')
   out.push('</details>', '')
   return out
 }
@@ -144,22 +258,22 @@ function toolBlock(message: Message): string[] {
 export function transcriptMarkdown(detail: TaskDetail, meta: { harness?: string; exportedAt?: Date } = {}): string {
   const { summary } = detail
   const facts = [
-    meta.harness && `Harness：${meta.harness}`,
-    summary.model && `模型：${summary.model}`,
-    `模式：${summary.mode === 'chat' ? '对话' : 'Agent'}`,
-    summary.cwd && `项目：${code(summary.cwd)}`,
-    summary.usage && `用量：${tokenText(summary.usage)}`,
-    `导出于：${dateTime((meta.exportedAt ?? new Date()).toISOString())}`,
+    meta.harness && COPY.harness(meta.harness),
+    summary.model && COPY.model(summary.model),
+    COPY.mode(summary.mode === 'chat' ? COPY.chat : 'Agent'),
+    summary.cwd && COPY.project(code(summary.cwd)),
+    summary.usage && COPY.usage(tokenText(summary.usage)),
+    COPY.exported(dateTime((meta.exportedAt ?? new Date()).toISOString())),
   ].filter((fact): fact is string => typeof fact === 'string' && fact.length > 0)
-  const out = [`# ${summary.title.trim() || '未命名会话'}`, '', ...facts.map(fact => `- ${fact}`), '']
+  const out = [`# ${summary.title.trim() || COPY.untitled}`, '', ...facts.map(fact => `- ${fact}`), '']
   for (const message of detail.messages) {
-    if (message.role === 'user') out.push('## 你', '', message.text, '')
+    if (message.role === 'user') out.push(COPY.you, '', message.text, '')
     else if (message.role === 'assistant') {
       out.push('## Agent', '')
       if (message.reasoning)
         out.push(
           '<details>',
-          '<summary>思考过程</summary>',
+          COPY.reasoning,
           '',
           inertMarkdown(message.reasoning)
             .split('\n')
@@ -172,9 +286,9 @@ export function transcriptMarkdown(detail: TaskDetail, meta: { harness?: string;
       if (message.text) out.push(inertMarkdown(message.text), '')
       // Say what was kept only when something was.
       const kept = message.text.trim().length > 0
-      if (message.state === 'cancelled') out.push(kept ? '_已停止，保留了部分回复。_' : '_已停止。_', '')
-      else if (message.state === 'failed') out.push(kept ? '_回复中断，保留了部分内容。_' : '_回复中断。_', '')
-      if (message.usage) out.push(`_用量：${tokenText(message.usage)}_`, '')
+      if (message.state === 'cancelled') out.push(kept ? COPY.stoppedPartial : COPY.stoppedLine, '')
+      else if (message.state === 'failed') out.push(kept ? COPY.interruptedPartial : COPY.interruptedLine, '')
+      if (message.usage) out.push(COPY.messageUsage(tokenText(message.usage)), '')
     } else if (message.role === 'tool') out.push(...toolBlock(message))
     else
       out.push(
@@ -185,7 +299,7 @@ export function transcriptMarkdown(detail: TaskDetail, meta: { harness?: string;
         '',
       )
   }
-  if (detail.liveText) out.push('## Agent（生成中）', '', inertMarkdown(detail.liveText), '')
+  if (detail.liveText) out.push(COPY.live, '', inertMarkdown(detail.liveText), '')
   return `${out.join('\n').trimEnd()}\n`
 }
 

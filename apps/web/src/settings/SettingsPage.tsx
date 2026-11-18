@@ -3,6 +3,7 @@ import { canDelegate } from '../agents/model.ts'
 import { Radio, Blocks, Cable, Database } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
 import { useViewport } from '../breakpoints.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
 import { computerName, SETTINGS_ADMIN_HIDDEN } from '../core/securityCopy.ts'
 import { currentShell, shellComputers } from '../core/shell.ts'
@@ -36,47 +37,148 @@ import { settingsSectionsAt, type AgentPageTarget, type SettingsSection } from '
 
 export type { SettingsSection }
 
-const AboutSettings = deferredComponent(async () => ({ default: (await import('./AboutSettings.tsx')).AboutSettings }), '关于')
-const AgentsSettings = deferredComponent(async () => ({ default: (await import('./AgentsSettings.tsx')).AgentsSettings }), '设置')
+const SECTION_LABELS = defineCopy<Record<SettingsSection, string>>(
+  {
+    general: '通用',
+    providers: '模型',
+    engines: 'Harness',
+    mcp: 'MCP',
+    extensions: '扩展',
+    workspaces: '项目',
+    plugins: '插件',
+    devices: '设备',
+    relays: '连接转发',
+    data: '数据',
+    computers: '电脑',
+    shortcuts: '快捷键',
+    about: '关于',
+  },
+  {
+    general: 'General',
+    providers: 'Models',
+    engines: 'Harness',
+    mcp: 'MCP',
+    extensions: 'Extensions',
+    workspaces: 'Projects',
+    plugins: 'Plugins',
+    devices: 'Devices',
+    relays: 'Relays',
+    data: 'Data',
+    computers: 'Computers',
+    shortcuts: 'Shortcuts',
+    about: 'About',
+  },
+)
+
+const COPY = defineCopy(
+  {
+    settings: '设置',
+    generalLoading: '通用设置',
+    pluginsLoading: '插件设置',
+    projectsLoading: '项目设置',
+    close: '关闭设置',
+    search: '搜索设置',
+    categories: '设置分类',
+    back: '返回',
+  },
+  {
+    settings: 'Settings',
+    generalLoading: 'general settings',
+    pluginsLoading: 'plugin settings',
+    projectsLoading: 'project settings',
+    close: 'Close settings',
+    search: 'Search settings',
+    categories: 'Settings categories',
+    back: 'Back',
+  },
+)
+
+const NO_MATCH = defineCopy({ text: (query: string) => `没有找到「${query}」` }, { text: (query: string) => `No results for “${query}”` })
+
+const AboutSettings = deferredComponent(
+  async () => ({ default: (await import('./AboutSettings.tsx')).AboutSettings }),
+  () => SECTION_LABELS.about,
+)
+const AgentsSettings = deferredComponent(
+  async () => ({ default: (await import('./AgentsSettings.tsx')).AgentsSettings }),
+  () => COPY.settings,
+)
 const PhoneDevicesPage = deferredComponent(
   async () => ({ default: (await import('./devices/PhoneDevicesPage.tsx')).PhoneDevicesPage }),
-  '设备',
+  () => SECTION_LABELS.devices,
 )
-const ComputersSettings = deferredComponent(async () => ({ default: (await import('./ComputersSettings.tsx')).ComputersSettings }), '电脑')
-const GeneralSettings = deferredComponent(async () => ({ default: (await import('./GeneralSettings.tsx')).GeneralSettings }), '通用设置')
-const PluginsSettings = deferredComponent(async () => ({ default: (await import('./PluginsSettings.tsx')).PluginsSettings }), '插件设置')
+const ComputersSettings = deferredComponent(
+  async () => ({ default: (await import('./ComputersSettings.tsx')).ComputersSettings }),
+  () => SECTION_LABELS.computers,
+)
+const GeneralSettings = deferredComponent(
+  async () => ({ default: (await import('./GeneralSettings.tsx')).GeneralSettings }),
+  () => COPY.generalLoading,
+)
+const PluginsSettings = deferredComponent(
+  async () => ({ default: (await import('./PluginsSettings.tsx')).PluginsSettings }),
+  () => COPY.pluginsLoading,
+)
 const ExtensionsSettings = deferredComponent(
   async () => ({ default: (await import('./ExtensionsSettings.tsx')).ExtensionsSettings }),
-  '扩展',
+  () => SECTION_LABELS.extensions,
 )
-const McpSettings = deferredComponent(async () => ({ default: (await import('./McpSettings.tsx')).McpSettings }), 'MCP')
-const RelaySettings = deferredComponent(async () => ({ default: (await import('./RelaySettings.tsx')).RelaySettings }), '中继')
-const DataSettings = deferredComponent(async () => ({ default: (await import('./DataSettings.tsx')).DataSettings }), '数据')
+const McpSettings = deferredComponent(
+  async () => ({ default: (await import('./McpSettings.tsx')).McpSettings }),
+  () => SECTION_LABELS.mcp,
+)
+const RelaySettings = deferredComponent(
+  async () => ({ default: (await import('./RelaySettings.tsx')).RelaySettings }),
+  () => SECTION_LABELS.relays,
+)
+const DataSettings = deferredComponent(
+  async () => ({ default: (await import('./DataSettings.tsx')).DataSettings }),
+  () => SECTION_LABELS.data,
+)
 const ShortcutsSettings = deferredComponent(
   async () => ({ default: (await import('./ShortcutsSettings.tsx')).ShortcutsSettings }),
-  '快捷键',
+  () => SECTION_LABELS.shortcuts,
 )
 const WorkspacesSettings = deferredComponent(
   async () => ({ default: (await import('./WorkspacesSettings.tsx')).WorkspacesSettings }),
-  '项目设置',
+  () => COPY.projectsLoading,
 )
 
 /** What each section holds, so 搜索设置 finds a setting by the words on its row. */
-const SEARCH_TERMS: Partial<Record<SettingsSection, string>> = {
-  general: '外观 主题 深色 浅色 自定义 主色 圆角 字号 恢复默认 布局 侧栏 顶栏 按项目 按状态 发送消息 回车 新文档 自动打开 通知 唤醒 名称',
-  providers: '服务 密钥 key 添加服务 添加模型服务 单价 预算 显示的模型 已确认的地址 地址 出站',
-  engines: '已安装 可以安装 怎么装 自定义启动方式 启动方式 环境变量 命令 agent',
-  mcp: 'mcp 服务器 工具 连接器 npx 命令',
-  extensions: '技能 命令 插件 mcp 安装 卸载 更新 harness 自带 latch 提供',
-  workspaces: '文件夹 添加项目 新建项目 快照',
-  plugins: '工具 技能 页面 数据面板',
-  shortcuts: '键盘',
-  data: '数据目录 保留 多久 大小 审计 记录 导出 隐私',
-  devices: '设备 手机 连接手机 二维码 配对 重命名 移除 撤销 浏览器 在浏览器中打开 关于连接 policy 开始新会话',
-  relays: '中继 直连 自建 cloudflare workers linux 服务器 中继文件 添加中继',
-  computers: '添加电脑 其他电脑 移除 切换 打开',
-  about: '版本 许可与条款',
-}
+const SEARCH_TERMS = defineCopy<Partial<Record<SettingsSection, string>>>(
+  {
+    general:
+      '外观 主题 深色 浅色 自定义 主色 圆角 字号 恢复默认 布局 侧栏 顶栏 按项目 按状态 发送消息 回车 新文档 自动打开 通知 唤醒 名称 语言 界面语言',
+    providers: '服务 密钥 key 添加服务 添加模型服务 单价 预算 显示的模型 已确认的地址 地址 出站',
+    engines: '已安装 可以安装 怎么装 自定义启动方式 启动方式 环境变量 命令 agent',
+    mcp: 'mcp 服务器 工具 连接器 npx 命令',
+    extensions: '技能 命令 插件 mcp 安装 卸载 更新 harness 自带 latch 提供',
+    workspaces: '文件夹 添加项目 新建项目 快照',
+    plugins: '工具 技能 页面 数据面板',
+    shortcuts: '键盘',
+    data: '数据目录 保留 多久 大小 安全记录 审计 记录 导出 隐私',
+    devices: '设备 手机 连接手机 二维码 配对 重命名 移除 撤销 浏览器 在浏览器中打开 关于连接 policy 开始新会话',
+    relays: '转发服务 中继 直连 直接连接 自建 cloudflare workers linux 服务器 配置文件 中继文件 添加中继',
+    computers: '添加电脑 其他电脑 移除 切换 打开',
+    about: '版本 许可与条款',
+  },
+  {
+    general:
+      'appearance theme dark light customize accent corners fonts defaults layout sidebar title bar project status send enter documents auto open notification awake name language',
+    providers: 'service key add model service price spend budget visible models confirmed addresses',
+    engines: 'installed install how to install startup command environment variables Agent',
+    mcp: 'mcp server tools connector npx command',
+    extensions: 'skills commands plugins mcp install uninstall update harness built-in latch',
+    workspaces: 'folder add project create snapshot',
+    plugins: 'tools skills pages data panels',
+    shortcuts: 'keyboard',
+    data: 'data directory retention size audit log activity records export privacy',
+    devices: 'device phone connect qr code pair rename remove privacy browser open start session',
+    relays: 'relay direct self-hosted cloudflare workers linux server relay file add',
+    computers: 'add computer other remove switch open',
+    about: 'versions licenses terms',
+  },
+)
 
 /** The sections a search names: by their label or by the words on their rows, case aside. */
 export function searchSections<T extends { id: SettingsSection; label: string }>(list: readonly T[], query: string): T[] {
@@ -92,7 +194,6 @@ export function searchSections<T extends { id: SettingsSection; label: string }>
  */
 const sections: Array<{
   id: SettingsSection
-  label: string
   icon: IconComponent
   admin: boolean
   catalog?: boolean
@@ -103,22 +204,22 @@ const sections: Array<{
   /** Needs data scope `all`: it spans every session and device, private ones included. */
   allData?: boolean
 }> = [
-  { id: 'general', label: '通用', icon: SettingsGlyph, admin: false },
-  { id: 'providers', label: '模型', icon: ModelGlyph, admin: true, catalog: true },
-  { id: 'engines', label: 'Harness', icon: HarnessGlyph, admin: true, catalog: true },
-  { id: 'mcp', label: 'MCP', icon: Cable, admin: true, catalog: true, feature: 'mcp' },
-  { id: 'extensions', label: '扩展', icon: Blocks, admin: true, catalog: true, feature: 'extensions' },
-  { id: 'workspaces', label: '项目', icon: FolderGlyph, admin: true, catalog: true },
-  { id: 'plugins', label: '插件', icon: PluginsGlyph, admin: true },
-  { id: 'devices', label: '设备', icon: DevicesGlyph, admin: false, secured: true },
-  { id: 'relays', label: '中继', icon: Radio, admin: true, secured: true },
-  { id: 'data', label: '数据', icon: Database, admin: true, catalog: true, feature: 'data', allData: true },
-  { id: 'computers', label: '电脑', icon: LaptopGlyph, admin: false, shell: true },
-  { id: 'shortcuts', label: '快捷键', icon: KeyboardGlyph, admin: false },
-  { id: 'about', label: '关于', icon: InfoGlyph, admin: false },
+  { id: 'general', icon: SettingsGlyph, admin: false },
+  { id: 'providers', icon: ModelGlyph, admin: true, catalog: true },
+  { id: 'engines', icon: HarnessGlyph, admin: true, catalog: true },
+  { id: 'mcp', icon: Cable, admin: true, catalog: true, feature: 'mcp' },
+  { id: 'extensions', icon: Blocks, admin: true, catalog: true, feature: 'extensions' },
+  { id: 'workspaces', icon: FolderGlyph, admin: true, catalog: true },
+  { id: 'plugins', icon: PluginsGlyph, admin: true },
+  { id: 'devices', icon: DevicesGlyph, admin: false, secured: true },
+  { id: 'relays', icon: Radio, admin: true, secured: true },
+  { id: 'data', icon: Database, admin: true, catalog: true, feature: 'data', allData: true },
+  { id: 'computers', icon: LaptopGlyph, admin: false, shell: true },
+  { id: 'shortcuts', icon: KeyboardGlyph, admin: false },
+  { id: 'about', icon: InfoGlyph, admin: false },
 ]
 
-export const sectionLabel = (id: SettingsSection): string => sections.find(section => section.id === id)!.label
+export const sectionLabel = (id: SettingsSection): string => SECTION_LABELS[id]
 
 /** The line under the sections of a device that lacks 管理此 Host: some sections are hidden, and where to grant it. */
 export function hiddenSectionsCaption(snapshot: AppSnapshot, access: DeviceAccess): string | undefined {
@@ -197,7 +298,9 @@ export function SettingsPage({
   if (reads.audience !== audience) setReads(new ModelSettingsReads(audience))
   const allowed = settingsSections(snapshot, access)
   const ids = settingsSectionsAt(phone).filter(id => allowed.includes(id))
-  const available = ids.flatMap(id => sections.filter(section => section.id === id))
+  const available = ids.flatMap(id =>
+    sections.filter(section => section.id === id).map(section => ({ ...section, label: sectionLabel(id) })),
+  )
   const [query, setQuery] = useState('')
   // A Harness's 扩展 page, opened from its 设置 › Harness page or from 设置 › MCP.
   const [extensionsHarness, setExtensionsHarness] = useState<string>()
@@ -313,8 +416,8 @@ export function SettingsPage({
   return (
     <section className="settings-page" data-entry="settings" onKeyDown={escape}>
       <header className="settings-overlay-header">
-        <h2>设置</h2>
-        <IconButton label="关闭设置" icon={CloseGlyph} data-autofocus="" onClick={onClose} />
+        <h2>{COPY.settings}</h2>
+        <IconButton label={COPY.close} icon={CloseGlyph} data-testid="close-settings" data-autofocus="" onClick={onClose} />
       </header>
       <SettingsNavigationProvider value={navigation}>
         <OpenExtensions.Provider value={ids.includes('extensions') ? openExtensions : undefined}>
@@ -323,8 +426,8 @@ export function SettingsPage({
               {searchable && (
                 <div ref={search} className="settings-search">
                   <SearchField
-                    label="搜索设置"
-                    placeholder="搜索设置"
+                    label={COPY.search}
+                    placeholder={COPY.search}
                     value={query}
                     onValueChange={setQuery}
                     trailing={!phone && !query ? <Kbd>/</Kbd> : undefined}
@@ -334,7 +437,13 @@ export function SettingsPage({
                   />
                 </div>
               )}
-              <div ref={tabs} className="settings-nav" role="tablist" aria-orientation="vertical" aria-label="设置分类" onKeyDown={keydown}>
+              <div
+                ref={tabs}
+                className="settings-nav"
+                role="tablist"
+                aria-orientation="vertical"
+                aria-label={COPY.categories}
+                onKeyDown={keydown}>
                 {found.map(section => (
                   <button
                     key={section.id}
@@ -353,7 +462,7 @@ export function SettingsPage({
                   </button>
                 ))}
               </div>
-              {found.length === 0 && <p className="settings-nav-caption">没有找到「{query.trim()}」</p>}
+              {found.length === 0 && <p className="settings-nav-caption">{NO_MATCH.text(query.trim())}</p>}
               {caption && (
                 <p className="settings-nav-caption">
                   <Icon icon={LockGlyph} size={14} />
@@ -372,7 +481,7 @@ export function SettingsPage({
                 inert={(phone && (!pushed || level === 'page')) || undefined}>
                 {phone && (
                   <header className="settings-bar">
-                    <IconButton label="返回" icon={ChevronLeftGlyph} onClick={back} />
+                    <IconButton label={COPY.back} icon={ChevronLeftGlyph} onClick={back} />
                     <h2>{current?.label}</h2>
                   </header>
                 )}

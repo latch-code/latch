@@ -1,4 +1,26 @@
 import type { HarnessInfo, TaskDetail, WorkspaceInfo } from '@latch/protocol'
+import { defineCopy } from '../core/i18n.ts'
+
+const RECOVERY_REASONS = defineCopy(
+  {
+    unknown: '上次提交的结果还未知。请先确认原请求的结果，再选择继续方式。',
+    busy: '正在处理原会话，请稍后再继续。',
+    running: '请等原会话这一轮结束后再继续。',
+    oldHost: '这台 Mac 上的 Latch 较旧，不能从会话记录继续，请先更新。',
+    noReply: '原会话还没有可继续的已结束回复。',
+    noProjects: '暂时没有可用项目，请先在 Mac 上添加或修复项目。',
+    pickProject: '请选择一个当前可用的项目。',
+  },
+  {
+    unknown: 'The last request’s result is unknown. Check how it ended before choosing how to continue.',
+    busy: 'Working on the original session. Try again shortly.',
+    running: 'Wait for the original session’s turn to finish.',
+    oldHost: 'Latch on this Mac is too old to continue from a session’s history. Update it first.',
+    noReply: 'The original session has no finished reply to continue from yet.',
+    noProjects: 'No projects available. Add or repair one on the Mac first.',
+    pickProject: 'Choose a project that is available now.',
+  },
+)
 
 type RecoveryPhase = 'idle' | 'busy' | 'unknown'
 type RecoveryRunGate = { allowed: true } | { allowed: false; reason: string }
@@ -55,22 +77,22 @@ export function workspaceRecovery(input: WorkspaceRecoveryInput): {
 } {
   const workspaces = recoveryWorkspaces(input)
   let blockedReason: string | undefined
-  if (input.phase === 'unknown') blockedReason = '上次提交的结果还未知。请先确认原请求的结果，再选择继续方式。'
-  else if (input.phase === 'busy') blockedReason = '正在处理原会话，请稍后再继续。'
+  if (input.phase === 'unknown') blockedReason = RECOVERY_REASONS.unknown
+  else if (input.phase === 'busy') blockedReason = RECOVERY_REASONS.busy
   else if (
     input.source.summary.status === 'running'
     || input.source.summary.status === 'waiting-approval'
     || input.source.activity?.phase === 'cancelling'
   )
-    blockedReason = '请等原会话这一轮结束后再继续。'
-  else if (!input.forkSupported) blockedReason = '这台 Mac 上的 Latch 较旧，不能从会话记录继续，请先更新。'
+    blockedReason = RECOVERY_REASONS.running
+  else if (!input.forkSupported) blockedReason = RECOVERY_REASONS.oldHost
   else if (!input.runGate.allowed) blockedReason = input.runGate.reason
 
   const upToMessageId = recoveryMessage(input.source)
-  if (blockedReason === undefined && upToMessageId === undefined) blockedReason = '原会话还没有可继续的已结束回复。'
-  if (blockedReason === undefined && !workspaces.length) blockedReason = '暂时没有可用项目，请先在 Mac 上添加或修复项目。'
+  if (blockedReason === undefined && upToMessageId === undefined) blockedReason = RECOVERY_REASONS.noReply
+  if (blockedReason === undefined && !workspaces.length) blockedReason = RECOVERY_REASONS.noProjects
   if (blockedReason === undefined && !workspaces.some(workspace => workspace.id === input.workspaceId))
-    blockedReason = '请选择一个当前可用的项目。'
+    blockedReason = RECOVERY_REASONS.pickProject
 
   return {
     workspaces,

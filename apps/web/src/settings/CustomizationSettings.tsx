@@ -17,12 +17,75 @@ import { customization } from '../core/customBoot.ts'
 import { readCustomization, useCustomizationStatus, type CustomizationActions, type CustomizationChange } from '../core/customization.ts'
 import { dateTime } from '../format.ts'
 import { SettingsGroup, SettingsRow } from './common.tsx'
+import { defineCopy, formatNumber, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    cyan: '青',
+    lake: '湖蓝',
+    sky: '天蓝',
+    indigo: '靛',
+    purple: '紫',
+    magenta: '洋红',
+    apply: '应用',
+    restore: '回退',
+    reset: '恢复默认',
+    accent: '主色',
+    default: '默认',
+    customize: '自定义',
+    allDevices: '所有设备',
+    changedElsewhere: '外观已在别处修改，放弃草稿后重新编辑。',
+    corners: '圆角',
+    sharp: '方',
+    round: '圆',
+    textSize: '字号',
+    small: '小',
+    large: '大',
+    preview: '预览中',
+    discard: '放弃',
+    current: '当前',
+    hue: (value: number) => `色相 ${formatNumber(value)}`,
+    cliSuffix: ' · 命令行',
+  },
+  {
+    cyan: 'Cyan',
+    lake: 'Lake blue',
+    sky: 'Sky blue',
+    indigo: 'Indigo',
+    purple: 'Purple',
+    magenta: 'Magenta',
+    apply: 'Apply',
+    restore: 'Restore',
+    reset: 'Reset to defaults',
+    accent: 'Accent',
+    default: 'Default',
+    customize: 'Customize',
+    allDevices: 'All devices',
+    changedElsewhere: 'Appearance changed elsewhere. Discard your draft and edit again.',
+    corners: 'Corners',
+    sharp: 'Square',
+    round: 'Rounded',
+    textSize: 'Text size',
+    small: 'Small',
+    large: 'Large',
+    preview: 'Previewing',
+    discard: 'Discard',
+    current: 'Current',
+    hue: (value: number) => `Hue ${formatNumber(value)}`,
+    cliSuffix: ' · Command line',
+  },
+)
 
 /** The hues offered for 主色, round the wheel; the ones a rule refuses (too near amber, red or green) are left out. */
 const HUE_CHOICES = [195, 215, 240, 285, 305, 325]
-const HUE_NAMES: Record<number, string> = { 195: '青', 215: '湖蓝', 240: '天蓝', 285: '靛', 305: '紫', 325: '洋红' }
-
-const SOURCE_WORDS: Record<CustomizationRevision['source'], string> = { apply: '应用', restore: '回退', reset: '恢复默认' }
+const HUE_NAMES: Partial<Record<number, 'cyan' | 'lake' | 'sky' | 'indigo' | 'purple' | 'magenta'>> = {
+  195: 'cyan',
+  215: 'lake',
+  240: 'sky',
+  285: 'indigo',
+  305: 'purple',
+  325: 'magenta',
+}
 
 /** The document a set of choices makes: a default choice is left out, so the default is the empty appearance. */
 export function documentOf(appearance: Appearance): CustomizationDocument {
@@ -56,7 +119,7 @@ function HueChoice({
     <div
       className="custom-hues"
       role="radiogroup"
-      aria-label="主色"
+      aria-label={COPY.accent}
       onKeyDown={event => {
         const step =
           event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0
@@ -68,6 +131,8 @@ function HueChoice({
       }}>
       {options.map(hue => {
         const [r, g, b] = hue === undefined ? [0, 0, 0] : accentAt('light', hue).accent
+        const label = hue === undefined ? 'default' : HUE_NAMES[hue]
+        const words = label ? COPY[label] : COPY.hue(hue!)
         return (
           <button
             key={hue ?? 'default'}
@@ -77,8 +142,8 @@ function HueChoice({
             data-hue={hue ?? 'default'}
             data-default={hue === undefined ? '' : undefined}
             aria-checked={value === hue}
-            aria-label={hue === undefined ? '默认' : (HUE_NAMES[hue] ?? `色相 ${hue}`)}
-            title={hue === undefined ? '默认' : (HUE_NAMES[hue] ?? `色相 ${hue}`)}
+            aria-label={words}
+            title={words}
             aria-disabled={disabled || undefined}
             tabIndex={value === hue ? 0 : -1}
             // The swatch is the colour the document would give, computed by the same expansion.
@@ -107,9 +172,10 @@ export function CustomizationSettings({
   writer: CustomizationActions
   onChanged: () => void
 }) {
+  useLocale()
   if (admin) return <EditableCustomizationSettings writer={writer} onChanged={onChanged} />
   return (
-    <SettingsGroup title="自定义" meta="所有设备">
+    <SettingsGroup title={COPY.customize} meta={COPY.allDevices}>
       <div className="custom-foot" data-secure="">
         <CustomizationRecovery writer={writer} admin={false} onDone={onChanged} size="sm" />
       </div>
@@ -169,44 +235,44 @@ function EditableCustomizationSettings({ writer, onChanged }: { writer: Customiz
     const outcome = await writer.submit(change, baseRevision)
     if (outcome.kind === 'done') finish()
     if (outcome.kind === 'conflict') onChanged()
-    if (outcome.kind === 'conflict') setError(change.kind === 'apply' ? '外观已在别处修改，放弃草稿后重新编辑。' : outcome.text)
+    if (outcome.kind === 'conflict') setError(change.kind === 'apply' ? COPY.changedElsewhere : outcome.text)
     if (outcome.kind === 'refused') setError(outcome.text)
   }
   const disabled = safe || writer.pending !== undefined
 
   return (
-    <SettingsGroup title="自定义" meta="所有设备">
+    <SettingsGroup title={COPY.customize} meta={COPY.allDevices}>
       <SettingsRow
-        title="主色"
+        title={COPY.accent}
         trailing={<HueChoice value={shown.accentHue} disabled={disabled} onValueChange={accentHue => choose({ accentHue })} />}
       />
       <SettingsRow
-        title="圆角"
+        title={COPY.corners}
         trailing={
           <SegmentedControl<AppearanceRadius>
-            label="圆角"
+            label={COPY.corners}
             value={shown.radius ?? 'default'}
             disabled={disabled}
             options={[
-              { value: 'sharp', label: '方' },
-              { value: 'default', label: '默认' },
-              { value: 'round', label: '圆' },
+              { value: 'sharp', label: COPY.sharp },
+              { value: 'default', label: COPY.default },
+              { value: 'round', label: COPY.round },
             ]}
             onValueChange={radius => choose({ radius })}
           />
         }
       />
       <SettingsRow
-        title="字号"
+        title={COPY.textSize}
         trailing={
           <SegmentedControl<AppearanceTextSize>
-            label="字号"
+            label={COPY.textSize}
             value={shown.textSize ?? 'default'}
             disabled={disabled}
             options={[
-              { value: 'small', label: '小' },
-              { value: 'default', label: '默认' },
-              { value: 'large', label: '大' },
+              { value: 'small', label: COPY.small },
+              { value: 'default', label: COPY.default },
+              { value: 'large', label: COPY.large },
             ]}
             onValueChange={textSize => choose({ textSize })}
           />
@@ -223,11 +289,11 @@ function EditableCustomizationSettings({ writer, onChanged }: { writer: Customiz
             ) : error ? (
               <StatusWord tone="failed">{error}</StatusWord>
             ) : changed ? (
-              <StatusWord tone="neutral">预览中</StatusWord>
+              <StatusWord tone="neutral">{COPY.preview}</StatusWord>
             ) : null}
             {changed && (
               <Button size="sm" variant="ghost" onClick={discard}>
-                放弃
+                {COPY.discard}
               </Button>
             )}
             <Button
@@ -237,7 +303,7 @@ function EditableCustomizationSettings({ writer, onChanged }: { writer: Customiz
               onClick={() => {
                 void run({ kind: 'reset' })
               }}>
-              恢复默认
+              {COPY.reset}
             </Button>
             <Button
               size="sm"
@@ -246,7 +312,7 @@ function EditableCustomizationSettings({ writer, onChanged }: { writer: Customiz
               onClick={() => {
                 if (draft) void run({ kind: 'apply', doc: draft.doc }, draft.baseRevision)
               }}>
-              应用
+              {COPY.apply}
             </Button>
           </>
         )}
@@ -254,7 +320,7 @@ function EditableCustomizationSettings({ writer, onChanged }: { writer: Customiz
       {revisions.map(item => (
         <SettingsRow
           key={item.revision}
-          title={`${SOURCE_WORDS[item.source]}${item.by === 'cli' ? ' · 命令行' : ''}`}
+          title={`${COPY[item.source]}${item.by === 'cli' ? COPY.cliSuffix : ''}`}
           description={
             <time className="custom-history-when" dateTime={item.at}>
               {dateTime(item.at)}
@@ -262,7 +328,7 @@ function EditableCustomizationSettings({ writer, onChanged }: { writer: Customiz
           }
           trailing={
             item.revision === host.revision ? (
-              <StatusWord tone="neutral">当前</StatusWord>
+              <StatusWord tone="neutral">{COPY.current}</StatusWord>
             ) : (
               <Button
                 size="xs"
@@ -270,7 +336,7 @@ function EditableCustomizationSettings({ writer, onChanged }: { writer: Customiz
                 onClick={() => {
                   void run({ kind: 'restore', revision: item.revision })
                 }}>
-                回退
+                {COPY.restore}
               </Button>
             )
           }

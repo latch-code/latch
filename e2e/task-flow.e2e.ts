@@ -230,14 +230,49 @@ it('recovers a private proposal, reads its precise Agent turn and opens evidence
     await expect.poll(() => original.evaluate(control => document.activeElement === control)).toBe(true)
     expect(Math.abs((await readingOffset()) - before)).toBeLessThanOrEqual(2)
 
+    const reader = await browser.newContext({ viewport: WIDE, locale: 'zh-CN', reducedMotion: 'reduce' })
+    await stillMotion(reader)
+    const readOnly = await reader.newPage()
+    await enrollBrowser(readOnly, host, { name: '只读验收', scopes: ['view'], dataScope: 'all' })
+    const deviceId = host.host.security.devices.list().find(device => device.name === '只读验收')!.id
+    await owner.json(`devices/${deviceId}`, { method: 'PATCH', body: { scopes: ['view'] } })
+    await readOnly.reload()
+    await connected(readOnly)
+
     await deliver('elicit 选择验证方式')
     const waiting = thread.locator('.item-thread-post').filter({ hasText: '选择验证方式' })
     await waiting.getByRole('button', { name: '查看问题' }).waitFor()
+    await waiting.getByText('等你回答', { exact: true }).waitFor()
     expect(await waiting.getByRole('button', { name: '展开全文' }).count()).toBe(0)
-    await captures(page, '等待问题', waiting.getByRole('button', { name: '查看问题' }))
+    const attention = itemPage.getByRole('region', { name: '等你处理', exact: true, includeHidden: true })
+    const questionLink = attention.getByRole('button', { name: '查看问题' })
+    await attention.getByText('等你回答', { exact: true }).waitFor()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await settleShell(page)
+    await itemPage.locator('.item-page-body').evaluate(body => {
+      body.scrollTop = body.scrollHeight
+    })
+    const linkBounds = await questionLink.boundingBox()
+    expect(linkBounds?.y).toBeGreaterThanOrEqual(0)
+    expect((linkBounds?.y ?? Infinity) + (linkBounds?.height ?? Infinity)).toBeLessThan(844)
+    await captures(page, '等待问题', questionLink)
     const question = (await detail(chat)).questions![0]!
-    await waiting.getByRole('button', { name: '查看问题' }).click()
-    await page.locator(`[data-question-id="${question.id}"]`).waitFor()
+    await switchView(readOnly, 'board')
+    await readOnly.locator(`[data-work-item="${item.id}"] .work-board-card-main`).click()
+    const readOnlyTask = readOnly.locator('.item-page')
+    await readOnlyTask.getByRole('region', { name: '等你处理', exact: true }).getByRole('button', { name: '查看问题' }).press('Enter')
+    await readOnly.locator(`.workspace-view [data-question-id="${question.id}"]`).waitFor()
+    await readOnly.getByRole('button', { name: '返回待办', exact: true }).press('Enter')
+    await readOnlyTask.getByRole('heading', { name: title }).waitFor()
+    expect(await readOnlyTask.getByRole('combobox', { name: '发言' }).count()).toBe(0)
+    await questionLink.press('Enter')
+    const questionCard = page.locator(`.workspace-view [data-question-id="${question.id}"]`)
+    await questionCard.waitFor()
+    await expect.poll(() => questionCard.evaluate(card => card.contains(document.activeElement))).toBe(true)
+    await page.getByRole('button', { name: '返回待办', exact: true }).press('Enter')
+    await expect.poll(() => questionLink.evaluate(button => document.activeElement === button)).toBe(true)
+    await questionLink.press('Enter')
+    await questionCard.waitFor()
     await owner.json(`tasks/${chat}/questions/${question.id}/answer`, {
       method: 'POST',
       body: {
@@ -250,7 +285,11 @@ it('recovers a private proposal, reads its precise Agent turn and opens evidence
       },
     })
     await settled(chat)
-    await page.getByRole('button', { name: '返回待办', exact: true }).click()
+    await expect.poll(() => attention.count()).toBe(0)
+    await page.getByRole('button', { name: '返回待办', exact: true }).press('Enter')
+    await waiting.getByText('已交给 发布助手', { exact: true }).waitFor()
+    expect(await waiting.getByRole('button', { name: '查看问题' }).count()).toBe(0)
+    await expect.poll(() => itemPage.locator('.item-page-back').evaluate(button => document.activeElement === button)).toBe(true)
 
     await writeFile(join(project, 'release.md'), 'Summarize the linked changes and rollback\n')
     git('commit', '-am', 'Document rollback')
@@ -285,17 +324,6 @@ it('recovers a private proposal, reads its precise Agent turn and opens evidence
     await prSection.getByRole('button', { name: '查看日志' }).click()
     await prSection.getByText('Rollback verification failed.', { exact: false }).waitFor()
 
-    const reader = await browser.newContext({ viewport: WIDE, locale: 'zh-CN', reducedMotion: 'reduce' })
-    await stillMotion(reader)
-    const readOnly = await reader.newPage()
-    await enrollBrowser(readOnly, host, { name: '只读验收', scopes: ['view'], dataScope: 'all' })
-    const deviceId = host.host.security.devices.list().find(device => device.name === '只读验收')!.id
-    await owner.json(`devices/${deviceId}`, { method: 'PATCH', body: { scopes: ['view'] } })
-    await readOnly.reload()
-    await connected(readOnly)
-    await switchView(readOnly, 'board')
-    await readOnly.locator(`[data-work-item="${item.id}"] .work-board-card-main`).click()
-    const readOnlyTask = readOnly.locator('.item-page')
     await readOnlyTask.getByRole('heading', { name: title }).waitFor()
     expect(await readOnlyTask.getByRole('combobox', { name: '发言' }).count()).toBe(0)
     await captures(readOnly, '只读', readOnlyTask.getByRole('heading', { name: title }))

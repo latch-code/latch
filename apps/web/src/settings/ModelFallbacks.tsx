@@ -4,6 +4,49 @@ import { MAX_MODEL_FALLBACKS, type ModelFallback, type ProviderKind, type Provid
 import { Button, Dialog, Hint, IconButton, InlineNotice, ValuePicker, TrashGlyph, type PickerGroup } from '@latch/ui'
 import { ProviderTile } from '../components/BrandTile.tsx'
 import { SettingsRow } from './common.tsx'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    title: '出错时改用',
+    beforeReply: '只在回复开始前',
+    detail: '按顺序改发给下一个，每次都写进记录。Latch 内置从下一轮起用；其他 Harness 从新开的会话起用。',
+    cancel: '取消',
+    save: '保存',
+    empty: '还没有',
+    missing: '已不在',
+    moveUp: '上移',
+    moveDown: '下移',
+    remove: '移除',
+    add: '添加模型',
+    addEllipsis: '添加模型…',
+    noOthers: '没有其他已保存的模型',
+    moveUpFor: (label: string) => `上移 ${label}`,
+    moveDownFor: (label: string) => `下移 ${label}`,
+    removeFor: (label: string) => `移除 ${label}`,
+    limit: (count: number) => `最多 ${formatNumber(count)} 个`,
+  },
+  {
+    title: 'Fallback models',
+    beforeReply: 'Before a reply starts',
+    detail:
+      'Latch tries the next model in order and records each switch. The built-in Harness uses this from the next turn. Other Harnesses use it in new sessions.',
+    cancel: 'Cancel',
+    save: 'Save',
+    empty: 'None yet',
+    missing: 'No longer available',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
+    remove: 'Remove',
+    add: 'Add model',
+    addEllipsis: 'Add model…',
+    noOthers: 'No other saved models',
+    moveUpFor: (label: string) => `Move ${label} up`,
+    moveDownFor: (label: string) => `Move ${label} down`,
+    removeFor: (label: string) => `Remove ${label}`,
+    limit: (count: number) => `Up to ${plural(count, { one: '{n} model', other: '{n} models' })}`,
+  },
+)
 
 const keyOf = (item: ModelFallback) => `${item.providerId}\u0000${item.model}`
 const same = (a: readonly ModelFallback[], b: readonly ModelFallback[]) =>
@@ -82,16 +125,16 @@ export function ModelFallbacksDialog({
     <Dialog
       open={open}
       size="lg"
-      title="出错时改用"
+      title={COPY.title}
       subtitle={<code className="settings-mono">{model}</code>}
-      note={<Hint label="只在回复开始前">按顺序改发给下一个，每次都写进记录。Latch 内置从下一轮起用；其他 Harness 从新开的会话起用。</Hint>}
+      note={<Hint label={COPY.beforeReply}>{COPY.detail}</Hint>}
       onClose={() => {
         if (!busy) onClose()
       }}
       footer={
         <>
           <Button size="md" disabled={busy} onClick={onClose}>
-            取消
+            {COPY.cancel}
           </Button>
           <Button
             size="md"
@@ -101,13 +144,13 @@ export function ModelFallbacksDialog({
             onClick={() => {
               void save()
             }}>
-            保存
+            {COPY.save}
           </Button>
         </>
       }>
       <div className="settings-form model-fallbacks">
         {list.length === 0 ? (
-          <p className="model-fallbacks-empty">还没有</p>
+          <p className="model-fallbacks-empty">{COPY.empty}</p>
         ) : (
           <ol className="model-fallbacks-list">
             {list.map((item, index) => {
@@ -123,10 +166,10 @@ export function ModelFallbacksDialog({
                     dim={gone}
                     trailing={
                       <>
-                        {gone && <span className="service-status">已不在</span>}
+                        {gone && <span className="service-status">{COPY.missing}</span>}
                         <IconButton
-                          label={`上移 ${label}`}
-                          tooltip="上移"
+                          label={COPY.moveUpFor(label)}
+                          tooltip={COPY.moveUp}
                           icon={ArrowUp}
                           disabled={busy || index === 0}
                           onClick={() => {
@@ -134,8 +177,8 @@ export function ModelFallbacksDialog({
                           }}
                         />
                         <IconButton
-                          label={`下移 ${label}`}
-                          tooltip="下移"
+                          label={COPY.moveDownFor(label)}
+                          tooltip={COPY.moveDown}
                           icon={ArrowDown}
                           disabled={busy || index === list.length - 1}
                           onClick={() => {
@@ -143,8 +186,8 @@ export function ModelFallbacksDialog({
                           }}
                         />
                         <IconButton
-                          label={`移除 ${label}`}
-                          tooltip="移除"
+                          label={COPY.removeFor(label)}
+                          tooltip={COPY.remove}
                           icon={TrashGlyph}
                           disabled={busy}
                           onClick={() => {
@@ -160,14 +203,14 @@ export function ModelFallbacksDialog({
           </ol>
         )}
         <ValuePicker
-          label="添加模型"
-          placeholder="添加模型…"
+          label={COPY.add}
+          placeholder={COPY.addEllipsis}
           value={undefined}
           groups={groups}
           searchable={groups.reduce((sum, group) => sum + group.options.length, 0) >= 8}
           width="sm"
           disabled={busy || full || groups.length === 0}
-          disabledReason={full ? `最多 ${MAX_MODEL_FALLBACKS} 个` : groups.length === 0 ? '没有其他已保存的模型' : undefined}
+          disabledReason={full ? COPY.limit(MAX_MODEL_FALLBACKS) : groups.length === 0 ? COPY.noOthers : undefined}
           onValueChange={key => {
             const [providerId = '', name = ''] = key.split('\u0000')
             setList(current => (current.length >= MAX_MODEL_FALLBACKS ? current : [...current, { providerId, model: name }]))

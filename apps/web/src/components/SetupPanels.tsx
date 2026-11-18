@@ -42,10 +42,45 @@ import {
 } from '@latch/ui'
 import { MarkTile, ProviderTile } from './BrandTile.tsx'
 import { TerminalFillButton } from './TerminalFillButton.tsx'
+import { defineCopy } from '../core/i18n.ts'
+import { harnessPresetCopy } from '../core/harnessPresetCopy.ts'
+
+const COPY = defineCopy(
+  {
+    providerForm: '模型服务表单',
+    back: '返回',
+    found: '已找到',
+    addHarness: '添加 Harness',
+    local: '在这台 Mac 上运行',
+    upgrade: '需要升级',
+    add: '添加',
+    copyUpgrade: '复制升级命令',
+    copyInstall: '复制安装命令',
+    check: '重新检测',
+    manageServices: '管理模型服务…',
+    chooseService: '选择服务',
+    loading: '正在读取模型服务…',
+  },
+  {
+    providerForm: 'model service form',
+    back: 'Back',
+    found: 'Found',
+    addHarness: 'Add Harness',
+    local: 'Runs on this Mac',
+    upgrade: 'Upgrade needed',
+    add: 'Add',
+    copyUpgrade: 'Copy upgrade command',
+    copyInstall: 'Copy install command',
+    check: 'Check again',
+    manageServices: 'Manage model services…',
+    chooseService: 'Choose a service',
+    loading: 'Reading model services…',
+  },
+)
 
 const ProviderAddForm = deferredComponent(
   async () => ({ default: (await import('../settings/ProvidersSettings.tsx')).ProviderAddForm }),
-  '模型服务表单',
+  () => COPY.providerForm,
 )
 
 /*
@@ -58,13 +93,15 @@ type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin'>
 /** The panel: a head with the way back, the thing's tile and name; then what is needed; then its one action. */
 function SetupPanel({
   title,
+  panelId,
   tile,
   onBack,
-  backLabel = '返回',
+  backLabel = COPY.back,
   children,
   footer,
 }: {
   title: string
+  panelId: string
   tile?: ReactNode
   onBack?: () => void
   backLabel?: string
@@ -75,7 +112,7 @@ function SetupPanel({
   // The panel replaces what had focus: the first control in it takes it.
   useEffect(() => {
     head.current?.parentElement?.querySelector<HTMLElement>('input, button:not([aria-disabled="true"])')?.focus({ preventScroll: true })
-  }, [title])
+  }, [panelId])
   return (
     <section className="setup-panel" aria-label={title}>
       <header ref={head} className="setup-panel-head">
@@ -139,7 +176,7 @@ function Detected({ preset, detected }: { preset: AgentPresetSettings; detected?
   return (
     <span className="detect is-ok">
       <Icon icon={CircleCheckGlyph} size={12} />
-      <span className="detect-label">已找到</span>
+      <span className="detect-label">{COPY.found}</span>
       <span className="detect-path">{detected.path ?? preset.command}</span>
     </span>
   )
@@ -159,33 +196,36 @@ export function AgentPresetList({
   footer?: ReactNode
 }) {
   return (
-    <div className="setup-list" role="group" aria-label="添加 Harness">
+    <div className="setup-list" role="group" aria-label={COPY.addHarness}>
       <p className="setup-list-head">
-        <span className="setup-list-title">添加 Harness</span>
-        <span className="setup-list-meta">在这台 Mac 上运行</span>
+        <span className="setup-list-title">{COPY.addHarness}</span>
+        <span className="setup-list-meta">{COPY.local}</span>
       </p>
-      {presets.map(preset => (
-        <button
-          key={preset.id}
-          type="button"
-          className="setup-list-item"
-          onClick={() => {
-            onPick(preset)
-          }}>
-          <MarkTile mark={preset.id} size={24} />
-          <span className="setup-list-text">
-            <span className="setup-list-name">
-              {preset.name}
-              <Badge>{preset.license}</Badge>
+      {presets.map(preset => {
+        const words = harnessPresetCopy(preset)
+        return (
+          <button
+            key={preset.id}
+            type="button"
+            className="setup-list-item"
+            onClick={() => {
+              onPick(preset)
+            }}>
+            <MarkTile mark={preset.id} size={24} />
+            <span className="setup-list-text">
+              <span className="setup-list-name">
+                {preset.name}
+                <Badge>{words.license}</Badge>
+              </span>
+              <span className="setup-list-description">{words.description}</span>
             </span>
-            <span className="setup-list-description">{preset.description}</span>
-          </span>
-          <span className="setup-list-end">
-            {preset.detected?.outdated ? '需要升级' : preset.detected?.found ? '已找到' : '添加'}
-            <Icon icon={ChevronRightGlyph} size={12} />
-          </span>
-        </button>
-      ))}
+            <span className="setup-list-end">
+              {preset.detected?.outdated ? COPY.upgrade : preset.detected?.found ? COPY.found : COPY.add}
+              <Icon icon={ChevronRightGlyph} size={12} />
+            </span>
+          </button>
+        )
+      })}
       {footer}
     </div>
   )
@@ -217,6 +257,7 @@ export function AgentSetupPanel({
   // Here but too old: its upgrade command takes the install command's place.
   const upgrade = preset.detected?.outdated?.upgrade
   const command = upgrade ?? preset.install
+  const words = harnessPresetCopy(preset)
   const add = async () => {
     setBusy('add')
     setError('')
@@ -244,24 +285,25 @@ export function AgentSetupPanel({
   return (
     <SetupPanel
       title={preset.name}
+      panelId={preset.id}
       tile={<MarkTile mark={preset.id} size={24} />}
       onBack={onBack}
       footer={
         canAdd ? (
           <Button variant="primary" loading={busy === 'add'} disabled={busy !== null} onClick={() => void add()}>
-            添加
+            {COPY.add}
           </Button>
         ) : (
           <Elsewhere>{SETUP_COPY.addAgentElsewhere(computer)}</Elsewhere>
         )
       }>
-      <p className="setup-panel-text">{preset.description}</p>
+      <p className="setup-panel-text">{words.description}</p>
       <Detected preset={preset} detected={preset.detected} />
       {(missing !== undefined || !preset.detected || upgrade) && command && (
         <div className="agent-install">
           <span className="agent-install-command">
             <code>{command}</code>
-            <CopyButton text={command} label={upgrade ? '复制升级命令' : '复制安装命令'} size="xs" />
+            <CopyButton text={command} label={upgrade ? COPY.copyUpgrade : COPY.copyInstall} size="xs" />
             <TerminalFillButton command={command} detached />
           </span>
           {onRecheck && (
@@ -272,13 +314,13 @@ export function AgentSetupPanel({
               loading={busy === 'check'}
               disabled={busy !== null}
               onClick={() => void recheck()}>
-              重新检测
+              {COPY.check}
             </Button>
           )}
         </div>
       )}
       <ButtonLink variant="link" size="xs" href={preset.homepage} target="_blank" rel="noopener noreferrer" className="setup-panel-link">
-        {`${hostOf(preset.homepage)} · ${preset.license}`}
+        {`${hostOf(preset.homepage)} · ${words.license}`}
         <Icon icon={ExternalGlyph} size={12} />
       </ButtonLink>
       <Hint className="setup-panel-caption" lead={<Icon icon={ShieldAlertGlyph} size={12} />} label={SETUP_COPY.agentFullAccess.label}>
@@ -342,7 +384,7 @@ export function ProviderSetupPanel({
   }, [access.admin])
   if (!access.admin)
     return (
-      <SetupPanel title={SERVICE_FORM.title} onBack={onCancel}>
+      <SetupPanel title={SERVICE_FORM.title} panelId="provider" onBack={onCancel}>
         <Elsewhere>{SETUP_COPY.addProviderElsewhere(remoteName)}</Elsewhere>
       </SetupPanel>
     )
@@ -351,15 +393,16 @@ export function ProviderSetupPanel({
     return (
       <SetupPanel
         title={SERVICE_FORM.title}
+        panelId="provider"
         onBack={onCancel}
         footer={
           onSettings && (
             <Button variant="ghost" size="xs" onClick={onSettings}>
-              管理模型服务…
+              {COPY.manageServices}
             </Button>
           )
         }>
-        <div className="setup-grid" role="group" aria-label="选择服务">
+        <div className="setup-grid" role="group" aria-label={COPY.chooseService}>
           {servicesToPick(presets).map(item => (
             <button key={item.id} type="button" className="setup-grid-item" onClick={() => setPreset(item)}>
               <ProviderTile provider={{ id: item.id, kind: item.kind, presetId: item.id }} size={24} />
@@ -384,12 +427,13 @@ export function ProviderSetupPanel({
     return (
       <SetupPanel
         title={title}
+        panelId={preset.id}
         tile={<ProviderTile provider={{ id: preset.id, kind: preset.kind, presetId: preset.id }} size={24} />}
         onBack={() => setPreset(null)}
         footer={
           onSettings && (
             <Button variant="ghost" size="xs" onClick={onSettings}>
-              管理模型服务…
+              {COPY.manageServices}
             </Button>
           )
         }>
@@ -399,6 +443,7 @@ export function ProviderSetupPanel({
   return (
     <SetupPanel
       title={title}
+      panelId={preset.id}
       tile={<ProviderTile provider={{ id: preset.id, kind: preset.kind, presetId: preset.id }} size={24} />}
       onBack={() => setPreset(null)}>
       {data && snapshot ? (
@@ -422,7 +467,7 @@ export function ProviderSetupPanel({
       ) : error ? (
         <InlineNotice tone="error">{error}</InlineNotice>
       ) : (
-        <Loading label="正在读取模型服务…" />
+        <Loading label={COPY.loading} />
       )}
     </SetupPanel>
   )

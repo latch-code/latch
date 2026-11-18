@@ -183,13 +183,13 @@ function declaredPermission(harness: PermissionHarness, read?: DraftRead): Permi
 }
 
 /** No tools run, so nothing can be asked and no mode applies. */
-const chatPermission: PermissionView = {
+const chatPermission = (): PermissionView => ({
   label: MODE_COPY.noFiles,
   line: MODE_COPY.noFilesLine,
   icon: 'shield',
   amber: false,
   asksNothing: true,
-}
+})
 
 /** What the footer says about a session's permissions. It always says something: the mode with its rows when the agent reports modes. */
 export function permissionView(input: {
@@ -202,7 +202,7 @@ export function permissionView(input: {
 }): PermissionView | undefined {
   const { harness, permission, config, access, locked } = input
   if (!harness) return undefined
-  if (input.mode === 'chat') return chatPermission
+  if (input.mode === 'chat') return chatPermission()
   if (harness.level !== 'L3') return declaredPermission(harness)
   const option = modeOption(config)
   if (!option) {
@@ -248,7 +248,7 @@ export function draftPermission(
   read?: DraftRead,
 ): PermissionView | undefined {
   if (!harness) return undefined
-  if (mode === 'chat') return chatPermission
+  if (mode === 'chat') return chatPermission()
   if (!config || !modeOption(config)) return declaredPermission(harness, read)
   return permissionView({
     harness,

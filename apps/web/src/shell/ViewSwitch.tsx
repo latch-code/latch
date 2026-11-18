@@ -1,11 +1,13 @@
 import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { MessagesSquare, SquareKanban } from 'lucide-react'
 import { Count, Icon, SegmentedControl, useLivePrevious } from '@latch/ui'
+import { defineCopy } from '../core/i18n.ts'
 import { currentShell } from '../core/shell.ts'
 import { switchWorkView, VIEW_NAMES, type WorkView } from '../preferences.ts'
 import { shortcutKeys } from '../workbenchShortcuts.ts'
 
 const VIEW_GLYPHS = { chat: MessagesSquare, board: SquareKanban } as const
+const COPY = defineCopy({ views: '视图' }, { views: 'View' })
 
 /**
  * 对话 | 看板: two word segments at the end of the window's top row (and in a phone's heading). The shell draws it once on
@@ -38,7 +40,7 @@ export function ViewSwitch({
   return (
     <SegmentedControl
       className={className ? `view-switch ${className}` : 'view-switch'}
-      label="视图"
+      label={COPY.views}
       value={value}
       options={[option('chat'), option('board')]}
       onValueChange={switchWorkView}

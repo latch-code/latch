@@ -72,6 +72,222 @@ import { fallbackLabel, ModelFallbacksDialog } from './ModelFallbacks.tsx'
 import { BudgetRow, PricesDialog, useModelSpend } from './ModelSpend.tsx'
 import type { ProviderAbilities } from '../core/providerAbilities.ts'
 import { clearProviderAddition, previousProviderInput, providerAddition, rememberProviderAddition } from '../core/providerAddition.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    checkConnection: '检测连接',
+    unreachable: 'Latch 还不能访问这个地址',
+    checkFailed: '没有通过',
+    checking: '检测中…',
+    check: '检测',
+    checkAgain: '重新检测',
+    manualModel: '手动添加模型 ID',
+    addTyped: '添加输入的模型 ID',
+    add: '添加',
+    noModelsYet: '尚未添加模型。获取服务的模型列表，或手动输入模型 ID。',
+    noReturnedModels: '服务没有返回模型，可以手动添加。',
+    models: '模型',
+    fetching: '获取中…',
+    fetchModels: '获取模型',
+    setImagesThinking: '图片与思考按服务的文档设置',
+    setThinking: '思考按服务的文档设置',
+    default: '默认',
+    fallback: '出错时改用',
+    priced: '已填单价',
+    fallbackEdit: '出错时改用…',
+    savingPlain: '正在保存',
+    price: '单价…',
+    acceptImages: '可以接收图片（需与模型服务的真实能力一致）',
+    remove: '移除',
+    modelsToAdd: '可添加的模型',
+    filterModels: '筛选模型',
+    notListed: '服务没有列出模型',
+    canEnterModel: '可以手动输入模型 ID。',
+    manualModelFirst: '服务没有列出模型。手动输入一个模型 ID，再保存。',
+    noReceipt: '还没有收到添加回执。',
+    cancel: '取消',
+    saving: '保存中…',
+    addUnknown: '添加结果未确认。',
+    verifyResult: '核对结果',
+    retryRequest: '重试同一请求',
+    letGo: '放下这次请求',
+    name: '名称',
+    protocol: '协议',
+    enterKey: '输入密钥',
+    localKey: '本地服务通常无需密钥',
+    optional: '可选',
+    contextTokens: '上下文长度（token）',
+    context: '上下文',
+    thinkingDefault: '思考：默认',
+    thinkingOptions: '这个模型接受的思考',
+    keepOne: '至少保留一个模型。',
+    saveTouchID: '用 Touch ID 保存',
+    save: '保存',
+    rename: '重命名…',
+    confirming: '确认中…',
+    setKeyEllipsis: '设置密钥…',
+    connection: '连接',
+    enable: '启用',
+    change: '修改…',
+    clearsThinking: '换协议会清除为模型设置的思考',
+    concurrent: '同时请求',
+    concurrentDetail: '这个服务同时最多几个请求',
+    unlimited: '不限',
+    removeService: '移除此服务',
+    replaceKeyEllipsis: '替换密钥…',
+    key: '密钥',
+    savedKey: '已保存（不回显）',
+    notSet: '未设置',
+    keyRequired: '这个服务需要密钥才能使用',
+    replace: '替换…',
+    addressBeforeFetch: '确认地址后才能获取模型',
+    keyBeforeFetch: '填写密钥后才能获取模型',
+    removeKey: '移除密钥',
+    deleteService: '删除服务',
+    delete: '删除',
+    renameService: '重命名服务',
+    changeAddress: '修改地址',
+    addressRemovesKey: '密钥只发往原来的地址：保存后会移除已保存的密钥。',
+    replaceKey: '替换密钥',
+    setKey: '设置密钥',
+    deleteModelService: '删除模型服务',
+    checkResult: (ms: number, count: number) => `连接正常 · ${formatNumber(ms)} ms · ${formatNumber(count)} 个模型`,
+    manualAfter: (reason: string) => `${reason}可以手动输入模型 ID。`,
+    listResult: (count: number, fresh: number) =>
+      `获取到 ${formatNumber(count)} 个模型${fresh ? `，${formatNumber(fresh)} 个尚未添加` : '，都已添加'}。`,
+    thinkingDetail: (vision: boolean) => `${vision ? '图片未开启时只发送文字。' : ''}思考选「默认」时用模型自己的默认值。`,
+    newSessionDefault: (model: string) => `默认使用 ${model}`,
+    fallbackCount: (count: number) => ` 等 ${formatNumber(count)} 个`,
+    moreModel: (model: string) => `${model} 的更多设置`,
+    modelImages: (model: string) => `${model} 可以接收图片`,
+    removeModel: (model: string) => `移除模型 ${model}`,
+    modelCount: (count: number) => `${formatNumber(count)} 个模型`,
+    addModel: (model: string) => `添加模型 ${model}`,
+    foundModels: (count: number) => `找到 ${formatNumber(count)} 个模型`,
+    useModel: (model: string) => `使用 ${model}`,
+    foundDefault: (count: number) => `找到 ${formatNumber(count)} 个模型，第一个打开的是默认`,
+    listingNeedsKey: (elsewhere: string) => `列出模型需要密钥。${elsewhere}`,
+    confirmThere: (computer: string) => `可以先手动输入模型 ID 保存，再在 ${computer} 上确认这个地址。`,
+    modelContext: (model: string) => `${model} 的上下文长度（token）`,
+    modelThinking: (model: string) => `${model} 的思考`,
+    thinking: (level: string) => `思考：${level}`,
+    defaultService: (kind: string) => `${kind} · 新会话默认使用`,
+    requests: (count: number) => `${formatNumber(count)} 个`,
+    sentTo: (scope: string) => `只发往 ${scope}`,
+    keySentTo: (scope: string) => `密钥只发往 ${scope}`,
+    confirmRemoveKey: (service: string) => `移除「${service}」保存的密钥？需要密钥的服务在重新设置前不能使用。`,
+    confirmDelete: (service: string) => `删除「${service}」及其保存的密钥？正在使用它的会话需要换用其他模型。`,
+  },
+  {
+    checkConnection: 'Check connection',
+    unreachable: 'Latch can’t reach this address yet',
+    checkFailed: 'Failed',
+    checking: 'Checking…',
+    check: 'Check',
+    checkAgain: 'Check again',
+    manualModel: 'Add a model ID',
+    addTyped: 'Add the typed model ID',
+    add: 'Add',
+    noModelsYet: 'No models yet. Fetch the service’s list, or type a model ID.',
+    noReturnedModels: 'The service returned no models. You can add one by ID.',
+    models: 'Models',
+    fetching: 'Fetching…',
+    fetchModels: 'Fetch models',
+    setImagesThinking: 'Set images and thinking per the service’s docs',
+    setThinking: 'Set thinking per the service’s docs',
+    default: 'Default',
+    fallback: 'Fallback models',
+    priced: 'Price set',
+    fallbackEdit: 'Fallback models…',
+    savingPlain: 'Saving',
+    price: 'Price…',
+    acceptImages: 'Accepts images (must match what the service really supports)',
+    remove: 'Remove',
+    modelsToAdd: 'Models to add',
+    filterModels: 'Filter models',
+    notListed: 'The service listed no models',
+    canEnterModel: 'You can type a model ID.',
+    manualModelFirst: 'The service listed no models. Type a model ID, then save.',
+    noReceipt: 'No receipt for adding the service yet.',
+    cancel: 'Cancel',
+    saving: 'Saving…',
+    addUnknown: 'Adding the service is still unconfirmed.',
+    verifyResult: 'Check result',
+    retryRequest: 'Retry same request',
+    letGo: 'Stop waiting for this request',
+    name: 'Name',
+    protocol: 'Protocol',
+    enterKey: 'Enter key',
+    localKey: 'Local services usually need no key',
+    optional: 'Optional',
+    contextTokens: 'Context length (tokens)',
+    context: 'Context',
+    thinkingDefault: 'Thinking: Default',
+    thinkingOptions: 'Thinking this model accepts',
+    keepOne: 'Keep at least one model.',
+    saveTouchID: 'Save with Touch ID',
+    save: 'Save',
+    rename: 'Rename…',
+    confirming: 'Confirming…',
+    setKeyEllipsis: 'Set key…',
+    connection: 'Connection',
+    enable: 'Enable',
+    change: 'Change…',
+    clearsThinking: 'Changing the protocol clears the thinking set for each model',
+    concurrent: 'Concurrent requests',
+    concurrentDetail: 'Maximum concurrent requests for this service',
+    unlimited: 'Unlimited',
+    removeService: 'Remove service',
+    replaceKeyEllipsis: 'Replace key…',
+    key: 'Key',
+    savedKey: 'Saved (not shown)',
+    notSet: 'Not set',
+    keyRequired: 'This service needs a key',
+    replace: 'Replace…',
+    addressBeforeFetch: 'Confirm the address to fetch models',
+    keyBeforeFetch: 'Add a key to fetch models',
+    removeKey: 'Remove key',
+    deleteService: 'Delete service',
+    delete: 'Delete',
+    renameService: 'Rename service',
+    changeAddress: 'Change address',
+    addressRemovesKey: 'The key is sent only to the original address. Saving removes the saved key.',
+    replaceKey: 'Replace key',
+    setKey: 'Set key',
+    deleteModelService: 'Delete model service',
+    checkResult: (ms: number, count: number) =>
+      `Connected · ${formatNumber(ms)} ms · ${plural(count, { one: '{n} model', other: '{n} models' })}`,
+    manualAfter: (reason: string) => `${reason} You can type a model ID.`,
+    listResult: (count: number, fresh: number) =>
+      `Received ${plural(count, { one: '{n} model', other: '{n} models' })}.${fresh ? ` ${formatNumber(fresh)} available to add.` : ' All have been added.'}`,
+    thinkingDetail: (vision: boolean) =>
+      `${vision ? 'With images off, the request sends text only. ' : ''}Default thinking uses the model’s own default.`,
+    newSessionDefault: (model: string) => `Use ${model} by default`,
+    fallbackCount: (count: number) => ` and ${formatNumber(count - 1)} more`,
+    moreModel: (model: string) => `More settings for ${model}`,
+    modelImages: (model: string) => `${model} accepts images`,
+    removeModel: (model: string) => `Remove model ${model}`,
+    modelCount: (count: number) => plural(count, { one: '{n} model', other: '{n} models' }),
+    addModel: (model: string) => `Add model ${model}`,
+    foundModels: (count: number) => `Found ${plural(count, { one: '{n} model', other: '{n} models' })}`,
+    useModel: (model: string) => `Use ${model}`,
+    foundDefault: (count: number) =>
+      `Found ${plural(count, { one: '{n} model', other: '{n} models' })}. The first enabled model is the default.`,
+    listingNeedsKey: (elsewhere: string) => `Listing models requires a key. ${elsewhere}`,
+    confirmThere: (computer: string) => `You can save a model ID manually, then confirm this address on ${computer}.`,
+    modelContext: (model: string) => `Context length for ${model} (tokens)`,
+    modelThinking: (model: string) => `Thinking for ${model}`,
+    thinking: (level: string) => `Thinking: ${level}`,
+    defaultService: (kind: string) => `${kind} · Default for new sessions`,
+    requests: (count: number) => formatNumber(count),
+    sentTo: (scope: string) => `Sent only to ${scope}`,
+    keySentTo: (scope: string) => `The key goes only to ${scope}`,
+    confirmRemoveKey: (service: string) =>
+      `Remove the saved key for “${service}”? If the service requires a key, it becomes available again after you set one.`,
+    confirmDelete: (service: string) => `Delete “${service}” and its saved key? Sessions using the service will need a different model.`,
+  },
+)
 export { providerAbilities, type ProviderAbilities } from '../core/providerAbilities.ts'
 
 type CheckState = { ok: true; latencyMs: number; count: number } | { ok: false; failure: ProbeFailure }
@@ -140,7 +356,7 @@ function useProbe(probe: () => Promise<ListedModels & { latencyMs?: number }>, o
 
   const failed = (cause: unknown): ProbeFailure => {
     const described = describeProbeFailure(cause)
-    if (described.kind === 'key' && described.text.startsWith('已保存的密钥')) onKeyMismatch?.()
+    if (cause instanceof ApiError && cause.code === 'key-origin-mismatch') onKeyMismatch?.()
     return described
   }
   /** The models it found, or undefined after a failure (shown as `check`). */
@@ -218,12 +434,12 @@ function CheckRow({
   const unknown = listingNeutral && result?.ok === false && result.failure.kind === 'listing'
   return (
     <SettingsRow
-      title="检测连接"
+      title={COPY.checkConnection}
       description={
         result === null ? undefined : local ? (
           <span className="check-result" role="status">
             <Icon icon={InfoGlyph} size={12} />
-            Latch 还不能访问这个地址
+            {COPY.unreachable}
           </span>
         ) : unknown ? (
           <span className="check-result" role="status">
@@ -233,13 +449,19 @@ function CheckRow({
         ) : (
           <span className={`check-result ${result.ok ? 'is-ok' : 'is-error'}`} role="status">
             <Icon icon={result.ok ? CircleCheckGlyph : AlertGlyph} size={12} />
-            {result.ok ? `连接正常 · ${result.latencyMs} ms · ${result.count} 个模型` : reasonBelow ? '没有通过' : result.failure.text}
+            {result.ok ? COPY.checkResult(result.latencyMs, result.count) : reasonBelow ? COPY.checkFailed : result.failure.text}
           </span>
         )
       }
       trailing={
-        <Button aria-label="检测连接" disabled={disabled} tooltip={disabledReason} loading={busy} loadingLabel="检测中…" onClick={onCheck}>
-          {result === null ? '检测' : '重新检测'}
+        <Button
+          aria-label={COPY.checkConnection}
+          disabled={disabled}
+          tooltip={disabledReason}
+          loading={busy}
+          loadingLabel={COPY.checking}
+          onClick={onCheck}>
+          {result === null ? COPY.check : COPY.checkAgain}
         </Button>
       }
     />
@@ -325,10 +547,10 @@ function ManualModel({
       <input
         ref={inputRef}
         className="ui-input"
-        aria-label="手动添加模型 ID"
+        aria-label={COPY.manualModel}
         aria-describedby={problem ? hint : undefined}
         aria-invalid={problem ? true : undefined}
-        placeholder="手动添加模型 ID"
+        placeholder={COPY.manualModel}
         value={manual}
         maxLength={400}
         spellCheck={false}
@@ -343,8 +565,8 @@ function ManualModel({
           add()
         }}
       />
-      <Button icon={PlusGlyph} aria-label="添加输入的模型 ID" disabled={disabled || !manual.trim()} onClick={add}>
-        添加
+      <Button icon={PlusGlyph} aria-label={COPY.addTyped} disabled={disabled || !manual.trim()} onClick={add}>
+        {COPY.add}
       </Button>
       {problem && (
         <span id={hint} className="model-add-problem" role="alert">
@@ -417,28 +639,28 @@ function ModelsGroups({
   const fresh = fetched?.filter(model => !models.includes(model)) ?? []
   const shown = fresh.filter(model => model.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))
   const caption = failed
-    ? `${failed}可以手动输入模型 ID。`
+    ? COPY.manualAfter(failed)
     : fetched === null
       ? models.length === 0
-        ? '尚未添加模型。获取服务的模型列表，或手动输入模型 ID。'
+        ? COPY.noModelsYet
         : undefined
       : fetched.length === 0
-        ? '服务没有返回模型，可以手动添加。'
-        : `获取到 ${fetched.length} 个模型${fresh.length ? `，${fresh.length} 个尚未添加` : '，都已添加'}。`
+        ? COPY.noReturnedModels
+        : COPY.listResult(fetched.length, fresh.length)
   return (
     <>
       <SettingsGroup
-        title="模型"
+        title={COPY.models}
         meta={
           <Button
             variant="link"
             size="xs"
             loading={fetching}
-            loadingLabel="获取中…"
+            loadingLabel={COPY.fetching}
             disabled={disabled || fetchBlocked !== undefined}
             tooltip={fetchBlocked}
             onClick={onFetch}>
-            获取模型
+            {COPY.fetchModels}
           </Button>
         }
         caption={caption}
@@ -446,8 +668,8 @@ function ModelsGroups({
         note={
           <NoteLine
             brief={{
-              label: onVision ? '图片与思考按服务的文档设置' : '思考按服务的文档设置',
-              detail: `${onVision ? '图片未开启时只发送文字。' : ''}思考选「默认」时用模型自己的默认值。`,
+              label: onVision ? COPY.setImagesThinking : COPY.setThinking,
+              detail: COPY.thinkingDetail(Boolean(onVision)),
             }}
           />
         }>
@@ -458,7 +680,7 @@ function ModelsGroups({
                 name={group}
                 checked={defaultModel === model}
                 disabled={disabled}
-                aria-label={`默认使用 ${model}`}
+                aria-label={COPY.newSessionDefault(model)}
                 onChange={() => {
                   onDefault(model)
                 }}
@@ -467,7 +689,7 @@ function ModelsGroups({
             <span className="settings-row-text">
               <span className="settings-row-title settings-row-name">
                 <code className="settings-mono model-id">{model}</code>
-                {defaultModel === model && <Badge>默认</Badge>}
+                {defaultModel === model && <Badge>{COPY.default}</Badge>}
               </span>
               <span className="model-thinking">
                 <ThinkingPicker
@@ -491,27 +713,27 @@ function ModelsGroups({
                 )}
                 {fallbacks?.[model]?.length ? (
                   <span className="model-fallback-note">
-                    出错时改用 {fallbackLabel(fallbacks[model]![0]!, services ?? [])}
-                    {fallbacks[model]!.length > 1 ? ` 等 ${fallbacks[model]!.length} 个` : ''}
+                    {COPY.fallback} {fallbackLabel(fallbacks[model]![0]!, services ?? [])}
+                    {fallbacks[model]!.length > 1 ? COPY.fallbackCount(fallbacks[model]!.length) : ''}
                   </span>
                 ) : null}
-                {priced?.has(model) && <span className="model-fallback-note">已填单价</span>}
+                {priced?.has(model) && <span className="model-fallback-note">{COPY.priced}</span>}
               </span>
             </span>
             <span className="settings-row-end">
               {onFallbacks && (
                 <Menu
-                  label={`${model} 的更多设置`}
+                  label={COPY.moreModel(model)}
                   align="end"
-                  trigger={moreButton(`${model} 的更多设置`)}
+                  trigger={moreButton(COPY.moreModel(model))}
                   sections={[
                     {
                       id: 'model',
                       items: [
                         {
                           id: 'fallbacks',
-                          label: '出错时改用…',
-                          ...(disabled ? { disabledReason: '正在保存' } : {}),
+                          label: COPY.fallbackEdit,
+                          ...(disabled ? { disabledReason: COPY.savingPlain } : {}),
                           onSelect: () => {
                             onFallbacks(model)
                           },
@@ -520,7 +742,7 @@ function ModelsGroups({
                           ? [
                               {
                                 id: 'prices',
-                                label: '单价…',
+                                label: COPY.price,
                                 onSelect: () => {
                                   onPrices(model)
                                 },
@@ -534,16 +756,16 @@ function ModelsGroups({
               )}
               {onVision && (
                 <Switch
-                  label={`${model} 可以接收图片`}
-                  title="可以接收图片（需与模型服务的真实能力一致）"
+                  label={COPY.modelImages(model)}
+                  title={COPY.acceptImages}
                   checked={modelCapabilities?.[model]?.vision === true}
                   disabled={disabled}
                   onCheckedChange={vision => onVision(model, vision)}
                 />
               )}
               <IconButton
-                label={`移除模型 ${model}`}
-                tooltip="移除"
+                label={COPY.removeModel(model)}
+                tooltip={COPY.remove}
                 icon={TrashGlyph}
                 disabled={disabled}
                 onClick={() => {
@@ -556,10 +778,10 @@ function ModelsGroups({
         <ManualModel models={models} disabled={disabled} inputRef={manualRef} onAdd={onAdd} />
       </SettingsGroup>
       {fresh.length > 0 && (
-        <SettingsGroup title="可添加的模型" meta={`${fresh.length} 个模型`}>
+        <SettingsGroup title={COPY.modelsToAdd} meta={COPY.modelCount(fresh.length)}>
           {fresh.length > 8 && (
             <div className="settings-row model-filter">
-              <SearchField label="筛选模型" value={filter} onValueChange={setFilter} />
+              <SearchField label={COPY.filterModels} value={filter} onValueChange={setFilter} />
             </div>
           )}
           <div className="model-available">
@@ -571,11 +793,11 @@ function ModelsGroups({
                   <Button
                     variant="ghost"
                     disabled={disabled}
-                    aria-label={`添加模型 ${model}`}
+                    aria-label={COPY.addModel(model)}
                     onClick={() => {
                       onAdd(model)
                     }}>
-                    添加
+                    {COPY.add}
                   </Button>
                 }
               />
@@ -618,16 +840,16 @@ function FoundModels({
   return (
     <div className="provider-found">
       <span className="provider-found-title">
-        {fetched === null ? '模型' : fetched.length ? `找到 ${fetched.length} 个模型` : '服务没有列出模型'}
+        {fetched === null ? COPY.models : fetched.length ? COPY.foundModels(fetched.length) : COPY.notListed}
       </span>
-      {all.length > 8 && <SearchField label="筛选模型" value={filter} onValueChange={setFilter} />}
+      {all.length > 8 && <SearchField label={COPY.filterModels} value={filter} onValueChange={setFilter} />}
       {shown.length > 0 && (
         <div className="provider-found-list">
           {shown.map(model => (
             <div key={model} className="provider-found-row">
               <code className="settings-mono model-id">{model}</code>
               <Switch
-                label={`使用 ${model}`}
+                label={COPY.useModel(model)}
                 checked={models.includes(model)}
                 disabled={disabled}
                 onCheckedChange={on => {
@@ -639,7 +861,12 @@ function FoundModels({
         </div>
       )}
       <ManualModel models={models} disabled={disabled} inputRef={manualRef} onAdd={onAdd} />
-      {failed && <p className="settings-caption">{failed}可以手动输入模型 ID。</p>}
+      {failed && (
+        <p className="settings-caption">
+          {failed}
+          {COPY.canEnterModel}
+        </p>
+      )}
     </div>
   )
 }
@@ -826,9 +1053,7 @@ export function ProviderAddForm({
       listingFailed = false
       if (listed.length === 0 || listed.length > TAKE_ALL_UP_TO) {
         if (listed.length === 0) manual.current?.focus()
-        setGuide(
-          listed.length === 0 ? '服务没有列出模型。手动输入一个模型 ID，再保存。' : `找到 ${listed.length} 个模型，第一个打开的是默认`,
-        )
+        setGuide(listed.length === 0 ? COPY.manualModelFirst : COPY.foundDefault(listed.length))
         return
       }
       chosen = listed
@@ -894,7 +1119,7 @@ export function ProviderAddForm({
     failure === null || failure.kind === 'local'
       ? undefined
       : failure.kind === 'key' && !keyEditable && requiresKey
-        ? `列出模型需要密钥。${PROVIDER_COPY.keyElsewhere(computer)}`
+        ? COPY.listingNeedsKey(PROVIDER_COPY.keyElsewhere(computer))
         : failure.text
   const keyElsewhere = abilities.keys
     ? offlineText(abilities)
@@ -921,7 +1146,7 @@ export function ProviderAddForm({
         clearProviderAddition(additionOwner)
         setAddition(undefined)
         onSaved(result.provider, false)
-      } else setError('还没有收到添加回执。')
+      } else setError(COPY.noReceipt)
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === 'provider-changed') {
         clearProviderAddition(additionOwner)
@@ -942,7 +1167,7 @@ export function ProviderAddForm({
   const actions = (
     <>
       <Button size="md" disabled={saving} onClick={onCancel}>
-        取消
+        {COPY.cancel}
       </Button>
       <Button
         size="md"
@@ -953,7 +1178,7 @@ export function ProviderAddForm({
         icon={locked ? LockGlyph : undefined}
         disabled={busy}
         loading={saving}
-        loadingLabel={waiting ? PROVIDER_COPY.waitingTouchID : '保存中…'}>
+        loadingLabel={waiting ? PROVIDER_COPY.waitingTouchID : COPY.saving}>
         {locked ? PROVIDER_COPY.saveWithTouchID : PROVIDER_COPY.save}
       </Button>
     </>
@@ -961,16 +1186,16 @@ export function ProviderAddForm({
   if (addition && additionOwner)
     return (
       <div className="provider-add provider-add-inline">
-        <InlineNotice tone="neutral">添加结果未确认。</InlineNotice>
+        <InlineNotice tone="neutral">{COPY.addUnknown}</InlineNotice>
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
         <InlineConfirm active={saving} rank={2} />
         <div className="settings-actions">
           <Button disabled={saving} onClick={() => void recover(false)}>
-            核对结果
+            {COPY.verifyResult}
           </Button>
           {previousProviderInput(additionOwner) && (
             <Button loading={saving} onClick={() => void recover(true)}>
-              重试同一请求
+              {COPY.retryRequest}
             </Button>
           )}
           <Button
@@ -981,7 +1206,7 @@ export function ProviderAddForm({
               setAddition(undefined)
               setError('')
             }}>
-            放下这次请求
+            {COPY.letGo}
           </Button>
         </div>
       </div>
@@ -1003,7 +1228,7 @@ export function ProviderAddForm({
       <div className="settings-fields">
         {customKind && (
           <TextField
-            label="名称"
+            label={COPY.name}
             value={name}
             maxLength={80}
             autoComplete="off"
@@ -1014,7 +1239,7 @@ export function ProviderAddForm({
         )}
         {protocols.length > 1 && (
           <label className="field">
-            <span>协议</span>
+            <span>{COPY.protocol}</span>
             <select
               value={kind}
               onChange={event => {
@@ -1048,9 +1273,9 @@ export function ProviderAddForm({
             label={SERVICE_FORM.key}
             type="password"
             value={apiKey}
-            placeholder={requiresKey ? '输入密钥' : '本地服务通常无需密钥'}
+            placeholder={requiresKey ? COPY.enterKey : COPY.localKey}
             autoComplete="new-password"
-            hint={requiresKey ? undefined : '可选'}
+            hint={requiresKey ? undefined : COPY.optional}
             onChange={event => {
               setApiKey(event.target.value)
               probe.reset()
@@ -1083,7 +1308,7 @@ export function ProviderAddForm({
           busy={busy}
           waiting={confirming && waiting}
           actionLabel={PROVIDER_COPY.allowAndFetch}
-          elsewhere={abilities.offline ? offlineText(abilities) : `可以先手动输入模型 ID 保存，再在 ${computer} 上确认这个地址。`}
+          elsewhere={abilities.offline ? offlineText(abilities) : COPY.confirmThere(computer)}
           atSave={locked}
           onAllow={() => {
             void allowAndFetch()
@@ -1135,9 +1360,9 @@ function ContextField({
     <input
       className="ui-input model-context"
       inputMode="numeric"
-      aria-label={`${model} 的上下文长度（token）`}
-      title="上下文长度（token）"
-      placeholder="上下文"
+      aria-label={COPY.modelContext(model)}
+      title={COPY.contextTokens}
+      placeholder={COPY.context}
       value={text}
       disabled={disabled}
       onChange={event => {
@@ -1192,12 +1417,15 @@ function ThinkingPicker({
   const offered = levels?.length && !sets.some(set => set.join(' ') === current) ? [...sets, levels] : sets
   return (
     <ValuePicker
-      label={`${model} 的思考`}
+      label={COPY.modelThinking(model)}
       size="xs"
       value={current}
-      valueText={current === NO_THINKING ? '思考：默认' : `思考：${thinkingSetText(levels!)}`}
-      options={[{ value: NO_THINKING, label: '默认' }, ...offered.map(set => ({ value: set.join(' '), label: thinkingSetText(set) }))]}
-      header={{ title: '这个模型接受的思考' }}
+      valueText={current === NO_THINKING ? COPY.thinkingDefault : COPY.thinking(thinkingSetText(levels!))}
+      options={[
+        { value: NO_THINKING, label: COPY.default },
+        ...offered.map(set => ({ value: set.join(' '), label: thinkingSetText(set) })),
+      ]}
+      header={{ title: COPY.thinkingOptions }}
       width="sm"
       disabled={disabled}
       onValueChange={value => {
@@ -1329,7 +1557,7 @@ export function ProviderPage({
   const removeModel = (model: string) => {
     const models = provider.models.filter(item => item !== model)
     if (models.length === 0) {
-      setError('至少保留一个模型。')
+      setError(COPY.keepOne)
       return
     }
     apply({ models, ...(provider.defaultModel === model ? { defaultModel: models[0] } : {}) })
@@ -1343,7 +1571,7 @@ export function ProviderPage({
   // The reason stands in the notice with its action, and the row only says that the check did not pass.
   const failedAction = checkAction(checkFailure, { keyEditable, justSaved: checkOnOpen })
   const listingFailed = probe.failure === null || probe.failure.kind === 'local' ? undefined : probe.failure.text
-  const confirmLabel = unconfirmed && abilities.confirm ? '用 Touch ID 保存' : '保存'
+  const confirmLabel = unconfirmed && abilities.confirm ? COPY.saveTouchID : COPY.save
   const scope = origin ? shownAddress(origin) : undefined
   const newKeyScope = keyScopeOf(provider.baseURL)
   const keyCaption = keyEditable
@@ -1359,7 +1587,7 @@ export function ProviderPage({
         title={provider.name}
         description={
           <>
-            {isDefault ? `${providerKindLabels[provider.kind]} · 新会话默认使用` : providerKindLabels[provider.kind]}
+            {isDefault ? COPY.defaultService(providerKindLabels[provider.kind]) : providerKindLabels[provider.kind]}
             <HealthLine health={provider.health} />
           </>
         }
@@ -1369,7 +1597,7 @@ export function ProviderPage({
             onClick={() => {
               setDialog('name')
             }}>
-            重命名…
+            {COPY.rename}
           </Button>
         }
       />
@@ -1385,7 +1613,7 @@ export function ProviderPage({
                 disabled={busy || targetBlocked !== undefined}
                 tooltip={targetBlocked}
                 loading={saving}
-                loadingLabel={waiting ? PROVIDER_COPY.waitingTouchID : '确认中…'}
+                loadingLabel={waiting ? PROVIDER_COPY.waitingTouchID : COPY.confirming}
                 onClick={confirmHere}>
                 {PROVIDER_COPY.confirmAddress}
               </Button>
@@ -1412,7 +1640,7 @@ export function ProviderPage({
                 onClick={() => {
                   setDialog('key')
                 }}>
-                设置密钥…
+                {COPY.setKeyEllipsis}
               </Button>
             ) : undefined
           }>
@@ -1421,10 +1649,10 @@ export function ProviderPage({
       )}
       <InlineConfirm active={saving} rank={1} />
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
-      <SettingsGroup title="连接" caption={targetBlocked}>
+      <SettingsGroup title={COPY.connection} caption={targetBlocked}>
         <SwitchRow
           className="settings-row"
-          title="启用"
+          title={COPY.enable}
           checked={enabled}
           disabled={saving}
           onCheckedChange={next => {
@@ -1448,17 +1676,17 @@ export function ProviderPage({
               onClick={() => {
                 setDialog('address')
               }}>
-              修改…
+              {COPY.change}
             </Button>
           }
         />
         {protocols.length > 1 && (
           <SettingsRow
-            title="协议"
-            description={declaresThinking ? '换协议会清除为模型设置的思考' : undefined}
+            title={COPY.protocol}
+            description={declaresThinking ? COPY.clearsThinking : undefined}
             trailing={
               <ValuePicker
-                label="协议"
+                label={COPY.protocol}
                 value={provider.kind}
                 disabled={busy || targetBlocked !== undefined}
                 bleed="end"
@@ -1474,20 +1702,20 @@ export function ProviderPage({
           />
         )}
         <SettingsRow
-          title="同时请求"
+          title={COPY.concurrent}
           trailing={
             <ValuePicker
-              label="同时请求"
+              label={COPY.concurrent}
               value={provider.maxConcurrent === undefined ? 'none' : String(provider.maxConcurrent)}
               disabled={busy}
               bleed="end"
-              header={{ title: '这个服务同时最多几个请求' }}
+              header={{ title: COPY.concurrentDetail }}
               options={[
-                { value: 'none', label: '不限' },
-                ...CONCURRENCY_CHOICES.map(count => ({ value: String(count), label: `${count} 个` })),
+                { value: 'none', label: COPY.unlimited },
+                ...CONCURRENCY_CHOICES.map(count => ({ value: String(count), label: COPY.requests(count) })),
                 // A saved value outside the usual steps is still shown as it is.
                 ...(provider.maxConcurrent !== undefined && !CONCURRENCY_CHOICES.includes(provider.maxConcurrent)
-                  ? [{ value: String(provider.maxConcurrent), label: `${provider.maxConcurrent} 个` }]
+                  ? [{ value: String(provider.maxConcurrent), label: COPY.requests(provider.maxConcurrent) }]
                   : []),
               ]}
               onValueChange={value => {
@@ -1533,7 +1761,7 @@ export function ProviderPage({
                 onClick={() => {
                   setConfirm('delete')
                 }}>
-                移除此服务
+                {COPY.removeService}
               </Button>
             ) : (
               <Button
@@ -1542,7 +1770,7 @@ export function ProviderPage({
                 onClick={() => {
                   setDialog('key')
                 }}>
-                {provider.hasKey ? '替换密钥…' : '设置密钥…'}
+                {provider.hasKey ? COPY.replaceKeyEllipsis : COPY.setKeyEllipsis}
               </Button>
             )
           }>
@@ -1550,14 +1778,14 @@ export function ProviderPage({
         </InlineNotice>
       )}
       <SettingsGroup
-        title="密钥"
+        title={COPY.key}
         caption={keyCaption}
         captionIcon="lock"
         note={keyEditable ? <NoteLine icon={LockGlyph} brief={PROVIDER_COPY.keyHeld} /> : undefined}>
         <SettingsRow
           leading={<IconTile icon={provider.hasKey ? KeyRound : LockGlyph} />}
-          title={provider.hasKey ? '已保存（不回显）' : '未设置'}
-          description={provider.hasKey && scope ? `只发往 ${scope}` : requiresKey ? '这个服务需要密钥才能使用' : '本地服务通常无需密钥'}
+          title={provider.hasKey ? COPY.savedKey : COPY.notSet}
+          description={provider.hasKey && scope ? COPY.sentTo(scope) : requiresKey ? COPY.keyRequired : COPY.localKey}
           trailing={
             keyEditable ? (
               <Button
@@ -1565,7 +1793,7 @@ export function ProviderPage({
                 onClick={() => {
                   setDialog('key')
                 }}>
-                {provider.hasKey ? '替换…' : '设置密钥…'}
+                {provider.hasKey ? COPY.replace : COPY.setKeyEllipsis}
               </Button>
             ) : undefined
           }
@@ -1588,7 +1816,7 @@ export function ProviderPage({
         fetching={probe.busy === 'fetch'}
         disabled={busy}
         failed={listingFailed}
-        fetchBlocked={unconfirmed ? '确认地址后才能获取模型' : keyless ? '填写密钥后才能获取模型' : undefined}
+        fetchBlocked={unconfirmed ? COPY.addressBeforeFetch : keyless ? COPY.keyBeforeFetch : undefined}
         onFetch={() => {
           void probe.fetchModels()
         }}
@@ -1644,7 +1872,7 @@ export function ProviderPage({
       <SettingsGroup>
         {provider.hasKey && (
           <SettingsRow
-            title="移除密钥"
+            title={COPY.removeKey}
             trailing={
               <Button
                 variant="danger"
@@ -1652,13 +1880,13 @@ export function ProviderPage({
                 onClick={() => {
                   setConfirm('clear-key')
                 }}>
-                移除
+                {COPY.remove}
               </Button>
             }
           />
         )}
         <SettingsRow
-          title="删除服务"
+          title={COPY.deleteService}
           trailing={
             <Button
               variant="danger"
@@ -1666,15 +1894,15 @@ export function ProviderPage({
               onClick={() => {
                 setConfirm('delete')
               }}>
-              删除
+              {COPY.delete}
             </Button>
           }
         />
       </SettingsGroup>
       <FieldDialog
         open={dialog === 'name'}
-        title="重命名服务"
-        label="名称"
+        title={COPY.renameService}
+        label={COPY.name}
         initial={provider.name}
         maxLength={80}
         onSubmit={value => update({ name: value })}
@@ -1684,14 +1912,14 @@ export function ProviderPage({
       />
       <FieldDialog
         open={dialog === 'address' && targetBlocked === undefined}
-        title="修改地址"
+        title={COPY.changeAddress}
         label={SERVICE_FORM.address}
         type="url"
         initial={provider.baseURL}
         placeholder="https://api.example.com/v1"
         warning={value => {
           const drops = provider.hasKey && keyScopeOf(value, provider.keyPath !== undefined) !== origin
-          return drops ? '密钥只发往原来的地址：保存后会移除已保存的密钥。' : undefined
+          return drops ? COPY.addressRemovesKey : undefined
         }}
         onSubmit={value =>
           update({ baseURL: value, ...(abilities.confirm && destinationOf(value, data) === 'unconfirmed' ? { confirmOrigin: true } : {}) })
@@ -1702,11 +1930,11 @@ export function ProviderPage({
       />
       <FieldDialog
         open={dialog === 'key' && keyEditable && !!newKeyScope}
-        title={provider.hasKey ? '替换密钥' : '设置密钥'}
-        subtitle={newKeyScope ? `密钥只发往 ${shownAddress(newKeyScope)}` : undefined}
+        title={provider.hasKey ? COPY.replaceKey : COPY.setKey}
+        subtitle={newKeyScope ? COPY.keySentTo(shownAddress(newKeyScope)) : undefined}
         label={SERVICE_FORM.key}
         type="password"
-        placeholder="输入密钥"
+        placeholder={COPY.enterKey}
         hint={PROVIDER_COPY.keyHeld.label}
         confirmLabel={confirmLabel}
         onSubmit={value => update({ apiKey: value, ...(unconfirmed && abilities.confirm ? { confirmOrigin: true } : {}) })}
@@ -1716,10 +1944,10 @@ export function ProviderPage({
       />
       {confirm === 'clear-key' && (
         <ConfirmDialog
-          title="移除密钥"
+          title={COPY.removeKey}
           danger
-          confirmLabel="移除"
-          message={`移除「${provider.name}」保存的密钥？需要密钥的服务在重新设置前不能使用。`}
+          confirmLabel={COPY.remove}
+          message={COPY.confirmRemoveKey(provider.name)}
           onClose={() => {
             setConfirm(null)
           }}
@@ -1731,10 +1959,10 @@ export function ProviderPage({
       )}
       {confirm === 'delete' && (
         <ConfirmDialog
-          title="删除模型服务"
+          title={COPY.deleteModelService}
           danger
-          confirmLabel="删除"
-          message={`删除「${provider.name}」及其保存的密钥？正在使用它的会话需要换用其他模型。`}
+          confirmLabel={COPY.delete}
+          message={COPY.confirmDelete(provider.name)}
           onClose={() => {
             setConfirm(null)
           }}

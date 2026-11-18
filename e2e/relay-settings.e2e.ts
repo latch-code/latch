@@ -9,7 +9,7 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 import { openEntry } from './helpers/layout.ts'
 
 /**
- * 设置 › 中继 against a scripted Host: every state a relay row has, 添加中继 through a relay file with the check card and
+ * 设置 › 连接转发 against a scripted Host: every state a relay row has, 添加转发服务 through a relay file with the check card and
  * the progress line, a file that is refused, and a device that only reads. Screenshots at four widths, light and dark.
  */
 const OUTPUT = process.env.LATCH_RELAY_SHOTS ? resolve(process.env.LATCH_RELAY_SHOTS, 'settings') : 'test-results/relay-settings'
@@ -105,7 +105,7 @@ async function scripted(page: Page, local: boolean, relays: Relay[], listening =
   return state
 }
 
-describe('设置 › 中继', () => {
+describe('设置 › 连接转发', () => {
   let host: TestHost
   let browser: Browser
   beforeAll(async () => {
@@ -128,7 +128,7 @@ describe('设置 › 中继', () => {
         const state = await scripted(page, true, [...ALL_STATES])
         await page.reload()
         await connected(page)
-        await openEntry(page, '中继')
+        await openEntry(page, '连接转发')
         const capture = async (name: string) => {
           for (const colorScheme of ['light', 'dark'] as const) {
             await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
@@ -140,7 +140,7 @@ describe('设置 › 中继', () => {
         await page.getByTestId('relay-direct').getByText('可用').waitFor()
         for (const word of ['连接中', '已连接 · 38 ms', '密钥不符', '连不上', '已停用', '尚未实现'])
           await page.getByText(word, { exact: true }).first().waitFor()
-        await expect.poll(() => page.getByText('官方中继').count()).toBe(0)
+        await expect.poll(() => page.getByText('官方转发服务').count()).toBe(0)
         await capture('relays-states')
 
         // ⋯ › 测试 shows the four steps where it stopped; ⋯ › 停用 and 移除 go to the Host.
@@ -156,24 +156,24 @@ describe('设置 › 中继', () => {
         await page.getByRole('menuitem', { name: '移除' }).last().click()
         await expect.poll(() => state.deleted).toEqual(['5'.repeat(32)])
 
-        // 添加中继 › 已有中继文件: a file that is not one is refused; a good one shows the check card, never the token.
-        await page.getByRole('button', { name: '添加中继' }).click()
+        // 添加转发服务 › 已有配置文件: a file that is not one is refused; a good one shows the check card, never the token.
+        await page.getByRole('button', { name: '添加转发服务' }).click()
         const sheet = page.locator('.relay-add-dialog')
         await sheet.getByTestId('relay-ways').waitFor()
         await capture('relays-add-ways')
         expect(await sheet.getByRole('button', { name: /Cloudflare Workers/u }).getAttribute('aria-disabled')).toBe('true')
-        await sheet.getByRole('button', { name: '已有中继文件' }).click()
+        await sheet.getByRole('button', { name: '已有配置文件' }).click()
         await sheet
           .getByTestId('relay-file')
           .setInputFiles({ name: 'x.json', mimeType: 'application/json', buffer: Buffer.from('{"version":9}') })
-        await sheet.getByText('这个文件不是中继导出的连接配置。').waitFor()
+        await sheet.getByText('请选择由转发服务导出的连接配置。').waitFor()
         await capture('relays-file-rejected')
         await sheet.getByTestId('relay-file').setInputFiles({
           name: 'latch-relay.json',
           mimeType: 'application/json',
           buffer: Buffer.from(JSON.stringify({ version: 2, profile: edge })),
         })
-        await sheet.getByText(/Cloudflare Workers 中继尚未实现/u).waitFor()
+        await sheet.getByText(/Cloudflare Workers 转发服务尚未实现/u).waitFor()
         await sheet.getByTestId('relay-file').setInputFiles({
           name: 'latch-relay.json',
           mimeType: 'application/json',
@@ -203,10 +203,10 @@ describe('设置 › 中继', () => {
       await scripted(page, false, [row('2'.repeat(32), 'connected', { latencyMs: 38 })], false)
       await page.reload()
       await connected(page)
-      await openEntry(page, '中继')
+      await openEntry(page, '连接转发')
       await page.getByText('已连接 · 38 ms', { exact: true }).waitFor()
       await page.getByTestId('relay-direct').getByText('未开启').waitFor()
-      expect(await page.getByRole('button', { name: '添加中继' }).count()).toBe(0)
+      expect(await page.getByRole('button', { name: '添加转发服务' }).count()).toBe(0)
       expect(await page.getByRole('button', { name: '更多' }).count()).toBe(0)
       for (const colorScheme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme })
@@ -222,8 +222,8 @@ describe('设置 › 中继', () => {
       await scripted(page, true, [])
       await page.reload()
       await connected(page)
-      await openEntry(page, '中继')
-      await page.getByRole('button', { name: '添加中继' }).waitFor()
+      await openEntry(page, '连接转发')
+      await page.getByRole('button', { name: '添加转发服务' }).waitFor()
       for (const colorScheme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme })
         await page.screenshot({ path: `${OUTPUT}/relays-empty-390-${colorScheme}.png`, animations: 'disabled' })

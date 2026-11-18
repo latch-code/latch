@@ -31,7 +31,7 @@ import { harnessName } from '../composerChoice.ts'
 import { api, errorMessage } from '../core/api.ts'
 import { exactTokens, formatTokens } from '../format.ts'
 import { useModelSpend } from '../settings/ModelSpend.tsx'
-import { budgetProgressText, costsText, NOT_REPORTED } from '../settings/modelSpend.ts'
+import { budgetProgressText, costsText, notReported } from '../settings/modelSpend.ts'
 import { LimitWindow } from './LimitWindow.tsx'
 import { budgetLimit } from './limits.ts'
 import type { UsageRequest } from './surface.ts'
@@ -42,12 +42,10 @@ import {
   costNote,
   harnessOf,
   mergeSources,
-  OWN_LOGIN,
-  PLUGIN_SERVICE,
   projectName,
   SOURCE_NAMES,
   sourceSplit,
-  TOKEN_KINDS,
+  tokenKinds,
   tokenColumns,
   unpricedShare,
   usageRowDetail,
@@ -55,26 +53,212 @@ import {
   usageTotals,
   type AnyRow,
 } from './usage.ts'
+import { defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    day: '24 小时',
+    week: '7 天',
+    month: '30 天',
+    quarter: '90 天',
+    allSources: '全部来源',
+    byHarness: '按 Harness',
+    byModel: '按模型',
+    byService: '按服务',
+    byProject: '按项目',
+    byAgent: '按 Agent',
+    bySession: '按会话',
+    period: '统计期间',
+    source: '来源',
+    retry: '重试',
+    stale: ' 当前显示上次读取结果。',
+    tokensDetail: (value1: string | number, value2: string | number) => `输入 ${value1}
+输出 ${value2}`,
+    estimateBasis: '估算的依据',
+    estimate: '估算',
+    unpriced: (value1: string | number) => `${value1}% 未计价`,
+    turns: (count: number) => plural(count, { other: '{n} 轮' }),
+    requests: (count: number) => plural(count, { other: '{n} 次请求' }),
+    count: (count: number) => plural(count, { other: '{n} 次' }),
+    uncounted: (count: number) => plural(count, { other: '未计入 {n} 次' }),
+    omitted: (count: number) => plural(count, { other: '有 {n} 行记录读不出，没有计入' }),
+    tokenSplit: (input: string, output: string) => `输入 ${input} · 输出 ${output}`,
+    hitRate: (rate: string) => `缓存命中 ${rate}`,
+    perTurn: (tokens: string, turns: string) => `${tokens} / 轮 · ${turns}`,
+    groupName: { harness: 'Harness', model: '模型', service: '服务', project: '项目', agent: 'Agent', session: '会话' },
+    empty: '这个期间没有 Latch 运行的用量',
+    hourly: '每小时 tokens',
+    daily: '每日 tokens',
+    periodSessions: '这一段的会话',
+    collapse: '收起',
+    noUsage: '没有用量',
+    input: '输入',
+    output: '输出',
+    cacheHit: '缓存命中',
+    allHarnesses: '全部 Harness',
+    times: '时段',
+    project: '项目',
+    monthlyBudget: '本月预算',
+    details: '明细',
+    group: '分组',
+    tooMany: '记录太多，只算了读到的部分',
+    other: '其他',
+    modelComparison: '同一模型，不同 Harness',
+    noComparison: '没有在两个 Harness 上都用过的模型',
+    inputPerTurn: '输入 / 轮',
+    outputPerTurn: '输出 / 轮',
+    usage: '用量',
+    uses: '次数',
+    failed: (value1: string | number) => `失败 ${value1}`,
+    fallbacks: (value1: string | number) => `备选 ${value1}`,
+  },
+  {
+    day: '24 hours',
+    week: '7 days',
+    month: '30 days',
+    quarter: '90 days',
+    allSources: 'All sources',
+    byHarness: 'By Harness',
+    byModel: 'By model',
+    byService: 'By service',
+    byProject: 'By project',
+    byAgent: 'By Agent',
+    bySession: 'By session',
+    period: 'Period',
+    source: 'Source',
+    retry: 'Retry',
+    stale: ' Showing the last result.',
+    tokensDetail: (value1: string | number, value2: string | number) => `Input ${value1}
+Output ${value2}`,
+    estimateBasis: 'About the estimate',
+    estimate: 'Estimated',
+    unpriced: (value1: string | number) => `${value1}% unpriced`,
+    turns: (count: number) => plural(count, { one: '{n} turn', other: '{n} turns' }),
+    requests: (count: number) => plural(count, { one: '{n} request', other: '{n} requests' }),
+    count: (count: number) => plural(count, { other: '{n}' }),
+    uncounted: (count: number) => plural(count, { one: '{n} request excluded', other: '{n} requests excluded' }),
+    omitted: (count: number) => plural(count, { one: '{n} unreadable record excluded', other: '{n} unreadable records excluded' }),
+    tokenSplit: (input: string, output: string) => `Input ${input} · Output ${output}`,
+    hitRate: (rate: string) => `Cache hits ${rate}`,
+    perTurn: (tokens: string, turns: string) => `${tokens} / turn · ${turns}`,
+    groupName: { harness: 'Harness', model: 'Model', service: 'Service', project: 'Project', agent: 'Agent', session: 'Session' },
+    empty: 'No usage from Latch in this period',
+    hourly: 'Tokens per hour',
+    daily: 'Tokens per day',
+    periodSessions: 'Sessions in this period',
+    collapse: 'Show less',
+    noUsage: 'No usage',
+    input: 'Input',
+    output: 'Output',
+    cacheHit: 'Cache hits',
+    allHarnesses: 'All Harnesses',
+    times: 'Time of week',
+    project: 'Project',
+    monthlyBudget: 'Monthly budget',
+    details: 'Details',
+    group: 'Group by',
+    tooMany: 'Too many records. Showing totals for the records read',
+    other: 'Other',
+    modelComparison: 'Same model across Harnesses',
+    noComparison: 'No model was used on more than one Harness',
+    inputPerTurn: 'Input per turn',
+    outputPerTurn: 'Output per turn',
+    usage: 'Usage',
+    uses: 'Count',
+    failed: (value1: string | number) => `Failed ${value1}`,
+    fallbacks: (value1: string | number) => `Fallbacks ${value1}`,
+  },
+)
 
 const PERIODS: Array<{ value: UsagePeriod; label: string }> = [
-  { value: '1', label: '24 小时' },
-  { value: '7', label: '7 天' },
-  { value: '30', label: '30 天' },
-  { value: '90', label: '90 天' },
+  {
+    value: '1',
+    get label() {
+      return COPY.day
+    },
+  },
+  {
+    value: '7',
+    get label() {
+      return COPY.week
+    },
+  },
+  {
+    value: '30',
+    get label() {
+      return COPY.month
+    },
+  },
+  {
+    value: '90',
+    get label() {
+      return COPY.quarter
+    },
+  },
 ]
 const SOURCES: Array<{ value: UsageSource | 'all'; label: string }> = [
-  { value: 'all', label: '全部来源' },
-  { value: 'gateway', label: SOURCE_NAMES.gateway },
-  { value: 'own', label: OWN_LOGIN },
-  { value: 'plugin', label: PLUGIN_SERVICE },
+  {
+    value: 'all',
+    get label() {
+      return COPY.allSources
+    },
+  },
+  {
+    value: 'gateway',
+    get label() {
+      return SOURCE_NAMES.gateway
+    },
+  },
+  {
+    value: 'own',
+    get label() {
+      return SOURCE_NAMES.own
+    },
+  },
+  {
+    value: 'plugin',
+    get label() {
+      return SOURCE_NAMES.plugin
+    },
+  },
 ]
 const GROUPS: Array<{ value: UsageGroup; label: string }> = [
-  { value: 'harness', label: '按 Harness' },
-  { value: 'model', label: '按模型' },
-  { value: 'service', label: '按服务' },
-  { value: 'project', label: '按项目' },
-  { value: 'agent', label: '按 Agent' },
-  { value: 'session', label: '按会话' },
+  {
+    value: 'harness',
+    get label() {
+      return COPY.byHarness
+    },
+  },
+  {
+    value: 'model',
+    get label() {
+      return COPY.byModel
+    },
+  },
+  {
+    value: 'service',
+    get label() {
+      return COPY.byService
+    },
+  },
+  {
+    value: 'project',
+    get label() {
+      return COPY.byProject
+    },
+  },
+  {
+    value: 'agent',
+    get label() {
+      return COPY.byAgent
+    },
+  },
+  {
+    value: 'session',
+    get label() {
+      return COPY.bySession
+    },
+  },
 ]
 
 /** The choices last made stay made while the page lives, across a new audience or a reopening. */
@@ -101,7 +285,7 @@ interface Shown extends UsageSeries {
  */
 function useUsageRead(key: string | undefined, read: (signal: AbortSignal) => Promise<Shown>) {
   const [answers, setAnswers] = useState<{ key: string; value: Shown }>()
-  const [failure, setFailure] = useState<{ key: string; text: string }>()
+  const [failure, setFailure] = useState<{ key: string; text: () => string }>()
   const [turn, setTurn] = useState(0)
   useEffect(() => {
     if (key === undefined) return undefined
@@ -113,7 +297,7 @@ function useUsageRead(key: string | undefined, read: (signal: AbortSignal) => Pr
         setFailure(undefined)
       },
       cause => {
-        if (!controller.signal.aborted) setFailure({ key, text: errorMessage(cause) })
+        if (!controller.signal.aborted) setFailure({ key, text: () => errorMessage(cause) })
       },
     )
     return () => controller.abort()
@@ -123,7 +307,7 @@ function useUsageRead(key: string | undefined, read: (signal: AbortSignal) => Pr
   return {
     shown: answers?.value,
     stale: answers !== undefined && answers.key !== key,
-    error: failure && failure.key === key ? failure.text : undefined,
+    error: failure && failure.key === key ? failure.text() : undefined,
     retry: () => setTurn(count => count + 1),
   }
 }
@@ -170,9 +354,10 @@ function Panel({
 }
 
 const tokens = (value: number) => (value === 0 ? '0' : formatTokens(value))
-const percent = (value: number) => `${Math.round(value * 100)}%`
+const percent = (value: number) => formatNumber(value, { style: 'percent' })
 
 export function UsageView({ request, snapshot }: { request: UsageRequest; snapshot: AppSnapshot }) {
+  useLocale()
   const [period, choosePeriod] = useState<UsagePeriod>(chosen.period)
   const [chosenGroup, chooseGroup] = useState<UsageGroup>(chosen.group)
   const [by, chooseBy] = useState<UsageSource | 'all'>(chosen.by)
@@ -228,19 +413,19 @@ export function UsageView({ request, snapshot }: { request: UsageRequest; snapsh
   return (
     <div className="usage-usage">
       <div className="usage-controls">
-        <SegmentedControl label="统计期间" size="sm" value={period} options={PERIODS} onValueChange={setPeriod} />
-        {!scope && <ValuePicker label="来源" value={by} options={SOURCES} onValueChange={setBy} menuChevron width="xs" />}
+        <SegmentedControl label={COPY.period} size="sm" value={period} options={PERIODS} onValueChange={setPeriod} />
+        {!scope && <ValuePicker label={COPY.source} value={by} options={SOURCES} onValueChange={setBy} menuChevron width="xs" />}
       </div>
       {main.error && (
         <InlineNotice
           tone="error"
           action={
             <Button size="sm" onClick={main.retry}>
-              重试
+              {COPY.retry}
             </Button>
           }>
           {main.error}
-          {shown && ' 当前显示上次读取结果。'}
+          {shown && COPY.stale}
         </InlineNotice>
       )}
       {!shown && !main.error && <UsageSkeleton />}
@@ -249,32 +434,32 @@ export function UsageView({ request, snapshot }: { request: UsageRequest; snapsh
           <div className="usage-total">
             <p className="usage-total-tokens">
               <strong title={totals.tokens === undefined ? undefined : exactTokens(totals.tokens)}>
-                {totals.tokens === undefined ? (nothing ? '0' : NOT_REPORTED) : formatTokens(totals.tokens)}
+                {totals.tokens === undefined ? (nothing ? '0' : notReported()) : formatTokens(totals.tokens)}
               </strong>
               <span>tokens</span>
             </p>
             <p className="usage-total-facts">
-              {totals.turns > 0 && <span>{totals.turns} 轮</span>}
-              {(totals.requests > 0 || totals.turns === 0) && <span>{totals.requests} 次请求</span>}
+              {totals.turns > 0 && <span>{COPY.turns(totals.turns)}</span>}
+              {(totals.requests > 0 || totals.turns === 0) && <span>{COPY.requests(totals.requests)}</span>}
               {totals.tokens !== undefined && (
-                <span title={`输入 ${exactTokens(totals.inputTokens)}\n输出 ${exactTokens(totals.outputTokens)}`}>
-                  输入 {formatTokens(totals.inputTokens)} · 输出 {formatTokens(totals.outputTokens)}
+                <span title={COPY.tokensDetail(exactTokens(totals.inputTokens), exactTokens(totals.outputTokens))}>
+                  {COPY.tokenSplit(formatTokens(totals.inputTokens), formatTokens(totals.outputTokens))}
                 </span>
               )}
-              {hit !== undefined && <span>缓存命中 {hit}%</span>}
+              {hit !== undefined && <span>{COPY.hitRate(percent(hit / 100))}</span>}
               {cost && (
                 // What the estimate is worked out from, on a tap as well as a hover: nothing more is written on the line.
                 <Popover
-                  label="估算的依据"
+                  label={COPY.estimateBasis}
                   size="sm"
                   trigger={props => (
                     <button {...props} type="button" className="usage-total-cost">
-                      <Badge>估算</Badge>
+                      <Badge>{COPY.estimate}</Badge>
                       {cost}
                     </button>
                   )}>
                   <ul className="usage-cost-basis">
-                    {[...(costNote(totals.cost)?.split(' · ') ?? []), unpriced > 0 ? `${unpriced}% 未计价` : '']
+                    {[...(costNote(totals.cost)?.split(' · ') ?? []), unpriced > 0 ? COPY.unpriced(formatNumber(unpriced)) : '']
                       .filter(Boolean)
                       .map(line => (
                         <li key={line}>{line}</li>
@@ -285,46 +470,49 @@ export function UsageView({ request, snapshot }: { request: UsageRequest; snapsh
             </p>
           </div>
           {nothing ? (
-            <p className="usage-empty">这个期间没有 Latch 运行的用量</p>
+            <p className="usage-empty">{COPY.empty}</p>
           ) : (
             <>
-              <Panel title={shown.period === '1' ? '每小时 tokens' : '每日 tokens'} aside={<ChartLegend series={TOKEN_KINDS} />}>
+              <Panel title={shown.period === '1' ? COPY.hourly : COPY.daily} aside={<ChartLegend series={tokenKinds()} />}>
                 <BarChart
-                  label={shown.period === '1' ? '每小时 tokens' : '每日 tokens'}
-                  series={TOKEN_KINDS}
+                  label={shown.period === '1' ? COPY.hourly : COPY.daily}
+                  series={tokenKinds()}
                   columns={columns}
                   format={tokens}
                   // A day's sessions come grouped by session, which a service's own view cannot narrow to it.
                   {...(scope ? {} : { selected: day, onSelect: setDay })}
                 />
                 {day !== undefined && (
-                  <div className="usage-day" aria-label="这一段的会话">
+                  <div className="usage-day" aria-label={COPY.periodSessions}>
                     <header className="usage-panel-head">
                       <h4>{columns.find(column => column.key === day)?.title}</h4>
                       <Button size="sm" variant="ghost" onClick={() => setDay(undefined)}>
-                        收起
+                        {COPY.collapse}
                       </Button>
                     </header>
                     {daily.error && <p className="usage-muted">{daily.error}</p>}
                     {!dayRows && !daily.error && <Skeleton width="100%" height={56} />}
-                    {dayRows && dayRows.length === 0 && <p className="usage-muted">没有用量</p>}
+                    {dayRows && dayRows.length === 0 && <p className="usage-muted">{COPY.noUsage}</p>}
                     {dayRows && dayRows.length > 0 && (
                       <BarRows
-                        label="这一段的会话"
-                        series={['输入', '输出']}
+                        label={COPY.periodSessions}
+                        series={[COPY.input, COPY.output]}
                         from={1}
                         format={tokens}
                         rows={sessionsOf(dayRows)
                           .slice(0, 8)
                           .map(session => {
                             const { name } = usageRowName({ ...session.row, sessionId: session.sessionId }, 'session', snapshot)
-                            const uses = [session.turns ? `${session.turns} 轮` : '', session.requests ? `${session.requests} 次请求` : '']
+                            const uses = [
+                              session.turns ? COPY.turns(session.turns) : '',
+                              session.requests ? COPY.requests(session.requests) : '',
+                            ]
                             return {
                               key: session.sessionId ?? 'other',
                               name,
                               label: name,
                               values: [session.input, session.output],
-                              figure: [session.measured ? formatTokens(session.input + session.output) : NOT_REPORTED, ...uses]
+                              figure: [session.measured ? formatTokens(session.input + session.output) : notReported(), ...uses]
                                 .filter(Boolean)
                                 .join(' · '),
                             }
@@ -336,14 +524,14 @@ export function UsageView({ request, snapshot }: { request: UsageRequest; snapsh
               </Panel>
               <div className="usage-pair">
                 <Panel
-                  title="缓存命中"
+                  title={COPY.cacheHit}
                   aside={
                     harnessIds.length > 1 ? (
                       <ValuePicker
                         label="Harness"
                         value={cacheHarness && harnessIds.includes(cacheHarness) ? cacheHarness : ''}
                         options={[
-                          { value: '', label: '全部 Harness' },
+                          { value: '', label: COPY.allHarnesses },
                           ...harnessIds.map(id => ({ value: id, label: harnessName(harness(id)) })),
                         ]}
                         onValueChange={setCacheHarness}
@@ -354,7 +542,7 @@ export function UsageView({ request, snapshot }: { request: UsageRequest; snapsh
                     ) : undefined
                   }>
                   <LineChart
-                    label="缓存命中"
+                    label={COPY.cacheHit}
                     points={cachePoints(shown.buckets, cacheOf, shown.period, shown.timeZone)}
                     format={percent}
                     max={1}
@@ -362,18 +550,18 @@ export function UsageView({ request, snapshot }: { request: UsageRequest; snapsh
                   />
                 </Panel>
                 {!scope && (
-                  <Panel title="时段">
-                    <HeatGrid label="时段" values={shown.hours} format={value => `${value} 次`} />
+                  <Panel title={COPY.times}>
+                    <HeatGrid label={COPY.times} values={shown.hours} format={value => COPY.count(value)} />
                   </Panel>
                 )}
               </div>
               {!scope && (
                 <div className="usage-pair">
-                  <Panel title="来源">
+                  <Panel title={COPY.source}>
                     <SourceShare points={points} />
                   </Panel>
-                  <Panel title="项目">
-                    <ShareBar label="项目" parts={projectParts(shown.projects ?? [], snapshot)} format={tokens} />
+                  <Panel title={COPY.project}>
+                    <ShareBar label={COPY.project} parts={projectParts(shown.projects ?? [], snapshot)} format={tokens} />
                   </Panel>
                 </div>
               )}
@@ -381,28 +569,36 @@ export function UsageView({ request, snapshot }: { request: UsageRequest; snapsh
             </>
           )}
           {budgets.length > 0 && spending.spend && (
-            <section className="usage-budgets" aria-label="本月预算">
-              <h3>本月预算</h3>
+            <section className="usage-budgets" aria-label={COPY.monthlyBudget}>
+              <h3>{COPY.monthlyBudget}</h3>
               {budgets.map(budget => (
                 <LimitWindow
                   key={`${budget.scope}:${budget.id}`}
                   view={budgetLimit(budget, budgetName(budget, snapshot), spending.spend!.month)}
-                  detail={`${budgetProgressText(budget)}${budget.uncounted ? ` · 未计入 ${budget.uncounted} 次` : ''}`}
+                  detail={`${budgetProgressText(budget)}${budget.uncounted ? ` · ${COPY.uncounted(budget.uncounted)}` : ''}`}
                 />
               ))}
             </section>
           )}
           {!nothing && (
             <Panel
-              title="明细"
+              title={COPY.details}
               aside={
                 !scope && (
-                  <ValuePicker label="分组" value={group} options={GROUPS} onValueChange={setGroup} menuChevron width="xs" size="sm" />
+                  <ValuePicker
+                    label={COPY.group}
+                    value={group}
+                    options={GROUPS}
+                    onValueChange={setGroup}
+                    menuChevron
+                    width="xs"
+                    size="sm"
+                  />
                 )
               }>
               {rows && rows.length > 0 && <UsageTable rows={tableRows ?? []} group={shown.group} snapshot={snapshot} scoped={!!scope} />}
-              {shown.skipped > 0 && <p className="usage-muted">有 {shown.skipped} 行记录读不出，没有计入</p>}
-              {shown.truncated && <p className="usage-muted">记录太多，只算了读到的部分</p>}
+              {shown.skipped > 0 && <p className="usage-muted">{COPY.omitted(shown.skipped)}</p>}
+              {shown.truncated && <p className="usage-muted">{COPY.tooMany}</p>}
             </Panel>
           )}
         </div>
@@ -451,13 +647,15 @@ function SourceShare({ points }: { points: UsageSeries['series'] }) {
   const split = sourceSplit(points)
   return (
     <ShareBar
-      label="来源"
+      label={COPY.source}
       format={tokens}
       parts={[
         { key: 'gateway', name: SOURCE_NAMES.gateway, label: SOURCE_NAMES.gateway, value: split.gateway, series: 0 },
-        { key: 'own', name: OWN_LOGIN, label: OWN_LOGIN, value: split.own, series: 1 },
+        { key: 'own', name: SOURCE_NAMES.own, label: SOURCE_NAMES.own, value: split.own, series: 1 },
         // Only once a plugin's provider was used: most Hosts never have one.
-        ...(split.plugin > 0 ? [{ key: 'plugin', name: PLUGIN_SERVICE, label: PLUGIN_SERVICE, value: split.plugin, series: 2 }] : []),
+        ...(split.plugin > 0
+          ? [{ key: 'plugin', name: SOURCE_NAMES.plugin, label: SOURCE_NAMES.plugin, value: split.plugin, series: 2 }]
+          : []),
       ]}
     />
   )
@@ -473,7 +671,7 @@ function projectParts(projects: UsageSummary['projects'], snapshot: AppSnapshot)
       const name = projectName(snapshot, project.projectId)
       return { key: project.projectId!, name, label: name, value: project.tokens }
     }),
-    ...(rest > 0 || top.length === 0 ? [{ key: 'rest', name: '其他', label: '其他', value: rest, series: 'rest' as const }] : []),
+    ...(rest > 0 || top.length === 0 ? [{ key: 'rest', name: COPY.other, label: COPY.other, value: rest, series: 'rest' as const }] : []),
   ]
 }
 
@@ -481,9 +679,9 @@ function projectParts(projects: UsageSummary['projects'], snapshot: AppSnapshot)
 function Compare({ compare, snapshot }: { compare: UsageSummary['compare']; snapshot: AppSnapshot }) {
   const models = comparedModels(compare).slice(0, 4)
   return (
-    <Panel title="同一模型，不同 Harness" aside={models.length > 0 ? <ChartLegend series={['输入', '输出']} from={1} /> : undefined}>
+    <Panel title={COPY.modelComparison} aside={models.length > 0 ? <ChartLegend series={[COPY.input, COPY.output]} from={1} /> : undefined}>
       {models.length === 0 ? (
-        <p className="usage-muted">没有在两个 Harness 上都用过的模型</p>
+        <p className="usage-muted">{COPY.noComparison}</p>
       ) : (
         <div className="usage-compare">
           {models.map(({ model, rows }) => (
@@ -491,7 +689,7 @@ function Compare({ compare, snapshot }: { compare: UsageSummary['compare']; snap
               <h4>{model}</h4>
               <BarRows
                 label={model}
-                series={['输入 / 轮', '输出 / 轮']}
+                series={[COPY.inputPerTurn, COPY.outputPerTurn]}
                 from={1}
                 format={tokens}
                 rows={rows.map(row => {
@@ -508,7 +706,7 @@ function Compare({ compare, snapshot }: { compare: UsageSummary['compare']; snap
                       </>
                     ),
                     values: [input, output],
-                    figure: `${formatTokens(input + output)} / 轮 · ${row.measured} 轮`,
+                    figure: COPY.perTurn(formatTokens(input + output), COPY.turns(row.measured)),
                   }
                 })}
               />
@@ -522,13 +720,13 @@ function Compare({ compare, snapshot }: { compare: UsageSummary['compare']; snap
 
 function UsageTable({ rows, group, snapshot, scoped }: { rows: AnyRow[]; group: UsageGroup; snapshot: AppSnapshot; scoped: boolean }) {
   return (
-    <table className="usage-rows" aria-label="用量">
+    <table className="usage-rows" aria-label={COPY.usage}>
       <thead>
         <tr>
-          <th scope="col">{GROUPS.find(item => item.value === group)!.label.replace(/^按 ?/u, '')}</th>
-          <th scope="col">次数</th>
+          <th scope="col">{COPY.groupName[group]}</th>
+          <th scope="col">{COPY.uses}</th>
           <th scope="col">tokens</th>
-          <th scope="col">估算</th>
+          <th scope="col">{COPY.estimate}</th>
         </tr>
       </thead>
       <tbody>
@@ -542,11 +740,11 @@ function UsageTable({ rows, group, snapshot, scoped }: { rows: AnyRow[]; group: 
           const notes = [
             scoped ? undefined : detail,
             source,
-            row.failed ? `失败 ${row.failed}` : undefined,
-            row.fallbacks ? `备选 ${row.fallbacks}` : undefined,
+            row.failed ? COPY.failed(formatNumber(row.failed)) : undefined,
+            row.fallbacks ? COPY.fallbacks(formatNumber(row.fallbacks)) : undefined,
           ].filter(Boolean)
           const turns = row.turns ?? 0
-          const uses = [turns ? `${turns} 轮` : '', row.requests || !turns ? `${row.requests} 次` : ''].filter(Boolean).join(' · ')
+          const uses = [turns ? COPY.turns(turns) : '', row.requests || !turns ? COPY.count(row.requests) : ''].filter(Boolean).join(' · ')
           return (
             <tr key={index} title={usageRowDetail(row) || undefined}>
               <th scope="row">
@@ -567,7 +765,7 @@ function UsageTable({ rows, group, snapshot, scoped }: { rows: AnyRow[]; group: 
               </th>
               <td>{uses}</td>
               <td title={tokenCount === undefined ? undefined : exactTokens(tokenCount)}>
-                {tokenCount === undefined ? NOT_REPORTED : formatTokens(tokenCount)}
+                {tokenCount === undefined ? notReported() : formatTokens(tokenCount)}
               </td>
               <td>{costsText(row.cost) ?? '—'}</td>
             </tr>

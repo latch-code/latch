@@ -20,11 +20,49 @@ import { Collapse, Icon, ICON_STROKE, StatusPill, ChevronRightGlyph, UpDownGlyph
 import { escapeHiddenCharacters, hasHiddenCharacters, VisibleText } from './VisibleText.tsx'
 import { useHighlightedTokens, SyntaxLine } from '../preview/HighlightedCode.tsx'
 import { languageForPath, type SyntaxLines } from '../preview/highlight-protocol.ts'
+import { defineCopy, plural, formatNumber } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    before: '修改前',
+    after: '修改后',
+    code: (value1: string) => `${value1}代码`,
+    added: '新增：',
+    removed: '删除：',
+    newFile: '新文件',
+    deleted: '已删除',
+    lineCount: (value1: string, count: number) => `${value1} · ${formatNumber(count)} 行`,
+    unchanged: ' 行未改动',
+    noChange: '内容没有变化',
+    moreLines: (count: number) => `还有 ${formatNumber(count)} 行`,
+    moreChanged: (count: number) => `还有 ${formatNumber(count)} 行改动`,
+    renamedFrom: '重命名自 ',
+    changes: (value1: string) => `${value1} 的改动`,
+    expand: (count: number) => plural(count, { other: '展开其余 {n} 行' }),
+    binary: '二进制文件，没有可比较的文字',
+  },
+  {
+    before: 'Before',
+    after: 'After',
+    code: (value1: string) => `${value1} code`,
+    added: 'Added: ',
+    removed: 'Removed: ',
+    newFile: 'New file',
+    deleted: 'Deleted',
+    lineCount: (value1: string, count: number) => `${value1} · ${plural(count, { one: '{n} line', other: '{n} lines' })}`,
+    unchanged: ' unchanged lines',
+    noChange: 'No changes to the content',
+    moreLines: (count: number) => `${formatNumber(count)} more lines`,
+    moreChanged: (count: number) => `${formatNumber(count)} more changed lines`,
+    renamedFrom: 'Renamed from ',
+    changes: (value1: string) => `Changes to ${value1}`,
+    expand: (count: number) => plural(count, { one: 'Show {n} more line', other: 'Show {n} more lines' }),
+    binary: 'Binary file, no text to compare',
+  },
+)
 
 /** Lines rendered before "显示全部"; long rewrites stay cheap until asked for. */
 const VISIBLE_LINES = 400
-
-const BINARY_TEXT = '二进制文件，没有可比较的文字'
 
 /** A band of unchanged lines opens this many at a time. */
 const GAP_STEP = 20
@@ -113,11 +151,11 @@ function SplitSides({ rows, tools, titled }: { rows: SplitRows; tools: RowTools;
     <div className="diff-split">
       {(
         [
-          { key: 'before', label: '修改前', tokens: before },
-          { key: 'after', label: '修改后', tokens: after },
+          { key: 'before', label: COPY.before, tokens: before },
+          { key: 'after', label: COPY.after, tokens: after },
         ] as const
       ).map(side => (
-        <div className="diff-split-side" key={side.key} role="region" aria-label={`${side.label}代码`} tabIndex={0}>
+        <div className="diff-split-side" key={side.key} role="region" aria-label={COPY.code(side.label)} tabIndex={0}>
           {titled ? <div className="diff-side-title">{side.label}</div> : <span className="sr-only">{side.label}</span>}
           {rows.map((row, index) => {
             const line = row[side.key]
@@ -201,8 +239,8 @@ function UnifiedRows({ lines, tools }: { lines: DiffLine[]; tools: RowTools }) {
           {line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}
         </span>
         <span className="diff-text">
-          {line.kind === 'add' && <span className="sr-only">新增：</span>}
-          {line.kind === 'remove' && <span className="sr-only">删除：</span>}
+          {line.kind === 'add' && <span className="sr-only">{COPY.added}</span>}
+          {line.kind === 'remove' && <span className="sr-only">{COPY.removed}</span>}
           {line.text ? <LineText text={line.text} tokens={lineTokens(line, tools)} ranges={marks?.get(line)} /> : ' '}
         </span>
       </div>
@@ -218,10 +256,10 @@ function wholeFile(diff: DiffViewFile, previous: PreviousState): 'new' | 'delete
 }
 
 function WholeTag({ whole, view, binary }: { whole: 'new' | 'deleted'; view: LineDiff; binary?: boolean }) {
-  const name = whole === 'new' ? '新文件' : '已删除'
+  const name = whole === 'new' ? COPY.newFile : COPY.deleted
   return (
     <span className="diff-whole-tag" data-tone={whole}>
-      {binary ? name : `${name} · ${whole === 'new' ? view.added : view.removed} 行`}
+      {binary ? name : COPY.lineCount(name, whole === 'new' ? view.added : view.removed)}
     </span>
   )
 }
@@ -240,7 +278,8 @@ function GapBand({ gap, hunks, tools, layout }: { gap: DiffGap; hunks: number; t
           setOpened(opened + GAP_STEP)
         }}>
         <Icon icon={UpDownGlyph} size={12} />
-        {hidden} 行未改动
+        {hidden}
+        {COPY.unchanged}
       </button>
     ) : null
   return gap.before === hunks ? (
@@ -272,15 +311,15 @@ function CompactDiff({ diff, fileActions }: { diff: DiffViewFile; fileActions?: 
     <div className="diff-compact" data-whole={whole}>
       {note && <p className="diff-note">{note}</p>}
       {diff.binary ? (
-        <p className="diff-empty">{BINARY_TEXT}</p>
+        <p className="diff-empty">{COPY.binary}</p>
       ) : lines.length === 0 ? (
-        <p className="diff-empty">内容没有变化</p>
+        <p className="diff-empty">{COPY.noChange}</p>
       ) : (
         <UnifiedRows lines={lines} tools={{ diff, marks, before, after }} />
       )}
       {((remaining > 0 && !diff.binary) || actions) && (
         <div className="diff-compact-foot">
-          <span>{remaining > 0 && !diff.binary ? (whole === 'new' ? `还有 ${remaining} 行` : `还有 ${remaining} 行改动`) : ''}</span>
+          <span>{remaining > 0 && !diff.binary ? (whole === 'new' ? COPY.moreLines(remaining) : COPY.moreChanged(remaining)) : ''}</span>
           {actions}
         </div>
       )}
@@ -288,28 +327,43 @@ function CompactDiff({ diff, fileActions }: { diff: DiffViewFile; fileActions?: 
   )
 }
 
-export const PREVIOUS_UNAVAILABLE_LABEL = '原内容未显示'
-export const PREVIOUS_UNAVAILABLE_TEXT = '该文件已存在，但原内容过大、是二进制或无法读取，没有显示：写入会覆盖它。'
-export const PREVIOUS_UNKNOWN_LABEL = '原内容未知'
-export const PREVIOUS_UNKNOWN_TEXT = 'Harness 没有说明原内容：这可能是新文件，也可能会覆盖过大、二进制或无法读取的现有文件。'
+const PREVIOUS_COPY = defineCopy(
+  {
+    unavailable: '原内容未显示',
+    unavailableDetail: '该文件已存在，但原内容过大、是二进制或无法读取，没有显示：写入会覆盖它。',
+    unknown: '原内容未知',
+    unknownDetail: 'Harness 没有说明原内容：这可能是新文件，也可能会覆盖过大、二进制或无法读取的现有文件。',
+  },
+  {
+    unavailable: 'Original not shown',
+    unavailableDetail: 'The file exists. Its original content is too large, binary or unreadable. Writing will overwrite it.',
+    unknown: 'Original content unknown',
+    unknownDetail:
+      'The Harness did not report the original content. The write may create a new file or overwrite an existing file that is too large, binary or unreadable.',
+  },
+)
 
 /** Warning lines for previous content the reviewer cannot see; a new file or included text needs none. */
 export const PREVIOUS_NOTES: Partial<Record<PreviousState, string>> = {
-  unavailable: PREVIOUS_UNAVAILABLE_TEXT,
-  unknown: PREVIOUS_UNKNOWN_TEXT,
+  get unavailable() {
+    return PREVIOUS_COPY.unavailableDetail
+  },
+  get unknown() {
+    return PREVIOUS_COPY.unknownDetail
+  },
 }
 
 function PreviousBadge({ state }: { state: PreviousState }) {
   if (state === 'unavailable')
     return (
-      <StatusPill tone="warn" title={PREVIOUS_UNAVAILABLE_TEXT}>
-        {PREVIOUS_UNAVAILABLE_LABEL}
+      <StatusPill tone="warn" title={PREVIOUS_COPY.unavailableDetail}>
+        {PREVIOUS_COPY.unavailable}
       </StatusPill>
     )
   if (state === 'unknown')
     return (
-      <StatusPill tone="warn" title={PREVIOUS_UNKNOWN_TEXT}>
-        {PREVIOUS_UNKNOWN_LABEL}
+      <StatusPill tone="warn" title={PREVIOUS_COPY.unknownDetail}>
+        {PREVIOUS_COPY.unknown}
       </StatusPill>
     )
   return null
@@ -399,7 +453,8 @@ function DiffFile({
       </span>
       {full && diff.renamedFrom && (
         <span className="diff-renamed">
-          重命名自 <VisibleText text={diff.renamedFrom} />
+          {COPY.renamedFrom}
+          <VisibleText text={diff.renamedFrom} />
         </span>
       )}
       <PreviousBadge state={full && whole ? 'none' : previous} />
@@ -430,12 +485,12 @@ function DiffFile({
           setOpen(true)
         }}>
         <div className="diff-paper">
-          <div className="diff-body" role="region" tabIndex={0} aria-label={`${path} 的改动`}>
+          <div className="diff-body" role="region" tabIndex={0} aria-label={COPY.changes(path)}>
             {note && !whole && <p className="diff-note">{note}</p>}
             {diff.binary ? (
-              <p className="diff-empty">{BINARY_TEXT}</p>
+              <p className="diff-empty">{COPY.binary}</p>
             ) : view.hunks.length === 0 ? (
-              <p className="diff-empty">内容没有变化</p>
+              <p className="diff-empty">{COPY.noChange}</p>
             ) : (
               <div className="diff-table">
                 {view.hunks.map((hunk, index) => {
@@ -474,7 +529,7 @@ function DiffFile({
               onClick={() => {
                 setUnfolded(true)
               }}>
-              展开其余 {lineCount - shownLines} 行
+              {COPY.expand(lineCount - shownLines)}
             </button>
           )}
           {!folded && !all && total > VISIBLE_LINES && (
@@ -484,7 +539,7 @@ function DiffFile({
               onClick={() => {
                 setAll(true)
               }}>
-              展开其余 {lineCount - shownLines} 行
+              {COPY.expand(lineCount - shownLines)}
             </button>
           )}
         </div>
@@ -540,7 +595,7 @@ export function DiffLines({
           onClick={() => {
             setAll(true)
           }}>
-          展开其余 {lineCount - VISIBLE_LINES} 行
+          {COPY.expand(lineCount - VISIBLE_LINES)}
         </button>
       )}
     </div>

@@ -9,6 +9,94 @@ import {
 import { api, ApiError, ApiTimeoutError, errorMessage } from './api.ts'
 import { confirmationStore, withConfirmation, type ConfirmationPresenter } from './confirmations.ts'
 import { computerName, PROVIDER_COPY, safeTarget } from './securityCopy.ts'
+import { currentLocale, defineCopy } from './i18n.ts'
+
+const COPY = defineCopy(
+  {
+    title: '添加模型服务',
+    custom: '自定义地址…',
+    customTitle: '自定义地址',
+    address: '地址',
+    key: '密钥',
+    needAddress: '请先填写地址。',
+    needNameAndAddress: '请填写名称和地址。',
+    needKey: '这个模型服务需要密钥。',
+    replaceService: (name: string) => `在 ${name} 的 设置 › 模型 里换一个模型服务`,
+    addKey: (name: string) => `在 ${name} 的 设置 › 模型 里填写密钥`,
+    confirmAddress: (name: string) => `在 ${name} 的 设置 › 模型 里确认地址`,
+    unsupported: (name: string) => `${name}用的协议不再支持。`,
+    missingKey: (name: string) => `${name}还没有填写密钥。`,
+    unconfirmed: (name: string) => `${name}的地址还没有确认。`,
+    refused: 'Latch 连不上这个地址：那里没有服务在监听。确认服务已经启动、端口正确。',
+    reset: 'Latch 连上了这个地址，但连接被对方断开。检查地址和协议（http 或 https）是否正确。',
+    notFound: 'Latch 找不到这个地址。检查地址的拼写和网络。',
+    dns: 'Latch 暂时解析不了这个地址。检查网络后重试。',
+    timeout: 'Latch 连不上这个地址：等待超时。',
+    unreachable: 'Latch 连不上这个地址：网络不可达。',
+    slow: 'Latch 没有及时回答。它可能仍在等待这个地址，请稍后重新检测。',
+    unauthorized: '密钥不对或已过期。检查密钥后重新检测。',
+    forbidden: '服务拒绝列出模型（HTTP 403）。可能是密钥不对，也可能是它没有列表权限；可以手动添加模型 ID。',
+    listMissing: '这个地址没有模型列表。检查地址是否完整（常见的以 /v1 结尾），也可以手动添加模型 ID。',
+    rate: '服务拒绝了请求：太频繁，或账户额度不足。',
+    error: '模型服务返回了错误。',
+    httpError: (status: number) => `模型服务返回了错误（HTTP ${status}）。`,
+    certificate: 'Latch 不信任这个地址的 HTTPS 证书。',
+    network: 'Latch 连不上这个地址。检查地址和网络。',
+    noResponse: 'Latch 连不上这个地址：10 秒内没有响应。',
+    redirect: '服务返回了重定向。请填写最终的地址。',
+    invalidList: '这个地址返回的不是模型列表。检查地址是否正确。',
+    invalidAddress: '地址要以 http:// 或 https:// 开头，不能带用户名、密码、? 或 #。',
+    invalidKey: '密钥里有换行或不可见字符。重新粘贴密钥。',
+    originChanged: '已保存的密钥只发往原来的地址。请重新输入密钥。',
+    modelId: '请输入模型 ID。',
+    modelIdLength: '模型 ID 不能超过 200 个字符。',
+    modelIdCharacters: '模型 ID 不能包含换行或不可见字符。',
+    alreadyAdded: '这个模型已经添加。',
+  },
+  {
+    title: 'Add model service',
+    custom: 'Custom address…',
+    customTitle: 'Custom address',
+    address: 'Address',
+    key: 'API key',
+    needAddress: 'Enter an address first.',
+    needNameAndAddress: 'Enter a name and an address.',
+    needKey: 'This model service requires an API key.',
+    replaceService: (name: string) => `Choose another model service on ${name} in Settings › Models`,
+    addKey: (name: string) => `Enter an API key on ${name} in Settings › Models`,
+    confirmAddress: (name: string) => `Confirm the address on ${name} in Settings › Models`,
+    unsupported: (name: string) => `${name} uses a protocol that is no longer supported.`,
+    missingKey: (name: string) => `${name} has no API key yet.`,
+    unconfirmed: (name: string) => `The address for ${name} is unconfirmed.`,
+    refused:
+      'Latch can’t connect to this address. No service is listening there. Check that the service is running and the port is correct.',
+    reset: 'The service closed the connection. Check the address and protocol (http or https).',
+    notFound: 'Latch can’t find this address. Check its spelling and your network.',
+    dns: 'Latch can’t resolve this address right now. Check your network and try again.',
+    timeout: 'The connection to this address timed out.',
+    unreachable: 'The network cannot reach this address.',
+    slow: 'Latch didn’t respond in time. It may still be waiting for this address. Check again later.',
+    unauthorized: 'The API key is incorrect or expired. Check the key and try again.',
+    forbidden:
+      'The service refused to list models (HTTP 403). The API key may be incorrect or lack permission to list models. You can add model IDs manually.',
+    listMissing: 'No model list at this address. Check the full address (often ending in /v1), or add model IDs manually.',
+    rate: 'The service rejected the request because of a rate limit or insufficient account quota.',
+    error: 'The model service returned an error.',
+    httpError: (status: number) => `The model service returned an error (HTTP ${status}).`,
+    certificate: 'Latch doesn’t trust this address’s HTTPS certificate.',
+    network: 'Latch can’t connect to this address. Check the address and network.',
+    noResponse: 'No response from this address within 10 seconds.',
+    redirect: 'The service redirected the request. Enter the final address.',
+    invalidList: 'This address didn’t return a model list. Check the address.',
+    invalidAddress: 'Start the address with http:// or https:// and omit the username, password, ? and #.',
+    invalidKey: 'The API key contains a line break or invisible character. Paste it again.',
+    originChanged: 'The saved API key is only sent to the original address. Enter the API key again.',
+    modelId: 'Enter a model ID.',
+    modelIdLength: 'Model IDs can be up to 200 characters.',
+    modelIdCharacters: 'Model IDs can’t contain line breaks or invisible characters.',
+    alreadyAdded: 'This model has already been added.',
+  },
+)
 
 /**
  * Adding and checking a model service, without layout: the settings page and the composer's in-place 「添加模型服务」
@@ -27,15 +115,31 @@ import { computerName, PROVIDER_COPY, safeTarget } from './securityCopy.ts'
  * labels and the save words.
  */
 export const SERVICE_FORM = {
-  title: '添加模型服务',
-  custom: '自定义地址…',
+  get title() {
+    return COPY.title
+  },
+  get custom() {
+    return COPY.custom
+  },
   /** The custom choice once picked: the preset's own name (「自定义服务」) stays the editable name. */
-  customTitle: '自定义地址',
-  address: '地址',
-  key: '密钥',
-  needAddress: '请先填写地址。',
-  needNameAndAddress: '请填写名称和地址。',
-  needKey: '这个模型服务需要密钥。',
+  get customTitle() {
+    return COPY.customTitle
+  },
+  get address() {
+    return COPY.address
+  },
+  get key() {
+    return COPY.key
+  },
+  get needAddress() {
+    return COPY.needAddress
+  },
+  get needNameAndAddress() {
+    return COPY.needNameAndAddress
+  },
+  get needKey() {
+    return COPY.needKey
+  },
 } as const
 
 /** The grid's order: the presets as the Host lists them, the custom address always last. */
@@ -124,12 +228,13 @@ export function heldBackService(
 ): { message: string; hint: string } | undefined {
   const first = catalog.unusableProviders?.[0]
   if (!first) return undefined
-  const name = `「${escapeSecurityText(first.name)}」`
-  const where = `在 ${computerName(hostName)} 的 设置 › 模型 里`
-  if (first.reason === 'unsupported') return { message: `${name}用的协议不再支持。`, hint: `${where}换一个模型服务` }
+  const escaped = escapeSecurityText(first.name)
+  const name = currentLocale() === 'en' ? `“${escaped}”` : `「${escaped}」`
+  const computer = computerName(hostName)
+  if (first.reason === 'unsupported') return { message: COPY.unsupported(name), hint: COPY.replaceService(computer) }
   return first.reason === 'key-missing'
-    ? { message: `${name}还没有填写密钥。`, hint: `${where}填写密钥` }
-    : { message: `${name}的地址还没有确认。`, hint: `${where}确认地址` }
+    ? { message: COPY.missingKey(name), hint: COPY.addKey(computer) }
+    : { message: COPY.unconfirmed(name), hint: COPY.confirmAddress(computer) }
 }
 
 /** A saved service's destination; older Hosts do not report it and enforce their own rules. */
@@ -200,19 +305,33 @@ export function latestQuestions() {
 }
 
 const NETWORK_TEXT: Record<string, string> = {
-  ECONNREFUSED: 'Latch 连不上这个地址：那里没有服务在监听。确认服务已经启动、端口正确。',
-  ECONNRESET: 'Latch 连上了这个地址，但连接被对方断开。检查地址和协议（http 或 https）是否正确。',
-  ENOTFOUND: 'Latch 找不到这个地址。检查地址的拼写和网络。',
-  EAI_AGAIN: 'Latch 暂时解析不了这个地址。检查网络后重试。',
-  ETIMEDOUT: 'Latch 连不上这个地址：等待超时。',
-  EHOSTUNREACH: 'Latch 连不上这个地址：网络不可达。',
-  ENETUNREACH: 'Latch 连不上这个地址：网络不可达。',
+  get ECONNREFUSED() {
+    return COPY.refused
+  },
+  get ECONNRESET() {
+    return COPY.reset
+  },
+  get ENOTFOUND() {
+    return COPY.notFound
+  },
+  get EAI_AGAIN() {
+    return COPY.dns
+  },
+  get ETIMEDOUT() {
+    return COPY.timeout
+  },
+  get EHOSTUNREACH() {
+    return COPY.unreachable
+  },
+  get ENETUNREACH() {
+    return COPY.unreachable
+  },
 }
 const CERTIFICATE = /^(CERT_|UNABLE_TO_|DEPTH_ZERO_|SELF_SIGNED_|ERR_TLS_)/u
 
 /** One sentence for a failed check or listing, chosen by the Host's code; the Host's own text only as a last resort. */
 export function describeProbeFailure(error: unknown): ProbeFailure {
-  if (error instanceof ApiTimeoutError) return { kind: 'network', text: 'Latch 没有及时回答。它可能仍在等待这个地址，请稍后重新检测。' }
+  if (error instanceof ApiTimeoutError) return { kind: 'network', text: COPY.slow }
   if (!(error instanceof ApiError)) return { kind: 'other', text: errorMessage(error) }
   const { code, details } = error
   switch (code) {
@@ -224,34 +343,32 @@ export function describeProbeFailure(error: unknown): ProbeFailure {
     }
     case 'http-error': {
       const status = typeof details.upstreamStatus === 'number' ? details.upstreamStatus : undefined
-      if (status === 401) return { kind: 'key', text: '密钥不对或已过期。检查密钥后重新检测。' }
+      if (status === 401) return { kind: 'key', text: COPY.unauthorized }
       // A key restricted to chat can get 403 on the listing alone, so this does not say the key is bad.
-      if (status === 403)
-        return { kind: 'listing', text: '服务拒绝列出模型（HTTP 403）。可能是密钥不对，也可能是它没有列表权限；可以手动添加模型 ID。' }
-      if (status === 404)
-        return { kind: 'listing', text: '这个地址没有模型列表。检查地址是否完整（常见的以 /v1 结尾），也可以手动添加模型 ID。' }
-      if (status === 429) return { kind: 'other', text: '服务拒绝了请求：太频繁，或账户额度不足。' }
-      return { kind: 'listing', text: status === undefined ? '模型服务返回了错误。' : `模型服务返回了错误（HTTP ${status}）。` }
+      if (status === 403) return { kind: 'listing', text: COPY.forbidden }
+      if (status === 404) return { kind: 'listing', text: COPY.listMissing }
+      if (status === 429) return { kind: 'other', text: COPY.rate }
+      return { kind: 'listing', text: status === undefined ? COPY.error : COPY.httpError(status) }
     }
     case 'network-error': {
       const network = typeof details.networkCode === 'string' ? details.networkCode : ''
-      if (CERTIFICATE.test(network)) return { kind: 'network', text: 'Latch 不信任这个地址的 HTTPS 证书。' }
-      return { kind: 'network', text: NETWORK_TEXT[network] ?? 'Latch 连不上这个地址。检查地址和网络。' }
+      if (CERTIFICATE.test(network)) return { kind: 'network', text: COPY.certificate }
+      return { kind: 'network', text: NETWORK_TEXT[network] ?? COPY.network }
     }
     case 'timeout':
-      return { kind: 'network', text: 'Latch 连不上这个地址：10 秒内没有响应。' }
+      return { kind: 'network', text: COPY.noResponse }
     case 'redirect':
-      return { kind: 'address', text: '服务返回了重定向。请填写最终的地址。' }
+      return { kind: 'address', text: COPY.redirect }
     case 'invalid-response':
     case 'response-too-large':
     case 'empty-response':
-      return { kind: 'listing', text: '这个地址返回的不是模型列表。检查地址是否正确。' }
+      return { kind: 'listing', text: COPY.invalidList }
     case 'invalid-url':
-      return { kind: 'address', text: '地址要以 http:// 或 https:// 开头，不能带用户名、密码、? 或 #。' }
+      return { kind: 'address', text: COPY.invalidAddress }
     case 'invalid-key':
-      return { kind: 'key', text: '密钥里有换行或不可见字符。重新粘贴密钥。' }
+      return { kind: 'key', text: COPY.invalidKey }
     case 'key-origin-mismatch':
-      return { kind: 'key', text: '已保存的密钥只发往原来的地址。请重新输入密钥。' }
+      return { kind: 'key', text: COPY.originChanged }
     default:
       return { kind: 'other', text: error.message }
   }
@@ -262,10 +379,10 @@ const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁠-⁩﻿]/u
 /** Why a typed model ID cannot be added (the Host's limits: printable, at most 200 characters), or undefined. */
 export function modelIdProblem(value: string, existing: readonly string[] = []): string | undefined {
   const id = value.trim()
-  if (!id) return '请输入模型 ID。'
-  if (id.length > 200) return '模型 ID 不能超过 200 个字符。'
-  if (UNPRINTABLE.test(id)) return '模型 ID 不能包含换行或不可见字符。'
-  if (existing.includes(id)) return '这个模型已经添加。'
+  if (!id) return COPY.modelId
+  if (id.length > 200) return COPY.modelIdLength
+  if (UNPRINTABLE.test(id)) return COPY.modelIdCharacters
+  if (existing.includes(id)) return COPY.alreadyAdded
   return undefined
 }
 

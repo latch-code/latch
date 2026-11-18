@@ -5,9 +5,37 @@ import { ICON_STROKE, Meter, Tooltip, FolderGlyph, BranchGlyph } from '@latch/ui
 import { ProviderTile } from '../components/BrandTile.tsx'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { findProvider, harnessName } from '../composerChoice.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { formatTokens } from '../format.ts'
-import { GATEWAY_NAME, ROUTE_NOTE, routeService } from './ModelControl.tsx'
+import { ROUTE_NOTE, routeService } from './ModelControl.tsx'
 import { costClause, type SessionTotals } from './sessionTotals.ts'
+
+const COPY = defineCopy(
+  {
+    throughGateway: '经 Latch 网关',
+    removedWorktree: '工作树已移除 · ',
+    worktree: '工作树 · ',
+    newWorktree: '新工作树 · ',
+    branch: '分支 ',
+    status: '会话状态',
+    context: '上下文',
+    contextSizeUnknown: (source: string) => `${source} 未报告上下文总量。`,
+    input: '输入',
+    output: '输出',
+  },
+  {
+    throughGateway: 'Via Latch gateway',
+    removedWorktree: 'Worktree removed · ',
+    worktree: 'Worktree · ',
+    newWorktree: 'New worktree · ',
+    branch: 'Branch ',
+    status: 'Session status',
+    context: 'Context',
+    contextSizeUnknown: (source: string) => `${source} did not report the context window size.`,
+    input: 'In',
+    output: 'Out',
+  },
+)
 
 /** Which way the model goes, in the words its menu uses: 「OpenAI · 经 Latch 网关」, or the Harness and its model, 「Codex · GPT-5.5」. */
 export interface StatusRoute {
@@ -37,13 +65,13 @@ export function statusRoute(
     const service = routeService(catalog, input.route)
     const provider = findProvider(catalog, input.route.providerId)
     return {
-      text: `${service.name} · ${service.unusable?.words ?? `经 ${GATEWAY_NAME}`}`,
+      text: `${service.name} · ${service.unusable?.words ?? COPY.throughGateway}`,
       note: service.unusable?.note ?? ROUTE_NOTE(name).detail,
       ...(provider ? { provider } : {}),
     }
   }
   const provider = input.picked ? findProvider(catalog, input.picked.providerId) : undefined
-  if (provider) return { text: `${provider.name} · 经 ${GATEWAY_NAME}`, note: ROUTE_NOTE(name).detail, provider }
+  if (provider) return { text: `${provider.name} · ${COPY.throughGateway}`, note: ROUTE_NOTE(name).detail, provider }
   return { text: input.model ? `${name} · ${input.model}` : name }
 }
 
@@ -99,7 +127,7 @@ export function BranchSegment({
   removed?: boolean
 }) {
   const name = breakable(escapeHiddenCharacters(branch))
-  const lead = removed ? '工作树已移除 · ' : '工作树 · '
+  const lead = removed ? COPY.removedWorktree : COPY.worktree
   const tip = worktree ? (
     <>
       {lead}
@@ -107,7 +135,7 @@ export function BranchSegment({
     </>
   ) : (
     <>
-      {base ? '新工作树 · ' : '分支 '}
+      {base ? COPY.newWorktree : COPY.branch}
       {name}
     </>
   )
@@ -210,7 +238,7 @@ export function ComposerStatus({
   const cost = totals?.cost
   const time = totals?.time
   return (
-    <div ref={row} className="composer-status" data-phone={phone ? '' : undefined} aria-label="会话状态" role="group">
+    <div ref={row} className="composer-status" data-phone={phone ? '' : undefined} aria-label={COPY.status} role="group">
       {show.place && place}
       {show.route && route && (
         <StatusSegment kind="route">
@@ -225,9 +253,9 @@ export function ComposerStatus({
       {!phone && <span className="composer-status-gap" aria-hidden="true" />}
       {show.context && context && totals && (
         <StatusSegment kind="context">
-          <span className="composer-status-key">上下文</span>
+          <span className="composer-status-key">{COPY.context}</span>
           {context.size === undefined ? (
-            <StatusNote label={formatTokens(context.used)}>{totals.by} 未报告上下文总量。</StatusNote>
+            <StatusNote label={formatTokens(context.used)}>{COPY.contextSizeUnknown(totals.by)}</StatusNote>
           ) : (
             <span className="composer-status-meter">
               <span className="composer-status-value">
@@ -236,7 +264,7 @@ export function ComposerStatus({
               <Meter
                 value={context.used}
                 max={context.size}
-                label="上下文"
+                label={COPY.context}
                 valueText={`${formatTokens(context.used)} / ${formatTokens(context.size)}`}
               />
             </span>
@@ -246,9 +274,9 @@ export function ComposerStatus({
       {show.tokens && tokens && (
         <StatusSegment kind="tokens">
           <span className="composer-status-pair">
-            <span className="composer-status-key">输入</span>
+            <span className="composer-status-key">{COPY.input}</span>
             <span className="composer-status-value">{formatTokens(tokens.usage.inputTokens)}</span>
-            <span className="composer-status-key">输出</span>
+            <span className="composer-status-key">{COPY.output}</span>
             <span className="composer-status-value">{formatTokens(tokens.usage.outputTokens)}</span>
           </span>
         </StatusSegment>

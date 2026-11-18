@@ -6,6 +6,16 @@ import { FileSession } from './FileChip.tsx'
 import { FileOpenContext } from '../preview/fileContext.ts'
 import { VisibleText } from './VisibleText.tsx'
 import { api } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    attachments: '消息附件',
+  },
+  {
+    attachments: 'Message attachments',
+  },
+)
 
 function MessageAttachment({ attachment }: { attachment: AttachmentRef }) {
   const session = useContext(FileSession),
@@ -86,7 +96,7 @@ function MessageAttachment({ attachment }: { attachment: AttachmentRef }) {
 export function MessageAttachments({ attachments }: { attachments?: AttachmentRef[] }) {
   if (!attachments?.length) return null
   return (
-    <div className="message-attachments" aria-label="消息附件">
+    <div className="message-attachments" aria-label={COPY.attachments}>
       {attachments.map(ref => (
         <MessageAttachment key={ref.id} attachment={ref} />
       ))}

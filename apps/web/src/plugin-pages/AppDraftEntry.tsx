@@ -2,6 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 
 import { Button, Icon, PluginsGlyph } from '@latch/ui'
 import { api, inlineError, isUncertain, newRequestId } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    update: '更新应用草稿',
+    create: '作为应用草稿',
+  },
+  {
+    update: 'Update app draft',
+    create: 'Create app draft',
+  },
+)
 
 /**
  * 改动's 「作为应用草稿」: a session whose folder holds `latch-app/latch-app.json` can hand that draft to 设置 › 插件,
@@ -56,7 +68,7 @@ export function AppDraftEntry({
       <Icon icon={PluginsGlyph} size={14} />
       <span>latch-app</span>
       <Button size="sm" loading={busy} onClick={() => void send()}>
-        {state.pluginId ? '更新应用草稿' : '作为应用草稿'}
+        {state.pluginId ? COPY.update : COPY.create}
       </Button>
     </div>
   )

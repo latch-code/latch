@@ -13,6 +13,40 @@ import { api, inlineError } from '../core/api.ts'
 import { readHarnessCatalogue, readNeedsLogin } from '../composer/harnessCatalogue.tsx'
 import { loginRuns, useLoginRun, type LoginRunState, type LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { VisibleText } from './VisibleText.tsx'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    expiresOn: (date: Date) => `${formatNumber(date.getMonth() + 1)} 月 ${formatNumber(date.getDate())} 日`,
+    loggingIn: '登录中',
+    loggedIn: '已登录',
+    ended: '已结束',
+    failed: '失败',
+    copy: '复制登录命令',
+    terminal: '在终端里登录',
+    comeBack: '登录后回到这里',
+    runHere: '在这台 Mac 的终端里运行这条命令。',
+    check: '重新检查',
+    login: '登录',
+    notLoggedIn: ' 还没登录',
+    expires: (value1: string | number, value2: string | number) => `${value1} 的登录 ${value2}到期`,
+  },
+  {
+    expiresOn: (date: Date) => new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(date),
+    loggingIn: 'Logging in',
+    loggedIn: 'Logged in',
+    ended: 'Ended',
+    failed: 'Failed',
+    copy: 'Copy login command',
+    terminal: 'Log in in Terminal',
+    comeBack: 'Come back here after logging in',
+    runHere: 'Run this command in a terminal on this Mac.',
+    check: 'Check again',
+    login: 'Login',
+    notLoggedIn: 'Not logged in',
+    expires: (value1: string | number, value2: string | number) => `${value1} login expires on ${value2}`,
+  },
+)
 
 /** The harness's own CLI warns this long before a stored login ends; the page says so as early. */
 const ENDS_SOON_MS = 10 * 24 * 60 * 60_000
@@ -20,7 +54,7 @@ const ENDS_SOON_MS = 10 * 24 * 60 * 60_000
 /** `11 月 12 日`, the day a login ends. */
 export function loginEndDay(expiresAt: string): string {
   const date = new Date(expiresAt)
-  return `${date.getMonth() + 1} 月 ${date.getDate()} 日`
+  return Number.isFinite(date.getTime()) ? COPY.expiresOn(date) : ''
 }
 
 /** A stored login that ends within the warning window, or already has. */
@@ -61,16 +95,21 @@ function askLogin(harnessId: string, fresh: boolean): Promise<HarnessLoginCheck 
  * What a row says of a login command run in a Latch terminal. A command that left with code 0 only ended: the harness
  * itself says whether that was a login (`verdict`, undefined until it answered), and one that cannot say stays 已结束.
  */
-export function loginRunWord(
+function loginRunVerdict(
   state: LoginRunState | undefined,
   verdict: { asked: boolean; status?: HarnessLoginStatus | undefined },
-): '登录中' | '已登录' | '已结束' | '失败' | undefined {
+): 'loggingIn' | 'loggedIn' | 'ended' | 'failed' | undefined {
   if (state === undefined) return undefined
-  if (state === 'running') return '登录中'
-  if (state === 'failed') return '失败'
-  if (!verdict.asked) return '登录中'
-  if (verdict.status === 'authenticated') return '已登录'
-  return verdict.status === 'unauthenticated' ? undefined : '已结束'
+  if (state === 'running') return 'loggingIn'
+  if (state === 'failed') return 'failed'
+  if (!verdict.asked) return 'loggingIn'
+  if (verdict.status === 'authenticated') return 'loggedIn'
+  return verdict.status === 'unauthenticated' ? undefined : 'ended'
+}
+
+export function loginRunWord(state: LoginRunState | undefined, verdict: { asked: boolean; status?: HarnessLoginStatus | undefined }) {
+  const result = loginRunVerdict(state, verdict)
+  return result && COPY[result]
 }
 
 /**
@@ -192,7 +231,7 @@ function LoginCommand({
       setOpening(false)
     }
   }
-  const word = loginRunWord(state, { asked: verdict?.terminalId === terminalId, status: verdict?.status })
+  const result = loginRunVerdict(state, { asked: verdict?.terminalId === terminalId, status: verdict?.status })
   return (
     <>
       {name && (
@@ -204,27 +243,27 @@ function LoginCommand({
         <code>
           <VisibleText text={command} />
         </code>
-        <CopyButton text={command} label="复制登录命令" size="xs" />
+        <CopyButton text={command} label={COPY.copy} size="xs" />
         {surface.kind !== 'none' && (
           <Button size="xs" variant="secondary" icon={TerminalGlyph} loading={opening} onClick={() => void open()}>
-            在终端里登录
+            {COPY.terminal}
           </Button>
         )}
-        {word && (
-          <span className="harness-login-state" data-state={word === '失败' ? 'failed' : undefined} role="status">
-            {word === '登录中' ? (
+        {result && (
+          <span className="harness-login-state" data-state={result === 'failed' ? 'failed' : undefined} role="status">
+            {result === 'loggingIn' ? (
               <Spinner size={12} />
             ) : (
-              <Icon icon={word === '失败' ? AlertGlyph : word === '已登录' ? CircleCheckGlyph : TerminalGlyph} size={12} />
+              <Icon icon={result === 'failed' ? AlertGlyph : result === 'loggedIn' ? CircleCheckGlyph : TerminalGlyph} size={12} />
             )}
-            {word}
+            {COPY[result]}
           </span>
         )}
       </div>
       {opened && (
         <p>
           <Icon icon={TerminalGlyph} size={12} />
-          登录后回到这里
+          {COPY.comeBack}
         </p>
       )}
       {error && (
@@ -285,7 +324,7 @@ export function HarnessLoginSteps({
       ))}
       {login.command && <LoginCommand harnessId={harnessId} command={login.command} surface={surface} onEnded={onEnded} />}
       {login.note && <p>{login.note}</p>}
-      {runnable && surface.kind === 'none' && <p>在这台 Mac 的终端里运行这条命令。</p>}
+      {runnable && surface.kind === 'none' && <p>{COPY.runHere}</p>}
       {onCheck && (
         <div className="harness-login-command">
           <Button
@@ -299,7 +338,7 @@ export function HarnessLoginSteps({
                 setChecking(false)
               })
             }}>
-            重新检查
+            {COPY.check}
           </Button>
         </div>
       )}
@@ -344,8 +383,11 @@ export function DraftLoginNotice({
     // A harness read only when asked is not started because a command ended: 重新检查 asks.
     const bySelf = harness.catalogueRead?.when === 'select'
     return (
-      <section className="setup-card harness-login-card" role="status" aria-label="登录">
-        <strong>{name} 还没登录</strong>
+      <section className="setup-card harness-login-card" role="status" aria-label={COPY.login}>
+        <strong>
+          {name}
+          {COPY.notLoggedIn}
+        </strong>
         <HarnessLoginSteps
           harnessId={harness.id}
           login={login ?? {}}
@@ -357,6 +399,6 @@ export function DraftLoginNotice({
     )
   }
   if (status === 'authenticated' && expiresAt && loginEndsSoon(expiresAt))
-    return <InlineNotice tone="warn" title={`${name} 的登录 ${loginEndDay(expiresAt)}到期`} />
+    return <InlineNotice tone="warn" title={COPY.expires(name, loginEndDay(expiresAt))} />
   return null
 }

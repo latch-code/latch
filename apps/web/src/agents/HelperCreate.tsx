@@ -26,16 +26,96 @@ import {
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { ModelPicker, ProjectPicker } from '../components/Pickers.tsx'
 import { harnessName } from '../composerChoice.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import type { AgentCreationToken } from '../core/agentCreation.ts'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { WriteNotice } from './AgentForm.tsx'
 import { DraftAvatarPicker } from './AvatarPicker.tsx'
-import { ABILITY_WORDS, firstFace, helperCandidates, helperMode, isolationBrief, type HelperCandidate } from './helpers.ts'
+import { ABILITY_WORDS, firstFace, helperCandidates, helperCardLine, helperMode, isolationBrief, type HelperCandidate } from './helpers.ts'
 import { usesHostModels } from './model.ts'
 import { BeforeActing } from './parts.tsx'
+import { AGENT_SPACE_COPY } from './spaceCopy.ts'
 import { writeFor, type AgentWrites } from './useAgentWrites.ts'
 import type { HelperAbility } from '@latch/protocol'
+
+const COPY = defineCopy(
+  {
+    abilities: '能做的事',
+    unasked: '不先问你',
+    waiting: (count: number) => `还有 ${formatNumber(count)} 位没准备好`,
+    notReady: '没准备好',
+    harnessSettings: '设置 › Harness',
+    deviceBlocked: '这台设备已不能继续创建 Agent。',
+    check: '确认创建结果',
+    checking: '正在确认创建结果…',
+    cancel: '取消',
+    stopWaiting: '放弃这次创建的等待',
+    abandonTitle: '放弃等待创建结果？',
+    abandonDetail: 'Mac 可能已经创建了这个 Agent。这里只放下此设备保存的待确认请求，不会撤销创建；再次创建会是另一个请求。',
+    abandon: '放弃等待',
+    choose: '你想让谁成为你的帮手？',
+    candidates: '候选',
+    empty: '还没有能运行 Agent 的 Harness',
+    nameRequired: '先给它起个名字',
+    chosen: '选了',
+    change: '换',
+    boundary: (label: string, detail?: string) => (detail ? `${label}。${detail}` : label),
+    name: '名字',
+    namePrompt: '给它起个名字',
+    duty: '职责',
+    dutyPrompt: '一句话，例如：查资料，写成一页摘要',
+    instructionsMore: '多说几句',
+    instructions: '指令',
+    more: '更多',
+    model: '用的模型',
+    useDefault: '用默认',
+    harnessDefault: '它自己的默认',
+    beforeActing: '做事前',
+    workspace: '在哪做',
+    ownFolder: '它自己的文件夹',
+    ownFolderDetail: '不是隔离：它仍能读写这台 Mac 上别处的文件。选了项目，首次聊天就在项目里做。',
+    create: '创建',
+  },
+  {
+    abilities: 'Capabilities',
+    unasked: 'Acts without asking',
+    waiting: (count: number) => plural(count, { one: '{n} Harness isn’t ready', other: '{n} Harnesses aren’t ready' }),
+    notReady: 'Not ready',
+    harnessSettings: 'Settings › Harness',
+    deviceBlocked: 'This device can no longer create an Agent.',
+    check: 'Check creation',
+    checking: 'Checking whether the Agent was created…',
+    cancel: 'Cancel',
+    stopWaiting: 'Stop waiting for this creation request',
+    abandonTitle: 'Stop waiting for the creation result?',
+    abandonDetail:
+      'Your Mac may already have created the Agent. This clears the pending request on this device. It does not undo creation. Creating again sends a new request.',
+    abandon: 'Stop waiting',
+    choose: 'Which Harness should run your Agent?',
+    candidates: 'Available Harnesses',
+    empty: 'No Harness can run an Agent yet',
+    nameRequired: 'Give your Agent a name first',
+    chosen: 'Selected',
+    change: 'Change',
+    boundary: (label: string, detail?: string) => (detail ? `${label}. ${detail}` : label),
+    name: 'Name',
+    namePrompt: 'Give your Agent a name',
+    duty: 'Role',
+    dutyPrompt: 'One sentence, such as “Research a topic and write a one-page summary”',
+    instructionsMore: 'Add more detail',
+    instructions: 'Instructions',
+    more: 'More',
+    model: 'Model',
+    useDefault: 'Use default',
+    harnessDefault: 'Harness default',
+    beforeActing: 'Before acting',
+    workspace: 'Workspace',
+    ownFolder: 'Its own folder',
+    ownFolderDetail: 'The Agent can still read and write files elsewhere on this Mac. Choose a project to start its first chat there.',
+    create: 'Create',
+  },
+)
 
 const ABILITY_ICONS: Record<HelperAbility, IconComponent> = {
   files: FileGlyph,
@@ -50,7 +130,7 @@ const ABILITY_ICONS: Record<HelperAbility, IconComponent> = {
 function Abilities({ candidate }: { candidate: HelperCandidate }) {
   if (!candidate.abilities.length) return null
   return (
-    <ul className="helper-abilities" aria-label="能做的事">
+    <ul className="helper-abilities" aria-label={COPY.abilities}>
       {candidate.abilities.map(ability => {
         const Glyph = ABILITY_ICONS[ability]
         return (
@@ -80,6 +160,7 @@ function CandidateCard({
   onChoose: () => void
 }) {
   const name = harnessName(candidate.harness)
+  const line = helperCardLine(candidate)
   return (
     <li>
       <Button variant="ghost" className="helper-card" disabled={disabled} aria-label={name} onClick={onChoose}>
@@ -90,11 +171,11 @@ function CandidateCard({
             <HarnessTile harness={candidate.harness} size={14} />
             {candidate.unasked && (
               <StatusWord tone="warn" className="helper-unasked">
-                不先问你
+                {COPY.unasked}
               </StatusWord>
             )}
           </span>
-          {candidate.card && <span className="helper-card-line">{candidate.card.line}</span>}
+          {line && <span className="helper-card-line">{line}</span>}
           <Abilities candidate={candidate} />
         </span>
         <ChevronRightGlyph className="helper-card-go" size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
@@ -110,10 +191,10 @@ function Waiting({ waiting, onSettings }: { waiting: ReturnType<typeof helperCan
   return (
     <div className="helper-waiting">
       <FoldHeader open={open} onOpenChange={setOpen}>
-        还有 {waiting.length} 位没准备好
+        {COPY.waiting(waiting.length)}
       </FoldHeader>
       <Collapse open={open}>
-        <ul className="helper-cards" aria-label="没准备好">
+        <ul className="helper-cards" aria-label={COPY.notReady}>
           {waiting.map(item => (
             <li key={item.harness.id} className="helper-card" data-waiting="">
               <HarnessTile harness={item.harness} size={20} />
@@ -132,7 +213,7 @@ function Waiting({ waiting, onSettings }: { waiting: ReturnType<typeof helperCan
         </ul>
         {onSettings && (
           <Button size="sm" variant="ghost" onClick={onSettings}>
-            设置 › Harness
+            {COPY.harnessSettings}
           </Button>
         )}
       </Collapse>
@@ -228,25 +309,25 @@ export function HelperCreate({
     }))
     setChoosing(false)
   }
-  if (writes.creationAvailable === false) return <InlineNotice>这台设备已不能继续创建 Agent。</InlineNotice>
+  if (writes.creationAvailable === false) return <InlineNotice>{COPY.deviceBlocked}</InlineNotice>
   if ((writes.held || writes.saving) && state) {
     return (
-      <div className="helper-create agent-form" aria-label="新建 Agent" role="form">
-        <h1 className="settings-title">确认创建结果</h1>
-        {writes.saving && <InlineNotice>正在确认创建结果…</InlineNotice>}
+      <div className="helper-create agent-form" aria-label={AGENT_SPACE_COPY.newAgent} role="form">
+        <h1 className="settings-title">{COPY.check}</h1>
+        {writes.saving && <InlineNotice>{COPY.checking}</InlineNotice>}
         <WriteNotice state={state} onRetry={() => void writes.retry<CustomAgent>().then(saved => saved && onCreated(saved))} />
         <div className="agent-form-actions">
           <span className="agent-form-spacer" />
-          <Button disabled>取消</Button>
+          <Button disabled>{COPY.cancel}</Button>
           {writes.held && writes.abandon && 'creationToken' in state && state.creationToken && (
-            <Button onClick={() => setAbandon(state.creationToken)}>放弃这次创建的等待</Button>
+            <Button onClick={() => setAbandon(state.creationToken)}>{COPY.stopWaiting}</Button>
           )}
         </div>
         {abandon && 'creationToken' in state && state.creationToken?.record === abandon.record && (
           <ConfirmDialog
-            title="放弃等待创建结果？"
-            message="Mac 可能已经创建了这个 Agent。这里只放下此设备保存的待确认请求，不会撤销创建；再次创建会是另一个请求。"
-            confirmLabel="放弃等待"
+            title={COPY.abandonTitle}
+            message={COPY.abandonDetail}
+            confirmLabel={COPY.abandon}
             onClose={() => setAbandon(undefined)}
             onConfirm={async () => {
               if (await writes.abandon?.(abandon)) {
@@ -261,10 +342,10 @@ export function HelperCreate({
   }
   if (choosing || !draft || !chosen) {
     return (
-      <div className="helper-create" aria-label="新建 Agent" role="form">
-        <h1 className="helper-create-question">你想让谁成为你的帮手？</h1>
+      <div className="helper-create" aria-label={AGENT_SPACE_COPY.newAgent} role="form">
+        <h1 className="helper-create-question">{COPY.choose}</h1>
         {ready.length ? (
-          <ul className="helper-cards" aria-label="候选">
+          <ul className="helper-cards" aria-label={COPY.candidates}>
             {ready.map(candidate => (
               <CandidateCard
                 key={candidate.harness.id}
@@ -278,18 +359,18 @@ export function HelperCreate({
             ))}
           </ul>
         ) : (
-          <p className="agent-form-empty">还没有能运行 Agent 的 Harness</p>
+          <p className="agent-form-empty">{COPY.empty}</p>
         )}
         <Waiting waiting={waiting} {...(onSettings ? { onSettings } : {})} />
         <div className="agent-form-actions">
           <span className="agent-form-spacer" />
-          <Button onClick={onCancel}>取消</Button>
+          <Button onClick={onCancel}>{COPY.cancel}</Button>
         </div>
       </div>
     )
   }
   const harness = chosen.harness
-  const problem = draft.name.trim() ? undefined : '先给它起个名字'
+  const problem = draft.name.trim() ? undefined : COPY.nameRequired
   // Said where the person decides: Latch does not isolate an external Harness, and one that never asks says that too.
   const isolation = isolationBrief(harness)
   const create = async () => {
@@ -300,18 +381,18 @@ export function HelperCreate({
   return (
     <form
       className="helper-create agent-form"
-      aria-label="新建 Agent"
+      aria-label={AGENT_SPACE_COPY.newAgent}
       onSubmit={event => {
         event.preventDefault()
         void create()
       }}>
       <div className="helper-chosen">
         {/* That Latch does not isolate it is the choice's tooltip, where the person decides; 不先问你 is said in words, amber. */}
-        <Tooltip content={isolation && !chosen.unasked ? `${isolation.label}。${isolation.detail}` : undefined}>
+        <Tooltip content={isolation && !chosen.unasked ? COPY.boundary(isolation.label, isolation.detail) : undefined}>
           <span className="helper-chosen-name" tabIndex={isolation && !chosen.unasked ? 0 : undefined}>
             <HarnessTile harness={harness} size={16} />
             <span>
-              选了 <strong>{harnessName(harness)}</strong>
+              {COPY.chosen} <strong>{harnessName(harness)}</strong>
             </span>
           </span>
         </Tooltip>
@@ -322,14 +403,14 @@ export function HelperCreate({
           onClick={() => {
             setChoosing(true)
           }}>
-          换
+          {COPY.change}
         </Button>
         {isolation && chosen.unasked && (
           <Hint
             className="helper-isolation agent-permission-note is-warn"
-            label="不先问你"
+            label={COPY.unasked}
             lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
-            {isolation.label}。{isolation.detail}
+            {COPY.boundary(isolation.label, isolation.detail)}
           </Hint>
         )}
       </div>
@@ -342,10 +423,10 @@ export function HelperCreate({
           }}
         />
         <TextField
-          label="名字"
+          label={COPY.name}
           value={draft.name}
           maxLength={80}
-          placeholder="给它起个名字"
+          placeholder={COPY.namePrompt}
           required
           disabled={locked}
           onChange={event => {
@@ -354,10 +435,10 @@ export function HelperCreate({
         />
       </div>
       <TextField
-        label="职责"
+        label={COPY.duty}
         value={draft.description}
         maxLength={200}
-        placeholder="一句话，例如：查资料，写成一页摘要"
+        placeholder={COPY.dutyPrompt}
         disabled={locked}
         onChange={event => {
           update({ description: event.target.value.replaceAll('\n', ' ') })
@@ -365,11 +446,11 @@ export function HelperCreate({
       />
       <div className="helper-fold">
         <FoldHeader open={words} onOpenChange={setWords}>
-          多说几句
+          {COPY.instructionsMore}
         </FoldHeader>
         <Collapse open={words}>
           <TextAreaField
-            label="指令"
+            label={COPY.instructions}
             value={draft.instructions}
             rows={6}
             maxLength={32_000}
@@ -382,11 +463,11 @@ export function HelperCreate({
       </div>
       <div className="helper-fold">
         <FoldHeader open={more} onOpenChange={setMore}>
-          更多
+          {COPY.more}
         </FoldHeader>
         <Collapse open={more}>
           <dl className="agent-facts helper-more">
-            <dt>用的模型</dt>
+            <dt>{COPY.model}</dt>
             <dd>
               {usesHostModels(harness) ? (
                 <>
@@ -412,23 +493,21 @@ export function HelperCreate({
                           return rest
                         })
                       }}>
-                      用默认
+                      {COPY.useDefault}
                     </Button>
                   )}
                 </>
               ) : (
-                <span>它自己的默认</span>
+                <span>{COPY.harnessDefault}</span>
               )}
             </dd>
-            <dt>做事前</dt>
+            <dt>{COPY.beforeActing}</dt>
             <dd>
               <BeforeActing harness={harness} mode={helperMode(harness)} />
             </dd>
-            <dt>在哪做</dt>
+            <dt>{COPY.workspace}</dt>
             <dd>
-              {!draft.defaultProjectId && (
-                <Hint label="它自己的文件夹">不是隔离：它仍能读写这台 Mac 上别处的文件。选了项目，首次聊天就在项目里做。</Hint>
-              )}
+              {!draft.defaultProjectId && <Hint label={COPY.ownFolder}>{COPY.ownFolderDetail}</Hint>}
               <ProjectPicker
                 catalog={catalog}
                 harness={harness}
@@ -451,7 +530,7 @@ export function HelperCreate({
       <div className="agent-form-actions">
         <span className="agent-form-spacer" />
         <Button disabled={writes.saving || writes.held} onClick={onCancel}>
-          取消
+          {COPY.cancel}
         </Button>
         <Button
           type="submit"
@@ -459,7 +538,7 @@ export function HelperCreate({
           disabled={locked || problem !== undefined}
           loading={state !== null && 'phase' in state && state.phase === 'saving'}
           title={problem}>
-          创建
+          {COPY.create}
         </Button>
       </div>
     </form>

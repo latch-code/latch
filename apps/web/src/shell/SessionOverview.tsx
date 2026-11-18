@@ -19,18 +19,119 @@ import { VisibleText } from '../components/VisibleText.tsx'
 import { toolLabel, turnsOf } from '../conversation.ts'
 import { deliveryChecks, useWorkbenchDelivery } from './useWorkbenchEvidence.ts'
 import type { ShellState } from './useShellLayout.tsx'
+import { currentLocale, defineCopy, plural } from '../core/i18n.ts'
+import { describeFailure } from '../core/securityCopy.ts'
+
+const COPY = defineCopy(
+  {
+    completed: '已完成',
+    failed: '失败',
+    stopped: '已停止',
+    running: '运行中',
+    attention: '等你处理',
+    queued: '已排队',
+    last: (time: string) => `上次 ${time}`,
+    conflictsAction: '查看冲突',
+    gitStatus: '查看 Git 状态',
+    commit: (count: number) => `提交 ${count} 个文件…`,
+    push: '推送提交…',
+    pullRequest: '查看 PR',
+    openPR: '开 PR…',
+    noChanges: '本轮未记录文件改动',
+    changes: '这次改动',
+    all: '全部',
+    changesDenied: '这台设备不能读取项目改动',
+    loading: '正在读取…',
+    added: '新增',
+    deleted: '删除',
+    modified: '修改',
+    changesFailed: '读不到本轮改动',
+    checking: '正在核对…',
+    partial: '只列出部分',
+    checks: '检查',
+    unknown: '结果未知',
+    notReported: '未报告结果',
+    delivery: '交付',
+    deliveryDenied: '这台设备不能交付',
+    retry: '重试',
+    view: '查看',
+    deliveryFailed: '读不到交付状态',
+    conflicts: (count: number) => `${count} 个冲突`,
+    pendingGit: 'Git 操作未结束',
+    uncommitted: (count: number) => `${count} 个文件未提交`,
+    unpushed: (count: number) => `${count} 个提交未推送`,
+    committed: '已全部提交',
+    branch: '分支',
+    pullRequestFailed: '读不到 PR',
+    notLoaded: '还没读取',
+  },
+  {
+    completed: 'Completed',
+    failed: 'Failed',
+    stopped: 'Stopped',
+    running: 'Running',
+    attention: 'Needs you',
+    queued: 'Queued',
+    last: (time: string) => `Last: ${time}`,
+    conflictsAction: 'View conflicts',
+    gitStatus: 'View Git status',
+    commit: (count: number) => plural(count, { one: 'Commit {n} file…', other: 'Commit {n} files…' }),
+    push: 'Push commits…',
+    pullRequest: 'View PR',
+    openPR: 'Open PR…',
+    noChanges: 'No file changes recorded this turn',
+    changes: 'Changes',
+    all: 'All',
+    changesDenied: 'This device can’t read project changes',
+    loading: 'Loading…',
+    added: 'Added',
+    deleted: 'Deleted',
+    modified: 'Modified',
+    changesFailed: 'Can’t read changes from this turn',
+    checking: 'Checking…',
+    partial: 'Partial list',
+    checks: 'Checks',
+    unknown: 'Outcome unknown',
+    notReported: 'No result reported',
+    delivery: 'Delivery',
+    deliveryDenied: 'This device can’t deliver changes',
+    retry: 'Retry',
+    view: 'View',
+    deliveryFailed: 'Can’t read delivery status',
+    conflicts: (count: number) => plural(count, { one: '{n} conflict', other: '{n} conflicts' }),
+    pendingGit: 'Git operation in progress',
+    uncommitted: (count: number) => plural(count, { one: '{n} file to commit', other: '{n} files to commit' }),
+    unpushed: (count: number) => plural(count, { one: '{n} commit to push', other: '{n} commits to push' }),
+    committed: 'All committed',
+    branch: 'Branch',
+    pullRequestFailed: 'Can’t read PR',
+    notLoaded: 'Not loaded',
+  },
+)
 
 /** A command finishing is evidence about that command, never an invented test or CI count. */
 const commandWords = {
-  completed: '已完成',
-  failed: '失败',
-  cancelled: '已停止',
-  running: '运行中',
-  'awaiting-approval': '等你处理',
-  queued: '已排队',
+  get completed() {
+    return COPY.completed
+  },
+  get failed() {
+    return COPY.failed
+  },
+  get cancelled() {
+    return COPY.stopped
+  },
+  get running() {
+    return COPY.running
+  },
+  get 'awaiting-approval'() {
+    return COPY.attention
+  },
+  get queued() {
+    return COPY.queued
+  },
 } as const
 
-const clock = (at: string) => new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+const clock = (at: string) => new Date(at).toLocaleTimeString(currentLocale(), { hour: '2-digit', minute: '2-digit' })
 
 /**
  * One row of the summary, the same for every section: a 14px glyph, what it is about, then its state (an icon and a
@@ -99,20 +200,20 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
   const state = entry?.state
   const pr = entry?.pr?.pr
   const checks = entry ? deliveryChecks(entry) : undefined
-  const failure = evidence.error ?? entry?.error?.message
+  const failure = evidence.error ?? (entry?.error && describeFailure(0, entry.error.code, entry.error.message))
   // While the connection is lost, what is shown is what was last seen, and says when.
-  const seen = !connected && entry ? `上次 ${clock(entry.observedAt)}` : undefined
+  const seen = !connected && entry ? COPY.last(clock(entry.observedAt)) : undefined
   const next = state?.conflicted
-    ? '查看冲突'
+    ? COPY.conflictsAction
     : state?.gitOperation
-      ? '查看 Git 状态'
+      ? COPY.gitStatus
       : state?.files
-        ? `提交 ${state.files} 个文件…`
+        ? COPY.commit(state.files)
         : state?.ahead
-          ? '推送提交…'
+          ? COPY.push
           : pr
-            ? '查看 PR'
-            : '开 PR…'
+            ? COPY.pullRequest
+            : COPY.openPR
   const deliver = (label: string) => (
     <Button size="xs" variant="ghost" onClick={() => shell.showSurface({ kind: 'delivery' })}>
       {label}
@@ -127,14 +228,14 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
   if (!showChanges && !showChecks && !showDelivery)
     return (
       <div className="session-overview">
-        <p className="session-overview-empty">本轮未记录文件改动</p>
+        <p className="session-overview-empty">{COPY.noChanges}</p>
       </div>
     )
   return (
     <div className="session-overview">
       {showChanges && (
         <Section
-          title="这次改动"
+          title={COPY.changes}
           {...(canReadChanges && detail && !unavailable && !pending ? { count: distinct.length } : {})}
           {...(distinct.length > 0
             ? {
@@ -143,15 +244,15 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
                     size="xs"
                     variant="ghost"
                     onClick={() => shell.openChangesTab(turn?.user?.turnId ? { turnId: turn.user.turnId } : undefined)}>
-                    全部
+                    {COPY.all}
                   </Button>
                 ),
               }
             : {})}>
           {!canReadChanges ? (
-            <Row icon={LockGlyph}>这台设备不能读取项目改动</Row>
+            <Row icon={LockGlyph}>{COPY.changesDenied}</Row>
           ) : !detail ? (
-            <Row icon={DiffGlyph}>正在读取…</Row>
+            <Row icon={DiffGlyph}>{COPY.loading}</Row>
           ) : (
             <>
               {distinct.slice(0, 6).map(file => (
@@ -160,7 +261,7 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
                   icon={DiffGlyph}
                   state={
                     <span className="session-overview-word">
-                      {file.change === 'created' ? '新增' : file.change === 'deleted' ? '删除' : '修改'}
+                      {file.change === 'created' ? COPY.added : file.change === 'deleted' ? COPY.deleted : COPY.modified}
                     </span>
                   }>
                   <button
@@ -178,18 +279,18 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
               ))}
               {unavailable ? (
                 <Row icon={WarningGlyph} tone="warn">
-                  读不到本轮改动
+                  {COPY.changesFailed}
                 </Row>
               ) : pending ? (
-                <Row icon={DiffGlyph}>正在核对…</Row>
+                <Row icon={DiffGlyph}>{COPY.checking}</Row>
               ) : null}
-              {truncated && <Row icon={DiffGlyph}>只列出部分</Row>}
+              {truncated && <Row icon={DiffGlyph}>{COPY.partial}</Row>}
             </>
           )}
         </Section>
       )}
       {showChecks && (
-        <Section title="检查">
+        <Section title={COPY.checks}>
           {commands.map(message => {
             // The row's own words, as the transcript says them; the tool's ID only behind hover. A finished command is
             // not a passed test: its word stays neutral, without a check.
@@ -211,7 +312,7 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
                 state={
                   // A lost connection stops the spinner where it is: the run was last seen running, not seen now.
                   <StatusWord tone={tone} data-stale={tone === 'running' && !connected ? '' : undefined}>
-                    {message.interrupted ? '结果未知' : message.state ? commandWords[message.state] : '未报告结果'}
+                    {message.interrupted ? COPY.unknown : message.state ? commandWords[message.state] : COPY.notReported}
                   </StatusWord>
                 }
                 {...(tone === 'running' && seen ? { time: seen } : {})}>
@@ -226,9 +327,9 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
         </Section>
       )}
       {showDelivery && (
-        <Section title="交付" {...(state && !failure && shell.canDeliver ? { action: deliver(next) } : {})}>
+        <Section title={COPY.delivery} {...(state && !failure && shell.canDeliver ? { action: deliver(next) } : {})}>
           {!shell.canDeliver ? (
-            <Row icon={LockGlyph}>这台设备不能交付</Row>
+            <Row icon={LockGlyph}>{COPY.deliveryDenied}</Row>
           ) : failure ? (
             <Row
               icon={WarningGlyph}
@@ -237,14 +338,14 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
               action={
                 connected ? (
                   <Button size="xs" variant="ghost" onClick={evidence.refresh}>
-                    重试
+                    {COPY.retry}
                   </Button>
                 ) : (
-                  deliver('查看')
+                  deliver(COPY.view)
                 )
               }>
               <Tooltip content={failure}>
-                <span tabIndex={0}>读不到交付状态</span>
+                <span tabIndex={0}>{COPY.deliveryFailed}</span>
               </Tooltip>
             </Row>
           ) : state ? (
@@ -254,18 +355,18 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
                 state={
                   <span className="session-overview-word">
                     {state.conflicted
-                      ? `${state.conflicted} 个冲突`
+                      ? COPY.conflicts(state.conflicted)
                       : state.gitOperation
-                        ? 'Git 操作未结束'
+                        ? COPY.pendingGit
                         : state.files
-                          ? `${state.files} 个文件未提交`
+                          ? COPY.uncommitted(state.files)
                           : state.ahead > 0
-                            ? `${state.ahead} 个提交未推送`
-                            : '已全部提交'}
+                            ? COPY.unpushed(state.ahead)
+                            : COPY.committed}
                   </span>
                 }
                 {...(seen ? { time: seen } : {})}>
-                {state.branch ? <VisibleText text={state.branch} /> : '分支'}
+                {state.branch ? <VisibleText text={state.branch} /> : COPY.branch}
                 {pr?.base && (
                   <span className="session-overview-base">
                     {' → '}
@@ -280,15 +381,15 @@ export function SessionOverview({ shell, summary }: { shell: ShellState; summary
               )}
               {entry?.prError && (
                 <Row icon={WarningGlyph} tone="warn">
-                  <Tooltip content={entry.prError.message}>
-                    <span tabIndex={0}>读不到 PR</span>
+                  <Tooltip content={checks}>
+                    <span tabIndex={0}>{COPY.pullRequestFailed}</span>
                   </Tooltip>
                 </Row>
               )}
             </>
           ) : (
-            <Row icon={BranchGlyph} action={deliver('查看')}>
-              {evidence.loading ? '正在读取…' : '还没读取'}
+            <Row icon={BranchGlyph} action={deliver(COPY.view)}>
+              {evidence.loading ? COPY.loading : COPY.notLoaded}
             </Row>
           )}
         </Section>

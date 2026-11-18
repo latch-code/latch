@@ -8,11 +8,19 @@ import {
   type WorkProposalEntryEdit,
   type WorkProposalSummary,
 } from '@latch/protocol'
+import { AGENT_SPACE_COPY } from '../agents/spaceCopy.ts'
 import { api, ApiError, errorMessage, newRequestId } from '../core/api.ts'
+import { harnessName } from '../core/harnessName.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { unconfirmedReason } from '../core/sendingMessage.ts'
 import { readStorage } from '../core/storageKeys.ts'
 import { storageDeviceCurrent } from '../core/deviceStorageScope.ts'
 import { holdsExcerpt } from '../core/sessionDrafts.ts'
+
+const COPY = defineCopy(
+  { codeSession: 'Code 会话', unanswered: '没有收到电脑的答复' },
+  { codeSession: 'Code session', unanswered: 'The computer did not reply' },
+)
 
 /**
  * Agents' proposals for the board as this device was given them (`AppSnapshot.workProposals`): pending ones only, a
@@ -47,18 +55,21 @@ export interface ProposalOrigin {
   from: { sessionId?: string | undefined; customAgentId?: string | undefined }
 }
 
-/** Who proposed it, in words: one of 我的 Agent by name, 通用, or the session's own title; just 「Agent」 when withheld. */
+/** A person's Agent by name, or a Code proposal's visible Harness and project. The session is for details and navigation. */
 export function proposerName(
   proposal: ProposalOrigin,
-  snapshot: Pick<AppSnapshot, 'customAgents' | 'tasks'>,
+  snapshot: Pick<AppSnapshot, 'catalog' | 'customAgents' | 'tasks'>,
 ): { name: string; agent?: NonNullable<AppSnapshot['customAgents']>[number] | 'general'; session?: TaskSummary } {
   const session = snapshot.tasks.find(task => task.id === proposal.from.sessionId)
   const id = proposal.from.customAgentId
-  if (id === GENERAL_AGENT_ID) return { name: '通用', agent: 'general', ...(session ? { session } : {}) }
+  if (id === GENERAL_AGENT_ID) return { name: AGENT_SPACE_COPY.general, agent: 'general', ...(session ? { session } : {}) }
   const agent = id ? snapshot.customAgents?.find(item => item.id === id) : undefined
   if (agent) return { name: agent.name, agent, ...(session ? { session } : {}) }
-  if (proposal.from.sessionId === undefined && id === undefined) return { name: 'Agent' }
-  return { name: session?.title || 'Code 会话', ...(session ? { session } : {}) }
+  if (id || proposal.from.sessionId === undefined) return { name: 'Agent', ...(session ? { session } : {}) }
+  const harness = session && snapshot.catalog?.harnesses.find(harness => harness.id === session.harnessId)
+  const project = session?.workspaceId && snapshot.catalog?.workspaces.find(project => project.id === session.workspaceId)
+  const name = [harness ? harnessName(harness) : undefined, project ? project.name : undefined].filter(Boolean).join(' · ')
+  return { name: name || COPY.codeSession, ...(session ? { session } : {}) }
 }
 
 /** A proposal's write as its card shows it: sending, or unknown (重试 sends the same request), or refused with why. */
@@ -119,7 +130,7 @@ export function useProposalWrites(refresh: () => Promise<void>, { device, tasks 
           id,
           {
             state: 'unknown',
-            reason: '没有收到电脑的答复',
+            reason: COPY.unanswered,
             ...(request.sessionId ? { sessionId: request.sessionId } : {}),
           } satisfies ProposalWriteState,
         ]),

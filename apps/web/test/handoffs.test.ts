@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import type { Handoff, HandoffSummary, Message, TaskSummary } from '@latch/protocol'
 import { ApiError, ApiTimeoutError } from '../src/core/api.ts'
+import { setLocale } from '../src/core/i18n.ts'
 import {
   awaitsReturn,
   createBody,
@@ -266,4 +267,22 @@ describe('handoff states', () => {
     expect(sessionTargets(list, source).map(item => item.id)).toEqual(['a', 'c'])
     expect(sessionTargets(list, task('p', { agentPrivate: true })).map(item => item.id)).toEqual(['c'])
   })
+})
+
+it('updates an already received failure while leaving the quoted summary and hash intact', async () => {
+  const summary = '已接入\n\n缓存 24 小时'
+  const failure = writeFailure(new ApiTimeoutError())
+  const quote = quotedSummary('', summary)
+  const hash = await sha256Hex(summary)
+  expect(failure.message).toContain('Mac 没有回答')
+
+  setLocale('en')
+  try {
+    expect(failure.message).toContain("The Mac hasn't responded")
+    expect(statusWords({ status: 'returned', returnScope: 'summary' }).words).toBe('Returned')
+    expect(quotedSummary('', summary)).toBe(quote)
+    expect(await sha256Hex(summary)).toBe(hash)
+  } finally {
+    setLocale('zh-CN')
+  }
 })

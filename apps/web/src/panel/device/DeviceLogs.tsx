@@ -4,6 +4,48 @@ import { IconButton, StatusWord, ValuePicker } from '@latch/ui'
 import type { SimulatorAppView, SimulatorLogEvents } from '@latch/protocol'
 import { EventStreamParser } from '../../core/eventStream.ts'
 import { appendLines } from './model.ts'
+import { defineCopy, formatNumber, plural } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    dropped: (count: number) => `少 ${formatNumber(count)} 行`,
+    all: '全部进程',
+    yours: '你的',
+    logs: '日志',
+    filter: '只看这个 App 的日志',
+    failed: '失败',
+    retry: '重新读取日志',
+    ended: '已结束',
+    live: '实时',
+    droppedTitle: '页面读得比设备写得慢时少显示的行',
+    resume: '继续',
+    pause: '暂停',
+    resumeScroll: '继续滚动',
+    pauseScroll: '暂停滚动 · 新行先留着',
+    clear: '清空',
+    close: '关闭日志',
+    deviceLogs: '设备日志',
+  },
+  {
+    dropped: (count: number) => plural(count, { one: '{n} line omitted', other: '{n} lines omitted' }),
+    all: 'All processes',
+    yours: 'Yours',
+    logs: 'Logs',
+    filter: 'Show logs only for this app',
+    failed: 'Failed',
+    retry: 'Reload logs',
+    ended: 'Ended',
+    live: 'Live',
+    droppedTitle: 'Lines omitted when the device wrote faster than this page could read',
+    resume: 'Resume',
+    pause: 'Pause',
+    resumeScroll: 'Resume scrolling',
+    pauseScroll: 'Pause scrolling · New lines keep buffering',
+    clear: 'Clear',
+    close: 'Close logs',
+    deviceLogs: 'Device logs',
+  },
+)
 
 const ALL = '*'
 
@@ -92,15 +134,15 @@ export function DeviceLogs({ udid, apps, onClose }: { udid: string; apps: readon
   }, [lines, paused])
 
   const appOptions = [
-    { value: ALL, label: '全部进程' },
-    ...apps.map(item => ({ value: item.bundleId, label: item.name, meta: item.kind === 'user' ? '你的' : undefined })),
+    { value: ALL, label: COPY.all },
+    ...apps.map(item => ({ value: item.bundleId, label: item.name, meta: item.kind === 'user' ? COPY.yours : undefined })),
   ]
 
   return (
-    <section className="sim-pane" aria-label="日志">
+    <section className="sim-pane" aria-label={COPY.logs}>
       <div className="sim-pane-bar">
         <ValuePicker
-          label="只看这个 App 的日志"
+          label={COPY.filter}
           size="xs"
           value={app}
           options={appOptions}
@@ -113,42 +155,42 @@ export function DeviceLogs({ udid, apps, onClose }: { udid: string; apps: readon
         />
         {state === 'failed' ? (
           <StatusWord tone="failed" title={reason}>
-            失败
+            {COPY.failed}
           </StatusWord>
         ) : state === 'ended' ? (
-          <button type="button" className="sim-pane-again" title="重新读取日志" onClick={() => setRevision(value => value + 1)}>
-            <StatusWord tone="neutral">已结束</StatusWord>
+          <button type="button" className="sim-pane-again" title={COPY.retry} onClick={() => setRevision(value => value + 1)}>
+            <StatusWord tone="neutral">{COPY.ended}</StatusWord>
           </button>
         ) : state === 'live' ? (
-          <StatusWord tone="running">实时</StatusWord>
+          <StatusWord tone="running">{COPY.live}</StatusWord>
         ) : null}
         {dropped > 0 && (
-          <span className="sim-pane-meta" title="页面读得比设备写得慢时少显示的行">
-            少 {dropped} 行
+          <span className="sim-pane-meta" title={COPY.droppedTitle}>
+            {COPY.dropped(dropped)}
           </span>
         )}
         <span className="sim-spacer" />
         <IconButton
           size="xs"
           icon={paused ? Play : Pause}
-          label={paused ? '继续' : '暂停'}
-          tooltip={paused ? '继续滚动' : '暂停滚动 · 新行先留着'}
+          label={paused ? COPY.resume : COPY.pause}
+          tooltip={paused ? COPY.resumeScroll : COPY.pauseScroll}
           pressed={paused}
           onClick={() => setPaused(value => !value)}
         />
         <IconButton
           size="xs"
           icon={Eraser}
-          label="清空"
+          label={COPY.clear}
           onClick={() => {
             setLines([])
             held.current = []
             setDropped(0)
           }}
         />
-        <IconButton size="xs" icon={X} label="关闭日志" onClick={onClose} />
+        <IconButton size="xs" icon={X} label={COPY.close} onClick={onClose} />
       </div>
-      <pre ref={list} className="sim-log" tabIndex={0} aria-label="设备日志" aria-live="off">
+      <pre ref={list} className="sim-log" tabIndex={0} aria-label={COPY.deviceLogs} aria-live="off">
         {lines.join('\n')}
       </pre>
     </section>

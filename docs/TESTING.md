@@ -414,6 +414,8 @@ testkit 另导出：`FAKE_ACP_AGENT`、`FAKE_CODEX_APP_SERVER`、`FAKE_PI_AGENT`
 
 **输出。** `test-results/visual/<状态>--<视口>--<主题>.png` 与 `index.json`（每张图的状态、视口、主题、说明、尺寸与参考图 `board`）。参考图由 `LATCH_VISUAL_BOARDS=<json 文件>` 给出，格式为 `{ "<状态>": { "<视口>": "<文件名，{theme} 换成主题>" } }`。
 
+**英文截图。** 用 `LATCH_VISUAL_LOCALE=en` 运行同一套 `visual.e2e.ts`，产物写到 `test-results/visual-en/`。录制前触发页面的系统语言更新并复验布局，录制后恢复夹具驱动用的中文。五种验收宽度另由 `i18n.e2e.ts` 直接在英文页面驱动，检查切换、焦点和同一份草稿。
+
 **每次运行结果相同。** 改截取的状态时保持这些措施：
 
 - 页面时钟用 `clock.setFixedTime` 固定，Host 的 `now` 固定在同一时刻；消息与运行的时间用 Host 的 `clock`，由脚本推进。
@@ -493,6 +495,8 @@ grep -rnE 'createTestPresence|startHostFixture|latch-test\.localhost|(tests?|e2e
 ## 仓库检查
 
 这些命令检查仓库自身的结构，不运行产品代码；文件按 git 的列表读取，被忽略的文件不在其中。
+
+**界面语言。** `pnpm i18n:coverage` 扫描 Web、UI 与桌面源码的待迁移文案。用 `pnpm i18n:coverage -- --report` 查看每个文件的数量。首次建立名单用 `pnpm i18n:coverage -- --init`。每当文案迁移减少时用 `pnpm i18n:coverage -- --write` 更新，单个文件的待迁移数量增长会失败。Vitest 验证扫描和增长判断的行为。
 
 - **`pnpm check:quick` 与 `pnpm check`**（`scripts/check.ts`）：依次运行各项，一项失败也继续，最后逐项写出结果，有失败时以状态 1 结束。
 - **`pnpm check -- --plan`**（`scripts/verify-plan.ts`）：见[按改动选择回归](#按改动选择回归)。技能 `latch-verify` 按它运行并汇报。

@@ -1,7 +1,10 @@
 import type { HostCatalog, ModelRef } from '@latch/protocol'
 import { Badge, type PickerGroup, type PickerOption } from '@latch/ui'
 import { startableWorkspaces } from '../composerChoice.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { basename, middleEllipsis } from '../format.ts'
+
+const OPTIONS_COPY = defineCopy({ demo: '演示' }, { demo: 'Demo' })
 
 /**
  * The values of the design system's pickers (ValuePicker) for a session's model and project: one string per choice,
@@ -23,7 +26,7 @@ export function modelGroups(catalog: HostCatalog): Array<PickerGroup<string>> {
     options: (provider.models.length ? provider.models : [provider.defaultModel]).filter(Boolean).map(model => ({
       value: modelKey({ providerId: provider.id, model }),
       label: model,
-      ...(provider.kind === 'demo' ? { tag: <Badge tone="warn">演示</Badge> } : {}),
+      ...(provider.kind === 'demo' ? { tag: <Badge tone="warn">{OPTIONS_COPY.demo}</Badge> } : {}),
     })),
   }))
 }

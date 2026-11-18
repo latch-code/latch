@@ -2,7 +2,8 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { HarnessInfo, McpImportCandidate } from '@latch/protocol'
-import { HarnessMcpGroup, NOT_REPORTED, harnessMcpWord } from '../src/settings/HarnessMcp.tsx'
+import { EXTENSION_COPY } from '../src/settings/extensions.ts'
+import { HarnessMcpGroup, harnessMcpWord } from '../src/settings/HarnessMcp.tsx'
 import { candidateLine, importedForm } from '../src/settings/McpImport.tsx'
 import { hiddenCharacters } from '../src/settings/McpSettings.tsx'
 
@@ -29,7 +30,7 @@ describe('a Harness’s own MCP', () => {
 
   it('says a Harness that does not report its MCP does not, and offers nothing to read', () => {
     const html = render(createElement(HarnessMcpGroup, { harness: harness(), title: 'MCP', run: true }))
-    expect(html).toContain(NOT_REPORTED)
+    expect(html).toContain(EXTENSION_COPY.notReported)
     expect(html).not.toContain('读取')
   })
 

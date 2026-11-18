@@ -3,6 +3,7 @@ import { followSystemTheme } from '@latch/ui'
 import { applyAppearance, applyTheme, usePreferences } from './preferences.ts'
 import { customization } from './core/customBoot.ts'
 import { CustomizationActionsContext, CustomizationWrites, useCustomizationActions, useCustomizationStatus } from './core/customization.ts'
+import { defineCopy, resolveLocale, setLocale, useLocale } from './core/i18n.ts'
 import { deviceAccess } from './core/permissions.ts'
 import { computerLabel } from './core/securityCopy.ts'
 import { currentShell } from './core/shell.ts'
@@ -14,10 +15,30 @@ import { ErrorBoundary } from './components/ErrorBoundary.tsx'
 import { SafeModeBanner } from './components/SafeModeBanner.tsx'
 import { ModelSpendWritesProvider } from './settings/modelSpendWrites.tsx'
 
+const COPY = defineCopy(
+  { description: 'Latch：在桌面和手机之间接续的 Agent 工作台，自由组合 Harness、模型与项目。' },
+  { description: 'Latch is an Agent workbench for desktop and phone. Choose your Harness, model, and project.' },
+)
+
 /** Composition root: theme, authority from the Host, then enrollment or the workspace shell. */
 export function App() {
   const harness = useHarness()
   const preferences = usePreferences()
+  const locale = useLocale()
+  useLayoutEffect(() => {
+    const apply = () => setLocale(resolveLocale(preferences.locale))
+    apply()
+    if (preferences.locale !== 'system') return
+    window.addEventListener('languagechange', apply)
+    return () => window.removeEventListener('languagechange', apply)
+  }, [preferences.locale])
+  useLayoutEffect(() => {
+    const description = document.querySelector<HTMLMetaElement>('meta[name="description"]')
+    if (description) description.content = COPY.description
+    const manifest = document.querySelector<HTMLLinkElement>('link[rel="manifest"]')
+    if (manifest) manifest.href = locale === 'en' ? '/link/manifest.en.webmanifest' : '/link/manifest.webmanifest'
+    currentShell()?.locale?.set(preferences.locale, locale)
+  }, [preferences.locale, locale])
   useLayoutEffect(() => {
     applyTheme(preferences.theme)
   }, [preferences.theme])

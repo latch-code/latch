@@ -7,6 +7,32 @@ import { TextPreview } from './TextPreview.tsx'
 import { DESKTOP_CANVAS, isFrameEvent, type FrameCanvas, type FrameCommand } from './types.ts'
 import { openDocumentLink } from './openLink.ts'
 import { useViewerMenu, useViewerSource } from './viewerActions.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    runScripts: '运行页面脚本',
+    desktop: '按桌面尺寸显示',
+    unavailable: '无法显示这个页面，请切换源码查看。',
+    didNotRun: '页面脚本没有运行。',
+    assetsMissing: '页面引用的脚本或样式文件没有加载，显示可能不完整。',
+    oldShell: '这个版本的 Latch 不能运行页面脚本。',
+    onMac: '只能在 Mac 上的 Latch 里运行页面脚本。',
+    previous: '上一页',
+    next: '下一页',
+  },
+  {
+    runScripts: 'Run page scripts',
+    desktop: 'Show at desktop size',
+    unavailable: 'This page could not be shown. Switch to the source view.',
+    didNotRun: 'Page scripts did not run.',
+    assetsMissing: 'The page’s linked scripts or styles did not load. The preview may be incomplete.',
+    oldShell: 'This version of Latch cannot run page scripts.',
+    onMac: 'Page scripts run only in Latch on the Mac.',
+    previous: 'Previous page',
+    next: 'Next page',
+  },
+)
 
 function readPreference(key: string | undefined): string | null {
   try {
@@ -87,13 +113,13 @@ export function HtmlPreview({
     setSource(!source)
   })
   useViewerMenu([
-    ...(available ? [{ id: 'scripts', label: '运行页面脚本', checked: enabled, onSelect: () => runScripts(!enabled) }] : []),
+    ...(available ? [{ id: 'scripts', label: COPY.runScripts, checked: enabled, onSelect: () => runScripts(!enabled) }] : []),
     ...(source
       ? []
       : [
           {
             id: 'desktop-size',
-            label: '按桌面尺寸显示',
+            label: COPY.desktop,
             checked: canvas !== undefined,
             onSelect: () => {
               const next = canvas === undefined
@@ -108,7 +134,7 @@ export function HtmlPreview({
       {source ? (
         <TextPreview text={text} path={path} />
       ) : error ? (
-        <InlineNotice tone="error">无法显示这个页面，请切换源码查看。</InlineNotice>
+        <InlineNotice tone="error">{COPY.unavailable}</InlineNotice>
       ) : (
         <>
           {(scriptsOff || externalLeftOut) && (
@@ -116,13 +142,13 @@ export function HtmlPreview({
               action={
                 scriptsOff && available ? (
                   <Button size="xs" onClick={() => runScripts(true)}>
-                    运行页面脚本
+                    {COPY.runScripts}
                   </Button>
                 ) : undefined
               }>
-              {scriptsOff && '页面脚本没有运行。'}
-              {externalLeftOut && '页面引用的脚本或样式文件没有加载，显示可能不完整。'}
-              {scriptsOff && !available && (local ? '这个版本的 Latch 不能运行页面脚本。' : '只能在 Mac 上的 Latch 里运行页面脚本。')}
+              {scriptsOff && COPY.didNotRun}
+              {externalLeftOut && COPY.assetsMissing}
+              {scriptsOff && !available && (local ? COPY.oldShell : COPY.onMac)}
             </InlineNotice>
           )}
           <FileSandbox
@@ -140,7 +166,7 @@ export function HtmlPreview({
           {pages && (
             <div className="html-deck-pager">
               <IconButton
-                label="上一页"
+                label={COPY.previous}
                 icon={ArrowLeft}
                 size="sm"
                 disabled={pages.index === 0}
@@ -150,7 +176,7 @@ export function HtmlPreview({
                 {pages.index + 1} / {pages.count}
               </span>
               <IconButton
-                label="下一页"
+                label={COPY.next}
                 icon={ArrowRight}
                 size="sm"
                 disabled={pages.index + 1 === pages.count}

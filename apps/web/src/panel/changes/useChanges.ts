@@ -13,11 +13,11 @@ import type {
 import { announceChangesWrite, onChangesWrite } from '../../conversation/useTurnChanges.ts'
 import { api, ApiError, errorMessage, isUncertain, newRequestId } from '../../core/api.ts'
 import { fileId, queryOf, type ScopeChoice } from './model.ts'
+import { CHANGE_WRITE_COPY } from './write.copy.ts'
 
 /** Whole-file context: the review folds what it does not show, and opens it without asking again. */
 const WHOLE_FILE = 100_000
 const ACTIVE = new Set(['running', 'waiting-approval'])
-const UNCERTAIN = '不确定有没有完成。再按一次会核对，不会重复写入。'
 
 export type ChangesFailure =
   /** A kept turn was asked for and is gone: past the 20 kept, or never recorded. */
@@ -67,7 +67,8 @@ export function useChanges(summary: Pick<TaskSummary, 'id' | 'status' | 'runId'>
   const [turnsRead, setTurnsRead] = useState(false)
   const [refused, setRefused] = useState<{ key: string; failure: ChangesFailure }>()
   const [busy, setBusy] = useState<'undo' | 'redo' | 'file' | 'discard' | undefined>()
-  const [actionError, setActionError] = useState<string>()
+  const [actionFailure, setActionError] = useState<{ cause: unknown }>()
+  const actionError = actionFailure && (isUncertain(actionFailure.cause) ? CHANGE_WRITE_COPY.uncertain : errorMessage(actionFailure.cause))
   const [uncertain, setUncertain] = useState<{ action: 'undo' | 'redo'; turnId: string }>()
   const [result, setResult] = useState<ChangesResult>()
   const [undoneFiles, setUndoneFiles] = useState<ReadonlySet<string>>(new Set())
@@ -250,7 +251,7 @@ export function useChanges(summary: Pick<TaskSummary, 'id' | 'status' | 'runId'>
         if (!isUncertain(cause)) unknownWrite.current = null
         if (shownKey.current === scopeKey) {
           if (isUncertain(cause)) setUncertain({ action, turnId })
-          setActionError(isUncertain(cause) ? UNCERTAIN : errorMessage(cause))
+          setActionError({ cause })
         }
       }
       // Still busy until the list is back: the button must not come alive on the state from before the press.
@@ -281,7 +282,7 @@ export function useChanges(summary: Pick<TaskSummary, 'id' | 'status' | 'runId'>
         }
       } catch (cause) {
         // Going back again finds the file already there and writes nothing, so pressing again is safe.
-        if (shownKey.current === scopeKey) setActionError(isUncertain(cause) ? UNCERTAIN : errorMessage(cause))
+        if (shownKey.current === scopeKey) setActionError({ cause })
       }
       await latestLoad.current()
       announceChangesWrite(sessionId, 'panel')

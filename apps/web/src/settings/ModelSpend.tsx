@@ -26,8 +26,95 @@ import {
   type BudgetFields,
   type PriceFields,
 } from './modelSpend.ts'
+import { defineCopy, plural } from '../core/i18n.ts'
 
-const CURRENCY_OPTIONS = COST_CURRENCIES.map(value => ({ value, label: CURRENCY_NAMES[value] }))
+const COPY = defineCopy(
+  {
+    readFailed: '暂时读不到当前设置，请稍后重试。',
+    unknown: '结果未知',
+    conflict: '已在别处修改',
+    loadCurrent: '载入当前设置',
+    close: '关闭',
+    stopWaiting: '放弃等待',
+    retrySame: '重试同一请求',
+    invalidNumber: '填数字',
+    unitPrice: '单价',
+    clear: '清除',
+    cancel: '取消',
+    save: '保存',
+    currency: '币种',
+    perMillion: '每百万 tokens',
+    input: '输入',
+    output: '输出',
+    cacheInput: '缓存输入',
+    sameAsInput: '同输入',
+    cacheWrite: '缓存写入',
+    monthlyBudget: '本月预算',
+    uncounted: (count: number) => plural(count, { other: '未计入 {n} 次' }),
+    uncountedTitle: '这些请求的花费未知，没有算进预算',
+    monthTimeZone: (value1: string | number) => `按这台 Mac 的时间算月（${value1}）`,
+    monthLocal: '按这台 Mac 的时间算月',
+    monthlyReset: '每月 1 日 0 点重新计，用到 80% 时会话里提示。',
+    serviceBudget: '用完后会尝试可用的备选，若没有就拒绝新请求。',
+    agentBudget: '用完后这个 Agent 的新请求会被拒绝。',
+    currentRequests: '进行中的请求照常结束。按花费的预算只计花费已知的请求。',
+    removeBudget: '取消预算',
+    budgetMetric: '按什么算',
+    cost: '花费',
+    monthlyLimit: '每月上限',
+    invalidInteger: '填整数',
+    notSet: '未设置',
+    reading: '正在读取…',
+    edit: '修改',
+    configure: '设置',
+  },
+  {
+    readFailed: "Couldn't read current settings. Try again later.",
+    unknown: 'Outcome unknown',
+    conflict: 'Changed elsewhere',
+    loadCurrent: 'Load current settings',
+    close: 'Close',
+    stopWaiting: 'Stop waiting',
+    retrySame: 'Retry same request',
+    invalidNumber: 'Enter a number',
+    unitPrice: 'Unit prices',
+    clear: 'Clear',
+    cancel: 'Cancel',
+    save: 'Save',
+    currency: 'Currency',
+    perMillion: 'Per million tokens',
+    input: 'Input',
+    output: 'Output',
+    cacheInput: 'Cached input',
+    sameAsInput: 'Same as input',
+    cacheWrite: 'Cache write',
+    monthlyBudget: 'Monthly budget',
+    uncounted: (count: number) => plural(count, { one: '{n} request excluded', other: '{n} requests excluded' }),
+    uncountedTitle: "These requests have unknown costs and don't count toward the budget",
+    monthTimeZone: (value1: string | number) => `Uses the Mac's time zone (${value1})`,
+    monthLocal: "Uses the Mac's time zone",
+    monthlyReset: 'Resets at midnight on the first day of each month. Sessions show a warning at 80%.',
+    serviceBudget: 'When the budget runs out, new requests use an available fallback or are rejected.',
+    agentBudget: "When the budget runs out, this Agent's new requests are rejected.",
+    currentRequests: 'Requests in progress can finish. Spending budgets count requests with known costs.',
+    removeBudget: 'Remove budget',
+    budgetMetric: 'Budget basis',
+    cost: 'Cost',
+    monthlyLimit: 'Monthly limit',
+    invalidInteger: 'Enter a whole number',
+    notSet: 'Not set',
+    reading: 'Reading…',
+    edit: 'Edit',
+    configure: 'Set budget',
+  },
+)
+
+const CURRENCY_OPTIONS = COST_CURRENCIES.map(value => ({
+  value,
+  get label() {
+    return CURRENCY_NAMES[value]
+  },
+}))
 
 /**
  * Prices and budgets as the Host has them now, with this month's use. Read again whenever `revision` changes (the
@@ -35,7 +122,7 @@ const CURRENCY_OPTIONS = COST_CURRENCIES.map(value => ({ value, label: CURRENCY_
  */
 export function useModelSpend(enabled: boolean, revision: unknown, reads?: ModelSettingsReads) {
   const [spend, setSpend] = useState(reads?.spend)
-  const [error, setError] = useState('')
+  const [error, setError] = useState<() => string>()
   const reading = useRef<AbortController | undefined>(undefined)
   const reload = useCallback(async (): Promise<ModelSpend | undefined> => {
     if (!enabled) return undefined
@@ -47,7 +134,7 @@ export function useModelSpend(enabled: boolean, revision: unknown, reads?: Model
       if (controller.signal.aborted) return undefined
       reads?.keepSpend(result)
       setSpend(result)
-      setError('')
+      setError(undefined)
       return result
     } catch (cause) {
       if (controller.signal.aborted) return undefined
@@ -55,7 +142,7 @@ export function useModelSpend(enabled: boolean, revision: unknown, reads?: Model
         reads?.keepSpend(undefined)
         setSpend(undefined)
       }
-      setError(errorMessage(cause))
+      setError(() => () => errorMessage(cause))
       return undefined
     }
   }, [enabled, reads])
@@ -63,7 +150,7 @@ export function useModelSpend(enabled: boolean, revision: unknown, reads?: Model
     void reload()
     return () => reading.current?.abort()
   }, [reload, revision])
-  return { spend, error, reload }
+  return { spend, error: error?.() ?? '', reload }
 }
 
 interface SpendDialogControls {
@@ -80,8 +167,8 @@ function useSpendForm(
 ) {
   const { pending, submit, retry, abandon } = useSpendWrite(target)
   const [base, setBase] = useState(revision)
-  const [conflict, setConflict] = useState('')
-  const [error, setError] = useState('')
+  const [conflict, setConflict] = useState<() => string>()
+  const [error, setError] = useState<() => string>()
   const [reading, setReading] = useState(false)
   const writing = pending?.sending === true
   const busy = writing || reading
@@ -90,8 +177,8 @@ function useSpendForm(
     if (result.kind === 'done') {
       void reload()
       onClose()
-    } else if (result.kind === 'conflict') setConflict(result.text)
-    else if (result.kind === 'refused') setError(result.text)
+    } else if (result.kind === 'conflict') setConflict(() => () => result.text)
+    else if (result.kind === 'refused') setError(() => () => result.text)
   }
 
   async function readCurrent() {
@@ -99,31 +186,31 @@ function useSpendForm(
     const latest = await reload()
     setReading(false)
     if (!latest) {
-      setError('暂时读不到当前设置，请稍后重试。')
+      setError(() => () => COPY.readFailed)
       return
     }
     onRead(latest)
     setBase(latest.revision)
-    setConflict('')
-    setError('')
+    setConflict(undefined)
+    setError(undefined)
   }
 
   return {
     pending,
-    conflict,
-    error,
+    conflict: conflict?.(),
+    error: error?.(),
     setError,
     busy,
     reading,
     locked: disabled || busy || !!pending || !!conflict,
     send: (change: SpendChange) => {
       if (disabled || busy || pending || conflict) return
-      setError('')
+      setError(undefined)
       void submit(change, base).then(finish)
     },
     retry: () => {
       if (disabled || busy) return
-      setError('')
+      setError(undefined)
       void retry().then(finish)
     },
     readCurrent: () => {
@@ -146,10 +233,10 @@ function SpendFeedback({ form }: { form: SpendForm }) {
       {(warning || form.conflict) && (
         <InlineNotice
           tone="warn"
-          title={warning ? '结果未知' : '已在别处修改'}
+          title={warning ? COPY.unknown : COPY.conflict}
           action={
             <Button size="sm" disabled={form.busy} loading={form.reading} onClick={form.readCurrent}>
-              载入当前设置
+              {COPY.loadCurrent}
             </Button>
           }>
           {warning?.text ?? form.conflict}
@@ -164,14 +251,14 @@ function PendingSpendActions({ form, disabled, onClose }: { form: SpendForm; dis
   return (
     <>
       <Button size="md" disabled={form.busy} onClick={onClose}>
-        关闭
+        {COPY.close}
       </Button>
       <Button size="md" variant="ghost" disabled={form.busy} onClick={form.abandon}>
-        放弃等待
+        {COPY.stopWaiting}
       </Button>
       {form.pending?.unknown?.retryable && (
         <Button size="md" variant="primary" disabled={disabled || form.busy} loading={form.pending.sending} onClick={form.retry}>
-          重试同一请求
+          {COPY.retrySame}
         </Button>
       )}
     </>
@@ -197,7 +284,7 @@ export function PricesDialog({
   const read = readPrices(fields)
   const invalid = 'invalid' in read ? read.invalid : undefined
   // A field is wrong only once something is typed in it; an empty form is just not filled yet.
-  const wrong = (name: Exclude<keyof PriceFields, 'currency'>) => (invalid === name && fields[name].trim() ? '填数字' : undefined)
+  const wrong = (name: Exclude<keyof PriceFields, 'currency'>) => (invalid === name && fields[name].trim() ? COPY.invalidNumber : undefined)
   const field = (name: Exclude<keyof PriceFields, 'currency'>, label: string, placeholder?: string) => (
     <TextField
       label={label}
@@ -211,7 +298,7 @@ export function PricesDialog({
       error={wrong(name)}
       onChange={event => {
         setFields(current => ({ ...current, [name]: event.target.value }))
-        form.setError('')
+        form.setError(undefined)
       }}
     />
   )
@@ -219,7 +306,7 @@ export function PricesDialog({
     <Dialog
       open
       size="lg"
-      title="单价"
+      title={COPY.unitPrice}
       subtitle={<code className="settings-mono">{model}</code>}
       onClose={() => {
         if (!form.busy) controls.onClose()
@@ -238,11 +325,11 @@ export function PricesDialog({
                 onClick={() => {
                   send(null)
                 }}>
-                清除
+                {COPY.clear}
               </Button>
             )}
             <Button size="md" disabled={form.busy} onClick={controls.onClose}>
-              取消
+              {COPY.cancel}
             </Button>
             <Button
               size="md"
@@ -252,14 +339,14 @@ export function PricesDialog({
               onClick={() => {
                 if ('prices' in read) send(read.prices)
               }}>
-              保存
+              {COPY.save}
             </Button>
           </>
         )
       }>
       <div className="settings-form">
         <SegmentedControl
-          label="币种"
+          label={COPY.currency}
           value={fields.currency}
           options={CURRENCY_OPTIONS}
           disabled={form.locked}
@@ -267,12 +354,12 @@ export function PricesDialog({
             setFields(current => ({ ...current, currency }))
           }}
         />
-        <p className="settings-hint">每百万 tokens</p>
+        <p className="settings-hint">{COPY.perMillion}</p>
         <div className="form-grid">
-          {field('input', '输入')}
-          {field('output', '输出')}
-          {field('cacheRead', '缓存输入', '同输入')}
-          {field('cacheWrite', '缓存写入', '同输入')}
+          {field('input', COPY.input)}
+          {field('output', COPY.output)}
+          {field('cacheRead', COPY.cacheInput, COPY.sameAsInput)}
+          {field('cacheWrite', COPY.cacheWrite, COPY.sameAsInput)}
         </div>
         <SpendFeedback form={form} />
       </div>
@@ -284,10 +371,10 @@ export function PricesDialog({
 export function BudgetProgressLine({ budget }: { budget: BudgetProgress }) {
   const words = budgetWords(budget.state)
   const text = budgetProgressText(budget)
-  const limit = budgetLimit(budget, '本月预算', '')
+  const limit = budgetLimit(budget, COPY.monthlyBudget, '')
   return (
     <span className="budget-progress">
-      <LimitBar percent={limit.percent ?? 0} state={limit.state} label="本月预算" />
+      <LimitBar percent={limit.percent ?? 0} state={limit.state} label={COPY.monthlyBudget} />
       <span className="budget-progress-text">{text}</span>
       {words ? (
         <StatusWord tone={words.tone}>{words.text}</StatusWord>
@@ -296,8 +383,8 @@ export function BudgetProgressLine({ budget }: { budget: BudgetProgress }) {
       )}
       {/* A cost budget says how many requests it could not count, rather than looking fuller than it is. */}
       {budget.uncounted ? (
-        <span className="budget-progress-share" title="这些请求的花费未知，没有算进预算">
-          未计入 {budget.uncounted} 次
+        <span className="budget-progress-share" title={COPY.uncountedTitle}>
+          {COPY.uncounted(budget.uncounted)}
         </span>
       ) : null}
     </span>
@@ -327,12 +414,12 @@ function BudgetDialog({
     <Dialog
       open
       size="lg"
-      title="本月预算"
+      title={COPY.monthlyBudget}
       note={
-        <Hint label={timeZone ? `按这台 Mac 的时间算月（${timeZone}）` : '按这台 Mac 的时间算月'}>
-          每月 1 日 0 点重新计，用到 80% 时会话里提示。
-          {scope === 'service' ? '用完后会尝试可用的备选，若没有就拒绝新请求。' : '用完后这个 Agent 的新请求会被拒绝。'}
-          进行中的请求照常结束。按花费的预算只计花费已知的请求。
+        <Hint label={timeZone ? COPY.monthTimeZone(timeZone) : COPY.monthLocal}>
+          {COPY.monthlyReset}
+          {scope === 'service' ? COPY.serviceBudget : COPY.agentBudget}
+          {COPY.currentRequests}
         </Hint>
       }
       onClose={() => {
@@ -352,11 +439,11 @@ function BudgetDialog({
                 onClick={() => {
                   send(null)
                 }}>
-                取消预算
+                {COPY.removeBudget}
               </Button>
             )}
             <Button size="md" disabled={form.busy} onClick={controls.onClose}>
-              关闭
+              {COPY.close}
             </Button>
             <Button
               size="md"
@@ -366,18 +453,18 @@ function BudgetDialog({
               onClick={() => {
                 if (budget) send(budget)
               }}>
-              保存
+              {COPY.save}
             </Button>
           </>
         )
       }>
       <div className="settings-form">
         <SegmentedControl
-          label="按什么算"
+          label={COPY.budgetMetric}
           value={fields.unit}
           options={[
             { value: 'tokens', label: 'tokens' },
-            { value: 'cost', label: '花费' },
+            { value: 'cost', label: COPY.cost },
           ]}
           disabled={form.locked}
           onValueChange={(unit: ModelBudget['unit']) => {
@@ -386,7 +473,7 @@ function BudgetDialog({
         />
         {fields.unit === 'cost' && (
           <SegmentedControl
-            label="币种"
+            label={COPY.currency}
             value={fields.currency}
             options={CURRENCY_OPTIONS}
             disabled={form.locked}
@@ -396,17 +483,17 @@ function BudgetDialog({
           />
         )}
         <TextField
-          label="每月上限"
+          label={COPY.monthlyLimit}
           value={fields.limit}
           inputMode={fields.unit === 'tokens' ? 'numeric' : 'decimal'}
           autoComplete="off"
           spellCheck={false}
           maxLength={20}
           disabled={form.locked}
-          error={fields.limit.trim() && !budget ? (fields.unit === 'tokens' ? '填整数' : '填数字') : undefined}
+          error={fields.limit.trim() && !budget ? (fields.unit === 'tokens' ? COPY.invalidInteger : COPY.invalidNumber) : undefined}
           onChange={event => {
             setFields(current => ({ ...current, limit: event.target.value }))
-            form.setError('')
+            form.setError(undefined)
           }}
         />
         <SpendFeedback form={form} />
@@ -440,7 +527,7 @@ export function BudgetControl({
   const budget = spend?.budgets.find(item => item.scope === scope && item.id === id)
   return (
     <span className="budget-control">
-      {budget ? <BudgetProgressLine budget={budget} /> : <span className="budget-none">{spend ? '未设置' : '正在读取…'}</span>}
+      {budget ? <BudgetProgressLine budget={budget} /> : <span className="budget-none">{spend ? COPY.notSet : COPY.reading}</span>}
       {admin && (
         <Button
           size="sm"
@@ -449,7 +536,7 @@ export function BudgetControl({
           onClick={() => {
             setOpen(true)
           }}>
-          {budget ? '修改' : '设置'}
+          {budget ? COPY.edit : COPY.configure}
         </Button>
       )}
       {open && admin && spend && (
@@ -472,5 +559,5 @@ export function BudgetControl({
 
 /** The service page's 「本月预算」 row. */
 export function BudgetRow(props: Parameters<typeof BudgetControl>[0]) {
-  return <SettingsRow title="本月预算" className="budget-row" trailing={<BudgetControl {...props} />} />
+  return <SettingsRow title={COPY.monthlyBudget} className="budget-row" trailing={<BudgetControl {...props} />} />
 }

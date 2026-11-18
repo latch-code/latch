@@ -23,8 +23,8 @@ export interface NoteContext {
 /** What the composer does while an approval can take a note. */
 export interface ComposerNote {
   placeholder: string
-  /** The approval drawer's word for rejecting. */
-  rejectLabel: string
+  /** Whether pressing reject also sends the input note. */
+  rejectWithNote: boolean
   error: string
   submit: () => void
 }
@@ -61,9 +61,9 @@ export function useRejectionNote(
     rejectOption: (approval: Approval) => string | undefined
   },
 ): { reject: (approval: Approval, optionId: string | undefined) => void; composer?: ComposerNote } {
-  const [problem, setProblem] = useState<{ text: string; draft: string } | null>(null)
+  const [problemDraft, setProblemDraft] = useState<string | null>(null)
   const send = (approval: Approval, optionId: string | undefined, note: string | undefined) => {
-    setProblem(null)
+    setProblemDraft(null)
     const text = context.draft
     if (note) context.clearDraft()
     void context.decide(approval, optionId, note).then(taken => {
@@ -81,12 +81,12 @@ export function useRejectionNote(
     reject,
     composer: {
       placeholder: APPROVAL_COPY.rejectPlaceholder,
-      rejectLabel: 'note' in written && written.note ? APPROVAL_COPY.rejectAndSend : APPROVAL_COPY.reject,
-      error: problem?.draft === context.draft ? problem.text : '',
+      rejectWithNote: 'note' in written && !!written.note,
+      error: problemDraft === context.draft && 'problem' in written ? written.problem : '',
       submit: () => {
         const option = context.rejectOption(approval)
         const rejection = rejectionFor(approval, option, context.draft, context)
-        if ('problem' in rejection) setProblem({ text: rejection.problem, draft: context.draft })
+        if ('problem' in rejection) setProblemDraft(context.draft)
         else send(approval, option, rejection.note)
       },
     },

@@ -1,3 +1,4 @@
+import { SHELL_COPY } from './copy.ts'
 import { agentsOverview, OVERVIEW_ROWS } from '../agents/roster.ts'
 import { useLayoutEffect } from 'react'
 import { api, errorMessage, MessageError } from '../core/api.ts'
@@ -17,6 +18,16 @@ import { ItemJoinDialog } from '../board/ItemPageJoin.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { spaceOf } from '../sessions.ts'
 import { canDelegate } from '../agents/model.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    delete: '删除',
+  },
+  {
+    delete: 'Delete',
+  },
+)
 
 /**
  * Lifts the window's toast 12 above the composer while one is on screen and not covered, centred on it, so it never lies
@@ -167,8 +178,8 @@ export function Overlays({ shell }: { shell: ShellState }) {
       )}
       {renaming && (
         <PromptDialog
-          title="重命名会话"
-          label="会话名称"
+          title={SHELL_COPY.renameSession}
+          label={SHELL_COPY.sessionName}
           initial={renaming.title}
           maxLength={120}
           onClose={() => {
@@ -205,10 +216,10 @@ export function Overlays({ shell }: { shell: ShellState }) {
       )}
       {deleting && (
         <ConfirmDialog
-          title="删除会话"
+          title={SHELL_COPY.deleteSession}
           danger
-          confirmLabel="删除"
-          message={sessionDeletionMessage([deleting], snapshot.catalog?.harnesses ?? [], deleting.title || '未命名会话')}
+          confirmLabel={COPY.delete}
+          message={sessionDeletionMessage([deleting], snapshot.catalog?.harnesses ?? [], deleting.title || SHELL_COPY.untitled)}
           onClose={() => {
             setDeleting(null)
           }}
@@ -237,7 +248,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
       {removingWorktree && (
         <RemoveWorktreeDialog
           target={{ kind: 'session', sessionId: removingWorktree.id }}
-          title={removingWorktree.title || '未命名会话'}
+          title={removingWorktree.title || SHELL_COPY.untitled}
           onClose={() => {
             setRemovingWorktree(null)
           }}
@@ -250,7 +261,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
       {(shownApprovalToast || toast) && <ToastClearance />}
       {shownApprovalToast && (
         <Toast className="toast" duration={null}>
-          <span>{toastSpace === 'agents' ? '另一个话题等你处理' : '另一个会话等你处理'}</span>
+          <span>{toastSpace === 'agents' ? SHELL_COPY.otherTopic : SHELL_COPY.otherSession}</span>
           <Button
             variant="ghost"
             onClick={() => {
@@ -259,7 +270,7 @@ export function Overlays({ shell }: { shell: ShellState }) {
               if (target) reading.show(target.sessionId, toolRowId(target))
               setApprovalToast(null)
             }}>
-            查看
+            {SHELL_COPY.view}
           </Button>
         </Toast>
       )}
@@ -276,6 +287,6 @@ export function Overlays({ shell }: { shell: ShellState }) {
 function detachedWorkspace(catalog: NonNullable<ShellState['snapshot']['catalog']>): { workspaceId: string; unavailable?: string } {
   const workspaceId = catalog.defaults.workspaceId ?? 'default'
   const workspace = catalog.workspaces.find(item => item.id === workspaceId)
-  const unavailable = workspace ? workspace.unavailable : '找不到默认项目的文件夹'
+  const unavailable = workspace ? workspace.unavailable : SHELL_COPY.defaultFolderMissing
   return { workspaceId, ...(unavailable ? { unavailable } : {}) }
 }

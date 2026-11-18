@@ -1,4 +1,41 @@
-import { GENERAL_AGENT_ID, type AppSnapshot, type WorkItemSummary, type WorkPost, type WorkPostTarget } from '@latch/protocol'
+import {
+  GENERAL_AGENT_ID,
+  type AppSnapshot,
+  type TaskSummary,
+  type WorkItemSummary,
+  type WorkPost,
+  type WorkPostTarget,
+} from '@latch/protocol'
+import { AGENT_SPACE_COPY } from '../agents/spaceCopy.ts'
+import { defineCopy } from '../core/i18n.ts'
+import type { WorkItemSessionTarget } from './itemPage.ts'
+
+export const THREAD_COPY = defineCopy(
+  {
+    untitled: '未命名会话',
+    unlisted: '不在列表中',
+    sending: '发送中',
+    sent: (name: string) => `已交给 ${name}`,
+    unknown: '未确认送达',
+    failed: '没有送达',
+    waiting: {
+      approval: { status: '等你审批', action: '查看审批' },
+      question: { status: '等你回答', action: '查看问题' },
+    },
+  },
+  {
+    untitled: 'Untitled session',
+    unlisted: 'Not in the list',
+    sending: 'Sending',
+    sent: (name: string) => `Sent to ${name}`,
+    unknown: 'Delivery unconfirmed',
+    failed: 'Not delivered',
+    waiting: {
+      approval: { status: 'Waiting for your approval', action: 'View approval' },
+      question: { status: 'Waiting for your answer', action: 'View question' },
+    },
+  },
+)
 
 /** One name the thread's @ offers: a session of this 待办, or one of 我的 Agent. */
 export type ThreadTarget =
@@ -16,14 +53,21 @@ export function threadTargets(
   const sessions = item.sessionIds.flatMap(id => {
     const task = snapshot.tasks.find(entry => entry.id === id)
     return task
-      ? [{ kind: 'session' as const, id, label: task.title || '未命名会话', ...(task.harnessId ? { harnessId: task.harnessId } : {}) }]
+      ? [
+          {
+            kind: 'session' as const,
+            id,
+            label: task.title || THREAD_COPY.untitled,
+            ...(task.harnessId ? { harnessId: task.harnessId } : {}),
+          },
+        ]
       : []
   })
   if (!snapshot.customAgents) return sessions
   const ready = (id: string) => snapshot.agentChats?.[id]?.state === 'ready'
   return [
     ...sessions,
-    { kind: 'agent', id: GENERAL_AGENT_ID, label: '通用', ready: ready(GENERAL_AGENT_ID) },
+    { kind: 'agent', id: GENERAL_AGENT_ID, label: AGENT_SPACE_COPY.general, ready: ready(GENERAL_AGENT_ID) },
     ...snapshot.customAgents.map(agent => ({ kind: 'agent' as const, id: agent.id, label: agent.name, ready: ready(agent.id) })),
   ]
 }
@@ -74,7 +118,7 @@ export function postTarget(target: ThreadTarget): WorkPostTarget {
 export function targetLabel(target: WorkPostTarget, targets: readonly ThreadTarget[]): string {
   const found = targets.find(entry => targetKey(postTarget(entry)) === targetKey(target))
   if (found) return found.label
-  return 'customAgentId' in target ? (target.customAgentId === GENERAL_AGENT_ID ? '通用' : 'Agent') : '不在列表中'
+  return 'customAgentId' in target ? (target.customAgentId === GENERAL_AGENT_ID ? AGENT_SPACE_COPY.general : 'Agent') : THREAD_COPY.unlisted
 }
 
 /** A delivered post's state in words: the same words as a message sent from the input. */
@@ -86,14 +130,63 @@ export function deliveryWords(
   if (!delivery) return undefined
   switch (delivery.state) {
     case 'sending':
-      return { tone: 'running', words: '发送中' }
+      return { tone: 'running', words: THREAD_COPY.sending }
     case 'sent':
-      return { tone: 'neutral', words: `已交给 ${name}` }
+      return { tone: 'neutral', words: THREAD_COPY.sent(name) }
     case 'unknown':
-      return { tone: 'warn', words: '未确认送达' }
+      return { tone: 'warn', words: THREAD_COPY.unknown }
     case 'failed':
-      return { tone: 'failed', words: '没有送达' }
+      return { tone: 'failed', words: THREAD_COPY.failed }
   }
+}
+
+export type PostDecision = NonNullable<WorkItemSessionTarget['decision']>
+
+/** A new view of the source invalidates a decision from a previous read, even within the same run. */
+export function postSourceVersion(task: TaskSummary): string {
+  return JSON.stringify([
+    task.harnessId,
+    task.runId,
+    task.updatedAt,
+    task.board?.reason,
+    task.status,
+    task.pendingQuestions,
+    task.live?.activity,
+  ])
+}
+
+export function postDecision(
+  { attention, delivery, turn }: Pick<WorkPost, 'attention' | 'delivery' | 'turn'>,
+  snapshot: Pick<AppSnapshot, 'tasks' | 'approvals'>,
+  version: string | undefined,
+): PostDecision | undefined {
+  if (
+    !attention?.decisionId
+    || (attention.reason !== 'approval' && attention.reason !== 'question')
+    || !turn?.runId
+    || !turn.userMessageId
+    || delivery?.state !== 'sent'
+    || delivery.sessionId !== turn.sessionId
+  )
+    return undefined
+
+  const task = snapshot.tasks.find(entry => entry.id === turn.sessionId)
+  if (
+    !task
+    || version !== postSourceVersion(task)
+    || task.runId !== turn.runId
+    || task.board?.group !== 'attention'
+    || task.board.reason !== attention.reason
+    || (task.status !== 'running' && task.status !== 'waiting-approval')
+    || (task.live && (task.live.runId !== turn.runId || task.live.activity === 'cancelling'))
+  )
+    return undefined
+
+  const pending =
+    attention.reason === 'approval'
+      ? snapshot.approvals.some(approval => approval.sessionId === task.id && approval.id === attention.decisionId)
+      : (task.pendingQuestions ?? 0) > 0
+  return pending ? { kind: attention.reason, id: attention.decisionId, runId: turn.runId } : undefined
 }
 
 /** Keep the human post and delivery receipt. The source ID is only used to decide when to read it again. */
@@ -126,7 +219,7 @@ export function replySources(posts: readonly WorkPost[] | null, snapshot: Pick<A
   return ids
     .map(id => {
       const task = snapshot.tasks.find(task => task.id === id)
-      return `${id}:${task?.updatedAt ?? ''}:${task?.runId ?? ''}:${task?.board?.reason ?? ''}:${task?.pendingQuestions ?? 0}`
+      return `${id}:${task ? postSourceVersion(task) : ''}`
     })
     .join('|')
 }

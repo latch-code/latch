@@ -4,6 +4,30 @@ import { VisibleText } from '../components/VisibleText.tsx'
 import { WriteNotice } from './AgentForm.tsx'
 import { originWords, proposalRowState } from './proposals.ts'
 import { writeFor, type AgentWrites } from './useAgentWrites.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    memoryProposal: '记忆提议',
+    remember: '想记住：',
+    external: '来自外部内容',
+    reason: '理由',
+    saved: '已保存',
+    dismissed: '不要了',
+    dismiss: '不要',
+    save: '保存',
+  },
+  {
+    memoryProposal: 'Memory proposal',
+    remember: 'Wants to remember',
+    external: 'From external content',
+    reason: 'Reason',
+    saved: 'Saved',
+    dismissed: 'Dismissed',
+    dismiss: 'Dismiss',
+    save: 'Save',
+  },
+)
 
 /**
  * 想记住：… with 保存 and 不要. Nothing is saved until the person presses 保存 and the Host answers; a write whose result
@@ -42,30 +66,30 @@ export function ProposalRow({
     <section
       className="memory-proposal"
       role="group"
-      aria-label="记忆提议"
+      aria-label={COPY.memoryProposal}
       data-state={row.kind}
       data-compact={compact ? '' : undefined}
       data-proposal-id={proposal.id}>
       <p className="memory-proposal-text">
-        {!compact && <span className="memory-proposal-lead">想记住：</span>}
+        {!compact && <span className="memory-proposal-lead">{COPY.remember}</span>}
         <VisibleText text={proposal.content} />
       </p>
       <div className="memory-proposal-foot">
         <span className="memory-proposal-source">{originWords(proposal.origin)}</span>
-        {proposal.external && <StatusWord tone="warn">来自外部内容</StatusWord>}
+        {proposal.external && <StatusWord tone="warn">{COPY.external}</StatusWord>}
         {proposal.reason && (
-          <Hint label="理由" className="memory-proposal-reason">
+          <Hint label={COPY.reason} className="memory-proposal-reason">
             <VisibleText text={proposal.reason} />
           </Hint>
         )}
         <span className="memory-proposal-spacer" />
         {row.kind === 'saved' ? (
           <span className="memory-proposal-outcome">
-            <StatusWord tone="done">已保存</StatusWord>
+            <StatusWord tone="done">{COPY.saved}</StatusWord>
             {effect && <span className="memory-proposal-effect">{effect}</span>}
           </span>
         ) : row.kind === 'dismissed' ? (
-          <span className="memory-proposal-outcome memory-proposal-muted">不要了</span>
+          <span className="memory-proposal-outcome memory-proposal-muted">{COPY.dismissed}</span>
         ) : (
           <span className="memory-proposal-actions">
             <Button
@@ -76,7 +100,7 @@ export function ProposalRow({
               onClick={() => {
                 decide('dismiss')
               }}>
-              不要
+              {COPY.dismiss}
             </Button>
             <Button
               size="sm"
@@ -87,7 +111,7 @@ export function ProposalRow({
               onClick={() => {
                 decide('save')
               }}>
-              保存
+              {COPY.save}
             </Button>
           </span>
         )}

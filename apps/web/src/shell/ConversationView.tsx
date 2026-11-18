@@ -1,10 +1,11 @@
+import { SHELL_COPY } from './copy.ts'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { readsProjectFiles, type HarnessInfo } from '@latch/protocol'
 import { api, errorMessage } from '../core/api.ts'
 import { sessionReadOnly } from '../core/permissions.ts'
 import { projectFor } from '../composerChoice.ts'
-import { forkSource } from '../forkChoice.ts'
+import { FORK_CONTINUATION_PROMPT, forkSource } from '../forkChoice.ts'
 import { APPROVAL_COPY, RECOVERY_COPY } from '../core/securityCopy.ts'
 import { FindBar } from '../components/FindBar.tsx'
 import { RebuildLostDialog } from '../history/RebuildLost.tsx'
@@ -35,11 +36,27 @@ import { useOpenedMark } from '../core/attend.ts'
 import { useEditFrom } from '../conversation/EditFrom.tsx'
 import type { SendingMessage as SendingView } from '../core/sendingMessage.ts'
 import { SendingMessage } from '../components/SendingMessage.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    openRebuilt: (title: string) => `打开「${title}」`,
+    unfiltered: (count: number) => `${count} 个文件的 filter 没有运行`,
+    unfilteredHint:
+      '新工作树里这些文件的 filter（例如 Git LFS）没有运行，留成了 Git 里存的样子；要用 Git LFS 文件时，在终端里运行 git lfs pull。',
+  },
+  {
+    openRebuilt: (title: string) => `Open “${title}”`,
+    unfiltered: (count: number) => `Filters skipped for ${count} files`,
+    unfilteredHint:
+      'Git filters such as Git LFS were skipped for these files in the new worktree. The files contain the data stored in Git. To get the Git LFS files, run git lfs pull in the terminal.',
+  },
+)
 
 /** A typical first turn's bubble and reply in the same content column as the loaded transcript. */
 function TranscriptSkeleton() {
   return (
-    <div className="transcript-skeleton" role="status" aria-label="正在读取会话记录">
+    <div className="transcript-skeleton" role="status" aria-label={SHELL_COPY.loadingTranscript}>
       <div className="message-user">
         <Skeleton width="48%" height={40} />
       </div>
@@ -179,7 +196,7 @@ export function ConversationView({
             <ReturnedResult
               key={item.id}
               handoff={item}
-              targetTitle={target ? target.title || '未命名会话' : undefined}
+              targetTitle={target ? target.title || SHELL_COPY.untitled : undefined}
               {...(target ? { onOpenTarget: () => choose(target.id) } : {})}
               {...(targetId && catalog?.features?.filePreview
                 ? {
@@ -229,7 +246,7 @@ export function ConversationView({
     dataScope: snapshot.device.dataScope,
     phone,
     // This device's unconfirmed message holds the composer until it settles; an edit would take its place.
-    held: () => (submission.pending ? '还有一条消息没有确认送达，先处理它再编辑' : undefined),
+    held: () => (submission.pending ? SHELL_COPY.pendingEdit : undefined),
     onToast: (text, tone = 'ok') => setToast({ text, tone }),
     onEdit: (_message, before, draft) => {
       if (!current) return
@@ -287,7 +304,7 @@ export function ConversationView({
       {starting ? (
         <div className="conversation" key={starting.submission.requestId}>
           <div className="transcript-shell">
-            <div className="transcript" tabIndex={0} aria-label="会话记录">
+            <div className="transcript" tabIndex={0} aria-label={SHELL_COPY.transcript}>
               <div className="transcript-content">
                 <SendingMessage view={starting} showUnknown={false} />
               </div>
@@ -328,7 +345,7 @@ export function ConversationView({
               {...reading.handlers}
               data-backdrop-scroll={showBackdrop ? '' : undefined}
               tabIndex={0}
-              aria-label="会话记录">
+              aria-label={SHELL_COPY.transcript}>
               <div className="transcript-content" ref={reading.contentRef}>
                 {current === null ? (
                   <>
@@ -341,10 +358,7 @@ export function ConversationView({
                     <ChangesLinkContext.Provider value={changesLink}>
                       {current.summary.worktree?.unfiltered !== undefined && (
                         <div className="session-start-note" role="note">
-                          <Hint label={`${current.summary.worktree.unfiltered} 个文件的 filter 没有运行`}>
-                            新工作树里这些文件的 filter（例如 Git LFS）没有运行，留成了 Git 里存的样子；要用 Git LFS 文件时，在终端里运行
-                            git lfs pull。
-                          </Hint>
+                          <Hint label={COPY.unfiltered(current.summary.worktree.unfiltered)}>{COPY.unfilteredHint}</Hint>
                         </div>
                       )}
                       <Transcript
@@ -362,7 +376,7 @@ export function ConversationView({
                           : {})}
                         onFork={
                           catalog?.features?.fork && access.scopes.has('run')
-                            ? (upToMessageId, draft = '请接着这个会话继续。') => {
+                            ? (upToMessageId, draft = FORK_CONTINUATION_PROMPT) => {
                                 submission.setFork({
                                   taskId: current.summary.id,
                                   upToMessageId,
@@ -459,9 +473,9 @@ export function ConversationView({
             {rebuiltInto && (
               <p className="composer-stop history-rebuilt" role="status">
                 <HistoryGlyph size={14} aria-hidden="true" />
-                <span>已按文字重建为新会话</span>
+                <span>{SHELL_COPY.rebuiltNewSession}</span>
                 <Button size="xs" onClick={() => choose(rebuiltInto.id)}>
-                  打开「{rebuiltInto.title || '未命名会话'}」
+                  {COPY.openRebuilt(rebuiltInto.title || SHELL_COPY.untitled)}
                 </Button>
               </p>
             )}
@@ -480,7 +494,7 @@ export function ConversationView({
                 )}
                 {lostImport && (
                   <Button size="xs" icon={HistoryGlyph} onClick={() => setRebuilding(true)}>
-                    按文字重建
+                    {SHELL_COPY.rebuild}
                   </Button>
                 )}
                 <Button size="xs" onClick={continueInNew}>

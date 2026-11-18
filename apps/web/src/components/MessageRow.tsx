@@ -7,6 +7,7 @@ import { MessageContent, ReasoningContent } from '../MessageContent.tsx'
 import { KindGlyph } from '../conversation/KindGlyph.tsx'
 import { ownTextStart, reasoningSections } from '../conversation.ts'
 import { hostNow, parseDuration, parseTime, useTicker } from '../core/hostClock.ts'
+import { useLocale } from '../core/i18n.ts'
 import { absoluteTime, formatDuration, messageTime } from '../format.ts'
 import { usePacedText } from '../hooks/usePacedText.ts'
 import { MarkTile } from './BrandTile.tsx'
@@ -15,6 +16,7 @@ import { isolationBrief } from '../agents/helpers.ts'
 import { THOUGHT_WORDS } from '../agents/personWords.ts'
 import type { AgentAvatar as AgentAvatarValue } from '@latch/protocol'
 import { VisibleText } from './VisibleText.tsx'
+import { MESSAGE_COPY as COPY } from './messageRow.copy.ts'
 import {
   Badge,
   Button,
@@ -46,6 +48,7 @@ export interface LiveReasoning {
  * start, end and duration); it rolls over at midnight.
  */
 export function TimeLabel({ at, tip }: { at: number; tip?: (now: number) => ReactNode }) {
+  useLocale()
   const now = useTicker('minute')
   return (
     <Tooltip content={tip?.(now) ?? absoluteTime(at)}>
@@ -89,6 +92,7 @@ export function ThinkingRow({
   /** A helper's turn: 「在想」 and 「想了 6 秒」. */
   person?: boolean
 }) {
+  useLocale()
   const [choice, setChoice] = useState<boolean | null>(null)
   const open = choice ?? live
   const started = parseTime(liveTimes?.startedAt)
@@ -108,7 +112,7 @@ export function ThinkingRow({
   const thought =
     settledMs === undefined ? undefined : formatDuration(person ? Math.max(1000, Math.round(settledMs / 1000) * 1000) : settledMs)
   const elapsed = live && !frozen && started !== undefined ? formatDuration(hostNow() - started, true) : undefined
-  const liveWord = person ? THOUGHT_WORDS.live : '思考中'
+  const liveWord = person ? THOUGHT_WORDS.live : COPY.thinking
   return (
     <div className={`thinking ${live && !frozen ? 'is-live' : ''}`}>
       <button
@@ -131,12 +135,12 @@ export function ThinkingRow({
             person ? (
               THOUGHT_WORDS.settled(thought)
             ) : (
-              `思考了 ${thought}`
+              COPY.thought(thought)
             )
           ) : person ? (
             THOUGHT_WORDS.untimed
           ) : (
-            '思考过程'
+            COPY.reasoning
           )}
         </Swap>
         {title && (
@@ -192,6 +196,7 @@ export interface Speaker {
 
 /** A helper's turn opens with its face and name, and nothing of the Harness or the model that ran it. */
 export function SpeakerLine({ speaker, demo = false }: { speaker: Speaker; demo?: boolean }) {
+  useLocale()
   return (
     <div className="assistant-meta assistant-meta-person">
       <AgentAvatar avatar={speaker.avatar} size={16} />
@@ -199,7 +204,7 @@ export function SpeakerLine({ speaker, demo = false }: { speaker: Speaker; demo?
         <VisibleText text={speaker.name} />
       </span>
       {/* The demo model is never passed off as the helper's own answer. */}
-      {demo && <span className="assistant-meta-model">演示</span>}
+      {demo && <span className="assistant-meta-model">{COPY.demo}</span>}
     </div>
   )
 }
@@ -229,6 +234,7 @@ export function AuthorLine({
   /** A 「出错时改用」 service answered the turn: its name, written before the model with the 备选 tag after. */
   fallback?: string | undefined
 }) {
+  useLocale()
   const detail = [engine, fallback, model].filter(Boolean).join(' · ')
   // An external Harness: that Latch does not isolate it is the mark and name's tooltip, on every turn, taking no room.
   const boundary = harness && isolationBrief(harness)
@@ -247,21 +253,16 @@ export function AuthorLine({
         </Tooltip>
       )}
       {fallback && (
-        <Tooltip content={`这一轮由「${fallback}」回答`}>
+        <Tooltip content={COPY.answeredBy(fallback)}>
           <span className="assistant-meta-fallback" tabIndex={0}>
-            <Badge>备选</Badge>
+            <Badge>{COPY.fallback}</Badge>
           </span>
         </Tooltip>
       )}
       {chosen && model && (
-        <Tooltip
-          content={
-            chosen.reported
-              ? `选的是 ${chosen.model}，模型服务说这一轮用的是 ${model}`
-              : `选的是 ${chosen.model}，这一轮 Harness 请求的是 ${model}，模型服务没有说用的是哪个`
-          }>
+        <Tooltip content={chosen.reported ? COPY.reportedModel(chosen.model, model) : COPY.unreportedModel(chosen.model, model)}>
           <span className="assistant-meta-chosen" tabIndex={0}>
-            选的是 {chosen.model}
+            {COPY.chosenModel(chosen.model)}
           </span>
         </Tooltip>
       )}
@@ -280,9 +281,9 @@ function EditTurnButton({ message, onEdit }: { message: Message; onEdit: (messag
     <IconButton
       icon={UndoGlyph}
       size="xs"
-      label="从这里编辑"
+      label={COPY.edit}
       disabled={locked}
-      tooltip={locked ? '这一轮结束后才能编辑' : '从这里编辑 · 原会话保留'}
+      tooltip={locked ? COPY.editLocked : COPY.editTip}
       onClick={() => onEdit(message)}
     />
   )
@@ -336,19 +337,19 @@ function UserMessage({
       {note && (
         <Tooltip content={note}>
           <p className="message-change-note" tabIndex={0}>
-            已告诉 {voice ?? 'Harness'} 改动被撤销了
+            {COPY.undoTold(voice ?? 'Harness')}
           </p>
         </Tooltip>
       )}
       {message.steered && (
-        <Tooltip content={`发送时这一轮还在运行，${voice ?? 'Harness'} 收到了；有没有读到，看它后面的回复`}>
+        <Tooltip content={COPY.steeredTip(voice ?? 'Harness')}>
           <p className="message-change-note message-steered" tabIndex={0}>
-            已追加到本轮
+            {COPY.steered}
           </p>
         </Tooltip>
       )}
       {/* The agent fetched an MCP prompt during this turn: text Latch never saw is in its context. Always said. */}
-      {message.origin === 'mcp-prompt' && <p className="message-change-note">来自 MCP 提示</p>}
+      {message.origin === 'mcp-prompt' && <p className="message-change-note">{COPY.fromMcp}</p>}
       <MessageAttachments attachments={message.attachments} />
       {message.text && (
         <div className="user-bubble" data-clamped={tall && !whole ? '' : undefined}>
@@ -357,17 +358,14 @@ function UserMessage({
               // The harness forked its own record: the text record was not sent, so there is none to show.
               <p className="fork-context">
                 <GitFork size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-                {harness ?? 'Harness'} 带着「
-                <VisibleText text={message.forkContext.title} />
-                」的前 {message.forkContext.turn} 轮
+                <VisibleText text={COPY.nativeFork(harness ?? 'Harness', message.forkContext.title, message.forkContext.turn)} />
               </p>
             )}
             {message.forkContext && !message.nativeFork && (
               <details className="fork-context">
                 <summary>
                   <GitFork size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-                  「<VisibleText text={message.forkContext.title} />
-                  」的前 {message.forkContext.turn} 轮
+                  <VisibleText text={COPY.textFork(message.forkContext.title, message.forkContext.turn)} />
                 </summary>
                 <pre>
                   <VisibleText text={message.text.slice(0, message.forkContext.prefixLength)} />
@@ -378,8 +376,8 @@ function UserMessage({
               // A text rebuild: what went to the model with these words, folded, and named for what it is.
               <details className="fork-context">
                 <summary>
-                  <HistoryGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />按{' '}
-                  {message.importContext.from} 会话的文字重建
+                  <HistoryGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+                  {COPY.imported(message.importContext.from)}
                 </summary>
                 <pre>
                   <VisibleText text={message.text.slice(0, message.importContext.prefixLength)} />
@@ -395,7 +393,7 @@ function UserMessage({
               onClick={() => {
                 setWhole(!whole)
               }}>
-              {whole ? '收起' : '显示全部'}
+              {whole ? COPY.less : COPY.more}
             </button>
           )}
         </div>
@@ -407,15 +405,16 @@ function UserMessage({
       ) : (
         <div className="message-meta">
           {at !== undefined && (
-            <TimeLabel at={at} tip={queuedAt !== undefined ? () => `${absoluteTime(at)} · 排队于 ${absoluteTime(queuedAt)}` : undefined} />
+            <TimeLabel at={at} tip={queuedAt !== undefined ? () => COPY.queued(absoluteTime(at), absoluteTime(queuedAt)) : undefined} />
           )}
-          {text && <CopyButton text={text} label="复制" size="xs" />}
+          {text && <CopyButton text={text} label={COPY.copy} size="xs" />}
           {onEdit && <EditTurnButton message={message} onEdit={onEdit} />}
           {onHandoff && text && (
             <IconButton
               icon={EnterGlyph}
               size="xs"
-              label="交给代码任务…"
+              label={COPY.handoff}
+              data-handoff-action=""
               onClick={() => {
                 onHandoff([message.id])
               }}
@@ -455,11 +454,7 @@ function SystemNote({
         <Icon size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
       </span>
       <p>
-        {failed && voice && (
-          <>
-            <VisibleText text={voice} /> 没能回复：
-          </>
-        )}
+        {failed && voice && <VisibleText text={COPY.failedVoice(voice)} />}
         {message.text}
       </p>
       {failed && action ? (
@@ -470,7 +465,7 @@ function SystemNote({
         failed
         && onRetry && (
           <Button size="xs" variant="ghost" icon={RotateCcw} onClick={onRetry}>
-            重试
+            {COPY.retry}
           </Button>
         )
       )}
@@ -500,7 +495,7 @@ function AssistantMessage({
     <article
       className={`message message-assistant ${streaming && !frozen ? 'is-live' : ''}`}
       data-message-id={message.id}
-      aria-label={streaming ? '正在生成的回复' : undefined}>
+      aria-label={streaming ? COPY.live : undefined}>
       <MessageAttachments attachments={message.attachments} />
       {message.text && (
         <div ref={stream} className="message-text">
@@ -555,6 +550,7 @@ export const MessageRow = memo(
     /** 交给代码任务… with this message chosen. */
     onHandoff?: (messageIds: string[]) => void
   }) {
+    useLocale()
     if (message.role === 'user')
       return (
         <UserMessage

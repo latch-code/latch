@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import type { BoardPlace, TaskSummary, WorkItemPlace, WorkItemSummary, WorkProposalSummary, WorkspaceInfo } from '@latch/protocol'
+import type {
+  BoardPlace,
+  HostCatalog,
+  TaskSummary,
+  WorkItemPlace,
+  WorkItemSummary,
+  WorkProposalSummary,
+  WorkspaceInfo,
+} from '@latch/protocol'
 import {
   boardColumns,
   filterOptions,
@@ -113,7 +121,19 @@ describe('proposals on the board', () => {
     expect(todoProposals([change])).toEqual([])
     const snapshot = { tasks: [task('chat', { title: '聊天' })], customAgents: [{ id: 'agt_1', name: '助理' }] } as never
     expect(proposerName(change, snapshot).name).toBe('助理')
-    expect(proposerName(proposal('wpp-d'), { tasks: [task('code-1', { title: '修复登录' })] } as never).name).toBe('修复登录')
-    expect(proposerName(proposal('wpp-e', { from: { sessionId: 'gone' } }), { tasks: [] } as never).name).toBe('Code 会话')
+    expect(proposerName(change, { tasks: [] }).name).toBe('Agent')
+  })
+
+  it('names an ordinary Code source using its visible catalog and keeps the original session for details', () => {
+    const source = task('code-1', { title: 'board {"tool":"propose_todo"}', workspaceId: 'project' })
+    const row = proposal('wpp-d')
+    const catalog = {
+      harnesses: [{ id: 'codex', capabilities: { display: { label: 'Codex' } } }],
+      workspaces: [{ id: 'project', name: '发布项目' }],
+    } as HostCatalog
+    expect(proposerName(row, { tasks: [source], catalog })).toEqual({ name: 'Codex · 发布项目', session: source })
+    expect(proposerName(row, { tasks: [source], catalog: { ...catalog, workspaces: [] } })).toEqual({ name: 'Codex', session: source })
+    expect(proposerName(row, { tasks: [source] })).toEqual({ name: 'Code 会话', session: source })
+    expect(proposerName(row, { tasks: [], catalog })).toEqual({ name: 'Code 会话' })
   })
 })

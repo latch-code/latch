@@ -16,6 +16,44 @@ import {
   type PaletteRow,
   type PaletteSearchState,
 } from './model.ts'
+import { defineCopy, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    untitled: '未命名会话',
+    archived: ' · 已归档',
+    searchFiles: '搜索文件',
+    palette: '命令面板',
+    fileLabel: '搜索文件名',
+    label: '搜索会话、文件、Harness 和命令',
+    filePlaceholder: '输入文件名…',
+    placeholder: '搜索会话、文件、Harness 和命令…',
+    results: '搜索结果',
+    searching: '正在搜索…',
+    empty: '没有匹配结果',
+    choose: '选择',
+    open: '打开',
+    back: '返回',
+    close: '关闭',
+  },
+  {
+    untitled: 'Untitled session',
+    archived: ' · Archived',
+    searchFiles: 'Search files',
+    palette: 'Command palette',
+    fileLabel: 'Search by filename',
+    label: 'Search sessions, files, Harnesses, and commands',
+    filePlaceholder: 'Enter a filename…',
+    placeholder: 'Search sessions, files, Harnesses, and commands…',
+    results: 'Search results',
+    searching: 'Searching…',
+    empty: 'No matches',
+    choose: 'Select',
+    open: 'Open',
+    back: 'Back',
+    close: 'Close',
+  },
+)
 
 function PathSub({ path }: { path: string }) {
   const cut = path.lastIndexOf('/') + 1
@@ -82,6 +120,7 @@ export function CommandPalette({
   const moved = useRef(false)
   const seat = useRef<{ id: string | undefined; at: number }>({ id: undefined, at: -1 })
 
+  const locale = useLocale()
   const groups = useMemo(() => {
     const manyRoots = new Set(file.files.map(item => item.root)).size > 1
     const files: PaletteSearchState | undefined = fileContext && {
@@ -112,7 +151,7 @@ export function CommandPalette({
               id: `hit:${hit.sessionId}:${hit.messageId}`,
               label: text,
               mark,
-              sub: `${hit.title || '未命名会话'}${hit.archived ? ' · 已归档' : ''}`,
+              sub: `${hit.title || COPY.untitled}${hit.archived ? COPY.archived : ''}`,
               icon: <Icon icon={TextSearch} size={16} />,
               run: () => {
                 onSearchHit(hit)
@@ -126,6 +165,7 @@ export function CommandPalette({
       : undefined
     return paletteGroups({ level, query, recent, sessions, files, agents, myAgents, settings, commands, messages })
   }, [
+    locale,
     level,
     query,
     recent,
@@ -190,7 +230,7 @@ export function CommandPalette({
     }
   }
   const files = level === 'files'
-  const name = files ? '搜索文件' : '命令面板'
+  const name = files ? COPY.searchFiles : COPY.palette
   return (
     <Modal
       label={name}
@@ -202,8 +242,8 @@ export function CommandPalette({
       <SearchField
         autoFocus
         variant="ghost"
-        label={files ? '搜索文件名' : '搜索会话、文件、Harness 和命令'}
-        placeholder={files ? '输入文件名…' : '搜索会话、文件、Harness 和命令…'}
+        label={files ? COPY.fileLabel : COPY.label}
+        placeholder={files ? COPY.filePlaceholder : COPY.placeholder}
         aria-controls="palette-results"
         aria-activedescendant={selected ? `palette-${selected.id}` : undefined}
         value={query}
@@ -213,7 +253,7 @@ export function CommandPalette({
         }}
         onKeyDown={keydown}
       />
-      <div ref={list} id="palette-results" className="palette-results" role="listbox" aria-label="搜索结果">
+      <div ref={list} id="palette-results" className="palette-results" role="listbox" aria-label={COPY.results}>
         {groups.map(group => (
           <section key={group.label} role="group" aria-label={group.label}>
             <h3>
@@ -262,20 +302,22 @@ export function CommandPalette({
         ))}
         {!groups.length && (
           <p className="palette-note" role="status">
-            {message.loading || file.loading ? '正在搜索…' : '没有匹配结果'}
+            {message.loading || file.loading ? COPY.searching : COPY.empty}
           </p>
         )}
       </div>
       <footer className="palette-foot" aria-hidden="true">
         <span>
-          <Kbd>↑↓</Kbd>选择
+          <Kbd>↑↓</Kbd>
+          {COPY.choose}
         </span>
         <span>
-          <Kbd>⏎</Kbd>打开
+          <Kbd>⏎</Kbd>
+          {COPY.open}
         </span>
         <span>
           <Kbd>esc</Kbd>
-          {query || levels.length > 1 ? '返回' : '关闭'}
+          {query || levels.length > 1 ? COPY.back : COPY.close}
         </span>
       </footer>
     </Modal>

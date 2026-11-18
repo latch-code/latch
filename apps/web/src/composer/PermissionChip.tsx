@@ -3,6 +3,18 @@ import { ICON_STROKE, Popover, Tooltip, ChevronDownGlyph } from '@latch/ui'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { MODE_ICONS, PermissionPanel } from './PermissionList.tsx'
 import { permissionTip, type PermissionView } from './permission.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    permissions: '权限',
+    current: (value1: string) => `权限：${value1}`,
+  },
+  {
+    permissions: 'Permissions',
+    current: (value1: string) => `Permissions – ${value1}`,
+  },
+)
 
 /**
  * 权限, always drawn and always opening: the agent's own modes as segments (`PermissionPanel`) when it reports them,
@@ -23,7 +35,7 @@ export function PermissionChip({
   const label = escapeHiddenCharacters(view.label)
   return (
     <Popover
-      label="权限"
+      label={COPY.permissions}
       size="sm"
       side="top"
       onOpenChange={open => {
@@ -36,7 +48,7 @@ export function PermissionChip({
             type="button"
             className={`chip chip-permission${view.amber ? ' is-amber' : ''}`}
             data-lock={view.amber ? '' : undefined}
-            aria-label={`权限：${label}`}>
+            aria-label={COPY.current(label)}>
             <Glyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
             <span className="chip-text">{label}</span>
             <ChevronDownGlyph className="chip-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />

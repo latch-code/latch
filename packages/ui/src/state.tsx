@@ -3,6 +3,7 @@ import { WarningGlyph } from './glyphs/index.tsx'
 import { Icon, Spinner } from './icon.tsx'
 import { cx } from './internal.ts'
 import { MOTION, usePausedOffscreen, usePresence } from './motion.tsx'
+import { UI_COPY, useUiLocale } from './locale.ts'
 
 /**
  * An empty list or area: a short noun phrase (「还没有会话」) in ink-2, one line in muted ink and at most one xs action,
@@ -99,7 +100,8 @@ export function ErrorState({
  * then completes in 150ms and fades. It stays indeterminate to assistive technology, since the 90% is not a measurement.
  * Without motion it is a still line that fades when the work ends.
  */
-export function ProgressBar({ active, label = '正在加载', className }: { active: boolean; label?: string; className?: string }) {
+export function ProgressBar({ active, label = UI_COPY.loading, className }: { active: boolean; label?: string; className?: string }) {
+  useUiLocale()
   const { present, leaving } = usePresence(active, 150 + MOTION.micro)
   if (!present) return null
   return (

@@ -486,12 +486,12 @@ describe('error copy', () => {
     expect(PROVIDER_COPY.save).toBe('保存')
   })
 
-  it('keeps the Host message for other codes', () => {
-    expect(isCatalogCode('workspace-overlap')).toBe(false)
+  it('uses a local message for a recognized project refusal and a generic message for a new code', () => {
+    expect(isCatalogCode('workspace-overlap')).toBe(true)
     expect(describeFailure(409, 'workspace-overlap', '该目录与 Latch 的数据目录重叠，不能作为项目')).toBe(
-      '该目录与 Latch 的数据目录重叠，不能作为项目',
+      '该目录与不能添加到项目的目录重叠。',
     )
-    expect(describeFailure(500, 'whatever', '')).toBe('请求未完成（500），请重试。')
+    expect(describeFailure(500, 'whatever', 'maintenance note')).toBe('请求未完成（500），请重试。')
   })
 
   it('maps 401 codes to the enrollment page and keeps the legacy name', () => {

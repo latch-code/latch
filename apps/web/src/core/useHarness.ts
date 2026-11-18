@@ -69,7 +69,7 @@ export function useHarness() {
   const [detailView, setDetailView] = useState(EMPTY_DETAIL)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [auth, setAuth] = useState<AuthState | null>(null)
-  const [error, setError] = useState('')
+  const [pageError, setPageError] = useState<{ cause: unknown } | null>(null)
   const [failure, setFailure] = useState<ConnectionFailure | null>(null)
   const [loading, setLoading] = useState(true)
   const [connection, setConnection] = useState<ConnectionStatus>('connecting')
@@ -236,7 +236,7 @@ export function useHarness() {
             }
             signedOut.current = false
             setAuth(null)
-            setError('')
+            setPageError(null)
             setFailure(null)
             renewal.failure = null
             lastSyncFailure.current = null
@@ -291,7 +291,7 @@ export function useHarness() {
             if (cause instanceof ApiError && cause.status === 401 && !renewalPending) signOut(authStateFor(cause, renewal.failure))
             else {
               // Includes a renewal that failed for a transient reason: retry with the connection, not re-enrollment.
-              setError(errorMessage(cause))
+              setPageError({ cause })
               setFailure(connectionFailure(cause))
               setConnection(navigator.onLine ? 'reconnecting' : 'offline')
             }
@@ -335,7 +335,12 @@ export function useHarness() {
       signOut({ reason: 'credential-not-stored' })
       return { status: 'credential-not-stored' }
     }
-    return { status: 'failed', message: errorMessage(cause) }
+    return {
+      status: 'failed',
+      get message() {
+        return errorMessage(cause)
+      },
+    }
   }, [synchronize, signOut])
   const select = useCallback(
     (id: string | null) => {
@@ -572,7 +577,7 @@ export function useHarness() {
     loading,
     connection,
     hostNotice,
-    error,
+    error: pageError ? errorMessage(pageError.cause) : '',
     failure,
     removed,
     resyncs,

@@ -1,5 +1,15 @@
 import { GENERAL_AGENT_ID, type AppSnapshot, type TaskSummary } from '@latch/protocol'
 import { sourceCrumb } from './handoffs/model.ts'
+import { defineCopy } from './core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    untitled: '未命名会话',
+  },
+  {
+    untitled: 'Untitled session',
+  },
+)
 
 /** Where a session came from, as its one 「来自 …」 line says it. */
 export type SessionSource =
@@ -26,7 +36,7 @@ export function sessionSource(
     return {
       kind: 'fork',
       sessionId: task.forkOf.taskId,
-      title: (listed ? listed.title : task.forkOf.title) || '未命名会话',
+      title: (listed ? listed.title : task.forkOf.title) || COPY.untitled,
       listed: listed !== undefined,
     }
   }

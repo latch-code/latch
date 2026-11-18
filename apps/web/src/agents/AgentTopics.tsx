@@ -3,6 +3,7 @@ import { ArchiveGlyph, Button, ChevronLeftGlyph, EmptyState, IconButton, MoreGly
 import { useLastConfirmed } from '../components/SessionStatus.tsx'
 import { Menu } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
 import { relativeTime } from '../format.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
@@ -11,14 +12,33 @@ import { agentTopics, topicWords } from './chat.ts'
 import { readsAgents } from './model.ts'
 import { LockedAgents } from './parts.tsx'
 import { topicState, type RosterRow } from './roster.ts'
+import { AGENT_SPACE_COPY } from './spaceCopy.ts'
 
 const TONE = { waiting: 'waiting', running: 'running', failed: 'failed', idle: 'neutral' } as const
+const COPY = defineCopy(
+  {
+    untitled: '未命名会话',
+    topicActions: (title: string) => `话题操作：${title}`,
+    more: (title: string) => `更多操作：${title}`,
+    archived: '已归档',
+    emptyArchive: '没有已归档的话题',
+    empty: '还没有话题',
+  },
+  {
+    untitled: 'Untitled session',
+    topicActions: (title: string) => `Topic actions for ${title}`,
+    more: (title: string) => `More actions for ${title}`,
+    archived: 'Archived',
+    emptyArchive: 'No archived topics',
+    empty: 'No topics yet',
+  },
+)
 
 /** One topic: its state mark, the title, its state in the helper's words, when it last changed, and its own menu. */
 function TopicRow({ shell, task, frozen, asking }: { shell: ShellState; task: TaskSummary; frozen: boolean; asking: ReadonlySet<string> }) {
   const state = topicState(task, asking)
   const words = topicWords(task, frozen)
-  const title = task.title || '未命名会话'
+  const title = task.title || COPY.untitled
   return (
     <div className="workbench-session-entry">
       <button
@@ -40,10 +60,10 @@ function TopicRow({ shell, task, frozen, asking }: { shell: ShellState; task: Ta
         <time dateTime={task.updatedAt}>{relativeTime(task.updatedAt, new Date(shell.now))}</time>
       </button>
       <Menu
-        label={`话题操作：${title}`}
+        label={COPY.topicActions(title)}
         placement="bottom-end"
         sections={shell.sessionMenu(task)}
-        trigger={props => <IconButton {...props} size="sm" label={`更多操作：${title}`} icon={MoreGlyph} />}
+        trigger={props => <IconButton {...props} size="sm" label={COPY.more(title)} icon={MoreGlyph} />}
       />
     </div>
   )
@@ -59,7 +79,7 @@ export function AgentTopics({ shell, onBack }: { shell: ShellState; onBack: () =
   const archived = agentsFilter === 'archived'
   if (!readsAgents(snapshot))
     return (
-      <section className="workbench-sessions agent-topics" aria-label="全部话题">
+      <section className="workbench-sessions agent-topics" aria-label={AGENT_SPACE_COPY.allTopics}>
         <LockedAgents />
       </section>
     )
@@ -71,10 +91,10 @@ export function AgentTopics({ shell, onBack }: { shell: ShellState; onBack: () =
   const listed = new Set(groups.flatMap(group => group.topics.map(task => task.id)))
   const orphans = archived ? snapshot.tasks.filter(task => task.archived && (task.agent || task.generalChat) && !listed.has(task.id)) : []
   return (
-    <section className="workbench-sessions agent-topics" aria-label="全部话题">
+    <section className="workbench-sessions agent-topics" aria-label={AGENT_SPACE_COPY.allTopics}>
       <header className="workbench-sessions-head">
-        {phone && <IconButton label="返回" icon={ChevronLeftGlyph} onClick={onBack} />}
-        <h1>全部话题</h1>
+        {phone && <IconButton label={AGENT_SPACE_COPY.back} icon={ChevronLeftGlyph} onClick={onBack} />}
+        <h1>{AGENT_SPACE_COPY.allTopics}</h1>
         <div className="workbench-sessions-filters">
           <Button
             variant="ghost"
@@ -83,11 +103,11 @@ export function AgentTopics({ shell, onBack }: { shell: ShellState; onBack: () =
             onClick={() => {
               setAgentsFilter(archived ? 'all' : 'archived')
             }}>
-            已归档
+            {COPY.archived}
           </Button>
         </div>
       </header>
-      {groups.length === 0 && orphans.length === 0 && <EmptyState title={archived ? '没有已归档的话题' : '还没有话题'} />}
+      {groups.length === 0 && orphans.length === 0 && <EmptyState title={archived ? COPY.emptyArchive : COPY.empty} />}
       {groups.map(({ row, topics }) => (
         <section key={row.id} className="workbench-session-group" aria-label={row.name}>
           <header className="workbench-session-group-head">
@@ -95,7 +115,7 @@ export function AgentTopics({ shell, onBack }: { shell: ShellState; onBack: () =
             <h2>
               <VisibleText text={row.name} />
             </h2>
-            <span className="workbench-session-count">{topics.length}</span>
+            <span className="workbench-session-count">{formatNumber(topics.length)}</span>
           </header>
           {topics.map(task => (
             <TopicRow key={task.id} shell={shell} task={task} frozen={frozen} asking={asking} />
@@ -103,11 +123,11 @@ export function AgentTopics({ shell, onBack }: { shell: ShellState; onBack: () =
         </section>
       ))}
       {orphans.length > 0 && (
-        <section className="workbench-session-group" aria-label="已删除的 Agent">
+        <section className="workbench-session-group" aria-label={AGENT_SPACE_COPY.deleted}>
           <header className="workbench-session-group-head">
             <AgentAvatar avatar="general" size={22} />
-            <h2>已删除的 Agent</h2>
-            <span className="workbench-session-count">{orphans.length}</span>
+            <h2>{AGENT_SPACE_COPY.deleted}</h2>
+            <span className="workbench-session-count">{formatNumber(orphans.length)}</span>
           </header>
           {orphans.map(task => (
             <TopicRow key={task.id} shell={shell} task={task} frozen={frozen} asking={asking} />

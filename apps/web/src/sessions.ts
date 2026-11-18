@@ -11,6 +11,68 @@ import { runClock, runElapsed } from './conversation.ts'
 import { parseTime } from './core/hostClock.ts'
 import { basename } from './format.ts'
 import { storageGet, storageSet } from './preferences.ts'
+import { defineCopy, plural } from './core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    stopped: '已停止',
+    forcedStop: '已强制停止',
+    interrupted: '已中断',
+    starting: '在启动',
+    model: '在等模型',
+    command: '在跑命令',
+    tool: '在用工具',
+    queuedFor: (reason: string) => `排队：${reason}`,
+    queued: '排队',
+    running: '运行中',
+    quiet: '没有动静',
+    minutes: (minutes: number) => `没有动静 ${minutes} 分钟`,
+    hours: (hours: number) => `没有动静 ${hours} 小时`,
+    unknown: (count: number) => `${count} 条结果未知`,
+    approval: '审批',
+    questions: (count: number) => `${count} 个问题`,
+    unsupported: '不支持的请求',
+    stopping: '正在停止',
+    attention: '等你处理',
+    last: (status: string) => `上次状态：${status}`,
+    failedUnknown: (count: number) => `失败 · ${count} 条结果未知`,
+    failed: '失败',
+    fresh: '有新内容',
+    completed: '本轮已结束',
+    transcript: '会话记录',
+    sessions: '会话',
+    noProject: '无项目',
+  },
+  {
+    stopped: 'Stopped',
+    forcedStop: 'Force stopped',
+    interrupted: 'Interrupted',
+    starting: 'Starting',
+    model: 'Waiting for model',
+    command: 'Running a command',
+    tool: 'Using a tool',
+    queuedFor: (reason: string) => `Queued: ${reason}`,
+    queued: 'Queued',
+    running: 'Running',
+    quiet: 'No activity',
+    minutes: (minutes: number) => `No activity for ${minutes} min`,
+    hours: (hours: number) => `No activity for ${hours} hr`,
+    unknown: (count: number) => plural(count, { one: '{n} unknown outcome', other: '{n} unknown outcomes' }),
+    approval: 'Approval',
+    questions: (count: number) => plural(count, { one: '{n} question', other: '{n} questions' }),
+    unsupported: 'Unsupported request',
+    stopping: 'Stopping',
+    attention: 'Needs you',
+    last: (status: string) => `Last status: ${status}`,
+    failedUnknown: (count: number) => plural(count, { one: 'Failed · {n} unknown outcome', other: 'Failed · {n} unknown outcomes' }),
+    failed: 'Failed',
+    fresh: 'New content',
+    completed: 'Turn ended',
+    transcript: 'Transcript',
+    sessions: 'Sessions',
+    noProject: 'No project',
+  },
+)
 
 export type SessionFilter = 'all' | 'archived'
 
@@ -113,9 +175,9 @@ export function rowStatus(task: TaskSummary, { unread = false, stopping = false,
   if (task.status === 'failed' || outcome === 'failed') return { kind: 'failed' }
   const unknown = task.runEnd?.unknownResultCount ?? 0
   const marked = unread ? { unread: true as const } : {}
-  if (task.status === 'cancelled' || outcome === 'cancelled') return { kind: 'ended', word: '已停止', unknown, ...marked }
+  if (task.status === 'cancelled' || outcome === 'cancelled') return { kind: 'ended', word: COPY.stopped, unknown, ...marked }
   if (task.status === 'interrupted' || outcome === 'interrupted')
-    return { kind: 'ended', word: task.runEnd?.reason === 'forced-stop' ? '已强制停止' : '已中断', unknown, ...marked }
+    return { kind: 'ended', word: task.runEnd?.reason === 'forced-stop' ? COPY.forcedStop : COPY.interrupted, unknown, ...marked }
   return { kind: unread ? 'unread' : 'read' }
 }
 
@@ -150,16 +212,24 @@ export const showsUnread = (status: RowStatus): boolean => status.kind === 'unre
 
 /** What a running row says the run is doing, from the summary's activity alone; 运行中 when the Host named none. */
 const ACTIVITY_WORDS: Partial<Record<RunLive['activity'], string>> = {
-  starting: '在启动',
-  model: '在等模型',
-  command: '在跑命令',
-  tool: '在用工具',
+  get starting() {
+    return COPY.starting
+  },
+  get model() {
+    return COPY.model
+  },
+  get command() {
+    return COPY.command
+  },
+  get tool() {
+    return COPY.tool
+  },
 }
 
 export const activityWords = (live: RunLive | undefined): string =>
   // A model request waiting for a free place says which service it waits for, whatever the run was doing before.
   // The service is named only while its own place is what the request waits for.
-  live?.queuedFor ? `排队：${live.queuedFor}` : live?.queued ? '排队' : ((live && ACTIVITY_WORDS[live.activity]) ?? '运行中')
+  live?.queuedFor ? COPY.queuedFor(live.queuedFor) : live?.queued ? COPY.queued : ((live && ACTIVITY_WORDS[live.activity]) ?? COPY.running)
 
 /** 在跑命令 1:12, or the words alone when the Host did not say when the run began. */
 export function runningWords(live: RunLive | undefined, hostNow: number): string {
@@ -171,16 +241,16 @@ export function runningWords(live: RunLive | undefined, hostNow: number): string
 /** 没有动静 3 分钟, counted from the engine's last sign of life. */
 export function silentWords(live: RunLive | undefined, hostNow: number): string {
   const last = parseTime(live?.lastEventAt)
-  if (last === undefined) return '没有动静'
+  if (last === undefined) return COPY.quiet
   const minutes = Math.max(1, Math.floor((hostNow - last) / 60_000))
-  return minutes < 60 ? `没有动静 ${minutes} 分钟` : `没有动静 ${Math.floor(minutes / 60)} 小时`
+  return minutes < 60 ? COPY.minutes(minutes) : COPY.hours(Math.floor(minutes / 60))
 }
 
 /** Results nobody can vouch for after a run that ended without an answer: the one fact a row's second line adds. */
 export function unknownNote(task: TaskSummary, status: RowStatus): string | undefined {
-  if (status.kind === 'ended' && status.unknown > 0) return `${status.unknown} 条结果未知`
+  if (status.kind === 'ended' && status.unknown > 0) return COPY.unknown(status.unknown)
   const unknown = task.runEnd?.unknownResultCount ?? 0
-  if (status.kind === 'failed' && unknown > 0) return `${unknown} 条结果未知`
+  if (status.kind === 'failed' && unknown > 0) return COPY.unknown(unknown)
   return undefined
 }
 
@@ -215,11 +285,11 @@ export function waitKind(task: TaskSummary): WaitKind | undefined {
   if (task.status !== 'running' && task.status !== 'waiting-approval') return undefined
   const asks = [
     // A question also holds the session at waiting-approval: that alone is no approval.
-    ...(task.status === 'waiting-approval' && !task.pendingQuestions ? ['审批'] : []),
-    ...(task.pendingQuestions ? [`${task.pendingQuestions} 个问题`] : []),
+    ...(task.status === 'waiting-approval' && !task.pendingQuestions ? [COPY.approval] : []),
+    ...(task.pendingQuestions ? [COPY.questions(task.pendingQuestions)] : []),
   ]
   if (asks.length > 0) return { kind: 'asks', words: asks.join(' · ') }
-  if (stuckOnRequest(live)) return { kind: 'asks', words: '不支持的请求' }
+  if (stuckOnRequest(live)) return { kind: 'asks', words: COPY.unsupported }
   return live?.silent ? { kind: 'silent' } : undefined
 }
 
@@ -240,23 +310,23 @@ export function workStatus(
   const live = task.status === 'running' || task.status === 'waiting-approval'
   const unknown = live ? 0 : (task.runEnd?.unknownResultCount ?? 0)
   if (!connected && live) {
-    const words = status.kind === 'stopping' ? '正在停止' : waitsOnYou(task) ? '等你处理' : activityWords(task.live)
-    return { tone: 'neutral', words: `上次状态：${words}` }
+    const words = status.kind === 'stopping' ? COPY.stopping : waitsOnYou(task) ? COPY.attention : activityWords(task.live)
+    return { tone: 'neutral', words: COPY.last(words) }
   }
-  if (status.kind === 'stopping') return { tone: 'running', words: '正在停止' }
+  if (status.kind === 'stopping') return { tone: 'running', words: COPY.stopping }
   if (status.kind === 'waiting' || status.kind === 'silent') {
     const wait = waitKind(task)
     return {
       tone: 'waiting',
-      words: wait?.kind === 'asks' ? wait.words : wait?.kind === 'silent' ? silentWords(task.live, now) : '等你处理',
+      words: wait?.kind === 'asks' ? wait.words : wait?.kind === 'silent' ? silentWords(task.live, now) : COPY.attention,
     }
   }
   if (status.kind === 'running') return { tone: 'running', words: runningWords(task.live, now) }
-  if (status.kind === 'failed') return { tone: 'failed', words: unknown > 0 ? `失败 · ${unknown} 条结果未知` : '失败' }
-  if (unknown > 0) return { tone: 'warn', words: `${unknown} 条结果未知` }
+  if (status.kind === 'failed') return { tone: 'failed', words: unknown > 0 ? COPY.failedUnknown(unknown) : COPY.failed }
+  if (unknown > 0) return { tone: 'warn', words: COPY.unknown(unknown) }
   if (status.kind === 'ended') return { tone: 'neutral', words: status.word }
-  if (status.kind === 'unread') return { tone: 'neutral', words: '有新内容' }
-  return { tone: 'neutral', words: task.runOutcome === 'completed' ? '本轮已结束' : '会话记录' }
+  if (status.kind === 'unread') return { tone: 'neutral', words: COPY.fresh }
+  return { tone: 'neutral', words: task.runOutcome === 'completed' ? COPY.completed : COPY.transcript }
 }
 
 /** Archived sessions appear only under their own filter; search matches titles; a place keeps only its own sessions. */
@@ -324,11 +394,11 @@ export function groupSessions(
 ): SessionGroup[] {
   const waiting: SessionGroup = {
     id: 'waiting',
-    label: '等你处理',
+    label: COPY.attention,
     tasks: (options.waitingFrom ?? []).filter(inAttention).toSorted(byRecency),
   }
   const shelved = new Set(waiting.tasks.map(task => task.id))
-  const other: SessionGroup = { id: 'other', label: workspaces === undefined ? '会话' : '无项目', tasks: [] }
+  const other: SessionGroup = { id: 'other', label: workspaces === undefined ? COPY.sessions : COPY.noProject, tasks: [] }
   const projects = new Map<string, SessionGroup>()
   const makeProject = (project: WorkspaceInfo): SessionGroup => ({
     id: `project:${project.id}`,

@@ -2,6 +2,26 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Grid2X2 } from 'lucide-react'
 import { Button, IconButton, InlineNotice } from '@latch/ui'
 import type { FileMetadata } from '@latch/protocol'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    unknownSize: '无法确认图片尺寸，已停止解码。可以下载文件后查看。',
+    tooManyPixels: '图片像素过多，无法在这里预览。',
+    fit: '适应',
+    checkerboard: '切换图片棋盘底色',
+    decodeFailed: '无法解码这张图片，可以下载或在 Mac 上查看。',
+    image: '图片预览，支持缩放和平移',
+  },
+  {
+    unknownSize: 'Could not confirm the image dimensions, so decoding stopped. Download the file to view it.',
+    tooManyPixels: 'The image has too many pixels for this preview.',
+    fit: 'Fit',
+    checkerboard: 'Toggle checkerboard background',
+    decodeFailed: 'Could not decode this image. Download it or view it on the Mac.',
+    image: 'Image preview. Zoom and pan.',
+  },
+)
 
 export function ImagePreview({ file, source, local }: { file: FileMetadata; source: string; local: boolean }) {
   const viewport = useRef<HTMLDivElement>(null)
@@ -65,9 +85,8 @@ export function ImagePreview({ file, source, local }: { file: FileMetadata; sour
     node.scrollTop = point.imageY * factor - point.y
     pending.current = undefined
   }, [factor])
-  if (file.kind === 'image' && (!file.width || !file.height))
-    return <InlineNotice>无法确认图片尺寸，已停止解码。可以下载文件后查看。</InlineNotice>
-  if (size.width * size.height > (local ? 100_000_000 : 50_000_000)) return <InlineNotice>图片像素过多，无法在这里预览。</InlineNotice>
+  if (file.kind === 'image' && (!file.width || !file.height)) return <InlineNotice>{COPY.unknownSize}</InlineNotice>
+  if (size.width * size.height > (local ? 100_000_000 : 50_000_000)) return <InlineNotice>{COPY.tooManyPixels}</InlineNotice>
   return (
     <div className="file-image">
       <div className="file-preview-controls">
@@ -81,13 +100,13 @@ export function ImagePreview({ file, source, local }: { file: FileMetadata; sour
               setScale(1)
             } else setFit(true)
           }}>
-          适应
+          {COPY.fit}
         </Button>
         <span role="status">{Math.round(factor * 100)}%</span>
-        <IconButton label="切换图片棋盘底色" icon={Grid2X2} aria-pressed={dark} onClick={() => setDark(!dark)} />
+        <IconButton label={COPY.checkerboard} icon={Grid2X2} aria-pressed={dark} onClick={() => setDark(!dark)} />
       </div>
       {failed ? (
-        <InlineNotice tone="error">无法解码这张图片，可以下载或在 Mac 上查看。</InlineNotice>
+        <InlineNotice tone="error">{COPY.decodeFailed}</InlineNotice>
       ) : (
         <div
           ref={viewport}
@@ -95,7 +114,7 @@ export function ImagePreview({ file, source, local }: { file: FileMetadata; sour
           data-checker={dark ? 'dark' : 'light'}
           tabIndex={0}
           role="region"
-          aria-label="图片预览，支持缩放和平移"
+          aria-label={COPY.image}
           onKeyDown={event => {
             if (['+', '=', '-'].includes(event.key)) {
               event.preventDefault()

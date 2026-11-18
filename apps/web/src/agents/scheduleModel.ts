@@ -12,7 +12,55 @@ import type {
   TaskSummary,
 } from '@latch/protocol'
 import { worksIn } from './model.ts'
-import { DEVICE_OFFLINE } from '../core/hostState.ts'
+import { CONNECTION_COPY } from '../core/hostState.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    name: '先填名称',
+    time: '先填时间',
+    location: '先选工作位置',
+    prompt: '先写每次的输入',
+    today: (clock: string) => `今天 ${clock}`,
+    tomorrow: (clock: string) => `明天 ${clock}`,
+    yesterday: (clock: string) => `昨天 ${clock}`,
+    date: (date: Date, clock: string, showYear: boolean) =>
+      `${showYear ? `${date.getFullYear()}年` : ''}${date.getMonth() + 1}月${date.getDate()}日 ${clock}`,
+    running: '运行中',
+    paused: '已暂停',
+    enabled: '已开启',
+    disabled: '已关闭',
+    missed: '这台 Mac 关机、睡眠或 Latch 没有运行，没有补跑。',
+    skipped: '上一次运行还没结束，没有补跑。',
+    home: '家',
+    pauseOffline: (reason: string) => `${reason}，恢复后再改`,
+    viewOnly: '这台设备只能查看定时任务：它没有开始会话的权限。',
+    unavailable: '这个 Agent 现在不可用。',
+    manualOnly: '这个 Agent 不能后台运行，可保存后点「立即运行」。',
+  },
+  {
+    name: 'Enter a name',
+    time: 'Enter a time',
+    location: 'Choose a work location',
+    prompt: 'Enter a prompt for each run',
+    today: (clock: string) => `Today ${clock}`,
+    tomorrow: (clock: string) => `Tomorrow ${clock}`,
+    yesterday: (clock: string) => `Yesterday ${clock}`,
+    date: (date: Date, clock: string, showYear: boolean) =>
+      `${new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', ...(showYear ? { year: 'numeric' } : {}) }).format(date)} ${clock}`,
+    running: 'Running',
+    paused: 'Paused',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
+    missed: 'This Mac was off, asleep, or Latch wasn’t running. The missed run was skipped.',
+    skipped: 'The previous run was still active. This run was skipped.',
+    home: 'Home',
+    pauseOffline: (reason: string) => `${reason}. Reconnect to make changes.`,
+    viewOnly: 'This device can view schedules. Starting sessions requires permission.',
+    unavailable: 'This Agent is currently unavailable.',
+    manualOnly: 'This Agent cannot run in the background. Save, then select Run now.',
+  },
+)
 
 /** What the 定时 form edits. `location` is a project ID, or `default` for the owner's fixed home. */
 export interface ScheduleDraft {
@@ -62,10 +110,10 @@ const TIME = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/u
 
 /** Why the form cannot be saved yet, in a few words; undefined when it can. */
 export function scheduleProblem(draft: ScheduleDraft): string | undefined {
-  if (!draft.name.trim()) return '先填名称'
-  if (!TIME.test(draft.time)) return '先填时间'
-  if (draft.location === undefined) return '先选工作位置'
-  if (!draft.prompt.trim()) return '先写每次的输入'
+  if (!draft.name.trim()) return COPY.name
+  if (!TIME.test(draft.time)) return COPY.time
+  if (draft.location === undefined) return COPY.location
+  if (!draft.prompt.trim()) return COPY.prompt
   return undefined
 }
 
@@ -108,11 +156,10 @@ export function whenWords(at: string, now = Date.now()): string {
   const today = new Date(now)
   const offset = (days: number) => dayKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() + days))
   const key = dayKey(date)
-  if (key === offset(0)) return `今天 ${clock}`
-  if (key === offset(1)) return `明天 ${clock}`
-  if (key === offset(-1)) return `昨天 ${clock}`
-  const year = date.getFullYear() === today.getFullYear() ? '' : `${date.getFullYear()}年`
-  return `${year}${date.getMonth() + 1}月${date.getDate()}日 ${clock}`
+  if (key === offset(0)) return COPY.today(clock)
+  if (key === offset(1)) return COPY.tomorrow(clock)
+  if (key === offset(-1)) return COPY.yesterday(clock)
+  return COPY.date(date, clock, date.getFullYear() !== today.getFullYear())
 }
 
 /** The Host's run records and next times, with waiting sessions already represented by decision cards. */
@@ -138,17 +185,17 @@ export function scheduleStatus(automation: Pick<AutomationSummary, 'state' | 'pa
   tone: 'neutral' | 'running' | 'warn'
   reason?: string
 } {
-  if (automation.state === 'running') return { label: '运行中', tone: 'running' }
+  if (automation.state === 'running') return { label: COPY.running, tone: 'running' }
   if (automation.state === 'paused')
-    return { label: '已暂停', tone: 'warn', ...(automation.pause ? { reason: automation.pause.message } : {}) }
-  if (automation.state === 'ready') return { label: '已开启', tone: 'neutral' }
-  return { label: '已关闭', tone: 'neutral' }
+    return { label: COPY.paused, tone: 'warn', ...(automation.pause ? { reason: automation.pause.message } : {}) }
+  if (automation.state === 'ready') return { label: COPY.enabled, tone: 'neutral' }
+  return { label: COPY.disabled, tone: 'neutral' }
 }
 
 /** Why a run did not happen, as the Host records it. Neither kind is caught up. */
 export function runReason(run: Pick<AutomationRun, 'state'>): string | undefined {
-  if (run.state === 'missed') return '这台 Mac 关机、睡眠或 Latch 没有运行，没有补跑。'
-  if (run.state === 'skipped') return '上一次运行还没结束，没有补跑。'
+  if (run.state === 'missed') return COPY.missed
+  if (run.state === 'skipped') return COPY.skipped
   return undefined
 }
 
@@ -164,7 +211,7 @@ export function missedRuns(runs: readonly AutomationRun[]): AutomationRun[] {
 
 /** Where the runs work: a project, or each run's own folder in the start directory. */
 export function scheduleWhere(catalog: HostCatalog | undefined, automation: Pick<AutomationConfig, 'projectId'>): string {
-  return automation.projectId ? worksIn(catalog, automation.projectId) : '家'
+  return automation.projectId ? worksIn(catalog, automation.projectId) : COPY.home
 }
 
 /** The first line of what each run receives. */
@@ -194,10 +241,10 @@ export function scheduleBlock(input: {
   agent?: { available?: boolean; canAutomate: boolean; unavailableReason?: string } | undefined
   trigger?: 'schedule' | 'manual'
 }): string | undefined {
-  if (input.offline) return `${DEVICE_OFFLINE}，恢复后再改`
-  if (!input.canRun) return '这台设备只能查看定时任务：它没有开始会话的权限。'
-  if (input.agent?.available === false || input.agent?.unavailableReason) return input.agent.unavailableReason ?? '这个 Agent 现在不可用。'
-  if (input.trigger !== 'manual' && input.agent && !input.agent.canAutomate) return '这个 Agent 不能后台运行，可保存后点「立即运行」。'
+  if (input.offline) return COPY.pauseOffline(CONNECTION_COPY.offline)
+  if (!input.canRun) return COPY.viewOnly
+  if (input.agent?.available === false || input.agent?.unavailableReason) return input.agent.unavailableReason ?? COPY.unavailable
+  if (input.trigger !== 'manual' && input.agent && !input.agent.canAutomate) return COPY.manualOnly
   return undefined
 }
 

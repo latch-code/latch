@@ -1012,7 +1012,7 @@ Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别�
 
 **安装、更新、卸载。** `HARNESS_EXTENSIONS`（`packages/protocol/src/extensions.ts`）记录厂商文档或 CLI 帮助给出的命令。命令经「在终端里打开」填进 Latch 的终端（[TERMINAL.md](TERMINAL.md)），由人补全参数后按回车。Codex 卸载须指定市场和插件，pi 卸载须指定原安装来源。名称只用于显示。MCP 的单项卸载命令只接受 `namedExtensionCommand` 校验过的名称。没有文档化命令时，悬停可查看原因。
 
-**Latch 提供的。** 都是数据：我的 Agent 的技能与「操控这台 Mac」的规则经 `latch-skills`；预览浏览器的工具经 `latch-browser`（桌面端开着时）；Latch 的 MCP 服务器经会话的 `mcpServers`（Codex 为线程配置），只给 `HarnessInfo.skills === 'server'` 的 Harness；提示词模板由 Latch 填进输入框（全部 Harness 的与只给这个 Harness 的）；数据插件（技能与数据面板）与页面在 Latch 里，不交给 Harness。含代码的插件（工具、面板模块、模型、Harness、连接）只在折叠的「本机开发者」里，标「可信的本机代码」，不隔离。Latch 内置的插件（项目文件、演示的工具与模型，`PluginInfo.builtIn`）不列。Latch 自己的 MCP 与插件仍在「设置 › MCP」「设置 › 插件」里管理，改动照旧本机确认；「设置 › MCP」与 Harness 页只留一行通往「扩展」。
+**Latch 提供的。** 都是数据：我的 Agent 的技能与「操控这台 Mac」的规则经 `latch-skills`；预览浏览器的工具经 `latch-browser`（桌面端开着时）；Latch 的 MCP 服务器经会话的 `mcpServers`（Codex 为线程配置），只给 `HarnessInfo.skills === 'server'` 的 Harness；提示词模板由 Latch 填进输入框（全部 Harness 的与只给这个 Harness 的）；数据插件（技能与数据面板）与页面在 Latch 里，不交给 Harness。含代码的插件（工具、面板模块、模型、Harness、连接）只在折叠的「这台 Mac 上的开发者」里，标「可信的本地代码」，不隔离。Latch 内置的插件（项目文件、演示的工具与模型，`PluginInfo.builtIn`）不列。Latch 自己的 MCP 与插件仍在「设置 › MCP」「设置 › 插件」里管理，改动照旧本机确认；「设置 › MCP」与 Harness 页只留一行通往「扩展」。
 
 ## 错误
 

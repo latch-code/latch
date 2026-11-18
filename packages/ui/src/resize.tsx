@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
 import { cx } from './internal.ts'
+import { UI_COPY, useUiLocale } from './locale.ts'
 
 export type ResizePhase = 'drag' | 'commit'
 
@@ -42,6 +43,7 @@ export function ResizeHandle({
   className?: string
   style?: CSSProperties
 }) {
+  useUiLocale()
   const drag = useRef<{ pointer: number; position: number; from: number } | null>(null)
   const [dragging, setDragging] = useState(false)
   // Removed in the middle of a drag (the window crossed a breakpoint): the page must not keep the resize cursor and
@@ -98,7 +100,7 @@ export function ResizeHandle({
       aria-valuenow={collapsed ? min : value}
       aria-valuemin={min}
       aria-valuemax={max}
-      aria-valuetext={collapsed ? '已收起' : `${value} 像素`}
+      aria-valuetext={collapsed ? UI_COPY.collapsed : UI_COPY.pixels(value)}
       tabIndex={0}
       className={cx('ui-resize-handle', className)}
       data-edge={edge}

@@ -1,4 +1,20 @@
 import type { LocalService, TerminalSummary, TerminalTarget, TerminalText } from '@latch/protocol'
+import { defineCopy, formatNumber } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    tab: (number: number) => `终端 ${formatNumber(number)}`,
+    unexpected: '终端意外结束',
+    signal: (value1: string | number) => `已结束 · ${value1}`,
+    exited: (code: number) => `已退出 · 代码 ${formatNumber(code)}`,
+  },
+  {
+    tab: (number: number) => `Terminal ${formatNumber(number)}`,
+    unexpected: 'Terminal ended unexpectedly',
+    signal: (value1: string | number) => `Ended · ${value1}`,
+    exited: (code: number) => `Exited · Code ${formatNumber(code)}`,
+  },
+)
 
 /** One call to `…/input` carries at most this much once decoded (docs/TERMINAL.md). */
 export const INPUT_CHUNK_BYTES = 64 * 1024
@@ -14,10 +30,8 @@ export interface TerminalTab {
   summary: TerminalSummary
 }
 
-export const tabLabel = (number: number) => `终端 ${number}`
-
 /** A tab's name: the Harness whose login command runs in it, else 终端 N. */
-export const tabName = (tab: Pick<TerminalTab, 'number' | 'summary'>) => tab.summary.login?.name ?? tabLabel(tab.number)
+export const tabName = (tab: Pick<TerminalTab, 'number' | 'summary'>) => tab.summary.login?.name ?? COPY.tab(tab.number)
 
 /**
  * The Host's list in tab order. A terminal keeps the number it was first shown with; a new one takes the lowest number
@@ -83,9 +97,9 @@ export function opensFirstTerminal(state: {
 /** How a terminal ended, for the line under its output; undefined while it runs. */
 export function endedText(summary: TerminalSummary): string | undefined {
   if (summary.status === 'running') return undefined
-  if (summary.status === 'failed') return '终端意外结束'
-  if (summary.exitSignal) return `已结束 · ${summary.exitSignal}`
-  return `已退出 · 代码 ${summary.exitCode ?? 0}`
+  if (summary.status === 'failed') return COPY.unexpected
+  if (summary.exitSignal) return COPY.signal(summary.exitSignal)
+  return COPY.exited(summary.exitCode ?? 0)
 }
 
 /** `localhost:5173`, for a link that opens the whole origin. */

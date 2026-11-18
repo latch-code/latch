@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import type { BoardAttendInput, WorkItemPatchInput, WorkItemStartAnswer, WorkItemSummary } from '@latch/protocol'
 import { api, ApiError, errorMessage, newRequestId } from '../core/api.ts'
 import { withConfirmation } from '../core/confirmations.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { unconfirmedReason } from '../core/sendingMessage.ts'
 
 /** A write to one 待办 (or a session's attend) from its card, kept as sent until the Host answers it for certain. */
@@ -23,7 +24,7 @@ export type ItemWriteState =
 
 export type ItemWriteResult = { ok: true; sessionId?: string } | { ok: false; reason?: string; unknown?: true; blocked?: true }
 
-export const ITEM_WRITE_BLOCKED = '请先处理上一项操作'
+export const ITEM_WRITE_COPY = defineCopy({ blocked: '请先处理上一项操作' }, { blocked: 'Resolve the previous action first' })
 
 /** The Host already holds what an uncertain edit, delete or attend asked for, or moved on: the snapshot says which. */
 const settledOnRetry = (cause: unknown) =>
@@ -50,7 +51,7 @@ export function useItemWrites(refresh: () => Promise<void>) {
     async (id: string, request: ItemRequest, retry = false): Promise<ItemWriteResult> => {
       const held = requests.current.get(id)
       if (flights.current.has(id) || (retry ? held !== request : held !== undefined))
-        return { ok: false, blocked: true, reason: ITEM_WRITE_BLOCKED }
+        return { ok: false, blocked: true, reason: ITEM_WRITE_COPY.blocked }
       flights.current.add(id)
       requests.current.set(id, request)
       set(id, { state: 'sending', kind: request.kind })

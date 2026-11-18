@@ -4,6 +4,35 @@ import { Hint, InlineNotice, Switch } from '@latch/ui'
 import { api, inlineError, newRequestId } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { McpStatusWord } from '../settings/McpSettings.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    builtInRemote: '内置 Harness 只用远程地址',
+    unsupported: '这个 Harness 不接收 MCP 服务器',
+    builtInDetail:
+      '命令交给 Claude Agent、Codex 等外部 Harness；内置 Harness 要由 Latch 自己在这台 Mac 上运行命令，尚未实现。远程地址由 Latch 调用，每次都要你确认。',
+    piDetail: 'pi 的 RPC 模式不接收 MCP 服务器。',
+    settings: '在设置 › MCP 里添加',
+    settingsDetail: '这个 Agent 的会话每次启动时拿到这里列出的服务器。挂上或取下只改服务器的「用在」。',
+    empty: '没有 MCP 服务器',
+    all: '所有会话',
+    useFor: (name: string) => `${name} 用在这个 Agent`,
+  },
+  {
+    builtInRemote: 'The built-in Harness uses remote addresses',
+    unsupported: 'This Harness cannot receive MCP servers',
+    builtInDetail:
+      'External Harnesses such as Claude Agent and Codex run commands. To support commands in the built-in Harness, Latch would need to run them on this Mac. That support is not implemented yet. Latch calls remote servers and asks you each time.',
+    piDetail: 'pi’s RPC mode does not accept MCP servers.',
+    settings: 'Add in Settings › MCP',
+    settingsDetail:
+      'This Agent’s sessions receive these servers when they start. Adding or removing a server changes where that server is used.',
+    empty: 'No MCP servers',
+    all: 'All sessions',
+    useFor: (name: string) => `Use ${name} for this Agent`,
+  },
+)
 
 /** The servers an Agent's sessions get: used in every session, or chosen for it. */
 export function agentServers(servers: readonly McpServerView[], agentId: string): McpServerView[] {
@@ -13,7 +42,7 @@ export function agentServers(servers: readonly McpServerView[], agentId: string)
 /** What of Latch's servers this Agent's Harness does not get, or undefined when it gets them all. */
 export function harnessNote(harness: HarnessInfo | undefined, builtin: boolean): string | undefined {
   if (!harness || harness.skills === 'server') return undefined
-  return builtin ? '内置 Harness 只用远程地址' : '这个 Harness 不接收 MCP 服务器'
+  return builtin ? COPY.builtInRemote : COPY.unsupported
 }
 
 /**
@@ -77,26 +106,22 @@ export function McpSection({
       <header className="agent-profile-heading">
         <h3>MCP</h3>
         {note ? (
-          <Hint label={note}>
-            {builtin
-              ? '命令交给 Claude Agent、Codex 等外部 Harness；内置 Harness 要由 Latch 自己在这台 Mac 上运行命令，尚未实现。远程地址由 Latch 调用，每次都要你确认。'
-              : 'pi 的 RPC 模式不接收 MCP 服务器。'}
-          </Hint>
+          <Hint label={note}>{builtin ? COPY.builtInDetail : COPY.piDetail}</Hint>
         ) : (
-          <Hint label="在设置 › MCP 里添加">这个 Agent 的会话每次启动时拿到这里列出的服务器。挂上或取下只改服务器的「用在」。</Hint>
+          <Hint label={COPY.settings}>{COPY.settingsDetail}</Hint>
         )}
       </header>
-      {used.length === 0 && others.length === 0 && <p className="agent-mcp-empty">没有 MCP 服务器</p>}
+      {used.length === 0 && others.length === 0 && <p className="agent-mcp-empty">{COPY.empty}</p>}
       <ul className="agent-mcp-list">
         {[...used, ...others].map(server => {
           const chosen = server.scope.agents.includes(agentId)
           return (
             <li key={server.id} data-mcp-server={server.name} data-dim={!used.includes(server) || !server.enabled ? '' : undefined}>
               <span className="agent-mcp-name">{server.name}</span>
-              {server.scope.all ? <span className="agent-mcp-tag">所有会话</span> : <McpStatusWord server={server} />}
+              {server.scope.all ? <span className="agent-mcp-tag">{COPY.all}</span> : <McpStatusWord server={server} />}
               {canAttach && !server.scope.all && (
                 <Switch
-                  label={`${server.name} 用在这个 Agent`}
+                  label={COPY.useFor(server.name)}
                   checked={chosen}
                   disabled={disabled || busy !== null}
                   onCheckedChange={on => {

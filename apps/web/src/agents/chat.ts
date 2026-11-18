@@ -7,9 +7,16 @@ import {
   type TaskSummary,
 } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { rowStatus } from '../sessions.ts'
 import { personActivity, WAITS_ON_YOU } from './personWords.ts'
 import type { MyAgentTab, MyAgentTarget, ShellRoute } from '../shell/routes.ts'
+import { AGENT_SPACE_COPY } from './spaceCopy.ts'
+
+const COPY = defineCopy(
+  { silent: '没有动静', running: '运行中', stopping: '正在停止', failed: '失败' },
+  { silent: 'No activity', running: 'Running', stopping: 'Stopping', failed: 'Failed' },
+)
 
 /**
  * 通用's explicit chat belongs here too. Other sessions with its private context do not acquire that ownership.
@@ -91,9 +98,9 @@ export function generalSubmission(input: {
 
 /** The name the frame and the lists show for an owner: 通用, the Agent's own, or 已删除的 Agent once it is gone. */
 export function ownerName(agents: readonly Pick<CustomAgentSummary, 'id' | 'name'>[] | undefined, owner: string): string {
-  if (owner === GENERAL_AGENT_ID) return '通用'
+  if (owner === GENERAL_AGENT_ID) return AGENT_SPACE_COPY.general
   if (agents === undefined) return 'Agent'
-  return agents.find(agent => agent.id === owner)?.name ?? '已删除的 Agent'
+  return agents.find(agent => agent.id === owner)?.name ?? AGENT_SPACE_COPY.deleted
 }
 
 /**
@@ -106,13 +113,13 @@ export function topicWords(task: TaskSummary, frozen: boolean): string | undefin
     case 'waiting':
       return WAITS_ON_YOU.words
     case 'silent':
-      return '没有动静'
+      return COPY.silent
     case 'running':
-      return personActivity(task.live)?.words ?? '运行中'
+      return personActivity(task.live)?.words ?? COPY.running
     case 'stopping':
-      return '正在停止'
+      return COPY.stopping
     case 'failed':
-      return '失败'
+      return COPY.failed
     case 'ended':
       return status.word
     default:

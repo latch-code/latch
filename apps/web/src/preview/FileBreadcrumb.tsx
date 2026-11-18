@@ -3,11 +3,33 @@ import { Fragment, useRef, useState } from 'react'
 import { escapeSecurityText, isFileDirectoryListing, type FileContext, type FileDirectoryListing } from '@latch/protocol'
 import { Icon, Menu, MenuFooterNote, CheckGlyph, ChevronRightGlyph, InfoGlyph } from '@latch/ui'
 import { api } from '../core/api.ts'
+import { defineCopy, plural } from '../core/i18n.ts'
 import { referenceIcon } from '../fileReference.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { fileContextBody, fileRoute } from './fileContext.ts'
 
 const MENU_FILES = 100
+
+const COPY = defineCopy(
+  {
+    loading: '正在读取…',
+    unavailable: '读不到这个文件夹',
+    noOtherFiles: '这里没有其他文件',
+    firstFiles: (count: number) => plural(count, { other: '只列出前 {n} 个文件' }),
+    contents: (name: string) => `${name} 里的文件`,
+    location: '文件位置',
+    attachments: '消息附件',
+  },
+  {
+    loading: 'Loading…',
+    unavailable: 'Could not read this folder',
+    noOtherFiles: 'No other files here',
+    firstFiles: (count: number) => plural(count, { one: 'Showing only the first file', other: 'Showing only the first {n} files' }),
+    contents: (name: string) => `Files in ${name}`,
+    location: 'File location',
+    attachments: 'Message attachments',
+  },
+)
 
 /** The folders a file sits in, each with the listing its menu reads. The root's name stands for the empty path. */
 export function breadcrumbFolders(rootName: string, path: string): Array<{ name: string; dir: string }> {
@@ -49,17 +71,17 @@ function FolderCrumb({
   const files = listing && listing !== 'failed' ? listing.entries.filter(entry => entry.kind === 'file') : []
   const state =
     listing === undefined
-      ? '正在读取…'
+      ? COPY.loading
       : listing === 'failed'
-        ? '读不到这个文件夹'
+        ? COPY.unavailable
         : files.length === 0
-          ? '这里没有其他文件'
+          ? COPY.noOtherFiles
           : files.length > MENU_FILES || listing.truncated
-            ? `只列出前 ${Math.min(files.length, MENU_FILES)} 个文件`
+            ? COPY.firstFiles(Math.min(files.length, MENU_FILES))
             : undefined
   return (
     <Menu
-      label={`${name} 里的文件`}
+      label={COPY.contents(name)}
       {...(state ? { footer: <MenuFooterNote icon={InfoGlyph}>{state}</MenuFooterNote> } : {})}
       sections={[
         {
@@ -120,10 +142,10 @@ export function FileBreadcrumb({
   onOpen(path: string): void
 }) {
   return (
-    <nav className="file-crumbs" aria-label="文件位置">
+    <nav className="file-crumbs" aria-label={COPY.location}>
       {attachment ? (
         <>
-          <span className="file-crumb-plain">消息附件</span>
+          <span className="file-crumb-plain">{COPY.attachments}</span>
           <Icon icon={ChevronRightGlyph} size={12} />
         </>
       ) : (

@@ -95,11 +95,11 @@ describe('model usage in 额度与用量, prices and budgets in settings', () =>
   })
 
   /** 额度与用量's 用量 view, opened from the global entry; with `admin`, 设置 instead, where prices and budgets are set. */
-  const open = async (width: number, colorScheme: 'light' | 'dark', purpose = '汇总', admin = false) => {
+  const open = async (width: number, colorScheme: 'light' | 'dark', purpose = '汇总', admin = false, english = false) => {
     const context = await browser.newContext({
       viewport: { width, height: 900 },
       colorScheme,
-      locale: 'zh-CN',
+      locale: english ? 'en-US' : 'zh-CN',
       reducedMotion: 'reduce',
       ...(width < 768 ? { isMobile: true, hasTouch: true } : {}),
     })
@@ -107,24 +107,29 @@ describe('model usage in 额度与用量, prices and budgets in settings', () =>
     page.setDefaultTimeout(15_000)
     await page.clock.setFixedTime(NOW)
     const name = `用量浏览器 ${width} ${colorScheme} ${purpose}`
-    await enrollBrowser(page, host, { name, scopes: admin ? ['view', 'run', 'admin'] : ['view', 'run'] })
+    await enrollBrowser(page, host, { name, followSystemLanguage: english, scopes: admin ? ['view', 'run', 'admin'] : ['view', 'run'] })
     const id = host.host.security.devices.list().find(device => device.name === name)!.id
     await owner.confirmedJson(`devices/${id}`, { method: 'PATCH', body: { dataScope: 'all' } })
     await page.reload()
     await connected(page)
-    const surface = page.getByRole('dialog', { name: '额度与用量', exact: true })
+    const surface = page.getByRole('dialog', { name: english ? 'Limits and usage' : '额度与用量', exact: true })
     if (admin) return { page, id, settings: await openSettings(page), surface, usage: surface, budgets: surface }
     // A phone's entry is in the start screen's head, over the list it opens on (cae787a4).
-    await phoneStartScreen(page)
+    if (english && width < 768) {
+      await page
+        .locator('.phone-list:not([inert]) .phone-list-head')
+        .getByRole('button', { name: /^(?:New session|新建会话)$/u })
+        .click()
+    } else await phoneStartScreen(page)
     await page.locator('.usage-entry:visible').first().click()
-    await surface.getByRole('radio', { name: '用量', exact: true }).click()
+    await surface.getByRole('radio', { name: english ? 'Usage' : '用量', exact: true }).click()
     return {
       page,
       id,
       settings: surface,
       surface,
-      usage: surface.getByRole('table', { name: '用量', exact: true }),
-      budgets: surface.getByRole('region', { name: '本月预算', exact: true }),
+      usage: surface.getByRole('table', { name: english ? 'Usage' : '用量', exact: true }),
+      budgets: surface.getByRole('region', { name: english ? 'Monthly budget' : '本月预算', exact: true }),
     }
   }
   /** Chooses in one of the surface's pickers: a menu on a wide window, a sheet of radios on a phone. */
@@ -209,6 +214,57 @@ describe('model usage in 额度与用量, prices and budgets in settings', () =>
         await page.screenshot({ path: `${OUTPUT}/usage--${theme}--${width}.png`, animations: 'disabled' })
         await page.context().close()
       }
+  })
+
+  it.each([1440, 390])('shows English costs, filters and retry at %i in both themes', async width => {
+    for (const theme of ['light', 'dark'] as const) {
+      const { page, surface, usage, budgets } = await open(width, theme, 'English', false, true)
+      try {
+        const byService = async () => {
+          await surface.getByRole('button', { name: /^Group by[:：]/u }).click()
+          await page.getByRole(width < 768 ? 'radio' : 'menuitemradio', { name: 'By service', exact: true }).click()
+        }
+        await byService()
+        const primaryRow = usage.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '主服务', exact: true }) })
+        const backupRow = usage.getByRole('row').filter({ has: page.getByRole('rowheader', { name: /^备用服务/u }) })
+        await expect.poll(() => primaryRow.getByRole('cell').allTextContents()).toEqual(['1', '15', '$0.0150'])
+        await expect.poll(() => backupRow.getByRole('cell').allTextContents()).toEqual(['2', '30', 'CN¥0.0300'])
+        await budgets.getByRole('meter').first().waitFor()
+        expect(await budgets.getByRole('meter').first().getAttribute('aria-valuetext')).toBe('100% used')
+
+        const filterSource = async (option: string) => {
+          await surface.getByRole('button', { name: /^Source[:：]/u }).click()
+          await page.getByRole(width < 768 ? 'radio' : 'menuitemradio', { name: option, exact: true }).click()
+        }
+        await filterSource('Own sign-in')
+        await surface.getByText('No usage from Latch in this period', { exact: true }).waitFor()
+        await filterSource('Via Latch Gateway')
+        await primaryRow.waitFor()
+
+        let failed = false
+        await page.route('**/link/api/usage', async route => {
+          if (!failed) {
+            failed = true
+            await route.abort()
+          } else await route.continue()
+        })
+        await surface.getByRole('radio', { name: '7 days', exact: true }).click()
+        await surface.getByRole('button', { name: 'Retry', exact: true }).click()
+        await surface.getByRole('button', { name: 'Retry', exact: true }).waitFor({ state: 'hidden' })
+        await expect.poll(() => primaryRow.getByRole('cell').allTextContents()).toEqual(['1', '15', '$0.0150'])
+        await noHorizontalOverflow(page)
+        await page.screenshot({ path: `${OUTPUT}/usage--en--${theme}--${width}.png`, animations: 'disabled' })
+        await page.evaluate(() => {
+          Object.defineProperty(navigator, 'languages', { configurable: true, get: () => ['zh-CN'] })
+          window.dispatchEvent(new Event('languagechange'))
+        })
+        const chinese = page.getByRole('dialog', { name: '额度与用量', exact: true })
+        await chinese.getByRole('radio', { name: '7 天', checked: true, exact: true }).waitFor()
+        await chinese.getByRole('rowheader', { name: '主服务', exact: true }).waitFor()
+      } finally {
+        await page.context().close()
+      }
+    }
   })
 
   it('shows the budget of the service a session runs on in its composer, and opens that service’s use', async () => {

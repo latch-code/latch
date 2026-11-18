@@ -1,9 +1,21 @@
 import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { useState } from 'react'
 import { Button, Dialog, Kbd, SearchField } from '@latch/ui'
+import { defineCopy } from '../core/i18n.ts'
 import { currentShell } from '../core/shell.ts'
 import { ShortcutCaps } from '../settings/ShortcutsSettings.tsx'
 import { shortcutRows } from '../workbenchShortcuts.ts'
+
+const OVERLAY_COPY = defineCopy(
+  { title: '快捷键', close: '关闭', settingsLink: '设置 › 快捷键', search: '搜索快捷键', none: '没有匹配的快捷键' },
+  {
+    title: 'Keyboard shortcuts',
+    close: 'Close',
+    settingsLink: 'Settings › Shortcuts',
+    search: 'Search shortcuts',
+    none: 'No matching shortcuts',
+  },
+)
 
 /**
  * ⌘/ (a browser's Alt /): this client's shortcuts over the session, which keeps running behind the scrim, in two
@@ -36,22 +48,22 @@ export function ShortcutsOverlay({
       open
       size="xl"
       className="shortcuts-overlay"
-      title="快捷键"
+      title={OVERLAY_COPY.title}
       onClose={onClose}
       note={
         <span className="shortcuts-overlay-hint">
           <Kbd keys="esc" />
-          关闭
+          {OVERLAY_COPY.close}
         </span>
       }
       footer={
         onSettings && (
           <Button variant="link" onClick={onSettings}>
-            设置 › 快捷键
+            {OVERLAY_COPY.settingsLink}
           </Button>
         )
       }>
-      <SearchField className="shortcuts-overlay-search" label="搜索快捷键" value={query} onValueChange={setQuery} />
+      <SearchField className="shortcuts-overlay-search" label={OVERLAY_COPY.search} value={query} onValueChange={setQuery} />
       {columns.length ? (
         <div className="shortcuts-overlay-columns">
           {columns.map(column => (
@@ -66,7 +78,7 @@ export function ShortcutsOverlay({
           ))}
         </div>
       ) : (
-        <p className="shortcuts-overlay-none">没有匹配的快捷键</p>
+        <p className="shortcuts-overlay-none">{OVERLAY_COPY.none}</p>
       )}
     </Dialog>
   )

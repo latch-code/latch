@@ -18,12 +18,46 @@ import {
 } from '@latch/protocol'
 import { Maximize2, Minimize2 } from 'lucide-react'
 import { Button, IconButton, InlineNotice, Loading, PanelTabs, type PanelTab } from '@latch/ui'
-import { api, errorMessage, MessageError } from '../core/api.ts'
+import { api, errorMessage } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { VisibleText } from './VisibleText.tsx'
 import { ClientPluginPanel } from './ClientPluginPanel.tsx'
 import { PanelAddMenu, PanelEmpty } from '../panel/PanelChoices.tsx'
 import { panelFace, type PanelChoice, type PanelKey } from '../panel/panelTabs.ts'
 import { referenceIcon } from '../fileReference.ts'
+
+const COPY = defineCopy(
+  {
+    closeTab: (name: string) => `关闭${name}`,
+    closeFile: (name: string) => `关闭 ${name}`,
+    tabs: '会话面板',
+    restore: '还原',
+    fill: '铺满',
+    overview: '会话概要',
+    providedBy: (plugin: string) => `由 ${plugin} 提供`,
+    table: '面板表格',
+    unsupported: '扩展面板返回了不支持的内容。',
+    refresh: '刷新',
+    empty: '这个会话暂时没有面板内容。',
+    retry: '重试',
+    loading: '正在读取扩展面板…',
+  },
+  {
+    closeTab: (name: string) => `Close ${name}`,
+    closeFile: (name: string) => `Close ${name}`,
+    tabs: 'Session panels',
+    restore: 'Restore panel size',
+    fill: 'Expand panel',
+    overview: 'Session overview',
+    providedBy: (plugin: string) => `Provided by ${plugin}`,
+    table: 'Panel table',
+    unsupported: 'The extension panel returned unsupported content.',
+    refresh: 'Refresh',
+    empty: 'There is no panel content for this session yet.',
+    retry: 'Retry',
+    loading: 'Loading extension panel…',
+  },
+)
 
 /** What the panel shows: one of its tabs, an opened file, or nothing (the choices). */
 export type PanelSurface =
@@ -207,7 +241,7 @@ export function SessionPanels({
     : undefined
   const plugin = selected?.startsWith('plugin:') ? offered.find(panel => `plugin:${panel.id}` === selected) : undefined
   const empty = !activeFile && selected === undefined
-  const closable = (name: string) => (onCloseTab ? { closeLabel: `关闭${name}` } : {})
+  const closable = (name: string) => (onCloseTab ? { closeLabel: COPY.closeTab(name) } : {})
   const tabs: Array<PanelTab<string>> = [
     ...tabsOpen.map(key => {
       const panel = key.startsWith('plugin:') ? offered.find(item => `plugin:${item.id}` === key) : undefined
@@ -231,7 +265,7 @@ export function SessionPanels({
         label: name,
         icon: referenceIcon(name),
         controls: id,
-        closeLabel: `关闭 ${name}`,
+        closeLabel: COPY.closeFile(name),
         ...(tab.fresh ? { fresh: true } : {}),
       }
     }),
@@ -243,7 +277,7 @@ export function SessionPanels({
   return (
     <div className="session-panels">
       <PanelTabs
-        label="会话面板"
+        label={COPY.tabs}
         className="session-panel-strip"
         value={value}
         tabs={tabs}
@@ -257,7 +291,7 @@ export function SessionPanels({
           : {})}
         actions={
           !empty && onExpand ? (
-            <IconButton size="xs" icon={expanded ? Minimize2 : Maximize2} label={expanded ? '还原' : '铺满'} onClick={onExpand} />
+            <IconButton size="xs" icon={expanded ? Minimize2 : Maximize2} label={expanded ? COPY.restore : COPY.fill} onClick={onExpand} />
           ) : undefined
         }
       />
@@ -310,7 +344,7 @@ export function SessionPanels({
         hidden={!inBody}
         role={empty ? undefined : 'tabpanel'}
         id={id}
-        aria-label={empty ? undefined : (activeFile?.file?.name ?? plugin?.title ?? (showing('overview') ? '会话概要' : undefined))}>
+        aria-label={empty ? undefined : (activeFile?.file?.name ?? plugin?.title ?? (showing('overview') ? COPY.overview : undefined))}>
         {activeFile?.target.view === 'changes' ? (
           <FileHistoryPreview
             history={history}
@@ -338,7 +372,7 @@ export function SessionPanels({
         ) : plugin?.moduleHash && summary ? (
           <section className="plugin-panel" aria-label={plugin.title}>
             <p className="plugin-panel-caption">
-              由 <VisibleText text={plugin.pluginName} /> 提供
+              <VisibleText text={COPY.providedBy(plugin.pluginName)} />
             </p>
             <ClientPluginPanel
               key={`${plugin.id}:${plugin.moduleHash}:${summary.id}`}
@@ -415,7 +449,7 @@ function BlockContent({ block }: { block: UiPanelBlock }) {
       )
     case 'table':
       return (
-        <div className="plugin-panel-table" role="region" tabIndex={0} aria-label="面板表格">
+        <div className="plugin-panel-table" role="region" tabIndex={0} aria-label={COPY.table}>
           <table>
             <thead>
               <tr>
@@ -447,7 +481,7 @@ function BlockContent({ block }: { block: UiPanelBlock }) {
 function PluginPanel({ panel, summary }: { panel: UiPanelInfo; summary: TaskSummary }) {
   const [retry, setRetry] = useState(0)
   const key = JSON.stringify([panel.id, summary.id, summary.runId, summary.status, summary.title, retry])
-  const [result, setResult] = useState<{ key: string; document?: UiPanelDocument; error?: string } | null>(null)
+  const [result, setResult] = useState<{ key: string; document?: UiPanelDocument; error?: 'unsupported' | { cause: unknown } } | null>(null)
   useEffect(() => {
     const controller = new AbortController()
     void api<{ panel: unknown }>(`tasks/${encodeURIComponent(summary.id)}/ui-panels/${encodeURIComponent(panel.id)}`, {
@@ -455,11 +489,10 @@ function PluginPanel({ panel, summary }: { panel: UiPanelInfo; summary: TaskSumm
     })
       .then(data => {
         if (controller.signal.aborted) return
-        if (!isUiPanelDocument(data.panel)) throw new MessageError('扩展面板返回了不支持的内容。')
-        setResult({ key, document: data.panel })
+        setResult(isUiPanelDocument(data.panel) ? { key, document: data.panel } : { key, error: 'unsupported' })
       })
       .catch(cause => {
-        if (!controller.signal.aborted) setResult({ key, error: errorMessage(cause) })
+        if (!controller.signal.aborted) setResult({ key, error: { cause } })
       })
     return () => {
       controller.abort()
@@ -474,11 +507,11 @@ function PluginPanel({ panel, summary }: { panel: UiPanelInfo; summary: TaskSumm
             <VisibleText text={panel.title} />
           </h2>
           <p className="plugin-panel-caption">
-            由 <VisibleText text={panel.pluginName} /> 提供
+            <VisibleText text={COPY.providedBy(panel.pluginName)} />
           </p>
         </div>
         <Button size="xs" variant="ghost" onClick={() => setRetry(value => value + 1)}>
-          刷新
+          {COPY.refresh}
         </Button>
       </header>
       {panel.description && (
@@ -491,20 +524,20 @@ function PluginPanel({ panel, summary }: { panel: UiPanelInfo; summary: TaskSumm
           {current.document.blocks.map((block, index) => (
             <BlockContent key={index} block={block} />
           ))}
-          {current.document.blocks.length === 0 && <p className="plugin-panel-caption">这个会话暂时没有面板内容。</p>}
+          {current.document.blocks.length === 0 && <p className="plugin-panel-caption">{COPY.empty}</p>}
         </div>
       ) : current?.error ? (
         <InlineNotice
           tone="error"
           action={
             <Button size="xs" onClick={() => setRetry(value => value + 1)}>
-              重试
+              {COPY.retry}
             </Button>
           }>
-          {current.error}
+          {current.error === 'unsupported' ? COPY.unsupported : errorMessage(current.error.cause)}
         </InlineNotice>
       ) : (
-        <Loading label="正在读取扩展面板…" />
+        <Loading label={COPY.loading} />
       )}
     </section>
   )

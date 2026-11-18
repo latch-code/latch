@@ -2,36 +2,91 @@ import { useState, type ReactNode } from 'react'
 import type { HarnessInfo, HarnessMcpServer, HarnessMcpState } from '@latch/protocol'
 import { Button, CopyButton, GlobeGlyph, InlineNotice, StatusWord, TerminalGlyph, type StatusTone } from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
+import { defineCopy, plural } from '../core/i18n.ts'
 import { dateTime } from '../format.ts'
 import { IconTile, NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
+import { EXTENSION_COPY } from './extensions.ts'
 
-/** Where a person looks for a Harness's own MCP servers and it cannot say which it has. */
-export const NOT_REPORTED = '这个 Harness 没有报告'
-
-const STATE: Readonly<Record<HarnessMcpState, { tone: StatusTone; text: string }>> = {
-  ready: { tone: 'done', text: '可用' },
-  starting: { tone: 'running', text: '正在启动' },
-  'needs-login': { tone: 'warn', text: '需要登录' },
-  failed: { tone: 'failed', text: '失败' },
-  cancelled: { tone: 'neutral', text: '已取消' },
-  disabled: { tone: 'neutral', text: '已停用' },
-  'not-started': { tone: 'neutral', text: '未启动' },
-  unknown: { tone: 'neutral', text: '状态未知' },
+const TONE: Readonly<Record<HarnessMcpState, StatusTone>> = {
+  ready: 'done',
+  starting: 'running',
+  'needs-login': 'warn',
+  failed: 'failed',
+  cancelled: 'neutral',
+  disabled: 'neutral',
+  'not-started': 'neutral',
+  unknown: 'neutral',
 }
+
+const COPY = defineCopy(
+  {
+    state: {
+      ready: '可用',
+      starting: '正在启动',
+      'needs-login': '需要登录',
+      failed: '失败',
+      cancelled: '已取消',
+      disabled: '已停用',
+      'not-started': '未启动',
+      unknown: '状态未知',
+    },
+    tools: (count: number) => plural(count, { other: '{n} 个工具' }),
+    readNote: {
+      label: '读取会在空文件夹里运行 Harness',
+      detail:
+        'Latch 不读写 Harness 自己的配置文件，只显示它经协议报告的服务器。读取时 Harness 在一个空文件夹里运行，可能启动它配置的 MCP 服务器；会话里的状态随它的报告更新。这些服务器的调用不经过 Latch，没有记录。',
+    },
+    namesOnly: { label: '只有名字', detail: '开一个会话后才有状态' },
+    read: '读取',
+    reading: '正在读取…',
+    readAt: (at: string, truncated: boolean) => `读取于 ${at}${truncated ? ' · 只列出一部分' : ''}`,
+    reportAt: (at: string, truncated: boolean) => `会话报告于 ${at}${truncated ? ' · 只列出一部分' : ''}`,
+    failed: (message: string) => `读取失败：${message}`,
+    none: '没有 MCP 服务器',
+    notYet: '还没有报告',
+    replacement: '会话里用 Latch 的同名服务器',
+    login: '登录命令',
+    copyLogin: (name: string) => `复制 ${name} 的登录命令`,
+  },
+  {
+    state: {
+      ready: 'Ready',
+      starting: 'Starting',
+      'needs-login': 'Sign-in required',
+      failed: 'Failed',
+      cancelled: 'Cancelled',
+      disabled: 'Disabled',
+      'not-started': 'Not started',
+      unknown: 'Status unknown',
+    },
+    tools: (count: number) => plural(count, { one: '{n} tool', other: '{n} tools' }),
+    readNote: {
+      label: 'Read runs the Harness in an empty folder',
+      detail:
+        'Latch displays servers from the Harness protocol and leaves its configuration files untouched. Read runs the Harness in an empty folder and may start its configured MCP servers. Sessions update as the Harness reports changes. These calls happen outside Latch and are absent from its records.',
+    },
+    namesOnly: { label: 'Names only', detail: 'Open a session to see status' },
+    read: 'Read',
+    reading: 'Reading…',
+    readAt: (at: string, truncated: boolean) => `Read at ${at}${truncated ? ' · Partial list' : ''}`,
+    reportAt: (at: string, truncated: boolean) => `Session report at ${at}${truncated ? ' · Partial list' : ''}`,
+    failed: (message: string) => `Couldn’t read servers. ${message}`,
+    none: 'No MCP servers',
+    notYet: 'No report yet',
+    replacement: 'Sessions use Latch’s server with this name',
+    login: 'Sign-in command',
+    copyLogin: (name: string) => `Copy sign-in command for ${name}`,
+  },
+)
 
 /** A Harness's server in a few words: its state, with the tool count once it is up. */
 export function harnessMcpWord(server: Pick<HarnessMcpServer, 'state' | 'tools'>): { tone: StatusTone; text: string } {
-  const word = STATE[server.state]
-  return server.state === 'ready' && server.tools !== undefined ? { ...word, text: `${word.text} · ${server.tools} 个工具` } : word
+  const text = COPY.state[server.state]
+  return {
+    tone: TONE[server.state],
+    text: server.state === 'ready' && server.tools !== undefined ? `${text} · ${COPY.tools(server.tools)}` : text,
+  }
 }
-
-const READ_NOTE = {
-  label: '读取会在空文件夹里运行 Harness',
-  detail:
-    'Latch 不读写 Harness 自己的配置文件，只显示它经协议报告的服务器。读取时 Harness 在一个空文件夹里运行，可能启动它配置的 MCP 服务器；会话里的状态随它的报告更新。这些服务器的调用不经过 Latch，没有记录。',
-}
-
-const NAMES_ONLY = { label: '只有名字', detail: '开一个会话后才有状态' }
 
 /**
  * A Harness's own MCP servers, read-only: as it reports them (a session, or 读取 here), with its own login command where
@@ -72,7 +127,7 @@ export function HarnessMcpGroup({
     return (
       <SettingsGroup title={title} {...(meta ? { meta } : {})} {...(note ? { note } : {})}>
         {sourceHeading}
-        <SettingsRow dim title={NOT_REPORTED} />
+        <SettingsRow dim title={EXTENSION_COPY.notReported} />
         {children}
       </SettingsGroup>
     )
@@ -106,29 +161,27 @@ export function HarnessMcpGroup({
                 onClick={() => {
                   void read()
                 }}>
-                读取
+                {COPY.read}
               </Button>
             )}
           </span>
         )
       }
-      caption={
-        last ? `${last.via === 'read' ? '读取' : '会话报告'}于 ${dateTime(last.at)}${last.truncated ? ' · 只列出一部分' : ''}` : undefined
-      }
+      caption={last ? (last.via === 'read' ? COPY.readAt : COPY.reportAt)(dateTime(last.at), last.truncated === true) : undefined}
       note={
         <>
-          <NoteLine brief={READ_NOTE} />
+          <NoteLine brief={COPY.readNote} />
           {note}
         </>
       }>
       {sourceHeading}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {!error && own.failed && (!last || own.failed.at > last.at) && (
-        <InlineNotice tone="error">{`读取失败：${own.failed.message}`}</InlineNotice>
+        <InlineNotice tone="error">{COPY.failed(own.failed.message)}</InlineNotice>
       )}
-      {!last && <SettingsRow title={reading ? '正在读取…' : '还没有报告'} />}
-      {last?.servers.length === 0 && <SettingsRow title="没有 MCP 服务器" />}
-      {last?.namesOnly && last.servers.length > 0 && <NoteLine brief={NAMES_ONLY} />}
+      {!last && <SettingsRow title={reading ? COPY.reading : COPY.notYet} />}
+      {last?.servers.length === 0 && <SettingsRow title={COPY.none} />}
+      {last?.namesOnly && last.servers.length > 0 && <NoteLine brief={COPY.namesOnly} />}
       {last?.servers.map(server => {
         const word = harnessMcpWord(server)
         return (
@@ -136,7 +189,7 @@ export function HarnessMcpGroup({
             <SettingsRow
               leading={<IconTile icon={server.origin ? GlobeGlyph : TerminalGlyph} />}
               title={<code className="settings-mono">{server.name}</code>}
-              description={shadowed.has(server.name.toLowerCase()) ? '会话里用 Latch 的同名服务器' : server.origin}
+              description={shadowed.has(server.name.toLowerCase()) ? COPY.replacement : server.origin}
               trailing={
                 last.namesOnly && !remove ? undefined : (
                   <span className="extension-trailing">
@@ -148,9 +201,9 @@ export function HarnessMcpGroup({
             />
             {server.login && (
               <SettingsRow
-                title="登录命令"
+                title={COPY.login}
                 description={<span className="settings-mono">{server.login}</span>}
-                trailing={<CopyButton text={server.login} label={`复制 ${server.name} 的登录命令`} />}
+                trailing={<CopyButton text={server.login} label={COPY.copyLogin(server.name)} />}
               />
             )}
           </div>

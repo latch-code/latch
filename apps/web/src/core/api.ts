@@ -1,8 +1,44 @@
 import { MODEL_EFFORT, NOT_ACCEPTED_5XX, isFileMention, type FileMention } from '@latch/protocol'
 import { isAttachmentRef, type AttachmentRef, type AttachmentUpload } from '@latch/protocol'
 import type { ApiFailure, ModelRef, TaskMode, WorktreeStart } from '@latch/protocol'
+import { defineCopy } from './i18n.ts'
 import { describeFailure } from './securityCopy.ts'
 import { readStorage } from './storageKeys.ts'
+
+const COPY = defineCopy(
+  {
+    timeout: '请求超时；Mac 可能仍在处理，请同步状态后确认结果。',
+    avatarInvalid: '图片不可用。',
+    avatarResponse: '上传响应无效，请重试。',
+    avatarInterrupted: '上传连接中断，Mac 可能已经保存。',
+    attachmentSize: '附件大小不可用。',
+    attachmentMetadata: '附件元数据过长。',
+    attachmentRetry: '附件上传响应无效，请重试。',
+    attachmentInterrupted: '附件上传连接中断，请重试。',
+    uploadCancelled: '上传已取消',
+    attachmentResponse: '附件上传响应无效。',
+    fileRange: '文件读取范围不可用。',
+    noAnswer: (computer: string) => `连不上 ${computer} 上的 Latch`,
+    cancelled: '已取消',
+    pageError: (name: string) => `页面出错了（${name}）· 刷新`,
+  },
+  {
+    timeout: 'The request timed out. Your Mac may still be processing it. Sync to check the outcome.',
+    avatarInvalid: 'Image unavailable.',
+    avatarResponse: 'Invalid upload response. Try again.',
+    avatarInterrupted: 'The upload disconnected. The Mac may already have saved it.',
+    attachmentSize: 'The attachment size is unavailable.',
+    attachmentMetadata: 'The attachment metadata is too long.',
+    attachmentRetry: 'Invalid attachment upload response. Try again.',
+    attachmentInterrupted: 'The attachment upload disconnected. Try again.',
+    uploadCancelled: 'Upload cancelled',
+    attachmentResponse: 'Invalid attachment upload response.',
+    fileRange: 'The file range is unavailable.',
+    noAnswer: (computer: string) => `Can’t reach Latch on ${computer}`,
+    cancelled: 'Cancelled',
+    pageError: (name: string) => `Something went wrong (${name}) · Reload`,
+  },
+)
 
 /** An explicit server rejection; network errors remain distinguishable. `details` carries the rest of the error body. */
 export class ApiError extends Error {
@@ -10,10 +46,11 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
-    message: string,
+    message: string | (() => string),
     details: Partial<ApiFailure> = {},
   ) {
-    super(message)
+    super(typeof message === 'string' ? message : undefined)
+    if (typeof message === 'function') Object.defineProperty(this, 'message', { configurable: true, get: message })
     this.name = 'ApiError'
     this.details = details
   }
@@ -21,7 +58,8 @@ export class ApiError extends Error {
 
 export class ApiTimeoutError extends Error {
   constructor() {
-    super('请求超时；Mac 可能仍在处理，请同步状态后确认结果。')
+    super()
+    Object.defineProperty(this, 'message', { configurable: true, get: () => COPY.timeout })
     this.name = 'ApiTimeoutError'
   }
 }
@@ -44,11 +82,12 @@ export class NoAnswerError extends Error {
  */
 export class ClientError extends Error {
   constructor(
-    message: string,
+    message: string | (() => string),
     readonly reason: string,
     readonly options: { definitive?: boolean; handled?: boolean } = {},
   ) {
-    super(message)
+    super(typeof message === 'string' ? message : undefined)
+    if (typeof message === 'function') Object.defineProperty(this, 'message', { configurable: true, get: message })
     this.name = 'ClientError'
   }
   get definitive(): boolean {
@@ -65,7 +104,7 @@ export class ClientError extends Error {
  * `pnpm lint` keeps `new Error` in apps/web/src to ASCII literals (scripts/oxlint-rules.ts).
  */
 export class MessageError extends ClientError {
-  constructor(message: string, options?: ErrorOptions) {
+  constructor(message: string | (() => string), options?: ErrorOptions) {
     super(message, 'message', { definitive: false })
     this.name = 'MessageError'
     if (options && 'cause' in options) this.cause = options.cause
@@ -126,12 +165,8 @@ async function failureOf(response: Response): Promise<ApiError> {
   }
   const code = typeof failure.error === 'string' ? failure.error : 'request-failed'
   const { error: _code, message: _message, ...details } = failure
-  return new ApiError(
-    response.status,
-    code,
-    describeFailure(response.status, code, typeof failure.message === 'string' ? failure.message : '', details),
-    details,
-  )
+  const status = response.status
+  return new ApiError(status, code, () => describeFailure(status, code, '', details), details)
 }
 
 /** Cookie-authenticated API (the desktop shell adds its own header). Credentials never enter a URL or browser storage. */
@@ -215,7 +250,7 @@ export async function uploadAgentAvatar<T>(
   request: { requestId: string; baseRevision: number },
   options: { onProgress?: (loaded: number, total: number) => void; retried?: boolean } = {},
 ): Promise<T> {
-  if (!/^agt_[a-f0-9-]{36}$/u.test(agentId) || picture.size <= 0) throw new ClientError('图片不可用。', 'agent-avatar-invalid')
+  if (!/^agt_[a-f0-9-]{36}$/u.test(agentId) || picture.size <= 0) throw new ClientError(() => COPY.avatarInvalid, 'agent-avatar-invalid')
   const query = new URLSearchParams({ requestId: request.requestId, baseRevision: String(request.baseRevision) })
   const response = await new Promise<Response>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -229,13 +264,13 @@ export async function uploadAgentAvatar<T>(
     }
     xhr.onload = () => {
       if (xhr.status < 200 || xhr.status > 599 || xhr.responseText.length > 1024 * 1024) {
-        reject(new ClientError('上传响应无效，请重试。', 'agent-avatar-response', { definitive: false }))
+        reject(new ClientError(COPY.avatarResponse, 'agent-avatar-response', { definitive: false }))
         return
       }
       resolve(new Response(xhr.responseText, { status: xhr.status, headers: { 'content-type': 'application/json' } }))
     }
     xhr.onerror = () => {
-      reject(new ClientError('上传连接中断，Mac 可能已经保存。', 'agent-avatar-upload', { definitive: false }))
+      reject(new ClientError(COPY.avatarInterrupted, 'agent-avatar-upload', { definitive: false }))
     }
     xhr.ontimeout = () => {
       reject(new ApiTimeoutError())
@@ -257,13 +292,13 @@ export async function uploadAttachment(
   options: { signal?: AbortSignal; onProgress?: (loaded: number, total: number) => void; retried?: boolean } = {},
 ): Promise<AttachmentRef> {
   if (metadata.size !== file.size || file.size <= 0 || file.size > 25 * 1024 * 1024)
-    throw new ClientError('附件大小不可用。', 'attachment-too-large')
+    throw new ClientError(COPY.attachmentSize, 'attachment-too-large')
   const bytes = new TextEncoder().encode(JSON.stringify(metadata)),
     header = btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join(''))
       .replaceAll('+', '-')
       .replaceAll('/', '_')
       .replace(/=+$/u, '')
-  if (header.length > 4096) throw new ClientError('附件元数据过长。', 'attachment-invalid')
+  if (header.length > 4096) throw new ClientError(COPY.attachmentMetadata, 'attachment-invalid')
   const response = await new Promise<Response>((resolve, reject) => {
     const xhr = new XMLHttpRequest(),
       abort = () => xhr.abort()
@@ -279,14 +314,14 @@ export async function uploadAttachment(
     xhr.onload = () => {
       cleanup()
       if (xhr.status < 200 || xhr.status > 599 || xhr.responseText.length > 65_536) {
-        reject(new ClientError('附件上传响应无效，请重试。', 'attachment-response', { definitive: false }))
+        reject(new ClientError(COPY.attachmentRetry, 'attachment-response', { definitive: false }))
         return
       }
       resolve(new Response(xhr.responseText, { status: xhr.status, headers: { 'content-type': 'application/json' } }))
     }
     xhr.onerror = () => {
       cleanup()
-      reject(new ClientError('附件上传连接中断，请重试。', 'attachment-upload', { definitive: false }))
+      reject(new ClientError(COPY.attachmentInterrupted, 'attachment-upload', { definitive: false }))
     }
     xhr.ontimeout = () => {
       cleanup()
@@ -294,19 +329,19 @@ export async function uploadAttachment(
     }
     xhr.onabort = () => {
       cleanup()
-      reject(new DOMException('上传已取消', 'AbortError'))
+      reject(new DOMException(COPY.uploadCancelled, 'AbortError'))
     }
     options.signal?.addEventListener('abort', abort, { once: true })
     if (options.signal?.aborted) {
       cleanup()
-      reject(new DOMException('上传已取消', 'AbortError'))
+      reject(new DOMException(COPY.uploadCancelled, 'AbortError'))
       return
     }
     xhr.send(file)
   })
   if (response.ok) {
     const value = (await response.json()) as { attachment?: unknown }
-    if (!isAttachmentRef(value.attachment)) throw new ClientError('附件上传响应无效。', 'attachment-response', { definitive: false })
+    if (!isAttachmentRef(value.attachment)) throw new ClientError(COPY.attachmentResponse, 'attachment-response', { definitive: false })
     return value.attachment
   }
   const failure = await failureOf(response)
@@ -334,7 +369,7 @@ export function fileBytes(
     || (start !== undefined && (!Number.isSafeInteger(start) || start < 0))
     || (end !== undefined && (!Number.isSafeInteger(end) || end < (start ?? 0)))
   )
-    return Promise.reject(new ClientError('文件读取范围不可用。', 'file-range'))
+    return Promise.reject(new ClientError(COPY.fileRange, 'file-range'))
   return api<ArrayBuffer>(source === 'attachment' ? `attachments/${handle}/content` : `files/${handle}`, {
     response: 'bytes',
     ...(etag && /^"[a-f0-9]{32}"$/u.test(etag) ? { ifMatch: etag } : {}),
@@ -359,15 +394,15 @@ const logged = new WeakSet<object>()
  */
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiError || error instanceof ApiTimeoutError || error instanceof ClientError) return error.message
-  if (error instanceof NoAnswerError) return `连不上 ${computer} 上的 Latch`
+  if (error instanceof NoAnswerError) return COPY.noAnswer(computer)
   const name = error instanceof Error || error instanceof DOMException ? error.name : ''
   if (name === 'ClipboardError') return (error as Error).message
-  if (name === 'AbortError') return '已取消'
+  if (name === 'AbortError') return COPY.cancelled
   if (error !== null && typeof error === 'object' && !logged.has(error)) {
     logged.add(error)
     console.error('[Latch] 页面出错', error)
   } else if (error === null || typeof error !== 'object') console.error('[Latch] 页面出错', error)
-  return `页面出错了（${/^[A-Za-z][A-Za-z0-9_]{0,39}$/u.test(name) ? name : 'Error'}）· 刷新`
+  return COPY.pageError(/^[A-Za-z][A-Za-z0-9_]{0,39}$/u.test(name) ? name : 'Error')
 }
 
 /**

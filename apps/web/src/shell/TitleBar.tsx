@@ -1,3 +1,4 @@
+import { SHELL_COPY } from './copy.ts'
 import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { ArrowLeft } from 'lucide-react'
 import {
@@ -24,6 +25,16 @@ import { ShellUpdateCheck } from './UpdateCheck.tsx'
 import { WorkbenchPanes, workbenchPanes } from './WorkbenchPanes.tsx'
 import { WorkbenchComputer } from './WorkbenchNav.tsx'
 import type { ShellState } from './useShellLayout.tsx'
+import { defineCopy, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    waiting: (count: number) => `${count} 项等你处理`,
+  },
+  {
+    waiting: (count: number) => plural(count, { one: '{n} item needs your attention', other: '{n} items need your attention' }),
+  },
+)
 
 /**
  * The 52px row spanning the window. Its left zone holds the traffic lights' inset and ◧, with 新建会话 once the panel is
@@ -77,7 +88,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
           ? !workbenchPanes(shell).left && (
               <IconButton
                 ref={sidebarToggle}
-                label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
+                label={sidebarCollapsed ? SHELL_COPY.expandSidebar : SHELL_COPY.collapseSidebar}
                 icon={PanelLeftGlyph}
                 shortcut={desktop ? '⌘B' : 'Alt B'}
                 aria-controls="session-navigation"
@@ -89,7 +100,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
             )
           : sessions && (
               <IconButton
-                label="打开会话列表"
+                label={SHELL_COPY.openSessions}
                 icon={PanelLeftGlyph}
                 aria-controls="session-navigation"
                 aria-expanded={drawer.open}
@@ -110,10 +121,16 @@ export function TitleBar({ shell }: { shell: ShellState }) {
             {placed && shell.space === 'agents' ? (
               <ShellNewAgent shell={shell} compact />
             ) : sessions ? (
-              <IconButton label="新建会话" data-space-primary="" icon={NewSessionGlyph} pressed={route.start === true} onClick={startNew} />
+              <IconButton
+                label={SHELL_COPY.startSession}
+                data-space-primary=""
+                icon={NewSessionGlyph}
+                pressed={route.start === true}
+                onClick={startNew}
+              />
             ) : (
               <IconButton
-                label="返回会话"
+                label={SHELL_COPY.backToSession}
                 icon={ArrowLeft}
                 onClick={() => {
                   goEntry('sessions')
@@ -122,7 +139,7 @@ export function TitleBar({ shell }: { shell: ShellState }) {
             )}
             {approvals > 0 && (
               <IconButton
-                label={`${approvals} 项等你处理`}
+                label={COPY.waiting(approvals)}
                 icon={InboxGlyph}
                 badge={<Count tone="warn" value={approvals} from={approvalsBefore} />}
                 onClick={openApprovals}
@@ -154,7 +171,8 @@ export function TitleBar({ shell }: { shell: ShellState }) {
         <div className="titlebar-foot">
           {shell.entries.includes('settings') && (
             <IconButton
-              label="设置"
+              label={SHELL_COPY.settings}
+              data-testid="open-settings"
               icon={SettingsGlyph}
               shortcut={shortcutKeys('settings', desktop !== null) ?? undefined}
               onClick={() => shell.goEntry('settings')}
@@ -194,7 +212,8 @@ function BoardTitleBar({ shell }: { shell: ShellState }) {
       <div className="titlebar-views">
         {shell.entries.includes('settings') && (
           <IconButton
-            label="设置"
+            label={SHELL_COPY.settings}
+            data-testid="open-settings"
             icon={SettingsGlyph}
             shortcut={shortcutKeys('settings', desktop !== null) ?? undefined}
             onClick={() => shell.goEntry('settings')}

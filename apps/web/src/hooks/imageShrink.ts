@@ -1,3 +1,19 @@
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    animated: (value1: string) => `动图超过 ${value1}，缩小会丢掉动画`,
+    unreadable: (value1: string) => `超过 ${value1}，这台设备读不了这种图片`,
+    cannotShrink: (value1: string) => `超过 ${value1}，这台设备无法缩小图片`,
+    stillOver: (value1: string) => `缩小后仍超过 ${value1}`,
+  },
+  {
+    animated: (value1: string) => `Animated image exceeds ${value1}. Resizing would remove animation.`,
+    unreadable: (value1: string) => `Over ${value1}. This device cannot read this image type.`,
+    cannotShrink: (value1: string) => `Over ${value1}. This device cannot resize this image.`,
+    stillOver: (value1: string) => `Still over ${value1} after resizing`,
+  },
+)
 /** The Host's pixel cap for an image (docs/ATTACHMENTS.md); the capabilities report only bytes. */
 export const IMAGE_PIXELS = 40_000_000
 /** A sensible longest side for what a model reads; larger only costs bytes. */
@@ -130,12 +146,12 @@ export class ShrinkRefusal extends Error {}
 export async function shrinkImage(file: File, limit: number, signal: AbortSignal, limitText: string): Promise<File> {
   const head = new Uint8Array(await file.arrayBuffer())
   signal.throwIfAborted()
-  if (animated(head)) throw new ShrinkRefusal(`动图超过 ${limitText}，缩小会丢掉动画`)
+  if (animated(head)) throw new ShrinkRefusal(COPY.animated(limitText))
   let bitmap: ImageBitmap
   try {
     bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
   } catch {
-    throw new ShrinkRefusal(`超过 ${limitText}，这台设备读不了这种图片`)
+    throw new ShrinkRefusal(COPY.unreadable(limitText))
   }
   try {
     signal.throwIfAborted()
@@ -144,7 +160,7 @@ export async function shrinkImage(file: File, limit: number, signal: AbortSignal
     let alpha: boolean | undefined
     for (let count = 1; ; count++) {
       const target = surface(attempt.width, attempt.height)
-      if (!target) throw new ShrinkRefusal(`超过 ${limitText}，这台设备无法缩小图片`)
+      if (!target) throw new ShrinkRefusal(COPY.cannotShrink(limitText))
       target.context.drawImage(bitmap, 0, 0, attempt.width, attempt.height)
       if (alpha === undefined) {
         alpha = !opaqueSource && hasAlpha(target.context, attempt.width, attempt.height)
@@ -158,10 +174,10 @@ export async function shrinkImage(file: File, limit: number, signal: AbortSignal
         blob = await target.encode('image/png', 1)
         signal.throwIfAborted()
       }
-      if (!blob) throw new ShrinkRefusal(`超过 ${limitText}，这台设备无法缩小图片`)
+      if (!blob) throw new ShrinkRefusal(COPY.cannotShrink(limitText))
       if (blob.size <= limit) return new File([blob], shrunkName(file.name, attempt.type), { type: attempt.type })
       const next = nextAttempt(attempt, blob.size, limit, count)
-      if (!next) throw new ShrinkRefusal(`缩小后仍超过 ${limitText}`)
+      if (!next) throw new ShrinkRefusal(COPY.stillOver(limitText))
       attempt = next
     }
   } finally {

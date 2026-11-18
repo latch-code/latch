@@ -19,6 +19,51 @@ import { saveOfferedPreset } from '../core/offeredHarness.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { harnessName } from '../composerChoice.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    readFailed: '没有读到。',
+    readAgain: '重新读取',
+    refresh: '刷新模型列表',
+    readList: (value1: string) => `读取 ${value1} 的模型列表`,
+    readingPrefix: '正在读取 ',
+    readingSuffix: ' 的模型列表…',
+    notSignedIn: '还没登录',
+    failedPrefix: '没有读到：',
+    readRisk: (value1: string) => `读取要启动 ${value1}，会加载你的扩展或插件、运行会话钩子，所以点了才读`,
+    enterMenu: '填写模型 ID…',
+    back: '返回',
+    enterTitle: '填写模型 ID',
+    modelId: '模型 ID',
+    example: '例如 provider/model-name',
+    sendUntouched: (value1: string) => `开始时原样发给 ${value1}`,
+    addUse: '添加并选用',
+    entered: '已填写的模型 ID',
+    remove: (value1: string) => `移除 ${value1}`,
+  },
+  {
+    readFailed: 'Could not read the list.',
+    readAgain: 'Read again',
+    refresh: 'Refresh model list',
+    readList: (value1: string) => `Read model list from ${value1}`,
+    readingPrefix: 'Reading ',
+    readingSuffix: '’s model list…',
+    notSignedIn: 'Signed out',
+    failedPrefix: 'Could not read: ',
+    readRisk: (value1: string) =>
+      `Reading starts ${value1} and loads your extensions or plugins and runs session hooks. It happens when you ask to read.`,
+    enterMenu: 'Enter model ID…',
+    back: 'Back',
+    enterTitle: 'Enter model ID',
+    modelId: 'Model ID',
+    example: 'For example, provider/model-name',
+    sendUntouched: (value1: string) => `Sent as entered to ${value1} when the session starts`,
+    addUse: 'Add and use',
+    entered: 'Entered model IDs',
+    remove: (value1: string) => `Remove ${value1}`,
+  },
+)
 
 /**
  * Harnesses this page is asking to read by selection. Once the read ends, the Host's last read says whether another is
@@ -159,31 +204,34 @@ export function CatalogueRows({
       await onRead?.()
     }
   }
-  const failed = error || (read?.last && !read.last.ok ? (read.last.message ?? '没有读到。') : '')
+  const failed = error || (read?.last && !read.last.ok ? (read.last.message ?? COPY.readFailed) : '')
   const needsLogin = !error && readNeedsLogin(harness)
-  const label = failed ? '重新读取' : catalogue ? '刷新模型列表' : `读取 ${name} 的模型列表`
+  const label = failed ? COPY.readAgain : catalogue ? COPY.refresh : COPY.readList(name)
   return (
     <>
-      {running && <p className="model-note">正在读取 {name} 的模型列表…</p>}
+      {running && (
+        <p className="model-note">
+          {COPY.readingPrefix}
+          {name}
+          {COPY.readingSuffix}
+        </p>
+      )}
       {/* A missing login is a state, said above the composer with the way to log in; on a service's model it is not in the way. */}
       {!running && needsLogin && ownModels && (
         <p className="model-note" data-tone="warn">
           <Icon icon={AlertGlyph} size={12} />
-          还没登录
+          {COPY.notSignedIn}
         </p>
       )}
       {!running && failed && !needsLogin && (
         <p className="model-note" data-tone="error">
-          没有读到：
+          {COPY.failedPrefix}
           <VisibleText text={failed} />
         </p>
       )}
       {((read && canRun) || (harness.offer && ready)) && !running && (
         // Why a read waits for the press is the row's tooltip: it starts the Harness, which loads the person's own code.
-        <Tooltip
-          content={
-            read?.when === 'request' && !catalogue ? `读取要启动 ${name}，会加载你的扩展或插件、运行会话钩子，所以点了才读` : undefined
-          }>
+        <Tooltip content={read?.when === 'request' && !catalogue ? COPY.readRisk(name) : undefined}>
           <MenuFooterLink
             icon={RefreshGlyph}
             chevron={false}
@@ -196,7 +244,7 @@ export function CatalogueRows({
       )}
       {hasModels && canRun && (
         <MenuFooterLink icon={TextCursorInput} chevron={false} onClick={onTypeModel}>
-          填写模型 ID…
+          {COPY.enterMenu}
         </MenuFooterLink>
       )}
     </>
@@ -248,20 +296,20 @@ export function TypedModelsPanel({
   return (
     <div className="permission-list typed-models">
       <header className="permission-list-head">
-        <IconButton size="xs" icon={ChevronLeftGlyph} label="返回" onClick={onBack} />
-        <span>填写模型 ID</span>
+        <IconButton size="xs" icon={ChevronLeftGlyph} label={COPY.back} onClick={onBack} />
+        <span>{COPY.enterTitle}</span>
       </header>
       {/* Not a form: the composer around it is one, and its submit would reach the composer too. */}
       <div className="typed-models-form">
         <TextField
-          label="模型 ID"
+          label={COPY.modelId}
           value={value}
-          placeholder="例如 provider/model-name"
+          placeholder={COPY.example}
           autoComplete="off"
           spellCheck={false}
           maxLength={256}
           {...(error ? { error } : {})}
-          hint={`开始时原样发给 ${name}`}
+          hint={COPY.sendUntouched(name)}
           onChange={event => {
             setValue(event.target.value)
           }}
@@ -279,18 +327,18 @@ export function TypedModelsPanel({
           onClick={() => {
             void add()
           }}>
-          添加并选用
+          {COPY.addUse}
         </Button>
       </div>
       {typed.length > 0 && (
-        <ul className="typed-models-list" aria-label="已填写的模型 ID">
+        <ul className="typed-models-list" aria-label={COPY.entered}>
           {typed.map(model => (
             <li key={model}>
               <VisibleText text={model} />
               <IconButton
                 size="xs"
                 icon={CloseGlyph}
-                label={`移除 ${model}`}
+                label={COPY.remove(model)}
                 disabled={busy}
                 onClick={() => {
                   void save(typed.filter(item => item !== model))

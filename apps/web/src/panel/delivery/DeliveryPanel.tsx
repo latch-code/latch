@@ -45,7 +45,7 @@ import {
   GROUP_TITLE,
   hookExcerpt,
   hooksDetail,
-  HOOKS_UNLISTED,
+  hooksUnlisted,
   operationNote,
   primaryAction,
   nothingToMerge,
@@ -64,6 +64,216 @@ import { PullRequestSection, prInput, type PrForm } from './PullRequestSection.t
 import { usePullRequest } from './usePullRequest.ts'
 import { useDelivery, type DeliveryFailure, type UnknownWrite } from './useDelivery.ts'
 import { needsRecheck, usePersonEditAt } from '../../preview/personEdits.ts'
+import { defineCopy, formatNumber, plural } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    exitCode: (code: number) => `退出码 ${formatNumber(code)}`,
+    unknownCommit: '提交结果未知',
+    unknownPush: '推送结果未知',
+    unknownDetail: (kind: 'commit' | 'push') => {
+      const action = kind === 'commit' ? '提交' : '推送'
+      const fresh =
+        kind === 'commit' ? '新的提交只提交那时暂存的文件，第一次已经提交的不会再提交一次。' : '新的推送照常推送当前分支，从不强制。'
+      return `没有收到答复，这台电脑可能已经${action}。重试沿用同一请求，电脑会先核对结果，不会${action}两次。放弃这次结果只在这个页面上放下它，之后可以发起新的请求；电脑上的记录仍是结果未知。${fresh}`
+    },
+    committed: '已提交 ',
+    pushedTo: '已推送到 ',
+    pulled: (count: number) => `已拉取 ${formatNumber(count)} 个提交 · `,
+    fileCount: (count: number) => `${formatNumber(count)} 个文件`,
+    more: (count: number) => `还有 ${formatNumber(count)} 个`,
+    notStaged: (count: number) => `${formatNumber(count)} 个文件未暂存`,
+    staged: (count: number) => `${formatNumber(count)} 个文件已暂存`,
+    aheadBehind: (ahead: number, behind: number) => `领先 ${formatNumber(ahead)} · 落后 ${formatNumber(behind)}`,
+    stage: '暂存',
+    commit: '提交',
+    push: '推送',
+    steps: '交付步骤',
+    pushHook: '推送前的钩子没通过',
+    commitHook: '提交钩子没通过',
+    exit: (code: number) => ` · 退出码 ${formatNumber(code)}`,
+    hookOutput: '钩子输出',
+    notPushed: '没有推送',
+    notCommitted: '没有生成提交，暂存保持不变',
+    chat: '加入对话',
+    remoteRejected: '远端钩子拒绝了推送',
+    remoteOutput: '远端输出',
+    commitFailed: '提交失败',
+    gitOutput: 'Git 输出',
+    labelExit: (value1: string, code: number) => `${value1} · 退出码 ${formatNumber(code)}`,
+    copyPull: '复制拉取命令',
+    checking: '核对中…',
+    retrySame: '重试同一请求',
+    abandon: '放弃这次结果',
+    creatingPR: '创建 PR 中…',
+    titleFirst: '先写标题',
+    createPR: '创建 PR',
+    recheck: '需要复验',
+    recheckInfo: '之后你编辑过文件，这次的结果不包括那些修改。',
+    offline: (value1: string | number) => `${value1} 不在线 · 恢复后再交付`,
+    readOnly: '这个会话只读',
+    agentBusy: 'Agent 正在改这个文件夹',
+    fetched: '已获取',
+    upToDate: '已是最新',
+    aborted: '已中止',
+    upstreamSet: ' · 已设为上游',
+    commitMessage: '提交信息',
+    skipOnce: '这次不运行提交钩子',
+    runHooks: '运行仓库钩子',
+    skipHooks: '跳过钩子',
+    noFiles: '这台设备看不到会话文件夹里的文件',
+    pushing: '推送中…',
+    committing: '提交中…',
+    messageFirst: '先写提交信息',
+    commitStaged: '提交已暂存的',
+    readFailed: '读不到仓库',
+    retry: '重试',
+    reading: '正在读取…',
+    checkFailed: '检查失败',
+    checkingStatus: '检查进行中',
+    checkPassed: '检查通过',
+    noChanges: '没有未提交的改动',
+    unstageAll: '全部取消暂存',
+    stageGroup: (value1: string | number) => `暂存全部${value1}`,
+    noneStaged: '还没有暂存的文件',
+    unstage: '取消暂存',
+    stageAll: '全部暂存',
+    lastFetch: (value1: string | number) => `最近获取 ${value1}`,
+    neverFetched: '还没有获取过，落后数未知',
+    upstreamDetail: (value1: string | number, value2: string | number) => `${value1} 上游：${value2}`,
+    upstreamOtherBranch: '上游是另一个分支',
+    abortTitle: (value1: string | number) => `中止${value1}？`,
+    abortRebase: '回到这次变基开始之前。已解决的冲突、停下的这一步里还没提交的修改和变基带来的改动都会丢失，不能撤销。',
+    abortInfo: (value1: string | number) => `回到这次${value1}开始之前。已解决的冲突和它带来的改动都会丢失，不能撤销。`,
+    abortConfirm: (value1: string | number) => `中止${value1}`,
+    staging: '暂存中…',
+    onlyStaged: '只提交已暂存的',
+    unstagedWarning: (count: number) => `未暂存的 ${formatNumber(count)} 个文件不提交。`,
+    aheadUpstream: (value1: string, count: number) => `领先 ${value1} ${formatNumber(count)} 个提交`,
+    notRemote: '这个分支还不在远端',
+    notPushedYet: '已提交，未推送',
+    sync: '同步',
+    fetching: '获取中…',
+    fetch: '获取',
+    pulling: '拉取中…',
+    fastForward: '只快进；分叉时不合并也不变基',
+    pullCount: (count: number) => `拉取 ${formatNumber(count)} 个提交`,
+    pull: '拉取',
+    operationConflicts: (value1: string | number) => `${value1}有冲突`,
+    operationRunning: (value1: string | number) => `${value1}进行中`,
+    resolveAgent: '交给 Agent 解决',
+    aborting: '中止中…',
+    abort: '中止',
+    diverged: '与上游已分叉',
+    handOff: '交给 Agent',
+    leave: '保持原样',
+  },
+  {
+    exitCode: (code: number) => `Exit code ${formatNumber(code)}`,
+    unknownCommit: 'Commit outcome unknown',
+    unknownPush: 'Push outcome unknown',
+    unknownDetail: (kind: 'commit' | 'push') => {
+      const action = kind === 'commit' ? 'commit' : 'push'
+      const fresh =
+        kind === 'commit'
+          ? 'A new commit includes the files staged then. Files already committed won’t be committed a second time.'
+          : 'A new push sends the current branch, without forcing.'
+      return `No reply arrived. The computer may already have completed the ${action}. Retrying reuses the request and checks the outcome first. Stopping the wait dismisses the outcome on this page. The computer still records the outcome as unknown. ${fresh}`
+    },
+    committed: 'Committed ',
+    pushedTo: 'Pushed to ',
+    pulled: (count: number) => plural(count, { one: 'Pulled {n} commit · ', other: 'Pulled {n} commits · ' }),
+    fileCount: (count: number) => plural(count, { one: '{n} file', other: '{n} files' }),
+    more: (count: number) => `${formatNumber(count)} more`,
+    notStaged: (count: number) => plural(count, { one: '{n} file unstaged', other: '{n} files unstaged' }),
+    staged: (count: number) => plural(count, { one: '{n} file staged', other: '{n} files staged' }),
+    aheadBehind: (ahead: number, behind: number) => `Ahead ${formatNumber(ahead)} · Behind ${formatNumber(behind)}`,
+    stage: 'Stage',
+    commit: 'Commit',
+    push: 'Push',
+    steps: 'Delivery steps',
+    pushHook: 'Pre-push hook failed',
+    commitHook: 'Commit hook failed',
+    exit: (code: number) => ` · Exit code ${formatNumber(code)}`,
+    hookOutput: 'Hook output',
+    notPushed: 'Nothing was pushed',
+    notCommitted: 'No commit was created. Staging is unchanged.',
+    chat: 'Add to chat',
+    remoteRejected: 'Remote hook rejected the push',
+    remoteOutput: 'Remote output',
+    commitFailed: 'Commit failed',
+    gitOutput: 'Git output',
+    labelExit: (value1: string, code: number) => `${value1} · Exit code ${formatNumber(code)}`,
+    copyPull: 'Copy pull command',
+    checking: 'Checking…',
+    retrySame: 'Retry same request',
+    abandon: 'Stop waiting for this outcome',
+    creatingPR: 'Creating PR…',
+    titleFirst: 'Enter a title first',
+    createPR: 'Create PR',
+    recheck: 'Needs recheck',
+    recheckInfo: 'You edited files afterward. This result doesn’t include those changes.',
+    offline: (value1: string | number) => `${value1} is offline · Resume delivery after reconnecting`,
+    readOnly: 'This session is read only',
+    agentBusy: 'Agent is changing this folder',
+    fetched: 'Fetched',
+    upToDate: 'Up to date',
+    aborted: 'Aborted',
+    upstreamSet: ' · Set as upstream',
+    commitMessage: 'Commit message',
+    skipOnce: 'Skip commit hooks this time',
+    runHooks: 'Run repository hooks',
+    skipHooks: 'Skip hooks',
+    noFiles: 'This device can’t see the session’s files',
+    pushing: 'Pushing…',
+    committing: 'Committing…',
+    messageFirst: 'Enter a commit message first',
+    commitStaged: 'Commit staged changes',
+    readFailed: 'Couldn’t read repository',
+    retry: 'Retry',
+    reading: 'Reading…',
+    checkFailed: 'Checks failed',
+    checkingStatus: 'Checks in progress',
+    checkPassed: 'Checks passed',
+    noChanges: 'No uncommitted changes',
+    unstageAll: 'Unstage all',
+    stageGroup: (value1: string | number) => `Stage all ${value1}`,
+    noneStaged: 'No files staged yet',
+    unstage: 'Unstage',
+    stageAll: 'Stage all',
+    lastFetch: (value1: string | number) => `Last fetched ${value1}`,
+    neverFetched: 'No fetch yet · Behind count unknown',
+    upstreamDetail: (value1: string | number, value2: string | number) => `${value1} Upstream: ${value2}`,
+    upstreamOtherBranch: 'Upstream is a different branch',
+    abortTitle: (value1: string | number) => `Abort ${value1}?`,
+    abortRebase:
+      'Return to the state before this rebase. Resolved conflicts, uncommitted edits in the current step, and changes from the rebase will be lost permanently.',
+    abortInfo: (value1: string | number) =>
+      `Return to the state before this ${value1}. Resolved conflicts and changes from the operation will be lost permanently.`,
+    abortConfirm: (value1: string | number) => `Abort ${value1}`,
+    staging: 'Staging…',
+    onlyStaged: 'Commit staged files only',
+    unstagedWarning: (count: number) => `The ${formatNumber(count)} unstaged files will stay out of the commit.`,
+    aheadUpstream: (value1: string, count: number) => `${plural(count, { one: '{n} commit', other: '{n} commits' })} ahead of ${value1}`,
+    notRemote: 'This branch isn’t on the remote yet',
+    notPushedYet: 'Committed · Not pushed',
+    sync: 'Sync',
+    fetching: 'Fetching…',
+    fetch: 'Fetch',
+    pulling: 'Pulling…',
+    fastForward: 'Fast-forward only · Diverged branches aren’t merged or rebased',
+    pullCount: (count: number) => `Pull ${plural(count, { one: '{n} commit', other: '{n} commits' })}`,
+    pull: 'Pull',
+    operationConflicts: (value1: string | number) => `${value1} has conflicts`,
+    operationRunning: (value1: string | number) => `${value1} in progress`,
+    resolveAgent: 'Ask agent to resolve',
+    aborting: 'Aborting…',
+    abort: 'Abort',
+    diverged: 'Diverged from upstream',
+    handOff: 'Ask agent',
+    leave: 'Keep as is',
+  },
+)
 
 const ACTIVE = new Set(['running', 'waiting-approval'])
 const GROUPS: readonly FileGroup[] = ['staged', 'unstaged', 'untracked', 'conflicted']
@@ -91,13 +301,24 @@ export interface DeliveryPanelProps {
 }
 
 const STEP_ORDER = ['stage', 'commit', 'push', 'pr'] as const
-const STEP_WORD = { stage: '暂存', commit: '提交', push: '推送', pr: 'PR' } as const
+const STEP_WORD = {
+  get stage() {
+    return COPY.stage
+  },
+  get commit() {
+    return COPY.commit
+  },
+  get push() {
+    return COPY.push
+  },
+  pr: 'PR',
+} as const
 
 /** 暂存 › 提交 › 推送 › PR: the steps before the current one are done. */
 function Steps({ step }: { step: DeliveryStep }) {
   const at = step === 'done' ? STEP_ORDER.length : STEP_ORDER.indexOf(step)
   return (
-    <ol className="delivery-steps" aria-label="交付步骤">
+    <ol className="delivery-steps" aria-label={COPY.steps}>
       {STEP_ORDER.map((name, index) => (
         <li
           key={name}
@@ -115,7 +336,7 @@ function Steps({ step }: { step: DeliveryStep }) {
 /** A hook that refused: its name, exit code and the end of its output, which can go into the draft. */
 function HookCard({ failure, onCompose }: { failure: DeliveryFailure; onCompose?: ((text: string) => void) | undefined }) {
   const push = failure.kind === 'push'
-  const title = push ? '推送前的钩子没通过' : '提交钩子没通过'
+  const title = push ? COPY.pushHook : COPY.commitHook
   return (
     <section className="delivery-card" data-tone="red" aria-label={title}>
       <header className="delivery-card-head">
@@ -123,12 +344,12 @@ function HookCard({ failure, onCompose }: { failure: DeliveryFailure; onCompose?
         <strong>{title}</strong>
         <span className="delivery-card-meta">
           {failure.hook ?? (push ? 'pre-push' : 'pre-commit')}
-          {failure.exitCode !== undefined && ` · 退出码 ${failure.exitCode}`}
+          {failure.exitCode !== undefined && COPY.exit(failure.exitCode)}
         </span>
       </header>
-      {failure.tail ? <Output text={failure.tail} label="钩子输出" /> : null}
+      {failure.tail ? <Output text={failure.tail} label={COPY.hookOutput} /> : null}
       <div className="delivery-card-foot">
-        <span className="delivery-card-note">{push ? '没有推送' : '没有生成提交，暂存保持不变'}</span>
+        <span className="delivery-card-note">{push ? COPY.notPushed : COPY.notCommitted}</span>
         {onCompose && (
           <Button
             size="xs"
@@ -137,7 +358,7 @@ function HookCard({ failure, onCompose }: { failure: DeliveryFailure; onCompose?
             onClick={() => {
               onCompose(hookExcerpt({ ...failure, push }))
             }}>
-            加入对话
+            {COPY.chat}
           </Button>
         )}
       </div>
@@ -149,25 +370,25 @@ function FailureLine({ failure, state }: { failure: DeliveryFailure; state?: Git
   const copy = failureCopy(failure.code, state?.gitOperation)
   if (failure.code === 'git-push-remote-rejected')
     return (
-      <section className="delivery-card" data-tone="red" aria-label="远端钩子拒绝了推送">
+      <section className="delivery-card" data-tone="red" aria-label={COPY.remoteRejected}>
         <header className="delivery-card-head">
           <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-          <strong>远端钩子拒绝了推送</strong>
+          <strong>{COPY.remoteRejected}</strong>
         </header>
-        {failure.remoteLines?.length ? <Output text={failure.remoteLines.join('\n')} label="远端输出" /> : null}
+        {failure.remoteLines?.length ? <Output text={failure.remoteLines.join('\n')} label={COPY.remoteOutput} /> : null}
       </section>
     )
   if (failure.code === 'git-commit-failed' && failure.tail)
     return (
-      <section className="delivery-card" data-tone="red" aria-label="提交失败">
+      <section className="delivery-card" data-tone="red" aria-label={COPY.commitFailed}>
         <header className="delivery-card-head">
           <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-          <strong>提交失败</strong>
-          {failure.exitCode !== undefined && <span className="delivery-card-meta">退出码 {failure.exitCode}</span>}
+          <strong>{COPY.commitFailed}</strong>
+          {failure.exitCode !== undefined && <span className="delivery-card-meta">{COPY.exitCode(failure.exitCode)}</span>}
         </header>
-        <Output text={failure.tail} label="Git 输出" />
+        <Output text={failure.tail} label={COPY.gitOutput} />
         <div className="delivery-card-foot">
-          <span className="delivery-card-note">没有生成提交，暂存保持不变</span>
+          <span className="delivery-card-note">{COPY.notCommitted}</span>
         </div>
       </section>
     )
@@ -179,7 +400,7 @@ function FailureLine({ failure, state }: { failure: DeliveryFailure; state?: Git
     )
   const label =
     failure.code === 'git-push-failed' && failure.exitCode !== undefined
-      ? `${copy.label} · 退出码 ${failure.exitCode}`
+      ? COPY.labelExit(copy.label, failure.exitCode)
       : failure.code === 'git-repo-config' && failure.repoKind
         ? repoConfigReason(failure.repoKind)
         : copy.label
@@ -194,7 +415,7 @@ function FailureLine({ failure, state }: { failure: DeliveryFailure; state?: Git
             action: (
               <span className="delivery-command">
                 <code>{PULL_COMMAND}</code>
-                <CopyButton text={PULL_COMMAND} label="复制拉取命令" size="xs" />
+                <CopyButton text={PULL_COMMAND} label={COPY.copyPull} size="xs" />
                 <TerminalFillButton command={PULL_COMMAND} />
               </span>
             ),
@@ -218,26 +439,23 @@ function UnknownLine({
   onRetry: () => void
   onAbandon: () => void
 }) {
-  const what = unknown.kind === 'commit' ? '提交' : '推送'
-  const fresh =
-    unknown.kind === 'commit' ? '新的提交只提交那时暂存的文件，第一次已经提交的不会再提交一次。' : '新的推送照常推送当前分支，从不强制。'
   return (
     <Line
       locked
       tone="muted"
       icon={CircleHelp}
-      detail={`没有收到答复，这台电脑可能已经${what}。重试沿用同一请求，电脑会先核对结果，不会${what}两次。放弃这次结果只在这个页面上放下它，之后可以发起新的请求；电脑上的记录仍是结果未知。${fresh}`}
+      detail={COPY.unknownDetail(unknown.kind)}
       action={
         <>
-          <Button size="xs" variant="outline" loading={busy} loadingLabel="核对中…" disabled={disabled} onClick={onRetry}>
-            重试同一请求
+          <Button size="xs" variant="outline" loading={busy} loadingLabel={COPY.checking} disabled={disabled} onClick={onRetry}>
+            {COPY.retrySame}
           </Button>
           <Button size="xs" variant="ghost" disabled={busy} onClick={onAbandon}>
-            放弃这次结果
+            {COPY.abandon}
           </Button>
         </>
       }>
-      {what}结果未知
+      {unknown.kind === 'commit' ? COPY.unknownCommit : COPY.unknownPush}
     </Line>
   )
 }
@@ -331,18 +549,16 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       {...footSize}
       icon={GitPullRequest}
       loading={pull.creating}
-      loadingLabel="创建 PR 中…"
+      loadingLabel={COPY.creatingPR}
       disabled={prBlocked || !prReady}
-      tooltip={!prReady ? '先写标题' : undefined}
+      tooltip={!prReady ? COPY.titleFirst : undefined}
       onClick={() => void createPr()}>
-      创建 PR
+      {COPY.createPR}
     </Button>
   )
   // A file saved from the preview after the commit: what its hooks checked is not what is there now.
   const recheck = needsRecheck(outcome?.at, usePersonEditAt(summary.id))
-  const recheckMark = recheck ? (
-    <Hint label={<StatusWord tone="warn">需要复验</StatusWord>}>之后你编辑过文件，这次的结果不包括那些修改。</Hint>
-  ) : null
+  const recheckMark = recheck ? <Hint label={<StatusWord tone="warn">{COPY.recheck}</StatusWord>}>{COPY.recheckInfo}</Hint> : null
 
   const commit = async () => {
     const end = await writes.commit(message.trim(), skipHooks)
@@ -366,10 +582,14 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
 
   const notes = (
     <>
-      {offline && <Line tone="amber" icon={WarningGlyph}>{`${computer} 不在线 · 恢复后再交付`}</Line>}
+      {offline && (
+        <Line tone="amber" icon={WarningGlyph}>
+          {COPY.offline(computer)}
+        </Line>
+      )}
       {readOnly && (
         <Line tone="muted" icon={InfoGlyph}>
-          这个会话只读
+          {COPY.readOnly}
         </Line>
       )}
       {state?.gitOperation && !(sync && abortable(state)) && (
@@ -400,7 +620,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       )}
       {turnRunning && !state?.gitOperation && canWrite && (
         <Line tone="muted" icon={InfoGlyph} hover detail={failureCopy('git-turn-running')?.detail}>
-          Agent 正在改这个文件夹
+          {COPY.agentBusy}
         </Line>
       )}
       {unknown && (
@@ -426,20 +646,21 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
           action={
             outcome.result.hookOutput ? (
               <Button size="xs" variant="ghost" aria-expanded={showOutput} onClick={() => setShowOutput(value => !value)}>
-                钩子输出
+                {COPY.hookOutput}
               </Button>
             ) : undefined
           }>
-          已提交 <code className="delivery-sha">{shortSha(outcome.result.commit)}</code>
+          {COPY.committed}
+          <code className="delivery-sha">{shortSha(outcome.result.commit)}</code>
           {recheckMark}
         </Line>
       )}
       {outcome?.kind === 'committed' && showOutput && outcome.result.hookOutput && (
-        <Output text={outcome.result.hookOutput} label="钩子输出" />
+        <Output text={outcome.result.hookOutput} label={COPY.hookOutput} />
       )}
       {outcome?.kind === 'fetched' && (
         <Line icon={CheckGlyph}>
-          已获取{' '}
+          {COPY.fetched}{' '}
           <code className="delivery-sha">
             <VisibleText text={outcome.result.remote} />
           </code>
@@ -449,22 +670,28 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
         <Line icon={CheckGlyph}>
           {outcome.result.updated ? (
             <>
-              已拉取 {outcome.result.commits} 个提交 · <code className="delivery-sha">{shortSha(outcome.result.head)}</code>
+              {COPY.pulled(outcome.result.commits)}
+              <code className="delivery-sha">{shortSha(outcome.result.head)}</code>
             </>
           ) : (
-            '已是最新'
+            COPY.upToDate
           )}
         </Line>
       )}
-      {outcome?.kind === 'aborted' && <Line icon={CheckGlyph}>已中止{OPERATION_WORD[outcome.result.operation]}</Line>}
+      {outcome?.kind === 'aborted' && (
+        <Line icon={CheckGlyph}>
+          {COPY.aborted}
+          {OPERATION_WORD[outcome.result.operation]}
+        </Line>
+      )}
       {outcome?.kind === 'pushed' && (
         <Line icon={CheckGlyph}>
-          已推送到{' '}
+          {COPY.pushedTo}
           <code className="delivery-sha">
             <VisibleText text={`${outcome.result.remote}/${outcome.result.ref.replace(/^refs\/heads\//u, '')}`} />
           </code>{' '}
           · <code className="delivery-sha">{shortSha(outcome.result.sha)}</code>
-          {outcome.result.setUpstream ? ' · 已设为上游' : ''}
+          {outcome.result.setUpstream ? COPY.upstreamSet : ''}
           {recheckMark}
         </Line>
       )}
@@ -472,9 +699,9 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
   )
 
   const messageBox = (
-    <section className="delivery-section" aria-label="提交">
+    <section className="delivery-section" aria-label={COPY.commit}>
       <TextAreaField
-        label="提交信息"
+        label={COPY.commitMessage}
         className="delivery-message"
         rows={phone ? 3 : 2}
         value={message}
@@ -486,15 +713,13 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
         }}
       />
       <div className="delivery-hooks">
-        <Hint
-          lead={<Webhook size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}
-          label={skipHooks ? '这次不运行提交钩子' : '运行仓库钩子'}>
-          {state ? hooksDetail(state) : HOOKS_UNLISTED}
+        <Hint lead={<Webhook size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />} label={skipHooks ? COPY.skipOnce : COPY.runHooks}>
+          {state ? hooksDetail(state) : hooksUnlisted()}
         </Hint>
         <span className="delivery-space" />
         <label className="delivery-switch">
-          <span>跳过钩子</span>
-          <Switch label="跳过钩子" checked={skipHooks} disabled={frozen || !canWrite} onCheckedChange={setSkipHooks} />
+          <span>{COPY.skipHooks}</span>
+          <Switch label={COPY.skipHooks} checked={skipHooks} disabled={frozen || !canWrite} onCheckedChange={setSkipHooks} />
         </label>
       </div>
     </section>
@@ -506,7 +731,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
         <div className="delivery-body">
           <div className="changes-empty delivery-locked">
             <div>
-              <p className="changes-empty-title">这台设备看不到会话文件夹里的文件</p>
+              <p className="changes-empty-title">{COPY.noFiles}</p>
               <p className="changes-empty-detail">{SETUP_COPY.filesNeedScope(computer)}</p>
             </div>
           </div>
@@ -520,10 +745,10 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
               variant="outline"
               {...footSize}
               loading={writing === 'push'}
-              loadingLabel="推送中…"
+              loadingLabel={COPY.pushing}
               disabled={offline || busy || unknown?.kind === 'push'}
               onClick={() => void writes.push()}>
-              推送
+              {COPY.push}
             </Button>
             <span className="delivery-space" />
             {prUnbound && !message.trim() ? (
@@ -533,11 +758,11 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
                 variant="primary"
                 {...footSize}
                 loading={writing === 'commit'}
-                loadingLabel="提交中…"
+                loadingLabel={COPY.committing}
                 disabled={offline || busy || !message.trim() || unknown?.kind === 'commit'}
-                tooltip={!message.trim() ? '先写提交信息' : undefined}
+                tooltip={!message.trim() ? COPY.messageFirst : undefined}
                 onClick={() => void commit()}>
-                提交已暂存的
+                {COPY.commitStaged}
               </Button>
             )}
           </div>
@@ -552,17 +777,17 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
           {read.kind === 'failed' ? (
             <div className="changes-empty">
               <div>
-                <p className="changes-empty-title">{failureCopy(read.code)?.label ?? '读不到仓库'}</p>
+                <p className="changes-empty-title">{failureCopy(read.code)?.label ?? COPY.readFailed}</p>
                 {!failureCopy(read.code) && <p className="changes-empty-detail">{read.text}</p>}
                 <Button size="xs" variant="outline" onClick={() => void delivery.reload()}>
-                  重试
+                  {COPY.retry}
                 </Button>
               </div>
             </div>
           ) : (
             <div className="delivery-loading" aria-busy="true">
               <Spinner size={14} />
-              <span>正在读取…</span>
+              <span>{COPY.reading}</span>
             </div>
           )}
         </div>
@@ -583,7 +808,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       variant="outline"
       icon={Upload}
       loading={writing === 'push'}
-      loadingLabel="推送中…"
+      loadingLabel={COPY.pushing}
       disabled={blocked || busy || unknown?.kind === 'push' || pushOff !== undefined}
       tooltip={pushOff}
       onClick={() => void writes.push()}>
@@ -612,18 +837,18 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
         {runningWord ? (
           <StatusWord tone="running">{runningWord}</StatusWord>
         ) : summaryWord === 'fail' ? (
-          <StatusWord tone="failed">检查失败</StatusWord>
+          <StatusWord tone="failed">{COPY.checkFailed}</StatusWord>
         ) : summaryWord === 'pending' ? (
-          <StatusWord tone="running">检查进行中</StatusWord>
+          <StatusWord tone="running">{COPY.checkingStatus}</StatusWord>
         ) : summaryWord === 'pass' ? (
-          <StatusWord tone="done">检查通过</StatusWord>
+          <StatusWord tone="done">{COPY.checkPassed}</StatusWord>
         ) : null}
       </div>
       <div className="delivery-body">
         {notes}
         {total === 0 ? (
           <Line tone="muted" icon={CheckGlyph}>
-            没有未提交的改动
+            {COPY.noChanges}
           </Line>
         ) : (
           <div className="delivery-groups">
@@ -639,7 +864,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
                       type="checkbox"
                       className="ui-checkbox"
                       checked={headerStaged && rows.length > 0}
-                      aria-label={headerStaged ? '全部取消暂存' : `暂存全部${GROUP_TITLE[group]}`}
+                      aria-label={headerStaged ? COPY.unstageAll : COPY.stageGroup(GROUP_TITLE[group])}
                       aria-disabled={!fileWrites || rows.length === 0 || undefined}
                       onChange={() => {
                         if (!fileWrites || rows.length === 0) return
@@ -651,7 +876,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
                     <span className="delivery-space" />
                     <span className="delivery-count">{rows.length}</span>
                   </div>
-                  {rows.length === 0 && <p className="delivery-group-empty">还没有暂存的文件</p>}
+                  {rows.length === 0 && <p className="delivery-group-empty">{COPY.noneStaged}</p>}
                   {rows.map(row => {
                     const wanted = pending.get(row.path)
                     const checked = wanted ? wanted === 'stage' : row.staged
@@ -661,7 +886,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
                           type="checkbox"
                           className="ui-checkbox"
                           checked={checked}
-                          aria-label={`${row.staged ? '取消暂存' : '暂存'} ${escapeHiddenCharacters(row.path)}`}
+                          aria-label={`${row.staged ? COPY.unstage : COPY.stage} ${escapeHiddenCharacters(row.path)}`}
                           aria-disabled={!fileWrites || wanted !== undefined || undefined}
                           onChange={() => {
                             if (!fileWrites || wanted) return
@@ -687,19 +912,19 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
                 </div>
               )
             })}
-            {state.more ? <p className="delivery-more">还有 {state.more} 个</p> : null}
+            {state.more ? <p className="delivery-more">{COPY.more(state.more)}</p> : null}
             {primary?.kind !== 'stage' && changedCount(state) > 0 && (
               <div className="delivery-stage-all">
                 <Button size="xs" variant="ghost" disabled={!fileWrites || busy} onClick={() => writes.stage(stageAllPaths(state))}>
-                  全部暂存
+                  {COPY.stageAll}
                 </Button>
               </div>
             )}
           </div>
         )}
         {(state.staged.length > 0 || frozen) && messageBox}
-        <section className="delivery-section" aria-label="推送">
-          <h3 className="delivery-heading">推送</h3>
+        <section className="delivery-section" aria-label={COPY.push}>
+          <h3 className="delivery-heading">{COPY.push}</h3>
           {!state.branch ? (
             <FailureCopyLine code="git-detached" />
           ) : !state.head ? (
@@ -720,9 +945,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
                 <span className="delivery-space" />
                 <span
                   className="delivery-count"
-                  title={
-                    state.upstream ? (state.fetchedAt ? `最近获取 ${dateTime(state.fetchedAt)}` : '还没有获取过，落后数未知') : undefined
-                  }>
+                  title={state.upstream ? (state.fetchedAt ? COPY.lastFetch(dateTime(state.fetchedAt)) : COPY.neverFetched) : undefined}>
                   {aheadBehind(state)}
                 </span>
               </div>
@@ -731,8 +954,8 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
                   tone="muted"
                   icon={InfoGlyph}
                   hover
-                  detail={`${failureCopy('git-upstream-other-branch')?.detail ?? ''} 上游：${state.upstream ?? ''}`}>
-                  上游是另一个分支
+                  detail={COPY.upstreamDetail(failureCopy('git-upstream-other-branch')?.detail ?? '', state.upstream ?? '')}>
+                  {COPY.upstreamOtherBranch}
                 </Line>
               )}
               {pushable && primary?.kind !== 'push' && !sync && <div className="delivery-stage-all">{pushButton}</div>}
@@ -754,13 +977,9 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       </div>
       {aborting && abortable(state) && (
         <ConfirmDialog
-          title={`中止${OPERATION_WORD[abortable(state)!]}？`}
-          message={
-            abortable(state) === 'rebase'
-              ? '回到这次变基开始之前。已解决的冲突、停下的这一步里还没提交的修改和变基带来的改动都会丢失，不能撤销。'
-              : `回到这次${OPERATION_WORD[abortable(state)!]}开始之前。已解决的冲突和它带来的改动都会丢失，不能撤销。`
-          }
-          confirmLabel={`中止${OPERATION_WORD[abortable(state)!]}`}
+          title={COPY.abortTitle(OPERATION_WORD[abortable(state)!])}
+          message={abortable(state) === 'rebase' ? COPY.abortRebase : COPY.abortInfo(OPERATION_WORD[abortable(state)!])}
+          confirmLabel={COPY.abortConfirm(OPERATION_WORD[abortable(state)!])}
           danger
           onConfirm={async () => {
             await writes.abort(abortable(state)!)
@@ -778,9 +997,9 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
             {...footSize}
             icon={primary.kind === 'push' ? Upload : primary.kind === 'commit' ? CommitGlyph : undefined}
             loading={writing === primary.kind || (primary.kind === 'stage' && pending.size > 0)}
-            loadingLabel={primary.kind === 'stage' ? '暂存中…' : RUNNING_WORD[primary.kind]}
+            loadingLabel={primary.kind === 'stage' ? COPY.staging : RUNNING_WORD[primary.kind]}
             disabled={primaryBlocked}
-            tooltip={primary.kind === 'commit' && !message.trim() ? '先写提交信息' : primary.kind === 'push' ? pushOff : undefined}
+            tooltip={primary.kind === 'commit' && !message.trim() ? COPY.messageFirst : primary.kind === 'push' ? pushOff : undefined}
             onClick={runPrimary}>
             {primary.label}
           </Button>
@@ -801,20 +1020,20 @@ function FailureCopyLine({ code }: { code: string }) {
 }
 
 function FootNote({ state, step }: { state: GitDeliveryState; step: DeliveryStep }) {
-  if (step === 'stage') return <span className="delivery-foot-note">{changedCount(state)} 个文件未暂存</span>
+  if (step === 'stage') return <span className="delivery-foot-note">{COPY.notStaged(changedCount(state))}</span>
   if (step === 'commit') {
     const left = changedCount(state)
     return left ? (
-      <Hint lead={false} label="只提交已暂存的">{`未暂存的 ${left} 个文件不提交。`}</Hint>
+      <Hint lead={false} label={COPY.onlyStaged}>
+        {COPY.unstagedWarning(left)}
+      </Hint>
     ) : (
-      <span className="delivery-foot-note">{state.staged.length} 个文件已暂存</span>
+      <span className="delivery-foot-note">{COPY.staged(state.staged.length)}</span>
     )
   }
   if (step === 'push')
-    return (
-      <span className="delivery-foot-note">{state.upstream ? `领先 ${state.upstream} ${state.ahead} 个提交` : '这个分支还不在远端'}</span>
-    )
-  if (state.head && !state.remote) return <span className="delivery-foot-note">已提交，未推送</span>
+    return <span className="delivery-foot-note">{state.upstream ? COPY.aheadUpstream(state.upstream, state.ahead) : COPY.notRemote}</span>
+  if (state.head && !state.remote) return <span className="delivery-foot-note">{COPY.notPushedYet}</span>
   return null
 }
 
@@ -838,29 +1057,29 @@ function SyncRow({
 }) {
   const behind = !!state.fetchedAt && state.behind > 0 && !diverged(state)
   return (
-    <div className="delivery-sync" role="group" aria-label="同步">
+    <div className="delivery-sync" role="group" aria-label={COPY.sync}>
       {push}
       <Button
         size="xs"
         variant="outline"
         icon={RefreshCw}
         loading={writing === 'fetch'}
-        loadingLabel="获取中…"
+        loadingLabel={COPY.fetching}
         disabled={fetchOff !== undefined}
         tooltip={fetchOff}
         onClick={onFetch}>
-        获取
+        {COPY.fetch}
       </Button>
       <Button
         size="xs"
         variant={behind && pullOff === undefined ? 'primary' : 'outline'}
         icon={ArrowDownToLine}
         loading={writing === 'pull'}
-        loadingLabel="拉取中…"
+        loadingLabel={COPY.pulling}
         disabled={pullOff !== undefined}
-        tooltip={pullOff ?? '只快进；分叉时不合并也不变基'}
+        tooltip={pullOff ?? COPY.fastForward}
         onClick={onPull}>
-        {behind ? `拉取 ${state.behind} 个提交` : '拉取'}
+        {behind ? COPY.pullCount(state.behind) : COPY.pull}
       </Button>
     </div>
   )
@@ -883,13 +1102,13 @@ function OperationCard({
   const operation = abortable(state)!
   const word = OPERATION_WORD[operation]
   const count = state.conflicted.length
-  const title = count ? `${word}有冲突` : `${word}进行中`
+  const title = count ? COPY.operationConflicts(word) : COPY.operationRunning(word)
   return (
     <section className="delivery-card" data-tone="amber" aria-label={title}>
       <header className="delivery-card-head">
         <WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
         <strong>{title}</strong>
-        {count > 0 && <span className="delivery-card-meta">{count} 个文件</span>}
+        {count > 0 && <span className="delivery-card-meta">{COPY.fileCount(count)}</span>}
       </header>
       <div className="delivery-card-foot">
         <span className="delivery-space" />
@@ -901,18 +1120,19 @@ function OperationCard({
             onClick={() => {
               onCompose(conflictPrompt({ operation, paths: state.conflicted, ...(state.more ? { more: state.more } : {}) }))
             }}>
-            交给 Agent 解决
+            {COPY.resolveAgent}
           </Button>
         )}
         <Button
           size="xs"
           variant="outline"
           loading={aborting}
-          loadingLabel="中止中…"
+          loadingLabel={COPY.aborting}
           disabled={reason !== undefined}
           tooltip={reason}
           onClick={onAbort}>
-          中止{word}
+          {COPY.abort}
+          {word}
         </Button>
       </div>
     </section>
@@ -934,13 +1154,11 @@ function DivergedCard({
   onLeave: () => void
 }) {
   return (
-    <section className="delivery-card" data-tone="amber" aria-label="与上游已分叉">
+    <section className="delivery-card" data-tone="amber" aria-label={COPY.diverged}>
       <header className="delivery-card-head">
         <WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-        <strong>与上游已分叉</strong>
-        <span className="delivery-card-meta">
-          领先 {ahead} · 落后 {behind}
-        </span>
+        <strong>{COPY.diverged}</strong>
+        <span className="delivery-card-meta">{COPY.aheadBehind(ahead, behind)}</span>
       </header>
       <div className="delivery-card-foot">
         <span className="delivery-space" />
@@ -952,11 +1170,11 @@ function DivergedCard({
             onClick={() => {
               onCompose(divergedPrompt({ branch: state.branch ?? '', upstream: state.upstream ?? '', ahead, behind }))
             }}>
-            交给 Agent
+            {COPY.handOff}
           </Button>
         )}
         <Button size="xs" variant="ghost" onClick={onLeave}>
-          保持原样
+          {COPY.leave}
         </Button>
       </div>
     </section>

@@ -1,3 +1,4 @@
+import { defineCopy, plural } from '../core/i18n.ts'
 import { useFileMentions, type FileMentionChoice } from '../hooks/useFileMentions.tsx'
 import type { AttachmentDraftController } from '../hooks/useAttachments.ts'
 import type { MenuSection } from '../components/overlays.tsx'
@@ -28,6 +29,85 @@ import {
   SendGlyph,
   DrawerStack,
 } from '@latch/ui'
+
+const COPY = defineCopy(
+  {
+    actionUnavailable: '这个动作在当前页面不可用',
+    waitForSubmit: '等待这次提交完成',
+    writeFirst: '输入内容后发送',
+    sendAfterTurn: '本轮完成后发送',
+    insertCommand: '插入命令',
+    cancelSend: '取消发送',
+    steerHint: '加到正在运行的这一轮',
+    steerLabel: '追加到本轮',
+    steer: '追加',
+    queue: '排队',
+    queueSend: '排队发送',
+    runAction: '运行动作',
+    send: '发送',
+    otherPending: '另一个会话有消息未确认送达',
+    pending: '未确认送达',
+    noAnswer: '没有收到电脑的答复',
+    unknownStart:
+      '重试沿用同一请求，电脑已经收到的不会再开一个会话。放弃这次提交只在这台设备上放下它，文字回到输入框；电脑如果其实已经收到，那个会话会出现在列表里，再发送会开始另一个会话，可能另建一个工作树。',
+    unknownMessage:
+      '重试沿用同一请求，电脑已经收到的不会再算一次。放弃这次提交只在这台设备上放下它，文字回到输入框，附件和文件引用要重新添加；电脑如果其实已经收到，它会出现在会话里，再发送就是第二条消息。',
+    open: '打开',
+    retrySubmission: '重试这次提交',
+    checking: '核对中…',
+    discardSubmission: '放弃这次提交',
+    options: '会话选项',
+    stopping: '正在停止…',
+    stop: '停止',
+    unknown: '结果未知',
+    check: '核对',
+    retryRequest: '重试同一请求',
+    discardResult: '放弃这次结果',
+    unconfirmed: '尚未确认',
+    retry: '重试',
+    attachments: (count: number) => `${count} 个附件`,
+    checkDetails: (harness: string) =>
+      `核对会先结束这个会话的 ${harness} 进程，再让它重新打开会话、报告现在的设置；不会再发送一次修改。会话运行中、等你处理或子 Agent 可能还在运行时不核对。`,
+  },
+  {
+    actionUnavailable: 'This action is unavailable here',
+    waitForSubmit: 'Wait for this submission',
+    writeFirst: 'Enter a message to send',
+    sendAfterTurn: 'Send after this turn',
+    insertCommand: 'Insert command',
+    cancelSend: 'Cancel send',
+    steerHint: 'Add to the running turn',
+    steerLabel: 'Add to this turn',
+    steer: 'Add',
+    queue: 'Queue',
+    queueSend: 'Queue message',
+    runAction: 'Run action',
+    send: 'Send',
+    otherPending: 'Another session has an unconfirmed message',
+    pending: 'Delivery unconfirmed',
+    noAnswer: 'No response from the computer',
+    unknownStart:
+      'Retry uses the same request. If the computer already received it, there will be only one session. Discarding returns the text to this device’s input. If the request already arrived, the original session will appear in the list. Sending again starts a separate session and may create another worktree.',
+    unknownMessage:
+      'Retry uses the same request. If the computer already received it, there will be only one message. Discarding returns the text to this device’s input. Add any attachments and file references again. If the original message appears in the session, sending again creates a second message.',
+    open: 'Open',
+    retrySubmission: 'Retry submission',
+    checking: 'Checking…',
+    discardSubmission: 'Discard submission',
+    options: 'Session options',
+    stopping: 'Stopping…',
+    stop: 'Stop',
+    unknown: 'Outcome unknown',
+    check: 'Check',
+    retryRequest: 'Retry same request',
+    discardResult: 'Discard outcome',
+    unconfirmed: 'Unconfirmed',
+    retry: 'Retry',
+    attachments: (count: number) => plural(count, { one: '{n} attachment', other: '{n} attachments' }),
+    checkDetails: (harness: string) =>
+      `Check restarts ${harness} for this session to read its current settings. It will not resend the change. Wait until the session and its sub-agents are idle.`,
+  },
+)
 
 /**
  * What a running session's input needs to know. What the run is doing and for how long is said in the conversation (the
@@ -306,7 +386,7 @@ export function Composer({
     && typedAction === undefined
     && readOnly === undefined
   const localAction = typedAction && actions?.find(action => action.name === typedAction.name)
-  const actionBlock = typedAction ? (localAction?.unavailable ?? (!localAction?.run ? '这个动作在当前页面不可用' : undefined)) : undefined
+  const actionBlock = typedAction ? (localAction?.unavailable ?? (!localAction?.run ? COPY.actionUnavailable : undefined)) : undefined
   const sendable =
     !locked
     && readOnly === undefined
@@ -423,7 +503,7 @@ export function Composer({
   const sendTip =
     actionBlock
     ?? blockReason
-    ?? (locked ? '等待这次提交完成' : empty ? '输入内容后发送' : queueDraft && !steerable ? '本轮完成后发送' : undefined)
+    ?? (locked ? COPY.waitForSubmit : empty ? COPY.writeFirst : queueDraft && !steerable ? COPY.sendAfterTurn : undefined)
 
   // The slot's control swaps in (from 90%, fading in) when the page sees it change: a run starting or ending.
   const answering = answer?.kind === 'question' && !empty
@@ -512,7 +592,7 @@ export function Composer({
   const slashButton = showSlashButton && readOnly === undefined && (
     <IconButton
       className="composer-slash-button"
-      label="插入命令"
+      label={COPY.insertCommand}
       icon={Slash}
       disabled={locked || answer !== undefined}
       onClick={() => {
@@ -536,47 +616,47 @@ export function Composer({
       {attachments?.preparing ? (
         <Button size="sm" onClick={attachments.cancel}>
           <Spinner size={14} />
-          取消发送
+          {COPY.cancelSend}
         </Button>
       ) : run && !queueDraft && !answering && !choosing ? (
         <StopButton run={run} stepBack={stepBack} />
       ) : queueDraft && steerable ? (
-        <Tooltip content={sendTip ?? '加到正在运行的这一轮'} shortcut={sendTip === undefined ? shortcut : undefined}>
+        <Tooltip content={sendTip ?? COPY.steerHint} shortcut={sendTip === undefined ? shortcut : undefined}>
           <button
             type="submit"
             className="send-button queue-button"
-            aria-label="追加到本轮"
+            aria-label={COPY.steerLabel}
             aria-disabled={!sendable || undefined}
             onClick={event => {
               if (!sendable) event.preventDefault()
             }}>
             <CornerDownRight size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-            追加
+            {COPY.steer}
           </button>
         </Tooltip>
       ) : queueDraft ? (
-        <Tooltip content={sendTip ?? '排队'} shortcut={sendTip === undefined ? shortcut : undefined} describe={sendTip !== undefined}>
+        <Tooltip content={sendTip ?? COPY.queue} shortcut={sendTip === undefined ? shortcut : undefined} describe={sendTip !== undefined}>
           <button
             type="submit"
             className="send-button queue-button"
-            aria-label="排队发送"
+            aria-label={COPY.queueSend}
             aria-disabled={!sendable || undefined}
             onClick={event => {
               if (!sendable) event.preventDefault()
             }}>
             <ListPlus size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-            排队
+            {COPY.queue}
           </button>
         </Tooltip>
       ) : readOnly !== undefined ? null : (
         <Tooltip
-          content={sendTip ?? (choosing ? '运行动作' : '发送')}
+          content={sendTip ?? (choosing ? COPY.runAction : COPY.send)}
           shortcut={sendTip === undefined ? shortcut : undefined}
           describe={sendTip !== undefined}>
           <button
             type="submit"
             className="send-button"
-            aria-label={choosing ? '运行动作' : '发送'}
+            aria-label={choosing ? COPY.runAction : COPY.send}
             aria-disabled={!sendable || undefined}
             aria-busy={sending || undefined}
             onClick={event => {
@@ -633,29 +713,27 @@ export function Composer({
       {pending !== null && !sending && (
         <div className="pending-submission" data-tint="warn" role="status">
           <div className="pending-submission-text">
-            <strong>{onOpenPending ? '另一个会话有消息未确认送达' : '未确认送达'}</strong>
-            {!pendingInTranscript && <p>{pending.prompt || `${pending.attachmentIds?.length ?? 0} 个附件`}</p>}
-            <Hint inline className="pending-submission-reason" label={pendingReason || '没有收到电脑的答复'}>
-              {pending.sessionId === undefined
-                ? '重试沿用同一请求，电脑已经收到的不会再开一个会话。放弃这次提交只在这台设备上放下它，文字回到输入框；电脑如果其实已经收到，那个会话会出现在列表里，再发送会开始另一个会话，可能另建一个工作树。'
-                : '重试沿用同一请求，电脑已经收到的不会再算一次。放弃这次提交只在这台设备上放下它，文字回到输入框，附件和文件引用要重新添加；电脑如果其实已经收到，它会出现在会话里，再发送就是第二条消息。'}
+            <strong>{onOpenPending ? COPY.otherPending : COPY.pending}</strong>
+            {!pendingInTranscript && <p>{pending.prompt || COPY.attachments(pending.attachmentIds?.length ?? 0)}</p>}
+            <Hint inline className="pending-submission-reason" label={pendingReason || COPY.noAnswer}>
+              {pending.sessionId === undefined ? COPY.unknownStart : COPY.unknownMessage}
             </Hint>
           </div>
           <div className="pending-submission-actions">
             {pendingNote && <span className="pending-submission-held">{pendingNote}</span>}
             {onOpenPending ? (
-              <Button onClick={onOpenPending}>打开</Button>
+              <Button onClick={onOpenPending}>{COPY.open}</Button>
             ) : (
               <Button disabled={abandoning} onClick={onRetry}>
-                重试这次提交
+                {COPY.retrySubmission}
               </Button>
             )}
             {onAbandon
               && (abandonHeld ? (
                 <span className="pending-submission-held">{abandonHeld}</span>
               ) : (
-                <Button variant="ghost" loading={abandoning} loadingLabel="核对中…" disabled={sending} onClick={onAbandon}>
-                  放弃这次提交
+                <Button variant="ghost" loading={abandoning} loadingLabel={COPY.checking} disabled={sending} onClick={onAbandon}>
+                  {COPY.discardSubmission}
                 </Button>
               ))}
           </div>
@@ -697,7 +775,7 @@ export function Composer({
           <>
             {/* The other choices scroll sideways. The current permission stays beside the send key. */}
             {(location || controls || trailing || meta || usage) && (
-              <div className="composer-chips" role="group" aria-label="会话选项">
+              <div className="composer-chips" role="group" aria-label={COPY.options}>
                 {location}
                 <div className="composer-inline-controls">
                   {controls}
@@ -760,12 +838,12 @@ export function Composer({
 function StopButton({ run, stepBack }: { run: RunState; stepBack: boolean }) {
   const cancelling = run.cancel === 'cancelling'
   return (
-    <Tooltip content={cancelling ? '正在停止…' : '停止'} shortcut={cancelling ? undefined : 'Esc Esc'} describe={false}>
+    <Tooltip content={cancelling ? COPY.stopping : COPY.stop} shortcut={cancelling ? undefined : 'Esc Esc'} describe={false}>
       <button
         type="button"
         className="send-button stop-button"
         data-step-back={stepBack ? '' : undefined}
-        aria-label="停止"
+        aria-label={COPY.stop}
         aria-disabled={cancelling || undefined}
         aria-busy={cancelling || undefined}
         onClick={() => {
@@ -799,23 +877,22 @@ function ConfigUnknownBar({ state }: { state?: ConfigUnknownState | undefined })
               ·
             </span>
             <span role="status" className="run-bar-status" data-lock="">
-              {state.checking ? '核对中…' : '结果未知'}
+              {state.checking ? COPY.checking : COPY.unknown}
             </span>
             <span className="run-bar-dot" aria-hidden="true">
               ·
             </span>
             {/* What 核对 does is the button's tooltip: the bar keeps its one line. */}
-            <Tooltip
-              content={`核对会先结束这个会话的 ${state.harness} 进程，再让它重新打开会话、报告现在的设置；不会再发送一次修改。会话运行中、等你处理或子 Agent 可能还在运行时不核对。`}>
+            <Tooltip content={COPY.checkDetails(state.harness)}>
               <button type="button" className="run-bar-action" disabled={state.checking} onClick={state.onCheck}>
-                核对
+                {COPY.check}
               </button>
             </Tooltip>
             <span className="run-bar-dot" aria-hidden="true">
               ·
             </span>
             <button type="button" className="run-bar-action" disabled={state.checking} onClick={state.onRetry}>
-              重试同一请求
+              {COPY.retryRequest}
             </button>
             {state.onAbandon && (
               <>
@@ -823,7 +900,7 @@ function ConfigUnknownBar({ state }: { state?: ConfigUnknownState | undefined })
                   ·
                 </span>
                 <button type="button" className="run-bar-action" disabled={state.checking} onClick={state.onAbandon}>
-                  放弃这次结果
+                  {COPY.discardResult}
                 </button>
               </>
             )}
@@ -844,14 +921,14 @@ function RunBar({ run }: { run?: RunState }) {
       <div className="run-bar">
         <span className="run-bar-what">
           <span role="status" className="run-bar-status">
-            <span className="sr-only">停止</span>
-            尚未确认
+            <span className="sr-only">{COPY.stop}</span>
+            {COPY.unconfirmed}
           </span>
           <span className="run-bar-dot" aria-hidden="true">
             ·
           </span>
           <button type="button" className="run-bar-action" onClick={run?.onCancel}>
-            重试
+            {COPY.retry}
           </button>
         </span>
       </div>

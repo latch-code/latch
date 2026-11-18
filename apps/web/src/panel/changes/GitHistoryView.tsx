@@ -6,6 +6,42 @@ import { api, ApiError, errorMessage } from '../../core/api.ts'
 import { ChangesFile } from './ChangesFile.tsx'
 import { fileId } from './model.ts'
 import { commitRow, historyFile, historyTitle } from './staging.ts'
+import { defineCopy, formatNumber, plural } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    more: (count: number) => `还有 ${formatNumber(count)} 个文件`,
+    latest: (count: number) => `只显示最近 ${formatNumber(count)} 个提交`,
+    reading: '正在读取…',
+    noBase: '没有可以比较的基线',
+    retry: '重试',
+    noChanges: '没有改动的文件',
+    commitPrefix: '提交 ',
+    committed: '已提交的改动 · 不含未提交',
+    back: '返回',
+    commit: '提交',
+    fileCommits: ' · 改过这个文件的提交',
+    noFiles: '这台设备看不到会话文件',
+    noFileCommits: '没有改过这个文件的提交',
+    noCommits: '还没有提交',
+  },
+  {
+    more: (count: number) => plural(count, { one: '{n} more file', other: '{n} more files' }),
+    latest: (count: number) => plural(count, { one: 'Only the latest commit is shown', other: 'Only the latest {n} commits are shown' }),
+    reading: 'Reading…',
+    noBase: 'No comparison base available',
+    retry: 'Retry',
+    noChanges: 'No changed files',
+    commitPrefix: 'Commit ',
+    committed: 'Committed changes',
+    back: 'Back',
+    commit: 'Commit',
+    fileCommits: ' · Commits that changed this file',
+    noFiles: 'This device can’t see session files',
+    noFileCommits: 'No commits changed this file',
+    noCommits: 'No commits yet',
+  },
+)
 
 /** 提交: the session's commits. 文件历史: the commits that changed one file. 分支与基线: HEAD against where it left main. */
 export type HistoryMode = { kind: 'commits' } | { kind: 'file'; path: string } | { kind: 'compare' } | { kind: 'commit'; sha: string }
@@ -124,24 +160,24 @@ function TreeFiles({
     )
   }
   if (only !== undefined) return row({ root, path: only, status: 'M' })
-  if (read.kind === 'loading') return <p className="changes-body-note">正在读取…</p>
+  if (read.kind === 'loading') return <p className="changes-body-note">{COPY.reading}</p>
   if (read.kind === 'failed')
     return (
       <p className="changes-body-note">
-        {read.code === 'git-no-base' ? '没有可以比较的基线' : read.text}
+        {read.code === 'git-no-base' ? COPY.noBase : read.text}
         {read.code !== 'git-no-base' && (
           <Button size="xs" variant="ghost" onClick={retry}>
-            重试
+            {COPY.retry}
           </Button>
         )}
       </p>
     )
   const diff = read.value
-  if (!diff.files.length) return <p className="changes-body-note">没有改动的文件</p>
+  if (!diff.files.length) return <p className="changes-body-note">{COPY.noChanges}</p>
   return (
     <>
       {diff.files.map(file => row(historyFile(root, file)))}
-      {diff.more ? <p className="changes-body-note">还有 {diff.more} 个文件</p> : null}
+      {diff.more ? <p className="changes-body-note">{COPY.more(diff.more)}</p> : null}
     </>
   )
 }
@@ -202,7 +238,8 @@ export function GitHistoryView(props: GitHistoryViewProps) {
         <div className="changes-list">
           <div className="changes-line" data-tone="muted">
             <span className="changes-line-text">
-              提交 <code>{mode.sha.slice(0, 7)}</code>
+              {COPY.commitPrefix}
+              <code>{mode.sha.slice(0, 7)}</code>
             </span>
           </div>
           <TreeFiles key={mode.sha} {...shared} base={`${base}/history/${mode.sha}`} query={mode.sha} />
@@ -214,7 +251,7 @@ export function GitHistoryView(props: GitHistoryViewProps) {
       <div className="changes-body">
         <div className="changes-list">
           <div className="changes-line" data-tone="muted">
-            <span className="changes-line-text">已提交的改动 · 不含未提交</span>
+            <span className="changes-line-text">{COPY.committed}</span>
           </div>
           <TreeFiles {...shared} base={`${base}/compare`} query="compare" />
         </div>
@@ -226,25 +263,25 @@ export function GitHistoryView(props: GitHistoryViewProps) {
         <div className="changes-line" data-tone="muted">
           {mode.kind === 'file' && onBack && (
             <Button size="xs" variant="ghost" icon={ChevronLeftGlyph} onClick={onBack}>
-              返回
+              {COPY.back}
             </Button>
           )}
           <span className="changes-line-text">
-            {mode.kind === 'file' ? <VisibleText text={mode.path} /> : read.kind === 'ready' ? historyTitle(read.value) : '提交'}
-            {mode.kind === 'file' ? ' · 改过这个文件的提交' : ''}
+            {mode.kind === 'file' ? <VisibleText text={mode.path} /> : read.kind === 'ready' ? historyTitle(read.value) : COPY.commit}
+            {mode.kind === 'file' ? COPY.fileCommits : ''}
           </span>
         </div>
         {read.kind === 'loading' ? (
-          <p className="changes-body-note">正在读取…</p>
+          <p className="changes-body-note">{COPY.reading}</p>
         ) : read.kind === 'failed' ? (
           <p className="changes-body-note">
-            {read.code === 'file-scope' ? '这台设备看不到会话文件' : read.text}
+            {read.code === 'file-scope' ? COPY.noFiles : read.text}
             <Button size="xs" variant="ghost" onClick={retry}>
-              重试
+              {COPY.retry}
             </Button>
           </p>
         ) : read.value.commits.length === 0 ? (
-          <p className="changes-body-note">{mode.kind === 'file' ? '没有改过这个文件的提交' : '还没有提交'}</p>
+          <p className="changes-body-note">{mode.kind === 'file' ? COPY.noFileCommits : COPY.noCommits}</p>
         ) : (
           <>
             {read.value.commits.map(commit => (
@@ -263,7 +300,7 @@ export function GitHistoryView(props: GitHistoryViewProps) {
                 />
               </CommitRow>
             ))}
-            {read.value.more && <p className="changes-body-note">只显示最近 {read.value.commits.length} 个提交</p>}
+            {read.value.more && <p className="changes-body-note">{COPY.latest(read.value.commits.length)}</p>}
           </>
         )}
       </div>

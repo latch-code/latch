@@ -1,3 +1,4 @@
+import { UI_COPY, useUiLocale } from './locale.ts'
 import {
   createContext,
   useCallback,
@@ -573,12 +574,13 @@ export function MenuSearch({
   onValueChange: (value: string) => void
   onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void
 }) {
+  useUiLocale()
   return (
     <div className="ui-menu-search">
       <input
         type="search"
-        aria-label={`搜索${label}`}
-        placeholder="搜索"
+        aria-label={UI_COPY.searchIn(label)}
+        placeholder={UI_COPY.search}
         value={value}
         onChange={event => {
           onValueChange(event.target.value)
@@ -826,13 +828,13 @@ export function ValuePicker<T extends string>({
   groups,
   onValueChange,
   leading,
-  placeholder = '未选择',
+  placeholder = UI_COPY.unselected,
   size = 'sm',
   bleed,
   chevron = 'always',
   menuChevron = false,
   pending: pendingProp = false,
-  pendingLabel = '等待验证…',
+  pendingLabel = UI_COPY.verifying,
   reserve = false,
   header,
   footer,
@@ -855,6 +857,7 @@ export function ValuePicker<T extends string>({
   anchor,
   className,
 }: ValuePickerProps<T>) {
+  useUiLocale()
   const phone = useMediaQuery(PHONE_QUERY)
   const sheet = phone || variant === 'row'
   const panel = useRef<HTMLDivElement>(null)

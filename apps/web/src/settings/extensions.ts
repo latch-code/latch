@@ -12,25 +12,72 @@ import {
   type PluginInfo,
   type PromptTemplate,
 } from '@latch/protocol'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
 
 /**
  * 设置 › 扩展's model: per Harness, what it reports of each kind and what Latch gives it, each marked by where it comes
  * from, and the vendor's commands for the Harness's part.
  */
 
-export const KIND_TITLE: Readonly<Record<ExtensionKind, string>> = { skills: '技能', commands: '命令', mcp: 'MCP', plugins: '插件' }
-
-/** A kind this Harness does not report: said plainly, never an empty list that reads as 「none installed」. */
-export const NOT_REPORTED = '这个 Harness 没有报告'
-/** It reports this kind, but no ordinary session of its current definition has yet. */
-export const NOT_YET = '还没有会话报告'
-/** A session reported the kind, and it was empty. */
-export const NONE = '没有'
-/** The session reported other entries but did not obtain this list. */
-export const UNREAD = '上次会话没有读到'
-export const NOT_IMPLEMENTED = '尚未实现'
-export const READING_REPORT = '正在读取会话报告…'
-export const REPORT_UNAVAILABLE = '暂时无法读取会话报告'
+export const EXTENSION_COPY = defineCopy(
+  {
+    title: '扩展',
+    source: { harness: 'Harness 自带', latch: 'Latch 提供' },
+    kind: { skills: '技能', commands: '命令', mcp: 'MCP', plugins: '插件' },
+    notReported: '这个 Harness 没有报告',
+    notYet: '还没有会话报告',
+    none: '没有',
+    unread: '上次会话没有读到',
+    notImplemented: '尚未实现',
+    reading: '正在读取会话报告…',
+    reportUnavailable: '暂时无法读取会话报告',
+    unknownCommands: 'Latch 没有这个 Harness 的内置配置，无法给出命令',
+    noSkillCommands: '它没有文档化的安装命令；技能与命令随插件或项目文件而来',
+    noCommands: '它没有文档化的安装命令',
+    agentSkills: '我的 Agent 的技能',
+    throughSkills: '经 latch-skills',
+    nativeLoad: '原生加载',
+    templates: '提示词模板',
+    allSessions: '全部会话',
+    scopedSessions: '部分 Agent 与项目',
+    noExtensionCommands: '没有扩展命令',
+    codexPluginReason: '读取清单时可能下载或更新账号里已安装的插件包。当前协议没有只读取清单的接口。',
+    capability: { data: '数据面板', pages: '页面', tools: '工具', panels: '面板', models: '模型', harness: 'Harness', connections: '连接' },
+  },
+  {
+    title: 'Extensions',
+    source: { harness: 'From the Harness', latch: 'Provided by Latch' },
+    kind: { skills: 'Skills', commands: 'Commands', mcp: 'MCP', plugins: 'Plugins' },
+    notReported: 'This Harness provides no report',
+    notYet: 'No session report yet',
+    none: 'None',
+    unread: 'Unavailable in the last session report',
+    notImplemented: 'Not implemented yet',
+    reading: 'Reading session report…',
+    reportUnavailable: 'Session report temporarily unavailable',
+    unknownCommands: 'Latch has no built-in commands for this custom Harness.',
+    noSkillCommands: 'Skills and commands come from plugins or project files. This Harness documents no installation command for them.',
+    noCommands: 'This Harness documents no installation command.',
+    agentSkills: 'My Agents’ skills',
+    throughSkills: 'Via latch-skills',
+    nativeLoad: 'Loaded by the Harness',
+    templates: 'Prompt templates',
+    allSessions: 'All sessions',
+    scopedSessions: 'Selected Agents and projects',
+    noExtensionCommands: 'No extension commands',
+    codexPluginReason:
+      'Listing plugins can download or update bundles installed in your account. The current protocol has no read-only list.',
+    capability: {
+      data: 'Data panels',
+      pages: 'Pages',
+      tools: 'Tools',
+      panels: 'Panels',
+      models: 'Models',
+      harness: 'Harness',
+      connections: 'Connections',
+    },
+  },
+)
 
 export interface ExtensionEntry {
   key: string
@@ -67,7 +114,10 @@ export interface LatchContext {
   templates?: readonly PromptTemplate[]
 }
 
-const SCOPE: Readonly<Record<string, string>> = { project: '项目', user: '用户', system: '系统', admin: '管理员', temporary: '临时' }
+const SCOPE = defineCopy<Readonly<Record<string, string>>>(
+  { project: '项目', user: '用户', system: '系统', admin: '管理员', temporary: '临时' },
+  { project: 'Project', user: 'User', system: 'System', admin: 'Admin', temporary: 'Temporary' },
+)
 
 export const presetOf = (harness: Pick<HarnessInfo, 'capabilities'>): string | undefined => harness.capabilities.display.mark
 
@@ -75,8 +125,8 @@ export const presetOf = (harness: Pick<HarnessInfo, 'capabilities'>): string | u
 export const takesLatchServers = (harness: Pick<HarnessInfo, 'skills'>): boolean => harness.skills === 'server'
 
 function absentReason(kind: ExtensionKind, preset: boolean): string {
-  if (!preset) return '这个 Harness 不是 Latch 的预设，不知道它的命令'
-  return kind === 'skills' || kind === 'commands' ? '它没有文档化的安装命令；技能与命令随插件或项目文件而来' : '它没有文档化的安装命令'
+  if (!preset) return EXTENSION_COPY.unknownCommands
+  return kind === 'skills' || kind === 'commands' ? EXTENSION_COPY.noSkillCommands : EXTENSION_COPY.noCommands
 }
 
 export function harnessKinds(
@@ -95,7 +145,7 @@ export function harnessKinds(
     const commands = profile.commands[kind]
     const view: KindView = {
       kind,
-      title: KIND_TITLE[kind],
+      title: EXTENSION_COPY.kind[kind],
       status: 'not-reported',
       own: [],
       latch: [],
@@ -115,11 +165,11 @@ export function harnessKinds(
       if (harness.skills)
         view.latch.push({
           key: 'latch:agent-skills',
-          name: '我的 Agent 的技能',
-          detail: harness.skills === 'server' ? '经 latch-skills' : '原生加载',
+          name: EXTENSION_COPY.agentSkills,
+          detail: harness.skills === 'server' ? EXTENSION_COPY.throughSkills : EXTENSION_COPY.nativeLoad,
         })
       if (servers.some(server => server.transport === 'stdio' && server.preset === 'computer'))
-        view.latch.push({ key: 'latch:computer-guide', name: 'latch-operate-this-mac', detail: '经 latch-skills' })
+        view.latch.push({ key: 'latch:computer-guide', name: 'latch-operate-this-mac', detail: EXTENSION_COPY.throughSkills })
     }
     if (kind === 'commands') {
       if (report) {
@@ -134,7 +184,8 @@ export function harnessKinds(
       const templates = (latch.templates ?? []).filter(
         template => template.scope.kind === 'all' || (template.scope.kind === 'agent' && template.scope.id === harness.id),
       )
-      for (const template of templates) view.latch.push({ key: `latch:template:${template.id}`, name: template.name, detail: '提示词模板' })
+      for (const template of templates)
+        view.latch.push({ key: `latch:template:${template.id}`, name: template.name, detail: EXTENSION_COPY.templates })
     }
     if (kind === 'mcp') {
       view.status = harness.ownMcp ? (harness.ownMcp.last ? 'reported' : 'not-yet') : 'not-reported'
@@ -146,7 +197,7 @@ export function harnessKinds(
       view.latch = servers.map(server => ({
         key: `latch-mcp:${server.id}`,
         name: server.name,
-        detail: server.scope.all ? '全部会话' : '部分 Agent 与项目',
+        detail: server.scope.all ? EXTENSION_COPY.allSessions : EXTENSION_COPY.scopedSessions,
       }))
     }
     if (kind === 'plugins') {
@@ -157,10 +208,10 @@ export function harnessKinds(
           view.own = plugins.names.map(name => ({ key: `plugin:${name}`, name }))
           if (plugins.truncated) view.truncated = true
         }
-        view.empty = '没有扩展命令'
+        view.empty = EXTENSION_COPY.noExtensionCommands
       } else if (support?.plugins === 'requires-sync') {
         view.status = 'not-implemented'
-        view.reason = '读取清单时可能下载或更新账号里已安装的插件包。当前协议没有只读取清单的接口。'
+        view.reason = EXTENSION_COPY.codexPluginReason
       }
     }
     if (pending && kind !== 'mcp' && view.status === 'not-yet') view.status = pending
@@ -206,14 +257,14 @@ export function extensionReportKey(snapshot: AppSnapshot, harnesses: readonly Ha
 export function harnessSummary(kinds: readonly KindView[]): string {
   const parts = kinds.flatMap(view => {
     const count = view.status === 'reported' ? view.own.length + view.latch.length : view.latch.length
-    return count ? [`${view.title} ${count}`] : []
+    return count ? [`${view.title} ${formatNumber(count)}`] : []
   })
   if (parts.length) return parts.join(' · ')
-  if (kinds.some(view => view.status === 'reading')) return READING_REPORT
-  if (kinds.some(view => view.status === 'unavailable')) return REPORT_UNAVAILABLE
-  if (kinds.some(view => view.status === 'not-yet')) return NOT_YET
-  if (kinds.some(view => view.status === 'unread' || view.truncated)) return UNREAD
-  return kinds.some(view => view.status === 'reported') ? NONE : NOT_REPORTED
+  if (kinds.some(view => view.status === 'reading')) return EXTENSION_COPY.reading
+  if (kinds.some(view => view.status === 'unavailable')) return EXTENSION_COPY.reportUnavailable
+  if (kinds.some(view => view.status === 'not-yet')) return EXTENSION_COPY.notYet
+  if (kinds.some(view => view.status === 'unread' || view.truncated)) return EXTENSION_COPY.unread
+  return kinds.some(view => view.status === 'reported') ? EXTENSION_COPY.none : EXTENSION_COPY.notReported
 }
 
 /**
@@ -231,16 +282,17 @@ export function latchPlugins(plugins: readonly PluginInfo[]): { data: PluginInfo
 /** What a plugin provides, counted: 技能 2 · 数据面板 1. */
 export function pluginProvides(plugin: PluginInfo, pages = 0): string {
   const count = (prefix: string) => plugin.capabilities.filter(capability => capability.startsWith(prefix)).length
+  const capability = EXTENSION_COPY.capability
   const parts: Array<[string, number]> = [
-    ['技能', count('skill:')],
-    ['数据面板', count('data:')],
-    ['页面', pages],
-    ['工具', count('tool:')],
-    ['面板', count('ui:')],
-    ['模型', count('provider:')],
-    ['Harness', count('harness:')],
-    ['连接', count('transport:')],
+    [EXTENSION_COPY.kind.skills, count('skill:')],
+    [capability.data, count('data:')],
+    [capability.pages, pages],
+    [capability.tools, count('tool:')],
+    [capability.panels, count('ui:')],
+    [capability.models, count('provider:')],
+    [capability.harness, count('harness:')],
+    [capability.connections, count('transport:')],
   ]
-  const shown = parts.filter(([, n]) => n > 0).map(([label, n]) => `${label} ${n}`)
+  const shown = parts.filter(([, n]) => n > 0).map(([label, n]) => `${label} ${formatNumber(n)}`)
   return shown.length ? shown.join(' · ') : plugin.description
 }

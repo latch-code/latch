@@ -56,80 +56,432 @@ import { ImportDialog, importedForm } from './McpImport.tsx'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { harnessName } from '../composerChoice.ts'
 import { computerHarnesses, computerToolSections, computerVersion, defaultsNote } from './computerTools.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    disableTelemetry: '关闭 Driver 的遥测',
+    copyTelemetry: '复制关闭遥测的命令',
+    notInstalled: '未安装',
+    unknownVersion: '读不到版本',
+    unsignedDriver: '不是签名的 Cua Driver',
+    operateMac: '操控这台 Mac',
+    recheck: '重新检测',
+    addEllipsis: '添加…',
+    copyUpdate: '复制升级命令',
+    copyInstall: '复制安装命令',
+    update: '升级命令',
+    install: '安装命令',
+    noXcode: '未安装 Xcode',
+    xcodeBridge: 'Xcode 的 MCP 桥',
+    signingIn: '登录中',
+    loginFailed: '登录失败',
+    reloginRequired: '需要重新登录',
+    signedOut: '未登录',
+    signedIn: '已登录',
+    disabled: '已停用',
+    untested: '未测试',
+    loginRequired: '需要登录',
+    failed: '失败',
+    allSessions: '所有会话',
+    noSelection: '还没有选',
+    noProject: '无项目',
+    hidden: '含不可见或改变方向的字符',
+    invalidServerName: '字母、数字、- 与 _，不连写 __，不以 latch 开头',
+    invalidUrl: 'https:// 地址，或这台 Mac 上的 http://localhost',
+    serverType: 'MCP 服务器的类型',
+    command: '命令',
+    remote: '远程地址',
+    address: '地址',
+    name: '名称',
+    nameExample: '例如 github',
+    headers: '请求头',
+    addHeader: '添加请求头',
+    headerPrivacy: '值只存在这台 Mac 上，只发往这个地址',
+    noHeaders: '没有请求头',
+    invalidHeader: '不是可用的请求头名称',
+    value: '值',
+    enterValue: '填写值',
+    remove: '移除',
+    commandExample: '例如 npx 或 /usr/local/bin/server',
+    arguments: '参数',
+    argumentsHint: '每行一个；${workspaceFolder} 是会话的项目文件夹',
+    unpinned: '每次启动可能下载新版本',
+    environment: '环境变量',
+    addVariable: '添加变量',
+    secretPrivacy: '秘密的值只存在这台 Mac 上，不再显示',
+    noEnvironment: '没有环境变量',
+    variableName: '变量名',
+    invalidVariable: '只能包含字母、数字和下划线',
+    secret: '秘密',
+    launch: '启动',
+    launchInProject: '在项目文件夹里启动',
+    importFromProject: '从项目导入…',
+    cancel: '取消',
+    add: '添加',
+    useIn: '用在',
+    projects: '项目',
+    addEnvironment: '添加环境变量',
+    save: '保存',
+    editCommand: '编辑命令',
+    perLine: '每行一个',
+    editAddress: '编辑地址',
+    login: '登录',
+    registeredApp: '在授权服务器注册的应用',
+    visibleAscii: '只能是可见的 ASCII 字符',
+    optionalSecret: 'Client Secret（没有就留空）',
+    browserFinish: '在浏览器里完成',
+    browserOpen: '在浏览器中打开',
+    logout: '退出登录',
+    retry: '重试',
+    relogin: '重新登录',
+    authorizationServer: '授权服务器',
+    scope: '范围',
+    editEllipsis: '编辑…',
+    set: '已设置',
+    notSet: '未设置',
+    replaceEllipsis: '更换…',
+    none: '无',
+    cwd: '工作目录',
+    projectFolder: '会话的项目文件夹',
+    emptyFolder: '会话的空文件夹',
+    version: '版本',
+    available: '可以使用',
+    cannotReceive: '不接收 MCP 服务器',
+    new: '新',
+    test: '测试',
+    session: '会话',
+    testing: '测试中',
+    disable: '停用',
+    enable: '启用',
+    incomplete: '没有完成',
+    tools: '工具',
+    noTools: '没有工具',
+    testToList: '测试后列出工具',
+    title: 'Latch 的 MCP 服务器',
+    noServers: '还没有 MCP 服务器',
+    ok: '知道了',
+    ownMcp: 'Harness 自己的 MCP',
+    localEdit: '只在这台 Mac 上添加和修改',
+    localEditDetail: '停用可以在任何能管理这台 Mac 的设备上做；添加、修改与移除只在这台 Mac 的 Latch 里。',
+    addServer: '添加 MCP 服务器',
+    secretSet: '秘密 · 已设置',
+    secretUnset: '秘密 · 未设置',
+    outdated: (version: string) => `版本太旧 · ${version}`,
+    found: (version: string) => `已找到 · ${version}`,
+    minimum: (version: string) => `需要 ${version} 或更高`,
+    minimumXcode: (version: string) => `需要 Xcode ${version} 或更高`,
+    toolStatus: (count: number) => `可用 · ${formatNumber(count)} 个工具`,
+    agents: (count: number) => `${formatNumber(count)} 个 Agent`,
+    places: (list: string, count: number) => `${list} 等 ${formatNumber(count)} 处`,
+    listSeparator: '、',
+    removeHeader: (name: string | number) => `移除请求头 ${name}`,
+    removeVariable: (name: string | number) => `移除变量 ${name}`,
+    imported: (name: string) => `来自 ${name} 的 .mcp.json`,
+    replaceValue: (name: string) => `更换 ${name} 的值`,
+    expires: (at: string) => `到期 ${at}`,
+    removeNamed: (name: string) => `移除 ${name}`,
+    useTool: (name: string) => `使用 ${name}`,
+    testFailed: (reason: string) => `测试失败：${reason}`,
+    toolCount: (count: number) => `${formatNumber(count)} 个`,
+    confirmRemove: (name: string) => `移除 ${name}？`,
+    removeDetail: (remote: boolean, revoke: boolean) =>
+      `正在用它的会话立即失去它；它的${remote ? '请求头' : '环境变量'}的值一并删除${revoke ? '，登录的令牌会被撤销' : ''}。`,
+    removeAllowance: (allowance: string) => `同时移除出站许可 ${allowance}`,
+    open: (name: string) => `打开 ${name}`,
+  },
+  {
+    disableTelemetry: 'Disable Driver telemetry',
+    copyTelemetry: 'Copy command to disable telemetry',
+    notInstalled: 'Not installed',
+    unknownVersion: 'Version unavailable',
+    unsignedDriver: 'Cua Driver signature check failed',
+    operateMac: 'Operate this Mac',
+    recheck: 'Check again',
+    addEllipsis: 'Add…',
+    copyUpdate: 'Copy update command',
+    copyInstall: 'Copy install command',
+    update: 'Update command',
+    install: 'Install command',
+    noXcode: 'Xcode is not installed',
+    xcodeBridge: 'Xcode MCP bridge',
+    signingIn: 'Logging in',
+    loginFailed: 'Login failed',
+    reloginRequired: 'Login required again',
+    signedOut: 'Not logged in',
+    signedIn: 'Logged in',
+    disabled: 'Disabled',
+    untested: 'Untested',
+    loginRequired: 'Login required',
+    failed: 'Failed',
+    allSessions: 'All sessions',
+    noSelection: 'Nothing selected',
+    noProject: 'No project',
+    hidden: 'Has invisible or direction-changing characters',
+    invalidServerName: 'Use letters, numbers, hyphens, and underscores. Avoid consecutive underscores and the latch prefix.',
+    invalidUrl: 'Use an https:// address, or http://localhost on this Mac',
+    serverType: 'MCP server type',
+    command: 'Command',
+    remote: 'Remote address',
+    address: 'Address',
+    name: 'Name',
+    nameExample: 'e.g. github',
+    headers: 'Request headers',
+    addHeader: 'Add header',
+    headerPrivacy: 'Values stay on this Mac and go only to this address',
+    noHeaders: 'No headers',
+    invalidHeader: 'Invalid header name',
+    value: 'Value',
+    enterValue: 'Enter a value',
+    remove: 'Remove',
+    commandExample: 'e.g. npx or /usr/local/bin/server',
+    arguments: 'Arguments',
+    argumentsHint: 'One per line. ${workspaceFolder} is the session’s project folder.',
+    unpinned: 'Launching may download a new version',
+    environment: 'Environment variables',
+    addVariable: 'Add variable',
+    secretPrivacy: 'Secret values stay on this Mac and are never shown again',
+    noEnvironment: 'No environment variables',
+    variableName: 'Name',
+    invalidVariable: 'Use only letters, numbers, and underscores',
+    secret: 'Secret',
+    launch: 'Launch',
+    launchInProject: 'Start in the project folder',
+    importFromProject: 'Import from project…',
+    cancel: 'Cancel',
+    add: 'Add',
+    useIn: 'Use in',
+    projects: 'Projects',
+    addEnvironment: 'Add environment variable',
+    save: 'Save',
+    editCommand: 'Edit command',
+    perLine: 'One per line',
+    editAddress: 'Edit address',
+    login: 'Login',
+    registeredApp: 'App registered with the authorization server',
+    visibleAscii: 'Use visible ASCII characters only',
+    optionalSecret: 'Client Secret (optional)',
+    browserFinish: 'Finish in browser',
+    browserOpen: 'Open in browser',
+    logout: 'Log out',
+    retry: 'Retry',
+    relogin: 'Log in again',
+    authorizationServer: 'Authorization server',
+    scope: 'Scope',
+    editEllipsis: 'Edit…',
+    set: 'Set',
+    notSet: 'Not set',
+    replaceEllipsis: 'Replace…',
+    none: 'None',
+    cwd: 'Working directory',
+    projectFolder: 'Session’s project folder',
+    emptyFolder: 'Session’s empty folder',
+    version: 'Version',
+    available: 'Available',
+    cannotReceive: 'Cannot receive MCP servers',
+    new: 'New',
+    test: 'Test',
+    session: 'Session',
+    testing: 'Testing',
+    disable: 'Disable',
+    enable: 'Enable',
+    incomplete: 'Didn’t finish',
+    tools: 'Tools',
+    noTools: 'No tools',
+    testToList: 'Test to list tools',
+    title: 'Latch MCP servers',
+    noServers: 'No MCP servers yet',
+    ok: 'OK',
+    ownMcp: 'Harness MCP servers',
+    localEdit: 'Add or edit on this Mac',
+    localEditDetail: 'Any device that can manage this Mac can disable a server. Use Latch on this Mac to add, edit, or remove servers.',
+    addServer: 'Add MCP server',
+    secretSet: 'Secret · Set',
+    secretUnset: 'Secret · Not set',
+    outdated: (version: string) => `Update required · ${version}`,
+    found: (version: string) => `Found · ${version}`,
+    minimum: (version: string) => `Requires ${version} or later`,
+    minimumXcode: (version: string) => `Requires Xcode ${version} or later`,
+    toolStatus: (count: number) => `Available · ${plural(count, { one: '{n} tool', other: '{n} tools' })}`,
+    agents: (count: number) => plural(count, { one: '{n} Agent', other: '{n} Agents' }),
+    places: (list: string, count: number) => `${list}, and ${formatNumber(count - 2)} more`,
+    listSeparator: ', ',
+    removeHeader: (name: string | number) => `Remove header ${name}`,
+    removeVariable: (name: string | number) => `Remove variable ${name}`,
+    imported: (name: string) => `From ${name}’s .mcp.json`,
+    replaceValue: (name: string) => `Replace value for ${name}`,
+    expires: (at: string) => `Expires ${at}`,
+    removeNamed: (name: string) => `Remove ${name}`,
+    useTool: (name: string) => `Use ${name}`,
+    testFailed: (reason: string) => `Test failed: ${reason}`,
+    toolCount: (count: number) => plural(count, { one: '{n} tool', other: '{n} tools' }),
+    confirmRemove: (name: string) => `Remove ${name}?`,
+    removeDetail: (remote: boolean, revoke: boolean) =>
+      `Sessions using this server lose access immediately. Its ${remote ? 'request header' : 'environment variable'} values are deleted.${revoke ? ' Login tokens will be revoked.' : ''}`,
+    removeAllowance: (allowance: string) => `Also remove outbound permission for ${allowance}`,
+    open: (name: string) => `Open ${name}`,
+  },
+)
 
 export const MCP_ICON = Cable
 
 /** Why a server did not come up, in a few words; the detail is the server's own and stays on the Mac. */
-export const MCP_FAILURE_TEXT: Readonly<Record<McpFailure, string>> = {
-  'spawn-failed': '命令无法启动',
-  exited: '进程已退出',
-  timeout: '没有在时限内完成初始化',
-  protocol: '回答不是 MCP',
-  'list-failed': '没有列出工具',
-  'output-too-large': '输出过大',
-  'auth-required': '需要登录',
-  unreachable: '无法连接',
-  refused: 'Latch 没有连接这个地址',
-}
+export const MCP_FAILURE_TEXT = defineCopy<Readonly<Record<McpFailure, string>>>(
+  {
+    'spawn-failed': '命令无法启动',
+    exited: '进程已退出',
+    timeout: '没有在时限内完成初始化',
+    protocol: '回答不是 MCP',
+    'list-failed': '没有列出工具',
+    'output-too-large': '输出过大',
+    'auth-required': '需要登录',
+    unreachable: '无法连接',
+    refused: 'Latch 没有连接这个地址',
+  },
+  {
+    'spawn-failed': 'Couldn’t launch the command',
+    exited: 'Process exited',
+    timeout: 'Initialization timed out',
+    protocol: 'The response wasn’t MCP',
+    'list-failed': 'No tools were listed',
+    'output-too-large': 'Output was too large',
+    'auth-required': 'Login required',
+    unreachable: 'Couldn’t connect',
+    refused: 'Latch declined to connect to this address',
+  },
+)
 
-const RUNS_AS_YOU = {
-  label: '以你的身份运行',
-  detail:
-    '命令由 Agent 一侧的 latch-mcp 启动，以你的身份运行，Latch 不隔离它。经 Latch 的每次调用都有记录；Harness 自己的 MCP 不经过 Latch。',
-}
+const RUNS_AS_YOU = defineCopy(
+  {
+    label: '以你的身份运行',
+    detail:
+      '命令由 Agent 一侧的 latch-mcp 启动，以你的身份运行，Latch 不隔离它。经 Latch 的每次调用都有记录；Harness 自己的 MCP 不经过 Latch。',
+  },
+  {
+    label: 'Runs as you',
+    detail:
+      'The Agent-side latch-mcp starts the command under your account. Latch does not isolate it. Calls through Latch are logged. A Harness handles its own MCP calls outside Latch.',
+  },
+)
 /** Why a login did not finish or no longer holds: Latch's own words, never the authorization server's. */
-export const MCP_LOGIN_FAILURE_TEXT: Readonly<Record<McpOAuthFailure, string>> = {
-  discovery: '服务器没有说明去哪里登录',
-  resource: '服务器说明的资源与它的地址不符',
-  metadata: '读不到授权服务器的说明',
-  endpoint: '授权服务器的端点不在确认过的地址上',
-  pkce: '授权服务器不支持 PKCE',
-  'client-required': '需要填写 Client ID',
-  registration: '授权服务器没有接受注册',
-  state: '回调与这次登录不符',
-  issuer: '回调不是来自确认过的授权服务器',
-  denied: '登录被拒绝或取消',
-  expired: '登录超时',
-  exchange: '授权服务器没有发出令牌',
-  token: '授权服务器发出的令牌不合格式',
-  scope: '范围超出确认过的',
-  refused: 'Latch 没有连接这个地址',
-  unreachable: '无法连接授权服务器',
-  cancelled: '登录已取消',
-  audit: '记录写不进',
-  refresh: '续期被拒绝',
-  rejected: '服务器不再接受这次登录',
-  delete: '没能删除这台 Mac 上的登录',
-}
-const LOGIN_NOTE = {
-  label: '令牌只留在这台 Mac',
-  detail:
-    'Latch 在系统浏览器里登录，令牌只存在这台 Mac 上，只发往这个地址与确认过的授权服务器，不交给 Agent 或其他设备。只能在这台 Mac 上登录与退出；移除服务器或退出登录时令牌会被撤销。',
-}
-const CLIENT_NOTE = '授权服务器不提供自动注册时填写。注册时回调地址填 http://127.0.0.1/callback（任意端口）。'
+export const MCP_LOGIN_FAILURE_TEXT = defineCopy<Readonly<Record<McpOAuthFailure, string>>>(
+  {
+    discovery: '服务器没有说明去哪里登录',
+    resource: '服务器说明的资源与它的地址不符',
+    metadata: '读不到授权服务器的说明',
+    endpoint: '授权服务器的端点不在确认过的地址上',
+    pkce: '授权服务器不支持 PKCE',
+    'client-required': '需要填写 Client ID',
+    registration: '授权服务器没有接受注册',
+    state: '回调与这次登录不符',
+    issuer: '回调不是来自确认过的授权服务器',
+    denied: '登录被拒绝或取消',
+    expired: '登录超时',
+    exchange: '授权服务器没有发出令牌',
+    token: '授权服务器发出的令牌不合格式',
+    scope: '范围超出确认过的',
+    refused: 'Latch 没有连接这个地址',
+    unreachable: '无法连接授权服务器',
+    cancelled: '登录已取消',
+    audit: '记录写不进',
+    refresh: '续期被拒绝',
+    rejected: '服务器不再接受这次登录',
+    delete: '没能删除这台 Mac 上的登录',
+  },
+  {
+    discovery: 'The server didn’t provide a login location',
+    resource: 'The resource returned by the server doesn’t match its address',
+    metadata: 'Couldn’t read authorization server information',
+    endpoint: 'The authorization endpoint uses an unconfirmed address',
+    pkce: 'The authorization server doesn’t support PKCE',
+    'client-required': 'Enter a Client ID',
+    registration: 'The authorization server refused registration',
+    state: 'The callback doesn’t match this login',
+    issuer: 'The callback didn’t come from the confirmed authorization server',
+    denied: 'Login was denied or cancelled',
+    expired: 'Login timed out',
+    exchange: 'The authorization server didn’t issue a token',
+    token: 'The authorization server returned a malformed token',
+    scope: 'The requested scope exceeds the approved scope',
+    refused: 'Latch declined to connect to this address',
+    unreachable: 'Couldn’t connect to the authorization server',
+    cancelled: 'Login cancelled',
+    audit: 'Couldn’t write the audit record',
+    refresh: 'Renewal was denied',
+    rejected: 'The server no longer accepts this login',
+    delete: 'Couldn’t remove the login from this Mac',
+  },
+)
+const LOGIN_NOTE = defineCopy(
+  {
+    label: '令牌只留在这台 Mac',
+    detail:
+      'Latch 在系统浏览器里登录，令牌只存在这台 Mac 上，只发往这个地址与确认过的授权服务器，不交给 Agent 或其他设备。只能在这台 Mac 上登录与退出；移除服务器或退出登录时令牌会被撤销。',
+  },
+  {
+    label: 'Tokens stay on this Mac',
+    detail:
+      'Latch logs in through your system browser and stores tokens only on this Mac. Tokens go only to this address and the confirmed authorization server. Agents and other devices have no access to them. Use this Mac to log in or out. Removing the server or logging out revokes its tokens.',
+  },
+)
+const CLIENT_NOTE = defineCopy(
+  { detail: '授权服务器不提供自动注册时填写。注册时回调地址填 http://127.0.0.1/callback（任意端口）。' },
+  {
+    detail:
+      'Enter this when the authorization server doesn’t support automatic registration. Register http://127.0.0.1/callback as the callback address, with any port.',
+  },
+)
 
-const REMOTE_NOTE = {
-  label: '请求头只留在这台 Mac',
-  detail:
-    'Latch 是远程地址的客户端：请求头只发往确认过的地址，不交给 Agent，也不跟随重定向。内置 Harness 的每次调用都要你确认；外部 Harness 经 latch-mcp 交给 Latch 调用。经 Latch 的每次调用都有记录。',
-}
-const BUILTIN_NOTE = {
-  label: '内置 Harness 只用远程地址',
-  detail:
-    '命令交给 Claude Agent、Codex 等外部 Harness；pi 不接收 MCP 服务器。内置 Harness 要由 Latch 自己在这台 Mac 上运行命令，尚未实现；远程地址由 Latch 调用，每次都要你确认。',
-}
+const REMOTE_NOTE = defineCopy(
+  {
+    label: '请求头只留在这台 Mac',
+    detail:
+      'Latch 是远程地址的客户端：请求头只发往确认过的地址，不交给 Agent，也不跟随重定向。内置 Harness 的每次调用都要你确认；外部 Harness 经 latch-mcp 交给 Latch 调用。经 Latch 的每次调用都有记录。',
+  },
+  {
+    label: 'Headers stay on this Mac',
+    detail:
+      'Latch connects to the remote address and sends headers only to the confirmed address. Headers do not go to the Agent and Latch does not follow redirects. The built-in Harness asks you before each call. External Harnesses call through latch-mcp. Latch logs every call it handles.',
+  },
+)
+const BUILTIN_NOTE = defineCopy(
+  {
+    label: '内置 Harness 只用远程地址',
+    detail:
+      '命令交给 Claude Agent、Codex 等外部 Harness；pi 不接收 MCP 服务器。内置 Harness 要由 Latch 自己在这台 Mac 上运行命令，尚未实现；远程地址由 Latch 调用，每次都要你确认。',
+  },
+  {
+    label: 'The built-in Harness uses remote addresses only',
+    detail:
+      'External Harnesses such as Claude Agent and Codex receive commands. pi does not receive MCP servers. Running a command for the built-in Harness would require Latch to run it on this Mac, which is not implemented yet. Latch calls remote servers and asks you each time.',
+  },
+)
 
-const COMPUTER_NOTE = {
-  label: '以你的身份操作这台 Mac',
-  detail:
-    '它以你的身份点击、输入和读取这台 Mac 上的 App。这不是沙箱，Latch 不隔离它。先不要让它操作 Electron 应用（包括 Latch 与 VS Code）。Latch 的变量到不了它的后台服务：在终端运行 cua-driver telemetry disable 关掉它的遥测。',
-}
+const COMPUTER_NOTE = defineCopy(
+  {
+    label: '以你的身份操作这台 Mac',
+    detail:
+      '它以你的身份点击、输入和读取这台 Mac 上的 App。这不是沙箱，Latch 不隔离它。先不要让它操作 Electron 应用（包括 Latch 与 VS Code）。Latch 的变量到不了它的后台服务：在终端运行 cua-driver telemetry disable 关掉它的遥测。',
+  },
+  {
+    label: 'Operates this Mac as you',
+    detail:
+      'The driver clicks, types, and reads apps on this Mac under your account. Latch does not sandbox or isolate it. For now, keep it away from Electron apps, including Latch and VS Code. Latch’s environment variables do not reach its background service. Run cua-driver telemetry disable in a terminal to disable its telemetry.',
+  },
+)
 
-const XCODE_NOTE = {
-  label: '经 Xcode 构建并操作模拟器',
-  detail:
-    '它是 Xcode 自带的 MCP 桥（xcrun mcpbridge），以你的身份构建、安装并操作模拟器上的 App，不是沙箱。要在 Xcode › 设置 › Intelligence 里允许外部 Agent，并在 Xcode 里打开项目；Latch 不替你改。改项目文件与运行代码的工具默认关闭。',
-}
+const XCODE_NOTE = defineCopy(
+  {
+    label: '经 Xcode 构建并操作模拟器',
+    detail:
+      '它是 Xcode 自带的 MCP 桥（xcrun mcpbridge），以你的身份构建、安装并操作模拟器上的 App，不是沙箱。要在 Xcode › 设置 › Intelligence 里允许外部 Agent，并在 Xcode 里打开项目；Latch 不替你改。改项目文件与运行代码的工具默认关闭。',
+  },
+  {
+    label: 'Builds and operates the simulator through Xcode',
+    detail:
+      'Xcode’s MCP bridge (xcrun mcpbridge) builds, installs, and operates apps in the simulator under your account. The bridge is not a sandbox. Allow external Agents in Xcode › Settings › Intelligence and open the project in Xcode. Latch leaves these settings to you. Tools that modify the project or run code are disabled by default.',
+  },
+)
 
 /** A command the person runs: copy, and typed in at the prompt of a Latch terminal on this Mac's desktop. */
 function CommandActions({ command, label }: { command: string; label: string }) {
@@ -146,19 +498,19 @@ function TelemetryRow({ command }: { command: string }) {
   const line = driverTelemetryOff(command)
   return (
     <SettingsRow
-      title="关闭 Driver 的遥测"
+      title={COPY.disableTelemetry}
       description={<code className="settings-mono">{line}</code>}
-      trailing={<CommandActions command={line} label="复制关闭遥测的命令" />}
+      trailing={<CommandActions command={line} label={COPY.copyTelemetry} />}
     />
   )
 }
 
 /** 「操控这台 Mac」 in a word: not there, too old, refused, or found with its version. */
 export function computerWord(check: McpComputerCheck): { tone: StatusTone; text: string } {
-  if (check.state === 'absent') return { tone: 'neutral', text: '未安装' }
-  if (check.state === 'old') return { tone: 'warn', text: `版本太旧 · ${check.version ?? ''}` }
-  if (check.state === 'refused') return { tone: 'failed', text: check.reason === 'version' ? '读不到版本' : '不是签名的 Cua Driver' }
-  return { tone: 'done', text: `已找到 · ${check.version ?? ''}` }
+  if (check.state === 'absent') return { tone: 'neutral', text: COPY.notInstalled }
+  if (check.state === 'old') return { tone: 'warn', text: COPY.outdated(check.version ?? '') }
+  if (check.state === 'refused') return { tone: 'failed', text: check.reason === 'version' ? COPY.unknownVersion : COPY.unsignedDriver }
+  return { tone: 'done', text: COPY.found(check.version ?? '') }
 }
 
 /**
@@ -213,10 +565,10 @@ function ComputerGroup({ revision, onAdded }: { revision: number; onAdded: (serv
   const command = check.state === 'absent' || check.state === 'old' ? check.install : undefined
   return (
     <SettingsGroup
-      title="操控这台 Mac"
+      title={COPY.operateMac}
       meta={
         <Button variant="ghost" size="xs" icon={RefreshGlyph} loading={checking} onClick={() => void read()}>
-          重新检测
+          {COPY.recheck}
         </Button>
       }
       note={<NoteLine brief={COMPUTER_NOTE} />}>
@@ -225,23 +577,23 @@ function ComputerGroup({ revision, onAdded }: { revision: number; onAdded: (serv
           leading={<IconTile icon={LaptopGlyph} />}
           title="Cua Driver"
           description={
-            <StatusWord tone={word.tone} title={check.state === 'old' ? `需要 ${check.minimum} 或更高` : undefined}>
+            <StatusWord tone={word.tone} title={check.state === 'old' ? COPY.minimum(check.minimum) : undefined}>
               {word.text}
             </StatusWord>
           }
           trailing={
             check.state === 'ok' ? (
               <Button size="sm" loading={busy} onClick={() => void add()}>
-                添加…
+                {COPY.addEllipsis}
               </Button>
             ) : command ? (
-              <CommandActions command={command} label={check.state === 'old' ? '复制升级命令' : '复制安装命令'} />
+              <CommandActions command={command} label={check.state === 'old' ? COPY.copyUpdate : COPY.copyInstall} />
             ) : undefined
           }
         />
         {command && (
           <SettingsRow
-            title={check.state === 'old' ? '升级命令' : '安装命令'}
+            title={check.state === 'old' ? COPY.update : COPY.install}
             description={<code className="settings-mono">{command}</code>}
           />
         )}
@@ -255,9 +607,9 @@ function ComputerGroup({ revision, onAdded }: { revision: number; onAdded: (serv
 
 /** 「Xcode」 in a word: not there, too old, or found with its version. */
 export function xcodeWord(check: McpXcodeCheck): { tone: StatusTone; text: string } {
-  if (check.state === 'absent') return { tone: 'neutral', text: '未安装 Xcode' }
-  if (check.state === 'old') return { tone: 'warn', text: `版本太旧 · ${check.version ?? ''}` }
-  return { tone: 'done', text: `已找到 · Xcode ${check.version ?? ''}` }
+  if (check.state === 'absent') return { tone: 'neutral', text: COPY.noXcode }
+  if (check.state === 'old') return { tone: 'warn', text: COPY.outdated(check.version ?? '') }
+  return { tone: 'done', text: COPY.found(`Xcode ${check.version ?? ''}`) }
 }
 
 /** 「Xcode」, on this Mac's desktop app only: Xcode's bridge as Latch found it, and 添加 through the usual confirmation. */
@@ -308,23 +660,23 @@ function XcodeGroup({ revision, onAdded }: { revision: number; onAdded: (server:
       title="Xcode"
       meta={
         <Button variant="ghost" size="xs" icon={RefreshGlyph} loading={checking} onClick={() => void read()}>
-          重新检测
+          {COPY.recheck}
         </Button>
       }
       note={<NoteLine brief={XCODE_NOTE} />}>
       <div data-mcp-xcode={check.state}>
         <SettingsRow
           leading={<IconTile icon={Hammer} />}
-          title="Xcode 的 MCP 桥"
+          title={COPY.xcodeBridge}
           description={
-            <StatusWord tone={word.tone} title={check.state === 'old' ? `需要 Xcode ${check.minimum} 或更高` : undefined}>
+            <StatusWord tone={word.tone} title={check.state === 'old' ? COPY.minimumXcode(check.minimum) : undefined}>
               {word.text}
             </StatusWord>
           }
           trailing={
             check.state === 'ok' ? (
               <Button size="sm" loading={busy} onClick={() => void add()}>
-                添加…
+                {COPY.addEllipsis}
               </Button>
             ) : undefined
           }
@@ -342,28 +694,28 @@ export function mcpLoginStatus(server: McpHttpServerView): { tone: StatusTone; t
   if (!oauth) return undefined
   // 退出登录 did not get the tokens off this Mac: said as it is, not as a login that failed.
   if (oauth.state === 'failed' && oauth.reason === 'delete') return { tone: 'failed', text: MCP_LOGIN_FAILURE_TEXT.delete }
-  if (oauth.state === 'signing-in') return { tone: 'running', text: '登录中' }
+  if (oauth.state === 'signing-in') return { tone: 'running', text: COPY.signingIn }
   if (oauth.state === 'failed')
-    return { tone: 'failed', text: '登录失败', reason: oauth.reason ? MCP_LOGIN_FAILURE_TEXT[oauth.reason] : '' }
+    return { tone: 'failed', text: COPY.loginFailed, reason: oauth.reason ? MCP_LOGIN_FAILURE_TEXT[oauth.reason] : '' }
   if (oauth.state === 'relogin')
-    return { tone: 'warn', text: '需要重新登录', reason: oauth.reason ? MCP_LOGIN_FAILURE_TEXT[oauth.reason] : '' }
-  if (oauth.state === 'signed-out') return { tone: 'warn', text: '未登录' }
-  return { tone: 'done', text: '已登录' }
+    return { tone: 'warn', text: COPY.reloginRequired, reason: oauth.reason ? MCP_LOGIN_FAILURE_TEXT[oauth.reason] : '' }
+  if (oauth.state === 'signed-out') return { tone: 'warn', text: COPY.signedOut }
+  return { tone: 'done', text: COPY.signedIn }
 }
 
 /** The state word of a server: 已停用, 未测试, 可用 · N 个工具, its login where that waits, or 失败 with the reason. */
 export function mcpStatus(server: McpServerView): { tone: StatusTone; text: string; reason?: string } {
-  if (!server.enabled) return { tone: 'neutral', text: '已停用' }
+  if (!server.enabled) return { tone: 'neutral', text: COPY.disabled }
   const login = server.transport === 'http' ? mcpLoginStatus(server) : undefined
   // A login that is not there yet says more than the last test does.
   if (login && server.transport === 'http' && server.oauth?.state !== 'signed-in') return login
   const report = server.report
-  if (!report) return login ?? { tone: 'neutral', text: '未测试' }
+  if (!report) return login ?? { tone: 'neutral', text: COPY.untested }
   // A login is something the person does, not a failure.
-  if (report.status === 'failed' && report.reason === 'auth-required') return { tone: 'warn', text: '需要登录' }
-  if (report.status === 'failed') return { tone: 'failed', text: '失败', reason: report.reason ? MCP_FAILURE_TEXT[report.reason] : '' }
+  if (report.status === 'failed' && report.reason === 'auth-required') return { tone: 'warn', text: COPY.loginRequired }
+  if (report.status === 'failed') return { tone: 'failed', text: COPY.failed, reason: report.reason ? MCP_FAILURE_TEXT[report.reason] : '' }
   const on = report.tools.filter(tool => isMcpToolOn(server, tool)).length
-  return { tone: 'done', text: `可用 · ${on} 个工具` }
+  return { tone: 'done', text: COPY.toolStatus(on) }
 }
 
 export function McpStatusWord({ server }: { server: McpServerView }) {
@@ -377,11 +729,11 @@ export function McpStatusWord({ server }: { server: McpServerView }) {
 
 /** 「用在」 in a few words. */
 export function scopeText(scope: McpScope, snapshot: Pick<AppSnapshot, 'customAgents' | 'catalog'>): string {
-  if (scope.all) return '所有会话'
+  if (scope.all) return COPY.allSessions
   // An Agent this device cannot read (or one since deleted) is counted, not named.
   const named = scope.agents.flatMap(id => snapshot.customAgents?.find(agent => agent.id === id)?.name ?? [])
   const unnamed = scope.agents.length - named.length
-  const agents = [...named, ...(unnamed ? [`${unnamed} 个 Agent`] : [])]
+  const agents = [...named, ...(unnamed ? [COPY.agents(unnamed)] : [])]
   const projects = scope.projects.map(id =>
     projectLabel(
       snapshot.catalog?.workspaces.find(project => project.id === id),
@@ -389,8 +741,8 @@ export function scopeText(scope: McpScope, snapshot: Pick<AppSnapshot, 'customAg
     ),
   )
   const names = [...agents, ...projects]
-  if (names.length === 0) return '还没有选'
-  return names.length <= 2 ? names.join('、') : `${names.slice(0, 2).join('、')} 等 ${names.length} 处`
+  if (names.length === 0) return COPY.noSelection
+  return names.length <= 2 ? names.join(COPY.listSeparator) : COPY.places(names.slice(0, 2).join(COPY.listSeparator), names.length)
 }
 
 /** A write to a server with its request ID kept, so a retry after an unknown outcome is the same request. */
@@ -418,7 +770,7 @@ interface EnvRow {
   secret: boolean
 }
 
-const projectLabel = (project: { name: string } | undefined, id: string) => project?.name || (id === 'default' ? '无项目' : id)
+const projectLabel = (project: { name: string } | undefined, id: string) => project?.name || (id === 'default' ? COPY.noProject : id)
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u
 const HEADER = { test: isMcpHeaderName }
@@ -438,7 +790,6 @@ export function remoteUrl(value: string): boolean {
  * argument holding one reads differently than it runs, so the form refuses it.
  */
 export const hiddenCharacters = (text: string) => escapeSecurityText(text) !== text
-const HIDDEN = '含不可见或改变方向的字符'
 
 const lines = (text: string) =>
   text
@@ -473,13 +824,13 @@ function AddServer({
   /** The project whose `.mcp.json` filled the form, named in the record of the addition. */
   const [importedFrom, setImportedFrom] = useState<string | undefined>(undefined)
   const write = useWrite()
-  const nameError = name && !isMcpServerName(name) ? '字母、数字、- 与 _，不连写 __，不以 latch 开头' : undefined
+  const nameError = name && !isMcpServerName(name) ? COPY.invalidServerName : undefined
   const badEnv = env.find(row => row.key.trim() && !ENV_NAME.test(row.key.trim()))
   const badHeader = headers.find(row => row.key.trim() && !HEADER.test(row.key.trim()))
   const remote = transport === 'http'
-  const urlError = url.trim() && !remoteUrl(url.trim()) ? 'https:// 地址，或这台 Mac 上的 http://localhost' : undefined
-  const commandError = hiddenCharacters(command) ? HIDDEN : undefined
-  const argsError = args.split('\n').some(hiddenCharacters) ? HIDDEN : undefined
+  const urlError = url.trim() && !remoteUrl(url.trim()) ? COPY.invalidUrl : undefined
+  const commandError = hiddenCharacters(command) ? COPY.hidden : undefined
+  const argsError = args.split('\n').some(hiddenCharacters) ? COPY.hidden : undefined
   const ready = remote ? !!url.trim() && !urlError && !badHeader : !!command.trim() && !badEnv && !commandError && !argsError
   const save = async (event: FormEvent) => {
     event.preventDefault()
@@ -531,24 +882,24 @@ function AddServer({
         void save(event)
       }}>
       <SegmentedControl<'stdio' | 'http'>
-        label="MCP 服务器的类型"
+        label={COPY.serverType}
         value={transport}
         options={[
-          { value: 'stdio', label: '命令' },
-          { value: 'http', label: '远程地址' },
+          { value: 'stdio', label: COPY.command },
+          { value: 'http', label: COPY.remote },
         ]}
         onValueChange={setTransport}
       />
       {remote && (
         <>
-          <SettingsGroup title="地址" note={<NoteLine brief={REMOTE_NOTE} />}>
+          <SettingsGroup title={COPY.address} note={<NoteLine brief={REMOTE_NOTE} />}>
             <div className="settings-card-body settings-fields">
               <TextField
-                label="名称"
+                label={COPY.name}
                 value={name}
                 spellCheck={false}
                 autoComplete="off"
-                placeholder="例如 github"
+                placeholder={COPY.nameExample}
                 error={nameError}
                 onChange={event => {
                   setName(event.target.value)
@@ -569,7 +920,7 @@ function AddServer({
             </div>
           </SettingsGroup>
           <SettingsGroup
-            title="请求头"
+            title={COPY.headers}
             meta={
               <Button
                 variant="link"
@@ -577,31 +928,31 @@ function AddServer({
                 onClick={() => {
                   setHeaders(rows => [...rows, { key: '', value: '' }])
                 }}>
-                添加请求头
+                {COPY.addHeader}
               </Button>
             }
             captionIcon="lock"
-            caption="值只存在这台 Mac 上，只发往这个地址">
-            {headers.length === 0 && <SettingsRow title="没有请求头" />}
+            caption={COPY.headerPrivacy}>
+            {headers.length === 0 && <SettingsRow title={COPY.noHeaders} />}
             {headers.map((row, index) => (
               <div key={index} className="settings-card-body settings-fields mcp-env-row">
                 <TextField
-                  label="名称"
+                  label={COPY.name}
                   value={row.key}
                   spellCheck={false}
                   autoComplete="off"
                   placeholder="Authorization"
-                  error={row.key.trim() && !HEADER.test(row.key.trim()) ? '不是可用的请求头名称' : undefined}
+                  error={row.key.trim() && !HEADER.test(row.key.trim()) ? COPY.invalidHeader : undefined}
                   onChange={event => {
                     const key = event.target.value
                     setHeaders(rows => rows.map((item, at) => (at === index ? { ...item, key } : item)))
                   }}
                 />
                 <TextField
-                  label="值"
+                  label={COPY.value}
                   type="password"
                   value={row.value}
-                  placeholder="填写值"
+                  placeholder={COPY.enterValue}
                   spellCheck={false}
                   autoComplete="new-password"
                   onChange={event => {
@@ -611,11 +962,11 @@ function AddServer({
                 />
                 <Button
                   variant="ghost"
-                  aria-label={`移除请求头 ${row.key || index + 1}`}
+                  aria-label={COPY.removeHeader(row.key || index + 1)}
                   onClick={() => {
                     setHeaders(rows => rows.filter((_, at) => at !== index))
                   }}>
-                  移除
+                  {COPY.remove}
                 </Button>
               </div>
             ))}
@@ -624,33 +975,33 @@ function AddServer({
       )}
       {!remote && (
         <>
-          <SettingsGroup title="命令" note={<NoteLine brief={RUNS_AS_YOU} />}>
+          <SettingsGroup title={COPY.command} note={<NoteLine brief={RUNS_AS_YOU} />}>
             <div className="settings-card-body settings-fields">
               <TextField
-                label="名称"
+                label={COPY.name}
                 value={name}
                 spellCheck={false}
                 autoComplete="off"
-                placeholder="例如 github"
+                placeholder={COPY.nameExample}
                 error={nameError}
                 onChange={event => {
                   setName(event.target.value)
                 }}
               />
               <TextField
-                label="命令"
+                label={COPY.command}
                 value={command}
                 spellCheck={false}
                 autoComplete="off"
-                placeholder="例如 npx 或 /usr/local/bin/server"
+                placeholder={COPY.commandExample}
                 error={commandError}
                 onChange={event => {
                   setCommand(event.target.value)
                 }}
               />
               <TextAreaField
-                label="参数"
-                hint="每行一个；${workspaceFolder} 是会话的项目文件夹"
+                label={COPY.arguments}
+                hint={COPY.argumentsHint}
                 rows={3}
                 value={args}
                 error={argsError}
@@ -659,11 +1010,11 @@ function AddServer({
                   setArgs(event.target.value)
                 }}
               />
-              {isUnpinnedRunner(command.trim(), lines(args)) && <InlineNotice tone="warn">每次启动可能下载新版本</InlineNotice>}
+              {isUnpinnedRunner(command.trim(), lines(args)) && <InlineNotice tone="warn">{COPY.unpinned}</InlineNotice>}
             </div>
           </SettingsGroup>
           <SettingsGroup
-            title="环境变量"
+            title={COPY.environment}
             meta={
               <Button
                 variant="link"
@@ -671,30 +1022,30 @@ function AddServer({
                 onClick={() => {
                   setEnv(rows => [...rows, { key: '', value: '', secret: true }])
                 }}>
-                添加变量
+                {COPY.addVariable}
               </Button>
             }
             captionIcon="lock"
-            caption="秘密的值只存在这台 Mac 上，不再显示">
-            {env.length === 0 && <SettingsRow title="没有环境变量" />}
+            caption={COPY.secretPrivacy}>
+            {env.length === 0 && <SettingsRow title={COPY.noEnvironment} />}
             {env.map((row, index) => (
               <div key={index} className="settings-card-body settings-fields mcp-env-row">
                 <TextField
-                  label="变量名"
+                  label={COPY.variableName}
                   value={row.key}
                   spellCheck={false}
                   autoComplete="off"
-                  error={row.key.trim() && !ENV_NAME.test(row.key.trim()) ? '只能包含字母、数字和下划线' : undefined}
+                  error={row.key.trim() && !ENV_NAME.test(row.key.trim()) ? COPY.invalidVariable : undefined}
                   onChange={event => {
                     const key = event.target.value
                     setEnv(rows => rows.map((item, at) => (at === index ? { ...item, key } : item)))
                   }}
                 />
                 <TextField
-                  label="值"
+                  label={COPY.value}
                   type={row.secret ? 'password' : 'text'}
                   value={row.value}
-                  placeholder={row.secret ? '填写值' : undefined}
+                  placeholder={row.secret ? COPY.enterValue : undefined}
                   spellCheck={false}
                   autoComplete={row.secret ? 'new-password' : 'off'}
                   onChange={event => {
@@ -703,7 +1054,7 @@ function AddServer({
                   }}
                 />
                 <Checkbox
-                  label="秘密"
+                  label={COPY.secret}
                   checked={row.secret}
                   onChange={event => {
                     const secret = event.target.checked
@@ -712,27 +1063,31 @@ function AddServer({
                 />
                 <Button
                   variant="ghost"
-                  aria-label={`移除变量 ${row.key || index + 1}`}
+                  aria-label={COPY.removeVariable(row.key || index + 1)}
                   onClick={() => {
                     setEnv(rows => rows.filter((_, at) => at !== index))
                   }}>
-                  移除
+                  {COPY.remove}
                 </Button>
               </div>
             ))}
           </SettingsGroup>
-          <SettingsGroup title="启动">
-            <SwitchRow title="在项目文件夹里启动" checked={projectCwd} onCheckedChange={setProjectCwd} />
+          <SettingsGroup title={COPY.launch}>
+            <SwitchRow title={COPY.launchInProject} checked={projectCwd} onCheckedChange={setProjectCwd} />
           </SettingsGroup>
         </>
       )}
       <ScopeGroup snapshot={snapshot} scope={scope} onChange={setScope} />
       <div className="settings-note">
         {importedFrom && (
-          <span>{`来自 ${projectLabel(
-            snapshot.catalog?.workspaces.find(project => project.id === importedFrom),
-            importedFrom,
-          )} 的 .mcp.json`}</span>
+          <span>
+            {COPY.imported(
+              projectLabel(
+                snapshot.catalog?.workspaces.find(project => project.id === importedFrom),
+                importedFrom,
+              ),
+            )}
+          </span>
         )}
         <Button
           variant="link"
@@ -741,7 +1096,7 @@ function AddServer({
           onClick={() => {
             setImporting(true)
           }}>
-          从项目导入…
+          {COPY.importFromProject}
         </Button>
       </div>
       <ImportDialog
@@ -767,10 +1122,10 @@ function AddServer({
       <InlineConfirm active={busy} rank={1} />
       <div className="settings-actions">
         <Button size="md" disabled={busy} onClick={onCancel}>
-          取消
+          {COPY.cancel}
         </Button>
         <Button size="md" type="submit" variant="primary" loading={busy} disabled={!name.trim() || !ready || !!nameError}>
-          添加
+          {COPY.add}
         </Button>
       </div>
     </form>
@@ -793,9 +1148,9 @@ function ScopeGroup({
     onChange({ ...scope, [list]: on ? [...scope[list], id] : scope[list].filter(item => item !== id) })
   const agents = snapshot.customAgents ?? []
   return (
-    <SettingsGroup title="用在">
+    <SettingsGroup title={COPY.useIn}>
       <SwitchRow
-        title="所有会话"
+        title={COPY.allSessions}
         checked={scope.all}
         disabled={disabled}
         onCheckedChange={all => {
@@ -821,7 +1176,7 @@ function ScopeGroup({
             </fieldset>
           )}
           <fieldset>
-            <legend>项目</legend>
+            <legend>{COPY.projects}</legend>
             {(snapshot.catalog?.workspaces ?? []).map(project => (
               <Checkbox
                 key={project.id}
@@ -886,17 +1241,17 @@ function EnvDialog({
     <Dialog
       open={open}
       size="lg"
-      title={fixed ? `更换 ${fixed} 的值` : header ? '添加请求头' : '添加环境变量'}
+      title={fixed ? COPY.replaceValue(fixed) : header ? COPY.addHeader : COPY.addEnvironment}
       onClose={() => {
         if (!busy) close()
       }}
       footer={
         <>
           <Button size="md" disabled={busy} onClick={close}>
-            取消
+            {COPY.cancel}
           </Button>
           <Button size="md" variant="primary" type="submit" form="mcp-env-form" disabled={!name || invalid} loading={busy}>
-            保存
+            {COPY.save}
           </Button>
         </>
       }>
@@ -908,18 +1263,18 @@ function EnvDialog({
         }}>
         {!fixed && (
           <TextField
-            label={header ? '名称' : '变量名'}
+            label={header ? COPY.name : COPY.variableName}
             value={key}
             spellCheck={false}
             autoComplete="off"
-            error={invalid ? (header ? '不是可用的请求头名称' : '只能包含字母、数字和下划线') : undefined}
+            error={invalid ? (header ? COPY.invalidHeader : COPY.invalidVariable) : undefined}
             onChange={event => {
               setKey(event.target.value)
             }}
           />
         )}
         <TextField
-          label="值"
+          label={COPY.value}
           type={secret ? 'password' : 'text'}
           value={value}
           spellCheck={false}
@@ -928,7 +1283,7 @@ function EnvDialog({
             setValue(event.target.value)
           }}
         />
-        {!fixed && !header && <Checkbox label="秘密" checked={chosenSecret} onChange={event => setSecret(event.target.checked)} />}
+        {!fixed && !header && <Checkbox label={COPY.secret} checked={chosenSecret} onChange={event => setSecret(event.target.checked)} />}
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
         <InlineConfirm active={busy} rank={1} />
       </form>
@@ -966,17 +1321,17 @@ function CommandDialog({
     <Dialog
       open={open}
       size="lg"
-      title="编辑命令"
+      title={COPY.editCommand}
       onClose={() => {
         if (!busy) onClose()
       }}
       footer={
         <>
           <Button size="md" disabled={busy} onClick={onClose}>
-            取消
+            {COPY.cancel}
           </Button>
           <Button size="md" variant="primary" type="submit" form="mcp-command-form" disabled={!command.trim()} loading={busy}>
-            保存
+            {COPY.save}
           </Button>
         </>
       }>
@@ -987,7 +1342,7 @@ function CommandDialog({
           void submit(event)
         }}>
         <TextField
-          label="命令"
+          label={COPY.command}
           value={command}
           spellCheck={false}
           autoComplete="off"
@@ -996,8 +1351,8 @@ function CommandDialog({
           }}
         />
         <TextAreaField
-          label="参数"
-          hint="每行一个"
+          label={COPY.arguments}
+          hint={COPY.perLine}
           rows={3}
           value={args}
           spellCheck={false}
@@ -1005,7 +1360,7 @@ function CommandDialog({
             setArgs(event.target.value)
           }}
         />
-        <SwitchRow title="在项目文件夹里启动" checked={projectCwd} onCheckedChange={setProjectCwd} />
+        <SwitchRow title={COPY.launchInProject} checked={projectCwd} onCheckedChange={setProjectCwd} />
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
         <InlineConfirm active={busy} rank={1} />
       </form>
@@ -1040,17 +1395,17 @@ function UrlDialog({
     <Dialog
       open
       size="lg"
-      title="编辑地址"
+      title={COPY.editAddress}
       onClose={() => {
         if (!busy) onClose()
       }}
       footer={
         <>
           <Button size="md" disabled={busy} onClick={onClose}>
-            取消
+            {COPY.cancel}
           </Button>
           <Button size="md" variant="primary" type="submit" form="mcp-url-form" disabled={!url.trim() || invalid} loading={busy}>
-            保存
+            {COPY.save}
           </Button>
         </>
       }>
@@ -1066,7 +1421,7 @@ function UrlDialog({
           spellCheck={false}
           autoComplete="off"
           inputMode="url"
-          error={invalid ? 'https:// 地址，或这台 Mac 上的 http://localhost' : undefined}
+          error={invalid ? COPY.invalidUrl : undefined}
           onChange={event => {
             setUrl(event.target.value)
           }}
@@ -1111,10 +1466,10 @@ function ClientDialog({
       footer={
         <>
           <Button size="md" disabled={busy} onClick={onClose}>
-            取消
+            {COPY.cancel}
           </Button>
           <Button size="md" variant="primary" type="submit" form="mcp-client-form" disabled={!clientId.trim() || invalid} loading={busy}>
-            登录
+            {COPY.login}
           </Button>
         </>
       }>
@@ -1129,14 +1484,14 @@ function ClientDialog({
           value={clientId}
           spellCheck={false}
           autoComplete="off"
-          hint={<Hint label="在授权服务器注册的应用">{CLIENT_NOTE}</Hint>}
-          error={invalid ? '只能是可见的 ASCII 字符' : undefined}
+          hint={<Hint label={COPY.registeredApp}>{CLIENT_NOTE.detail}</Hint>}
+          error={invalid ? COPY.visibleAscii : undefined}
           onChange={event => {
             setClientId(event.target.value)
           }}
         />
         <TextField
-          label="Client Secret（没有就留空）"
+          label={COPY.optionalSecret}
           type="password"
           value={secret}
           spellCheck={false}
@@ -1237,7 +1592,7 @@ function LoginGroup({
     else void login().then(text => text && setError(text))
   }
   return (
-    <SettingsGroup title="登录" note={<NoteLine brief={LOGIN_NOTE} />}>
+    <SettingsGroup title={COPY.login} note={<NoteLine brief={LOGIN_NOTE} />}>
       <SettingsRow
         className="mcp-login"
         title={
@@ -1247,9 +1602,9 @@ function LoginGroup({
         }
         description={
           oauth.state === 'signed-in' && oauth.expiresAt
-            ? `到期 ${dateTime(oauth.expiresAt)}`
+            ? COPY.expires(dateTime(oauth.expiresAt))
             : oauth.state === 'signing-in'
-              ? '在浏览器里完成'
+              ? COPY.browserFinish
               : status.reason || undefined
         }
         trailing={
@@ -1262,22 +1617,22 @@ function LoginGroup({
                   onClick={() => {
                     window.open(address, '_blank', 'noopener,noreferrer')
                   }}>
-                  在浏览器中打开
+                  {COPY.browserOpen}
                 </Button>
               )}
               {oauth.state === 'signing-in' && (
                 <Button variant="ghost" disabled={idle} loading={busy === 'logout'} onClick={() => void logout()}>
-                  取消
+                  {COPY.cancel}
                 </Button>
               )}
               {oauth.state === 'signed-in' && (
                 <Button variant="ghost" disabled={idle} loading={busy === 'logout'} onClick={() => void logout()}>
-                  退出登录
+                  {COPY.logout}
                 </Button>
               )}
               {undeleted && (
                 <Button variant="primary" disabled={idle} loading={busy === 'logout'} onClick={() => void logout()}>
-                  重试
+                  {COPY.retry}
                 </Button>
               )}
               {!undeleted && (oauth.state === 'signed-out' || oauth.state === 'failed' || oauth.state === 'relogin') && (
@@ -1286,7 +1641,7 @@ function LoginGroup({
                     Client ID…
                   </Button>
                   <Button variant="primary" disabled={idle} loading={busy === 'login'} onClick={start}>
-                    {oauth.state === 'relogin' ? '重新登录' : '登录'}
+                    {oauth.state === 'relogin' ? COPY.relogin : COPY.login}
                   </Button>
                 </>
               )}
@@ -1294,9 +1649,11 @@ function LoginGroup({
           )
         }
       />
-      {oauth.issuer && <SettingsRow title="授权服务器" description={<MiddleEllipsis text={oauth.issuer} className="settings-mono" />} />}
+      {oauth.issuer && (
+        <SettingsRow title={COPY.authorizationServer} description={<MiddleEllipsis text={oauth.issuer} className="settings-mono" />} />
+      )}
       {oauth.scopes && oauth.scopes.length > 0 && (
-        <SettingsRow title="范围" description={<code className="settings-mono">{oauth.scopes.join(' ')}</code>} />
+        <SettingsRow title={COPY.scope} description={<code className="settings-mono">{oauth.scopes.join(' ')}</code>} />
       )}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       <InlineConfirm active={busy === 'login'} rank={1} />
@@ -1326,11 +1683,11 @@ function RemoteGroups({
   return (
     <>
       <SettingsGroup
-        title="地址"
+        title={COPY.address}
         meta={
           local && (
             <Button variant="link" size="xs" disabled={busy} onClick={onEditUrl}>
-              编辑…
+              {COPY.editEllipsis}
             </Button>
           )
         }
@@ -1338,30 +1695,30 @@ function RemoteGroups({
         <SettingsRow title="URL" description={<MiddleEllipsis text={server.url} className="settings-mono" />} />
       </SettingsGroup>
       <SettingsGroup
-        title="请求头"
+        title={COPY.headers}
         meta={
           local && (
             <Button variant="link" size="xs" disabled={busy} onClick={onAddHeader}>
-              添加…
+              {COPY.addEllipsis}
             </Button>
           )
         }
         captionIcon="lock"
-        caption="值只存在这台 Mac 上，只发往这个地址">
-        {server.headers.length === 0 && <SettingsRow title="没有请求头" />}
+        caption={COPY.headerPrivacy}>
+        {server.headers.length === 0 && <SettingsRow title={COPY.noHeaders} />}
         {server.headers.map(entry => (
           <SettingsRow
             key={entry.name}
             title={<code className="settings-mono">{entry.name}</code>}
-            description={entry.set ? '已设置' : '未设置'}
+            description={entry.set ? COPY.set : COPY.notSet}
             trailing={
               local && (
                 <span className="mcp-row-actions">
                   <Button variant="ghost" disabled={busy} onClick={() => onReplace(entry.name)}>
-                    更换…
+                    {COPY.replaceEllipsis}
                   </Button>
-                  <Button variant="ghost" disabled={busy} aria-label={`移除 ${entry.name}`} onClick={() => onRemove(entry.name)}>
-                    移除
+                  <Button variant="ghost" disabled={busy} aria-label={COPY.removeNamed(entry.name)} onClick={() => onRemove(entry.name)}>
+                    {COPY.remove}
                   </Button>
                 </span>
               )
@@ -1392,7 +1749,7 @@ function StdioGroups({
   return (
     <>
       <SettingsGroup
-        title="命令"
+        title={COPY.command}
         meta={
           local && (
             <Button
@@ -1402,31 +1759,31 @@ function StdioGroups({
               onClick={() => {
                 setDialog('command')
               }}>
-              编辑…
+              {COPY.editEllipsis}
             </Button>
           )
         }
         note={<NoteLine brief={RUNS_AS_YOU} />}>
-        <SettingsRow title="命令" description={<MiddleEllipsis text={server.command} className="settings-mono" />} />
+        <SettingsRow title={COPY.command} description={<MiddleEllipsis text={server.command} className="settings-mono" />} />
         <SettingsRow
-          title="参数"
-          description={server.args.length ? <MiddleEllipsis text={server.args.join(' ')} className="settings-mono" /> : '无'}
+          title={COPY.arguments}
+          description={server.args.length ? <MiddleEllipsis text={server.args.join(' ')} className="settings-mono" /> : COPY.none}
         />
-        <SettingsRow title="工作目录" description={server.projectCwd ? '会话的项目文件夹' : '会话的空文件夹'} />
+        <SettingsRow title={COPY.cwd} description={server.projectCwd ? COPY.projectFolder : COPY.emptyFolder} />
         {server.preset === 'computer' && <TelemetryRow command={server.command} />}
         {server.unpinned && (
           <SettingsRow
             title={
               <span className="mcp-warn">
                 <Icon icon={WarningGlyph} size={14} />
-                每次启动可能下载新版本
+                {COPY.unpinned}
               </span>
             }
           />
         )}
       </SettingsGroup>
       <SettingsGroup
-        title="环境变量"
+        title={COPY.environment}
         meta={
           local && (
             <Button
@@ -1436,13 +1793,13 @@ function StdioGroups({
               onClick={() => {
                 setDialog('env')
               }}>
-              添加…
+              {COPY.addEllipsis}
             </Button>
           )
         }
         captionIcon="lock"
-        caption="秘密的值只存在这台 Mac 上，不再显示">
-        {server.env.length === 0 && <SettingsRow title="没有环境变量" />}
+        caption={COPY.secretPrivacy}>
+        {server.env.length === 0 && <SettingsRow title={COPY.noEnvironment} />}
         {server.env.map(entry => (
           <SettingsRow
             key={entry.name}
@@ -1450,9 +1807,9 @@ function StdioGroups({
             description={
               entry.secret ? (
                 entry.set ? (
-                  '秘密 · 已设置'
+                  COPY.secretSet
                 ) : (
-                  '秘密 · 未设置'
+                  COPY.secretUnset
                 )
               ) : (
                 <MiddleEllipsis text={entry.value ?? ''} className="settings-mono" />
@@ -1467,19 +1824,19 @@ function StdioGroups({
                     onClick={() => {
                       setDialog({ name: entry.name, secret: entry.secret })
                     }}>
-                    更换…
+                    {COPY.replaceEllipsis}
                   </Button>
                   <Button
                     variant="ghost"
                     disabled={busy !== null}
-                    aria-label={`移除 ${entry.name}`}
+                    aria-label={COPY.removeNamed(entry.name)}
                     onClick={() => {
                       // A plain variable is part of what was confirmed: taking it away asks again.
                       void patch(`env-${entry.name}`, { [entry.secret ? 'secrets' : 'env']: { [entry.name]: null } }, !entry.secret).then(
                         text => text && setError(text),
                       )
                     }}>
-                    移除
+                    {COPY.remove}
                   </Button>
                 </span>
               )
@@ -1508,7 +1865,7 @@ function ComputerFacts({ snapshot, local }: { snapshot: AppSnapshot; local: bool
     <SettingsGroup title="Cua Driver">
       {version && (
         <SettingsRow
-          title="版本"
+          title={COPY.version}
           description={
             <StatusWord tone={version.tone} title={version.title} data-computer-version="">
               {version.text}
@@ -1518,7 +1875,7 @@ function ComputerFacts({ snapshot, local }: { snapshot: AppSnapshot; local: bool
       )}
       {harnesses.length > 0 && (
         <SettingsRow
-          title="可以使用"
+          title={COPY.available}
           description={
             <span className="mcp-computer-harnesses">
               {harnesses.map(({ harness, usable }) => (
@@ -1526,7 +1883,7 @@ function ComputerFacts({ snapshot, local }: { snapshot: AppSnapshot; local: bool
                   key={harness.id}
                   className="mcp-computer-harness"
                   data-usable={usable ? '' : undefined}
-                  title={`${harnessName(harness)} · ${usable ? '可以使用' : '不接收 MCP 服务器'}`}>
+                  title={`${harnessName(harness)} · ${usable ? COPY.available : COPY.cannotReceive}`}>
                   <HarnessTile harness={harness} size={16} />
                 </span>
               ))}
@@ -1562,12 +1919,12 @@ function ToolRow({
       title={
         <span className="mcp-tool">
           <code className="settings-mono">{tool}</code>
-          {fresh && <Badge tone="warn">新</Badge>}
+          {fresh && <Badge tone="warn">{COPY.new}</Badge>}
         </span>
       }
       trailing={
         <Switch
-          label={`使用 ${tool}`}
+          label={COPY.useTool(tool)}
           checked={isMcpToolOn(server, tool)}
           disabled={!local || busy}
           onCheckedChange={on => {
@@ -1657,7 +2014,7 @@ function ServerPage({
           <p>
             <McpStatusWord server={server} />
             {status.reason && <span className="mcp-reason">{status.reason}</span>}
-            {report && <span className="mcp-when">{`${report.via === 'test' ? '测试' : '会话'} · ${dateTime(report.at)}`}</span>}
+            {report && <span className="mcp-when">{`${report.via === 'test' ? COPY.test : COPY.session} · ${dateTime(report.at)}`}</span>}
           </p>
         </div>
         <div className="mcp-actions">
@@ -1669,7 +2026,7 @@ function ServerPage({
               onClick={() => {
                 void test()
               }}>
-              {busy === 'test' ? '测试中' : '测试'}
+              {busy === 'test' ? COPY.testing : COPY.test}
             </Button>
           )}
           {(local || server.enabled) && (
@@ -1680,7 +2037,7 @@ function ServerPage({
               onClick={() => {
                 void patch('enabled', { enabled: !server.enabled }).then(text => text && setError(text))
               }}>
-              {server.enabled ? '停用' : '启用'}
+              {server.enabled ? COPY.disable : COPY.enable}
             </Button>
           )}
           {local && (
@@ -1691,13 +2048,13 @@ function ServerPage({
               onClick={() => {
                 setRemoving(true)
               }}>
-              移除
+              {COPY.remove}
             </Button>
           )}
         </div>
       </div>
       {tested === 'failed' && report?.status === 'failed' && (
-        <InlineNotice tone="error">{`测试失败：${report.reason ? MCP_FAILURE_TEXT[report.reason] : '没有完成'}`}</InlineNotice>
+        <InlineNotice tone="error">{COPY.testFailed(report.reason ? MCP_FAILURE_TEXT[report.reason] : COPY.incomplete)}</InlineNotice>
       )}
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       {server.transport === 'http' && (
@@ -1734,8 +2091,8 @@ function ServerPage({
           </SettingsGroup>
         ))
       ) : (
-        <SettingsGroup title="工具" meta={tools.length > 0 ? `${tools.length} 个` : undefined}>
-          {tools.length === 0 && <SettingsRow title={server.report ? '没有工具' : '测试后列出工具'} />}
+        <SettingsGroup title={COPY.tools} meta={tools.length > 0 ? COPY.toolCount(tools.length) : undefined}>
+          {tools.length === 0 && <SettingsRow title={server.report ? COPY.noTools : COPY.testToList} />}
           {tools.map(tool => (
             <ToolRow key={tool} server={server} tool={tool} local={local} busy={busy !== null} patch={patch} setError={setError} />
           ))}
@@ -1773,22 +2130,20 @@ function ServerPage({
       />
       {removing && (
         <ConfirmDialog
-          title={`移除 ${server.name}？`}
+          title={COPY.confirmRemove(server.name)}
           message={
             <>
-              {`正在用它的会话立即失去它；它的${remote ? '请求头' : '环境变量'}的值一并删除${
-                server.transport === 'http' && server.oauth?.state === 'signed-in' ? '，登录的令牌会被撤销' : ''
-              }。`}
+              {COPY.removeDetail(remote, server.transport === 'http' && server.oauth?.state === 'signed-in')}
               {server.transport === 'http' && server.allowance && (
                 <Checkbox
-                  label={`同时移除出站许可 ${server.allowance}`}
+                  label={COPY.removeAllowance(server.allowance)}
                   checked={dropAllowance}
                   onChange={event => setDropAllowance(event.target.checked)}
                 />
               )}
             </>
           }
-          confirmLabel="移除"
+          confirmLabel={COPY.remove}
           danger
           onConfirm={async () => {
             const drop = server.transport === 'http' && server.allowance && dropAllowance ? '?allowance=remove' : ''
@@ -1836,7 +2191,7 @@ export function McpSettings({ snapshot }: { snapshot: AppSnapshot }) {
   const main = (
     <>
       <SettingsGroup
-        title="Latch 的 MCP 服务器"
+        title={COPY.title}
         meta={
           local && (
             <Button
@@ -1845,12 +2200,12 @@ export function McpSettings({ snapshot }: { snapshot: AppSnapshot }) {
               onClick={() => {
                 setEditing({ kind: 'new' })
               }}>
-              添加…
+              {COPY.addEllipsis}
             </Button>
           )
         }
         note={<NoteLine brief={BUILTIN_NOTE} />}>
-        {data.servers.length === 0 && <SettingsRow title="还没有 MCP 服务器" />}
+        {data.servers.length === 0 && <SettingsRow title={COPY.noServers} />}
         {data.servers.map(server => (
           <Fragment key={server.id}>
             <ObjectRow
@@ -1859,7 +2214,7 @@ export function McpSettings({ snapshot }: { snapshot: AppSnapshot }) {
               title={server.name}
               description={scopeText(server.scope, snapshot)}
               dim={!server.enabled}
-              label={`打开 ${server.name}`}
+              label={COPY.open(server.name)}
               trailing={<McpStatusWord server={server} />}
               onOpen={() => {
                 setEditing({ kind: 'server', id: server.id })
@@ -1879,7 +2234,7 @@ export function McpSettings({ snapshot }: { snapshot: AppSnapshot }) {
                         body: { requestId: newRequestId(), baseRevision: server.revision, defaultsSeen: true },
                       }).then(load, () => {})
                     }}>
-                    知道了
+                    {COPY.ok}
                   </Button>
                 }
               />
@@ -1905,10 +2260,10 @@ export function McpSettings({ snapshot }: { snapshot: AppSnapshot }) {
           }}
         />
       )}
-      <ExtensionsLink title="Harness 自己的 MCP" />
+      <ExtensionsLink title={COPY.ownMcp} />
       {!local && (
         <div className="settings-note">
-          <Hint label="只在这台 Mac 上添加和修改">停用可以在任何能管理这台 Mac 的设备上做；添加、修改与移除只在这台 Mac 的 Latch 里。</Hint>
+          <Hint label={COPY.localEdit}>{COPY.localEditDetail}</Hint>
         </div>
       )}
     </>
@@ -1917,7 +2272,7 @@ export function McpSettings({ snapshot }: { snapshot: AppSnapshot }) {
   if (editing?.kind === 'new')
     levels.push({
       key: 'mcp:new',
-      title: '添加 MCP 服务器',
+      title: COPY.addServer,
       onBack: () => setEditing(null),
       content: (
         <AddServer

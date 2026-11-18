@@ -9,6 +9,59 @@ import type { DocumentPreviewProps } from './types.ts'
 import { boundedQuoteText, selectedQuote } from './quote.ts'
 import { useViewerQuote } from './viewerActions.tsx'
 import { PDF_CSS_SCALE, pdfPageAt, pdfPercent, pdfScale, pdfZoomKey } from './pdfZoom.ts'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    pageFailed: '这一页无法显示。',
+    page: (page: number) => `第 ${formatNumber(page)} 页`,
+    partial: '部分 PDF 数据暂时无法读取。',
+    cannotOpen: '无法显示这个 PDF，请下载或在 Mac 上打开。',
+    password: 'PDF 密码',
+    open: '打开',
+    reading: '正在读取 PDF…',
+    noQuote: '这一页没有可引用的文字。',
+    quoteUnavailable: '这一页暂时无法读取，请重试。',
+    previous: '上一页',
+    pagesSuffix: ' 页',
+    next: '下一页',
+    fit: '适应',
+    zoom: 'PDF 缩放比例',
+    fitWidth: '适应宽度',
+    find: '查找 PDF 文字',
+    finding: '正在查找…',
+    matched: (first: number, second: number) => `${formatNumber(first)}/${formatNumber(second)} 匹配页`,
+    contents: '目录',
+    kept: ' 之前读到的内容仍保留在这里。',
+    updating: '正在更新 PDF…',
+    pages: 'PDF 页面',
+  },
+  {
+    pageFailed: 'This page could not be shown.',
+    page: (page: number) => `Page ${formatNumber(page)}`,
+    partial: 'Some PDF data could not be read right now.',
+    cannotOpen: 'Could not open this PDF. Download it or open it on the Mac.',
+    password: 'PDF password',
+    open: 'Open',
+    reading: 'Reading PDF…',
+    noQuote: 'There is no text to quote on this page.',
+    quoteUnavailable: 'Could not read this page right now. Try again.',
+    previous: 'Previous page',
+    pagesSuffix: ' pages',
+    next: 'Next page',
+    fit: 'Fit',
+    zoom: 'PDF zoom',
+    fitWidth: 'Fit width',
+    find: 'Find in PDF',
+    finding: 'Finding…',
+    matched: (first: number, second: number) => `${formatNumber(first)}/${formatNumber(second)} matching pages`,
+    contents: 'Contents',
+    kept: ' The previously read content stays here.',
+    updating: 'Updating PDF…',
+    pages: 'PDF pages',
+  },
+)
+
 class SafeBinaryData {
   async fetch({ kind, filename }: { kind: string; filename: string }) {
     const directory =
@@ -45,11 +98,11 @@ function PdfPage({
   const canvas = useRef<HTMLCanvasElement>(null),
     text = useRef<HTMLDivElement>(null),
     [height, setHeight] = useState(1000),
-    [error, setError] = useState('')
+    [failed, setFailed] = useState(false)
   const callbacks = useRef({ onRendered, onDimensions })
   callbacks.current = { onRendered, onDimensions }
   useEffect(() => {
-    setError('')
+    setFailed(false)
     let disposed = false,
       page: PDFPageProxy | undefined,
       render: ReturnType<PDFPageProxy['render']> | undefined,
@@ -137,7 +190,7 @@ function PdfPage({
         if (!disposed) callbacks.current.onRendered(index, `${fit}:${percent}:${width}`)
       })
       .catch(() => {
-        if (!disposed) setError('这一页无法显示。')
+        if (!disposed) setFailed(true)
       })
     return () => {
       disposed = true
@@ -153,9 +206,9 @@ function PdfPage({
     }
   }, [pdf, index, width, fit, percent, query])
   return (
-    <div className="pdf-page" style={{ height }} aria-label={`第 ${index + 1} 页`}>
-      {error ? (
-        <InlineNotice tone="error">{error}</InlineNotice>
+    <div className="pdf-page" style={{ height }} aria-label={COPY.page(index + 1)}>
+      {failed ? (
+        <InlineNotice tone="error">{COPY.pageFailed}</InlineNotice>
       ) : (
         <>
           <canvas ref={canvas} />
@@ -182,7 +235,7 @@ function releasePdf(value: PdfResource) {
 }
 export default function PdfPreview({ file, read, versionKey, onQuote }: DocumentPreviewProps) {
   const [document, setDocument] = useState<PDFDocumentProxy>(),
-    [error, setError] = useState(''),
+    [error, setError] = useState<'partial' | 'cannotOpen'>(),
     [password, setPassword] = useState(''),
     [passwordRequest, setPasswordRequest] = useState<(text: string) => void>(),
     [fit, setFit] = useState(true),
@@ -194,7 +247,7 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
     [matchIndex, setMatchIndex] = useState(0),
     [outline, setOutline] = useState<Array<{ title: string; page: number }>>([])
   const [loadedVersion, setLoadedVersion] = useState(''),
-    [quoteHint, setQuoteHint] = useState('')
+    [quoteHint, setQuoteHint] = useState<'noQuote' | 'quoteUnavailable'>()
   const resource = useRef<PdfResource | undefined>(undefined),
     generation = useRef(0)
   const reading = useRef({ page: 0, offset: 0 })
@@ -343,7 +396,7 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
       worker = PDFWorker.create({ port: nativeWorker })
     const entry: PdfResource = { controller, worker, nativeWorker },
       currentGeneration = ++generation.current
-    setError('')
+    setError(undefined)
     let loading: ReturnType<typeof getDocument> | undefined
     class Ranges extends PDFDataRangeTransport {
       requestDataRange(start: number, end: number) {
@@ -352,7 +405,7 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
             if (!controller.signal.aborted) this.onDataRange(start, new Uint8Array(data))
           },
           () => {
-            if (!controller.signal.aborted && currentGeneration === generation.current) setError('部分 PDF 数据暂时无法读取。')
+            if (!controller.signal.aborted && currentGeneration === generation.current) setError('partial')
             releasePdf(entry)
           },
         )
@@ -393,7 +446,7 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
         resource.current = entry
         setLoadedVersion(versionKey)
         setDocument(pdf)
-        setError('')
+        setError(undefined)
         setPasswordRequest(undefined)
         const tree = await pdf.getOutline()
         const links: Array<{ title: string; page: number }> = []
@@ -418,7 +471,7 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
         if (!controller.signal.aborted) setOutline(links)
       })
       .catch(() => {
-        if (!controller.signal.aborted) setError('无法显示这个 PDF，请下载或在 Mac 上打开。')
+        if (!controller.signal.aborted) setError('cannotOpen')
         if (resource.current !== entry) releasePdf(entry)
       })
     return () => {
@@ -470,7 +523,7 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
   useViewerQuote(onQuote ? !!document && loadedVersion === versionKey : undefined, () => {
     quoteNow.current()
   })
-  if (error && !document) return <InlineNotice tone="error">{error}</InlineNotice>
+  if (error && !document) return <InlineNotice tone="error">{COPY[error]}</InlineNotice>
   if (passwordRequest)
     return (
       <form
@@ -480,18 +533,18 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
           passwordRequest(password)
           setPassword('')
         }}>
-        <TextField label="PDF 密码" type="password" value={password} onChange={event => setPassword(event.target.value)} />
-        <Button type="submit">打开</Button>
+        <TextField label={COPY.password} type="password" value={password} onChange={event => setPassword(event.target.value)} />
+        <Button type="submit">{COPY.open}</Button>
       </form>
     )
-  if (!document) return <p role="status">正在读取 PDF…</p>
+  if (!document) return <p role="status">{COPY.reading}</p>
   const index = pdfPageAt(virtual.getVirtualItems(), scroll.current?.scrollTop ?? 0)?.index ?? 0
   const quote = async (source: 'page' | 'selection') => {
     if (!onQuote || loadedVersion !== versionKey) return
     if (source === 'selection') {
       const value = selectedQuote(scroll.current)
       if (value) {
-        setQuoteHint('')
+        setQuoteHint(undefined)
         onQuote(value)
         return
       }
@@ -509,11 +562,11 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
       }
       const text = boundedQuoteText(excerpt)
       if (text) {
-        setQuoteHint('')
+        setQuoteHint(undefined)
         onQuote({ text, page: index })
-      } else setQuoteHint('这一页没有可引用的文字。')
+      } else setQuoteHint('noQuote')
     } catch {
-      if (activeGeneration === generation.current) setQuoteHint('这一页暂时无法读取，请重试。')
+      if (activeGeneration === generation.current) setQuoteHint('quoteUnavailable')
     }
   }
   quoteNow.current = () => {
@@ -531,18 +584,19 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
         changeZoom(command === 'fit' ? 'fit' : currentPercent() + (command === 'in' ? 10 : -10))
       }}>
       <div className="document-preview-controls">
-        <IconButton label="上一页" icon={ArrowLeft} disabled={index === 0} onClick={() => goToPage(index - 1)} />
+        <IconButton label={COPY.previous} icon={ArrowLeft} disabled={index === 0} onClick={() => goToPage(index - 1)} />
         <span role="status">
-          {index + 1} / {document.numPages} 页
+          {index + 1} / {document.numPages}
+          {COPY.pagesSuffix}
         </span>
-        <IconButton label="下一页" icon={ArrowRight} disabled={index + 1 === document.numPages} onClick={() => goToPage(index + 1)} />
+        <IconButton label={COPY.next} icon={ArrowRight} disabled={index + 1 === document.numPages} onClick={() => goToPage(index + 1)} />
         <Button size="sm" variant="ghost" aria-pressed={fit} onClick={() => changeZoom(fit ? 100 : 'fit')}>
-          适应
+          {COPY.fit}
         </Button>
-        <span className="sr-only" role="status" aria-label="PDF 缩放比例">
-          {fit ? '适应宽度' : `${percent}%`}
+        <span className="sr-only" role="status" aria-label={COPY.zoom}>
+          {fit ? COPY.fitWidth : `${percent}%`}
         </span>
-        <SearchField label="查找 PDF 文字" value={query} onValueChange={setQuery} />
+        <SearchField label={COPY.find} value={query} onValueChange={setQuery} />
         {query && (
           <Button
             size="sm"
@@ -553,13 +607,13 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
               setMatchIndex(next)
               goToPage(matches[next]!)
             }}>
-            {finding ? '正在查找…' : `${matches.length ? matchIndex + 1 : 0}/${matches.length} 匹配页`}
+            {finding ? COPY.finding : COPY.matched(matches.length ? matchIndex + 1 : 0, matches.length)}
           </Button>
         )}
       </div>
       {outline.length > 0 && (
         <details className="pdf-outline">
-          <summary>目录</summary>
+          <summary>{COPY.contents}</summary>
           {outline.map((item, i) => (
             <button type="button" key={i} onClick={() => goToPage(item.page)}>
               {item.title}
@@ -567,22 +621,27 @@ export default function PdfPreview({ file, read, versionKey, onQuote }: Document
           ))}
         </details>
       )}
-      {error && <InlineNotice tone="warn">{error} 之前读到的内容仍保留在这里。</InlineNotice>}
+      {error && (
+        <InlineNotice tone="warn">
+          {COPY[error]}
+          {COPY.kept}
+        </InlineNotice>
+      )}
       {quoteHint && (
         <span className="document-preview-caption" role="status">
-          {quoteHint}
+          {COPY[quoteHint]}
         </span>
       )}
       {loadedVersion !== versionKey && !error && (
         <span className="document-preview-caption" role="status">
-          正在更新 PDF…
+          {COPY.updating}
         </span>
       )}
       <div
         className="pdf-scroll"
         ref={scroll}
         tabIndex={0}
-        aria-label="PDF 页面"
+        aria-label={COPY.pages}
         onScroll={() => {
           const top = scroll.current?.scrollTop ?? 0,
             first = pdfPageAt(virtual.getVirtualItems(), top)

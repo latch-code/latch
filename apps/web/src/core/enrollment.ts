@@ -18,7 +18,7 @@ import {
   signText,
   type DeviceKeyRecord,
 } from './deviceKey.ts'
-import { DEVICE_NAME_INVALID_TEXT } from './securityCopy.ts'
+import { NOTICE_COPY } from './securityCopy.ts'
 import { currentShell } from './shell.ts'
 
 /**
@@ -138,7 +138,14 @@ const enrollmentPath = (id: string) => `enrollments/${encodeURIComponent(id)}`
 
 /** `GET enrollment-info` failed: a Host from before device confirmation has no enrollment API at all (404). */
 export function infoFailureStep(cause: unknown): EnrollmentStep {
-  return cause instanceof ApiError && cause.status === 404 ? { kind: 'old-host' } : { kind: 'load-failed', message: errorMessage(cause) }
+  return cause instanceof ApiError && cause.status === 404
+    ? { kind: 'old-host' }
+    : {
+        kind: 'load-failed',
+        get message() {
+          return errorMessage(cause)
+        },
+      }
 }
 
 /**
@@ -152,14 +159,19 @@ export function enrolledStep(result: EnrolledResult): EnrollmentStep | null {
   if (result.status === 'connected') return null
   // The page's reason now explains the missing cookie; only a new enrollment can help.
   if (result.status === 'credential-not-stored') return { kind: 'form' }
-  return { kind: 'confirm-failed', message: result.message }
+  return {
+    kind: 'confirm-failed',
+    get message() {
+      return result.message
+    },
+  }
 }
 
 /** The browser (or desktop shell) side of device enrollment: request, wait for the Host's local confirmation, sign, complete. */
 export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
   const [info, setInfo] = useState<EnrollmentInfo | null>(null)
   const [step, setStep] = useState<EnrollmentStep>({ kind: 'loading' })
-  const [error, setError] = useState('')
+  const [failure, setFailure] = useState<{ kind: 'invalid-name' } | { kind: 'error'; cause: unknown } | null>(null)
   const [linkAllowsAdmin, setLinkAllowsAdmin] = useState(false)
   /** What the invitation grants, when the Host said so; null asks for nothing, and the Host grants its default within it. */
   const [offeredScopes, setOfferedScopes] = useState<DeviceScope[] | null>(null)
@@ -169,7 +181,7 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
 
   const load = useCallback(async () => {
     setStep({ kind: 'loading' })
-    setError('')
+    setFailure(null)
     try {
       const next = await api<EnrollmentInfo>('enrollment-info', { noRenew: true })
       if (!alive.current) return
@@ -188,7 +200,7 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
         } catch (cause) {
           if (cause instanceof ApiError && cause.code === 'invitation-invalid') {
             invitation = null
-            setError(errorMessage(cause))
+            setFailure({ kind: 'error', cause })
           }
         }
         if (!alive.current) return
@@ -238,7 +250,7 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
   /** After `complete` the device exists: a failed first snapshot is retried, never a second enrollment. */
   const confirm = useCallback(async () => {
     setStep({ kind: 'completing' })
-    setError('')
+    setFailure(null)
     const next = enrolledStep(await onEnrolled())
     if (alive.current && next) setStep(next)
   }, [onEnrolled])
@@ -271,7 +283,7 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
       else if (cause instanceof ApiError && cause.code === 'enrollment-denied') setStep({ kind: 'denied' })
       else if (cause instanceof ApiError && cause.code === 'enrollment-expired') setStep({ kind: 'expired' })
       else {
-        setError(errorMessage(cause))
+        setFailure({ kind: 'error', cause })
         setStep({ kind: 'form' })
       }
       return
@@ -284,11 +296,11 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
       if (!info) return
       const name = enrollmentName(form.name, info.legacy?.name)
       if (name === null) {
-        setError(DEVICE_NAME_INVALID_TEXT)
+        setFailure({ kind: 'invalid-name' })
         return
       }
       setStep({ kind: 'submitting' })
-      setError('')
+      setFailure(null)
       try {
         const key = shell ? undefined : await generateDeviceKey(info.hostId)
         const offlineCode = form.offlineCode?.trim()
@@ -327,7 +339,7 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
         }
         // An expired or used invitation stays unusable; the page asks for a new one instead of offering the form again.
         if (cause instanceof ApiError && cause.code === 'invitation-invalid') invitation = null
-        setError(errorMessage(cause))
+        setFailure({ kind: 'error', cause })
         setStep({ kind: 'form' })
       }
     },
@@ -371,7 +383,7 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
           } else if (cause instanceof ApiError && cause.code === 'enrollment-cancelled') {
             stopped = true
             flight.current = null
-            setError(errorMessage(cause))
+            setFailure({ kind: 'error', cause })
             setStep({ kind: 'form' })
           } else if (Date.now() > Date.parse(flight.current?.enrollment.expiresAt ?? '') + 5000) {
             stopped = true
@@ -395,7 +407,7 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
   }, [])
 
   const restart = useCallback(() => {
-    setError('')
+    setFailure(null)
     setStep(info ? { kind: 'form' } : { kind: 'loading' })
     if (!info) void load()
   }, [info, load])
@@ -403,7 +415,7 @@ export function useEnrollment(onEnrolled: () => Promise<EnrolledResult>) {
   return {
     info,
     step,
-    error,
+    error: failure?.kind === 'invalid-name' ? NOTICE_COPY.deviceNameInvalid : failure ? errorMessage(failure.cause) : '',
     linkAllowsAdmin,
     offeredScopes,
     submit,

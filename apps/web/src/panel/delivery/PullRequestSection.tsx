@@ -35,6 +35,72 @@ import {
 } from './model.ts'
 import { Line, Output } from './parts.tsx'
 import type { LogRead, PrCreateInput, PrFailure, PrRead, PrUnknown } from './usePullRequest.ts'
+import { defineCopy, formatNumber, plural } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    noLog: '（日志为空）',
+    recent: (count: number) => `· 只显示最新 ${formatNumber(count)} 条`,
+    viewLog: '查看日志',
+    readingLog: '正在读取日志…',
+    logName: (value1: string | number) => `${value1} 的日志`,
+    logTail: '日志的最后 200 行',
+    chat: '加入对话',
+    open: '打开',
+    refresh: '刷新',
+    draft: '草稿',
+    reading: '正在读取 PR…',
+    retry: '重试',
+    unknownInfo:
+      '没有收到答复，PR 可能已经建好。重试沿用同一请求，电脑会先按分支查找，不会建两个。放弃这次结果只在这个页面上放下它，电脑上的记录仍是结果未知；之后再创建 PR 时，电脑同样先按分支查找，找到就绑定它。',
+    checking: '核对中…',
+    retrySame: '重试同一请求',
+    abandon: '放弃这次结果',
+    unknown: 'PR 结果未知',
+    checks: '检查',
+    oldCheck: '检查对应的不是这里最新的提交',
+    oldCommit: '旧提交',
+    noChecks: '没有检查',
+    comments: '评论',
+    noComments: '没有评论',
+    title: '标题',
+    base: '合入',
+    body: '正文',
+    creationFailed: 'PR 没有创建',
+    ghOutput: 'gh 输出',
+  },
+  {
+    noLog: '(Log is empty)',
+    recent: (count: number) => plural(count, { one: '· Showing only the latest comment', other: '· Showing only the latest {n} comments' }),
+    viewLog: 'View log',
+    readingLog: 'Reading log…',
+    logName: (value1: string | number) => `Log for ${value1}`,
+    logTail: 'Last 200 lines of the log',
+    chat: 'Add to chat',
+    open: 'Open',
+    refresh: 'Refresh',
+    draft: 'Draft',
+    reading: 'Reading PR…',
+    retry: 'Retry',
+    unknownInfo:
+      'No reply arrived. The PR may already exist. Retrying reuses the request and checks the branch first to avoid creating a duplicate. Stopping the wait dismisses the result on this page. The computer keeps the outcome as unknown. A later request checks the branch again and links an existing PR if it finds one.',
+    checking: 'Checking…',
+    retrySame: 'Retry same request',
+    abandon: 'Stop waiting for this outcome',
+    unknown: 'PR outcome unknown',
+    checks: 'Checks',
+    oldCheck: 'These checks ran against an earlier commit',
+    oldCommit: 'Older commit',
+    noChecks: 'No checks',
+    comments: 'Comments',
+    noComments: 'No comments',
+    title: 'Title',
+    base: 'Base branch',
+    body: 'Description',
+    creationFailed: 'PR wasn’t created',
+    ghOutput: 'gh output',
+  },
+)
 
 export interface PrForm {
   title: string
@@ -123,14 +189,14 @@ function CheckRow({
               if (log) onCloseLog(job)
               else onReadLog(job)
             }}>
-            查看日志
+            {COPY.viewLog}
           </Button>
         )}
       </div>
       {job && log?.kind === 'loading' && (
         <div className="delivery-loading" aria-busy="true">
           <Spinner size={12} />
-          <span>正在读取日志…</span>
+          <span>{COPY.readingLog}</span>
         </div>
       )}
       {job && log?.kind === 'failed' && (
@@ -140,9 +206,9 @@ function CheckRow({
       )}
       {job && log?.kind === 'ready' && (
         <div className="delivery-log">
-          <Output text={log.log.text || '（日志为空）'} label={`${check.name} 的日志`} />
+          <Output text={log.log.text || COPY.noLog} label={COPY.logName(check.name)} />
           <div className="delivery-card-foot">
-            <span className="delivery-card-note">{log.log.truncated ? '日志的最后 200 行' : ''}</span>
+            <span className="delivery-card-note">{log.log.truncated ? COPY.logTail : ''}</span>
             {onCompose && (
               <Button
                 size="xs"
@@ -151,7 +217,7 @@ function CheckRow({
                 onClick={() => {
                   onCompose(checkExcerpt({ number: pr.number, check: check.name, sha: pr.headSha, text: log.log.text }))
                 }}>
-                加入对话
+                {COPY.chat}
               </Button>
             )}
           </div>
@@ -180,7 +246,7 @@ function Comment({ comment, pr, onCompose }: { comment: GitPrComment; pr: PullRe
             onClick={() => {
               onCompose(commentExcerpt({ number: pr.number, comment }))
             }}>
-            加入对话
+            {COPY.chat}
           </Button>
         )}
       </header>
@@ -204,14 +270,14 @@ function PrRow({ pr, onReload, loading }: { pr: PullRequest; onReload: () => voi
         </span>
         {pr.url.startsWith('https://') && (
           <ButtonLink size="xs" variant="ghost" icon={ExternalGlyph} href={pr.url} target="_blank" rel="noopener noreferrer">
-            打开
+            {COPY.open}
           </ButtonLink>
         )}
-        <IconButton size="xs" label="刷新" icon={RefreshGlyph} disabled={loading} onClick={onReload} />
+        <IconButton size="xs" label={COPY.refresh} icon={RefreshGlyph} disabled={loading} onClick={onReload} />
       </div>
       <div className="delivery-pr-states">
         <StatusWord tone={pr.state === 'merged' ? 'done' : 'neutral'}>{PR_STATE_WORD[pr.state]}</StatusWord>
-        {pr.draft && <Badge>草稿</Badge>}
+        {pr.draft && <Badge>{COPY.draft}</Badge>}
         {decision && (
           <StatusWord tone={decision === 'changes-requested' ? 'warn' : decision === 'approved' ? 'done' : 'neutral'}>
             {REVIEW_DECISION_WORD[decision]}
@@ -244,7 +310,7 @@ export function PullRequestSection(props: PullRequestSectionProps) {
       {read.kind === 'loading' && !state && (
         <div className="delivery-loading" aria-busy="true">
           <Spinner size={12} />
-          <span>正在读取 PR…</span>
+          <span>{COPY.reading}</span>
         </div>
       )}
       {read.kind === 'failed' && (
@@ -254,7 +320,7 @@ export function PullRequestSection(props: PullRequestSectionProps) {
           detail={copy?.detail}
           action={
             <Button size="xs" variant="ghost" onClick={props.onReload}>
-              重试
+              {COPY.retry}
             </Button>
           }>
           {copy?.label ?? read.text}
@@ -265,24 +331,24 @@ export function PullRequestSection(props: PullRequestSectionProps) {
           locked
           tone="muted"
           icon={CircleHelp}
-          detail="没有收到答复，PR 可能已经建好。重试沿用同一请求，电脑会先按分支查找，不会建两个。放弃这次结果只在这个页面上放下它，电脑上的记录仍是结果未知；之后再创建 PR 时，电脑同样先按分支查找，找到就绑定它。"
+          detail={COPY.unknownInfo}
           action={
             <>
               <Button
                 size="xs"
                 variant="outline"
                 loading={creating}
-                loadingLabel="核对中…"
+                loadingLabel={COPY.checking}
                 disabled={props.retryDisabled}
                 onClick={props.onRetry}>
-                重试同一请求
+                {COPY.retrySame}
               </Button>
               <Button size="xs" variant="ghost" disabled={creating} onClick={props.onAbandon}>
-                放弃这次结果
+                {COPY.abandon}
               </Button>
             </>
           }>
-          PR 结果未知
+          {COPY.unknown}
         </Line>
       )}
       {failure && <PrFailureLine failure={failure} />}
@@ -290,18 +356,18 @@ export function PullRequestSection(props: PullRequestSectionProps) {
         <>
           <PrRow pr={pr} onReload={props.onReload} loading={loading} />
           <div className="delivery-subhead">
-            <span>检查</span>
+            <span>{COPY.checks}</span>
             {pr.headSha && <code className="delivery-sha">{shortSha(pr.headSha)}</code>}
             {stale && (
-              <Badge tone="warn" title="检查对应的不是这里最新的提交">
-                旧提交
+              <Badge tone="warn" title={COPY.oldCheck}>
+                {COPY.oldCommit}
               </Badge>
             )}
           </div>
           {state.checks.length === 0 ? (
-            <p className="delivery-group-empty">没有检查</p>
+            <p className="delivery-group-empty">{COPY.noChecks}</p>
           ) : (
-            <div className="delivery-checks" role="list" aria-label="检查">
+            <div className="delivery-checks" role="list" aria-label={COPY.checks}>
               {state.checks.map((check, index) => (
                 <div role="listitem" key={`${check.name}\n${index}`}>
                   <CheckRow
@@ -319,12 +385,12 @@ export function PullRequestSection(props: PullRequestSectionProps) {
           {state.discussion && (
             <>
               <div className="delivery-subhead">
-                <span>评论</span>
+                <span>{COPY.comments}</span>
                 <span className="delivery-count">{state.discussion.length}</span>
-                {state.discussionCapped && <span className="delivery-count">· 只显示最新 {state.discussion.length} 条</span>}
+                {state.discussionCapped && <span className="delivery-count">{COPY.recent(state.discussion.length)}</span>}
               </div>
               {state.discussion.length === 0 ? (
-                <p className="delivery-group-empty">没有评论</p>
+                <p className="delivery-group-empty">{COPY.noComments}</p>
               ) : (
                 <div className="delivery-comments">
                   {state.discussion.map((comment, index) => (
@@ -344,7 +410,7 @@ export function PullRequestSection(props: PullRequestSectionProps) {
       {state && !pr && canWrite && !nothingAhead && (
         <div className="delivery-pr-form">
           <TextField
-            label="标题"
+            label={COPY.title}
             value={form.title}
             placeholder={state.draft?.title}
             maxLength={256}
@@ -355,7 +421,7 @@ export function PullRequestSection(props: PullRequestSectionProps) {
           />
           <div className="delivery-pr-into">
             <TextField
-              label="合入"
+              label={COPY.base}
               className="delivery-pr-base"
               value={form.base}
               placeholder={state.draft?.base}
@@ -372,7 +438,7 @@ export function PullRequestSection(props: PullRequestSectionProps) {
             )}
           </div>
           <TextAreaField
-            label="正文"
+            label={COPY.body}
             className="delivery-pr-body"
             rows={3}
             value={form.body}
@@ -382,9 +448,9 @@ export function PullRequestSection(props: PullRequestSectionProps) {
             }}
           />
           <label className="delivery-switch">
-            <span>草稿</span>
+            <span>{COPY.draft}</span>
             <Switch
-              label="草稿"
+              label={COPY.draft}
               checked={form.draft}
               disabled={disabled || !!unknown}
               onCheckedChange={draft => {
@@ -402,12 +468,12 @@ function PrFailureLine({ failure }: { failure: PrFailure }) {
   const copy = failureCopy(failure.code)
   if (failure.code === 'pr-create-failed' && failure.tail)
     return (
-      <section className="delivery-card" data-tone="red" aria-label="PR 没有创建">
+      <section className="delivery-card" data-tone="red" aria-label={COPY.creationFailed}>
         <header className="delivery-card-head">
           <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-          <strong>PR 没有创建</strong>
+          <strong>{COPY.creationFailed}</strong>
         </header>
-        <Output text={failure.tail} label="gh 输出" />
+        <Output text={failure.tail} label={COPY.ghOutput} />
       </section>
     )
   return (

@@ -102,6 +102,36 @@ import type { ChangesLink, ChangesTarget } from '../conversation/changesLink.ts'
 import { useFrozenAt } from '../conversation/useFrozenAt.ts'
 import { overlayDismissed } from '../escapeGrace.ts'
 import { toggleUsage } from '../usage/surface.ts'
+import { defineCopy } from '../core/i18n.ts'
+import { SHELL_COPY } from './copy.ts'
+import { describeFailure } from '../core/securityCopy.ts'
+
+const COPY = defineCopy(
+  {
+    missingFolder: '找不到所选项目的文件夹',
+    openFolderFailed: '没有打开文件夹。请在设置 › 项目中重试。',
+    dialogBusy: '另一个系统对话框还没结束。',
+    folderRefused: (name: string, message: string) => `没有打开 ${name}：${message}`,
+    folderRejected: 'Latch 拒绝了这个文件夹。',
+    handoffEnded: '交接已结束',
+    endingUnknown: '结束交接的结果未知，再点一次会重试同一请求',
+    endHandoff: '结束交接',
+    backToSessions: '返回会话列表',
+    originalTurnUnavailable: '原回合已不可用',
+  },
+  {
+    missingFolder: 'Can’t find the selected project’s folder',
+    openFolderFailed: 'Couldn’t open the folder. Try again in Settings › Projects.',
+    dialogBusy: 'Another system dialog is still open.',
+    folderRefused: (name: string, message: string) => `Couldn’t open ${name}: ${message}`,
+    folderRejected: 'Latch rejected this folder.',
+    handoffEnded: 'Handoff ended',
+    endingUnknown: 'Ending the handoff is unconfirmed. Click again to retry the same request.',
+    endHandoff: 'End handoff',
+    backToSessions: 'Back to sessions',
+    originalTurnUnavailable: 'The original turn is unavailable',
+  },
+)
 
 type Harness = ReturnType<typeof useHarness>
 
@@ -467,7 +497,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const terminalUnavailable =
     terminalTarget?.workspaceId === undefined
       ? undefined
-      : (terminalWorkspace?.unavailable ?? (terminalWorkspace ? undefined : '找不到所选项目的文件夹'))
+      : (terminalWorkspace?.unavailable ?? (terminalWorkspace ? undefined : COPY.missingFolder))
   const terminalLocation = terminalTarget?.workspaceId !== undefined ? terminalWorkspace?.name : summary?.cwd && basename(summary.cwd)
   const canTerminal = terminalTarget !== undefined && !phone && route.entry === 'sessions'
   const dockWanted = canTerminal && preferences.dockOpen
@@ -1132,8 +1162,20 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       ? async (start: boolean) => {
           const result = await folders.pick()
           if (result.status !== 'added') {
-            if (result.status === 'failed') setToast({ text: '没有打开文件夹。请在设置 › 项目中重试。', tone: 'error' })
-            if (result.status === 'busy') setToast({ text: '另一个系统对话框还没结束。', tone: 'error' })
+            if (result.status === 'failed')
+              setToast({
+                get text() {
+                  return COPY.openFolderFailed
+                },
+                tone: 'error',
+              })
+            if (result.status === 'busy')
+              setToast({
+                get text() {
+                  return COPY.dialogBusy
+                },
+                tone: 'error',
+              })
             return
           }
           const added = result.added[0]
@@ -1145,7 +1187,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
           }
           // Said where it was chosen, at once, rather than when sending fails later.
           if (refused) {
-            const refusal = `没有打开 ${basename(refused.path)}：${refused.message ?? 'Latch 拒绝了这个文件夹。'}`
+            const refusal = COPY.folderRefused(
+              basename(refused.path),
+              describeFailure(refused.status, refused.code, refused.message ?? COPY.folderRejected),
+            )
             // The list that says so stands on the new-session page; over a session it would say nothing.
             if (selectedId === null) askProject(refusal)
             else setToast({ text: refusal, tone: 'error' })
@@ -1604,7 +1649,8 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
           body.scrollTop = control.isConnected
             ? body.scrollTop + control.getBoundingClientRect().top - body.getBoundingClientRect().top - previous.offset
             : previous.top
-          if (control.isConnected) control.focus({ preventScroll: true })
+          const focus = control.isConnected ? control : body.closest('.item-page')?.querySelector<HTMLElement>('.item-page-back')
+          focus?.focus({ preventScroll: true })
         }
         setItemVisit(undefined)
       })
@@ -1619,7 +1665,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   const openWorkItemSession = useStableCallback((itemId: string, target: WorkItemSessionTarget) => {
     if (!snapshot.items?.some(item => item.id === itemId) || !snapshot.tasks.some(task => task.id === target.sessionId)) return
     const control = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
-    const body = control?.closest<HTMLElement>('.item-page-body')
+    const body = control?.closest('.item-page')?.querySelector<HTMLElement>('.item-page-body')
     const previous =
       control && body
         ? { body, top: body.scrollTop, control, offset: control.getBoundingClientRect().top - body.getBoundingClientRect().top }
@@ -1648,7 +1694,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       const anchor = ids.find(id => transcript?.querySelector(`[data-message-id="${CSS.escape(id)}"]`))
       if (ids.length && !anchor) {
         returnToWorkItem()
-        setToast({ text: '原回合已不可用', tone: 'error' })
+        setToast({
+          get text() {
+            return COPY.originalTurnUnavailable
+          },
+          tone: 'error',
+        })
         return
       }
       jumpedItemVisit.current = itemReturn
@@ -1760,12 +1811,17 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     try {
       handoffs.merge(await api<Handoff>(`handoffs/${encodeURIComponent(handoff.id)}/withdraw`, { method: 'POST', body: { requestId } }))
       closing.current.delete(handoff.id)
-      setToast({ text: '交接已结束', tone: 'ok' })
+      setToast({
+        get text() {
+          return COPY.handoffEnded
+        },
+        tone: 'ok',
+      })
     } catch (error) {
       const outcome = writeFailure(error)
       if (outcome.kind !== 'unknown') closing.current.delete(handoff.id)
       setToast({
-        text: outcome.kind === 'unknown' ? '结束交接的结果未知，再点一次会重试同一请求' : outcome.message,
+        text: outcome.kind === 'unknown' ? COPY.endingUnknown : outcome.message,
         tone: 'error',
       })
     }
@@ -1779,7 +1835,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
             items: [
               {
                 id: 'close-handoff',
-                label: '结束交接',
+                label: COPY.endHandoff,
                 leading: <EnterGlyph size={14} />,
                 onSelect: () => {
                   void closeHandoff(incoming)
@@ -1943,7 +1999,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     askBoardNew,
     entries,
     goEntry,
-    phoneBackLabel: itemReturn ? '返回待办' : '返回会话列表',
+    phoneBackLabel: itemReturn ? SHELL_COPY.backToItem : COPY.backToSessions,
     space,
     goSpace,
     waits,

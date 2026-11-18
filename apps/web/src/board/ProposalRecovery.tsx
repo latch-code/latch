@@ -1,7 +1,10 @@
 import type { AppSnapshot } from '@latch/protocol'
 import { useEffect, useRef } from 'react'
+import { defineCopy } from '../core/i18n.ts'
 import { ItemWriteLine } from './WriteLine.tsx'
 import type { ProposalWrites } from './proposals.ts'
+
+const COPY = defineCopy({ pending: '待确认的提议', proposal: '提议' }, { pending: 'Unconfirmed proposals', proposal: 'Proposal' })
 
 /** A proposal can disappear from the pending list before this device receives its receipt. */
 export function ProposalRecovery({
@@ -31,10 +34,10 @@ export function ProposalRecovery({
   )
   if (!rows.length) return null
   return (
-    <section className="work-board-proposal-recovery" aria-label="待确认的提议">
+    <section className="work-board-proposal-recovery" aria-label={COPY.pending}>
       {rows.map(([id, state]) => (
         <div key={id} className="work-board-session-proposal">
-          <span>提议</span>
+          <span>{COPY.proposal}</span>
           <ItemWriteLine
             state={state}
             onRetry={() => {

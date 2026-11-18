@@ -4,6 +4,39 @@ import { Button, IconButton, SearchField, TextField, useCopy, CloseGlyph } from 
 import { SyntaxLine, useHighlightedTokens } from './HighlightedCode.tsx'
 import { languageForPath } from './highlight-protocol.ts'
 import { useViewerMenu } from './viewerActions.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    find: '查找',
+    wrap: '自动换行',
+    copyFile: '复制文件内容',
+    findInFile: '查找文件内容',
+    next: '下一个',
+    goToLine: '跳到行',
+    closeFind: '关闭查找',
+    previousLines: '前 200 行',
+    linesSuffix: ' 行',
+    nextLines: '后 200 行',
+    copied: '已复制',
+    copyUnavailable: '复制不可用，请手动选择内容',
+  },
+  {
+    find: 'Find',
+    wrap: 'Wrap lines',
+    copyFile: 'Copy file content',
+    findInFile: 'Find in file',
+    next: 'Next',
+    goToLine: 'Go to line',
+    closeFind: 'Close find',
+    previousLines: 'Previous 200 lines',
+    linesSuffix: ' lines',
+    nextLines: 'Next 200 lines',
+    copied: 'Copied',
+    copyUnavailable: 'Could not copy. Select the content manually.',
+  },
+)
+
 export function TextPreview({
   text,
   path,
@@ -43,10 +76,10 @@ export function TextPreview({
     })
   }
   useViewerMenu([
-    { id: 'find', label: '查找', onSelect: openFind },
+    { id: 'find', label: COPY.find, onSelect: openFind },
     {
       id: 'wrap',
-      label: '自动换行',
+      label: COPY.wrap,
       checked: wrap,
       onSelect: () => {
         setWrap(!wrap)
@@ -54,7 +87,7 @@ export function TextPreview({
     },
     {
       id: 'copy-content',
-      label: '复制文件内容',
+      label: COPY.copyFile,
       onSelect: () => {
         void copied.copy(text)
       },
@@ -123,8 +156,8 @@ export function TextPreview({
         <div className="file-preview-controls file-find">
           <SearchField
             ref={search}
-            label="查找文件内容"
-            placeholder="查找"
+            label={COPY.findInFile}
+            placeholder={COPY.find}
             value={query}
             onValueChange={value => setQuery(value.slice(0, 512))}
             onKeyDown={event => {
@@ -137,12 +170,12 @@ export function TextPreview({
             }}
           />
           <Button size="xs" variant="ghost" onClick={find}>
-            下一个
+            {COPY.next}
           </Button>
           <TextField
-            label={<span className="sr-only">跳到行</span>}
+            label={<span className="sr-only">{COPY.goToLine}</span>}
             className="file-line-jump"
-            aria-label="跳到行"
+            aria-label={COPY.goToLine}
             type="number"
             min={1}
             max={lines.length}
@@ -154,7 +187,7 @@ export function TextPreview({
           />
           <IconButton
             size="xs"
-            label="关闭查找"
+            label={COPY.closeFind}
             icon={CloseGlyph}
             onClick={() => {
               setQuery('')
@@ -176,18 +209,19 @@ export function TextPreview({
       {lines.length > 200 && (
         <div className="file-preview-controls file-text-pages">
           <Button size="xs" variant="ghost" disabled={start === 0} onClick={() => setStart(Math.max(0, start - 200))}>
-            前 200 行
+            {COPY.previousLines}
           </Button>
           <span>
-            {start + 1}–{Math.min(start + 200, lines.length)} / {lines.length} 行
+            {start + 1}–{Math.min(start + 200, lines.length)} / {lines.length}
+            {COPY.linesSuffix}
           </span>
           <Button size="xs" variant="ghost" disabled={start + 200 >= lines.length} onClick={() => setStart(start + 200)}>
-            后 200 行
+            {COPY.nextLines}
           </Button>
         </div>
       )}
       <span className="sr-only" role="status">
-        {copied.state === 'copied' ? '已复制' : copied.state === 'failed' ? '复制不可用，请手动选择内容' : ''}
+        {copied.state === 'copied' ? COPY.copied : copied.state === 'failed' ? COPY.copyUnavailable : ''}
       </span>
     </div>
   )

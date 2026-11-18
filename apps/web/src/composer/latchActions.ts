@@ -1,13 +1,96 @@
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    clear: '清空上下文',
+    sideQuestion: '旁支提问',
+    question: '问题',
+    fork: '从最新一轮分叉',
+    firstMessage: '第一句（可选）',
+    newSession: '新会话',
+    model: '选择模型',
+    filter: '筛选（可选）',
+    thinking: '选择思考深度',
+    permissions: '选择权限',
+    changes: '打开改动',
+  },
+  {
+    clear: 'Clear context',
+    sideQuestion: 'Side question',
+    question: 'Question',
+    fork: 'Fork from the latest turn',
+    firstMessage: 'First message (optional)',
+    newSession: 'New session',
+    model: 'Choose model',
+    filter: 'Filter (optional)',
+    thinking: 'Choose thinking level',
+    permissions: 'Choose permissions',
+    changes: 'Open changes',
+  },
+)
+
 /** Shared action names and words for slash completion, typed interception and the command palette. */
 export const LATCH_ACTIONS = [
-  { name: 'clear', label: '清空上下文' },
-  { name: 'btw', label: '旁支提问', inputHint: '问题' },
-  { name: 'fork', label: '从最新一轮分叉', inputHint: '第一句（可选）' },
-  { name: 'new', label: '新会话', inputHint: '第一句（可选）' },
-  { name: 'model', label: '选择模型', inputHint: '筛选（可选）' },
-  { name: 'think', label: '选择思考深度' },
-  { name: 'permissions', label: '选择权限' },
-  { name: 'changes', label: '打开改动' },
+  {
+    name: 'clear',
+    get label() {
+      return COPY.clear
+    },
+  },
+  {
+    name: 'btw',
+    get label() {
+      return COPY.sideQuestion
+    },
+    get inputHint() {
+      return COPY.question
+    },
+  },
+  {
+    name: 'fork',
+    get label() {
+      return COPY.fork
+    },
+    get inputHint() {
+      return COPY.firstMessage
+    },
+  },
+  {
+    name: 'new',
+    get label() {
+      return COPY.newSession
+    },
+    get inputHint() {
+      return COPY.firstMessage
+    },
+  },
+  {
+    name: 'model',
+    get label() {
+      return COPY.model
+    },
+    get inputHint() {
+      return COPY.filter
+    },
+  },
+  {
+    name: 'think',
+    get label() {
+      return COPY.thinking
+    },
+  },
+  {
+    name: 'permissions',
+    get label() {
+      return COPY.permissions
+    },
+  },
+  {
+    name: 'changes',
+    get label() {
+      return COPY.changes
+    },
+  },
 ] as const
 
 export type LatchActionName = (typeof LATCH_ACTIONS)[number]['name']

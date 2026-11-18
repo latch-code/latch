@@ -3,10 +3,47 @@ import type { HarnessInfo, HostCatalog, TaskMode, TaskSummary } from '@latch/pro
 import { routeService } from '../composer/ModelControl.tsx'
 import { draftPermission } from '../composer/permission.ts'
 import { MODE_COPY } from '../core/securityCopy.ts'
+import { defineCopy } from '../core/i18n.ts'
 import type { AvatarState } from './avatarFace.ts'
 import { isolationBrief } from './helpers.ts'
 import { ACTIVITY_WORDS } from './model.ts'
-import { DEVICE_OFFLINE } from '../core/hostState.ts'
+import { CONNECTION_COPY } from '../core/hostState.ts'
+
+const COPY = defineCopy(
+  {
+    available: '可用',
+    unavailable: '不可用',
+    cannotChat: '现在不能开始聊天。',
+    repairHere: ' 在这台 Mac 的 设置 里修复。',
+    repair: '去修复',
+    locked: '这台设备看不到 Agent',
+    unlock: 'Agent 的指令、记忆和会话只对能读取全部数据的设备开放。在这台 Mac 的 设置 › 设备 里为这台设备打开「也能看私有内容」后可见。',
+    detailOf: (words: string) => `${words}：说明`,
+    isolation: (label: string, detail?: string) => `${label}。${detail ? `${detail} ` : ''}`,
+    otherModes: '其他档位在开始时设置尚未实现。',
+    nextFails: (reason: string) => `下一轮会失败：模型服务${reason}`,
+    bypassed: '有一轮没经过 Latch',
+    bypassDetail: '那一轮可能用了它自己的登录或配置，内容可能发给了别的服务。',
+    details: '说明',
+  },
+  {
+    available: 'Available',
+    unavailable: 'Unavailable',
+    cannotChat: 'This Agent can’t start a chat right now.',
+    repairHere: ' Open Settings on this Mac to fix it.',
+    repair: 'Fix in Settings',
+    locked: 'My Agents is hidden on this device',
+    unlock:
+      'Agent instructions, memories, and sessions require access to all data. On this Mac, open Settings › Devices and enable “Also see private content” for this device.',
+    detailOf: (words: string) => `Details about ${words}`,
+    isolation: (label: string, detail?: string) => `${label}. ${detail ? `${detail} ` : ''}`,
+    otherModes: 'Setting other modes at the start of a session is not implemented yet.',
+    nextFails: (reason: string) => `The next turn will fail. Model service ${reason}`,
+    bypassed: 'A turn bypassed Latch',
+    bypassDetail: 'That turn may have used its own login or configuration and sent content to another service.',
+    details: 'Details',
+  },
+)
 
 /** The state word beside a face, for the states that have one; `live`: what a running one is doing, in a person's words. */
 export function ActivityWord({ state, live }: { state: AvatarState; live?: { words: string } | undefined }) {
@@ -25,18 +62,21 @@ export function Availability({ available, reason, offline }: { available: boolea
     return (
       <span className="agent-availability" data-tone="warn">
         <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-        <span>{DEVICE_OFFLINE}</span>
+        <span>{CONNECTION_COPY.offline}</span>
       </span>
     )
-  if (available) return <span className="agent-availability">可用</span>
+  if (available) return <span className="agent-availability">{COPY.available}</span>
   if (!reason)
     return (
       <span className="agent-availability" data-tone="warn">
-        <StatusWord tone="warn">不可用</StatusWord>
+        <StatusWord tone="warn">{COPY.unavailable}</StatusWord>
       </span>
     )
   return (
-    <Hint className="agent-availability" label="不可用" lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
+    <Hint
+      className="agent-availability"
+      label={COPY.unavailable}
+      lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
       {reason}
     </Hint>
   )
@@ -49,13 +89,16 @@ export function Availability({ available, reason, offline }: { available: boolea
 export function Unavailable({ reason, onRepair }: { reason?: string | undefined; onRepair?: (() => void) | undefined }) {
   return (
     <span className="agent-unavailable">
-      <Hint className="agent-availability" label="不可用" lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
-        {reason ?? '现在不能开始聊天。'}
-        {!onRepair && ' 在这台 Mac 的 设置 里修复。'}
+      <Hint
+        className="agent-availability"
+        label={COPY.unavailable}
+        lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
+        {reason ?? COPY.cannotChat}
+        {!onRepair && COPY.repairHere}
       </Hint>
       {onRepair && (
         <Button variant="outline" size="xs" onClick={onRepair}>
-          去修复
+          {COPY.repair}
         </Button>
       )}
     </span>
@@ -66,8 +109,8 @@ export function Unavailable({ reason, onRepair }: { reason?: string | undefined;
 export function LockedAgents() {
   return (
     <div className="agents-locked" role="status">
-      <Hint label="这台设备看不到 Agent" lead={<LockGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
-        Agent 的指令、记忆和会话只对能读取全部数据的设备开放。在这台 Mac 的 设置 › 设备 里为这台设备打开「也能看私有内容」后可见。
+      <Hint label={COPY.locked} lead={<LockGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
+        {COPY.unlock}
       </Hint>
     </div>
   )
@@ -80,7 +123,7 @@ export function LockedAgents() {
 export function PermissionNote({ words, detail, tone }: { words: string; detail: string; tone: 'warn' | 'neutral' }) {
   return (
     <Popover
-      label={`${words}：说明`}
+      label={COPY.detailOf(words)}
       title={words}
       size="sm"
       trigger={props => (
@@ -92,7 +135,7 @@ export function PermissionNote({ words, detail, tone }: { words: string; detail:
           className={`agent-permission-note agent-boundary-trigger is-${tone}`}
           // 不先问你 and 权限没确认 look the same under every customisation (tokens.css).
           data-lock={tone === 'warn' ? '' : undefined}
-          aria-label={`${words}：说明`}
+          aria-label={COPY.detailOf(words)}
           // A warning keeps its words beside the name; the neutral boundary is its shield, its words behind it.
           data-icon-only={tone === 'warn' ? undefined : ''}
           title={tone === 'warn' ? undefined : words}>
@@ -131,7 +174,8 @@ export function BeforeActing({ harness, mode }: { harness: HarnessInfo; mode: Ta
           <ShieldGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />
         )
       }>
-      {isolation ? `${isolation.label}。${isolation.detail} ` : ''}其他档位在开始时设置尚未实现。
+      {isolation ? COPY.isolation(isolation.label, isolation.detail) : ''}
+      {COPY.otherModes}
     </Hint>
   )
 }
@@ -143,9 +187,9 @@ export function BeforeActing({ harness, mode }: { harness: HarnessInfo; mode: Ta
 export function RouteWarning({ catalog, route }: { catalog: HostCatalog; route: NonNullable<TaskSummary['modelRoute']> }) {
   const service = routeService(catalog, route)
   const brief = service.unusable
-    ? { label: `下一轮会失败：模型服务${service.unusable.words}`, detail: service.unusable.note }
+    ? { label: COPY.nextFails(service.unusable.words), detail: service.unusable.note }
     : route.bypassed
-      ? { label: '有一轮没经过 Latch', detail: '那一轮可能用了它自己的登录或配置，内容可能发给了别的服务。' }
+      ? { label: COPY.bypassed, detail: COPY.bypassDetail }
       : undefined
   if (!brief) return null
   return (
@@ -155,7 +199,7 @@ export function RouteWarning({ catalog, route }: { catalog: HostCatalog; route: 
         className="agent-permission-note is-warn"
         label={brief.label}
         lead={<WarningGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}
-        moreLabel="说明">
+        moreLabel={COPY.details}>
         {brief.detail}
       </Hint>
     </div>

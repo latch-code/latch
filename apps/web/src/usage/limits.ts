@@ -10,15 +10,69 @@ import {
   type QuotaState,
   type QuotaWindow,
 } from '@latch/protocol'
+import { currentLocale, defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    used: (percent: string) => `已用 ${percent}`,
+    days: (count: number) => plural(count, { other: '{n} 天' }),
+    hours: (count: number) => plural(count, { other: '{n} 小时' }),
+    minutes: (count: number) => plural(count, { other: '{n} 分钟' }),
+    limitReached: '额度已用尽',
+    limitNear: '额度将用尽',
+    chip: (name: string, figure: string) => `${name}${figure}`,
+    monthlyReset: (month: number) => `${month} 月 1 日重置`,
+    balance: (amount: string) => `余额 ${amount}`,
+    near: '将用尽',
+    limited: '已用尽',
+    weekly: '每周',
+    opus: '每周 · Opus',
+    sonnet: '每周 · Sonnet',
+    currentWindow: '本期',
+    quota: '额度',
+    resetSoon: '即将重置',
+    resetAfter: (value1: string | number) => `${value1}后重置`,
+    gemini: 'Gemini 模型',
+    claudeGpt: 'Claude 与 GPT 模型',
+  },
+  {
+    used: (percent: string) => `${percent} used`,
+    days: (count: number) => plural(count, { one: '{n} day', other: '{n} days' }),
+    hours: (count: number) => plural(count, { one: '{n} hour', other: '{n} hours' }),
+    minutes: (count: number) => plural(count, { one: '{n} minute', other: '{n} minutes' }),
+    limitReached: 'Limit reached',
+    limitNear: 'Near limit',
+    chip: (name: string, figure: string) => [name, figure].filter(Boolean).join(' '),
+    monthlyReset: (month: number) =>
+      `Resets ${new Intl.DateTimeFormat(currentLocale(), { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(Date.UTC(2024, month - 1, 1))}`,
+    balance: (amount: string) => `Balance ${amount}`,
+    near: 'Nearly reached',
+    limited: 'Reached',
+    weekly: 'Weekly',
+    opus: 'Weekly · Opus',
+    sonnet: 'Weekly · Sonnet',
+    currentWindow: 'Current period',
+    quota: 'Limit',
+    resetSoon: 'Resets soon',
+    resetAfter: (value1: string | number) => `Resets in ${value1}`,
+    gemini: 'Gemini models',
+    claudeGpt: 'Claude and GPT models',
+  },
+)
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 const DAY = 24 * HOUR
 
-/** The one word for how much of a limit is gone, wherever a limit is shown. */
-export const USED = '已用'
 /** A limit without a figure, as its program said it: nearly used up, or used up. */
-export const LIMIT_WORDS: Record<Exclude<QuotaState, 'ok'>, string> = { near: '将用尽', limited: '已用尽' }
+export const LIMIT_WORDS: Record<Exclude<QuotaState, 'ok'>, string> = {
+  get near() {
+    return COPY.near
+  },
+  get limited() {
+    return COPY.limited
+  },
+}
 
 /** One limit window as every place shows it: a Harness's window or a monthly budget. */
 export interface LimitView {
@@ -37,25 +91,25 @@ export interface LimitView {
 
 /** A window's length in words: whole days where it is a whole number of them, else hours. */
 function lengthWords(minutes: number): string {
-  if (minutes % 1440 === 0) return `${minutes / 1440} 天`
-  if (minutes % 60 === 0) return `${minutes / 60} 小时`
-  return `${minutes} 分钟`
+  if (minutes % 1440 === 0) return COPY.days(minutes / 1440)
+  if (minutes % 60 === 0) return COPY.hours(minutes / 60)
+  return COPY.minutes(minutes)
 }
 
 function windowName(window: QuotaWindow): string {
   switch (window.kind) {
     case 'five-hour':
-      return '5 小时'
+      return COPY.hours(5)
     case 'weekly':
-      return '每周'
+      return COPY.weekly
     case 'weekly-opus':
-      return '每周 · Opus'
+      return COPY.opus
     case 'weekly-sonnet':
-      return '每周 · Sonnet'
+      return COPY.sonnet
     case 'billing-period':
-      return '本期'
+      return COPY.currentWindow
     case 'rolling':
-      return window.windowMinutes ? lengthWords(window.windowMinutes) : '额度'
+      return window.windowMinutes ? lengthWords(window.windowMinutes) : COPY.quota
   }
 }
 
@@ -82,17 +136,17 @@ export function resetWords(resetsAt: string | undefined, now: number, brief = fa
   if (resetsAt === undefined) return undefined
   const left = Date.parse(resetsAt) - now
   if (!Number.isFinite(left)) return undefined
-  if (left < MINUTE) return '即将重置'
+  if (left < MINUTE) return COPY.resetSoon
   const days = Math.floor(left / DAY)
   const hours = Math.floor((left % DAY) / HOUR)
   const minutes = Math.floor((left % HOUR) / MINUTE)
   const span =
     days > 0
-      ? `${days} 天${hours && !brief ? ` ${hours} 小时` : ''}`
+      ? [COPY.days(days), hours && !brief ? COPY.hours(hours) : ''].filter(Boolean).join(' ')
       : hours > 0
-        ? `${hours} 小时${minutes && !brief ? ` ${minutes} 分钟` : ''}`
-        : `${minutes} 分钟`
-  return `${span}后重置`
+        ? [COPY.hours(hours), minutes && !brief ? COPY.minutes(minutes) : ''].filter(Boolean).join(' ')
+        : COPY.minutes(minutes)
+  return COPY.resetAfter(span)
 }
 
 /**
@@ -129,7 +183,14 @@ const PLANS: Record<QuotaPlan, string> = {
 }
 
 /** Latch's own words for a model group; never the Harness's. */
-const GROUPS: Record<QuotaGroup, string> = { gemini: 'Gemini 模型', 'claude-gpt': 'Claude 与 GPT 模型' }
+const GROUPS: Record<QuotaGroup, string> = {
+  get gemini() {
+    return COPY.gemini
+  },
+  get 'claude-gpt'() {
+    return COPY.claudeGpt
+  },
+}
 
 function windowView(window: QuotaWindow, now: number): LimitView {
   const state = quotaWindowState(window)
@@ -174,7 +235,15 @@ export function harnessLimits(quota: HarnessQuota | undefined, now: number): Har
       ...(held.account ? [held.account] : []),
       // A balance beside windows shows only with money in it; a balance reported alone always shows.
       ...(held.balanceCents !== undefined && (held.balanceCents > 0 || !lead)
-        ? [`余额 ${held.currency === 'CNY' ? '¥' : '$'}${(held.balanceCents / 100).toFixed(2)}`]
+        ? [
+            COPY.balance(
+              formatNumber(held.balanceCents / 100, {
+                style: 'currency',
+                currencyDisplay: currentLocale() === 'zh-CN' ? 'narrowSymbol' : 'symbol',
+                currency: held.currency ?? 'USD',
+              }),
+            ),
+          ]
         : []),
     ],
   }
@@ -182,7 +251,7 @@ export function harnessLimits(quota: HarnessQuota | undefined, now: number): Har
 
 /** 「已用 68%」, or the state's words for a limit without a figure. */
 export function usedWords(view: Pick<LimitView, 'percent' | 'status'>): string {
-  return view.percent !== undefined ? `${USED} ${view.percent}%` : (view.status ?? '')
+  return view.percent !== undefined ? COPY.used(formatNumber(view.percent / 100, { style: 'percent' })) : (view.status ?? '')
 }
 
 /**
@@ -192,14 +261,26 @@ export function usedWords(view: Pick<LimitView, 'percent' | 'status'>): string {
  */
 export function chipParts(limits: Pick<HarnessLimits, 'tightest' | 'account'>): { name: string; figure: string } {
   const { tightest } = limits
-  if (limits.account || !tightest) return { name: '', figure: `额度${LIMIT_WORDS.limited}` }
-  return { name: tightest.name, figure: tightest.percent !== undefined ? usedWords(tightest) : `额度${tightest.status ?? ''}` }
+  if (limits.account || !tightest) return { name: '', figure: COPY.limitReached }
+  return {
+    name: tightest.name,
+    figure:
+      tightest.percent !== undefined
+        ? usedWords(tightest)
+        : tightest.state === 'limited'
+          ? COPY.limitReached
+          : tightest.state === 'near'
+            ? COPY.limitNear
+            : COPY.quota,
+  }
 }
 
 /** The same words in one run (「每周已用 68%」), for reading out. */
+export const limitWords = (name: string, figure: string): string => COPY.chip(name, figure)
+
 export function chipWords(limits: Pick<HarnessLimits, 'tightest' | 'account'>): string {
   const { name, figure } = chipParts(limits)
-  return `${name}${figure}`
+  return limitWords(name, figure)
 }
 
 /** The first day of the month after `month` (`YYYY-MM`), as 「12 月 1 日重置」. */
@@ -207,7 +288,7 @@ function monthReset(month: string): string | undefined {
   const match = /^(\d{4})-(\d{2})$/u.exec(month)
   if (!match) return undefined
   const next = (Number(match[2]) % 12) + 1
-  return `${next} 月 1 日重置`
+  return COPY.monthlyReset(next)
 }
 
 /** A monthly budget as a limit window: the same bar, the same word, amber from 80% and red when used up. */

@@ -99,7 +99,7 @@ describe('冲突 and 中止', () => {
 describe('克隆仓库', () => {
   it('says each reason in short words, with the fine print for the hover', () => {
     expect(cloneCopy('clone-url-credentials').label).toBe('地址里带有凭据')
-    expect(cloneCopy('clone-url-credentials').detail).toContain('凭据助手')
+    expect(cloneCopy('clone-url-credentials').detail).toContain('凭据管理工具')
     expect(cloneCopy('clone-folder-exists').label).toBe('这个位置已有同名文件夹')
     expect(cloneCopy('anything-else').label).toBe('克隆失败')
     expect(cloneProgress({ progress: { phase: 'receiving', percent: 45 } })).toBe('接收中 45%')

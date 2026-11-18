@@ -1,3 +1,5 @@
+import { SHELL_COPY } from './copy.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { OverviewGlyph, ScheduleGlyph } from '@latch/ui'
 import type { ReactNode } from 'react'
@@ -20,7 +22,7 @@ import {
 import { AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import { useComputers } from '../core/computers.ts'
 import { deviceAccess } from '../core/permissions.ts'
-import { DEVICE_OFFLINE } from '../core/hostState.ts'
+import { CONNECTION_COPY } from '../core/hostState.ts'
 import { computerName } from '../core/securityCopy.ts'
 import { currentShell, type ComputersView } from '../core/shell.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
@@ -38,7 +40,7 @@ export interface SpacesProps {
 }
 
 /** The places' names and glyphs, wherever a way to them is drawn. */
-const SPACE_LABELS: Record<Space, string> = { code: 'Code', agents: '我的 Agent' }
+const spaceLabel = (space: Space): string => (space === 'code' ? 'Code' : SHELL_COPY.agents)
 
 /** The place's glyph; `solid` where it is the place you are in. */
 function SpaceGlyph({ space, size = 16, solid = false }: { space: Space; size?: 16 | 20; solid?: boolean }) {
@@ -46,7 +48,10 @@ function SpaceGlyph({ space, size = 16, solid = false }: { space: Space; size?: 
 }
 
 /** The amber dot on the other place while something waits for you there. */
-const WAITS_TITLE: Record<Space, string> = { code: 'Code 里有等你处理的会话', agents: '我的 Agent 里有等你处理的会话' }
+const WAITS_TITLE = defineCopy<Record<Space, string>>(
+  { code: 'Code 里有等你处理的会话', agents: '我的 Agent 里有等你处理的会话' },
+  { code: 'A Code session needs you', agents: 'A session in My Agents needs you' },
+)
 
 /**
  * Code | 我的 Agent across the top of the sidebar: two places, not a filter. Choosing one changes the primary action, the
@@ -57,7 +62,7 @@ function SpaceSwitch({ space, onSpace, waits }: SpacesProps) {
     const dot = waits[value] && value !== space
     return {
       value,
-      label: SPACE_LABELS[value],
+      label: spaceLabel(value),
       // The dot rides the glyph's corner, as on the shut sidebar's buttons, so the place's name keeps its room.
       icon: (
         <span className="space-glyph">
@@ -71,7 +76,7 @@ function SpaceSwitch({ space, onSpace, waits }: SpacesProps) {
   return (
     <SegmentedControl
       className="space-switch"
-      label="Code 与我的 Agent"
+      label={SHELL_COPY.spaces}
       size="md"
       value={space}
       options={[option('code'), option('agents')]}
@@ -87,13 +92,13 @@ function SpaceSwitch({ space, onSpace, waits }: SpacesProps) {
 export function SpaceButtons({ space, onSpace, waits }: SpacesProps) {
   const desktop = currentShell() !== null
   return (
-    <span className="space-buttons" role="group" aria-label="Code 与我的 Agent">
+    <span className="space-buttons" role="group" aria-label={SHELL_COPY.spaces}>
       {(['code', 'agents'] as const).map(value => {
         const dot = waits[value] && value !== space
         return (
           <IconButton
             key={value}
-            label={SPACE_LABELS[value]}
+            label={spaceLabel(value)}
             icon={value === 'agents' ? AgentsGlyph : CodeGlyph}
             pressed={value === space}
             {...(dot ? { tooltip: WAITS_TITLE[value], badge: <span className="space-dot" /> } : {})}
@@ -121,13 +126,13 @@ export function NewSessionRow({ onNew, active, drawer }: { onNew: () => void; ac
     <Button
       variant="ghost"
       className="sidebar-nav-row"
-      aria-label="新建会话"
+      aria-label={SHELL_COPY.startSession}
       data-space-primary=""
       aria-pressed={drawer ? undefined : active}
       {...capsOf('new', drawer)}
       onClick={onNew}>
       <NewSessionGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-      <span>新会话</span>
+      <span>{SHELL_COPY.newSession}</span>
     </Button>
   )
 }
@@ -154,11 +159,11 @@ function NewAgentRow({
   return compact ? (
     <IconButton
       data-space-primary=""
-      label="新建 Agent"
+      label={SHELL_COPY.newAgent}
       icon={PlusGlyph}
       pressed={active}
       disabled={offline}
-      tooltip={offline ? DEVICE_OFFLINE : undefined}
+      tooltip={offline ? CONNECTION_COPY.offline : undefined}
       onClick={onNew}
     />
   ) : (
@@ -168,10 +173,10 @@ function NewAgentRow({
       data-space-primary=""
       aria-pressed={active}
       disabled={offline}
-      tooltip={offline ? DEVICE_OFFLINE : undefined}
+      tooltip={offline ? CONNECTION_COPY.offline : undefined}
       onClick={onNew}>
       <PlusGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-      <span>新建 Agent</span>
+      <span>{SHELL_COPY.newAgent}</span>
     </Button>
   )
 }
@@ -227,25 +232,25 @@ export function NavTop({
       {spaces && (
         <div className="sidebar-nav-line">
           <SpaceSwitch {...spaces} />
-          {drawer && onClose && <IconButton label="关闭会话列表" icon={CloseGlyph} onClick={onClose} />}
+          {drawer && onClose && <IconButton label={SHELL_COPY.closeSessions} icon={CloseGlyph} onClick={onClose} />}
         </div>
       )}
       {overview && (
         <Button variant="ghost" className="sidebar-nav-row" icon={OverviewGlyph} aria-pressed={overview.active} onClick={overview.open}>
-          总览
+          {SHELL_COPY.overview}
         </Button>
       )}
       <div className="sidebar-nav-line">
         {primary}
-        {drawer && onClose && !spaces && <IconButton label="关闭会话列表" icon={CloseGlyph} onClick={onClose} />}
+        {drawer && onClose && !spaces && <IconButton label={SHELL_COPY.closeSessions} icon={CloseGlyph} onClick={onClose} />}
       </div>
-      <Button variant="ghost" className="sidebar-nav-row" aria-label="搜索" {...capsOf('palette', drawer)} onClick={onSearch}>
+      <Button variant="ghost" className="sidebar-nav-row" aria-label={SHELL_COPY.search} {...capsOf('palette', drawer)} onClick={onSearch}>
         <SearchGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
-        <span>搜索</span>
+        <span>{SHELL_COPY.search}</span>
       </Button>
       {onSchedules && (
         <Button variant="ghost" className="sidebar-nav-row" icon={ScheduleGlyph} onClick={onSchedules}>
-          定时任务
+          {SHELL_COPY.schedules}
         </Button>
       )}
     </div>
@@ -257,9 +262,9 @@ export function connectionTrouble(
   connection: ConnectionStatus,
   hostProblem: { text: string } | null,
 ): { tone: 'warn' | 'error'; text: string } | null {
-  if (connection === 'offline') return { tone: 'warn', text: DEVICE_OFFLINE }
+  if (connection === 'offline') return { tone: 'warn', text: CONNECTION_COPY.offline }
   if (hostProblem) return { tone: 'error', text: hostProblem.text }
-  if (connection === 'reconnecting') return { tone: 'warn', text: '正在重新连接' }
+  if (connection === 'reconnecting') return { tone: 'warn', text: SHELL_COPY.reconnecting }
   return null
 }
 
@@ -286,14 +291,17 @@ export function NavFoot({
   useShortcutBindings()
   const keys = shortcutKeys('settings', currentShell() !== null) ?? undefined
   return (
-    <nav className="sidebar-foot" aria-label="主导航">
+    <nav className="sidebar-foot" aria-label={SHELL_COPY.navigation}>
       {settings ? (
         <IconButton
-          label="设置"
+          label={SHELL_COPY.settings}
+          data-testid="open-settings"
           icon={SettingsGlyph}
           shortcut={keys}
           onClick={settings}
-          {...(trouble ? { tooltip: `设置 · ${trouble.text}`, badge: <span className="icon-dot" data-tone={trouble.tone} /> } : {})}
+          {...(trouble
+            ? { tooltip: `${SHELL_COPY.settings} · ${trouble.text}`, badge: <span className="icon-dot" data-tone={trouble.tone} /> }
+            : {})}
         />
       ) : (
         trouble && (
@@ -303,7 +311,9 @@ export function NavFoot({
         )
       )}
       {quota}
-      {apps && <IconButton label="应用" icon={PluginsGlyph} aria-current={apps.current ? 'page' : undefined} onClick={apps.onOpen} />}
+      {apps && (
+        <IconButton label={SHELL_COPY.apps} icon={PluginsGlyph} aria-current={apps.current ? 'page' : undefined} onClick={apps.onOpen} />
+      )}
       {awake}
       <span className="sidebar-foot-spacer" />
       {update}

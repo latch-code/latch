@@ -6,15 +6,75 @@ import { KindGlyph } from '../conversation/KindGlyph.tsx'
 import { ToolCard } from './ToolCard.tsx'
 import { VisibleText } from './VisibleText.tsx'
 import { Button, Collapse, ICON_STROKE, StatusWord, type StatusTone, ChevronRightGlyph } from '@latch/ui'
+import { defineCopy, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    running: '运行中',
+    done: '已完成',
+    failed: '失败',
+    stopped: '已停止',
+    unknown: '未回报结果',
+    stopping: '正在停止…',
+    subagent: '子 Agent',
+    stopName: (value1: string | number) => `停止子 Agent ${value1}`,
+    stop: '停止',
+    noSteps: '还没有说做了什么',
+    truncated: '之后的步骤没有保留',
+  },
+  {
+    running: 'Running',
+    done: 'Done',
+    failed: 'Failed',
+    stopped: 'Stopped',
+    unknown: 'No result reported',
+    stopping: 'Stopping…',
+    subagent: 'Subagent',
+    stopName: (value1: string | number) => `Stop subagent ${value1}`,
+    stop: 'Stop',
+    noSteps: 'Nothing reported yet',
+    truncated: 'Later steps weren’t kept',
+  },
+)
 
 /** How a subagent last said it was doing, in the words a row uses. Nothing said, nothing shown. */
 export const SUBAGENT_STATUS: Record<NonNullable<Subagent['status']>, { tone: StatusTone; words: string }> = {
-  running: { tone: 'running', words: '运行中' },
-  waiting: { tone: 'waiting', words: APPROVAL_COPY.waiting },
-  done: { tone: 'done', words: '已完成' },
-  failed: { tone: 'failed', words: '失败' },
-  cancelled: { tone: 'neutral', words: '已停止' },
-  unknown: { tone: 'neutral', words: '未回报结果' },
+  running: {
+    tone: 'running',
+    get words() {
+      return COPY.running
+    },
+  },
+  waiting: {
+    tone: 'waiting',
+    get words() {
+      return APPROVAL_COPY.waiting
+    },
+  },
+  done: {
+    tone: 'done',
+    get words() {
+      return COPY.done
+    },
+  },
+  failed: {
+    tone: 'failed',
+    get words() {
+      return COPY.failed
+    },
+  },
+  cancelled: {
+    tone: 'neutral',
+    get words() {
+      return COPY.stopped
+    },
+  },
+  unknown: {
+    tone: 'neutral',
+    get words() {
+      return COPY.unknown
+    },
+  },
 }
 
 /** Stops one subagent by its row's ID; absent where this device cannot stop the session. Rejects with what went wrong. */
@@ -29,6 +89,7 @@ const UNNAMED = '子 Agent'
  * stopped alone offers 停止; it reads 正在停止… until it says it stopped.
  */
 export const SubagentRow = memo(function SubagentRow({ message, frozen }: { message: Message; frozen: boolean }) {
+  useLocale()
   const [open, setOpen] = useState(false)
   const [requested, setRequested] = useState(false)
   const stop = useContext(SubagentStop)
@@ -38,7 +99,7 @@ export const SubagentRow = memo(function SubagentRow({ message, frozen }: { mess
     if (agent.stopping || !agent.stoppable) setRequested(false)
   }, [agent.stopping, agent.stoppable])
   const stopping = agent.stopping === true || (requested && agent.stoppable === true)
-  const status = stopping ? { tone: 'neutral' as const, words: '正在停止…' } : agent.status ? SUBAGENT_STATUS[agent.status] : undefined
+  const status = stopping ? { tone: 'neutral' as const, words: COPY.stopping } : agent.status ? SUBAGENT_STATUS[agent.status] : undefined
   const canStop = stop && agent.stoppable && !stopping && !frozen
   return (
     <div className="subagent-row" data-message-id={message.id} data-open={open ? '' : undefined}>
@@ -51,7 +112,7 @@ export const SubagentRow = memo(function SubagentRow({ message, frozen }: { mess
             setOpen(!open)
           }}>
           <KindGlyph kind="agent" />
-          <span className="process-verb">子 Agent</span>
+          <span className="process-verb">{COPY.subagent}</span>
           <span className="process-object subagent-name">{agent.title !== UNNAMED && <VisibleText text={agent.title} />}</span>
           {status ? (
             <StatusWord tone={frozen && status.tone === 'running' ? 'neutral' : status.tone} className="subagent-status">
@@ -68,14 +129,14 @@ export const SubagentRow = memo(function SubagentRow({ message, frozen }: { mess
             <Button
               size="xs"
               variant="outline"
-              aria-label={`停止子 Agent ${agent.title}`}
+              aria-label={COPY.stopName(agent.title)}
               onClick={() => {
                 setRequested(true)
                 stop(message.id).catch(() => {
                   setRequested(false)
                 })
               }}>
-              停止
+              {COPY.stop}
             </Button>
           )}
         </span>
@@ -102,8 +163,8 @@ export const SubagentRow = memo(function SubagentRow({ message, frozen }: { mess
               </div>
             ),
           )}
-          {agent.steps.length === 0 && <p className="subagent-note">还没有说做了什么</p>}
-          {agent.truncated && <p className="subagent-note">之后的步骤没有保留</p>}
+          {agent.steps.length === 0 && <p className="subagent-note">{COPY.noSteps}</p>}
+          {agent.truncated && <p className="subagent-note">{COPY.truncated}</p>}
         </div>
       </Collapse>
     </div>

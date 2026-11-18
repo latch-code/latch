@@ -599,6 +599,12 @@ if (!REMOTE)
       devMode: true,
       computers: computersApi(true),
       spaces: spacesApi,
+      locale: Object.freeze({
+        set: (preference, language) => {
+          if (language !== 'zh-CN' && language !== 'en') return
+          if (preference === 'system' || preference === language) ipcRenderer.send('latch:locale', preference, language)
+        },
+      }),
       ...(LIGHTS ? { lights: LIGHTS } : {}),
       platform: process.platform,
       previews: Object.freeze({ protocolVersion: 1, htmlScripts: true }),

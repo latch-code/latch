@@ -13,7 +13,7 @@ import {
   type TaskDetail,
 } from '@latch/protocol'
 import {
-  FORK_BUSY,
+  forkBusy,
   onComputer,
   ownModelGroups,
   ROUTE_NOTE,
@@ -447,7 +447,7 @@ describe('分叉 in the session Harness popover', () => {
   })
 
   it('stays focusable but off while the latest turn runs, with the reason as its tooltip', () => {
-    const html = render({ onFork() {}, blocked: FORK_BUSY })
+    const html = render({ onFork() {}, blocked: forkBusy() })
     expect(html).toMatch(/aria-disabled="true"[^>]*>.*分叉.*role="tooltip"[^>]*>.*这一轮结束后才能分叉/su)
   })
 

@@ -23,6 +23,12 @@ import {
   LockGlyph,
 } from '@latch/ui'
 import { FILE_COPY, fileNote, type FileNote } from '../core/securityCopy.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const CHIP_COPY = defineCopy(
+  { file: '文件', preview: (name: string) => `预览文件：${name}` },
+  { file: 'File', preview: name => `Preview file: ${name}` },
+)
 import { currentShell, revealLabel, shellFiles, type FileActionResult, type FileInspection, type ShellFiles } from '../core/shell.ts'
 import { absoluteReference, referenceIcon, referenceName, splitPath } from '../fileReference.ts'
 import { editorLabel, openInEditor, useEditors } from './OpenInEditor.tsx'
@@ -171,7 +177,7 @@ interface ChipMenuProps extends ChipProps {
 function ChipMenu({ name, checking = false, sections, note, copied, onOpen, triggerRef, ...props }: ChipMenuProps) {
   return (
     <Menu
-      label="文件"
+      label={CHIP_COPY.file}
       header={{ title: name, ...(checking ? { meta: FILE_COPY.checking } : {}) }}
       sections={sections}
       footer={
@@ -199,7 +205,7 @@ function ChipMenu({ name, checking = false, sections, note, copied, onOpen, trig
               data-file-chip=""
               aria-haspopup={menu['aria-haspopup']}
               aria-expanded={menu['aria-expanded']}
-              aria-label={props.onPreview ? `预览文件：${spoken(props)}` : spoken(props)}
+              aria-label={props.onPreview ? CHIP_COPY.preview(spoken(props)) : spoken(props)}
               onKeyDown={event => {
                 if (event.key !== 'ArrowDown' || menu['aria-expanded']) return
                 event.preventDefault()

@@ -4,6 +4,7 @@ import type { AgentAvatar as AgentAvatarValue } from '@latch/protocol'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import type { AvatarState } from './avatarFace.ts'
+import { AGENT_SPACE_COPY } from './spaceCopy.ts'
 
 /**
  * The conversation's frame: a 40px face, the name and the role line on the left, which open the profile; at the right
@@ -39,7 +40,12 @@ export function AgentFrame({
 }) {
   return (
     <div className="agent-frame" data-phone={phone ? '' : undefined}>
-      <button type="button" className="agent-frame-who" aria-label={`${name} 的资料`} aria-expanded={profileOpen} onClick={onProfile}>
+      <button
+        type="button"
+        className="agent-frame-who"
+        aria-label={AGENT_SPACE_COPY.profileOf(name)}
+        aria-expanded={profileOpen}
+        onClick={onProfile}>
         <AgentAvatar avatar={avatar} size={phone ? 28 : 40} state={state} />
         <span className="agent-frame-text">
           <span className="agent-frame-name">

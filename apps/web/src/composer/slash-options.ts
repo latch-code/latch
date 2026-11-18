@@ -1,6 +1,22 @@
 import type { PromptTemplate, SessionCommand, SessionSkill } from '@latch/protocol'
 import { matchSlash, slashToken } from './slash-match.ts'
 import { isLatchAction } from './latchActions.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    afterFirst: '第一条消息之后可用',
+    afterTurn: '这一轮结束后可用',
+    unsupported: '这个 Harness 尚不支持',
+    compact: '压缩上下文',
+  },
+  {
+    afterFirst: 'Available after the first message',
+    afterTurn: 'Available after this turn',
+    unsupported: 'This Harness does not support it yet',
+    compact: 'Compact context',
+  },
+)
 
 const RANDOM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu
 
@@ -45,7 +61,10 @@ export interface SlashContext {
   skills?: readonly SessionSkill[]
 }
 const ORDER = { command: 0, skill: 1, template: 2, action: 3 }
-const SKILL_SCOPE = { project: '项目', user: '个人', system: '系统', admin: '管理', temporary: '临时' }
+const SKILL_SCOPE = defineCopy(
+  { project: '项目', user: '个人', system: '系统', admin: '管理', temporary: '临时' },
+  { project: 'Project', user: 'Personal', system: 'System', admin: 'Administrator', temporary: 'Temporary' },
+)
 
 export function slashOptions(
   draft: string,
@@ -65,11 +84,7 @@ export function slashOptions(
           .filter(command => !isLatchAction(command.name.toLowerCase()) && !actions.some(action => action.name === command.name))
           .filter(command => !skills.some(skill => skill.invocation === '/' + command.name))
           .map(command => {
-            const unavailable = context.firstTurn
-              ? '第一条消息之后可用'
-              : context.running && command.idleOnly
-                ? '这一轮结束后可用'
-                : undefined
+            const unavailable = context.firstTurn ? COPY.afterFirst : context.running && command.idleOnly ? COPY.afterTurn : undefined
             return {
               id: 'command:' + command.name,
               kind: 'command' as const,
@@ -127,9 +142,9 @@ export function slashOptions(
       id: 'command:compact',
       kind: 'command',
       label: '/compact',
-      description: '这个 Harness 尚不支持',
+      description: COPY.unsupported,
       text: '/compact ',
-      score: score('compact', '压缩上下文'),
+      score: score('compact', COPY.compact),
       unavailable: true,
     })
   return options

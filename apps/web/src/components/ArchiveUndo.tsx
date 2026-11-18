@@ -1,5 +1,11 @@
 import { useEffect } from 'react'
+import { defineCopy } from '../core/i18n.ts'
 import { currentShell } from '../core/shell.ts'
+
+const UNDO_COPY = defineCopy(
+  { archived: '已归档', undo: '撤销', undoKeys: '⌘Z 撤销' },
+  { archived: 'Archived', undo: 'Undo', undoKeys: '⌘Z Undo' },
+)
 
 /** The field that owns ⌘Z while it has focus: the composer's text comes first. */
 const editing = (target: EventTarget | null) =>
@@ -28,9 +34,9 @@ export function ArchiveUndo({ onUndo, onExpire }: { onUndo: () => void; onExpire
   }, [onUndo])
   return (
     <div className="archive-undo" role="status">
-      <span>已归档</span>
+      <span>{UNDO_COPY.archived}</span>
       <button type="button" onClick={onUndo}>
-        {currentShell() ? '⌘Z 撤销' : '撤销'}
+        {currentShell() ? UNDO_COPY.undoKeys : UNDO_COPY.undo}
       </button>
     </div>
   )

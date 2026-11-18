@@ -60,8 +60,7 @@ import {
 import {
   defaultModelOf,
   defaultTag,
-  EXPERIMENTAL,
-  GATEWAY_NAME,
+  ROUTING_COPY,
   OWN_MODEL,
   type ModelGroup,
   ownModelGroups,
@@ -76,26 +75,68 @@ import {
   agentConfigChoice,
   agentConfigLabel,
   agentConfigValues,
-  BUILTIN_THINKING_NOTE,
-  CONFIG_UNKNOWN_REASON,
-  DEFAULT_LEVEL,
-  DEFAULT_MODEL,
+  REASONING_COPY,
   feedbackFor,
   resetModelLabel,
   sameModelId,
-  SERVICE_DEFAULT_HINT,
   thinkingWord,
   unreportedModelNote,
   unreportedThinkingNote,
   type AgentConfigState,
 } from './modelReasoning.ts'
 import { ConfigFeedback, ReadPickedModel, useSlowWrite } from './ThinkingControl.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    thinking: '思考',
+    model: '模型',
+    levelUnavailable: '这个模型不再设置这一档',
+    chooseAnotherLevel: (value1: string) => `这个模型不再设置「${value1}」，重新选一个后再发送。`,
+    switchBusy: '正在切换，请稍后。',
+    outcomeUnknown: (value1: string) => `${value1} · 结果未知`,
+    reading: '正在读取…',
+    waitingFor: (value1: string) => `等 ${value1} 回应…`,
+    switching: '正在切换…',
+    bypassedPrefix: '有一轮没经过 Latch，可能用了 ',
+    bypassedSuffix: ' 自己的登录或配置',
+    manageModels: '管理模型…',
+    chooseHarness: '先选 Harness',
+    levelsNeedHarness: '先选一个 Harness，才知道有哪些思考。',
+    useModelList: '在模型列表里选',
+    readLevels: '读取思考档位',
+    chooseModel: '选择模型',
+    addService: '添加模型服务…',
+    nextMessage: (value1: string) => `下一条：${value1}`,
+  },
+  {
+    thinking: 'Thinking',
+    model: 'Model',
+    levelUnavailable: 'This model no longer offers that level',
+    chooseAnotherLevel: (value1: string) => `This model no longer offers “${value1}”. Choose another level before sending.`,
+    switchBusy: 'Switching. Try again in a moment.',
+    outcomeUnknown: (value1: string) => `${value1} · Outcome unknown`,
+    reading: 'Reading…',
+    waitingFor: (value1: string) => `Waiting for ${value1}…`,
+    switching: 'Switching…',
+    bypassedPrefix: 'A turn bypassed Latch and may have used ',
+    bypassedSuffix: '’s own login or configuration',
+    manageModels: 'Manage models…',
+    chooseHarness: 'Choose a Harness first',
+    levelsNeedHarness: 'Choose a Harness to see its thinking levels.',
+    useModelList: 'Choose in the model list',
+    readLevels: 'Read thinking levels',
+    chooseModel: 'Choose model',
+    addService: 'Add model service…',
+    nextMessage: (value1: string) => `Next message: ${value1}`,
+  },
+)
 
 type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin' | 'scopes'>
 
 /** No level sent: the model's own default. Not a valid wire level, so it never collides. */
 const MODEL_DEFAULT_LEVEL = '~default'
-const DEFAULT_ONLY: BoardLevels<string>['options'] = [{ value: MODEL_DEFAULT_LEVEL, label: DEFAULT_LEVEL }]
+const defaultOnly = (): BoardLevels<string>['options'] => [{ value: MODEL_DEFAULT_LEVEL, label: REASONING_COPY.defaultLevel }]
 
 /** What a chip shows: the model's or the thinking's. */
 interface ChipFace {
@@ -172,15 +213,15 @@ export function boardSources(groups: ReadonlyArray<ModelGroup>): Array<BoardSour
     const experimental = gateway.every(item => item.gateway?.experimental)
     sources.push({
       id: '~gateway',
-      label: GATEWAY_NAME,
-      ...(experimental ? { tip: `${GATEWAY_NAME} · ${EXPERIMENTAL}` } : {}),
+      label: ROUTING_COPY.gateway,
+      ...(experimental ? { tip: `${ROUTING_COPY.gateway} · ${ROUTING_COPY.experimental}` } : {}),
       // A route, not a chip: the model glyph's pins read as a gear at this size.
       icon: <Icon icon={Route} size={16} />,
       groups: gateway.map(item => ({
         id: item.id,
         label: item.label ?? '',
         ...(item.media ? { media: item.media } : {}),
-        ...(item.gateway?.experimental ? { tag: <Badge>{EXPERIMENTAL}</Badge> } : {}),
+        ...(item.gateway?.experimental ? { tag: <Badge>{ROUTING_COPY.experimental}</Badge> } : {}),
         ...(item.hint ? { hint: item.hint } : {}),
         ...(item.note ? { note: item.note } : {}),
         items: boardItems(item),
@@ -227,8 +268,6 @@ function besideModel(trigger: HTMLElement): HTMLElement {
 /** Past this many characters a chip's value may be cut off at a narrow width. */
 const LONG_NAME = 24
 
-const CHIP_LABEL = { model: '模型', thinking: '思考' } as const
-
 /** The 模型 or 思考 chip: its value, and the shared panel focused on the list or the levels. */
 function BoardChip({ board, kind }: { board: Board; kind: 'model' | 'thinking' }) {
   const face = board[kind]
@@ -238,7 +277,7 @@ function BoardChip({ board, kind }: { board: Board; kind: 'model' | 'thinking' }
     <>
       {board.effects}
       <ValuePicker
-        label={CHIP_LABEL[kind]}
+        label={COPY[kind]}
         value={value}
         options={value ? [{ value, label: face.valueText! }] : []}
         {...(face.placeholder ? { placeholder: face.placeholder } : {})}
@@ -246,7 +285,7 @@ function BoardChip({ board, kind }: { board: Board; kind: 'model' | 'thinking' }
           ? {
               leading: (
                 <span className="thinking-label" aria-hidden="true">
-                  思考
+                  {COPY.thinking}
                 </span>
               ),
             }
@@ -270,8 +309,8 @@ function BoardChip({ board, kind }: { board: Board; kind: 'model' | 'thinking' }
         panel={
           board.panel ?? (
             <PickerBoard
-              label="模型"
-              levelsLabel="思考"
+              label={COPY.model}
+              levelsLabel={COPY.thinking}
               sources={boardSources(board.groups)}
               value={board.value}
               levels={board.levels}
@@ -336,7 +375,7 @@ function ConfigRow({ option, disabled, onChoose }: { option: SessionConfigOption
 function builtinLevels(catalog: HostCatalog, chosen: ModelRef | undefined, key: string | undefined): BoardLevels<string> {
   const [providerId = '', name = ''] = key?.split('\u0000') ?? []
   const ref = key ? { providerId, model: name } : chosen
-  if (!ref) return { value: MODEL_DEFAULT_LEVEL, options: DEFAULT_ONLY }
+  if (!ref) return { value: MODEL_DEFAULT_LEVEL, options: defaultOnly() }
   const levels = thinkingLevels(catalog, ref)
   const current = chosen !== undefined && sameModelId(chosen, ref)
   // Another model keeps the level when it declares it too (`switchModel`): what choosing it would start on.
@@ -345,14 +384,14 @@ function builtinLevels(catalog: HostCatalog, chosen: ModelRef | undefined, key: 
   return {
     value: effort ?? MODEL_DEFAULT_LEVEL,
     options: [
-      ...DEFAULT_ONLY,
+      ...defaultOnly(),
       ...levels.map(level => ({ value: level, label: thinkingWord(level) })),
-      ...(withdrawn ? [{ value: effort, label: thinkingWord(effort), disabledReason: '这个模型不再设置这一档' }] : []),
+      ...(withdrawn ? [{ value: effort, label: thinkingWord(effort), disabledReason: COPY.levelUnavailable }] : []),
     ],
     note: withdrawn
-      ? noteOf(`这个模型不再设置「${thinkingWord(effort)}」，重新选一个后再发送。`)
+      ? noteOf(COPY.chooseAnotherLevel(thinkingWord(effort)))
       : levels.length === 0
-        ? noteOf(BUILTIN_THINKING_NOTE)
+        ? noteOf(REASONING_COPY.builtinNote)
         : undefined,
   }
 }
@@ -440,7 +479,7 @@ function harnessBoard({
   const routed = service !== undefined && 'session' in service && service.route !== undefined
   const config = withTypedModels(given, routed ? undefined : harness?.customModels)
   const blocked = agentConfigBlocked(state)
-  const blockedReason = blocked ? (feedback?.kind === 'unknown' ? CONFIG_UNKNOWN_REASON : '正在切换，请稍后。') : undefined
+  const blockedReason = blocked ? (feedback?.kind === 'unknown' ? REASONING_COPY.unknown : COPY.switchBusy) : undefined
   const choose = (id: string, value: string) => {
     const intent = agentConfigChoice(config, id, value, state)
     if (intent) return onConfig(intent.configId, intent.value)
@@ -453,7 +492,7 @@ function harnessBoard({
   const picked = service && 'picked' in service ? service.picked : undefined
   const session = service && 'session' in service ? { route: service.route } : undefined
   const pickedProvider = findProvider(catalog, picked?.providerId ?? session?.route?.providerId)
-  const text = picked ? picked.model : (reportedOr ?? DEFAULT_MODEL)
+  const text = picked ? picked.model : (reportedOr ?? REASONING_COPY.defaultModel)
   const note = noteOverride === null ? undefined : (noteOverride ?? unreportedModelNote(name, true, config))
   const writing = busy !== null && (busy === modelOption?.id || others.some(option => option.id === busy))
   const ownFeedback = feedbackFor(feedback, [modelOption?.id, ...others.map(option => option.id)])
@@ -467,7 +506,7 @@ function harnessBoard({
           ...defaultTag(item.value, defaultModel),
           ...(blockedReason ? { disabledReason: blockedReason } : {}),
         }))
-      : [{ value: OWN_MODEL, label: reportedOr ?? DEFAULT_MODEL }],
+      : [{ value: OWN_MODEL, label: reportedOr ?? REASONING_COPY.defaultModel }],
     session,
     computer,
   )
@@ -485,7 +524,7 @@ function harnessBoard({
     if (!option)
       return {
         value: MODEL_DEFAULT_LEVEL,
-        options: current && thinking.defaultHint ? [{ ...DEFAULT_ONLY[0]!, hint: thinking.defaultHint }] : DEFAULT_ONLY,
+        options: current && thinking.defaultHint ? [{ ...defaultOnly()[0]!, hint: thinking.defaultHint }] : defaultOnly(),
       }
     return {
       value: option.currentValue,
@@ -531,25 +570,25 @@ function harnessBoard({
     }
     if (modelOption) void choose(modelOption.id, next)
   }
-  const thinkingLabel = own ? agentConfigLabel(own) : DEFAULT_LEVEL
+  const thinkingLabel = own ? agentConfigLabel(own) : REASONING_COPY.defaultLevel
 
   return {
     model: {
-      valueText: escapeHiddenCharacters(feedback?.kind === 'unknown' && ownFeedback ? `${text} · 结果未知` : text),
+      valueText: escapeHiddenCharacters(feedback?.kind === 'unknown' && ownFeedback ? COPY.outcomeUnknown(text) : text),
       ...(pickedProvider ? { leading: <ProviderTile provider={pickedProvider} size={14} /> } : {}),
       className: picked || reportedOr !== undefined ? 'model-picker is-id' : 'model-picker',
       pending: writing || reading,
-      pendingLabel: reading ? '正在读取…' : slow ? `等 ${name} 回应…` : '正在切换…',
+      pendingLabel: reading ? COPY.reading : slow ? COPY.waitingFor(name) : COPY.switching,
       disabled: locked !== undefined || disabled === true,
       disabledReason: locked,
     },
     thinking: {
       valueText: escapeHiddenCharacters(
-        feedback?.kind === 'unknown' && own && thinkingFeedback ? `${thinkingLabel} · 结果未知` : thinkingLabel,
+        feedback?.kind === 'unknown' && own && thinkingFeedback ? COPY.outcomeUnknown(thinkingLabel) : thinkingLabel,
       ),
       className: (own?.options.length ?? 0) <= 1 ? 'thinking-picker is-fixed' : 'thinking-picker',
       pending: reading || (own !== undefined && busy === own.id),
-      pendingLabel: reading ? '正在读取…' : slow ? `等 ${name} 回应…` : '正在切换…',
+      pendingLabel: reading ? COPY.reading : slow ? COPY.waitingFor(name) : COPY.switching,
       disabled: locked !== undefined || disabled === true,
       disabledReason: locked,
       hint: thinking.hint ?? (own ? undefined : thinking.defaultHint),
@@ -595,7 +634,9 @@ function harnessBoard({
         )}
         {bypassed && (
           <p className="model-note" data-tone="warn">
-            有一轮没经过 Latch，可能用了 {name} 自己的登录或配置
+            {COPY.bypassedPrefix}
+            {name}
+            {COPY.bypassedSuffix}
           </p>
         )}
         {feedback && ownFeedback && <ConfigFeedback feedback={feedback} onRefresh={onRefresh} />}
@@ -642,21 +683,27 @@ function useDraftBoard({
   const reading = useReading(harness)
   const manage = onManageModels && (
     <MenuFooterLink icon={ModelGlyph} chevron={false} closes onClick={onManageModels}>
-      管理模型…
+      {COPY.manageModels}
     </MenuFooterLink>
   )
   if (!harness)
     return {
-      model: { valueText: undefined, placeholder: '模型', className: 'model-picker', disabled: true, disabledReason: '先选 Harness' },
+      model: {
+        valueText: undefined,
+        placeholder: COPY.model,
+        className: 'model-picker',
+        disabled: true,
+        disabledReason: COPY.chooseHarness,
+      },
       thinking: {
-        valueText: DEFAULT_LEVEL,
+        valueText: REASONING_COPY.defaultLevel,
         className: 'thinking-picker is-fixed',
         disabled: true,
-        disabledReason: '先选一个 Harness，才知道有哪些思考。',
+        disabledReason: COPY.levelsNeedHarness,
       },
       groups: [],
       value: undefined,
-      levels: () => ({ value: MODEL_DEFAULT_LEVEL, options: DEFAULT_ONLY }),
+      levels: () => ({ value: MODEL_DEFAULT_LEVEL, options: defaultOnly() }),
       onModel: () => {},
       onLevel: () => {},
     }
@@ -691,7 +738,7 @@ function useDraftBoard({
     // person's own code, on request otherwise.
     const readable = unknown && readsModel(harness, access)
     const bySelf = readable && harness.catalogueRead?.when === 'select'
-    const thinkingNote = harness.capabilities.models.thinkingInModel && !service ? '在模型列表里选' : undefined
+    const thinkingNote = harness.capabilities.models.thinkingInModel && !service ? COPY.useModelList : undefined
     const thinkingDefault =
       thinkingNote !== undefined || service || !known || known.thinkingUnknown
         ? undefined
@@ -756,10 +803,10 @@ function useDraftBoard({
         footer:
           readable && !bySelf && !reading ? (
             <MenuFooterLink chevron={false} closes onClick={() => void readHarnessCatalogue(harness, false, pickedModel).catch(() => {})}>
-              读取思考档位
+              {COPY.readLevels}
             </MenuFooterLink>
           ) : undefined,
-        hint: service && !option && harness.capabilities.models.serviceThinking ? SERVICE_DEFAULT_HINT : undefined,
+        hint: service && !option && harness.capabilities.models.serviceThinking ? REASONING_COPY.serviceDefault : undefined,
         of: value => draftConfig(harness, picksFor(value))?.config.find(item => item.category === 'thought_level'),
         pickWith: (value, configId, level) => {
           onChoice({ config: { ...picksFor(value), [configId]: level } })
@@ -775,13 +822,13 @@ function useDraftBoard({
   return {
     model: {
       valueText: choice.model?.model,
-      placeholder: '选择模型',
+      placeholder: COPY.chooseModel,
       ...(provider ? { leading: <ProviderTile provider={provider} size={14} /> } : {}),
       className: choice.model ? 'model-picker is-id' : 'model-picker',
       disabled,
     },
     thinking: {
-      valueText: choice.model?.effort ? thinkingWord(choice.model.effort) : DEFAULT_LEVEL,
+      valueText: choice.model?.effort ? thinkingWord(choice.model.effort) : REASONING_COPY.defaultLevel,
       className: level.options.length <= 1 ? 'thinking-picker is-fixed' : 'thinking-picker',
       disabled,
     },
@@ -809,7 +856,7 @@ function useDraftBoard({
             onClick={() => {
               setAdding(true)
             }}>
-            添加模型服务…
+            {COPY.addService}
           </MenuFooterLink>
         ) : (
           noService && <MenuFooterNote>{SETUP_COPY.addProviderElsewhere()}</MenuFooterNote>
@@ -898,24 +945,24 @@ function useSessionBoard({
   const slow = useSlowWrite(busy !== null && writes.some(option => option.id === busy))
   const manage = onManageModels && (
     <MenuFooterLink icon={ModelGlyph} chevron={false} closes onClick={onManageModels}>
-      管理模型…
+      {COPY.manageModels}
     </MenuFooterLink>
   )
   if (harness?.capabilities.models.owner === 'latch' && catalog.providers.length > 0) {
     const provider = findProvider(catalog, model?.providerId)
-    const word = model?.effort ? thinkingWord(model.effort) : DEFAULT_LEVEL
+    const word = model?.effort ? thinkingWord(model.effort) : REASONING_COPY.defaultLevel
     const switching = current !== undefined && model !== undefined && model.effort !== current.effort
     const level = builtinLevels(catalog, model, undefined)
     return {
       model: {
-        valueText: !model ? DEFAULT_MODEL : sameModelId(model, current) ? model.model : `下一条：${model.model}`,
+        valueText: !model ? REASONING_COPY.defaultModel : sameModelId(model, current) ? model.model : COPY.nextMessage(model.model),
         ...(provider ? { leading: <ProviderTile provider={provider} size={14} /> } : {}),
         className: model ? 'model-picker is-id' : 'model-picker',
         disabled: locked !== undefined,
         disabledReason: locked,
       },
       thinking: {
-        valueText: switching ? `下一条：${word}` : word,
+        valueText: switching ? COPY.nextMessage(word) : word,
         className: level.options.length <= 1 ? 'thinking-picker is-fixed' : 'thinking-picker',
         disabled: locked !== undefined,
         disabledReason: locked,
@@ -971,12 +1018,12 @@ function useSessionBoard({
     computer,
     thinking: {
       option,
-      note: !routed && harness?.capabilities.models.thinkingInModel ? '在模型列表里选' : undefined,
+      note: !routed && harness?.capabilities.models.thinkingInModel ? COPY.useModelList : undefined,
       defaultHint:
         routed || harness?.capabilities.models.thinkingInModel
           ? undefined
           : unreportedThinkingNote(name, true, config, harness?.capabilities.models.thinkingPerModel === true),
-      hint: routed && !option ? SERVICE_DEFAULT_HINT : undefined,
+      hint: routed && !option ? REASONING_COPY.serviceDefault : undefined,
     },
   })
 }

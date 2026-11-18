@@ -59,7 +59,68 @@ import { AppFrame, hostInfo, reportDiagnostic, type FrameOutcome } from './AppFr
 import { appRef, fallbackVersion, findApp, listedApps, openStep, type PageVersion } from './model.ts'
 import { useShellTheme } from '../hooks/useShellTheme.ts'
 import { useSecureCover } from './secureCover.ts'
-import { harnessName } from '../composerChoice.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    apps: '应用',
+    notFound: '找不到这个页面',
+    backToApps: '回到应用',
+    reload: '重新加载',
+    diagnostics: '诊断',
+    disable: '停用',
+    showDiagnostics: '查看诊断',
+    disabled: '插件已停用',
+    migrating: '正在更新数据…',
+    newerData: '数据比这个版本新',
+    pluginSettings: '打开插件设置',
+    unbuilt: '页面还没有构建',
+    migrationNeeded: '数据需要更新',
+    viewOnly: '这台设备只能查看',
+    migrationFailed: '数据更新没成功',
+    openFailed: '页面没有打开',
+    opening: '正在打开页面…',
+    back: '返回',
+    offline: '不在线',
+    actions: '页面操作',
+    usingOld: '新版本没有打开，正在显示上一个版本',
+    reading: '正在读取…',
+    noDiagnostics: '没有诊断',
+    plugin: (name: string, version?: string) => `插件 · ${name}${version ? ` ${version}` : ''}`,
+    rollback: (version: string) => `回退到 ${version}`,
+    editOn: (computer: string) => `在 ${computer} 上修改`,
+    diagnosticsFor: (title: string) => `${title} 的诊断`,
+  },
+  {
+    apps: 'Apps',
+    notFound: 'Page not found',
+    backToApps: 'Back to Apps',
+    reload: 'Reload',
+    diagnostics: 'Diagnostics',
+    disable: 'Disable',
+    showDiagnostics: 'View diagnostics',
+    disabled: 'Plugin disabled',
+    migrating: 'Updating data…',
+    newerData: 'This page’s data is newer',
+    pluginSettings: 'Open plugin settings',
+    unbuilt: 'Page hasn’t been built',
+    migrationNeeded: 'Data needs an update',
+    viewOnly: 'This device is read only',
+    migrationFailed: 'Data update failed',
+    openFailed: 'Page couldn’t open',
+    opening: 'Opening page…',
+    back: 'Back',
+    offline: 'Offline',
+    actions: 'Page actions',
+    usingOld: 'The new version couldn’t open. Showing the previous version.',
+    reading: 'Loading…',
+    noDiagnostics: 'No diagnostics',
+    plugin: (name: string, version?: string) => `Plugin · ${name}${version ? ` ${version}` : ''}`,
+    rollback: (version: string) => `Roll back to ${version}`,
+    editOn: (computer: string) => `Edit on ${computer}`,
+    diagnosticsFor: (title: string) => `Diagnostics for ${title}`,
+  },
+)
 
 const ICONS: Record<string, IconComponent> = {
   'list-checks': ListChecks,
@@ -98,8 +159,8 @@ function AppsGroup({ shell, current }: { shell: ShellState; current?: AppTarget 
   const pages = listedApps(shell.snapshot)
   if (!pages.length) return null
   return (
-    <div className="sidebar-apps" role="group" aria-label="应用">
-      <h2 className="sidebar-apps-head">应用</h2>
+    <div className="sidebar-apps" role="group" aria-label={COPY.apps}>
+      <h2 className="sidebar-apps-head">{COPY.apps}</h2>
       {pages.map(page => (
         <button
           key={appRef(page)}
@@ -151,7 +212,7 @@ function AppsNav({ shell, current }: { shell: ShellState; current: AppTarget | u
           <span>Code</span>
         </button>
       )}
-      <nav className="space-list" aria-label="应用">
+      <nav className="space-list" aria-label={COPY.apps}>
         <AppsGroup shell={shell} current={current} />
       </nav>
       <ShellNavFoot shell={shell} />
@@ -180,15 +241,15 @@ export function AppsPage({ shell }: { shell: ShellState }) {
     back()
   }
   return (
-    <section aria-label="应用" className="settings-page apps-page" data-entry="apps" onKeyDown={escape}>
-      {!phone && titleSlot && createPortal(<span className="titlebar-page-title">应用</span>, titleSlot)}
+    <section aria-label={COPY.apps} className="settings-page apps-page" data-entry="apps" onKeyDown={escape}>
+      {!phone && titleSlot && createPortal(<span className="titlebar-page-title">{COPY.apps}</span>, titleSlot)}
       <div className="settings-layout" data-level={phone ? (pushed ? 'section' : 'root') : undefined}>
         <div className="settings-nav-pane" inert={pushed || undefined}>
           {phone ? (
             <>
               <header className="settings-bar">
                 <span />
-                <h2>应用</h2>
+                <h2>{COPY.apps}</h2>
               </header>
               <div className="settings-scroll">
                 <ul className="apps-list">
@@ -205,7 +266,7 @@ export function AppsPage({ shell }: { shell: ShellState }) {
                         </span>
                         <span className="apps-list-text">
                           <span className="apps-list-title">{item.title}</span>
-                          <span className="apps-list-meta">{`插件 · ${item.pluginName}`}</span>
+                          <span className="apps-list-meta">{COPY.plugin(item.pluginName)}</span>
                         </span>
                         <ChevronRightGlyph size={16} nonScalingStroke strokeWidth={ICON_STROKE[16]} aria-hidden="true" />
                       </button>
@@ -220,14 +281,14 @@ export function AppsPage({ shell }: { shell: ShellState }) {
         </div>
         <section
           className="settings-panel apps-panel"
-          aria-label={page?.title ?? '应用'}
+          aria-label={page?.title ?? COPY.apps}
           aria-hidden={(phone && !pushed) || undefined}
           inert={(phone && !pushed) || undefined}>
           {(!phone || pushed)
             && (page ? (
               <AppView key={appRef(page)} shell={shell} page={page} onBack={phone ? back : undefined} />
             ) : (
-              <EmptyState title="找不到这个页面" action={<Button onClick={back}>回到应用</Button>} />
+              <EmptyState title={COPY.notFound} action={<Button onClick={back}>{COPY.backToApps}</Button>} />
             ))}
         </section>
       </div>
@@ -424,10 +485,10 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
     {
       id: 'page',
       items: [
-        { id: 'reload', label: '重新加载', onSelect: reload },
+        { id: 'reload', label: COPY.reload, onSelect: reload },
         {
           id: 'diagnostics',
-          label: '诊断',
+          label: COPY.diagnostics,
           onSelect: () => {
             setDiagnostics(true)
           },
@@ -439,8 +500,10 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
           {
             id: 'manage',
             items: [
-              { id: 'disable', label: '停用', disabled: busy || !online, onSelect: disable },
-              ...(previous ? [{ id: 'rollback', label: `回退到 ${previous.version}`, disabled: busy || !online, onSelect: rollback }] : []),
+              { id: 'disable', label: COPY.disable, disabled: busy || !online, onSelect: disable },
+              ...(previous
+                ? [{ id: 'rollback', label: COPY.rollback(previous.version), disabled: busy || !online, onSelect: rollback }]
+                : []),
             ],
           },
         ]
@@ -448,12 +511,12 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
           {
             id: 'manage',
             // Building, applying, turning off and going back happen on the Mac that runs the Host.
-            items: [{ id: 'elsewhere', label: `在 ${computerName(snapshot.hostName)} 上修改`, disabled: true, onSelect: () => {} }],
+            items: [{ id: 'elsewhere', label: COPY.editOn(computerName(snapshot.hostName)), disabled: true, onSelect: () => {} }],
           },
         ]),
   ]
   const info = hostInfo(theme, online, canRun, {
-    harnesses: (snapshot.catalog?.harnesses ?? []).map(harness => ({ id: harness.id, name: harnessName(harness) })),
+    harnesses: (snapshot.catalog?.harnesses ?? []).map(harness => ({ id: harness.id, name: harness.capabilities.display.label })),
   })
   // Esc in the frame is the page's way back on a phone, and nothing else.
   const escapeFrame = () => {
@@ -462,11 +525,11 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
   const manageActions = manager && (
     <>
       <Button variant="outline" disabled={busy || !online} onClick={disable}>
-        停用
+        {COPY.disable}
       </Button>
       {previous && (
         <Button variant="outline" disabled={busy || !online} onClick={rollback}>
-          {`回退到 ${previous.version}`}
+          {COPY.rollback(previous.version)}
         </Button>
       )}
     </>
@@ -477,17 +540,17 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
       onClick={() => {
         setDiagnostics(true)
       }}>
-      查看诊断
+      {COPY.showDiagnostics}
     </Button>
   )
 
   let body
-  if (page.status === 'disabled') body = <EmptyState title="插件已停用" />
-  else if (page.status === 'migrating') body = <Loading variant="page" label="正在更新数据…" />
+  if (page.status === 'disabled') body = <EmptyState title={COPY.disabled} />
+  else if (page.status === 'migrating') body = <Loading variant="page" label={COPY.migrating} />
   else if (page.status === 'data-newer')
     body = (
       <ErrorState
-        title="数据比这个版本新"
+        title={COPY.newerData}
         actions={
           manager ? (
             <Button
@@ -495,24 +558,24 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
               onClick={() => {
                 shell.openSettings('plugins')
               }}>
-              打开插件设置
+              {COPY.pluginSettings}
             </Button>
           ) : undefined
         }
       />
     )
-  else if (!page.bundleHash) body = <EmptyState title="页面还没有构建" />
-  else if (page.status === 'needs-migration' && !canRun) body = <EmptyState title="数据需要更新" description="这台设备只能查看" />
+  else if (!page.bundleHash) body = <EmptyState title={COPY.unbuilt} />
+  else if (page.status === 'needs-migration' && !canRun) body = <EmptyState title={COPY.migrationNeeded} description={COPY.viewOnly} />
   else if (phase.kind === 'migration-failed')
     body = (
       <ErrorState
-        title="数据更新没成功"
+        title={COPY.migrationFailed}
         actions={
           <>
             {showDiagnostics}
             {manager && previous && (
               <Button variant="outline" disabled={busy || !online} onClick={rollback}>
-                {`回退到 ${previous.version}`}
+                {COPY.rollback(previous.version)}
               </Button>
             )}
           </>
@@ -522,11 +585,11 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
   else if (phase.kind === 'failed')
     body = (
       <ErrorState
-        title="页面没有打开"
+        title={COPY.openFailed}
         actions={
           <>
             <Button variant="primary" onClick={reload}>
-              重新加载
+              {COPY.reload}
             </Button>
             {showDiagnostics}
             {manageActions}
@@ -537,7 +600,7 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
   else if (page.status === 'needs-migration')
     body = (
       <>
-        <Loading variant="page" label="正在更新数据…" />
+        <Loading variant="page" label={COPY.migrating} />
         {lease && (
           <AppFrame
             key={`migrate:${attempt}`}
@@ -558,7 +621,7 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
   else
     body = (
       <>
-        {phase.kind !== 'ready' && <Loading variant="page" label="正在打开页面…" />}
+        {phase.kind !== 'ready' && <Loading variant="page" label={COPY.opening} />}
         <AppFrame
           key={`${version}:${attempt}`}
           page={{ ...page, bundleHash: page.bundleHash, ...(fallback ?? {}) }}
@@ -577,25 +640,25 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
   return (
     <div className="app-page" data-phase={phase.kind} data-covered={covered ? '' : undefined}>
       <header className="app-page-head">
-        {onBack && <IconButton size="lg" label="返回" icon={ChevronLeftGlyph} onClick={onBack} />}
+        {onBack && <IconButton size="lg" label={COPY.back} icon={ChevronLeftGlyph} onClick={onBack} />}
         <span className="app-page-icon">
           <AppIcon name={page.icon} />
         </span>
         <div className="app-page-title">
           <h1>{page.title}</h1>
-          <span className="app-page-plugin">{`插件 · ${page.pluginName} ${page.version}`}</span>
+          <span className="app-page-plugin">{COPY.plugin(page.pluginName, page.version)}</span>
         </div>
         {!online && (
           <span className="app-page-offline">
             <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-            不在线
+            {COPY.offline}
           </span>
         )}
         <ActionMenu
-          label="页面操作"
+          label={COPY.actions}
           placement="bottom-end"
           sections={sections}
-          trigger={props => <IconButton {...props} icon={MoreGlyph} label="页面操作" />}
+          trigger={props => <IconButton {...props} icon={MoreGlyph} label={COPY.actions} />}
         />
       </header>
       {error && (
@@ -614,10 +677,10 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
           className="app-page-error"
           action={
             <Button variant="ghost" onClick={reload}>
-              重新加载
+              {COPY.reload}
             </Button>
           }>
-          新版本没有打开，正在显示上一个版本
+          {COPY.usingOld}
         </InlineNotice>
       )}
       <div className="app-page-body">{body}</div>
@@ -633,13 +696,10 @@ function AppView({ shell, page, onBack }: { shell: ShellState; page: AppSummary;
   )
 }
 
-const SOURCE_LABEL: Record<AppDiagnostic['source'], string> = {
-  build: '构建',
-  runtime: '运行',
-  handshake: '打开',
-  bridge: '能力',
-  migration: '数据',
-}
+const SOURCE_LABEL = defineCopy<Record<AppDiagnostic['source'], string>>(
+  { build: '构建', runtime: '运行', handshake: '打开', bridge: '能力', migration: '数据' },
+  { build: 'Build', runtime: 'Run', handshake: 'Open', bridge: 'Capabilities', migration: 'Data' },
+)
 
 /** The page's last diagnostics, newest first, as the Host keeps them (redacted, at most 2 KiB each). */
 export function DiagnosticsDialog({ page, onClose }: { page: AppSummary; onClose: () => void }) {
@@ -665,12 +725,12 @@ export function DiagnosticsDialog({ page, onClose }: { page: AppSummary; onClose
     }
   }, [page.pluginId, page.appId, page.revision])
   return (
-    <Modal label={`${page.title} 的诊断`} onClose={onClose} className="app-diagnostics">
-      <ModalHeader title="诊断" onClose={onClose} />
+    <Modal label={COPY.diagnosticsFor(page.title)} onClose={onClose} className="app-diagnostics">
+      <ModalHeader title={COPY.diagnostics} onClose={onClose} />
       <div className="app-diagnostics-body">
-        {state.kind === 'loading' && <Loading label="正在读取…" />}
+        {state.kind === 'loading' && <Loading label={COPY.reading} />}
         {state.kind === 'failed' && <InlineNotice tone="error">{state.message}</InlineNotice>}
-        {state.kind === 'ready' && state.items.length === 0 && <EmptyState title="没有诊断" />}
+        {state.kind === 'ready' && state.items.length === 0 && <EmptyState title={COPY.noDiagnostics} />}
         {state.kind === 'ready' && state.items.length > 0 && (
           <ol className="app-diagnostics-list">
             {state.items.map(item => (

@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { HarnessLogin, KeepWaitingResult, TaskDetail } from '@latch/protocol'
 import { Button, ICON_STROKE, Icon, AlertGlyph, CircleCheckGlyph, WarningGlyph } from '@latch/ui'
-import { runEndLine, runStatus, type LivePhaseOptions, type RunMessageFacts, type RunStatus } from '../conversation.ts'
+import { phaseText, runEndLine, runStatus, type LivePhaseOptions, type RunMessageFacts, type RunStatus } from '../conversation.ts'
 import { api, ApiError, isUncertain } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
+import { RECOVERY_COPY } from '../core/securityCopy.ts'
 import { attend, checkSettle } from '../core/attend.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { HarnessLoginSteps } from '../components/HarnessLogin.tsx'
@@ -12,6 +14,11 @@ import { personStatus } from '../agents/personWords.ts'
 import { silentWords } from '../sessions.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 
+const COPY = defineCopy(
+  { view: '查看', keepWaiting: '继续等', stop: '停止', checked: '已核对', retry: '重试' },
+  { view: 'View', keepWaiting: 'Keep waiting', stop: 'Stop', checked: 'Checked', retry: 'Retry' },
+)
+
 /** The words change at most once a second; waiting on a person and stopping do not wait for that. */
 function useHeldStatus(status: RunStatus): RunStatus {
   const [shown, setShown] = useState(status)
@@ -19,7 +26,7 @@ function useHeldStatus(status: RunStatus): RunStatus {
   latest.current = status
   const key = `${status.tone}\n${status.text}`
   const shownKey = `${shown.tone}\n${shown.text}`
-  const urgent = status.tone !== 'plain' || status.text === '正在停止…'
+  const urgent = status.tone !== 'plain' || status.text === phaseText({ kind: 'cancelling' }, '')
   useEffect(() => {
     if (key === shownKey) return undefined
     const timer = setTimeout(
@@ -120,7 +127,7 @@ export function StatusLine({
           onClick={() => {
             onView?.(status.viewMessageId!)
           }}>
-          查看
+          {COPY.view}
         </button>
       )}
       {status.actions?.includes('keep-waiting') && live && live.silenceThresholdMs !== undefined && (
@@ -142,12 +149,12 @@ export function StatusLine({
                 setWaiting(false)
               })
           }}>
-          继续等
+          {COPY.keepWaiting}
         </Button>
       )}
       {status.actions?.includes('stop') && onStop && (
         <Button size="xs" variant="secondary" onClick={onStop}>
-          停止
+          {COPY.stop}
         </Button>
       )}
     </div>
@@ -248,18 +255,18 @@ export function RunEndNote({
         <span>{line.text}</span>
         {line.check && canCheck && !check.sent && (
           <Button size="xs" variant="secondary" loading={check.busy} onClick={check.run}>
-            已核对
+            {COPY.checked}
           </Button>
         )}
         {line.retry && onRetry && (
           // Logged in, sending again is the one thing left to do; it is still the person who sends.
           <Button size="xs" variant={loggedIn ? 'primary' : 'secondary'} onClick={onRetry}>
-            重试
+            {COPY.retry}
           </Button>
         )}
         {onContinue && !refused && (
           <Button size="xs" variant="secondary" onClick={onContinue}>
-            在新会话中继续
+            {RECOVERY_COPY.continueInNew}
           </Button>
         )}
       </div>

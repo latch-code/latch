@@ -1,8 +1,9 @@
 import { GENERAL_AGENT_ID, type AgentAvatar, type AppSnapshot, type CustomAgentSummary, type TaskSummary } from '@latch/protocol'
 import { rowStatus, spaceOf, waitsOnYou } from '../sessions.ts'
 import { topicOwner } from './chat.ts'
-import { dutyLine, GENERAL_NAME } from './model.ts'
+import { dutyLine } from './model.ts'
 import { personActivity, WAITS_ON_YOU, type PersonWord } from './personWords.ts'
+import { AGENT_SPACE_COPY } from './spaceCopy.ts'
 
 /**
  * 我的 Agent as people: the roster (one row per Agent, its topics on tree lines under the one in view) and the space's
@@ -62,7 +63,7 @@ function rowOf(
     state === 'waiting'
       ? WAITS_ON_YOU
       : state === 'running'
-        ? (personActivity(topics[runningAt].live) ?? { words: '运行中', tone: 'running' as const })
+        ? (personActivity(topics[runningAt].live) ?? { words: AGENT_SPACE_COPY.running, tone: 'running' as const })
         : undefined
   const { unavailable, ...rest } = who
   return {
@@ -104,7 +105,7 @@ export function rosterRows(
         avatar: agent.avatar,
         duty: dutyLine(agent),
         gone: false,
-        unavailable: agent.available ? undefined : (agent.unavailableReason ?? '现在不能开始'),
+        unavailable: agent.available ? undefined : (agent.unavailableReason ?? AGENT_SPACE_COPY.cannotStart),
       },
       topicsOf(agent.id),
       asking,
@@ -113,7 +114,7 @@ export function rosterRows(
   if (general)
     rows.push(
       rowOf(
-        { id: GENERAL_AGENT_ID, name: GENERAL_NAME, avatar: 'general', duty: '', gone: false, unavailable: generalBlocked },
+        { id: GENERAL_AGENT_ID, name: AGENT_SPACE_COPY.general, avatar: 'general', duty: '', gone: false, unavailable: generalBlocked },
         topicsOf(GENERAL_AGENT_ID),
         asking,
       ),
@@ -125,7 +126,7 @@ export function rosterRows(
     if (!known.has(owner))
       rows.push({
         ...rowOf(
-          { id: owner, name: listed ? '已删除的 Agent' : 'Agent', avatar: 'general', duty: '', gone: listed },
+          { id: owner, name: listed ? AGENT_SPACE_COPY.deletedAgent : 'Agent', avatar: 'general', duty: '', gone: listed },
           topics.toSorted(newestFirst),
           asking,
         ),

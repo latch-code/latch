@@ -18,6 +18,7 @@ import { HarnessTile } from '../components/BrandTile.tsx'
 import { ProjectPicker } from '../components/Pickers.tsx'
 import { harnessName } from '../composerChoice.ts'
 import { agentDeletionMessage } from '../deletionCopy.ts'
+import { defineCopy } from '../core/i18n.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { draftOf, normalizedDraft, patchOf, rebaseDraft, saveWaits, type AgentDraft } from './model.ts'
 import { isolationBrief } from './helpers.ts'
@@ -25,13 +26,104 @@ import { writeFor, type AgentWrites, type WriteState } from './useAgentWrites.ts
 import { MessageError } from '../core/api.ts'
 import { AgentDefaults } from './AgentDefaults.tsx'
 import { BudgetControl, useModelSpend } from '../settings/ModelSpend.tsx'
+import { AGENT_SPACE_COPY } from './spaceCopy.ts'
+
+const COPY = defineCopy(
+  {
+    effect: '何时生效',
+    effectDetail:
+      '内置 Harness 从下一轮起读取所选模型、指令和记忆。外部 Harness 在首次聊天或清空上下文后读取指令和记忆。要修改外部 Harness 的模型或权限，请使用当前聊天中的可用选项。',
+    unknown: '结果未知',
+    retry: '重试同一请求',
+    abandon: '放弃等待',
+    conflict: '已在别处修改',
+    latest: '载入最新',
+    notSaved: '没有保存',
+    noSkills: '没有已启用的技能',
+    allSkills: '全部已启用的技能',
+    pluginDisabled: '插件已停用',
+    nameRequired: '先填名称',
+    settings: (name: string) => `${name} 的设置`,
+    name: '名称',
+    namePrompt: '例如：资料整理',
+    duty: '职责',
+    dutyPrompt: '一句话，例如：查资料，写成一页摘要',
+    instructions: '指令',
+    execution: '执行方式',
+    runner: '由谁运行',
+    runsOn: (name: string) => `由 ${name} 运行`,
+    fixedHarness: '建好后不能换 Harness，要用别的就新建一个 Agent。',
+    boundary: (label: string, detail?: string) => (detail ? ` ${label}。${detail}` : ` ${label}`),
+    budget: '本月预算',
+    project: '默认项目',
+    home: { label: '家', description: '没有选项目时，在家里做' },
+    skills: '技能',
+    skillsUnavailable: '这个 Harness 收不到技能',
+    skillsUnavailableDetail: '技能经内置加载或技能服务送达；这个 Harness 两种都不接受，所选技能不会发送。',
+    tools: '可以使用',
+    restrict: '只收紧',
+    restrictDetail: '只对内置 Harness 生效：它只能调用勾选的插件的工具，不会因此获得新的能力。',
+    allPlugins: '全部已启用的插件',
+    conflictDetail: '这项记录已更新，请刷新后再修改。',
+    delete: '删除',
+    cancel: '取消',
+    conflictTip: '已在别处修改，载入最新后再保存',
+    save: '保存',
+    deleteTitle: (name: string) => `删除「${name}」？`,
+    deleteFailed: '没有删除，原因见页面下方。',
+  },
+  {
+    effect: 'When changes take effect',
+    effectDetail:
+      'The built-in Harness reads the selected model, instructions, and memory from the next turn. An external Harness reads instructions and memory when you first start a chat or clear its context. Use the options in the current chat to change an external Harness’s model or permissions.',
+    unknown: 'Outcome unknown',
+    retry: 'Retry the same request',
+    abandon: 'Stop waiting',
+    conflict: 'Changed elsewhere',
+    latest: 'Load latest',
+    notSaved: 'Changes weren’t saved',
+    noSkills: 'No enabled skills',
+    allSkills: 'All enabled skills',
+    pluginDisabled: 'Plugin disabled',
+    nameRequired: 'Enter a name first',
+    settings: (name: string) => `Settings for ${name}`,
+    name: 'Name',
+    namePrompt: 'For example, Research Assistant',
+    duty: 'Role',
+    dutyPrompt: 'One sentence, such as “Research a topic and write a one-page summary”',
+    instructions: 'Instructions',
+    execution: 'Execution',
+    runner: 'Harness',
+    runsOn: (name: string) => `Runs on ${name}`,
+    fixedHarness: 'To use a different Harness, create a new Agent.',
+    boundary: (label: string, detail?: string) => (detail ? ` ${label}. ${detail}` : ` ${label}`),
+    budget: 'Monthly budget',
+    project: 'Default project',
+    home: { label: 'Home', description: 'Work in the Agent’s home folder when no project is selected' },
+    skills: 'Skills',
+    skillsUnavailable: 'This Harness cannot receive skills',
+    skillsUnavailableDetail:
+      'Latch sends skills through built-in loading or the skill service. This Harness supports neither, so it won’t receive selected skills.',
+    tools: 'Allowed tools',
+    restrict: 'Limits tool access',
+    restrictDetail:
+      'This applies to the built-in Harness only. Its tool access is limited to the selected plugins and their existing capabilities.',
+    allPlugins: 'All enabled plugins',
+    conflictDetail: 'This record has changed. Load the latest version before editing it.',
+    delete: 'Delete',
+    cancel: 'Cancel',
+    conflictTip: 'Changed elsewhere. Load the latest version before saving.',
+    save: 'Save',
+    deleteTitle: (name: string) => `Delete “${name}”?`,
+    deleteFailed: 'The Agent wasn’t deleted. See the reason below.',
+  },
+)
 
 /** When a change reaches the Agent's sessions: the fine print behind ⓘ. */
-export function TakesEffect({ label = '何时生效' }: { label?: string }) {
+export function TakesEffect({ label = COPY.effect }: { label?: string }) {
   return (
     <Hint label={label} lead={false} className="agent-effect">
-      内置 Harness 从下一轮起读取所选模型、指令和记忆。外部 Harness 在首次聊天或清空上下文后读取指令和记忆。要修改外部 Harness
-      的模型或权限，请使用当前聊天中的可用选项。
+      {COPY.effectDetail}
     </Hint>
   )
 }
@@ -53,20 +145,20 @@ export function WriteNotice({
     return (
       <InlineNotice
         tone="warn"
-        title="结果未知"
-        action={state.unreplayable ? undefined : <Button onClick={onRetry}>重试同一请求</Button>}
-        {...(onAbandon ? { onClose: onAbandon, closeLabel: '放弃等待' } : {})}>
+        title={COPY.unknown}
+        action={state.unreplayable ? undefined : <Button onClick={onRetry}>{COPY.retry}</Button>}
+        {...(onAbandon ? { onClose: onAbandon, closeLabel: COPY.abandon } : {})}>
         <span>{state.message}</span> <span className="agent-request-id">{state.write.body.requestId}</span>
       </InlineNotice>
     )
   if (state.kind === 'conflict')
     return (
-      <InlineNotice tone="warn" title="已在别处修改" action={onReload ? <Button onClick={onReload}>载入最新</Button> : undefined}>
+      <InlineNotice tone="warn" title={COPY.conflict} action={onReload ? <Button onClick={onReload}>{COPY.latest}</Button> : undefined}>
         {state.message}
       </InlineNotice>
     )
   return (
-    <InlineNotice tone="error" title="没有保存">
+    <InlineNotice tone="error" title={COPY.notSaved}>
       {state.message}
     </InlineNotice>
   )
@@ -101,12 +193,12 @@ function SkillChoice({
   const skills = catalog.skills ?? []
   // A chosen skill whose plugin is off now is kept, and said to be off.
   const missing = (value ?? []).filter(id => !skills.some(skill => skill.id === id))
-  if (!skills.length && !missing.length) return <p className="agent-form-empty">没有已启用的技能</p>
+  if (!skills.length && !missing.length) return <p className="agent-form-empty">{COPY.noSkills}</p>
   return (
     <div className="agent-checks">
       {allowAll && (
         <Checkbox
-          label="全部已启用的技能"
+          label={COPY.allSkills}
           checked={value === undefined}
           disabled={disabled}
           onChange={event => {
@@ -131,7 +223,7 @@ function SkillChoice({
         <Checkbox
           key={id}
           label={id}
-          description="插件已停用"
+          description={COPY.pluginDisabled}
           checked
           disabled={disabled}
           onChange={() => {
@@ -201,7 +293,7 @@ export function AgentForm({
   }, [revision])
   const harness = catalog.harnesses.find(item => item.id === draft.harnessId)
   // The Harness is fixed, so one that cannot run now does not hold back a new name or instructions.
-  const problem = draft.name.trim() ? undefined : '先填名称'
+  const problem = draft.name.trim() ? undefined : COPY.nameRequired
   const normalized = normalizedDraft(catalog, draft)
   const changes = patchOf(draftOf(agent), normalized)
   const changed = Object.keys(changes).length > 0
@@ -232,33 +324,33 @@ export function AgentForm({
   return (
     <form
       className="agent-form"
-      aria-label={`${agent.name} 的设置`}
+      aria-label={COPY.settings(agent.name)}
       onSubmit={event => {
         event.preventDefault()
         void save()
       }}>
       <TextField
-        label="名称"
+        label={COPY.name}
         value={draft.name}
         maxLength={80}
-        placeholder="例如：资料整理"
+        placeholder={COPY.namePrompt}
         disabled={locked}
         onChange={event => {
           update({ name: event.target.value })
         }}
       />
       <TextField
-        label="职责"
+        label={COPY.duty}
         value={draft.description}
         maxLength={200}
-        placeholder="一句话，例如：查资料，写成一页摘要"
+        placeholder={COPY.dutyPrompt}
         disabled={locked}
         onChange={event => {
           update({ description: event.target.value.replaceAll('\n', ' ') })
         }}
       />
       <TextAreaField
-        label="指令"
+        label={COPY.instructions}
         value={draft.instructions}
         rows={6}
         maxLength={32_000}
@@ -267,16 +359,16 @@ export function AgentForm({
           update({ instructions: event.target.value })
         }}
       />
-      <Section title="执行方式" aside={<TakesEffect />}>
+      <Section title={COPY.execution} aside={<TakesEffect />}>
         <dl className="agent-facts">
-          <dt>由谁运行</dt>
+          <dt>{COPY.runner}</dt>
           <dd>
             {/* Fixed at creation: another Harness is another Agent. Latch does not isolate it either way. */}
             <Hint
-              label={`由 ${harness ? harnessName(harness) : draft.harnessId} 运行`}
+              label={COPY.runsOn(harness ? harnessName(harness) : draft.harnessId)}
               lead={harness ? <HarnessTile harness={harness} size={14} /> : undefined}>
-              建好后不能换 Harness，要用别的就新建一个 Agent。
-              {isolation ? ` ${isolation.label}。${isolation.detail}` : ''}
+              {COPY.fixedHarness}
+              {isolation ? COPY.boundary(isolation.label, isolation.detail) : ''}
             </Hint>
           </dd>
           <AgentDefaults
@@ -290,7 +382,7 @@ export function AgentForm({
           />
           {catalog.features?.modelUsage && (
             <>
-              <dt>本月预算</dt>
+              <dt>{COPY.budget}</dt>
               <dd>
                 <BudgetControl
                   scope="agent"
@@ -306,11 +398,11 @@ export function AgentForm({
         </dl>
       </Section>
 
-      <Section title="默认项目">
+      <Section title={COPY.project}>
         <div className="agent-form-pickers">
           <ProjectPicker
             catalog={catalog}
-            defaultLocation={{ label: '家', description: '没有选项目时，在家里做' }}
+            defaultLocation={COPY.home}
             harness={harness}
             access={access}
             value={draft.defaultProjectId ?? 'default'}
@@ -325,12 +417,8 @@ export function AgentForm({
         </div>
       </Section>
       <Section
-        title="技能"
-        aside={
-          harness && !harness.skills ? (
-            <Hint label="这个 Harness 收不到技能">技能经内置加载或技能服务送达；这个 Harness 两种都不接受，所选技能不会发送。</Hint>
-          ) : undefined
-        }>
+        title={COPY.skills}
+        aside={harness && !harness.skills ? <Hint label={COPY.skillsUnavailable}>{COPY.skillsUnavailableDetail}</Hint> : undefined}>
         <SkillChoice
           catalog={catalog}
           value={draft.skills}
@@ -343,15 +431,15 @@ export function AgentForm({
       </Section>
       {builtIn && (
         <Section
-          title="可以使用"
+          title={COPY.tools}
           aside={
-            <Hint label="只收紧" lead={<ShieldGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
-              只对内置 Harness 生效：它只能调用勾选的插件的工具，不会因此获得新的能力。
+            <Hint label={COPY.restrict} lead={<ShieldGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} />}>
+              {COPY.restrictDetail}
             </Hint>
           }>
           <div className="agent-checks">
             <Checkbox
-              label="全部已启用的插件"
+              label={COPY.allPlugins}
               checked={draft.tools === undefined}
               disabled={locked}
               onChange={event => {
@@ -380,17 +468,17 @@ export function AgentForm({
       {elsewhere && !(state && 'kind' in state) && (
         <InlineNotice
           tone="warn"
-          title="已在别处修改"
+          title={COPY.conflict}
           action={
             <Button
               onClick={() => {
                 setConflicts([])
                 setDraft(base)
               }}>
-              载入最新
+              {COPY.latest}
             </Button>
           }>
-          这项记录已更新，请刷新后再修改。
+          {COPY.conflictDetail}
         </InlineNotice>
       )}
       <div className="agent-form-actions">
@@ -402,13 +490,13 @@ export function AgentForm({
             onClick={() => {
               setDeleting(true)
             }}>
-            删除
+            {COPY.delete}
           </Button>
         )}
         <span className="agent-form-spacer" />
         {onCancel && (
           <Button disabled={writes.saving} onClick={onCancel}>
-            取消
+            {COPY.cancel}
           </Button>
         )}
         <Button
@@ -416,22 +504,22 @@ export function AgentForm({
           variant="primary"
           disabled={locked || problem !== undefined || !changed || saveWaits(conflicts)}
           loading={state !== null && 'phase' in state && state.phase === 'saving'}
-          title={saveWaits(conflicts) ? '已在别处修改，载入最新后再保存' : problem}>
-          保存
+          title={saveWaits(conflicts) ? COPY.conflictTip : problem}>
+          {COPY.save}
         </Button>
       </div>
       {deleting && agent && onDeleted && (
         <ConfirmDialog
-          title={`删除「${agent.name}」？`}
+          title={COPY.deleteTitle(agent.name)}
           danger
-          confirmLabel="删除"
+          confirmLabel={COPY.delete}
           message={agentDeletionMessage(homePath)}
           onClose={() => {
             setDeleting(false)
           }}
           onConfirm={async () => {
             const done = await writes.run(`agent:${agent.id}`, `custom-agents/${encodeURIComponent(agent.id)}`, 'DELETE', {})
-            if (done === undefined) throw new MessageError('没有删除，原因见页面下方。')
+            if (done === undefined) throw new MessageError(COPY.deleteFailed)
             onDeleted()
           }}
         />
@@ -467,7 +555,7 @@ export function GeneralForm({
   return (
     <form
       className="agent-form"
-      aria-label="通用 的设置"
+      aria-label={COPY.settings(AGENT_SPACE_COPY.general)}
       onSubmit={event => {
         event.preventDefault()
         if (locked || !changed) return
@@ -478,7 +566,7 @@ export function GeneralForm({
         })
       }}>
       <TextAreaField
-        label="指令"
+        label={COPY.instructions}
         value={instructions}
         rows={6}
         maxLength={32_000}
@@ -487,7 +575,7 @@ export function GeneralForm({
           setInstructions(event.target.value)
         }}
       />
-      <Section title="技能" aside={<TakesEffect />}>
+      <Section title={COPY.skills} aside={<TakesEffect />}>
         <SkillChoice catalog={catalog} value={skills} allowAll disabled={locked} onChange={setSkills} />
       </Section>
       <WriteNotice state={state} onRetry={() => void writes.retry()} onReload={onReload} />
@@ -498,7 +586,7 @@ export function GeneralForm({
           variant="primary"
           disabled={locked || !changed}
           loading={state !== null && 'phase' in state && state.phase === 'saving'}>
-          保存
+          {COPY.save}
         </Button>
       </div>
     </form>

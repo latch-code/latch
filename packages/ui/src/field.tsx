@@ -2,6 +2,7 @@ import { useId, useRef, type ComponentProps, type ReactNode } from 'react'
 import { SearchGlyph, CloseGlyph } from './glyphs/index.tsx'
 import { Icon } from './icon.tsx'
 import { cx, mergeRefs } from './internal.ts'
+import { UI_COPY, useUiLocale } from './locale.ts'
 
 type InputProps = Omit<ComponentProps<'input'>, 'size'>
 type TextAreaProps = ComponentProps<'textarea'>
@@ -100,7 +101,7 @@ export function SearchField({
   label,
   value,
   onValueChange,
-  clearLabel = '清除搜索',
+  clearLabel = UI_COPY.clearSearch,
   trailing,
   variant = 'fill',
   className,
@@ -116,6 +117,7 @@ export function SearchField({
   trailing?: ReactNode
   variant?: 'fill' | 'ghost'
 }) {
+  useUiLocale()
   const input = useRef<HTMLInputElement>(null)
   return (
     <div className={cx('ui-search', className)} data-variant={variant === 'ghost' ? 'ghost' : undefined}>

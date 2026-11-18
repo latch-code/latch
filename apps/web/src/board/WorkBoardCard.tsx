@@ -3,18 +3,48 @@ import { GENERAL_AGENT_ID, escapeSecurityText, type TaskSummary, type WorkbenchD
 import { IconButton, Icon, MoreGlyph, RunningEdge, ScheduleGlyph, StatusWord, type StatusTone } from '@latch/ui'
 import { StickyNote } from 'lucide-react'
 import { AgentAvatar } from '../agents/AgentAvatar.tsx'
+import { AGENT_SPACE_COPY } from '../agents/spaceCopy.ts'
 import { BoardPlace } from './BoardPlace.tsx'
 import { Menu, rowOf, type MenuSection } from '../components/overlays.tsx'
 import { hostNow, useTicker } from '../core/hostClock.ts'
+import { harnessName } from '../core/harnessName.ts'
+import { defineCopy, plural, useLocale } from '../core/i18n.ts'
 import { relativeTime } from '../format.ts'
 import { projectOf, workStatus } from '../sessions.ts'
 import { sessionSource } from '../sessionSource.ts'
 import { deliveryCheckSummary } from '../shell/useWorkbenchEvidence.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
-import { PRIORITY_LABELS, priorityOf, reasonWords, whoOf, WHO_CODE } from './model.ts'
+import { GROUP_LABELS, PRIORITY_LABELS, priorityOf, reasonWords, whoOf, WHO_CODE } from './model.ts'
 import { ItemWriteLine, type CardWriteLine } from './WriteLine.tsx'
 
-const SOURCE_WORDS = { handoff: '交接自', fork: '分叉自', schedule: '定时' } as const
+export const BOARD_CARD_COPY = defineCopy(
+  {
+    untitled: '未命名会话',
+    noProject: '无项目',
+    actions: (title: string) => `看板操作：${title}`,
+    moreFor: (title: string) => `更多操作：${title}`,
+    more: '更多操作',
+    source: { handoff: '交接自', fork: '分叉自', schedule: '定时' },
+    previous: (reason: string) => `上次状态：${reason}`,
+    files: (count: number, shared: boolean) => `${shared ? '这个目录有 ' : ''}${plural(count, { other: '{n} 个文件未提交' })}`,
+    ahead: (count: number, shared: boolean) => `${shared ? '这个目录有 ' : ''}${plural(count, { other: '{n} 个提交未推送' })}`,
+    priority: (value: string) => `优先级${value}`,
+  },
+  {
+    untitled: 'Untitled session',
+    noProject: 'No project',
+    actions: (title: string) => `Board actions for ${title}`,
+    moreFor: (title: string) => `More actions for ${title}`,
+    more: 'More actions',
+    source: { handoff: 'Handed off from', fork: 'Forked from', schedule: 'Schedule' },
+    previous: (reason: string) => `Last status: ${reason}`,
+    files: (count: number, shared: boolean) =>
+      `${shared ? 'This folder has ' : ''}${plural(count, { one: '{n} uncommitted file', other: '{n} uncommitted files' })}`,
+    ahead: (count: number, shared: boolean) =>
+      `${shared ? 'This folder has ' : ''}${plural(count, { one: '{n} unpushed commit', other: '{n} unpushed commits' })}`,
+    priority: (value: string) => `${value} priority`,
+  },
+)
 
 /** What the card's third line says, and in which tone: the Host's reason in 等你处理, the delivery facts in 可交付. */
 export function cardState(
@@ -30,7 +60,7 @@ export function cardState(
   const group = task.board?.group
   if (group === 'attention') {
     const reason = task.board?.reason
-    if (!connected) return { tone: 'neutral', words: `上次状态：${reasonWords(task)}` }
+    if (!connected) return { tone: 'neutral', words: BOARD_CARD_COPY.previous(reasonWords(task)) }
     // A failed run is said in red whichever of its facts brought it here first.
     if (reason === 'failed' || (reason === 'unknown' && workStatus(task, { connected, now, stopping }).tone === 'failed'))
       return { tone: 'failed', words: workStatus(task, { connected, now, stopping }).words }
@@ -47,10 +77,9 @@ export function cardState(
     const checks = delivery ? deliveryCheckSummary(delivery) : undefined
     if (pr) return { tone: 'neutral', words: `PR #${pr.number}${checks ? ` · ${checks.text}` : ''}` }
     const state = delivery?.state
-    const where = sharedFolder ? '这个目录有 ' : ''
-    if (state?.files) return { tone: 'neutral', words: `${where}${state.files} 个文件未提交` }
-    if (state?.ahead) return { tone: 'neutral', words: `${where}${state.ahead} 个提交未推送` }
-    return { tone: 'neutral', words: '可交付' }
+    if (state?.files) return { tone: 'neutral', words: BOARD_CARD_COPY.files(state.files, sharedFolder) }
+    if (state?.ahead) return { tone: 'neutral', words: BOARD_CARD_COPY.ahead(state.ahead, sharedFolder) }
+    return { tone: 'neutral', words: GROUP_LABELS.deliver }
   }
   return { tone: status.tone === 'warn' ? 'warn' : 'neutral', words: status.words }
 }
@@ -60,7 +89,14 @@ export function cardState(
 export function PriorityMark({ task, reserve = false }: { task: Pick<TaskSummary, 'priority'>; reserve?: boolean }) {
   const priority = priorityOf(task)
   if (priority === 'mid') return reserve ? <span className="work-board-priority" aria-hidden="true" /> : null
-  return <span className="work-board-priority" data-priority={priority} role="img" aria-label={`优先级${PRIORITY_LABELS[priority]}`} />
+  return (
+    <span
+      className="work-board-priority"
+      data-priority={priority}
+      role="img"
+      aria-label={BOARD_CARD_COPY.priority(PRIORITY_LABELS[priority])}
+    />
+  )
 }
 
 /** A card's one-line note: shown as text only. */
@@ -101,7 +137,7 @@ export function WhoMark({ task, shell }: { task: TaskSummary; shell: ShellState 
   return (
     <span className="work-board-who">
       <AgentAvatar avatar={agent ? agent.avatar : 'general'} size={16} still />
-      <span>{escapeSecurityText(agent?.name ?? '通用')}</span>
+      <span>{escapeSecurityText(agent?.name ?? AGENT_SPACE_COPY.general)}</span>
     </span>
   )
 }
@@ -144,6 +180,7 @@ export const WorkBoardCard = memo(function WorkBoardCard({
   onDismiss,
   suggestion,
 }: CardProps) {
+  useLocale()
   const connected = shell.connection === 'connected'
   const live = task.status === 'running' || task.status === 'waiting-approval'
   useTicker(connected && live ? 'second' : 'minute')
@@ -152,7 +189,7 @@ export const WorkBoardCard = memo(function WorkBoardCard({
   const state = cardState(task, { connected, now, stopping, delivery, sharedFolder })
   const harness = shell.catalog?.harnesses.find(item => item.id === task.harnessId)
   const project = projectOf(task, shell.catalog?.workspaces ?? [])
-  const title = escapeSecurityText(task.title || '未命名会话')
+  const title = escapeSecurityText(task.title || BOARD_CARD_COPY.untitled)
   const branch = task.worktree ? escapeSecurityText(task.branch ?? task.worktree.branch) : task.branch && escapeSecurityText(task.branch)
   const found = sessionSource(shell.snapshot, task)
   // A source this device cannot list is not named on the card.
@@ -182,10 +219,10 @@ export const WorkBoardCard = memo(function WorkBoardCard({
           <BoardPlace
             harness={{
               mark: harness?.capabilities.display.mark ?? task.harnessId,
-              label: harness?.capabilities.display.label ?? task.harnessId,
+              label: harness ? harnessName(harness) : task.harnessId,
             }}
             who={hasWho(task, shell) ? <WhoMark task={task} shell={shell} /> : undefined}
-            project={whoOf(task) === WHO_CODE ? (project?.name ?? '无项目') : null}
+            project={whoOf(task) === WHO_CODE ? (project?.name ?? BOARD_CARD_COPY.noProject) : null}
             branch={branch || undefined}
             worktree={task.worktree !== undefined}
           />
@@ -197,7 +234,7 @@ export const WorkBoardCard = memo(function WorkBoardCard({
           {source && (
             <span className="work-board-card-source">
               {source.kind === 'schedule' && <Icon icon={ScheduleGlyph} size={12} />}
-              <span>{`${SOURCE_WORDS[source.kind]} ${escapeSecurityText(source.title ?? '未命名会话')}`}</span>
+              <span>{`${BOARD_CARD_COPY.source[source.kind]} ${escapeSecurityText(source.title ?? BOARD_CARD_COPY.untitled)}`}</span>
             </span>
           )}
           {running && <RunningEdge />}
@@ -223,7 +260,7 @@ export const WorkBoardCard = memo(function WorkBoardCard({
       )}
       <span className="work-board-card-actions">
         <Menu
-          label={`看板操作：${title}`}
+          label={BOARD_CARD_COPY.actions(title)}
           placement="bottom-end"
           context={rowOf('.work-board-card')}
           sections={menu}
@@ -232,8 +269,8 @@ export const WorkBoardCard = memo(function WorkBoardCard({
               {...props}
               className="work-board-card-more"
               size="xs"
-              label={`更多操作：${title}`}
-              tooltip="更多操作"
+              label={BOARD_CARD_COPY.moreFor(title)}
+              tooltip={BOARD_CARD_COPY.more}
               icon={MoreGlyph}
             />
           )}

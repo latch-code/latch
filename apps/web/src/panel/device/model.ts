@@ -8,6 +8,16 @@ import {
   type SimulatorOrientationView,
   type SimulatorRecordingView,
 } from '@latch/protocol'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    device: '设备',
+  },
+  {
+    device: 'Device',
+  },
+)
 
 /** A simulator as the Host lists it (`GET /simulators`). */
 export interface SimulatorView {
@@ -185,7 +195,7 @@ export function deviceLabel(device: Pick<SimulatorView, 'name' | 'os'>): string 
 
 /** A screenshot's file name: the device and the time. */
 export function shotName(device: Pick<SimulatorView, 'name'>, at = new Date(), extension: 'png' | 'mp4' = 'png'): string {
-  const safe = device.name.replace(/[^\p{L}\p{N} ._-]/gu, '').trim() || '设备'
+  const safe = device.name.replace(/[^\p{L}\p{N} ._-]/gu, '').trim() || COPY.device
   const stamp = `${at.getFullYear()}${String(at.getMonth() + 1).padStart(2, '0')}${String(at.getDate()).padStart(2, '0')}-${String(at.getHours()).padStart(2, '0')}${String(at.getMinutes()).padStart(2, '0')}${String(at.getSeconds()).padStart(2, '0')}`
   return `${safe}-${stamp}.${extension}`
 }

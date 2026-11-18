@@ -13,6 +13,7 @@ import {
 } from '@latch/ui'
 import { Ban, CircleCheck, ListTodo } from 'lucide-react'
 import type { PointerEvent, ReactNode } from 'react'
+import { currentLocale, defineCopy, formatNumber, plural } from '../core/i18n.ts'
 import { GROUP_LABELS, type BoardCard, type BoardColumn, type BoardColumnGroup } from './model.ts'
 import type { BoardDragView } from './useBoardDrag.ts'
 
@@ -24,13 +25,30 @@ const GROUP_ICONS: Record<BoardColumnGroup, IconComponent> = {
   done: CircleCheck,
 }
 
+const COPY = defineCopy(
+  {
+    count: (n: number) => plural(n, { other: '{n} 个' }),
+    shown: (visible: number, total: number) => `显示 ${formatNumber(visible)} 个，共 ${formatNumber(total)} 个`,
+    schedules: '定时任务',
+    missed: '错过',
+    forbidden: '不能放到这里',
+  },
+  {
+    count: (n: number) => plural(n, { one: '{n} card', other: '{n} cards' }),
+    shown: (visible: number, total: number) => `Showing ${formatNumber(visible)} of ${formatNumber(total)}`,
+    schedules: 'Schedules',
+    missed: 'Missed',
+    forbidden: 'Can’t drop here',
+  },
+)
+
 /** The column's count: the whole column, or 「shown / whole」 while a filter narrows it. Amber only for 等你处理. */
 function ColumnCount({ column, filtered }: { column: BoardColumn; filtered: boolean }) {
   const tone = column.group === 'attention' && column.total > 0 ? 'warn' : 'neutral'
-  if (!filtered) return <Count value={column.total} tone={tone} label={`${column.total} 个`} />
+  if (!filtered) return <Count value={column.total} tone={tone} label={COPY.count(column.total)} />
   return (
-    <span className="work-board-count" data-tone={tone} aria-label={`显示 ${column.cards.length} 个，共 ${column.total} 个`}>
-      {column.cards.length} / {column.total}
+    <span className="work-board-count" data-tone={tone} aria-label={COPY.shown(column.cards.length, column.total)}>
+      {formatNumber(column.cards.length)} / {formatNumber(column.total)}
     </span>
   )
 }
@@ -46,16 +64,16 @@ function Schedules({ schedules, now }: { schedules: readonly AutomationSummary[]
     const time = new Date(value)
     const sameDay = new Date(now).toDateString() === time.toDateString()
     return sameDay
-      ? time.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
-      : time.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+      ? time.toLocaleTimeString(currentLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
+      : time.toLocaleString(currentLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
   }
   return (
-    <ul className="work-board-schedules" aria-label="定时任务">
+    <ul className="work-board-schedules" aria-label={COPY.schedules}>
       {next.map(item => (
         <li key={item.id}>
           <Icon icon={ScheduleGlyph} size={12} />
           <span className="work-board-schedule-name">{escapeSecurityText(item.name)}</span>
-          {item.lastRun?.state === 'missed' && <StatusWord tone="warn">错过</StatusWord>}
+          {item.lastRun?.state === 'missed' && <StatusWord tone="warn">{COPY.missed}</StatusWord>}
           {item.nextRunAt && <time dateTime={item.nextRunAt}>{at(item.nextRunAt)}</time>}
         </li>
       ))}
@@ -114,8 +132,8 @@ export function WorkBoard({
               <h3>{GROUP_LABELS[column.group]}</h3>
               <ColumnCount column={column} filtered={filtered} />
               {drop === 'forbidden' && (
-                <Tooltip content="不能放到这里">
-                  <span className="work-board-column-forbidden" role="img" aria-label="不能放到这里">
+                <Tooltip content={COPY.forbidden}>
+                  <span className="work-board-column-forbidden" role="img" aria-label={COPY.forbidden}>
                     <Icon icon={Ban} size={14} />
                   </span>
                 </Tooltip>

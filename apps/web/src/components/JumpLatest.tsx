@@ -1,6 +1,20 @@
 import { useRef } from 'react'
 import { ArrowDown } from 'lucide-react'
 import { ICON_STROKE, MOTION, usePresence } from '@latch/ui'
+import { defineCopy, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    latest: '回到最新',
+    fresh: (count: number) => plural(count, { other: '{n} 条新内容' }),
+    latestWithFresh: (fresh: string) => `回到最新，${fresh}`,
+  },
+  {
+    latest: 'Jump to latest',
+    fresh: (count: number) => plural(count, { one: '{n} new item', other: '{n} new items' }),
+    latestWithFresh: (fresh: string) => `Jump to latest, ${fresh}`,
+  },
+)
 
 /**
  * Back to the latest output, while the reader is away from it: a pill centred in a strip of its own right above the
@@ -38,15 +52,16 @@ export function JumpLatest({
       </button>
     )
   }
+  const freshCopy = fresh > 0 ? COPY.fresh(fresh) : undefined
   return (
     <button
       type="button"
       className="jump-latest"
       data-leaving={leaving ? '' : undefined}
-      aria-label={fresh > 0 ? `回到最新，${fresh} 条新内容` : '回到最新'}
+      aria-label={freshCopy ? COPY.latestWithFresh(freshCopy) : COPY.latest}
       onClick={onJump}>
       <ArrowDown size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-      {fresh > 0 ? `${fresh} 条新内容` : '回到最新'}
+      {freshCopy ?? COPY.latest}
     </button>
   )
 }

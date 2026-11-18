@@ -1,7 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { isFileMetadata, type FileMention, type Handoff, type HandoffCreate, type HandoffList, type HandoffSummary } from '@latch/protocol'
-import { api, fileBytes, MessageError } from '../core/api.ts'
-import { sha256Hex } from './model.ts'
+import { api, fileBytes } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
+import { HandoffMessageError, sha256Hex } from './model.ts'
+
+const COPY = defineCopy(
+  {
+    unreadable: '读不到这个文件',
+    tooLarge: '超过 4 MB',
+    partial: '这台设备读不到整个文件',
+    changed: '文件在读取时变化了',
+  },
+  {
+    unreadable: "Couldn't read the file",
+    tooLarge: 'Over 4 MB',
+    partial: "This device can't read the entire file",
+    changed: 'The file changed while it was being read',
+  },
+)
 
 /** The Host hashes a file material whole and refuses larger ones. */
 const FILE_LIMIT = 4 * 1024 * 1024
@@ -70,12 +86,12 @@ export async function fileHash(sessionId: string, file: FileMention, signal?: Ab
     { method: 'POST', body: { paths: [file.path], rootId: file.root }, ...(signal ? { signal } : {}) },
   )
   const answer = result.files[0]
-  if (!answer || answer.status !== 'ok' || !isFileMetadata(answer.file)) throw new MessageError('读不到这个文件')
+  if (!answer || answer.status !== 'ok' || !isFileMetadata(answer.file)) throw new HandoffMessageError(() => COPY.unreadable)
   const meta = answer.file
-  if (meta.size > FILE_LIMIT) throw new MessageError('超过 4 MB')
-  if (meta.secret || meta.truncated || meta.size > meta.limit) throw new MessageError('这台设备读不到整个文件')
+  if (meta.size > FILE_LIMIT) throw new HandoffMessageError(() => COPY.tooLarge)
+  if (meta.secret || meta.truncated || meta.size > meta.limit) throw new HandoffMessageError(() => COPY.partial)
   const bytes = await fileBytes(meta.handle, undefined, undefined, signal)
-  if (bytes.byteLength !== meta.size) throw new MessageError('文件在读取时变化了')
+  if (bytes.byteLength !== meta.size) throw new HandoffMessageError(() => COPY.changed)
   return sha256Hex(bytes)
 }
 

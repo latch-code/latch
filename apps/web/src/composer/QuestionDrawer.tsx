@@ -4,6 +4,50 @@ import { Button, Drawer, Icon, InlineNotice, Kbd, MessageGlyph, Tooltip } from '
 import { api, ApiError, inlineError, MessageError } from '../core/api.ts'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { cardTakesKeys, useArmed } from './useArmed.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    cannotSaveDraft: '本设备无法保存回答草稿，请允许站点存储后重试。',
+    cannotSaveAnswer: '本设备无法保存这次提交，请允许站点存储后重试。',
+    badReceipt: '回答回执不匹配，请重试这次提交',
+    answeredOtherDevice: '这个问题已在另一台设备回答',
+    ended: '这个问题已经结束',
+    retrySameAnswer: (value1: string) => `${value1} · 这次回答还在，重试会沿用它。`,
+    question: 'Harness 提问',
+    asks: ' 想问你',
+    multiple: '可多选',
+    other: '其他…',
+    notAllowed: '此设备没有回答权限。',
+    answeredElsewhere: '已在别处回答',
+    previous: '上一题',
+    retry: '重试这次回答',
+    submit: '提交',
+    next: '下一题',
+    answeredPrefix: '已回答 ',
+    answeredSuffix: ' 题',
+  },
+  {
+    cannotSaveDraft: 'This device cannot save the answer draft. Allow site storage and try again.',
+    cannotSaveAnswer: 'This device cannot save this answer. Allow site storage and try again.',
+    badReceipt: 'The answer receipt did not match. Retry this answer.',
+    answeredOtherDevice: 'Another device answered this question',
+    ended: 'This question has ended',
+    retrySameAnswer: (value1: string) => `${value1} · Your answer is kept for retry.`,
+    question: 'Harness question',
+    asks: ' asks',
+    multiple: 'Choose any',
+    other: 'Other…',
+    notAllowed: 'This device cannot answer questions.',
+    answeredElsewhere: 'Answered elsewhere',
+    previous: 'Previous question',
+    retry: 'Retry this answer',
+    submit: 'Submit',
+    next: 'Next question',
+    answeredPrefix: 'Answered ',
+    answeredSuffix: ' questions',
+  },
+)
 
 export interface QuestionActions {
   deviceId: string
@@ -57,7 +101,7 @@ function readDraft(key: string, question: AgentQuestion): Draft {
 interface SharedAnswer {
   draft: Draft
   busy: boolean
-  error: string
+  error: (() => string) | null
 }
 interface AnswerStore {
   get(): SharedAnswer
@@ -68,7 +112,7 @@ const answersByQuestion = new Map<string, AnswerStore>()
 function answerStore(key: string, question: AgentQuestion): AnswerStore {
   const previous = answersByQuestion.get(key)
   if (previous) return previous
-  let value: SharedAnswer = { draft: readDraft(key, question), busy: false, error: '' }
+  let value: SharedAnswer = { draft: readDraft(key, question), busy: false, error: null }
   const listeners = new Set<() => void>()
   // Home and the retained conversation share a write. Once neither renders it, only its durable draft remains.
   const release = () =>
@@ -148,9 +192,9 @@ export function useQuestionDrawer(
     update({ draft: value })
     try {
       localStorage.setItem(storageKey, JSON.stringify(value))
-      update({ error: '' })
+      update({ error: null })
     } catch {
-      update({ error: '本设备无法保存回答草稿，请允许站点存储后重试。' })
+      update({ error: () => COPY.cannotSaveDraft })
     }
   }
   const send = async (value: Draft) => {
@@ -168,29 +212,29 @@ export function useQuestionDrawer(
     try {
       localStorage.setItem(storageKey, JSON.stringify(pending))
     } catch {
-      update({ error: '本设备无法保存这次提交，请允许站点存储后重试。' })
+      update({ error: () => COPY.cannotSaveAnswer })
       return
     }
-    update({ draft: pending, busy: true, error: '' })
+    update({ draft: pending, busy: true, error: null })
     try {
       const receipt = await api<QuestionReceipt>(
         `tasks/${encodeURIComponent(sessionId)}/questions/${encodeURIComponent(question.id)}/answer`,
         { method: 'POST', body: submission },
       )
       if (!receipt.answered || receipt.requestId !== submission.requestId || receipt.questionId !== question.id)
-        throw new MessageError('回答回执不匹配，请重试这次提交')
+        throw new MessageError(COPY.badReceipt)
       localStorage.removeItem(storageKey)
       await actions.onChanged()
     } catch (cause) {
       // Answered from another device, or the question is over: this answer is moot, and the session shows what happened.
       if (cause instanceof ApiError && SETTLED_ELSEWHERE.has(cause.code)) {
         localStorage.removeItem(storageKey)
-        update({ draft: emptyDraft(question), error: '' })
-        actions.onSettledElsewhere?.(cause.code === 'question-answered' ? '这个问题已在另一台设备回答' : '这个问题已经结束')
+        update({ draft: emptyDraft(question), error: null })
+        actions.onSettledElsewhere?.(cause.code === 'question-answered' ? COPY.answeredOtherDevice : COPY.ended)
         await actions.onChanged().catch(() => {})
         return
       }
-      update({ error: `${inlineError(cause)} · 这次回答还在，重试会沿用它。` })
+      update({ error: () => COPY.retrySameAnswer(inlineError(cause)) })
     } finally {
       update({ busy: false })
     }
@@ -212,7 +256,7 @@ export function useQuestionDrawer(
     question,
     draft,
     busy,
-    error,
+    error: error?.() ?? '',
     locked,
     complete: answers(draft, draft.step),
     choose: optionId => {
@@ -312,12 +356,21 @@ export function QuestionDrawer({
       data-presentation={presentation}
       data-compact={compact ? '' : undefined}
       data-arming={armed ? undefined : ''}
-      label="Harness 提问">
+      label={COPY.question}>
       <div className="question-heading">
         <span className="question-kind" aria-hidden="true">
           <Icon icon={MessageGlyph} size={16} />
         </span>
-        <span>{presentation ? <VisibleText text={current.label} /> : <>{asker} 想问你</>}</span>
+        <span>
+          {presentation ? (
+            <VisibleText text={current.label} />
+          ) : (
+            <>
+              {asker}
+              {COPY.asks}
+            </>
+          )}
+        </span>
         {question.questions.length > 1 && (
           <span className="question-count">
             {draft.step + 1}/{question.questions.length}
@@ -332,7 +385,7 @@ export function QuestionDrawer({
       )}
       <p className="question-label" hidden={!!presentation && !current.multiple}>
         <VisibleText text={current.label} />
-        {current.multiple && <span className="question-hint">可多选</span>}
+        {current.multiple && <span className="question-hint">{COPY.multiple}</span>}
       </p>
       {canAnswer && (
         <div className="question-options" role="group" aria-label={escapeHiddenCharacters(current.label)}>
@@ -353,27 +406,27 @@ export function QuestionDrawer({
             </Tooltip>
           ))}
           <button type="button" className="question-option question-other" disabled={locked} onClick={onOther}>
-            其他…
+            {COPY.other}
           </button>
         </div>
       )}
-      {!canAnswer && <InlineNotice>{disabledReason ?? '此设备没有回答权限。'}</InlineNotice>}
-      {question.state === 'answering' && !draft.pending && <InlineNotice>已在别处回答</InlineNotice>}
+      {!canAnswer && <InlineNotice>{disabledReason ?? COPY.notAllowed}</InlineNotice>}
+      {question.state === 'answering' && !draft.pending && <InlineNotice>{COPY.answeredElsewhere}</InlineNotice>}
       {state.error && <InlineNotice tone="error">{state.error}</InlineNotice>}
       {canAnswer && (current.multiple || draft.step > 0 || draft.pending) && (
         <div className="question-actions">
           {draft.step > 0 && !draft.pending && (
             <Button size="sm" variant="outline" disabled={state.busy} onClick={state.back}>
-              上一题
+              {COPY.previous}
             </Button>
           )}
           {draft.pending ? (
             <Button size="sm" variant="primary" loading={state.busy} onClick={state.send}>
-              重试这次回答
+              {COPY.retry}
             </Button>
           ) : current.multiple ? (
             <Button size="sm" variant="primary" loading={state.busy} disabled={!state.complete || locked} onClick={state.next}>
-              {last ? '提交' : '下一题'}
+              {last ? COPY.submit : COPY.next}
             </Button>
           ) : null}
         </div>
@@ -410,7 +463,11 @@ export function QuestionResultCard({ text }: { text: string }) {
   }
   return (
     <details className="question-result">
-      <summary>已回答 {result.answers.length} 题</summary>
+      <summary>
+        {COPY.answeredPrefix}
+        {result.answers.length}
+        {COPY.answeredSuffix}
+      </summary>
       <dl>
         {result.answers.map((answer, index) => (
           <div key={index}>

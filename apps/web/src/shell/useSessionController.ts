@@ -27,13 +27,7 @@ import { approvalActions, composerGate, deviceAccess, hostView } from '../core/p
 import { detailOwnsSummary } from '../core/projection.ts'
 import { setPreference } from '../preferences.ts'
 import { requestLeave } from '../preview/editDrafts.ts'
-import {
-  CONFIG_UNVERIFIED_TEXT,
-  isSessionStopCode,
-  SESSION_STOP_LABEL,
-  stopLocksInput,
-  type SessionStopCode,
-} from '../core/securityCopy.ts'
+import { NOTICE_COPY, isSessionStopCode, SESSION_STOP_LABEL, stopLocksInput, type SessionStopCode } from '../core/securityCopy.ts'
 import { retryOfRefused, type RefusedInput } from '../core/refusedInput.ts'
 import { sessionMenuSections, type BoardMarkActions, type SessionPatch } from '../sessionMenu.ts'
 import { askJoinItem, leaveItem } from '../board/ItemPageJoin.tsx'
@@ -68,6 +62,92 @@ import { deliveredSubmission, queuedTwin, sendingMessageFor } from '../core/send
 import { toolRowId } from '../conversation.ts'
 import { rebuiltFrom } from '../history/model.ts'
 import { failureAction } from '../conversation/failureAction.ts'
+import { defineCopy, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    released: '已在 设置 › 设备 里释放，请移除后重新添加',
+    attachmentsInSteer: '追加的消息不能带附件或文件引用，本轮结束后再发送。',
+    attachmentsInQueue: '排队的消息不能带附件或文件引用，本轮结束后再发送。',
+    delivered: '已送达',
+    duplicate: '队列里同样文字的一条还在，在队列里发送或移除',
+    reattach: '附件和文件引用需要重新添加',
+    deleted: '会话已被删除',
+    hidden: '会话已不可见',
+    changed: '输入已更改，请重新选择操作。',
+    draftLimit: '草稿超出临时缓存上限，请先复制或缩短内容后再切换。',
+    newerTurn: '那一轮已经结束，新的一轮仍在运行',
+    alreadyEnded: '这一轮已经结束，无需停止',
+    thinking: '思考',
+    model: '模型',
+    defaultModel: '默认模型',
+    configUnknown: '没有收到 Agent 的确认。核对会向它读取当前设置，不会再发送一次。',
+    settingUnchanged: '设置未更改，请重新选择。',
+    settingNotApplied: (value: string) => `没有切换到「${value}」，可以重新选择。`,
+    copied: '已复制 Markdown',
+    saveFolderFailed: '没有保存这个会话的文件夹，请在项目设置中重试。',
+    savedAsProject: '已存为项目',
+    dialogBusy: '另一个系统对话框还没结束。',
+    saveFolderSync: '没有保存这个会话的文件夹，请同步后重试。',
+    rebuiltReadOnly: '已按文字重建为新会话 · 这个会话只能查看',
+    runDenied: '此设备没有「发起和继续会话」权限',
+    previousChat: '聊天记录 · 请在这个 Agent 的当前聊天发送',
+    removedWorktree: '工作树已移除 · 只能查看',
+    chooseProject: '选择一个项目继续，当前草稿会保留。',
+    harnessUnavailable: (name: string) => `${name} 暂不可用`,
+    modelUnavailable: '当前模型接口不可用，请检查模型插件状态。',
+    sessionChanged: '会话状态已变化，请查看最新状态后重试。',
+    ask: '写下问题或想法…',
+    prompt: '想让 Agent 做什么？',
+    pending: '等待确认上一条提交…',
+    noInput: '这个会话不再接收输入',
+    answer: '输入你自己的回答',
+    steerOrQueue: '补充或排队一条消息',
+    writeNow: '可以先写，本轮结束后发送…',
+    messageTopic: (name: string) => `给${name}发消息…`,
+  },
+  {
+    released: 'Released in Settings › Devices. Remove it and add it again.',
+    attachmentsInSteer: 'A follow-up during a turn can’t include attachments or file references. Send it after the turn ends.',
+    attachmentsInQueue: 'A queued message can’t include attachments or file references. Send it after the turn ends.',
+    delivered: 'Delivered',
+    duplicate: 'The same message is still queued. Send or remove it there.',
+    reattach: 'Add attachments and file references again',
+    deleted: 'Session deleted',
+    hidden: 'Session no longer visible',
+    changed: 'The input changed. Choose the action again.',
+    draftLimit: 'The draft is too large to keep temporarily. Copy or shorten it before switching.',
+    newerTurn: 'That turn ended. A new turn is running.',
+    alreadyEnded: 'This turn has already ended',
+    thinking: 'Reasoning',
+    model: 'Model',
+    defaultModel: 'Default model',
+    configUnknown: 'The Agent didn’t confirm the change. Checking reads its current setting without sending the change again.',
+    settingUnchanged: 'Setting unchanged. Choose again.',
+    settingNotApplied: (value: string) => `Didn’t switch to “${value}”. You can choose again.`,
+    copied: 'Markdown copied',
+    saveFolderFailed: 'Couldn’t save this session’s folder. Try again in project settings.',
+    savedAsProject: 'Saved as a project',
+    dialogBusy: 'Another system dialog is still open.',
+    saveFolderSync: 'Couldn’t save this session’s folder. Sync and try again.',
+    rebuiltReadOnly: 'Reconstructed from text in a new session · Read-only',
+    runDenied: 'This device can’t start or continue sessions',
+    previousChat: 'Chat history · Send messages in this Agent’s current chat',
+    removedWorktree: 'Worktree removed · Read-only',
+    chooseProject: 'Choose a project to continue. Your draft will be kept.',
+    harnessUnavailable: (name: string) => `${name} is unavailable`,
+    modelUnavailable: 'The model interface is unavailable. Check the model plugin’s status.',
+    sessionChanged: 'The session changed. Check its latest state and try again.',
+    ask: 'Write a question or thought…',
+    prompt: 'What should the Agent do?',
+    pending: 'Waiting for the previous submission…',
+    noInput: 'This session no longer accepts input',
+    answer: 'Type your own answer',
+    steerOrQueue: 'Add or queue a message',
+    writeNow: 'Draft now and send when this turn ends…',
+    messageTopic: (name: string) => `Message ${name}…`,
+  },
+)
 
 /** Session IDs are never empty. */
 const NEW_SESSION_DRAFT = ''
@@ -116,6 +196,7 @@ export function useSessionController({
   /** A message went out from this page and its session is now the open one. */
   onForegroundSent: () => void
 }) {
+  const locale = useLocale()
   const { selectedId, detail, cachedDetail, select, refresh } = harness
   const inputId = inputTarget === 'new' ? null : selectedId
   const privateVisible = snapshot.device.dataScope === 'all' && snapshot.device.scopes.includes('view')
@@ -233,7 +314,7 @@ export function useSessionController({
     onRefused: (sessionId, cause, resent) => stopSession(sessionId, cause, { from: 'send', ...(resent ? { prompt: resent } : {}) }),
     // Not delivered, for certain: the text goes back where it was written, and the released rows say so.
     onReleased: (sent, restored) => {
-      released.current?.('已在 设置 › 设备 里释放，请移除后重新添加')
+      released.current?.(COPY.released)
       if (restored || !sent.prompt) return
       const home = sent.sessionId ?? NEW_SESSION_DRAFT
       if (!sessionDrafts.current.read(home, privateVisible))
@@ -363,7 +444,7 @@ export function useSessionController({
     // The Host takes a queued or steered message as text only (`queue-attachments-unsupported`): said before sending.
     ...(active
       ? {
-          heldBack: `${steer ? '追加' : '排队'}的消息不能带附件或文件引用，本轮结束后再发送。`,
+          heldBack: steer ? COPY.attachmentsInSteer : COPY.attachmentsInQueue,
           heldRefs: fileMentions.some(ref => hasFileMention(submission.draft, ref)),
         }
       : {}),
@@ -443,7 +524,7 @@ export function useSessionController({
   }
   const sendDraft = async () => {
     if (inputId !== null && active && (attachmentDraft.items.length > 0 || mentionChoice.refs.length > 0)) {
-      submission.setError(`${steer ? '追加' : '排队'}的消息不能带附件或文件引用，本轮结束后再发送。`)
+      submission.setError(steer ? COPY.attachmentsInSteer : COPY.attachmentsInQueue)
       return
     }
     await settingsLanded()
@@ -505,7 +586,12 @@ export function useSessionController({
         // The text waiting as that session's draft is what was just delivered, as a sent message takes it away.
         sessionDrafts.current.remove(held.sessionId)
     }
-    setToast({ text: '已送达', tone: 'ok' })
+    setToast({
+      get text() {
+        return COPY.delivered
+      },
+      tone: 'ok',
+    })
   })
   const held = submission.pending
   useEffect(() => {
@@ -566,8 +652,20 @@ export function useSessionController({
         attachmentDraft.clear()
         setFileMentions([])
       }
-      if (twin) setToast({ text: '队列里同样文字的一条还在，在队列里发送或移除', tone: 'ok' })
-      else if (attached || pending.fileRefs?.length) setToast({ text: '附件和文件引用需要重新添加', tone: 'ok' })
+      if (twin)
+        setToast({
+          get text() {
+            return COPY.duplicate
+          },
+          tone: 'ok',
+        })
+      else if (attached || pending.fileRefs?.length)
+        setToast({
+          get text() {
+            return COPY.reattach
+          },
+          tone: 'ok',
+        })
       if (dropped.restored || !dropped.text) return
       const home = dropped.sessionId ?? NEW_SESSION_DRAFT
       if (!sessionDrafts.current.read(home, privateVisible))
@@ -605,7 +703,7 @@ export function useSessionController({
     }
   }, [toast])
   useEffect(() => {
-    if (harness.removed) setToast({ text: harness.removed.deleted ? '会话已被删除' : '会话已不可见', tone: 'ok' })
+    if (harness.removed) setToast({ text: harness.removed.deleted ? COPY.deleted : COPY.hidden, tone: 'ok' })
   }, [harness.removed])
 
   // Per-device read markers; the selected session is read while it is open.
@@ -657,7 +755,12 @@ export function useSessionController({
   const choose = useStableCallback((id: string | null, afterSelect?: () => void, intent?: SessionSelectionIntent): void => {
     if (intent && (submission.pending !== null || submission.sending)) return
     if (intent?.consumeDraft && (intent.consumeDraft.inputId !== inputId || intent.consumeDraft.text !== submission.draft)) {
-      setToast({ text: '输入已更改，请重新选择操作。', tone: 'error' })
+      setToast({
+        get text() {
+          return COPY.changed
+        },
+        tone: 'error',
+      })
       return
     }
     // An editor's unsaved text in this session: the guard asks first, and comes back here once it may go.
@@ -670,11 +773,21 @@ export function useSessionController({
         const hidden = summary === undefined || privateSession(summary) || privateDraftId.current === inputId
         if (!privateVisible && hidden) sessionDrafts.current.remove(inputId)
         else if (!sessionDrafts.current.save(inputId, outgoing, hidden)) {
-          setToast({ text: '草稿超出临时缓存上限，请先复制或缩短内容后再切换。', tone: 'error' })
+          setToast({
+            get text() {
+              return COPY.draftLimit
+            },
+            tone: 'error',
+          })
           return
         }
       } else if (id !== null && !sessionDrafts.current.save(NEW_SESSION_DRAFT, outgoing, false)) {
-        setToast({ text: '草稿超出临时缓存上限，请先复制或缩短内容后再切换。', tone: 'error' })
+        setToast({
+          get text() {
+            return COPY.draftLimit
+          },
+          tone: 'error',
+        })
         return
       }
       // 新会话 pressed on 新会话 starts over; coming back from a session finds what was being written.
@@ -907,7 +1020,7 @@ export function useSessionController({
       cancels.current.settle(id)
       if (answer === 'ended' || answer === 'newer') {
         setCancelling(previous => without(previous, id))
-        setToast({ text: answer === 'newer' ? '那一轮已经结束，新的一轮仍在运行' : '这一轮已经结束，无需停止', tone: 'ok' })
+        setToast({ text: answer === 'newer' ? COPY.newerTurn : COPY.alreadyEnded, tone: 'ok' })
       }
       await refresh()
     } catch (cause) {
@@ -925,7 +1038,8 @@ export function useSessionController({
   /** The Harness's own name for a value of one of the open session's options. */
   const valueName = (configId: string, value: string) => {
     const option = current?.config?.find(item => item.id === configId)
-    const word = option?.category === 'thought_level' ? '思考' : option?.category === 'model' ? '模型' : (option?.name ?? configId)
+    const word =
+      option?.category === 'thought_level' ? COPY.thinking : option?.category === 'model' ? COPY.model : (option?.name ?? configId)
     // A move to another route names the model the way the menu does: a service's ID, else the Harness's own name for it.
     const choice = option?.category === 'model' ? parseModelChoice(value) : undefined
     const name =
@@ -934,13 +1048,13 @@ export function useSessionController({
         : choice?.kind === 'own'
           ? (harnessInfo?.catalogue?.options.find(item => item.category === 'model')?.options.find(item => item.value === choice.value)
               ?.name
-            ?? (choice.value || '默认模型'))
+            ?? (choice.value || COPY.defaultModel))
           : (option?.options.find(item => item.value === value)?.name ?? value)
     return `${word} ${name}`
   }
   const unknownFeedback = (request: ConfigRequest, at: number): SessionConfigFeedback => ({
     kind: 'unknown',
-    message: '没有收到 Agent 的确认。核对会向它读取当前设置，不会再发送一次。',
+    message: COPY.configUnknown,
     configId: request.configId,
     valueName: valueName(request.configId, request.value),
     at,
@@ -987,9 +1101,9 @@ export function useSessionController({
       // Unknown is not an error: it is said once, in place, with 核对 and 重试同一请求.
       if (configUncertain(cause)) setConfigFeedback(previous => new Map(previous).set(id, unknownFeedback(request, at)))
       else {
-        const text = cause instanceof ApiError && cause.code === 'permission-unverified' ? CONFIG_UNVERIFIED_TEXT : inlineError(cause)
+        const text = cause instanceof ApiError && cause.code === 'permission-unverified' ? NOTICE_COPY.configUnverified : inlineError(cause)
         setConfigFeedback(previous =>
-          new Map(previous).set(id, { kind: 'failed', message: text || '设置未更改，请重新选择。', configId: request.configId }),
+          new Map(previous).set(id, { kind: 'failed', message: text || COPY.settingUnchanged, configId: request.configId }),
         )
         if (text && !(cause instanceof ApiError && isSessionStopCode(cause.code))) failAction(id, text)
       }
@@ -1020,7 +1134,7 @@ export function useSessionController({
       if (state === 'failed')
         updated.set(id, {
           kind: 'failed',
-          message: `没有切换到「${valueName(request.configId, request.value)}」，可以重新选择。`,
+          message: COPY.settingNotApplied(valueName(request.configId, request.value)),
           configId: request.configId,
         })
       else updated.delete(id)
@@ -1143,7 +1257,12 @@ export function useSessionController({
     try {
       const data = task.id === current?.summary.id ? current : await api<TaskDetail>(`tasks/${encodeURIComponent(task.id)}`)
       await writeClipboard(transcriptMarkdown(data))
-      setToast({ text: '已复制 Markdown', tone: 'ok' })
+      setToast({
+        get text() {
+          return COPY.copied
+        },
+        tone: 'ok',
+      })
     } catch (cause) {
       setToast({ text: errorMessage(cause), tone: 'error' })
     }
@@ -1153,13 +1272,21 @@ export function useSessionController({
       const result = await shellFolders()!.saveSessionFolder!(task.id)
       if (result.status === 'added') {
         await refresh()
-        setToast(
-          result.refused.length
-            ? { text: '没有保存这个会话的文件夹，请在项目设置中重试。', tone: 'error' }
-            : { text: '已存为项目', tone: 'ok' },
-        )
-      } else if (result.status === 'busy') setToast({ text: '另一个系统对话框还没结束。', tone: 'error' })
-      else if (result.status === 'failed') setToast({ text: '没有保存这个会话的文件夹，请同步后重试。', tone: 'error' })
+        setToast(result.refused.length ? { text: COPY.saveFolderFailed, tone: 'error' } : { text: COPY.savedAsProject, tone: 'ok' })
+      } else if (result.status === 'busy')
+        setToast({
+          get text() {
+            return COPY.dialogBusy
+          },
+          tone: 'error',
+        })
+      else if (result.status === 'failed')
+        setToast({
+          get text() {
+            return COPY.saveFolderSync
+          },
+          tone: 'error',
+        })
     } catch (cause) {
       setToast({ text: errorMessage(cause), tone: 'error' })
     }
@@ -1256,6 +1383,7 @@ export function useSessionController({
       patchTask,
       exportTask,
       copyTask,
+      locale,
       manageable,
       boardMarks,
       setRenaming,
@@ -1288,7 +1416,7 @@ export function useSessionController({
   const refusedInput = selectedId === null ? undefined : refused.get(selectedId)
   const stopText =
     stopCode === 'permission-unverified' && refusedInput?.from === 'config'
-      ? CONFIG_UNVERIFIED_TEXT
+      ? NOTICE_COPY.configUnverified
       : stopCode && SESSION_STOP_LABEL[stopCode]
   const stopRetry =
     stopCode === undefined || stopLocksInput(stopCode)
@@ -1309,13 +1437,13 @@ export function useSessionController({
   const personalOwner = topicOwner(summary)
   const gate =
     rebuiltInto !== undefined
-      ? { kind: 'read-only' as const, text: '已按文字重建为新会话 · 这个会话只能查看' }
+      ? { kind: 'read-only' as const, text: COPY.rebuiltReadOnly }
       : selectedId === null
         ? access.legacy || access.scopes.has('run')
           ? { kind: 'open' as const }
-          : { kind: 'read-only' as const, text: '此设备没有「发起和继续会话」权限' }
+          : { kind: 'read-only' as const, text: COPY.runDenied }
         : personalOwner && summary && !isPersonalChat(snapshot, summary)
-          ? { kind: 'read-only' as const, text: '聊天记录 · 请在这个 Agent 的当前聊天发送' }
+          ? { kind: 'read-only' as const, text: COPY.previousChat }
           : composerGate({
               summary,
               permission: current?.permission,
@@ -1326,13 +1454,13 @@ export function useSessionController({
     selectedId === null
       ? undefined
       : summary?.worktree?.removed
-        ? '工作树已移除 · 只能查看'
+        ? COPY.removedWorktree
         : workspaceChanged.has(selectedId)
-          ? '选择一个项目继续，当前草稿会保留。'
+          ? COPY.chooseProject
           : harnessInfo?.status === 'unavailable'
-            ? harnessInfo.statusMessage || `${harnessLabel(harnessInfo)} 暂不可用`
+            ? harnessInfo.statusMessage || COPY.harnessUnavailable(harnessLabel(harnessInfo))
             : !catalog && snapshot.execution?.ready === false
-              ? '当前模型接口不可用，请检查模型插件状态。'
+              ? COPY.modelUnavailable
               : undefined
   useEffect(() => {
     setApprovalTarget(target => (target?.sessionId === selectedId ? target : undefined))
@@ -1470,30 +1598,35 @@ export function useSessionController({
       || (task.status !== 'failed' && task.runOutcome !== 'failed')
       || (task.runEnd?.unknownResultCount ?? 0) > 0
     ) {
-      setToast({ text: '会话状态已变化，请查看最新状态后重试。', tone: 'error' })
+      setToast({
+        get text() {
+          return COPY.sessionChanged
+        },
+        tone: 'error',
+      })
       return
     }
     void resend(queuedRetry.prompt)
   }, [queuedRetry, inputId, current, retry, harness.connection])
   const askedQuestion = current?.questions?.[0]?.state === 'answering' ? undefined : current?.questions?.[0]
-  const startWords = mode === 'chat' ? '写下问题或想法…' : '想让 Agent 做什么？'
+  const startWords = mode === 'chat' ? COPY.ask : COPY.prompt
   // A topic of a conversation in 我的 Agent says whom the message goes to.
   const topicName = selectedId !== null && summary ? sessionAgent(snapshot, summary)?.name : undefined
   const placeholder =
     submission.pending !== null
-      ? '等待确认上一条提交…'
+      ? COPY.pending
       : gate.kind === 'stopped'
-        ? '这个会话不再接收输入'
+        ? COPY.noInput
         : askedQuestion && gate.kind === 'open'
-          ? '输入你自己的回答'
+          ? COPY.answer
           : selectedId === null
             ? startWords
             : active
               ? catalog?.features?.queue
-                ? '补充或排队一条消息'
-                : '可以先写，本轮结束后发送…'
+                ? COPY.steerOrQueue
+                : COPY.writeNow
               : topicName
-                ? `给${topicName}发消息…`
+                ? COPY.messageTopic(topicName)
                 : startWords
 
   return {
@@ -1504,7 +1637,12 @@ export function useSessionController({
         return true
       }
       if (sessionDrafts.current.save(inputId ?? NEW_SESSION_DRAFT, submission.draft, hidden)) return true
-      setToast({ text: '草稿超出临时缓存上限，请先复制或缩短内容后再切换。', tone: 'error' })
+      setToast({
+        get text() {
+          return COPY.draftLimit
+        },
+        tone: 'error',
+      })
       return false
     },
     inputId,
@@ -1543,10 +1681,10 @@ export function useSessionController({
       gate:
         access.legacy || access.scopes.has('run')
           ? { kind: 'open' as const }
-          : { kind: 'read-only' as const, text: '此设备没有「发起和继续会话」权限', reason: undefined },
+          : { kind: 'read-only' as const, text: COPY.runDenied, reason: undefined },
       sessionBlock: undefined,
       pendingQueued: null,
-      placeholder: '想让 Agent 做什么？',
+      placeholder: COPY.prompt,
       newChoicesLocked:
         submission.pending !== null || submission.sending || newAttachments.preparing || !(access.legacy || access.scopes.has('run')),
     },

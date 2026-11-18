@@ -7,12 +7,26 @@ import { VisibleText } from '../../components/VisibleText.tsx'
 import { api, errorMessage, inlineError } from '../../core/api.ts'
 import { withConfirmation } from '../../core/confirmations.ts'
 import { BASE_SCOPES } from '../../core/enrollment.ts'
+import { defineCopy } from '../../core/i18n.ts'
 import type { DeviceAccess } from '../../core/permissions.ts'
-import { CONNECTION_DETAILS_COPY, DEVICE_NAME_INVALID_TEXT, DEVICES_COPY as COPY } from '../../core/securityCopy.ts'
+import { CONNECTION_DETAILS_COPY, DEVICES_COPY as COPY, NOTICE_COPY } from '../../core/securityCopy.ts'
 import { SettingsGroup, SettingsRow } from '../common.tsx'
 import { deviceIcon } from './deviceIcon.ts'
 import { deviceSwitches, filesChange, grantedText, manageChange, privateChange, seenText, type ScopeChange } from './deviceRows.ts'
 import { ReservedAttachments } from './ReservedAttachments.tsx'
+
+const FILE_ACCESS_COPY = defineCopy(
+  {
+    guide: (computer: string, setting: string) => `在 ${computer} 的 设置 › 设备 里为这台设备开启「${setting}」。`,
+    on: '已开启',
+    off: '未开启',
+  },
+  {
+    guide: (computer: string, setting: string) => `Turn on ${setting} for this device in Settings › Devices on ${computer}.`,
+    on: 'On',
+    off: 'Off',
+  },
+)
 
 export function SeenLine({ device, self }: { device: Device; self: boolean }) {
   return (
@@ -64,7 +78,7 @@ function NameRow({ device, self, canRename, onSaved }: { device: Device; self: b
       <label className="settings-row-text" htmlFor={`device-name-${device.id}`}>
         <span className="settings-row-title">{COPY.name}</span>
         {(invalid || error) && (
-          <span className="settings-row-description device-name-error">{invalid ? DEVICE_NAME_INVALID_TEXT : error}</span>
+          <span className="settings-row-description device-name-error">{invalid ? NOTICE_COPY.deviceNameInvalid : error}</span>
         )}
       </label>
       <span className="settings-row-end">
@@ -273,12 +287,10 @@ export function DevicePage({
                   {COPY.filesNote.detail}
                 </Hint>
               ) : (
-                <Hint label={COPY.raiseOnMac(computer)}>
-                  在 {computer} 的 设置 › 设备 里为这台设备开启「{COPY.files}」。
-                </Hint>
+                <Hint label={COPY.raiseOnMac(computer)}>{FILE_ACCESS_COPY.guide(computer, COPY.files)}</Hint>
               )
             }
-            trailing={<span className="settings-row-value">{files ? '已开启' : '未开启'}</span>}
+            trailing={<span className="settings-row-value">{files ? FILE_ACCESS_COPY.on : FILE_ACCESS_COPY.off}</span>}
           />
         </SettingsGroup>
       )}

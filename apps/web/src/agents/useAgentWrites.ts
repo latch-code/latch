@@ -13,6 +13,39 @@ import {
 import { AgentCreation, type AgentCreationToken } from '../core/agentCreation.ts'
 import { abandonSubmission, unconfirmedReason } from '../core/sendingMessage.ts'
 import { writeOutcome, type WriteOutcome } from './model.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    storageUnavailable: '暂时读不到此设备保存的待确认记录，不能开始另一项创建。请恢复浏览器存储后再确认。',
+    storageInvalid: '此设备保存的待确认创建记录无法读取。请查看已有 Agent 后，再决定是否放弃等待。',
+    creationUnknown: '上一次创建的结果尚未确认。',
+    unknownSensitive: '上一次创建的结果尚未确认。敏感内容只保留在原页面内存中，当前页面不能重发；请查看已有 Agent 后再决定是否放弃等待。',
+    invalid: '创建请求无效。',
+    couldNotHold: '无法保留创建请求，这次没有发送。',
+    cannotClearAfterReply: 'Mac 已回复，但此设备无法清除待确认记录。请重试同一请求。',
+    storageFailed: '浏览器无法安全保留创建请求，这次没有发送。',
+    receiptMissing: '仍未取得原请求的回执。',
+    cannotClear: '此设备无法清除待确认记录，请重试同一请求。',
+    couldNotSave: '无法保存待发送内容。请允许浏览器存储后重试。',
+  },
+  {
+    storageUnavailable:
+      'The saved pending request on this device cannot be read right now. Restore browser storage before creating another Agent.',
+    storageInvalid:
+      'The saved creation request on this device could not be read. Check the list of Agents before deciding whether to stop waiting.',
+    creationUnknown: 'The previous creation request has an unknown result.',
+    unknownSensitive:
+      'The previous creation request has an unknown result. Its sensitive content is held only in memory on the original page, so this page cannot resend it. Check the list of Agents before deciding whether to stop waiting.',
+    invalid: 'Invalid creation request.',
+    couldNotHold: 'Latch couldn’t save the creation request, so it was unsent.',
+    cannotClearAfterReply: 'The Mac replied. This device couldn’t clear the pending record. Retry the same request.',
+    storageFailed: 'The browser couldn’t safely save the creation request, so it was unsent.',
+    receiptMissing: 'The original request still has no receipt.',
+    cannotClear: 'This device couldn’t clear the pending record. Retry the same request.',
+    couldNotSave: 'Couldn’t save the content to send. Allow browser storage and try again.',
+  },
+)
 
 /** One write to 我的 Agent, as sent: a retry repeats it with the same requestId. */
 export interface AgentWrite {
@@ -40,12 +73,12 @@ function retainedCreation(store: AgentCreation): Extract<WriteState, { kind: 'un
         },
         kind: 'unknown',
         message: pending.unavailable
-          ? '暂时读不到此设备保存的待确认记录，不能开始另一项创建。请恢复浏览器存储后再确认。'
+          ? COPY.storageUnavailable
           : pending.unread
-            ? '此设备保存的待确认创建记录无法读取。请查看已有 Agent 后，再决定是否放弃等待。'
+            ? COPY.storageInvalid
             : pending.body
-              ? '上一次创建的结果尚未确认。'
-              : '上一次创建的结果尚未确认。敏感内容只保留在原页面内存中，当前页面不能重发；请查看已有 Agent 后再决定是否放弃等待。',
+              ? COPY.creationUnknown
+              : COPY.unknownSensitive,
         ...(!pending.body ? { unreplayable: true as const } : {}),
         ...(pending.token ? { creationToken: pending.token } : {}),
       }
@@ -121,15 +154,12 @@ export function useAgentWrites(
         const execute = async () => {
           if (!current() || (store && !mounted.current)) return undefined
           if (store) {
-            if (write.path !== 'custom-agents' || write.method !== 'POST') throw new ClientError('创建请求无效。', 'agent-creation-invalid')
+            if (write.path !== 'custom-agents' || write.method !== 'POST') throw new ClientError(COPY.invalid, 'agent-creation-invalid')
             replaying = store.read() !== null
             try {
               store.begin(write.body as unknown as CustomAgentCreate)
             } catch (error) {
-              throw new ClientError(
-                error instanceof Error ? error.message : '无法保留创建请求，这次没有发送。',
-                'agent-creation-unavailable',
-              )
+              throw new ClientError(error instanceof Error ? error.message : COPY.couldNotHold, 'agent-creation-unavailable')
             }
           }
           dispatched = true
@@ -146,7 +176,7 @@ export function useAgentWrites(
                 ...retainedCreation(store),
                 write,
                 kind: 'unknown',
-                message: 'Mac 已回复，但此设备无法清除待确认记录。请重试同一请求。',
+                message: COPY.cannotClearAfterReply,
               })
               return undefined
             }
@@ -168,7 +198,7 @@ export function useAgentWrites(
               : {
                   write,
                   kind: 'refused',
-                  message: error instanceof ClientError ? error.message : '浏览器无法安全保留创建请求，这次没有发送。',
+                  message: error instanceof ClientError ? error.message : COPY.storageFailed,
                 },
           )
         } else if (pending && (pending.requestId !== write.body.requestId || error instanceof ClientError)) {
@@ -178,14 +208,14 @@ export function useAgentWrites(
             write,
             kind: 'unknown',
             ...(pending?.token ? { creationToken: pending.token } : {}),
-            message: error instanceof ApiError ? error.message : '仍未取得原请求的回执。',
+            message: error instanceof ApiError ? error.message : COPY.receiptMissing,
           })
         } else {
           if (store && outcome.kind !== 'unknown') {
             try {
               store.finish(write.body.requestId)
             } catch {
-              setState({ ...retainedCreation(store), write, kind: 'unknown', message: '此设备无法清除待确认记录，请重试同一请求。' })
+              setState({ ...retainedCreation(store), write, kind: 'unknown', message: COPY.cannotClear })
               return undefined
             }
           }
@@ -285,7 +315,7 @@ export function useDelegation(
       writePending(key, submission)
     } catch {
       busy.current = false
-      setRefused({ customAgentId: submission.customAgentId ?? '', message: '无法保存待发送内容。请允许浏览器存储后重试。' })
+      setRefused({ customAgentId: submission.customAgentId ?? '', message: COPY.couldNotSave })
       return undefined
     }
     setPending(submission)

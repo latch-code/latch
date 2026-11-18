@@ -1,6 +1,6 @@
 import { escapeSecurityText, type ApiFailure, type AppSnapshot, type BlockingTask, type PresenceAction } from '@latch/protocol'
 import { api } from './api.ts'
-import { BLOCKED_VERBS, type NamedSession } from './securityCopy.ts'
+import { BLOCKED_VERBS, CONFIRMATION_COPY, type NamedSession } from './securityCopy.ts'
 
 /**
  * A confirmation the Host held back while a full-access session runs or waits for an answer (`presence-blocked`): the
@@ -60,7 +60,7 @@ const TITLE_LIMIT = 40
  */
 export function shownTitle(title: string): string {
   const escaped = escapeSecurityText(title.trim())
-  if (!escaped) return '未命名会话'
+  if (!escaped) return CONFIRMATION_COPY.untitled
   const parts =
     typeof Intl.Segmenter === 'function'
       ? Array.from(new Intl.Segmenter('zh', { granularity: 'grapheme' }).segment(escaped), part => part.segment)

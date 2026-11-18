@@ -1,4 +1,5 @@
 import type { AgentAvatar, AgentBracket, AgentEyes, AgentHue } from '@latch/protocol'
+import { defineCopy } from '../core/i18n.ts'
 
 /**
  * The bracket face on a 40 grid: the two halves of each bracket, the eyes a little below the middle, every line with
@@ -62,17 +63,36 @@ export const avatarTier = (size: number): AvatarTier => (size >= 32 ? 'full' : s
 /** 通用: the same face in a neutral grey. */
 export const GENERAL_AVATAR = { kind: 'face', bracket: 'round', eyes: 'dot', hue: 'neutral' } as const
 
-export const BRACKET_NAMES: Record<AgentBracket, string> = { round: '圆括号', curly: '花括号', square: '方括号', angle: '尖括号' }
-export const EYES_NAMES: Record<AgentEyes, string> = { dot: '圆点', arc: '弯眼', oval: '椭圆', sleepy: '眯眼' }
-export const HUE_NAMES: Record<AgentHue, string> = {
-  ink: '墨',
-  slate: '岩',
-  pine: '松',
-  plum: '李',
-  wisteria: '藤',
-  cocoa: '可可',
-  sand: '砂',
-  moss: '苔',
-  mist: '雾',
-}
+export const BRACKET_NAMES = defineCopy<Record<AgentBracket, string>>(
+  { round: '圆括号', curly: '花括号', square: '方括号', angle: '尖括号' },
+  { round: 'Round brackets', curly: 'Curly brackets', square: 'Square brackets', angle: 'Angle brackets' },
+)
+export const EYES_NAMES = defineCopy<Record<AgentEyes, string>>(
+  { dot: '圆点', arc: '弯眼', oval: '椭圆', sleepy: '眯眼' },
+  { dot: 'Dots', arc: 'Arcs', oval: 'Ovals', sleepy: 'Sleepy eyes' },
+)
+export const HUE_NAMES = defineCopy<Record<AgentHue, string>>(
+  {
+    ink: '墨',
+    slate: '岩',
+    pine: '松',
+    plum: '李',
+    wisteria: '藤',
+    cocoa: '可可',
+    sand: '砂',
+    moss: '苔',
+    mist: '雾',
+  },
+  {
+    ink: 'Ink',
+    slate: 'Slate',
+    pine: 'Pine',
+    plum: 'Plum',
+    wisteria: 'Wisteria',
+    cocoa: 'Cocoa',
+    sand: 'Sand',
+    moss: 'Moss',
+    mist: 'Mist',
+  },
+)
 export const avatarName = (avatar: AgentAvatar) => `${BRACKET_NAMES[avatar.bracket]}、${EYES_NAMES[avatar.eyes]}、${HUE_NAMES[avatar.hue]}`

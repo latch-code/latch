@@ -38,6 +38,66 @@ import {
 } from './notes.ts'
 import { NoteCard, NoteEditor, type NoteWriting } from './ReviewNotes.tsx'
 import { rowOf } from '../../components/overlays.tsx'
+import { defineCopy, formatNumber, plural } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    newFile: '新文件',
+    lineCount: (count: number) => ` · ${formatNumber(count)} 行`,
+    deleted: '已删除',
+    renamed: '重命名',
+    conflict: '有冲突',
+    mode: '执行位变化',
+    secret: '可能含密钥，不显示内容',
+    tooLarge: '超过 1 MB，不显示内容',
+    binary: '二进制文件，没有可比较的文字',
+    moved: '内容相同，只是换了路径',
+    modeOnly: '内容没有变化，只改了执行位',
+    unchanged: '内容没有变化',
+    retry: '重试',
+    loading: '正在读取…',
+    beforeLine: (line: number) => `反馈修改前第 ${formatNumber(line)} 行`,
+    line: (line: number) => `反馈第 ${formatNumber(line)} 行`,
+    queue: '加入待发',
+    feedbackCount: (count: number) => `${formatNumber(count)} 条反馈`,
+    expired: '位置可能过期',
+    undone: '已撤销',
+    actions: (value1: string | number) => `${value1} 的操作`,
+    open: '打开文件',
+    history: '文件历史',
+    copyPath: '复制路径',
+    undoFile: '撤销此文件',
+    copied: '已复制',
+  },
+  {
+    newFile: 'New file',
+    lineCount: (count: number) => ` · ${plural(count, { one: '{n} line', other: '{n} lines' })}`,
+    deleted: 'Deleted',
+    renamed: 'Renamed',
+    conflict: 'Conflict',
+    mode: 'Executable bit changed',
+    secret: 'Contents are hidden because they may contain secret keys',
+    tooLarge: 'Contents are hidden because the file exceeds 1 MB',
+    binary: 'Binary file · No text to compare',
+    moved: 'Same contents at a new path',
+    modeOnly: 'Contents unchanged · Executable bit changed',
+    unchanged: 'Contents unchanged',
+    retry: 'Retry',
+    loading: 'Reading…',
+    beforeLine: (line: number) => `Give feedback on original line ${formatNumber(line)}`,
+    line: (line: number) => `Give feedback on line ${formatNumber(line)}`,
+    queue: 'Queue feedback',
+    feedbackCount: (count: number) => `${plural(count, { one: '{n} feedback item', other: '{n} feedback items' })}`,
+    expired: 'Location may be out of date',
+    undone: 'Undone',
+    actions: (value1: string | number) => `Actions for ${value1}`,
+    open: 'Open file',
+    history: 'File history',
+    copyPath: 'Copy path',
+    undoFile: 'Undo this file',
+    copied: 'Copied',
+  },
+)
 
 /**
  * Lines picked by the page around the diff (the phone's review): taps go to `onTap` with both sides' lines, for the
@@ -153,18 +213,22 @@ function Stat({ add, del }: { add?: number; del?: number }) {
 function HeadFacts({ file, lines, only }: { file: ChangedFile; lines?: number; only?: 'stat' | 'note' }) {
   const note = fileNote(file)
   const absent = contentHidden(file) || only === 'note'
+  const addedLines = lines ?? file.add
+  const deletedLines = lines ?? file.del
   return (
     <>
       {absent ? null : file.status === 'A' ? (
         <span className="changes-tag" data-tone="new">
-          新文件{(lines ?? file.add) !== undefined ? ` · ${lines ?? file.add} 行` : ''}
+          {COPY.newFile}
+          {addedLines !== undefined ? COPY.lineCount(addedLines) : ''}
         </span>
       ) : file.status === 'D' ? (
         <span className="changes-tag" data-tone="gone">
-          已删除{(lines ?? file.del) !== undefined ? ` · ${lines ?? file.del} 行` : ''}
+          {COPY.deleted}
+          {deletedLines !== undefined ? COPY.lineCount(deletedLines) : ''}
         </span>
       ) : file.status === 'R' && !file.add && !file.del ? (
-        <span className="changes-note">重命名</span>
+        <span className="changes-note">{COPY.renamed}</span>
       ) : (
         <Stat add={file.add} del={file.del} />
       )}
@@ -173,24 +237,24 @@ function HeadFacts({ file, lines, only }: { file: ChangedFile; lines?: number; o
           {note.text}
         </span>
       )}
-      {only !== 'stat' && file.conflicted && <span className="changes-note changes-note-warn">有冲突</span>}
-      {only !== 'stat' && file.modeChanged && <span className="changes-note">执行位变化</span>}
+      {only !== 'stat' && file.conflicted && <span className="changes-note changes-note-warn">{COPY.conflict}</span>}
+      {only !== 'stat' && file.modeChanged && <span className="changes-note">{COPY.mode}</span>}
     </>
   )
 }
 
 const whyEmpty = (file: ChangedFile) =>
   file.secret
-    ? '可能含密钥，不显示内容'
+    ? COPY.secret
     : file.large
-      ? '超过 1 MB，不显示内容'
+      ? COPY.tooLarge
       : file.binary
-        ? '二进制文件，没有可比较的文字'
+        ? COPY.binary
         : file.status === 'R'
-          ? '内容相同，只是换了路径'
+          ? COPY.moved
           : file.modeChanged
-            ? '内容没有变化，只改了执行位'
-            : '内容没有变化'
+            ? COPY.modeOnly
+            : COPY.unchanged
 
 export function FileBody({
   file,
@@ -228,11 +292,11 @@ export function FileBody({
           onClick={() => {
             setAttempt(value => value + 1)
           }}>
-          重试
+          {COPY.retry}
         </Button>
       </p>
     )
-  if (!detail) return <p className="changes-body-note">正在读取…</p>
+  if (!detail) return <p className="changes-body-note">{COPY.loading}</p>
   if (!detail.hunks?.length)
     return (
       <>
@@ -314,7 +378,7 @@ function FileReview({
                   <IconButton
                     size="xs"
                     icon={PlusGlyph}
-                    label={side === 'old' ? `反馈修改前第 ${number} 行` : `反馈第 ${number} 行`}
+                    label={side === 'old' ? COPY.beforeLine(number) : COPY.line(number)}
                     className="changes-comment-add"
                     pressed={inSelection(selection, line)}
                     onClick={press(line)}
@@ -338,7 +402,7 @@ function FileReview({
                 <NoteEditor
                   key={`${selection.side}:${selection.start}`}
                   label={noteLinesLabel(selection)}
-                  submitLabel="加入待发"
+                  submitLabel={COPY.queue}
                   busy={writing.busy}
                   onCancel={() => {
                     setSelection(undefined)
@@ -375,14 +439,14 @@ function NoteFacts({ count, stale }: { count: number; stale: number }) {
   if (!count) return null
   return (
     <>
-      <span className="changes-note review-note-count" title={`${count} 条反馈`}>
+      <span className="changes-note review-note-count" title={COPY.feedbackCount(count)}>
         <MessageGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         {count}
       </span>
       {stale > 0 && (
         <span className="changes-note changes-note-warn">
           <AlertGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-          位置可能过期
+          {COPY.expired}
         </span>
       )}
     </>
@@ -445,7 +509,7 @@ export function ChangesFile({
                   </span>
                 )}
                 <HeadFacts file={file} only="note" />
-                {undone && <span className="changes-note">已撤销</span>}
+                {undone && <span className="changes-note">{COPY.undone}</span>}
                 <NoteFacts count={notes?.notes.length ?? 0} stale={stale} />
               </span>
             </span>
@@ -453,44 +517,44 @@ export function ChangesFile({
             <>
               <FittedPath text={shown} />
               <HeadFacts file={file} />
-              {undone && <span className="changes-note">已撤销</span>}
+              {undone && <span className="changes-note">{COPY.undone}</span>}
               <NoteFacts count={notes?.notes.length ?? 0} stale={stale} />
             </>
           )}
         </button>
         {/* The head's hover actions as its context menu too: right click, press and hold, the context-menu key. */}
         <Menu
-          label={`${escapeHiddenCharacters(file.path)} 的操作`}
+          label={COPY.actions(escapeHiddenCharacters(file.path))}
           context={rowOf('.changes-file-head')}
           sections={[
             {
               id: 'file',
               items: [
-                { id: 'open', label: '打开文件', icon: FileGlyph, onSelect: onOpenFile },
+                { id: 'open', label: COPY.open, icon: FileGlyph, onSelect: onOpenFile },
                 ...(editor && !file.secret && !file.binary && file.status !== 'D'
                   ? [{ id: 'editor', label: editor.label, icon: CodeGlyph, onSelect: editor.run }]
                   : []),
-                ...(onHistory ? [{ id: 'history', label: '文件历史', icon: HistoryGlyph, onSelect: onHistory }] : []),
-                { id: 'copy', label: '复制路径', icon: CopyGlyph, onSelect: () => void copy(file.path) },
+                ...(onHistory ? [{ id: 'history', label: COPY.history, icon: HistoryGlyph, onSelect: onHistory }] : []),
+                { id: 'copy', label: COPY.copyPath, icon: CopyGlyph, onSelect: () => void copy(file.path) },
               ],
             },
             ...(onUndo
-              ? [{ id: 'undo', items: [{ id: 'undo', label: '撤销此文件', icon: UndoGlyph, danger: true, onSelect: onUndo }] }]
+              ? [{ id: 'undo', items: [{ id: 'undo', label: COPY.undoFile, icon: UndoGlyph, danger: true, onSelect: onUndo }] }]
               : []),
           ]}
         />
         {showActions && (
           <span className="changes-file-actions">
-            <IconButton size="xs" icon={FileGlyph} label="打开文件" onClick={onOpenFile} />
+            <IconButton size="xs" icon={FileGlyph} label={COPY.open} onClick={onOpenFile} />
             {editor && !file.secret && !file.binary && file.status !== 'D' && (
               <IconButton size="xs" icon={CodeGlyph} label={editor.label} onClick={editor.run} />
             )}
-            {onHistory && <IconButton size="xs" icon={HistoryGlyph} label="文件历史" onClick={onHistory} />}
-            {onUndo && <IconButton size="xs" icon={UndoGlyph} label="撤销此文件" onClick={onUndo} />}
+            {onHistory && <IconButton size="xs" icon={HistoryGlyph} label={COPY.history} onClick={onHistory} />}
+            {onUndo && <IconButton size="xs" icon={UndoGlyph} label={COPY.undoFile} onClick={onUndo} />}
             <IconButton
               size="xs"
               icon={CopyGlyph}
-              label={copyState === 'copied' ? '已复制' : '复制路径'}
+              label={copyState === 'copied' ? COPY.copied : COPY.copyPath}
               onClick={() => {
                 void copy(file.path)
               }}

@@ -1,6 +1,46 @@
 import type { ReactNode } from 'react'
 import type { TaskSummary } from '@latch/protocol'
 import { textMatches, type TextMatch } from '../textSearch.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    searchingFiles: '正在查找文件…',
+    filesFailed: '文件搜索失败',
+    partialFiles: '只显示了部分文件，请缩小搜索范围。',
+    files: '文件',
+    noFiles: '没有匹配的文件',
+    recent: '最近会话',
+    commands: '命令',
+    sessions: '会话',
+    partialSessions: '只显示了部分会话，请缩小搜索范围。',
+    agents: '我的 Agent',
+    settings: '设置',
+    inMessages: '在消息中',
+    searchingMessages: '正在搜索消息…',
+    messagesFailed: '消息搜索失败',
+    noMessages: (query: string) => `消息里没有「${query}」`,
+    partialMessages: '只显示了部分结果，请缩小搜索范围。',
+  },
+  {
+    searchingFiles: 'Searching files…',
+    filesFailed: 'File search failed',
+    partialFiles: 'Showing some files. Narrow your search.',
+    files: 'Files',
+    noFiles: 'No matching files',
+    recent: 'Recent sessions',
+    commands: 'Commands',
+    sessions: 'Sessions',
+    partialSessions: 'Showing some sessions. Narrow your search.',
+    agents: 'My Agents',
+    settings: 'Settings',
+    inMessages: 'In messages',
+    searchingMessages: 'Searching messages…',
+    messagesFailed: 'Message search failed',
+    noMessages: (query: string) => `No messages contain “${query}”`,
+    partialMessages: 'Showing some results. Narrow your search.',
+  },
+)
 
 export type PaletteLevel = 'root' | 'files'
 
@@ -110,7 +150,17 @@ function sessionGroup(label: string, rows: PaletteRow[]): PaletteGroup {
 
 const SESSION_ROWS = 20
 
-const FILE_WORDS = { loading: '正在查找文件…', failed: '文件搜索失败', truncated: '只显示了部分文件，请缩小搜索范围。' }
+const FILE_WORDS = {
+  get loading() {
+    return COPY.searchingFiles
+  },
+  get failed() {
+    return COPY.filesFailed
+  },
+  get truncated() {
+    return COPY.partialFiles
+  },
+}
 
 /** Before typing: 最近会话 and 命令. While typing, every kind of result, with what is slowest to answer last. */
 export function paletteGroups({
@@ -140,30 +190,30 @@ export function paletteGroups({
   const typed = query.trim()
   if (level === 'files') {
     const state = files ?? { rows: [], loading: false, error: '', truncated: false }
-    return [{ label: '文件', rows: state.rows, notes: searchNotes(state, { ...FILE_WORDS, none: '没有匹配的文件' }) }]
+    return [{ label: COPY.files, rows: state.rows, notes: searchNotes(state, { ...FILE_WORDS, none: COPY.noFiles }) }]
   }
   if (!typed)
-    return [sessionGroup('最近会话', [...recent]), { label: '命令', rows: commands.filter(command => command.root) }].filter(shown)
+    return [sessionGroup(COPY.recent, [...recent]), { label: COPY.commands, rows: commands.filter(command => command.root) }].filter(shown)
   const matchedSessions = matchEntries(sessions, typed)
   return [
     {
-      ...sessionGroup('会话', matchedSessions.slice(0, SESSION_ROWS)),
-      notes: matchedSessions.length > SESSION_ROWS ? [{ text: '只显示了部分会话，请缩小搜索范围。' }] : [],
+      ...sessionGroup(COPY.sessions, matchedSessions.slice(0, SESSION_ROWS)),
+      notes: matchedSessions.length > SESSION_ROWS ? [{ text: COPY.partialSessions }] : [],
     },
-    { label: '文件', rows: files?.rows ?? [], notes: files ? searchNotes({ ...files, loading: false }, FILE_WORDS) : [] },
-    { label: '我的 Agent', rows: matchEntries(myAgents, typed) },
+    { label: COPY.files, rows: files?.rows ?? [], notes: files ? searchNotes({ ...files, loading: false }, FILE_WORDS) : [] },
+    { label: COPY.agents, rows: matchEntries(myAgents, typed) },
     { label: 'Harness', rows: matchEntries(agents, typed) },
-    { label: '设置', rows: matchEntries(settings, typed) },
-    { label: '命令', rows: matchEntries(commands, typed) },
+    { label: COPY.settings, rows: matchEntries(settings, typed) },
+    { label: COPY.commands, rows: matchEntries(commands, typed) },
     {
-      label: '在消息中',
+      label: COPY.inMessages,
       rows: messages?.rows ?? [],
       notes: messages
         ? searchNotes(messages, {
-            loading: '正在搜索消息…',
-            failed: '消息搜索失败',
-            none: `消息里没有「${typed}」`,
-            truncated: '只显示了部分结果，请缩小搜索范围。',
+            loading: COPY.searchingMessages,
+            failed: COPY.messagesFailed,
+            none: COPY.noMessages(typed),
+            truncated: COPY.partialMessages,
           })
         : [],
     },

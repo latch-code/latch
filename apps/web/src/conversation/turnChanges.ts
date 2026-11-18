@@ -2,6 +2,7 @@ import type { ChangedFile, ChangeList, ChangeReceipt, FileChange, FileDiff, Mess
 import { parseTime } from '../core/hostClock.ts'
 import { appliedDiffs, type Turn } from '../conversation.ts'
 import { diffLines } from '../diff.ts'
+import { BLOCKED_COPY, TURN_CHANGES_COPY } from './turnChanges.copy.ts'
 
 /*
  * A turn's summary card and its way to the Host's per-turn record. The record's turn is a run, and a message does not
@@ -138,12 +139,12 @@ export interface UndoRights {
  */
 export type TurnUndo = { kind: 'undo' } | { kind: 'redo' } | { kind: 'why'; text: string; someFiles?: true } | { kind: 'none' }
 
-/** The reasons the Host gives, said once for both actions; `no-changes` and `undone` leave nothing to say. */
-const BLOCK_WHY: Partial<Record<UndoBlock, (word: string) => string>> = {
-  running: word => `运行中不能${word}`,
-  'not-settled': word => `这一轮没有正常结束，不能${word}`,
-  'changed-since': word => `之后又改过这些文件，不能${word}`,
-  'not-retained': word => `这些文件的内容没有留存，不能${word}`,
+/** The reasons the Host gives, said for each action; `no-changes` and `undone` leave nothing to say. */
+const BLOCK_WHY: Partial<Record<UndoBlock, 'running' | 'notSettled' | 'changedSince' | 'notRetained'>> = {
+  running: 'running',
+  'not-settled': 'notSettled',
+  'changed-since': 'changedSince',
+  'not-retained': 'notRetained',
 }
 
 /**
@@ -151,41 +152,38 @@ const BLOCK_WHY: Partial<Record<UndoBlock, (word: string) => string>> = {
  * Host checks again: a device with `run` may undo from anywhere, so this computer is not a condition.
  */
 export function turnUndo(list: ChangeList, turn: Pick<TurnChanges, 'state'> | undefined, rights: UndoRights): TurnUndo {
-  const word = list.undone ? '恢复' : '撤销'
+  const words = list.undone ? BLOCKED_COPY.redo : BLOCKED_COPY.undo
   const why = (text: string): TurnUndo => ({ kind: 'why', text })
-  if (rights.offline) return why(`离线时不能${word}`)
+  if (rights.offline) return why(words.offline)
   // The turn's state first, because `ChangeList.running` is also true of one that was interrupted.
-  if (rights.active || turn?.state === 'running') return why(BLOCK_WHY.running!(word))
-  if (turn?.state === 'interrupted') return why(BLOCK_WHY['not-settled']!(word))
-  if (rights.readOnly) return why('这个会话只能查看')
-  if (!rights.canRun) return why('这台设备只能查看')
+  if (rights.active || turn?.state === 'running') return why(words.running)
+  if (turn?.state === 'interrupted') return why(words.notSettled)
+  if (rights.readOnly) return why(TURN_CHANGES_COPY.sessionReadOnly)
+  if (!rights.canRun) return why(TURN_CHANGES_COPY.deviceReadOnly)
   const availability = list.undone ? list.redo : list.undo
   if (availability?.available) return { kind: list.undone ? 'redo' : 'undo' }
-  const text = availability ? BLOCK_WHY[availability.reason]?.(word) : undefined
-  if (!availability || !text) return { kind: 'none' }
+  const reason = availability ? BLOCK_WHY[availability.reason] : undefined
+  if (!availability || !reason) return { kind: 'none' }
+  const text = words[reason]
   return !list.undone && availability.reason === 'changed-since' ? { kind: 'why', text, someFiles: true } : why(text)
 }
 
 /** Files 撤销本轮 would leave alone, said before it runs: without them the undo runs at once. */
 export function undoExceptions(list: ChangeList): string[] {
   return [
-    ...list.files.filter(file => file.notRetained).map(file => `${file.path} · 内容没有留存`),
-    ...list.files.filter(file => file.secret).map(file => `${file.path} · 可能含密钥，不写也不删`),
-    ...(list.notCovered ?? []).map(path => `${path} · 在文件夹之外或被忽略`),
+    ...list.files.filter(file => file.notRetained).map(file => TURN_CHANGES_COPY.notRetainedFile(file.path)),
+    ...list.files.filter(file => file.secret).map(file => TURN_CHANGES_COPY.secretFile(file.path)),
+    ...(list.notCovered ?? []).map(path => TURN_CHANGES_COPY.notCoveredFile(path)),
   ]
 }
-
-/** A record that stopped at the walk's limits: the title in view wherever the turn's files are shown, why behind ⓘ. */
-export const PARTIAL_NOTE = {
-  label: '记录不完整：文件夹太大',
-  detail: '超过 5 万项、32 层或 10 秒。可能还有没列出的文件，撤销也碰不到它们。',
-} as const
 
 /** How many files a receipt left as they were; it names only the first of them. */
 export function notRestoredLine(receipt: Pick<ChangeReceipt, 'skipped' | 'notRestored'>): string | undefined {
   if (receipt.skipped === 0) return undefined
   const named = receipt.notRestored.length
-  return `这 ${receipt.skipped} 个文件没有恢复${named > 0 && named < receipt.skipped ? `（列出前 ${named} 个）` : ''}`
+  return named > 0 && named < receipt.skipped
+    ? TURN_CHANGES_COPY.notRestoredNamed(receipt.skipped, named)
+    : TURN_CHANGES_COPY.notRestored(receipt.skipped)
 }
 
 /** The file 打开改动 goes to: a deleted one has nothing to open. */

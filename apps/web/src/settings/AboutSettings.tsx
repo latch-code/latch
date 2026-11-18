@@ -17,82 +17,193 @@ import {
   WarningGlyph,
 } from '@latch/ui'
 import { currentShell, type UpdateView } from '../core/shell.ts'
+import { defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'
+import { harnessPresetCopy } from '../core/harnessPresetCopy.ts'
 import { computerState, olderVersion, useComputers } from '../core/computers.ts'
 import { useShellUpdates } from '../core/shellUpdates.ts'
 import { formatSize, relativeTime } from '../format.ts'
 import { BrandMark } from '../components/ui.tsx'
 import type { DeviceAccess } from '../core/permissions.ts'
-import { DEV_MODE_TEXT, hostView } from '../core/permissions.ts'
-import { computerName, presenceUnavailableText, RUNS_AS_YOU_COPY } from '../core/securityCopy.ts'
+import { DEVICE_PERMISSION_COPY, hostView } from '../core/permissions.ts'
+import { computerName, presenceUnavailableText, runsOn, RUNS_AS_YOU_COPY } from '../core/securityCopy.ts'
 import { NavRow, NoteLine, SectionHeading, SettingsGroup, SettingsRow } from './common.tsx'
 import { SettingsPages } from './navigation.tsx'
 
-const UPDATE_COPY = {
-  versions: '版本',
-  app: 'Latch 应用',
-  hostHere: '这台 Mac',
-  hostOn: (name: string) => name,
-  older: '版本较旧',
-  olderDetail: '在那台电脑上更新 Latch。这台 Mac 不会替它更新或重启。',
-  updates: '更新',
-  check: '检查更新',
-  checking: '正在检查…',
-  notChecked: '尚未检查',
-  upToDate: '已是最新版本',
-  checkedAt: (when: string) => `检查于 ${when}`,
-  newVersion: (version: string) => `新版本 ${version}`,
-  download: '下载',
-  downloading: (version: string) => `正在下载 ${version}`,
-  progress: (received: string, total: string) => `${received} / ${total}`,
-  ready: (version: string) => `${version} 已下载`,
-  restartInstall: '重启并安装',
-  later: '稍后',
-  atQuit: '下次退出时安装',
-  atQuitChosen: '将在下次退出 Latch 时安装',
-  appOnly: '只重启 Latch 应用，会话不受影响',
-  hostChange: '包含 Latch 服务的更新',
-  hostChangeDetail:
-    '安装前会等这台 Mac 上运行中、等你处理和结果未知的会话、排队的消息与终端里的命令结束；等待期间不能开始新会话。安装后数据目录不变。',
-  waiting: (count: number) => `等 ${count} 项结束`,
-  waitingDetail: (counts: NonNullable<UpdateView['waiting']>) =>
-    [
-      counts.running && `运行中 ${counts.running}`,
-      counts.waiting && `等你处理 ${counts.waiting}`,
-      counts.unknown && `结果未知 ${counts.unknown}`,
-      counts.queued && `排队 ${counts.queued}`,
-      counts.terminals && `终端命令 ${counts.terminals}`,
-      counts.services && `本地服务 ${counts.services}（随终端结束）`,
-    ]
-      .filter(Boolean)
-      .join(' · '),
-  view: '查看会话',
-  hide: '收起',
-  cancel: '取消',
-  installing: '正在安装…',
-  retry: '重试',
-  notes: (version: string) => `${version} 更新说明`,
-  autoDownload: '自动下载更新',
-  autoDownloadDetail: '在后台下载，安装前仍会问你',
-  incompatible: (names: string) => `这些插件与新版本不兼容，安装后会停用，资产保留：${names}`,
-  held: (names: string) => `更新后已停用不兼容的插件：${names}。资产仍保留，更新插件后可在「插件」中重新启用。`,
-  unsupported: '不支持自动更新',
-  reason: {
-    development: '源码运行，不支持自动更新',
-    'not-configured': '这个版本没有配置更新来源',
-    unsigned: '这个版本没有签名，macOS 不允许它自行安装更新',
-    platform: '目前只在 macOS 上支持自动更新',
+const COPY = defineCopy(
+  {
+    versions: '版本',
+    licence: '许可与条款',
+    homepage: '主页',
+    terminalLocation: '终端只在运行 Latch 的 Mac 上',
+    terminalDetail: '终端以你在那台 Mac 上的账户运行，只在那台 Mac 的 Latch 桌面端打开；其他设备上没有终端，也看不到它的输出。',
+    exportScope: '不含对话、文件内容与密钥',
+    exportDetail: '只有版本、Harness 与插件状态、连接计数与近期事件（类别与错误代码，不含日志原文）；设备名与项目名隐去，主目录写作 ~。',
+    diagnostics: '诊断',
+    exported: '已导出',
+    notExported: '没有导出',
+    exporting: '正在导出',
+    export: '导出诊断…',
+    view: '查看',
   },
-  failed: {
-    check: '无法检查更新，当前版本照常可用',
-    untrusted: '更新信息无法验证，已忽略',
-    download: '下载中断，当前版本照常可用',
-    verify: '下载的文件校验失败，已删除，没有安装',
-    install: '安装没有完成，当前版本照常可用，数据未改动',
-    installDetail: '可以重试；仍失败时，退出 Latch 后重新打开再试。',
-    hostExternal: '这台 Mac 的 Latch 服务不是由 Latch 应用启动的，请在启动它的终端停止后再安装',
-    hostUnreachable: '无法联系这台 Mac 的 Latch 服务，没有安装',
+  {
+    versions: 'Versions',
+    licence: 'Licenses and terms',
+    homepage: 'Homepage',
+    terminalLocation: 'The terminal is available on the Mac running Latch',
+    terminalDetail:
+      'The terminal runs under your account in the desktop app on that Mac. Other devices have no access to it or its output.',
+    exportScope: 'Excludes chats, file contents and secrets',
+    exportDetail:
+      'Includes versions, Harness and plugin status, connection counts and recent event categories and error codes. It excludes raw logs and hides device and project names. The home directory is shown as ~.',
+    diagnostics: 'Diagnostics',
+    exported: 'Exported',
+    notExported: 'Couldn’t export',
+    exporting: 'Exporting',
+    export: 'Export diagnostics…',
+    view: 'View',
   },
-}
+)
+
+const UPDATE_COPY = defineCopy(
+  {
+    versions: '版本',
+    app: 'Latch 应用',
+    hostHere: '这台 Mac',
+    hostOn: (name: string) => name,
+    older: '版本较旧',
+    olderDetail: '在那台电脑上更新 Latch。这台 Mac 不会替它更新或重启。',
+    updates: '更新',
+    check: '检查更新',
+    checking: '正在检查…',
+    notChecked: '尚未检查',
+    upToDate: '已是最新版本',
+    checkedAt: (when: string) => `检查于 ${when}`,
+    newVersion: (version: string) => `新版本 ${version}`,
+    download: '下载',
+    downloading: (version: string) => `正在下载 ${version}`,
+    progress: (received: string, total: string) => `${received} / ${total}`,
+    ready: (version: string) => `${version} 已下载`,
+    restartInstall: '重启并安装',
+    later: '稍后',
+    atQuit: '下次退出时安装',
+    atQuitChosen: '将在下次退出 Latch 时安装',
+    appOnly: '只重启 Latch 应用，会话不受影响',
+    hostChange: '包含 Latch 服务的更新',
+    hostChangeDetail:
+      '安装前会等这台 Mac 上运行中、等你处理和结果未知的会话、排队的消息与终端里的命令结束；等待期间不能开始新会话。安装后数据目录不变。',
+    waiting: (count: number) => `等 ${count} 项结束`,
+    waitingDetail: (counts: NonNullable<UpdateView['waiting']>) =>
+      [
+        counts.running && `运行中 ${counts.running}`,
+        counts.waiting && `等你处理 ${counts.waiting}`,
+        counts.unknown && `结果未知 ${counts.unknown}`,
+        counts.queued && `排队 ${counts.queued}`,
+        counts.terminals && `终端命令 ${counts.terminals}`,
+        counts.services && `本地服务 ${counts.services}（随终端结束）`,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    view: '查看会话',
+    hide: '收起',
+    cancel: '取消',
+    installing: '正在安装…',
+    retry: '重试',
+    notes: (version: string) => `${version} 更新说明`,
+    autoDownload: '自动下载更新',
+    autoDownloadDetail: '在后台下载，安装前仍会问你',
+    incompatible: (names: string) => `这些插件与新版本不兼容，安装后会停用，资产保留：${names}`,
+    held: (names: string) => `更新后已停用不兼容的插件：${names}。资产仍保留，更新插件后可在「插件」中重新启用。`,
+    unsupported: '不支持自动更新',
+    reason: {
+      development: '源码运行，不支持自动更新',
+      'not-configured': '这个版本没有配置更新来源',
+      unsigned: '这个版本没有签名，macOS 不允许它自行安装更新',
+      platform: '目前只在 macOS 上支持自动更新',
+    },
+    failed: {
+      check: '无法检查更新，当前版本照常可用',
+      untrusted: '更新信息无法验证，已忽略',
+      download: '下载中断，当前版本照常可用',
+      verify: '下载的文件校验失败，已删除，没有安装',
+      install: '安装没有完成，当前版本照常可用，数据未改动',
+      installDetail: '可以重试；仍失败时，退出 Latch 后重新打开再试。',
+      hostExternal: '这台 Mac 的 Latch 服务不是由 Latch 应用启动的，请在启动它的终端停止后再安装',
+      hostUnreachable: '无法联系这台 Mac 的 Latch 服务，没有安装',
+    },
+  },
+  {
+    versions: 'Versions',
+    app: 'Latch app',
+    hostHere: 'This Mac',
+    hostOn: (name: string) => name,
+    older: 'Older version',
+    olderDetail: 'Open Latch on that computer to update it there.',
+    updates: 'Updates',
+    check: 'Check for updates',
+    checking: 'Checking…',
+    notChecked: 'Not checked yet',
+    upToDate: 'Up to date',
+    checkedAt: (when: string) => `Checked ${when}`,
+    newVersion: (version: string) => `Version ${version} is available`,
+    download: 'Download',
+    downloading: (version: string) => `Downloading ${version}`,
+    progress: (received: string, total: string) => `${received} / ${total}`,
+    ready: (version: string) => `${version} downloaded`,
+    restartInstall: 'Restart and install',
+    later: 'Later',
+    atQuit: 'Install on quit',
+    atQuitChosen: 'Will install the next time you quit Latch',
+    appOnly: 'Latch will restart. Sessions will continue.',
+    hostChange: 'This update includes the Latch service',
+    hostChangeDetail:
+      'Installation waits for running sessions, pending decisions, unknown results, queued messages and terminal commands on this Mac. New sessions are paused while you wait. Installation keeps your data directory.',
+    waiting: (count: number) => plural(count, { one: 'Waiting for {n} item to finish', other: 'Waiting for {n} items to finish' }),
+    waitingDetail: (counts: NonNullable<UpdateView['waiting']>) =>
+      [
+        counts.running && `${formatNumber(counts.running)} running`,
+        counts.waiting && `${formatNumber(counts.waiting)} waiting for you`,
+        counts.unknown && `${formatNumber(counts.unknown)} unresolved`,
+        counts.queued && `${formatNumber(counts.queued)} queued`,
+        counts.terminals && plural(counts.terminals, { one: '{n} terminal command', other: '{n} terminal commands' }),
+        counts.services
+          && plural(counts.services, {
+            one: '{n} local service ends with the terminal',
+            other: '{n} local services end with the terminal',
+          }),
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    view: 'View sessions',
+    hide: 'Show less',
+    cancel: 'Cancel',
+    installing: 'Installing…',
+    retry: 'Retry',
+    notes: (version: string) => `${version} release notes`,
+    autoDownload: 'Download updates automatically',
+    autoDownloadDetail: 'Downloads run in the background. You confirm each installation.',
+    incompatible: (names: string) => `The update will turn off these incompatible plugins and keep their assets: ${names}`,
+    held: (names: string) =>
+      `The update turned off these incompatible plugins and kept their assets: ${names}. Update them, then turn them back on in Plugins.`,
+    unsupported: 'Automatic updates are unavailable',
+    reason: {
+      development: 'Updates are unavailable when running from source',
+      'not-configured': 'This version has no configured update source',
+      unsigned: 'macOS requires a signed app to install updates',
+      platform: 'Automatic updates are available on macOS',
+    },
+    failed: {
+      check: 'Couldn’t check for updates. You can keep using this version.',
+      untrusted: 'Update details could not be verified and were ignored.',
+      download: 'The download was interrupted. You can keep using this version.',
+      verify: 'Verification failed. The downloaded file was removed and the update was skipped.',
+      install: 'The update didn’t finish. The current version and your data are available.',
+      installDetail: 'Try again. If installation still fails, quit Latch and reopen it.',
+      hostExternal:
+        'This Mac’s Latch service was started outside the app. Stop it in the terminal where it’s running, then install the update.',
+      hostUnreachable: 'Installation stopped because this Mac’s Latch service could not be reached.',
+    },
+  },
+)
 
 export interface UpdateActions {
   check(): void
@@ -271,7 +382,8 @@ export function UpdateArea({
     }
   }
   const showNotes = release && ['available', 'downloading', 'ready', 'waiting', 'installing'].includes(view.state)
-  const notes = release ? release.notes['zh-CN'] : ''
+  const locale = useLocale()
+  const notes = release ? release.notes[locale] : ''
   const plugins = release?.incompatiblePlugins ?? []
   return (
     <div className="about-updates" data-update-state={view.state}>
@@ -316,7 +428,7 @@ function Licences() {
   const engines = useMemo(() => AGENT_PRESETS.toSorted((a, b) => a.name.localeCompare(b.name)), [])
   return (
     <>
-      <SectionHeading title="许可与条款" />
+      <SectionHeading title={COPY.licence} />
       <SettingsGroup>
         <SettingsRow record title="Latch" trailing={<span className="settings-row-value">MIT License</span>} />
       </SettingsGroup>
@@ -327,10 +439,10 @@ function Licences() {
             title={preset.name}
             trailing={
               <>
-                <span className="settings-row-value">{preset.license}</span>
+                <span className="settings-row-value">{harnessPresetCopy(preset).license}</span>
                 {preset.homepage && (
                   <ButtonLink variant="ghost" href={preset.homepage} target="_blank" rel="noreferrer">
-                    主页
+                    {COPY.homepage}
                   </ButtonLink>
                 )}
               </>
@@ -344,8 +456,8 @@ function Licences() {
 
 /** Said once, where a device has no 终端 tab: there is no dead entry to explain it. */
 const TERMINAL_ELSEWHERE = {
-  label: '终端只在运行 Latch 的 Mac 上',
-  detail: '终端以你在那台 Mac 上的账户运行，只在那台 Mac 的 Latch 桌面端打开；其他设备上没有终端，也看不到它的输出。',
+  label: COPY.terminalLocation,
+  detail: COPY.terminalDetail,
 }
 
 type DiagnosticsExport = NonNullable<NonNullable<ReturnType<typeof currentShell>>['diagnostics']>['export']
@@ -362,28 +474,28 @@ function DiagnosticsRow({ export: run }: { export: DiagnosticsExport }) {
         <NoteLine
           icon={ShieldGlyph}
           brief={{
-            label: '不含对话、文件内容与密钥',
-            detail: '只有版本、Harness 与插件状态、连接计数与近期事件（类别与错误代码，不含日志原文）；设备名与项目名隐去，主目录写作 ~。',
+            label: COPY.exportScope,
+            detail: COPY.exportDetail,
           }}
         />
       }>
       <SettingsRow
-        title="诊断"
+        title={COPY.diagnostics}
         trailing={
           <span className="about-diagnostics">
-            {state === 'saved' && <StatusWord tone="done">已导出</StatusWord>}
-            {state === 'failed' && <StatusWord tone="failed">没有导出</StatusWord>}
+            {state === 'saved' && <StatusWord tone="done">{COPY.exported}</StatusWord>}
+            {state === 'failed' && <StatusWord tone="failed">{COPY.notExported}</StatusWord>}
             <Button
               variant="ghost"
               loading={state === 'busy'}
-              loadingLabel="正在导出"
+              loadingLabel={COPY.exporting}
               onClick={() => {
                 setState('busy')
                 void run()
                   .then(result => setState(result.status === 'saved' ? 'saved' : result.status === 'canceled' ? 'idle' : 'failed'))
                   .catch(() => setState('failed'))
               }}>
-              导出诊断…
+              {COPY.export}
             </Button>
           </span>
         }
@@ -418,9 +530,13 @@ export function AboutSettings({
         <div>
           <h2>
             Latch
-            {dev && <DevMark description={DEV_MODE_TEXT} />}
+            {dev && <DevMark description={DEVICE_PERMISSION_COPY.devMode} />}
           </h2>
-          {snapshot.version && !desktop && <p>版本 {snapshot.version}</p>}
+          {snapshot.version && !desktop && (
+            <p>
+              {COPY.versions} {snapshot.version}
+            </p>
+          )}
           {dev && <Hint lead={<Icon icon={WarningGlyph} size={12} />} label={RUNS_AS_YOU_COPY.devMode.label} />}
         </div>
       </header>
@@ -473,21 +589,16 @@ export function AboutSettings({
       )}
       {access.local && diagnostics && <DiagnosticsRow export={diagnostics.export} />}
       <SettingsGroup
-        note={
-          <NoteLine
-            icon={ShieldGlyph}
-            brief={RUNS_AS_YOU_COPY.about(access.local ? '这台 Mac 上' : ` ${computerName(snapshot.hostName)} 上`)}
-          />
-        }>
+        note={<NoteLine icon={ShieldGlyph} brief={RUNS_AS_YOU_COPY.about(runsOn(access.local === true, snapshot.hostName))} />}>
         <SettingsRow
-          title="许可与条款"
+          title={COPY.licence}
           trailing={
             <Button
               variant="ghost"
               onClick={() => {
                 setLicences(true)
               }}>
-              查看
+              {COPY.view}
             </Button>
           }
         />
@@ -507,7 +618,7 @@ export function AboutSettings({
           ? [
               {
                 key: 'licences',
-                title: '许可与条款',
+                title: COPY.licence,
                 onBack: () => {
                   setLicences(false)
                 },

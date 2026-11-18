@@ -1,6 +1,7 @@
 import { useMemo, useRef } from 'react'
 import type { Message, TaskDetail } from '@latch/protocol'
 import { projectTurns, sameData, type TranscriptProjection } from '../conversation.ts'
+import { useLocale, type Locale } from '../core/i18n.ts'
 
 const EMPTY_PROJECTION = projectTurns([])
 
@@ -8,7 +9,8 @@ const EMPTY_PROJECTION = projectTurns([])
 export function useTranscriptProjection(detail: TaskDetail | null): TranscriptProjection {
   const sessionId = detail?.summary.id
   const messages = detail?.messages
-  const last = useRef<{ sessionId: string; messages: Message[]; projection: TranscriptProjection } | null>(null)
+  const locale = useLocale()
+  const last = useRef<{ sessionId: string; messages: Message[]; locale: Locale; projection: TranscriptProjection } | null>(null)
   return useMemo(() => {
     if (sessionId === undefined || !messages) {
       last.current = null
@@ -16,9 +18,9 @@ export function useTranscriptProjection(detail: TaskDetail | null): TranscriptPr
     }
     const previous = last.current?.sessionId === sessionId ? last.current : undefined
     // Old Hosts can send the whole history with each fragment. Keep the projection if only the live tail changed.
-    if (previous && sameData(previous.messages, messages)) return previous.projection
+    if (previous && previous.locale === locale && sameData(previous.messages, messages)) return previous.projection
     const projection = projectTurns(messages, previous?.projection.turns)
-    last.current = { sessionId, messages, projection }
+    last.current = { sessionId, messages, locale, projection }
     return projection
-  }, [messages, sessionId])
+  }, [locale, messages, sessionId])
 }

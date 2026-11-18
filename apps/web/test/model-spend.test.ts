@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest'
 import type { AppSnapshot, BudgetProgress, ModelUsageRow } from '@latch/protocol'
 import { TurnFooter } from '../src/components/TurnFooter.tsx'
 import { BudgetProgressLine } from '../src/settings/ModelSpend.tsx'
-import { usageRowDetail, usageRowName, usageTotals, mergeSources } from '../src/usage/usage.ts'
+import { setLocale } from '../src/core/i18n.ts'
+import { usageRowDetail, usageRowName, usageTotals, mergeSources, projectName } from '../src/usage/usage.ts'
 import { settingsSections } from '../src/settings/SettingsPage.tsx'
 import {
   budgetProgressText,
@@ -269,4 +270,20 @@ describe('设置', () => {
     expect(settingsSections(snapshot(['view', 'run']))).toEqual(['general', 'devices', 'shortcuts', 'about'])
     expect(settingsSections(snapshot(['view', 'run', 'admin']))).not.toContain('usage')
   })
+})
+
+it('formats English currency and count labels without changing quoted model IDs', () => {
+  setLocale('en')
+  try {
+    expect(costText({ currency: 'CNY', micros: 1_234_500_000 })).toBe('CN¥1,234.50')
+    expect(costText({ currency: 'USD', micros: 2100 })).toBe('$0.0021')
+    expect(usageRowDetail(row())).toContain('1 request did not report usage')
+    const current = snapshot(['view'])
+    expect(projectName(current, 'default')).toBe('Other')
+    current.catalog!.workspaces.push({ id: 'default', name: '默认文件夹', path: '/project' })
+    expect(projectName(current, 'default')).toBe('Default folder')
+    expect(usageRowName(row({ model: '测试/model-v1' }), 'model', snapshot(['view'])).name).toBe('测试/model-v1')
+  } finally {
+    setLocale('zh-CN')
+  }
 })

@@ -3,6 +3,36 @@
 import type { ReviewNoteCounts, TaskSummary, TurnChanges } from '@latch/protocol'
 import type { DiffLine } from '../diff.ts'
 import { numberOn, selectLine, sideOf, type LineSelection } from '../panel/changes/notes.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    reviewCount: (count: number) => `复核 ${formatNumber(count)} 处改动`,
+    review: '复核改动',
+    line: (line: number) => `第 ${formatNumber(line)} 行`,
+    lines: (first: number, last: number) => `第 ${formatNumber(first)}–${formatNumber(last)} 行`,
+    nextTurn: '排到下一轮',
+    afterTurn: '本轮结束后发',
+    send: (count: number) => `发给 Agent (${formatNumber(count)})`,
+    sending: (count: number) => `正在发送 ${formatNumber(count)} 条反馈`,
+    revising: (count: number) => `Agent 在修订 ${formatNumber(count)} 条反馈`,
+    queued: (count: number) => `${formatNumber(count)} 条反馈已排队`,
+    reviewNeeded: (count: number) => `${formatNumber(count)} 条待你复核`,
+  },
+  {
+    reviewCount: (count: number) => `Review ${plural(count, { one: '{n} change', other: '{n} changes' })}`,
+    review: 'Review changes',
+    line: (line: number) => `Line ${formatNumber(line)}`,
+    lines: (first: number, last: number) => `Lines ${formatNumber(first)}–${formatNumber(last)}`,
+    nextTurn: 'Queue for next turn',
+    afterTurn: 'Send after this turn',
+    send: (count: number) => `Send to agent (${formatNumber(count)})`,
+    sending: (count: number) => `Sending ${plural(count, { one: '{n} feedback item', other: '{n} feedback items' })}`,
+    revising: (count: number) => `Agent is addressing ${plural(count, { one: '{n} feedback item', other: '{n} feedback items' })}`,
+    queued: (count: number) => `${plural(count, { one: '{n} feedback item', other: '{n} feedback items' })} queued`,
+    reviewNeeded: (count: number) => `${plural(count, { one: '{n} feedback item needs', other: '{n} feedback items need' })} review`,
+  },
+)
 
 const ACTIVE = new Set(['running', 'waiting-approval'])
 
@@ -56,7 +86,7 @@ export function reviewShortcut(
   const { pending, toReview } = notesWaiting(input.notes)
   // Notes sent and back from the Agent wait until the person marks them reviewed, read or not.
   if (!(input.unread && files > 0) && pending === 0 && toReview === 0) return undefined
-  return files > 0 ? { label: `复核 ${files} 处改动`, files } : { label: '复核改动' }
+  return files > 0 ? { label: COPY.reviewCount(files), files } : { label: COPY.review }
 }
 
 /**
@@ -121,23 +151,23 @@ export function footAction(input: {
       kind: 'note',
       label:
         input.selection.start === input.selection.end
-          ? `第 ${input.selection.start} 行`
-          : `第 ${input.selection.start}–${input.selection.end} 行`,
+          ? COPY.line(input.selection.start)
+          : COPY.lines(input.selection.start, input.selection.end),
     }
   if (input.unknownSend && input.canWrite) return { kind: 'unknown', sending: tally.sending }
   if (tally.ready > 0 && input.canWrite) {
-    const label = running ? (canQueue ? '排到下一轮' : '本轮结束后发') : `发给 Agent (${tally.ready})`
+    const label = running ? (canQueue ? COPY.nextTurn : COPY.afterTurn) : COPY.send(tally.ready)
     return { kind: 'send', label, count: tally.ready, disabled: offline || (running && !canQueue) }
   }
   const status: FootStatus | undefined =
     tally.sending > 0
-      ? { text: `正在发送 ${tally.sending} 条反馈`, running: true }
+      ? { text: COPY.sending(tally.sending), running: true }
       : running && tally.sent > 0
-        ? { text: `Agent 在修订 ${tally.sent} 条反馈`, running: true }
+        ? { text: COPY.revising(tally.sent), running: true }
         : tally.queued > 0
-          ? { text: `${tally.queued} 条反馈已排队`, running: false }
+          ? { text: COPY.queued(tally.queued), running: false }
           : tally.toReview > 0
-            ? { text: `${tally.toReview} 条待你复核`, running: false }
+            ? { text: COPY.reviewNeeded(tally.toReview), running: false }
             : undefined
   if (input.canDeliver) return { kind: 'deliver', ...(status ? { status } : {}) }
   return { kind: 'none', ...(status ? { status } : {}) }

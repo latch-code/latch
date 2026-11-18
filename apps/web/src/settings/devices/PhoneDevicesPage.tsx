@@ -8,6 +8,7 @@ import { api, errorMessage, MessageError } from '../../core/api.ts'
 import type { DeviceAccess } from '../../core/permissions.ts'
 import { computerName, DEVICES_COPY as COPY } from '../../core/securityCopy.ts'
 import { currentShell } from '../../core/shell.ts'
+import { defineCopy } from '../../core/i18n.ts'
 import { IconTile, Loading, moreButton, ObjectRow, SettingsGroup, SettingsRow } from '../common.tsx'
 import { NavigationContext, SettingsPages } from '../navigation.tsx'
 import { AboutConnection, ConnectNew } from './ConnectDevices.tsx'
@@ -17,6 +18,8 @@ import { connectWays, deviceLabel, listedDevices, removeBody, seenText } from '.
 import { PairingSheet } from './PairingSheet.tsx'
 
 const POLL_MS = 5000
+
+const PHONE_COPY = defineCopy({ actions: (name: string) => `${name} 的操作` }, { actions: (name: string) => `Actions for ${name}` })
 
 /** The device list while this page is open. Without 管理此 Host the Host lists none, and a device sees only itself. */
 function useDevices(current: AppSnapshot['device'], admin: boolean) {
@@ -118,7 +121,12 @@ export function PhoneDevicesPage({ snapshot, access, onChanged }: { snapshot: Ap
         trailing={
           !phone && (self || access.admin) ? (
             <span className="device-nav-more">
-              <Menu label={`${label} 的操作`} align="end" sections={[{ id: 'device', items }]} trigger={moreButton(`${label} 的操作`)} />
+              <Menu
+                label={PHONE_COPY.actions(label)}
+                align="end"
+                sections={[{ id: 'device', items }]}
+                trigger={moreButton(PHONE_COPY.actions(label))}
+              />
             </span>
           ) : undefined
         }

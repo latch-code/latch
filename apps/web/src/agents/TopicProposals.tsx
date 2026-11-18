@@ -10,6 +10,16 @@ import { proposalDraft } from './activity.ts'
 import { effectWords, placeProposals } from './proposals.ts'
 import { useProposals } from './useAgentData.ts'
 import { useAgentWrites } from './useAgentWrites.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    notSaved: '没有记下',
+  },
+  {
+    notSaved: 'Couldn’t save',
+  },
+)
 
 /**
  * The memory proposals of an open topic of 我的 Agent, each after the turn it came from: what the Transcript's `placed`
@@ -73,7 +83,7 @@ export function useTopicProposals(
               />
             ) : proposal.id.startsWith('refused:') ? (
               <p key={proposal.id} className="memory-proposal-refused" role="status">
-                <StatusWord tone="failed">没有记下</StatusWord>
+                <StatusWord tone="failed">{COPY.notSaved}</StatusWord>
                 <span>{proposal.content}</span>
               </p>
             ) : (

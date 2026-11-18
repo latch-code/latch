@@ -3,6 +3,24 @@ import { Component, useEffect, useRef, useState, type ComponentType, type ReactN
 import { Button, Checkbox, InlineNotice, Loading, StatusPill, TextAreaField, TextField, type PluginPanelProps } from '@latch/ui'
 import type { TaskSummary, UiPanelInfo } from '@latch/protocol'
 import { api, MessageError } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    reload: '重新加载',
+    crashed: '这个插件的界面无法显示。其他会话仍可使用。',
+    retry: '重试',
+    loadFailed: '无法加载这个插件的界面，请同步后重试。',
+    loading: '正在加载插件界面…',
+  },
+  {
+    reload: 'Reload',
+    crashed: 'This plugin’s view could not be shown. Other sessions are available.',
+    retry: 'Retry',
+    loadFailed: 'Could not load this plugin’s view. Sync and try again.',
+    loading: 'Loading plugin view…',
+  },
+)
 
 const ui = { Button, Checkbox, TextField, TextAreaField, InlineNotice, StatusPill, Loading }
 type Panel = ComponentType<PluginPanelProps<TaskSummary>>
@@ -20,10 +38,10 @@ class PanelBoundary extends Component<{ children: ReactNode; retry: () => void }
         tone="error"
         action={
           <Button size="xs" onClick={this.props.retry}>
-            重新加载
+            {COPY.reload}
           </Button>
         }>
-        这个插件的界面无法显示。其他会话仍可使用。
+        {COPY.crashed}
       </InlineNotice>
     ) : (
       this.props.children
@@ -82,14 +100,14 @@ export function ClientPluginPanel({
         tone="error"
         action={
           <Button size="xs" onClick={reload}>
-            重试
+            {COPY.retry}
           </Button>
         }>
-        无法加载这个插件的界面，请同步后重试。
+        {COPY.loadFailed}
       </InlineNotice>
     )
   const View = current?.component
-  if (!View) return <Loading label="正在加载插件界面…" />
+  if (!View) return <Loading label={COPY.loading} />
   return (
     <PanelBoundary key={retry} retry={reload}>
       <View

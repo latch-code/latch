@@ -8,6 +8,47 @@ import { matchSlash, slashToken } from './slash-match.ts'
 import { slashOptions, type SlashAction, type SlashContext, type SlashOption } from './slash-options.ts'
 import { SlashHistory } from '../core/slashHistory.ts'
 import { latchActionOf } from './latchActions.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    thisHarness: '当前 Harness',
+    run: '运行',
+    choose: '选择',
+    recent: '最近',
+    templates: '提示模板',
+    skills: '技能',
+    previous: '（上次会话）',
+    afterStart: '开始会话后列出',
+    noPrevious: '上次会话没有列出命令',
+    noneReported: (value1: string) => `${value1} 还没报告命令`,
+    unavailable: '这个动作在当前页面不可用',
+    sendAsTyped: (value1: string, value2: string) => `没有「/${value1}」· Enter 原样发给 ${value2}`,
+    commands: '命令与提示模板',
+    createTemplate: '新建提示模板',
+    someSkills: '仅列出部分技能',
+    complete: ' 补全',
+  },
+  {
+    thisHarness: 'This Harness',
+    run: 'Run',
+    choose: 'Choose',
+    recent: 'Recent',
+    templates: 'Prompt templates',
+    skills: 'Skills',
+    previous: ' (previous session)',
+    afterStart: 'Commands appear after the session starts',
+    noPrevious: 'No commands were reported in the previous session',
+    noneReported: (value1: string) => `${value1} has not reported any commands`,
+    unavailable: 'This action is unavailable here',
+    sendAsTyped: (value1: string, value2: string) => `No “/${value1}” · Enter sends it as typed to ${value2}`,
+    commands: 'Commands and prompt templates',
+    createTemplate: 'New prompt template',
+    someSkills: 'Only some skills are listed',
+    complete: ' Complete',
+  },
+)
+
 export { slashMatches, slashOptions, type SlashAction, type SlashOption } from './slash-options.ts'
 
 export function useSlashCommands({
@@ -21,7 +62,7 @@ export function useSlashCommands({
   enabled,
   onDraft,
   onCommand,
-  harnessName = '当前 Harness',
+  harnessName = COPY.thisHarness,
   harnessMedia,
   running = false,
   firstTurn = false,
@@ -141,7 +182,7 @@ export function useSlashCommands({
     previousSession,
     awaitingSession,
     skillsTruncated,
-    enterLabel: options[active]?.kind === 'command' && !options[active]?.inputHint && !running && !previousSession ? '运行' : '选择',
+    enterLabel: options[active]?.kind === 'command' && !options[active]?.inputHint && !running && !previousSession ? COPY.run : COPY.choose,
     reportedCommands: commands.length,
     setActive: (index: number) => {
       const option = options[index]
@@ -173,17 +214,13 @@ export function SlashCommands({
   onCreateTemplate?: () => void
 }) {
   const labels = {
-    recent: '最近',
+    recent: COPY.recent,
     action: 'Latch',
-    template: '提示模板',
-    skill: '技能' + (menu.previousSession ? '（上次会话）' : ''),
-    command: menu.harnessName + (menu.previousSession ? '（上次会话）' : ''),
+    template: COPY.templates,
+    skill: COPY.skills + (menu.previousSession ? COPY.previous : ''),
+    command: menu.harnessName + (menu.previousSession ? COPY.previous : ''),
   }
-  const noCommands = menu.awaitingSession
-    ? '开始会话后列出'
-    : menu.previousSession
-      ? '上次会话没有列出命令'
-      : `${menu.harnessName} 还没报告命令`
+  const noCommands = menu.awaitingSession ? COPY.afterStart : menu.previousSession ? COPY.noPrevious : COPY.noneReported(menu.harnessName)
   const media = {
     recent: undefined,
     action: <BrandMark size={16} />,
@@ -198,13 +235,13 @@ export function SlashCommands({
       )
   const empty = menu.query
     ? latchActionOf('/' + menu.query)
-      ? '这个动作在当前页面不可用'
-      : `没有「/${escapeSecurityText(menu.query)}」· Enter 原样发给 ${menu.harnessName}`
+      ? COPY.unavailable
+      : COPY.sendAsTyped(escapeSecurityText(menu.query), menu.harnessName)
     : noCommands
   return (
     <Suggest
       id={menu.id}
-      label="命令与提示模板"
+      label={COPY.commands}
       open={menu.open}
       anchorRef={anchorRef}
       activeId={menu.active >= 0 ? menu.id + '-' + menu.active : undefined}
@@ -225,7 +262,7 @@ export function SlashCommands({
                     <span>{noCommands}</span>
                     {onCreateTemplate && (
                       <Button size="xs" variant="ghost" onClick={onCreateTemplate}>
-                        新建提示模板
+                        {COPY.createTemplate}
                       </Button>
                     )}
                   </>
@@ -259,7 +296,12 @@ export function SlashCommands({
               {
                 id: 'skill-limit',
                 items: [],
-                empty: <span role="status">{menu.query && !menu.options.length ? `${empty}。` : ''}仅列出部分技能</span>,
+                empty: (
+                  <span role="status">
+                    {menu.query && !menu.options.length ? `${empty}。` : ''}
+                    {COPY.someSkills}
+                  </span>
+                ),
               },
             ]
           : []),
@@ -271,7 +313,8 @@ export function SlashCommands({
             <Kbd>↑↓</Kbd>
           </span>
           <span>
-            <Kbd>Tab</Kbd> 补全
+            <Kbd>Tab</Kbd>
+            {COPY.complete}
           </span>
           <span>
             <Kbd>⏎</Kbd> {menu.enterLabel}

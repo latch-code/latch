@@ -2,6 +2,70 @@
 // The macOS menu bar: the app menu with 「检查更新…」, then Edit, View (with Code, 我的 Agent and 用默认外观打开) and Window.
 
 const { isAppUrl } = require('./proxy.cjs')
+const { defineCopy } = require('./locale.cjs')
+
+const COPY = defineCopy(
+  {
+    about: '关于 Latch',
+    updates: '检查更新…',
+    services: '服务',
+    hide: '隐藏 Latch',
+    hideOthers: '隐藏其他',
+    unhide: '全部显示',
+    quit: '退出 Latch',
+    edit: '编辑',
+    undo: '撤销',
+    redo: '重做',
+    cut: '剪切',
+    copy: '拷贝',
+    paste: '粘贴',
+    selectAll: '全选',
+    view: '显示',
+    agents: '我的 Agent',
+    defaultAppearance: '用默认外观打开',
+    reload: '重新载入',
+    developerTools: '开发者工具',
+    actualSize: '实际大小',
+    zoomIn: '放大',
+    zoomOut: '缩小',
+    fullScreen: '进入全屏幕',
+    window: '窗口',
+    minimize: '最小化',
+    zoom: '缩放',
+    closeWindow: '关闭窗口',
+    front: '前置全部窗口',
+  },
+  {
+    about: 'About Latch',
+    updates: 'Check for Updates…',
+    services: 'Services',
+    hide: 'Hide Latch',
+    hideOthers: 'Hide Others',
+    unhide: 'Show All',
+    quit: 'Quit Latch',
+    edit: 'Edit',
+    undo: 'Undo',
+    redo: 'Redo',
+    cut: 'Cut',
+    copy: 'Copy',
+    paste: 'Paste',
+    selectAll: 'Select All',
+    view: 'View',
+    agents: 'My Agents',
+    defaultAppearance: 'Open with Default Appearance',
+    reload: 'Reload',
+    developerTools: 'Developer Tools',
+    actualSize: 'Actual Size',
+    zoomIn: 'Zoom In',
+    zoomOut: 'Zoom Out',
+    fullScreen: 'Toggle Full Screen',
+    window: 'Window',
+    minimize: 'Minimize',
+    zoom: 'Zoom',
+    closeWindow: 'Close Window',
+    front: 'Bring All to Front',
+  },
+)
 
 /**
  * The menu bar template for `Menu.buildFromTemplate`. The developer tools item exists only in a development run, as
@@ -25,32 +89,32 @@ function menuTemplate({
     {
       label: 'Latch',
       submenu: [
-        { role: 'about', label: '关于 Latch' },
-        { label: '检查更新…', id: 'check-for-updates', click: () => onCheckForUpdates() },
+        { role: 'about', label: COPY.about },
+        { label: COPY.updates, id: 'check-for-updates', click: () => onCheckForUpdates() },
         { type: 'separator' },
-        { role: 'services', label: '服务' },
+        { role: 'services', label: COPY.services },
         { type: 'separator' },
-        { role: 'hide', label: '隐藏 Latch' },
-        { role: 'hideOthers', label: '隐藏其他' },
-        { role: 'unhide', label: '全部显示' },
+        { role: 'hide', label: COPY.hide },
+        { role: 'hideOthers', label: COPY.hideOthers },
+        { role: 'unhide', label: COPY.unhide },
         { type: 'separator' },
-        { role: 'quit', label: '退出 Latch' },
+        { role: 'quit', label: COPY.quit },
       ],
     },
     {
-      label: '编辑',
+      label: COPY.edit,
       submenu: [
-        { role: 'undo', label: '撤销' },
-        { role: 'redo', label: '重做' },
+        { role: 'undo', label: COPY.undo },
+        { role: 'redo', label: COPY.redo },
         { type: 'separator' },
-        { role: 'cut', label: '剪切' },
-        { role: 'copy', label: '拷贝' },
-        { role: 'paste', label: '粘贴' },
-        { role: 'selectAll', label: '全选' },
+        { role: 'cut', label: COPY.cut },
+        { role: 'copy', label: COPY.copy },
+        { role: 'paste', label: COPY.paste },
+        { role: 'selectAll', label: COPY.selectAll },
       ],
     },
     {
-      label: '显示',
+      label: COPY.view,
       submenu: [
         {
           label: 'Code',
@@ -60,33 +124,33 @@ function menuTemplate({
           click: () => onSpace('code'),
         },
         {
-          label: '我的 Agent',
+          label: COPY.agents,
           id: 'space-agents',
           ...(accelerators.agents ? { accelerator: accelerators.agents } : {}),
           enabled: false,
           click: () => onSpace('agents'),
         },
         { type: 'separator' },
-        { label: '用默认外观打开', id: 'safe-mode', click: () => onSafeMode() },
-        { role: 'reload', label: '重新载入' },
-        ...(packaged ? [] : [/** @type {const} */ ({ role: 'toggleDevTools', label: '开发者工具' })]),
+        { label: COPY.defaultAppearance, id: 'safe-mode', click: () => onSafeMode() },
+        { role: 'reload', label: COPY.reload },
+        ...(packaged ? [] : [/** @type {const} */ ({ role: 'toggleDevTools', label: COPY.developerTools })]),
         { type: 'separator' },
-        { role: 'resetZoom', label: '实际大小' },
-        { role: 'zoomIn', label: '放大' },
-        { role: 'zoomOut', label: '缩小' },
+        { role: 'resetZoom', label: COPY.actualSize },
+        { role: 'zoomIn', label: COPY.zoomIn },
+        { role: 'zoomOut', label: COPY.zoomOut },
         { type: 'separator' },
-        { role: 'togglefullscreen', label: '进入全屏幕' },
+        { role: 'togglefullscreen', label: COPY.fullScreen },
       ],
     },
     {
-      label: '窗口',
+      label: COPY.window,
       role: 'windowMenu',
       submenu: [
-        { role: 'minimize', label: '最小化' },
-        { role: 'zoom', label: '缩放' },
-        { role: 'close', label: '关闭窗口' },
+        { role: 'minimize', label: COPY.minimize },
+        { role: 'zoom', label: COPY.zoom },
+        { role: 'close', label: COPY.closeWindow },
         { type: 'separator' },
-        { role: 'front', label: '前置全部窗口' },
+        { role: 'front', label: COPY.front },
       ],
     },
   ]
@@ -206,10 +270,10 @@ function spaceMenu({ focused, item, rebuild = () => {} }) {
   /** @type {WeakMap<object, SpaceAccelerators>} */
   const keysOf = new WeakMap()
   let shown = DEFAULT_SPACE_ACCELERATORS
-  const sync = () => {
+  const sync = (rebuildLabels = false) => {
     const contents = focused()
     const wanted = (contents && keysOf.get(contents)) ?? DEFAULT_SPACE_ACCELERATORS
-    if (wanted.code !== shown.code || wanted.agents !== shown.agents) {
+    if (rebuildLabels || wanted.code !== shown.code || wanted.agents !== shown.agents) {
       shown = wanted
       rebuild(wanted)
     }

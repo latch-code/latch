@@ -36,6 +36,40 @@ import { ArgumentList } from '../components/ArgumentList.tsx'
 import { DiffView, PREVIOUS_NOTES } from '../components/DiffView.tsx'
 import { escapeHiddenCharacters, hasHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { cardTakesKeys, useArmed } from './useArmed.ts'
+import { defineCopy, plural, useLocale } from '../core/i18n.ts'
+
+const DEFAULT_APPROVAL_REASON = '该工具可能修改项目文件或产生外部副作用，需要你确认本次操作。'
+
+const COPY = defineCopy(
+  {
+    remaining: (count: number) => plural(count, { other: '还有 {n} 行' }),
+    writeFile: (value1: string) => `写入文件 ${value1}`,
+    runCommand: '想运行一条命令',
+    editFile: (value1: string) => `想改 ${value1}`,
+    perform: (value1: string) => `想执行：${value1}`,
+    needsReview: DEFAULT_APPROVAL_REASON,
+    pending: '待批准操作',
+    through: '经 ',
+    subagent: '子 Agent · ',
+    previous: '上一个',
+    next: '下一个',
+    proposed: '拟议改动',
+  },
+  {
+    remaining: (count: number) => plural(count, { one: '{n} more line', other: '{n} more lines' }),
+    writeFile: (value1: string) => `Write file ${value1}`,
+    runCommand: 'Wants to run a command',
+    editFile: (value1: string) => `Wants to change ${value1}`,
+    perform: (value1: string) => `Wants to run ${value1}`,
+    needsReview: 'This tool may change project files or have external side effects. Review the action before allowing it.',
+    pending: 'Pending approval',
+    through: 'Via ',
+    subagent: 'Sub-agent · ',
+    previous: 'Previous',
+    next: 'Next',
+    proposed: 'Proposed changes',
+  },
+)
 
 /**
  * A press on one of the card's choices. `retry`: the same choice sent again after an unknown outcome, with the note a
@@ -90,7 +124,7 @@ function ApprovalCommand({ text, hint }: { text: string; hint: string | undefine
           <VisibleText text={text} />
         </span>
       </Tooltip>
-      {below > 0 && <span className="approval-more-lines">还有 {below} 行</span>}
+      {below > 0 && <span className="approval-more-lines">{COPY.remaining(below)}</span>}
     </span>
   )
 }
@@ -99,16 +133,21 @@ const isAllow = (option: ApprovalOption) => option.kind.startsWith('allow')
 
 /**
  * The words on an option: an agent's question shows the product's words for its kind, never the agent's own (which
- * may be in another language); every other request comes from the Host in the product's words already.
+ * may be in another language); built-in choices also use the product’s words even when the Host persisted its source-language label.
  */
-function optionLabel(option: ApprovalOption, gate: ApprovalGate): string {
+function optionLabel(option: ApprovalOption, gate: ApprovalGate, builtin: boolean): string {
   if (option.kind === 'allow_once') return APPROVAL_COPY.allow
   if (option.kind === 'allow_always') return APPROVAL_COPY.allowSession
+  if (builtin && option.kind === 'reject_once' && option.id === 'reject_once' && option.label === '拒绝')
+    return APPROVAL_OPTION_LABELS.reject_once
   return gate.kind === 'advisory' && Object.hasOwn(APPROVAL_OPTION_LABELS, option.kind) ? APPROVAL_OPTION_LABELS[option.kind] : option.label
 }
 
 /** The words on a plan's two answers; the harness's own words for them are in the button's tooltip. */
-export const PLAN_COPY = { go: '按计划执行', keepPlanning: '继续规划', heading: '计划' } as const
+export const PLAN_COPY = defineCopy(
+  { go: '按计划执行', keepPlanning: '继续规划', heading: '计划' },
+  { go: 'Execute plan', keepPlanning: 'Keep planning', heading: 'Plan' },
+)
 
 /**
  * A plan the harness asks to go on with, read in full: its Markdown as text, with no links, pictures or markup of its
@@ -228,12 +267,12 @@ export function approvalKeyCaps(input: {
   inCard: boolean
   /** Focus is where an Esc refuses. */
   escapeRefuses: boolean
-  rejectLabel?: string | undefined
+  rejectWithNote?: boolean | undefined
 }): { allow?: string[]; reject?: string[] } {
   if (input.phone) return {}
   return {
     ...(input.shortcut && input.inCard ? { allow: ['mod', 'enter'] } : {}),
-    ...(input.escapes && input.escapeRefuses && input.rejectLabel !== APPROVAL_COPY.rejectAndSend ? { reject: ['esc'] } : {}),
+    ...(input.escapes && input.escapeRefuses && !input.rejectWithNote ? { reject: ['esc'] } : {}),
   }
 }
 
@@ -279,6 +318,7 @@ export interface ApprovalDrawerProps {
   context?: ReactNode
   /** A personal Agent's name; its actual tool title and parameters stay visible. */
   requester?: string
+  builtin?: boolean
   approvals: readonly Approval[]
   /** The tool rows of the transcript, for the words of what a request does. */
   messages: readonly Message[]
@@ -290,8 +330,8 @@ export interface ApprovalDrawerProps {
   statuses: ReadonlyMap<string, ApprovalStatus>
   onDecide: DecideHandler
   canRetry?: ((choice: UncertainChoice) => boolean) | undefined
-  /** The word on 拒绝: it changes when typing would send what to do instead. */
-  rejectLabel?: string | undefined
+  /** When the composer supports a rejection note, whether rejecting will send it. */
+  rejectWithNote?: boolean | undefined
   onStop?: (() => void) | undefined
 }
 
@@ -316,14 +356,16 @@ export function ApprovalDrawer({
   statuses,
   onDecide,
   canRetry,
-  rejectLabel,
+  rejectWithNote,
   onStop,
   presentation,
   emphasis = true,
   numberKeys = false,
   context,
   requester,
+  builtin = false,
 }: ApprovalDrawerProps) {
+  useLocale()
   const approval = approvals[Math.min(index, approvals.length - 1)]
   if (!approval) return null
   const message = messages.find(item => item.id === `tool:${approval.toolCallId}`) ?? null
@@ -340,13 +382,14 @@ export function ApprovalDrawer({
       status={statuses.get(approval.id)}
       onDecide={onDecide}
       canRetry={canRetry}
-      rejectLabel={rejectLabel}
+      rejectWithNote={rejectWithNote}
       onStop={onStop}
       presentation={presentation}
       emphasis={emphasis}
       numberKeys={numberKeys}
       context={context}
       requester={requester}
+      builtin={builtin}
     />
   )
 }
@@ -362,19 +405,21 @@ function ApprovalPanel({
   status,
   onDecide,
   canRetry,
-  rejectLabel,
+  rejectWithNote,
   onStop,
   presentation,
   emphasis,
   numberKeys,
   context,
   requester,
+  builtin,
 }: {
   presentation?: 'workbench' | 'conversation'
   emphasis: boolean
   numberKeys: boolean
   context?: ReactNode
   requester?: string | undefined
+  builtin: boolean
   approval: Approval
   message: Message | null
   position: number
@@ -385,7 +430,7 @@ function ApprovalPanel({
   status: ApprovalStatus | undefined
   onDecide: DecideHandler
   canRetry?: ((choice: UncertainChoice) => boolean) | undefined
-  rejectLabel?: string | undefined
+  rejectWithNote?: boolean | undefined
   onStop?: (() => void) | undefined
 }) {
   const phone = useViewport() === 'phone'
@@ -394,8 +439,12 @@ function ApprovalPanel({
   const places = useKeyPlaces(card, armed)
   const tool = message?.tool ?? approval.tool
   const toolName = message?.toolName ?? approval.toolName
-  // The tool's own title and ID both remain available to the approver.
-  const action = toolHeading(tool, toolName)
+  const headingPath = toolHeadingPath(tool)
+  // External titles and paths are the reported evidence. Only the built-in write verb has product copy.
+  const action =
+    builtin && toolName === 'write_file' && tool?.kind === 'edit' && tool.toolTitle === '写入文件' && headingPath !== undefined
+      ? COPY.writeFile(headingPath)
+      : toolHeading(tool, toolName)
   // Show the command carried by the approval in full, with its shell below and the Agent's description on hover.
   const plan = approval.plan
   const command =
@@ -404,28 +453,22 @@ function ApprovalPanel({
   const diffs = tool?.diffs ?? approval.tool?.diffs ?? []
   const path = diffs.length === 1 ? diffs[0]?.path : tool?.locations?.[0]
   const file = path?.split(/[\\/]/u).at(-1)
-  const headingPath = toolHeadingPath(tool)
+  // Legacy write titles are supplied by the Driver in the source language.
+  const legacyWriteTitle = toolName === 'write_file' && (tool?.title === `写入 ${path}` || tool?.title === `写入文件 ${path}`)
   const fileInHeading =
     diffs.length === 1
     && !!path
     && what === action
-    && (headingPath === path
-      || (!tool?.toolTitle
-        && (tool?.title === path || (toolName === 'write_file' && (tool?.title === `写入 ${path}` || tool?.title === `写入文件 ${path}`)))))
+    && (headingPath === path || (!tool?.toolTitle && (tool?.title === path || legacyWriteTitle)))
   const heading = plan
-    ? approval.reason.startsWith(`${PLAN_COPY.heading}：`)
+    ? approval.reason.startsWith('计划：')
       ? approval.reason
       : PLAN_COPY.heading
     : requester && !command
-      ? `${requester} ${tool?.kind === 'execute' ? '想运行一条命令' : tool?.kind === 'edit' && file ? `想改 ${file}` : `想执行：${action}`}`
+      ? `${requester} ${tool?.kind === 'execute' ? COPY.runCommand : tool?.kind === 'edit' && file ? COPY.editFile(file) : COPY.perform(action)}`
       : what
   const hidden = approvalHidesText(approval, action, diffs) || hasHiddenCharacters(command?.reported)
-  const quietReason =
-    presentation
-    && approval.risk === 'R1'
-    && !approval.advisory
-    && !hidden
-    && approval.reason === '该工具可能修改项目文件或产生外部副作用，需要你确认本次操作。'
+  const quietReason = presentation && approval.risk === 'R1' && !approval.advisory && !hidden && approval.reason === DEFAULT_APPROVAL_REASON
   // Against a previous file nobody could read, a count of removed lines would be made up.
   const stat = diffs.some(diff => ['unavailable', 'unknown'].includes(previousState(diff))) ? undefined : diffStat(tool)
   const running = busy !== undefined
@@ -435,7 +478,8 @@ function ApprovalPanel({
   const commandOnly = command && command.reported === command.command && args.kind === 'entries' && args.entries.length === 1
   const risky = gate.kind === 'R2'
   // A high-risk request's sentence is the Host's own; it stands beside the red reason, word for word.
-  const otherReason = approval.reason && approval.reason !== action ? approval.reason : undefined
+  const reason = approval.reason === DEFAULT_APPROVAL_REASON ? COPY.needsReview : approval.reason
+  const otherReason = reason && reason !== action ? reason : undefined
   const riskSentence = risky ? otherReason : undefined
   const previewReason = !quietReason && !risky ? otherReason : undefined
   const hasDetail = commandOnly ? previewReason !== undefined : args.kind !== 'empty' || otherReason !== undefined
@@ -486,7 +530,7 @@ function ApprovalPanel({
   useEscapeRefuses(escapes, card, () => {
     if (reject) choose(reject)
   })
-  const caps = approvalKeyCaps({ phone, shortcut: shortcut && armed && !running, escapes, ...places, rejectLabel })
+  const caps = approvalKeyCaps({ phone, shortcut: shortcut && armed && !running, escapes, ...places, rejectWithNote })
   const keys = (event: KeyboardEvent<HTMLElement>) => {
     if (running || !armed || event.defaultPrevented) return
     if (!cardTakesKeys(card.current, event.target)) return
@@ -520,7 +564,7 @@ function ApprovalPanel({
     ...(offerMore
       ? more.map(option => ({
           id: option.id,
-          label: optionLabel(option, gate),
+          label: optionLabel(option, gate, builtin),
           ...(running ? { disabledReason: APPROVAL_COPY.moreBusy } : {}),
           onSelect: () => {
             choose(option)
@@ -554,7 +598,7 @@ function ApprovalPanel({
     && toolName === 'write_file'
     && diffs.length === 0
     && singleWriteTarget
-    && action === `写入文件 ${headingPath}`
+    && action === COPY.writeFile(headingPath)
   // A phone can read the known file tool in 更多 when the complete action is visible and the menu is available.
   const toolInMenu =
     presentation === 'workbench'
@@ -565,7 +609,7 @@ function ApprovalPanel({
     && toolId === 'write_file'
     && tool?.kind === 'edit'
     && singleWriteTarget
-    && action === `写入文件 ${headingPath}`
+    && action === COPY.writeFile(headingPath)
     && menuItems.length > 0
   // The glyph says what kind of decision this is; any other tool's request takes the mark of waiting.
   const kindIcon = plan
@@ -585,6 +629,7 @@ function ApprovalPanel({
     menuItems.length > 0 ? (
       <Menu
         label={APPROVAL_COPY.moreChoices}
+        className="approval-options"
         align="end"
         side="top"
         {...(toolInMenu ? { header: { title: toolId } } : {})}
@@ -623,7 +668,7 @@ function ApprovalPanel({
       data-approval-id={approval.id}
       data-risk={approval.advisory ? 'advisory' : approval.risk}
       data-arming={armed ? undefined : ''}
-      label="待批准操作"
+      label={COPY.pending}
       ref={card}
       onKeyDown={keys}>
       <div className="approval-row">
@@ -659,7 +704,12 @@ function ApprovalPanel({
                 <VisibleText text={command ? requester : what} />
               </span>
             )}
-            {command?.shell && <span className="approval-shell">经 {command.shell}</span>}
+            {command?.shell && (
+              <span className="approval-shell">
+                {COPY.through}
+                {command.shell}
+              </span>
+            )}
             {context}
             {!presentation && toolName && toolName !== action && (
               <code className="tool-card-name">
@@ -668,7 +718,8 @@ function ApprovalPanel({
             )}
             {approval.subagent && (
               <span className="approval-subagent">
-                子 Agent · <VisibleText text={approval.subagent} />
+                {COPY.subagent}
+                <VisibleText text={approval.subagent} />
               </span>
             )}
             {hasPreview && !open && !uncertain && (
@@ -688,7 +739,7 @@ function ApprovalPanel({
                 <IconButton
                   size="xs"
                   icon={ChevronLeftGlyph}
-                  label="上一个"
+                  label={COPY.previous}
                   disabled={position === 0}
                   onClick={() => {
                     onIndex(position - 1)
@@ -698,7 +749,7 @@ function ApprovalPanel({
                 <IconButton
                   size="xs"
                   icon={ChevronRightGlyph}
-                  label="下一个"
+                  label={COPY.next}
                   disabled={position === total - 1}
                   onClick={() => {
                     onIndex(position + 1)
@@ -715,14 +766,20 @@ function ApprovalPanel({
               && button(
                 reject,
                 'outline',
-                plan ? PLAN_COPY.keepPlanning : (rejectLabel ?? optionLabel(reject, gate)),
+                plan
+                  ? PLAN_COPY.keepPlanning
+                  : rejectWithNote === undefined
+                    ? optionLabel(reject, gate, builtin)
+                    : rejectWithNote
+                      ? APPROVAL_COPY.rejectAndSend
+                      : APPROVAL_COPY.reject,
                 numbered ? (!phone && places.numeric ? ['1'] : undefined) : caps.reject,
               )}
             {allow
               && button(
                 allow,
                 primary ? 'primary' : 'outline',
-                plan ? PLAN_COPY.go : optionLabel(allow, gate),
+                plan ? PLAN_COPY.go : optionLabel(allow, gate, builtin),
                 numbered ? (!phone && places.numeric ? ['2'] : undefined) : caps.allow,
               )}
           </div>
@@ -776,7 +833,7 @@ function ApprovalPanel({
                     <VisibleText text={path} />
                   </code>
                 )}
-                <span>拟议改动</span>
+                <span>{COPY.proposed}</span>
               </div>
             )}
             {plan ? (
@@ -810,7 +867,9 @@ function ApprovalPanel({
         <InlineNotice
           tone="warn"
           className="approval-uncertain"
-          title={uncertainOption ? APPROVAL_COPY.uncertainTitle(optionLabel(uncertainOption, gate)) : APPROVAL_COPY.uncertainApproval}
+          title={
+            uncertainOption ? APPROVAL_COPY.uncertainTitle(optionLabel(uncertainOption, gate, builtin)) : APPROVAL_COPY.uncertainApproval
+          }
           action={
             retry && (
               <Button

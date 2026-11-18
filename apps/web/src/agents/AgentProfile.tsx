@@ -16,6 +16,7 @@ import {
   EditGlyph,
   PlusGlyph,
 } from '@latch/ui'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { AgentHome } from './AgentHome.tsx'
@@ -27,7 +28,7 @@ import { type ProfileSection } from './chat.ts'
 import { ActivityTab, LibraryTab } from './Activity.tsx'
 import { activityVersion, type SchedulePrefill } from './activity.ts'
 import { MemoryTab } from './Memory.tsx'
-import { agentActivity, dutyLine, GENERAL_NAME, scheduleWords, worksIn } from './model.ts'
+import { agentActivity, dutyLine, scheduleWords, worksIn } from './model.ts'
 import { Availability, LockedAgents } from './parts.tsx'
 import { SchedulesTab } from './Schedules.tsx'
 import { scheduleBlock, whenWords } from './scheduleModel.ts'
@@ -36,9 +37,72 @@ import { ComputerSection, NotificationSection } from './Computer.tsx'
 import { McpSection } from './McpSection.tsx'
 import { builtinHarness } from '../composerChoice.ts'
 import { effectWords } from './proposals.ts'
+import { AGENT_SPACE_COPY } from './spaceCopy.ts'
 import { useAgentWrites, writeFor, type AgentWrites } from './useAgentWrites.ts'
 
 const NO_PLUGINS: CustomAgentList['plugins'] = []
+const COPY = defineCopy(
+  {
+    noSchedules: '没有定时任务',
+    schedules: '定时任务',
+    next: (time: string) => `下次 ${time}`,
+    enabled: (name: string) => `${name} 开启`,
+    edit: '编辑',
+    newSchedule: '新建定时',
+    profile: '资料',
+    close: '关闭资料',
+    missing: '找不到这个 Agent',
+    missingDetail: '它可能已在别处删除。',
+    readFailed: '读取失败',
+    retry: '重试',
+    confirmingDetail: '结果确认前不能读取或修改 Agent，Mac 会自己重试。',
+    builtin: '内置',
+    profileTabs: '动态、资料库与记忆',
+    activity: '动态',
+    library: '资料库',
+    memory: '记忆',
+    loading: '正在读取',
+    upcoming: '即将进行',
+    place: '工作位置',
+    skills: '技能',
+    allSkills: '全部已启用',
+    skillCount: (count: number) => `${formatNumber(count)} 个`,
+    tools: '工具',
+    allTools: '不限',
+    pluginCount: (count: number) => `${formatNumber(count)} 个插件`,
+    settings: '设置',
+  },
+  {
+    noSchedules: 'No scheduled tasks',
+    schedules: 'Scheduled tasks',
+    next: (time: string) => `Next ${time}`,
+    enabled: (name: string) => `Enable ${name}`,
+    edit: 'Edit',
+    newSchedule: 'New schedule',
+    profile: 'Profile',
+    close: 'Close profile',
+    missing: 'Agent not found',
+    missingDetail: 'It may have been deleted elsewhere.',
+    readFailed: 'Couldn’t load the Agent',
+    retry: 'Retry',
+    confirmingDetail: 'You can read or edit the Agent once your Mac confirms the result. Your Mac will retry automatically.',
+    builtin: 'Built-in',
+    profileTabs: 'Activity, library, and memory',
+    activity: 'Activity',
+    library: 'Library',
+    memory: 'Memory',
+    loading: 'Loading',
+    upcoming: 'Upcoming',
+    place: 'Workspace',
+    skills: 'Skills',
+    allSkills: 'All enabled',
+    skillCount: (count: number) => formatNumber(count),
+    tools: 'Tools',
+    allTools: 'Unrestricted',
+    pluginCount: (count: number) => plural(count, { one: '{n} plugin', other: '{n} plugins' }),
+    settings: 'Settings',
+  },
+)
 
 type View = 'main' | 'settings' | 'schedules'
 type Segment = 'activity' | 'library' | 'memory'
@@ -57,14 +121,14 @@ function Upcoming({
   canRun: boolean
   onEdit: () => void
 }) {
-  if (!automations) return <Loading label="正在确认上一项修改" />
+  if (!automations) return <Loading label={AGENT_SPACE_COPY.confirming} />
   const locked = writes.saving || writes.held
   return (
     <>
       {automations.length === 0 ? (
-        <p className="agent-profile-quiet">没有定时任务</p>
+        <p className="agent-profile-quiet">{COPY.noSchedules}</p>
       ) : (
-        <ul className="agent-upcoming" aria-label="定时任务">
+        <ul className="agent-upcoming" aria-label={COPY.schedules}>
           {automations.map(automation => {
             const state = writeFor(writes.state, `automation:${automation.id}`)
             return (
@@ -74,11 +138,11 @@ function Upcoming({
                     <span className="agent-recent-title">{automation.name}</span>
                     <span className="agent-schedule-meta">
                       {scheduleWords(automation.schedule)}
-                      {automation.nextRunAt && automation.enabled ? ` · 下次 ${whenWords(automation.nextRunAt)}` : ''}
+                      {automation.nextRunAt && automation.enabled ? ` · ${COPY.next(whenWords(automation.nextRunAt))}` : ''}
                     </span>
                   </span>
                   <Switch
-                    label={`${automation.name} 开启`}
+                    label={COPY.enabled(automation.name)}
                     checked={automation.enabled}
                     disabled={!canRun || locked || (!automation.enabled && block !== undefined)}
                     {...(!automation.enabled && block ? { title: block } : {})}
@@ -98,7 +162,7 @@ function Upcoming({
       )}
       {canRun && (
         <Button variant="ghost" size="sm" icon={automations.length ? EditGlyph : PlusGlyph} className="agent-profile-more" onClick={onEdit}>
-          {automations.length ? '编辑' : '新建定时'}
+          {automations.length ? COPY.edit : COPY.newSchedule}
         </Button>
       )}
     </>
@@ -175,8 +239,8 @@ export function AgentProfile({
     : value?.kind === 'custom'
       ? value.detail.agent
       : snapshot.customAgents?.find(agent => agent.id === owner)
-  const name = general ? GENERAL_NAME : (summary?.name ?? '')
-  const duty = general ? '没选别的 Agent 的会话都带上它' : dutyLine(value?.kind === 'custom' ? value.detail.agent : (summary ?? {}))
+  const name = general ? AGENT_SPACE_COPY.general : (summary?.name ?? '')
+  const duty = general ? AGENT_SPACE_COPY.generalDuty : dutyLine(value?.kind === 'custom' ? value.detail.agent : (summary ?? {}))
   const activity = summary ? agentActivity(snapshot, summary) : 'idle'
   const held = offline || writes.held
   const schedulesOn = catalog?.features?.automations === true
@@ -202,7 +266,7 @@ export function AgentProfile({
   return (
     <section
       className="agent-profile"
-      aria-label={`${name} 的资料`}
+      aria-label={AGENT_SPACE_COPY.profileOf(name)}
       data-phone={phone ? '' : undefined}
       onKeyDown={event => {
         // Escape closes the panel, unless a menu, picker or dialog inside it takes it first.
@@ -213,22 +277,22 @@ export function AgentProfile({
       }}>
       {!phone && (
         <header className="agent-profile-head">
-          {view === 'main' ? <h2>资料</h2> : back}
-          <IconButton label="关闭资料" icon={CloseGlyph} size="sm" onClick={onClose} />
+          {view === 'main' ? <h2>{COPY.profile}</h2> : back}
+          <IconButton label={COPY.close} icon={CloseGlyph} size="sm" onClick={onClose} />
         </header>
       )}
       {phone && view !== 'main' && <div className="agent-profile-subhead">{back}</div>}
       <div ref={body} className="agent-profile-body">
         {locked && <LockedAgents />}
-        {!locked && detail.read.state === 'missing' && <EmptyState title="找不到这个 Agent" description="它可能已在别处删除。" />}
+        {!locked && detail.read.state === 'missing' && <EmptyState title={COPY.missing} description={COPY.missingDetail} />}
         {!locked && detail.read.state === 'failed' && !value && (
-          <InlineNotice tone="error" title="读取失败" action={<Button onClick={settle}>重试</Button>}>
+          <InlineNotice tone="error" title={COPY.readFailed} action={<Button onClick={settle}>{COPY.retry}</Button>}>
             {detail.read.message}
           </InlineNotice>
         )}
         {!locked && detail.read.state === 'confirming' && (
-          <InlineNotice tone="warn" title="正在确认上一项修改">
-            结果确认前不能读取或修改 Agent，Mac 会自己重试。
+          <InlineNotice tone="warn" title={AGENT_SPACE_COPY.confirming}>
+            {COPY.confirmingDetail}
           </InlineNotice>
         )}
         {!locked && view === 'main' && detail.read.state !== 'missing' && (
@@ -242,7 +306,7 @@ export function AgentProfile({
               <div className="agent-head-text">
                 <h3>
                   {name}
-                  {general && <span className="agent-builtin">内置</span>}
+                  {general && <span className="agent-builtin">{COPY.builtin}</span>}
                 </h3>
                 {duty && <p>{duty}</p>}
                 {summary && (!summary.available || offline) && (
@@ -252,12 +316,12 @@ export function AgentProfile({
             </div>
             <div className="agent-profile-section">
               <SegmentedControl<Segment>
-                label="动态、资料库与记忆"
+                label={COPY.profileTabs}
                 value={segment}
                 options={[
-                  { value: 'activity', label: '动态' },
-                  { value: 'library', label: '资料库' },
-                  { value: 'memory', label: '记忆' },
+                  { value: 'activity', label: COPY.activity },
+                  { value: 'library', label: COPY.library },
+                  { value: 'memory', label: COPY.memory },
                 ]}
                 onValueChange={setSegment}
               />
@@ -305,12 +369,12 @@ export function AgentProfile({
                     knowsYou={summary && !general ? { agent: summary, canRun } : undefined}
                   />
                 ) : (
-                  <Loading label="正在读取" />
+                  <Loading label={COPY.loading} />
                 ))}
             </div>
             {schedulesOn && (
-              <div className="agent-profile-section" aria-label="即将进行" role="group">
-                <h3>即将进行</h3>
+              <div className="agent-profile-section" aria-label={COPY.upcoming} role="group">
+                <h3>{COPY.upcoming}</h3>
                 <Upcoming
                   automations={automations}
                   writes={scheduleWrites}
@@ -347,21 +411,21 @@ export function AgentProfile({
               />
             )}
             <dl className="agent-facts agent-profile-section">
-              <dt>工作位置</dt>
+              <dt>{COPY.place}</dt>
               <dd>
-                <span>{summary ? worksIn(catalog ?? undefined, summary.defaultProjectId) : '家'}</span>
+                <span>{worksIn(catalog ?? undefined, summary?.defaultProjectId)}</span>
               </dd>
               {value && (
                 <>
-                  <dt>技能</dt>
+                  <dt>{COPY.skills}</dt>
                   <dd>
-                    <span>{skills === undefined ? '全部已启用' : `${skills.length} 个`}</span>
+                    <span>{skills === undefined ? COPY.allSkills : COPY.skillCount(skills.length)}</span>
                   </dd>
                   {!general && (
                     <>
-                      <dt>工具</dt>
+                      <dt>{COPY.tools}</dt>
                       <dd>
-                        <span>{tools === undefined ? '不限' : `${tools.length} 个插件`}</span>
+                        <span>{tools === undefined ? COPY.allTools : COPY.pluginCount(tools.length)}</span>
                       </dd>
                     </>
                   )}
@@ -375,11 +439,11 @@ export function AgentProfile({
                 writes.clear()
                 setView('settings')
               }}>
-              设置
+              {COPY.settings}
             </Button>
           </>
         )}
-        {!locked && view === 'settings' && !value && detail.read.state === 'loading' && <Loading label="正在读取" />}
+        {!locked && view === 'settings' && !value && detail.read.state === 'loading' && <Loading label={COPY.loading} />}
         {!locked && view === 'settings' && value && <AgentHome key={owner} home={home.value} local={access.local} admin={access.admin} />}
         {!locked && view === 'settings' && <CurrentAgentOptions shell={shell} owner={owner} />}
         {!locked && view === 'settings' && value?.kind === 'custom' && catalog && (
@@ -481,7 +545,7 @@ export function ProfileLayer({ shell }: { shell: ShellState }) {
   const name = !shown
     ? ''
     : shown.owner === GENERAL_AGENT_ID
-      ? GENERAL_NAME
+      ? AGENT_SPACE_COPY.general
       : (shell.snapshot.customAgents?.find(agent => agent.id === shown.owner)?.name ?? 'Agent')
   return (
     <>

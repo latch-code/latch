@@ -10,6 +10,7 @@ import type {
 } from '@latch/protocol'
 import { Badge, Button, CopyButton, FoldHeader, Collapse, Hint, InlineNotice, Tooltip } from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 import { harnessName } from '../composerChoice.ts'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
@@ -19,13 +20,7 @@ import { HarnessMcpGroup } from './HarnessMcp.tsx'
 import { Loading, NavRow, NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 import {
-  NONE,
-  NOT_REPORTED,
-  NOT_IMPLEMENTED,
-  NOT_YET,
-  READING_REPORT,
-  REPORT_UNAVAILABLE,
-  UNREAD,
+  EXTENSION_COPY,
   extensionHarnesses,
   extensionReportKey,
   harnessKinds,
@@ -38,29 +33,94 @@ import {
   type LatchContext,
 } from './extensions.ts'
 
-const COMMANDS_NOTE = (source: string) => ({
-  label: '用 Harness 自己的命令',
-  detail: `按下后命令填进 Latch 的终端，补上名字或来源再由你按回车；Latch 不运行它，也不读改 Harness 的配置。命令来源：${source}`,
-})
-
-const REPORT_NOTE = {
-  label: '只列 Harness 报告的',
-  detail: '命令、技能与插件名称来自最近一次普通会话的报告。报告随项目而变。',
-}
-
-const REPORT_ACTION = '用这个 Harness 新建普通会话并发送消息。收到报告后会在这里显示。'
-
-const CODE_NOTE = {
-  label: '可信的本机代码',
-  detail:
-    '这些插件在 Host 进程里运行，能做 Latch 能做的一切。Latch 不隔离它们。只给在这台 Mac 上开发插件的人；其他人用数据插件、MCP 定义与页面。',
-}
-
-const LATCH_NOTE = {
-  label: 'Latch 的部分都是数据',
-  detail:
-    '技能与指引经 latch-skills 服务器给 Harness；MCP 服务器经每个会话的 MCP 列表（Codex 为线程配置）给；提示词模板由 Latch 填进输入框。数据面板与页面在 Latch 里显示，不交给 Harness。',
-}
+const COPY = defineCopy(
+  {
+    commandNote: (source: string) => ({
+      label: '用 Harness 自己的命令',
+      detail: `按下后命令填进 Latch 的终端，补上名字或来源再由你按回车；Latch 不运行它，也不读改 Harness 的配置。命令来源：${source}`,
+    }),
+    reportNote: {
+      label: '只列 Harness 报告的',
+      detail: '命令、技能与插件名称来自最近一次普通会话的报告。报告随项目而变。',
+    },
+    reportAction: '用这个 Harness 新建普通会话并发送消息。收到报告后会在这里显示。',
+    codeNote: {
+      label: '可信的本地代码',
+      detail:
+        '这些插件在 Latch 服务的进程里运行，能做 Latch 能做的一切。Latch 不隔离它们。只给在这台 Mac 上开发插件的人；其他人用数据插件、MCP 定义与页面。',
+    },
+    latchNote: {
+      label: 'Latch 的部分都是数据',
+      detail:
+        '技能与指引经 latch-skills 服务器给 Harness；MCP 服务器经每个会话的 MCP 列表（Codex 为线程配置）给；提示词模板由 Latch 填进输入框。数据面板与页面在 Latch 里显示，不交给 Harness。',
+    },
+    action: { install: '安装', update: '更新', remove: '卸载' },
+    copyAction: (action: string) => `复制${action}命令`,
+    copyRemove: (name: string) => `复制卸载 ${name} 的命令`,
+    noInstall: '没有安装命令',
+    total: (count: number) => `共 ${formatNumber(count)} 个`,
+    additional: (count: number) => `还有 ${formatNumber(count)} 个`,
+    collapse: '收起',
+    showAll: '全部',
+    partial: '只列出一部分',
+    noneToShow: '没有可显示的条目',
+    reportAt: (at: string, project?: string) => `会话报告于 ${at}${project ? ` · ${project}` : ''}`,
+    noReceivers: '没有 Harness 接收',
+    latchesSkills: '我的 Agent 的技能与 Latch 的指引',
+    browser: '这台 Mac 的预览浏览器，桌面端开着时有',
+    mcpServers: 'MCP 服务器',
+    enabled: (count: number) => `${formatNumber(count)} 个开着`,
+    count: (count: number) => `${formatNumber(count)} 个`,
+    manage: '管理',
+    allHarnesses: '全部 Harness',
+    data: '数据',
+    developer: '这台 Mac 上的开发者',
+    noExternal: '没有外部 Harness',
+  },
+  {
+    commandNote: (source: string) => ({
+      label: 'Use the Harness’s own command',
+      detail: `Fill the command into Latch’s terminal, add the name or source, and press Return yourself. Latch does not run it or read or change the Harness configuration. Vendor reference: ${source}`,
+    }),
+    reportNote: {
+      label: 'From Harness reports',
+      detail: 'Commands, skills, and plugin names come from the latest regular session report. Reports vary by project.',
+    },
+    reportAction: 'Start a regular session with this Harness and send a message. Its report will appear here when available.',
+    codeNote: {
+      label: 'Trusted local code',
+      detail:
+        'These plugins run in the Latch service process with the same access as Latch. They are not isolated. This is for developers working on plugins on this Mac. Data plugins, MCP definitions, and pages are available to other users.',
+    },
+    latchNote: {
+      label: 'Latch provides data',
+      detail:
+        'latch-skills provides skills and guidance. MCP servers are added to the session’s MCP list or to the thread configuration for Codex. Latch fills prompt templates into the composer. Data panels and pages are shown in Latch.',
+    },
+    action: { install: 'Install', update: 'Update', remove: 'Uninstall' },
+    copyAction: (action: string) => `Copy ${action.toLowerCase()} command`,
+    copyRemove: (name: string) => `Copy command to uninstall ${name}`,
+    noInstall: 'No installation command',
+    total: (count: number) => `${formatNumber(count)} total`,
+    additional: (count: number) => `${formatNumber(count)} more`,
+    collapse: 'Collapse',
+    showAll: 'Show all',
+    partial: 'Partial list',
+    noneToShow: 'No entries to display',
+    reportAt: (at: string, project?: string) => `Session report at ${at}${project ? ` · ${project}` : ''}`,
+    noReceivers: 'No Harness receives this',
+    latchesSkills: 'My Agents’ skills and Latch guidance',
+    browser: 'Preview browser for this Mac, available while the desktop app is open',
+    mcpServers: 'MCP servers',
+    enabled: (count: number) => `${formatNumber(count)} enabled`,
+    count: (count: number) => plural(count, { one: '{n} template', other: '{n} templates' }),
+    manage: 'Manage',
+    allHarnesses: 'All Harnesses',
+    data: 'Data',
+    developer: 'Local developers',
+    noExternal: 'No external Harnesses',
+  },
+)
 
 const NO_PAGES: ReadonlyMap<string, number> = new Map()
 
@@ -72,7 +132,7 @@ function LatchEntries({ entries }: { entries: readonly ExtensionEntry[] }) {
   if (!entries.length) return null
   return (
     <>
-      <ExtensionSource>Latch 提供</ExtensionSource>
+      <ExtensionSource>{EXTENSION_COPY.source.latch}</ExtensionSource>
       {entries.map(entry => (
         <EntryRow key={entry.key} entry={entry} />
       ))}
@@ -90,8 +150,6 @@ function CommandButtons({ command, label }: { command: string; label: string }) 
   )
 }
 
-const ACTION_LABEL = { install: '安装', update: '更新', remove: '卸载' } as const
-
 /** The vendor's commands for a kind as rows; a kind without any says so with the reason behind hover. */
 function CommandRows({ commands }: { commands: ExtensionCommands | undefined }) {
   if (!commands) return null
@@ -104,9 +162,9 @@ function CommandRows({ commands }: { commands: ExtensionCommands | undefined }) 
           <SettingsRow
             key={action}
             className="extension-command"
-            title={ACTION_LABEL[action]}
+            title={COPY.action[action]}
             description={<code className="settings-mono">{command.trimEnd()}</code>}
-            trailing={<CommandButtons command={command} label={`复制${ACTION_LABEL[action]}命令`} />}
+            trailing={<CommandButtons command={command} label={COPY.copyAction(COPY.action[action])} />}
           />,
         ]
       })}
@@ -116,9 +174,9 @@ function CommandRows({ commands }: { commands: ExtensionCommands | undefined }) 
 
 function kindNote(view: KindView): ReactNode {
   return view.commands ? (
-    <NoteLine brief={COMMANDS_NOTE(view.commands.source)} />
+    <NoteLine brief={COPY.commandNote(view.commands.source)} />
   ) : (
-    <NoteLine brief={{ label: '没有安装命令', detail: view.absent ?? '' }} />
+    <NoteLine brief={{ label: COPY.noInstall, detail: view.absent ?? '' }} />
   )
 }
 
@@ -142,7 +200,7 @@ function EntryRow({ entry, plugin = false }: { entry: ExtensionEntry; plugin?: b
           (entry.detail || entry.remove) && (
             <span className="extension-trailing">
               {entry.detail && <span className="settings-row-value">{entry.detail}</span>}
-              {entry.remove && <CommandButtons command={entry.remove} label={`复制卸载 ${entry.name} 的命令`} />}
+              {entry.remove && <CommandButtons command={entry.remove} label={COPY.copyRemove(entry.name)} />}
             </span>
           )
         }
@@ -167,28 +225,30 @@ function KindGroup({ view, caption, lead }: { view: KindView; caption?: string; 
           {kindNote(view)}
         </>
       }>
-      <ExtensionSource>Harness 自带</ExtensionSource>
-      {view.status === 'not-reported' && <SettingsRow dim title={NOT_REPORTED} />}
-      {view.status === 'not-yet' && <SettingsRow dim title={<Hint label={NOT_YET}>{REPORT_ACTION}</Hint>} />}
-      {view.status === 'reading' && <Loading label={READING_REPORT} />}
-      {view.status === 'unavailable' && <SettingsRow dim title={REPORT_UNAVAILABLE} />}
-      {view.status === 'unread' && <SettingsRow dim title={UNREAD} />}
-      {view.status === 'not-implemented' && <SettingsRow dim title={<Hint label={NOT_IMPLEMENTED}>{view.reason}</Hint>} />}
-      {view.status === 'reported' && view.own.length === 0 && !view.truncated && <SettingsRow dim title={view.empty ?? NONE} />}
+      <ExtensionSource>{EXTENSION_COPY.source.harness}</ExtensionSource>
+      {view.status === 'not-reported' && <SettingsRow dim title={EXTENSION_COPY.notReported} />}
+      {view.status === 'not-yet' && <SettingsRow dim title={<Hint label={EXTENSION_COPY.notYet}>{COPY.reportAction}</Hint>} />}
+      {view.status === 'reading' && <Loading label={EXTENSION_COPY.reading} />}
+      {view.status === 'unavailable' && <SettingsRow dim title={EXTENSION_COPY.reportUnavailable} />}
+      {view.status === 'unread' && <SettingsRow dim title={EXTENSION_COPY.unread} />}
+      {view.status === 'not-implemented' && <SettingsRow dim title={<Hint label={EXTENSION_COPY.notImplemented}>{view.reason}</Hint>} />}
+      {view.status === 'reported' && view.own.length === 0 && !view.truncated && (
+        <SettingsRow dim title={view.empty ?? EXTENSION_COPY.none} />
+      )}
       {own.map(entry => (
         <EntryRow key={entry.key} entry={entry} plugin={view.kind === 'plugins'} />
       ))}
       {view.own.length > SHOWN && (
         <SettingsRow
-          title={all ? `共 ${view.own.length} 个` : `还有 ${view.own.length - SHOWN} 个`}
+          title={all ? COPY.total(view.own.length) : COPY.additional(view.own.length - SHOWN)}
           trailing={
             <Button variant="link" size="xs" onClick={() => setAll(value => !value)}>
-              {all ? '收起' : '全部'}
+              {all ? COPY.collapse : COPY.showAll}
             </Button>
           }
         />
       )}
-      {view.truncated && <SettingsRow dim title={view.own.length ? '只列出一部分' : '没有可显示的条目'} />}
+      {view.truncated && <SettingsRow dim title={view.own.length ? COPY.partial : COPY.noneToShow} />}
       <CommandRows commands={view.commands} />
       <LatchEntries entries={view.latch} />
     </SettingsGroup>
@@ -208,7 +268,7 @@ function HarnessPage({
   project?: string
   run: boolean
 }) {
-  const caption = reportedAt ? `会话报告于 ${dateTime(reportedAt)}${project ? ` · ${project}` : ''}` : undefined
+  const caption = reportedAt ? COPY.reportAt(dateTime(reportedAt), project) : undefined
   const mcp = kinds.find(view => view.kind === 'mcp')!
   return (
     <div className="extensions-harness" data-extensions-harness={harness.id}>
@@ -220,10 +280,10 @@ function HarnessPage({
             title={view.title}
             run={run}
             latchNames={mcp.latch.map(entry => entry.name)}
-            sourceHeading={<ExtensionSource>Harness 自带</ExtensionSource>}
+            sourceHeading={<ExtensionSource>{EXTENSION_COPY.source.harness}</ExtensionSource>}
             remove={name => {
               const entry = mcp.own.find(item => item.name === name)
-              return entry?.remove ? <CommandButtons command={entry.remove} label={`复制卸载 ${name} 的命令`} /> : undefined
+              return entry?.remove ? <CommandButtons command={entry.remove} label={COPY.copyRemove(name)} /> : undefined
             }}
             note={kindNote(view)}>
             <CommandRows commands={view.commands} />
@@ -234,7 +294,7 @@ function HarnessPage({
             key={view.kind}
             view={view}
             {...(caption ? { caption } : {})}
-            {...(view.kind === 'skills' ? { lead: <NoteLine brief={REPORT_NOTE} /> } : {})}
+            {...(view.kind === 'skills' ? { lead: <NoteLine brief={COPY.reportNote} /> } : {})}
           />
         ),
       )}
@@ -244,7 +304,7 @@ function HarnessPage({
 
 /** The Harnesses that receive something, as small tiles named on hover; the rest are not drawn. */
 function Receivers({ harnesses }: { harnesses: readonly HarnessInfo[] }) {
-  if (!harnesses.length) return <span className="settings-row-value">没有 Harness 接收</span>
+  if (!harnesses.length) return <span className="settings-row-value">{COPY.noReceivers}</span>
   return (
     <span className="extension-receivers">
       {harnesses.map(harness => (
@@ -277,23 +337,19 @@ function LatchProvides({
   const { data, code } = latchPlugins(plugins ?? [])
   return (
     <>
-      <SettingsGroup title="Latch 提供" note={<NoteLine brief={LATCH_NOTE} />}>
-        <SettingsRow title="latch-skills" description="我的 Agent 的技能与 Latch 的指引" trailing={<Receivers harnesses={servers} />} />
-        <SettingsRow
-          title="latch-browser"
-          description="这台 Mac 的预览浏览器，桌面端开着时有"
-          trailing={<Receivers harnesses={servers} />}
-        />
+      <SettingsGroup title={EXTENSION_COPY.source.latch} note={<NoteLine brief={COPY.latchNote} />}>
+        <SettingsRow title="latch-skills" description={COPY.latchesSkills} trailing={<Receivers harnesses={servers} />} />
+        <SettingsRow title="latch-browser" description={COPY.browser} trailing={<Receivers harnesses={servers} />} />
         {latch.mcpServers && (
           <SettingsRow
-            title="MCP 服务器"
-            description={`${enabled.length} 个开着`}
+            title={COPY.mcpServers}
+            description={COPY.enabled(enabled.length)}
             trailing={
               <span className="extension-trailing">
                 <Receivers harnesses={servers} />
                 {onMcp && (
                   <Button variant="link" size="xs" onClick={onMcp}>
-                    管理
+                    {COPY.manage}
                   </Button>
                 )}
               </span>
@@ -301,9 +357,9 @@ function LatchProvides({
           />
         )}
         <SettingsRow
-          title="提示词模板"
-          description={`${latch.templates?.length ?? 0} 个`}
-          trailing={<span className="settings-row-value">全部 Harness</span>}
+          title={EXTENSION_COPY.templates}
+          description={COPY.count(latch.templates?.length ?? 0)}
+          trailing={<span className="settings-row-value">{COPY.allHarnesses}</span>}
         />
         {data.map(plugin => (
           <div key={plugin.id} data-latch-plugin={plugin.id}>
@@ -312,10 +368,10 @@ function LatchProvides({
               description={pluginProvides(plugin, pages.get(plugin.id))}
               trailing={
                 <span className="extension-trailing">
-                  <Badge>数据</Badge>
+                  <Badge>{COPY.data}</Badge>
                   {onPlugins && (
                     <Button variant="link" size="xs" onClick={onPlugins}>
-                      管理
+                      {COPY.manage}
                     </Button>
                   )}
                 </span>
@@ -326,17 +382,17 @@ function LatchProvides({
       </SettingsGroup>
       {code.length > 0 && (
         <section className="extension-developer">
-          <FoldHeader open={developer} onOpenChange={setDeveloper} meta={`${code.length}`}>
-            本机开发者
+          <FoldHeader open={developer} onOpenChange={setDeveloper} meta={formatNumber(code.length)}>
+            {COPY.developer}
           </FoldHeader>
           <Collapse open={developer}>
-            <SettingsGroup note={<NoteLine brief={CODE_NOTE} />}>
+            <SettingsGroup note={<NoteLine brief={COPY.codeNote} />}>
               {code.map(plugin => (
                 <div key={plugin.id} data-latch-code={plugin.id}>
                   <SettingsRow
                     title={plugin.name}
                     description={pluginProvides(plugin, pages.get(plugin.id))}
-                    trailing={<Badge tone="warn">可信的本机代码</Badge>}
+                    trailing={<Badge tone="warn">{COPY.codeNote.label}</Badge>}
                   />
                 </div>
               ))}
@@ -453,7 +509,7 @@ export function ExtensionsSettings({
     <>
       {read?.error && <InlineNotice tone="error">{read.error}</InlineNotice>}
       <SettingsGroup title="Harness">
-        {harnesses.length === 0 && <SettingsRow dim title="没有外部 Harness" />}
+        {harnesses.length === 0 && <SettingsRow dim title={COPY.noExternal} />}
         {harnesses.map(harness => (
           <NavRow
             key={harness.id}

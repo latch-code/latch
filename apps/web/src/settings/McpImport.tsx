@@ -3,6 +3,36 @@ import type { AppSnapshot, McpImportCandidate, McpImportFile, McpImportResponse,
 import { Button, Dialog, GlobeGlyph, InlineNotice, TerminalGlyph } from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
 import { IconTile, Loading, MiddleEllipsis, ObjectRow, SettingsGroup, SettingsRow } from './common.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    fromProject: '从项目导入',
+    changeProject: '换一个项目',
+    cancel: '取消',
+    noProjects: '还没有项目',
+    projectNoManifest: '这个项目没有 .mcp.json',
+    missingManifest: '没有 .mcp.json',
+    noServers: '没有 MCP 服务器',
+    limit: '只列出前 32 个',
+    from: (project: string) => `从 ${project} 导入`,
+    read: (project: string) => `读取 ${project} 的 .mcp.json`,
+    import: (name: string) => `导入 ${name}`,
+  },
+  {
+    fromProject: 'Import from project',
+    changeProject: 'Change project',
+    cancel: 'Cancel',
+    noProjects: 'No projects yet',
+    projectNoManifest: 'This project has no .mcp.json',
+    missingManifest: 'No .mcp.json',
+    noServers: 'No MCP servers',
+    limit: 'Showing the first 32',
+    from: (project: string) => `Import from ${project}`,
+    read: (project: string) => `Read .mcp.json from ${project}`,
+    import: (name: string) => `Import ${name}`,
+  },
+)
 
 /** What 添加 is filled with from one server of a project's `.mcp.json`: secret values left for the person to type. */
 export interface ImportedForm {
@@ -28,23 +58,46 @@ export function importedForm(candidate: McpImportCandidate): ImportedForm {
   }
 }
 
-const FLAG_TEXT: Readonly<Record<McpImportCandidate['flags'][number], string>> = {
-  expansion: '含 ${…}：按原样显示，不展开',
-  'repository-command': '命令在项目里：不能添加',
-  'repository-path': '参数指向项目里的文件：测试会拒绝',
-  secret: '像秘密的值已留空：请作为秘密变量填写',
-}
-const SKIP_TEXT: Readonly<Record<McpImportSkip, string>> = {
-  'legacy-sse': '旧的 HTTP+SSE 传输尚未实现',
-  unsupported: '不支持的类型',
-  invalid: '格式不对',
-}
-const FILE_TEXT: Readonly<Record<NonNullable<McpImportFile['reason']>, string>> = {
-  'not-file': '.mcp.json 不是普通文件',
-  'too-large': '.mcp.json 超过 64 KiB',
-  'not-json': '.mcp.json 不是 JSON',
-  invalid: '.mcp.json 的格式不对',
-}
+const FLAG_TEXT = defineCopy<Record<McpImportCandidate['flags'][number], string>>(
+  {
+    expansion: '含 ${…}：按原样显示，不展开',
+    'repository-command': '命令在项目里：不能添加',
+    'repository-path': '参数指向项目里的文件：测试会拒绝',
+    secret: '像秘密的值已留空：请作为秘密变量填写',
+  },
+  {
+    expansion: 'Contains ${…}. Shown as written without expansion.',
+    'repository-command': 'This command is in the project and cannot be added.',
+    'repository-path': 'Arguments refer to files in the project. The test will refuse them.',
+    secret: 'Likely secrets are blank. Enter them as secret variables.',
+  },
+)
+const SKIP_TEXT = defineCopy<Record<McpImportSkip, string>>(
+  {
+    'legacy-sse': '旧的 HTTP+SSE 传输尚未实现',
+    unsupported: '不支持的类型',
+    invalid: '格式不对',
+  },
+  {
+    'legacy-sse': 'Legacy HTTP+SSE transport is not implemented yet',
+    unsupported: 'Unsupported type',
+    invalid: 'Invalid format',
+  },
+)
+const FILE_TEXT = defineCopy<Record<NonNullable<McpImportFile['reason']>, string>>(
+  {
+    'not-file': '.mcp.json 不是普通文件',
+    'too-large': '.mcp.json 超过 64 KiB',
+    'not-json': '.mcp.json 不是 JSON',
+    invalid: '.mcp.json 的格式不对',
+  },
+  {
+    'not-file': '.mcp.json is not a regular file',
+    'too-large': '.mcp.json exceeds 64 KiB',
+    'not-json': '.mcp.json is not valid JSON',
+    invalid: '.mcp.json has an invalid structure',
+  },
+)
 
 export function candidateLine(candidate: McpImportCandidate): string {
   return candidate.transport === 'http' ? (candidate.url ?? '') : [candidate.command ?? '', ...(candidate.args ?? [])].join(' ')
@@ -91,7 +144,7 @@ export function ImportDialog({
     <Dialog
       open={open}
       size="lg"
-      title={chosen ? `从 ${chosen.name} 导入` : '从项目导入'}
+      title={chosen ? COPY.from(chosen.name) : COPY.fromProject}
       onClose={close}
       footer={
         <>
@@ -103,24 +156,24 @@ export function ImportDialog({
                 setRead(null)
                 setError('')
               }}>
-              换一个项目
+              {COPY.changeProject}
             </Button>
           )}
           <Button size="md" onClick={close}>
-            取消
+            {COPY.cancel}
           </Button>
         </>
       }>
       <div className="settings-form mcp-import">
         {project === null && (
           <SettingsGroup>
-            {projects.length === 0 && <SettingsRow title="还没有项目" />}
+            {projects.length === 0 && <SettingsRow title={COPY.noProjects} />}
             {projects.map(item => (
               <ObjectRow
                 key={item.id}
                 title={item.name}
                 description={<MiddleEllipsis text={item.path} className="settings-mono" />}
-                label={`读取 ${item.name} 的 .mcp.json`}
+                label={COPY.read(item.name)}
                 onOpen={() => {
                   void choose(item.id)
                 }}
@@ -132,7 +185,7 @@ export function ImportDialog({
         {project !== null && !error && !read && <Loading />}
         {read && !found && read.files.every(file => file.status === 'missing') && (
           <SettingsGroup>
-            <SettingsRow title="这个项目没有 .mcp.json" />
+            <SettingsRow title={COPY.projectNoManifest} />
           </SettingsGroup>
         )}
         {read?.files.map(file => {
@@ -140,9 +193,9 @@ export function ImportDialog({
           if (file.status === 'missing' && !several) return null
           return (
             <SettingsGroup key={file.folderId} title={several && folder ? folderName(folder.path) : undefined}>
-              {file.status === 'missing' && <SettingsRow dim title="没有 .mcp.json" />}
+              {file.status === 'missing' && <SettingsRow dim title={COPY.missingManifest} />}
               {file.status === 'refused' && file.reason && <InlineNotice tone="error">{FILE_TEXT[file.reason]}</InlineNotice>}
-              {file.status === 'ok' && file.servers.length === 0 && file.skipped.length === 0 && <SettingsRow title="没有 MCP 服务器" />}
+              {file.status === 'ok' && file.servers.length === 0 && file.skipped.length === 0 && <SettingsRow title={COPY.noServers} />}
               {file.servers.map(candidate => {
                 const blocked = candidate.flags.includes('repository-command')
                 return (
@@ -152,7 +205,7 @@ export function ImportDialog({
                       title={candidate.key}
                       description={<MiddleEllipsis text={candidateLine(candidate)} className="settings-mono" />}
                       dim={blocked}
-                      label={`导入 ${candidate.key}`}
+                      label={COPY.import(candidate.key)}
                       {...(blocked
                         ? {}
                         : {
@@ -173,7 +226,7 @@ export function ImportDialog({
               {file.skipped.map(skip => (
                 <SettingsRow key={`skip:${skip.key}`} dim title={skip.key} description={SKIP_TEXT[skip.reason]} />
               ))}
-              {file.truncated && <SettingsRow dim title="只列出前 32 个" />}
+              {file.truncated && <SettingsRow dim title={COPY.limit} />}
             </SettingsGroup>
           )
         })}

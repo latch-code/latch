@@ -6,6 +6,35 @@ import { FileOpenContext } from '../preview/fileContext.ts'
 import { resolveFileImage } from '../preview/fileImages.ts'
 import { FileSession } from './FileChip.tsx'
 import { VisibleText } from './VisibleText.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    previewImage: (value1: string) => `预览产物图片：${value1}`,
+    incomplete: '记录不完整',
+    partial: '只记录了部分变化；目录过大、观察中断或部分路径无法读取。',
+    unavailable: '本轮未能完整观察文件变化，请在项目目录中核对结果。',
+    outputs: '这一轮生成的文件',
+    generated: '生成了 ',
+    files: ' 个文件',
+    bytes: (value1: string) => `${value1} 字节`,
+    openFile: (value1: string) => `打开 ${value1}`,
+    open: '打开',
+  },
+  {
+    previewImage: (value1: string) => `Preview output image ${value1}`,
+    incomplete: 'Incomplete record',
+    partial: 'Only some changes were recorded. The folder may be too large, watching may have stopped or some paths could not be read.',
+    unavailable: 'File changes could not be fully tracked this turn. Check the project folder for results.',
+    outputs: 'Files created this turn',
+    generated: 'Created ',
+    files: ' files',
+    bytes: (value1: string) => `${value1} bytes`,
+    openFile: (value1: string) => `Open ${value1}`,
+    open: 'Open',
+  },
+)
+
 const outputSize = (size: number) =>
   size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${Math.ceil(size / 1024)} KB` : `${(size / (1024 * 1024)).toFixed(1)} MB`
 const KIND_ICONS: Record<string, IconComponent> = {
@@ -63,7 +92,7 @@ function OutputThumbnail({ file }: { file: FileChange }) {
           size="xs"
           variant="ghost"
           className="file-output-thumbnail"
-          aria-label={`预览产物图片：${file.path}`}
+          aria-label={COPY.previewImage(file.path)}
           onClick={() => open({ sessionId: session.id, reference: file.path, rootId: file.root })}>
           <img src={value.url} alt="" width={value.width} height={value.height} loading="lazy" onError={() => setFailureKey(key)} />
         </Button>
@@ -76,11 +105,8 @@ export function OutputNotes({ truncated, unavailable }: { truncated?: boolean | 
   if (!truncated && !unavailable) return null
   return (
     <div className="output-notes">
-      <Hint inline lead={<WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label="记录不完整">
-        {[
-          truncated ? '只记录了部分变化；目录过大、观察中断或部分路径无法读取。' : '',
-          unavailable ? '本轮未能完整观察文件变化，请在项目目录中核对结果。' : '',
-        ].join('')}
+      <Hint inline lead={<WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} />} label={COPY.incomplete}>
+        {[truncated ? COPY.partial : '', unavailable ? COPY.unavailable : ''].join('')}
       </Hint>
     </div>
   )
@@ -95,9 +121,13 @@ export function ProducedFiles({ files, actions }: { files: FileChange[]; actions
   const open = useContext(FileOpenContext)
   if (!files.length) return null
   return (
-    <section className="file-outputs" aria-label="这一轮生成的文件">
+    <section className="file-outputs" aria-label={COPY.outputs}>
       <div className="file-outputs-heading">
-        <span>生成了 {files.length} 个文件</span>
+        <span>
+          {COPY.generated}
+          {files.length}
+          {COPY.files}
+        </span>
         {actions}
       </div>
       <ul>
@@ -111,7 +141,7 @@ export function ProducedFiles({ files, actions }: { files: FileChange[]; actions
                 <VisibleText text={name} />
               </span>
               {file.size !== undefined && (
-                <Tooltip content={`${file.size.toLocaleString()} 字节`}>
+                <Tooltip content={COPY.bytes(file.size.toLocaleString())}>
                   <span className="file-output-size" tabIndex={0}>
                     {outputSize(file.size)}
                   </span>
@@ -122,11 +152,11 @@ export function ProducedFiles({ files, actions }: { files: FileChange[]; actions
                   size="xs"
                   variant="secondary"
                   className="file-output-open"
-                  aria-label={`打开 ${name}`}
+                  aria-label={COPY.openFile(name)}
                   onClick={() => {
                     open({ sessionId: session.id, reference: file.path, rootId: file.root })
                   }}>
-                  打开
+                  {COPY.open}
                 </Button>
               )}
             </li>

@@ -48,10 +48,9 @@ import {
   LIST_PAGE,
   missedFiles,
   missingTurnTitle,
-  NOT_COVERED_WHY,
   offersBase,
   queryOf,
-  SCOPE_NOTE,
+  UNDO_SCOPE_COPY,
   scopeAction,
   scopeLabel,
   statusLetter,
@@ -72,12 +71,190 @@ import { useChanges, type ChangesActions, type ChangesResult } from './useChange
 import { useReviewNotes } from './useReviewNotes.ts'
 import { noteTally, sameFile } from './notes.ts'
 import { NoteCard, NotesFoot, type NoteWriting } from './ReviewNotes.tsx'
-import { PARTIAL_NOTE } from '../../conversation/turnChanges.ts'
+import { TURN_CHANGES_COPY } from '../../conversation/turnChanges.copy.ts'
 import { GitHistoryView, type HistoryMode } from './GitHistoryView.tsx'
 import { StagingFeedback, StagingView } from './StagingView.tsx'
 import { useStaging, type useStagingWrites } from './useStaging.ts'
 import type { GitStagingView } from '@latch/protocol'
 import { rowOf } from '../../components/overlays.tsx'
+import { defineCopy, formatNumber, plural } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    branchWith: (base: string) => `分支与 ${base}`,
+    willMiss: (count: number) => `不会恢复 ${formatNumber(count)} 个文件`,
+    missed: (count: number) => `没有恢复 ${formatNumber(count)} 个文件`,
+    moreMissed: (count: number) => `另有 ${formatNumber(count)} 个文件没有列出`,
+    notRoot: ' 不是仓库顶层，未提交的不列出',
+    compared: (base: string) => ` 与 ${base} 的分叉点比较`,
+    compareBase: (base: string) => `与 ${base} 的分叉点比较`,
+    outsideUndo: (count: number) => `${formatNumber(count)} 个文件不在撤销范围`,
+    moreFiles: (count: number) => `再显示 ${formatNumber(count)} 个文件`,
+    unstaged: '未暂存',
+    staged: '已暂存',
+    commitId: (value1: string | number) => `提交 ${value1}`,
+    commit: '提交',
+    history: '文件历史',
+    outsideFeedback: '不在这个范围的反馈',
+    undoing: '撤销中…',
+    restore: '写回这一轮开始时的内容',
+    undo: '撤销本轮',
+    cancel: '取消',
+    redoing: '恢复中…',
+    redo: '恢复',
+    discard: '撤销未提交的改动…',
+    turnUndone: '已撤销本轮改动',
+    turnRedone: '已恢复本轮改动',
+    discarded: '已撤销未提交的改动',
+    undonePath: (value1: string | number) => `已撤销 ${value1}`,
+    alreadyRestored: '这个文件已经是这一轮开始时的内容。',
+    willTell: (value1: string | number) => `下一条消息会告诉 ${value1}`,
+    memory: (value1: string | number) => `${value1} 的记忆不会被撤销。`,
+    undoScope: '撤销的范围',
+    changedFiles: '改动的文件',
+    undoPath: (value1: string | number) => `撤销 ${value1}`,
+    undoFile: '撤销此文件',
+    fileActions: (value1: string | number) => `${value1} 的操作`,
+    refresh: '点按刷新',
+    running: '运行中 · 点按刷新',
+    interrupted: '这一轮中断了 · 对比到此刻',
+    view: '查看',
+    otherSession: '另一个会话也在改这里',
+    main: '主分支',
+    noFiles: '这台设备看不到会话文件夹里的文件',
+    actionBusy: '上一个文件操作还没有完成，请稍后重试。',
+    auto: '自动',
+    stacked: '上下',
+    split: '左右',
+    noPatchFiles: (count: number) => `这 ${formatNumber(count)} 个文件不能进入补丁`,
+    noPatchChanges: '没有可以复制的改动',
+    leftOut: (count: number) => `，${formatNumber(count)} 个文件没有进入补丁`,
+    partialPatch: (value1: string | number) => `已复制补丁的前一部分：补丁太大${value1}`,
+    copiedPatch: (value1: string | number) => `已复制补丁${value1}`,
+    keptTurns: '保留的轮次',
+    session: '这个会话',
+    uncommitted: '未提交',
+    versus: '和 HEAD 比较',
+    sinceFork: '从分叉点开始',
+    lineStaging: '按行暂存',
+    branchCommits: '这个分支的',
+    committedChanges: '已提交的改动',
+    offline: '不在线',
+    readOnly: '只读',
+    agentBusy: 'Agent 正在改这个文件夹',
+    scope: '改动范围',
+    olderTurns: (older: number, kept: number) => `还有 ${formatNumber(older)} 轮 · 只保留最近 ${formatNumber(kept)} 轮`,
+    goDelivery: '去交付',
+    layout: '排列',
+    wrap: '自动换行',
+    tree: '文件树',
+    more: '更多',
+    copyPatch: '复制补丁',
+    nextTells: (value1: string | number) => ` · 下一条消息会告诉 ${value1}`,
+    refreshFailed: '没有刷新成功 · 这是上次的列表',
+    readFailed: '读不到改动',
+    retry: '重试',
+    reading: '正在读取…',
+    feedbackFailed: '读不到反馈 · ',
+    clearQueue: (count: number) => `清空 ${formatNumber(count)} 条待发反馈？`,
+    clear: '清空',
+    clearInfo: '这些反馈还没有发出，清空后不能恢复。',
+    undoFileTitle: '撤销此文件？',
+    undoNew: '这个文件是这一轮新建的，撤销会删除它。这一步不能恢复。',
+    undoOld: '写回这一轮开始时的内容。这一步不能恢复。',
+    discardTitle: '撤销未提交的改动？',
+    confirmDiscard: '撤销改动',
+    willDelete: '会删除',
+    leftAlone: '不会改动',
+  },
+  {
+    branchWith: (base: string) => `Branch vs ${base}`,
+    willMiss: (count: number) => plural(count, { one: '{n} file won’t be restored', other: '{n} files won’t be restored' }),
+    missed: (count: number) => plural(count, { one: '{n} file wasn’t restored', other: '{n} files weren’t restored' }),
+    moreMissed: (count: number) => plural(count, { one: '{n} additional file isn’t listed', other: '{n} additional files aren’t listed' }),
+    notRoot: ' is outside the repository root. Uncommitted changes aren’t listed.',
+    compared: (base: string) => ` compared with its merge base with ${base}`,
+    compareBase: (base: string) => `Compared with the merge base with ${base}`,
+    outsideUndo: (count: number) => plural(count, { one: '{n} file outside undo scope', other: '{n} files outside undo scope' }),
+    moreFiles: (count: number) => plural(count, { one: 'Show {n} more file', other: 'Show {n} more files' }),
+    unstaged: 'Unstaged',
+    staged: 'Staged',
+    commitId: (value1: string | number) => `Commit ${value1}`,
+    commit: 'Commit',
+    history: 'File history',
+    outsideFeedback: 'Feedback outside this scope',
+    undoing: 'Undoing…',
+    restore: 'Restore the contents from the start of this turn',
+    undo: 'Undo turn',
+    cancel: 'Cancel',
+    redoing: 'Redoing…',
+    redo: 'Redo',
+    discard: 'Discard uncommitted changes…',
+    turnUndone: 'Turn undone',
+    turnRedone: 'Turn redone',
+    discarded: 'Uncommitted changes discarded',
+    undonePath: (value1: string | number) => `Undid ${value1}`,
+    alreadyRestored: 'This file already matches the start of the turn.',
+    willTell: (value1: string | number) => `The next message will tell ${value1}`,
+    memory: (value1: string | number) => `${value1}’s memory won’t be undone.`,
+    undoScope: 'What undo covers',
+    changedFiles: 'Changed files',
+    undoPath: (value1: string | number) => `Undo ${value1}`,
+    undoFile: 'Undo this file',
+    fileActions: (value1: string | number) => `Actions for ${value1}`,
+    refresh: 'Refresh',
+    running: 'Running · press to refresh',
+    interrupted: 'Turn interrupted · showing changes so far',
+    view: 'View',
+    otherSession: 'Another session is changing this folder too',
+    main: 'main branch',
+    noFiles: 'This device can’t see the session’s files',
+    actionBusy: 'The last file action hasn’t finished. Try again shortly.',
+    auto: 'Auto',
+    stacked: 'Stacked',
+    split: 'Split',
+    noPatchFiles: (count: number) => `${plural(count, { one: '{n} file', other: '{n} files' })} can’t be included in the patch`,
+    noPatchChanges: 'No changes to copy',
+    leftOut: (count: number) => ` · ${plural(count, { one: '{n} file', other: '{n} files' })} omitted`,
+    partialPatch: (value1: string | number) => `Copied the first part of the patch because it was too large${value1}`,
+    copiedPatch: (value1: string | number) => `Patch copied${value1}`,
+    keptTurns: 'Kept turns',
+    session: 'This session',
+    uncommitted: 'Uncommitted',
+    versus: 'vs HEAD',
+    sinceFork: 'Since branching',
+    lineStaging: 'Stage by line',
+    branchCommits: 'On this branch',
+    committedChanges: 'Committed changes',
+    offline: 'Offline',
+    readOnly: 'Read only',
+    agentBusy: 'Agent is changing this folder',
+    scope: 'Changes scope',
+    olderTurns: (older: number, kept: number) => `${formatNumber(older)} older turns · Only last ${formatNumber(kept)} kept`,
+    goDelivery: 'Go to delivery',
+    layout: 'Layout',
+    wrap: 'Wrap lines',
+    tree: 'File tree',
+    more: 'More',
+    copyPatch: 'Copy patch',
+    nextTells: (value1: string | number) => ` · The next message will tell ${value1}`,
+    refreshFailed: 'Couldn’t refresh · showing the last list',
+    readFailed: 'Couldn’t read changes',
+    retry: 'Retry',
+    reading: 'Reading…',
+    feedbackFailed: 'Couldn’t read feedback · ',
+    clearQueue: (count: number) => `Clear ${formatNumber(count)} queued feedback items?`,
+    clear: 'Clear',
+    clearInfo: 'This feedback hasn’t been sent. Clearing it can’t be undone.',
+    undoFileTitle: 'Undo this file?',
+    undoNew: 'This turn created the file. Undoing deletes it permanently.',
+    undoOld: 'Restore the contents from the start of the turn. This can’t be undone.',
+    discardTitle: 'Discard uncommitted changes?',
+    confirmDiscard: 'Discard changes',
+    willDelete: 'Will delete',
+    leftAlone: 'Left alone',
+  },
+)
 
 /** Where the conversation sends the person: a turn and, when it names one, a file of it. */
 export interface ChangesTarget {
@@ -135,16 +312,16 @@ export interface ChangesPanelProps {
 type GitPane = { kind: 'staging'; view: GitStagingView } | { kind: 'history'; mode: HistoryMode; back?: GitPane }
 
 function paneLabel(pane: GitPane, base: string | undefined): string {
-  if (pane.kind === 'staging') return pane.view === 'unstaged' ? '未暂存' : '已暂存'
-  if (pane.mode.kind === 'commit') return `提交 ${pane.mode.sha.slice(0, 7)}`
-  return pane.mode.kind === 'commits' ? '提交' : pane.mode.kind === 'compare' ? `分支与 ${base ?? '主分支'}` : '文件历史'
+  if (pane.kind === 'staging') return pane.view === 'unstaged' ? COPY.unstaged : COPY.staged
+  if (pane.mode.kind === 'commit') return COPY.commitId(pane.mode.sha.slice(0, 7))
+  return pane.mode.kind === 'commits' ? COPY.commit : pane.mode.kind === 'compare' ? COPY.branchWith(base ?? COPY.main) : COPY.history
 }
 
 /** Notes on files this scope does not list: they stay in reach with their original lines. */
 function ApartNotes({ notes, writing }: { notes: ReviewNote[]; writing: NoteWriting | undefined }) {
   return (
-    <section className="review-notes-apart" aria-label="不在这个范围的反馈">
-      <p className="review-notes-apart-title">不在这个范围的反馈</p>
+    <section className="review-notes-apart" aria-label={COPY.outsideFeedback}>
+      <p className="review-notes-apart-title">{COPY.outsideFeedback}</p>
       {notes.map(note => (
         <NoteCard key={note.id} note={note} quote where={`${note.path} `} {...(writing ? { writing } : {})} />
       ))}
@@ -220,25 +397,18 @@ function UndoTurn({ list, onUndo, busy }: { list: ChangeList; onUndo: () => void
   const warning = undoWarning(list)
   if (!warning.missed.length)
     return (
-      <Button
-        size="xs"
-        variant="ghost"
-        icon={UndoGlyph}
-        loading={busy}
-        loadingLabel="撤销中…"
-        tooltip="写回这一轮开始时的内容"
-        onClick={onUndo}>
-        撤销本轮
+      <Button size="xs" variant="ghost" icon={UndoGlyph} loading={busy} loadingLabel={COPY.undoing} tooltip={COPY.restore} onClick={onUndo}>
+        {COPY.undo}
       </Button>
     )
   return (
     <Popover
-      label="撤销本轮"
+      label={COPY.undo}
       size="md"
       align="start"
       trigger={props => (
-        <Button {...props} size="xs" variant="ghost" icon={UndoGlyph} loading={busy} loadingLabel="撤销中…">
-          撤销本轮
+        <Button {...props} size="xs" variant="ghost" icon={UndoGlyph} loading={busy} loadingLabel={COPY.undoing}>
+          {COPY.undo}
         </Button>
       )}>
       <UndoWarning warning={warning} onUndo={onUndo} />
@@ -250,16 +420,16 @@ function UndoWarning({ warning, onUndo }: { warning: ReturnType<typeof undoWarni
   const close = useLayerClose()
   return (
     <div className="changes-warning">
-      <p className="changes-warning-title">撤销本轮</p>
+      <p className="changes-warning-title">{COPY.undo}</p>
       <p>{writtenWords(warning.restore, warning.remove)}</p>
       <p className="changes-warning-miss">
         <WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-        不会恢复 {warning.missed.length} 个文件
+        {COPY.willMiss(warning.missed.length)}
       </p>
       <MissedList files={warning.missed} />
       <div className="changes-warning-actions">
         <Button size="sm" variant="ghost" onClick={close}>
-          取消
+          {COPY.cancel}
         </Button>
         <Button
           size="sm"
@@ -268,7 +438,7 @@ function UndoWarning({ warning, onUndo }: { warning: ReturnType<typeof undoWarni
             close()
             onUndo()
           }}>
-          撤销本轮
+          {COPY.undo}
         </Button>
       </div>
     </div>
@@ -308,17 +478,17 @@ function ScopeOptions({
         variant="ghost"
         icon={Redo2}
         loading={busy === 'redo'}
-        loadingLabel="恢复中…"
+        loadingLabel={COPY.redoing}
         onClick={() => {
           void actions.redo(turnId)
         }}>
-        恢复
+        {COPY.redo}
       </Button>
     )
   if (action.kind === 'discard')
     return (
-      <Button size="xs" variant="ghost" icon={UndoGlyph} loading={busy === 'discard'} loadingLabel="撤销中…" onClick={onDiscard}>
-        撤销未提交的改动…
+      <Button size="xs" variant="ghost" icon={UndoGlyph} loading={busy === 'discard'} loadingLabel={COPY.undoing} onClick={onDiscard}>
+        {COPY.discard}
       </Button>
     )
   return null
@@ -335,7 +505,7 @@ function Receipt({ result, engine }: { result: ChangesResult; engine: string }) 
     skipped: number
   if (result.kind === 'turn') {
     const { receipt } = result
-    title = receipt.action === 'undo' ? '已撤销本轮改动' : '已恢复本轮改动'
+    title = receipt.action === 'undo' ? COPY.turnUndone : COPY.turnRedone
     words = writtenWords(receipt.restored, receipt.removed)
     told = receipt.noteNextTurn
     ;({ notRestored, skipped } = receipt)
@@ -343,8 +513,8 @@ function Receipt({ result, engine }: { result: ChangesResult; engine: string }) 
   } else {
     const { restored, removed } = result.result
     ;({ notRestored, skipped } = result.result)
-    title = result.kind === 'uncommitted' ? '已撤销未提交的改动' : `已撤销 ${result.path}`
-    words = restored + removed ? writtenWords(restored, removed) : '这个文件已经是这一轮开始时的内容。'
+    title = result.kind === 'uncommitted' ? COPY.discarded : COPY.undonePath(result.path)
+    words = restored + removed ? writtenWords(restored, removed) : COPY.alreadyRestored
     told = restored + removed > 0 && result.result.noteNextTurn
   }
   const missed = missedFiles(notRestored, notCovered, skipped)
@@ -358,12 +528,12 @@ function Receipt({ result, engine }: { result: ChangesResult; engine: string }) 
         </span>
       </p>
       <p>{words}</p>
-      {told && <Hint label={`下一条消息会告诉 ${engine}`}>{`${engine} 的记忆不会被撤销。`}</Hint>}
+      {told && <Hint label={COPY.willTell(engine)}>{COPY.memory(engine)}</Hint>}
       {missed.files.length + missed.more > 0 && (
         <>
-          <p className="changes-receipt-key">没有恢复 {missed.files.length + missed.more} 个文件</p>
+          <p className="changes-receipt-key">{COPY.missed(missed.files.length + missed.more)}</p>
           <MissedList files={missed.files} />
-          {missed.more > 0 && <p className="changes-receipt-more">另有 {missed.more} 个文件没有列出</p>}
+          {missed.more > 0 && <p className="changes-receipt-more">{COPY.moreMissed(missed.more)}</p>}
         </>
       )}
       <button
@@ -374,9 +544,9 @@ function Receipt({ result, engine }: { result: ChangesResult; engine: string }) 
           setMore(!more)
         }}>
         <ChevronRightGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-        撤销的范围
+        {COPY.undoScope}
       </button>
-      {more && <p>{SCOPE_NOTE}</p>}
+      {more && <p>{UNDO_SCOPE_COPY.notes}</p>}
     </div>
   )
 }
@@ -409,7 +579,7 @@ function TreeRows({
       ref={scroller}
       className="changes-tree"
       role="tree"
-      aria-label="改动的文件"
+      aria-label={COPY.changedFiles}
       onScroll={event => {
         if (windowed) setView({ top: event.currentTarget.scrollTop, height: event.currentTarget.clientHeight })
       }}>
@@ -464,8 +634,8 @@ function TreeRows({
                   <IconButton
                     size="xs"
                     icon={UndoGlyph}
-                    label={`撤销 ${row.file.path}`}
-                    tooltip="撤销此文件"
+                    label={COPY.undoPath(row.file.path)}
+                    tooltip={COPY.undoFile}
                     className="changes-tree-undo"
                     onClick={() => {
                       onUndo(row.file)
@@ -473,12 +643,12 @@ function TreeRows({
                   />
                   {/* Its one hover action as its context menu too. */}
                   <Menu
-                    label={`${escapeHiddenCharacters(row.file.path)} 的操作`}
+                    label={COPY.fileActions(escapeHiddenCharacters(row.file.path))}
                     context={rowOf('.changes-tree-file')}
                     sections={[
                       {
                         id: 'undo',
-                        items: [{ id: 'undo', label: '撤销此文件', icon: UndoGlyph, danger: true, onSelect: () => onUndo(row.file) }],
+                        items: [{ id: 'undo', label: COPY.undoFile, icon: UndoGlyph, danger: true, onSelect: () => onUndo(row.file) }],
                       },
                     ]}
                   />
@@ -506,21 +676,21 @@ function LineFor({
   switch (line.kind) {
     case 'running':
       return (
-        <button type="button" className="changes-line changes-line-button" data-tone="muted" title="点按刷新" onClick={onRefresh}>
+        <button type="button" className="changes-line changes-line-button" data-tone="muted" title={COPY.refresh} onClick={onRefresh}>
           <Spinner size={12} />
-          <span className="changes-line-text">运行中 · 点按刷新</span>
+          <span className="changes-line-text">{COPY.running}</span>
         </button>
       )
     case 'interrupted':
       return (
         <Line tone="muted" icon={AlertGlyph}>
-          这一轮中断了 · 对比到此刻
+          {COPY.interrupted}
         </Line>
       )
     case 'partial':
       return (
-        <Line tone="amber" icon={WarningGlyph} detail={PARTIAL_NOTE.detail}>
-          {PARTIAL_NOTE.label}
+        <Line tone="amber" icon={WarningGlyph} detail={TURN_CHANGES_COPY.partialDetail}>
+          {TURN_CHANGES_COPY.partialLabel}
         </Line>
       )
     case 'conflict':
@@ -543,18 +713,19 @@ function LineFor({
                 onClick={() => {
                   onOpenSession(other)
                 }}>
-                查看
+                {COPY.view}
               </Button>
             ) : undefined
           }>
-          另一个会话也在改这里
+          {COPY.otherSession}
         </Line>
       )
     }
     case 'not-git':
       return (
         <Line tone="muted" icon={InfoGlyph}>
-          <VisibleText text={line.names.join('、')} /> 不是仓库顶层，未提交的不列出
+          <VisibleText text={line.names.join('、')} />
+          {COPY.notRoot}
         </Line>
       )
     case 'base':
@@ -562,10 +733,11 @@ function LineFor({
         <Line tone="muted" icon={BranchGlyph}>
           {line.branch ? (
             <>
-              <VisibleText text={line.branch} /> 与 {line.base ?? '主分支'} 的分叉点比较
+              <VisibleText text={line.branch} />
+              {COPY.compared(line.base ?? COPY.main)}
             </>
           ) : (
-            `与 ${line.base ?? '主分支'} 的分叉点比较`
+            COPY.compareBase(line.base ?? COPY.main)
           )}
         </Line>
       )
@@ -573,7 +745,7 @@ function LineFor({
 }
 
 function FilesRestricted({ hostName }: { hostName: string | undefined }) {
-  return <Empty title="这台设备看不到会话文件夹里的文件" detail={SETUP_COPY.filesNeedScope(computerName(hostName))} />
+  return <Empty title={COPY.noFiles} detail={SETUP_COPY.filesNeedScope(computerName(hostName))} />
 }
 
 /** The right panel's 改动 tab: what this session changed, who changed it, and taking it back. */
@@ -650,7 +822,7 @@ function ReadableChanges({
       if (meta.actions.editor !== true) throw new MessageError(fileRefusalText(meta.refused?.editor ?? 'file-type-refused'))
       const result = await openInEditor(summary.id, { handle: meta.handle })
       if (result.status === 'refused' || result.status === 'failed') throw new MessageError(fileRefusalText(result.code))
-      if (result.status === 'busy') throw new MessageError('上一个文件操作还没有完成，请稍后重试。')
+      if (result.status === 'busy') throw new MessageError(COPY.actionBusy)
     } catch (cause) {
       setEditorError(errorMessage(cause))
     }
@@ -733,9 +905,9 @@ function ReadableChanges({
   const narrow = width < 520
   const canArrange = !stagingView && !phone
   const modes = [
-    { value: 'auto', label: '自动' },
-    { value: 'stacked', label: '上下' },
-    { value: 'split', label: '左右' },
+    { value: 'auto', label: COPY.auto },
+    { value: 'stacked', label: COPY.stacked },
+    { value: 'split', label: COPY.split },
   ] as const
 
   const listRef = useRef<HTMLDivElement>(null)
@@ -781,12 +953,12 @@ function ReadableChanges({
     actions.patch().then(
       async patch => {
         if (!patch.text) {
-          onToast(patch.omitted ? `这 ${patch.omitted} 个文件不能进入补丁` : '没有可以复制的改动')
+          onToast(patch.omitted ? COPY.noPatchFiles(patch.omitted) : COPY.noPatchChanges)
           return
         }
         await writeClipboard(patch.text)
-        const left = patch.omitted ? `，${patch.omitted} 个文件没有进入补丁` : ''
-        onToast(patch.truncated ? `已复制补丁的前一部分：补丁太大${left}` : `已复制补丁${left}`, 'ok')
+        const left = patch.omitted ? COPY.leftOut(patch.omitted) : ''
+        onToast(patch.truncated ? COPY.partialPatch(left) : COPY.copiedPatch(left), 'ok')
       },
       (cause: unknown) => {
         onToast(errorMessage(cause), 'error')
@@ -796,7 +968,7 @@ function ReadableChanges({
 
   const keptTurns: MenuSection = {
     id: 'turns',
-    label: '保留的轮次',
+    label: COPY.keptTurns,
     items: turns.toReversed().map(item => {
       const row = turnRow(item, numbers)
       return {
@@ -814,11 +986,11 @@ function ReadableChanges({
   const others: MenuSection = {
     id: 'scopes',
     items: [
-      { id: 'session', label: '这个会话', checked: !git && choice.kind === 'session', onSelect: () => pickScope({ kind: 'session' }) },
+      { id: 'session', label: COPY.session, checked: !git && choice.kind === 'session', onSelect: () => pickScope({ kind: 'session' }) },
       {
         id: 'uncommitted',
-        label: '未提交',
-        meta: '和 HEAD 比较',
+        label: COPY.uncommitted,
+        meta: COPY.versus,
         checked: !git && choice.kind === 'uncommitted',
         onSelect: () => pickScope({ kind: 'uncommitted' }),
       },
@@ -827,7 +999,7 @@ function ReadableChanges({
             {
               id: 'base',
               label: baseLabel(base),
-              meta: '从分叉点开始',
+              meta: COPY.sinceFork,
               checked: !git && choice.kind === 'base',
               onSelect: () => pickScope({ kind: 'base' }),
             },
@@ -841,22 +1013,22 @@ function ReadableChanges({
     items: [
       {
         id: 'unstaged',
-        label: '未暂存',
-        meta: '按行暂存',
+        label: COPY.unstaged,
+        meta: COPY.lineStaging,
         checked: git?.kind === 'staging' && git.view === 'unstaged',
         onSelect: () => setGit({ kind: 'staging', view: 'unstaged' }),
       },
       {
         id: 'staged',
-        label: '已暂存',
-        meta: '和 HEAD 比较',
+        label: COPY.staged,
+        meta: COPY.versus,
         checked: git?.kind === 'staging' && git.view === 'staged',
         onSelect: () => setGit({ kind: 'staging', view: 'staged' }),
       },
       {
         id: 'commits',
-        label: '提交',
-        meta: '这个分支的',
+        label: COPY.commit,
+        meta: COPY.branchCommits,
         checked: git?.kind === 'history' && git.mode.kind === 'commits',
         onSelect: () => setGit({ kind: 'history', mode: { kind: 'commits' } }),
       },
@@ -864,8 +1036,8 @@ function ReadableChanges({
         ? [
             {
               id: 'compare',
-              label: `分支与 ${base ?? '主分支'}`,
-              meta: '已提交的改动',
+              label: COPY.branchWith(base ?? COPY.main),
+              meta: COPY.committedChanges,
               checked: git?.kind === 'history' && git.mode.kind === 'compare',
               onSelect: () => setGit({ kind: 'history', mode: { kind: 'compare' } }),
             },
@@ -878,7 +1050,7 @@ function ReadableChanges({
     setGit(current => ({ kind: 'history', mode: { kind: 'file', path }, ...(current ? { back: current } : {}) }))
   }
   const readOnly = sessionReadOnly(summary) !== undefined
-  const stagingWhy = offline ? '不在线' : !canRun || readOnly ? '只读' : running ? 'Agent 正在改这个文件夹' : undefined
+  const stagingWhy = offline ? COPY.offline : !canRun || readOnly ? COPY.readOnly : running ? COPY.agentBusy : undefined
   const dropped = droppedTurns(numbers, turns)
   const kept = review.notes ?? []
   const writing: NoteWriting | undefined =
@@ -907,14 +1079,12 @@ function ReadableChanges({
       {appDraft}
       <div className="changes-scope-row">
         <Menu
-          label="改动范围"
+          label={COPY.scope}
           size="sm"
           selection
           align="start"
           sections={[...(turns.length ? [keptTurns] : []), others, ...(gitHunks ? [gitViews] : [])]}
-          footer={
-            dropped > 0 ? <MenuFooterNote icon={InfoGlyph}>{`还有 ${dropped} 轮 · 只保留最近 ${KEPT_TURNS} 轮`}</MenuFooterNote> : undefined
-          }
+          footer={dropped > 0 ? <MenuFooterNote icon={InfoGlyph}>{COPY.olderTurns(dropped, KEPT_TURNS)}</MenuFooterNote> : undefined}
           trigger={props => (
             <button {...props} type="button" className="changes-scope-button">
               <span>{label}</span>
@@ -935,13 +1105,13 @@ function ReadableChanges({
         )}
         {(git ? git.kind === 'staging' : choice.kind === 'uncommitted') && onDeliver && (
           <Button size="xs" variant="ghost" onClick={onDeliver}>
-            去交付
+            {COPY.goDelivery}
           </Button>
         )}
         <span className="changes-scope-space" />
         {!narrow && canArrange && (
           <SegmentedControl
-            label="排列"
+            label={COPY.layout}
             size="xs"
             value={preferences.diffMode}
             options={modes}
@@ -953,7 +1123,7 @@ function ReadableChanges({
         <IconButton
           size="xs"
           icon={WrapText}
-          label="自动换行"
+          label={COPY.wrap}
           pressed={preferences.diffWrap}
           onClick={() => {
             setPreference('diffWrap', !preferences.diffWrap)
@@ -963,7 +1133,7 @@ function ReadableChanges({
           <IconButton
             size="xs"
             icon={FolderTree}
-            label="文件树"
+            label={COPY.tree}
             pressed={treeOn}
             onClick={() => {
               setPreference('diffTree', !treeOn)
@@ -972,7 +1142,7 @@ function ReadableChanges({
         )}
         {(!git || (narrow && canArrange)) && (
           <Menu
-            label="更多"
+            label={COPY.more}
             align="end"
             sections={[
               ...(narrow && canArrange
@@ -990,9 +1160,9 @@ function ReadableChanges({
                     },
                   ]
                 : []),
-              ...(!git ? [{ id: 'copy', items: [{ id: 'patch', label: '复制补丁', onSelect: copyPatch }] }] : []),
+              ...(!git ? [{ id: 'copy', items: [{ id: 'patch', label: COPY.copyPatch, onSelect: copyPatch }] }] : []),
             ]}
-            trigger={menu => <IconButton {...menu} size="xs" icon={MoreGlyph} label="更多" />}
+            trigger={menu => <IconButton {...menu} size="xs" icon={MoreGlyph} label={COPY.more} />}
           />
         )}
       </div>
@@ -1040,10 +1210,13 @@ function ReadableChanges({
           )}
           {undone && (
             <>
-              <Line icon={UndoGlyph}>已撤销本轮改动{turn?.notePending ? ` · 下一条消息会告诉 ${engine}` : ''}</Line>
+              <Line icon={UndoGlyph}>
+                {COPY.turnUndone}
+                {turn?.notePending ? COPY.nextTells(engine) : ''}
+              </Line>
               {!!list.notCovered?.length && (
-                <Line tone="muted" sub={<MissedList files={list.notCovered.map(path => ({ path, why: NOT_COVERED_WHY }))} />}>
-                  {list.notCovered.length} 个文件不在撤销范围
+                <Line tone="muted" sub={<MissedList files={list.notCovered.map(path => ({ path, why: UNDO_SCOPE_COPY.outside }))} />}>
+                  {COPY.outsideUndo(list.notCovered.length)}
                 </Line>
               )}
             </>
@@ -1053,12 +1226,12 @@ function ReadableChanges({
               type="button"
               className="changes-line changes-line-button"
               data-tone="muted"
-              title="点按刷新"
+              title={COPY.refresh}
               onClick={() => {
                 void reload()
               }}>
               <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-              <span className="changes-line-text">没有刷新成功 · 这是上次的列表</span>
+              <span className="changes-line-text">{COPY.refreshFailed}</span>
             </button>
           )}
           {lines.map(line => (
@@ -1075,18 +1248,18 @@ function ReadableChanges({
           {failure?.kind === 'turn-gone' ? (
             <Empty title={missingTurnTitle(choice, numbers, turns)} />
           ) : failure && !list ? (
-            <Empty title="读不到改动" detail={failure.text}>
+            <Empty title={COPY.readFailed} detail={failure.text}>
               <Button
                 size="xs"
                 variant="outline"
                 onClick={() => {
                   void reload()
                 }}>
-                重试
+                {COPY.retry}
               </Button>
             </Empty>
           ) : !list ? (
-            <Empty title="正在读取…" />
+            <Empty title={COPY.reading} />
           ) : empty ? (
             <Empty title={empty.title} detail={empty.detail}>
               {empty.retry && (
@@ -1096,7 +1269,7 @@ function ReadableChanges({
                   onClick={() => {
                     void reload()
                   }}>
-                  重试
+                  {COPY.retry}
                 </Button>
               )}
             </Empty>
@@ -1173,7 +1346,7 @@ function ReadableChanges({
                     onClick={() => {
                       setLimit(limit + LIST_PAGE)
                     }}>
-                    再显示 {Math.min(LIST_PAGE, files.length - limit)} 个文件
+                    {COPY.moreFiles(Math.min(LIST_PAGE, files.length - limit))}
                   </button>
                 )}
                 {apart.length > 0 && <ApartNotes notes={apart} writing={writing} />}
@@ -1189,7 +1362,8 @@ function ReadableChanges({
       )}
       {!git && reviewNotes && review.readError && !review.notes && (
         <Line tone="muted" icon={AlertGlyph}>
-          读不到反馈 · {review.readError}
+          {COPY.feedbackFailed}
+          {review.readError}
         </Line>
       )}
       {!git && reviewNotes && (
@@ -1233,10 +1407,10 @@ function ReadableChanges({
       )}
       {askClear && (
         <ConfirmDialog
-          title={`清空 ${tally.ready.length} 条待发反馈？`}
-          confirmLabel="清空"
+          title={COPY.clearQueue(tally.ready.length)}
+          confirmLabel={COPY.clear}
           danger
-          message="这些反馈还没有发出，清空后不能恢复。"
+          message={COPY.clearInfo}
           onConfirm={async () => {
             for (const note of tally.ready) await review.actions.remove(note.id)
           }}
@@ -1247,16 +1421,12 @@ function ReadableChanges({
       )}
       {askUndoFile && (
         <ConfirmDialog
-          title="撤销此文件？"
+          title={COPY.undoFileTitle}
           danger
-          confirmLabel="撤销此文件"
+          confirmLabel={COPY.undoFile}
           message={
             <div className="changes-discard">
-              <p>
-                {askUndoFile.status === 'A'
-                  ? '这个文件是这一轮新建的，撤销会删除它。这一步不能恢复。'
-                  : '写回这一轮开始时的内容。这一步不能恢复。'}
-              </p>
+              <p>{askUndoFile.status === 'A' ? COPY.undoNew : COPY.undoOld}</p>
               <div className="changes-missed">
                 <div className="changes-missed-row">
                   <code title={escapeHiddenCharacters(askUndoFile.path)}>
@@ -1276,15 +1446,15 @@ function ReadableChanges({
       )}
       {discard && (
         <ConfirmDialog
-          title="撤销未提交的改动？"
+          title={COPY.discardTitle}
           danger
-          confirmLabel="撤销改动"
+          confirmLabel={COPY.confirmDiscard}
           message={
             <div className="changes-discard">
               <p>{discard.warning}</p>
               {discard.removes.length > 0 && (
                 <>
-                  <p className="changes-receipt-key">会删除</p>
+                  <p className="changes-receipt-key">{COPY.willDelete}</p>
                   <div className="changes-missed">
                     {discard.removes.map(path => (
                       <div className="changes-missed-row" key={path}>
@@ -1298,7 +1468,7 @@ function ReadableChanges({
               )}
               {discard.missed.length > 0 && (
                 <>
-                  <p className="changes-receipt-key">不会改动</p>
+                  <p className="changes-receipt-key">{COPY.leftAlone}</p>
                   <MissedList files={discard.missed} />
                 </>
               )}

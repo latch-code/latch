@@ -1,6 +1,58 @@
 import { useEffect, useState } from 'react'
 import { isLoopbackHost, type AttentionItem, type AttentionKind, type ComputerSession, type ComputerSummary } from '@latch/protocol'
 import { shellComputers, type ComputersView } from './shell.ts'
+import { currentLocale, defineCopy, formatNumber } from './i18n.ts'
+
+const COPY = defineCopy(
+  {
+    online: '在线',
+    connecting: '正在连接',
+    lastSeen: (time: string) => `离线 · 上次在线 ${time}`,
+    offline: '离线',
+    updating: '正在更新',
+    restarting: '正在重启',
+    stopped: '已停止',
+    sleeping: '已休眠',
+    removed: '已被移除',
+    wrongComputer: '不是这台电脑',
+    certificateUntrusted: '证书不受信任',
+    certificateChanged: '证书变了',
+    outdated: '版本较旧',
+    connected: '已连接',
+    reconnecting: '正在重连',
+    stale: (count: number) => `离线前 ${count} 项`,
+    local: '这台 Mac',
+    loopback: '回环 HTTP',
+    approval: '审批',
+    question: '问题',
+    stuck: '没有动静',
+    noProject: '无项目',
+  },
+  {
+    online: 'Online',
+    connecting: 'Connecting',
+    lastSeen: (time: string) => `Offline · Last seen ${time}`,
+    offline: 'Offline',
+    updating: 'Updating',
+    restarting: 'Restarting',
+    stopped: 'Stopped',
+    sleeping: 'Asleep',
+    removed: 'Removed',
+    wrongComputer: 'Wrong computer',
+    certificateUntrusted: 'Certificate not trusted',
+    certificateChanged: 'Certificate changed',
+    outdated: 'Out of date',
+    connected: 'Connected',
+    reconnecting: 'Reconnecting',
+    stale: (count: number) => `${formatNumber(count)} before going offline`,
+    local: 'This Mac',
+    loopback: 'Loopback HTTP',
+    approval: 'Approval',
+    question: 'Question',
+    stuck: 'No activity',
+    noProject: 'No project',
+  },
+)
 
 /** A state colour for the status words: the tones of `StatusWord` in @latch/ui. */
 type Tone = 'neutral' | 'waiting' | 'running' | 'failed' | 'done' | 'warn'
@@ -8,42 +60,57 @@ type Tone = 'neutral' | 'waiting' | 'running' | 'failed' | 'done' | 'warn'
 /** A clock time, 10:42, or empty for a time that does not parse. */
 export function clockTime(iso: string | undefined): string {
   const at = iso ? new Date(iso) : undefined
-  return at && Number.isFinite(at.getTime()) ? at.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
+  return at && Number.isFinite(at.getTime())
+    ? at.toLocaleTimeString(currentLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
+    : ''
 }
 
 /** A computer's state in words and tone: amber where it waits for the person, red where the connection is not safe. */
 export function computerState(computer: Pick<ComputerSummary, 'state' | 'reason' | 'lastSeenAt'>): { text: string; tone: Tone } {
   switch (computer.state) {
     case 'online':
-      return { text: '在线', tone: 'neutral' }
+      return { text: COPY.online, tone: 'neutral' }
     case 'connecting':
-      return { text: '正在连接', tone: 'running' }
+      return { text: COPY.connecting, tone: 'running' }
     case 'offline': {
       const seen = clockTime(computer.lastSeenAt)
-      return { text: seen ? `离线 · 上次在线 ${seen}` : '离线', tone: 'neutral' }
+      return { text: seen ? COPY.lastSeen(seen) : COPY.offline, tone: 'neutral' }
     }
     case 'stopping':
       return {
-        text: computer.reason === 'update' ? '正在更新' : computer.reason === 'restart' ? '正在重启' : '已停止',
+        text: computer.reason === 'update' ? COPY.updating : computer.reason === 'restart' ? COPY.restarting : COPY.stopped,
         tone: 'neutral',
       }
     case 'sleeping':
-      return { text: '已休眠', tone: 'neutral' }
+      return { text: COPY.sleeping, tone: 'neutral' }
     case 'revoked':
-      return { text: '已被移除', tone: 'warn' }
+      return { text: COPY.removed, tone: 'warn' }
     case 'wrong-host':
-      return { text: '不是这台电脑', tone: 'failed' }
+      return { text: COPY.wrongComputer, tone: 'failed' }
     case 'cert-error':
-      return { text: '证书不受信任', tone: 'failed' }
+      return { text: COPY.certificateUntrusted, tone: 'failed' }
     case 'cert-changed':
-      return { text: '证书变了', tone: 'warn' }
+      return { text: COPY.certificateChanged, tone: 'warn' }
     case 'outdated':
-      return { text: '版本较旧', tone: 'warn' }
+      return { text: COPY.outdated, tone: 'warn' }
   }
 }
 
 /** This page's connection to its Host in a word, beside its live dot. */
-export const CONNECTION_WORDS = { connecting: '正在连接', connected: '已连接', reconnecting: '正在重连', offline: '离线' } as const
+export const CONNECTION_WORDS = {
+  get connecting() {
+    return COPY.connecting
+  },
+  get connected() {
+    return COPY.connected
+  },
+  get reconnecting() {
+    return COPY.reconnecting
+  },
+  get offline() {
+    return COPY.offline
+  },
+} as const
 
 /** One other computer in the computer popover: its state, what waits there, and whether its Latch is older. */
 export interface OtherComputerRow {
@@ -70,11 +137,11 @@ export function otherComputerRows(
     if (computer.hostId === hostId) return []
     const live = computer.state === 'online'
     const waiting = computer.waiting?.length ?? 0
-    const stale = !live && waiting > 0 ? `离线前 ${waiting} 项` : undefined
+    const stale = !live && waiting > 0 ? COPY.stale(waiting) : undefined
     return [
       {
         hostId: computer.hostId,
-        name: computer.local ? '这台 Mac' : computer.name,
+        name: computer.local ? COPY.local : computer.name,
         state: computer.state,
         text: [computerState(computer).text, stale].filter(Boolean).join(' · '),
         count: live ? waiting : 0,
@@ -96,7 +163,7 @@ export function connectionTransport(
   if (protocol === 'https:') return 'HTTPS'
   // The Host binds a dedicated localhost alias for this identity (apps/host/src/listeners.ts).
   const loopback = isLoopbackHost(hostname) || (hostId !== undefined && hostname === `h-${hostId}.localhost`)
-  return protocol === 'http:' && loopback ? '回环 HTTP' : ''
+  return protocol === 'http:' && loopback ? COPY.loopback : ''
 }
 
 /** The computers list of the desktop app, kept current by main's pushes; undefined outside it or until it arrives. */
@@ -141,9 +208,15 @@ export function otherWaiting(view: ComputersView | undefined, hostId: string | u
 }
 
 export const ATTENTION_WORDS: Record<AttentionKind, string> = {
-  approval: '审批',
-  question: '问题',
-  stuck: '没有动静',
+  get approval() {
+    return COPY.approval
+  },
+  get question() {
+    return COPY.question
+  },
+  get stuck() {
+    return COPY.stuck
+  },
 }
 
 /** Whether version `a` is older than `b` (x.y.z, a pre-release before its release); unknown versions are not. */
@@ -201,7 +274,7 @@ export function otherComputerLists(view: ComputersView | undefined, hostId: stri
       const key = session.project ? `p:${session.project.id}` : 'none'
       let project = byProject.get(key)
       if (!project) {
-        project = { id: session.project?.id ?? null, name: session.project?.name ?? '无项目', sessions: [] }
+        project = { id: session.project?.id ?? null, name: session.project?.name ?? COPY.noProject, sessions: [] }
         byProject.set(key, project)
       }
       project.sessions.push(session)

@@ -2,6 +2,19 @@ import type { HarnessInfo, TaskDetail, TaskSummary, TokenUsage, UsageReport } fr
 import { turnsOf } from '../conversation.ts'
 import { parseDuration } from '../core/hostClock.ts'
 import { currencyAmount, formatDuration, tokenLines } from '../format.ts'
+import { harnessName } from '../core/harnessName.ts'
+import { defineCopy, plural } from '../core/i18n.ts'
+
+const TOTALS_COPY = defineCopy(
+  {
+    costClause: (reporter: string) => `由 ${reporter} 报告，不是账单`,
+    turns: (count: number) => plural(count, { other: '{n} 轮' }),
+  },
+  {
+    costClause: (reporter: string) => `reported by ${reporter}, not a bill`,
+    turns: (count: number) => plural(count, { one: '{n} turn', other: '{n} turns' }),
+  },
+)
 
 /** How full the context window is, only from what the Harness reported; never estimated. */
 export interface ContextTotals {
@@ -37,7 +50,7 @@ export function contextTotals(report: Pick<UsageReport, 'contextUsed' | 'context
 }
 
 /** 「由 Codex 报告，不是账单」: a cost is never shown without it. */
-export const costClause = (reporter: string) => `由 ${reporter} 报告，不是账单`
+export const costClause = (reporter: string) => TOTALS_COPY.costClause(reporter)
 
 /** The session's totals from its summary and, when it is the open one, its detail. */
 export function sessionTotals(input: {
@@ -47,7 +60,7 @@ export function sessionTotals(input: {
 }): SessionTotals {
   const { summary, harness } = input
   const own = input.detail?.summary.id === summary.id ? input.detail : undefined
-  const name = harness?.capabilities.display.label ?? 'Harness'
+  const name = harness ? harnessName(harness) : 'Harness'
   const totals: SessionTotals = { by: name }
   const context = contextTotals(own?.usageReport)
   if (context) totals.context = context
@@ -69,7 +82,7 @@ export function sessionTotals(input: {
   })
   if (timed.length > 0) {
     const ms = timed.reduce((sum, value) => sum + value, 0)
-    totals.time = { ms, turns: timed.length, text: [formatDuration(ms), `${timed.length} 轮`].filter(Boolean).join(' · ') }
+    totals.time = { ms, turns: timed.length, text: [formatDuration(ms), TOTALS_COPY.turns(timed.length)].filter(Boolean).join(' · ') }
   }
   return totals
 }

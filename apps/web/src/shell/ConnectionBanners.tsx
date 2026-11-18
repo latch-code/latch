@@ -1,10 +1,30 @@
-import { AUDIT_ROLLBACK_TEXT } from '../core/auditCheckpoint.ts'
-import { LEGACY_HOST_TEXT } from '../core/permissions.ts'
+import { AUDIT_COPY } from '../core/auditCheckpoint.ts'
+import { DEVICE_PERMISSION_COPY } from '../core/permissions.ts'
 import { hostNeedsStart } from '../core/shellLifecycle.ts'
 import { Banner } from '../components/Banner.tsx'
 import { Button, Hint, Icon, IconButton, InlineNotice, CloseGlyph, RefreshGlyph } from '@latch/ui'
 import { restartLatch } from './UpdateCheck.tsx'
 import type { ShellState } from './useShellLayout.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    start: '启动 Latch',
+    retry: '重试',
+    restart: '重启 Latch',
+    restartHelp: '怎么重启',
+    checked: '已核对',
+    dismiss: '关闭提示',
+  },
+  {
+    start: 'Start Latch',
+    retry: 'Retry',
+    restart: 'Restart Latch',
+    restartHelp: 'How to restart',
+    checked: 'Reviewed',
+    dismiss: 'Dismiss notice',
+  },
+)
 
 /** The connection and the Host itself: over the open conversation, or at the top of a phone's list. */
 export function ConnectionBanners({ shell }: { shell: ShellState }) {
@@ -22,7 +42,7 @@ export function ConnectionBanners({ shell }: { shell: ShellState }) {
                 onClick={() => {
                   restartLatch(shell)
                 }}>
-                启动 Latch
+                {COPY.start}
               </Button>
             ) : (
               <Button
@@ -30,7 +50,7 @@ export function ConnectionBanners({ shell }: { shell: ShellState }) {
                 onClick={() => {
                   void resync()
                 }}>
-                重试
+                {COPY.retry}
               </Button>
             )
           }>
@@ -50,11 +70,11 @@ export function ConnectionBanners({ shell }: { shell: ShellState }) {
                   onClick={() => {
                     restartLatch(shell)
                   }}>
-                  重启 Latch
+                  {COPY.restart}
                 </Button>
               ) : undefined
             }>
-            <Hint inline lead={<Icon icon={RefreshGlyph} size={12} />} label={oldHost.label} moreLabel="怎么重启">
+            <Hint inline lead={<Icon icon={RefreshGlyph} size={12} />} label={oldHost.label} moreLabel={COPY.restartHelp}>
               {oldHost.detail}
             </Hint>
           </InlineNotice>
@@ -67,17 +87,17 @@ export function ConnectionBanners({ shell }: { shell: ShellState }) {
           action={
             <span className="banner-actions">
               <Button size="xs" onClick={audit.accept}>
-                已核对
+                {COPY.checked}
               </Button>
-              <IconButton className="banner-close" label="关闭提示" icon={CloseGlyph} size="xs" onClick={audit.dismiss} />
+              <IconButton className="banner-close" label={COPY.dismiss} icon={CloseGlyph} size="xs" onClick={audit.dismiss} />
             </span>
           }>
-          {AUDIT_ROLLBACK_TEXT}
+          {AUDIT_COPY.rollback}
         </InlineNotice>
       </Banner>
       <Banner show={access.legacy}>
         <InlineNotice tone="neutral" secure>
-          {LEGACY_HOST_TEXT}
+          {DEVICE_PERMISSION_COPY.legacyHost}
         </InlineNotice>
       </Banner>
     </>

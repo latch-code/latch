@@ -1,6 +1,16 @@
 // How large the 设备 panel draws a device's picture: fit to the panel, 1:1 (one device pixel per screen pixel), or a
 // step in between or beyond. Remembered per device in this browser only, as a convenience.
 import { readStorage } from '../../core/storageKeys.ts'
+import { defineCopy, formatNumber } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    fitPercent: (percent: number) => `适应 · ${formatNumber(percent)}%`,
+  },
+  {
+    fitPercent: (percent: number) => `Fit · ${formatNumber(percent)}%`,
+  },
+)
 
 export type Zoom = 'fit' | number
 
@@ -61,5 +71,5 @@ export function screenSize(
 
 /** 「适应」 or a percentage. */
 export function zoomLabel(zoom: Zoom, fit: number): string {
-  return zoom === 'fit' ? `适应 · ${Math.round(fit * 100)}%` : `${Math.round(zoom * 100)}%`
+  return zoom === 'fit' ? COPY.fitPercent(Math.round(fit * 100)) : `${Math.round(zoom * 100)}%`
 }

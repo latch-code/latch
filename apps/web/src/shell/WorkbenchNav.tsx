@@ -27,6 +27,32 @@ import { shortcutKeys } from '../workbenchShortcuts.ts'
 import { UsageEntry } from '../usage/UsageEntry.tsx'
 import { ShellUpdateCheck } from './UpdateCheck.tsx'
 import type { ShellState } from './useShellLayout.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    nav: '工作台导航',
+    overview: '总览',
+    newSession: '新建会话',
+    search: '搜索',
+    scheduled: '定时任务',
+    sessions: '打开会话列表',
+    settings: '设置',
+    online: (count: number) => `${count} 台在线`,
+    connection: '连接状态',
+  },
+  {
+    nav: 'Workbench navigation',
+    overview: 'Overview',
+    newSession: 'New session',
+    search: 'Search',
+    scheduled: 'Scheduled tasks',
+    sessions: 'Open session list',
+    settings: 'Settings',
+    online: (count: number) => `${count} online`,
+    connection: 'Connection status',
+  },
+)
 
 /** On tablets the project tree is a drawer beside a persistent 60px navigation rail. */
 export function TabletRail({ shell }: { shell: ShellState }) {
@@ -35,20 +61,24 @@ export function TabletRail({ shell }: { shell: ShellState }) {
   const inAgents = spaces?.space === 'agents'
   return (
     // Under a page the rail's column is the page's own list: nothing here is in the focus order then.
-    <nav className="workbench-tablet-rail" aria-label="工作台导航" inert={shell.route.entry !== 'sessions' || shell.board || undefined}>
+    <nav className="workbench-tablet-rail" aria-label={COPY.nav} inert={shell.route.entry !== 'sessions' || shell.board || undefined}>
       <span className="workbench-rail-brand">
         <BrandMark size={24} />
       </span>
       {spaces && <SpaceButtons {...spaces} />}
-      {home && <IconButton label="总览" icon={OverviewGlyph} pressed={home.active} onClick={home.open} />}
-      {inAgents ? <ShellNewAgent shell={shell} compact /> : <IconButton label="新建会话" icon={NewSessionGlyph} onClick={shell.startNew} />}
-      <IconButton label="搜索" icon={SearchGlyph} onClick={shell.openSearch} />
+      {home && <IconButton label={COPY.overview} icon={OverviewGlyph} pressed={home.active} onClick={home.open} />}
+      {inAgents ? (
+        <ShellNewAgent shell={shell} compact />
+      ) : (
+        <IconButton label={COPY.newSession} icon={NewSessionGlyph} onClick={shell.startNew} />
+      )}
+      <IconButton label={COPY.search} icon={SearchGlyph} onClick={shell.openSearch} />
       {shell.catalog?.features?.automations && (
-        <IconButton label="定时任务" icon={ScheduleGlyph} onClick={() => shell.openMyAgent({ id: 'general', tab: 'schedules' })} />
+        <IconButton label={COPY.scheduled} icon={ScheduleGlyph} onClick={() => shell.openMyAgent({ id: 'general', tab: 'schedules' })} />
       )}
       <IconButton
         ref={shell.sidebarToggle}
-        label="打开会话列表"
+        label={COPY.sessions}
         icon={PanelLeftGlyph}
         aria-controls="session-navigation"
         aria-expanded={shell.drawer.open}
@@ -56,7 +86,9 @@ export function TabletRail({ shell }: { shell: ShellState }) {
       />
       <span className="workbench-rail-spacer" />
       {shell.access.scopes.has('view') && <UsageEntry />}
-      {shell.entries.includes('settings') && <IconButton label="设置" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />}
+      {shell.entries.includes('settings') && (
+        <IconButton label={COPY.settings} data-testid="open-settings" icon={SettingsGlyph} onClick={() => shell.goEntry('settings')} />
+      )}
       <ShellUpdateCheck shell={shell} />
     </nav>
   )
@@ -168,12 +200,12 @@ export function WorkbenchConnection({ shell, inert }: { shell: ShellState; inert
       ),
     },
     { id: 'transport', text: transport },
-    { id: 'online', text: online === null ? '' : `${online} 台在线` },
+    { id: 'online', text: online === null ? '' : COPY.online(online) },
     { id: 'search', text: shortcutKeys('palette', desktop !== null) ?? '', end: true },
   ]
   return (
     <footer className="workbench-connection" inert={inert || undefined}>
-      <StatusStrip facts={facts} label="连接状态" />
+      <StatusStrip facts={facts} label={COPY.connection} />
     </footer>
   )
 }

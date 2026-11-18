@@ -13,6 +13,20 @@ import {
   uprightTransform,
 } from './live.ts'
 import { screenSize, type Zoom } from './zoom.ts'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    stopped: '设备已停止',
+    disconnected: '实时画面断开了',
+    view: (value1: string | number) => `${value1} 的实时画面`,
+  },
+  {
+    stopped: 'Device stopped',
+    disconnected: 'Live view disconnected',
+    view: (value1: string | number) => `Live view of ${value1}`,
+  },
+)
 
 export type LiveState = 'connecting' | 'live' | 'unavailable'
 
@@ -236,12 +250,12 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onOwn
         ownerRef.current(undefined)
         clearMark()
         if (outcome === 'stop' || outcome === 'device') {
-          if (outcome === 'device') stateRef.current('unavailable', { reason: '设备已停止' })
+          if (outcome === 'device') stateRef.current('unavailable', { reason: COPY.stopped })
           return
         }
         if (outcome === 'jpeg') codec = 'jpeg'
         else if (++reconnects > RECONNECTS) {
-          stateRef.current('unavailable', { reason: '实时画面断开了' })
+          stateRef.current('unavailable', { reason: COPY.disconnected })
           return
         }
         await new Promise(resolve => setTimeout(resolve, 500))
@@ -361,7 +375,7 @@ export function DeviceScreen({ udid, name, zoom, box, pixelRatio, onState, onOwn
         ref={canvas}
         className="sim-screen sim-live"
         role="img"
-        aria-label={`${name} 的实时画面`}
+        aria-label={COPY.view(name)}
         tabIndex={onInput ? 0 : -1}
         data-input={onInput ? '' : undefined}
         data-orientation={description?.orientation}

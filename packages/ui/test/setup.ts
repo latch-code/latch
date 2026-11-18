@@ -2,6 +2,8 @@ import { configure } from 'vitest-browser-react/pure'
 import tokens from '../src/tokens.css?inline'
 import primitives from '../src/ui.css?inline'
 
+document.documentElement.lang = 'zh-CN'
+
 // The design system's stylesheets, in the order a page loads them: the tokens declare the cascade layers first.
 for (const text of [tokens, primitives]) {
   const style = document.createElement('style')

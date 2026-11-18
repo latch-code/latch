@@ -16,6 +16,7 @@ import {
   LockGlyph,
 } from '@latch/ui'
 import type { Brief } from '../core/securityCopy.ts'
+import { SETTINGS_COPY } from './settings.copy.ts'
 
 /**
  * The page's own layout for settings: groups of rows in a well sunk into the panel, divided by hairlines. Controls
@@ -299,6 +300,6 @@ export function moreButton(label: string) {
 }
 
 /** Settings sections loading their data: the design system's inline loading line. */
-export function Loading({ label = '正在读取…' }: { label?: string }) {
-  return <InlineLoading label={label} />
+export function Loading({ label }: { label?: string }) {
+  return <InlineLoading label={label ?? SETTINGS_COPY.loading} />
 }

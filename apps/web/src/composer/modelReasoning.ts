@@ -1,8 +1,36 @@
 import type { ModelRef, ProviderKind, SessionConfigOption } from '@latch/protocol'
 import type { Brief } from '../core/securityCopy.ts'
+import { defineCopy } from '../core/i18n.ts'
 import type { ConfigUnknownState } from './Composer.tsx'
 import { currentShell } from '../core/shell.ts'
 import { COMPOSER_CONTROLS, shortcutCaps, shortcutKeys, type ComposerControl } from '../workbenchShortcuts.ts'
+
+export const REASONING_COPY = defineCopy(
+  {
+    unknown: '上次切换的结果未知，请先核对。',
+    defaultModel: '默认模型',
+    defaultLevel: '默认',
+    decides: (harness: string) => `由 ${harness} 决定`,
+    noLevels: '这个模型没有思考档位',
+    harnessDefault: (harness: string) => `用 ${harness} 的默认值`,
+    serviceDefault: '用模型服务的默认值',
+    builtinNote: { label: '用模型默认值', detail: '可以在 设置 › 模型 里为它选择。' } satisfies Brief,
+    resetTo: (name: string) => `撤销切换，继续使用 ${name}`,
+    reset: '撤销切换',
+  },
+  {
+    unknown: 'The previous switch has an unknown outcome. Check it first.',
+    defaultModel: 'Default model',
+    defaultLevel: 'Default',
+    decides: (harness: string) => `Chosen by ${harness}`,
+    noLevels: 'This model has no thinking levels',
+    harnessDefault: (harness: string) => `Use the default from ${harness}`,
+    serviceDefault: 'Use the model service default',
+    builtinNote: { label: 'Model default', detail: 'Choose a level in Settings › Models.' },
+    resetTo: (name: string) => `Undo switch and keep using ${name}`,
+    reset: 'Undo switch',
+  },
+)
 
 export interface SessionConfigFeedback {
   kind: 'failed' | 'unknown'
@@ -24,8 +52,6 @@ export function feedbackFor(feedback: SessionConfigFeedback | undefined, ids: re
   if (!feedback) return false
   return feedback.configId === undefined || ids.includes(feedback.configId)
 }
-
-export const CONFIG_UNKNOWN_REASON = '上次切换的结果未知，请先核对。'
 
 /** The bar above the input while the open session's config change is unknown. */
 export function configUnknownBar(
@@ -77,21 +103,14 @@ export function agentModelControls(config: readonly SessionConfigOption[]): {
   }
 }
 
-export const DEFAULT_MODEL = '默认模型'
-/** The thinking control's value when no level is chosen or none was reported: the model's own default. */
-export const DEFAULT_LEVEL = '默认'
-
 /**
  * The model menu's few words on a model the Harness has not told Latch of. Nothing when it reported one, and nothing
  * before a start: the menu then shows what will be used, 默认模型.
  */
 export function unreportedModelNote(harness: string, started: boolean, config: readonly SessionConfigOption[]): string | undefined {
   if (!started) return undefined
-  return config.some(option => option.category === 'model') ? undefined : `由 ${harness} 决定`
+  return config.some(option => option.category === 'model') ? undefined : REASONING_COPY.decides(harness)
 }
-
-/** A Harness that reports levels for every model that has them reported none for this one. */
-export const NO_THINKING_LEVELS = '这个模型没有思考档位'
 
 /**
  * What the thinking column's lone 默认 means while the Harness has told Latch of no levels, on hover of that row and of
@@ -106,24 +125,13 @@ export function unreportedThinkingNote(
 ): string | undefined {
   if (!started) return undefined
   if (config.some(option => option.category === 'thought_level')) return undefined
-  return perModel && config.some(option => option.category === 'model') ? NO_THINKING_LEVELS : `用 ${harness} 的默认值`
+  return perModel && config.some(option => option.category === 'model') ? REASONING_COPY.noLevels : REASONING_COPY.harnessDefault(harness)
 }
 
-/** On a model of a service with no level declared or reported: 默认 is the service's own, as the trigger's hover says. */
-export const SERVICE_DEFAULT_HINT = '用模型服务的默认值'
-
-/** On the built-in Harness, for a model with no thinking levels declared in settings. */
-export const BUILTIN_THINKING_NOTE: Brief = { label: '用模型默认值', detail: '可以在 设置 › 模型 里为它选择。' }
-
-const THINKING_WORDS: Readonly<Record<string, string>> = {
-  none: '不思考',
-  minimal: '最少',
-  low: '低',
-  medium: '中',
-  high: '高',
-  xhigh: '超高',
-  max: '最高',
-}
+const THINKING_WORDS = defineCopy<Readonly<Record<string, string>>>(
+  { none: '不思考', minimal: '最少', low: '低', medium: '中', high: '高', xhigh: '超高', max: '最高' },
+  { none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' },
+)
 
 /** A thinking level in words; a level Latch has no word for shows as sent. */
 export const thinkingWord = (level: string): string => THINKING_WORDS[level] ?? level
@@ -156,7 +164,8 @@ export const sameModelId = (a: ModelRef | undefined, b: ModelRef | undefined): b
   a?.providerId === b?.providerId && a?.model === b?.model
 
 /** Undoing a built-in switch that applies from the next message, in the model's and the thinking's menu alike. */
-export const resetModelLabel = (current: ModelRef | undefined) => (current ? `撤销切换，继续使用 ${modelWords(current)}` : '撤销切换')
+export const resetModelLabel = (current: ModelRef | undefined) =>
+  current ? REASONING_COPY.resetTo(modelWords(current)) : REASONING_COPY.reset
 
 export const thinkingSetText = (levels: readonly string[]): string => levels.map(thinkingWord).join(' · ')
 

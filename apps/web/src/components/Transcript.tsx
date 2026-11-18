@@ -51,6 +51,36 @@ import { VisibleText } from './VisibleText.tsx'
 import { transcriptMarkdown } from '../exportMarkdown.ts'
 import { useStableCallback } from '../hooks/useStableCallback.ts'
 import { Button, Collapse, ICON_STROKE, useLivePrevious, ChevronRightGlyph, CloseGlyph, writeClipboard } from '@latch/ui'
+import { defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    forkBegin: '从「',
+    forkEnd: (turn: number) => `」第 ${formatNumber(turn)} 轮分叉`,
+    steps: (count: number) => `工作过程 · ${formatNumber(count)} 步`,
+    trace: '工作过程',
+    retry: '重试',
+    cleared: '清空了上下文',
+    cancel: '取消',
+    demo: '演示',
+    speakerStarted: (value1: string | number) => `${value1} 已开始`,
+    otherService: '另一个模型服务',
+    sourceSession: '返回来源会话',
+  },
+  {
+    forkBegin: 'Forked from “',
+    forkEnd: (turn: number) => `”, turn ${formatNumber(turn)}`,
+    steps: (count: number) => `Work trace · ${plural(count, { one: '{n} step', other: '{n} steps' })}`,
+    trace: 'Work trace',
+    retry: 'Retry',
+    cleared: 'Context cleared',
+    cancel: 'Cancel',
+    demo: 'Demo',
+    speakerStarted: (value1: string | number) => `${value1} started`,
+    otherService: 'Another model service',
+    sourceSession: 'Back to source session',
+  },
+)
 
 /** What resending the latest turn takes, when this device may send now. */
 export interface RetryAccess {
@@ -93,7 +123,8 @@ function QuestionRow({ message, context }: { message: Message; context: RowConte
 /** A run of finished reads, listings and searches as one row; opening it lists them as the rows they were. */
 function ReadsRow({ messages, context }: { messages: Message[]; context: RowContext }) {
   const [open, setOpen] = useState(false)
-  const words = useMemo(() => quietGroupWords(messages), [messages])
+  const locale = useLocale()
+  const words = useMemo(() => quietGroupWords(messages), [locale, messages])
   return (
     <div className="reads-row" data-open={open ? '' : undefined}>
       <button
@@ -146,7 +177,7 @@ function StepsRow({ items, count, context }: { items: WorkItem[]; count: number;
         <KindGlyph kind="steps" />
         <span className="process-label">
           {/* Only tool steps are counted; a fold that holds nothing but thoughts says no number. */}
-          <span className="process-object">{count > 0 ? `工作过程 · ${count} 步` : '工作过程'}</span>
+          <span className="process-object">{count > 0 ? COPY.steps(count) : COPY.trace}</span>
         </span>
         <ChevronRightGlyph className="process-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       </button>
@@ -372,7 +403,7 @@ function OutcomeRecord({ turn, outcome, onRetry }: { turn: Turn; outcome: TurnOu
       <span>{[...words.slice(0, 1), ...(at !== undefined ? [messageTime(at, Date.now())] : []), ...words.slice(1)].join(' · ')}</span>
       {outcome === 'failed' && onRetry && (
         <Button size="xs" variant="ghost" icon={RotateCcw} onClick={onRetry}>
-          重试
+          {COPY.retry}
         </Button>
       )}
     </p>
@@ -416,6 +447,7 @@ const TurnView = memo(function TurnView({
   changesEnabled,
   onChangesError,
 }: TurnViewProps) {
+  useLocale()
   const [tapped, setTapped] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [foldChoice, setFoldChoice] = useState<boolean | null>(null)
@@ -454,7 +486,7 @@ const TurnView = memo(function TurnView({
   const showOutcome = outcome !== undefined && outcome !== 'completed' && !runEnd && !(outcome === 'failed' && speaksFailure)
   return (
     <div className="turn" data-turn={turn.key} data-settled={latest ? undefined : ''}>
-      {turn.user?.freshContext && <TimelineDivider icon={Eraser} text="清空了上下文" />}
+      {turn.user?.freshContext && <TimelineDivider icon={Eraser} text={COPY.cleared} />}
       {switched && !speaker && <TimelineDivider text={switched} />}
       {turn.user && (
         <MessageRow
@@ -591,7 +623,7 @@ const TurnView = memo(function TurnView({
               <div
                 className="turn-retry-confirm"
                 role="group"
-                aria-label="重试"
+                aria-label={COPY.retry}
                 onKeyDown={event => {
                   if (event.key === 'Escape') {
                     event.stopPropagation()
@@ -606,7 +638,7 @@ const TurnView = memo(function TurnView({
                     onClick={() => {
                       setConfirming(false)
                     }}>
-                    取消
+                    {COPY.cancel}
                   </Button>
                   <Button
                     size="sm"
@@ -615,7 +647,7 @@ const TurnView = memo(function TurnView({
                       setConfirming(false)
                       retry.onResend()
                     }}>
-                    重试
+                    {COPY.retry}
                   </Button>
                 </div>
               </div>
@@ -736,6 +768,7 @@ interface TranscriptProps {
 }
 
 export function Transcript(props: TranscriptProps) {
+  const locale = useLocale()
   const {
     login,
     detail,
@@ -841,7 +874,7 @@ export function Transcript(props: TranscriptProps) {
     [changes?.undo, changes?.offline, refreshChanges, sessionId],
   )
   const frozen = frozenAt !== undefined
-  const engine = demo ? '演示' : undefined
+  const engine = demo ? COPY.demo : undefined
   const statusProps: StatusLineProps = {
     detail,
     messageFacts: projection.messageFacts,
@@ -878,7 +911,7 @@ export function Transcript(props: TranscriptProps) {
     const providerId = stamped?.model ? stamped.providerId : trailingLive ? detail.summary.providerId : undefined
     const said = trailingLive && !frozen ? deliveryWords(detail, turn) : undefined
     // A helper has begun on it, not a Harness.
-    const delivery = speaker && said === 'Harness 已开始' ? `${speaker.name} 已开始` : said
+    const delivery = speaker && said && detail.summary.live?.activity !== 'starting' ? COPY.speakerStarted(speaker.name) : said
     const record = records.get(turn.key)
     const hasChangeRecord = changes?.enabled === true && record !== undefined
     return (
@@ -909,7 +942,7 @@ export function Transcript(props: TranscriptProps) {
           }
           provider={providerId ? providerName?.(providerId) : undefined}
           {...(route?.differs && !route.fallback && !route.direct ? { chosen: { model: route.chosen!, reported: route.reported } } : {})}
-          {...(route?.fallback ? { fallback: providerName?.(route.fallback.providerId) ?? '另一个模型服务' } : {})}
+          {...(route?.fallback ? { fallback: providerName?.(route.fallback.providerId) ?? COPY.otherService } : {})}
           latest={latest}
           trailingLive={trailingLive}
           outcome={outcome}
@@ -940,6 +973,7 @@ export function Transcript(props: TranscriptProps) {
   }
   const historyInputs = {
     ...props,
+    locale,
     detail: historyDetail(detail),
     fallbackElapsed: undefined,
     onFork: !!onFork,
@@ -992,15 +1026,15 @@ export function Transcript(props: TranscriptProps) {
           <FileReferences sessionId={sessionId} active={active}>
             {detail.summary.forkOf && (
               <p className="fork-origin">
-                从「
+                {COPY.forkBegin}
                 {onSource ? (
-                  <button type="button" aria-label="返回来源会话" onClick={() => onSource(detail.summary.forkOf!.taskId)}>
+                  <button type="button" aria-label={COPY.sourceSession} onClick={() => onSource(detail.summary.forkOf!.taskId)}>
                     <VisibleText text={detail.summary.forkOf.title} />
                   </button>
                 ) : (
                   <VisibleText text={detail.summary.forkOf.title} />
                 )}
-                」第 {detail.summary.forkOf.turn} 轮分叉
+                {COPY.forkEnd(detail.summary.forkOf.turn)}
               </p>
             )}
             {inserts?.get('')}

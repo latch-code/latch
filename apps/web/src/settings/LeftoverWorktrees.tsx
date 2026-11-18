@@ -6,6 +6,26 @@ import { api, errorMessage } from '../core/api.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { RemoveWorktreeDialog, removalWords } from '../components/RemoveWorktreeDialog.tsx'
 import { SettingsGroup, SettingsRow } from './common.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    title: '残留的工作树',
+    reading: '正在读取工作树',
+    retry: '重试',
+    none: '没有',
+    detached: '分离 HEAD',
+    remove: '移除…',
+  },
+  {
+    title: 'Leftover worktrees',
+    reading: 'Reading worktrees',
+    retry: 'Retry',
+    none: 'None',
+    detached: 'Detached HEAD',
+    remove: 'Remove…',
+  },
+)
 
 type Listing = { state: 'reading' } | { state: 'ready'; worktrees: LatchWorktree[] } | { state: 'failed'; message: string }
 
@@ -29,27 +49,27 @@ export function LeftoverWorktrees({ project }: { project: WorkspaceInfo }) {
   }, [project.id])
   useEffect(load, [load])
   return (
-    <SettingsGroup title="残留的工作树">
-      {listing.state === 'reading' && <SettingsRow title={<Spinner size={12} label="正在读取工作树" />} />}
+    <SettingsGroup title={COPY.title}>
+      {listing.state === 'reading' && <SettingsRow title={<Spinner size={12} label={COPY.reading} />} />}
       {listing.state === 'failed' && (
         <InlineNotice
           tone="error"
           action={
             <Button size="xs" onClick={load}>
-              重试
+              {COPY.retry}
             </Button>
           }>
           {listing.message}
         </InlineNotice>
       )}
-      {listing.state === 'ready' && listing.worktrees.length === 0 && <SettingsRow title="没有" />}
+      {listing.state === 'ready' && listing.worktrees.length === 0 && <SettingsRow title={COPY.none} />}
       {listing.state === 'ready'
         && listing.worktrees.map(entry => (
           <SettingsRow
             key={entry.name}
             leading={<Icon icon={FolderGit2} size={16} />}
             title={entry.name}
-            description={entry.branch ? <VisibleText text={entry.branch} /> : '分离 HEAD'}
+            description={entry.branch ? <VisibleText text={entry.branch} /> : COPY.detached}
             trailing={
               <Button
                 variant="danger"
@@ -60,7 +80,7 @@ export function LeftoverWorktrees({ project }: { project: WorkspaceInfo }) {
                   setDone('')
                   setRemoving(entry)
                 }}>
-                移除…
+                {COPY.remove}
               </Button>
             }
           />

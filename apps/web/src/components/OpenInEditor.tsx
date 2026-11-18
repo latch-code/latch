@@ -1,6 +1,30 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Button, ChoiceList, Dialog } from '@latch/ui'
 import { shellEditors, type EditorList, type FileActionResult } from '../core/shell.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    openIn: (value1: string | number) => `在 ${value1} 中打开`,
+    editor: '在编辑器中打开…',
+    chooseEditor: '用哪个编辑器打开？',
+    changeEditor: '之后可在 设置 › 通用 中更换',
+    notSaved: '没有保存，请重试',
+    cancel: '取消',
+    open: '打开',
+    editors: '编辑器',
+  },
+  {
+    openIn: (value1: string | number) => `Open in ${value1}`,
+    editor: 'Open in editor…',
+    chooseEditor: 'Open with which editor?',
+    changeEditor: 'Change this later in Settings › General',
+    notSaved: 'Couldn’t save. Try again.',
+    cancel: 'Cancel',
+    open: 'Open',
+    editors: 'Editor',
+  },
+)
 
 /**
  * 在编辑器中打开, in the desktop app's own window only: the editors main found, the one the person chose (in 设置 or the
@@ -69,7 +93,7 @@ export function useEditors(): View | undefined {
 export function editorLabel(current: View | undefined): string | undefined {
   if (!current || current.editors.length === 0) return undefined
   const chosen = current.editors.find(editor => editor.id === current.chosen)
-  return chosen ? `在 ${chosen.name} 中打开` : '在编辑器中打开…'
+  return chosen ? COPY.openIn(chosen.name) : COPY.editor
 }
 
 /**
@@ -132,16 +156,16 @@ export function EditorChooser() {
   return (
     <Dialog
       open={open}
-      title="用哪个编辑器打开？"
-      subtitle="之后可在 设置 › 通用 中更换"
+      title={COPY.chooseEditor}
+      subtitle={COPY.changeEditor}
       onClose={() => {
         if (!busy) finish(null)
       }}
-      note={failed ? <span role="alert">没有保存，请重试</span> : undefined}
+      note={failed ? <span role="alert">{COPY.notSaved}</span> : undefined}
       footer={
         <>
           <Button size="md" disabled={busy} onClick={() => finish(null)}>
-            取消
+            {COPY.cancel}
           </Button>
           <Button
             size="md"
@@ -151,11 +175,11 @@ export function EditorChooser() {
             onClick={() => {
               void confirm()
             }}>
-            打开
+            {COPY.open}
           </Button>
         </>
       }>
-      <ChoiceList label="编辑器" value={picked ?? options[0]?.value} options={options} onValueChange={setPicked} autoFocus />
+      <ChoiceList label={COPY.editors} value={picked ?? options[0]?.value} options={options} onValueChange={setPicked} autoFocus />
     </Dialog>
   )
 }

@@ -14,7 +14,63 @@ import {
 import type { BarColumn, LinePoint } from '@latch/ui'
 import { harnessName } from '../composerChoice.ts'
 import { exactTokens } from '../format.ts'
-import { NOT_REPORTED, pricedNote } from '../settings/modelSpend.ts'
+import { notReported, pricedNote } from '../settings/modelSpend.ts'
+import { currentLocale, defineCopy, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    ownLogin: '自己登录',
+    pluginService: '插件服务',
+    inputLabel: '输入',
+    outputLabel: '输出',
+    noUsage: (count: number, turns: boolean) => plural(count, { other: turns ? '{n} 轮或请求没有报告用量' : '{n} 次请求没有报告用量' }),
+    unknownCost: (count: number, turns: boolean) => plural(count, { other: turns ? '{n} 轮或请求的花费未知' : '{n} 次请求的花费未知' }),
+    gateway: '经 Latch 网关',
+    other: '其他',
+    defaultFolder: '默认文件夹',
+    general: '通用',
+    deletedAgent: '已删除的 Agent',
+    otherSessions: '其他会话',
+    missingSession: '已不在的会话',
+    input: (value1: string | number) => `输入（含缓存）${value1}`,
+    output: (value1: string | number) => `输出（含推理）${value1}`,
+    cacheRead: '缓存读取',
+    cacheWrite: '缓存写入',
+    reasoning: '推理',
+    harnessEstimate: 'Harness 自己估算',
+    serviceReport: '按服务报告',
+  },
+  {
+    ownLogin: 'Own sign-in',
+    pluginService: 'Plugin service',
+    inputLabel: 'Input',
+    outputLabel: 'Output',
+    noUsage: (count: number, turns: boolean) =>
+      plural(count, {
+        other: turns ? '{n} turns or requests did not report usage' : '{n} requests did not report usage',
+        one: turns ? '{n} turn or request did not report usage' : '{n} request did not report usage',
+      }),
+    unknownCost: (count: number, turns: boolean) =>
+      plural(count, {
+        other: turns ? 'Cost unknown for {n} turns or requests' : 'Cost unknown for {n} requests',
+        one: turns ? 'Cost unknown for {n} turn or request' : 'Cost unknown for {n} request',
+      }),
+    gateway: 'Via Latch Gateway',
+    other: 'Other',
+    defaultFolder: 'Default folder',
+    general: 'General',
+    deletedAgent: 'Deleted Agent',
+    otherSessions: 'Other sessions',
+    missingSession: 'Unavailable session',
+    input: (value1: string | number) => `Input (including cache) ${value1}`,
+    output: (value1: string | number) => `Output (including reasoning) ${value1}`,
+    cacheRead: 'Cache read',
+    cacheWrite: 'Cache write',
+    reasoning: 'Reasoning',
+    harnessEstimate: 'Estimated by the Harness',
+    serviceReport: 'Reported by the service',
+  },
+)
 
 /**
  * A row of either route: a gateway row has no `by` and no `turns`. `split`: tokens by source, on a row that merges the
@@ -22,9 +78,17 @@ import { NOT_REPORTED, pricedNote } from '../settings/modelSpend.ts'
  */
 export type AnyRow = ModelUsageRow & { by?: UsageSource; turns?: number; split?: Partial<Record<UsageSource, number>> }
 
-export const OWN_LOGIN = '自己登录'
-export const PLUGIN_SERVICE = '插件服务'
-export const SOURCE_NAMES: Readonly<Record<UsageSource, string>> = { gateway: '经 Latch 网关', own: OWN_LOGIN, plugin: PLUGIN_SERVICE }
+export const SOURCE_NAMES: Readonly<Record<UsageSource, string>> = {
+  get gateway() {
+    return COPY.gateway
+  },
+  get own() {
+    return COPY.ownLogin
+  },
+  get plugin() {
+    return COPY.pluginService
+  },
+}
 
 const PARTS = ['cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const
 
@@ -94,8 +158,11 @@ export function harnessOf(snapshot: AppSnapshot, id: string): Pick<HarnessInfo, 
 }
 
 /** A project's name; one this device does not see, or no project, is 其他. */
-export const projectName = (snapshot: AppSnapshot, id: string | undefined): string =>
-  (id && snapshot.catalog?.workspaces.find(workspace => workspace.id === id)?.name) || '其他'
+export function projectName(snapshot: AppSnapshot, id: string | undefined): string {
+  const project = snapshot.catalog?.workspaces.find(workspace => workspace.id === id)
+  if (project?.id === 'default') return COPY.defaultFolder
+  return project?.name || COPY.other
+}
 
 /** What a row is of, a second line when the first alone would not tell it apart, and the Harness it is of when it is one. */
 export function usageRowName(row: AnyRow, group: UsageGroup, snapshot: AppSnapshot): { name: string; detail?: string; harness?: string } {
@@ -105,41 +172,41 @@ export function usageRowName(row: AnyRow, group: UsageGroup, snapshot: AppSnapsh
   if (group === 'service')
     return row.providerId
       ? { name: service(row.providerId) }
-      : { name: harness(row.harness ?? ''), detail: OWN_LOGIN, harness: row.harness }
+      : { name: harness(row.harness ?? ''), detail: SOURCE_NAMES.own, harness: row.harness }
   if (group === 'model')
     return {
-      name: row.model ?? NOT_REPORTED,
-      detail: row.providerId ? service(row.providerId) : row.harness ? `${harness(row.harness)} · ${OWN_LOGIN}` : undefined,
+      name: row.model ?? notReported(),
+      detail: row.providerId ? service(row.providerId) : row.harness ? `${harness(row.harness)} · ${SOURCE_NAMES.own}` : undefined,
     }
   if (group === 'project') return { name: projectName(snapshot, row.projectId) }
   if (group === 'agent') {
     // Uses of no Agent, and to a device that may not read Agents, every Agent's.
-    if (!row.agentId) return { name: '其他' }
-    if (row.agentId === GENERAL_AGENT_ID) return { name: '通用' }
-    return { name: snapshot.customAgents?.find(agent => agent.id === row.agentId)?.name ?? '已删除的 Agent' }
+    if (!row.agentId) return { name: COPY.other }
+    if (row.agentId === GENERAL_AGENT_ID) return { name: COPY.general }
+    return { name: snapshot.customAgents?.find(agent => agent.id === row.agentId)?.name ?? COPY.deletedAgent }
   }
   // Sessions this device cannot read, ones deleted since, and requests of no session: counted, not named.
-  if (!row.sessionId) return { name: '其他会话' }
-  return { name: snapshot.tasks.find(task => task.id === row.sessionId)?.title || '已不在的会话' }
+  if (!row.sessionId) return { name: COPY.otherSessions }
+  return { name: snapshot.tasks.find(task => task.id === row.sessionId)?.title || COPY.missingSession }
 }
 
 /** The fine print of a row, one fact a line: the exact counts, what was left out and why. */
 export function usageRowDetail(row: AnyRow): string {
   const lines: string[] = []
   if (row.usage) {
-    lines.push(`输入（含缓存）${exactTokens(row.usage.inputTokens)}`, `输出（含推理）${exactTokens(row.usage.outputTokens)}`)
+    lines.push(COPY.input(exactTokens(row.usage.inputTokens)), COPY.output(exactTokens(row.usage.outputTokens)))
     for (const [name, part] of [
-      ['缓存读取', 'cacheReadTokens'],
-      ['缓存写入', 'cacheWriteTokens'],
-      ['推理', 'reasoningTokens'],
+      [COPY.cacheRead, 'cacheReadTokens'],
+      [COPY.cacheWrite, 'cacheWriteTokens'],
+      [COPY.reasoning, 'reasoningTokens'],
     ] as const) {
       const value = row.usage[part]
-      lines.push(`${name} ${value === undefined ? NOT_REPORTED : exactTokens(value)}`)
+      lines.push(`${name} ${value === undefined ? notReported() : exactTokens(value)}`)
     }
   }
   const uses = row.requests + (row.turns ?? 0)
-  if (row.measured < uses) lines.push(`${uses - row.measured} ${row.turns ? '轮或请求' : '次请求'}没有报告用量`)
-  if (row.uncosted > 0 && row.cost.length > 0) lines.push(`${row.uncosted} ${row.turns ? '轮或请求' : '次请求'}的花费未知`)
+  if (row.measured < uses) lines.push(COPY.noUsage(uses - row.measured, !!row.turns))
+  if (row.uncosted > 0 && row.cost.length > 0) lines.push(COPY.unknownCost(row.uncosted, !!row.turns))
   const note = costNote(row.cost)
   if (note) lines.push(note)
   return lines.join('\n')
@@ -148,8 +215,8 @@ export function usageRowDetail(row: AnyRow): string {
 /** Where a cost came from: the prices the person entered, a Harness's own estimate, or the service's word. */
 export function costNote(cost: readonly CostAmount[] | undefined): string | undefined {
   if (!cost?.length) return undefined
-  const notes = [pricedNote(cost), cost.some(item => item.estimated) ? 'Harness 自己估算' : undefined].filter(Boolean)
-  if (cost.some(item => !item.priced && !item.estimated) || notes.length === 0) notes.push('按服务报告')
+  const notes = [pricedNote(cost), cost.some(item => item.estimated) ? COPY.harnessEstimate : undefined].filter(Boolean)
+  if (cost.some(item => !item.priced && !item.estimated) || notes.length === 0) notes.push(COPY.serviceReport)
   return notes.join(' · ')
 }
 
@@ -222,7 +289,7 @@ function bucketLabels(start: string, period: UsagePeriod, timeZone: string): { l
     }
   })()
   const part = (options: Intl.DateTimeFormatOptions) =>
-    new Intl.DateTimeFormat('zh-CN', { ...options, ...(zone ? { timeZone: zone } : {}) }).format(at)
+    new Intl.DateTimeFormat(currentLocale(), { ...options, ...(zone ? { timeZone: zone } : {}) }).format(at)
   const day = part({ month: 'numeric', day: 'numeric' })
   const weekday = part({ weekday: 'short' })
   if (period === '1') {
@@ -232,7 +299,7 @@ function bucketLabels(start: string, period: UsagePeriod, timeZone: string): { l
   return { label: part({ month: 'numeric', day: 'numeric' }).replace(/月/u, '/').replace(/日/u, ''), title: `${day} ${weekday}` }
 }
 
-export const TOKEN_KINDS = ['缓存读取', '输入', '输出'] as const
+export const tokenKinds = () => [COPY.cacheRead, COPY.inputLabel, COPY.outputLabel] as const
 
 /** One column a bucket: cache reads, the rest of the input, output; summed over the points given. */
 export function tokenColumns(

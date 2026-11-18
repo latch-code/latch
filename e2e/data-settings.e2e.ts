@@ -10,7 +10,7 @@ import { openSection, openSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/data-settings'
 
-describe('设置 › 数据 and 审计记录 in a browser', { timeout: 180_000 }, () => {
+describe('设置 › 数据 and 安全记录 in a browser', { timeout: 180_000 }, () => {
   let host: TestHost
   let browser: Browser
 
@@ -57,7 +57,7 @@ describe('设置 › 数据 and 审计记录 in a browser', { timeout: 180_000 }
         await openSection(settings, '数据')
         await settings.getByText('数据目录', { exact: true }).waitFor()
         await settings.getByText(host.dataDir).first().waitFor()
-        await settings.getByRole('button', { name: /^审计记录/u }).waitFor()
+        await settings.getByRole('button', { name: /^安全记录/u }).waitFor()
         await settings.getByText('一直保留').first().waitFor()
         await settings.getByText('明细 90 天，按月删去更早的；单价与预算一直保留').waitFor()
         await settings.locator('.data-size').first().waitFor()
@@ -82,8 +82,8 @@ describe('设置 › 数据 and 审计记录 in a browser', { timeout: 180_000 }
       try {
         const settings = await openSettings(page)
         await openSection(settings, '数据')
-        await settings.getByRole('button', { name: /审计记录/u }).click()
-        const list = page.getByRole('list', { name: '审计记录' })
+        await settings.getByRole('button', { name: /安全记录/u }).click()
+        const list = page.getByRole('list', { name: '安全记录' })
         await list.locator('.audit-row').first().waitFor()
         expect(await list.locator('.audit-row').count()).toBeGreaterThan(2)
         // By kind: only 设备与连接.

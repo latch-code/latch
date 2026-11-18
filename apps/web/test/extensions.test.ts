@@ -13,8 +13,7 @@ import {
 } from '@latch/protocol'
 import { fillRefusal } from '../src/panel/terminal/fill.ts'
 import {
-  NOT_REPORTED,
-  NOT_YET,
+  EXTENSION_COPY,
   extensionHarnesses,
   extensionReportKey,
   harnessKinds,
@@ -90,7 +89,7 @@ describe('设置 › 扩展 model', () => {
     expect(kind(mcpOnly, 'plugins').status).toBe('not-reported')
     const pluginUnavailable = harnessKinds(harness({ extensionSupport: direct }), undefined, {})
     expect(kind(pluginUnavailable, 'plugins').status).toBe('not-implemented')
-    expect(harnessSummary(before)).toBe(NOT_YET)
+    expect(harnessSummary(before)).toBe(EXTENSION_COPY.notYet)
 
     const reported = harnessKinds(
       harness({ ownMcp: { last: { servers: [], at: '2026-11-17T00:00:00.000Z', via: 'session' } } }),
@@ -116,7 +115,7 @@ describe('设置 › 扩展 model', () => {
     expect(piEmpty).toMatchObject({ status: 'reported', own: [], empty: '没有扩展命令' })
 
     const dsh = harnessKinds(harness({}, 'dsh'), undefined, {})
-    expect(harnessSummary(dsh)).toBe(NOT_REPORTED)
+    expect(harnessSummary(dsh)).toBe(EXTENSION_COPY.notReported)
     expect(kind(dsh, 'commands').status).toBe('not-reported')
     expect(kind(dsh, 'plugins').status).toBe('not-reported')
   })
@@ -171,11 +170,11 @@ describe('设置 › 扩展 model', () => {
     expect(kind(codex, 'skills').commands).toBeUndefined()
     expect(kind(codex, 'skills').absent).toBeTruthy()
     const custom = harnessKinds(harness({}, 'my-agent'), undefined, {})
-    expect(custom.every(view => !view.commands && view.absent?.includes('不是 Latch 的预设'))).toBe(true)
+    expect(custom.every(view => !view.commands && view.absent === EXTENSION_COPY.unknownCommands)).toBe(true)
     // A preset whose vendor documents no such command is still a preset.
     const dsh = harnessKinds(harness({}, 'dsh'), undefined, {})
     expect(dsh.every(view => !view.commands && view.absent?.startsWith('它没有'))).toBe(true)
-    expect(dsh.some(view => view.absent?.includes('不是 Latch 的预设'))).toBe(false)
+    expect(dsh.some(view => view.absent === EXTENSION_COPY.unknownCommands)).toBe(false)
     // Every command can be typed into the terminal as it stands.
     for (const profile of Object.values(HARNESS_EXTENSIONS))
       for (const commands of Object.values(profile.commands))
@@ -230,7 +229,7 @@ describe('设置 › 扩展 model', () => {
     const html = renderToStaticMarkup(
       createElement(HarnessMcpGroup, { harness: harness({}, 'claude-agent'), title: 'MCP', run: true }, createElement('i', null, 'github')),
     )
-    expect(html).toContain(NOT_REPORTED)
+    expect(html).toContain(EXTENSION_COPY.notReported)
     expect(html).toContain('github')
   })
 })

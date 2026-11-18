@@ -26,6 +26,108 @@ import { InlineConfirm } from '../components/InlineConfirm.tsx'
 import { PLUGIN_REACH_COPY } from '../core/securityCopy.ts'
 import { IconTile, NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
 import { addPluginSource, editPluginSource, manifestReach, readPluginBundle, typedManifest, type PluginReach } from './pluginAssets.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    needsAttention: '需要处理',
+    draft: '草稿',
+    unapplied: '有未应用修改',
+    on: '已开启',
+    off: '未开启',
+    idChangeAdvanced: '插件标识不能在高级编辑中更改。',
+    invalidPluginManifest: '插件声明格式无效。',
+    fileTooLarge: '插件文件不能超过 8 MiB。',
+    couldNotRead: '无法读取插件文件。',
+    add: '添加插件',
+    import: '导入文件…',
+    newTool: '新建工具',
+    newPlugin: '新建插件',
+    codePreview: '应用前不会运行编辑中的代码',
+    delete: '删除',
+    saveDraft: '保存草稿',
+    apply: '保存并应用',
+    unsavedChanges: '未保存修改',
+    notSaved: '未保存',
+    turnOn: '启用插件',
+    export: '导出',
+    name: '插件名称',
+    version: '版本',
+    description: '说明',
+    editor: '插件编辑方式',
+    skillText: '技能正文',
+    files: '文件',
+    manifest: '高级声明',
+    idChange: '插件标识不能更改。',
+    badManifest: '声明格式无效。',
+    pluginManifest: '插件声明',
+    manifestDetails: '可组合技能、在 Mac 上运行的模块、React 面板和静态数据面板；执行入口使用 .mjs。',
+    pluginFiles: '插件文件',
+    instructions: '工作方法',
+    noTextFiles: '没有文本文件',
+    newFilePath: '新增文件路径',
+    couldNotAdd: '无法添加文件。',
+    addFile: '添加文件',
+    idAndExecution: '插件标识与执行方式',
+    pluginId: '插件标识',
+    codeConfirmation: '含代码的插件要在这台 Mac 上确认',
+    unknownKept: '结果尚未确认，编辑内容已保留。',
+    retrySame: '重试同一请求',
+    deleteTitle: '删除这个插件？',
+    deleteDetails: '新的会话将不再使用它；正在运行的工作会保留已经取得的能力。',
+    deletePlugin: '删除插件',
+    unknown: '结果尚未确认。',
+  },
+  {
+    needsAttention: 'Needs attention',
+    draft: 'Draft',
+    unapplied: 'Unapplied changes',
+    on: 'On',
+    off: 'Off',
+    idChangeAdvanced: 'The plugin ID can’t be changed in the manifest.',
+    invalidPluginManifest: 'The plugin manifest isn’t valid.',
+    fileTooLarge: 'The plugin file must be 8 MiB or less.',
+    couldNotRead: 'Couldn’t read the plugin file.',
+    add: 'Add plugin',
+    import: 'Import file…',
+    newTool: 'New tool',
+    newPlugin: 'New plugin',
+    codePreview: 'Edited code runs only after you apply it',
+    delete: 'Delete',
+    saveDraft: 'Save draft',
+    apply: 'Save and apply',
+    unsavedChanges: 'Unsaved changes',
+    notSaved: 'Not saved',
+    turnOn: 'Turn on plugin',
+    export: 'Export',
+    name: 'Plugin name',
+    version: 'Version',
+    description: 'Description',
+    editor: 'How to edit the plugin',
+    skillText: 'Skill text',
+    files: 'Files',
+    manifest: 'Manifest',
+    idChange: 'The plugin ID can’t be changed.',
+    badManifest: 'The manifest isn’t valid.',
+    pluginManifest: 'Plugin manifest',
+    manifestDetails: 'Combine skills, modules that run on the Mac, React panels and static data panels. Entry points use .mjs.',
+    pluginFiles: 'Plugin files',
+    instructions: 'Instructions',
+    noTextFiles: 'No text files',
+    newFilePath: 'New file path',
+    couldNotAdd: 'Couldn’t add the file.',
+    addFile: 'Add file',
+    idAndExecution: 'Plugin ID and how it runs',
+    pluginId: 'Plugin ID',
+    codeConfirmation: 'Plugins with code are confirmed on this Mac',
+    unknownKept: 'Result unknown. Your edits are kept.',
+    retrySame: 'Retry same request',
+    deleteTitle: 'Delete this plugin?',
+    deleteDetails: 'New sessions won’t use it. Work already running keeps what it has loaded.',
+    deletePlugin: 'Delete plugin',
+    unknown: 'Result unknown.',
+  },
+)
 
 interface PendingChange {
   path: string
@@ -39,14 +141,14 @@ interface Editor {
 const route = (id: string) => 'plugin-packages/' + encodeURIComponent(id)
 export const packageState = (record: PluginPackageSummary) =>
   record.unavailableReason
-    ? '需要处理'
+    ? COPY.needsAttention
     : record.state === 'draft'
-      ? '草稿'
+      ? COPY.draft
       : record.state === 'update-available'
-        ? '有未应用修改'
+        ? COPY.unapplied
         : record.enabled
-          ? '已开启'
-          : '未开启'
+          ? COPY.on
+          : COPY.off
 
 const REACH_ICONS = { page: DevicesGlyph, host: Cpu, text: FileGlyph } as const
 
@@ -199,9 +301,9 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
     if (tab === 'manifest') {
       try {
         bundle = readPluginBundle(JSON.stringify({ manifest: JSON.parse(manifestText), files: bundle.files }))
-        if (bundle.manifest.id !== editor.bundle.manifest.id) throw new MessageError('插件标识不能在高级编辑中更改。')
+        if (bundle.manifest.id !== editor.bundle.manifest.id) throw new MessageError(COPY.idChangeAdvanced)
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : '插件声明格式无效。')
+        setError(cause instanceof Error ? cause.message : COPY.invalidPluginManifest)
         return
       }
     }
@@ -259,7 +361,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
           event.target.value = ''
           if (!selected || locked) return
           if (selected.size > 8 * 1024 * 1024) {
-            setError('插件文件不能超过 8 MiB。')
+            setError(COPY.fileTooLarge)
             return
           }
           void selected
@@ -272,19 +374,19 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
               }
             })
             .catch((cause: unknown) => {
-              if (alive.current) setError(cause instanceof Error ? cause.message : '无法读取插件文件。')
+              if (alive.current) setError(cause instanceof Error ? cause.message : COPY.couldNotRead)
             })
         }}
       />
       <Dialog
         open={adding}
-        title="添加插件"
+        title={COPY.add}
         size="lg"
         onClose={() => setAdding(false)}
         footer={
           <>
             <Button icon={Upload} disabled={locked} onClick={() => input.current?.click()}>
-              导入文件…
+              {COPY.import}
             </Button>
             <Button
               variant="primary"
@@ -292,7 +394,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                 open({ bundle: createPluginPackageTemplate('tool', 'my-plugin-' + newRequestId().slice(0, 8)) })
                 setAdding(false)
               }}>
-              新建工具
+              {COPY.newTool}
             </Button>
           </>
         }>
@@ -300,9 +402,9 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
       </Dialog>
       <Dialog
         open={editor !== null}
-        title={record ? record.name : '新建插件'}
+        title={record ? record.name : COPY.newPlugin}
         size="xl"
-        subtitle="应用前不会运行编辑中的代码"
+        subtitle={COPY.codePreview}
         onClose={() => {
           if (!locked) {
             setEditor(null)
@@ -313,30 +415,30 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
           <>
             {record && (
               <Button variant="ghost" disabled={locked} onClick={() => setDeleting(true)}>
-                删除
+                {COPY.delete}
               </Button>
             )}
             <span className="plugin-asset-spacer" />
             <Button disabled={locked} onClick={() => save(false)}>
-              保存草稿
+              {COPY.saveDraft}
             </Button>
             <Button
               variant="primary"
               loading={busy}
               disabled={pending !== null || !editor?.bundle.manifest.name.trim()}
               onClick={() => save(true)}>
-              保存并应用
+              {COPY.apply}
             </Button>
           </>
         }>
         {editor && (
           <div className="settings-form plugin-editor">
             <div className="plugin-asset-toolbar">
-              <StatusPill>{dirty ? '未保存修改' : record ? packageState(record) : '未保存'}</StatusPill>
+              <StatusPill>{dirty ? COPY.unsavedChanges : record ? packageState(record) : COPY.notSaved}</StatusPill>
               <span className="plugin-asset-spacer" />
               {record?.appliedRevision && (
                 <Switch
-                  label="启用插件"
+                  label={COPY.turnOn}
                   checked={record.enabled}
                   disabled={locked || dirty}
                   onCheckedChange={enabled => {
@@ -354,7 +456,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                   onClick={() => {
                     void exportBundle()
                   }}>
-                  导出
+                  {COPY.export}
                 </Button>
               )}
             </div>
@@ -365,14 +467,14 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
             <fieldset disabled={locked} className="plugin-asset-fields">
               <div className="form-grid">
                 <TextField
-                  label="插件名称"
+                  label={COPY.name}
                   disabled={tab === 'manifest'}
                   maxLength={80}
                   value={editor.bundle.manifest.name}
                   onChange={event => editBundle({ ...editor.bundle, manifest: { ...editor.bundle.manifest, name: event.target.value } })}
                 />
                 <TextField
-                  label="版本"
+                  label={COPY.version}
                   disabled={tab === 'manifest'}
                   maxLength={64}
                   value={editor.bundle.manifest.version}
@@ -380,7 +482,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                 />
               </div>
               <TextField
-                label="说明"
+                label={COPY.description}
                 disabled={tab === 'manifest'}
                 maxLength={1000}
                 value={editor.bundle.manifest.description}
@@ -389,21 +491,21 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                 }
               />
               <Tabs
-                label="插件编辑方式"
+                label={COPY.editor}
                 value={tab}
                 options={[
-                  ...(skillFiles.size ? [{ value: 'content' as const, label: '技能正文' }] : []),
-                  { value: 'files' as const, label: '文件' },
-                  { value: 'manifest' as const, label: '高级声明' },
+                  ...(skillFiles.size ? [{ value: 'content' as const, label: COPY.skillText }] : []),
+                  { value: 'files' as const, label: COPY.files },
+                  { value: 'manifest' as const, label: COPY.manifest },
                 ]}
                 onValueChange={value => {
                   if (tab === 'manifest') {
                     try {
                       const next = readPluginBundle(JSON.stringify({ manifest: JSON.parse(manifestText), files: editor.bundle.files }))
-                      if (next.manifest.id !== editor.bundle.manifest.id) throw new MessageError('插件标识不能更改。')
+                      if (next.manifest.id !== editor.bundle.manifest.id) throw new MessageError(COPY.idChange)
                       editBundle(next)
                     } catch (cause) {
-                      setError(cause instanceof Error ? cause.message : '声明格式无效。')
+                      setError(cause instanceof Error ? cause.message : COPY.badManifest)
                       return
                     }
                   } else if (value === 'manifest') setManifestText(JSON.stringify(editor.bundle.manifest, null, 2))
@@ -413,7 +515,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
               />
               {tab === 'manifest' ? (
                 <TextAreaField
-                  label="插件声明"
+                  label={COPY.pluginManifest}
                   value={manifestText}
                   rows={16}
                   spellCheck={false}
@@ -422,11 +524,11 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                     setManifestText(event.target.value)
                     setDirty(true)
                   }}
-                  hint="可组合技能、在 Mac 上运行的模块、React 面板和静态数据面板；执行入口使用 .mjs。"
+                  hint={COPY.manifestDetails}
                 />
               ) : (
                 <div className="plugin-file-editor">
-                  <div className="plugin-file-list" role="group" aria-label="插件文件">
+                  <div className="plugin-file-list" role="group" aria-label={COPY.pluginFiles}>
                     {shownFiles.map(item => (
                       <Button
                         key={item.path}
@@ -439,7 +541,7 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                   </div>
                   {selectedFile ? (
                     <TextAreaField
-                      label={tab === 'content' ? '工作方法' : selectedFile.path}
+                      label={tab === 'content' ? COPY.instructions : selectedFile.path}
                       rows={14}
                       className={tab === 'files' ? 'plugin-source' : undefined}
                       spellCheck={tab === 'content'}
@@ -447,14 +549,14 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                       onChange={event => editBundle(editPluginSource(editor.bundle, selectedFile.path, event.target.value))}
                     />
                   ) : (
-                    <p className="settings-empty">没有文本文件</p>
+                    <p className="settings-empty">{COPY.noTextFiles}</p>
                   )}
                 </div>
               )}
               {tab === 'files' && (
                 <div className="settings-form-row plugin-asset-actions">
                   <TextField
-                    label="新增文件路径"
+                    label={COPY.newFilePath}
                     value={newFile}
                     maxLength={256}
                     placeholder="helpers/format.mjs"
@@ -470,34 +572,34 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
                         setNewFile('')
                         setError('')
                       } catch (cause) {
-                        setError(cause instanceof Error ? cause.message : '无法添加文件。')
+                        setError(cause instanceof Error ? cause.message : COPY.couldNotAdd)
                       }
                     }}>
-                    添加文件
+                    {COPY.addFile}
                   </Button>
                 </div>
               )}
               <details className="plugin-asset-details">
-                <summary>插件标识与执行方式</summary>
+                <summary>{COPY.idAndExecution}</summary>
                 <TextField
-                  label="插件标识"
+                  label={COPY.pluginId}
                   value={editor.bundle.manifest.id}
                   readOnly={record !== undefined}
                   maxLength={64}
                   onChange={event => editBundle({ ...editor.bundle, manifest: { ...editor.bundle.manifest, id: event.target.value } })}
                 />
-                <NoteLine icon={LockGlyph} brief={{ label: '含代码的插件要在这台 Mac 上确认' }} />
+                <NoteLine icon={LockGlyph} brief={{ label: COPY.codeConfirmation }} />
               </details>
             </fieldset>
             {error && <InlineNotice tone="error">{error}</InlineNotice>}
             {pending && !busy && (
               <InlineNotice tone="warn">
-                结果尚未确认，编辑内容已保留。
+                {COPY.unknownKept}
                 <Button
                   onClick={() => {
                     void perform(pending)
                   }}>
-                  重试同一请求
+                  {COPY.retrySame}
                 </Button>
               </InlineNotice>
             )}
@@ -507,9 +609,9 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
       </Dialog>
       {deleting && (
         <ConfirmDialog
-          title="删除这个插件？"
-          message="新的会话将不再使用它；正在运行的工作会保留已经取得的能力。"
-          confirmLabel="删除插件"
+          title={COPY.deleteTitle}
+          message={COPY.deleteDetails}
+          confirmLabel={COPY.deletePlugin}
           danger
           onConfirm={async () => {
             if (!record) return
@@ -548,12 +650,12 @@ export function usePluginAssets({ canEdit, onChanged }: { canEdit: boolean; onCh
           <InlineConfirm active={busy} rank={1} />
           {pending && !busy && (
             <InlineNotice tone="warn">
-              结果尚未确认。
+              {COPY.unknown}
               <Button
                 onClick={() => {
                   void perform(pending)
                 }}>
-                重试同一请求
+                {COPY.retrySame}
               </Button>
             </InlineNotice>
           )}

@@ -5,6 +5,36 @@ import { Button, Hint, PromptDialog, Spinner, StatusWord } from '@latch/ui'
 import { api, ApiError, MessageError } from '../core/api.ts'
 import type { ShellFolders } from '../core/shell.ts'
 import { cloneCopy, cloneProgress } from './clone.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    dialogBusy: '另一个对话框正在打开',
+    alreadyCloning: '一个仓库正在克隆',
+    clone: '克隆仓库',
+    url: '仓库地址',
+    chooseLocation: '选择位置…',
+    cancelling: '取消中…',
+    cancel: '取消',
+    cloned: '已克隆',
+    notAdded: '已克隆，没有加入项目',
+    cancelled: '已取消',
+    failed: '没有克隆',
+  },
+  {
+    dialogBusy: 'Another dialog is opening',
+    alreadyCloning: 'A repository is already being cloned',
+    clone: 'Clone repository',
+    url: 'Repository URL',
+    chooseLocation: 'Choose location…',
+    cancelling: 'Cancelling…',
+    cancel: 'Cancel',
+    cloned: 'Cloned',
+    notAdded: 'Cloned without adding a project',
+    cancelled: 'Cancelled',
+    failed: 'Clone failed',
+  },
+)
 
 /** While a clone runs and this page shows it: how often its progress is read. */
 const FOLLOW_MS = 1_000
@@ -58,7 +88,7 @@ export function useCloneProject(
     }
     if (result.status === 'failed') throw new MessageError(cloneCopy(result.code).label)
     // Canceled in the panel, or another dialog open: the address stays for another try.
-    if (result.status === 'busy') throw new MessageError('另一个对话框正在打开')
+    if (result.status === 'busy') throw new MessageError(COPY.dialogBusy)
   }
 
   const cancel = async () => {
@@ -82,16 +112,16 @@ export function useCloneProject(
         variant="outline"
         icon={GitBranch}
         disabled={running}
-        tooltip={running ? '一个仓库正在克隆' : undefined}
+        tooltip={running ? COPY.alreadyCloning : undefined}
         onClick={() => setAsking(true)}>
-        克隆仓库
+        {COPY.clone}
       </Button>
       {asking && (
         <PromptDialog
-          title="克隆仓库"
-          label="仓库地址"
+          title={COPY.clone}
+          label={COPY.url}
           initial=""
-          confirmLabel="选择位置…"
+          confirmLabel={COPY.chooseLocation}
           maxLength={2048}
           onSubmit={start}
           onClose={() => setAsking(false)}
@@ -108,19 +138,19 @@ export function useCloneProject(
             <span className="clone-status-name">{clone.name}</span>
             <span className="clone-status-progress">{cloneProgress(clone)}</span>
             <span className="clone-status-space" />
-            <Button size="xs" variant="ghost" loading={cancelling} loadingLabel="取消中…" onClick={() => void cancel()}>
-              取消
+            <Button size="xs" variant="ghost" loading={cancelling} loadingLabel={COPY.cancelling} onClick={() => void cancel()}>
+              {COPY.cancel}
             </Button>
           </>
         ) : ended?.state === 'done' && !ended.notAdded ? (
           <>
-            <StatusWord tone="done">已克隆</StatusWord>
+            <StatusWord tone="done">{COPY.cloned}</StatusWord>
             <span className="clone-status-name">{ended.name}</span>
           </>
         ) : (
           <>
             <StatusWord tone={ended?.state === 'cancelled' ? 'neutral' : 'failed'}>
-              {ended?.notAdded ? '已克隆，没有加入项目' : ended?.state === 'cancelled' ? '已取消' : '没有克隆'}
+              {ended?.notAdded ? COPY.notAdded : ended?.state === 'cancelled' ? COPY.cancelled : COPY.failed}
             </StatusWord>
             {ended && <span className="clone-status-name">{ended.name}</span>}
             {copy

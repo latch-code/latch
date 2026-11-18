@@ -5,6 +5,39 @@ import { useViewerMenu, useViewerQuote } from './viewerActions.tsx'
 import type { GridCell, SheetInfo } from './types.ts'
 import { boundedQuoteText, columnLabel, type PreviewQuote } from './quote.ts'
 import { MessageError } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    rowFailed: '部分行无法读取，请重新打开文件后重试。',
+    smallerSelection: '请缩小选区后重试。',
+    selectionTooLarge: '选区文字过多，请缩小选区。',
+    emptySelection: '选区没有文字内容。',
+    selectionUnavailable: '暂时无法读取选区，请缩小选区后重试。',
+    copy: '复制选区',
+    pending: '选区还没有读完',
+    freeze: '冻结首行首列',
+    resize: (value1: string) => `调整 ${value1} 列宽`,
+    formula: (value1: string) => `公式：${value1}（显示缓存值）`,
+    noCachedValue: '无缓存值',
+    uncachedFormula: (formula: string) => `公式：${formula}（无缓存值）`,
+  },
+  {
+    rowFailed: 'Some rows could not be read. Reopen the file and try again.',
+    smallerSelection: 'Select a smaller range and try again.',
+    selectionTooLarge: 'The selection contains too much text. Select a smaller range.',
+    emptySelection: 'There is no text in the selection.',
+    selectionUnavailable: 'Could not read the selection right now. Select a smaller range and try again.',
+    copy: 'Copy selection',
+    pending: 'Selection still loading',
+    freeze: 'Freeze first row and column',
+    resize: (value1: string) => `Resize column ${value1}`,
+    formula: (value1: string) => `Formula ${value1} (showing cached value)`,
+    noCachedValue: 'No cached value',
+    uncachedFormula: (formula: string) => `Formula ${formula} (no cached value)`,
+  },
+)
+
 export type LoadRows = (start: number, count: number, signal?: AbortSignal) => Promise<GridCell[][]>
 const PAGE_ROWS = 64
 export interface SheetView {
@@ -17,12 +50,14 @@ export interface SheetView {
 }
 export function SheetGrid({
   sheet,
+  label,
   load,
   view,
   onView,
   onQuote,
 }: {
   sheet: SheetInfo
+  label: string
   load: LoadRows
   view?: SheetView
   onView?(view: SheetView): void
@@ -34,7 +69,7 @@ export function SheetGrid({
   })
   const scroll = useRef<HTMLDivElement>(null),
     [cache, setCache] = useState<Map<number, GridCell[][]>>(new Map()),
-    [error, setError] = useState(''),
+    [error, setError] = useState<'rowFailed' | 'emptySelection' | 'selectionUnavailable' | ClipboardError | MessageError>(),
     [active, setActive] = useState(() => clamp(view?.active)),
     [anchor, setAnchor] = useState(() => clamp(view?.anchor)),
     [widths, setWidths] = useState(() =>
@@ -98,7 +133,7 @@ export function SheetGrid({
               })
           })
           .catch(() => {
-            if (!controller.signal.aborted) setError('部分行无法读取，请重新打开文件后重试。')
+            if (!controller.signal.aborted) setError('rowFailed')
           })
     return () => controller.abort()
   }, [load, pageStarts])
@@ -117,7 +152,7 @@ export function SheetGrid({
       b = Math.max(active.row, anchor.row),
       c = Math.min(active.col, anchor.col),
       d = Math.max(active.col, anchor.col)
-    if ((b - a + 1) * (d - c + 1) > limit) throw new MessageError('请缩小选区后重试。')
+    if ((b - a + 1) * (d - c + 1) > limit) throw new MessageError(COPY.smallerSelection)
     const values: GridCell[][] = []
     for (let start = Math.floor(a / PAGE_ROWS) * PAGE_ROWS; start <= b; start += PAGE_ROWS) {
       const page = cache.get(start) ?? (await load(start, PAGE_ROWS, signal))
@@ -131,7 +166,7 @@ export function SheetGrid({
           .join('\t'),
       )
       .join('\n')
-    if (text.length > 1_000_000) throw new MessageError('选区文字过多，请缩小选区。')
+    if (text.length > 1_000_000) throw new MessageError(COPY.selectionTooLarge)
     return { text, cells: { sheet: sheet.name, start: [a, c] as [number, number], end: [b, d] as [number, number] } }
   }
   const useSelection = async (action: 'copy' | 'quote') => {
@@ -145,15 +180,15 @@ export function SheetGrid({
       if (action === 'copy') await writeClipboard(result.text)
       else if (result.text.trim()) onQuote?.({ text: boundedQuoteText(result.text), cells: result.cells })
       else {
-        setError('选区没有文字内容。')
+        setError('emptySelection')
         return
       }
-      setError('')
+      setError(undefined)
     } catch (cause) {
       if (controller.signal.aborted) return
       // A copy that failed both ways, or the selection's own limit, says so; anything else is the read.
-      if (cause instanceof ClipboardError || cause instanceof MessageError) setError(cause.message)
-      else setError('暂时无法读取选区，请缩小选区后重试。')
+      if (cause instanceof ClipboardError || cause instanceof MessageError) setError(cause)
+      else setError('selectionUnavailable')
     } finally {
       if (!controller.signal.aborted) setBusy(false)
       if (operation.current === controller) operation.current = undefined
@@ -174,15 +209,15 @@ export function SheetGrid({
   useViewerMenu([
     {
       id: 'copy-range',
-      label: '复制选区',
-      ...(unavailable ? { disabledReason: '选区还没有读完' } : {}),
+      label: COPY.copy,
+      ...(unavailable ? { disabledReason: COPY.pending } : {}),
       onSelect: () => {
         void useSelection('copy')
       },
     },
     {
       id: 'frozen',
-      label: '冻结首行首列',
+      label: COPY.freeze,
       checked: frozen,
       onSelect: () => {
         setFrozen(value => !value)
@@ -198,13 +233,13 @@ export function SheetGrid({
           {active.row !== anchor.row || active.col !== anchor.col ? ` : ${columnLabel(anchor.col)}${anchor.row + 1}` : ''}
         </span>
       </div>
-      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {error && <InlineNotice tone="error">{typeof error === 'string' ? COPY[error] : error.message}</InlineNotice>}
       <div
         ref={scroll}
         onScroll={saveView}
         className="sheet-grid-viewport"
         role="grid"
-        aria-label={sheet.name}
+        aria-label={label}
         aria-rowcount={sheet.rows + 1}
         aria-colcount={sheet.cols + 1}
         tabIndex={0}
@@ -233,7 +268,7 @@ export function SheetGrid({
                 <button
                   type="button"
                   role="separator"
-                  aria-label={`调整 ${columnLabel(col)} 列宽`}
+                  aria-label={COPY.resize(columnLabel(col))}
                   aria-orientation="vertical"
                   aria-valuenow={widths[col] ?? 120}
                   aria-valuemin={16}
@@ -318,12 +353,14 @@ export function SheetGrid({
                       width: merge ? widths.slice(merge[1], merge[3] + 1).reduce((sum, width) => sum + width, 0) : (widths[col] ?? 120),
                       height: merge ? (merge[2] - merge[0] + 1) * 32 : 32,
                     }}
-                    title={cell?.formula ? `公式：${cell.formula}（显示缓存值）` : cell?.text}
+                    title={
+                      cell?.formula ? (cell.noCachedValue ? COPY.uncachedFormula(cell.formula) : COPY.formula(cell.formula)) : cell?.text
+                    }
                     onClick={event => {
                       select(row.index, col, event.shiftKey)
                       scroll.current?.focus({ preventScroll: true })
                     }}>
-                    {cell?.text ?? ''}
+                    {cell?.noCachedValue ? COPY.noCachedValue : (cell?.text ?? '')}
                   </div>
                 )
               })}

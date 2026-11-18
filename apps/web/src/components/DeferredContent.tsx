@@ -1,15 +1,30 @@
 import { lazy, Suspense, useState, type FunctionComponent } from 'react'
 import { Button, InlineNotice, Loading } from '@latch/ui'
 import { ErrorBoundary } from './ErrorBoundary.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    retry: '重试加载',
+    failed: (label: string) => `无法加载${label}，当前会话和草稿仍保留。`,
+    loading: (label: string) => `正在加载${label}…`,
+  },
+  {
+    retry: 'Retry',
+    failed: (label: string) => `Could not load ${label}. Your session and draft are still here.`,
+    loading: (label: string) => `Loading ${label}…`,
+  },
+)
 
 /** Keep the already-open shell and its focus; only an optional body waits or fails. */
 export function deferredComponent<P extends object>(
   load: () => Promise<{ default: FunctionComponent<P> }>,
-  label: string,
+  label: string | (() => string),
 ): FunctionComponent<P> {
   let InitialContent = lazy(load)
   return function DeferredContent(props: P) {
     const [Content, replace] = useState(() => InitialContent)
+    const title = typeof label === 'function' ? label() : label
     return (
       <ErrorBoundary
         resetKey={Content}
@@ -23,13 +38,13 @@ export function deferredComponent<P extends object>(
                   InitialContent = lazy(load)
                   replace(() => InitialContent)
                 }}>
-                重试加载
+                {COPY.retry}
               </Button>
             }>
-            无法加载{label}，当前会话和草稿仍保留。
+            {COPY.failed(title)}
           </InlineNotice>
         }>
-        <Suspense fallback={<Loading label={`正在加载${label}…`} />}>
+        <Suspense fallback={<Loading label={COPY.loading(title)} />}>
           <Content {...props} />
         </Suspense>
       </ErrorBoundary>

@@ -27,6 +27,158 @@ import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { IconTile, SettingsGroup, SettingsRow } from './common.tsx'
 import { relaySetupCommands } from './relayCommands.ts'
+import { currentLocale, defineCopy, formatNumber, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    serverKind: 'Linux 服务器',
+    tokyo: '东京',
+    singapore: '新加坡',
+    edgeUnavailable: 'Cloudflare 暂无法在消息组装前限制大小，也无法确认连接已释放。',
+    connected: '已连接',
+    keyMismatch: '密钥不符',
+    differentKey: '转发服务的密钥与文件里的不一致',
+    rejected: '注册被拒绝',
+    rejectedReason: '注册令牌不对，或转发服务已满',
+    unreachable: '连不上',
+    needsAttention: '需要检查',
+    routeConflict: '同一天两次路由冲突',
+    turnedOff: '已停用',
+    unimplemented: '尚未实现',
+    connecting: '连接中',
+    testConnected: '连上',
+    sameKey: '密钥相符',
+    registration: '注册',
+    bookSigning: '签发连接信息',
+    signed: '这台 Mac 已签发',
+    direct: '直接连接',
+    directUnavailable: '手机现在不能直接连接这台 Mac',
+    available: '可用',
+    off: '未开启',
+    official: '官方转发服务',
+    closed: '已关闭',
+    preferred: '优先使用',
+    officialKind: '官方',
+    ownKind: '自己的',
+    more: '更多',
+    test: '测试',
+    enable: '启用',
+    disable: '停用',
+    remove: '移除',
+    unknown: '添加结果待确认',
+    giveUp: '放弃',
+    retry: '重试',
+    savedAddresses: '已保存的地址目录',
+    addRelay: '添加转发服务',
+    copyCommand: '复制命令',
+    dropFile: '拖入配置文件',
+    chooseFile: '选择文件',
+    logIn: '登录',
+    loggedIn: '已登录',
+    deploy: '部署',
+    deployFromMac: '在这台 Mac 的 Latch 源码目录运行。',
+    region: '地区',
+    connect: '连接',
+    server: '服务器',
+    deployFromServer: '登录后进入服务器上的 Latch 源码目录，再运行这些命令。',
+    domain: '服务器地址',
+    existingFile: '已有配置文件',
+    back: '返回',
+    done: '完成',
+    previousUnknown: '上次的添加结果待确认',
+    serverBuildFile: '安装版尚未附带转发服务程序。部署后选择「已有配置文件」添加。',
+    invalidFile: '请选择由转发服务导出的连接配置。',
+    address: '地址',
+    key: '密钥',
+    registrationToken: '注册令牌',
+    included: '已包含',
+    none: '无',
+    confirmConnect: '确认并连接',
+    connectedLatency: (latency: number) => `已连接 · ${formatNumber(latency)} ms`,
+    connectedAt: (time: string) => `连上于 ${time}`,
+    retryAt: (time: string) => `下次重试 ${time}`,
+    testLatency: (latency: number) => `连上 ${formatNumber(latency)} ms`,
+    directAddress: (address: string) => `同一网络的手机可直接连接 ${address}`,
+    relayAddresses: (address: string, count: number, key: string) =>
+      `${address}${count > 1 ? ` 等 ${formatNumber(count)} 个地址` : ''} · 密钥 ${key}`,
+    relayActions: (name: string) => `${name} 的操作`,
+    edgeRelayUnavailable: 'Cloudflare Workers 转发服务尚未实现。',
+  },
+  {
+    serverKind: 'Linux server',
+    tokyo: 'Tokyo',
+    singapore: 'Singapore',
+    edgeUnavailable: 'Cloudflare cannot currently limit message size before assembly or confirm that connections have been released.',
+    connected: 'Connected',
+    keyMismatch: 'Key mismatch',
+    differentKey: 'The relay’s key does not match the key in the file',
+    rejected: 'Registration refused',
+    rejectedReason: 'The registration token is incorrect, or the relay is full',
+    unreachable: 'Unreachable',
+    needsAttention: 'Needs attention',
+    routeConflict: 'Two route conflicts on the same day',
+    turnedOff: 'Turned off',
+    unimplemented: 'Not implemented',
+    connecting: 'Connecting',
+    testConnected: 'Connected',
+    sameKey: 'Key matched',
+    registration: 'Registration',
+    bookSigning: 'Sign connection details',
+    signed: 'Signed on this Mac',
+    direct: 'Direct connection',
+    directUnavailable: 'Phones can’t connect directly to this Mac right now',
+    available: 'Available',
+    off: 'Off',
+    official: 'Official relay',
+    closed: 'Off',
+    preferred: 'Preferred',
+    officialKind: 'Official',
+    ownKind: 'Self-hosted',
+    more: 'More',
+    test: 'Test',
+    enable: 'Turn on',
+    disable: 'Turn off',
+    remove: 'Remove',
+    unknown: 'Relay setup hasn’t been confirmed',
+    giveUp: 'Abandon',
+    retry: 'Retry',
+    savedAddresses: 'Saved address books',
+    addRelay: 'Add relay',
+    copyCommand: 'Copy command',
+    dropFile: 'Drop a relay file',
+    chooseFile: 'Choose file',
+    logIn: 'Log in',
+    loggedIn: 'Logged in',
+    deploy: 'Deploy',
+    deployFromMac: 'Run from the Latch source folder on this Mac.',
+    region: 'Region',
+    connect: 'Connect',
+    server: 'Server',
+    deployFromServer: 'Log in and open the Latch source folder on the server, then run these commands.',
+    domain: 'Domain',
+    existingFile: 'Use a relay file',
+    back: 'Back',
+    done: 'Done',
+    previousUnknown: 'Previous relay setup hasn’t been confirmed',
+    serverBuildFile: 'The installer doesn’t include the relay server yet. Deploy the relay, then select “Use a relay file.”',
+    invalidFile: 'This file isn’t a connection configuration exported by a relay.',
+    address: 'Address',
+    key: 'Key',
+    registrationToken: 'Registration token',
+    included: 'Included',
+    none: 'None',
+    confirmConnect: 'Confirm and connect',
+    connectedLatency: (latency: number) => `Connected · ${formatNumber(latency)} ms`,
+    connectedAt: (time: string) => `Connected ${time}`,
+    retryAt: (time: string) => `Next retry ${time}`,
+    testLatency: (latency: number) => `Connected in ${formatNumber(latency)} ms`,
+    directAddress: (address: string) => `Phones on the same network can connect directly to ${address}.`,
+    relayAddresses: (address: string, count: number, key: string) =>
+      `${address}${count > 1 ? ` and ${formatNumber(count - 1)} more` : ''} · Key ${key}`,
+    relayActions: (name: string) => `Actions for ${name}`,
+    edgeRelayUnavailable: 'Cloudflare Workers relays aren’t supported yet.',
+  },
+)
 
 /**
  * A relay file: version 1 is a self-hosted node exported by the relay CLI (pinned TLS key); version 2 is an edge node
@@ -78,9 +230,14 @@ export async function relayKeyHash(profile: NativeRelayProfile): Promise<string>
 
 const KIND: Record<'self' | 'edge', { label: string; icon: IconComponent }> = {
   edge: { label: 'Cloudflare Workers', icon: Cloud },
-  self: { label: 'Linux 服务器', icon: Server },
+  self: {
+    get label() {
+      return COPY.serverKind
+    },
+    icon: Server,
+  },
 }
-const REGION: Record<string, string> = { 'apac-ne': '东京', 'apac-se': '新加坡' }
+const regionName = (region: string) => (region === 'apac-ne' ? COPY.tokyo : region === 'apac-se' ? COPY.singapore : region)
 const hostOf = (url: string) => {
   try {
     return new URL(url).host
@@ -88,33 +245,32 @@ const hostOf = (url: string) => {
     return url
   }
 }
-const at = (time: number | undefined) => (time === undefined ? '' : new Date(time).toLocaleString())
+const at = (time: number) => new Date(time).toLocaleString(currentLocale())
 
 type Relay = NativeLinkInfo['relays'][number]
-const EDGE_UNAVAILABLE = 'Cloudflare 暂无法在消息组装前限制大小，也无法确认连接已释放。'
 /** A relay's state: a few words in the tone they mean, the detail in the hover. */
 function relayState(relay: Relay): { tone: StatusTone; word: string; detail?: string } {
   switch (relay.status) {
     case 'connected':
       return {
         tone: 'done',
-        word: relay.latencyMs === undefined ? '已连接' : `已连接 · ${relay.latencyMs} ms`,
-        ...(relay.connectedAt === undefined ? {} : { detail: `连上于 ${at(relay.connectedAt)}` }),
+        word: relay.latencyMs === undefined ? COPY.connected : COPY.connectedLatency(relay.latencyMs),
+        ...(relay.connectedAt === undefined ? {} : { detail: COPY.connectedAt(at(relay.connectedAt)) }),
       }
     case 'mismatch':
-      return { tone: 'failed', word: '密钥不符', detail: '中继给出的密钥与文件里的不一致' }
+      return { tone: 'failed', word: COPY.keyMismatch, detail: COPY.differentKey }
     case 'refused':
-      return { tone: 'failed', word: '登记被拒绝', detail: '注册令牌不对，或中继已满' }
+      return { tone: 'failed', word: COPY.rejected, detail: COPY.rejectedReason }
     case 'waiting':
-      return { tone: 'warn', word: '连不上', ...(relay.retryAt === undefined ? {} : { detail: `下次重试 ${at(relay.retryAt)}` }) }
+      return { tone: 'warn', word: COPY.unreachable, ...(relay.retryAt === undefined ? {} : { detail: COPY.retryAt(at(relay.retryAt)) }) }
     case 'attention':
-      return { tone: 'warn', word: '需要检查', detail: '同一天两次路由冲突' }
+      return { tone: 'warn', word: COPY.needsAttention, detail: COPY.routeConflict }
     case 'disabled':
-      return { tone: 'neutral', word: '已停用' }
+      return { tone: 'neutral', word: COPY.turnedOff }
     case 'unsupported':
-      return { tone: 'neutral', word: '尚未实现', detail: EDGE_UNAVAILABLE }
+      return { tone: 'neutral', word: COPY.unimplemented, detail: COPY.edgeUnavailable }
     default:
-      return { tone: 'running', word: '连接中' }
+      return { tone: 'running', word: COPY.connecting }
   }
 }
 
@@ -123,10 +279,10 @@ export function RelaySteps({ test, busy = false }: { test: NativeRelayTest | nul
   const reached = test ? ['none', 'identity', 'registered'].indexOf(test.reached) : -1
   const failedAt = !test?.failure ? -1 : test.failure === 'refused' ? 2 : test.failure === 'mismatch' ? 1 : 0
   const steps: Array<[string, boolean, boolean]> = [
-    [test?.latencyMs === undefined ? '连上' : `连上 ${test.latencyMs} ms`, reached >= 1, failedAt === 0],
-    ['密钥相符', reached >= 1, failedAt === 1],
-    ['注册', reached >= 2, failedAt === 2],
-    [test?.bookIssuedAt === undefined ? '连接簿签发' : 'Host 已签发', test?.bookIssuedAt !== undefined, false],
+    [test?.latencyMs === undefined ? COPY.testConnected : COPY.testLatency(test.latencyMs), reached >= 1, failedAt === 0],
+    [COPY.sameKey, reached >= 1, failedAt === 1],
+    [COPY.registration, reached >= 2, failedAt === 2],
+    [test?.bookIssuedAt === undefined ? COPY.bookSigning : COPY.signed, test?.bookIssuedAt !== undefined, false],
   ]
   const first = steps.findIndex(([, done, failed]) => !done && !failed)
   return (
@@ -148,10 +304,11 @@ const FAILURE = {
 
 /**
  * 设置 › 中继: whether phones reach this Mac directly, then each relay of the person's own (and the official one, once the
- * compiled list has nodes) with its state and a ⋯ menu, and 添加中继. Only this Mac's local administrator changes anything;
+ * compiled list has nodes) with its state and a ⋯ menu, and 添加转发服务. Only this Mac's local administrator changes anything;
  * other admin devices read the list.
  */
 export function RelaySettings({ access }: { access: DeviceAccess }) {
+  useLocale()
   const manage = access.admin && access.local
   const [info, setInfo] = useState<NativeLinkInfo | null>(null)
   const [error, setError] = useState('')
@@ -204,13 +361,12 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
       <SettingsGroup>
         <SettingsRow
           leading={<IconTile icon={Radio} />}
-          title="直连"
+          title={COPY.direct}
           record
           trailing={
-            <Tooltip
-              content={direct ? `同一网络的手机直接连 ${direct.host}:${direct.port}，不经过中继` : '这台 Mac 现在没有等待手机的局域网入口'}>
+            <Tooltip content={direct ? COPY.directAddress(`${direct.host}:${direct.port}`) : COPY.directUnavailable}>
               <span data-testid="relay-direct">
-                <StatusWord tone={direct ? 'done' : 'neutral'}>{direct ? '可用' : '未开启'}</StatusWord>
+                <StatusWord tone={direct ? 'done' : 'neutral'}>{direct ? COPY.available : COPY.off}</StatusWord>
               </span>
             </Tooltip>
           }
@@ -218,12 +374,12 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
         {official?.deployed && (
           <SettingsRow
             leading={<IconTile icon={Cloud} />}
-            title="官方中继"
+            title={COPY.official}
             record
-            description={official.enabled ? official.nodes.map(node => `${REGION[node.region] ?? node.region}`).join(' · ') : '已关闭'}
+            description={official.enabled ? official.nodes.map(node => regionName(node.region)).join(' · ') : COPY.closed}
             trailing={
               <Switch
-                label="官方中继"
+                label={COPY.official}
                 checked={official.enabled}
                 disabled={!manage || busy}
                 onCheckedChange={enabled => void run(() => api('native/official-relay', { method: 'PUT', body: { enabled } }))}
@@ -233,15 +389,15 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
         )}
         {official?.deployed && official.enabled && info.relays.length > 0 && (
           <SettingsRow
-            title="优先使用"
+            title={COPY.preferred}
             trailing={
               <SegmentedControl
-                label="优先使用"
+                label={COPY.preferred}
                 value={official.ownFirst ? 'own' : 'official'}
                 disabled={!manage || busy}
                 options={[
-                  { value: 'official', label: '官方' },
-                  { value: 'own', label: '自己的' },
+                  { value: 'official', label: COPY.officialKind },
+                  { value: 'own', label: COPY.ownKind },
                 ]}
                 onValueChange={value =>
                   void run(() => api('native/official-relay', { method: 'PUT', body: { ownFirst: value === 'own' } }))
@@ -262,8 +418,7 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
                 record
                 dim={relay.status === 'disabled'}
                 description={
-                  <Tooltip
-                    content={`${relay.url}${relay.addresses && relay.addresses > 1 ? ` 等 ${relay.addresses} 个地址` : ''} · 密钥 ${relay.keyHash ?? ''}`}>
+                  <Tooltip content={COPY.relayAddresses(relay.url, relay.addresses ?? 1, relay.keyHash ?? '')}>
                     <span>{hostOf(relay.url)}</span>
                   </Tooltip>
                 }
@@ -276,21 +431,21 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
                     </Tooltip>
                     {manage ? (
                       <ActionMenu
-                        label={`${kind.label} 的操作`}
+                        label={COPY.relayActions(kind.label)}
                         placement="bottom-end"
-                        trigger={props => <IconButton {...props} size="sm" icon={MoreGlyph} label="更多" />}
+                        trigger={props => <IconButton {...props} size="sm" icon={MoreGlyph} label={COPY.more} />}
                         sections={[
                           {
                             id: 'relay',
                             items: [
                               ...(relay.kind !== 'edge' || info.edgeRelayAvailable
-                                ? [{ id: 'test', label: '测试', onSelect: () => void test(relay.relayId) }]
+                                ? [{ id: 'test', label: COPY.test, onSelect: () => void test(relay.relayId) }]
                                 : []),
                               ...(relay.kind !== 'edge' || info.edgeRelayAvailable || relay.status !== 'disabled'
                                 ? [
                                     {
                                       id: 'toggle',
-                                      label: relay.status === 'disabled' ? '启用' : '停用',
+                                      label: relay.status === 'disabled' ? COPY.enable : COPY.disable,
                                       onSelect: () =>
                                         void run(() =>
                                           api(`native/relays/${relay.relayId}`, {
@@ -303,7 +458,7 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
                                 : []),
                               {
                                 id: 'remove',
-                                label: '移除',
+                                label: COPY.remove,
                                 danger: true,
                                 onSelect: () => void run(() => api(`native/relays/${relay.relayId}`, { method: 'DELETE' })),
                               },
@@ -325,18 +480,18 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
         })}
         {info.pendingRelay && manage && (
           <SettingsRow
-            title="添加结果待确认"
+            title={COPY.unknown}
             description={hostOf(info.pendingRelay.url)}
             trailing={
               <span className="relay-row-end">
                 <Button
                   disabled={busy}
                   onClick={() => void run(() => api(`native/relay-requests/${info.pendingRelay!.requestId}`, { method: 'DELETE' }))}>
-                  放弃
+                  {COPY.giveUp}
                 </Button>
                 {info.pendingRelay.canRetry && (
                   <Button onClick={() => setAdding(true)} disabled={busy}>
-                    重试
+                    {COPY.retry}
                   </Button>
                 )}
               </span>
@@ -345,11 +500,11 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
         )}
         {info.directory && (
           <SettingsRow
-            title="已保存的地址目录"
+            title={COPY.savedAddresses}
             trailing={
               manage ? (
                 <Button disabled={busy} onClick={() => void run(() => api('native/directory', { method: 'DELETE' }))}>
-                  移除
+                  {COPY.remove}
                 </Button>
               ) : undefined
             }
@@ -359,7 +514,7 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
       {manage && (
         <div className="relay-add">
           <Button variant="primary" onClick={() => setAdding(true)} disabled={busy}>
-            添加中继
+            {COPY.addRelay}
           </Button>
         </div>
       )}
@@ -393,7 +548,7 @@ function Command({ command, copyOnly = false }: { command: string; copyOnly?: bo
     <span className="relay-command">
       <code>{command}</code>
       <span className="command-actions">
-        <CopyButton text={command} label="复制命令" size="xs" />
+        <CopyButton text={command} label={COPY.copyCommand} size="xs" />
         {!copyOnly && <TerminalFillButton command={command} detached />}
       </span>
     </span>
@@ -413,7 +568,7 @@ function Step({ index, title, children }: { index: number; title: string; childr
 }
 
 /**
- * 添加中继: choose how the relay runs, follow its three steps (log in, deploy, connect), or bring a relay file; then the
+ * 添加转发服务: choose how the relay runs, follow its three steps (log in, deploy, connect), or bring a relay file; then the
  * check card and 确认并连接, which asks for this Mac's local confirmation and shows the progress line.
  */
 function AddRelay({
@@ -505,7 +660,7 @@ function AddRelay({
         test: failure ? { reached: failure === 'refused' ? 'identity' : 'none', failure } : null,
         busy: false,
         uncertain,
-        message: uncertain ? '添加结果待确认' : inlineError(cause),
+        message: uncertain ? COPY.unknown : inlineError(cause),
       })
     }
   }
@@ -518,9 +673,9 @@ function AddRelay({
   const fileStep = (
     <div className="relay-drop" data-testid="relay-drop" onDragOver={event => event.preventDefault()} onDrop={drop}>
       <Icon icon={FileUp} size={16} />
-      <span>拖入中继文件</span>
+      <span>{COPY.dropFile}</span>
       <Button size="sm" onClick={() => file.current?.click()}>
-        选择文件
+        {COPY.chooseFile}
       </Button>
       <input
         ref={file}
@@ -543,20 +698,20 @@ function AddRelay({
   const steps =
     way === 'edge' && commands ? (
       <ol className="relay-steps-list">
-        <Step index={1} title="登录">
+        <Step index={1} title={COPY.logIn}>
           {commands.login.map(command => (
             <Command key={command} command={command} />
           ))}
-          <Checkbox checked={loggedIn} onChange={event => setLoggedIn(event.currentTarget.checked)} label="已登录" />
+          <Checkbox checked={loggedIn} onChange={event => setLoggedIn(event.currentTarget.checked)} label={COPY.loggedIn} />
         </Step>
-        <Step index={2} title="部署">
-          <span>在这台 Mac 的 Latch 源码目录运行。</span>
+        <Step index={2} title={COPY.deploy}>
+          <span>{COPY.deployFromMac}</span>
           <SegmentedControl
-            label="地区"
+            label={COPY.region}
             value={region}
             options={[
-              { value: 'ne', label: '东京' },
-              { value: 'se', label: '新加坡' },
+              { value: 'ne', label: COPY.tokyo },
+              { value: 'se', label: COPY.singapore },
             ]}
             onValueChange={setRegion}
           />
@@ -564,15 +719,15 @@ function AddRelay({
             <Command key={command} command={command} copyOnly />
           ))}
         </Step>
-        <Step index={3} title="连接">
+        <Step index={3} title={COPY.connect}>
           {fileStep}
         </Step>
       </ol>
     ) : way === 'self' && commands ? (
       <ol className="relay-steps-list">
-        <Step index={1} title="登录">
+        <Step index={1} title={COPY.logIn}>
           <TextField
-            label="服务器"
+            label={COPY.server}
             placeholder="user@server"
             value={server}
             onChange={event => setServer(event.currentTarget.value.trim())}
@@ -581,10 +736,10 @@ function AddRelay({
             <Command key={command} command={command} />
           ))}
         </Step>
-        <Step index={2} title="部署">
-          <span>登录后进入服务器上的 Latch 源码目录，再运行这些命令。</span>
+        <Step index={2} title={COPY.deploy}>
+          <span>{COPY.deployFromServer}</span>
           <TextField
-            label="域名"
+            label={COPY.domain}
             placeholder="relay.example.com"
             value={domain}
             onChange={event => setDomain(event.currentTarget.value.trim().toLowerCase())}
@@ -593,7 +748,7 @@ function AddRelay({
             <Command key={command} command={command} copyOnly />
           ))}
         </Step>
-        <Step index={3} title="连接">
+        <Step index={3} title={COPY.connect}>
           {commands.fetch.map(command => (
             <Command key={command} command={command} />
           ))}
@@ -609,7 +764,7 @@ function AddRelay({
       size="lg"
       secure
       className="relay-add-dialog"
-      title={way === null ? '添加中继' : way === 'file' ? '已有中继文件' : KIND[way].label}
+      title={way === null ? COPY.addRelay : way === 'file' ? COPY.existingFile : KIND[way].label}
       onClose={() => {
         if (awaitingConfirmation) confirmation.actions.cancel()
         if (!progress?.busy && !progress?.uncertain) reset()
@@ -618,7 +773,7 @@ function AddRelay({
       footer={
         way !== null && !progress?.relayId ? (
           <Button onClick={reset} disabled={progress?.busy || progress?.uncertain}>
-            返回
+            {COPY.back}
           </Button>
         ) : progress?.relayId ? (
           <Button
@@ -627,15 +782,15 @@ function AddRelay({
               reset()
               onClose()
             }}>
-            完成
+            {COPY.done}
           </Button>
         ) : undefined
       }>
       {pending && way === null && !progress && (
         <div className="relay-check">
-          <b>上次的添加结果待确认</b>
+          <b>{COPY.previousUnknown}</b>
           <Button variant="primary" onClick={() => void connect({ requestId: pending })}>
-            重试
+            {COPY.retry}
           </Button>
         </div>
       )}
@@ -654,14 +809,12 @@ function AddRelay({
                   if (!missing) setWay(option)
                 }}>
                 <IconTile icon={option === 'file' ? FileUp : KIND[option].icon} />
-                <span>{option === 'file' ? '已有中继文件' : KIND[option].label}</span>
-                {missing && <StatusWord>尚未实现</StatusWord>}
+                <span>{option === 'file' ? COPY.existingFile : KIND[option].label}</span>
+                {missing && <StatusWord>{COPY.unimplemented}</StatusWord>}
               </button>
             )
             return missing ? (
-              <Tooltip
-                key={option}
-                content={platformUnavailable ? EDGE_UNAVAILABLE : '安装版尚未提供服务器发布物。部署好后用「已有中继文件」添加。'}>
+              <Tooltip key={option} content={platformUnavailable ? COPY.edgeUnavailable : COPY.serverBuildFile}>
                 {row}
               </Tooltip>
             ) : (
@@ -673,7 +826,7 @@ function AddRelay({
       {!candidate && steps}
       {rejected && (
         <InlineNotice tone="error" secure>
-          {rejected === 'edge' ? `Cloudflare Workers 中继尚未实现。${EDGE_UNAVAILABLE}` : '这个文件不是中继导出的连接配置。'}
+          {rejected === 'edge' ? `${COPY.edgeRelayUnavailable}${COPY.edgeUnavailable}` : COPY.invalidFile}
         </InlineNotice>
       )}
       {candidate && (
@@ -684,20 +837,20 @@ function AddRelay({
             record
           />
           <dl className="relay-facts">
-            <dt>地址</dt>
+            <dt>{COPY.address}</dt>
             <dd>
               {[candidate.profile.url, ...('extraUrls' in candidate.profile ? (candidate.profile.extraUrls ?? []) : [])].map(url => (
                 <span key={url}>{hostOf(url)}</span>
               ))}
             </dd>
-            <dt>密钥</dt>
+            <dt>{COPY.key}</dt>
             <dd>
               <Tooltip content={'relayKey' in candidate.profile ? candidate.profile.relayKey : candidate.profile.spkiHash}>
                 <span>{candidate.hash}</span>
               </Tooltip>
             </dd>
-            <dt>注册令牌</dt>
-            <dd>{candidate.profile.registrationKey ? '已包含' : '无'}</dd>
+            <dt>{COPY.registrationToken}</dt>
+            <dd>{candidate.profile.registrationKey ? COPY.included : COPY.none}</dd>
           </dl>
           {progress ? (
             <>
@@ -709,13 +862,13 @@ function AddRelay({
               )}
               {!progress.busy && !progress.relayId && (
                 <Button variant="primary" onClick={() => void connect(candidate)}>
-                  重试
+                  {COPY.retry}
                 </Button>
               )}
             </>
           ) : (
             <Button variant="primary" onClick={() => void connect(candidate)}>
-              确认并连接
+              {COPY.confirmConnect}
             </Button>
           )}
         </div>
@@ -730,7 +883,7 @@ function AddRelay({
           )}
           {!progress.busy && !progress.relayId && (
             <Button variant="primary" onClick={() => void connect({ requestId: progress.requestId })}>
-              重试
+              {COPY.retry}
             </Button>
           )}
         </div>

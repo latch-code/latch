@@ -8,6 +8,40 @@ import { VisibleText } from '../components/VisibleText.tsx'
 import { api, errorMessage, MessageError } from '../core/api.ts'
 import type { LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { IconTile, SettingsGroup, SettingsRow } from './common.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    maybeExpired: '登录可能已失效',
+    loggedIn: '已登录',
+    loggedOut: '已退出登录',
+    notLoggedIn: '还没登录',
+    unknown: '登录状态未知',
+    testDisagrees: '测试启动说还没登录',
+    login: '登录',
+    check: '重新检查',
+    logout: '退出登录',
+    switchAccount: '换账号',
+    expires: (day: string) => `${day}到期`,
+    confirmLogout: (name: string) =>
+      `退出 ${name} 的登录？之后要重新登录才能开始会话。这台 Mac 上别处用的是同一份登录时，那里也会退出。有会话正在运行时不能退出。`,
+  },
+  {
+    maybeExpired: 'Login may have expired',
+    loggedIn: 'Logged in',
+    loggedOut: 'Logged out',
+    notLoggedIn: 'Not logged in',
+    unknown: 'Login status unknown',
+    testDisagrees: 'Launch test says not logged in',
+    login: 'Login',
+    check: 'Check again',
+    logout: 'Log out',
+    switchAccount: 'Switch account',
+    expires: (day: string) => `Expires ${day}`,
+    confirmLogout: (name: string) =>
+      `Log out of ${name}? To start sessions again, you’ll need to log in. Other apps on this Mac that share this login will also be signed out. Wait for running sessions to finish before logging out.`,
+  },
+)
 
 /**
  * Whether a harness is logged in, by its own word, how to log in again, and logging out where it offers that. Shown only
@@ -39,21 +73,21 @@ export function LoginGroup({
   const soon = signedIn && loginEndsSoon(expiresAt)
   const runnable = login.methods !== undefined || login.command !== undefined
   const title = doubted
-    ? '登录可能已失效'
+    ? COPY.maybeExpired
     : signedIn
-      ? '已登录'
+      ? COPY.loggedIn
       : left
-        ? '已退出登录'
+        ? COPY.loggedOut
         : status === 'unauthenticated'
-          ? '还没登录'
-          : '登录状态未知'
-  const details = [signedIn && label, signedIn && expiresAt && `${loginEndDay(expiresAt)}到期`, doubted && '测试启动说还没登录'].filter(
+          ? COPY.notLoggedIn
+          : COPY.unknown
+  const details = [signedIn && label, signedIn && expiresAt && COPY.expires(loginEndDay(expiresAt)), doubted && COPY.testDisagrees].filter(
     (part): part is string => Boolean(part),
   )
   const steps = (!signedIn || switching || doubted) && (runnable || login.note)
   return (
     <SettingsGroup
-      title="登录"
+      title={COPY.login}
       meta={
         login.checkable && allowed ? (
           <Button
@@ -67,7 +101,7 @@ export function LoginGroup({
                 setChecking(false)
               })
             }}>
-            重新检查
+            {COPY.check}
           </Button>
         ) : undefined
       }>
@@ -90,7 +124,7 @@ export function LoginGroup({
               onClick={() => {
                 setLeaving(true)
               }}>
-              退出登录
+              {COPY.logout}
             </Button>
           ) : signedIn && runnable && !switching && !doubted ? (
             <Button
@@ -99,7 +133,7 @@ export function LoginGroup({
               onClick={() => {
                 setSwitching(true)
               }}>
-              换账号
+              {COPY.switchAccount}
             </Button>
           ) : undefined
         }
@@ -111,10 +145,10 @@ export function LoginGroup({
       )}
       {leaving && (
         <ConfirmDialog
-          title="退出登录"
+          title={COPY.logout}
           danger
-          confirmLabel="退出登录"
-          message={`退出 ${name} 的登录？之后要重新登录才能开始会话。这台 Mac 上别处用的是同一份登录时，那里也会退出。有会话正在运行时不能退出。`}
+          confirmLabel={COPY.logout}
+          message={COPY.confirmLogout(name)}
           onClose={() => {
             setLeaving(false)
           }}

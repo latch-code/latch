@@ -58,6 +58,7 @@ const { createAgentRunner, createBrowserProvider } = require('./browser-agent.cj
 // Through the module objects, so the end-to-end test's bootstrap can give the updater a local feed and a fake installer.
 const updates = require('./updater.cjs')
 const menus = require('./menu.cjs')
+const { createLocale, currentLocale, defineCopy } = require('./locale.cjs')
 const {
   LIFECYCLE_CHANNELS,
   createHostSupervisor,
@@ -139,6 +140,22 @@ if (app.isPackaged) {
 
 app.setName('Latch')
 app.setPath('userData', resolve(argument('latch-user-data') ?? join(app.getPath('appData'), 'Latch', 'Desktop')))
+const desktopLocale = createLocale(app.getPath('userData'), () => app.getPreferredSystemLanguages())
+const NATIVE_COPY = defineCopy(
+  { chooseConnectionFile: '选择连接文件', exportDiagnostics: '导出诊断' },
+  { chooseConnectionFile: 'Choose connection file', exportDiagnostics: 'Export diagnostics' },
+)
+const STARTUP_EN = {
+  secureStorage: 'Secure storage is unavailable on this system. Latch cannot store device credentials.',
+  missingFlag: 'The --latch-host-state option is missing. Start Latch with pnpm desktop.',
+  notRunning: 'The Latch service is not running, or its host.json file is invalid.',
+  unverified: 'Couldn’t verify the Latch service.',
+  packagedBoot: 'Latch could not start. Check the Node.js installation and reopen Latch.',
+  reopen: 'Reopen the Latch app.',
+  devStart: 'Start Latch with pnpm desktop.',
+  deviceStorage: 'Couldn’t open device credential storage.',
+  failed: 'Latch couldn’t start. Check the application log for details.',
+}
 let hostStatePath = argument('latch-host-state')
 
 protocol.registerSchemesAsPrivileged([
@@ -269,13 +286,14 @@ function openLocalSession(sessionId) {
 }
 
 /** Shows a local error page served by the latch scheme (the renderer may load nothing else), then quits on close. */
-function fatal(message) {
+function fatal(message, english) {
   log(message)
+  const display = currentLocale() === 'en' ? english : message
   if (protocol.isProtocolHandled('latch')) protocol.unhandle('latch')
   protocol.handle(
     'latch',
     () =>
-      new Response(htmlErrorPage(message), {
+      new Response(htmlErrorPage(display), {
         status: 200,
         headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': HTML_CSP, 'cache-control': 'no-store' },
       }),
@@ -823,7 +841,7 @@ function handleFiles(proxy) {
     let chosen
     try {
       chosen = await dialog.showSaveDialog(mainWindow, {
-        title: '导出诊断',
+        title: NATIVE_COPY.exportDiagnostics,
         defaultPath: join(app.getPath('downloads'), `latch-diagnostics-${stamp}.json`),
         filters: [{ name: 'JSON', extensions: ['json'] }],
         properties: ['createDirectory', 'showOverwriteConfirmation'],
@@ -1090,7 +1108,10 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
     if (source === 'file') {
       if (!dialogGate.enter()) return { ok: false, error: 'busy', message: '另一个对话框正在打开。' }
       try {
-        const picked = await dialog.showOpenDialog(mainWindow, { title: '选择连接文件', properties: ['openFile', 'dontAddToRecent'] })
+        const picked = await dialog.showOpenDialog(mainWindow, {
+          title: NATIVE_COPY.chooseConnectionFile,
+          properties: ['openFile', 'dontAddToRecent'],
+        })
         if (picked.canceled || picked.filePaths.length !== 1) return { ok: false, error: 'canceled', message: '' }
         const path = picked.filePaths[0]
         const info = await lstat(path)
@@ -1134,6 +1155,10 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
     rebuild: accelerators => buildMenu(accelerators),
   })
   const syncSpaceMenu = spaceMenu.sync
+  ipcMain.on('latch:locale', (event, preference, language) => {
+    if (!trusted(event)) return
+    if (desktopLocale.set(preference, language)) syncSpaceMenu(true)
+  })
   ipcMain.on('latch:space:ready', (event, ready) => {
     if (!senderOf(event) || typeof ready !== 'boolean') return
     spaceMenu.ready(event.sender, ready)
@@ -1143,7 +1168,7 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
     if (!senderOf(event)) return
     spaceMenu.keys(event.sender, keys)
   })
-  app.on('browser-window-blur', syncSpaceMenu)
+  app.on('browser-window-blur', () => syncSpaceMenu())
   app.on('will-quit', () => computers.stop())
   app.on('browser-window-focus', () => {
     computers.refocus()
@@ -1160,18 +1185,19 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
 }
 
 async function start() {
+  await desktopLocale.load()
   await hardenSession(session.defaultSession)
   if (process.platform === 'darwin') app.dock?.setIcon(icon)
   const storageProblem = secureStorageProblem(safeStorage)
-  if (storageProblem) return fatal(storageProblem)
+  if (storageProblem) return fatal(storageProblem, STARTUP_EN.secureStorage)
   if (app.isPackaged && !hostStatePath) {
     try {
       hostStatePath = await startPackagedHost({ launcher: PACKAGED_CLI, dataDir: join(app.getPath('appData'), 'Latch', 'Host') })
     } catch (error) {
-      return fatal(error instanceof Error ? error.message : '无法启动 Latch。')
+      return fatal(error instanceof Error ? error.message : '无法启动 Latch。', STARTUP_EN.packagedBoot)
     }
   }
-  if (!hostStatePath) return fatal('缺少 --latch-host-state 参数。请用 pnpm desktop 启动 Latch 桌面端。')
+  if (!hostStatePath) return fatal('缺少 --latch-host-state 参数。请用 pnpm desktop 启动 Latch 桌面端。', STARTUP_EN.missingFlag)
   let state = await readHostStateFile(hostStatePath)
   let checked = state ? await inspectHostState(state) : undefined
   /** @type {{ onChange: (view: object) => void, onActivity: (activity: { running: number, waiting: number }) => void }} */
@@ -1193,11 +1219,12 @@ async function start() {
     }
   }
   if (!state || !checked?.ok) {
-    const instruction = app.isPackaged ? '请重新打开 Latch 应用。' : '请用 pnpm desktop 启动。'
-    const message = state
-      ? `无法验证 Latch Host：${checked?.reason ?? '未知原因'}。`
-      : '找不到正在运行的 Latch Host（host.json 缺失或格式不正确）。'
-    return fatal(`${message}${instruction}`)
+    const english = state ? STARTUP_EN.unverified : STARTUP_EN.notRunning
+    const next = app.isPackaged ? STARTUP_EN.reopen : STARTUP_EN.devStart
+    return fatal(
+      `${state ? `无法验证 Latch Host：${checked?.reason ?? '未知原因'}。` : '找不到正在运行的 Latch Host（host.json 缺失或格式不正确）。'}${app.isPackaged ? '请重新打开 Latch 应用。' : '请用 pnpm desktop 启动。'}`,
+      `${english} ${next}`,
+    )
   }
   previewBrowser.blockHost(state)
   if (!supervisor || supervisedId !== state.hostId) supervisor = hostSupervisor(state.hostId, hostStatePath, hooks)
@@ -1206,7 +1233,7 @@ async function start() {
   try {
     store = await openCredentialStore({ directory: join(app.getPath('userData'), 'latch-devices'), hostId: state.hostId, safeStorage, log })
   } catch (error) {
-    return fatal(`无法打开设备凭据目录：${error instanceof Error ? error.message : '未知错误'}`)
+    return fatal(`无法打开设备凭据目录：${error instanceof Error ? error.message : '未知错误'}`, STARTUP_EN.deviceStorage)
   }
 
   let socketPath = state.socketPath
@@ -1370,7 +1397,7 @@ if (!app.requestSingleInstanceLock()) {
   app
     .whenReady()
     .then(start)
-    .catch(error => fatal(`启动失败：${error instanceof Error ? error.message : '未知错误'}`))
+    .catch(error => fatal(`启动失败：${error instanceof Error ? error.message : '未知错误'}`, STARTUP_EN.failed))
   // The Dock brings back this Mac's window, also while only other computers' windows are open.
   app.on('activate', () => {
     if (ready && (!mainWindow || mainWindow.isDestroyed())) openWindow()

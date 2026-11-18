@@ -1,13 +1,62 @@
 import type { TaskStatus, TokenUsage } from '@latch/protocol'
+import { currentLocale, defineCopy, formatNumber } from './core/i18n.ts'
 
-export const statusLabels: Record<TaskStatus, string> = {
-  idle: '已完成',
-  running: '运行中',
-  'waiting-approval': '待批准',
-  cancelled: '已停止',
-  failed: '失败',
-  interrupted: '已中断',
-}
+export const statusLabels: Record<TaskStatus, string> = defineCopy<Record<TaskStatus, string>>(
+  {
+    idle: '已完成',
+    running: '运行中',
+    'waiting-approval': '待批准',
+    cancelled: '已停止',
+    failed: '失败',
+    interrupted: '已中断',
+  },
+  {
+    idle: 'Done',
+    running: 'Running',
+    'waiting-approval': 'Awaiting approval',
+    cancelled: 'Stopped',
+    failed: 'Failed',
+    interrupted: 'Interrupted',
+  },
+)
+
+/** The words of times, sizes and token counts, in the page's language. */
+const TIME_COPY = defineCopy(
+  {
+    justNow: '刚刚',
+    minutes: (n: number) => `${n} 分钟`,
+    hours: (n: number) => `${n} 小时`,
+    yesterday: '昨天',
+    days: (n: number) => `${n} 天`,
+    lastWeek: '上周',
+    seconds: (n: string) => `${n} 秒`,
+    minutesSeconds: (m: number, s: number) => `${m} 分 ${s} 秒`,
+    hoursMinutes: (h: number, m: number) => `${h} 小时 ${m} 分`,
+    yesterdayAt: (clock: string) => `昨天 ${clock}`,
+    input: '输入',
+    output: '输出',
+    cacheRead: '缓存读取',
+    cacheWrite: '缓存写入',
+    reasoning: '推理',
+  },
+  {
+    justNow: 'now',
+    minutes: (n: number) => `${n} min`,
+    hours: (n: number) => `${n} h`,
+    yesterday: 'yesterday',
+    days: (n: number) => `${n} d`,
+    lastWeek: 'last week',
+    seconds: (n: string) => `${n} s`,
+    minutesSeconds: (m: number, s: number) => `${m} min ${s} s`,
+    hoursMinutes: (h: number, m: number) => `${h} h ${m} min`,
+    yesterdayAt: (clock: string) => `Yesterday ${clock}`,
+    input: 'In',
+    output: 'Out',
+    cacheRead: 'cache read',
+    cacheWrite: 'cache write',
+    reasoning: 'reasoning',
+  },
+)
 
 export const isActive = (status: TaskStatus | undefined) => status === 'running' || status === 'waiting-approval'
 
@@ -19,18 +68,18 @@ function parse(value: string): number | null {
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
 const pad = (value: number) => value.toString().padStart(2, '0')
 
-/** Compact sidebar time: "刚刚", "5 分钟", "3 小时", "昨天", "4 天", "上周", "10/23", "2025/10/23". */
+/** Compact sidebar time: "刚刚", "5 分钟", "3 小时", "昨天", "4 天", "上周", "10/23", "2025/10/23" (English: now, 5 min…). */
 export function relativeTime(value: string, now = new Date()): string {
   const time = parse(value)
   if (time === null) return ''
   const elapsed = now.getTime() - time
-  if (elapsed < 60_000) return '刚刚'
-  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} 分钟`
+  if (elapsed < 60_000) return TIME_COPY.justNow
+  if (elapsed < 3_600_000) return TIME_COPY.minutes(Math.floor(elapsed / 60_000))
   const days = Math.round((startOfDay(now) - startOfDay(new Date(time))) / 86_400_000)
-  if (days <= 0) return `${Math.floor(elapsed / 3_600_000)} 小时`
-  if (days === 1) return '昨天'
-  if (days < 7) return `${days} 天`
-  if (days < 14) return '上周'
+  if (days <= 0) return TIME_COPY.hours(Math.floor(elapsed / 3_600_000))
+  if (days === 1) return TIME_COPY.yesterday
+  if (days < 7) return TIME_COPY.days(days)
+  if (days < 14) return TIME_COPY.lastWeek
   const date = new Date(time)
   const day = `${pad(date.getMonth() + 1)}/${pad(date.getDate())}`
   return date.getFullYear() === now.getFullYear() ? day : `${date.getFullYear()}/${day}`
@@ -39,7 +88,7 @@ export function relativeTime(value: string, now = new Date()): string {
 export function dateTime(value: string): string {
   const time = parse(value)
   if (time === null) return ''
-  return new Date(time).toLocaleString('zh-CN', {
+  return new Date(time).toLocaleString(currentLocale(), {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -56,18 +105,19 @@ export function formatTokens(value: number): string {
   return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
 }
 
-const groupedNumber = new Intl.NumberFormat('en-US')
-export const exactTokens = (value: number): string => groupedNumber.format(value)
+export const exactTokens = (value: number): string => formatNumber(value)
 
 // A formatter is expensive to build and this runs on every render of the session's details.
 const currencies = new Map<string, Intl.NumberFormat>()
 /** An amount in its currency; building throws on a code that is not a currency, as `format` did inline. */
 export function currencyAmount(amount: number, currency: string): string {
-  let format = currencies.get(currency)
+  const locale = currentLocale()
+  const key = `${locale}:${currency}`
+  let format = currencies.get(key)
   if (!format) {
-    format = new Intl.NumberFormat('zh-CN', { style: 'currency', currency })
+    format = new Intl.NumberFormat(locale, { style: 'currency', currency })
     if (currencies.size >= 16) currencies.clear()
-    currencies.set(currency, format)
+    currencies.set(key, format)
   }
   return format.format(amount)
 }
@@ -77,7 +127,7 @@ export const tokenAmount = (value: number): string => `${formatTokens(value)} to
 
 /** 「输入 12.4k tokens」 and 「输出 3.1k tokens」: tokens in words, never arrows, each with its unit. */
 export function tokenParts(usage: TokenUsage): [string, string] {
-  return [`输入 ${tokenAmount(usage.inputTokens)}`, `输出 ${tokenAmount(usage.outputTokens)}`]
+  return [`${TIME_COPY.input} ${tokenAmount(usage.inputTokens)}`, `${TIME_COPY.output} ${tokenAmount(usage.outputTokens)}`]
 }
 
 /** 「输入 12.4k tokens · 输出 3.1k tokens」. */
@@ -93,11 +143,11 @@ export function tokenLines(usage: TokenUsage): [string, string] {
     return known.length ? `（${known.map(([name, value]) => `${name} ${exactTokens(value)}`).join(' · ')}）` : ''
   }
   return [
-    `输入 ${exactTokens(usage.inputTokens)} tokens${parts([
-      ['缓存读取', usage.cacheReadTokens],
-      ['缓存写入', usage.cacheWriteTokens],
+    `${TIME_COPY.input} ${exactTokens(usage.inputTokens)} tokens${parts([
+      [TIME_COPY.cacheRead, usage.cacheReadTokens],
+      [TIME_COPY.cacheWrite, usage.cacheWriteTokens],
     ])}`,
-    `输出 ${exactTokens(usage.outputTokens)} tokens${parts([['推理', usage.reasoningTokens]])}`,
+    `${TIME_COPY.output} ${exactTokens(usage.outputTokens)} tokens${parts([[TIME_COPY.reasoning, usage.reasoningTokens]])}`,
   ]
 }
 
@@ -121,14 +171,21 @@ export function sumUsage(items: TokenUsage[]): TokenUsage | undefined {
  */
 export function formatDuration(ms: number, live = false): string | undefined {
   if (!Number.isFinite(ms) || ms < 1000) return undefined
-  if (ms < 10_000) return live ? `${Math.floor(ms / 1000)} 秒` : `${(Math.floor(ms / 100) / 10).toFixed(1).replace(/\.0$/, '')} 秒`
+  if (ms < 10_000) return TIME_COPY.seconds(live ? `${Math.floor(ms / 1000)}` : (Math.floor(ms / 100) / 10).toFixed(1).replace(/\.0$/, ''))
   const seconds = Math.floor(ms / 1000)
-  if (seconds < 60) return `${seconds} 秒`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
-  return `${Math.floor(seconds / 3600)} 小时 ${Math.floor((seconds % 3600) / 60)} 分`
+  if (seconds < 60) return TIME_COPY.seconds(`${seconds}`)
+  if (seconds < 3600) return TIME_COPY.minutesSeconds(Math.floor(seconds / 60), seconds % 60)
+  return TIME_COPY.hoursMinutes(Math.floor(seconds / 3600), Math.floor((seconds % 3600) / 60))
 }
 
-const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+/** A calendar day in the page's language: 「10月3日」, 「2025年10月3日」 / "Oct 3", "Oct 3, 2025". */
+const calendarDay = (date: Date, withYear: boolean) =>
+  date.toLocaleDateString(currentLocale(), {
+    ...(withYear ? { year: 'numeric' } : {}),
+    month: currentLocale() === 'en' ? 'short' : 'long',
+    day: 'numeric',
+  })
+const weekday = (date: Date) => date.toLocaleDateString(currentLocale(), { weekday: 'short' })
 const clock = (date: Date) => `${pad(date.getHours())}:${pad(date.getMinutes())}`
 /** Calendar days from `then` to `now`, by the local calendar. */
 const daysBetween = (then: Date, now: Date) => Math.round((startOfDay(now) - startOfDay(then)) / 86_400_000)
@@ -139,16 +196,14 @@ export function messageTime(at: number, now: number): string {
   const today = new Date(now)
   const days = daysBetween(date, today)
   if (days <= 0) return clock(date)
-  if (days === 1) return `昨天 ${clock(date)}`
-  if (date.getFullYear() === today.getFullYear()) return `${date.getMonth() + 1}月${date.getDate()}日 ${clock(date)}`
-  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${clock(date)}`
+  if (days === 1) return TIME_COPY.yesterdayAt(clock(date))
+  return `${calendarDay(date, date.getFullYear() !== today.getFullYear())} ${clock(date)}`
 }
 
 /** A day and a time with seconds, the year only when it is not this one: 「10月25日 14:31:05」, 「2025年10月3日 09:00:12」. */
 export function dayClockTime(at: number, now: number): string {
   const date = new Date(at)
-  const day = `${date.getMonth() + 1}月${date.getDate()}日`
-  return `${date.getFullYear() === new Date(now).getFullYear() ? day : `${date.getFullYear()}年${day}`} ${clock(date)}:${pad(date.getSeconds())}`
+  return `${calendarDay(date, date.getFullYear() !== new Date(now).getFullYear())} ${clock(date)}:${pad(date.getSeconds())}`
 }
 
 /** Whether two times fall on the same local day. */
@@ -159,7 +214,7 @@ export function sameDay(a: number, b: number): boolean {
 /** The full time for a tooltip or `<time title>`: 「2026年10月24日 周五 14:32:07」. */
 export function absoluteTime(at: number): string {
   const date = new Date(at)
-  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${WEEKDAYS[date.getDay()]} ${clock(date)}:${pad(date.getSeconds())}`
+  return `${calendarDay(date, true)} ${weekday(date)} ${clock(date)}:${pad(date.getSeconds())}`
 }
 
 /** A time of day with seconds, for start and end lines: 「14:32:07」. */

@@ -8,12 +8,36 @@ import {
   type ReviewNoteStatus,
 } from '@latch/protocol'
 import type { DiffLine } from '../../diff.ts'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    ready: '待发',
+    sent: '已发送',
+    reported: 'Agent 称已修',
+    reviewed: '你已复核',
+  },
+  {
+    ready: 'Queued',
+    sent: 'Sent',
+    reported: 'Agent reported fixed',
+    reviewed: 'Reviewed by you',
+  },
+)
 
 export const NOTE_STATUS_LABEL: Record<ReviewNoteStatus, string> = {
-  pending: '待发',
-  sent: '已发送',
-  'agent-claimed': 'Agent 称已修',
-  reviewed: '你已复核',
+  get pending() {
+    return COPY.ready
+  },
+  get sent() {
+    return COPY.sent
+  },
+  get 'agent-claimed'() {
+    return COPY.reported
+  },
+  get reviewed() {
+    return COPY.reviewed
+  },
 }
 
 /** Lines picked in one file's diff: on one side, `anchor` the line the selection started from. */

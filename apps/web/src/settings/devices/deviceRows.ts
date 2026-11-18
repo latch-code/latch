@@ -2,7 +2,14 @@ import { escapeSecurityText, type AppSnapshot, type Device } from '@latch/protoc
 import type { DeviceAccess } from '../../core/permissions.ts'
 import { DEVICES_COPY as COPY, GRANTED_TEXT } from '../../core/securityCopy.ts'
 import type { LatchShell } from '../../core/shell.ts'
+import { defineCopy } from '../../core/i18n.ts'
 import { relativeTime } from '../../format.ts'
+
+/** A count of minutes, hours or days reads as time ago; 刚刚, 昨天 and dates read as they are. */
+const SEEN_COPY = defineCopy(
+  { ago: (time: string) => (/\d (?:分钟|小时|天)$/u.test(time) ? `${time}前` : time) },
+  { ago: (time: string) => (/\d (?:min|h|d)$/u.test(time) ? `${time} ago` : time) },
+)
 
 /** Names recorded before the Host checked them may still hide characters, so they are shown escaped. */
 export const deviceLabel = (name: string): string => escapeSecurityText(name) || COPY.unnamed
@@ -30,8 +37,7 @@ export const isBrowserDevice = (device: Pick<Device, 'listener' | 'native'>): bo
  */
 export function seenText(device: Pick<Device, 'lastSeenAt'>, self: boolean, now = new Date()): string {
   if (self) return COPY.online
-  const time = relativeTime(device.lastSeenAt, now)
-  return /\d (?:分钟|小时|天)$/u.test(time) ? `${time}前` : time
+  return SEEN_COPY.ago(relativeTime(device.lastSeenAt, now))
 }
 
 /** The body of the remove dialog: what happens, in words that fit how the device connects, and what else it takes with it. */

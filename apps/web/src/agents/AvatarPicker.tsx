@@ -13,12 +13,36 @@ import { WriteNotice } from './AgentForm.tsx'
 import { BRACKET_NAMES, EYES_NAMES, HUE_NAMES, type AvatarState } from './avatarFace.ts'
 import { PictureRow, useAvatarUpload } from './AvatarPicture.tsx'
 import { writeFor, type AgentWrites } from './useAgentWrites.ts'
+import { defineCopy, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    brackets: '括号',
+    eyes: '眼睛',
+    colours: '颜色',
+    avatar: '头像',
+    unknown: '头像上传结果未知',
+    retrySame: '重试同一请求',
+    currentAvatar: (name: string) => `${name} 的头像`,
+    draftAvatar: (name: string) => `${name || '它'}的头像`,
+  },
+  {
+    brackets: 'Brackets',
+    eyes: 'Eyes',
+    colours: 'Colors',
+    avatar: 'Avatar',
+    unknown: 'Avatar upload result unknown',
+    retrySame: 'Retry same request',
+    currentAvatar: (name: string) => `Avatar for ${name}`,
+    draftAvatar: (name: string) => (name ? `Avatar for ${name}` : 'Agent avatar'),
+  },
+)
 
 type Part = 'bracket' | 'eyes' | 'hue'
-const ROWS: Array<{ part: Part; label: string; values: readonly string[]; name: (value: string) => string }> = [
-  { part: 'bracket', label: '括号', values: AGENT_BRACKETS, name: value => BRACKET_NAMES[value as Avatar['bracket']] },
-  { part: 'eyes', label: '眼睛', values: AGENT_EYES, name: value => EYES_NAMES[value as Avatar['eyes']] },
-  { part: 'hue', label: '颜色', values: AGENT_HUES, name: value => HUE_NAMES[value as Avatar['hue']] },
+const ROWS: Array<{ part: Part; label: 'brackets' | 'eyes' | 'colours'; values: readonly string[]; name: (value: string) => string }> = [
+  { part: 'bracket', label: 'brackets', values: AGENT_BRACKETS, name: value => BRACKET_NAMES[value as Avatar['bracket']] },
+  { part: 'eyes', label: 'eyes', values: AGENT_EYES, name: value => EYES_NAMES[value as Avatar['eyes']] },
+  { part: 'hue', label: 'colours', values: AGENT_HUES, name: value => HUE_NAMES[value as Avatar['hue']] },
 ]
 
 /**
@@ -56,7 +80,7 @@ function PartRow({
   return (
     <div className="avatar-picker-row">
       <span className="avatar-picker-label" id={`avatar-picker-${row.part}`}>
-        {row.label}
+        {COPY[row.label]}
       </span>
       <div
         ref={group}
@@ -142,13 +166,13 @@ export function AvatarPicker({
   return (
     <>
       <Popover
-        label="头像"
+        label={COPY.avatar}
         size="md"
         side="auto"
         align="start"
         onOpenChange={setOpen}
         trigger={props => (
-          <button {...props} type="button" className="agent-head-avatar" aria-label={`${agent.name} 的头像`}>
+          <button {...props} type="button" className="agent-head-avatar" aria-label={COPY.currentAvatar(agent.name)}>
             <AgentAvatar avatar={agent.avatar} size={56} state={state} />
           </button>
         )}>
@@ -181,7 +205,7 @@ export function AvatarPicker({
       {!open && write && 'kind' in write && <div className="avatar-picker-notice">{notice}</div>}
       {!open && upload.state.phase === 'unknown' && (
         <div className="avatar-picker-notice">
-          <InlineNotice tone="warn" title="头像上传结果未知" action={<Button onClick={() => void upload.retry()}>重试同一请求</Button>}>
+          <InlineNotice tone="warn" title={COPY.unknown} action={<Button onClick={() => void upload.retry()}>{COPY.retrySame}</Button>}>
             {upload.state.message}
           </InlineNotice>
         </div>
@@ -195,14 +219,15 @@ export function AvatarPicker({
  * person picks.
  */
 export function DraftAvatarPicker({ avatar, name, onPick }: { avatar: Avatar; name: string; onPick: (next: Avatar) => void }) {
+  useLocale()
   return (
     <Popover
-      label="头像"
+      label={COPY.avatar}
       size="md"
       side="auto"
       align="start"
       trigger={props => (
-        <button {...props} type="button" className="agent-head-avatar helper-create-face" aria-label={`${name || '它'}的头像`}>
+        <button {...props} type="button" className="agent-head-avatar helper-create-face" aria-label={COPY.draftAvatar(name)}>
           <AgentAvatar avatar={avatar} size={72} />
         </button>
       )}>

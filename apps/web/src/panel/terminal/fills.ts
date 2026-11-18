@@ -1,5 +1,17 @@
 import { createContext, useContext, useSyncExternalStore } from 'react'
 import { MessageError } from '../../core/api.ts'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    replaced: '已换成新的命令',
+    notReady: '终端没有准备好',
+  },
+  {
+    replaced: 'Replaced with a new command',
+    notReady: 'The terminal isn’t ready',
+  },
+)
 
 /** Where a command goes when no session is in view (设置, first setup): the terminal dialog. */
 export const DETACHED = ''
@@ -42,7 +54,7 @@ export class TerminalFills {
 
   /** Resolves once the command is at the prompt; rejects with the few words the block shows. */
   request(place: string, command: string): Promise<void> {
-    this.asked?.settle('已换成新的命令')
+    this.asked?.settle(COPY.replaced)
     return new Promise((resolve, reject) => {
       let settled = false
       const failed: Array<() => void> = []
@@ -69,7 +81,7 @@ export class TerminalFills {
           reject(new MessageError(error))
         },
       }
-      const timer = setTimeout(() => ask.settle('终端没有准备好'), this.deadlineMs)
+      const timer = setTimeout(() => ask.settle(COPY.notReady), this.deadlineMs)
       this.asked = ask
       this.changed()
     })

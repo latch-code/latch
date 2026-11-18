@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { flushSync } from 'react-dom'
 import { crossFade, setReducedMotion, switchTheme } from '@latch/ui'
+import { defineCopy, isLocalePreference, type LocalePreference } from './core/i18n.ts'
 import { readStorage } from './core/storageKeys.ts'
 import {
   parseRightPanelPreference,
@@ -18,7 +19,7 @@ export type SendKey = 'enter' | 'mod-enter'
 export type WorkView = 'chat' | 'board'
 /** How much of a turn's work the conversation shows: every row, only what went wrong, or one folded row. */
 export type WorkDisplay = 'all' | 'failures' | 'folded'
-export const VIEW_NAMES: Record<WorkView, string> = { chat: '对话', board: '看板' }
+export const VIEW_NAMES = defineCopy<Record<WorkView, string>>({ chat: '对话', board: '看板' }, { chat: 'Chat', board: 'Board' })
 /** 背景效果: 关, 轻 or 标准. */
 export type BackdropPreference = 'off' | 'light' | 'standard'
 /**
@@ -28,19 +29,23 @@ export type BackdropPreference = 'off' | 'light' | 'standard'
 export type MotionPreference = 'system' | 'reduce'
 /** 密度: 标准 or 紧凑. */
 export type DensityPreference = 'standard' | 'compact'
-export const BACKDROP_CHOICES = [
-  { value: 'off', label: '关' },
-  { value: 'light', label: '轻' },
-  { value: 'standard', label: '标准' },
-] as const satisfies readonly { value: BackdropPreference; label: string }[]
-export const MOTION_CHOICES = [
-  { value: 'system', label: '跟随系统' },
-  { value: 'reduce', label: '减弱' },
-] as const satisfies readonly { value: MotionPreference; label: string }[]
-export const DENSITY_CHOICES = [
-  { value: 'standard', label: '标准' },
-  { value: 'compact', label: '紧凑' },
-] as const satisfies readonly { value: DensityPreference; label: string }[]
+const APPEARANCE_COPY = defineCopy(
+  { off: '关', light: '轻', standard: '标准', system: '跟随系统', reduce: '减弱', compact: '紧凑' },
+  { off: 'Off', light: 'Light', standard: 'Standard', system: 'System', reduce: 'Reduced', compact: 'Compact' },
+)
+
+function appearanceOptions<T extends keyof typeof APPEARANCE_COPY>(values: readonly T[]) {
+  return values.map(value => ({
+    value,
+    get label() {
+      return APPEARANCE_COPY[value]
+    },
+  }))
+}
+
+export const BACKDROP_CHOICES = appearanceOptions<BackdropPreference>(['off', 'light', 'standard'])
+export const MOTION_CHOICES = appearanceOptions<MotionPreference>(['system', 'reduce'])
+export const DENSITY_CHOICES = appearanceOptions<DensityPreference>(['standard', 'compact'])
 
 export interface Preferences {
   autoOpenDocuments: boolean
@@ -53,6 +58,7 @@ export interface Preferences {
   /** 文件树 in the 改动 tab; absent until the person chooses, so it opens by itself where it fits. */
   diffTree?: boolean
   theme: ThemePreference
+  locale: LocalePreference
   /** 对话 or 看板 on this device. */
   workView: WorkView
   /** 工作过程: this device only. Approvals, questions, failures and unknown results show at every level. */
@@ -84,6 +90,7 @@ const defaults: Preferences = {
   diffMode: 'auto',
   diffWrap: false,
   theme: 'system',
+  locale: 'system',
   workView: 'chat',
   workDisplay: 'all',
   motion: 'system',
@@ -131,6 +138,7 @@ export function parsePreferences(raw: string | null): Preferences {
       diffWrap: item.diffWrap === true,
       ...(typeof item.diffTree === 'boolean' ? { diffTree: item.diffTree } : {}),
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
+      locale: isLocalePreference(item.locale) ? item.locale : 'system',
       workView: storedView(item),
       workDisplay: item.workDisplay === 'failures' || item.workDisplay === 'folded' ? item.workDisplay : 'all',
       ...(item.backdrop === 'off' || item.backdrop === 'light' || item.backdrop === 'standard' ? { backdrop: item.backdrop } : {}),

@@ -16,8 +16,63 @@ import {
   CloseGlyph,
 } from '@latch/ui'
 import { draftSize, type AttachmentDraftController, type DraftAttachment } from '../hooks/useAttachments.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
+
+const COPY = defineCopy(
+  {
+    folderSettings: '文件夹请在 设置 › 项目 中添加。',
+    checking: '正在确认这个 Harness 能否接收文件…',
+    unavailable: '暂时不能添加文件。',
+    choose: '选择附件',
+    more: '更多',
+    addMenu: '添加文件…',
+    add: '添加文件',
+    pending: '等待这次提交完成',
+    pastedText: '粘贴的文字',
+    restoreText: '放回输入框',
+    save: '保存附件',
+    pastedCount: (count: number) => `已粘贴 ${formatNumber(count)} 字`,
+    originalImage: (size: string) => `原图 ${size}`,
+    shrinking: '缩小中',
+    retrieving: '取回中',
+    shrunk: (size: string) => `已缩小 · ${size}`,
+    review: '确认内容…',
+    retry: '重试上传',
+    remove: (name: string) => `移除附件 ${name}`,
+    attachments: '消息附件',
+    possibleSecret: '这个附件可能包含密钥',
+    confirmDetail: '确认后，附件内容会随消息发送给当前模型服务或 Harness。请先检查内容。',
+    confirm: '确认添加',
+  },
+  {
+    folderSettings: 'Add folders in Settings › Projects.',
+    checking: 'Checking whether this Harness accepts files…',
+    unavailable: 'Files cannot be added right now.',
+    choose: 'Choose attachments',
+    more: 'More',
+    addMenu: 'Add files…',
+    add: 'Add files',
+    pending: 'Wait for this submission',
+    pastedText: 'Pasted text',
+    restoreText: 'Return to input',
+    save: 'Save attachment',
+    pastedCount: (count: number) => plural(count, { one: 'Pasted {n} character', other: 'Pasted {n} characters' }),
+    originalImage: (size: string) => `Original image ${size}`,
+    shrinking: 'Resizing',
+    retrieving: 'Retrieving',
+    shrunk: (size: string) => `Resized · ${size}`,
+    review: 'Review content…',
+    retry: 'Retry upload',
+    remove: (name: string) => `Remove attachment ${name}`,
+    attachments: 'Message attachments',
+    possibleSecret: 'This attachment may contain secrets',
+    confirmDetail:
+      'After you confirm, the attachment goes to the current model service or Harness with your message. Review its contents first.',
+    confirm: 'Confirm attachment',
+  },
+)
 
 const uploadBytes = (value: number) =>
   value < 1024
@@ -45,7 +100,7 @@ export function dropAttachments(event: DragEvent, controller: AttachmentDraftCon
   event.stopPropagation()
   controller.setDragging(false)
   if ([...event.dataTransfer.items].some(item => item.webkitGetAsEntry?.()?.isDirectory)) {
-    controller.setError('文件夹请在 设置 › 项目 中添加。')
+    controller.setError(COPY.folderSettings)
     return
   }
   controller.add([...event.dataTransfer.files])
@@ -54,7 +109,7 @@ export function dropAttachments(event: DragEvent, controller: AttachmentDraftCon
 export function attachmentBlock(controller: AttachmentDraftController): string | undefined {
   if (controller.caps?.images || controller.caps?.text) return undefined
   if (controller.caps?.reason) return controller.caps.reason
-  return controller.checking ? '正在确认这个 Harness 能否接收文件…' : '暂时不能添加文件。'
+  return controller.checking ? COPY.checking : COPY.unavailable
 }
 
 export function AttachmentButton({
@@ -79,7 +134,7 @@ export function AttachmentButton({
         type="file"
         multiple
         hidden
-        aria-label="选择附件"
+        aria-label={COPY.choose}
         onChange={event => {
           controller.add([...(event.target.files ?? [])])
           event.target.value = ''
@@ -88,7 +143,7 @@ export function AttachmentButton({
       {/* Not disabled when it cannot add: pressing it says why, where a touch screen has no hover to tell. */}
       {sections ? (
         <Menu
-          label="更多"
+          label={COPY.more}
           placement="top-start"
           sections={[
             {
@@ -96,7 +151,7 @@ export function AttachmentButton({
               items: [
                 {
                   id: 'attach',
-                  label: '添加文件…',
+                  label: COPY.addMenu,
                   description: blocked,
                   leading: <Icon icon={FileGlyph} size={14} />,
                   onSelect: pick,
@@ -105,16 +160,16 @@ export function AttachmentButton({
             },
             ...sections,
           ]}
-          trigger={props => <IconButton {...props} icon={PlusGlyph} label="更多" disabled={disabled} className="attachment-button" />}
+          trigger={props => <IconButton {...props} icon={PlusGlyph} label={COPY.more} disabled={disabled} className="attachment-button" />}
         />
       ) : (
         <IconButton
           icon={PlusGlyph}
-          label="添加文件"
+          label={COPY.add}
           className="attachment-button"
           data-unavailable={blocked !== undefined && !disabled ? '' : undefined}
           disabled={disabled}
-          tooltip={disabled ? '等待这次提交完成' : (blocked ?? '添加文件')}
+          tooltip={disabled ? COPY.pending : (blocked ?? COPY.add)}
           onClick={pick}
         />
       )}
@@ -153,7 +208,7 @@ function DraftPreview({
         {url ? (
           <img src={url} alt={item.file.name} />
         ) : item.pastedText !== undefined ? (
-          <TextAreaField label="粘贴的文字" value={text} maxLength={256 * 1024} onChange={event => setText(event.target.value)} />
+          <TextAreaField label={COPY.pastedText} value={text} maxLength={256 * 1024} onChange={event => setText(event.target.value)} />
         ) : (
           <pre>
             <VisibleText text={text} />
@@ -162,9 +217,9 @@ function DraftPreview({
       </div>
       {item.pastedText !== undefined && (
         <footer className="ui-modal-footer">
-          <Button onClick={() => onRestore(text)}>放回输入框</Button>
+          <Button onClick={() => onRestore(text)}>{COPY.restoreText}</Button>
           <Button variant="primary" onClick={() => onReplace(text)}>
-            保存附件
+            {COPY.save}
           </Button>
         </footer>
       )}
@@ -194,27 +249,27 @@ function DraftAttachmentCard({
     setPicture({ file: item.file, url })
     return () => URL.revokeObjectURL(url)
   }, [item.file, image])
-  const name = item.pastedText === undefined ? item.file.name : `已粘贴 ${item.pastedText.length.toLocaleString()} 字`
+  const name = item.pastedText === undefined ? item.file.name : COPY.pastedCount(item.pastedText.length)
   const status = (
     <span
       className="attachment-state"
       role="status"
-      title={item.shrunkFrom === undefined ? undefined : `原图 ${uploadBytes(item.shrunkFrom)}`}>
+      title={item.shrunkFrom === undefined ? undefined : COPY.originalImage(uploadBytes(item.shrunkFrom))}>
       {item.status === 'uploading' && item.shrink ? (
         <>
           <Spinner size={12} />
-          缩小中
+          {COPY.shrinking}
         </>
       ) : item.status === 'uploading' ? (
         <>
           <Spinner size={12} />
-          {item.source ? '取回中' : `${uploadBytes(item.file.size * item.progress)} / ${uploadBytes(item.file.size)}`}
+          {item.source ? COPY.retrieving : `${uploadBytes(item.file.size * item.progress)} / ${uploadBytes(item.file.size)}`}
         </>
       ) : item.status === 'ready' ? (
         item.shrunkFrom === undefined ? (
           `${Math.ceil(draftSize(item) / 1024)} KB`
         ) : (
-          `已缩小 · ${uploadBytes(item.file.size)}`
+          COPY.shrunk(uploadBytes(item.file.size))
         )
       ) : (
         item.error
@@ -256,11 +311,11 @@ function DraftAttachmentCard({
           size="xs"
           disabled={locked}
           onClick={() => (item.status === 'confirm' ? onConfirm() : controller.retry(item.key))}>
-          {item.status === 'confirm' ? '确认内容…' : '重试上传'}
+          {item.status === 'confirm' ? COPY.review : COPY.retry}
         </Button>
       )}
       <IconButton
-        label={`移除附件 ${item.file.name}`}
+        label={COPY.remove(item.file.name)}
         icon={CloseGlyph}
         {...(image ? {} : { size: 'xs' as const })}
         disabled={locked}
@@ -300,7 +355,7 @@ export function AttachmentDrafts({
       )}
       {controller.heldBack && <InlineNotice tone="warn">{controller.heldBack}</InlineNotice>}
       {controller.items.length > 0 && (
-        <div className="attachment-drafts" aria-label="消息附件">
+        <div className="attachment-drafts" aria-label={COPY.attachments}>
           {controller.items.map(item => (
             <DraftAttachmentCard
               key={item.key}
@@ -332,9 +387,9 @@ export function AttachmentDrafts({
       )}
       {confirm && (
         <ConfirmDialog
-          title="这个附件可能包含密钥"
-          message="确认后，附件内容会随消息发送给当前模型服务或 Harness。请先检查内容。"
-          confirmLabel="确认添加"
+          title={COPY.possibleSecret}
+          message={COPY.confirmDetail}
+          confirmLabel={COPY.confirm}
           onClose={() => setConfirm(undefined)}
           onConfirm={async () => {
             controller.retry(confirm, true)

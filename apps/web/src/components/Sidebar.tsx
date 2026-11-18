@@ -4,8 +4,8 @@ import { Fragment, memo, useCallback, useMemo, useRef, useState, type ReactNode 
 import { Coffee, FolderGit2 } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { HARNESS_MARKS, harnessArt, presetOf } from '../brands.ts'
-import { GATEWAY_NAME } from '../composer/ModelControl.tsx'
-import { sessionHarness } from '../composerChoice.ts'
+import { harnessName, sessionHarness } from '../composerChoice.ts'
+import { defineCopy, useLocale } from '../core/i18n.ts'
 import { hostView } from '../core/permissions.ts'
 import { otherComputerLists, otherWaiting, useComputers, type OtherWaiting } from '../core/computers.ts'
 import { OtherComputersSessions, OtherComputersWaiting } from './Computers.tsx'
@@ -39,16 +39,15 @@ import { SessionRowGlyph, SessionStatus, statusLabel, useLastConfirmed, WaitWord
 import { Collapse, ICON_STROKE, Icon, IconButton, Tooltip, ArchiveGlyph, ChevronLeftGlyph, MoreGlyph, PinGlyph, PlusGlyph } from '@latch/ui'
 import { originTitle } from '../plugin-pages/model.ts'
 import { connectionTrouble, NavFoot, NavTop, NewSessionRow, type SpacesProps } from '../shell/SpaceNav.tsx'
+import { SESSION_LIST_COPY as COPY } from './sessionList.copy.ts'
 
-export const connectionLabels: Record<ConnectionStatus, string> = {
-  connected: '已连接',
-  connecting: '同步中',
-  reconnecting: '重新连接中',
-  offline: '离线',
-}
+export const connectionLabels = defineCopy<Record<ConnectionStatus, string>>(
+  { connected: '已连接', connecting: '同步中', reconnecting: '重新连接中', offline: '离线' },
+  { connected: 'Connected', connecting: 'Syncing', reconnecting: 'Reconnecting', offline: 'Offline' },
+)
 
 /** What the glyph beside the computer's name says while the desktop app keeps this Mac awake. */
-const KEEP_AWAKE_LABEL = '保持唤醒中'
+const SIDEBAR_COPY = defineCopy({ keepingAwake: '保持唤醒中' }, { keepingAwake: 'Keeping awake' })
 
 /** The connection is named only when it is not healthy. */
 export const connectionProblem = (connection: ConnectionStatus) => connection === 'reconnecting' || connection === 'offline'
@@ -66,7 +65,7 @@ export interface TaskHarness {
 export function taskHarness(snapshot: AppSnapshot, task: TaskSummary): TaskHarness {
   const known = sessionHarness(snapshot.catalog, task)
   return known
-    ? { id: known.id, label: known.capabilities.display.label, mark: known.capabilities.display.mark }
+    ? { id: known.id, label: harnessName(known), mark: known.capabilities.display.mark }
     : { id: task.harnessId, label: task.harnessId, mark: task.harnessId ? presetOf(task.harnessId, HARNESS_MARKS) : undefined }
 }
 
@@ -111,7 +110,8 @@ const SessionItem = memo(function SessionItem({
   onSelect: (id: string) => void
   menu: (task: TaskSummary) => MenuSection[]
 }) {
-  const title = task.title || '未命名会话'
+  useLocale()
+  const title = task.title || COPY.untitled
   const time = relativeTime(task.updatedAt, new Date(now))
   const status = rowStatus(task, { unread, stopping, frozen: frozen !== null })
   const engine = harness.label
@@ -132,9 +132,23 @@ const SessionItem = memo(function SessionItem({
   const archive = task.archived ? undefined : sections.flatMap(section => section.items).find(item => item.id === 'archive')
   const said = statusLabel(status, task.live)
   const worktree = task.worktree
-    ? `${task.worktree.removed ? '工作树已移除' : '工作树'} · ${escapeSecurityText(task.branch ?? task.worktree.branch)}`
+    ? `${task.worktree.removed ? COPY.worktreeRemoved : COPY.worktree} · ${escapeSecurityText(task.branch ?? task.worktree.branch)}`
     : undefined
   const branch = task.branch === undefined ? undefined : escapeSecurityText(task.branch)
+  const details = [
+    engine,
+    wait?.kind === 'asks' ? wait.words : model,
+    wait && (project ?? COPY.noProject),
+    said,
+    note,
+    from && COPY.fromPage(from),
+    handoffWaits && COPY.returnPending,
+    status.kind === 'frozen' && frozen,
+    time,
+  ]
+    .filter(Boolean)
+    .map(word => COPY.detailSeparator + word)
+    .join('')
   return (
     <li className="session-entry" data-flip-id={task.id} data-leaving={leaving ? '' : undefined} inert={leaving || undefined}>
       <div
@@ -144,14 +158,14 @@ const SessionItem = memo(function SessionItem({
           className="session-item-main"
           data-task-id={leaving ? undefined : task.id}
           aria-current={selected ? 'page' : undefined}
-          title={[engine, model, gateway && `经 ${GATEWAY_NAME}`, worktree ?? branch].filter(Boolean).join(' · ')}
+          title={[engine, model, gateway && COPY.gatewayRoute, worktree ?? branch].filter(Boolean).join(' · ')}
           onClick={() => {
             onSelect(task.id)
           }}>
           <span className="session-line">
             <SessionRowGlyph status={status} mark={harness.mark} />
             {task.pinned && (
-              <PinGlyph className="session-pin" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label="已置顶" />
+              <PinGlyph className="session-pin" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label={COPY.pinned} />
             )}
             {worktree && (
               <FolderGit2 className="session-worktree" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label={worktree} />
@@ -159,7 +173,7 @@ const SessionItem = memo(function SessionItem({
             <span className="session-title">{title}</span>
             {handoffWaits && (
               <span className="session-handoff" aria-hidden="true">
-                待交回
+                {COPY.returnPending}
               </span>
             )}
             <SessionStatus
@@ -183,26 +197,26 @@ const SessionItem = memo(function SessionItem({
               model !== undefined && <span className="session-model">{model}</span>
             )}
             {named && <span className="session-harness">{engine}</span>}
-            {wait && <span className="session-meta-rest">{`· ${project ?? '无项目'}`}</span>}
+            {wait && <span className="session-meta-rest">{`· ${project ?? COPY.noProject}`}</span>}
             {note && <span className="session-meta-rest">{`· ${note}`}</span>}
-            {from && <span className="session-meta-rest session-from">{`· 来自 ${from}`}</span>}
+            {from && <span className="session-meta-rest session-from">{`· ${COPY.fromPage(from)}`}</span>}
             {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
           </span>
-          <span className="sr-only">{`${engine ? `，${engine}` : ''}${wait?.kind === 'asks' ? `，${wait.words}` : model !== undefined ? `，${model}` : ''}${wait ? `，${project ?? '无项目'}` : ''}${said ? `，${said}` : ''}${note ? `，${note}` : ''}${from ? `，来自 ${from}` : ''}${handoffWaits ? '，待交回' : ''}${status.kind === 'frozen' ? `，${frozen}` : ''}${time ? `，${time}` : ''}`}</span>
+          <span className="sr-only">{details}</span>
         </button>
         <span className="session-actions">
           {archive && (
             <IconButton
               className="session-item-archive"
               size="xs"
-              label={`归档：${title}`}
-              tooltip="归档"
+              label={COPY.archiveSession(title)}
+              tooltip={COPY.archive}
               icon={ArchiveGlyph}
               onClick={() => archive.onSelect()}
             />
           )}
           <Menu
-            label={`会话操作：${title}`}
+            label={COPY.actionsFor(title)}
             placement="bottom-end"
             context={rowOf('.session-item')}
             sections={sections}
@@ -211,8 +225,8 @@ const SessionItem = memo(function SessionItem({
                 {...props}
                 className="session-item-more"
                 size="xs"
-                label={`更多操作：${title}`}
-                tooltip="更多操作"
+                label={COPY.moreFor(title)}
+                tooltip={COPY.more}
                 icon={MoreGlyph}
               />
             )}
@@ -289,7 +303,7 @@ function SessionGroupView({
           count={(waiting && count > 0) || folded ? count : undefined}
           actions={
             group.id === 'other' && onNewWithoutProject ? (
-              <IconButton size="xs" label="新会话" tooltip="新会话" icon={PlusGlyph} onClick={onNewWithoutProject} />
+              <IconButton size="xs" label={COPY.newShort} tooltip={COPY.newShort} icon={PlusGlyph} onClick={onNewWithoutProject} />
             ) : undefined
           }
         />
@@ -486,7 +500,7 @@ export function Sidebar({
         awake={
           awake && (
             <Tooltip content={keepAwake}>
-              <span className="sidebar-awake" tabIndex={0} role="img" aria-label={KEEP_AWAKE_LABEL}>
+              <span className="sidebar-awake" tabIndex={0} role="img" aria-label={SIDEBAR_COPY.keepingAwake}>
                 <Icon icon={Coffee} size={14} />
               </span>
             </Tooltip>
@@ -554,7 +568,7 @@ function CodeList({
     ...(archived || projectTree ? {} : { waitingFrom: own }),
   })
   const groups: SessionGroup[] =
-    others.length > 0 && grouped[0]?.id !== 'waiting' ? [{ id: 'waiting', label: '等你处理', tasks: [] }, ...grouped] : grouped
+    others.length > 0 && grouped[0]?.id !== 'waiting' ? [{ id: 'waiting', label: COPY.waiting, tasks: [] }, ...grouped] : grouped
   const archivedCount = own.filter(task => task.archived).length
   const context = filter
   const signature =
@@ -568,12 +582,14 @@ function CodeList({
   const headAt = groups.findIndex(group => group.id !== 'waiting')
   const projectsHead = !archived && (
     <div className="sidebar-group-label">
-      <span>项目</span>
-      {onCreateProject && <IconButton size="xs" label="添加项目" tooltip="添加项目" icon={PlusGlyph} onClick={onCreateProject} />}
+      <span>{COPY.projects}</span>
+      {onCreateProject && (
+        <IconButton size="xs" label={COPY.addProject} tooltip={COPY.addProject} icon={PlusGlyph} onClick={onCreateProject} />
+      )}
     </div>
   )
   return (
-    <nav ref={list} className="session-list" aria-label="会话列表" data-session-filter={filter}>
+    <nav ref={list} className="session-list" aria-label={COPY.navigation} data-session-filter={filter}>
       {archived && (
         <button
           type="button"
@@ -582,14 +598,14 @@ function CodeList({
             onFilter('all')
           }}>
           <ChevronLeftGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-          <span>已归档</span>
+          <span>{COPY.archived}</span>
           <span className="archived-count">{archivedCount}</span>
         </button>
       )}
       {headAt < 0 && projectsHead}
       {groups.length === 0 ? (
         <div className="list-empty">
-          <p>{own.length === 0 ? '会话会保存在这里' : archived ? '没有已归档的会话' : '暂无会话'}</p>
+          <p>{own.length === 0 ? COPY.savedHere : archived ? COPY.noArchived : COPY.noSessions}</p>
         </div>
       ) : (
         groups.map((group, index) => (
@@ -625,14 +641,14 @@ function CodeList({
         <button
           type="button"
           className="archived-row"
-          aria-label={`已归档的会话（${archivedCount}）`}
+          aria-label={COPY.archivedCount(archivedCount)}
           onClick={() => {
             onFilter('archived')
           }}>
           <span className="sidebar-row-icon">
             <ArchiveGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
           </span>
-          <span>已归档</span>
+          <span>{COPY.archived}</span>
           <span className="archived-count">{archivedCount}</span>
         </button>
       )}

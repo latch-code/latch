@@ -3,6 +3,18 @@ import { TerminalPanel } from '../panel/terminal/TerminalPanel.tsx'
 import { paneStorageKey } from '../panel/terminal/panes.ts'
 import { DOCK_MIN } from './panelLayout.ts'
 import type { ShellState } from './useShellLayout.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    terminal: '底部终端',
+    height: '调整终端高度',
+  },
+  {
+    terminal: 'Terminal dock',
+    height: 'Resize terminal height',
+  },
+)
 
 /**
  * The target's terminals, in the dock or in a tab of the right panel: one component in one place at a time, so the
@@ -69,13 +81,13 @@ export function TerminalDock({ shell }: { shell: ShellState }) {
       ref={terminalDock}
       id="terminal-dock"
       className="terminal-dock"
-      aria-label="底部终端"
+      aria-label={COPY.terminal}
       hidden={!terminalOpen || shell.board}
       inert={shell.board || undefined}>
       {terminalOpen && dockLimit >= DOCK_MIN && (
         <ResizeHandle
           className="terminal-resize"
-          label="调整终端高度"
+          label={COPY.height}
           orientation="horizontal"
           edge="start"
           value={dockHeight}

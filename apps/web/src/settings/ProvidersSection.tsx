@@ -33,11 +33,100 @@ import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 import { peekProviderDraft } from './providerDraft.ts'
 import { isSupported, providerKindLabels, type SupportedProvider } from './providerKind.ts'
 import { readDenied, type ModelSettingsReads } from './modelSettingsReads.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 
-const ProviderPage = deferredComponent(async () => ({ default: (await import('./ProvidersSettings.tsx')).ProviderPage }), '服务详情')
+const COPY = defineCopy(
+  {
+    details: '服务详情',
+    disabled: '已停用',
+    setKey: '设置密钥',
+    invalidKey: '密钥无效',
+    updateKey: '更新密钥',
+    unreachable: '连不上',
+    awaitApproval: '等待允许',
+    connected: '已连接',
+    checking: '检测中',
+    restartFirst: '请更新并重新启动这台 Mac 上的 Latch 后再修改。',
+    verify: '正在核对模型服务的地址和协议…',
+    retry: '重试',
+    previous: ' 当前显示上次读取结果。',
+    title: '模型服务',
+    close: '关闭',
+    reading: '正在读取模型服务…',
+    empty: '还没有模型服务',
+    local: '本地',
+    default: '默认',
+    edit: '编辑…',
+    updateKeyEllipsis: '更新密钥…',
+    refreshModels: '刷新模型列表',
+    removeEllipsis: '移除…',
+    unsupported: '不再支持',
+    other: '其他来源',
+    localScript: '本地脚本回复',
+    plugin: '由插件提供',
+    cancel: '取消',
+    enterKey: '输入密钥',
+    saveTouchID: '用 Touch ID 保存',
+    save: '保存',
+    checkAddress: '请核对当前服务地址。',
+    remove: '移除',
+    removeDetail: '它保存的密钥一起删除；正在使用它的会话要换用其他模型。',
+    editService: (name: string) => `编辑 ${name}`,
+    models: (kind: string, count: number) => `${kind} · ${formatNumber(count)} 个模型`,
+    actions: (name: string) => `${name} 的操作`,
+    keySentTo: (address: string) => `密钥只发往 ${address}`,
+    confirmRemove: (name: string) => `移除「${name}」？`,
+  },
+  {
+    details: 'Service details',
+    disabled: 'Disabled',
+    setKey: 'Set key',
+    invalidKey: 'Invalid key',
+    updateKey: 'Update key',
+    unreachable: 'Unreachable',
+    awaitApproval: 'Not allowed yet',
+    connected: 'Connected',
+    checking: 'Checking',
+    restartFirst: 'Update and restart Latch on this Mac before making changes.',
+    verify: 'Checking model service addresses and protocols…',
+    retry: 'Retry',
+    previous: ' Showing the last saved readout.',
+    title: 'Model services',
+    close: 'Close',
+    reading: 'Reading model services…',
+    empty: 'No model services yet',
+    local: 'Local',
+    default: 'Default',
+    edit: 'Edit…',
+    updateKeyEllipsis: 'Update key…',
+    refreshModels: 'Refresh model list',
+    removeEllipsis: 'Remove…',
+    unsupported: 'No longer supported',
+    other: 'Other sources',
+    localScript: 'Replies from a local script',
+    plugin: 'From a plugin',
+    cancel: 'Cancel',
+    enterKey: 'Enter key',
+    saveTouchID: 'Save with Touch ID',
+    save: 'Save',
+    checkAddress: 'Check the current service address.',
+    remove: 'Remove',
+    removeDetail: 'Its saved key is deleted too. Sessions using it need another model.',
+    editService: (name: string) => `Edit ${name}`,
+    models: (kind: string, count: number) => `${kind} · ${plural(count, { one: '{n} model', other: '{n} models' })}`,
+    actions: (name: string) => `Actions for ${name}`,
+    keySentTo: (address: string) => `The key goes only to ${address}`,
+    confirmRemove: (name: string) => `Remove “${name}”?`,
+  },
+)
+
+const ProviderPage = deferredComponent(
+  async () => ({ default: (await import('./ProvidersSettings.tsx')).ProviderPage }),
+  () => COPY.details,
+)
 const ProviderAddContent = deferredComponent(
   async () => ({ default: (await import('./ProvidersSettings.tsx')).ProviderAddContent }),
-  SERVICE_FORM.title,
+  () => SERVICE_FORM.title,
 )
 
 type Selection = { kind: 'provider'; id: string; check?: boolean; fetch?: boolean } | null
@@ -127,7 +216,7 @@ function ServiceStatus({
       {text}
     </span>
   )
-  if (!provider.enabled) return word('已停用')
+  if (!provider.enabled) return word(COPY.disabled)
   if (isUnconfirmed(provider)) return word(PROVIDER_COPY.unconfirmedBadge, 'warn', PROVIDER_COPY.unconfirmedRow(computer))
   const keyAction = (label: string) => (
     <Button variant="outline" disabled={keyBlocked !== undefined} tooltip={keyBlocked} onClick={onUpdateKey}>
@@ -138,25 +227,25 @@ function ServiceStatus({
     return (
       <>
         {word(PROVIDER_COPY.missingKeyBadge, 'warn')}
-        {keyAction('设置密钥')}
+        {keyAction(COPY.setKey)}
       </>
     )
   switch (health) {
     case 'key':
       return (
         <>
-          {word('密钥无效', 'err')}
-          {keyAction('更新密钥')}
+          {word(COPY.invalidKey, 'err')}
+          {keyAction(COPY.updateKey)}
         </>
       )
     case 'unreachable':
-      return word('连不上', 'err')
+      return word(COPY.unreachable, 'err')
     case 'local':
-      return word('等待允许', 'warn')
+      return word(COPY.awaitApproval, 'warn')
     case 'ok':
-      return word('已连接', undefined, PROVIDER_COPY.connectedReason)
+      return word(COPY.connected, undefined, PROVIDER_COPY.connectedReason)
     case 'checking':
-      return word('检测中')
+      return word(COPY.checking)
     default:
       return null
   }
@@ -242,12 +331,7 @@ export function ProvidersSection({
 
   const abilities = providerAbilities(access, hostView(snapshot)?.presence)
   const computer = computerName(snapshot.hostName)
-  const targetBlocked =
-    snapshot.catalog?.features?.providerUpdateTarget !== true
-      ? '请更新并重新启动这台 Mac 上的 Latch 后再修改。'
-      : readConfig
-        ? undefined
-        : '正在核对模型服务的地址和协议…'
+  const targetBlocked = snapshot.catalog?.features?.providerUpdateTarget !== true ? COPY.restartFirst : readConfig ? undefined : COPY.verify
   const keyBlocked = abilities.keys ? targetBlocked : PROVIDER_COPY.keyElsewhere(computer)
   if (
     keyFor
@@ -289,15 +373,15 @@ export function ProvidersSection({
     if (!addCommitting) setAdding(null)
   }
   const notice: ReactNode = error ? (
-    <InlineNotice tone="error" action={<Button onClick={() => void load()}>重试</Button>}>
+    <InlineNotice tone="error" action={<Button onClick={() => void load()}>{COPY.retry}</Button>}>
       {error}
-      {data && ' 当前显示上次读取结果。'}
+      {data && COPY.previous}
     </InlineNotice>
   ) : null
   // A denied read must remove protected phone levels immediately, including their exit animation.
   if (denied)
     return (
-      <SettingsGroup title="模型服务" bare>
+      <SettingsGroup title={COPY.title} bare>
         {notice}
       </SettingsGroup>
     )
@@ -307,7 +391,7 @@ export function ProvidersSection({
       tone="error"
       action={
         <Button size="sm" onClick={() => setTargetError('')}>
-          关闭
+          {COPY.close}
         </Button>
       }>
       {targetError}
@@ -317,7 +401,7 @@ export function ProvidersSection({
     <>
       {conflict}
       <SettingsGroup
-        title="模型服务"
+        title={COPY.title}
         meta={
           <Button variant="outline" icon={PlusGlyph} onClick={addService} disabled={!data}>
             {SERVICE_FORM.title}
@@ -327,30 +411,30 @@ export function ProvidersSection({
         {!data ? (
           !error && (
             <div className="settings-row">
-              <Loading label="正在读取模型服务…" />
+              <Loading label={COPY.reading} />
             </div>
           )
         ) : data.providers.length === 0 ? (
-          <SettingsRow title="还没有模型服务" />
+          <SettingsRow title={COPY.empty} />
         ) : (
           data.providers.map(provider =>
             isSupported(provider) ? (
               <ObjectRow
                 key={provider.id}
                 className="provider-row"
-                label={`编辑 ${provider.name}`}
+                label={COPY.editService(provider.name)}
                 leading={<ProviderTile provider={provider} size={24} />}
                 dim={!provider.enabled}
                 title={
                   <span className="settings-row-name">
                     {provider.name}
                     {data.presets.find(preset => preset.id === provider.presetId)?.requiresKey === false && (
-                      <span className="settings-row-note">本地</span>
+                      <span className="settings-row-note">{COPY.local}</span>
                     )}
-                    {defaultProvider === provider.id && <span className="settings-row-note">默认</span>}
+                    {defaultProvider === provider.id && <span className="settings-row-note">{COPY.default}</span>}
                   </span>
                 }
-                description={`${providerKindLabels[provider.kind]} · ${provider.models.length} 个模型`}
+                description={COPY.models(providerKindLabels[provider.kind], provider.models.length)}
                 onOpen={() => {
                   setSelection({ kind: 'provider', id: provider.id })
                 }}
@@ -368,7 +452,7 @@ export function ProvidersSection({
                       }}
                     />
                     <Menu
-                      label={`${provider.name} 的操作`}
+                      label={COPY.actions(provider.name)}
                       align="end"
                       sections={[
                         {
@@ -376,7 +460,7 @@ export function ProvidersSection({
                           items: [
                             {
                               id: 'edit',
-                              label: '编辑…',
+                              label: COPY.edit,
                               icon: EditGlyph,
                               onSelect: () => {
                                 setSelection({ kind: 'provider', id: provider.id })
@@ -384,7 +468,7 @@ export function ProvidersSection({
                             },
                             {
                               id: 'key',
-                              label: '更新密钥…',
+                              label: COPY.updateKeyEllipsis,
                               icon: KeyRound,
                               ...(keyBlocked === undefined ? {} : { disabledReason: keyBlocked }),
                               onSelect: () => {
@@ -393,7 +477,7 @@ export function ProvidersSection({
                             },
                             {
                               id: 'models',
-                              label: '刷新模型列表',
+                              label: COPY.refreshModels,
                               icon: ListRestart,
                               onSelect: () => {
                                 setSelection({ kind: 'provider', id: provider.id, fetch: true })
@@ -406,7 +490,7 @@ export function ProvidersSection({
                           items: [
                             {
                               id: 'remove',
-                              label: '移除…',
+                              label: COPY.removeEllipsis,
                               icon: TrashGlyph,
                               danger: true,
                               onSelect: () => {
@@ -416,7 +500,7 @@ export function ProvidersSection({
                           ],
                         },
                       ]}
-                      trigger={moreButton(`${provider.name} 的操作`)}
+                      trigger={moreButton(COPY.actions(provider.name))}
                     />
                   </>
                 }
@@ -429,14 +513,14 @@ export function ProvidersSection({
                 leading={<ProviderTile provider={{ id: provider.id, kind: 'plugin' }} size={24} />}
                 dim
                 title={<span className="settings-row-name">{provider.name}</span>}
-                description="不再支持"
+                description={COPY.unsupported}
                 trailing={
                   <Button
                     variant="outline"
                     onClick={() => {
                       setRemoving(provider)
                     }}>
-                    移除…
+                    {COPY.removeEllipsis}
                   </Button>
                 }
               />
@@ -445,7 +529,7 @@ export function ProvidersSection({
         )}
       </SettingsGroup>
       {external.length > 0 && (
-        <SettingsGroup title="其他来源">
+        <SettingsGroup title={COPY.other}>
           {external.map(provider => (
             <SettingsRow
               key={provider.id}
@@ -458,7 +542,7 @@ export function ProvidersSection({
                   {provider.kind === 'demo' && <DemoMark compact />}
                 </span>
               }
-              description={provider.kind === 'demo' ? '本地脚本回复' : '由插件提供'}
+              description={provider.kind === 'demo' ? COPY.localScript : COPY.plugin}
             />
           ))}
         </SettingsGroup>
@@ -477,7 +561,7 @@ export function ProvidersSection({
             <div ref={setSheetFooter} className="provider-sheet-footer" />
           ) : (
             <Button size="md" onClick={closeAdd}>
-              取消
+              {COPY.cancel}
             </Button>
           )
         }>
@@ -502,15 +586,15 @@ export function ProvidersSection({
       </Dialog>
       <FieldDialog
         open={keyFor !== null}
-        title={keyFor?.hasKey ? '更新密钥' : '设置密钥'}
-        subtitle={keyFor && keyScopeOf(keyFor.baseURL) ? `密钥只发往 ${shownAddress(keyScopeOf(keyFor.baseURL)!)}` : undefined}
+        title={keyFor?.hasKey ? COPY.updateKey : COPY.setKey}
+        subtitle={keyFor && keyScopeOf(keyFor.baseURL) ? COPY.keySentTo(shownAddress(keyScopeOf(keyFor.baseURL)!)) : undefined}
         label={SERVICE_FORM.key}
         type="password"
-        placeholder="输入密钥"
+        placeholder={COPY.enterKey}
         hint={PROVIDER_COPY.keyHeld.label}
-        confirmLabel={keyFor && isUnconfirmed(keyFor) && abilities.confirm ? '用 Touch ID 保存' : '保存'}
+        confirmLabel={keyFor && isUnconfirmed(keyFor) && abilities.confirm ? COPY.saveTouchID : COPY.save}
         onSubmit={async value => {
-          if (!keyFor || keyBlocked !== undefined || !keyScopeOf(keyFor.baseURL)) return keyBlocked ?? '请核对当前服务地址。'
+          if (!keyFor || keyBlocked !== undefined || !keyScopeOf(keyFor.baseURL)) return keyBlocked ?? COPY.checkAddress
           try {
             await updateProvider(keyFor, {
               apiKey: value,
@@ -530,10 +614,10 @@ export function ProvidersSection({
       />
       {removing && (
         <ConfirmDialog
-          title={`移除「${removing.name}」？`}
+          title={COPY.confirmRemove(removing.name)}
           danger
-          confirmLabel="移除"
-          message="它保存的密钥一起删除；正在使用它的会话要换用其他模型。"
+          confirmLabel={COPY.remove}
+          message={COPY.removeDetail}
           onClose={() => {
             setRemoving(null)
           }}

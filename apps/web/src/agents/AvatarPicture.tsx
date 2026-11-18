@@ -5,6 +5,38 @@ import { Button, InlineNotice, Meter, StatusWord } from '@latch/ui'
 import { ApiError, newRequestId, uploadAgentAvatar } from '../core/api.ts'
 import { AVATAR_PROBLEM_WORDS, preparePicture, type AvatarProblem } from './avatarImage.ts'
 import { writeOutcome } from './model.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    picture: '图片',
+    choose: '选择图片',
+    replace: '换一张',
+    upload: '上传',
+    clear: '清除',
+    processing: '正在处理',
+    failed: '没有保存',
+    unknown: '结果未知',
+    retry: '重试同一请求',
+    elsewhere: '已在别处修改',
+    latest: '载入最新',
+    uploadPercent: (percent: number) => `上传 ${percent}%`,
+  },
+  {
+    picture: 'Picture',
+    choose: 'Choose image',
+    replace: 'Replace',
+    upload: 'Upload',
+    clear: 'Clear',
+    processing: 'Processing',
+    failed: 'Not saved',
+    unknown: 'Outcome unknown',
+    retry: 'Retry same request',
+    elsewhere: 'Changed elsewhere',
+    latest: 'Load latest',
+    uploadPercent: (percent: number) => `Uploading ${percent}%`,
+  },
+)
 
 /** One upload as sent: a retry of a result that stayed unknown repeats it, with the same bytes. */
 interface PictureRequest {
@@ -135,7 +167,7 @@ export function PictureRow({
   return (
     <div className="avatar-picker-row" data-part="picture" aria-busy={working || undefined}>
       <span className="avatar-picker-label" id="avatar-picker-picture">
-        图片
+        {COPY.picture}
       </span>
       <div className="avatar-picker-picture" role="group" aria-labelledby="avatar-picker-picture">
         <input
@@ -143,7 +175,7 @@ export function PictureRow({
           type="file"
           accept="image/png,image/jpeg,image/webp"
           hidden
-          aria-label="选择图片"
+          aria-label={COPY.choose}
           onChange={event => {
             const file = event.target.files?.[0]
             event.target.value = ''
@@ -151,37 +183,37 @@ export function PictureRow({
           }}
         />
         <Button disabled={locked} onClick={() => input.current?.click()}>
-          {hasPicture ? '换一张' : '上传'}
+          {hasPicture ? COPY.replace : COPY.upload}
         </Button>
         {hasPicture && (
           <Button variant="ghost" disabled={locked} onClick={onClear}>
-            清除
+            {COPY.clear}
           </Button>
         )}
         {upload.phase === 'preparing' && (
           <StatusWord tone="running" role="status">
-            正在处理
+            {COPY.processing}
           </StatusWord>
         )}
         {upload.phase === 'uploading' && (
           <span className="avatar-picker-progress" role="status">
-            <Meter value={upload.loaded} max={Math.max(upload.total, 1)} label="上传" valueText={`${percent}%`} cells={8} />
-            <span>上传 {percent}%</span>
+            <Meter value={upload.loaded} max={Math.max(upload.total, 1)} label={COPY.upload} valueText={`${percent}%`} cells={8} />
+            <span>{COPY.uploadPercent(percent)}</span>
           </span>
         )}
         {upload.phase === 'refused' && (
           <StatusWord tone="failed" role="alert">
-            {upload.problem ? AVATAR_PROBLEM_WORDS[upload.problem] : (upload.message ?? '没有保存')}
+            {upload.problem ? AVATAR_PROBLEM_WORDS[upload.problem] : (upload.message ?? COPY.failed)}
           </StatusWord>
         )}
       </div>
       {upload.phase === 'unknown' && (
-        <InlineNotice tone="warn" title="结果未知" action={<Button onClick={onRetry}>重试同一请求</Button>}>
+        <InlineNotice tone="warn" title={COPY.unknown} action={<Button onClick={onRetry}>{COPY.retry}</Button>}>
           <span>{upload.message}</span> <span className="agent-request-id">{upload.requestId}</span>
         </InlineNotice>
       )}
       {upload.phase === 'conflict' && (
-        <InlineNotice tone="warn" title="已在别处修改" action={<Button onClick={onReload}>载入最新</Button>}>
+        <InlineNotice tone="warn" title={COPY.elsewhere} action={<Button onClick={onReload}>{COPY.latest}</Button>}>
           {upload.message}
         </InlineNotice>
       )}

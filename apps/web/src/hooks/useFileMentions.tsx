@@ -4,6 +4,37 @@ import type { FileMention } from '@latch/protocol'
 import { FileGlyph, Hint, Icon, Kbd, Suggest } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    limit: '每条消息最多引用 32 个文件。',
+    noAccess: '这台设备看不到项目文件',
+    grantAccess: '在 Mac 的 设置 › 设备 里为这台设备开启「可以看项目文件」。',
+    chooseProject: '先选择一个项目，再引用其中的文件。',
+    finding: '正在查找文件…',
+    noMatches: '没有匹配的文件',
+    mention: '引用项目文件',
+    ignored: '已忽略',
+    more: '还有更多文件，继续输入缩小范围',
+    complete: ' 补全',
+    choose: ' 选择',
+  },
+  {
+    limit: 'Mention up to 32 files per message.',
+    noAccess: 'This device cannot view project files',
+    grantAccess: 'Allow this device to view project files in Settings › Devices on the Mac.',
+    chooseProject: 'Choose a project first to mention its files.',
+    finding: 'Finding files…',
+    noMatches: 'No matching files',
+    mention: 'Mention project files',
+    ignored: 'Ignored',
+    more: 'More files are available. Type to narrow down.',
+    complete: ' to complete',
+    choose: ' to choose',
+  },
+)
+
 export interface FileMentionChoice {
   enabled: boolean
   /** @ would find files, but this device's data scope does not let it list them: the menu says so. */
@@ -143,7 +174,7 @@ export function useFileMentions(
   const choose = (file: FileMention) => {
     if (!choice || !token) return
     if (choice.refs.length >= 32) {
-      setError('每条消息最多引用 32 个文件。')
+      setError(COPY.limit)
       return
     }
     const marker = `${mentionMarker(file)} `
@@ -177,21 +208,21 @@ export function useFileMentions(
   const optionId = (index: number) => `${id}-${index}`
   const shown = open || hiddenOpen
   const status = hiddenOpen ? (
-    <Hint label="这台设备看不到项目文件">在 Mac 的 设置 › 设备 里为这台设备开启「可以看项目文件」。</Hint>
+    <Hint label={COPY.noAccess}>{COPY.grantAccess}</Hint>
   ) : !scope ? (
-    '先选择一个项目，再引用其中的文件。'
+    COPY.chooseProject
   ) : error ? (
     <span data-tone="error">{error}</span>
   ) : loading ? (
-    '正在查找文件…'
+    COPY.finding
   ) : (
-    '没有匹配的文件'
+    COPY.noMatches
   )
   const listed = open && scope && !error && !loading ? files : []
   const menu = (
     <Suggest
       id={id}
-      label="引用项目文件"
+      label={COPY.mention}
       open={shown}
       anchorRef={anchorRef}
       activeId={active >= 0 ? optionId(active) : undefined}
@@ -206,7 +237,7 @@ export function useFileMentions(
           id: 'files',
           items: listed.map((file, index) => {
             const folder = file.path.slice(0, Math.max(0, file.path.length - file.name.length - 1))
-            const source = [file.ignored ? '已忽略' : '', severalRoots ? file.root : ''].filter(Boolean).join(' · ')
+            const source = [file.ignored ? COPY.ignored : '', severalRoots ? file.root : ''].filter(Boolean).join(' · ')
             return {
               id: optionId(index),
               media: <Icon icon={FileGlyph} size={16} />,
@@ -216,9 +247,7 @@ export function useFileMentions(
             }
           }),
         },
-        ...(listed.length && truncated
-          ? [{ id: 'more', items: [], empty: <span role="status">还有更多文件，继续输入缩小范围</span> }]
-          : []),
+        ...(listed.length && truncated ? [{ id: 'more', items: [], empty: <span role="status">{COPY.more}</span> }] : []),
       ]}
       empty={status}
       footer={
@@ -228,10 +257,12 @@ export function useFileMentions(
               <Kbd>↑↓</Kbd>
             </span>
             <span>
-              <Kbd>Tab</Kbd> 补全
+              <Kbd>Tab</Kbd>
+              {COPY.complete}
             </span>
             <span>
-              <Kbd>⏎</Kbd> 选择
+              <Kbd>⏎</Kbd>
+              {COPY.choose}
             </span>
             <Kbd>Esc</Kbd>
           </>

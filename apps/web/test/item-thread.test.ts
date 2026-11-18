@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { CustomAgentSummary, TaskSummary, WorkPost } from '@latch/protocol'
+import type { Approval, CustomAgentSummary, TaskSummary, WorkPost } from '@latch/protocol'
 import {
   deliveryWords,
   matchTargets,
   mentionAt,
+  postDecision,
   postPreview,
+  postSourceVersion,
   postTarget,
   replySources,
   targetLabel,
@@ -51,6 +53,59 @@ it('evicts the missing source from a complete listing while keeping the post and
     { id: 'post', at: '', text: '请核对版本', requestId: 'request-1', delivery: { state: 'sent', sessionId: 's1' } },
   ])
   expect(withoutMissingPostSources(hidden, { tasks: [] })).toBe(hidden)
+})
+
+it('links a pending question only while its authorized session and run still match the read', () => {
+  const source = task('s1', {
+    status: 'running',
+    runId: 'run-1',
+    pendingQuestions: 1,
+    board: { group: 'attention', reason: 'question' },
+  })
+  const post = {
+    turn: { sessionId: source.id, userMessageId: 'input', runId: source.runId! },
+    delivery: { sessionId: source.id, state: 'sent' },
+    attention: { reason: 'question', decisionId: 'question-1' },
+  } satisfies Pick<WorkPost, 'turn' | 'delivery' | 'attention'>
+  const snapshot = { tasks: [source], approvals: [] }
+  const version = postSourceVersion(source)
+  expect(postDecision(post, snapshot, version)).toEqual({ kind: 'question', runId: 'run-1', id: 'question-1' })
+  expect(postDecision(post, { ...snapshot, tasks: [] }, version)).toBeUndefined()
+  expect(postDecision({ ...post, attention: { reason: 'question' } }, snapshot, version)).toBeUndefined()
+  expect(postDecision({ ...post, turn: { ...post.turn, runId: 'another-run' } }, snapshot, version)).toBeUndefined()
+  expect(postDecision({ ...post, delivery: { ...post.delivery, state: 'unknown' } }, snapshot, version)).toBeUndefined()
+  const changed = { ...source, updatedAt: '2026-11-17T00:00:01.000Z' }
+  const later = { ...snapshot, tasks: [changed] }
+  expect(postDecision(post, later, version)).toBeUndefined()
+  expect(postDecision({ ...post, attention: { reason: 'question', decisionId: 'question-2' } }, later, postSourceVersion(changed))).toEqual(
+    {
+      kind: 'question',
+      id: 'question-2',
+      runId: 'run-1',
+    },
+  )
+  const answered = { ...source, pendingQuestions: 0 }
+  expect(postDecision(post, { ...snapshot, tasks: [answered] }, postSourceVersion(answered))).toBeUndefined()
+})
+
+it('links an approval only while its decision is pending on the same visible session', () => {
+  const source = task('s1', {
+    status: 'waiting-approval',
+    runId: 'run-1',
+    board: { group: 'attention', reason: 'approval' },
+  })
+  const post = {
+    turn: { sessionId: source.id, userMessageId: 'input', runId: source.runId! },
+    delivery: { sessionId: source.id, state: 'sent' },
+    attention: { reason: 'approval', decisionId: 'approval-1' },
+  } satisfies Pick<WorkPost, 'turn' | 'delivery' | 'attention'>
+  const first: Approval = { id: 'approval-1', sessionId: 's1', toolName: 'tool', reason: 'Review', requestedAt: source.updatedAt }
+  const snapshot = { tasks: [source], approvals: [first] }
+  const version = postSourceVersion(source)
+  expect(postDecision(post, snapshot, version)).toEqual({ kind: 'approval', runId: 'run-1', id: first.id })
+  expect(postDecision(post, { ...snapshot, approvals: [{ ...first, sessionId: 's2' }] }, version)).toBeUndefined()
+  expect(postDecision(post, { ...snapshot, approvals: [{ ...first, id: 'next-approval' }] }, version)).toBeUndefined()
+  expect(postDecision(post, { ...snapshot, approvals: [] }, version)).toBeUndefined()
 })
 
 describe('the thread’s @', () => {

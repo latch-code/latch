@@ -31,16 +31,119 @@ import { NoteCard, type NoteWriting } from '../panel/changes/ReviewNotes.tsx'
 import { useChanges } from '../panel/changes/useChanges.ts'
 import { useReviewNotes } from '../panel/changes/useReviewNotes.ts'
 import { DeliveryPanel } from '../panel/delivery/DeliveryPanel.tsx'
-import { PARTIAL_NOTE } from '../conversation/turnChanges.ts'
+import { TURN_CHANGES_COPY } from '../conversation/turnChanges.copy.ts'
 import { footAction, stepFile, tapLine, type PhoneReviewTarget } from './model.ts'
 import { moveFocus } from './usePhoneReview.ts'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    reviewSession: (title: string) => `复核 · ${title}`,
+    turn: '本轮',
+    session: '这个会话',
+    uncommitted: '未提交',
+    commit: '提交',
+    backSessions: '返回会话列表',
+    backChanges: '返回改动',
+    untitled: '未命名会话',
+    changes: '改动',
+    scope: '改动范围',
+    previous: '上一个文件',
+    newFile: '新文件',
+    deleted: '已删除',
+    stale: '位置可能过期',
+    next: '下一个文件',
+    noFiles: '这台设备看不到会话文件夹里的文件',
+    readFailed: '读不到改动',
+    retry: '重试',
+    running: '运行中 · 点按刷新',
+    refreshFailed: '没有刷新成功 · 这是上次的列表',
+    empty: '没有改动',
+    noContent: '没有可以显示的内容',
+    feedbackFailed: '读不到反馈 · ',
+    offline: (value1: string | number) => `${value1} 不在线，反馈留在待发`,
+    cancel: '取消',
+    write: '写反馈',
+    unknown: '发送结果未知',
+    abandon: '放弃这次发送',
+    retrySame: '重试同一请求',
+    clear: '清空',
+    sending: '发送中…',
+    goCommit: '去提交',
+    feedback: '反馈',
+    adding: '加入中…',
+    add: '加入待发',
+    selected: '选中的代码',
+    feedbackHint: '写给 Agent 的反馈…',
+    confirmClear: (count: number) => `清空 ${formatNumber(count)} 条待发反馈？`,
+    clearMessage: '这些反馈还没有发出，清空后不能恢复。',
+    outside: '不在这个范围的反馈',
+  },
+  {
+    reviewSession: (title: string) => `Review · ${title}`,
+    turn: 'Latest turn',
+    session: 'This session',
+    uncommitted: 'Uncommitted',
+    commit: 'Commit',
+    backSessions: 'Back to sessions',
+    backChanges: 'Back to changes',
+    untitled: 'Untitled session',
+    changes: 'Changes',
+    scope: 'Changes scope',
+    previous: 'Previous file',
+    newFile: 'New file',
+    deleted: 'Deleted',
+    stale: 'Location may be out of date',
+    next: 'Next file',
+    noFiles: 'This device can’t see the session’s files',
+    readFailed: 'Couldn’t read changes',
+    retry: 'Retry',
+    running: 'Running · press to refresh',
+    refreshFailed: 'Couldn’t refresh · showing the last list',
+    empty: 'No changes',
+    noContent: 'Nothing to show',
+    feedbackFailed: 'Couldn’t read feedback · ',
+    offline: (value1: string | number) => `${value1} is offline. Feedback stays queued.`,
+    cancel: 'Cancel',
+    write: 'Write feedback',
+    unknown: 'Send outcome unknown',
+    abandon: 'Stop waiting for this send',
+    retrySame: 'Retry same request',
+    clear: 'Clear',
+    sending: 'Sending…',
+    goCommit: 'Go to commit',
+    feedback: 'Feedback',
+    adding: 'Adding…',
+    add: 'Queue feedback',
+    selected: 'Selected code',
+    feedbackHint: 'Write feedback for the agent…',
+    confirmClear: (count: number) => `Clear ${formatNumber(count)} queued feedback items?`,
+    clearMessage: 'This feedback hasn’t been sent. Clearing it can’t be undone.',
+    outside: 'Feedback outside this scope',
+  },
+)
 
 export type ReviewScope = PhoneReviewTarget['scope']
 
 const SCOPES = [
-  { value: 'turn', label: '本轮' },
-  { value: 'session', label: '这个会话' },
-  { value: 'uncommitted', label: '未提交' },
+  {
+    value: 'turn',
+    get label() {
+      return COPY.turn
+    },
+  },
+  {
+    value: 'session',
+    get label() {
+      return COPY.session
+    },
+  },
+  {
+    value: 'uncommitted',
+    get label() {
+      return COPY.uncommitted
+    },
+  },
 ] as const
 
 const choiceOf = (scope: ReviewScope): ScopeChoice => (scope === 'turn' ? { kind: 'latest' } : { kind: scope })
@@ -119,7 +222,7 @@ export function PhoneReview(props: PhoneReviewProps) {
     <section
       ref={page}
       className="phone-review"
-      aria-label={`复核 · ${summary.title || '未命名会话'}`}
+      aria-label={COPY.reviewSession(summary.title || COPY.untitled)}
       data-leaving={leaving ? '' : undefined}
       inert={leaving || undefined}>
       <ReviewChanges
@@ -134,20 +237,20 @@ export function PhoneReview(props: PhoneReviewProps) {
         <section
           className="phone-review-level"
           data-state={deliveryLeaving ? 'leaving' : 'top'}
-          aria-label="提交"
+          aria-label={COPY.commit}
           inert={deliveryLeaving || undefined}>
           <header className="phone-review-bar">
             <IconButton
               ref={deliveryBack}
               size="lg"
               icon={ChevronLeftGlyph}
-              label={committed ? '返回会话列表' : '返回改动'}
+              label={committed ? COPY.backSessions : COPY.backChanges}
               onClick={committed ? onClose : toChanges}
             />
             <div className="phone-review-title">
-              <h2>提交</h2>
+              <h2>{COPY.commit}</h2>
               <span>
-                <VisibleText text={summary.title || '未命名会话'} />
+                <VisibleText text={summary.title || COPY.untitled} />
               </span>
             </div>
           </header>
@@ -279,13 +382,13 @@ function ReviewChanges({
   const note = file ? fileNote(file) : undefined
 
   return (
-    <section className="phone-review-level" data-state={under ? 'under' : 'top'} aria-label="改动" inert={under || undefined}>
+    <section className="phone-review-level" data-state={under ? 'under' : 'top'} aria-label={COPY.changes} inert={under || undefined}>
       <header className="phone-review-bar">
-        <IconButton ref={backRef} size="lg" icon={ChevronLeftGlyph} label="返回会话列表" onClick={onClose} />
+        <IconButton ref={backRef} size="lg" icon={ChevronLeftGlyph} label={COPY.backSessions} onClick={onClose} />
         <div className="phone-review-title">
-          <h2>改动</h2>
+          <h2>{COPY.changes}</h2>
           <span>
-            <VisibleText text={summary.title || '未命名会话'} />
+            <VisibleText text={summary.title || COPY.untitled} />
           </span>
         </div>
         {list && !list.unavailable && list.files.length > 0 && (
@@ -298,7 +401,7 @@ function ReviewChanges({
       {canRead && (
         <div className="phone-review-scope">
           <SegmentedControl
-            label="改动范围"
+            label={COPY.scope}
             value={target.scope}
             options={SCOPES}
             onValueChange={scope => {
@@ -310,7 +413,7 @@ function ReviewChanges({
       )}
       {canRead && file && (
         <div className="phone-review-pager">
-          <IconButton size="lg" icon={ChevronLeftGlyph} label="上一个文件" disabled={index === 0} onClick={() => go(-1)} />
+          <IconButton size="lg" icon={ChevronLeftGlyph} label={COPY.previous} disabled={index === 0} onClick={() => go(-1)} />
           <div className="phone-review-file" aria-live="polite">
             <span className="phone-review-file-line">
               <span className="phone-review-file-name">
@@ -320,11 +423,11 @@ function ReviewChanges({
                 <span className="changes-stat">
                   {file.status === 'A' ? (
                     <span className="changes-tag" data-tone="new">
-                      新文件
+                      {COPY.newFile}
                     </span>
                   ) : file.status === 'D' ? (
                     <span className="changes-tag" data-tone="gone">
-                      已删除
+                      {COPY.deleted}
                     </span>
                   ) : (
                     <>
@@ -351,7 +454,7 @@ function ReviewChanges({
               {stale > 0 && (
                 <span className="changes-note-warn">
                   <AlertGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-                  位置可能过期
+                  {COPY.stale}
                 </span>
               )}
             </span>
@@ -359,7 +462,7 @@ function ReviewChanges({
           <span className="phone-review-count">
             {index + 1} / {files.length}
           </span>
-          <IconButton size="lg" icon={ChevronRightGlyph} label="下一个文件" disabled={index >= files.length - 1} onClick={() => go(1)} />
+          <IconButton size="lg" icon={ChevronRightGlyph} label={COPY.next} disabled={index >= files.length - 1} onClick={() => go(1)} />
         </div>
       )}
       <div className="phone-review-body">
@@ -367,24 +470,24 @@ function ReviewChanges({
           <div className="changes-empty phone-review-locked">
             <div>
               <LockGlyph size={20} nonScalingStroke strokeWidth={ICON_STROKE[20]} aria-hidden="true" />
-              <p className="changes-empty-title">这台设备看不到会话文件夹里的文件</p>
+              <p className="changes-empty-title">{COPY.noFiles}</p>
               <p className="changes-empty-detail">{SETUP_COPY.filesNeedScope(hostName)}</p>
             </div>
           </div>
         ) : failure?.kind === 'denied' ? (
           <div className="changes-empty">
             <div>
-              <p className="changes-empty-title">这台设备看不到会话文件夹里的文件</p>
+              <p className="changes-empty-title">{COPY.noFiles}</p>
               <p className="changes-empty-detail">{SETUP_COPY.filesNeedScope(hostName)}</p>
             </div>
           </div>
         ) : failure && !list ? (
           <div className="changes-empty">
             <div>
-              <p className="changes-empty-title">读不到改动</p>
+              <p className="changes-empty-title">{COPY.readFailed}</p>
               {failure.kind === 'failed' && <p className="changes-empty-detail">{failure.text}</p>}
               <Button size="sm" variant="outline" onClick={() => void reload()}>
-                重试
+                {COPY.retry}
               </Button>
             </div>
           </div>
@@ -399,32 +502,32 @@ function ReviewChanges({
             {running && (
               <button type="button" className="changes-line changes-line-button" data-tone="muted" onClick={() => void reload()}>
                 <Spinner size={12} />
-                <span className="changes-line-text">运行中 · 点按刷新</span>
+                <span className="changes-line-text">{COPY.running}</span>
               </button>
             )}
             {list.partial && (
               <div className="changes-line" data-tone="amber">
                 <WarningGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-                <span className="changes-line-text">{PARTIAL_NOTE.label}</span>
+                <span className="changes-line-text">{TURN_CHANGES_COPY.partialLabel}</span>
               </div>
             )}
             {failure?.kind === 'failed' && (
               <button type="button" className="changes-line changes-line-button" data-tone="muted" onClick={() => void reload()}>
                 <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-                <span className="changes-line-text">没有刷新成功 · 这是上次的列表</span>
+                <span className="changes-line-text">{COPY.refreshFailed}</span>
               </button>
             )}
             {empty || !file ? (
               <div className="changes-empty">
                 <div>
-                  <p className="changes-empty-title">{empty?.title ?? '没有改动'}</p>
+                  <p className="changes-empty-title">{empty?.title ?? COPY.empty}</p>
                   {empty?.detail && <p className="changes-empty-detail">{empty.detail}</p>}
                 </div>
               </div>
             ) : contentHidden(file) ? (
               <div className="changes-empty">
                 <div>
-                  <p className="changes-empty-title">{note?.text ?? '没有可以显示的内容'}</p>
+                  <p className="changes-empty-title">{note?.text ?? COPY.noContent}</p>
                   {note?.title && <p className="changes-empty-detail">{note.title}</p>}
                 </div>
               </div>
@@ -451,14 +554,17 @@ function ReviewChanges({
         {reviewNotes && review.readError && !review.notes && (
           <div className="changes-line" data-tone="muted">
             <AlertGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-            <span className="changes-line-text">读不到反馈 · {review.readError}</span>
+            <span className="changes-line-text">
+              {COPY.feedbackFailed}
+              {review.readError}
+            </span>
           </div>
         )}
       </div>
       <footer className="phone-review-foot" data-tone={action.kind === 'unknown' ? 'amber' : undefined}>
         {(offline || review.error) && (
           <p className="phone-review-foot-note" data-tone="amber">
-            {offline ? `${hostName} 不在线，反馈留在待发` : review.error}
+            {offline ? COPY.offline(hostName) : review.error}
           </p>
         )}
         <div className="phone-review-foot-row">
@@ -466,36 +572,36 @@ function ReviewChanges({
             <>
               <span className="phone-review-foot-text">{action.label}</span>
               <Button size="lg" variant="ghost" onClick={() => setPicked(undefined)}>
-                取消
+                {COPY.cancel}
               </Button>
               <Button size="lg" variant="primary" onClick={() => setWritingNote(true)}>
-                写反馈
+                {COPY.write}
               </Button>
             </>
           ) : action.kind === 'unknown' ? (
             <>
               <span className="phone-review-foot-text" data-lock="">
                 <CircleHelp size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-                发送结果未知
+                {COPY.unknown}
               </span>
               <Button size="lg" variant="ghost" disabled={review.busy || offline} onClick={() => void review.actions.abandonSend()}>
-                放弃这次发送
+                {COPY.abandon}
               </Button>
               <Button size="lg" variant="outline" disabled={review.busy || offline} onClick={() => void review.actions.retrySend()}>
-                重试同一请求
+                {COPY.retrySame}
               </Button>
             </>
           ) : action.kind === 'send' ? (
             <>
               <Button size="lg" variant="ghost" disabled={review.busy} onClick={() => setAskClear(true)}>
-                清空
+                {COPY.clear}
               </Button>
               <Button
                 size="lg"
                 variant="primary"
                 className="phone-review-primary"
                 loading={review.busy}
-                loadingLabel="发送中…"
+                loadingLabel={COPY.sending}
                 disabled={action.disabled}
                 onClick={() => {
                   void review.actions.send(
@@ -515,7 +621,7 @@ function ReviewChanges({
               )}
               {action.kind === 'deliver' && (
                 <Button size="lg" variant="primary" className="phone-review-primary" onClick={onDeliver}>
-                  去提交
+                  {COPY.goCommit}
                 </Button>
               )}
             </>
@@ -524,7 +630,7 @@ function ReviewChanges({
       </footer>
       <Sheet
         open={writingNote && selection !== undefined}
-        title={selection ? noteLinesLabel(selection) : '反馈'}
+        title={selection ? noteLinesLabel(selection) : COPY.feedback}
         onClose={() => {
           setWritingNote(false)
         }}
@@ -533,22 +639,22 @@ function ReviewChanges({
             variant="primary"
             disabled={!text.trim() || review.busy}
             loading={review.busy}
-            loadingLabel="加入中…"
+            loadingLabel={COPY.adding}
             onClick={() => void submitNote()}>
-            加入待发
+            {COPY.add}
           </Button>
         }>
         <div className="phone-review-sheet">
           {picked && (
-            <pre className="review-note-snippet" aria-label="选中的代码">
+            <pre className="review-note-snippet" aria-label={COPY.selected}>
               {snippetOf(picked.sides[picked.selection.side], picked.selection).join('\n')}
             </pre>
           )}
           <TextAreaField
-            label="反馈"
+            label={COPY.feedback}
             rows={4}
             autoFocus
-            placeholder="写给 Agent 的反馈…"
+            placeholder={COPY.feedbackHint}
             value={text}
             onChange={event => {
               setText(event.target.value)
@@ -558,10 +664,10 @@ function ReviewChanges({
       </Sheet>
       {askClear && (
         <ConfirmDialog
-          title={`清空 ${tally.ready.length} 条待发反馈？`}
-          confirmLabel="清空"
+          title={COPY.confirmClear(tally.ready.length)}
+          confirmLabel={COPY.clear}
           danger
-          message="这些反馈还没有发出，清空后不能恢复。"
+          message={COPY.clearMessage}
           onConfirm={async () => {
             for (const item of tally.ready) await review.actions.remove(item.id)
           }}
@@ -577,8 +683,8 @@ function ReviewChanges({
 /** Notes on files this scope does not list: they stay in reach with their original lines. */
 function ApartNotes({ notes, writing }: { notes: ReviewNote[]; writing: NoteWriting | undefined }) {
   return (
-    <section className="review-notes-apart" aria-label="不在这个范围的反馈">
-      <p className="review-notes-apart-title">不在这个范围的反馈</p>
+    <section className="review-notes-apart" aria-label={COPY.outside}>
+      <p className="review-notes-apart-title">{COPY.outside}</p>
       {notes.map(note => (
         <NoteCard key={note.id} note={note} quote where={`${note.path} `} {...(writing ? { writing } : {})} />
       ))}

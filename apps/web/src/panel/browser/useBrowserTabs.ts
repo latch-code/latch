@@ -1,6 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
 import type { BrowserColorScheme, BrowserPreset, ShellBrowser } from '../../core/shell.ts'
 import { endedTabs, noticeText, refusalText, withEvent, withState, type KnownTab } from './model.ts'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    takeOverFailed: '没有接手，请重试',
+    handBackFailed: '没有交还，请重试',
+    viewportFailed: '没有改变视口',
+    appearanceFailed: '这个标签现在不能模拟外观（开发者工具可能占用了它）',
+  },
+  {
+    takeOverFailed: 'Couldn’t take over. Try again.',
+    handBackFailed: 'Couldn’t return control. Try again.',
+    viewportFailed: 'Couldn’t change the viewport',
+    appearanceFailed: 'This tab can’t simulate appearance right now. Developer tools may be using it.',
+  },
+)
 
 const NOTICE_MS = 4_000
 
@@ -26,15 +42,15 @@ export function useBrowserTabs({
   const [all, setAll] = useState<KnownTab[]>([])
   const [listed, setListed] = useState<'loading' | 'ready' | 'failed'>('loading')
   const [active, setActive] = useState<string>()
-  const [notice, setNotice] = useState<string>()
-  const [failure, setFailure] = useState<string>()
+  const [notice, setNotice] = useState<() => string>()
+  const [failure, setFailure] = useState<() => string>()
   const allRef = useRef(all)
   allRef.current = all
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
-  const say = (text: string) => {
+  const say = (text: () => string) => {
     clearTimeout(noticeTimer.current)
-    setNotice(text)
+    setNotice(() => text)
     noticeTimer.current = setTimeout(() => setNotice(undefined), NOTICE_MS)
   }
 
@@ -77,7 +93,7 @@ export function useBrowserTabs({
       if (event.type === 'opened' && event.sessionId === sessionId && event.state.opener === 'agent') setActive(event.tabId)
       if (event.type === 'notice') {
         if (allRef.current.some(tab => tab.tabId === event.tabId && tab.sessionId === sessionId))
-          say(noticeText(event.notice, event.detail))
+          say(() => noticeText(event.notice, event.detail))
         return
       }
       setAll(previous => withEvent(previous, event, Date.now()))
@@ -103,7 +119,7 @@ export function useBrowserTabs({
     setFailure(undefined)
     const answer = await shell.open(projectId, sessionId, url ?? null)
     if (!answer.ok) {
-      setFailure(refusalText(answer.error, answer.reason))
+      setFailure(() => () => refusalText(answer.error, answer.reason))
       return false
     }
     const tab: KnownTab = { tabId: answer.tabId, sessionId, projectId, state: answer.state }
@@ -115,7 +131,7 @@ export function useBrowserTabs({
   const navigate = async (tabId: string, url: string): Promise<boolean> => {
     setFailure(undefined)
     const answer = await shell.navigate(tabId, url)
-    if (!answer.ok) setFailure(refusalText(answer.error, answer.reason))
+    if (!answer.ok) setFailure(() => () => refusalText(answer.error, answer.reason))
     return answer.ok
   }
 
@@ -124,9 +140,9 @@ export function useBrowserTabs({
   }
 
   /** Whatever main answers, the state event that follows is what the panel shows. */
-  const settle = async (call: Promise<{ ok: boolean; error?: string }>, failed: string) => {
+  const settle = async (call: Promise<{ ok: boolean; error?: string }>, failed: () => string) => {
     const answer = await call
-    if (!answer.ok) setFailure(failed)
+    if (!answer.ok) setFailure(() => failed)
     return answer.ok
   }
 
@@ -138,8 +154,8 @@ export function useBrowserTabs({
     others: all.filter(tab => tab.sessionId !== sessionId),
     current,
     listed,
-    notice,
-    failure,
+    notice: notice?.(),
+    failure: failure?.(),
     setFailure,
     say,
     select: setActive,
@@ -148,11 +164,11 @@ export function useBrowserTabs({
     navigate,
     close,
     /** 接手 and 交还给 Agent; absent from a shell without the Agent's browser. */
-    takeOver: shell.takeOver ? (tabId: string) => settle(shell.takeOver!(tabId), '没有接手，请重试') : undefined,
-    handBack: shell.handBack ? (tabId: string) => settle(shell.handBack!(tabId), '没有交还，请重试') : undefined,
-    viewport: (tabId: string, preset: BrowserPreset, rotated: boolean) => settle(shell.setViewport(tabId, preset, rotated), '没有改变视口'),
-    colorScheme: (tabId: string, scheme: BrowserColorScheme) =>
-      settle(shell.setColorScheme(tabId, scheme), '这个标签现在不能模拟外观（开发者工具可能占用了它）'),
+    takeOver: shell.takeOver ? (tabId: string) => settle(shell.takeOver!(tabId), () => COPY.takeOverFailed) : undefined,
+    handBack: shell.handBack ? (tabId: string) => settle(shell.handBack!(tabId), () => COPY.handBackFailed) : undefined,
+    viewport: (tabId: string, preset: BrowserPreset, rotated: boolean) =>
+      settle(shell.setViewport(tabId, preset, rotated), () => COPY.viewportFailed),
+    colorScheme: (tabId: string, scheme: BrowserColorScheme) => settle(shell.setColorScheme(tabId, scheme), () => COPY.appearanceFailed),
   }
 }
 

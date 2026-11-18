@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Smartphone } from 'lucide-react'
 import { CommitGlyph, DiffGlyph, FolderGlyph, GlobeGlyph, OverviewGlyph, PluginsGlyph, TerminalGlyph, type IconComponent } from '@latch/ui'
+import { defineCopy } from '../core/i18n.ts'
 import { storageGet, storageSet } from '../preferences.ts'
 
 /**
@@ -115,19 +116,34 @@ export interface PanelChoice {
   letter?: string
 }
 
-const FACES: Record<Exclude<PanelKey, `plugin:${string}`>, Omit<PanelChoice, 'key'>> = {
-  browser: { label: '浏览器', icon: GlobeGlyph, letter: 'B' },
-  device: { label: '设备', icon: Smartphone, letter: 'V' },
-  terminal: { label: '终端', icon: TerminalGlyph, letter: 'T' },
-  files: { label: '文件', icon: FolderGlyph, letter: 'F' },
-  changes: { label: '改动', icon: DiffGlyph, letter: 'D' },
-  delivery: { label: '交付', icon: CommitGlyph, letter: 'P' },
-  overview: { label: '概要', icon: OverviewGlyph, letter: 'O' },
+const LABELS = defineCopy(
+  { browser: '浏览器', device: '设备', terminal: '终端', files: '文件', changes: '改动', delivery: '交付', overview: '概要' },
+  {
+    browser: 'Browser',
+    device: 'Devices',
+    terminal: 'Terminal',
+    files: 'Files',
+    changes: 'Changes',
+    delivery: 'Delivery',
+    overview: 'Overview',
+  },
+)
+
+const FACES: Record<Exclude<PanelKey, `plugin:${string}`>, Pick<PanelChoice, 'icon' | 'letter'>> = {
+  browser: { icon: GlobeGlyph, letter: 'B' },
+  device: { icon: Smartphone, letter: 'V' },
+  terminal: { icon: TerminalGlyph, letter: 'T' },
+  files: { icon: FolderGlyph, letter: 'F' },
+  changes: { icon: DiffGlyph, letter: 'D' },
+  delivery: { icon: CommitGlyph, letter: 'P' },
+  overview: { icon: OverviewGlyph, letter: 'O' },
 }
 
 /** A tab's name and glyph; a plugin panel's name is its own title. */
 export function panelFace(key: PanelKey, title = ''): Omit<PanelChoice, 'key'> {
-  return key.startsWith('plugin:') ? { label: title, icon: PluginsGlyph } : FACES[key as keyof typeof FACES]
+  if (key.startsWith('plugin:')) return { label: title, icon: PluginsGlyph }
+  const builtin = key as keyof typeof FACES
+  return { label: LABELS[builtin], ...FACES[builtin] }
 }
 
 /** Everything this session can open in the panel here, in one order for the 「+」 menu and the empty panel. */
@@ -143,7 +159,7 @@ export function panelChoices(input: {
 }): PanelChoice[] {
   const order = ['browser', 'device', 'terminal', 'files', 'changes', 'delivery', 'overview'] as const
   return [
-    ...order.filter(key => input[key]).map(key => ({ key, ...FACES[key] })),
+    ...order.filter(key => input[key]).map(key => ({ key, ...panelFace(key) })),
     ...(input.plugins ?? []).map(plugin => ({ key: `plugin:${plugin.id}` as const, ...panelFace(`plugin:${plugin.id}`, plugin.title) })),
   ]
 }

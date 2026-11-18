@@ -1,4 +1,5 @@
 import { isFileMention } from '@latch/protocol'
+import { defineCopy, formatList, plural } from '../core/i18n.ts'
 
 /** What the Host answers for `POST …/files/grep` (apps/host/src/files/grep.ts), checked before it is shown. */
 interface ContentLine {
@@ -118,13 +119,49 @@ export function highlightParts(text: string, ranges: ReadonlyArray<readonly [num
 }
 
 /** Why the list is not everything, for the hover beside the count. */
-const STOP_WORDS: Record<ContentStop, string> = {
-  results: '结果较多，只显示前一部分',
-  files: '文件较多，只搜索了一部分',
-  bytes: '内容较多，只搜索了一部分',
-  time: '搜索时间到了，只搜索了一部分',
-  entries: '文件夹较大，只搜索了一部分',
-}
+const STOP_WORDS = defineCopy<Record<ContentStop, string>>(
+  {
+    results: '结果较多，只显示前一部分',
+    files: '文件较多，只搜索了一部分',
+    bytes: '内容较多，只搜索了一部分',
+    time: '搜索时间到了，只搜索了一部分',
+    entries: '文件夹较大，只搜索了一部分',
+  },
+  {
+    results: 'Only the first matches are shown.',
+    files: 'There are too many files to search them all.',
+    bytes: 'There is too much content to search it all.',
+    time: 'The search reached its time limit.',
+    entries: 'The folder is too large to search it all.',
+  },
+)
+
+const COPY = defineCopy(
+  {
+    folders: (count: number) => plural(count, { other: '{n} 个文件夹（连同其中内容）' }),
+    files: (count: number) => plural(count, { other: '{n} 个文件' }),
+    unchecked: (count: number) => plural(count, { other: '{n} 项未核对' }),
+    ignored: (parts: string[]) => `${parts.join('和 ')}的忽略规则没有核对完，按已忽略处理，没有搜索。`,
+    noResults: '没有找到',
+    matches: (count: number) => plural(count, { other: '{n} 处' }),
+    large: (count: number) => plural(count, { other: '{n} 个大文件' }),
+    binary: (count: number) => plural(count, { other: '{n} 个非文本文件' }),
+    skipped: (parts: string[]) => `未搜索 ${parts.join('、')}`,
+    someMatches: '有的文件匹配较多，只显示前一部分',
+  },
+  {
+    folders: (count: number) => plural(count, { one: '{n} folder and its contents', other: '{n} folders and their contents' }),
+    files: (count: number) => plural(count, { one: '{n} file', other: '{n} files' }),
+    unchecked: (count: number) => plural(count, { one: '{n} item unchecked', other: '{n} items unchecked' }),
+    ignored: (parts: string[]) => `Ignore rules could not be fully checked for ${formatList(parts)}. The search skipped them.`,
+    noResults: 'No matches',
+    matches: (count: number) => plural(count, { one: '{n} match', other: '{n} matches' }),
+    large: (count: number) => plural(count, { one: '{n} large file', other: '{n} large files' }),
+    binary: (count: number) => plural(count, { one: '{n} non-text file', other: '{n} non-text files' }),
+    skipped: (parts: string[]) => `Skipped ${formatList(parts)}`,
+    someMatches: 'Only the first matches in some files are shown.',
+  },
+)
 
 /**
  * Files and folders whose ignore check the Host cut short, as content search and ⌘P both show them: a short label, and
@@ -132,8 +169,8 @@ const STOP_WORDS: Record<ContentStop, string> = {
  */
 export function uncheckedNote(files: number, folders: number): { label: string; detail: string } | undefined {
   if (!files && !folders) return undefined
-  const parts = [folders ? `${folders} 个文件夹（连同其中内容）` : '', files ? `${files} 个文件` : ''].filter(Boolean).join('和 ')
-  return { label: `${files + folders} 项未核对`, detail: `${parts}的忽略规则没有核对完，按已忽略处理，没有搜索。` }
+  const parts = [folders ? COPY.folders(folders) : '', files ? COPY.files(files) : ''].filter(Boolean)
+  return { label: COPY.unchecked(files + folders), detail: COPY.ignored(parts) }
 }
 
 /** The count line under the field: how many lines in how many files, whether more exist, and what was left out. */
@@ -145,15 +182,13 @@ export function resultSummary(results: ContentResults): {
 } {
   const { files, count, stopped, skipped } = results
   const more = stopped !== undefined || files.some(file => file.more)
-  const text = count === 0 ? '没有找到' : `${count} 处 · ${files.length} 个文件`
+  const text = count === 0 ? COPY.noResults : `${COPY.matches(count)} · ${COPY.files(files.length)}`
   const unchecked = uncheckedNote(skipped.unchecked, skipped.uncheckedFolders)
-  const left = [skipped.large ? `${skipped.large} 个大文件` : '', skipped.binary ? `${skipped.binary} 个非文本文件` : '']
-    .filter(Boolean)
-    .join('、')
+  const left = [skipped.large ? COPY.large(skipped.large) : '', skipped.binary ? COPY.binary(skipped.binary) : ''].filter(Boolean)
   return {
     text,
-    ...(more ? { partial: stopped ? STOP_WORDS[stopped] : '有的文件匹配较多，只显示前一部分' } : {}),
-    ...(left ? { skipped: `未搜索 ${left}` } : {}),
+    ...(more ? { partial: stopped ? STOP_WORDS[stopped] : COPY.someMatches } : {}),
+    ...(left.length ? { skipped: COPY.skipped(left) } : {}),
     ...(unchecked ? { unchecked } : {}),
   }
 }

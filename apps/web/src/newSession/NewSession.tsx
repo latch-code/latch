@@ -5,6 +5,8 @@ import { Button, Collapse, CopyButton, Hint, ICON_STROKE, RefreshGlyph, WarningG
 import { api } from '../core/api.ts'
 import { foundWithoutAdapter, presetsFound } from '../core/agentDetection.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
+import { harnessPresetCopy } from '../core/harnessPresetCopy.ts'
 import { ProviderSetupPanel } from '../components/SetupPanels.tsx'
 import type { StartBlock } from '../composerChoice.ts'
 import { MarkTile } from '../components/BrandTile.tsx'
@@ -13,6 +15,61 @@ import { VisibleText } from '../components/VisibleText.tsx'
 import { SETUP_COPY } from '../core/securityCopy.ts'
 import { middleEllipsis } from '../format.ts'
 import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
+
+const COPY = defineCopy(
+  {
+    filesOnly: 'Latch 内置只读写文件，不运行命令',
+    addService: '添加模型服务',
+    openSettings: '打开设置',
+    copyCommand: (name: string, upgrade: boolean) => `复制 ${name} 的${upgrade ? '升级' : '安装'}命令`,
+    install: '安装 Harness',
+    almostReady: '还差一步',
+    noneFound: '没有找到可用的 Harness',
+    missingAdapter: (program: string) => `找到 ${program}，还缺适配器`,
+    alternative: '或者装别的：',
+    chooseOne: '先装一个：',
+    recheck: '重新检测',
+    useBuiltin: '改用 Latch 内置（只读写文件）…',
+    upgradeHelp: '怎么升级',
+    installHelp: '怎么装',
+    helpFor: (word: string, name: string) => `${word} ${name}`,
+    found: '找到的 Harness',
+    foundCount: (count: number) => (
+      <>
+        在这台 Mac 上找到 <span className="harness-found-count">{formatNumber(count)}</span> 个 Harness
+      </>
+    ),
+    needsUpgrade: '需要升级',
+    detected: '已找到',
+    needsAdapter: '缺适配器',
+  },
+  {
+    filesOnly: 'Latch built-in reads and writes files. It cannot run commands.',
+    addService: 'Add model service',
+    openSettings: 'Open Settings',
+    copyCommand: (name: string, upgrade: boolean) => `Copy ${name} ${upgrade ? 'upgrade' : 'install'} command`,
+    install: 'Install a Harness',
+    almostReady: 'One more step',
+    noneFound: 'No available Harness found',
+    missingAdapter: (program: string) => `Found ${program}. Its adapter is missing.`,
+    alternative: 'Or install another',
+    chooseOne: 'Install one to start',
+    recheck: 'Check again',
+    useBuiltin: 'Use Latch built-in (file access only)…',
+    upgradeHelp: 'How to upgrade',
+    installHelp: 'How to install',
+    helpFor: (word: string, name: string) => `${word} ${name}`,
+    found: 'Detected Harnesses',
+    foundCount: (count: number) => (
+      <>
+        Found <span className="harness-found-count">{formatNumber(count)}</span> {count === 1 ? 'Harness' : 'Harnesses'} on this Mac
+      </>
+    ),
+    needsUpgrade: 'Upgrade needed',
+    detected: 'Detected',
+    needsAdapter: 'Adapter missing',
+  },
+)
 
 /**
  * Why a session cannot start and the one thing that fixes it, each said plainly. A missing model service is added right
@@ -56,7 +113,7 @@ export function SetupCard({
             <p>
               {model
                 ? owner
-                  ? (held?.hint ?? 'Latch 内置只读写文件，不运行命令')
+                  ? (held?.hint ?? COPY.filesOnly)
                   : SETUP_COPY.modelNeedsAdmin(computer)
                 : SETUP_COPY.harnessNeedsAdmin(computer)}
             </p>
@@ -70,7 +127,7 @@ export function SetupCard({
               if (inPlace) setAdding(true)
               else onSetup()
             }}>
-            {model ? (held?.action ?? '添加模型服务') : '打开设置'}
+            {model ? (held?.action ?? COPY.addService) : COPY.openSettings}
           </Button>
         )}
       </div>
@@ -99,6 +156,7 @@ function InstallRow({ preset, note }: { preset: AgentPresetSettings; note?: stri
   // A command that is here but too old gets its upgrade command instead of the install command.
   const upgrade = preset.detected?.outdated?.upgrade
   const command = upgrade ?? preset.install
+  const { installNote } = harnessPresetCopy(preset)
   return (
     <li className="harness-install-row">
       <span className="harness-install-name">
@@ -108,9 +166,9 @@ function InstallRow({ preset, note }: { preset: AgentPresetSettings; note?: stri
       {note && <span className="harness-install-note">{note}</span>}
       <span className="harness-install-command">
         <code>{command}</code>
-        {command && <CopyButton text={command} label={`复制 ${preset.name} 的${upgrade ? '升级' : '安装'}命令`} size="xs" />}
+        {command && <CopyButton text={command} label={COPY.copyCommand(preset.name, !!upgrade)} size="xs" />}
         {command && <TerminalFillButton command={command} detached />}
-        {!upgrade && preset.installNote && <span className="harness-install-note">{preset.installNote}</span>}
+        {!upgrade && installNote && <span className="harness-install-note">{installNote}</span>}
       </span>
     </li>
   )
@@ -146,9 +204,9 @@ export function HarnessInstallCard({
   const halfway = presets.filter(preset => foundWithoutAdapter(preset.detected) !== undefined || preset.detected?.outdated)
   const others = presets.filter(preset => !halfway.includes(preset))
   return (
-    <section className="setup-card harness-install" aria-label="安装 Harness">
+    <section className="setup-card harness-install" aria-label={COPY.install}>
       <div className="setup-card-text">
-        <strong>{halfway.length ? '还差一步' : '没有找到可用的 Harness'}</strong>
+        <strong>{halfway.length ? COPY.almostReady : COPY.noneFound}</strong>
       </div>
       {halfway.length > 0 && (
         <ul className="harness-install-list">
@@ -156,13 +214,13 @@ export function HarnessInstallCard({
             <InstallRow
               key={preset.id}
               preset={preset}
-              note={preset.detected?.outdated?.need ?? `找到 ${foundWithoutAdapter(preset.detected)!}，还缺适配器`}
+              note={preset.detected?.outdated?.need ?? COPY.missingAdapter(foundWithoutAdapter(preset.detected)!)}
             />
           ))}
         </ul>
       )}
       <div className="harness-install-group">
-        <p>{halfway.length ? '或者装别的：' : '先装一个：'}</p>
+        <p>{halfway.length ? COPY.alternative : COPY.chooseOne}</p>
         <ul className="harness-install-list">
           {others.map(preset => (
             <InstallRow key={preset.id} preset={preset} />
@@ -180,7 +238,7 @@ export function HarnessInstallCard({
               setChecking(false)
             })
           }}>
-          重新检测
+          {COPY.recheck}
         </Button>
         {!adding && (
           <Button
@@ -190,7 +248,7 @@ export function HarnessInstallCard({
             onClick={() => {
               setAdding(true)
             }}>
-            改用 Latch 内置（只读写文件）…
+            {COPY.useBuiltin}
           </Button>
         )}
       </div>
@@ -225,9 +283,9 @@ function HowToInstall({ preset, checking, onRecheck }: { preset: AgentPresetSett
       </span>
       <code>{command}</code>
       <span className="harness-found-how-actions">
-        <CopyButton text={command} label={`复制 ${preset.name} 的${upgrade ? '升级' : '安装'}命令`} size="xs" />
+        <CopyButton text={command} label={COPY.copyCommand(preset.name, !!upgrade)} size="xs" />
         <Button size="xs" variant="ghost" icon={RefreshGlyph} loading={checking} onClick={onRecheck}>
-          重新检测
+          {COPY.recheck}
         </Button>
       </span>
     </div>
@@ -262,13 +320,13 @@ export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<voi
   // A Harness that is no preset can be what runs here; the card has nothing of its own to say then.
   if (!found.length) return null
   const howButton = (preset: AgentPresetSettings) => {
-    const word = preset.detected?.outdated ? '怎么升级' : '怎么装'
+    const word = preset.detected?.outdated ? COPY.upgradeHelp : COPY.installHelp
     return (
       (preset.detected?.outdated || preset.install) && (
         <Button
           size="xs"
           aria-expanded={how === preset.id}
-          aria-label={`${word} ${preset.name}`}
+          aria-label={COPY.helpFor(word, preset.name)}
           onClick={() => {
             setHow(how === preset.id ? null : preset.id)
           }}>
@@ -294,24 +352,22 @@ export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<voi
     </li>
   )
   return (
-    <section className="harness-found" aria-label="找到的 Harness">
+    <section className="harness-found" aria-label={COPY.found}>
       <div className="harness-found-head">
-        <strong>
-          在这台 Mac 上找到 <span className="harness-found-count">{found.length}</span> 个 Harness
-        </strong>
+        <strong>{COPY.foundCount(found.length)}</strong>
         <Button size="xs" variant="ghost" icon={RefreshGlyph} loading={checking} onClick={recheck}>
-          重新检测
+          {COPY.recheck}
         </Button>
       </div>
       <ul className="harness-found-list">
         {found.map(({ preset, path }) =>
           preset.detected?.outdated ? (
-            halfRow(preset, '需要升级', preset.detected.outdated.need)
+            halfRow(preset, COPY.needsUpgrade, preset.detected.outdated.need)
           ) : (
             <li key={preset.id} className="harness-found-row">
               <MarkTile mark={preset.id} size={16} />
               <span className="harness-found-name">{preset.name}</span>
-              <span className="harness-found-state">已找到</span>
+              <span className="harness-found-state">{COPY.detected}</span>
               {path && (
                 <code className="harness-found-path" title={path}>
                   <VisibleText text={middleEllipsis(path, 56)} />
@@ -320,7 +376,7 @@ export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<voi
             </li>
           ),
         )}
-        {halfway.map(({ preset, program }) => halfRow(preset, '缺适配器', `找到 ${program}，还缺适配器`))}
+        {halfway.map(({ preset, program }) => halfRow(preset, COPY.needsAdapter, COPY.missingAdapter(program)))}
       </ul>
     </section>
   )

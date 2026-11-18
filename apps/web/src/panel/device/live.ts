@@ -10,6 +10,31 @@ import {
   type SimulatorKey,
   type SimulatorLiveDescription,
 } from '@latch/protocol'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    noCompanion:
+      '没有安装 idb_companion。可运行 brew install meta/fb/idb-companion。若 Homebrew 要求信任此 tap，先运行 brew trust meta/fb。',
+    companionFailed: 'idb_companion 没有启动或已退出',
+    noAnswer: 'idb_companion 没有回答',
+    socketPath: '临时目录的路径太长',
+    keyboard: '文字只在设备的 English (US) 键盘上逐键输入可打印的 ASCII；拼音等键盘会改写它',
+    singleTouch: 'idb 的触摸只有一个点',
+    unsupported: '这台电脑上没有输入',
+  },
+  {
+    noCompanion:
+      'idb_companion isn’t installed. Run brew install meta/fb/idb-companion. If Homebrew requires trusting the tap, run brew trust meta/fb first.',
+    companionFailed: 'idb_companion didn’t start or has exited',
+    noAnswer: 'idb_companion didn’t respond',
+    socketPath: 'The temporary directory path is too long',
+    keyboard:
+      'Key-by-key entry supports printable ASCII on the device’s English (US) keyboard. Other keyboards, such as Pinyin, may change the text.',
+    singleTouch: 'idb supports single-touch input only',
+    unsupported: 'Input isn’t available on this computer',
+  },
+)
 
 export interface LiveMessage {
   type: number
@@ -259,14 +284,27 @@ export function deviceKey(event: { key: string; metaKey: boolean; ctrlKey: boole
 }
 
 const REASONS: Record<string, string> = {
-  'idb-missing':
-    '没有安装 idb_companion。可运行 brew install meta/fb/idb-companion。若 Homebrew 要求信任此 tap，先运行 brew trust meta/fb。',
-  'companion-failed': 'idb_companion 没有启动或已退出',
-  'no-answer': 'idb_companion 没有回答',
-  'socket-path': '临时目录的路径太长',
-  keyboard: '文字只在设备的 English (US) 键盘上逐键输入可打印的 ASCII；拼音等键盘会改写它',
-  'single-touch': 'idb 的触摸只有一个点',
-  unsupported: '这台电脑上没有输入',
+  get 'idb-missing'() {
+    return COPY.noCompanion
+  },
+  get 'companion-failed'() {
+    return COPY.companionFailed
+  },
+  get 'no-answer'() {
+    return COPY.noAnswer
+  },
+  get 'socket-path'() {
+    return COPY.socketPath
+  },
+  get keyboard() {
+    return COPY.keyboard
+  },
+  get 'single-touch'() {
+    return COPY.singleTouch
+  },
+  get unsupported() {
+    return COPY.unsupported
+  },
 }
 
 /** The hover for an unavailable kind of input. */

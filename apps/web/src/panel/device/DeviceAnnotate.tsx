@@ -13,6 +13,42 @@ import {
   type AnnotateTool,
   type Shape,
 } from './annotate.ts'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    noImage: '没有生成图片',
+    tooLarge: '标注后的图片超过 5 MB',
+    annotate: '标注截图',
+    tools: '标注工具',
+    arrow: '箭头',
+    drawArrow: '拖动画箭头',
+    box: '方框',
+    drawBox: '拖动画方框',
+    pen: '画笔',
+    drawPen: '按住画线',
+    undo: '撤销',
+    cancel: '取消',
+    add: '放进草稿',
+    draw: '在截图上标注',
+  },
+  {
+    noImage: 'No image was created',
+    tooLarge: 'The annotated image exceeds 5 MB',
+    annotate: 'Annotate screenshot',
+    tools: 'Annotation tools',
+    arrow: 'Arrow',
+    drawArrow: 'Drag to draw an arrow',
+    box: 'Rectangle',
+    drawBox: 'Drag to draw a rectangle',
+    pen: 'Pen',
+    drawPen: 'Hold and drag to draw',
+    undo: 'Undo',
+    cancel: 'Cancel',
+    add: 'Add to draft',
+    draw: 'Annotate the screenshot',
+  },
+)
 
 export interface AnnotateImage {
   url: string
@@ -88,8 +124,8 @@ export function DeviceAnnotate({
         type = 'image/jpeg'
         blob = await encode(element, type)
       }
-      if (!blob) onFailure('没有生成图片')
-      else if (blob.size > ANNOTATED_LIMIT) onFailure('标注后的图片超过 5 MB')
+      if (!blob) onFailure(COPY.noImage)
+      else if (blob.size > ANNOTATED_LIMIT) onFailure(COPY.tooLarge)
       else onDone(new File([blob], annotatedName(image.name, type), { type }))
     } finally {
       setSaving(false)
@@ -97,16 +133,16 @@ export function DeviceAnnotate({
   }
 
   return (
-    <div className="sim-annotate" aria-label="标注截图" role="group">
+    <div className="sim-annotate" aria-label={COPY.annotate} role="group">
       <div className="sim-annotate-bar">
         <SegmentedControl
-          label="标注工具"
+          label={COPY.tools}
           size="xs"
           value={tool}
           options={[
-            { value: 'arrow', label: '箭头', title: '拖动画箭头' },
-            { value: 'box', label: '方框', title: '拖动画方框' },
-            { value: 'pen', label: '画笔', title: '按住画线' },
+            { value: 'arrow', label: COPY.arrow, title: COPY.drawArrow },
+            { value: 'box', label: COPY.box, title: COPY.drawBox },
+            { value: 'pen', label: COPY.pen, title: COPY.drawPen },
           ]}
           onValueChange={setTool}
         />
@@ -116,17 +152,17 @@ export function DeviceAnnotate({
         <IconButton
           size="xs"
           icon={Undo2}
-          label="撤销"
+          label={COPY.undo}
           shortcut="⌘Z"
           disabled={shapes.length === 0}
           onClick={() => setShapes(current => current.slice(0, -1))}
         />
         <span className="sim-spacer" />
         <Button size="xs" variant="ghost" onClick={onCancel}>
-          取消
+          {COPY.cancel}
         </Button>
         <Button size="xs" variant="primary" loading={saving} onClick={() => void save()}>
-          放进草稿
+          {COPY.add}
         </Button>
       </div>
       <div
@@ -143,7 +179,7 @@ export function DeviceAnnotate({
           width={image.width}
           height={image.height}
           tabIndex={0}
-          aria-label="在截图上标注"
+          aria-label={COPY.draw}
           style={{ aspectRatio: `${image.width} / ${image.height}` }}
           onPointerDown={event => {
             if (event.button !== 0) return

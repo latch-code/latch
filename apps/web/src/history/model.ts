@@ -1,6 +1,22 @@
 import type { AppSnapshot, HarnessInfo, HistoryList, HistoryRow, HostCatalog, TaskSummary } from '@latch/protocol'
 import { ApiError, ApiTimeoutError, errorMessage, isUncertain } from '../core/api.ts'
 import { harnessName } from '../composerChoice.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    imported: '已接入',
+    importedFrom: (value1: string) => `从 ${value1} 接入 · 原样加载`,
+    rebuilt: '已接入 · 按文字重建',
+    rebuiltFrom: (value1: string) => `从 ${value1} 接入 · 按文字重建，不是原样恢复`,
+  },
+  {
+    imported: 'Imported',
+    importedFrom: (value1: string) => `Imported from ${value1} · Full history`,
+    rebuilt: 'Imported · Rebuilt from text',
+    rebuiltFrom: (value1: string) => `Imported from ${value1} · Rebuilt from text`,
+  },
+)
 
 /**
  * 接入已有会话 (docs/HARNESSES.md#接入已有会话), as the page draws it: whether the new session offers it, the list's and the
@@ -187,8 +203,8 @@ export function importedMark(
   if (!imported) return undefined
   const from = sourceLabel ?? imported.from
   return imported.mode === 'native'
-    ? { label: '已接入', detail: `从 ${from} 接入 · 原样加载`, rebuilt: false }
-    : { label: '已接入 · 按文字重建', detail: `从 ${from} 接入 · 按文字重建，不是原样恢复`, rebuilt: true }
+    ? { label: COPY.imported, detail: COPY.importedFrom(from), rebuilt: false }
+    : { label: COPY.rebuilt, detail: COPY.rebuiltFrom(from), rebuilt: true }
 }
 
 /** A text rebuild whose rebuilt conversation still waits for the first message: sending it sends that text too. */

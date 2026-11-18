@@ -1,8 +1,20 @@
 import type { PluginInfo, PluginPackageBundle, PluginPackageManifest } from '@latch/protocol'
 import { PLUGIN_REACH_COPY } from '../core/securityCopy.ts'
 import { MessageError } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
 
-const fail = () => new MessageError('请选择有效的 .latch-plugin.json 文件，文件总大小不超过 8 MiB。')
+const COPY = defineCopy(
+  {
+    badBundle: '请选择有效的 .latch-plugin.json 文件，文件总大小不超过 8 MiB。',
+    badPath: '使用未被占用的包内相对路径，例如 helpers/format.mjs。最多 128 个文件。',
+  },
+  {
+    badBundle: 'Choose a valid .latch-plugin.json file, 8 MiB or less in total.',
+    badPath: 'Use a free relative path inside the package, such as helpers/format.mjs. Up to 128 files.',
+  },
+)
+
+const fail = () => new MessageError(COPY.badBundle)
 
 /** Bounded renderable import. The Host validates the full contract before saving or importing code. */
 export function readPluginBundle(text: string): PluginPackageBundle {
@@ -75,7 +87,7 @@ export function addPluginSource(bundle: PluginPackageBundle, path: string): Plug
       return existing === spelling || existing.startsWith(spelling + '/') || spelling.startsWith(existing + '/')
     })
   )
-    throw new MessageError('使用未被占用的包内相对路径，例如 helpers/format.mjs。最多 128 个文件。')
+    throw new MessageError(COPY.badPath)
   return { ...bundle, files: [...bundle.files, { path, content: '' }] }
 }
 

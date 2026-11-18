@@ -1,4 +1,29 @@
 'use strict'
+
+const { defineCopy } = require('./locale.cjs')
+
+const ACTIVITY_COPY = defineCopy(
+  {
+    opening: '正在打开页面',
+    scrolling: '正在滚动页面',
+    clicking: (target = '') => `正在点击${target}`,
+    doubleClicking: (target = '') => `正在双击${target}`,
+    hovering: (target = '') => `正在悬停${target}`,
+    key: '正在按键',
+    select: '正在选择',
+    typing: (target = '') => `正在输入${target}`,
+  },
+  {
+    opening: 'Opening page',
+    scrolling: 'Scrolling page',
+    clicking: (target = '') => (target ? `Clicking ${target}` : 'Clicking'),
+    doubleClicking: (target = '') => (target ? `Double-clicking ${target}` : 'Double-clicking'),
+    hovering: (target = '') => (target ? `Hovering over ${target}` : 'Hovering'),
+    key: 'Pressing a key',
+    select: 'Selecting',
+    typing: (target = '') => (target ? `Typing in ${target}` : 'Typing'),
+  },
+)
 // The Agent's side of the preview browser: main registers with its own Host as the browser provider and carries out the
 // built-in harness's browser calls on the tabs of the calling session. The actions are a fixed list, apart from the
 // page's `latchShell.browser`: no developer tools, no clearing data, no focus, no overlay, no script of the Agent's own.
@@ -1005,7 +1030,7 @@ function createAgentRunner({ access, controller, now = Date.now }) {
       const created = access.tab(opened.tabId)
       if (!created) throw new AgentFailure('unavailable')
       if (!target) return { text: `已打开空白标签 ${created.id}。`, tab: state(created) }
-      return acting(created, '正在打开页面', async () => {
+      return acting(created, ACTIVITY_COPY.opening, async () => {
         prepare(created)
         access.load(created, target)
         // The page places the Agent's tab once it is no longer blank.
@@ -1023,7 +1048,7 @@ function createAgentRunner({ access, controller, now = Date.now }) {
         if (!url) throw new AgentFailure('invalid-url')
         if (!localOrBlank(url) || !access.verdict(url).ok) throw new AgentFailure('not-local')
       }
-      return acting(target, '正在打开页面', async () => {
+      return acting(target, ACTIVITY_COPY.opening, async () => {
         prepare(target)
         const history = target.contents.navigationHistory
         // Back and forward go only to an entry on this Mac.
@@ -1097,7 +1122,7 @@ function createAgentRunner({ access, controller, now = Date.now }) {
     },
     async browser_scroll(call) {
       const target = tabFor(call)
-      return acting(target, '正在滚动页面', async () => {
+      return acting(target, ACTIVITY_COPY.scrolling, async () => {
         prepare(target)
         if (call.args.ref !== undefined) {
           const found = await element(target, { ref: call.args.ref }, call.deadline - 500)
@@ -1167,13 +1192,14 @@ function createAgentRunner({ access, controller, now = Date.now }) {
     async browser_click(call, signal) {
       const target = tabFor(call)
       const verb = call.args.hover ? '悬停' : call.args.double ? '双击' : '点击'
-      return acting(target, `正在${verb}`, async () => {
+      const label = call.args.hover ? ACTIVITY_COPY.hovering : call.args.double ? ACTIVITY_COPY.doubleClicking : ACTIVITY_COPY.clicking
+      return acting(target, label(), async () => {
         prepare(target)
         // Its centre must be the element itself, not something the page laid over it.
         const found = await element(target, { ref: call.args.ref, hit: true }, call.deadline - 1000)
         // A file chooser would open a native panel on the person's screen.
         if (found.file) throw new AgentFailure('file-input')
-        target.activity = `正在${verb}${targetName(found)}`
+        target.activity = label(targetName(found))
         access.changed(target, true)
         step(target, signal, false)
         mouse(
@@ -1188,7 +1214,7 @@ function createAgentRunner({ access, controller, now = Date.now }) {
     },
     async browser_key(call, signal) {
       const target = tabFor(call)
-      return acting(target, '正在按键', async () => {
+      return acting(target, ACTIVITY_COPY.key, async () => {
         prepare(target)
         // A character into a password field one key at a time is typing into it: refused below R2, as browser_type is.
         const printable = call.args.key === 'Space' || !Object.hasOwn(NAMED_KEYS, call.args.key)
@@ -1201,7 +1227,7 @@ function createAgentRunner({ access, controller, now = Date.now }) {
     },
     async browser_select(call) {
       const target = tabFor(call)
-      return acting(target, '正在选择', async () => {
+      return acting(target, ACTIVITY_COPY.select, async () => {
         prepare(target)
         const found = await element(target, { ref: call.args.ref, option: call.args.value }, call.deadline - 500)
         return {
@@ -1213,13 +1239,13 @@ function createAgentRunner({ access, controller, now = Date.now }) {
     },
     async browser_type(call, signal) {
       const target = tabFor(call)
-      return acting(target, '正在输入', async () => {
+      return acting(target, ACTIVITY_COPY.typing(), async () => {
         prepare(target)
         // Only check, don't focus yet: a field whose value is never read takes text only at R2.
         const peek = await element(target, { ref: call.args.ref, scroll: true }, call.deadline - 1000)
         if (peek.sensitive && call.risk !== 'R2') throw new AgentFailure('sensitive-field')
         if (peek.file) throw new AgentFailure('file-input')
-        target.activity = `正在输入${targetName(peek)}`
+        target.activity = ACTIVITY_COPY.typing(targetName(peek))
         access.changed(target, true)
         const focused = await element(
           target,

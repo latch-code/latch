@@ -37,7 +37,7 @@ import {
 } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
-import { MODEL_MENU_COPY, type Brief } from '../core/securityCopy.ts'
+import { computerLabel, MODEL_MENU_COPY, type Brief } from '../core/securityCopy.ts'
 import {
   engineEntries,
   findProvider,
@@ -53,14 +53,116 @@ import { AgentPresetList, AgentSetupPanel } from '../components/SetupPanels.tsx'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { MiddleEllipsis } from '../settings/common.tsx'
 import { isolationBrief } from '../agents/helpers.ts'
-import { agentConfigValues, DEFAULT_MODEL } from './modelReasoning.ts'
+import { agentConfigValues, REASONING_COPY } from './modelReasoning.ts'
 import { ValuePicker } from './ComposerControl.tsx'
 import { readOnSelect, readsOnSelect } from './harnessCatalogue.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    saving: '正在保存…',
+    clearDefault: '取消新会话默认',
+    setDefault: '设为新会话默认',
+    back: '返回',
+    addHarness: '添加 Harness',
+    chooseHarness: '选择 Harness',
+    addHarnessMenu: '添加 Harness…',
+    manageHarnesses: '管理 Harness…',
+    fixedHarnessDetail: (value1: string) => `${value1}开始后不能换 Harness。`,
+    fixedHarness: '开始后不能换 Harness',
+    newSession: '新会话',
+    fork: '分叉',
+    unsupported: '不再支持',
+    confirmLocal: (value1: string) => `地址还没确认 · 在${value1} 上确认`,
+    unusableServices: '这个 Harness 用不了的模型服务',
+    forwarded: (value1: string) => `经 ${value1}转发`,
+    forwardedDetail: (value1: string, value2: string) =>
+      `「经 ${value1}」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。${value2} 有一整轮没有经过 Latch 时，会话里会告诉你。`,
+    sessionCredential: (value1: string) => `${value1} 运行的命令读得到这个会话的转发凭据，不是密钥。`,
+    fixedRoute: (value1: string) => `${value1} 的会话不能在它自己的登录和经 Latch 之间换，新开一个会话`,
+    service: '模型服务',
+    deleted: '已经删除',
+    deletedDetail: '这个会话开始时用的模型服务已经删除，下一轮会失败。要接着做，新开一个会话。',
+    noKey: '没有密钥',
+    addKey: '在设置 › 模型里添加密钥',
+    unconfirmed: '地址还没确认',
+    confirmAddress: '在这台 Mac 上确认它的地址',
+    unsupportedRoute: '不再支持',
+    anotherService: '换一个模型服务',
+    off: '已停用',
+    turnOn: '在设置 › 模型里重新打开它',
+    unavailable: '现在不能用',
+    checkSettings: '在设置 › 模型里看看它',
+    unusableDetail: (value1: string, value2: string, value3: string) =>
+      `这个会话开始时用的「${value1}」${value2}，下一轮会失败。${value3}，或新开一个会话。`,
+    forwards: '请求由 Latch 在这台 Mac 上转发，用设置里的密钥。',
+    fallsBack: (value1: string) => `出错时改用「${value1}」。`,
+    experimentalDetail: (value1: string) => `协议转换，实验性：略去或受限的有${value1}；文件与服务端会话状态不能转换。`,
+    experimentalNote: (value1: string) => `${value1}协议转换，实验性。`,
+    limits: '略去或受限',
+    notConverted: '文件与服务端会话状态（不能转换）',
+    serviceFail: (value1: string) => `下一轮会失败：服务${value1}`,
+    unknownModel: (value1: string) => `${value1} 不认识这个模型`,
+    default: '默认',
+  },
+  {
+    saving: 'Saving…',
+    clearDefault: 'Remove new-session default',
+    setDefault: 'Default for new sessions',
+    back: 'Back',
+    addHarness: 'Add Harness',
+    chooseHarness: 'Choose Harness',
+    addHarnessMenu: 'Add Harness…',
+    manageHarnesses: 'Manage Harnesses…',
+    fixedHarnessDetail: (value1: string) => `${value1} The Harness stays fixed after the session starts.`,
+    fixedHarness: 'Harness is fixed once started',
+    newSession: 'New session',
+    fork: 'Fork',
+    unsupported: 'No longer supported',
+    confirmLocal: (value1: string) => `Address unconfirmed · Confirm on ${value1}`,
+    unusableServices: 'Model services this Harness cannot use',
+    forwarded: (value1: string) => `Forwarded via ${value1}`,
+    forwardedDetail: (value1: string, value2: string) =>
+      `Requests through ${value1} are forwarded by Latch on this Mac using the key in Settings. The conversation shows when an entire ${value2} turn bypasses Latch.`,
+    sessionCredential: (value1: string) =>
+      `Commands run by ${value1} can read this session’s forwarding credential. The model service key stays on this Mac.`,
+    fixedRoute: (value1: string) =>
+      `This ${value1} session keeps either its own login or the Latch route. Start a new session to change the route.`,
+    service: 'Model service',
+    deleted: 'deleted',
+    deletedDetail: 'The model service this session started on was deleted. The next turn will fail. Start a new session to continue.',
+    noKey: 'has no key',
+    addKey: 'Add a key in Settings › Models',
+    unconfirmed: 'has an unconfirmed address',
+    confirmAddress: 'Confirm its address on this Mac',
+    unsupportedRoute: 'is no longer supported',
+    anotherService: 'Choose another model service',
+    off: 'is turned off',
+    turnOn: 'Turn it back on in Settings › Models',
+    unavailable: 'is unavailable',
+    checkSettings: 'Check it in Settings › Models',
+    unusableDetail: (value1: string, value2: string, value3: string) =>
+      `This session started with “${value1}”, which ${value2}. The next turn will fail. ${value3} or start a new session.`,
+    forwards: 'Latch forwards the requests on this Mac using the key in Settings.',
+    fallsBack: (value1: string) => `If the request fails, use “${value1}”.`,
+    experimentalDetail: (value1: string) =>
+      `Experimental protocol conversion. Limited or omitted: ${value1}. Files and server-side session state cannot be converted.`,
+    experimentalNote: (value1: string) => `${value1} Protocol conversion is experimental.`,
+    limits: 'Limited or omitted',
+    notConverted: 'Files and server-side session state (conversion unavailable)',
+    serviceFail: (value1: string) => `The next turn will fail. The service ${value1}.`,
+    unknownModel: (value1: string) => `${value1} does not recognize this model`,
+    default: 'Default',
+  },
+)
 
 type Access = Pick<DeviceAccess, 'legacy' | 'local' | 'admin' | 'scopes'>
 export const OWN_MODEL = 'own'
 
-const HERE = '这台 Mac'
+const CONTROL_COPY = defineCopy(
+  { forkBusy: '这一轮结束后才能分叉', fixedService: '开始后不能换服务' },
+  { forkBusy: 'Fork after this turn ends', fixedService: 'Service is fixed once started' },
+)
 
 /**
  * That Latch does not isolate an external Harness, as the chip that picks it says on hover: the same words each reply's
@@ -126,7 +228,7 @@ function PinChoiceRow({
         onClick={() => {
           void toggle()
         }}>
-        {busy ? '正在保存…' : pinned ? '取消新会话默认' : '设为新会话默认'}
+        {busy ? COPY.saving : pinned ? COPY.clearDefault : COPY.setDefault}
       </MenuFooterLink>
     </>
   )
@@ -183,8 +285,8 @@ function EngineAddPanel({
   return (
     <div className="permission-list">
       <header className="permission-list-head">
-        <IconButton size="xs" icon={ChevronLeftGlyph} label="返回" onClick={onBack} />
-        <span>添加 Harness</span>
+        <IconButton size="xs" icon={ChevronLeftGlyph} label={COPY.back} onClick={onBack} />
+        <span>{COPY.addHarness}</span>
       </header>
       <AgentPresetList
         presets={presets}
@@ -234,7 +336,7 @@ export function DraftHarnessControl({
   return (
     <ValuePicker
       label="Harness"
-      placeholder="选择 Harness"
+      placeholder={COPY.chooseHarness}
       value={harness?.id}
       options={entries.map(entry => ({
         value: entry.harness.id,
@@ -273,12 +375,12 @@ export function DraftHarnessControl({
               onClick={() => {
                 setAdding(true)
               }}>
-              添加 Harness…
+              {COPY.addHarnessMenu}
             </MenuFooterLink>
           )}
           {onManage && (
             <MenuFooterLink icon={HarnessGlyph} chevron={false} closes onClick={onManage}>
-              管理 Harness…
+              {COPY.manageHarnesses}
             </MenuFooterLink>
           )}
         </div>
@@ -304,7 +406,7 @@ export function DraftHarnessControl({
 }
 
 /** Why 分叉 is off while the latest turn runs: the Host refuses a fork from a turn that has not ended. */
-export const FORK_BUSY = '这一轮结束后才能分叉'
+export const forkBusy = () => CONTROL_COPY.forkBusy
 
 /** 分叉 in the session's Harness popover: the latest turn into a new session, which may pick another Harness. */
 export interface SessionFork {
@@ -336,7 +438,7 @@ export function SessionHarnessControl({
       size="sm"
       side="top"
       trigger={props => (
-        <Tooltip content={boundary ? `${boundary}开始后不能换 Harness。` : '开始后不能换 Harness'}>
+        <Tooltip content={boundary ? COPY.fixedHarnessDetail(boundary) : COPY.fixedHarness}>
           <button {...props} type="button" className="chip chip-harness" aria-label={`Harness：${name}`}>
             <HarnessTile harness={harness} size={16} />
             <span className="chip-text">{name}</span>
@@ -351,7 +453,7 @@ export function SessionHarnessControl({
         )}
         {fork && <ForkRow fork={fork} />}
         <MenuFooterLink icon={PlusGlyph} chevron={false} closes onClick={onNewSession}>
-          新会话
+          {COPY.newSession}
         </MenuFooterLink>
       </div>
     </Popover>
@@ -376,7 +478,7 @@ function ForkRow({ fork }: { fork: SessionFork }) {
         <span className="ui-menu-item-lead">
           <Icon icon={GitFork} size={14} />
         </span>
-        <span className="harness-fork-text">分叉</span>
+        <span className="harness-fork-text">{COPY.fork}</span>
       </button>
     </Tooltip>
   )
@@ -392,9 +494,9 @@ export interface UnusableService {
 
 /** The words for a saved service the built-in Harness cannot use yet. The app on that Mac keeps its own sentence. */
 function heldReason(reason: UnusableProvider['reason'], computer: string | undefined): string {
-  if (reason === 'unsupported') return '不再支持'
+  if (reason === 'unsupported') return COPY.unsupported
   if (reason === 'key-missing') return MODEL_MENU_COPY.missingKey
-  return computer === undefined ? `地址还没确认 · 在${HERE} 上确认` : MODEL_MENU_COPY.unconfirmed(computer)
+  return computer === undefined ? COPY.confirmLocal(computerLabel(true)) : MODEL_MENU_COPY.unconfirmed(computer)
 }
 
 /**
@@ -443,7 +545,7 @@ export function UnusableServices({ services }: { services: readonly UnusableServ
         </span>
       </MenuFooterLink>
       {open && (
-        <ul className="model-unusable-list" aria-label="这个 Harness 用不了的模型服务">
+        <ul className="model-unusable-list" aria-label={COPY.unusableServices}>
           {services.map(service => (
             <li key={service.id}>
               {service.provider ? <ProviderTile provider={service.provider} size={16} /> : <span className="model-unusable-blank" />}
@@ -482,9 +584,11 @@ function serviceReason(harness: HarnessInfo, provider: ProviderSummary): string 
 }
 
 /** The one name of Latch's model gateway wherever a page shows it: the panel's source, the composer's status, a turn's footer. */
-export const GATEWAY_NAME = 'Latch 网关'
+export const ROUTING_COPY = defineCopy(
+  { gateway: 'Latch 网关', experimental: '实验性' },
+  { gateway: 'Latch gateway', experimental: 'Experimental' },
+)
 /** On a service group's heading: the route is a protocol translation, or the Harness's forwarding is not yet proven. */
-export const EXPERIMENTAL = '实验性'
 
 /**
  * A group of the model panel. `gateway`: a service's models that go through Latch's gateway, all of which the panel
@@ -494,17 +598,13 @@ export type ModelGroup = PickerGroup<string> & { gateway?: { experimental: boole
 
 // Only a turn with no request through the gateway can be told apart; a turn that sends some elsewhere cannot.
 export const ROUTE_NOTE = (name: string, computer?: string, inherited?: boolean): Brief & { detail: string } => ({
-  label: `经 ${GATEWAY_NAME}转发`,
-  detail: `${onComputer(
-    `「经 ${GATEWAY_NAME}」表示请求由 Latch 在这台 Mac 上转发，用设置里的密钥。${name} 有一整轮没有经过 Latch 时，会话里会告诉你。`,
-    computer,
-  )}${inherited ? credentialInherited(name) : ''}`,
+  label: COPY.forwarded(ROUTING_COPY.gateway),
+  detail: `${onComputer(COPY.forwardedDetail(ROUTING_COPY.gateway, name), computer)}${inherited ? credentialInherited(name) : ''}`,
 })
 /** For a Harness with no switch that keeps its environment from the commands it runs: what those commands can read. */
-const credentialInherited = (name: string) => `${name} 运行的命令读得到这个会话的转发凭据，不是密钥。`
-const ROUTE_LOCKED = '开始后不能换服务'
+const credentialInherited = (name: string) => COPY.sessionCredential(name)
 /** Why a session of a Harness that keeps it where it began cannot cross between its own login and a service. */
-const routeBound = (name: string) => `${name} 的会话不能在它自己的登录和经 Latch 之间换，新开一个会话`
+const routeBound = (name: string) => COPY.fixedRoute(name)
 
 /**
  * The service a session's route goes to, as its menu names it, and why its next turn cannot go through Latch when the
@@ -521,20 +621,20 @@ export function routeService(
   const name = held?.name ?? route.name
   if (name === undefined)
     return {
-      name: '模型服务',
-      unusable: { words: '已经删除', note: '这个会话开始时用的模型服务已经删除，下一轮会失败。要接着做，新开一个会话。' },
+      name: COPY.service,
+      unusable: { words: COPY.deleted, note: COPY.deletedDetail },
     }
   const [words, fix] =
     held?.reason === 'key-missing'
-      ? ['没有密钥', '在设置 › 模型里添加密钥']
+      ? [COPY.noKey, COPY.addKey]
       : held?.reason === 'origin-unconfirmed'
-        ? ['地址还没确认', onComputer('在这台 Mac 上确认它的地址', computer)]
+        ? [COPY.unconfirmed, onComputer(COPY.confirmAddress, computer)]
         : held?.reason === 'unsupported'
-          ? ['不再支持', '换一个模型服务']
+          ? [COPY.unsupportedRoute, COPY.anotherService]
           : route.off
-            ? ['已停用', '在设置 › 模型里重新打开它']
-            : ['现在不能用', '在设置 › 模型里看看它']
-  return { name, unusable: { words, note: `这个会话开始时用的「${name}」${words}，下一轮会失败。${fix}，或新开一个会话。` } }
+            ? [COPY.off, COPY.turnOn]
+            : [COPY.unavailable, COPY.checkSettings]
+  return { name, unusable: { words, note: COPY.unusableDetail(name, words, fix) } }
 }
 
 /**
@@ -552,17 +652,17 @@ function serviceHint(
 ): { hint: string; note: BoardNote } {
   const pair = harness && provider ? pairRoute(harness.capabilities, provider) : undefined
   const others = (route?.fallbacks ?? []).flatMap(item => (item.name ? [item.name] : []))
-  const lead = onComputer('请求由 Latch 在这台 Mac 上转发，用设置里的密钥。', computer)
+  const lead = onComputer(COPY.forwards, computer)
   const losses = pair?.kind === 'translate' ? [...new Set(pair.losses)].map(loss => GATEWAY_LOSS_NAMES[loss]) : undefined
   const after = [
     harness?.capabilities.models.credentialInherited ? credentialInherited(name) : '',
-    others.length ? `出错时改用「${[...new Set(others)].join('」「')}」。` : '',
+    others.length ? COPY.fallsBack([...new Set(others)].join('」「')) : '',
   ].filter(Boolean)
   return {
-    hint: [lead, losses ? `协议转换，实验性：略去或受限的有${losses.join('、')}；文件与服务端会话状态不能转换。` : '', ...after].join(''),
+    hint: [lead, losses ? COPY.experimentalDetail(losses.join('、')) : '', ...after].join(''),
     note: {
-      lead: losses ? `${lead}协议转换，实验性。` : lead,
-      ...(losses ? { fold: { label: '略去或受限', items: [...losses, '文件与服务端会话状态（不能转换）'] } } : {}),
+      lead: losses ? COPY.experimentalNote(lead) : lead,
+      ...(losses ? { fold: { label: COPY.limits, items: [...losses, COPY.notConverted] } } : {}),
       after,
     },
   }
@@ -596,10 +696,10 @@ export function ownModelGroups(
   const switching = harness?.capabilities.models.routeSwitch
   // In a session: why a choice that leaves its route cannot be made, `crossing` between the Harness's login and a service.
   const locked = (crossing: boolean) =>
-    !session ? undefined : !switching ? ROUTE_LOCKED : crossing && switching === 'services' ? routeBound(name) : undefined
+    !session ? undefined : !switching ? CONTROL_COPY.fixedService : crossing && switching === 'services' ? routeBound(name) : undefined
   const media = harness ? { media: <HarnessTile harness={harness} size={16} /> } : {}
   const ownOptions: Array<PickerGroup<string>['options'][number]> = route
-    ? (listed ? agentConfigValues(listed) : [{ value: '', name: DEFAULT_MODEL }]).map(item => {
+    ? (listed ? agentConfigValues(listed) : [{ value: '', name: REASONING_COPY.defaultModel }]).map(item => {
         const reason = locked(true)
         return {
           value: ownChoice(item.value),
@@ -620,7 +720,7 @@ export function ownModelGroups(
       gateway: { experimental: experimental && !routed!.unusable },
       ...(health ? { media: <HealthDot words={health} /> } : {}),
       ...serviceHint(harness, name, provider, computer, route),
-      options: routed!.unusable ? own.map(option => ({ ...option, disabledReason: `下一轮会失败：服务${routed!.unusable!.words}` })) : own,
+      options: routed!.unusable ? own.map(option => ({ ...option, disabledReason: COPY.serviceFail(routed!.unusable!.words) })) : own,
     }
   }
   let placed = false
@@ -645,7 +745,7 @@ export function ownModelGroups(
       ...(health ? { media: <HealthDot words={health} /> } : {}),
       ...serviceHint(harness, name, provider, computer),
       options: serviceModels(provider).map(model => {
-        const why = knows && !knows.has(modelIdKey(model)) ? `${name} 不认识这个模型` : reason
+        const why = knows && !knows.has(modelIdKey(model)) ? COPY.unknownModel(name) : reason
         return {
           value: serviceValue({ providerId: provider.id, model }),
           label: model,
@@ -670,4 +770,4 @@ export function defaultModelOf(harness: Pick<HarnessInfo, 'catalogue'> | undefin
 
 /** 「默认」 beside the real name of the model a new session starts on. */
 export const defaultTag = (value: string, defaultModel: string | undefined) =>
-  defaultModel !== undefined && value === defaultModel ? { tag: <Badge>默认</Badge> } : {}
+  defaultModel !== undefined && value === defaultModel ? { tag: <Badge>{COPY.default}</Badge> } : {}

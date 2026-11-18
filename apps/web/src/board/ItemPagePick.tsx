@@ -2,6 +2,12 @@ import { useState } from 'react'
 import { escapeSecurityText } from '@latch/protocol'
 import { Button, InlineNotice, Modal, ModalHeader } from '@latch/ui'
 import { MarkTile } from '../components/BrandTile.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  { failed: '没有完成，请重试。', cancel: '取消' },
+  { failed: 'Couldn’t complete the action. Try again.', cancel: 'Cancel' },
+)
 
 export interface PickOption {
   id: string
@@ -44,7 +50,7 @@ export function ItemPagePick({
       await onPick(id)
       onClose()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '没有完成，请重试。')
+      setError(cause instanceof Error ? cause.message : COPY.failed)
       setBusy(null)
     }
   }
@@ -76,7 +82,7 @@ export function ItemPagePick({
       </div>
       <footer className="ui-modal-footer">
         <Button size="md" disabled={busy !== null} onClick={close}>
-          取消
+          {COPY.cancel}
         </Button>
       </footer>
     </Modal>

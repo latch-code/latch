@@ -1,6 +1,22 @@
 import { Circle, CircleDot } from 'lucide-react'
 import type { PlanEntry } from '@latch/protocol'
 import { ICON_STROKE, StatusGlyph, CircleCheckGlyph } from '@latch/ui'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    complete: '，已完成',
+    active: '，进行中',
+    unfinished: '，未完成',
+    pending: '，待开始',
+  },
+  {
+    complete: ', done',
+    active: ', in progress',
+    unfinished: ', unfinished',
+    pending: ', not started',
+  },
+)
 
 /**
  * `active`: the session is still running, so the step in progress is drawn in ink; once it settles that step reads as
@@ -23,7 +39,13 @@ export function PlanList({ plan, active }: { plan: PlanEntry[]; active: boolean 
           </StatusGlyph>
           <span className="plan-text">{entry.content}</span>
           <span className="sr-only">
-            {entry.status === 'completed' ? '，已完成' : entry.status === 'in_progress' ? (active ? '，进行中' : '，未完成') : '，待开始'}
+            {entry.status === 'completed'
+              ? COPY.complete
+              : entry.status === 'in_progress'
+                ? active
+                  ? COPY.active
+                  : COPY.unfinished
+                : COPY.pending}
           </span>
         </li>
       ))}

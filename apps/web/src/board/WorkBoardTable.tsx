@@ -5,19 +5,48 @@ import { Lightbulb, ListTodo } from 'lucide-react'
 import { MarkTile } from '../components/BrandTile.tsx'
 import { Menu, rowOf, type MenuSection } from '../components/overlays.tsx'
 import { hostNow, useTicker } from '../core/hostClock.ts'
+import { harnessName } from '../core/harnessName.ts'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
 import { relativeTime } from '../format.ts'
 import { projectOf } from '../sessions.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { ItemWriteState } from './itemWrites.ts'
 import { cardUpdatedAt, GROUP_LABELS, whoOf, WHO_CODE, type BoardCard, type ListState } from './model.ts'
-import { cardState, PriorityMark, TagChips, WhoMark } from './WorkBoardCard.tsx'
+import { BOARD_CARD_COPY, cardState, PriorityMark, TagChips, WhoMark } from './WorkBoardCard.tsx'
 import { itemState, type ItemCard } from './WorkBoardItemCard.tsx'
 import { ItemWriteLine } from './WriteLine.tsx'
 import { pendingEntries, type TodoProposal } from './proposals.ts'
 import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
 
 export const LIST_STATES: readonly ListState[] = ['all', 'todo', 'attention', 'running', 'deliver', 'done', 'archived']
-const STATE_LABELS: Record<ListState, string> = { all: '全部', ...GROUP_LABELS, archived: '已归档' }
+const COPY = defineCopy(
+  {
+    all: '全部',
+    archived: '已归档',
+    expand: (title: string) => `展开 ${title} 的会话`,
+    collapse: (title: string) => `收起 ${title} 的会话`,
+    proposal: '提议',
+    title: '标题',
+    status: '状态',
+    project: '项目',
+    who: '谁在做',
+    updated: '更新时间',
+  },
+  {
+    all: 'All',
+    archived: 'Archived',
+    expand: (title: string) => `Expand sessions for ${title}`,
+    collapse: (title: string) => `Collapse sessions for ${title}`,
+    proposal: 'Proposal',
+    title: 'Title',
+    status: 'Status',
+    project: 'Project',
+    who: 'Who’s working',
+    updated: 'Updated',
+  },
+)
+
+const stateLabel = (state: ListState) => (state === 'all' || state === 'archived' ? COPY[state] : GROUP_LABELS[state])
 
 function Row({
   task,
@@ -39,11 +68,11 @@ function Row({
   const now = hostNow()
   const stopping = shell.stopping.has(task.id) || task.live?.activity === 'cancelling'
   const state = task.archived
-    ? { tone: 'neutral' as const, words: '已归档' }
+    ? { tone: 'neutral' as const, words: COPY.archived }
     : cardState(task, { connected, now, stopping, sharedFolder: false })
   const harness = shell.catalog?.harnesses.find(item => item.id === task.harnessId)
   const project = projectOf(task, shell.catalog?.workspaces ?? [])
-  const title = escapeSecurityText(task.title || '未命名会话')
+  const title = escapeSecurityText(task.title || BOARD_CARD_COPY.untitled)
   return (
     <li className="work-board-row" data-work-session={task.id} data-marked={marked ? '' : undefined} data-nested={nested ? '' : undefined}>
       <button
@@ -61,10 +90,10 @@ function Row({
         <StatusWord className="work-board-row-state" tone={state.tone}>
           {state.words}
         </StatusWord>
-        <span className="work-board-row-project">{escapeSecurityText(project?.name ?? '无项目')}</span>
+        <span className="work-board-row-project">{escapeSecurityText(project?.name ?? BOARD_CARD_COPY.noProject)}</span>
         <span className="work-board-row-harness">
           <MarkTile mark={harness?.capabilities.display.mark ?? task.harnessId} size={16} bare />
-          <span>{escapeSecurityText(harness?.capabilities.display.label ?? task.harnessId ?? '')}</span>
+          <span>{escapeSecurityText(harness ? harnessName(harness) : (task.harnessId ?? ''))}</span>
         </span>
         <span className="work-board-row-who">{whoOf(task) === WHO_CODE ? 'Code' : <WhoMark task={task} shell={shell} />}</span>
         <time className="work-board-row-time" dateTime={task.updatedAt}>
@@ -73,7 +102,7 @@ function Row({
       </button>
       <span className="work-board-card-actions">
         <Menu
-          label={`看板操作：${title}`}
+          label={BOARD_CARD_COPY.actions(title)}
           placement="bottom-end"
           context={rowOf('.work-board-row')}
           sections={menu}
@@ -82,8 +111,8 @@ function Row({
               {...props}
               className="work-board-card-more"
               size="xs"
-              label={`更多操作：${title}`}
-              tooltip="更多操作"
+              label={BOARD_CARD_COPY.moreFor(title)}
+              tooltip={BOARD_CARD_COPY.more}
               icon={MoreGlyph}
             />
           )}
@@ -140,7 +169,7 @@ function ItemRow({
           <IconButton
             className="work-board-row-fold"
             size="xs"
-            label={folded ? `展开 ${title} 的会话` : `收起 ${title} 的会话`}
+            label={folded ? COPY.expand(title) : COPY.collapse(title)}
             icon={folded ? ChevronRightGlyph : ChevronDownGlyph}
             aria-expanded={!folded}
             onClick={onFold}
@@ -157,18 +186,18 @@ function ItemRow({
             <PriorityMark task={item} reserve />
             <Icon icon={ListTodo} size={14} className="work-board-item-glyph" />
             <span className="work-board-card-title">{title}</span>
-            {sessions.length > 1 && <span className="work-board-row-count">{sessions.length}</span>}
+            {sessions.length > 1 && <span className="work-board-row-count">{formatNumber(sessions.length)}</span>}
             <TagChips tags={item.tags} />
           </span>
           <StatusWord className="work-board-row-state" tone={state.tone}>
             {state.words}
           </StatusWord>
-          <span className="work-board-row-project">{escapeSecurityText(project?.name ?? '无项目')}</span>
+          <span className="work-board-row-project">{escapeSecurityText(project?.name ?? BOARD_CARD_COPY.noProject)}</span>
           <span className="work-board-row-harness">
             {harnessIds.length > 0 && <MarkTile mark={harness?.capabilities.display.mark ?? harnessIds[0]} size={16} bare />}
             <span>
-              {escapeSecurityText(harness?.capabilities.display.label ?? harnessIds[0] ?? '')}
-              {harnessIds.length > 1 ? ` +${harnessIds.length - 1}` : ''}
+              {escapeSecurityText(harness ? harnessName(harness) : (harnessIds[0] ?? ''))}
+              {harnessIds.length > 1 ? ` +${formatNumber(harnessIds.length - 1)}` : ''}
             </span>
           </span>
           <span className="work-board-row-who">Code</span>
@@ -191,7 +220,7 @@ function ItemRow({
         )}
         <span className="work-board-card-actions">
           <Menu
-            label={`看板操作：${title}`}
+            label={BOARD_CARD_COPY.actions(title)}
             placement="bottom-end"
             context={rowOf('.work-board-row')}
             sections={menu}
@@ -200,8 +229,8 @@ function ItemRow({
                 {...props}
                 className="work-board-card-more"
                 size="xs"
-                label={`更多操作：${title}`}
-                tooltip="更多操作"
+                label={BOARD_CARD_COPY.moreFor(title)}
+                tooltip={BOARD_CARD_COPY.more}
                 icon={MoreGlyph}
               />
             )}
@@ -247,7 +276,7 @@ function ProposalRow({
         </span>
         <span className="work-board-row-state work-board-proposal-line">
           <StatusWord tone="neutral" className="work-board-proposal-word">
-            提议
+            {COPY.proposal}
           </StatusWord>
           {proposal.external && <ExternalMark />}
         </span>
@@ -311,20 +340,20 @@ export function WorkBoardTable({
     <div className="work-board-table">
       <FilterPills
         className="work-board-states"
-        label="状态"
+        label={COPY.status}
         value={state}
-        options={LIST_STATES.map(value => ({
-          value,
-          label: counts[value] === undefined ? STATE_LABELS[value] : `${STATE_LABELS[value]} ${counts[value]}`,
-        }))}
+        options={LIST_STATES.map(value => {
+          const count = counts[value]
+          return { value, label: count === undefined ? stateLabel(value) : `${stateLabel(value)} ${formatNumber(count)}` }
+        })}
         onValueChange={onState}
       />
       <div className="work-board-table-head">
-        <span>标题</span>
-        <span>状态</span>
-        <span className="work-board-row-project">项目</span>
+        <span>{COPY.title}</span>
+        <span>{COPY.status}</span>
+        <span className="work-board-row-project">{COPY.project}</span>
         <span className="work-board-row-harness">Harness</span>
-        <span className="work-board-row-who">谁在做</span>
+        <span className="work-board-row-who">{COPY.who}</span>
         <button
           type="button"
           className="work-board-order work-board-row-time"
@@ -332,12 +361,12 @@ export function WorkBoardTable({
           onClick={() => {
             onOrder(order === 'time' ? 'group' : 'time')
           }}>
-          更新时间
+          {COPY.updated}
           {order === 'time' && <Icon icon={ChevronDownGlyph} size={12} />}
         </button>
       </div>
       {rows.length ? (
-        <ul className="work-board-rows" aria-label={STATE_LABELS[state]}>
+        <ul className="work-board-rows" aria-label={stateLabel(state)}>
           {rows.map(card =>
             card.kind === 'proposal' ? (
               <ProposalRow key={card.id} card={card} shell={shell} onReview={onReview} />

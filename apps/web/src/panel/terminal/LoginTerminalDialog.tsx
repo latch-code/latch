@@ -5,7 +5,29 @@ import { errorMessage, MessageError } from '../../core/api.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
 import { endedText } from './model.ts'
 import { loginRuns, useDetachedLogin, type LoginRun } from './loginRuns.ts'
-import { ACCOUNT_NOTE, TerminalScreen } from './TerminalPanel.tsx'
+import { terminalAccountNote, TerminalScreen } from './TerminalPanel.tsx'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    closeTerminal: '关闭终端',
+    close: '关闭',
+    reconnecting: '正在重新连接…',
+    loggingIn: '登录中',
+    loginTerminal: (value1: string | number) => `${value1} 登录终端`,
+    closeLogin: (value1: string | number) => `关闭 ${value1} 的登录？`,
+    running: '登录命令还在运行，关闭会结束它。',
+  },
+  {
+    closeTerminal: 'Close terminal',
+    close: 'Close',
+    reconnecting: 'Reconnecting…',
+    loggingIn: 'Logging in',
+    loginTerminal: (value1: string | number) => `${value1} login terminal`,
+    closeLogin: (value1: string | number) => `Close ${value1} login?`,
+    running: 'The login command is still running. Closing ends it.',
+  },
+)
 
 /**
  * A Harness's login command outside any session (设置, a new session's draft): one Latch terminal in a dialog, in the home
@@ -52,13 +74,13 @@ function DetachedLogin({ run }: { run: LoginRun }) {
         className="login-terminal-dialog"
         title={
           // Whose account the shell runs as is the title's tooltip, as on the terminal's foot; it takes no room.
-          <Tooltip content={ACCOUNT_NOTE}>
+          <Tooltip content={terminalAccountNote()}>
             <span className="login-terminal-title" tabIndex={0}>
               <VisibleText text={name} />
             </span>
           </Tooltip>
         }
-        closeLabel="关闭终端"
+        closeLabel={COPY.closeTerminal}
         onClose={() => void close()}
         footer={
           ended ? (
@@ -66,12 +88,12 @@ function DetachedLogin({ run }: { run: LoginRun }) {
               <span className="terminal-ended" role="status">
                 {ended}
               </span>
-              <Button onClick={() => void close()}>关闭</Button>
+              <Button onClick={() => void close()}>{COPY.close}</Button>
             </>
           ) : (
             <span className="terminal-running" role="status">
               <Spinner size={12} />
-              {connection === 'reconnecting' ? '正在重新连接…' : '登录中'}
+              {connection === 'reconnecting' ? COPY.reconnecting : COPY.loggingIn}
             </span>
           )
         }>
@@ -86,7 +108,7 @@ function DetachedLogin({ run }: { run: LoginRun }) {
             {failure ?? inputFailure}
           </InlineNotice>
         )}
-        <div className="login-terminal-screen terminal-screens" role="group" aria-label={`${name} 登录终端`}>
+        <div className="login-terminal-screen terminal-screens" role="group" aria-label={COPY.loginTerminal(name)}>
           <TerminalScreen
             target={{ sessionId: run.sessionId }}
             tab={{ id: summary.id, number: 1, summary }}
@@ -104,9 +126,9 @@ function DetachedLogin({ run }: { run: LoginRun }) {
       </Dialog>
       {confirming && (
         <ConfirmDialog
-          title={`关闭 ${name} 的登录？`}
-          message="登录命令还在运行，关闭会结束它。"
-          confirmLabel="关闭终端"
+          title={COPY.closeLogin(name)}
+          message={COPY.running}
+          confirmLabel={COPY.closeTerminal}
           danger
           onConfirm={async () => {
             try {

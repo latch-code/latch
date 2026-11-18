@@ -14,7 +14,33 @@ import {
   withServicePick,
   type ComposerChoice,
 } from './composerChoice.ts'
+import { defineCopy, formatList } from './core/i18n.ts'
 import { MODE_COPY } from './core/securityCopy.ts'
+
+/** The first user message sent to a fork when the editor is empty. */
+export const FORK_CONTINUATION_PROMPT = '请接着这个会话继续。'
+
+/** What a fork's draft says it could not take from its source. The source's names stay as they were. */
+const FORK_COPY = defineCopy(
+  {
+    model: (name: string) => `模型「${name}」`,
+    thinking: (name: string) => `思考「${name}」`,
+    permission: (name: string) => `权限「${name}」`,
+    list: (items: readonly string[]) => (items.length > 2 ? `${items.slice(0, -1).join('、')}与${items.at(-1)}` : items.join('与')),
+    /** What a fork's draft could not take from its source's model and thinking level. */
+    lost: (items: string, harness: string) => `没有沿用来源会话的${items}：${harness} 在这里不能选。`,
+    /** What it can take only once the Harness's options are read, whether that read is running, failed or not asked for. */
+    pending: (items: string, harness: string) => `来源会话的${items}要等读到 ${harness} 的选项后才能沿用。`,
+  },
+  {
+    model: name => `model “${name}”`,
+    thinking: name => `thinking “${name}”`,
+    permission: name => `permissions “${name}”`,
+    list: items => formatList(items),
+    lost: (items, harness) => `Didn’t keep the source session’s ${items}: ${harness} can’t choose them here.`,
+    pending: (items, harness) => `The source session’s ${items} carry over once ${harness}’s options are read.`,
+  },
+)
 
 /** One of the source's own options when it was forked: its ID there, the value and that value's name. */
 interface SourcePick {
@@ -121,11 +147,11 @@ function carry(catalog: HostCatalog, base: ComposerChoice, source: ForkSource): 
   const thinkingWords = source.thinking?.name ?? (source.service?.effort ? thinkingWord(source.service.effort) : undefined)
   if (harness.capabilities.models.owner === 'latch') {
     let model = service && validModel(catalog, service)
-    if (!model && modelWords !== undefined) lost.push(`模型「${modelWords}」`)
+    if (!model && modelWords !== undefined) lost.push(FORK_COPY.model(modelWords))
     model ??= base.model
     if (thinkingValue !== undefined) {
       if (model && thinkingLevels(catalog, model).includes(thinkingValue)) model = { ...model, effort: thinkingValue }
-      else lost.push(`思考「${thinkingWords}」`)
+      else lost.push(FORK_COPY.thinking(String(thinkingWords)))
     }
     return { config: base.config, ...(model ? { model } : {}), lost }
   }
@@ -142,14 +168,14 @@ function carry(catalog: HostCatalog, base: ComposerChoice, source: ForkSource): 
   if (routed) config = withServicePick(config, service, modelOption?.id)!
   else if (source.model && modelOption && offers(modelOption, source.model.value))
     config = { ...withServicePick(config, undefined), [modelOption.id]: source.model.value }
-  else if (unread && source.model) pending.push(`模型「${modelWords}」`)
-  else if (modelWords !== undefined) lost.push(`模型「${modelWords}」`)
+  else if (unread && source.model) pending.push(FORK_COPY.model(String(modelWords)))
+  else if (modelWords !== undefined) lost.push(FORK_COPY.model(modelWords))
   if (thinkingValue !== undefined) {
     // On a service's model the Harness says which levels it has only once it starts.
     const option = routed ? undefined : find('thought_level', source.thinking)
     if (option && offers(option, thinkingValue)) config[option.id] = thinkingValue
-    else if (unread && !routed) pending.push(`思考「${thinkingWords}」`)
-    else lost.push(`思考「${thinkingWords}」`)
+    else if (unread && !routed) pending.push(FORK_COPY.thinking(String(thinkingWords)))
+    else lost.push(FORK_COPY.thinking(String(thinkingWords)))
   }
   let permission: Carried['permission']
   const from = source.mode
@@ -157,7 +183,7 @@ function carry(catalog: HostCatalog, base: ComposerChoice, source: ForkSource): 
   const rows = base.mode !== 'chat' && harness.level === 'L3'
   // A Harness whose profile lists no rows (pi, one Latch cannot read back) has none to carry the source's onto.
   const hasRows = harness.permission === undefined || harness.permission.modeTiers !== undefined
-  if (rows && unread && hasRows && was !== undefined) pending.push(`权限「${was}」`)
+  if (rows && unread && hasRows && was !== undefined) pending.push(FORK_COPY.permission(was))
   const option = rows ? find('mode', from) : undefined
   if (option) {
     const exact = same && from && offers(option, from.value) ? from.value : undefined
@@ -183,11 +209,8 @@ function carry(catalog: HostCatalog, base: ComposerChoice, source: ForkSource): 
   return { config, lost, ...(pending.length ? { pending } : {}), ...(permission ? { permission } : {}) }
 }
 
-const listed = (items: readonly string[]) => (items.length > 2 ? `${items.slice(0, -1).join('、')}与${items.at(-1)}` : items.join('与'))
-/** What a fork's draft could not take from its source's model and thinking level. */
-const lostLine = (items: readonly string[], harness: string) => `没有沿用来源会话的${listed(items)}：${harness} 在这里不能选。`
-/** What it can take only once the Harness's options are read, whether that read is running, failed or not asked for. */
-const pendingLine = (items: readonly string[], harness: string) => `来源会话的${listed(items)}要等读到 ${harness} 的选项后才能沿用。`
+const lostLine = (items: readonly string[], harness: string) => FORK_COPY.lost(FORK_COPY.list(items), harness)
+const pendingLine = (items: readonly string[], harness: string) => FORK_COPY.pending(FORK_COPY.list(items), harness)
 
 /** A fork's draft, and what it says it could not take from its source. */
 export interface ForkedChoice {

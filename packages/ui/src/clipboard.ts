@@ -1,3 +1,5 @@
+import { UI_COPY } from './locale.ts'
+
 /**
  * Puts `text` on the clipboard: the async Clipboard API where the page has it and may use it, else a hidden textarea and
  * `execCommand('copy')`. The API is missing in an insecure context (a browser on `http://<LAN IP>`). Call it straight
@@ -19,7 +21,7 @@ export async function writeClipboard(text: string): Promise<void> {
 /** Neither way could copy; the page says 「复制不可用」 rather than blaming the connection. */
 export class ClipboardError extends Error {
   constructor(options?: ErrorOptions) {
-    super('复制不可用，请手动选择', options)
+    super(UI_COPY.copyUnavailable, options)
     this.name = 'ClipboardError'
   }
 }

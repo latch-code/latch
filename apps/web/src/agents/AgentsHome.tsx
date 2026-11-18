@@ -3,7 +3,7 @@ import { useState, type ReactNode } from 'react'
 import { GENERAL_AGENT_ID, type AutomationSummary, type TaskSummary } from '@latch/protocol'
 import { Button, Count, EmptyState, Icon, OverviewGlyph, PlusGlyph, ScheduleGlyph, Skeleton, StatusWord, WaitingGlyph } from '@latch/ui'
 import { VisibleText } from '../components/VisibleText.tsx'
-import { DEVICE_OFFLINE } from '../core/hostState.ts'
+import { CONNECTION_COPY } from '../core/hostState.ts'
 import { ConnectionBanners } from '../shell/ConnectionBanners.tsx'
 import { WorkbenchDecision } from '../shell/WorkbenchDecision.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
@@ -13,6 +13,7 @@ import { readsAgents, RUN_WORDS } from './model.ts'
 import { LockedAgents } from './parts.tsx'
 import { addressable, agentsOverview, OVERVIEW_ROWS, rowFor, type RosterRow } from './roster.ts'
 import { scheduleOverview, whenWords } from './scheduleModel.ts'
+import { AGENT_SPACE_COPY as COPY } from './spaceCopy.ts'
 
 /** A topic's row is signed by its helper: the face and the name, never a project, Harness or model. */
 const personOf = (rows: readonly RosterRow[], task: TaskSummary) => {
@@ -25,7 +26,7 @@ function More({ total, open, onToggle }: { total: number; open: boolean; onToggl
   if (total <= OVERVIEW_ROWS) return null
   return (
     <Button variant="ghost" className="work-overview-more" aria-expanded={open} onClick={onToggle}>
-      {open ? '收起' : `还有 ${total - OVERVIEW_ROWS} 件`}
+      {open ? COPY.collapse : COPY.more(total - OVERVIEW_ROWS)}
     </Button>
   )
 }
@@ -118,10 +119,10 @@ export function AgentsHome({
       <div className="agents-home-content">
         <ConnectionBanners shell={shell} />
         {attention.length > 0 && (
-          <section className="work-overview work-overview-group agents-home-waiting" data-group="attention" aria-label="等你处理">
+          <section className="work-overview work-overview-group agents-home-waiting" data-group="attention" aria-label={COPY.needsYou}>
             <header className="work-overview-group-heading">
               <Icon icon={WaitingGlyph} size={16} />
-              <h3>等你处理</h3>
+              <h3>{COPY.needsYou}</h3>
               <Count value={attention.length} />
             </header>
             <ul className="work-overview-list">
@@ -142,10 +143,10 @@ export function AgentsHome({
           </section>
         )}
         {results.length > 0 && (
-          <section aria-label="最近定时结果">
+          <section aria-label={COPY.scheduledResults}>
             <header className="work-overview-group-heading">
               <Icon icon={OverviewGlyph} size={16} />
-              <h3>最近定时结果</h3>
+              <h3>{COPY.scheduledResults}</h3>
             </header>
             <ul className="work-overview-list">
               {results.slice(0, OVERVIEW_ROWS).map(({ automation, run }) => {
@@ -169,10 +170,10 @@ export function AgentsHome({
           </section>
         )}
         {upcoming.length > 0 && (
-          <section aria-label="下次运行">
+          <section aria-label={COPY.nextRun}>
             <header className="work-overview-group-heading">
               <Icon icon={ScheduleGlyph} size={16} />
-              <h3>下次运行</h3>
+              <h3>{COPY.nextRun}</h3>
             </header>
             <ul className="work-overview-list">
               {upcoming.slice(0, OVERVIEW_ROWS).map(({ automation, at }) => {
@@ -194,7 +195,7 @@ export function AgentsHome({
         )}
         {empty !== null
           && (empty === 'loading' ? (
-            <ul className="work-overview-list agents-home-loading" aria-busy="true" aria-label="正在读取 Agent">
+            <ul className="work-overview-list agents-home-loading" aria-busy="true" aria-label={COPY.reading}>
               {[0, 1, 2].map(row => (
                 <li key={row}>
                   <Skeleton width={36} height={36} />
@@ -208,7 +209,7 @@ export function AgentsHome({
               title={
                 <>
                   <Icon icon={empty === 'no-agents' ? AgentsGlyph : WaitingGlyph} size={24} />
-                  <span>{empty === 'no-agents' ? '还没有自己的 Agent' : '没有待处理事项'}</span>
+                  <span>{empty === 'no-agents' ? COPY.noAgents : COPY.noAttention}</span>
                 </>
               }
               action={
@@ -220,9 +221,9 @@ export function AgentsHome({
                     icon={PlusGlyph}
                     data-space-primary=""
                     disabled={offline}
-                    tooltip={offline ? DEVICE_OFFLINE : undefined}
+                    tooltip={offline ? CONNECTION_COPY.offline : undefined}
                     onClick={() => shell.openMyAgent({ id: 'new' })}>
-                    新建 Agent
+                    {COPY.newAgent}
                   </Button>
                 )
               }
@@ -243,7 +244,7 @@ export function WaitingCards({ shell }: { shell: ShellState }) {
   const [all, setAll] = useState(false)
   if (attention.length === 0) return null
   return (
-    <section className="work-overview agents-phone-waiting" aria-label="等你处理">
+    <section className="work-overview agents-phone-waiting" aria-label={COPY.needsYou}>
       <ul className="work-overview-list">
         {(all ? attention : attention.slice(0, OVERVIEW_ROWS)).map((task, index) => (
           <li key={task.id}>

@@ -1,7 +1,10 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { Icon, IconButton, Kbd, Menu, PlusGlyph } from '@latch/ui'
+import { defineCopy } from '../core/i18n.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import type { PanelChoice, PanelKey } from './panelTabs.ts'
+
+const COPY = defineCopy({ open: '打开面板' }, { open: 'Open panel' })
 
 /** The 「+」 at the end of the panel's tabs: everything that can be opened here, each with its letter. */
 export function PanelAddMenu({
@@ -18,7 +21,7 @@ export function PanelAddMenu({
 }) {
   return (
     <Menu
-      label="打开面板"
+      label={COPY.open}
       size="xs"
       sections={[
         {
@@ -41,7 +44,7 @@ export function PanelAddMenu({
           }}
           size="xs"
           icon={PlusGlyph}
-          label="打开面板"
+          label={COPY.open}
           {...(shortcut ? { shortcut } : {})}
         />
       )}
@@ -76,7 +79,7 @@ export function PanelEmpty({
   return (
     <div className="panel-empty" ref={list} tabIndex={-1} onKeyDown={keydown}>
       {choices.length > 0 && (
-        <div className="panel-empty-choices" role="group" aria-label="打开面板">
+        <div className="panel-empty-choices" role="group" aria-label={COPY.open}>
           {choices.map(choice => (
             <button
               key={choice.key}

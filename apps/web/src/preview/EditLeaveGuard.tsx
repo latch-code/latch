@@ -1,6 +1,12 @@
 import { useEffect } from 'react'
 import { ConfirmDialog } from '@latch/ui'
+import { defineCopy } from '../core/i18n.ts'
 import { answerLeave, useEditDrafts } from './editDrafts.ts'
+
+const COPY = defineCopy(
+  { title: '放弃你的修改？', detail: '还没有保存的修改会丢失。', discard: '放弃' },
+  { title: 'Discard your changes?', detail: 'Unsaved changes will be lost.', discard: 'Discard' },
+)
 
 /** Asks before a session switch drops an editor's unsaved text, and before a reload does. */
 export function EditLeaveGuard() {
@@ -16,9 +22,9 @@ export function EditLeaveGuard() {
   if (!leaving) return null
   return (
     <ConfirmDialog
-      title="放弃你的修改？"
-      message="还没有保存的修改会丢失。"
-      confirmLabel="放弃"
+      title={COPY.title}
+      message={COPY.detail}
+      confirmLabel={COPY.discard}
       danger
       onConfirm={async () => {
         answerLeave(true)

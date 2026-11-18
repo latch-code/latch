@@ -17,9 +17,70 @@ import {
   type WorkspaceInfo,
 } from '@latch/protocol'
 import type { DeviceAccess } from './core/permissions.ts'
+import { harnessName } from './core/harnessName.ts'
+import { defineCopy, formatNumber, plural } from './core/i18n.ts'
 import { heldBackService } from './core/providerSetup.ts'
 import { storageGet, storageSet } from './preferences.ts'
 import { projectOf } from './sessions.ts'
+
+const COMPOSER_WORDS = defineCopy(
+  {
+    permissions: '权限',
+    upgrade: '需要升级',
+    previousService: '原来选择的模型服务暂不可用。',
+    services: '打开模型服务',
+  },
+  {
+    permissions: 'Permission',
+    upgrade: 'Update required',
+    previousService: 'The previously selected model service is unavailable.',
+    services: 'Open model services',
+  },
+)
+
+const formatCount = (count: number) => formatNumber(count)
+
+const CHOICE_COPY = defineCopy(
+  {
+    /** Words beside a model ID a person typed, in every list that shows one. */
+    typedModel: '自己填写',
+    readsAndRuns: '读写文件、运行命令',
+    filesOnly: '只读写文件，不运行命令',
+    folderLimit: (max: number, count: number) => `最多 ${max} 个文件夹，这个项目有 ${count} 个`,
+    newFolder: '在一个新的空文件夹里开始',
+    chatsOnly: (name: string) => `${name} 只回复文字，不读写文件`,
+    startsInNewFolder: (name: string) => `${name} 在一个新的空文件夹里开始`,
+    oldHost: '这台 Mac 上的 Latch 较旧，不能在这里连接模型服务。',
+    oldHostHint: '更新 Latch 并重新启动后再添加。',
+    executionDown: '当前模型接口不可用，请检查模型插件状态。',
+    noHarness: '没有可用的 Harness。',
+    harnessDown: (name: string) => `${name} 暂不可用。`,
+    projectTooBig: (count: number, name: string, max: number) => `这个项目有 ${count} 个文件夹，${name} 最多使用 ${max} 个。`,
+    noUsableService: (message: string) => `还没有可用的模型服务。${message}`,
+    openServices: '打开模型服务',
+    noService: '还没有模型服务。',
+  },
+  {
+    typedModel: 'Entered by you',
+    readsAndRuns: 'Reads and writes files, runs commands',
+    filesOnly: 'Reads and writes files, no commands',
+    folderLimit: (max, count) =>
+      `At most ${plural(max, { one: '{n} folder', other: '{n} folders' })}; this project has ${formatCount(count)}`,
+    newFolder: 'Starts in a new empty folder',
+    chatsOnly: name => `${name} replies with text only, no files`,
+    startsInNewFolder: name => `${name} starts in a new empty folder`,
+    oldHost: 'Latch on this Mac is too old to connect a model service here.',
+    oldHostHint: 'Update Latch and restart it, then add one.',
+    executionDown: 'The model interface is unavailable. Check the model plugin.',
+    noHarness: 'No Harness available.',
+    harnessDown: name => `${name} is unavailable.`,
+    projectTooBig: (count, name, max) =>
+      `This project has ${plural(count, { one: '{n} folder', other: '{n} folders' })}; ${name} uses at most ${formatCount(max)}.`,
+    noUsableService: message => `No usable model service yet. ${message}`,
+    openServices: 'Open model services',
+    noService: 'No model service yet.',
+  },
+)
 
 /** A pin is this computer's own, so whether this page is on it decides whether a pin applies. */
 type PinAccess = Pick<DeviceAccess, 'legacy' | 'local'>
@@ -59,9 +120,6 @@ export interface DraftConfig {
   source: HarnessCatalogue['source'] | ServiceModelOptions['source']
 }
 
-/** Words beside a model ID a person typed, in every list that shows one. */
-export const TYPED_MODEL = '自己填写'
-
 /** The model option with the IDs a person typed for this Harness after what it lists. */
 export function withTypedModels(config: readonly SessionConfigOption[], typed: readonly string[] | undefined): SessionConfigOption[] {
   if (!typed?.length) return [...config]
@@ -69,7 +127,10 @@ export function withTypedModels(config: readonly SessionConfigOption[], typed: r
     if (option.category !== 'model') return option
     const extra = typed.filter(model => !option.options.some(item => item.value === model))
     return extra.length
-      ? { ...option, options: [...option.options, ...extra.map(model => ({ value: model, name: model, description: TYPED_MODEL }))] }
+      ? {
+          ...option,
+          options: [...option.options, ...extra.map(model => ({ value: model, name: model, description: CHOICE_COPY.typedModel }))],
+        }
       : option
   })
 }
@@ -136,7 +197,7 @@ export function ladderMode(
   const picked = picks?.[LADDER_MODE]
   return {
     id: LADDER_MODE,
-    name: '权限',
+    name: COMPOSER_WORDS.permissions,
     category: 'mode',
     currentValue: picked !== undefined && modes.includes(picked) ? picked : declared.startMode,
     options: modes.map(value => ({ value, name: value })),
@@ -182,7 +243,7 @@ export function startConfig(
   })
 }
 
-export const harnessName = (harness: Pick<HarnessInfo, 'capabilities'>): string => harness.capabilities.display.label
+export { harnessName } from './core/harnessName.ts'
 
 /**
  * A draft's pick of a model from a saved service instead of the Harness's own, kept among its picks so that it is that
@@ -309,13 +370,13 @@ export function engineEntries(catalog: HostCatalog, workspaceId?: string): Engin
     .filter(harness => harness.status === 'ready' || needsUpgrade(harness))
     .toSorted((a, b) => harnessRank(a) - harnessRank(b))
     .map(harness => {
-      if (needsUpgrade(harness)) return { harness, label: harnessName(harness), line: '', disabledReason: '需要升级' }
+      if (needsUpgrade(harness)) return { harness, label: harnessName(harness), line: '', disabledReason: COMPOSER_WORDS.upgrade }
       const max = harness.projectFolders?.access === 'all' ? harness.projectFolders.max : undefined
       return {
         harness,
         label: harnessName(harness),
-        line: harness.capabilities.tools.shell ? (harness.statusMessage ?? '读写文件、运行命令') : '只读写文件，不运行命令',
-        ...(max !== undefined && count > max ? { disabledReason: `最多 ${max} 个文件夹，这个项目有 ${count} 个` } : {}),
+        line: harness.capabilities.tools.shell ? (harness.statusMessage ?? CHOICE_COPY.readsAndRuns) : CHOICE_COPY.filesOnly,
+        ...(max !== undefined && count > max ? { disabledReason: CHOICE_COPY.folderLimit(max, count) } : {}),
       }
     })
 }
@@ -476,10 +537,8 @@ function startMode(catalog: HostCatalog, harness: HarnessInfo | undefined, works
  * Harness and what it does.
  */
 export function noProjectLine(harness: Pick<HarnessInfo, 'modes' | 'capabilities'> | undefined): string {
-  if (!harness) return '在一个新的空文件夹里开始'
-  return harness.modes.includes('chat')
-    ? `${harnessName(harness)} 只回复文字，不读写文件`
-    : `${harnessName(harness)} 在一个新的空文件夹里开始`
+  if (!harness) return CHOICE_COPY.newFolder
+  return harness.modes.includes('chat') ? CHOICE_COPY.chatsOnly(harnessName(harness)) : CHOICE_COPY.startsInNewFolder(harnessName(harness))
 }
 
 /**
@@ -584,11 +643,11 @@ export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice): Start
     if (snapshot.execution?.modelConfigurationRequired)
       return {
         kind: 'model-required',
-        message: '这台 Mac 上的 Latch 较旧，不能在这里连接模型服务。',
-        hint: '更新 Latch 并重新启动后再添加。',
+        message: CHOICE_COPY.oldHost,
+        hint: CHOICE_COPY.oldHostHint,
         settable: false,
       }
-    if (snapshot.execution?.ready === false) return { kind: 'harness-unavailable', message: '当前模型接口不可用，请检查模型插件状态。' }
+    if (snapshot.execution?.ready === false) return { kind: 'harness-unavailable', message: CHOICE_COPY.executionDown }
     return null
   }
   const harness = catalog.harnesses.find(item => item.id === choice.harnessId)
@@ -596,24 +655,24 @@ export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice): Start
     const builtin = builtinHarness(catalog)
     return {
       kind: 'harness-unavailable',
-      message: builtin?.status === 'unavailable' && builtin.statusMessage ? builtin.statusMessage : '没有可用的 Harness。',
+      message: builtin?.status === 'unavailable' && builtin.statusMessage ? builtin.statusMessage : CHOICE_COPY.noHarness,
     }
   }
   if (harness.status !== 'ready')
-    return { kind: 'harness-unavailable', message: harness.statusMessage || `${harnessName(harness)} 暂不可用。` }
+    return { kind: 'harness-unavailable', message: harness.statusMessage || CHOICE_COPY.harnessDown(harnessName(harness)) }
   if (choice.mode !== 'chat') {
     const project = catalog.workspaces.find(item => item.id === choice.workspaceId)
     if (project?.unavailable) return { kind: 'harness-unavailable', message: project.unavailable }
     const count = project?.folders?.length ?? 1
     const max = harness.projectFolders?.access === 'all' ? harness.projectFolders.max : undefined
     if (max !== undefined && count > max)
-      return { kind: 'harness-unavailable', message: `这个项目有 ${count} 个文件夹，${harnessName(harness)} 最多使用 ${max} 个。` }
+      return { kind: 'harness-unavailable', message: CHOICE_COPY.projectTooBig(count, harnessName(harness), max) }
   }
   if (harness.capabilities.models.owner === 'latch' && !choice.model) {
     const held = heldBackService(catalog, snapshot.hostName)
     return held
-      ? { kind: 'model-required', message: `还没有可用的模型服务。${held.message}`, hint: held.hint, action: '打开模型服务' }
-      : { kind: 'model-required', message: '还没有模型服务。' }
+      ? { kind: 'model-required', message: CHOICE_COPY.noUsableService(held.message), hint: held.hint, action: CHOICE_COPY.openServices }
+      : { kind: 'model-required', message: CHOICE_COPY.noService }
   }
   if (
     catalog.defaults.gatewayUnavailable
@@ -624,7 +683,7 @@ export function startBlock(snapshot: AppSnapshot, choice: ComposerChoice): Start
       harness.catalogue?.options.some(option => option.id === pick.configId && option.category === 'model'),
     )
   )
-    return { kind: 'model-required', message: '原来选择的模型服务暂不可用。', action: '打开模型服务' }
+    return { kind: 'model-required', message: COMPOSER_WORDS.previousService, action: COMPOSER_WORDS.services }
   return null
 }
 

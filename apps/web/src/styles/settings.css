@@ -702,6 +702,19 @@
     flex: 1;
   }
 }
+/* These choices have three short labels even when each must fit in one third of a narrow phone row. */
+@media (max-width: 767.98px) {
+  .settings-row-end > .display-language,
+  :root:lang(en) .settings-row-end > .work-details-choice {
+    min-width: 0;
+    grid-auto-columns: minmax(0, 1fr);
+  }
+  .settings-row-end > .display-language .ui-segmented-option,
+  :root:lang(en) .settings-row-end > .work-details-choice .ui-segmented-option {
+    min-width: 0;
+    padding-inline: var(--sp-4);
+  }
+}
 /* Offline or unavailable: the tile dims and the name turns ink-2; the state is said in the description. */
 .settings-row[data-dim] .settings-row-lead {
   opacity: 0.45;
@@ -902,6 +915,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Keep a service name and protocol legible when its status, key action and menu also need space. */
+:root:lang(en) .provider-row:has(> .settings-row-main) {
+  flex-wrap: wrap;
+}
+:root:lang(en) .provider-row > .settings-row-main {
+  flex-basis: min(100%, 20ch);
+}
+
 .provider-presets {
   display: grid;
   gap: var(--sp-20);
@@ -1070,6 +1091,17 @@
   gap: var(--sp-2);
   margin-inline-start: auto;
   font-family: var(--font);
+}
+@media (max-width: 767.98px) {
+  .agent-how-command {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    column-gap: var(--sp-8);
+    row-gap: var(--sp-2);
+  }
+  .agent-how-actions {
+    grid-column: 1 / -1;
+  }
 }
 .agent-command {
   display: block;

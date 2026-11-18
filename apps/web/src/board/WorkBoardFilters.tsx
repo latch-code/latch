@@ -1,8 +1,24 @@
 import { escapeSecurityText } from '@latch/protocol'
 import { Button, Checkbox, CloseGlyph, Icon, Popover } from '@latch/ui'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
 import { NO_FILTERS, type BoardFilters, type FilterKey, type FilterOption } from './model.ts'
 
-const FILTER_LABELS: Record<FilterKey, string> = { projects: '项目', harnesses: 'Harness', who: '谁在做', tags: '标签', origin: '来源' }
+const COPY = defineCopy(
+  {
+    labels: { projects: '项目', harnesses: 'Harness', who: '谁在做', tags: '标签', origin: '来源' },
+    chosen: '已选筛选',
+    remove: (name: string, value: string) => `去掉筛选 ${name}：${value}`,
+    clear: '清除',
+    filter: '筛选',
+  },
+  {
+    labels: { projects: 'Projects', harnesses: 'Harness', who: 'Who’s working', tags: 'Tags', origin: 'Source' },
+    chosen: 'Active filters',
+    remove: (name: string, value: string) => `Remove ${value} from ${name} filters`,
+    clear: 'Clear',
+    filter: 'Filter',
+  },
+)
 const FILTER_KEYS: readonly FilterKey[] = ['projects', 'harnesses', 'who', 'tags', 'origin']
 
 function toggle(filters: BoardFilters, key: FilterKey, value: string): BoardFilters {
@@ -23,7 +39,7 @@ function FilterChoices({
   onToggle: (value: string) => void
 }) {
   return (
-    <div className="work-board-filter-choices" role="group" aria-label={FILTER_LABELS[name]}>
+    <div className="work-board-filter-choices" role="group" aria-label={COPY.labels[name]}>
       {options.map(option => (
         <Checkbox
           key={option.value}
@@ -53,7 +69,7 @@ function FilterMenu({
   const chosen = filters[name]
   return (
     <Popover
-      label={FILTER_LABELS[name]}
+      label={COPY.labels[name]}
       size="xs"
       trigger={props => (
         <Button
@@ -64,8 +80,8 @@ function FilterMenu({
           className="work-board-filter"
           data-active={chosen.length ? '' : undefined}
           disabled={!options.length && !chosen.length}>
-          {FILTER_LABELS[name]}
-          {chosen.length > 0 && <span className="work-board-filter-count">{chosen.length}</span>}
+          {COPY.labels[name]}
+          {chosen.length > 0 && <span className="work-board-filter-count">{formatNumber(chosen.length)}</span>}
         </Button>
       )}>
       <FilterChoices
@@ -114,14 +130,14 @@ export function FilterChips({
   )
   if (!chosen.length) return null
   return (
-    <div className="work-board-chips" role="group" aria-label="已选筛选">
+    <div className="work-board-chips" role="group" aria-label={COPY.chosen}>
       {chosen.map(item => (
         <span key={`${item.key}:${item.value}`} className="work-board-chip">
           <span>{escapeSecurityText(item.label)}</span>
           <button
             type="button"
             className="work-board-chip-remove"
-            aria-label={`去掉筛选 ${FILTER_LABELS[item.key]}：${escapeSecurityText(item.label)}`}
+            aria-label={COPY.remove(COPY.labels[item.key], escapeSecurityText(item.label))}
             onClick={() => {
               onFilters(toggle(filters, item.key, item.value))
             }}>
@@ -136,7 +152,7 @@ export function FilterChips({
           onClick={() => {
             onFilters(NO_FILTERS)
           }}>
-          清除
+          {COPY.clear}
         </Button>
       )}
     </div>
@@ -156,18 +172,18 @@ export function AllFilters({
   const chosen = FILTER_KEYS.reduce((sum, key) => sum + filters[key].length, 0)
   return (
     <Popover
-      label="筛选"
+      label={COPY.filter}
       size="sm"
       trigger={props => (
         <Button {...props} variant="ghost" size="sm" menu className="work-board-filter" data-active={chosen ? '' : undefined}>
-          筛选
-          {chosen > 0 && <span className="work-board-filter-count">{chosen}</span>}
+          {COPY.filter}
+          {chosen > 0 && <span className="work-board-filter-count">{formatNumber(chosen)}</span>}
         </Button>
       )}>
       <div className="work-board-filter-sheet">
         {FILTER_KEYS.filter(key => options[key].length > 0 || filters[key].length > 0).map(key => (
           <section key={key}>
-            <h4>{FILTER_LABELS[key]}</h4>
+            <h4>{COPY.labels[key]}</h4>
             <FilterChoices
               name={key}
               options={options[key]}

@@ -6,6 +6,32 @@ import { api } from '../core/api.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { TargetChoice } from './HistoryImport.tsx'
 import { importAttempt, importOutcome, rebuildTargets, type ImportAttempt, type ImportOutcome } from './model.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    rebuild: '按文字重建',
+    fromPrefix: '从「',
+    untitled: '未命名会话',
+    fromSuffix: '」的对话文字开始一个新会话；这个会话留着，只能查看。',
+    unavailableHarness: '没有能按文字重建的 Harness',
+    unconfirmed: '结果未确认',
+    unavailableSession: '这个会话现在不能重建',
+    rebuilding: '正在重建',
+    retry: '重试',
+  },
+  {
+    rebuild: 'Rebuild from text',
+    fromPrefix: 'Start a new session from the transcript of “',
+    untitled: 'Untitled session',
+    fromSuffix: '”. The original session remains available to read.',
+    unavailableHarness: 'No Harness can rebuild this session from text',
+    unconfirmed: 'Outcome unconfirmed',
+    unavailableSession: 'This session cannot be rebuilt right now',
+    rebuilding: 'Rebuilding',
+    retry: 'Retry',
+  },
+)
 
 const IMPORT_TIMEOUT = 90_000
 
@@ -62,15 +88,15 @@ export function RebuildLostDialog({
   }
 
   return (
-    <Modal label="按文字重建" variant={phone ? 'sheet' : 'dialog'} className="history-rebuild" dismissible={!busy} onClose={onClose}>
-      <ModalHeader title="按文字重建" onClose={onClose} />
+    <Modal label={COPY.rebuild} variant={phone ? 'sheet' : 'dialog'} className="history-rebuild" dismissible={!busy} onClose={onClose}>
+      <ModalHeader title={COPY.rebuild} onClose={onClose} />
       <div className="history-rebuild-body">
         <p className="history-rebuild-from">
           <Icon icon={HistoryGlyph} size={14} />
           <span>
-            从「
-            <VisibleText text={summary.title || '未命名会话'} />
-            」的对话文字开始一个新会话；这个会话留着，只能查看。
+            {COPY.fromPrefix}
+            <VisibleText text={summary.title || COPY.untitled} />
+            {COPY.fromSuffix}
           </span>
         </p>
         {target ? (
@@ -86,7 +112,7 @@ export function RebuildLostDialog({
           />
         ) : (
           <p className="history-result" data-tint="err" role="alert">
-            没有能按文字重建的 Harness
+            {COPY.unavailableHarness}
           </p>
         )}
       </div>
@@ -94,16 +120,16 @@ export function RebuildLostDialog({
         <div className="history-actions">
           {state.kind === 'unknown' && (
             <span className="history-result" data-tint="warn" role="status">
-              结果未确认
+              {COPY.unconfirmed}
             </span>
           )}
           {(state.kind === 'failed' || state.kind === 'busy' || state.kind === 'expired') && (
             <span className="history-result" data-tint="err" role="alert">
-              {state.kind === 'failed' ? state.message : '这个会话现在不能重建'}
+              {state.kind === 'failed' ? state.message : COPY.unavailableSession}
             </span>
           )}
           <Button variant="primary" loading={busy} disabled={!target} onClick={() => void send()}>
-            {busy ? '正在重建' : state.kind === 'unknown' ? '重试' : '按文字重建'}
+            {busy ? COPY.rebuilding : state.kind === 'unknown' ? COPY.retry : COPY.rebuild}
           </Button>
         </div>
       </footer>

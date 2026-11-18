@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { TextQuote } from 'lucide-react'
 import {
   WORK_ITEM_LIMITS,
@@ -40,6 +40,8 @@ import { ConfirmDialog, Menu, rowOf, type MenuSection } from '../components/over
 import { api, ApiError, errorMessage, MessageError } from '../core/api.ts'
 import { handDraft } from '../core/draftHandoff.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
+import { harnessName } from '../core/harnessName.ts'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
 import { dateTime, relativeTime } from '../format.ts'
 import { useBackLayer } from '../hooks/backStack.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
@@ -47,11 +49,106 @@ import { useWorkbenchDelivery } from '../shell/useWorkbenchEvidence.ts'
 import { closeItemPage } from './itemPage.ts'
 import { ItemPagePick } from './ItemPagePick.tsx'
 import { ItemPageStart } from './ItemPageStart.tsx'
+import { ItemThread, useItemThread } from './ItemThread.tsx'
+import { THREAD_COPY } from './itemThread.ts'
 import { bringReply, joinableSessions, placeWords } from './items.ts'
 import { PRIORITY_LABELS } from './model.ts'
-import { cardState, TagChips } from './WorkBoardCard.tsx'
+import { BOARD_CARD_COPY, cardState, TagChips } from './WorkBoardCard.tsx'
 import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
 import { ItemEvidence } from './ItemEvidence.tsx'
+
+const COPY = defineCopy(
+  {
+    noReply: '这个会话还没有回复',
+    deleteTask: '删除待办',
+    task: (title: string) => `待办：${title}`,
+    board: '看板',
+    reopen: '重新打开',
+    done: '完成',
+    actions: '待办操作',
+    properties: '属性',
+    taskProperties: '待办属性',
+    viewPost: '查看发言',
+    status: '状态',
+    attention: '等你处理',
+    project: '项目',
+    tags: '标签',
+    none: '无',
+    editTags: '编辑标签',
+    priority: '优先级',
+    note: '备注',
+    from: '来自',
+    created: '创建',
+    completed: '完成',
+    sessions: '会话',
+    addSession: '加入会话',
+    anotherSession: '再开一个',
+    start: '开始',
+    unlisted: '不在列表中',
+    outside: '未加入的会话',
+    outsideOne: '未加入',
+    notSaved: '没有保存，请重试。',
+    delete: '删除',
+    confirmDelete: (title: string) => `删除「${title}」？它的会话保留。`,
+    noSessionsToAdd: '没有可加入的会话',
+    title: '标题',
+    editTitle: (title: string) => `标题：${title}，编辑`,
+    instructions: '要求',
+    save: '保存',
+    openInChat: '在对话中打开',
+    bring: '带过去',
+    removeSession: '移出待办',
+    worktree: '工作树',
+    bringReply: (title: string) => `带过去：${title}`,
+    bringTo: '带到',
+    sessionActions: (title: string) => `会话操作：${title}`,
+  },
+  {
+    noReply: 'This session has no reply yet',
+    deleteTask: 'Delete task',
+    task: (title: string) => `Task: ${title}`,
+    board: 'Board',
+    reopen: 'Reopen',
+    done: 'Mark done',
+    actions: 'Task actions',
+    properties: 'Properties',
+    taskProperties: 'Task properties',
+    viewPost: 'View post',
+    status: 'Status',
+    attention: 'Needs you',
+    project: 'Project',
+    tags: 'Tags',
+    none: 'None',
+    editTags: 'Edit tags',
+    priority: 'Priority',
+    note: 'Note',
+    from: 'From',
+    created: 'Created',
+    completed: 'Completed',
+    sessions: 'Sessions',
+    addSession: 'Add session',
+    anotherSession: 'Start another',
+    start: 'Start',
+    unlisted: 'Not in the list',
+    outside: 'Sessions outside this task',
+    outsideOne: 'Outside this task',
+    notSaved: 'Changes weren’t saved. Try again.',
+    delete: 'Delete',
+    confirmDelete: (title: string) => `Delete “${title}”? Its sessions will be kept.`,
+    noSessionsToAdd: 'No sessions to add',
+    title: 'Title',
+    editTitle: (title: string) => `Edit title: ${title}`,
+    instructions: 'Instructions',
+    save: 'Save',
+    openInChat: 'Open in chat',
+    bring: 'Bring reply',
+    removeSession: 'Remove from task',
+    worktree: 'Worktree',
+    bringReply: (title: string) => `Bring reply from ${title}`,
+    bringTo: 'Bring reply to',
+    sessionActions: (title: string) => `Session actions for ${title}`,
+  },
+)
 
 const PLACE_TONE: Record<WorkItemSummary['board']['group'], StatusTone> = {
   todo: 'neutral',
@@ -60,7 +157,7 @@ const PLACE_TONE: Record<WorkItemSummary['board']['group'], StatusTone> = {
   deliver: 'neutral',
   done: 'neutral',
 }
-const PRIORITIES = (['high', 'mid', 'low'] as const).map(value => ({ value, label: PRIORITY_LABELS[value] }))
+const PRIORITIES = ['high', 'mid', 'low'] as const
 const itemPath = (id: string) => `work/items/${encodeURIComponent(id)}`
 
 /** The 待办's full record (its 要求 is not in the snapshot), read again whenever the Host's revision moves. */
@@ -89,11 +186,12 @@ function useItemRecord(id: string, revision: number | undefined, onGone: () => v
  * A 待办's page, in 看板's place (no sidebar): its title and 要求 (editable until it has a session), its sessions with the
  * state the Host gives each, 再开一个, adding or removing a session, 带过去 (a session's last reply into another one's
  * input), 完成 or 重新打开, and a facts card with its tags and priority. ← 看板, Esc and the browser's back return to the
- * board. `thread` is where its discussion goes (package H); nothing is drawn there before it.
+ * board. The discussion shares its authorized read with the current decision above the scrolling body.
  */
-export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId: string; thread?: ReactNode }) {
+export function ItemPage({ shell, itemId }: { shell: ShellState; itemId: string }) {
   const { snapshot } = shell
   const item = snapshot.items?.find(entry => entry.id === itemId)
+  const thread = useItemThread(item, snapshot, shell.connection === 'connected')
   const canWrite = shell.access.scopes.has('run')
   const root = useRef<HTMLElement>(null)
   const close = useCallback(() => {
@@ -199,7 +297,7 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
         hand: handDraft,
         open: openSession,
       })
-      if (done === 'empty') shell.setToast({ text: '这个会话还没有回复', tone: 'error' })
+      if (done === 'empty') shell.setToast({ text: COPY.noReply, tone: 'error' })
     } catch (cause) {
       fail(cause)
     } finally {
@@ -209,6 +307,11 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
 
   if (!item) return null
   const closed = item.closedAt !== undefined
+  const decisionPost = closed
+    ? undefined
+    : (thread.posts?.find(post => post.id === item.board.postId && thread.decisions.has(post.id))
+      ?? thread.posts?.findLast(post => thread.decisions.has(post.id)))
+  const decision = decisionPost && thread.decisions.get(decisionPost.id)
   const members = item.sessionIds.map(id => ({ id, task: snapshot.tasks.find(task => task.id === id) }))
   const full = item.sessionIds.length >= WORK_ITEM_LIMITS.sessions
   const outside = started.flatMap(id => {
@@ -220,45 +323,58 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
   const harness = item.harnessId ? shell.catalog?.harnesses.find(entry => entry.id === item.harnessId) : undefined
   const title = escapeSecurityText(item.title)
   const menu: MenuSection[] = canWrite
-    ? [{ id: 'danger', items: [{ id: 'delete', label: '删除待办', icon: TrashGlyph, danger: true, onSelect: () => setDeleting(true) }] }]
+    ? [
+        {
+          id: 'danger',
+          items: [{ id: 'delete', label: COPY.deleteTask, icon: TrashGlyph, danger: true, onSelect: () => setDeleting(true) }],
+        },
+      ]
     : []
 
   return (
-    <section ref={root} className="item-page" aria-label={`待办：${title}`} data-item-id={item.id} data-closed={closed ? '' : undefined}>
+    <section ref={root} className="item-page" aria-label={COPY.task(title)} data-item-id={item.id} data-closed={closed ? '' : undefined}>
       <header className="item-page-head">
         <Button className="item-page-back" variant="ghost" size="sm" icon={ChevronLeftGlyph} onClick={close}>
-          看板
+          {COPY.board}
         </Button>
         <ItemTitle title={item.title} canEdit={canWrite} busy={busy} onSave={next => patch({ title: next })} />
         <div className="item-page-head-actions">
           {canWrite
             && (closed ? (
               <Button size="sm" variant="outline" icon={UndoGlyph} disabled={busy} onClick={() => void patch({ closed: false })}>
-                重新打开
+                {COPY.reopen}
               </Button>
             ) : (
               <Button size="sm" variant="outline" icon={CheckGlyph} disabled={busy} onClick={() => void patch({ closed: true })}>
-                完成
+                {COPY.done}
               </Button>
             ))}
           {menu.length > 0 && (
             <Menu
-              label="待办操作"
+              label={COPY.actions}
               placement="bottom-end"
               sections={menu}
-              trigger={props => <IconButton {...props} size="sm" label="待办操作" icon={MoreGlyph} />}
+              trigger={props => <IconButton {...props} size="sm" label={COPY.actions} icon={MoreGlyph} />}
             />
           )}
         </div>
       </header>
+      {decisionPost?.turn && decision && (
+        <section className="item-page-attention" aria-label={COPY.attention}>
+          <StatusWord tone="waiting">{THREAD_COPY.waiting[decision.kind].status}</StatusWord>
+          <Button size="sm" variant="secondary" onClick={() => shell.openWorkItemSession(itemId, { ...decisionPost.turn!, decision })}>
+            {THREAD_COPY.waiting[decision.kind].action}
+          </Button>
+        </section>
+      )}
       <div className="item-page-body">
-        <aside className="item-page-facts" aria-label="属性" data-facts-open={factsOpen ? '' : undefined}>
+        <aside className="item-page-facts" aria-label={COPY.properties} data-facts-open={factsOpen ? '' : undefined}>
           <dl>
             <div>
-              <dt>状态</dt>
+              <dt>{COPY.status}</dt>
               <dd className="item-page-fact-status">
                 <StatusWord tone={closed ? 'neutral' : PLACE_TONE[item.board.group]}>{placeWords(item.board)}</StatusWord>
-                {item.board.postId && (
+                {item.board.postId && item.board.postId !== decisionPost?.id && (
                   <Button
                     size="xs"
                     variant="ghost"
@@ -268,44 +384,46 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
                       post.scrollIntoView({ block: 'nearest' })
                       post.querySelector<HTMLElement>('.item-thread-action, .item-thread-post-state button')?.focus({ preventScroll: true })
                     }}>
-                    查看发言
+                    {COPY.viewPost}
                   </Button>
                 )}
               </dd>
             </div>
           </dl>
           <FoldHeader className="item-page-facts-toggle" open={factsOpen} onOpenChange={setFactsOpen} aria-controls={factsId}>
-            待办属性
+            {COPY.taskProperties}
           </FoldHeader>
           <dl className="item-page-facts-details" id={factsId}>
             <div>
-              <dt>项目</dt>
-              <dd>{project ? escapeSecurityText(project.name) : '无项目'}</dd>
+              <dt>{COPY.project}</dt>
+              <dd>{project ? escapeSecurityText(project.name) : BOARD_CARD_COPY.noProject}</dd>
             </div>
             {item.harnessId && (
               <div>
                 <dt>Harness</dt>
                 <dd className="item-page-fact-harness">
                   <MarkTile mark={harness?.capabilities.display.mark ?? item.harnessId} size={14} />
-                  <span>{escapeSecurityText(harness?.capabilities.display.label ?? item.harnessId)}</span>
+                  <span>{escapeSecurityText(harness ? harnessName(harness) : item.harnessId)}</span>
                 </dd>
               </div>
             )}
             <div>
-              <dt>标签</dt>
+              <dt>{COPY.tags}</dt>
               <dd className="item-page-fact-tags">
-                {item.tags?.length ? <TagChips tags={item.tags} /> : <span className="item-page-none">无</span>}
-                {canWrite && <IconButton size="xs" label="编辑标签" icon={EditGlyph} disabled={busy} onClick={() => setTagging(true)} />}
+                {item.tags?.length ? <TagChips tags={item.tags} /> : <span className="item-page-none">{COPY.none}</span>}
+                {canWrite && (
+                  <IconButton size="xs" label={COPY.editTags} icon={EditGlyph} disabled={busy} onClick={() => setTagging(true)} />
+                )}
               </dd>
             </div>
             <div>
-              <dt>优先级</dt>
+              <dt>{COPY.priority}</dt>
               <dd>
                 <SegmentedControl
                   size="xs"
-                  label="优先级"
+                  label={COPY.priority}
                   value={item.priority ?? 'mid'}
-                  options={PRIORITIES}
+                  options={PRIORITIES.map(value => ({ value, label: PRIORITY_LABELS[value] }))}
                   disabled={!canWrite || busy}
                   onValueChange={(value: BoardPriority | 'mid') => {
                     if (value !== (item.priority ?? 'mid')) void patch({ priority: value })
@@ -315,17 +433,18 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
             </div>
             {item.note && (
               <div>
-                <dt>备注</dt>
+                <dt>{COPY.note}</dt>
                 <dd>{escapeSecurityText(item.note)}</dd>
               </div>
             )}
             {item.from && (
               <div>
-                <dt>来自</dt>
+                <dt>{COPY.from}</dt>
                 <dd className="work-board-proposal-line">
                   <ProposedBy
                     proposal={{ from: item.from }}
                     shell={shell}
+                    details
                     onOpenSession={id =>
                       shell.openWorkItemSession(item.id, {
                         sessionId: id,
@@ -338,14 +457,14 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
               </div>
             )}
             <div>
-              <dt>创建</dt>
+              <dt>{COPY.created}</dt>
               <dd>
                 <time dateTime={item.createdAt}>{dateTime(item.createdAt)}</time>
               </dd>
             </div>
             {item.closedAt && (
               <div>
-                <dt>完成</dt>
+                <dt>{COPY.completed}</dt>
                 <dd>
                   <time dateTime={item.closedAt}>{dateTime(item.closedAt)}</time>
                 </dd>
@@ -360,15 +479,15 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
             busy={busy}
             onSave={prompt => patch({ prompt })}
           />
-          <section className="item-page-sessions" aria-label="会话">
+          <section className="item-page-sessions" aria-label={COPY.sessions}>
             <header className="item-page-section-head">
               <h2>
-                会话 <span className="item-page-count">{item.sessionIds.length}</span>
+                {COPY.sessions} <span className="item-page-count">{formatNumber(item.sessionIds.length)}</span>
               </h2>
               {canWrite && !closed && (
                 <span className="item-page-section-actions">
                   <Button size="sm" variant="ghost" icon={PlusGlyph} disabled={busy || full} onClick={() => setJoining(true)}>
-                    加入会话
+                    {COPY.addSession}
                   </Button>
                   <Button
                     size="sm"
@@ -376,7 +495,7 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
                     icon={NewSessionGlyph}
                     disabled={!canStart || !record}
                     onClick={() => setStarting(true)}>
-                    {item.sessionIds.length ? '再开一个' : '开始'}
+                    {item.sessionIds.length ? COPY.anotherSession : COPY.start}
                   </Button>
                 </span>
               )}
@@ -400,7 +519,7 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
                   ) : (
                     <li key={id} className="item-page-row" data-withheld="">
                       <LockGlyph size={12} aria-hidden="true" />
-                      <span className="item-page-none">不在列表中</span>
+                      <span className="item-page-none">{COPY.unlisted}</span>
                     </li>
                   ),
                 )}
@@ -412,7 +531,7 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
             )}
           </section>
           {outside.length > 0 && (
-            <ul className="item-page-rows item-page-outside" aria-label="未加入的会话">
+            <ul className="item-page-rows item-page-outside" aria-label={COPY.outside}>
               {outside.map(task => (
                 <li key={task.id} className="item-page-row" data-outside="" data-work-session={task.id}>
                   <button type="button" className="item-page-row-main" onClick={() => openSession(task.id)}>
@@ -422,17 +541,18 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
                       }
                       size={16}
                     />
-                    <span className="item-page-row-title">{escapeSecurityText(task.title || '未命名会话')}</span>
+                    <span className="item-page-row-title">{escapeSecurityText(task.title || BOARD_CARD_COPY.untitled)}</span>
                     <StatusWord className="item-page-row-state" tone="warn">
-                      未加入
+                      {COPY.outsideOne}
                     </StatusWord>
                   </button>
                 </li>
               ))}
             </ul>
           )}
-          {/* The discussion with @ (package H) takes this place; nothing is drawn before it. */}
-          {thread !== undefined && <div className="item-page-thread">{thread}</div>}
+          <div className="item-page-thread">
+            <ItemThread key={thread.scope} shell={shell} item={item} thread={thread} />
+          </div>
         </div>
       </div>
       {tagging && (
@@ -442,16 +562,16 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
           phone={shell.phone}
           onClose={() => setTagging(false)}
           onSave={async tags => {
-            if (!(await patch({ tags }))) throw new MessageError('没有保存，请重试。')
+            if (!(await patch({ tags }))) throw new MessageError(COPY.notSaved)
           }}
         />
       )}
       {deleting && (
         <ConfirmDialog
-          title="删除待办"
+          title={COPY.deleteTask}
           danger
-          confirmLabel="删除"
-          message={`删除「${title}」？它的会话保留。`}
+          confirmLabel={COPY.delete}
+          message={COPY.confirmDelete(title)}
           onClose={() => setDeleting(false)}
           onConfirm={async () => {
             try {
@@ -467,12 +587,12 @@ export function ItemPage({ shell, itemId, thread }: { shell: ShellState; itemId:
       )}
       {joining && (
         <ItemPagePick
-          title="加入会话"
+          title={COPY.addSession}
           phone={shell.phone}
-          empty="没有可加入的会话"
+          empty={COPY.noSessionsToAdd}
           options={joinableSessions(snapshot).map(task => ({
             id: task.id,
-            title: task.title || '未命名会话',
+            title: task.title || BOARD_CARD_COPY.untitled,
             mark: shell.catalog?.harnesses.find(entry => entry.id === task.harnessId)?.capabilities.display.mark ?? task.harnessId,
             meta: relativeTime(task.updatedAt, new Date(hostNow())),
           }))}
@@ -524,7 +644,7 @@ function ItemTitle({
       <input
         ref={input}
         className="item-page-title item-page-title-field"
-        aria-label="标题"
+        aria-label={COPY.title}
         value={editing}
         maxLength={WORK_ITEM_LIMITS.titleChars * 2}
         disabled={busy}
@@ -547,7 +667,7 @@ function ItemTitle({
         <button
           type="button"
           className="item-page-title-button"
-          aria-label={`标题：${escapeSecurityText(title)}，编辑`}
+          aria-label={COPY.editTitle(escapeSecurityText(title))}
           onClick={() => setEditing(title)}>
           <VisibleText text={title} />
         </button>
@@ -576,9 +696,9 @@ export function ItemPrompt({
   const shown = text ?? saved
   const changed = text !== null && text !== saved
   return (
-    <section className="item-page-prompt" aria-label="要求">
+    <section className="item-page-prompt" aria-label={COPY.instructions}>
       <header className="item-page-section-head">
-        <h2>要求</h2>
+        <h2>{COPY.instructions}</h2>
         {editable && (
           <span className="item-page-section-actions">
             <Button
@@ -590,7 +710,7 @@ export function ItemPrompt({
                   if (done) setText(null)
                 })
               }}>
-              保存
+              {COPY.save}
             </Button>
           </span>
         )}
@@ -599,7 +719,7 @@ export function ItemPrompt({
         <div className="item-page-prompt-text" data-loading="" aria-busy="true" />
       ) : editable ? (
         <TextAreaField
-          label="要求"
+          label={COPY.instructions}
           className="item-page-prompt-field"
           value={shown}
           rows={6}
@@ -612,7 +732,7 @@ export function ItemPrompt({
         </div>
       ) : (
         <div className="item-page-prompt-text" data-readonly="" data-empty="">
-          <span className="item-page-none">无</span>
+          <span className="item-page-none">{COPY.none}</span>
         </div>
       )}
     </section>
@@ -650,26 +770,26 @@ function SessionRow({
   const stopping = shell.stopping.has(task.id) || task.live?.activity === 'cancelling'
   const state = cardState(task, { connected, now, stopping, sharedFolder: false })
   const harness = shell.catalog?.harnesses.find(entry => entry.id === task.harnessId)
-  const title = escapeSecurityText(task.title || '未命名会话')
+  const title = escapeSecurityText(task.title || BOARD_CARD_COPY.untitled)
   const branch = task.worktree ? (task.branch ?? task.worktree.branch) : task.branch
   const marked = shell.selectedId === task.id
   const sections: MenuSection[] = [
-    { id: 'open', items: [{ id: 'open', label: '在对话中打开', icon: MessageGlyph, onSelect: () => onOpen(task.id) }] },
+    { id: 'open', items: [{ id: 'open', label: COPY.openInChat, icon: MessageGlyph, onSelect: () => onOpen(task.id) }] },
     ...(canWrite && others.length
       ? [
           {
             id: 'bring',
-            label: '带过去',
+            label: COPY.bring,
             items: others.map(other => ({
               id: `bring-${other.id}`,
-              label: escapeSecurityText(other.title || '未命名会话'),
+              label: escapeSecurityText(other.title || BOARD_CARD_COPY.untitled),
               icon: TextQuote,
               onSelect: () => onBring(other.id),
             })),
           },
         ]
       : []),
-    ...(canWrite ? [{ id: 'leave', items: [{ id: 'leave', label: '移出待办', icon: UndoGlyph, onSelect: onLeave }] }] : []),
+    ...(canWrite ? [{ id: 'leave', items: [{ id: 'leave', label: COPY.removeSession, icon: UndoGlyph, onSelect: onLeave }] }] : []),
   ]
   return (
     <li
@@ -679,14 +799,18 @@ function SessionRow({
       data-marked={marked ? '' : undefined}>
       <div className="item-page-session-line">
         <button type="button" className="item-page-row-main" aria-current={marked ? 'true' : undefined} onClick={() => onOpen(task.id)}>
-          <MarkTile mark={harness?.capabilities.display.mark ?? task.harnessId} size={16} label={harness?.capabilities.display.label} />
+          <MarkTile
+            mark={harness?.capabilities.display.mark ?? task.harnessId}
+            size={16}
+            label={harness ? harnessName(harness) : undefined}
+          />
           <span className="item-page-row-title">{title}</span>
           <StatusWord className="item-page-row-state" tone={state.tone}>
             {state.words}
           </StatusWord>
           {branch && (
             <span className="item-page-row-branch">
-              {task.worktree && <FolderGit2 size={12} aria-label="工作树" />}
+              {task.worktree && <FolderGit2 size={12} aria-label={COPY.worktree} />}
               <span>{escapeSecurityText(branch)}</span>
             </span>
           )}
@@ -695,15 +819,15 @@ function SessionRow({
         <span className="item-page-row-actions">
           {canWrite && others.length > 0 && (
             <Menu
-              label={`带过去：${title}`}
+              label={COPY.bringReply(title)}
               placement="bottom-end"
               sections={[
                 {
                   id: 'targets',
-                  label: '带到',
+                  label: COPY.bringTo,
                   items: others.map(other => ({
                     id: `bring-${other.id}`,
-                    label: escapeSecurityText(other.title || '未命名会话'),
+                    label: escapeSecurityText(other.title || BOARD_CARD_COPY.untitled),
                     onSelect: () => onBring(other.id),
                   })),
                 },
@@ -717,17 +841,19 @@ function SessionRow({
                   icon={TextQuote}
                   loading={bringing}
                   disabled={bringing}>
-                  带过去
+                  {COPY.bring}
                 </Button>
               )}
             />
           )}
           <Menu
-            label={`会话操作：${title}`}
+            label={COPY.sessionActions(title)}
             placement="bottom-end"
             context={rowOf('.item-page-row')}
             sections={sections}
-            trigger={props => <IconButton {...props} size="xs" label={`更多操作：${title}`} tooltip="更多操作" icon={MoreGlyph} />}
+            trigger={props => (
+              <IconButton {...props} size="xs" label={BOARD_CARD_COPY.moreFor(title)} tooltip={BOARD_CARD_COPY.more} icon={MoreGlyph} />
+            )}
           />
         </span>
       </div>

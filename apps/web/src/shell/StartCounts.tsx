@@ -1,10 +1,44 @@
 import type { BoardGroup } from '@latch/protocol'
 import { Icon, PullRequestGlyph, RunningGlyph, WaitingGlyph, type IconComponent } from '@latch/ui'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    attention: '等你处理',
+    running: '进行中',
+    ready: '可交付',
+    board: '看板',
+  },
+  {
+    attention: 'Needs you',
+    running: 'In progress',
+    ready: 'Ready to deliver',
+    board: 'Board',
+  },
+)
 
 const COUNTED = [
-  { group: 'attention', label: '等你处理', icon: WaitingGlyph },
-  { group: 'running', label: '进行中', icon: RunningGlyph },
-  { group: 'deliver', label: '可交付', icon: PullRequestGlyph },
+  {
+    group: 'attention',
+    get label() {
+      return COPY.attention
+    },
+    icon: WaitingGlyph,
+  },
+  {
+    group: 'running',
+    get label() {
+      return COPY.running
+    },
+    icon: RunningGlyph,
+  },
+  {
+    group: 'deliver',
+    get label() {
+      return COPY.ready
+    },
+    icon: PullRequestGlyph,
+  },
 ] as const satisfies readonly { group: BoardGroup; label: string; icon: IconComponent }[]
 
 /**
@@ -14,7 +48,7 @@ const COUNTED = [
 export function StartCounts({ counts, onGroup }: { counts: Record<BoardGroup, number>; onGroup: (group: BoardGroup) => void }) {
   const shown = COUNTED.filter(item => counts[item.group] > 0)
   return (
-    <nav className="start-counts" aria-label="看板" data-empty={shown.length === 0 ? '' : undefined}>
+    <nav className="start-counts" aria-label={COPY.board} data-empty={shown.length === 0 ? '' : undefined}>
       {shown.map(item => (
         <button
           key={item.group}

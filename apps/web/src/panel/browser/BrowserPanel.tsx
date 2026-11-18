@@ -69,6 +69,164 @@ import {
   withRecent,
 } from './model.ts'
 import { useBrowserTabs } from './useBrowserTabs.ts'
+import { defineCopy, formatNumber, plural } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    partition: '这个项目的网页登录只在内存里，退出 Latch 即清除；它不是沙箱。',
+    safeArea: '安全区示意',
+    noElement: '那里没有可以选取的元素',
+    pageChanged: '页面在选取时变了，只加入了截图',
+    redacted: '加入的内容里有像密钥的文字，已隐藏',
+    noScreenshot: '没有截到画面，请重试',
+    viewport: '视口',
+    fit: '适应面板',
+    current: '当前',
+    rotate: '旋转',
+    pickSize: '先选一个尺寸',
+    appearance: '外观',
+    zoomValue: (percent: number) => `缩放 ${formatNumber(percent)}%`,
+    zoom: '缩放',
+    zoomIn: '放大',
+    zoomOut: '缩小',
+    actualSize: '实际大小',
+    devTools: '开发者工具',
+    systemBrowser: '在系统浏览器中打开',
+    noPage: '这个标签还没有打开网页',
+    clearData: '清除这个项目的浏览数据…',
+    close: (value1: string | number) => `关闭 ${value1}`,
+    browser: '浏览器',
+    tabs: '浏览器标签',
+    otherTabs: '其他会话的标签',
+    closeOther: '关闭其他会话的标签',
+    closeAll: '全部关闭',
+    otherTabCount: (count: number) => `其他会话的标签 · ${formatNumber(count)}`,
+    newTab: '新标签',
+    tabLimit: (limit: number) => `最多 ${formatNumber(limit)} 个标签`,
+    toolbar: '浏览器工具',
+    back: '后退',
+    forward: '前进',
+    stop: '停止',
+    reload: '重新载入',
+    address: '地址',
+    addressHint: '网址或 localhost 端口',
+    viewportFit: '视口：适应面板',
+    viewportSelected: (value1: string | number) => `视口：${value1}`,
+    appearanceSelected: (value1: string | number) => `外观：${value1}`,
+    screenshot: '截图',
+    screenshotInfo: '截图放进草稿 · 发送后交给模型服务',
+    noAttachment: '现在不能添加附件',
+    selectElement: '选取元素',
+    more: '更多',
+    readingTabs: '正在读取标签…',
+    waiting: (value1: string | number) => `等待 ${value1}…`,
+    crashed: '页面崩溃了',
+    connectFailed: (value1: string | number, value2: string | number) => `连不上 ${value1}（${value2}）`,
+    selectAria: '选取元素：点按一个元素，⇧ 点按可多选，esc 结束',
+    agentControl: 'Agent 正在操作',
+    takeOver: '接手',
+    personControl: '你在操作',
+    handBack: '交还给 Agent',
+    selectHelp: '选取元素 · 点按一个元素，⇧ 点按可多选，esc 结束',
+    clearTitle: '清除这个项目的浏览数据？',
+    clearMessage: '这个项目在浏览器里的登录、Cookie、存储与缓存都会清除。',
+    clear: '清除',
+    clearFailed: '没有清除，请重试',
+    cleared: '已清除这个项目的浏览数据',
+    noServices: '终端里的本地服务会列在这里',
+    services: '本地服务',
+    recent: '最近打开',
+    noErrors: '没有可以加入的错误',
+    noFailed: '没有失败的请求',
+    logTypes: '控制台或网络',
+    console: '控制台',
+    network: '网络',
+    addSelected: '把选中的条目加入草稿',
+    lastErrors: '把最近 20 条错误加入草稿',
+    lastFailed: '把最近 20 个失败的请求加入草稿',
+    add: '加入对话',
+    reading: '正在读取…',
+    emptyConsole: '没有控制台消息',
+    emptyRequests: '没有请求',
+  },
+  {
+    partition: 'This project’s website logins live in memory and clear when Latch quits. The partition doesn’t provide sandboxing.',
+    safeArea: 'Safe area guide',
+    noElement: 'There’s no selectable element there',
+    pageChanged: 'The page changed during selection. Only the screenshot was added.',
+    redacted: 'Text resembling a secret key was hidden from the added content',
+    noScreenshot: 'Couldn’t capture the screen. Try again.',
+    viewport: 'Viewport',
+    fit: 'Fit to panel',
+    current: 'Current',
+    rotate: 'Rotate',
+    pickSize: 'Choose a size first',
+    appearance: 'Appearance',
+    zoomValue: (percent: number) => `Zoom ${formatNumber(percent)}%`,
+    zoom: 'Zoom',
+    zoomIn: 'Zoom in',
+    zoomOut: 'Zoom out',
+    actualSize: 'Actual size',
+    devTools: 'Developer tools',
+    systemBrowser: 'Open in system browser',
+    noPage: 'This tab hasn’t opened a page yet',
+    clearData: 'Clear browsing data for this project…',
+    close: (value1: string | number) => `Close ${value1}`,
+    browser: 'Browser',
+    tabs: 'Browser tabs',
+    otherTabs: 'Tabs from other sessions',
+    closeOther: 'Close tabs from other sessions',
+    closeAll: 'Close all',
+    otherTabCount: (count: number) => `Tabs from other sessions · ${formatNumber(count)}`,
+    newTab: 'New tab',
+    tabLimit: (limit: number) => `Up to ${plural(limit, { one: '{n} tab', other: '{n} tabs' })}`,
+    toolbar: 'Browser tools',
+    back: 'Back',
+    forward: 'Forward',
+    stop: 'Stop',
+    reload: 'Reload',
+    address: 'Address',
+    addressHint: 'URL or localhost port',
+    viewportFit: 'Viewport: Fit to panel',
+    viewportSelected: (value1: string | number) => `Viewport: ${value1}`,
+    appearanceSelected: (value1: string | number) => `Appearance: ${value1}`,
+    screenshot: 'Screenshot',
+    screenshotInfo: 'Add a screenshot to the draft. It goes to the model service when sent.',
+    noAttachment: 'Attachments aren’t available right now',
+    selectElement: 'Select element',
+    more: 'More',
+    readingTabs: 'Reading tabs…',
+    waiting: (value1: string | number) => `Waiting for ${value1}…`,
+    crashed: 'The page crashed',
+    connectFailed: (value1: string | number, value2: string | number) => `Couldn’t connect to ${value1} (${value2})`,
+    selectAria: 'Select an element. Shift-click to select several. Press Esc to finish.',
+    agentControl: 'Agent is in control',
+    takeOver: 'Take over',
+    personControl: 'You’re in control',
+    handBack: 'Return control to agent',
+    selectHelp: 'Select element · Shift-click for multiple · Esc to finish',
+    clearTitle: 'Clear this project’s browsing data?',
+    clearMessage: 'This clears website logins, cookies, storage and cache for this project.',
+    clear: 'Clear',
+    clearFailed: 'Couldn’t clear the data. Try again.',
+    cleared: 'Browsing data cleared for this project',
+    noServices: 'Local services started in a terminal will appear here',
+    services: 'Local services',
+    recent: 'Recently opened',
+    noErrors: 'No errors to add',
+    noFailed: 'No failed requests',
+    logTypes: 'Console or network',
+    console: 'Console',
+    network: 'Network',
+    addSelected: 'Add selected entries to the draft',
+    lastErrors: 'Add the last 20 errors to the draft',
+    lastFailed: 'Add the last 20 failed requests to the draft',
+    add: 'Add to chat',
+    reading: 'Reading…',
+    emptyConsole: 'No console messages',
+    emptyRequests: 'No requests',
+  },
+)
 
 /** Below this the viewport and appearance menus fold into ⋯. */
 const NARROW = 480
@@ -119,8 +277,6 @@ type Picked = { rect: BrowserRect; tag: string }
  * Agent out of it.
  */
 const TOOLTIP = '[role="tooltip"]'
-/** Where a project's web logins live, on the foot's state: it is a partition in memory, not a sandbox. */
-const PARTITION_NOTE = '这个项目的网页登录只在内存里，退出 Latch 即清除；它不是沙箱。'
 
 export function overlayCovers(canvas: HTMLElement, doc: Pick<Document, 'elementFromPoint' | 'querySelectorAll'> = document): boolean {
   const area = canvas.getBoundingClientRect()
@@ -273,7 +429,7 @@ function PresetFrame({
   return (
     <span
       className="browser-phone-frame"
-      title="安全区示意"
+      title={COPY.safeArea}
       style={{
         left: rect.x - PHONE_BEZEL,
         top: rect.y - PHONE_BEZEL,
@@ -522,7 +678,7 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
     try {
       const answer = await shell.annotate(current.tabId, point)
       if (!answer.ok) {
-        browser.say('那里没有可以选取的元素')
+        browser.say(() => COPY.noElement)
         return
       }
       const { target } = answer
@@ -537,14 +693,14 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
         ?? (matches && target.image ? await imageFile(target.image, name) : undefined)
       if (crop) onAttach?.([crop])
       if (!matches) {
-        browser.say('页面在选取时变了，只加入了截图')
+        browser.say(() => COPY.pageChanged)
         stopPicking()
         return
       }
       const draft = elementDraft(target)
       onCompose(draft.text)
       const next = [...picked, { rect: target.rect, tag: target.tag }]
-      if (draft.redacted) browser.say('加入的内容里有像密钥的文字，已隐藏')
+      if (draft.redacted) browser.say(() => COPY.redacted)
       if (many && next.length < PICK_LIMIT) setPicked(next)
       else stopPicking()
     } finally {
@@ -558,7 +714,7 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
     try {
       const answer = await shell.capture(current.tabId)
       if (!answer.ok) {
-        browser.say('没有截到画面，请重试')
+        browser.say(() => COPY.noScreenshot)
         return
       }
       onAttach([await imageFile(answer.image, imageName('截图', state?.url ?? ''))])
@@ -586,19 +742,19 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
   const full = browser.total >= BROWSER_TAB_LIMIT
   const viewportSection: MenuSection = {
     id: 'viewport',
-    label: narrow ? '视口' : undefined,
+    label: narrow ? COPY.viewport : undefined,
     items: [
       {
         id: 'fit',
-        label: '适应面板',
+        label: COPY.fit,
         checked: preset === 'fit',
-        ...(narrow && preset === 'fit' ? { meta: '当前' } : {}),
+        ...(narrow && preset === 'fit' ? { meta: COPY.current } : {}),
         onSelect: () => void setViewport('fit', false),
       },
       ...PRESETS.map(item => ({
         id: item.id,
         label: item.label,
-        meta: narrow && preset === item.id ? '当前' : `${item.width} × ${item.height}${item.ratio !== 1 ? ` @${item.ratio}x` : ''}`,
+        meta: narrow && preset === item.id ? COPY.current : `${item.width} × ${item.height}${item.ratio !== 1 ? ` @${item.ratio}x` : ''}`,
         checked: preset === item.id,
         onSelect: () => void setViewport(item.id, rotated),
       })),
@@ -609,21 +765,21 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
     items: [
       {
         id: 'rotate',
-        label: '旋转',
+        label: COPY.rotate,
         icon: RotateCw,
-        ...(preset === 'fit' ? { disabledReason: '先选一个尺寸' } : {}),
+        ...(preset === 'fit' ? { disabledReason: COPY.pickSize } : {}),
         onSelect: () => void setViewport(preset, !rotated),
       },
     ],
   }
   const schemeSection: MenuSection = {
     id: 'scheme',
-    label: narrow ? '外观' : undefined,
+    label: narrow ? COPY.appearance : undefined,
     items: SCHEMES.map(item => ({
       id: item.id,
       label: item.label,
       checked: scheme === item.id,
-      ...(narrow && scheme === item.id ? { meta: '当前' } : {}),
+      ...(narrow && scheme === item.id ? { meta: COPY.current } : {}),
       onSelect: () => {
         if (current) void browser.colorScheme(current.tabId, item.id)
       },
@@ -637,26 +793,26 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
     ...(narrow ? [viewportSection, rotateSection, schemeSection] : []),
     {
       id: 'zoom',
-      label: state ? `缩放 ${Math.round(state.zoom * 100)}%` : '缩放',
+      label: state ? COPY.zoomValue(Math.round(state.zoom * 100)) : COPY.zoom,
       items: [
-        { id: 'zoom-in', label: '放大', onSelect: () => current && void shell.zoom(current.tabId, 'in') },
-        { id: 'zoom-out', label: '缩小', onSelect: () => current && void shell.zoom(current.tabId, 'out') },
-        { id: 'zoom-reset', label: '实际大小', onSelect: () => current && void shell.zoom(current.tabId, 'reset') },
+        { id: 'zoom-in', label: COPY.zoomIn, onSelect: () => current && void shell.zoom(current.tabId, 'in') },
+        { id: 'zoom-out', label: COPY.zoomOut, onSelect: () => current && void shell.zoom(current.tabId, 'out') },
+        { id: 'zoom-reset', label: COPY.actualSize, onSelect: () => current && void shell.zoom(current.tabId, 'reset') },
       ],
     },
     {
       id: 'tools',
       items: [
-        { id: 'devtools', label: '开发者工具', onSelect: () => current && void shell.devTools(current.tabId) },
+        { id: 'devtools', label: COPY.devTools, onSelect: () => current && void shell.devTools(current.tabId) },
         {
           id: 'external',
-          label: '在系统浏览器中打开',
-          ...(pageUrl ? {} : { disabledReason: '这个标签还没有打开网页' }),
+          label: COPY.systemBrowser,
+          ...(pageUrl ? {} : { disabledReason: COPY.noPage }),
           onSelect: () => {
             if (pageUrl) window.open(pageUrl, '_blank', 'noopener,noreferrer')
           },
         },
-        { id: 'clear', label: '清除这个项目的浏览数据…', onSelect: () => setClearing(true) },
+        { id: 'clear', label: COPY.clearData, onSelect: () => setClearing(true) },
       ],
     },
   ]
@@ -667,7 +823,7 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
     label: tabTitle(tab.state),
     icon: tab.state.loading ? LoadingGlyph : tab.state.opener === 'agent' || tab.state.control === 'agent' ? AgentsGlyph : GlobeGlyph,
     controls: id,
-    closeLabel: `关闭 ${tabTitle(tab.state)}`,
+    closeLabel: COPY.close(tabTitle(tab.state)),
   }))
   const shownAddress = address ?? (state && !isBlank(state) ? state.url : '')
   const parts = footerParts(state?.logs)
@@ -677,9 +833,9 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
   const frameUrl = useObjectUrl(frame)
 
   return (
-    <section ref={section} className="browser-panel" aria-label="浏览器" data-narrow={narrow ? '' : undefined}>
+    <section ref={section} className="browser-panel" aria-label={COPY.browser} data-narrow={narrow ? '' : undefined}>
       <PanelTabs
-        label="浏览器标签"
+        label={COPY.tabs}
         className="browser-tabs"
         value={current?.tabId ?? ''}
         tabs={panelTabs}
@@ -689,12 +845,12 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
           <>
             {browser.others.length > 0 && (
               <Menu
-                label="其他会话的标签"
+                label={COPY.otherTabs}
                 align="end"
                 sections={[
                   {
                     id: 'others',
-                    label: '关闭其他会话的标签',
+                    label: COPY.closeOther,
                     items: browser.others.map(tab => ({
                       id: tab.tabId,
                       label: tabTitle(tab.state),
@@ -708,7 +864,7 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
                     items: [
                       {
                         id: 'all',
-                        label: '全部关闭',
+                        label: COPY.closeAll,
                         onSelect: () => {
                           for (const tab of browser.others) void browser.close(tab.tabId)
                         },
@@ -718,7 +874,7 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
                 ]}
                 trigger={props => (
                   <Button {...props} size="xs" variant="ghost">
-                    {`其他会话的标签 · ${browser.others.length}`}
+                    {COPY.otherTabCount(browser.others.length)}
                   </Button>
                 )}
               />
@@ -726,36 +882,36 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
             <IconButton
               size="xs"
               icon={PlusGlyph}
-              label="新标签"
-              {...(full ? { tooltip: `最多 ${BROWSER_TAB_LIMIT} 个标签` } : {})}
+              label={COPY.newTab}
+              {...(full ? { tooltip: COPY.tabLimit(BROWSER_TAB_LIMIT) } : {})}
               disabled={full}
               onClick={() => void browser.open()}
             />
           </>
         }
       />
-      <div className="browser-toolbar" role="toolbar" aria-label="浏览器工具">
+      <div className="browser-toolbar" role="toolbar" aria-label={COPY.toolbar}>
         <IconButton
           size="xs"
           icon={ChevronLeftGlyph}
-          label="后退"
+          label={COPY.back}
           disabled={!state?.canGoBack}
           onClick={() => current && void shell.back(current.tabId)}
         />
         <IconButton
           size="xs"
           icon={ChevronRightGlyph}
-          label="前进"
+          label={COPY.forward}
           disabled={!state?.canGoForward}
           onClick={() => current && void shell.forward(current.tabId)}
         />
         {state?.loading ? (
-          <IconButton size="xs" icon={CloseGlyph} label="停止" onClick={() => current && void shell.stop(current.tabId)} />
+          <IconButton size="xs" icon={CloseGlyph} label={COPY.stop} onClick={() => current && void shell.stop(current.tabId)} />
         ) : (
           <IconButton
             size="xs"
             icon={RefreshGlyph}
-            label="重新载入"
+            label={COPY.reload}
             disabled={!pageUrl}
             onClick={() => current && void shell.reload(current.tabId)}
           />
@@ -763,8 +919,8 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
         <form className="browser-address" onSubmit={submitAddress}>
           <input
             type="text"
-            aria-label="地址"
-            placeholder="网址或 localhost 端口"
+            aria-label={COPY.address}
+            placeholder={COPY.addressHint}
             spellCheck={false}
             autoCapitalize="off"
             autoComplete="off"
@@ -789,7 +945,7 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
         {!narrow && (
           <>
             <Menu
-              label="视口"
+              label={COPY.viewport}
               selection
               align="end"
               sections={[viewportSection]}
@@ -798,7 +954,7 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
                   {...props}
                   size="xs"
                   icon={presetIcon(preset)}
-                  label={preset === 'fit' ? '视口：适应面板' : `视口：${PRESETS.find(item => item.id === preset)?.label ?? ''}`}
+                  label={preset === 'fit' ? COPY.viewportFit : COPY.viewportSelected(PRESETS.find(item => item.id === preset)?.label ?? '')}
                   pressed={preset !== 'fit'}
                   disabled={!current}
                 />
@@ -808,14 +964,14 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
               <IconButton
                 size="xs"
                 icon={RotateCw}
-                label="旋转"
+                label={COPY.rotate}
                 pressed={rotated}
                 disabled={!current}
                 onClick={() => void setViewport(preset, !rotated)}
               />
             )}
             <Menu
-              label="外观"
+              label={COPY.appearance}
               selection
               align="end"
               sections={[schemeSection]}
@@ -824,7 +980,7 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
                   {...props}
                   size="xs"
                   icon={schemeIcon(scheme)}
-                  label={`外观：${SCHEMES.find(item => item.id === scheme)?.label ?? ''}`}
+                  label={COPY.appearanceSelected(SCHEMES.find(item => item.id === scheme)?.label ?? '')}
                   pressed={scheme !== 'system'}
                   disabled={!current}
                 />
@@ -835,25 +991,25 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
         <IconButton
           size="xs"
           icon={Camera}
-          label="截图"
-          tooltip={onAttach ? '截图放进草稿 · 发送后交给模型服务' : '现在不能添加附件'}
+          label={COPY.screenshot}
+          tooltip={onAttach ? COPY.screenshotInfo : COPY.noAttachment}
           disabled={!showsView || !onAttach || busy === 'capture'}
           onClick={() => void screenshot()}
         />
         <IconButton
           size="xs"
           icon={SquareDashedMousePointer}
-          label="选取元素"
+          label={COPY.selectElement}
           shortcut="⇧⌘S"
           pressed={picking}
           disabled={!showsView || !onCompose}
           onClick={() => setPicking(value => !value)}
         />
         <Menu
-          label="更多"
+          label={COPY.more}
           align="end"
           sections={moreSections}
-          trigger={props => <IconButton {...props} size="xs" icon={MoreGlyph} label="更多" disabled={!current} />}
+          trigger={props => <IconButton {...props} size="xs" icon={MoreGlyph} label={COPY.more} disabled={!current} />}
         />
       </div>
       {(browser.failure || browser.notice) && (
@@ -866,12 +1022,12 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
         className="browser-canvas"
         id={id}
         role="tabpanel"
-        aria-label={current ? tabTitle(state) : '浏览器'}
+        aria-label={current ? tabTitle(state) : COPY.browser}
         data-preset={preset !== 'fit' && showsView ? '' : undefined}
         data-picking={picking ? '' : undefined}
         data-agent={control === 'agent' ? '' : undefined}>
         {browser.listed === 'loading' && tabs.length === 0 ? (
-          <Loading label="正在读取标签…" />
+          <Loading label={COPY.readingTabs} />
         ) : blank ? (
           <BlankPage
             services={services}
@@ -885,17 +1041,17 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
             {trouble.kind === 'waiting' ? (
               <span className="browser-waiting">
                 <Spinner size={14} />
-                <VisibleText text={`等待 ${trouble.host}…`} />
+                <VisibleText text={COPY.waiting(trouble.host)} />
               </span>
             ) : (
               <InlineNotice
                 tone="error"
                 action={
                   <Button size="xs" icon={RefreshGlyph} onClick={() => current && void shell.reload(current.tabId)}>
-                    重新载入
+                    {COPY.reload}
                   </Button>
                 }>
-                {trouble.kind === 'crashed' ? '页面崩溃了' : `连不上 ${trouble.host}（${trouble.reason}）`}
+                {trouble.kind === 'crashed' ? COPY.crashed : COPY.connectFailed(trouble.host, trouble.reason)}
               </InlineNotice>
             )}
           </div>
@@ -921,7 +1077,7 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
               <div
                 className="browser-pick"
                 role="application"
-                aria-label="选取元素：点按一个元素，⇧ 点按可多选，esc 结束"
+                aria-label={COPY.selectAria}
                 style={{ left: viewRect.x, top: viewRect.y, width: viewRect.width, height: viewRect.height }}
                 onMouseMove={hit}
                 onMouseLeave={() => setHover(undefined)}
@@ -953,27 +1109,27 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
         {control === 'agent' ? (
           <span className="browser-foot-agent" role="status">
             <Spinner size={12} />
-            <span className="browser-foot-activity">{state?.activity || 'Agent 正在操作'}</span>
+            <span className="browser-foot-activity">{state?.activity || COPY.agentControl}</span>
             {browser.takeOver && current && (
               <Button size="xs" variant="secondary" icon={Hand} onClick={() => void browser.takeOver?.(current.tabId)}>
-                接手
+                {COPY.takeOver}
               </Button>
             )}
           </span>
         ) : control === 'person' ? (
           <span className="browser-foot-agent" role="status">
-            <span className="browser-foot-activity">你在操作</span>
+            <span className="browser-foot-activity">{COPY.personControl}</span>
             {browser.handBack && current && (
               <Button size="xs" variant="primary" icon={AgentsGlyph} onClick={() => void browser.handBack?.(current.tabId)}>
-                交还给 Agent
+                {COPY.handBack}
               </Button>
             )}
           </span>
         ) : picking ? (
-          <span className="browser-foot-pick">选取元素 · 点按一个元素，⇧ 点按可多选，esc 结束</span>
+          <span className="browser-foot-pick">{COPY.selectHelp}</span>
         ) : (
           // Where the project's logins live is the foot's tooltip: it takes no room beside the page's state.
-          <Tooltip content={PARTITION_NOTE}>
+          <Tooltip content={COPY.partition}>
             <button
               type="button"
               className="browser-foot-logs"
@@ -993,13 +1149,13 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
       </footer>
       {clearing && (
         <ConfirmDialog
-          title="清除这个项目的浏览数据？"
-          message="这个项目在浏览器里的登录、Cookie、存储与缓存都会清除。"
-          confirmLabel="清除"
+          title={COPY.clearTitle}
+          message={COPY.clearMessage}
+          confirmLabel={COPY.clear}
           onConfirm={async () => {
             const answer = await shell.clearData(projectId)
-            if (!answer.ok) throw new MessageError('没有清除，请重试')
-            browser.say('已清除这个项目的浏览数据')
+            if (!answer.ok) throw new MessageError(COPY.clearFailed)
+            browser.say(() => COPY.cleared)
           }}
           onClose={() => setClearing(false)}
         />
@@ -1011,12 +1167,12 @@ export function BrowserPanel({ shell, sessionId, projectId, deviceId, shown, ter
 /** The blank tab: the local services this session's terminals announced, then the project's recent addresses. */
 function BlankPage({ services, recent, onOpen }: { services: string[]; recent: string[]; onOpen(url: string): void }) {
   const others = recent.filter(url => !services.some(service => url.startsWith(service)))
-  if (services.length === 0 && others.length === 0) return <p className="browser-blank-empty">终端里的本地服务会列在这里</p>
+  if (services.length === 0 && others.length === 0) return <p className="browser-blank-empty">{COPY.noServices}</p>
   return (
     <div className="browser-blank">
       {services.length > 0 && (
         <div className="browser-blank-group">
-          <h3>本地服务</h3>
+          <h3>{COPY.services}</h3>
           {services.map(url => (
             <button key={url} type="button" className="browser-blank-row" onClick={() => onOpen(url)}>
               <Icon icon={GlobeGlyph} size={14} />
@@ -1027,7 +1183,7 @@ function BlankPage({ services, recent, onOpen }: { services: string[]; recent: s
       )}
       {others.length > 0 && (
         <div className="browser-blank-group">
-          <h3>最近打开</h3>
+          <h3>{COPY.recent}</h3>
           {others.map(url => (
             <button key={url} type="button" className="browser-blank-row" onClick={() => onOpen(url)}>
               <Icon icon={GlobeGlyph} size={14} />
@@ -1052,7 +1208,7 @@ function BrowserDrawer({
   tabId: string
   page: string
   onCompose?: ((text: string) => void) | undefined
-  onNotice(text: string): void
+  onNotice(text: () => string): void
 }) {
   const [kind, setKind] = useState<'console' | 'network'>('console')
   const [lists, setLists] = useState<{ console: BrowserConsoleEntry[]; network: BrowserNetworkEntry[] }>()
@@ -1078,23 +1234,23 @@ function BrowserDrawer({
     if (!lists || !onCompose) return
     const draft = logsDraft({ kind, page, console: lists.console, network: lists.network, selected })
     if (!draft) {
-      onNotice(kind === 'console' ? '没有可以加入的错误' : '没有失败的请求')
+      onNotice(() => (kind === 'console' ? COPY.noErrors : COPY.noFailed))
       return
     }
     onCompose(draft.text)
-    if (draft.redacted) onNotice('加入的内容里有像密钥的文字，已隐藏')
+    if (draft.redacted) onNotice(() => COPY.redacted)
     setSelected([])
   }
   return (
     <div className="browser-drawer">
       <div className="browser-drawer-head">
         <SegmentedControl
-          label="控制台或网络"
+          label={COPY.logTypes}
           size="xs"
           value={kind}
           options={[
-            { value: 'console', label: '控制台' },
-            { value: 'network', label: '网络' },
+            { value: 'console', label: COPY.console },
+            { value: 'network', label: COPY.network },
           ]}
           onValueChange={setKind}
         />
@@ -1104,11 +1260,9 @@ function BrowserDrawer({
             size="xs"
             variant="ghost"
             icon={MessageGlyph}
-            tooltip={
-              selected.length ? '把选中的条目加入草稿' : kind === 'console' ? '把最近 20 条错误加入草稿' : '把最近 20 个失败的请求加入草稿'
-            }
+            tooltip={selected.length ? COPY.addSelected : kind === 'console' ? COPY.lastErrors : COPY.lastFailed}
             onClick={add}>
-            加入对话
+            {COPY.add}
           </Button>
         )}
       </div>
@@ -1116,12 +1270,12 @@ function BrowserDrawer({
         className="browser-drawer-list"
         role="listbox"
         aria-multiselectable="true"
-        aria-label={kind === 'console' ? '控制台' : '网络'}
+        aria-label={kind === 'console' ? COPY.console : COPY.network}
         tabIndex={0}>
         {!lists ? (
-          <Loading label="正在读取…" />
+          <Loading label={COPY.reading} />
         ) : rows === 0 ? (
-          <p className="browser-drawer-empty">{kind === 'console' ? '没有控制台消息' : '没有请求'}</p>
+          <p className="browser-drawer-empty">{kind === 'console' ? COPY.emptyConsole : COPY.emptyRequests}</p>
         ) : kind === 'console' ? (
           lists.console.map(entry => (
             <div

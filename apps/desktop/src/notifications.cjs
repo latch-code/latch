@@ -3,6 +3,25 @@ const { constants } = require('node:fs')
 const { lstat, mkdir, open, rename, rm } = require('node:fs/promises')
 const { randomUUID } = require('node:crypto')
 const { join } = require('node:path')
+const { defineCopy } = require('./locale.cjs')
+const COPY = defineCopy(
+  {
+    approval: '有一个请求等你处理。',
+    question: '有一个问题等你回答。',
+    failure: '一个会话失败了。',
+    completion: '一个会话已完成。',
+    untitled: '未命名会话',
+    otherComputer: '另一台电脑',
+  },
+  {
+    approval: 'A request needs your attention.',
+    question: 'A question needs an answer.',
+    failure: 'A session failed.',
+    completion: 'A session finished.',
+    untitled: 'Untitled session',
+    otherComputer: 'Another computer',
+  },
+)
 const DEFAULTS = Object.freeze({ completion: false, approval: false, title: false })
 const CONSENTS = new Set(['unasked', 'accepted', 'declined'])
 const fresh = () => ({ version: 1, preferences: { ...DEFAULTS }, consent: 'unasked' })
@@ -270,16 +289,9 @@ function createNotifications(options) {
     if (closed || options.focused() || !options.supported() || !state.preferences[setting] || now() - (last.get(key) ?? -Infinity) < 10_000)
       return
     last.set(key, now())
-    const body =
-      kind === 'approval'
-        ? '有一个请求等你处理。'
-        : kind === 'question'
-          ? '有一个问题等你回答。'
-          : kind === 'failure'
-            ? '一个会话失败了。'
-            : '一个会话已完成。'
+    const body = kind === 'approval' || kind === 'question' || kind === 'failure' ? COPY[kind] : COPY.completion
     // Nothing invisible survives (a bidi override could make one computer's line read as another's).
-    const named = state.preferences.title ? attentionTitle(task.title, 120) || '未命名会话' : 'Latch'
+    const named = state.preferences.title ? attentionTitle(task.title, 120) || COPY.untitled : 'Latch'
     // Another computer's name leads the title; this Mac's notifications have none.
     const title = source.name ? `${source.name} · ${named}` : named
     options.show({ title, body, onClick: () => source.open(task.id) })
@@ -369,7 +381,7 @@ function createNotifications(options) {
     async observeRemote(hostId, name, snapshot) {
       if (closed || typeof hostId !== 'string' || !valid(snapshot)) return
       try {
-        const shown = attentionTitle(name) || '另一台电脑'
+        const shown = attentionTitle(name) || COPY.otherComputer
         await observe({ key: `h-${hostId}`, name: shown, open: id => options.openRemote?.(hostId, id) }, snapshot)
       } catch {
         /* A failed preference write cannot authorize a new notification. */

@@ -3,6 +3,7 @@ import { CheckGlyph, AlertGlyph, ShieldGlyph } from './glyphs/index.tsx'
 import { useLiveChange } from './changes.ts'
 import { Icon, Spinner, type SpinnerSize } from './icon.tsx'
 import { cx } from './internal.ts'
+import { UI_COPY, useUiLocale } from './locale.ts'
 
 /*
  * The status vocabulary: a state is a few words with at most one 12px glyph, in the colour of what it means. Only
@@ -63,10 +64,10 @@ export type SlotStatus = 'none' | 'running' | 'waiting' | 'attention' | 'failed'
  */
 export function StatusSlot({
   status,
-  running = '运行中',
-  waiting = '等你处理',
+  running = UI_COPY.running,
+  waiting = UI_COPY.waiting,
   attention,
-  failed = '失败',
+  failed = UI_COPY.failed,
   ended,
   time,
   dateTime,
@@ -94,6 +95,7 @@ export function StatusSlot({
   actions?: ReactNode
   className?: string
 }) {
+  useUiLocale()
   const content = (shown: SlotStatus) =>
     shown === 'running' ? (
       <StatusWord tone="running">{running}</StatusWord>

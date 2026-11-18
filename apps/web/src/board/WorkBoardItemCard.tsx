@@ -17,17 +17,50 @@ import { VisibleText } from '../components/VisibleText.tsx'
 import { api, errorMessage } from '../core/api.ts'
 import { Menu, rowOf, type MenuSection } from '../components/overlays.tsx'
 import { hostNow, useTicker } from '../core/hostClock.ts'
+import { harnessName } from '../core/harnessName.ts'
+import { defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'
 import { relativeTime } from '../format.ts'
 import { projectOf } from '../sessions.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import type { ItemWriteState } from './itemWrites.ts'
 import { cardUpdatedAt, GROUP_LABELS, type BoardCard } from './model.ts'
-import { CardNote, cardState, PriorityMark, TagChips } from './WorkBoardCard.tsx'
+import { BOARD_CARD_COPY, CardNote, cardState, PriorityMark, TagChips } from './WorkBoardCard.tsx'
 import { ItemWriteLine } from './WriteLine.tsx'
 import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
 import { placeWords } from './items.ts'
 
 export type ItemCard = Extract<BoardCard, { kind: 'item' }>
+
+const COPY = defineCopy(
+  {
+    settled: '都已结束',
+    closed: '已完成',
+    merged: 'PR 已合并',
+    reading: '读取中',
+    noPrompt: '没有要求',
+    session: (harness: string, title: string, state: string) => `${harness} ${title}：${state}`,
+    newWorktree: '新工作树',
+    outside: (count: number) => `${formatNumber(count)} 个未加入`,
+    sessionsOf: (title: string) => `${title} 的会话`,
+    prompt: '要求',
+    start: '开始',
+    done: '完成',
+  },
+  {
+    settled: 'All sessions ended',
+    closed: 'Done',
+    merged: 'PR merged',
+    reading: 'Loading',
+    noPrompt: 'No instructions',
+    session: (harness: string, title: string, state: string) => `${harness} ${title}: ${state}`,
+    newWorktree: 'New worktree',
+    outside: (count: number) => plural(count, { one: '{n} session outside this task', other: '{n} sessions outside this task' }),
+    sessionsOf: (title: string) => `Sessions for ${title}`,
+    prompt: 'Instructions',
+    start: 'Start',
+    done: 'Mark done',
+  },
+)
 
 /** The card's line under its title, from the Host's place for the 待办: what its sessions need, or how far it is. */
 export function itemState(card: ItemCard, connected: boolean, now: number): { tone: StatusTone; words: string } | undefined {
@@ -41,20 +74,20 @@ export function itemState(card: ItemCard, connected: boolean, now: number): { to
         const words = placeWords(place)
         return connected
           ? { tone: place.reason === 'failed' ? 'failed' : 'waiting', words }
-          : { tone: 'neutral', words: `上次状态：${words}` }
+          : { tone: 'neutral', words: BOARD_CARD_COPY.previous(words) }
       }
       // The session the Host's reason comes from says it in its own words.
       const waiting = sessions.find(task => task.board?.group === 'attention' && task.board.reason === place.reason)
       if (waiting) return cardState(waiting, { connected, now, stopping: false, sharedFolder: false })
       const words = GROUP_LABELS.attention
-      return connected ? { tone: 'waiting', words } : { tone: 'neutral', words: `上次状态：${words}` }
+      return connected ? { tone: 'waiting', words } : { tone: 'neutral', words: BOARD_CARD_COPY.previous(words) }
     }
     case 'running':
       return { tone: connected ? 'running' : 'neutral', words: GROUP_LABELS.running }
     case 'deliver':
-      return { tone: 'neutral', words: place.reason === 'settled' ? '都已结束' : GROUP_LABELS.deliver }
+      return { tone: 'neutral', words: place.reason === 'settled' ? COPY.settled : GROUP_LABELS.deliver }
     case 'done':
-      return { tone: 'neutral', words: item.closedAt ? '已完成' : 'PR 已合并' }
+      return { tone: 'neutral', words: item.closedAt ? COPY.closed : COPY.merged }
   }
 }
 
@@ -81,13 +114,13 @@ function ItemPrompt({ item }: { item: WorkItemSummary }) {
   return (
     <div className="work-board-item-prompt" aria-live="polite">
       {read === null ? (
-        <span className="work-board-item-prompt-wait" aria-label="读取中" />
+        <span className="work-board-item-prompt-wait" aria-label={COPY.reading} />
       ) : 'error' in read ? (
         <StatusWord tone="failed">{read.error}</StatusWord>
       ) : read.prompt ? (
         <VisibleText text={read.prompt} />
       ) : (
-        <span className="work-board-item-hint">没有要求</span>
+        <span className="work-board-item-hint">{COPY.noPrompt}</span>
       )}
     </div>
   )
@@ -101,13 +134,13 @@ function SessionRow({ task, shell, onOpen }: { task: TaskSummary; shell: ShellSt
   const state = cardState(task, { connected, now, stopping, sharedFolder: false })
   const harness = shell.catalog?.harnesses.find(item => item.id === task.harnessId)
   const branch = task.worktree ? (task.branch ?? task.worktree.branch) : task.branch
-  const label = harness?.capabilities.display.label ?? task.harnessId ?? ''
+  const label = harness ? harnessName(harness) : (task.harnessId ?? '')
   return (
     <li data-work-session={task.id}>
       <button
         type="button"
         className="work-board-item-session"
-        aria-label={`${escapeSecurityText(label)} ${escapeSecurityText(task.title || '未命名会话')}：${state.words}`}
+        aria-label={COPY.session(escapeSecurityText(label), escapeSecurityText(task.title || BOARD_CARD_COPY.untitled), state.words)}
         onClick={() => {
           onOpen(task.id)
         }}>
@@ -169,6 +202,7 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
   outside = 0,
   suggestion,
 }: ItemCardProps) {
+  useLocale()
   const { item, sessions } = card
   const connected = shell.connection === 'connected'
   const live = sessions.some(task => task.status === 'running' || task.status === 'waiting-approval')
@@ -222,11 +256,11 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
         <BoardPlace
           harness={
             todo && (item.harnessId || harness)
-              ? { mark: harness?.capabilities.display.mark ?? item.harnessId, label: harness?.capabilities.display.label ?? item.harnessId }
+              ? { mark: harness?.capabilities.display.mark ?? item.harnessId, label: harness ? harnessName(harness) : item.harnessId }
               : undefined
           }
-          project={project?.name ?? '无项目'}
-          hint={todo && item.worktree === 'new' ? <span className="work-board-item-hint">新工作树</span> : undefined}
+          project={project?.name ?? BOARD_CARD_COPY.noProject}
+          hint={todo && item.worktree === 'new' ? <span className="work-board-item-hint">{COPY.newWorktree}</span> : undefined}
         />
         {headState && (
           <StatusWord className="work-board-card-state" tone={headState.tone}>
@@ -244,18 +278,18 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
         )}
         {outside > 0 && (
           <StatusWord className="work-board-card-state" tone="warn">
-            {`${outside} 个未加入`}
+            {COPY.outside(outside)}
           </StatusWord>
         )}
         {connected && state?.tone === 'running' && <RunningEdge />}
       </button>
       {promptShown && <ItemPrompt item={item} />}
       {sessions.length > 0 && (
-        <ul className="work-board-item-sessions" aria-label={`${title} 的会话`}>
+        <ul className="work-board-item-sessions" aria-label={COPY.sessionsOf(title)}>
           {sessions.map(task => (
             <SessionRow key={task.id} task={task} shell={shell} onOpen={onOpenSession} />
           ))}
-          {unlisted > 0 && <li className="work-board-item-unlisted">+{unlisted}</li>}
+          {unlisted > 0 && <li className="work-board-item-unlisted">+{formatNumber(unlisted)}</li>}
         </ul>
       )}
       {decision && <div className="work-board-item-decision">{decision}</div>}
@@ -271,7 +305,7 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
                 setShowPrompt(!promptShown)
               }}>
               <Icon icon={promptShown ? ChevronDownGlyph : ChevronRightGlyph} size={12} />
-              要求
+              {COPY.prompt}
             </button>
           )}
 
@@ -292,7 +326,7 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
               onClick={() => {
                 onStart(item)
               }}>
-              开始
+              {COPY.start}
             </Button>
           )}
           {canFinish && (busy || !blocked) && (
@@ -303,14 +337,14 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
               onClick={() => {
                 onDone(item)
               }}>
-              完成
+              {COPY.done}
             </Button>
           )}
         </div>
       )}
       <span className="work-board-card-actions">
         <Menu
-          label={`看板操作：${title}`}
+          label={BOARD_CARD_COPY.actions(title)}
           placement="bottom-end"
           context={rowOf('.work-board-card')}
           sections={menu}
@@ -319,8 +353,8 @@ export const WorkBoardItemCard = memo(function WorkBoardItemCard({
               {...props}
               className="work-board-card-more"
               size="xs"
-              label={`更多操作：${title}`}
-              tooltip="更多操作"
+              label={BOARD_CARD_COPY.moreFor(title)}
+              tooltip={BOARD_CARD_COPY.more}
               icon={MoreGlyph}
             />
           )}

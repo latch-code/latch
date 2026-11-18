@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api as defaultApi, ApiError, type ApiOptions } from './api.ts'
+import { defineCopy } from './i18n.ts'
 
 /**
  * Each browser remembers the newest audit record it has seen per Host. After a
@@ -194,4 +195,8 @@ export function useAuditCheckpoint(hostId: string | undefined, connected: boolea
   return { rollback, dismiss, accept }
 }
 
-export const AUDIT_ROLLBACK_TEXT = '这台 Mac 上的记录与上次看到的不一致（可能被回滚或替换）。请在 Mac 上检查。'
+/** The banner's words when the records no longer match what this browser saw. */
+export const AUDIT_COPY = defineCopy({ rollback: '这台 Mac 上的记录与上次看到的不一致（可能被回滚或替换）。请在 Mac 上检查。' } as const, {
+  rollback:
+    'The records on this Mac do not match what this browser saw last time (they may have been rolled back or replaced). Check on the Mac.',
+})

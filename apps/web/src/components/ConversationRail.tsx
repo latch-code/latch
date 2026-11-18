@@ -1,12 +1,18 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { FocusEvent, KeyboardEvent, PointerEvent } from 'react'
 import { splitChangeNote, type Message } from '@latch/protocol'
+import { defineCopy, useLocale } from '../core/i18n.ts'
 import { ownTextStart, type Turn } from '../conversation.ts'
 import { overlayDismissed } from '../escapeGrace.ts'
 import { escapeHiddenCharacters } from './VisibleText.tsx'
 
 const MIN_TURNS = 6
 const PREVIEW_LIMIT = 240
+
+const COPY = defineCopy(
+  { attachments: '附件', userMessage: '用户消息', navigation: '会话定位' },
+  { attachments: 'Attachments', userMessage: 'User message', navigation: 'Conversation navigation' },
+)
 
 interface Marker {
   id: string
@@ -15,7 +21,7 @@ interface Marker {
 
 function excerptFor(message: Message): string {
   const text = splitChangeNote(message.text.slice(ownTextStart(message))).text.trim()
-  if (!text) return message.attachments?.length ? '附件' : '用户消息'
+  if (!text) return message.attachments?.length ? COPY.attachments : COPY.userMessage
   const prefix = text
     .slice(0, PREVIEW_LIMIT)
     .replace(/[\uD800-\uDBFF]$/u, '')
@@ -62,7 +68,8 @@ export const ConversationRail = memo(function ConversationRail({
   subscribeToReadingAnchor: (listener: () => void) => () => void
   onReveal: (messageId: string) => void
 }) {
-  const { markers, byMessage, markerOrder } = useMemo(() => projectMarkers(turns), [turns])
+  const locale = useLocale()
+  const { markers, byMessage, markerOrder } = useMemo(() => projectMarkers(turns), [turns, locale])
   const visible = markers.length >= MIN_TURNS
   const readCurrentIndex = useCallback(() => {
     const anchor = getReadingMessageId()
@@ -220,7 +227,7 @@ export const ConversationRail = memo(function ConversationRail({
     <nav
       className="conversation-rail"
       ref={rail}
-      aria-label="会话定位"
+      aria-label={COPY.navigation}
       onPointerOver={pointerOver}
       onPointerMove={pointerMove}
       onPointerLeave={event => {

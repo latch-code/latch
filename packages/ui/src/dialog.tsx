@@ -1,3 +1,4 @@
+import { UI_COPY, useUiLocale } from './locale.ts'
 import {
   createContext,
   useContext,
@@ -337,7 +338,7 @@ export function ModalHeader({
   onClose,
   leading,
   actions,
-  closeLabel = '关闭',
+  closeLabel = UI_COPY.close,
 }: {
   title: ReactNode
   onClose?: () => void
@@ -346,6 +347,7 @@ export function ModalHeader({
   actions?: ReactNode
   closeLabel?: string
 }) {
+  useUiLocale()
   const sheet = useContext(InSheet)
   if (sheet)
     return (
@@ -472,13 +474,14 @@ export function DialogSurface({
   footer,
   note,
   children,
-  closeLabel = '关闭',
+  closeLabel = UI_COPY.close,
   bare = false,
   size = 'md',
   placement = 'center',
   titleId,
   onClose,
 }: DialogContent & { size?: DialogSize; placement?: DialogPlacement; titleId?: string; onClose?: () => void }) {
+  useUiLocale()
   const heading = (
     <>
       <h2 id={titleId} className="ui-dialog-title">
@@ -614,7 +617,8 @@ function useSheetHistory(open: boolean, onClose: () => void, dismissible: boolea
 }
 
 /** The one way a phone sheet closes from its header: an X on the left, named 关闭. */
-function SheetClose({ label = '关闭', onClose }: { label?: string | undefined; onClose?: (() => void) | undefined }) {
+function SheetClose({ label = UI_COPY.close, onClose }: { label?: string | undefined; onClose?: (() => void) | undefined }) {
+  useUiLocale()
   return <IconButton className="ui-sheet-close" size="lg" label={label} icon={CloseGlyph} data-layer-close="" onClick={onClose} />
 }
 

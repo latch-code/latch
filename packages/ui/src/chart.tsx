@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { cx } from './internal.ts'
+import { UI_COPY, useUiLocale } from './locale.ts'
 
 /*
  * Charts drawn as inline SVG at the pixel width they are given, so a bar's edge and a 1px rule stay crisp at any size.
@@ -142,6 +143,7 @@ export function BarChart({
   onSelect?: (key: string | undefined) => void
   className?: string
 }) {
+  useUiLocale()
   const [ref, width] = useWidth<HTMLDivElement>()
   const [hover, setHover] = useState<number>()
   const plot = Math.max(0, width - GUTTER)
@@ -223,7 +225,7 @@ export function BarChart({
           title={tip.title ?? tip.label}
           lines={[
             ...series.map((name, part) => ({ label: name, value: format(tip.values[part] ?? 0), series: part })).toReversed(),
-            { label: '合计', value: format(tip.values.reduce((sum, value) => sum + value, 0)) },
+            { label: UI_COPY.total, value: format(tip.values.reduce((sum, value) => sum + value, 0)) },
           ]}
         />
       )}
@@ -345,8 +347,6 @@ export function LineChart({
   )
 }
 
-const WEEK = ['一', '二', '三', '四', '五', '六', '日'] as const
-
 /**
  * Hours of the week, Monday first, as a 7 × 24 grid of cells: one hue, deeper for more, the track grey for none.
  * `values` holds 168 counts, Monday 00:00 first.
@@ -362,9 +362,11 @@ export function HeatGrid({
   format: (value: number) => string
   className?: string
 }) {
+  const locale = useUiLocale()
   const [ref, width] = useWidth<HTMLDivElement>()
   const [hover, setHover] = useState<number>()
-  const gutter = 20
+  const week = UI_COPY.heatWeek
+  const gutter = locale === 'en' ? 25 : 20
   const pitch = Math.max(4, Math.floor((width - gutter) / 24))
   const cell = pitch - 2
   const rowPitch = Math.min(Math.max(8, cell), 16) + 2
@@ -375,10 +377,10 @@ export function HeatGrid({
   return (
     <div ref={ref} className={cx('ui-chart', className)} style={{ height }} onPointerLeave={() => setHover(undefined)}>
       {width > 0 && (
-        <svg width={width} height={height} role="img" aria-label={`${label}：共 ${format(total)}`}>
-          {WEEK.map((day, row) =>
+        <svg width={width} height={height} role="img" aria-label={UI_COPY.heatTotal(label, format(total))}>
+          {week.map((day, row) =>
             row % 2 === 1 ? null : (
-              <text key={day} className="ui-chart-axis" x={0} y={row * rowPitch + (rowPitch - 2) / 2} dy="0.32em">
+              <text key={row} className="ui-chart-axis" x={0} y={row * rowPitch + (rowPitch - 2) / 2} dy="0.32em">
                 {day}
               </text>
             ),
@@ -409,7 +411,7 @@ export function HeatGrid({
           key={hover}
           x={gutter + (hover % 24) * pitch + cell / 2}
           width={width}
-          title={`周${WEEK[Math.floor(hover / 24)]} ${hover % 24}:00–${(hover % 24) + 1}:00`}
+          title={UI_COPY.heatHour(week[Math.floor(hover / 24)]!, hover % 24)}
           lines={[{ label, value: format(values[hover] ?? 0), series: 0 }]}
         />
       )}

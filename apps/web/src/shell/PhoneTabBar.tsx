@@ -1,14 +1,15 @@
+import { SHELL_COPY } from './copy.ts'
 import { AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import { Icon, type IconComponent, CodeGlyph, PluginsGlyph, SettingsGlyph } from '@latch/ui'
 import { waitingCount } from '../sessions.ts'
 import type { ShellEntry } from './routes.ts'
 import type { ShellState } from './useShellLayout.tsx'
 
-const TABS: Partial<Record<ShellEntry, { label: string; icon: IconComponent }>> = {
-  sessions: { label: 'Code', icon: CodeGlyph },
-  agents: { label: '我的 Agent', icon: AgentsGlyph },
-  apps: { label: '应用', icon: PluginsGlyph },
-  settings: { label: '设置', icon: SettingsGlyph },
+const TABS: Record<ShellEntry, IconComponent> = {
+  sessions: CodeGlyph,
+  agents: AgentsGlyph,
+  apps: PluginsGlyph,
+  settings: SettingsGlyph,
 }
 
 /**
@@ -18,10 +19,8 @@ const TABS: Partial<Record<ShellEntry, { label: string; icon: IconComponent }>> 
 export function PhoneTabBar({ shell }: { shell: ShellState }) {
   const { entries, route, goEntry, snapshot } = shell
   return (
-    <nav className="phone-tabs" aria-label="主导航">
+    <nav className="phone-tabs" aria-label={SHELL_COPY.navigation}>
       {entries.flatMap(entry => {
-        const tab = TABS[entry]
-        if (!tab) return []
         // A tab not shown carries a dot while something of its own waits; with 我的 Agent, each tab counts only its place.
         const agents = entries.includes('agents')
         const waits =
@@ -33,6 +32,8 @@ export function PhoneTabBar({ shell }: { shell: ShellState }) {
             key={entry}
             type="button"
             className="phone-tab"
+            data-entry={entry}
+            data-testid={entry === 'settings' ? 'open-settings' : undefined}
             aria-current={route.entry === entry ? 'page' : undefined}
             onClick={() => {
               // Code's root page is its session list; 新会话 there opens the start screen.
@@ -42,8 +43,8 @@ export function PhoneTabBar({ shell }: { shell: ShellState }) {
                 if (shell.selectedId !== null) shell.choose(null)
               }
             }}>
-            <Icon icon={tab.icon} size={20} solid={route.entry === entry} />
-            <span>{tab.label}</span>
+            <Icon icon={TABS[entry]} size={20} solid={route.entry === entry} />
+            <span>{entry === 'sessions' ? 'Code' : SHELL_COPY[entry]}</span>
             {waits && <span className="phone-tab-dot" aria-hidden="true" />}
           </button>,
         ]

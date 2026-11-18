@@ -12,6 +12,7 @@ import {
 } from '@latch/protocol'
 import { CloseGlyph, Dialog, Icon, SegmentedControl, Switch } from '@latch/ui'
 import { api, newRequestId, type PendingSubmission } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
 import type { SendingMessage } from '../core/sendingMessage.ts'
 import { unconfirmedReason } from '../core/sendingMessage.ts'
 import { errorMessage } from '../core/api.ts'
@@ -21,6 +22,27 @@ import { SessionComposer } from '../shell/SessionComposers.tsx'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
 import { PRIORITY_LABELS } from './model.ts'
+
+const COPY = defineCopy(
+  {
+    removeTag: (tag: string) => `移除 ${tag}`,
+    tags: '标签',
+    attachments: '待办不带附件和文件引用',
+    start: '开始',
+    create: '新建',
+    saveLater: '先不开始',
+    priority: '优先级',
+  },
+  {
+    removeTag: (tag: string) => `Remove ${tag}`,
+    tags: 'Tags',
+    attachments: 'Remove attachments and file references to save this as a task.',
+    start: 'Start',
+    create: 'New',
+    saveLater: 'Save for later',
+    priority: 'Priority',
+  },
+)
 
 /** What 新建 does: start a session (or, 先不开始, keep a 待办), or start one from a 待办 that has none yet (开始). */
 export type NewMode = { kind: 'new' } | { kind: 'start'; item: WorkItemSummary }
@@ -58,7 +80,7 @@ function TagInput({ tags, onTags, disabled }: { tags: string[]; onTags: (tags: s
           <button
             type="button"
             className="work-board-tag-remove"
-            aria-label={`移除 ${tag}`}
+            aria-label={COPY.removeTag(tag)}
             disabled={disabled}
             onClick={() => {
               onTags(tags.filter(item => item !== tag))
@@ -70,9 +92,9 @@ function TagInput({ tags, onTags, disabled }: { tags: string[]; onTags: (tags: s
       {tags.length < BOARD_TAG_LIMIT && (
         <input
           className="work-board-new-tag-field"
-          aria-label="标签"
+          aria-label={COPY.tags}
           aria-invalid={bad || undefined}
-          placeholder="标签"
+          placeholder={COPY.tags}
           value={draft}
           disabled={disabled}
           autoComplete="off"
@@ -191,7 +213,7 @@ export function WorkBoardNew({
     const prompt = submission.draft.trim()
     if (!prompt) return
     if (shell.attachmentDraft.items.length > 0 || shell.mentionChoice.refs.length > 0) {
-      setError('待办不带附件和文件引用')
+      setError(COPY.attachments)
       return
     }
     const { choice } = submission
@@ -237,7 +259,7 @@ export function WorkBoardNew({
           }
         : shell
   return (
-    <Dialog open={open} onClose={onClose} size="lg" title={starting ? '开始' : '新建'} className="work-board-new">
+    <Dialog open={open} onClose={onClose} size="lg" title={starting ? COPY.start : COPY.create} className="work-board-new">
       {open && ready && starting?.from && (
         // An agent wrote this 要求: who, and whether its turn read outside content, above the text it will send.
         <div className="work-board-proposal-line work-board-new-from">
@@ -254,12 +276,12 @@ export function WorkBoardNew({
       {open && ready && !starting && (
         <div className="work-board-new-item" data-later={later ? '' : undefined}>
           <label className="work-board-new-later">
-            <Switch checked={later} onCheckedChange={setLater} label="先不开始" disabled={held !== null} />
-            <span aria-hidden="true">先不开始</span>
+            <Switch checked={later} onCheckedChange={setLater} label={COPY.saveLater} disabled={held !== null} />
+            <span aria-hidden="true">{COPY.saveLater}</span>
           </label>
           <div className="work-board-new-marks" inert={!later || undefined}>
             <SegmentedControl
-              label="优先级"
+              label={COPY.priority}
               value={priority}
               size="sm"
               disabled={!later || held !== null}

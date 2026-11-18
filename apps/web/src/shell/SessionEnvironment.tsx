@@ -14,6 +14,44 @@ import { currentShell, revealLabel, shellFolders } from '../core/shell.ts'
 import { absoluteTime, basename, formatDuration, messageTime, tokenAmount } from '../format.ts'
 import { folderAccessText, projectFolders } from '../projects.tsx'
 import { projectOf } from '../sessions.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    worktree: '工作树',
+    namedFolder: (name: number) => `文件夹 · ${name}`,
+    folder: '文件夹',
+    missing: '找不到',
+    removed: '已移出项目',
+    missingFolder: '找不到这个文件夹，请同步后重试。',
+    copyPath: (path: string) => `复制路径：${path}`,
+    usage: '用量',
+    input: '输入',
+    output: '· 输出',
+    cost: '费用',
+    turns: '轮数',
+    time: '用时',
+    started: '开始于',
+    readOnly: '该会话不再接受输入。',
+  },
+  {
+    worktree: 'Worktree',
+    namedFolder: (name: number) => `Folder · ${name}`,
+    folder: 'Folder',
+    missing: 'Missing',
+    removed: 'Removed from project',
+    missingFolder: 'Can’t find this folder. Sync and try again.',
+    copyPath: (path: string) => `Copy path: ${path}`,
+    usage: 'Usage',
+    input: 'Input',
+    output: '· Output',
+    cost: 'Cost',
+    turns: 'Turns',
+    time: 'Duration',
+    started: 'Started',
+    readOnly: 'This session no longer accepts input.',
+  },
+)
 
 export function CrumbRow({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -66,7 +104,7 @@ export function SessionFolders({
   if (summary.mode === 'chat' || folders.length === 0) return null
   return (
     <>
-      <CrumbRow label={summary.worktree ? '工作树' : folders.length > 1 ? `文件夹 · ${folders.length}` : '文件夹'}>
+      <CrumbRow label={summary.worktree ? COPY.worktree : folders.length > 1 ? COPY.namedFolder(folders.length) : COPY.folder}>
         {folders.map((folder, index) => {
           const known = project ? projectFolders(project).find(item => item.id === folder.id && item.path === folder.path) : undefined
           const removed = project !== undefined && summary.folders !== undefined && known === undefined
@@ -76,7 +114,7 @@ export function SessionFolders({
               <code>
                 <MiddleText text={folder.path} />
               </code>
-              {known?.unavailable ? <Badge tone="warn">找不到</Badge> : removed ? <Badge>已移出项目</Badge> : null}
+              {known?.unavailable ? <Badge tone="warn">{COPY.missing}</Badge> : removed ? <Badge>{COPY.removed}</Badge> : null}
               {shell && project && known && !known.unavailable && (
                 <IconButton
                   size="xs"
@@ -86,7 +124,7 @@ export function SessionFolders({
                     void shell
                       .reveal(project.id, known.id)
                       .then(result => {
-                        if (result.status === 'failed') setError('找不到这个文件夹，请同步后重试。')
+                        if (result.status === 'failed') setError(COPY.missingFolder)
                       })
                       .catch(cause => {
                         setError(errorMessage(cause))
@@ -94,7 +132,7 @@ export function SessionFolders({
                   }}
                 />
               )}
-              <CopyButton text={folder.path} label={`复制路径：${basename(folder.path)}`} size="xs" />
+              <CopyButton text={folder.path} label={COPY.copyPath(basename(folder.path))} size="xs" />
             </div>
           )
         })}
@@ -129,20 +167,20 @@ function SessionUsage({
   return (
     <>
       {tokens && (
-        <CrumbRow label="用量">
+        <CrumbRow label={COPY.usage}>
           <span>
-            输入 {tokenAmount(tokens.usage.inputTokens)} · 输出 {tokenAmount(tokens.usage.outputTokens)}
+            {COPY.input} {tokenAmount(tokens.usage.inputTokens)} {COPY.output} {tokenAmount(tokens.usage.outputTokens)}
           </span>
         </CrumbRow>
       )}
       {cost && (
-        <CrumbRow label="费用">
+        <CrumbRow label={COPY.cost}>
           {cost.text} · {costClause(cost.reporter)}
         </CrumbRow>
       )}
-      {time && <CrumbRow label={formatDuration(time.ms) === undefined ? '轮数' : '用时'}>{time.text}</CrumbRow>}
+      {time && <CrumbRow label={formatDuration(time.ms) === undefined ? COPY.turns : COPY.time}>{time.text}</CrumbRow>}
       {created !== undefined && (
-        <CrumbRow label="开始于">
+        <CrumbRow label={COPY.started}>
           <Tooltip content={absoluteTime(created)}>
             <time dateTime={new Date(created).toISOString()} tabIndex={0}>
               {messageTime(created, now)}
@@ -164,7 +202,7 @@ function LockedOptions({ config, gate }: { config: readonly SessionConfigOption[
           {escapeHiddenCharacters(option.options.find(item => item.value === option.currentValue)?.name ?? option.currentValue)}
         </CrumbRow>
       ))}
-      <p className="crumb-note">{gate.kind === 'read-only' ? gate.text : '该会话不再接受输入。'}</p>
+      <p className="crumb-note">{gate.kind === 'read-only' ? gate.text : COPY.readOnly}</p>
     </>
   )
 }

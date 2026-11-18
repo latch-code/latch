@@ -45,6 +45,192 @@ import { loginSurface, type LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { ExtensionsLink } from './ExtensionsLink.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
+import { defineCopy } from '../core/i18n.ts'
+import { harnessPresetCopy } from '../core/harnessPresetCopy.ts'
+
+const COPY = defineCopy(
+  {
+    customStart: '自定义启动方式',
+    environmentStored: '只存在这台 Mac 上，不再显示',
+    notStarted: '还没有开启过会话',
+    recheckAfterInstall: '；安装后点「重新检测」',
+    found: '已找到',
+    installCommand: '安装命令',
+    copyInstall: '复制安装命令',
+    homepage: '项目主页',
+    open: '打开',
+    variableName: '变量名',
+    variableValue: '变量值',
+    value: '值',
+    removeVariable: '删除此变量',
+    nameAndCommand: '请填写名称和启动命令。',
+    customHarness: '自定义 Harness',
+    programHere: '在这台 Mac 上运行的程序',
+    presetDescription: (name: string, description: string) => `${name}：${description}`,
+    install: '安装',
+    launch: '启动方式',
+    name: '名称',
+    launchCommand: '启动命令',
+    example: '例如 codex-acp',
+    arguments: '参数',
+    perLine: '每行一个',
+    enableAfter: '添加后启用',
+    environment: '环境变量',
+    addVariable: '添加变量',
+    noEnvironment: '没有环境变量',
+    cancel: '取消',
+    addHarness: '添加 Harness',
+    editLaunch: '编辑启动方式',
+    save: '保存',
+    addEnvironment: '添加环境变量',
+    add: '添加',
+    environmentExample: '例如 OPENAI_BASE_URL',
+    invalidVariable: '只能包含字母、数字和下划线，不能以数字开头',
+    rename: '重命名…',
+    enabled: '启用',
+    edit: '编辑…',
+    command: '命令',
+    none: '无',
+    addEllipsis: '添加…',
+    set: '已设置',
+    remove: '移除',
+    detection: '检测',
+    checkAgain: '重新检测',
+    notLaunchable: '还不能启动',
+    updateNeeded: '需要升级',
+    commandFound: '已找到命令',
+    copyUpdate: '复制升级命令',
+    copyCommandPath: '复制命令路径',
+    upgradeCommand: '升级命令',
+    definitionProblem: '定义有问题',
+    listed: 'Latch 已收录',
+    unverified: '未验证的定义',
+    differentCommand: '命令或参数与 Latch 收录的不同',
+    extensions: '技能、命令、MCP 与插件',
+    deleteHarness: '删除 Harness',
+    delete: '删除',
+    renameHarness: '重命名 Harness',
+    notInstalled: '未安装',
+    needsAttention: '需要处理',
+    disabled: '已停用',
+    available: '可用',
+    versionUnread: '版本未读：添加并在这台 Mac 上确认后读取',
+    howToInstall: '怎么装',
+    installed: '已安装',
+    builtIn: '内置，用你接入的模型服务',
+    needsProvider: '需要模型服务',
+    offers: '可以安装',
+    notAdmin: '这台设备没有管理这台 Mac 的权限。',
+    cannotRun: '此设备没有发起和继续会话的权限。',
+    commandFirst: '先安装或配置 Harness 命令，再测试启动。',
+    onThisMac: '这台 Mac 上',
+    onComputer: (name: string) => ` ${name} 上`,
+    launchWhere: (place: string) => `在${place}启动 · 外部 Harness`,
+    openHomepage: (name: string) => `打开 ${name} 的项目主页`,
+    invalidName: (key: string) => `环境变量名「${key}」无效，只能包含字母、数字和下划线。`,
+    removeName: (name: string) => `移除 ${name}`,
+    deleteConfirm: (name: string) => `删除「${name}」的启动配置和环境变量？它的会话正在运行时无法删除。`,
+    editName: (name: string) => `编辑 ${name}`,
+    via: (command: string) => `经 ${command}`,
+    enableName: (name: string) => `启用 ${name}`,
+    offerLabel: (name: string, note: string, launch: string) => `${name}，${note}，${launch}`,
+    foundWithNote: (found: string, note: string) => `${found}，${note}`,
+    needAdapter: (program: string) => `找到了 ${program}，还差让 Latch 连接它的适配器`,
+    installHelp: (name: string) => `怎么装 ${name}`,
+    copyInstallFor: (name: string) => `复制 ${name} 的安装命令`,
+  },
+  {
+    customStart: 'Custom launch',
+    environmentStored: 'Kept only on this Mac, never shown again',
+    notStarted: 'No sessions started yet',
+    recheckAfterInstall: ' After installing, check again.',
+    found: 'Found',
+    installCommand: 'Install command',
+    copyInstall: 'Copy install command',
+    homepage: 'Homepage',
+    open: 'Open',
+    variableName: 'Name',
+    variableValue: 'Value',
+    value: 'Value',
+    removeVariable: 'Remove variable',
+    nameAndCommand: 'Enter a name and a launch command.',
+    customHarness: 'Custom Harness',
+    programHere: 'A program that runs on this Mac',
+    presetDescription: (name: string, description: string) => `${name} · ${description}`,
+    install: 'Install',
+    launch: 'Launch',
+    name: 'Name',
+    launchCommand: 'Launch command',
+    example: 'e.g. codex-acp',
+    arguments: 'Arguments',
+    perLine: 'One per line',
+    enableAfter: 'Enable after adding',
+    environment: 'Environment variables',
+    addVariable: 'Add variable',
+    noEnvironment: 'No environment variables',
+    cancel: 'Cancel',
+    addHarness: 'Add Harness',
+    editLaunch: 'Edit launch',
+    save: 'Save',
+    addEnvironment: 'Add environment variable',
+    add: 'Add',
+    environmentExample: 'e.g. OPENAI_BASE_URL',
+    invalidVariable: 'Letters, digits and underscores only, not starting with a digit',
+    rename: 'Rename…',
+    enabled: 'Enable',
+    edit: 'Edit…',
+    command: 'Command',
+    none: 'None',
+    addEllipsis: 'Add…',
+    set: 'Set',
+    remove: 'Remove',
+    detection: 'Detection',
+    checkAgain: 'Check again',
+    notLaunchable: 'Can’t launch yet',
+    updateNeeded: 'Update required',
+    commandFound: 'Command found',
+    copyUpdate: 'Copy update command',
+    copyCommandPath: 'Copy command path',
+    upgradeCommand: 'Update command',
+    definitionProblem: 'Definition has a problem',
+    listed: 'Listed by Latch',
+    unverified: 'Unverified definition',
+    differentCommand: 'Command or arguments differ from Latch’s listing',
+    extensions: 'Skills, commands, MCP, and plugins',
+    deleteHarness: 'Delete Harness',
+    delete: 'Delete',
+    renameHarness: 'Rename Harness',
+    notInstalled: 'Not installed',
+    needsAttention: 'Needs attention',
+    disabled: 'Off',
+    available: 'Available',
+    versionUnread: 'Version unread. Add and confirm on this Mac to read it.',
+    howToInstall: 'How to install',
+    installed: 'Installed',
+    builtIn: 'Built in, uses your model services',
+    needsProvider: 'Needs a model service',
+    offers: 'Available to install',
+    notAdmin: 'This device doesn’t have permission to manage this Mac.',
+    cannotRun: 'This device can’t start or continue sessions.',
+    commandFirst: 'Install or set up the Harness command, then test the launch.',
+    onThisMac: 'on this Mac',
+    onComputer: (name: string) => `on ${name}`,
+    launchWhere: (place: string) => `Launches ${place} · External Harness`,
+    openHomepage: (name: string) => `Open the ${name} homepage`,
+    invalidName: (key: string) => `The environment variable “${key}” is invalid. Use only letters, numbers, and underscores.`,
+    removeName: (name: string) => `Remove ${name}`,
+    deleteConfirm: (name: string) =>
+      `Delete the launch configuration and environment variables for “${name}”? Wait for its running sessions to finish before deleting it.`,
+    editName: (name: string) => `Edit ${name}`,
+    via: (command: string) => `Via ${command}`,
+    enableName: (name: string) => `Enable ${name}`,
+    offerLabel: (name: string, note: string, launch: string) => `${name}, ${note}, ${launch}`,
+    foundWithNote: (found: string, note: string) => `${found}. ${note}`,
+    needAdapter: (program: string) => `Found ${program}. Set up its adapter to connect it to Latch.`,
+    installHelp: (name: string) => `How to install ${name}`,
+    copyInstallFor: (name: string) => `Copy the ${name} install command`,
+  },
+)
 
 interface AgentsResponse {
   agents: AgentSettings[]
@@ -54,14 +240,11 @@ type Editing = { kind: 'agent'; id: string } | { kind: 'new'; preset?: AgentPres
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
 /** Where the Harnesses run, as a person on this device names that computer: 「这台 Mac」 in its own app, else its name. */
-const onComputer = (local: boolean, hostName?: string) => (local ? '这台 Mac 上' : ` ${computerName(hostName)} 上`)
+const onComputer = (local: boolean, hostName?: string) => (local ? COPY.onThisMac : COPY.onComputer(computerName(hostName)))
 /** A session started with a definition is an external Harness's session: it decides its own reach, Latch does not isolate it. */
-const FULL_ACCESS_NOTE = <NoteLine icon={ShieldGlyph} brief={SETUP_COPY.externalNote} />
-const CUSTOM_START = '自定义启动方式'
-/** Environment values: kept on this Mac and never shown again. */
-const ENV_HELD = '只存在这台 Mac 上，不再显示'
-/** A definition no full-access session has started with yet (`started: false`; older Hosts do not say). */
-const NOT_STARTED = '还没有开启过会话'
+function FullAccessNote() {
+  return <NoteLine icon={ShieldGlyph} brief={SETUP_COPY.externalNote} />
+}
 const lines = (text: string) =>
   text
     .split('\n')
@@ -77,7 +260,7 @@ function Detection({ agent, preset, harness }: { agent: AgentSettings; preset?: 
         <Icon icon={AlertGlyph} size={12} />
         <span>
           {missing}
-          {preset ? '；安装后点「重新检测」' : ''}
+          {preset ? COPY.recheckAfterInstall : ''}
         </span>
       </span>
     )
@@ -99,7 +282,7 @@ function Detection({ agent, preset, harness }: { agent: AgentSettings; preset?: 
   return (
     <span className="detect is-ok">
       <Icon icon={CircleCheckGlyph} size={12} />
-      <span className="detect-label">已找到</span>
+      <span className="detect-label">{COPY.found}</span>
       <MiddleEllipsis text={agent.detected.path ?? agent.command} className="detect-path" />
     </span>
   )
@@ -111,27 +294,27 @@ function InstallRows({ preset }: { preset: AgentPreset }) {
     <>
       {preset.install && (
         <SettingsRow
-          title="安装命令"
+          title={COPY.installCommand}
           description={<code className="settings-mono">{preset.install}</code>}
           trailing={
             <span className="command-actions">
-              <CopyButton text={preset.install} label="复制安装命令" />
+              <CopyButton text={preset.install} label={COPY.copyInstall} />
               <TerminalFillButton command={preset.install} detached />
             </span>
           }
         />
       )}
       <SettingsRow
-        title="项目主页"
-        description={`${hostOf(preset.homepage)} · ${preset.license}`}
+        title={COPY.homepage}
+        description={`${hostOf(preset.homepage)} · ${harnessPresetCopy(preset).license}`}
         trailing={
           <ButtonLink
             variant="ghost"
             href={preset.homepage}
             target="_blank"
             rel="noopener noreferrer"
-            aria-label={`打开 ${preset.name} 的项目主页`}>
-            打开
+            aria-label={COPY.openHomepage(preset.name)}>
+            {COPY.open}
             <Icon icon={ExternalGlyph} size={12} />
           </ButtonLink>
         }
@@ -154,8 +337,8 @@ function EnvFields({
         <div key={index} className="settings-row env-row">
           <input
             className="ui-input"
-            aria-label="变量名"
-            placeholder="变量名"
+            aria-label={COPY.variableName}
+            placeholder={COPY.variableName}
             value={item.key}
             spellCheck={false}
             autoComplete="off"
@@ -165,9 +348,9 @@ function EnvFields({
           />
           <input
             className="ui-input"
-            aria-label="变量值"
+            aria-label={COPY.variableValue}
             type="password"
-            placeholder="值"
+            placeholder={COPY.value}
             value={item.value}
             autoComplete="new-password"
             onChange={event => {
@@ -175,7 +358,7 @@ function EnvFields({
             }}
           />
           <IconButton
-            label="删除此变量"
+            label={COPY.removeVariable}
             icon={CloseGlyph}
             onClick={() => {
               onChange(entries.filter((_, i) => i !== index))
@@ -204,12 +387,12 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
   const save = async (event: FormEvent) => {
     event.preventDefault()
     if (!name.trim() || !command.trim()) {
-      setError('请填写名称和启动命令。')
+      setError(COPY.nameAndCommand)
       return
     }
     const invalid = invalidEnv(env)
     if (invalid) {
-      setError(`环境变量名「${invalid.key}」无效，只能包含字母、数字和下划线。`)
+      setError(COPY.invalidName(invalid.key))
       return
     }
     setBusy(true)
@@ -238,18 +421,18 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
         void save(event)
       }}>
       <SectionHeading
-        title={preset ? CUSTOM_START : '自定义 Harness'}
-        description={preset ? `${preset.name}：${preset.description}` : '在这台 Mac 上运行的程序'}
+        title={preset ? COPY.customStart : COPY.customHarness}
+        description={preset ? COPY.presetDescription(preset.name, harnessPresetCopy(preset).description) : COPY.programHere}
       />
       {preset && (
-        <SettingsGroup title="安装">
+        <SettingsGroup title={COPY.install}>
           <InstallRows preset={preset} />
         </SettingsGroup>
       )}
-      <SettingsGroup title="启动方式" note={<NoteLine icon={ShieldGlyph} brief={SETUP_COPY.agentFullAccess} />}>
+      <SettingsGroup title={COPY.launch} note={<NoteLine icon={ShieldGlyph} brief={SETUP_COPY.agentFullAccess} />}>
         <div className="settings-card-body settings-fields">
           <TextField
-            label="名称"
+            label={COPY.name}
             value={name}
             maxLength={80}
             autoComplete="off"
@@ -258,18 +441,18 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
             }}
           />
           <TextField
-            label="启动命令"
+            label={COPY.launchCommand}
             value={command}
             spellCheck={false}
             autoComplete="off"
-            placeholder="例如 codex-acp"
+            placeholder={COPY.example}
             onChange={event => {
               setCommand(event.target.value)
             }}
           />
           <TextAreaField
-            label="参数"
-            hint="每行一个"
+            label={COPY.arguments}
+            hint={COPY.perLine}
             rows={3}
             value={args}
             spellCheck={false}
@@ -278,10 +461,10 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
             }}
           />
         </div>
-        <SwitchRow className="settings-row" title="添加后启用" checked={enabled} onCheckedChange={setEnabled} />
+        <SwitchRow className="settings-row" title={COPY.enableAfter} checked={enabled} onCheckedChange={setEnabled} />
       </SettingsGroup>
       <SettingsGroup
-        title="环境变量"
+        title={COPY.environment}
         meta={
           <Button
             variant="link"
@@ -289,22 +472,22 @@ function AgentAdd({ preset, onSaved, onCancel }: { preset?: AgentPreset; onSaved
             onClick={() => {
               setEnv(previous => [...previous, { key: '', value: '' }])
             }}>
-            添加变量
+            {COPY.addVariable}
           </Button>
         }
-        caption={ENV_HELD}
+        caption={COPY.environmentStored}
         captionIcon="lock">
-        {env.length === 0 && <SettingsRow title="没有环境变量" />}
+        {env.length === 0 && <SettingsRow title={COPY.noEnvironment} />}
         <EnvFields entries={env} onChange={setEnv} />
       </SettingsGroup>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       <InlineConfirm active={busy} rank={1} />
       <div className="settings-actions">
         <Button size="md" disabled={busy} onClick={onCancel}>
-          取消
+          {COPY.cancel}
         </Button>
         <Button size="md" type="submit" variant="primary" loading={busy}>
-          添加 Harness
+          {COPY.addHarness}
         </Button>
       </div>
     </form>
@@ -350,17 +533,17 @@ function DefinitionDialog({
     <Dialog
       open={open}
       size="lg"
-      title="编辑启动方式"
+      title={COPY.editLaunch}
       onClose={() => {
         if (!busy) onClose()
       }}
       footer={
         <>
           <Button size="md" disabled={busy} onClick={onClose}>
-            取消
+            {COPY.cancel}
           </Button>
           <Button size="md" variant="primary" type="submit" form={form} disabled={!command.trim()} loading={busy}>
-            保存
+            {COPY.save}
           </Button>
         </>
       }>
@@ -370,9 +553,9 @@ function DefinitionDialog({
         onSubmit={event => {
           void submit(event)
         }}>
-        {FULL_ACCESS_NOTE}
+        <FullAccessNote />
         <TextField
-          label="启动命令"
+          label={COPY.launchCommand}
           value={command}
           spellCheck={false}
           autoComplete="off"
@@ -381,8 +564,8 @@ function DefinitionDialog({
           }}
         />
         <TextAreaField
-          label="参数"
-          hint="每行一个"
+          label={COPY.arguments}
+          hint={COPY.perLine}
           rows={4}
           value={args}
           spellCheck={false}
@@ -432,18 +615,18 @@ function EnvDialog({
     <Dialog
       open={open}
       size="lg"
-      title="添加环境变量"
-      subtitle={ENV_HELD}
+      title={COPY.addEnvironment}
+      subtitle={COPY.environmentStored}
       onClose={() => {
         if (!busy) close()
       }}
       footer={
         <>
           <Button size="md" disabled={busy} onClick={close}>
-            取消
+            {COPY.cancel}
           </Button>
           <Button size="md" variant="primary" type="submit" form={form} disabled={!key.trim() || invalid} loading={busy}>
-            添加
+            {COPY.add}
           </Button>
         </>
       }>
@@ -454,19 +637,19 @@ function EnvDialog({
           void submit(event)
         }}>
         <TextField
-          label="变量名"
+          label={COPY.variableName}
           value={key}
           spellCheck={false}
           autoComplete="off"
-          placeholder="例如 OPENAI_BASE_URL"
-          error={invalid ? '只能包含字母、数字和下划线，不能以数字开头' : undefined}
+          placeholder={COPY.environmentExample}
+          error={invalid ? COPY.invalidVariable : undefined}
           onChange={event => {
             setKey(event.target.value)
             setError('')
           }}
         />
         <TextField
-          label="值"
+          label={COPY.value}
           type="password"
           value={value}
           autoComplete="new-password"
@@ -549,14 +732,14 @@ function AgentPage({
     <>
       <SectionHeading
         title={agent.name}
-        description={`在${on}启动 · 外部 Harness`}
+        description={COPY.launchWhere(on)}
         action={
           <Button
             disabled={busy}
             onClick={() => {
               setDialog('name')
             }}>
-            重命名…
+            {COPY.rename}
           </Button>
         }
       />
@@ -564,7 +747,7 @@ function AgentPage({
       <SettingsGroup>
         <SwitchRow
           className="settings-row"
-          title="启用"
+          title={COPY.enabled}
           checked={enabled}
           disabled={busy}
           onCheckedChange={next => {
@@ -579,7 +762,7 @@ function AgentPage({
         />
       </SettingsGroup>
       <SettingsGroup
-        title="启动方式"
+        title={COPY.launch}
         meta={
           local && (
             <Button
@@ -589,20 +772,20 @@ function AgentPage({
               onClick={() => {
                 setDialog('definition')
               }}>
-              编辑…
+              {COPY.edit}
             </Button>
           )
         }
-        note={FULL_ACCESS_NOTE}>
-        {agent.started === false && <SettingsRow title={NOT_STARTED} />}
-        <SettingsRow title="命令" description={<MiddleEllipsis text={agent.command} className="settings-mono" />} />
+        note={<FullAccessNote />}>
+        {agent.started === false && <SettingsRow title={COPY.notStarted} />}
+        <SettingsRow title={COPY.command} description={<MiddleEllipsis text={agent.command} className="settings-mono" />} />
         <SettingsRow
-          title="参数"
-          description={agent.args.length > 0 ? <MiddleEllipsis text={agent.args.join(' ')} className="settings-mono" /> : '无'}
+          title={COPY.arguments}
+          description={agent.args.length > 0 ? <MiddleEllipsis text={agent.args.join(' ')} className="settings-mono" /> : COPY.none}
         />
       </SettingsGroup>
       <SettingsGroup
-        title="环境变量"
+        title={COPY.environment}
         meta={
           local && (
             <Button
@@ -612,31 +795,31 @@ function AgentPage({
               onClick={() => {
                 setDialog('env')
               }}>
-              添加…
+              {COPY.addEllipsis}
             </Button>
           )
         }
-        caption={ENV_HELD}
+        caption={COPY.environmentStored}
         captionIcon="lock">
         <InlineConfirm active={busy && dialog === null} rank={1} />
-        {agent.envKeys.length === 0 && <SettingsRow title="没有环境变量" />}
+        {agent.envKeys.length === 0 && <SettingsRow title={COPY.noEnvironment} />}
         {agent.envKeys.map(key => (
           <SettingsRow
             key={key}
             title={<code className="settings-mono">{key}</code>}
-            description="已设置"
+            description={COPY.set}
             trailing={
               local && (
                 <Button
                   variant="ghost"
                   disabled={busy}
-                  aria-label={`移除 ${key}`}
+                  aria-label={COPY.removeName(key)}
                   onClick={() => {
                     void update({ env: { [key]: null } }).then(text => {
                       if (text) setError(text)
                     })
                   }}>
-                  移除
+                  {COPY.remove}
                 </Button>
               )
             }
@@ -644,15 +827,15 @@ function AgentPage({
         ))}
       </SettingsGroup>
       <SettingsGroup
-        title="检测"
+        title={COPY.detection}
         meta={
           <Button variant="ghost" size="xs" icon={RefreshGlyph} loading={checking} onClick={onRecheck}>
-            重新检测
+            {COPY.checkAgain}
           </Button>
         }>
         <SettingsRow
           leading={<IconTile icon={missing || agent.detected.outdated ? AlertGlyph : CircleCheckGlyph} />}
-          title={missing ? '还不能启动' : agent.detected.outdated ? '需要升级' : '已找到命令'}
+          title={missing ? COPY.notLaunchable : agent.detected.outdated ? COPY.updateNeeded : COPY.commandFound}
           description={
             missing || agent.detected.outdated || harness?.status === 'unavailable' ? (
               <Detection agent={agent} preset={preset} harness={harness} />
@@ -663,37 +846,37 @@ function AgentPage({
           trailing={
             missing ? undefined : agent.detected.outdated ? (
               <span className="command-actions">
-                <CopyButton text={agent.detected.outdated.upgrade} label="复制升级命令" />
+                <CopyButton text={agent.detected.outdated.upgrade} label={COPY.copyUpdate} />
                 <TerminalFillButton command={agent.detected.outdated.upgrade} detached />
               </span>
             ) : agent.detected.path ? (
-              <CopyButton text={agent.detected.path} label="复制命令路径" />
+              <CopyButton text={agent.detected.path} label={COPY.copyCommandPath} />
             ) : undefined
           }
         />
         {agent.detected.outdated && (
-          <SettingsRow title="升级命令" description={<span className="settings-mono">{agent.detected.outdated.upgrade}</span>} />
+          <SettingsRow title={COPY.upgradeCommand} description={<span className="settings-mono">{agent.detected.outdated.upgrade}</span>} />
         )}
         {agent.problem && (
           <SettingsRow
             leading={<IconTile icon={AlertGlyph} />}
-            title="定义有问题"
+            title={COPY.definitionProblem}
             description={<span className="detect is-warn">{agent.problem}</span>}
           />
         )}
         <SettingsRow
           leading={<IconTile icon={agent.verified ? ShieldCheck : ShieldQuestion} />}
-          title={agent.verified ? 'Latch 已收录' : '未验证的定义'}
-          description={agent.verified ? undefined : '命令或参数与 Latch 收录的不同'}
+          title={agent.verified ? COPY.listed : COPY.unverified}
+          description={agent.verified ? undefined : COPY.differentCommand}
         />
         {preset && <InstallRows preset={preset} />}
       </SettingsGroup>
       {harness?.login && <LoginGroup harness={harness} allowed={run} surface={surface} probe={agent.lastProbe} />}
-      {harness && <ExtensionsLink title="技能、命令、MCP 与插件" harnessId={harness.id} />}
+      {harness && <ExtensionsLink title={COPY.extensions} harnessId={harness.id} />}
       {probe && <AgentProbe agent={agent} disabled={busy} disabledReason={probeDisabledReason} onSaved={onSaved} />}
       <SettingsGroup>
         <SettingsRow
-          title="删除 Harness"
+          title={COPY.deleteHarness}
           trailing={
             <Button
               variant="danger"
@@ -701,15 +884,15 @@ function AgentPage({
               onClick={() => {
                 setRemoving(true)
               }}>
-              删除
+              {COPY.delete}
             </Button>
           }
         />
       </SettingsGroup>
       <FieldDialog
         open={dialog === 'name'}
-        title="重命名 Harness"
-        label="名称"
+        title={COPY.renameHarness}
+        label={COPY.name}
         initial={agent.name}
         maxLength={80}
         onSubmit={value => update({ name: value })}
@@ -736,10 +919,10 @@ function AgentPage({
       </>
       {removing && (
         <ConfirmDialog
-          title="删除 Harness"
+          title={COPY.deleteHarness}
           danger
-          confirmLabel="删除"
-          message={`删除「${agent.name}」的启动配置和环境变量？它的会话正在运行时无法删除。`}
+          confirmLabel={COPY.delete}
+          message={COPY.deleteConfirm(agent.name)}
           onClose={() => {
             setRemoving(false)
           }}
@@ -764,12 +947,12 @@ function EngineStatus({ agent, harness }: { agent: AgentSettings; harness?: Harn
     const reason = missing ?? agent.problem ?? harness?.statusMessage
     return (
       <span className="service-status" data-tone="warn" title={reason}>
-        {missing !== undefined ? '未安装' : agent.detected.outdated ? '需要升级' : '需要处理'}
+        {missing !== undefined ? COPY.notInstalled : agent.detected.outdated ? COPY.updateNeeded : COPY.needsAttention}
       </span>
     )
   }
-  if (!agent.enabled) return <span className="service-status">已停用</span>
-  return <span className="service-status">可用</span>
+  if (!agent.enabled) return <span className="service-status">{COPY.disabled}</span>
+  return <span className="service-status">{COPY.available}</span>
 }
 
 /** 已安装 holds what can run; a definition whose program is not on this Mac waits with the others that can be installed. */
@@ -813,24 +996,25 @@ export function AgentRow({
 }) {
   // Saved on the preset's adapter rather than its own program: said, with what the direct route needs.
   const viaAdapter = preset?.fallback !== undefined && commandBase(agent.command) === preset.fallback.command
+  const words = preset && harnessPresetCopy(preset)
   return (
     <ObjectRow
       className="agent-row"
-      label={`编辑 ${agent.name}`}
+      label={COPY.editName(agent.name)}
       dim={missingText(agent) !== undefined}
       leading={<MarkTile mark={agent.presetId} cold={harness?.status === 'unavailable'} size={24} />}
       title={
         <span className="settings-row-name">
           {agent.name}
-          {!agent.verified && <span className="settings-row-note">未验证的定义</span>}
+          {!agent.verified && <span className="settings-row-note">{COPY.unverified}</span>}
         </span>
       }
       description={
         // A preset says which program it is bound to; anything else says what it runs.
         agent.verified && preset && harness?.bound?.path ? (
           <MiddleEllipsis text={harness.bound.path} className="settings-mono" />
-        ) : agent.verified && preset ? (
-          ((viaAdapter ? preset.fallback?.description : undefined) ?? preset.description)
+        ) : agent.verified && words ? (
+          ((viaAdapter ? words.adapterDescription : undefined) ?? words.description)
         ) : (
           <code className="agent-command">{[agent.command, ...agent.args].join(' ')}</code>
         )
@@ -838,9 +1022,9 @@ export function AgentRow({
       onOpen={onOpen}
       trailing={
         <>
-          {viaAdapter && preset?.fallback && <Hint label={`经 ${preset.fallback.command}`}>{preset.fallback.direct}</Hint>}
+          {viaAdapter && preset?.fallback && <Hint label={COPY.via(preset.fallback.command)}>{words?.direct}</Hint>}
           <EngineStatus agent={agent} harness={harness} />
-          <Switch label={`启用 ${agent.name}`} checked={agent.enabled} disabled={busy} onCheckedChange={onToggle} />
+          <Switch label={COPY.enableName(agent.name)} checked={agent.enabled} disabled={busy} onCheckedChange={onToggle} />
         </>
       }
     />
@@ -852,7 +1036,6 @@ export function AgentRow({
  * so it is not drawn as ready. The row opens its start form, for a person who wants to change how it starts.
  */
 /** Behind 已找到's ⓘ: a preset is run for its version only once it is confirmed on this Mac. */
-const VERSION_UNREAD = '版本未读：添加并在这台 Mac 上确认后读取'
 
 function FoundRow({ preset, onOpen }: { preset: AgentPresetSettings; onOpen: () => void }) {
   const outdated = preset.detected?.outdated
@@ -875,18 +1058,22 @@ function FoundRow({ preset, onOpen }: { preset: AgentPresetSettings; onOpen: () 
       }
       value={
         outdated ? (
-          '需要升级'
+          COPY.updateNeeded
         ) : unread ? (
           // Not run for its version until it is confirmed: 已找到 says only that the program is there.
           // The row's name already says it to assistive tech; pointer and touch get it as the word's tooltip.
-          <Tooltip content={VERSION_UNREAD} describe={false}>
-            <span className="agent-found-unread">已找到</span>
+          <Tooltip content={COPY.versionUnread} describe={false}>
+            <span className="agent-found-unread">{COPY.found}</span>
           </Tooltip>
         ) : (
-          '已找到'
+          COPY.found
         )
       }
-      label={`${preset.name}，${outdated ? '需要升级' : unread ? `已找到，${VERSION_UNREAD}` : '已找到'}，${CUSTOM_START}`}
+      label={COPY.offerLabel(
+        preset.name,
+        outdated ? COPY.updateNeeded : unread ? COPY.foundWithNote(COPY.found, COPY.versionUnread) : COPY.found,
+        COPY.customStart,
+      )}
       onClick={onOpen}
     />
   )
@@ -909,6 +1096,7 @@ function InstallRow({
 }) {
   const [open, setOpen] = useState(false)
   const program = foundWithoutAdapter(preset.detected)
+  const words = harnessPresetCopy(preset)
   return (
     <div className="agent-install">
       <SettingsRow
@@ -916,16 +1104,16 @@ function InstallRow({
         leading={<MarkTile mark={preset.id} size={24} />}
         record
         title={preset.name}
-        description={program ? `找到了 ${program}，还差让 Latch 连接它的适配器` : preset.description}
+        description={program ? COPY.needAdapter(program) : words.description}
         trailing={
           <Button
             variant="outline"
             aria-expanded={open}
-            aria-label={`怎么装 ${preset.name}`}
+            aria-label={COPY.installHelp(preset.name)}
             onClick={() => {
               setOpen(!open)
             }}>
-            怎么装
+            {COPY.howToInstall}
           </Button>
         }
       />
@@ -941,17 +1129,17 @@ function InstallRow({
               </>
             )}
             <span className="agent-how-actions">
-              {preset.install && <CopyButton text={preset.install} label={`复制 ${preset.name} 的安装命令`} size="xs" />}
+              {preset.install && <CopyButton text={preset.install} label={COPY.copyInstallFor(preset.name)} size="xs" />}
               {preset.install && <TerminalFillButton command={preset.install} detached />}
               <Button size="xs" variant="ghost" icon={RefreshGlyph} loading={checking} onClick={onRecheck}>
-                重新检测
+                {COPY.checkAgain}
               </Button>
             </span>
           </div>
-          {preset.installNote && <p className="agent-how-note">{preset.installNote}</p>}
+          {words.installNote && <p className="agent-how-note">{words.installNote}</p>}
           <span className="agent-how-custom">
             <Button variant="link" size="xs" onClick={onCustom}>
-              {CUSTOM_START}…
+              {COPY.customStart}…
             </Button>
           </span>
         </div>
@@ -1054,7 +1242,7 @@ export function AgentsSettings({
     <>
       {error && <InlineNotice tone="error">{error}</InlineNotice>}
       <SettingsGroup
-        title="已安装"
+        title={COPY.installed}
         meta={
           <Button
             variant="outline"
@@ -1062,7 +1250,7 @@ export function AgentsSettings({
             onClick={() => {
               setEditing({ kind: 'new' })
             }}>
-            自定义 Harness
+            {COPY.customHarness}
           </Button>
         }
         note={<NoteLine icon={ShieldGlyph} brief={RUNS_AS_YOU_COPY.engines(on)} />}>
@@ -1072,8 +1260,8 @@ export function AgentsSettings({
             leading={<HarnessTile harness={builtin} size={24} />}
             record
             title={harnessName(builtin)}
-            description="内置，用你接入的模型服务"
-            trailing={<span className="service-status">{builtin.status === 'ready' ? '可用' : '需要模型服务'}</span>}
+            description={COPY.builtIn}
+            trailing={<span className="service-status">{builtin.status === 'ready' ? COPY.available : COPY.needsProvider}</span>}
           />
         )}
         {installed.map(engineRow)}
@@ -1082,7 +1270,7 @@ export function AgentsSettings({
         ))}
       </SettingsGroup>
       {(missing.length > 0 || installable.length > 0) && (
-        <SettingsGroup title="可以安装">
+        <SettingsGroup title={COPY.offers}>
           {missing.map(engineRow)}
           {installable.map(preset => (
             <InstallRow
@@ -1102,7 +1290,7 @@ export function AgentsSettings({
   if (editing?.kind === 'new')
     levels.push({
       key: `new:${editing.preset?.id ?? 'custom'}`,
-      title: editing.preset ? CUSTOM_START : '自定义 Harness',
+      title: editing.preset ? COPY.customStart : COPY.customHarness,
       onBack: () => {
         setEditing(null)
       },
@@ -1137,11 +1325,11 @@ export function AgentsSettings({
           run={snapshot.device.scopes?.includes('run') === true}
           probeDisabledReason={
             !snapshot.device.scopes?.includes('admin')
-              ? '这台设备没有管理这台 Mac 的权限。'
+              ? COPY.notAdmin
               : !snapshot.device.scopes?.includes('run')
-                ? '此设备没有发起和继续会话的权限。'
+                ? COPY.cannotRun
                 : !agent.detected.found
-                  ? '先安装或配置 Harness 命令，再测试启动。'
+                  ? COPY.commandFirst
                   : undefined
           }
           onRecheck={() => {

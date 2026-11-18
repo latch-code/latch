@@ -9,6 +9,76 @@ import type {
   BrowserColorScheme,
 } from '../../core/shell.ts'
 import { readStorage } from '../../core/storageKeys.ts'
+import { defineCopy, formatNumber, plural } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    preset: {
+      'phone-small': '小屏手机',
+      phone: '手机',
+      'phone-large': '大屏手机',
+      android: 'Android 手机',
+      tablet: '平板',
+      desktop: '桌面',
+    },
+    scheme: { system: '跟随系统', light: '浅色', dark: '深色' },
+    errors: (count: number) => `${formatNumber(count)} 个错误`,
+    warnings: (count: number) => `${formatNumber(count)} 个警告`,
+    newTab: '新标签',
+    downloadBlocked: '页面想下载文件，已拦下',
+    popupBlocked: '页面想打开新窗口，已拦下',
+    certificateBlocked: '证书无效，已拒绝连接',
+    permissionBlocked: '页面请求的权限已拒绝',
+    hostBlocked: '页面想访问 Latch，已拦下',
+    privateBlocked: '页面想去局域网或这台 Mac 的其他地址，已拦下',
+    notLocalBlocked: 'Agent 操作后页面想离开这台 Mac，已拦下',
+    addressBlocked: '页面想去的地址不能打开，已拦下',
+    blocked: '已拦下页面的请求',
+    invalid: '只能打开 http 或 https 地址',
+    refusedHost: '不能在这里打开 Latch 自己的地址',
+    refusedAddress: '不能打开这个地址',
+    tabLimit: (limit: number) => `最多 ${formatNumber(limit)} 个标签`,
+    projectLimit: '打开的项目太多了，请重启 Latch',
+    unavailable: '窗口还没准备好，请重试',
+    failed: '没有打开',
+    console: '控制台',
+    network: '网络',
+    failedCount: (count: number) => `${formatNumber(count)} 个失败`,
+  },
+  {
+    preset: {
+      'phone-small': 'Small phone',
+      phone: 'Phone',
+      'phone-large': 'Large phone',
+      android: 'Android phone',
+      tablet: 'Tablet',
+      desktop: 'Desktop',
+    },
+    scheme: { system: 'System', light: 'Light', dark: 'Dark' },
+    errors: (count: number) => plural(count, { one: '{n} error', other: '{n} errors' }),
+    warnings: (count: number) => plural(count, { one: '{n} warning', other: '{n} warnings' }),
+    newTab: 'New tab',
+    downloadBlocked: 'The page tried to download a file. Latch blocked it.',
+    popupBlocked: 'The page tried to open a window. Latch blocked it.',
+    certificateBlocked: 'Invalid certificate. Connection refused.',
+    permissionBlocked: 'The page’s permission request was denied.',
+    hostBlocked: 'The page tried to reach Latch. The request was blocked.',
+    privateBlocked: 'The page tried to reach the local network or another address on this Mac. The request was blocked.',
+    notLocalBlocked: 'After the agent acted, the page tried to leave this Mac. The request was blocked.',
+    addressBlocked: 'The page tried to open a restricted address. The request was blocked.',
+    blocked: 'The page’s request was blocked.',
+    invalid: 'Only HTTP and HTTPS addresses can be opened',
+    refusedHost: 'Latch’s own address can’t be opened here',
+    refusedAddress: 'This address can’t be opened',
+    tabLimit: (limit: number) => `Up to ${plural(limit, { one: '{n} tab', other: '{n} tabs' })}`,
+    projectLimit: 'Too many projects are open. Restart Latch.',
+    unavailable: 'The window isn’t ready. Try again.',
+    failed: 'Couldn’t open the address',
+    console: 'Console',
+    network: 'Network',
+    failedCount: (count: number) => `${formatNumber(count)} failed`,
+  },
+)
 
 /** As main keeps them (browser.cjs `TAB_LIMIT`): every tab of the window counts. */
 export const BROWSER_TAB_LIMIT = 8
@@ -36,20 +106,87 @@ export const PRESETS: ReadonlyArray<{
   ratio: number
   phone?: { top: number; bottom: number }
 }> = [
-  { id: 'phone-small', label: '小屏手机', width: 375, height: 667, ratio: 2, phone: { top: 20, bottom: 0 } },
-  { id: 'phone', label: '手机', width: 390, height: 844, ratio: 3, phone: { top: 47, bottom: 34 } },
-  { id: 'phone-large', label: '大屏手机', width: 440, height: 956, ratio: 3, phone: { top: 62, bottom: 34 } },
-  { id: 'android', label: 'Android 手机', width: 412, height: 915, ratio: 2.625, phone: { top: 24, bottom: 24 } },
-  { id: 'tablet', label: '平板', width: 820, height: 1180, ratio: 2 },
-  { id: 'desktop', label: '桌面', width: 1280, height: 800, ratio: 1 },
+  {
+    id: 'phone-small',
+    get label() {
+      return COPY.preset['phone-small']
+    },
+    width: 375,
+    height: 667,
+    ratio: 2,
+    phone: { top: 20, bottom: 0 },
+  },
+  {
+    id: 'phone',
+    get label() {
+      return COPY.preset.phone
+    },
+    width: 390,
+    height: 844,
+    ratio: 3,
+    phone: { top: 47, bottom: 34 },
+  },
+  {
+    id: 'phone-large',
+    get label() {
+      return COPY.preset['phone-large']
+    },
+    width: 440,
+    height: 956,
+    ratio: 3,
+    phone: { top: 62, bottom: 34 },
+  },
+  {
+    id: 'android',
+    get label() {
+      return COPY.preset.android
+    },
+    width: 412,
+    height: 915,
+    ratio: 2.625,
+    phone: { top: 24, bottom: 24 },
+  },
+  {
+    id: 'tablet',
+    get label() {
+      return COPY.preset.tablet
+    },
+    width: 820,
+    height: 1180,
+    ratio: 2,
+  },
+  {
+    id: 'desktop',
+    get label() {
+      return COPY.preset.desktop
+    },
+    width: 1280,
+    height: 800,
+    ratio: 1,
+  },
 ]
 /** The plain frame Latch draws around a phone preset's page, outside the view (a native view covers what is under it). */
 export const PHONE_BEZEL = 10
 
 export const SCHEMES: ReadonlyArray<{ id: BrowserColorScheme; label: string }> = [
-  { id: 'system', label: '跟随系统' },
-  { id: 'light', label: '浅色' },
-  { id: 'dark', label: '深色' },
+  {
+    id: 'system',
+    get label() {
+      return COPY.scheme.system
+    },
+  },
+  {
+    id: 'light',
+    get label() {
+      return COPY.scheme.light
+    },
+  },
+  {
+    id: 'dark',
+    get label() {
+      return COPY.scheme.dark
+    },
+  },
 ]
 
 /** A preset's size in CSS pixels, turned when rotated; null for 适应面板. */
@@ -131,10 +268,10 @@ export function pageLabel(url: string): string {
 
 /** A tab's name in the strip: its title, else where it is, else 新标签. */
 export function tabTitle(state: BrowserTabState | undefined): string {
-  if (!state) return '新标签'
+  if (!state) return COPY.newTab
   const title = state.title.trim()
   if (title && title !== state.url && !/^https?:\/\//u.test(title)) return title
-  return hostLabel(state.url) || '新标签'
+  return hostLabel(state.url) || COPY.newTab
 }
 
 const NET_ERRORS: Record<number, string> = {
@@ -172,34 +309,34 @@ export type TabTrouble = { kind: 'crashed' } | { kind: 'waiting'; host: string }
 export function noticeText(notice: string, detail?: string): string {
   switch (notice) {
     case 'download':
-      return '页面想下载文件，已拦下'
+      return COPY.downloadBlocked
     case 'popup':
-      return '页面想打开新窗口，已拦下'
+      return COPY.popupBlocked
     case 'certificate':
-      return '证书无效，已拒绝连接'
+      return COPY.certificateBlocked
     case 'permission':
-      return '页面请求的权限已拒绝'
+      return COPY.permissionBlocked
     case 'navigation':
       return detail === 'host'
-        ? '页面想访问 Latch，已拦下'
+        ? COPY.hostBlocked
         : detail === 'private'
-          ? '页面想去局域网或这台 Mac 的其他地址，已拦下'
+          ? COPY.privateBlocked
           : detail === 'not-local'
-            ? 'Agent 操作后页面想离开这台 Mac，已拦下'
-            : '页面想去的地址不能打开，已拦下'
+            ? COPY.notLocalBlocked
+            : COPY.addressBlocked
     default:
-      return '已拦下页面的请求'
+      return COPY.blocked
   }
 }
 
 /** What a refused open or navigate means, for the address field. */
 export function refusalText(error: string, reason?: string): string {
-  if (error === 'invalid-url' || error === 'invalid') return '只能打开 http 或 https 地址'
-  if (error === 'blocked') return reason === 'host' ? '不能在这里打开 Latch 自己的地址' : '不能打开这个地址'
-  if (error === 'tab-limit') return `最多 ${BROWSER_TAB_LIMIT} 个标签`
-  if (error === 'project-limit') return '打开的项目太多了，请重启 Latch'
-  if (error === 'unavailable') return '窗口还没准备好，请重试'
-  return '没有打开'
+  if (error === 'invalid-url' || error === 'invalid') return COPY.invalid
+  if (error === 'blocked') return reason === 'host' ? COPY.refusedHost : COPY.refusedAddress
+  if (error === 'tab-limit') return COPY.tabLimit(BROWSER_TAB_LIMIT)
+  if (error === 'project-limit') return COPY.projectLimit
+  if (error === 'unavailable') return COPY.unavailable
+  return COPY.failed
 }
 
 /** The bottom row: counts in their tones; red only for errors, amber only for warnings. */
@@ -208,9 +345,14 @@ export function footerParts(logs: BrowserTabState['logs'] | undefined): Array<{ 
   const warnings = logs?.warnings ?? 0
   const failed = logs?.failed ?? 0
   const console: Array<{ text: string; tone?: 'error' | 'warn' }> = []
-  if (errors) console.push({ text: `${errors} 个错误`, tone: 'error' })
-  if (warnings) console.push({ text: `${warnings} 个警告`, tone: 'warn' })
-  return [{ text: '控制台' }, ...console, { text: '网络' }, ...(failed ? [{ text: `${failed} 个失败`, tone: 'error' as const }] : [])]
+  if (errors) console.push({ text: COPY.errors(errors), tone: 'error' })
+  if (warnings) console.push({ text: COPY.warnings(warnings), tone: 'warn' })
+  return [
+    { text: COPY.console },
+    ...console,
+    { text: COPY.network },
+    ...(failed ? [{ text: COPY.failedCount(failed), tone: 'error' as const }] : []),
+  ]
 }
 
 const PATTERNS = [...LATCH_CREDENTIALS, ...CREDENTIAL_CARRIERS, ...CREDENTIAL_KEYS]

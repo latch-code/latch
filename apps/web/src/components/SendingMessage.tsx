@@ -1,7 +1,29 @@
 import { useEffect, useState } from 'react'
 import { Count } from '@latch/ui'
 import type { SendingMessage as SendingView } from '../core/sendingMessage.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { MessageRow } from './MessageRow.tsx'
+
+const COPY = defineCopy(
+  {
+    attachments: (count: number) => (
+      <>
+        已添加 <Count value={count} /> 个附件
+      </>
+    ),
+    unknown: '未确认送达 · 在输入框重试或放弃这次提交',
+    sending: '发送中…',
+  },
+  {
+    attachments: (count: number) => (
+      <>
+        Added <Count value={count} /> {count === 1 ? 'attachment' : 'attachments'}
+      </>
+    ),
+    unknown: 'Delivery unconfirmed · Retry or discard from the input box',
+    sending: 'Sending…',
+  },
+)
 
 /** The text is immediate; the quiet delivery label waits 500ms to avoid flicker on a fast acknowledgement. */
 export function SendingMessage({ view, showUnknown = true }: { view: SendingView; showUnknown?: boolean }) {
@@ -24,14 +46,10 @@ export function SendingMessage({ view, showUnknown = true }: { view: SendingView
           }}
         />
       )}
-      {attachments > 0 && (
-        <p className="sending-attachments">
-          已添加 <Count value={attachments} /> 个附件
-        </p>
-      )}
+      {attachments > 0 && <p className="sending-attachments">{COPY.attachments(attachments)}</p>}
       {((view.state === 'unknown' && showUnknown) || (view.state === 'sending' && slow)) && (
         <div className="sending-message-status" data-state={view.state} role="status">
-          {view.state === 'unknown' ? '未确认送达 · 在输入框重试或放弃这次提交' : '发送中…'}
+          {view.state === 'unknown' ? COPY.unknown : COPY.sending}
         </div>
       )}
     </div>

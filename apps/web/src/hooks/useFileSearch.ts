@@ -2,6 +2,17 @@ import { useEffect, useState } from 'react'
 import { isFileMention, type FileContext } from '@latch/protocol'
 import { api, errorMessage, MessageError } from '../core/api.ts'
 import { fileContextBody, fileContextKey, fileRoute } from '../preview/fileContext.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    invalidReply: '文件搜索响应无效。',
+  },
+  {
+    invalidReply: 'The file search response was invalid.',
+  },
+)
+
 interface FileResults {
   files: Array<{ name: string; path: string; root: string }>
   truncated: boolean
@@ -38,7 +49,7 @@ export function useFileSearch(query: string, context: FileContext | undefined) {
             || result.files.some(file => typeof file.name !== 'string' || !isFileMention({ root: file.root, path: file.path }))
             || (result.unchecked !== undefined && (!isCount(result.unchecked.files) || !isCount(result.unchecked.directories)))
           )
-            throw new MessageError('文件搜索响应无效。')
+            throw new MessageError(COPY.invalidReply)
           if (!controller.signal.aborted)
             setState({
               files: result.files,

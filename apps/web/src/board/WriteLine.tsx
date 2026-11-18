@@ -1,4 +1,10 @@
 import { Button, StatusWord } from '@latch/ui'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  { acknowledge: '知道了', unknown: '结果未知', retry: '重试', abandon: '放弃' },
+  { acknowledge: 'OK', unknown: 'Outcome unknown', retry: 'Retry', abandon: 'Abandon' },
+)
 
 /** What a card's write line shows: a 待办's own write, or a session's attend or stop from the board. */
 export type CardWriteLine = { state: 'sending' } | { state: 'unknown'; reason: string } | { state: 'refused'; reason: string }
@@ -23,20 +29,20 @@ export function ItemWriteLine({
         <StatusWord tone="failed">{state.reason}</StatusWord>
         {onDismiss && (
           <Button size="xs" variant="ghost" onClick={onDismiss}>
-            知道了
+            {COPY.acknowledge}
           </Button>
         )}
       </span>
     )
   return (
     <span className="work-board-item-write" data-state="unknown" title={state.reason}>
-      <StatusWord tone="warn">结果未知</StatusWord>
+      <StatusWord tone="warn">{COPY.unknown}</StatusWord>
       <Button size="xs" onClick={onRetry}>
-        重试
+        {COPY.retry}
       </Button>
       {onDismiss && (
         <Button size="xs" variant="ghost" onClick={onDismiss}>
-          放弃
+          {COPY.abandon}
         </Button>
       )}
     </span>

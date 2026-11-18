@@ -1,3 +1,4 @@
+import { SHELL_COPY } from './copy.ts'
 import { useShortcutBindings } from '../core/shortcutBindings.ts'
 import { useRef, type ReactNode, type RefObject } from 'react'
 import { appRef, listedApps, originTitle } from '../plugin-pages/model.ts'
@@ -47,6 +48,28 @@ import { ComputerChip } from './ComputerChip.tsx'
 import { itemOfSession } from '../board/items.ts'
 import { openItemPage } from '../board/itemPage.ts'
 import { switchWorkView } from '../preferences.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const HEADER_COPY = defineCopy(
+  {
+    forcedStop: '已强制停止',
+    session: (title: string) => `会话：${title}`,
+    project: (name: string) => `项目：${name}`,
+    from: '来自',
+    open: (title: string) => `打开 ${title}`,
+    toDo: (title: string) => `待办：${title}`,
+    worktree: (path: string) => `工作树 · ${path}`,
+  },
+  {
+    forcedStop: 'Force stopped',
+    session: (title: string) => `Session: ${title}`,
+    project: (name: string) => `Project: ${name}`,
+    from: 'From ',
+    open: (title: string) => `Open ${title}`,
+    toDo: (title: string) => `To-do: ${title}`,
+    worktree: (path: string) => `Worktree · ${path}`,
+  },
+)
 
 /** The clock's leaf: only these words re-render each second, and the shared ticker stops while the page is hidden. */
 function RunningWords({ live }: { live: RunLive | undefined }) {
@@ -69,9 +92,9 @@ function TitleStatus({ summary, cancelling, frozen }: { summary: TaskSummary; ca
   const live = summary.live
   switch (status.kind) {
     case 'stopping':
-      return <StatusPill tone="neutral">正在停止</StatusPill>
+      return <StatusPill tone="neutral">{SHELL_COPY.stopping}</StatusPill>
     case 'waiting':
-      return <StatusWord tone="waiting">等你处理</StatusWord>
+      return <StatusWord tone="waiting">{SHELL_COPY.attention}</StatusWord>
     case 'silent':
       return (
         <StatusWord tone="warn">
@@ -85,9 +108,9 @@ function TitleStatus({ summary, cancelling, frozen }: { summary: TaskSummary; ca
         </StatusWord>
       )
     case 'failed':
-      return <StatusPill tone="err">失败</StatusPill>
+      return <StatusPill tone="err">{SHELL_COPY.failed}</StatusPill>
     case 'ended':
-      return <StatusPill tone={status.unknown > 0 || status.word === '已强制停止' ? 'warn' : 'neutral'}>{status.word}</StatusPill>
+      return <StatusPill tone={status.unknown > 0 || status.word === HEADER_COPY.forcedStop ? 'warn' : 'neutral'}>{status.word}</StatusPill>
     default:
       return null
   }
@@ -133,7 +156,7 @@ function TitleMenu({ title, sections }: { title: string; sections: MenuSection[]
   if (sections.length === 0) return <span className="topbar-title-text">{title}</span>
   return (
     <Menu
-      label={`会话：${title}`}
+      label={HEADER_COPY.session(title)}
       title={title}
       placement="bottom-start"
       sections={sections}
@@ -165,11 +188,11 @@ function ProjectCrumb({
   after?: ReactNode
 }) {
   const worktree = summary.worktree && (summary.branch ?? summary.worktree.branch)
-  const lead = summary.worktree?.removed ? '工作树已移除' : '工作树'
+  const lead = summary.worktree?.removed ? SHELL_COPY.worktreeRemoved : SHELL_COPY.worktree
   return (
     <span className="topbar-crumb">
       <Popover
-        label="项目"
+        label={SHELL_COPY.project}
         size="sm"
         side="bottom"
         align="start"
@@ -178,8 +201,8 @@ function ProjectCrumb({
             {...props}
             type="button"
             className="topbar-crumb-button"
-            title={project ?? '会话的文件夹'}
-            aria-label={`${project ? `项目：${project}` : '会话的文件夹'}${worktree ? `，${lead} · ${escapeSecurityText(worktree)}` : ''}`}>
+            title={project ?? SHELL_COPY.sessionFolder}
+            aria-label={`${project ? HEADER_COPY.project(project) : SHELL_COPY.sessionFolder}${worktree ? `，${lead} · ${escapeSecurityText(worktree)}` : ''}`}>
             {/* Without a project there is no folder chip to draw: the words say so and still open where it runs. */}
             {worktree ? (
               <FolderGit2 size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
@@ -191,7 +214,7 @@ function ProjectCrumb({
                 <VisibleText text={project} />
               </span>
             ) : (
-              !worktree && <span className="topbar-crumb-text">不选项目</span>
+              !worktree && <span className="topbar-crumb-text">{SHELL_COPY.noProject}</span>
             )}
             {worktree && (
               <span className="topbar-crumb-worktree">
@@ -201,7 +224,9 @@ function ProjectCrumb({
           </button>
         )}>
         <div className="crumb-body">
-          <CrumbRow label="分支">{summary.branch ? <VisibleText text={summary.branch} /> : '读不到分支'}</CrumbRow>
+          <CrumbRow label={SHELL_COPY.branch}>
+            {summary.branch ? <VisibleText text={summary.branch} /> : SHELL_COPY.branchUnavailable}
+          </CrumbRow>
           {children}
           {after}
         </div>
@@ -240,18 +265,18 @@ function SourceLink({ source }: { source: HeaderSource }) {
         {glyph}
         {source.title ? (
           <span>
-            来自 <VisibleText text={source.title} />
+            {HEADER_COPY.from} <VisibleText text={source.title} />
           </span>
         ) : (
-          <span>来自另一个会话</span>
+          <span>{SHELL_COPY.fromSession}</span>
         )}
       </span>
     )
   return (
-    <button type="button" className="topbar-agent topbar-handoff" title={`打开 ${source.title}`} onClick={source.onOpen}>
+    <button type="button" className="topbar-agent topbar-handoff" title={HEADER_COPY.open(source.title)} onClick={source.onOpen}>
       {glyph}
       <span>
-        来自 <VisibleText text={source.title} />
+        {HEADER_COPY.from} <VisibleText text={source.title} />
       </span>
     </button>
   )
@@ -264,7 +289,11 @@ export interface HeaderItem {
 }
 function ItemLink({ item }: { item: HeaderItem }) {
   return (
-    <button type="button" className="topbar-agent topbar-item" title={`待办：${escapeSecurityText(item.title)}`} onClick={item.onOpen}>
+    <button
+      type="button"
+      className="topbar-agent topbar-item"
+      title={HEADER_COPY.toDo(escapeSecurityText(item.title))}
+      onClick={item.onOpen}>
       <ListTodo size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
       <span className="topbar-item-title">
         <VisibleText text={item.title} />
@@ -336,23 +365,29 @@ function PhoneTopBar({
   menu: MenuSection[]
   connection: ConnectionStatus
 }) {
-  const title = summary ? summary.title || '未命名会话' : (startingTitle ?? '新会话')
+  const title = summary ? summary.title || SHELL_COPY.untitled : (startingTitle ?? SHELL_COPY.newSession)
   // The header is the one place a session's state is written, on a phone as on a wide window.
   const state = summary && <TitleStatus summary={summary} cancelling={cancelling} frozen={connectionProblem(connection)} />
   const where = summary && source
-  const branch = summary?.worktree ? `工作树 · ${summary.branch ?? summary.worktree.branch}` : summary?.branch
+  const branch = summary?.worktree ? HEADER_COPY.worktree(summary.branch ?? summary.worktree.branch) : summary?.branch
   // A conversation in 我的 Agent: its Agent's frame stands in the title's place, the topic under the name.
   if (frame)
     return (
       <header className="topbar topbar-frame" data-phone="">
-        {onBack && <IconButton size="lg" className="topbar-back" label="返回" icon={ChevronLeftGlyph} onClick={onBack} />}
+        {onBack && <IconButton size="lg" className="topbar-back" label={SHELL_COPY.back} icon={ChevronLeftGlyph} onClick={onBack} />}
         {frame}
       </header>
     )
   return (
     <header className="topbar" data-phone="">
       {onBack && (
-        <IconButton size="lg" className="topbar-back" label={backLabel ?? '返回会话列表'} icon={ChevronLeftGlyph} onClick={onBack} />
+        <IconButton
+          size="lg"
+          className="topbar-back"
+          label={backLabel ?? SHELL_COPY.backToSessions}
+          icon={ChevronLeftGlyph}
+          onClick={onBack}
+        />
       )}
       <div className="topbar-title">
         <h1 title={title}>
@@ -367,8 +402,8 @@ function PhoneTopBar({
             {state}
             {branch && <span className="topbar-branch">{escapeSecurityText(branch)}</span>}
             {demo && (
-              <StatusPill tone="warn" title="此会话使用演示模型，回复由本地脚本生成">
-                演示
+              <StatusPill tone="warn" title={SHELL_COPY.demoDetails}>
+                {SHELL_COPY.demo}
               </StatusPill>
             )}
             {computerUse && summary && <ComputerChip sessionId={summary.id} stopping={computerUse === 'stopping'} />}
@@ -381,7 +416,7 @@ function PhoneTopBar({
           {changes && (
             <IconButton size="lg" label={changes.label} icon={changes.icon} pressed={changes.pressed} onClick={changes.onToggle} />
           )}
-          <IconButton ref={panelRef} size="lg" label="侧边面板" icon={PanelRightGlyph} pressed={panelOpen} onClick={onPanel} />
+          <IconButton ref={panelRef} size="lg" label={SHELL_COPY.sidePanel} icon={PanelRightGlyph} pressed={panelOpen} onClick={onPanel} />
         </span>
       )}
     </header>
@@ -478,7 +513,7 @@ export function SessionHeader({
   filesOpen?: boolean
   slots?: ConversationHeaderSlots
 }) {
-  const title = summary ? summary.title || '未命名会话' : '新会话'
+  const title = summary ? summary.title || SHELL_COPY.untitled : SHELL_COPY.newSession
   if (phone)
     return (
       <PhoneTopBar
@@ -508,20 +543,20 @@ export function SessionHeader({
       {computerUse && summary && <ComputerChip sessionId={summary.id} stopping={computerUse === 'stopping'} />}
       <ConnectionPill connection={connection} />
       {demo && (
-        <StatusPill tone="warn" title="此会话使用演示模型，回复由本地脚本生成">
-          演示模型
+        <StatusPill tone="warn" title={SHELL_COPY.demoDetails}>
+          {SHELL_COPY.demoModel}
         </StatusPill>
       )}
       {slots.gitAction}
       {slots.changes && <ChangesToggle toggle={slots.changes} totals={changesTotals} />}
       {/* A session reaches its files through the panel; a new one has no panel yet, only this. */}
-      {onFiles && !summary && <IconButton label="浏览项目文件" icon={FolderGlyph} pressed={filesOpen} onClick={onFiles} />}
+      {onFiles && !summary && <IconButton label={SHELL_COPY.browseProjects} icon={FolderGlyph} pressed={filesOpen} onClick={onFiles} />}
       {summary && menu.length > 0 && (
         <Menu
-          label="会话操作"
+          label={SHELL_COPY.sessionActions}
           placement="bottom-end"
           sections={menu}
-          trigger={props => <IconButton {...props} label="会话操作" icon={MoreGlyph} />}
+          trigger={props => <IconButton {...props} label={SHELL_COPY.sessionActions} icon={MoreGlyph} />}
         />
       )}
     </div>
@@ -544,7 +579,9 @@ export function SessionHeader({
                 <h1 title={title}>
                   <TitleMenu title={title} sections={sessionMenu} />
                 </h1>
-                {onRename && <IconButton className="topbar-rename" label="重命名会话" icon={EditGlyph} size="xs" onClick={onRename} />}
+                {onRename && (
+                  <IconButton className="topbar-rename" label={SHELL_COPY.renameSession} icon={EditGlyph} size="xs" onClick={onRename} />
+                )}
               </div>
             </div>
             <div className="topbar-session-meta">
@@ -676,7 +713,7 @@ export function ConversationHeader({
     const place = snapshot.catalog?.workspaces.find(item => item.id === workspaceId && item.id !== 'default')
     return (
       <SessionHeader
-        startingTitle={`${harness ? harnessName(harness) : '新会话'} · ${place ? escapeSecurityText(place.name) : '不选项目'}`}
+        startingTitle={`${harness ? harnessName(harness) : SHELL_COPY.newSession} · ${place ? escapeSecurityText(place.name) : SHELL_COPY.noProject}`}
         cancelling={false}
         demo={usesDemoModel(snapshot, harnessId, model?.providerId)}
         phone={phone}
@@ -721,24 +758,24 @@ export function ConversationHeader({
                 shell={shell}
                 owner={topicOf}
                 current={summary.id}
-                title={summary.title || '未命名会话'}
+                title={summary.title || SHELL_COPY.untitled}
                 actions={
                   phone ? (
                     <>
                       <IconButton
                         ref={panelToggle}
                         size="lg"
-                        label="侧边面板"
+                        label={SHELL_COPY.sidePanel}
                         icon={PanelRightGlyph}
                         pressed={panelShown}
                         onClick={() => togglePanel()}
                       />
                       {topMenu.length > 0 && (
                         <Menu
-                          label="会话操作"
+                          label={SHELL_COPY.sessionActions}
                           placement="bottom-end"
                           sections={topMenu}
-                          trigger={props => <IconButton {...props} size="lg" label="会话操作" icon={MoreGlyph} />}
+                          trigger={props => <IconButton {...props} size="lg" label={SHELL_COPY.sessionActions} icon={MoreGlyph} />}
                         />
                       )}
                     </>
@@ -791,7 +828,7 @@ export function ConversationHeader({
                 items: [
                   {
                     id: 'changes',
-                    label: '改动',
+                    label: SHELL_COPY.changes,
                     icon: GitCompare,
                     meta: desktop ? '⌘D' : 'Alt D',
                     onSelect: toggleChanges,
@@ -829,7 +866,7 @@ export function ConversationHeader({
         ...(canViewChanges && !foldChanges
           ? {
               changes: {
-                label: '改动',
+                label: SHELL_COPY.changes,
                 icon: GitCompare,
                 shortcut: desktop ? '⌘D' : 'Alt D',
                 pressed: showing,

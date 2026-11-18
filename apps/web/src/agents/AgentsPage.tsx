@@ -14,10 +14,11 @@ import { AgentImport } from './AgentTransfer.tsx'
 import { AgentChat } from './AgentChat.tsx'
 import { AgentsHome, agentsHomeData, WaitingCards } from './AgentsHome.tsx'
 import { AgentTopics } from './AgentTopics.tsx'
-import { GENERAL_NAME, readsAgents } from './model.ts'
+import { readsAgents } from './model.ts'
 import { LockedAgents } from './parts.tsx'
+import { AGENT_SPACE_COPY as COPY } from './spaceCopy.ts'
 import { useAgentWrites } from './useAgentWrites.ts'
-import { DEVICE_OFFLINE } from '../core/hostState.ts'
+import { CONNECTION_COPY } from '../core/hostState.ts'
 
 /**
  * The left of 我的 Agent on wide windows: the sidebar's own top (the switch, 总览, 新建 Agent, 搜索, 定时任务), the roster
@@ -65,7 +66,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
   useEffect(() => {
     if (id !== 'new') setImporting(false)
   }, [id])
-  const creating = importing ? '导入 Agent' : '新建 Agent'
+  const creating = importing ? COPY.importAgent : COPY.newAgent
   const topics = id === undefined && route.topics === true
   const home = id === undefined && !topics
   const locked = !readsAgents(snapshot)
@@ -96,7 +97,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
   const canCreate = shell.access.scopes.has('run') && !locked
   return (
     <section
-      aria-label="我的 Agent"
+      aria-label={COPY.myAgents}
       className="settings-page agents-page"
       data-entry="agents"
       data-view={home ? 'home' : topics ? 'topics' : chat ? 'chat' : 'new'}
@@ -105,9 +106,9 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
       {!locked && id !== 'new' && writes.held && writes.state?.write.key === 'agent:new' && (
         <InlineNotice
           tone="warn"
-          title="创建结果未知"
-          action={<Button onClick={() => shell.openMyAgent({ id: 'new' })}>继续确认创建</Button>}>
-          上一次创建还没有确认结果，原请求仍然保留。
+          title={COPY.createUnknown}
+          action={<Button onClick={() => shell.openMyAgent({ id: 'new' })}>{COPY.continueCreate}</Button>}>
+          {COPY.originalRequest}
         </InlineNotice>
       )}
       {!phone
@@ -119,7 +120,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
             {offline && (
               <span className="agents-offline">
                 <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-                {DEVICE_OFFLINE}
+                {CONNECTION_COPY.offline}
               </span>
             )}
           </div>,
@@ -131,17 +132,17 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
             <>
               <header className="settings-bar">
                 <span />
-                <h2>我的 Agent</h2>
+                <h2>{COPY.myAgents}</h2>
                 {offline ? (
                   <span className="agents-offline">
                     <OfflineGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-                    不在线
+                    {COPY.offline}
                   </span>
                 ) : (
                   canCreate && (
                     <IconButton
                       size="lg"
-                      label="新建 Agent"
+                      label={COPY.newAgent}
                       icon={PlusGlyph}
                       onClick={() => {
                         shell.openMyAgent({ id: 'new' })
@@ -162,7 +163,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
                       onClick={() => {
                         shell.openAgentTopics()
                       }}>
-                      全部话题
+                      {COPY.allTopics}
                     </Button>
                   )}
                 </div>
@@ -177,12 +178,12 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
           aria-label={
             chat
               ? id === GENERAL_AGENT_ID
-                ? GENERAL_NAME
+                ? COPY.general
                 : (snapshot.customAgents?.find(agent => agent.id === id)?.name ?? 'Agent')
               : topics
-                ? '全部话题'
+                ? COPY.allTopics
                 : home
-                  ? '总览'
+                  ? COPY.overview
                   : creating
           }
           aria-hidden={(phone && !pushed) || undefined}
@@ -195,7 +196,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
             <>
               {phone && (
                 <header className="settings-bar">
-                  <IconButton label="返回" icon={ChevronLeftGlyph} onClick={back} />
+                  <IconButton label={COPY.back} icon={ChevronLeftGlyph} onClick={back} />
                   <h2>{creating}</h2>
                 </header>
               )}
@@ -228,7 +229,7 @@ export function AgentsPage({ shell }: { shell: ShellState }) {
                           writes.clear()
                           setImporting(true)
                         }}>
-                        从文件导入
+                        {COPY.importFile}
                       </Button>
                       <HelperCreate
                         key={snapshot.device.id}

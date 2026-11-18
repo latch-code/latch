@@ -1,4 +1,5 @@
 import { api, auditFailed, ClientError } from './api.ts'
+import { defineCopy } from './i18n.ts'
 import { keyScopeOf, shownAddress } from './providerSetup.ts'
 
 /**
@@ -10,13 +11,16 @@ export interface PolicyView {
   confirmedAddresses: string[]
 }
 
+const POLICY_COPY = defineCopy({ unreadable: '读不懂这台 Mac 返回的设置，请刷新后重试。' } as const, {
+  unreadable: 'Could not read the settings this Mac returned. Refresh and try again.',
+})
+
 const stringList = (value: unknown): value is string[] => Array.isArray(value) && value.every(item => typeof item === 'string')
 
 function viewOf(body: unknown): PolicyView {
   const policy = (body as { policy?: Record<string, unknown> } | null)?.policy
   const addresses = policy?.confirmedAddresses ?? []
-  if (!stringList(policy?.hostEgressAllow) || !stringList(addresses))
-    throw new ClientError('读不懂这台 Mac 返回的设置，请刷新后重试。', 'policy-unreadable')
+  if (!stringList(policy?.hostEgressAllow) || !stringList(addresses)) throw new ClientError(POLICY_COPY.unreadable, 'policy-unreadable')
   return {
     hostEgressAllow: policy.hostEgressAllow,
     confirmedAddresses: addresses,

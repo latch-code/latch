@@ -1,5 +1,35 @@
 import { HOST_STATE_REASONS, type HostStateEvent, type HostStateReason } from '@latch/protocol'
 import { ApiError } from './api.ts'
+import { currentLocale, defineCopy } from './i18n.ts'
+
+export const CONNECTION_COPY = defineCopy(
+  {
+    offline: '这台设备没有联网',
+    sleeping: (computer: string, time: string) => `${computer} 已休眠（${time} 起）`,
+    wake: '唤醒后自动重连',
+    restarting: (computer: string) => `${computer} 上的 Latch 正在重启`,
+    restart: '几秒后自动重连',
+    updating: (computer: string) => `${computer} 上的 Latch 正在更新`,
+    update: '更新完成后自动重连',
+    stopped: (computer: string, time: string) => `${computer} 上的 Latch 已停止（${time} 起）`,
+    start: 'Latch 启动后自动重连',
+    error: (computer: string, status: number) => `${computer} 上的 Latch 出错（HTTP ${status}）`,
+    reconnecting: (computer: string) => `连不上 ${computer}，正在重连…`,
+  },
+  {
+    offline: 'This device is offline',
+    sleeping: (computer: string, time: string) => `${computer} has been asleep since ${time}`,
+    wake: 'Reconnecting when it wakes',
+    restarting: (computer: string) => `Latch is restarting on ${computer}`,
+    restart: 'Reconnecting in a few seconds',
+    updating: (computer: string) => `Latch is updating on ${computer}`,
+    update: 'Reconnecting after the update',
+    stopped: (computer: string, time: string) => `Latch stopped on ${computer} at ${time}`,
+    start: 'Reconnecting when Latch starts',
+    error: (computer: string, status: number) => `Latch on ${computer} returned an error (HTTP ${status})`,
+    reconnecting: (computer: string) => `Can’t reach ${computer}. Reconnecting…`,
+  },
+)
 
 /** The Host's last announcement that it stopped answering: why, since when, and when to try again. */
 export interface HostNotice {
@@ -43,7 +73,7 @@ export function noticeOf(event: HostStateEvent): HostNotice | null {
 }
 
 function clock(at: string): string {
-  return new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return new Date(at).toLocaleTimeString(currentLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 /**
@@ -51,20 +81,17 @@ function clock(at: string): string {
  * `computerLabel`: 「这台 Mac」 in the Latch app there, the computer's name on any other device.
  */
 export function hostNoticeCopy(notice: HostNotice, computer = 'Mac'): { title: string; body: string } {
-  if (notice.state === 'sleeping') return { title: `${computer} 已休眠（${clock(notice.at)} 起）`, body: '唤醒后自动重连' }
+  if (notice.state === 'sleeping') return { title: CONNECTION_COPY.sleeping(computer, clock(notice.at)), body: CONNECTION_COPY.wake }
   switch (notice.reason) {
     case 'restart':
-      return { title: `${computer} 上的 Latch 正在重启`, body: '几秒后自动重连' }
+      return { title: CONNECTION_COPY.restarting(computer), body: CONNECTION_COPY.restart }
     case 'update':
-      return { title: `${computer} 上的 Latch 正在更新`, body: '更新完成后自动重连' }
+      return { title: CONNECTION_COPY.updating(computer), body: CONNECTION_COPY.update }
     case 'sleep':
     case 'shutdown':
-      return { title: `${computer} 上的 Latch 已停止（${clock(notice.at)} 起）`, body: 'Latch 启动后自动重连' }
+      return { title: CONNECTION_COPY.stopped(computer, clock(notice.at)), body: CONNECTION_COPY.start }
   }
 }
-
-/** What the page says while the Host is not reached, from `navigator.onLine` alone. */
-export const DEVICE_OFFLINE = '这台设备没有联网'
 
 /** Why the last read of the Host failed, as far as the page can tell. */
 export type ConnectionFailure = { kind: 'unreachable' } | { kind: 'host-error'; status: number } | { kind: 'refused'; message: string }
@@ -72,7 +99,13 @@ export type ConnectionFailure = { kind: 'unreachable' } | { kind: 'host-error'; 
 /** A failed read: no answer at all (or none in time), the Host answering with an error of its own, or a refusal it explained. */
 export function connectionFailure(cause: unknown): ConnectionFailure {
   if (!(cause instanceof ApiError)) return { kind: 'unreachable' }
-  return cause.status >= 500 ? { kind: 'host-error', status: cause.status } : { kind: 'refused', message: cause.message }
+  if (cause.status >= 500) return { kind: 'host-error', status: cause.status }
+  return {
+    kind: 'refused',
+    get message() {
+      return cause.message
+    },
+  }
 }
 
 /**
@@ -88,10 +121,10 @@ export function connectionWords(
   failure: ConnectionFailure | null,
   computer: string,
 ): { title: string; text: string } {
-  if (connection === 'offline') return { title: DEVICE_OFFLINE, text: '' }
+  if (connection === 'offline') return { title: CONNECTION_COPY.offline, text: '' }
   if (hostProblem) return { title: hostProblem.text, text: notice?.body ?? '' }
   if (notice) return { title: notice.title, text: notice.body }
-  if (failure?.kind === 'host-error') return { title: `${computer} 上的 Latch 出错（HTTP ${failure.status}）`, text: '' }
+  if (failure?.kind === 'host-error') return { title: CONNECTION_COPY.error(computer, failure.status), text: '' }
   if (failure?.kind === 'refused') return { title: failure.message, text: '' }
-  return { title: `连不上 ${computer}，正在重连…`, text: '' }
+  return { title: CONNECTION_COPY.reconnecting(computer), text: '' }
 }

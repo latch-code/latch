@@ -2,9 +2,43 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { HarnessInfo, HostCatalog, Message, TaskDetail, TaskSummary } from '@latch/protocol'
 import { Button, IconButton, InlineNotice, StatusWord, CloseGlyph, CopyGlyph, useStreamingLayer } from '@latch/ui'
 import { api, errorMessage, isUncertain, newRequestId } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { MessageContent } from '../MessageContent.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { useBackLayer } from '../hooks/backStack.ts'
+
+const COPY = defineCopy(
+  {
+    unsupported: '这个 Harness 尚不支持',
+    unavailable: '这个 Harness 当前不可用',
+    blocked: (why: string) => `/btw：${why}`,
+    panel: '旁支提问',
+    answering: '正在回答',
+    unknown: '结果未知',
+    unanswered: '没有回答',
+    close: '关闭并归档',
+    didNotStart: '没有开始',
+    waiting: '正在回答…',
+    retry: '重试',
+    insert: '插入到输入框',
+    open: '打开为会话',
+  },
+  {
+    unsupported: 'This Harness does not support side questions yet',
+    unavailable: 'This Harness is unavailable',
+    blocked: (why: string) => `/btw: ${why}`,
+    panel: 'Side question',
+    answering: 'Answering',
+    unknown: 'Outcome unknown',
+    unanswered: 'No answer',
+    close: 'Close and archive',
+    didNotStart: 'Did not start',
+    waiting: 'Answering…',
+    retry: 'Retry',
+    insert: 'Insert into input',
+    open: 'Open as a session',
+  },
+)
 
 /**
  * /btw: a side question asked next to a session without touching its turn or its history. It is a fork of the session
@@ -25,8 +59,8 @@ export function sideQuestionRefusal(
   catalog: Pick<HostCatalog, 'features'> | undefined,
   harness: Pick<HarnessInfo, 'modes' | 'status'> | undefined,
 ): string | undefined {
-  if (catalog?.features?.fork !== true || !harness || !harness.modes.includes('chat')) return '这个 Harness 尚不支持'
-  if (harness.status !== 'ready') return '这个 Harness 当前不可用'
+  if (catalog?.features?.fork !== true || !harness || !harness.modes.includes('chat')) return COPY.unsupported
+  if (harness.status !== 'ready') return COPY.unavailable
   return undefined
 }
 
@@ -35,7 +69,7 @@ export function sideQuestionRefusal(
  * is never sent to the Harness as a prompt, queued or added to the running turn.
  */
 export function sideQuestionBlock(draft: string, offered: boolean, refusal: string | undefined): string | undefined {
-  return offered && refusal !== undefined && sideQuestionOf(draft) !== undefined ? `/btw：${refusal}` : undefined
+  return offered && refusal !== undefined && sideQuestionOf(draft) !== undefined ? COPY.blocked(refusal) : undefined
 }
 
 const SETTLING = new Set(['running', 'queued', 'awaiting-approval'])
@@ -282,40 +316,40 @@ export function SideQuestionPanel({
     void closeSideQuestion(sourceId, answering)
   }
   return (
-    <aside className="side-question" data-phone={phone ? '' : undefined} aria-label="旁支提问" data-backdrop-clear="">
+    <aside className="side-question" data-phone={phone ? '' : undefined} aria-label={COPY.panel} data-backdrop-clear="">
       <header className="side-question-head">
         <span className="side-question-title">
           /btw
           {question.phase === 'starting' || (question.phase === 'open' && !settled && !failed) ? (
-            <StatusWord tone="running">正在回答</StatusWord>
+            <StatusWord tone="running">{COPY.answering}</StatusWord>
           ) : question.phase === 'unknown' ? (
-            <StatusWord tone="warn">结果未知</StatusWord>
+            <StatusWord tone="warn">{COPY.unknown}</StatusWord>
           ) : question.phase === 'failed' || failed ? (
-            <StatusWord tone="failed">没有回答</StatusWord>
+            <StatusWord tone="failed">{COPY.unanswered}</StatusWord>
           ) : null}
         </span>
-        <IconButton size="xs" icon={CloseGlyph} label="关闭并归档" onClick={close} />
+        <IconButton size="xs" icon={CloseGlyph} label={COPY.close} onClick={close} />
       </header>
       <p className="side-question-question">
         <VisibleText text={question.question} />
       </p>
       <div ref={stream} className="side-question-answer" aria-live="polite">
         {question.phase === 'failed' || question.phase === 'unknown' ? (
-          <InlineNotice tone={question.phase === 'unknown' ? 'warn' : 'error'}>{question.error ?? '没有开始'}</InlineNotice>
+          <InlineNotice tone={question.phase === 'unknown' ? 'warn' : 'error'}>{question.error ?? COPY.didNotStart}</InlineNotice>
         ) : answer.text ? (
           <MessageContent text={answer.text} streaming={answer.streaming} />
         ) : failed ? (
-          <InlineNotice tone="error">没有回答</InlineNotice>
+          <InlineNotice tone="error">{COPY.unanswered}</InlineNotice>
         ) : readError ? (
           <InlineNotice tone="warn">{readError}</InlineNotice>
         ) : (
-          <p className="side-question-wait">正在回答…</p>
+          <p className="side-question-wait">{COPY.waiting}</p>
         )}
       </div>
       <footer className="side-question-actions">
         {question.phase === 'unknown' || question.phase === 'failed' ? (
           <Button size={phone ? 'lg' : 'sm'} variant="primary" onClick={() => void send(question)}>
-            重试
+            {COPY.retry}
           </Button>
         ) : (
           <>
@@ -327,7 +361,7 @@ export function SideQuestionPanel({
                 onInsert(quote(answer.text))
                 close()
               }}>
-              插入到输入框
+              {COPY.insert}
             </Button>
             <Button
               size={phone ? 'lg' : 'sm'}
@@ -339,7 +373,7 @@ export function SideQuestionPanel({
                 put(undefined, sourceId)
                 onOpen(id)
               }}>
-              打开为会话
+              {COPY.open}
             </Button>
           </>
         )}

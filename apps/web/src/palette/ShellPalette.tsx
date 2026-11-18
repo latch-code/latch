@@ -48,23 +48,138 @@ import { AgentAvatar, AgentsGlyph } from '../agents/AgentAvatar.tsx'
 import { openUsage } from '../usage/surface.ts'
 import { CommandPalette } from './CommandPalette.tsx'
 import { recentSessions, type PaletteEntry } from './model.ts'
+import { defineCopy, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    generalKeywords: '外观 主题 通知 发送键',
+    providerKeywords: '模型 密钥',
+    projectKeywords: '文件夹',
+    deviceKeywords: '手机 连接手机 配对 浏览器',
+    shortcutKeywords: '键盘',
+    aboutKeywords: '版本 许可',
+    archived: '已归档',
+    untitled: '未命名会话',
+    nextAttention: '下一个等你处理的请求',
+    agents: '我的 Agent',
+    browser: '浏览器',
+    terminal: '终端',
+    sidebar: '收起或展开侧栏',
+    addHarness: '添加 Harness',
+    harnessKeywords: '新建 Harness',
+    settings: '设置',
+    usage: '额度与用量',
+    usageKeywords: '额度 用量 tokens 花费 预算 限额',
+    find: '在当前会话中查找',
+    sidePanel: '展开或收起侧边面板',
+    copy: '复制当前会话为 Markdown',
+    export: '导出当前会话为 Markdown',
+    browseFiles: '浏览项目文件',
+    searchFiles: '搜索项目文件',
+    switchFile: (name: string) => `切换文件：${name}`,
+    toChat: '切换到对话',
+    toBoard: '切换到看板',
+    theme: (label: string) => `外观：${label}`,
+    system: '跟随系统',
+    light: '浅色',
+    dark: '深色',
+    current: '当前',
+    backdrop: (label: string) => `背景效果：${label}`,
+    backdropKeywords: '外观 粒子',
+    motion: (label: string) => `动效：${label}`,
+    motionKeywords: '外观 动画',
+    density: (label: string) => `密度：${label}`,
+    appearanceKeywords: '外观',
+  },
+  {
+    generalKeywords: 'appearance theme notifications send key language',
+    providerKeywords: 'models keys',
+    projectKeywords: 'folders',
+    deviceKeywords: 'phone connect pair browser',
+    shortcutKeywords: 'keyboard',
+    aboutKeywords: 'version license',
+    archived: 'Archived',
+    untitled: 'Untitled session',
+    nextAttention: 'Next request that needs you',
+    agents: 'My Agents',
+    browser: 'Browser',
+    terminal: 'Terminal',
+    sidebar: 'Toggle sidebar',
+    addHarness: 'Add Harness',
+    harnessKeywords: 'new harness',
+    settings: 'Settings',
+    usage: 'Limits and usage',
+    usageKeywords: 'limits usage tokens cost budget',
+    find: 'Find in current session',
+    sidePanel: 'Toggle side panel',
+    copy: 'Copy current session as Markdown',
+    export: 'Export current session as Markdown',
+    browseFiles: 'Browse project files',
+    searchFiles: 'Search project files',
+    switchFile: (name: string) => `Switch file: ${name}`,
+    toChat: 'Switch to chat',
+    toBoard: 'Switch to board',
+    theme: (label: string) => `Appearance: ${label}`,
+    system: 'Follow system',
+    light: 'Light',
+    dark: 'Dark',
+    current: 'Current',
+    backdrop: (label: string) => `Backdrop: ${label}`,
+    backdropKeywords: 'appearance particles',
+    motion: (label: string) => `Motion: ${label}`,
+    motionKeywords: 'appearance animation',
+    density: (label: string) => `Density: ${label}`,
+    appearanceKeywords: 'appearance',
+  },
+)
 
 const glyph = (icon: IconComponent) => <Icon icon={icon} size={16} />
 
 /** Each settings section, in the order of the page, with the words it also answers to. */
 const SETTINGS_ROWS: ReadonlyArray<{ section: SettingsSection; keywords?: string }> = [
-  { section: 'general', keywords: '外观 主题 通知 发送键' },
-  { section: 'providers', keywords: '模型 密钥' },
+  {
+    section: 'general',
+    get keywords() {
+      return COPY.generalKeywords
+    },
+  },
+  {
+    section: 'providers',
+    get keywords() {
+      return COPY.providerKeywords
+    },
+  },
   { section: 'engines', keywords: 'agent' },
-  { section: 'workspaces', keywords: '文件夹' },
+  {
+    section: 'workspaces',
+    get keywords() {
+      return COPY.projectKeywords
+    },
+  },
   { section: 'plugins' },
-  { section: 'devices', keywords: '手机 连接手机 配对 浏览器' },
-  { section: 'shortcuts', keywords: '键盘' },
-  { section: 'about', keywords: '版本 许可' },
+  {
+    section: 'devices',
+    get keywords() {
+      return COPY.deviceKeywords
+    },
+  },
+  {
+    section: 'shortcuts',
+    get keywords() {
+      return COPY.shortcutKeywords
+    },
+  },
+  {
+    section: 'about',
+    get keywords() {
+      return COPY.aboutKeywords
+    },
+  },
 ]
 
 /** The palette over the shell: what this device can reach now, and only that. */
 export function ShellPalette({ shell }: { shell: ShellState }) {
+  const locale = useLocale()
   useShortcutBindings()
   const {
     snapshot,
@@ -147,11 +262,11 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       // Where it lives: Code, or the Agent it was delegated to (found by the Agent's name as well).
       const owner = task.agent ? customAgents?.find(item => item.id === task.agent?.customAgentId) : undefined
       const agent = task.agent ? (owner?.name ?? 'Agent') : undefined
-      const sub = [agent, project?.name, task.archived ? '已归档' : ''].filter(Boolean).join(' · ')
+      const sub = [agent, project?.name, task.archived ? COPY.archived : ''].filter(Boolean).join(' · ')
       return {
         id: `session:${task.id}`,
         codeSession: spaces && !task.agent,
-        label: task.title || '未命名会话',
+        label: task.title || COPY.untitled,
         ...(sub ? { sub } : {}),
         ...(agent ? { keywords: agent } : {}),
         icon: task.agent ? (
@@ -166,7 +281,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
         },
       }
     }
-  }, [catalog?.workspaces, catalog?.harnesses, customAgents, choose, spaces])
+  }, [catalog?.workspaces, catalog?.harnesses, customAgents, choose, spaces, locale])
   const recent = useMemo(() => recentSessions(snapshot.tasks).map(sessionEntry), [snapshot.tasks, sessionEntry])
   const sessions = useMemo(
     () => snapshot.tasks.toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(sessionEntry),
@@ -203,7 +318,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       ? [
           {
             id: 'approval',
-            label: '下一个等你处理的请求',
+            label: COPY.nextAttention,
             icon: glyph(ArrowRightToLine),
             root: true,
             ...keys('next-approval'),
@@ -225,7 +340,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
           },
           {
             id: 'space:agents',
-            label: '我的 Agent',
+            label: COPY.agents,
             icon: glyph(AgentsGlyph),
             root: true,
             ...keys('space-agents'),
@@ -264,7 +379,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       ? [
           {
             id: 'browser',
-            label: '浏览器',
+            label: COPY.browser,
             icon: glyph(GlobeGlyph),
             root: true,
             ...keys('browser'),
@@ -273,17 +388,17 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
         ]
       : []),
     ...(shell.canTerminal
-      ? [{ id: 'terminal', label: '终端', icon: glyph(TerminalGlyph), root: true, ...keys('terminal'), run: shell.toggleTerminal }]
+      ? [{ id: 'terminal', label: COPY.terminal, icon: glyph(TerminalGlyph), root: true, ...keys('terminal'), run: shell.toggleTerminal }]
       : []),
     ...(drawerMode && route.entry !== 'sessions'
       ? []
-      : [{ id: 'sidebar', label: '收起或展开侧栏', icon: glyph(PanelLeftGlyph), root: true, ...keys('sidebar'), run: toggleSidebar }]),
+      : [{ id: 'sidebar', label: COPY.sidebar, icon: glyph(PanelLeftGlyph), root: true, ...keys('sidebar'), run: toggleSidebar }]),
     ...(canDefineAgents
       ? [
           {
             id: 'new-agent',
-            label: '添加 Harness',
-            keywords: '新建 Harness',
+            label: COPY.addHarness,
+            keywords: COPY.harnessKeywords,
             icon: glyph(HarnessGlyph),
             root: true,
             run: () => {
@@ -294,7 +409,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       : []),
     {
       id: 'settings',
-      label: '设置',
+      label: COPY.settings,
       icon: glyph(SettingsGlyph),
       root: true,
       ...keys('settings'),
@@ -306,8 +421,8 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       ? [
           {
             id: 'usage',
-            label: '额度与用量',
-            keywords: '额度 用量 tokens 花费 预算 限额',
+            label: COPY.usage,
+            keywords: COPY.usageKeywords,
             icon: glyph(ChartNoAxesColumn),
             root: true,
             ...keys('usage'),
@@ -322,7 +437,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       ? [
           {
             id: 'find',
-            label: '在当前会话中查找',
+            label: COPY.find,
             icon: glyph(SearchGlyph),
             ...keys('find'),
             run: inSession(() => {
@@ -335,14 +450,14 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       ? [
           {
             id: 'info',
-            label: '展开或收起侧边面板',
+            label: COPY.sidePanel,
             icon: glyph(PanelRightGlyph),
             ...keys('side-panel'),
             run: inSession(() => togglePanel(true)),
           },
           {
             id: 'copy',
-            label: '复制当前会话为 Markdown',
+            label: COPY.copy,
             icon: glyph(ClipboardCopy),
             run: () => {
               void copyTask(summary)
@@ -350,7 +465,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
           },
           {
             id: 'export',
-            label: '导出当前会话为 Markdown',
+            label: COPY.export,
             icon: glyph(DownloadGlyph),
             run: () => {
               void exportTask(summary)
@@ -362,7 +477,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       ? [
           {
             id: 'files',
-            label: '浏览项目文件',
+            label: COPY.browseFiles,
             icon: glyph(FolderTree),
             ...keys('files'),
             run: route.start ? browseFiles : inSession(browseFiles),
@@ -371,7 +486,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
             ? [
                 {
                   id: 'file-search',
-                  label: '搜索项目文件',
+                  label: COPY.searchFiles,
                   icon: glyph(FileSearch),
                   ...keys('file-search'),
                   level: 'files' as const,
@@ -383,7 +498,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       : []),
     ...fileTabs.tabs.map(tab => ({
       id: `file:${tab.id}`,
-      label: `切换文件：${tab.file?.name ?? tab.target.reference}`,
+      label: COPY.switchFile(tab.file?.name ?? tab.target.reference),
       icon: glyph(FileGlyph),
       run: route.start
         ? () => {
@@ -398,7 +513,7 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     })),
     {
       id: 'view',
-      label: shell.board ? '切换到对话' : '切换到看板',
+      label: shell.board ? COPY.toChat : COPY.toBoard,
       icon: glyph(shell.board ? MessagesSquare : SquareKanban),
       root: true,
       ...keys('view'),
@@ -406,8 +521,8 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     },
     ...(['system', 'light', 'dark'] as const).map(theme => ({
       id: `theme:${theme}`,
-      label: `外观：${{ system: '跟随系统', light: '浅色', dark: '深色' }[theme]}`,
-      ...(shell.preferences.theme === theme ? { sub: '当前' } : {}),
+      label: COPY.theme({ system: COPY.system, light: COPY.light, dark: COPY.dark }[theme]),
+      ...(shell.preferences.theme === theme ? { sub: COPY.current } : {}),
       icon: glyph(SunMoon),
       run: () => {
         setPreference('theme', theme)
@@ -415,25 +530,25 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
     })),
     ...BACKDROP_CHOICES.map(({ value, label }) => ({
       id: `backdrop:${value}`,
-      label: `背景效果：${label}`,
-      ...(backdropLevel(shell.preferences, shell.phone) === value ? { sub: '当前' } : {}),
-      keywords: '外观 粒子',
+      label: COPY.backdrop(label),
+      ...(backdropLevel(shell.preferences, shell.phone) === value ? { sub: COPY.current } : {}),
+      keywords: COPY.backdropKeywords,
       icon: glyph(SunMoon),
       run: () => setPreference('backdrop', value),
     })),
     ...MOTION_CHOICES.map(({ value, label }) => ({
       id: `motion:${value}`,
-      label: `动效：${label}`,
-      ...(shell.preferences.motion === value ? { sub: '当前' } : {}),
-      keywords: '外观 动画',
+      label: COPY.motion(label),
+      ...(shell.preferences.motion === value ? { sub: COPY.current } : {}),
+      keywords: COPY.motionKeywords,
       icon: glyph(SunMoon),
       run: () => setPreference('motion', value),
     })),
     ...DENSITY_CHOICES.map(({ value, label }) => ({
       id: `density:${value}`,
-      label: `密度：${label}`,
-      ...(shell.preferences.density === value ? { sub: '当前' } : {}),
-      keywords: '外观',
+      label: COPY.density(label),
+      ...(shell.preferences.density === value ? { sub: COPY.current } : {}),
+      keywords: COPY.appearanceKeywords,
       icon: glyph(SunMoon),
       run: () => setPreference('density', value),
     })),

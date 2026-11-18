@@ -9,6 +9,8 @@ import {
   type WorkProposalSummary,
   type WorkspaceInfo,
 } from '@latch/protocol'
+import { harnessName } from '../core/harnessName.ts'
+import { defineCopy, plural } from '../core/i18n.ts'
 import { projectOf } from '../sessions.ts'
 import { todoProposals, type TodoProposal } from './proposals.ts'
 
@@ -25,20 +27,47 @@ export type BoardColumnGroup = WorkItemPlace['group']
 
 /** The columns, left to right then top to bottom. */
 export const BOARD_GROUPS: readonly BoardColumnGroup[] = ['todo', 'attention', 'running', 'deliver', 'done']
-export const GROUP_LABELS: Record<BoardColumnGroup, string> = {
-  todo: '未开始',
-  attention: '等你处理',
-  running: '进行中',
-  deliver: '可交付',
-  done: '已结束',
-}
+export const GROUP_LABELS = defineCopy<Record<BoardColumnGroup, string>>(
+  { todo: '未开始', attention: '等你处理', running: '进行中', deliver: '可交付', done: '已结束' },
+  { todo: 'Not started', attention: 'Needs you', running: 'In progress', deliver: 'Ready to deliver', done: 'Ended' },
+)
 /** 已结束 on the board holds the last seven days; the list holds all of it. */
 const DONE_DAYS = 7
 const DAY = 86_400_000
 
-export const PRIORITY_LABELS: Record<BoardPriority | 'mid', string> = { high: '高', mid: '中', low: '低' }
+export const PRIORITY_LABELS = defineCopy<Record<BoardPriority | 'mid', string>>(
+  { high: '高', mid: '中', low: '低' },
+  { high: 'High', mid: 'Medium', low: 'Low' },
+)
 const PRIORITY_RANK: Record<BoardPriority | 'mid', number> = { high: 0, mid: 1, low: 2 }
 const REASON_RANK: Record<BoardReason, number> = { approval: 0, question: 1, unknown: 2, failed: 3, unrecognized: 4, silent: 5 }
+
+const COPY = defineCopy(
+  {
+    noProject: '无项目',
+    general: '通用',
+    proposed: '提议',
+    fromAgent: 'Agent 提的',
+    approval: '审批',
+    questions: (count: number) => plural(count, { other: '{n} 个问题' }),
+    unrecognized: '不支持的请求',
+    silent: '没有动静',
+    unknown: (count: number) => plural(count, { other: '{n} 条结果未知' }),
+    failed: '失败',
+  },
+  {
+    noProject: 'No project',
+    general: 'General',
+    proposed: 'Proposal',
+    fromAgent: 'Proposed by an Agent',
+    approval: 'Approval',
+    questions: (count: number) => plural(count, { one: '{n} question', other: '{n} questions' }),
+    unrecognized: 'Unsupported request',
+    silent: 'No activity',
+    unknown: (count: number) => plural(count, { one: '{n} unknown result', other: '{n} unknown results' }),
+    failed: 'Failed',
+  },
+)
 
 export const NO_PROJECT = '~none'
 export const WHO_CODE = '~code'
@@ -349,12 +378,12 @@ export function filterOptions(
   const origins = new Set(facets.flatMap(facet => facet.origin))
   const projects = unique(facets.flatMap(facet => facet.projects)).map(id => ({
     value: id,
-    label: id === NO_PROJECT ? '无项目' : (workspaces.find(item => item.id === id)?.name ?? id),
+    label: id === NO_PROJECT ? COPY.noProject : (workspaces.find(item => item.id === id)?.name ?? id),
   }))
   const harnessIds = unique(facets.flatMap(facet => facet.harnesses).filter(id => !!id))
   const who = unique(facets.flatMap(facet => facet.who)).flatMap(id => {
     if (id === WHO_CODE) return [{ value: id, label: 'Code' }]
-    if (id === GENERAL_AGENT_ID) return [{ value: id, label: '通用' }]
+    if (id === GENERAL_AGENT_ID) return [{ value: id, label: COPY.general }]
     // An Agent this device is not told about has no name to show; its sessions stay under no 谁在做 choice.
     const agent = snapshot.customAgents?.find(item => item.id === id)
     return agent ? [{ value: id, label: agent.name }] : []
@@ -365,15 +394,15 @@ export function filterOptions(
     ),
     harnesses: harnessIds.map(id => {
       const harness = harnesses.find(item => item.id === id)
-      return { value: id, label: harness?.capabilities.display.label ?? id }
+      return { value: id, label: harness ? harnessName(harness) : id }
     }),
     who: who.toSorted((a, b) => Number(b.value === WHO_CODE) - Number(a.value === WHO_CODE)),
     tags: unique(facets.flatMap(facet => facet.tags))
       .toSorted((a, b) => a.localeCompare(b))
       .map(tag => ({ value: tag, label: tag })),
     origin: [
-      ...(origins.has(ORIGIN_PROPOSED) ? [{ value: ORIGIN_PROPOSED, label: '提议' }] : []),
-      ...(origins.has(ORIGIN_AGENT) ? [{ value: ORIGIN_AGENT, label: 'Agent 提的' }] : []),
+      ...(origins.has(ORIGIN_PROPOSED) ? [{ value: ORIGIN_PROPOSED, label: COPY.proposed }] : []),
+      ...(origins.has(ORIGIN_AGENT) ? [{ value: ORIGIN_AGENT, label: COPY.fromAgent }] : []),
     ],
   }
 }
@@ -382,12 +411,12 @@ export function filterOptions(
 export function reasonWords(task: TaskSummary): string {
   const unknown = task.runEnd?.unknownResultCount ?? 0
   const words: Record<BoardReason, string> = {
-    approval: '审批',
-    question: `${Math.max(1, task.pendingQuestions ?? 1)} 个问题`,
-    unrecognized: '不支持的请求',
-    silent: '没有动静',
-    unknown: `${unknown} 条结果未知`,
-    failed: unknown > 0 ? `失败 · ${unknown} 条结果未知` : '失败',
+    approval: COPY.approval,
+    question: COPY.questions(Math.max(1, task.pendingQuestions ?? 1)),
+    unrecognized: COPY.unrecognized,
+    silent: COPY.silent,
+    unknown: COPY.unknown(unknown),
+    failed: unknown > 0 ? `${COPY.failed} · ${COPY.unknown(unknown)}` : COPY.failed,
   }
   return task.board?.reason ? words[task.board.reason] : GROUP_LABELS.attention
 }

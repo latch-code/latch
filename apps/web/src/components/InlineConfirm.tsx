@@ -10,6 +10,7 @@ import {
 } from '../core/confirmations.ts'
 import { BLOCKED_COPY, BLOCKED_VERBS, CONFIRMATION_COPY as COPY, CONFIRMATION_VERBS, waitText } from '../core/securityCopy.ts'
 import { useSessionLinks } from '../core/sessionLinks.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { namedSession, stillBlocking } from '../core/blocking.ts'
 import { errorMessage, isUncertain } from '../core/api.ts'
 import { useCountdown } from '../hooks/useCountdown.ts'
@@ -310,13 +311,15 @@ export function ConfirmationContent({
   )
 }
 
+const INLINE_CONFIRM_COPY = defineCopy({ proceed: '继续' }, { proceed: 'continuing' })
+
 /** Told to a screen reader only, since a pending button says nothing by itself. Outside the fold, which hides its content. */
 function ConfirmationStatus({ view }: { view: ConfirmationView | undefined }) {
   let text = ''
   if (view?.phase === 'waiting') text = COPY.waiting
   else if (view?.phase === 'sending') {
     const { action } = view.ticket
-    text = `${COPY.confirmed}${Object.hasOwn(CONFIRMATION_VERBS, action) ? CONFIRMATION_VERBS[action] : '继续'}…`
+    text = `${COPY.confirmed}${Object.hasOwn(CONFIRMATION_VERBS, action) ? CONFIRMATION_VERBS[action] : INLINE_CONFIRM_COPY.proceed}…`
   }
   return (
     <p className="sr-only" role="status">

@@ -1,3 +1,4 @@
+import { UI_COPY, useUiLocale } from './locale.ts'
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { CloseGlyph } from './glyphs/index.tsx'
 import { Icon, type IconComponent } from './icon.tsx'
@@ -177,6 +178,7 @@ export function PanelTabs<T extends string>({
   actions?: ReactNode
   className?: string
 }) {
+  useUiLocale()
   const row = useRef<HTMLDivElement>(null)
   const end = useRef<HTMLDivElement>(null)
   const adder = useRef<HTMLDivElement>(null)
@@ -271,7 +273,7 @@ export function PanelTabs<T extends string>({
                   <span data-tone="add">+{tab.stat.added}</span> <span data-tone="remove">−{tab.stat.removed}</span>
                 </span>
               )}
-              {tab.fresh && <span className="ui-panel-tab-fresh" role="img" aria-label="有新内容" />}
+              {tab.fresh && <span className="ui-panel-tab-fresh" role="img" aria-label={UI_COPY.fresh} />}
             </button>
             {tab.closeLabel !== undefined && (
               <button
@@ -295,7 +297,7 @@ export function PanelTabs<T extends string>({
                     id: 'tab',
                     items:
                       tab.closeLabel !== undefined && onClose
-                        ? [{ id: 'close', label: '关闭', icon: CloseGlyph, onSelect: () => onClose(tab.value) }]
+                        ? [{ id: 'close', label: UI_COPY.close, icon: CloseGlyph, onSelect: () => onClose(tab.value) }]
                         : [],
                   },
                 ].filter(section => section.items.length > 0)}
@@ -306,7 +308,7 @@ export function PanelTabs<T extends string>({
       </div>
       {hidden.length > 0 && (
         <Menu
-          label={`其余 ${hidden.length} 个标签`}
+          label={UI_COPY.moreTabs(hidden.length)}
           align="end"
           size="sm"
           sections={[
@@ -322,9 +324,9 @@ export function PanelTabs<T extends string>({
             },
           ]}
           trigger={props => (
-            <button {...props} type="button" className="ui-panel-tabs-more" aria-label={`其余 ${hidden.length} 个标签`}>
+            <button {...props} type="button" className="ui-panel-tabs-more" aria-label={UI_COPY.moreTabs(hidden.length)}>
               +{hidden.length}
-              {hidden.some(({ tab }) => tab.fresh) && <span className="ui-panel-tab-fresh" role="img" aria-label="有新内容" />}
+              {hidden.some(({ tab }) => tab.fresh) && <span className="ui-panel-tab-fresh" role="img" aria-label={UI_COPY.fresh} />}
             </button>
           )}
         />

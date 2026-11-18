@@ -15,26 +15,133 @@ import {
   readsProjectFiles,
 } from '@latch/protocol'
 import { ApiError, isUncertain, MessageError } from '../core/api.ts'
+import { defineCopy, formatNumber } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    noReturn: '不交回',
+    summary: '结论',
+    withEvidence: '加证据',
+    noReturnLine: '不回到这里',
+    returnLine: '交回到这个会话',
+    noReturnFact: '代码会话照常运行，结果不回到这里；在那边用「结束交接」收尾。',
+    summaryFact: '代码会话结束后，由你在那边把结论交回这个会话。',
+    evidenceFact: '代码会话结束后，由你在那边把结论连同选中的文件与消息交回这个会话，各带链接。',
+    selection: (value1: string | number) => `选中的文字 · ${value1}`,
+    userMessage: '你的消息',
+    agentReply: 'Agent 的回复',
+    chipProblem: (label: string, problem: string) => `「${label}」${problem}`,
+    pinning: '正在固定材料的版本',
+    materialsLimit: (value1: string | number) => `材料最多 ${value1} 项`,
+    noHash: '这个页面不能核对文件版本，请用 HTTPS 或这台电脑上的 Latch 打开。',
+    empty: '选一项材料或写下要求',
+    chooseExisting: '选一个已有会话',
+    chooseHarness: '先选 Harness',
+    newWorktree: '新工作树里没有选定的文件版本：去掉文件，或改用当前文件夹',
+    requirementsLimit: (value1: string | number) => `要求最多 ${value1} KB`,
+    selectionLimit: (value1: string | number) => `选中的文字合计最多 ${value1} KB`,
+    unknown: '已发出，Mac 没有回答；重试不会多建一个会话。',
+    failed: '没有交接，请重试。',
+    starting: '正在开始',
+    started: '已开始',
+    working: '代码会话在做',
+    statusUnknown: '结果未知',
+    startFailed: '没有开始',
+    returned: '已交回',
+    withdrawn: '已撤回',
+    closed: '已结束',
+    untitled: '未命名会话',
+    message: '消息',
+    reply: '回复',
+    withheld: '无权查看',
+    codeMessage: '代码会话里的一条消息',
+  },
+  {
+    noReturn: 'No return',
+    summary: 'Summary',
+    withEvidence: 'With evidence',
+    noReturnLine: 'No result returns here',
+    returnLine: 'Return to this session',
+    noReturnFact: 'The code session runs as usual. Use “End handoff” there to finish without returning a result.',
+    summaryFact: 'When the code session finishes, return its summary from that session.',
+    evidenceFact: 'When the code session finishes, return its summary with links to selected files and messages.',
+    selection: (value1: string | number) => `Selected text · ${value1}`,
+    userMessage: 'Your message',
+    agentReply: 'Agent reply',
+    chipProblem: (label: string, problem: string) => `“${label}” · ${problem}`,
+    pinning: 'Pinning material versions',
+    materialsLimit: (value1: string | number) => `Up to ${value1} materials`,
+    noHash: "This page can't verify file versions. Open it over HTTPS or in Latch on this computer.",
+    empty: 'Select a material or enter requirements',
+    chooseExisting: 'Choose an existing session',
+    chooseHarness: 'Choose a Harness first',
+    newWorktree: "The new worktree doesn't have the selected file versions. Remove the files or use the current folder.",
+    requirementsLimit: (value1: string | number) => `Requirements can be up to ${value1} KB`,
+    selectionLimit: (value1: string | number) => `Selected text can total up to ${value1} KB`,
+    unknown: "The Mac hasn't responded. Retrying won't create a duplicate session.",
+    failed: 'Handoff failed. Try again.',
+    starting: 'Starting',
+    started: 'Started',
+    working: 'Code session working',
+    statusUnknown: 'Outcome unknown',
+    startFailed: "Couldn't start",
+    returned: 'Returned',
+    withdrawn: 'Withdrawn',
+    closed: 'Closed',
+    untitled: 'Untitled session',
+    message: 'Message',
+    reply: 'Reply',
+    withheld: 'Unavailable to this device',
+    codeMessage: 'Message in the code session',
+  },
+)
 
 /** 回传: what the target may hand back. The Host keeps three scopes, so the page offers three. */
 export const RETURN_SCOPES: ReadonlyArray<{ value: HandoffReturnScope; label: string }> = [
-  { value: 'none', label: '不交回' },
-  { value: 'summary', label: '结论' },
-  { value: 'summary-and-evidence', label: '加证据' },
+  {
+    value: 'none',
+    get label() {
+      return COPY.noReturn
+    },
+  },
+  {
+    value: 'summary',
+    get label() {
+      return COPY.summary
+    },
+  },
+  {
+    value: 'summary-and-evidence',
+    get label() {
+      return COPY.withEvidence
+    },
+  },
 ]
 
 /** Where the result goes, in a few words beside the choice. */
 export const SCOPE_LINES: Record<HandoffReturnScope, string> = {
-  none: '不回到这里',
-  summary: '交回到这个会话',
-  'summary-and-evidence': '交回到这个会话',
+  get none() {
+    return COPY.noReturnLine
+  },
+  get summary() {
+    return COPY.returnLine
+  },
+  get 'summary-and-evidence'() {
+    return COPY.returnLine
+  },
 }
 
 /** The fact behind each scope's ⓘ. */
 export const SCOPE_FACTS: Record<HandoffReturnScope, string> = {
-  none: '代码会话照常运行，结果不回到这里；在那边用「结束交接」收尾。',
-  summary: '代码会话结束后，由你在那边把结论交回这个会话。',
-  'summary-and-evidence': '代码会话结束后，由你在那边把结论连同选中的文件与消息交回这个会话，各带链接。',
+  get none() {
+    return COPY.noReturnFact
+  },
+  get summary() {
+    return COPY.summaryFact
+  },
+  get 'summary-and-evidence'() {
+    return COPY.evidenceFact
+  },
 }
 
 /** 「回传：结论」 in a few words, for lines that only say what was agreed. */
@@ -64,14 +171,29 @@ export function messageLine(text: string, max = 40): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line
 }
 
+export class HandoffMessageError extends MessageError {
+  constructor(copy: () => string) {
+    super('')
+    Object.defineProperty(this, 'message', { configurable: true, get: copy })
+  }
+}
+
 /**
  * A chip of 材料. A message or file chip is pinned to the version it had when chosen, by SHA-256 of its text or bytes;
  * `pinning` while that is computed, `failed` when it could not be read.
  */
 export type MaterialChip =
   | { key: string; kind: 'text'; text: string }
-  | { key: string; kind: 'message'; messageId: string; role: 'user' | 'assistant'; line: string; hash?: string; problem?: string }
-  | { key: string; kind: 'file'; file: FileMention; hash?: string; problem?: string }
+  | {
+      key: string
+      kind: 'message'
+      messageId: string
+      role: 'user' | 'assistant'
+      line: string
+      hash?: string
+      problem?: string | (() => string)
+    }
+  | { key: string; kind: 'file'; file: FileMention; hash?: string; problem?: string | (() => string) }
 
 export const chipKey = {
   text: (index: number) => `text:${index}`,
@@ -80,8 +202,8 @@ export const chipKey = {
 }
 
 export function chipLabel(chip: MaterialChip): string {
-  if (chip.kind === 'text') return `选中的文字 · ${messageLine(chip.text, 24)}`
-  if (chip.kind === 'message') return `${chip.role === 'user' ? '你的消息' : 'Agent 的回复'} · ${chip.line}`
+  if (chip.kind === 'text') return COPY.selection(messageLine(chip.text, 24))
+  if (chip.kind === 'message') return `${chip.role === 'user' ? COPY.userMessage : COPY.agentReply} · ${chip.line}`
   return fileName(chip.file)
 }
 
@@ -110,12 +232,13 @@ export function materialsOf(chips: readonly MaterialChip[]): { materials: Handof
   const materials: HandoffMaterial[] = []
   for (const chip of chips) {
     if (chip.kind === 'text') materials.push({ kind: 'text', text: chip.text })
-    else if (chip.problem) return { problem: `「${chipLabel(chip)}」${chip.problem}` }
-    else if (!chip.hash) return { problem: '正在固定材料的版本' }
+    else if (chip.problem)
+      return { problem: COPY.chipProblem(chipLabel(chip), typeof chip.problem === 'function' ? chip.problem() : chip.problem) }
+    else if (!chip.hash) return { problem: COPY.pinning }
     else if (chip.kind === 'message') materials.push({ kind: 'message', messageId: chip.messageId, hash: chip.hash })
     else materials.push({ kind: 'file', file: chip.file, hash: chip.hash })
   }
-  if (materials.length > HANDOFF_LIMITS.materials) return { problem: `材料最多 ${HANDOFF_LIMITS.materials} 项` }
+  if (materials.length > HANDOFF_LIMITS.materials) return { problem: COPY.materialsLimit(formatNumber(HANDOFF_LIMITS.materials)) }
   return { materials }
 }
 
@@ -127,7 +250,7 @@ export async function sha256Hex(
   input: string | ArrayBuffer,
   subtle: SubtleCrypto | undefined = globalThis.crypto?.subtle,
 ): Promise<string> {
-  if (!subtle) throw new MessageError('这个页面不能核对文件版本，请用 HTTPS 或这台电脑上的 Latch 打开。')
+  if (!subtle) throw new HandoffMessageError(() => COPY.noHash)
   const data = typeof input === 'string' ? utf8.encode(input) : new Uint8Array(input)
   const digest = new Uint8Array(await subtle.digest('SHA-256', data))
   return Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('')
@@ -154,14 +277,14 @@ export interface HandoffForm {
 export function formProblem(form: HandoffForm, chips: readonly MaterialChip[]): string | undefined {
   const pinned = materialsOf(chips)
   if ('problem' in pinned) return pinned.problem
-  if (!pinned.materials.length && !form.requirements.trim()) return '选一项材料或写下要求'
-  if (form.target.kind === 'session' && !form.target.sessionId) return '选一个已有会话'
-  if (form.target.kind === 'new-session' && !form.target.harnessId) return '先选 Harness'
-  if (form.target.kind === 'new-session' && form.target.worktree && chips.some(chip => chip.kind === 'file'))
-    return '新工作树里没有选定的文件版本：去掉文件，或改用当前文件夹'
-  if (utf8Bytes(form.requirements) > HANDOFF_LIMITS.requirementsBytes) return `要求最多 ${HANDOFF_LIMITS.requirementsBytes / 1024} KB`
+  if (!pinned.materials.length && !form.requirements.trim()) return COPY.empty
+  if (form.target.kind === 'session' && !form.target.sessionId) return COPY.chooseExisting
+  if (form.target.kind === 'new-session' && !form.target.harnessId) return COPY.chooseHarness
+  if (form.target.kind === 'new-session' && form.target.worktree && chips.some(chip => chip.kind === 'file')) return COPY.newWorktree
+  if (utf8Bytes(form.requirements) > HANDOFF_LIMITS.requirementsBytes)
+    return COPY.requirementsLimit(formatNumber(HANDOFF_LIMITS.requirementsBytes / 1024))
   const text = chips.reduce((sum, chip) => sum + (chip.kind === 'text' ? utf8Bytes(chip.text) : 0), 0)
-  if (text > HANDOFF_LIMITS.materialBytes) return `选中的文字合计最多 ${HANDOFF_LIMITS.materialBytes / 1024} KB`
+  if (text > HANDOFF_LIMITS.materialBytes) return COPY.selectionLimit(formatNumber(HANDOFF_LIMITS.materialBytes / 1024))
   return undefined
 }
 
@@ -216,15 +339,46 @@ export type WriteFailure =
   | { kind: 'refused'; message: string; code?: string; items?: number[] }
 
 export function writeFailure(error: unknown): WriteFailure {
-  if (error instanceof ApiError && error.code === 'agent-write-unknown') return { kind: 'unknown', message: error.message }
-  if (isUncertain(error)) return { kind: 'unknown', message: '已发出，Mac 没有回答；重试不会多建一个会话。' }
+  if (error instanceof ApiError && error.code === 'agent-write-unknown')
+    return {
+      kind: 'unknown',
+      get message() {
+        return error.message
+      },
+    }
+  if (isUncertain(error))
+    return {
+      kind: 'unknown',
+      get message() {
+        return COPY.unknown
+      },
+    }
   if (error instanceof ApiError) {
-    if (error.status === 403) return { kind: 'denied', message: error.message, code: error.code }
+    if (error.status === 403)
+      return {
+        kind: 'denied',
+        get message() {
+          return error.message
+        },
+        code: error.code,
+      }
     const listed = (error.details as Record<string, unknown>).materials ?? (error.details as Record<string, unknown>).evidence
     const items = Array.isArray(listed) ? listed.filter((value): value is number => Number.isInteger(value)) : undefined
-    return { kind: 'refused', message: error.message, code: error.code, ...(items?.length ? { items } : {}) }
+    return {
+      kind: 'refused',
+      get message() {
+        return error.message
+      },
+      code: error.code,
+      ...(items?.length ? { items } : {}),
+    }
   }
-  return { kind: 'refused', message: error instanceof Error ? error.message : '没有交接，请重试。' }
+  return {
+    kind: 'refused',
+    get message() {
+      return error instanceof Error ? error.message : COPY.failed
+    },
+  }
 }
 
 /** The chips a refusal names, by the materials' order in the request. */
@@ -239,19 +393,19 @@ export function statusWords(handoff: Pick<Handoff, 'status' | 'returnScope'>): {
 } {
   switch (handoff.status) {
     case 'starting':
-      return { tone: 'running', words: '正在开始' }
+      return { tone: 'running', words: COPY.starting }
     case 'started':
-      return handoff.returnScope === 'none' ? { tone: 'done', words: '已开始' } : { tone: 'running', words: '代码会话在做' }
+      return handoff.returnScope === 'none' ? { tone: 'done', words: COPY.started } : { tone: 'running', words: COPY.working }
     case 'start-unknown':
-      return { tone: 'warn', words: '结果未知' }
+      return { tone: 'warn', words: COPY.statusUnknown }
     case 'start-failed':
-      return { tone: 'failed', words: '没有开始' }
+      return { tone: 'failed', words: COPY.startFailed }
     case 'returned':
-      return { tone: 'done', words: '已交回' }
+      return { tone: 'done', words: COPY.returned }
     case 'withdrawn':
-      return { tone: 'neutral', words: '已撤回' }
+      return { tone: 'neutral', words: COPY.withdrawn }
     case 'closed':
-      return { tone: 'neutral', words: '已结束' }
+      return { tone: 'neutral', words: COPY.closed }
   }
 }
 
@@ -271,7 +425,7 @@ export function sourceCrumb(
   const incoming = incomingHandoff(snapshot, sessionId)
   if (!incoming) return undefined
   const source = snapshot.tasks.find(task => task.id === incoming.sourceSessionId)
-  return { sourceId: incoming.sourceSessionId, ...(source ? { title: source.title || '未命名会话' } : {}) }
+  return { sourceId: incoming.sourceSessionId, ...(source ? { title: source.title || COPY.untitled } : {}) }
 }
 
 const running = (task: Pick<TaskSummary, 'status'>) => task.status === 'running' || task.status === 'waiting-approval'
@@ -317,7 +471,7 @@ export function evidenceChoices(messages: readonly Message[], dataScope: DataSco
       key: chipKey.message(message.id),
       kind: 'message',
       messageId: message.id,
-      label: `${message.role === 'user' ? '消息' : '回复'} · ${messageLine(message.text, 48)}`,
+      label: `${message.role === 'user' ? COPY.message : COPY.reply} · ${messageLine(message.text, 48)}`,
     }))
   return [...files, ...replies].slice(0, HANDOFF_LIMITS.evidence)
 }
@@ -355,9 +509,9 @@ export function quotedSummary(previous: string, summary: string): string {
 export function evidenceRow(
   item: HandoffEvidence,
 ): { kind: 'file'; label: string } | { kind: 'message'; label: string } | { kind: 'withheld'; label: string } {
-  if (item.kind === 'withheld') return { kind: 'withheld', label: '无权查看' }
+  if (item.kind === 'withheld') return { kind: 'withheld', label: COPY.withheld }
   if (item.kind === 'file') return { kind: 'file', label: item.file.path }
-  return { kind: 'message', label: '代码会话里的一条消息' }
+  return { kind: 'message', label: COPY.codeMessage }
 }
 
 /**

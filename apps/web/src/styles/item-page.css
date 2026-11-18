@@ -69,6 +69,18 @@
   align-items: center;
   gap: var(--sp-8);
 }
+.item-page-attention {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  margin: 0 var(--sp-16) var(--sp-12);
+  padding: var(--sp-8) var(--sp-12);
+  border-radius: var(--r-12);
+  background: var(--sunken);
+}
 
 .item-page-body {
   display: grid;
@@ -140,6 +152,9 @@
   }
   .item-page-head {
     padding-inline: var(--sp-12);
+  }
+  .item-page-attention {
+    margin-inline: var(--sp-12);
   }
 }
 

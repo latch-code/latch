@@ -15,6 +15,11 @@ describe('glossary', () => {
     expect(words('const a = <p title="引擎" />')).toEqual(['引擎'])
   })
 
+  it('checks English interface terminology without matching parts of identifiers', () => {
+    expect(words("const copy = { label: 'Data scope', help: 'Open the execution computer' }")).toEqual(['data scope', 'execution computer'])
+    expect(words("const internalDataScope = 'process-data-scope'")).toEqual([])
+  })
+
   it('leaves out what a person cannot read', () => {
     expect(words(`import x from 'Host'\n// Host 指纹\nconst Host = 1\ntype T = '执行端'\nconsole.warn('Host')`)).toEqual([])
     expect(words(`const a = '在新会话中继续'`)).toEqual([])
@@ -27,6 +32,14 @@ describe('glossary', () => {
     expect(words(`const COPY = { relay: '中继' }`, 'a.ts', allowance)).toEqual([])
     expect(words(`const COPY = { relay: '中继 Host' }`, 'a.ts', allowance)).toEqual(['Host'])
     expect(words(`const OTHER = { relay: '中继' }`, 'a.ts', allowance)).toEqual(['中继'])
+  })
+
+  it('does not allow other text at an exact search alias key', () => {
+    const allowance = [{ file: 'a.ts', key: 'SEARCH_TERMS.relay', words: ['中继'], text: '中继 转发', why: 'search only' }]
+    expect(words("const SEARCH_TERMS = { relay: '中继 转发' }", 'a.ts', allowance)).toEqual([])
+    expect(words("const SEARCH_TERMS = { relay: '添加中继' }", 'a.ts', allowance)).toEqual(['中继'])
+    expect(words("const COPY = { relay: '中继 转发' }", 'a.ts', allowance)).toEqual(['中继'])
+    expect(words("const SEARCH_TERMS = { relay: '中继 转发' }", 'b.ts', allowance)).toEqual(['中继'])
   })
 
   it('finds none in the scanned files and directories', async () => {

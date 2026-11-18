@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { Button, EmptyState, IconButton, ChevronLeftGlyph } from '@latch/ui'
+import { defineCopy } from '../core/i18n.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
 import { AgentAvatar } from './AgentAvatar.tsx'
 import { personalChat } from './chat.ts'
@@ -10,12 +11,30 @@ import { fillDraft, openingActions } from './opening.ts'
 import { ProfileSlot } from './AgentProfile.tsx'
 import { takeDelegateFocus } from './delegateFocus.ts'
 import { NewTopic } from './NewTopic.tsx'
-import { agentHarnesses, GENERAL_NAME, readsAgents } from './model.ts'
+import { agentHarnesses, readsAgents } from './model.ts'
 import { LockedAgents } from './parts.tsx'
+import { AGENT_SPACE_COPY } from './spaceCopy.ts'
 import { TopicFrame } from './TopicFrame.tsx'
 import { ResultStack } from './TopicResults.tsx'
 import { useWaitingResults } from './useAgentData.ts'
 import { useAgentWrites } from './useAgentWrites.ts'
+
+const COPY = defineCopy(
+  {
+    opening: (name: string) => `${name}的开场`,
+    suggestions: '可以这样开始',
+    missing: '找不到这个 Agent',
+    maybeDeleted: '它可能已在别处删除。',
+    backList: '回到列表',
+  },
+  {
+    opening: (name: string) => `Start with ${name}`,
+    suggestions: 'Suggestions to get started',
+    missing: 'Agent not found',
+    maybeDeleted: 'It may have been deleted elsewhere.',
+    backList: 'Back to list',
+  },
+)
 
 /**
  * The Agent speaks first: its face, turned to the person, and three things to ask that it can really do here (its name
@@ -51,10 +70,10 @@ function Opening({
     project,
   })
   return (
-    <section className="agent-opening" aria-label={`${name}的开场`}>
+    <section className="agent-opening" aria-label={COPY.opening(name)}>
       {/* The header right above says who it is and what it is for; here it only turns to the person. */}
       <AgentAvatar avatar={agent?.avatar ?? 'general'} size={40} />
-      <div className="agent-opening-actions" role="group" aria-label="可以这样开始">
+      <div className="agent-opening-actions" role="group" aria-label={COPY.suggestions}>
         {actions.map(action => (
           <Button
             key={action.id}
@@ -83,7 +102,7 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
   const agent = general ? undefined : snapshot.customAgents?.find(item => item.id === owner)
   const confirming = !general && snapshot.customAgents === undefined
   const missing = !general && !confirming && agent === undefined
-  const name = general ? GENERAL_NAME : (agent?.name ?? '')
+  const name = general ? AGENT_SPACE_COPY.general : (agent?.name ?? '')
   const locked = !readsAgents(snapshot)
   // Results of its schedules while it has no topic: they stay here, and the next topic keeps them.
   const { read: waitingRead } = useWaitingResults(snapshot, locked ? null : owner)
@@ -116,7 +135,7 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
     <div className="agent-chat" data-profile={shell.profileShown && !phone ? '' : undefined}>
       <div className="agent-chat-main">
         <header className="topbar topbar-frame" data-phone={phone ? '' : undefined}>
-          {phone && <IconButton size="lg" className="topbar-back" label="返回" icon={ChevronLeftGlyph} onClick={onBack} />}
+          {phone && <IconButton size="lg" className="topbar-back" label={AGENT_SPACE_COPY.back} icon={ChevronLeftGlyph} onClick={onBack} />}
           {frame}
         </header>
         {(locked || missing || confirming || waiting.length > 0 || opening) && (
@@ -133,9 +152,9 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
             {locked ? (
               <LockedAgents />
             ) : missing ? (
-              <EmptyState title="找不到这个 Agent" description="它可能已在别处删除。" action={<Button onClick={onBack}>回到列表</Button>} />
+              <EmptyState title={COPY.missing} description={COPY.maybeDeleted} action={<Button onClick={onBack}>{COPY.backList}</Button>} />
             ) : confirming ? (
-              <EmptyState title="正在确认上一项修改" />
+              <EmptyState title={AGENT_SPACE_COPY.confirming} />
             ) : waiting.length > 0 ? (
               <ResultStack shell={shell} owner={owner} results={waiting} writes={writes} className="agent-chat-results" />
             ) : null}

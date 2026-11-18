@@ -1,6 +1,24 @@
 import { looksSecret, type CustomAgentCreate } from '@latch/protocol'
 import { MessageError } from './api.ts'
 import { markStorageDevice, storageDeviceCurrent, storageDeviceKey } from './deviceStorageScope.ts'
+import { defineCopy } from './i18n.ts'
+
+const COPY = defineCopy(
+  {
+    unsupportedBrowser: '这个浏览器无法协调多个窗口的创建请求，请使用支持此能力的浏览器。',
+    notAllowed: '这台设备已不能创建 Agent。',
+    pending: '先确认上一次创建的结果。',
+    conflict: '同一个请求不能用于不同创建。',
+    size: '创建请求太大，无法保留。',
+  },
+  {
+    unsupportedBrowser: 'This browser can’t coordinate creation requests across windows. Use a browser that supports it.',
+    notAllowed: 'This device can no longer create an Agent.',
+    pending: 'Confirm the outcome of the last creation first.',
+    conflict: 'The same request cannot create two different Agents.',
+    size: 'The creation request is too large to keep.',
+  },
+)
 
 const PREFIX = 'latch.agent-creation.'
 const epochKey = (key: string) => `${key}.epoch`
@@ -121,19 +139,19 @@ export class AgentCreation {
   }
   /** The browser lock covers admission and the response, so another window cannot replace an in-flight request. */
   async exclusive<T>(work: () => Promise<T>): Promise<T> {
-    if (!navigator.locks?.request) throw new MessageError('这个浏览器无法协调多个窗口的创建请求，请使用支持此能力的浏览器。')
+    if (!navigator.locks?.request) throw new MessageError(() => COPY.unsupportedBrowser)
     return navigator.locks.request(this.key, async () => {
-      if (!this.current()) throw new MessageError('这台设备已不能创建 Agent。')
+      if (!this.current()) throw new MessageError(() => COPY.notAllowed)
       return work()
     })
   }
   begin(body: CustomAgentCreate): void {
-    if (!this.current()) throw new MessageError('这台设备已不能创建 Agent。')
+    if (!this.current()) throw new MessageError(() => COPY.notAllowed)
     const pending = this.read()
-    if (pending && pending.requestId !== body.requestId) throw new MessageError('先确认上一次创建的结果。')
-    if (pending?.body && JSON.stringify(pending.body) !== JSON.stringify(body)) throw new MessageError('同一个请求不能用于不同创建。')
+    if (pending && pending.requestId !== body.requestId) throw new MessageError(() => COPY.pending)
+    if (pending?.body && JSON.stringify(pending.body) !== JSON.stringify(body)) throw new MessageError(() => COPY.conflict)
     const raw = JSON.stringify(body)
-    if (!requestId(body.requestId) || raw.length > 128_000) throw new MessageError('创建请求太大，无法保留。')
+    if (!requestId(body.requestId) || raw.length > 128_000) throw new MessageError(() => COPY.size)
     const retained = JSON.parse(raw) as CustomAgentCreate
     const safe = !looksSecret(raw)
     // A marker is required even for secret text: a reload must not silently forget an uncertain write.

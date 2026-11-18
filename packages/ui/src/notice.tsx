@@ -1,3 +1,4 @@
+import { UI_COPY, useUiLocale } from './locale.ts'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { CircleX } from 'lucide-react'
 import { InfoGlyph, WarningGlyph, CloseGlyph } from './glyphs/index.tsx'
@@ -22,7 +23,7 @@ export function InlineNotice({
   children,
   action,
   onClose,
-  closeLabel = '关闭',
+  closeLabel = UI_COPY.close,
   secure = false,
   className,
 }: {
@@ -36,6 +37,7 @@ export function InlineNotice({
   secure?: boolean
   className?: string
 }) {
+  useUiLocale()
   return (
     <div
       className={cx('ui-notice', className)}
@@ -71,7 +73,7 @@ export function Hint({
   lead,
   children,
   inline = false,
-  moreLabel = '说明',
+  moreLabel = UI_COPY.more,
   defaultOpen = false,
   locked = false,
   className,
@@ -90,6 +92,7 @@ export function Hint({
   defaultOpen?: boolean
   className?: string
 }) {
+  useUiLocale()
   const id = useId()
   const [open, setOpen] = useState(defaultOpen)
   if (!inline)

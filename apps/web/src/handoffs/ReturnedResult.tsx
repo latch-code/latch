@@ -4,6 +4,26 @@ import { Button, ICON_STROKE, EnterGlyph, FileGlyph, LockGlyph, MessageGlyph } f
 import { MessageContent } from '../MessageContent.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { evidenceRow } from './model.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    result: '交回的结果',
+    removed: '内容已随会话删除',
+    withheld: '无权查看',
+    evidence: '证据',
+    openCode: '打开代码会话',
+    insert: '带入输入框',
+  },
+  {
+    result: 'Returned result',
+    removed: 'Content deleted with the session',
+    withheld: 'Unavailable to this device',
+    evidence: 'Evidence',
+    openCode: 'Open code session',
+    insert: 'Add to composer',
+  },
+)
 
 /**
  * 交回的结果 in the source's timeline, built from the handoff record, never a message: the summary, each piece of evidence
@@ -28,10 +48,10 @@ export function ReturnedResult({
 }) {
   const result = handoff.result
   return (
-    <section className="handoff-result" role="group" aria-label="交回的结果" data-handoff-id={handoff.id}>
+    <section className="handoff-result" role="group" aria-label={COPY.result} data-handoff-id={handoff.id}>
       <header className="handoff-result-head">
         <EnterGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
-        <strong>交回的结果</strong>
+        <strong>{COPY.result}</strong>
         {targetTitle && (
           <span className="handoff-muted">
             <VisibleText text={targetTitle} />
@@ -40,11 +60,11 @@ export function ReturnedResult({
       </header>
       <div className="handoff-result-body">
         {handoff.contentRemoved ? (
-          <p className="handoff-muted">内容已随会话删除</p>
+          <p className="handoff-muted">{COPY.removed}</p>
         ) : !result ? null : result.summaryWithheld ? (
           <p className="handoff-withheld">
             <LockGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-            无权查看
+            {COPY.withheld}
           </p>
         ) : (
           <div className="message-text">
@@ -52,14 +72,14 @@ export function ReturnedResult({
           </div>
         )}
         {result && !handoff.contentRemoved && result.evidence.length > 0 && (
-          <ul className="handoff-evidence-list" aria-label="证据">
+          <ul className="handoff-evidence-list" aria-label={COPY.evidence}>
             {result.evidence.map((item, index) => {
               const row = evidenceRow(item)
               if (row.kind === 'withheld' || item.kind === 'withheld')
                 return (
                   <li key={index} className="handoff-withheld">
                     <LockGlyph size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
-                    无权查看
+                    {COPY.withheld}
                   </li>
                 )
               const Glyph = item.kind === 'file' ? FileGlyph : MessageGlyph
@@ -85,12 +105,12 @@ export function ReturnedResult({
         <div className="handoff-result-actions">
           {onOpenTarget && (
             <Button size="xs" variant="ghost" onClick={onOpenTarget}>
-              打开代码会话
+              {COPY.openCode}
             </Button>
           )}
           {onQuote && result?.summary && !handoff.contentRemoved && (
             <Button size="xs" icon={TextQuote} onClick={() => onQuote(result.summary!)}>
-              带入输入框
+              {COPY.insert}
             </Button>
           )}
         </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import { Sheet } from './dialog.tsx'
 import { Menu, MenuPanel, useLayerClose, type MenuItem, type MenuSection, type MenuTriggerProps } from './menu.tsx'
+import { UI_COPY } from './locale.ts'
 
 export interface ActionMenuItem extends Omit<MenuItem, 'media'> {
   leading?: ReactNode
@@ -17,7 +18,7 @@ const sectionsOf = (sections: ActionMenuSection[]): MenuSection[] =>
     items: items.map(({ leading: media, disabled, disabledReason, ...item }) => ({
       ...item,
       media,
-      ...(disabled ? { disabledReason: disabledReason ?? '此项暂不可用' } : {}),
+      ...(disabled ? { disabledReason: disabledReason ?? UI_COPY.unavailable } : {}),
     })),
   }))
 function Footer({ render }: { render: (close: () => void) => ReactNode }) {

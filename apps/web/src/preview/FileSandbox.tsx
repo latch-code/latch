@@ -2,13 +2,32 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { InlineNotice, Loading } from '@latch/ui'
 import { currentShell, shellFrameUrl } from '../core/shell.ts'
 import { isFrameCommand, isFrameEvent, type FrameInput } from './types.ts'
+import { currentLocale, defineCopy, useLocale } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    stopped: '文档预览已停止，请关闭后重新打开。',
+    showing: '正在显示文档…',
+    preview: '文档预览',
+  },
+  {
+    stopped: 'The preview stopped. Close and reopen it.',
+    showing: 'Showing document…',
+    preview: 'Document preview',
+  },
+)
 
 /** Untrusted document bytes have no access to Host objects or trusted demand-package React panels. */
 export function FileSandbox({ kind, data, versionKey, options, onMessage, onChannel, canvas, focusOnReady }: FrameInput) {
   const frame = useRef<HTMLIFrameElement>(null)
+  const locale = useLocale()
+  const notesPort = useRef<MessagePort>(undefined)
+  useEffect(() => {
+    notesPort.current?.postMessage({ type: 'language', locale })
+  }, [locale])
   const latest = useRef({ onMessage, onChannel })
   latest.current = { onMessage, onChannel }
-  const [error, setError] = useState('')
+  const [stopped, setStopped] = useState(false)
   const [ready, setReady] = useState(false)
   const box = useRef<HTMLDivElement>(null)
   const [room, setRoom] = useState<{ width: number; height: number }>()
@@ -38,7 +57,7 @@ export function FileSandbox({ kind, data, versionKey, options, onMessage, onChan
     ? `${shellFrameUrl('preview', `${name}.html`)}#nonce=${nonce}`
     : `/link/preview-frame/${name}.html#nonce=${nonce}`
   useEffect(() => {
-    setError('')
+    setStopped(false)
     setReady(false)
     let disposed = false,
       initialized = false,
@@ -50,8 +69,9 @@ export function FileSandbox({ kind, data, versionKey, options, onMessage, onChan
       clearTimeout(timer)
       channel.port1.close()
       channel.port2.close()
+      notesPort.current = undefined
       latest.current.onChannel?.(undefined)
-      setError('文档预览已停止，请关闭后重新打开。')
+      setStopped(true)
     }
     const timer = setTimeout(fail, 15_000)
     const receive = (event: MessageEvent<unknown>) => {
@@ -72,6 +92,7 @@ export function FileSandbox({ kind, data, versionKey, options, onMessage, onChan
       const buffer = data.slice(0)
       const safeOptions = {
         theme: options?.theme === 'dark' ? 'dark' : 'light',
+        ...(kind === 'pptx' ? { locale: currentLocale() } : {}),
         showChanges: options?.showChanges === true,
         ...(Number.isInteger(options?.pageIndex) && Number(options?.pageIndex) >= 0 && Number(options?.pageIndex) <= 9999
           ? { pageIndex: options!.pageIndex }
@@ -98,6 +119,7 @@ export function FileSandbox({ kind, data, versionKey, options, onMessage, onChan
       }
       channel.port1.onmessageerror = fail
       channel.port1.start()
+      if (kind === 'pptx') notesPort.current = channel.port1
       latest.current.onChannel?.(command => {
         if (!disposed && isFrameCommand(command)) channel.port1.postMessage(command)
       })
@@ -120,20 +142,21 @@ export function FileSandbox({ kind, data, versionKey, options, onMessage, onChan
       element?.removeEventListener('load', load)
       channel.port1.close()
       channel.port2.close()
+      notesPort.current = undefined
       latest.current.onChannel?.(undefined)
     }
   }, [kind, data, nonce, versionKey, options?.theme, options?.showChanges])
   return (
     <div ref={box} className={canvas ? 'file-sandbox fitted' : 'file-sandbox'} onClick={canvas ? () => frame.current?.focus() : undefined}>
-      {error ? (
-        <InlineNotice tone="error">{error}</InlineNotice>
+      {stopped ? (
+        <InlineNotice tone="error">{COPY.stopped}</InlineNotice>
       ) : (
         <>
-          {!ready && <Loading label="正在显示文档…" />}
+          {!ready && <Loading label={COPY.showing} />}
           <iframe
             key={nonce}
             ref={frame}
-            title="文档预览"
+            title={COPY.preview}
             // The frame keeps a real viewport, so its own layout, pointer targets and resize events all stay true.
             style={
               canvas && room

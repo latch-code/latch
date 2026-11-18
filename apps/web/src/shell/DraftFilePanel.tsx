@@ -5,6 +5,20 @@ import { errorMessage } from '../core/api.ts'
 import { shellFolders } from '../core/shell.ts'
 import { liveFolder } from './SessionEnvironment.tsx'
 import type { ShellState } from './useShellLayout.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    changed: ' 已更新，引用可能过时',
+    missing: '找不到这个文件夹，请同步后重试。',
+    files: '项目文件',
+  },
+  {
+    changed: ' changed. The reference may be outdated.',
+    missing: 'Can’t find this folder. Sync and try again.',
+    files: 'Project files',
+  },
+)
 
 /** A new project's files stay apart from the conversation still being read under Home. */
 export function DraftFilePanel({ shell, inline = false }: { shell: ShellState; inline?: boolean }) {
@@ -35,7 +49,7 @@ export function DraftFilePanel({ shell, inline = false }: { shell: ShellState; i
         tabs.resolved(id, file)
         const quote = shell.quoteSnapshots.current.get(fileContextKey(context) + '\n' + file.root + '\n' + file.path)
         if (quote && quote.etag !== file.etag && shell.submission.draft.includes(quote.marker)) {
-          shell.setToast({ text: file.name + ' 已更新，引用可能过时', tone: 'ok' })
+          shell.setToast({ text: file.name + COPY.changed, tone: 'ok' })
           quote.etag = file.etag
         }
       }}
@@ -47,7 +61,7 @@ export function DraftFilePanel({ shell, inline = false }: { shell: ShellState; i
                     void folders
                       .reveal(workspace.id, root)
                       .then(result => {
-                        if (result.status === 'failed') shell.setToast({ text: '找不到这个文件夹，请同步后重试。', tone: 'error' })
+                        if (result.status === 'failed') shell.setToast({ text: COPY.missing, tone: 'error' })
                       })
                       .catch(cause => shell.setToast({ text: errorMessage(cause), tone: 'error' }))
                   }
@@ -65,7 +79,7 @@ export function DraftFilePanel({ shell, inline = false }: { shell: ShellState; i
   ) : null
   if (inline) return content
   return (
-    <Sheet open={open} onClose={onClose} title="项目文件" detent="large" className="draft-file-panel">
+    <Sheet open={open} onClose={onClose} title={COPY.files} detent="large" className="draft-file-panel">
       {content}
     </Sheet>
   )

@@ -4,6 +4,113 @@ import { Button, Checkbox, Hint, InlineNotice, Modal, ModalHeader, Spinner, Stat
 import { ApiError, api, errorMessage, isUncertain, newRequestId } from '../core/api.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { useViewport } from '../breakpoints.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    ignoredCount: (count: number) => `${formatNumber(count)} 个被忽略的文件`,
+    exampleStart: '（例如 ',
+    exampleEnd: '）',
+    folderCount: (count: number) => `${formatNumber(count)} 个`,
+    turnBusy: 'Agent 正在这个工作树里运行，这一轮结束后再移除',
+    deliveryBusy: '交付操作进行中，结束后再移除',
+    terminalBusy: '这个会话还有打开的终端，关闭后再移除',
+    starting: '正在用它开始会话',
+    removing: '正在移除',
+    branchDeleted: '已移除工作树和分支',
+    branchKept: (value1: string | number) => `已移除工作树 · 分支 ${value1} 已保留`,
+    removed: '已移除工作树',
+    staged: (count: number) => `已暂存 ${formatNumber(count)}`,
+    unstaged: (count: number) => `未暂存 ${formatNumber(count)}`,
+    untracked: (count: number) => `未跟踪 ${formatNumber(count)}`,
+    ahead: (count: number, value2: string) => `${formatNumber(count)} 个提交未推送到 ${value2}`,
+    pushed: (value1: string | number) => `已推送到 ${value1}`,
+    unpushed: (count: number) => `${formatNumber(count)} 个提交从未推送`,
+    noNewCommits: '没有新提交',
+    uncommitted: '未提交',
+    none: '没有',
+    ignored: '被忽略',
+    commits: '提交',
+    branch: '分支',
+    detached: '分离 HEAD',
+    keep: '保留',
+    mergedDelete: '已合并，会删除',
+    emptyDelete: '没有新提交，会删除',
+    branchExternal: '不是 Latch 新建的分支，不删除。',
+    merged: (value1: string | number) => `提交都已在 ${value1} 上。`,
+    noOwnCommits: '没有自己的提交，删除不丢提交。',
+    notMerged: '没有找到它已合并的证据。',
+    unknown: '还不知道是否已移除。重试会发送同一个请求。',
+    heading: (value1: string | number) => `移除「${value1}」的工作树`,
+    retry: '重试',
+    loading: '正在读取工作树',
+    nestedRepo: ' 是另一个 Git 仓库，先在终端里移走它',
+    tooMany: ' 里文件太多，无法检查，先在终端里删除或移走它',
+    submoduleData: (value1: string | number) => `子模块仓库留在 ${value1}，确认其中的提交已推送后在终端里删除它`,
+    deinit: (count: number) => `有 ${formatNumber(count)} 个已检出的子模块，先在终端里运行 git submodule deinit --all`,
+    discardBoth: (uncommitted: number, ignored: number) =>
+      `丢弃 ${formatNumber(uncommitted)} 个未提交的文件和 ${formatNumber(ignored)} 个被忽略的文件`,
+    discardChanges: (count: number) => `丢弃 ${formatNumber(count)} 个未提交的文件`,
+    discardIgnored: (count: number) => `丢弃 ${formatNumber(count)} 个被忽略的文件`,
+    irreversible: '这些文件会被删除，无法恢复。',
+    retrySame: '重试同一请求',
+    remove: '移除工作树',
+    cancel: '取消',
+  },
+  {
+    ignoredCount: (count: number) => plural(count, { one: '{n} ignored file', other: '{n} ignored files' }),
+    exampleStart: ' (e.g. ',
+    exampleEnd: ')',
+    folderCount: (count: number) => plural(count, { one: '{n} file', other: '{n} files' }),
+    turnBusy: 'The agent is running in this worktree. Remove it after this turn.',
+    deliveryBusy: 'Delivery is in progress. Remove the worktree when it ends.',
+    terminalBusy: 'This session has an open terminal. Close it first.',
+    starting: 'Starting a session here',
+    removing: 'Removing',
+    branchDeleted: 'Worktree and branch removed',
+    branchKept: (value1: string | number) => `Worktree removed · Branch ${value1} kept`,
+    removed: 'Worktree removed',
+    staged: (count: number) => `${formatNumber(count)} staged`,
+    unstaged: (count: number) => `${formatNumber(count)} unstaged`,
+    untracked: (count: number) => `${formatNumber(count)} untracked`,
+    ahead: (count: number, value2: string) =>
+      `${plural(count, { one: '{n} commit hasn’t', other: '{n} commits haven’t' })} been pushed to ${value2}`,
+    pushed: (value1: string | number) => `Pushed to ${value1}`,
+    unpushed: (count: number) => `${plural(count, { one: '{n} commit has', other: '{n} commits have' })} never been pushed`,
+    noNewCommits: 'No new commits',
+    uncommitted: 'Uncommitted',
+    none: 'None',
+    ignored: 'Ignored',
+    commits: 'Commits',
+    branch: 'Branch',
+    detached: 'Detached HEAD',
+    keep: 'Keep',
+    mergedDelete: 'Merged · Will be deleted',
+    emptyDelete: 'No new commits · Will be deleted',
+    branchExternal: 'Latch didn’t create this branch. It will be kept.',
+    merged: (value1: string | number) => `All commits are already on ${value1}.`,
+    noOwnCommits: 'Deleting this branch won’t lose any commits.',
+    notMerged: 'No evidence that this branch has been merged.',
+    unknown: 'Removal outcome unknown. Retrying sends the same request.',
+    heading: (value1: string | number) => `Remove the worktree for “${value1}”`,
+    retry: 'Retry',
+    loading: 'Reading worktree',
+    nestedRepo: ' is another Git repository. Move it out in Terminal first.',
+    tooMany: ' has too many files to inspect. Delete it or move it in Terminal first.',
+    submoduleData: (value1: string | number) =>
+      `The submodule repository stays at ${value1}. Confirm its commits have been pushed before deleting it in Terminal.`,
+    deinit: (count: number) =>
+      `${plural(count, { one: '{n} submodule is', other: '{n} submodules are' })} checked out. Run git submodule deinit --all in Terminal first.`,
+    discardBoth: (uncommitted: number, ignored: number) =>
+      `Discard ${formatNumber(uncommitted)} uncommitted files and ${formatNumber(ignored)} ignored files`,
+    discardChanges: (count: number) => `Discard ${formatNumber(count)} uncommitted files`,
+    discardIgnored: (count: number) => `Discard ${formatNumber(count)} ignored files`,
+    irreversible: 'These files will be deleted permanently.',
+    retrySame: 'Retry same request',
+    remove: 'Remove worktree',
+    cancel: 'Cancel',
+  },
+)
 
 /** A session's worktree, or a leftover of a project (one no session owns), by its folder name. */
 export type WorktreeTarget = { kind: 'session'; sessionId: string } | { kind: 'leftover'; projectId: string; name: string }
@@ -15,18 +122,28 @@ function endpoint(target: WorktreeTarget): string {
 }
 
 const BUSY: Record<NonNullable<WorktreeInventory['busy']>, string> = {
-  turn: 'Agent 正在这个工作树里运行，这一轮结束后再移除',
-  delivery: '交付操作进行中，结束后再移除',
-  terminal: '这个会话还有打开的终端，关闭后再移除',
-  starting: '正在用它开始会话',
-  removing: '正在移除',
+  get turn() {
+    return COPY.turnBusy
+  },
+  get delivery() {
+    return COPY.deliveryBusy
+  },
+  get terminal() {
+    return COPY.terminalBusy
+  },
+  get starting() {
+    return COPY.starting
+  },
+  get removing() {
+    return COPY.removing
+  },
 }
 
 /** What happened, in a few words, for the toast after it is gone. */
 export function removalWords(result: WorktreeRemoval): string {
-  if (result.branch === 'deleted') return '已移除工作树和分支'
-  if (result.branch === 'kept') return `已移除工作树 · 分支 ${result.branchName ?? ''} 已保留`
-  return '已移除工作树'
+  if (result.branch === 'deleted') return COPY.branchDeleted
+  if (result.branch === 'kept') return COPY.branchKept(result.branchName ?? '')
+  return COPY.removed
 }
 
 function Line({ label, children }: { label: string; children: ReactNode }) {
@@ -40,63 +157,71 @@ function Line({ label, children }: { label: string; children: ReactNode }) {
 
 function Facts({ facts }: { facts: WorktreeInventory }) {
   const counts = [
-    facts.staged ? `已暂存 ${facts.staged}` : '',
-    facts.unstaged ? `未暂存 ${facts.unstaged}` : '',
-    facts.untracked ? `未跟踪 ${facts.untracked}` : '',
+    facts.staged ? COPY.staged(facts.staged) : '',
+    facts.unstaged ? COPY.unstaged(facts.unstaged) : '',
+    facts.untracked ? COPY.untracked(facts.untracked) : '',
   ].filter(Boolean)
   const stat = facts.insertions !== undefined && (facts.insertions || facts.deletions) ? `+${facts.insertions} −${facts.deletions}` : ''
   const commits =
     facts.upstream !== undefined
       ? facts.ahead
-        ? { tone: 'warn' as const, text: `${facts.ahead} 个提交未推送到 ${facts.upstream}` }
-        : { tone: 'neutral' as const, text: `已推送到 ${facts.upstream}` }
+        ? { tone: 'warn' as const, text: COPY.ahead(facts.ahead, facts.upstream) }
+        : { tone: 'neutral' as const, text: COPY.pushed(facts.upstream) }
       : facts.unpushed
-        ? { tone: 'warn' as const, text: `${facts.unpushed} 个提交从未推送` }
-        : { tone: 'neutral' as const, text: '没有新提交' }
+        ? { tone: 'warn' as const, text: COPY.unpushed(facts.unpushed) }
+        : { tone: 'neutral' as const, text: COPY.noNewCommits }
   return (
     <dl className="worktree-facts">
-      <Line label="未提交">
+      <Line label={COPY.uncommitted}>
         {facts.files ? (
           <StatusWord tone="warn">
             {counts.join(' · ')}
             {stat && <span className="worktree-facts-stat">{stat}</span>}
           </StatusWord>
         ) : (
-          '没有'
+          COPY.none
         )}
       </Line>
       {facts.ignored > 0 && (
-        <Line label="被忽略">
+        <Line label={COPY.ignored}>
           <StatusWord tone="warn">
-            {facts.ignored} 个被忽略的文件
+            {COPY.ignoredCount(facts.ignored)}
             {!facts.ignoredFolders?.length && facts.ignoredExample && (
               <>
-                （例如 <VisibleText text={facts.ignoredExample} />）
+                {COPY.exampleStart}
+                <VisibleText text={facts.ignoredExample} />
+                {COPY.exampleEnd}
               </>
             )}
           </StatusWord>
           {facts.ignoredFolders?.map(folder => (
             <span key={folder.path} className="worktree-facts-stat">
-              <VisibleText text={folder.path} /> {folder.files} 个
+              <VisibleText text={folder.path} /> {COPY.folderCount(folder.files)}
             </span>
           ))}
         </Line>
       )}
-      <Line label="提交">{commits.tone === 'warn' ? <StatusWord tone="warn">{commits.text}</StatusWord> : commits.text}</Line>
-      <Line label="分支">
-        {facts.branch ? <VisibleText text={facts.branch} /> : '分离 HEAD'}
+      <Line label={COPY.commits}>{commits.tone === 'warn' ? <StatusWord tone="warn">{commits.text}</StatusWord> : commits.text}</Line>
+      <Line label={COPY.branch}>
+        {facts.branch ? <VisibleText text={facts.branch} /> : COPY.detached}
         <Hint
           inline
           label={
-            !facts.ownBranch ? '保留' : facts.merged?.into === 'default' ? '已合并，会删除' : facts.merged ? '没有新提交，会删除' : '保留'
+            !facts.ownBranch
+              ? COPY.keep
+              : facts.merged?.into === 'default'
+                ? COPY.mergedDelete
+                : facts.merged
+                  ? COPY.emptyDelete
+                  : COPY.keep
           }>
           {!facts.ownBranch
-            ? '不是 Latch 新建的分支，不删除。'
+            ? COPY.branchExternal
             : facts.merged?.into === 'default'
-              ? `提交都已在 ${facts.merged.ref} 上。`
+              ? COPY.merged(facts.merged.ref)
               : facts.merged
-                ? '没有自己的提交，删除不丢提交。'
-                : '没有找到它已合并的证据。'}
+                ? COPY.noOwnCommits
+                : COPY.notMerged}
         </Hint>
       </Line>
     </dl>
@@ -177,7 +302,7 @@ export function RemoveWorktreeDialog({
       const unknown = isUncertain(cause)
       setUncertain(unknown)
       if (!unknown) request.current = null
-      setError(unknown ? '还不知道是否已移除。重试会发送同一个请求。' : errorMessage(cause))
+      setError(unknown ? COPY.unknown : errorMessage(cause))
       // What is there changed since it was read: read it again, and ask again.
       if (cause instanceof ApiError && (cause.code === 'worktree-dirty' || cause.code === 'worktree-changed')) load()
     }
@@ -194,7 +319,7 @@ export function RemoveWorktreeDialog({
   const close = () => {
     if (!busy) onClose()
   }
-  const heading = `移除「${title}」的工作树`
+  const heading = COPY.heading(title)
   const body = (
     <div className="worktree-remove">
       {facts === null ? (
@@ -208,13 +333,13 @@ export function RemoveWorktreeDialog({
                   setLoadError('')
                   load()
                 }}>
-                重试
+                {COPY.retry}
               </Button>
             }>
             {loadError}
           </InlineNotice>
         ) : (
-          <Spinner size={14} label="正在读取工作树" />
+          <Spinner size={14} label={COPY.loading} />
         )
       ) : (
         <>
@@ -222,20 +347,18 @@ export function RemoveWorktreeDialog({
           {facts.busy && <InlineNotice tone="warn">{BUSY[facts.busy]}</InlineNotice>}
           {facts.nested !== undefined && (
             <InlineNotice tone="warn">
-              <VisibleText text={facts.nested} /> 是另一个 Git 仓库，先在终端里移走它
+              <VisibleText text={facts.nested} />
+              {COPY.nestedRepo}
             </InlineNotice>
           )}
           {facts.tooLarge !== undefined && (
             <InlineNotice tone="warn">
-              <VisibleText text={facts.tooLarge} /> 里文件太多，无法检查，先在终端里删除或移走它
+              <VisibleText text={facts.tooLarge} />
+              {COPY.tooMany}
             </InlineNotice>
           )}
-          {facts.submoduleData && (
-            <InlineNotice tone="warn">{`子模块仓库留在 ${facts.submoduleData.path}，确认其中的提交已推送后在终端里删除它`}</InlineNotice>
-          )}
-          {!!facts.submodules && (
-            <InlineNotice tone="warn">{`有 ${facts.submodules} 个已检出的子模块，先在终端里运行 git submodule deinit --all`}</InlineNotice>
-          )}
+          {facts.submoduleData && <InlineNotice tone="warn">{COPY.submoduleData(facts.submoduleData.path)}</InlineNotice>}
+          {!!facts.submodules && <InlineNotice tone="warn">{COPY.deinit(facts.submodules)}</InlineNotice>}
           {discarded > 0 && !blocked && (
             <Checkbox
               className="worktree-remove-discard"
@@ -246,12 +369,12 @@ export function RemoveWorktreeDialog({
               }}
               label={
                 facts.files && facts.ignored
-                  ? `丢弃 ${facts.files} 个未提交的文件和 ${facts.ignored} 个被忽略的文件`
+                  ? COPY.discardBoth(facts.files, facts.ignored)
                   : facts.files
-                    ? `丢弃 ${facts.files} 个未提交的文件`
-                    : `丢弃 ${facts.ignored} 个被忽略的文件`
+                    ? COPY.discardChanges(facts.files)
+                    : COPY.discardIgnored(facts.ignored)
               }
-              description="这些文件会被删除，无法恢复。"
+              description={COPY.irreversible}
             />
           )}
         </>
@@ -268,7 +391,7 @@ export function RemoveWorktreeDialog({
       onClick={() => {
         void remove()
       }}>
-      {uncertain ? '重试同一请求' : '移除工作树'}
+      {uncertain ? COPY.retrySame : COPY.remove}
     </Button>
   )
   // A phone shows the same modal as a sheet: the answers stay in the footer; its close button only dismisses.
@@ -278,7 +401,7 @@ export function RemoveWorktreeDialog({
       <div className="ui-modal-body">{body}</div>
       <footer className="ui-modal-footer">
         <Button size="md" disabled={busy} onClick={onClose}>
-          取消
+          {COPY.cancel}
         </Button>
         {action}
       </footer>

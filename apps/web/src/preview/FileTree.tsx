@@ -33,6 +33,88 @@ import { FileOpenContext, fileContextBody, fileContextKey, fileRoute, targetIn }
 import { readTreeFile, soleFolder, treeChanges, treeFullPath, treeKey as branchKey, treeLocation, type FileTreeView } from './treeFiles.ts'
 import { rowOf } from '../components/overlays.tsx'
 import { ContentSearch } from './ContentSearch.tsx'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    showMore: (name: string) => `显示更多 · ${name}`,
+    manyFolders: '展开的目录较多。收起暂时不用的目录，或搜索文件名。',
+    closeFolders: '收起一些目录后重试。',
+    invalidFolder: '文件夹响应无效，请重试。',
+    invalidFiles: '项目文件响应无效。',
+    missingFolder: '找不到这个文件所属的冻结文件夹，请重新同步会话。',
+    cannotOpen: '当前桌面端无法这样打开这个文件。',
+    busy: '上一个文件操作还没有完成，请稍后重试。',
+    currentAction: '请等待当前文件操作完成。',
+    copyPath: '复制路径',
+    quote: '引用到对话',
+    copyRelative: '复制相对路径',
+    defaultApp: '用默认应用打开',
+    quickLook: '快速查看',
+    files: '项目文件',
+    search: '搜索文件',
+    searchContents: '搜索内容',
+    options: '文件显示选项',
+    hidden: '显示隐藏项',
+    hiddenInfo: '也列出点开头的文件和生成目录',
+    refresh: '刷新文件树',
+    loading: '正在读取项目文件…',
+    updating: '正在更新已展开的文件夹',
+    checking: '正在核对文件',
+    retry: '重试',
+    folder: '项目文件夹',
+    changedInfo: '本轮运行期间有变化，也可能包含其他程序的改动。',
+    changed: '本轮运行期间有变化',
+    symlink: '符号链接',
+    actions: (value1: string | number) => `${value1} 文件操作`,
+    reading: (value1: string | number) => `正在读取 ${value1}…`,
+    empty: '空文件夹',
+    partial: '此目录只显示部分内容，可搜索文件名缩小范围。',
+    noFolders: '这个项目没有可用的文件夹。',
+    limit: '先显示 1,000 行。收起一些目录，或搜索文件名。',
+    copied: '已复制路径',
+    cannotCopy: '复制不可用',
+  },
+  {
+    showMore: (name: string) => `Show more · ${name}`,
+    manyFolders: 'Too many folders open. Collapse some, or search by file name.',
+    closeFolders: 'Collapse some folders and try again.',
+    invalidFolder: 'Invalid folder response. Try again.',
+    invalidFiles: 'Invalid project files response.',
+    missingFolder: 'Can’t find this file’s frozen folder. Sync the session again.',
+    cannotOpen: 'This desktop app can’t open the file this way.',
+    busy: 'The last file action hasn’t finished. Try again shortly.',
+    currentAction: 'Wait for the current file action to finish.',
+    copyPath: 'Copy path',
+    quote: 'Quote in chat',
+    copyRelative: 'Copy relative path',
+    defaultApp: 'Open in default app',
+    quickLook: 'Quick Look',
+    files: 'Project files',
+    search: 'Search files',
+    searchContents: 'Search contents',
+    options: 'File view options',
+    hidden: 'Show hidden items',
+    hiddenInfo: 'Also list dotfiles and generated folders',
+    refresh: 'Refresh file tree',
+    loading: 'Reading project files…',
+    updating: 'Updating open folders',
+    checking: 'Checking file',
+    retry: 'Retry',
+    folder: 'Project folder',
+    changedInfo: 'Changed during this run, possibly by other programs too.',
+    changed: 'Changed during this run',
+    symlink: 'Symlink',
+    actions: (value1: string | number) => `File actions for ${value1}`,
+    reading: (value1: string | number) => `Reading ${value1}…`,
+    empty: 'Empty folder',
+    partial: 'Only part of this folder is shown. Search by file name to narrow it down.',
+    noFolders: 'This project has no available folders.',
+    limit: 'Showing the first 1,000 rows. Collapse some folders or search by file name.',
+    copied: 'Path copied',
+    cannotCopy: 'Can’t copy',
+  },
+)
 
 type Branch = { listing?: FileDirectoryListing; loading?: boolean; error?: string; shown: number }
 type TreeRow = {
@@ -133,7 +215,7 @@ export function FileTree({
         !loadedBranches.current.has(key)
         && [...loadedBranches.current].filter(id => openBranches.current.has(id)).length >= CACHE_LIMIT
       ) {
-        setNotice('展开的目录较多。收起暂时不用的目录，或搜索文件名。')
+        setNotice(COPY.manyFolders)
         return
       }
       const controller = new AbortController()
@@ -162,8 +244,8 @@ export function FileTree({
           !loadedBranches.current.has(key)
           && [...loadedBranches.current].filter(id => openBranches.current.has(id)).length >= CACHE_LIMIT
         ) {
-          setNotice('展开的目录较多。收起暂时不用的目录，或搜索文件名。')
-          setBranches(previous => ({ ...previous, [key]: { shown: PAGE_SIZE, error: '收起一些目录后重试。' } }))
+          setNotice(COPY.manyFolders)
+          setBranches(previous => ({ ...previous, [key]: { shown: PAGE_SIZE, error: COPY.closeFolders } }))
           return
         }
         const params = new URLSearchParams({
@@ -179,7 +261,7 @@ export function FileTree({
           || result.rootId !== root
           || result.dir !== path
         )
-          throw new MessageError('文件夹响应无效，请重试。')
+          throw new MessageError(COPY.invalidFolder)
         if (!controller.signal.aborted) {
           loadedBranches.current.add(key)
           setBranches(previous => ({ ...previous, [key]: { listing: result, shown: previous[key]?.shown ?? PAGE_SIZE } }))
@@ -215,7 +297,7 @@ export function FileTree({
     void api<unknown>(`${fileRoute(contextRef.current, 'list')}?${params}`, { signal: controller.signal })
       .then(result => {
         if (controller.signal.aborted) return
-        if (!isFileDirectoryListing(result) || fileContextKey(result.context) !== contextKey) throw new MessageError('项目文件响应无效。')
+        if (!isFileDirectoryListing(result) || fileContextKey(result.context) !== contextKey) throw new MessageError(COPY.invalidFiles)
         setRoots(result.roots)
         const first = result.roots[0]
         if (first) {
@@ -281,7 +363,7 @@ export function FileTree({
       if (!nativeLocal.current || fileContextKey(contextRef.current) !== contextKey) return
       if (kind === 'copy') {
         const path = treeFullPath(file, folders, cwd)
-        if (!path) throw new MessageError('找不到这个文件所属的冻结文件夹，请重新同步会话。')
+        if (!path) throw new MessageError(COPY.missingFolder)
         await copy.copy(path)
       } else {
         const shell = shellFiles()
@@ -293,12 +375,12 @@ export function FileTree({
               : kind === 'editor'
                 ? file.actions.editor === true
                 : file.actions.quicklook
-        if (!shell || shell.protocolVersion !== 2 || !allowed) throw new MessageError('当前桌面端无法这样打开这个文件。')
+        if (!shell || shell.protocolVersion !== 2 || !allowed) throw new MessageError(COPY.cannotOpen)
         const owner = context.kind === 'session' ? context.sessionId : { workspaceId: context.workspaceId, harnessId: context.harnessId }
         const result =
           kind === 'editor' ? await openInEditor(owner, { handle: file.handle }) : await shell[kind](owner, { handle: file.handle })
         if (result.status === 'canceled') return
-        if (result.status === 'busy') throw new MessageError('上一个文件操作还没有完成，请稍后重试。')
+        if (result.status === 'busy') throw new MessageError(COPY.busy)
         if (result.status === 'refused' || result.status === 'failed') throw new MessageError(fileRefusalText(result.code))
       }
     } catch (cause) {
@@ -401,7 +483,7 @@ export function FileTree({
       activate(row)
     }
   }
-  const busy = acting ? { disabledReason: '请等待当前文件操作完成。' } : {}
+  const busy = acting ? { disabledReason: COPY.currentAction } : {}
   const rootItems = (row: TreeRow): MenuItem[] => {
     const path = folders?.length ? folders.find(folder => folder.id === row.root)?.path : cwd
     const reveal = rootReveal?.(row.root)
@@ -410,7 +492,7 @@ export function FileTree({
         ? [
             {
               id: 'copy',
-              label: '复制路径',
+              label: COPY.copyPath,
               icon: CopyGlyph,
               onSelect: () => {
                 void copy.copy(path)
@@ -430,7 +512,7 @@ export function FileTree({
         ? [
             {
               id: 'quote',
-              label: '引用到对话',
+              label: COPY.quote,
               icon: MessageSquareQuote,
               onSelect: () => {
                 onMention({ root: row.root, path: row.path })
@@ -439,10 +521,10 @@ export function FileTree({
           ]
         : []),
       full
-        ? { id: 'copy', label: '复制路径', icon: CopyGlyph, ...busy, onSelect: () => void fileAction(row, 'copy') }
+        ? { id: 'copy', label: COPY.copyPath, icon: CopyGlyph, ...busy, onSelect: () => void fileAction(row, 'copy') }
         : {
             id: 'copy',
-            label: '复制路径',
+            label: COPY.copyPath,
             icon: CopyGlyph,
             onSelect: () => {
               void copy.copy(row.path)
@@ -452,7 +534,7 @@ export function FileTree({
         ? [
             {
               id: 'copy-relative',
-              label: '复制相对路径',
+              label: COPY.copyRelative,
               icon: CopyGlyph,
               onSelect: () => {
                 void copy.copy(row.path)
@@ -469,8 +551,8 @@ export function FileTree({
               ...busy,
               onSelect: () => void fileAction(row, 'reveal'),
             },
-            { id: 'open', label: '用默认应用打开', icon: ExternalGlyph, ...busy, onSelect: () => void fileAction(row, 'open') },
-            { id: 'quicklook', label: '快速查看', icon: EyeGlyph, ...busy, onSelect: () => void fileAction(row, 'quickLook') },
+            { id: 'open', label: COPY.defaultApp, icon: ExternalGlyph, ...busy, onSelect: () => void fileAction(row, 'open') },
+            { id: 'quicklook', label: COPY.quickLook, icon: EyeGlyph, ...busy, onSelect: () => void fileAction(row, 'quickLook') },
             ...(editorText
               ? [{ id: 'editor', label: editorText, icon: CodeGlyph, ...busy, onSelect: () => void fileAction(row, 'editor') }]
               : []),
@@ -489,7 +571,7 @@ export function FileTree({
   }
   if (contentSearch && contentOpen)
     return (
-      <section className="file-tree" aria-label="项目文件" onKeyDown={panelKeys}>
+      <section className="file-tree" aria-label={COPY.files} onKeyDown={panelKeys}>
         <ContentSearch
           key={contextKey}
           context={context}
@@ -502,59 +584,59 @@ export function FileTree({
       </section>
     )
   return (
-    <section className="file-tree" aria-label="项目文件" onKeyDown={panelKeys}>
+    <section className="file-tree" aria-label={COPY.files} onKeyDown={panelKeys}>
       <header className="file-tree-head">
         {onSearch ? (
-          <button type="button" className="file-tree-search" aria-label="搜索文件" onClick={onSearch}>
+          <button type="button" className="file-tree-search" aria-label={COPY.search} onClick={onSearch}>
             <Icon icon={SearchGlyph} size={14} />
-            <span>搜索文件</span>
+            <span>{COPY.search}</span>
             <Kbd keys="mod+p" />
           </button>
         ) : (
           <span className="file-tree-search-gap" />
         )}
         {contentSearch && (
-          <IconButton size="xs" label="搜索内容" icon={TextSearch} shortcut={keyGlyphs('shift+mod+f')} onClick={openContent} />
+          <IconButton size="xs" label={COPY.searchContents} icon={TextSearch} shortcut={keyGlyphs('shift+mod+f')} onClick={openContent} />
         )}
         <Menu
-          label="文件显示选项"
+          label={COPY.options}
           align="end"
-          trigger={props => <IconButton {...props} size="xs" label="文件显示选项" icon={MoreGlyph} />}
+          trigger={props => <IconButton {...props} size="xs" label={COPY.options} icon={MoreGlyph} />}
           sections={[
             {
               id: 'view',
               items: [
                 {
                   id: 'hidden',
-                  label: '显示隐藏项',
-                  description: '也列出点开头的文件和生成目录',
+                  label: COPY.hidden,
+                  description: COPY.hiddenInfo,
                   checked: showHidden,
                   onSelect: () => setShowHidden(value => !value),
                 },
-                { id: 'refresh', label: '刷新文件树', icon: RefreshGlyph, onSelect: () => setGeneration(value => value + 1) },
+                { id: 'refresh', label: COPY.refresh, icon: RefreshGlyph, onSelect: () => setGeneration(value => value + 1) },
               ],
             },
           ]}
         />
       </header>
       {notice && <InlineNotice>{notice}</InlineNotice>}
-      {loading && <Loading label="正在读取项目文件…" />}
+      {loading && <Loading label={COPY.loading} />}
       <span className="sr-only" role="status">
-        {refreshing ? '正在更新已展开的文件夹' : acting ? '正在核对文件' : ''}
+        {refreshing ? COPY.updating : acting ? COPY.checking : ''}
       </span>
       {error && (
         <InlineNotice
           tone="error"
           action={
             <Button size="xs" onClick={() => setGeneration(value => value + 1)}>
-              重试
+              {COPY.retry}
             </Button>
           }>
           {error}
         </InlineNotice>
       )}
       {!loading && !error && (
-        <div ref={tree} className="file-tree-items" role="tree" aria-label="项目文件夹">
+        <div ref={tree} className="file-tree-items" role="tree" aria-label={COPY.folder}>
           {rows.map((row, index) => {
             const branch = branches[row.key],
               isExpanded = expanded.has(row.key),
@@ -598,18 +680,18 @@ export function FileTree({
                     <VisibleText text={row.name} />
                   </span>
                   {row.kind === 'file' && changes.has(row.key) && (
-                    <Tooltip content="本轮运行期间有变化，也可能包含其他程序的改动。">
-                      <span className="file-tree-change" aria-label="本轮运行期间有变化" />
+                    <Tooltip content={COPY.changedInfo}>
+                      <span className="file-tree-change" aria-label={COPY.changed} />
                     </Tooltip>
                   )}
-                  {row.kind === 'symlink' && <small>符号链接</small>}
+                  {row.kind === 'symlink' && <small>{COPY.symlink}</small>}
                   {(row.kind === 'file' || row.path === '') && (
                     <div onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
                       <Menu
-                        label={`${row.name} 文件操作`}
+                        label={COPY.actions(row.name)}
                         align="end"
                         context={rowOf('.file-tree-row')}
-                        trigger={props => <IconButton {...props} label={`${row.name} 文件操作`} size="xs" icon={MoreGlyph} />}
+                        trigger={props => <IconButton {...props} label={COPY.actions(row.name)} size="xs" icon={MoreGlyph} />}
                         sections={[
                           {
                             id: 'file',
@@ -622,7 +704,7 @@ export function FileTree({
                 </div>
                 {folder && isExpanded && branch?.loading && (
                   <p className="file-tree-message">
-                    <Loading label={`正在读取 ${row.name}…`} />
+                    <Loading label={COPY.reading(row.name)} />
                   </p>
                 )}
                 {folder && isExpanded && branch?.error && (
@@ -634,13 +716,13 @@ export function FileTree({
                         onClick={() => {
                           void load(row.root, row.path)
                         }}>
-                        重试
+                        {COPY.retry}
                       </Button>
                     }>
                     {branch.error}
                   </InlineNotice>
                 )}
-                {folder && isExpanded && branch?.listing?.entries.length === 0 && <p className="file-tree-message">空文件夹</p>}
+                {folder && isExpanded && branch?.listing?.entries.length === 0 && <p className="file-tree-message">{COPY.empty}</p>}
                 {closing.map(item => {
                   const current = branches[item.key]
                   if (!current?.listing) return null
@@ -653,23 +735,23 @@ export function FileTree({
                       onClick={() =>
                         setBranches(previous => ({ ...previous, [item.key]: { ...previous[item.key]!, shown: current.shown + PAGE_SIZE } }))
                       }>
-                      显示更多 · {item.name}
+                      {COPY.showMore(item.name)}
                     </Button>
                   ) : current.listing.truncated ? (
                     <p key={item.key} className="file-tree-message">
-                      此目录只显示部分内容，可搜索文件名缩小范围。
+                      {COPY.partial}
                     </p>
                   ) : null
                 })}
               </div>
             )
           })}
-          {!rows.length && <p className="file-tree-message">这个项目没有可用的文件夹。</p>}
+          {!rows.length && <p className="file-tree-message">{COPY.noFolders}</p>}
         </div>
       )}
-      {clipped && <p className="file-tree-message">先显示 1,000 行。收起一些目录，或搜索文件名。</p>}
+      {clipped && <p className="file-tree-message">{COPY.limit}</p>}
       <span role="status" className="sr-only">
-        {copy.state === 'copied' ? '已复制路径' : copy.state === 'failed' ? '复制不可用' : ''}
+        {copy.state === 'copied' ? COPY.copied : copy.state === 'failed' ? COPY.cannotCopy : ''}
       </span>
     </section>
   )

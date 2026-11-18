@@ -20,6 +20,160 @@ import { absoluteTime, argumentView, basename, clockTime, dayClockTime, formatDu
 import { diffLines, previousState } from './diff.ts'
 import { toolKind } from './icons.tsx'
 import { thinkingWord } from './composer/modelReasoning.ts'
+import { currentLocale, defineCopy, formatList, plural } from './core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    times: (note: string, count: number) => `${note} · ${count} 次`,
+    failed: '失败',
+    stopped: '已停止',
+    partialReply: '保留了部分回复',
+    interrupted: '回复中断',
+    partialContent: '保留了部分内容',
+    modelChange: (before: string, after: string) => `模型 ${before} → ${after}`,
+    thinkingChange: (before: string, after: string) => `思考 ${before} → ${after}`,
+    completed: '完成',
+    stop: '停止',
+    ended: '结束',
+    started: (time: string) => `${time} 开始`,
+    duration: (time: string, wait: string) => `用时 ${time}${wait}`,
+    wait: (time: string) => `（不含等待批准 ${time}）`,
+    read: '读取',
+    edit: '编辑',
+    delete: '删除',
+    move: '移动',
+    search: '搜索',
+    execute: '运行',
+    fetch: '获取',
+    files: (count: number) => `${count} 个文件`,
+    create: '新建',
+    lines: (path: string, count: number) => `${path} · ${count} 行`,
+    readFiles: (count: number) => `读取 ${count} 个文件`,
+    listFolders: (count: number) => `列出 ${count} 个文件夹`,
+    searches: (count: number) => `搜索 ${count} 次`,
+    list: '列出',
+    currentFolder: '当前文件夹',
+    toolCall: '工具调用',
+    worked: (time: string) => `已工作${time}`,
+    failedSteps: (count: number) => `${count} 步失败`,
+    deniedSteps: (count: number) => `${count} 步被拒绝`,
+    unsuccessful: '没有成功',
+    received: 'Mac 已收到',
+    harnessStarted: 'Harness 已开始',
+    changedFiles: (count: number) => `修改 ${count} 个文件`,
+    commands: (count: number) => `运行 ${count} 条命令`,
+    otherTools: (count: number) => `调用 ${count} 次其他工具`,
+    executed: (count: number, details: string) => `上一次已经执行了 ${count} 个操作：${details}。`,
+    unknown: (count: number) => `上一次有 ${count} 个操作结果未知，可能已经执行。`,
+    mayRepeat: '重新发送后，Harness 可能再次执行它们。',
+    executing: (name: string) => `正在执行 ${name}`,
+    executingTool: '正在执行工具',
+    stopping: '正在停止…',
+    subagent: (name: string, status: string) => `子 Agent ${name} ${status}`,
+    running: '运行中',
+    doing: (name: string) => `正在${name}`,
+    reply: '正在回复',
+    reasoning: '正在思考',
+    model: '等待模型…',
+    slowStart: (harness: string) => `${harness} 启动较慢…`,
+    starting: (harness: string) => `正在启动 ${harness}…`,
+    minutes: (count: number) => `${count} 分钟`,
+    unsupportedMethod: (harness: string, method: string) => `${harness} 发来不支持的请求 ${method}`,
+    unsupported: (harness: string) => `${harness} 发来不支持的请求`,
+    command: '命令',
+    quietCommand: (command: string, duration: string) => `${command} · ${duration}没有输出`,
+    quietModel: (duration: string) => `等模型回应 · ${duration}没有新内容`,
+    quiet: (duration: string) => `${duration}没有新输出`,
+    runningCommand: (command: string) => `命令运行中 · ${command}`,
+    uncertainty: (count: number, note: string) => ` · 这 ${count} 条命令结果未知${note}`,
+    checked: ' · 已核对',
+    check: '，请核对',
+    exited: (harness: string, uncertain: string) => `${harness} 已退出 · 这一轮没有完成${uncertain}`,
+    forced: (uncertain: string) => `已强制停止${uncertain}`,
+    restarted: (uncertain: string) => `Latch 重启时中断${uncertain}`,
+    signedIn: '已登录',
+    signIn: (harness: string) => `${harness} 还没登录 · 登录后重试`,
+    turnEnded: (harness: string, uncertain: string) => `${harness} 结束了这一轮${uncertain}`,
+  },
+  {
+    times: (note: string, count: number) => `${note} · ${count} times`,
+    failed: 'Failed',
+    stopped: 'Stopped',
+    partialReply: 'Partial reply kept',
+    interrupted: 'Reply interrupted',
+    partialContent: 'Partial content kept',
+    modelChange: (before: string, after: string) => `Model ${before} → ${after}`,
+    thinkingChange: (before: string, after: string) => `Reasoning ${before} → ${after}`,
+    completed: 'Completed',
+    stop: 'Stopped',
+    ended: 'Ended',
+    started: (time: string) => `Started ${time}`,
+    duration: (time: string, wait: string) => `Duration ${time}${wait}`,
+    wait: (time: string) => ` (excluding ${time} for approval)`,
+    read: 'Read',
+    edit: 'Edit',
+    delete: 'Delete',
+    move: 'Move',
+    search: 'Search',
+    execute: 'Run',
+    fetch: 'Fetch',
+    files: (count: number) => `${count} files`,
+    create: 'Create',
+    lines: (path: string, count: number) => `${path} · ${count} lines`,
+    readFiles: (count: number) => `Read ${count} files`,
+    listFolders: (count: number) => plural(count, { one: 'Listed {n} folder', other: 'Listed {n} folders' }),
+    searches: (count: number) => plural(count, { one: '{n} search', other: '{n} searches' }),
+    list: 'List',
+    currentFolder: 'Current folder',
+    toolCall: 'Tool call',
+    worked: (time: string) => `Worked ${time}`,
+    failedSteps: (count: number) => plural(count, { one: '{n} step failed', other: '{n} steps failed' }),
+    deniedSteps: (count: number) => plural(count, { one: '{n} step denied', other: '{n} steps denied' }),
+    unsuccessful: 'Didn’t succeed',
+    received: 'Received by Mac',
+    harnessStarted: 'Harness started',
+    changedFiles: (count: number) => plural(count, { one: 'Changed {n} file', other: 'Changed {n} files' }),
+    commands: (count: number) => plural(count, { one: 'Ran {n} command', other: 'Ran {n} commands' }),
+    otherTools: (count: number) => plural(count, { one: 'Called {n} other tool', other: 'Called {n} other tools' }),
+    executed: (count: number, details: string) =>
+      `Last time, ${plural(count, { one: '{n} action ran', other: '{n} actions ran' })}: ${details}.`,
+    unknown: (count: number) =>
+      plural(count, {
+        one: 'Last time, {n} action had an unknown outcome and may have run.',
+        other: 'Last time, {n} actions had unknown outcomes and may have run.',
+      }),
+    mayRepeat: 'The Harness may run them again if you resend.',
+    executing: (name: string) => `Running ${name}`,
+    executingTool: 'Running a tool',
+    stopping: 'Stopping…',
+    subagent: (name: string, status: string) => `Subagent ${name} · ${status}`,
+    running: 'Running',
+    doing: (name: string) => `Running ${name}`,
+    reply: 'Replying',
+    reasoning: 'Reasoning',
+    model: 'Waiting for model…',
+    slowStart: (harness: string) => `${harness} is taking longer to start…`,
+    starting: (harness: string) => `Starting ${harness}…`,
+    minutes: (count: number) => `${count} min`,
+    unsupportedMethod: (harness: string, method: string) => `${harness} sent an unsupported request: ${method}`,
+    unsupported: (harness: string) => `${harness} sent an unsupported request`,
+    command: 'Command',
+    quietCommand: (command: string, duration: string) => `${command} · No output for ${duration}`,
+    quietModel: (duration: string) => `Waiting for model · No new content for ${duration}`,
+    quiet: (duration: string) => `No new output for ${duration}`,
+    runningCommand: (command: string) => `Running command · ${command}`,
+    uncertainty: (count: number, note: string) =>
+      ` · ${plural(count, { one: '{n} command with unknown outcome', other: '{n} commands with unknown outcomes' })}${note}`,
+    checked: ' · Reviewed',
+    check: '. Review the results',
+    exited: (harness: string, uncertain: string) => `${harness} exited · This turn didn’t finish${uncertain}`,
+    forced: (uncertain: string) => `Force stopped${uncertain}`,
+    restarted: (uncertain: string) => `Interrupted when Latch restarted${uncertain}`,
+    signedIn: 'Signed in',
+    signIn: (harness: string) => `${harness} isn’t signed in · Sign in and retry`,
+    turnEnded: (harness: string, uncertain: string) => `${harness} ended this turn${uncertain}`,
+  },
+)
 
 /*
  * What the conversation shows, derived from the Host's messages alone: turns, their footers, what a work row says, when
@@ -125,9 +279,11 @@ export function collapseCompactions(messages: Message[]): Message[] {
     counted.set(run.at(-1)!, run.length)
   }
   if (!dropped.size) return messages
-  return messages.flatMap(message =>
-    dropped.has(message) ? [] : counted.has(message) ? [{ ...message, text: `${message.text} · ${counted.get(message)} 次` }] : [message],
-  )
+  return messages.flatMap(message => {
+    if (dropped.has(message)) return []
+    const count = counted.get(message)
+    return count === undefined ? [message] : [{ ...message, text: COPY.times(message.text, count) }]
+  })
 }
 
 /**
@@ -207,10 +363,12 @@ export function turnOutcome(turn: Turn, latestStatus: TaskStatus | undefined): T
  * tool row. A completed turn says nothing.
  */
 export function outcomeWords(turn: Turn, outcome: TurnOutcome): string[] {
-  if (outcome === 'failed') return ['失败']
-  if (outcome === 'stopped') return turnText(turn) ? ['已停止', '保留了部分回复'] : ['已停止']
+  if (outcome === 'failed') return [COPY.failed]
+  if (outcome === 'stopped') return turnText(turn) ? [COPY.stopped, COPY.partialReply] : [COPY.stopped]
   if (outcome === 'interrupted')
-    return turnText(turn) || turn.replies.some(message => message.role === 'tool') ? ['回复中断', '保留了部分内容'] : ['回复中断']
+    return turnText(turn) || turn.replies.some(message => message.role === 'tool')
+      ? [COPY.interrupted, COPY.partialContent]
+      : [COPY.interrupted]
   return []
 }
 
@@ -302,8 +460,9 @@ export function settingSwitches(turns: readonly Turn[]): Map<string, string> {
     const modelChanged = model !== undefined && step.model !== model
     const thinkingChanged = thinking !== undefined && nextThinking !== undefined && nextThinking !== thinking
     if (modelChanged && thinkingChanged) switches.set(turn.key, `${model} · ${thinking} → ${step.model} · ${nextThinking}`)
-    else if (modelChanged) switches.set(turn.key, `模型 ${model} → ${step.model}`)
-    else if (thinkingChanged) switches.set(turn.key, `思考 ${thinking} → ${nextThinking}`)
+    else if (modelChanged && model !== undefined) switches.set(turn.key, COPY.modelChange(model, step.model))
+    else if (thinkingChanged && thinking !== undefined && nextThinking !== undefined)
+      switches.set(turn.key, COPY.thinkingChange(thinking, nextThinking))
     model = step.model
     // A model without levels says nothing about the next one's.
     thinking = nextThinking ?? (modelChanged ? undefined : thinking)
@@ -335,7 +494,20 @@ export function turnTimes(turn: Turn): TurnTimes {
   }
 }
 
-const END_WORDS: Record<TurnOutcome, string> = { completed: '完成', stopped: '停止', failed: '结束', interrupted: '结束' }
+const END_WORDS: Record<TurnOutcome, string> = {
+  get completed() {
+    return COPY.completed
+  },
+  get stopped() {
+    return COPY.stop
+  },
+  get failed() {
+    return COPY.ended
+  },
+  get interrupted() {
+    return COPY.ended
+  },
+}
 
 /**
  * The tooltip of a settled turn's time: 「10月25日 14:31:05 开始 · 14:32:17 完成 · 用时 1 分 12 秒（不含等待批准 20 秒）」.
@@ -345,7 +517,7 @@ const END_WORDS: Record<TurnOutcome, string> = { completed: '完成', stopped: '
 export function turnTimeTip(times: TurnTimes, outcome: TurnOutcome, now: number): string | undefined {
   const parts: string[] = []
   const { startedAt, sentAt } = times
-  if (startedAt !== undefined) parts.push(`${dayClockTime(startedAt, now)} 开始`)
+  if (startedAt !== undefined) parts.push(COPY.started(dayClockTime(startedAt, now)))
   if (sentAt !== undefined)
     parts.push(
       `${startedAt !== undefined && sameDay(startedAt, sentAt) ? clockTime(sentAt) : dayClockTime(sentAt, now)} ${END_WORDS[outcome]}`,
@@ -353,7 +525,7 @@ export function turnTimeTip(times: TurnTimes, outcome: TurnOutcome, now: number)
   const duration = outcome === 'interrupted' || times.activeMs === undefined ? undefined : formatDuration(times.activeMs)
   if (duration) {
     const wait = times.waitMs !== undefined && times.waitMs >= 1000 ? formatDuration(times.waitMs) : undefined
-    parts.push(`用时 ${duration}${wait ? `（不含等待批准 ${wait}）` : ''}`)
+    parts.push(COPY.duration(duration, wait ? COPY.wait(wait) : ''))
   }
   return parts.length ? parts.join(' · ') : undefined
 }
@@ -361,13 +533,27 @@ export function turnTimeTip(times: TurnTimes, outcome: TurnOutcome, now: number)
 // ---- Process rows ------------------------------------------------------------------------------------------------
 
 const VERBS: Partial<Record<ToolKind, string>> = {
-  read: '读取',
-  edit: '编辑',
-  delete: '删除',
-  move: '移动',
-  search: '搜索',
-  execute: '运行',
-  fetch: '获取',
+  get read() {
+    return COPY.read
+  },
+  get edit() {
+    return COPY.edit
+  },
+  get delete() {
+    return COPY.delete
+  },
+  get move() {
+    return COPY.move
+  },
+  get search() {
+    return COPY.search
+  },
+  get execute() {
+    return COPY.execute
+  },
+  get fetch() {
+    return COPY.fetch
+  },
 }
 
 function argument(input: string | undefined, names: string[]): string | undefined {
@@ -419,11 +605,11 @@ const shortPath = (path: string) => basename(path) || path
 function diffLabel(tool: Message['tool']): ToolLabel | undefined {
   const diffs = tool?.diffs
   if (!diffs?.length) return undefined
-  if (diffs.length > 1) return { verb: '编辑', object: `${diffs.length} 个文件`, mono: false }
+  if (diffs.length > 1) return { verb: COPY.edit, object: COPY.files(diffs.length), mono: false }
   const diff = diffs[0]!
-  if (previousState(diff) !== 'none') return { verb: '编辑', object: shortPath(diff.path), mono: false }
+  if (previousState(diff) !== 'none') return { verb: COPY.edit, object: shortPath(diff.path), mono: false }
   const lines = diff.newText === '' ? 0 : diff.newText.replace(/\n$/, '').split('\n').length
-  return { verb: '新建', object: `${shortPath(diff.path)} · ${lines} 行`, mono: false }
+  return { verb: COPY.create, object: COPY.lines(shortPath(diff.path), lines), mono: false }
 }
 
 /** A command call's line: as the agent reported it, as a row shows it, and the shell wrapper it came in, if any. */
@@ -487,22 +673,22 @@ export function rowKind(message: Pick<Message, 'tool' | 'toolName' | 'state'>): 
 /** How many quiet steps of each kind, in words: 「读取 3 个文件，搜索 2 次」. Only what was counted is said. */
 export function quietWords(counts: { read: number; list: number; search: number }): string {
   return [
-    ...(counts.read ? [`读取 ${counts.read} 个文件`] : []),
-    ...(counts.list ? [`列出 ${counts.list} 个文件夹`] : []),
-    ...(counts.search ? [`搜索 ${counts.search} 次`] : []),
+    ...(counts.read ? [COPY.readFiles(counts.read)] : []),
+    ...(counts.list ? [COPY.listFolders(counts.list)] : []),
+    ...(counts.search ? [COPY.searches(counts.search)] : []),
   ].join('，')
 }
 
 function actionLabel(actions: readonly ToolAction[]): ToolLabel {
   const [only] = actions
   if (actions.length === 1 && only) {
-    if (only.kind === 'read' && only.path) return { verb: '读取', object: shortPath(only.path), mono: false }
+    if (only.kind === 'read' && only.path) return { verb: COPY.read, object: shortPath(only.path), mono: false }
     if (only.kind === 'list') {
       const folder = only.path?.replace(/[\\/]+$/u, '')
-      return { verb: '列出', object: folder ? shortPath(folder) : '当前文件夹', mono: false }
+      return { verb: COPY.list, object: folder ? shortPath(folder) : COPY.currentFolder, mono: false }
     }
-    if (only.kind === 'search' && only.query) return { verb: '搜索', object: only.query, mono: true }
-    if (only.kind === 'search' && only.path) return { verb: '搜索', object: shortPath(only.path), mono: false }
+    if (only.kind === 'search' && only.query) return { verb: COPY.search, object: only.query, mono: true }
+    if (only.kind === 'search' && only.path) return { verb: COPY.search, object: shortPath(only.path), mono: false }
   }
   const count = (kind: ToolAction['kind']) => actions.filter(action => action.kind === kind).length
   return { object: quietWords({ read: count('read'), list: count('list'), search: count('search') }), mono: false }
@@ -535,7 +721,7 @@ export function toolLabel(message: Pick<Message, 'tool' | 'toolName' | 'state'>)
   if (object !== undefined && verb !== undefined) return { verb, object, mono }
   // A title that only repeats the tool's identifier is the raw name.
   if (tool?.title && tool.title !== message.toolName) return { object: tool.title, mono: false }
-  return message.toolName ? { object: message.toolName, mono: true } : { object: '工具调用', mono: false }
+  return message.toolName ? { object: message.toolName, mono: true } : { object: COPY.toolCall, mono: false }
 }
 
 /** The row is the harness's own model reviewing a request, not a call of its own. */
@@ -587,7 +773,7 @@ export function toolHeading(tool: Message['tool'], toolName: string | undefined)
     const found = titledObject(tool)
     return found ? `${tool.toolTitle} ${found.object}` : tool.toolTitle
   }
-  return tool?.title || toolName || '工具调用'
+  return tool?.title || toolName || COPY.toolCall
 }
 
 /** The structured file path printed by toolHeading, if its object is a path. */
@@ -950,9 +1136,9 @@ export function foldWords(turn: Turn): string {
   const denied = countCalls(turn.replies, tool => tool.judged?.outcome === 'denied' || tool.blocked?.source === 'model')
   const ruled = countCalls(turn.replies, tool => tool.blocked?.source === 'rule')
   return [
-    `已工作${spent ? ` ${spent}` : ''}`,
-    ...(failed ? [`${failed} 步失败`] : []),
-    ...(rejected ? [`${rejected} 步被拒绝`] : []),
+    COPY.worked(spent ? ` ${spent}` : ''),
+    ...(failed ? [COPY.failedSteps(failed)] : []),
+    ...(rejected ? [COPY.deniedSteps(rejected)] : []),
     ...(denied ? [JUDGED_COPY.deniedCount(denied)] : []),
     ...(ruled ? [JUDGED_COPY.ruleBlockedCount(ruled)] : []),
   ].join(' · ')
@@ -985,7 +1171,7 @@ export function failureReason(message: Pick<Message, 'state' | 'tool' | 'text'>)
     .filter(Boolean)
   const line = lines.find(part => ERROR_LINE.test(part)) ?? lines[0]
   const reason = line ? withoutToolCode(line) : ''
-  if (!reason) return '没有成功'
+  if (!reason) return COPY.unsuccessful
   return reason.length > 120 ? `${reason.slice(0, 120)}…` : reason
 }
 
@@ -993,7 +1179,7 @@ export function failureReason(message: Pick<Message, 'state' | 'tool' | 'text'>)
 export function deliveryWords(detail: TaskDetail, turn: Turn): string | undefined {
   const activity = detail.summary.live?.activity
   if (activity === undefined || isLive(detail) || turn.replies.length > 0) return undefined
-  return activity === 'starting' ? 'Mac 已收到' : 'Harness 已开始'
+  return activity === 'starting' ? COPY.received : COPY.harnessStarted
 }
 
 // ---- Retry ------------------------------------------------------------------------------------------------------
@@ -1040,15 +1226,15 @@ export function resendWarning(effects: SideEffects): string | undefined {
   const parts: string[] = []
   if (done > 0) {
     const what = [
-      effects.edits ? `修改 ${effects.edits} 个文件` : '',
-      effects.commands ? `运行 ${effects.commands} 条命令` : '',
-      effects.others ? `调用 ${effects.others} 次其他工具` : '',
+      effects.edits ? COPY.changedFiles(effects.edits) : '',
+      effects.commands ? COPY.commands(effects.commands) : '',
+      effects.others ? COPY.otherTools(effects.others) : '',
     ].filter(Boolean)
-    parts.push(`上一次已经执行了 ${done} 个操作：${what.join('、')}。`)
+    parts.push(COPY.executed(done, currentLocale() === 'en' ? formatList(what) : what.join('、')))
   }
-  if (effects.unknown > 0) parts.push(`上一次有 ${effects.unknown} 个操作结果未知，可能已经执行。`)
-  parts.push('重新发送后，Harness 可能再次执行它们。')
-  return parts.join('')
+  if (effects.unknown > 0) parts.push(COPY.unknown(effects.unknown))
+  parts.push(COPY.mayRepeat)
+  return parts.join(currentLocale() === 'en' ? ' ' : '')
 }
 
 /**
@@ -1120,7 +1306,7 @@ export function livePhase(detail: TaskDetail, opts: LivePhaseOptions): LivePhase
   if (opts.approvals > 0 || detail.summary.status === 'waiting-approval' || activity?.phase === 'approval') return { kind: 'approval' }
   const { trailing } = opts.messageFacts ?? runMessageFacts(detail.messages)
   if (trailing) return { kind: 'tool', text: toolText(trailing) }
-  if (activity?.phase === 'tool') return { kind: 'tool', text: activity.toolName ? `正在执行 ${activity.toolName}` : '正在执行工具' }
+  if (activity?.phase === 'tool') return { kind: 'tool', text: activity.toolName ? COPY.executing(activity.toolName) : COPY.executingTool }
   if (detail.liveText) return { kind: 'reply' }
   if (detail.liveReasoning) return { kind: 'thinking' }
   if (activity?.phase === 'starting') {
@@ -1135,25 +1321,37 @@ export function livePhase(detail: TaskDetail, opts: LivePhaseOptions): LivePhase
  * (「运行 pnpm test」, 「读取 a.ts」), or 「正在执行」 with its title when it has no kind Latch reads.
  */
 function toolText(message: Message): string {
-  if (message.subagent) return `子 Agent ${message.subagent.title} ${message.subagent.stopping ? '正在停止…' : '运行中'}`
+  if (message.subagent) return COPY.subagent(message.subagent.title, message.subagent.stopping ? COPY.stopping : COPY.running)
   const label = toolLabel({ ...message, state: 'running' })
   if (label.verb) return `${label.verb} ${label.object}`
-  return message.tool?.toolTitle ? `正在${message.tool.toolTitle}` : `正在执行 ${label.object}`
+  return message.tool?.toolTitle ? COPY.doing(message.tool.toolTitle) : COPY.executing(label.object)
 }
 
 const PHASE_WORDS: Record<Exclude<LivePhase['kind'], 'tool' | 'starting'>, string> = {
-  cancelling: '正在停止…',
-  approval: APPROVAL_COPY.waiting,
-  question: APPROVAL_COPY.waiting,
-  reply: '正在回复',
-  thinking: '正在思考',
-  model: '等待模型…',
+  get cancelling() {
+    return COPY.stopping
+  },
+  get approval() {
+    return APPROVAL_COPY.waiting
+  },
+  get question() {
+    return APPROVAL_COPY.waiting
+  },
+  get reply() {
+    return COPY.reply
+  },
+  get thinking() {
+    return COPY.reasoning
+  },
+  get model() {
+    return COPY.model
+  },
 }
 
 /** A phase in words. */
 export function phaseText(phase: LivePhase, harness: string): string {
   if (phase.kind === 'tool') return phase.text
-  if (phase.kind === 'starting') return phase.slow ? `${harness} 启动较慢…` : `正在启动 ${harness}…`
+  if (phase.kind === 'starting') return phase.slow ? COPY.slowStart(harness) : COPY.starting(harness)
   return PHASE_WORDS[phase.kind]
 }
 
@@ -1185,7 +1383,7 @@ export type RunStatus = {
   viewMessageId?: string
 }
 
-const minutesText = (ms: number) => `${Math.max(1, Math.floor(ms / 60_000))} 分钟`
+const minutesText = (ms: number) => COPY.minutes(Math.max(1, Math.floor(ms / 60_000)))
 
 export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness: string; fallbackElapsed?: number }): RunStatus {
   const phase = livePhase(detail, opts)
@@ -1199,7 +1397,7 @@ export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness
     return {
       tone: 'amber',
       // The method, when the detail names it: what was asked is what the person looks up.
-      text: unknown.method ? `${opts.harness} 发来不支持的请求 ${unknown.method}` : `${opts.harness} 发来不支持的请求`,
+      text: unknown.method ? COPY.unsupportedMethod(opts.harness, unknown.method) : COPY.unsupported(opts.harness),
       actions: ['stop'],
       ...(unknown.messageId ? { viewMessageId: unknown.messageId } : {}),
     }
@@ -1209,7 +1407,7 @@ export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness
     const commandLike = live.activity === 'command' || live.activity === 'tool'
     return {
       tone: 'amber',
-      text: commandLike ? `${live.commandName ?? '命令'} · ${minutesText(quiet)}没有输出` : `等模型回应 · ${minutesText(quiet)}没有新内容`,
+      text: commandLike ? COPY.quietCommand(live.commandName ?? COPY.command, minutesText(quiet)) : COPY.quietModel(minutesText(quiet)),
       actions: ['keep-waiting', 'stop'],
     }
   }
@@ -1219,7 +1417,7 @@ export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness
   // An older Host says nothing about silence; the time since its last output is all there is to go on.
   const lastOutput = live ? undefined : parseTime(detail.lastOutputAt)
   if (lastOutput !== undefined && opts.hostNow - lastOutput > 120_000)
-    return { tone: 'amber', text: `${minutesText(opts.hostNow - lastOutput)}没有新输出`, actions: ['stop'] }
+    return { tone: 'amber', text: COPY.quiet(minutesText(opts.hostNow - lastOutput)), actions: ['stop'] }
   const elapsed = runElapsed(detail, opts.hostNow) ?? opts.fallbackElapsed
   const clock = elapsed === undefined ? undefined : runClock(elapsed)
   const running = opts.messageFacts
@@ -1228,7 +1426,7 @@ export function runStatus(detail: TaskDetail, opts: LivePhaseOptions & { harness
   // The row reads the command itself where the Host may only have the tool's title.
   const command =
     running && toolKind(running) === 'execute' ? toolLabel(running).object : live?.activity === 'command' ? live.commandName : undefined
-  const words = command ? `命令运行中 · ${command}` : '运行中'
+  const words = command ? COPY.runningCommand(command) : COPY.running
   return { tone: 'plain', text: words, inHeader: true, ...(clock ? { clock } : {}) }
 }
 
@@ -1260,20 +1458,20 @@ export function runEndLine(
   const unknown = results.filter(result => !shown?.has(result.messageId)).map(result => result.name)
   const count = end.unknownResultCount ?? results.length
   const checked = unknownChecked(summary)
-  const uncertain = count > 0 ? ` · 这 ${count} 条命令结果未知${checked ? ' · 已核对' : '，请核对'}` : ''
+  const uncertain = count > 0 ? COPY.uncertainty(count, checked ? COPY.checked : COPY.check) : ''
   const check = count > 0 && checkSettle(summary) !== undefined
   switch (end.reason) {
     case 'process-exited':
-      return { tone: 'red', text: `${harness} 已退出 · 这一轮没有完成${uncertain}`, unknown, retry: true, check }
+      return { tone: 'red', text: COPY.exited(harness, uncertain), unknown, retry: true, check }
     case 'forced-stop':
-      return { tone: 'amber', text: `已强制停止${uncertain}`, unknown, retry: false, check }
+      return { tone: 'amber', text: COPY.forced(uncertain), unknown, retry: false, check }
     case 'host-stopped':
-      return { tone: 'amber', text: `Latch 重启时中断${uncertain}`, unknown, retry: true, check }
+      return { tone: 'amber', text: COPY.restarted(uncertain), unknown, retry: true, check }
     case 'login-required':
       return loggedIn
-        ? { tone: 'plain', text: '已登录', unknown, retry: true, check: false }
-        : { tone: 'amber', text: `${harness} 还没登录 · 登录后重试`, unknown, retry: true, check: false }
+        ? { tone: 'plain', text: COPY.signedIn, unknown, retry: true, check: false }
+        : { tone: 'amber', text: COPY.signIn(harness), unknown, retry: true, check: false }
     case 'turn-ended':
-      return count > 0 ? { tone: 'amber', text: `${harness} 结束了这一轮${uncertain}`, unknown, retry: false, check } : undefined
+      return count > 0 ? { tone: 'amber', text: COPY.turnEnded(harness, uncertain), unknown, retry: false, check } : undefined
   }
 }

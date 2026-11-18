@@ -1,5 +1,83 @@
 import { DEFAULT_SHORTCUTS, SHORTCUT_ACTIONS, parseChord, type ShortcutAction, type ShortcutChord } from '@latch/protocol'
 import { clientKind, shortcutBindings } from './core/shortcutBindings.ts'
+import { defineCopy } from './core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    settings: '设置',
+    newSession: '新会话',
+    agents: '我的 Agent',
+    search: '搜索',
+    sidebar: '收起或展开侧栏',
+    sidePanel: '侧边面板',
+    openPanel: '在侧边面板打开…',
+    view: '切换对话、看板',
+    changes: '改动',
+    terminal: '终端',
+    split: '终端左右分屏',
+    splitDown: '终端上下分屏',
+    terminalPane: '终端的下一个、上一个窗格',
+    browser: '浏览器',
+    pick: '在浏览器里选取元素',
+    find: '在会话中查找',
+    findStep: '下一个、上一个匹配',
+    fileSearch: '搜索文件',
+    files: '浏览文件、切换文件标签',
+    closeFile: '关闭当前文件',
+    quickLook: '快速查看预览中的文件',
+    previous: '上一个会话',
+    next: '下一个会话',
+    numbered: '跳到第 N 个会话 · 模型面板里选第 N 个模型',
+    attention: '下一个等你处理的请求',
+    approval: '允许、拒绝选中的请求',
+    composer: '聚焦输入框',
+    composerOptions: 'Harness · 模型 · 思考 · 权限',
+    previousMessage: '空输入框取回上一条消息',
+    stop: '在输入框里停止运行',
+    undoArchive: '撤销归档',
+    usage: '额度与用量',
+    shortcuts: '快捷键',
+    sessionOrChat: '新会话 · 新对话',
+    or: '或',
+  },
+  {
+    settings: 'Settings',
+    newSession: 'New session',
+    agents: 'My Agents',
+    search: 'Search',
+    sidebar: 'Toggle sidebar',
+    sidePanel: 'Side panel',
+    openPanel: 'Open in side panel…',
+    view: 'Switch between chat and board',
+    changes: 'Changes',
+    terminal: 'Terminal',
+    split: 'Split terminal side by side',
+    splitDown: 'Split terminal top to bottom',
+    terminalPane: 'Next or previous terminal pane',
+    browser: 'Browser',
+    pick: 'Pick an element in the browser',
+    find: 'Find in session',
+    findStep: 'Next or previous match',
+    fileSearch: 'Search files',
+    files: 'Browse files or switch file tabs',
+    closeFile: 'Close current file',
+    quickLook: 'Quick Look at the previewed file',
+    previous: 'Previous session',
+    next: 'Next session',
+    numbered: 'Go to session N · Pick model N in the model picker',
+    attention: 'Next request that needs you',
+    approval: 'Approve or reject the selected request',
+    composer: 'Focus composer',
+    composerOptions: 'Harness · Model · Reasoning · Permission',
+    previousMessage: 'Recall previous message in an empty composer',
+    stop: 'Stop run from the composer',
+    undoArchive: 'Undo archive',
+    usage: 'Limits and usage',
+    shortcuts: 'Shortcuts',
+    sessionOrChat: 'New session · New chat',
+    or: 'or',
+  },
+)
 
 export type WorkbenchAction =
   | 'new'
@@ -73,41 +151,228 @@ function typesCharacter(event: KeyStroke): boolean {
  * Browser bindings avoid its new-window, close-tab, history and address-bar shortcuts.
  */
 const SHORTCUTS = [
-  { id: 'settings', label: '设置' },
-  { id: 'new', label: '新会话' },
+  {
+    id: 'settings',
+    get label() {
+      return COPY.settings
+    },
+  },
+  {
+    id: 'new',
+    get label() {
+      return COPY.newSession
+    },
+  },
   { id: 'space-code', label: 'Code' },
-  { id: 'space-agents', label: '我的 Agent' },
-  { id: 'palette', label: '搜索' },
-  { id: 'sidebar', label: '收起或展开侧栏' },
-  { id: 'side-panel', label: '侧边面板' },
-  { id: 'panel-add', label: '在侧边面板打开…' },
-  { id: 'view', label: '切换对话、看板' },
-  { id: 'changes', label: '改动' },
-  { id: 'terminal', label: '终端' },
-  { id: 'terminal-split', label: '终端左右分屏', desktop: '⌘\\', browser: null },
-  { id: 'terminal-split-down', label: '终端上下分屏', desktop: '⇧⌘\\', browser: null },
-  { id: 'terminal-pane', label: '终端的下一个、上一个窗格', desktop: '⌥⌘] · ⌥⌘[', browser: null },
-  { id: 'browser', label: '浏览器' },
-  { id: 'pick', label: '在浏览器里选取元素' },
-  { id: 'find', label: '在会话中查找' },
-  { id: 'find-step', label: '下一个、上一个匹配', desktop: '⏎ · ⇧⏎', browser: 'Enter · Shift Enter' },
-  { id: 'file-search', label: '搜索文件' },
-  { id: 'files', label: '浏览文件、切换文件标签' },
-  { id: 'close-file', label: '关闭当前文件' },
-  { id: 'quick-look', label: '快速查看预览中的文件', desktop: 'Space', browser: null },
-  { id: 'previous', label: '上一个会话' },
-  { id: 'next', label: '下一个会话' },
+  {
+    id: 'space-agents',
+    get label() {
+      return COPY.agents
+    },
+  },
+  {
+    id: 'palette',
+    get label() {
+      return COPY.search
+    },
+  },
+  {
+    id: 'sidebar',
+    get label() {
+      return COPY.sidebar
+    },
+  },
+  {
+    id: 'side-panel',
+    get label() {
+      return COPY.sidePanel
+    },
+  },
+  {
+    id: 'panel-add',
+    get label() {
+      return COPY.openPanel
+    },
+  },
+  {
+    id: 'view',
+    get label() {
+      return COPY.view
+    },
+  },
+  {
+    id: 'changes',
+    get label() {
+      return COPY.changes
+    },
+  },
+  {
+    id: 'terminal',
+    get label() {
+      return COPY.terminal
+    },
+  },
+  {
+    id: 'terminal-split',
+    get label() {
+      return COPY.split
+    },
+    desktop: '⌘\\',
+    browser: null,
+  },
+  {
+    id: 'terminal-split-down',
+    get label() {
+      return COPY.splitDown
+    },
+    desktop: '⇧⌘\\',
+    browser: null,
+  },
+  {
+    id: 'terminal-pane',
+    get label() {
+      return COPY.terminalPane
+    },
+    desktop: '⌥⌘] · ⌥⌘[',
+    browser: null,
+  },
+  {
+    id: 'browser',
+    get label() {
+      return COPY.browser
+    },
+  },
+  {
+    id: 'pick',
+    get label() {
+      return COPY.pick
+    },
+  },
+  {
+    id: 'find',
+    get label() {
+      return COPY.find
+    },
+  },
+  {
+    id: 'find-step',
+    get label() {
+      return COPY.findStep
+    },
+    desktop: '⏎ · ⇧⏎',
+    browser: 'Enter · Shift Enter',
+  },
+  {
+    id: 'file-search',
+    get label() {
+      return COPY.fileSearch
+    },
+  },
+  {
+    id: 'files',
+    get label() {
+      return COPY.files
+    },
+  },
+  {
+    id: 'close-file',
+    get label() {
+      return COPY.closeFile
+    },
+  },
+  {
+    id: 'quick-look',
+    get label() {
+      return COPY.quickLook
+    },
+    desktop: 'Space',
+    browser: null,
+  },
+  {
+    id: 'previous',
+    get label() {
+      return COPY.previous
+    },
+  },
+  {
+    id: 'next',
+    get label() {
+      return COPY.next
+    },
+  },
   // While the model panel is open it takes the same keys for its Nth model.
-  { id: 'session', label: '跳到第 N 个会话 · 模型面板里选第 N 个模型', desktop: '⌘1 … ⌘9', browser: 'Alt 1 … Alt 9' },
-  { id: 'next-approval', label: '下一个等你处理的请求' },
-  { id: 'decide', label: '允许、拒绝选中的请求', desktop: '⌘⏎ · esc', browser: 'Mod Enter · Esc' },
-  { id: 'compose', label: '聚焦输入框' },
-  { id: 'controls', label: 'Harness · 模型 · 思考 · 权限', desktop: '⌥⌘1 … ⌥⌘4', browser: 'Alt Shift 1 … Alt Shift 4' },
-  { id: 'recall', label: '空输入框取回上一条消息', desktop: '↑', browser: '↑' },
-  { id: 'stop', label: '在输入框里停止运行', desktop: 'esc esc', browser: 'Esc Esc' },
-  { id: 'undo-archive', label: '撤销归档', desktop: '⌘Z', browser: 'Mod Z' },
-  { id: 'usage', label: '额度与用量' },
-  { id: 'shortcuts', label: '快捷键' },
+  {
+    id: 'session',
+    get label() {
+      return COPY.numbered
+    },
+    desktop: '⌘1 … ⌘9',
+    browser: 'Alt 1 … Alt 9',
+  },
+  {
+    id: 'next-approval',
+    get label() {
+      return COPY.attention
+    },
+  },
+  {
+    id: 'decide',
+    get label() {
+      return COPY.approval
+    },
+    desktop: '⌘⏎ · esc',
+    browser: 'Mod Enter · Esc',
+  },
+  {
+    id: 'compose',
+    get label() {
+      return COPY.composer
+    },
+  },
+  {
+    id: 'controls',
+    get label() {
+      return COPY.composerOptions
+    },
+    desktop: '⌥⌘1 … ⌥⌘4',
+    browser: 'Alt Shift 1 … Alt Shift 4',
+  },
+  {
+    id: 'recall',
+    get label() {
+      return COPY.previousMessage
+    },
+    desktop: '↑',
+    browser: '↑',
+  },
+  {
+    id: 'stop',
+    get label() {
+      return COPY.stop
+    },
+    desktop: 'esc esc',
+    browser: 'Esc Esc',
+  },
+  {
+    id: 'undo-archive',
+    get label() {
+      return COPY.undoArchive
+    },
+    desktop: '⌘Z',
+    browser: 'Mod Z',
+  },
+  {
+    id: 'usage',
+    get label() {
+      return COPY.usage
+    },
+  },
+  {
+    id: 'shortcuts',
+    get label() {
+      return COPY.shortcuts
+    },
+  },
 ] as const
 
 export type ShortcutId = (typeof SHORTCUTS)[number]['id']
@@ -187,7 +452,7 @@ export function shortcutRows(
   return SHORTCUTS.flatMap(({ id, label: named }) => {
     if (!spaces && SPACE_SHORTCUTS.has(id)) return []
     // In 我的 Agent the same key is 新对话…, said only where this device can start one.
-    const label = id === 'new' && spaces && delegate ? '新会话 · 新对话' : named
+    const label = id === 'new' && spaces && delegate ? COPY.sessionOrChat : named
     const keys = shortcutKeys(id, desktop, mac)
     return keys === null ? [] : [{ id, label, keys }]
   })
@@ -197,10 +462,10 @@ export function shortcutRows(
  * A shortcut as the keys to draw: each part split into its keys, with what joins it to the one before (「或」 between
  * alternatives, 「…」 between the ends of a range).
  */
-export function shortcutCaps(keys: string): Array<{ join: '或' | '…' | null; caps: string[] }> {
+export function shortcutCaps(keys: string): Array<{ join: string | null; caps: string[] }> {
   return keys.split(' · ').flatMap((alternative, index) =>
     alternative.split(' … ').map((part, end) => ({
-      join: end > 0 ? ('…' as const) : index > 0 ? ('或' as const) : null,
+      join: end > 0 ? ('…' as const) : index > 0 ? COPY.or : null,
       caps: part.match(/[⌘⇧⌥⌃]|[^\s⌘⇧⌥⌃]+/gu) ?? [],
     })),
   )

@@ -3,18 +3,118 @@ import type { HarnessInfo, ProjectGlyph, TaskSummary, WorkspaceFolder, Workspace
 import { Icon, type IconComponent, CodeGlyph, FolderGlyph, GlobeGlyph, PhoneGlyph } from '@latch/ui'
 import type { Brief } from './core/securityCopy.ts'
 import { basename } from './format.ts'
+import { defineCopy } from './core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    folder: '文件夹',
+    code: '代码',
+    web: '网页',
+    service: '服务',
+    mobile: '移动应用',
+    docs: '文档',
+    data: '数据',
+    experiment: '实验',
+    design: '设计',
+    tools: '工具',
+    maxFolders: (max: number) => `最多使用 ${max} 个文件夹，不能在这个项目中新建会话`,
+    allFolders: (count: number) => `使用全部 ${count} 个文件夹`,
+    asks: '只使用主文件夹，访问其他文件夹前会询问你',
+    unbounded: '只收到主文件夹；它不限制可以访问的目录',
+    primary: '只收到主文件夹',
+    primaryUse: (folder: string) => `只用主文件夹「${folder}」`,
+    asksDetail: (harness: string) => `${harness} 访问其他文件夹前会询问你。`,
+    primaryGiven: (folder: string) => `只收到主文件夹「${folder}」`,
+    unboundedDetail: (harness: string) => `${harness} 不限制可以访问的目录。`,
+    primaryOnly: (folder: string) => `只能用主文件夹「${folder}」`,
+    primaryDetail: (harness: string) => `${harness} 用不了这个项目的其他文件夹。`,
+  },
+  {
+    folder: 'Folder',
+    code: 'Code',
+    web: 'Web page',
+    service: 'Service',
+    mobile: 'Mobile app',
+    docs: 'Documentation',
+    data: 'Data',
+    experiment: 'Experiment',
+    design: 'Design',
+    tools: 'Tools',
+    maxFolders: (max: number) => `Can use up to ${max} folders. A new session can’t start in this project.`,
+    allFolders: (count: number) => `Uses all ${count} folders`,
+    asks: 'Uses the main folder and asks before accessing other folders',
+    unbounded: 'Receives only the main folder and can access other directories',
+    primary: 'Receives only the main folder',
+    primaryUse: (folder: string) => `Uses only the main folder “${folder}”`,
+    asksDetail: (harness: string) => `${harness} will ask before accessing other folders.`,
+    primaryGiven: (folder: string) => `Receives only the main folder “${folder}”`,
+    unboundedDetail: (harness: string) => `${harness} doesn’t restrict which directories can be accessed.`,
+    primaryOnly: (folder: string) => `Can use only the main folder “${folder}”`,
+    primaryDetail: (harness: string) => `${harness} can’t use the other folders in this project.`,
+  },
+)
 
 export const PROJECT_ICONS: Record<ProjectGlyph, { label: string; icon: IconComponent }> = {
-  folder: { label: '文件夹', icon: FolderGlyph },
-  code: { label: '代码', icon: CodeGlyph },
-  globe: { label: '网页', icon: GlobeGlyph },
-  server: { label: '服务', icon: Server },
-  smartphone: { label: '移动应用', icon: PhoneGlyph },
-  'book-open': { label: '文档', icon: BookOpen },
-  database: { label: '数据', icon: Database },
-  'flask-conical': { label: '实验', icon: TestTubeDiagonal },
-  'pen-tool': { label: '设计', icon: PenTool },
-  wrench: { label: '工具', icon: Wrench },
+  folder: {
+    get label() {
+      return COPY.folder
+    },
+    icon: FolderGlyph,
+  },
+  code: {
+    get label() {
+      return COPY.code
+    },
+    icon: CodeGlyph,
+  },
+  globe: {
+    get label() {
+      return COPY.web
+    },
+    icon: GlobeGlyph,
+  },
+  server: {
+    get label() {
+      return COPY.service
+    },
+    icon: Server,
+  },
+  smartphone: {
+    get label() {
+      return COPY.mobile
+    },
+    icon: PhoneGlyph,
+  },
+  'book-open': {
+    get label() {
+      return COPY.docs
+    },
+    icon: BookOpen,
+  },
+  database: {
+    get label() {
+      return COPY.data
+    },
+    icon: Database,
+  },
+  'flask-conical': {
+    get label() {
+      return COPY.experiment
+    },
+    icon: TestTubeDiagonal,
+  },
+  'pen-tool': {
+    get label() {
+      return COPY.design
+    },
+    icon: PenTool,
+  },
+  wrench: {
+    get label() {
+      return COPY.tools
+    },
+    icon: Wrench,
+  },
 }
 
 export const projectFolders = (project: WorkspaceInfo): WorkspaceFolder[] =>
@@ -44,12 +144,10 @@ export function ProjectIcon({
 export function folderAccessText(harness: Pick<HarnessInfo, 'projectFolders'>, count: number): string {
   const support = harness.projectFolders
   if (support?.access === 'all')
-    return support.max !== undefined && count > support.max
-      ? `最多使用 ${support.max} 个文件夹，不能在这个项目中新建会话`
-      : `使用全部 ${count} 个文件夹`
-  if (support?.access === 'primary-asks') return '只使用主文件夹，访问其他文件夹前会询问你'
-  if (support?.access === 'primary-unbounded') return '只收到主文件夹；它不限制可以访问的目录'
-  return '只收到主文件夹'
+    return support.max !== undefined && count > support.max ? COPY.maxFolders(support.max) : COPY.allFolders(count)
+  if (support?.access === 'primary-asks') return COPY.asks
+  if (support?.access === 'primary-unbounded') return COPY.unbounded
+  return COPY.primary
 }
 
 /** A count describes membership; it never changes the settings navigation. */
@@ -72,8 +170,8 @@ export function projectScopeCaption(project: WorkspaceInfo | undefined, harness:
   const name = harness.capabilities.display.label
   const access = harness.projectFolders?.access
   return access === 'primary-asks'
-    ? { label: `只用主文件夹「${primary}」`, detail: `${name} 访问其他文件夹前会询问你。` }
+    ? { label: COPY.primaryUse(primary), detail: COPY.asksDetail(name) }
     : access === 'primary-unbounded'
-      ? { label: `只收到主文件夹「${primary}」`, detail: `${name} 不限制可以访问的目录。` }
-      : { label: `只能用主文件夹「${primary}」`, detail: `${name} 用不了这个项目的其他文件夹。` }
+      ? { label: COPY.primaryGiven(primary), detail: COPY.unboundedDetail(name) }
+      : { label: COPY.primaryOnly(primary), detail: COPY.primaryDetail(name) }
 }

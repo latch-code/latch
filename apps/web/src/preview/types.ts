@@ -7,10 +7,12 @@ export interface GridCell {
   text: string
   formula?: string
   numeric?: true
+  noCachedValue?: true
 }
 export interface SheetInfo {
   id: number
   name: string
+  unnamed?: true
   rows: number
   cols: number
   hidden: boolean
@@ -31,6 +33,7 @@ export type FrameCommand =
   | { type: 'page'; index: number }
   | { type: 'fit'; value: boolean }
   | { type: 'zoom'; percent: number }
+  | { type: 'language'; locale: 'zh-CN' | 'en' }
 export type FrameEvent =
   | { type: 'quote'; id: string; text: string; page?: number }
   | { type: 'initialized' }
@@ -99,6 +102,7 @@ export function isFrameCommand(value: unknown): value is FrameCommand {
       && Number(value.count) > 0
     )
   if (value.type === 'zoom') return keys(value, ['type', 'percent']) && integer(value.percent, 400) && Number(value.percent) >= 10
+  if (value.type === 'language') return keys(value, ['type', 'locale']) && (value.locale === 'zh-CN' || value.locale === 'en')
   if (value.type === 'page') return keys(value, ['type', 'index']) && integer(value.index, 9999)
   return value.type === 'fit' && keys(value, ['type', 'value']) && typeof value.value === 'boolean'
 }
@@ -174,10 +178,11 @@ export function isFrameEvent(value: unknown): value is FrameEvent {
             && value.sheets.every(
               sheet =>
                 plain(sheet)
-                && keys(sheet, ['id', 'name', 'rows', 'cols', 'hidden', 'merges', 'colWidths', 'frozen'])
+                && keys(sheet, ['id', 'name', 'unnamed', 'rows', 'cols', 'hidden', 'merges', 'colWidths', 'frozen'])
                 && integer(sheet.id, 99)
                 && typeof sheet.name === 'string'
                 && sheet.name.length <= 200
+                && (sheet.unnamed === undefined || sheet.unnamed === true)
                 && integer(sheet.rows, 1_000_000)
                 && integer(sheet.cols, 200)
                 && typeof sheet.hidden === 'boolean'
@@ -214,13 +219,14 @@ export function isFrameEvent(value: unknown): value is FrameEvent {
           && row.every(
             cell =>
               plain(cell)
-              && keys(cell, ['text', 'formula', 'numeric'])
+              && keys(cell, ['text', 'formula', 'numeric', 'noCachedValue'])
               && typeof cell.text === 'string'
               && cell.text.length <= 32767
               && (chars += cell.text.length) <= 1_000_000
               && (cell.formula === undefined
                 || (typeof cell.formula === 'string' && cell.formula.length <= 8192 && (chars += cell.formula.length) <= 1_000_000))
-              && (cell.numeric === undefined || cell.numeric === true),
+              && (cell.numeric === undefined || cell.numeric === true)
+              && (cell.noCachedValue === undefined || (cell.noCachedValue === true && typeof cell.formula === 'string')),
           ),
       )
     }

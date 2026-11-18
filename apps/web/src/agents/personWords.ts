@@ -1,6 +1,7 @@
 import type { Message, RunLive, TaskDetail } from '@latch/protocol'
 import type { PermissionView } from '../composer/permission.ts'
 import { livePhase, turnsOf, type LivePhaseOptions } from '../conversation.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { MODE_COPY } from '../core/securityCopy.ts'
 import { toolKind } from '../icons.tsx'
 
@@ -16,7 +17,57 @@ export interface PersonWord {
 }
 
 const running = (words: string): PersonWord => ({ words, tone: 'running' })
-export const WAITS_ON_YOU: PersonWord = { words: '等你点头', tone: 'waiting' }
+const COPY = defineCopy(
+  {
+    waits: '等你点头',
+    delegates: '在分头做',
+    usingServer: (server: string) => `在用 ${server}`,
+    browser: '在看网页',
+    readsFiles: '在看文件',
+    search: '在找东西',
+    fetch: '在查资料',
+    writesFiles: '在写文件',
+    command: '在跑命令',
+    thinking: '在想',
+    tool: '在动手',
+    cancelling: '在停下',
+    replying: '在回复',
+    starting: '在准备',
+    unconfirmed: '权限没确认',
+    unconfirmedDetail: (note: string) => `${note}：Latch 说不准它动手前会不会问你。Latch 也不隔离它。`,
+    noAsk: '不先问你',
+    noAskDetail: '它动手前不问你。Latch 也不隔离它。',
+    unknownMode: 'Latch 不认识这一档，它是这个 Agent 自己的设置。Latch 也不隔离它。',
+  },
+  {
+    waits: 'Waiting for you',
+    delegates: 'Delegating',
+    usingServer: (server: string) => `Using ${server}`,
+    browser: 'Browsing',
+    readsFiles: 'Reading files',
+    search: 'Searching',
+    fetch: 'Looking things up',
+    writesFiles: 'Editing files',
+    command: 'Running a command',
+    thinking: 'Thinking',
+    tool: 'Working',
+    cancelling: 'Stopping',
+    replying: 'Replying',
+    starting: 'Getting ready',
+    unconfirmed: 'Permissions unconfirmed',
+    unconfirmedDetail: (note: string) => `${note}. Latch can’t tell whether the Agent will ask before acting. Latch does not isolate it.`,
+    noAsk: 'Acts without asking',
+    noAskDetail: 'The Agent acts without asking first. Latch does not isolate it.',
+    unknownMode: 'This mode belongs to the Agent and is unfamiliar to Latch. Latch does not isolate the Agent.',
+  },
+)
+
+export const WAITS_ON_YOU: PersonWord = {
+  get words() {
+    return COPY.waits
+  },
+  tone: 'waiting',
+}
 
 /** The built-in Harness's own reads, whose names say nothing a kind would. */
 const READ_TOOLS = new Set(['read_file', 'list_files', 'list_folders'])
@@ -32,29 +83,29 @@ export function mcpServer(name: string | undefined): string | undefined {
 
 /** One tool call in a person's words: what kind of work it is, never the tool's own name (an MCP server's excepted). */
 export function toolWord(message: Pick<Message, 'tool' | 'toolName' | 'subagent'>): string {
-  if (message.subagent) return '在分头做'
+  if (message.subagent) return COPY.delegates
   const name = message.toolName ?? ''
   const server = mcpServer(name) ?? mcpServer(message.tool?.title)
-  if (server) return `在用 ${server}`
-  if (name.startsWith('browser_')) return '在看网页'
-  if (READ_TOOLS.has(name)) return '在看文件'
+  if (server) return COPY.usingServer(server)
+  if (name.startsWith('browser_')) return COPY.browser
+  if (READ_TOOLS.has(name)) return COPY.readsFiles
   switch (toolKind(message)) {
     case 'read':
-      return '在看文件'
+      return COPY.readsFiles
     case 'search':
-      return '在找东西'
+      return COPY.search
     case 'fetch':
-      return '在查资料'
+      return COPY.fetch
     case 'edit':
     case 'delete':
     case 'move':
-      return '在写文件'
+      return COPY.writesFiles
     case 'execute':
-      return '在跑命令'
+      return COPY.command
     case 'think':
-      return '在想'
+      return COPY.thinking
     default:
-      return '在动手'
+      return COPY.tool
   }
 }
 
@@ -67,7 +118,7 @@ export function personStatus(detail: TaskDetail, opts: LivePhaseOptions): Person
   const phase = livePhase(detail, opts)
   switch (phase.kind) {
     case 'cancelling':
-      return running('在停下')
+      return running(COPY.cancelling)
     case 'approval':
     case 'question':
       return WAITS_ON_YOU
@@ -80,22 +131,21 @@ export function personStatus(detail: TaskDetail, opts: LivePhaseOptions): Person
       return running(call ? toolWord(call) : toolWord({ toolName: detail.activity?.toolName }))
     }
     case 'reply':
-      return running('在回复')
+      return running(COPY.replying)
     case 'starting':
-      return running('在准备')
+      return running(COPY.starting)
     case 'thinking':
     case 'model':
-      return running('在想')
+      return running(COPY.thinking)
   }
 }
 
-const COARSE: Record<RunLive['activity'], PersonWord> = {
-  starting: running('在准备'),
-  model: running('在想'),
-  command: running('在跑命令'),
-  tool: running('在动手'),
-  approval: WAITS_ON_YOU,
-  cancelling: running('在停下'),
+const COARSE: Record<Exclude<RunLive['activity'], 'approval'>, 'starting' | 'thinking' | 'command' | 'tool' | 'cancelling'> = {
+  starting: 'starting',
+  model: 'thinking',
+  command: 'command',
+  tool: 'tool',
+  cancelling: 'cancelling',
 }
 
 /**
@@ -103,11 +153,15 @@ const COARSE: Record<RunLive['activity'], PersonWord> = {
  * tool, so it is 在动手. Absent while nothing runs.
  */
 export function personActivity(live: RunLive | undefined): PersonWord | undefined {
-  return live ? COARSE[live.activity] : undefined
+  if (!live) return undefined
+  return live.activity === 'approval' ? WAITS_ON_YOU : running(COPY[COARSE[live.activity]])
 }
 
 /** 「思考了 6 秒」 as a person says it: 「想了 6 秒」; while it streams, 「在想」. */
-export const THOUGHT_WORDS = { live: '在想', settled: (time: string) => `想了 ${time}`, untimed: '想法' } as const
+export const THOUGHT_WORDS = defineCopy(
+  { live: '在想', settled: (time: string) => `想了 ${time}`, untimed: '想法' },
+  { live: 'Thinking', settled: (time: string) => `Thought for ${time}`, untimed: 'Thoughts' },
+)
 
 /** What the frame says of a helper's permission: a few words, their reason behind ⓘ, amber or neutral. */
 export interface PermissionNoteValue {
@@ -134,17 +188,17 @@ export function helperPermissionBlocked(detail: TaskDetail | null | undefined, p
 export function permissionNote(view: PermissionView | undefined, unconfirmed = false): PermissionNoteValue | undefined {
   if (unconfirmed || (view?.amber && view.label === MODE_COPY.unverifiable))
     return {
-      words: '权限没确认',
-      detail: `${MODE_COPY.unverifiableLine}：Latch 说不准它动手前会不会问你。Latch 也不隔离它。`,
+      words: COPY.unconfirmed,
+      detail: COPY.unconfirmedDetail(MODE_COPY.unverifiableLine),
       tone: 'warn',
     }
   if (!view) return undefined
-  if (view.amber) return { words: '不先问你', detail: '它动手前不问你。Latch 也不隔离它。', tone: 'warn' }
+  if (view.amber) return { words: COPY.noAsk, detail: COPY.noAskDetail, tone: 'warn' }
   const unnamed = view.rows?.find(row => row.current && !row.tier)
   if (unnamed)
     return {
       words: view.label,
-      detail: 'Latch 不认识这一档，它是这个 Agent 自己的设置。Latch 也不隔离它。',
+      detail: COPY.unknownMode,
       tone: 'neutral',
     }
   return undefined

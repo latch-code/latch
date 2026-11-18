@@ -7,6 +7,20 @@ import { Button } from '@latch/ui'
 import { WriteNotice } from './AgentForm.tsx'
 import { ResultCard } from './ResultCard.tsx'
 import { useAgentWrites, writeFor, type AgentWrites } from './useAgentWrites.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    scheduledResults: '定时结果',
+    runNow: '立即运行',
+    moreResults: (count: number) => `还有 ${formatNumber(count)} 条结果`,
+  },
+  {
+    scheduledResults: 'Scheduled results',
+    runNow: 'Run now',
+    moreResults: (count: number) => plural(count, { one: '{n} more result', other: '{n} more results' }),
+  },
+)
 
 type ResultShell = Pick<
   ShellState,
@@ -46,10 +60,10 @@ export function ResultStack({
 }) {
   const hidden = Math.max(0, results.length - SHOWN_RESULTS)
   return (
-    <div className={className ? `schedule-results ${className}` : 'schedule-results'} aria-label="定时结果">
+    <div className={className ? `schedule-results ${className}` : 'schedule-results'} aria-label={COPY.scheduledResults}>
       {hidden > 0 && (
         <Button size="xs" variant="ghost" className="schedule-results-more" onClick={() => shell.openProfile(owner)}>
-          还有 {hidden} 条结果
+          {COPY.moreResults(hidden)}
         </Button>
       )}
       {results.slice(hidden).map(result => (
@@ -73,7 +87,7 @@ function nextStepOf(shell: ResultShell, result: ScheduleResult, writes: AgentWri
     const key = `automation:${schedule.id}:result:${result.id}`
     const state = writeFor(writes.state, key)
     return {
-      label: '立即运行',
+      label: COPY.runNow,
       busy: state !== null && 'phase' in state && state.phase === 'saving',
       run: () => void writes.run(key, `automations/${encodeURIComponent(schedule.id)}/run`, 'POST', {}),
       notice: <WriteNotice state={state} onRetry={() => void writes.retry()} />,

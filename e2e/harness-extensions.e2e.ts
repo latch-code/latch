@@ -55,7 +55,7 @@ it('lists per Harness what it reports, says plainly what it does not, and offers
       })),
     ]),
   )
-  // A developer's plugin with code: listed only under 本机开发者.
+  // A developer's plugin with code: listed only under 这台 Mac 上的开发者.
   const developer: HarnessPlugin = {
     id: 'dev-tool',
     name: '开发中的工具',
@@ -299,10 +299,10 @@ it('lists per Harness what it reports, says plainly what it does not, and offers
     await pi.getByText('还没有会话报告', { exact: true }).waitFor()
     await previewRow.waitFor({ state: 'hidden' })
 
-    // ---- Latch's own: built-ins are not listed; a developer's code plugin only under 本机开发者 ----
+    // ---- Latch's own: built-ins are not listed; a developer's code plugin only under 这台 Mac 上的开发者 ----
     await openSection(settings, '扩展')
-    await settings.getByRole('button', { name: /^本机开发者/u }).click()
-    await settings.locator('[data-latch-code="dev-tool"]').getByText('可信的本机代码', { exact: true }).waitFor()
+    await settings.getByRole('button', { name: /^这台 Mac 上的开发者/u }).click()
+    await settings.locator('[data-latch-code="dev-tool"]').getByText('可信的本地代码', { exact: true }).waitFor()
     expect(await settings.locator('[data-latch-code]').count()).toBe(1)
     await page.screenshot({ path: `${OUTPUT}/developer--1440-light.png`, animations: 'disabled', fullPage: true })
 

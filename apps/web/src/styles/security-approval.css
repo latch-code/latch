@@ -365,6 +365,13 @@
 .approval-note > .ui-hint-lead {
   color: var(--amber-icon) !important;
 }
+.approval-note > .ui-hint-label {
+  white-space: normal;
+}
+.approval-options .ui-menu-item-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .approval-note > .ui-hint-detail {
   color: var(--ink-2) !important;
 }

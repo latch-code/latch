@@ -57,6 +57,168 @@ import {
   type SimulatorList,
 } from './model.ts'
 import { fitScale, readZoom, screenSize, writeZoom, zoomIn, zoomLabel, zoomOut, type Zoom } from './zoom.ts'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    idle: '空闲',
+    idleDescription: '模拟器输入空闲',
+    you: '你',
+    youDescription: '你已接管模拟器输入',
+    local: '其他窗口',
+    localDescription: '这台 Mac 上的另一个窗口已接管模拟器输入',
+    agentDescription: 'Agent 正在向模拟器输入',
+    asciiInput: '只能逐键输入可打印的 ASCII 字符；中文等请在 Device Hub 里输入',
+    unreadable: '没有读懂截图',
+    recordingEnded: '录屏已结束',
+    devices: '设备',
+    noXcode: '未安装 Xcode',
+    failed: '失败',
+    booting: '启动中',
+    shuttingDown: '关机中',
+    recordingLimits: '最长 1 分钟或 25 MB · 关闭面板即丢弃',
+    recording: '录屏 ',
+    agentUseInfo: '一个会话的 Agent 正经 Xcode 的设备工具使用它',
+    agentUse: 'Agent 正在使用',
+    notEntered: '文字未输入',
+    hubFallback: (value1: string | number) => `${value1} · 可在 Device Hub 中点按`,
+    inputUnavailable: '输入不可用',
+    noTwoFingers: (value1: string | number) => `实时画面 · 两指不可用：${value1}`,
+    snapshot: (value1: string | number) => `截图画面${value1}`,
+    running: '运行中',
+    notRunning: '未启动',
+    choose: '选择设备',
+    osRunning: (value1: string | number) => `${value1} · 运行中`,
+    newDevice: '新建设备…',
+    zoom: '缩放',
+    zoomOut: '缩小',
+    actual: '切到 1:1（一个设备像素对一个屏幕像素）',
+    fitPanel: '适应面板',
+    fitToActual: '缩放：适应，切到 1:1',
+    actualToFit: (value1: string | number) => `缩放：${value1}，切到适应`,
+    fit: '适应',
+    zoomIn: '放大',
+    shutdown: '关机',
+    boot: '启动',
+    owned: '只关闭 Latch 启动的设备',
+    address: '设备上打开的地址',
+    addressHint: 'https://… 或 myapp://…',
+    screenOf: (value1: string | number) => `${value1} 的画面`,
+    screen: '设备画面',
+    noSimulator: '没有模拟器',
+    tools: '设备工具',
+    rotateLeft: '向左旋转',
+    rotateRight: '向右旋转',
+    left90: '向左转 90°',
+    right90: '向右转 90°',
+    cannotRotate: '这台设备不能旋转',
+    screenshot: '截图',
+    screenshotDraft: '截图放进草稿 · 发送后交给模型服务',
+    screenshotDownload: '截图下载到这台电脑',
+    stopRecording: '停止录屏',
+    record: '录屏',
+    saveRecording: '停止并保存到这台电脑',
+    recordInfo: '录屏 · 最长 1 分钟或 25 MB · 停止后保存到这台电脑',
+    home: '主屏幕',
+    lock: '锁屏',
+    lockKey: '锁屏键',
+    keyboard: '键盘输入到设备',
+    keys: (value1: string | number) => `⏎ ⌫ ⇥ ⎋ 与方向键发到设备 · 文字：${value1}`,
+    keyboardInfo: '按键与 ASCII 文字发到设备 · 文字只在设备的 English (US) 键盘上输入',
+    annotate: '标注截图',
+    annotateDraft: '截图后标注，再放进草稿',
+    noAttachment: '现在不能添加附件',
+    appActions: '设备上的 App：启动、结束、预先授权',
+    logs: '日志',
+    logsInfo: '设备的实时日志 · 只在这里显示，不保存',
+    openAddress: '打开地址',
+    openAddressInfo: '在设备上打开网址或深链接',
+    dark: '外观：深色',
+    light: '外观：浅色',
+    changeAppearance: '切换设备的浅色与深色',
+    openHub: '在 Device Hub 中打开',
+    hubInfo: '在 Device Hub 里查看和点按',
+  },
+  {
+    idle: 'Idle',
+    idleDescription: 'Simulator input is idle',
+    you: 'You',
+    youDescription: 'You’re controlling simulator input',
+    local: 'Other window',
+    localDescription: 'Another window on this Mac is controlling simulator input',
+    agentDescription: 'Agent is sending input to the simulator',
+    asciiInput: 'Key-by-key entry supports printable ASCII. Use Device Hub to enter Chinese and other text.',
+    unreadable: 'Couldn’t read the screenshot',
+    recordingEnded: 'Recording ended',
+    devices: 'Devices',
+    noXcode: 'Xcode isn’t installed',
+    failed: 'Failed',
+    booting: 'Starting',
+    shuttingDown: 'Shutting down',
+    recordingLimits: 'Up to 1 minute or 25 MB · Closing this panel discards the recording',
+    recording: 'Recording ',
+    agentUseInfo: 'An agent in a session is using this device through Xcode’s device tools',
+    agentUse: 'Agent is using it',
+    notEntered: 'Text wasn’t entered',
+    hubFallback: (value1: string | number) => `${value1} · Use Device Hub for touch input`,
+    inputUnavailable: 'Input unavailable',
+    noTwoFingers: (value1: string | number) => `Live view · Two-finger input unavailable: ${value1}`,
+    snapshot: (value1: string | number) => `Screenshot view${value1}`,
+    running: 'Running',
+    notRunning: 'Not running',
+    choose: 'Choose device',
+    osRunning: (value1: string | number) => `${value1} · Running`,
+    newDevice: 'New device…',
+    zoom: 'Zoom',
+    zoomOut: 'Zoom out',
+    actual: 'Switch to 1:1 (one device pixel per screen pixel)',
+    fitPanel: 'Fit to panel',
+    fitToActual: 'Zoom: Fit · Switch to 1:1',
+    actualToFit: (value1: string | number) => `Zoom: ${value1} · Switch to Fit`,
+    fit: 'Fit',
+    zoomIn: 'Zoom in',
+    shutdown: 'Shut down',
+    boot: 'Start',
+    owned: 'Only devices started by Latch can be shut down here',
+    address: 'Address to open on the device',
+    addressHint: 'https://… or myapp://…',
+    screenOf: (value1: string | number) => `Screen for ${value1}`,
+    screen: 'Device screen',
+    noSimulator: 'No simulators',
+    tools: 'Device tools',
+    rotateLeft: 'Rotate left',
+    rotateRight: 'Rotate right',
+    left90: 'Rotate left 90°',
+    right90: 'Rotate right 90°',
+    cannotRotate: 'This device can’t rotate',
+    screenshot: 'Screenshot',
+    screenshotDraft: 'Add a screenshot to the draft. It goes to the model service when sent.',
+    screenshotDownload: 'Download the screenshot to this computer',
+    stopRecording: 'Stop recording',
+    record: 'Record screen',
+    saveRecording: 'Stop and save to this computer',
+    recordInfo: 'Record screen · Up to 1 minute or 25 MB · Saved to this computer when stopped',
+    home: 'Home screen',
+    lock: 'Lock screen',
+    lockKey: 'Lock button',
+    keyboard: 'Send keyboard input to device',
+    keys: (value1: string | number) => `⏎ ⌫ ⇥ ⎋ and arrow keys go to the device · Text: ${value1}`,
+    keyboardInfo: 'Keys and ASCII text go to the device. Text entry requires its English (US) keyboard.',
+    annotate: 'Annotate screenshot',
+    annotateDraft: 'Capture and annotate a screenshot, then add it to the draft',
+    noAttachment: 'Attachments aren’t available right now',
+    appActions: 'Apps on the device: launch, quit and grant permissions',
+    logs: 'Logs',
+    logsInfo: 'Live device logs appear here and aren’t saved',
+    openAddress: 'Open address',
+    openAddressInfo: 'Open a URL or deep link on the device',
+    dark: 'Appearance: Dark',
+    light: 'Appearance: Light',
+    changeAppearance: 'Switch device appearance between light and dark',
+    openHub: 'Open in Device Hub',
+    hubInfo: 'View and tap in Device Hub',
+  },
+)
 
 export interface DevicePanelProps {
   /** Whether the panel is on screen: frames and the list are read only then. */
@@ -68,10 +230,40 @@ export interface DevicePanelProps {
 type Pending = 'boot' | 'shutdown' | 'appearance' | 'shot' | 'url' | 'hub' | 'rotate' | 'record' | 'annotate'
 
 const INPUT_OWNER = {
-  none: { icon: Circle, label: '空闲', title: '模拟器输入空闲' },
-  you: { icon: Hand, label: '你', title: '你已接管模拟器输入' },
-  other: { icon: AppWindow, label: '本机', title: '其他本机窗口已接管模拟器输入' },
-  agent: { icon: AgentsGlyph, label: 'Agent', title: 'Agent 正在向模拟器输入' },
+  none: {
+    icon: Circle,
+    get label() {
+      return COPY.idle
+    },
+    get title() {
+      return COPY.idleDescription
+    },
+  },
+  you: {
+    icon: Hand,
+    get label() {
+      return COPY.you
+    },
+    get title() {
+      return COPY.youDescription
+    },
+  },
+  other: {
+    icon: AppWindow,
+    get label() {
+      return COPY.local
+    },
+    get title() {
+      return COPY.localDescription
+    },
+  },
+  agent: {
+    icon: AgentsGlyph,
+    label: 'Agent',
+    get title() {
+      return COPY.agentDescription
+    },
+  },
 } as const
 
 /** Hands a file to the person: into the draft when it takes one, else as a download. */
@@ -326,7 +518,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
       event.preventDefault()
       event.stopPropagation()
       if (input === 'refused') {
-        if (udid) setInputFailure({ udid, text: '只能逐键输入可打印的 ASCII 字符；中文等请在 Device Hub 里输入', textOnly: true })
+        if (udid) setInputFailure({ udid, text: COPY.asciiInput, textOnly: true })
         return
       }
       sendInput(input)
@@ -418,7 +610,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
     const blob = new Blob([bytes], { type: 'image/png' })
     const bitmap = await createImageBitmap(blob).catch(() => undefined)
     if (!bitmap) {
-      fail('没有读懂截图')
+      fail(COPY.unreadable)
       return
     }
     setAnnotating({ url: URL.createObjectURL(blob), width: bitmap.width, height: bitmap.height, name: shotName(device) })
@@ -495,7 +687,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
           if (view.state === 'ready') void takeRecording(target, name)
           else if (view.state === 'none') {
             setRecording(undefined)
-            setFailure({ udid: target, text: '录屏已结束' })
+            setFailure({ udid: target, text: COPY.recordingEnded })
           }
         })
         .catch(() => {})
@@ -598,15 +790,15 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
 
   if (list === null)
     return (
-      <section className="sim-panel" aria-label="设备" aria-busy="true">
+      <section className="sim-panel" aria-label={COPY.devices} aria-busy="true">
         <div className="sim-canvas" />
       </section>
     )
   if (!list.xcode)
     return (
-      <section className="sim-panel" aria-label="设备">
+      <section className="sim-panel" aria-label={COPY.devices}>
         <div className="sim-canvas sim-quiet">
-          <span>未安装 Xcode</span>
+          <span>{COPY.noXcode}</span>
         </div>
       </section>
     )
@@ -629,40 +821,41 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   const recordingHere = recording !== undefined && recording.udid === udid
   const state = failed ? (
     <StatusWord tone="failed" title={failed}>
-      失败
+      {COPY.failed}
     </StatusWord>
   ) : booting ? (
-    <StatusWord tone="running">启动中</StatusWord>
+    <StatusWord tone="running">{COPY.booting}</StatusWord>
   ) : stopping ? (
-    <StatusWord tone="running">关机中</StatusWord>
+    <StatusWord tone="running">{COPY.shuttingDown}</StatusWord>
   ) : recordingHere ? (
-    <StatusWord tone="running" title="最长 1 分钟或 25 MB · 关闭面板即丢弃">
-      录屏 {clock((now - recording.since) / 1000)}
+    <StatusWord tone="running" title={COPY.recordingLimits}>
+      {COPY.recording}
+      {clock((now - recording.since) / 1000)}
     </StatusWord>
   ) : pictured && agent ? (
-    <StatusWord tone="running" title="一个会话的 Agent 正经 Xcode 的设备工具使用它">
-      Agent 正在使用
+    <StatusWord tone="running" title={COPY.agentUseInfo}>
+      {COPY.agentUse}
     </StatusWord>
   ) : pictured && textFailed ? (
     <StatusWord tone="warn" title={textFailed}>
-      文字未输入
+      {COPY.notEntered}
     </StatusWord>
   ) : pictured && inputOff ? (
-    <StatusWord tone="warn" title={`${inputOff} · 可在 Device Hub 中点按`}>
-      输入不可用
+    <StatusWord tone="warn" title={COPY.hubFallback(inputOff)}>
+      {COPY.inputUnavailable}
     </StatusWord>
   ) : pictured ? (
     <StatusWord
       tone="done"
       title={
         liveOn
-          ? `实时画面 · 两指不可用：${inputReason(controlHere?.twoFingers ?? { available: false, reason: 'single-touch' })}`
-          : `截图画面${liveHere?.reason ? ` · ${liveHere.reason}` : ''}`
+          ? COPY.noTwoFingers(inputReason(controlHere?.twoFingers ?? { available: false, reason: 'single-touch' }))
+          : COPY.snapshot(liveHere?.reason ? ` · ${liveHere.reason}` : '')
       }>
-      运行中
+      {COPY.running}
     </StatusWord>
   ) : device ? (
-    <StatusWord tone="neutral">未启动</StatusWord>
+    <StatusWord tone="neutral">{COPY.notRunning}</StatusWord>
   ) : null
 
   const natural =
@@ -677,10 +870,10 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
   const tools = running && !annotating
 
   return (
-    <section ref={section} className="sim-panel" aria-label="设备" tabIndex={-1} onKeyDown={onKeyDown}>
-      <div className="sim-toolbar" role="toolbar" aria-label="设备">
+    <section ref={section} className="sim-panel" aria-label={COPY.devices} tabIndex={-1} onKeyDown={onKeyDown}>
+      <div className="sim-toolbar" role="toolbar" aria-label={COPY.devices}>
         <Menu
-          label="选择设备"
+          label={COPY.choose}
           selection
           sections={[
             {
@@ -688,7 +881,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
               items: devices.map(item => ({
                 id: item.udid,
                 label: item.name,
-                meta: item.state === 'booted' ? `${item.os} · 运行中` : item.os,
+                meta: item.state === 'booted' ? COPY.osRunning(item.os) : item.os,
                 checked: item.udid === udid,
                 onSelect: () => {
                   setChosen(item.udid)
@@ -696,36 +889,42 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
                 },
               })),
             },
-            { id: 'new', items: [{ id: 'new', label: '新建设备…', icon: Plus, onSelect: () => setCreating(true) }] },
+            { id: 'new', items: [{ id: 'new', label: COPY.newDevice, icon: Plus, onSelect: () => setCreating(true) }] },
           ]}
           trigger={props => (
             <Button {...props} size="xs" variant="ghost" icon={Smartphone} className="sim-picker">
-              {device ? <VisibleText text={deviceLabel(device)} /> : '选择设备'}
-              {running && <span className="sim-on" aria-label="运行中" role="img" />}
+              {device ? <VisibleText text={deviceLabel(device)} /> : COPY.choose}
+              {running && <span className="sim-on" aria-label={COPY.running} role="img" />}
             </Button>
           )}
         />
         <span className="sim-state">{state}</span>
         <span className="sim-spacer" />
         {pictured && !annotating && (
-          <span className="sim-zoom" role="group" aria-label="缩放">
-            <IconButton size="xs" icon={Minus} label="缩小" disabled={zoom === 'fit'} onClick={() => changeZoom(zoomOut(zoom, fit))} />
+          <span className="sim-zoom" role="group" aria-label={COPY.zoom}>
+            <IconButton
+              size="xs"
+              icon={Minus}
+              label={COPY.zoomOut}
+              disabled={zoom === 'fit'}
+              onClick={() => changeZoom(zoomOut(zoom, fit))}
+            />
             <button
               type="button"
               className="sim-zoom-value"
-              title={zoom === 'fit' ? '切到 1:1（一个设备像素对一个屏幕像素）' : '适应面板'}
-              aria-label={zoom === 'fit' ? '缩放：适应，切到 1:1' : `缩放：${zoomLabel(zoom, fit)}，切到适应`}
+              title={zoom === 'fit' ? COPY.actual : COPY.fitPanel}
+              aria-label={zoom === 'fit' ? COPY.fitToActual : COPY.actualToFit(zoomLabel(zoom, fit))}
               onClick={() => changeZoom(zoom === 'fit' ? 1 : 'fit')}>
-              {zoom === 'fit' ? '适应' : zoomLabel(zoom, fit)}
+              {zoom === 'fit' ? COPY.fit : zoomLabel(zoom, fit)}
             </button>
-            <IconButton size="xs" icon={Plus} label="放大" disabled={zoom === 2} onClick={() => changeZoom(zoomIn(zoom, fit))} />
+            <IconButton size="xs" icon={Plus} label={COPY.zoomIn} disabled={zoom === 2} onClick={() => changeZoom(zoomIn(zoom, fit))} />
           </span>
         )}
         <IconButton
           size="xs"
           icon={Power}
-          label={running ? '关机' : '启动'}
-          tooltip={running && !device?.ours ? '只关闭 Latch 启动的设备' : running ? '关机' : '启动'}
+          label={running ? COPY.shutdown : COPY.boot}
+          tooltip={running && !device?.ours ? COPY.owned : running ? COPY.shutdown : COPY.boot}
           pressed={running}
           disabled={!device || busy || booting || stopping || (running && !device.ours)}
           onClick={() => void (running ? act('shutdown', 'shutdown') : act('boot', 'boot'))}
@@ -736,8 +935,8 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
           <input
             ref={addressInput}
             type="text"
-            aria-label="设备上打开的地址"
-            placeholder="https://… 或 myapp://…"
+            aria-label={COPY.address}
+            placeholder={COPY.addressHint}
             spellCheck={false}
             autoCapitalize="off"
             autoComplete="off"
@@ -792,7 +991,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
           <img
             className="sim-screen"
             src={frame.url}
-            alt={device ? `${device.name} 的画面` : '设备画面'}
+            alt={device ? COPY.screenOf(device.name) : COPY.screen}
             draggable={false}
             style={
               zoom === 'fit' || natural.width === 0
@@ -803,8 +1002,8 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
         ) : running ? (
           <Spinner size={14} />
         ) : (
-          <ul className="sim-list" aria-label="设备">
-            {devices.length === 0 && <li className="sim-quiet">没有模拟器</li>}
+          <ul className="sim-list" aria-label={COPY.devices}>
+            {devices.length === 0 && <li className="sim-quiet">{COPY.noSimulator}</li>}
             {devices.map(item => {
               const selected = item.udid === udid
               return (
@@ -815,12 +1014,12 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
                       <VisibleText text={item.name} />
                     </span>
                     <span className="sim-row-os">{item.os}</span>
-                    {item.state === 'booted' && <span className="sim-on" aria-label="运行中" role="img" />}
+                    {item.state === 'booted' && <span className="sim-on" aria-label={COPY.running} role="img" />}
                   </button>
                   <span className="sim-row-action" aria-hidden={!selected}>
                     {selected && item.state === 'shutdown' && (
                       <Button size="xs" variant="ghost" disabled={busy} onClick={() => void act('boot', 'boot')}>
-                        {pending === 'boot' ? <Spinner size={12} /> : '启动'}
+                        {pending === 'boot' ? <Spinner size={12} /> : COPY.boot}
                       </Button>
                     )}
                   </span>
@@ -842,15 +1041,15 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
         />
       )}
       {pane === 'logs' && udid && running && <DeviceLogs udid={udid} apps={apps ?? []} onClose={() => setPane(undefined)} />}
-      <div className="sim-foot" role="toolbar" aria-label="设备工具">
+      <div className="sim-foot" role="toolbar" aria-label={COPY.tools}>
         {abilities.rotate
           && (['left', 'right'] as const).map(direction => (
             <IconButton
               key={direction}
               size="xs"
               icon={direction === 'left' ? RotateCcw : RotateCw}
-              label={direction === 'left' ? '向左旋转' : '向右旋转'}
-              tooltip={rotatable ? (direction === 'left' ? '向左转 90°' : '向右转 90°') : '这台设备不能旋转'}
+              label={direction === 'left' ? COPY.rotateLeft : COPY.rotateRight}
+              tooltip={rotatable ? (direction === 'left' ? COPY.left90 : COPY.right90) : COPY.cannotRotate}
               shortcut={desktop && rotatable ? (direction === 'left' ? '⌘←' : '⌘→') : undefined}
               disabled={!tools || !rotatable || busy}
               busy={pending === 'rotate'}
@@ -860,8 +1059,8 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
         <IconButton
           size="xs"
           icon={Camera}
-          label="截图"
-          tooltip={onAttach ? '截图放进草稿 · 发送后交给模型服务' : '截图下载到这台电脑'}
+          label={COPY.screenshot}
+          tooltip={onAttach ? COPY.screenshotDraft : COPY.screenshotDownload}
           shortcut={desktop ? '⌘S' : undefined}
           disabled={!tools || busy}
           busy={pending === 'shot'}
@@ -871,8 +1070,8 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
           <IconButton
             size="xs"
             icon={recordingHere ? Square : Circle}
-            label={recordingHere ? '停止录屏' : '录屏'}
-            tooltip={recordingHere ? '停止并保存到这台电脑' : '录屏 · 最长 1 分钟或 25 MB · 停止后保存到这台电脑'}
+            label={recordingHere ? COPY.stopRecording : COPY.record}
+            tooltip={recordingHere ? COPY.saveRecording : COPY.recordInfo}
             shortcut={desktop ? '⇧⌘R' : undefined}
             pressed={recordingHere}
             className={recordingHere ? 'sim-recording' : undefined}
@@ -884,29 +1083,29 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
         <IconButton
           size="xs"
           icon={House}
-          label="主屏幕"
-          tooltip={controlHere && !controlHere.buttons.available ? inputReason(controlHere.buttons) : '主屏幕'}
+          label={COPY.home}
+          tooltip={controlHere && !controlHere.buttons.available ? inputReason(controlHere.buttons) : COPY.home}
           disabled={!tools || !desktop || (controlHere !== undefined && !controlHere.buttons.available)}
           onClick={() => sendInput({ type: 'button', button: 'home' })}
         />
         <IconButton
           size="xs"
           icon={Lock}
-          label="锁屏"
-          tooltip={controlHere && !controlHere.buttons.available ? inputReason(controlHere.buttons) : '锁屏键'}
+          label={COPY.lock}
+          tooltip={controlHere && !controlHere.buttons.available ? inputReason(controlHere.buttons) : COPY.lockKey}
           disabled={!tools || !desktop || (controlHere !== undefined && !controlHere.buttons.available)}
           onClick={() => sendInput({ type: 'button', button: 'lock' })}
         />
         <IconButton
           size="xs"
           icon={Keyboard}
-          label="键盘输入到设备"
+          label={COPY.keyboard}
           tooltip={
             controlHere && !controlHere.keys.available
               ? inputReason(controlHere.keys)
               : controlHere && !controlHere.text.available
-                ? `⏎ ⌫ ⇥ ⎋ 与方向键发到设备 · 文字：${inputReason(controlHere.text)}`
-                : '按键与 ASCII 文字发到设备 · 文字只在设备的 English (US) 键盘上输入'
+                ? COPY.keys(inputReason(controlHere.text))
+                : COPY.keyboardInfo
           }
           pressed={keysOn}
           disabled={!tools || !desktop || (controlHere !== undefined && !controlHere.keys.available)}
@@ -918,8 +1117,8 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
         <IconButton
           size="xs"
           icon={PenLine}
-          label="标注截图"
-          tooltip={onAttach ? '截图后标注，再放进草稿' : '现在不能添加附件'}
+          label={COPY.annotate}
+          tooltip={onAttach ? COPY.annotateDraft : COPY.noAttachment}
           disabled={!tools || busy || !onAttach}
           busy={pending === 'annotate'}
           onClick={() => void annotate()}
@@ -929,7 +1128,7 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
           size="xs"
           icon={LayoutGrid}
           label="App"
-          tooltip="设备上的 App：启动、结束、预先授权"
+          tooltip={COPY.appActions}
           pressed={pane === 'apps'}
           disabled={!tools}
           onClick={() => setPane(value => (value === 'apps' ? undefined : 'apps'))}
@@ -938,8 +1137,8 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
           <IconButton
             size="xs"
             icon={ScrollText}
-            label="日志"
-            tooltip="设备的实时日志 · 只在这里显示，不保存"
+            label={COPY.logs}
+            tooltip={COPY.logsInfo}
             pressed={pane === 'logs'}
             disabled={!tools}
             onClick={() => setPane(value => (value === 'logs' ? undefined : 'logs'))}
@@ -948,8 +1147,8 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
         <IconButton
           size="xs"
           icon={Link}
-          label="打开地址"
-          tooltip="在设备上打开网址或深链接"
+          label={COPY.openAddress}
+          tooltip={COPY.openAddressInfo}
           pressed={address !== undefined}
           disabled={!tools}
           onClick={() => setAddress(value => (value === undefined ? '' : undefined))}
@@ -957,8 +1156,8 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
         <IconButton
           size="xs"
           icon={appearance === 'dark' ? Moon : Sun}
-          label={appearance === 'dark' ? '外观：深色' : '外观：浅色'}
-          tooltip="切换设备的浅色与深色"
+          label={appearance === 'dark' ? COPY.dark : COPY.light}
+          tooltip={COPY.changeAppearance}
           pressed={appearance === 'dark'}
           disabled={!tools || busy}
           onClick={async () => {
@@ -970,8 +1169,8 @@ export function DevicePanel({ shown, onAttach }: DevicePanelProps) {
         <IconButton
           size="xs"
           icon={AppWindow}
-          label="在 Device Hub 中打开"
-          tooltip="在 Device Hub 里查看和点按"
+          label={COPY.openHub}
+          tooltip={COPY.hubInfo}
           disabled={!device || busy}
           onClick={() => void act('hub', 'device-hub')}
         />

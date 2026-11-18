@@ -4,7 +4,54 @@ import { Button, InlineNotice, Kbd, TextAreaField, TextField } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { usePromptTemplates } from '../hooks/usePromptTemplates.ts'
 import { ConfirmDialog, Modal, ModalHeader } from '../components/overlays.tsx'
+import { harnessName } from '../core/harnessName.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { SettingsGroup, SettingsRow } from './common.tsx'
+
+const TEMPLATES_COPY = defineCopy(
+  {
+    title: '提示模板',
+    /** Around the 「/」 key cap. */
+    captionBefore: '在输入框键入 ',
+    captionAfter: ' 选择，插入后可编辑',
+    allSessions: '所有会话',
+    project: (name: string) => `项目：${name}`,
+    agent: (name: string) => `Agent：${name}`,
+    edit: '编辑',
+    remove: '删除',
+    addAnother: '再加一个模板',
+    none: '还没有提示模板',
+    add: '添加提示模板',
+    editTitle: '编辑提示模板',
+    name: '名称',
+    content: '提示内容',
+    scope: '适用范围',
+    save: '保存',
+    removeTitle: (name: string) => `删除“${name}”？`,
+    removeMessage: '现有会话与草稿不受影响。',
+  },
+  {
+    title: 'Prompt templates',
+    captionBefore: 'Type ',
+    captionAfter: ' in the input to pick one, then edit it',
+    allSessions: 'All sessions',
+    project: (name: string) => `Project: ${name}`,
+    agent: (name: string) => `Agent: ${name}`,
+    edit: 'Edit',
+    remove: 'Delete',
+    addAnother: 'Add another template',
+    none: 'No prompt templates yet',
+    add: 'Add template',
+    editTitle: 'Edit prompt template',
+    name: 'Name',
+    content: 'Prompt',
+    scope: 'Applies to',
+    save: 'Save',
+    removeTitle: (name: string) => `Delete “${name}”?`,
+    removeMessage: 'Existing sessions and drafts stay as they are.',
+  },
+)
+
 export function PromptTemplatesSettings({ snapshot, onChanged }: { snapshot: AppSnapshot; onChanged: () => void }) {
   const templates = usePromptTemplates(true, snapshot.catalog?.promptTemplatesVersion),
     [editing, setEditing] = useState<PromptTemplate | null>(null),
@@ -27,18 +74,20 @@ export function PromptTemplatesSettings({ snapshot, onChanged }: { snapshot: App
   }
   const scopeName = (template: PromptTemplate) => {
     const scope = template.scope
-    return scope.kind === 'all'
-      ? '所有会话'
-      : scope.kind === 'project'
-        ? `项目：${snapshot.catalog?.workspaces.find(item => item.id === scope.id)?.name ?? scope.id}`
-        : `Agent：${snapshot.catalog?.harnesses.find(item => item.id === scope.id)?.capabilities.display.label ?? scope.id}`
+    if (scope.kind === 'all') return TEMPLATES_COPY.allSessions
+    if (scope.kind === 'project')
+      return TEMPLATES_COPY.project(snapshot.catalog?.workspaces.find(item => item.id === scope.id)?.name ?? scope.id)
+    const harness = snapshot.catalog?.harnesses.find(item => item.id === scope.id)
+    return TEMPLATES_COPY.agent(harness ? harnessName(harness) : scope.id)
   }
   return (
     <SettingsGroup
-      title="提示模板"
+      title={TEMPLATES_COPY.title}
       caption={
         <>
-          在输入框键入 <Kbd>/</Kbd> 选择，插入后可编辑
+          {TEMPLATES_COPY.captionBefore}
+          <Kbd>/</Kbd>
+          {TEMPLATES_COPY.captionAfter}
         </>
       }
       captionIcon={null}>
@@ -50,35 +99,35 @@ export function PromptTemplatesSettings({ snapshot, onChanged }: { snapshot: App
           trailing={
             <>
               <Button size="sm" variant="ghost" onClick={() => setEditing(template)}>
-                编辑
+                {TEMPLATES_COPY.edit}
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setRemoving(template)}>
-                删除
+                {TEMPLATES_COPY.remove}
               </Button>
             </>
           }
         />
       ))}
       <SettingsRow
-        title={templates.length ? '再加一个模板' : '还没有提示模板'}
+        title={templates.length ? TEMPLATES_COPY.addAnother : TEMPLATES_COPY.none}
         trailing={
           <Button
             size="sm"
             variant="outline"
             disabled={templates.length >= 200}
             onClick={() => setEditing({ id: crypto.randomUUID(), name: '', content: '', scope: { kind: 'all' } })}>
-            添加提示模板
+            {TEMPLATES_COPY.add}
           </Button>
         }
       />
       {editing && (
         <Modal
-          label="编辑提示模板"
+          label={TEMPLATES_COPY.editTitle}
           onClose={() => {
             if (!busy) setEditing(null)
           }}>
           <ModalHeader
-            title="编辑提示模板"
+            title={TEMPLATES_COPY.editTitle}
             onClose={() => {
               if (!busy) setEditing(null)
             }}
@@ -90,51 +139,51 @@ export function PromptTemplatesSettings({ snapshot, onChanged }: { snapshot: App
               void save()
             }}>
             <TextField
-              label="名称"
+              label={TEMPLATES_COPY.name}
               value={editing.name}
               maxLength={80}
               onChange={event => setEditing({ ...editing, name: event.target.value })}
             />
             <TextAreaField
-              label="提示内容"
+              label={TEMPLATES_COPY.content}
               value={editing.content}
               maxLength={20_000}
               rows={8}
               onChange={event => setEditing({ ...editing, content: event.target.value })}
             />
             <label>
-              适用范围
+              {TEMPLATES_COPY.scope}
               <select
                 value={editing.scope.kind === 'all' ? 'all' : `${editing.scope.kind}:${editing.scope.id}`}
                 onChange={event => {
                   const [kind, id] = event.target.value.split(':')
                   setEditing({ ...editing, scope: kind === 'all' ? { kind: 'all' } : { kind: kind as 'project' | 'agent', id } })
                 }}>
-                <option value="all">所有会话</option>
+                <option value="all">{TEMPLATES_COPY.allSessions}</option>
                 {snapshot.catalog?.workspaces.map(item => (
                   <option key={item.id} value={`project:${item.id}`}>
-                    项目：{item.name}
+                    {TEMPLATES_COPY.project(item.name)}
                   </option>
                 ))}
                 {snapshot.catalog?.harnesses.map(item => (
                   <option key={item.id} value={`agent:${item.id}`}>
-                    Agent：{item.capabilities.display.label}
+                    {TEMPLATES_COPY.agent(harnessName(item))}
                   </option>
                 ))}
               </select>
             </label>
             {error && <InlineNotice tone="error">{error}</InlineNotice>}
             <Button type="submit" disabled={busy || !editing.name.trim() || !editing.content.trim()}>
-              保存
+              {TEMPLATES_COPY.save}
             </Button>
           </form>
         </Modal>
       )}
       {removing && (
         <ConfirmDialog
-          title={`删除“${removing.name}”？`}
-          message="现有会话与草稿不受影响。"
-          confirmLabel="删除"
+          title={TEMPLATES_COPY.removeTitle(removing.name)}
+          message={TEMPLATES_COPY.removeMessage}
+          confirmLabel={TEMPLATES_COPY.remove}
           danger
           onClose={() => setRemoving(null)}
           onConfirm={async () => {

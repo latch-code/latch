@@ -15,7 +15,97 @@ import { WriteNotice } from './AgentForm.tsx'
 import { scheduleWords } from './model.ts'
 import { exportFileName, fileMemoryWords, readAgentFileText } from './transfer.ts'
 import { writeFor, type AgentWrites, type WriteState } from './useAgentWrites.ts'
-import { DEVICE_OFFLINE } from '../core/hostState.ts'
+import { CONNECTION_COPY } from '../core/hostState.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    confirmExport: '导出前确认',
+    memory: '记忆',
+    scheduledSummary: '· 定时',
+    redacted: (memories: number, schedules: number) =>
+      `像密钥的不导出：记忆 ${formatNumber(memories)} 条，定时 ${formatNumber(schedules)} 个`,
+    download: '下载',
+    cancel: '取消',
+    exportReadFailed: '没有读到要导出的内容，请重试。',
+    exportFailed: '没有导出，请重试。',
+    export: '导出',
+    exportDetail: '一个文件：名称、职责、指令、头像样式、已保存的记忆和定时。不含模型、项目、技能、密钥和话题。',
+    exported: '已导出',
+    notExported: '没有导出',
+    notHere: '这台电脑上没有',
+    readFailed: '读不了这个文件，请重试。',
+    chooseExport: '选择 Agent 导出文件',
+    chooseAnother: '换一个文件',
+    chooseFile: '选择文件',
+    importTitle: '导入 Agent',
+    newFromFile: '从导出的文件新建一个 Agent',
+    importPreview: '先看到文件里有什么，再决定导入。不会改动已有的 Agent。',
+    reading: '正在读取',
+    cannotImport: '不能导入',
+    sameName: '已有同名，会新建一个',
+    file: '文件',
+    instructions: '指令',
+    noInstructions: '没有指令',
+    memoryCount: '记忆 ·',
+    markedAsImport: '标为「导入」',
+    importedReference: '导入的记忆作为资料带给 Agent，不算你说的话；之后在「记忆」里点「设为我说的」，它才算你的。',
+    redactedMemories: (count: number) => `${formatNumber(count)} 条像密钥的记忆没有随文件导出`,
+    harnessUnavailable: (name: string) => `${name} 现在不可用`,
+    external: '来自外部内容',
+    scheduled: '定时',
+    scheduleCount: '定时 ·',
+    startsOff: '导入后是关的',
+    noScheduleSupport: '这个 Harness 不能定时，不会导入',
+    import: '导入',
+  },
+  {
+    confirmExport: 'Confirm export',
+    memory: 'Memory',
+    scheduledSummary: '· Schedules',
+    redacted: (memories: number, schedules: number) =>
+      `Skipped possible secrets in ${plural(memories, { one: '{n} memory', other: '{n} memories' })} and ${plural(schedules, { one: '{n} schedule', other: '{n} schedules' })}`,
+    download: 'Download',
+    cancel: 'Cancel',
+    exportReadFailed: 'Couldn’t load the export. Try again.',
+    exportFailed: 'Couldn’t export. Try again.',
+    export: 'Export',
+    exportDetail:
+      'One file with the name, role, instructions, avatar style, saved memories, and schedules. Models, projects, skills, keys, and topics are excluded.',
+    exported: 'Exported',
+    notExported: 'Export failed',
+    notHere: 'Unavailable on this computer',
+    readFailed: 'Couldn’t read this file. Try again.',
+    chooseExport: 'Choose an Agent export file',
+    chooseAnother: 'Choose another file',
+    chooseFile: 'Choose file',
+    importTitle: 'Import Agent',
+    newFromFile: 'Create an Agent from an export',
+    importPreview: 'Review the file before importing it as a new Agent. Existing Agents are kept.',
+    reading: 'Reading',
+    cannotImport: 'Can’t import',
+    sameName: 'An Agent has this name. Importing creates a new one.',
+    file: 'File',
+    instructions: 'Instructions',
+    noInstructions: 'No instructions',
+    memoryCount: 'Memories ·',
+    markedAsImport: 'Marked as imported',
+    importedReference:
+      'Imported memories reach the Agent as reference material. In Memory, choose Mark as my words to attribute them to you.',
+    redactedMemories: (count: number) =>
+      plural(count, {
+        one: 'Skipped {n} memory that appeared to contain a key',
+        other: 'Skipped {n} memories that appeared to contain keys',
+      }),
+    harnessUnavailable: (name: string) => `${name} is unavailable right now`,
+    external: 'From external content',
+    scheduled: 'Schedules',
+    scheduleCount: 'Schedules ·',
+    startsOff: 'Disabled on import',
+    noScheduleSupport: 'This Harness cannot schedule tasks, so those entries are skipped',
+    import: 'Import',
+  },
+)
 
 const failure = (error: unknown, fallback: string) => (error instanceof ApiError ? error.message : fallback)
 
@@ -43,21 +133,19 @@ export function ExportPreview({
 }) {
   const { omitted } = preview
   return (
-    <div className="agent-export-preview" role="group" aria-label="导出前确认">
+    <div className="agent-export-preview" role="group" aria-label={COPY.confirmExport}>
       <span>
-        记忆 {preview.memories} · 定时 {preview.schedules}
+        {COPY.memory} {formatNumber(preview.memories)} {COPY.scheduledSummary} {formatNumber(preview.schedules)}
       </span>
       {omitted.secretMemories + omitted.secretSchedules > 0 && (
-        <StatusWord tone="warn">
-          像密钥的不导出：记忆 {omitted.secretMemories} 条，定时 {omitted.secretSchedules} 个
-        </StatusWord>
+        <StatusWord tone="warn">{COPY.redacted(omitted.secretMemories, omitted.secretSchedules)}</StatusWord>
       )}
       <div className="agent-form-actions">
         <Button variant="primary" icon={DownloadGlyph} loading={working} disabled={offline || working} onClick={onDownload}>
-          下载
+          {COPY.download}
         </Button>
         <Button variant="ghost" disabled={working} onClick={onCancel}>
-          取消
+          {COPY.cancel}
         </Button>
       </div>
     </div>
@@ -75,7 +163,7 @@ export function AgentExport({ agent, offline }: { agent: Pick<CustomAgent, 'id' 
     try {
       setState({ phase: 'shown', preview: await api<AgentExportPreview>(`custom-agents/${agent.id}/export/preview`) })
     } catch (error) {
-      setState({ phase: 'failed', message: failure(error, '没有读到要导出的内容，请重试。') })
+      setState({ phase: 'failed', message: failure(error, COPY.exportReadFailed) })
     }
   }
   const download = async (preview: AgentExportPreview) => {
@@ -92,22 +180,22 @@ export function AgentExport({ agent, offline }: { agent: Pick<CustomAgent, 'id' 
       }, 1000)
       setState({ phase: 'done' })
     } catch (error) {
-      setState({ phase: 'failed', message: failure(error, '没有导出，请重试。') })
+      setState({ phase: 'failed', message: failure(error, COPY.exportFailed) })
     }
   }
   const open = state.phase === 'shown' || state.phase === 'working'
   return (
-    <section className="agent-form-section agent-export" aria-label="导出">
+    <section className="agent-form-section agent-export" aria-label={COPY.export}>
       <header>
-        <Hint label="导出">一个文件：名称、职责、指令、头像样式、已保存的记忆和定时。不含模型、项目、技能、密钥和话题。</Hint>
+        <Hint label={COPY.export}>{COPY.exportDetail}</Hint>
         {!open && (
           <Button
             icon={DownloadGlyph}
             loading={state.phase === 'reading'}
             disabled={offline || state.phase === 'reading'}
-            title={offline ? DEVICE_OFFLINE : undefined}
+            title={offline ? CONNECTION_COPY.offline : undefined}
             onClick={() => void look()}>
-            导出
+            {COPY.export}
           </Button>
         )}
       </header>
@@ -124,11 +212,11 @@ export function AgentExport({ agent, offline }: { agent: Pick<CustomAgent, 'id' 
       )}
       {state.phase === 'done' && (
         <StatusWord tone="done" role="status">
-          已导出
+          {COPY.exported}
         </StatusWord>
       )}
       {state.phase === 'failed' && (
-        <InlineNotice tone="error" title="没有导出">
+        <InlineNotice tone="error" title={COPY.notExported}>
           {state.message}
         </InlineNotice>
       )}
@@ -147,10 +235,10 @@ function harnessProblem(harness: AgentImportPreview['harness']) {
   return (
     <StatusWord tone="failed">
       {harness.label ? (
-        `${harness.label} 现在不可用`
+        COPY.harnessUnavailable(harness.label)
       ) : (
         <>
-          这台电脑上没有 <VisibleText text={harness.id} />
+          {COPY.notHere} <VisibleText text={harness.id} />
         </>
       )}
     </StatusWord>
@@ -190,7 +278,7 @@ export function AgentImport({
       const preview = await api<AgentImportPreview>('custom-agents/import/preview', { method: 'POST', body: { file: read.file } })
       setChosen({ phase: 'shown', name: picked.name, file: read.file, preview })
     } catch (error) {
-      setChosen({ phase: 'choose', problem: failure(error, '读不了这个文件，请重试。') })
+      setChosen({ phase: 'choose', problem: failure(error, COPY.readFailed) })
     }
   }
   const create = async (file: unknown) => {
@@ -208,7 +296,7 @@ export function AgentImport({
         type="file"
         accept=".json,application/json"
         hidden
-        aria-label="选择 Agent 导出文件"
+        aria-label={COPY.chooseExport}
         onChange={event => {
           const picked = event.target.files?.[0]
           event.target.value = ''
@@ -218,27 +306,27 @@ export function AgentImport({
       <Button
         variant={chosen.phase === 'shown' ? 'secondary' : 'primary'}
         disabled={offline || chosen.phase === 'reading' || saving || writes.held}
-        title={offline ? DEVICE_OFFLINE : undefined}
+        title={offline ? CONNECTION_COPY.offline : undefined}
         onClick={() => input.current?.click()}>
-        {chosen.phase === 'shown' ? '换一个文件' : '选择文件'}
+        {chosen.phase === 'shown' ? COPY.chooseAnother : COPY.chooseFile}
       </Button>
     </>
   )
   if (chosen.phase !== 'shown')
     return (
       <div className="agent-page agent-import">
-        <h1 className="settings-title">导入 Agent</h1>
-        <Hint label="从导出的文件新建一个 Agent">先看到文件里有什么，再决定导入。不会改动已有的 Agent。</Hint>
-        {chosen.phase === 'reading' && <Loading label="正在读取" />}
+        <h1 className="settings-title">{COPY.importTitle}</h1>
+        <Hint label={COPY.newFromFile}>{COPY.importPreview}</Hint>
+        {chosen.phase === 'reading' && <Loading label={COPY.reading} />}
         {chosen.phase === 'choose' && chosen.problem && (
-          <InlineNotice tone="error" title="不能导入">
+          <InlineNotice tone="error" title={COPY.cannotImport}>
             {chosen.problem}
           </InlineNotice>
         )}
         <div className="agent-form-actions">
           {chooser}
           <Button variant="ghost" onClick={onCancel}>
-            取消
+            {COPY.cancel}
           </Button>
         </div>
       </div>
@@ -286,7 +374,7 @@ export function ImportPreview({
   const problem = harnessProblem(preview.harness)
   return (
     <div className="agent-page agent-import" aria-busy={saving || undefined}>
-      <h1 className="settings-title">导入 Agent</h1>
+      <h1 className="settings-title">{COPY.importTitle}</h1>
       <div className="agent-import-head">
         <AgentAvatar avatar={{ kind: 'face', ...agent.avatar }} size={40} />
         <div className="agent-import-name">
@@ -299,11 +387,11 @@ export function ImportPreview({
             </span>
           )}
         </div>
-        {preview.nameTaken && <StatusWord tone="neutral">已有同名，会新建一个</StatusWord>}
+        {preview.nameTaken && <StatusWord tone="neutral">{COPY.sameName}</StatusWord>}
       </div>
       <dl className="agent-import-facts">
         <div>
-          <dt>文件</dt>
+          <dt>{COPY.file}</dt>
           <dd>
             <VisibleText text={fileName} />
           </dd>
@@ -313,27 +401,27 @@ export function ImportPreview({
           <dd>{problem ?? preview.harness.label ?? preview.harness.id}</dd>
         </div>
       </dl>
-      <section className="agent-form-section" aria-label="指令">
+      <section className="agent-form-section" aria-label={COPY.instructions}>
         <header>
-          <h3>指令</h3>
+          <h3>{COPY.instructions}</h3>
         </header>
         {agent.instructions ? (
           <pre className="agent-import-text">
             <VisibleText text={agent.instructions} />
           </pre>
         ) : (
-          <p className="agent-form-empty">没有指令</p>
+          <p className="agent-form-empty">{COPY.noInstructions}</p>
         )}
       </section>
-      <section className="agent-form-section" aria-label="记忆">
+      <section className="agent-form-section" aria-label={COPY.memory}>
         <header>
-          <h3>记忆 · {memories.length}</h3>
-          {memories.length > 0 && (
-            <Hint label="标为「导入」">导入的记忆作为资料带给 Agent，不算你说的话；之后在「记忆」里点「设为我说的」，它才算你的。</Hint>
-          )}
+          <h3>
+            {COPY.memoryCount} {formatNumber(memories.length)}
+          </h3>
+          {memories.length > 0 && <Hint label={COPY.markedAsImport}>{COPY.importedReference}</Hint>}
         </header>
         {preview.file.omitted?.secretMemories ? (
-          <StatusWord tone="neutral">{preview.file.omitted.secretMemories} 条像密钥的记忆没有随文件导出</StatusWord>
+          <StatusWord tone="neutral">{COPY.redactedMemories(preview.file.omitted.secretMemories)}</StatusWord>
         ) : null}
         {memories.length > 0 && (
           <ul className="agent-memory-list">
@@ -345,7 +433,7 @@ export function ImportPreview({
                   </p>
                   <span className="agent-memory-meta agent-memory-source">
                     <span>{fileMemoryWords(memory)}</span>
-                    {memory.external && <StatusWord tone="warn">来自外部内容</StatusWord>}
+                    {memory.external && <StatusWord tone="warn">{COPY.external}</StatusWord>}
                     <time dateTime={memory.savedAt}>{memory.savedAt.slice(0, 10)}</time>
                   </span>
                 </div>
@@ -354,14 +442,16 @@ export function ImportPreview({
           </ul>
         )}
       </section>
-      <section className="agent-form-section" aria-label="定时">
+      <section className="agent-form-section" aria-label={COPY.scheduled}>
         <header>
-          <h3>定时 · {schedules.length}</h3>
+          <h3>
+            {COPY.scheduleCount} {formatNumber(schedules.length)}
+          </h3>
           {schedules.length > 0
             && (preview.canSchedule ? (
-              <StatusWord tone="neutral">导入后是关的</StatusWord>
+              <StatusWord tone="neutral">{COPY.startsOff}</StatusWord>
             ) : (
-              <StatusWord tone="warn">这个 Harness 不能定时，不会导入</StatusWord>
+              <StatusWord tone="warn">{COPY.noScheduleSupport}</StatusWord>
             ))}
         </header>
         {schedules.length > 0 && (
@@ -387,14 +477,14 @@ export function ImportPreview({
           variant="primary"
           loading={saving}
           disabled={blocked || saving || !preview.harness.ready}
-          title={offline ? DEVICE_OFFLINE : undefined}
+          title={offline ? CONNECTION_COPY.offline : undefined}
           onClick={onImport}>
-          导入
+          {COPY.import}
         </Button>
         {chooser}
         <span className="agent-form-spacer" />
         <Button variant="ghost" disabled={saving || (write !== null && 'kind' in write && write.kind === 'unknown')} onClick={onCancel}>
-          取消
+          {COPY.cancel}
         </Button>
       </div>
     </div>

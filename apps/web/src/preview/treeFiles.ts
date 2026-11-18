@@ -8,7 +8,13 @@ import {
   type FileMention,
 } from '@latch/protocol'
 import { api, MessageError } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { fileContextBody, fileRoute } from './fileContext.ts'
+
+const COPY = defineCopy(
+  { invalid: '文件引用无效。', unavailable: '文件已变化或无法读取，请刷新文件树后重试。' },
+  { invalid: 'Invalid file reference.', unavailable: 'The file changed or can’t be read. Refresh the file tree and try again.' },
+)
 
 /** The name of the only entry, when it is a folder and the listing is whole. */
 export function soleFolder(listing: FileDirectoryListing | undefined): string | undefined {
@@ -53,7 +59,7 @@ export function treeFullPath(
 
 /** Resolve again at action time; tree names and old handles are never native-action authority. */
 export async function readTreeFile(context: FileContext, target: FileMention, signal: AbortSignal): Promise<FileMetadata> {
-  if (!isFileMention(target)) throw new MessageError('文件引用无效。')
+  if (!isFileMention(target)) throw new MessageError(COPY.invalid)
   signal.throwIfAborted()
   const result = await api<{ files?: Array<{ status?: string; file?: unknown }> }>(fileRoute(context, 'resolve'), {
     method: 'POST',
@@ -70,7 +76,7 @@ export async function readTreeFile(context: FileContext, target: FileMention, si
     || entry.file.root !== target.root
     || entry.file.path !== target.path
   )
-    throw new MessageError('文件已变化或无法读取，请刷新文件树后重试。')
+    throw new MessageError(COPY.unavailable)
   return entry.file
 }
 export interface FileTreeView {

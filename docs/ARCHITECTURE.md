@@ -508,6 +508,8 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 
 **接受的待办开始时不带私有上下文。** 它的要求是模型写的：无论哪台设备接受、之后谁改过，`startScope` 都是 `work`（只会变窄）。项目文件夹里的文件是数据范围较窄的设备也能写的，要求可能照着这样的文件写出；带着「通用」的私有内容开始，就可能把它写回较窄设备读得到的地方。开始框显示的就是这个修订的要求（`baseRevision`），私有待办开始的会话照样私有（`privateFrom`）。
 
+看板提议的来源使用当前设备可读的 Agent 名称、Harness 和项目。审阅中的来源提示保留可读会话的原始标题，来源按钮打开该会话。
+
 **路由**（`routes/work-proposals.ts`）。
 
 | 路由 | 做什么 | 权限 |
@@ -534,6 +536,8 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 | `POST /work/items/:id/posts` | `{ requestId, text, target? }`，`target` 是 `{ sessionId }`（必须是这条待办的会话，否则 409 `post-target-gone`）或 `{ customAgentId }`。201 `{ post }`；同一设备同一 `requestId` 同一内容答同一条（200），未送达的再投一次，换内容 409 `request-conflict` | `run`；对 Agent 另需 Agent 的访问权（数据范围 `all`） |
 
 `catalog.features.workItemTurns` 表示支持精确发言与回复读取。投递带 `delivery`，读到同一请求的用户输入时投影为 `sent`，并给 `turn: { sessionId, userMessageId, runId? }`。回复仅取该输入到下一个未追加的用户输入之间的助手消息，节选限 2 000 个码点。运行状态要有同一运行 ID 的证据。命中该轮的提问或审批时，`attention.decisionId` 指原对象。没有可读来源时省去来源 ID 和回复；源回复找不到时返回 404 `post-reply-not-found`。原生读取上述正文须有有效窗口，响应前复核设备、待办与源会话。
+
+浏览器待办页把仍待回答或审批的发言显示在滚动区上方，讨论行也显示同一状态。页面核对当前可见会话、运行、等待类型和原对象 ID，来源更新后按新报告确认。按钮进入原回合的提问或审批，原会话按设备权限决定能否作答。从对话返回时恢复待办阅读位置；原控件随等待结束消失时，焦点回到「看板」按钮。
 
 **顺序。** 可见性（与待办相同，私有的对较窄设备 404 `item-not-found`）、内容检查、对象可用（会话在一轮中 409 `post-target-busy`；Agent 的聊天还没开始 409 `agent-chat-empty`、正在确认 409 `agent-chat-starting`），@ Agent 时先把待办标为私有（只收窄可见范围），然后写 `work.item.posted`（`itemId`、`postId`、`target`：`none`、`session`、`agent`，`sessionId?`；不含文字，写不进 503 `audit-unavailable`，什么都不存），再存发言（投递记为 `unknown`），最后投递并结清为 `sent`、`failed` 或 `unknown`。投递失败不回错误码：发言已存，回答里的状态说明结果，重试同一请求再投。`postId` 由设备、待办与 `requestId` 推出，同一请求同时发两次时后一个等前一个，所以一个请求只有一条发言、一行审计。
 
@@ -822,7 +826,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `PATCH /devices/:id` | `admin`；授予权限或扩大数据范围需本机与本机确认 | 调整权限与数据范围 |
 | `PATCH /devices/:id/name`、`GET /enrollments` | 本机 `admin` | 重命名任一设备；仍在等待的登记 |
 | `POST /pairings` | 本机 `admin` 或匿名 | 配对邀请 `{ scopes?, target? }`；未配置 HTTPS 入口时 409 `tls-not-configured`。桌面端只由主进程调用 |
-| `GET /native/info`、`/native/pairings…`、`/native/relays…`（含 `PATCH /native/relays/:id` 停用与启用、`POST /native/relays/:id/test` 测试）、`/native/relay-requests/:id`、`PUT /native/official-relay`、`DELETE /native/directory` | 本机 `admin`（`GET /native/info`：任何 `admin` 设备，或本机匿名；测试：本机 `admin` 或本机匿名）；添加中继需本机确认 | 手机配对二维码、设置 › 中继（[RELAY.md](RELAY.md)）。签发二维码要先打开局域网入口：没有网络时 409 `native-no-lan`，完全访问的会话运行或等待时 409 `presence-blocked` |
+| `GET /native/info`、`/native/pairings…`、`/native/relays…`（含 `PATCH /native/relays/:id` 停用与启用、`POST /native/relays/:id/test` 测试）、`/native/relay-requests/:id`、`PUT /native/official-relay`、`DELETE /native/directory` | 本机 `admin`（`GET /native/info`：任何 `admin` 设备，或本机匿名；测试：本机 `admin` 或本机匿名）；添加中继需本机确认 | 手机配对二维码、设置 › 连接转发（[RELAY.md](RELAY.md)）。签发二维码要先打开局域网入口：没有网络时 409 `native-no-lan`，完全访问的会话运行或等待时 409 `presence-blocked` |
 | `/native/pairing`、`/native/verification…`、`/native/revocation…`、`/native/address-book`、`/native/proximity`、`/native/bulk` | 原生连接上的设备 | 手机 App 的验证窗口、撤销通知、地址簿与文件传输 |
 | `GET`/`DELETE /confirmations/:id` | 发起确认的设备 | 查询或取消本机确认 |
 | `GET /audit/head`、`GET /audit/hash?seq=` | `view` | 审计检查点 |

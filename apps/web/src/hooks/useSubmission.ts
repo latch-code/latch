@@ -30,7 +30,6 @@ import { forkedChoice, type ForkSource } from '../forkChoice.ts'
 import { withConfirmation } from '../core/confirmations.ts'
 import { saveOfferedPreset } from '../core/offeredHarness.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
-import { DEVICE_OFFLINE } from '../core/hostState.ts'
 import {
   abandonSubmission,
   endFlight,
@@ -43,6 +42,17 @@ import {
   writePendingReason,
   type SendingMessage,
 } from '../core/sendingMessage.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    cannotStore: '无法保存待发送内容。请允许浏览器存储后重试，避免断线时重复提交。',
+  },
+  {
+    cannotStore:
+      'Could not save the outgoing message. Allow browser storage and try again to avoid sending it twice if the connection drops.',
+  },
+)
 
 /**
  * A new session forked from another. `choice`: what it borrows from its source and what the person picks in the draft,
@@ -428,7 +438,7 @@ export function useSubmission({
       writePending(pendingKey, submission)
     } catch {
       requestOrigins.current.delete(submission.requestId)
-      setError('无法保存待发送内容。请允许浏览器存储后重试，避免断线时重复提交。')
+      setError(COPY.cannotStore)
       return false
     }
     sendingRef.current = true
@@ -485,7 +495,8 @@ export function useSubmission({
       await refresh()
       return true
     } catch (cause) {
-      const reason = unconfirmedReason(cause)
+      const online = typeof navigator === 'undefined' || navigator.onLine !== false
+      const reason = unconfirmedReason(cause, online)
       const uncertain = reason !== null
       setSendingMessage(previous =>
         previous?.submission.requestId !== submission.requestId ? previous : uncertain ? { ...previous, state: 'unknown' } : null,
@@ -497,7 +508,7 @@ export function useSubmission({
       }
       setPendingReason(reason ?? '')
       // This device's own network says nothing that should outlive it: the row says so only while it lasts.
-      if (uncertain && reason !== DEVICE_OFFLINE) writePendingReason(pendingKey, submission.requestId, reason)
+      if (uncertain && online) writePendingReason(pendingKey, submission.requestId, reason)
       if (!uncertain && cause instanceof ApiError && cause.code === 'attachment-released' && fromInput(submission)) {
         const restored = mounted.current && storedOwnsInput(submission, destination.current.selectedId)
         if (restored) setDraft(previous => (previous.trim() ? previous : submission.prompt))

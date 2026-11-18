@@ -2,6 +2,18 @@ import { useEffect, useState } from 'react'
 import { Dialog } from '@latch/ui'
 import { DETACHED, useFillAsk } from './fills.ts'
 import { TerminalPanel } from './TerminalPanel.tsx'
+import { defineCopy } from '../../core/i18n.ts'
+
+const COPY = defineCopy(
+  {
+    terminal: '终端',
+    close: '关闭',
+  },
+  {
+    terminal: 'Terminal',
+    close: 'Close',
+  },
+)
 
 /**
  * A command typed in where no session is in view (设置, first setup): the default project's terminals in a dialog, as a
@@ -19,8 +31,8 @@ export function FillTerminalDialog({ workspaceId, unavailable }: { workspaceId: 
       open
       size="xl"
       className="login-terminal-dialog fill-terminal-dialog"
-      title="终端"
-      closeLabel="关闭"
+      title={COPY.terminal}
+      closeLabel={COPY.close}
       onClose={() => setOpen(false)}>
       <div className="login-terminal-screen fill-terminal-screen">
         <TerminalPanel target={{ workspaceId }} shown requested={false} {...(unavailable ? { unavailable } : {})} fillPlace={DETACHED} />

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AGENT_AVATAR_IMAGE, imageDimensions } from '@latch/protocol'
 import { api } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
 
 /** The largest file a person may choose; the page makes it a small square PNG before anything is sent. */
 export const AVATAR_FILE_BYTES = 10 * 1024 * 1024
@@ -9,11 +10,10 @@ const AVATAR_SOURCE_SIDE = 8192
 
 /** Why a chosen picture cannot be used, as the picker says it. */
 export type AvatarProblem = 'too-large' | 'wrong-type' | 'unreadable'
-export const AVATAR_PROBLEM_WORDS: Record<AvatarProblem, string> = {
-  'too-large': '图片太大',
-  'wrong-type': '只能用 PNG、JPEG 或 WebP',
-  unreadable: '读不了这张图片',
-}
+export const AVATAR_PROBLEM_WORDS = defineCopy<Record<AvatarProblem, string>>(
+  { 'too-large': '图片太大', 'wrong-type': '只能用 PNG、JPEG 或 WebP', unreadable: '读不了这张图片' },
+  { 'too-large': 'Image is too large', 'wrong-type': 'Use a PNG, JPEG or WebP image', unreadable: 'Couldn’t read this image' },
+)
 
 /** The kind of picture a file is, by its first bytes alone: never its name or the type the browser reports. */
 export function sniffPicture(bytes: Uint8Array): 'png' | 'jpeg' | 'webp' | undefined {

@@ -14,24 +14,51 @@ import {
   type WorktreeStart,
 } from '@latch/protocol'
 import { ApiError, ApiTimeoutError, ClientError, isUncertain, type PendingSubmission } from '../core/api.ts'
+import { defineCopy } from '../core/i18n.ts'
 import { findProvider, servicePick, withServicePick, type ComposerChoice } from '../composerChoice.ts'
 import { projectName } from '../projects.tsx'
 import { rowStatus, waitsOnYou } from '../sessions.ts'
 import type { AvatarState } from './avatarFace.ts'
 import { agentTopics, topicOwner } from './chat.ts'
 import { personActivity, WAITS_ON_YOU } from './personWords.ts'
+import { AGENT_SPACE_COPY } from './spaceCopy.ts'
 
 /** One entry of 我的 Agent's list: 通用 first, then the Host's own order. */
 export type AgentEntry =
   | { kind: 'general'; id: typeof GENERAL_AGENT_ID; name: string; memoryCount: number }
   | { kind: 'custom'; id: string; name: string; summary: CustomAgentSummary }
 
-export const GENERAL_NAME = '通用'
+const COPY = defineCopy(
+  {
+    removedService: (model: string) => `${model}（服务已移除）`,
+    home: '家',
+    removedProject: '项目已移除',
+    failed: '失败',
+    interrupted: '连接中断，Mac 可能已经保存。',
+    refused: '没有保存，请重试。',
+    days: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
+    daily: (time: string) => `每天 ${time}`,
+    weekdays: (time: string) => `工作日 ${time}`,
+    weekly: (day: string, time: string) => `每${day} ${time}`,
+  },
+  {
+    removedService: (model: string) => `${model} (service removed)`,
+    home: 'Home',
+    removedProject: 'Project removed',
+    failed: 'Failed',
+    interrupted: 'The connection dropped. Your Mac may have saved the changes.',
+    refused: 'Changes weren’t saved. Try again.',
+    days: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+    daily: (time: string) => `Every day at ${time}`,
+    weekdays: (time: string) => `Weekdays at ${time}`,
+    weekly: (day: string, time: string) => `Every ${day} at ${time}`,
+  },
+)
 
 export function agentEntries(list: { general: { memoryCount: number }; agents: readonly CustomAgentSummary[] } | undefined): AgentEntry[] {
   if (!list) return []
   return [
-    { kind: 'general', id: GENERAL_AGENT_ID, name: GENERAL_NAME, memoryCount: list.general.memoryCount },
+    { kind: 'general', id: GENERAL_AGENT_ID, name: AGENT_SPACE_COPY.general, memoryCount: list.general.memoryCount },
     ...list.agents.map(summary => ({ kind: 'custom' as const, id: summary.id, name: summary.name, summary })),
   ]
 }
@@ -70,14 +97,14 @@ export function dutyLine(agent: { description?: string; instructions?: string })
 
 export function modelName(catalog: HostCatalog | undefined, model: ModelRef): string {
   const provider = findProvider(catalog, model.providerId)
-  return provider ? model.model : `${model.model}（服务已移除）`
+  return provider ? model.model : COPY.removedService(model.model)
 }
 
 /** Where a new topic works: the selected project, or the Agent's fixed home. */
 export function worksIn(catalog: HostCatalog | undefined, projectId: string | undefined): string {
-  if (!projectId || projectId === 'default') return '家'
+  if (!projectId || projectId === 'default') return COPY.home
   const project = catalog?.workspaces.find(item => item.id === projectId)
-  return project ? projectName(project) : '项目已移除'
+  return project ? projectName(project) : COPY.removedProject
 }
 
 /** This Agent's topics that are not archived, newest first; 通用's are the conversations marked as its. */
@@ -92,9 +119,13 @@ export function sessionAgent(
 ): { id: string; name: string; avatar?: AgentAvatar } | undefined {
   const id = topicOwner(task)
   if (!id) return undefined
-  if (id === GENERAL_AGENT_ID) return { id, name: GENERAL_NAME }
+  if (id === GENERAL_AGENT_ID) return { id, name: AGENT_SPACE_COPY.general }
   const found = snapshot.customAgents?.find(agent => agent.id === id)
-  return { id, name: found?.name ?? (snapshot.customAgents ? '已删除的 Agent' : 'Agent'), ...(found ? { avatar: found.avatar } : {}) }
+  return {
+    id,
+    name: found?.name ?? (snapshot.customAgents ? AGENT_SPACE_COPY.deletedAgent : 'Agent'),
+    ...(found ? { avatar: found.avatar } : {}),
+  }
 }
 
 /**
@@ -140,9 +171,19 @@ export function agentActivity(
  * through the Agent's availability. 运行中 stands in only while no topic says what it does.
  */
 export const ACTIVITY_WORDS: Partial<Record<AvatarState, { words: string; tone: 'running' | 'waiting' | 'failed' }>> = {
-  running: { words: '运行中', tone: 'running' },
-  waiting: { words: WAITS_ON_YOU.words, tone: 'waiting' },
-  failed: { words: '失败', tone: 'failed' },
+  running: {
+    get words() {
+      return AGENT_SPACE_COPY.running
+    },
+    tone: 'running',
+  },
+  waiting: WAITS_ON_YOU,
+  failed: {
+    get words() {
+      return COPY.failed
+    },
+    tone: 'failed',
+  },
 }
 
 /**
@@ -309,11 +350,11 @@ export function writeOutcome(error: unknown): WriteOutcome {
   if (isUncertain(error))
     return {
       kind: 'unknown',
-      message: error instanceof ApiTimeoutError || error instanceof ApiError ? error.message : '连接中断，Mac 可能已经保存。',
+      message: error instanceof ApiTimeoutError || error instanceof ApiError ? error.message : COPY.interrupted,
     }
   if (error instanceof ApiError) return { kind: 'refused', message: error.message, code: error.code }
   if (error instanceof ClientError) return { kind: 'refused', message: error.message }
-  return { kind: 'refused', message: '没有保存，请重试。' }
+  return { kind: 'refused', message: COPY.refused }
 }
 
 /** A read that a smaller data scope cannot make, as opposed to one that failed. */
@@ -358,23 +399,35 @@ export function delegationSubmission(input: {
   }
 }
 
-const DAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 /** 定时任务's schedule in words: 每天 09:00, 工作日 09:00, 每周一 09:00. */
 export function scheduleWords(schedule: AutomationSummary['schedule']): string {
-  if (schedule.kind === 'daily') return `每天 ${schedule.time}`
-  if (schedule.kind === 'weekdays') return `工作日 ${schedule.time}`
-  return `每${DAYS[schedule.day] ?? ''} ${schedule.time}`
+  if (schedule.kind === 'daily') return COPY.daily(schedule.time)
+  if (schedule.kind === 'weekdays') return COPY.weekdays(schedule.time)
+  return COPY.weekly(COPY.days[schedule.day] ?? '', schedule.time)
 }
 
 /** A run's state in the words the session list uses. */
-export const RUN_WORDS: Record<NonNullable<AutomationSummary['lastRun']>['state'], string> = {
-  running: '运行中',
-  waiting: '等你处理',
-  completed: '完成',
-  failed: '失败',
-  cancelled: '已取消',
-  interrupted: '已中断',
-  unknown: '结果未知',
-  missed: '错过',
-  skipped: '跳过',
-}
+export const RUN_WORDS = defineCopy(
+  {
+    running: '运行中',
+    waiting: '等你处理',
+    completed: '完成',
+    failed: '失败',
+    cancelled: '已取消',
+    interrupted: '已中断',
+    unknown: '结果未知',
+    missed: '错过',
+    skipped: '跳过',
+  } satisfies Record<NonNullable<AutomationSummary['lastRun']>['state'], string>,
+  {
+    running: 'Running',
+    waiting: 'Needs you',
+    completed: 'Complete',
+    failed: 'Failed',
+    cancelled: 'Cancelled',
+    interrupted: 'Interrupted',
+    unknown: 'Outcome unknown',
+    missed: 'Missed',
+    skipped: 'Skipped',
+  },
+)
