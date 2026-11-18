@@ -191,8 +191,15 @@ it('opens a 待办 inside 看板 with its sessions, starts another, brings a rep
       await route.fulfill({ response, json: body })
     })
     await owner.json(`work/items/${mixed.id}`, { method: 'PATCH', body: { baseRevision: shown, priority: 'low' } })
+    const rejected = page.waitForResponse(
+      response => response.url().endsWith(`/link/api/work/items/${mixed.id}/start`) && response.request().method() === 'POST',
+    )
     await dialog.getByRole('button', { name: '发送', exact: true }).click()
-    await dialog.getByText('待办已被修改，请刷新后再试。').waitFor()
+    const conflict = await rejected
+    expect(conflict.status()).toBe(409)
+    expect(await conflict.json()).toMatchObject({ error: 'item-changed' })
+    await dialog.getByText('待办已被修改，请刷新后再试。', { exact: true }).waitFor()
+    expect(await input.inputValue()).toBe('echo 再来一个会话')
     expect((await itemOf(mixed.id)).sessionIds.length).toBe(3)
     await page.unrouteAll({ behavior: 'ignoreErrors' })
     // The next change reaches the page as it is: the dialog's next send names the revision now shown.

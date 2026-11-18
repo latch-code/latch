@@ -14,8 +14,8 @@ import { defineCopy, formatList, plural } from './i18n.ts'
 /**
  * Security-related text comes from this catalog, chosen by the Host's error code; the Host's free-text `message` is never
  * shown for these codes. The only values substituted in are a wait time and a validated `host:port` target. Codes
- * outside the catalog keep the Host's message in Chinese and use a generic notice in English. The catalog follows
- * the interface glossary (`scripts/glossary.ts`).
+ * outside the catalog use a generic notice in both languages. The catalog follows the interface glossary
+ * (`scripts/glossary.ts`).
  */
 
 /** Why this browser is on the enrollment page: the Host's 401 code or a local cause. */
@@ -1796,9 +1796,11 @@ const EXTRA_FAILURES: Readonly<Record<string, string>> = defineCopy(
     'host-starting': 'Latch 服务正在启动，请稍候。',
     'host-stop-timeout': 'Latch 服务没有在 60 秒内停止，未重新启动。',
     'host-unverified': '无法通过 host.sock 核对正在运行的 Latch 服务，未重新启动。',
+    'internal-error': '请求未完成。请刷新页面，核对当前状态后重试。',
     'invalid-input': '输入格式不正确，请检查必填内容。',
     'invalid-json': '请求不是有效的 JSON。',
     'invalid-link': '没有找到电脑链接。请在另一台电脑上的 Latch 里复制链接，或选用它生成的连接文件。',
+    'item-changed': '待办已被修改，请刷新后再试。',
     'login-item-failed': '无法更改登录项，请在「系统设置 › 通用 › 登录项」中检查。',
     offline: '无法连接到这台电脑，请确认它已开机并运行 Latch。',
     outdated: '请先更新那台电脑上的 Latch，再试一次。',
@@ -1851,9 +1853,11 @@ const EXTRA_FAILURES: Readonly<Record<string, string>> = defineCopy(
     'host-starting': 'The Latch service is starting. Wait and try again.',
     'host-stop-timeout': 'The Latch service did not stop within 60 seconds. It was not restarted.',
     'host-unverified': 'Latch could not verify the running service through host.sock. It was not restarted.',
+    'internal-error': 'The request did not finish. Refresh the page and check the current state before trying again.',
     'invalid-input': 'Check the required fields and try again.',
     'invalid-json': 'The request was not valid JSON.',
     'invalid-link': 'No connection link was found. Copy a link in Latch on the other computer, or choose a connection file it created.',
+    'item-changed': 'This task changed. Refresh and try again.',
     'login-item-failed': 'Couldn’t change the login item. Check System Settings › General › Login Items.',
     offline: 'This computer could not be reached. Check that it is on and running Latch.',
     outdated: 'Update Latch on the other computer and try again.',

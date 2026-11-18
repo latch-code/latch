@@ -190,6 +190,18 @@ describe('the page language', () => {
     )
   })
 
+  it('explains how to recover from a stale task or an incomplete request', () => {
+    const raw = 'Server-only diagnostic'
+    expect(describeFailure(409, 'item-changed', raw)).toBe('待办已被修改，请刷新后再试。')
+    expect(describeFailure(500, 'internal-error', raw)).toBe('请求未完成。请刷新页面，核对当前状态后重试。')
+
+    setLocale('en')
+    expect(describeFailure(409, 'item-changed', raw)).toBe('This task changed. Refresh and try again.')
+    expect(describeFailure(500, 'internal-error', raw)).toBe(
+      'The request did not finish. Refresh the page and check the current state before trying again.',
+    )
+  })
+
   it('reads the display label for an audit action without translating its key', () => {
     const entry = { action: 'git.push', label: '推送' }
     expect(auditActionLabel(entry)).toBe('推送')

@@ -14,6 +14,7 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSection, openSession, openSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/policy-limits'
+const INCOMPLETE_REQUEST = '请求未完成。请刷新页面，核对当前状态后重试。'
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844, touch: true },
   { name: 'tablet', width: 768, height: 1024, touch: true },
@@ -160,18 +161,26 @@ describe('what this computer can take back', () => {
         await row.scrollIntoViewIfNeeded()
         await shot('addresses')
 
-        // A removal the Host refuses stays in the dialog and changes nothing.
+        const readPolicy = () => local.json<{ policy: { confirmedAddresses: string[]; hostEgressAllow: string[] } }>('policy')
+        const before = await readPolicy()
+        const confirmations = host.presence.requests.length
+        // A failed removal leaves its confirmation open. The policy remains as the Host last read it.
         await page.route('**/link/api/policy', route =>
           route.request().method() === 'PATCH'
-            ? route.fulfill({ status: 500, json: { error: 'internal', message: '写入失败' } })
+            ? route.fulfill({ status: 500, json: { error: 'internal-error', message: '写入失败' } })
             : route.continue(),
         )
         await row.getByRole('button', { name: '移除', exact: true }).click()
         const dialog = page.locator('.confirm-dialog')
+        const remove = dialog.getByRole('button', { name: '移除', exact: true })
+        const failure = dialog.getByText(INCOMPLETE_REQUEST, { exact: true })
         await dialog.getByText('本地服务', { exact: false }).waitFor()
         await shot('remove-confirm')
-        await dialog.getByRole('button', { name: '移除', exact: true }).click()
-        await dialog.getByText('写入失败', { exact: false }).waitFor()
+        await remove.click()
+        await failure.waitFor()
+        expect(await dialog.getByText('写入失败', { exact: true }).count()).toBe(0)
+        expect(await remove.isEnabled()).toBe(true)
+        expect(await readPolicy()).toEqual(before)
         await shot('remove-failed')
         await page.unroute('**/link/api/policy')
 
@@ -184,16 +193,23 @@ describe('what this computer can take back', () => {
           if (route.request().method() === 'PATCH') await held
           await route.continue()
         })
-        await dialog.getByRole('button', { name: '移除', exact: true }).click()
-        await page.waitForTimeout(200)
-        await shot('remove-progress')
-        release()
+        try {
+          const writing = page.waitForRequest(request => request.url().endsWith('/link/api/policy') && request.method() === 'PATCH')
+          await remove.click()
+          await writing
+          await expect.poll(() => remove.isEnabled()).toBe(false)
+          expect(await failure.count()).toBe(0)
+          await shot('remove-progress')
+        } finally {
+          release()
+        }
         await dialog.waitFor({ state: 'detached' })
         await page.unroute('**/link/api/policy')
         await row.waitFor({ state: 'detached' })
-        const policy = await local.json<{ policy: { confirmedAddresses: string[]; hostEgressAllow: string[] } }>('policy')
+        const policy = await readPolicy()
         expect(policy.policy.confirmedAddresses).toEqual([])
         expect(policy.policy.hostEgressAllow).toEqual([])
+        expect(host.presence.requests).toHaveLength(confirmations)
         await settings.locator('.provider-row', { hasText: '本地服务' }).getByText('未确认', { exact: true }).waitFor()
         await shot('removed')
 
@@ -310,10 +326,16 @@ describe('what this computer can take back', () => {
 
   it('reports a pin that failed in the menu, and leaves the choice unset', async () => {
     const { page, context } = await open(VIEWPORTS[2], 'dark')
-    await page.route('**/link/api/preferences', route => route.fulfill({ status: 500, json: { error: 'internal', message: '没有保存' } }))
+    await page.route('**/link/api/preferences', route =>
+      route.request().method() === 'PUT'
+        ? route.fulfill({ status: 500, json: { error: 'internal-error', message: '没有保存' } })
+        : route.continue(),
+    )
     await page.locator('.composer-stack .harness-picker').filter({ visible: true }).click()
     await page.getByRole('menuitem', { name: '设为新会话默认' }).click()
-    await page.getByText('没有保存', { exact: false }).waitFor()
+    await page.getByText(INCOMPLETE_REQUEST, { exact: true }).waitFor()
+    expect(await page.getByText('没有保存', { exact: true }).count()).toBe(0)
+    expect((await local.json<AppSnapshot>('snapshot')).catalog!.defaults.pinned).toBeUndefined()
     await page.screenshot({ path: `${OUTPUT}/pin-failed--desktop--dark.png` })
     await page.keyboard.press('Escape')
     await context.close()
@@ -339,45 +361,43 @@ describe('what this computer can take back', () => {
       await openSession(page, created.sessionId)
       const composer = page.locator('.composer-stack:visible').first()
       await composer.waitFor()
-      if (viewport.name === 'phone') {
-        // The model menu lives elsewhere on a phone: copying from the session menu draws a toast in the same place.
-        const copied = await recordClipboardWrites(page)
-        await page.locator('.topbar-title-button').click()
-        await page.getByRole('menuitem', { name: /复制.*Markdown/u }).click()
-        await expect.poll(copied).toEqual([expect.stringContaining('说一句话')])
-      } else {
-        await composer.locator('.model-picker').click()
-        await page.getByRole('menuitemradio', { name: /model-b/u }).click()
-      }
+      const copied = await recordClipboardWrites(page)
+      await page.locator('.topbar-title-button').click()
+      await page.getByRole('menuitem', { name: /复制.*Markdown/u }).click()
+      await expect.poll(copied).toEqual([expect.stringContaining('说一句话')])
       const toast = page.locator('.toast')
-      await toast.waitFor()
+      await toast.getByText('已复制 Markdown', { exact: true }).waitFor()
       const clearOfComposer = async (name: string) => {
         await expect
           .poll(async () => {
             const [toastBox, composerBox] = await Promise.all([toast.boundingBox(), composer.boundingBox()])
-            return composerBox!.y - (toastBox!.y + toastBox!.height)
+            return toastBox && composerBox ? composerBox.y - (toastBox.y + toastBox.height) : Number.NEGATIVE_INFINITY
           })
           .toBeGreaterThanOrEqual(0)
         await motionDone(page)
         await page.screenshot({ path: `${OUTPUT}/${name}--${viewport.name}.png` })
       }
       await clearOfComposer('toast')
-      // Taller toasts reach the composer's centre from their resting place, which must not read as covering it.
-      await page.route('**/link/api/tasks/*', route =>
+      const detailPath = `tasks/${created.sessionId}`
+      await page.route(`**/link/api/${detailPath}`, route =>
         route.request().method() === 'PATCH'
-          ? route.fulfill({
-              status: 500,
-              json: {
-                error: 'internal',
-                message: '没有保存这次改动：这台 Mac 上的 Latch 刚才没有回答，请等它恢复之后再试一次，草稿和会话都还在原处。',
-              },
-            })
+          ? route.fulfill({ status: 500, json: { error: 'internal-error', message: '没有保存这次改动' } })
           : route.continue(),
       )
       await page.locator('.topbar-title-button').click()
       await page.getByRole('menuitem', { name: /置顶/u }).click()
-      await page.getByText('没有保存这次改动', { exact: false }).waitFor()
-      await clearOfComposer('toast-wrapped')
+      await toast.getByText(INCOMPLETE_REQUEST, { exact: true }).waitFor()
+      expect(await toast.getByText('没有保存这次改动', { exact: true }).count()).toBe(0)
+      expect((await local.json<TaskDetail>(detailPath)).summary.pinned).toBeFalsy()
+      // Narrow only the error toast so the same fixed copy exercises a second line at every viewport.
+      const flatHeight = (await toast.boundingBox())!.height
+      const narrow = await page.addStyleTag({ content: '.toast { max-width: 12rem }' })
+      try {
+        await expect.poll(async () => (await toast.boundingBox())?.height).toBeGreaterThan(flatHeight)
+        await clearOfComposer('toast-wrapped')
+      } finally {
+        await narrow.evaluate(style => style.remove())
+      }
       const waiting = await local.json<{ sessionId: string }>('tasks', {
         method: 'POST',
         body: { prompt: '要等批准', requestId: randomUUID(), mode: 'agent', model: { providerId: 'limit-models', model: 'model-a' } },
