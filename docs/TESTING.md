@@ -149,8 +149,8 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 
 这些用例运行真实已安装的 CLI，默认跳过，只在这台电脑的所有者明确授权后设置变量运行。共同规则：
 
-- 临时 HOME/XDG 与 CLI 配置目录、临时 Host 与项目，上游是本地假模型服务；不读取用户的 CLI 登录文件。
-- 通过只说明真实 CLI 与 Latch 的接线，不能称为真实模型服务或 BYOK 成功；夹具回答的审批也不代替页面审批或本人的系统确认。
+- 使用临时 Host 与项目，不读取用户的 CLI 登录文件。
+- 使用本地假模型的用例另隔离 HOME/XDG 与 CLI 配置目录，只验证 CLI 与 Latch 的接线。系统确认由本人实测。
 
 没有写目录的文件在 `apps/host/test/`。
 
@@ -168,10 +168,28 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | `LATCH_AGY_BINARY` | `antigravity.live.test.ts` |
 | `LATCH_COMPUTER_GUIDE_LIVE=codex=<路径>,claude-agent=<claude-agent-acp 路径>,opencode=<路径>` | `computer-guide.live.test.ts`：CLI 用自己的登录与模型，假 Driver，不碰桌面；替换与前置的 A/B（[MCP.md](MCP.md#给-agent-的指引)）。`LATCH_COMPUTER_GUIDE_ARMS=replace` 或 `prepend` 只跑一组，`LATCH_COMPUTER_GUIDE_RUNS` 每组次数，`LATCH_COMPUTER_GUIDE_VENDOR_FILE` 是 Driver 原文（不进仓库），`LATCH_COMPUTER_GUIDE_BROWSER=0` 跳过 latch-browser 一项，`LATCH_COMPUTER_GUIDE_EVIDENCE_DIR` 写下每轮的结果。`PATH` 里的 `cua-driver` 与 `cua` 要换成只记录的替身 |
 | `LATCH_CODEX_QUOTA_BINARY` | `harness-quota.live.test.ts`，结果写到 `LATCH_CODEX_QUOTA_OUT` |
+| `LATCH_LIVE_HARNESS` 和 `LATCH_LIVE_HARNESS_BINARY` | `e2e/harness-acceptance.e2e.ts`，在真实浏览器中验收所选 CLI 的一轮回复与重入 |
 
-最后两行是例外：它们使用 CLI 自己已有的登录并调用真实模型（没有可指向的本地假服务），所以只发一条或几条极短的提示，在临时 Host 与临时项目里运行，仍不读取 CLI 自己的任何文件。
+电脑指引、Codex 额度、Antigravity 实测与单回合浏览器验收使用 CLI 自己已有的登录与模型。它们在临时 Host 与临时项目里发送极短的提示，不读取 CLI 自己的任何文件。
 
 `LATCH_GATEWAY_EVIDENCE_DIR` 与 `LATCH_AGY_EVIDENCE_DIR` 收每一轮去掉正文的结果。
+
+#### 单回合浏览器验收
+
+构建页面后从仓库根目录运行。默认使用本地 ACP 夹具走完报告面板与重启重入。实测时每次只选 `codex`、`claude-agent`、`pi`、`antigravity`、`grok`、`qwen` 或 `goose` 中的一项，程序路径使用已安装的预设命令。此例用 Codex 验收待办提议。
+
+```sh
+LATCH_LIVE_HARNESS=codex \
+LATCH_LIVE_HARNESS_BINARY=/absolute/path/to/codex \
+LATCH_LIVE_HARNESS_MODE=todo \
+LATCH_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
+NODE_OPTIONS=--disable-sigusr1 \
+pnpm exec vitest run --config e2e/vitest.config.ts e2e/harness-acceptance.e2e.ts --maxWorkers=1
+```
+
+用例经浏览器发送一次固定短答，核对 Host 的终态、回复与回合，检查该 Harness 报告的模型、额度与扩展情况，再重启临时 Host 并打开同一会话。默认模式要求模型只返回 `LATCH-OK`。Codex 可加 `LATCH_LIVE_HARNESS_MODE=todo`，在「我的 Agent」中发送一条合成提议，请人经界面接受并打开对应待办。只有参数精确匹配的 `latch-skills.propose_todo` 可以得到一次测试批准，待办保持未开始。
+
+临时 Host 只查找选定的程序。Antigravity 与 Claude 的启动环境关闭自动更新，Claude 另关闭官方市场的自动安装。结果只输出状态、固定失败类别、数量与核对结果。报告面板失败后仍检查同一回合能否在 Host 重启后重入。浏览器或 Host 关闭失败时保留本次验收的临时目录，输出关闭状态与目录路径。设置 `LATCH_LIVE_HARNESS_EVIDENCE_DIR` 可保存重入后经过文字核对的回复正文裁图。运行时保持 Playwright 的调试日志与跟踪关闭。登录、拒绝、超时与偏离短答按实际结果记录。真实 CLI 配本地假模型的验收另见 `gateway-no-login.live.test.ts`。
 
 ### iOS 模拟器用例
 
@@ -567,7 +585,7 @@ pnpm latch presence test --data-dir <临时目录>
 
 - iOS/iPadOS 真机：软键盘、输入法、后台挂起、读屏、Secure Enclave、Face ID、钥匙串、App Attest、Bonjour 重连与跨网络；真机经 Tailscale 证书的 HTTPS 访问；公网代理与中继的公网部署。
 - 模拟器里的 App：SDK 编译与固定样本截图不代替安装后的布局、主线程与流量验收；Swift 互操作用例（`native-swift.test.ts`）只测核心与协议，不启动 App。
-- 真实模型服务的兼容矩阵、真实 BYOK，以及真实 ACP Agent 的提示执行。假进程与手写回放不是真实 CLI 的录制。对真实 Agent 只做人工验收；可以在不发送提示的前提下检查握手（`initialize`、`session/new`）。
+- 真实模型服务的完整兼容矩阵、真实 BYOK 与未覆盖的真实 CLI 场景。单回合验收须经所有者授权并显式开启。在不发送提示时也可以检查握手（`initialize`、`session/new`）。
 - macOS 的系统确认表单（见上一节）、原生文件夹面板、Quick Look、系统通知与系统剪贴板。
 - Linux 与 Windows 上的本机确认尚未实现（没有对应的确认组件），相关用例只覆盖「不可用」路径与桌面端的离线连接码。
 - 正式签名、公证后的 Electron 应用、真实系统 Node 安装路径的跨机器矩阵与发布身份的正向验证。
