@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { copyFile, mkdir, open, writeFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
@@ -164,6 +164,9 @@ export async function runSetup(input: SetupInput, deps: SetupDeps): Promise<{ ur
     // The admin token goes into a 0600 header file for `curl -H @file`, never onto a command line.
     await writeNew(`${input.out}.admin-header`, `Authorization: Bearer ${hex(admin)}\n`)
     deps.progress(`已写入中继文件 ${input.out}（含注册令牌，只交给你的 Mac）`)
+    // Public: the short hash the Mac's confirmation sheet shows for this relay key.
+    deps.progress(`中继密钥短哈希 ${createHash('sha256').update(Buffer.from(relayKey, 'hex')).digest('hex').slice(0, 8)}`)
+    deps.progress(`下一步：pnpm relay-edge:accept --file ${input.out}`)
     return { url: `${url}/`, relayId }
   } finally {
     seed.fill(0)

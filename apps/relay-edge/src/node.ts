@@ -43,6 +43,11 @@ export interface EdgeLimits {
    * where an idle pair costs about 8 received messages a second and a streaming one up to about 50.
    */
   maxPairs: number
+  /**
+   * A socket whose runtime reports more unsent bytes than this is closed (4302). Only used when the runtime reports a
+   * valid `bufferedAmount`; the send budget in buffers.ts bounds every socket either way.
+   */
+  maxBacklogBytes: number
 }
 const DEFAULT_LIMITS: EdgeLimits = {
   maxConnections: 1024,
@@ -56,6 +61,7 @@ const DEFAULT_LIMITS: EdgeLimits = {
   maxConcurrent: 4,
   maxQueuedBytes: 262_144,
   maxPairs: 40,
+  maxBacklogBytes: 1_048_576,
 }
 /**
  * Messages a socket may send before the node has authenticated it: HELLO and one REGISTER, ADMIT or ATTACH. The one
@@ -96,7 +102,7 @@ class OuterPadding {
   private queuedBytes = 0
   private readonly started: number
   private timer: unknown
-  private stopped = false
+  stopped = false
   private readonly platform: EdgePlatform
   private readonly write: (payload: Uint8Array, reserved: boolean) => void
   private readonly fail: () => void
@@ -111,7 +117,7 @@ class OuterPadding {
   /** The bounds of the self-hosted relay's cover (link-client relay-outer-padding.ts): past them the socket closes. */
   send(payload: Uint8Array): void {
     if (this.stopped) {
-      this.write(payload, true)
+      this.write(payload, false)
       return
     }
     const bytes = frameBytes(payload.length, false)
@@ -196,8 +202,10 @@ interface Socket {
 export class EdgeNode {
   private readonly platform: EdgePlatform
   private readonly sockets = new Map<number, Socket>()
-  private readonly buffers = new EdgeBuffers()
+  private readonly buffers: EdgeBuffers
   private readonly configured: boolean
+  /** When this object started: a reset (deploy, runtime update, memory limit) shows as a new value in /admin/status. */
+  private readonly startedAt: number
   private core?: RelayCore
   private denials?: EdgeDenials
   private sequence = 0
@@ -221,6 +229,13 @@ export class EdgeNode {
       parsed = undefined
     }
     this.limits = parsed ?? DEFAULT_LIMITS
+    this.startedAt = platform.now()
+    this.buffers = new EdgeBuffers(() => platform.now(), {
+      maxBacklogBytes: this.limits.maxBacklogBytes,
+      // Open sockets above the core's per-prefix limit evict that prefix's oldest unauthenticated one; held slots of
+      // closed sockets count here too, so a prefix that opens and closes fast holds at most twice its share.
+      maxPerPrefix: this.limits.maxPerPrefix * 2,
+    })
     const relayId = hexBytes(env.RELAY_ID, 16),
       seed = hexBytes(env.RELAY_SIGNING_SEED, 32)
     const token = env.REGISTRATION_TOKEN ? hexBytes(env.REGISTRATION_TOKEN, 32) : undefined
@@ -283,12 +298,13 @@ export class EdgeNode {
     if (this.buffers.size >= this.limits.maxConnections) return this.platform.respond(503)
     const now = this.platform.now()
     const [client, ws] = this.platform.pair()
-    if (!this.buffers.accept(ws)) return this.platform.respond(503)
+    // Refused, not served without cover, when the prefix or the object has spent its unauthenticated output budget.
+    if (!this.buffers.accept(ws, prefix)) return this.platform.respond(503)
     try {
       ws.binaryType = 'arraybuffer'
       ws.accept()
     } catch {
-      this.buffers.closed(ws)
+      this.buffers.close(ws)
       return this.platform.respond(503)
     }
     const id = ++this.sequence
@@ -321,16 +337,13 @@ export class EdgeNode {
     if (role !== 'host')
       socket.outer = new OuterPadding(
         this.platform,
-        (payload, reserved) => this.write(socket, payload, reserved),
+        (payload, queued) => this.write(socket, payload, queued),
         () => this.close(socket, 4302),
       )
     this.sockets.set(id, socket)
     this.armAlarm()
     ws.addEventListener('message', event => this.receive(core, socket, event.data))
-    ws.addEventListener('close', () => {
-      this.disconnect(socket)
-      this.buffers.closed(ws)
-    })
+    ws.addEventListener('close', () => this.disconnect(socket))
     ws.addEventListener('error', () => this.close(socket, 1001))
     if (role === 'client' && this.pairs() >= this.limits.maxPairs) this.close(socket, 4302)
     else core.connect(socket.peer, role)
@@ -349,31 +362,26 @@ export class EdgeNode {
     for (const socket of this.sockets.values()) if (!socket.closed && socket.spliced && socket.role === 'client') spliced++
     return spliced
   }
-  private write(socket: Socket, payload: Uint8Array, reserved = false): void {
+  /** `queued`: the message held a cover-queue reservation, released as it goes to the runtime. */
+  private write(socket: Socket, payload: Uint8Array, queued = false): void {
     if (socket.closed) return
-    if (!reserved && !this.buffers.queue(socket.ws, payload.length)) {
-      this.close(socket, 4302)
-      return
-    }
-    try {
-      this.buffers.write(socket.ws, payload)
-      this.traffic.bytesOut += frameBytes(payload.length, false)
-    } catch {
-      this.close(socket, 4302)
-    }
+    const result = this.buffers.write(socket.ws, payload, { queued, authenticated: socket.authenticated })
+    if (result === 'written' || result === 'backlog') this.traffic.bytesOut += frameBytes(payload.length, false)
+    if (result !== 'written') this.close(socket, 4302)
   }
   private send(socket: Socket, message: RelayMessage): Promise<void> {
     if (socket.closed) return Promise.reject(new Error('Relay socket closed'))
     if (message.type === 'registered' || message.type === 'admitted' || message.type === 'attached') socket.authenticated = true
     if (message.type === 'registration-work') socket.workAsked = true
     const payload = encodeMessage(message, 2)
-    if (!this.buffers.queue(socket.ws, payload.length)) {
-      this.close(socket, 4302)
-      return Promise.reject(new Error('Relay output unavailable'))
-    }
-    if (socket.outer) socket.outer.send(payload)
-    else this.write(socket, payload, true)
-    return Promise.resolve()
+    if (socket.outer && !socket.outer.stopped) {
+      if (!this.buffers.queue(socket.ws, payload.length)) {
+        this.close(socket, 4302)
+        return Promise.reject(new Error('Relay output unavailable'))
+      }
+      socket.outer.send(payload)
+    } else this.write(socket, payload)
+    return socket.closed ? Promise.reject(new Error('Relay output unavailable')) : Promise.resolve()
   }
   private receive(core: RelayCore, socket: Socket, data: unknown): void {
     if (socket.closed) return
@@ -448,8 +456,9 @@ export class EdgeNode {
     if (!core) return
     const now = this.platform.now()
     core.sweep()
+    const overloaded = new Set(this.buffers.overloaded())
     for (const socket of [...this.sockets.values()]) {
-      if (!this.buffers.current(socket.ws)) this.close(socket, 4302)
+      if (overloaded.has(socket.ws)) this.close(socket, 4302)
       else if (now - socket.lastSeen > EDGE_RELAY.nodeDeadAfterMs) this.close(socket, 1001)
     }
   }
@@ -493,6 +502,7 @@ export class EdgeNode {
     return {
       ready: this.ready(),
       configured: this.configured,
+      startedAt: this.startedAt,
       ...(this.core ? this.core.status() : {}),
       sockets: this.sockets.size,
       pairs: this.pairs(),

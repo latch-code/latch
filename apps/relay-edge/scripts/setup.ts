@@ -23,7 +23,7 @@ const fail = (message: string): void => {
 }
 const region = values.region
 if (!EDGE_RELAY_AVAILABLE) {
-  fail('Cloudflare Workers 中继尚未实现：平台暂无法提供消息组装前大小与连接释放约束。')
+  fail('这个版本关闭了 Cloudflare Workers 中继。')
   process.exit()
 }
 if (region !== 'ne' && region !== 'se') {

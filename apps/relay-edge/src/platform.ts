@@ -21,7 +21,10 @@ export interface EdgeResponse {
 }
 /** The server half of a WebSocketPair, used with accept() (never the hibernation API). */
 export interface EdgeWebSocket {
-  /** Since workerd v1.20261117.1 (PR 8479); live Cloudflare rollout unverified. Missing/invalid counters fail closed. */
+  /**
+   * Since workerd v1.20261117.1; a probe on the platform read a number. Used only to close a socket earlier, never to
+   * release budget, so a missing or wrong value cannot widen a bound.
+   */
   readonly bufferedAmount?: number
   binaryType: 'arraybuffer' | 'blob'
   accept(): void

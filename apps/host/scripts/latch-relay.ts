@@ -23,7 +23,7 @@ export const RELAY_USAGE = `  relay list [--json]                      列出自
                                            文件里的注册令牌只交给 Host，不显示
   relay test <节点标识>                      测试中继的连接、密钥、登记，显示 Host 签发状态（Host 运行中）
   relay remove <节点标识>                    移除自己的中继（Host 已停止）
-  relay setup cloudflare                  Cloudflare Workers 中继尚未实现
+  relay setup cloudflare                  尚未实现：安装版不带 Workers 部署包，源码目录用 pnpm relay-edge:setup
   relay setup linux                       尚未提供 Linux 中继发布物；可在服务器源码目录部署后导入
 `
 type Out = (text: string) => void
@@ -98,8 +98,10 @@ export async function runRelayCommand(input: {
   const { command, rest, flags, dataDir, io, out } = input
   if (command === 'setup') {
     if (rest[0] === 'cloudflare') {
-      if (!EDGE_RELAY_AVAILABLE) throw new RelayCliError('Cloudflare Workers 中继尚未实现：平台暂无法提供消息组装前大小与连接释放约束。')
-      throw new RelayCliError('此版本的 latch 命令尚未接入 Workers 部署。')
+      if (!EDGE_RELAY_AVAILABLE) throw new RelayCliError('这个版本关闭了 Cloudflare Workers 中继。')
+      throw new RelayCliError(
+        '尚未实现：安装版不带 Workers 部署包。请在 Latch 源码目录运行 pnpm relay-edge:setup，再导入它写出的中继文件。',
+      )
     }
     if (rest[0] === 'linux') throw new RelayCliError('尚未提供 Linux 中继发布物。请在服务器上的 Latch 源码目录部署，再导入中继文件。')
     throw new RelayCliError('用法：relay setup cloudflare|linux')

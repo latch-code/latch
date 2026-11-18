@@ -122,6 +122,8 @@ private final class RelayFramer: NWProtocolFramerImplementation {
     private var outerStart: ContinuousClock.Instant?
     private let started = ContinuousClock.now
     private var stopped = false
+    /** Edge kind: when this origin's claim on the node lapses unless the connection is ready by then. */
+    private var claimDeadline: ContinuousClock.Instant?
     required init(framer: NWProtocolFramer.Instance) { setup = framer.options["latch.relay"] as? RelaySetup }
     func start(framer: NWProtocolFramer.Instance) -> NWProtocolFramer.StartResult {
         guard let setup, let host = setup.origin.host else { framer.markFailed(error: .posix(.EAUTH)); return .willMarkReady }
@@ -162,7 +164,12 @@ private final class RelayFramer: NWProtocolFramerImplementation {
         else {
             let spent = started.duration(to: .now).components
             let milliseconds = spent.seconds * 1000 + spent.attoseconds / 1_000_000_000_000_000
-            framer.scheduleWakeup(wakeupTime: .milliseconds(UInt64(max(1, 8000 - milliseconds))))
+            var wait = max(1, 8000 - milliseconds)
+            if let claimDeadline {
+                let left = ContinuousClock.now.duration(to: claimDeadline).components
+                wait = min(wait, max(1, left.seconds * 1000 + left.attoseconds / 1_000_000_000_000_000))
+            }
+            framer.scheduleWakeup(wakeupTime: .milliseconds(UInt64(wait)))
         }
     }
     func handleInput(framer: NWProtocolFramer.Instance) -> Int {
@@ -245,7 +252,12 @@ private final class RelayFramer: NWProtocolFramerImplementation {
                 if edge != nil {
                     // Check again after signing. The batch write also checks cancellation before sending anything.
                     let admit = try Data([0x11]) + setup.admission.boundAdmission(timeMs: relayTime, nonce: LinkBytes.random(16), relayNonce: relayNonce)
-                    guard setup.race?.claim() ?? true else { throw NativeFailure.unavailable }
+                    if let race = setup.race {
+                        guard race.claim(origin: setup.origin) else { throw NativeFailure.unavailable }
+                        // The claimant has its own short deadline: a stalled origin must not hold the node's other origins.
+                        claimDeadline = ContinuousClock.now + NativeEdgeRace.claimTimeout
+                        schedule(framer: framer)
+                    }
                     try send(admit, framer: framer)
                 } else {
                     try send(Data([0x10]) + setup.admission.admission(timeMs: relayTime, nonce: LinkBytes.random(16)), framer: framer)
@@ -282,6 +294,7 @@ private final class RelayFramer: NWProtocolFramerImplementation {
     }
     func wakeup(framer: NWProtocolFramer.Instance) {
         guard !stopped else { return }
+        if let claimDeadline, phase != .ready, ContinuousClock.now >= claimDeadline { framer.markFailed(error: .posix(.ETIMEDOUT)); return }
         do {
             if outer != nil {
                 if let batch = try outer!.batch(elapsedMs: elapsedMs) { try write(batch, framer: framer) }
@@ -297,7 +310,11 @@ private final class RelayFramer: NWProtocolFramerImplementation {
         catch { framer.markFailed(error: .posix(.EAUTH)) }
     }
     func stop(framer: NWProtocolFramer.Instance) -> Bool { stopped = true; outer?.clear(); outer = nil; return true }
-    func cleanup(framer: NWProtocolFramer.Instance) { stopped = true; outer?.clear(); outer = nil; setup?.outerSlot?.release() }
+    func cleanup(framer: NWProtocolFramer.Instance) {
+        stopped = true; outer?.clear(); outer = nil; setup?.outerSlot?.release()
+        // The connection is gone: an unfinished race may let another origin of the node try.
+        if claimDeadline != nil, let setup { setup.race?.release(origin: setup.origin) }
+    }
 }
 
 extension NativeHTTPConnection {
@@ -396,25 +413,58 @@ public enum NativeEdgeOrigins {
     }
 }
 
-/** The first origin of an edge node to pass the signature check claims the node; later ones stop there. */
+/**
+ * The first origin of an edge node to pass the signature check claims the node and alone sends the admission proof.
+ * The claim lapses with its connection (`claimTimeout` after claiming at most): another origin that was refused while it
+ * was held then dials again, so a stalled origin cannot keep the node's other origins waiting for the outer timeout.
+ */
 public final class NativeEdgeRace: @unchecked Sendable {
+    static let claimTimeout: Duration = .seconds(4)
     private let lock = NSLock()
-    private var claimed = false
+    private var holder: URL?
+    private var finished = false
     private var cancelled = false
+    private var refused = Set<URL>()
+    private var waiters: [(origin: URL, resume: CheckedContinuation<Bool, Never>)] = []
     public init() {}
-    public func claim() -> Bool {
+    public func claim(origin: URL) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        if cancelled || claimed { return false }
-        claimed = true; return true
+        if cancelled || finished { return false }
+        guard holder == nil else { refused.insert(origin); return false }
+        holder = origin; return true
+    }
+    /** The holder's connection ended before the race chose it: origins refused meanwhile may try again. */
+    public func release(origin: URL) {
+        lock.lock()
+        guard holder == origin, !finished else { lock.unlock(); return }
+        holder = nil
+        let ready = waiters; waiters.removeAll()
+        lock.unlock()
+        for waiter in ready { waiter.resume.resume(returning: true) }
+    }
+    /** Whether `origin`, refused while another held the claim, should dial again: after a release, never after a winner. */
+    func retryAfterRelease(origin: URL) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            lock.lock()
+            guard !cancelled, !finished, refused.remove(origin) != nil else { lock.unlock(); continuation.resume(returning: false); return }
+            if holder == nil { lock.unlock(); continuation.resume(returning: true); return }
+            waiters.append((origin, continuation))
+            lock.unlock()
+        }
     }
     func whileActive(_ operation: () -> Void) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard !cancelled else { return false }
         operation(); return true
     }
-    func cancel() {
-        lock.lock(); defer { lock.unlock() }
-        cancelled = true
+    func finish() { end(cancel: false) }
+    func cancel() { end(cancel: true) }
+    private func end(cancel: Bool) {
+        lock.lock()
+        if cancel { cancelled = true } else { finished = true }
+        let waiting = waiters; waiters.removeAll()
+        lock.unlock()
+        for waiter in waiting { waiter.resume.resume(returning: false) }
     }
 }
 
@@ -433,8 +483,14 @@ extension NativeEdgeOrigins {
                     group.addTask {
                         do {
                             if index > 0 { try await Task.sleep(for: stagger * index) }
-                            try Task.checkCancellation()
-                            return (try await attempt(origin, race), origin)
+                            // A second dial only when this origin was refused while a claimant held the node and that
+                            // claimant's connection ended before winning.
+                            for round in 0..<2 {
+                                try Task.checkCancellation()
+                                do { return (try await attempt(origin, race), origin) }
+                                catch { guard round == 0, await race.retryAfterRelease(origin: origin) else { return nil } }
+                            }
+                            return nil
                         } catch { return nil }
                     }
                 }
@@ -443,6 +499,7 @@ extension NativeEdgeOrigins {
                     guard let result = next else { continue }
                     if winner == nil, !Task.isCancelled {
                         winner = result
+                        race.finish()
                         group.cancelAll()
                     } else { await close(result.0) }
                 }

@@ -893,13 +893,21 @@ do {
         var rows: [[String: Any]] = []
         for scenario in input["scenarios"] as? [[[String: Any]]] ?? [] {
             let origins = scenario.indices.map { URL(string: "https://o\($0).example/")! }
-            let specs: [(delay: Int, valid: Bool)] = scenario.map { (($0["delay"] as? NSNumber)?.intValue ?? 0, $0["valid"] as? Bool == true) }
+            // `stall`: after claiming, the origin hangs this long, then its connection ends (the framer releases the claim).
+            let specs: [(delay: Int, valid: Bool, stall: Int)] = scenario.map {
+                (($0["delay"] as? NSNumber)?.intValue ?? 0, $0["valid"] as? Bool == true, ($0["stall"] as? NSNumber)?.intValue ?? 0)
+            }
             let started = ContinuousClock.now
             let won = await NativeEdgeOrigins.race(origins, stagger: .milliseconds(50), attempt: { origin, race in
                 let spec = specs[origins.firstIndex(of: origin)!]
                 try await Task.sleep(for: .milliseconds(spec.delay))
                 guard spec.valid else { throw NativeFailure.identityMismatch }
-                guard race.claim() else { throw NativeFailure.unavailable }
+                guard race.claim(origin: origin) else { throw NativeFailure.unavailable }
+                if spec.stall > 0 {
+                    try? await Task.sleep(for: .milliseconds(spec.stall))
+                    race.release(origin: origin)
+                    throw NativeFailure.unavailable
+                }
                 return origin.host!
             }, close: { _ in await closed.add() })
             let elapsed = started.duration(to: .now).components
@@ -930,7 +938,7 @@ do {
         let runner = Task {
             await NativeEdgeOrigins.race(urls, stagger: .seconds(30), attempt: { origin, race in
                 await signature.hold()
-                await signature.record(cancelled: Task.isCancelled, claimed: race.claim())
+                await signature.record(cancelled: Task.isCancelled, claimed: race.claim(origin: origin))
                 return origin
             }, close: { _ in await signature.close() })
         }

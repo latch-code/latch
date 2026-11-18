@@ -134,9 +134,12 @@ async function edgeRelay(seed: Uint8Array, relayId: string, token: Uint8Array) {
     },
   }
   const worker = createEdgeWorker(platform)
-  const server: Server = createServer({ cert: certificate.cert, key: certificate.key, minVersion: 'TLSv1.3', ALPNProtocols: ['http/1.1'] })
   const connections = new Set<Duplex>()
-  server.on('upgrade', (incoming, raw: Duplex, head: Buffer) => {
+  // Two origins of the same node: two listeners in front of one Worker and its node objects.
+  const servers: Server[] = [0, 1].map(() =>
+    createServer({ cert: certificate.cert, key: certificate.key, minVersion: 'TLSv1.3', ALPNProtocols: ['http/1.1'] }),
+  )
+  const upgrade = (incoming: import('node:http').IncomingMessage, raw: Duplex, head: Buffer) => {
     connections.add(raw)
     raw.once('close', () => connections.delete(raw))
     const headers: Record<string, string> = { 'cf-connecting-ip': '127.0.0.1' }
@@ -175,16 +178,25 @@ async function edgeRelay(seed: Uint8Array, relayId: string, token: Uint8Array) {
       raw.on('close', () => socket.emit('close'))
       raw.on('error', () => {})
     })
-  })
-  server.listen(0, '127.0.0.1')
-  await once(server, 'listening')
+  }
+  for (const server of servers) {
+    server.on('upgrade', upgrade)
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+  }
   cleanup.push(async () => {
     for (const node of nodes.values()) node.dispose()
     for (const connection of connections) connection.destroy()
-    server.closeAllConnections()
-    await new Promise(resolve => server.close(resolve))
+    for (const server of servers) {
+      server.closeAllConnections()
+      await new Promise(resolve => server.close(resolve))
+    }
   })
-  return { port: (server.address() as AddressInfo).port, certificate }
+  const ports = servers.map(server => (server.address() as AddressInfo).port)
+  /** Routes registered on the node objects: live, test and departed alike. */
+  const routes = () => [...nodes.values()].reduce((sum, node) => sum + Number(node.status().routes ?? 0), 0)
+  const controls = () => [...nodes.values()].reduce((sum, node) => sum + Number(node.status().controls ?? 0), 0)
+  return { port: ports[0]!, second: ports[1]!, certificate, routes, controls }
 }
 
 async function phoneAddressBook(host: TestHost) {
@@ -229,7 +241,7 @@ async function phoneAddressBook(host: TestHost) {
   }
 }
 
-it('closes the winning edge origin when its exact lease is revoked and rejects a Workers profile in the real Host', async () => {
+it('closes the winning edge origin when its exact lease is revoked', async () => {
   const seed = nodeCrypto.random(32),
     token = nodeCrypto.random(32),
     relayId = Buffer.from(nodeCrypto.random(16)).toString('hex')
@@ -280,26 +292,77 @@ it('closes the winning edge origin when its exact lease is revoked and rejects a
   expect(path.permitted()).toBe(false)
   expect(aRevoked.signal.aborted).toBe(false)
   await vi.waitFor(() => expect(releases.sort()).toEqual([a.origin, b.origin].sort()))
+}, 60_000)
 
+it('adds a Workers relay from its file in the real Host, tests it, signs both addresses, refuses another key and removes it', async () => {
+  const seed = nodeCrypto.random(32),
+    token = nodeCrypto.random(32),
+    relayId = Buffer.from(nodeCrypto.random(16)).toString('hex')
+  const relay = await edgeRelay(seed, relayId, token)
   const host = await startTestHost({
     native: { host: '127.0.0.1', port: 0 },
+    nativeRelayCa: relay.certificate.cert,
+    egressAllow: [`localhost:${relay.port}`, `localhost:${relay.second}`],
+    egressLookup: (_hostname, _options, callback) => callback(null, [{ address: '127.0.0.1', family: 4 }]),
   })
   cleanup.push(() => host.close())
+  host.presence.mode = 'approve'
   const desktop = await host.enroll({ listener: 'unix' })
+  const relayKey = Buffer.from(await nodeCrypto.publicKey(seed)).toString('hex')
+  const keyHash = createHash('sha256').update(Buffer.from(relayKey, 'hex')).digest('hex').slice(0, 8)
   const file = {
     relayId,
     url: `https://localhost:${relay.port}/`,
     kind: 'edge' as const,
-    relayKey: Buffer.from(await nodeCrypto.publicKey(seed)).toString('hex'),
+    relayKey,
+    extraUrls: [`https://localhost:${relay.second}/`],
     registrationKey: `lrt1.${Buffer.from(token).toString('base64url')}`,
   }
 
-  const refused = await desktop.request('native/relays', { method: 'POST', body: { requestId: crypto.randomUUID(), profile: file } })
-  expect(refused.status).toBe(503)
-  expect(await refused.json()).toMatchObject({ error: 'native-relay-platform-unavailable' })
+  // A file naming another relay key: the node's signature does not match, nothing is saved.
+  const other = Buffer.from(await nodeCrypto.publicKey(nodeCrypto.random(32))).toString('hex')
+  const refusedId = crypto.randomUUID()
+  const mismatch = await desktop.confirmed('native/relays', {
+    method: 'POST',
+    body: { requestId: refusedId, profile: { ...file, relayKey: other } },
+  })
+  expect(await mismatch.json()).toMatchObject({ error: 'native-relay-key-mismatch' })
   expect((await desktop.json<NativeLinkInfo>('native/info')).relays).toEqual([])
-  expect(host.presence.requests).toHaveLength(0)
-}, 60_000)
+  // The refused addition stays pending until it is given up.
+  expect((await desktop.request(`native/relay-requests/${refusedId}`, { method: 'DELETE' })).ok).toBe(true)
+
+  const before = host.presence.requests.length
+  const added = await desktop.confirmed('native/relays', { method: 'POST', body: { requestId: crypto.randomUUID(), profile: file } })
+  expect(added.ok).toBe(true)
+  const confirmation = host.presence.requests[before]!
+  expect(confirmation.preview.subject).toMatchObject({ form: 'relay.add', slots: { count: '2', hash: keyHash } })
+  expect(JSON.stringify(confirmation.preview)).not.toContain(file.registrationKey)
+  const info = await desktop.json<NativeLinkInfo>('native/info')
+  expect(info.edgeRelayAvailable).toBe(true)
+  expect(info.relays).toMatchObject([{ relayId, kind: 'edge', addresses: 2, keyHash }])
+  await expect.poll(async () => (await desktop.json<NativeLinkInfo>('native/info')).relays[0]?.status).toBe('connected')
+
+  // 测试 twice: one test route for the day, re-registered, never a new route per test.
+  const live = relay.routes()
+  for (let run = 0; run < 2; run++) {
+    const tested = await desktop.json<{ reached: string; failure?: string }>(`native/relays/${relayId}/test`, { method: 'POST', body: {} })
+    expect(tested).toMatchObject({ reached: 'registered' })
+    expect(tested.failure).toBeUndefined()
+  }
+  expect(relay.routes()).toBe(live + 1)
+
+  const book = await phoneAddressBook(host)
+  expect(book.relays).toHaveLength(1)
+  const entry = book.relays[0]!
+  expect(Buffer.from(entry.relayId).toString('hex')).toBe(relayId)
+  expect(Buffer.from(entry.edge!.relayKey).toString('hex')).toBe(relayKey)
+  expect([entry.url, ...(entry.extraUrls ?? [])]).toEqual([file.url, ...file.extraUrls])
+
+  expect((await desktop.request(`native/relays/${relayId}`, { method: 'DELETE' })).ok).toBe(true)
+  expect((await desktop.json<NativeLinkInfo>('native/info')).relays).toEqual([])
+  // No longer dialed: its live control connection is closed.
+  await expect.poll(() => relay.controls()).toBe(0)
+}, 90_000)
 
 it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'imports through the real desktop and Host, confirms locally, and retries a lost success with the identical request',

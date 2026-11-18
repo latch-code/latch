@@ -20,7 +20,11 @@ export function relaySetupCommands(
     const region = options.region ?? 'ne'
     return {
       login: ['wrangler login'],
-      deploy: [`pnpm relay-edge:setup --region ${region} --out "$HOME/latch-relay-${region}.json"`],
+      // Deploy, then the acceptance run against the fresh node before any Mac uses it.
+      deploy: [
+        `pnpm relay-edge:setup --region ${region} --out "$HOME/latch-relay-${region}.json"`,
+        `pnpm relay-edge:accept --file "$HOME/latch-relay-${region}.json"`,
+      ],
       fetch: [],
     }
   }

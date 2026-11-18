@@ -933,7 +933,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       relayKeys: [vectors.edgeRelay.relayKey, ''],
       urls: [['https://latch-relay-ne.example.workers.dev/', 'https://ne.relay.example/'], ['https://relay.example/']],
       order: [vectors.relayId, '33'.repeat(16)],
-      available: ['33'.repeat(16)],
+      available: [vectors.relayId, '33'.repeat(16)],
       hostRegion: 'apac-ne',
     })
     const result = await invoke({ ...vectors, operation: 'edgeRelay' })
@@ -951,7 +951,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(await verifyProof(nodeCrypto, Buffer.from(vectors.relayId, 'hex'), proof, vectors.timeMs, relayNonce)).not.toBeNull()
     expect(await verifyProof(nodeCrypto, Buffer.from(vectors.relayId, 'hex'), proof, vectors.timeMs)).toBeNull()
   })
-  it('races the origins of one edge node to a single claimant, returning the first and leaking none', async () => {
+  it('races the origins of one edge node to a single claimant at a time, returning the first and leaking none', async () => {
     const result = await invoke({
       operation: 'edgeRace',
       scenarios: [
@@ -976,6 +976,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           { delay: 0, valid: true },
           { delay: 0, valid: true },
         ],
+        // The claimant stalls after claiming: its claim lapses with its connection and the refused origin dials again.
+        [
+          { delay: 0, valid: true, stall: 300 },
+          { delay: 0, valid: true },
+        ],
       ],
     })
     expect(result).toEqual({
@@ -986,8 +991,9 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         { winner: 'o1.example', fast: true },
         { winner: '', fast: true },
         { winner: 'o0.example', fast: true },
+        { winner: 'o1.example', fast: true },
       ],
-      // Only one origin per node ever claims it, so there is never a second connection to close.
+      // Only one origin per node holds the claim at a time, so there is never a second connection to close.
       closed: 0,
     })
   })

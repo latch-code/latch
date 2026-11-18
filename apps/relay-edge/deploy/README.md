@@ -1,16 +1,33 @@
-# Cloudflare Workers 中继
+# 部署自己的 Cloudflare Workers 中继
 
-生产部署尚未开放。发布入口会拒绝 WebSocket 升级，`pnpm relay-edge:setup` 与 `latch relay setup cloudflare` 会在构建或调用 Wrangler 前停止。当前可用的方式是 [Linux 中继](../../../docs/RELAY.md#方式-alinux-服务器self) 与局域网直连。
+给自己和少数人用的中继：只有持有中继文件（含注册令牌）的 Mac 能登记。机制、谁能看到什么与内存界限见 [docs/RELAY.md](../../../docs/RELAY.md#方式-b自己的-cloudflare-账户edge)。
 
-## 上线所需的平台能力
+## 顺序
 
-- **组装前的入站上限。** Workers 会在调用 JavaScript 的 `message` 回调前组装 WebSocket 消息，单条最多 32 MiB；当前入口无法在组装前拒绝过大的帧及未完整的分片。平台需能对连接和对象约束正在组装的帧、分片与消息。应在真实运行时验证超限数据尚未分配到对象时就被拒绝。[Workers WebSocket 接口](https://developers.cloudflare.com/workers/runtime-apis/websockets/#events)
-- **实际关闭。** `close` 事件可能先于输出泵结束；`bufferedAmount` 归零只说明已发送 payload。必须能等待该连接的收发与关闭帧全部结算，再把容量交给新连接。应在真实运行时让接收端慢读、未读取 Close 或突然断开，核对连接槽和内存仍受限。[锁定的 workerd 实现](https://github.com/cloudflare/workerd/blob/v1.20261117.1/src/workerd/api/web-socket.c%2B%2B)
+在 Latch 的源码目录（已 `pnpm install`）：
 
-有边界的入口可以在受控 TLS 连接中解析帧头、在分配 payload 前拒绝超限值，并等待传输实际结束。若用这样的入口承接流量，还需让公开的 Worker 地址拒绝直接升级，确保所有连接都经过同一限制。上述路径尚未接入 Workers。现有 Linux 中继提供受控的 Go/TLS 入口。
+```sh
+wrangler login                                                         # 你本人在终端完成；Free 可用，长期用 Workers Paid
+pnpm relay-edge:setup --region ne --out "$HOME/latch-relay-ne.json"    # 部署，写出中继文件与 .admin-header
+pnpm relay-edge:accept --file "$HOME/latch-relay-ne.json"              # 验收，全部通过再添加
+```
 
-## 本地协议验证
+然后在 Mac 的「设置 › 连接转发 › 添加转发服务 › 已有配置文件」选 `latch-relay-ne.json`，对照密钥短哈希后确认。
 
-`pnpm build:relay-edge` 构建 Worker 与注册挑战校验 Worker。测试通过本地 TLS 与 Node 夹具覆盖端到端协议与应用缓冲；线上接收、物理关闭与 Durable Object 内存尚未验收。健康端点只代表配置状态。
+- **部署**只打印进度、`中继密钥短哈希 xxxxxxxx` 与下一步命令。秘密（中继私钥、注册令牌、管理令牌）只经 `scripts/wrangler.ts` 的调用器从标准输入写进 Workers secret：固定 wrangler 4.164.0，子进程环境净化，诊断与结构化日志写入空设备，写秘密时两个输出都丢弃。不要用其他方式手动 `wrangler secret put` 这些值。[Wrangler 环境变量](https://developers.cloudflare.com/workers/wrangler/system-environment-variables/)、[Wrangler 4.164.0 日志实现](https://github.com/cloudflare/workers-sdk/blob/wrangler%404.164.0/packages/wrangler/src/utils/log-file.ts)
+- **验收**每项一行，`✓` 通过、`✗` 失败、`·` 跳过，不打印令牌或地址；有失败时退出码为 1。约一分钟，会在节点上制造未认证连接、超限消息与一个不读的连接，所以在任何 Mac 使用它之前运行。
+  - 健康检查：`/healthz` 返回 200。
+  - 管理接口只认令牌：`/admin/status` 无令牌或错误令牌时 404，正确令牌时报告每个分片的启动时间。
+  - 错误密钥与令牌被拒绝：期望另一把中继密钥的客户端在签名检查处拒绝节点；错误的注册令牌被节点拒绝。
+  - 用中继文件登记：正确的密钥与令牌登记成功。
+  - 前三秒填充：未认证的连接收到约三秒、每 40 ms 一批 4 KiB 的填充，帧完整，之后被关闭。
+  - 未认证连接的内存：一批从不读取、一半发 256 KiB 超限消息的连接被拒绝或关闭，节点对象没有重置（启动时间不变），之后仍能登记。
+  - 不读的手机：已接合的连接停止读取、Host 持续发送时，节点关闭它且对象没有重置。失败说明平台没有报告积压，这一界限只剩每连接发送预算。
+- 失败时不要添加这个中继；可再运行一次确认，或删除：`wrangler delete --name latch-relay-ne`（校验 Worker 为 `latch-relay-work`）。
 
-部署模块的 Wrangler 调用统一经 `scripts/wrangler.ts`。它核对已审阅的 Wrangler 版本，子进程仅继承运行和已登录配置所需的环境。调试和结构化日志写入空设备，禁用遥测，并通过指定空的 dotenv 文件阻止工作目录内的配置重启诊断。秘密只进标准输入，写秘密命令的两个输出都丢弃。将来的正式 CLI 与源码入口共用这一调用路径；连接文件与管理头仅写入新建的 0600 文件。[Wrangler 环境变量](https://developers.cloudflare.com/workers/wrangler/system-environment-variables/) [Wrangler 4.164.0 日志实现](https://github.com/cloudflare/workers-sdk/blob/wrangler%404.164.0/packages/wrangler/src/utils/log-file.ts)
+## 之后
+
+- 状态：`curl -s -H @"$HOME/latch-relay-ne.json.admin-header" https://latch-relay-ne.<子域>.workers.dev/admin/status`，令牌只在这个 0600 文件里。排空：同一头部 `-X POST …/admin/drain`。
+- 再次运行部署命令会换新的密钥、令牌与节点标识，旧文件失效；只把新文件交给仍要用的人。
+- 每次部署都会让经过节点的连接断开一次。Latch 不设花费上限，在 Cloudflare 为账户设账单提醒。
+- `deploy/wrangler.jsonc` 与 `work.wrangler.jsonc` 是部署命令所用配置的参考，`pnpm build:relay-edge` 把它们与 Worker 一起放进 `dist/relay-edge/`。

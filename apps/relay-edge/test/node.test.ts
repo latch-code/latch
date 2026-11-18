@@ -428,49 +428,57 @@ describe('edge relay node', () => {
     expect(client.closed).toBe(4302)
   })
 
-  it('bounds a continuous slow reader and retains its slot even after the close event and payload drains', async () => {
-    const t = setup({ LIMITS: JSON.stringify({ maxConnections: 3 }) })
+  it('closes a slow reader on its reported backlog and holds its slot for the hold time by the clock', async () => {
+    const t = setup({ LIMITS: JSON.stringify({ maxConnections: 3, maxBacklogBytes: 65_536 }) })
     const { client, data } = await t.join(await t.credentials())
     await t.clock.advance(3100)
     data.server.paused = true
-    // 160 KiB/s, well below the former rate bucket. No amount of elapsed time releases unsent bytes.
-    for (let index = 0; index < 40 && data.server.closeCode === undefined; index++) {
+    for (let index = 0; index < 20 && data.server.closeCode === undefined; index++) {
       client.send({ type: 'data', data: new Uint8Array(16_000) })
-      await t.clock.advance(100)
-      expect(data.server.bufferedAmount).toBeLessThanOrEqual(EDGE_BUFFER_LIMITS.socketBytes)
+      await t.clock.advance(40)
     }
     expect(data.server.closeCode).toBe(4302)
-    expect(data.closed).toBeUndefined()
+    expect(data.server.bufferedAmount).toBeLessThanOrEqual(65_536 + 16_100)
     const node = await t.objects.object('n')
-    expect(node.status().buffered).toMatchObject({ bytes: expect.any(Number) })
-    expect((node.status().buffered as { bytes: number }).bytes).toBeGreaterThan(0)
-    expect((await t.attempt('host', '203.0.113.0/24')).status).toBe(503)
-    data.close()
-    await settle()
+    // The closed sockets keep their slots for the hold time, whatever the runtime reports or delivers.
     expect((await t.attempt('host', '203.0.113.0/24')).status).toBe(503)
     data.server.paused = false
     data.server.flush()
     await settle()
-    expect(data.server.bufferedAmount).toBe(0)
-    expect((node.status().buffered as { bytes: number }).bytes).toBeLessThan(EDGE_BUFFER_LIMITS.socketBytes)
     expect((await t.attempt('host', '203.0.113.0/24')).status).toBe(503)
+    await t.clock.advance(EDGE_BUFFER_LIMITS.closeHoldMs)
+    expect((await t.attempt('host', '203.0.113.0/24')).status).toBe(101)
+    expect(node.status().buffered).toMatchObject({ bytes: 0 })
   })
 
-  it.each([undefined, -1, Number.NaN, Number.POSITIVE_INFINITY])('refuses an upgrade when bufferedAmount is %s', async amount => {
-    const t = setup()
-    const pair = t.platform.pair
-    let accepted = false
-    t.platform.pair = () => {
-      const [client, server] = pair()
-      Object.defineProperty(server, 'bufferedAmount', { value: amount })
-      server.accept = () => {
-        accepted = true
+  it.each([undefined, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'serves a socket whose runtime reports bufferedAmount as %s',
+    async amount => {
+      const t = setup()
+      const pair = t.platform.pair
+      t.platform.pair = () => {
+        const [client, server] = pair()
+        Object.defineProperty(server, 'bufferedAmount', { value: amount })
+        return [client, server]
       }
-      return [client, server]
-    }
+      expect((await t.attempt('client')).status).toBe(101)
+    },
+  )
+
+  it('refuses or closes unauthenticated sockets of one prefix once its cover budget is spent, and serves other prefixes', async () => {
+    const t = setup()
+    const sockets: ClientSocket[] = []
+    for (let index = 0; index < 10; index++) sockets.push(await t.open('client'))
+    // Ten covers want 400 KiB in 400 ms; the prefix budget pays for about 280 KiB of it.
+    await t.clock.advance(400)
+    expect(sockets.filter(socket => socket.closed === 4302).length).toBeGreaterThan(0)
+    const handed = sockets.reduce((sum, socket) => sum + socket.received.reduce((bytes, payload) => bytes + payload.length, 0), 0)
+    expect(handed).toBeLessThanOrEqual(EDGE_BUFFER_LIMITS.preauthPrefixBytes + EDGE_BUFFER_LIMITS.preauthPrefixRate)
     expect((await t.attempt('client')).status).toBe(503)
-    expect(accepted).toBe(false)
-    expect((await t.objects.object('n')).status().sockets).toBe(0)
+    expect((await t.attempt('client', '198.51.100.0/24')).status).toBe(101)
+    const node = await t.objects.object('n')
+    expect((node.status().buffered as { refused: number }).refused).toBeGreaterThanOrEqual(1)
+    expect(node.status().startedAt).toEqual(expect.any(Number))
   })
 
   it('closes on malformed input: text, unknown tags, oversized and truncated messages', async () => {

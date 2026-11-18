@@ -93,12 +93,7 @@ export function assertRelayUsable(profile: { kind?: 'edge'; url: string; extraUr
     )
 }
 export function assertRelayAvailable(profile: { kind?: 'edge' } | RelayProfileInput): void {
-  if (!relayAvailable(profile))
-    throw new AppError(
-      503,
-      'native-relay-platform-unavailable',
-      'Cloudflare Workers 中继尚未实现：平台暂无法提供消息组装前大小与连接释放约束。',
-    )
+  if (!relayAvailable(profile)) throw new AppError(503, 'native-relay-platform-unavailable', '这个版本关闭了 Cloudflare Workers 中继。')
 }
 export const nativeDirectSchema = z.strictObject({
   host: z

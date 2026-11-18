@@ -44,12 +44,13 @@ const upgrade = (extra: Record<string, string | undefined> = {}) =>
   )
 
 describe('edge Worker front', () => {
-  it('refuses a checked upgrade at the published entry before reaching the Durable Object', async () => {
+  it('serves the published entry: health in the Worker, a checked upgrade at the shard object', async () => {
     const t = setup()
     const url = 'https://latch-relay-ne.example.workers.dev'
-    expect((await releasedWorker.fetch(request(`${url}/v1/c/0`, 'GET', upgrade()), t.env)).status).toBe(503)
-    expect((await releasedWorker.fetch(request(`${url}/healthz`, 'GET'), t.env)).status).toBe(503)
+    expect((await releasedWorker.fetch(request(`${url}/healthz`, 'GET'), t.env)).status).toBe(200)
     expect(t.objects.requests).toEqual([])
+    expect((await releasedWorker.fetch(request(`${url}/v1/c/0`, 'GET', upgrade()), t.env)).status).toBe(101)
+    expect(t.objects.requests.map(item => item.url)).toEqual(['https://node/ws'])
   })
   it('routes a checked upgrade to the shard object near its hint and passes only the role and the prefix', async () => {
     const t = setup({ SHARDS: '2' })
@@ -108,7 +109,7 @@ describe('edge Worker front', () => {
       t.env,
     )) as FakeResponse
     expect(status.status).toBe(200)
-    expect(JSON.parse(status.body!).shards[0]).toMatchObject({ ready: true, routes: 0, pairs: 0 })
+    expect(JSON.parse(status.body!).shards[0]).toMatchObject({ ready: true, routes: 0, pairs: 0, startedAt: expect.any(Number) })
     expect((await t.worker.fetch(request(`${url}/admin/drain`, 'GET', { authorization: `Bearer ${ADMIN}` }), t.env)).status).toBe(404)
     expect((await t.worker.fetch(request(`${url}/admin/drain`, 'POST', { authorization: `Bearer ${ADMIN}` }), t.env)).status).toBe(200)
     // Health never reaches a node object (no billed request); the drain shows in the admin status.

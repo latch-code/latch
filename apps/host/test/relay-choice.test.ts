@@ -60,13 +60,14 @@ async function host(region?: string) {
 }
 const ids = (book: NativeAddressBook) => book.relays.map(relay => Buffer.from(relay.relayId).toString('hex'))
 
-it('keeps built-in Workers entries out of address books while the platform is unavailable', async () => {
+it('signs built-in Workers entries with their region and the Host region', async () => {
   const t = await host('apac-se')
   await t.profiles.syncOfficial(official)
   const book = await t.book()
   expect(t.profiles.snapshot().profiles.map(profile => profile.relayId)).toEqual(official.map(profile => profile.relayId))
-  expect(ids(book)).toEqual([])
-  expect(book.hostRegion).toBeUndefined()
+  expect(ids(book)).toEqual(official.map(profile => profile.relayId))
+  expect(book.hostRegion).toBe('apac-se')
+  expect(Buffer.from(orderRelays(book)[0]!.relayId).toString('hex')).toBe(official[1]!.relayId)
 })
 
 it('signs a self-hosted node with its pinned key and reports signing for that profile only', async () => {
@@ -174,45 +175,42 @@ it('keeps a relay added with the Host stopped out of books until its node is ver
   )
 })
 
-it('rejects adding Workers, while a saved Workers profile remains removable and is never signed', async () => {
+it('adds a Workers relay unverified, signs it with its relay key and every origin once verified, and removes it', async () => {
   const t = await host()
-  await expect(t.profiles.addUnverified(ownEdge, t.profiles.configHash(), async () => {})).rejects.toMatchObject({
-    code: 'native-relay-platform-unavailable',
-  })
-  const seed = () => `lrs1.${randomBytes(32).toString('base64url')}`
-  const state = {
-    ...t.profiles.snapshot(),
-    profiles: [{ ...ownEdge, seeds: [seed(), seed()], activeSlot: 0, rotationDay: 0, rotations: 0 }],
-  }
-  await writeFile(join(t.directory, 'native/relays.json'), JSON.stringify(state), { mode: 0o600 })
-  const loaded = await RelayProfiles.open(t.directory)
-  expect(loaded.snapshot().profiles).toHaveLength(1)
-  const books = new HostAddressBooks(loaded, t.identity, () => [])
-  const book = verifyAddressBook(await books.issue(deviceId), t.identity.publicKeySpki, { hostId: t.identity.hostId, deviceId })
-  expect(book.relays).toEqual([])
-  expect(books.bookIssuedAt(ownEdge.relayId)).toBeUndefined()
-  await loaded.setDisabled(
+  await t.profiles.addUnverified(ownEdge, t.profiles.configHash(), async () => {})
+  expect(ids(await t.book())).toEqual([])
+  await t.profiles.markVerified(
+    t.profiles.snapshot().profiles.find(profile => profile.relayId === ownEdge.relayId)!,
+    () => {},
+  )
+  const book = await t.book()
+  expect(ids(book)).toEqual([ownEdge.relayId])
+  const entry = book.relays[0]!
+  expect(Buffer.from(entry.edge!.relayKey).toString('hex')).toBe(ownEdge.relayKey)
+  expect([entry.url, ...(entry.extraUrls ?? [])]).toEqual([ownEdge.url, ...ownEdge.extraUrls])
+  expect(entry.spkiHash.every(byte => byte === 0)).toBe(true)
+  expect(t.books.bookIssuedAt(ownEdge.relayId)).toEqual(expect.any(Number))
+  await t.profiles.setDisabled(
     ownEdge.relayId,
     true,
     () => {},
     async () => true,
   )
-  await expect(
-    loaded.setDisabled(
-      ownEdge.relayId,
-      false,
-      () => {},
-      async () => true,
-    ),
-  ).rejects.toMatchObject({
-    code: 'native-relay-platform-unavailable',
-  })
-  await loaded.removeObserver(
+  expect(ids(await t.book())).toEqual([])
+  await t.profiles.setDisabled(
+    ownEdge.relayId,
+    false,
+    () => {},
+    async () => true,
+  )
+  expect(ids(await t.book())).toEqual([ownEdge.relayId])
+  await t.profiles.removeObserver(
     { relayId: ownEdge.relayId },
     () => {},
     async () => true,
   )
-  expect(loaded.snapshot().profiles).toEqual([])
+  expect(t.profiles.snapshot().profiles).toEqual([])
+  expect(ids(await t.book())).toEqual([])
 })
 
 it('turns the official relay on only once the audit is written; turning it off never waits', async () => {

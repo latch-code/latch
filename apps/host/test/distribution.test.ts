@@ -47,7 +47,7 @@ describe.runIf(process.platform === 'darwin' && packageApp !== undefined)('appli
     const out = join(temporary, 'latch-cloudflare.json')
     await expect(cli(['relay', 'setup', 'cloudflare', '--region', 'ne', '--out', out, '--data-dir', data])).rejects.toMatchObject({
       code: 1,
-      stderr: expect.stringContaining('消息组装前大小与连接释放约束'),
+      stderr: expect.stringContaining('安装版不带 Workers 部署包'),
     })
     await expect(stat(out)).rejects.toMatchObject({ code: 'ENOENT' })
 

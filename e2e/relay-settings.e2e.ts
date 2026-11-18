@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { chromium, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -34,6 +35,7 @@ const self = {
   registrationKey: edge.registrationKey,
 }
 const keyHash = self.spkiHash.slice(0, 8)
+const edgeHash = createHash('sha256').update(Buffer.from(edge.relayKey, 'hex')).digest('hex').slice(0, 8)
 type Relay = NativeLinkInfo['relays'][number]
 const row = (relayId: string, status: Relay['status'], extra: Partial<Relay> = {}): Relay => ({
   relayId,
@@ -68,6 +70,7 @@ async function scripted(page: Page, local: boolean, relays: Relay[], listening =
     listening: listening ? { host: '192.168.1.20', port: 4319 } : null,
     directory: false,
     sourceCheckout: true,
+    edgeRelayAvailable: true,
     relays: state.relays,
   })
   await page.route('**/link/api/snapshot', async route => {
@@ -168,7 +171,7 @@ describe('设置 › 连接转发', () => {
         const sheet = page.locator('.relay-add-dialog')
         await sheet.getByTestId('relay-ways').waitFor()
         await capture('relays-add-ways')
-        expect(await sheet.getByRole('button', { name: /Cloudflare Workers/u }).getAttribute('aria-disabled')).toBe('true')
+        expect(await sheet.getByRole('button', { name: /Cloudflare Workers/u }).getAttribute('aria-disabled')).toBeNull()
         await sheet.getByRole('button', { name: '已有配置文件' }).click()
         await sheet
           .getByTestId('relay-file')
@@ -180,7 +183,12 @@ describe('设置 › 连接转发', () => {
           mimeType: 'application/json',
           buffer: Buffer.from(JSON.stringify({ version: 2, profile: edge })),
         })
-        await sheet.getByText(/Cloudflare Workers 转发服务尚未实现/u).waitFor()
+        // A Workers relay file shows its relay key's short hash, the one the Mac's confirmation sheet shows.
+        await sheet.getByTestId('relay-candidate').getByText(edgeHash, { exact: true }).waitFor()
+        await capture('relays-check-card-edge')
+        // Back to the ways and the file step again: the check card replaced it.
+        await sheet.getByRole('button', { name: '返回', exact: true }).click()
+        await sheet.getByRole('button', { name: '已有配置文件' }).click()
         await sheet.getByTestId('relay-file').setInputFiles({
           name: 'underscore.json',
           mimeType: 'application/json',

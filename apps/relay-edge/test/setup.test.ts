@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -81,6 +82,10 @@ it('deploys, puts every secret through standard input only, and writes a 0600 re
   expect(file.profile.registrationKey).toBe(`lrt1.${Buffer.from(secrets[1]!, 'hex').toString('base64url')}`)
   expect(await readFile(`${t.input.out}.admin-header`, 'utf8')).toBe(`Authorization: Bearer ${secrets[2]}\n`)
   expect((await stat(`${t.input.out}.admin-header`)).mode & 0o777).toBe(0o600)
+  // The key's short hash, public, for comparison with the Mac's confirmation sheet; then the acceptance step.
+  const short = createHash('sha256').update(Buffer.from(file.profile.relayKey!, 'hex')).digest('hex').slice(0, 8)
+  expect(t.lines).toContain(`中继密钥短哈希 ${short}`)
+  expect(t.lines.at(-1)).toBe(`下一步：pnpm relay-edge:accept --file ${t.input.out}`)
 })
 
 it('stops before deploying anything when wrangler is missing or the relay file exists', async () => {

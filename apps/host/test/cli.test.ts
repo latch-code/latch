@@ -1112,7 +1112,8 @@ describe('latch CLI', () => {
     const out = join(directory, 'latch-relay.json')
     const cloudflare = cli({ cwd: directory })
     expect(await cloudflare.latch('relay', 'setup', 'cloudflare', '--region', 'ne', '--out', out, '--data-dir', dataDir)).toBe(1)
-    expect(cloudflare.output.stderr).toContain('消息组装前大小与连接释放约束')
+    // The installed command ships no Worker bundles: the source checkout's pnpm relay-edge:setup deploys.
+    expect(cloudflare.output.stderr).toContain('安装版不带 Workers 部署包')
     const linux = cli({ cwd: directory })
     expect(await linux.latch('relay', 'setup', 'linux', '--data-dir', dataDir)).toBe(1)
     expect(linux.output.stderr).toContain('尚未提供 Linux 中继发布物')
@@ -1153,10 +1154,20 @@ describe('latch CLI', () => {
       )
       expect(bad.output.stderr).toContain('这个文件不是中继导出的连接配置')
     }
+    // A Workers relay file: every address and the relay key are shown before it is saved, unverified.
+    const edgeDir = await stoppedDataDir()
+    const edgeRun = cli({ cwd: directory, typed: true, answer: 'y' })
+    expect(await edgeRun.latch('relay', 'add', '--file', 'edge.json', '--data-dir', edgeDir)).toBe(0)
+    expect(edgeRun.output.asked[0]!.shown).toContain(`中继公钥：${edge.relayKey}`)
+    expect(edgeRun.output.asked[0]!.shown).toContain(`地址：${edge.extraUrls[0]}`)
+    expect(`${edgeRun.output.stdout}${edgeRun.output.stderr}`).not.toContain(key)
+    const edgeList = cli()
+    expect(await edgeList.latch('relay', 'list', '--json', '--data-dir', edgeDir)).toBe(0)
+    expect(JSON.parse(edgeList.output.stdout)).toEqual({
+      relays: [{ relayId: edge.relayId, kind: 'edge', urls: [edge.url, ...edge.extraUrls], unverified: true }],
+      inAddressBook: [],
+    })
     const typed = cli({ cwd: directory, typed: true, answer: 'y' })
-    expect(await typed.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir)).toBe(1)
-    expect(typed.output.stderr).toContain('Cloudflare Workers 中继尚未实现')
-    expect(typed.output.asked).toEqual([])
     const added = await typed.latch('relay', 'add', '--file', 'own.json', '--data-dir', dataDir)
     expect(added).toBe(0)
     expect(typed.output.asked[0]!.shown).toContain(`证书公钥 SHA-256：${own.spkiHash}`)
