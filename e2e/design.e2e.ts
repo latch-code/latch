@@ -118,17 +118,19 @@ describe('responsive workspace controls', () => {
       await reachable(composer)
       await composer.fill('这是一条未提交的布局验收草稿。')
       await noHorizontalOverflow(page)
-      // The project and the four controls: one row of chips over the input on phones, which scrolls sideways by itself
-      // (a chip past its edge is reached by scrolling the row); the controls in the input's toolbar elsewhere.
+      // Phone options scroll above the input, while permission stays next to Send regardless of the scroll position.
       if (phone) {
         const chips = page.locator('.workbench-home').getByRole('group', { name: '会话选项', exact: true })
         expect(await chips.evaluate(element => element.classList.contains('composer-chips'))).toBe(true)
         expect(await chips.locator('.home-composer-location').count()).toBe(1)
-        for (const control of ['harness', 'model', 'thinking', 'permission']) {
+        for (const control of ['harness', 'model', 'thinking']) {
           const chip = chips.locator(`[data-composer-control="${control}"]`).getByRole('button').first()
           await chip.scrollIntoViewIfNeeded()
           await reachable(chip)
         }
+        const actions = page.locator('.workbench-home .composer-line')
+        await reachable(actions.locator('[data-composer-control="permission"]').getByRole('button'))
+        await reachable(actions.getByRole('button', { name: '发送', exact: true }))
         expect(await page.locator('.workbench-home .composer-toolbar, .workbench-home [data-rows]').count()).toBe(0)
         await noHorizontalOverflow(page)
       } else
