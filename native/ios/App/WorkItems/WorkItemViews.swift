@@ -3,6 +3,7 @@ import SwiftUI
 
 struct WorkItemList: View {
     @EnvironmentObject private var model: PhoneModel
+    @Environment(\.colorScheme) private var scheme
     private var selection: Binding<String?> { Binding(get: { model.workItemId }, set: model.selectWorkItem) }
 
     var body: some View {
@@ -28,18 +29,20 @@ struct WorkItemList: View {
             if model.connected && model.snapshot["device"]["dataScope"].string == "all" && !model.mayReadPrivateWork {
                 Button { Task { await model.openWorkWindow() } } label: {
                     Label(model.verifying ? "正在验证…" : "查看全部待办", systemImage: "lock.open")
-                        .font(.subheadline).frame(minHeight: 44)
+                        .font(.subheadline).foregroundStyle(PhoneTheme.ink).frame(minHeight: 44)
                 }.buttonStyle(.plain).disabled(model.verifying).listRowSeparator(.hidden)
             }
         }
         .listStyle(.plain).scrollContentBackground(.hidden)
+        // A split-view list uses its tint for the selected row's fill. Keep the tab's ink tint out of that surface.
+        .tint(scheme == .dark ? PhoneTheme.line : PhoneTheme.sunken)
         .background(PhoneTheme.canvas).navigationTitle("待办").navigationBarTitleDisplayMode(.large)
         .refreshable { await model.refresh() }
     }
 
     private func row(_ item: PhoneWorkItemSummary) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(PhoneConversation.visible(item.title)).font(.body.weight(.medium)).foregroundStyle(PhoneTheme.ink)
+            Text(PhoneConversation.visible(item.title)).font(.body.weight(model.workItemId == item.id ? .semibold : .medium)).foregroundStyle(PhoneTheme.ink)
                 .fixedSize(horizontal: false, vertical: true)
             if let project = projectName(item.projectId, snapshot: model.snapshot) {
                 Text(PhoneConversation.visible(project)).font(.subheadline).foregroundStyle(PhoneTheme.muted)
