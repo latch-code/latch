@@ -87,6 +87,7 @@ export function createFileTrackingService(options: TrackerOptions) {
       const stops: Array<() => void> = []
       let truncated = false,
         failedScan = false,
+        baselineComplete = true,
         fallback = platform !== 'darwin' && platform !== 'win32',
         pathBytes = 0
       let disposed = false,
@@ -186,11 +187,19 @@ export function createFileTrackingService(options: TrackerOptions) {
         }
         if (info.isDirectory()) {
           fallback = true
+          // The end scan now decides what changed under it, against a baseline that did not reach everything.
+          if (!baselineComplete) truncated = true
           return
         }
         if (!info.isFile() || info.isSymbolicLink()) return
         const previous = baseline.get(key)
         if (previous?.signature === stamp(info).signature) {
+          changes.delete(key)
+          return
+        }
+        // Outside an unfinished baseline there is no earlier state to compare with, but a file whose content and
+        // metadata were both last written before the run began was not changed by it.
+        if (!previous && !baselineComplete && info.mtimeMs < startedAt && info.ctimeMs < startedAt) {
           changes.delete(key)
           return
         }
@@ -279,7 +288,12 @@ export function createFileTrackingService(options: TrackerOptions) {
         return { entries: new Map<string, Stamp>(), complete: false }
       })
       for (const [key, value] of first.entries) baseline.set(key, value)
-      if (!first.complete) truncated = true
+      // With a watcher running, every change arrives as an event whether or not the folder was scanned to the end: a
+      // large repository's unfinished baseline costs only the telling apart of a file that was touched from one that
+      // changed, and of a deletion from a file that never was. Without one, the end scan compares against this
+      // baseline, so what it did not reach is not known.
+      if (!first.complete && fallback) truncated = true
+      baselineComplete = first.complete
       ready = true
       const handle: FileTrackingHandle = {
         finish() {

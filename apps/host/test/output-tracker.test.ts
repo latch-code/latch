@@ -77,6 +77,39 @@ describe('bounded per-run workspace changes', () => {
     expect(result.truncated).toBe(true)
     expect(result.files.length).toBeLessThanOrEqual(1)
   })
+  // The watcher is the platform's own, as in the first test.
+  it.runIf(process.platform === 'darwin')(
+    'does not call the record incomplete for a folder too large to scan while a watcher reports every change',
+    async () => {
+      const f = await fixture({ platform: 'darwin', entryLimit: 2, settleMs: 2000 })
+      // More than the scan reaches: the baseline is unfinished, as in a large repository.
+      await Promise.all(['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt'].map(path => writeFile(join(f.root, path), 'old')))
+      await new Promise(resolve => setTimeout(resolve, 20))
+      const handle = await f.service.start(f.input)
+      await writeFile(join(f.root, 'made.txt'), 'new')
+      await writeFile(join(f.root, 'e.txt'), 'changed')
+      const result = await handle.finish()
+      expect(result.files.map(file => file.path).toSorted()).toEqual(['e.txt', 'made.txt'])
+      expect(result.truncated).toBeUndefined()
+      expect(result.unavailable).toBeUndefined()
+    },
+  )
+  it('still says so when an unscanned folder has to be compared by scanning at the end', async () => {
+    const f = await fixture({
+      platform: 'darwin',
+      entryLimit: 2,
+      watch: () => {
+        throw new Error('unavailable')
+      },
+    })
+    await Promise.all(['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt'].map(path => writeFile(join(f.root, path), 'old')))
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const handle = await f.service.start(f.input)
+    const result = await handle.finish()
+    expect(result.truncated).toBe(true)
+    // Files that were never touched since before the run are not reported as changed for want of a baseline.
+    expect(result.files).toEqual([])
+  })
   it('keeps watcher debounce separate from the settlement deadline and publishes bounded live changes', async () => {
     let changed!: (path: string | null) => void
     const stop = vi.fn()
