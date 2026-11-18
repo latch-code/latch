@@ -7775,17 +7775,18 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       // Checked against the current device record: the request may have been opened before a scope change.
       const needed: DeviceScope =
         input.decision === 'reject' ? 'view' : approval.advisory ? 'run' : approval.risk === 'R2' ? 'approve:elevated' : 'approve:standard'
+      // A note is model input. Check the same permissions again after the audit write, before handing it to the driver.
+      function checkDecisionAccess(): void {
+        recheck(caller, needed)
+        if (note !== undefined) recheck(caller, 'run')
+        if (input.decision === 'allow' || note !== undefined) privateAccess(caller, session)
+      }
       let previewHash: string | undefined
       if (input.decision === 'reject') limits.classC.take(caller.device.id)
-      recheck(caller, needed)
+      checkDecisionAccess()
       if (input.decision === 'allow') {
         // Allowing a call acts in the session's folders, so they must still be folders of its project, as for new input.
         await assertSessionWorkspace(approval.sessionId)
-      }
-      // A note is input to the model, so it needs what typing into the session needs: a device that may only view or
-      // reject can still reject, but without a note.
-      if (note !== undefined) {
-        recheck(caller, 'run')
       }
       if (input.decision === 'allow' && optionKind === 'allow_always' && (approval.advisory || approval.risk === 'R2')) {
         throw new AppError(403, 'approval-always-unavailable', '高风险操作不提供“始终允许”')
@@ -7795,7 +7796,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (input.decision === 'allow' && approval.risk === 'R2' && !approval.advisory) {
         previewHash = (await approvalFacts(approval, args, session)).previewHash
       }
-      recheck(caller, needed)
+      checkDecisionAccess()
       const at = new Date(now()).toISOString()
       const intent = await audited(
         {
@@ -7818,8 +7819,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         input.decision === 'reject' ? res : undefined,
       )
       try {
-        recheck(caller, needed)
-        if (input.decision === 'allow') privateAccess(caller, session)
+        checkDecisionAccess()
       } catch (error) {
         auditFailed(intent, caller)
         throw error

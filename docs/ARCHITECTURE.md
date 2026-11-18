@@ -582,7 +582,7 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 - 记录写的是人的决定，不是调用有没有执行。内置 Harness 在允许之前不执行调用；ACP Agent 的询问只是提示，它之后报告的状态与差异照常记下。Agent 为同一调用询问多次时，记录保留已经给出的允许。
 - 拒绝可以附一句说明 `note`：去掉首尾空白、换行统一为 `\n` 后最多 500 个字符，每一行都不能含 `escapeSecurityText` 会标出的字符（`packages/protocol/src/decision.ts` 的 `rejectionNote`），否则在审计之前返回 400 `invalid-note`；允许时带说明同样 400。
 - Host 只把说明交给 `capabilities.permission.rejectionNote` 为真的 Harness（内置 Harness 声明它；ACP 的权限回复不能带文字）。给其他 Harness 的说明检查后丢弃，拒绝照常生效。
-- 说明是给模型的输入，所以另需 `run`（403 `scope-required`），也不写进审计；只有查看权限的设备仍可以拒绝，但不能附说明。
+- 说明是给模型的输入，所以另需 `run`（403 `scope-required`）和对应的私有会话权限。Host 在写审计前检查它们，写完后在交给 Driver 前复查当前设备权限和原生验证窗口。说明正文不写进审计；只有查看权限的设备仍可以不附说明地拒绝。
 
 **没有问人的调用。** Harness 自己的模型代人决定时，那次调用带 `ToolDetail.judged = { by, outcome }`（`approved`、`denied`、`none`，或没有问人就运行的 `unasked`）。它不是决定记录，也不是人的批准，每一条另写审计 `task.tool.judged`。Harness 在调用运行之前自己拦下它时带 `ToolDetail.blocked = { by, source, reason? }`（`model` 或 `rule`），界面读作「拦下」，不算失败也不算改动。见 [HARNESSES.md](./HARNESSES.md)「权限菜单」。
 

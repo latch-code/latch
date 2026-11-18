@@ -3668,6 +3668,17 @@ describe('workspaces, policy and audit', () => {
     const records = (await auditRecords(t)).slice(before)
     expect(records.map(record => record.action)).toContain('approval.decided')
     expect(JSON.stringify(records)).not.toContain('先把计划')
+
+    const viewerRejected = await startTask(browser, '生成需要审批的报告')
+    const viewerApproval = await pendingApproval(t, viewerRejected)
+    const request = { decision: 'reject', requestId: randomUUID() } as const
+    const accepted = await viewer.json<{ receipt: ApprovalReceipt }>(`approvals/${viewerApproval.id}`, { method: 'POST', body: request })
+    await settled(t, viewerRejected)
+    expect(await decision(viewerRejected)).toEqual({ outcome: 'rejected', at: expect.any(String), via: 'other-device' })
+    expect(await viewer.json(`approvals/${viewerApproval.id}`, { method: 'POST', body: request })).toEqual({
+      accepted: true,
+      receipt: { ...accepted.receipt, replay: true },
+    })
   })
 
   it('treats every write as protected when the session root itself lies inside .git', async () => {
