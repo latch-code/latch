@@ -440,6 +440,7 @@ export function WorkbenchDecision({
           statuses={shell.statuses}
           onDecide={shell.onDecide}
           canRetry={shell.canRetryApproval}
+          onCheck={shell.checkApproval}
         />
       ) : asked ? (
         <QuestionDrawer

@@ -260,6 +260,8 @@ export function useSessionController({
     (choice: UncertainChoice) =>
       harness.connection === 'connected' && (access.legacy || (access.scopes.has('view') && (!choice.note || access.scopes.has('run')))),
   )
+  /** An unknown approval choice is settled only by the Host: reading the session again shows whether it took. */
+  const checkApproval = useStableCallback(() => refresh())
   const approvals = useMemo(
     () => (preferDetail ? current.approvals : snapshot.approvals.filter(approval => approval.sessionId === selectedId)),
     [current, preferDetail, snapshot.approvals, selectedId],
@@ -1747,6 +1749,7 @@ export function useSessionController({
     steer,
     gateFor,
     canRetryApproval,
+    checkApproval,
     approvals,
     active,
     harnessInfo,

@@ -466,6 +466,8 @@ export interface PendingSubmission {
   itemId?: string
   /** With `itemId`: the 待办's revision the person saw when sending (`baseRevision`); another is 409 `item-changed`. */
   itemRevision?: number
+  /** A new session started from the board's 新建: once the Host takes it, the page stays on the board. Never sent. */
+  stay?: true
 }
 
 /** The submission took the input's text, attachments and file references; a prompt sent again (`resent`) took none. */
@@ -524,6 +526,7 @@ export function readPending(key: string): PendingSubmission | null {
     if (item.mode !== undefined && item.mode !== 'chat' && item.mode !== 'agent') return null
     if (item.model !== undefined && modelRef(item.model) === undefined) return null
     if (item.queue !== undefined && item.queue !== true) return null
+    if (item.stay !== undefined && (item.stay !== true || item.sessionId !== undefined)) return null
     if (item.steer !== undefined && item.steer !== true) return null
     if (item.resent !== undefined && (item.resent !== true || typeof item.sessionId !== 'string')) return null
     if (item.freshContext !== undefined && (item.freshContext !== true || typeof item.sessionId !== 'string')) return null
@@ -566,6 +569,7 @@ export function readPending(key: string): PendingSubmission | null {
       ...(typeof item.itemId === 'string' ? { itemId: item.itemId, itemRevision: item.itemRevision as number } : {}),
       ...(model ? { model } : {}),
       ...(item.queue === true ? { queue: true as const } : {}),
+      ...(item.stay === true ? { stay: true as const } : {}),
       ...(item.steer === true ? { steer: true as const } : {}),
       ...(item.resent === true ? { resent: true as const } : {}),
       ...(item.freshContext === true ? { freshContext: true as const } : {}),

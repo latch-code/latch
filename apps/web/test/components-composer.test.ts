@@ -405,6 +405,30 @@ describe('approval cards', () => {
     expect(buttonLabels(html)).toEqual([])
   })
 
+  it('offers 核对 with the Host when an unknown choice cannot be sent again here', () => {
+    const request = approval({ risk: 'R1', options: [...ALWAYS] })
+    const card = (canRetry: boolean) =>
+      renderToStaticMarkup(
+        createElement(ApprovalDrawer, {
+          approvals: [request],
+          messages: [tool()],
+          index: 0,
+          onIndex: () => {},
+          gateFor: item => approvalActions(item, null),
+          busy: new Map(),
+          statuses: new Map<string, ApprovalStatus>([[request.id, { uncertain: { decision: 'allow', optionId: 'allow_once' } }]]),
+          onDecide: () => {},
+          canRetry: () => canRetry,
+          onCheck: () => Promise.resolve(),
+        }),
+      )
+    expect(buttonLabels(card(true))).toEqual([APPROVAL_COPY.retry])
+    const stuck = card(false)
+    expect(stuck).toMatch(/「.+」的结果未知/u)
+    expect(buttonLabels(stuck)).toEqual([APPROVAL_COPY.recheck])
+    expect(stuck).not.toContain('data-variant="primary"')
+  })
+
   it("shows an agent's options in the product's words", () => {
     const html = approvalCard({ advisory: true, options: [{ id: 'r', label: 'Reject', kind: 'reject_once' }] }, undefined, {
       kind: 'advisory',

@@ -35,6 +35,24 @@ describe('starting a 待办 from the board', () => {
     expect(submissionRequest({ prompt: 'x', requestId: 'r' }).path).toBe('tasks')
   })
 
+  it('keeps a 新建 start on the board across a reload, without sending that choice', () => {
+    const values = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key),
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    })
+    const input = { prompt: 'echo 新建', requestId: 'board-start', harnessId: 'fake', stay: true as const }
+    writePending('pending', input)
+    expect(readPending('pending')).toEqual(input)
+    expect(submissionRequest(readPending('pending')!).body).not.toHaveProperty('stay')
+    // Only a new session stays on the board, and only as `true`.
+    values.set('pending', JSON.stringify({ ...input, sessionId: 'tsk_1' }))
+    expect(readPending('pending')).toBeNull()
+    values.set('pending', JSON.stringify({ ...input, stay: 'yes' }))
+    expect(readPending('pending')).toBeNull()
+  })
+
   it('titles a kept 待办 by the session-title rule, cut to 120 characters', () => {
     expect(itemTitle('> 引用\n修好登录\n第二行')).toBe('修好登录 第二行')
     expect(Array.from(itemTitle('长'.repeat(200))).length).toBe(120)

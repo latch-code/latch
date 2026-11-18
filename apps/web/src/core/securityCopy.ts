@@ -183,6 +183,8 @@ export const APPROVAL_COPY = defineCopy(
     uncertainTitle: (choice: string) => `「${choice}」的结果未知`,
     uncertainApproval: '审批结果尚未确认',
     retry: '重试',
+    /** An unknown choice that cannot be sent again from here: read the session from the Host again. */
+    recheck: '核对',
     /** The drawer above the composer. */
     drawerCount: (index: number, total: number) => `${index}/${total}`,
     allow: '允许',
@@ -221,6 +223,7 @@ export const APPROVAL_COPY = defineCopy(
     uncertainTitle: (choice: string) => `Result of “${choice}” unknown`,
     uncertainApproval: 'Approval outcome unconfirmed',
     retry: 'Retry',
+    recheck: 'Check',
     drawerCount: (index: number, total: number) => `${index}/${total}`,
     allow: 'Allow',
     reject: 'Deny',

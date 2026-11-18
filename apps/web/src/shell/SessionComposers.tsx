@@ -472,6 +472,7 @@ export function SessionComposer({
         statuses={statuses}
         onDecide={onDecide}
         canRetry={shell.canRetryApproval}
+        onCheck={shell.checkApproval}
         rejectWithNote={noteComposer?.rejectWithNote}
         {...(run ? { onStop: run.onCancel } : {})}
       />

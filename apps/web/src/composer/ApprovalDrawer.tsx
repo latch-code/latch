@@ -330,6 +330,8 @@ export interface ApprovalDrawerProps {
   statuses: ReadonlyMap<string, ApprovalStatus>
   onDecide: DecideHandler
   canRetry?: ((choice: UncertainChoice) => boolean) | undefined
+  /** Reads the session from the Host again: the one step left when an unknown choice cannot be retried here. */
+  onCheck?: (() => Promise<unknown>) | undefined
   /** When the composer supports a rejection note, whether rejecting will send it. */
   rejectWithNote?: boolean | undefined
   onStop?: (() => void) | undefined
@@ -356,6 +358,7 @@ export function ApprovalDrawer({
   statuses,
   onDecide,
   canRetry,
+  onCheck,
   rejectWithNote,
   onStop,
   presentation,
@@ -382,6 +385,7 @@ export function ApprovalDrawer({
       status={statuses.get(approval.id)}
       onDecide={onDecide}
       canRetry={canRetry}
+      onCheck={onCheck}
       rejectWithNote={rejectWithNote}
       onStop={onStop}
       presentation={presentation}
@@ -405,6 +409,7 @@ function ApprovalPanel({
   status,
   onDecide,
   canRetry,
+  onCheck,
   rejectWithNote,
   onStop,
   presentation,
@@ -430,6 +435,7 @@ function ApprovalPanel({
   status: ApprovalStatus | undefined
   onDecide: DecideHandler
   canRetry?: ((choice: UncertainChoice) => boolean) | undefined
+  onCheck?: (() => Promise<unknown>) | undefined
   rejectWithNote?: boolean | undefined
   onStop?: (() => void) | undefined
 }) {
@@ -560,6 +566,15 @@ function ApprovalPanel({
     && previousNotes.length === 0
   const uncertainOption = uncertain && retryApprovalOption(gate, uncertain)
   const retry = uncertain && uncertainOption && canRetry?.(uncertain) !== false && (!hidden || uncertainOption.kind.endsWith('_once'))
+  // Without a retry here the outcome still ends only with the Host's evidence: reading the session again shows it.
+  const [checking, setChecking] = useState(false)
+  const check = () => {
+    if (!onCheck || checking) return
+    setChecking(true)
+    void onCheck()
+      .catch(() => {})
+      .finally(() => setChecking(false))
+  }
   const menuItems: MenuItem[] = [
     ...(offerMore
       ? more.map(option => ({
@@ -871,7 +886,7 @@ function ApprovalPanel({
             uncertainOption ? APPROVAL_COPY.uncertainTitle(optionLabel(uncertainOption, gate, builtin)) : APPROVAL_COPY.uncertainApproval
           }
           action={
-            retry && (
+            retry ? (
               <Button
                 size="xs"
                 disabled={!armed || running}
@@ -880,6 +895,12 @@ function ApprovalPanel({
                 }}>
                 {APPROVAL_COPY.retry}
               </Button>
+            ) : (
+              onCheck && (
+                <Button size="xs" disabled={checking} onClick={check}>
+                  {APPROVAL_COPY.recheck}
+                </Button>
+              )
             )
           }
         />

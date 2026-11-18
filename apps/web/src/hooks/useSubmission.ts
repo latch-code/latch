@@ -393,6 +393,8 @@ export function useSubmission({
             ...(picks.length ? { config: picks } : {}),
             ...(worktree ? { worktree: worktree.from === 'head' ? (true as const) : worktree } : {}),
             ...(itemRef.current && !fork ? { itemId: itemRef.current.id, itemRevision: itemRef.current.revision } : {}),
+            // Stored with the submission, so a start whose result stayed unknown still stays on the board after a reload.
+            ...(stayRef.current ? { stay: true as const } : {}),
           }
         : {
             requestId: newRequestId(),
@@ -416,7 +418,7 @@ export function useSubmission({
       epoch: destination.current.epoch,
       // After a reload only the stored submission says where it came from.
       consumedDraft: earlier?.consumedDraft ?? (resend === undefined && fromInput(submission)),
-      stay: earlier?.stay ?? (stayRef.current && submission.sessionId === undefined),
+      stay: earlier?.stay ?? submission.stay === true,
     }
     if (earlier && !storedOwnsInput(submission, destination.current.selectedId)) origin.epoch = earlier.epoch
     if (!retry) requestOrigins.current.clear()
@@ -590,7 +592,11 @@ export function useSubmission({
     sending,
     sendingMessage,
     startingMessage:
-      sendingMessage?.sessionId === null && !requestOrigins.current.get(sendingMessage.submission.requestId)?.stay ? sendingMessage : null,
+      sendingMessage?.sessionId === null
+      && sendingMessage.submission.stay !== true
+      && !requestOrigins.current.get(sendingMessage.submission.requestId)?.stay
+        ? sendingMessage
+        : null,
     error,
     /** The Host's code for the refusal `error` says, while it says it. */
     errorCode: failed.current?.text === error ? failed.current.code : undefined,

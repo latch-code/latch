@@ -368,7 +368,7 @@ Face ID 关闭时，前台原阅读意图的正文窗口到期后沿原验证入
 
 `POST /link/api/approvals/:id` 的请求体为 `{ decision, optionId?, requestId?, note? }`。`note` 是拒绝时给 Harness 的说明；同一说明的重试用同一个 `requestId`，换一句说明算换一个选择。浏览器总是带 `requestId`：每个审批上的每个选择一个（`DecisionRequests`），同一页面同一审批同时只发出一个决定。
 
-- **结果未知时重用。** 网络错误、超时（15 秒）、408 或 5xx 时结果未知，`requestId` 保留，重试或再按同一个按钮都重发同一请求。审批从快照里消失（已由某台设备结算）时提示随之去掉。[确定的拒绝](#确定的拒绝)与其他明确回答之后丢弃 `requestId`。换一个选择总是用新的 `requestId`。
+- **结果未知时重用。** 网络错误、超时（15 秒）、408 或 5xx 时结果未知，`requestId` 保留，重试或再按同一个按钮都重发同一请求。审批从快照里消失（已由某台设备结算）时提示随之去掉。这台设备此刻不能重发（Harness 未连接、权限变了、原选项已不在）时，卡片仍写结果未知，只给「核对」：重新读取会话，审批已结算就随之消失，否则保持未知。[确定的拒绝](#确定的拒绝)与其他明确回答之后丢弃 `requestId`。换一个选择总是用新的 `requestId`。
 - **回执。** Host 接受后返回 `{ accepted: true, receipt: { approvalId, decision, optionId?, at } }`。同一设备用同一 `requestId` 重发时返回原回执并带 `replay: true`，不再决定也不再审计。
 - **已被处理。** 其他情况下，已处理或已失效的审批返回 `409 approval-settled`，`decidedBy` 为 `{ kind: 'device', self, deviceName, decision, optionKind, at }`，或 `{ kind: 'system' }`（会话结束或取消使其失效）。`deviceName` 是作出决定的设备当前的名称，Host 已不认识它时为空。
 - **客户端的判断。** 本设备此前作了同一决定（有 `optionKind` 时还要求选项类别相同）视为已生效；作了不同的选择时提示本次选择未生效；由其他设备处理时写出设备名，设备名为空或不合设备名称规则时、以及 `system`，只说该审批已结束。
@@ -422,7 +422,7 @@ Face ID 关闭时，前台原阅读意图的正文窗口到期后沿原验证入
 
 源码：[useSubmission.ts](../apps/web/src/hooks/useSubmission.ts)、[sendingMessage.ts](../apps/web/src/core/sendingMessage.ts)。
 
-**临时气泡。** 提交后立即显示临时文字，500ms 后才显示「发送中…」；按相同的 `requestId`、文字与附件或文件引用匹配到 Host 的消息后隐藏。临时状态不写入 `TaskDetail`、快照或 Host 的存储；会话仍由 Host 维护。队列接收不生成临时气泡。看板「新建」发起的新会话在 Host 接下后不打开：草稿照常用掉，页面留在看板，结果未知时同样以原请求重试（`setStay`）。待办卡的「开始」走同一个提交：待发送的提交多带 `itemId` 与读出要求时的修订，发往 `POST /work/items/:id/start`（`baseRevision`），重试与放弃不变（`setItem`）。待办讨论的发言不走这个提交：它在讨论里自己显示发送中与结果未知，重试用同一个 `requestId`；讨论的变化不新增事件种类，快照里待办的 `threadRevision` 变了、或某条回复所在的会话变了，页面重读讨论。
+**临时气泡。** 提交后立即显示临时文字，500ms 后才显示「发送中…」；按相同的 `requestId`、文字与附件或文件引用匹配到 Host 的消息后隐藏。临时状态不写入 `TaskDetail`、快照或 Host 的存储；会话仍由 Host 维护。队列接收不生成临时气泡。看板「新建」发起的新会话在 Host 接下后不打开：草稿照常用掉，页面留在看板，结果未知时同样以原请求重试（`setStay`）。这个选择随待发送的提交一起存下（`stay`，不发给 Host），刷新后重试仍留在看板。待办卡的「开始」走同一个提交：待发送的提交多带 `itemId` 与读出要求时的修订，发往 `POST /work/items/:id/start`（`baseRevision`），重试与放弃不变（`setItem`）。待办讨论的发言不走这个提交：它在讨论里自己显示发送中与结果未知，重试用同一个 `requestId`；讨论的变化不新增事件种类，快照里待办的 `threadRevision` 变了、或某条回复所在的会话变了，页面重读讨论。
 
 从对话起始页发送第一条时，以 `requestId` 在对话布局投影气泡与所选 Harness、项目。未知时保留原草稿和提交。Host 回执给出真实会话 ID 后在原位置接续，若人已打开别的会话则保留当前选择。临时投影不驻留详情缓存。
 
