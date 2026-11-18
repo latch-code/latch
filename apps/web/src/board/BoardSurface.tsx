@@ -174,24 +174,37 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
   const [noting, setNoting] = useState<{ kind: 'item'; item: WorkItemSummary } | { kind: 'session'; task: TaskSummary } | null>(null)
   const [reviewing, setReviewing] = useState<TodoProposal | null>(null)
   const [acceptedItems, setAcceptedItems] = useState<string[]>([])
-  const writes = useItemWrites(shell.refresh)
+  // The receipt's item can differ from the one currently open.
+  const [outsideByItem, setOutsideByItem] = useState<ReadonlyMap<string, readonly string[]>>(() => new Map())
+  const noteStartedOutside = useCallback((itemId: string, sessionId: string) => {
+    setOutsideByItem(previous => {
+      const sessions = previous.get(itemId) ?? []
+      return sessions.includes(sessionId) ? previous : new Map(previous).set(itemId, [...sessions, sessionId])
+    })
+  }, [])
+  const startReceipt = shell.submission.sendingMessage
+  useEffect(() => {
+    if (startReceipt?.state === 'accepted' && startReceipt.itemOutside && startReceipt.sessionId && startReceipt.submission.itemId)
+      noteStartedOutside(startReceipt.submission.itemId, startReceipt.sessionId)
+  }, [startReceipt, noteStartedOutside])
+  const writes = useItemWrites(shell.refresh, noteStartedOutside)
   const proposalWrites = shell.proposalWrites
   const showAccepted = (ids: string[]) => {
     if (readPreferences().workView !== 'board') return
     if (ids.length > 1) setAcceptedItems(ids)
     else if (ids[0]) shell.openWorkItem(ids[0])
   }
-  /** Sessions this page started from a 待办: one the snapshot lists outside it was not added (the 待办 was full). */
-  const [startedFrom, setStartedFrom] = useState<ReadonlyArray<{ itemId: string; sessionId: string }>>([])
-  const noteStarted = useCallback((itemId: string, sessionId: string) => {
-    setStartedFrom(previous => [...previous, { itemId, sessionId }])
-  }, [])
   const root = useRef<HTMLElement>(null)
   const narrow = useNarrow(root)
   useTicker(connection === 'connected' ? 'minute' : false)
   const now = hostNow()
   const tasks = snapshot.tasks
   const items = useMemo(() => snapshot.items ?? [], [snapshot.items])
+  const outsideSessions = (itemId: string) =>
+    (outsideByItem.get(itemId) ?? []).flatMap(sessionId => {
+      const session = tasks.find(task => task.id === sessionId)
+      return session && !items.some(item => item.sessionIds.includes(sessionId)) ? [session] : []
+    })
   const proposals = useMemo(() => snapshot.workProposals ?? [], [snapshot.workProposals])
   const workspaces = shell.catalog?.workspaces ?? []
   const filters = memory.filters
@@ -355,13 +368,6 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
     setNewMode(mode)
     setNewSince(shell.submission.sendingMessage)
   }
-  const onNewStarted = useCallback(
-    (sessionId: string) => {
-      setStarted(sessionId)
-      if (newMode.kind === 'start') noteStarted(newMode.item.id, sessionId)
-    },
-    [newMode, noteStarted],
-  )
   const startItem = useCallback(
     (item: WorkItemSummary) => {
       beforeNew.current = shell.route
@@ -550,14 +556,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
           onDismiss={writes.dismiss}
           decision={waiting ? <WorkbenchDecision task={waiting} shell={decisionShell} /> : undefined}
           suggestion={suggestionFor({ itemId: card.id })}
-          outside={
-            startedFrom.filter(
-              entry =>
-                entry.itemId === card.id
-                && !items.some(other => other.sessionIds.includes(entry.sessionId))
-                && tasks.some(task => task.id === entry.sessionId),
-            ).length
-          }
+          outside={outsideSessions(card.id).length}
         />
       )
     }
@@ -593,7 +592,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         size="xs"
         loading={writes.startingAll}
         onClick={() => {
-          void writes.startAll(unstarted, noteStarted)
+          void writes.startAll(unstarted)
         }}>
         {COPY.startAll}
       </Button>
@@ -726,7 +725,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
       data-narrow={narrow ? '' : undefined}
       data-view={memory.view}>
       {showItem ? (
-        <ItemPage shell={shell} itemId={itemPage} />
+        <ItemPage shell={shell} itemId={itemPage} outside={outsideSessions(itemPage)} />
       ) : (
         <>
           {!narrow && header}
@@ -740,7 +739,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         mode={newMode}
         since={newSince ?? null}
         onClose={closeNew}
-        onStarted={onNewStarted}
+        onStarted={setStarted}
         onKept={setStarted}
       />
       {stopAsk && (

@@ -72,6 +72,30 @@ describe('starting a 待办 from the board', () => {
     expect(fetcher).toHaveBeenCalledTimes(3)
   })
 
+  it('notes only starts that the Host marked as outside, including after retry', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+    fetcher
+      .mockResolvedValueOnce(Response.json({ sessionId: 'joined' }, { status: 201 }))
+      .mockRejectedValueOnce(new TypeError('No response'))
+      .mockResolvedValueOnce(Response.json({ sessionId: 'outside', outside: 'item-full' }, { status: 201 }))
+    vi.stubGlobal('fetch', fetcher)
+    const startedOutside = vi.fn()
+    let writes: ItemWrites | undefined
+    function BoardWrites() {
+      writes = useItemWrites(async () => {}, startedOutside)
+      return null
+    }
+    renderToStaticMarkup(createElement(BoardWrites))
+    const board = writes!
+    const item = { id: ITEM, revision: 3 }
+    expect(await board.start(item)).toEqual({ ok: true, sessionId: 'joined' })
+    expect(await board.start(item)).toMatchObject({ ok: false, unknown: true })
+    expect(startedOutside).not.toHaveBeenCalled()
+    expect(await board.retry(ITEM)).toEqual({ ok: true, sessionId: 'outside' })
+    expect(startedOutside).toHaveBeenCalledExactlyOnceWith(ITEM, 'outside')
+    expect(fetcher.mock.calls[2]?.[1]?.body).toBe(fetcher.mock.calls[1]?.[1]?.body)
+  })
+
   it('counts a 待办 once on the start screen, never its sessions', () => {
     const tasks = [
       { id: 'a', board: { group: 'running' as const, card: true as const } },

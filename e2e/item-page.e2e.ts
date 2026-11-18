@@ -310,11 +310,23 @@ it('opens a 待办 inside 看板 with its sessions, starts another, brings a rep
     expect((await itemOf(todo.id)).sessionIds).toEqual([])
     await page.unroute(startPath)
 
+    await row(page, loose).getByRole('button').click()
+    await page.locator('main.workspace:not([inert]) .user-bubble').getByText('echo 单独的会话', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '返回待办', exact: true }).click()
+    await outside.waitFor()
+
     // Done: 重新打开 in the head, no 再开一个.
-    await openItem(page, finished.id)
+    const showBoard = () => itemPage(page).getByRole('button', { name: '看板', exact: true }).click()
+    const openCard = (id: string) => page.locator(`.work-board-card[data-work-item="${id}"] .work-board-card-main`).click()
+    await showBoard()
+    await openCard(finished.id)
     await itemPage(page).getByRole('button', { name: '重新打开', exact: true }).waitFor()
     expect(await itemPage(page).getByRole('button', { name: '再开一个', exact: true }).count()).toBe(0)
+    expect(await row(page, loose).count()).toBe(0)
     await shots(page, 'done', [1440, 900])
+    await showBoard()
+    await openCard(todo.id)
+    await outside.waitFor()
 
     // Phone: a pushed page, the facts card first, ← 看板 in its head.
     await openItem(phone, mixed.id)

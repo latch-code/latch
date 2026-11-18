@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { chromium, type Browser, type Page } from '@playwright/test'
 import { expect, it } from 'vitest'
-import type { AppSnapshot, WorkItemAnswer, WorkItemSummary, WorkspaceInfo } from '@latch/protocol'
+import type { AppSnapshot, WorkItemAnswer, WorkItemStartAnswer, WorkItemSummary, WorkspaceInfo } from '@latch/protocol'
 import { latchEnv } from '@latch/host/env'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
@@ -194,6 +194,14 @@ it('keeps 待办 in 未开始, starts them as one card with their sessions, and 
 
     // Every session of a started 待办 ended: 可交付 with 完成, then 已结束.
     await expect.poll(async () => (await itemOf(readme.id))?.board, { timeout: 30_000 }).toEqual({ group: 'deliver', reason: 'settled' })
+    const completedSession = started!.sessionIds[0]!
+    await owner.json(`work/items/${readme.id}/sessions/${completedSession}`, { method: 'DELETE' })
+    const cardWithoutMember = column(page, '未开始').locator(`.work-board-card[data-work-item="${readme.id}"]`)
+    await cardWithoutMember.waitFor()
+    expect(await cardWithoutMember.locator(`[data-work-session="${completedSession}"]`).count()).toBe(0)
+    expect(await cardWithoutMember.getByText('1 个未加入', { exact: true }).count()).toBe(0)
+    await owner.json(`work/items/${readme.id}/sessions`, { method: 'POST', body: { sessionId: completedSession } })
+    await itemCard(page, readme.id).locator(`[data-work-session="${completedSession}"]`).waitFor()
     await shot(page, 'started', 1440, 'light')
     await shot(page, 'started', 1440, 'dark')
     await page.setViewportSize({ width: 1440, height: 900 })
@@ -227,6 +235,21 @@ it('keeps 待办 in 未开始, starts them as one card with their sessions, and 
     await page.getByRole('dialog', { name: '删除待办' }).getByRole('button', { name: '删除', exact: true }).click()
     await board(page).locator(`.work-board-card[data-work-session="${session}"]`).waitFor()
     expect(await itemOf(running.id)).toBeUndefined()
+
+    // The Host can report that a start created a session without joining it. Its card still stands on its own.
+    const outsidePath = `**/link/api/work/items/${release.id}/start`
+    await page.route(outsidePath, async route => {
+      if (route.request().method() !== 'POST') return route.continue()
+      return route.fulfill({
+        status: 201,
+        json: { sessionId: session, outside: 'item-full', item: await itemOf(release.id) } satisfies WorkItemStartAnswer,
+      })
+    })
+    await itemCard(page, release.id).getByRole('button', { name: '开始', exact: true }).click()
+    await page.getByRole('dialog', { name: '开始', exact: true }).getByRole('button', { name: '发送', exact: true }).click()
+    await itemCard(page, release.id).getByText('1 个未加入', { exact: true }).waitFor()
+    expect((await itemOf(release.id))?.sessionIds).toEqual([])
+    await page.unroute(outsidePath)
 
     // Phone: 未开始 is a state of the list.
     await page.setViewportSize({ width: 390, height: 844 })

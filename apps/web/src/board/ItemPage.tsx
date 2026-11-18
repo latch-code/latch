@@ -188,7 +188,7 @@ function useItemRecord(id: string, revision: number | undefined, onGone: () => v
  * input), 完成 or 重新打开, and a facts card with its tags and priority. ← 看板, Esc and the browser's back return to the
  * board. The discussion shares its authorized read with the current decision above the scrolling body.
  */
-export function ItemPage({ shell, itemId }: { shell: ShellState; itemId: string }) {
+export function ItemPage({ shell, itemId, outside }: { shell: ShellState; itemId: string; outside: readonly TaskSummary[] }) {
   const { snapshot } = shell
   const item = snapshot.items?.find(entry => entry.id === itemId)
   const thread = useItemThread(item, snapshot, shell.connection === 'connected')
@@ -236,7 +236,6 @@ export function ItemPage({ shell, itemId }: { shell: ShellState; itemId: string 
   const [joining, setJoining] = useState(false)
   const [starting, setStarting] = useState(false)
   const [bringing, setBringing] = useState<string | null>(null)
-  const [startedOutside, setStartedOutside] = useState<string[]>([])
   const fail = (cause: unknown) => {
     shell.setToast({ text: errorMessage(cause), tone: 'error' })
   }
@@ -313,10 +312,6 @@ export function ItemPage({ shell, itemId }: { shell: ShellState; itemId: string 
   const decision = decisionPost && thread.decisions.get(decisionPost.id)
   const members = item.sessionIds.map(id => ({ id, task: snapshot.tasks.find(task => task.id === id) }))
   const full = item.sessionIds.length >= WORK_ITEM_LIMITS.sessions
-  const outside = startedOutside.flatMap(id => {
-    const task = snapshot.tasks.find(entry => entry.id === id)
-    return task && !item.sessionIds.includes(id) && !snapshot.items?.some(other => other.sessionIds.includes(id)) ? [task] : []
-  })
   const canStart = canWrite && !closed && !full && shell.homeComposerState.gate.kind === 'open'
   const project = item.projectId ? shell.catalog?.workspaces.find(entry => entry.id === item.projectId) : undefined
   const harness = item.harnessId ? shell.catalog?.harnesses.find(entry => entry.id === item.harnessId) : undefined
@@ -599,15 +594,7 @@ export function ItemPage({ shell, itemId }: { shell: ShellState; itemId: string 
           onClose={() => setJoining(false)}
         />
       )}
-      {starting && record && (
-        <ItemPageStart
-          shell={shell}
-          item={record}
-          revision={item.revision}
-          onStartedOutside={sessionId => setStartedOutside(previous => [...previous, sessionId])}
-          onClose={() => setStarting(false)}
-        />
-      )}
+      {starting && record && <ItemPageStart shell={shell} item={record} revision={item.revision} onClose={() => setStarting(false)} />}
     </section>
   )
 }

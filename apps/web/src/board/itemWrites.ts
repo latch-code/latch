@@ -34,7 +34,7 @@ const settledOnRetry = (cause: unknown) =>
  * The board's writes to 待办 outside 新建: 开始 with its stored choices, 全部开始, 完成, priority, tags, edits and
  * delete. One unconfirmed write per 待办; it is retried as it was sent and never replaced by a new one meanwhile.
  */
-export function useItemWrites(refresh: () => Promise<void>) {
+export function useItemWrites(refresh: () => Promise<void>, onStartedOutside?: (itemId: string, sessionId: string) => void) {
   const [states, setStates] = useState<ReadonlyMap<string, ItemWriteState>>(() => new Map())
   const requests = useRef(new Map<string, ItemRequest>())
   const flights = useRef(new Set<string>())
@@ -66,6 +66,7 @@ export function useItemWrites(refresh: () => Promise<void>) {
         )
         requests.current.delete(id)
         set(id, undefined)
+        if (request.kind === 'start' && answer.sessionId && answer.outside) onStartedOutside?.(id, answer.sessionId)
         await refresh()
         return { ok: true, ...(answer.sessionId ? { sessionId: answer.sessionId } : {}) }
       } catch (cause) {
@@ -90,7 +91,7 @@ export function useItemWrites(refresh: () => Promise<void>) {
         flights.current.delete(id)
       }
     },
-    [refresh],
+    [refresh, onStartedOutside],
   )
 
   /**
@@ -167,7 +168,7 @@ export function useItemWrites(refresh: () => Promise<void>) {
    * not answered stops the rest; its card says why.
    */
   const startAll = useCallback(
-    async (items: readonly Pick<WorkItemSummary, 'id' | 'revision'>[], onStarted?: (itemId: string, sessionId: string) => void) => {
+    async (items: readonly Pick<WorkItemSummary, 'id' | 'revision'>[]) => {
       if (startingAll) return
       setStartingAll(true)
       try {
@@ -175,7 +176,6 @@ export function useItemWrites(refresh: () => Promise<void>) {
           if (requests.current.has(item.id)) break
           const result = await start(item)
           if (!result.ok) break
-          if (result.sessionId) onStarted?.(item.id, result.sessionId)
         }
       } finally {
         setStartingAll(false)
