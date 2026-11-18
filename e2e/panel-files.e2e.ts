@@ -129,7 +129,7 @@ describe('the right panel', () => {
 
       await page.getByTestId('open-settings').filter({ visible: true }).first().click()
       await page.locator('#settings-tab-general').click()
-      await page.getByTestId('display-language').getByRole('radio', { name: 'English' }).click()
+      await page.getByRole('radiogroup', { name: '界面语言', exact: true }).getByRole('radio', { name: 'English', exact: true }).click()
       await page.getByTestId('close-settings').click()
 
       await page.getByRole('status').filter({ hasText: '2 / 6 pages' }).waitFor()
@@ -141,7 +141,8 @@ describe('the right panel', () => {
       expect(await sandbox.getAttribute('src')).toBe(source)
       await shot(page, 'pptx-en', 1440, 'light')
       await page.getByRole('button', { name: 'Quote in chat', exact: true }).click()
-      await expect.poll(async () => page.locator('.composer-input textarea:visible').inputValue()).toContain('Page 2')
+      // Draft references use the original page marker even when the viewer is English.
+      await expect.poll(async () => page.locator('.composer-input textarea:visible').inputValue()).toContain('第 2 页')
     } finally {
       await page.context().close()
     }
