@@ -90,7 +90,7 @@ export async function runStop(
   }
   const active = info.activity ? info.activity.running + info.activity.waiting : info.activeSessions
   if (active > 0 && !force) {
-    error(`有 ${active} 个会话正在运行或等待审批。确认后使用 ${command} --force。`)
+    error(`有 ${active} 个会话正在运行或等待审批。确认要停止时，在原停止命令的末尾加上 --force，沿用同一数据目录。`)
     return 1
   }
   if (reason !== undefined) {

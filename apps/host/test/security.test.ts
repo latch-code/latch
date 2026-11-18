@@ -638,6 +638,6 @@ export default { id: 'gate', name: 'Gate', version: '0.0.1', description: 'Holds
       (error: { code: number; stderr: string }) => error,
     )
     expect(busy.code).toBe(1)
-    expect(busy.stderr).toContain('有 1 个会话正在运行。确认后使用 pnpm stop --force。')
+    expect(busy.stderr).toContain('有 1 个会话正在运行或等待审批。确认要停止时，在原停止命令的末尾加上 --force，沿用同一数据目录。')
   }, 30_000)
 })
