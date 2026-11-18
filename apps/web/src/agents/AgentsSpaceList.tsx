@@ -217,7 +217,7 @@ function Roster({
  * 我的 Agent's people, wherever the shell draws them (the sidebar, 我的 Agent's own pane, a phone's root page): the
  * roster. Drawn from the snapshot's summaries, so it is the same wherever it stands.
  */
-export function AgentsSpaceList({ shell, page = false }: { shell: ShellState; page?: boolean }) {
+export function AgentsSpaceList({ shell, page = false, hideEmpty = false }: { shell: ShellState; page?: boolean; hideEmpty?: boolean }) {
   const { snapshot, connection } = shell
   const frozen = useLastConfirmed(connection, snapshot) !== null
   const locked = !readsAgents(snapshot)
@@ -287,7 +287,7 @@ export function AgentsSpaceList({ shell, page = false }: { shell: ShellState; pa
                 正在确认上一项修改
               </p>
             ) : (
-              own.length === 0 && <p className="space-quiet">还没有自己的 Agent</p>
+              !hideEmpty && own.length === 0 && <p className="space-quiet">还没有自己的 Agent</p>
             )}
           </>
         )}

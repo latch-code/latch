@@ -4,7 +4,7 @@ import { testHarness } from '@latch/testkit'
 import { describe, expect, it } from 'vitest'
 import { waitKindOf, type AppSnapshot, type BoardPlace, type CustomAgentSummary, type HostCatalog, type TaskSummary } from '@latch/protocol'
 import { AgentsSpaceList, currentAgent, faceState, RosterMark } from '../src/agents/AgentsSpaceList.tsx'
-import { AgentsHome } from '../src/agents/AgentsHome.tsx'
+import { AgentsHome, agentsHomeData } from '../src/agents/AgentsHome.tsx'
 import { addressee, agentsOverview, defaultAddressee, rosterRows, rosterTopics, topicState, waitingTopic } from '../src/agents/roster.ts'
 import { TopicFrame } from '../src/agents/TopicFrame.tsx'
 import { shellOverview } from '../src/shell/SpaceNav.tsx'
@@ -444,27 +444,26 @@ describe('the topic header', () => {
 
 describe('the 总览 while the Host withholds the list of Agents', () => {
   // A device that only looks: the input is not drawn, so the page is the groups alone.
-  const home = (agents: CustomAgentSummary[] | undefined, tasks: TaskSummary[]) =>
-    renderToStaticMarkup(
-      createElement(AgentsHome, {
-        shell: {
-          snapshot: { ...snapshot(tasks, agents), device: { id: 'd1', dataScope: 'all', scopes: ['view'] } },
-          catalog: undefined,
-          connection: 'offline',
-          route: { entry: 'agents' },
-          selectedId: null,
-          stopping: new Set<string>(),
-          statuses: new Map(),
-          now: Date.UTC(2026, 10, 14, 10, 0),
-          preferences: {},
-          access: { scopes: new Set(['view']) },
-          submission: { pending: null, sending: false },
-          delegation: { sending: false, pending: null },
-          lifecycle: {},
-          audit: {},
-        } as unknown as ShellState,
-      }),
-    )
+  const home = (agents: CustomAgentSummary[] | undefined, tasks: TaskSummary[]) => {
+    const shell = {
+      snapshot: { ...snapshot(tasks, agents), device: { id: 'd1', dataScope: 'all', scopes: ['view'] } },
+      catalog: undefined,
+      connection: 'offline',
+      route: { entry: 'agents' },
+      selectedId: null,
+      stopping: new Set<string>(),
+      statuses: new Map(),
+      now: Date.UTC(2026, 10, 14, 10, 0),
+      preferences: {},
+      access: { scopes: new Set(['view']) },
+      submission: { pending: null, sending: false },
+      delegation: { sending: false, pending: null },
+      lifecycle: {},
+      audit: {},
+    } as unknown as ShellState
+    const data = agentsHomeData(shell)
+    return renderToStaticMarkup(createElement(AgentsHome, { shell, data, emptyInOverview: data.empty === 'no-agents' }))
+  }
   const waiting = topic('m1', 'man', 3, { status: 'waiting-approval', live: live('approval') })
 
   it('still draws what waits for you, instead of a skeleton', () => {

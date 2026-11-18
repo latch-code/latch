@@ -1682,11 +1682,15 @@ button.helper-card:focus-visible {
   margin: 0;
 }
 .agents-home-content {
-  display: grid;
-  gap: var(--sp-24);
   width: 100%;
   max-width: var(--content-width);
   margin-inline: auto;
+}
+.agents-home-content > section + section {
+  margin-block-start: var(--sp-24);
+}
+.agents-home-content .banner-region {
+  padding: var(--sp-8) 0;
 }
 .agents-home-waiting.work-overview {
   padding: 0;

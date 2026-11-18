@@ -73,16 +73,36 @@ function ScheduleRow({
   )
 }
 
+/** The same snapshot decides what the overview shows and where the first Agent can be created. */
+export function agentsHomeData({ snapshot, stopping }: Pick<ShellState, 'snapshot' | 'stopping'>) {
+  const { attention } = agentsOverview(snapshot.tasks, stopping)
+  const { results, upcoming } = scheduleOverview(snapshot.automations, attention)
+  const empty =
+    attention.length || results.length || upcoming.length
+      ? null
+      : snapshot.customAgents === undefined
+        ? 'loading'
+        : snapshot.customAgents.length === 0
+          ? 'no-agents'
+          : 'no-activity'
+  return { attention, results, upcoming, empty }
+}
+
 /** The wide overview leads with decisions, followed by settled schedule runs and upcoming times from the Host. */
-export function AgentsHome({ shell }: { shell: ShellState }) {
+export function AgentsHome({
+  shell,
+  data: { attention, results, upcoming, empty },
+  emptyInOverview,
+}: {
+  shell: ShellState
+  data: ReturnType<typeof agentsHomeData>
+  emptyInOverview: boolean
+}) {
   const { snapshot, connection, now } = shell
   const offline = connection === 'offline'
   const locked = !readsAgents(snapshot)
   const canRun = shell.access.scopes.has('run')
   const rows = locked ? [] : shellRoster(shell)
-  const own = rows.some(row => addressable(row) && row.id !== GENERAL_AGENT_ID)
-  const { attention } = agentsOverview(snapshot.tasks, shell.stopping)
-  const { results, upcoming } = scheduleOverview(snapshot.automations, attention)
   const [opened, setOpened] = useState<string>()
   const [expanded, setExpanded] = useState(false)
   if (locked)
@@ -93,7 +113,6 @@ export function AgentsHome({ shell }: { shell: ShellState }) {
     )
   const activeDecision = attention.some(task => task.id === opened) ? opened : attention[0]?.id
   const agentOf = (automation: AutomationSummary) => rows.find(row => row.id === (automation.customAgentId ?? GENERAL_AGENT_ID))
-  const hasActivity = attention.length > 0 || results.length > 0 || upcoming.length > 0
   return (
     <div className="workbench-home agents-home">
       <div className="agents-home-content">
@@ -173,8 +192,8 @@ export function AgentsHome({ shell }: { shell: ShellState }) {
             </ul>
           </section>
         )}
-        {!hasActivity
-          && (snapshot.customAgents === undefined ? (
+        {empty !== null
+          && (empty === 'loading' ? (
             <ul className="work-overview-list agents-home-loading" aria-busy="true" aria-label="正在读取 Agent">
               {[0, 1, 2].map(row => (
                 <li key={row}>
@@ -188,17 +207,18 @@ export function AgentsHome({ shell }: { shell: ShellState }) {
               className="agents-home-empty"
               title={
                 <>
-                  <Icon icon={own ? WaitingGlyph : AgentsGlyph} size={24} />
-                  <span>{own ? '没有待处理事项' : '还没有自己的 Agent'}</span>
+                  <Icon icon={empty === 'no-agents' ? AgentsGlyph : WaitingGlyph} size={24} />
+                  <span>{empty === 'no-agents' ? '还没有自己的 Agent' : '没有待处理事项'}</span>
                 </>
               }
               action={
-                !own
+                emptyInOverview
                 && canRun && (
                   <Button
-                    variant="ghost"
+                    variant="secondary"
                     size="sm"
                     icon={PlusGlyph}
+                    data-space-primary=""
                     disabled={offline}
                     tooltip={offline ? DEVICE_OFFLINE : undefined}
                     onClick={() => shell.openMyAgent({ id: 'new' })}>
