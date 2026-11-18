@@ -190,34 +190,37 @@ it.each([
       await page.setViewportSize({ width: 1440, height: 1000 })
       await home.getByRole('button', { name: /^项目：/u }).click()
       await page.getByRole('menuitemradio', { name: '首页项目', exact: true }).click()
-      const requests: string[] = []
-      let rejected = false
+      const requests: Array<{ requestId: string; sessionId?: string; prompt: string; attachmentIds?: string[] }> = []
       await page.route('**/link/api/tasks', async route => {
         if (route.request().method() !== 'POST') return route.continue()
-        const body = route.request().postDataJSON() as { requestId: string; sessionId?: string; prompt: string }
-        requests.push(body.requestId)
-        expect(body.sessionId).toBeUndefined()
-        expect(body.prompt).toBe('只属于首页的新任务')
-        if (!rejected) {
-          rejected = true
-          return route.fulfill({
-            status: 503,
-            contentType: 'application/json',
-            body: JSON.stringify({ code: 'submission-unknown', message: '测试发送结果未知' }),
-          })
-        }
+        requests.push(route.request().postDataJSON() as (typeof requests)[number])
+        if (requests.length === 1) return route.abort('failed')
         return route.continue()
       })
       await home.getByRole('button', { name: '发送', exact: true }).click()
-      await home.getByRole('button', { name: '重试这次提交', exact: true }).waitFor()
-      const pendingBox = await home.locator('.pending-submission').boundingBox()
-      const formBox = await home.locator('.composer').boundingBox()
-      expect(formBox!.y - pendingBox!.y - pendingBox!.height).toBeGreaterThanOrEqual(8)
-      await home.getByRole('button', { name: '重试这次提交', exact: true }).click()
+      const sending = page.locator('main.workspace[data-pending-start]:not([inert])')
+      const firstMessage = sending.locator('.transcript .user-bubble').getByText('只属于首页的新任务', { exact: true })
+      const pending = sending.locator('.pending-submission')
+      const retry = pending.getByRole('button', { name: '重试这次提交', exact: true })
+      await firstMessage.waitFor()
+      await retry.waitFor()
+      expect(await home.isVisible()).toBe(false)
+      expect(await sending.locator('form[hidden] textarea').inputValue()).toBe('只属于首页的新任务')
+      const [request] = requests
+      expect(request).toMatchObject({ requestId: expect.any(String), prompt: '只属于首页的新任务' })
+      expect(request!.sessionId).toBeUndefined()
+      expect(request!.attachmentIds).toHaveLength(1)
+      expect(await sending.getAttribute('data-pending-start')).toBe(request!.requestId)
+      expect(await host.host.bridge.listTasks()).toHaveLength(1)
+      const pendingBox = await pending.boundingBox()
+      const messageBox = await firstMessage.boundingBox()
+      expect(pendingBox!.y - (messageBox!.y + messageBox!.height)).toBeGreaterThanOrEqual(8)
+      expect(pendingBox!.y + pendingBox!.height).toBeLessThanOrEqual(page.viewportSize()!.height)
+      await retry.click()
       await expect.poll(() => calls).toBe(2)
-      expect(requests).toHaveLength(2)
-      expect(new Set(requests).size).toBe(1)
-      await expect.poll(() => home.count()).toBe(0)
+      expect(requests).toEqual([request, request])
+      await sending.waitFor({ state: 'detached' })
+      await page.locator('main.workspace:not([inert]) .transcript .user-bubble').getByText('只属于首页的新任务', { exact: true }).waitFor()
       const tasks = await host.host.bridge.listTasks()
       expect(tasks).toHaveLength(2)
       const created = await owner.json<TaskDetail>(`tasks/${tasks.find(task => task.id !== sessionId)!.id}`)

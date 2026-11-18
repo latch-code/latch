@@ -137,11 +137,14 @@ it('keeps 待办 in 未开始, starts them as one card with their sessions, and 
       await route.continue()
     })
     // 全部开始 goes card by card in the column's order (高 first), and stops at the first refusal.
+    const rejectedStart = page.waitForResponse(
+      response => response.url().endsWith(`/link/api/work/items/${stale.id}/start`) && response.request().method() === 'POST',
+    )
     await column(page, '未开始').getByRole('button', { name: '全部开始' }).click()
-    await itemCard(page, stale.id)
-      .getByText(/修改/u)
-      .first()
-      .waitFor()
+    const conflict = await rejectedStart
+    expect(conflict.status()).toBe(409)
+    expect(await conflict.json()).toMatchObject({ error: 'item-changed' })
+    await itemCard(page, stale.id).getByText('待办已被修改，请刷新后再试。', { exact: true }).waitFor()
     await itemCard(page, stale.id)
       .getByText(/升级依赖到最新版并跑测试/u)
       .waitFor()
