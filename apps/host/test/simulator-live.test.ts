@@ -717,28 +717,39 @@ describe('agent input tools', () => {
     },
   )
 
-  it.each(['narrow editor', 'scope lost after dispatch'])('checks an edited queue turn with %s', async change => {
-    const { t, desktop, idb } = await agentHost()
-    const editor = await t.enroll({ listener: 'unix', dataScope: change === 'narrow editor' ? 'work' : 'all', scopes: ['view', 'run'] })
-    const { sessionId } = await desktop.confirmedJson<{ sessionId: string }>('tasks', {
-      body: { requestId: randomUUID(), harnessId: 'device-agent', prompt: tapWithApproval },
-    })
-    const route = `tasks/${sessionId}`
-    const firstApproval = await waitingApproval(desktop, sessionId)
-    const { queued } = await desktop.json<{ queued: { id: string } }>(`${route}/prompt`, {
-      body: { requestId: randomUUID(), prompt: 'echo before edit', queue: true },
-    })
-    await editor.json(`${route}/queue/${queued.id}`, { method: 'PATCH', body: { text: tapWithApproval } })
-    await desktop.json(`approvals/${firstApproval}`, { body: { decision: 'reject' } })
-    const secondApproval = await waitingApproval(desktop, sessionId, firstApproval)
-    if (change === 'scope lost after dispatch')
-      expect((await desktop.request(`devices/${editor.id}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
-    await desktop.json(`approvals/${secondApproval}`, { body: { decision: 'allow' } })
-    const done = await settled(desktop, sessionId)
-    expect(idb.events).toEqual([])
-    expect(done.messages.some(message => /device_tap: error: .*(全部数据|device-scope|sees all data)/u.test(message.text))).toBe(true)
-    expect((await audit(t)).filter(record => record.action === 'simulator.call')).toEqual([])
-  })
+  it.each(['narrow editor', 'narrow editor then a full one', 'scope lost after dispatch'])(
+    'checks an edited queue turn with %s',
+    async change => {
+      const { t, desktop, idb } = await agentHost()
+      const editor = await t.enroll({
+        listener: 'unix',
+        dataScope: change === 'scope lost after dispatch' ? 'all' : 'work',
+        scopes: ['view', 'run'],
+      })
+      const { sessionId } = await desktop.confirmedJson<{ sessionId: string }>('tasks', {
+        body: { requestId: randomUUID(), harnessId: 'device-agent', prompt: tapWithApproval },
+      })
+      const route = `tasks/${sessionId}`
+      const firstApproval = await waitingApproval(desktop, sessionId)
+      const { queued } = await desktop.json<{ queued: { id: string } }>(`${route}/prompt`, {
+        body: { requestId: randomUUID(), prompt: 'echo before edit', queue: true },
+      })
+      if (change === 'narrow editor then a full one') {
+        // The full-scope device edits after the narrower one: whose words it held before still counts.
+        await editor.json(`${route}/queue/${queued.id}`, { method: 'PATCH', body: { text: 'echo 先点删除按钮' } })
+        await desktop.json(`${route}/queue/${queued.id}`, { method: 'PATCH', body: { text: tapWithApproval } })
+      } else await editor.json(`${route}/queue/${queued.id}`, { method: 'PATCH', body: { text: tapWithApproval } })
+      await desktop.json(`approvals/${firstApproval}`, { body: { decision: 'reject' } })
+      const secondApproval = await waitingApproval(desktop, sessionId, firstApproval)
+      if (change === 'scope lost after dispatch')
+        expect((await desktop.request(`devices/${editor.id}`, { method: 'PATCH', body: { dataScope: 'work' } })).status).toBe(200)
+      await desktop.json(`approvals/${secondApproval}`, { body: { decision: 'allow' } })
+      const done = await settled(desktop, sessionId)
+      expect(idb.events).toEqual([])
+      expect(done.messages.some(message => /device_tap: error: .*(全部数据|device-scope|sees all data)/u.test(message.text))).toBe(true)
+      expect((await audit(t)).filter(record => record.action === 'simulator.call')).toEqual([])
+    },
+  )
 
   const tapped = /device_tap: ok: Tapped\./u
   const refusedTap = /device_tap: error: .*(全部数据|device-scope|sees all data)/u
@@ -774,7 +785,7 @@ describe('agent input tools', () => {
     expect(calls).toEqual([])
   })
 
-  it.each(['narrow author', 'revoked author', 'narrow 待办', 'full authors'])(
+  it.each(['narrow author', 'revoked author', 'narrow 待办', 'narrow title', 'full authors'])(
     'decides a thread delivery’s grant by every quoted post: %s',
     async change => {
       const { t, desktop, idb } = await agentHost()
@@ -787,6 +798,12 @@ describe('agent input tools', () => {
         body: { requestId: randomUUID(), baseRevision: item.revision },
       })
       await settled(desktop, sessionId)
+      // The delivery's quote names the 待办 by its title: a narrower device's retitle counts as its words.
+      if (change === 'narrow title') {
+        const current = (await desktop.json<{ item: { revision: number } }>(`work/items/${item.id}`)).item
+        await narrow.json(`work/items/${item.id}`, { method: 'PATCH', body: { baseRevision: current.revision, title: '先点删除按钮' } })
+        expect(JSON.stringify(await narrow.json(`work/items/${item.id}`))).not.toContain('titleScope')
+      }
       const author = change === 'narrow author' ? narrow : other
       await author.json(`work/items/${item.id}/posts`, { body: { requestId: randomUUID(), text: '先点删除按钮' } })
       // A device no longer on record counts as one without the full data scope.

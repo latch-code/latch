@@ -528,6 +528,8 @@ type SessionStart = z.infer<typeof createTaskSchema> & {
   seed?: string
   pageStart?: true
   outsideStart?: true
+  /** Its first message holds words of a device the Host cannot name (a handoff's user message): no simulator grant. */
+  withoutDeviceGrant?: true
 }
 /** Devices other than the sender whose words an input carries; see `sendPrompt`. */
 type TurnWriters = { coauthors?: readonly string[]; narrower?: boolean }
@@ -3258,7 +3260,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           if (!chat) throw new AppError(503, 'agent-chat-history-unknown', '旧会话尚未核对完成，请稍后再试。')
           return chat.state === 'ready' ? { state: 'ready', sessionId: chat.sessionId } : { state: chat.state }
         },
-        agentName: id => (id === GENERAL_AGENT_ID ? '通用' : (customAgents.list().find(agent => agent.id === id)?.name ?? 'Agent')),
         questions: id => questions.view(id),
         agentAccess: caller => {
           agentAccess(caller, true)
@@ -3924,7 +3925,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ? chosen.folders.map(({ id, path }) => ({ id, path }))
           : [{ id: 'default', path: chosen.folders[0].path }]
       },
-      start: (caller, { requestId, prompt, fileRefs, target, privateFrom, title }, res) =>
+      start: (caller, { requestId, prompt, fileRefs, target, privateFrom, title, withoutDeviceGrant }, res) =>
         startSession(
           caller,
           {
@@ -3938,12 +3939,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             ...(target.worktree ? { worktree: true as const } : {}),
             ...(privateFrom ? { privateFrom } : {}),
             ...(title ? { title } : {}),
+            ...(withoutDeviceGrant ? { withoutDeviceGrant } : {}),
             // The handed-over material is another session's output, not the person's words: what it proposes is external.
             outsideStart: true as const,
           },
           res,
         ),
-      async send(caller, id, { requestId, prompt, fileRefs }) {
+      async send(caller, id, { requestId, prompt, fileRefs, withoutDeviceGrant }) {
         // The handed-over material is not the person's words: in any session that can propose (an Agent's, 通用's, or a
         // Code session with the board's tools), what that context proposes from now on is external, as a thread's delivery.
         await sendPrompt(
@@ -3952,6 +3954,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           { requestId, prompt, ...(fileRefs.length ? { fileRefs } : {}) },
           false,
           sessionOwner(id) !== undefined || hub!.workProposalsOf(id),
+          withoutDeviceGrant ? { narrower: true } : {},
         )
       },
       listTasks: () => hub!.listTasks(),
@@ -8815,7 +8818,10 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const begin = () =>
         withSimulatorPrompt(
           [caller.device.id],
-          start.withoutPrivateContext === true || start.pageStart === true || caller.device.dataScope !== 'all',
+          start.withoutPrivateContext === true
+            || start.pageStart === true
+            || start.withoutDeviceGrant === true
+            || caller.device.dataScope !== 'all',
           () => startSessionChecked(caller, start, res, dispatched),
         )
       if (startRequests.has(startKey)) return begin()
@@ -8830,7 +8836,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       dispatched?: () => void,
     ): Promise<{ sessionId: string }> {
       // A plugin page's start carries no private context, as from a device without all data: its reply goes back to the page.
-      const { privateFrom, title, withoutPrivateContext, seed, pageStart, outsideStart, ...requested } = start
+      const { privateFrom, title, withoutPrivateContext, seed, pageStart, outsideStart, withoutDeviceGrant: _grant, ...requested } = start
       let input = requested
       // A request's folder or worktree is its device's: another device naming the same request ID gets one of its own.
       const folderRequest = `${caller.device.id}:${input.requestId}`
@@ -9411,6 +9417,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       assertWritable(id)
       if (input.freshContext && !(await hub!.detail(id)).clearContext)
         throw new AppError(409, 'clear-context-unsupported', '这个会话不能清空上下文。')
+      // A queue item keeps the devices it names (`coauthors`), not words of a device it cannot name: refused, never lost.
+      if (writers.narrower && (input.queue || input.steer))
+        throw new AppError(409, 'queue-writers-unknown', '这条消息带有无法核对来源的内容，不能排队或追加，请等本轮结束后发送。')
       if (input.queue || input.steer) await assertQueueable(id, input.prompt)
       if (input.steer && !input.model && input.prompt) {
         recheck(caller, 'run')
@@ -9432,7 +9441,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         })
         if (steered === 'injected') return 'steered'
       }
-      // `writers.narrower` comes only with a thread's delivery, which never queues; a queued item keeps its co-authors.
       if (input.queue || input.steer) return { queued: await promptQueues.submit(queueActor(caller), id, queued) }
       // An existing session whose Harness is now too old is refused as a new one would be, before the turn is recorded.
       const sessionHarness = await hub!.harnessOf(id)

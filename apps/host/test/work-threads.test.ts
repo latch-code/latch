@@ -329,7 +329,7 @@ describe('a 待办’s thread', () => {
       // and the first's reply, each quoted line by line.
       await posted(owner, made.id, { text: 'echo 第二个', target: { sessionId: second } })
       const toSecond = userTexts(await settled(owner, second)).at(-1)!
-      expect(toSecond).toContain('> 我（发给 会话「')
+      expect(toSecond).toContain('> 我（发给 另一个会话）：')
       expect(toSecond).toContain('> > echo: echo 请 @第二个会话 也看看')
       expect(
         toSecond

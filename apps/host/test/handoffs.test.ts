@@ -27,7 +27,7 @@ interface Fake {
   dataDir: string
   sessions: Map<string, TaskDetail>
   events: Array<{ action: string; onDisk: string; started: number; detail: unknown }>
-  starts: Array<{ requestId: string; prompt: string }>
+  starts: Array<{ requestId: string; prompt: string; withoutDeviceGrant?: true }>
   /** Driver receipts: a start with a request ID it has seen answers with the session it made. */
   receipts: Map<string, string>
   failAudit: boolean
@@ -112,7 +112,11 @@ async function fake(): Promise<Fake> {
         async checkNewTarget() {},
         newTargetRoots: () => [],
         async start(_caller, input) {
-          state.starts.push({ requestId: input.requestId, prompt: input.prompt })
+          state.starts.push({
+            requestId: input.requestId,
+            prompt: input.prompt,
+            ...(input.withoutDeviceGrant ? { withoutDeviceGrant: true } : {}),
+          })
           if (state.gate) await state.gate
           if (state.startMode === 'refused') throw new AppError(409, 'harness-unavailable', 'Harness 当前不可用')
           if (state.startMode === 'dropped') throw new Error('socket closed before sending')
@@ -136,7 +140,11 @@ async function fake(): Promise<Fake> {
           return { sessionId: id }
         },
         async send(_caller, id, input) {
-          state.starts.push({ requestId: input.requestId, prompt: input.prompt })
+          state.starts.push({
+            requestId: input.requestId,
+            prompt: input.prompt,
+            ...(input.withoutDeviceGrant ? { withoutDeviceGrant: true } : {}),
+          })
           const session = sessions.get(id)!
           if (state.startMode !== 'dropped')
             session.messages.push({
@@ -193,6 +201,20 @@ describe('handoff store', () => {
     const reopened = await state.open()
     expect(await reopened.get(callerOf('dev_owner'), created.value.id)).toEqual(created.value)
     expect((await reopened.list(callerOf('dev_owner'), 'target-1')).map(item => item.id)).toEqual([created.value.id])
+  })
+
+  it('starts without a simulator grant when a user message is among the materials, to a new or an existing session', async () => {
+    const state = await fake()
+    const service = await state.open()
+    await service.create(callerOf('dev_owner'), body(), res)
+    const user = { kind: 'message', messageId: 'q', hash: sha('What should we build?') }
+    await service.create(callerOf('dev_owner'), body({ requestId: 'handoff-request-0002', materials: [user] }), res)
+    await service.create(
+      callerOf('dev_owner'),
+      body({ requestId: 'handoff-request-0003', materials: [user], target: { kind: 'session', sessionId: 'target-1' } }),
+      res,
+    )
+    expect(state.starts.map(start => start.withoutDeviceGrant)).toEqual([undefined, true, true])
   })
 
   it('writes the first message from the template, in the language asked for, with materials verbatim', async () => {

@@ -22,6 +22,13 @@ const MAX_RECEIPTS = 100_000
 const RECEIPTS_PER_DEVICE = 10_000
 const text = z.string().min(1).max(16_000)
 const id = z.string().min(1).max(256)
+const MAX_COAUTHORS = 256
+/** Refused, never cut: a device left out would no longer count as one that wrote the text. */
+function checkedCoauthors(coauthors: readonly string[] | undefined): string[] | undefined {
+  if (coauthors && coauthors.length > MAX_COAUTHORS)
+    throw new AppError(400, 'queue-item-invalid', `写过这条排队内容的设备超过 ${MAX_COAUTHORS} 台，不能排队或修改。`)
+  return coauthors?.length ? [...coauthors] : undefined
+}
 const actorSchema = z.strictObject({
   deviceId: id,
   listener: z.enum(LISTENER_CLASSES),
@@ -43,7 +50,7 @@ const recordSchema = z.strictObject({
     .optional(),
   editor: actorSchema.optional(),
   /** Other devices whose words the text carries (review notes): a device-input grant needs each of them, at sending too. */
-  coauthors: z.array(id).min(1).max(256).optional(),
+  coauthors: z.array(id).min(1).max(MAX_COAUTHORS).optional(),
   binding: z
     .string()
     .regex(/^[a-f0-9]{64}$/u)
@@ -204,6 +211,7 @@ export class PromptQueues {
   ): Promise<{ accepted: true } | { queued: { id: string } }> {
     return this.lock(async () => {
       this.assertOpen()
+      const coauthors = checkedCoauthors(input.coauthors)
       const hash = sha256Hex(canonicalJson({ text: input.prompt, ...(input.model ? { model: input.model } : {}) }))
       const prior = [...this.entries.values()].find(
         item => item.sessionId === sessionId && item.deviceId === actor.deviceId && item.requestId === input.requestId,
@@ -235,7 +243,7 @@ export class PromptQueues {
           state: 'sending',
           ...(model ? { model } : {}),
           ...(binding ? { binding } : {}),
-          ...(input.coauthors?.length ? { coauthors: [...input.coauthors] } : {}),
+          ...(coauthors ? { coauthors } : {}),
         }
         valid(immediate)
         next.set(immediate.id, immediate)
@@ -299,7 +307,7 @@ export class PromptQueues {
             : 'parked',
         ...(model ? { model } : {}),
         ...(binding ? { binding } : {}),
-        ...(input.coauthors?.length ? { coauthors: [...input.coauthors] } : {}),
+        ...(coauthors ? { coauthors } : {}),
       }
       if (item.state === 'parked') item.reason = '队列已暂停，请确认后发送'
       valid(item)
@@ -322,7 +330,13 @@ export class PromptQueues {
       if (item.text === value) return
       await this.options.check(actor, sessionId, item.model, item.binding)
       await authorize?.()
-      await this.patch(item, { text: value, sendRequestId: randomUUID(), editor: actor })
+      // The editor before this one may have kept words of its own: it stays a writer of the text, so authorship only grows.
+      const previous = item.editor?.deviceId
+      const kept =
+        previous !== undefined && previous !== actor.deviceId && previous !== item.deviceId && !item.coauthors?.includes(previous)
+          ? checkedCoauthors([...(item.coauthors ?? []), previous])
+          : item.coauthors
+      await this.patch(item, { text: value, sendRequestId: randomUUID(), editor: actor, ...(kept ? { coauthors: kept } : {}) })
     })
   }
 

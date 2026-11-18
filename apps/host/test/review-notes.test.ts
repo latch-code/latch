@@ -169,11 +169,25 @@ describe('the store', () => {
     expect(notes.writersOf('s1', [other.id])).toEqual(['dev_a'])
     expect((await ReviewNotes.open({ dataDir })).writersOf('s1', [created.id, other.id])).toEqual(['dev_a', 'dev_b'])
     expect(JSON.stringify(notes.list('s1'))).not.toContain('dev_b')
-    for (let index = 0; index < 15; index++)
+    // dev_a and dev_b edited it: 14 more fill its 16.
+    for (let index = 0; index < 14; index++)
       await notes.edit('s1', { deviceId: `dev_${index}x`, name: '' }, created.id, { requestId: randomUUID(), text: `改 ${index}` })
     await expect(
       notes.edit('s1', { deviceId: 'dev_last', name: '' }, created.id, { requestId: randomUUID(), text: '再改' }),
     ).rejects.toMatchObject({ code: 'review-note-editors' })
+  })
+
+  it('counts a note edited before its editors were kept as having a writer it cannot name', async () => {
+    const { dataDir, notes } = await store()
+    const created = await notes.create('s1', writer, input(randomUUID()))
+    await notes.edit('s1', { deviceId: 'dev_b', name: '手机' }, created.id, { requestId: randomUUID(), text: '手机改' })
+    const [name] = (await readdir(join(dataDir, 'review-notes'))).filter(file => file.endsWith('.json'))
+    const path = join(dataDir, 'review-notes', name!)
+    const file = JSON.parse(await readFile(path, 'utf8')) as { notes: Array<{ editors?: string[]; createdAt: string; updatedAt: string }> }
+    delete file.notes[0]!.editors
+    file.notes[0]!.updatedAt = new Date(Date.parse(file.notes[0]!.createdAt) + 1000).toISOString()
+    await writeFile(path, JSON.stringify(file))
+    expect((await ReviewNotes.open({ dataDir })).writersOf('s1', [created.id])).toEqual(['dev_a', 'unknown-writer'])
   })
 
   it('refuses a message longer than the prompt path takes, and keeps nothing of it', async () => {

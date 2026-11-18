@@ -535,6 +535,7 @@ export function createWorkProposalRoutes(context: RouteContext, deps: WorkPropos
           sessionIds: [],
           // A model wrote what a start takes from it, whatever device accepts it: its start carries no private context.
           startScope: 'work',
+          titleScope: 'work',
           // As private as the proposal is now, in this write: its session may have turned private meanwhile.
           ...(isPrivate(target) ? { private: true as const } : {}),
           createdAt: at,

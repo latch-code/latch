@@ -16,8 +16,13 @@ import { canonicalJson, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
 
 const MAX_RECEIPTS = 512
 const MAX_SENDS = 32
-// Devices besides its writer that may edit one note; past that a new note says the same.
+// Devices that may edit one note; past that a new note says the same.
 const MAX_EDITORS = 16
+/**
+ * Stands for a writer the store cannot name: a note edited before editors were kept. No device has this ID (they are
+ * `dev_…`), so a grant that needs it is never given.
+ */
+const UNKNOWN_WRITER = 'unknown-writer'
 
 /** The client's request ID: only the receipt key of a write here, never sent on to a session. */
 const rid = z.string().uuid()
@@ -56,7 +61,7 @@ const noteSchema = z
     /** The send the note is in while its result is open (`sends`); the note stays pending and locked meanwhile. */
     sendId: sendId.optional(),
     createdBy: z.strictObject({ deviceId: z.string().min(1).max(256), name: z.string().max(256) }),
-    /** Other devices that edited the text: what it says may be theirs as well (`writersOf`). Never sent to a device. */
+    /** Every device that edited the text, its writer too: what it says may be theirs (`writersOf`). Never sent to a device. */
     editors: z.array(z.string().min(1).max(256)).min(1).max(MAX_EDITORS).optional(),
     createdAt: at,
     updatedAt: at,
@@ -321,7 +326,7 @@ export class ReviewNotes {
         const note = this.noteIn(file, id)
         if (note.status !== 'pending' || note.sendId) throw new AppError(409, 'review-note-sent', '这条反馈已经发出，不能再改。')
         const editors = note.editors ?? []
-        if (writer.deviceId !== note.createdBy.deviceId && !editors.includes(writer.deviceId)) {
+        if (!editors.includes(writer.deviceId)) {
           if (editors.length >= MAX_EDITORS) throw new AppError(409, 'review-note-editors', '改过这条反馈的设备太多，请新建一条。')
           note.editors = [...editors, writer.deviceId]
         }
@@ -415,10 +420,16 @@ export class ReviewNotes {
     })
   }
 
-  /** Every device that wrote these notes' text, creators and editors, as recorded; a note that is gone names none. */
+  /**
+   * Every device that wrote these notes' text, creators and editors, as recorded; a note that is gone names none. A
+   * pending note changes `updatedAt` only by an edit, so one edited without `editors` (from before they were kept) names
+   * `UNKNOWN_WRITER`.
+   */
   writersOf(sessionId: string, noteIds: readonly string[]): string[] {
     const notes = this.cache.get(sessionId)?.notes ?? []
-    const writers = notes.filter(note => noteIds.includes(note.id)).flatMap(note => [note.createdBy.deviceId, ...(note.editors ?? [])])
+    const writers = notes
+      .filter(note => noteIds.includes(note.id))
+      .flatMap(note => [note.createdBy.deviceId, ...(note.editors ?? (note.updatedAt !== note.createdAt ? [UNKNOWN_WRITER] : []))])
     return [...new Set(writers)]
   }
 

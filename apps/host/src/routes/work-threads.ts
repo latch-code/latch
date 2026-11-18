@@ -59,8 +59,6 @@ export interface WorkThreadRouteDeps {
   remember: (caller: DeviceCaller, sessionId: string, text: string, requestId: string) => Promise<void>
   /** The Agent's one chat; undefined when there is no such Agent. Throws while old chats are not yet sorted. */
   agentChat: (caller: DeviceCaller, customAgentId: string) => Promise<AgentChatSlot | undefined>
-  /** The name a quote gives an Agent. */
-  agentName: (customAgentId: string) => string
   /** The Host's question IDs; the discussion never includes their prompts or options. */
   questions: (sessionId: string) => readonly AgentQuestion[]
   /** 我的 Agent hold private memory: the full data scope and `run`, as any write to one. */
@@ -345,20 +343,22 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
       if (to && 'customAgentId' in to && !targetPrivate) continue
       const other = entry.delivery && entry.delivery.sessionId !== sessionId ? entry.delivery : undefined
       if (other && sessionPrivate(other.sessionId) && !targetPrivate) continue
-      parts.push({ label: to ? `我（发给 ${await targetName(to)}）` : '我', text: entry.text })
+      parts.push({ label: to ? `我（发给 ${targetName(to)}）` : '我', text: entry.text })
       authors.add(entry.deviceId)
       if (!other || other.state === 'failed') continue
       const detail = await detailOf(other.sessionId)
       const reply = detail && replyTo(detail.messages, other.requestId, false)
-      if (reply) parts.push({ label: `${await targetName(entry.target!)} 的回复`, text: reply.text + (reply.more ? '\n…' : '') })
+      if (reply) parts.push({ label: `${targetName(entry.target!)} 的回复`, text: reply.text + (reply.more ? '\n…' : '') })
     }
     return { parts, authors: [...authors] }
   }
 
-  async function targetName(target: NonNullable<WorkPostRecord['target']>): Promise<string> {
-    if ('customAgentId' in target) return `「${deps.agentName(target.customAgentId)}」`
-    const summary = await context.hub.summary(target.sessionId).catch(() => undefined)
-    return `会话「${summary?.title || '未命名会话'}」`
+  /**
+   * What a quote calls a post's target: no session title or Agent name, which a device without the full data scope may
+   * have written, and which would then reach a turn as if its sender had.
+   */
+  function targetName(target: NonNullable<WorkPostRecord['target']>): string {
+    return 'customAgentId' in target ? 'Agent' : '另一个会话'
   }
 
   /** Where a post goes now: the member session, or the Agent's chat while it is ready and idle. */
@@ -427,7 +427,8 @@ export function createWorkThreadRoutes(context: RouteContext, deps: WorkThreadRo
         const ownWords = () => itemIsPrivate(visible(caller, itemId), sessionPrivate) && !sessionPrivate(sessionId)
         const quoted = ownWords() ? undefined : await increment(threads.get(itemId)?.posts ?? [], post, sessionId)
         let prompt = quoted ? deliveryText(item.title, post.text, quoted.parts) : post.text
-        let writers = { coauthors: quoted?.authors ?? [], narrower: quoted !== undefined && item.startScope !== 'all' }
+        // The quote names the 待办 by its title: whoever wrote that counts as well (absent: a 待办 from before it was kept).
+        let writers = { coauthors: quoted?.authors ?? [], narrower: quoted !== undefined && (item.titleScope ?? 'work') !== 'all' }
         if (ownWords()) {
           prompt = post.text
           writers = { coauthors: [], narrower: false }

@@ -166,6 +166,11 @@ const record = z.strictObject({
         .min(1)
         .refine(value => [...value].length <= HANDOFF_TITLE_CHARS)
         .optional(),
+      /**
+       * A user message among the materials: any device may have typed it, and the session records none, so the start
+       * carries no simulator-input grant.
+       */
+      withoutDeviceGrant: z.literal(true).optional(),
     })
     .optional(),
   createdAt: at,
@@ -367,7 +372,7 @@ export interface HandoffOptions {
   checkNewTarget(target: Extract<Target, { kind: 'new-session' }>): Promise<void>
   /** The folders a new session's file references resolve in. */
   newTargetRoots(target: Extract<Target, { kind: 'new-session' }>): FileRoot[]
-  /** The session start path of `POST /tasks`. */
+  /** The session start path of `POST /tasks`. `withoutDeviceGrant`: its first turn gets no simulator-input grant. */
   start(
     caller: DeviceCaller,
     input: {
@@ -377,11 +382,16 @@ export interface HandoffOptions {
       target: Extract<Target, { kind: 'new-session' }>
       privateFrom?: string
       title?: string
+      withoutDeviceGrant?: true
     },
     res: ServerResponse,
   ): Promise<{ sessionId: string }>
   /** The input path of `POST /tasks/:id/prompt`. */
-  send(caller: DeviceCaller, sessionId: string, input: { requestId: string; prompt: string; fileRefs: FileMention[] }): Promise<void>
+  send(
+    caller: DeviceCaller,
+    sessionId: string,
+    input: { requestId: string; prompt: string; fileRefs: FileMention[]; withoutDeviceGrant?: true },
+  ): Promise<void>
   /** Every session the Host can reach now; one missing from it is treated as unreadable. */
   listTasks(): Promise<TaskSummary[]>
   /** The detail as the Host keeps it, without a caller: only to find a start's own message by its request ID. */
@@ -586,6 +596,7 @@ export class Handoffs {
           pending: {
             prompt,
             fileRefs,
+            ...(composed.some(item => item.kind === 'message' && item.role === 'user') ? { withoutDeviceGrant: true as const } : {}),
             ...(privateSource ? { privateFrom: input.sourceSessionId } : {}),
             ...(title ? { title } : {}),
           },
@@ -919,7 +930,7 @@ export class Handoffs {
   private async startOnce(caller: DeviceCaller, id: string, res: ServerResponse, first: boolean): Promise<void> {
     const item = this.find(this.journal.read(), id)
     if ((item.status !== 'starting' && item.status !== 'start-unknown') || !item.pending) return
-    const { prompt, fileRefs, privateFrom, title } = item.pending
+    const { prompt, fileRefs, privateFrom, title, withoutDeviceGrant } = item.pending
     let outcome: Outcome
     try {
       if (item.target.kind === 'new-session') {
@@ -932,12 +943,18 @@ export class Handoffs {
             target: item.target,
             ...(privateFrom ? { privateFrom } : {}),
             ...(title ? { title } : {}),
+            ...(withoutDeviceGrant ? { withoutDeviceGrant } : {}),
           },
           res,
         )
         outcome = { status: 'started', targetSessionId: created.sessionId }
       } else {
-        await this.options.send(caller, item.target.sessionId, { requestId: item.startRequestId, prompt, fileRefs })
+        await this.options.send(caller, item.target.sessionId, {
+          requestId: item.startRequestId,
+          prompt,
+          fileRefs,
+          ...(withoutDeviceGrant ? { withoutDeviceGrant } : {}),
+        })
         outcome = { status: 'started', targetSessionId: item.target.sessionId }
       }
     } catch (error) {

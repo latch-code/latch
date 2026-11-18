@@ -279,6 +279,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
         ...(body.priority && body.priority !== 'mid' ? { priority: body.priority } : {}),
         sessionIds: [],
         startScope: scopeOf(caller),
+        titleScope: scopeOf(caller),
         createdAt: at,
         updatedAt: at,
         revision: 1,
@@ -337,6 +338,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
       // A start under way read these already; changing them now would make what started differ from what was asked.
       if (startEdit && starting.get(id)) throw new AppError(409, 'item-starting', '这条待办正在开始一个会话，稍后再改。')
       if (startEdit) record.startScope = narrowerScope(record.startScope, scopeOf(caller))
+      if (title !== undefined && title !== record.title) record.titleScope = narrowerScope(record.titleScope ?? 'work', scopeOf(caller))
       if (title !== undefined) record.title = title
       if (prompt !== undefined) record.prompt = prompt
       for (const key of ['projectId', 'harnessId', 'model', 'worktree'] as const) {

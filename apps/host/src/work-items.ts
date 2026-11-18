@@ -95,6 +95,11 @@ const itemSchema = z.strictObject({
    * worktree). Below `all`, a start from it carries no private context, as a start by such a device itself would not.
    */
   startScope: z.enum(['work', 'files', 'all']),
+  /**
+   * The narrowest data scope of the devices that wrote its title, which a thread's delivery quotes. Absent on a 待办 from
+   * before it was kept: counted as narrower than the full scope. Never sent to a device.
+   */
+  titleScope: z.enum(['work', 'files', 'all']).optional(),
   private: z.literal(true).optional(),
   closedAt: isoTime.optional(),
   createdAt: isoTime,
@@ -253,7 +258,7 @@ export interface MemberFacts {
 }
 
 export function itemSummary(record: WorkItemRecord, facts: MemberFacts, isPrivate: boolean): WorkItemSummary {
-  const { prompt, private: _private, startScope: _scope, ...rest } = record
+  const { prompt, private: _private, startScope: _scope, titleScope: _titleScope, ...rest } = record
   const members: WorkItemMember[] = record.sessionIds.flatMap(id => {
     const place = facts.summary(id)?.board
     return place ? [{ place, prMerged: facts.prState(id) === 'merged' }] : []
