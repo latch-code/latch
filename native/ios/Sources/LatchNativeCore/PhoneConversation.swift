@@ -282,12 +282,12 @@ public enum PhoneConversation {
         let count = Set(targets.filter { !$0.isEmpty }).count
         let target = targets.first { !$0.isEmpty }.map { visible($0, preservingLayout: false) }
         let more = count > 1 ? " 等 \(count) 处" : ""
-        if let title = tool["toolTitle"].string, !title.isEmpty, title != toolName {
-            if let target { return title + " " + target + more }
-            if let found = titledObject(tool) { return title + " " + found.object + more }
-            return title + more
+        let titles = [tool["toolTitle"].string, tool["title"].string]
+        if let title = titles.compactMap({ $0 }).first(where: { !$0.isEmpty && $0 != toolName }) {
+            let heading = visible(title, preservingLayout: false)
+            if let target, heading != target, !heading.hasSuffix(" " + target) { return heading + " " + target + more }
+            return heading + more
         }
-        if let title = tool["title"].string, !title.isEmpty, title != toolName { return title + more }
         let name = toolName ?? "工具调用"
         let action = approvalToolNames[name] ?? tool["kind"].string.flatMap { verbs[$0] }
         let label = action.map { toolName == nil ? $0 : "\($0) · \(name)" } ?? name

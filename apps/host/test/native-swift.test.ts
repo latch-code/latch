@@ -1830,6 +1830,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       canRun: true,
       approvals: [
         { toolName: 'write_file', risk: 'R1', tool: { toolTitle: '写入', locations: ['src/a.ts'] } },
+        { toolName: 'write_file', risk: 'R1', tool: { toolTitle: '保存报告', input: '{"path":"report.md"}' } },
+        { toolName: 'write_file', risk: 'R1', tool: { title: '保存报告', locations: ['docs/report.md'] } },
         {
           toolName: 'write_file',
           risk: 'R1',
@@ -1987,6 +1989,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     ])
     expect(result.approvals).toEqual([
       { heading: '写入 src/a.ts', canAllow: true, option: '', refusal: '', clause: '' },
+      { heading: '保存报告', canAllow: true, option: '', refusal: '', clause: '' },
+      { heading: '保存报告 docs/report.md', canAllow: true, option: '', refusal: '', clause: '' },
       { heading: '写入文件 src/new.ts', canAllow: true, option: '', refusal: '', clause: '' },
       { heading: '写入 src/a.ts 等 3 处', canAllow: true, option: '', refusal: '', clause: '' },
       { heading: '写入文件 · write_file', canAllow: true, option: 'o1', refusal: '', clause: '' },
