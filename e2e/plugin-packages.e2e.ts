@@ -153,6 +153,7 @@ describe('feature packages in the workbench', () => {
       phase = 'error'
       await panel.getByRole('button', { name: '刷新', exact: true }).click()
       await panel.getByText('扩展面板暂时无法读取，请稍后重试。', { exact: true }).waitFor()
+      expect(await panel.getByText('Private failure', { exact: false }).count()).toBe(0)
       await page.screenshot({ path: `${OUTPUT}/data-failure.png`, fullPage: true, animations: 'disabled' })
       phase = 'empty'
       await panel.getByRole('button', { name: '重试', exact: true }).click()
