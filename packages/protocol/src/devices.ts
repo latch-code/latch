@@ -97,8 +97,18 @@ export interface NativeLinkInfo {
 /**
  * `refused`: the node turned the registration down (a wrong or missing registration token, or a full node).
  * `mismatch`: the node answered with another relay key or certificate than the relay file names. `disabled`: 停用.
+ * `invalid`: a saved address outside the address-book grammar; never dialed or put in a book, only removable.
  */
-export type NativeRelayStatus = 'connecting' | 'connected' | 'waiting' | 'attention' | 'refused' | 'mismatch' | 'disabled' | 'unsupported'
+export type NativeRelayStatus =
+  | 'connecting'
+  | 'connected'
+  | 'waiting'
+  | 'attention'
+  | 'refused'
+  | 'mismatch'
+  | 'disabled'
+  | 'unsupported'
+  | 'invalid'
 /** 测试 and the progress after 确认并连接: how far the Host got with the node. */
 export interface NativeRelayTest {
   /** `identity`: connected and the node proved its key. `registered`: it also accepted a registration. */

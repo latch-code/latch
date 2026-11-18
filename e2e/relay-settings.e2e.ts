@@ -51,6 +51,7 @@ const ALL_STATES: Relay[] = [
   row('4'.repeat(32), 'waiting', { retryAt: Date.UTC(2026, 10, 18, 3) }),
   row('5'.repeat(32), 'disabled'),
   row('6'.repeat(32), 'unsupported', { kind: 'edge' }),
+  row('7'.repeat(32), 'invalid'),
 ]
 
 async function scripted(page: Page, local: boolean, relays: Relay[], listening = true) {
@@ -138,7 +139,7 @@ describe('设置 › 连接转发', () => {
           await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
         }
         await page.getByTestId('relay-direct').getByText('可用').waitFor()
-        for (const word of ['连接中', '已连接 · 38 ms', '密钥不符', '连不上', '已停用', '尚未实现'])
+        for (const word of ['连接中', '已连接 · 38 ms', '密钥不符', '连不上', '已停用', '尚未实现', '地址无效'])
           await page.getByText(word, { exact: true }).first().waitFor()
         await expect.poll(() => page.getByText('官方转发服务').count()).toBe(0)
         await capture('relays-states')
@@ -155,6 +156,12 @@ describe('设置 › 连接转发', () => {
         await page.getByTestId('relay-own').nth(4).getByRole('button', { name: '更多' }).click()
         await page.getByRole('menuitem', { name: '移除' }).last().click()
         await expect.poll(() => state.deleted).toEqual(['5'.repeat(32)])
+        // A saved address outside the book's grammar can only be removed.
+        await page.getByTestId('relay-own').filter({ hasText: '地址无效' }).getByRole('button', { name: '更多' }).click()
+        await page.getByRole('menuitem', { name: '移除' }).last().waitFor()
+        expect(await page.getByRole('menuitem', { name: '测试' }).count()).toBe(0)
+        expect(await page.getByRole('menuitem', { name: '启用' }).count()).toBe(0)
+        await page.keyboard.press('Escape')
 
         // 添加转发服务 › 已有配置文件: a file that is not one is refused; a good one shows the check card, never the token.
         await page.getByRole('button', { name: '添加转发服务' }).click()
@@ -174,6 +181,12 @@ describe('设置 › 连接转发', () => {
           buffer: Buffer.from(JSON.stringify({ version: 2, profile: edge })),
         })
         await sheet.getByText(/Cloudflare Workers 转发服务尚未实现/u).waitFor()
+        await sheet.getByTestId('relay-file').setInputFiles({
+          name: 'underscore.json',
+          mimeType: 'application/json',
+          buffer: Buffer.from(JSON.stringify({ version: 1, profile: { ...self, url: 'https://a_b.example/' } })),
+        })
+        await sheet.getByText('请选择由转发服务导出的连接配置。').waitFor()
         await sheet.getByTestId('relay-file').setInputFiles({
           name: 'latch-relay.json',
           mimeType: 'application/json',

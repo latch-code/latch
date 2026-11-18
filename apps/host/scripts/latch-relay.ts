@@ -7,6 +7,7 @@ import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { AuditLog, type AuditActor } from '../src/audit.ts'
 import {
   bookRelays,
+  relayAddressValid,
   relayAvailable,
   relayKeyHash,
   relayNodeFields,
@@ -15,7 +16,7 @@ import {
   type RelayProfileInput,
 } from '../src/relay/profiles.ts'
 
-export const RELAY_USAGE = `  relay list [--json]                      列出官方中继与自己的中继、顺序与开关（Host 已停止）
+export const RELAY_USAGE = `  relay list [--json]                      列出自己的中继与状态（Host 已停止）
   relay add --file <中继文件> [--expect-key <密钥短哈希>]
                                            添加自己的中继（Host 已停止）：先列出地址与密钥短哈希，再输入 y 确认；
                                            非交互环境用 --expect-key。Host 启动后核对密钥并登记成功，才签发含该中继的连接簿；
@@ -24,8 +25,6 @@ export const RELAY_USAGE = `  relay list [--json]                      列出官
   relay remove <节点标识>                    移除自己的中继（Host 已停止）
   relay setup cloudflare                  Cloudflare Workers 中继尚未实现
   relay setup linux                       尚未提供 Linux 中继发布物；可在服务器源码目录部署后导入
-  relay official on|off                    打开或关闭官方中继（Host 已停止）
-  relay order official|own                 优先使用官方中继或自己的中继（Host 已停止）
 `
 type Out = (text: string) => void
 interface RelayCliIO {
@@ -131,15 +130,10 @@ export async function runRelayCommand(input: {
   }
   if (command === 'list') {
     const lock = await input.stopped().catch(() => undefined)
-    if (!lock) throw new RelayCliError('Host 运行中时请在桌面端「设置 › 中继」查看中继，或停止 Host 后再运行')
+    if (!lock) throw new RelayCliError('Host 运行中时请在桌面端「设置 › 连接转发」查看中继，或停止 Host 后再运行')
     try {
       const state = (await RelayProfiles.open(dataDir)).snapshot()
       const view = {
-        official: {
-          deployed: state.profiles.some(item => item.builtIn && relayAvailable(item)),
-          enabled: !state.officialOff,
-          ownFirst: Boolean(state.ownFirst),
-        },
         relays: state.profiles
           .filter(item => !item.builtIn)
           .map(item => ({
@@ -148,16 +142,15 @@ export async function runRelayCommand(input: {
             urls: [item.url, ...(item.extraUrls ?? [])],
             ...(item.unverified ? { unverified: true } : {}),
             ...(!relayAvailable(item) ? { unsupported: true } : {}),
+            ...(!relayAddressValid(item) ? { invalidAddress: true } : {}),
           })),
         inAddressBook: bookRelays(state).map(item => item.relayId),
       }
       if (flags.has('--json')) out(JSON.stringify(view, null, 2))
       else {
-        out(`官方中继：${!view.official.deployed ? '尚未部署' : view.official.enabled ? '已开启' : '已关闭'}`)
-        out(`优先使用：${view.official.ownFirst ? '自己的中继' : '官方中继'}`)
         for (const relay of view.relays)
           out(
-            `${relay.relayId}  ${relay.kind === 'edge' ? 'Workers' : '自建服务器'}  ${relay.urls.join(' ')}${relay.unsupported ? '  尚未实现' : ''}`,
+            `${relay.relayId}  ${relay.kind === 'edge' ? 'Workers' : '自建服务器'}  ${relay.urls.join(' ')}${relay.unsupported ? '  尚未实现' : ''}${relay.invalidAddress ? '  地址无效：不进连接簿，请移除后用新的中继文件添加' : ''}`,
           )
         if (!view.relays.length) out('没有自己的中继')
       }
@@ -166,11 +159,11 @@ export async function runRelayCommand(input: {
     }
     return 0
   }
-  if (command === 'add' || command === 'remove' || command === 'official' || command === 'order') {
+  if (command === 'add' || command === 'remove') {
     const lock = await input.stopped()
     let audit: AuditLog | undefined
     try {
-      const lowering = command === 'remove' || (command === 'official' && rest[0] === 'off')
+      const lowering = command === 'remove'
       audit = await AuditLog.open(join(dataDir, 'audit')).catch(error => {
         if (!lowering) throw error
         return undefined
@@ -219,36 +212,15 @@ export async function runRelayCommand(input: {
         out('已保存。Host 启动后核对节点密钥并登记成功，才会签发含该中继的连接簿；结果在设置与 relay list 中可见。')
         return 0
       }
-      if (command === 'remove') {
-        const relayId = rest[0]
-        if (!relayId || !profiles.snapshot().profiles.some(item => !item.builtIn && item.relayId === relayId))
-          throw new RelayCliError('没有这个自己的中继')
-        await profiles.removeObserver(
-          { relayId },
-          () => {},
-          detail => record(detail, true),
-        )
-        out('已移除。已配对的手机下次取得连接簿时不再得到它。')
-        return 0
-      }
-      const value = rest[0]
-      if (command === 'official') {
-        if (value !== 'on' && value !== 'off') throw new RelayCliError('用法：relay official on|off')
-        await profiles.setOfficial(
-          { enabled: value === 'on' },
-          () => {},
-          detail => record(detail, value === 'off'),
-        )
-        out(value === 'on' ? '官方中继已开启。' : '官方中继已关闭；自己的中继照常使用。')
-        return 0
-      }
-      if (value !== 'own' && value !== 'official') throw new RelayCliError('用法：relay order official|own')
-      await profiles.setOfficial(
-        { ownFirst: value === 'own' },
+      const relayId = rest[0]
+      if (!relayId || !profiles.snapshot().profiles.some(item => !item.builtIn && item.relayId === relayId))
+        throw new RelayCliError('没有这个自己的中继')
+      await profiles.removeObserver(
+        { relayId },
         () => {},
-        detail => record(detail, false),
+        detail => record(detail, true),
       )
-      out(value === 'own' ? '优先使用自己的中继。' : '优先使用官方中继。')
+      out('已移除。已配对的手机下次取得连接簿时不再得到它。')
       return 0
     } finally {
       try {

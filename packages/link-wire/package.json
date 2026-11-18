@@ -10,5 +10,7 @@
   "latch": {
     "env": "isomorphic"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@latch/protocol": "workspace:*"
+  }
 }

@@ -69,7 +69,7 @@ export function createEdgeWorker(platform: EdgePlatform): { fetch(request: EdgeR
       const namespace = env.NODE
       const stub = (shard: number) =>
         namespace.get(namespace.idFromName(`${env.RELAY_ID}:${env.OBJECT_EPOCH ?? '1'}:${shard}`), { locationHint: env.LOCATION_HINT })
-      // Answered here, never by a node object: probing health costs no object request and touches no budget.
+      // Answered here, never by a node object: probing health costs no object request and wakes no object.
       if (path === '/healthz' && request.method === 'GET') return platform.respond(200, 'ok\n', { 'Cache-Control': 'no-store' })
       if (path === '/admin/status' || path === '/admin/drain') {
         const bearer = /^Bearer ([\x21-\x7e]{32,256})$/u.exec(request.headers.get('authorization') ?? '')?.[1]

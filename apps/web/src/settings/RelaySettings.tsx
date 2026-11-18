@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { Cloud, FileUp, Radio, Server } from 'lucide-react'
-import type { NativeLinkInfo, NativeRelayProfile, NativeRelayTest } from '@latch/protocol'
+import { isRelayEndpoint, type NativeLinkInfo, type NativeRelayProfile, type NativeRelayTest } from '@latch/protocol'
 import {
   ActionMenu,
   Button,
@@ -44,6 +44,8 @@ const COPY = defineCopy(
     needsAttention: '需要检查',
     routeConflict: '同一天两次路由冲突',
     turnedOff: '已停用',
+    invalidAddress: '地址无效',
+    invalidAddressReason: '地址不符合连接簿格式，手机无法使用；移除后用新的中继文件添加',
     unimplemented: '尚未实现',
     connecting: '连接中',
     testConnected: '连上',
@@ -118,6 +120,8 @@ const COPY = defineCopy(
     needsAttention: 'Needs attention',
     routeConflict: 'Two route conflicts on the same day',
     turnedOff: 'Turned off',
+    invalidAddress: 'Invalid address',
+    invalidAddressReason: 'The address is outside the address-book format, so phones can’t use it; remove it and add a new relay file',
     unimplemented: 'Not implemented',
     connecting: 'Connecting',
     testConnected: 'Connected',
@@ -191,7 +195,9 @@ export function readRelayProfile(text: string): NativeRelayProfile {
   const origin = (value: unknown) => {
     if (typeof value !== 'string' || value.length > 512) throw new Error('Invalid relay origin')
     const url = new URL(value)
-    if (url.protocol !== 'https:' || url.username || url.password || value !== `${url.origin}/`) throw new Error('Invalid relay origin')
+    // The Host and the signed address book accept exactly this grammar; anything else could never reach a phone.
+    if (url.protocol !== 'https:' || url.username || url.password || value !== `${url.origin}/` || !isRelayEndpoint(value))
+      throw new Error('Invalid relay origin')
     return value
   }
   const hex = (value: unknown, size: number) => {
@@ -269,6 +275,8 @@ function relayState(relay: Relay): { tone: StatusTone; word: string; detail?: st
       return { tone: 'neutral', word: COPY.turnedOff }
     case 'unsupported':
       return { tone: 'neutral', word: COPY.unimplemented, detail: COPY.edgeUnavailable }
+    case 'invalid':
+      return { tone: 'failed', word: COPY.invalidAddress, detail: COPY.invalidAddressReason }
     default:
       return { tone: 'running', word: COPY.connecting }
   }
@@ -303,7 +311,7 @@ const FAILURE = {
 } as const
 
 /**
- * 设置 › 中继: whether phones reach this Mac directly, then each relay of the person's own (and the official one, once the
+ * 设置 › 连接转发: whether phones reach this Mac directly, then each relay of the person's own (and the official one, once the
  * compiled list has nodes) with its state and a ⋯ menu, and 添加转发服务. Only this Mac's local administrator changes anything;
  * other admin devices read the list.
  */
@@ -438,10 +446,11 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
                           {
                             id: 'relay',
                             items: [
-                              ...(relay.kind !== 'edge' || info.edgeRelayAvailable
+                              ...(relay.status !== 'invalid' && (relay.kind !== 'edge' || info.edgeRelayAvailable)
                                 ? [{ id: 'test', label: COPY.test, onSelect: () => void test(relay.relayId) }]
                                 : []),
-                              ...(relay.kind !== 'edge' || info.edgeRelayAvailable || relay.status !== 'disabled'
+                              ...(relay.status !== 'invalid'
+                              && (relay.kind !== 'edge' || info.edgeRelayAvailable || relay.status !== 'disabled')
                                 ? [
                                     {
                                       id: 'toggle',

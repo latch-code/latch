@@ -42,7 +42,7 @@ export const PROJECTS: Readonly<Record<string, ProjectRule>> = {
   // The root holds the compatibility entries of the plugin SDK (src/), the repository's scripts and the tests of the
   // packages without a test/ directory (tests/), which drive core through the Host's Standard driver.
   latch: { dir: '.', dependencies: ['@latch/protocol', '@latch/sdk', '@latch/core'], devDependencies: ['@latch/host'] },
-  '@latch/link-wire': { dir: 'packages/link-wire', env: 'isomorphic', dependencies: [] },
+  '@latch/link-wire': { dir: 'packages/link-wire', env: 'isomorphic', dependencies: ['@latch/protocol'] },
   '@latch/link-client': { dir: 'packages/link-client', env: 'node', dependencies: ['@latch/link-wire'] },
   // The relay's state machine without I/O, shared by the self-hosted Node relay and the edge relay.
   '@latch/relay-core': { dir: 'packages/relay-core', env: 'isomorphic', dependencies: ['@latch/link-wire'] },

@@ -1,3 +1,4 @@
+import { isRelayEndpoint } from '@latch/protocol/relay-endpoint'
 import { ascii, concat, equal, field, fixed, hex, Reader, uint } from './bytes.ts'
 import { decodePass } from './pass.ts'
 import { decodeDirectorySource, encodeDirectorySource, type NativeDirectorySource } from './directory-source.ts'
@@ -53,9 +54,7 @@ function text(bytes: Uint8Array): string {
   return String.fromCharCode(...bytes)
 }
 function endpoint(value: string): void {
-  const parsed = /^https:\/\/([a-z0-9.-]{1,253}|\[[a-f0-9:]{2,45}\])(?::([0-9]{1,5}))?\/?$/u.exec(value)
-  if (!parsed || (parsed[2] !== undefined && (Number(parsed[2]) < 1 || Number(parsed[2]) > 65535)))
-    throw new RangeError('Invalid relay book endpoint')
+  if (!isRelayEndpoint(value)) throw new RangeError('Invalid relay book endpoint')
 }
 function address(value: NativeLanAddress): void {
   const v6 = value.address.includes(':')

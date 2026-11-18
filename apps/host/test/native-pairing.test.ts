@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AppError } from '@latch/sdk'
 import { connectPluginTransport } from '../src/native-transports.ts'
-import { createTransportCertificate, openNativeHttp, type NativeHttpClient } from '@latch/link-client'
+import { createTransportCertificate, openNativeHttp, verifyAddressBook, type NativeHttpClient } from '@latch/link-client'
 import { invitationCode, parsePairingPayload } from '@latch/link-wire'
 import type { Device, NativePairingInvitation, NativePairingStatus } from '@latch/protocol'
 import type { TestDevice } from '@latch/testkit'
@@ -223,6 +223,26 @@ it('asks for one confirmation naming the escaped device, and grants the fixed re
     dataScope: 'all',
     listener: 'native-direct',
   })
+})
+
+it('pairs while a saved relay address is outside the address-book grammar, signing a book with the other relays', async () => {
+  // Built-in entries reach relays.json through the saved schema, like a file written before the shared grammar.
+  const good = { relayId: 'a'.repeat(32), kind: 'self' as const, url: 'https://relay.example/', spkiHash: 'b'.repeat(64) }
+  const bad = ['https://relay.example/?', 'https://other.example/#', 'https://a_b.example/'].map((url, index) => ({
+    relayId: String(index + 1).repeat(32),
+    kind: 'self' as const,
+    url,
+    spkiHash: 'c'.repeat(64),
+  }))
+  const t = await host({ officialRelays: [good, ...bad] })
+  const { client, device, enrollment, invited } = await pairToApproved(t)
+  const signature = device.signature(t, enrollment)
+  const prepared = await client.request('POST', `/link/api/enrollments/${enrollment.id}/prepare`, { signature })
+  expect(prepared.status).toBe(200)
+  const body = prepared.body as { deviceId: string; addressBook: string }
+  const book = verifyAddressBook(body.addressBook, invited.rootSpki, { hostId: t.host.hostId, deviceId: body.deviceId })
+  expect(book.relays.map(relay => Buffer.from(relay.relayId).toString('hex'))).toEqual([good.relayId])
+  expect((await client.request('POST', `/link/api/enrollments/${enrollment.id}/complete`, { signature })).status).toBe(200)
 })
 
 it('escapes what the device calls itself before the sheet shows it', async () => {

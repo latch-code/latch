@@ -1703,6 +1703,8 @@ const FIXED = defineCopy<Record<string, string>>(
     'native-relay-egress': '当前的出站规则不允许连接这个中继。',
     'native-relay-unconfirmed': '还无法确认中继可用。请核对地址、证书和注册令牌，然后继续验证。',
     'native-relay-write-unknown': '中继配置的保存结果尚未确认，请继续原请求。',
+    'native-relay-address': '这个中继的地址不符合连接簿格式，手机无法使用。请移除后用新的中继文件添加。',
+    'native-relay-testing': '另一项中继测试正在进行，请稍后再试。',
     'native-managed': '这个地址由启动参数管理，需要停止 Latch 服务后修改参数。',
     'native-address-unavailable': '原来的局域网地址已不可用，请重新选择当前地址。',
     'native-listener-unavailable': '无法启用所选地址或端口，请核对网络后重试。',
@@ -1763,6 +1765,9 @@ const FIXED = defineCopy<Record<string, string>>(
     'native-relay-cancelled': 'The relay request was cancelled.',
     'native-relay-egress': 'The current network rules do not allow a connection to this relay.',
     'native-relay-unconfirmed': 'The relay is still unverified. Check the address, certificate and registration token, then continue.',
+    'native-relay-address':
+      'This relay’s address is outside the address-book format, so phones can’t use it. Remove it and add a new relay file.',
+    'native-relay-testing': 'Another relay test is running. Try again shortly.',
     'native-relay-write-unknown': 'Saving the relay is still unconfirmed. Continue the original request.',
     'native-managed': 'This address is set by launch options. Stop the Latch service to change them.',
     'native-address-unavailable': 'The previous local network address is no longer available. Choose a current one.',

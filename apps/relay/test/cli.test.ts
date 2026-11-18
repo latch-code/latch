@@ -31,9 +31,12 @@ it('creates a private registration token without printing it and validates opera
   const output = join(directory, 'connection.json')
   const exportArgs = [...args, 'profile', '--data-dir', directory, '--output', output]
   await expect(run(process.execPath, [...exportArgs, '--url', 'https://other.example/'])).rejects.toMatchObject({ code: 1 })
+  // Outside the address-book grammar: the Host and every phone would refuse it.
+  for (const url of ['https://localhost:8443/?', 'https://localhost:8443/#', 'https://a_b.localhost:8443/'])
+    await expect(run(process.execPath, [...exportArgs, '--url', url])).rejects.toMatchObject({ code: 1 })
   await expect(stat(output)).rejects.toMatchObject({ code: 'ENOENT' })
   const exported = await run(process.execPath, [...exportArgs, '--url', 'https://localhost:8443'])
-  expect(exported.stdout).toBe('{"written":true}\n')
+  expect(exported.stdout).toBe(`{"written":true,"keyHash":"${createHash('sha256').update(cert.spki).digest('hex').slice(0, 8)}"}\n`)
   expect(exported.stderr).toBe('')
   expect((await stat(output)).mode & 0o777).toBe(0o600)
   const connection = JSON.parse(await readFile(output, 'utf8'))

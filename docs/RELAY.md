@@ -12,11 +12,11 @@ sources:
   - apps/relay-edge/src/edge.ts
   - apps/relay-edge/deploy/wrangler.jsonc
   - apps/relay-edge/deploy/README.md
-  - apps/relay-edge/scripts/profile.ts
   - apps/relay-edge/scripts/setup-core.ts
   - apps/relay-edge/scripts/wrangler.ts
   - apps/web/src/settings/RelaySettings.tsx
   - apps/web/src/settings/relayCommands.ts
+  - packages/protocol/src/relay-endpoint.ts
   - packages/link-wire/src/relay-identity.ts
   - packages/link-wire/src/relay-availability.ts
   - packages/link-wire/src/pass.ts
@@ -105,7 +105,7 @@ pnpm relay health --data-dir /srv/latch-relay
 pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8443 --output /srv/latch-relay/latch-connection.json
 ```
 
-`--url` 是 https origin，证书须与主机名相符；`--output` 是新文件的绝对路径，以 0600 写出，命令只打印写入结果。文件（版本 1）含地址、节点 ID、证书公钥指纹，没有开放登记时还含注册令牌。
+`--url` 是 https origin（小写域名或 IPv6、可选端口，不带路径、`?`、`#` 或下划线：手机连接簿只认这种地址），证书须与主机名相符；`--output` 是新文件的绝对路径，以 0600 写出，命令只打印写入结果与密钥短哈希，供在 Mac 的确认窗口里对照。文件（版本 1）含地址、节点 ID、证书公钥指纹，没有开放登记时还含注册令牌。
 
 ### Cloudflare Workers（edge）
 
@@ -119,6 +119,7 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 
 - 只有这台 Mac 上有 `admin` 的设备能添加、停用、移除；其他有 `admin` 的设备只看得到列表与状态。
 - 每个节点只能添加一次，至多四个自己的中继。
+- 地址只接受连接簿的格式：`https://` 加小写域名或 IPv6、可选端口，末尾至多一个 `/`。设置、`latch relay add` 与 Host 都按同一份规则拒绝其他写法（[relay-endpoint.ts](../packages/protocol/src/relay-endpoint.ts)）。
 - Host 停止时可用 `latch relay add --file <中继文件> --data-dir <目录>`、`relay list` 和 `relay remove <节点标识>`。源码运行使用 `pnpm latch`。添加时终端列出每个地址与密钥短哈希，核对后输入 y，非交互用 `--expect-key <密钥短哈希>`。先写审计再保存为待核对，Host 启动后节点证明密钥并接受登记，才可进入签名连接簿。Host 运行时可用 `relay test <节点标识>` 检查连通性、身份与登记，并查看 Host 签发状态。`relay setup linux` 显示服务器发布物尚未提供，Linux 源码部署流程见上文。
 
 **Host 做什么。**
@@ -128,7 +129,7 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 3. 实际登记一条随配置保存的真实路由。
 4. 只有登记成功且配置与回执都已写入，才在签名连接簿里发布。
 
-「测试」先记 `native.relay.test` 审计（节点与配置的哈希），再另登记一条一次性的路由，不影响正在用的那条；审计失败时不解析地址或连接，等待期间与每次写前复核权限及所测配置。文件已替换而目录同步未知时（503 `native-relay-write-unknown`）先确认那次保存。移除与放弃都先尝试留审计，再替换配置；审计写失败时仍完成收紧；CLI 移除或关闭也容忍审计打开失败，并在终端报告审计失败。启用一个中继与添加一样，审计写不进就不做。局域网或内网的中继需要本机管理员先在出站规则里放行对应的 `host:port`。每条控制与数据连接持有其实际来源和锁定 IP 的出站许可；撤销许可后只关闭失去许可的连接。
+「测试」先记 `native.relay.test` 审计（节点与配置的哈希），再登记这个中继当天专用的测试路由，不影响正在用的那条；同一天重复测试复用同一条路由，同一时间只运行一项测试，Host 停止时不再开始；审计失败时不解析地址或连接，等待期间与每次写前复核权限及所测配置。文件已替换而目录同步未知时（503 `native-relay-write-unknown`）先确认那次保存。移除与放弃都先尝试留审计，再替换配置；审计写失败时仍完成收紧；CLI 移除或关闭也容忍审计打开失败，并在终端报告审计失败。启用一个中继与添加一样，审计写不进就不做。局域网或内网的中继需要本机管理员先在出站规则里放行对应的 `host:port`。每条控制与数据连接持有其实际来源和锁定 IP 的出站许可；撤销许可后只关闭失去许可的连接。
 
 ### 手机怎样得到新中继
 
@@ -153,5 +154,6 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 | 已停用 | 你在 ⋯ 里停用了它 | 需要时启用 Linux 中继 |
 | 尚未实现 | Workers 中继暂停上线 | 可停用或移除已有配置 |
 | 需要检查 | 同一天两次报告路由冲突 | 移除后重新添加 |
+| 地址无效 | 早先保存的地址不符合连接簿格式（带 `?`、`#`、下划线等），不拨号、不进连接簿，其他中继照常签发 | 移除后用新的中继文件添加 |
 
 Linux 中继的 `/healthz` 只说明节点接受连接。完整的验证要用手机在另一个网络实际连接、重连与撤销。

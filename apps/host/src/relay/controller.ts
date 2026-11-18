@@ -1,15 +1,17 @@
+import { createHmac } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { Duplex } from 'node:stream'
 import { ascii, hex, holder, routeId, routeKey, UTC_DAY, type KnockBinding } from '@latch/link-wire'
 import { nodeCrypto, RelayClosed, RelayControl, type RelayDialLease } from '@latch/link-client'
 import { sha256Hex } from '@latch/core/node-kit'
+import { AppError } from '@latch/sdk'
 import type { AuditLog } from '../audit.ts'
 import type { DeviceStore } from '../auth.ts'
 import {
-  assertRelayAvailable,
+  assertRelayUsable,
   profileFingerprint,
-  relayAvailable,
   relayEndpointOf,
+  relayUsable,
   RelayProfiles,
   secretBytes,
   type RelayProfile,
@@ -66,6 +68,9 @@ export class HostRelayController {
   private readonly dialLeases = new Map<RelayDialLease, AbortController>()
   private readonly timer: ReturnType<typeof setInterval>
   private checking?: { abort: AbortController; done: Promise<Verification> }
+  /** One 测试 at a time; its route is derived per relay and day, and re-registered with the token it got. */
+  private probing = false
+  private readonly probeTokens = new Map<string, { fingerprint: string; day: number; token: Uint8Array }>()
   private stopped = false
   private region?: string
   constructor(options: RelayControllerOptions) {
@@ -110,7 +115,7 @@ export class HostRelayController {
     const reachable = this.options.devices.nativeReachable()
     const snapshot = this.options.profiles.snapshot()
     const profiles = snapshot.profiles.filter(
-      profile => relayAvailable(profile) && !profile.disabled && (!profile.builtIn || (reachable && !snapshot.officialOff)),
+      profile => relayUsable(profile) && !profile.disabled && (!profile.builtIn || (reachable && !snapshot.officialOff)),
     )
     for (const [id, retained] of this.resumeTokens) {
       const profile =
@@ -118,6 +123,7 @@ export class HostRelayController {
         ?? (snapshot.pendingRelay?.profile.relayId === id ? snapshot.pendingRelay.profile : undefined)
       if (!profile || retained.fingerprint !== profileFingerprint(profile)) this.resumeTokens.delete(id)
     }
+    for (const id of this.probeTokens.keys()) if (!snapshot.profiles.some(item => item.relayId === id)) this.probeTokens.delete(id)
     for (const [id, state] of this.nodes) {
       const profile = profiles.find(item => item.relayId === id)
       if (!profile || state.fingerprint !== profileFingerprint(profile)) {
@@ -210,11 +216,14 @@ export class HostRelayController {
   }
   /**
    * 测试: dials the node now and reports how far it got: connected and key verified, then a registration. It registers a
-   * throwaway route, never this Host's own, so the live control connection is not superseded.
+   * test route of its own, never this Host's live one, so the live control connection is not superseded. One test runs at
+   * a time.
    */
   async test(profile: RelayProfile, authorize: () => void): Promise<RelayTest> {
+    if (this.probing) throw new AppError(409, 'native-relay-testing', '另一项中继测试正在进行，请稍后再试。')
     const abort = new AbortController()
     if (this.stopped) return { reached: 'none', failure: 'unreachable' }
+    this.probing = true
     const timer = setTimeout(() => abort.abort(), 15_000)
     timer.unref()
     const started = performance.now()
@@ -232,6 +241,7 @@ export class HostRelayController {
       return { reached, failure: reached === 'identity' ? 'refused' : classify(error) === 'mismatch' ? 'mismatch' : 'unreachable' }
     } finally {
       clearTimeout(timer)
+      this.probing = false
     }
   }
   private async verifyRegistration(
@@ -240,7 +250,7 @@ export class HostRelayController {
     signal: AbortSignal,
     options: { probe?: boolean; onIdentity?: () => void } = {},
   ): Promise<Verification> {
-    assertRelayAvailable(profile)
+    assertRelayUsable(profile)
     const relayId = Buffer.from(profile.relayId, 'hex')
     let transportPermitted = () => true
     const permitted = () => !signal.aborted && !this.stopped && transportPermitted()
@@ -274,13 +284,26 @@ export class HostRelayController {
     signal.addEventListener('abort', abort, { once: true })
     try {
       const day = Math.floor(Date.now() / 1000 / UTC_DAY)
-      const seed = options.probe ? nodeCrypto.random(32) : secretBytes(profile.seeds[profile.activeSlot])
+      const fingerprint = profileFingerprint(profile)
+      // 测试 registers its own route, never the live one, so the control connection is not superseded. The route is the
+      // same for every test of this relay on this day, so repeated tests replace one route instead of leaving new ones.
+      const seed = options.probe
+        ? createHmac('sha256', secretBytes(profile.seeds[0])).update(`latch-relay-test-route-v1:${day}`).digest()
+        : secretBytes(profile.seeds[profile.activeSlot])
       const routeKeyBytes = await routeKey(nodeCrypto, seed, relayId, day)
       const currentRoute = hex(await routeId(nodeCrypto, await nodeCrypto.publicKey(routeKeyBytes)))
-      const retained = this.resumeTokens.get(profile.relayId)
-      const previous = retained?.fingerprint === profileFingerprint(profile) ? retained.tokens.get(currentRoute) : undefined
+      const retained = this.resumeTokens.get(profile.relayId),
+        probe = this.probeTokens.get(profile.relayId)
+      const previous = options.probe
+        ? probe?.fingerprint === fingerprint && probe.day === day
+          ? probe.token
+          : undefined
+        : retained?.fingerprint === fingerprint
+          ? retained.tokens.get(currentRoute)
+          : undefined
       check()
       const { routeId: registeredRoute, token } = await control.register({ routeKey: routeKeyBytes, day, previous, alternate: false })
+      if (options.probe) this.probeTokens.set(profile.relayId, { fingerprint, day, token })
       check()
       return { routeId: registeredRoute, token, permitted }
     } finally {

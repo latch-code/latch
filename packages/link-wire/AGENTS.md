@@ -1,6 +1,6 @@
 # @latch/link-wire
 
-原生链路与中继的纯线格式、严格校验、密码学注入接口与有界恢复状态。环境 isomorphic；只用 ES 标准库，不使用 Node、DOM、WebCrypto 全局或 I/O。密码学由调用方注入。
+原生链路与中继的纯线格式、严格校验、密码学注入接口与有界恢复状态。环境 isomorphic；只用 ES 标准库，不使用 Node、DOM、WebCrypto 全局或 I/O。密码学由调用方注入。中继地址语法只在 `@latch/protocol/relay-endpoint`，连接簿、Host、设置页与 CLI 共用；放宽它要同时改 iOS `AddressBookCodec.relayURL`。
 
 - 所有变长输入先限长；整数大端，保留位为零；未知标签与尾部字节拒绝。
 - 更改编码、域分离或密钥派生时同步 `packages/testkit/vectors/link-v1.json`。

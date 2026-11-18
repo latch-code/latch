@@ -10,7 +10,7 @@ import { HostAddressBooks } from '../src/relay/address-book.ts'
 import { NativeSettings } from '../src/native-settings.ts'
 import { classify } from '../src/relay/controller.ts'
 import { RelayClosed } from '@latch/link-client'
-import { RelayProfiles } from '../src/relay/profiles.ts'
+import { relayProfileInput, RelayProfiles } from '../src/relay/profiles.ts'
 import type { OfficialRelay } from '../src/relay/official.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
 import { readRelayFile, relayFacts } from '../scripts/latch-relay.ts'
@@ -273,4 +273,67 @@ it('names a failed dial by what went wrong: another key, a refused registration,
   expect(classify(new Error('Relay certificate identity mismatch'))).toBe('mismatch')
   expect(classify(new RelayClosed(4100))).toBe('refused')
   expect(classify(new Error('connect ECONNREFUSED'))).toBe('unreachable')
+})
+
+const BAD_ADDRESSES = ['https://relay.example/?', 'https://relay.example/#', 'https://a_b.example/']
+
+it('refuses addresses outside the address-book grammar from relay files and settings requests alike', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'latch-relay-choice-'))
+  folders.push(directory)
+  for (const [index, url] of BAD_ADDRESSES.entries()) {
+    expect(relayProfileInput.safeParse({ ...ownSelf, url }).success).toBe(false)
+    expect(relayProfileInput.safeParse({ ...ownEdge, extraUrls: [url] }).success).toBe(false)
+    const path = join(directory, `bad-${index}.json`)
+    await writeFile(path, JSON.stringify({ version: 1, profile: { ...ownSelf, url } }), { mode: 0o600 })
+    await expect(readRelayFile(path)).rejects.toThrow()
+  }
+})
+
+it('keeps a saved entry outside the address-book grammar out of books, flags it, and keeps signing for the others', async () => {
+  const t = await host()
+  const seed = () => `lrs1.${randomBytes(32).toString('base64url')}`
+  const saved = (fields: object) => ({ ...fields, seeds: [seed(), seed()], activeSlot: 0, rotationDay: 0, rotations: 0 })
+  const bad = BAD_ADDRESSES.map(url => ({ relayId: hex(16), url, spkiHash: hex(32) }))
+  // relays.json used the looser schema before: such files must still load, and are never rewritten to fit.
+  const state = { ...t.profiles.snapshot(), profiles: [saved(ownSelf), ...bad.map(saved)] }
+  await writeFile(join(t.directory, 'native/relays.json'), JSON.stringify(state), { mode: 0o600 })
+  const loaded = await RelayProfiles.open(t.directory)
+  expect(loaded.snapshot().profiles).toHaveLength(4)
+  const books = new HostAddressBooks(loaded, t.identity, () => [])
+  const book = verifyAddressBook(await books.issue(deviceId), t.identity.publicKeySpki, { hostId: t.identity.hostId, deviceId })
+  expect(ids(book)).toEqual([ownSelf.relayId])
+  const settings = new NativeSettings({
+    profiles: loaded,
+    native: {} as never,
+    controller: { reconcile() {}, status: () => [] } as never,
+    audit: { append: async () => {} } as never,
+    pairing: () => false,
+    reachable: () => false,
+  })
+  const relays = settings.info().relays
+  expect(relays.map(relay => relay.status)).toEqual(['connecting', 'invalid', 'invalid', 'invalid'])
+  await loaded.setDisabled(
+    bad[0]!.relayId,
+    true,
+    () => {},
+    async () => true,
+  )
+  await expect(
+    loaded.setDisabled(
+      bad[0]!.relayId,
+      false,
+      () => {},
+      async () => true,
+    ),
+  ).rejects.toMatchObject({
+    code: 'native-relay-address',
+  })
+  await expect(settings.testRelay(bad[1]!.relayId, { listener: 'unix' }, () => {})).rejects.toMatchObject({ code: 'native-relay-address' })
+  for (const relay of bad)
+    await loaded.removeObserver(
+      { relayId: relay.relayId },
+      () => {},
+      async () => true,
+    )
+  expect(loaded.snapshot().profiles.map(profile => profile.relayId)).toEqual([ownSelf.relayId])
 })

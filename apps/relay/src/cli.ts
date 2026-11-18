@@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { isIP } from 'node:net'
 import { resolve, join, isAbsolute } from 'node:path'
 import { parseArgs } from 'node:util'
+import { isRelayEndpoint } from '@latch/link-wire'
 import { loadRelayConfig } from './config.ts'
 import { startRelay } from './server.ts'
 import { requestPrivateAdmin } from './admin.ts'
@@ -91,7 +92,8 @@ async function main(): Promise<void> {
   if (command === 'profile') {
     if (!values.url || !values.output || !isAbsolute(values.output) || values.url.length > 512) throw new Error('Invalid profile output')
     const url = new URL(values.url)
-    if (url.protocol !== 'https:' || url.username || url.password || url.href !== `${url.origin}/`) throw new Error('Invalid relay origin')
+    if (url.protocol !== 'https:' || url.username || url.password || url.href !== `${url.origin}/` || !isRelayEndpoint(url.href))
+      throw new Error('Invalid relay origin')
     const certificate = new X509Certificate(config.cert)
     const hostname = url.hostname.replace(/^\[|\]$/gu, '')
     if (!(isIP(hostname) ? certificate.checkIP(hostname) : certificate.checkHost(hostname)))
@@ -114,7 +116,8 @@ async function main(): Promise<void> {
       })}\n`,
       { flag: 'wx', mode: 0o600 },
     )
-    process.stdout.write('{"written":true}\n')
+    // The key's short hash, the one the Mac's confirmation sheet shows: an independent reference to compare it with.
+    process.stdout.write(`${JSON.stringify({ written: true, keyHash: spkiHash.slice(0, 8) })}\n`)
     return
   }
   if (command === 'check') {

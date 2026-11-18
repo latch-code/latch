@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, syncDirectory, writeFileAtomic } from '@latch/core/node-kit'
 import { EDGE_RELAY_AVAILABLE } from '@latch/link-wire'
+import { isRelayEndpoint } from '@latch/protocol'
 import { OFFICIAL_RELAYS, type OfficialRelay } from './official.ts'
 import {
   directoryConfigSchema,
@@ -18,7 +19,11 @@ import {
 
 const secret = (prefix: string) => `${prefix}.${randomBytes(32).toString('base64url')}`
 const key = (prefix: string) => z.string().regex(new RegExp(`^${prefix}\\.[A-Za-z0-9_-]{43}$`, 'u'))
-const endpoint = z
+/**
+ * What relays.json may already hold: an https origin. Entries saved before the shared grammar was enforced on input are
+ * read unchanged (never rewritten), but kept out of dialing and address books by `relayAddressValid`.
+ */
+const savedEndpoint = z
   .string()
   .max(512)
   .refine(value => {
@@ -37,15 +42,20 @@ const endpoint = z
       return false
     }
   })
+/** A new address: canonical (`value === url.href`) and inside the address-book grammar shared with every client. */
+const endpoint = savedEndpoint.refine(isRelayEndpoint)
 const relayId = z.string().regex(/^[a-f0-9]{32}$/u),
   hex64 = z.string().regex(/^[a-f0-9]{64}$/u),
   region = z.string().regex(/^[a-z0-9-]{1,16}$/u)
 /** Further origins of an edge node: the relay-key signature, not the name, binds a connection to it. */
-const extraUrls = z
-  .array(endpoint)
-  .min(1)
-  .max(3)
-  .refine(values => new Set(values).size === values.length)
+const urlList = (item: typeof savedEndpoint) =>
+  z
+    .array(item)
+    .min(1)
+    .max(3)
+    .refine(values => new Set(values).size === values.length)
+const extraUrls = urlList(endpoint),
+  savedExtraUrls = urlList(savedEndpoint)
 /** A relay file or settings request. A self-hosted node is pinned by its TLS key; an edge node by its relay key. */
 export const relayProfileInput = z
   .union([
@@ -64,6 +74,23 @@ export const relayProfileInput = z
 export type RelayProfileInput = z.infer<typeof relayProfileInput>
 export function relayAvailable(profile: { kind?: 'edge' } | RelayProfileInput): boolean {
   return !('kind' in profile && profile.kind === 'edge') || EDGE_RELAY_AVAILABLE
+}
+/** Every address of a saved entry is inside the shared grammar, so a signed address book can carry it. */
+export function relayAddressValid(profile: { url: string; extraUrls?: string[] }): boolean {
+  return [profile.url, ...(profile.extraUrls ?? [])].every(isRelayEndpoint)
+}
+/** An entry the Host may dial, test, enable and put in address books. */
+export function relayUsable(profile: { kind?: 'edge'; url: string; extraUrls?: string[] }): boolean {
+  return relayAvailable(profile) && relayAddressValid(profile)
+}
+export function assertRelayUsable(profile: { kind?: 'edge'; url: string; extraUrls?: string[] }): void {
+  assertRelayAvailable(profile)
+  if (!relayAddressValid(profile))
+    throw new AppError(
+      409,
+      'native-relay-address',
+      '这个中继的地址不符合连接簿格式（只能是小写域名或 IPv6、可选端口），手机无法使用。请移除后用新的中继文件添加。',
+    )
 }
 export function assertRelayAvailable(profile: { kind?: 'edge' } | RelayProfileInput): void {
   if (!relayAvailable(profile))
@@ -87,11 +114,11 @@ export type NativeDirect = z.infer<typeof nativeDirectSchema>
  */
 const profileFields = z.strictObject({
   relayId,
-  url: endpoint,
+  url: savedEndpoint,
   spkiHash: hex64.optional(),
   kind: z.literal('edge').optional(),
   relayKey: hex64.optional(),
-  extraUrls: extraUrls.optional(),
+  extraUrls: savedExtraUrls.optional(),
   shard: z.int().min(0).max(15).optional(),
   region: region.optional(),
   registrationKey: key('lrt1').optional(),
@@ -309,6 +336,7 @@ export class RelayProfiles {
       authorize()
       this.checkBase(base)
       this.assertNewRelay(pending.profile)
+      assertRelayUsable(pending.profile)
       if (draft.pendingRelay?.requestId !== pending.requestId || draft.pendingRelay.requestHash !== pending.requestHash)
         throw new AppError(409, 'native-relay-cancelled', '这次中继添加已放弃。')
       draft.profiles.push(draft.pendingRelay.profile)
@@ -562,7 +590,7 @@ export class RelayProfiles {
       authorize()
       const node = draft.profiles.find(profile => profile.relayId === relayId && !profile.builtIn)
       if (!node) throw new AppError(404, 'native-relay-missing', '中继配置已移除')
-      if (!disabled) assertRelayAvailable(node)
+      if (!disabled) assertRelayUsable(node)
       const before = this.hashConfiguration(draft)
       if (disabled) node.disabled = true
       else delete node.disabled
@@ -646,9 +674,12 @@ export class RelayProfiles {
   }
 }
 
-/** The relays an address book offers, in the person's order of preference, at most four; never an unverified one. */
+/**
+ * The relays an address book offers, in the person's order of preference, at most four; never an unverified one, and
+ * never a saved entry whose address the book's grammar refuses (it would make every signing fail, for every relay).
+ */
 export function bookRelays(state: Pick<z.infer<typeof schema>, 'profiles' | 'officialOff' | 'ownFirst'>): RelayProfile[] {
-  const available = state.profiles.filter(relayAvailable)
+  const available = state.profiles.filter(relayUsable)
   const official = state.officialOff ? [] : available.filter(profile => profile.builtIn),
     own = available.filter(profile => !profile.builtIn && !profile.unverified && !profile.disabled)
   return (state.ownFirst ? [...own, ...official] : [...official, ...own]).slice(0, 4)

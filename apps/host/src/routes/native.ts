@@ -30,7 +30,7 @@ import type { HostAddressBooks } from '../relay/address-book.ts'
 import { HostRelayController } from '../relay/controller.ts'
 import type { HostRelayDirectory } from '../relay/directory.ts'
 import { OFFICIAL_RELAYS, type OfficialRelay } from '../relay/official.ts'
-import { relayKeyHash, relayNodeFields, relayProfileInput, type RelayProfiles } from '../relay/profiles.ts'
+import { relayKeyHash, relayNodeFields, relayProfileInput, relayUsable, type RelayProfiles } from '../relay/profiles.ts'
 import { signatureSchema } from './devices.ts'
 import { type Caller, type CallerRequest, type RouteContext, type RouteModule, type RouteRequest } from './registry.ts'
 
@@ -459,7 +459,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
       const settings = nativeSettings
       const { requestId, profile } = z
-        .strictObject({ requestId: z.uuid(), profile: relayProfileInput.refine(value => !/[?#]/u.test(value.url)).optional() })
+        .strictObject({ requestId: z.uuid(), profile: relayProfileInput.optional() })
         .parse(await jsonBody(req, 4 * KIB))
       const current = () => {
         if (closing()) throw new AppError(503, 'host-closing', '电脑正在停止，请稍后查询原请求。')
@@ -545,6 +545,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
         if (caller.device) requireScope(caller, 'admin')
         requireLocal(caller)
         const authorize = () => {
+          if (closing()) throw new AppError(503, 'host-closing', '电脑正在停止，请稍后再试。')
           if (caller.device) recheck(caller, 'admin')
         }
         json(res, await nativeSettings.testRelay(relayAction[1]!, actorOf(caller), authorize))
@@ -605,7 +606,9 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       ...(options.native ? { bind: options.native } : {}),
       relayAvailable: () => {
         const state = relayProfiles.snapshot()
-        return state.profiles.some(profile => !profile.builtIn || (devices.nativeReachable() && !state.officialOff))
+        return state.profiles.some(
+          profile => relayUsable(profile) && (!profile.builtIn || (devices.nativeReachable() && !state.officialOff)),
+        )
       },
       handler(req, res, opening) {
         const permitted = () =>

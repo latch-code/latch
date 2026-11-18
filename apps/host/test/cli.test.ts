@@ -1120,7 +1120,7 @@ describe('latch CLI', () => {
     await expect(stat(out)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('adds, lists, orders, switches and removes relays with the Host stopped, never showing a registration key', async () => {
+  it('adds, lists and removes relays with the Host stopped, never showing a registration key', async () => {
     const dataDir = await stoppedDataDir()
     const directory = await temporaryDirectory()
     const key = `lrt1.${'Q'.repeat(43)}`
@@ -1144,6 +1144,15 @@ describe('latch CLI', () => {
     expect(await piped.latch('relay', 'add', '--file', 'own.json', '--data-dir', dataDir, '--expect-key', '00000000')).toBe(1)
     // A device or anything that is not a regular file is refused without being read to its end.
     expect(await piped.latch('relay', 'add', '--file', '/dev/zero', '--data-dir', dataDir, '--expect-key', '00000000')).toBe(1)
+    // Addresses the signed address book cannot carry are refused before anything is saved.
+    for (const url of ['https://relay.example/?', 'https://relay.example/#', 'https://a_b.example/']) {
+      await writeFile(join(directory, 'bad.json'), JSON.stringify({ version: 1, profile: { ...self, url } }), { mode: 0o600 })
+      const bad = cli({ cwd: directory })
+      expect(await bad.latch('relay', 'add', '--file', 'bad.json', '--data-dir', dataDir, '--expect-key', self.spkiHash.slice(0, 8))).toBe(
+        1,
+      )
+      expect(bad.output.stderr).toContain('这个文件不是中继导出的连接配置')
+    }
     const typed = cli({ cwd: directory, typed: true, answer: 'y' })
     expect(await typed.latch('relay', 'add', '--file', 'edge.json', '--data-dir', dataDir)).toBe(1)
     expect(typed.output.stderr).toContain('Cloudflare Workers 中继尚未实现')
@@ -1173,7 +1182,6 @@ describe('latch CLI', () => {
     const list = cli()
     expect(await list.latch('relay', 'list', '--json', '--data-dir', dataDir)).toBe(0)
     expect(JSON.parse(list.output.stdout)).toEqual({
-      official: { deployed: false, enabled: true, ownFirst: false },
       relays: [
         { relayId: own.relayId, kind: 'self', urls: [own.url], unverified: true },
         { relayId: self.relayId, kind: 'self', urls: [self.url], unverified: true },
@@ -1182,9 +1190,9 @@ describe('latch CLI', () => {
       inAddressBook: [],
     })
     expect(list.output.stdout).not.toContain(key)
-    expect(await cli().latch('relay', 'order', 'own', '--data-dir', dataDir)).toBe(0)
-    expect(await cli().latch('relay', 'official', 'off', '--data-dir', dataDir)).toBe(0)
-    expect(await cli().latch('relay', 'official', 'maybe', '--data-dir', dataDir)).toBe(1)
+    // There is no official relay: no switch and no order to set.
+    expect(await cli().latch('relay', 'official', 'off', '--data-dir', dataDir)).toBe(1)
+    expect(await cli().latch('relay', 'order', 'own', '--data-dir', dataDir)).toBe(1)
     expect(await cli().latch('relay', 'remove', own.relayId, '--data-dir', dataDir)).toBe(0)
     expect(await cli().latch('relay', 'remove', own.relayId, '--data-dir', dataDir)).toBe(1)
     const saved = JSON.parse(await readFile(join(dataDir, 'native', 'relays.json'), 'utf8')) as {
@@ -1192,7 +1200,8 @@ describe('latch CLI', () => {
       ownFirst?: boolean
       profiles: Array<{ relayId: string; registrationKey?: string }>
     }
-    expect(saved).toMatchObject({ officialOff: true, ownFirst: true })
+    expect(saved.officialOff).toBeUndefined()
+    expect(saved.ownFirst).toBeUndefined()
     expect(saved.profiles.map(profile => profile.relayId)).toEqual([self.relayId])
     const records = (await readFile(join(dataDir, 'audit', 'audit.jsonl'), 'utf8'))
       .trim()
@@ -1205,8 +1214,6 @@ describe('latch CLI', () => {
       'native.relay.add.requested',
       'native.config.changed',
       'native.relay.add.requested',
-      'native.config.changed',
-      'native.config.changed',
       'native.config.changed',
       'native.config.changed',
     ])
@@ -1231,42 +1238,32 @@ describe('latch CLI', () => {
     expect(records.map(record => record.actor)).toEqual([{ listener: 'unix', via: 'cli' }])
   })
 
-  it.each(['open', 'append', 'config append'] as const)(
-    'still removes and switches relays off when audit %s fails, but refuses to grant',
-    async failure => {
-      const dataDir = await stoppedDataDir()
-      const profiles = await RelayProfiles.open(dataDir)
-      const relay = { relayId: 'c'.repeat(32), url: 'https://relay.example/', spkiHash: 'd'.repeat(64) }
-      await profiles.replace([relay])
-      const append = AuditLog.prototype.append
-      const mock =
-        failure === 'open'
-          ? vi.spyOn(AuditLog, 'open').mockRejectedValue(new Error('audit unavailable'))
-          : vi.spyOn(AuditLog.prototype, 'append').mockImplementation(async function (this: AuditLog, entry) {
-              if (failure === 'append' || entry.action === 'native.config.changed') throw new Error('audit unavailable')
-              return append.call(this, entry)
-            })
-      try {
-        const off = cli()
-        expect(await off.latch('relay', 'official', 'off', '--data-dir', dataDir)).toBe(0)
-        expect(off.output.stderr).toContain('审计记录写入失败')
-        expect((await RelayProfiles.open(dataDir)).snapshot().officialOff).toBe(true)
-        expect(await cli().latch('relay', 'official', 'on', '--data-dir', dataDir)).toBe(1)
-        expect((await RelayProfiles.open(dataDir)).snapshot().officialOff).toBe(true)
-
-        const remove = cli()
-        expect(await remove.latch('relay', 'remove', relay.relayId, '--data-dir', dataDir)).toBe(0)
-        expect(remove.output.stderr).toContain('审计记录写入失败')
-        expect((await RelayProfiles.open(dataDir)).snapshot().profiles).toEqual([])
-        const directory = await temporaryDirectory()
-        await writeFile(join(directory, 'relay.json'), JSON.stringify({ version: 1, profile: relay }))
-        expect(
-          await cli({ cwd: directory }).latch('relay', 'add', '--file', 'relay.json', '--expect-key', 'dddddddd', '--data-dir', dataDir),
-        ).toBe(1)
-        expect((await RelayProfiles.open(dataDir)).snapshot().profiles).toEqual([])
-      } finally {
-        mock.mockRestore()
-      }
-    },
-  )
+  it.each(['open', 'append', 'config append'] as const)('still removes relays when audit %s fails, but refuses to grant', async failure => {
+    const dataDir = await stoppedDataDir()
+    const profiles = await RelayProfiles.open(dataDir)
+    const relay = { relayId: 'c'.repeat(32), url: 'https://relay.example/', spkiHash: 'd'.repeat(64) }
+    await profiles.replace([relay])
+    const append = AuditLog.prototype.append
+    const mock =
+      failure === 'open'
+        ? vi.spyOn(AuditLog, 'open').mockRejectedValue(new Error('audit unavailable'))
+        : vi.spyOn(AuditLog.prototype, 'append').mockImplementation(async function (this: AuditLog, entry) {
+            if (failure === 'append' || entry.action === 'native.config.changed') throw new Error('audit unavailable')
+            return append.call(this, entry)
+          })
+    try {
+      const remove = cli()
+      expect(await remove.latch('relay', 'remove', relay.relayId, '--data-dir', dataDir)).toBe(0)
+      expect(remove.output.stderr).toContain('审计记录写入失败')
+      expect((await RelayProfiles.open(dataDir)).snapshot().profiles).toEqual([])
+      const directory = await temporaryDirectory()
+      await writeFile(join(directory, 'relay.json'), JSON.stringify({ version: 1, profile: relay }))
+      expect(
+        await cli({ cwd: directory }).latch('relay', 'add', '--file', 'relay.json', '--expect-key', 'dddddddd', '--data-dir', dataDir),
+      ).toBe(1)
+      expect((await RelayProfiles.open(dataDir)).snapshot().profiles).toEqual([])
+    } finally {
+      mock.mockRestore()
+    }
+  })
 })

@@ -16,3 +16,5 @@ export * from './directory-source.ts'
 export * from './relay-profile.ts'
 export * from './relay-identity.ts'
 export * from './relay-availability.ts'
+// The relay address grammar of the address book, defined once in the protocol package for the Host and its clients.
+export { isRelayEndpoint } from '@latch/protocol/relay-endpoint'

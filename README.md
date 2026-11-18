@@ -131,7 +131,7 @@ pnpm desktop -- --tailnet \
 
 **iPhone 与 iPad 上的 Latch App** 不走这个 HTTPS 入口：在桌面端的「设置 → 设备」选「连接手机」，用 App 扫码，再在 Mac 上确认一次。
 
-- 配对时手机要和这台 Mac 在同一个局域网。之后同一网络直连，其他网络可经[自己的 Linux 中继](docs/RELAY.md)接入。在这台 Mac 的「设置 › 中继」导入，经本机确认后生效。Cloudflare Workers 中继尚未实现，官方列表为空。
+- 配对时手机要和这台 Mac 在同一个局域网。之后同一网络直连，其他网络可经[自己的 Linux 中继](docs/RELAY.md)接入。在这台 Mac 的「设置 › 连接转发」导入，经本机确认后生效。Cloudflare Workers 中继尚未实现，官方列表为空。
 - 没有账号和云端用户库，不使用 P2P 或 NAT 穿透。设备、权限与会话都由 Mac 上的 Host 决定。
 - 中继只转发 Host 与已获准设备之间的连接，读不到端到端正文，也不能签发设备权限或替换 Host 身份；它的运营方仍能看到 IP、时间、填充后的大小与连接关系。
 - 局域网入口默认自动选择；`--native-host <具体 IP>` 与 `--native-port <端口>` 把它固定在一个地址。

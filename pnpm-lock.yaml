@@ -520,7 +520,11 @@ importers:
         specifier: 'catalog:'
         version: 4.4.3
 
-  packages/link-wire: {}
+  packages/link-wire:
+    dependencies:
+      '@latch/protocol':
+        specifier: workspace:*
+        version: link:../protocol
 
   packages/protocol: {}
 

@@ -196,7 +196,7 @@ function ConnectRows({
 
 /**
  * 关于连接, what the rows above do not say: that another computer cannot connect yet (and why, behind ⓘ) and that the
- * phone connects end to end encrypted. Relays have their own section, 设置 › 中继.
+ * phone connects end to end encrypted. Relays have their own section, 设置 › 连接转发.
  */
 export function AboutConnection({ entry }: { entry: boolean }) {
   return (

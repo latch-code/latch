@@ -8,7 +8,8 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
-    "./types": "./src/types.ts"
+    "./types": "./src/types.ts",
+    "./relay-endpoint": "./src/relay-endpoint.ts"
   },
   "latch": {
     "env": "isomorphic"
