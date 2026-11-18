@@ -2,6 +2,7 @@ import { createAgentLoginRoutes, type AgentLoginDeps, type AgentLoginRoutes } fr
 import { createAgentRoutes, type AgentRouteDeps } from './agents.ts'
 import { createAppRoutes, type AppRouteDeps, type AppRoutes } from './apps.ts'
 import { createAutomationRoutes, type AutomationRouteDeps } from './automations.ts'
+import { createBranchRoutes, type BranchRouteDeps } from './branches.ts'
 import { createBrowserRoutes, type BrowserRouteDeps } from './browser.ts'
 import { createChangeRoutes, type ChangeRoutes } from './changes.ts'
 import { createCustomizationRoutes, type CustomizationRouteDeps, type CustomizationRoutes } from './customization.ts'
@@ -40,6 +41,7 @@ export interface RouteDeps {
   history: HistoryRouteDeps
   reviewNotes: ReviewNoteRouteDeps
   git?: GitRouteOptions
+  branches: BranchRouteDeps
   apps: AppRouteDeps
   browser: BrowserRouteDeps
   simulators: { simulators: Simulators; live: SimulatorLive; control: SimulatorControl }
@@ -98,6 +100,7 @@ export function createRoutes(
       changes,
       createReviewNoteRoutes(context, deps.reviewNotes),
       createGitRoutes(context, deps.git),
+      createBranchRoutes(context, deps.branches),
       terminal,
       createBrowserRoutes(context, deps.browser),
       simulators,

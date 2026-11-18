@@ -137,6 +137,12 @@ export class RequestRecords {
     return false
   }
 
+  /** Whether a request whose key passes `test` is on its way (not yet accepted or forgotten). */
+  someInFlight(test: (key: string) => boolean): boolean {
+    for (const [key, state] of this.records) if (state === 'in-flight' && test(key)) return true
+    return false
+  }
+
   inFlight(): number {
     let count = 0
     for (const state of this.records.values()) if (state === 'in-flight') count++

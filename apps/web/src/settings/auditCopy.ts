@@ -150,6 +150,8 @@ const actionLabels: Readonly<Record<string, string>> = {
   'git.fetch': 'Fetched changes',
   'git.pull': 'Pulled changes',
   'git.abort': 'Aborted merge or rebase',
+  'git.switch': 'Switched branch',
+  'git.switch.result': 'Branch switch ended',
   'git.clone': 'Cloned repository',
   'git.clone.result': 'Repository clone ended',
   'git.result': 'Git action ended',

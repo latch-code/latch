@@ -32,8 +32,9 @@ import { HarnessLimitChip, ServiceBudgetChip } from '../usage/UsageChip.tsx'
 import { ComposerControl, openControlWhenShown } from '../composer/ComposerControl.tsx'
 import { composerActions } from './composerActions.ts'
 import { MoreMenu } from '../composer/Footer.tsx'
-import { FolderControl } from '../composer/FolderControl.tsx'
-import { BranchSegment, ComposerStatus, FolderSegment, statusRoute } from '../composer/ComposerStatus.tsx'
+import { canSwitchBranch } from '../composer/BranchSwitch.tsx'
+import { FolderControl, ProjectBranch } from '../composer/FolderControl.tsx'
+import { ComposerStatus, FolderSegment, statusRoute } from '../composer/ComposerStatus.tsx'
 import { SessionVitalsLine } from '../composer/VitalsStrip.tsx'
 import { DraftHarnessControl, forkBusy, SessionHarnessControl, type SessionFork } from '../composer/ModelControl.tsx'
 import { DraftModelControl, DraftThinkingControl, SessionModelControl, SessionThinkingControl } from '../composer/ModelPanel.tsx'
@@ -381,6 +382,7 @@ export function SessionComposer({
   const permissionBlocked =
     selectedId !== null && helperPermissionBlocked(current, permissionChange?.kind === 'unknown' ? permissionChange.configId : undefined)
   const worktreeOffer = selectedId === null ? worktreeProject(catalog, choice, submission.fork !== null) : undefined
+  const branchSwitchable = canSwitchBranch(shell.snapshot, shell.access, shell.connection)
   const status = (() => {
     if (selectedId === null) {
       const project = catalog?.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')
@@ -392,6 +394,7 @@ export function SessionComposer({
           disabled={newChoicesLocked}
           branch={project?.branch}
           starts
+          switchBranch={branchSwitchable}
         />
       ) : project && choice.mode !== 'chat' ? (
         <>
@@ -399,7 +402,7 @@ export function SessionComposer({
             name={project.name || basename(project.path)}
             tip={COMPOSER_COPY.project(project.name || basename(project.path))}
           />
-          {project.branch && <BranchSegment branch={project.branch} />}
+          {project.branch && <ProjectBranch projectId={project.id} branch={project.branch} switchable={branchSwitchable} />}
         </>
       ) : undefined
       const route = statusRoute(catalog, chosenHarness, {
@@ -670,6 +673,7 @@ export function SessionComposer({
                 disabled={newChoicesLocked}
                 branch={catalog?.workspaces.find(item => item.id === choice.workspaceId)?.branch}
                 starts
+                switchBranch={branchSwitchable}
               />
             )}
             {phone && (

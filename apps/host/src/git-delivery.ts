@@ -215,14 +215,17 @@ export interface DeliveryCaller {
   result: (event: DeliveryResultEvent) => Promise<void>
 }
 
+/** A Host write that holds a repository: delivery, removing a worktree, or switching the project folder's branch. */
+export type HoldKind = 'delivery' | 'worktree-remove' | 'branch-switch'
+
 /**
- * Which Host write holds a repository (its shared Git directory): a delivery write or a worktree removal. One at a time,
+ * Which Host write holds a repository (its shared Git directory): a delivery write, a worktree removal or a branch switch. One at a time,
  * so a removal never runs while a delivery does, and the other way round. Every Host write that runs the user's Git
  * (delivery, pull request, worktree removal) also enters here: refused once the install window is committed, and
  * counted while it runs, so the install waits for it.
  */
 export class RepositoryHolds {
-  private readonly held = new Map<string, 'delivery' | 'worktree-remove'>()
+  private readonly held = new Map<string, HoldKind>()
   private writes = 0
   private readonly closed: () => boolean
 
@@ -249,7 +252,7 @@ export class RepositoryHolds {
   }
 
   /** Takes the repository, or undefined when something holds it already. */
-  take(common: string, kind: 'delivery' | 'worktree-remove'): (() => void) | undefined {
+  take(common: string, kind: HoldKind): (() => void) | undefined {
     this.refuseWhileUpdating()
     if (this.held.has(common)) return undefined
     this.held.set(common, kind)
@@ -258,7 +261,7 @@ export class RepositoryHolds {
     }
   }
 
-  of(common: string): 'delivery' | 'worktree-remove' | undefined {
+  of(common: string): HoldKind | undefined {
     return this.held.get(common)
   }
 
@@ -716,7 +719,13 @@ export class GitDelivery {
         running: { kind: busy.kind, requestId: busy.requestId, startedAt: busy.startedAt, ...(busy.hook ? { hook: busy.hook } : {}) },
       })
     const release = this.holds.take(common, 'delivery')
-    if (!release) throw refuse('git-busy', '这个仓库正在移除一个工作树，等它结束后再试。')
+    if (!release)
+      throw refuse(
+        'git-busy',
+        this.holds.of(common) === 'branch-switch'
+          ? '这个仓库正在切换分支，等它结束后再试。'
+          : '这个仓库正在移除一个工作树，等它结束后再试。',
+      )
     const running: Running = { kind, requestId, startedAt: new Date(this.now()).toISOString(), sessionId: caller.sessionId }
     this.running.set(common, running)
     this.options.changed?.(caller.sessionId)

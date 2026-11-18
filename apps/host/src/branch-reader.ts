@@ -173,6 +173,20 @@ export class BranchReader {
     if ((this.options.now ?? Date.now)() - entry.checkedAt >= 30_000) this.refresh(entry)
     return entry.branch
   }
+  /**
+   * HEAD moved in these folders (a branch switch): what was read is dropped and read again now; a read under way is
+   * discarded and repeated once it settles.
+   */
+  invalidate(folders: readonly string[]): void {
+    if (this.closed) return
+    for (const entry of this.cache.values()) {
+      if (!folders.includes(entry.cwd)) continue
+      entry.generation++
+      entry.checkedAt = -Infinity
+      entry.again = true
+      this.refresh(entry)
+    }
+  }
   private entryFor(cwd: string): Cached {
     const entry = this.cache.get(cwd) ?? { cwd, checkedAt: -Infinity, generation: 0, again: false }
     this.cache.delete(cwd)

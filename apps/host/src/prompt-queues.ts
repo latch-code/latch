@@ -180,6 +180,13 @@ export class PromptQueues {
     return undefined
   }
 
+  /** This session has an item that will still be sent by itself or is being sent now: a turn is queued to run. */
+  pendingIn(sessionId: string): boolean {
+    for (const item of this.entries.values())
+      if (item.sessionId === sessionId && (item.state === 'waiting' || item.state === 'sending')) return true
+    return false
+  }
+
   /** Items that will still be sent by themselves or are being sent now. */
   pending(): number {
     let count = 0

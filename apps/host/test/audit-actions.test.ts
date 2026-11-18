@@ -133,6 +133,8 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   'git.fetch': { sessionId, requestHash: hex, remote: 'upstream', remoteHash: hex, transport: 'ssh' },
   'git.pull': { sessionId, requestHash: hex, remote: 'upstream', remoteHash: hex, transport: 'https', preHead: 'b'.repeat(40) },
   'git.abort': { sessionId, requestHash: hex, operation: 'merge', preHead: 'b'.repeat(40), conflicted: 2 },
+  'git.switch': { workspaceId: 'ws-1', requestHash: hex, fromHash: hex, toHash: hex, preHead: 'b'.repeat(40) },
+  'git.switch.result': { workspaceId: 'ws-1', requestHash: hex, outcome: 'failed', code: 'branch-switch-local-changes' },
   'git.clone': { cloneHash: hex, transport: 'ssh', urlHash: hex, hostHash: hex, pathHash: hex },
   'git.clone.result': { cloneHash: hex, outcome: 'cancelled', code: 'clone-cancelled', removed: true },
   'worktree.remove': {

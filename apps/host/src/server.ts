@@ -1751,6 +1751,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const updateWindow = new UpdateWindow(now)
     /** Host writes that run the user's Git (delivery, pull request, worktree removal): the install waits for them. */
     const repositoryHolds = new RepositoryHolds({ closed: () => updateWindow.isCommitted })
+    /** Project folders whose branch is being switched, by real path: their sessions start nothing until it ends. */
+    const branchSwitching = new Set<string>()
     /** 克隆 into a new project folder: your Git, like a push, with none of the repository's code (docs/GIT-DELIVERY.md). */
     const clones = new GitClones({
       holds: repositoryHolds,
@@ -3309,6 +3311,66 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         promptHeld: (id, requestId) => turnRequests.some(key => key.startsWith(`${id}:`) && key.endsWith(`:${requestId}`)),
       },
       ...(options.gitDelivery ? { git: options.gitDelivery } : {}),
+      branches: {
+        projectFolder: id => {
+          const record = requireProject(id)
+          return record.folders[0]?.path ?? record.path
+        },
+        projectOperation: (id, caller, operation) => projectOperation(id, caller, 'run', operation),
+        latchWorktree: async folder => (await worktrees.sessionOf(folder).catch(() => undefined)) !== undefined,
+        assertIdle: async folder => {
+          const root = await canonicalPath(folder)
+          for (const task of await hub!.listTasks()) {
+            if (!(await sessionOverlaps(task, root))) continue
+            if (ACTIVE_STATUSES.has(task.status))
+              throw new AppError(409, 'branch-switch-turn-running', '这个文件夹里有会话正在运行或等待审批，结束后再切换。')
+            // `${session}:${device}:${requestId}`: a turn on its way into the session, or one queued to follow.
+            if (turnRequests.someInFlight(key => key.startsWith(`${task.id}:`)) || promptQueues.pendingIn(task.id))
+              throw new AppError(409, 'branch-switch-turn-running', '这个文件夹里有会话正要开始新一轮，结束后再切换。')
+          }
+        },
+        hold: folder => {
+          let root: string | undefined
+          try {
+            root = realpathSync(folder)
+          } catch {
+            root = folder
+          }
+          const held = root
+          branchSwitching.add(held)
+          return () => {
+            branchSwitching.delete(held)
+          }
+        },
+        moved: folder => {
+          let root = folder
+          try {
+            root = realpathSync(folder)
+          } catch {
+            // Gone: the read says so.
+          }
+          hub?.branchMoved([folder, root])
+          void hub
+            ?.listTasks()
+            .then(async tasks => {
+              for (const task of tasks)
+                if (await sessionOverlaps(task, root)) {
+                  refresh(task.id)
+                  boardDelivery.settled(task.id)
+                }
+            })
+            .catch(() => {})
+          refresh()
+        },
+        ...(options.gitDelivery
+          ? {
+              git: {
+                ...(options.gitDelivery.git ? { git: options.gitDelivery.git } : {}),
+                ...(options.gitDelivery.home ? { home: options.gitDelivery.home } : {}),
+              },
+            }
+          : {}),
+      },
       mcp: {
         store: mcpStore,
         resolveCommand,
@@ -7021,11 +7083,24 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * (else `workspace-changed`). A session from before projects had several folders is refused while its directory is
      * the primary folder of an unusable project.
      */
+    /** Whether one of the session's folders is, holds or lies in `root` (a real path); one that cannot be resolved counts. */
+    async function sessionOverlaps(task: TaskSummary, root: string): Promise<boolean> {
+      for (const folder of sessionFolders(task, workspaceRoot)) {
+        const real = await canonicalPath(folder).catch(() => undefined)
+        if (real === undefined || isInsidePath(real, root) || isInsidePath(root, real)) return true
+      }
+      return false
+    }
+
     async function assertSessionWorkspace(
       sessionId: string,
       options: { task?: TaskSummary; fresh?: true; absentHome?: true } = {},
     ): Promise<void> {
       const task = options.task ?? (await sessionTask(sessionId))
+      // A project folder's branch is being switched: its sessions' working directory must not change under a new turn.
+      if (task && branchSwitching.size > 0)
+        for (const root of branchSwitching)
+          if (await sessionOverlaps(task, root)) throw new AppError(409, 'branch-switching', '正在切换这个项目文件夹的分支，结束后再试。')
       if (task && helperSession(task)) await assertAgentHomeOf(task, options.absentHome)
       else if (task?.sessionFolder && !(await ownFolders.verify(task.cwd))) throw workspaceChanged()
       // A worktree session needs its project, and the worktree still Latch's and this session's, where it started.

@@ -3,12 +3,13 @@
 // .git/config may name for any file (`git diff` does even with --no-ext-diff --no-textconv). The Host hashes the work
 // tree's files the way Git does and compares them with the tree. The same runner, with more options, makes worktrees
 // (`../worktrees.ts`).
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcessByStdio } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { accessSync, constants, statSync } from 'node:fs'
 import { lstat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import type { Readable, Writable } from 'node:stream'
 import type { GitOperation } from '@latch/protocol'
 import type { GitLayout } from '../branch-reader.ts'
 
@@ -57,8 +58,14 @@ const CANDIDATES =
 const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u
 
 export class GitError extends Error {
-  /** `unsafe-config`: a hook in the configuration whose name cannot be switched off from the command line. */
-  constructor(readonly reason: 'failed' | 'timeout' | 'output-limit' | 'unsafe-config') {
+  /**
+   * `unsafe-config`: a hook in the configuration whose name cannot be switched off from the command line. `stderr`: the
+   * start of what Git printed there, only for a run that asked for it, to tell its refusals apart; never for a client.
+   */
+  constructor(
+    readonly reason: 'failed' | 'timeout' | 'output-limit' | 'unsafe-config',
+    readonly stderr?: string,
+  ) {
     super(`git-${reason}`)
   }
 }
@@ -126,6 +133,8 @@ interface RunOptions {
   timeoutMs?: number
   /** Recheck a write after reading its hook configuration and before starting the command. */
   authorize?: () => Promise<void>
+  /** Keeps up to this many bytes of standard error for a failure's `GitError.stderr`; discarded otherwise. */
+  stderrBytes?: number
 }
 
 /** Runs fixed Git commands in a work tree whose metadata `readGitLayout` checked, with a scrubbed environment. */
@@ -173,13 +182,21 @@ export class GitReader {
           GIT_DIR: layout.gitdir,
           GIT_WORK_TREE: layout.root,
         },
-        stdio: ['pipe', 'pipe', 'ignore'],
+        // Standard error is discarded, unless the run keeps its start for a failure.
+        stdio: ['pipe', 'pipe', options.stderrBytes ? 'pipe' : 'ignore'],
         // Its own process group, so a stop also ends any process Git started.
         detached: true,
-      })
-      const chunks: Buffer[] = []
+      }) as ChildProcessByStdio<Writable, Readable, Readable | null>
+      const chunks: Buffer[] = [],
+        errors: Buffer[] = []
       let bytes = 0,
+        errorBytes = 0,
         settled = false
+      child.stderr?.on('data', (chunk: Buffer) => {
+        const room = (options.stderrBytes ?? 0) - errorBytes
+        if (room > 0) errors.push(chunk.subarray(0, room))
+        errorBytes += chunk.length
+      })
       const settle = (error: GitError | undefined) => {
         if (settled) return
         settled = true
@@ -195,6 +212,7 @@ export class GitReader {
           // Already gone.
         }
         child.stdout.destroy()
+        child.stderr?.destroy()
       }
       const timer = setTimeout(() => stop(new GitError('timeout')), options.timeoutMs ?? this.timeoutMs)
       child.stdout.on('data', (chunk: Buffer) => {
@@ -203,7 +221,13 @@ export class GitReader {
         else chunks.push(chunk)
       })
       child.on('error', () => settle(new GitError('failed')))
-      child.on('close', code => settle(code !== null && (options.exitCodes ?? [0]).includes(code) ? undefined : new GitError('failed')))
+      child.on('close', code =>
+        settle(
+          code !== null && (options.exitCodes ?? [0]).includes(code)
+            ? undefined
+            : new GitError('failed', options.stderrBytes ? Buffer.concat(errors).toString('utf8') : undefined),
+        ),
+      )
       child.stdin.on('error', () => {})
       child.stdin.end(options.input ?? '')
     })

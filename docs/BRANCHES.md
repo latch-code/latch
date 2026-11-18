@@ -1,5 +1,5 @@
 ---
-description: Host 只读分支元数据、受限 Git worktree 验证与非阻塞摘要缓存；Host 为会话新建、沿用与移除工作树时不运行仓库里的程序（交付是唯一具名的例外，见 GIT-DELIVERY.md）；新会话可以从 HEAD、其他分支或提交、已有分支在新工作树里开始，或沿用残留的工作树；会话菜单与项目设置可以移除工作树。
+description: Host 只读分支元数据、受限 Git worktree 验证与非阻塞摘要缓存；人可以从分支名切换项目文件夹的分支（列表只读元数据，切换经受限的 Git，遇到会运行程序的配置就拒绝）；Host 为会话新建、沿用与移除工作树时不运行仓库里的程序（交付是唯一具名的例外，见 GIT-DELIVERY.md）；新会话可以从 HEAD、其他分支或提交、已有分支在新工作树里开始，或沿用残留的工作树；会话菜单与项目设置可以移除工作树。
 sources:
   - apps/host/src/branch-reader.ts
   - apps/host/src/worktrees.ts
@@ -17,6 +17,15 @@ sources:
   - packages/protocol/src/types.ts
   - apps/web/src/shell/ConversationHeader.tsx
   - apps/web/src/core/useHarness.ts
+  - apps/host/src/branch-list.ts
+  - apps/host/src/branch-switch.ts
+  - apps/host/src/routes/branches.ts
+  - apps/host/test/branch-switch.test.ts
+  - apps/host/test/branch-routes.test.ts
+  - apps/web/src/composer/BranchSwitch.tsx
+  - apps/web/src/composer/branchList.ts
+  - apps/web/src/components/MiddleEllipsis.tsx
+  - e2e/branch-switch.e2e.ts
 ---
 # 只读分支
 
@@ -47,9 +56,78 @@ sources:
 - 只有值变化才通知 Host 更新列表。关闭时等待实际读取结束，迟到的结果不发布。
 - 页面可见时每 30 秒请求现有的快照即可驱动刷新，不为它另加轮询。
 
+# 切换分支
+
+人在分支名上按一下，从这个项目文件夹的本地分支里选一个，Host 把文件夹切过去。`catalog.features.branchSwitch` 表示 Host 有这两条路由。
+
+## 列表
+
+`GET /link/api/workspaces/:id/branches` 回答 `BranchListing`（`packages/protocol/src/git.ts`）：项目（已保存的项目，取它的第一个文件夹）的本地分支，当前分支在前，其余按名字排。按提交时间排尚未实现：那要读 Git 的对象。
+
+- **只读元数据，不运行 Git**（`apps/host/src/branch-list.ts`）。先过[布局检查](#只读分支)，再读共同 Git 目录里的 `refs/heads/` 下的松散引用与 `packed-refs`（同名时松散的为准）。
+- 文件夹必须是真实目录（不是链接），引用文件是只有一个硬链接、不超过 4 KB 的普通文件，用 `O_NOFOLLOW` 打开，读取前后身份、大小与时间不变；`packed-refs` 同样检查，至多 32 MB。符号引用、链接、读不出的文件不跟随，不列出。
+- 至多看 2 万个条目、16 层文件夹，列出至多 2,000 个分支；其余与不列出的名字计入 `more`。
+- **只列能原样发回的名字**：至多 256 个字符，不像密钥，没有要转义的隐藏字符，符合 Git 的引用规则（没有 `..`、`@{`、`//`、控制字符与 `~^:?*[\`，不以 `/` 或 `.` 结尾，没有以 `.` 开头或以 `.lock` 结尾的段），不以 `-` 开头，不是 `HEAD` 或 `@`。
+- 在仓库的另一个工作树（主工作树或链接工作树）里检出的分支带 `checkedOut`。
+- reftable 仓库、共同目录认不出的布局与读取中途变化的文件：409 `branches-unreadable`，不说成没有分支。
+
+## 切换
+
+`POST /link/api/workspaces/:id/branches/switch`，请求 `{ requestId, branch }`，成功回答 `BranchSwitchResult`（`{ branch, head }`；已经在那个分支上时 `unchanged`，同一请求的重答带 `replay`）。
+
+按顺序：
+
+1. 在这个项目的启动队列里（与同项目的开始会话、改文件夹、移除工作树串行）。同一请求已有答复、或 HEAD 已在目标分支上时，在这里直接回答（见「重试」），下面的检查只对要运行的切换。文件夹是 Latch 新建的工作树时 409 `branch-switch-worktree`：工作树的分支属于它的会话。
+2. 与这个文件夹重叠（相同、包含或位于其中）的会话有运行中或等待审批的回合、正要开始的一轮或排着的消息：409 `branch-switch-turn-running`。
+3. `branch` 必须是这次读出的列表里的名字，否则 409 `branch-switch-unknown`（选项、修订、`refs/heads/…` 与任何列表外的名字都在这里被拒）；别处已检出：409 `branch-switch-checked-out`。
+4. 持有这个仓库（`RepositoryHolds`，与交付和移除工作树共用，一方进行时另一方 409 `git-busy`）；合并、变基、拣选或还原进行中 409 `git-operation-in-progress`。
+5. 读配置（受限的 Git，`config --null --list --show-scope`）。拒绝而不置空，409 `branch-switch-config`，`kind` 写种类、从不写值：
+   - `filter`：任何作用域里的 filter 驱动（`filter.*`，含全局的 Git LFS），与拉取同一条规则。检出会运行 smudge 与 process，置空则写出的文件不是你的 Git 会写的。
+   - `hook`：仓库自己的配置（`local`、`worktree` 与它们 include 的）设了 `core.hooksPath` 或 `hook.*`。钩子目录 `.git/hooks/` 与全局钩子不拒绝，受限的 Git 把它们都关掉，不运行（包括 `post-checkout` 与 `reference-transaction`）。
+6. 记下目标分支的提交，然后**标记这个文件夹正在切换**：从这时起，与它重叠的会话的新一轮、选项修改、审批与文件读写都是 409 `branch-switching`，终端此刻打不开（文件夹暂不可用）；同项目的新会话本来就在启动队列里等。标记之后再查一次第 2 条与设备权限（`run`、数据范围 `files`），标记之前已上路的一轮由此被看见。
+7. **先写审计** `git.switch`（项目、请求的哈希、离开的分支或分离提交的哈希、目标分支的哈希、之前的 HEAD），写不进去就不执行。
+8. 受限的 Git 启动之前再查一次：权限与会话、配置（第 5 条，这时出现的 filter 或钩子同样拒绝）、目标分支仍指向记下的提交（否则 409 `branch-switch-moved`）。然后运行：
+
+```
+git --no-pager -c core.fsmonitor= -c core.hooksPath=/dev/null -c diff.external= -c protocol.allow=never \
+  -c core.untrackedCache=false -c core.alternateRefsCommand= -c commit.gpgSign=false -c tag.gpgSign=false -c core.editor=: \
+  [-c hook.<名>.enabled=false …] -c gc.auto=0 -c maintenance.auto=false -c submodule.recurse=false \
+  switch --no-guess --no-recurse-submodules --no-overwrite-ignore --quiet --end-of-options <分支>
+```
+
+环境是受限运行器的（`GIT_DIR`、`GIT_WORK_TREE` 来自布局检查，`GIT_NO_LAZY_FETCH=1`）加 `LC_ALL=C`，最多 10 分钟。`switch` 只认分支名，不认 `refs/heads/<名字>`，所以名字放在 `--end-of-options` 之后，而它是列表里的名字这一点保证它不是选项或修订。
+
+9. 答复看 HEAD，不看退出码：HEAD 指向目标分支就是完成。Git 拒绝时按它的英文输出归类（输出不给客户端）：本地改动或未跟踪、被忽略的文件会被覆盖是 409 `branch-switch-local-changes`（从不 `--force`、`--discard-changes`、`--merge`，从不贮藏；被忽略的文件也不覆盖）；分支在别处检出是 409 `branch-switch-checked-out`；其余 422 `branch-switch-failed`。超时是 504 `git-result-unknown`。
+10. 之后记 `git.switch.result`（`done`、`failed` 带固定原因、`unknown`，完成时带新的 HEAD），写不进去只记日志。无论结果，分支读取器丢掉这个文件夹的缓存并立即重读，这个文件夹里每个会话的页面重新读取它的状态。
+
+- **重试。** 同一设备的同一 `requestId` 在进行中等同一个答复，完成后（同一个 Host 进程里，最近 256 个）得到原答复与 `replay`；换了分支是 409 `request-conflict`。没有回执：答复丢了或 Host 重启后，重试看到 HEAD 已在目标分支上就回答 `unchanged`，不再运行 Git、不记审计；否则照新请求执行。
+- **子模块。** 不递归：子模块文件夹保持原来的检出，检出的子模块在切换后可能显示为未跟踪的文件夹。
+- **部分克隆。** 缺对象时不获取（`GIT_NO_LAZY_FETCH=1`、`protocol.allow=never`），Git 在写文件之前失败：422 `branch-switch-failed`，文件夹不变。
+- **剩下的窗口。** 第 8 步的读取与 Git 自己读配置之间的片刻，别的程序写进仓库配置的 filter 驱动仍会生效（与拉取相同）。标记只挡 Latch 自己开始的回合与终端；你在终端里或别的程序对这个文件夹做的事不受它管。启动队列按项目：另一个项目的文件夹与这个重叠（包含或位于其中）时，它的新会话不等这次切换，第 2 条与标记只看已有的会话。
+- **不告诉 Agent。** 会话的下一轮不带「用户切换了分支」的说明，尚未实现；改动记录照常把两轮之间变了的文件算作「两轮之间改动」（[CHANGES.md](CHANGES.md)）。
+
+## 谁能列出与切换
+
+| | 要求 |
+| --- | --- |
+| 列出 | `view`，数据范围 `files` 或 `all`（分支名是项目里的内容，与文件树同一条线） |
+| 切换 | `run`，数据范围 `files` 或 `all`。本机与远程设备（包括手机）一样，与拉取相同：有 `run` 的设备已经能让 Agent 在这个文件夹里运行 `git switch` |
+
+- 只有人按下：没有 Agent 工具、插件页面能力或定时任务能到这两条路由。
+- 已保存的项目才有；启动目录（`default`）是 404。多文件夹项目只切第一个文件夹，其他文件夹尚未实现。
+- 远端跟踪分支（`refs/remotes/`）不列出也不能切换，尚未实现：从它新建本地分支需要选名字与上游。
+
+## 界面
+
+- 项目文件夹的分支在三处是控件：新会话的状态行与输入框上方的位置行、工作在项目主文件夹里的会话的页头（宽屏在项目旁，手机在标题下一行）。设备不能切换（没有 `run`、没有项目文件的数据范围、不在线、Host 没有 `branchSwitch`）时仍是原来的只读名字。
+- 工作树里的会话不给切换：页头写「工作树 · 分支」，悬停说它的分支属于它的会话。分离 HEAD 照旧写「分离于 3f2a1c9」，同样打开列表。
+- 列表：桌面是贴在分支名下的弹层，手机是底部表单；搜索框在最上并取得焦点，按名字任意位置、不分大小写过滤；当前分支打勾在最前；在别处检出的停用并写原因。最多画 100 行，其余写「还有 N 个，搜索查看」，搜索仍查全部。↑↓ 移动，Enter 在搜索框里切到第一个可切换的匹配，Esc 关闭并把焦点还给分支名。
+- 按下后那一行转圈，其余不能再按；只有 Host 的答复才改分支名，成功后关闭、焦点回到分支名。拒绝的原因写在列表顶部（配置的拒绝写出种类），列表重新读取；没有答复时写结果未知，「重试同一请求」沿用原 `requestId`。
+- 分支名在每一处都是一行：中间先让出省略号，保留区分分支的结尾，完整的名字在悬停里（`BranchName`）。
+
 # 新建工作树
 
-Host 写 Git 只在两处：`apps/host/src/worktrees.ts` 新建、沿用与移除工作树，交付（[GIT-DELIVERY.md](GIT-DELIVERY.md)）暂存、提交与推送。这里的每一步都不运行仓库里的程序；交付的提交、推送与有 filter 时的暂存是唯一具名的例外。
+Host 写 Git 只在三处：`apps/host/src/worktrees.ts` 新建、沿用与移除工作树，[切换分支](#切换分支)，交付（[GIT-DELIVERY.md](GIT-DELIVERY.md)）暂存、提交与推送。这里的每一步都不运行仓库里的程序；交付的提交、推送与有 filter 时的暂存是唯一具名的例外。
 
 一次开始请求从起点新建一个 Git 工作树与分支：
 

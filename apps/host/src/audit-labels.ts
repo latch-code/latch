@@ -150,6 +150,8 @@ export const AUDIT_LABELS: Readonly<Record<AuditAction, readonly [AuditKind, str
   'git.fetch': ['git', '获取'],
   'git.pull': ['git', '拉取'],
   'git.abort': ['git', '中止合并或变基'],
+  'git.switch': ['git', '切换分支'],
+  'git.switch.result': ['git', '切换分支结束'],
   'git.clone': ['git', '克隆仓库'],
   'git.clone.result': ['git', '克隆结束'],
   'git.result': ['git', 'Git 操作结束'],

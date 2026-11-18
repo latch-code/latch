@@ -1,14 +1,15 @@
 import { chromium, type Browser, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSession, phoneStartScreen } from './helpers/layout.ts'
+import { noHorizontalOverflow, openPanelTab, openSession, phoneStartScreen } from './helpers/layout.ts'
 
 const OUT = 'test-results/branch-switch'
 const LONG = 'fix/studio-sidebar-history-scroll'
@@ -34,6 +35,7 @@ describe('the branch chip', () => {
   let browser: Browser
   let project = ''
   let session = ''
+  let gitHome = ''
   const git = (...args: string[]) =>
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'init.defaultBranch=main', ...args], {
       cwd: project,
@@ -42,7 +44,9 @@ describe('the branch chip', () => {
 
   beforeAll(async () => {
     await mkdir(OUT, { recursive: true })
-    host = await startTestHost()
+    // Git's own home is a fresh folder, so no global configuration of this computer's user is read.
+    gitHome = await mkdtemp(join(tmpdir(), 'latch-e2e-branch-home-'))
+    host = await startTestHost({ gitDelivery: { home: gitHome } })
     owner = await host.enroll({ listener: 'unix' })
     await owner.confirmedJson('agents', {
       method: 'POST',
@@ -54,6 +58,14 @@ describe('the branch chip', () => {
     await writeFile(join(project, 'README.md'), '# studio\n')
     git('add', '-A')
     git('commit', '-qm', 'first')
+    // A branch whose README differs, so an edit to it here is one a switch would overwrite.
+    git('checkout', '-q', '-b', 'feature/one')
+    await writeFile(join(project, 'README.md'), '# studio, feature\n')
+    await writeFile(join(project, 'feature.txt'), 'only on feature/one\n')
+    git('add', '-A')
+    git('commit', '-qm', 'feature')
+    git('checkout', '-q', 'main')
+    for (const name of ['release/2026-11', 'chore/deps', 'docs/readme']) git('branch', name)
     git('checkout', '-q', '-b', LONG)
     expect((await owner.addFolders({ paths: [project] })).ok).toBe(true)
     const workspaces = await owner.json<{ workspaces: Array<{ id: string; path: string }> }>('workspaces')
@@ -73,6 +85,7 @@ describe('the branch chip', () => {
   afterAll(async () => {
     await browser?.close()
     await host?.close()
+    if (gitHome) await rm(gitHome, { recursive: true, force: true })
   })
 
   async function open(width: number, theme: 'light' | 'dark'): Promise<Page> {
@@ -126,6 +139,12 @@ describe('the branch chip', () => {
           .catch(() => {})
         await page.screenshot({ path: `${OUT}/long-draft--${width}--${theme}.png` })
         expect(await oneLine(page)).toBeGreaterThan(0)
+        // The chip is the switch: its list, at this width.
+        await page.locator('.home-composer-location button.branch-switch').click()
+        await page.getByRole('menuitemradio', { name: LONG }).or(page.getByRole('menuitemradio').first()).first().waitFor()
+        await page.waitForTimeout(500)
+        await page.screenshot({ path: `${OUT}/list--${width}--${theme}.png` })
+        await page.keyboard.press('Escape')
         await openSession(page, session)
         await page.screenshot({ path: `${OUT}/long-session--${width}--${theme}.png` })
         await oneLine(page)
@@ -133,6 +152,141 @@ describe('the branch chip', () => {
       } finally {
         await page.context().close()
       }
+    }
+  })
+
+  it('opens the list, searches, switches, and the draft and the idle session say the new branch; a refusal says why', async () => {
+    const page = await open(1440, 'light')
+    try {
+      await chooseProject(page)
+      const chip = page.locator('.home-composer-location button.branch-switch')
+      await chip.waitFor()
+      // Esc closes the list and gives focus back to the chip.
+      await chip.click()
+      const search = page.getByRole('searchbox', { name: '搜索分支' })
+      await search.waitFor()
+      expect(await search.evaluate(element => element === document.activeElement)).toBe(true)
+      await page.keyboard.press('Escape')
+      await expect.poll(() => chip.evaluate(element => element === document.activeElement)).toBe(true)
+      await chip.click()
+      const list = page.getByRole('menu', { name: '分支' })
+      await expect.poll(() => list.getByRole('menuitemradio').count()).toBe(6)
+      expect(await list.getByRole('menuitemradio').first().getAttribute('aria-checked')).toBe('true')
+      await page.waitForTimeout(400)
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme })
+        await page.screenshot({ path: `${OUT}/list-open--1440--${colorScheme}.png` })
+      }
+      await page.emulateMedia({ colorScheme: 'light' })
+      // Anywhere in a name, ignoring case.
+      await search.fill('FEAT')
+      await expect.poll(() => list.getByRole('menuitemradio').count()).toBe(1)
+      await page.screenshot({ path: `${OUT}/list-search--1440--light.png` })
+      // Held so the switching state can be seen.
+      await page.route('**/branches/switch', async route => {
+        await new Promise(done => setTimeout(done, 1200))
+        await route.continue()
+      })
+      await search.press('Enter')
+      await page.locator('.branch-list[data-switching]').waitFor()
+      await page.screenshot({ path: `${OUT}/switching--1440--light.png` })
+      await page.locator('.branch-list').waitFor({ state: 'hidden' })
+      await page.unroute('**/branches/switch')
+      await expect.poll(() => chip.innerText()).toContain('feature/one')
+      expect(git('branch', '--show-current').trim()).toBe('feature/one')
+      await expect.poll(() => chip.evaluate(element => element === document.activeElement)).toBe(true)
+
+      // The idle session in that folder says the new branch, and its file tree shows the branch's files.
+      await openSession(page, session)
+      const header = page.locator('.topbar button.branch-switch').locator('visible=true').first()
+      await expect.poll(() => header.textContent()).toBe('feature/one')
+      await openPanelTab(page, '文件')
+      const tree = page.getByRole('treeitem', { name: 'feature.txt', exact: true })
+      await tree.waitFor()
+      await page.waitForTimeout(300)
+      await page.screenshot({ path: `${OUT}/session-after--1440--light.png` })
+      // Back by the keyboard alone: a search, ↓ to the row, Enter; the open tree follows.
+      await header.click()
+      await page.getByRole('searchbox', { name: '搜索分支' }).fill('history')
+      await page.getByRole('menu', { name: '分支' }).getByRole('menuitemradio', { name: LONG }).waitFor()
+      await page.keyboard.press('ArrowDown')
+      await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('role'))).toBe('menuitemradio')
+      await page.keyboard.press('Enter')
+      await expect.poll(() => git('branch', '--show-current').trim()).toBe(LONG)
+      await expect.poll(() => header.textContent()).toBe(LONG)
+      await tree.waitFor({ state: 'detached' })
+
+      const notice = page.locator('.branch-list-notice')
+      const refuse = async (to: string, words: string, name: string, dark = false) => {
+        await header.click()
+        await page.getByRole('menu', { name: '分支' }).getByRole('menuitemradio', { name: to, exact: true }).click()
+        await expect.poll(() => notice.innerText()).toContain(words)
+        await page.waitForTimeout(300)
+        await page.screenshot({ path: `${OUT}/refused-${name}--1440--light.png` })
+        if (dark) {
+          await page.emulateMedia({ colorScheme: 'dark' })
+          await page.screenshot({ path: `${OUT}/refused-${name}--1440--dark.png` })
+          await page.emulateMedia({ colorScheme: 'light' })
+        }
+        expect(git('branch', '--show-current').trim()).toBe(LONG)
+        await page.keyboard.press('Escape')
+      }
+      // An edit a switch would overwrite: refused, with the reason in the list, and nothing moved.
+      await writeFile(join(project, 'README.md'), '# studio, edited here\n')
+      await refuse('feature/one', '未提交的改动', 'local-changes')
+      expect(await readFile(join(project, 'README.md'), 'utf8')).toBe('# studio, edited here\n')
+      git('checkout', '--', 'README.md')
+      // Hooks the repository sets for itself, and a filter driver: refused, naming the kind of setting.
+      git('config', 'core.hooksPath', '.husky')
+      await refuse('feature/one', '钩子', 'hooks', true)
+      git('config', '--unset', 'core.hooksPath')
+      git('config', 'filter.lfs.smudge', 'git-lfs smudge -- %f')
+      await refuse('feature/one', 'filter', 'filter')
+      git('config', '--unset', 'filter.lfs.smudge')
+      // A turn in a session of the folder: refused until it ends.
+      await owner.json(`tasks/${session}/prompt`, { method: 'POST', body: { prompt: 'hang', requestId: randomUUID() } })
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${session}`)).summary.status).toBe('running')
+      await refuse('feature/one', '正在运行', 'turn-running')
+      await owner.json(`tasks/${session}/cancel`, { method: 'POST', body: {} })
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${session}`)).summary.status).not.toBe('running')
+      // A branch another worktree holds: shown, not choosable, with why.
+      const other = join(host.root, 'studio-other')
+      git('worktree', 'add', '-q', other, 'docs/readme')
+      await header.click()
+      const held = page.getByRole('menu', { name: '分支' }).getByRole('menuitemradio', { name: /docs\/readme/u })
+      await held.waitFor()
+      expect(await held.getAttribute('aria-disabled')).toBe('true')
+      await page.waitForTimeout(300)
+      await page.screenshot({ path: `${OUT}/held-elsewhere--1440--light.png` })
+      await page.keyboard.press('Escape')
+      git('worktree', 'remove', '--force', other)
+    } finally {
+      await page.context().close()
+    }
+  })
+
+  it('opens the same list as a sheet on a phone, and the session’s line says the branch', async () => {
+    const page = await open(390, 'light')
+    try {
+      await openSession(page, session)
+      const chip = page.locator('.topbar-subline button.branch-switch')
+      await chip.waitFor()
+      await chip.click()
+      const sheet = page.getByRole('dialog', { name: '分支' })
+      await sheet.getByRole('menuitemradio').first().waitFor()
+      await page.waitForTimeout(600)
+      await page.screenshot({ path: `${OUT}/sheet--390--light.png` })
+      await sheet.getByRole('searchbox').fill('feat')
+      await expect.poll(() => sheet.getByRole('menuitemradio').count()).toBe(1)
+      await sheet.getByRole('menuitemradio', { name: 'feature/one' }).click()
+      await expect.poll(() => git('branch', '--show-current').trim()).toBe('feature/one')
+      await expect.poll(() => chip.textContent()).toBe('feature/one')
+      expect(await oneLine(page)).toBeGreaterThan(0)
+      await noHorizontalOverflow(page)
+      await page.waitForTimeout(600)
+      await page.screenshot({ path: `${OUT}/sheet-after--390--light.png` })
+    } finally {
+      await page.context().close()
     }
   })
 })

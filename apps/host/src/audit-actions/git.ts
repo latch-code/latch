@@ -44,6 +44,16 @@ export const RESULT_CODES = [
   'git-abort-failed',
   'git-repo-config',
 ] as const
+/** Why a branch switch that was recorded did not land (docs/BRANCHES.md#切换分支). */
+export const SWITCH_CODES = [
+  'branch-switch-config',
+  'branch-switch-moved',
+  'branch-switch-checked-out',
+  'branch-switch-local-changes',
+  'branch-switch-failed',
+  /** A check right before Git started refused it (the device's scope, a turn in the folder). */
+  'refused',
+] as const
 /** Why a clone did not become a project. */
 export const CLONE_CODES = [
   'clone-auth',
@@ -122,6 +132,19 @@ export const GIT_ACTIONS = {
     code: z.enum(RESULT_CODES).optional(),
     commit: oid.optional(),
     number: prNumber.optional(),
+  }),
+  /**
+   * 切换分支 of a project's folder (docs/BRANCHES.md#切换分支), before Git runs: the project, the request, and hashes of
+   * the branch (or detached commit) it leaves and of the branch it goes to; never a name.
+   */
+  'git.switch': z.strictObject({ workspaceId: opaqueId, requestHash: hex64, fromHash: hex64, toHash: hex64, preHead: oid.optional() }),
+  /** After: the folder is on the branch (`done`), it is not (`failed`, with why), or Git did not answer in time (`unknown`). */
+  'git.switch.result': z.strictObject({
+    workspaceId: opaqueId,
+    requestHash: hex64,
+    outcome: z.enum(['done', 'failed', 'unknown']),
+    code: z.enum(SWITCH_CODES).optional(),
+    head: oid.optional(),
   }),
   /**
    * Removing a Latch worktree (docs/BRANCHES.md), before Git runs: what it loses as counts, whether the removal is

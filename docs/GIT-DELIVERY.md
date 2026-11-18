@@ -11,6 +11,7 @@ sources:
   - apps/host/src/changes/git-hunks.ts
   - apps/host/src/changes/git-history.ts
   - apps/host/src/routes/git.ts
+  - apps/host/src/routes/branches.ts
   - apps/host/src/audit-actions/git.ts
   - apps/host/src/session-meta.ts
   - packages/protocol/src/git-delivery.ts
@@ -55,12 +56,12 @@ Host 不运行仓库里的程序，交付除外：读取与多数索引写入用
 
 ### 受限的 Git
 
-运行器是 `apps/host/src/changes/git.ts` 的 `GitReader`，改动记录（[CHANGES.md](CHANGES.md#只读-git)）与工作树（[BRANCHES.md](BRANCHES.md#新建工作树)）用同一个。每个进程：
+运行器是 `apps/host/src/changes/git.ts` 的 `GitReader`，改动记录（[CHANGES.md](CHANGES.md#只读-git)）、工作树（[BRANCHES.md](BRANCHES.md#新建工作树)）与切换项目文件夹的分支（[BRANCHES.md](BRANCHES.md#切换分支)）用同一个。每个进程：
 
 - **固定选项。** `--no-pager`、`core.fsmonitor=`、`core.hooksPath=/dev/null`、`diff.external=`、`protocol.allow=never`、`core.untrackedCache=false`、`core.alternateRefsCommand=`、`commit.gpgSign=false`、`tag.gpgSign=false`、`core.editor=:`。
 - **重建的环境。** 只有 `PATH=/usr/bin:/bin:/usr/sbin:/sbin`、`HOME`、`GIT_OPTIONAL_LOCKS=0`、`GIT_NO_LAZY_FETCH=1`、`GIT_TERMINAL_PROMPT=0` 与调用给的变量；`GIT_DIR`、`GIT_WORK_TREE` 固定为检查过的布局，Host 自己的环境不传入。
 - **配置里的钩子。** `core.hooksPath` 关不掉 Git 2.54 起的 `hook.<名>.*`，所以每次运行前先列出所有作用域的配置，为每个名字加 `-c hook.<名>.enabled=false`。`hook.` 下形状不认识、或名字含 `=` 与换行的键无法这样关掉：`unsafe-config`，什么也不运行。
-- **边界。** 自己的进程组，超时（默认 10 秒，交付的读取 30 秒）或输出超限时 SIGKILL 整组；标准错误丢弃。
+- **边界。** 自己的进程组，超时（默认 10 秒，交付的读取 30 秒）或输出超限时 SIGKILL 整组；标准错误丢弃，只有切换分支留下开头 16 KB 用来归类 Git 的拒绝（不给客户端）。
 - **Git 的位置。** macOS 上依次找 `/opt/homebrew/bin/git`、`/usr/local/bin/git`、命令行工具与 Xcode 里的 Git，不用 `/usr/bin/git`（没有开发者工具时它会弹出安装窗口）。
 
 它在交付里做这些事：
@@ -139,7 +140,7 @@ filter 驱动的名单在暂存之前读一次，名单为空就由受限的 Git
 ## 一次一个写入
 
 - 同一仓库（共同 Git 目录，各工作树共用）同时只做一个写入，另一个得到 409 `git-busy` 与进行中的写入 `{ kind, requestId, startedAt, hook? }`。
-- 移除这个仓库的一个工作树（[BRANCHES.md](BRANCHES.md#移除工作树)）持有同一把锁（`RepositoryHolds`），其间的交付写入同样 409 `git-busy`，反过来也是。
+- 移除这个仓库的一个工作树（[BRANCHES.md](BRANCHES.md#移除工作树)）与切换项目文件夹的分支（[BRANCHES.md](BRANCHES.md#切换分支)）持有同一把锁（`RepositoryHolds`），其间的交付写入同样 409 `git-busy`，反过来也是。
 - `GET git` 的 `running` 让所有设备看到同一个进行中的写入；写入开始与结束时 Host 为这个会话推送新的修订。
 - 仓库正在合并、变基、拣选或还原时，除 PR、获取与中止外的写入 409 `git-operation-in-progress`；状态里给 `gitOperation`。标记读不出时按进行中处理。
 - 同一 `requestId` 的请求进行中再来一次，等同一个答复；换了内容或操作是 409 `request-conflict`。

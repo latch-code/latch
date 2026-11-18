@@ -52,6 +52,8 @@ export interface HostFeatures {
   gitSync?: true
   /** Worktree start points (`POST /tasks` `worktree` objects), `…/worktree` inventories and removal (docs/BRANCHES.md). */
   worktreeLifecycle?: true
+  /** `GET /workspaces/:id/branches` and `…/branches/switch`: a project folder's local branches and switching (docs/BRANCHES.md). */
+  branchSwitch?: true
   terminal?: true
   /** A harness's login command can open in this computer's terminal: only on this computer, for a device with `run`. */
   loginTerminal?: true

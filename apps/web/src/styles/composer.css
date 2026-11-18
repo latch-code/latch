@@ -1414,3 +1414,85 @@ button.vitals-item {
 .model-board .model-setting > .ui-segmented {
   flex: 1 1 100%;
 }
+
+/*
+ * A project folder's branch that this device may switch (BranchSwitch): it reads as the branch, a ghost control like
+ * the folder picker beside it, with an up-down mark for its list. In the title row it keeps the row's quiet ink.
+ */
+.branch-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 var(--sp-6);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-family: var(--mono);
+  white-space: nowrap;
+  cursor: default;
+  transition:
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
+}
+.branch-switch:hover,
+.branch-switch[aria-expanded='true'] {
+  background: var(--hover);
+  color: var(--ink);
+}
+.branch-switch:active {
+  background: var(--press);
+}
+.branch-switch > :is(svg, .ui-spinner, .branch-switch-chevron) {
+  flex: none;
+}
+.branch-switch-chevron {
+  color: var(--muted);
+}
+.branch-switch[data-variant='status'] {
+  margin-inline-start: calc(-1 * var(--sp-6));
+}
+.branch-switch[data-variant='header'] {
+  height: 22px;
+  margin-inline-start: var(--sp-6);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.branch-switch[data-variant='subline'] {
+  flex: 0 1 auto;
+  height: auto;
+  padding: 0 var(--sp-2);
+  color: inherit;
+}
+.topbar-subline > span + .branch-switch::before {
+  content: '·';
+  margin-right: var(--sp-4);
+  color: var(--muted);
+  font-family: var(--font);
+}
+.branch-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.branch-list-state {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  margin: 0;
+  padding: var(--sp-10) var(--sp-12);
+  color: var(--muted);
+}
+.branch-list-notice {
+  margin: var(--sp-4) var(--sp-4) 0;
+}
+.branch-list-more {
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}

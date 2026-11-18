@@ -565,6 +565,11 @@ export class HarnessHub implements Bridge {
     return this.branches.branchOf(cwd)
   }
 
+  /** HEAD moved in these folders: the branch they show is read again at once. */
+  branchMoved(folders: readonly string[]): void {
+    this.branches.invalidate(folders)
+  }
+
   /** The harness that owns a session, as far as the hub has seen it; no driver is asked. */
   ownerOf(sessionId: string): string | undefined {
     return this.routes.get(sessionId)

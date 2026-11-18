@@ -173,6 +173,8 @@ export const AUDIT_FIELDS: AuditFieldTable = {
     number: 'show',
   },
   'git.stage': { sessionId: 'short', requestHash: 'short', files: 'show', filtered: 'show', lines: 'show' },
+  'git.switch': { workspaceId: 'short', requestHash: 'short', fromHash: 'short', toHash: 'short', preHead: 'short' },
+  'git.switch.result': { workspaceId: 'short', requestHash: 'short', outcome: 'show', code: 'show', head: 'short' },
   'git.unstage': { sessionId: 'short', requestHash: 'short', files: 'show', lines: 'show' },
   'handoff.created': {
     handoffId: 'short',

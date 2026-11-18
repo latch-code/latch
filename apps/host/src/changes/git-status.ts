@@ -68,6 +68,8 @@ export interface RepositoryConfig {
    * gives that would run a program or change where credentials go during a fetch: 获取 and 拉取 refuse it.
    */
   fetchUnsafe?: GitRepoConfigKind
+  /** The repository's own configuration (`local` or `worktree`, includes from them too) sets hooks: `core.hooksPath` or `hook.*`. */
+  ownHooks?: true
 }
 
 /**
@@ -112,7 +114,8 @@ export async function readRepositoryConfig(git: GitReader, layout: GitLayout): P
   const drivers = new Set<string>(),
     remotes = new Set<string>()
   const values = new Map<string, string>()
-  let fetchUnsafe: GitRepoConfigKind | undefined
+  let fetchUnsafe: GitRepoConfigKind | undefined,
+    ownHooks = false
   const fields = out.toString('utf8').split('\0')
   // `--show-scope --null`: the scope, then `key\nvalue`. The restricted runner's own `-c` options are the command scope.
   for (let at = 0; at + 1 < fields.length; at += 2) {
@@ -124,6 +127,7 @@ export async function readRepositoryConfig(git: GitReader, layout: GitLayout): P
       value = newline < 0 ? 'true' : record.slice(newline + 1)
     // An entry included from the repository's configuration carries the scope of the file that included it.
     if ((scope === 'local' || scope === 'worktree') && fetchUnsafe === undefined) fetchUnsafe = fetchUnsafeKind(key)
+    if ((scope === 'local' || scope === 'worktree') && (key === 'core.hookspath' || key.startsWith('hook.'))) ownHooks = true
     const filter = /^filter\.([\s\S]+)\.(?:clean|smudge|process|required)$/u.exec(key)
     if (filter) drivers.add(filter[1]!)
     const remote = /^remote\.([\s\S]+)\.url$/u.exec(key)
@@ -145,6 +149,7 @@ export async function readRepositoryConfig(git: GitReader, layout: GitLayout): P
       : {}),
     ...(pushRemote !== undefined ? { pushRemote } : {}),
     ...(fetchUnsafe ? { fetchUnsafe } : {}),
+    ...(ownHooks ? { ownHooks: true as const } : {}),
     ...(remote && merge && remotes.has(remote) && REMOTE_NAME.test(remote) && /^refs\/heads\/\S+$/u.test(merge)
       ? { upstream: { remote, ref: merge } }
       : {}),

@@ -35,6 +35,7 @@ import { importedMark } from '../history/model.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { rowStatus, runningWords, silentWords } from '../sessions.ts'
 import { BranchName } from '../components/MiddleEllipsis.tsx'
+import { BranchSwitch, canSwitchBranch } from '../composer/BranchSwitch.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { currentShell } from '../core/shell.ts'
 import { shortcutButtonKeys } from '../workbenchShortcuts.ts'
@@ -60,6 +61,7 @@ const HEADER_COPY = defineCopy(
     open: (title: string) => `打开 ${title}`,
     toDo: (title: string) => `待办：${title}`,
     worktree: (path: string) => `工作树 · ${path}`,
+    worktreeBranch: '工作树的分支属于它的会话，不在这里切换',
   },
   {
     forcedStop: 'Force stopped',
@@ -69,6 +71,7 @@ const HEADER_COPY = defineCopy(
     open: (title: string) => `Open ${title}`,
     toDo: (title: string) => `To-do: ${title}`,
     worktree: (path: string) => `Worktree · ${path}`,
+    worktreeBranch: 'A worktree’s branch belongs to its session and isn’t switched here',
   },
 )
 
@@ -181,9 +184,12 @@ function ProjectCrumb({
   summary,
   children,
   after,
+  branchProject,
 }: {
   /** Absent for a session in a folder of its own: 「不选项目」 keeps the way to its path. */
   project?: string | undefined
+  /** The session works in this project's folder and this device may switch its branch. */
+  branchProject?: string | undefined
   summary: TaskSummary
   children?: ReactNode
   after?: ReactNode
@@ -218,7 +224,7 @@ function ProjectCrumb({
               !worktree && <span className="topbar-crumb-text">{SHELL_COPY.noProject}</span>
             )}
             {worktree && (
-              <span className="topbar-crumb-worktree">
+              <span className="topbar-crumb-worktree" title={HEADER_COPY.worktreeBranch}>
                 <span className="topbar-crumb-lead">{lead} · </span>
                 <BranchName branch={worktree} />
               </span>
@@ -238,7 +244,8 @@ function ProjectCrumb({
           /
         </span>
       )}
-      {!worktree && summary.branch && (
+      {!worktree && summary.branch && branchProject && <BranchSwitch projectId={branchProject} branch={summary.branch} variant="header" />}
+      {!worktree && summary.branch && !branchProject && (
         <span className="topbar-session-branch" title={escapeSecurityText(summary.branch)}>
           <Icon icon={BranchGlyph} size={14} />
           <BranchName branch={summary.branch} className="topbar-crumb-text" />
@@ -344,9 +351,12 @@ function PhoneTopBar({
   item,
   imported,
   computerUse,
+  branchProject,
 }: {
   /** 「操控这台 Mac」 is in use in this session, or stopping. */
   computerUse?: 'on' | 'stopping' | undefined
+  /** The session works in this project's folder and this device may switch its branch. */
+  branchProject?: string | undefined
   item?: HeaderItem | undefined
   changes?: HeaderToggle | undefined
   frame?: ReactNode
@@ -400,8 +410,11 @@ function PhoneTopBar({
             {imported && <ImportedMark mark={imported} />}
             {where && <span className="topbar-source-text">{where}</span>}
             {state}
-            {branch && (
-              <span className="topbar-branch" title={escapeSecurityText(summary?.worktree ? HEADER_COPY.worktree(branch) : branch)}>
+            {branch && branchProject && !summary?.worktree && <BranchSwitch projectId={branchProject} branch={branch} variant="subline" />}
+            {branch && !(branchProject && !summary?.worktree) && (
+              <span
+                className="topbar-branch"
+                title={escapeSecurityText(summary?.worktree ? `${HEADER_COPY.worktree(branch)} · ${HEADER_COPY.worktreeBranch}` : branch)}>
                 {summary?.worktree && <span className="topbar-crumb-lead">{HEADER_COPY.worktree('')}</span>}
                 <BranchName branch={branch} />
               </span>
@@ -476,7 +489,10 @@ export function SessionHeader({
   item,
   imported,
   computerUse,
+  branchProject,
 }: {
+  /** The session works in this project's folder and this device may switch its branch. */
+  branchProject?: string | undefined
   /** The 待办 the session belongs to. */
   item?: HeaderItem | undefined
   /** 「操控这台 Mac」 is in use in this session (its chip, with 停), or stopping. */
@@ -540,6 +556,7 @@ export function SessionHeader({
         item={item}
         imported={imported}
         computerUse={computerUse}
+        branchProject={branchProject}
       />
     )
   // A session's actions end the line under its title, so the title has the head's whole width.
@@ -591,7 +608,7 @@ export function SessionHeader({
             </div>
             <div className="topbar-session-meta">
               {(project || (summary.mode !== 'chat' && summary.cwd)) && (
-                <ProjectCrumb project={project} summary={summary} after={crumb?.after}>
+                <ProjectCrumb project={project} summary={summary} after={crumb?.after} branchProject={branchProject}>
                   {crumb?.folders}
                 </ProjectCrumb>
               )}
@@ -683,6 +700,13 @@ export function ConversationHeader({
   const importedFrom = summary?.imported && snapshot.catalog?.harnesses.find(harness => harness.id === summary.imported!.from)
   const imported = summary && importedMark(summary, importedFrom ? harnessName(importedFrom) : undefined)
   const source = summary ? sessionSource(snapshot, summary) : undefined
+  // A session in its project's own folder (not a worktree, nor an Agent's home): its branch is that folder's, switchable.
+  const branchProject =
+    summary && !summary.worktree && !summary.personal && !summary.agent && summary.branch && canSwitchBranch(snapshot, access, connection)
+      ? snapshot.catalog?.workspaces.find(
+          item => item.id === summary.workspaceId && item.id !== 'default' && (item.folders?.[0]?.path ?? item.path) === summary.cwd,
+        )?.id
+      : undefined
   // Membership is read from the 待办 the snapshot lists, never from the session's own field.
   const item = summary && snapshot.catalog?.features?.workItems ? itemOfSession(snapshot, summary.id) : undefined
   // A session a plugin page started: 「来自 <页面名>」, the way back to the page while it is listed.
@@ -755,6 +779,7 @@ export function ConversationHeader({
           }
         : {})}
       panelOpen={panelShown}
+      branchProject={branchProject}
       changesTotals={shell.changesTotals}
       {...(topicOf && summary
         ? {

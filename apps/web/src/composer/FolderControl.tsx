@@ -5,6 +5,7 @@ import { MenuFooterLink, ValuePicker, FolderGlyph } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { BriefHint } from './BriefHint.tsx'
+import { BranchSwitch } from './BranchSwitch.tsx'
 import { BranchSegment, StatusSegment } from './ComposerStatus.tsx'
 import { WorktreeStartPanel } from './WorktreeStartPanel.tsx'
 import { defineCopy } from '../core/i18n.ts'
@@ -127,6 +128,7 @@ export function FolderControl({
   variant = 'inline',
   branch,
   starts = false,
+  switchBranch = false,
 }: {
   project: WorkspaceInfo
   /** In the status line: the project's branch, shown while the session would start in the project folder. */
@@ -137,6 +139,8 @@ export function FolderControl({
   variant?: 'inline' | 'row'
   /** Offers start points other than the folder's HEAD. */
   starts?: boolean
+  /** The branch is a control that switches the project folder's branch (this device may). */
+  switchBranch?: boolean
 }) {
   const { base, read } = useWorktreeBase(project.id)
   const [choosing, setChoosing] = useState(false)
@@ -214,8 +218,18 @@ export function FolderControl({
       {picked && words && (start.from !== 'head' || base?.state === 'ready') ? (
         <BranchSegment branch={words} base />
       ) : (
-        !picked && branch && <BranchSegment branch={branch} />
+        !picked && branch && <ProjectBranch projectId={project.id} branch={branch} switchable={switchBranch} />
       )}
     </>
+  )
+}
+
+/** A project folder's branch in the status line: a control that switches it where this device may, else the name. */
+export function ProjectBranch({ projectId, branch, switchable }: { projectId: string; branch: string; switchable: boolean }) {
+  if (!switchable) return <BranchSegment branch={branch} />
+  return (
+    <StatusSegment kind="branch">
+      <BranchSwitch projectId={projectId} branch={branch} variant="status" />
+    </StatusSegment>
   )
 }

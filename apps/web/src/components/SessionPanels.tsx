@@ -234,6 +234,8 @@ export function SessionPanels({
     fileRevision,
     summary?.runId,
     summary?.status,
+    // The folder's branch moved: its files are another branch's now.
+    summary?.branch,
     observedFiles.map(file => [file.root, file.path, file.change]),
   ])
   const history = activeFile

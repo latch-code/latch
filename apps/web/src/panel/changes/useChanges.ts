@@ -59,7 +59,7 @@ const RECHECK_MS = [300, 600, 1200, 2400, 5000, 5000, 5000, 5000]
  * turn ends, on returning to the window and on a press, never with a skeleton. A list is only ever answered for the
  * scope that asked for it, so nothing of another scope, least of all its actions, stands under this scope's label.
  */
-export function useChanges(summary: Pick<TaskSummary, 'id' | 'status' | 'runId'>, choice: ScopeChoice, offline = false) {
+export function useChanges(summary: Pick<TaskSummary, 'id' | 'status' | 'runId' | 'branch'>, choice: ScopeChoice, offline = false) {
   const sessionId = summary.id
   const running = ACTIVE.has(summary.status)
   const [answer, setAnswer] = useState<{ key: string; list: ChangeList }>()
@@ -165,6 +165,15 @@ export function useChanges(summary: Pick<TaskSummary, 'id' | 'status' | 'runId'>
       readTurns()
     }
   }, [running, runKey, readTurns, load])
+
+  // The folder's branch moved (a switch, here or in a terminal): its files are another branch's now.
+  const branchKey = summary.branch ?? ''
+  const lastBranch = useRef(branchKey)
+  useEffect(() => {
+    if (lastBranch.current === branchKey) return
+    lastBranch.current = branchKey
+    if (!running) void load()
+  }, [branchKey, running, load])
 
   const recordRunning = turns.some(turn => turn.state === 'running')
   const disagrees = turnsRead && running !== recordRunning
