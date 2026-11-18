@@ -1032,7 +1032,10 @@ async function prompt({ sessionId, prompt: blocks }) {
   }
   if (env.FAKE_ACP_AUTH === 'prompt' || needsLogin()) throw rpcError(-32000, 'Authentication required')
   const input = blocks.map(block => block.text ?? '').join('')
-  const [keyword, argument] = input.trim().split(/\s+/)
+  // The Host may send the Agent's updated digest before the user's schedule command as a separate text block.
+  const lastText = blocks.at(-1)?.text ?? ''
+  const commandInput = blocks.length > 1 && /^schedule\s/u.test(lastText.trim()) ? lastText : input
+  const [keyword, argument] = commandInput.trim().split(/\s+/)
   log('prompt-mode', { sessionId, mode: session.mode })
   cancelled.delete(sessionId)
   session.history.push({ role: 'user', text: input })
@@ -1051,7 +1054,7 @@ async function prompt({ sessionId, prompt: blocks }) {
   running.set(sessionId, steers)
   const turn = dshTurn(sessionId, session)
   const result = await Promise.resolve()
-    .then(() => scenario({ sessionId, session, input, argument, say, think, tool, permission, steers }))
+    .then(() => scenario({ sessionId, session, input: commandInput, argument, say, think, tool, permission, steers }))
     .finally(() => running.delete(sessionId))
   turn?.end(reply.join(''), input)
   session.history.push({ role: 'agent', text: reply.join('') })
