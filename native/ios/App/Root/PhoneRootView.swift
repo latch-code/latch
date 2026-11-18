@@ -15,15 +15,18 @@ struct PhoneRootView: View {
         Group {
             switch model.storeState {
             case .opening: PhoneTheme.canvas.ignoresSafeArea()
-            case .unavailable:
+            case let .unavailable(failure):
                 ContentUnavailableView {
                     Label("无法打开安全存储", systemImage: "lock.circle")
                 } description: {
-                    #if targetEnvironment(simulator)
-                    Text("请在 iPhone 或 iPad 真机上打开 Latch。连接电脑需要设备的安全存储。")
-                    #else
-                    Text("请解锁这台设备，再试一次。")
-                    #endif
+                    VStack(spacing: 8) {
+                        #if targetEnvironment(simulator)
+                        Text("请在 iPhone 或 iPad 真机上打开 Latch。连接电脑需要设备的安全存储。")
+                        #else
+                        Text(failure.advice)
+                        #endif
+                        Text(failure.code).font(.caption.monospaced()).foregroundStyle(PhoneTheme.muted)
+                    }
                 } actions: {
                     Button("重试") { Task { await model.open() } }
                 }

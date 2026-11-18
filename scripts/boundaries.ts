@@ -463,7 +463,7 @@ function checkScreensProject(text: string): string[] {
     if (
       !screensConfigs.has(item.id)
       || settings?.SUPPORTED_PLATFORMS !== 'iphonesimulator'
-      || settings.PRODUCT_BUNDLE_IDENTIFIER !== 'dev.latch.ios.screens'
+      || settings.PRODUCT_BUNDLE_IDENTIFIER !== 'codes.latch.ios.screens'
     )
       problems.push('project.pbxproj：只有 LatchScreens（仅模拟器）设置 LATCH_SCREENS')
   }

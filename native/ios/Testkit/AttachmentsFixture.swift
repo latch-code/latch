@@ -178,7 +178,7 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
 
     // The file and camera paths: pixels only, the picker's copy gone, nothing else written; oversized text is never read.
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("latch-attach-pick-" + UUID().uuidString)
-    let inbox = folder.appendingPathComponent("dev.latch.ios-Inbox")
+    let inbox = folder.appendingPathComponent("codes.latch.ios-Inbox")
     try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: folder) }
     let photoCopy = inbox.appendingPathComponent("IMG_9001.JPG"), bigText = inbox.appendingPathComponent("big.log"), note = inbox.appendingPathComponent("note.md")

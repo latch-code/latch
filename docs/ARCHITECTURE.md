@@ -12,6 +12,9 @@ sources:
   - packages/sdk/src
   - packages/core/src
   - native/macos
+  - native/ios/Latch.xcodeproj
+  - native/ios/App/PrivacyInfo.xcprivacy
+  - native/ios/App/Latch.entitlements
   - scripts/boundaries.ts
   - pnpm-workspace.yaml
   - tsconfig.json
@@ -236,6 +239,8 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 信任起点仍是安装的应用与 Host 代码。Host 对启动器本身先做磁盘校验、再按路径执行，二者之间的竞态尚未消除；这不是对启动器实际进程的动态校验。启动器的动态校验覆盖其 helper 在文件检查后、创建进程前被替换，以及恢复执行前的身份不确定，不能用于宣称所有执行替换竞态都已消除。可以改写应用或 Host 的同用户恶意进程不在此边界之内，这仍不是操作系统隔离。
 
 当前产物用 ad-hoc 签名供本机验证。打包器在框架签名前关闭 RunAsNode、NodeOptions 和 NodeCliInspect，递归验证签名并读回开关。Electron 外壳与辅助进程带 JIT 与库校验例外，以加载没有 Team ID 的本机框架。正式发行要用同一 Team ID 重新签名 Electron 与框架，并去除该 ad-hoc 库校验例外。当前打包器拒绝 `--release`，发行仍需固定公开 Team ID、Developer ID 签名、公证、更新源和 asar 完整性验证。`--presence-team` 仅构建待所有者签名的身份验证产物。
+
+**iOS App 包。** `native/ios/Latch.xcodeproj` 的 `Latch` 目标（包标识 `codes.latch.ios`；仅模拟器的 `LatchScreens` 为 `codes.latch.ios.screens`）与共享方案 `Latch`（归档用 Release）。版本号来自构建设置 `MARKETING_VERSION` 与 `CURRENT_PROJECT_VERSION`，再次上传只需在命令行提高后者。`App/PrivacyInfo.xcprivacy` 声明不跟踪、不收集数据，并给出用到的 required-reason API 的理由：UserDefaults 为 `CA92.1`，App 容器内 `stat` 系列为 `C617.1`；随包链接的 NIOPosix 自带清单。新增这类 API 时同步更新。权限文件为空：推送与 App Attest 尚未接入，不申请这两项能力。出口合规键 `ITSAppUsesNonExemptEncryption` 由所有者声明，仓库不写。团队、签名与上传不在仓库中。
 
 ## 会话级别与审批风险
 

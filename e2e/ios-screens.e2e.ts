@@ -205,20 +205,20 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_SCREENS !== '1'
         used += 1
         await simctlSlow('bootstatus', udid, '-b')
         await simctl('install', udid, application)
-        await simctl('privacy', udid, 'grant', 'camera', 'dev.latch.ios.screens').catch(() => {})
+        await simctl('privacy', udid, 'grant', 'camera', 'codes.latch.ios.screens').catch(() => {})
         const before = given ? (await simctl('ui', udid, 'appearance')).stdout.trim() : undefined
         // A fresh install's first launch is slow, so the first scene would be shot blank.
-        await simctl('launch', '--terminate-running-process', udid, 'dev.latch.ios.screens', '-LatchScene', chosen[0] ?? 'code')
+        await simctl('launch', '--terminate-running-process', udid, 'codes.latch.ios.screens', '-LatchScene', chosen[0] ?? 'code')
         await pause(6000)
         for (const theme of ['light', 'dark']) {
           await simctl('ui', udid, 'appearance', theme)
           for (const scene of chosen) {
-            await simctl('launch', '--terminate-running-process', udid, 'dev.latch.ios.screens', '-LatchScene', scene)
+            await simctl('launch', '--terminate-running-process', udid, 'codes.latch.ios.screens', '-LatchScene', scene)
             await pause(2500)
             await simctl('io', udid, 'screenshot', join(output, `${scene}--${theme}--${device.name}.png`))
           }
         }
-        if (!KEEP_RUNNING) await simctl('terminate', udid, 'dev.latch.ios.screens').catch(() => {})
+        if (!KEEP_RUNNING) await simctl('terminate', udid, 'codes.latch.ios.screens').catch(() => {})
         if (before === 'light' || before === 'dark') await simctl('ui', udid, 'appearance', before)
         if (!given) {
           // Fresh runtimes consume several GB each; release our completed device before booting the next.

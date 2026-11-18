@@ -14,6 +14,7 @@ sources:
   - apps/web/public
   - native/ios/Sources/LatchNativeCore/PhoneSlash.swift
   - build/icon.png
+  - native/ios/App/Assets.xcassets
 ---
 # Latch 界面设计
 
@@ -23,7 +24,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 
 ## 品牌与原则
 
-- **名称与图标。** 名称为 Latch。`apps/web/public/icon.png` 用于界面、窗口与主屏幕，`apps/web/public/favicon.png` 用于浏览器标签，`build/icon.png` 是源图。不改动图形本身。图标是界面里唯一的暖色元素，它的橙色不用来表达状态。
+- **名称与图标。** 名称为 Latch。`apps/web/public/icon.png` 用于界面、窗口与主屏幕，`apps/web/public/favicon.png` 用于浏览器标签，`build/icon.png` 是源图。iOS 的 `native/ios/App/Assets.xcassets/AppIcon.appiconset` 是同一图形：源图的圆角底板等比铺满 1024 方形，空白处填底板本色，无透明、无圆角，由系统裁圆角。不改动图形本身。图标是界面里唯一的暖色元素，它的橙色不用来表达状态。
 - **简约、克制。** 蓝白为主，中性的近白与近黑。层次只靠几层平涂的表面、细线、阴影与墨色深浅，不用装饰色、渐变、底纹、插画或表情。菜单、选值与对话框是不透明的面。控件按数据的形状选择，一种意思只用一种画法。
 - **每种颜色只表达一件事，并且总配文字或图形。**
 

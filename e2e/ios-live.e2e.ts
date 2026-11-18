@@ -19,7 +19,7 @@ import { iosLiveMetricRecorder, seedIosStream } from './helpers/iosLiveMetrics.t
 
 const run = promisify(execFile)
 const PREFIX = 'latch-live-'
-const BUNDLE = 'dev.latch.ios.screens'
+const BUNDLE = 'codes.latch.ios.screens'
 const TYPES = ['iPhone-17-Pro', 'iPhone-16-Pro', 'iPhone-17', 'iPhone-16']
 const SCHEDULE_MODEL = { providerId: 'ios-live-schedule', model: 'fixture' }
 /** Optional normal-API templates and actual ACP command reports for the native Slash acceptance pass. */
@@ -577,7 +577,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
               '--last',
               '1h',
               '--predicate',
-              `processIdentifier == ${appPid} AND subsystem == "dev.latch.ios.screens" AND category == "pairing-timing"`,
+              `processIdentifier == ${appPid} AND subsystem == "codes.latch.ios.screens" AND category == "pairing-timing"`,
             ).catch(() => undefined)
           : undefined
         if (timing) {

@@ -35,7 +35,7 @@ import UIKit
     }
 }
 
-enum PhoneStoreState: Equatable { case opening, ready, unavailable }
+enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFailure) }
 
 @MainActor final class PhoneModel: ObservableObject {
     @Published var hosts: [RegisteredHost] = []
@@ -270,7 +270,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable }
             }
         } catch {
             await provisional?.lock()
-            if canOpenStore(current) { storeState = .unavailable }
+            if canOpenStore(current) { storeState = .unavailable(NativeStoreFailure(error)) }
         }
     }
     /** The Mac this phone last used, or the first saved one. */

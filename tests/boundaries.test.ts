@@ -232,9 +232,9 @@ describe('workspace project listing', () => {
 
 describe('iOS LatchScreens code', () => {
   const settings = {
-    latch: 'PRODUCT_BUNDLE_IDENTIFIER = dev.latch.ios; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";',
+    latch: 'PRODUCT_BUNDLE_IDENTIFIER = codes.latch.ios; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";',
     screens:
-      'PRODUCT_BUNDLE_IDENTIFIER = dev.latch.ios.screens; SUPPORTED_PLATFORMS = iphonesimulator; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG LATCH_SCREENS";',
+      'PRODUCT_BUNDLE_IDENTIFIER = codes.latch.ios.screens; SUPPORTED_PLATFORMS = iphonesimulator; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG LATCH_SCREENS";',
   }
   function project(change: { latch?: string; latchGroups?: string; screensName?: string; screensPath?: string; latchBase?: string } = {}) {
     return `// !$*UTF8*$!
@@ -371,7 +371,7 @@ describe('iOS LatchScreens code', () => {
 		A00000000000000000000009 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				PRODUCT_BUNDLE_IDENTIFIER = dev.latch.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = codes.latch.ios;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "${latchConditions}";
 			};
@@ -380,7 +380,7 @@ describe('iOS LatchScreens code', () => {
 		A00000000000000000000018 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				PRODUCT_BUNDLE_IDENTIFIER = dev.latch.ios.screens;
+				PRODUCT_BUNDLE_IDENTIFIER = codes.latch.ios.screens;
 				SUPPORTED_PLATFORMS = iphonesimulator;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG LATCH_SCREENS";
 			};

@@ -15,14 +15,55 @@ public enum CacheKeychain {
         var found: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &found)
         if status == errSecSuccess, let key = found as? Data { return try LinkBytes.fixed(key, 32) }
-        guard status == errSecItemNotFound else { throw NativeFailure.storageUnavailable }
+        guard status == errSecItemNotFound else { throw CacheKeychainFailure(status: status) }
         let key = try LinkBytes.random(32)
         let add: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: "app.latch.ios.cache",
             kSecAttrAccount: account, kSecAttrSynchronizable: false, kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecValueData: key]
         let saved = SecItemAdd(add as CFDictionary, nil)
-        guard saved == errSecSuccess else { throw NativeFailure.storageUnavailable }
+        guard saved == errSecSuccess else { throw CacheKeychainFailure(status: saved) }
         return key
+    }
+}
+
+/** The keychain's own status when the cache key cannot be read or made; the status is a number, never key material. */
+public struct CacheKeychainFailure: Error, LocalizedError, Sendable, Equatable {
+    public let status: OSStatus
+    public var errorDescription: String? { NativeFailure.storageUnavailable.errorDescription }
+}
+
+/** What the App's failure screen can tell apart when its store does not open: only what the open path reports. */
+public enum NativeStoreFailure: Equatable, Sendable {
+    /** The item is readable only while the device is unlocked. */
+    case locked
+    case keychain(OSStatus)
+    /** The encrypted files or the saved profiles; the code is the failure's name or the system error's domain and number. */
+    case files(String)
+
+    public init(_ error: any Error) {
+        if let keychain = error as? CacheKeychainFailure {
+            self = keychain.status == errSecInteractionNotAllowed ? .locked : .keychain(keychain.status)
+        } else if let failure = error as? NativeFailure {
+            self = .files(failure.rawValue)
+        } else {
+            let system = error as NSError
+            self = .files("\(system.domain) \(system.code)")
+        }
+    }
+    public var advice: String {
+        switch self {
+        case .locked: "请解锁这台设备，再试一次。"
+        case .keychain: "系统钥匙串不可用。"
+        case .files: "本机资料无法读取。"
+        }
+    }
+    /** A short code for reporting the failure. */
+    public var code: String {
+        switch self {
+        case .locked: "OSStatus \(errSecInteractionNotAllowed)"
+        case let .keychain(status): "OSStatus \(status)"
+        case let .files(name): name
+        }
     }
 }
 

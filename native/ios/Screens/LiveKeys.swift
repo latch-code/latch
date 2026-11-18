@@ -21,7 +21,7 @@ enum PhoneLive {
         case windowBound, windowClosed, readUnavailable, streamExpired, streamUnavailable, streamOther, metadataConfirmed, reconnectRequired, networkChanged, bookFailed, bodyReadRepair, eventBufferRepair, eventRecordRepair
     }
     private static let pairingStart = ContinuousClock.now
-    private static let pairingLog = Logger(subsystem: "dev.latch.ios.screens", category: "pairing-timing")
+    private static let pairingLog = Logger(subsystem: "codes.latch.ios.screens", category: "pairing-timing")
     /** Fixed milestones only: no invitation, address, identifier or error description enters the diagnostic. */
     static func pairingCheckpoint(_ stage: PairingStage) {
         guard isOn else { return }
