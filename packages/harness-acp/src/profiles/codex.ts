@@ -131,7 +131,7 @@ export const codexProfile: HarnessProfile = {
   // Responses service through the gateway. 9: modes this computer's Codex policy refuses are greyed and never sent, and a
   // gateway session is refused before its thread when the policy or the person's own config would change its provider
   // (`codex-policy.ts`).
-  version: 9,
+  version: 8,
   wire: 'codex',
   permission: {
     approvals: 'prompts',
