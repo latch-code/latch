@@ -56,6 +56,16 @@ it.skipIf(!live).each(['anthropic', 'openai-compatible', 'openai-responses'] as 
         .first()
     const row = (name: string | RegExp) =>
       page.getByRole('menuitemradio', { name }).or(page.getByRole('option', { name })).or(page.getByRole('radio', { name })).first()
+    // The model panel lists one source at a time: the service's models are under Latch 网关 on the rail.
+    const serviceSource = async () => {
+      const tab = page
+        .getByRole('tablist', { name: '来源', exact: true })
+        .getByRole('tab', { name: 'Latch 网关', exact: true })
+        .filter({ visible: true })
+        .first()
+      await tab.waitFor()
+      await tab.click()
+    }
     try {
       const added = await owner.confirmed('providers', {
         body: {
@@ -90,6 +100,7 @@ it.skipIf(!live).each(['anthropic', 'openai-compatible', 'openai-responses'] as 
       await enrollBrowser(page, host)
       await connected(page)
       await chip('模型').click()
+      await serviceSource()
       await row(names[0]!).waitFor()
       if (kind !== 'anthropic')
         await page
@@ -129,6 +140,12 @@ it.skipIf(!live).each(['anthropic', 'openai-compatible', 'openai-responses'] as 
         const chosen = names[width === 820 ? 0 : 1]!
         await page.setViewportSize({ width, height: 1000 })
         await page.emulateMedia({ colorScheme })
+        // A session's switch keeps the panel open on the new model's levels: closed before the chip opens it again.
+        const panel = page.locator('.model-board').filter({ visible: true })
+        if (await panel.count()) {
+          await page.keyboard.press('Escape')
+          await expect.poll(() => panel.count()).toBe(0)
+        }
         await chip('模型').click()
         await row(new RegExp(chosen, 'u')).waitFor()
         await noHorizontalOverflow(page)
@@ -137,6 +154,9 @@ it.skipIf(!live).each(['anthropic', 'openai-compatible', 'openai-responses'] as 
         await expect
           .poll(async () => (await detail()).config?.find(option => option.category === 'model')?.currentValue)
           .toBe(nativeValue(chosen))
+        // The panel stays open on the new model's levels; left open, the next width draws a second one over it.
+        await page.keyboard.press('Escape')
+        await expect.poll(() => page.getByRole('menuitemradio', { name: new RegExp(chosen, 'u') }).count()).toBe(0)
       }
       await page.setViewportSize({ width: 1440, height: 1000 })
       await host.close()

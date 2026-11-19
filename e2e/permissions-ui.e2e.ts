@@ -452,8 +452,8 @@ describe('permission states in a browser', () => {
     // The fact in view on the card, the sentence behind its ⓘ.
     const advisory = card.locator('.approval-note')
     await advisory.getByText('拒绝只会转达，拦不住它', { exact: true }).waitFor()
-    await advisory.getByRole('button', { name: '说明', exact: true }).click()
-    await advisory.getByText('Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。', { exact: true }).waitFor()
+    await advisory.getByRole('img', { name: '说明', exact: true }).hover()
+    await page.getByText('Harness 的询问只是提示：拒绝会转达给它，但不能阻止它执行其他操作。', { exact: true }).waitFor()
     // An agent's ask: Esc refuses, but ⌘⏎ never allows it, so 允许 has no cap even with focus in the card.
     await expect.poll(() => card.getAttribute('data-arming')).toBeNull()
     await card.getByRole('button', { name: '拒绝', exact: true }).focus()
