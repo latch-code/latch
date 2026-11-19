@@ -26,11 +26,12 @@
     ".": {
       "entry": ["examples/*.mjs"],
       // lefthook runs by hand once per clone (`pnpm exec lefthook install`), not from a script. qrcode and undici are
-      // imported only by workspace projects (qrcode by the Host and the web client, undici by the Host); the Host
-      // bundles in dist/ load them from the root's node_modules, so the root declares them too.
+      // imported only by workspace projects (qrcode by the Host and the web client, undici by the Host, the Claude Agent
+      // SDK by harness-acp); the Host bundles in dist/ load them from the root's node_modules, so the root declares them too.
       // @types/react: the Host type-checks page drafts against it at run time (app-build.ts); dist/ resolves it from the root.
-      // @cursor/sdk: dist/harness/cursor-runner.js imports it at run time from the root's node_modules.
-      "ignoreDependencies": ["lefthook", "qrcode", "undici", "@types/react", "@cursor/sdk"],
+      // @cursor/sdk: dist/harness/cursor-runner.js imports it at run time from the root's node_modules; the Claude Agent SDK
+      // is imported by harness-acp and loaded by the Host bundle from there too.
+      "ignoreDependencies": ["lefthook", "qrcode", "undici", "@types/react", "@cursor/sdk", "@anthropic-ai/claude-agent-sdk"],
       // System commands that tests run.
       "ignoreBinaries": ["mkfifo"]
     },

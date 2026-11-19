@@ -7,7 +7,7 @@ import { redactSecrets } from '@latch/core/node-kit'
 import { authFacts, type TerminalLogin } from './auth.ts'
 import { redactor, resolveCommand } from './command.ts'
 import { agentEnvironment } from './environment.ts'
-import { selectProfile } from './permission.ts'
+import { routeCommand, selectProfile } from './permission.ts'
 import type { LoginCheck, QuotaCommand } from './profiles/index.ts'
 import type { QuotaReport } from './quota.ts'
 
@@ -43,8 +43,9 @@ function statusProgram(record: AgentRecord): { path: string; args: readonly stri
   const { preset, profile } = selectProfile(record)
   const status = profile?.loginStatus
   if (!status || !preset || !locate) return undefined
-  if (status.program === 'adapter') {
-    const path = locate(preset.command)
+  // The adapter's own, or for a harness with no login command (its vendor's own flow), the preset's program.
+  if (status.program === 'adapter' || !preset.login) {
+    const path = locate(routeCommand(record, preset))
     return path ? { path, args: status.args } : undefined
   }
   const program = loginProgram(record)

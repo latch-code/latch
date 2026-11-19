@@ -15,6 +15,7 @@ import {
 import { CURSOR_KEY_ENV, cursorSdkAvailable } from './wires/cursor.ts'
 import type { PermissionOption } from './protocol.ts'
 import type { AgentRecord } from './types.ts'
+import { claudeArgs } from './wires/claude.ts'
 import { codexArgs } from './wires/codex.ts'
 import { opencodeArgs } from './wires/opencode.ts'
 import { piArgs } from './wires/pi.ts'
@@ -82,6 +83,11 @@ export function isRetiredAdapterDefinition(record: Pick<AgentRecord, 'presetId' 
   )
 }
 
+/** The program a definition of this preset runs: the preset's own, or for any other command its adapter's. */
+export function routeCommand(record: Pick<AgentRecord, 'command' | 'args'>, preset: AgentPreset): string {
+  return runsPresetFallback(preset, commandName(record.command), record.args) ? preset.fallback!.command : preset.command
+}
+
 /**
  * Cursor runs through its official SDK instead of `cursor-agent acp` when its definition carries the key the SDK reads
  * and this Host can run the SDK's runner; otherwise as before. The key is part of the definition, so adding or removing
@@ -141,11 +147,13 @@ export function validateAgentDefinition(
     }
   }
   const selection = selectProfile(record, locate)
-  if (selection.profile?.wire === 'pi' || selection.profile?.wire === 'codex' || selection.profile?.wire === 'opencode') {
+  const wire = selection.profile?.wire
+  if (wire === 'pi' || wire === 'codex' || wire === 'opencode' || wire === 'claude') {
     try {
-      if (selection.profile.wire === 'pi') piArgs(record.args)
-      else if (selection.profile.wire === 'opencode') opencodeArgs(record.args)
-      else codexArgs(record.args)
+      if (wire === 'pi') piArgs(record.args)
+      else if (wire === 'opencode') opencodeArgs(record.args)
+      else if (wire === 'codex') codexArgs(record.args)
+      else claudeArgs(record.args)
     } catch (error) {
       return { ok: false, error: new AppError(400, 'agent-args-reserved', error instanceof Error ? error.message : String(error)) }
     }

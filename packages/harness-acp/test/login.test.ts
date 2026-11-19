@@ -470,12 +470,17 @@ describe('the login command', () => {
       checkable: true,
     })
     expect(loginTerminalScript(presetRecord('claude-agent')!)).toBeUndefined()
+    // Directly, the check is the person's own `claude`; on the adapter, the CLI the adapter ships.
     await expect(checkLogin(presetRecord('claude-agent')!)).resolves.toEqual({ status: 'unknown' })
-    // The check is the adapter's own, through the CLI it ships; the person's `claude` never runs.
-    expect(await readFile(ran, 'utf8')).toBe('claude-agent-acp --cli auth status --json\n')
+    expect(await readFile(ran, 'utf8')).toBe('claude auth status --json\n')
+    const adapter = { ...presetRecord('claude-agent')!, command: 'claude-agent-acp' }
+    expect(harnessLogin(adapter)).toEqual({ note: expect.stringContaining('Claude Code 自己的方式登录'), checkable: true })
+    await expect(checkLogin(adapter)).resolves.toEqual({ status: 'unknown' })
+    const both = 'claude auth status --json\nclaude-agent-acp --cli auth status --json\n'
+    expect(await readFile(ran, 'utf8')).toBe(both)
     expect(harnessLogin(presetRecord('cursor')!)).toEqual({ command: 'cursor-agent login' })
     expect(loginTerminalScript(presetRecord('cursor')!)).toContain(`'${join(bin, 'cursor-agent')}' 'login'`)
     // Cursor has no status command, and a script is only written.
-    expect(await readFile(ran, 'utf8')).toBe('claude-agent-acp --cli auth status --json\n')
+    expect(await readFile(ran, 'utf8')).toBe(both)
   })
 })

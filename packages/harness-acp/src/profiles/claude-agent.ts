@@ -1,9 +1,10 @@
 import { claudeErrorQuota, claudeUsageQuota } from '../quota.ts'
-import type { HarnessProfile, LoginCheck, SessionUpdate, ToolDenial } from './types.ts'
+import type { ModelRoute } from '@latch/sdk'
+import type { GatewayPlace, HarnessProfile, LoginCheck, SessionUpdate, ToolDenial } from './types.ts'
 
 const DAY_MS = 24 * 60 * 60_000
 
-/** The adapter's `--cli --version` reports the same native binary its SDK sessions run. */
+/** `claude --version`, or the adapter's `--cli --version`, which reports the same native binary its SDK sessions run. */
 export function readClaudeVersion(output: string): string | undefined {
   const first = output.split(/\r?\n/u).find(line => line.trim()) ?? ''
   return /^\s*(\d+\.\d+\.\d+) \(Claude Code\)\s*$/u.exec(first)?.[1]
@@ -90,106 +91,87 @@ function readClaudeDenial(update: SessionUpdate): ToolDenial | undefined {
   return { source, ...(reason ? { reason } : {}) }
 }
 
-export const claudeAgentProfile: HarnessProfile = {
-  presetId: 'claude-agent',
-  version: 4,
-  gateway: {
-    via: 'launch',
-    wires: ['anthropic-messages'],
-    tokenEnv: 'ANTHROPIC_AUTH_TOKEN',
-    envNames: ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS', ...Object.keys(GATEWAY_DEFAULTS), ...GATEWAY_MODEL_NAMES],
-    templates: { session: 1 },
-    models: { value: id => id, id: value => value || undefined, reportedOnly: true },
-    // Default hands effort back to Claude, which then sends `high` of its own (2.1.318).
-    defaultThinking: 'default',
-    minimumVersion: {
-      args: ['--cli', '--version'],
-      read: readClaudeVersion,
-      minimum: '2.1.318',
-      upgrade: 'npm i -g @agentclientprotocol/claude-agent-acp@latest',
+/** What Claude needs to send its model calls to Latch's gateway, through the adapter or directly: the same either way. */
+function claudeGatewayDeliver(place: GatewayPlace, route: ModelRoute) {
+  return {
+    env: {
+      ...GATEWAY_DEFAULTS,
+      ANTHROPIC_BASE_URL: place.baseURL,
+      ...(route.upstream && route.upstream !== route.wire ? { CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1' } : {}),
+      ...Object.fromEntries(GATEWAY_MODEL_NAMES.map(name => [name, route.model])),
     },
-    // ACP reports the adapter version, not the Claude Code version that owns provider routing and subprocesses.
-    commandVersionOnly: true,
-    usage: 'tokens-only',
-    deliver(place, route) {
-      return {
-        env: {
-          ...GATEWAY_DEFAULTS,
-          ANTHROPIC_BASE_URL: place.baseURL,
-          ...(route.upstream && route.upstream !== route.wire ? { CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1' } : {}),
-          ...Object.fromEntries(GATEWAY_MODEL_NAMES.map(name => [name, route.model])),
-        },
-        sessionMeta: {
-          claudeCode: {
-            options: {
-              settings: {
-                apiKeyHelper: '',
-                availableModels: place.models.map(model => model.id),
-                modelPicker: {
-                  replaceBuiltInOptions: true,
-                  options: place.models.map(model => ({ model: model.id, label: model.id })),
-                },
-              },
+    sessionMeta: {
+      claudeCode: {
+        options: {
+          settings: {
+            apiKeyHelper: '',
+            availableModels: place.models.map(model => model.id),
+            modelPicker: {
+              replaceBuiltInOptions: true,
+              options: place.models.map(model => ({ model: model.id, label: model.id })),
             },
           },
         },
-      }
+      },
     },
+  }
+}
+
+const CLAUDE_GATEWAY_ENV_NAMES = [
+  'ANTHROPIC_BASE_URL',
+  'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
+  ...Object.keys(GATEWAY_DEFAULTS),
+  ...GATEWAY_MODEL_NAMES,
+]
+
+/**
+ * Claude Code's permission modes and how Latch reads each, the same whether the adapter or the SDK drives it: the
+ * adapter's mode IDs are Claude Code's own.
+ */
+const CLAUDE_PERMISSION = {
+  approvals: 'prompts',
+  defaultEnv: {},
+  // The adapter starts a session in Auto unless settings say otherwise, so every turn sets this first.
+  expectedMode: 'default',
+  // Planning sits below Manual: it edits nothing, though its commands may go to Claude's own classifier (notes).
+  modeLadder: ['plan', 'default', 'acceptEdits', 'auto', 'bypassPermissions'],
+  // Claude reports what its classifier denied (`readDenial`), not what it let run: a call that ran in `auto` is
+  // recorded as run unasked.
+  modeTiers: {
+    plan: { tier: 'plan', line: '只看和规划，不改文件' },
+    default: { tier: 'ask', line: '改文件或运行命令前问你' },
+    acceptEdits: { tier: 'rule', line: '直接改文件，命令前问你' },
+    auto: { tier: 'model', line: '由它的分类器判断' },
+    bypassPermissions: { tier: 'never', line: '直接改文件和运行命令' },
   },
-  // Starting Claude Code runs the person's SessionStart hooks and loads their plugins, so its lists are read only on
-  // request, as pi's are.
-  catalogueRead: { when: 'request' },
-  permission: {
-    approvals: 'prompts',
-    defaultEnv: {},
-    // The adapter starts a session in Auto unless settings say otherwise, so every turn sets this first.
-    expectedMode: 'default',
-    // Planning sits below Manual: it edits nothing, though its commands may go to Claude's own classifier (notes).
-    modeLadder: ['plan', 'default', 'acceptEdits', 'auto', 'bypassPermissions'],
-    // Claude reports what its classifier denied (`readDenial`), not what it let run: a call that ran in `auto` is
-    // recorded as run unasked.
-    modeTiers: {
-      plan: { tier: 'plan', line: '只看和规划，不改文件' },
-      default: { tier: 'ask', line: '改文件或运行命令前问你' },
-      acceptEdits: { tier: 'rule', line: '直接改文件，命令前问你' },
-      auto: { tier: 'model', line: '由它的分类器判断' },
-      bypassPermissions: { tier: 'never', line: '直接改文件和运行命令' },
-    },
-    modeAnswers: [
-      // ExitPlanMode's one-time choice: leave the plan and ask before each edit.
-      { optionId: 'exit-plan-default', mode: 'default' },
-      // EnterPlanMode asks with the adapter's plain allow option on a mode-switching call.
-      { optionId: 'allow-once', toolKind: 'switch_mode', mode: 'plan' },
-    ],
-    readback: 'mode',
-    // Later 0.x adapters only; a new major version may start sessions or report modes differently.
-    versionRule: { pattern: '^0\\.(?:99|[1-9]\\d{2,})\\.', message: 'Claude Agent 适配器需要 0.99 或之后的 0.x 版本' },
-    // Where Claude Code keeps its settings and the login the adapter shares; a name, never a secret.
-    inheritEnv: ['CLAUDE_CONFIG_DIR'],
-    notes: [
-      '工作目录内的读取、只读命令等 Claude 不需要批准的调用不会出现在 Latch 的审批里',
-      '你在 Claude Code 设置里写的允许规则与 hooks 先于 Latch 生效，Latch 看不到',
-      '自动模式下由 Claude 的分类器决定是否执行，不问你；计划模式下若自动模式可用，命令也可能由分类器决定',
-      '项目的 .mcp.json 中的服务器会直接连接，不经询问',
-    ],
-  },
+  modeAnswers: [
+    // ExitPlanMode's one-time choice: leave the plan and ask before each edit.
+    { optionId: 'exit-plan-default', mode: 'default' },
+    // EnterPlanMode asks with the adapter's plain allow option on a mode-switching call.
+    { optionId: 'allow-once', toolKind: 'switch_mode', mode: 'plan' },
+  ],
+  readback: 'mode',
+  // Where Claude Code keeps its settings and its login; a name, never a secret.
+  inheritEnv: ['CLAUDE_CONFIG_DIR'],
+  notes: [
+    '工作目录内的读取、只读命令等 Claude 不需要批准的调用不会出现在 Latch 的审批里',
+    '你在 Claude Code 设置里写的允许规则与 hooks 先于 Latch 生效，Latch 看不到',
+    '自动模式下由 Claude 的分类器决定是否执行，不问你；计划模式下若自动模式可用，命令也可能由分类器决定',
+    '项目的 .mcp.json 中的服务器会直接连接，不经询问',
+  ],
+} satisfies HarnessProfile['permission']
+
+/** What Claude's profiles share besides permissions: the session directory, its project files and the plan it proposes. */
+const CLAUDE_SHARED = {
   // Claude asks before it reads or writes outside the session directory.
   folderAccess: 'primary-asks',
   // Project settings (permission rules, hooks, agents, skills) and MCP servers, from the session directory upwards.
   projectConfigPaths: ['.claude', '.mcp.json'],
   // Worktrees Claude creates for its own subagents.
   projectConfigManaged: { skip: ['.claude/worktrees'] },
-  // The adapter's `--cli` hands the rest to the Claude CLI it ships, the one its sessions use; it is how the date a
-  // sign-in ends is known without reading the login.
-  loginStatus: {
-    program: 'adapter',
-    expires: true,
-    args: ['--cli', 'auth', 'status', '--json'],
-    read: ({ output }) => readClaudeStatus(output),
-  },
   readDenial: readClaudeDenial,
-  // ExitPlanMode: the adapter asks with its `exit-plan-*` options and the plan in the call's input.
-  // Leaving the plan to ask before each edit; the other exits widen the mode or swap the context, so they are never offered.
+  // ExitPlanMode: asked with the `exit-plan-*` options and the plan in the call's input. Leaving the plan to ask before
+  // each edit; the other exits widen the mode or swap the context, so they are never offered.
   planAnswers: ['exit-plan-default'],
   readPlan(toolCall, options) {
     const input = toolCall.rawInput
@@ -203,4 +185,84 @@ export const claudeAgentProfile: HarnessProfile = {
   // Checked on the adapter 2026-11-16: each answer counts its own turn, with cache reads and writes outside the input.
   usageScope: 'turn',
   inputExcludesCache: true,
+} satisfies Partial<HarnessProfile>
+
+/** The gateway as Claude Code takes it, through the adapter or directly; only the version check differs. */
+const CLAUDE_GATEWAY = {
+  via: 'launch',
+  wires: ['anthropic-messages'],
+  tokenEnv: 'ANTHROPIC_AUTH_TOKEN',
+  envNames: CLAUDE_GATEWAY_ENV_NAMES,
+  templates: { session: 1 },
+  models: { value: (id: string) => id, id: (value: string) => value || undefined, reportedOnly: true },
+  // Default hands effort back to Claude, which then sends `high` of its own (2.1.318).
+  defaultThinking: 'default',
+  // ACP reports the adapter version, not the Claude Code version that owns provider routing and subprocesses.
+  commandVersionOnly: true,
+  usage: 'tokens-only',
+  deliver: claudeGatewayDeliver,
+} as const
+
+/** Claude Code through the ACP adapter `claude-agent-acp`: what a definition on the adapter runs with. */
+export const claudeAgentProfile: HarnessProfile = {
+  presetId: 'claude-agent',
+  version: 4,
+  gateway: {
+    ...CLAUDE_GATEWAY,
+    wires: [...CLAUDE_GATEWAY.wires],
+    minimumVersion: {
+      args: ['--cli', '--version'],
+      read: readClaudeVersion,
+      minimum: '2.1.318',
+      upgrade: 'npm i -g @agentclientprotocol/claude-agent-acp@latest',
+    },
+  },
+  // Starting Claude Code runs the person's SessionStart hooks and loads their plugins, so its lists are read only on
+  // request, as pi's are.
+  catalogueRead: { when: 'request' },
+  permission: {
+    ...CLAUDE_PERMISSION,
+    // Later 0.x adapters only; a new major version may start sessions or report modes differently.
+    versionRule: { pattern: '^0\\.(?:99|[1-9]\\d{2,})\\.', message: 'Claude Agent 适配器需要 0.99 或之后的 0.x 版本' },
+  },
+  ...CLAUDE_SHARED,
+  // The adapter's `--cli` hands the rest to the Claude CLI it ships, the one its sessions use; it is how the date a
+  // sign-in ends is known without reading the login.
+  loginStatus: {
+    program: 'adapter',
+    expires: true,
+    args: ['--cli', 'auth', 'status', '--json'],
+    read: ({ output }) => readClaudeStatus(output),
+  },
+}
+
+/** The oldest Claude Code the direct wire runs: the one the SDK it is built on ships (`claudeCodeVersion` of 0.3.322). */
+const CLAUDE_DIRECT_MINIMUM = '2.1.322'
+const CLAUDE_UPGRADE = 'npm i -g @anthropic-ai/claude-code@latest'
+
+/**
+ * Claude Code itself, driven through the official Claude Agent SDK (`wires/claude.ts`): the person's own `claude`, its
+ * own login and settings. Mode, option and session IDs are the adapter's, so a session goes on whichever route runs it.
+ */
+export const claudeProfile: HarnessProfile = {
+  presetId: 'claude-agent',
+  version: 1,
+  wire: 'claude',
+  gateway: {
+    ...CLAUDE_GATEWAY,
+    wires: [...CLAUDE_GATEWAY.wires],
+    minimumVersion: { args: ['--version'], read: readClaudeVersion, minimum: CLAUDE_DIRECT_MINIMUM, upgrade: CLAUDE_UPGRADE },
+  },
+  catalogueRead: { when: 'request' },
+  // A new `query()` on a resumed session starts at Claude's default effort and the model `claude` resumes with, so what
+  // the session showed is set again before the next prompt.
+  resumeResetsOptions: true,
+  permission: CLAUDE_PERMISSION,
+  ...CLAUDE_SHARED,
+  minimumVersion: { args: ['--version'], read: readClaudeVersion, minimum: CLAUDE_DIRECT_MINIMUM, upgrade: CLAUDE_UPGRADE },
+  loginStatus: {
+    expires: true,
+    args: ['auth', 'status', '--json'],
+    read: ({ output }) => readClaudeStatus(output),
+  },
 }

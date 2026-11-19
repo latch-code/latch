@@ -1,5 +1,5 @@
 import { antigravityProfile } from './antigravity.ts'
-import { claudeAgentProfile } from './claude-agent.ts'
+import { claudeAgentProfile, claudeProfile } from './claude-agent.ts'
 import { codexAcpProfile } from './codex-acp.ts'
 import { codexProfile } from './codex.ts'
 import { cursorProfile } from './cursor.ts'
@@ -28,7 +28,7 @@ export type {
 export const HARNESS_PROFILES: ReadonlyMap<string, HarnessProfile> = new Map(
   [
     codexProfile,
-    claudeAgentProfile,
+    claudeProfile,
     qwenProfile,
     gooseProfile,
     dshProfile,
@@ -41,10 +41,9 @@ export const HARNESS_PROFILES: ReadonlyMap<string, HarnessProfile> = new Map(
 )
 
 /** The profile of a preset's `fallback` adapter, by preset ID: what a definition on the adapter runs with. */
-export const FALLBACK_PROFILES: ReadonlyMap<string, HarnessProfile> = new Map([
-  [codexAcpProfile.presetId, codexAcpProfile],
-  [opencodeAcpProfile.presetId, opencodeAcpProfile],
-])
+export const FALLBACK_PROFILES: ReadonlyMap<string, HarnessProfile> = new Map(
+  [codexAcpProfile, opencodeAcpProfile, claudeAgentProfile].map(profile => [profile.presetId, profile]),
+)
 
 export function profileFor(presetId: string | undefined): HarnessProfile | undefined {
   return presetId === undefined ? undefined : HARNESS_PROFILES.get(presetId)

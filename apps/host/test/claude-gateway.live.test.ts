@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { AppSnapshot, AttachmentRef, CancelReceipt, ProviderSettings, TaskDetail } from '@latch/protocol'
 import { startFakeModels } from '@latch/testkit'
@@ -9,6 +9,10 @@ import { startTestHost } from './helpers/host.ts'
 import { assertNoGatewayCredentials } from './helpers/gateway-evidence.ts'
 
 const binary = process.env.LATCH_CLAUDE_GATEWAY_BINARY
+/** The person's own `claude` runs on the Agent SDK wire, which takes no arguments; anything else is the adapter. */
+const direct = binary !== undefined && basename(binary) === 'claude'
+const program = direct ? 'claude' : 'claude-agent-acp'
+const launchArgs = direct ? [] : ['--hide-claude-auth']
 afterEach(() => vi.unstubAllEnvs())
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
@@ -140,7 +144,7 @@ if (process.argv[3] !== 'hook') createInterface({ input: process.stdin }).on('li
       dataDir: join(root, 'host'),
       workspaceRoot: join(root, 'project'),
       commandDirectories: () => [dirname(binary!)],
-      loginPrograms: (name: string) => (name === 'claude-agent-acp' ? binary : undefined),
+      loginPrograms: (name: string) => (name === program ? binary : undefined),
       detectPreset: (preset: { id: string }) => (preset.id === 'claude-agent' ? { found: true, path: binary! } : { found: false }),
     }
     let host = await startTestHost(hostOptions)
@@ -173,7 +177,7 @@ if (process.argv[3] !== 'hook') createInterface({ input: process.stdin }).on('li
           name: 'Claude Code',
           presetId: 'claude-agent',
           command: binary!,
-          args: ['--hide-claude-auth'],
+          args: launchArgs,
           env: { PROBE_SECRET: 'fake-other-credential', PROBE_BOUNDARY: 'public-probe-value' },
         },
       })
@@ -333,7 +337,7 @@ it.skipIf(!binary).each([false, true])(
       dataDir: join(root, 'host'),
       workspaceRoot: join(root, 'project'),
       commandDirectories: () => [dirname(binary!)],
-      loginPrograms: name => (name === 'claude-agent-acp' ? binary : undefined),
+      loginPrograms: name => (name === program ? binary : undefined),
       detectPreset: preset => (preset.id === 'claude-agent' ? { found: true, path: binary! } : { found: false }),
     })
     try {
@@ -359,7 +363,7 @@ it.skipIf(!binary).each([false, true])(
               name: 'Claude Code',
               presetId: 'claude-agent',
               command: binary!,
-              args: ['--hide-claude-auth'],
+              args: launchArgs,
               env: {},
             },
           })

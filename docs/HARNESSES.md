@@ -82,13 +82,14 @@ Agent 自己提供官方机器协议时 Latch 直接说它，ACP 适配器只作
 | Cursor | 定义带 `CURSOR_API_KEY` 时用官方 SDK `@cursor/sdk`（见「Cursor 的 SDK 路线」），否则 `cursor-agent acp` |
 | OpenCode | `opencode serve`，2.2.6 起（见「OpenCode 的服务接口」）；更早的版本与保存为 `opencode acp` 的定义走 ACP |
 | DeepSeek Harness | `dsh --profile acp`：随包的 `acp` 配置是它给自动化客户端的官方协议 |
-| 其他预设 | ACP：它们的官方集成方式（Claude Agent 用官方适配器） |
+| 其他预设 | ACP：它们的官方集成方式 |
 
-Codex 的后备规则：
+Codex 与 Claude Agent 的后备规则（Claude 把下文的 `codex` 换成 `claude`、`codex-acp` 换成 `claude-agent-acp`、0.156.0 换成 2.1.322；`claude-agent-acp` 运行它自带的 Claude Code，不运行人装的旧 `claude`，太旧时仍不改用它，以免悄悄换掉人自己的版本与设置）：
 
 - `codex` 低于 0.156.0（此版起被中断或失败的一轮保留已流出的回答与计划）时以 409 `harness-version-unsupported` 拒绝并给出升级命令，不改用 codex-acp：适配器会经 `CODEX_PATH` 运行同一个旧 Codex。
 - 只有这台电脑没有 `codex`、却装了 `codex-acp` 时，从草稿选 Codex 才保存为 `codex-acp`（预设的 `fallback`），它运行自己随包带的 Codex。
 - 定义的命令是 `codex-acp` 或任何别的命令时走 ACP，用 `profiles/codex-acp.ts`；设置里它的行写「经 codex-acp」。
+- Claude Agent 的适配器定义用 `profiles/claude-agent.ts` 的 `claudeAgentProfile`，直连用同一文件的 `claudeProfile`；两者的模式、选项与会话 ID 相同，所以适配器上开的会话在直连上按同一 ID 恢复（`claude-resume.live.test.ts`）。版本与登录状态命令按定义所走的路线读（`routeCommand`）：直连读 `claude`，适配器读 `claude-agent-acp --cli`。
 
 OpenCode 的后备规则（适配器与预设是同一个程序，按参数区分，`runsPresetFallback`）：
 
@@ -106,7 +107,7 @@ OpenCode 的后备规则（适配器与预设是同一个程序，按参数区�
 | DeepSeek Harness | `dsh --profile acp` | MIT | `npm i -g @deepseek-ai/dsh`，0.2.2-rc.1 起；它自己要求 Node.js 24.9 起；按完整消息回复 | 无 |
 | Qwen Code | `qwen --acp` | Apache-2.0 | `npm i -g @qwen-code/qwen-code` | 进入后 `/auth` |
 | goose | `goose acp` | Apache-2.0 | `brew install block-goose-cli` | `goose configure` |
-| Claude Agent | `claude-agent-acp` | 适配器 Apache-2.0；Claude Code 专有 | `npm i -g @agentclientprotocol/claude-agent-acp`，适配器 0.99 起的 0.x | 不提供（`signIn`，见「登录」） |
+| Claude Agent | `claude`，参数全由线与 SDK 给出；只有适配器时 `claude-agent-acp` | Claude Code 专有，SDK 按 Anthropic 商业条款；适配器 Apache-2.0 | `npm i -g @anthropic-ai/claude-code`，2.1.322 起；适配器 `npm i -g @agentclientprotocol/claude-agent-acp`，0.99 起的 0.x | 不提供（`signIn`，见「登录」） |
 | Cursor | `cursor-agent acp` | 专有（Cursor 服务条款） | 官方安装脚本 | `cursor-agent login` |
 | Antigravity | `agy acp --disable-telemetry --process-per-session` | 专有（Google Antigravity 条款） | 1.5.8 起 | `agy acp --login` |
 | Grok Build | `grok --no-auto-update --permission-mode default agent stdio` | 发布版条款；源码 Apache-2.0 | `npm i -g @xai-official/grok`，1.0.77 起 | `grok login` |
@@ -139,7 +140,7 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 | OpenCode | 直连 2.2.6（`opencode --version` 打印 `opencode v2.2.6`）；`opencode acp` 无（版本规则 1.x、2.x） | 2.2.6 |
 | Qwen Code | 无 | 0.26.8 |
 | goose | 无 | 1.57.0 |
-| Claude Agent | 无（版本规则见下） | 适配器自带的 Claude Code 2.1.318（`--cli --version`） |
+| Claude Agent | 直连 2.1.322（`claude --version`）；适配器无（版本规则见下） | 直连同左；适配器上是它自带的 Claude Code 2.1.318（`--cli --version`） |
 
 怎样读：
 
@@ -175,7 +176,7 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 | DeepSeek Harness | 私有 `--patch` 插件、`DSH_PERMISSION_MODE`、`DSH_TELEMETRY_DISABLED=1` | `read-only` | `read-only`、`workspace-write`、`danger-full-access` | — | 它的权限服务报告 |
 | OpenCode | `OPENCODE_CONFIG_CONTENT` | `build` | `plan`、`build`、`auto-edit`、`yolo` | — | 可读回 |
 | pi | 私有 `-e` 扩展 | `ask` | `plan`、`ask`、`rule`、`never` | — | 扩展报告 |
-| Claude Agent | — | `default` | `plan`、`default`、`acceptEdits`、`auto`、`bypassPermissions` | ExitPlanMode 只留 `exit-plan-default` | 可读回；适配器新会话默认进 `auto`，每轮前设回 |
+| Claude Agent | — | `default` | `plan`、`default`、`acceptEdits`、`auto`、`bypassPermissions` | ExitPlanMode 只留 `exit-plan-default` | 可读回；适配器新会话默认进 `auto`，每轮前设回；直连新会话以 `default` 开始，模式由线经 SDK 设置并报告 |
 | Cursor | `--mode` 或 `--force` 启动参数 | `agent` | `ask`、`plan`、`agent`、`agent-force` | `allow-always` | ACP 报告前三档；force 只标为启动设置 |
 | Cursor 经 SDK | 创建或恢复 agent 时的工具名单与沙箱 | `read-only` | `read-only`、`sandbox`、`full` | 不询问，没有选项 | 运行器报告它交给 SDK 的档位 |
 | Antigravity | — | `default` | `default`、`accept-edits`、`auto` | — | 可读回 |
@@ -379,7 +380,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 | codex-acp | Responses，实验性 | — | ACP `providers/set`，只在适配器声明并列出该 provider 与 API 类型时 | 只能用适配器认识的服务模型（`knownOnly`） |
 | OpenCode | Chat、Responses、Anthropic | 2.2.6 | `OPENCODE_CONFIG_CONTENT` 里的私有 provider 与私有插件 | 插件把工具子进程里的令牌值清空 |
 | DeepSeek Harness | Chat、Responses、Anthropic | 0.2.2-rc.1 | 私有 `--patch` 的 provider `latch-gateway` | 这条路线关掉它的会话日志与包清单遥测插件 |
-| Claude Agent | Anthropic（Chat、Responses 服务经实验性转换） | Claude Code 2.1.318 | 官方环境变量与会话的 `modelPicker` | 只按精确的模型 ID |
+| Claude Agent | Anthropic（Chat、Responses 服务经实验性转换） | 直连 Claude Code 2.1.322，适配器上 2.1.318 | 官方环境变量与会话的 `modelPicker` | 只按精确的模型 ID |
 | pi | Chat、Responses、Anthropic | 1.5.0 | 私有扩展注册 provider，只在当前进程 | 见 [pi 运行预算](MODEL-GATEWAY.md#pi-运行预算) |
 | Qwen Code | Chat、Responses、Anthropic，实验性 | 0.26.8 | `QWEN_CODE_SYSTEM_SETTINGS_PATH` 指向 0600 的会话私有系统设置 | 没有子 Agent；凭据被工具子进程继承 |
 | goose | Chat、Responses、Anthropic，实验性 | 1.57.0 | 只有环境变量；凭据在 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY` | `provider` 选项不提供；`delegate` 子 Agent 固定不了服务；凭据被继承 |
@@ -569,6 +570,35 @@ Latch 不读 CLI 自己的存储，有两个例外，这是第二个（第一个
 - **怎么归到这一轮。** 开始与结束都在 Latch 这一轮之内的 dsh 轮次，把它们的 `assistant/message.usage` 相加（输入加回缓存读写）。有 dsh 轮次跨过这一轮的边、没有完整的轮、有回复没带 `usage`、会话到这一轮为止建过子 Agent（它的用量在 Latch 没有 ID 的子会话日志里），都一个数也不写。
 - **去向。** 只有数字，只进轮次记录（`usage/turns-*.jsonl`），不进会话的 `TurnStats`，不进日志、错误、SSE。失败不说话。不写审计：不碰秘密，没有东西离开这台电脑，读到的数就是记录里那一行。
 
+## Claude 的 Agent SDK 线
+
+`wires/claude.ts` 经官方的 `@anthropic-ai/claude-agent-sdk`（精确版本在 catalog）驱动人自己装的 `claude`，一个会话一个流式输入的 `query()`、一个 `claude` 进程。运行时照旧说 ACP，线把它换成 SDK 的调用与消息。依据 SDK 的 `sdk.d.ts` 与 `claude-agent-acp` 0.101 的 `acp-agent.js`。
+
+- **程序与进程。** `pathToClaudeCodeExecutable` 是查到的 `claude`；SDK 的平台包（自带的 Claude Code）在 `pnpm-workspace.yaml` 的 `ignoredOptionalDependencies` 里不安装，两个只供类型用的 peer 经 `packageExtensions` 标为可选、也不安装。SDK 经线的 `spawnClaudeCodeProcess` 起进程：`process.ts` 的 `AgentProcess`（自己的进程组、stderr 尾巴、停止时先关 stdin 再 SIGTERM、SIGKILL），环境是运行时算好的那份，SDK 只能再加 `CLAUDE_CODE_*`、`CLAUDE_AGENT_SDK_*` 标记，其余（包括 Host 的变量）丢掉。网关令牌只在这份环境里；网关的模型清单经 `settings` 进 `--settings` 参数，里面没有令牌。SDK 启动时写进 Host 环境的 `CLAUDE_AGENT_SDK_VERSION` 随即还原。`claude` 是原生程序，`--disable-sigusr1` 不适用（SDK 会把 `executableArgs` 也放在原生程序前面，所以不传）。
+- **与适配器相同的设置。** `settingSources: ['user','project','local']`、`systemPrompt` 与 `tools` 用 `claude_code` 预设、会话的 MCP 服务器、`includePartialMessages`、`allowDangerouslySkipPermissions`（root 时不给）；Claude 自己的 CLAUDE.md、技能、斜杠命令、hooks、插件与 MCP 服务器都由它自己加载。适配器自己注册的 hooks（计划、任务清单、子 Agent 配置、模型切换同步）不注册。
+- **会话。** 新会话由线生成 UUID 作为 SDK 的 `sessionId`，恢复用 `resume`，与适配器相同；不是 UUID 的 ID 不找。`claude` 说找不到会话时是 `-32002`。一个线同时只开一个会话，另开会话或 `session/close` 先结束上一个 `query()` 与它的进程，那不算线退出；会话打开后进程自己退出才算。
+- **一轮。** 输入是带 `uuid` 的 `SDKUserMessage`；图片按 base64 块，嵌入的资源成文字。只有带同一 `user_message_uuid` 的结果结束这一轮，别的结果（Claude 自己开始的一轮）只报告用量。流式的 `text_delta`、`thinking_delta` 成为文字与思考，消息 ID 是 Claude 的 `msg_…`；同一 ID 的整条消息（`claude` 可能每个内容块发一条）只补流式没发出的部分。
+- **工具行。** 标题、种类、差异与位置照适配器给既非 AIR 也非 ACP v2 的客户端的样子（`wires/claude-tools.ts`，依据它的 `tool-calls/reporters/`）：`Read a.txt`（位置带行号）、`Edit`（`old_string` 到 `new_string` 的差异）、`Write`（新文本的差异，运行后换成结果里 `structuredPatch` 的真实差异）、`NotebookEdit` 只有标题，命令的输出放进 console 代码块。
+- **任务清单。** TodoWrite 的列表与 `TaskCreate`、`TaskUpdate`、`TaskList` 的结果作 `plan` 更新，它们不成工具行，与适配器相同。真实核对时 2.1.327 的 SDK 会话没有提供这些工具（`init` 只列 `Task`、`TaskStop`），所以只用假 SDK 测过。
+- **子 Agent。** 照适配器的 RFD 形式：Agent 调用在发起它的会话上宣告 `subagent_update`（`state: running`），子会话 ID 是 `<会话>/subagent/<调用 ID>`；带这次调用 `parent_tool_use_id` 的文字与工具调用发在子会话上，它的审批（`canUseTool` 的 `agentID`）也在子会话上。`task_started` 之后带 `capabilities.cancel`，单独停止经 `stopTask`。Agent 调用的结果到达时报告 `idle`（失败时带错误，停止这一轮时 `cancelled`）。
+- **审批。** `canUseTool` 成为运行时的权限请求，选项与适配器的 `permissions/options*` 相同（ID、类型、名字与顺序，`wires/claude-permissions.ts`）：一般调用 `allow-once`、`reject`，Claude 给出建议时另有 `allow-with-updates`（`allow_always`，选中时把建议原样作 `updatedPermissions` 交回），Skill 的 `allow-skill-*`、WebFetch 的按域名规则；人的 ask 规则触发或 `suppressAlwaysAllowRule` 时不给。Latch 对所有预设都只展示一次性的允许与拒绝（见「预设的权限配置」），所以「始终允许」在两条路线上都不出现。ExitPlanMode 给 `exit-plan-clear-*`、`exit-plan-auto`/`exit-plan-bypass` 或 `exit-plan-accept-edits`、`exit-plan-default`、`reject`；接受时把 Claude 换到所选模式并报告；`reject`（继续规划）以 `interrupt` 拒绝，这一轮按取消结束，与适配器相同。EnterPlanMode 的类型是 `switch_mode`。Claude 自己拦下的调用（`permission_denied`）照适配器的样子写 `_meta.claudeCode.toolResponse`。
+- **提问。** 客户端声明表单提问时（Latch 有 `askUser` 时），AskUserQuestion 经 `canUseTool` 成为 `elicitation/create` 的表单：每题 `question_<n>`（单选 `oneOf`、多选 `anyOf`）加 `question_<n>_custom`；回答写进工具输入的 `answers`（多选逗号连接，选了又写的话进 `annotations[问题].notes`），拒答给空的 `answers`，取消中止调用。没有表单时与适配器一样关掉这个工具。MCP 服务器的表单提问经 `onElicitation` 同样交给人，URL 形式答「取消」。
+- **模式、模型与思考。** 选项 ID 与适配器相同：`mode`（`default`、`acceptEdits`、`plan`、模型支持时 `auto`、`bypassPermissions`）经 `setPermissionMode`；`model` 的值是 `supportedModels()` 的 `value`，`default` 经 `setModel()` 交回 Claude；`effort`（`default` 加模型声明的档位）经 `applyFlagSettings({ effortLevel })`，与适配器相同。新会话与恢复的会话都以 `default` 开始；运行时在下一条消息前把会话记下的模式设回去（模式读回），模型与思考经 `resumeResetsOptions` 设回去。当前模型按 `getContextUsage()` 报告的模型认出所在一行。Claude 自己换模式（`init`、`status` 消息里的 `permissionMode`）时报告 `config_option_update`。
+- **取消。** `session/cancel` 发 `interrupt()`，等它答复、且这一轮的结果到了才按取消结束。
+- **用量与额度。** 结果的 `usage`：`input_tokens` 是不含缓存的输入，缓存读写另记。之后 2 秒内读 `getContextUsage()` 的 `totalTokens` 与 `maxTokens` 作上下文占用；`total_cost_usd` 作花费（经网关时不报）。`rate_limit_event` 照适配器放进 `usage_update._meta["_claude/rateLimit"]`；一轮因回复错误失败时错误 `data` 带 `errorKind`（适配器同样），`rate_limit` 时另带最近一次的 `rateLimit`，额度照常读。
+- **登录。** 开会话时把 `initializationResult().account` 照适配器的 `fromAccountInfo` 推送为 `_auth/status_update`（`account` 套餐、`api_key`、`external`、经网关时 `gateway`），不带邮箱与组织；变了才推送。
+- **斜杠命令。** 第一轮开始时把 `initializationResult()` 列出的命令报告给运行时。
+
+**与适配器不同、尚未实现的。**
+
+| 项目 | 原因 |
+| --- | --- |
+| ExitPlanMode 的「清空上下文后执行」 | 选中时直连只按「继续规划」结束这一轮，不像适配器那样换新上下文接着执行；Latch 对两条路线都不展示这个选项（`allow_always`，也不在 `planAnswers`），所以没有接上 |
+| 子 Agent 的流式文字、模型与文件夹 | 子 Agent 的文字按整条消息发到子会话；适配器另报告的子 Agent 模型与 `cwd` 没有 |
+| 提示建议 | 适配器经 `session_info_update._meta.promptSuggestions` 发，Latch 的运行时不读，两条路线都不显示 |
+| 读 Claude 的设置与记录 | Latch 不读 Claude 的设置与会话记录：`defaultMode`、`disableBypassPermissionsMode` 等由 Claude 在换模式时自己拒绝；恢复的会话以 `default` 开始，再由运行时设回记下的模式 |
+| 适配器其他私有功能 | 文件改动报告、按某一条分叉、空闲压缩、目标（goal）与 AIR 扩展只在适配器里 |
+
 ## 登录
 
 Latch 从不替人登录：不调用 `authenticate`，不读凭据文件或钥匙串。它只运行程序自己的命令，并听 Agent 怎么说。
@@ -581,10 +611,10 @@ Latch 从不替人登录：不调用 `authenticate`，不读凭据文件或钥�
 
 **状态。**
 
-- **Agent 推送。** codex-acp 与 Claude Agent 的适配器推送 `_auth/status_update`（以 `agentCapabilities._meta.authStatus` 宣告）。Latch 只读 `kind` 与 `label`：`none` 是未登录，`account`、`api_key`、`gateway`、`external` 是已登录，其他是 `unknown`。`label` 显出不可见字符、遮住像密钥的部分、最多 80 字，含 `@` 的整个不用。`account`（email、组织、套餐）在解析时就丢掉。推送只在发出它的进程还在时算数。Claude Agent 的适配器只在 `initialize`、建会话与每轮开始时重读登录，所以空闲进程的推送可能是旧的。
+- **Agent 推送。** codex-acp、Claude Agent 的适配器与 Claude 直连推送 `_auth/status_update`（以 `agentCapabilities._meta.authStatus` 宣告）。Latch 只读 `kind` 与 `label`：`none` 是未登录，`account`、`api_key`、`gateway`、`external` 是已登录，其他是 `unknown`。`label` 显出不可见字符、遮住像密钥的部分、最多 80 字，含 `@` 的整个不用。`account`（email、组织、套餐）在解析时就丢掉。推送只在发出它的进程还在时算数。Claude Agent 的适配器只在 `initialize`、建会话与每轮开始时重读登录，直连只在建会话时读，所以空闲进程的推送可能是旧的。
 - **状态命令（`loginStatus`）。** 只有 Codex 与 Claude Agent 有；其他 Harness 始终 `unknown`，要到 `session/new` 被拒才知道。
   - Codex：`codex login status`。退出 0 算已登录；退出 1 且文字是 `Not logged in` 才算未登录，其他都是 `unknown`。
-  - Claude Agent：适配器自带 CLI 的 `claude-agent-acp --cli auth status --json`，只读 `loggedIn`、`apiKeySource`、`apiProvider` 与 `loginExpiresAt`。有推送时它仍运行，因为推送里没有到期日。
+  - Claude Agent：直连是 `claude auth status --json`，适配器上是它自带 CLI 的 `claude-agent-acp --cli auth status --json`，只读 `loggedIn`、`apiKeySource`、`apiProvider` 与 `loginExpiresAt`。有推送时它仍运行，因为推送里没有到期日。
   - 超时 10 秒。输出只在判断时读一次，可能含账号或部分密钥，不返回、不记录。
 - **三态接口。** `POST /link/api/harnesses/:id/login-status`（`run`，可带 `fresh`）返回 `{ status, label?, expiresAt? }`。有运行中的进程推送过、而状态命令说不出更多时直接用推送，不运行程序。两者都有时较新的说了算；标签只取推送的，日期只取命令的，各自只在结果与它的来源都说已登录时给出。结果缓存 30 秒；「测试启动」读到不同的明确状态时缓存作废。`fresh`（「重新检查」）总会再运行程序，只有 2 秒内的上一次 `fresh` 结果能代替它。
 - **审计。** 每次实际运行前写 `agent.login.requested`（写不进就不运行），结束后 `agent.login.checked`，只含 ID 与状态。
@@ -798,7 +828,7 @@ Harness 先给出计划、等人同意再动手时，profile 的 `readPlan` 认�
 
 | Harness | 认出的询问 | 「按计划执行」 | 「继续规划」 |
 | --- | --- | --- | --- |
-| Claude Agent | ExitPlanMode：选项是 `exit-plan-*`，计划在调用输入的 `plan` | `exit-plan-default`（回到 `default`，之后每次改文件先问） | `reject`：适配器中断这一轮，这一轮按取消结束，人在下一条消息里说怎么改 |
+| Claude Agent | ExitPlanMode：选项是 `exit-plan-*`，计划在调用输入的 `plan` | `exit-plan-default`（回到 `default`，之后每次改文件先问） | `reject`：中断这一轮，这一轮按取消结束（直连与适配器相同），人在下一条消息里说怎么改 |
 | Cursor | `cursor/create_plan` | `accepted` | `rejected` |
 
 - **「按计划执行」只来自允许名单。** profile 的 `planAnswers` 列出能回答计划的选项 ID（Claude 是 `exit-plan-default`，Cursor 是 `accept`）；它若同时换模式（`modeAnswers`），换到的模式不能比 profile 的默认模式宽。名单之外的允许选项，或换到更宽模式的，一律不提供，从不改名显示；没有可用的就只能「继续规划」。
@@ -1092,7 +1122,7 @@ Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别�
 | --- | --- |
 | `mode-unsupported`（400） | ACP Agent 只支持 Agent 模式 |
 | `agent-env-reserved`（400） | 定义设置了由 Latch 管理的环境变量 |
-| `agent-args-reserved`（400） | 定义的参数里有由线决定的参数（Codex、pi） |
+| `agent-args-reserved`（400） | 定义的参数里有由线决定的参数（Codex、pi）；Claude 直连的定义不能带任何参数 |
 | `approval-option-hidden`（400） | 该选项会持久保存授权，Latch 不提供 |
 | `workspace-unavailable`（400） | 工作目录不是 Host 登记的项目目录，或所选项目的文件夹与登记的不一致 |
 | `l3-confirmation-missing`（409） | 会话没有启动指纹的记录 |

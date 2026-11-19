@@ -5,7 +5,7 @@
 import { realpathSync, statSync } from 'node:fs'
 import { AppError } from '@latch/sdk'
 import { locateProgram, readOwnVersion } from './login.ts'
-import { selectProfile } from './permission.ts'
+import { routeCommand, selectProfile } from './permission.ts'
 import type { HarnessProfile } from './profiles/index.ts'
 import type { AgentRecord } from './types.ts'
 import { compareVersions } from './semver.ts'
@@ -62,11 +62,13 @@ function gateOf(record: AgentRecord, path: string, own?: Gate): Gate | undefined
   const { preset, profile } = selectProfile(record)
   const gate = own ?? profile?.minimumVersion
   if (!gate || !preset) return undefined
-  // Only the preset's own program, the file a login check runs: its bare name, or a path to that same file. Any other
+  // Only the preset's own program (its adapter's, for a definition on the adapter), the file a login check runs: its bare
+  // name, or a path to that same file. Any other
   // command (`node …/cli.js`, a copy in a project folder) is never run for its version and blocks nothing.
-  const located = locateProgram(preset.command)
+  const program = routeCommand(record, preset)
+  const located = locateProgram(program)
   if (!located) return undefined
-  if (record.command !== preset.command && !sameFile(record.command, located)) return undefined
+  if (record.command !== program && !sameFile(record.command, located)) return undefined
   return sameFile(path, located) ? gate : undefined
 }
 

@@ -10,6 +10,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "catalog:",
     "@cursor/sdk": "catalog:",
     "@latch/core": "workspace:*",
     "@latch/protocol": "workspace:*",

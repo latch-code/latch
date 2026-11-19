@@ -207,9 +207,9 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 
 ### Claude Agent
 
-- **版本门**运行适配器自己的 `--cli --version`，只认它实际启动的 Claude Code 版本，不用 ACP 报告的适配器版本或 PATH 上另一个 `claude` 代替。每个新进程重读；无法确认或低于最低版本时在发凭据之前拒绝。
+- **版本门**读实际启动的 Claude Code：直连读 `claude --version`（2.1.322 起），适配器上读它自己的 `--cli --version`（2.1.318 起），不用 ACP 报告的适配器版本或 PATH 上另一个 `claude` 代替。每个新进程重读；无法确认或低于最低版本时在发凭据之前拒绝。
 - `ANTHROPIC_BASE_URL` 指向会话网关，凭据在 `ANTHROPIC_AUTH_TOKEN`。其他 provider 开关、API key、OAuth token 与自定义头清空。`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` 让 Claude Code 忽略设置文件里的 provider 地址与认证覆盖。
-- 模型经适配器的 `_meta.claudeCode.options.settings` 交付（新建、载入、恢复、分叉）：`availableModels` 与 `modelPicker`，模型 ID 原样，不给 `behavesAs`、价格或推测容量。原生发现只留 ID 含 `claude` 或 `anthropic` 的模型，所以要显式 picker；Host 仍只保留 Agent 实际报告的精确值。
+- 模型经 `_meta.claudeCode.options.settings` 交付（新建、载入、恢复、分叉；直连的线把它作为 SDK 的 `settings`，即 `claude` 的 `--settings` 参数，不含凭据）：`availableModels` 与 `modelPicker`，模型 ID 原样，不给 `behavesAs`、价格或推测容量。原生发现只留 ID 含 `claude` 或 `anthropic` 的模型，所以要显式 picker；Host 仍只保留 Agent 实际报告的精确值。
 - 会话设置只有公开模型字段与禁用的 `apiKeyHelper`，不写用户的 CLI 设置。主模型、自定义模型项、自动模式分类器与子 Agent 默认值指向所选模型，其他默认别名清空。网关仍拒绝列表外的请求；不承诺未知的辅助调用都遵守配置。
 - `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` 让 Bash、SessionStart hook 与 stdio MCP 子进程不继承凭据。泛化的 scrub 可被设置文件覆盖，不能据此说用户自己配置的秘密都被清除。
 - Claude 对自定义模型假定的上下文容量与价格不作为服务事实显示，只保留它报告的已用上下文 token。

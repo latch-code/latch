@@ -11,9 +11,13 @@ const ENGLISH: Readonly<
     direct: 'Direct connections require Codex 0.156.0 or later: npm i -g @openai/codex',
   },
   'claude-agent': {
-    description: 'Uses your existing Claude Code login. Latch doesn’t read your credentials.',
-    license: 'Apache-2.0 adapter. Claude Code is proprietary.',
-    installNote: 'Sign in to Claude Code as well',
+    description:
+      'Connects directly to the Claude Code you installed, with its existing login and settings. Latch doesn’t read your credentials.',
+    license: 'Claude Code is proprietary; the Claude Agent SDK is under Anthropic’s commercial terms.',
+    installNote: 'Version 2.1.322 or later. Sign in to Claude Code as well',
+    adapterDescription:
+      'Uses the Claude Code bundled with claude-agent-acp, with your existing Claude Code login. Latch doesn’t read your credentials.',
+    direct: 'Direct connections require Claude Code 2.1.322 or later: npm i -g @anthropic-ai/claude-code',
   },
   pi: {
     description: 'pi manages models and login. The Latch extension configures permissions.',

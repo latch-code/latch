@@ -1,7 +1,7 @@
 import { chromium } from '@playwright/test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { AppSnapshot, ProviderSettings, TaskDetail } from '@latch/protocol'
 import { startFakeModels } from '@latch/testkit'
@@ -12,6 +12,8 @@ import { noHorizontalOverflow } from './helpers/layout.ts'
 afterEach(() => vi.unstubAllEnvs())
 
 const live = process.env.LATCH_CLAUDE_GATEWAY_BINARY
+/** The person's own `claude` runs on the Agent SDK wire, which takes no arguments; anything else is the adapter. */
+const program = live !== undefined && basename(live) === 'claude' ? 'claude' : 'claude-agent-acp'
 it.skipIf(!live).each(['anthropic', 'openai-compatible', 'openai-responses'] as const)(
   'chooses real Claude %s gateway models in the normal menus and restores the exact model',
   async kind => {
@@ -36,7 +38,7 @@ it.skipIf(!live).each(['anthropic', 'openai-compatible', 'openai-responses'] as 
       dataDir: join(root, 'host'),
       workspaceRoot: join(root, 'project'),
       commandDirectories: () => [dirname(command)],
-      loginPrograms: (name: string) => (name === 'claude-agent-acp' ? command : undefined),
+      loginPrograms: (name: string) => (name === program ? command : undefined),
       detectPreset: (preset: { id: string }) => (preset.id === harness ? { found: true, path: command } : { found: false }),
     }
     let host = await startTestHost(options)
@@ -79,7 +81,7 @@ it.skipIf(!live).each(['anthropic', 'openai-compatible', 'openai-responses'] as 
               name: harness,
               presetId: harness,
               command,
-              args: ['--hide-claude-auth'],
+              args: program === 'claude' ? [] : ['--hide-claude-auth'],
               env: {},
             },
           })

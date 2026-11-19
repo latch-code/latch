@@ -1,4 +1,5 @@
 import { AcpWire } from './acp.ts'
+import { ClaudeWire } from './claude.ts'
 import { CODEX_APP_SERVER_ARGS, CodexWire } from './codex.ts'
 import { CursorWire, cursorRunnerArgs } from './cursor.ts'
 import { OPENCODE_SERVE_ARGS, OpencodeWire } from './opencode.ts'
@@ -8,7 +9,7 @@ import type { SpawnSpec } from './process.ts'
 import type { AgentWire, WireHandlers, WireModelRoute } from './types.ts'
 
 /** The protocol a harness speaks, by its profile: ACP unless it says otherwise. */
-export type WireKind = 'acp' | 'pi' | 'codex' | 'cursor' | 'opencode'
+export type WireKind = 'acp' | 'pi' | 'codex' | 'cursor' | 'opencode' | 'claude'
 
 /**
  * What a wire that chooses the model itself is told of a session on a route: the model it starts on and the only ones it
@@ -23,6 +24,7 @@ export function openWire(kind: WireKind | undefined, spec: SpawnSpec, handlers: 
   if (kind === 'codex') return CodexWire.spawn(spec, handlers, options.route)
   if (kind === 'cursor') return CursorWire.spawn(spec, handlers)
   if (kind === 'opencode') return OpencodeWire.spawn(spec, handlers)
+  if (kind === 'claude') return ClaudeWire.spawn(spec, handlers, options.route)
   return AcpWire.spawn(spec, handlers)
 }
 

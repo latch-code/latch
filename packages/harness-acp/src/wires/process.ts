@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { Readable, Writable } from 'node:stream'
 
 export interface ExitInfo {
   code: number | null
@@ -44,9 +45,12 @@ export interface SpawnSpec {
   redact(text: string): string
 }
 
-/** What a wire reads from its process: one JSON object per line, then the end of the process. */
+/**
+ * What a wire reads from its process: one JSON object per line, then the end of the process. Without `record` or `text`
+ * the process's stdin and stdout are the caller's own (`streams`), for a library that speaks to the process itself.
+ */
 export interface ProcessEvents {
-  record(message: Record<string, unknown>): void
+  record?(message: Record<string, unknown>): void
   /** A line on stdout that is not a JSON object, for a program that speaks elsewhere and only says where on stdout. */
   text?(line: string): void
   /** Called once, before `exited` resolves. */
@@ -158,7 +162,7 @@ export class AgentProcess {
     this.exited = new Promise(resolve => {
       this.resolveExited = resolve
     })
-    child.stdout.on('data', (chunk: Buffer) => this.onData(chunk))
+    if (events.record || events.text) child.stdout.on('data', (chunk: Buffer) => this.onData(chunk))
     child.stderr.on('data', (chunk: Buffer) => this.onStderr(chunk))
     child.stdin.on('drain', () => this.onDrain())
     // EPIPE after the agent exits is expected; the exit path reports it.
@@ -194,6 +198,14 @@ export class AgentProcess {
   }
   get pid(): number | undefined {
     return this.child.pid
+  }
+  /** The process's own stdin and stdout, for a caller that reads and writes them itself (no `record`). */
+  get streams(): { stdin: Writable; stdout: Readable } {
+    return { stdin: this.child.stdin, stdout: this.child.stdout }
+  }
+  /** A signal to every process of the group, as `stop` sends them; for a library that ends the process its own way. */
+  signal(signal: NodeJS.Signals): void {
+    if (!this.info) this.signalGroup(signal)
   }
 
   write(message: unknown): void {
@@ -327,7 +339,7 @@ export class AgentProcess {
       else this.noise++
       return
     }
-    this.events.record(message)
+    this.events.record?.(message)
   }
 
   private onStderr(chunk: Buffer): void {

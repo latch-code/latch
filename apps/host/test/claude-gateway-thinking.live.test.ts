@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { ProviderSettings, TaskDetail } from '@latch/protocol'
 import { startFakeModels } from '@latch/testkit'
@@ -9,6 +9,10 @@ import { startTestHost } from './helpers/host.ts'
 import { assertNoGatewayCredentials } from './helpers/gateway-evidence.ts'
 
 const binary = process.env.LATCH_CLAUDE_GATEWAY_BINARY
+/** The person's own `claude` runs on the Agent SDK wire, which takes no arguments; anything else is the adapter. */
+const direct = binary !== undefined && basename(binary) === 'claude'
+const program = direct ? 'claude' : 'claude-agent-acp'
+const launchArgs = direct ? [] : ['--hide-claude-auth']
 afterEach(() => vi.unstubAllEnvs())
 
 // Claude sends `output_config.effort: high` of its own on Default; a Chat model that declares only `max` once refused it.
@@ -32,7 +36,7 @@ it.skipIf(!binary)(
       dataDir: join(root, 'host'),
       workspaceRoot: join(root, 'project'),
       commandDirectories: () => [dirname(binary!)],
-      loginPrograms: name => (name === 'claude-agent-acp' ? binary : undefined),
+      loginPrograms: name => (name === program ? binary : undefined),
       detectPreset: preset => (preset.id === 'claude-agent' ? { found: true, path: binary! } : { found: false }),
     })
     try {
@@ -57,7 +61,7 @@ it.skipIf(!binary)(
           name: 'Claude Code',
           presetId: 'claude-agent',
           command: binary!,
-          args: ['--hide-claude-auth'],
+          args: launchArgs,
           env: {},
         },
       })
