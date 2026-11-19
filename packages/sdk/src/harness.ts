@@ -10,6 +10,7 @@ import type {
   ModelCapabilities,
   RiskLevel,
   RoutedTurn,
+  TeamRoster,
   TokenUsage,
   ToolKind,
 } from '@latch/protocol/types'
@@ -281,6 +282,18 @@ export interface HarnessHostOptions {
    */
   proposeWork?(input: WorkProposalInput): Promise<void>
   /**
+   * The same sessions: the team this session leads, as its agent may read it (`list_members`), only while the person
+   * lets the agent send work to its members; undefined otherwise. Read again whenever the Host says it changed
+   * (`Bridge.teamChanged`).
+   */
+  teamRoster?(sessionId: string): TeamRoster | undefined
+  /**
+   * The same sessions: its agent sent work to members of the team this session leads (`send_to_members`). The Host finds
+   * the team and each member from its own records, never from the agent, and makes the round as the device that allowed
+   * it. Resolves with the round's number; rejects, in English for the agent, with why it was refused. Never quotes a prompt.
+   */
+  dispatchTeam?(input: TeamDispatchInput): Promise<{ round: number }>
+  /**
    * The built-in harness, the same sessions: its agent searched its own saved memories (`recall_memory`). Read-only. The Host finds the owner
    * from its own records of `sessionId`, answers only that owner's confirmed memories, bounded in count and size, and
    * counts the query in the owner's activity. Rejects when the session may not recall.
@@ -359,6 +372,16 @@ export interface WorkProposalInput {
   /** A tool that read outside content ran in that turn before it, or the driver could not tell. */
   external: boolean
   /** Unique within the session's own channel, so a proposal read twice is kept once. */
+  key: string
+}
+
+/** A round an agent sent through `send_to_members`. Only `sends` comes from the agent; `member` is a roster's short ID. */
+export interface TeamDispatchInput {
+  sessionId: string
+  /** The user message of the turn it came from. */
+  messageId?: string
+  sends: Array<{ member: string; prompt: string }>
+  /** Unique within the session's own channel, so a call read twice makes one round. */
   key: string
 }
 

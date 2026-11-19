@@ -134,8 +134,10 @@ export const MEMBER_TONE: Record<TeamMemberState, StatusTone> = {
 export const memberAtWork = (state: TeamMemberState): boolean => state === 'starting' || state === 'running' || state === 'waiting'
 
 /** The turn a team's card follows: the one that holds `messageId`; none when that message is not in the record. */
-export function teamTurnKey(team: Pick<TeamSummary, 'messageId'>, messages: readonly Message[]): string | undefined {
-  const at = team.messageId === undefined ? -1 : messages.findIndex(message => message.id === team.messageId)
+export function teamTurnKey(team: Pick<TeamSummary, 'messageId' | 'rounds'>, messages: readonly Message[]): string | undefined {
+  // A later round moves the card to where it was made: the card shows the latest round.
+  const messageId = team.rounds?.at(-1)?.messageId ?? team.messageId
+  const at = messageId === undefined ? -1 : messages.findIndex(message => message.id === messageId)
   if (at < 0) return undefined
   for (let index = at; index >= 0; index--) {
     const message = messages[index]!
@@ -151,7 +153,10 @@ export function teamTurnKey(team: Pick<TeamSummary, 'messageId'>, messages: read
  */
 export function returnOf(message: Pick<Message, 'id' | 'role' | 'text'>, teams: readonly TeamSummary[] | undefined): TeamSummary | boolean {
   if (message.role !== 'user') return false
-  return teams?.find(team => team.returnedMessageId === message.id) ?? message.text.startsWith(TEAM_RETURN_HEADING)
+  return (
+    teams?.find(team => team.returnedMessageId === message.id || team.rounds?.some(round => round.returnedMessageId === message.id))
+    ?? message.text.startsWith(TEAM_RETURN_HEADING)
+  )
 }
 
 /** A member's place among its team's members, counted from one. */

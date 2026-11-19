@@ -374,6 +374,7 @@ Driver 上的其他声明：
 | `modelGateway` | 给声明了 `models.wires` 的 Driver：按进程 `open` 一个凭据，进程结束时 `close`，`active()` 为假后换进程；一轮发出时与结束时各调用一次 `takeTurn()`，把结果记进 `TurnStats.routed`。凭据不进参数、URL、日志与消息。路线、`upstream`、`setThinking` 与损耗见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md) |
 | `turnEnded(turn)` | 每轮结束时调用一次：ACP Driver 只在不走模型路由时调用，带与 `TurnStats.usage` 相同的用量、步数、用时与 Harness 报告的花费差值；内置 Harness 带这一轮的 `providerId` 与各步用量之和，Host 只留插件服务的轮次。Host 只追加到自己登录轮次的记录（[MODEL-GATEWAY.md](MODEL-GATEWAY.md#网关以外的轮次)），不向 Driver 抛错 |
 | `askUser`、`questionSettled` | 给内置以外的 Driver：把 Harness 的提问放进会话行 `tool:<callId>`，回答落进会话后得到 `latch.question-result` 的 JSON；提问结束或 `signal` 中止时拒绝。Driver 把结果写进那一行并落盘后调用 `questionSettled`，回答的设备才拿到回执 |
+| `teamRoster`、`dispatchTeam` | 同样的会话：带队会话的 Agent 在人打开开关时读团队名单、给已有成员派一轮（[TEAMS.md](TEAMS.md#agent-派活)）；名单变了 Host 调 `Bridge.teamChanged`。拒绝用英文原因 |
 | `proposeWork` | 建会话时 `CreateTaskInput.workProposals` 为真时可用：Agent 为看板提议待办或自己卡上的改动，Host 只建一条待人接受的提议（[ARCHITECTURE.md](ARCHITECTURE.md#agent-的提议)）；只交 `todo` 或 `card`，不交优先级 |
 | `proposeMemory`、`proposeSchedule` | 会话的执行上下文带 `proposals` 时可用。Host 只建一条待人确认的提议，从不直接保存或运行；`key` 在会话的通道内唯一，重复只建一条；`external` 拿不准时为真；拒绝的原因不复述内容（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#记忆提议)） |
 | `recallMemory` | 只给内置 Harness；只读，只回该归属已确认的记忆（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#查记忆)） |

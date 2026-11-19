@@ -4,7 +4,7 @@ import type { SessionCommand, SessionSkill } from '@latch/protocol'
 export interface PromptMark {
   start: number
   end: number
-  kind: 'skill' | 'command'
+  kind: 'skill' | 'command' | 'member'
   name: string
   description?: string
 }
@@ -14,6 +14,8 @@ export interface PromptCatalogue {
   skills?: readonly SessionSkill[] | undefined
   /** Latch's own slash actions, run by the page and never sent. */
   actions?: readonly { name: string; description?: string }[] | undefined
+  /** Members of the team this session leads: `@token` standing on its own is a member's chip. */
+  members?: readonly { token: string; title: string }[] | undefined
 }
 
 /**
@@ -62,6 +64,12 @@ export function promptMarks(text: string, catalogue: PromptCatalogue): PromptMar
     const mark = skill(match.index + match[1]!.length, match[2]!)
     if (mark) marks.push(mark)
   }
+  for (const member of catalogue.members ?? [])
+    for (let start = text.indexOf(member.token); start >= 0; start = text.indexOf(member.token, start + 1)) {
+      const end = start + member.token.length
+      if ((start === 0 || /\s/u.test(text[start - 1]!)) && (end === text.length || /\s/u.test(text[end]!)))
+        marks.push({ start, end, kind: 'member', name: member.title })
+    }
   return marks
 }
 

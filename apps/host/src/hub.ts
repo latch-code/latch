@@ -1215,6 +1215,23 @@ export class HarnessHub implements Bridge {
     await bridge.markOutsideContent(sessionId)
   }
 
+  /**
+   * Whether the session's agent can be given the team tools: started with the board's channel, by a driver that reads
+   * a team's roster again when told (`Bridge.teamChanged`).
+   */
+  teamChannel(sessionId: string): boolean {
+    return this.workProposalsOf(sessionId) && typeof this.owner(sessionId)?.bridge?.teamChanged === 'function'
+  }
+
+  /** The team the session leads changed: its driver reads the roster again. Never fails the caller. */
+  async teamChanged(sessionId: string): Promise<void> {
+    const bridge = this.owner(sessionId)?.bridge
+    if (!bridge?.teamChanged || !this.workProposalsOf(sessionId)) return
+    await bridge
+      .teamChanged(sessionId)
+      .catch(error => this.log(`团队名单没有交给会话 ${sessionId}：${error instanceof Error ? error.message : String(error)}`))
+  }
+
   /** Starts a settled session's process ahead of its next turn (`Bridge.warm`); false when its driver has none or declined. */
   async warm(sessionId: string): Promise<boolean> {
     const { bridge } = await this.route(sessionId)

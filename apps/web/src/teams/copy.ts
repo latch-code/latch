@@ -1,4 +1,4 @@
-import type { TeamMemberState, TeamSummary } from '@latch/protocol'
+import { TEAM_LIMITS, type TeamMemberState, type TeamSummary } from '@latch/protocol'
 import { APPROVAL_COPY } from '../core/securityCopy.ts'
 import { defineCopy, formatNumber } from '../core/i18n.ts'
 import type { EndMark } from './model.ts'
@@ -53,6 +53,24 @@ export const TEAM_COPY = defineCopy(
     noReply: '没有回复',
     place: (place: number, of: number) => `团队分工 · ${formatNumber(place)}/${formatNumber(of)}`,
     said: (members: number) => `团队分工，${formatNumber(members)} 个成员`,
+    round: (round: number) => `第 ${formatNumber(round)} 轮`,
+    byYou: '你派的',
+    byAgent: 'Agent 派的',
+    again: '再派一轮',
+    againTo: (title: string) => `再派一轮给「${title}」`,
+    againPlaceholder: '要它再做什么',
+    sendAgain: '发出',
+    letAgent: '让它自己派活',
+    resultsOfRound: (round: number) => `成员的结果 · 第 ${formatNumber(round)} 轮`,
+    memberUnstarted: '没有开始过',
+    memberArchived: '会话已归档',
+    memberBusy: '还在做上一件',
+    roundOpen: '这一轮还没结束',
+    writeFirst: '写下要成员做的事',
+    tooLong: `最多 ${formatNumber(TEAM_LIMITS.promptChars)} 个字符`,
+    textOnly: '派给成员只带文字',
+    sendToMembers: '派给成员',
+    memberMark: '成员 · ',
   },
   {
     team: 'Team',
@@ -103,6 +121,24 @@ export const TEAM_COPY = defineCopy(
     noReply: 'No reply',
     place: (place: number, of: number) => `Team · ${formatNumber(place)}/${formatNumber(of)}`,
     said: (members: number) => `Team of ${formatNumber(members)}`,
+    round: (round: number) => `Round ${formatNumber(round)}`,
+    byYou: 'Sent by you',
+    byAgent: 'Sent by the agent',
+    again: 'Send again',
+    againTo: (title: string) => `Send “${title}” another round`,
+    againPlaceholder: 'What next',
+    sendAgain: 'Send',
+    letAgent: 'Let it assign work',
+    resultsOfRound: (round: number) => `Members’ results · Round ${formatNumber(round)}`,
+    memberUnstarted: 'Never started',
+    memberArchived: 'Session archived',
+    memberBusy: 'Still at work',
+    roundOpen: 'This round is still open',
+    writeFirst: 'Write what the members should do',
+    tooLong: `At most ${formatNumber(TEAM_LIMITS.promptChars)} characters`,
+    textOnly: 'Members get text only',
+    sendToMembers: 'Send to members',
+    memberMark: 'Member · ',
   },
 )
 

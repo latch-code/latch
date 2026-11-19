@@ -140,6 +140,7 @@ import {
   type MemoryRecallResult,
   type ScheduleProposalInput,
   type WorkProposalInput,
+  type TeamDispatchInput,
   type HostProject,
   type ModelProvider,
   type ModelRoute,
@@ -3254,6 +3255,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             }
           terminalRoutes.endDisallowedStreams()
           endDisallowedSimulatorRuns()
+          // What a removed device, or one without `run` now, let the lead's agent do goes off with it.
+          void teamRoutes.devicesChanged()
         },
       },
       terminals,
@@ -3382,6 +3385,28 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           await cancelTask(caller, sessionId, runId ? { runId } : {}, res)
         },
         changed: teamChanged,
+        // A person's own words go as theirs; the lead's agent's carry no device's grant and are outside content.
+        async sendToMember(caller, sessionId, input, how) {
+          await sendPrompt(
+            caller,
+            sessionId,
+            queuedPromptSchema.parse(input),
+            how.withoutPrivateContext,
+            how.outside,
+            how.agent ? { narrower: true } : {},
+            how.agent,
+          )
+        },
+        unattendedRefusal: teamUnattendedRefusal,
+        channelRefusal(leadSessionId) {
+          if (hub?.teamChannel(leadSessionId)) return undefined
+          const harnessId = hub?.ownerOf(leadSessionId)
+          const name = (harnessId && hub?.info(harnessId)?.capabilities.display.label) || '这个 Harness'
+          return `${name} 没有给 Agent 的工具通道，不能让它自己派活。`
+        },
+        rosterChanged(leadSessionId) {
+          void hub?.teamChanged(leadSessionId)
+        },
       },
       workThreads: {
         threads: workThreads,
@@ -3801,6 +3826,29 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       refresh(input.sessionId)
     }
     /**
+     * A driver's `send_to_members`: only for a session the driver owns and the Host gave the board's channel, never a
+     * page's, an Agent's or a scheduled one. The team, its members and the device are the Host's own records
+     * (`TeamRoutes.dispatch`); nothing the agent names but a member's short ID and a prompt.
+     */
+    async function dispatchFromAgent(driver: HarnessDriver, raw: TeamDispatchInput): Promise<{ round: number }> {
+      const sessionId = typeof raw?.sessionId === 'string' ? raw.sessionId : ''
+      if (
+        hub?.ownerOf(sessionId) !== driver.id
+        || !hub.teamChannel(sessionId)
+        || hub.pageOriginOf(sessionId)
+        || hub.personalOf(sessionId)
+        || hub.automationOf(sessionId) !== undefined
+        || hub.unattended(sessionId)
+      )
+        throw new Error('Not sent: this conversation cannot send work to a team.')
+      return teamRoutes.dispatch({
+        sessionId,
+        ...(typeof raw.messageId === 'string' && raw.messageId.length <= 256 ? { messageId: raw.messageId } : {}),
+        sends: raw.sends,
+        key: String(raw.key).slice(0, 256),
+      })
+    }
+    /**
      * A driver's `recall_memory`, read-only: the same session check as a proposal, then only that owner's confirmed
      * memories, bounded. The query is counted in the owner's activity; a count that cannot be written fails nothing.
      */
@@ -3937,6 +3985,28 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     /** An assistant's or a group's session only opens to be read: nothing runs its private context any more. */
     function assertWritable(id: string): void {
       if (hub!.personalOf(id)) throw new AppError(409, 'session-read-only', '这个会话来自已移除的 Agent，只能查看。')
+    }
+    /**
+     * A team round the lead's agent makes: nobody presses anything, so the ceiling scheduled runs keep applies to the
+     * device that allowed it (it still stands behind unattended work, has `run`, was seen within the idle days) and to
+     * every Harness the round runs on. Without a device, only the Harnesses. Undefined when it may run.
+     */
+    function teamUnattendedRefusal(deviceId: string | undefined, harnessIds: readonly string[]): string | undefined {
+      const current = policy.get()
+      if (deviceId !== undefined) {
+        const device = devices.get(deviceId)
+        if (!device || !devices.standsBehind(deviceId) || !device.scopes.includes('run')) return '允许它的设备现在不能替你在后台运行。'
+        if (now() - Date.parse(device.lastSeenAt) > current.unattended.pauseAfterIdleDays * 86400000)
+          return `允许它的设备超过 ${current.unattended.pauseAfterIdleDays} 天没有用过，后台运行已暂停。`
+      }
+      for (const id of harnessIds) {
+        const level = hub!.levelOf(id)
+        if (!levelAtMost(level, current.unattended.maxLevel)) {
+          const name = hub!.info(id)?.capabilities.display.label ?? id
+          return `${name} 是 ${level}，后台运行最高 ${current.unattended.maxLevel}。`
+        }
+      }
+      return undefined
     }
     /** Manual runs need the caller's current authority; background grants also need the unattended ceiling and activity. */
     function authorizeAutomation(deviceId: string, definition: AutomationConfig, trigger: 'schedule' | 'manual'): void {
@@ -6292,6 +6362,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             proposeMemory: input => proposeFromAgent(driver, input),
             proposeSchedule: input => proposeScheduleFromAgent(driver, input),
             proposeWork: input => proposeWorkFromAgent(driver, input),
+            teamRoster: sessionId =>
+              hub?.ownerOf(sessionId) === driver.id && hub.teamChannel(sessionId) ? teamRoutes.roster(sessionId) : undefined,
+            dispatchTeam: input => dispatchFromAgent(driver, input),
             // Only Latch 内置 searches memories: other Harnesses get them in their first-turn block, as before.
             ...(driver.id === STANDARD ? { recallMemory: (input: MemoryRecallInput) => recallFromAgent(driver, input) } : {}),
             // Only a driver that says it can be pointed at a service gets tokens for one.
@@ -9915,18 +9988,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
        * as well, checked as the sender is. `narrower`: it carries words of a device it cannot name, so no grant.
        */
       writers: TurnWriters = {},
+      /** A turn nobody pressed (a team round the lead's agent sent): no session-wide allowance carries into it. */
+      unattended = false,
     ): Promise<'steered' | 'accepted' | 'replayed' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
       // The install window: a retry of a turn this Host has on record gets its original answer; a new plain message, and a
       // queued or steered one on a session that is not running (it would start a turn at once), are refused.
       const turnKey = `${id}:${caller.device.id}:${input.requestId}`
       if (turnRequests.has(turnKey) || promptQueues.knows(id, caller.device.id, input.requestId))
-        return sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent, writers)
+        return sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent, writers, unattended)
       if (updateWindow.isOpen()) {
         if (!(input.queue || input.steer)) refuseWhileUpdating('turn')
         const status = (await hub!.summary(id)).status
         if (status !== 'running' && status !== 'waiting-approval') refuseWhileUpdating('turn')
       }
-      return tracked(turnRequests, turnKey, () => sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent, writers))
+      return tracked(turnRequests, turnKey, () =>
+        sendPromptChecked(caller, id, input, withoutPrivateContext, outsideContent, writers, unattended),
+      )
     }
 
     async function sendPromptChecked(
@@ -9936,6 +10013,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       withoutPrivateContext: boolean,
       outsideContent = false,
       writers: TurnWriters = {},
+      unattended = false,
     ): Promise<'steered' | 'accepted' | 'replayed' | { queued: Awaited<ReturnType<PromptQueues['submit']>> }> {
       recheck(caller, 'run')
       await assertSessionAccess(caller, id)
@@ -10070,6 +10148,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               ...(attachments.length ? { attachments } : {}),
               ...(input.freshContext ? { freshContext: true as const } : {}),
               ...(outsideContent ? { outsideContent: true as const } : {}),
+              ...(unattended ? { unattended: true as const } : {}),
             }),
         )
       } catch (cause) {

@@ -91,6 +91,19 @@ export const SESSION_ACTIONS = {
   'team.returned': z.strictObject({ teamId: prefixed('tem'), leadSessionId: opaqueId, members: count, promptHash: hex64 }),
   'team.kept': z.strictObject({ teamId: prefixed('tem'), reason: z.enum(['lead-gone', 'device-removed', 'stopped']) }),
   'team.stopped': z.strictObject({ teamId: prefixed('tem') }),
+  /**
+   * A later round on existing members (`team.round.started`, before any is sent; `by` a person or the lead's agent), and
+   * the switch that lets the lead's agent make them: `team.dispatch.allowed` before it is on, `team.dispatch.ended` when
+   * it goes off (the person, the device that allowed it removed or without `run`, or the team stopped).
+   */
+  'team.round.started': z.strictObject({
+    teamId: prefixed('tem'),
+    round: count,
+    by: z.enum(['person', 'agent']),
+    members: count,
+  }),
+  'team.dispatch.allowed': z.strictObject({ teamId: prefixed('tem'), leadSessionId: opaqueId }),
+  'team.dispatch.ended': z.strictObject({ teamId: prefixed('tem'), reason: z.enum(['person', 'device-removed', 'stopped']) }),
   /** A person marked the 待办 done (`closed`) or reopened it. */
   'work.item.closed': z.strictObject({ itemId: prefixed('itm'), closed: z.boolean() }),
   'task.question.answered': z.strictObject({ sessionId: opaqueId, questionId: opaqueId }),

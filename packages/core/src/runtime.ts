@@ -16,6 +16,11 @@ import {
   PROPOSE_CARD_GUIDE,
   PROPOSE_TODO_GUIDE,
   PROPOSE_TODOS_GUIDE,
+  LIST_MEMBERS_GUIDE,
+  LIST_MEMBERS_TOOL,
+  SEND_TO_MEMBERS_GUIDE,
+  SEND_TO_MEMBERS_TOOL,
+  TEAM_LIMITS,
   WORK_PROPOSAL_LIMITS,
 } from '@latch/protocol'
 import type {
@@ -65,6 +70,7 @@ import {
   type WorkProposalInput,
   type WorkTodoProposal,
   type HarnessTurnRecord,
+  type HarnessHostOptions,
 } from '@latch/sdk'
 import { errorCodeOf, HOST_STOPPED, interruptedNote, runEndRecord } from './run-end.ts'
 import { isoTime, ReasoningTimer, RunClock } from './node-kit/timing.ts'
@@ -175,6 +181,12 @@ export interface RuntimeOptions {
    * `workProposals`. Without it no run offers them. Nothing is created, changed or started until the person accepts.
    */
   proposeWork?(input: WorkProposalInput): Promise<void>
+  /**
+   * The same sessions: the team this session leads, while the person lets its agent send work; with `dispatchTeam`, a
+   * run that starts while it is there offers `list_members` and `send_to_members`.
+   */
+  teamRoster?: HarnessHostOptions['teamRoster']
+  dispatchTeam?: HarnessHostOptions['dispatchTeam']
   /**
    * Where `recall_memory` asks, for the same runs. Without it no run offers that tool. Read-only: the Host answers the
    * session owner's confirmed memories, bounded, and counts the query.
@@ -1078,6 +1090,8 @@ class HarnessRuntime implements Bridge {
         }
         // With the turn's own record: nothing between can clear it, and it marks no other turn.
         if (options.outsideContent) task.outsideRead = true
+        // A turn nobody pressed asks for every call that asks, as a scheduled run does.
+        if (options.unattended) run.unattended = true
         this.assertAttachments(run, [...attachments, ...task.history.flatMap(message => message.attachmentRefs ?? [])])
         dropTurnSignatures(task.history)
         const at = isoTime(run.clock.startedAt)
@@ -1216,6 +1230,10 @@ class HarnessRuntime implements Bridge {
         ...(agent && this.options.proposeSchedule ? [proposeScheduleTool(run, this.options.proposeSchedule, session)] : []),
         ...(agent && this.options.recallMemory ? [recallMemoryTool(run, this.options.recallMemory, session)] : []),
         ...(board ? boardTools(run, this.options.proposeWork!, session) : []),
+        // Only while the person lets this session's agent send its team work; each call is checked again by the Host.
+        ...(board && this.options.teamRoster?.(sessionId) && this.options.dispatchTeam
+          ? teamTools(this.options.teamRoster, this.options.dispatchTeam, run)
+          : []),
       ]
       if (own.length) run.proposals = own
     }
@@ -1242,6 +1260,9 @@ class HarnessRuntime implements Bridge {
       })
       .catch(() => {}) // drive records execution errors; storage failure remains fail-closed.
   }
+
+  /** A run reads the roster when it starts (`teamRoster`): nothing is kept here to bring up to date. */
+  async teamChanged(_sessionId: string): Promise<void> {}
 
   async markOutsideContent(sessionId: string): Promise<void> {
     await this.ready()
@@ -1465,7 +1486,7 @@ class HarnessRuntime implements Bridge {
     if (risk !== 'R0') {
       // An R1 tool the user allowed for this session still shows its preview and result, without asking again.
       // R2 ignores that allowance and asks every time.
-      if (risk === 'R2' || !this.task(this.state, run.sessionId).allowedTools?.includes(call.name)) {
+      if (risk === 'R2' || run.unattended === true || !this.task(this.state, run.sessionId).allowedTools?.includes(call.name)) {
         const answer = await this.approval(run, call, tool, preview, risk)
         signal.throwIfAborted()
         if (answer.decision !== 'allow') {
@@ -2022,6 +2043,86 @@ function boardTools(run: Run, propose: NonNullable<RuntimeOptions['proposeWork']
           `call:${run.id}:${context.callId}`,
         )
         return { text: done }
+      },
+    },
+  ]
+}
+
+/**
+ * The team tools for one run of a session that leads a team, while the person lets its agent send work: the roster as
+ * the Host has it now, and a round to some of its members, answered once the Host has made or refused it.
+ */
+function teamTools(
+  roster: NonNullable<RuntimeOptions['teamRoster']>,
+  dispatch: NonNullable<RuntimeOptions['dispatchTeam']>,
+  run: Run,
+): ToolDefinition[] {
+  const off = 'The user has not let you send work to this team; only the user can turn it on.'
+  return [
+    {
+      name: LIST_MEMBERS_TOOL,
+      title: '查看团队成员',
+      kind: 'other',
+      description: LIST_MEMBERS_GUIDE,
+      requiresApproval: false,
+      parameters: { type: 'object', additionalProperties: false, properties: {} },
+      async execute(_args, context) {
+        const found = roster(context.sessionId)
+        if (!found) throw new Error(off)
+        return { text: JSON.stringify(found) }
+      },
+    },
+    {
+      name: SEND_TO_MEMBERS_TOOL,
+      title: '给团队成员派活',
+      kind: 'other',
+      description: SEND_TO_MEMBERS_GUIDE,
+      requiresApproval: false,
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['sends'],
+        properties: {
+          sends: {
+            type: 'array',
+            minItems: 1,
+            maxItems: TEAM_LIMITS.members,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['member', 'prompt'],
+              properties: {
+                member: { type: 'string', pattern: '^m[1-9]$', description: "A member's id from list_members." },
+                prompt: {
+                  type: 'string',
+                  maxLength: TEAM_LIMITS.promptChars,
+                  description: 'The whole message for that member, standing alone.',
+                },
+              },
+            },
+          },
+        },
+      },
+      async execute(args, context) {
+        if (!roster(context.sessionId)) throw new Error(off)
+        const sends = Array.isArray(args.sends)
+          ? args.sends.map(one => {
+              const value = (one ?? {}) as { member?: unknown; prompt?: unknown }
+              return {
+                member: typeof value.member === 'string' ? value.member : '',
+                prompt: typeof value.prompt === 'string' ? value.prompt.trim() : '',
+              }
+            })
+          : []
+        const { round } = await dispatch({
+          sessionId: context.sessionId,
+          messageId: run.userMessageId,
+          sends,
+          key: `call:${run.id}:${context.callId}`,
+        })
+        return {
+          text: `Sent as round ${round}. Each member works on it in its own session; the results come back here as one message once every one has ended, so do not wait or poll.`,
+        }
       },
     },
   ]

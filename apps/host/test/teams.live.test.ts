@@ -8,7 +8,8 @@ import { liveHarnesses, replies, startRealHarnessHost, systemNotes, type RealHar
 /**
  * A team between real Harnesses: each Harness whose path is set leads once, with the next two as its members, so each is
  * also a member twice. The members run at the same time on their own Harnesses; the Host sends their replies to the lead
- * as one message, and the lead answers it.
+ * as one message, and the lead answers it. Then a second round goes to the same members, each in its own session again,
+ * and its results come back to the lead as a second message.
  *
  * Recorded (the default): every model request goes to a local recording service; the test reads the request the lead
  * sent after the return and finds both members' replies in it. With `LATCH_TEAM_REAL=1` each Harness runs signed in on
@@ -35,7 +36,10 @@ beforeAll(async () => {
   live = await startRealHarnessHost({
     real: REAL,
     plan: request => {
-      const asked = /(?:KIWI|PEAR)-[A-Z0-9-]+/u.exec(JSON.stringify(request.body).split(TEAM_RETURN_HEADING)[0] ?? '')
+      // The latest code word asked: a member's second round still carries its first in its history.
+      const asked = [
+        ...(JSON.stringify(request.body).split(TEAM_RETURN_HEADING)[0] ?? '').matchAll(/(?:KIWI|PEAR|PLUM|FIGS)-[A-Z0-9-]+/gu),
+      ].at(-1)
       return { text: asked ? `Member result ${asked[0]} reported.` : 'Recorded reply given.' }
     },
   })
@@ -163,6 +167,36 @@ else
         expect(summary).toContain(pear)
       }
       expect(overlapped).toBe(true)
+
+      // A second round to the same members, from the lead's conversation: each answers in its own session again.
+      const [plum, figs] = [`PLUM-${tag}`, `FIGS-${tag}`]
+      const sent = await live.owner.request(`teams/${team.id}/rounds`, {
+        method: 'POST',
+        body: {
+          requestId: randomUUID(),
+          sends: [
+            { itemId: team.members[0]!.itemId, prompt: `Reply with only this code word and nothing else: ${plum}` },
+            { itemId: team.members[1]!.itemId, prompt: `Reply with only this code word and nothing else: ${figs}` },
+          ],
+        },
+      })
+      expect(sent.status, await sent.clone().text()).toBe(201)
+      const again = await teamIn(team.id, ['returned', 'kept'], 300_000)
+      expect([again.state, again.round, again.members.map(member => member.state)]).toEqual(['returned', 2, ['done', 'done']])
+      expect(again.returnedMessageId).not.toBe(team.returnedMessageId)
+      const secondAnswer = await settledAfter(leadId, again.returnedMessageId!, 300_000)
+      const secondReturn = secondAnswer.messages.find(message => message.id === again.returnedMessageId)!
+      evidence.secondRound = { said: again.members.map(member => member.said) }
+      if (live.upstream) {
+        expect(secondReturn.text).toContain(plum)
+        expect(secondReturn.text).toContain(figs)
+      } else {
+        const sessions = await Promise.all(again.members.map(member => live.detail(member.sessionId!)))
+        expect(replies(sessions[0]!)).toContain(plum)
+        expect(replies(sessions[1]!)).toContain(figs)
+        expect(secondReturn.text).toContain(plum)
+        expect(secondReturn.text).toContain(figs)
+      }
       if (evidenceDir)
         await writeFile(join(evidenceDir, `team-${REAL ? 'real' : 'recorded'}-${lead}.json`), `${JSON.stringify(evidence)}\n`)
     },

@@ -24,6 +24,10 @@ import {
   skillsDirectory,
   skillsServer,
   writeAnswer,
+  readRounds,
+  writeRoundAnswer,
+  writeTeamRoster,
+  clearTakenRounds,
   writeSessionGuides,
   writeSessionSkills,
 } from './skills-server.ts'
@@ -933,6 +937,7 @@ export class AgentRuntime implements Bridge {
   private readonly tools = new Map<string, { seq: number; calls: Map<string, ToolState> }>()
   /** Each session's read of its proposals file, one at a time. */
   private readonly proposalReads = new Map<string, Promise<void>>()
+  private readonly roundReads = new Map<string, Promise<void>>()
   /** Sessions whose board proposal is in flight: their file is read until it ends (`watchProposals`). */
   private readonly proposalWatches = new Map<string, ReturnType<typeof setTimeout>>()
   /** Assistant text that arrived outside a turn and is being appended to a settled message. */
@@ -3001,6 +3006,18 @@ export class AgentRuntime implements Bridge {
     return promise
   }
 
+  /** The roster beside the session's server, as the Host has it now; removed while its agent may not send work. */
+  async teamChanged(sessionId: string): Promise<void> {
+    const task = this.state.tasks[sessionId]
+    if (!task?.acp.workProposals || !this.teamTools()) return
+    await writeTeamRoster(skillsDirectory(this.options.dataDir, sessionId), this.options.teamRoster!(sessionId))
+  }
+
+  /** Whether the Host gives sessions with the board's channel the team tools. */
+  private teamTools(): boolean {
+    return this.options.teamRoster !== undefined && this.options.dispatchTeam !== undefined
+  }
+
   async markOutsideContent(sessionId: string): Promise<void> {
     await this.ready()
     const task = this.task(sessionId)
@@ -4076,6 +4093,63 @@ export class AgentRuntime implements Bridge {
     })
   }
 
+  /**
+   * Hands the Host each whole `send_to_members` call the session's server has written since the last read, in order,
+   * and writes the Host's word back for the server to answer the agent: the round's number or why it was refused.
+   */
+  private collectRounds(taskId: string): void {
+    const previous = this.roundReads.get(taskId) ?? Promise.resolve()
+    const next = previous.then(async () => {
+      const task = this.state.tasks[taskId]
+      const dispatch = this.options.dispatchTeam
+      if (!task?.acp.workProposals || !dispatch || !this.teamTools()) return
+      const turn = proposalTurn(task)
+      const directory = skillsDirectory(this.options.dataDir, taskId)
+      const from = { line: task.acp.roundsRead ?? 0, offset: task.acp.roundsOffset ?? 0 }
+      const { calls, refused, next: after } = await readRounds(directory, from)
+      if (after.line === from.line && after.offset === from.offset) return
+      for (const first of refused)
+        await writeRoundAnswer(directory, first, false, 'Not sent: the round was not in the expected form.').catch(() => {})
+      for (const call of calls) {
+        const answer = await dispatch({
+          sessionId: taskId,
+          ...(turn.messageId ? { messageId: turn.messageId } : {}),
+          sends: call.sends,
+          key: `round:${call.first}`,
+        }).then(
+          ({ round }) => ({
+            ok: true,
+            text: `Sent as round ${round}. Each member works on it in its own session; the results come back here as one message once every one has ended, so do not wait or poll.`,
+          }),
+          (error: unknown) => ({ ok: false, text: clip(message(error), 300) || 'Not sent.' }),
+        )
+        if (!answer.ok) this.limits.log(`${this.agent.name} 会话 ${taskId} 的一轮团队派活没有发出：${clip(this.redact(answer.text), 200)}`)
+        await writeRoundAnswer(directory, call.first, answer.ok, answer.text).catch(() => {})
+      }
+      const current = this.state.tasks[taskId]
+      if (!current) return
+      current.acp.roundsRead = after.line
+      current.acp.roundsOffset = after.offset
+      this.mark()
+    })
+    const settled = next.catch(() => {})
+    this.roundReads.set(taskId, settled)
+    void settled.then(() => {
+      if (this.roundReads.get(taskId) === settled) this.roundReads.delete(taskId)
+    })
+  }
+
+  /** As `clearProposals`, for the rounds file. */
+  private async clearRounds(taskId: string): Promise<void> {
+    await this.roundReads.get(taskId)
+    const task = this.state.tasks[taskId]
+    const offset = task?.acp.roundsOffset ?? 0
+    if (!task || offset === 0 || !(await clearTakenRounds(skillsDirectory(this.options.dataDir, taskId), offset))) return
+    task.acp.roundsCleared = task.acp.roundsRead ?? 0
+    task.acp.roundsOffset = 0
+    this.mark()
+  }
+
   /** Reads the proposals file every 200 ms for up to 20 s while a board proposal of the session is in flight. */
   private watchProposals(taskId: string): void {
     if (this.proposalWatches.has(taskId)) return
@@ -4090,6 +4164,7 @@ export class AgentRuntime implements Bridge {
         return
       }
       this.collectProposals(taskId)
+      this.collectRounds(taskId)
       this.proposalWatches.set(taskId, setTimeout(tick, 200))
     }
     this.proposalWatches.set(taskId, setTimeout(tick, 100))
@@ -5454,6 +5529,7 @@ export class AgentRuntime implements Bridge {
     const task = this.state.tasks[run.taskId]
     let outputMessageId: string | undefined
     if (task?.acp.proposals || task?.acp.workProposals) this.collectProposals(run.taskId)
+    if (task?.acp.workProposals) this.collectRounds(run.taskId)
     if (task) {
       const at = this.now()
       if (run.segment) this.settleSegment(run, task, status === 'idle' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed')
@@ -6207,9 +6283,26 @@ export class AgentRuntime implements Bridge {
     const directories = passed?.via === 'acp' ? { additionalDirectories: [...passed.paths] } : {}
     const board = task.acp.workProposals === true && this.options.proposeWork !== undefined
     if (task.acp.proposals || board) await this.clearProposals(taskId)
-    const skilled = task.acp.skills === true || task.acp.proposals === true || board
+    // The team tools ride on the board's channel; the roster beside them says whether they are listed now.
+    const team = task.acp.workProposals === true && this.teamTools()
+    if (team) {
+      await this.clearRounds(taskId)
+      await writeTeamRoster(skillsDirectory(this.options.dataDir, taskId), this.options.teamRoster!(taskId)).catch((error: unknown) =>
+        this.limits.log(`${this.agent.name} 会话 ${taskId} 的团队名单没有写入：${clip(this.redact(message(error)), 200)}`),
+      )
+    }
+    const skilled = task.acp.skills === true || task.acp.proposals === true || board || team
     const mcpServers: unknown[] = skilled
-      ? [skillsServer(skillsDirectory(this.options.dataDir, taskId), task.acp.proposals === true, task.acp.proposalsCleared ?? 0, board)]
+      ? [
+          skillsServer(
+            skillsDirectory(this.options.dataDir, taskId),
+            task.acp.proposals === true,
+            task.acp.proposalsCleared ?? 0,
+            board,
+            undefined,
+            team ? { roundsTaken: task.acp.roundsCleared ?? 0 } : undefined,
+          ),
+        ]
       : []
     const tools = this.openTools(taskId, live)
     if (tools) mcpServers.push(browserServer(tools))
@@ -7543,8 +7636,10 @@ export class AgentRuntime implements Bridge {
     mergeTool(state, fields, this.now())
     this.judge(task, state, fields.toolCallId, denial)
     this.upsert(task, toolMessage(state))
-    if ((task.acp.proposals || task.acp.workProposals) && (state.status === 'completed' || state.status === 'failed'))
+    if ((task.acp.proposals || task.acp.workProposals) && (state.status === 'completed' || state.status === 'failed')) {
       this.collectProposals(task.summary.id)
+      if (task.acp.workProposals) this.collectRounds(task.summary.id)
+    }
     // A board proposal in flight waits for the Host's answer: read its lines while it runs, not only when it ends.
     else if (task.acp.workProposals && boardTool(toolMessage(state))) this.watchProposals(task.summary.id)
     if (run) run.lastOutputAt = this.clock()
@@ -8220,10 +8315,11 @@ export class AgentRuntime implements Bridge {
 
 /** The server's own tools: calling them reads nothing from outside. Compared by exact name, after the server's prefix. */
 /** One of the skills server's board tools, by the same exact-name rule as `ownTool`. */
+/** A tool that waits for the Host's answer: a board proposal, or a round sent to the team (`send_to_members`). */
 function boardTool(message: Pick<Message, 'toolName' | 'tool'>): boolean {
   if (!ownTool(message)) return false
   const own = (message.toolName ?? message.tool?.title)?.trim().replace(SERVER_PREFIX, '')
-  return own === 'propose_todo' || own === 'propose_todos' || own === 'propose_card'
+  return own === 'propose_todo' || own === 'propose_todos' || own === 'propose_card' || own === 'send_to_members'
 }
 
 const OWN_TOOLS: ReadonlySet<string> = new Set([
@@ -8234,6 +8330,9 @@ const OWN_TOOLS: ReadonlySet<string> = new Set([
   'propose_card',
   'list_skills',
   'read_skill',
+  // The team's titles, Harnesses and states, which the person started; and a round, whose prompts reach only members.
+  'list_members',
+  'send_to_members',
 ])
 /** How agents name an MCP tool of `latch-skills`: Claude Code's `mcp__latch-skills__x`, others' `latch-skills: x` and similar. */
 const SERVER_PREFIX = /^(?:mcp__latch[-_]skills__|latch[-_]skills(?:\s*[:/.]\s*|__))/u

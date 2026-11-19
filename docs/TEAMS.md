@@ -3,6 +3,9 @@ description: 团队：人给一个会话开始几个成员会话，各在所选�
 sources:
   - apps/host/src/teams.ts
   - apps/host/src/routes/teams.ts
+  - apps/host/src/routes/team-rounds.ts
+  - packages/harness-acp/src/skills-server.ts
+  - packages/core/src/runtime.ts
   - apps/host/src/routes/work-items.ts
   - apps/host/src/routes/work-proposals.ts
   - apps/host/src/server.ts
@@ -18,7 +21,8 @@ sources:
 一个会话（带队的，lead）加上几个成员会话：每个成员做一件事，各在为它选的 Harness 上，同时进行。成员全部结束后，Host 把它们的结果作为一条消息发给带队的会话，由它的 Agent 核对并汇总。
 
 - 成员是普通的待办和普通的会话；团队只记录谁带队、有哪些成员、结果有没有交回。
-- 什么都不会自己开始。团队只在人的设备调用 `POST /tasks/:id/team` 时开始；带队会话的 Agent 只能提议（`propose_todos` 的一组待办就是分工方案），没有开始团队的工具。
+- 什么都不会自己开始。团队只在人的设备调用 `POST /tasks/:id/team` 时开始；带队会话的 Agent 只能提议（`propose_todos` 的一组待办就是分工方案），没有开始团队或新建成员的工具。
+- 之后可以给已有成员再派一轮（[轮](#轮)）：人从带队会话派；人为这个团队打开开关后，带队会话的 Agent 也能自己派（[Agent 派活](#agent-派活)）。
 - 不做：团队套团队（成员不能再带队）、自动开始、在成员之间复制文件、带回最后一条回复以外的内容、跨 Host。
 
 `catalog.features.teams` 声明下面的接口。
@@ -28,6 +32,8 @@ sources:
 | `POST /tasks/:id/team` | `run`，且能读带队会话 | `TeamStartInput`：从提议或任务列表开始，每个成员开始或被拒之后答 201 `{ team }`；同一设备同一 `requestId` 的重试答同一个团队，200 |
 | `GET /teams/:id` | `view`，且能读带队会话 | `{ team }` |
 | `POST /teams/:id/stop` | `run`，且能读带队会话 | `{ requestId }`：停止，答 `{ team }` |
+| `POST /teams/:id/rounds` | `run`，且能读带队会话与每个成员 | `TeamRoundInput`：再派一轮，答 201 `{ team }`；同一设备同一 `requestId` 答同一轮，200 |
+| `PATCH /teams/:id` | `run`，且能读带队会话 | `{ agentDispatch: boolean }`：Agent 派活的开关，答 `{ team }` |
 
 快照的 `teams` 列出读者能读的团队：没结束的全部，加最近结束的，合计最多 32 个。成员会话的摘要带 `teamOf`（`{ teamId, leadSessionId }`），由 Host 从团队记录填入，Driver 自报的被丢弃。
 
@@ -90,6 +96,34 @@ TEAM_RETURN_ASK
 - 带队会话已归档或已删除：`kept: 'lead-gone'`。设备已移除、停用、没有 `run`，或发送时被拒为无权（401、403）：`kept: 'device-removed'`。
 - 其他失败（Host 在安装更新、带队会话的 Harness 此刻不可用或不能恢复这个会话）留在 `returning`，之后每次再看时重试。从手机开始的团队按开始时的验证窗口发送：窗口结束后不再发，团队停在 `returning`。停在 `returning` 的团队由人按停止结束，结果留在页面上。
 
+## 轮
+
+开始是第 1 轮。之后的一轮给这个团队的一些已有成员各发一条消息，是各自会话的新一回合；这一轮的成员都结束后，结果按[交回](#交回)的同样方式回到带队会话：一条外部内容消息，以发起这一轮的设备身份，请求标识由团队 ID 与轮号推出，只发一次，带队会话忙时等着，发不出时留下原因。
+
+- 请求是 `{ requestId, sends: [{ itemId, prompt }] }`，1–8 项，每条 1–4 000 个字符（同 `checkedPrompt`，像密钥的拒绝）。
+- 成员必须在这个团队里（否则 404 `team-member-not-found`）、开始过（409 `team-member-unstarted`）、会话没有归档（409 `team-member-archived`）、上一件已经结束且没有在运行、等批准、等回答或排队（409 `team-member-busy`）。不替人排队。
+- 一个团队同时只有一轮没结束：还有一轮在进行时 409 `team-round-open`，所以带队会话每轮只收到一条结果。所有轮都结束了（交回、留下或停止）的团队可以再派一轮，它因此重新打开；带队会话另有没结束的团队时 409 `team-open`。最多 32 轮（`TEAM_LIMITS.rounds`，409 `team-rounds-full`）。
+- 顺序：核对 → 写 `team.round.started`（写不进 503 `audit-unavailable`，什么都不发）→ 记下这一轮（每个成员这一轮的消息的请求标识由团队、轮号与待办推出）→ 同时发出每一条。每条走人发消息的同一条检查路径（`POST /tasks/:id/prompt` 的同一函数），身份是调用的设备。发不出的成员这一轮记为 `unstarted` 并带原因；一条都没发出时团队回到这一轮之前，答第一个拒绝。
+- 人派的一轮里，带队会话从外部内容开始时，消息标为外部内容；否则是人自己的话。
+- 成员结束看的是这一轮那条消息之后的回复，不看之前的轮；成员显示最新一轮的状态。交回的消息只列这一轮的成员。
+- 记录：团队记下最新一轮（轮号、`by`、成员、请求、当时带队会话的最后一条消息）和之前每一轮（成员与各自结束的状态、各自那条消息的请求标识、交回的消息或留下的原因）。`TeamSummary.round` 与 `rounds` 在有不止一轮时给出这些，不含任何文字。
+- `POST /teams/:id/stop` 停的是正在进行的那一轮的成员。
+
+## Agent 派活
+
+`PATCH /teams/:id { agentDispatch: true }` 让带队会话的 Agent 自己给这个团队的已有成员派一轮。默认关，Latch 不替人打开。
+
+- 打开是放宽：先写 `team.dispatch.allowed`，写不进 503，什么都不变；记下打开它的设备。关是收紧：写 `team.dispatch.ended`（`reason: person`），写不进照样关，响应带 `x-latch-audit: failed`。
+- 自己关：打开它的设备被移除或失去 `run`（设备变更时检查，`reason: device-removed`），或团队被停止（`reason: stopped`）。之后不会自己再打开。
+- 只对会话最新的团队有效。带队会话的 Harness 没有给 Agent 的工具通道（看板的提议通道，pi 没有）时拒绝 409 `team-dispatch-unavailable`；没有一个开始过的成员落在无人值守上限内时也拒绝。原因放在 `TeamSummary.dispatchRefusal`，页面把开关画成灰的。
+- 开着时带队会话的 Agent 有两个工具（说明在 `packages/protocol` 的 `LIST_MEMBERS_GUIDE`、`SEND_TO_MEMBERS_GUIDE`）：
+  - `list_members`：这个团队的成员，各带短标识（`m1`…）、标题、Harness 名与状态，还有是否有一轮在进行、Agent 还能派几轮。ACP 会话从 Host 写在会话私有目录里的 `team.json`（0600，原子写；关时删掉）读；`latch-skills` 服务器只在它存在时列出这两个工具，变化时发 `notifications/tools/list_changed`。内置 Harness 在每次运行开始时向 Host 要。
+  - `send_to_members({ sends: [{ member, prompt }] })`：ACP 会话写进同目录的 `rounds.jsonl`（每个成员一行，按调用的标签成组，每次启动最多 64 行；与提议的文件分开，不占提议的额度），驱动交给 Host，再把 Host 的话写进 `round-answers.jsonl`：轮号，或拒绝的原因（Host 自己的英文句子，不引用要求）。内置 Harness 直接等 Host 的答复。
+- Host 只认自己的记录：会话必须属于调用的 Driver 并有看板通道，不是插件页面、我的 Agent、定时或无人值守的会话；团队是这个会话最新的团队；成员只按短标识在这个团队里找。Agent 不能开始新会话、不能新建成员（它仍可以 `propose_todos`，由人开始），也碰不到团队以外的会话。
+- 这一轮与人派的一样，`by: 'agent'`，身份是打开开关的那台设备，请求标识由会话、团队与调用推出（同一行读两次只派一轮）。要求对成员是外部内容（这一回合标为外部内容），不带任何设备的输入授权（与引用别的设备的话的消息相同）。
+- 拒绝（工具答出原因）：开关关着，设备此刻不能操作（手机验证窗口外）或已被移除，有一轮没结束，成员不在团队里、没开始、在忙或已归档，每个团队 Agent 最多 6 轮（`TEAM_LIMITS.agentRounds`，人仍可以再派），以及无人值守上限。
+- **无人值守上限。** 没有人按下，所以与定时运行同一个上限（`policy.json` 的 `unattended`）：打开开关的设备仍能替人担保无人值守的工作（`standsBehind`）、有 `run`、没有超过 `pauseAfterIdleDays` 不用；这一轮每个成员的 Harness 等级不超过 `maxLevel`。`maxLevel` 最高 L2，ACP Harness 是 L3，所以 Agent 只能给 Latch 内置的成员派活；给 ACP 成员的一轮总被拒绝。
+
 ## 停止
 
 `POST /teams/:id/stop` 把团队记为 `stopping`，对每个还没结束的成员走与 `POST /tasks/:id/cancel` 相同的取消（审计与回执照常）。成员的 Harness 真正结束后团队成为 `kept: 'stopped'`，结果留在页面上，不发给带队会话。`returning` 中的团队停止后直接成为 `kept: 'stopped'`。已经结束的团队 409 `team-ended`；成员正在开始时 409 `team-starting`。
@@ -108,6 +142,9 @@ detail 只有 ID、计数、哈希与枚举，不含标题、目标或回复。
 | `team.returned` | `teamId`、`leadSessionId`、`members`、`promptHash` | 发给带队会话之前；写不进就下次再试 |
 | `team.kept` | `teamId`、`reason` | 记为不再发送时（三种原因都写）；写不进照做 |
 | `team.stopped` | `teamId` | 人按停止时；写不进照做并带 `x-latch-audit: failed` |
+| `team.round.started` | `teamId`、`round`、`by`、`members` | 再派一轮、发出任何消息之前；写不进就不派 |
+| `team.dispatch.allowed` | `teamId`、`leadSessionId` | 打开 Agent 派活之前；写不进就不开 |
+| `team.dispatch.ended` | `teamId`、`reason` | 开关关上时（人、设备移除或失去 `run`、团队停止）；写不进照样关 |
 
 成员的待办与会话另有各自的 `work.proposal.decided`、`work.item.changed`、`work.item.started`、`task.l3.started` 与 `task.cancelled`。
 
@@ -124,5 +161,6 @@ detail 只有 ID、计数、哈希与枚举，不含标题、目标或回复。
 - **从提议开始。** 会话里审阅自己 Agent 的一组待办提议（待处理的不少于两条）时多一个「一起开始」，每条可改 Harness；「接受」与「不要」照旧。看板上的审阅没有它。409 `proposal-changed` 后页面重读提议。
 - **结果未知。** 开始的请求没有收到答复时，列表锁住，「重试」原样再发（同一 `requestId` 与内容），「放弃」后才能改。停止同理。
 - **对话里。** 团队的卡片排在 `messageId` 所在那一轮之后，找不到那条消息时排在最后（[placeTeams.tsx](../apps/web/src/teams/placeTeams.tsx)）。交回的消息按 `returnedMessageId` 认；快照里没有这个团队时，以 `TEAM_RETURN_HEADING` 开头的用户消息也画成结果卡，只是没有成员行。成员行展开时读的是成员会话的最后一条回复，不解析交回的文字。
+- **再派一轮。** 带队会话的输入框里 @ 列出最新团队的成员（在文件上面），选中放入成员标记；消息里有成员标记时不发给这个会话，而是去掉标记后作为每个被提到成员的要求，派成一轮（`POST /teams/:id/rounds`；没收到答复时同样的内容再发用同一个 `requestId`）。图里能接活的成员行上有「再派一轮」，在图下打开一行输入只派给它。卡片画最新一轮，排在这一轮所在的回合之后；结果卡按 `rounds` 里的 `returnedMessageId` 认，标题写第几轮，展开读这一轮那条消息之后的回复。头一行的开关是「让它自己派活」。
 - **Codex 自带的子 Agent** 是同一个面板的另一种分工方式（[CodexTeam.tsx](../apps/web/src/composer/CodexTeam.tsx)）：会话的 Harness 此刻能用它们（`codexTeam === 'available'`）时，面板顶上有「各开会话 / Codex 子 Agent」两段。选后者时每行只有文字；「开始」把 `CODEX_TEAM_REQUEST` 和编了号的各项作为一条消息，经输入框自己的发送路径发给这个会话（同样的检查、回执，运行中时排队），不建团队记录，输入框里的字不动。面板记住这个会话上次用的方式，只在页面内存里。有了委派后，入口打开委派记录，记录里的「用团队分工」回到面板。这个会话是成员或已有没结束的团队时，面板不出现，已有的委派记录照常。
 - **列表。** 成员排在来源会话下面，按团队里的顺序（`nestMembers`）；来源会话不在同一组（被搜索或归档筛掉、成员在「等你处理」）时成员照常显示。

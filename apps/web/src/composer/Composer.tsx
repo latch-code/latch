@@ -1,5 +1,5 @@
 import { defineCopy, plural } from '../core/i18n.ts'
-import { useFileMentions, type FileMentionChoice } from '../hooks/useFileMentions.tsx'
+import { useFileMentions, type FileMentionChoice, type MentionMembers } from '../hooks/useFileMentions.tsx'
 import type { AttachmentDraftController } from '../hooks/useAttachments.ts'
 import type { MenuSection } from '../components/overlays.tsx'
 import { AttachmentButton, AttachmentDrafts, pasteAttachments, dropAttachments } from './AttachmentDrafts.tsx'
@@ -218,6 +218,7 @@ export function Composer({
   attachments,
   attachmentMenu,
   fileMentions,
+  members,
   lastPrompt,
 }: {
   queueable?: boolean
@@ -225,6 +226,17 @@ export function Composer({
   steerable?: boolean
   queueTray?: ReactNode
   fileMentions?: FileMentionChoice
+  /**
+   * The open session leads a team: its members after `@`, their chips drawn as marks, and, while the draft names any,
+   * what sending does instead (a round to them, never this session): whether it can go, and why not.
+   */
+  members?: {
+    mention: MentionMembers
+    marks: ReadonlyArray<{ token: string; title: string }>
+    round?: { ready: boolean; reason?: string }
+    sending: boolean
+    sendLabel: string
+  }
   lastPrompt?: string
   attachments?: AttachmentDraftController
   /** Related actions share the attachment button's menu, so a personal topic has one ＋. */
@@ -328,8 +340,13 @@ export function Composer({
   const commandDefinition = actions?.find(action => action.name === commandName) ?? commands?.find(command => command.name === commandName)
   const commandChip = commandHead && commandDefinition ? commandHead[1]! : undefined
   const argumentHint = commandChip && !commandHead?.[3]?.trim() ? commandDefinition?.inputHint : undefined
-  const mentions = useFileMentions(draft, onDraft, textareaRef, fileMentions, commandAnchor)
-  const marks = usePromptMarks({ draft, catalogue: { commands, skills, actions }, textareaRef, mirrorRef: commandMirror })
+  const mentions = useFileMentions(draft, onDraft, textareaRef, fileMentions, commandAnchor, members?.mention)
+  const marks = usePromptMarks({
+    draft,
+    catalogue: { commands, skills, actions, members: members?.marks },
+    textareaRef,
+    mirrorRef: commandMirror,
+  })
   // The input grows with its content a line at a time, up to eight lines, its height moving over 120ms (composer.css).
   // Measuring needs the height let go for a moment; it is put back without a transition, so the move then starts from
   // the height the input had and not from the measurement.
@@ -364,13 +381,18 @@ export function Composer({
     }
   }, [textareaRef, readOnly, inline])
 
-  const locked = sending || pending !== null || attachments?.preparing === true
+  const roundSending = members?.sending === true
+  const locked = sending || roundSending || pending !== null || attachments?.preparing === true
   // One unconfirmed write per device: nothing else is sent meanwhile, but only the input that holds its text is held.
-  const textLocked = sending || (pending !== null && onOpenPending === undefined) || attachments?.preparing === true
+  const textLocked = sending || roundSending || (pending !== null && onOpenPending === undefined) || attachments?.preparing === true
   const empty = draft.trim().length === 0 && !attachments?.items.length
   const typedAction = answer === undefined ? latchActionOf(draft) : undefined
+  // Members named in the draft: it goes to them as a round, whether or not this session is at work.
+  const round = answer === undefined && typedAction === undefined ? members?.round : undefined
+  const rounding = round !== undefined
   const queueDraft =
-    !!run
+    !rounding
+    && !!run
     && (queueable || steerable)
     && !empty
     && !attachments?.items.length
@@ -383,7 +405,13 @@ export function Composer({
   const sendable =
     !locked
     && readOnly === undefined
-    && (answer !== undefined ? !empty : typedAction ? !actionBlock : canSend && !empty && (!run || queueDraft))
+    && (answer !== undefined
+      ? !empty
+      : typedAction
+        ? !actionBlock
+        : round
+          ? canSend && round.ready
+          : canSend && !empty && (!run || queueDraft))
   const submit = () => {
     if (answer) answer.onSubmit()
     else if (typedAction) {
@@ -496,13 +524,22 @@ export function Composer({
   const sendTip =
     actionBlock
     ?? blockReason
+    ?? round?.reason
     ?? (locked ? COPY.waitForSubmit : empty ? COPY.writeFirst : queueDraft && !steerable ? COPY.sendAfterTurn : undefined)
 
   // The slot's control swaps in (from 90%, fading in) when the page sees it change: a run starting or ending.
   const answering = answer?.kind === 'question' && !empty
   const choosing = typedAction !== undefined
   const slot =
-    answering || choosing ? 'send' : run && !queueDraft ? 'stop' : queueDraft ? 'queue' : readOnly !== undefined ? 'none' : 'send'
+    answering || choosing || rounding
+      ? 'send'
+      : run && !queueDraft
+        ? 'stop'
+        : queueDraft
+          ? 'queue'
+          : readOnly !== undefined
+            ? 'none'
+            : 'send'
   useLiveChange(slot, (_previous, live) => {
     const element = box.current?.querySelector<HTMLElement>('.composer-slot > *')
     if (live && element)
@@ -605,13 +642,13 @@ export function Composer({
   const action = (
     <div className="composer-slot" data-queue-draft={queueDraft ? '' : undefined}>
       {/* Touch has no Esc: stop stays beside 排队 and an answer's send there. */}
-      {(queueDraft || answering || choosing) && run && coarse && <StopButton run={run} stepBack={stepBack} />}
+      {(queueDraft || answering || choosing || rounding) && run && coarse && <StopButton run={run} stepBack={stepBack} />}
       {attachments?.preparing ? (
         <Button size="sm" onClick={attachments.cancel}>
           <Spinner size={14} />
           {COPY.cancelSend}
         </Button>
-      ) : run && !queueDraft && !answering && !choosing ? (
+      ) : run && !queueDraft && !answering && !choosing && !rounding ? (
         <StopButton run={run} stepBack={stepBack} />
       ) : queueDraft && steerable ? (
         <Tooltip content={sendTip ?? COPY.steerHint} shortcut={sendTip === undefined ? shortcut : undefined}>
@@ -643,20 +680,24 @@ export function Composer({
         </Tooltip>
       ) : readOnly !== undefined ? null : (
         <Tooltip
-          content={sendTip ?? (choosing ? COPY.runAction : COPY.send)}
+          content={sendTip ?? (choosing ? COPY.runAction : rounding ? members!.sendLabel : COPY.send)}
           shortcut={sendTip === undefined ? shortcut : undefined}
           describe={sendTip !== undefined}>
           <button
             type="submit"
             className="send-button"
-            aria-label={choosing ? COPY.runAction : COPY.send}
+            aria-label={choosing ? COPY.runAction : rounding ? members!.sendLabel : COPY.send}
             aria-disabled={!sendable || undefined}
-            aria-busy={sending || undefined}
+            aria-busy={sending || roundSending || undefined}
             onClick={event => {
               if (!sendable) event.preventDefault()
             }}>
-            <Swap value={sending ? 'sending' : 'idle'}>
-              {sending ? <Spinner size={14} /> : <SendGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />}
+            <Swap value={sending || roundSending ? 'sending' : 'idle'}>
+              {sending || roundSending ? (
+                <Spinner size={14} />
+              ) : (
+                <SendGlyph size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />
+              )}
             </Swap>
           </button>
         </Tooltip>

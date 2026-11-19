@@ -29,6 +29,9 @@ import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { Composer } from '../composer/Composer.tsx'
 import { CodexTeam } from '../composer/CodexTeam.tsx'
 import { canStartTeam } from '../teams/model.ts'
+import { draftRound, leadTeamOf, memberChoices, useTeamRound } from '../teams/rounds.ts'
+import { MemberTile } from '../teams/TeamGraph.tsx'
+import { TEAM_COPY, memberWords } from '../teams/copy.ts'
 import { HarnessLimitChip, ServiceBudgetChip } from '../usage/UsageChip.tsx'
 import { ComposerControl, openControlWhenShown } from '../composer/ComposerControl.tsx'
 import { composerActions } from './composerActions.ts'
@@ -353,6 +356,25 @@ export function SessionComposer({
   const manageEngines = owner ? () => openSettings('engines') : undefined
   // A refusal the new session's own block already says (a Harness found too old once sent) is said there once.
   const refusal = selectedId === null && block !== null && submission.error === block.message ? '' : submission.error
+  // The open session leads a team: its members after `@`, and a draft that names them goes to them as a round.
+  const leadTeam =
+    catalog?.features?.teams && access.scopes.has('run') && selectedId !== null && current?.summary.id === selectedId
+      ? leadTeamOf(shell.snapshot.teams, selectedId)
+      : undefined
+  const choices = leadTeam ? memberChoices(leadTeam, shell.snapshot.tasks) : undefined
+  const textOnly = (attachmentDraft?.items.length ?? 0) > 0 || (mentionChoice?.refs.length ?? 0) > 0
+  const named = choices ? draftRound(submission.draft, choices) : undefined
+  const roundDraft = named && textOnly ? { ...named, ready: false, reason: TEAM_COPY.textOnly } : named
+  const teamRound = useTeamRound(leadTeam?.id, refresh)
+  const roundFailure = teamRound.status.state === 'failed' && teamRound.status.key === submission.draft ? teamRound.status.reason : ''
+  const sendRound = async () => {
+    if (!roundDraft?.ready) return
+    const sent = await teamRound.send(
+      roundDraft.itemIds.map(itemId => ({ itemId, prompt: roundDraft.prompt })),
+      submission.draft,
+    )
+    if (sent) setSubmissionDraft('')
+  }
   // A text rebuild sends its rebuilt conversation with the first message, to the service that answers it.
   const seedService =
     current && current.summary.id === selectedId && seedWaiting(current.summary, current.messages)
@@ -725,6 +747,31 @@ export function SessionComposer({
       lastPrompt={current?.messages.findLast(message => message.role === 'user')?.text}
       attachments={catalog?.features?.attachments === true && gate.kind === 'open' && !answer ? attachmentDraft : undefined}
       fileMentions={mentionChoice}
+      members={
+        choices && catalog
+          ? {
+              mention: {
+                label: TEAM_COPY.member,
+                items: choices.map(choice => {
+                  const harness = catalog.harnesses.find(item => item.id === choice.harnessId)
+                  return {
+                    id: choice.itemId,
+                    token: choice.token,
+                    title: choice.title,
+                    media: <MemberTile harnessId={choice.harnessId} harnesses={catalog.harnesses} />,
+                    description: harness ? harnessName(harness) : choice.harnessId,
+                    source: memberWords(choice.member.state),
+                    ...(choice.disabled ? { disabled: choice.disabled } : {}),
+                  }
+                }),
+              },
+              marks: choices,
+              ...(roundDraft ? { round: { ready: roundDraft.ready, ...(roundDraft.reason ? { reason: roundDraft.reason } : {}) } } : {}),
+              sending: teamRound.status.state === 'sending',
+              sendLabel: TEAM_COPY.sendToMembers,
+            }
+          : undefined
+      }
       commands={selectedId === null ? cachedCommands?.commands : current?.commands}
       skills={selectedId === null ? cachedCommands?.skills : current?.skills}
       skillsTruncated={selectedId === null ? cachedCommands?.skillsTruncated : current?.skillsTruncated}
@@ -769,7 +816,13 @@ export function SessionComposer({
             },
           })}
       sending={submission.sending}
-      error={noteComposer?.error || refusal || (actionError?.sessionId === selectedId ? actionError.text : '') || (sideBlocked ?? '')}
+      error={
+        noteComposer?.error
+        || refusal
+        || roundFailure
+        || (actionError?.sessionId === selectedId ? actionError.text : '')
+        || (sideBlocked ?? '')
+      }
       {...(!noteComposer?.error && refusal
         ? composerFailure(submission.errorCode, owner, openSettings, () => {
             void sendDraft()
@@ -880,7 +933,9 @@ export function SessionComposer({
         <InlineConfirm active={submission.sending || (selectedId !== null && configBusy.has(selectedId))} className="composer-confirm" />
       }
       onSubmit={() => {
-        void sendDraft()
+        // Members named in it: a round to them, never a message to this session.
+        if (roundDraft) void sendRound()
+        else void sendDraft()
       }}
       sendKey={preferences.sendKey}
       coarse={coarse}

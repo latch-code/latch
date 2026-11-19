@@ -39,7 +39,15 @@ import type {
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { FAKE_ACP_AGENT, FAKE_PI_AGENT, startFakeModels, type FakeModels } from '@latch/testkit'
 import { AcpWire } from '../src/wires/acp.ts'
-import { PROPOSAL_LIMITS, readProposals, skillsServer } from '../src/skills-server.ts'
+import {
+  PROPOSAL_LIMITS,
+  readProposals,
+  readRounds,
+  skillsServer,
+  TEAM_FILE,
+  writeRoundAnswer,
+  writeTeamRoster,
+} from '../src/skills-server.ts'
 import { ownTool, proposalTurn } from '../src/runtime.ts'
 import { ConnectionStopping, isRecord } from '../src/wires/process.ts'
 import { agentEnvironment, programPaths } from '../src/environment.ts'
@@ -5242,6 +5250,74 @@ describe('agent context', () => {
     const all = await readProposals(directory, { line: 0, offset: 0 })
     expect(all.next.line).toBe(PROPOSAL_LIMITS.count)
     expect(await readProposals(directory, all.next)).toEqual({ lines: [], next: all.next, skipped: [] })
+  })
+
+  it('the skills server with team lists its tools only while the roster is there, says so when it changes, and answers a round', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'latch-team-'))
+    cleanups.push(() => rm(directory, { recursive: true, force: true }))
+    await writeFile(join(directory, 'skills.json'), '[]')
+    const server = skillsServer(directory, false, 0, true, 2_000, { roundsTaken: 3 })
+    const child = spawn(server.command, server.args, { stdio: ['pipe', 'pipe', 'inherit'] })
+    const lines: Array<Record<string, unknown>> = []
+    let buffer = ''
+    child.stdout.on('data', chunk => {
+      buffer += String(chunk)
+      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+        lines.push(JSON.parse(buffer.slice(0, end)) as Record<string, unknown>)
+        buffer = buffer.slice(end + 1)
+      }
+    })
+    let next = 1
+    const ask = async (method: string, params?: unknown) => {
+      const id = next++
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
+      await vi.waitFor(() => expect(lines.some(line => line.id === id)).toBe(true), { timeout: 5_000 })
+      return lines.find(line => line.id === id)!
+    }
+    const started = await ask('initialize', { protocolVersion: '2025-06-18' })
+    expect(started.result).toMatchObject({ capabilities: { tools: { listChanged: true } } })
+    const names = async () => ((await ask('tools/list')).result as { tools: Array<{ name: string }> }).tools.map(tool => tool.name)
+    expect(await names()).not.toContain('send_to_members')
+    const call = (name: string, args: unknown) => ask('tools/call', { name, arguments: args })
+    expect((await call('send_to_members', { sends: [{ member: 'm1', prompt: 'x' }] })).result).toMatchObject({ isError: true })
+
+    await writeTeamRoster(directory, { members: [{ id: 'm1', title: '一', harness: 'Alpha', state: 'done' }], open: false, roundsLeft: 6 })
+    expect((await stat(join(directory, TEAM_FILE))).mode & 0o777).toBe(0o600)
+    await vi.waitFor(() => expect(lines.some(line => line.method === 'notifications/tools/list_changed')).toBe(true), { timeout: 5_000 })
+    expect(await names()).toEqual(expect.arrayContaining(['list_members', 'send_to_members']))
+    expect(JSON.stringify((await call('list_members', {})).result)).toContain('roundsLeft')
+    expect((await call('send_to_members', { sends: [{ member: 'x1', prompt: 'x' }] })).result).toMatchObject({ isError: true })
+    expect((await call('send_to_members', { sends: [{ member: 'm1', prompt: '' }] })).result).toMatchObject({ isError: true })
+
+    // A round waits for the Host's word, by its first line, which goes on from the lines taken before.
+    const asked = ask('tools/call', {
+      name: 'send_to_members',
+      arguments: {
+        sends: [
+          { member: 'm1', prompt: '做甲' },
+          { member: 'm2', prompt: '做乙' },
+        ],
+      },
+    })
+    let read: Awaited<ReturnType<typeof readRounds>> | undefined
+    await vi.waitFor(async () => {
+      read = await readRounds(directory, { line: 3, offset: 0 })
+      expect(read.calls).toHaveLength(1)
+    })
+    expect(read!.calls[0]).toEqual({
+      first: 3,
+      sends: [
+        { member: 'm1', prompt: '做甲' },
+        { member: 'm2', prompt: '做乙' },
+      ],
+    })
+    await writeRoundAnswer(directory, 3, true, 'Sent as round 2.')
+    expect((await asked).result).toEqual({ content: [{ type: 'text', text: 'Sent as round 2.' }] })
+
+    await writeTeamRoster(directory, undefined)
+    await vi.waitFor(async () => expect(await names()).not.toContain('list_members'), { timeout: 5_000 })
+    child.stdin.end()
+    await once(child, 'exit')
   })
 
   it('the skills server with board offers only the board tools, refuses priority and extra fields, and writes a group as lines', async () => {

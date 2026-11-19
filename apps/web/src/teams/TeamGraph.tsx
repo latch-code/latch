@@ -10,6 +10,7 @@ import { useLocale } from '../core/i18n.ts'
 import { TEAM_COPY, endWords, keptWords, memberWords } from './copy.ts'
 import { MEMBER_TONE, endMark, memberAtWork } from './model.ts'
 import { useTeamStop } from './start.ts'
+import { AgainButton, AgainLine, DispatchSwitch, RoundMark, useAgain } from './RoundControls.tsx'
 
 /** What the team's parts in a conversation need from the page around them. */
 export interface TeamPage {
@@ -159,7 +160,7 @@ function Rail({ members, end, team }: { members: readonly TeamMember[]; end: str
   )
 }
 
-function MemberRow({ member, page, index }: { member: TeamMember; page: TeamPage; index: number }) {
+function MemberRow({ member, page, index, action }: { member: TeamMember; page: TeamPage; index: number; action?: ReactNode }) {
   const body = (
     <>
       <MemberTile harnessId={member.harnessId} harnesses={page.harnesses} />
@@ -195,6 +196,7 @@ function MemberRow({ member, page, index }: { member: TeamMember; page: TeamPage
       // Each pill's light starts at its own point, so the rows never pulse in step.
       style={{ '--team-row': index } as CSSProperties}>
       <Tooltip content={member.state === 'unstarted' ? member.refusal : undefined}>{main}</Tooltip>
+      {action}
     </li>
   )
 }
@@ -265,7 +267,9 @@ const endWire = (team: TeamSummary): string =>
 export function TeamGraph({ team, lead }: { team: TeamSummary; lead: { name: string; harness?: HarnessInfo | undefined } }): ReactNode {
   useLocale()
   const page = useContext(TeamPageContext)
+  const again = useAgain(team, page)
   if (!page) return null
+  const againMember = team.members.find(member => member.itemId === again.open)
   return (
     <section
       className="team-card"
@@ -276,6 +280,8 @@ export function TeamGraph({ team, lead }: { team: TeamSummary; lead: { name: str
       <header className="team-head">
         <span className="team-goal">{team.goal ? <VisibleText text={team.goal} /> : TEAM_COPY.team}</span>
         <span className="team-count">{TEAM_COPY.memberCount(team.members.length)}</span>
+        <RoundMark team={team} />
+        <DispatchSwitch team={team} page={page} />
         <Stop team={team} page={page} />
       </header>
       <div className="team-graph">
@@ -289,12 +295,19 @@ export function TeamGraph({ team, lead }: { team: TeamSummary; lead: { name: str
         <Rail members={team.members} end={endWire(team)} team={team.state} />
         <ul className="team-members">
           {team.members.map((member, index) => (
-            <MemberRow key={member.itemId} member={member} page={page} index={index} />
+            <MemberRow
+              key={member.itemId}
+              member={member}
+              page={page}
+              index={index}
+              action={again.offers(member) && <AgainButton member={member} onOpen={() => again.setOpen(member.itemId)} />}
+            />
           ))}
         </ul>
         <Fan members={team.members} side="in" team={team.state} />
         <End team={team} page={page} />
       </div>
+      {againMember && <AgainLine team={team} member={againMember} page={page} onClose={() => again.setOpen(undefined)} />}
     </section>
   )
 }

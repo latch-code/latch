@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from 'react'
-import { BookOpen } from 'lucide-react'
+import { BookOpen, Users } from 'lucide-react'
 import { CodeGlyph, Icon } from '@latch/ui'
 import { escapeSecurityText } from '@latch/protocol'
 import { markBeforeCaret, promptMarks, type PromptCatalogue, type PromptMark } from './prompt-tokens.ts'
@@ -9,10 +9,12 @@ const COPY = defineCopy(
   {
     skill: '技能 · ',
     command: '命令 · ',
+    member: '成员 · ',
   },
   {
     skill: 'Skill · ',
     command: 'Command · ',
+    member: 'Member · ',
   },
 )
 
@@ -73,8 +75,8 @@ export function usePromptMarks({
   textareaRef: RefObject<HTMLTextAreaElement | null>
   mirrorRef: RefObject<HTMLDivElement | null>
 }) {
-  const { commands, skills, actions } = catalogue
-  const marks = useMemo(() => promptMarks(draft, { commands, skills, actions }), [draft, commands, skills, actions])
+  const { commands, skills, actions, members } = catalogue
+  const marks = useMemo(() => promptMarks(draft, { commands, skills, actions, members }), [draft, commands, skills, actions, members])
   const [composing, setComposing] = useState(false)
   const shown = marks.length > 0 && !composing
   useLayoutEffect(() => {
@@ -125,7 +127,7 @@ function markTip(mirror: HTMLElement | null, marks: readonly PromptMark[], x: nu
   )
   const mark = element && marks.find(item => String(item.start) === element.dataset.start)
   if (!mark) return ''
-  const head = (mark.kind === 'skill' ? COPY.skill : COPY.command) + mark.name
+  const head = (mark.kind === 'skill' ? COPY.skill : mark.kind === 'member' ? COPY.member : COPY.command) + mark.name
   return escapeSecurityText(mark.description ? `${head}\n${mark.description}` : head)
 }
 
@@ -140,7 +142,7 @@ export function PromptMirrorText({ text, marks, hint }: { text: string; marks: r
       <span key={mark.start} className="prompt-mark" data-kind={mark.kind} data-start={mark.start}>
         <span className="prompt-mark-sigil">
           {text[mark.start]}
-          <Icon icon={mark.kind === 'skill' ? BookOpen : CodeGlyph} size={14} />
+          <Icon icon={mark.kind === 'skill' ? BookOpen : mark.kind === 'member' ? Users : CodeGlyph} size={14} />
         </span>
         <span className="prompt-mark-name">{text.slice(mark.start + 1, mark.end)}</span>
       </span>,

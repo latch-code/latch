@@ -5,7 +5,17 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import type { WorkCardProposal, WorkTodoProposal } from '@latch/sdk'
-import { PROPOSE_CARD_GUIDE, PROPOSE_TODO_GUIDE, PROPOSE_TODOS_GUIDE, WORK_PROPOSAL_LIMITS, type AgentSkillBody } from '@latch/protocol'
+import {
+  LIST_MEMBERS_GUIDE,
+  PROPOSE_CARD_GUIDE,
+  PROPOSE_TODO_GUIDE,
+  PROPOSE_TODOS_GUIDE,
+  SEND_TO_MEMBERS_GUIDE,
+  TEAM_LIMITS,
+  WORK_PROPOSAL_LIMITS,
+  type AgentSkillBody,
+  type TeamRoster,
+} from '@latch/protocol'
 
 /** The file the proposal tools append to, one JSON line per proposal (per item of a group), in the session's private directory. */
 export const PROPOSALS_FILE = 'proposals.jsonl'
@@ -16,6 +26,16 @@ export const PROPOSALS_FILE = 'proposals.jsonl'
 export const PROPOSAL_LIMITS = { count: 32, line: 16 * 1024, bytes: 192 * 1024 } as const
 /** Where the driver writes the Host's word on each board line, `{ line, ok }`, for the server to answer the agent. */
 export const ANSWERS_FILE = 'answers.jsonl'
+/**
+ * The team tools' own files, apart from the proposals' so rounds never use up what a session may propose: the roster the
+ * driver writes while the person lets the agent send work (`team.json`), the rounds the agent sends (one line per member,
+ * gathered by a label), and the Host's word on each round (`{ line, ok, text }`, by its first line).
+ */
+export const TEAM_FILE = 'team.json'
+const ROUNDS_FILE = 'rounds.jsonl'
+const ROUND_ANSWERS_FILE = 'round-answers.jsonl'
+/** Per session start: lines in the rounds file and bytes of one line and of the file; a line holds one prompt of 4000 characters. */
+const ROUND_LIMITS = { count: 64, line: 16 * 1024, bytes: 512 * 1024 } as const
 
 /**
  * MCP over stdio for one session: it lists an agent's skills and returns their text, and, started with `propose`, has two
@@ -33,10 +53,16 @@ try {
   for (const skill of JSON.parse(readFileSync(join(directory, 'guides.json'), 'utf8')))
     if (skill && typeof skill.id === 'string' && !skills.some(item => item.id === skill.id)) skills.push(skill)
 } catch {}
-// 'propose': memories and schedules (one of 我的 Agent's sessions or 通用's); 'board': 待办 and card changes for the board.
+// 'propose': memories and schedules (one of 我的 Agent's sessions or 通用's); 'board': 待办 and card changes for the board;
+// 'team': the members of the team this session leads, listed only while the person lets the agent send them work.
 const modes = String(process.argv[2] || '').split(',')
 const proposing = modes.includes('propose')
 const board = modes.includes('board')
+const team = modes.includes('team')
+// Round lines the Host already took from earlier copies of the rounds file: the next line's index goes on from them.
+const roundsEarlier = Math.max(0, Math.min(Number(process.argv[5]) || 0, 1000))
+const ROUNDS = ${JSON.stringify(ROUND_LIMITS)}
+const TEAM = ${JSON.stringify({ members: TEAM_LIMITS.members, promptChars: TEAM_LIMITS.promptChars })}
 // Lines the Host already took from earlier copies of the file count toward the session's limit.
 const earlier = Math.max(0, Math.min(Number(process.argv[3]) || 0, 1000))
 // How long a board proposal waits for the Host's answer (the driver writes it to answers.jsonl), in milliseconds.
@@ -144,6 +170,58 @@ const tools = [
       ]
     : []),
 ]
+const teamTools = [
+  {
+    name: 'list_members',
+    description: ${JSON.stringify(LIST_MEMBERS_GUIDE)},
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'send_to_members',
+    description: ${JSON.stringify(SEND_TO_MEMBERS_GUIDE)},
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sends: {
+          type: 'array',
+          minItems: 1,
+          maxItems: TEAM.members,
+          items: {
+            type: 'object',
+            properties: {
+              member: { type: 'string', pattern: '^m[1-9]$', description: "A member's id from list_members." },
+              prompt: { type: 'string', maxLength: TEAM.promptChars, description: 'The whole message for that member, standing alone.' },
+            },
+            required: ['member', 'prompt'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['sends'],
+      additionalProperties: false,
+    },
+  },
+]
+// The roster the driver keeps beside this file while the person lets the agent send work; nothing when it is off.
+function roster() {
+  let fd
+  try {
+    fd = openSync(join(directory, 'team.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  } catch {
+    return undefined
+  }
+  try {
+    const stat = fstatSync(fd)
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > 64 * 1024) return undefined
+    const value = JSON.parse(readFileSync(fd, 'utf8'))
+    return value && Array.isArray(value.members) ? value : undefined
+  } catch {
+    return undefined
+  } finally {
+    closeSync(fd)
+  }
+}
+const listed = () => (team && roster() ? [...tools, ...teamTools] : tools)
 const text = value => ({ content: [{ type: 'text', text: value }] })
 const refused = value => ({ ...text(value), isError: true })
 const TIME = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/
@@ -317,6 +395,84 @@ function append(lines, done, wait = false) {
   }
   return text(done)
 }
+const OFF = 'The user has not let you send work to this team; only the user can turn it on.'
+function listMembers() {
+  const found = roster()
+  return found ? text(JSON.stringify(found)) : refused(OFF)
+}
+function sendToMembers(args) {
+  if (!roster()) return refused(OFF)
+  if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some(key => key !== 'sends'))
+    return refused('Pass { "sends": [{ "member": "m1", "prompt": "…" }] }.')
+  const sends = Array.isArray(args.sends) ? args.sends : []
+  if (sends.length < 1 || sends.length > TEAM.members) return refused('sends must hold 1 to ' + TEAM.members + ' members.')
+  const values = []
+  for (const one of sends) {
+    if (!one || typeof one !== 'object' || Array.isArray(one) || Object.keys(one).some(key => key !== 'member' && key !== 'prompt'))
+      return refused('Each send is { "member", "prompt" }.')
+    const prompt = typeof one.prompt === 'string' ? one.prompt.trim() : ''
+    if (typeof one.member !== 'string' || !/^m[1-9]$/.test(one.member)) return refused('member must be an id from list_members, like m1.')
+    if (!prompt || prompt.length > TEAM.promptChars || PROMPT_REFUSED.test(prompt)) return refused('prompt must be 1 to ' + TEAM.promptChars + ' characters.')
+    values.push({ member: one.member, prompt })
+  }
+  const label = require('node:crypto').randomBytes(9).toString('base64url')
+  const lines = values.map(value => JSON.stringify({ kind: 'send', ...value, group: { label, count: values.length } }))
+  if (lines.some(line => Buffer.byteLength(line) + 1 > ROUNDS.line)) return refused('A prompt is too long.')
+  let fd
+  try {
+    fd = openSync(
+      join(directory, 'rounds.jsonl'),
+      constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      0o600,
+    )
+  } catch {
+    return refused('Work cannot be sent from this session.')
+  }
+  let first
+  try {
+    const stat = fstatSync(fd)
+    if (!stat.isFile() || stat.nlink !== 1) return refused('Work cannot be sent from this session.')
+    const body = lines.map(line => line + '\n').join('')
+    if (stat.size + Buffer.byteLength(body) > ROUNDS.bytes) return refused('This session has sent as much work as it may until it starts again.')
+    const held = stat.size ? readFileSync(fd, 'utf8') : ''
+    first = roundsEarlier + held.split('\n').filter(Boolean).length
+    if (first - roundsEarlier + lines.length > ROUNDS.count) return refused('This session has sent as much work as it may until it starts again.')
+    writeSync(fd, body)
+  } finally {
+    closeSync(fd)
+  }
+  return roundAnswer(first)
+}
+// The Host's word on a round, by its first line: the round's number or why it was refused, in the Host's own words.
+function roundAnswer(first) {
+  const until = Date.now() + WAIT
+  return new Promise(resolve => {
+    const look = () => {
+      let fd
+      try {
+        fd = openSync(join(directory, 'round-answers.jsonl'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+      } catch {}
+      if (fd !== undefined)
+        try {
+          const stat = fstatSync(fd)
+          if (stat.isFile() && stat.nlink === 1 && stat.size <= 1024 * 1024)
+            for (const row of readFileSync(fd, 'utf8').split('\n')) {
+              try {
+                const parsed = JSON.parse(row)
+                if (parsed?.line === first && typeof parsed.text === 'string')
+                  return resolve(parsed.ok === true ? text(parsed.text.slice(0, 600)) : refused(parsed.text.slice(0, 600)))
+              } catch {}
+            }
+        } finally {
+          closeSync(fd)
+        }
+      if (Date.now() >= until)
+        return resolve(text('Written for the team; if it is taken, the results come back here as one message once every member has ended.'))
+      setTimeout(look, 100)
+    }
+    look()
+  })
+}
 function call(params) {
   if (params?.name === 'list_skills') return text(JSON.stringify(skills.map(({ id, name, description }) => ({ id, name, description }))))
   if (params?.name === 'read_skill') {
@@ -328,15 +484,36 @@ function call(params) {
   if (board && params?.name === 'propose_todo') return proposeTodo(params.arguments)
   if (board && params?.name === 'propose_todos') return proposeTodos(params.arguments)
   if (board && params?.name === 'propose_card') return proposeCard(params.arguments)
+  if (team && params?.name === 'list_members') return listMembers()
+  if (team && params?.name === 'send_to_members') return sendToMembers(params.arguments)
   throw Object.assign(new Error('Unknown tool'), { code: -32602 })
 }
 function answer(method, params) {
-  if (method === 'initialize')
-    return { protocolVersion: params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'latch-skills', version: '1' } }
+  if (method === 'initialize') {
+    if (team) watchTeam()
+    return {
+      protocolVersion: params?.protocolVersion ?? '2025-06-18',
+      capabilities: { tools: team ? { listChanged: true } : {} },
+      serverInfo: { name: 'latch-skills', version: '1' },
+    }
+  }
   if (method === 'ping') return {}
-  if (method === 'tools/list') return { tools }
+  if (method === 'tools/list') return { tools: listed() }
   if (method === 'tools/call') return call(params)
   throw Object.assign(new Error('Method not found'), { code: -32601 })
+}
+// The team tools come and go with the person's switch: the agent is told the list changed, and lists it again.
+let watching = false
+function watchTeam() {
+  if (watching) return
+  watching = true
+  let shown = Boolean(roster())
+  setInterval(() => {
+    const now = Boolean(roster())
+    if (now === shown) return
+    shown = now
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' }) + '\n')
+  }, 1000).unref()
 }
 function handle(line) {
   let request
@@ -407,8 +584,10 @@ export function skillsServer(
   board = false,
   /** How long a board proposal waits for the Host's answer before saying it was written; tests shorten it. */
   waitMs = 15_000,
+  /** `list_members` and `send_to_members`, listed only while `team.json` is there; `roundsTaken`: round lines cleared. */
+  team?: { roundsTaken: number },
 ): { name: string; command: string; args: string[]; env: never[] } {
-  const modes = [...(propose ? ['propose'] : []), ...(board ? ['board'] : [])]
+  const modes = [...(propose ? ['propose'] : []), ...(board ? ['board'] : []), ...(team ? ['team'] : [])]
   return {
     name: 'latch-skills',
     command: process.execPath,
@@ -417,7 +596,9 @@ export function skillsServer(
       '-e',
       SERVER_SOURCE,
       directory,
-      ...(modes.length ? [modes.join(','), String(taken), ...(board ? [String(waitMs)] : [])] : []),
+      ...(modes.length
+        ? [modes.join(','), String(taken), ...(board || team ? [String(waitMs)] : []), ...(team ? [String(team.roundsTaken)] : [])]
+        : []),
     ],
     env: [],
   }
@@ -565,15 +746,17 @@ export type SkippedLine = 'not-json' | 'invalid'
  * no newline yet and is read next time. Only `content` and `reason` are taken from a line; a line that does not parse is
  * skipped but counted. The session is the directory's; nothing in the file names it.
  */
-export async function readProposals(
+/** The complete lines of one of the session's files after `from`, read as `readProposals` describes; each with its index and end. */
+async function readLines(
   directory: string,
+  name: string,
   from: ProposalCursor,
-): Promise<{ lines: ProposalLine[]; next: ProposalCursor; skipped: SkippedLine[] }> {
-  const nothing = { lines: [], next: from, skipped: [] }
-  if (from.line >= PROPOSAL_LIMITS.count) return nothing
+  limits: { count: number; line: number; bytes: number },
+): Promise<Array<{ index: number; end: number; text: string }>> {
+  if (from.line >= limits.count) return []
   let chunk: Buffer
   try {
-    const file = await open(join(directory, PROPOSALS_FILE), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    const file = await open(join(directory, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     try {
       const stat = await file.stat()
       const uid = process.getuid?.()
@@ -582,11 +765,11 @@ export async function readProposals(
         || stat.nlink !== 1
         || stat.mode & 0o077
         || (uid !== undefined && stat.uid !== uid)
-        || stat.size > PROPOSAL_LIMITS.bytes + PROPOSAL_LIMITS.line
+        || stat.size > limits.bytes + limits.line
         || stat.size <= from.offset
       )
-        return nothing
-      const buffer = Buffer.alloc(Math.min(stat.size - from.offset, PROPOSAL_LIMITS.bytes + PROPOSAL_LIMITS.line))
+        return []
+      const buffer = Buffer.alloc(Math.min(stat.size - from.offset, limits.bytes + limits.line))
       let count = 0
       while (count < buffer.length) {
         const read = await file.read(buffer, count, buffer.length - count, from.offset + count)
@@ -598,18 +781,34 @@ export async function readProposals(
       await file.close()
     }
   } catch {
-    return nothing
+    return []
   }
-  const lines: ProposalLine[] = [],
-    skipped: SkippedLine[] = []
+  const rows: Array<{ index: number; end: number; text: string }> = []
   let line = from.line,
     offset = from.offset
   // Split as bytes, so the offset counts what is on disk even where a line is not valid UTF-8.
   for (let begin = 0, end = chunk.indexOf(0x0a); end >= 0; begin = end + 1, end = chunk.indexOf(0x0a, begin)) {
-    if (line >= PROPOSAL_LIMITS.count) break
-    const index = line++
+    if (line >= limits.count) break
     offset += end - begin + 1
-    const text = chunk.subarray(begin, end).toString('utf8')
+    rows.push({ index: line++, end: offset, text: chunk.subarray(begin, end).toString('utf8') })
+  }
+  return rows
+}
+
+export async function readProposals(
+  directory: string,
+  from: ProposalCursor,
+): Promise<{ lines: ProposalLine[]; next: ProposalCursor; skipped: SkippedLine[] }> {
+  const rows = await readLines(directory, PROPOSALS_FILE, from, PROPOSAL_LIMITS)
+  const lines: ProposalLine[] = [],
+    skipped: SkippedLine[] = []
+  let line = from.line,
+    offset = from.offset
+  for (const row of rows) {
+    const index = row.index
+    line = index + 1
+    offset = row.end
+    const text = row.text
     let raw: unknown
     try {
       raw = JSON.parse(text)
@@ -645,4 +844,114 @@ export async function readProposals(
     else skipped.push('invalid')
   }
   return { lines, next: { line, offset }, skipped }
+}
+
+const roundLine = z.strictObject({
+  kind: z.literal('send'),
+  member: z.string().regex(/^m[1-9]$/u),
+  prompt: z
+    .string()
+    .trim()
+    .min(1)
+    .max(TEAM_LIMITS.promptChars)
+    .refine(value => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\p{Cf}]/u.test(value)),
+  group: z.strictObject({ label: z.string().regex(/^[A-Za-z0-9_-]{8,32}$/u), count: z.number().int().min(1).max(TEAM_LIMITS.members) }),
+})
+/** One `send_to_members` call, its lines gathered: `first` is the line the server waits for an answer on. */
+export interface RoundCall {
+  first: number
+  sends: Array<{ member: string; prompt: string }>
+}
+/** Round lines a session may have sent over its life; past it nothing more is read. */
+const ROUND_LINES = 1000
+
+/**
+ * The complete calls in the rounds file after `from`, read as the proposals are. A call's lines were written at once;
+ * a call not yet whole is left for the next read. `refused`: the first line of each call that did not parse, to be
+ * answered as refused.
+ */
+export async function readRounds(
+  directory: string,
+  from: ProposalCursor,
+): Promise<{ calls: RoundCall[]; refused: number[]; next: ProposalCursor }> {
+  const rows = await readLines(directory, ROUNDS_FILE, from, { ...ROUND_LIMITS, count: ROUND_LINES })
+  const calls: RoundCall[] = [],
+    refused: number[] = []
+  let next = from
+  for (let at = 0; at < rows.length;) {
+    const head = rows[at]!
+    let parsed: z.infer<typeof roundLine> | undefined
+    try {
+      parsed = roundLine.parse(JSON.parse(head.text))
+    } catch {
+      refused.push(head.index)
+      next = { line: head.index + 1, offset: head.end }
+      at++
+      continue
+    }
+    const count = parsed.group.count
+    if (at + count > rows.length) break
+    const group = rows.slice(at, at + count).map(row => {
+      try {
+        const line = roundLine.parse(JSON.parse(row.text))
+        return line.group.label === parsed.group.label && line.group.count === count ? line : undefined
+      } catch {
+        return undefined
+      }
+    })
+    if (group.every(Boolean)) calls.push({ first: head.index, sends: group.map(line => ({ member: line!.member, prompt: line!.prompt })) })
+    else refused.push(head.index)
+    const last = rows[at + count - 1]!
+    next = { line: last.index + 1, offset: last.end }
+    at += count
+  }
+  return { calls, refused, next }
+}
+
+/** The Host's word on one round call, by its first line: the round's number or why not, never the prompts. */
+export async function writeRoundAnswer(directory: string, line: number, ok: boolean, text: string): Promise<void> {
+  const file = await open(
+    join(directory, ROUND_ANSWERS_FILE),
+    constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    0o600,
+  )
+  try {
+    const stat = await file.stat()
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > 512 * 1024) return
+    await file.write(`${JSON.stringify({ line, ok, text: text.slice(0, 600) })}\n`)
+  } finally {
+    await file.close()
+  }
+}
+
+/**
+ * The roster the agent reads (`list_members`), written beside the server while the person lets the agent send work
+ * (0600, atomic), and removed when not: the server lists the team tools only while it is there.
+ */
+export async function writeTeamRoster(directory: string, roster: TeamRoster | undefined): Promise<void> {
+  if (!roster) {
+    await rm(join(directory, TEAM_FILE), { force: true })
+    return
+  }
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  await chmod(directory, 0o700)
+  await writeFileAtomic(join(directory, TEAM_FILE), JSON.stringify(roster))
+}
+
+/** As `clearTakenProposals`, for the rounds file and its answers. */
+export async function clearTakenRounds(directory: string, offset: number): Promise<boolean> {
+  try {
+    const file = await open(join(directory, ROUNDS_FILE), constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    try {
+      const stat = await file.stat()
+      if (!stat.isFile() || stat.nlink !== 1 || stat.mode & 0o077 || stat.size !== offset || offset === 0) return false
+      await file.truncate(0)
+      await rm(join(directory, ROUND_ANSWERS_FILE), { force: true })
+      return true
+    } finally {
+      await file.close()
+    }
+  } catch {
+    return false
+  }
 }

@@ -92,6 +92,9 @@ export const AUDIT_LABELS: Readonly<Record<AuditAction, readonly [AuditKind, str
   'team.returned': ['sessions', '团队结果交回'],
   'team.kept': ['sessions', '团队结果留存'],
   'team.stopped': ['sessions', '停止团队'],
+  'team.round.started': ['sessions', '团队再派一轮'],
+  'team.dispatch.allowed': ['sessions', '允许 Agent 给团队派活'],
+  'team.dispatch.ended': ['sessions', '停止 Agent 给团队派活'],
   'app.task.start': ['sessions', '确认：插件页面开始会话'],
   // Agent
   'agent.home.assigned': ['agents', '分配 Agent 的家'],

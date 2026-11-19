@@ -710,4 +710,260 @@ describe('a team of sessions, in the page', () => {
     expect(await input.inputValue()).toBe('先别发')
     await input.fill('')
   }, 180_000)
+
+  it('sends existing members another round from the input with @, its results titled with the round', async () => {
+    const id = await lead('拆分登录重构')
+    const team = await startTeam(id, {
+      tasks: [
+        { title: '列出改动', prompt: 'echo 一共要改 6 个文件。', harnessId: 'alpha' },
+        { title: '核对接口', prompt: 'echo 接口签名不变。', harnessId: 'beta' },
+      ],
+    })
+    await teamIn(team.id, 'returned')
+    await settled(id)
+    await open('拆分登录重构')
+    await card(team.id).waitFor()
+    const input = () => page.getByRole('textbox', { name: '继续对话', exact: true }).filter({ visible: true })
+    const list = page.getByRole('listbox', { name: '提到成员或文件', exact: true })
+    const members = list.getByRole('group', { name: '成员', exact: true })
+    // @ lists the members first, each with its Harness and how it stands.
+    await input().fill('@')
+    await members.waitFor()
+    expect(await members.getByRole('option').allInnerTexts()).toEqual([
+      expect.stringMatching(/列出改动[\s\S]*Alpha[\s\S]*已完成/u),
+      expect.stringMatching(/核对接口[\s\S]*Beta[\s\S]*已完成/u),
+    ])
+    await shots('mention', '拆分登录重构', async view => {
+      const field = view.getByRole('textbox', { name: '继续对话', exact: true }).filter({ visible: true })
+      await field.fill('')
+      await field.fill('@')
+      await view.getByRole('listbox', { name: '提到成员或文件', exact: true }).getByRole('group', { name: '成员', exact: true }).waitFor()
+    })
+    // Picking one puts its chip in the input; a second chip names the other. Enter sends them a round, not this session.
+    await input().fill('@核')
+    await page.keyboard.press('Enter')
+    await poll(() => input().inputValue()).toBe('@核对接口 ')
+    await page.keyboard.type('@列')
+    await members.waitFor()
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('echo 再核对一遍边界。')
+    expect(await page.locator('.composer-input .prompt-mark[data-kind="member"]').count()).toBe(2)
+    const before = (await detail(id)).messages.length
+    await page.keyboard.press('Enter')
+    await poll(() => input().inputValue()).toBe('')
+    const second = await teamIn(team.id, 'returned')
+    expect(second.round).toBe(2)
+    expect(second.rounds?.at(-1)?.members.map(member => member.itemId)).toEqual(team.members.map(member => member.itemId))
+    for (const member of team.members)
+      expect((await detail(member.sessionId!)).messages.filter(message => message.role === 'user').at(-1)?.text).toBe(
+        'echo 再核对一遍边界。',
+      )
+    // Nothing of it went to this session as a message of the person's: only the results came back.
+    const after = (await detail(id)).messages.slice(before)
+    expect(after.filter(message => message.role === 'user').map(message => message.text.startsWith('团队成员都结束了'))).toEqual([true])
+    await settled(id)
+    // The card shows the latest round; its results say which round they are.
+    await poll(() => card(team.id).locator('.team-round').innerText()).toBe('第 2 轮')
+    const results = page.locator(`.team-results[data-message-id="${second.returnedMessageId}"]`)
+    await results.waitFor()
+    expect(await results.locator('.team-results-title').innerText()).toBe('成员的结果 · 第 2 轮')
+    await results.getByRole('button', { name: /核对接口/u }).click()
+    await results.locator('.team-result-body').getByText('再核对一遍边界', { exact: false }).waitFor()
+    // The first round's card still opens to that round's reply.
+    const firstResults = page.locator(
+      `.team-results[data-message-id="${team.returnedMessageId ?? (await snapshot()).teams!.find(row => row.id === team.id)!.rounds![0]!.returnedMessageId}"]`,
+    )
+    expect(await firstResults.locator('.team-results-title').innerText()).toBe('成员的结果 · 第 1 轮')
+    await shots('round-2', '拆分登录重构', async view => {
+      const shown = view.locator(`.team-results[data-message-id="${second.returnedMessageId}"]`)
+      await shown.waitFor()
+      await shown.evaluate(node => node.scrollIntoView({ block: 'center' }))
+    })
+    await noHorizontalOverflow(page)
+  }, 240_000)
+
+  it('marks the round on the card, and sends one member another round from its row', async () => {
+    const id = await lead('拆分支付重构')
+    const team = await startTeam(id, {
+      tasks: [
+        { title: '列出改动', prompt: 'echo 一共要改 6 个文件。', harnessId: 'alpha' },
+        { title: '核对接口', prompt: 'echo 接口签名不变。', harnessId: 'beta' },
+      ],
+    })
+    await teamIn(team.id, 'returned')
+    await settled(id)
+    await owner.json(`teams/${team.id}/rounds`, {
+      method: 'POST',
+      body: { requestId: randomUUID(), sends: [{ itemId: team.members[1]!.itemId, prompt: 'echo 再核对一遍边界。' }] },
+    })
+    await teamIn(team.id, 'returned')
+    await settled(id)
+    await open('拆分支付重构')
+    await card(team.id).waitFor()
+    const mark = card(team.id).locator('.team-round')
+    await poll(() => mark.innerText()).toBe('第 2 轮')
+    await mark.hover()
+    await page.getByRole('tooltip').filter({ hasText: '你派的' }).waitFor()
+
+    await shots('round-mark', '拆分支付重构', async view => {
+      const graph = view.locator(`.team-card[data-team="${team.id}"]`)
+      await graph.locator('.team-round').waitFor()
+      await graph.evaluate(node => node.scrollIntoView({ block: 'center' }))
+    })
+
+    // 再派一轮 from a row: the action at the pill's end opens a line under the graph; Esc closes it, Enter sends that
+    // member alone. The rows keep their height.
+    const name = '再派一轮给「列出改动」'
+    const row = card(team.id).locator('.team-member').nth(0)
+    const height = (await row.boundingBox())!.height
+    const openAgain = async (view: Page) => {
+      const target = view.locator(`.team-card[data-team="${team.id}"] .team-member`).nth(0)
+      await target.hover()
+      await target.getByRole('button', { name, exact: true }).click()
+    }
+    const again = card(team.id).getByRole('textbox', { name, exact: true })
+    await row.evaluate(node => node.scrollIntoView({ block: 'center' }))
+    await row.hover()
+    await row.getByRole('button', { name, exact: true }).waitFor()
+    await page.screenshot({ path: `${OUTPUT}/again-hover--1440--light.png`, animations: 'disabled', caret: 'hide' })
+    await openAgain(page)
+    await again.waitFor()
+    expect((await row.boundingBox())!.height).toBe(height)
+    await page.keyboard.press('Escape')
+    await again.waitFor({ state: 'hidden' })
+    await openAgain(page)
+    await again.fill('echo 把第 3 个文件拆成两个。')
+    await shots('again', '拆分支付重构', async view => {
+      const field = view.locator(`.team-card[data-team="${team.id}"]`).getByRole('textbox', { name, exact: true })
+      if (!(await field.isVisible())) {
+        await openAgain(view)
+        await field.fill('echo 把第 3 个文件拆成两个。')
+      }
+      await field.evaluate(node => node.scrollIntoView({ block: 'center' }))
+    })
+    if (!(await again.isVisible())) {
+      await openAgain(page)
+      await again.fill('echo 把第 3 个文件拆成两个。')
+    }
+    await again.press('Enter')
+    await again.waitFor({ state: 'hidden' })
+    const third = await teamIn(team.id, 'returned')
+    expect(third.rounds?.at(-1)).toMatchObject({ round: 3, by: 'person', members: [{ itemId: team.members[0]!.itemId }] })
+    await poll(() => card(team.id).locator('.team-round').innerText()).toBe('第 3 轮')
+    await noHorizontalOverflow(page)
+  }, 240_000)
+})
+
+/**
+ * The switch that lets the lead's agent send work by itself, on a Host with the demo model: a member on Latch 内置 (L1)
+ * is the only kind the default unattended ceiling lets a round nobody pressed reach.
+ */
+describe("the lead's agent sending its team another round", () => {
+  let host: TestHost
+  let owner: TestDevice
+  let browser: Browser
+  let page: Page
+  let state = ''
+
+  const poll = <T>(read: () => T) => expect.poll(read, { timeout: 20_000 })
+  const teamOf = async (id: string) => (await owner.json<TeamAnswer>(`teams/${id}`)).team
+  const settled = async (id: string) =>
+    expect
+      .poll(async () => ['idle', 'failed', 'cancelled'].includes((await owner.json<TaskDetail>(`tasks/${id}`)).summary.status), {
+        timeout: 20_000,
+      })
+      .toBe(true)
+
+  beforeAll(async () => {
+    await mkdir(OUTPUT, { recursive: true })
+    state = await mkdtemp(join(tmpdir(), 'latch-e2e-team-agent-'))
+    host = await startTestHost({ demo: true })
+    owner = await host.enroll({ listener: 'unix' })
+    await owner.confirmedJson('agents', {
+      method: 'POST',
+      body: {
+        id: 'alpha',
+        name: 'Alpha',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: { FAKE_ACP_MCP: 'dsh', FAKE_ACP_STATE: join(state, 'alpha.json'), FAKE_ACP_CAPS: 'load,resume' },
+      },
+    })
+    browser = await chromium.launch(browserLaunchOptions())
+    page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+    page.setDefaultTimeout(20_000)
+    page.on('pageerror', error => console.error('pageerror', error.stack ?? error.message))
+    await enrollBrowser(page, host)
+    await connected(page)
+  }, 120_000)
+
+  afterAll(async () => {
+    await browser?.close()
+    await host?.close()
+    if (state) await rm(state, { recursive: true, force: true })
+  })
+
+  it('turns the switch on, and the results of the round the agent sent come back as round 2', async () => {
+    const created = await owner.confirmed('tasks', {
+      method: 'POST',
+      body: { requestId: randomUUID(), prompt: 'echo 先把文案定下来', harnessId: 'alpha', mode: 'agent' },
+    })
+    const { sessionId: id } = (await created.json()) as { sessionId: string }
+    await settled(id)
+    await owner.json(`tasks/${id}`, { method: 'PATCH', body: { title: '首页文案' } })
+    const { team } = await owner.json<TeamAnswer>(`tasks/${id}/team`, {
+      method: 'POST',
+      body: { requestId: randomUUID(), tasks: [{ title: '写问候语', prompt: '写一句问候', harnessId: 'standard' }] },
+    })
+    await poll(async () => (await teamOf(team.id)).state).toBe('returned')
+    await settled(id)
+    await page.keyboard.press('Meta+k')
+    const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+    await palette.getByRole('searchbox').fill('首页文案')
+    await palette.getByRole('option', { name: '首页文案', exact: true }).first().click()
+    const graph = page.locator(`.team-card[data-team="${team.id}"]`)
+    await graph.waitFor()
+    // Off by default; the person turns it on.
+    const toggle = graph.getByRole('switch', { name: '让它自己派活', exact: true })
+    expect(await toggle.getAttribute('aria-checked')).toBe('false')
+    await toggle.click()
+    await poll(async () => (await teamOf(team.id)).agentDispatch).toBe(true)
+    await poll(() => toggle.getAttribute('aria-checked')).toBe('true')
+    for (const [width, height, theme] of VIEWS) {
+      await page.setViewportSize({ width, height })
+      await page.emulateMedia({ colorScheme: theme })
+      await settleShell(page)
+      await graph.evaluate(node => node.scrollIntoView({ block: 'center' }))
+      await page.mouse.move(width - 2, Math.floor(height / 2))
+      await noHorizontalOverflow(page)
+      await page.screenshot({ path: `${OUTPUT}/switch--${width}--${theme}.png`, animations: 'disabled', caret: 'hide' })
+    }
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.emulateMedia({ colorScheme: 'light' })
+
+    // The lead's agent sends its member another round through its own tool.
+    await owner.json(`tasks/${id}/prompt`, {
+      method: 'POST',
+      body: {
+        requestId: randomUUID(),
+        prompt: `mcp latch-skills send_to_members ${JSON.stringify({ sends: [{ member: 'm1', prompt: '再写一句更短的问候' }] })}`,
+      },
+    })
+    await poll(async () => (await teamOf(team.id)).rounds?.at(-1)?.state).toBe('returned')
+    const done = await teamOf(team.id)
+    expect(done.rounds?.at(-1)).toMatchObject({ round: 2, by: 'agent' })
+    const results = page.locator(`.team-results[data-message-id="${done.returnedMessageId}"]`)
+    await results.waitFor()
+    await poll(() => results.locator('.team-results-title').innerText()).toBe('成员的结果 · 第 2 轮')
+    const mark = graph.locator('.team-round')
+    await poll(() => mark.innerText()).toBe('第 2 轮')
+    await mark.hover()
+    await page.getByRole('tooltip').filter({ hasText: 'Agent 派的' }).waitFor()
+    await results.evaluate(node => node.scrollIntoView({ block: 'center' }))
+    await noHorizontalOverflow(page)
+    await page.screenshot({ path: `${OUTPUT}/agent-round--1440--light.png`, animations: 'disabled', caret: 'hide' })
+    // Turned off again by the person.
+    await toggle.click()
+    await poll(async () => (await teamOf(team.id)).agentDispatch).toBeUndefined()
+  }, 180_000)
 })

@@ -16,6 +16,7 @@ import {
   type WorkspaceInfo,
 } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
+import type { HarnessPlugin } from '@latch/sdk'
 import { TEAM_CUT_MARK, teamReturnText, type TeamRecord } from '../src/teams.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
@@ -29,10 +30,10 @@ const SLOW = { timeout: 60_000 }
 const WAIT = { timeout: 20_000, interval: 50 }
 
 /** A Host with two Harnesses, `alpha` and `beta`: the fake ACP agent twice, each with its own record of sessions. */
-async function fixture(directories?: { dataDir: string; workspaceRoot: string }, state?: string) {
+async function fixture(directories?: { dataDir: string; workspaceRoot: string }, state?: string, demo = false) {
   const root = state ?? (await mkdtemp(join(tmpdir(), 'latch-teams-')))
   if (!state) cleanups.push(() => rm(root, { recursive: true, force: true }))
-  const t = await startTestHost({ demo: false, ...directories })
+  const t = await startTestHost({ demo, ...directories })
   cleanups.push(() => t.close().catch(() => undefined))
   const owner = await t.enroll({ listener: 'unix' })
   const defined = (await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.map(harness => harness.id) ?? []
@@ -649,5 +650,314 @@ describe('the words sent to the lead', () => {
     expect(text.length).toBeLessThan(16_000)
     expect(text.startsWith(TEAM_RETURN_HEADING)).toBe(true)
     expect(text.match(/Z\n/gu)).toHaveLength(TEAM_LIMITS.members)
+  })
+})
+
+/**
+ * The same Host with the demo model, so a member can be on Latch 内置 (`standard`, L1): the only level the default
+ * unattended ceiling lets a round nobody pressed run on. The ACP Harnesses are L3.
+ */
+const unattendedFixture = () => fixture(undefined, undefined, true)
+const DEMO_SAID = '当前为演示模式。'
+
+const round = (device: TestDevice, teamId: string, sends: Array<{ itemId: string; prompt: string }>, requestId = randomUUID()) =>
+  device.request(`teams/${teamId}/rounds`, { method: 'POST', body: { requestId, sends } })
+const dispatchSwitch = (device: TestDevice, teamId: string, agentDispatch: boolean) =>
+  device.request(`teams/${teamId}`, { method: 'PATCH', body: { agentDispatch } })
+const say = async (device: TestDevice, sessionId: string, prompt: string): Promise<string> => {
+  await device.json(`tasks/${sessionId}/prompt`, { method: 'POST', body: { requestId: randomUUID(), prompt } })
+  const detail = await settled(device, sessionId)
+  return detail.messages.findLast(message => message.role === 'assistant')?.text ?? ''
+}
+
+describe('later rounds on an existing team', () => {
+  it("sends a person's round to two members, refuses a busy member and a second open round, and returns once per round", SLOW, async () => {
+    const { t, owner } = await fixture()
+    const lead = await leadSession(owner)
+    const team = await started(owner, lead, { tasks: [task('一', 'echo one', 'alpha'), task('二', 'echo two', 'beta')] })
+    const first = await teamIn(owner, team.id, 'returned')
+    expect(first).not.toHaveProperty('round')
+    const [m1, m2] = team.members.map(member => member.itemId) as [string, string]
+    const [s1, s2] = team.members.map(member => member.sessionId!) as [string, string]
+
+    // A member the person is talking to right now takes no round: refused, never queued.
+    await owner.json(`tasks/${s1}/prompt`, { method: 'POST', body: { requestId: randomUUID(), prompt: 'endturn' } })
+    await vi.waitFor(async () => expect((await detailOf(owner, s1)).summary.status).toBe('running'), WAIT)
+    expect(await errorOf(await round(owner, team.id, [{ itemId: m1, prompt: 'echo again' }]))).toEqual({
+      status: 409,
+      error: 'team-member-busy',
+    })
+    await owner.json(`tasks/${s1}/cancel`, { method: 'POST', body: {} })
+    await settled(owner, s1)
+
+    const requestId = randomUUID()
+    const sends = [
+      { itemId: m1, prompt: 'echo second one' },
+      { itemId: m2, prompt: 'permission' },
+    ]
+    const made = await round(owner, team.id, sends, requestId)
+    expect(made.status).toBe(201)
+    const open = ((await made.json()) as TeamAnswer).team
+    expect(open).toMatchObject({ state: 'running', round: 2 })
+    expect(open.rounds?.map(row => [row.round, row.by, row.state])).toEqual([
+      [1, 'person', 'returned'],
+      [2, 'person', 'running'],
+    ])
+    // The same request again answers the same round; another while it is open is refused.
+    const again = await round(owner, team.id, sends, requestId)
+    expect([again.status, ((await again.json()) as TeamAnswer).team.round]).toEqual([200, 2])
+    expect(await errorOf(await round(owner, team.id, [{ itemId: m1, prompt: 'echo three' }]))).toEqual({
+      status: 409,
+      error: 'team-round-open',
+    })
+    expect(await errorOf(await round(owner, team.id, sends, requestId).then(() => round(owner, team.id, [sends[0]!], requestId)))).toEqual({
+      status: 409,
+      error: 'request-conflict',
+    })
+    await vi.waitFor(
+      async () => expect((await teamOf(owner, team.id)).members.map(member => member.state)).toEqual(['done', 'waiting']),
+      WAIT,
+    )
+    expect(await returnsIn(owner, lead)).toHaveLength(1)
+    await allowAll(owner, [s2])
+    const second = await teamIn(owner, team.id, 'returned')
+    const returns = await returnsIn(owner, lead)
+    expect(returns).toHaveLength(2)
+    expect(returns[1]).toContain('【一】（Alpha）：已完成\necho: echo second one')
+    expect(returns[1]).toContain('【二】（Beta）：已完成\nallowed')
+    expect(returns[1]).not.toContain('echo: echo one')
+    expect(second.rounds?.map(row => row.returnedMessageId)).toEqual([first.returnedMessageId, second.returnedMessageId])
+    expect(second.returnedMessageId).not.toBe(first.returnedMessageId)
+    await new Promise(resolve => setTimeout(resolve, 1_200))
+    expect(await returnsIn(owner, lead)).toHaveLength(2)
+
+    // A round to one member: only it is in the round, and only it is in what goes back.
+    await settled(owner, lead)
+    const third = ((await (await round(owner, team.id, [{ itemId: m2, prompt: 'echo third two' }])).json()) as TeamAnswer).team
+    expect(third.round).toBe(3)
+    expect(third.rounds?.at(-1)?.members.map(member => member.itemId)).toEqual([m2])
+    await teamIn(owner, team.id, 'returned')
+    const last = (await returnsIn(owner, lead)).at(-1)!
+    expect(last).toContain('【二】（Beta）：已完成\necho: echo third two')
+    expect(last).not.toContain('【一】')
+    expect((await audited(t, 'team.round.started')).map(entry => entry.detail)).toEqual([
+      { teamId: team.id, round: 2, by: 'person', members: 2 },
+      { teamId: team.id, round: 3, by: 'person', members: 1 },
+    ])
+    // The person's own words are not outside content to the member.
+    expect((await detailOf(owner, s1)).messages.find(message => message.text === 'echo second one')).not.toHaveProperty('origin')
+  })
+
+  it('reopens a stopped team, refuses a member outside the team, a device without run, and empty prompts', SLOW, async () => {
+    const { t, owner } = await fixture()
+    const lead = await leadSession(owner)
+    const team = await started(owner, lead, { tasks: [task('长活', 'endturn', 'alpha')] })
+    await vi.waitFor(async () => expect((await teamOf(owner, team.id)).members[0]!.state).toBe('running'), WAIT)
+    await owner.json(`teams/${team.id}/stop`, { method: 'POST', body: { requestId: randomUUID() } })
+    await teamIn(owner, team.id, 'kept')
+    const member = team.members[0]!.itemId
+    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+    expect((await round(viewer, team.id, [{ itemId: member, prompt: 'echo x' }])).status).toBe(403)
+    expect(await errorOf(await round(owner, team.id, [{ itemId: `itm_${'B'.repeat(22)}`, prompt: 'echo x' }]))).toEqual({
+      status: 404,
+      error: 'team-member-not-found',
+    })
+    expect((await round(owner, team.id, [{ itemId: member, prompt: '   ' }])).status).toBe(400)
+    expect((await round(owner, team.id, [])).status).toBe(400)
+    const reopened = ((await (await round(owner, team.id, [{ itemId: member, prompt: 'echo back' }])).json()) as TeamAnswer).team
+    expect(reopened).toMatchObject({ round: 2, state: 'running' })
+    expect(reopened).not.toHaveProperty('kept')
+    await teamIn(owner, team.id, 'returned')
+    expect((await returnsIn(owner, lead)).at(-1)).toContain('echo: echo back')
+  })
+
+  it('keeps the switch off by default; on is audited first, and it goes off when the device that allowed it is removed', SLOW, async () => {
+    const { t, owner } = await unattendedFixture()
+    // Every device before the team: once a return is back the lead runs in full access and enrolling waits.
+    const phone = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'] })
+    const viewer = await t.enroll({ listener: 'loopback-tcp', scopes: ['view'] })
+    const lead = await leadSession(owner)
+    const team = await started(owner, lead, { tasks: [task('一', '写一句问候', 'standard')] })
+    await teamIn(owner, team.id, 'returned')
+    expect(await teamOf(owner, team.id)).not.toHaveProperty('agentDispatch')
+    expect((await dispatchSwitch(viewer, team.id, true)).status).toBe(403)
+    expect(await audited(t, 'team.dispatch.allowed')).toEqual([])
+
+    const on = await dispatchSwitch(phone, team.id, true)
+    expect([on.status, ((await on.json()) as TeamAnswer).team.agentDispatch]).toEqual([200, true])
+    expect((await audited(t, 'team.dispatch.allowed')).map(entry => entry.detail)).toEqual([{ teamId: team.id, leadSessionId: lead }])
+    expect((await owner.request(`devices/${phone.id}`, { method: 'DELETE', body: {} })).status).toBe(200)
+    await vi.waitFor(async () => expect(await teamOf(owner, team.id)).not.toHaveProperty('agentDispatch'), WAIT)
+    expect((await audited(t, 'team.dispatch.ended')).map(entry => entry.detail)).toEqual([{ teamId: team.id, reason: 'device-removed' }])
+
+    // Off by the person, and by stopping the team.
+    expect((await dispatchSwitch(owner, team.id, true)).status).toBe(200)
+    expect(((await (await dispatchSwitch(owner, team.id, false)).json()) as TeamAnswer).team).not.toHaveProperty('agentDispatch')
+    expect((await audited(t, 'team.dispatch.ended')).map(entry => entry.detail.reason)).toEqual(['device-removed', 'person'])
+
+    // Stopping a round takes the switch back with it.
+    expect((await dispatchSwitch(owner, team.id, true)).status).toBe(200)
+    expect((await round(owner, team.id, [{ itemId: team.members[0]!.itemId, prompt: '运行 30 秒长任务' }])).status).toBe(201)
+    expect((await owner.request(`teams/${team.id}/stop`, { method: 'POST', body: { requestId: randomUUID() } })).status).toBe(200)
+    await teamIn(owner, team.id, 'kept')
+    expect(await teamOf(owner, team.id)).not.toHaveProperty('agentDispatch')
+    await vi.waitFor(async () => {
+      expect((await audited(t, 'team.dispatch.ended')).map(entry => entry.detail.reason)).toEqual(['device-removed', 'person', 'stopped'])
+    }, WAIT)
+  })
+
+  it(
+    "lets the lead's agent send a round through its channel only while the switch is on, as outside content, and returns it",
+    SLOW,
+    async () => {
+      const { t, owner } = await unattendedFixture()
+      const lead = await leadSession(owner)
+      const team = await started(owner, lead, { tasks: [task('一', '写一句问候', 'standard'), task('二', 'echo two', 'alpha')] })
+      await teamIn(owner, team.id, 'returned')
+      await settled(owner, lead)
+      const call = (args: unknown) => say(owner, lead, `mcp latch-skills send_to_members ${JSON.stringify(args)}`)
+
+      // Off: the tools are not listed and a call is refused, with nothing sent.
+      expect(await say(owner, lead, 'mcp-list latch-skills')).not.toContain('send_to_members')
+      expect(await call({ sends: [{ member: 'm1', prompt: '再写一句' }] })).toContain('error: The user has not let you')
+      expect((await teamOf(owner, team.id)).round).toBeUndefined()
+
+      expect((await dispatchSwitch(owner, team.id, true)).status).toBe(200)
+      // The live server lists them once the roster is beside it: no new session needed.
+      await vi.waitFor(async () => expect(await say(owner, lead, 'mcp-list latch-skills')).toContain('list_members,send_to_members'), WAIT)
+      const roster = await say(owner, lead, 'mcp latch-skills list_members')
+      expect(roster).toContain('"id":"m1","title":"一","harness":"Latch 内置","state":"done"')
+      expect(roster).toContain('"id":"m2","title":"二","harness":"Alpha","state":"done"')
+      expect(roster).toContain('"roundsLeft":6')
+
+      // Refused by the Host: a member not in the team, and an L3 member past the unattended ceiling. Nothing is sent.
+      expect(await call({ sends: [{ member: 'm3', prompt: 'echo nobody' }] })).toContain('m3 is not a member of this team')
+      expect(await call({ sends: [{ member: 'm2', prompt: 'echo agent two' }] })).toContain('Alpha 是 L3，后台运行最高 L1。')
+      expect((await teamOf(owner, team.id)).round).toBeUndefined()
+
+      const answer = await call({ sends: [{ member: 'm1', prompt: '请再写一句问候' }] })
+      expect(answer).toContain('ok: Sent as round 2.')
+      const done = await teamIn(owner, team.id, 'returned')
+      expect(done.rounds?.at(-1)).toMatchObject({ round: 2, by: 'agent', members: [{ itemId: team.members[0]!.itemId, state: 'done' }] })
+      const back = (await returnsIn(owner, lead)).at(-1)!
+      expect(back).toContain(`【一】（Latch 内置）：已完成\n${DEMO_SAID}`)
+      expect(back).not.toContain('【二】')
+      // The member got it as outside content: what it proposes from now on is external.
+      const member = done.members[0]!.sessionId!
+      expect((await detailOf(owner, member)).messages.some(message => message.role === 'user' && message.text === '请再写一句问候')).toBe(
+        true,
+      )
+      expect((await audited(t, 'team.round.started')).map(entry => entry.detail)).toEqual([
+        { teamId: team.id, round: 2, by: 'agent', members: 1 },
+      ])
+      // Stopping the team takes the switch back.
+      await settled(owner, lead)
+      expect(
+        (
+          (await (await owner.request(`teams/${team.id}/stop`, { method: 'POST', body: { requestId: randomUUID() } })).json()) as {
+            error?: string
+          }
+        ).error,
+      ).toBe('team-ended')
+    },
+  )
+
+  it('refuses an agent round past the cap, and the switch where the unattended ceiling allows no member', SLOW, async () => {
+    const { owner } = await unattendedFixture()
+    const lead = await leadSession(owner)
+    const team = await started(owner, lead, { tasks: [task('一', 'echo one', 'alpha')] })
+    await teamIn(owner, team.id, 'returned')
+    // Only L3 members under the default L1 ceiling: the switch cannot go on, and says why.
+    expect((await teamOf(owner, team.id)).dispatchRefusal).toBe('Alpha 是 L3，后台运行最高 L1。')
+    expect(await errorOf(await dispatchSwitch(owner, team.id, true))).toEqual({ status: 409, error: 'team-dispatch-unavailable' })
+
+    const other = await leadSession(owner)
+    const capped = await started(owner, other, { tasks: [task('一', '写一句问候', 'standard')] })
+    await teamIn(owner, capped.id, 'returned')
+    expect((await dispatchSwitch(owner, capped.id, true)).status).toBe(200)
+    const send = (prompt: string) =>
+      say(owner, other, `mcp latch-skills send_to_members ${JSON.stringify({ sends: [{ member: 'm1', prompt }] })}`)
+    for (let index = 0; index < TEAM_LIMITS.agentRounds; index++) {
+      await settled(owner, other)
+      expect(await send(`第 ${index} 句问候`)).toContain(`Sent as round ${index + 2}.`)
+      await teamIn(owner, capped.id, 'returned')
+    }
+    await settled(owner, other)
+    expect(await send('再来一句')).toContain(`the ${TEAM_LIMITS.agentRounds} rounds you may make`)
+    // The person can still send more.
+    expect((await round(owner, capped.id, [{ itemId: capped.members[0]!.itemId, prompt: '写一句' }])).status).toBe(201)
+  })
+
+  it('gives the built-in Harness the same tools while the switch is on, and its call makes a round', SLOW, async () => {
+    const seen: string[][] = []
+    const answers: string[] = []
+    const plugin: HarnessPlugin = {
+      id: 'team-provider',
+      name: 'fixture',
+      version: '1',
+      description: '',
+      activate(ctx) {
+        ctx.registerProvider({
+          id: 'team-provider',
+          name: 'fixture',
+          model: 'fixture',
+          async *stream({ messages, tools }) {
+            seen.push(tools.map(tool => tool.name))
+            const last = messages.at(-1)
+            if (last?.role === 'tool') answers.push(JSON.stringify(last))
+            // A member asked to propose: whether it is marked external says how its turn was sent.
+            if (last?.role === 'user' && JSON.stringify(last).includes('propose now') && tools.some(tool => tool.name === 'propose_todo')) {
+              yield {
+                type: 'tool-call',
+                call: { id: `call-${randomUUID()}`, name: 'propose_todo', arguments: { title: '后续', prompt: '把结论写进文档。' } },
+              }
+              yield { type: 'finish', reason: 'tool-calls' }
+              return
+            }
+            if (last?.role === 'user' && JSON.stringify(last).includes('dispatch it')) {
+              yield {
+                type: 'tool-call',
+                call: {
+                  id: `call-${randomUUID()}`,
+                  name: 'send_to_members',
+                  arguments: { sends: [{ member: 'm1', prompt: 'propose now' }] },
+                },
+              }
+              yield { type: 'finish', reason: 'tool-calls' }
+              return
+            }
+            yield { type: 'text', text: 'ok' }
+            yield { type: 'finish', reason: 'stop' }
+          },
+        })
+      },
+    }
+    const t = await startTestHost({ plugins: [plugin] })
+    cleanups.push(() => t.close())
+    const owner = await t.enroll({ listener: 'unix' })
+    const model = { providerId: 'team-provider', model: 'fixture' }
+    const lead = await leadSession(owner, 'hello', { harnessId: 'standard', model })
+    const team = await started(owner, lead, { tasks: [{ ...task('一', '写一句问候', 'standard'), model }] })
+    await teamIn(owner, team.id, 'returned')
+    await settled(owner, lead)
+    const member = team.members[0]!.sessionId!
+    const proposals = async () => ((await snapshotOf(owner)).workProposals ?? []).filter(row => row.from.sessionId === member)
+    // A person's round is the person's words: what the member proposes from it is not outside content.
+    expect((await round(owner, team.id, [{ itemId: team.members[0]!.itemId, prompt: 'propose now' }])).status).toBe(201)
+    await teamIn(owner, team.id, 'returned')
+    await vi.waitFor(async () => expect(await proposals()).toHaveLength(1), WAIT)
+    expect((await proposals())[0]!.external).toBeUndefined()
+    await settled(owner, lead)
+    expect(seen.flat()).not.toContain('send_to_members')
+    expect((await dispatchSwitch(owner, team.id, true)).status).toBe(200)
+    await say(owner, lead, 'dispatch it')
+    expect(seen.at(-1)).toEqual(expect.arrayContaining(['list_members', 'send_to_members']))
+    expect(answers.at(-1)).toContain('Sent as round 3.')
+    const done = await teamIn(owner, team.id, 'returned')
+    expect(done.rounds?.at(-1)).toMatchObject({ round: 3, by: 'agent' })
+    // The agent's words reach the member as outside content: what it proposes from them is external.
+    await vi.waitFor(async () => expect(await proposals()).toHaveLength(2), WAIT)
+    expect((await proposals()).filter(row => row.external)).toHaveLength(1)
+    expect((await returnsIn(owner, lead)).at(-1)).toContain('【一】（Latch 内置）：已完成\nok')
   })
 })

@@ -144,6 +144,11 @@ export interface PromptOptions {
    * with `markOutsideContent` take it; the Host refuses it for the others.
    */
   outsideContent?: true
+  /**
+   * Nobody pressed anything for this turn (a team round the lead's agent sent): what the person allowed for the whole
+   * session (本会话始终允许) does not carry into it; every call that asks, asks.
+   */
+  unattended?: true
 }
 
 export interface DecideOptions {
@@ -306,6 +311,11 @@ export interface Bridge {
    * any, gets `Message.origin`. The marker records permission to fetch and may outlive a failed fetch.
    */
   markOutsideContent?(sessionId: string): Promise<void>
+  /**
+   * Optional, with `HarnessHostOptions.teamRoster`. The team this session leads changed (its members, their states, or
+   * whether its agent may send them work): the driver reads `teamRoster` again for what its agent reads next.
+   */
+  teamChanged?(sessionId: string): Promise<void>
   /**
    * Optional. Starts the settled session's process ahead of its next turn, as that turn would, and sends nothing to the
    * model. A driver starts one only while it is under its process limit, never stopping another session's process for

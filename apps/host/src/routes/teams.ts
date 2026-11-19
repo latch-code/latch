@@ -20,6 +20,8 @@ import {
   memberEnded,
   newTeamId,
   resultOf,
+  roundMembers,
+  roundOf,
   saidOf,
   teamOpen,
   teamReturnText,
@@ -32,6 +34,7 @@ import { checkedPrompt, checkedTitle, HARNESS_ID, type WorkItemStore } from '../
 import type { DeviceCaller, RouteContext, RouteModule } from './registry.ts'
 import type { WorkItemRoutes } from './work-items.ts'
 import type { WorkProposalRoutes } from './work-proposals.ts'
+import { createTeamRounds } from './team-rounds.ts'
 
 export interface TeamRouteDeps {
   store: TeamStore
@@ -58,6 +61,25 @@ export interface TeamRouteDeps {
   cancel: (caller: DeviceCaller, sessionId: string, runId: string | undefined, res: ServerResponse) => Promise<void>
   /** A team changed: clients read again, and each named session's summary; a private one only tells the full data scope. */
   changed: (team: TeamRecord, sessionIds: readonly string[]) => void
+  /**
+   * A later round's message to a member, through the same checked path as a person's message, as `caller`. `agent`: the
+   * lead's agent wrote it, so it is outside content for the member and carries no device's grant.
+   */
+  sendToMember: (
+    caller: DeviceCaller,
+    sessionId: string,
+    input: { requestId: string; prompt: string },
+    how: { agent: boolean; outside: boolean; withoutPrivateContext: boolean },
+  ) => Promise<void>
+  /**
+   * Why a round nobody pressed cannot run as this device on these Harnesses now, by the ceiling scheduled runs keep
+   * (`policy.json` `unattended`): the Harness's level, the device standing behind unattended work, its idle days.
+   */
+  unattendedRefusal: (deviceId: string | undefined, harnessIds: readonly string[]) => string | undefined
+  /** Why the lead's Harness gives its agent no team tools (no agent channel); undefined when it does. */
+  channelRefusal: (leadSessionId: string) => string | undefined
+  /** What the lead's agent may read of its team changed: its driver reads it again. */
+  rosterChanged: (leadSessionId: string) => void
   /** How often open teams are looked at, in milliseconds. */
   pollMs?: number
 }
@@ -68,7 +90,7 @@ interface Parts {
 }
 
 const START = /^\/link\/api\/tasks\/([^/]+)\/team$/u
-const ONE = /^\/link\/api\/teams\/(tem_[A-Za-z0-9_-]{22})(?:\/(stop))?$/u
+const ONE = /^\/link\/api\/teams\/(tem_[A-Za-z0-9_-]{22})(?:\/(stop|rounds))?$/u
 const BODY_LIMIT = 256 * KIB
 /** In the snapshot: every open team, and the most recent ended ones up to this many in all. */
 const SNAPSHOT_TEAMS = 32
@@ -211,11 +233,14 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
   function answer(res: ServerResponse, caller: DeviceCaller, id: string, status = 200): void {
     context.recheck(caller, 'view')
     const team = visible(caller, id)
-    json(res, { team: teamSummary(team, memberReadable(fullData(caller))) } satisfies TeamAnswer, status)
+    json(res, { team: teamSummary(team, memberReadable(fullData(caller)), rounds.refusalOf(team)) } satisfies TeamAnswer, status)
   }
 
   function published(team: TeamRecord | undefined, sessionIds: readonly string[] = []): void {
-    if (team) deps.changed(team, [team.leadSessionId, ...sessionIds])
+    if (team) {
+      deps.changed(team, [team.leadSessionId, ...sessionIds])
+      deps.rosterChanged(team.leadSessionId)
+    }
     watch()
   }
 
@@ -274,14 +299,24 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
     if (state === 'running' || state === 'waiting') return state === member.state ? undefined : { state }
     const detail = await hub.detail(sessionId).catch(() => undefined)
     if (!detail) return undefined
+    // A later round: only what follows its own message counts; before that message is on record, the earlier round's
+    // outcome still stands in the summary, so nothing is read from it.
+    const from = member.sendRequestId
+      ? detail.messages.findIndex(message => message.role === 'user' && message.requestId === member.sendRequestId)
+      : 0
+    if (from < 0) {
+      if (context.now() - Date.parse(member.startedAt ?? at) < SILENT_END_MS) return undefined
+      return { state: 'unknown', endedAt: at }
+    }
+    const since = detail.messages.slice(from)
     if (state === undefined) {
       // Idle with no outcome on record (a Harness that records none, or a first run not yet begun): done once it has
       // replied; with no reply it is waited for, then counted as ended nobody knows how.
-      if (detail.messages.some(message => message.role === 'assistant')) state = 'done'
+      if (since.some(message => message.role === 'assistant')) state = 'done'
       else if (context.now() - Date.parse(member.startedAt ?? at) < SILENT_END_MS) return undefined
       else state = 'unknown'
     }
-    const reply = detail.messages.findLast(message => message.role === 'assistant' && message.text.trim())?.text ?? ''
+    const reply = since.findLast(message => message.role === 'assistant' && message.text.trim())?.text ?? ''
     const said = saidOf(reply)
     const { result, cut } = resultOf(reply)
     return {
@@ -391,19 +426,20 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
         ? []
         : team.members.flatMap(member => (member.sessionId && hub.agentPrivate(member.sessionId) ? [member.sessionId] : [])),
     )
-    const prompt = teamReturnText(team, deps.harnessName, withheld)
-    if (!returnAudited.has(team.id)) {
+    const prompt = teamReturnText({ members: roundMembers(team) }, deps.harnessName, withheld)
+    const once = `${team.id}:${roundOf(team)}`
+    if (!returnAudited.has(once)) {
       try {
         await context.audited({
           action: 'team.returned',
           actor: context.actorOf(caller),
           target: team.id,
-          detail: { teamId: team.id, leadSessionId: lead, members: team.members.length, promptHash: sha256Hex(prompt) },
+          detail: { teamId: team.id, leadSessionId: lead, members: roundMembers(team).length, promptHash: sha256Hex(prompt) },
         })
       } catch {
         return
       }
-      returnAudited.add(team.id)
+      returnAudited.add(once)
     }
     try {
       await deps.send(caller, lead, { requestId: team.returnRequestId, prompt })
@@ -412,7 +448,7 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
       // The device lost what a message of its own needs: it is not sent as anyone else.
       if (error instanceof AppError && (error.status === 401 || error.status === 403) && code !== 'native-verification-required')
         return keep(team.id, 'device-removed')
-      noteOnce(`${team.id}:${code ?? 'send'}`, `团队 ${team.id} 的结果还没有发给来源会话：${errorText(error)}`)
+      noteOnce(`${once}:${code ?? 'send'}`, `团队 ${team.id} 的结果还没有发给来源会话：${errorText(error)}`)
       return
     }
     await returned(team.id, (await sent().catch(() => undefined))?.id)
@@ -705,7 +741,10 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
       const marked = await store.update(id, row => {
         if (!teamOpen(row) || row.state === 'stopping') return false
         row.state = 'stopping'
+        // Stopping a team also takes back what its lead's agent was let do.
+        delete row.dispatch
       })
+      if (marked?.state === 'stopping' && current.dispatch) void rounds.dispatchEnded(id, 'stopped')
       if (marked?.state === 'stopping') published(marked)
       return marked
     })
@@ -733,7 +772,7 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
       .filter(team => !teamOpen(team))
       .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, Math.max(0, SNAPSHOT_TEAMS - open.length))
-    return [...open, ...ended].map(team => teamSummary(team, memberReadable(scope === 'all')))
+    return [...open, ...ended].map(team => teamSummary(team, memberReadable(scope === 'all'), rounds.refusalOf(team)))
   }
 
   context.lifecycle.on('runSettled', ({ sessionId }) => {
@@ -742,6 +781,17 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
   context.lifecycle.on('hostStopping', () => {
     if (timer) clearInterval(timer)
     timer = undefined
+  })
+  const rounds = createTeamRounds({
+    context,
+    deps,
+    exclusive,
+    starting,
+    published,
+    visible,
+    answer,
+    sweep,
+    fullData,
   })
   // Teams left open by the last run of the Host are taken up again: their members' states, then the return.
   watch()
@@ -764,12 +814,23 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
       if (!match) throw notFound()
       const id = match[1]!
       if (!match[2] && method === 'GET') answer(res, caller, id)
+      else if (!match[2] && method === 'PATCH') await rounds.change(req, res, caller, id)
       else if (match[2] === 'stop' && method === 'POST') await stop(req, res, caller, id)
+      else if (match[2] === 'rounds' && method === 'POST') await rounds.start(req, res, caller, id)
       else throw new AppError(404, 'not-found', '接口不存在。')
       return true
     },
   }
-  return { module, summaries, isPrivate, sweep, close: () => (timer ? clearInterval(timer) : undefined) }
+  return {
+    module,
+    summaries,
+    isPrivate,
+    sweep,
+    roster: rounds.roster,
+    dispatch: rounds.dispatch,
+    devicesChanged: rounds.devicesChanged,
+    close: () => (timer ? clearInterval(timer) : undefined),
+  }
 }
 
 export type TeamRoutes = ReturnType<typeof createTeamRoutes>

@@ -11,6 +11,7 @@ import {
   WORK_ITEM_LIMITS,
   type TeamMember,
   type TeamMemberState,
+  type TeamRound,
   type TeamSummary,
 } from '@latch/protocol'
 import { canonicalJson, sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
@@ -48,6 +49,34 @@ const memberSchema = z.strictObject({
   branch: z.string().min(1).max(256).optional(),
   startedAt: isoTime.optional(),
   endedAt: isoTime.optional(),
+  /** A later round's message to it: its reply is the one after that message, not an earlier round's. */
+  sendRequestId: z.string().uuid().optional(),
+})
+const ITEM_ID = z.string().regex(/^itm_[A-Za-z0-9_-]{22}$/u)
+const actorSchema = z.strictObject({
+  deviceId: z.string().min(1).max(64),
+  listener: z.enum(LISTENER_CLASSES),
+  nativeWindowHash: z.string().min(1).max(128).optional(),
+})
+const roundRequestSchema = z.strictObject({
+  deviceId: z.string().min(1).max(64),
+  requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
+  hash: hex64,
+})
+/** A round that has ended, as the record keeps it once a later one is made: who was in it and how each ended. */
+const pastRoundSchema = z.strictObject({
+  round: z.number().int().min(1).max(TEAM_LIMITS.rounds),
+  by: z.enum(['person', 'agent']),
+  members: z
+    .array(z.strictObject({ itemId: ITEM_ID, state: memberState, requestId: z.string().uuid().optional() }))
+    .min(1)
+    .max(TEAM_LIMITS.members),
+  state: z.enum(['returned', 'kept']),
+  kept: z.enum(['lead-gone', 'device-removed', 'stopped']).optional(),
+  returnedMessageId: z.string().min(1).max(256).optional(),
+  messageId: z.string().min(1).max(256).optional(),
+  request: roundRequestSchema.optional(),
+  createdAt: isoTime,
 })
 // Every persisted field is listed and the objects are strict, as the 待办 file beside it.
 const teamSchema = z.strictObject({
@@ -67,11 +96,7 @@ const teamSchema = z.strictObject({
    * The device that started it, as a queued message keeps its sender: the members were started as it, and the results go
    * to the lead as it, checked again then.
    */
-  actor: z.strictObject({
-    deviceId: z.string().min(1).max(64),
-    listener: z.enum(LISTENER_CLASSES),
-    nativeWindowHash: z.string().min(1).max(128).optional(),
-  }),
+  actor: actorSchema,
   /** The start request, by that device: a retry answers this team. */
   request: z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u), hash: hex64 }),
   /** The lead was private when the team was read: only the full data scope reads the team from then on. Never cleared. */
@@ -84,6 +109,30 @@ const teamSchema = z.strictObject({
   returnedMessageId: z.string().min(1).max(256).optional(),
   createdAt: isoTime,
   updatedAt: isoTime,
+  /**
+   * The latest round when it is not the start (docs/TEAMS.md): its number, who made it, its members, the request that
+   * made it and the lead's last message then. `state`, `kept`, `actor`, `returnRequestId` and `returnedMessageId` above
+   * are this round's; the members' states are each one's latest.
+   */
+  round: z
+    .strictObject({
+      round: z.number().int().min(2).max(TEAM_LIMITS.rounds),
+      by: z.enum(['person', 'agent']),
+      itemIds: z.array(ITEM_ID).min(1).max(TEAM_LIMITS.members),
+      request: roundRequestSchema,
+      messageId: z.string().min(1).max(256).optional(),
+      createdAt: isoTime,
+    })
+    .optional(),
+  /** The rounds before the latest, oldest first. */
+  history: z.array(pastRoundSchema).max(TEAM_LIMITS.rounds).optional(),
+  /** Rounds the lead's agent made by itself. */
+  agentRounds: z.number().int().min(1).max(TEAM_LIMITS.agentRounds).optional(),
+  /**
+   * The person let the lead's agent send work to the members: the device that allowed it, as whom its rounds are made.
+   * Cleared when that device is removed or loses `run`, and when the team is stopped.
+   */
+  dispatch: z.strictObject({ ...actorSchema.shape, at: isoTime }).optional(),
 })
 const fileSchema = z
   .strictObject({ version: z.literal(1), teams: z.array(teamSchema).max(TEAM_LIMITS.stored) })
@@ -92,6 +141,7 @@ const fileSchema = z
   })
 
 export type TeamRecord = z.infer<typeof teamSchema>
+export type PastRound = z.infer<typeof pastRoundSchema>
 export type TeamMemberRecord = z.infer<typeof memberSchema>
 
 const ENDS: ReadonlySet<TeamMemberState> = new Set(['done', 'failed', 'cancelled', 'unknown', 'unstarted'])
@@ -188,7 +238,68 @@ function memberView(member: TeamMemberRecord, readable: boolean): TeamMember {
   }
 }
 
-export function teamSummary(team: TeamRecord, readable: (sessionId: string) => boolean): TeamSummary {
+/** The latest round's number: 1 until a later one is made. */
+export const roundOf = (team: Pick<TeamRecord, 'round'>): number => team.round?.round ?? 1
+
+/** The members in the latest round: every member in the start, the ones sent work in a later one. */
+export function roundMembers(team: Pick<TeamRecord, 'members' | 'round'>): TeamMemberRecord[] {
+  const ids = team.round?.itemIds
+  return ids ? team.members.filter(member => ids.includes(member.itemId)) : team.members
+}
+
+/** The latest round as the record keeps it once it has ended and a later one is made. */
+export function pastRound(team: TeamRecord): PastRound {
+  return {
+    round: roundOf(team),
+    by: team.round?.by ?? 'person',
+    members: roundMembers(team).map(member => ({
+      itemId: member.itemId,
+      state: member.state,
+      ...(member.sendRequestId ? { requestId: member.sendRequestId } : {}),
+    })),
+    state: team.state === 'returned' ? 'returned' : 'kept',
+    ...(team.state === 'kept' && team.kept ? { kept: team.kept } : {}),
+    ...(team.returnedMessageId ? { returnedMessageId: team.returnedMessageId } : {}),
+    ...((team.round?.messageId ?? team.messageId) ? { messageId: team.round?.messageId ?? team.messageId } : {}),
+    ...(team.round ? { request: team.round.request } : {}),
+    createdAt: team.round?.createdAt ?? team.createdAt,
+  }
+}
+
+/** Every round of a team for the page, the latest last; the latest as it stands. */
+function roundsOf(team: TeamRecord): TeamRound[] {
+  const past: TeamRound[] = (team.history ?? []).map(round => ({
+    round: round.round,
+    by: round.by,
+    members: round.members,
+    state: round.state,
+    ...(round.kept ? { kept: round.kept } : {}),
+    ...(round.returnedMessageId ? { returnedMessageId: round.returnedMessageId } : {}),
+    ...(round.messageId ? { messageId: round.messageId } : {}),
+    createdAt: round.createdAt,
+  }))
+  const latest = pastRound(team)
+  return [
+    ...past,
+    {
+      round: latest.round,
+      by: latest.by,
+      members: latest.members,
+      state: team.state,
+      ...(team.kept ? { kept: team.kept } : {}),
+      ...(latest.returnedMessageId ? { returnedMessageId: latest.returnedMessageId } : {}),
+      ...(latest.messageId ? { messageId: latest.messageId } : {}),
+      createdAt: latest.createdAt,
+    },
+  ]
+}
+
+export function teamSummary(
+  team: TeamRecord,
+  readable: (sessionId: string) => boolean,
+  /** Why the lead's agent cannot be let send work now; undefined when it can. */
+  dispatchRefusal?: string,
+): TeamSummary {
   return {
     id: team.id,
     leadSessionId: team.leadSessionId,
@@ -201,6 +312,9 @@ export function teamSummary(team: TeamRecord, readable: (sessionId: string) => b
     ...(team.returnedMessageId ? { returnedMessageId: team.returnedMessageId } : {}),
     createdAt: team.createdAt,
     updatedAt: team.updatedAt,
+    ...(team.round ? { round: team.round.round, rounds: roundsOf(team) } : {}),
+    ...(team.dispatch ? { agentDispatch: true as const } : {}),
+    ...(dispatchRefusal ? { dispatchRefusal } : {}),
   }
 }
 

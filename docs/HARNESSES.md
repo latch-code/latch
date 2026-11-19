@@ -351,7 +351,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 
 **`mcpServers`**（`session/new`、`session/resume`、`session/load` 与分叉）依次是：
 
-1. `latch-skills`（`skills-server.ts`）：会话带技能、或属于某个 Agent 或「和通用的对话」时有；Latch 内置的指引（如[操控这台 Mac](MCP.md#给-agent-的指引)）排在 Agent 的技能之后。后一种另有 `propose_memory` 与 `propose_schedule` 两个写工具；Host 给了 `workProposals` 的会话（Code 会话也是）另有看板的 `propose_todo`、`propose_todos`、`propose_card`（[ARCHITECTURE.md](ARCHITECTURE.md#agent-的提议)），为此没有技能的会话也接上它。写工具只往会话私有目录的 `proposals.jsonl` 追加提议（见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#外部-harness-的通道)）；不联网。
+1. `latch-skills`（`skills-server.ts`）：会话带技能、或属于某个 Agent 或「和通用的对话」时有；Latch 内置的指引（如[操控这台 Mac](MCP.md#给-agent-的指引)）排在 Agent 的技能之后。后一种另有 `propose_memory` 与 `propose_schedule` 两个写工具；Host 给了 `workProposals` 的会话（Code 会话也是）另有看板的 `propose_todo`、`propose_todos`、`propose_card`（[ARCHITECTURE.md](ARCHITECTURE.md#agent-的提议)），为此没有技能的会话也接上它。写工具只往会话私有目录的 `proposals.jsonl` 追加提议（见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#外部-harness-的通道)）；不联网。这些会话还带 `team` 模式：只在 Host 写下的 `team.json` 在时列出 `list_members` 与 `send_to_members`，派活写进单独的 `rounds.jsonl`（[TEAMS.md](TEAMS.md#agent-派活)）。
 2. `latch-browser`（`browser-server.ts`）：打开、恢复、载入或分叉会话的那一刻，这台 Mac 的桌面端已登记为浏览器提供者、且会话有项目时有。`initialize` 带几条 `instructions`：要看布局先 `browser_viewport` 再 `browser_read`；只用最新一次读到的引用；只开本机地址；登录与密码交给人；最后用截图与控制台错误验证。Codex 直连把它列为延迟加载的工具时，模型看不到这段文字（真实 CLI 核对，Claude Agent 与 OpenCode 能看到）。令牌 `lbt1.` 在网关目录的 0600 文件里，服务只拿到文件路径，读出即删，参数与 `env` 里没有它，每次换新。桌面端没开时打开的会话没有这个服务，同一进程里不会补上（见 [PREVIEW-BROWSER.md](PREVIEW-BROWSER.md#agent-的工具)）。
 3. 会话「用在」的每个 Latch MCP 服务器各一个 `latch-mcp` 桥：命令是 Host 的 Node，参数只有网关套接字与令牌文件的路径，`env` 为空；坏掉的服务器不挡会话（见 [MCP.md](MCP.md)）。
 

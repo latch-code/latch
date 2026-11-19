@@ -92,6 +92,10 @@ export interface AcpRecord {
   proposalsOffset?: number
   /** Lines taken and then cleared from the file; they still count toward the session's limit. */
   proposalsCleared?: number
+  /** The rounds file of the team tools (`send_to_members`): lines handed to the Host, the byte past them, lines cleared. */
+  roundsRead?: number
+  roundsOffset?: number
+  roundsCleared?: number
   /** A scheduled run: whatever it proposes is external, and its idle process is reclaimed as a Code session's. */
   unattended?: true
   /**
@@ -538,6 +542,9 @@ const stateSchema = z.object({
         proposalsRead: z.number().int().min(0).max(1000).optional(),
         proposalsOffset: z.number().int().min(0).max(1_048_576).optional(),
         proposalsCleared: z.number().int().min(0).max(1000).optional(),
+        roundsRead: z.number().int().min(0).max(1000).optional(),
+        roundsOffset: z.number().int().min(0).max(1_048_576).optional(),
+        roundsCleared: z.number().int().min(0).max(1000).optional(),
         unattended: z.literal(true).optional(),
         startConfig: z.array(startChoice).optional(),
         route: storedRoute.optional(),

@@ -1,7 +1,7 @@
 import { mentionMarker } from '../fileMentions.ts'
-import { useEffect, useId, useState, type KeyboardEvent, type RefObject } from 'react'
+import { useEffect, useId, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import type { FileMention } from '@latch/protocol'
-import { FileGlyph, Hint, Icon, Kbd, Suggest } from '@latch/ui'
+import { FileGlyph, Hint, Icon, Kbd, Suggest, Tooltip } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { defineCopy } from '../core/i18n.ts'
@@ -15,6 +15,8 @@ const COPY = defineCopy(
     finding: '正在查找文件…',
     noMatches: '没有匹配的文件',
     mention: '引用项目文件',
+    files: '文件',
+    mentionMembers: '提到成员或文件',
     ignored: '已忽略',
     more: '还有更多文件，继续输入缩小范围',
     complete: ' 补全',
@@ -28,6 +30,8 @@ const COPY = defineCopy(
     finding: 'Finding files…',
     noMatches: 'No matching files',
     mention: 'Mention project files',
+    files: 'Files',
+    mentionMembers: 'Mention members or files',
     ignored: 'Ignored',
     more: 'More files are available. Type to narrow down.',
     complete: ' to complete',
@@ -47,6 +51,30 @@ export interface FileMentionChoice {
 }
 
 type MentionFile = FileMention & { name: string; ignored?: boolean }
+
+/**
+ * Members of the team the open session leads, listed above the files after `@`: choosing one puts its `token` in the
+ * draft, where it stays text. One that cannot take work now is listed, not chosen, with `disabled` as the reason on hover.
+ */
+export interface MentionMembers {
+  label: string
+  items: ReadonlyArray<{
+    id: string
+    token: string
+    title: string
+    media: ReactNode
+    description?: ReactNode
+    source?: ReactNode
+    disabled?: string
+  }>
+}
+
+/** Members a query after `@` finds: by title or token, case-insensitively; all of them with nothing typed. */
+export function matchingMembers<T extends { title: string; token: string }>(items: readonly T[], query: string): T[] {
+  const words = query.trim().toLocaleLowerCase()
+  if (!words) return [...items]
+  return items.filter(item => item.title.toLocaleLowerCase().includes(words) || item.token.slice(1).toLocaleLowerCase().includes(words))
+}
 
 export function activeFileMention(draft: string, caret: number): { start: number; end: number; query: string } | undefined {
   const before = draft.slice(0, caret),
@@ -102,6 +130,7 @@ export function useFileMentions(
   textarea: RefObject<HTMLTextAreaElement | null>,
   choice: FileMentionChoice | undefined,
   anchorRef: RefObject<HTMLElement | null>,
+  members?: MentionMembers,
 ) {
   const id = useId()
   const [caret, setCaret] = useState(draft.length),
@@ -113,16 +142,19 @@ export function useFileMentions(
     [dismissed, setDismissed] = useState<string>()
   const token = activeFileMention(draft, Math.min(caret, draft.length)),
     scope = choice?.sessionId ?? choice?.workspaceId
-  const hiddenOpen = Boolean(choice?.hidden && token && dismissed !== draft)
-  const open = Boolean(choice?.enabled && token && dismissed !== draft)
   const query = token?.query ?? ''
+  const people = members && token && dismissed !== draft ? matchingMembers(members.items, query) : []
+  const choosable = people.filter(item => !item.disabled)
+  const hiddenOpen = Boolean(choice?.hidden && token && dismissed !== draft && !people.length)
+  const filesOpen = Boolean(choice?.enabled && token && dismissed !== draft)
+  const open = filesOpen || people.length > 0
   useEffect(() => {
     setDismissed(previous => (previous === draft ? previous : undefined))
   }, [draft])
   useEffect(() => {
     setSelected(undefined)
     setError('')
-    if (!open || !scope || !choice) {
+    if (!filesOpen || !scope || !choice) {
       setFiles([])
       setTruncated(false)
       setLoading(false)
@@ -169,8 +201,34 @@ export function useFileMentions(
       clearTimeout(timer)
       controller.abort()
     }
-  }, [open, scope, choice?.sessionId, choice?.harnessId, query])
-  const active = open ? mentionActive({ count: files.length, loading, query, ...(selected ? { selected } : {}) }) : -1
+  }, [filesOpen, scope, choice?.sessionId, choice?.harnessId, query])
+  // A member found is ready at once: the files still on their way do not hold Enter back from it.
+  const listedFiles = filesOpen && scope && !error && !loading ? files : []
+  const count = choosable.length + listedFiles.length
+  const waiting = loading && filesOpen && !!scope && !choosable.length
+  const active = open ? mentionActive({ count, loading: waiting, query, ...(selected ? { selected } : {}) }) : -1
+  const chooseMember = (item: MentionMembers['items'][number]) => {
+    if (!token || item.disabled) return
+    const marker = `${item.token} `
+    const next = `${draft.slice(0, token.start)}${marker}${draft.slice(token.end)}`
+    onDraft(next)
+    setDismissed(undefined)
+    requestAnimationFrame(() => {
+      const input = textarea.current
+      input?.focus()
+      // Typing that came in meanwhile has put the caret where it belongs.
+      if (input?.value !== next) return
+      input.setSelectionRange(token.start + marker.length, token.start + marker.length)
+      setCaret(token.start + marker.length)
+    })
+  }
+  const chooseEntry = (index: number) => {
+    if (index < choosable.length) chooseMember(choosable[index]!)
+    else {
+      const file = listedFiles[index - choosable.length]
+      if (file) choose(file)
+    }
+  }
   const choose = (file: FileMention) => {
     if (!choice || !token) return
     if (choice.refs.length >= 32) {
@@ -192,7 +250,7 @@ export function useFileMentions(
       return false
     // A device that cannot list files only has the note to close.
     const action = open
-      ? mentionKey({ key: event.key, shift: event.shiftKey, count: files.length, loading: loading && !!scope, query, active })
+      ? mentionKey({ key: event.key, shift: event.shiftKey, count, loading: waiting, query, active })
       : event.key === 'Escape'
         ? ({ do: 'close' } as const)
         : ({ do: 'pass' } as const)
@@ -201,13 +259,13 @@ export function useFileMentions(
     event.stopPropagation()
     if (action.do === 'close') setDismissed(draft)
     else if (action.do === 'move') setSelected({ query, index: action.index })
-    else if (action.do === 'choose') choose(files[action.index]!)
+    else if (action.do === 'choose') chooseEntry(action.index)
     return true
   }
   const severalRoots = new Set(files.map(file => file.root)).size > 1
   const optionId = (index: number) => `${id}-${index}`
   const shown = open || hiddenOpen
-  const status = hiddenOpen ? (
+  const fileStatus = hiddenOpen ? (
     <Hint label={COPY.noAccess}>{COPY.grantAccess}</Hint>
   ) : !scope ? (
     COPY.chooseProject
@@ -218,24 +276,52 @@ export function useFileMentions(
   ) : (
     COPY.noMatches
   )
-  const listed = open && scope && !error && !loading ? files : []
   const menu = (
     <Suggest
       id={id}
-      label={COPY.mention}
+      label={people.length ? COPY.mentionMembers : COPY.mention}
       open={shown}
       anchorRef={anchorRef}
       activeId={active >= 0 ? optionId(active) : undefined}
       onActiveChange={option => setSelected({ query, index: Number(option.slice(id.length + 1)) })}
       onChoose={option => {
-        const file = files[Number(option.slice(id.length + 1))]
-        if (file) choose(file)
+        const index = Number(option.slice(id.length + 1))
+        if (Number.isInteger(index)) chooseEntry(index)
       }}
       onDismiss={() => setDismissed(draft)}
       groups={[
+        ...(people.length && members
+          ? [
+              {
+                id: 'members',
+                label: members.label,
+                items: people.map(item => {
+                  const at = choosable.indexOf(item)
+                  return {
+                    id: at >= 0 ? optionId(at) : `${id}-off-${item.id}`,
+                    media: item.media,
+                    label: (
+                      <Tooltip content={item.disabled}>
+                        <span className="mention-member" tabIndex={item.disabled ? -1 : undefined}>
+                          <VisibleText text={item.title} />
+                        </span>
+                      </Tooltip>
+                    ),
+                    ...(item.description ? { description: item.description } : {}),
+                    ...(item.source ? { source: item.source } : {}),
+                    ...(item.disabled ? { disabled: true } : {}),
+                  }
+                }),
+              },
+            ]
+          : []),
         {
           id: 'files',
-          items: listed.map((file, index) => {
+          ...(people.length ? { label: COPY.files } : {}),
+          // Beside the members, only a search that failed is said; one under way or with no match shows no files.
+          ...(people.length && filesOpen && error ? { empty: fileStatus } : {}),
+          items: listedFiles.map((file, fileIndex) => {
+            const index = choosable.length + fileIndex
             const folder = file.path.slice(0, Math.max(0, file.path.length - file.name.length - 1))
             const source = [file.ignored ? COPY.ignored : '', severalRoots ? file.root : ''].filter(Boolean).join(' · ')
             return {
@@ -247,9 +333,9 @@ export function useFileMentions(
             }
           }),
         },
-        ...(listed.length && truncated ? [{ id: 'more', items: [], empty: <span role="status">{COPY.more}</span> }] : []),
+        ...(listedFiles.length && truncated ? [{ id: 'more', items: [], empty: <span role="status">{COPY.more}</span> }] : []),
       ]}
-      empty={status}
+      empty={fileStatus}
       footer={
         hiddenOpen ? undefined : (
           <>

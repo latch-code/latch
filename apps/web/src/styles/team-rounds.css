@@ -1,0 +1,161 @@
+/*
+ * Later rounds of a team (docs/TEAMS.md), drawn by `RoundControls.tsx` wherever the team card places them: 「第 N 轮」 and
+ * the switch for the lead's agent in the card's head, 「再派一轮」 on a member's row and its input under that row.
+ */
+/* After the count: the round once there is more than one, then the switch for the lead's agent. */
+.team-round {
+  flex: none;
+  padding: 0 var(--sp-6);
+  border-radius: var(--r-4);
+  background: var(--hover);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+.team-round:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.team-dispatch {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-8);
+  margin-inline-start: auto;
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  white-space: nowrap;
+}
+.team-dispatch-label {
+  cursor: pointer;
+}
+.team-dispatch[data-disabled] .team-dispatch-label {
+  color: var(--muted);
+  cursor: default;
+}
+.team-dispatch[data-busy] {
+  cursor: progress;
+}
+/* 停止 follows the switch at the head's end, a divider between them. */
+.team-dispatch + .team-stop.ui-button {
+  margin-inline-start: 0;
+}
+.team-dispatch:has(+ .team-stop) {
+  padding-inline-end: var(--sp-8);
+  border-inline-end: 1px solid var(--line);
+}
+/* The action sits on the pill's end; the pill keeps its height, which the wires are drawn from. */
+.team-member:has(.team-again-button) {
+  position: relative;
+}
+.team-again-button {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: var(--sp-6);
+  gap: var(--sp-4);
+  background: var(--raised);
+  color: var(--muted);
+  translate: 0 -50%;
+}
+/* With a pointer that hovers it stands over the state word while the row is hovered or focused. */
+@media (hover: hover) and (pointer: fine) {
+  .team-again-button {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--m-micro) var(--e-micro);
+  }
+  .team-member:is(:hover, :focus-within) .team-again-button {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .team-member:has(.team-again-button):is(:hover, :focus-within) .team-member-state {
+    visibility: hidden;
+  }
+}
+/* On touch it stays, an arrow beside the pill. */
+@media (hover: none), (pointer: coarse) {
+  .team-member:has(.team-again-button) {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-4);
+  }
+  .team-again-button {
+    position: static;
+    flex: none;
+    background: transparent;
+    translate: none;
+  }
+  .team-again-word {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+/* The line under the graph that sends one member another round. */
+.team-again {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+  margin-block-start: var(--sp-8);
+}
+.team-again-to {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-4);
+  max-width: 40%;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.team-again-title {
+  overflow: hidden;
+  color: var(--ink-2);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-again-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-8);
+  border: 1px solid var(--line);
+  border-radius: var(--r-6);
+  background: var(--surface);
+  transition: border-color var(--m-micro) var(--e-micro);
+}
+.team-again-field:focus-within {
+  border-color: var(--accent);
+}
+.team-again[data-busy] .team-again-field {
+  cursor: progress;
+}
+.team-again-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--sp-4) 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  outline: 0;
+}
+.team-again-input::placeholder {
+  color: var(--muted);
+}
+.team-again-error {
+  margin: 0;
+  color: var(--red);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
