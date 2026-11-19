@@ -41,6 +41,7 @@ import { decodeAnthropicReply, decodeAnthropicStream } from './model-gateway/out
 import type { GatewayRequest, GatewayDelta, GatewayReasoning } from './model-gateway/ir.ts'
 import type { ToolNames } from './model-gateway/tools.ts'
 import { exactJson } from './model-gateway/json.ts'
+import { CONTEXT_OVERFLOW, claudeOverflow, overflowed, serviceMessage } from './model-gateway/errors.ts'
 import { addSpend, type ModelMeter } from './model-budgets.ts'
 import { ModelRequestQueue } from './model-request-queue.ts'
 import { ModelScheduler, classifyStatus, retryAfterMs, type AttemptResult, type AttemptTimer } from './model-scheduler.ts'
@@ -137,6 +138,8 @@ interface Tally {
   moved: Map<string, number>
   /** What the turn's settled requests cost, when known, and a budget of theirs that is nearly or fully used. */
   spend?: TurnSpend
+  /** What the service said of the turn's latest request that failed before its reply began, its key taken out. */
+  failure?: string
 }
 
 /** A forwarded request until its result is counted: its reply, once the service answers, is read as it passes. */
@@ -176,7 +179,21 @@ const FORWARDED_HEADERS: Readonly<Record<ModelWire, readonly string[]>> = {
 }
 const ANTHROPIC_HEADERS = ['anthropic-version', 'anthropic-beta']
 /** What a reply keeps of the service's headers. */
-const RETURNED_HEADERS = ['content-type', 'retry-after', 'x-request-id', 'request-id']
+const RETURNED_HEADERS = ['content-type', 'retry-after', 'x-should-retry', 'x-request-id', 'request-id']
+/** How much of what a failing service said is kept with it while its breaker is open. */
+const MAX_REASON_CHARS = 300
+
+/**
+ * Whether the harness should send a failed request again, as Claude Code, OpenCode and pi's provider retries read
+ * `x-should-retry`: one layer retries, not two. The gateway already waited out a short `retry-after` and tried a failure
+ * on the service's side again in place, and a long wait, a key, a balance or a minute of silence does not heal in the
+ * seconds a harness waits. A failure on the service's side that the gateway would not send again (the request may
+ * have run there) is the harness's to judge, as it would be at the service itself; so is the request's own fault.
+ */
+function finalFailure(reply: Reply, failure: ModelFailureClass, retriedInPlace: boolean): Reply {
+  const harnessDecides = failure === 'request' || ((failure === 'server' || failure === 'network') && !retriedInPlace)
+  return harnessDecides ? reply : { ...reply, headers: { ...reply.headers, 'x-should-retry': 'false' } }
+}
 
 const isModelWire = (wire: unknown): wire is ModelWire => (MODEL_WIRES as readonly unknown[]).includes(wire)
 const hashOf = (token: string) => createHash('sha256').update(token).digest('hex')
@@ -405,7 +422,10 @@ function runsOnService(fields: Record<string, unknown>): boolean {
     if (typeof item !== 'object' || item === null) return false
     const tool = item as Record<string, unknown>
     if (typeof tool.type === 'string') return !CLIENT_TOOL_TYPES.has(tool.type) && !ANTHROPIC_CLIENT_TOOLS.test(tool.type)
-    // A tool without a type that is not a plain function declaration is taken as the service's: never sent twice.
+    // Anthropic's own tool declaration has no type, only a name and an input schema: the harness runs it. Every tool the
+    // Anthropic service runs itself names its type.
+    if (typeof tool.name === 'string' && typeof tool.input_schema === 'object' && tool.input_schema !== null) return false
+    // Any other tool without a type that is not a plain function declaration is taken as the service's: never sent twice.
     return Object.keys(tool).some(key => key !== 'function')
   })
 }
@@ -666,8 +686,8 @@ export class ModelGatewayServer implements ModelGateway {
       baseURL: baseFor(binding.entry, this.port),
       token,
       requests: () => binding.count,
-      takeTurn: (): RoutedTurn => {
-        const { requests, models, open, dropped, spend } = binding.turn
+      takeTurn: (): RoutedTurn & { failure?: string } => {
+        const { requests, models, open, dropped, spend, failure } = binding.turn
         binding.turn = newTally()
         // Copies: a reply still under way settles into the counts just taken, which nobody reads again, never into what
         // the caller keeps.
@@ -690,6 +710,7 @@ export class ModelGatewayServer implements ModelGateway {
           models: [...copies.values()],
           ...(dropped.size ? { dropped: [...dropped] } : {}),
           ...(spend ? { spend } : {}),
+          ...(failure ? { failure } : {}),
         }
       },
       models: [...models],
@@ -983,6 +1004,9 @@ export class ModelGatewayServer implements ModelGateway {
       signal.throwIfAborted()
       request = entry ? { tally, entry, apiKey: service.apiKey, settled: writeUsage } : undefined
       if (request) tally.open.add(request)
+      // Judged by what goes out: a converted request never carries the service's own tools (they are left out or
+      // refused before it is sent), so only a candidate the request passes through to as it came can run one.
+      const retryServer = !stateful && !(runsOnService(fields) && candidates.some(({ candidate }) => candidate.upstream === binding.entry))
       const moved = tally.moved.get(model)
       const start = moved === undefined ? -1 : candidates.findIndex(item => item.place === moved)
       const result = await this.scheduler.dispatch<Opened, Reply>({
@@ -992,9 +1016,7 @@ export class ModelGatewayServer implements ModelGateway {
         signal,
         // An answer that comes whole may rightly take longer than any first-byte limit.
         firstByte: fields.stream === true,
-        // Judged by what goes out: a converted request never carries the service's own tools (they are left out or
-        // refused before it is sent), so only a candidate the request passes through to as it came can run one.
-        retryServer: !stateful && !(runsOnService(fields) && candidates.some(({ candidate }) => candidate.upstream === binding.entry)),
+        retryServer,
         attempt: async (index, attemptSignal, timer) => {
           const { candidate } = candidates[index]!
           const usable = () => (index === 0 ? this.current(hash, binding) : this.candidateService(candidate))
@@ -1066,15 +1088,24 @@ export class ModelGatewayServer implements ModelGateway {
         usage.ending = result.failure ? result.failure.class : result.changed ? 'unavailable' : refused ? 'budget' : 'circuit-open'
         finish(request)
         writeUsage()
-        if (result.failure) return answer(res, result.failure.reply)
+        if (result.failure) {
+          if (result.failure.reason) tally.failure = result.failure.reason
+          return answer(res, finalFailure(result.failure.reply, result.failure.class, retryServer))
+        }
         // The session's own service is not what this token was issued for any more: as before, the token is what fails.
         if (result.changed) return answer(res, revoked())
+        res.setHeader('x-should-retry', 'false')
         if (refused) return refuse(res, 402, BUDGET_EXCEEDED, BUDGET_MESSAGE, shape)
         const wait = Math.ceil((result.retryAfterMs ?? 1000) / 1000)
         res.setHeader('retry-after', String(wait))
-        return refuse(res, 503, 'gateway-circuit-open', '这个模型服务一直出错，Latch 暂时没有向它发送请求。', shape)
+        // What the service said when it last failed, its key already taken out: the reason this request is not sent.
+        const circuit = `这个模型服务一直出错，Latch 暂时没有向它发送请求。${result.reason ? `最近一次：${result.reason}` : ''}`
+        tally.failure = `503 ${circuit}`
+        return refuse(res, 503, 'gateway-circuit-open', circuit, shape)
       }
       const opened = result.value
+      // A later reply began: what an earlier request of the turn failed on was got over, and is not this turn's reason.
+      delete tally.failure
       const { place } = candidates[result.index]!
       usage.candidate = opened.candidate
       usage.fallback = place > 0
@@ -1138,12 +1169,13 @@ export class ModelGatewayServer implements ModelGateway {
       if (typeof value === 'string') headers[name] = value
     }
     const unreachable = (error: unknown, unsent = false): AttemptResult<Opened, Reply> => {
-      const detail = error instanceof Error ? error.message : String(error)
+      const detail = `连不上模型服务：${withoutKey(error instanceof Error ? error.message : String(error), service.apiKey).slice(0, 300)}`
       return {
         ok: false,
         class: 'network',
         ...(unsent ? { unsent: true as const } : {}),
-        reply: refusal(502, 'gateway-upstream', `连不上模型服务：${withoutKey(detail, service.apiKey).slice(0, 300)}`, shape),
+        reason: detail.slice(0, MAX_REASON_CHARS),
+        reply: refusal(502, 'gateway-upstream', detail, shape),
       }
     }
     let response: Response
@@ -1167,42 +1199,52 @@ export class ModelGatewayServer implements ModelGateway {
     if (!response.ok) {
       const text = response.body ? await errorText(response.body) : ''
       const safe = withoutKey(text, service.apiKey)
+      const { status } = response
+      const said = serviceMessage(safe).slice(0, 1000)
       const failure = {
         ok: false as const,
-        class: classifyStatus(response.status, safe) as Exclude<ModelFailureClass, 'unavailable' | 'circuit-open'>,
+        class: classifyStatus(status, safe) as Exclude<ModelFailureClass, 'unavailable' | 'circuit-open'>,
         ...(retryAfterMs(response.headers.get('retry-after'), this.scheduler.clock.now()) !== undefined
           ? { retryAfterMs: retryAfterMs(response.headers.get('retry-after'), this.scheduler.clock.now())! }
           : {}),
+        reason: `${status} ${said}`.slice(0, MAX_REASON_CHARS),
       }
-      if (!translated) return { ...failure, reply: { status: response.status, headers: returned, body: safe } }
-      const status = response.status >= 500 ? 503 : response.status
-      const code = /context_length_exceeded|maximum context|context window|prompt is too long/iu.test(safe)
+      const json = { ...returned, 'content-type': 'application/json; charset=utf-8' }
+      // Claude Code compacts and sends again only on a too-long refusal it recognises; any other wording ends its turn.
+      const tooLong = shape === 'anthropic' && overflowed(status, safe) ? claudeOverflow(safe) : undefined
+      if (!translated)
+        return { ...failure, reply: tooLong ? { status, headers: json, body: tooLong } : { status, headers: returned, body: safe } }
+      // The service's own status and words: a harness that reads a code of its own into the error (Codex's "at
+      // capacity" for `server_is_overloaded`) would show that instead of what the service said.
+      const code = CONTEXT_OVERFLOW.test(safe)
         ? 'context_length_exceeded'
         : status === 429
           ? 'rate_limit_exceeded'
-          : status === 503
-            ? 'server_is_overloaded'
+          : status >= 500
+            ? 'server_error'
             : 'gateway-upstream'
       return {
         ...failure,
         reply: {
           status,
-          headers: { ...returned, 'content-type': 'application/json; charset=utf-8' },
-          body: JSON.stringify({
-            ...(shape === 'anthropic' ? { type: 'error' } : {}),
-            error: {
-              type:
-                shape === 'anthropic'
-                  ? status === 503
-                    ? 'overloaded_error'
-                    : (ANTHROPIC_ERRORS[status] ?? 'api_error')
-                  : status < 500
-                    ? 'invalid_request_error'
-                    : 'server_error',
-              code,
-              message: safe.slice(0, 1000) || '模型服务拒绝了请求',
-            },
-          }),
+          headers: json,
+          body:
+            tooLong
+            ?? JSON.stringify({
+              ...(shape === 'anthropic' ? { type: 'error' } : {}),
+              error: {
+                type:
+                  shape === 'anthropic'
+                    ? status === 503 || status === 529
+                      ? 'overloaded_error'
+                      : (ANTHROPIC_ERRORS[status] ?? 'api_error')
+                    : status < 500
+                      ? 'invalid_request_error'
+                      : 'server_error',
+                code,
+                message: said || '模型服务拒绝了请求',
+              },
+            }),
         },
       }
     }

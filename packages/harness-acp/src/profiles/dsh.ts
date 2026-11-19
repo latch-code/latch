@@ -12,6 +12,18 @@ const API = {
   'anthropic-messages': 'anthropic-messages',
 } as const
 
+/**
+ * The output cap and compaction headroom for a model whose window the service declared. dsh-compaction-basic starts at
+ * `floor(min(W × 0.8, W − O − headroomTokens))`, where O is the request's output cap: the model's `maxTokens`, else
+ * llm-pi-ai's `defaultMaxTokens` of 128,000, and headroom defaults to 65,536 (its README, "Tuning when condensation
+ * starts"). Left alone, a 64,000 window never compacts and a 200,000 one compacts above 6,464 tokens. A quarter of the
+ * window for output (at most 32,768) and an eighth for headroom (at most the default) start it at 62.5% of a 64,000 or
+ * 128,000 window, 71% of 200,000 and 80% of 1,000,000.
+ */
+export function dshWindowBudget(window: number): { maxTokens: number; headroomTokens: number } {
+  return { maxTokens: Math.min(32_768, Math.floor(window / 4)), headroomTokens: Math.min(65_536, Math.floor(window / 8)) }
+}
+
 const MINIMUM_VERSION = {
   args: ['--version'],
   read: bareVersion,
@@ -32,7 +44,7 @@ export const dshProfile: HarnessProfile = {
     wires: ['chat-completions', 'responses', 'anthropic-messages'],
     tokenEnv: 'LMG_TOKEN',
     envNames: [],
-    templates: { args: 1, files: 1 },
+    templates: { args: 1, files: 2 },
     models: GATEWAY_MODELS,
     minimumVersion: MINIMUM_VERSION,
     // ACP reports the application's hard-coded 0.0.1, not the dsh release version.
@@ -55,14 +67,27 @@ export const dshProfile: HarnessProfile = {
                   id,
                   name: id,
                   input: capabilities?.vision ? ['text', 'image'] : ['text'],
-                  // llm-pi-ai's own model field; without it the provider's `defaultContextWindow` (1,000,000) applies.
-                  ...(capabilities?.contextTokens ? { contextWindow: capabilities.contextTokens } : {}),
+                  // llm-pi-ai's own model fields; without them the provider's `defaultContextWindow` (1,000,000) and
+                  // `defaultMaxTokens` (128,000) apply.
+                  ...(capabilities?.contextTokens
+                    ? { contextWindow: capabilities.contextTokens, maxTokens: dshWindowBudget(capabilities.contextTokens).maxTokens }
+                    : {}),
                   reasoningEfforts: capabilities?.thinking?.length
                     ? Object.fromEntries(capabilities.thinking.map(level => [level, level === 'off' ? null : level]))
                     : false,
                 })),
               },
             },
+          },
+        },
+        {
+          id: 'compaction-basic',
+          config: {
+            modelPolicies: place.models.flatMap(({ id, capabilities }) =>
+              capabilities?.contextTokens
+                ? [{ provider, model: id, headroomTokens: dshWindowBudget(capabilities.contextTokens).headroomTokens }]
+                : [],
+            ),
           },
         },
         { id: 'acp', config: selection },

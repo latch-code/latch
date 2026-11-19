@@ -168,7 +168,12 @@ export function scheduledProvider(raw: ModelProvider, deps: ScheduledProviderDep
                 return { skip: true }
               }
               if (sorted === undefined) throw error
-              const failure: AttemptFailure<unknown> = { class: sorted, reply: error }
+              const failure: AttemptFailure<unknown> = {
+                class: sorted,
+                reply: error,
+                // Shown again while the breaker keeps requests from the service: what it said, as the run would have.
+                ...(error instanceof Error && error.message ? { reason: error.message.slice(0, 300) } : {}),
+              }
               return { ok: false, ...failure }
             }
           },
@@ -189,7 +194,11 @@ export function scheduledProvider(raw: ModelProvider, deps: ScheduledProviderDep
         // The service was edited while the run was under way: the run says so, as it did before there were candidates.
         if (result.changed) throw new AppError(409, 'model-route-changed', '模型服务的设置已经变了，请重新选择模型。')
         if (refused) throw new AppError(402, 'budget-exceeded', '本月预算已用完')
-        throw new AppError(503, 'provider-circuit-open', '这个模型服务一直出错，Latch 暂时没有向它发送请求。请稍后再试。')
+        throw new AppError(
+          503,
+          'provider-circuit-open',
+          `这个模型服务一直出错，Latch 暂时没有向它发送请求。请稍后再试。${result.reason ? `最近一次：${result.reason}` : ''}`,
+        )
       }
       if (result.index > 0) turn.moved.set(model, result.index)
       else turn.moved.delete(model)

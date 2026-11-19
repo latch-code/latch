@@ -90,6 +90,11 @@ export interface AttemptFailure<R> {
    * a failure after it was sent, a connection that broke under way among them.
    */
   unsent?: true
+  /**
+   * What the service said of it, short and with its key taken out: kept with the service while its breaker is open, so
+   * a request nothing is sent for can still say why. Never part of its health.
+   */
+  reason?: string
   /** What the caller answers with when nothing else is tried after this. */
   reply: R
 }
@@ -148,11 +153,12 @@ export type DispatchResult<T, R> =
     }
   | { ok: false; index: number; failure: AttemptFailure<R> }
   /**
-   * Nothing could be tried: every candidate is held back or gone. `retryAfterMs` when one opens again by itself.
-   * `changed`: the first candidate's own service is no longer what the caller bound, which is the caller's to say; the
-   * request never moves on from that by itself.
+   * Nothing could be tried: every candidate is held back or gone. `retryAfterMs` when one opens again by itself, and
+   * `reason`, what the first such candidate's service last said when it failed. `changed`: the first candidate's own
+   * service is no longer what the caller bound, which is the caller's to say; the request never moves on from that by
+   * itself.
    */
-  | { ok: false; index?: undefined; failure?: undefined; retryAfterMs?: number; changed?: true }
+  | { ok: false; index?: undefined; failure?: undefined; retryAfterMs?: number; reason?: string; changed?: true }
 
 interface Waiter {
   sessionId: string
@@ -173,12 +179,16 @@ interface ServiceState {
   /** The service answered 429: other services come first until then. Nothing of a failing service is said of it. */
   rateUntil: number | undefined
   last: { class: ModelFailureClass; at: number } | undefined
+  /** What the service last said when it failed on its side; cleared with the rest when its settings change. */
+  lastReason: string | undefined
   firstByte: number[]
   active: number
   waiting: Waiter[]
 }
 
 const TIMEOUT: unique symbol = Symbol('timeout')
+/** What a reply that broke off after it began said: nothing of the service's own, only that it stopped. */
+const BROKEN_REASON = '模型服务的回复中断了'
 const median = (values: readonly number[]) => values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)]!
 
 export interface ModelSchedulerDeps {
@@ -277,6 +287,8 @@ export class ModelScheduler {
     /** A later candidate's own refusal of the request: answered only when nothing else failed. */
     let refused: { index: number; failure: AttemptFailure<R> } | undefined
     let reopens: number | undefined
+    /** What the first candidate passed over for its open breaker last said. */
+    let heldReason: string | undefined
     /** A later candidate being full is no answer while an earlier one really failed: that failure is. */
     const busyAfterFailure = (error: unknown) =>
       error instanceof AppError && error.code === 'gateway-busy' && (last ?? refused) !== undefined
@@ -286,7 +298,9 @@ export class ModelScheduler {
         const candidate = candidates[order[next]!]!
         if (this.gate(candidate) !== 'open') return next
         // Passed over only for now: when it opens again is part of the answer if nothing else can be tried.
-        const opened = this.state(candidate.providerId, candidate.fingerprint).openedAt ?? clock.now()
+        const held = this.state(candidate.providerId, candidate.fingerprint)
+        heldReason ??= held.lastReason
+        const opened = held.openedAt ?? clock.now()
         reopens = Math.min(reopens ?? Infinity, Math.max(opened + SCHEDULE.breaker.openMs - clock.now(), 1000))
       }
       return undefined
@@ -310,6 +324,7 @@ export class ModelScheduler {
       const state = this.state(candidate.providerId, candidate.fingerprint)
       const gate = this.gate(candidate)
       if (gate === 'open') {
+        heldReason ??= state.lastReason
         const opens = (state.openedAt ?? clock.now()) + SCHEDULE.breaker.openMs - clock.now()
         reopens = Math.min(reopens ?? Infinity, Math.max(opens, 1000))
         const next = await moveOn(position, 'circuit-open')
@@ -364,7 +379,7 @@ export class ModelScheduler {
                 ended = true
                 held?.()
                 if (end === 'complete') this.succeeded(candidate.providerId, state)
-                else if (end === 'broken') this.failed(candidate.providerId, state, 'stream')
+                else if (end === 'broken') this.failed(candidate.providerId, state, 'stream', undefined, BROKEN_REASON)
               },
             }
           }
@@ -378,7 +393,7 @@ export class ModelScheduler {
             break
           }
           last = { index, failure }
-          this.failed(candidate.providerId, state, failure.class, failure.retryAfterMs)
+          this.failed(candidate.providerId, state, failure.class, failure.retryAfterMs, failure.reason)
           // The request may have run there already, wholly or in part. Sent again, here or anywhere, it could run twice.
           if (
             input.retryServer === false
@@ -428,7 +443,11 @@ export class ModelScheduler {
     }
     const answer = last ?? refused
     if (answer) return { ok: false, ...answer }
-    return { ok: false, ...(reopens !== undefined ? { retryAfterMs: reopens } : {}) }
+    return {
+      ok: false,
+      ...(reopens !== undefined ? { retryAfterMs: reopens } : {}),
+      ...(reopens !== undefined && heldReason !== undefined ? { reason: heldReason } : {}),
+    }
   }
 
   /**
@@ -572,6 +591,7 @@ export class ModelScheduler {
       restUntil: undefined,
       rateUntil: undefined,
       last: undefined,
+      lastReason: undefined,
       firstByte: [],
       active: 0,
       waiting: [],
@@ -595,6 +615,7 @@ export class ModelScheduler {
     state.restStep = 0
     state.restUntil = undefined
     state.rateUntil = undefined
+    state.lastReason = undefined
     this.trim(state)
     if (before !== this.health(providerId)?.state) this.deps.changed?.(providerId)
   }
@@ -608,7 +629,7 @@ export class ModelScheduler {
     if (before !== this.health(providerId)?.state) this.deps.changed?.(providerId)
   }
 
-  private failed(providerId: string, state: ServiceState, reason: ModelFailureClass, retryAfter?: number): void {
+  private failed(providerId: string, state: ServiceState, reason: ModelFailureClass, retryAfter?: number, said?: string): void {
     const before = this.health(providerId)?.state
     const now = this.clock.now()
     state.last = { class: reason, at: now }
@@ -624,6 +645,8 @@ export class ModelScheduler {
       if (before !== this.health(providerId)?.state) this.deps.changed?.(providerId)
       return
     }
+    // Only what counts toward the breaker: the reason it opens, never a 429 said in between.
+    if (said !== undefined) state.lastReason = said
     state.consecutive++
     state.window.push({ at: now, failed: true })
     this.trim(state)

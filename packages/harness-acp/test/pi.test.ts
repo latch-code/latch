@@ -12,7 +12,7 @@ import {
   type AgentRecord,
 } from '../src/index.ts'
 import { MAX_SESSION_SKILLS_BYTES, readSessionSkills } from '@latch/protocol'
-import { forkPlan } from '../src/wires/pi.ts'
+import { forkPlan, stopsRetry } from '../src/wires/pi.ts'
 import { activate, fakePrograms, openBridge, replayTranscript } from './helpers/replay.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
@@ -134,6 +134,18 @@ const commandReply = (message: string): ReplayEntry[] => [
   event('agent_settled', { aborted: false }),
   ...stats,
 ]
+
+describe('pi retries through the gateway', () => {
+  it('stops every retry pi would make of a routed model error but a full queue at the Host, and none of its own', () => {
+    expect(stopsRetry(true, '500: {"message":"The server had an error"}')).toBe(true)
+    expect(stopsRetry(true, '429 {"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}')).toBe(true)
+    expect(stopsRetry(true, undefined)).toBe(true)
+    expect(stopsRetry(true, '429 {"type":"error","error":{"type":"rate_limit_error","message":"queued","code":"gateway-busy"}}')).toBe(
+      false,
+    )
+    expect(stopsRetry(false, '500: {"message":"The server had an error"}')).toBe(false)
+  })
+})
 
 describe('pi over its own RPC', () => {
   it('identifies the declared edit diff without treating unrelated content as a safe replacement', async () => {

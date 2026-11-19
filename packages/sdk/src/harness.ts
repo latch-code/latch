@@ -88,9 +88,11 @@ export interface ModelGatewayLease {
   requests(): number
   /**
    * What this token's requests did since the last call, by model, then counts afresh: a request is counted when it
-   * arrives, its reply when it ends. Never the content of either.
+   * arrives, its reply when it ends. Never the content of either. `failure`: what the service said of the latest request
+   * that failed before its reply began (status and message, its key taken out), for a failed turn to show; it is not
+   * part of what the turn keeps.
    */
-  takeTurn(): RoutedTurn
+  takeTurn(): RoutedTurn & { failure?: string }
   /** The service's models this token may use: the gateway refuses any other. */
   models: readonly string[]
   /** Capabilities declared in the saved service settings; absent means unknown, never inferred from model IDs. */

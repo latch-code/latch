@@ -464,6 +464,7 @@ Codex 自己中断、Latch 没有要求停止的一轮同样先等它的命令�
 - **停止。** 先 `clear_queue` 再 `abort`：不清空队列，`abort` 会接着处理排队的追加。清掉的追加内容在会话里写一行。
 - **运行中追加。** pi 在跑这一轮（`agent_start` 到 `agent_end`）时用 `steer`；其他时候交回 Host 排队。
 - **工具与其他事件。** `tool_execution_*` 成为工具行（`bash` 命令，`read` 读取，`edit`、`write` 改文件，`grep`、`find`、`ls` 搜索）。压缩成为压缩行；自动重试、扩展的通知与扩展出错成为通知。pi 转来的失败回复、重试原因、压缩失败原因与扩展出错都先遮住像密钥的部分。
+- **经 Latch 的会话不让 pi 自己重试。** pi 报告 `auto_retry_start` 时线发 `abort_retry`（RPC 文档的命令，不写设置），通知只写错误，不写「第几次重试」；原因里带 `gateway-busy`（Host 的队列满）的除外。网关已经重试过几秒内会好的失败，pi 的重试按错误文字判断、不读 `x-should-retry`，而 `retry.maxRetries` 只在 pi 的设置文件里，`set_auto_retry` 会写用户的全局设置（[重试只由一层负责](MODEL-GATEWAY.md#重试只由一层负责)）。
 - **扩展的提问。** `confirm` 像审批一样交给人；`select`、`input`、`editor` 是一道题，进同一张提问卡（下文「Agent 的提问」）：`select` 的回答只能是它列出的选项之一（自己写的话答「已取消」，会话里写一行），`input` 与 `editor` 收自己写的话。没人回答时答「已取消」。
 
 **`/compact`。** pi 的 RPC 不列出它界面里的 `/compact`，当文字发出去会交给模型，所以 Latch 在会话第一轮开始时把它列为 pi 的命令。

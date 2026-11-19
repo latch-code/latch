@@ -6979,6 +6979,51 @@ describe('sessions on a model service through the gateway', () => {
     expect(stub.leases.every(lease => lease.closed)).toBe(true)
   })
 
+  it('says what the service said on a routed turn that failed in the harness’s own words, once, and keeps it out of the turn', async () => {
+    const models = await startFakeModels({ replies: [{ text: 'not asked' }] })
+    cleanups.push(() => models.close())
+    const queue = join(await mkdtemp(join(tmpdir(), 'latch-routed-failure-')), 'queue.json')
+    cleanups.push(() => rm(dirname(queue), { recursive: true, force: true }))
+    await writeFile(
+      queue,
+      JSON.stringify([
+        { error: 'We are currently experiencing high demand', code: -32603 },
+        { error: 'The server had an error (500)', code: -32603 },
+      ]),
+    )
+    const said = ['500 The server had an error', '500 The server had an error']
+    const access: ModelGateway = {
+      open: () => ({
+        baseURL: `${models.origin}/v1`,
+        token: `lmg1.${randomUUID().replaceAll('-', '')}${'t'.repeat(11)}`,
+        requests: () => 1,
+        takeTurn: () => ({ requests: 1, models: [{ model: 'fake-model', requests: 1, failed: 1 }], failure: said.shift() }),
+        models: ['fake-model'],
+        active: () => true,
+        close: () => {},
+      }),
+    }
+    const fixture = await setup(
+      { ...LAUNCHED, FAKE_ACP_CAPS: 'resume', FAKE_ACP_REPLY_QUEUE: queue },
+      { idleMs: 60_000 },
+      { presetId: 'opencode' },
+      { modelGateway: access },
+    )
+    const bridge = await fixture.open()
+    const route = { providerId: 'svc', model: 'fake-model', wire: 'chat-completions', origin: models.origin } as const
+    const { sessionId } = await bridge.createTask({ prompt: 'hello', requestId: rid(), modelRoute: route })
+    let detail = await settled(bridge, sessionId)
+    expect(detail.summary.status).toBe('failed')
+    expect(systemText(detail)).toContain('模型服务：500 The server had an error')
+    const prompt = detail.messages.find(message => message.role === 'user')!
+    expect(prompt.turn?.routed).toEqual({ requests: 1, models: [{ model: 'fake-model', requests: 1, failed: 1 }], chosen: 'fake-model' })
+    // A harness that already said the service's words gets no second line of them.
+    await bridge.prompt(sessionId, 'again', rid())
+    detail = await settled(bridge, sessionId)
+    expect(systemText(detail).match(/The server had an error/gu), systemText(detail)).toHaveLength(2)
+    await bridge.close()
+  })
+
   it('refuses a gateway on an older OpenCode report while its native model route remains usable', async () => {
     const { fixture, stub, route, models } = await routed(
       'opencode',

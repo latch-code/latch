@@ -33,6 +33,8 @@ Host 为经 Latch 使用模型服务的 Harness 提供一个单独的回环临�
 - 一个进程只有一条路线，只提供凭据允许的模型。换到别的服务或 Harness 自己的登录见[会话中换路线](#会话中换路线)。
 - Host 保存的 vision/thinking/上下文长度声明随租约（`ModelGatewayLease.modelCapabilities`）交给 profile，不从模型名猜图片、思考、价格或容量。
 
+**上下文超长。** 服务以 4xx（不含 429）拒绝、正文说上下文放不下（`context_length_exceeded`、`maximum context`、`context window`、`prompt is too long`）时，对 Anthropic 入口的回答是 `invalid_request_error`，消息为 `capability_rejected: prompt_too_long · <服务的原话>`，透传与转换都一样。Claude Code 只在认得的说法上压缩后重发（[errors](https://code.claude.com/docs/en/errors)「Prompt is too long」：Anthropic 的「Prompt is too long」、Bedrock 的「Input is too long for requested model」与这个令牌）；别的说法它把同一请求原样重发直到放弃。服务的话里已有这些说法时原样转发。「输入加 `max_tokens` 超过上限」不在其列，Claude Code 自己缩小 `max_tokens` 重发。2.1.327 实测：「Invalid request: the request exceeds the maximum context of the model」原样时同一请求 6 次 400 后失败，加上令牌后压缩一次即成功。
+
 **上下文长度。** 设置 › 模型 给每个模型一个可选的数字（`modelCapabilities[model].contextTokens`，1024–16777216，超出 400）。服务的 `/models` 在 `context_length`、`context_window` 或 `max_model_len` 里报了长度时，从列表加入的模型预填它，人可以改；Anthropic 的列表不报。各 Harness 怎样收到见下表的「上下文」。Harness 自己不报窗口大小时，会话的上下文占用以这个数为分母（`TaskDetail.usageReport.contextSize`）。
 
 工具网关的 `lbt1.` 令牌是另一套：每个 `latch-mcp` 桥一个，经 0600 的令牌文件交给桥，不进参数与环境，Host 只存哈希（[MCP.md](MCP.md#latch-mcp-桥)）。
@@ -61,7 +63,7 @@ Host 为经 Latch 使用模型服务的 Harness 提供一个单独的回环临�
 - 入站认证、Cookie 与未列出的头不转发。Chat、Responses 只转发 `accept`、`openai-beta`；Anthropic 同协议透传另保留 `anthropic-version`、`anthropic-beta`。
 - 读完请求体后、发出前再核对一次凭据与服务指纹：上传期间被撤销或变更的请求不转发。
 - 上游不跟随重定向。下游断开时中止上游。
-- 回复只保留 `content-type`、`retry-after`、`x-request-id`、`request-id`，值也脱敏。
+- 回复只保留 `content-type`、`retry-after`、`x-should-retry`、`x-request-id`、`request-id`，值也脱敏；失败时 `x-should-retry` 按[重试只由一层负责](#重试只由一层负责)改写。
 
 **脱敏与错误**
 
@@ -82,7 +84,7 @@ Host 为经 Latch 使用模型服务的 Harness 提供一个单独的回环临�
 - **数字词元保真。** 工具参数与 schema 里的有限数字用 Node 24 的 JSON source/rawJSON 保留原始词元（大整数、长小数、-0）；嵌套上限、非有限数值与脱敏后的键冲突仍然拒绝。
 - **工具只在全部核对后发布。** 所有调用的身份与参数都验证后才给可执行的 done 或 `tool_use`。输出截断、被过滤、畸形调用或断流时一个都不发布。Chat 流里同一工具索引的 ID 与名称报告后不能变（重复相同值可以）。脱敏会改变工具 ID 或名称时整组拒绝。
 - **工具选择约束**在发布前核对：`none` 不得调用；指定工具按名称、命名空间与 function/custom 身份精确匹配；`parallel=false` 至多一个；正常完成却没满足 required 或指定工具时拒绝。
-- **失败不变成空成功。** 断流、畸形输出或流内错误按入口协议报错，不重试、不回退。回复开始后上游连接断开时，说的是「模型服务的回复中断了」，与同协议透传相同，而不是转换失败。429 与 `retry-after` 保留；上游 5xx 改为 503；上下文超长保留 `context_length_exceeded`。
+- **失败不变成空成功。** 断流、畸形输出或流内错误按入口协议报错，不重试、不回退。回复开始后上游连接断开时，说的是「模型服务的回复中断了」，与同协议透传相同，而不是转换失败。回复开始前的失败保留服务的状态码与 `retry-after`，`message` 是服务自己的 `error.message`（没有时是原文）；`code` 是 `context_length_exceeded`（上下文超长）、`rate_limit_exceeded`（429）、`server_error`（5xx）或 `gateway-upstream`。5xx 不改成 503、不写 `server_is_overloaded`：Codex 把后者读成它自己的「Selected model is at capacity」，看不到服务说了什么。
 - **用量只取上游证据**，不计暂存值；各方向对缺失用量的处理见下。
 - **取消。** 下游取消中止上游。
 
@@ -143,8 +145,8 @@ Host 为经 Latch 使用模型服务的 Harness 提供一个单独的回环临�
 | Codex 直连 | 启动参数里的自定义 provider `latch`，只有地址、变量名与公开选项 | `LMG_TOKEN` | 线程 config 的环境过滤规则排除它 | 线程 config 的 `model_context_window`，未知模型另经 `model_catalog_json` |
 | codex-acp | ACP `providers/set`，只在适配器声明并列出该 provider 与 API 类型时 | ACP 头字段 | — | 不交 |
 | OpenCode | `OPENCODE_CONFIG_CONTENT` 里的私有 provider `latch` 与会话私有插件 | `LMG_TOKEN` | 插件清空它的值 | 模型的 `limit.context` |
-| DeepSeek Harness | 私有 `--patch`：provider `latch-gateway`、ACP 与默认模型 | `LMG_TOKEN` | dsh 自己清除敏感变量 | llm-pi-ai 模型的 `contextWindow` |
-| Claude Agent | 官方环境变量与会话的 `modelPicker` | `ANTHROPIC_AUTH_TOKEN` | `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` | 不交 |
+| DeepSeek Harness | 私有 `--patch`：provider `latch-gateway`、ACP 与默认模型 | `LMG_TOKEN` | dsh 自己清除敏感变量 | llm-pi-ai 模型的 `contextWindow` 与 `maxTokens`，`compaction-basic` 的 `headroomTokens`（见 [DeepSeek Harness](#deepseek-harness)） |
+| Claude Agent | 官方环境变量与会话的 `modelPicker` | `ANTHROPIC_AUTH_TOKEN` | `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` | `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，10 万到 100 万另有 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`（见 [Claude Agent](#claude-agent)） |
 | pi | 私有扩展调用 `registerProvider`，只在当前进程 | `LMG_TOKEN`，扩展读入内存 | 从继承环境删除 | 模型的 `contextWindow`（见 pi 运行预算） |
 | Qwen Code | `QWEN_CODE_SYSTEM_SETTINGS_PATH` 指向会话私有系统设置，条目 `envKey: LMG_TOKEN` | `LMG_TOKEN` | 继承 | 不交 |
 | goose | 只有环境变量 | `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`（它的 provider 规定） | 继承 | 不交 |
@@ -185,6 +187,7 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 
 ### Codex 直连
 
+- **重试。** 启动参数写 `request_max_retries=0` 与 `stream_max_retries=0`（见[重试只由一层负责](#重试只由一层负责)）。
 - 开线程与恢复线程前，以相同 cwd 调用官方 `config/read`，只投影有效的命令环境过滤规则：旧的 exclude/include_only 与新的 filters 保持原表示，只额外排除 `LMG_TOKEN`。大小写冲突、混合表示、畸形或读取失败都拒绝开线程。规则经线程 config 覆盖，既有规则不被启动参数的数组替换。不复制其他配置值，不读写 Codex 私有文件。
 - 导入历史仍经 `thread/list` 与 `thread/read`，包含自定义 provider 的线程。
 - 模型列表取服务声明，允许 Codex 原生目录之外的模型。目录外模型用 Codex 自己的后备描述；Latch 不改模型 ID 去套另一个型号的能力，也不把后备描述里的容量当作服务声明。
@@ -199,11 +202,14 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 - 模型值是 `latch/<模型>`，启动配置同时设主模型与小模型，保留原权限与 Agent 档位。
 - 会话私有插件用官方的 shell `create.before` hook 把工具子进程里 `LMG_TOKEN` 的值清空。OpenCode 的环境合并保留空变量名，所以不说成变量不存在。
 - 插件目录与源码计入启动指纹。
+- 重试读 `x-should-retry`；次数没有设置（见[重试只由一层负责](#重试只由一层负责)）。
 
 ### DeepSeek Harness
 
 - 网关 patch 与权限服务 patch 一起交付。这条路线关掉它的会话日志与包清单遥测插件。
 - 配置值严格解码为该协议指定的 provider 与模型二元组；恢复不接受其他 provider 的同名模型。
+- **压缩。** dsh-compaction-basic 在 `floor(min(W × 0.8, W − O − headroomTokens))` 开始压缩（它的 README「Tuning when condensation starts」）：O 是请求的输出上限，取模型的 `maxTokens`，没有时取 llm-pi-ai 的 `defaultMaxTokens` 128,000；`headroomTokens` 默认 65,536。只交 `contextWindow` 时，声明 64,000 的模型算不出正数，它只警告一次、从不压缩；声明 200,000 的模型在 6,464 tokens 就压缩。所以声明了窗口 W 的模型另交 `maxTokens = min(32768, W/4)`，并在 `compaction-basic` 的 `modelPolicies` 里写 `headroomTokens = min(65536, W/8)`（`dshWindowBudget`）：64,000 与 128,000 在 62.5% 开始，200,000 在 71%，100 万在 80%（它自己的默认）。这也把请求的 `max_tokens` 从 128,000 降到这个数。没有声明的模型不变。0.2.2-rc.1 实测：声明 64,000 时用量报 62,122、200,000 时报 194,042 后，下一轮先发两次摘要请求再发本轮；200,000 报 100,042 时不压缩。
+- **重试。** provider 的 `retryPolicy` 是 `{ mode: 'normal', maxRetries: 0 }`：只由网关重试。
 - 它的 ACP `initialize` 不声明图片输入：模型支持图片也不能经这个入口发图片。
 
 ### Claude Agent
@@ -214,6 +220,13 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 - 会话设置只有公开模型字段与禁用的 `apiKeyHelper`，不写用户的 CLI 设置。主模型、自定义模型项、自动模式分类器与子 Agent 默认值指向所选模型，其他默认别名清空。网关仍拒绝列表外的请求；不承诺未知的辅助调用都遵守配置。
 - `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` 让 Bash、SessionStart hook 与 stdio MCP 子进程不继承凭据。泛化的 scrub 可被设置文件覆盖，不能据此说用户自己配置的秘密都被清除。
 - Claude 对自定义模型假定的上下文容量与价格不作为服务事实显示，只保留它报告的已用上下文 token。
+- **上下文长度。** 所选模型声明了长度 W 时，进程环境里写 `CLAUDE_CODE_MAX_CONTEXT_TOKENS=W`，W 在 100,000 到 1,000,000 之间时另写 `CLAUDE_CODE_AUTO_COMPACT_WINDOW=W`；没有声明时都不写，Claude 用它自己的假定（直连 2.1.327 对不认识的 ID 假定 1M，用量报 300,000 时不压缩；适配器带的 2.1.318 在同样的 300,000 时压缩）。依据 [model-config](https://code.claude.com/docs/en/model-config) 的「Correct the window for a gateway or custom model ID」「Set the auto-compact window」：前者对 Claude 不认识、不以 `claude-` 开头的 ID 单独生效，对它认识的 ID 无效（除非连压缩都关掉）；后者对任何 ID 生效，但最小 100,000、不超过 Claude 假定的窗口。真实 Claude 与本地假服务实测，门槛只在直连的 `claude` 2.1.327 上量过；适配器上核对了交付后声明 64,000 与 200,000 的模型在 97% 与 90% 时压缩：
+  - 不认识的 ID 声明 64,000：只写前者时，用量 32,000 起下一轮先压缩，25,600 时不压缩；只写后者（100,000）不压缩。
+  - 不认识的 ID 声明 200,000：只写前者时 170,000 压缩、160,000 不压缩；两者都写结果相同；都不写时 194,000 也不压缩。
+  - 认识的 ID（`claude-sonnet-4-5`）声明 200,000：只写前者 170,000 不压缩，写后者时压缩。认识的 ID 声明不到 100,000 时没有能生效的设置（尚未实现），只靠上面「上下文超长」的恢复。
+  - 带 `[1m]` 的 ID 没有核对：Claude 对它假定 1M，前者要配 `CLAUDE_CODE_DISABLE_1M_CONTEXT` 才生效，Latch 不写。
+- 这些变量按进程定，和 `ANTHROPIC_MODEL` 一样取启动时的模型：会话中原地换到另一长度的模型，下次启动进程（恢复、换路线、Host 重启）才生效；这之间放不下时由「上下文超长」的恢复接住。
+- **重试。** `CLAUDE_CODE_MAX_RETRIES=2`（默认 10，[errors](https://code.claude.com/docs/en/errors)「Tune retry behavior」）。网关不会重发的失败由它判断：回复开始后断开、可能已在服务端执行的请求的 5xx。网关已重试或不会好转的失败带 `x-should-retry: false`，它立即停下（[llm-gateway-protocol](https://code.claude.com/docs/en/llm-gateway-protocol)「Response headers」）。
 - **思考。** Claude 对每个自定义模型都报告 low 到 max，选「Default」时自己发 `output_config.effort: high`（2.1.318 真实核对）。在转换路线上，或模型声明了档位时，Host 只给「Default」加声明的档位（[HARNESSES.md](HARNESSES.md#开始前的选项)），并用租约的 `setThinking` 登记当前模型的选择：Default 时出站删去 `output_config.effort`（其余字段与精确数字原样），服务用它自己的默认；选了档位时照 Claude 发来的转发，它别的请求带的其他档位按「思考档位」处理。
 
 ### Qwen Code
@@ -263,6 +276,7 @@ pi 的模型注册 API 必须有输入上下文与输出上限。
 - 只为私有 provider 注册官方 streamSimple 委托，沿用官方 SDK 的消息、工具、推理回放与取消转换，覆盖普通回复、压缩与分支摘要。
 - 每次请求以 `options.reasoning` 为准；在原 `onPayload` 回调之后核对模型并限制输出上限，回调删掉上限也消除不了运行预算。payload 失配在发网前失败。
 - 服务可以用自己的模型别名，不靠改模型 ID 触发 SDK 的型号判断。
+- **压缩。** pi 在 `上下文占用 > contextWindow − reserveTokens`（默认 16,384）时压缩（它的 `compaction.md`「When It Triggers」），窗口就是上面注册的 `contextWindow`，RPC 模式也在每轮之后检查。它保留最近的 `keepRecentTokens`（默认 20,000）不摘要，对话实际不到这么长时没有可摘要的部分，就不压缩，哪怕服务报告的用量已近满。Latch 不改 `compaction.*`：它们只在 pi 的设置文件里。1.5.0 实测：声明 64,000、用量报 62,080 且对话里有约 37,000 tokens 的文字时，这一轮结束后发两次摘要请求，下一轮的请求只剩摘要与最近的部分。
 
 ## 调度
 
@@ -316,8 +330,29 @@ pi 的模型注册 API 必须有输入上下文与输出上限。
 - **后面的候选满了**（位置或全 Host 名额等不到）：返回前一个候选的真实失败，不用 `gateway-busy` 盖住它。
 - **先审计再切换。** 把请求交给另一个候选之前写 `task.model.fallback`（会话、离开的服务 ID、去往的候选序号、错误分类；没有模型名与正文）。写不进就不切换，返回当时的错误。因第一个候选被暂缓而从备选开始的请求同样先写一条。
 - **会话亲和。** 一轮里换到备选后，这一轮余下的请求直接去那个备选；下一轮从第一个候选开始，除非它正被暂缓。
-- **暂缓的服务排到候选末尾。** 密钥无效、休息中、请求过多的在别无选择时仍会收到真实请求；熔断中的不发。一个都不能试时 503 `gateway-circuit-open` 加 `retry-after`。
+- **暂缓的服务排到候选末尾。** 密钥无效、休息中、请求过多的在别无选择时仍会收到真实请求；熔断中的不发。一个都不能试时 503 `gateway-circuit-open` 加 `retry-after`，消息末尾是「最近一次：」加第一个熔断中的服务上次失败时说的话（状态码与 `error.message`，去掉密钥，最多 300 字；回复中途断开的是「模型服务的回复中断了」）。这句话只在 Host 内存、跟着服务的状态（成功一次或指纹变化就清掉），不进 `health`、日志与账本。内置 Harness 的 `provider-circuit-open` 带同样的一句。
 - 指纹不是服务当前值的候选不会被尝试，也不会清掉这个服务已有的记录。
+
+### 重试只由一层负责
+
+网关在回复开始前按上表重试（429 等一次，5xx、连不上各再试两次）；之后 Harness 不应再按自己的次数重发同一请求，否则服务看到的请求翻倍、失败的一轮拖过一分钟。规则：
+
+- **网关已重试或不会在几秒内好转的失败**带 `x-should-retry: false`：在原地重试过的 5xx 与连接失败、429（短的 `retry-after` 已在这里等过一次，长的或没有的等几秒也不会好）、60 秒没有回复（504）、密钥、余额、预算、熔断。门槛沿用调度的数：`retry-after` 不超过 10 秒的在网关等，5xx 隔 1 秒与 3 秒（各 ±30%）再试两次，所以几秒内会好的故障在网关这一层就接住了。
+- **网关不会重发的失败交给 Harness 判断**，不带这个头：请求带服务端自己执行的工具或服务端状态时的 5xx 与发出后断开的连接（可能已在服务端执行，网关不重发），以及请求自身的问题（原样带服务自己的 `x-should-retry`）。回复开始后断开也一样，回复已经开始，没有头可改。`gateway-busy`（Host 的队列满，`retry-after: 1`）也不带。Codex 与 pi 在经 Latch 的会话里自己不重试（见下表），这类失败对它们直接结束这一轮。
+- Anthropic 协议里只有名称与 `input_schema`、没有 `type` 的工具是 Harness 自己的工具，不算服务端执行；服务端执行的工具都写明 `type`。
+- **原因带到会话里。** 失败的回答保留服务的状态码与 `error.message`；网关在这一轮记下最近一次回复开始前失败时服务说的话（`ModelGatewayLease.takeTurn().failure`，不进 `routed` 记录）。这一轮失败、Harness 的错误里又没有这句话时（Codex 对任何 5xx 只说「We’re currently experiencing high demand」，对用完重试的 429 只说「exceeded retry limit, last status: 429」），会话多一行「模型服务：<状态码> <服务的原话>」。
+
+各 Harness 怎样只留一层（都在启动时交给这个进程，不写它们自己的文件）：
+
+| Harness | 交付 | 依据 |
+| --- | --- | --- |
+| Claude Agent（两条线） | 读 `x-should-retry`；`CLAUDE_CODE_MAX_RETRIES=2` 管剩下的（断流、带服务端工具的 5xx） | [llm-gateway-protocol](https://code.claude.com/docs/en/llm-gateway-protocol)「Response headers」，[errors](https://code.claude.com/docs/en/errors)「Automatic retries」「Tune retry behavior」 |
+| Codex 直连 | `model_providers.latch.request_max_retries=0`、`stream_max_retries=0`（默认 4 与 5） | [配置参考](https://developers.openai.com/codex/config-reference)。Codex 不读 `x-should-retry`，又把 429 与 5xx 当断流按 `stream_max_retries` 重发，只能关掉；代价是回复中途断开时这一轮直接失败 |
+| OpenCode | 读 `x-should-retry` | 它的重试次数写死在代码里（10 次，指数退避到每次 10 秒，没有设置）：回复中途断开时它一直重发，直到熔断打开后收到带 `false` 的 503 |
+| pi | 路由的会话里，pi 报告 `auto_retry_start` 时线发 RPC `abort_retry`（`gateway-busy` 除外） | pi 的 agent 级重试按错误文字判断、不读这个头；`retry.maxRetries` 只在它的设置文件里，`set_auto_retry` 会写用户的全局设置，所以都不用（[HARNESSES](HARNESSES.md#pi-的-rpc-模式)） |
+| DeepSeek Harness | provider 的 `retryPolicy.maxRetries: 0`（原有） | llm-pi-ai 的 `retryPolicy` |
+
+本地假服务实测（`gateway-efficiency.live.test.ts`，五个 Harness 的各条路线，从发出到这一轮失败；括号里是服务收到的主请求数）：429（`retry-after: 2`）都在 4 秒内（2）；500 都在 7 秒内（至多 3）；回复中途断开时 Claude 1–6 秒（3–4），Codex、pi、dsh 1–3 秒（1），OpenCode 37 秒（5，熔断打开后停）；熔断打开时 3 秒内、不发请求。每种都带服务的原话，断开的带网关的「模型服务的回复中断了」或「连不上模型服务」。
 
 ### 健康与熔断
 
@@ -458,7 +493,11 @@ Latch 没有内置价格表，也不从 token 猜费用。网关请求的花费�
 
 - Chat Completions 入口到其他协议的转换尚未实现。
 - 会话中换路线对真实程序核对过（自己的登录 → 服务 → 另一服务 → 自己的登录，每次一轮，回到自己的登录后它仍记得第一轮的内容）：Codex 0.169、Claude Agent、OpenCode 2.2.6、pi；Grok Build 1.0.77、Qwen Code 与 goose 1.57 核对了服务之间（没有登录；Qwen 换回自己的登录被拒绝并留在服务上）。codex-acp 与 DeepSeek Harness 只用假程序核对过。历史里另一服务或厂商签名、加密的推理（Codex 的 `encrypted_content`、Claude 的 thinking 签名）换到别的服务后是否被接受没有核对。
-- codex-acp、Claude Agent、Qwen Code、goose 与 Grok Build 不收声明的上下文长度：尚未核对它们给自定义模型定窗口的字段。OpenCode、pi 与 DeepSeek Harness 只按配置字段交付，没有对真实程序看它们是否按这个窗口压缩。
+- codex-acp、Qwen Code、goose 与 Grok Build 不收声明的上下文长度：尚未核对它们给自定义模型定窗口的字段。Codex、Claude Agent（两条线）、OpenCode、pi 与 DeepSeek Harness 对真实程序核对过：声明 64,000 的模型用量报到 97% 后，下一轮发出之前先压缩（`gateway-efficiency.live.test.ts`）。
+- Claude Code 认识的模型 ID 声明不到 100,000 时，没有不关掉压缩就能生效的设置（见 [Claude Agent](#claude-agent)）。
+- 回复中途断开时，Codex 不再重发（为了 429 与 5xx 不被重试两层），OpenCode 按写死的次数重发到熔断打开（见[重试只由一层负责](#重试只由一层负责)）。
+- 回复中途断开后 Claude Code 改用非流式请求再发（它的非流式后备，`CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK` 可关），本地假服务对这样的请求在响应头之前就断开，所以 Claude 那一轮最后说的是「连不上模型服务：fetch failed」。Latch 不关这个后备。
+- codex-acp 经 `providers/set` 接入，收不到重试次数：转换路线上的 5xx 现在保留状态码，Codex 默认按断流重发（直连 Codex 用默认的 `stream_max_retries` 时 100 秒仍在重发），直到熔断打开；之前的 503 `server_is_overloaded` 让它立即停下、却只说「Selected model is at capacity」。没有对 codex-acp 核对。
 - Responses 的 `tool_search` 尚未转换（见「转换的共同规则」）。
 - 预算拒绝（402 `budget-exceeded`）没有对着真实的 Harness 看它是否停下而不是重试。
 - 真实服务的 `usage.cost` 字段与币种只用本地假服务核对过。

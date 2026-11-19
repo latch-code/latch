@@ -359,14 +359,19 @@ const isMain = (request: UpstreamRequest) =>
   && userText(request.wire, request.body).includes(PROMPTS[0]!.slice(0, 12))
   && (endsWithToolResult(request.wire, request.body) || lastUserText(request.wire, request.body).trimStart().startsWith('GWM'))
 
-type Failure = 'rate' | 'server' | 'overflow' | 'cut'
+type Failure = 'rate' | 'server' | 'overflow' | 'cut' | 'circuit'
 
-function failureBody(wire: ModelWire, failure: Exclude<Failure, 'cut'>): unknown {
+const RATE_MESSAGE = 'Rate limit reached for gw-measure-model; please try again in 2s.'
+const SERVER_MESSAGE = 'The server had an error while processing your request.'
+/** What the gateway itself says of a reply that broke off: the service said nothing. */
+const BROKE_OFF = /模型服务的回复中断了|连不上模型服务/u
+
+function failureBody(wire: ModelWire, failure: Exclude<Failure, 'cut' | 'circuit'>): unknown {
   const message =
     failure === 'rate'
-      ? 'Rate limit reached for gw-measure-model; please try again in 2s.'
+      ? RATE_MESSAGE
       : failure === 'server'
-        ? 'The server had an error while processing your request.'
+        ? SERVER_MESSAGE
         : "This model's maximum context length is 64000 tokens. However, your messages resulted in 70210 tokens."
   if (wire === 'anthropic-messages')
     return {
@@ -392,10 +397,12 @@ function plan(failure?: Failure) {
     const main = offeredTools(request.body).length > 0
     if (failure && main) {
       if (failure === 'cut') return { text: 'This reply will break off after its first words.', cut: true }
+      // A service whose breaker opens: it fails every request on its side.
+      const sorted = failure === 'circuit' ? 'server' : failure
       return {
         error: {
-          status: failure === 'rate' ? 429 : failure === 'server' ? 500 : 400,
-          body: failureBody(request.wire, failure),
+          status: sorted === 'rate' ? 429 : sorted === 'server' ? 500 : 400,
+          body: failureBody(request.wire, sorted),
           ...(failure === 'rate' ? { retryAfter: '2' } : {}),
         },
       }
@@ -405,13 +412,23 @@ function plan(failure?: Failure) {
       const tool = shellTool(request.body)
       if (tool) return { reasoning: 'I will run the probe.', tool }
     }
+    // The turn that fills the window says so in its usage and is long in fact: about 37,000 tokens of text, so a harness
+    // that keeps the newest part of a conversation word for word (pi keeps 20,000 tokens, dsh 16% of the window) has an
+    // older part left to summarise. Summary requests are answered like any other side request.
+    const inflating = main && latest === INFLATE_PROMPT && !endsWithToolResult(request.wire, request.body) && !summaryLike(request)
     return {
       reasoning: main ? 'Short thought before answering.' : undefined,
-      text: 'Measured gateway answer in one short sentence here.',
-      ...(main && latest === INFLATE_PROMPT ? { inflate: Math.round(WINDOW * 0.97) } : {}),
+      text: inflating
+        ? `Measured gateway answer, long on purpose. ${'measured filler words keep this answer long '.repeat(3400)}`
+        : 'Measured gateway answer in one short sentence here.',
+      ...(inflating ? { inflate: Math.round(WINDOW * 0.97) } : {}),
     }
   }
 }
+
+/** A request that asks for a summary of the conversation, as each harness words its compaction. */
+const summaryLike = (request: UpstreamRequest) =>
+  /summar|compact|condens|checkpoint|TEXT ONLY/iu.test(lastUserText(request.wire, request.body))
 
 async function homes(root: string, names: string[]): Promise<void> {
   vi.stubEnv('NO_PROXY', '127.0.0.1,localhost,::1')
@@ -512,12 +529,12 @@ else
           ).sessionId
         const send = (id: string, prompt: string) =>
           owner.json(`tasks/${id}/prompt`, { method: 'POST', body: { prompt, requestId: randomUUID() } })
-        const failureText = (current: TaskDetail) =>
+        const failureText = (current: TaskDetail, chars = 600) =>
           current.messages
             .filter(message => message.role === 'system')
             .map(message => message.text)
             .join(' | ')
-            .slice(0, 600)
+            .slice(0, chars)
 
         // 1. Four turns: plain, one tool call, plain, plain.
         const turnStarts: number[] = []
@@ -712,6 +729,7 @@ else
         }
 
         // 2. Context window: what the harness believes for the declared model, and for one without a declared length.
+        const beforeInflate = upstream.requests.length
         turnStarts.push(performance.now())
         await send(sessionId, INFLATE_PROMPT)
         await settle(sessionId, INFLATE_PROMPT)
@@ -723,6 +741,11 @@ else
         // Requests after the last turn ended belong to a turn that never ends, so no turn counts them.
         const lastTurnEnded = performance.now()
         const six = upstream.requests.slice(beforeSix)
+        // From the reply that filled the window to the next turn's own request: pi compacts as the filling turn ends, the
+        // others before the next turn's request goes out.
+        const filled = upstream.requests.slice(beforeInflate)
+        const afterFull = filled.slice(filled.findIndex(request => request.reply?.inflate !== undefined) + 1)
+        const nextMain = afterFull.findIndex(request => isMain(request) && lastUserText(request.wire, request.body).includes(AFTER_PROMPT))
         const sixDetail = await detail(sessionId)
         report.window = {
           declared: WINDOW,
@@ -736,12 +759,11 @@ else
           })),
           turnSixStatus: sixSettled ? sixDetail.summary.status : 'timeout',
           ...(sixDetail.summary.status === 'idle' ? {} : { turnSixFailure: failureText(sixDetail) }),
-          // A summary request before the turn's own, or a main request clearly shorter than the conversation was.
-          compactedBeforeSending: six.some(
-            request =>
-              /summar|compact|condens/iu.test(lastUserText(request.wire, request.body))
-              || (isMain(request) && request.text.length < (mainRequests.at(-1)?.text.length ?? 0) * 0.8),
-          ),
+          // A summary request before the next turn's own, or a main request clearly shorter than the conversation was.
+          compactedBeforeSending:
+            (nextMain < 0 ? afterFull : afterFull.slice(0, nextMain)).some(summaryLike)
+            || six.some(request => isMain(request) && request.text.length < (mainRequests.at(-1)?.text.length ?? 0) * 0.8),
+          summaryRequests: afterFull.filter(summaryLike).length,
         }
         const openSession = await start(OPEN_MODEL, PROMPTS[0]!)
         const openSettled = await settle(openSession, PROMPTS[0]!, 60_000)
@@ -808,22 +830,41 @@ else
 
         // 4. Failures, each at a service of its own so one's health never touches the next.
         const failures: Record<string, unknown> = {}
-        for (const failure of ['overflow', 'cut', 'rate', 'server'] as const) {
+        for (const failure of ['overflow', 'cut', 'rate', 'server', 'circuit'] as const) {
           const failing = await startRecordingUpstream({ plan: plan(failure) })
           ups.push(failing)
           const other = await service(`Failing ${failure}`, failing.origin)
+          if (failure === 'circuit') {
+            // A service that kept failing: a session that fails on it first, then the same request again on that
+            // session's token until the breaker is open (four failures in a row), before the measured session starts.
+            const first = await start(MODEL, FAIL_PROMPT, other.id)
+            await settle(first, FAIL_PROMPT, 75_000)
+            const primer = leases.get(first)
+            const sample = harnessBodies.at(-1)?.text
+            for (let tries = 0; primer && sample && tries < 8; tries++) {
+              const listed = await owner.json<{ providers: ProviderSettings[] }>('providers')
+              if (listed.providers.find(item => item.id === other.id)?.health?.state === 'failing') break
+              await fetch(`${primer.baseURL.replace(/\/v1$/u, '')}${pathOf(primer.entry)}`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', authorization: `Bearer ${primer.token}`, 'anthropic-version': '2023-06-01' },
+                body: sample,
+              }).then(response => response.text())
+            }
+          }
+          const sentBefore = failing.requests.length
           const id = await start(MODEL, FAIL_PROMPT, other.id)
           const t0 = Date.now()
           const ended = await settle(id, FAIL_PROMPT, 75_000)
           const result = await detail(id)
-          const main = failing.requests.filter(request => offeredTools(request.body).length > 0)
+          const main = failing.requests.slice(sentBefore).filter(request => offeredTools(request.body).length > 0)
           const gatewayRequests = traces.filter(trace => trace.sessionId === id).length
           failures[failure] = {
             status: ended ? result.summary.status : 'still running after 75 s',
             seconds: Math.round((Date.now() - t0) / 100) / 10,
             upstreamMainRequests: main.length,
+            ...(failure === 'circuit' ? { primed: sentBefore } : {}),
             gatewayRequests,
-            reason: failureText(result),
+            reason: failureText(result, 1500),
             routed: result.messages.find(message => message.role === 'user')?.turn?.routed,
           }
           if (!ended) {
@@ -852,7 +893,26 @@ else
         }
         expect(report.cancel).toMatchObject({ receipt: 'stopped' })
         expect((report.cancel as { upstreamClosedMs: number }).upstreamClosedMs).toBeLessThan(1000)
-        const failed = report.failures as Record<Failure, { upstreamMainRequests: number; reason: string }>
+        const failed = report.failures as Record<Failure, { status: string; seconds: number; upstreamMainRequests: number; reason: string }>
+        // Every harness compacts before the service would refuse a conversation that fills the declared window.
+        expect((report.window as { compactedBeforeSending: boolean }).compactedBeforeSending, JSON.stringify(report.window)).toBe(true)
+        // Failures that will not heal in seconds end the turn soon, sent once more at most by one layer, with what the
+        // service said (a reply that broke off has no words of the service's: the gateway's own say so).
+        const bounds: Record<Exclude<Failure, 'overflow'>, { requests: number; seconds: number; says: RegExp | string }> = {
+          rate: { requests: 2, seconds: 20, says: RATE_MESSAGE },
+          server: { requests: 3, seconds: 20, says: SERVER_MESSAGE },
+          // OpenCode sends a broken stream again on its own, a fixed number of times; the breaker ends that.
+          cut: { requests: 5, seconds: 60, says: BROKE_OFF },
+          circuit: { requests: 0, seconds: 20, says: SERVER_MESSAGE },
+        }
+        for (const [failure, bound] of Object.entries(bounds) as Array<[Exclude<Failure, 'overflow'>, (typeof bounds)['rate']]>) {
+          const result = failed[failure]
+          expect(result.status, `${failure}: ${JSON.stringify(result)}`).toBe('failed')
+          expect(result.upstreamMainRequests, `${failure}: ${JSON.stringify(result)}`).toBeLessThanOrEqual(bound.requests)
+          expect(result.seconds, `${failure}: ${JSON.stringify(result)}`).toBeLessThan(bound.seconds)
+          if (typeof bound.says === 'string') expect(result.reason, failure).toContain(bound.says)
+          else expect(result.reason, failure).toMatch(bound.says)
+        }
         if (entry !== upstreamWire) {
           // A converted request carries none of the service's own tools, so a 5xx is tried again in place before the
           // harness hears of it, whatever tools the harness named.

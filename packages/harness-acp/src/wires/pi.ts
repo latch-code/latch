@@ -129,6 +129,16 @@ const OUTSIDE_CONTEXT = new Set(['model_change', 'thinking_level_change', 'label
  * source's next turn began: `fork` before the first user message written since then on the branch pi is on, or, when
  * there is none, `clone` of the whole branch. `keep` is the entry the new session must end at. Or why it cannot.
  */
+/**
+ * Whether Latch stops a retry pi is about to make. Through the gateway every model error comes after the gateway's own
+ * tries, and pi's agent-level retry, which goes by the error's words and not `x-should-retry`, cannot be limited per
+ * launch: `retry.maxRetries` lives only in pi's settings files, and `set_auto_retry` writes the person's global
+ * settings. `abort_retry` stops this one and saves nothing. A full queue at the Host heals in a moment and is left to pi.
+ */
+export function stopsRetry(routed: boolean, errorMessage: unknown): boolean {
+  return routed && !(typeof errorMessage === 'string' && errorMessage.includes('gateway-busy'))
+}
+
 export function forkPlan(data: unknown, before: string): { command: Record<string, unknown>; keep: string } | string {
   const cut = Date.parse(before)
   const read = listing.safeParse(data)
@@ -939,6 +949,8 @@ export class PiWire implements AgentWire {
         return
       }
       case 'auto_retry_start':
+        const stopped = stopsRetry(this.routed, event.errorMessage)
+        if (stopped) void this.send({ type: 'abort_retry' }).catch(() => {})
         if (typeof event.errorMessage !== 'string' || !event.errorMessage) return
         this.reply = undefined
         this.update({
@@ -946,7 +958,7 @@ export class PiWire implements AgentWire {
           severity: 'warning',
           // A model service's error can echo part of a key.
           title: clip(redactKnownSecrets(event.errorMessage), 300),
-          ...(typeof event.attempt === 'number' && typeof event.maxAttempts === 'number'
+          ...(!stopped && typeof event.attempt === 'number' && typeof event.maxAttempts === 'number'
             ? { description: `第 ${event.attempt} 次重试，最多 ${event.maxAttempts} 次` }
             : {}),
         })

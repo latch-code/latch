@@ -31,6 +31,10 @@ const GATEWAY_DEFAULTS = {
   CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1',
   CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
   CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP: '1',
+  // The gateway has already tried again what heals in seconds and marks the rest `x-should-retry: false`; what is left
+  // for Claude Code is a reply that broke off, which only it can send again (code.claude.com/docs/en/errors, "Automatic
+  // retries"; its default is 10).
+  CLAUDE_CODE_MAX_RETRIES: '2',
 }
 const GATEWAY_MODEL_NAMES = [
   'ANTHROPIC_MODEL',
@@ -91,6 +95,22 @@ function readClaudeDenial(update: SessionUpdate): ToolDenial | undefined {
   return { source, ...(reason ? { reason } : {}) }
 }
 
+/**
+ * The window the service declared for the model this process starts on, as Claude Code's settings take it
+ * (code.claude.com/docs/en/model-config, "Correct the window for a gateway or custom model ID" and "Set the auto-compact
+ * window"). `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is the window of an ID Claude Code does not know, which it otherwise takes
+ * for 1M (2.1.327; the adapter's own Claude Code may assume less); it does nothing for an ID Claude Code knows.
+ * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is when to compact, for any ID, but only from 100,000 to 1,000,000 and never above the
+ * window Claude Code assumes. With nothing declared Claude Code's own window stays.
+ */
+function claudeWindow(declared: number | undefined): Record<string, string> {
+  if (!declared) return {}
+  return {
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(declared),
+    ...(declared >= 100_000 && declared <= 1_000_000 ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(declared) } : {}),
+  }
+}
+
 /** What Claude needs to send its model calls to Latch's gateway, through the adapter or directly: the same either way. */
 function claudeGatewayDeliver(place: GatewayPlace, route: ModelRoute) {
   return {
@@ -99,6 +119,8 @@ function claudeGatewayDeliver(place: GatewayPlace, route: ModelRoute) {
       ANTHROPIC_BASE_URL: place.baseURL,
       ...(route.upstream && route.upstream !== route.wire ? { CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1' } : {}),
       ...Object.fromEntries(GATEWAY_MODEL_NAMES.map(name => [name, route.model])),
+      // Per process, like the model above: a model changed inside the session takes its window at the next start.
+      ...claudeWindow(place.models.find(model => model.id === route.model)?.capabilities?.contextTokens),
     },
     sessionMeta: {
       claudeCode: {
@@ -120,6 +142,8 @@ function claudeGatewayDeliver(place: GatewayPlace, route: ModelRoute) {
 const CLAUDE_GATEWAY_ENV_NAMES = [
   'ANTHROPIC_BASE_URL',
   'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
+  'CLAUDE_CODE_MAX_CONTEXT_TOKENS',
+  'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
   ...Object.keys(GATEWAY_DEFAULTS),
   ...GATEWAY_MODEL_NAMES,
 ]
@@ -193,7 +217,7 @@ const CLAUDE_GATEWAY = {
   wires: ['anthropic-messages'],
   tokenEnv: 'ANTHROPIC_AUTH_TOKEN',
   envNames: CLAUDE_GATEWAY_ENV_NAMES,
-  templates: { session: 1 },
+  templates: { session: 2 },
   models: { value: (id: string) => id, id: (value: string) => value || undefined, reportedOnly: true },
   // Default hands effort back to Claude, which then sends `high` of its own (2.1.318).
   defaultThinking: 'default',

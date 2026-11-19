@@ -4463,7 +4463,7 @@ export class AgentRuntime implements Bridge {
    * What a turn on a route sent through Latch, as the gateway counted it, with the model the session had chosen named
    * the way the service names it: the option's value or name matched to the token's models, else the route's model.
    */
-  private routedTurn(run: Run, task: AcpTask): RoutedTurn | undefined {
+  private routedTurn(run: Run, task: AcpTask): (RoutedTurn & { failure?: string }) | undefined {
     const lease = run.live?.gateway
     if (!lease || run.gatewayMark === undefined || !task.acp.route) return undefined
     const turn = lease.takeTurn()
@@ -5429,6 +5429,14 @@ export class AgentRuntime implements Bridge {
               : 'failed'
       if (run.end || unknown.length) task.summary.runEnd = runEndRecord(run.end ?? 'turn-ended', at, unknown)
       if (stopped) task.messages.push(interruptedNote(at))
+      const prompt = run.userMessageId === undefined ? undefined : task.messages.find(item => item.id === run.userMessageId)
+      const { failure: serviceSaid, ...routed } = (prompt && this.routedTurn(run, task)) || { failure: undefined }
+      // A harness may put its own words on a service's failure (Codex's "high demand" for any 5xx): what the service said,
+      // as the gateway kept it, goes with the turn that failed on it.
+      if (status === 'failed' && serviceSaid) {
+        const said = clip(this.redact(serviceSaid), 600)
+        if (!notes.some(note => note?.includes(said.replace(/^\d{3} /u, '').slice(0, 80)))) notes.push(`模型服务：${said}`)
+      }
       for (const note of notes) {
         if (!note) continue
         task.messages.push({
@@ -5440,12 +5448,10 @@ export class AgentRuntime implements Bridge {
           createdAt: at,
         })
       }
-      const prompt = run.userMessageId === undefined ? undefined : task.messages.find(item => item.id === run.userMessageId)
       if (prompt) {
-        const routed = this.routedTurn(run, task)
         prompt.turn = {
           ...run.clock.turn(),
-          ...(routed ? { routed } : {}),
+          ...('requests' in routed ? { routed } : {}),
           ...(run.tokens?.turn ? { usage: run.tokens.turn } : {}),
           ...(run.tokens?.stream ? { stream: run.tokens.stream } : {}),
         }

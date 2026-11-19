@@ -100,8 +100,10 @@ const readVersion = (output: string) => /\bcodex-cli (\d+\.\d+\.\d+(?:-[0-9A-Za-
 /**
  * Through the gateway: a model provider of Latch's own, chosen for the whole process at launch, since Codex 0.167
  * refuses a turn on a thread whose provider is not the process's (`modelProviderMismatch`). The token is read from the
- * variable `env_key` names; neither it nor any header value is ever an argument. One retry: the gateway's own answer is
- * what Codex should act on. Before opening a thread, the wire preserves the effective command environment filters
+ * variable `env_key` names; neither it nor any header value is ever an argument. No retries of its own
+ * (`request_max_retries`, `stream_max_retries`; Codex reads no `x-should-retry`): the gateway has already tried again
+ * what heals in seconds, and Codex retries a 429 or a 5xx as a broken stream, which would be a second layer. A reply that
+ * broke off then ends the turn. Before opening a thread, the wire preserves the effective command environment filters
  * and adds the token's exclusion through that thread's config, without overwriting the person's config files.
  */
 function codexGatewayArgs(place: GatewayPlace, catalog?: string): string[] {
@@ -113,7 +115,8 @@ function codexGatewayArgs(place: GatewayPlace, catalog?: string): string[] {
     `${provider}.wire_api="responses"`,
     `${provider}.env_key="LMG_TOKEN"`,
     `${provider}.supports_websockets=false`,
-    `${provider}.request_max_retries=1`,
+    `${provider}.request_max_retries=0`,
+    `${provider}.stream_max_retries=0`,
     ...(catalog ? [`model_catalog_json=${JSON.stringify(catalog)}`] : []),
   ].flatMap(setting => ['-c', setting])
 }
@@ -163,7 +166,7 @@ export const codexProfile: HarnessProfile = {
     carriesAcrossLogin: true,
     tokenEnv: 'LMG_TOKEN',
     envNames: [],
-    templates: { args: 2, files: 1 },
+    templates: { args: 3, files: 1 },
     minimumVersion: {
       args: ['--version'],
       read: readVersion,

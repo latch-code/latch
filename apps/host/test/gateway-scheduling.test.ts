@@ -586,7 +586,7 @@ describe('the gateway schedules a session across its candidates', () => {
     expect(JSON.stringify(converted.a.requests[0]?.body)).not.toContain('web_search')
     // A candidate the request would reach as it came still could run the search: then it is sent once, as before.
     const passed = await setup({ a: [failed(500)], b: [{ text: 'must not be asked' }], kinds: ['openai-compatible', 'openai-responses'] })
-    expect((await passed.ask({ body: { tools } })).status).toBe(503)
+    expect((await passed.ask({ body: { tools } })).status).toBe(500)
     expect(passed.a.requests).toHaveLength(1)
     expect(passed.b.requests).toHaveLength(0)
   })
@@ -714,5 +714,158 @@ describe('the gateway schedules a session across its candidates', () => {
     const said = `${logs.join('\n')}\n${JSON.stringify(switches)}`
     for (const secret of [KEY_A, KEY_B, lease.token, 'private reply text', 'hello', 'fake-model', 'status 500'])
       expect(said).not.toContain(secret)
+  })
+})
+
+describe('what a failed request tells the harness', () => {
+  /** A lease of the session's own service only, so nothing moves on and each failure is the answer. */
+  async function alone(replies: FakeReply[], kinds?: [Kind, Kind]) {
+    const setting = await setup({ a: replies, ...(kinds ? { kinds } : {}) })
+    setting.services.b = undefined
+    const lease = setting.server.open({ sessionId: 'alone', route: setting.route })
+    const ask = (body: Record<string, unknown> = {}) =>
+      setting.answered(
+        fetch(`${lease.baseURL}/responses`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${lease.token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ model: 'fake-model', input: 'hello', stream: true, ...body }),
+        }),
+      )
+    return { ...setting, lease, ask }
+  }
+
+  it('says not to send again what the gateway already tried or what does not heal in seconds, and the service’s own words', async () => {
+    const server = await alone([failed(500)])
+    const failedServer = await server.ask()
+    expect(failedServer.status).toBe(500)
+    expect(failedServer.headers.get('x-should-retry')).toBe('false')
+    expect(await failedServer.text()).toContain('status 500')
+    expect(server.a.requests).toHaveLength(3)
+    // The turn keeps what the service said, for a harness that shows only words of its own.
+    expect(server.lease.takeTurn().failure).toBe('500 status 500')
+
+    // A short retry-after is waited out here once; a long one is handed back. Neither is sent again by the harness.
+    const rate = await alone([failed(429, 2), failed(429, 2), failed(429, 30)])
+    const short = await rate.ask()
+    expect(short.status).toBe(429)
+    expect(short.headers.get('x-should-retry')).toBe('false')
+    expect(rate.a.requests).toHaveLength(2)
+    const long = await rate.ask()
+    expect(long.headers.get('retry-after')).toBe('30')
+    expect(long.headers.get('x-should-retry')).toBe('false')
+    expect(rate.a.requests).toHaveLength(3)
+
+    // The request's own fault is the service's to mark, as it came.
+    const own = await alone([failed(400)])
+    const refused = await own.ask()
+    expect(refused.status).toBe(400)
+    expect(refused.headers.get('x-should-retry')).toBeNull()
+  })
+
+  it('leaves a 5xx the gateway would not send again to the harness, since the request may have run at the service', async () => {
+    const acted = await alone([failed(500)])
+    const response = await acted.ask({ tools: [{ type: 'web_search' }] })
+    expect(response.status).toBe(500)
+    expect(response.headers.get('x-should-retry')).toBeNull()
+    expect(acted.a.requests).toHaveLength(1)
+  })
+
+  it('names what the service last said while its breaker keeps requests from it, and clears it once the service answers', async () => {
+    const held = await alone([failed(502), failed(502), failed(502), failed(502), { text: 'back again' }])
+    expect((await held.ask()).status).toBe(502)
+    expect((await held.ask()).status).toBe(502)
+    expect(held.a.requests).toHaveLength(4)
+    held.lease.takeTurn()
+    const open = await held.ask()
+    expect(open.status).toBe(503)
+    expect(open.headers.get('x-should-retry')).toBe('false')
+    const body = (await open.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('gateway-circuit-open')
+    expect(body.error.message).toContain('最近一次：502 status 502')
+    expect(held.lease.takeTurn().failure).toContain('最近一次：502 status 502')
+    expect(held.a.requests).toHaveLength(4)
+    // What it said is never part of the service's health, which every device reads.
+    expect(JSON.stringify(held.scheduler.health('a'))).not.toContain('status 502')
+    expect((await held.ask()).status).toBe(503)
+    await held.time.advance(60_000)
+    expect(await (await held.ask()).text()).toContain('back again')
+    // A reply that began after a failure in the same turn leaves the turn nothing to blame.
+    expect(held.lease.takeTurn()).not.toHaveProperty('failure')
+  })
+
+  it('keeps a converted 5xx as the service sent it: its status and words, not a code a harness reads as its own message', async () => {
+    const converted = await alone([failed(500)], ['openai-compatible', 'openai-compatible'])
+    const response = await converted.ask()
+    expect(response.status).toBe(500)
+    const body = (await response.json()) as { error: { code: string; message: string } }
+    expect(body.error).toMatchObject({ code: 'server_error', message: 'status 500' })
+  })
+})
+
+describe('an Anthropic request with the harness’s own tools', () => {
+  it('is tried again in place after a 5xx: a tool declared by name and input schema runs in the harness', async () => {
+    const setting = await setup({ a: [failed(500)], kinds: ['anthropic', 'anthropic'] })
+    setting.services.b = undefined
+    const { upstream: _, ...rest } = setting.route
+    const lease = setting.server.open({ sessionId: 'anthropic-tools', route: { ...rest, wire: 'anthropic-messages' } })
+    const ask = (tools: unknown[]) =>
+      setting.answered(
+        fetch(`${lease.baseURL}/v1/messages`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${lease.token}`, 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify({
+            model: 'fake-model',
+            max_tokens: 64,
+            stream: true,
+            messages: [{ role: 'user', content: 'hello' }],
+            tools,
+          }),
+        }),
+      )
+    const own = await ask([{ name: 'read_file', description: 'Read a file', input_schema: { type: 'object', properties: {} } }])
+    expect(own.status).toBe(500)
+    expect(own.headers.get('x-should-retry')).toBe('false')
+    expect(setting.a.requests).toHaveLength(3)
+    // A search the service runs itself is sent once, and Claude decides.
+    await setting.time.advance(60_000)
+    const searched = await ask([{ type: 'web_search_20250305', name: 'web_search' }])
+    expect(searched.status).toBe(500)
+    expect(searched.headers.get('x-should-retry')).toBeNull()
+    expect(setting.a.requests).toHaveLength(4)
+  })
+})
+
+describe('a context overflow as Claude Code reads it', () => {
+  async function claude(kind: Kind, message: string) {
+    const setting = await setup({ a: [{ error: { status: 400, message } }], kinds: [kind, kind] })
+    setting.services.b = undefined
+    const { upstream: _, ...rest } = setting.route
+    const route: ModelRoute = { ...rest, wire: 'anthropic-messages', ...(kind === 'anthropic' ? {} : { upstream: WIRE[kind] }) }
+    const lease = setting.server.open({ sessionId: 'claude', route })
+    const response = await fetch(`${lease.baseURL}/v1/messages`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${lease.token}`, 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'fake-model', max_tokens: 64, messages: [{ role: 'user', content: 'hello' }] }),
+    })
+    return { status: response.status, body: (await response.json()) as { type: string; error: { type: string; message: string } } }
+  }
+
+  it('puts the token Claude Code compacts on before the service’s own words, passed through or converted', async () => {
+    const words = 'Invalid request: the request exceeds the maximum context of the model'
+    for (const kind of ['anthropic', 'openai-compatible'] as const) {
+      const { status, body } = await claude(kind, words)
+      expect(status).toBe(400)
+      expect(body).toEqual({
+        type: 'error',
+        error: { type: 'invalid_request_error', message: `capability_rejected: prompt_too_long · ${words}` },
+      })
+    }
+  })
+
+  it('leaves wording Claude Code already recognises, and any other refusal, as the service wrote it', async () => {
+    const own = await claude('anthropic', 'prompt is too long: 70210 tokens > 64000 maximum')
+    expect(own.body.error.message).toBe('prompt is too long: 70210 tokens > 64000 maximum')
+    const other = await claude('anthropic', 'input length and `max_tokens` exceed context limit: 188240 + 21333 > 200000')
+    expect(other.body.error.message).toBe('input length and `max_tokens` exceed context limit: 188240 + 21333 > 200000')
   })
 })

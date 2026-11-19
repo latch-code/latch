@@ -219,7 +219,10 @@ it.skipIf(!binary).each([
         body: { prompt: 'Report the planned service refusal.', requestId: randomUUID() },
       })
       await vi.waitFor(async () => expect((await detail()).summary.status).toBe('failed'), { timeout: 30_000 })
-      expect((await detail()).messages.map(message => message.text).join('\n')).toContain('Selected model is at capacity')
+      // The service's own words, not Codex's "Selected model is at capacity" for a code the gateway no longer writes.
+      const said = (await detail()).messages.map(message => message.text).join('\n')
+      expect(said).toContain('planned Chat refusal')
+      expect(said).not.toContain('Selected model is at capacity')
       await assertNoGatewayCredentials(root)
     } finally {
       await host.close()
