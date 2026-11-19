@@ -443,7 +443,7 @@ export interface PendingSubmission {
   model?: ModelRef
   workspaceId?: string
   /** `moved`: the same conversation going on with another Harness. */
-  forkOf?: { taskId: string; upToMessageId: string; moved?: true }
+  forkOf?: { taskId: string; upToMessageId: string; moved?: true; brief?: true }
   /** 从这里编辑 on a session's first message: the Host makes the new session from that session (`editOf`). */
   editOf?: { taskId: string }
   queue?: true
@@ -532,9 +532,10 @@ export function readPending(key: string): PendingSubmission | null {
     if (item.resent !== undefined && (item.resent !== true || typeof item.sessionId !== 'string')) return null
     if (item.freshContext !== undefined && (item.freshContext !== true || typeof item.sessionId !== 'string')) return null
     if (item.worktree !== undefined && (worktreeStartOf(item.worktree) === undefined || item.sessionId !== undefined)) return null
-    const fork = item.forkOf as { taskId?: unknown; upToMessageId?: unknown; moved?: unknown } | undefined
+    const fork = item.forkOf as { taskId?: unknown; upToMessageId?: unknown; moved?: unknown; brief?: unknown } | undefined
     if (fork !== undefined && (!fork || typeof fork.taskId !== 'string' || typeof fork.upToMessageId !== 'string')) return null
     if (fork?.moved !== undefined && fork.moved !== true) return null
+    if (fork?.brief !== undefined && (fork.brief !== true || fork.moved !== true)) return null
     const edit = item.editOf as { taskId?: unknown } | undefined
     if (edit !== undefined && (!edit || typeof edit.taskId !== 'string' || fork !== undefined)) return null
     if (
@@ -583,6 +584,7 @@ export function readPending(key: string): PendingSubmission | null {
               taskId: fork.taskId as string,
               upToMessageId: fork.upToMessageId as string,
               ...(fork.moved ? { moved: true as const } : {}),
+              ...(fork.brief ? { brief: true as const } : {}),
             },
           }
         : {}),

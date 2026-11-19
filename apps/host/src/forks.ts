@@ -9,6 +9,11 @@ export function forkSeed(
   upToMessageId: string,
   /** What the record is introduced as; a fork names the session and the turn it forks after. */
   heading: (title: string, turn: number) => string = (title, turn) => `以下是会话「${title}」到第 ${turn} 轮为止的记录`,
+  /**
+   * Only the reply at `upToMessageId` goes across: a note the Harness being left wrote for whoever takes over, in the
+   * place of the whole record. The person asked for it and read it before sending.
+   */
+  brief = false,
 ): {
   text: string
   context: NonNullable<TaskSummary['forkOf']>
@@ -54,6 +59,7 @@ export function forkSeed(
     const message = detail.messages[index]!
     if (message.role === 'user' && !message.steered) turn++
     if (index < start) continue
+    if (brief && index !== end) continue
     if (message.role === 'tool' || message.subagent || message.origin === 'mcp-prompt') outside = true
     // A first message that itself began from a record (a fork, or a conversation that moved Harness) carries that
     // record before the person's words: it is written out once, as the turns it was, not as a record inside a record.
@@ -80,7 +86,8 @@ export function forkSeed(
   )
     .replace(/\s+/gu, ' ')
     .slice(0, 80)
-  const label = heading(title, turn)
+  if (brief && detail.messages[end]!.role !== 'assistant') throw new AppError(400, 'fork-position', '交接说明要是一条回复，请重新生成')
+  const label = brief ? `以下是会话「${title}」里上一位 Agent 写给接手者的交接说明` : heading(title, turn)
   const text = `${label}\n${truncated ? '（较早的记录已截断，只保留最后 20 万字符。）\n' : ''}<会话记录>${transcript}\n</会话记录>\n\n请将以上内容作为背景，继续处理后面的请求。\n\n`
   return {
     text,
@@ -92,6 +99,7 @@ export function forkSeed(
       turn,
       prefixLength: text.length,
       ...(truncated ? { truncated: true } : {}),
+      ...(brief ? { brief: true as const } : {}),
     },
   }
 }

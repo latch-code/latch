@@ -63,6 +63,8 @@ const COPY = defineCopy(
 export type ForkDraft = { taskId: string; upToMessageId?: string } & {
   /** The same conversation going on with another Harness, not a branch of it. */
   moved?: true
+  /** With `moved`: only the note the Harness being left wrote goes across (`upToMessageId` is that reply). */
+  brief?: true
   title?: string
   choice?: Partial<ComposerChoice>
   source?: ForkSource
@@ -383,7 +385,14 @@ export function useSubmission({
             mode: choice.mode,
             ...(fork
               ? fork.upToMessageId
-                ? { forkOf: { taskId: fork.taskId, upToMessageId: fork.upToMessageId, ...(fork.moved ? { moved: true as const } : {}) } }
+                ? {
+                    forkOf: {
+                      taskId: fork.taskId,
+                      upToMessageId: fork.upToMessageId,
+                      ...(fork.moved ? { moved: true as const } : {}),
+                      ...(fork.brief ? { brief: true as const } : {}),
+                    },
+                  }
                 : { editOf: { taskId: fork.taskId } }
               : {}),
             ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),

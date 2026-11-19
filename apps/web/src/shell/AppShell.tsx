@@ -11,7 +11,7 @@ import { openLayer, useBackLayer } from '../hooks/backStack.ts'
 import { FoundHarnessesCard } from '../newSession/NewSession.tsx'
 import { HistoryImportEntry } from '../history/HistoryImport.tsx'
 import { harnessName as harnessLabel, usesDemoModel, listsFoundHarnesses } from '../composerChoice.ts'
-import { MoveHistory, MovingThread } from '../conversation/HarnessMove.tsx'
+import { MoveCarry, MoveHistory, MovingThread } from '../conversation/HarnessMove.tsx'
 import { PhoneSessionList } from '../components/PhoneSessionList.tsx'
 import { Sidebar } from '../components/Sidebar.tsx'
 import { ConversationHeader } from './ConversationHeader.tsx'
@@ -167,11 +167,13 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const movingFork = start && submission.fork?.moved ? submission.fork : undefined
   const movingSource = movingFork ? snapshot.tasks.find(task => task.id === movingFork.taskId) : undefined
   const movingTo = movingFork ? catalog?.harnesses.find(item => item.id === choice.harnessId) : undefined
+  const movingFrom = movingSource ? catalog?.harnesses.find(item => item.id === movingSource.harnessId) : undefined
   const moving =
     movingFork && movingSource
       ? {
           taskId: movingFork.taskId,
           from: movingSource.harnessId,
+          fromName: movingFrom ? harnessLabel(movingFrom) : movingSource.harnessId,
           to: { name: movingTo ? harnessLabel(movingTo) : (choice.harnessId ?? ''), harness: movingTo },
         }
       : undefined
@@ -609,6 +611,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                     <MovingThread>
                       <>
                         <MoveHistory
+                          // Read again once the Harness being left has written its note: it is the record's last reply.
+                          key={movingFork?.brief ? `brief:${movingFork.upToMessageId}` : 'record'}
                           fork={{ taskId: moving.taskId, moved: { from: moving.from } }}
                           harnesses={catalog?.harnesses}
                           to={moving.to}
@@ -616,6 +620,18 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                           onCancel={() => {
                             submission.setFork(null)
                             choose(moving.taskId)
+                          }}
+                        />
+                        <MoveCarry
+                          sourceId={moving.taskId}
+                          from={moving.fromName}
+                          brief={movingFork?.brief === true}
+                          canWrite={access.scopes.has('run')}
+                          onRecord={upToMessageId => {
+                            if (movingFork) submission.setFork({ ...movingFork, upToMessageId, brief: undefined } as typeof movingFork)
+                          }}
+                          onBrief={messageId => {
+                            if (movingFork) submission.setFork({ ...movingFork, upToMessageId: messageId, brief: true })
                           }}
                         />
                       </>

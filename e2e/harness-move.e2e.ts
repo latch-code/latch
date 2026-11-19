@@ -174,4 +174,42 @@ describe('a conversation that moved to another Harness', () => {
     await expect.poll(() => page.locator('[data-task-id]').filter({ visible: true }).count()).toBe(1)
     await page.screenshot({ path: `${OUTPUT}/moved-twice--1440--light.png`, animations: 'disabled' })
   })
+
+  it('lets the Harness being left write a note, shows it, and carries only that', async () => {
+    const before = (await owner.json<AppSnapshot>('snapshot')).tasks
+    const current = before.find(task => task.id !== first && task.id !== second)!
+    await page.getByRole('button', { name: 'Harness：First Agent', exact: true }).filter({ visible: true }).first().click()
+    await page.getByRole('button', { name: '换到 Second Agent 继续', exact: true }).click()
+    const home = page.locator('.workbench-home')
+    const carry = home.locator('.move-carry')
+    // The whole record by default, with how much that is; files never go across, and it says so.
+    await carry.getByText(/^\d+ 轮 · 约 /u).waitFor()
+    await carry.getByText('附件与图片不会跟过去', { exact: true }).waitFor()
+    await carry.getByRole('radio', { name: '交接说明', exact: true }).click()
+    await carry.getByText('会在原会话里多跑一轮', { exact: false }).first().waitFor()
+    await page.screenshot({ path: `${OUTPUT}/carry-brief--1440--light.png`, animations: 'disabled' })
+    const turnsBefore = (await detail(current.id)).messages.length
+    await carry.getByRole('button', { name: '让 First Agent 写交接说明', exact: true }).click()
+    await carry.getByText('已写好，就是上面最后一条回复', { exact: false }).first().waitFor({ timeout: 30_000 })
+    // The note is a real turn of the session being left, and it is in view above the line.
+    const noted = await detail(current.id)
+    expect(noted.messages.length).toBe(turnsBefore + 2)
+    expect(noted.messages.at(-2)!.text).toContain('交接说明')
+    await home.locator('.move-history').getByText('请为接手这件事的另一个 Agent 写一份交接说明', { exact: false }).first().waitFor()
+    await page.screenshot({ path: `${OUTPUT}/carry-brief-written--1440--light.png`, animations: 'disabled' })
+    await home.locator('.composer textarea').fill('echo with the note only')
+    await page.keyboard.press('Meta+Enter')
+    await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.length, { timeout: 20_000 }).toBe(4)
+    const next = (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => !before.some(item => item.id === task.id))!
+    await settled(next.id)
+    const moved = await detail(next.id)
+    expect(moved.summary.forkOf).toMatchObject({ taskId: current.id, brief: true, moved: { from: 'fake-one' } })
+    // Only the note went across: the first message carries it, and none of what was said before it.
+    const opening = moved.messages.find(message => message.role === 'user')!.text
+    expect(opening).toContain('上一位 Agent 写给接手者的交接说明')
+    expect(opening).not.toContain('said on the second')
+    const lines = await page.locator('.move-line').allInnerTexts()
+    expect(lines.at(-1)).toMatch(/First Agent[\s\S]*Second Agent[\s\S]*带着 First Agent 写的交接说明/u)
+    await page.screenshot({ path: `${OUTPUT}/moved-with-brief--1440--light.png`, animations: 'disabled' })
+  })
 })

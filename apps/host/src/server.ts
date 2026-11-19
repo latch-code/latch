@@ -490,6 +490,8 @@ const createTaskSchema = promptSchema.extend({
       upToMessageId: z.string().min(1).max(256),
       /** The same conversation, going on with another Harness: recorded on the new session, with the Harness it left. */
       moved: z.literal(true).optional(),
+      /** With `moved`: only the reply at `upToMessageId`, a note the Harness being left wrote for the next, goes across. */
+      brief: z.literal(true).optional(),
     })
     .strict()
     .optional(),
@@ -9370,7 +9372,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               const detail = await hub!.detail(input.forkOf!.taskId)
               recheck(caller, 'view')
               privateAccess(caller, detail.summary)
-              return { ...forkSeed(detail, input.forkOf!.upToMessageId), source: detail.summary }
+              if (input.forkOf!.brief && !input.forkOf!.moved) throw new AppError(400, 'invalid-input', '交接说明只用于换 Harness 继续')
+              return { ...forkSeed(detail, input.forkOf!.upToMessageId, undefined, input.forkOf!.brief === true), source: detail.summary }
             })()
           : undefined
         if (input.editOf && input.forkOf) throw new AppError(400, 'edit-invalid', '编辑与分叉不能同时使用')

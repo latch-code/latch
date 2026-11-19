@@ -222,6 +222,7 @@ const sessionEntrySchema = z.object({
       turn: z.number().int().nonnegative(),
       prefixLength: z.number().int().min(1).max(201_000),
       truncated: z.literal(true).optional(),
+      brief: z.literal(true).optional(),
       moved: z.object({ from: z.string().min(1).max(256) }).optional(),
     })
     .optional(),

@@ -237,6 +237,8 @@ export interface DriverTaskSummary {
     turn: number
     prefixLength: number
     truncated?: true
+    /** Only a note the Harness being left wrote for the next went across, not the record. */
+    brief?: true
     moved?: { from: string }
   }
   /**

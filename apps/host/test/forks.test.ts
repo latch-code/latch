@@ -22,6 +22,16 @@ const detail = (): TaskDetail => ({
   ],
 })
 describe('Host-generated forks', () => {
+  it('carries only the reply the Harness being left wrote as a note, and refuses anything that is not a reply', () => {
+    const source = detail()
+    const seed = forkSeed(source, 'a', undefined, true)
+    expect(seed.context).toMatchObject({ taskId: 'source', upToMessageId: 'a', brief: true })
+    expect(seed.text).toContain('写给接手者的交接说明')
+    expect(seed.text).toContain('Answer')
+    expect(seed.text.split('<会话记录>')[1]).not.toContain('Original question')
+    expect(() => forkSeed(source, 'u', undefined, true)).toThrow(expect.objectContaining({ code: 'fork-position' }))
+  })
+
   it('writes a record the source itself began from out once, as the turns it was, and titles by the person’s own words', () => {
     const first = forkSeed(detail(), 'a')
     const moved = detail()

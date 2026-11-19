@@ -1784,3 +1784,28 @@ button.summary-file:hover {
     animation-delay: 0.4s;
   }
 }
+
+/* Under the waiting line: what goes across, as one quiet centred row that wraps. */
+.move-carry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-6) var(--sp-12);
+  margin-block: 0 var(--sp-12);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.move-carry-note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+}
+.move-carry-note.is-failed {
+  color: var(--red);
+}
+.move-carry-note.is-aside {
+  flex-basis: 100%;
+  justify-content: center;
+}
