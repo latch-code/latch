@@ -148,6 +148,26 @@ describe('attachment tiles', () => {
         }
       }
       await page.setViewportSize({ width: 1440, height: 960 })
+      // The × shows only while its tile is hovered or holds the focus.
+      const image = drafts.locator('.attachment-draft[data-kind="image"]').first()
+      const remove = image.locator('.attachment-remove')
+      const opacity = () => remove.evaluate(node => getComputedStyle(node).opacity)
+      await page.mouse.move(0, 0)
+      await expect.poll(opacity).toBe('0')
+      for (const theme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme: theme })
+        await image.locator('.attachment-tile').hover()
+        await expect.poll(opacity).toBe('1')
+        await page
+          .locator('.composer')
+          .filter({ visible: true })
+          .first()
+          .screenshot({ path: `${OUT}/draft-hover-1440-${theme}.png`, animations: 'disabled' })
+      }
+      await page.mouse.move(0, 0)
+      await remove.focus()
+      await expect.poll(opacity).toBe('1')
+      await remove.blur()
       await page.emulateMedia({ colorScheme: 'light' })
       // The video plays in the composer's own preview.
       await drafts.getByRole('button', { name: 'screen-recording.webm', exact: true }).click()

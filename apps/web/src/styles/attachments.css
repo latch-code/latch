@@ -207,28 +207,38 @@ button.attachment-tile-face:disabled {
   flex-shrink: 0;
   white-space: nowrap;
 }
-/* The round ×: ink on a ring of the surface, so it reads on any picture; on touch its target is 44 around it. */
+/*
+ * The round ×: a small raised button over the tile's corner, shown while the tile is hovered or holds the focus; on
+ * touch, with no hover, it stays, and its target is 44 around it.
+ */
 .attachment-tile > .attachment-remove {
   position: absolute;
   z-index: 1;
-  inset-block-start: -7px;
-  inset-inline-end: -7px;
+  inset-block-start: -6px;
+  inset-inline-end: -6px;
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  box-sizing: border-box;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
   margin: 0;
   padding: 0;
-  border: 0;
+  border: 1px solid var(--line-strong);
   border-radius: var(--r-full);
-  background: var(--ink);
-  color: var(--canvas);
-  box-shadow: 0 0 0 2px var(--pop);
+  background: var(--raised);
+  color: var(--ink-2);
+  box-shadow: var(--sh-thumb);
   cursor: pointer;
   appearance: none;
 }
+.attachment-tile > .attachment-remove svg {
+  width: 10px;
+  height: 10px;
+}
 .attachment-tile > .attachment-remove:hover:not(:disabled) {
-  background: var(--ink-2);
+  background: var(--pop);
+  color: var(--ink);
 }
 .attachment-tile > .attachment-remove:focus-visible {
   outline: 2px solid var(--accent);
@@ -237,11 +247,20 @@ button.attachment-tile-face:disabled {
 .attachment-tile > .attachment-remove:disabled {
   cursor: default;
 }
+@media (hover: hover) {
+  .attachment-tile > .attachment-remove {
+    opacity: 0;
+    transition: opacity var(--m-micro) var(--e-micro);
+  }
+  .attachment-tile:is(:hover, :focus-within) > .attachment-remove {
+    opacity: 1;
+  }
+}
 @media (pointer: coarse) {
   .attachment-tile > .attachment-remove::after {
     content: '';
     position: absolute;
-    inset: -12px;
+    inset: -13px;
   }
 }
 .attachment-state {
@@ -417,37 +436,6 @@ button.attachment-tile-face:disabled {
 .attachment-tile-tail {
   flex-shrink: 0;
   white-space: nowrap;
-}
-/* The round ×: ink on a ring of the surface, so it reads on any picture; on touch its target is still 44. */
-.attachment-tile > .attachment-remove.ui-icon-button {
-  --icon-button-size: 20px;
-  --icon-button-radius: var(--r-full);
-  position: absolute;
-  z-index: 1;
-  inset-block-start: -7px;
-  inset-inline-end: -7px;
-  color: var(--canvas);
-}
-.attachment-tile > .attachment-remove.ui-icon-button::before {
-  background-color: var(--ink);
-  box-shadow: 0 0 0 2px var(--pop);
-}
-.attachment-tile > .attachment-remove.ui-icon-button:hover:not([aria-disabled='true']) {
-  color: var(--canvas);
-}
-.attachment-tile > .attachment-remove.ui-icon-button:hover:not([aria-disabled='true'])::before {
-  background-color: var(--ink-2);
-}
-@media (pointer: coarse) {
-  /* The box grows to 44 around the same 20px face: centred on the same corner point. */
-  .attachment-tile > .attachment-remove.ui-icon-button {
-    inset-block-start: -19px;
-    inset-inline-end: -19px;
-  }
-}
-.attachment-tile > .attachment-remove svg {
-  width: 12px;
-  height: 12px;
 }
 .attachment-state {
   display: -webkit-box;
@@ -625,30 +613,6 @@ button.attachment-tile-face:disabled {
 .attachment-tile-tail {
   flex-shrink: 0;
   white-space: nowrap;
-}
-.attachment-tile > .attachment-remove {
-  position: absolute;
-  inset-block-start: -7px;
-  inset-inline-end: -7px;
-  z-index: 1;
-}
-.attachment-tile > .attachment-remove .ui-icon-button-face,
-.attachment-tile > .attachment-remove:where(.ui-icon-button) {
-  border-radius: var(--r-full);
-}
-.attachment-tile > .attachment-remove {
-  --remove-size: 20px;
-  min-width: var(--remove-size);
-  width: var(--remove-size);
-  height: var(--remove-size);
-  border-radius: var(--r-full);
-  background: var(--ink);
-  color: var(--canvas);
-  box-shadow: 0 0 0 2px var(--pop);
-}
-.attachment-tile > .attachment-remove:hover:not(:disabled) {
-  background: var(--ink-2);
-  color: var(--canvas);
 }
 .attachment-state {
   display: inline-flex;
