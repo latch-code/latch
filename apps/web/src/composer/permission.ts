@@ -82,7 +82,12 @@ function tierRows(
         ...(tier ? { name: tier.name ?? MODE_COPY.tierTitles[tier.tier], tier: tier.tier } : {}),
         icon,
         neverAsks: tier?.tier === 'never',
-        line: tier?.line ?? row.description ?? '',
+        // A row the Harness's own policy forbids says why where its line goes: a phone has no hover for the tooltip.
+        line:
+          (!row.current ? option.options.find(value => value.value === row.value)?.unavailable : undefined)
+          ?? tier?.line
+          ?? row.description
+          ?? '',
       },
     ]
   })

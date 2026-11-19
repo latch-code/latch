@@ -416,7 +416,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 - **命令的解析（`commandActions`）。** 全部动作都是读取、列出或搜索时，作为工具条目的可选字段 `actions` 带给客户端；有一项 `unknown` 或不认得的形状就不带，命令原文照旧保存。这个字段只从 Codex 线接受（[STREAMING.md](STREAMING.md#工作过程的行)）。
 - **模型。** `model/list`（最多 5 页）给出模型与各自的思考深度；开始前的读取用同一个程序的 `codex app-server`，不开 thread。
 - **速度。** `model/list` 的每个模型带 `serviceTiers`（Codex 0.169：`id`、`name`、`description`；旧字段 `additionalSpeedTiers` 不读）。只有列出 Fast 档（`id` 为 `priority`）的模型、在 Codex 自己的登录上（不经网关，不经 codex-acp）才有「速度」一项（`service_tier`，`model_config`）：「标准」（`default`）与「快速」（`priority`，Codex 对这一档的说明是它的悬停，其中写着更费额度）。当前值读自 thread 的 `serviceTier`（`thread/start` 与 `thread/resume` 的回答；开始前读 `config/read` 的 `service_tier`，旧值 `fast` 读作 `priority`）。thread 已在别的档（如 Ultrafast）时列出这一档，Latch 不另外提供它。人选过之后每轮 `turn/start` 带 `serviceTier`；没选过不带，thread 沿用人自己的配置。换到没有 Fast 档的模型时这一项消失，轮次不带档。草稿读到的列表按模型带这一项（`perModel`）。实测见 `codex-speed.live.test.ts`：选的档随一轮发出，新进程恢复 thread 后读回同一档。
-- **删除。** 线声明 `sessionCapabilities.delete`，把 `session/delete` 换成 Codex 自己的硬删除 `thread/delete`（0.156 起即是硬删除，这条线最低就要 0.156）：删 Codex 的会话记录、分页历史、标题与索引，连同它派出的子 Agent thread。删之前先 `thread/list { parentThreadId }` 记下子 thread；删成功后再删 Codex 为这些 thread 存的图片：按 `initialize` 报告的 `codexHome` 读 `generated_images/<thread>/`（`fs/readDirectory`），只删名字是 Codex 自己形状（`<调用 ID>.png|gif|jpg|webp`）的文件，每次一个文件、`recursive: false`，再删空文件夹；别的文件与非空文件夹留下。最后 `thread/read` 不再读到这个 thread 才算删掉。Codex 说没有这个 thread 时视为已删。另一个进程正写着它、或别的分叉的历史仍引用它时 Codex 拒绝，Latch 不重试、不抢锁，拒绝的原话进 Host 日志。实测：`codex-delete.live.test.ts`（不发一轮）与 `codex-delete-real.live.test.ts`（一轮）。
+- **删除。** 线声明 `sessionCapabilities.delete`，把 `session/delete` 换成 Codex 自己的硬删除 `thread/delete`（0.156 起即是硬删除，这条线最低就要 0.156）：删 Codex 的会话记录、分页历史、标题与索引，连同它派出的子 Agent thread。删之前先 `thread/list { parentThreadId }` 记下子 thread；删成功后再删 Codex 为这些 thread 存的图片：按 `initialize` 报告的 `codexHome` 读 `generated_images/<thread>/`（`fs/readDirectory`），只删名字是 Codex 自己形状（`<调用 ID>.png|gif|jpg|webp`）的文件，每次一个文件、`recursive: false`，再删空文件夹；别的文件与非空文件夹留下。最后 `thread/read` 不再读到这个 thread 才算删掉。Codex 说没有这个 thread 时视为已删。另一个进程正写着它、或别的分叉的历史仍引用它时 Codex 拒绝，Latch 不重试、不抢锁，拒绝的原话进 Host 日志。实测：`packages/harness-acp/test/codex-no-turn.live.test.ts`（不发一轮）与 `apps/host/test/codex-delete.live.test.ts`（一轮）。
 - **模型服务与分叉。** 见上节。分叉（包括「从这里编辑」）用 Codex 自己的记录：Codex 0.169 起（`initialize` 报告的版本）每轮 `turn/start` 带 `clientUserMessageId`（这一轮用户消息的 Latch ID），Codex 记在这一轮的用户消息上，更早的版本不带；分叉到同一个 Codex 定义、同一个文件夹时，新进程用 `thread/read` 找到这条消息所在的一轮，`thread/fork` 带 `lastTurnId` 分叉到这一轮为止，再读新线程核对它停在这一轮。找不到（这个标记之前的旧轮次、不保留标记的 Codex）、Codex 拒绝或分叉出的线程没有停在这一轮时，用 `thread/delete` 删掉那条线程（删不掉就归档，归档也失败时写明它留在 Codex 的会话列表里）并退回背景文本，会话里写明原因（`HarnessCapabilities.fork: 'native'`，见 [ARCHITECTURE.md](ARCHITECTURE.md#会话分叉)）。`thread/fork` 另用于会话在自己的登录与服务之间换路线（`CARRY_METHOD`）。
 
 **权限模式。** 四档与 ACP 路线同名同说明，对照在 `profiles/codex.ts`；模式由线保存，thread 开始、恢复与每一轮 `turn/start` 都带上。
@@ -427,6 +427,13 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 | `workspace-write` | `on-request` | `workspaceWrite`（项目的其他文件夹是可写根，不联网） | 人 |
 | `agent` | `on-request` | `workspaceWrite` | Codex 的审阅模型（`auto_review`） |
 | `agent-full-access` | `never` | `dangerFullAccess` | — |
+
+**管理策略。** 开 thread 前读 `configRequirements/read`（`profiles/codex-policy.ts`）：`allowedApprovalPolicies`、`allowedSandboxModes`、`allowedApprovalsReviewers` 与 `autoReview.requiredOnModels`。Codex 对不在允许集合里的审批策略、沙箱或审阅者报错拒绝这一轮（`invalid thread settings override`），不会悄悄收窄；要求模型审阅的模型上只有 `agent` 一档可用（`step_settings.rs` 的 `validate`）。所以：
+
+- 不允许的档仍列在权限菜单里，置灰，一句原因（「这台电脑的 Codex 管理策略不允许…」）作悬停与它的说明行，手机上点它看到同一句。它经选项值的 `_meta["latch/unavailable"]` 到运行时（只认 Codex 直连线的；ACP Agent 发来的这个标记被丢掉，Agent 不能把一档置灰），存为 `SessionConfigOption.options[].unavailable`，草稿的目录随第一个会话带上。
+- 选它被拒绝，带同一句原因；当前档在当前模型上不允许时，这一轮不发给 Codex，会话写明原因，请人换一档。Latch 不替人换到别的档，宽松的也不。
+- 开 thread 时不带被禁止的那一项，由 Codex 按自己的策略开；之后每一轮都带所选档的全部设置。
+- 读不到（旧版没有这个请求、回答读不懂）时当作没有要求；Codex 仍按自己的策略拒绝，`turn/start` 的 `invalid thread settings override` 写成「这台电脑的 Codex 管理策略不允许当前的权限档」，这一轮没有开始。
 
 **审批。**
 
@@ -448,12 +455,13 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 
 Codex 自己中断、Latch 没有要求停止的一轮同样先等它的命令；30 秒后仍没有结束证据时强制结束 app-server，轮次标为已中断、命令结果未知。
 
-**Codex 自己的 MCP 服务器**只读、只经 app-server 报告：Latch 从不读写 `~/.codex/config.toml`，不调用 `mcpServer/oauth/login`，不碰 Codex 的令牌。
+**Codex 自己的 MCP 服务器与钩子**只读、只经 app-server 报告：Latch 经 `config/read`、`configRequirements/read` 读 Codex 的配置（只取下文写到的字段与来源，不取值里的令牌与请求头），从不写 `~/.codex/config.toml`，不调用 `mcpServer/oauth/login`，不碰 Codex 的令牌。
 
 - thread 开始或恢复后发一次 `mcpServerStatus/list`（带 `threadId`、`detail: toolsAndAuthOnly`，最多 4 页、200 个），再跟随 `mcpServer/startupStatus/updated`。变化作为 `_latch_mcp_status` 交给运行时，记为 `HarnessInfo.ownMcp`（只在内存，换定义即作废）。Latch 自己的服务器按名字排除。
 - 「读取」（`POST /link/api/agents/:id/mcp`，`run`；审计 `agent.mcp.requested` 与 `agent.mcp.read`）在 Host 临时目录的空文件夹里启动 `codex app-server`，不开 thread，最多 60 秒。它可能启动 Codex 配置的服务器，所以只在人按下时读。
 - 不带 thread 时 Codex 只列配置里的名字：报告标 `namesOnly`，不覆盖已有的会话报告。
 - 每个服务器只留名字、状态、工具数与 `httpOrigin` 的源。见 [MCP.md](MCP.md#harness-自己的-mcp)。
+- **钩子。** 同一次读取（有 thread 时 `hooks/list { threadId }`，读取时不带）一并列出 Codex 会运行的钩子，随 `ownMcp` 报告（`hooks`，最多 100 个）：每个只留事件、来源、是否受管理策略强制、是否启用与信任状态，从不取命令、文件路径与键。管理策略加的钩子在 Latch 开的每个 Codex 会话里也运行（例如 `userPromptSubmit` 看得到每条经 Latch 发出的消息），所以「设置 › 扩展」的 Codex 页在 MCP 下列出它们。
 
 ## pi 的 RPC 模式
 
@@ -1147,13 +1155,13 @@ Harness 报告的命令透传，是否报告与执行由 Harness 决定。
 - `harness-extensions.json` 在 Driver 的数据目录里按普通会话各保留最新一份报告（0600，最多 64 份、2 MiB，原子写入）。同一目录下可有多个普通来源。删除来源、把来源变为私有或项目不可用时，查找下一份有效的普通报告。读取与发送前核对 Driver、来源、项目和实际目录身份（设备号与 inode）。在同一路径重建目录后不沿用旧报告。
 - 扩展页从升级后登记的普通会话开始收录。用想查看的 Harness 新建普通会话并发送消息，收到报告后这里会更新。
 - 页面根据 Driver 代次、可见会话的报告版本和项目状态撤下旧记录并取消在途读取。页面可见时每 30 秒复查一次，以发现没有通知的目录变化。读取只用 Latch 的缓存，不启动 CLI。
-- Harness 自己的 MCP 来自 `HarnessInfo.ownMcp`。「读取」只在人按下时启动 Harness。
+- Harness 自己的 MCP 来自 `HarnessInfo.ownMcp`。「读取」只在人按下时启动 Harness。Codex 直连的同一份报告带它会运行的钩子，列在 MCP 下的「钩子」组：何时运行、来自哪里、是否受管理策略强制、停用或未信任，不显示命令。
 
 Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别与插件清单不可用的原因。报告为空会明确显示。支持报告且还没有普通会话的类别显示「还没有会话报告」。有普通会话报告但这项未读到时显示「上次会话没有读到」。当前适配器没有报告的类别显示「这个 Harness 没有报告」。
 
 | Harness | 报告 |
 | --- | --- |
-| Codex 直连 | 命令（`/compact`）、技能（`skills/list`）、MCP（`mcpServerStatus/list`） |
+| Codex 直连 | 命令（`/compact`）、技能（`skills/list`）、MCP（`mcpServerStatus/list`）、钩子（`hooks/list`） |
 | pi | 命令、技能与注册过命令的扩展（`get_commands`） |
 | DeepSeek Harness | 此页没有已知的报告类别 |
 | 其他 ACP Harness（含 Codex ACP） | 收到的命令（`available_commands_update`）。有些 Harness 把技能作为命令报告 |

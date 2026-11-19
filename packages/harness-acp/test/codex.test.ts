@@ -32,6 +32,7 @@ import {
 } from '../src/index.ts'
 import { CodexWire, codexMcpServer, codexVersion, setCodexStopLimits } from '../src/wires/codex.ts'
 import { codexOptions, gatewayEffortOption } from '../src/codex-models.ts'
+import { configFromOptions } from '../src/mapping.ts'
 import { MCP_STATUS_METHOD } from '../src/protocol.ts'
 import { IMAGE_NOT_MADE, settleToolMessage } from '../src/mapping.ts'
 import { RequestTimeout, setProcessLister } from '../src/wires/process.ts'
@@ -2180,6 +2181,187 @@ describe('Codex over its app-server', () => {
     expect(sent(log, 'thread/read')[0]!.params).toMatchObject({ includeTurns: true })
   })
 
+  describe('this computer’s Codex policy', () => {
+    /** The wire on the fake app-server, with its own environment, as a session would drive it. */
+    async function wired(env: Record<string, string>, route?: boolean) {
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-codex-policy-')))
+      cleanups.push(() => rm(root, { recursive: true, force: true }))
+      const logFile = join(root, 'codex.jsonl')
+      const wire = CodexWire.spawn(
+        {
+          command: process.execPath,
+          args: [
+            FAKE_CODEX_APP_SERVER,
+            ...(route ? ['-c', 'model_provider="latch"', '-c', 'model_providers.latch.base_url="http://127.0.0.1:9"'] : []),
+          ],
+          cwd: root,
+          env: { PATH: process.env.PATH ?? '', FAKE_ACP_LOG: logFile, ...env },
+          maxLineBytes: 1 << 20,
+          redact: text => text,
+        },
+        { request: async () => ({ outcome: { outcome: 'cancelled' } }), notification: () => {}, exit: () => {} },
+        route ? { model: 'service-model', models: ['service-model'], modelCapabilities: {} } : undefined,
+      )
+      cleanups.push(async () => {
+        await wire.stop('kill', 100)
+      })
+      const log = async () =>
+        (await readFile(logFile, 'utf8').catch(() => ''))
+          .split('\n')
+          .filter(Boolean)
+          .map(line => JSON.parse(line) as LogEntry)
+      await wire.request('initialize', {}, 5_000)
+      return { wire, root, log }
+    }
+    type Opened = {
+      sessionId: string
+      configOptions: Array<{ id: string; options: Array<{ value: string; _meta?: Record<string, unknown> }> }>
+    }
+    const unavailable = (opened: Opened) =>
+      Object.fromEntries(
+        opened.configOptions
+          .find(option => option.id === 'mode')!
+          .options.flatMap(entry => (entry._meta?.['latch/unavailable'] ? [[entry.value, entry._meta['latch/unavailable']]] : [])),
+      )
+
+    it('greys the modes the policy refuses, with why, refuses choosing one, and never sends one to Codex', async () => {
+      const { wire, root, log } = await wired({
+        FAKE_CODEX_REQUIREMENTS: JSON.stringify({ allowedSandboxModes: ['read-only', 'workspace-write'] }),
+      })
+      const opened = (await wire.request('session/new', { cwd: root, mcpServers: [] }, 5_000)) as Opened
+      expect(unavailable(opened)).toEqual({ 'agent-full-access': '这台电脑的 Codex 管理策略不允许不用沙箱' })
+      await expect(
+        wire.request('session/set_config_option', { sessionId: opened.sessionId, configId: 'mode', value: 'agent-full-access' }, 5_000),
+      ).rejects.toThrow('这台电脑的 Codex 管理策略不允许不用沙箱')
+      await wire.request('session/set_config_option', { sessionId: opened.sessionId, configId: 'mode', value: 'workspace-write' }, 5_000)
+      await wire.request('session/prompt', { sessionId: opened.sessionId, prompt: [{ type: 'text', text: 'echo hi' }] }, 5_000)
+      const turns = sent(await log(), 'turn/start').map(entry => (entry.params?.sandboxPolicy as { type: string }).type)
+      expect(turns).toEqual(['workspaceWrite'])
+    })
+
+    it('opens the thread without a setting the policy refuses, and sends no turn on a refused mode', async () => {
+      const { wire, root, log } = await wired({
+        FAKE_CODEX_REQUIREMENTS: JSON.stringify({ allowedApprovalPolicies: ['on-request', 'never'] }),
+      })
+      const opened = (await wire.request('session/new', { cwd: root, mcpServers: [] }, 5_000)) as Opened
+      expect(unavailable(opened)).toEqual({ 'read-only': '这台电脑的 Codex 管理策略不允许每次询问' })
+      expect(sent(await log(), 'thread/start')[0]!.params).not.toHaveProperty('approvalPolicy')
+      expect(sent(await log(), 'thread/start')[0]!.params).toMatchObject({ sandbox: 'read-only' })
+      // Read-only is where a session starts: it stays, and nothing is narrowed or widened for the person.
+      await expect(
+        wire.request('session/prompt', { sessionId: opened.sessionId, prompt: [{ type: 'text', text: 'echo hi' }] }, 5_000),
+      ).rejects.toThrow('请在「权限」里换一档再发送')
+      expect(sent(await log(), 'turn/start')).toEqual([])
+    })
+
+    it('on a model the policy has its review model decide, offers only the model-reviewed mode', async () => {
+      const { wire, root } = await wired({ FAKE_CODEX_REQUIREMENTS: JSON.stringify({ autoReview: { requiredOnModels: ['gpt-fake'] } }) })
+      const opened = (await wire.request('session/new', { cwd: root, mcpServers: [] }, 5_000)) as Opened
+      expect(Object.keys(unavailable(opened)).sort()).toEqual(['agent-full-access', 'read-only', 'workspace-write'])
+      expect(unavailable(opened)['read-only']).toBe('这台电脑的 Codex 管理策略要求 gpt-fake 由 Codex 的模型审阅')
+    })
+
+    it('says a turn Codex refused for a policy it did not report is the policy’s, and the turn never started', async () => {
+      const { wire, root } = await wired({
+        FAKE_CODEX_REQUIREMENTS: JSON.stringify({ allowedApprovalPolicies: ['on-request'] }),
+        FAKE_CODEX_REQUIREMENTS_HIDDEN: '1',
+      })
+      const opened = (await wire.request('session/new', { cwd: root, mcpServers: [] }, 5_000).catch(error => error)) as Opened | Error
+      // Unread, the policy refuses the thread's own setting too: Codex's words, as they are.
+      expect(opened).toBeInstanceOf(Error)
+      const second = await wired({
+        FAKE_CODEX_REQUIREMENTS: JSON.stringify({ allowedSandboxModes: ['read-only'] }),
+        FAKE_CODEX_REQUIREMENTS_HIDDEN: '1',
+      })
+      const session = (await second.wire.request('session/new', { cwd: second.root, mcpServers: [] }, 5_000)) as Opened
+      await second.wire.request(
+        'session/set_config_option',
+        { sessionId: session.sessionId, configId: 'mode', value: 'agent-full-access' },
+        5_000,
+      )
+      await expect(
+        second.wire.request('session/prompt', { sessionId: session.sessionId, prompt: [{ type: 'text', text: 'echo hi' }] }, 5_000),
+      ).rejects.toThrow('这台电脑的 Codex 管理策略不允许当前的权限档，这一轮没有开始')
+    })
+
+    it('takes a greyed mode only from Latch’s own wire: an ACP agent cannot grey one out', () => {
+      const reported = [
+        {
+          type: 'select',
+          id: 'mode',
+          name: 'Mode',
+          category: 'mode',
+          currentValue: 'a',
+          options: [
+            { value: 'a', name: 'A' },
+            { value: 'b', name: 'B', _meta: { 'latch/unavailable': 'not now' } },
+          ],
+        },
+      ]
+      expect(configFromOptions(reported, true)[0]!.options[1]).toEqual({ value: 'b', name: 'B', unavailable: 'not now' })
+      expect(configFromOptions(reported)[0]!.options[1]).toEqual({ value: 'b', name: 'B' })
+    })
+
+    it('carries the greyed modes to the session’s settings, and a choice of one is refused with why', async () => {
+      const t = await computer({ FAKE_CODEX_REQUIREMENTS: JSON.stringify({ allowedSandboxModes: ['read-only', 'workspace-write'] }) })
+      const bridge = await t.open()
+      const id = await start(bridge, t.main, 'echo hi')
+      const detail = await settled(bridge, id)
+      const mode = detail.config?.find(option => option.category === 'mode')
+      expect(mode?.options.find(option => option.value === 'agent-full-access')?.unavailable).toBe(
+        '这台电脑的 Codex 管理策略不允许不用沙箱',
+      )
+      expect(mode?.options.filter(option => option.unavailable).map(option => option.value)).toEqual(['agent-full-access'])
+      await expect(bridge.setConfig!(id, 'mode', 'agent-full-access')).rejects.toMatchObject({
+        message: expect.stringContaining('这台电脑的 Codex 管理策略不允许不用沙箱'),
+      })
+      expect((await bridge.detail(id)).permission?.expectedMode).toBe('read-only')
+    })
+
+    it('does not start a draft’s first turn in a mode the policy refuses, and says why', async () => {
+      const t = await computer({ FAKE_CODEX_REQUIREMENTS: JSON.stringify({ allowedSandboxModes: ['read-only', 'workspace-write'] }) })
+      const bridge = await t.open()
+      const config = [{ configId: 'mode', value: 'agent-full-access' }]
+      const { launchHash } = await bridge.launchPreview!({ cwd: t.main, config })
+      const outcome = await bridge
+        .createTask({ prompt: 'echo hi', requestId: rid(), cwd: t.main, config, expectedLaunchHash: launchHash })
+        .then(
+          async ({ sessionId }) => {
+            const detail = await settled(bridge, sessionId)
+            return `${detail.summary.status}: ${said(detail, 'system')}`
+          },
+          (error: Error) => error.message,
+        )
+      expect(outcome).toContain('这台电脑的 Codex 管理策略不允许不用沙箱')
+      expect(sent(await t.log(), 'turn/start')).toEqual([])
+    })
+
+    it('refuses a gateway session before its thread when the policy forces another provider', async () => {
+      const { wire, root, log } = await wired({ FAKE_CODEX_REQUIREMENTS: JSON.stringify({ modelProvider: 'corp' }) }, true)
+      await expect(wire.request('session/new', { cwd: root, mcpServers: [] }, 5_000)).rejects.toThrow('管理策略指定了它自己的模型服务')
+      expect(sent(await log(), 'thread/start')).toEqual([])
+    })
+
+    it('refuses a gateway session when the person’s own provider by Latch’s name would merge into it, naming no value', async () => {
+      const { wire, root, log } = await wired(
+        { FAKE_CODEX_ORIGINS: JSON.stringify({ 'model_providers.latch.http_headers.X-Secret': { name: { type: 'user' }, version: 'v' } }) },
+        true,
+      )
+      const refused = (await wire.request('session/new', { cwd: root, mcpServers: [] }, 5_000).catch(error => error)) as Error
+      expect(refused.message).toContain('[model_providers.latch]')
+      expect(refused.message).not.toContain('X-Secret')
+      expect(sent(await log(), 'thread/start')).toEqual([])
+    })
+
+    it('refuses a gateway session when a layer above Latch’s arguments picks the provider', async () => {
+      const { wire, root } = await wired(
+        { FAKE_CODEX_ORIGINS: JSON.stringify({ model_provider: { name: { type: 'legacyManagedConfigTomlFromFile' }, version: 'v' } }) },
+        true,
+      )
+      await expect(wire.request('session/new', { cwd: root, mcpServers: [] }, 5_000)).rejects.toThrow('更高优先级的配置')
+    })
+  })
+
   describe('deleting a session', () => {
     const deleted = (log: LogEntry[]) => sent(log, 'thread/delete').map(entry => entry.params?.threadId as string)
     const threadsOf = async (t: Awaited<ReturnType<typeof computer>>) =>
@@ -2377,6 +2559,54 @@ describe('Codex over its app-server', () => {
       const started = log.filter(entry => entry.event === 'start').at(-1) as LogEntry & { cwd: string }
       expect(started.cwd).not.toBe(t.main)
       expect(sent(log, 'thread/start')).toHaveLength(0)
+    })
+
+    const HOOKS = JSON.stringify([
+      {
+        key: 'managed:pre',
+        eventName: 'userPromptSubmit',
+        handlerType: 'command',
+        command: '/opt/corp/audit --token sk-live-secret',
+        source: 'mdm',
+        sourcePath: '/Library/Managed Preferences/corp.plist',
+        isManaged: true,
+        enabled: true,
+        trustStatus: 'managed',
+        currentHash: 'h1',
+        displayOrder: 0,
+        timeoutSec: 30,
+      },
+      {
+        key: 'user:post',
+        eventName: 'postToolUse',
+        handlerType: 'command',
+        command: 'echo done',
+        source: 'user',
+        sourcePath: '/Users/someone/.codex/hooks.json',
+        isManaged: false,
+        enabled: false,
+        trustStatus: 'untrusted',
+        currentHash: 'h2',
+        displayOrder: 1,
+        timeoutSec: 30,
+      },
+    ])
+    const shownHooks = [
+      { event: 'userPromptSubmit', source: 'mdm', managed: true, enabled: true, trust: 'managed' },
+      { event: 'postToolUse', source: 'user', managed: false, enabled: false, trust: 'untrusted' },
+    ]
+
+    it('lists the hooks Codex runs, in a 读取 and in a session’s report, with no command, path or key', async () => {
+      const t = await computer({ FAKE_CODEX_MCP: OWN, FAKE_CODEX_HOOKS: HOOKS })
+      const bridge = await t.open()
+      await bridge.readOwnMcp!()
+      expect(bridge.ownMcp!()!.last!.hooks).toEqual(shownHooks)
+      expect(sent(await t.log(), 'hooks/list')[0]!.params).toEqual({})
+      await settled(bridge, await start(bridge, t.main, 'echo hi'))
+      await vi.waitFor(() => expect(bridge.ownMcp?.()?.last?.via).toBe('session'))
+      expect(bridge.ownMcp!()!.last!.hooks).toEqual(shownHooks)
+      expect(sent(await t.log(), 'hooks/list').at(-1)!.params).toEqual({ threadId: expect.any(String) })
+      expect(JSON.stringify(bridge.ownMcp!())).not.toMatch(/sk-live|audit|Managed Preferences|hooks\.json|managed:pre/u)
     })
 
     it('never replaces a session’s report with names alone', async () => {

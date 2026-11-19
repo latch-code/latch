@@ -1,8 +1,9 @@
 import type { SessionCommand, SessionSkill } from './sessions.ts'
 
 /**
- * 设置 › 扩展: what each Harness has, as it reports it, and the vendor's own commands that change it. Latch never reads
- * a CLI's configuration or storage to fill it, and never runs these commands: a person types them in its terminal.
+ * 设置 › 扩展: what each Harness has, as it reports it over its own protocol, and the vendor's own commands that change
+ * it. Latch never writes a CLI's configuration to change it, and never runs these commands: a person types them in its
+ * terminal.
  */
 export type ExtensionKind = 'skills' | 'commands' | 'mcp' | 'plugins'
 

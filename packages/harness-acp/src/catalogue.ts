@@ -47,6 +47,7 @@ const bounded = (options: readonly SessionConfigOption[]): SessionConfigOption[]
         value: value.value,
         name: value.name,
         ...(value.description ? { description: clip(value.description, MAX_DESCRIPTION) } : {}),
+        ...(value.unavailable ? { unavailable: clip(value.unavailable, MAX_DESCRIPTION) } : {}),
       })),
   }))
 

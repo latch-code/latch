@@ -188,7 +188,8 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 ### Codex 直连
 
 - **重试。** 启动参数写 `request_max_retries=0` 与 `stream_max_retries=0`（见[重试只由一层负责](#重试只由一层负责)）。
-- 开线程与恢复线程前，以相同 cwd 调用官方 `config/read`，只投影有效的命令环境过滤规则：旧的 exclude/include_only 与新的 filters 保持原表示，只额外排除 `LMG_TOKEN`。大小写冲突、混合表示、畸形或读取失败都拒绝开线程。规则经线程 config 覆盖，既有规则不被启动参数的数组替换。不复制其他配置值，不读写 Codex 私有文件。
+- 开线程与恢复线程前，以相同 cwd 调用官方 `config/read`，只投影有效的命令环境过滤规则：旧的 exclude/include_only 与新的 filters 保持原表示，只额外排除 `LMG_TOKEN`。大小写冲突、混合表示、畸形或读取失败都拒绝开线程。规则经线程 config 覆盖，既有规则不被启动参数的数组替换。不复制其他配置值，不写 Codex 的文件。
+- **配置冲突的预检。** 同一次 `config/read` 的 `origins`（每个键来自哪一层，不取值）里，`model_providers.latch.*` 有一个键不来自启动参数（`sessionFlags`）时拒绝开线程：人自己的 `[model_providers.latch]` 会被 Codex 逐字段合并，它的请求头、查询参数或凭据就会跟着发往 Latch 的网关。`model_provider` 不来自启动参数时也拒绝：一层优先级更高的配置（旧的 `managed_config.toml`、MDM）盖过了 Latch 的设置。之前再读 `configRequirements/read`：管理策略指定了别的 `modelProvider`，或用 `modelProviders` 只允许它列出的服务时拒绝。三种都在开线程之前、以一句原因结束，不等 Codex 开线程时报错；人的配置不改。provider 名字不改成别的：Codex 只在线程开始时的 provider 上恢复它，改名会让已有的网关会话恢复不了。0.170 实测：用户层的 `[model_providers.latch] http_headers` 在 `origins` 里报 `user`，Latch 自己的键报 `sessionFlags`（`codex-no-turn.live.test.ts`）。
 - 导入历史仍经 `thread/list` 与 `thread/read`，包含自定义 provider 的线程。
 - 模型列表取服务声明，允许 Codex 原生目录之外的模型。目录外模型用 Codex 自己的后备描述；Latch 不改模型 ID 去套另一个型号的能力，也不把后备描述里的容量当作服务声明。
 - **思考。** 「默认」指模型服务的默认。wire 提供的思考选项由 `gatewayEffortOption` 按服务声明生成，Host 用同一个函数给新会话草稿投影（[HARNESSES.md](HARNESSES.md#开始前的选项)），所以开始前就能选。wire 用租约的 `setThinking(model, effort)` 登记当前模型的意图：`null` 时出站只删这个模型请求的 `reasoning.effort`（Codex 自己的 `model_reasoning_effort` 可能补上一个值），其余字段不动；显式选择只允许服务声明的档位，实际请求必须相符。没登记意图的模型按「思考档位」处理。

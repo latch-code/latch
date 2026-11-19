@@ -1265,11 +1265,13 @@ async function handle(method, params) {
       log('deleted', { threadId: params.threadId, subtree })
       return {}
     }
+    // FAKE_CODEX_REQUIREMENTS_HIDDEN: enforced, but not said (a Codex whose answer Latch cannot read).
     case 'configRequirements/read':
-      return { requirements: REQUIREMENTS }
+      return { requirements: env.FAKE_CODEX_REQUIREMENTS_HIDDEN === '1' ? null : REQUIREMENTS }
     case 'hooks/list': {
       const hooks = env.FAKE_CODEX_HOOKS ? JSON.parse(env.FAKE_CODEX_HOOKS) : []
-      const cwds = params.threadId ? [thread?.cwd ?? ''] : (params.cwds ?? [])
+      // No folders named: the process's own, as Codex 0.170 answers.
+      const cwds = params.threadId ? [thread?.cwd ?? ''] : params.cwds?.length ? params.cwds : [process.cwd()]
       return { data: cwds.map(cwd => ({ cwd, hooks, warnings: [], errors: [] })) }
     }
     case 'initialize':

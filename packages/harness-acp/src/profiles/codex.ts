@@ -128,8 +128,10 @@ function codexGatewayArgs(place: GatewayPlace, catalog?: string): string[] {
 export const codexProfile: HarnessProfile = {
   presetId: 'codex',
   // 2: Codex's reviews and refusals reach the session, the wire's own refusals are said and recorded. 3: sessions on a
-  // Responses service through the gateway.
-  version: 8,
+  // Responses service through the gateway. 9: modes this computer's Codex policy refuses are greyed and never sent, and a
+  // gateway session is refused before its thread when the policy or the person's own config would change its provider
+  // (`codex-policy.ts`).
+  version: 9,
   wire: 'codex',
   permission: {
     approvals: 'prompts',
@@ -152,7 +154,8 @@ export const codexProfile: HarnessProfile = {
   // The other folders are writable roots of a `workspace-write` turn; Codex loads `.agents/skills` in the session directory.
   folders: { via: 'acp', configPaths: ['.codex', '.agents/skills'] },
   projectConfigPaths: ['.codex'],
-  // Threads are listed and read through `thread/list` and `thread/read`; Latch never reads Codex's own files.
+  // Threads are listed, read and deleted through Codex's own requests (`thread/list`, `thread/read`, `thread/delete`),
+  // never by parsing its files, whose formats change between versions.
   historyImport: true,
   // `model/list` opens no thread: no turn, no model call, no hooks or MCP servers, so a draft reads it by itself.
   catalogueRead: { codexModels: ['app-server'] },

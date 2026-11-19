@@ -34,6 +34,7 @@ import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { GENERATED_IMAGES_PER_TURN, generatedImage, generatedImageNote, savedImagePath } from './codex-images.ts'
 import { CODEX_GATEWAY_PROVIDER, CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
 import { codexGatewayEnvironment } from '../profiles/codex-environment.ts'
+import { codexGatewayClash, codexModeRefusal, codexPolicy, codexProviderRefusal, type CodexPolicy } from '../profiles/codex-policy.ts'
 import {
   CARRY_METHOD,
   FORK_METHOD,
@@ -46,6 +47,7 @@ import {
   STEER_METHOD,
   SESSION_SKILLS_UPDATE,
   TOKENS_UPDATE,
+  UNAVAILABLE_META,
   type RpcId,
   type TurnTokens,
 } from '../protocol.ts'
@@ -217,6 +219,24 @@ const sessionParams = z.object({
 /** Pages and servers of Codex's own MCP servers Latch reads at most. */
 const MCP_PAGES = 4
 const MCP_MAX = 200
+/** Hooks Latch lists at most. */
+const MAX_HOOKS = 100
+const word = text.regex(/^[A-Za-z]{1,64}$/u)
+/** `hooks/list` (0.156, 0.170): Latch reads only these fields of each hook; its command, path and key stay unread. */
+const hookList = z.object({ data: z.array(z.object({ hooks: z.array(z.unknown()).max(1000) })).max(16) })
+const hookEntry = z.object({
+  eventName: word,
+  source: word,
+  isManaged: z.boolean(),
+  enabled: z.boolean(),
+  trustStatus: word.optional().catch(undefined),
+})
+interface CodexHooks {
+  hooks: Array<{ event: string; source: string; managed: boolean; enabled: boolean; trust?: string }>
+  truncated?: true
+}
+const hooksReport = (hooks: CodexHooks | undefined) =>
+  hooks ? { hooks: hooks.hooks, ...(hooks.truncated ? { hooksTruncated: true as const } : {}) } : {}
 /** A name `codex mcp login <name>` can be given as one word that no shell, nor Codex, reads as anything else (no leading `-`). */
 const LOGIN_NAME = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/u
 /** `McpServerStatus.runtimeStatus` (0.156, 0.167) in Latch's words. */
@@ -350,14 +370,19 @@ function turnSettings(mode: Mode, cwd: string, folders: readonly string[]): Reco
   return { cwd, approvalPolicy: settings.approvalPolicy, approvalsReviewer: settings.reviewer, sandboxPolicy }
 }
 
-/** What a thread starts or resumes with: the mode's settings in the thread's own words, and MCP servers as Codex config. */
-function threadSettings(mode: Mode, cwd: string, servers: Array<z.infer<typeof mcpServer>>): Record<string, unknown> {
+/**
+ * What a thread starts or resumes with: the mode's settings in the thread's own words, and MCP servers as Codex config.
+ * A setting this computer's Codex policy refuses is left out, so Codex opens the thread on what its policy allows; no
+ * turn runs on it, as every turn names the mode's settings and a refused mode sends none (`prompt`).
+ */
+function threadSettings(mode: Mode, cwd: string, servers: Array<z.infer<typeof mcpServer>>, policy?: CodexPolicy): Record<string, unknown> {
   const settings = MODES[mode]
+  const allowed = (list: string[] | undefined, value: string) => !list || list.includes(value)
   return {
     cwd,
-    approvalPolicy: settings.approvalPolicy,
-    approvalsReviewer: settings.reviewer,
-    sandbox: settings.sandbox,
+    ...(allowed(policy?.approvalPolicies, settings.approvalPolicy) ? { approvalPolicy: settings.approvalPolicy } : {}),
+    ...(allowed(policy?.reviewers, settings.reviewer) ? { approvalsReviewer: settings.reviewer } : {}),
+    ...(allowed(policy?.sandboxes, settings.sandbox) ? { sandbox: settings.sandbox } : {}),
     ...(servers.length
       ? {
           config: {
@@ -491,6 +516,8 @@ export class CodexWire implements AgentWire {
   private marksTurns = false
   /** Codex's home as its `initialize` reported it: where its image tool saves pictures, which a deletion removes. */
   private codexHome?: string
+  /** This computer's Codex policy, read before the thread opens (`configRequirements/read`); undefined: none. */
+  private policy?: CodexPolicy
   readonly commandsWithoutContext = new Set([COMPACT.name, 'review'])
   private listedFor?: string
   private readonly skillPaths = new Map<string, { name: string; path: string }>()
@@ -546,6 +573,8 @@ export class CodexWire implements AgentWire {
   private readonly ownMcp = new Map<string, HarnessMcpServer>()
   /** Names whose start Codex reported while a list was being read: the report is newer than the list. */
   private mcpSeen?: Set<string>
+  /** The hooks Codex runs on this thread, as `hooks/list` reported them; sent with each MCP report. */
+  private hooks?: CodexHooks
 
   private constructor(
     spec: SpawnSpec,
@@ -608,7 +637,11 @@ export class CodexWire implements AgentWire {
       case 'session/prompt':
         return this.prompt(params, timeoutMs, context)
       case 'session/set_config_option':
-        return Promise.resolve(this.setOption(params))
+        try {
+          return Promise.resolve(this.setOption(params))
+        } catch (error) {
+          return Promise.reject(error instanceof Error ? error : new RpcError(RPC.internal, 'Internal error'))
+        }
       case STEER_METHOD:
         return this.steer(params, timeoutMs, signal, context)
       case 'logout':
@@ -715,6 +748,24 @@ export class CodexWire implements AgentWire {
       throw new RpcError(RPC.authRequired, 'Codex is not logged in')
   }
 
+  /**
+   * This computer's Codex policy (`configRequirements/read`). A Codex without the request, or an answer Latch cannot read,
+   * is no policy Latch knows of: Codex still enforces its own, and a turn it refuses says so (`prompt`).
+   */
+  private async readPolicy(timeoutMs?: number, signal?: AbortSignal): Promise<CodexPolicy | undefined> {
+    try {
+      return codexPolicy(await this.send('configRequirements/read', undefined, Math.min(timeoutMs ?? 5_000, 5_000), signal))
+    } catch (error) {
+      if (error instanceof RpcError && error.code === RPC.cancelled) throw error
+      return undefined
+    }
+  }
+
+  /** Why Codex's policy refuses a mode on the current model, or undefined. */
+  private refused(mode: Mode): string | undefined {
+    return codexModeRefusal(this.policy, mode, this.model)
+  }
+
   private async readModels(timeoutMs?: number, signal?: AbortSignal): Promise<void> {
     const models: CodexModels['models'] = []
     let cursor: string | null | undefined = null
@@ -804,14 +855,22 @@ export class CodexWire implements AgentWire {
       this.model ??= this.route.model
       this.route.setThinking?.(this.route.model, this.routeEffort ?? null)
     } else await this.readModels(timeoutMs, signal)
-    const settings = threadSettings(this.mode, this.cwd, this.servers)
+    this.policy = await this.readPolicy(timeoutMs, signal)
+    const settings = threadSettings(this.mode, this.cwd, this.servers, this.policy)
     if (this.route) {
+      // Refused here, with why, rather than by Codex when the thread opens or its first turn starts.
+      const forced = codexProviderRefusal(this.policy)
+      if (forced) throw new RpcError(RPC.invalidParams, forced)
       let environment: Record<string, unknown> | undefined
+      let configured: unknown
       try {
-        environment = codexGatewayEnvironment(await this.send('config/read', { cwd: this.cwd, includeLayers: false }, timeoutMs, signal))
+        configured = await this.send('config/read', { cwd: this.cwd, includeLayers: false }, timeoutMs, signal)
+        environment = codexGatewayEnvironment(configured)
       } catch {
         // A configuration error may quote private values. Only the fact that no safe policy was read leaves this wire.
       }
+      const clash = codexGatewayClash(configured)
+      if (clash) throw new RpcError(RPC.invalidParams, clash)
       if (!environment) throw new RpcError(RPC.internal, '无法读取 Codex 的命令环境规则，未打开会话。')
       // `model_context_window`: the window Codex assumes for the thread's model, which it knows nothing of on Latch's
       // provider; without it Codex takes a default far larger than many services' models and compacts only after the
@@ -1204,16 +1263,53 @@ export class CodexWire implements AgentWire {
     return { servers, namesOnly: true, ...(truncated ? { truncated: true as const } : {}) }
   }
 
+  /**
+   * The hooks Codex would run (`hooks/list`, 0.156): on the thread when there is one, else for the process's folder. Only
+   * when each runs, where it is configured and whether it is managed, enabled and trusted are kept: never its command,
+   * its file or its key. A Codex that cannot list them says nothing.
+   */
+  private async readHooks(threadId: string | undefined, timeoutMs?: number, signal?: AbortSignal): Promise<CodexHooks | undefined> {
+    const answer = await this.send('hooks/list', threadId ? { threadId } : {}, Math.min(timeoutMs ?? 5_000, 5_000), signal).catch(
+      () => undefined,
+    )
+    const read = hookList.safeParse(answer)
+    if (!read.success) return undefined
+    const hooks: CodexHooks['hooks'] = []
+    let truncated = false
+    for (const entry of read.data.data)
+      for (const raw of entry.hooks) {
+        const hook = hookEntry.safeParse(raw)
+        if (!hook.success) {
+          truncated = true
+          continue
+        }
+        if (hooks.length >= MAX_HOOKS) {
+          truncated = true
+          break
+        }
+        hooks.push({
+          event: hook.data.eventName,
+          source: hook.data.source,
+          managed: hook.data.isManaged,
+          enabled: hook.data.enabled,
+          ...(hook.data.trustStatus ? { trust: hook.data.trustStatus } : {}),
+        })
+      }
+    return { hooks, ...(truncated ? { truncated: true as const } : {}) }
+  }
+
   /** `_latch/mcp/status`: the session's servers when it names one, or, in a process with no thread, the names Codex has. */
   private async mcpStatus(params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
     const sessionId = isRecord(params) && typeof params.sessionId === 'string' ? params.sessionId : undefined
     if (sessionId !== undefined) this.assertSession(sessionId)
     else if (this.threadId) throw new RpcError(RPC.invalidParams, 'This process runs a session')
     const read = await this.readMcp(sessionId, timeoutMs, signal)
+    const hooks = await this.readHooks(sessionId, timeoutMs, signal)
     return {
       servers: [...read.servers.values()],
       ...(read.truncated ? { truncated: true } : {}),
       ...(read.namesOnly ? { namesOnly: true } : {}),
+      ...hooksReport(hooks),
     }
   }
 
@@ -1223,13 +1319,14 @@ export class CodexWire implements AgentWire {
     if (!threadId) return
     const seen = new Set<string>()
     this.mcpSeen = seen
-    void this.readMcp(threadId, timeoutMs)
-      .then(read => {
+    void Promise.all([this.readMcp(threadId, timeoutMs), this.readHooks(threadId, timeoutMs)])
+      .then(([read, hooks]) => {
         if (this.threadId !== threadId) return
         for (const [name, server] of read.servers) {
           const newer = seen.has(name) ? this.ownMcp.get(name) : undefined
           this.ownMcp.set(name, newer ? codexMcpServer(name, newer.state, { tools: server.tools, origin: server.origin }) : server)
         }
+        this.hooks = hooks
         this.sendMcp(read.truncated)
       })
       .catch(() => {})
@@ -1239,7 +1336,12 @@ export class CodexWire implements AgentWire {
   }
 
   private sendMcp(truncated?: true): void {
-    this.update({ sessionUpdate: MCP_STATUS_UPDATE, servers: [...this.ownMcp.values()], ...(truncated ? { truncated } : {}) })
+    this.update({
+      sessionUpdate: MCP_STATUS_UPDATE,
+      servers: [...this.ownMcp.values()],
+      ...(truncated ? { truncated } : {}),
+      ...hooksReport(this.hooks),
+    })
   }
 
   /**
@@ -1397,7 +1499,11 @@ export class CodexWire implements AgentWire {
         category: 'mode',
         name: 'Mode',
         currentValue: this.mode,
-        options: Object.entries(MODES).map(([value, mode]) => ({ value, name: mode.name })),
+        // A mode Codex's policy refuses stays in the list, greyed with why (`latch/unavailable`); it is never sent.
+        options: Object.entries(MODES).map(([value, mode]) => {
+          const refused = isMode(value) ? this.refused(value) : undefined
+          return { value, name: mode.name, ...(refused ? { _meta: { [UNAVAILABLE_META]: refused } } : {}) }
+        }),
       },
       ...listed.map(option => ({ type: 'select', ...option })),
     ]
@@ -1411,6 +1517,8 @@ export class CodexWire implements AgentWire {
     const { configId, value } = parsed.data
     if (configId === CODEX_MODE_ID) {
       if (!isMode(value)) throw new RpcError(RPC.invalidParams, 'Unknown mode')
+      const refused = this.refused(value)
+      if (refused) throw new RpcError(RPC.invalidParams, `${refused}。`)
       this.mode = value
     } else if (configId === CODEX_MODEL_ID) {
       if (!this.models.models.some(entry => entry.id === value) && value !== this.model)
@@ -1491,6 +1599,9 @@ export class CodexWire implements AgentWire {
     if (compact && (parsed.data.prompt.length !== 1 || parsed.data.prompt[0]?.text?.trim() !== '/compact'))
       throw new RpcError(RPC.invalidParams, 'Codex 的 /compact 不接受参数或附件。')
     const input = this.input(parsed.data.prompt, context)
+    // A mode the policy refuses (on this model) never reaches Codex, which would refuse the turn; nothing is narrowed.
+    const refused = this.refused(this.mode)
+    if (refused) throw new RpcError(RPC.invalidParams, `${refused}，请在「权限」里换一档再发送。`)
     let turn!: Turn
     const done = new Promise<unknown>((resolve, reject) => {
       turn = { resolve, reject, cancelled: false, commands: new Set(), threads: new Set(), ...(compact ? { compact: true } : {}) }
@@ -1531,6 +1642,12 @@ export class CodexWire implements AgentWire {
       )
     } catch (error) {
       if (this.turn === turn) this.turn = undefined
+      // A policy Latch could not read refused the settings: said as Codex's policy, the turn never started.
+      if (error instanceof RpcError && /^invalid thread settings override\b/iu.test(error.message))
+        throw new RpcError(
+          RPC.invalidParams,
+          `这台电脑的 Codex 管理策略不允许当前的权限档，这一轮没有开始：${clip(redactKnownSecrets(error.message), 300)}`,
+        )
       throw error
     }
     const read = started.safeParse(answer)

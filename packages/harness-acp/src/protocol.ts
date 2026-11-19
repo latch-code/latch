@@ -128,7 +128,14 @@ export const sessionList = z.object({
   nextCursor: z.string().min(1).max(4096).nullish().catch(undefined),
 })
 
-export const selectOption = z.object({ value: z.string(), name: z.string(), description: optionalText })
+/** On a select option's value: why it cannot be chosen now, which a client shows greyed with this line. */
+export const UNAVAILABLE_META = 'latch/unavailable'
+export const selectOption = z.object({
+  value: z.string(),
+  name: z.string(),
+  description: optionalText,
+  _meta: z.record(z.string(), z.unknown()).nullish().catch(undefined),
+})
 export const configOption = z.object({
   id: z.string().min(1).max(256),
   name: z.string(),
@@ -334,6 +341,22 @@ export const ownMcpStatus = z.object({
     .max(200),
   truncated: z.literal(true).optional(),
   namesOnly: z.literal(true).optional(),
+  hooks: z
+    .array(
+      z.strictObject({
+        event: z.string().regex(/^[A-Za-z]{1,64}$/u),
+        source: z.string().regex(/^[A-Za-z]{1,64}$/u),
+        managed: z.boolean(),
+        enabled: z.boolean(),
+        trust: z
+          .string()
+          .regex(/^[A-Za-z]{1,64}$/u)
+          .optional(),
+      }),
+    )
+    .max(100)
+    .optional(),
+  hooksTruncated: z.literal(true).optional(),
 })
 
 export const cancelRequest = z.object({ requestId: z.union([z.string(), z.number()]) })

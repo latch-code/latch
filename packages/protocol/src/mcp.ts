@@ -422,6 +422,25 @@ export interface HarnessMcpReport {
   truncated?: true
   /** A 读取 with no session, of a Harness that then names its servers only: every state is `unknown`. */
   namesOnly?: true
+  /**
+   * The hooks the Harness runs in its sessions, Latch's among them, as the same read reported them (Codex's `hooks/list`).
+   * Absent: it did not say. Never a hook's command, path or key.
+   */
+  hooks?: HarnessHook[]
+  hooksTruncated?: true
+}
+
+/** One of a Harness's own hooks: when it runs and whose it is, with no command. */
+export interface HarnessHook {
+  /** The Harness's name for when it runs (Codex: `preToolUse`, `userPromptSubmit`, …). */
+  event: string
+  /** Where it is configured (Codex: `system`, `mdm`, `user`, `project`, `plugin`, `cloudRequirements`, …). */
+  source: string
+  /** A managed policy put it there: the person cannot turn it off. */
+  managed: boolean
+  enabled: boolean
+  /** Codex's word: `managed`, `trusted`, `untrusted` (it does not run) or `modified` (changed since it was trusted). */
+  trust?: string
 }
 
 /** On a Harness that reports its own MCP servers (`HarnessInfo.ownMcp`); absent on every other. */

@@ -222,7 +222,7 @@ export function modeRows(option: Pick<SessionConfigOption, 'currentValue' | 'opt
       name: row.name,
       ...(row.description ? { description: row.description } : {}),
       current,
-      ...(!current && locked ? { disabledReason: locked } : {}),
+      ...(!current && (locked || row.unavailable) ? { disabledReason: locked ?? row.unavailable! } : {}),
     }
   })
 }

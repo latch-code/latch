@@ -675,7 +675,8 @@ export interface SessionConfigOption {
   /** A Host-owned startup setting, not an independent effective-value report from the Harness. */
   source?: 'launch'
   currentValue: string
-  options: Array<{ value: string; name: string; description?: string }>
+  /** `unavailable`: why this value cannot be chosen now (a Harness's own policy forbids it), shown greyed with that line. */
+  options: Array<{ value: string; name: string; description?: string; unavailable?: string }>
 }
 
 /** A session as clients read it. Every one has a harness: the Host fills it in for every driver. */

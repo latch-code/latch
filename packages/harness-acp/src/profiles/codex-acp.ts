@@ -29,7 +29,8 @@ export const codexAcpProfile: HarnessProfile = {
   folders: { via: 'acp', configPaths: ['.codex', '.agents/skills'] },
   // A trusted project's own config.toml, hooks, agents and exec policies, from the session directory up to its root.
   projectConfigPaths: ['.codex'],
-  // codex-acp lists Codex's threads (metadata only) and replays one on session/load; Latch never reads Codex's own files.
+  // codex-acp lists Codex's threads (metadata only) and replays one on session/load, through Codex's own app-server; it
+  // deletes a thread it started on session/delete (`thread/delete`), which it advertises.
   historyImport: true,
   // codex-acp configures one provider, `openai`, whose only API type is `openai`: Codex's Responses protocol. Its models are
   // then those the gateway lists that Codex itself knows.

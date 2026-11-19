@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
-import type { HarnessInfo, HarnessMcpServer, HarnessMcpState } from '@latch/protocol'
+import { Anchor } from 'lucide-react'
+import type { HarnessHook, HarnessInfo, HarnessMcpServer, HarnessMcpState } from '@latch/protocol'
 import { Button, CopyButton, GlobeGlyph, InlineNotice, StatusWord, TerminalGlyph, type StatusTone } from '@latch/ui'
 import { api, inlineError } from '../core/api.ts'
 import { defineCopy, plural } from '../core/i18n.ts'
@@ -34,8 +35,48 @@ const COPY = defineCopy(
     readNote: {
       label: '读取会在空文件夹里运行 Harness',
       detail:
-        'Latch 不读写 Harness 自己的配置文件，只显示它经协议报告的服务器。读取时 Harness 在一个空文件夹里运行，可能启动它配置的 MCP 服务器；会话里的状态随它的报告更新。这些服务器的调用不经过 Latch，没有记录。',
+        'Latch 不改 Harness 自己的配置文件，只显示它经协议报告的服务器。读取时 Harness 在一个空文件夹里运行，可能启动它配置的 MCP 服务器；会话里的状态随它的报告更新。这些服务器的调用不经过 Latch，没有记录。',
     },
+    hooks: '钩子',
+    hooksNote: {
+      label: '每个会话都会运行',
+      detail:
+        '这些钩子在 Harness 自己的会话里运行，经 Latch 开的会话也一样。由管理策略加的你关不掉。Latch 不显示它们的命令，它们做什么不经过 Latch，没有记录。',
+    },
+    noHooks: '没有钩子',
+    hooksPartial: '只列出一部分',
+    event: {
+      preToolUse: '调用工具前',
+      postToolUse: '调用工具后',
+      permissionRequest: '请求权限时',
+      userPromptSubmit: '你发送消息时',
+      sessionStart: '会话开始时',
+      sessionEnd: '会话结束时',
+      stop: '一轮结束时',
+      interrupt: '停止时',
+      preCompact: '压缩前',
+      postCompact: '压缩后',
+      subagentStart: '子 Agent 开始时',
+      subagentStop: '子 Agent 结束时',
+      preModelRequest: '请求模型前',
+      postModelRequest: '请求模型后',
+    } as Record<string, string>,
+    source: {
+      system: '系统配置',
+      mdm: '设备管理',
+      user: '你的配置',
+      project: '项目配置',
+      plugin: '插件',
+      sessionFlags: '启动参数',
+      cloudRequirements: '云端策略',
+      cloudManagedConfig: '云端配置',
+      legacyManagedConfigFile: '管理员配置文件',
+      legacyManagedConfigMdm: '设备管理',
+    } as Record<string, string>,
+    managed: '管理策略',
+    hookOff: '已停用',
+    untrusted: '未信任',
+    modified: '已改动',
     namesOnly: { label: '只有名字', detail: '开一个会话后才有状态' },
     read: '读取',
     reading: '正在读取…',
@@ -65,6 +106,46 @@ const COPY = defineCopy(
       detail:
         'Latch displays servers from the Harness protocol and leaves its configuration files untouched. Read runs the Harness in an empty folder and may start its configured MCP servers. Sessions update as the Harness reports changes. These calls happen outside Latch and are absent from its records.',
     },
+    hooks: 'Hooks',
+    hooksNote: {
+      label: 'Runs in every session',
+      detail:
+        'These hooks run in the Harness’s own sessions, including those Latch starts. Hooks added by a managed policy cannot be turned off. Latch does not show their commands, and what they do happens outside Latch and is absent from its records.',
+    },
+    noHooks: 'No hooks',
+    hooksPartial: 'Partial list',
+    event: {
+      preToolUse: 'Before a tool call',
+      postToolUse: 'After a tool call',
+      permissionRequest: 'On a permission request',
+      userPromptSubmit: 'When you send a message',
+      sessionStart: 'When a session starts',
+      sessionEnd: 'When a session ends',
+      stop: 'When a turn ends',
+      interrupt: 'On stop',
+      preCompact: 'Before compaction',
+      postCompact: 'After compaction',
+      subagentStart: 'When a subagent starts',
+      subagentStop: 'When a subagent ends',
+      preModelRequest: 'Before a model request',
+      postModelRequest: 'After a model request',
+    } as Record<string, string>,
+    source: {
+      system: 'System configuration',
+      mdm: 'Device management',
+      user: 'Your configuration',
+      project: 'Project configuration',
+      plugin: 'Plugin',
+      sessionFlags: 'Launch arguments',
+      cloudRequirements: 'Cloud policy',
+      cloudManagedConfig: 'Cloud configuration',
+      legacyManagedConfigFile: 'Administrator configuration file',
+      legacyManagedConfigMdm: 'Device management',
+    } as Record<string, string>,
+    managed: 'Managed policy',
+    hookOff: 'Disabled',
+    untrusted: 'Not trusted',
+    modified: 'Changed',
     namesOnly: { label: 'Names only', detail: 'Open a session to see status' },
     read: 'Read',
     reading: 'Reading…',
@@ -210,6 +291,45 @@ export function HarnessMcpGroup({
         )
       })}
       {children}
+    </SettingsGroup>
+  )
+}
+
+/** What a hook's state says beside it: managed, disabled, or not trusted (Codex then does not run it). */
+function hookWord(hook: HarnessHook): { tone: StatusTone; text: string } | undefined {
+  if (!hook.enabled) return { tone: 'neutral', text: COPY.hookOff }
+  if (hook.trust === 'untrusted') return { tone: 'neutral', text: COPY.untrusted }
+  if (hook.trust === 'modified') return { tone: 'warn', text: COPY.modified }
+  if (hook.managed) return { tone: 'neutral', text: COPY.managed }
+  return undefined
+}
+
+/**
+ * The hooks a Harness runs in its sessions, as the same read or session reported them (`HarnessMcpReport.hooks`): when
+ * each runs and where it is configured, never its command. Absent when the Harness did not say.
+ */
+export function HarnessHooksGroup({ harness }: { harness: HarnessInfo }) {
+  const last = harness.ownMcp?.last
+  if (!last?.hooks) return null
+  return (
+    <SettingsGroup
+      title={COPY.hooks}
+      {...(last.hooksTruncated ? { caption: COPY.hooksPartial } : {})}
+      note={<NoteLine brief={COPY.hooksNote} />}>
+      {last.hooks.length === 0 && <SettingsRow title={COPY.noHooks} />}
+      {last.hooks.map((hook, index) => {
+        const word = hookWord(hook)
+        return (
+          <div key={index} data-harness-hook={hook.event}>
+            <SettingsRow
+              leading={<IconTile icon={Anchor} />}
+              title={COPY.event[hook.event] ?? hook.event}
+              description={COPY.source[hook.source] ?? hook.source}
+              {...(word ? { trailing: <StatusWord tone={word.tone}>{word.text}</StatusWord> } : {})}
+            />
+          </div>
+        )
+      })}
     </SettingsGroup>
   )
 }

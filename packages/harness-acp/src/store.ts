@@ -378,7 +378,9 @@ const configOption = z.object({
   description: z.string().optional(),
   source: z.literal('launch').optional(),
   currentValue: z.string(),
-  options: z.array(z.object({ value: z.string(), name: z.string(), description: z.string().optional() })),
+  options: z.array(
+    z.object({ value: z.string(), name: z.string(), description: z.string().optional(), unavailable: z.string().optional() }),
+  ),
 })
 const hash = z.string().regex(/^[0-9a-f]{64}$/)
 const catalogue = z.object({

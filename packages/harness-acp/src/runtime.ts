@@ -1707,6 +1707,11 @@ export class AgentRuntime implements Bridge {
     return rest
   }
 
+  /** Its options come from a wire of Latch's own, whose `latch/…` marks (a greyed mode) Latch shows. */
+  private latchMarks(): boolean {
+    return this.selection.profile?.wire === 'codex'
+  }
+
   /** Whether this harness reports its own MCP servers over its protocol: Codex's app-server does; ACP does not. */
   private reportsOwnMcp(): boolean {
     // Codex's app-server, and Claude's SDK (`mcpServerStatus`) on its direct wire.
@@ -1943,6 +1948,8 @@ export class AgentRuntime implements Bridge {
         via,
         ...(parsed.data.truncated ? { truncated: true as const } : {}),
         ...(via === 'read' && parsed.data.namesOnly ? { namesOnly: true as const } : {}),
+        ...(parsed.data.hooks ? { hooks: parsed.data.hooks.map(hook => ({ ...hook })) } : {}),
+        ...(parsed.data.hooksTruncated ? { hooksTruncated: true as const } : {}),
       },
     }
     this.notify()
@@ -2306,7 +2313,7 @@ export class AgentRuntime implements Bridge {
         live.capture = undefined
       }
       const state = sessionState.safeParse(result)
-      const folded = state.success ? foldConfig(state.data) : undefined
+      const folded = state.success ? foldConfig(state.data, this.latchMarks()) : undefined
       const model = modelName(folded?.options)
       const load: ExternalSessionLoad = {
         loadId,
@@ -2544,7 +2551,7 @@ export class AgentRuntime implements Bridge {
         return
       }
       const parsed = sessionState.safeParse(result)
-      const folded = parsed.success ? foldConfig(parsed.data) : undefined
+      const folded = parsed.success ? foldConfig(parsed.data, this.latchMarks()) : undefined
       if (!folded?.options.length) throw new AppError(502, 'catalogue-empty', `${this.agent.name} 没有报告可选的模型和设置。`)
       this.state.catalogue = startCatalogue(this.state.catalogue, {
         options: this.withLaunchThinking(this.withProcessMode(live, parsed.data?.sessionId, folded.options)),
@@ -2573,7 +2580,7 @@ export class AgentRuntime implements Bridge {
     model: string,
   ): Promise<SessionConfigOption[] | undefined> {
     const parsed = sessionState.safeParse(created)
-    const folded = parsed.success ? foldConfig(parsed.data) : undefined
+    const folded = parsed.success ? foldConfig(parsed.data, this.latchMarks()) : undefined
     const option = folded?.source === 'legacy' ? undefined : folded?.options.find(item => item.category === 'model')
     if (!sessionId || !option) throw new AppError(502, 'catalogue-empty', `${this.agent.name} 不能在开始前换模型。`)
     if (option.currentValue === model) return folded!.options
@@ -2589,7 +2596,7 @@ export class AgentRuntime implements Bridge {
       this.lifetime.signal,
     )
     const options = configUpdate.safeParse(answer)
-    const now = options.success ? configFromOptions(options.data.configOptions) : undefined
+    const now = options.success ? configFromOptions(options.data.configOptions, this.latchMarks()) : undefined
     return now?.find(item => item.category === 'model')?.currentValue === model ? now : undefined
   }
 
@@ -5023,6 +5030,12 @@ export class AgentRuntime implements Bridge {
     const expected = this.expectedMode(task)
     if (expected === undefined) return
     const option = this.modeOption(task)
+    // A mode the Harness's own policy forbids (a mark of Latch's own wire) is never asked for: the person sees why.
+    const forbidden = option?.options.find(value => value.value === expected)?.unavailable
+    if (forbidden && option?.currentValue !== expected) {
+      this.securityEvent({ type: 'permission-unverified', sessionId: taskId })
+      throw new AppError(409, 'permission-unverified', `${forbidden}，未发送本轮输入。请在「权限」里换一档。`)
+    }
     if (option && (option.currentValue !== expected || this.unconfirmed.has(taskId))) {
       try {
         await this.applyMode(taskId, binding, option, expected, signal)
@@ -5088,7 +5101,7 @@ export class AgentRuntime implements Bridge {
   private reportConfig(task: AcpTask, items: unknown[]): void {
     this.configReported(task.summary.id)
     const prior = this.modeOption(task)
-    task.config = this.offered(task, configFromOptions(items))
+    task.config = this.offered(task, configFromOptions(items, this.latchMarks()))
     task.acp.configSource = 'options'
     this.noteModelOptions(task, task.config)
     // An agent that opened on another model reports the route's once the start switches to it.
@@ -6561,7 +6574,7 @@ export class AgentRuntime implements Bridge {
       )
     else this.settingsNotes.delete(taskId)
     const parsed = sessionState.safeParse(result)
-    const folded = parsed.success ? foldConfig(parsed.data) : undefined
+    const folded = parsed.success ? foldConfig(parsed.data, this.latchMarks()) : undefined
     if (folded || live.processModes?.has(acpSessionId)) {
       this.configReported(taskId)
       const earlier = current && this.selection.profile?.resumeResetsOptions ? target.config : undefined
@@ -8293,7 +8306,9 @@ export class AgentRuntime implements Bridge {
       }
       case 'config_option_update': {
         const parsed = configUpdate.safeParse(update)
-        const mode = parsed.success ? configFromOptions(parsed.data.configOptions).find(option => option.category === 'mode') : undefined
+        const mode = parsed.success
+          ? configFromOptions(parsed.data.configOptions, this.latchMarks()).find(option => option.category === 'mode')
+          : undefined
         if (mode) this.childMode(task, child, mode.currentValue)
         return
       }

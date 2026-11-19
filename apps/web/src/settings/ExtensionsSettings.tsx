@@ -16,7 +16,7 @@ import { HarnessTile } from '../components/BrandTile.tsx'
 import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
 import { dateTime } from '../format.ts'
 import { usePromptTemplates } from '../hooks/usePromptTemplates.ts'
-import { HarnessMcpGroup } from './HarnessMcp.tsx'
+import { HarnessHooksGroup, HarnessMcpGroup } from './HarnessMcp.tsx'
 import { Loading, NavRow, NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
 import { SettingsPages, type SettingsLevel } from './navigation.tsx'
 import {
@@ -298,6 +298,7 @@ function HarnessPage({
           />
         ),
       )}
+      <HarnessHooksGroup harness={harness} />
     </div>
   )
 }

@@ -15,7 +15,15 @@ import type {
 } from '@latch/protocol'
 import { simulatorInputDetail, simulatorInputTool } from '@latch/protocol'
 import { z } from 'zod'
-import { configOption, toolContent, toolLocation, type ContentBlock, type SessionState, type ToolFields } from './protocol.ts'
+import {
+  configOption,
+  toolContent,
+  toolLocation,
+  UNAVAILABLE_META,
+  type ContentBlock,
+  type SessionState,
+  type ToolFields,
+} from './protocol.ts'
 
 export const TEXT_LIMIT = 2_000_000
 export const TOOL_TEXT_LIMIT = 64 * 1024
@@ -371,7 +379,7 @@ export interface FoldedConfig {
   options: SessionConfigOption[]
 }
 
-function selectConfig(item: unknown): SessionConfigOption[] {
+function selectConfig(item: unknown, latchMarks: boolean): SessionConfigOption[] {
   const parsed = configOption.safeParse(item)
   if (!parsed.success) return []
   const option = parsed.data
@@ -385,22 +393,28 @@ function selectConfig(item: unknown): SessionConfigOption[] {
       currentValue: option.currentValue,
       ...(option.category ? { category: option.category } : {}),
       ...(option.description ? { description: clip(option.description, 1000) } : {}),
-      options: values.map(value => ({
-        value: value.value,
-        name: clip(value.name, 200),
-        ...(value.description ? { description: clip(value.description, 1000) } : {}),
-      })),
+      options: values.map(value => {
+        // Only a wire of Latch's own speaks for Latch here: an ACP agent cannot grey out a mode the person may choose.
+        const unavailable = latchMarks ? value._meta?.[UNAVAILABLE_META] : undefined
+        return {
+          value: value.value,
+          name: clip(value.name, 200),
+          ...(value.description ? { description: clip(value.description, 1000) } : {}),
+          ...(typeof unavailable === 'string' && unavailable ? { unavailable: clip(unavailable, 200) } : {}),
+        }
+      }),
     },
   ]
 }
 
-export function configFromOptions(items: unknown[]): SessionConfigOption[] {
-  return items.slice(0, 32).flatMap(selectConfig)
+/** `latchMarks`: the options come from a wire of Latch's own (Codex's app-server), whose `latch/…` marks are Latch's. */
+export function configFromOptions(items: unknown[], latchMarks = false): SessionConfigOption[] {
+  return items.slice(0, 32).flatMap(item => selectConfig(item, latchMarks))
 }
 
 /** Agents that send `configOptions` use them exclusively; older agents report `models` and `modes`. */
-export function foldConfig(state: SessionState): FoldedConfig | undefined {
-  if (state.configOptions?.length) return { source: 'options', options: configFromOptions(state.configOptions) }
+export function foldConfig(state: SessionState, latchMarks = false): FoldedConfig | undefined {
+  if (state.configOptions?.length) return { source: 'options', options: configFromOptions(state.configOptions, latchMarks) }
   const options: SessionConfigOption[] = []
   if (state.models) {
     options.push({
