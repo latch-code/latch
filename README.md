@@ -260,7 +260,7 @@ pnpm stop -- --data-dir <同一数据目录>
 | 流式同步、重连、审批与取消的顺序 | [STREAMING](docs/STREAMING.md) |
 | 接入本机 Agent、模型网关、模型配置 | [HARNESSES](docs/HARNESSES.md)、[MODEL-GATEWAY](docs/MODEL-GATEWAY.md)、[MODEL-CONFIGURATION](docs/MODEL-CONFIGURATION.md) |
 | MCP 服务器 | [MCP](docs/MCP.md) |
-| 我的 Agent、定时任务、交接 | [CUSTOM-AGENTS](docs/CUSTOM-AGENTS.md)、[AUTOMATIONS](docs/AUTOMATIONS.md)、[HANDOFFS](docs/HANDOFFS.md) |
+| 我的 Agent、定时任务、交接、团队 | [CUSTOM-AGENTS](docs/CUSTOM-AGENTS.md)、[AUTOMATIONS](docs/AUTOMATIONS.md)、[HANDOFFS](docs/HANDOFFS.md)、[TEAMS](docs/TEAMS.md) |
 | 改动记录、交付、分支与工作树、项目恢复 | [CHANGES](docs/CHANGES.md)、[GIT-DELIVERY](docs/GIT-DELIVERY.md)、[BRANCHES](docs/BRANCHES.md)、[WORKSPACE-RECOVERY](docs/WORKSPACE-RECOVERY.md) |
 | 终端、预览浏览器 | [TERMINAL](docs/TERMINAL.md)、[PREVIEW-BROWSER](docs/PREVIEW-BROWSER.md) |
 | 文件预览与编辑、运行期间的文件变化、附件 | [DOCUMENT-PREVIEWS](docs/DOCUMENT-PREVIEWS.md)、[FILE-OUTPUTS](docs/FILE-OUTPUTS.md)、[ATTACHMENTS](docs/ATTACHMENTS.md) |

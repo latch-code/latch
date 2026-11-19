@@ -74,6 +74,8 @@ export interface HostFeatures {
   workItemTurns?: true
   /** `GET /work/proposals/:id`, `…/accept`, `…/dismiss`, and `AppSnapshot.workProposals`: agents' proposals for the board. */
   workProposals?: true
+  /** `POST /tasks/:id/team`, `GET /teams/:id`, `POST /teams/:id/stop`, `AppSnapshot.teams` and `TaskSummary.teamOf` (docs/TEAMS.md). */
+  teams?: true
   mentions?: true
   pairingV3?: true
   nativeElevation?: true

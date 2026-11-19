@@ -532,6 +532,7 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 | `GET /work/proposals/:id` | 带要求的整条提议 | `view` |
 | `POST /work/proposals/:id/accept` | `{ requestId, baseRevision, entries? }`。待办提议：`entries` 是 `{ index, title?, prompt?, projectId?, harnessId?, tags? }`（人先改过的值，`null` 清除建议），不写就是全部待处理条目；一次写入里建成未开始的待办（带 `from`，`startScope: 'work'`，私有随提议），答 `{ proposal, itemIds }`。改动提议：写到它的卡（待办在同一次写入里改，会话经 `updateMeta`） | `run` |
 | `POST /work/proposals/:id/dismiss` | `{ requestId, baseRevision, entries? }`：所选条目或全部待处理的 | `run` |
+| `POST /tasks/:id/team` | 这个会话自己的待办提议可以直接作为团队开始：所选条目被接受并同时开始，结果交回这个会话（[TEAMS.md](TEAMS.md)） | `run` |
 
 `baseRevision` 不符 409 `proposal-changed`，已处理的条目 409 `proposal-decided`。接受与不要按设备与 `requestId` 记回执（与待办同一份，7 天），重试答同一记录，返回当前仍可读的待办 ID；换内容 409 `request-conflict`。接受时待办的 `from` 保留提议 ID 和可用的来源消息 ID。会话删除时，它提的、还没处理的提议与等着它的卡的改动一起删除（一组里已有条目处理过的，剩下的记为不要，记录留给重试的回执）；接受会话卡的改动时先在写入里把提议记为已接受，再改会话，改不成就退回待处理；组里什么都处理完后组名也删去；待办删除时，等着它的改动删除。快照的 `workProposals` 只列还有待处理内容的提议，不带要求，也不带已接受条目成为的待办 ID。`catalog.features.workProposals` 表示 Host 有这些路由。提议的文字只在看板与提出它的会话里显示，人接受后成为待办的要求，由人开始才发出。
 
@@ -637,6 +638,7 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 | `handoffs/handoffs.json` | 交接记录与回执（[HANDOFFS.md](HANDOFFS.md)） |
 | `work/items.json` | 待办与它们新建、开始的回执（见「待办」） |
 | `work/threads/` | 每条待办的讨论，一个文件一条（见「待办的讨论」） |
+| `work/teams.json` | 团队：带队会话、成员与结果是否交回（[TEAMS.md](TEAMS.md)） |
 | `review-notes/`、`snapshots/` | 行级反馈（含改过文字的其他设备 `editors`，不发给设备）、每轮的文件快照与记录（[CHANGES.md](CHANGES.md)） |
 | `attachments/`、`file-references/` | 附件存储（[ATTACHMENTS.md](ATTACHMENTS.md)）、会话提到过的文件路径 |
 | `plugin-packages/`、`plugin-data/<pluginId>/` | 自定义插件的资产与构建记录（[PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md)）、插件页面的数据与诊断（[APP-PAGES.md](APP-PAGES.md)） |
@@ -880,6 +882,8 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `/simulators…` | `routes/simulators.ts` | 见文档 | [DEVICE-PREVIEW.md](DEVICE-PREVIEW.md) |
 | `/handoffs…` | `routes/handoffs.ts` | 读 `view`，写 `run`；都要能读相关会话 | [HANDOFFS.md](HANDOFFS.md) |
 | `/work/items…` | `routes/work-items.ts` | 读 `view`，写 `run`；私有待办只给数据范围 `all` | 「待办」 |
+| `/work/proposals…` | `routes/work-proposals.ts` | 读 `view`，写 `run`；私有提议只给数据范围 `all` | 「Agent 的提议」 |
+| `POST /tasks/:id/team`、`/teams/:id`、`/teams/:id/stop` | `routes/teams.ts` | 读 `view`，开始与停止 `run`；带队会话私有时只给数据范围 `all` | [TEAMS.md](TEAMS.md) |
 | `/work/items/:id/posts` | `routes/work-threads.ts` | 读 `view`，写 `run`；对 Agent 另需数据范围 `all` | 「待办的讨论」 |
 | `/history/…` | `routes/history.ts` | `run` + 数据范围 `all` | [HARNESSES.md](HARNESSES.md#接入已有会话) |
 | `/custom-agents…` | `routes/agents.ts` | 见文档 | [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md) |

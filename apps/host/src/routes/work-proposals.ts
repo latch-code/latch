@@ -458,14 +458,35 @@ export function createWorkProposalRoutes(context: RouteContext, deps: WorkPropos
     context.requireScope(caller, 'run')
     context.limits.classC.take(caller.device.id)
     const body = acceptSchema.parse(raw)
+    const row = visible(caller, id)
+    if (row.change) {
+      const { requestId: request, ...fields } = body
+      const payloadHash = sha256Hex(canonicalJson({ id, ...fields }))
+      if (replayed(caller, 'accept', request, payloadHash, id)) return answer(res, caller, row)
+      if (row.revision !== body.baseRevision) throw changedError()
+      return acceptChange(res, caller, row, request, payloadHash)
+    }
+    const accepted = await acceptTodos(caller, id, body)
+    return answer(res, caller, accepted.row, accepted.itemIds)
+  }
+
+  /**
+   * The 待办 half of an accept, for `POST …/accept` and for a team's start: the 待办 it made, in the order of their
+   * entries. A retry of the same request answers the same ones and makes nothing.
+   */
+  async function acceptTodos(
+    caller: DeviceCaller,
+    id: string,
+    body: z.infer<typeof acceptSchema>,
+  ): Promise<{ row: WorkProposalRecord; itemIds: string[] }> {
     const { requestId: request, ...fields } = body
     const payloadHash = sha256Hex(canonicalJson({ id, ...fields }))
     const row = visible(caller, id)
     const prior = replayed(caller, 'accept', request, payloadHash, id)
-    if (prior) return answer(res, caller, row, prior.itemIds)
+    if (prior) return { row, itemIds: prior.itemIds ?? [] }
     if (row.revision !== body.baseRevision) throw changedError()
-    if (row.change) return acceptChange(res, caller, row, request, payloadHash)
-    const pending = row.entries!.flatMap((entry, index) => (entry.state === 'pending' ? [index] : []))
+    if (!row.entries) throw decided()
+    const pending = row.entries.flatMap((entry, index) => (entry.state === 'pending' ? [index] : []))
     const chosen: Array<z.infer<typeof entryEdit>> = body.entries ?? pending.map(index => ({ index }))
     if (new Set(chosen.map(edit => edit.index)).size !== chosen.length) throw new AppError(400, 'invalid-input', '同一项只能接受一次。')
     if (!chosen.length || chosen.some(edit => !pending.includes(edit.index))) throw decided()
@@ -565,12 +586,7 @@ export function createWorkProposalRoutes(context: RouteContext, deps: WorkPropos
     })
     for (const item of result.made) deps.itemChanged(item, [])
     deps.changed(result.row)
-    return answer(
-      res,
-      caller,
-      result.row,
-      result.made.map(item => item.id),
-    )
+    return { row: result.row, itemIds: result.made.map(item => item.id) }
   }
 
   /** A change to a card: the 待办's in the same write as the proposal; a session's through its own metadata route first. */
@@ -793,7 +809,7 @@ export function createWorkProposalRoutes(context: RouteContext, deps: WorkPropos
       return true
     },
   }
-  return { module, intake, summaries, sessionDeleted, itemDeleted, isPrivate }
+  return { module, intake, summaries, sessionDeleted, itemDeleted, isPrivate, acceptTodos }
 }
 
 export type WorkProposalRoutes = ReturnType<typeof createWorkProposalRoutes>

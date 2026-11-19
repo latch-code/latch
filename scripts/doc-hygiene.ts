@@ -33,6 +33,7 @@ const DOCUMENTS: ReadonlySet<string> = new Set(
     'PREVIEW-BROWSER',
     'RELAY',
     'STREAMING',
+    'TEAMS',
     'TERMINAL',
     'TESTING',
     'TRANSPORT-PLUGINS',

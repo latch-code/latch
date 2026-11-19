@@ -17,7 +17,7 @@ sources:
 
 - 来源从不被改写。
 - 目标永远是普通会话，经与 `POST /tasks`、`POST /tasks/:id/prompt` 相同的路径开始或接收输入。项目队列、项目与 Harness 检查、工作树、文件引用检查、启动审计与回执都和手动开始一样。
-- 不做：自动组队、自动把结果发给来源的 Agent、跨 Host。
+- 不做：自动组队、自动把结果发给来源的 Agent、跨 Host。人开始的团队会把成员的结果交回带队会话，见 [TEAMS.md](TEAMS.md)。
 
 `catalog.features.handoffs` 声明下面的接口，网页只在它存在时提供交接。
 

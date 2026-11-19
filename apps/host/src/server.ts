@@ -336,6 +336,7 @@ import { HarnessHub, listSignature, runEndOutline, type HubCreateInput } from '.
 import { BoardDelivery, boardPlace, type DeliveryTarget } from './board.ts'
 import { checkedNote, itemIsPrivate, itemSummary, WorkItemStore, type WorkItemRecord, type WorkProposalRecord } from './work-items.ts'
 import { WorkThreadStore } from './work-threads.ts'
+import { TeamStore, type TeamRecord } from './teams.ts'
 import { SessionLifecycle, projectIdOf, type LifecycleBounds, type LifecycleListeners } from './session-lifecycle.ts'
 import { RUN_ID, type ApprovalRecord, type CancelRecord } from './session-meta.ts'
 import { sendNotFoundPage } from './not-found.ts'
@@ -2360,6 +2361,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const boardDelivery = new BoardDelivery({ log, changed: sessionId => refresh(sessionId), target: deliveryTarget })
     const workItems = await WorkItemStore.open(dataDir, { now })
     startupCleanup.push(() => workItems.flush())
+    const teams = await TeamStore.open(dataDir, { now })
+    startupCleanup.push(() => teams.flush())
     const workThreads = await WorkThreadStore.open(dataDir, { now })
     // Only against a 待办 file read whole: a missing one (moved away after a refusal to start) says nothing of which
     // threads lost their 待办, and pruning then would delete every thread.
@@ -2413,10 +2416,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // A session that is not private, in a private 待办, would name the 待办 to devices that may not read it.
         return hub.agentPrivate(sessionId) ? item.id : undefined
       },
+      teamOf: sessionId => {
+        const team = teams.memberOf(sessionId)
+        if (!team || !hub) return undefined
+        // A member that is not private, of a team whose lead is, would name the lead to devices that may not read it.
+        if ((team.private || hub.agentPrivate(team.leadSessionId)) && !hub.agentPrivate(sessionId)) return undefined
+        return { teamId: team.id, leadSessionId: team.leadSessionId }
+      },
       // A private session leaving by deletion must leave its 待办 private: written before the session goes.
       beforeRemove: async (sessionId, isPrivate) => {
         const item = workItems.itemOf(sessionId)
         if (item && isPrivate && !item.private) await workItems.markPrivate(item.id)
+        // Its teams too: once the lead is gone nothing else says they were private.
+        if (isPrivate)
+          for (const team of teams.list())
+            if (team.leadSessionId === sessionId && !team.private) await teams.update(team.id, row => void (row.private = true))
       },
     })
     hub = harnessHub
@@ -3181,6 +3195,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       customization: customizationRoutes,
       workProposals: workProposalRoutes,
       workThreads: workThreadRoutes,
+      teams: teamRoutes,
       routes,
     } = createRoutes(routeContext, {
       customization: { store: () => customization, auditFailed },
@@ -3309,6 +3324,64 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         },
         itemChanged,
         changed: proposalChanged,
+      },
+      teams: {
+        store: teams,
+        items: workItems,
+        // Only a folder that is no repository (or a Mac without Git) takes none. Any other refusal a start with
+        // `worktree: true` would give is given to each member, which then does not start: never the shared folder instead.
+        async worktrees(projectId) {
+          const record = projectId === 'default' ? undefined : savedProject(projectId)
+          if (!record || record.folders.length !== 1) return false
+          return worktrees.base(record.folders[0].path).then(
+            () => true,
+            error => !['worktree-not-repository', 'worktree-no-git'].includes(String(codeOf(error))),
+          )
+        },
+        harnessRefusal(harnessId) {
+          const record = config.settings().agents.find(agent => agent.id === harnessId)
+          return record && record.confirmedCommand === undefined
+            ? `${record.name} 还没有在这台 Mac 上确认过：先在这台 Mac 上用它开始一个会话，确认一次后才能当团队成员`
+            : undefined
+        },
+        harnessName: id => hub?.info(id)?.capabilities.display.label ?? id,
+        // As a queued message finds its sender again (`checkQueuedPrompt`).
+        callerOf(actor) {
+          const native = isNativeListener(actor.listener)
+          const authenticated = native ? devices.authenticateNative(actor.deviceId) : undefined
+          const device = authenticated?.ok ? authenticated.device : devices.get(actor.deviceId)
+          if (
+            !device
+            || (native ? !authenticated?.ok : !devices.isActive(actor.deviceId) || device.listener !== actor.listener)
+            || !device.scopes.includes('run')
+          )
+            return 'gone'
+          const opening: NativeOpening | undefined = native
+            ? {
+                deviceId: actor.deviceId,
+                pairing: false,
+                listener: { listener: actor.listener, origin: '' },
+                source: '',
+                ...(actor.nativeWindowHash ? { windowHash: actor.nativeWindowHash } : {}),
+              }
+            : undefined
+          if (native && nativeRoutes.verifiedUntil(opening) <= now()) return 'wait'
+          return {
+            device,
+            connection: { listener: actor.listener, origin: '', remoteAddress: '' },
+            ...(opening ? { nativeOpening: opening } : {}),
+          }
+        },
+        // The members' replies are other agents' words: the lead's context holds outside content from this turn on.
+        async send(caller, sessionId, input) {
+          await sendPrompt(caller, sessionId, queuedPromptSchema.parse(input), false, true)
+        },
+        queued: id => promptQueues.view(id).length,
+        questions: id => questions.view(id).length,
+        async cancel(caller, sessionId, runId, res) {
+          await cancelTask(caller, sessionId, runId ? { runId } : {}, res)
+        },
+        changed: teamChanged,
       },
       workThreads: {
         threads: workThreads,
@@ -8494,6 +8567,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (workProposalRoutes.isPrivate(row)) refreshPrivate()
       else refresh()
     }
+    /** A team changed: as a 待办's change; its sessions' summaries carry `teamOf`. */
+    function teamChanged(team: TeamRecord, sessionIds: readonly string[]): void {
+      const isPrivate = teamRoutes.isPrivate(team)
+      if (isPrivate) refreshPrivate()
+      else refresh()
+      for (const id of sessionIds) if (!isPrivate || hub!.agentPrivate(id)) refresh(id)
+    }
     function itemChanged(item: WorkItemRecord, sessionIds: readonly string[]): void {
       const isPrivate = itemIsPrivate(item, id => hub!.agentPrivate(id))
       if (isPrivate) refreshPrivate()
@@ -11933,6 +12013,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         }
         const proposals = hasBodyWindow() ? workProposalRoutes.summaries(scope) : []
         if (proposals.length) snapshot.workProposals = proposals
+        const teamSummaries = hasBodyWindow() ? teamRoutes.summaries(scope) : []
+        if (teamSummaries.length) snapshot.teams = teamSummaries
+        if (!hasBodyWindow()) snapshot.tasks = snapshot.tasks.map(({ teamOf: _team, ...task }) => task)
         traffic.response('snapshot', json(res, snapshot))
         return
       }

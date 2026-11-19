@@ -20,6 +20,7 @@ import type {
   GitPrBinding,
   RunLive,
   TaskSummary,
+  TeamMembership,
 } from '@latch/protocol'
 import {
   AppError,
@@ -129,6 +130,8 @@ export interface HubOptions {
   board?: (summary: TaskSummary, record: { attended?: BoardAttended; pr: boolean }) => BoardPlace | undefined
   /** The 待办 a session belongs to, as `TaskSummary.itemId` shows it; read from memory, never waited on. */
   itemOf?: (sessionId: string) => string | undefined
+  /** The team a session is a member of, as `TaskSummary.teamOf` shows it; read from memory, never waited on. */
+  teamOf?: (sessionId: string) => TeamMembership | undefined
   /** Before a session is removed, with whether it is private now: what holds it may need to remember that. A throw keeps it. */
   beforeRemove?: (sessionId: string, isPrivate: boolean) => Promise<void>
 }
@@ -1521,6 +1524,7 @@ export class HarnessHub implements Bridge {
       note: _note,
       board: _board,
       itemId: _itemId,
+      teamOf: _teamOf,
       runId,
       live,
       modelRoute,
@@ -1579,6 +1583,8 @@ export class HarnessHub implements Bridge {
     })
     const itemId = this.options.itemOf?.(summary.id)
     if (itemId) presented.itemId = itemId
+    const teamOf = this.options.teamOf?.(summary.id)
+    if (teamOf) presented.teamOf = teamOf
     const board = this.options.board?.(presented, {
       ...(meta?.attended ? { attended: { ...meta.attended } } : {}),
       pr: meta?.pr !== undefined,

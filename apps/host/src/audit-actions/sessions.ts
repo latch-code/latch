@@ -76,6 +76,21 @@ export const SESSION_ACTIONS = {
     count,
     external: z.boolean(),
   }),
+  /**
+   * Teams (docs/TEAMS.md). `team.started` is written before anything is accepted, made or started; `team.returned`
+   * before the results are sent to the lead, with the hash of the message; `team.kept` when they will not be sent;
+   * `team.stopped` when a person stops one. Never a title, a goal or a reply.
+   */
+  'team.started': z.strictObject({
+    teamId: prefixed('tem'),
+    leadSessionId: opaqueId,
+    members: count,
+    harnessIds: z.array(opaqueId).max(8),
+    proposalId: prefixed('wpp').optional(),
+  }),
+  'team.returned': z.strictObject({ teamId: prefixed('tem'), leadSessionId: opaqueId, members: count, promptHash: hex64 }),
+  'team.kept': z.strictObject({ teamId: prefixed('tem'), reason: z.enum(['lead-gone', 'device-removed', 'stopped']) }),
+  'team.stopped': z.strictObject({ teamId: prefixed('tem') }),
   /** A person marked the 待办 done (`closed`) or reopened it. */
   'work.item.closed': z.strictObject({ itemId: prefixed('itm'), closed: z.boolean() }),
   'task.question.answered': z.strictObject({ sessionId: opaqueId, questionId: opaqueId }),

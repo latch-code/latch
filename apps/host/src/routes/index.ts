@@ -23,6 +23,7 @@ import type { SimulatorLive } from '../simulator-live.ts'
 import { createWorkItemRoutes, type WorkItemRouteDeps } from './work-items.ts'
 import { createWorkThreadRoutes, type WorkThreadRouteDeps, type WorkThreadRoutes } from './work-threads.ts'
 import { createWorkProposalRoutes, type WorkProposalRouteDeps, type WorkProposalRoutes } from './work-proposals.ts'
+import { createTeamRoutes, type TeamRouteDeps, type TeamRoutes } from './teams.ts'
 import { createTerminalRoutes, type TerminalRoutes, type TerminalWorkspaceOperation } from './terminal.ts'
 import type { TerminalService } from '../terminal/service.ts'
 
@@ -38,6 +39,7 @@ export interface RouteDeps {
   workItems: WorkItemRouteDeps
   workThreads: WorkThreadRouteDeps
   workProposals: WorkProposalRouteDeps
+  teams: TeamRouteDeps
   history: HistoryRouteDeps
   reviewNotes: ReviewNoteRouteDeps
   git?: GitRouteOptions
@@ -67,6 +69,7 @@ export function createRoutes(
   customization: CustomizationRoutes
   workProposals: WorkProposalRoutes
   workThreads: WorkThreadRoutes
+  teams: TeamRoutes
   routes: RouteRegistry
 } {
   const native = createNativeRoutes(context, deps.native)
@@ -77,6 +80,8 @@ export function createRoutes(
   const customization = createCustomizationRoutes(context, deps.customization)
   const workProposals = createWorkProposalRoutes(context, deps.workProposals)
   const workThreads = createWorkThreadRoutes(context, deps.workThreads)
+  const workItems = createWorkItemRoutes(context, { ...deps.workItems, postAttention: workThreads.attention })
+  const teams = createTeamRoutes(context, deps.teams, { itemRoutes: workItems, proposals: workProposals })
   const simulators = createSimulatorRoutes(context, deps.simulators.simulators, deps.simulators.live, deps.simulators.control)
   return {
     native,
@@ -87,6 +92,7 @@ export function createRoutes(
     customization,
     workProposals,
     workThreads,
+    teams,
     routes: new RouteRegistry([
       native,
       createDeviceRoutes(context, {
@@ -111,8 +117,10 @@ export function createRoutes(
       createHandoffRoutes(context, deps.handoffs),
       // Before the 待办's own routes, which answer every other path under them.
       workThreads,
-      createWorkItemRoutes(context, { ...deps.workItems, postAttention: workThreads.attention }),
+      workItems.module,
       workProposals.module,
+      // `POST /tasks/:id/team` is answered here, before the Host's own session routes.
+      teams.module,
       createHistoryRoutes(context, deps.history),
       customization,
       createShortcutRoutes(context, deps.shortcuts),

@@ -79,6 +79,14 @@ const suggestions = {
   model: modelRefSchema,
   worktree: z.enum(['new', 'project']),
 }
+export type WorkItemCreateBody = z.infer<typeof createSchema>
+export type WorkItemStartBody = z.infer<typeof startSchema>
+/** What a team adds to a member's start beyond what its 待办 says. */
+export interface WorkItemStartExtra {
+  privateFrom?: string
+  outsideStart?: boolean
+  withoutPrivateContext?: boolean
+}
 const createSchema = z.strictObject({
   requestId,
   title: z.string().max(4 * KIB),
@@ -156,7 +164,7 @@ function startRequestId(deviceId: string, itemId: string, requestId: string): st
 }
 
 /** 待办: one piece of work with 0–16 Code sessions (docs/ARCHITECTURE.md#待办). Only a person sets them; nothing here runs on its own. */
-export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteDeps): RouteModule {
+export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteDeps) {
   const { store } = deps
   /** Starts under way by 待办: they count against its 16 sessions, and the 待办 cannot be deleted meanwhile. */
   const starting = new Map<string, number>()
@@ -227,14 +235,27 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
 
   async function create(req: IncomingMessage, res: ServerResponse, caller: DeviceCaller): Promise<void> {
     writing(caller)
-    const body = createSchema.parse(await jsonBody(req, ITEM_BODY_LIMIT))
+    const { item, made } = await createItem(res, caller, createSchema.parse(await jsonBody(req, ITEM_BODY_LIMIT)))
+    return answer(res, item, caller, made ? 201 : 200)
+  }
+
+  /**
+   * One 待办 from a person's request, as `POST /work/items` makes it; a retry of the same request answers the same one
+   * (`made` false). `asPrivate`: private from the start (a team's member of a private lead).
+   */
+  async function createItem(
+    res: ServerResponse,
+    caller: DeviceCaller,
+    body: WorkItemCreateBody,
+    asPrivate = false,
+  ): Promise<{ item: WorkItemRecord; made: boolean }> {
     const { requestId: request, ...fields } = body
     const payloadHash = sha256Hex(canonicalJson(fields))
     const prior = store.receipt('create', caller.device.id, request)
     if (prior) {
       if (prior.payloadHash !== payloadHash) throw conflict()
       if (!prior.itemId) throw notFound()
-      return answer(res, visible(caller, prior.itemId), caller)
+      return { item: visible(caller, prior.itemId), made: false }
     }
     const title = checkedTitle(body.title)
     const prompt = checkedPrompt(body.prompt ?? '')
@@ -280,6 +301,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
         sessionIds: [],
         startScope: scopeOf(caller),
         titleScope: scopeOf(caller),
+        ...(asPrivate ? { private: true as const } : {}),
         createdAt: at,
         updatedAt: at,
         revision: 1,
@@ -298,7 +320,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
       return { result: record, changed: true }
     })
     deps.changed(item, [])
-    return answer(res, item, caller, 201)
+    return { item, made: true }
   }
 
   async function patch(req: IncomingMessage, res: ServerResponse, caller: DeviceCaller, id: string): Promise<void> {
@@ -473,21 +495,31 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
    */
   async function start(req: IncomingMessage, res: ServerResponse, caller: DeviceCaller, id: string): Promise<void> {
     writing(caller)
-    const body = startSchema.parse(await jsonBody(req, ITEM_BODY_LIMIT))
+    const started = await startItem(req, res, caller, id, startSchema.parse(await jsonBody(req, ITEM_BODY_LIMIT)))
+    await startAnswer(res, caller, id, started.sessionId, started.outside)
+  }
+
+  /** The start itself, for `POST …/start` and for a team's member (`extra`): everything above, and what it answers with. */
+  async function startItem(
+    req: IncomingMessage,
+    res: ServerResponse,
+    caller: DeviceCaller,
+    id: string,
+    body: WorkItemStartBody,
+    extra: WorkItemStartExtra = {},
+  ): Promise<{ sessionId: string; outside?: 'item-full' | 'item-gone' }> {
     const { requestId: request, baseRevision, ...choices } = body
     const current = visible(caller, id)
     const requestHash = sha256Hex(canonicalJson({ itemId: id, baseRevision, ...choices }))
     const prior = store.receipt('start', caller.device.id, request)
     if (prior && (prior.itemId !== id || prior.requestHash !== requestHash)) throw conflict()
-    if (prior?.state === 'done' && prior.sessionId) {
-      await startAnswer(res, caller, id, prior.sessionId, prior.outside)
-      return
-    }
+    if (prior?.state === 'done' && prior.sessionId)
+      return { sessionId: prior.sessionId, ...(prior.outside ? { outside: prior.outside } : {}) }
     if (current.revision !== baseRevision) throw changedError()
     if (current.closedAt) throw new AppError(409, 'item-closed', '待办已完成，请先重新打开。')
     if (!prior && current.sessionIds.length + (starting.get(id) ?? 0) >= WORK_ITEM_LIMITS.sessions)
       throw new AppError(409, 'item-full', `一条待办最多 ${WORK_ITEM_LIMITS.sessions} 个会话。`)
-    const withoutPrivateContext = current.startScope !== 'all'
+    const withoutPrivateContext = current.startScope !== 'all' || extra.withoutPrivateContext === true
     // The 待办's choices fill what the person left out; the permission mode is never one of them.
     const { requestId: _derived, ...finalInput } = {
       ...choices,
@@ -539,10 +571,11 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
         draft.receipts.push(receipt)
         return { result: undefined, changed: true }
       })
+      const privateFrom = isPrivate(current) ? `item:${id}` : extra.privateFrom
       started = await deps.start(req, caller, input, res, {
         withoutPrivateContext,
-        ...(isPrivate(current) ? { privateFrom: `item:${id}` } : {}),
-        ...(current.from?.external ? { outsideStart: true } : {}),
+        ...(privateFrom ? { privateFrom } : {}),
+        ...(current.from?.external || extra.outsideStart ? { outsideStart: true } : {}),
       })
     } catch (error) {
       // Refused before anything started: the request is forgotten, as `POST /tasks` forgets a failed start.
@@ -566,7 +599,8 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
       throw error
     }
     try {
-      await joinStarted(res, caller, id, request, started.sessionId)
+      const outside = await joinStarted(res, caller, id, request, started.sessionId)
+      return { sessionId: started.sessionId, ...(outside ? { outside } : {}) }
     } finally {
       release(id)
     }
@@ -578,7 +612,13 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
     else starting.delete(id)
   }
 
-  async function joinStarted(res: ServerResponse, caller: DeviceCaller, id: string, request: string, sessionId: string): Promise<void> {
+  async function joinStarted(
+    res: ServerResponse,
+    caller: DeviceCaller,
+    id: string,
+    request: string,
+    sessionId: string,
+  ): Promise<'item-full' | 'item-gone' | undefined> {
     // A start from a device with the full data scope can carry 通用's private context: the 待办 is private from now on.
     const priv = sessionPrivate(sessionId)
     const before = store.get(id)
@@ -593,7 +633,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
     })
     const item = store.get(id)
     if (item) deps.changed(item, outside ? [] : [sessionId])
-    await startAnswer(res, caller, id, sessionId, outside)
+    return outside
   }
 
   /** The session, the 待办 as it stands when this device may read it, and whether the session stands outside it. */
@@ -658,7 +698,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
     }
   }
 
-  return {
+  const module: RouteModule = {
     features: () => ({ workItems: true }) satisfies HostFeatures,
     async route({ req, res, caller, path, method }) {
       if (path !== ROOT && !path.startsWith(`${ROOT}/`)) return false
@@ -688,4 +728,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
       return true
     },
   }
+  return { module, createItem, startItem }
 }
+
+export type WorkItemRoutes = ReturnType<typeof createWorkItemRoutes>
