@@ -138,9 +138,11 @@ async function info(request: Json): Promise<Json> {
   const dir = dirOf(request)
   const api = await sdk()
   const found = (dir ? await api.getSessionInfo(id, { dir }) : undefined) ?? (await api.getSessionInfo(id, {}))
-  return found
-    ? { exists: true, ...(typeof found.lastModified === 'number' ? { lastModified: found.lastModified } : {}) }
-    : { exists: false }
+  if (found) return { exists: true, ...(typeof found.lastModified === 'number' ? { lastModified: found.lastModified } : {}) }
+  // A session with nothing to name it by (no summary, no prompt in words) has no info, yet its messages are there.
+  const near = dir ? await api.getSessionMessages(id, { dir, limit: 1 }) : []
+  const any = near.length ? near : await api.getSessionMessages(id, { limit: 1 })
+  return { exists: any.length > 0 }
 }
 
 async function messages(request: Json): Promise<Json> {

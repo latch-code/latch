@@ -169,9 +169,9 @@ async function computer(script: Script, host: Partial<HarnessHostOptions> = {}, 
     return made
   }
   const driver = await driverFor(extra.options?.claudeStore === true)
-  const open = async (store = extra.options?.claudeStore === true): Promise<Bridge> => {
+  const open = async (store = extra.options?.claudeStore === true, listed: typeof projects = projects): Promise<Bridge> => {
     const bridge = (await driverFor(store)).create({
-      projects: () => structuredClone(projects),
+      projects: () => structuredClone(listed),
       ...host,
       dataDir: join(root, 'data'),
       workspaceRoot: main,
@@ -323,7 +323,10 @@ describe('Claude’s own store under the runtime (a configuration directory of t
     expect(t.queries[0]!.options).not.toHaveProperty('resume')
     await bridge.close()
     const file = await transcript(t.fixture, claudeId, promptId, t.main)
-    bridge = await t.open(true)
+    // Nothing of the project is needed to delete it: its Claude settings changed and it is no longer listed.
+    await mkdir(join(t.main, '.claude'), { recursive: true })
+    await writeFile(join(t.main, '.claude', 'settings.json'), '{"permissions":{}}')
+    bridge = await t.open(true, [])
     await bridge.remove!(sessionId)
     await vi.waitFor(() => expect(existsSync(file)).toBe(false), { timeout: 8_000, interval: 20 })
   })

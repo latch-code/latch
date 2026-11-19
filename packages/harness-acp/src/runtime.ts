@@ -149,6 +149,7 @@ import { ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } f
 import { ForkRefused, type AgentWire } from './wires/types.ts'
 import { agentEnvironment, programPaths } from './environment.ts'
 import { loginShellValues } from './login-shell.ts'
+import { ClaudeStore } from './claude-store.ts'
 import {
   append,
   blockText,
@@ -3346,6 +3347,17 @@ export class AgentRuntime implements Bridge {
       confirmedOf(recorded.acp),
       () => this.stillListed(recorded),
     )
+  }
+
+  /** The environment a Claude session of this definition gets, as far as where Claude keeps its store goes. */
+  private claudeEnvironment(key: string): Record<string, string> {
+    const command = resolveCommand(this.agent.command) ?? this.agent.command
+    return agentEnvironment({
+      resolvedCommand: command,
+      ...(this.profile ? { profile: this.profile } : {}),
+      definitionEnv: this.agent.env,
+      sessionTmpDir: this.tmpDirFor(key),
+    })
   }
 
   /** Claude's direct wire, allowed to read its store: it deletes a session's record in a reader process, not in `claude`. */
@@ -6895,6 +6907,16 @@ export class AgentRuntime implements Bridge {
         }
         if (!acpSessionIds.length) return
         for (const id of acpSessionIds) live?.sessions.delete(id)
+        // Claude's direct wire deletes in a reader process with the session's environment, nothing of the project's
+        // runs: no launch fingerprint, project or command is needed for it.
+        if (!live && this.deletesWithoutStart()) {
+          const store = new ClaudeStore(this.claudeEnvironment(key))
+          for (const id of acpSessionIds) {
+            if ((await store.busy(id).catch(() => ({ busy: true }))).busy) continue
+            await store.delete(id, cwd).catch(() => {})
+          }
+          return
+        }
         if (
           live
             ? !live.capabilities.delete

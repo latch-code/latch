@@ -119,8 +119,6 @@ const AGENT_TOOLS = new Set(['Agent', 'Task'])
 /** How long a session's start waits for Claude's settings; past it the session starts as if none were read. */
 const SETTINGS_TIMEOUT_MS = 5_000
 const SETTINGS_TTL_MS = 30_000
-/** After Claude says it is idle again, how long a turn without its result waits before it ends without one. */
-const IDLE_SETTLE_MS = 1_500
 /** One page of `session/list`. */
 const LIST_PAGE = 100
 /** Claude Code's effort levels, lowest first: a cap in its settings (`maxEffortLevel`) leaves out those above it. */
@@ -331,8 +329,6 @@ class Inbox implements AsyncIterable<unknown> {
 /** The prompt being run, answered once its result came and, after a cancel, once `claude` acknowledged the interrupt. */
 interface Turn {
   uuid: string
-  /** Claude said it is running since this turn was sent (`session_state_changed`). */
-  running?: boolean
   resolve(result: unknown): void
   reject(error: Error): void
   cancelled: boolean
@@ -1297,29 +1293,15 @@ export class ClaudeWire implements AgentWire {
 
   /**
    * Claude's own word on whether it is working (`session_state_changed`), its authoritative signal that a turn is over:
-   * `idle` comes after the turn's result. A cancelled turn whose result came is settled by it even before the interrupt
-   * is acknowledged; a turn still without a result shortly after ends then, as failed, rather than waiting for ever.
+   * `idle` comes after the turn's result. A cancelled turn whose own result already came is settled by it, without
+   * waiting longer for the interrupt to be acknowledged. An `idle` alone settles nothing: it may be owed to an earlier
+   * result (the adapter counts such idles), so a turn without its result is not ended by it.
    */
   private onState(session: Session, state: unknown): void {
     const turn = this.turn
-    if (!turn || this.session !== session) return
-    if (state === 'running') {
-      turn.running = true
-      return
-    }
-    if (state !== 'idle' || !turn.running) return
-    if (turn.ended) {
-      turn.interrupted = true
-      void this.settle(turn, turn.ended)
-      return
-    }
-    setTimeout(() => {
-      if (this.turn !== turn) return
-      if (turn.ended) return void this.settle(turn, turn.ended)
-      this.turn = undefined
-      if (turn.cancelled || turn.stopped) turn.resolve({ stopReason: 'cancelled' })
-      else turn.reject(new RpcError(RPC.internal, 'Claude Code 结束了这一轮，但没有给出结果'))
-    }, IDLE_SETTLE_MS).unref()
+    if (!turn || this.session !== session || state !== 'idle' || !turn.ended) return
+    turn.interrupted = true
+    void this.settle(turn, turn.ended)
   }
 
   private onResult(session: Session, message: Record<string, unknown>): void {

@@ -1158,22 +1158,25 @@ describe('Claude’s own store, read only where the Host lets the wire', () => {
     ).rejects.toBeInstanceOf(ForkRefused)
   })
 
-  it('ends a turn when Claude says it is idle again and no result came', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout'] })
-    try {
-      const h = await stored()
-      const { sessionId } = (await h.wire.request('session/new', { cwd: fixture!.project, mcpServers: [] })) as { sessionId: string }
-      const q = h.queries[0]!
-      const answered = h.wire.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
-      answered.catch(() => {})
-      await vi.advanceTimersByTimeAsync(0)
-      q.out.push({ type: 'system', subtype: 'session_state_changed', state: 'running' })
-      q.out.push({ type: 'system', subtype: 'session_state_changed', state: 'idle' })
-      await vi.advanceTimersByTimeAsync(2_000)
-      await expect(answered).rejects.toThrow(/没有给出结果/u)
-    } finally {
-      vi.useRealTimers()
-    }
+  it('settles a cancelled turn whose result came once Claude says it is idle, and ends no turn on an idle alone', async () => {
+    const h = await stored()
+    const { sessionId } = (await h.wire.request('session/new', { cwd: fixture!.project, mcpServers: [] })) as { sessionId: string }
+    const q = h.queries[0]!
+    const answered = h.wire.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
+    let settled: unknown
+    void answered.then(value => (settled = value))
+    await tick()
+    // An idle owed to an earlier result: the turn goes on.
+    q.out.push({ type: 'system', subtype: 'session_state_changed', state: 'idle' })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(settled).toBeUndefined()
+    h.wire.notify('session/cancel', { sessionId })
+    q.out.push({ type: 'result', subtype: 'success', user_message_uuid: q.prompts[0]!.uuid, stop_reason: 'end_turn', usage: {} })
+    await tick()
+    expect(settled).toBeUndefined()
+    // The interrupt is not acknowledged yet; Claude says the turn is over.
+    q.out.push({ type: 'system', subtype: 'session_state_changed', state: 'idle' })
+    await vi.waitFor(() => expect(settled).toMatchObject({ stopReason: 'cancelled' }))
   })
 
   it('asks Claude for its limits on the session’s process, told to skip its scan, and reads only the shape it knows', async () => {

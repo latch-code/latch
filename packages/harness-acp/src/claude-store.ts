@@ -19,6 +19,24 @@ function locateRunner(): string {
   return candidates.find(path => existsSync(path)) ?? candidates[0]!
 }
 
+let available: boolean | undefined
+
+/**
+ * Whether this Host can read Claude's store: the runner is where a build or the sources put it and the Agent SDK is in a
+ * `node_modules` above it (a packaged Host has none). Only files are looked at; nothing is loaded.
+ */
+export function claudeStoreAvailable(): boolean {
+  if (available !== undefined) return available
+  const runner = locateRunner()
+  let found = false
+  for (let folder = dirname(runner); !found; folder = dirname(folder)) {
+    found = existsSync(join(folder, 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'package.json'))
+    if (dirname(folder) === folder) break
+  }
+  available = existsSync(runner) && found
+  return available
+}
+
 /** The variables the runner gets, and nothing else: where the store is, and what `resolveSettings` may run (`plutil`). */
 const STORE_ENV = ['HOME', 'USER', 'PATH', 'TMPDIR', 'LANG', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_PROJECT_DIR_NAME'] as const
 

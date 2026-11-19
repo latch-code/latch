@@ -1,4 +1,5 @@
 export type { AgentRecord } from '@latch/protocol'
+import { claudeStoreAvailable } from './claude-store.ts'
 import type { TokenUsage } from '@latch/protocol'
 import type { QuotaReport } from './quota.ts'
 
@@ -101,7 +102,8 @@ export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
   }
   return {
     requireConfirmedCommand: options.requireConfirmedCommand === true,
-    claudeStore: options.claudeStore === true,
+    // Only where the reader can run: a packaged Host without the SDK reads nothing and advertises nothing of it.
+    claudeStore: options.claudeStore === true && claudeStoreAvailable(),
     cancelGraceMs: pick(options.cancelGraceMs, 30_000),
     idleMs: pick(options.idleMs, 10 * 60_000),
     agentIdleMs: Math.max(pick(options.agentIdleMs, 30 * 60_000), pick(options.idleMs, 10 * 60_000)),

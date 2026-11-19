@@ -83,6 +83,12 @@ describe('Claude store reader (real Agent SDK, a configuration directory of the 
     expect(page.more).toBe(false)
     expect(await store.info(S1, fixture.project)).toMatchObject({ exists: true })
     expect(await store.info(S3, fixture.project)).toEqual({ exists: false })
+    // A session with nothing to name it by still has its record.
+    const l = line(S3, fixture.project, 'sdk-ts')
+    await fixture.write(S3, [
+      l(prompt(uuidOf(301), null, [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AA==' } }])),
+    ])
+    expect((await store.info(S3, fixture.project)).exists).toBe(true)
   })
 
   it('reads the session the environment names, not the Host’s: another directory holds none of it', async () => {
