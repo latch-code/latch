@@ -434,6 +434,12 @@ describe('the model a member runs on', () => {
 describe('who reads a team, and as whom its results go back', () => {
   it("makes a private lead's members private and shows the team only to the full data scope", SLOW, async () => {
     const { t, owner } = await fixture()
+    // Enrolled before anything runs: once the results go back the lead works on them in full access, which holds every
+    // confirmation (a new device's too) until it settles.
+    const devices = {
+      work: await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'], dataScope: 'work' }),
+      files: await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'], dataScope: 'files' }),
+    }
     const lead = await leadSession(owner)
     const original = t.host.bridge.agentPrivate.bind(t.host.bridge)
     vi.spyOn(t.host.bridge, 'agentPrivate').mockImplementation(id => id === lead || original(id))
@@ -444,7 +450,7 @@ describe('who reads a team, and as whom its results go back', () => {
     expect((await returnsIn(owner, lead))[0]).toContain('echo: echo secret')
     expect((await snapshotOf(owner)).teams?.map(row => row.id)).toEqual([team.id])
     for (const dataScope of ['work', 'files'] as const) {
-      const device = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'], dataScope })
+      const device = devices[dataScope]
       const snapshot = await snapshotOf(device)
       expect(snapshot.teams, dataScope).toBeUndefined()
       expect(JSON.stringify(snapshot), dataScope).not.toContain(team.id)
@@ -459,6 +465,8 @@ describe('who reads a team, and as whom its results go back', () => {
 
   it("keeps a member's reply out of a lead that is not private once the member is, and hides that member's session", SLOW, async () => {
     const { t, owner } = await fixture()
+    // Before anything runs, as above: the lead's turn on the results would hold the new device's confirmation.
+    const device = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'], dataScope: 'work' })
     const lead = await leadSession(owner)
     const team = await started(owner, lead, { tasks: [task('会变私有', 'permission', 'beta'), task('公开的', 'echo open', 'alpha')] })
     const secret = team.members[0]!.sessionId!
@@ -472,7 +480,6 @@ describe('who reads a team, and as whom its results go back', () => {
     expect(text).toContain('【会变私有】（Beta）：已完成\n它的会话是私有的，结果没有带回')
     expect(text).not.toContain('allowed')
     expect(text).toContain('echo: echo open')
-    const device = await t.enroll({ listener: 'loopback-tcp', scopes: ['view', 'run'], dataScope: 'work' })
     const seen = (await snapshotOf(device)).teams?.find(row => row.id === team.id)
     expect(seen?.members[0]).toEqual(expect.not.objectContaining({ sessionId: expect.anything(), said: expect.anything() }))
     expect(seen?.members[1]).toMatchObject({ sessionId: team.members[1]!.sessionId, said: 'echo: echo open' })
