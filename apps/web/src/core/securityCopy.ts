@@ -867,6 +867,8 @@ export const NATIVE_LINK_COPY = defineCopy(
     enable: '连接手机',
     scan: '用 iPhone 上的 Latch 扫码',
     sameWifi: '和这台 Mac 连同一个 Wi‑Fi',
+    /** The QR's address is the iPhone's Personal Hotspot over USB. */
+    byCable: '用数据线连接这台 Mac',
     /** The known cost of trusting a device once, said where that trust is given. */
     drivesAgents: '连接后，拿着这台解锁手机的人可以操作这台 Mac 上的 Agent，直到你移除它。',
     qrAlt: '原生客户端配对二维码',
@@ -891,6 +893,7 @@ export const NATIVE_LINK_COPY = defineCopy(
     enable: 'Connect a phone',
     scan: 'Scan with Latch on iPhone',
     sameWifi: 'Use the same Wi‑Fi as this Mac',
+    byCable: 'Connect to this Mac by cable',
     drivesAgents: 'Once connected, whoever holds this unlocked phone can operate the Agents on this Mac until you remove it.',
     qrAlt: 'QR code for pairing the iPhone app',
     qrFailed: 'Could not make the QR code. Close this and open it again.',

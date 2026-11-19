@@ -87,16 +87,22 @@ function linkLocal(address: string): boolean {
   return ip.family === 4 ? ip.bytes[0] === 169 && ip.bytes[1] === 254 : ip.bytes[0] === 254 && (ip.bytes[1]! & 192) === 128
 }
 
-/** A logical auto setting remains stable while the bound address follows this snapshot. No wildcard or tunnel is chosen. */
+/**
+ * A logical auto setting remains stable while the bound address follows this snapshot. No wildcard or tunnel is chosen.
+ * An iPhone sharing its connection over the cable comes first: the one listener goes where the phone in hand can reach
+ * it, and phones on the Wi‑Fi use their relay while the cable is in. Nothing about the cable grants a scope.
+ */
 export function selectAutoDirect(
   snapshot: NativeNetworkSnapshot,
   config: NativeDirect,
   current: NativeDirect | null,
 ): NativeDirect | undefined {
   if (config.host !== 'auto') return config
-  const choices = snapshot.interfaces
-    .filter(row => physical(row) && !linkLocal(row.address))
-    .toSorted((a, b) => parseIp(a.address).family - parseIp(b.address).family || a.index - b.index || a.address.localeCompare(b.address))
+  const all = snapshot.interfaces
+      .filter(row => physical(row) && !linkLocal(row.address))
+      .toSorted((a, b) => parseIp(a.address).family - parseIp(b.address).family || a.index - b.index || a.address.localeCompare(b.address)),
+    tethers = all.filter(row => row.tether),
+    choices = tethers.length > 0 ? tethers : all
   const selected = choices.find(row => current && sameIp(row.address, current.host)) ?? choices[0]
   return selected ? { host: selected.address, port: config.port || current?.port || 0 } : undefined
 }
@@ -179,6 +185,10 @@ export class NativeNetwork {
   }
   currentEpoch(): string | undefined {
     return this.snapshot?.epoch
+  }
+  /** Whether the bound address is on an iPhone's USB hotspot, for the sheet's label only. */
+  cable(): boolean {
+    return this.rows().some(row => row.tether === true)
   }
   async resolveDirect(config: NativeDirect | null, current: NativeDirect | null): Promise<NativeDirect | undefined> {
     if (!config) return undefined

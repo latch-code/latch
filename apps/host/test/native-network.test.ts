@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, chmod, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { isIP } from 'node:net'
 import { afterEach, expect, it, vi } from 'vitest'
 import { gatewayHash } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client'
@@ -40,8 +41,10 @@ class Backend implements NativeNetworkBackend {
     this.services = structuredClone(services)
     this.calls.push({ services, epoch })
   }
-  async neighbors() {
-    return { epoch: this.state.epoch, peerMac: this.peerMac, gatewayMac: this.gatewayMac, gateway: row.gateway }
+  /** Each interface answers with its own router, as the helper reads it per service. */
+  async neighbors(index: number = row.index, source: string = row.address) {
+    const own = this.state.interfaces.find(item => item.index === index && item.gateway && isIP(item.address) === isIP(source))
+    return { epoch: this.state.epoch, peerMac: this.peerMac, gatewayMac: this.gatewayMac, gateway: own?.gateway ?? null }
   }
   onChange(listener: (snapshot: NativeNetworkSnapshot) => void) {
     this.changes.add(listener)
@@ -380,4 +383,90 @@ it('fails closed for relay paths, without a local address, and when the neighbou
     gateway: row.gateway,
   })
   expect(await s.controller.pairingNearby(pairingOpening('192.168.1.9'), s.hash)).toBe(false)
+})
+
+// This Mac's shape: traffic goes over the USB adapter (primary), and the phone is on the Wi‑Fi beside it.
+const wired = { name: 'en13', index: 33, address: '10.40.12.20', prefixLength: 22, kind: 'ethernet' as const, gateway: '10.40.12.1' }
+const wifi = { name: 'en0', index: 14, address: '10.60.40.8', prefixLength: 19, kind: 'wifi' as const, gateway: '10.60.32.1' }
+const onWifi = (source: string): NativeOpening => ({ ...pairingOpening(source), localAddress: wifi.address })
+it('matches a phone on the Wi‑Fi by the Wi‑Fi router when the cable is the primary interface, never by the cable’s router', async () => {
+  const s = await setup()
+  const { gateway: _primaryOnly, ...unrouted } = wifi
+  // Before: the helper gave only the primary interface a gateway, so the Wi‑Fi row had none and pairing was refused.
+  s.backend.change([unrouted, wired])
+  s.bind({ host: wifi.address, port: 4319 })
+  const phone = await gatewayHash(nodeCrypto, '10.60.40.77', wifi.prefixLength, wifi.gateway)
+  expect(await s.controller.pairingNearby(onWifi('10.60.40.77'), phone)).toBe(false)
+  // The owner's check: the same phone passes once the Wi‑Fi row carries its own router.
+  s.backend.change([wifi, wired])
+  expect(await s.controller.pairingNearby(onWifi('10.60.40.77'), phone)).toBe(knownNetworkHash(wifi, s.backend.gatewayMac!))
+  // The primary interface's router says nothing about the Wi‑Fi.
+  const cable = await gatewayHash(nodeCrypto, '10.60.40.77', wifi.prefixLength, wired.gateway)
+  expect(await s.controller.pairingNearby(onWifi('10.60.40.77'), cable)).toBe(false)
+  expect(await s.controller.pairingNearby(onWifi('10.60.40.77'), new Uint8Array(32))).toBe(false)
+  // A phone on the cable's network cannot use the Wi‑Fi socket, whatever it claims.
+  expect(await s.controller.pairingNearby(onWifi('10.40.12.80'), phone)).toBe(false)
+})
+
+// The iPhone shares its connection over USB: the Mac gets an Ethernet interface and the phone is its router.
+const tether = {
+  name: 'en8',
+  index: 41,
+  address: '172.20.10.2',
+  prefixLength: 28,
+  kind: 'ethernet' as const,
+  gateway: '172.20.10.1',
+  tether: true as const,
+}
+it('binds to the iPhone on the cable before the Wi‑Fi, and labels only that address as the cable', async () => {
+  const { selectAutoDirect } = await import('../src/native-network.ts')
+  const snapshot: NativeNetworkSnapshot = { epoch: randomUUID(), interfaces: [wifi, wired, tether] }
+  expect(selectAutoDirect(snapshot, { host: 'auto', port: 0 }, { host: wifi.address, port: 4319 })).toEqual({
+    host: tether.address,
+    port: 4319,
+  })
+  expect(
+    selectAutoDirect({ ...snapshot, interfaces: [wifi, wired] }, { host: 'auto', port: 0 }, { host: tether.address, port: 4319 }),
+  ).toEqual({
+    host: wifi.address,
+    port: 4319,
+  })
+  // A link-local or tunnel address on the cable is never bound.
+  expect(
+    selectAutoDirect(
+      { ...snapshot, interfaces: [{ ...tether, address: 'fe80::2', prefixLength: 64, gateway: 'fe80::1' }, wired] },
+      { host: 'auto', port: 0 },
+      null,
+    ),
+  ).toEqual({ host: wired.address, port: 0 })
+  expect(selectAutoDirect({ ...snapshot, interfaces: [{ ...tether, kind: 'tunnel' }, wired] }, { host: 'auto', port: 0 }, null)).toEqual({
+    host: wired.address,
+    port: 0,
+  })
+  expect(networkSnapshotSchema.safeParse(snapshot).success).toBe(true)
+  expect(networkSnapshotSchema.safeParse({ ...snapshot, interfaces: [{ ...tether, tether: false }] }).success).toBe(false)
+  expect(networkSnapshotSchema.safeParse({ ...snapshot, interfaces: [{ ...tether, kind: 'usb' }] }).success).toBe(false)
+  const s = await setup()
+  s.backend.change([wifi, tether])
+  s.bind({ host: wifi.address, port: 4319 })
+  await vi.waitFor(() => expect(s.controller.currentEpoch()).toBe(s.backend.state.epoch))
+  expect(s.controller.cable()).toBe(false)
+  s.bind({ host: tether.address, port: 4319 })
+  expect(s.controller.cable()).toBe(true)
+})
+it('pairs the iPhone that is the hotspot on the cable, and nothing it forwards', async () => {
+  const s = await setup()
+  s.backend.change([wifi, tether])
+  s.bind({ host: tether.address, port: 4319 })
+  const onCable = (source: string): NativeOpening => ({ ...pairingOpening(source), localAddress: tether.address })
+  // The phone hashes its own hotspot subnet with itself as the router; the Mac hashes the same network.
+  const phone = await gatewayHash(nodeCrypto, tether.gateway, tether.prefixLength, tether.gateway)
+  s.backend.peerMac = s.backend.gatewayMac
+  expect(await s.controller.pairingNearby(onCable(tether.gateway), phone)).toBe(knownNetworkHash(tether, s.backend.gatewayMac!))
+  // The Wi‑Fi's router, another device behind the phone, and daily proximity all stay refused.
+  expect(
+    await s.controller.pairingNearby(onCable(tether.gateway), await gatewayHash(nodeCrypto, wifi.address, wifi.prefixLength, wifi.gateway)),
+  ).toBe(false)
+  expect(await s.controller.pairingNearby(onCable('172.20.10.4'), phone)).toBe(false)
+  expect(await s.controller.nearby({ ...s.opening, source: tether.gateway, localAddress: tether.address }, phone, () => {})).toBe(false)
 })

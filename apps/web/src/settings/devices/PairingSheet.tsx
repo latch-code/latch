@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Wifi } from 'lucide-react'
+import { Cable, Wifi } from 'lucide-react'
 import type { AppSnapshot, NativePairingInvitation, NativePairingStatus } from '@latch/protocol'
 import { Button, Icon, InlineNotice, Modal, ModalHeader, Spinner, OfflineGlyph } from '@latch/ui'
 import { useViewport } from '../../breakpoints.ts'
@@ -276,8 +276,8 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
         <div className="pair-foot" data-dim={busy ? '' : undefined}>
           <p className="pair-foot-title">{COPY.scan}</p>
           <p className="pair-foot-note pair-foot-wifi">
-            <Icon icon={Wifi} size={12} />
-            <span>{COPY.sameWifi}</span>
+            <Icon icon={invitation?.cable ? Cable : Wifi} size={12} />
+            <span>{invitation?.cable ? COPY.byCable : COPY.sameWifi}</span>
           </p>
           <p className="pair-foot-note">{COPY.drivesAgents}</p>
         </div>

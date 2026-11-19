@@ -25,6 +25,9 @@ sources:
   - packages/link-wire/src/pass.ts
   - apps/host/src/routes/native.ts
   - apps/host/src/native-settings.ts
+  - apps/host/src/native-network.ts
+  - apps/host/src/native-network-backend.ts
+  - native/macos/LatchNetwork.swift
   - apps/host/src/relay/controller.ts
   - apps/host/src/relay/profiles.ts
   - apps/host/src/relay/official.ts
@@ -42,6 +45,13 @@ sources:
 
 - **谁能看到什么。** 中继的运营者（你自己）与平台（服务器所在的云，或 Cloudflare）能看到：两端 IP、时间、填充后的大小与方向、路由标识、哪条路由被接通、通行证字段、路由令牌与准入证明。看不到：会话正文、Host 身份、设备授权，它们都在端到端的内层。Latch 的中继代码不写日志、不存完整 IP；Cloudflare 自己的边缘日志不在 Latch 控制之内，部署时关闭了 Workers 的日志与观测。
 - 当前没有官方中继的行、开关与「优先使用」设置。
+
+### 同一网络怎样判断
+
+- **网络组件。** `latch-network`（`native/macos/LatchNetwork.swift`）把这台 Mac 的地址交给 Host，最多 16 行：先排物理网口（`en*` 的 Wi‑Fi、有线）的私网 IPv4，再排它们的唯一本地与链路本地 IPv6，隧道最后，所以排在系统列表末尾的 USB 网卡不会被挤掉。每个接口的网关取它自己服务的 `Router`（`State:/Network/Service/<id>/IPv4|6`），不是只有主接口才有；同一接口两个服务给出不同网关时不给网关。
+- **配对的邻近证明。** 手机报它所在网络的网关哈希；Host 只用手机连进来的那个地址（`localAddress`）所在接口的网关比对，再看邻居表里手机与网关的硬件地址。不符就拒绝，不会借用另一个接口的网关。
+- **iPhone 的个人热点经数据线。** iPhone 用数据线共享网络时，这台 Mac 多一个以太网接口，iPhone 是它的网关。组件按 USB 厂商（Apple）与产品名（iPhone、iPad）认出它并标为 `tether`，连接簿里它仍是 `ethernet`。自动选址时它排在 Wi‑Fi 与有线之前：数据线插着时直连入口在这根线上，二维码下方显示「用数据线连接这台 Mac」，同一 Wi‑Fi 的其他手机这段时间经中继连接。邻近证明照常：手机就是网关，只在配对时、且来源就是网关地址时成立。数据线本身不建立信任，配对仍要扫码并在 Mac 上确认。
+- **只有数据线、不开热点**：尚未实现。要由 Mac 经 usbmuxd（系统未公开的接口）拨到手机 App 的回环端口，还需要一种不靠局域网的邻近证据。
 
 ## 中继协议的身份
 

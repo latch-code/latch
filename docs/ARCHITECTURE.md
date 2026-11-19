@@ -843,7 +843,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `PATCH /devices/:id` | `admin`；授予权限或扩大数据范围需本机与本机确认 | 调整权限与数据范围 |
 | `PATCH /devices/:id/name`、`GET /enrollments` | 本机 `admin` | 重命名任一设备；仍在等待的登记 |
 | `POST /pairings` | 本机 `admin` 或匿名 | 配对邀请 `{ scopes?, target? }`；未配置 HTTPS 入口时 409 `tls-not-configured`。桌面端只由主进程调用 |
-| `GET /native/info`、`/native/pairings…`、`/native/relays…`（含 `PATCH /native/relays/:id` 停用与启用、`POST /native/relays/:id/test` 测试）、`/native/relay-requests/:id`、`PUT /native/official-relay`、`DELETE /native/directory` | 本机 `admin`（`GET /native/info`：任何 `admin` 设备，或本机匿名；测试：本机 `admin` 或本机匿名）；添加中继需本机确认 | 手机配对二维码、设置 › 连接转发（[RELAY.md](RELAY.md)）。签发二维码要先打开局域网入口：没有网络时 409 `native-no-lan`，完全访问的会话运行或等待时 409 `presence-blocked` |
+| `GET /native/info`、`/native/pairings…`、`/native/relays…`（含 `PATCH /native/relays/:id` 停用与启用、`POST /native/relays/:id/test` 测试）、`/native/relay-requests/:id`、`PUT /native/official-relay`、`DELETE /native/directory` | 本机 `admin`（`GET /native/info`：任何 `admin` 设备，或本机匿名；测试：本机 `admin` 或本机匿名）；添加中继需本机确认 | 手机配对二维码、设置 › 连接转发（[RELAY.md](RELAY.md)）。签发二维码要先打开局域网入口：没有网络时 409 `native-no-lan`；入口在 iPhone 的数据线热点上时回执带 `cable: true`（[RELAY.md](RELAY.md#同一网络怎样判断)）；完全访问的会话运行或等待时 409 `presence-blocked` |
 | `/native/pairing`、`/native/verification…`、`/native/revocation…`、`/native/address-book`、`/native/proximity`、`/native/bulk` | 原生连接上的设备 | 手机 App 的验证窗口、撤销通知、地址簿与文件传输 |
 | `GET`/`DELETE /confirmations/:id` | 发起确认的设备 | 查询或取消本机确认 |
 | `GET /audit/head`、`GET /audit/hash?seq=` | `view` | 审计检查点 |

@@ -442,7 +442,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       recheck(caller, 'admin')
       const invitation = await nativeSettings.whileOpen(() => host.invite({ inviter: caller.device }, actorOf(caller)))
       nativeNetwork?.reconcile()
-      json(res, { invitation }, 201)
+      json(res, { invitation: { ...invitation, ...(nativeNetwork?.cable() ? { cable: true } : {}) } }, 201)
       return true
     }
     const rejected = /^\/link\/api\/native\/pairings\/([^/]+)\/device$/u.exec(path)

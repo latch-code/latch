@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IOKit
 import SystemConfiguration
 import dnssd
 
@@ -119,6 +120,120 @@ private func neighborFixture() -> Bool {
   let scoped = cachedNeighbor(bytes6, peer6, 3) == "00:11:22:33:44:55"
   return valid && wrongInterface && truncated && invalidLength && badHardware && scoped
 }
+/** One address of one interface, before the snapshot bound picks which rows the Host sees. */
+private struct Candidate: Sendable {
+  let name: String
+  let index: UInt32
+  let address: String
+  let prefixLength: Int
+  let kind: String
+  var gateway: String? = nil
+  var tether = false
+  var row: [String: Any] {
+    var value: [String: Any] = ["name": name, "index": index, "address": address, "prefixLength": prefixLength, "kind": kind]
+    if let gateway { value["gateway"] = gateway }
+    if tether { value["tether"] = true }
+    return value
+  }
+}
+/** The Host parses at most this many rows; a longer list fails its schema. */
+private let snapshotLimit = 16
+/** The Host's discovery rule (link-wire `isPrivateDiscoveryAddress`): private, shared, link-local and unique-local ranges. */
+private func usable(_ parsed: Address) -> (private: Bool, linkLocal: Bool) {
+  let bytes = [UInt8](parsed.bytes)
+  if parsed.family == AF_INET {
+    let linkLocal = bytes[0] == 169 && bytes[1] == 254
+    let shared = bytes[0] == 10 || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) || (bytes[0] == 192 && bytes[1] == 168) || (bytes[0] == 100 && bytes[1] >= 64 && bytes[1] <= 127)
+    return (shared || linkLocal, linkLocal)
+  }
+  let linkLocal = bytes[0] == 254 && bytes[1] & 192 == 128
+  return (bytes[0] & 254 == 252 || linkLocal, linkLocal)
+}
+/**
+ * Which rows fit in the bound: getifaddrs lists a USB adapter or a cabled iPhone after the built-in ports and dozens of
+ * tunnels, and a count cut at the front dropped the interface in use. A physical interface's private IPv4 address comes
+ * first, then its unique-local and link-local IPv6 ones, then anything else; tunnels last. Ties keep the system's order.
+ */
+private func relevant(_ rows: [Candidate], limit: Int = snapshotLimit) -> [Candidate] {
+  func rank(_ row: Candidate) -> Int {
+    guard row.kind != "tunnel", row.name.range(of: "^en[0-9]+$", options: .regularExpression) != nil, let parsed = address(row.address) else { return 6 }
+    let scope = usable(parsed), v4 = parsed.family == AF_INET
+    if scope.private && !scope.linkLocal { return v4 ? 0 : 1 }
+    if scope.linkLocal { return v4 ? 2 : 3 }
+    return v4 ? 4 : 5
+  }
+  let ranked: [(rank: Int, offset: Int)] = rows.indices.map { (rank: rank(rows[$0]), offset: $0) }
+  let ordered = ranked.sorted { (a: (rank: Int, offset: Int), b: (rank: Int, offset: Int)) -> Bool in a.rank != b.rank ? a.rank < b.rank : a.offset < b.offset }
+  return ordered.prefix(limit).map { rows[$0.offset] }
+}
+/**
+ * Each interface's own router, from every service's state (`State:/Network/Service/<id>/IPv4|6`), keyed `family:name`.
+ * The global key names only the primary interface's router, so Wi-Fi beside a cable used to have none. Two services that
+ * name different routers for one interface give it none: an ambiguous gateway proves nothing.
+ */
+private func serviceRouters(_ values: [String: Any]) -> [String: String] {
+  var routers: [String: String] = [:], ambiguous = Set<String>()
+  for (key, value) in values {
+    let family = key.hasSuffix("/IPv4") ? 4 : key.hasSuffix("/IPv6") ? 6 : 0
+    guard family != 0, key.hasPrefix("State:/Network/Service/"), let entry = value as? [String: Any], let name = entry["InterfaceName"] as? String,
+      name.range(of: "^[a-zA-Z0-9_.-]{1,32}$", options: .regularExpression) != nil, let text = entry["Router"] as? String,
+      let bare = text.split(separator: "%").first.map(String.init), let parsed = address(bare), parsed.family == (family == 4 ? AF_INET : AF_INET6) else { continue }
+    let slot = "\(family):\(name)"
+    if let known = routers[slot], known != bare { ambiguous.insert(slot) }
+    routers[slot] = bare
+  }
+  for slot in ambiguous { routers.removeValue(forKey: slot) }
+  return routers
+}
+/** An iPhone or iPad sharing its connection over USB: Apple's USB vendor and the device's own product string. */
+private func tetherDevice(vendor: Int?, product: String?) -> Bool {
+  vendor == 0x05ac && (product == "iPhone" || product == "iPad")
+}
+/** Reads the USB device under a BSD interface through public IOKit; any other interface, or a failed lookup, is not one. */
+private func tethered(_ name: String) -> Bool {
+  guard name.range(of: "^en[0-9]+$", options: .regularExpression) != nil, let matching = IOBSDNameMatching(kIOMainPortDefault, 0, name) else { return false }
+  let service = IOServiceGetMatchingService(kIOMainPortDefault, matching)
+  guard service != IO_OBJECT_NULL else { return false }
+  defer { IOObjectRelease(service) }
+  let options = IOOptionBits(kIORegistryIterateRecursively | kIORegistryIterateParents)
+  func property(_ key: String) -> CFTypeRef? { IORegistryEntrySearchCFProperty(service, kIOServicePlane, key as CFString, kCFAllocatorDefault, options) }
+  return tetherDevice(vendor: (property("idVendor") as? NSNumber)?.intValue, product: (property("kUSBProductString") ?? property("USB Product Name")) as? String)
+}
+/** This Mac's shape: 24 rows, the USB adapter last behind tunnels, Wi-Fi with its own non-primary router. */
+private func selectionFixture() -> Bool {
+  var rows: [Candidate] = []
+  for (offset, name) in ["anpi0", "anpi1", "en4", "en6", "en7", "en1", "en2", "en3", "bridge0"].enumerated() {
+    rows.append(Candidate(name: name, index: UInt32(offset + 2), address: "fe80::\(offset + 1)", prefixLength: 64, kind: name.hasPrefix("en") ? "ethernet" : "tunnel"))
+  }
+  rows.append(Candidate(name: "en0", index: 13, address: "10.60.40.8", prefixLength: 19, kind: "wifi"))
+  rows.append(Candidate(name: "awdl0", index: 15, address: "fe80::30", prefixLength: 64, kind: "tunnel"))
+  rows.append(Candidate(name: "llw0", index: 16, address: "fe80::31", prefixLength: 64, kind: "tunnel"))
+  for offset in 0..<9 { rows.append(Candidate(name: "utun\(offset)", index: UInt32(offset + 20), address: "fe80::\(offset + 40)", prefixLength: 64, kind: "tunnel")) }
+  rows.append(Candidate(name: "en8", index: 41, address: "172.20.10.2", prefixLength: 28, kind: "ethernet", tether: true))
+  rows.append(Candidate(name: "en13", index: 40, address: "10.40.12.20", prefixLength: 22, kind: "ethernet"))
+  rows.append(Candidate(name: "en13", index: 40, address: "fe80::77", prefixLength: 64, kind: "ethernet"))
+  let kept = relevant(rows)
+  // The old cut, the first 16 in the system's order, had neither the cable nor the adapter in use.
+  let selection = rows.count == 24 && !rows.prefix(snapshotLimit).contains(where: { $0.name == "en13" || $0.name == "en8" })
+    && kept.count == snapshotLimit && kept.prefix(3).map(\.name) == ["en0", "en8", "en13"]
+    && kept.contains(where: { $0.address == "fe80::77" }) && kept.prefix(10).allSatisfy({ $0.kind != "tunnel" }) && kept.suffix(6).allSatisfy({ $0.kind == "tunnel" })
+    && relevant(Array(rows.prefix(4)), limit: snapshotLimit).count == 4
+  let routers = serviceRouters([
+    "State:/Network/Service/A/IPv4": ["InterfaceName": "en13", "Router": "10.40.12.1"],
+    "State:/Network/Service/B/IPv4": ["InterfaceName": "en0", "Router": "10.60.32.1"],
+    "State:/Network/Service/B/IPv6": ["InterfaceName": "en0", "Router": "fe80::1:2ff:fe3:4%en0"],
+    "State:/Network/Service/C/IPv4": ["InterfaceName": "en8", "Router": "172.20.10.1"],
+    "State:/Network/Service/D/IPv4": ["InterfaceName": "en5", "Router": "192.168.1.1"],
+    "State:/Network/Service/E/IPv4": ["InterfaceName": "en5", "Router": "192.168.9.1"],
+    "State:/Network/Service/F/IPv4": ["InterfaceName": "en6", "Router": "fd00::1"],
+    "State:/Network/Service/G/IPv4": ["InterfaceName": "en7"],
+    "State:/Network/Global/IPv4": ["InterfaceName": "en9", "Router": "10.9.9.1"],
+  ])
+  let perInterface = routers == ["4:en13": "10.40.12.1", "4:en0": "10.60.32.1", "6:en0": "fe80::1:2ff:fe3:4", "4:en8": "172.20.10.1"]
+  let tether = tetherDevice(vendor: 1452, product: "iPhone") && tetherDevice(vendor: 1452, product: "iPad")
+    && !tetherDevice(vendor: 3034, product: "iPhone") && !tetherDevice(vendor: 1452, product: "USB 10/100/1000 LAN") && !tetherDevice(vendor: nil, product: nil)
+  return selection && perInterface && tether
+}
 private struct Service: Decodable, Sendable {
   let index: UInt32
   let port: UInt16
@@ -237,7 +352,8 @@ private final class Engine: @unchecked Sendable {
       guard let context else { return }; Unmanaged<Engine>.fromOpaque(context).takeUnretainedValue().changed()
     }, &context)
     if let store {
-      return SCDynamicStoreSetNotificationKeys(store, nil, ["State:/Network/Global/IPv[46]", "State:/Network/Interface/.*/(IPv[46]|Link|AirPort)"] as CFArray) && SCDynamicStoreSetDispatchQueue(store, queue)
+      // A service's router changes the gateway of its own interface, primary or not.
+      return SCDynamicStoreSetNotificationKeys(store, nil, ["State:/Network/Global/IPv[46]", "State:/Network/Service/[^/]+/IPv[46]", "State:/Network/Interface/.*/(IPv[46]|Link|AirPort)"] as CFArray) && SCDynamicStoreSetDispatchQueue(store, queue)
     }
     return false
   }
@@ -250,21 +366,28 @@ private final class Engine: @unchecked Sendable {
     var first: UnsafeMutablePointer<ifaddrs>?
     guard getifaddrs(&first) == 0 else { return [] }
     defer { freeifaddrs(first) }
-    var cursor = first, rows: [[String: Any]] = []
-    while let value = cursor {
+    var routers: [String: String] = [:]
+    if let store, let values = SCDynamicStoreCopyMultiple(store, nil, ["State:/Network/Service/[^/]+/IPv[46]"] as CFArray) as? [String: Any] { routers = serviceRouters(values) }
+    var cursor = first, rows: [Candidate] = [], tethers: [String: Bool] = [:], visited = 0
+    while let value = cursor, visited < 1024 {
       cursor = value.pointee.ifa_next
+      visited += 1
       let item = value.pointee, flags = item.ifa_flags
       guard flags & UInt32(IFF_UP) != 0, flags & UInt32(IFF_LOOPBACK) == 0, let socket = item.ifa_addr, let mask = item.ifa_netmask,
         socket.pointee.sa_family == UInt8(AF_INET) || socket.pointee.sa_family == UInt8(AF_INET6), let ip = numeric(socket), let bits = prefix(mask) else { continue }
       let name = String(cString: item.ifa_name), index = if_nametoindex(item.ifa_name)
-      guard index > 0, rows.count < 16 else { continue }
-      var row: [String: Any] = ["name": name, "index": index, "address": ip, "prefixLength": bits, "kind": kinds[name] ?? "tunnel"]
+      guard index > 0 else { continue }
+      var row = Candidate(name: name, index: index, address: ip, prefixLength: bits, kind: kinds[name] ?? "tunnel")
       let family = socket.pointee.sa_family == UInt8(AF_INET) ? 4 : 6
-      if let store, let global = SCDynamicStoreCopyValue(store, "State:/Network/Global/IPv\(family)" as CFString) as? [String: Any], global["PrimaryInterface"] as? String == name,
-        let gateway = global["Router"] as? String, let value = gateway.split(separator: "%").first, address(String(value)) != nil { row["gateway"] = String(value) }
+      // Never another interface's router: the primary service's router is its own interface's, as for any other.
+      row.gateway = routers["\(family):\(name)"]
+      if row.kind == "ethernet" {
+        if tethers[name] == nil { tethers[name] = tethered(name) }
+        row.tether = tethers[name] ?? false
+      }
       rows.append(row)
     }
-    return rows
+    return relevant(rows).map(\.row)
   }
   func handle(_ bytes: Data) {
     guard bytes.count <= 32768, let object = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any], Set(object.keys).isSubset(of: ["version", "id", "method", "services", "index", "source", "epoch"]),
@@ -299,7 +422,7 @@ private final class Engine: @unchecked Sendable {
       let valid = Service(index: 1, port: 4319, instance: "75253tsynaig", alternate: "4i55tlgepa4d", addresses: ["192.168.1.4", "fd00::4"]).valid()
       let invalid = !Service(index: 0, port: 0, instance: "MacBook", alternate: "other", addresses: ["malformed"]).valid()
       let normalized = mac("0:12:34:56:78:9a") == "00:12:34:56:78:9a" && mac("ff:ff:ff:ff:ff:ff") == nil && mac("00:00:00:00:00:00") == nil
-      print("{\"version\":1,\"valid\":\(valid),\"invalid\":\(invalid),\"mac\":\(normalized),\"neighbors\":\(neighborFixture()),\"emptyTXT\":true,\"target\":\"l-75253tsynaig.local\"}")
+      print("{\"version\":1,\"valid\":\(valid),\"invalid\":\(invalid),\"mac\":\(normalized),\"neighbors\":\(neighborFixture()),\"selection\":\(selectionFixture()),\"emptyTXT\":true,\"target\":\"l-75253tsynaig.local\"}")
       return
     }
     guard CommandLine.arguments.count == 1 else { Darwin._exit(1) }

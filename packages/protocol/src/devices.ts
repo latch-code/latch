@@ -144,6 +144,8 @@ export interface NativePairingInvitation {
   id: string
   payload: string
   expiresAt: string
+  /** The QR's address is on an iPhone's Personal Hotspot over USB, so the phone on the cable is the one to scan. */
+  cable?: true
 }
 /**
  * What the sheet shows for one of its QRs (`GET /link/api/native/pairings/:id`). `device` is the phone's own word for

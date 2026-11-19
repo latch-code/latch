@@ -30,6 +30,8 @@ export const networkSnapshotSchema = z.strictObject({
           prefixLength: z.int().min(1).max(128),
           kind: z.enum(['wifi', 'ethernet', 'tunnel']),
           gateway: ip.optional(),
+          /** An iPhone or iPad sharing its connection over USB (Personal Hotspot on the cable); `kind` stays `ethernet`. */
+          tether: z.literal(true).optional(),
         })
         .refine(
           value =>
