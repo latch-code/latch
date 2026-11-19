@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from 'react'
 import { BookOpen, Users } from 'lucide-react'
-import { CodeGlyph, Icon } from '@latch/ui'
+import { Icon } from '@latch/ui'
 import { escapeSecurityText } from '@latch/protocol'
 import { markBeforeCaret, promptMarks, type PromptCatalogue, type PromptMark } from './prompt-tokens.ts'
 import { defineCopy } from '../core/i18n.ts'
@@ -61,8 +61,9 @@ function alignMirror(input: HTMLTextAreaElement, mirror: HTMLElement) {
 /**
  * Skill and command tokens of the draft drawn as marks. The draft stays text: the input keeps its own value, caret,
  * selection, undo and IME, and only its ink is hidden while a mark is shown; a mirror under it paints the same text with
- * the same metrics, the marks in link blue on a tint, each sigil (`$`, `/`) painted over by the glyph the slash menu uses
- * for that kind, so no glyph changes width. Composition shows the input's own text until it ends.
+ * the same metrics, the marks in link blue on a tint. A skill's `$` and a member's `@` are painted over by a book or the
+ * member's Harness mark, which reaches left over the space before the token, so no character moves; a command keeps
+ * its `/`. Composition shows the input's own text until it ends.
  */
 export function usePromptMarks({
   draft,
@@ -140,9 +141,13 @@ export function PromptMirrorText({ text, marks, hint }: { text: string; marks: r
     parts.push(
       text.slice(at, mark.start),
       <span key={mark.start} className="prompt-mark" data-kind={mark.kind} data-start={mark.start}>
-        <span className="prompt-mark-sigil" data-media={mark.media ? '' : undefined}>
+        <span className="prompt-mark-sigil">
           {text[mark.start]}
-          {mark.media ?? <Icon icon={mark.kind === 'skill' ? BookOpen : mark.kind === 'member' ? Users : CodeGlyph} size={14} />}
+          {mark.kind !== 'command' && (
+            <span className="prompt-mark-glyph" aria-hidden>
+              {mark.media ?? <Icon icon={mark.kind === 'skill' ? BookOpen : Users} size={14} />}
+            </span>
+          )}
         </span>
         <span className="prompt-mark-name">{text.slice(mark.start + 1, mark.end)}</span>
       </span>,

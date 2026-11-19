@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AppSnapshot, RunLive } from '@latch/protocol'
-import { AlertGlyph, CheckGlyph, Icon, StatusGlyph, StatusSlot, WaitingGlyph, type SlotStatus } from '@latch/ui'
+import { AlertGlyph, CheckGlyph, Icon, Spinner, StatusGlyph, StatusSlot, WaitingGlyph, type SlotStatus } from '@latch/ui'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { currentLocale, defineCopy, plural, useLocale } from '../core/i18n.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
@@ -47,19 +47,14 @@ export function RunningWords({ live, person = false }: { live: RunLive | undefin
 }
 
 /**
- * The live turn before its words arrive, where they will be: one mark of Latch's own (two arcs turning round a point)
- * and how long it has run. It says nothing of what the Harness waits on; a tool's own row says that when there is one.
+ * The live turn before its words arrive, where they will be: a small grey turning ring and how long it has run. It says nothing of what the Harness waits on; a tool's own row says that when there is one.
  */
 export function ThinkingLine({ live }: { live: RunLive | undefined }) {
   useTicker('second')
   const ms = live && runElapsed(live, hostNow())
   return (
     <div className="thinking-line" role="status">
-      <svg className="thinking-mark" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-        <circle className="thinking-mark-core" cx="8" cy="8" r="1.75" />
-        <path className="thinking-mark-arc" d="M8 2.5 A5.5 5.5 0 0 1 13.5 8" />
-        <path className="thinking-mark-arc is-far" d="M8 13.5 A5.5 5.5 0 0 1 2.5 8" />
-      </svg>
+      <Spinner size={12} />
       <span>{COPY.thinking}</span>
       {ms !== undefined && <span className="thinking-clock">{runClock(ms)}</span>}
     </div>

@@ -1,7 +1,7 @@
 import { mentionMarker } from '../fileMentions.ts'
 import { useEffect, useId, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import type { FileMention } from '@latch/protocol'
-import { FileGlyph, Hint, Icon, Kbd, Suggest, Tooltip } from '@latch/ui'
+import { FileGlyph, Hint, Icon, Kbd, Spinner, Suggest, Tooltip } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { defineCopy } from '../core/i18n.ts'
@@ -13,6 +13,7 @@ const COPY = defineCopy(
     grantAccess: '在 Mac 的 设置 › 设备 里为这台设备开启「可以看项目文件」。',
     chooseProject: '先选择一个项目，再引用其中的文件。',
     finding: '正在查找文件…',
+    findingBeside: '正在查找…',
     noMatches: '没有匹配的文件',
     mention: '引用项目文件',
     files: '文件',
@@ -28,6 +29,7 @@ const COPY = defineCopy(
     grantAccess: 'Allow this device to view project files in Settings › Devices on the Mac.',
     chooseProject: 'Choose a project first to mention its files.',
     finding: 'Finding files…',
+    findingBeside: 'Finding…',
     noMatches: 'No matching files',
     mention: 'Mention project files',
     files: 'Files',
@@ -279,7 +281,10 @@ export function useFileMentions(
   ) : error ? (
     <span data-tone="error">{error}</span>
   ) : loading ? (
-    COPY.finding
+    <span className="mention-finding">
+      <Spinner size={12} />
+      {people.length ? COPY.findingBeside : COPY.finding}
+    </span>
   ) : (
     COPY.noMatches
   )
@@ -325,8 +330,8 @@ export function useFileMentions(
         {
           id: 'files',
           ...(people.length ? { label: COPY.files } : {}),
-          // Beside the members, only a search that failed is said; one under way or with no match shows no files.
-          ...(people.length && filesOpen && error ? { empty: fileStatus } : {}),
+          // Beside the members, a search under way or one that failed is said under 文件; no match shows no files.
+          ...(people.length && filesOpen && scope && (error || loading) ? { empty: fileStatus } : {}),
           items: listedFiles.map((file, fileIndex) => {
             const index = choosable.length + fileIndex
             const folder = file.path.slice(0, Math.max(0, file.path.length - file.name.length - 1))
