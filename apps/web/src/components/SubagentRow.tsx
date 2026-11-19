@@ -21,6 +21,8 @@ const COPY = defineCopy(
     stop: '停止',
     noSteps: '还没有说做了什么',
     truncated: '之后的步骤没有保留',
+    team: (count: number) => `${count} 个子 Agent`,
+    quiet: '还没开始',
   },
   {
     running: 'Running',
@@ -34,6 +36,8 @@ const COPY = defineCopy(
     stop: 'Stop',
     noSteps: 'Nothing reported yet',
     truncated: 'Later steps weren’t kept',
+    team: (count: number) => `${count} subagents`,
+    quiet: 'Not started',
   },
 )
 
@@ -83,6 +87,16 @@ export const SubagentStop = createContext<((subagentId: string) => Promise<void>
 /** The name the Host gives a subagent that reported none: the row's own word already says it. */
 const UNNAMED = '子 Agent'
 
+/** The first line of the last thing it said in words, or of its result; a tool call says nothing here. */
+function lastSaid(agent: NonNullable<Message['subagent']>): string | undefined {
+  const said =
+    agent.team?.result
+    ?? agent.team?.failure
+    ?? agent.steps.findLast(step => step.role !== 'tool' && !step.subagent && step.text.trim())?.text
+  const line = said?.trim().split('\n', 1)[0]
+  return line ? line.slice(0, 200) : undefined
+}
+
 /**
  * A subagent the harness started for this turn: a row on the turn's rail, its glyph and 「子 Agent」, its name and
  * what it last said of itself, opening to what it said and did on a rail of its own, read only. Its requests for approval are in the approval drawer, under its name. One that can be
@@ -101,6 +115,7 @@ export const SubagentRow = memo(function SubagentRow({ message, frozen }: { mess
   const stopping = agent.stopping === true || (requested && agent.stoppable === true)
   const status = stopping ? { tone: 'neutral' as const, words: COPY.stopping } : agent.status ? SUBAGENT_STATUS[agent.status] : undefined
   const canStop = stop && agent.stoppable && !stopping && !frozen
+  const last = lastSaid(agent)
   return (
     <div className="subagent-row" data-message-id={message.id} data-open={open ? '' : undefined}>
       <div className="subagent-head">
@@ -114,6 +129,8 @@ export const SubagentRow = memo(function SubagentRow({ message, frozen }: { mess
           <KindGlyph kind="agent" />
           <span className="process-verb">{COPY.subagent}</span>
           <span className="process-object subagent-name">{agent.title !== UNNAMED && <VisibleText text={agent.title} />}</span>
+          {/* What it last said, in one line, while its steps are closed: the list reads without opening each. */}
+          <span className="subagent-last">{!open && last && <VisibleText text={last} />}</span>
           {status ? (
             <StatusWord tone={frozen && status.tone === 'running' ? 'neutral' : status.tone} className="subagent-status">
               {status.words}
@@ -165,6 +182,65 @@ export const SubagentRow = memo(function SubagentRow({ message, frozen }: { mess
           )}
           {agent.steps.length === 0 && <p className="subagent-note">{COPY.noSteps}</p>}
           {agent.truncated && <p className="subagent-note">{COPY.truncated}</p>}
+        </div>
+      </Collapse>
+    </div>
+  )
+})
+
+const TEAM_ORDER = ['running', 'waiting', 'failed', 'cancelled', 'unknown', 'done'] as const
+
+/**
+ * Several subagents a turn started one after another, as one block: how many, how many of each state, and under it a
+ * row for each. Open while any of them works or waits; closed once all are at rest, until the reader opens it.
+ */
+export const SubagentGroup = memo(function SubagentGroup({ messages, frozen }: { messages: Message[]; frozen: boolean }) {
+  useLocale()
+  const busy = !frozen && messages.some(message => message.subagent?.status === 'running' || message.subagent?.status === 'waiting')
+  const [choice, setChoice] = useState<boolean>()
+  const open = choice ?? busy
+  const counts = new Map<string, number>()
+  for (const message of messages) {
+    const status = message.subagent?.status
+    if (status) counts.set(status, (counts.get(status) ?? 0) + 1)
+  }
+  const said = TEAM_ORDER.filter(status => counts.has(status))
+  return (
+    <div className="subagent-group" data-open={open ? '' : undefined}>
+      <button
+        type="button"
+        className="process-row subagent-group-head"
+        aria-expanded={open}
+        onClick={() => {
+          setChoice(!open)
+        }}>
+        <KindGlyph kind="agent" />
+        <span className="subagent-group-name">{COPY.team(messages.length)}</span>
+        <span className="subagent-group-states">
+          {said.length === 0 ? (
+            <span className="subagent-note">{COPY.quiet}</span>
+          ) : (
+            said.map(status => {
+              const { tone, words } = SUBAGENT_STATUS[status]
+              return (
+                <StatusWord key={status} tone={frozen && tone === 'running' ? 'neutral' : tone}>
+                  {counts.get(status)} {words}
+                </StatusWord>
+              )
+            })
+          )}
+        </span>
+        <ChevronRightGlyph className="process-chevron" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
+      </button>
+      <Collapse
+        open={open}
+        onReveal={() => {
+          setChoice(true)
+        }}>
+        <div className="subagent-group-rows">
+          {messages.map(message => (
+            <SubagentRow key={message.id} message={message} frozen={frozen} />
+          ))}
         </div>
       </Collapse>
     </div>

@@ -772,7 +772,7 @@
 .subagent-head > .subagent-toggle {
   display: grid;
   flex: 1 1 auto;
-  grid-template-columns: 16px max-content minmax(0, max-content) max-content minmax(0, 1fr);
+  grid-template-columns: 16px max-content minmax(0, max-content) minmax(0, 1fr) max-content max-content;
   align-items: center;
   column-gap: var(--sp-8);
   width: auto;
@@ -794,6 +794,48 @@
 .subagent-toggle > .process-chevron {
   justify-self: end;
   margin-left: 0;
+}
+/* What it last said, in muted ink between its name and its state; cut at the row's width. */
+.subagent-last {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/*
+ * Several subagents as one block: a head with the agent mark, how many they are and how many of each state,
+ * then a row for each on a rail of the block's own.
+ */
+.subagent-group-head {
+  display: grid;
+  grid-template-columns: 16px max-content minmax(0, 1fr) max-content;
+  align-items: center;
+  column-gap: var(--sp-8);
+  min-height: 32px;
+}
+.subagent-group-head > .kind-glyph {
+  margin-right: 0;
+}
+.subagent-group-name {
+  color: var(--ink);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.subagent-group-states {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-12);
+  min-width: 0;
+}
+.subagent-group-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-6) var(--sp-8);
+  padding: var(--sp-2) 0 var(--sp-2) var(--sp-12);
+  box-shadow: inset 1px 0 0 var(--line);
 }
 .subagent-stop {
   display: flex;
@@ -1596,4 +1638,11 @@ button.summary-file:hover {
   .thinking-mark-arc {
     animation: thinking-turn 2.4s linear infinite;
   }
+}
+/* In a block the head already says they are subagents: a row starts with its name. */
+.subagent-group-rows .subagent-toggle > .process-verb {
+  display: none;
+}
+.subagent-group-rows .subagent-head > .subagent-toggle {
+  grid-template-columns: 16px minmax(0, max-content) minmax(0, 1fr) max-content max-content;
 }

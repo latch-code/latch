@@ -2288,6 +2288,18 @@ const scenarios = {
         update(sessionId, { sessionUpdate: 'subagent_update', sessionId: other, title: `Helper ${index}`, state: { state: 'running' } })
         update(sessionId, { sessionUpdate: 'subagent_update', sessionId: other, state: { state: 'idle', stopReason: 'end_turn' } })
       }
+    // `pair`: two helpers before the child, one done after a line of its own and one still working.
+    if (argument === 'pair')
+      for (const [name, line, done] of [
+        ['Parser check', 'the parser accepts every fixture', true],
+        ['File count', 'counting the files under src', false],
+      ]) {
+        const other = `${sessionId}:helper-${name}`
+        update(sessionId, { sessionUpdate: 'subagent_update', sessionId: other, title: name, state: { state: 'running' } })
+        update(other, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: line } })
+        if (done)
+          update(sessionId, { sessionUpdate: 'subagent_update', sessionId: other, state: { state: 'idle', stopReason: 'end_turn' } })
+      }
     const child = `${sessionId}:child`
     const report = (state, stopReason) =>
       update(sessionId, { sessionUpdate: 'subagent_update', sessionId: child, state: { state, ...(stopReason ? { stopReason } : {}) } })
@@ -2361,7 +2373,7 @@ const scenarios = {
       log('child-permission-answer', { outcome: result?.outcome ?? null })
     }
     if (argument === 'mode') update(child, { sessionUpdate: 'current_mode_update', currentModeId: env.FAKE_ACP_CHILD_MODE ?? 'yolo' })
-    if (argument === 'stop' || argument === 'stopquiet' || argument === 'stopunknown') {
+    if (argument === 'stop' || argument === 'stopquiet' || argument === 'stopunknown' || argument === 'pair') {
       update(sessionId, { sessionUpdate: 'subagent_update', sessionId: child, capabilities: { cancel: {} } })
       const edit = { toolCallId: 'call_2', title: 'Edit a.txt', kind: 'edit', status: 'pending', rawInput: { path: 'a.txt' } }
       update(child, { sessionUpdate: 'tool_call', ...edit })

@@ -147,6 +147,14 @@ describe('tool rows and command blocks', () => {
     ).sessionId
     await owner.json(`tasks/${subagents}`, { method: 'PATCH', body: { title: '子 Agent 的会话' } })
     await poll(async () => (await detail(subagents)).messages.some(message => message.subagent?.stoppable), 'a stoppable subagent')
+    const team = (
+      await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { harnessId: 'fake-agent', prompt: 'delegate pair', requestId: randomUUID() },
+      })
+    ).sessionId
+    await owner.json(`tasks/${team}`, { method: 'PATCH', body: { title: '几个子 Agent 的会话' } })
+    await poll(async () => (await detail(team)).messages.filter(message => message.subagent).length === 3, 'three subagents')
   })
   afterAll(async () => {
     await allow('done').catch(() => {})
@@ -343,5 +351,34 @@ describe('tool rows and command blocks', () => {
           throw error
         }
       }
+  })
+
+  it('gathers subagents started together into one block that counts their states and lists a row for each', async () => {
+    for (const [width, height, theme] of [
+      [1440, 900, 'dark'],
+      [1440, 900, 'light'],
+      [390, 844, 'dark'],
+    ] as const) {
+      const page = await open(width, height, theme, '几个子 Agent 的会话')
+      try {
+        const group = page.locator('.subagent-group')
+        await group.getByText('3 个子 Agent', { exact: true }).waitFor()
+        // Open while any of them works; the head counts each state once.
+        expect(await group.locator('.subagent-group-head').getAttribute('aria-expanded')).toBe('true')
+        expect(await group.locator('.subagent-group-states').innerText()).toMatch(/1 运行中[\s\S]*1 等你处理[\s\S]*1 已完成/u)
+        const rows = group.locator('.subagent-group-rows > .subagent-row')
+        expect(await rows.count()).toBe(3)
+        // A closed row says what it last said, in one line, and does not repeat that it is a subagent.
+        await expect.poll(() => rows.first().locator('.subagent-last').innerText()).toBe('the parser accepts every fixture')
+        expect(await rows.first().locator('.process-verb').isVisible()).toBe(false)
+        await noHorizontalOverflow(page)
+        await page.screenshot({ path: `${OUTPUT}/b1-subagent-group--${width}--${theme}.png`, animations: 'disabled' })
+        await group.locator('.subagent-group-head').click()
+        await expect.poll(() => rows.first().isVisible()).toBe(false)
+      } catch (error) {
+        await page.screenshot({ path: `${OUTPUT}/failed-group-${width}-${theme}.png` })
+        throw error
+      }
+    }
   })
 })

@@ -44,7 +44,7 @@ import { FileReferences } from './FileReferences.tsx'
 import { AuthorLine, MessageRow, SpeakerLine, ThinkingRow, TurnEditLocked, type LiveReasoning, type Speaker } from './MessageRow.tsx'
 import { ToolCard } from './ToolCard.tsx'
 import { KindGlyph } from '../conversation/KindGlyph.tsx'
-import { SubagentRow, SubagentStop } from './SubagentRow.tsx'
+import { SubagentGroup, SubagentRow, SubagentStop } from './SubagentRow.tsx'
 import { QuestionResultCard } from '../composer/QuestionDrawer.tsx'
 import { TurnFooter, type TurnRetry } from './TurnFooter.tsx'
 import { VisibleText } from './VisibleText.tsx'
@@ -195,6 +195,19 @@ function StepsRow({ items, count, context }: { items: WorkItem[]; count: number;
       </Collapse>
     </div>
   )
+}
+
+/** Work items in order, with subagents a turn started one after another gathered into one block. */
+function gathered(items: WorkItem[]): Array<WorkItem | { kind: 'team'; messages: Message[] }> {
+  const rows: Array<WorkItem | { kind: 'team'; messages: Message[] }> = []
+  for (const item of items) {
+    const last = rows.at(-1)
+    if (item.kind !== 'tool' || !item.message.subagent) rows.push(item)
+    else if (last?.kind === 'team') last.messages.push(item.message)
+    else rows.push({ kind: 'team', messages: [item.message] })
+  }
+  // One alone is a row like any other: a block of one says nothing more than its row.
+  return rows.map(row => (row.kind === 'team' && row.messages.length === 1 ? { kind: 'tool' as const, message: row.messages[0]! } : row))
 }
 
 function WorkRow({ item, context, onRetry }: { item: WorkItem; context: RowContext; onRetry?: (() => void) | undefined }) {
@@ -583,14 +596,18 @@ const TurnView = memo(function TurnView({
                   setFoldChoice(true)
                 }}>
                 <div className="work-rows">
-                  {block.items.map(item => (
-                    <WorkRow
-                      key={workItemKey(item)}
-                      item={item}
-                      context={rowContext}
-                      onRetry={!runEnd && item.kind === 'tool' && item.message.id === lastFailed ? onRetry : undefined}
-                    />
-                  ))}
+                  {gathered(block.items).map(item =>
+                    item.kind === 'team' ? (
+                      <SubagentGroup key={`team:${item.messages[0]!.id}`} messages={item.messages} frozen={rowContext.frozen} />
+                    ) : (
+                      <WorkRow
+                        key={workItemKey(item)}
+                        item={item}
+                        context={rowContext}
+                        onRetry={!runEnd && item.kind === 'tool' && item.message.id === lastFailed ? onRetry : undefined}
+                      />
+                    ),
+                  )}
                 </div>
               </Collapse>
             )
