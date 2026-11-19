@@ -107,6 +107,8 @@
 }
 .user-bubble-text {
   min-width: 0;
+  /* Kept to the bubble, so quoted code scrolls inside it instead of widening the text past the column. */
+  max-width: 100%;
 }
 /* Code quoted in a person's message, a line feedback's lines among them. */
 .user-code {

@@ -44,13 +44,19 @@ export function ResizeHandle({
   style?: CSSProperties
 }) {
   useUiLocale()
-  const drag = useRef<{ pointer: number; position: number; from: number } | null>(null)
+  const drag = useRef<{ pointer: number; position: number; from: number; last: number } | null>(null)
   const [dragging, setDragging] = useState(false)
+  const report = useRef(onResize)
+  report.current = onResize
   // Removed in the middle of a drag (the window crossed a breakpoint): the page must not keep the resize cursor and
-  // its text unselectable.
+  // its text unselectable, and the owner ends the drag at the last size it was told, as a release there would.
   useEffect(
     () => () => {
-      if (drag.current) delete document.documentElement.dataset.resizing
+      const current = drag.current
+      if (!current) return
+      drag.current = null
+      delete document.documentElement.dataset.resizing
+      report.current(current.last, 'commit')
     },
     [],
   )
@@ -62,7 +68,8 @@ export function ResizeHandle({
   const end = (event: PointerEvent<HTMLDivElement>) => {
     const current = drag.current
     if (!current || current.pointer !== event.pointerId) return
-    const size = sizeAt(position(event))
+    // Only a release says where the pointer is; a cancelled or lost capture ends at the last size reported.
+    const size = event.type === 'pointerup' ? sizeAt(position(event)) : current.last
     drag.current = null
     setDragging(false)
     delete document.documentElement.dataset.resizing
@@ -115,12 +122,15 @@ export function ResizeHandle({
         // No text selection starts, and the pointer stays with the handle over frames and other elements.
         event.preventDefault()
         event.currentTarget.setPointerCapture(event.pointerId)
-        drag.current = { pointer: event.pointerId, position: position(event), from: collapsed ? 0 : value }
+        const from = collapsed ? 0 : value
+        drag.current = { pointer: event.pointerId, position: position(event), from, last: from }
         document.documentElement.dataset.resizing = horizontal ? 'horizontal' : ''
         setDragging(true)
       }}
       onPointerMove={event => {
-        if (drag.current?.pointer === event.pointerId) onResize(sizeAt(position(event)), 'drag')
+        if (drag.current?.pointer !== event.pointerId) return
+        drag.current.last = sizeAt(position(event))
+        onResize(drag.current.last, 'drag')
       }}
       onPointerUp={event => {
         end(event)

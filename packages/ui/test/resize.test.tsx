@@ -117,6 +117,32 @@ describe('resize handle', () => {
     expect(changes).toHaveLength(3)
   })
 
+  it('ends a drag at the last reported size when the capture is lost or the handle goes away mid-drag', async () => {
+    const changes: Array<[number, ResizePhase]> = []
+    const screen = await render(<Column onChange={(width, phase) => changes.push([width, phase])} />)
+    const handle = screen.getByRole('separator', { name: '调整侧栏宽度' }).element()
+    if (!(handle instanceof HTMLElement)) throw new Error('Expected the handle to be an HTML element')
+    vi.spyOn(handle, 'setPointerCapture').mockImplementation(() => {})
+    handle.dispatchEvent(pointer('pointerdown', 264))
+    handle.dispatchEvent(pointer('pointermove', 320))
+    // A lost capture carries no position of its own.
+    handle.dispatchEvent(pointer('lostpointercapture', 0))
+    expect(changes).toEqual([
+      [320, 'drag'],
+      [320, 'commit'],
+    ])
+    changes.length = 0
+    await expect.poll(() => handle.getAttribute('aria-valuenow')).toBe('320')
+    handle.dispatchEvent(pointer('pointerdown', 320))
+    handle.dispatchEvent(pointer('pointermove', 360))
+    await screen.unmount()
+    expect(changes).toEqual([
+      [360, 'drag'],
+      [360, 'commit'],
+    ])
+    expect(document.documentElement.dataset.resizing).toBeUndefined()
+  })
+
   it('resets on a double click', async () => {
     const screen = await render(<Column />)
     const handle = screen.getByRole('separator', { name: '调整侧栏宽度' })

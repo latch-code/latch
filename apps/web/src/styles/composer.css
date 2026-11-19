@@ -2,6 +2,8 @@
   --stack-gap: var(--sp-8);
   position: relative;
   display: grid;
+  /* One column no wider than the stack: an implicit auto track would take a long draft's unwrapped width. */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--stack-gap);
   width: 100%;
   max-width: var(--content-width);

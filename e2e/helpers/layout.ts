@@ -71,6 +71,40 @@ export async function layersInWindow(page: Page): Promise<void> {
   for (const layer of layers) expect(layer).toEqual({ layer: layer.layer, inside: true, reached: true })
 }
 
+/**
+ * What a box that clips its content (`overflow: hidden` or `clip`, not a scroller) cuts off at its right edge, and what
+ * reaches past the window: a column widened by its content shows as the composer or a card running out of view, which
+ * `scrollWidth` cannot see because the page, the shell and the main area all clip. Elements a scroller holds, text cut by
+ * an ellipsis, hidden or inert content and open layers are left out.
+ */
+export async function clippedOnTheRight(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const name = (element: Element) => `${element.tagName.toLowerCase()}${[...element.classList].map(item => `.${item}`).join('')}`
+    const found: string[] = []
+    for (const element of document.querySelectorAll<HTMLElement>('body *')) {
+      const box = element.getBoundingClientRect()
+      if (box.width === 0 || box.height === 0) continue
+      if (element.closest('[hidden], [inert], [aria-hidden="true"], .ui-popover, dialog, .visually-hidden')) continue
+      if (getComputedStyle(element).visibility === 'hidden') continue
+      let clip: HTMLElement | null = null
+      for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        const style = getComputedStyle(parent)
+        if (style.overflowX === 'visible') continue
+        clip = parent
+        break
+      }
+      if (clip === null) continue
+      const clipStyle = getComputedStyle(clip)
+      // A scroller shows the rest on scroll; an ellipsis says it is cut; an element slid out of view is shut, not cut.
+      if (clipStyle.overflowX === 'auto' || clipStyle.overflowX === 'scroll' || clipStyle.textOverflow === 'ellipsis') continue
+      const edge = Math.min(clip.getBoundingClientRect().right, innerWidth)
+      if (box.left >= edge) continue
+      if (box.right > edge + 1) found.push(`${name(element)} in ${name(clip)}: ${Math.round(box.right)} > ${Math.round(edge)}`)
+    }
+    return found
+  })
+}
+
 /** The page never scrolls sideways; with `region`, that element does not either. */
 export async function noHorizontalOverflow(page: Page, region?: Locator): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
