@@ -412,6 +412,16 @@
   flex: none;
   padding: 0 var(--sp-4);
 }
+/* A folder outside the session's folders is one plain path; it gives way from its start, keeping the folders nearest the file. */
+.file-crumb-folder {
+  flex: 0 1 auto;
+  min-width: 24px;
+  overflow: hidden;
+  direction: rtl;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .file-crumb-current {
   flex: 0 0 auto;
   max-width: 100%;

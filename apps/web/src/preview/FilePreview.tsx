@@ -35,7 +35,7 @@ import { FileOpenContext, contextOf, fileContextBody, fileContextKey, fileRoute,
 import { resolveFileImage } from './fileImages.ts'
 import type { FileTab } from './useFileTabs.ts'
 import { selectedQuote, type FileQuote, type PreviewQuote } from './quote.ts'
-import { FileBreadcrumb } from './FileBreadcrumb.tsx'
+import { FileBreadcrumb, writtenPlace } from './FileBreadcrumb.tsx'
 import { ViewerActionsProvider, useViewerActionsHost } from './viewerActions.tsx'
 import { FileEditor } from './FileEditor.tsx'
 import { decodeEditable, editHash, mixedLineEndings } from './editText.ts'
@@ -415,7 +415,9 @@ export function FilePreview({
       setDownloading(false)
     }
   }
-  const base = file ? (folders?.length ? folders.find(folder => folder.id === file.root)?.path : cwd) : undefined
+  // A file the conversation named outside the session's folders carries its own folder, which is never browsed.
+  const written = file ? undefined : writtenPlace(reference)
+  const base = file ? (file.folder ?? (folders?.length ? folders.find(folder => folder.id === file.root)?.path : cwd)) : undefined
   const fullPath = file && base ? `${base.replace(/[\\/]+$/u, '')}/${file.path}` : (file?.path ?? reference)
   const editorText = editorLabel(editors)
   const shell = shellFiles()
@@ -474,7 +476,7 @@ export function FilePreview({
               quote(selection)
             },
           }
-        : onMention && file.source !== 'attachment'
+        : onMention && file.source !== 'attachment' && file.folder === undefined
           ? {
               ready: true,
               run: () => {
@@ -541,12 +543,13 @@ export function FilePreview({
       <header className="file-preview-head">
         <FileBreadcrumb
           context={context}
-          {...(file ? { root: file.root } : {})}
+          {...(file && file.folder === undefined ? { root: file.root } : {})}
           rootName={base ? basename(base) : COPY.sessionFolder}
-          path={file?.path ?? reference}
-          name={file?.name ?? reference}
+          path={file?.path ?? written?.name ?? reference}
+          name={file?.name ?? written?.name ?? reference}
+          folder={file ? file.folder : written?.folder}
           attachment={file?.source === 'attachment' || attachmentId !== undefined}
-          browsable={browsable}
+          browsable={browsable && file?.folder === undefined}
           onOpen={path => openFile?.(targetIn(context, path, file?.root))}
         />
         {updated && !saved && (

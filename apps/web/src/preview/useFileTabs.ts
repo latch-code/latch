@@ -156,7 +156,8 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
             files: state.tabs.flatMap(tab => {
               const root = tab.file?.root ?? tab.target.rootId,
                 path = tab.file?.path ?? tab.target.reference
-              if (!root || path.startsWith('/')) return []
+              // A file outside the session's folders is reopened only by the path a message named, never kept here.
+              if (!root || path.startsWith('/') || tab.file?.folder !== undefined) return []
               return [
                 {
                   root,
@@ -261,11 +262,18 @@ export function useFileTabs(deviceId: string, context: FileContext | null, autho
             ...state,
             tabs: state.tabs.map(tab => {
               if (tab.id !== id) return tab
-              // Metadata refreshes keep the reading position; opening a reference can request a line again.
+              // Metadata refreshes keep the reading position; opening a reference can request a line again. A file outside
+              // the folders keeps the absolute path it was named by: it has no folder to be found in again.
+              const { rootId: _rootId, ...unrooted } = tab.target
+              const named = file.folder === undefined ? undefined : `${file.folder.replace(/\/+$/u, '')}/${file.path}`
               const target =
-                tab.target.reference === file.path && tab.target.rootId === file.root
-                  ? tab.target
-                  : { ...tab.target, reference: file.path, rootId: file.root }
+                named !== undefined
+                  ? tab.target.reference === named && tab.target.rootId === undefined
+                    ? tab.target
+                    : { ...unrooted, reference: named }
+                  : tab.target.reference === file.path && tab.target.rootId === file.root
+                    ? tab.target
+                    : { ...tab.target, reference: file.path, rootId: file.root }
               return { ...tab, file, target }
             }),
           }))

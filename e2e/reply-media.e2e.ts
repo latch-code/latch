@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -21,6 +22,8 @@ const REPLY = [
   '',
   '[下载 PNG 原图](/nonexistent/.codex/generated_images/ig_1.png)',
 ].join('\n')
+/** What the fixture model answers; a test may replace it before it sends. */
+let reply = REPLY
 
 /** A picture and a short video drawn by the page itself, so the test needs no media files or encoder. */
 async function media(page: Page): Promise<{ png: Buffer; webm: Buffer }> {
@@ -93,7 +96,7 @@ describe('media in replies', () => {
           name: 'Fixture media',
           model: 'fixture',
           async *stream() {
-            yield { type: 'text', text: REPLY }
+            yield { type: 'text', text: reply }
             yield { type: 'finish', reason: 'stop' }
           },
         })
@@ -187,6 +190,100 @@ describe('media in replies', () => {
       await page.getByRole('region', { name: '文件预览', exact: true }).waitFor()
     } finally {
       await context.close()
+    }
+  })
+
+  it('draws a picture the reply names outside the session folders and opens it in the file pane', async () => {
+    // A stand-in for Codex's own folder: a temporary one, never the person's real ~/.codex.
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'latch-outside-e2e-'))
+    const folder = join(outsideRoot, '.codex', 'generated_images', 'ig_e2e')
+    const picture = join(folder, 'ig_e2e.png')
+    const context = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    try {
+      let resolveRoute = ''
+      page.on('request', request => {
+        if (/\/link\/api\/tasks\/[^/]+\/files\/resolve$/u.test(new URL(request.url()).pathname))
+          resolveRoute = new URL(request.url()).pathname
+      })
+      await enrollBrowser(page, host, { name: '外部图片', scopes: ['admin'] })
+      const home = page.locator('.workbench-home')
+      await home.getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
+      const { png } = await media(page)
+      await mkdir(folder, { recursive: true })
+      await writeFile(picture, png)
+      await writeFile(join(folder, 'sibling.png'), png)
+      reply = [
+        `[下载 ig_e2e 原图（PNG，960 × 600）](${picture})`,
+        '',
+        `![紫粉色粒子在深色背景中形成涡环](${picture})`,
+        '',
+        `没提到的：\`${join(folder, 'other.png')}\``,
+      ].join('\n')
+      await home.getByRole('textbox', { name: '新会话消息', exact: true }).fill('把图给我看看')
+      await home.getByRole('button', { name: '发送', exact: true }).click()
+      const answer = page.locator('.message-assistant').last()
+      await answer.getByText('没提到的：').waitFor()
+
+      // The markdown picture draws from a handle the Host issued for that one named file.
+      const drawn = answer.getByRole('button', { name: '预览图片：紫粉色粒子在深色背景中形成涡环', exact: true })
+      await drawn.waitFor()
+      const img = drawn.locator('img.inline-media-image')
+      await expect.poll(() => img.evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth === 960), SLOW).toBe(true)
+      expect(await img.getAttribute('src')).toMatch(/^\/link\/api\/files\/[A-Za-z0-9_-]{22}\?v=[a-f0-9]{32}$/u)
+      // The link draws the same picture above its chip; the unnamed sibling is never asked for or shown.
+      const chip = answer.locator('.message-media-caption .file-chip', { hasText: '下载 ig_e2e 原图' })
+      await chip.waitFor()
+      expect(await answer.locator('img.inline-media-image').count()).toBe(2)
+      const sibling = await page.evaluate(
+        async ([route, path]) => {
+          const response = await fetch(route!, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ paths: [path] }),
+          })
+          return response.ok ? ((await response.json()) as { files: Array<{ status: string }> }).files[0]?.status : String(response.status)
+        },
+        [resolveRoute, join(folder, 'sibling.png')],
+      )
+      expect(['outside', 'not-referenced']).toContain(sibling)
+
+      await shots(page, 'outside', { image: img })
+      // The chip opens the picture in the file pane, whose breadcrumb names the real folder, not a session folder.
+      await chip.click()
+      const pane = page.getByRole('region', { name: '文件预览', exact: true })
+      await pane.waitFor()
+      const crumb = pane.locator('.file-crumb-folder')
+      await expect.poll(() => crumb.getAttribute('title'), SLOW).toBe(folder)
+      expect(await pane.locator('.file-crumbs').textContent()).not.toContain('会话文件夹')
+      await expect
+        .poll(
+          () =>
+            pane
+              .locator('img')
+              .first()
+              .evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth === 960),
+          SLOW,
+        )
+        .toBe(true)
+      for (const width of [390, 1440]) {
+        await page.setViewportSize({ width, height: 960 })
+        for (const theme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme: theme })
+          await page.waitForTimeout(300)
+          // A narrower layout opens the pane again from its tab: the same named file, still authorized.
+          await expect.poll(() => page.locator('.file-crumb-folder').first().getAttribute('title'), SLOW).toBe(folder)
+          expect(await page.getByText('无法读取这个文件').count()).toBe(0)
+          expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+          await page.screenshot({ path: `${OUT}/outside-pane-${width}-${theme}.png`, animations: 'disabled' })
+        }
+      }
+    } finally {
+      reply = REPLY
+      await context.close()
+      await rm(outsideRoot, { recursive: true, force: true })
     }
   })
 

@@ -1,11 +1,12 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
-import type { FileMetadata } from '@latch/protocol'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { isFileMetadata, type FileMetadata } from '@latch/protocol'
 import { MessageContent } from '../src/MessageContent.tsx'
 import { InlineMedia, inlineImageWidth } from '../src/components/InlineMedia.tsx'
 import { MessageAttachments } from '../src/components/MessageAttachments.tsx'
-import { drawableMedia, mediaFromAnswer, mediaTypeOf, trustedMediaUrl } from '../src/preview/fileImages.ts'
+import { drawableMedia, mediaFromAnswer, mediaTypeOf, resolveFileMedia, trustedMediaUrl } from '../src/preview/fileImages.ts'
+import { FileBreadcrumb, writtenPlace } from '../src/preview/FileBreadcrumb.tsx'
 
 const HERE = 'https://latch.test/link/'
 const HANDLE = 'A'.repeat(22)
@@ -125,5 +126,62 @@ describe('inline media in a reply', () => {
     expect(html).toContain('data-inline=""')
     expect(html).toContain('attachment-tile')
     expect(html).not.toContain('<img')
+  })
+})
+
+describe('a picture the conversation names outside the session folders', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+  const generated = '/Users/me/.codex/generated_images/ig_1/ig_1.png'
+  const outside = metadata({
+    root: `outside-${'b'.repeat(24)}`,
+    path: 'ig_1.png',
+    name: 'ig_1.png',
+    folder: '/Users/me/.codex/generated_images/ig_1',
+  })
+
+  it('asks the Host about the path exactly as written and draws the handle it answers', async () => {
+    const asked: unknown[] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      asked.push([url, JSON.parse(String(init?.body))])
+      return new Response(JSON.stringify({ files: [{ status: 'ok', file: outside }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    const media = await resolveFileMedia('session-1', generated, 'primary', new AbortController().signal)
+    expect(asked).toEqual([['/link/api/tasks/session-1/files/resolve', { paths: [generated], rootId: 'primary' }]])
+    expect(media).toEqual({ kind: 'image', url: `/link/api/files/${HANDLE}?v=${'a'.repeat(32)}`, width: 1536, height: 1024 })
+    expect(drawableMedia(media, HERE)).toBe(true)
+  })
+
+  it('keeps an outside answer to a whole folder path; a relative one is not a file’s answer', () => {
+    expect(isFileMetadata(outside)).toBe(true)
+    expect(isFileMetadata({ ...outside, folder: 'generated_images' })).toBe(false)
+    expect(mediaFromAnswer({ status: 'not-referenced' })).toBeUndefined()
+    expect(mediaFromAnswer({ status: 'protected' })).toBeUndefined()
+  })
+
+  it('names its folder plainly in the file pane, never as a session folder to walk', () => {
+    expect(writtenPlace(generated)).toEqual({ folder: '/Users/me/.codex/generated_images/ig_1', name: 'ig_1.png' })
+    expect(writtenPlace(`file://${generated}`)?.folder).toBe('/Users/me/.codex/generated_images/ig_1')
+    expect(writtenPlace('~/Desktop/a.png')).toEqual({ folder: '~/Desktop', name: 'a.png' })
+    expect(writtenPlace('out/chart.png')).toBeUndefined()
+    const html = renderToStaticMarkup(
+      createElement(FileBreadcrumb, {
+        context: { kind: 'session', sessionId: 's' },
+        rootName: '会话文件夹',
+        path: 'ig_1.png',
+        name: 'ig_1.png',
+        folder: '/Users/me/.codex/generated_images/ig_1',
+        attachment: false,
+        browsable: true,
+        onOpen: () => {},
+      }),
+    )
+    expect(html).toContain('/Users/me/.codex/generated_images/ig_1')
+    expect(html).not.toContain('会话文件夹')
+    expect(html).not.toContain('aria-haspopup')
   })
 })

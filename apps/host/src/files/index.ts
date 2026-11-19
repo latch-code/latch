@@ -4,7 +4,7 @@
 // folders and what may be done with it, records the action in the audit log, and only then tells main the real path.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { stat, realpath } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { basename, dirname, isAbsolute } from 'node:path'
 import { z } from 'zod'
 import {
   FILE_EDIT_LIMIT,
@@ -30,7 +30,8 @@ import { auditType } from './kinds.ts'
 import { mixedLineEndings, readCurrent, replaceFile, shapeContent, sha256, fileChanged, validContent } from './edit.ts'
 import { isInsidePath, isProtectedWorkspacePath } from '../paths.ts'
 import { canTruncate, contentLimit, fileEtag, fileFormat } from './metadata.ts'
-import { isReferenced, isReferenceListed, sessionReferences } from './references.ts'
+import { isReferenced, isReferenceListed, outsideReference, sessionReferences } from './references.ts'
+import { outsideKey, resolveOutside, type OutsideBinding, type OutsideGuard } from './outside.ts'
 import { openContent, sendContent } from './read.ts'
 import { FileReadQuota } from './quota.ts'
 import { FileSearchIndex, tooManyHung, trackHung } from './search.ts'
@@ -38,6 +39,7 @@ import { GREP_LIMITS, GREP_QUERY_MAX, grepFiles, type GrepLimits } from './grep.
 import {
   ProtectedPaths,
   fileVerdicts,
+  parseReference,
   resolveRecorded,
   resolveReference,
   type ResolvedFile,
@@ -143,6 +145,11 @@ export interface FileRoutesOptions {
   contentChunkBytes?(caller: FileCaller): 65_536 | undefined
   /** Latch's private paths: the same list the built-in file tools refuse. */
   protectedPaths: readonly string[]
+  /**
+   * Files a session's messages named outside its folders (`outside.ts`): `excluded` are never opened (Latch's data and
+   * program folders, credential stores), `cliHomes` show everything but their login files and databases. Without it none are opened.
+   */
+  outsidePaths?: { excluded: readonly string[]; cliHomes: readonly string[] }
   home: string
   now: () => number
   audit: Pick<AuditLog, 'append'>
@@ -219,6 +226,9 @@ const refuseEdit = (code: EditRefusal) => new AppError(EDIT_REFUSALS[code].statu
 export function createFileRoutes(options: FileRoutesOptions) {
   const handles = new FileHandles(options.now)
   const guard = new ProtectedPaths(options.protectedPaths)
+  const outsideGuard: OutsideGuard | undefined = options.outsidePaths
+    ? { excluded: new ProtectedPaths(options.outsidePaths.excluded), cliHomes: new ProtectedPaths(options.outsidePaths.cliHomes) }
+    : undefined
   const searchIndex = new FileSearchIndex()
   const quota = new FileReadQuota(options.now)
   const audited = new Map<string, number>()
@@ -365,6 +375,34 @@ export function createFileRoutes(options: FileRoutesOptions) {
     return options.sessionDetail ? sessionReferences(await options.sessionDetail(sessionId), roots, options.home) : new Set()
   }
 
+  /** A handle's file again: a folder's by its recorded path, a named outside file by its binding. */
+  function resolveEntry(entry: HandleEntry, roots: readonly FileRoot[]) {
+    if (entry.outside) {
+      if (!outsideGuard) return Promise.resolve({ status: 'missing' as const })
+      return resolveOutside(entry.outside.path, outsideGuard, { expect: entry.outside, ...(options.hooks ? { hooks: options.hooks } : {}) })
+    }
+    return resolveRecorded(entry.rootId, entry.relativePath, {
+      roots,
+      protectedPaths: guard,
+      home: options.home,
+      ...(options.hooks ? { hooks: options.hooks } : {}),
+    })
+  }
+
+  /** Every device, whatever its data scope, opens an outside file only while the session's messages name it. */
+  async function assertNamed(context: FileContext, roots: readonly FileRoot[], binding: OutsideBinding): Promise<void> {
+    if (
+      context.kind !== 'session'
+      || !options.sessionDetail
+      || !(await referencesOf(context.sessionId, roots)).has(outsideKey(binding.path))
+    )
+      throw new AppError(403, 'file-not-referenced', '这台设备只能查看本会话提到过的文件')
+  }
+
+  /** Where the file is, as the client shows it: a folder's relative path, or an outside file's name and folder. */
+  const placeOf = (file: ResolvedFile, outside: OutsideBinding | undefined) =>
+    outside ? { path: basename(outside.path), folder: dirname(outside.path) } : { path: file.relativePath }
+
   async function auditRead(
     caller: FileCaller & { device: Device },
     context: FileContext,
@@ -485,25 +523,57 @@ export function createFileRoutes(options: FileRoutesOptions) {
       home: options.home,
       ...(options.hooks ? { hooks: options.hooks } : {}),
     }
+    // Outside files exist only in a session's own words; every data scope needs the messages to name them.
+    let named = references
+    const outsideNamed = async (path: string) => {
+      if (context.kind !== 'session' || !outsideGuard || !options.sessionDetail) return undefined
+      const parsed = parseReference(path, options.home)
+      if (!parsed || !isAbsolute(parsed.path)) return undefined
+      named ??= await referencesOf(context.sessionId, roots)
+      access.check()
+      return outsideReference(path, named, options.home)
+    }
     const files = []
     for (const path of [...new Set(input.paths)]) {
+      let result: Awaited<ReturnType<typeof resolveReference>> | undefined
+      let outside: OutsideBinding | undefined
       if (references && !isReferenceListed(path, references, resolveOptions.roots, options.home)) {
-        files.push({ input: path, status: 'not-referenced', code: 'file-not-referenced' })
-        continue
+        const target = await outsideNamed(path)
+        if (!target) {
+          files.push({ input: path, status: 'not-referenced', code: 'file-not-referenced' })
+          continue
+        }
+        result = { status: 'outside' }
+      } else {
+        access.check()
+        result = await resolveReference(path, resolveOptions)
+        access.check()
       }
-      access.check()
-      const result = await resolveReference(path, resolveOptions)
-      access.check()
       const position = {
         ...(result.line === undefined ? {} : { line: result.line }),
         ...(result.column === undefined ? {} : { column: result.column }),
+      }
+      // A folder filter (`rootId`) that leaves no folder answers `missing` for the same path.
+      if (result.status === 'outside' || result.status === 'missing') {
+        const target = await outsideNamed(path)
+        if (target) {
+          const found = await resolveOutside(target, outsideGuard!, options.hooks ? { hooks: options.hooks } : {})
+          access.check()
+          const parsed = parseReference(path, options.home)
+          if (parsed?.line !== undefined) position.line = parsed.line
+          if (parsed?.column !== undefined) position.column = parsed.column
+          if (found.status === 'ok') {
+            result = { status: 'ok', file: found.file }
+            outside = found.binding
+          } else result = found
+        }
       }
       if (result.status !== 'ok') {
         files.push({ input: path, status: result.status, code: STATUS_CODE[result.status].code, ...position })
         continue
       }
       const { file } = result
-      if (references && !isReferenced(references, file)) {
+      if (references && !outside && !isReferenced(references, file)) {
         files.push({ input: path, status: 'not-referenced', code: 'file-not-referenced', ...position })
         continue
       }
@@ -511,13 +581,15 @@ export function createFileRoutes(options: FileRoutesOptions) {
       const local = isLocalListener(caller.connection.listener)
       const format = fileFormat(file)
       const limit = contentLimit(format.kind, local)
-      const secretAllowed = local && input.showSecret === true
+      // A secret outside the folders is never resolved at all; the local override is for a folder's own files.
+      const secretAllowed = local && input.showSecret === true && !outside
       const canRead = (!file.secret || secretAllowed) && (file.size <= limit || canTruncate(format.kind))
       const dimensions = format.kind === 'image' ? imageDimensions(file.head, format.mime) : undefined
       const imageTooLarge = !!dimensions && dimensions.width * dimensions.height > (local ? 100_000_000 : 50_000_000)
       const imageUnknown = format.kind === 'image' && !dimensions
       const editableFile =
         !!options.edits
+        && !outside
         && context.kind === 'session'
         && options.edits.writable(context.sessionId)
         && !file.secret
@@ -558,10 +630,11 @@ export function createFileRoutes(options: FileRoutesOptions) {
             rootId: file.rootId,
             relativePath: file.relativePath,
             ...(secretAllowed ? { allowSecret: true as const } : {}),
+            ...(outside ? { outside } : {}),
           }),
           name: file.name,
           root: file.rootId,
-          path: file.relativePath,
+          ...placeOf(file, outside),
           ext: file.ext,
           size: file.size,
           secret: file.secret,
@@ -584,7 +657,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
               ? {
                   download: canRead && file.size <= limit && !imageTooLarge,
                   preview: canRead && !imageTooLarge && !imageUnknown && format.kind !== 'binary',
-                  ...(options.edits ? { edit: editable } : {}),
+                  ...(options.edits && !outside ? { edit: editable } : {}),
                 }
               : {}),
           },
@@ -618,16 +691,15 @@ export function createFileRoutes(options: FileRoutesOptions) {
       throw new AppError(403, 'file-handle-foreign', '这个文件句柄不属于这个上下文')
     const access = await contextLease(caller, context, found.entry)
     const { roots } = access
-    const result = await resolveRecorded(found.entry.rootId, found.entry.relativePath, {
-      roots,
-      protectedPaths: guard,
-      home: options.home,
-      ...(options.hooks ? { hooks: options.hooks } : {}),
-    })
+    const result = await resolveEntry(found.entry, roots)
     access.check()
     if (result.status !== 'ok') {
       const failure = STATUS_CODE[result.status]
       throw new AppError(failure.status, failure.code, failure.message)
+    }
+    if (found.entry.outside) {
+      await assertNamed(context, roots, found.entry.outside)
+      access.check()
     }
     const verdict = fileVerdicts(result.file)[input.action]
     if (!verdict.ok) throw new AppError(403, verdict.code, REFUSAL_MESSAGE[verdict.code])
@@ -662,25 +734,21 @@ export function createFileRoutes(options: FileRoutesOptions) {
     const context = entryContext(entry)
     const access = await contextLease(caller, context, entry)
     const { roots } = access
-    const result = await resolveRecorded(entry.rootId, entry.relativePath, {
-      roots,
-      protectedPaths: guard,
-      home: options.home,
-      ...(options.hooks ? { hooks: options.hooks } : {}),
-    })
+    const result = await resolveEntry(entry, roots)
     access.check()
     if (result.status !== 'ok') {
       const failure = STATUS_CODE[result.status]
       throw new AppError(failure.status, failure.code, failure.message)
     }
     const file = result.file
-    if (
+    if (entry.outside) await assertNamed(context, roots, entry.outside)
+    else if (
       caller.device.dataScope === 'work'
       && (context.kind !== 'session' || !options.sessionDetail || !isReferenced(await referencesOf(context.sessionId, roots), file))
     )
       throw new AppError(403, 'file-not-referenced', '这台设备只能查看本会话提到过的文件')
     const local = isLocalListener(caller.connection.listener)
-    const allowSecret = local && entry.allowSecret === true
+    const allowSecret = local && entry.allowSecret === true && !entry.outside
     const format = fileFormat(file)
     const limit = contentLimit(format.kind, local)
     options.recheck(caller, 'view')
@@ -693,7 +761,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
     options.limiter.take(caller.device.id)
     const lease = quota.begin(caller.device.id, isLocalListener(caller.connection.listener))
     try {
-      const { file, context, access, local, allowSecret, format, limit } = await authorizedFile(caller, handle)
+      const { file, entry, context, access, local, allowSecret, format, limit } = await authorizedFile(caller, handle)
       if (meta) {
         const fd = await openContent(file, true)
         await fd.close()
@@ -703,7 +771,7 @@ export function createFileRoutes(options: FileRoutesOptions) {
             handle,
             name: file.name,
             root: file.rootId,
-            path: file.relativePath,
+            ...placeOf(file, entry.outside),
             ext: file.ext,
             ...format,
             size: file.size,
@@ -783,6 +851,8 @@ export function createFileRoutes(options: FileRoutesOptions) {
     const { file, entry, context, access } = await authorizedFile(caller, handle)
     if (context.kind !== 'session' || context.sessionId !== sessionId)
       throw new AppError(403, 'file-handle-foreign', '这个文件句柄不属于这个会话')
+    // A file a conversation named outside its folders is shown, never written.
+    if (entry.outside) throw new AppError(403, 'file-outside-folders', STATUS_CODE.outside.message)
     // The path opened now leads somewhere else (a symlink took its place): never write through it.
     if (file.rootId !== entry.rootId || file.relativePath !== entry.relativePath)
       throw new AppError(409, 'file-not-regular', '这个文件已被替换为链接，没有保存。')

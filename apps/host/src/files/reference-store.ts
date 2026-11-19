@@ -4,10 +4,15 @@ import { z } from 'zod'
 import type { TaskDetail } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { sha256Hex, writeFileAtomic } from '@latch/core/node-kit'
-import { referenceInput, sessionReferences } from './references.ts'
+import { FOLDER_REFERENCE_LIMIT, OUTSIDE_REFERENCE_LIMIT, isOutsideKey, referenceInput, sessionReferences } from './references.ts'
 import type { FileRoot } from './resolve.ts'
 
-const LIMIT = 10_000
+const LIMIT = FOLDER_REFERENCE_LIMIT + OUTSIDE_REFERENCE_LIMIT
+/**
+ * Part of each message's scan hash: a new scan rule (outside paths, 2026-11) makes every message read once more, so a
+ * record written by an older Host learns what its rules skipped.
+ */
+const SCAN = 'outside-1'
 const WINDOW = 4 * 1024 * 1024
 const seenSchema = z.strictObject({
   id: z.string().min(1).max(256),
@@ -71,6 +76,15 @@ export class FileReferenceStore {
     }
     const before = JSON.stringify(state)
     const references = new Set(state.references)
+    let outsides = state.references.filter(isOutsideKey).length
+    let folders = references.size - outsides
+    const keep = (reference: string) => {
+      if (references.has(reference)) return
+      if (isOutsideKey(reference) ? outsides >= OUTSIDE_REFERENCE_LIMIT : folders >= FOLDER_REFERENCE_LIMIT) return
+      references.add(reference)
+      if (isOutsideKey(reference)) outsides++
+      else folders++
+    }
     const seen = new Map(state.seen.map(entry => [entry.id, entry]))
     const ids = new Set(detail.messages.map(message => message.id))
     for (const id of seen.keys()) if (!ids.has(id)) seen.delete(id)
@@ -79,7 +93,14 @@ export class FileReferenceStore {
       if (remaining <= 0 || references.size >= LIMIT) break
       const source = [message.text, message.tool?.input, message.tool?.output].filter(Boolean).join('\n')
       const hash = sha256Hex(
-        JSON.stringify([source, message.fileRefs, message.outputs, message.tool?.locations, message.tool?.diffs?.map(diff => diff.path)]),
+        JSON.stringify([
+          SCAN,
+          source,
+          message.fileRefs,
+          message.outputs,
+          message.tool?.locations,
+          message.tool?.diffs?.map(diff => diff.path),
+        ]),
       )
       const previous = seen.get(message.id)
       if (previous?.hash === hash && previous.offset >= source.length) continue
@@ -107,19 +128,13 @@ export class FileReferenceStore {
         home,
         WINDOW + 4096,
       )
-      for (const reference of batch) {
-        if (references.size >= LIMIT) break
-        references.add(reference)
-      }
+      for (const reference of batch) keep(reference)
       remaining -= end - offset
       seen.set(message.id, { id: message.id, hash, offset: end })
     }
     if (detail.fileChanges?.runId === detail.summary.runId) {
       const batch = sessionReferences({ ...detail, messages: [] }, roots, home)
-      for (const ref of batch) {
-        if (references.size >= LIMIT) break
-        references.add(ref)
-      }
+      for (const ref of batch) keep(ref)
     }
     state.references = [...references]
     state.seen = [...seen.values()].slice(-20_000)

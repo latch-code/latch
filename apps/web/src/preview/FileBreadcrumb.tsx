@@ -4,7 +4,7 @@ import { escapeSecurityText, isFileDirectoryListing, type FileContext, type File
 import { Icon, Menu, MenuFooterNote, CheckGlyph, ChevronRightGlyph, InfoGlyph } from '@latch/ui'
 import { api } from '../core/api.ts'
 import { defineCopy, plural } from '../core/i18n.ts'
-import { referenceIcon } from '../fileReference.ts'
+import { referenceIcon, referenceText } from '../fileReference.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { fileContextBody, fileRoute } from './fileContext.ts'
 
@@ -35,6 +35,18 @@ const COPY = defineCopy(
 export function breadcrumbFolders(rootName: string, path: string): Array<{ name: string; dir: string }> {
   const parts = path.split('/').slice(0, -1)
   return [{ name: rootName, dir: '' }, ...parts.map((name, index) => ({ name, dir: parts.slice(0, index + 1).join('/') }))]
+}
+
+/**
+ * Where an absolute or `~/` reference says its file is, as written: shown before the Host answers, or when it refuses,
+ * so a path outside the session's folders never reads as one inside them.
+ */
+export function writtenPlace(reference: string): { folder: string; name: string } | undefined {
+  const text = referenceText(reference)
+  if (!text || !(text.startsWith('/') || text.startsWith('~/'))) return undefined
+  const cut = text.lastIndexOf('/')
+  const name = text.slice(cut + 1)
+  return name ? { folder: cut === 0 ? '/' : text.slice(0, cut), name } : undefined
 }
 
 /** A folder and the chevron after it open one menu: the files beside the one on show, read when asked for. */
@@ -129,8 +141,11 @@ export function FileBreadcrumb({
   name,
   attachment,
   browsable,
+  folder,
   onOpen,
 }: {
+  /** A file outside the session's folders: its folder, shown whole and plain, with nothing to list. */
+  folder?: string | undefined
   /** A device that cannot list folders sees where the file lives, with nothing to open. */
   browsable: boolean
   context: FileContext
@@ -146,6 +161,15 @@ export function FileBreadcrumb({
       {attachment ? (
         <>
           <span className="file-crumb-plain">{COPY.attachments}</span>
+          <Icon icon={ChevronRightGlyph} size={12} />
+        </>
+      ) : folder !== undefined ? (
+        <>
+          <span className="file-crumb-plain file-crumb-folder" title={folder}>
+            <bdi dir="ltr">
+              <VisibleText text={folder} />
+            </bdi>
+          </span>
           <Icon icon={ChevronRightGlyph} size={12} />
         </>
       ) : (

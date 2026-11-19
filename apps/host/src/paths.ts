@@ -352,8 +352,8 @@ export function findCodeRoot(start: string): string {
   }
 }
 
-/** Relative to HOME. Workspaces may not contain, equal or sit inside these. */
-export const DENY_READ_HOME_PATHS: readonly string[] = [
+/** Relative to HOME. Credential stores: never a project, and never opened as a file a conversation named. */
+export const CREDENTIAL_HOME_PATHS: readonly string[] = [
   '.ssh',
   '.aws',
   '.gnupg',
@@ -364,15 +364,29 @@ export const DENY_READ_HOME_PATHS: readonly string[] = [
   '.npmrc',
   '.password-store',
   'Library/Keychains',
-  '.codex',
-  '.gemini',
-  '.qwen',
-  '.config/opencode',
-  '.pi',
-  '.config/goose',
   // The person's own relay files: registration and admin tokens.
   '.latch',
 ]
+
+/**
+ * Relative to HOME. Agent CLIs' own folders (logins, configuration, logs). Never projects; a file a conversation names
+ * in one may be opened, except the CLI's login files and databases (`files/outside.ts`).
+ */
+export const CLI_HOME_PATHS: readonly string[] = ['.codex', '.gemini', '.qwen', '.config/opencode', '.pi', '.config/goose']
+
+/** Relative to HOME. Every folder an agent CLI keeps its own files in, for the login rule on named files only. */
+export const CLI_FILE_HOMES: readonly string[] = [
+  ...CLI_HOME_PATHS,
+  '.claude',
+  '.local/share/opencode',
+  '.local/share/goose',
+  '.grok',
+  '.dsh',
+  '.cursor',
+]
+
+/** Relative to HOME. Workspaces may not contain, equal or sit inside these. */
+export const DENY_READ_HOME_PATHS: readonly string[] = [...CREDENTIAL_HOME_PATHS, ...CLI_HOME_PATHS]
 
 /** Relative to HOME. Files placed here start at login, so these directories are never projects either. */
 const AUTOSTART_HOME_PATHS: readonly string[] = ['Library/LaunchAgents', '.config/autostart', '.config/systemd']

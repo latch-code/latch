@@ -204,6 +204,7 @@ import { readHarnessPluginReport, readSessionSkills, type SessionSkill } from '@
 import type { ExtensionsResponse, HarnessExtensionReport } from '@latch/protocol'
 import {
   DENY_READ_HOME_PATHS,
+  CLI_FILE_HOMES,
   PROJECT_FOLDER_LIMIT,
   canonicalPath,
   pathKey,
@@ -1788,6 +1789,21 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       ...(tlsKeyPath ? [tlsKeyPath] : []),
       ...denyRead,
     ]
+    // Files a conversation names outside its folders (files/outside.ts): agent CLIs' folders show media only; everything
+    // else private stays refused, Latch's whole data and program folders included. Claude's folder holds its login.
+    const cliHomes = await Promise.all(CLI_FILE_HOMES.map(entry => realpath(join(home, entry)).catch(() => join(home, entry))))
+    const outsidePaths = {
+      // `~/.claude.json` sits beside Claude's folder and may hold an API key.
+      excluded: [
+        ...guardedPaths.filter(path => !cliHomes.includes(path)),
+        dataDir,
+        realDataDir,
+        codeRoot,
+        canonicalCodeRoot,
+        join(home, '.claude.json'),
+      ],
+      cliHomes,
+    }
 
     const startupActor: AuditActor = { listener: 'host', via: 'startup' }
     // The last settings this Host knowingly started with or wrote; a write whose commit failed leaves its previous state.
@@ -2506,6 +2522,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           : [{ id: 'default', path: record.folders[0].path }]
       },
       protectedPaths: guardedPaths,
+      outsidePaths,
       home,
       now,
       audit,

@@ -118,6 +118,11 @@ export interface FileMetadata {
   name: string
   root: string
   path: string
+  /**
+   * Set only for a file outside the session's folders that its messages named: the folder it is in, as named. `root`
+   * is then that one file's own identity and `path` its name as named; there is no folder to list.
+   */
+  folder?: string
   ext: string
   kind: FileKind
   mime: string
@@ -214,6 +219,7 @@ export function isFileMetadata(value: unknown): value is FileMetadata {
     || value.path.length > 4096
     || typeof value.root !== 'string'
     || !/^[a-zA-Z0-9_-]{1,32}$/u.test(value.root)
+    || (value.folder !== undefined && (typeof value.folder !== 'string' || value.folder.length > 4096 || !value.folder.startsWith('/')))
     || typeof value.ext !== 'string'
     || typeof value.mime !== 'string'
     || value.mime.length > 128

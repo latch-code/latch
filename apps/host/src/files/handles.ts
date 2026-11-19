@@ -1,7 +1,8 @@
 // Opaque, short-lived names for files the Host resolved. A handle stands for (device, session, folder, relative
-// path), never for an inode: every use resolves the path again, so a file an agent replaced is the new file and a file
+// path), never for an inode (a named file outside the folders is the exception, see `outside`): every use resolves the path again, so a file an agent replaced is the new file and a file
 // moved out of the folder is gone. Handles live in memory only; a restarted Host knows none.
 import { randomBytes } from 'node:crypto'
+import type { OutsideBinding } from './outside.ts'
 
 export const HANDLE = /^[A-Za-z0-9_-]{22}$/u
 /** A handle lapses this long after it was last used. */
@@ -20,6 +21,11 @@ export interface HandleEntry {
   relativePath: string
   /** A desktop reader explicitly chose to display a secret file. Never sufficient on a remote listener. */
   allowSecret?: true
+  /**
+   * A file outside the session's folders that its messages named: unlike a folder's file, the handle is bound to the
+   * file it named when issued (real path, device and inode), and a replaced file is a new handle.
+   */
+  outside?: OutsideBinding
 }
 
 export type HandleLookup = { ok: true; entry: HandleEntry } | { ok: false; reason: 'expired' | 'foreign' }
@@ -47,6 +53,7 @@ export class FileHandles {
         && value.revision === entry.revision
         && value.rootId === entry.rootId
         && value.relativePath === entry.relativePath
+        && JSON.stringify(value.outside) === JSON.stringify(entry.outside)
       ) {
         if (entry.allowSecret) value.allowSecret = true
         this.touch(handle, value, time)
