@@ -100,7 +100,16 @@ describe('a conversation that moved to another Harness', () => {
       await palette.getByRole('option', { name: '换过 Harness 的会话', exact: true }).click()
       const line = page.locator('.move-line')
       await line.waitFor()
-      expect(await line.innerText()).toMatch(/换了 Harness[\s\S]*First Agent[\s\S]*Second Agent/u)
+      // Left to right: the Harness it left, the track, the one that took over; under it what went across.
+      expect(await line.innerText()).toMatch(/First Agent[\s\S]*Second Agent[\s\S]*带着前 1 轮的记录/u)
+      expect(await line.getAttribute('aria-label')).toBe('从 First Agent 换到 Second Agent')
+      const [left, track, right] = await Promise.all([
+        line.locator('.move-side').first().boundingBox(),
+        line.locator('.move-track').boundingBox(),
+        line.locator('.move-side.is-next').boundingBox(),
+      ])
+      expect(left!.x + left!.width).toBeLessThanOrEqual(track!.x + 1)
+      expect(track!.x + track!.width).toBeLessThanOrEqual(right!.x + 1)
       const before = page.locator('.move-history')
       await before.getByText('said on the first', { exact: false }).first().waitFor()
       // The earlier record is above the line, the new session's below it.
@@ -116,5 +125,37 @@ describe('a conversation that moved to another Harness', () => {
       await noHorizontalOverflow(page)
       await page.screenshot({ path: `${OUTPUT}/moved--${width}--${theme}.png`, animations: 'disabled' })
     }
+  })
+
+  it('moves on from the session itself: another Harness in its Harness menu, a message, and the three read as one', async () => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.emulateMedia({ colorScheme: 'light' })
+    await page.reload()
+    await connected(page)
+    await page.locator(`[data-task-id="${second}"]`).filter({ visible: true }).first().click()
+    await page.locator('.move-line').waitFor()
+    await page.getByRole('button', { name: 'Harness：Second Agent', exact: true }).filter({ visible: true }).first().click()
+    await page.getByRole('button', { name: '换到 First Agent 继续', exact: true }).click()
+    // The new message is written where a new session is, which says what it goes on from and already has the Harness.
+    const home = page.locator('.workbench-home')
+    await home.getByText('接着「换过 Harness 的会话」聊', { exact: true }).waitFor()
+    await home.getByRole('button', { name: 'Harness：First Agent', exact: true }).waitFor()
+    await page.screenshot({ path: `${OUTPUT}/moving--1440--light.png`, animations: 'disabled' })
+    await home.locator('.composer textarea').fill('echo back on the first')
+    await page.keyboard.press('Meta+Enter')
+    await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.length, { timeout: 20_000 }).toBe(3)
+    const third = (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.id !== first && task.id !== second)!
+    await settled(third.id)
+    const moved = (await detail(third.id)).summary
+    expect(moved.forkOf).toMatchObject({ taskId: second, moved: { from: 'fake-two' } })
+    expect(moved.title).toBe('换过 Harness 的会话')
+    // Both lines, each over what was said before it, and still one row in the list.
+    await expect.poll(() => page.locator('.move-line').count()).toBe(2)
+    const lines = await page.locator('.move-line').allInnerTexts()
+    expect(lines[0]).toMatch(/First Agent[\s\S]*Second Agent/u)
+    expect(lines[1]).toMatch(/Second Agent[\s\S]*First Agent/u)
+    await page.locator('.move-history').first().getByText('said on the first', { exact: false }).first().waitFor()
+    await expect.poll(() => page.locator('[data-task-id]').filter({ visible: true }).count()).toBe(1)
+    await page.screenshot({ path: `${OUTPUT}/moved-twice--1440--light.png`, animations: 'disabled' })
   })
 })

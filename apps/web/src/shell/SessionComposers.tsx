@@ -66,6 +66,7 @@ const COMPOSER_COPY = defineCopy(
     project: (name: string) => `项目 ${name}`,
     rebuild: '第一条消息会把重建的对话文字一起发给',
     fork: (title: string) => `从「${title}」分叉`,
+    moved: (title: string) => `接着「${title}」聊`,
     editFirst: (title: string) => `改写「${title}」的第一条`,
   },
   {
@@ -73,6 +74,7 @@ const COMPOSER_COPY = defineCopy(
     project: (name: string) => `Project ${name}`,
     rebuild: 'The first message sends the reconstructed conversation to',
     fork: (title: string) => `Fork from “${title}”`,
+    moved: (title: string) => `Continue “${title}”`,
     editFirst: (title: string) => `Edit the first message of “${title}”`,
   },
 )
@@ -329,6 +331,30 @@ export function SessionComposer({
               if (!phone) openControlWhenShown('harness')
             })
           },
+          // The same conversation on another Harness that is ready here: its record goes along, and the two read as one.
+          moves: (catalog.harnesses ?? [])
+            .filter(item => item.id !== current.summary.harnessId && item.status === 'ready')
+            .slice(0, 8)
+            .map(item => ({
+              harness: item,
+              onMove: () => {
+                const draft = submission.draft
+                shell.startNewDraft({ draft }, () => {
+                  submission.setFork({
+                    taskId: current.summary.id,
+                    upToMessageId: lastMessage.id,
+                    moved: true,
+                    title: current.summary.title,
+                    choice: {
+                      harnessId: item.id,
+                      workspaceId: projectFor(catalog, current.summary),
+                      mode: current.summary.mode ?? 'agent',
+                    },
+                    source: forkSource(current, harnessInfo),
+                  })
+                })
+              },
+            })),
         }
       : undefined
   const questionActions = {
@@ -901,9 +927,11 @@ export function SetupNotices({ shell }: { shell: ShellState }) {
             label={
               <VisibleText
                 text={
-                  submission.fork.upToMessageId
-                    ? COMPOSER_COPY.fork(submission.fork.title ?? submission.fork.taskId)
-                    : COMPOSER_COPY.editFirst(submission.fork.title ?? submission.fork.taskId)
+                  submission.fork.moved
+                    ? COMPOSER_COPY.moved(submission.fork.title ?? submission.fork.taskId)
+                    : submission.fork.upToMessageId
+                      ? COMPOSER_COPY.fork(submission.fork.title ?? submission.fork.taskId)
+                      : COMPOSER_COPY.editFirst(submission.fork.title ?? submission.fork.taskId)
                 }
               />
             }>

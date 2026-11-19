@@ -33,13 +33,7 @@ export function forkSeed(
     0,
     detail.messages.slice(0, end + 1).findLastIndex(message => message.role === 'user' && message.freshContext),
   )
-  for (let index = 0; index <= end; index++) {
-    const message = detail.messages[index]!
-    if (message.role === 'user' && !message.steered) turn++
-    if (index < start) continue
-    if (message.role === 'tool' || message.subagent || message.origin === 'mcp-prompt') outside = true
-    // Hidden reasoning and raw tool parameters are not required to continue the conversation.
-    const block = `\n\n${{ user: '你', assistant: '助手', tool: '工具结果', system: '会话说明' }[message.role]}：\n${message.text}`
+  const add = (block: string) => {
     pieces.push(block.length > FORK_CONTEXT_LIMIT ? block.slice(-FORK_CONTEXT_LIMIT) : block)
     if (block.length > FORK_CONTEXT_LIMIT) truncated = true
     length += pieces[pieces.length - 1]!.length
@@ -56,11 +50,36 @@ export function forkSeed(
       truncated = true
     }
   }
+  for (let index = 0; index <= end; index++) {
+    const message = detail.messages[index]!
+    if (message.role === 'user' && !message.steered) turn++
+    if (index < start) continue
+    if (message.role === 'tool' || message.subagent || message.origin === 'mcp-prompt') outside = true
+    // A first message that itself began from a record (a fork, or a conversation that moved Harness) carries that
+    // record before the person's words: it is written out once, as the turns it was, not as a record inside a record.
+    let said = message.text
+    const carried = message.role === 'user' && message.forkContext && !message.nativeFork ? message.forkContext.prefixLength : 0
+    if (carried > 0) {
+      const earlier = /<会话记录>([\s\S]*)\n<\/会话记录>/u.exec(message.text.slice(0, carried))?.[1]
+      if (earlier !== undefined) {
+        add(earlier)
+        said = message.text.slice(carried)
+      }
+    }
+    // Hidden reasoning and raw tool parameters are not required to continue the conversation.
+    add(`\n\n${{ user: '你', assistant: '助手', tool: '工具结果', system: '会话说明' }[message.role]}：\n${said}`)
+  }
   let transcript = pieces.join('')
   // A UTF-16 boundary must not leave half of a character at the beginning.
   if (/^[\uDC00-\uDFFF]/u.test(transcript)) transcript = transcript.slice(1)
   // The original prompt is immutable; renaming a source never changes a retried start's payload.
-  const title = (detail.messages.find(message => message.role === 'user')?.text ?? detail.summary.id).replace(/\s+/gu, ' ').slice(0, 80)
+  const opening = detail.messages.find(message => message.role === 'user')
+  // The person's own first words, without a record the message carries before them.
+  const title = (
+    opening ? opening.text.slice(opening.forkContext && !opening.nativeFork ? opening.forkContext.prefixLength : 0) : detail.summary.id
+  )
+    .replace(/\s+/gu, ' ')
+    .slice(0, 80)
   const label = heading(title, turn)
   const text = `${label}\n${truncated ? '（较早的记录已截断，只保留最后 20 万字符。）\n' : ''}<会话记录>${transcript}\n</会话记录>\n\n请将以上内容作为背景，继续处理后面的请求。\n\n`
   return {

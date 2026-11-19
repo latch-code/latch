@@ -1648,42 +1648,97 @@ button.summary-file:hover {
 }
 
 /*
- * Where a conversation went on with another Harness: a hairline across the column with the two marks and names in its
- * middle, the one it left in muted ink. What was said before stands above it as it was, a little quieter.
+ * Where a conversation went on with another Harness, as a passing: a small card in the column's middle with the Harness
+ * it left, a track of three marks travelling left to right and an arrow, and the Harness that took over; under it one
+ * muted line of what went across. Hairlines run from the card to the column's edges. The one it left is in muted ink.
  */
 .move-line {
-  display: flex;
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-6);
+  margin-block: var(--sp-32) var(--sp-20);
+}
+.move-card {
+  display: inline-flex;
   align-items: center;
   gap: var(--sp-12);
-  margin-block: var(--sp-32) var(--sp-16);
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-}
-.move-line::before,
-.move-line::after {
-  flex: 1 1 0;
-  height: 1px;
-  background: var(--line);
-  content: '';
-}
-.move-line-words {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: var(--sp-6);
-  min-width: 0;
+  max-width: 100%;
+  padding: var(--sp-6) var(--sp-12);
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--band);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
 .move-side {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-4);
+  gap: var(--sp-6);
+  min-width: 0;
+  color: var(--muted);
 }
 .move-side.is-next {
   color: var(--ink);
+  font-weight: 500;
+}
+.move-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.move-track {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  width: 64px;
+  height: 12px;
+  /* The marks take this ink; the arrow keeps the muted one. */
+  color: var(--accent);
+}
+.move-arrow {
+  color: var(--muted);
+}
+.move-track::before {
+  position: absolute;
+  inset: 50% 10px auto 0;
+  height: 1px;
+  background: var(--line);
+  content: '';
+}
+.move-dot {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: currentColor;
+}
+/* Standing still: the three marks along the track, each a little further and a little stronger. */
+.move-dot:nth-child(1) {
+  transform: translateX(8px);
+  background: color-mix(in srgb, currentColor 30%, transparent);
+}
+.move-dot:nth-child(2) {
+  transform: translateX(24px);
+  background: color-mix(in srgb, currentColor 55%, transparent);
+}
+.move-dot:nth-child(3) {
+  transform: translateX(40px);
+  background: color-mix(in srgb, currentColor 85%, transparent);
+}
+.move-note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 .move-cancel {
-  margin-inline-start: var(--sp-4);
   padding: 0;
   border: 0;
   background: none;
@@ -1697,4 +1752,35 @@ button.summary-file:hover {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
   text-align: center;
+}
+@keyframes move-across {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(50px);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* Once as the line appears; for as long as the move waits for its message. */
+  .move-dot {
+    animation: move-across 1.2s var(--e-micro) 2 backwards;
+  }
+  .move-line[data-pending] .move-dot {
+    animation-iteration-count: infinite;
+  }
+  .move-dot:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .move-dot:nth-child(3) {
+    animation-delay: 0.4s;
+  }
 }

@@ -61,6 +61,8 @@ const COPY = defineCopy(
  */
 /** A fork's draft; without `upToMessageId` it is 从这里编辑 on the source's first message (`editOf`). */
 export type ForkDraft = { taskId: string; upToMessageId?: string } & {
+  /** The same conversation going on with another Harness, not a branch of it. */
+  moved?: true
   title?: string
   choice?: Partial<ComposerChoice>
   source?: ForkSource
@@ -381,7 +383,7 @@ export function useSubmission({
             mode: choice.mode,
             ...(fork
               ? fork.upToMessageId
-                ? { forkOf: { taskId: fork.taskId, upToMessageId: fork.upToMessageId } }
+                ? { forkOf: { taskId: fork.taskId, upToMessageId: fork.upToMessageId, ...(fork.moved ? { moved: true as const } : {}) } }
                 : { editOf: { taskId: fork.taskId } }
               : {}),
             ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),

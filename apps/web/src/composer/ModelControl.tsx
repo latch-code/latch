@@ -71,6 +71,7 @@ const COPY = defineCopy(
     fixedHarness: '开始后不能换 Harness',
     newSession: '新会话',
     fork: '分叉',
+    moveTo: (name: string) => `换到 ${name} 继续`,
     unsupported: '不再支持',
     confirmLocal: (value1: string) => `地址还没确认 · 在${value1} 上确认`,
     unusableServices: '这个 Harness 用不了的模型服务',
@@ -117,6 +118,7 @@ const COPY = defineCopy(
     fixedHarness: 'Harness is fixed once started',
     newSession: 'New session',
     fork: 'Fork',
+    moveTo: (name: string) => `Continue with ${name}`,
     unsupported: 'No longer supported',
     confirmLocal: (value1: string) => `Address unconfirmed · Confirm on ${value1}`,
     unusableServices: 'Model services this Harness cannot use',
@@ -407,6 +409,8 @@ export const forkBusy = () => CONTROL_COPY.forkBusy
 /** 分叉 in the session's Harness popover: the latest turn into a new session, which may pick another Harness. */
 export interface SessionFork {
   onFork: () => void
+  /** The other Harnesses this conversation can go on with, each starting it there with what was said so far. */
+  moves?: ReadonlyArray<{ harness: HarnessInfo; onMove: () => void }>
   /** Why it cannot fork now; the row stays, dimmed, with this under it. */
   blocked?: string | undefined
 }
@@ -453,12 +457,39 @@ export function SessionHarnessControl({
         </Tooltip>
       )}>
       <div className="model-footer">
+        {fork?.moves?.map(move => (
+          <MoveRow key={move.harness.id} move={move} blocked={fork.blocked} />
+        ))}
         {fork && <ForkRow fork={fork} />}
         <MenuFooterLink icon={PlusGlyph} chevron={false} closes onClick={onNewSession}>
           {COPY.newSession}
         </MenuFooterLink>
       </div>
     </Popover>
+  )
+}
+
+/** 换到 another Harness: the same conversation goes on there. Off for the reason a fork is off. */
+function MoveRow({ move, blocked }: { move: NonNullable<SessionFork['moves']>[number]; blocked: string | undefined }) {
+  const close = useLayerClose()
+  const off = blocked !== undefined
+  return (
+    <Tooltip content={blocked}>
+      <button
+        type="button"
+        className="ui-menu-footer-link harness-move"
+        aria-disabled={off || undefined}
+        onClick={() => {
+          if (off) return
+          close()
+          move.onMove()
+        }}>
+        <span className="ui-menu-item-lead">
+          <HarnessTile harness={move.harness} size={16} />
+        </span>
+        <span className="harness-fork-text">{COPY.moveTo(harnessName(move.harness))}</span>
+      </button>
+    </Tooltip>
   )
 }
 

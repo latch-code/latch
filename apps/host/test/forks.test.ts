@@ -22,6 +22,25 @@ const detail = (): TaskDetail => ({
   ],
 })
 describe('Host-generated forks', () => {
+  it('writes a record the source itself began from out once, as the turns it was, and titles by the person’s own words', () => {
+    const first = forkSeed(detail(), 'a')
+    const moved = detail()
+    moved.summary.id = 'second'
+    moved.messages = [
+      { id: 'u2', role: 'user', text: `${first.text}Second question`, forkContext: first.context },
+      { id: 'a2', role: 'assistant', text: 'Second answer', state: 'completed' },
+    ]
+    const seed = forkSeed(moved, 'a2')
+    // One record, in order, with no record inside it and no heading of the first one.
+    expect(seed.text.match(/<会话记录>/gu)).toHaveLength(1)
+    expect(seed.text).not.toContain(first.text.split('\n', 1)[0])
+    const record = seed.text.split('<会话记录>')[1]!
+    const order = ['Original question', 'Answer', 'Second question', 'Second answer'].map(words => record.indexOf(words))
+    expect(order.every(index => index >= 0)).toBe(true)
+    expect(order).toEqual(order.toSorted((a, b) => a - b))
+    expect(seed.context.title).toBe('Second question')
+  })
+
   it('copies only through the selected message, without hidden reasoning or editable title affecting retries', () => {
     const source = detail()
     source.messages[1]!.reasoning = 'Hidden reasoning'

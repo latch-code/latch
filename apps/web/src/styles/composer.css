@@ -652,11 +652,13 @@
   line-height: var(--lh-caption-para);
 }
 /* 分叉 in the session's Harness popover: a title and one line; while the latest turn runs it dims and says why. */
-.harness-fork {
+.harness-fork,
+.harness-move {
   align-items: start;
   padding-block: var(--sp-6);
 }
-.harness-fork > .ui-menu-item-lead {
+.harness-fork > .ui-menu-item-lead,
+.harness-move > .ui-menu-item-lead {
   display: flex;
   justify-content: center;
   padding-top: var(--sp-2);
@@ -665,13 +667,16 @@
 .harness-fork-text {
   min-width: 0;
 }
-.harness-fork[aria-disabled='true'] {
+.harness-fork[aria-disabled='true'],
+.harness-move[aria-disabled='true'] {
   cursor: default;
 }
-.harness-fork[aria-disabled='true']:is(:hover, :active) {
+.harness-fork[aria-disabled='true']:is(:hover, :active),
+.harness-move[aria-disabled='true']:is(:hover, :active) {
   background: transparent;
 }
-.harness-fork[aria-disabled='true'] > :is(.ui-menu-item-lead, .harness-fork-text) {
+.harness-fork[aria-disabled='true'] > :is(.ui-menu-item-lead, .harness-fork-text),
+.harness-move[aria-disabled='true'] > :is(.ui-menu-item-lead, .harness-fork-text) {
   color: var(--faint);
 }
 .model-setting {
