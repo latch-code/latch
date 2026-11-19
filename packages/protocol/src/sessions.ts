@@ -9,6 +9,7 @@ import type { AgentBrief, SessionAgentRef } from './custom-agents.ts'
 import type { GatewayLoss } from './gateway-translations.ts'
 import type { TurnSpend } from './model-usage.ts'
 import type { BoardPlace, BoardPriority } from './board.ts'
+import type { TeamMembership } from './teams.ts'
 
 export interface SessionCommand {
   name: string
@@ -190,6 +191,8 @@ export interface DriverTaskSummary {
    * session that is not private in a private 待办, so a device that may not read the 待办 never learns of it.
    */
   itemId?: string
+  /** The team this session is a member of. Host-derived; a driver's claim is dropped. */
+  teamOf?: TeamMembership
   /** Accumulated model usage reported by the provider or agent. */
   usage?: TokenUsage
   /** L1: Latch asks before each risky tool call. L3: the harness runs unsandboxed (full access). */
