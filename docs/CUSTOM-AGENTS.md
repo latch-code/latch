@@ -597,4 +597,4 @@ Host 在 `custom.json` 的 `chats` 里为每个 Agent 与「通用」保留一�
 | 审批与提问 | 等你点头（琥珀） |
 | 停止中 | 在停下 |
 
-工具行没有种类时由 `toolKind` 按工具名猜。名册与总览只有摘要的 `RunLive.activity`，写粗词（`personActivity`）：`starting` 在准备、`model` 在想、`command` 在跑命令、`tool` 在动手、`approval` 等你点头、`cancelling` 在停下。失败写「失败」，长时间没有事件写「没有动静」。
+工具行没有种类时由 `toolKind` 按工具名猜。名册、总览与对话里回复文字到来前的转圈行只有摘要的 `RunLive.activity`，写粗词（`personActivity`，从不写「思考中」）：`starting` 在准备、`model` 在想、`command` 在跑命令、`tool` 在动手、`approval` 等你点头、`cancelling` 在停下。失败写「失败」，长时间没有事件写「没有动静」。

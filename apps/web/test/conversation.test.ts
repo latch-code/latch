@@ -1132,12 +1132,11 @@ describe('a settled turn', () => {
     vi.useFakeTimers({ now: Date.parse('2026-11-11T10:01:12Z'), toFake: ['Date'] })
     const live = {
       runId: 'r',
-      activity: 'model' as const,
       since: '2026-11-11T10:01:00Z',
       runStartedAt: '2026-11-11T10:00:00Z',
       lastEventAt: '2026-11-11T10:01:10Z',
     }
-    const turn = (status: TaskStatus, liveText: string) =>
+    const turn = (status: TaskStatus, liveText: string, speaker = false, activity: RunLive['activity'] = 'model') =>
       renderToStaticMarkup(
         createElement(Transcript, {
           detail: {
@@ -1150,17 +1149,25 @@ describe('a settled turn', () => {
               updatedAt: '',
               model: 'fixture-large',
               providerId: 'fixture',
-              live,
+              live: { ...live, activity },
             },
           },
           approvals: [],
           harnessName: 'Latch',
           active: status === 'running',
+          ...(speaker ? { speaker: { name: '晨报', avatar: 'general' as const } } : {}),
         }),
       )
     const waiting = turn('running', '')
     expect(waiting).toMatch(/class="thinking-line"[^>]*>.*思考中.*1:12/su)
     expect(waiting).not.toContain('在等模型')
+    // 我的 Agent says what it is doing as a person does, by the run's activity, never 思考中.
+    const line = (html: string) => /<div class="thinking-line"[^>]*>(.*?)<\/div>/su.exec(html)?.[1]?.replace(/<[^>]+>/gu, ' ')
+    const person = turn('running', '', true)
+    expect(person).not.toContain('思考')
+    expect(line(person)).toMatch(/^\s*在想\s+1:12\s*$/u)
+    expect(line(turn('running', '', true, 'starting'))).toMatch(/^\s*在准备\s+1:12\s*$/u)
+    expect(line(turn('running', '', true, 'command'))).toMatch(/^\s*在跑命令\s+1:12\s*$/u)
     // Once the reply writes, its text speaks for itself; a turn at rest says nothing either.
     expect(turn('running', '正在写')).not.toContain('thinking-line')
     expect(turn('idle', '')).not.toContain('thinking-line')

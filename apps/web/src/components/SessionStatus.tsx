@@ -48,14 +48,15 @@ export function RunningWords({ live, person = false }: { live: RunLive | undefin
 
 /**
  * The live turn before its words arrive, where they will be: a small grey turning ring and how long it has run. It says nothing of what the Harness waits on; a tool's own row says that when there is one.
+ * 我的 Agent says what it is doing as a person does (在准备, 在想, 在跑命令), never 思考中.
  */
-export function ThinkingLine({ live }: { live: RunLive | undefined }) {
+export function ThinkingLine({ live, person = false }: { live: RunLive | undefined; person?: boolean }) {
   useTicker('second')
   const ms = live && runElapsed(live, hostNow())
   return (
     <div className="thinking-line" role="status">
       <Spinner size={12} />
-      <span>{COPY.thinking}</span>
+      <span>{person ? personActivity(live)?.words : COPY.thinking}</span>
       {ms !== undefined && <span className="thinking-clock">{runClock(ms)}</span>}
     </div>
   )

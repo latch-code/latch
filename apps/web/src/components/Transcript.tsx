@@ -638,7 +638,7 @@ const TurnView = memo(function TurnView({
               </Collapse>
             )
           })}
-          {thinking && <ThinkingLine live={thinking} />}
+          {thinking && <ThinkingLine live={thinking} person={speaker !== undefined} />}
           {!trailingLive && (
             <TurnCards
               sessionId={rowContext.sessionId}
