@@ -13,14 +13,11 @@ import {
 } from '../core/api.ts'
 import {
   draftStart,
-  pickedOwnDefault,
-  findHarness,
   harnessPicks,
   pinnedChoice,
   readChoice,
   resolveChoice,
-  servicePick,
-  startConfig,
+  startChoices,
   writeChoice,
   worktreeProject,
   type ComposerChoice,
@@ -360,12 +357,6 @@ export function useSubmission({
     if (resend !== undefined && (selectedId === null || !resend.trim())) return false
     if (!retry && selectedId === null && !(await saveOfferedHarness())) return false
     const override = selectedId === null ? undefined : overrides[selectedId]
-    const harness = findHarness(catalog, choice.harnessId)
-    // A model from a service replaces the Harness's own model pick.
-    const service = servicePick(catalog, harness, choice.config)
-    const picks = startConfig(harness, choice.config).filter(
-      pick => !service || harness?.catalogue?.options.find(option => option.id === pick.configId)?.category !== 'model',
-    )
     const submission: PendingSubmission =
       retry
       ?? (resend !== undefined && selectedId !== null
@@ -375,7 +366,7 @@ export function useSubmission({
             sessionId: selectedId,
             resent: true,
             ...(override ? { model: override } : {}),
-            ...(clearing.has(selectedId) ? { freshContext: true } : {}),
+            ...(followUp === 'queue' ? { queue: true } : clearing.has(selectedId) ? { freshContext: true } : {}),
           }
         : undefined)
       ?? (selectedId === null
@@ -397,11 +388,7 @@ export function useSubmission({
               : {}),
             ...(choice.harnessId ? { harnessId: choice.harnessId } : {}),
             ...(choice.workspaceId ? { workspaceId: choice.workspaceId } : {}),
-            ...(service ? { model: service } : choice.model ? { model: choice.model } : {}),
-            ...(!service && (pickedOwnDefault(choice.config) || (!fork && harness?.capabilities.models.owner === 'harness'))
-              ? { ownModel: true as const }
-              : {}),
-            ...(picks.length ? { config: picks } : {}),
+            ...startChoices(catalog, choice, fork !== null),
             ...(worktree ? { worktree: worktree.from === 'head' ? (true as const) : worktree } : {}),
             ...(itemRef.current && !fork ? { itemId: itemRef.current.id, itemRevision: itemRef.current.revision } : {}),
             // Stored with the submission, so a start whose result stayed unknown still stays on the board after a reload.
@@ -630,6 +617,8 @@ export function useSubmission({
     /** While set, a new session this page starts belongs to that 待办 (`POST /work/items/:id/start`), as of that revision. */
     setItem,
     resend: (prompt: string) => submit(undefined, prompt),
+    /** A prompt for the open session that never sat in the input, through the same path; `queue` while it runs. */
+    send: (prompt: string, followUp?: 'queue') => submit(undefined, prompt, followUp),
     /** The open session's next prompt starts a new context. */
     clearing: selectedId !== null && clearing.has(selectedId),
     setClearing: (sessionId: string, on: boolean) =>

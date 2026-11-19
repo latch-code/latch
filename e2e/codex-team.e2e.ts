@@ -73,17 +73,22 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     const cancelResponse = () =>
       page.waitForResponse(response => response.url().endsWith(`/${path}/cancel`) && response.request().method() === 'POST')
     const input = page.getByRole('textbox', { name: '继续对话', exact: true })
-    await input.fill('核对移动端和审批回执')
-    // The one entry opens the list of tasks; Codex's own subagents are a quiet way in from it.
+    await input.fill('先留着')
+    // The one entry opens the list of tasks; Codex's own subagents are a way of working it, sent as one message.
     await open('用团队分工').click()
-    await page
-      .getByRole('dialog', { name: '团队分工', exact: true })
-      .getByRole('button', { name: '用 Codex 自带的子 Agent', exact: true })
-      .click()
-    expect(await input.inputValue()).toContain('核对移动端和审批回执')
-    expect(await input.inputValue()).toMatch(/^请启动 Codex 的子 Agent/u)
+    const panel = page.getByRole('dialog', { name: '团队分工', exact: true })
+    await panel.getByRole('radio', { name: 'Codex 子 Agent', exact: true }).click()
+    await panel.getByRole('textbox', { name: '第 1 项', exact: true }).fill('核对移动端和审批回执')
     expect((await read()).messages.filter(message => message.role === 'user')).toHaveLength(1)
-    await page.getByRole('button', { name: '发送', exact: true }).filter({ visible: true }).click()
+    await panel.getByRole('button', { name: '开始', exact: true }).click()
+    await panel.waitFor({ state: 'hidden' })
+    await expect.poll(async () => (await read()).messages.filter(message => message.role === 'user').length).toBe(2)
+    expect((await read()).messages.filter(message => message.role === 'user').at(-1)!.text).toMatch(
+      /^请启动 Codex 的子 Agent[\s\S]*\n1\. 核对移动端和审批回执$/u,
+    )
+    // The input keeps what it held.
+    expect(await input.inputValue()).toBe('先留着')
+    await input.fill('')
     await expect.poll(async () => (await read()).summary.status).toBe('waiting-approval')
     await open('Agent 团队').click()
     const memberApproval = dialog.getByRole('button', { name: '查看此成员的审批', exact: true })
@@ -168,7 +173,7 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     await teamEntry.click()
     await cedar.getByText('运行中', { exact: true }).waitFor()
     await selectDelegation(1)
-    await dialog.getByText('核对移动端和审批回执', { exact: true }).waitFor()
+    await dialog.getByText('1. 核对移动端和审批回执', { exact: true }).waitFor()
     await cedar.getByText('已完成', { exact: true }).waitFor()
     if (output) await page.screenshot({ path: join(output, 'team-parent-completed-390-dark.png'), animations: 'disabled' })
     expect(await stop.count()).toBe(1)
@@ -240,7 +245,7 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     expect(ordinaryRunId).not.toBe(runId)
     await teamEntry.click()
     await selectDelegation(1)
-    await dialog.getByText('核对移动端和审批回执', { exact: true }).waitFor()
+    await dialog.getByText('1. 核对移动端和审批回执', { exact: true }).waitFor()
     await reachable(stop)
     if (output) await page.screenshot({ path: join(output, 'team-history-ordinary-run-390-dark.png'), animations: 'disabled' })
     const ordinaryCancel = cancelResponse()

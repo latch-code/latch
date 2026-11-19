@@ -98,19 +98,17 @@
   line-height: var(--lh-caption);
 }
 .codex-team-current-run {
-  width: 100%;
+  flex: 1 1 auto;
 }
 .codex-team-request,
-.codex-team-empty,
 .codex-team-note,
 .codex-team-assignment {
   margin: 0;
 }
-.codex-team-request,
-.codex-team-empty {
-  line-height: var(--lh-ui-para);
-}
 .codex-team-request {
+  line-height: var(--lh-ui-para);
+  /* The tasks of the request, one to a line. */
+  white-space: pre-line;
   display: -webkit-box;
   max-height: calc(2 * var(--lh-ui-para));
   overflow: hidden;

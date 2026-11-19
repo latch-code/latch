@@ -28,7 +28,7 @@ import { useHarnessCommands } from '../hooks/useHarnessCommands.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { Composer } from '../composer/Composer.tsx'
 import { CodexTeam } from '../composer/CodexTeam.tsx'
-import { canStartTeam, teamOpen, teamsOf } from '../teams/model.ts'
+import { canStartTeam } from '../teams/model.ts'
 import { HarnessLimitChip, ServiceBudgetChip } from '../usage/UsageChip.tsx'
 import { ComposerControl, openControlWhenShown } from '../composer/ComposerControl.tsx'
 import { composerActions } from './composerActions.ts'
@@ -303,6 +303,7 @@ export function SessionComposer({
     setSubmissionDraft,
     mentionChoice,
     sendDraft,
+    sendPrompt,
     retryDraft,
     abandonPending,
     abandoning,
@@ -706,6 +707,17 @@ export function SessionComposer({
     && !answer
     && !submission.pending
     && !submission.sending
+  // This session would take a message now, as the send button would: queued behind a running turn where the Host queues.
+  const teamSend =
+    !offline
+    && gate.kind === 'open'
+    && sessionBlock === undefined
+    && !sideBlocked
+    && !permissionBlocked
+    && !answer
+    && !submission.pending
+    && !submission.sending
+    && (!shell.active || canQueue)
   const composer = (
     <Composer
       showSlashButton={speaker === undefined}
@@ -835,18 +847,8 @@ export function SessionComposer({
           <CodexTeam
             key={current.summary.id}
             detail={current}
-            draft={submission.draft}
-            canPrepare={teamPrepare}
-            onPrepare={value => {
-              setSubmissionDraft(value)
-              requestAnimationFrame(() => composerRef.current?.focus())
-            }}
             onApproval={selectApproval}
             run={run}
-            inTeam={
-              shell.catalog?.features?.teams === true
-              && (current.summary.teamOf !== undefined || teamsOf(shell.snapshot.teams, current.summary.id).some(teamOpen))
-            }
             team={
               shell.catalog?.features?.teams && access.scopes.has('run') && canStartTeam(current.summary, shell.snapshot.teams)
                 ? {
@@ -855,6 +857,8 @@ export function SessionComposer({
                     deviceId: shell.snapshot.device.id,
                     access,
                     refresh: shell.refresh,
+                    onManageModels: manageProviders,
+                    computer,
                     prepare: {
                       draft: submission.draft,
                       open: teamPrepare,
@@ -863,6 +867,7 @@ export function SessionComposer({
                         requestAnimationFrame(() => composerRef.current?.focus())
                       },
                     },
+                    send: { open: teamSend, go: sendPrompt },
                   }
                 : undefined
             }

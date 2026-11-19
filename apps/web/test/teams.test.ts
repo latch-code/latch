@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  LADDER_MODE,
   TEAM_LIMITS,
   TEAM_RETURN_HEADING,
+  WORK_ITEM_LIMITS,
   type HarnessInfo,
   type HostCatalog,
   type Message,
   type ModelWire,
+  type SessionConfigOption,
   type TaskSummary,
   type TeamMember,
   type TeamSummary,
@@ -13,9 +16,11 @@ import {
 import { testHarness } from '@latch/testkit'
 import { withServicePick } from '../src/composerChoice.ts'
 import { groupSessions, listedSessions, nestMembers } from '../src/sessions.ts'
-import { memberModel } from '../src/teams/memberModel.ts'
+import { CODEX_TEAM_REQUEST } from '../src/teams/copy.ts'
+import { memberChoice, memberModel, memberStart, withPick } from '../src/teams/memberModel.ts'
 import {
   canStartTeam,
+  codexTeamMessage,
   endMark,
   memberPlace,
   nextHarness,
@@ -228,5 +233,120 @@ describe("the model a member's Harness starts on", () => {
       providerId: 'openai',
       model: 'gpt-5.5',
     })
+  })
+})
+
+describe('what each row of the list starts on', () => {
+  const option = (id: string, category: SessionConfigOption['category'], values: string[], currentValue = values[0]!) =>
+    ({
+      id,
+      name: id,
+      category,
+      type: 'select',
+      currentValue,
+      options: values.map(value => ({ value, name: value })),
+    }) as SessionConfigOption
+  const own: HarnessInfo = {
+    ...testHarness('pi', { label: 'Pi' }),
+    catalogue: {
+      options: [
+        option('model', 'model', ['small', 'large']),
+        option('effort', 'thought_level', ['low', 'high']),
+        option('mode', 'mode', ['build', 'plan']),
+      ],
+      perModel: [{ model: 'large', options: [option('effort', 'thought_level', ['low', 'high', 'max'])] }],
+      reportedAt: '2026-11-19T00:00:00Z',
+      source: 'session',
+    },
+  }
+  const catalog: HostCatalog = {
+    harnesses: [testHarness('standard', { kind: 'builtin', label: 'Latch 内置' }), own],
+    providers: [
+      {
+        id: 'deepseek',
+        name: 'DeepSeek',
+        kind: 'openai-compatible',
+        models: ['deepseek-chat', 'deepseek-reasoner'],
+        defaultModel: 'deepseek-chat',
+      },
+      { id: 'openai', name: 'OpenAI', kind: 'openai-responses', models: ['gpt-5.5'], defaultModel: 'gpt-5.5' },
+    ],
+    workspaces: [{ id: 'default', name: 'app', path: '/work/app' }],
+    defaults: { harnessId: 'standard', mode: 'agent', workspaceId: 'default', model: { providerId: 'deepseek', model: 'deepseek-chat' } },
+  }
+
+  it("defaults to what a new session of the row's Harness would start on for this person, never the lead's", () => {
+    // Remembered for Pi while another Harness was the input's.
+    const remembered = {
+      harnessId: 'standard',
+      model: { providerId: 'deepseek', model: 'deepseek-reasoner' },
+      otherPicks: { pi: { model: 'large', effort: 'max' } },
+    }
+    const pi = memberChoice(catalog, remembered, 'pi')!
+    expect(pi.harnessId).toBe('pi')
+    expect(pi.config).toMatchObject({ model: 'large', effort: 'max' })
+    expect(memberChoice(catalog, remembered, 'standard')?.model).toEqual({ providerId: 'deepseek', model: 'deepseek-reasoner' })
+    // Nothing remembered: the Harness's own defaults.
+    expect(memberChoice(catalog, null, 'pi')?.config).toBeUndefined()
+    expect(memberChoice(catalog, null, 'gone')).toBeUndefined()
+  })
+
+  it('takes the picks made in the row over that default', () => {
+    const base = memberChoice(catalog, null, 'pi')!
+    expect(withPick(catalog, base, { config: { model: 'large', effort: 'max' } }).config).toMatchObject({ model: 'large', effort: 'max' })
+    // A level the model does not offer is not kept.
+    expect(withPick(catalog, base, { config: { model: 'small', effort: 'max' } }).config).toEqual({ model: 'small' })
+    expect(withPick(catalog, base, undefined)).toBe(base)
+  })
+
+  it("sends a service's model as model, the Harness's own choices as config, and never a permission pick", () => {
+    const standard = memberChoice(catalog, null, 'standard')!
+    expect(memberStart(catalog, standard)).toEqual({ model: { providerId: 'deepseek', model: 'deepseek-chat' } })
+    const pi = withPick(catalog, memberChoice(catalog, null, 'pi')!, {
+      config: { model: 'large', effort: 'max', mode: 'plan', [LADDER_MODE]: 'plan' },
+    })
+    expect(memberStart(catalog, pi)).toEqual({
+      ownModel: true,
+      config: [
+        { configId: 'model', value: 'large' },
+        { configId: 'effort', value: 'max' },
+      ],
+    })
+    // A service's model for a Harness with its own: the model goes as model, never as the Harness's own pick.
+    const speaking: HarnessInfo = {
+      ...own,
+      capabilities: { ...own.capabilities, models: { ...own.capabilities.models, wires: ['responses'], experimental: true } },
+    }
+    const routed = { ...catalog, harnesses: [catalog.harnesses[0]!, speaking] }
+    const service = withServicePick({ model: 'large' }, { providerId: 'openai', model: 'gpt-5.5' }, 'model')!
+    const start = memberStart(routed, withPick(routed, memberChoice(routed, null, 'pi')!, { config: service }))
+    expect(start.model).toEqual({ providerId: 'openai', model: 'gpt-5.5' })
+    expect(start.ownModel).toBeUndefined()
+    expect((start.config ?? []).some(pick => pick.configId === 'model')).toBe(false)
+    expect(memberStart(catalog, undefined)).toEqual({})
+  })
+
+  it("carries each row's start with its task", () => {
+    const tasks = tasksOf([row('一', 'pi'), row('二', 'standard')], item => (item.harnessId === 'pi' ? { ownModel: true } : {}))
+    expect(tasks).toEqual([
+      { title: '一', prompt: '一', harnessId: 'pi', ownModel: true },
+      { title: '二', prompt: '二', harnessId: 'standard' },
+    ])
+  })
+})
+
+describe("the message that hands the list to Codex's own subagents", () => {
+  it('is the request, then each written row numbered, its later lines under it', () => {
+    expect(codexTeamMessage([row(' 查前端 \n看登录表单。\n\n再看重试'), row('  '), row('查后端')])).toEqual({
+      text: `${CODEX_TEAM_REQUEST}\n\n1. 查前端\n   看登录表单。\n\n   再看重试\n2. 查后端`,
+      tooLong: false,
+    })
+    expect(codexTeamMessage([row(''), row(' \n ')])).toBeUndefined()
+  })
+
+  it('says when it would not fit one message', () => {
+    const long = Array.from({ length: 5 }, () => row('长'.repeat(TEAM_LIMITS.promptChars)))
+    expect(codexTeamMessage(long)?.tooLong).toBe(true)
+    expect(codexTeamMessage(long)!.text.length).toBeGreaterThan(WORK_ITEM_LIMITS.promptChars)
   })
 })

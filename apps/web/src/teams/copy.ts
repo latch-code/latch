@@ -19,7 +19,11 @@ export const TEAM_COPY = defineCopy(
     giveUp: '放弃',
     unanswered: '没有收到电脑的答复',
     askAgent: '让 Agent 来分',
-    codexNative: '用 Codex 自带的子 Agent',
+    modes: '分工方式',
+    sessionsMode: '各开会话',
+    sessionsModeHint: '每项开一个会话，用你为它选的 Harness 与模型',
+    codexMode: 'Codex 子 Agent',
+    codexModeHint: '作为一条消息发给这个会话，由 Codex 派给自己的子 Agent',
     slashInInput: '输入框里已有斜杠命令',
     noHarness: '没有可用的 Harness',
     count: (count: number, limit: number) => `${formatNumber(count)} / ${formatNumber(limit)}`,
@@ -65,7 +69,11 @@ export const TEAM_COPY = defineCopy(
     giveUp: 'Give up',
     unanswered: 'The computer did not reply',
     askAgent: 'Let the agent split it',
-    codexNative: 'Use Codex’s own subagents',
+    modes: 'How to split',
+    sessionsMode: 'Sessions',
+    sessionsModeHint: 'Each task opens a session on the Harness and model you pick for it',
+    codexMode: 'Codex agents',
+    codexModeHint: 'Sent to this session as one message; Codex hands it to its own subagents',
     slashInInput: 'The input already holds a slash command',
     noHarness: 'No Harness is ready',
     count: (count: number, limit: number) => `${formatNumber(count)} / ${formatNumber(limit)}`,
@@ -97,6 +105,9 @@ export const TEAM_COPY = defineCopy(
     said: (members: number) => `Team of ${formatNumber(members)}`,
   },
 )
+
+/** What Codex is asked when its own subagents do the work: the tasks follow it, numbered, in the same message. */
+export const CODEX_TEAM_REQUEST = '请启动 Codex 的子 Agent 并行处理下列任务。分工后等待各成员结果，再汇总给我。'
 
 /** What the agent is asked when the person lets it write the split; it goes into the input, and the person sends it. */
 export const ASK_AGENT_REQUEST =

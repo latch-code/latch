@@ -52,18 +52,20 @@
 }
 .team-task-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-8);
+  gap: var(--sp-2) var(--sp-4);
   min-width: 0;
   padding-inline: var(--sp-2);
 }
 .team-harness {
   display: inline-flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   align-items: center;
   gap: var(--sp-6);
   min-width: 0;
 }
+/* Where a proposal is reviewed: the model of a service the member will use, muted beside its Harness. */
 .team-model {
   min-width: 0;
   overflow: hidden;
@@ -73,12 +75,64 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A row's model, thinking and speed: the input box's entry, its name giving way first. */
+.team-agent-model {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+.team-agent-model .ui-value-picker {
+  max-width: 100%;
+}
+.team-agent-model .ui-value-picker-value {
+  min-width: 0;
+  overflow: hidden;
+}
+.team-agent-model .ui-value-picker-text {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-agent-model .model-picker {
+  color: var(--ink);
+}
+.team-task-end {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-6);
+  margin-inline-start: auto;
+}
+.team-task-remove {
+  color: var(--muted);
+}
 .team-task-count {
   flex: none;
   color: var(--red);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
+}
+/* Codex's own subagents: a row is its words alone, its 移除 in the corner. */
+.team-task {
+  position: relative;
+}
+.team-task-corner {
+  position: absolute;
+  inset-block-start: var(--sp-4);
+  inset-inline-end: var(--sp-4);
+}
+.team-panel[data-mode='codex'] .team-task:has(.team-task-corner) .team-task-input {
+  padding-inline-end: calc(var(--sp-8) + 24px);
+}
+.team-panel-head {
+  display: flex;
+  min-width: 0;
+}
+.ui-sheet .team-panel-head .ui-segmented {
+  flex: 1 1 auto;
 }
 .team-panel-add,
 .team-panel-foot {
@@ -94,17 +148,14 @@
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
 }
+.team-panel-count[data-over] {
+  color: var(--red);
+}
 .team-panel-foot {
   padding-block-start: var(--sp-10);
   border-block-start: 1px solid var(--line);
 }
-.team-panel-asks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2) var(--sp-4);
-  min-width: 0;
-}
-.team-panel-asks .ui-button {
+.team-panel-ask.ui-button {
   color: var(--muted);
 }
 

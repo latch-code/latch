@@ -35,8 +35,9 @@ sources:
 
 请求是 `{ requestId, proposal?, tasks?, goal? }`，`proposal` 与 `tasks` 二选一。
 
-- `proposal: { id, baseRevision, entries? }`：带队会话自己提出的一条待办提议（别的会话的提议 409 `team-proposal`）。`entries` 是 `{ index, title?, prompt?, harnessId?, model? }`，不写就是全部待处理条目。这些条目按人改过的值被接受，与 `POST /work/proposals/:id/accept` 是同一个函数（同样的审计、回执与私有规则），再逐条开始。
-- `tasks: [{ title, prompt, harnessId, model? }]`：人写的列表，每项建成一条待办（与 `POST /work/items` 同一个函数）。标题 1–120 字，要求 1–4 000 个字符。
+- `proposal: { id, baseRevision, entries? }`：带队会话自己提出的一条待办提议（别的会话的提议 409 `team-proposal`）。`entries` 是 `{ index, title?, prompt?, harnessId?, model?, config?, ownModel? }`，不写就是全部待处理条目。这些条目按人改过的值被接受，与 `POST /work/proposals/:id/accept` 是同一个函数（同样的审计、回执与私有规则），再逐条开始。
+- `tasks: [{ title, prompt, harnessId, model?, config?, ownModel? }]`：人写的列表，每项建成一条待办（与 `POST /work/items` 同一个函数）。标题 1–120 字，要求 1–4 000 个字符。
+- 成员开始时用的选择与 `POST /tasks` 相同：`model` 是 Latch 的一个模型服务，`config` 是 Harness 自己的选项（`[{ configId, value }]`，最多 16 项、每项一次，如它自己的模型、思考与速度），`ownModel: true` 是人选了 Harness 自己的默认模型、不被项目的默认模型替换。选权限档位的项（`~mode`，或这个 Harness 已报过的选项里类别是 `mode` 的）不收，这个成员记为没有开始。
 - 成员 1–8 个（`TEAM_LIMITS.members`），超出 400 `invalid-input`。
 
 带队会话必须是这台设备能读的 Code 会话，没有归档，不是插件页面开始的，也不是某个团队的成员（团队结束后仍算），否则 409 `team-lead`。一个带队会话同时只有一个没结束的团队，否则 409 `team-open`。
@@ -47,7 +48,7 @@ sources:
 | --- | --- |
 | 项目 | 带队会话的项目（提议条目里写的项目不用） |
 | Harness | 任务或条目写的；提议条目没写时用带队会话的 |
-| 模型 | 任务或条目带 `model`（Latch 的一个模型服务，人自己为这个 Harness 选的）时用它，由会话开始的同一套检查核对；不带时用 Harness 自己的。从不取带队会话的 |
+| 模型 | 任务或条目带的 `model`、`config` 与 `ownModel`，原样交给会话开始，由同一套检查核对：开始前就不收的（不存在的服务、Latch 内置收到 Harness 选项）让这个成员记为没有开始；Agent 自己不提供的值要等它的会话起来才知道，那个会话在第一轮之前失败，成员记为失败。其余成员照常。都不带时与在该项目里手动开始的新会话相同。从不取带队会话的 |
 | 权限 | Harness 与项目的默认值，不随带队会话 |
 | 文件夹 | 项目是只有一个文件夹的已保存项目、且该文件夹是 Git 仓库时，每个成员在自己的新工作树里开始（与 `POST /tasks` 的 `worktree: true` 相同）；仓库此刻建不出工作树（还没有提交、工作树位置不可用等）时成员被拒，不改用共用文件夹。不是仓库、多个文件夹或默认项目时，与在该项目里手动开始的会话相同。只对话的 Harness 不用工作树 |
 | 私有 | 带队会话私有时成员也私有（`privateFrom`），团队记下 `private`，此后不取消；不私有时成员不带私有上下文开始，这样它的回复才能交回 |
@@ -119,9 +120,9 @@ detail 只有 ID、计数、哈希与枚举，不含标题、目标或回复。
 页面只在 `catalog.features.teams` 时给出下面这些；画法见 [DESIGN.md](DESIGN.md)。
 
 - **开始。** Code 会话输入框末行的「用团队分工」（[TeamEntry.tsx](../apps/web/src/teams/TeamEntry.tsx)）：会话已归档、自己是成员、由插件页面开始、设备没有 `run`，或它已有一个没结束的团队时不出现。面板里每行的整段文字是要求，第一行是标题；空行不算任务。第一行默认用这个会话的 Harness，之后的行优先用还没用过的可用 Harness。写到一半的列表按设备与会话留在页面内存里，关掉面板或切换会话后还在，刷新页面后没有，不写入浏览器存储。
-- **模型。** 每个成员带的 `model` 是这个人的输入框给该 Harness 的新会话记住的选择（[memberModel.ts](../apps/web/src/teams/memberModel.ts)），按来源会话的项目解析；那是 Harness 自己的模型时不带。
+- **模型。** 每行在 Harness 旁有与输入框开始新会话时同一个模型入口（模型、思考与速度）。它默认是这个人的输入框给该 Harness 的新会话记住的选择，按来源会话的项目解析（[memberModel.ts](../apps/web/src/teams/memberModel.ts)）；人在这一行改的只属于这一行，换 Harness 后回到那个 Harness 的默认。开始时按输入框开始新会话的同一个函数（`startChoices`）把它写成 `model`、`config` 与 `ownModel`，去掉权限档位。从提议开始时每条用该 Harness 的默认。
 - **从提议开始。** 会话里审阅自己 Agent 的一组待办提议（待处理的不少于两条）时多一个「一起开始」，每条可改 Harness；「接受」与「不要」照旧。看板上的审阅没有它。409 `proposal-changed` 后页面重读提议。
 - **结果未知。** 开始的请求没有收到答复时，列表锁住，「重试」原样再发（同一 `requestId` 与内容），「放弃」后才能改。停止同理。
 - **对话里。** 团队的卡片排在 `messageId` 所在那一轮之后，找不到那条消息时排在最后（[placeTeams.tsx](../apps/web/src/teams/placeTeams.tsx)）。交回的消息按 `returnedMessageId` 认；快照里没有这个团队时，以 `TEAM_RETURN_HEADING` 开头的用户消息也画成结果卡，只是没有成员行。成员行展开时读的是成员会话的最后一条回复，不解析交回的文字。
-- **Codex 自带的子 Agent** 仍由 Codex 自己分工（[CodexTeam.tsx](../apps/web/src/composer/CodexTeam.tsx)）。还没有委派时它是面板里的一个入口；有了委派后，同一个入口打开委派记录，记录里的「用团队分工」回到面板。这个会话是成员或已有没结束的团队时，还没有委派的 Codex 会话也不出现这个入口。
+- **Codex 自带的子 Agent** 是同一个面板的另一种分工方式（[CodexTeam.tsx](../apps/web/src/composer/CodexTeam.tsx)）：会话的 Harness 此刻能用它们（`codexTeam === 'available'`）时，面板顶上有「各开会话 / Codex 子 Agent」两段。选后者时每行只有文字；「开始」把 `CODEX_TEAM_REQUEST` 和编了号的各项作为一条消息，经输入框自己的发送路径发给这个会话（同样的检查、回执，运行中时排队），不建团队记录，输入框里的字不动。面板记住这个会话上次用的方式，只在页面内存里。有了委派后，入口打开委派记录，记录里的「用团队分工」回到面板。这个会话是成员或已有没结束的团队时，面板不出现，已有的委派记录照常。
 - **列表。** 成员排在来源会话下面，按团队里的顺序（`nestMembers`）；来源会话不在同一组（被搜索或归档筛掉、成员在「等你处理」）时成员照常显示。

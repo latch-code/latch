@@ -22,7 +22,7 @@ import { ItemWriteLine } from './WriteLine.tsx'
 import { readChoice } from '../composerChoice.ts'
 import { TEAM_COPY } from '../teams/copy.ts'
 import { HarnessPick } from '../teams/HarnessPick.tsx'
-import { memberModel } from '../teams/memberModel.ts'
+import { memberChoice, memberModel, memberStart } from '../teams/memberModel.ts'
 import { proposalStart } from '../teams/model.ts'
 import { draftKey, useTeamStart } from '../teams/start.ts'
 
@@ -221,7 +221,16 @@ export function ProposalReview({
     const started = await teamStart.start({
       proposal: proposalStart(
         read,
-        chosen.map(draft => ({ ...draft, model: modelOf(draft.harnessId) })),
+        // Each starts on what a new session of its Harness would, as an untouched row of the panel does.
+        chosen.map(draft => ({
+          ...draft,
+          ...(team
+            ? memberStart(
+                team.catalog,
+                memberChoice(team.catalog, remembered, draft.harnessId, { projectId: team.lead.workspaceId, access: team.access }),
+              )
+            : {}),
+        })),
       ),
     })
     // The team's card takes the proposal's place in the conversation, which can mount this review anew: close it either way.

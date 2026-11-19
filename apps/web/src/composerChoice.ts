@@ -243,6 +243,30 @@ export function startConfig(
   })
 }
 
+/**
+ * What a new session's start carries of a draft beside its Harness and place: a service's model (it replaces the
+ * Harness's own model pick), Latch 内置's model, the Harness's own default chosen as such, and its own picks. A fork's
+ * Harness keeps what it maps from the source, so only a pick of the default marks `ownModel` there.
+ */
+export function startChoices(
+  catalog: HostCatalog | undefined,
+  choice: Pick<ComposerChoice, 'harnessId' | 'model' | 'config'>,
+  fork = false,
+): { model?: ModelRef; ownModel?: true; config?: Array<{ configId: string; value: string }> } {
+  const harness = findHarness(catalog, choice.harnessId)
+  const service = servicePick(catalog, harness, choice.config)
+  const picks = startConfig(harness, choice.config).filter(
+    pick => !service || harness?.catalogue?.options.find(option => option.id === pick.configId)?.category !== 'model',
+  )
+  return {
+    ...(service ? { model: service } : choice.model ? { model: choice.model } : {}),
+    ...(!service && (pickedOwnDefault(choice.config) || (!fork && harness?.capabilities.models.owner === 'harness'))
+      ? { ownModel: true as const }
+      : {}),
+    ...(picks.length ? { config: picks } : {}),
+  }
+}
+
 export { harnessName } from './core/harnessName.ts'
 
 /**

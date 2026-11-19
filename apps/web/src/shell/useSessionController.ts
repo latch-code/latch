@@ -1469,6 +1469,13 @@ export function useSessionController({
     await settingsLanded()
     await submission.resend(prompt)
   }
+  /** A message to the open session that never sat in the input, sent as the input sends it: queued while it runs. */
+  const sendPrompt = async (prompt: string) => {
+    if (inputId === null) return false
+    clearUnverified(inputId)
+    await settingsLanded()
+    return submission.send(prompt, active && canQueue ? 'queue' : undefined)
+  }
   const retryStopped = () => {
     if (stopRetry?.kind === 'draft') void sendDraft()
     else if (stopRetry?.kind === 'prompt') void resend(stopRetry.prompt)
@@ -1816,6 +1823,7 @@ export function useSessionController({
     setSubmissionDraft,
     mentionChoice,
     sendDraft,
+    sendPrompt,
     retryDraft,
     abandonPending,
     abandoning,

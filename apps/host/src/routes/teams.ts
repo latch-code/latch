@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
 import { AppError } from '@latch/sdk'
 import {
+  LADDER_MODE,
   TEAM_LIMITS,
   WORK_ITEM_LIMITS,
   WORK_PROPOSAL_LIMITS,
@@ -75,6 +76,20 @@ const POLL_MS = 500
 /** A member idle with no outcome on record and no reply: after this long its Harness is taken to have ended it unsaid. */
 const SILENT_END_MS = 60_000
 const requestId = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
+/** A member's start choices from its Harness's own options, bounded as `POST /tasks` bounds `config`; checked by that start. */
+const startConfig = z
+  .array(z.strictObject({ configId: z.string().min(1).max(128), value: z.string().max(1024) }))
+  .max(16)
+  .refine(entries => new Set(entries.map(entry => entry.configId)).size === entries.length, '每个设置只能选一次')
+  .optional()
+/** What a member starts on beside its Harness: a service's model, its Harness's own choices, or its own default model. */
+const startChoices = {
+  // Checked by the session's own start, as a 待办's is.
+  model: z.unknown().optional(),
+  config: startConfig,
+  ownModel: z.literal(true).optional(),
+}
+type StartChoices = { model?: unknown; config?: Array<{ configId: string; value: string }>; ownModel?: true }
 const startSchema = z
   .strictObject({
     requestId,
@@ -99,8 +114,7 @@ const startSchema = z
                 .max(WORK_ITEM_LIMITS.promptChars * 2)
                 .optional(),
               harnessId: z.string().regex(HARNESS_ID).optional(),
-              // Checked by the session's own start, as a 待办's is.
-              model: z.unknown().optional(),
+              ...startChoices,
             }),
           )
           .min(1)
@@ -114,7 +128,7 @@ const startSchema = z
           title: z.string().max(4 * KIB),
           prompt: z.string().max(TEAM_LIMITS.promptChars * 2),
           harnessId: z.string().regex(HARNESS_ID),
-          model: z.unknown().optional(),
+          ...startChoices,
         }),
       )
       .min(1)
@@ -127,6 +141,13 @@ const startSchema = z
   })
   .refine(body => (body.proposal === undefined) !== (body.tasks === undefined), '要么从一条提议开始，要么写一个任务列表')
 const stopSchema = z.strictObject({ requestId })
+
+/** Only the start choices that were given. */
+const choicesOf = (from: StartChoices | undefined): StartChoices => ({
+  ...(from?.model !== undefined ? { model: from.model } : {}),
+  ...(from?.config?.length ? { config: from.config } : {}),
+  ...(from?.ownModel ? { ownModel: true as const } : {}),
+})
 
 const notFound = () => new AppError(404, 'team-not-found', '找不到这个团队。')
 const conflict = () => new AppError(409, 'request-conflict', '同一个请求标识不能用于不同内容。')
@@ -455,7 +476,7 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
     const derived = (kind: string, index?: number) => sha256Hex(canonicalJson([kind, deviceId, leadId, body.requestId, index ?? 0]))
     const goalText = body.goal?.trim() ? checkedTitle(body.goal) : undefined
     const row = body.proposal ? items.proposal(body.proposal.id) : undefined
-    let plan: Array<{ index?: number; title?: string; prompt?: string; harnessId: string; model?: unknown }>
+    let plan: Array<{ index?: number; title?: string; prompt?: string; harnessId: string } & StartChoices>
     // A retry of a start whose members were all refused: its entries were accepted then, and are those 待办 now.
     const acceptedBefore = body.proposal ? items.receipt('accept', deviceId, derived('team-accept'))?.itemIds : undefined
     if (body.proposal) {
@@ -466,11 +487,17 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
       if (acceptedBefore) {
         const made = acceptedBefore.map(id => items.get(id))
         if (made.some(item => !item)) throw new AppError(409, 'proposal-decided', '这条提议已经处理过了。')
-        plan = made.map((item, index) => ({ index, title: item!.title, harnessId: item!.harnessId ?? lead.harnessId }))
+        // What each was to start on comes with the retry, as the first request named it.
+        plan = made.map((item, index) => ({
+          ...choicesOf(body.proposal!.entries?.[index]),
+          index,
+          title: item!.title,
+          harnessId: item!.harnessId ?? lead.harnessId,
+        }))
       } else {
         if (row.revision !== body.proposal.baseRevision) throw new AppError(409, 'proposal-changed', '提议已有变化，请刷新后再试。')
         const pending = row.entries.flatMap((entry, index) => (entry.state === 'pending' ? [index] : []))
-        const chosen: Array<{ index: number; title?: string; prompt?: string; harnessId?: string; model?: unknown }> =
+        const chosen: Array<{ index: number; title?: string; prompt?: string; harnessId?: string } & StartChoices> =
           body.proposal.entries ?? pending.map(index => ({ index }))
         if (new Set(chosen.map(edit => edit.index)).size !== chosen.length) throw new AppError(400, 'invalid-input', '同一项只能开始一次。')
         if (!chosen.length || chosen.some(edit => !pending.includes(edit.index)))
@@ -487,7 +514,7 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
           title: checkedTitle(task.title),
           prompt,
           harnessId: task.harnessId,
-          ...(task.model !== undefined ? { model: task.model } : {}),
+          ...choicesOf(task),
         }
       })
     }
@@ -596,7 +623,18 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
           const item = items.get(member.itemId)
           if (!item) throw new AppError(404, 'item-not-found', '找不到这条待办。')
           // Its own new worktree where the project takes them and the Harness works in files; never the lead's mode or model.
-          const ownTree = worktree && hub.info(member.harnessId)?.modes.includes('agent') === true
+          const harness = hub.info(member.harnessId)
+          const ownTree = worktree && harness?.modes.includes('agent') === true
+          const choices = plan[index]!
+          // A member's permission is its Harness's and project's default: no pick of a mode comes with it.
+          if (
+            choices.config?.some(
+              pick =>
+                pick.configId === LADDER_MODE
+                || harness?.catalogue?.options.some(option => option.id === pick.configId && option.category === 'mode'),
+            )
+          )
+            throw new AppError(400, 'config-unsupported', '成员的权限用项目的默认档位，不能在开始前另选。')
           const started = await parts.itemRoutes.startItem(
             req,
             res,
@@ -609,7 +647,7 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
               harnessId: member.harnessId,
               ...(ownTree ? { worktree: true } : {}),
               // The person's own choice for this member's Harness; never the lead's.
-              ...(plan[index]!.model !== undefined ? { model: plan[index]!.model } : {}),
+              ...choicesOf(choices),
             },
             {
               // A lead that is not private gets its members' replies: they start without private context.

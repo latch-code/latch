@@ -1,11 +1,11 @@
 import { chromium, type Browser, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AppSnapshot, TaskDetail, TeamAnswer, TeamSummary, WorkProposalSummary } from '@latch/protocol'
-import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
+import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, settleShell } from './helpers/layout.ts'
@@ -111,6 +111,34 @@ describe('a team of sessions, in the page', () => {
           env: { FAKE_ACP_MCP: 'dsh', FAKE_ACP_STATE: join(state, `${id}.json`), FAKE_ACP_CAPS: 'load,resume' },
         },
       })
+    // Gamma reports its own models and levels; a first session of it tells Latch what they are.
+    await owner.confirmedJson('agents', {
+      method: 'POST',
+      body: {
+        id: 'gamma',
+        name: 'Gamma',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: { FAKE_ACP_CONFIG: 'options', FAKE_ACP_EFFORT_BY_MODEL: '1', FAKE_ACP_STATE: join(state, 'gamma.json') },
+      },
+    })
+    await owner.confirmedJson('tasks', {
+      method: 'POST',
+      body: { requestId: randomUUID(), prompt: 'echo gamma', harnessId: 'gamma', mode: 'agent' },
+    })
+    for (let tries = 0; tries < 200; tries++) {
+      if ((await snapshot()).catalog?.harnesses.find(harness => harness.id === 'gamma')?.catalogue?.options.length) break
+      await new Promise(done => setTimeout(done, 100))
+    }
+    // Codex as its fake app-server, whose sessions offer its own subagents.
+    const bin = join(state, 'bin')
+    await mkdir(bin)
+    const codex = join(bin, 'codex')
+    await writeFile(codex, `#!/bin/sh\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`)
+    await chmod(codex, 0o755)
+    await owner.confirmedJson('agents', {
+      body: { id: 'codex', name: 'Codex', presetId: 'codex', command: codex, args: [], env: { FAKE_ACP_STATE: join(state, 'codex.json') } },
+    })
     browser = await chromium.launch(browserLaunchOptions())
     page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
     page.setDefaultTimeout(20_000)
@@ -174,6 +202,7 @@ describe('a team of sessions, in the page', () => {
       await page.emulateMedia({ colorScheme: theme })
       if (!(await first.isVisible())) await entry.click()
       await first.waitFor()
+      await page.mouse.move(width - 2, 2)
       await settleShell(page)
       await noHorizontalOverflow(page)
       await page.screenshot({ path: `${OUTPUT}/panel--${width}--${theme}.png`, animations: 'disabled', caret: 'hide' })
@@ -496,4 +525,189 @@ describe('a team of sessions, in the page', () => {
     await noHorizontalOverflow(page)
     await page.screenshot({ path: `${OUTPUT}/unstarted--1440--light.png`, animations: 'disabled', caret: 'hide' })
   }, 120_000)
+
+  /** The panel in every view, without horizontal overflow, reopened where a width change gave it way. */
+  async function panelShots(name: string, entry: ReturnType<Page['getByRole']>, ready: () => Promise<void>): Promise<void> {
+    for (const [width, height, theme] of VIEWS) {
+      await page.setViewportSize({ width, height })
+      await page.emulateMedia({ colorScheme: theme })
+      await page.waitForTimeout(400)
+      for (let tries = 0; tries < 3 && !(await page.locator('.team-panel').filter({ visible: true }).count()); tries++) {
+        await entry.click()
+        await page.waitForTimeout(400)
+      }
+      await ready()
+      // Nothing hovered or focused in the shot.
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+      await page.mouse.move(width - 2, 2)
+      await page.evaluate(() => document.fonts.ready)
+      await settleShell(page)
+      await noHorizontalOverflow(page)
+      await page.screenshot({ path: `${OUTPUT}/${name}--${width}--${theme}.png`, animations: 'disabled', caret: 'hide' })
+    }
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.emulateMedia({ colorScheme: 'light' })
+    // The phone's sheet gives way as the width changes; the entry opens the popover with the same list.
+    await page.waitForTimeout(600)
+    for (let tries = 0; tries < 3 && !(await page.locator('.team-panel').filter({ visible: true }).count()); tries++) {
+      await entry.click()
+      await page.waitForTimeout(400)
+    }
+  }
+
+  it("starts each member on the model and level chosen in its own row, never the lead's", async () => {
+    const id = await lead('换个模型查缓存')
+    await open('换个模型查缓存')
+    const entry = page.getByRole('button', { name: '用团队分工', exact: true }).filter({ visible: true })
+    await entry.click()
+    const panel = page.getByRole('dialog', { name: '团队分工', exact: true })
+    await panel.getByRole('textbox', { name: '第 1 项', exact: true }).fill('echo 查缓存命中率')
+    await panel.getByRole('textbox', { name: '第 2 项', exact: true }).fill('echo 查缓存失效')
+    // A Codex session's panel only: no way to choose how to split here.
+    expect(await panel.getByRole('radiogroup', { name: '分工方式', exact: true }).count()).toBe(0)
+    const rows = panel.locator('.team-task')
+    // Every row has its Harness, then its model entry; the old muted model name is gone.
+    await rows.nth(1).locator('.team-harness').getByRole('button').first().click()
+    await page.getByRole('menuitemradio', { name: 'Gamma', exact: true }).click()
+    const model = rows.nth(1).locator('.team-agent-model button.model-picker')
+    await model.waitFor()
+    expect(await model.innerText()).toContain('Small')
+    await model.click()
+    const board = page.locator('.ui-board.is-entry').filter({ visible: true })
+    await board.waitFor()
+    await board.getByRole('menuitemradio', { name: /^Large/u }).click()
+    await board.getByRole('menuitemradio', { name: 'Max', exact: true }).click()
+    await page.keyboard.press('Escape')
+    await board.waitFor({ state: 'hidden' })
+    expect(await panel.isVisible()).toBe(true)
+    await poll(() => model.innerText()).toMatch(/Large[\s\S]*Max/u)
+    // Row 1 stays on this session's Harness as a new session of it would start.
+    expect(await rows.nth(0).locator('.team-harness').innerText()).toContain('Alpha')
+    await panelShots('panel-sessions', entry, async () => {
+      await page.locator('.team-panel .team-agent-model').first().waitFor()
+    })
+    // On a phone the row's entry opens over the panel's sheet, and the panel stays.
+    const reopen = async () => {
+      await page.waitForTimeout(800)
+      for (let tries = 0; tries < 3 && !(await page.locator('.team-panel').filter({ visible: true }).count()); tries++) {
+        await entry.click()
+        await page.waitForTimeout(600)
+      }
+      await model.waitFor()
+      await settleShell(page)
+    }
+    // Opened at that width: a popover left open across the phone breakpoint keeps its desktop dismissal (packages/ui).
+    await page.keyboard.press('Escape')
+    await panel.waitFor({ state: 'hidden' })
+    await page.setViewportSize({ width: 390, height: 844 })
+    await reopen()
+    await model.click()
+    await board.waitFor()
+    await settleShell(page)
+    await noHorizontalOverflow(page)
+    await page.screenshot({ path: `${OUTPUT}/panel-sessions-board--390--light.png`, animations: 'disabled', caret: 'hide' })
+    await page.keyboard.press('Escape')
+    await board.waitFor({ state: 'hidden' })
+    expect(await model.isVisible()).toBe(true)
+    await page.keyboard.press('Escape')
+    await panel.waitFor({ state: 'hidden' })
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await reopen()
+    // Another Harness and back: the row is on that Harness's own start again.
+    await rows.nth(1).locator('.team-harness').getByRole('button').first().click()
+    await page.getByRole('menuitemradio', { name: 'Beta', exact: true }).click()
+    await rows.nth(1).locator('.team-harness').getByRole('button').first().click()
+    await page.getByRole('menuitemradio', { name: 'Gamma', exact: true }).click()
+    await poll(() => model.innerText()).toContain('Small')
+    await model.click()
+    await board.getByRole('menuitemradio', { name: /^Large/u }).click()
+    await board.getByRole('menuitemradio', { name: 'Max', exact: true }).click()
+    await page.keyboard.press('Escape')
+    await board.waitFor({ state: 'hidden' })
+    const sent = page.waitForRequest(request => request.url().endsWith(`/tasks/${id}/team`) && request.method() === 'POST')
+    await panel.getByRole('button', { name: '开始', exact: true }).click()
+    const body = (await sent).postDataJSON() as { tasks: Array<Record<string, unknown>> }
+    expect(body.tasks[1]).toMatchObject({
+      harnessId: 'gamma',
+      ownModel: true,
+      config: [
+        { configId: 'model', value: 'large' },
+        { configId: 'effort', value: 'max' },
+      ],
+    })
+    await panel.waitFor({ state: 'hidden' })
+    const started = (await snapshot()).teams!.find(row => row.leadSessionId === id)!
+    expect(started.members.map(member => member.harnessId)).toEqual(['alpha', 'gamma'])
+    await poll(async () => (await teamOf(started.id)).members.every(member => member.sessionId)).toBe(true)
+    const team = await teamOf(started.id)
+    const member = team.members[1]!.sessionId!
+    await settled(member)
+    const config = (await detail(member)).config ?? []
+    expect(config.find(option => option.id === 'model')?.currentValue).toBe('large')
+    expect(config.find(option => option.id === 'effort')?.currentValue).toBe('max')
+    await teamIn(team.id, 'returned')
+  }, 180_000)
+
+  it("hands the list to Codex's own subagents as one message to this session, leaving the input as it was", async () => {
+    const response = await owner.confirmed('tasks', {
+      method: 'POST',
+      body: { requestId: randomUUID(), prompt: 'echo 先看看', harnessId: 'codex' },
+    })
+    const { sessionId: id } = (await response.json()) as { sessionId: string }
+    await settled(id)
+    await owner.json(`tasks/${id}`, { method: 'PATCH', body: { title: '整理两个页面' } })
+    await poll(async () => (await detail(id)).codexTeam).toBe('available')
+    await open('整理两个页面')
+    const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+    await input.fill('先别发')
+    const entry = page.getByRole('button', { name: '用团队分工', exact: true }).filter({ visible: true })
+    await entry.click()
+    const panel = page.getByRole('dialog', { name: '团队分工', exact: true })
+    const modes = panel.getByRole('radiogroup', { name: '分工方式', exact: true })
+    expect(await modes.getByRole('radio', { name: '各开会话', exact: true }).getAttribute('aria-checked')).toBe('true')
+    // The old way in, which put the request into the input, is gone.
+    expect(await panel.getByRole('button', { name: '用 Codex 自带的子 Agent', exact: true }).count()).toBe(0)
+    await modes.getByRole('radio', { name: 'Codex 子 Agent', exact: true }).click()
+    // Codex chooses who does what: the rows are their words alone.
+    expect(await panel.locator('.team-harness, .team-agent-model').count()).toBe(0)
+    await panel.getByRole('textbox', { name: '第 1 项', exact: true }).fill('检查窄屏\n看 390 宽')
+    await panel.getByRole('textbox', { name: '第 2 项', exact: true }).fill('核对回执')
+    await panelShots('panel-codex', entry, async () => {
+      await page.locator('.team-panel[data-mode="codex"]').waitFor()
+    })
+    // The mode is remembered for this session while the page lives.
+    await page.keyboard.press('Escape')
+    await panel.waitFor({ state: 'hidden' })
+    await entry.click()
+    expect(await modes.getByRole('radio', { name: 'Codex 子 Agent', exact: true }).getAttribute('aria-checked')).toBe('true')
+    const before = (await detail(id)).messages.filter(message => message.role === 'user').length
+    await panel.getByRole('button', { name: '开始', exact: true }).click()
+    await panel.waitFor({ state: 'hidden' })
+    await poll(async () => (await detail(id)).messages.filter(message => message.role === 'user').length).toBe(before + 1)
+    const sent = (await detail(id)).messages.filter(message => message.role === 'user').at(-1)!.text
+    expect(sent).toBe(
+      '请启动 Codex 的子 Agent 并行处理下列任务。分工后等待各成员结果，再汇总给我。\n\n1. 检查窄屏\n   看 390 宽\n2. 核对回执',
+    )
+    expect(await input.inputValue()).toBe('先别发')
+    // No team of sessions was made: Codex's own members are the record's.
+    expect((await snapshot()).teams?.some(row => row.leadSessionId === id)).toBe(false)
+    const record = page.getByRole('button', { name: /Agent 团队/u }).filter({ visible: true })
+    await poll(() => record.count()).toBe(1)
+    // While the session works (a member waits for the person), the next list waits in its queue, as a typed message would.
+    await poll(async () => (await detail(id)).summary.status).toBe('waiting-approval')
+    await record.click()
+    const delegation = page.getByRole('dialog', { name: 'Agent 团队', exact: true })
+    await delegation.getByRole('button', { name: '用团队分工', exact: true }).click()
+    await panel.waitFor()
+    expect(await modes.getByRole('radio', { name: 'Codex 子 Agent', exact: true }).getAttribute('aria-checked')).toBe('true')
+    await panel.getByRole('textbox', { name: '第 1 项', exact: true }).fill('再看一遍')
+    await panel.getByRole('button', { name: '开始', exact: true }).click()
+    await panel.waitFor({ state: 'hidden' })
+    await poll(async () => (await detail(id)).queue?.map(item => item.text)).toEqual([
+      '请启动 Codex 的子 Agent 并行处理下列任务。分工后等待各成员结果，再汇总给我。\n\n1. 再看一遍',
+    ])
+    expect((await detail(id)).messages.filter(message => message.role === 'user').length).toBe(before + 1)
+    expect(await input.inputValue()).toBe('先别发')
+    await input.fill('')
+  }, 180_000)
 })

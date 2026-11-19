@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TeamAnswer, TeamStartInput, TeamSummary } from '@latch/protocol'
 import { api, ApiError, errorMessage, newRequestId } from '../core/api.ts'
 import { unconfirmedReason } from '../core/sendingMessage.ts'
-import type { TeamRow } from './model.ts'
+import type { TeamMode, TeamRow } from './model.ts'
 
 /**
  * What a person wrote for a session's team and has not started, and a start whose answer never came. Kept in this
@@ -11,6 +11,8 @@ import type { TeamRow } from './model.ts'
  */
 const drafts = new Map<string, TeamRow[]>()
 const unanswered = new Map<string, TeamStartInput>()
+/** The way the person last split a session's work, while that session offers more than one. */
+const modes = new Map<string, TeamMode>()
 const KEPT = 64
 
 function keep<T>(store: Map<string, T>, key: string, value: T | undefined): void {
@@ -39,6 +41,19 @@ export function useTeamDraft(key: string, initial: () => TeamRow[]): [TeamRow[],
     [key],
   )
   return [rows, write]
+}
+
+/** How the list of a session is worked; `sessions` until the person picks otherwise in this page. */
+export function useTeamMode(key: string): [TeamMode, (mode: TeamMode) => void] {
+  const [mode, setMode] = useState<TeamMode>(() => modes.get(key) ?? 'sessions')
+  const write = useCallback(
+    (next: TeamMode) => {
+      keep(modes, key, next)
+      setMode(next)
+    },
+    [key],
+  )
+  return [mode, write]
 }
 
 export type TeamStartState =

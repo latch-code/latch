@@ -83,7 +83,14 @@ export interface TeamTaskInput {
    * would start on in their input box). Absent: the Harness's own model. Never taken from the lead.
    */
   model?: ModelRef
+  /** The Harness's own start choices for this member (its model, thinking, speed), as `POST /tasks` takes `config`. */
+  config?: TeamStartConfig
+  /** The Harness's own default model, chosen as such: the project's 默认模型 does not replace it. */
+  ownModel?: true
 }
+
+/** A member's start choices from its Harness's own options, never the permission mode: that stays the project's default. */
+export type TeamStartConfig = Array<{ configId: string; value: string }>
 
 /**
  * `POST /link/api/tasks/:id/team`: start a team of the session `:id`. Either `proposal` (a pending todo proposal of
@@ -95,7 +102,15 @@ export interface TeamStartInput {
   proposal?: {
     id: string
     baseRevision: number
-    entries?: Array<{ index: number; title?: string; prompt?: string; harnessId?: string; model?: ModelRef }>
+    entries?: Array<{
+      index: number
+      title?: string
+      prompt?: string
+      harnessId?: string
+      model?: ModelRef
+      config?: TeamStartConfig
+      ownModel?: true
+    }>
   }
   tasks?: TeamTaskInput[]
   goal?: string

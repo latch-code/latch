@@ -350,6 +350,85 @@ describe('the model a member runs on', () => {
     const done = await teamIn(owner, team.id, 'returned')
     expect(done.members.map(member => member.state)).toEqual(['unstarted', 'done'])
   })
+
+  it(
+    "starts a member on its Harness's own choices, refuses one it does not offer or a permission pick, and runs the rest",
+    SLOW,
+    async () => {
+      const { owner, root } = await fixture()
+      // A Harness that reports its own model and thinking options.
+      await owner.confirmedJson('agents', {
+        body: {
+          id: 'gamma',
+          name: 'Gamma',
+          command: process.execPath,
+          args: [FAKE_ACP_AGENT],
+          env: { FAKE_ACP_CONFIG: 'options', FAKE_ACP_EFFORT_BY_MODEL: '1', FAKE_ACP_STATE: join(root, 'gamma.json') },
+        },
+      })
+      const lead = await leadSession(owner)
+      const chosen = [
+        { configId: 'model', value: 'large' },
+        { configId: 'effort', value: 'max' },
+      ]
+      const team = await started(owner, lead, {
+        tasks: [task('照常', 'echo a', 'alpha'), { ...task('大模型', 'echo b', 'gamma'), config: chosen }],
+      })
+      expect(team.members.map(member => member.state)).toEqual(['running', 'running'])
+      const member = await settled(owner, team.members[1]!.sessionId!)
+      expect(member.config?.map(option => [option.id, option.currentValue])).toEqual(
+        expect.arrayContaining([
+          ['model', 'large'],
+          ['effort', 'max'],
+        ]),
+      )
+      await teamIn(owner, team.id, 'returned')
+      // The lead answers the results it was sent: nothing is left running for the next test.
+      await vi.waitFor(async () => expect((await returnsIn(owner, lead)).length).toBe(1), WAIT)
+      await settled(owner, lead)
+
+      const lead2 = await leadSession(owner)
+      const refused = await started(owner, lead2, {
+        tasks: [
+          // Latch 内置 takes no Harness options: its own start refuses them.
+          { ...task('内置的选项', 'echo c', 'standard'), config: [{ configId: 'model', value: 'large' }] },
+          { ...task('另选权限', 'echo d', 'gamma'), config: [{ configId: '~mode', value: 'plan' }] },
+          { ...task('自己的默认', 'echo e', 'gamma'), ownModel: true },
+          // A value the agent does not offer is known only once its session is up: that session fails before any turn.
+          { ...task('没有的模型', 'echo f', 'gamma'), config: [{ configId: 'model', value: 'huge' }] },
+        ],
+      })
+      expect(refused.members.map(one => one.state === 'unstarted')).toEqual([true, true, false, false])
+      expect(refused.members[0]!.refusal).toContain('不能在开始前')
+      expect(refused.members[1]!.refusal).toContain('权限')
+      const after = await teamIn(owner, refused.id, 'returned')
+      expect(after.members.map(one => one.state)).toEqual(['unstarted', 'unstarted', 'done', 'failed'])
+      const unoffered = await detailOf(owner, after.members[3]!.sessionId!)
+      expect(unoffered.config?.find(option => option.id === 'model')?.currentValue).toBe('small')
+      expect(unoffered.messages.some(message => message.role === 'assistant')).toBe(false)
+      await vi.waitFor(async () => expect((await returnsIn(owner, lead2)).length).toBe(1), WAIT)
+      await settled(owner, lead2)
+    },
+  )
+
+  it('refuses start choices out of bounds before anything starts', SLOW, async () => {
+    const { owner } = await fixture()
+    const lead = await leadSession(owner)
+    const twice = {
+      ...task('两次', 'echo a', 'alpha'),
+      config: [
+        { configId: 'model', value: 'a' },
+        { configId: 'model', value: 'b' },
+      ],
+    }
+    const many = {
+      ...task('太多', 'echo a', 'alpha'),
+      config: Array.from({ length: 17 }, (_, index) => ({ configId: `o${index}`, value: 'v' })),
+    }
+    for (const body of [{ tasks: [twice] }, { tasks: [many] }, { tasks: [{ ...task('不对', 'echo a', 'alpha'), ownModel: false }] }])
+      expect(await errorOf(await startTeam(owner, lead, body))).toEqual({ status: 400, error: 'invalid-input' })
+    expect((await snapshotOf(owner)).teams ?? []).toEqual([])
+  })
 })
 
 describe('who reads a team, and as whom its results go back', () => {

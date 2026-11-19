@@ -6,6 +6,7 @@ import { MessageContent } from '../MessageContent.tsx'
 import { SUBAGENT_STATUS } from '../components/SubagentRow.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import type { RunState } from './Composer.tsx'
+import { CODEX_TEAM_REQUEST } from '../teams/copy.ts'
 import { TeamEntry, type TeamEntryProps } from '../teams/TeamEntry.tsx'
 import { defineCopy, formatNumber } from '../core/i18n.ts'
 
@@ -22,17 +23,12 @@ const COPY = defineCopy(
     stopping: '正在停止当前运行…',
     checkStop: '核对当前运行的停止请求',
     stop: '停止当前运行',
-    slashInInput: '输入框里已有斜杠命令，先发送或移除它',
-    requestInInput: '分工请求已在输入框里',
-    prepare: '把分工请求放入输入框，写清目标后亲自发送',
-    insert: '加入输入框',
     history: '委派记录',
     number: (number: number) => `第 ${formatNumber(number)} 次委派`,
     numberPrefix: '第 ',
     numberSuffix: ' 次委派',
     members: '实际成员',
     viewApproval: '查看此成员的审批',
-    noDelegationYet: '发送分工请求后，Codex 自行创建成员。这里会显示实际分工和成员回报。',
     teamDisabled: '当前 Codex 会话的原生协作已关闭。',
   },
   {
@@ -47,17 +43,12 @@ const COPY = defineCopy(
     stopping: 'Stopping the current run…',
     checkStop: 'Check the current stop request',
     stop: 'Stop the current run',
-    slashInInput: 'Send or remove the slash command already in the input',
-    requestInInput: 'The delegation request is already in the input',
-    prepare: 'Add the request to the input, write the goal and send it yourself',
-    insert: 'Add to input',
     history: 'Delegation history',
     number: (number: number) => `Delegation ${formatNumber(number)}`,
     numberPrefix: 'Delegation ',
     numberSuffix: ' ',
     members: 'Actual members',
     viewApproval: 'Review this member’s approval',
-    noDelegationYet: 'Send a delegation request and Codex will create the members. Their assignments and reports will appear here.',
     teamDisabled: 'Native collaboration is off for this Codex session.',
   },
 )
@@ -72,8 +63,6 @@ interface Delegation {
   userMessageId: string | undefined
   members: Member[]
 }
-
-const REQUEST = '请启动 Codex 的子 Agent 并行处理下列任务。分工后等待各成员结果，再汇总给我。'
 
 function delegations(messages: Message[]): Delegation[] {
   const groups = new Map<string, Delegation>()
@@ -107,28 +96,17 @@ function MemberResult({ text, running }: { text: string; running: boolean }) {
 
 export function CodexTeam({
   detail,
-  draft,
-  canPrepare,
-  onPrepare,
   onApproval,
   run,
   team,
-  inTeam = false,
 }: {
   /**
-   * This session is a team's member, or has a team open (docs/TEAMS.md): 「用团队分工」 is not shown for Codex's own
-   * subagents either; a record that exists stays.
-   */
-  inTeam?: boolean
-  /**
-   * This session can start a team of its own (docs/TEAMS.md): the one entry is that panel, with Codex's own subagents
-   * as a way in; once Codex has delegated, the entry opens this record, which leads to the panel.
+   * This session can start a team of its own (docs/TEAMS.md): the one entry is that panel, with Codex's own subagents as
+   * a way of working the list; once Codex has delegated, the entry opens this record, which leads to the panel. Absent
+   * (a member, a session with a team open, a device without run), only a record that exists is offered.
    */
   team?: TeamEntryProps | undefined
   detail: TaskDetail
-  draft: string
-  canPrepare: boolean
-  onPrepare: (value: string) => void
   onApproval: (approvalId: string) => void
   run?: RunState | undefined
 }) {
@@ -139,13 +117,10 @@ export function CodexTeam({
   const group = groups.find(entry => entry.id === selected) ?? groups[0]
   const delegationRequest = group?.userMessageId ? detail.messages.find(message => message.id === group.userMessageId)?.text : undefined
   const available = detail.codexTeam === 'available'
-  const canAdd = canPrepare && available
   const approvals = detail.approvals
   const waiting = approvals.some(approval => approval.subagentId !== undefined)
-  const conflict = draft.trimStart().startsWith('/')
   const currentRun = groups.length > 0 && detail.activity ? run : undefined
-  if (!detail.codexTeam && !group) return team ? <TeamEntry {...team} /> : null
-  if (inTeam && !team && !group) return null
+  if (!group) return team ? <TeamEntry {...team} codex={{ available }} /> : null
   const dialog = (
     <Dialog
       open={open}
@@ -164,118 +139,103 @@ export function CodexTeam({
       }
       className="codex-team-dialog"
       footer={
-        currentRun ? (
-          <div className="codex-team-current-run" role="group" aria-label={COPY.session}>
-            <span>{COPY.session}</span>
-            <Button variant="outline" disabled={currentRun.cancel === 'cancelling'} onClick={currentRun.onCancel}>
-              {currentRun.cancel === 'cancelling' ? COPY.stopping : currentRun.cancel === 'uncertain' ? COPY.checkStop : COPY.stop}
-            </Button>
-          </div>
-        ) : team && group ? (
-          <Button
-            variant="outline"
-            onClick={() => {
-              setOpen(false)
-              // Once the dialog has given the page back, the panel opens at the entry.
-              requestAnimationFrame(() => panel.current?.())
-            }}>
-            {COPY.useTeam}
-          </Button>
-        ) : (
-          canAdd && (
-            <Button
-              variant="primary"
-              disabled={conflict || draft.startsWith(REQUEST)}
-              // Why it is off, or what it does: the request goes into the input, and the person sends it.
-              tooltip={conflict ? COPY.slashInInput : draft.startsWith(REQUEST) ? COPY.requestInInput : COPY.prepare}
-              onClick={() => {
-                onPrepare(draft.trim() ? `${REQUEST}\n\n${draft}` : `${REQUEST}\n\n`)
-                setOpen(false)
-              }}>
-              {COPY.insert}
-            </Button>
-          )
+        (currentRun || team) && (
+          <>
+            {currentRun && (
+              <div className="codex-team-current-run" role="group" aria-label={COPY.session}>
+                <span>{COPY.session}</span>
+                <Button variant="outline" disabled={currentRun.cancel === 'cancelling'} onClick={currentRun.onCancel}>
+                  {currentRun.cancel === 'cancelling' ? COPY.stopping : currentRun.cancel === 'uncertain' ? COPY.checkStop : COPY.stop}
+                </Button>
+              </div>
+            )}
+            {team && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setOpen(false)
+                  // Once the dialog has given the page back, the panel opens at the entry.
+                  requestAnimationFrame(() => panel.current?.())
+                }}>
+                {COPY.useTeam}
+              </Button>
+            )}
+          </>
         )
       }>
       <div className="codex-team-content">
-        {group ? (
-          <>
-            {groups.length > 1 && (
-              <div className="codex-team-history">
-                <span>{COPY.history}</span>
-                <Menu
-                  label={COPY.history}
-                  align="end"
-                  selection
-                  sections={[
-                    {
-                      id: 'delegations',
-                      items: groups.map((entry, index) => ({
-                        id: entry.id,
-                        label: COPY.number(groups.length - index),
-                        checked: group.id === entry.id,
-                        onSelect: () => setSelected(entry.id),
-                      })),
-                    },
-                  ]}
-                  trigger={menu => (
-                    <SelectButton {...menu} aria-label={COPY.history}>
-                      {COPY.numberPrefix}
-                      {groups.length - groups.indexOf(group)}
-                      {COPY.numberSuffix}
-                    </SelectButton>
-                  )}
-                />
-              </div>
-            )}
-            {delegationRequest && (
-              <p className="codex-team-request">
-                <VisibleText text={delegationRequest.replace(REQUEST, '').trim() || delegationRequest} />
-              </p>
-            )}
-            <ul className="codex-team-members" aria-label={COPY.members}>
-              {group.members.map(({ rowId, subagent }) => {
-                const approval = approvals.find(item => item.subagentId === rowId)
-                const status = SUBAGENT_STATUS[approval ? 'waiting' : (subagent.status ?? 'unknown')]
-                return (
-                  <li key={rowId} className="codex-team-member">
-                    <div className="codex-team-member-heading">
-                      <strong>
-                        <VisibleText text={subagent.title} />
-                      </strong>
-                      <StatusWord tone={status.tone}>{status.words}</StatusWord>
-                    </div>
-                    {subagent.status === 'failed' && subagent.team?.failure && (
-                      <p className="codex-team-note">
-                        <VisibleText text={subagent.team.failure} />
-                      </p>
-                    )}
-                    {subagent.description && (
-                      <p className="codex-team-assignment">
-                        <VisibleText text={subagent.description} />
-                      </p>
-                    )}
-                    {subagent.team?.result && <MemberResult text={subagent.team.result} running={subagent.status === 'running'} />}
-                    {approval && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="codex-team-review"
-                        onClick={() => {
-                          setOpen(false)
-                          onApproval(approval.id)
-                        }}>
-                        {COPY.viewApproval}
-                      </Button>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
-          </>
-        ) : (
-          <p className="codex-team-empty">{COPY.noDelegationYet}</p>
+        {groups.length > 1 && (
+          <div className="codex-team-history">
+            <span>{COPY.history}</span>
+            <Menu
+              label={COPY.history}
+              align="end"
+              selection
+              sections={[
+                {
+                  id: 'delegations',
+                  items: groups.map((entry, index) => ({
+                    id: entry.id,
+                    label: COPY.number(groups.length - index),
+                    checked: group.id === entry.id,
+                    onSelect: () => setSelected(entry.id),
+                  })),
+                },
+              ]}
+              trigger={menu => (
+                <SelectButton {...menu} aria-label={COPY.history}>
+                  {COPY.numberPrefix}
+                  {groups.length - groups.indexOf(group)}
+                  {COPY.numberSuffix}
+                </SelectButton>
+              )}
+            />
+          </div>
         )}
+        {delegationRequest && (
+          <p className="codex-team-request">
+            <VisibleText text={delegationRequest.replace(CODEX_TEAM_REQUEST, '').trim() || delegationRequest} />
+          </p>
+        )}
+        <ul className="codex-team-members" aria-label={COPY.members}>
+          {group.members.map(({ rowId, subagent }) => {
+            const approval = approvals.find(item => item.subagentId === rowId)
+            const status = SUBAGENT_STATUS[approval ? 'waiting' : (subagent.status ?? 'unknown')]
+            return (
+              <li key={rowId} className="codex-team-member">
+                <div className="codex-team-member-heading">
+                  <strong>
+                    <VisibleText text={subagent.title} />
+                  </strong>
+                  <StatusWord tone={status.tone}>{status.words}</StatusWord>
+                </div>
+                {subagent.status === 'failed' && subagent.team?.failure && (
+                  <p className="codex-team-note">
+                    <VisibleText text={subagent.team.failure} />
+                  </p>
+                )}
+                {subagent.description && (
+                  <p className="codex-team-assignment">
+                    <VisibleText text={subagent.description} />
+                  </p>
+                )}
+                {subagent.team?.result && <MemberResult text={subagent.team.result} running={subagent.status === 'running'} />}
+                {approval && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="codex-team-review"
+                    onClick={() => {
+                      setOpen(false)
+                      onApproval(approval.id)
+                    }}>
+                    {COPY.viewApproval}
+                  </Button>
+                )}
+              </li>
+            )
+          })}
+        </ul>
         {detail.codexTeam === 'disabled' && <p className="codex-team-note">{COPY.teamDisabled}</p>}
       </div>
     </Dialog>
@@ -287,10 +247,8 @@ export function CodexTeam({
           {...team}
           panelToggle={panel}
           codex={{
-            ...(canAdd ? { request: REQUEST } : {}),
-            ...(group
-              ? { record: { label: COPY.team, ...(waiting ? { waiting: COPY.needsApproval } : {}), open: () => setOpen(true) } }
-              : {}),
+            available,
+            record: { label: COPY.team, ...(waiting ? { waiting: COPY.needsApproval } : {}), open: () => setOpen(true) },
           }}
         />
         {dialog}
@@ -300,7 +258,7 @@ export function CodexTeam({
     <div className="codex-team-control">
       <Button variant="ghost" size="xs" onClick={() => setOpen(true)} aria-haspopup="dialog" className="codex-team-entry">
         <AgentsGlyph size={14} />
-        <span className="codex-team-label">{group ? COPY.team : COPY.useTeam}</span>
+        <span className="codex-team-label">{COPY.team}</span>
         {waiting && <StatusWord tone="waiting">{COPY.needsApproval}</StatusWord>}
       </Button>
       {dialog}

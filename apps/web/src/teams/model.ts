@@ -1,16 +1,20 @@
 import {
   TEAM_LIMITS,
   TEAM_RETURN_HEADING,
+  WORK_ITEM_LIMITS,
   type HarnessInfo,
   type Message,
   type ModelRef,
   type TaskSummary,
   type TeamMemberState,
+  type TeamStartConfig,
   type TeamStartInput,
   type TeamSummary,
   type TeamTaskInput,
 } from '@latch/protocol'
 import type { StatusTone } from '@latch/ui'
+import { CODEX_TEAM_REQUEST } from './copy.ts'
+import type { MemberPick } from './memberModel.ts'
 
 /** A team whose results have neither gone back nor been kept: its session starts no other meanwhile. */
 export const teamOpen = (team: Pick<TeamSummary, 'state'>): boolean =>
@@ -32,11 +36,33 @@ export function canStartTeam(
   return !(teams ?? []).some(team => team.leadSessionId === summary.id && teamOpen(team))
 }
 
-/** One row of the list a person writes: the whole text is what the member is asked, its first line the title. */
+/**
+ * One row of the list a person writes: the whole text is what the member is asked, its first line the title. `pick`:
+ * what the person changed of what a new session of that Harness starts on; none is that start as it is.
+ */
 export interface TeamRow {
   id: string
   text: string
   harnessId: string
+  pick?: MemberPick | undefined
+}
+
+/** How the list is worked: a session per row, each on its own Harness; or Codex's own subagents, in this session. */
+export type TeamMode = 'sessions' | 'codex'
+
+/**
+ * The one message that asks Codex to split the rows among its own subagents: its request, then each row numbered, the
+ * lines after a row's first indented under it. `tooLong` when it would not fit one message.
+ */
+export function codexTeamMessage(rows: readonly Pick<TeamRow, 'text'>[]): { text: string; tooLong: boolean } | undefined {
+  const tasks = rows.map(row => row.text.trim()).filter(Boolean)
+  if (!tasks.length) return undefined
+  const list = tasks.map((task, index) => {
+    const [first = '', ...rest] = task.split('\n')
+    return [`${index + 1}. ${first.trim()}`, ...rest.map(line => (line.trim() ? `   ${line.trimEnd()}` : ''))].join('\n')
+  })
+  const text = `${CODEX_TEAM_REQUEST}\n\n${list.join('\n')}`
+  return { text, tooLong: text.length > WORK_ITEM_LIMITS.promptChars }
 }
 
 /**
@@ -65,9 +91,18 @@ export function taskOf(row: Pick<TeamRow, 'text' | 'harnessId'>): TeamTaskInput 
 
 export const rowTooLong = (row: Pick<TeamRow, 'text'>): boolean => row.text.trim().length > TEAM_LIMITS.promptChars
 
-/** What 开始 would send, or nothing while the list cannot start: no task written, one too long, or one without a Harness. */
-export function tasksOf(rows: readonly TeamRow[]): TeamTaskInput[] | undefined {
-  const tasks = rows.flatMap(row => taskOf(row) ?? [])
+/**
+ * What 开始 would send, or nothing while the list cannot start: no task written, one too long, or one without a Harness.
+ * `startOf`: what each row's member starts on beside its Harness.
+ */
+export function tasksOf(
+  rows: readonly TeamRow[],
+  startOf: (row: TeamRow) => Pick<TeamTaskInput, 'model' | 'config' | 'ownModel'> = () => ({}),
+): TeamTaskInput[] | undefined {
+  const tasks = rows.flatMap(row => {
+    const task = taskOf(row)
+    return task ? [{ ...task, ...startOf(row) }] : []
+  })
   if (!tasks.length || tasks.length > TEAM_LIMITS.members) return undefined
   if (rows.some(rowTooLong) || tasks.some(task => !task.harnessId)) return undefined
   return tasks
@@ -134,6 +169,8 @@ export function proposalStart(
     prompt: string
     harnessId: string
     model?: ModelRef | undefined
+    config?: TeamStartConfig | undefined
+    ownModel?: true | undefined
     read: { title: string; prompt: string }
   }>,
 ): NonNullable<TeamStartInput['proposal']> {
@@ -146,6 +183,8 @@ export function proposalStart(
       ...(entry.prompt.trim() !== entry.read.prompt ? { prompt: entry.prompt.trim() } : {}),
       harnessId: entry.harnessId,
       ...(entry.model ? { model: entry.model } : {}),
+      ...(entry.config?.length ? { config: entry.config } : {}),
+      ...(entry.ownModel ? { ownModel: true as const } : {}),
     })),
   }
 }
