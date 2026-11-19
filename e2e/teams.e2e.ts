@@ -243,14 +243,14 @@ describe('a team of sessions, in the page', () => {
     await membersIn(team.id, ['waiting', 'running', 'done'])
     await open('核对支付回调')
     await card(team.id).waitFor()
-    // Top to bottom: this session, the members off its spine, where the results are.
-    const [top, middle, bottom] = await Promise.all([
+    // Left to right on a wide card: this session, the members, where the results are.
+    const [left, middle, right] = await Promise.all([
       card(team.id).locator('.team-lead').boundingBox(),
       card(team.id).locator('.team-members').boundingBox(),
       card(team.id).locator('.team-end').boundingBox(),
     ])
-    expect(top!.y + top!.height).toBeLessThanOrEqual(middle!.y + 1)
-    expect(middle!.y + middle!.height).toBeLessThanOrEqual(bottom!.y + 1)
+    expect(left!.x + left!.width).toBeLessThanOrEqual(middle!.x + 1)
+    expect(middle!.x + middle!.width).toBeLessThanOrEqual(right!.x + 1)
     // How many have ended, beside where the results will be.
     expect(await card(team.id).locator('.team-end-count').innerText()).toBe('1/3')
     expect(await card(team.id).locator('.team-lead').innerText()).toContain('Alpha')
@@ -273,17 +273,22 @@ describe('a team of sessions, in the page', () => {
     await poll(() => end.innerText()).toContain('等成员')
     // Decided elsewhere: the toast that pointed at it leaves at once, whichever session is open.
     await poll(() => page.getByText('另一个会话等你处理', { exact: true }).count()).toBe(0)
-    // With motion allowed, a bead of work runs only round the elbow of the member at work.
+    // With motion allowed, light runs only along the wire and across the pill of the member at work.
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     const moving = (selector: string) =>
       card(team.id)
         .locator(selector)
         .evaluateAll(
-          nodes => nodes.flatMap(node => node.getAnimations({ subtree: true })).filter(item => item.playState === 'running').length,
+          // Animations that run on, not a colour easing once from one state to the next.
+          nodes =>
+            nodes
+              .flatMap(node => node.getAnimations({ subtree: true }))
+              .filter(item => item.playState === 'running' && item instanceof CSSAnimation).length,
         )
     await poll(() => moving('.team-member[data-state="running"]')).toBeGreaterThan(0)
     expect(await moving('.team-member[data-state="done"]')).toBe(0)
-    expect(await moving('.team-end .team-elbow')).toBe(0)
+    expect(await moving('.team-fan.is-in')).toBe(0)
+    await poll(() => moving('.team-fan.is-out')).toBe(1)
     await page.emulateMedia({ reducedMotion: 'reduce' })
     expect(await moving('.team-card')).toBe(0)
     await shots('running', '核对支付回调', async view => {

@@ -110,10 +110,10 @@
 
 /* ---- The team in its conversation --------------------------------------------------------------------------------- */
 /*
- * Drawn as pipes from this session down to its members: a spine under this session's mark, a rounded elbow from it into
- * each member, and a last elbow into where the results are. `--pipe` is the colour of what a pipe carries. Work flows as
- * a bead down the spine and round the elbow of a member at work; a member's elbow takes its colour once it has ended;
- * the last elbow fills once the results are back.
+ * Work passing through: this session as a node, curved wires out to one pill per member, and the wires coming together
+ * into the node where the results are. Left to right on a wide card, down a rail on a narrow one (the two drawings are
+ * both in the page; the card's width shows one). Rows are a fixed height, so the wires are computed, never measured:
+ * the heights here are `WIDE` and `NARROW` in TeamGraph.tsx.
  */
 .team-cards {
   display: grid;
@@ -122,15 +122,13 @@
   margin-block: var(--sp-32) var(--sp-16);
 }
 .team-card {
-  --pipe: var(--accent);
-  --pipe-w: 2px;
-  /* The spine runs under the middle of this session's 20px mark. */
-  --spine: calc(var(--sp-10) - var(--pipe-w) / 2);
-  --elbow: 18px;
+  --wire: var(--line-strong);
+  --row: 36px;
   container: team-card / inline-size;
   display: grid;
+  gap: var(--sp-10);
   min-width: 0;
-  padding: var(--sp-10) var(--sp-12) var(--sp-8);
+  padding: var(--sp-12) var(--sp-14) var(--sp-14);
   border: 1px solid var(--line);
   border-radius: var(--r-12);
   background: var(--band);
@@ -142,147 +140,195 @@
   align-items: center;
   gap: var(--sp-8);
   min-width: 0;
-  min-height: 28px;
-}
-.team-lead {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: var(--sp-8);
-  min-width: 0;
-  max-width: 50%;
-  color: var(--ink);
-  font-weight: 500;
-}
-.team-lead-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-height: 24px;
 }
 .team-goal {
   min-width: 0;
-  margin: 0;
   overflow: hidden;
-  color: var(--muted);
+  color: var(--ink-2);
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .team-count {
   flex: none;
-  margin-inline-start: auto;
   color: var(--muted);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
 }
+.team-stop.ui-button {
+  margin-inline-start: auto;
+}
+.team-graph {
+  display: grid;
+  grid-template:
+    'lead out members in end' auto
+    / max-content 56px minmax(0, 1fr) 56px max-content;
+  align-items: center;
+  min-width: 0;
+}
+.team-lead {
+  grid-area: lead;
+}
+.team-fan.is-out {
+  grid-area: out;
+}
+.team-members {
+  grid-area: members;
+}
+.team-fan.is-in {
+  grid-area: in;
+}
+.team-end {
+  grid-area: end;
+}
+.team-rail {
+  display: none;
+  grid-area: rail;
+}
+/* A node: this session, or where the results are. */
+.team-node {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  max-width: 180px;
+  height: 32px;
+  padding: 0 var(--sp-10);
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--raised);
+  color: var(--ink);
+  font: inherit;
+  white-space: nowrap;
+}
+.team-lead-name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+.team-end-count {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+}
+button.team-end-link {
+  cursor: pointer;
+  transition:
+    background-color var(--m-micro) var(--e-micro),
+    border-color var(--m-micro) var(--e-micro);
+}
+/* Back: the node the wires lead into holds the results, and opens them. */
+.team-end[data-end='returned'] > .team-node {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--raised));
+}
+.team-end[data-end='returned'] > button.team-node:hover {
+  background: color-mix(in srgb, var(--accent) 14%, var(--raised));
+}
+.team-end[data-end='you'] > .team-node {
+  border-color: color-mix(in srgb, var(--amber-icon) 40%, var(--line));
+}
+.team-end-kept {
+  outline-offset: 2px;
+}
+
+/* ---- Wires ---- */
+.team-fan,
+.team-rail {
+  overflow: visible;
+}
+.team-wire {
+  fill: none;
+  stroke: var(--wire);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+/* Out: work handed to a member that is at work, waiting for the person, or done; in: what came back, in its colour. */
+.team-wire[data-wire='flow'],
+.team-wire[data-wire='done'] {
+  stroke: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.team-wire[data-wire='flow'] {
+  stroke-dasharray: 2 5;
+}
+.team-wire[data-wire='waiting'] {
+  stroke: color-mix(in srgb, var(--amber-icon) 75%, transparent);
+}
+.team-wire[data-wire='failed'] {
+  stroke: color-mix(in srgb, var(--red) 65%, transparent);
+}
+.team-wire[data-wire='quiet'] {
+  stroke: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+.team-wire[data-wire='none'] {
+  stroke-dasharray: 1 4;
+}
+
+/* ---- Members ---- */
 .team-members {
   display: grid;
+  gap: 8px;
   min-width: 0;
-  margin: var(--sp-2) 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
-/* Each row draws its own length of spine, the elbow into it, and the bead that runs along both. */
-.team-member,
-.team-end {
-  /* Its place in the team, from the page: where its bead's run starts. */
+.team-member {
   --team-row: 0;
-  position: relative;
   min-width: 0;
-  padding-inline-start: calc(var(--spine) + var(--elbow));
-}
-.team-member::before,
-.team-end::before {
-  position: absolute;
-  inset-block: 0;
-  inset-inline-start: var(--spine);
-  width: var(--pipe-w);
-  background: color-mix(in srgb, var(--accent) 72%, transparent);
-  content: '';
-}
-/* The spine comes from under this session's mark, and stops where it turns into the last elbow. */
-.team-member:first-child::before {
-  inset-block-start: calc(-1 * var(--sp-6));
-}
-.team-end::before {
-  inset-block-end: auto;
-  height: 8px;
-}
-.team-elbow {
-  position: absolute;
-  inset-block-start: 0;
-  inset-inline-start: var(--spine);
-  /* Up to the member's mark, past the row's own inset. */
-  width: calc(var(--elbow) + var(--sp-4));
-  height: calc(16px + var(--pipe-w) / 2);
-  border-block-end: var(--pipe-w) solid var(--line-strong);
-  border-inline-start: var(--pipe-w) solid var(--line-strong);
-  border-end-start-radius: var(--r-8);
-  pointer-events: none;
-}
-.team-member[data-ended] > .team-elbow,
-.team-member[data-state='waiting'] > .team-elbow,
-.team-end[data-end='returned'] > .team-elbow {
-  border-color: color-mix(in srgb, var(--pipe) 72%, transparent);
-}
-.team-member[data-state='waiting'] {
-  --pipe: var(--amber-icon);
-}
-.team-member[data-state='failed'] {
-  --pipe: var(--red);
-}
-.team-member[data-state='cancelled'],
-.team-member[data-state='unknown'] {
-  --pipe: var(--muted);
-}
-/* One that never started carried nothing: its elbow is only drawn in outline. */
-.team-member[data-state='unstarted'] > .team-elbow {
-  border-style: dashed;
-  border-color: var(--line-strong);
-}
-/* A bead of work, drawn on the elbow's own path: down the spine and round into the row. */
-.team-bead {
-  position: absolute;
-  inset-block-start: 0;
-  inset-inline-start: 0;
-  display: none;
-  width: 6px;
-  height: 6px;
-  border-radius: var(--r-full);
-  color: var(--accent);
-  background: currentColor;
-  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
-  offset-anchor: center;
-  offset-path: path('M -1 -16 V 8 Q -1 16 7 16 H 20');
-  offset-rotate: 0deg;
-  offset-distance: 70%;
-}
-.team-member[data-work] .team-bead,
-.team-end[data-end='pending'] .team-bead {
-  display: block;
 }
 .team-member-main {
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--sp-8);
   width: 100%;
   min-width: 0;
-  min-height: 32px;
-  padding: var(--sp-6) var(--sp-8);
-  border: 0;
-  border-radius: var(--r-6);
-  background: transparent;
+  height: var(--row);
+  overflow: hidden;
+  padding: 0 var(--sp-12);
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  background: var(--raised);
   color: var(--ink-2);
   font: inherit;
   text-align: start;
 }
 button.team-member-main {
   cursor: pointer;
-  transition: background-color var(--m-micro) var(--e-micro);
+  transition:
+    background-color var(--m-micro) var(--e-micro),
+    border-color var(--m-micro) var(--e-micro);
 }
 button.team-member-main:hover {
-  background: var(--hover);
+  border-color: var(--line-strong);
+}
+.team-member[data-state='waiting'] > .team-member-main,
+.team-member[data-state='waiting'] .team-member-main {
+  border-color: color-mix(in srgb, var(--amber-icon) 45%, var(--line));
+}
+.team-member[data-state='failed'] .team-member-main {
+  border-color: color-mix(in srgb, var(--red) 35%, var(--line));
+}
+.team-member[data-state='unstarted'] .team-member-main {
+  border-style: dashed;
+  background: transparent;
+}
+/* Light passing across the pill of a member at work. */
+.team-member[data-work] .team-member-main::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 9%, transparent), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  background-position: 60% 0;
+  content: '';
+  pointer-events: none;
 }
 .team-member-main:focus-visible,
 .team-end-link:focus-visible,
@@ -293,7 +339,7 @@ button.team-member-main:hover {
   outline-offset: -2px;
 }
 .team-member-title {
-  max-width: 32ch;
+  max-width: 30ch;
   overflow: hidden;
   color: var(--ink);
   font-weight: 500;
@@ -321,50 +367,42 @@ button.team-member-main:hover {
   margin-inline-start: var(--sp-4);
   font-variant-numeric: tabular-nums;
 }
-/* Where the results are: the last elbow, the words, how many have ended, and 停止 while the team works. */
-.team-end {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  min-height: 32px;
-  padding-block: var(--sp-4) 0;
-  padding-inline-end: var(--sp-2);
-  white-space: nowrap;
-}
-.team-end > .team-elbow {
-  inset-block-start: 0;
-}
-.team-end-count {
-  color: var(--muted);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-variant-numeric: tabular-nums;
-}
-.team-end > .ui-button {
-  margin-inline-start: auto;
-}
-.team-end-link {
-  padding: var(--sp-2) var(--sp-4);
-  margin: calc(-1 * var(--sp-2)) calc(-1 * var(--sp-4));
-  border: 0;
-  border-radius: var(--r-6);
-  background: none;
-  font: inherit;
-  cursor: pointer;
-  transition: background-color var(--m-micro) var(--e-micro);
-}
-.team-end-link:hover {
-  background: var(--hover);
-}
-.team-end-kept {
-  border-radius: var(--r-4);
-}
 
-/* A narrow card: what a member said goes under its name. */
-@container team-card (max-width: 479.98px) {
+/* ---- Narrow: down a rail ---- */
+@container team-card (max-width: 559.98px) {
+  .team-card {
+    --row: 52px;
+  }
+  .team-graph {
+    grid-template:
+      'lead lead' auto
+      'rail members' auto
+      'rail end' auto
+      / 32px minmax(0, 1fr);
+    align-items: start;
+    row-gap: 8px;
+  }
+  .team-fan {
+    display: none;
+  }
+  .team-rail {
+    display: block;
+    align-self: start;
+    /* It starts under this session's mark and runs on past the members into the results. */
+    margin-top: calc(-1 * 8px);
+  }
+  .team-lead {
+    justify-self: start;
+    max-width: 100%;
+  }
+  .team-end {
+    justify-self: start;
+  }
   .team-member-main {
     grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
     row-gap: 0;
+    align-content: center;
   }
   .team-member-title {
     max-width: none;
@@ -373,35 +411,37 @@ button.team-member-main:hover {
     grid-row: 2;
     grid-column: 2 / -1;
   }
-  .team-member-said:empty {
-    display: none;
-  }
   .team-member-state {
     grid-row: 1;
     grid-column: 3;
   }
-  .team-goal {
-    display: none;
-  }
 }
 
-@keyframes team-bead {
+@keyframes team-wire {
+  to {
+    stroke-dashoffset: -14;
+  }
+}
+@keyframes team-light {
   from {
-    offset-distance: 0%;
+    background-position: -60% 0;
   }
   to {
-    offset-distance: 100%;
+    background-position: 160% 0;
   }
 }
 @media (prefers-reduced-motion: no-preference) {
-  /* Work runs for as long as its member is at work, each row from its own point, so the beads seem to come down in turn. */
-  .team-bead {
-    animation: team-bead 1.4s var(--e-micro) infinite;
-    animation-delay: calc(var(--team-row) * -0.35s);
+  /* Work moves along a wire for as long as it carries some, each member's from its own point in the run. */
+  .team-wire[data-wire='flow'] {
+    animation: team-wire 0.9s linear infinite;
+    animation-delay: calc(var(--team-row, 0) * -0.3s);
   }
-  .team-elbow,
-  .team-member::before {
-    transition: border-color var(--m-settle) var(--e-settle);
+  .team-member[data-work] .team-member-main::after {
+    animation: team-light 2.4s var(--e-micro) infinite;
+    animation-delay: calc(var(--team-row) * -0.6s);
+  }
+  .team-wire {
+    transition: stroke var(--m-settle) var(--e-settle);
   }
 }
 
