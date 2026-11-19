@@ -1133,6 +1133,8 @@ function useSessionBoard({
     }
   }
   const option = shownConfig.find(item => item.category === 'thought_level')
+  const modelId = shownConfig.find(item => item.category === 'model')?.id
+  const ownModels = route === undefined || route.bypassed === true
   // Only where 默认 sends no level: elsewhere the Harness's own default applies, as the note says.
   const routed = route !== undefined && !route.bypassed && harness?.capabilities.models.serviceThinking === true
   const name = harness ? harnessName(harness) : 'Harness'
@@ -1158,6 +1160,18 @@ function useSessionBoard({
           ? undefined
           : unreportedThinkingNote(name, true, config, harness?.capabilities.models.thinkingPerModel === true),
       hint: routed && !option ? REASONING_COPY.serviceDefault : undefined,
+      // Another of the Harness's own models: its levels as the Harness listed them, or, where it listed none, this
+      // model's, which the same source offers alike as far as the page knows. A level picked there moves the session to
+      // that model, then sets the level.
+      ...(ownModels && modelId && option
+        ? {
+            of: (value: string) =>
+              draftConfig(harness, { [modelId]: value })?.config.find(item => item.category === 'thought_level') ?? option,
+            pickWith: (value: string, configId: string, level: string) => {
+              void Promise.resolve(write(modelId, value)).then(() => write(configId, level))
+            },
+          }
+        : {}),
     },
   })
 }

@@ -187,6 +187,11 @@ describe('the input’s one entry and the start page’s headline', () => {
       // A model without the tier: 速度 and with it the foot leave at once, the permission stays, and the panel stays open.
       await entry.click()
       await board.waitFor()
+      // Another of Codex's own models shows its own levels, not only 默认.
+      await board.getByRole('menuitemradio', { name: /^GPT Fake Mini/u }).hover()
+      await expect
+        .poll(() => board.locator('.ui-board-levels').getByRole('menuitemradio').allInnerTexts())
+        .toEqual(expect.arrayContaining(['Low', 'High']))
       await board.getByRole('menuitemradio', { name: /^GPT Fake Mini/u }).click()
       await expect.poll(async () => current(await detail(sessionId), 'model')).toBe('gpt-fake-mini')
       await expect.poll(() => board.getByRole('radiogroup', { name: '速度', exact: true }).count()).toBe(0)
