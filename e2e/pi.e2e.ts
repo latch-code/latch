@@ -8,7 +8,7 @@ import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import { FAKE_PI_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { entryPermission, noHorizontalOverflow, openSection, openSettings, phoneStartScreen } from './helpers/layout.ts'
+import { permissionWords, noHorizontalOverflow, openSection, openSettings, phoneStartScreen } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/pi'
 
@@ -171,7 +171,7 @@ describe('pi over its own RPC mode', () => {
     const page = await open(1440, 'light')
     await expect.poll(() => chip(page, 'Harness').innerText()).toContain('pi')
     await expect.poll(() => chip(page, '模型').innerText()).toContain('默认模型')
-    await expect.poll(() => entryPermission(page)).toContain('先问你')
+    await expect.poll(() => permissionWords(page)).toContain('先问你')
     // Selecting pi loads nothing: its list is read only when a person asks.
     await chip(page, '模型').click()
     const readModels = page.getByRole('menuitem', { name: '读取 pi 的模型列表', exact: true })

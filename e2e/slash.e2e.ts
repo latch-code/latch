@@ -6,7 +6,7 @@ import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { composerEntry, noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, permissionControl } from './helpers/layout.ts'
 
 describe('slash suggestions in the real composer', () => {
   for (const engine of ['chromium', 'webkit'] as const)
@@ -168,17 +168,17 @@ describe('slash suggestions in the real composer', () => {
               await list.waitFor({ state: 'hidden' })
               if (width === 390) {
                 expect(await input.evaluate(element => element === document.activeElement)).toBe(true)
-                // The one entry at the line's end: inside the line, and its sheet holds the permission in its foot.
+                // The permission beside the Harness: inside the line, and its sheet holds the modes.
                 const line = page.locator('main.workspace:not([inert]) .composer-toolbar')
-                const permission = composerEntry(line)
+                const permission = permissionControl(line)
                 await permission.waitFor()
                 const rail = (await line.boundingBox())!
                 const chip = (await permission.boundingBox())!
                 expect(chip.x).toBeGreaterThanOrEqual(rail.x - 1)
                 expect(chip.x + chip.width).toBeLessThanOrEqual(rail.x + rail.width + 1)
                 await permission.press('Enter')
-                const sheet = page.getByRole('dialog', { name: '模型', exact: true })
-                await sheet.locator('.ui-board-foot').getByRole('radio').first().waitFor()
+                const sheet = page.getByRole('dialog', { name: '权限', exact: true })
+                await sheet.locator('.permission-panel').getByRole('radio').first().waitFor()
                 await page.screenshot({ path: `test-results/slash/permission-${engine}-${width}-${theme}.png`, animations: 'disabled' })
               }
               if (width === 1440) {

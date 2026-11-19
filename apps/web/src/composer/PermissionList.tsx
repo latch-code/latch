@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import {
   Circle,
   ClipboardList,
@@ -57,11 +58,24 @@ export function stripRows(view: PermissionView): StripRow[] {
 }
 
 /**
- * What the 权限 chip opens: the heading with its key (none where nothing can ask), one segment per mode from tightest to
- * loosest, and the chosen (or previewed) mode's name with its one line. A row this device cannot choose stays, with
- * why as its tooltip.
+ * What the 权限 control opens: the heading with its key (none where nothing can ask), one segment per mode from tightest
+ * to loosest, and the chosen (or previewed) mode's name with its one line. A row this device cannot choose stays, with
+ * why as its tooltip. `keepOpen` (the input's control) keeps it open on a choice, with a write under way turning by the
+ * heading and what a write came to that did not settle under the strip.
  */
-export function PermissionPanel({ view, onChoose }: { view: PermissionView; onChoose: (value: string) => void }) {
+export function PermissionPanel({
+  view,
+  onChoose,
+  keepOpen = false,
+  pending = false,
+  feedback,
+}: {
+  view: PermissionView
+  onChoose: (value: string) => void
+  keepOpen?: boolean
+  pending?: boolean
+  feedback?: ReactNode
+}) {
   const close = useLayerClose()
   const rows = stripRows(view)
   const keys = controlKeyCaps('permission')
@@ -71,6 +85,7 @@ export function PermissionPanel({ view, onChoose }: { view: PermissionView; onCh
       <ModeStrip
         label={view.asksNothing ? COPY.permissions : MODE_COPY.menuTitle}
         keys={keys && capsText(keys)}
+        pending={pending}
         value={rows.find(row => row.current)?.value}
         options={rows.map(row => ({
           value: row.value,
@@ -81,11 +96,12 @@ export function PermissionPanel({ view, onChoose }: { view: PermissionView; onCh
           ...(row.disabledReason ? { disabledReason: row.disabledReason } : {}),
         }))}
         onChoose={value => {
-          close()
-          // The one row that is true now is no choice: pressing it only closes.
+          if (!keepOpen) close()
+          // The one row that is true now is no choice: pressing it changes nothing.
           if (view.rows) onChoose(value)
         }}
       />
+      {feedback}
     </div>
   )
 }

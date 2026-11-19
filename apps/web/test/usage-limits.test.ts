@@ -8,7 +8,7 @@ import { LimitWindow } from '../src/usage/LimitWindow.tsx'
 import { setLocale } from '../src/core/i18n.ts'
 import { HarnessLimitChip } from '../src/usage/UsageChip.tsx'
 import { NoLimits } from '../src/usage/UsageSurface.tsx'
-import { budgetLimit, chipWords, harnessLimits, resetWords, usedWords, type LimitView } from '../src/usage/limits.ts'
+import { budgetLimit, chipWords, harnessLimits, markParts, resetWords, usedWords, type LimitView } from '../src/usage/limits.ts'
 import { unpricedShare } from '../src/usage/usage.ts'
 
 const NOW = Date.parse('2026-11-15T03:00:00.000Z')
@@ -126,17 +126,51 @@ describe('the tightest window, which the composer stands for', () => {
     }
   })
 
-  it('reads by name and number, never a bare percent', () => {
-    expect(chipWords(harnessLimits(ok, NOW)!)).toBe('每周已用 68%')
+  it('names both windows compactly by name and number, never a bare percent, each in its own state', () => {
+    expect(chipWords(harnessLimits(ok, NOW)!)).toBe('5 小时 12% · 周 68%')
     const near: HarnessQuota = { ...ok, windows: [{ ...ok.windows[0]!, usedPercent: 86.4 }, ok.windows[1]!], state: 'near' }
-    expect(chipWords(harnessLimits(near, NOW)!)).toBe('5 小时已用 86%')
+    expect(markParts(harnessLimits(near, NOW)!).map(part => [part.text, part.state])).toEqual([
+      ['5 小时 86%', 'near'],
+      ['周 68%', 'ok'],
+    ])
+    // Only one window reported: only that one.
+    expect(chipWords(harnessLimits({ ...ok, windows: [ok.windows[1]!] }, NOW)!)).toBe('周 68%')
+    setLocale('en')
+    try {
+      expect(chipWords(harnessLimits(ok, NOW)!)).toBe('5h 12% · wk 68%')
+    } finally {
+      setLocale('zh-CN')
+    }
+  })
+
+  it('always names the tightest window: a model’s own weekly window at its limit replaces the calm general one', () => {
+    const claude: HarnessQuota = {
+      windows: [
+        { kind: 'five-hour', usedPercent: 20, resetsAt: at(2 * HOUR) },
+        { kind: 'weekly', usedPercent: 30, resetsAt: at(100 * HOUR) },
+        { kind: 'weekly-opus', usedPercent: 100, resetsAt: at(100 * HOUR) },
+      ],
+      state: 'limited',
+      observedAt,
+    }
+    expect(chipWords(harnessLimits(claude, NOW)!)).toBe('5 小时 20% · 周 Opus 100%')
+    // Windows of another model group are not mixed in: the tightest one's group only.
+    const grouped: HarnessQuota = {
+      windows: [
+        { kind: 'five-hour', group: 'gemini', usedPercent: 10, resetsAt: at(2 * HOUR) },
+        { kind: 'five-hour', group: 'claude-gpt', usedPercent: 85, resetsAt: at(3 * HOUR) },
+      ],
+      state: 'near',
+      observedAt,
+    }
+    expect(chipWords(harnessLimits(grouped, NOW)!)).toBe('5 小时 85%')
   })
 
   it('says it is the limit when the Harness gave a warning without a figure, or the account is at one no window shows', () => {
     const warning: HarnessQuota = { windows: [{ kind: 'five-hour', state: 'near', resetsAt: at(2 * HOUR) }], state: 'near', observedAt }
-    expect(chipWords(harnessLimits(warning, NOW)!)).toBe('5 小时额度将用尽')
+    expect(chipWords(harnessLimits(warning, NOW)!)).toBe('5 小时 将用尽')
     const refused: HarnessQuota = { windows: [{ kind: 'weekly-opus', state: 'limited' }], state: 'limited', observedAt }
-    expect(chipWords(harnessLimits(refused, NOW)!)).toBe('每周 · Opus额度已用尽')
+    expect(chipWords(harnessLimits(refused, NOW)!)).toBe('周 Opus 已用尽')
     expect(chipWords(harnessLimits({ ...ok, state: 'limited' }, NOW)!)).toBe('额度已用尽')
   })
 

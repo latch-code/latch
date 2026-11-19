@@ -167,11 +167,11 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
     await host?.close()
   })
 
-  it('names the tightest window and its figure on the chip, opens the surface on that Harness, and follows what the next turn reports', async () => {
+  it('names both windows compactly on the chip, each in its own state, opens the surface on that Harness, and follows what the next turn reports', async () => {
     await expect.poll(async () => (await quota('codex'))?.windows.length).toBe(2)
     const page = await open(1440, 'light', sessions.codex)
     try {
-      await chip(page).getByText('每周已用 68%', { exact: true }).waitFor()
+      await chip(page).getByText('5 小时 12% · 周 68%', { exact: true }).waitFor()
       expect(await chip(page).getAttribute('data-state')).toBe('ok')
       // The chip is no control of the input: it stands under it, at the end of the line that says what the session used.
       const workspace = page.locator('main.workspace:not([inert])')
@@ -208,19 +208,27 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
 
       // The next turn's report reaches the open page by itself: amber from 80%, red at the limit, each with its figure.
       await push(86, 68)
-      await chip(page).getByText('5 小时已用 86%', { exact: true }).waitFor()
+      await chip(page).getByText('5 小时 86% · 周 68%', { exact: true }).waitFor()
       expect(await chip(page).getAttribute('data-state')).toBe('near')
-      expect(await chip(page).getAttribute('aria-label')).toMatch(/^Codex 额度：5 小时已用 86% · 2 小时 2\d 分钟后重置$/u)
+      expect(await chip(page).getAttribute('aria-label')).toMatch(
+        /^Codex 额度：5 小时 86%，2 小时 2\d 分钟后重置 · 周 68%，5 天 23 小时后重置$/u,
+      )
+      // Each window in its own state: the five hours amber, the week still in ink.
+      expect(
+        await chip(page)
+          .locator('.usage-chip-part')
+          .evaluateAll(parts => parts.map(part => part.getAttribute('data-state'))),
+      ).toEqual(['near', 'ok'])
     } finally {
       await page.context().close()
     }
-    await capture('near', sessions.codex, '5 小时已用 86%', true)
+    await capture('near', sessions.codex, '5 小时 86% · 周 68%', true)
     await push(86, 100)
     await expect.poll(async () => (await quota('codex'))?.state).toBe('limited')
-    await capture('limited', sessions.codex, '每周已用 100%', true)
+    await capture('limited', sessions.codex, '5 小时 86% · 周 100%', true)
     await push(12, 68)
     await expect.poll(async () => (await quota('codex'))?.state).toBe('ok')
-    await capture('ok', sessions.codex, '每周已用 68%', true)
+    await capture('ok', sessions.codex, '5 小时 12% · 周 68%', true)
   })
 
   it('moves no control when the chip comes or goes, at any width, and keeps it in sight at 390', async () => {
@@ -229,7 +237,7 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
     for (const width of [1440, 768, 390]) {
       const page = await open(width, 'light', sessions.codex)
       try {
-        await chip(page).getByText('每周已用 68%', { exact: true }).waitFor()
+        await chip(page).getByText('5 小时 12% · 周 68%', { exact: true }).waitFor()
         const composer = page.locator('main.workspace:not([inert]) form.composer')
         const boxes = () =>
           composer.locator('[data-composer-control]').evaluateAll(items =>
@@ -240,14 +248,14 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
           )
         const height = async () => Math.round((await composer.boundingBox())!.height)
         const withChip = { boxes: await boxes(), height: await height() }
-        expect(withChip.boxes.map(box => box[0])).toEqual(['harness', 'model'])
+        expect(withChip.boxes.map(box => box[0])).toEqual(['harness', 'permission', 'model'])
         const box = (await chip(page).boundingBox())!
         expect(box.x >= 0 && box.x + box.width <= width && box.width > 0, `${width}`).toBe(true)
         const hidden = await page.addStyleTag({ content: '.composer-usage { display: none !important; }' })
         expect(await chip(page).isVisible()).toBe(false)
         expect({ boxes: await boxes(), height: await height() }, `${width}`).toEqual(withChip)
         await hidden.evaluate(style => style.parentNode?.removeChild(style))
-        await chip(page).getByText('每周已用 68%', { exact: true }).waitFor()
+        await chip(page).getByText('5 小时 12% · 周 68%', { exact: true }).waitFor()
         expect({ boxes: await boxes(), height: await height() }, `${width}`).toEqual(withChip)
       } finally {
         await page.context().close()
@@ -392,7 +400,7 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
   it('opens the surface as a sheet on a phone', async () => {
     const page = await open(390, 'light', sessions.codex)
     try {
-      await chip(page).getByText('每周已用 68%', { exact: true }).waitFor()
+      await chip(page).getByText('5 小时 12% · 周 68%', { exact: true }).waitFor()
       await chip(page)
         .tap()
         .catch(() => chip(page).click())
@@ -430,9 +438,9 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
     expect(await quota('claude')).toMatchObject({ windows: [{ kind: 'five-hour', state: 'near' }], state: 'near' })
     const page = await open(1440, 'light', sessions.claude)
     try {
-      await chip(page).getByText('5 小时额度将用尽', { exact: true }).waitFor()
+      await chip(page).getByText('5 小时 将用尽', { exact: true }).waitFor()
       expect(await chip(page).getAttribute('data-state')).toBe('near')
-      expect(await chip(page).getAttribute('aria-label')).toMatch(/^Claude Agent 额度：5 小时额度将用尽 · 2 小时 2\d 分钟后重置$/u)
+      expect(await chip(page).getAttribute('aria-label')).toMatch(/^Claude Agent 额度：5 小时 将用尽，2 小时 2\d 分钟后重置$/u)
       expect(await chip(page).locator('.usage-chip-bar').count()).toBe(0)
       expect(await chip(page).textContent()).not.toContain('%')
       await chip(page).click()
@@ -444,7 +452,7 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
     } finally {
       await page.context().close()
     }
-    await capture('warning', sessions.claude, '5 小时额度将用尽')
+    await capture('warning', sessions.claude, '5 小时 将用尽')
   })
 
   it('opens every Harness from the one global entry by click, keyboard or shortcut, never on hover; a sheet on a phone', async () => {

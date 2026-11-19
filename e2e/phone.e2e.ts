@@ -161,12 +161,13 @@ describe('the phone stack', () => {
       await reachable(header.getByRole('button', { name: '返回会话列表', exact: true }))
       await reachable(header.getByRole('button', { name: '侧边面板', exact: true }))
       await reachable(header.locator('.topbar-title-button'))
-      // The full-width input, then one line: 「+」, the Harness by its mark, and the one entry (模型 · 思考 · 权限) beside
-      // send at the line's end. No row of chips and no separate 权限.
+      // The full-width input, then one line: 「+」, the Harness by its mark, its permission's glyph, and the one entry
+      // (模型 · 思考) beside send at the line's end. No row of chips and no separate 思考.
       const composer = page.locator('.composer-dock form.composer')
       expect(await composer.locator('.composer-chips, .composer-line, [data-rows], .composer-prompt').count()).toBe(0)
       expect(await composer.getByRole('button', { name: '／', exact: true }).count()).toBe(0)
-      expect(await composer.locator('[data-composer-control="permission"], [data-composer-control="thinking"]').count()).toBe(0)
+      expect(await composer.locator('[data-composer-control="thinking"]').count()).toBe(0)
+      expect(await composer.locator('[data-composer-control="permission"]').count()).toBe(1)
       expect(
         await page.locator('.composer-dock [data-composer-control]').evaluateAll(nodes => nodes.every(node => node.closest('form'))),
       ).toBe(true)

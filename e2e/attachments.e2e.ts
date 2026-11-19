@@ -8,7 +8,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { closeActiveFile, closeSettings, composerEntry, openSection, openSession, openSettings } from './helpers/layout.ts'
+import { closeActiveFile, closeSettings, openSection, openSession, openSettings, permissionControl } from './helpers/layout.ts'
 /** The new draft is the home's input on every width: already in sight, or where 新建会话 leads. */
 async function newDraft(page: Page) {
   const home = page.locator('.workbench-home')
@@ -562,10 +562,10 @@ describe('the attach button and @ on every Harness', () => {
         await page.screenshot({ path: `${shots}/${width}-${theme}-takes-none.png`, animations: 'disabled' })
         await sessionDrafts.getByRole('button', { name: '移除附件 sample.png', exact: true }).click()
         if (phone) {
-          // The entry's sheet sets several things, so pressing the mode already chosen keeps it open; 关闭 closes it.
-          await composerEntry(page).click()
-          const permission = page.getByRole('dialog', { name: '模型', exact: true })
-          await permission.locator('.ui-board-foot').getByRole('radio', { checked: true }).first().click()
+          // The permission's sheet stays open on a choice, so pressing the mode already chosen keeps it open; 关闭 closes it.
+          await permissionControl(page).click()
+          const permission = page.getByRole('dialog', { name: '权限', exact: true })
+          await permission.locator('.permission-panel').getByRole('radio', { checked: true }).first().click()
           expect(await permission.isVisible()).toBe(true)
           await permission.getByRole('button', { name: '关闭', exact: true }).click()
           await permission.waitFor({ state: 'hidden' })

@@ -34,6 +34,15 @@ const COPY = defineCopy(
     resetAfter: (value1: string | number) => `${value1}后重置`,
     gemini: 'Gemini 模型',
     claudeGpt: 'Claude 与 GPT 模型',
+    shortFiveHour: '5 小时',
+    shortWeekly: '周',
+    shortOpus: '周 Opus',
+    shortSonnet: '周 Sonnet',
+    shortDays: (count: number) => `${count} 天`,
+    shortHours: (count: number) => `${count} 小时`,
+    shortMinutes: (count: number) => `${count} 分钟`,
+    part: (name: string, figure: string) => `${name} ${figure}`,
+    reads: (part: string, reset: string) => `${part}，${reset}`,
   },
   {
     used: (percent: string) => `${percent} used`,
@@ -57,6 +66,15 @@ const COPY = defineCopy(
     resetAfter: (value1: string | number) => `Resets in ${value1}`,
     gemini: 'Gemini models',
     claudeGpt: 'Claude and GPT models',
+    shortFiveHour: '5h',
+    shortWeekly: 'wk',
+    shortOpus: 'wk Opus',
+    shortSonnet: 'wk Sonnet',
+    shortDays: (count: number) => `${count}d`,
+    shortHours: (count: number) => `${count}h`,
+    shortMinutes: (count: number) => `${count}m`,
+    part: (name: string, figure: string) => `${name} ${figure}`,
+    reads: (part: string, reset: string) => `${part}, ${reset}`,
   },
 )
 
@@ -81,6 +99,8 @@ export interface LimitView {
   group?: string
   /** 「5 小时」「每周」「本期」「本月预算」. */
   name: string
+  /** The name as the composer's mark says it beside another window: 「5 小时」「周」. */
+  short?: string
   state: QuotaState
   /** 0–100, shown whole; absent when the source gave no figure, and then `status` says the state. */
   percent?: number
@@ -110,6 +130,29 @@ function windowName(window: QuotaWindow): string {
       return COPY.currentWindow
     case 'rolling':
       return window.windowMinutes ? lengthWords(window.windowMinutes) : COPY.quota
+  }
+}
+
+/** The name the composer's mark gives a window beside another: 「5 小时」「周」「周 Opus」. */
+function windowShort(window: QuotaWindow): string {
+  switch (window.kind) {
+    case 'five-hour':
+      return COPY.shortFiveHour
+    case 'weekly':
+      return COPY.shortWeekly
+    case 'weekly-opus':
+      return COPY.shortOpus
+    case 'weekly-sonnet':
+      return COPY.shortSonnet
+    case 'billing-period':
+      return COPY.currentWindow
+    case 'rolling': {
+      const minutes = window.windowMinutes
+      if (!minutes) return COPY.quota
+      if (minutes % 1440 === 0) return COPY.shortDays(minutes / 1440)
+      if (minutes % 60 === 0) return COPY.shortHours(minutes / 60)
+      return COPY.shortMinutes(minutes)
+    }
   }
 }
 
@@ -199,6 +242,7 @@ function windowView(window: QuotaWindow, now: number): LimitView {
     key: `${window.group ?? ''}:${window.kind}:${window.windowMinutes ?? ''}`,
     ...(window.group ? { group: GROUPS[window.group] } : {}),
     name: windowName(window),
+    short: windowShort(window),
     state,
     ...(window.usedPercent !== undefined ? { percent: shownPercent(window.usedPercent) } : {}),
     ...(window.usedPercent === undefined && state !== 'ok' ? { status: LIMIT_WORDS[state] } : {}),
@@ -212,6 +256,12 @@ export interface HarnessLimits {
   windows: LimitView[]
   /** The window the composer stands for: the worst, then the fullest (`leadingQuotaWindow`). Absent: only a balance. */
   tightest?: LimitView
+  /**
+   * The windows the composer's mark names, shortest first: the shortest window of the tightest one's group and its
+   * longer one (the weekly, or the tightest where that is longer), so the tightest is always among them. One where the
+   * Harness reports one.
+   */
+  shown: LimitView[]
   /** The Harness said the account is at a limit that none of its windows shows. */
   account: boolean
   /** Plan, masked account and a prepaid balance above zero, each only when the Harness said it. */
@@ -228,6 +278,7 @@ export function harnessLimits(quota: HarnessQuota | undefined, now: number): Har
     state: held.state,
     windows: held.windows.map(window => windowView(window, now)),
     ...(lead ? { tightest: windowView(lead, now) } : {}),
+    shown: lead ? markWindows(held.windows, lead).map(window => windowView(window, now)) : [],
     account: held.state === 'limited' && (!lead || quotaWindowState(lead) !== 'limited'),
     ...(held.account ? { who: held.account } : {}),
     facts: [
@@ -255,33 +306,58 @@ export function usedWords(view: Pick<LimitView, 'percent' | 'status'>): string {
 }
 
 /**
- * The composer's words for a limit, in two parts so a narrow row can shorten the name and never the figure: the window's
- * name and how much of it is used (「每周」「已用 68%」), or, without a figure, that it is the limit (「5 小时」「额度将用尽」);
- * an account at a limit no window shows reads 「额度已用尽」 alone.
+ * The windows of `lead`'s group the composer names: the shortest, then a longer one, the general weekly window unless
+ * `lead` is the longer one. `lead` is always one of them: never two calm windows while a third is at its limit.
  */
-export function chipParts(limits: Pick<HarnessLimits, 'tightest' | 'account'>): { name: string; figure: string } {
-  const { tightest } = limits
-  if (limits.account || !tightest) return { name: '', figure: COPY.limitReached }
-  return {
-    name: tightest.name,
-    figure:
-      tightest.percent !== undefined
-        ? usedWords(tightest)
-        : tightest.state === 'limited'
-          ? COPY.limitReached
-          : tightest.state === 'near'
-            ? COPY.limitNear
-            : COPY.quota,
-  }
+function markWindows(windows: readonly QuotaWindow[], lead: QuotaWindow): QuotaWindow[] {
+  const group = windows.filter(window => window.group === lead.group)
+  const length = (window: QuotaWindow) => windowLength(window) ?? Number.POSITIVE_INFINITY
+  const shortest = group.reduce((best, window) => (length(window) < length(best) ? window : best), lead)
+  const longer = group.filter(window => length(window) > length(shortest))
+  const long = longer.includes(lead)
+    ? lead
+    : (longer.find(window => window.kind === 'weekly')
+      ?? longer.reduce<QuotaWindow | undefined>((best, window) => (best && length(best) >= length(window) ? best : window), undefined))
+  return long ? [shortest, long] : [shortest]
 }
 
-/** The same words in one run (「每周已用 68%」), for reading out. */
+/** One part of the composer's mark: a window's short name and its figure (「周 68%」), in its own state. */
+export interface MarkPart {
+  key: string
+  text: string
+  state: QuotaState
+  reset?: string
+}
+
+/**
+ * The composer's mark: each shown window as its short name and the share used (「5 小时 12%」「周 68%」), or, without a
+ * figure, its state (「5 小时 将用尽」); an account at a limit no window shows reads 「额度已用尽」 alone.
+ */
+export function markParts(limits: Pick<HarnessLimits, 'shown' | 'account'>): MarkPart[] {
+  if (limits.account || !limits.shown.length) return [{ key: 'account', text: COPY.limitReached, state: 'limited' }]
+  return limits.shown.map(view => ({
+    key: view.key,
+    text: COPY.part(
+      view.short ?? view.name,
+      view.percent !== undefined ? formatNumber(view.percent / 100, { style: 'percent' }) : (view.status ?? COPY.quota),
+    ),
+    state: view.state,
+    ...(view.reset ? { reset: view.reset } : {}),
+  }))
+}
+
+/** The same words in one run (「5 小时 12% · 周 68%」), for reading out. */
+export function chipWords(limits: Pick<HarnessLimits, 'shown' | 'account'>): string {
+  return markParts(limits)
+    .map(part => part.text)
+    .join(' · ')
+}
+
+/** A part as a screen reader hears it, with when its window resets. */
+export const partReads = (part: MarkPart): string => (part.reset ? COPY.reads(part.text, part.reset) : part.text)
+
+/** A monthly budget's words on the mark, its name and 「已用 N%」 in one run (「本月预算已用 40%」). */
 export const limitWords = (name: string, figure: string): string => COPY.chip(name, figure)
-
-export function chipWords(limits: Pick<HarnessLimits, 'tightest' | 'account'>): string {
-  const { name, figure } = chipParts(limits)
-  return limitWords(name, figure)
-}
 
 /** The first day of the month after `month` (`YYYY-MM`), as 「12 月 1 日重置」. */
 function monthReset(month: string): string | undefined {

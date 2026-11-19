@@ -284,7 +284,7 @@ describe('model usage in 额度与用量, prices and budgets in settings', () =>
           await enrollBrowser(page, host, { name: `预算小片 ${width} ${theme}`, scopes: ['view', 'run'] })
           await openSession(page, chatSession)
           // A session on Latch's service has no subscription limit: the chip is that service's budget, in the same words.
-          const chip = page.locator('main.workspace:not([inert]) form.composer .usage-chip')
+          const chip = page.locator('main.workspace:not([inert]) .composer-stack .usage-chip')
           await chip.getByText('本月预算已用 100%', { exact: true }).waitFor()
           expect(await chip.getAttribute('data-state')).toBe('limited')
           const box = (await chip.boundingBox())!

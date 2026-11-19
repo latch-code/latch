@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { TaskDetail, TaskSummary } from '@latch/protocol'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { entryPermission, noHorizontalOverflow, phoneStartScreen } from './helpers/layout.ts'
+import { permissionWords, noHorizontalOverflow, phoneStartScreen } from './helpers/layout.ts'
 import { homeInput } from './helpers/workbench.ts'
 
 describe('no project means chat', () => {
@@ -39,7 +39,7 @@ describe('no project means chat', () => {
       await page.getByText('不选项目', { exact: true }).filter({ visible: true }).last().click()
       expect(await input.inputValue()).toBe('解释一下什么是 SSE')
       // The permission says it on the input's one entry: nothing can ask, as no file is read or written.
-      await expect.poll(() => entryPermission(page)).toBe('权限：不读写文件')
+      await expect.poll(() => permissionWords(page)).toBe('权限：不读写文件')
       await noHorizontalOverflow(page)
       await page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }).click()
       await expect

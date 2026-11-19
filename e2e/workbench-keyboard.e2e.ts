@@ -357,21 +357,21 @@ it.each([
           await overlay.waitFor({ state: 'hidden' })
           await stayed()
 
-          // Each control key opens its own menu, in the session and on the home's input; Escape puts it away. 思考 and 权限
-          // are set in the model's one entry: their keys open its panel with focus on the levels or on the foot's modes.
+          // Each control key opens its own menu, in the session and on the home's input; Escape puts it away. 思考 is set
+          // in the model's one entry: its key opens that panel with focus on the levels. 权限 opens its own popover.
           const controls = ['harness', 'model', 'thinking', 'permission'] as const
           const part: Record<(typeof controls)[number], string | undefined> = {
             harness: undefined,
             model: '.ui-board-list',
             thinking: '.ui-board-levels',
-            permission: '.ui-board-foot',
+            permission: '.permission-panel',
           }
           const opens = async (where: 'session' | 'draft') => {
             const opened: string[] = []
             for (const [index, control] of controls.entries()) {
               const trigger = page
                 .locator(where === 'draft' ? '.workbench-home' : 'main.workspace')
-                .locator(`.composer-stack [data-composer-control="${control === 'harness' ? 'harness' : 'model'}"] button`)
+                .locator(`.composer-stack [data-composer-control="${control === 'thinking' ? 'model' : control}"] button`)
                 .first()
               if ((await trigger.count()) === 0) continue
               if ((await trigger.getAttribute('aria-disabled')) === 'true' || (await trigger.isDisabled())) continue

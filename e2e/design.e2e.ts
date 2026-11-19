@@ -9,10 +9,11 @@ import {
   backToPhoneSessions,
   closeSettings,
   composerEntry,
-  entryPermission,
   noHorizontalOverflow,
   openSection,
   openSettings,
+  permissionControl,
+  permissionWords,
   reachable,
 } from './helpers/layout.ts'
 import { viewSwitch } from './helpers/workbench.ts'
@@ -127,13 +128,14 @@ describe('responsive workspace controls', () => {
       await reachable(composer)
       await composer.fill('这是一条未提交的布局验收草稿。')
       await noHorizontalOverflow(page)
-      // One line under the text at every width: 「+」, the Harness, then the one entry (模型 · 思考 · 权限) beside send; the
-      // project is the headline's, where in it the line under the input.
+      // One line under the text at every width: 「+」, the Harness and its permission, then the one entry (模型 · 思考)
+      // beside send; the project is the headline's, where in it the line under the input.
       const line = page.locator('.workbench-home .composer-toolbar')
       await reachable(line.locator('[data-composer-control="harness"]').getByRole('button').first())
+      await reachable(permissionControl(line))
       await reachable(composerEntry(line))
-      expect(await entryPermission(line)).toMatch(/^权限：/u)
-      expect(await page.locator('.workbench-home [data-composer-control="permission"], .workbench-home .composer-chips').count()).toBe(0)
+      expect(await permissionWords(line)).toMatch(/^权限：/u)
+      expect(await page.locator('.workbench-home .composer-chips').count()).toBe(0)
       await reachable(page.locator('.workbench-home .home-headline').getByRole('button').first())
       if (phone) await noHorizontalOverflow(page)
       await reachable(page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }))

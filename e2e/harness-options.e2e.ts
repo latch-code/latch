@@ -8,12 +8,12 @@ import { AGENT_PRESETS, type AppSnapshot, type TaskDetail } from '@latch/protoco
 import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { composerEntry, entryPermission, noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, permissionControl, permissionWords } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/harness-options'
 
 /** The phone's entry on the start page: the same one entry as on a desktop, at the end of the input's line. */
-const phonePermission = (page: Page) => composerEntry(page.locator('.workbench-home form.composer'))
+const phonePermission = (page: Page) => permissionControl(page.locator('.workbench-home form.composer'))
 
 const refreshModels = (page: Page) =>
   page.getByRole('menuitem', { name: '刷新模型列表', exact: true }).or(page.getByRole('button', { name: '刷新模型列表', exact: true }))
@@ -148,8 +148,11 @@ describe("choosing a Harness's own options before the first message", () => {
     const entry = chip(page, '思考')
     if ((await entry.getAttribute('aria-expanded')) !== 'true') await entry.click()
   }
-  /** Opens the entry's panel, where its foot sets the permission, unless it is open already. */
-  const openEntry = openThinking
+  /** Opens the permission's popover beside the Harness, unless it is open already. */
+  const openEntry = async (page: Page) => {
+    const control = permissionControl(page)
+    if ((await control.getAttribute('aria-expanded')) !== 'true') await control.click()
+  }
   const send = async (page: Page, text: string) => {
     await input(page).fill(text)
     await input(page).press('Meta+Enter')
@@ -206,7 +209,7 @@ describe("choosing a Harness's own options before the first message", () => {
           .filter({ visible: true })
           .evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.composerControl)),
       )
-      .toEqual(['harness', 'model'])
+      .toEqual(['harness', 'permission', 'model'])
     const agent = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean)
     expect(await agent()).toEqual([])
     // The known ladder is available before a read, even though Codex's model/list reports no modes.
@@ -215,8 +218,8 @@ describe("choosing a Harness's own options before the first message", () => {
     await row(page, /由模型判断/u).waitFor()
     await row(page, /不再询问/u).waitFor()
     await row(page, /按规则放行/u).click()
-    // The panel stays open on the choice: the entry follows it.
-    await expect.poll(() => entryPermission(page)).toContain('按规则放行')
+    // The popover stays open on the choice: the control follows it.
+    await expect.poll(() => permissionWords(page)).toContain('按规则放行')
     await shot(page, 'permission-before-read-1440-light')
     await page.keyboard.press('Escape')
     expect(await agent()).toEqual([])
@@ -229,7 +232,7 @@ describe("choosing a Harness's own options before the first message", () => {
     expect((await agent()).filter(line => line.includes('"model/list"')).length).toBe(1)
     await page.keyboard.press('Escape')
     // A late catalogue must keep the earlier draft choice.
-    await expect.poll(() => entryPermission(page)).toContain('按规则放行')
+    await expect.poll(() => permissionWords(page)).toContain('按规则放行')
     await openEntry(page)
     await row(page, /先问你/u).click()
     await page.keyboard.press('Escape')
@@ -243,7 +246,7 @@ describe("choosing a Harness's own options before the first message", () => {
     // What the first session offered, before anything is sent.
     await expect.poll(() => chip(page, '模型').innerText()).toContain('Small')
     await expect.poll(() => chip(page, '思考').innerText()).toContain('Low')
-    await expect.poll(() => entryPermission(page)).toContain('先问你')
+    await expect.poll(() => permissionWords(page)).toContain('先问你')
     await chip(page, '模型').click()
     await row(page, /Large/u).waitFor()
     await refreshModels(page).waitFor()
@@ -270,18 +273,14 @@ describe("choosing a Harness's own options before the first message", () => {
       )
       .toEqual(['先问你', '按规则放行', '由模型判断', '不再询问'])
     await expect.poll(() => page.locator('.ui-mode-strip-name').filter({ visible: true }).innerText()).toBe('先问你')
-    // The strip is the foot's one tab stop: from there the arrows preview.
-    await page
-      .locator('.ui-board-foot .entry-permission-part [role="radio"][aria-checked="true"]')
-      .filter({ visible: true })
-      .first()
-      .focus()
+    // The strip is the popover's one tab stop: from there the arrows preview.
+    await page.locator('.permission-panel [role="radio"][aria-checked="true"]').filter({ visible: true }).first().focus()
     await page.keyboard.press('ArrowRight')
     await expect.poll(() => page.locator('.ui-mode-strip-name').filter({ visible: true }).innerText()).toBe('按规则放行')
-    expect(await entryPermission(page)).toContain('先问你')
+    expect(await permissionWords(page)).toContain('先问你')
     await shot(page, 'permission-strip-1440-light')
     await page.keyboard.press('Enter')
-    await expect.poll(() => entryPermission(page)).toContain('按规则放行')
+    await expect.poll(() => permissionWords(page)).toContain('按规则放行')
     await shot(page, 'picked-1440-light')
 
     await send(page, '第二轮')
@@ -294,7 +293,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await startNew(page)
     await expect.poll(() => chip(page, '模型').innerText()).toContain('Large')
     await expect.poll(() => chip(page, '思考').innerText()).toContain('Low')
-    await expect.poll(() => entryPermission(page)).toContain('按规则放行')
+    await expect.poll(() => permissionWords(page)).toContain('按规则放行')
     await openThinking(page)
     // Routine descriptions stay out of the list; every level remains reachable by its own name.
     for (const level of ['Low', 'High', 'Max']) await row(page, new RegExp(`^${level}`, 'u')).waitFor()
@@ -310,7 +309,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await startNew(page)
     await expect.poll(() => chip(page, '模型').innerText()).toContain('Large')
     await expect.poll(() => chip(page, '思考').innerText()).toContain('High')
-    await expect.poll(() => entryPermission(page)).toContain('按规则放行')
+    await expect.poll(() => permissionWords(page)).toContain('按规则放行')
     await noHorizontalOverflow(page)
     await page.context().close()
   })
@@ -353,7 +352,7 @@ describe("choosing a Harness's own options before the first message", () => {
     // The session shows what it runs on now, the rest of the draft with it, and a retry runs on that.
     await expect.poll(() => chip(page, '模型').innerText()).toContain('Small')
     await expect.poll(() => chip(page, '思考').innerText()).toContain('High')
-    await expect.poll(() => entryPermission(page)).toContain('按规则放行')
+    await expect.poll(() => permissionWords(page)).toContain('按规则放行')
     await page.getByRole('button', { name: '重试', exact: true }).first().click()
     await page.locator('.transcript').getByText('echo: 第三轮', { exact: true }).first().waitFor({ timeout: 20_000 })
     const retried = await latest()
@@ -425,7 +424,7 @@ describe("choosing a Harness's own options before the first message", () => {
         .locator('.composer-stack [data-composer-control]')
         .filter({ visible: true })
         .evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.composerControl)),
-    ).toEqual(['harness', 'model'])
+    ).toEqual(['harness', 'permission', 'model'])
     await openThinking(page)
     await row(page, /^High/u).click()
     await page.keyboard.press('Escape')
@@ -504,7 +503,7 @@ describe("choosing a Harness's own options before the first message", () => {
       const session = await latest()
       expect(current(session, 'mode')).toBe('read-only')
       await writeFile(answer, '')
-      await expect.poll(() => entryPermission(page)).toContain('先问你')
+      await expect.poll(() => permissionWords(page)).toContain('先问你')
       await openEntry(page)
       const accepted = page.waitForResponse(
         response => response.request().method() === 'POST' && /\/tasks\/[^/]+\/config$/u.test(response.url()),
@@ -537,7 +536,7 @@ describe("choosing a Harness's own options before the first message", () => {
     it(`lists the same on a phone, ${theme}`, async () => {
       const page = await open(390, theme)
       await openNew(page)
-      // One entry at the line's end: its sheet sets the model, its thinking and, in its foot, the permission.
+      // The permission beside the Harness: its own sheet sets it.
       const chips = page.locator('.workbench-home form.composer')
       const permission = phonePermission(page)
       await chips.getByRole('button', { name: /^模型/u }).waitFor()
@@ -550,7 +549,7 @@ describe("choosing a Harness's own options before the first message", () => {
       await shot(page, `sheet-permission-390-${theme}`)
       await row(page, '按规则放行').click()
       await page.keyboard.press('Escape')
-      await expect.poll(() => entryPermission(page)).toContain('按规则放行')
+      await expect.poll(() => permissionWords(page)).toContain('按规则放行')
       await noHorizontalOverflow(page)
       await page.context().close()
     })
@@ -632,7 +631,7 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
       await sheet.waitFor()
       expect(await sheet.getByRole('button', { name: /^Harness：/u }).getAttribute('aria-label')).toBe('Harness：Generic')
       const permission = phonePermission(page)
-      await expect.poll(() => entryPermission(page)).toBe('权限：默认')
+      await expect.poll(() => permissionWords(page)).toBe('权限：默认')
       expect(await page.getByText('开始后才知道', { exact: false }).count()).toBe(0)
       await shot(page, 'permission-before-read-390-dark')
       // Only 权限 is opened: the model row never is.
@@ -646,7 +645,7 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
         })
       await shot(page, 'permission-read-390-dark')
       await mode(page, 'auto').click()
-      await expect.poll(() => entryPermission(page)).toBe('权限：auto')
+      await expect.poll(() => permissionWords(page)).toBe('权限：auto')
       await noHorizontalOverflow(page)
     } finally {
       await page.context().close()
@@ -662,12 +661,12 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
           .first()
           .getAttribute('aria-label'),
       ).toBe('Harness：Generic')
-      const chip = composerEntry(page)
-      await expect.poll(() => entryPermission(page)).toBe('权限：默认')
+      const chip = permissionControl(page)
+      await expect.poll(() => permissionWords(page)).toBe('权限：默认')
       await chip.click()
       await expect.poll(async () => (await generic())?.catalogue, { timeout: 20_000 }).toMatchObject({ source: 'check' })
       await mode(page, 'auto').waitFor()
-      await expect.poll(() => entryPermission(page)).toBe('权限：ask')
+      await expect.poll(() => permissionWords(page)).toBe('权限：ask')
       await shot(page, 'permission-read-1280-light')
     } finally {
       await page.context().close()
@@ -751,8 +750,8 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
           .first()
           .getAttribute('aria-label'),
       ).toBe('Harness：Qwen Code')
-      const chip = composerEntry(page)
-      await expect.poll(() => entryPermission(page)).toBe('权限：先问你')
+      const chip = permissionControl(page)
+      await expect.poll(() => permissionWords(page)).toBe('权限：先问你')
       expect(await sent()).toEqual([])
       // Keep the read pending until its loading state was observed, even under a busy browser test run.
       await page.route(/\/agents\/[^/]+\/catalogue$/u, async route => {
@@ -768,13 +767,13 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
       expect(await sent()).toHaveLength(0)
       await shot('permission-reading-1280-dark')
       await rule.click()
-      await expect.poll(() => entryPermission(page)).toBe('权限：由模型判断')
+      await expect.poll(() => permissionWords(page)).toBe('权限：由模型判断')
       releaseRead()
       await expect.poll(sent).toHaveLength(1)
       expect(await page.getByText('发第一条消息后可以换', { exact: false }).count()).toBe(0)
       await shot('permission-read-1280-dark')
       expect(await sent()).toHaveLength(1)
-      await expect.poll(() => entryPermission(page)).toBe('权限：由模型判断')
+      await expect.poll(() => permissionWords(page)).toBe('权限：由模型判断')
       await noHorizontalOverflow(page)
     } finally {
       releaseRead()
@@ -834,8 +833,11 @@ describe("choosing one of Codex's own models in a draft", () => {
     const entry = chip(page, '思考')
     if ((await entry.getAttribute('aria-expanded')) !== 'true') await entry.click()
   }
-  /** Opens the entry's panel, where its foot sets the permission, unless it is open already. */
-  const openEntry = openThinking
+  /** Opens the permission's popover beside the Harness, unless it is open already. */
+  const openEntry = async (page: Page) => {
+    const control = permissionControl(page)
+    if ((await control.getAttribute('aria-expanded')) !== 'true') await control.click()
+  }
   const row = (page: Page, name: RegExp) =>
     page
       .getByRole('menuitemradio', { name })

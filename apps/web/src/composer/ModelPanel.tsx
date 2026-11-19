@@ -50,7 +50,6 @@ import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { capsText, shortcutCaps, shortcutKeys, workbenchShortcut } from '../workbenchShortcuts.ts'
 import { BriefHint } from './BriefHint.tsx'
 import { usePartRequest, useSearchRequest } from './ComposerControl.tsx'
-import { EntryPermissionMark, EntryPermissionPart, entryPermissionTip, type EntryPermission } from './EntryPermission.tsx'
 import {
   CatalogueRows,
   readHarnessCatalogue,
@@ -278,22 +277,11 @@ const LONG_NAME = 24
 
 /**
  * The 模型 or 思考 chip: its value, and the shared panel focused on the list or the levels. With `withLevel` it is the
- * input box's one entry: the model's mark and name, its level after a head, the session's permission as a mark (amber
- * with the mode's short name where nothing asks or Latch cannot confirm), and a panel that sets all of them, its foot the
- * model's other settings (速度) and the permission. Choices keep that panel open. It always opens while it shows the
- * permission: a model this device may not change is a disabled row with its reason, as each mode is.
+ * input box's one entry: the model's mark and name, its level after a head, and a panel that sets both, its foot the
+ * model's other settings (速度). Choices keep that panel open. The permission is a control of its own beside the Harness
+ * (`ComposerPermission`).
  */
-function BoardChip({
-  board,
-  kind,
-  withLevel = false,
-  permission,
-}: {
-  board: Board
-  kind: 'model' | 'thinking'
-  withLevel?: boolean
-  permission?: EntryPermission | undefined
-}) {
+function BoardChip({ board, kind, withLevel = false }: { board: Board; kind: 'model' | 'thinking'; withLevel?: boolean }) {
   const face = board[kind]
   // The input box has one entry for both: the model's name, then its level after a glyph, on the one panel's chip.
   const level = withLevel && kind === 'model' ? board.thinking : undefined
@@ -301,31 +289,23 @@ function BoardChip({
   const request = useSearchRequest()
   const asked = usePartRequest()
   const value = face.valueText === undefined ? undefined : '~face'
-  // The entry stays openable for the permission; what this device may not change is disabled inside, with its reason.
-  const rowsLocked = entry && permission !== undefined && face.disabled === true ? (face.disabledReason ?? '') : undefined
+  // The entry stays openable where this device may not change the model: each model and level is a disabled row, with
+  // the reason, so what could be chosen is still in view.
+  const rowsLocked = entry && face.disabled === true ? (face.disabledReason ?? '') : undefined
   const disabled = face.disabled === true && rowsLocked === undefined
-  const sources = boardSources(board.groups)
-  const shownSources =
-    rowsLocked === undefined
-      ? sources
-      : sources.map(source => ({
-          ...source,
-          ...(source.items ? { items: source.items.map(item => ({ ...item, disabledReason: item.disabledReason ?? rowsLocked })) } : {}),
-          ...(source.groups
-            ? {
-                groups: source.groups.map(group => ({
-                  ...group,
-                  items: group.items.map(item => ({ ...item, disabledReason: item.disabledReason ?? rowsLocked })),
-                })),
-              }
-            : {}),
-        }))
+  const locks = <I extends { disabledReason?: string | undefined }>(items: readonly I[]): I[] =>
+    rowsLocked === undefined ? [...items] : items.map(item => ({ ...item, disabledReason: item.disabledReason ?? rowsLocked }))
+  const sources = boardSources(board.groups).map(source => ({
+    ...source,
+    ...(source.items ? { items: locks(source.items) } : {}),
+    ...(source.groups ? { groups: source.groups.map(group => ({ ...group, items: locks(group.items) })) } : {}),
+  }))
   const levels =
     rowsLocked === undefined
       ? board.levels
       : (item: string | undefined) => {
           const shown = board.levels(item)
-          return { ...shown, options: shown.options.map(option => ({ ...option, disabledReason: option.disabledReason ?? rowsLocked })) }
+          return { ...shown, options: locks(shown.options) }
         }
   // The maker's mark before the name, read from the ID; a service's own tile where the model goes through one.
   const leading = face.leading ?? (entry && board.value && modelArt(board.value) ? <ModelTile model={board.value} size={14} /> : undefined)
@@ -336,17 +316,11 @@ function BoardChip({
         face.hint,
         level?.valueText !== undefined && COPY.entryThinking(level.valueText),
         level?.hint,
-        permission && entryPermissionTip(permission.view),
       ])
     : (face.hint ?? longName)
   const focus = asked.part ?? (kind === 'thinking' ? 'levels' : 'list')
-  const foot =
-    entry && (board.settings || permission) ? (
-      <>
-        <div className="entry-foot-settings">{board.settings}</div>
-        {permission && <EntryPermissionPart permission={permission} />}
-      </>
-    ) : undefined
+  // The model's other settings (速度) run across the board's foot, so the columns above never change size for them.
+  const foot = entry && board.settings ? <div className="entry-foot-settings">{board.settings}</div> : undefined
   return (
     <>
       {board.effects}
@@ -376,12 +350,12 @@ function BoardChip({
               ),
             }
           : {})}
-        {...(entry && permission ? { mark: <EntryPermissionMark view={permission.view} /> } : {})}
         className={entry ? `${face.className} entry-picker` : face.className}
         menuChevron
         anchor={besideModel}
-        // The input box's entry ends its line: the panel lines its end up with it and stays over the conversation.
-        {...(withLevel ? { align: 'end' as const } : {})}
+        // The input box's entry ends its line: the panel lines its end up with it, on the side of it with more room, so a
+        // short window never cuts it off (the board gives way inside the layer).
+        {...(withLevel ? { align: 'end' as const, side: 'auto' as const } : {})}
         width={board.panel ? 'md' : 'lg'}
         pending={face.pending === true || level?.pending === true}
         {...((face.pendingLabel ?? level?.pendingLabel) ? { pendingLabel: (face.pendingLabel ?? level?.pendingLabel)! } : {})}
@@ -391,8 +365,7 @@ function BoardChip({
         {...(hint ? { hint } : {})}
         onOpenChange={open => {
           board.onOpenChange?.(open)
-          if (open) permission?.onOpen?.()
-          else asked.clear()
+          if (!open) asked.clear()
         }}
         onValueChange={() => {}}
         // A slash argument (/model <query>) opens the panel on that search; the board fills its own field from it.
@@ -403,7 +376,7 @@ function BoardChip({
               label={COPY.model}
               levelsLabel={COPY.thinking}
               levelsIcon={<Icon icon={Brain} size={14} />}
-              sources={shownSources}
+              sources={sources}
               value={board.value}
               levels={levels}
               onItem={board.onModel}
@@ -416,7 +389,7 @@ function BoardChip({
               query={kind === 'model' ? request : undefined}
               settings={entry ? undefined : board.settings}
               footer={board.footer}
-              {...(entry ? { keepOpen: true, foot } : {})}
+              {...(entry ? { keepOpen: true, ...(foot ? { foot } : {}) } : {})}
               className={kind === 'thinking' ? 'model-board is-thinking' : entry ? 'model-board is-entry' : 'model-board'}
             />
           )
@@ -426,7 +399,7 @@ function BoardChip({
   )
 }
 
-/** The entry's hover: the model, its thinking and the permission, each in words, with what the permission means. */
+/** The entry's hover: the model and its thinking, each in words, with what each means. */
 function entryTip(parts: ReadonlyArray<string | false | undefined>): ReactNode {
   const lines = parts.filter((line): line is string => typeof line === 'string' && line.length > 0)
   if (!lines.length) return undefined
@@ -998,12 +971,8 @@ function useDraftBoard({
   }
 }
 
-export function DraftModelControl({
-  withLevel,
-  permission,
-  ...props
-}: DraftBoardProps & { withLevel?: boolean; permission?: EntryPermission | undefined }) {
-  return <BoardChip board={useDraftBoard(props)} kind="model" {...(withLevel ? { withLevel } : {})} permission={permission} />
+export function DraftModelControl({ withLevel, ...props }: DraftBoardProps & { withLevel?: boolean }) {
+  return <BoardChip board={useDraftBoard(props)} kind="model" {...(withLevel ? { withLevel } : {})} />
 }
 
 export function DraftThinkingControl(props: DraftBoardProps) {
@@ -1142,12 +1111,8 @@ function useSessionBoard({
   })
 }
 
-export function SessionModelControl({
-  withLevel,
-  permission,
-  ...props
-}: SessionBoardProps & { withLevel?: boolean; permission?: EntryPermission | undefined }) {
-  return <BoardChip board={useSessionBoard(props)} kind="model" {...(withLevel ? { withLevel } : {})} permission={permission} />
+export function SessionModelControl({ withLevel, ...props }: SessionBoardProps & { withLevel?: boolean }) {
+  return <BoardChip board={useSessionBoard(props)} kind="model" {...(withLevel ? { withLevel } : {})} />
 }
 
 export function SessionThinkingControl(props: SessionBoardProps) {

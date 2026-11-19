@@ -38,7 +38,7 @@ import { ComposerStatus, FolderSegment, statusRoute } from '../composer/Composer
 import { SessionVitalsLine } from '../composer/VitalsStrip.tsx'
 import { DraftHarnessControl, forkBusy, SessionHarnessControl, type SessionFork } from '../composer/ModelControl.tsx'
 import { DraftModelControl, SessionModelControl } from '../composer/ModelPanel.tsx'
-import type { EntryPermission } from '../composer/EntryPermission.tsx'
+import { ComposerPermission, type ComposerPermissionState } from '../composer/ComposerPermission.tsx'
 import { ConfigFeedback } from '../composer/ThinkingControl.tsx'
 import { composerOptions, configUnknownBar, ownModelName } from '../composer/modelReasoning.ts'
 import { draftPermission, draftRead, permissionView } from '../composer/permission.ts'
@@ -457,9 +457,9 @@ export function SessionComposer({
   const speaker = selectedId !== null ? speakerOf(shell.snapshot, summary) : undefined
   const showControls = speaker === undefined && (selectedId === null || (!!summary && !summary.personal && gate.kind !== 'stopped'))
   const permissionChange = selectedId !== null ? configFeedback.get(selectedId) : undefined
-  // The permission is set in the model's entry: its mark on the entry, its modes in the panel's foot.
+  // The permission is a control of its own, right after the Harness: its glyph on the line, its modes in its popover.
   const modeId = permission?.option?.id
-  const entryPermission: EntryPermission | undefined =
+  const composerPermission: ComposerPermissionState | undefined =
     permission && catalog && (selectedId === null || summary)
       ? {
           // While another of the session's settings is being written, the other modes wait for it, with why; a choice is
@@ -480,7 +480,7 @@ export function SessionComposer({
           ...(permissionChange && modeId !== undefined && permissionChange.configId === modeId
             ? { feedback: <ConfigFeedback feedback={permissionChange} onRefresh={refreshConfig} /> }
             : {}),
-          // A draft's modes come from the same read as its model list, so opening the panel asks for them as well.
+          // A draft's modes come from the same read as its model list, so opening the popover first asks as well.
           ...(selectedId === null && !newChoicesLocked
             ? {
                 onOpen: () => {
@@ -901,10 +901,12 @@ export function SessionComposer({
                 computer={computer}
               />
             </ComposerControl>
+            <ComposerControl name="permission">
+              <ComposerPermission permission={composerPermission} />
+            </ComposerControl>
             <ComposerControl name="model">
               <DraftModelControl
                 withLevel
-                permission={entryPermission}
                 catalog={catalog}
                 choice={choice}
                 onChoice={submission.updateChoice}
@@ -927,10 +929,12 @@ export function SessionComposer({
                   <SessionHarnessControl harness={harnessInfo} admin={access.admin} onNewSession={startNew} fork={fork} />
                 </ComposerControl>
               )}
+              <ComposerControl name="permission">
+                <ComposerPermission permission={composerPermission} />
+              </ComposerControl>
               <ComposerControl name="model">
                 <SessionModelControl
                   withLevel
-                  permission={entryPermission}
                   catalog={catalog}
                   harness={harnessInfo}
                   model={effectiveModel}

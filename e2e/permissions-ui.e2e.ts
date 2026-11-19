@@ -10,7 +10,7 @@ import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { composerEntry, entryPermission, openSection, openSession, openSettings, closeSettings } from './helpers/layout.ts'
+import { closeSettings, openSection, openSession, openSettings, permissionControl, permissionWords } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/permissions'
 
@@ -470,16 +470,16 @@ describe('permission states in a browser', () => {
     await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
     await page.getByRole('textbox', { name: '继续对话' }).waitFor()
 
-    // The entry's panel offers the wider row in its foot and takes it at once, staying open; Escape closes it.
-    expect(await entryPermission(page)).toMatch(/^权限：/u)
-    await composerEntry(page).click()
-    const foot = page.locator('.ui-board-foot .entry-permission-part[data-lock]')
+    // The permission's popover offers the wider row under the lock and takes it at once, staying open; Escape closes it.
+    expect(await permissionWords(page)).toMatch(/^权限：/u)
+    await permissionControl(page).click()
+    const foot = page.locator('.ui-popover:popover-open .permission-panel[data-lock]')
     await foot.waitFor()
     await foot.getByRole('radio', { name: /auto/iu }).click()
     await expect.poll(async () => (await detail(sessionId)).config?.find(option => option.id === 'mode')?.currentValue).toBe('auto')
     await expect.poll(() => foot.getByRole('radio', { name: /auto/iu }).getAttribute('aria-checked')).toBe('true')
     expect(await foot.isVisible()).toBe(true)
-    await expect.poll(() => entryPermission(page)).toBe('权限：auto')
+    await expect.poll(() => permissionWords(page)).toBe('权限：auto')
     await page.keyboard.press('Escape')
     await foot.waitFor({ state: 'hidden' })
     expect(testHost.presence.requests).toHaveLength(before)

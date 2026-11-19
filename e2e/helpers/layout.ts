@@ -312,18 +312,24 @@ export async function tooltipText(page: Page, trigger: Locator, touch = false): 
 }
 
 /**
- * The input's one entry in `scope`: the model, its thinking and the permission on one trigger, at the end of the input's
- * line. Its panel sets all three.
+ * The input's one entry in `scope`: the model and its thinking on one trigger, at the end of the input's line. Its
+ * panel sets both, and 速度 in its foot.
  */
 export function composerEntry(scope: Page | Locator): Locator {
   return scope.locator('[data-composer-control="model"] button.entry-picker').filter({ visible: true }).first()
 }
 
-/** What the entry says of the permission, 「权限：先问你」, as its description (the hover) reads it to a screen reader. */
-export async function entryPermission(scope: Page | Locator): Promise<string> {
-  return composerEntry(scope).evaluate(element => {
-    const ids = element.getAttribute('aria-describedby')?.split(' ') ?? []
-    const text = ids.map(id => document.getElementById(id)?.textContent ?? '').join(' ')
-    return /权限：[^。]*/u.exec(text)?.[0] ?? ''
-  })
+/** 权限 on the input's line, right after the Harness: the mode's glyph, and its name where it is amber. */
+export function permissionControl(scope: Page | Locator): Locator {
+  return scope.locator('[data-composer-control="permission"] button.composer-permission').filter({ visible: true }).first()
+}
+
+/** What the permission control says, 「权限：先问你」, as a screen reader reads it. */
+export async function permissionWords(scope: Page | Locator): Promise<string> {
+  return (await permissionControl(scope).getAttribute('aria-label')) ?? ''
+}
+
+/** The modes the permission control opens: its popover, or on a phone its sheet. */
+export function permissionModes(page: Page): Locator {
+  return page.locator('.permission-panel[data-lock]').filter({ visible: true }).first()
 }

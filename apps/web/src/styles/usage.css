@@ -79,96 +79,43 @@
 }
 
 /*
- * The composer's chip: a 16 bar of the same and the window's words, last before send. Ink-2 until 80%, then amber,
- * red at the limit, on the bar and the words together. A limit without a figure is the alert glyph with its words.
+ * The composer's mark: at the end of the line under the input, after what the session used and in its type, whole and
+ * never squeezed. Each window is its short name and figure in ink-2, amber from 80% and red at the limit, the windows
+ * parted by a muted dot. Hovering lays the tint of the worst one under it.
  */
 .usage-chip {
   gap: var(--sp-6);
+  height: 24px;
+  padding: 0 var(--sp-6);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
 }
-.usage-chip-bar {
-  display: inline-block;
-  flex: none;
-  width: 16px;
-  height: 4px;
-  overflow: hidden;
-  border-radius: var(--r-full);
-  background: var(--track);
-}
-.usage-chip-bar > span {
-  --used: 0%;
-  display: block;
-  width: var(--used);
-  height: 100%;
-  background: var(--meter);
-}
-.usage-chip[data-state='near'],
-.usage-chip[data-state='near']:hover:not(:disabled) {
+.usage-chip-part[data-state='near'] {
   color: var(--amber);
+}
+.usage-chip-part[data-state='limited'] {
+  color: var(--red);
+}
+.usage-chip-dot {
+  margin-inline: var(--sp-6);
+  color: var(--muted);
 }
 .usage-chip[data-state='near']:hover:not(:disabled) {
   background: var(--amber-soft);
 }
-.usage-chip[data-state='near'] > svg {
-  color: var(--amber-icon);
-}
-.usage-chip[data-state='near'] .usage-chip-bar > span {
-  background: var(--amber-icon);
-}
-.usage-chip[data-state='limited'],
-.usage-chip[data-state='limited']:hover:not(:disabled) {
-  color: var(--red);
-}
 .usage-chip[data-state='limited']:hover:not(:disabled) {
   background: var(--red-soft);
 }
-.usage-chip[data-state='limited'] > svg {
-  color: var(--red);
+/* Its hover says each window on its own line. */
+.usage-chip-tip {
+  display: grid;
+  gap: var(--sp-2);
 }
-.usage-chip[data-state='limited'] .usage-chip-bar > span {
-  background: var(--red);
-}
-/*
- * The chip takes only the room the row has left, so its coming never pushes a control onto another line: it starts
- * from nothing and grows into the space before send, standing at its end. It shows whole (bar and words), or its bar
- * alone with the words in its hover, or nothing: its words wrap onto a second line its own height hides, and below
- * the bar's own width it goes. Never cut, never a stub.
- */
 .composer-usage {
   display: flex;
-  flex: 1 1 0;
-  justify-content: flex-end;
   min-width: 0;
 }
-/* It may get no room at all: the gap before it is its own, so a full line never breaks for it. */
-.composer-toolbar .composer-usage {
-  container: composer-usage / inline-size;
-  margin-inline-start: calc(-1 * var(--sp-4));
-  padding-inline-start: var(--sp-4);
-}
-.composer-toolbar .usage-chip {
-  flex-wrap: wrap;
-  align-content: flex-start;
-  justify-content: flex-end;
-  row-gap: 0;
-  overflow: hidden;
-}
-.composer-toolbar .usage-chip > * {
-  flex: none;
-  block-size: 28px;
-}
-.composer-toolbar .usage-chip-bar {
-  block-size: 4px;
-  margin-block: 12px;
-}
-.composer-toolbar .usage-chip > svg {
-  block-size: 14px;
-  margin-block: 7px;
-}
-.composer-toolbar .usage-chip-text.chip-text {
-  align-items: center;
-}
-/* On a phone the chip ends the line under the input, after what the session used, whole and never squeezed. */
 .composer-foot[data-usage] > .composer-usage {
   flex: 0 0 auto;
   margin-inline-start: auto;
@@ -177,28 +124,28 @@
   flex: 1 1 auto;
   min-width: 0;
 }
-@container composer-usage (max-width: 31.98px) {
-  .usage-chip {
-    display: none;
-  }
+/*
+ * Beside the mark the usage line gives way whole items at a time, its last first: what does not fit wraps onto a second
+ * line its own height hides, so no figure is ever cut at its start.
+ */
+.composer-foot[data-usage] > .vitals-strip {
+  flex-wrap: wrap;
+  align-content: flex-start;
+  row-gap: var(--sp-24);
 }
 .usage-chip {
   min-width: 0;
-  max-width: 100%;
+  max-width: none;
 }
 .usage-chip-text.chip-text {
   display: inline-flex;
   min-width: 0;
   overflow: visible;
 }
-.usage-chip-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.usage-chip-part {
+  white-space: nowrap;
 }
-.usage-chip-figure {
-  flex: none;
-}
+
 /*
  * The surface fits what it holds under a fixed top edge, so a switch of view or data arriving only moves its bottom; the
  * views are its header's control, beside the close button (on a phone, the first row of the sheet).

@@ -195,13 +195,26 @@
   grid-template-columns: 44px minmax(0, 1fr) var(--board-levels);
 }
 /*
- * With a foot: the columns keep a fixed block over it, and the foot runs across the whole board on a hairline, its
- * settings at the start and the permission at the end, so the layer's size never changes with the highlight.
+ * With a foot: the columns keep a fixed block over it, and the foot runs across the whole board on a hairline, so the
+ * layer's size never changes with the highlight.
  */
 .ui-board[data-foot] {
   --board-main: 352px;
-  grid-template-rows: var(--board-main) auto;
+  grid-template-rows: minmax(0, var(--board-main)) auto;
   height: auto;
+}
+/*
+ * A window with less room than the board on either side of its trigger: the layer is a column, held inside the window
+ * (pinLayer's max-height), and the board gives way to it. The columns shorten and only the lists in them scroll; the
+ * foot keeps its whole height in view.
+ */
+.ui-popover:popover-open:has(> .ui-board) {
+  display: flex;
+  flex-direction: column;
+}
+.ui-popover > .ui-board {
+  flex: 0 1 auto;
+  min-height: 0;
 }
 .ui-board-foot {
   grid-column: 1 / -1;

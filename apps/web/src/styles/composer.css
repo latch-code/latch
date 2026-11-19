@@ -351,36 +351,44 @@
   white-space: nowrap;
 }
 /*
- * The entry's permission: the mode's glyph in muted ink after the level; where nothing asks or the mode cannot be
- * confirmed, the glyph in amber with the mode's short name in amber words. Never cut before the model's name is.
+ * 权限, right after the Harness: the mode's glyph alone, the line's glyph size in muted ink, on a square target where
+ * something asks; where nothing asks or the mode cannot be confirmed, the glyph in amber with the mode's short name in
+ * amber words. It never gives way: the model's name and then the Harness's do first.
  */
-.entry-permission {
-  display: inline-flex;
+.composer-control[data-composer-control='permission'] {
   flex: none;
-  align-items: center;
+}
+.composer-permission {
   gap: var(--sp-4);
-  max-width: 12em;
-  margin-inline-start: var(--sp-2);
+  min-width: 28px;
+  justify-content: center;
+}
+.composer-permission:not([data-amber]) {
+  padding: 0 var(--sp-6);
+}
+.composer-permission > svg,
+.composer-permission > .ui-spinner {
   color: var(--muted);
 }
-.entry-permission[data-amber] {
+.composer-permission[data-amber] {
   color: var(--amber);
 }
-.entry-permission[data-amber] > svg {
+.composer-permission[data-amber] > svg {
   color: var(--amber-icon);
 }
-.entry-permission-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.composer-permission[data-amber]:hover:not(:disabled) {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+.composer-control .composer-permission-name {
+  max-width: 12em;
 }
 /* The entry's hover says each thing it sets on its own line. */
 .entry-tip {
   display: grid;
   gap: var(--sp-2);
 }
-/* The panel's foot: the model's other settings (速度) at the start, the permission at the end. */
+/* The panel's foot: the model's other settings (速度). */
 .entry-foot-settings {
   display: flex;
   flex-wrap: wrap;
@@ -413,16 +421,7 @@
 .ui-board-foot {
   align-items: flex-start;
 }
-.entry-permission-part {
-  display: grid;
-  gap: var(--sp-6);
-  min-width: 0;
-  margin-inline-start: auto;
-}
 @media (max-width: 767.98px) {
-  .entry-permission-part {
-    margin-inline-start: 0;
-  }
   .ui-board-foot .entry-foot-settings .model-setting {
     display: grid;
     gap: var(--sp-6);
@@ -440,10 +439,6 @@
   .composer[data-inline] .composer-control[data-composer-control='harness'] {
     max-width: none;
     margin-inline-end: var(--sp-4);
-  }
-  /* With the amber mode's name on the entry, the level leaves for the panel so the model keeps its name. */
-  .composer[data-inline] .entry-picker:has(.entry-permission[data-amber]) .ui-value-picker-trail {
-    display: none;
   }
 }
 /*

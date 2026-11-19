@@ -24,7 +24,7 @@ import {
 } from '../src/composer/ModelControl.tsx'
 import { DraftModelControl, SessionModelControl } from '../src/composer/ModelPanel.tsx'
 import { MODE_ICONS, PermissionPanel, stripRows } from '../src/composer/PermissionList.tsx'
-import { EntryPermissionMark, EntryPermissionPart, entryPermissionTip } from '../src/composer/EntryPermission.tsx'
+import { ComposerPermission, permissionControlTip } from '../src/composer/ComposerPermission.tsx'
 import { pickCaps, pickIndex } from '../src/composer/ModelPanel.tsx'
 import { permissionView, type PermissionRow, type PermissionView } from '../src/composer/permission.ts'
 import { controlKeyCaps } from '../src/composer/modelReasoning.ts'
@@ -543,32 +543,38 @@ describe('the 权限 panel', () => {
     expect(html).toContain('这台设备不能改')
   })
 
-  it('marks the input’s entry with the glyph alone where something asks, and the amber glyph and short name under the lock where nothing does', () => {
-    const quiet = renderToStaticMarkup(createElement(EntryPermissionMark, { view: view(rows(3)) }))
-    expect(quiet).toContain('class="entry-permission"')
-    expect(quiet).not.toContain('data-amber')
-    expect(quiet).not.toContain('data-lock')
-    expect(quiet).not.toContain('先问你')
+  it('marks the permission beside the Harness with the glyph alone where something asks, and the amber glyph and short name under the lock where nothing does', () => {
+    const control = (shown: PermissionView, pending = false) =>
+      renderToStaticMarkup(createElement(ComposerPermission, { permission: { view: shown, onChoose() {}, pending } }))
+    const quiet = control(view(rows(3)))
+    expect(quiet).toMatch(/class="chip composer-permission"[^>]*aria-label="权限：先问你"/u)
+    expect(quiet).not.toMatch(/composer-permission"[^>]*data-amber/u)
+    expect(quiet).not.toMatch(/composer-permission"[^>]*data-lock/u)
+    expect(quiet).not.toContain('composer-permission-name')
     const never: PermissionView = { label: '不再询问', line: '改文件、运行命令都不再问你', icon: 'shield-alert', amber: true }
-    const amber = renderToStaticMarkup(createElement(EntryPermissionMark, { view: never }))
-    expect(amber).toMatch(/class="entry-permission" data-amber="" data-lock=""/u)
-    expect(amber).toContain('class="entry-permission-name">不再询问<')
+    const amber = control(never)
+    expect(amber).toMatch(/class="chip composer-permission" data-amber="" data-lock=""[^>]*aria-label="权限：不再询问"/u)
+    expect(amber).toContain('class="chip-text composer-permission-name">不再询问<')
+    // A write under way turns in the glyph's place, and the control says it is busy.
+    expect(control(view(rows(3)), true)).toMatch(/composer-permission"[^>]*aria-busy="true"/u)
     // Hidden and direction characters in a Harness's own mode name are drawn visibly, never applied.
-    const hidden = renderToStaticMarkup(createElement(EntryPermissionMark, { view: { ...never, label: 'yolo\u202e' } }))
-    expect(hidden).toContain('\\u{202E}')
-    // The hover says the mode in words, then what it means, as the 权限 chip's tooltip did.
-    expect(entryPermissionTip({ ...never, note: { label: 'Codex 自己的设置', detail: 'Latch 只核对选的是哪一项' } })).toBe(
+    expect(control({ ...never, label: 'yolo\u202e' })).toContain('\\u{202E}')
+    // The hover says the mode in words, then what it means and whose setting it is.
+    expect(permissionControlTip({ ...never, note: { label: 'Codex 自己的设置', detail: 'Latch 只核对选的是哪一项' } })).toBe(
       '权限：不再询问。改文件、运行命令都不再问你。Codex 自己的设置：Latch 只核对选的是哪一项',
+    )
+    // Without a view yet (no Harness read), it stays in its place, off.
+    expect(renderToStaticMarkup(createElement(ComposerPermission, { permission: undefined }))).toMatch(
+      /composer-permission"[^>]*disabled=""/u,
     )
   })
 
-  it('sets the permission in the entry panel’s foot: the compact strip under the lock, its disabled rows and a pending write', () => {
+  it('opens the modes under the lock, kept open on a choice: its disabled rows, a pending write and what the write came to', () => {
     const locked = rows(5).map((row, index) => (index === 2 ? { ...row, disabledReason: '这台设备只能查看' } : row))
     const html = renderToStaticMarkup(
-      createElement(EntryPermissionPart, { permission: { view: view(locked), onChoose() {}, pending: true, feedback: 'X 结果未知' } }),
+      createElement(PermissionPanel, { view: view(locked), onChoose() {}, keepOpen: true, pending: true, feedback: 'X 结果未知' }),
     )
-    expect(html).toContain('class="entry-permission-part permission-panel" data-lock=""')
-    expect(html).toContain('data-compact=""')
+    expect(html).toContain('class="permission-panel" data-lock=""')
     expect(html).toContain('aria-busy="true"')
     expect(html.match(/role="radio"/gu)).toHaveLength(5)
     expect(html).toMatch(/aria-label="模式2"[^>]*aria-disabled="true"/u)
@@ -578,8 +584,10 @@ describe('the 权限 panel', () => {
     expect(html).toContain('X 结果未知')
     // A Harness that reports no modes: the one segment that is true now.
     const one = renderToStaticMarkup(
-      createElement(EntryPermissionPart, {
-        permission: { view: { label: '开始后可选', line: '', icon: 'shield', amber: false }, onChoose() {} },
+      createElement(PermissionPanel, {
+        view: { label: '开始后可选', line: '', icon: 'shield', amber: false },
+        onChoose() {},
+        keepOpen: true,
       }),
     )
     expect(one.match(/role="radio"/gu)).toHaveLength(1)

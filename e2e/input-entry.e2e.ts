@@ -9,12 +9,21 @@ import type { TaskDetail } from '@latch/protocol'
 import { FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { composerEntry, entryPermission, noHorizontalOverflow, openSession, phoneStartScreen, reachable } from './helpers/layout.ts'
+import {
+  composerEntry,
+  noHorizontalOverflow,
+  openSession,
+  permissionControl,
+  permissionModes,
+  permissionWords,
+  phoneStartScreen,
+  reachable,
+} from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/input-entry'
 
 /**
- * The input's one entry (模型 · 思考 · 速度 · 权限) and the start page's headline, on Codex as the fake app-server: its
+ * The input's one entry (模型 · 思考 · 速度), the permission beside the Harness and the start page's headline, on Codex as the fake app-server: its
  * default model lists the Fast tier (FAKE_CODEX_TIERS), the other does not. Everything it receives goes to a log, so a
  * turn's tier, level and mode are read where Codex would read them. No program of this computer runs.
  */
@@ -103,14 +112,14 @@ describe('the input’s one entry and the start page’s headline', () => {
     if (gitHome) await rm(gitHome, { recursive: true, force: true })
   })
 
-  it('sets a level, 速度 and the permission in one opening of the panel, which stays open until Escape, and the turn runs on them', async () => {
+  it('sets a level and 速度 in one opening of the panel, the permission in its own popover, each staying open until Escape, and the turn runs on them', async () => {
     const sessionId = await begin('echo first')
     const page = await open(1440, 'light')
     try {
       await openSession(page, sessionId)
       const entry = composerEntry(page)
       expect(await entry.getAttribute('aria-label')).toBe('模型：GPT Fake')
-      expect(await entryPermission(page)).toBe('权限：先问你')
+      expect(await permissionWords(page)).toBe('权限：先问你')
       await entry.click()
       const board = page.locator('.ui-board.is-entry').filter({ visible: true })
       await board.waitFor()
@@ -124,17 +133,27 @@ describe('the input’s one entry and the start page’s headline', () => {
       await board.getByRole('menuitemradio', { name: 'High', exact: true }).click()
       await expect.poll(async () => current(await detail(sessionId), 'reasoning_effort')).toBe('high')
       expect(await panelOpen(page)).toBe(1)
-      await foot.getByRole('radio', { name: '按规则放行', exact: true }).click()
-      await expect.poll(async () => current(await detail(sessionId), 'mode')).toBe('workspace-write')
-      expect(await panelOpen(page)).toBe(1)
-      // The strip says the chosen mode and what it means; the entry follows each choice.
-      await expect.poll(() => foot.locator('.ui-mode-strip-name').innerText()).toBe('按规则放行')
-      await expect.poll(() => entryPermission(page)).toBe('权限：按规则放行')
+      // The foot holds the model's settings only: the permission is set beside the Harness.
+      expect(await foot.locator('.permission-panel').count()).toBe(0)
       await expect.poll(() => entry.locator('.model-level').innerText()).toBe('High')
       await noHorizontalOverflow(page)
       await shot(page, 'one-opening-1440-light')
       await page.keyboard.press('Escape')
       await board.waitFor({ state: 'hidden' })
+
+      // 权限 opens its modes in a popover of its own, which stays open on a choice: the strip says the chosen mode and
+      // what it means, and the control follows.
+      await permissionControl(page).click()
+      const modes = permissionModes(page)
+      await modes.waitFor()
+      await modes.getByRole('radio', { name: '按规则放行', exact: true }).click()
+      await expect.poll(async () => current(await detail(sessionId), 'mode')).toBe('workspace-write')
+      expect(await modes.isVisible()).toBe(true)
+      await expect.poll(() => modes.locator('.ui-mode-strip-name').innerText()).toBe('按规则放行')
+      await expect.poll(() => permissionWords(page)).toBe('权限：按规则放行')
+      await shot(page, 'permission-popover-1440-light')
+      await page.keyboard.press('Escape')
+      await modes.waitFor({ state: 'hidden' })
 
       const input = page.getByRole('textbox', { name: '继续对话', exact: true })
       await input.fill('echo fast')
@@ -146,13 +165,13 @@ describe('the input’s one entry and the start page’s headline', () => {
         approvalPolicy: 'on-request',
       })
 
-      // A model without the tier: 速度 leaves the foot at once, the permission stays, and the panel stays open.
+      // A model without the tier: 速度 and with it the foot leave at once, the permission stays, and the panel stays open.
       await entry.click()
       await board.waitFor()
       await board.getByRole('menuitemradio', { name: /^GPT Fake Mini/u }).click()
       await expect.poll(async () => current(await detail(sessionId), 'model')).toBe('gpt-fake-mini')
-      await expect.poll(() => foot.getByRole('radiogroup', { name: '速度', exact: true }).count()).toBe(0)
-      expect(await foot.getByRole('radio', { name: '按规则放行', exact: true }).getAttribute('aria-checked')).toBe('true')
+      await expect.poll(() => board.getByRole('radiogroup', { name: '速度', exact: true }).count()).toBe(0)
+      expect(await permissionWords(page)).toBe('权限：按规则放行')
       expect(await panelOpen(page)).toBe(1)
       await shot(page, 'no-speed-1440-light')
       // Clicking outside closes it as Escape does.
@@ -160,6 +179,73 @@ describe('the input’s one entry and the start page’s headline', () => {
       await board.waitFor({ state: 'hidden' })
     } finally {
       await page.context().close()
+    }
+  })
+
+  it('fits the panel in a short window, its foot in view, on the start page and in a session', async () => {
+    const sessionId = await begin('echo short')
+    /** What of the open panel is outside the window, or scrolls as a whole instead of in its lists. */
+    const outside = (board: ReturnType<Page['locator']>) =>
+      board.evaluate(element => {
+        const problems: string[] = []
+        const layer = element.closest<HTMLElement>('.ui-popover')!
+        const parts = [
+          layer,
+          ...element.querySelectorAll<HTMLElement>(
+            '.ui-board-rail, .ui-board-search, .ui-board-rows, .ui-board-levels, .ui-board-footer, .ui-board-foot, .ui-board-foot [role="radio"]',
+          ),
+        ]
+        for (const part of parts) {
+          const box = part.getBoundingClientRect()
+          if (box.height < 1) problems.push(`${part.className}: no height`)
+          if (box.top < -0.5 || box.bottom > innerHeight + 0.5 || box.left < -0.5 || box.right > innerWidth + 0.5)
+            problems.push(`${part.className}: ${Math.round(box.top)}–${Math.round(box.bottom)} of ${innerHeight}`)
+        }
+        if (layer.scrollHeight > layer.clientHeight + 1) problems.push(`the layer scrolls: ${layer.scrollHeight} > ${layer.clientHeight}`)
+        if (problems.length) problems.push(`side ${layer.dataset.side}, max-height ${layer.style.maxHeight || 'none'}`)
+        return problems
+      })
+    for (const [width, height] of [
+      [1280, 720],
+      [1440, 760],
+    ] as const) {
+      const context = await browser.newContext({
+        viewport: { width, height },
+        colorScheme: 'dark',
+        locale: 'zh-CN',
+        reducedMotion: 'reduce',
+      })
+      const page = await context.newPage()
+      page.setDefaultTimeout(15_000)
+      try {
+        await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'], name: `矮窗 ${width}` })
+        await connected(page)
+        const board = page.locator('.ui-board.is-entry').filter({ visible: true })
+        // The start page: the input in the middle of the window, the panel opening where there is more room.
+        const home = page.locator('.workbench-home')
+        await composerEntry(home).click()
+        await board.waitFor()
+        await board.locator('.ui-board-foot').getByRole('radiogroup', { name: '速度', exact: true }).waitFor()
+        await expect.poll(() => outside(board), { message: `start ${width}×${height}` }).toEqual([])
+        await shot(page, `short-start-${width}x${height}-dark`)
+        // A model without a foot keeps the board's fixed block, which gives way the same.
+        await board.getByRole('menuitemradio', { name: /^GPT Fake Mini/u }).click()
+        await expect.poll(() => board.locator('.ui-board-foot').count()).toBe(0)
+        await expect.poll(() => outside(board), { message: `start, no foot ${width}×${height}` }).toEqual([])
+        await page.keyboard.press('Escape')
+        await board.waitFor({ state: 'hidden' })
+        // A session: the input at the window's foot, the panel opening upward.
+        await openSession(page, sessionId)
+        await composerEntry(page).click()
+        await board.waitFor()
+        await board.locator('.ui-board-foot').getByRole('radiogroup', { name: '速度', exact: true }).waitFor()
+        await expect.poll(() => outside(board), { message: `session ${width}×${height}` }).toEqual([])
+        await shot(page, `short-session-${width}x${height}-dark`)
+        await page.keyboard.press('Escape')
+        await board.waitFor({ state: 'hidden' })
+      } finally {
+        await context.close()
+      }
     }
   })
 
@@ -243,52 +329,62 @@ describe('the input’s one entry and the start page’s headline', () => {
       expect(await why(other)).not.toBe('')
       const level = board.getByRole('menuitemradio', { name: 'High', exact: true })
       expect(await level.getAttribute('aria-disabled')).toBe('true')
-      const wider = board.locator('.ui-board-foot').getByRole('radio', { name: '按规则放行', exact: true })
+      await shot(page, 'read-only-panel-1440-light')
+      await page.keyboard.press('Escape')
+      await board.waitFor({ state: 'hidden' })
+      // The permission opens too: every other mode stays, disabled, with why.
+      await permissionControl(page).click()
+      const modes = permissionModes(page)
+      await modes.waitFor()
+      const wider = modes.getByRole('radio', { name: '按规则放行', exact: true })
       expect(await wider.getAttribute('aria-disabled')).toBe('true')
       expect(await why(wider)).not.toBe('')
-      await shot(page, 'read-only-panel-1440-light')
+      await shot(page, 'read-only-permission-1440-light')
       await page.keyboard.press('Escape')
     } finally {
       await page.context().close()
     }
   })
 
-  it('opens the panel on its foot for /permissions and on the levels for /think, and moves between them by key', async () => {
+  it('opens the permission’s popover for /permissions and the panel on its levels for /think, and moves between them by key', async () => {
     const sessionId = await begin('echo slash')
     const page = await open(1280, 'dark')
     try {
       await openSession(page, sessionId)
       const input = page.getByRole('textbox', { name: '继续对话', exact: true })
-      for (const [command, inside] of [
-        ['/permissions', '.ui-board-foot'],
-        ['/think', '.ui-board-levels'],
-      ] as const) {
-        await input.fill(command)
-        await input.press('Enter')
-        await page.locator('.ui-board.is-entry').filter({ visible: true }).waitFor()
-        await expect
-          .poll(() => page.evaluate(selector => !!document.activeElement?.closest(selector), inside), { message: command })
-          .toBe(true)
-        await shot(page, `slash-${command.slice(1)}-1280-dark`)
-        await page.keyboard.press('Escape')
-        await page.locator('.ui-board.is-entry').filter({ visible: true }).waitFor({ state: 'hidden' })
-      }
-      // The keys for 思考 and 权限 open the same panel on their part; pressed while it is open they move focus there.
       const focusIn = (selector: string) => page.evaluate(inside => !!document.activeElement?.closest(inside), selector)
+      const board = page.locator('.ui-board.is-entry').filter({ visible: true })
+      const modes = permissionModes(page)
+      await input.fill('/permissions')
+      await input.press('Enter')
+      await modes.waitFor()
+      await expect.poll(() => focusIn('.permission-panel')).toBe(true)
+      expect(await board.count()).toBe(0)
+      await shot(page, 'slash-permissions-1280-dark')
+      await page.keyboard.press('Escape')
+      await modes.waitFor({ state: 'hidden' })
+      await input.fill('/think')
+      await input.press('Enter')
+      await board.waitFor()
+      await expect.poll(() => focusIn('.ui-board-levels')).toBe(true)
+      await shot(page, 'slash-think-1280-dark')
+      await page.keyboard.press('Escape')
+      await board.waitFor({ state: 'hidden' })
+      // The key for 思考 opens the panel on its levels; the one for 权限 then opens the modes in their own popover.
       await page.locator('.transcript').click({ position: { x: 8, y: 8 } })
       await page.keyboard.press('Alt+Shift+3')
       await expect.poll(() => focusIn('.ui-board-levels')).toBe(true)
       await page.keyboard.press('Alt+Shift+4')
-      await expect.poll(() => focusIn('.ui-board-foot')).toBe(true)
-      expect(await page.locator('.ui-board.is-entry').filter({ visible: true }).count()).toBe(1)
+      await expect.poll(() => focusIn('.permission-panel')).toBe(true)
+      await board.waitFor({ state: 'hidden' })
       await page.keyboard.press('Escape')
-      await page.locator('.ui-board.is-entry').filter({ visible: true }).waitFor({ state: 'hidden' })
+      await modes.waitFor({ state: 'hidden' })
     } finally {
       await page.context().close()
     }
   })
 
-  it('shows a mode that never asks as the amber glyph and its name on the entry, kept under customisation', async () => {
+  it('shows a mode that never asks as the amber glyph and its name beside the Harness, kept under customisation', async () => {
     const sessionId = await begin('echo wide', [{ configId: 'mode', value: 'agent-full-access' }])
     for (const [width, theme] of [
       [1440, 'light'],
@@ -299,12 +395,20 @@ describe('the input’s one entry and the start page’s headline', () => {
       const page = await open(width, theme)
       try {
         await openSession(page, sessionId)
-        const mark = composerEntry(page).locator('.entry-permission')
+        const mark = permissionControl(page)
         await mark.waitFor()
         expect(await mark.getAttribute('data-amber')).toBe('')
         expect(await mark.getAttribute('data-lock')).toBe('')
         expect(await mark.innerText()).toBe('不再询问')
-        expect(await entryPermission(page)).toBe('权限：不再询问')
+        expect(await permissionWords(page)).toBe('权限：不再询问')
+        // It follows the Harness on the line; the entry no longer carries a permission.
+        const order = await page.evaluate(() =>
+          [...document.querySelectorAll('main.workspace:not([inert]) form.composer [data-composer-control]')]
+            .filter(element => element.getClientRects().length > 0)
+            .map(element => element.getAttribute('data-composer-control')),
+        )
+        expect(order).toEqual(['harness', 'permission', 'model'])
+        expect(await composerEntry(page).locator('.entry-permission, .composer-permission').count()).toBe(0)
         const amber = await page.evaluate(() => {
           const probe = document.createElement('span')
           probe.style.color = 'var(--amber)'
@@ -315,16 +419,26 @@ describe('the input’s one entry and the start page’s headline', () => {
         })
         const colours = () =>
           mark.evaluate(element => [getComputedStyle(element).color, getComputedStyle(element.querySelector('svg')!).color])
+        // The chip's colour eases in as the page settles.
+        await expect.poll(async () => (await colours())[0]).toBe(amber)
         const before = await colours()
-        expect(before[0]).toBe(amber)
         // A customised accent and warning colour do not reach it: the product's own tokens are pinned there.
         await page.addStyleTag({ content: ':root { --amber: rgb(1, 2, 3); --amber-icon: rgb(4, 5, 6); --muted: rgb(7, 8, 9); }' })
         expect(await colours()).toEqual(before)
-        // The mark is whole inside the entry, and the entry inside the window.
-        const inside = await composerEntry(page).evaluate(button => {
+        // The glyph and the whole name are inside the control, and the control inside the window: never cut.
+        const inside = await mark.evaluate(button => {
           const own = button.getBoundingClientRect()
-          const mark = button.querySelector('.entry-permission')!.getBoundingClientRect()
-          return mark.left >= own.left - 1 && mark.right <= own.right + 1 && own.right <= window.innerWidth
+          const name = button.querySelector('.composer-permission-name')!
+          const words = name.getBoundingClientRect()
+          const glyph = button.querySelector('svg')!.getBoundingClientRect()
+          return (
+            glyph.width === 16
+            && words.left >= own.left - 1
+            && words.right <= own.right + 1
+            && name.scrollWidth <= name.clientWidth + 1
+            && own.left >= 0
+            && own.right <= window.innerWidth
+          )
         })
         expect(inside).toBe(true)
         await noHorizontalOverflow(page)
@@ -385,7 +499,7 @@ describe('the input’s one entry and the start page’s headline', () => {
     }
   })
 
-  it('stacks the same parts in a phone’s sheet: models, levels, 速度 and the permission, choices keeping it open', async () => {
+  it('stacks the same parts in a phone’s sheet: models, levels and 速度, and the permission in a sheet of its own, choices keeping each open', async () => {
     const sessionId = await begin('echo phone')
     const page = await open(390, 'light')
     try {
@@ -395,19 +509,29 @@ describe('the input’s one entry and the start page’s headline', () => {
       await sheet.waitFor()
       const speed = sheet.getByRole('radiogroup', { name: '速度', exact: true })
       await speed.waitFor()
-      const modes = sheet.locator('.ui-board-foot .entry-permission-part').getByRole('radio')
-      expect(await modes.count()).toBe(4)
-      for (const mode of await modes.all()) expect((await mode.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+      expect(await sheet.locator('.permission-panel').count()).toBe(0)
       await speed.getByRole('radio', { name: '快速', exact: true }).click()
       await expect.poll(async () => current(await detail(sessionId), 'service_tier')).toBe('priority')
-      expect(await sheet.isVisible()).toBe(true)
-      await modes.and(sheet.getByRole('radio', { name: '由模型判断', exact: true })).click()
-      await expect.poll(async () => current(await detail(sessionId), 'mode')).toBe('agent')
       expect(await sheet.isVisible()).toBe(true)
       await shot(page, 'phone-sheet-390-light')
       await sheet.getByRole('button', { name: '关闭', exact: true }).click()
       await sheet.waitFor({ state: 'hidden' })
-      await expect.poll(() => entryPermission(page)).toBe('权限：由模型判断')
+      // The permission: its glyph alone on the line, its own sheet of modes, touch-sized.
+      const control = permissionControl(page)
+      expect(await control.innerText()).toBe('')
+      await control.click()
+      const modesSheet = page.getByRole('dialog', { name: '权限', exact: true })
+      await modesSheet.waitFor()
+      const modes = modesSheet.locator('.permission-panel[data-lock]').getByRole('radio')
+      expect(await modes.count()).toBe(4)
+      for (const mode of await modes.all()) expect((await mode.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+      await modesSheet.getByRole('radio', { name: '由模型判断', exact: true }).click()
+      await expect.poll(async () => current(await detail(sessionId), 'mode')).toBe('agent')
+      expect(await modesSheet.isVisible()).toBe(true)
+      await shot(page, 'phone-permission-390-light')
+      await modesSheet.getByRole('button', { name: '关闭', exact: true }).click()
+      await modesSheet.waitFor({ state: 'hidden' })
+      await expect.poll(() => permissionWords(page)).toBe('权限：由模型判断')
       await noHorizontalOverflow(page)
     } finally {
       await page.context().close()

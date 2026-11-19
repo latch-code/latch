@@ -959,12 +959,13 @@ describe('composer', () => {
     expect(html).not.toContain('取消')
   })
 
-  it('draws the text, then one line: 「+」, slash, the Harness and the one entry, then 「⋯」 and send in an end of their own, on a phone too', () => {
+  it('draws the text, then one line: 「+」, slash, the Harness, its permission and the one entry, then 「⋯」 and send in an end of their own, on a phone too', () => {
     const controls = createElement(
       'span',
       null,
       createElement('span', { 'data-composer-control': 'harness' }, 'Codex'),
-      createElement('span', { 'data-composer-control': 'model' }, 'gpt-5.5 · 高 · 权限'),
+      createElement('span', { 'data-composer-control': 'permission' }, '权限'),
+      createElement('span', { 'data-composer-control': 'model' }, 'gpt-5.5 · 高'),
     )
     const order = (markup: string) =>
       [...markup.matchAll(/<textarea|class="composer-(controls|end)"|data-composer-control="(\w+)"|aria-label="(发送|插入命令)"/gu)].map(
@@ -975,6 +976,7 @@ describe('composer', () => {
       'controls',
       'slash',
       'harness',
+      'permission',
       'model',
       'end',
       'send',
@@ -985,13 +987,12 @@ describe('composer', () => {
     const wide = renderToStaticMarkup(createElement(Composer, { ...base, controls, usage }))
     expect(order(wide).slice(-4)).toEqual(['model', 'end', 'send', 'late'])
     expect(wide).toContain('class="composer-foot" data-usage=""')
-    // No separate 权限 control and no row of chips: a phone draws the same line, without the slash button; its limit
-    // stands at the end of the line under the input, where its coming moves no control of the input.
+    // No row of chips: a phone draws the same line, without the slash button; its limit stands at the end of the line
+    // under the input, where its coming moves no control of the input.
     const phone = renderToStaticMarkup(createElement(Composer, { ...base, variant: 'session', inline: true, controls, usage }))
-    expect(order(phone)).toEqual(['text', 'controls', 'harness', 'model', 'end', 'send', 'late'])
+    expect(order(phone)).toEqual(['text', 'controls', 'harness', 'permission', 'model', 'end', 'send', 'late'])
     expect(phone).toContain('class="composer-foot" data-usage=""')
     expect(phone).not.toContain('composer-chips')
-    expect(phone).not.toContain('data-composer-control="permission"')
   })
 
   it('shows a device that may only watch a dashed frame with the reason instead of the input', () => {

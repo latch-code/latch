@@ -2,18 +2,18 @@ import { createContext, useContext, useLayoutEffect, useRef, useState, type Reac
 import { ValuePicker as Picker, type ValuePickerProps } from '@latch/ui'
 
 type ControlName = 'harness' | 'model' | 'thinking' | 'permission'
-/** The part of the input's one entry a request opens it on: the models, the levels or the foot's permission. */
-export type EntryPart = 'list' | 'levels' | 'foot'
+/** The part of the input's one entry a request opens it on: the models or the levels. */
+export type EntryPart = 'list' | 'levels'
 const openers = new WeakMap<HTMLElement, (query?: string, part?: EntryPart) => void>()
 const SearchRequest = createContext<{ query: string; revision: number } | undefined>(undefined)
 const PartRequest = createContext<{ part: EntryPart | undefined; clear: () => void }>({ part: undefined, clear: () => {} })
 
-/** 思考 and 权限 are set in the model's entry: one control, one panel, opened on their part. */
-const PARTS: Partial<Record<ControlName, EntryPart>> = { thinking: 'levels', permission: 'foot' }
+/** 思考 is set in the model's entry: one control, one panel, opened on its levels. 权限 is a control of its own. */
+const PARTS: Partial<Record<ControlName, EntryPart>> = { thinking: 'levels' }
 
 /**
- * The same control entry point serves shortcuts, slash actions and recovery buttons: 模型, 思考 and 权限 open the one
- * entry's panel on their part.
+ * The same control entry point serves shortcuts, slash actions and recovery buttons: 模型 and 思考 open the one
+ * entry's panel on their part, 权限 its own popover.
  */
 export function openControlWhenShown(name: ControlName, frames = 10, newOnly = true, query?: string) {
   const part = PARTS[name]
