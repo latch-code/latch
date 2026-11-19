@@ -243,7 +243,7 @@ OpenCode 2.x 的核对依据是它的源码与按源码手写的回放（`replay
 | Claude Agent | `.claude/`、`.mcp.json` | `.claude/worktrees` |
 | Cursor | `.cursor/`、`.cursorrules` | — |
 | Antigravity | `.agents`、`.agent`、`_agents`、`_agent`、`.gemini/config.json`（清单引用的这些目录之外的代码不在覆盖范围内） | — |
-| Grok Build | `.grok` | — |
+| Grok Build | `.grok/`，以及它兼容读取的 `.claude/`、`.mcp.json`、`.cursor/`、`.agents/` | `.claude/worktrees` |
 | goose、DeepSeek Harness | 无 | — |
 
 - **查找范围。** 从会话目录逐级向上到根目录，分别沿 Agent 收到的路径（可能经过符号链接）与它的真实路径；同一目录只查一次。主目录本身跳过，因为那里是 Agent 的用户级数据。范围比各 Agent 自己的（通常到 Git 仓库根）更宽。
@@ -386,10 +386,10 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 | pi | Chat、Responses、Anthropic | 1.5.0 | 私有扩展注册 provider，只在当前进程 | 见 [pi 运行预算](MODEL-GATEWAY.md#pi-运行预算) |
 | Qwen Code | Chat、Responses、Anthropic，实验性 | 0.26.8 | `QWEN_CODE_SYSTEM_SETTINGS_PATH` 指向 0600 的会话私有系统设置 | 没有子 Agent；凭据被工具子进程继承 |
 | goose | Chat、Responses、Anthropic，实验性 | 1.57.0 | 只有环境变量；凭据在 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY` | `provider` 选项不提供；`delegate` 子 Agent 固定不了服务；凭据被继承 |
-| Grok Build | Chat、Responses、Anthropic，实验性 | 1.0.77 | `GROK_HOME` 指向会话私有的家目录，其中 0600 的 `config.toml` 给每个服务模型写一个自定义模型 | 这个家里没有用户的 Grok 登录、钩子、插件与 MCP；凭据被继承 |
+| Grok Build | Chat、Responses、Anthropic，实验性 | 1.0.77 | `GROK_HOME` 指向会话私有的家目录，其中 0600 的 `config.toml` 给每个服务模型写一个自定义模型，并关掉对 Claude Code、Cursor 配置的兼容读取 | 这个家里没有用户的 Grok 登录、钩子、插件与 MCP，也不启动 Claude Code、Cursor 配置里的 MCP 服务器与钩子；凭据被继承（见下） |
 | Antigravity、Cursor | 不支持（`ownModelsOnly`） | — | — | 两者都不接受别人的模型服务地址；模型菜单不给它们列服务 |
 
-**凭据被工具子进程继承（`credentialInherited`）。** Qwen Code、goose 与 Grok Build 没有清理工具子进程环境的官方开关：它们运行的命令、钩子与 stdio MCP 服务器读得到网关凭据。
+**凭据被工具子进程继承（`credentialInherited`）。** Qwen Code、goose 与 Grok Build 没有清理工具子进程环境的官方开关：它们运行的命令、钩子与 stdio MCP 服务器读得到网关凭据。经网关的会话里，Latch 经 ACP 交给 Harness 的自己的 MCP 服务器（技能、浏览器、`latch-mcp` 桥）都把凭据变量设为空。Grok Build 另按它的文档用 `[shell_environment_policy] exclude` 不让 bash 工具与终端拿到凭据，但没有真实的工具调用核对过，所以仍标继承。
 
 - 这个凭据不是模型服务的密钥：它只能在这台电脑的回环端口上使用这个会话选定的服务与候选，进程退出或服务设置变化后失效。会话本来就是 L3。
 - goose 的凭据放在它规定的变量里，会读这些变量的工具可能把它发给真实厂商：在那里没有用，但离开了这台电脑。
@@ -399,7 +399,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 
 - **Qwen Code。** 私有系统设置替代了系统设置路径，这个进程不再读真正的系统设置里的管理策略。子 Agent 以 `permissions.deny: ["Agent"]` 关掉：它的定义文件可以点名任何模型，而用户自己起名的服务与内置 OAuth 模型删不掉。用户自己的钩子、网页搜索的模型、`batch.model` 与实验性语音仍不经网关。
 - **goose。** `delegate` 启动子 Agent 时，配方的 `settings.goose_provider` 或模型自己传的 `provider` 先于 `GOOSE_SUBAGENT_PROVIDER`：这样的子 Agent 用用户在 goose 里另配的服务，按轮的核对发现不了。Latch 不给会话传 `_meta.provider`（goose 会改用该服务的默认模型而不是 `GOOSE_MODEL`）。
-- **Grok Build。** 自定义模型只能写在用户配置里，所以用私有 `GROK_HOME`；Grok 自己的会话记录也写在这里，随 Latch 会话删除。它起标题时用内置模型向同一地址发请求，网关拒绝，Grok 改用截断的用户文字，不影响这一轮。
+- **Grok Build。** 自定义模型只能写在用户配置里，所以用私有 `GROK_HOME`；Grok 自己的会话记录也写在这里，随 Latch 会话删除。它起标题时用内置模型向同一地址发请求，网关拒绝，Grok 改用截断的用户文字，不影响这一轮。私有家里不读 Grok 自己的 MCP 与钩子，但 Grok 默认还从真实 HOME 读 Claude Code 与 Cursor 的配置；这条路线把这些兼容来源关掉（[依据](MODEL-GATEWAY.md#grok-build)），所以人在 Claude Code、Cursor 里配的 MCP 服务器、插件与钩子在这里都不运行，`~/.claude/settings.json` 的放行规则也不生效（拒绝规则仍生效）。私有家里没有文件夹信任，项目里的 Grok MCP、钩子与权限规则同样不加载。
 
 三者标「实验性」：都只在没有登录的临时 HOME 下对本地假服务跑通过一轮（`apps/host/test/gateway-no-login.live.test.ts`），没有对真实服务、带工具与多轮跑过。假 Agent 与回放夹具是照源码与文档写的，不是录制。
 

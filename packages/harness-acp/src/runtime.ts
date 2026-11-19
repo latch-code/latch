@@ -6509,6 +6509,14 @@ export class AgentRuntime implements Bridge {
     if (tools) mcpServers.push(browserServer(tools))
     const leases = await this.openMcp(taskId, live)
     for (const lease of leases) mcpServers.push(mcpBridgeServer(lease))
+    // An ACP agent may start the servers it is given with its whole environment, the gateway's token included (Grok
+    // does): Latch's own servers never use it, so each gets it blanked. Latch's own wires start them themselves.
+    const routed = this.selection.profile?.gateway
+    if (live.gateway && routed?.via === 'launch' && this.selection.profile?.wire === undefined) {
+      const names = [...new Set([routed.tokenEnv, ...Object.values(routed.tokenEnvByWire ?? {})])]
+      for (const server of mcpServers as Array<{ env: Array<{ name: string; value: string }> }>)
+        server.env = [...server.env.filter(item => !names.includes(item.name)), ...names.map(name => ({ name, value: '' }))]
+    }
     // The guides of the servers given this time, before the agent starts its skills server.
     if (skilled)
       await writeSessionGuides(

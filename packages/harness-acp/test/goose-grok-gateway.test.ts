@@ -97,7 +97,13 @@ describe('Grok Build on a model service', () => {
     ['anthropic-messages', 'messages', 'http://127.0.0.1:4010/v1'],
   ] as const)('writes a home of its own for %s whose custom models name the key by its variable', (wire, backend, address) => {
     const launch = gateway.deliver(place(wire), route(wire))
-    expect(launch.env).toEqual({ GROK_HOME: '/private/session/gateway' })
+    expect(launch.env).toEqual({
+      GROK_HOME: '/private/session/gateway',
+      GROK_CLAUDE_MCPS_ENABLED: '0',
+      GROK_CURSOR_MCPS_ENABLED: '0',
+      GROK_CLAUDE_HOOKS_ENABLED: '0',
+      GROK_CURSOR_HOOKS_ENABLED: '0',
+    })
     expect(launch.args).toBeUndefined()
     expect(Object.keys(launch.files!)).toEqual(['config.toml'])
     expect(launch.files!['config.toml']).toBe(
@@ -120,6 +126,23 @@ describe('Grok Build on a model service', () => {
         'env_key = "LMG_TOKEN"',
         `api_backend = "${backend}"`,
         '',
+        '[claude_compat]',
+        'imported = true',
+        '',
+        '[compat.claude]',
+        'mcps = false',
+        'hooks = false',
+        '',
+        '[compat.cursor]',
+        'mcps = false',
+        'hooks = false',
+        '',
+        '[compat.codex]',
+        'hooks = false',
+        '',
+        '[shell_environment_policy]',
+        'exclude = ["LMG_TOKEN"]',
+        '',
       ].join('\n'),
     )
   })
@@ -127,15 +150,30 @@ describe('Grok Build on a model service', () => {
   it('quotes a model ID so that it cannot open another table or key', () => {
     const odd = { ...place('responses'), models: [{ id: 'a"]\n[model."b' }] }
     const text = gateway.deliver(odd, { ...route('responses'), model: 'a"]\n[model."b' }).files!['config.toml']!
-    expect(text.split('\n').filter(line => line.startsWith('['))).toEqual(['[models]', '[model."a\\"]\\n[model.\\"b"]'])
+    expect(text.split('\n').filter(line => line.startsWith('['))).toEqual([
+      '[models]',
+      '[model."a\\"]\\n[model.\\"b"]',
+      '[claude_compat]',
+      '[compat.claude]',
+      '[compat.cursor]',
+      '[compat.codex]',
+      '[shell_environment_policy]',
+    ])
   })
 
   it('carries the token in LMG_TOKEN alone and is marked experimental', () => {
     expect(gateway.tokenEnv).toBe('LMG_TOKEN')
-    expect(gateway.envNames).toEqual(['GROK_HOME'])
+    expect(gateway.envNames).toEqual([
+      'GROK_HOME',
+      'GROK_CLAUDE_MCPS_ENABLED',
+      'GROK_CURSOR_MCPS_ENABLED',
+      'GROK_CLAUDE_HOOKS_ENABLED',
+      'GROK_CURSOR_HOOKS_ENABLED',
+    ])
     expect(gateway.experimental).toBe(true)
     expect(gateway.credentialInherited).toBe(true)
-    expect(grokProfile.version).toBe(2)
+    expect(grokProfile.version).toBe(3)
+    expect(gateway.templates).toEqual({ files: 2 })
     for (const wire of gateway.wires)
       expect(JSON.stringify(gateway.deliver(place(wire), route(wire)))).not.toMatch(/lmg1\.|service\.example/u)
   })

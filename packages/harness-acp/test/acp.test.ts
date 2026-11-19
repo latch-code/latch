@@ -7949,6 +7949,46 @@ describe('sessions on a model service through the gateway', () => {
     }
   })
 
+  it('keeps the token of a routed Grok session from other tools’ MCP servers and hooks, and from the servers Latch gives it', async () => {
+    const { fixture, stub, route } = await routed(
+      'grok',
+      // A definition of the person's own may not turn a compatibility source back on for a routed session.
+      { FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'resume', FAKE_ACP_GATEWAY: 'grok', GROK_CURSOR_MCPS_ENABLED: '1' },
+      { providerId: 'svc', model: 'fake-model', wire: 'responses' },
+    )
+    const bridge = await fixture.open()
+    const agentContext = {
+      agent: { customAgentId: `agt_${randomUUID()}` },
+      instructions: '',
+      revision: 'a'.repeat(64),
+      skillBodies: [{ id: 'plugin:list', name: '审阅清单', description: '逐项检查', content: 'SKILL BODY' }],
+    }
+    const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route, agentContext })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    const log = await fixture.log()
+    const [agentEnv] = envOf(log)
+    expect(agentEnv).toMatchObject({
+      GROK_CLAUDE_MCPS_ENABLED: '0',
+      GROK_CURSOR_MCPS_ENABLED: '0',
+      GROK_CLAUDE_HOOKS_ENABLED: '0',
+      GROK_CURSOR_HOOKS_ENABLED: '0',
+    })
+    const text = await readFile(join(agentEnv!.GROK_HOME!, 'config.toml'), 'utf8')
+    for (const line of ['[claude_compat]\nimported = true', '[compat.cursor]\nmcps = false\nhooks = false', 'exclude = ["LMG_TOKEN"]'])
+      expect(text).toContain(line)
+    const servers = (received(log, 'session/new')[0]!.params as { mcpServers: Array<{ name: string; env: unknown[] }> }).mcpServers
+    expect(servers.map(server => server.name)).toContain('latch-skills')
+    for (const server of servers) expect(server.env).toEqual([{ name: 'LMG_TOKEN', value: '' }])
+    expect(JSON.stringify(servers)).not.toContain(stub.leases[0]!.token)
+    // Its own login gives no token to blank.
+    const native = await bridge.createTask({ prompt: 'echo native', requestId: rid(), agentContext })
+    expect((await settled(bridge, native.sessionId)).summary.status).toBe('idle')
+    for (const server of (received(await fixture.log(), 'session/new').at(-1)!.params as { mcpServers: Array<{ env: unknown[] }> })
+      .mcpServers)
+      expect(server.env).toEqual([])
+    await bridge.close()
+  })
+
   it.skipIf(process.platform === 'win32')(
     'refuses a resumed gateway whose private directory points at the original CLI configuration',
     async () => {
