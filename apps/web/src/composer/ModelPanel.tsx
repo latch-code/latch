@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Route } from 'lucide-react'
+import { Box, Brain } from 'lucide-react'
 import {
   parseModelChoice,
   type HarnessInfo,
@@ -42,7 +42,8 @@ import {
   type ComposerChoice,
 } from '../composerChoice.ts'
 import { fuzzyModelMatch, modelKey, rememberModel, useModelPreferences } from '../modelPreferences.ts'
-import { ProviderTile } from '../components/BrandTile.tsx'
+import { ModelTile, ProviderTile } from '../components/BrandTile.tsx'
+import { BrandMark } from '../components/ui.tsx'
 import { ModelAddPanel, modelGroups } from '../components/Pickers.tsx'
 import { escapeHiddenCharacters } from '../components/VisibleText.tsx'
 import { capsText, shortcutCaps, shortcutKeys, workbenchShortcut } from '../workbenchShortcuts.ts'
@@ -178,14 +179,15 @@ export interface Board {
 /** The rail's mark for a source: its tile, or the glyph of what it is when it has none. */
 function sourceIcon(group: PickerGroup<string>): ReactNode {
   if (group.media) return group.media
-  return <Icon icon={group.id === '~recent' ? HistoryGlyph : ModelGlyph} size={16} />
+  return <Icon icon={group.id === '~recent' ? HistoryGlyph : Box} size={16} />
 }
 
 const boardItems = (group: PickerGroup<string>): Array<BoardItem<string>> =>
   group.options.map(option => ({
     value: option.value,
     label: option.label,
-    ...(option.media ? { media: option.media } : {}),
+    // Its maker's mark, read from the ID; a row that brings its own picture keeps it.
+    media: option.media ?? <ModelTile model={option.value} size={16} fallback={group.media} />,
     ...(option.tag ? { tag: option.tag } : {}),
     ...(option.disabledReason ? { disabledReason: option.disabledReason } : {}),
   }))
@@ -215,8 +217,8 @@ export function boardSources(groups: ReadonlyArray<ModelGroup>): Array<BoardSour
       id: '~gateway',
       label: ROUTING_COPY.gateway,
       ...(experimental ? { tip: `${ROUTING_COPY.gateway} · ${ROUTING_COPY.experimental}` } : {}),
-      // A route, not a chip: the model glyph's pins read as a gear at this size.
-      icon: <Icon icon={Route} size={16} />,
+      // Latch's own gateway: Latch's mark.
+      icon: <BrandMark size={16} />,
       groups: gateway.map(item => ({
         id: item.id,
         label: item.label ?? '',
@@ -269,8 +271,10 @@ function besideModel(trigger: HTMLElement): HTMLElement {
 const LONG_NAME = 24
 
 /** The 模型 or 思考 chip: its value, and the shared panel focused on the list or the levels. */
-function BoardChip({ board, kind }: { board: Board; kind: 'model' | 'thinking' }) {
+function BoardChip({ board, kind, withLevel = false }: { board: Board; kind: 'model' | 'thinking'; withLevel?: boolean }) {
   const face = board[kind]
+  // The input box has one entry for both: the model's name, then its level after a glyph, on the one panel's chip.
+  const level = withLevel && kind === 'model' ? board.thinking : undefined
   const request = useSearchRequest()
   const value = face.valueText === undefined ? undefined : '~face'
   return (
@@ -292,12 +296,24 @@ function BoardChip({ board, kind }: { board: Board; kind: 'model' | 'thinking' }
           : face.leading
             ? { leading: face.leading }
             : {})}
+        {...(level?.valueText !== undefined
+          ? {
+              trailing: (
+                <span className="model-level">
+                  <Icon icon={Brain} size={14} />
+                  {level.valueText}
+                </span>
+              ),
+            }
+          : {})}
         className={face.className}
         menuChevron
         anchor={besideModel}
+        // The input box's entry ends its line: the panel lines its end up with it and stays over the conversation.
+        {...(withLevel ? { align: 'end' as const } : {})}
         width={board.panel ? 'md' : 'lg'}
-        pending={face.pending === true}
-        {...(face.pendingLabel ? { pendingLabel: face.pendingLabel } : {})}
+        pending={face.pending === true || level?.pending === true}
+        {...((face.pendingLabel ?? level?.pendingLabel) ? { pendingLabel: (face.pendingLabel ?? level?.pendingLabel)! } : {})}
         disabled={face.disabled === true}
         disabledReason={face.disabledReason}
         // A long model name truncates on the chip; hovering shows it whole.
@@ -311,6 +327,7 @@ function BoardChip({ board, kind }: { board: Board; kind: 'model' | 'thinking' }
             <PickerBoard
               label={COPY.model}
               levelsLabel={COPY.thinking}
+              levelsIcon={<Icon icon={Brain} size={14} />}
               sources={boardSources(board.groups)}
               value={board.value}
               levels={board.levels}
@@ -888,8 +905,8 @@ function useDraftBoard({
   }
 }
 
-export function DraftModelControl(props: DraftBoardProps) {
-  return <BoardChip board={useDraftBoard(props)} kind="model" />
+export function DraftModelControl({ withLevel, ...props }: DraftBoardProps & { withLevel?: boolean }) {
+  return <BoardChip board={useDraftBoard(props)} kind="model" {...(withLevel ? { withLevel } : {})} />
 }
 
 export function DraftThinkingControl(props: DraftBoardProps) {
@@ -1028,8 +1045,8 @@ function useSessionBoard({
   })
 }
 
-export function SessionModelControl(props: SessionBoardProps) {
-  return <BoardChip board={useSessionBoard(props)} kind="model" />
+export function SessionModelControl({ withLevel, ...props }: SessionBoardProps & { withLevel?: boolean }) {
+  return <BoardChip board={useSessionBoard(props)} kind="model" {...(withLevel ? { withLevel } : {})} />
 }
 
 export function SessionThinkingControl(props: SessionBoardProps) {

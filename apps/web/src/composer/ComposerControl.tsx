@@ -7,8 +7,10 @@ const SearchRequest = createContext<{ query: string; revision: number } | undefi
 
 /** The same control entry point serves shortcuts, slash actions and recovery buttons. */
 export function openControlWhenShown(name: ControlName, frames = 10, newOnly = true, query?: string) {
+  // 思考 is set in the model's entry: one chip, one panel.
+  const shown = name === 'thinking' ? 'model' : name
   requestAnimationFrame(() => {
-    const control = [...document.querySelectorAll<HTMLElement>(`[data-composer-control="${name}"]`)].find(
+    const control = [...document.querySelectorAll<HTMLElement>(`[data-composer-control="${shown}"]`)].find(
       element =>
         element.getClientRects().length > 0
         && !element.closest('[inert], [hidden], [aria-hidden="true"]')

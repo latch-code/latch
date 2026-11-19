@@ -288,6 +288,8 @@ export interface PickerBoardProps<T extends string, L extends string> {
   label: string
   /** What the second column picks (思考). */
   levelsLabel: string
+  /** A 14px glyph before that word, in the column's head. */
+  levelsIcon?: ReactNode
   sources: Array<BoardSource<T>>
   /** The chosen item. */
   value: T | undefined
@@ -354,6 +356,7 @@ function moveInColumn(event: KeyboardEvent<HTMLElement>): boolean {
 export function PickerBoard<T extends string, L extends string>({
   label,
   levelsLabel,
+  levelsIcon,
   sources,
   value,
   levels,
@@ -721,6 +724,7 @@ export function PickerBoard<T extends string, L extends string>({
         {listColumn(false)}
         <div className="ui-board-phone-levels" role="menu" aria-label={levelsLabel} ref={column} onKeyDown={levelKeys}>
           <span className="ui-board-heading" aria-hidden="true">
+            {levelsIcon}
             {levelsLabel}
             {shownLevels.pending && <Spinner size={12} />}
           </span>
@@ -777,7 +781,10 @@ export function PickerBoard<T extends string, L extends string>({
         aria-busy={shownLevels.pending || undefined}
         onKeyDown={levelKeys}>
         <div className="ui-board-heading ui-board-levels-head" aria-hidden="true" id={`${id}-levels`}>
-          <span>{levelsLabel}</span>
+          <span className="ui-board-levels-name">
+            {levelsIcon}
+            {levelsLabel}
+          </span>
           {shownLevels.pending && <Spinner size={12} />}
         </div>
         <div className="ui-board-rows">{levelRows}</div>

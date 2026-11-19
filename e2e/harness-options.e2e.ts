@@ -140,7 +140,14 @@ describe("choosing a Harness's own options before the first message", () => {
   }
   const shot = (page: Page, name: string) => page.screenshot({ path: `${OUTPUT}/${name}.png`, animations: 'disabled' })
   const input = (page: Page) => page.getByRole('textbox', { name: '新会话消息', exact: true })
-  const chip = (page: Page, name: string): Locator => page.getByRole('button', { name: new RegExp(`^${name}：`, 'u') }).first()
+  // 思考 is set in the model's entry: its level stands after the model's name on the one chip, and the chip opens both.
+  const chip = (page: Page, name: string): Locator =>
+    page.getByRole('button', { name: new RegExp(`^${name === '思考' ? '模型' : name}：`, 'u') }).first()
+  /** Opens the entry's panel for a level, unless a model picked a moment ago left it open. */
+  const openThinking = async (page: Page) => {
+    const entry = chip(page, '思考')
+    if ((await entry.getAttribute('aria-expanded')) !== 'true') await entry.click()
+  }
   const send = async (page: Page, text: string) => {
     await input(page).fill(text)
     await input(page).press('Meta+Enter')
@@ -188,8 +195,8 @@ describe("choosing a Harness's own options before the first message", () => {
   it("reads Codex's own list when its menu first opens, then lists what a session offered, and starts on the picks", async () => {
     const page = await open(1440, 'light')
     await expect.poll(() => chip(page, '模型').innerText()).toContain('默认模型')
-    await expect.poll(() => chip(page, '思考').getAttribute('aria-label')).toBe('思考：默认')
-    // The four controls carry their names for the keys that open them, in a draft as in a session.
+    await expect.poll(() => chip(page, '思考').locator('.model-level').innerText()).toBe('默认')
+    // The three controls carry their names for the keys that open them, in a draft as in a session.
     await expect
       .poll(() =>
         page
@@ -197,7 +204,7 @@ describe("choosing a Harness's own options before the first message", () => {
           .filter({ visible: true })
           .evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.composerControl)),
       )
-      .toEqual(['harness', 'model', 'thinking', 'permission'])
+      .toEqual(['harness', 'model', 'permission'])
     const agent = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean)
     expect(await agent()).toEqual([])
     // The known ladder is available before a read, even though Codex's model/list reports no modes.
@@ -242,7 +249,7 @@ describe("choosing a Harness's own options before the first message", () => {
     // Codex's list said what thinking Large offers, so 思考 says it before any session ran on Large.
     await expect.poll(() => chip(page, '模型').innerText()).toContain('Large')
     await expect.poll(() => chip(page, '思考').innerText()).toContain('Low')
-    await chip(page, '思考').click()
+    await openThinking(page)
     await row(page, /^Max/u).waitFor()
     await shot(page, 'large-thinking-1440-light')
     await page.keyboard.press('Escape')
@@ -277,7 +284,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await expect.poll(() => chip(page, '模型').innerText()).toContain('Large')
     await expect.poll(() => chip(page, '思考').innerText()).toContain('Low')
     await expect.poll(() => chip(page, '权限').innerText()).toContain('按规则放行')
-    await chip(page, '思考').click()
+    await openThinking(page)
     // Routine descriptions stay out of the list; every level remains reachable by its own name.
     for (const level of ['Low', 'High', 'Max']) await row(page, new RegExp(`^${level}`, 'u')).waitFor()
     for (const text of Object.values(LEVELS)) expect(await page.getByText(text, { exact: true }).count()).toBe(0)
@@ -305,7 +312,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await row(page, /Large/u).click()
     await expect.poll(() => chip(page, '模型').innerText()).toContain('Large')
     await expect.poll(() => chip(page, '思考').innerText()).toContain('Low')
-    await chip(page, '思考').click()
+    await openThinking(page)
     await row(page, /^High/u).click()
     await expect.poll(() => chip(page, '思考').innerText()).toContain('High')
     await chip(page, '权限').click()
@@ -403,8 +410,8 @@ describe("choosing a Harness's own options before the first message", () => {
         .locator('.composer-stack [data-composer-control]')
         .filter({ visible: true })
         .evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.composerControl)),
-    ).toEqual(['harness', 'model', 'thinking', 'permission'])
-    await chip(page, '思考').click()
+    ).toEqual(['harness', 'model', 'permission'])
+    await openThinking(page)
     await row(page, /^High/u).click()
     const next = page.getByRole('textbox', { name: '继续对话', exact: true })
     await next.fill('第六轮')
@@ -435,7 +442,7 @@ describe("choosing a Harness's own options before the first message", () => {
       await new Promise(resolve => setTimeout(resolve, 1500))
       await route.continue()
     })
-    await chip(page, '思考').click()
+    await openThinking(page)
     await row(page, /^High/u).click()
     const transcript = page.locator('.transcript')
     await transcript.getByText('echo: 第七轮', { exact: true }).hover()
@@ -458,7 +465,7 @@ describe("choosing a Harness's own options before the first message", () => {
       await chip(page, '模型').click()
       await row(page, /Small/u).waitFor()
       await page.keyboard.press('Escape')
-      await chip(page, '思考').click()
+      await openThinking(page)
       await row(page, /^High/u).click()
       await chip(page, '权限').click()
       await row(page, /不再询问/u).click()
@@ -799,7 +806,14 @@ describe("choosing one of Codex's own models in a draft", () => {
       .filter(Boolean)
       .map(line => JSON.parse(line) as { event: string; method?: string | null; params?: Record<string, unknown> })
   const received = async (method: string) => (await lines()).filter(line => line.event === 'recv' && line.method === method)
-  const chip = (page: Page, name: string): Locator => page.getByRole('button', { name: new RegExp(`^${name}：`, 'u') }).first()
+  // 思考 is set in the model's entry: its level stands after the model's name on the one chip, and the chip opens both.
+  const chip = (page: Page, name: string): Locator =>
+    page.getByRole('button', { name: new RegExp(`^${name === '思考' ? '模型' : name}：`, 'u') }).first()
+  /** Opens the entry's panel for a level, unless a model picked a moment ago left it open. */
+  const openThinking = async (page: Page) => {
+    const entry = chip(page, '思考')
+    if ((await entry.getAttribute('aria-expanded')) !== 'true') await entry.click()
+  }
   const row = (page: Page, name: RegExp) =>
     page
       .getByRole('menuitemradio', { name })
@@ -840,7 +854,7 @@ describe("choosing one of Codex's own models in a draft", () => {
       await row(page, /^GPT Fake Mini/u).click()
       await expect.poll(() => chip(page, '模型').innerText()).toContain('GPT Fake Mini')
       // 思考 offers exactly the levels Codex listed for that model.
-      await chip(page, '思考').click()
+      await openThinking(page)
       await row(page, /^Medium/u).waitFor()
       expect(await row(page, /^High/u).count()).toBe(0)
       await page.keyboard.press('Escape')

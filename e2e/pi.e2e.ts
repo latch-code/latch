@@ -108,7 +108,14 @@ describe('pi over its own RPC mode', () => {
   const shot = (page: Page, name: string) => page.screenshot({ path: `${OUTPUT}/${name}.png`, animations: 'disabled' })
   const draft = (page: Page) => page.getByRole('textbox', { name: '新会话消息', exact: true }).filter({ visible: true })
   const composer = (page: Page) => page.getByRole('textbox', { name: '继续对话', exact: true }).filter({ visible: true })
-  const chip = (page: Page, name: string): Locator => page.getByRole('button', { name: new RegExp(`^${name}：`, 'u') }).first()
+  // 思考 is set in the model's entry: its level stands after the model's name on the one chip, and the chip opens both.
+  const chip = (page: Page, name: string): Locator =>
+    page.getByRole('button', { name: new RegExp(`^${name === '思考' ? '模型' : name}：`, 'u') }).first()
+  /** Opens the entry's panel for a level, unless a model picked a moment ago left it open. */
+  const openThinking = async (page: Page) => {
+    const entry = chip(page, '思考')
+    if ((await entry.getAttribute('aria-expanded')) !== 'true') await entry.click()
+  }
   const modelAction = (page: Page, name: string) =>
     page.getByRole('menuitem', { name, exact: true }).or(page.getByRole('button', { name, exact: true }))
   const received = async () =>
@@ -250,7 +257,7 @@ describe('pi over its own RPC mode', () => {
     expect((await received()).filter(entry => entry.type === 'steer').map(entry => entry.message)).toEqual(['also update the README'])
     await noHorizontalOverflow(page)
     await shot(page, 'steered-390-dark')
-    await chip(page, '思考').click()
+    await openThinking(page)
     // One model panel at every width since d0ccdd6e: a phone's levels are its menu's items too.
     await page.getByRole('menuitemradio', { name: '高', exact: true }).waitFor()
     await shot(page, 'model-menu-390-dark')
@@ -272,9 +279,8 @@ describe('pi over its own RPC mode', () => {
     await composer(page).fill('/comp')
     await menu.getByRole('option', { name: /^\/compact/u }).waitFor()
     await shot(page, 'compact-menu-1440-light')
-    await composer(page).press('Enter')
-    expect(await composer(page).inputValue()).toBe('/compact ')
-    await composer(page).pressSequentially('keep the test names')
+    // Its instructions are optional, so Enter alone would run it bare: they are typed after the name.
+    await composer(page).fill('/compact keep the test names')
     await composer(page).press('Meta+Enter')
     await page.locator('.transcript').getByText('keeping: keep the test names', { exact: false }).waitFor({ timeout: 20_000 })
     const compacted = await latest()

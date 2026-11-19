@@ -114,7 +114,12 @@ describe('a config change the Harness never answers', () => {
     )
     // The chip keeps the value the Host confirmed and marks it; thinking is not the change and is not marked.
     await page.getByRole('button', { name: /^模型：opencode\/Big Pickle · 结果未知$/u }).waitFor()
-    expect(await page.getByRole('button', { name: /^思考：Default$/u }).count()).toBe(1)
+    expect(
+      await page
+        .locator('.model-level')
+        .filter({ hasText: /^Default$/u, visible: true })
+        .count(),
+    ).toBe(1)
     // Not an error: no red banner.
     expect(await page.locator('[data-tone="error"], .action-error').filter({ hasText: '结果' }).count()).toBe(0)
     await noHorizontalOverflow(page)

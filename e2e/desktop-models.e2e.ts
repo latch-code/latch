@@ -150,7 +150,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           .click()
         const input = page.getByRole('textbox', { name: '继续对话', exact: true })
         const modelPicker = page.locator('button.model-picker')
-        const thinkingPicker = page.locator('button.thinking-picker')
+        // 思考 is set in the model's entry: the level stands on the model's chip, which opens both.
+        const thinkingPicker = page.locator('button.model-picker').filter({ visible: true }).first()
         await input.fill('切换设置时保留这份草稿。')
         const beforePresence = host.presence.requests.length
         await page.evaluate(() => {
@@ -178,7 +179,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         expect(await modelMenu.isVisible()).toBe(true)
         await modelMenu.getByRole('button', { name: '核对', exact: true }).click()
         await page.getByRole('button', { name: '模型：Large', exact: true }).waitFor()
-        await page.getByRole('button', { name: '思考：Low', exact: true }).waitFor()
+        await page.locator('.model-level').filter({ hasText: /^Low$/u, visible: true }).first().waitFor()
         expect(await page.evaluate(() => Reflect.get(window, 'configurationChanges').length)).toBe(1)
         await page.keyboard.press('Escape')
         for (const width of [1440, 900, 390]) {
@@ -204,7 +205,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             .poll(async () => (await owner.json<TaskDetail>('tasks/' + sessionId)).config?.find(item => item.id === 'effort')?.currentValue)
             .toBe(effort.toLowerCase())
           await expect.poll(() => thinkingPicker.getAttribute('aria-busy')).not.toBe('true')
-          await expect.poll(() => thinkingPicker.getAttribute('aria-label')).toBe(`思考：${effort}`)
+          await expect.poll(() => thinkingPicker.locator('.model-level').innerText()).toBe(effort)
           expect(await input.inputValue()).toBe('切换设置时保留这份草稿。')
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
           await mkdir('test-results/model-controls', { recursive: true })

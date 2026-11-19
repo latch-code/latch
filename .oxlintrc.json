@@ -30,63 +30,6 @@
           {
             "name": "@latch/testkit",
             "message": "@latch/testkit 只供测试使用，只有测试（tests/、e2e/ 与各项目的 test/）导入它。"
-          },
-          // The stock "AI product" pictures read as a template (docs/DESIGN.md「图标与转圈」): an Agent is the {··} mark,
-          // 思考 is the reason glyph, a model or a Harness without a brand is its own glyph. The list is every name lucide-react
-          // exports for those pictures (aliases included); deep paths are refused below, so the names cannot be bypassed.
-          {
-            "name": "lucide-react",
-            "importNames": [
-              "Bot",
-              "BotIcon",
-              "BotMessageSquare",
-              "BotMessageSquareIcon",
-              "BotOff",
-              "BotOffIcon",
-              "Brain",
-              "BrainCircuit",
-              "BrainCircuitIcon",
-              "BrainCog",
-              "BrainCogIcon",
-              "BrainIcon",
-              "FlaskConical",
-              "FlaskConicalIcon",
-              "FlaskConicalOff",
-              "FlaskConicalOffIcon",
-              "FlaskRound",
-              "FlaskRoundIcon",
-              "Glasses",
-              "GlassesIcon",
-              "LucideBot",
-              "LucideBotMessageSquare",
-              "LucideBotOff",
-              "LucideBrain",
-              "LucideBrainCircuit",
-              "LucideBrainCog",
-              "LucideFlaskConical",
-              "LucideFlaskConicalOff",
-              "LucideFlaskRound",
-              "LucideGlasses",
-              "LucideSparkle",
-              "LucideSparkles",
-              "LucideStars",
-              "LucideTelescope",
-              "LucideWand2",
-              "LucideWandSparkles",
-              "Sparkle",
-              "SparkleIcon",
-              "Sparkles",
-              "SparklesIcon",
-              "Stars",
-              "StarsIcon",
-              "Telescope",
-              "TelescopeIcon",
-              "Wand2",
-              "Wand2Icon",
-              "WandSparkles",
-              "WandSparklesIcon"
-            ],
-            "message": "界面不用机器人、大脑、星光、烧瓶、眼镜、望远镜这类「AI 产品」图形：Agent 用 {··}（AgentsGlyph），思考用 ReasonGlyph，模型与 Harness 用 ModelGlyph、HarnessGlyph。"
           }
         ],
         "patterns": [
@@ -97,10 +40,6 @@
           {
             "regex": "^cordis/",
             "message": "只有 packages/core/src/registry.ts 导入 cordis，其他代码经 @latch/core 的 PluginRegistry 使用插件。"
-          },
-          {
-            "regex": "^lucide-react/",
-            "message": "lucide-react 只从包入口导入（不用 lucide-react/dynamic 或深路径），这样禁用的「AI 产品」图形无法绕过 lint。"
           },
           {
             "regex": "^@latch/testkit/",

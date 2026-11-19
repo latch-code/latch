@@ -123,7 +123,7 @@ describe('responsive workspace controls', () => {
         const chips = page.locator('.workbench-home').getByRole('group', { name: '会话选项', exact: true })
         expect(await chips.evaluate(element => element.classList.contains('composer-chips'))).toBe(true)
         expect(await chips.locator('.home-composer-location').count()).toBe(1)
-        for (const control of ['harness', 'model', 'thinking']) {
+        for (const control of ['harness', 'model']) {
           const chip = chips.locator(`[data-composer-control="${control}"]`).getByRole('button').first()
           await chip.scrollIntoViewIfNeeded()
           await reachable(chip)
@@ -134,8 +134,7 @@ describe('responsive workspace controls', () => {
         expect(await page.locator('.workbench-home .composer-toolbar, .workbench-home [data-rows]').count()).toBe(0)
         await noHorizontalOverflow(page)
       } else
-        for (const control of [/^Harness：/, /^模型：/, /^思考：/, /^权限：/])
-          await reachable(page.getByRole('button', { name: control }).first())
+        for (const control of [/^Harness：/, /^模型：/, /^权限：/]) await reachable(page.getByRole('button', { name: control }).first())
       await reachable(page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }))
       await composer.fill('')
       await capture(page, `${label}-new-session`)

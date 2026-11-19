@@ -37,7 +37,7 @@ import { FolderControl, ProjectBranch } from '../composer/FolderControl.tsx'
 import { ComposerStatus, FolderSegment, statusRoute } from '../composer/ComposerStatus.tsx'
 import { SessionVitalsLine } from '../composer/VitalsStrip.tsx'
 import { DraftHarnessControl, forkBusy, SessionHarnessControl, type SessionFork } from '../composer/ModelControl.tsx'
-import { DraftModelControl, DraftThinkingControl, SessionModelControl, SessionThinkingControl } from '../composer/ModelPanel.tsx'
+import { DraftModelControl, SessionModelControl } from '../composer/ModelPanel.tsx'
 import { PermissionChip } from '../composer/PermissionChip.tsx'
 import { composerOptions, configUnknownBar, ownModelName } from '../composer/modelReasoning.ts'
 import { draftPermission, draftRead, permissionView } from '../composer/permission.ts'
@@ -821,6 +821,7 @@ export function SessionComposer({
             </ComposerControl>
             <ComposerControl name="model">
               <DraftModelControl
+                withLevel
                 catalog={catalog}
                 choice={choice}
                 onChoice={submission.updateChoice}
@@ -845,6 +846,7 @@ export function SessionComposer({
               )}
               <ComposerControl name="model">
                 <SessionModelControl
+                  withLevel
                   catalog={catalog}
                   harness={harnessInfo}
                   model={effectiveModel}
@@ -868,44 +870,7 @@ export function SessionComposer({
       }
       trailing={
         !showControls || !catalog || (selectedId !== null && !summary) ? null : (
-          <>
-            <ComposerControl name="thinking">
-              {selectedId === null ? (
-                <DraftThinkingControl
-                  catalog={catalog}
-                  choice={choice}
-                  onChoice={submission.updateChoice}
-                  access={access}
-                  disabled={newChoicesLocked}
-                  onManageModels={manageProviders}
-                  onProvidersChanged={() => {
-                    void refresh()
-                  }}
-                  onRead={refresh}
-                  computer={computer}
-                />
-              ) : (
-                <SessionThinkingControl
-                  catalog={catalog}
-                  harness={harnessInfo}
-                  model={effectiveModel}
-                  current={currentModel}
-                  onModel={switchSessionModel}
-                  config={current?.config ?? []}
-                  busy={configBusy.get(selectedId) ?? null}
-                  {...(configFeedback.get(selectedId) ? { feedback: configFeedback.get(selectedId)! } : {})}
-                  onRefresh={refreshConfig}
-                  onConfig={setConfig}
-                  onManageModels={manageProviders}
-                  locked={gate.kind === 'read-only' ? gate.text : undefined}
-                  route={summary?.modelRoute}
-                  reported={summary?.model}
-                  computer={computer}
-                />
-              )}
-            </ComposerControl>
-            {phone && selectedId !== null && <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />}
-          </>
+          <>{phone && selectedId !== null && <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />}</>
         )
       }
     />

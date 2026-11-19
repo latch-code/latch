@@ -752,6 +752,8 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
   onValueChange: (value: T) => void | Promise<void>
   /** A 14px glyph that serves as the label where there is no text label (the context row), or a 16px tile or avatar. */
   leading?: IconComponent | ReactNode
+  /** After the value and before the arrow, in muted ink: a second value the same panel sets (a model's 思考 level). */
+  trailing?: ReactNode
   /** Shown in muted ink when nothing is chosen (「选择模型」), never in a warning colour. */
   placeholder?: string
   /** xs: 24 with 6px corners, for the inspector. */
@@ -833,6 +835,7 @@ export function ValuePicker<T extends string>({
   groups,
   onValueChange,
   leading,
+  trailing,
   placeholder = UI_COPY.unselected,
   size = 'sm',
   bleed,
@@ -1050,6 +1053,7 @@ export function ValuePicker<T extends string>({
       {variant === 'row' && <span className="ui-value-row-label">{label}</span>}
       {lead}
       {valueLayers}
+      {trailing !== undefined && trailing !== null && !pending && <span className="ui-value-picker-trail">{trailing}</span>}
       <Icon icon={menuChevron ? ChevronDownGlyph : UpDownGlyph} size={variant === 'row' ? 16 : 12} className="ui-value-picker-chevron" />
     </button>
   )

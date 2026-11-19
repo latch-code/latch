@@ -105,3 +105,25 @@ export function providerArt(provider: { id: string; kind?: ProviderSummary['kind
   const mark = preset === undefined ? undefined : PROVIDER_MARKS[preset]
   return mark ? { kind: 'mark', mark } : { kind: 'glyph', icon: GLYPHS.custom }
 }
+
+/**
+ * A model's maker, read from the ID a service lists it under, for the mark beside its row: only families whose mark is
+ * already in this set, matched as a whole word of the ID (`openrouter/anthropic/claude-…`, `deepseek-v4-flash`).
+ * Anything else has no mark, which a row shows as the neutral model glyph.
+ */
+const MODEL_FAMILIES: ReadonlyArray<readonly [RegExp, TileMark]> = [
+  [/(^|[^a-z])claude([^a-z]|$)/u, HARNESS_MARKS['claude-agent']!],
+  [/(^|[^a-z])(gpt|chatgpt|codex|o[134])([^a-z]|$)/u, PROVIDER_MARKS.openai!],
+  [/(^|[^a-z])deepseek([^a-z]|$)/u, PROVIDER_MARKS.deepseek!],
+  [/(^|[^a-z])(qwen|qwq)([^a-z]|$)/u, PROVIDER_MARKS.dashscope!],
+  [/(^|[^a-z])(glm|zhipu)([^a-z]|$)/u, PROVIDER_MARKS.zhipu!],
+  [/(^|[^a-z])(kimi|moonshot)([^a-z]|$)/u, PROVIDER_MARKS.moonshot!],
+  [/(^|[^a-z])doubao([^a-z]|$)/u, PROVIDER_MARKS.volcengine!],
+  [/(^|[^a-z])grok([^a-z]|$)/u, HARNESS_MARKS.grok!],
+]
+
+export function modelArt(id: string): BrandArt | undefined {
+  const name = id.toLowerCase()
+  const mark = MODEL_FAMILIES.find(([family]) => family.test(name))?.[1]
+  return mark ? { kind: 'mark', mark } : undefined
+}

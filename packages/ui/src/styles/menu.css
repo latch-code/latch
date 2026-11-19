@@ -428,6 +428,14 @@
 .ui-value-picker-chevron {
   color: var(--muted);
 }
+/* A second value after the first: muted, never cut before the first is. */
+.ui-value-picker-trail {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-4);
+  color: var(--muted);
+}
 /*
  * The value starts right after the leading slot (or the picker's edge), so a column of values lines up. A toolbar
  * picker that reserves room for 「等待验证…」 leaves the spare width after the value, before the arrow.

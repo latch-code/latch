@@ -82,7 +82,8 @@ it.each(['opencode', 'dsh', 'pi'] as const)(
     await mkdir(output, { recursive: true })
     const chip = (name: string) =>
       page
-        .getByRole('button', { name: new RegExp(`^${name}：`, 'u') })
+        // 思考 is set in the model's entry: one chip opens both.
+        .getByRole('button', { name: new RegExp(`^${name === '思考' ? '模型' : name}：`, 'u') })
         .filter({ visible: true })
         .first()
     const row = (name: string | RegExp) =>

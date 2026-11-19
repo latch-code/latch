@@ -654,6 +654,7 @@ function Pickers() {
       <Row label="标准">
         <Cell caption="静止">
           <ValuePicker label="模型" value={model} options={MODELS} onValueChange={setModel} />
+          <ValuePicker label="模型" value={model} options={MODELS} onValueChange={setModel} trailing="高" menuChevron />
         </Cell>
         <Cell caption="悬停" force="hover">
           <ValuePicker label="模型" value="fixture-large" options={MODELS} onValueChange={() => {}} />

@@ -282,7 +282,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 
 - 只用 12、14、16、20、24 五个尺寸，线宽按屏幕像素定（`ICON_STROKE`）；其他尺寸类型检查失败。12px 时另画的图形在 `SMALL_GLYPHS`。
 - 每个图形至多一处实心，落在意义上。实心版（`solid`）只给选中或当前项；选中不用蓝色。
-- 不用模板化的「AI 产品」图画：机器人、大脑、星光、烧瓶、眼镜、望远镜由 lint 拒绝导入，含别名与深路径（`.oxlintrc.json`）。Agent 是 `AgentsGlyph`，模型是 `ModelGlyph`，Harness 是 `HarnessGlyph`。
+- Agent 是 `AgentsGlyph`，模型是 `ModelGlyph`，Harness 是 `HarnessGlyph`；思考是一个小脑袋（lucide 的 `Brain`），在输入框的入口与模型面板的「思考」列头。
 - Harness 与模型的品牌标志原样使用，不重画。
 - 静止的图标是提示墨色，悬停与激活时是正文墨色。工作行的种类图标带内容色板的色相；其余图标只在表示状态时带色相：失败是红，等你处理是琥珀盾牌，被选中的完全访问是琥珀色 `shield-alert`。
 - 箭头各有一种意思：向右是进入下一层或展开，上下双箭头是原地选值，向下是下拉动作。

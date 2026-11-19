@@ -1,6 +1,7 @@
+import type { ReactNode } from 'react'
 import type { HarnessInfo, ProviderSummary } from '@latch/protocol'
 import { Tile, type IconComponent, type TileSize, type TileState } from '@latch/ui'
-import { harnessArt, providerArt, type BrandArt } from '../brands.ts'
+import { harnessArt, modelArt, providerArt, type BrandArt } from '../brands.ts'
 import { BrandMark } from './ui.tsx'
 
 /**
@@ -72,4 +73,10 @@ export function GlyphTile({
   className?: string
 }) {
   return <Tile size={size} icon={icon} bare={size <= 16} label={label} className={className} />
+}
+
+/** The mark of a model's maker beside its name; an ID that names none Latch draws shows `fallback` (its service's tile), else keeps the place empty. */
+export function ModelTile({ model, fallback, ...tile }: BrandTileProps & { model: string; fallback?: ReactNode }) {
+  const art = modelArt(model)
+  return art ? <BrandTile art={art} {...tile} /> : (fallback ?? <span className="model-tile-blank" aria-hidden="true" />)
 }

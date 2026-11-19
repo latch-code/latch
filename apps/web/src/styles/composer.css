@@ -325,18 +325,31 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* A model's ID reads as one, in the mono face; the words for an unreported one stay in the UI face. */
-.model-picker.is-id .ui-value-picker-text:not([data-pending]) {
-  font-family: var(--mono);
-  font-size: var(--fs-mono);
-  line-height: var(--lh-mono);
-}
-/* 思考 is a small muted word before the value, in the leading slot. With only 默认 there is no arrow: it still opens. */
-.thinking-label {
-  white-space: nowrap;
-}
-.thinking-picker.is-fixed > .ui-value-picker-chevron {
+/*
+ * 模型 and 思考 are one entry at the line's end, beside send: the model's name in the UI face, its level after a glyph
+ * in muted ink, one arrow. The other choices keep the line's start. The 思考 control draws nothing of its own.
+ */
+.composer-control:empty {
   display: none;
+}
+.composer-toolbar .composer-control[data-composer-control='model'] {
+  order: 1;
+  margin-inline-start: auto;
+}
+.composer-control .model-picker {
+  color: var(--ink);
+}
+/* A row whose model names no maker Latch draws: the mark's 16px stays, so every name starts at one edge. */
+.model-tile-blank {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+}
+.model-level {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  white-space: nowrap;
 }
 /*
  * A phone: the place, Harness, 模型 and 思考 can scroll sideways. 权限 stays beside the send key.
