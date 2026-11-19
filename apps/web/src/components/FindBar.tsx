@@ -66,7 +66,7 @@ export function FindBar({
   /** A new value takes focus back to the field, with what it holds selected. */
   focusRequest?: number
   /** Where focus goes on closing when what had it is gone, as a palette that opened this is. */
-  fallbackFocus?: RefObject<HTMLElement | null>
+  fallbackFocus?: RefObject<{ focus(options?: FocusOptions): void } | null>
   onReveal: (id: string, offset?: number) => void
   onClose: () => void
 }) {

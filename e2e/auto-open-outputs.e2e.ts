@@ -7,6 +7,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { closeSettings, openSection, openSession, openSettings, settleShell } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 it.each([
   { width: 1440, enabled: true, opens: true },
@@ -89,7 +90,7 @@ it.each([
       await page.getByRole('button', { name: '打开 created.html', exact: true }).waitFor()
       expect(await page.locator('.file-preview').count()).toBe(0)
     }
-    expect(await input.inputValue()).toBe('仍在输入的草稿')
+    expect(await promptValue(input)).toBe('仍在输入的草稿')
     expect(await input.evaluate(node => document.activeElement === node)).toBe(true)
   } finally {
     release?.()

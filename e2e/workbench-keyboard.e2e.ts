@@ -9,6 +9,7 @@ import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { backToPhoneSessions, noHorizontalOverflow, openSession, reachable, settleShell } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 async function choose(page: Page, title: string) {
   await page.keyboard.press('Meta+k')
@@ -142,7 +143,7 @@ it.each([
       await page.keyboard.press('Alt+9')
       await page.waitForTimeout(300)
       await selected(neutralId)
-      expect(await input.inputValue()).toBe(draft)
+      expect(await promptValue(input)).toBe(draft)
       expect(page.url()).toBe(url)
       expect(context.pages()).toHaveLength(1)
       await page.keyboard.press('Alt+]')
@@ -174,9 +175,9 @@ it.each([
       await mkdir('test-results/workbench-keyboard', { recursive: true })
       await page.screenshot({ path: `test-results/workbench-keyboard/approval-${width}-${theme}.png`, animations: 'disabled' })
       // The input of a session waiting on a request is named for what typing does there.
-      expect(await page.locator('.composer textarea').filter({ visible: true }).inputValue()).toBe('')
+      expect(await promptValue(page.locator('.composer .composer-input [role="textbox"]').filter({ visible: true }))).toBe('')
       await choose(page, neutral.summary.title)
-      expect(await input.inputValue()).toBe(draft)
+      expect(await promptValue(input)).toBe(draft)
 
       await input.focus()
       fileSearches.length = 0
@@ -199,10 +200,10 @@ it.each([
       await page.keyboard.press('Alt+w')
       await preview.waitFor({ state: 'hidden' })
       expect(await page.getByRole('tab', { name: 'keyboard-navigation.txt', exact: true }).count()).toBe(0)
-      expect(await input.inputValue()).toBe(draft)
+      expect(await promptValue(input)).toBe(draft)
       await page.keyboard.press('Alt+l')
       await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
-      expect(await input.inputValue()).toBe(draft)
+      expect(await promptValue(input)).toBe(draft)
       expect(submissions).toEqual([])
       expect(modelCalls).toBe(callsBefore)
       for (const [index, detail] of details.entries()) {
@@ -302,7 +303,7 @@ it.each([
         const stayed = async () => {
           expect(page.url()).toBe(url)
           expect(context.pages()).toHaveLength(1)
-          expect(await input.inputValue()).toBe(draft)
+          expect(await promptValue(input)).toBe(draft)
         }
         const shoot = async (name: string) => {
           await mkdir(SHOTS, { recursive: true })
@@ -392,7 +393,7 @@ it.each([
             return opened
           }
           expect(await opens('session')).toEqual(controls)
-          expect(await input.inputValue()).toBe(draft)
+          expect(await promptValue(input)).toBe(draft)
           await page.keyboard.press('Alt+n')
           // 新会话 is the home with its input focused, over the session, which stays open.
           const newInput = page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true })
@@ -401,7 +402,7 @@ it.each([
           expect(await page.locator('main.workspace').getAttribute('inert')).toBe('')
           await newInput.fill('新会话草稿')
           expect(await opens('draft')).toEqual(controls)
-          expect(await newInput.inputValue()).toBe('新会话草稿')
+          expect(await promptValue(newInput)).toBe('新会话草稿')
           await choose(page, '键位浮层的运行中会话')
           await stayed()
           if (width >= 1024) await shoot('sidebar-caps')

@@ -73,6 +73,9 @@ catalog:
   remark-math: 6.0.0
   mermaid: 12.2.0
   '@aiden0z/pptx-renderer': 1.4.0
+  '@codemirror/commands': 6.11.1
+  '@codemirror/state': 6.7.6
+  '@codemirror/view': 6.43.15
   '@tanstack/react-virtual': 3.14.21
   '@xterm/xterm': 6.0.0
   '@xterm/addon-fit': 0.11.0

@@ -12,6 +12,7 @@ import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSession, settleShell } from './helpers/layout.ts'
 import { stillMotion } from './helpers/visual.ts'
 import { switchView } from './helpers/workbench.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/item-page'
 const itemPage = (page: Page) => page.locator('.item-page')
@@ -178,8 +179,8 @@ it('opens a 待办 inside 看板 with its sessions, starts another, brings a rep
     // 再开一个: the home's input in a dialog with the 待办's 要求; sending starts a session of this 待办, the page stays.
     await itemPage(page).getByRole('button', { name: '再开一个', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '升级依赖并审查' })
-    const input = dialog.locator('textarea')
-    await expect.poll(() => input.inputValue()).toBe('把依赖升到最新，再审一遍改动')
+    const input = dialog.locator('.composer-input [role="textbox"]')
+    await expect.poll(() => promptValue(input)).toBe('把依赖升到最新，再审一遍改动')
     await shots(page, 'start-another', [1440])
     await input.fill('echo 再来一个会话')
     // Changed elsewhere while this page still shows the older revision: refused, nothing starts, and the page reads it again.
@@ -199,7 +200,7 @@ it('opens a 待办 inside 看板 with its sessions, starts another, brings a rep
     expect(conflict.status()).toBe(409)
     expect(await conflict.json()).toMatchObject({ error: 'item-changed' })
     await dialog.getByText('待办已被修改，请刷新后再试。', { exact: true }).waitFor()
-    expect(await input.inputValue()).toBe('echo 再来一个会话')
+    expect(await promptValue(input)).toBe('echo 再来一个会话')
     expect((await itemOf(mixed.id)).sessionIds.length).toBe(3)
     await page.unrouteAll({ behavior: 'ignoreErrors' })
     // The next change reaches the page as it is: the dialog's next send names the revision now shown.
@@ -219,7 +220,7 @@ it('opens a 待办 inside 看板 with its sessions, starts another, brings a rep
     await page.getByRole('menuitem', { name: 'echo 再来一个会话' }).click()
     await expect.poll(() => page.locator('.app-shell').getAttribute('data-view')).toBe('chat')
     const composer = page.locator('main.workspace').getByRole('textbox').last()
-    await expect.poll(() => composer.inputValue()).toContain('> echo: echo 审这个分支相对 main 的改动')
+    await expect.poll(() => promptValue(composer)).toContain('> echo: echo 审这个分支相对 main 的改动')
     expect((await owner.json<TaskDetail>(`tasks/${another}`)).messages.length).toBe(before)
     await composer.fill('')
     await switchView(page, 'board')

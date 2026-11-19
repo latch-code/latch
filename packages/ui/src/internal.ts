@@ -274,7 +274,7 @@ export function setPopover(element: HTMLElement | null, open: boolean): void {
  */
 export function focusables(container: HTMLElement): HTMLElement[] {
   const selector =
-    'a[href], button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), [tabindex]'
+    'a[href], button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), [contenteditable="true"], [tabindex]'
   return Array.from(container.querySelectorAll<HTMLElement>(selector)).filter(
     element => element.tabIndex >= 0 && element.getClientRects().length > 0,
   )
@@ -283,7 +283,9 @@ export function focusables(container: HTMLElement): HTMLElement[] {
 /** The first control a layer should hand focus to on opening: never its close button, which only ends it. */
 export function firstMeaningful(container: HTMLElement): HTMLElement | null {
   const controls = Array.from(
-    container.querySelectorAll<HTMLElement>('[data-autofocus], a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+    container.querySelectorAll<HTMLElement>(
+      '[data-autofocus], a[href], button, input, select, textarea, [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
+    ),
   ).filter(element => !element.closest('[data-layer-close]') && !element.matches(':disabled') && element.getClientRects().length > 0)
   return controls.find(element => element.hasAttribute('data-autofocus')) ?? controls[0] ?? null
 }

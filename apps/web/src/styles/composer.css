@@ -179,125 +179,106 @@
   }
 }
 
-/* The input starts at the card's own padding: nothing stands before the text. */
+/*
+ * The input starts at the card's own padding: nothing stands before the text. PromptEditor's theme reads its padding,
+ * minimum and maximum height from these properties, so each surface below only changes them. It grows a line at a time
+ * up to eight lines of body text plus padding, then scrolls; the transcript keeps the remaining height.
+ */
 .composer-input {
   position: relative;
   min-width: 0;
-}
-.composer textarea {
-  display: block;
-  width: 100%;
-  min-height: calc(var(--lh-prose) + 24px);
-  max-height: 232px;
-  padding: var(--sp-16) var(--sp-16) var(--sp-8);
-  overflow-y: auto;
-  resize: none;
-  border: 0;
-  border-radius: var(--r-16);
-  background: transparent;
   color: var(--ink);
   font-size: var(--fs-prose);
   line-height: var(--lh-prose);
-  outline: none;
+  --prompt-padding: var(--sp-16) var(--sp-16) var(--sp-8);
+  --prompt-min-height: calc(var(--lh-prose) + 24px);
+  --prompt-max-height: 232px;
 }
-/* The input's height follows its lines over --m-micro (Composer measures and sets it), not with every key. */
+/* Its height follows its lines over --m-micro (PromptEditor measures and sets it), not with every key. */
 @media (prefers-reduced-motion: no-preference) {
-  .composer textarea {
+  .composer-input .cm-scroller {
     transition: height var(--m-micro) var(--e-micro);
   }
 }
-.composer textarea::placeholder {
-  color: var(--muted);
-}
-.composer textarea:disabled {
-  color: var(--ink-2);
-}
-.composer-input > textarea {
-  position: relative;
-  padding-inline-start: var(--sp-16);
-}
-/* Under the input with the input's own box, type and padding (PromptMarks copies them), so its lines break alike. */
-.composer-command-mirror {
-  position: absolute;
-  box-sizing: border-box;
-  overflow: hidden;
-  color: transparent;
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
-  pointer-events: none;
-  user-select: none;
-}
-/* With a mark shown the mirror paints the text and the input keeps only its caret, selection and IME. */
-.composer-input[data-marks] > textarea {
-  -webkit-text-fill-color: transparent;
-}
-.composer-input[data-marks] > textarea::placeholder {
-  -webkit-text-fill-color: currentColor;
-}
-.composer-input[data-marks] > .composer-command-mirror {
-  color: var(--ink);
-}
-.composer-input[data-marks]:has(> textarea:disabled) > .composer-command-mirror {
+.composer-input:has(.cm-content[aria-disabled='true']) {
   color: var(--ink-2);
 }
 /*
- * No padding, border or weight: a mark never moves a character. The token keeps its own letters, sigil included, in
- * the mark's ink; the tint is one rounded layer that reaches 3px past the token on each side as a shadow, over the
- * whitespace, line start or input padding the Host's rules always put round a token (prompt-tokens.ts), so the mark has
- * room without taking any.
+ * A token the Harness will read as one (a file chosen with @, a skill, a command, a member) is a chip, in the input and
+ * in a sent message alike: the glyph, then the name in link ink on a quiet wash, a little lower than the line and on
+ * its baseline, with room of its own on both sides so it never touches the text or the next chip. Never the primary
+ * fill; a long name ends in an ellipsis and the whole of it is in the hover.
  */
-.prompt-mark {
-  border-radius: var(--r-4);
-  background: var(--content-path-tint);
-  box-shadow: 0 0 0 3px var(--content-path-tint);
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
-  color: var(--content-path-ink);
-}
-/*
- * A skill's `$` and a member's `@` give way to a glyph: the sigil keeps its width but no ink, and the glyph ends at the
- * sigil's right edge and reaches left over the space or padding before the token. `$` is 0.61em and a space 0.27em, so
- * the 0.84em book leaves a sliver of the space clear and the tint reaches 1px further left to hold it; `@` is 0.9em,
- * about the member's 16px Harness mark.
- */
-.prompt-mark[data-kind='skill'] {
-  box-shadow:
-    0 0 0 3px var(--content-path-tint),
-    -1px 0 0 3px var(--content-path-tint);
-}
-.prompt-mark-sigil:has(> .prompt-mark-glyph) {
-  position: relative;
-  color: transparent;
-}
-.prompt-mark-glyph {
-  position: absolute;
-  top: 50%;
-  inset-inline-end: 0;
+.prompt-chip {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 0.84em;
-  height: 0.84em;
+  gap: var(--sp-4);
+  max-width: calc(100% - 2 * var(--sp-2));
+  margin-inline: var(--sp-2);
+  padding: 0 var(--sp-6) 0 var(--sp-4);
+  border-radius: var(--r-6);
+  background: var(--content-chip-wash);
   color: var(--content-path-ink);
-  translate: 0 -50%;
+  white-space: nowrap;
+  /* A little under the line, so a chip on each of two lines never meets the other. */
+  height: calc(1lh - 4px);
+  vertical-align: baseline;
+  cursor: default;
 }
-.prompt-mark-glyph > svg {
-  width: 100%;
-  height: 100%;
+.prompt-chip:hover {
+  background: var(--content-chip-wash-strong);
 }
-.prompt-mark[data-kind='member'] .prompt-mark-glyph {
-  width: 1em;
-  height: 1em;
+/* Inside a selection the chip is selected as a whole: a hairline accent ring on a stronger wash. */
+.prompt-chip[data-selected] {
+  background: var(--content-chip-wash-strong);
+  box-shadow: 0 0 0 1px var(--content-chip-ring);
+}
+/*
+ * The token as written, for assistive technology and for a copy across the chip, which skips the glyph and the name.
+ * It stays inline (not the absolute sr-only box), so a copied line does not break round it.
+ */
+.prompt-chip-token {
+  display: inline-block;
+  width: 1px;
+  height: 1px;
+  margin-inline-end: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.prompt-chip-icon,
+.prompt-chip-label {
+  user-select: none;
+}
+.prompt-chip-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+/* A member's Harness mark keeps its brand colours, drawn at the glyphs' 14px. */
+.prompt-chip-icon > * {
+  max-width: 14px;
+  max-height: 14px;
+}
+.prompt-chip-icon :is(svg, img) {
+  width: 14px;
+  height: 14px;
+}
+.prompt-chip-label {
+  align-self: baseline;
+  min-width: 0;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* The @ list's files on their way: a small grey ring and a word, in the empty row under 文件. */
 .mention-finding {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-6);
-}
-.composer-command-chip {
-  border-radius: var(--r-4);
-  background: var(--hover);
 }
 .composer-command-hint {
   color: var(--muted);
@@ -969,14 +950,11 @@
     --stack-gap: var(--sp-6);
   }
   /* Phones type in the input role (16/24), which also keeps iOS from zooming on focus. */
-  .composer textarea {
-    min-height: calc(var(--lh-input) + 16px);
-    padding: var(--sp-12) var(--sp-12) var(--sp-4);
+  .composer-input {
     font-size: var(--fs-input);
     line-height: var(--lh-input);
-  }
-  .composer-input > textarea {
-    padding-inline-start: var(--sp-12);
+    --prompt-padding: var(--sp-12) var(--sp-12) var(--sp-4);
+    --prompt-min-height: calc(var(--lh-input) + 16px);
   }
   .composer-slash-button {
     display: inline-flex;

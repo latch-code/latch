@@ -8,6 +8,7 @@ import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { openSession, settleShell } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/side-question'
 
@@ -78,12 +79,12 @@ describe('/btw', () => {
       await menu.getByRole('option', { name: /\/btw/u }).waitFor()
       await page.screenshot({ path: `${OUT}/menu-1440-light.png`, animations: 'disabled' })
       await input.press('Enter')
-      expect(await input.inputValue()).toBe('/btw ')
+      expect(await promptValue(input)).toBe('/btw ')
       await input.pressSequentially('顺便问一句：这是什么项目？')
       await input.press('Enter')
       const panel = page.getByRole('complementary', { name: '旁支提问', exact: true })
       await panel.getByText('旁支回答：这是 Latch 的测试项目。').waitFor()
-      expect(await input.inputValue()).toBe('')
+      expect(await promptValue(input)).toBe('')
 
       // The fork had the settled turn as background and nothing of the running one; the running turn did not move.
       const asked = prompts.find(prompt => prompt.includes('顺便问一句'))!
@@ -104,7 +105,7 @@ describe('/btw', () => {
 
       await panel.getByRole('button', { name: '插入到输入框', exact: true }).click()
       await panel.waitFor({ state: 'detached' })
-      expect(await input.inputValue()).toBe('> 旁支回答：这是 Latch 的测试项目。')
+      expect(await promptValue(input)).toBe('> 旁支回答：这是 Latch 的测试项目。')
       await expect
         .poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.id === fork.id)?.archived)
         .toBe(true)

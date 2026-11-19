@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionSkill } from '@latch/protocol'
-import { markBeforeCaret, promptMarks, type PromptCatalogue } from '../src/composer/prompt-tokens.ts'
+import { promptChips, promptMarks, type PromptCatalogue } from '../src/composer/prompt-tokens.ts'
 
 const codex: PromptCatalogue = {
   commands: [{ name: 'compact', description: '压缩上下文' }, { name: 'usr' }],
@@ -66,16 +66,42 @@ describe('prompt marks', () => {
   })
 })
 
-describe('whole-token backspace', () => {
-  const text = '请 $check 和 $lark-apps'
-  const marks = promptMarks(text, codex)
-  it('takes the mark right before a collapsed caret', () => {
-    expect(markBeforeCaret(marks, 8, 8)).toMatchObject({ start: 2, end: 8 })
-    expect(markBeforeCaret(marks, text.length, text.length)).toMatchObject({ start: 11, end: text.length })
+describe('prompt chips', () => {
+  const team: PromptCatalogue = {
+    ...codex,
+    members: [
+      { token: '@输出-1', name: '输出一', title: '列出改动' },
+      { token: '@输出-4', name: '输出四', title: '核对接口' },
+    ],
+  }
+  const refs = [
+    { root: 'default', path: 'vitest.browser.config.ts' },
+    { root: 'docs', path: 'guide/中文 说明.md' },
+  ]
+  const chips = (text: string) => promptChips(text, team, refs).map(chip => [chip.kind, text.slice(chip.start, chip.end), chip.name])
+
+  it('finds every kind in order, across Chinese text and lines, and keeps the text as written', () => {
+    const text = '/compact 看看 @default:vitest.browser.config.ts\n请 @输出-1 @输出-4 用 $check 检查\n@default:vitest.browser.config.ts'
+    expect(chips(text)).toEqual([
+      ['command', '/compact', 'compact'],
+      ['file', '@default:vitest.browser.config.ts', 'vitest.browser.config.ts'],
+      ['member', '@输出-1', '输出一'],
+      ['member', '@输出-4', '输出四'],
+      ['skill', '$check', 'check'],
+      ['file', '@default:vitest.browser.config.ts', 'vitest.browser.config.ts'],
+    ])
   })
-  it('leaves other positions and selections to the input', () => {
-    expect(markBeforeCaret(marks, 7, 7)).toBeUndefined()
-    expect(markBeforeCaret(marks, 9, 9)).toBeUndefined()
-    expect(markBeforeCaret(marks, 2, 8)).toBeUndefined()
+
+  it('takes a file only while it is referenced and stands on its own', () => {
+    expect(chips('@default:vitest.browser.config.ts,')).toEqual([])
+    expect(chips('看@default:vitest.browser.config.ts')).toEqual([])
+    expect(promptChips('@default:vitest.browser.config.ts', team, [])).toEqual([])
+    expect(chips('看 @docs:guide/中文 说明.md 吧')).toEqual([['file', '@docs:guide/中文 说明.md', '中文 说明.md']])
+  })
+
+  it('never overlaps: one range read two ways is one chip', () => {
+    const text = '@输出-1 @default:a.ts @输出-1'
+    const both = promptChips(text, { members: [{ token: '@default:a.ts', name: 'A', title: 'A' }] }, [{ root: 'default', path: 'a.ts' }])
+    expect(both.map(chip => [chip.start, chip.end])).toEqual([[6, 19]])
   })
 })

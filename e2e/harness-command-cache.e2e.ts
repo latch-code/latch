@@ -9,6 +9,7 @@ import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, phoneStartScreen } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 it('offers previous-session commands in a normal new draft after recovery without starting a CLI or sending the selection', async () => {
   const root = await mkdtemp(join(tmpdir(), 'latch-command-cache-ui-'))
@@ -115,7 +116,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
           await currentPage.screenshot({ path: `${output}/previous-${width}-${colorScheme}.png`, animations: 'disabled' })
           await input.press('ArrowDown')
           await input.press('Enter')
-          await expect.poll(() => input.inputValue()).toBe('/public-plan ')
+          await expect.poll(() => promptValue(input)).toBe('/public-plan ')
           await currentPage.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))))
           expect(submissions).toBe(0)
           expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(1)
@@ -123,7 +124,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
           if (width === 1440 && colorScheme === 'light') {
             const page = currentPage
             const selectProject = async (name: string, id: string, wait = true) => {
-              const text = await input.inputValue()
+              const text = await promptValue(input)
               const reply = wait
                 ? page.waitForResponse(
                     response =>
@@ -138,7 +139,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
                 .getByRole('menuitemradio')
                 .filter({ has: page.getByText(name, { exact: true }) })
                 .click()
-              expect(await input.inputValue()).toBe(text)
+              expect(await promptValue(input)).toBe(text)
               if (reply) expect((await reply).ok()).toBe(true)
             }
             await selectProject('另一个项目', other.id)
@@ -223,7 +224,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
             await page.screenshot({ path: `${output}/new-page-1440-light.png`, animations: 'disabled' })
             await input.press('ArrowDown')
             await input.press('Tab')
-            expect(await input.inputValue()).toBe('/public-plan ')
+            expect(await promptValue(input)).toBe('/public-plan ')
             expect(submissions).toBe(0)
             expect(await starts()).toBe(before)
           }
@@ -237,7 +238,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
               .getByRole('option')
               .filter({ has: currentPage.getByText('/public-plan', { exact: true }) })
               .click()
-            expect(await sheetInput.inputValue()).toBe('/public-plan ')
+            expect(await promptValue(sheetInput)).toBe('/public-plan ')
             expect(submissions).toBe(0)
             expect(await starts()).toBe(before)
             await sheetInput.fill('')
@@ -274,7 +275,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
                 .getByRole('option')
                 .filter({ has: currentPage.getByText('/public-plan', { exact: true }) })
                 .click()
-              expect(await input.inputValue()).toBe('/public-plan ')
+              expect(await promptValue(input)).toBe('/public-plan ')
               expect(submissions).toBe(0)
             } finally {
               await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 })
@@ -333,7 +334,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
       void nextRead.catch(() => {})
       await currentPage.clock.fastForward(30_000)
       expect((await nextRead).ok()).toBe(true)
-      expect(await input.inputValue()).toBe('/updated')
+      expect(await promptValue(input)).toBe('/updated')
       expect(await input.getAttribute('aria-activedescendant')).toBe(active)
       expect(await starts()).toBe(afterResume)
       // Headless Chrome has no OS app-background action: exercise the browser visibility event with a temporary
@@ -356,7 +357,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
       }
       await expect.poll(() => reads).toBeGreaterThan(visibleReads)
       await list.getByText('/updated-plan', { exact: true }).waitFor({ timeout: 5_000 })
-      expect(await input.inputValue()).toBe('/updated')
+      expect(await promptValue(input)).toBe('/updated')
       expect(await input.getAttribute('aria-activedescendant')).toBe(active)
       expect(await starts()).toBe(afterResume)
       await input.fill('/')
@@ -374,7 +375,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
       await list.getByText('开始会话后列出', { exact: true }).waitFor({ timeout: 5_000 })
       liveEvidence.push({ event: 'private-after-snapshot', elapsedMs: performance.now() - changedAt, reads, starts: await starts() })
       expect(await list.getByText('/updated-plan', { exact: true }).count()).toBe(0)
-      expect(await input.inputValue()).toBe('/')
+      expect(await promptValue(input)).toBe('/')
       expect(await starts()).toBe(afterResume)
       await currentPage.screenshot({ path: `${output}/source-private-1440-light.png`, animations: 'disabled' })
       const fresh = await owner.json<{ sessionId: string }>('tasks', {
@@ -413,7 +414,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
       await list.getByText('开始会话后列出', { exact: true }).waitFor({ timeout: 5_000 })
       liveEvidence.push({ event: 'delete', elapsedMs: performance.now() - changedAt, reads, starts: await starts() })
       expect(await list.getByText('/updated-plan', { exact: true }).count()).toBe(0)
-      expect(await input.inputValue()).toBe('/')
+      expect(await promptValue(input)).toBe('/')
       expect(await starts()).toBe(afterCreate + 1)
       await currentPage.screenshot({ path: `${output}/source-deleted-1440-light.png`, animations: 'disabled' })
     } finally {

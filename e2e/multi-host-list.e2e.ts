@@ -13,6 +13,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { openEntry, openSection, openSessions } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const SHOTS = process.env.LATCH_SHOTS_DIR ?? 'test-results/multi-host-list'
 const COMPUTER_SCOPES = ['view', 'run', 'approve:standard', 'approve:elevated'] as const
@@ -278,8 +279,8 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
       )
       const bInput = bPage.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true })
       await bInput.waitFor()
-      expect(await bInput.inputValue()).toBe('')
-      expect(await page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).inputValue()).toBe(
+      expect(await promptValue(bInput)).toBe('')
+      expect(await promptValue(page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }))).toBe(
         '只在这台 Mac 的草稿',
       )
       await bPage.locator('.home-headline').getByText('乙方项目').or(bPage.locator('.home-headline')).first().waitFor()

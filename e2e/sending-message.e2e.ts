@@ -10,6 +10,7 @@ import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browse
 import { startTestHost } from './helpers/host.ts'
 import { composerEntry, noHorizontalOverflow, openSession, permissionControl, permissionWords, showTooltip } from './helpers/layout.ts'
 import { homeInput } from './helpers/workbench.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 test('shows immediate text, delays delivery wording and retries an uncertain input with the same identity on three widths', async () => {
   const host = await startTestHost({ uiDir: resolve('dist/web') }),
@@ -222,7 +223,7 @@ test('a retry that stays unconfirmed says why, and 放弃这次提交 lets go of
         // In the session: the text goes back into the input and is sent as a new message with a new requestId.
         await card.getByRole('button', { name: '放弃这次提交', exact: true }).click()
         await expect.poll(() => card.count()).toBe(0)
-        expect(await input.inputValue()).toBe(text)
+        expect(await promptValue(input)).toBe(text)
       } else {
         // From another session: the card offers it there too, and the text waits as the home session's draft.
         await open(`旁边的会话 ${width}`)
@@ -234,9 +235,9 @@ test('a retry that stays unconfirmed says why, and 放弃这次提交 lets go of
         await page.emulateMedia({ colorScheme: 'light' })
         await card.getByRole('button', { name: '放弃这次提交', exact: true }).click()
         await expect.poll(() => card.count()).toBe(0)
-        expect(await input.inputValue()).toBe('')
+        expect(await promptValue(input)).toBe('')
         await open(`卡住的会话 ${width}`)
-        await expect.poll(() => input.inputValue()).toBe(text)
+        await expect.poll(() => promptValue(input)).toBe(text)
       }
       failing = false
       await input.press('Enter')
@@ -294,7 +295,7 @@ test('a Harness that cannot start is a refusal, not an unconfirmed message: the 
       await notice.getByRole('button', { name: '打开设置 › Harness', exact: true }).waitFor()
       await notice.getByRole('button', { name: '重试', exact: true }).waitFor()
       expect(await page.locator('.pending-submission').filter({ visible: true }).count()).toBe(0)
-      expect(await input.inputValue()).toBe(text)
+      expect(await promptValue(input)).toBe(text)
       await page.screenshot({ path: `${SHOTS}/start-failed--${scheme}--${width}.png` })
       const answered = page.waitForResponse(response => response.url().endsWith(`/tasks/${sessionId}/prompt`))
       await notice.getByRole('button', { name: '重试', exact: true }).click()
@@ -369,7 +370,7 @@ test('only a message the Host lists by this requestId counts as delivered, from 
     await card.getByRole('button', { name: '放弃这次提交', exact: true }).waitFor()
     await card.getByRole('button', { name: '放弃这次提交', exact: true }).click()
     await expect.poll(() => card.count()).toBe(0)
-    expect(await input.inputValue()).toBe('同样的文字')
+    expect(await promptValue(input)).toBe('同样的文字')
     expect(await page.getByText('已送达', { exact: true }).count()).toBe(0)
     expect(await texts('同样的文字')).toBe(1)
 
@@ -388,7 +389,7 @@ test('only a message the Host lists by this requestId counts as delivered, from 
     await page.locator(`[data-task-id="${home}"]`).first().click()
     await page.locator('.user-bubble').getByText('丢了答复的消息', { exact: true }).waitFor()
     // The draft that still held the delivered text went with it.
-    expect(await input.inputValue()).toBe('')
+    expect(await promptValue(input)).toBe('')
     expect(await texts('丢了答复的消息')).toBe(1)
 
     // With an attachment, a listed message is sent once more with the same requestId instead of being settled.
@@ -497,8 +498,8 @@ test('opens the new-session transcript on send, keeps the lost receipt, and open
         release()
         const retry = sending.getByRole('button', { name: '重试这次提交', exact: true })
         await retry.waitFor()
-        const input = sending.locator('form[hidden] textarea')
-        expect(await input.inputValue()).toBe(title)
+        const input = sending.locator('form[hidden] .composer-input [role="textbox"]')
+        expect(await promptValue(input)).toBe(title)
         expect(await input.isVisible()).toBe(false)
         expect(await sending.locator('.pending-submission').getByText(title, { exact: true }).count()).toBe(0)
         const [request] = starts

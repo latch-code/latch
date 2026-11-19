@@ -62,8 +62,11 @@
   flex-shrink: 0;
   color: var(--muted);
 }
-.new-session-sheet .setup-card,
-.composer-sheet .composer textarea {
+.new-session-sheet .setup-card {
   min-height: calc(var(--lh-input) * 5 + 16px);
   padding-bottom: var(--sp-12);
+}
+.composer-sheet .composer-input {
+  --prompt-min-height: calc(var(--lh-input) * 5 + 16px);
+  --prompt-padding: var(--sp-12);
 }

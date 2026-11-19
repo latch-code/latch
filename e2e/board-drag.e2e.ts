@@ -11,6 +11,7 @@ import { startTestHost } from './helpers/host.ts'
 import { settleShell } from './helpers/layout.ts'
 import { stillMotion } from './helpers/visual.ts'
 import { switchView } from './helpers/workbench.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/board-drag'
 
@@ -140,7 +141,7 @@ it('drags a card between columns: the drop does the card’s own action, the Hos
     await hold(page, itemCard(page, todo.id), column(page, '进行中'))
     await page.mouse.up()
     const start = page.getByRole('dialog', { name: '开始' })
-    await expect.poll(() => start.locator('textarea').inputValue()).toBe('echo 整理发布说明')
+    await expect.poll(() => promptValue(start.locator('.composer-input [role="textbox"]'))).toBe('echo 整理发布说明')
     await page.keyboard.press('Escape')
     await start.waitFor({ state: 'hidden' })
     expect((await itemOf(todo.id))?.sessionIds).toEqual([])

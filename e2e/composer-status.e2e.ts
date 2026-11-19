@@ -238,7 +238,7 @@ describe('the composer without a status line', () => {
         const [frameBox, lineBox, inputBox, sendBox, entryBox] = await Promise.all([
           form.boundingBox(),
           line.boundingBox(),
-          form.locator('textarea').boundingBox(),
+          form.locator('.composer-input .cm-scroller').boundingBox(),
           line.locator('.send-button').boundingBox(),
           line.locator('[data-composer-control="model"]').boundingBox(),
         ])
@@ -265,7 +265,7 @@ describe('the composer without a status line', () => {
       try {
         const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await input.waitFor()
-        expect(await input.getAttribute('placeholder')).toBe('想让 Agent 做什么？')
+        expect(await input.getAttribute('aria-placeholder')).toBe('想让 Agent 做什么？')
         await page
           .getByRole('button', { name: /^Harness：/u })
           .first()

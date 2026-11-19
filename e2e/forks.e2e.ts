@@ -9,6 +9,7 @@ import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { permissionControl, permissionWords, tooltipText } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 /** Reads a Harness's lists the way a person does where it reads them only on request: from the model menu. */
 async function readListsFromMenu(page: Page, harness: string): Promise<void> {
@@ -58,7 +59,7 @@ describe('conversation forks', () => {
         expect(await forking.evaluate(element => element.closest('.workbench-home') !== null)).toBe(true)
         expect(await page.locator('main.workspace.has-task').count()).toBe(0)
         const input = home.getByRole('textbox', { name: '新会话消息', exact: true })
-        expect(await input.inputValue()).toBe('请接着这个会话继续。')
+        expect(await promptValue(input)).toBe('请接着这个会话继续。')
         // What a fork borrows from its source is for this draft: nothing goes into what this device remembers.
         expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('latch.composer.')))).toEqual([])
         await input.fill('请走另一条路')
@@ -153,7 +154,7 @@ describe('conversation forks', () => {
       // The home: one notice, the sentence in the input, and the Harness menu open on the source's Harness.
       const notice = page.locator('.fork-notice').first()
       await notice.getByText('从「从弹层分叉」分叉', { exact: true }).waitFor()
-      expect(await page.getByRole('textbox', { name: '新会话消息', exact: true }).inputValue()).toBe('请接着这个会话继续。')
+      expect(await promptValue(page.getByRole('textbox', { name: '新会话消息', exact: true }))).toBe('请接着这个会话继续。')
       const menu = page.getByRole('menu', { name: /^Harness/u })
       await menu.waitFor()
       await menu.getByRole('menuitemradio', { name: /goose/u }).click()

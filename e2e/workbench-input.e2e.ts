@@ -7,6 +7,7 @@ import type { Device, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 async function choose(page: Page, title: string) {
   await page.keyboard.press('Meta+k')
@@ -70,7 +71,11 @@ it.each([
       await owner.confirmedJson(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all' } })
       await page.reload()
       await connected(page)
-      await expect.poll(() => page.locator('.workbench-home textarea').evaluate(element => element === document.activeElement)).toBe(true)
+      await expect
+        .poll(() =>
+          page.locator('.workbench-home .composer-input [role="textbox"]').evaluate(element => element === document.activeElement),
+        )
+        .toBe(true)
       let releaseDetail!: () => void
       const detailGate = new Promise<void>(resolve => {
         releaseDetail = resolve
@@ -80,16 +85,16 @@ it.each([
         await route.continue()
       })
       await choose(page, '原会话')
-      const input = page.locator('.workspace textarea').first()
+      const input = page.locator('.workspace .composer-input [role="textbox"]').first()
       await input.fill('只属于原会话的草稿')
       releaseDetail()
       await page.locator('.transcript').getByText('工作记录已保留。', { exact: true }).first().waitFor()
-      expect(await input.inputValue()).toBe('只属于原会话的草稿')
+      expect(await promptValue(input)).toBe('只属于原会话的草稿')
       await page.unroute(`**/link/api/tasks/${sessionId}`)
       await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
       await page.locator('.titlebar').getByRole('button', { name: '新建会话', exact: true }).click({ trial: true })
       await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
-      expect(await input.inputValue()).toBe('只属于原会话的草稿')
+      expect(await promptValue(input)).toBe('只属于原会话的草稿')
       await page
         .locator('.workspace')
         .getByLabel('选择附件', { exact: true })
@@ -122,7 +127,7 @@ it.each([
       await page.locator('.sidebar [data-space-primary]').click()
       const home = page.locator('.workbench-home')
       const draft = home.getByRole('textbox', { name: '新会话消息', exact: true })
-      expect(await draft.inputValue()).toBe('')
+      expect(await promptValue(draft)).toBe('')
       await draft.fill('只属于首页的新任务')
       await home
         .getByLabel('选择附件', { exact: true })
@@ -138,7 +143,7 @@ it.each([
       expect(await home.isVisible()).toBe(true)
       expect(await page.locator('main.workspace').getAttribute('inert')).toBe('')
       expect(await mounted!.evaluate(element => element.isConnected)).toBe(true)
-      expect(await draft.inputValue()).toBe('只属于首页的新任务')
+      expect(await promptValue(draft)).toBe('只属于首页的新任务')
       expect(await home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
       await page.setViewportSize({ width: 390, height: 844 })
       await home.locator('.workbench-phone-heading').waitFor()
@@ -148,7 +153,7 @@ it.each([
       await expect.poll(() => draft.evaluate(element => element === document.activeElement)).toBe(true)
       expect(await page.getByRole('dialog', { name: '新会话', exact: true }).count()).toBe(0)
       expect(await page.getByRole('button', { name: '新会话选项', exact: true }).count()).toBe(0)
-      expect(await draft.inputValue()).toBe('只属于首页的新任务')
+      expect(await promptValue(draft)).toBe('只属于首页的新任务')
       expect(await home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
       expect(await home.getByRole('button', { name: 'session.txt', exact: true }).count()).toBe(0)
       expect(await page.getByRole('dialog', { name: '放弃你的修改？', exact: true }).count()).toBe(0)
@@ -162,13 +167,13 @@ it.each([
           .count(),
       ).toBe(1)
       expect(await line.getByRole('button', { name: /^Harness：/u }).count()).toBe(1)
-      expect(await home.locator('form.composer textarea').count()).toBe(1)
+      expect(await home.locator('form.composer .composer-input [role="textbox"]').count()).toBe(1)
       expect(await line.locator('.send-button').getAttribute('aria-label')).toBe('发送')
       expect(await home.isVisible()).toBe(true)
       await page.setViewportSize({ width: 1440, height: 1000 })
       // The session under the home is still the current row; it leads back.
       await page.locator(`.sidebar [data-task-id="${sessionId}"]`).filter({ visible: true }).click()
-      expect(await input.inputValue()).toBe('只属于原会话的草稿')
+      expect(await promptValue(input)).toBe('只属于原会话的草稿')
       expect(await mounted!.evaluate(element => element.isConnected)).toBe(true)
       expect(await readingLine.evaluate(element => element.isConnected)).toBe(true)
       // The same paragraph should stay in the reading viewport, allowing for pixel rounding after resizing.
@@ -186,7 +191,7 @@ it.each([
       expect(await page.locator('.workspace').getByRole('button', { name: 'session.txt', exact: true }).isEnabled()).toBe(true)
       expect(await page.locator('.workspace').getByRole('button', { name: 'home.txt', exact: true }).count()).toBe(0)
       await page.locator('.sidebar [data-space-primary]').click()
-      expect(await draft.inputValue()).toBe('只属于首页的新任务')
+      expect(await promptValue(draft)).toBe('只属于首页的新任务')
       for (const width of [320, 390]) {
         await page.setViewportSize({ width, height: 844 })
         // A phone's start screen is pushed over its list: its heading holds the way back and 搜索.
@@ -200,13 +205,13 @@ it.each([
         expect(await palette.getByRole('searchbox').inputValue()).toBe('')
         await page.keyboard.press('Escape')
         await palette.waitFor({ state: 'hidden' })
-        expect(await draft.inputValue()).toBe('只属于首页的新任务')
+        expect(await promptValue(draft)).toBe('只属于首页的新任务')
         await navigation.getByRole('button', { name: '返回会话列表', exact: true }).click()
         const history = page.locator('.phone-list:not([inert])')
         await history.locator(`[data-task-id="${sessionId}"]`).click()
         await page.locator('.workspace .topbar').getByRole('button', { name: '返回会话列表', exact: true }).click()
         await history.getByRole('button', { name: '新建会话', exact: true }).click()
-        expect(await draft.inputValue()).toBe('只属于首页的新任务')
+        expect(await promptValue(draft)).toBe('只属于首页的新任务')
         expect(await home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
       }
       await page.setViewportSize({ width: 1440, height: 1000 })
@@ -227,7 +232,7 @@ it.each([
       await firstMessage.waitFor()
       await retry.waitFor()
       expect(await home.isVisible()).toBe(false)
-      expect(await sending.locator('form[hidden] textarea').inputValue()).toBe('只属于首页的新任务')
+      expect(await promptValue(sending.locator('form[hidden] .composer-input [role="textbox"]'))).toBe('只属于首页的新任务')
       const [request] = requests
       expect(request).toMatchObject({ requestId: expect.any(String), prompt: '只属于首页的新任务' })
       expect(request!.sessionId).toBeUndefined()
@@ -248,7 +253,7 @@ it.each([
       const created = await owner.json<TaskDetail>(`tasks/${tasks.find(task => task.id !== sessionId)!.id}`)
       expect(created.messages.find(message => message.role === 'user')?.attachments?.map(item => item.name)).toEqual(['home.txt'])
       await choose(page, '原会话')
-      expect(await input.inputValue()).toBe('只属于原会话的草稿')
+      expect(await promptValue(input)).toBe('只属于原会话的草稿')
       await mkdir('test-results/workbench-input', { recursive: true })
       await page.screenshot({ path: `test-results/workbench-input/restored-session-${name}.png`, animations: 'disabled' })
     } finally {

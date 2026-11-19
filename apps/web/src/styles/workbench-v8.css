@@ -473,11 +473,11 @@
   padding-top: var(--sp-8);
   padding-bottom: var(--sp-16);
 }
-.workbench-home-composer textarea {
-  padding: 0 var(--sp-16);
+.workbench-home-composer .composer-input {
   font-size: var(--fs-work-input);
   line-height: var(--lh-work-input);
-  min-height: 30px;
+  --prompt-padding: 0 var(--sp-16);
+  --prompt-min-height: 30px;
 }
 .workbench-home-composer .composer-toolbar {
   padding: 0 var(--sp-12) var(--sp-12);
@@ -641,8 +641,8 @@
 .code-home-input > .code-home-notices:empty {
   display: none;
 }
-.code-home .workbench-home-composer textarea {
-  max-height: min(232px, 24dvh);
+.code-home .workbench-home-composer .composer-input {
+  --prompt-max-height: min(232px, 24dvh);
 }
 
 /* The work and its input have separate space. With no work the composer stays in its established starting position. */
@@ -1178,11 +1178,11 @@
   .workbench-home-composer .composer-input {
     padding: 0;
   }
-  .workbench-home-composer textarea {
-    padding: var(--sp-8) var(--sp-4);
-    min-height: calc(var(--lh-input) + 16px);
+  .workbench-home-composer .composer-input {
     font-size: var(--fs-input);
     line-height: var(--lh-input);
+    --prompt-padding: var(--sp-8) var(--sp-4);
+    --prompt-min-height: calc(var(--lh-input) + 16px);
   }
   .workbench-phone-heading .space-switch {
     width: auto;

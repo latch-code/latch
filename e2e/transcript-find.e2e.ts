@@ -8,6 +8,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 it('finds never-opened tool output, opens both disclosures, highlights each match and preserves the draft at three widths', async () => {
   let calls = 0
@@ -90,7 +91,7 @@ it('finds never-opened tool output, opens both disclosures, highlights each matc
         await expect.poll(() => page.evaluate(() => CSS.highlights.get('latch-find')?.size ?? 0)).toBe(0)
         await query.press('Escape')
         await find.waitFor({ state: 'hidden' })
-        expect(await draft.inputValue()).toBe('尚未发送的草稿')
+        expect(await promptValue(draft)).toBe('尚未发送的草稿')
         expect(await draft.evaluate(element => element === document.activeElement)).toBe(true)
         expect(calls).toBe(before)
       } finally {

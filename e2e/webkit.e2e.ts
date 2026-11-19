@@ -6,6 +6,7 @@ import type { WorkspaceInfo } from '@latch/protocol'
 import { connected, enrollBrowser } from './helpers/browser.ts'
 import { backToPhoneSessions, noHorizontalOverflow } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 describe('WebKit workbench and authorized file rendering', () => {
   it.each([
@@ -63,9 +64,9 @@ describe('WebKit workbench and authorized file rendering', () => {
         element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
       })
       await preview.getByRole('button', { name: '引用到对话', exact: true }).click()
-      await expect.poll(() => input.inputValue()).toContain('> 这段内容来自授权的项目文件。')
-      expect(await input.inputValue()).toContain('请阅读这些内容，再给我建议。')
-      expect(await input.inputValue()).toContain('@' + project.folders![0]!.id + ':README.md')
+      await expect.poll(() => promptValue(input)).toContain('> 这段内容来自授权的项目文件。')
+      expect(await promptValue(input)).toContain('请阅读这些内容，再给我建议。')
+      expect(await promptValue(input)).toContain('@' + project.folders![0]!.id + ':README.md')
       expect(submissions).toHaveLength(0)
       expect(await host.host.bridge.listTasks()).toHaveLength(0)
       await noHorizontalOverflow(page)

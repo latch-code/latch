@@ -10,6 +10,7 @@ import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browse
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
 import { stillMotion } from './helpers/visual.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/my-agents'
 
@@ -380,7 +381,7 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     await retryInput.fill('第一条核对消息')
     await retryInput.press('Meta+Enter')
     await page.getByText(/没有开始/u).waitFor()
-    expect(await retryInput.inputValue()).toBe('第一条核对消息')
+    expect(await promptValue(retryInput)).toBe('第一条核对消息')
     await page.screenshot({ path: `${OUT}/refused-1440.png` })
 
     // An unknown result keeps the request; retrying sends the same requestId and starts exactly one session.
@@ -411,7 +412,7 @@ it('creates an Agent, continues its one chat, keeps its profile, talks with 通�
     expect((await card.locator('.pending-submission-reason').textContent())?.trim()).not.toBe('')
     await card.getByRole('button', { name: '放弃这次提交', exact: true }).click()
     await card.waitFor({ state: 'detached' })
-    await expect.poll(() => laterInput.inputValue()).toBe('保留这份草稿')
+    await expect.poll(() => promptValue(laterInput)).toBe('保留这份草稿')
     expect((await owner.json<AppSnapshot>('snapshot')).agentChats?.[another.id]).toEqual({ state: 'empty' })
 
     await context.close()
@@ -555,7 +556,7 @@ it('keeps the Agent, the topic and what was typed through a layout change, and p
     expect(await agentsNav(page).getAttribute('data-people')).toBe('roster')
     expect(await agentsNav(page).locator('.agent-tree').count()).toBe(0)
     // The open topic's own input (the new topic's is gone with its page).
-    const draft = page.locator('main.workspace textarea:visible').first()
+    const draft = page.locator('main.workspace .composer-input [role="textbox"]:visible').first()
     await draft.fill('写到一半的话')
     await page.screenshot({ path: `${OUT}/layout-roster-1440.png` })
 
@@ -566,7 +567,7 @@ it('keeps the Agent, the topic and what was typed through a layout change, and p
     await agentRow(page, agent.id).click()
     await expect.poll(() => page.locator('.app-shell').getAttribute('data-entry')).toBe('sessions')
     await expect.poll(() => current.count()).toBe(1)
-    expect(await draft.inputValue()).toBe('写到一半的话')
+    expect(await promptValue(draft)).toBe('写到一半的话')
     await context.close()
 
     // A phone: the roster is the root page; a topic is pushed over it and the way back returns to the roster.
@@ -888,13 +889,13 @@ it('keeps the second device’s first-message draft and explicitly opens the sha
     proceed()
     const continueChat = second.getByRole('button', { name: '带上草稿打开聊天', exact: true })
     await continueChat.waitFor()
-    expect(await input(second).inputValue()).toBe('手机的未送出草稿')
+    expect(await promptValue(input(second))).toBe('手机的未送出草稿')
     await noHorizontalOverflow(second)
     await second.screenshot({ path: `${OUT}/second-first-draft-390-dark.png`, animations: 'disabled' })
     await continueChat.click()
     await second.locator('.transcript-shell').getByText('桌面的唯一首条消息', { exact: true }).waitFor()
     const continued = second.getByRole('textbox', { name: '继续对话', exact: true }).filter({ visible: true })
-    await expect.poll(() => continued.inputValue()).toBe('手机的未送出草稿')
+    await expect.poll(() => promptValue(continued)).toBe('手机的未送出草稿')
     const detail = await owner.json<TaskDetail>(`tasks/${confirmed.sessionId}`)
     expect(detail.messages.filter(message => message.role === 'user').map(message => message.text)).toEqual(['桌面的唯一首条消息'])
     const tasks = (await owner.json<AppSnapshot>('snapshot')).tasks.filter(task => task.agent?.customAgentId === agent.id)

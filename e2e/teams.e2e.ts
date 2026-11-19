@@ -9,6 +9,7 @@ import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/t
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, settleShell } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/teams'
 const VIEWS = [
@@ -175,7 +176,7 @@ describe('a team of sessions, in the page', () => {
     await panel.getByRole('button', { name: '让 Agent 来分', exact: true }).click()
     await panel.waitFor({ state: 'hidden' })
     const input = page.getByRole('textbox', { name: '继续对话', exact: true })
-    expect(await input.inputValue()).toContain('propose_todos')
+    expect(await promptValue(input)).toContain('propose_todos')
     expect((await detail(id)).messages.filter(message => message.role === 'user')).toHaveLength(1)
     await input.fill('')
     await entry.click()
@@ -688,7 +689,7 @@ describe('a team of sessions, in the page', () => {
     expect(sent).toBe(
       '请启动 Codex 的子 Agent 并行处理下列任务。分工后等待各成员结果，再汇总给我。\n\n1. 检查窄屏\n   看 390 宽\n2. 核对回执',
     )
-    expect(await input.inputValue()).toBe('先别发')
+    expect(await promptValue(input)).toBe('先别发')
     // No team of sessions was made: Codex's own members are the record's.
     expect((await snapshot()).teams?.some(row => row.leadSessionId === id)).toBe(false)
     const record = page.getByRole('button', { name: /Agent 团队/u }).filter({ visible: true })
@@ -707,7 +708,7 @@ describe('a team of sessions, in the page', () => {
       '请启动 Codex 的子 Agent 并行处理下列任务。分工后等待各成员结果，再汇总给我。\n\n1. 再看一遍',
     ])
     expect((await detail(id)).messages.filter(message => message.role === 'user').length).toBe(before + 1)
-    expect(await input.inputValue()).toBe('先别发')
+    expect(await promptValue(input)).toBe('先别发')
     await input.fill('')
   }, 180_000)
 
@@ -742,15 +743,46 @@ describe('a team of sessions, in the page', () => {
     // Picking one puts its chip in the input; a second chip names the other. Enter sends them a round, not this session.
     await input().fill('@核')
     await page.keyboard.press('Enter')
-    await poll(() => input().inputValue()).toBe('@核对接口 ')
+    await poll(() => promptValue(input())).toBe('@核对接口 ')
     await page.keyboard.type('@列')
     await members.waitFor()
     await page.keyboard.press('Enter')
     await page.keyboard.type('echo 再核对一遍边界。')
-    expect(await page.locator('.composer-input .prompt-mark[data-kind="member"]').count()).toBe(2)
+    expect(await page.locator('.composer-input .prompt-chip[data-kind="member"]').count()).toBe(2)
+    expect(await promptValue(input())).toBe('@核对接口 @列出改动 echo 再核对一遍边界。')
+    // Two members side by side: each its Harness mark and name, with room between them and before the text.
+    const memberChips = await input().evaluate(element =>
+      [...element.querySelectorAll<HTMLElement>('.prompt-chip[data-kind="member"]')].map(chip => ({
+        label: chip.querySelector('.prompt-chip-label')!.textContent,
+        title: chip.title,
+        box: chip.getBoundingClientRect().toJSON() as DOMRect,
+        icon: chip.querySelector('.prompt-chip-icon')!.getBoundingClientRect().toJSON() as DOMRect,
+      })),
+    )
+    expect(memberChips.map(chip => chip.label)).toEqual(['核对接口', '列出改动'])
+    expect(memberChips[1]!.box.left - memberChips[0]!.box.right).toBeGreaterThanOrEqual(4)
+    expect(memberChips.every(chip => Math.abs(chip.icon.width - 14) <= 0.5)).toBe(true)
+    await shots('member-chips', '拆分登录重构', async view => {
+      const field = view.getByRole('textbox', { name: '继续对话', exact: true }).filter({ visible: true })
+      await field.fill('@核对接口 @列出改动 echo 再核对一遍边界。')
+      await field.locator('.prompt-chip[data-kind="member"]').nth(1).waitFor()
+    })
+    // The shared views have no light phone: that one too.
+    await page.setViewportSize({ width: 390, height: 844 })
+    await settleShell(page)
+    if (!(await page.locator('.transcript .turn').first().isVisible())) await open('拆分登录重构')
+    await input().fill('@核对接口 @列出改动 echo 再核对一遍边界。')
+    await input().locator('.prompt-chip[data-kind="member"]').nth(1).waitFor()
+    await page.mouse.move(388, 400)
+    await page.screenshot({ path: `${OUTPUT}/member-chips--390--light.png`, animations: 'disabled', caret: 'hide' })
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await settleShell(page)
+    if (!(await page.locator('.transcript .turn').first().isVisible())) await open('拆分登录重构')
+    await input().fill('@核对接口 @列出改动 echo 再核对一遍边界。')
+    await input().press('End')
     const before = (await detail(id)).messages.length
     await page.keyboard.press('Enter')
-    await poll(() => input().inputValue()).toBe('')
+    await poll(() => promptValue(input())).toBe('')
     const second = await teamIn(team.id, 'returned')
     expect(second.round).toBe(2)
     expect(second.rounds?.at(-1)?.members.map(member => member.itemId)).toEqual(team.members.map(member => member.itemId))

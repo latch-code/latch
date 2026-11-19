@@ -5,6 +5,7 @@ import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { permissionWords, noHorizontalOverflow, phoneStartScreen } from './helpers/layout.ts'
 import { homeInput } from './helpers/workbench.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 describe('no project means chat', () => {
   it.each([
@@ -37,7 +38,7 @@ describe('no project means chat', () => {
       await page.getByText('在 studio-mini 上的 Latch 里添加项目', { exact: true }).filter({ visible: true }).first().waitFor()
       expect(await page.getByRole('menuitem', { name: '添加项目…' }).count()).toBe(0)
       await page.getByText('不选项目', { exact: true }).filter({ visible: true }).last().click()
-      expect(await input.inputValue()).toBe('解释一下什么是 SSE')
+      expect(await promptValue(input)).toBe('解释一下什么是 SSE')
       // The permission says it on the input's one entry: nothing can ask, as no file is read or written.
       await expect.poll(() => permissionWords(page)).toBe('权限：不读写文件')
       await noHorizontalOverflow(page)
@@ -60,7 +61,7 @@ describe('no project means chat', () => {
         }
       }
       const continued = page.getByRole('textbox', { name: '继续对话', exact: true })
-      await expect.poll(() => continued.getAttribute('placeholder')).toBe('写下问题或想法…')
+      await expect.poll(() => continued.getAttribute('aria-placeholder')).toBe('写下问题或想法…')
       const detail = await owner.json<TaskDetail>(`tasks/${task!.id}`)
       expect(detail.messages.filter(message => message.role === 'tool')).toEqual([])
     } finally {

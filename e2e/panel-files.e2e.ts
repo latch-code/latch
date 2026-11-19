@@ -10,6 +10,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { closeActiveFile, openPanelTab, openSession, settleShell } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/panel-files'
 const { word, workbook, presentation, pdf } = documentFixtures(files =>
@@ -142,7 +143,7 @@ describe('the right panel', () => {
       await shot(page, 'pptx-en', 1440, 'light')
       await page.getByRole('button', { name: 'Quote in chat', exact: true }).click()
       // Draft references use the original page marker even when the viewer is English.
-      await expect.poll(async () => page.locator('.composer-input textarea:visible').inputValue()).toContain('第 2 页')
+      await expect.poll(async () => promptValue(page.locator('.composer-input [role="textbox"]:visible'))).toContain('第 2 页')
     } finally {
       await page.context().close()
     }

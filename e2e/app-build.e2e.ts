@@ -12,6 +12,7 @@ import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { closeSettings, noHorizontalOverflow, openSection, openSettings, reachable, settleShell } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/app-build'
 const TITLE = '计数页'
@@ -427,8 +428,8 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('page drafts on t
       await window.emulateMedia({ colorScheme: 'light' })
       const messages = (await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.length
       await card.getByRole('button', { name: '交回 Agent' }).click()
-      const composer = window.locator('.composer textarea').first()
-      await expect.poll(() => composer.inputValue(), SLOW).toContain('index.tsx:2:7')
+      const composer = window.locator('.composer .composer-input [role="textbox"]').first()
+      await expect.poll(() => promptValue(composer), SLOW).toContain('index.tsx:2:7')
       expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.length).toBe(messages)
 
       // The next turn fixes it: built again, and 应用新版本 rebuilds the page's frame everywhere.

@@ -13,6 +13,7 @@ import type { AppSnapshot, TerminalListResponse, WorkspaceInfo } from '@latch/pr
 import { startTestHost } from './helpers/host.ts'
 import { closeSettings, openPanelTab, openSettings } from './helpers/layout.ts'
 import { homeInput, switchView } from './helpers/workbench.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 type Launch = NonNullable<NonNullable<ServerOptions['terminal']>['launch']>
 type Spec = Parameters<Launch>[0]
@@ -434,18 +435,18 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await resize(1440)
 
       // 加入对话: without a selection the Host's extract of the last lines goes into the draft, not sent.
-      const draft = page.locator('.composer textarea').first()
+      const draft = page.locator('.composer .composer-input [role="textbox"]').first()
       await panel.getByRole('button', { name: '加入对话', exact: true }).click()
-      await expect.poll(() => draft.inputValue()).toContain('终端 1')
-      expect(await draft.inputValue()).toContain('ran echo hi')
-      expect(await draft.inputValue()).toMatch(/^终端 1(（较早的输出未包含）)?\n```text\n/u)
+      await expect.poll(() => promptValue(draft)).toContain('终端 1')
+      expect(await promptValue(draft)).toContain('ran echo hi')
+      expect(await promptValue(draft)).toMatch(/^终端 1(（较早的输出未包含）)?\n```text\n/u)
       expect((await host.bridge.detail(sessionId)).messages.filter(message => message.role === 'user')).toHaveLength(1)
       await draft.fill('')
       // With a selection, only the selection.
       const word = (await rows.getByText('ran echo hi').first().boundingBox())!
       await page.mouse.dblclick(word.x + 6, word.y + word.height / 2)
       await panel.getByRole('button', { name: '加入对话', exact: true }).click()
-      await expect.poll(() => draft.inputValue()).toBe('终端 1\n```text\nran\n```')
+      await expect.poll(() => promptValue(draft)).toBe('终端 1\n```text\nran\n```')
       await draft.fill('')
 
       // A reload shows the same terminal with its output replayed from the Host's scrollback.
@@ -570,12 +571,12 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       // 新会话 returns to the start screen with its draft; it starts in the just-read session's project, so the project is
       // chosen again, and its terminal is the one already running there.
       await page.locator('#session-navigation [data-space-primary]').click()
-      expect(await input.inputValue()).toBe('项目草稿仍在')
+      expect(await promptValue(input)).toBe('项目草稿仍在')
       await projectPicker.click()
       await page.getByRole('menu', { name: '项目', exact: true }).getByText('终端验收项目', { exact: true }).click()
       await expect.poll(() => screen.getAttribute('data-terminal-id')).toBe(projectTerminal!.id)
       await expect.poll(() => rows.innerText()).toContain('ran echo dock')
-      expect(await input.inputValue()).toBe('项目草稿仍在')
+      expect(await promptValue(input)).toBe('项目草稿仍在')
       expect((await owner.json<AppSnapshot>('snapshot')).tasks.map(task => task.id)).toEqual(chatIds)
       expect(shells).toHaveLength(5)
       await resizer.focus()
@@ -593,7 +594,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await capture(page, 'start-768')
       expect(await panelNode!.evaluate(element => element.isConnected && !(element as HTMLElement).inert)).toBe(true)
       expect(await inputNode!.evaluate(element => element === document.activeElement)).toBe(true)
-      expect(await input.inputValue()).toBe('项目草稿仍在')
+      expect(await promptValue(input)).toBe('项目草稿仍在')
       await expect.poll(() => rows.innerText()).toContain('ran echo dock')
       await rightToggle.click()
       await rightPanel.waitFor({ state: 'hidden' })

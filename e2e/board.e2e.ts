@@ -370,7 +370,7 @@ it('lays the Host’s groups out as a board that reflows by its own width, and w
     const before = (await owner.json<TaskDetail>(`tasks/${done2}`)).messages.length
     await board(page).getByRole('button', { name: '新建', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '新建' })
-    await dialog.locator('textarea').fill('echo 从看板开始')
+    await dialog.locator('.composer-input [role="textbox"]').fill('echo 从看板开始')
     await shot(page, 'board-new', 1440, 'light')
     await shot(page, 'board-new', 1440, 'dark')
     await dialog.getByRole('button', { name: '发送', exact: true }).click()

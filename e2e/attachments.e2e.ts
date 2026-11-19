@@ -9,6 +9,7 @@ import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { closeActiveFile, closeSettings, openSection, openSession, openSettings, permissionControl } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 /** The new draft is the home's input on every width: already in sight, or where 新建会话 leads. */
 async function newDraft(page: Page) {
   const home = page.locator('.workbench-home')
@@ -98,7 +99,7 @@ describe('private attachments through the composer', () => {
       await drafts.getByRole('button', { name: '移除附件 workbench.png', exact: true }).click()
       expect(await drafts.locator('img').count()).toBe(0)
       expect(await drafts.getByRole('button', { name: 'review-notes.txt', exact: true }).count()).toBe(1)
-      expect(await page.getByRole('textbox').filter({ visible: true }).first().inputValue()).toBe('')
+      expect(await promptValue(page.getByRole('textbox').filter({ visible: true }).first())).toBe('')
     } finally {
       await context.close()
     }
@@ -222,7 +223,7 @@ describe('private attachments through the composer', () => {
       const editor = page.getByRole('textbox', { name: '粘贴的文字', exact: true })
       await editor.fill('restored text')
       await page.getByRole('button', { name: '放回输入框', exact: true }).click()
-      expect(await next.inputValue()).toBe('restored text')
+      expect(await promptValue(next)).toBe('restored text')
       expect(await page.locator('.attachment-draft').count()).toBe(0)
     } finally {
       await context.close()
@@ -261,7 +262,7 @@ describe('private attachments through the composer', () => {
       await routeFinished
       await page.unroute('**/link/api/attachments', holdUpload)
       await page.getByRole('button', { name: '重试上传', exact: true }).waitFor()
-      expect(await input.inputValue()).toBe('keep my draft')
+      expect(await promptValue(input)).toBe('keep my draft')
       expect(calls).toBe(before)
       await page.screenshot({ path: 'test-results/attachments/1440-dark-cancelled.png', animations: 'disabled' })
       await page.getByRole('button', { name: '重试上传', exact: true }).click()
@@ -334,7 +335,7 @@ describe('private attachments through the composer', () => {
         expect(await input.getAttribute('aria-controls')).toBeNull()
         await openBareMention()
         await input.press('Enter')
-        expect(await input.inputValue()).toBe('@\n')
+        expect(await promptValue(input)).toBe('@\n')
         await chooser.waitFor({ state: 'hidden' })
         await openBareMention()
         await selectWithArrow()
@@ -346,7 +347,7 @@ describe('private attachments through the composer', () => {
       await row.waitFor()
       expect(await row.getAttribute('aria-selected')).toBe('true')
       await input.press('Tab')
-      expect(await input.inputValue()).toBe('@default:reference.txt ')
+      expect(await promptValue(input)).toBe('@default:reference.txt ')
       await page.screenshot({ path: 'test-results/attachments/1440-light-file-reference.png', animations: 'disabled' })
       await page.getByRole('button', { name: '发送', exact: true }).click()
       await expect
@@ -406,6 +407,20 @@ describe('private attachments through the composer', () => {
       expect(await page.locator('.attachment-draft').count()).toBe(1)
       await page.getByRole('button', { name: '发送', exact: true }).click()
       await page.getByText('已收到 1 个附件。', { exact: true }).waitFor()
+      // Dropped straight onto the text, an image is an attachment too, and none of its bytes enter the draft. The
+      // reload takes back the folder stand-in patched onto DataTransferItem above.
+      await page.reload()
+      await page.locator('.app-shell[data-connection="connected"]').waitFor()
+      const text = page.getByRole('textbox', { name: '继续对话', exact: true })
+      await text.fill('keep $none me')
+      const onto = await page.evaluateHandle(base64 => {
+        const transfer = new DataTransfer()
+        transfer.items.add(new File([Uint8Array.from(atob(base64), c => c.charCodeAt(0))], 'onto-text.png', { type: 'image/png' }))
+        return transfer
+      }, image.toString('base64'))
+      await text.dispatchEvent('drop', { dataTransfer: onto })
+      await expect.poll(() => page.getByRole('button', { name: 'onto-text.png', exact: true }).isEnabled(), { timeout: 10000 }).toBe(true)
+      expect(await promptValue(text)).toBe('keep $none me')
     } finally {
       await context.close()
     }
@@ -573,7 +588,7 @@ describe('the attach button and @ on every Harness', () => {
         }
         // A browser on the work scope: @ says so instead of staying silent.
         const input = page.getByRole('textbox', { name: '继续对话', exact: true })
-        expect(await input.getAttribute('placeholder')).toBe('想让 Agent 做什么？')
+        expect(await input.getAttribute('aria-placeholder')).toBe('想让 Agent 做什么？')
         await input.fill('看看 @app')
         await page
           .getByRole('listbox', { name: '引用项目文件', exact: true })
@@ -600,7 +615,7 @@ describe('the attach button and @ on every Harness', () => {
           await input.fill('带着附件的消息')
           await page.getByRole('button', { name: '发送', exact: true }).last().click()
           await drafts.locator('.attachment-draft[data-state="refused"]').getByText('已在 设置 › 设备 里释放，请移除后重新添加').waitFor()
-          expect(await input.inputValue()).toBe('带着附件的消息')
+          expect(await promptValue(input)).toBe('带着附件的消息')
           expect(await drafts.getByRole('button', { name: '重试上传', exact: true }).count()).toBe(0)
           await page.screenshot({ path: `${shots}/${width}-${theme}-released.png`, animations: 'disabled' })
           await page.unroute('**/link/api/tasks/*/prompt')

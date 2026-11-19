@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type Dispatch, type ReactNode, type SetSta
 import { GENERAL_AGENT_ID, type CustomAgentSummary, type HarnessInfo, type HostCatalog, type WorktreeStart } from '@latch/protocol'
 import { Badge, Button, ICON_STROKE, IconButton, FolderGlyph, HistoryGlyph, PlusGlyph, CloseGlyph } from '@latch/ui'
 import { Composer } from '../composer/Composer.tsx'
+import type { PromptInput } from '../composer/PromptEditor.tsx'
 import { FolderControl } from '../composer/FolderControl.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -191,7 +192,7 @@ export function NewTopic({
   // The start point picked in 新工作树 (HEAD or another one), sent as picked.
   const [worktree, setWorktree] = useState<WorktreeStart | undefined>(undefined)
   const [carrying, setCarrying] = useState(false)
-  const input = useRef<HTMLTextAreaElement>(null)
+  const input = useRef<PromptInput>(null)
   // Where the person is when the Host answers, not when they sent.
   const route = useRef(shell.route)
   const mounted = useMounted()

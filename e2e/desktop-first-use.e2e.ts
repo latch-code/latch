@@ -15,6 +15,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToPhoneSessions, closeSettings, noHorizontalOverflow, openSection, openSettings, reachable } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 function localProvider(calls = { count: 0 }): HarnessPlugin {
   return {
@@ -135,7 +136,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await setup.getByRole('region', { name: '添加模型服务', exact: true }).waitFor()
         await setup.getByRole('group', { name: '选择服务', exact: true }).waitFor()
         expect(await page.locator('.settings-page').count()).toBe(0)
-        expect(await input.inputValue()).toBe(missingDraft)
+        expect(await promptValue(input)).toBe(missingDraft)
         expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(1)
         expect(calls.count).toBe(1)
         await noHorizontalOverflow(page)
@@ -336,7 +337,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         await place.getByRole('button', { name: /^项目：/u }).click()
         const open = page.getByRole('menuitem', { name: '添加项目…', exact: true })
         await open.waitFor()
-        expect(await input.inputValue()).toBe('修一下测试')
+        expect(await promptValue(input)).toBe('修一下测试')
         expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(0)
         expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toEqual([])
 
@@ -478,13 +479,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           await input.press('ArrowDown')
           await input.press('ArrowUp')
           await input.press('Tab')
-          expect(await input.inputValue()).toBe('/init ')
+          expect(await promptValue(input)).toBe('/init ')
           await menu.waitFor({ state: 'hidden' })
           await input.fill('')
           await input.fill('/init')
           await list.getByRole('option').filter({ hasText: '/init' }).waitFor()
           await input.press('Tab')
-          expect(await input.inputValue()).toBe('/init ')
+          expect(await promptValue(input)).toBe('/init ')
           await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
           await input.fill('/review')
           await expect.poll(() => list.getByRole('option').count()).toBe(4)
@@ -496,11 +497,11 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           await input.press('ArrowUp')
           expect(await list.getByRole('option').nth(0).getAttribute('aria-selected')).toBe('true')
           await input.press('Enter')
-          expect(await input.inputValue()).toBe(templates[0][2])
+          expect(await promptValue(input)).toBe(templates[0][2])
           await input.fill('/检查')
           await list.getByRole('option').filter({ hasText: '/review · 检查改动' }).waitFor()
           await input.press('Tab')
-          expect(await input.inputValue()).toBe(templates[0][2])
+          expect(await promptValue(input)).toBe(templates[0][2])
           await input.fill('/')
           await list.getByRole('group', { name: '提示模板', exact: true }).waitFor()
           await list.getByRole('group', { name: '命令验收 Harness', exact: true }).waitFor()
@@ -541,13 +542,13 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           await page.screenshot({ path: `test-results/desktop-first-use/slash-${width}.png`, animations: 'disabled' })
           await input.press('Escape')
           await menu.waitFor({ state: 'hidden' })
-          expect(await input.inputValue()).toBe('/')
+          expect(await promptValue(input)).toBe('/')
           await input.fill('/not-a-command-9281')
           await menu.getByRole('status').waitFor()
           expect(await menu.getByRole('status').textContent()).toBe('没有「/not-a-command-9281」· Enter 原样发给 命令验收 Harness')
           await input.press('Escape')
           await menu.waitFor({ state: 'hidden' })
-          expect(await input.inputValue()).toBe('/not-a-command-9281')
+          expect(await promptValue(input)).toBe('/not-a-command-9281')
           expect(await promptCount()).toBe(1)
           expect(
             (await owner.json<TaskDetail>('tasks/' + sessionId)).messages

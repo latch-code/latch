@@ -6,6 +6,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { openSession } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 function gate() {
   let release!: () => void
@@ -203,14 +204,14 @@ describe('negotiated text stream', () => {
             expect(await live!.evaluate(element => element === document.querySelectorAll('.turn-reply .message-content')[10])).toBe(true)
             expect(await old!.evaluate(element => element === document.querySelector('.turn-reply .message-content'))).toBe(true)
           }
-          expect(await input.inputValue()).toBe('下一轮草稿')
+          expect(await promptValue(input)).toBe('下一轮草稿')
         }
         // A local draft remains owned by the same composer through all full/delta/repair publications.
         steps[4]!.release()
         await settled()
         await expect.poll(() => reply.getAttribute('aria-busy')).toBe(null)
         expect(await reply.textContent()).toBe(chunks.join(''))
-        expect(await input.inputValue()).toBe('下一轮草稿')
+        expect(await promptValue(input)).toBe('下一轮草稿')
         expect(await page.locator('.turn-reply .message-content').count()).toBe(11)
         if (!narrow)
           expect(await live!.evaluate(element => element === document.querySelectorAll('.turn-reply .message-content')[10])).toBe(true)

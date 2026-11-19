@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
+import { promptInputOf } from '../composer/PromptEditor.tsx'
 import { GENERAL_AGENT_ID } from '@latch/protocol'
 import { Button, EmptyState, IconButton, ChevronLeftGlyph } from '@latch/ui'
 import { defineCopy } from '../core/i18n.ts'
@@ -125,7 +126,7 @@ export function AgentChat({ shell, owner, onBack }: { shell: ShellState; owner: 
   const fill = (text: string) => {
     setDraft(previous => fillDraft(previous, text))
     requestAnimationFrame(() => {
-      const input = document.querySelector<HTMLTextAreaElement>('.agent-chat-composer textarea')
+      const input = promptInputOf(document.querySelector('.agent-chat-composer .composer-input'))
       if (!input) return
       input.focus({ preventScroll: true })
       input.setSelectionRange(input.value.length, input.value.length)

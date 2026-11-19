@@ -1189,7 +1189,7 @@ Harness 报告的命令透传，是否报告与执行由 Harness 决定。
 **原生技能。**
 
 - `TaskDetail.skills` 与 `HarnessCommandCatalogue.skills` 只有公开的 `name`、精确的 `invocation`、可选 `description` 与已知 `scope`，不含路径、正文或 `sourceInfo`。目录最多 200 项、64 KiB；先保名称，再分配说明。名称或数量超限时 `skillsTruncated: true`。Host 再次校验字段与预算。
-- Codex 的 `$name` 不放进斜杠命令；pi 的 `/skill:name` 保留在 `commands` 里，已列为技能的不重复显示。Web 把技能放在技能组，点按、Tab、Enter 都只插入草稿；最近选择按 Harness 隔离。输入框按同一规则把目录里的技能画成标记（`apps/web/src/composer/prompt-tokens.ts`），线不附加的写法不标记；发送的仍是原文。
+- Codex 的 `$name` 不放进斜杠命令；pi 的 `/skill:name` 保留在 `commands` 里，已列为技能的不重复显示。Web 把技能放在技能组，点按、Tab、Enter 都只插入草稿；最近选择按 Harness 隔离。输入框与已发送的消息按同一规则把目录里的技能画成块（`apps/web/src/composer/prompt-tokens.ts`），线不附加的写法不画；发送的仍是原文。
 - **Codex 的目录。** 开 thread 或恢复时以实际 cwd 调用 `skills/list {cwds:[cwd],forceReload:true}`。原生路径只留在当前线的 enabled 映射里，不从客户端或提示内容接收路径。`skills/changed` 立即清空映射并重读，旧代次的回答不得恢复旧路径。读取失败或目录不完整时撤下当前目录，错误里的私有路径不外发。
 - **Codex 的调用。** Host 在加人物 brief、文件引用、撤销说明、seed 与历史之前保留本轮原文，只经内部调用上下文传给线，不接受公共 HTTP 的来源声明。线只从这份原文里完整的、空白分隔的 `$name` 匹配官方清单，补充 `{type:'skill',name,path}`；原文照常发送。未知、带前后缀、转义或引号包围的名字保持文字；同名的 enabled 项明确拒绝。没有原文证据时不扫描完整 prompt 兜底。这只限定 Latch 生成的结构化项，不限制 CLI 或模型自己的行为。
 

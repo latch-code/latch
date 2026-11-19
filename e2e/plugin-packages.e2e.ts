@@ -7,6 +7,7 @@ import { loadPluginPackage } from '@latch/host'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { backToPhoneSessions, noHorizontalOverflow, openPanelTab, openSession as chooseSession, reachable } from './helpers/layout.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/plugin-packages'
 const VIEWS = [
@@ -127,8 +128,8 @@ describe('feature packages in the workbench', () => {
         const before = (await host.host.bridge.detail(first)).messages.length
         await compose.click()
         const input = page.getByRole('textbox', { name: '继续对话', exact: true })
-        await expect.poll(() => input.inputValue()).toContain('[x] 测试通过并附上结果')
-        expect(await input.inputValue()).toContain('v1.2 · 检查结果待核对')
+        await expect.poll(() => promptValue(input)).toContain('[x] 测试通过并附上结果')
+        expect(await promptValue(input)).toContain('v1.2 · 检查结果待核对')
         expect((await host.host.bridge.detail(first)).messages).toHaveLength(before)
         await input.fill('')
       } finally {

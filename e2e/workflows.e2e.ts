@@ -9,6 +9,7 @@ import { closeSettings, openSection, openSessions, openSettings, phoneStartScree
 import type { TaskDetail } from '@latch/protocol'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 describe('session search and workbench navigation', () => {
   it('finds private body text, reveals the original message, uses DOM highlights and opens commands at desktop and phone widths', async () => {
@@ -55,13 +56,13 @@ describe('session search and workbench navigation', () => {
           await page.keyboard.press('Alt+l')
           await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
           await input.press('ArrowUp')
-          expect(await input.inputValue()).toBe('正文包含 独特检索词 中文 hello world')
+          expect(await promptValue(input)).toBe('正文包含 独特检索词 中文 hello world')
           await input.fill('保留草稿')
           await page.keyboard.press('Meta+k')
           await palette.getByRole('searchbox').fill('外观：深色')
           await palette.getByRole('option', { name: '外观：深色', exact: true }).click()
           await expect.poll(() => page.locator('html').getAttribute('data-theme')).toBe('dark')
-          expect(await input.inputValue()).toBe('保留草稿')
+          expect(await promptValue(input)).toBe('保留草稿')
           await input.fill('运行可取消长任务')
           await input.press('Meta+Enter')
           await expect.poll(async () => (await owner.json<TaskDetail>('tasks/' + created.sessionId)).summary.status).not.toBe('idle')
@@ -121,7 +122,7 @@ describe('session search and workbench navigation', () => {
           .getByRole('listbox', { name: '命令与提示模板', exact: true })
           .getByRole('option', { name: /\/review/u })
           .click()
-        expect(await input.inputValue()).toBe('阅读改动，并解释结果。')
+        expect(await promptValue(input)).toBe('阅读改动，并解释结果。')
         expect((await owner.json<{ tasks: unknown[] }>('snapshot')).tasks).toEqual([])
         await context.close()
       }

@@ -10,6 +10,7 @@ import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browse
 import { closeSettings, noHorizontalOverflow, openSection, openSettings } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
 import { homeInput } from './helpers/workbench.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/palette'
 const LONG = Array.from({ length: 40 }, (_, line) => `第 ${line} 段说明，这里有一句普通的话用来撑开页面的高度。`).join('\n\n')
@@ -63,7 +64,7 @@ it('applies appearance commands locally and reads the same choices back in setti
     await codeCanvas.waitFor({ state: 'detached' })
     expect(await attribute('data-motion')).toBe('reduce')
     expect(await attribute('data-density')).toBe('compact')
-    expect(await input.inputValue()).toBe('切换外观前保留的草稿')
+    expect(await promptValue(input)).toBe('切换外观前保留的草稿')
 
     phase = 'readback'
     await page.reload()
@@ -71,7 +72,7 @@ it('applies appearance commands locally and reads the same choices back in setti
     expect(await codeCanvas.count()).toBe(0)
     expect(await attribute('data-motion')).toBe('reduce')
     expect(await attribute('data-density')).toBe('compact')
-    expect(await input.inputValue()).toBe('切换外观前保留的草稿')
+    expect(await promptValue(input)).toBe('切换外观前保留的草稿')
     const settings = await openSettings(page)
     await openSection(settings, '外观')
     for (const [group, label] of [
@@ -343,7 +344,7 @@ it.each([
       // The keys that opened it put it away.
       await page.keyboard.press('Meta+k')
       await palette.waitFor({ state: 'detached' })
-      expect(await draft.inputValue()).toBe('保留的草稿')
+      expect(await promptValue(draft)).toBe('保留的草稿')
 
       // 打开改动 opens: run again, with the panel showing, it leaves the panel there.
       const openChanges = async () => {

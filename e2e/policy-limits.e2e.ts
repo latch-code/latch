@@ -291,7 +291,7 @@ describe('what this computer can take back', () => {
     await picker.click()
     await page.getByRole('searchbox', { name: '搜索模型', exact: true }).filter({ visible: true }).first().fill('model-b')
     await page.getByRole('menuitemradio', { name: /model-b/u }).click()
-    await page.locator('.composer-stack textarea').filter({ visible: true }).fill('这一次用另一个模型')
+    await page.locator('.composer-stack .composer-input [role="textbox"]').filter({ visible: true }).fill('这一次用另一个模型')
     await page
       .locator('.composer-stack')
       .filter({ visible: true })

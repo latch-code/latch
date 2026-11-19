@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { useEffect, useId, useMemo, useState, type ReactNode, type RefObject } from 'react'
 import type { PromptTemplate, SessionCommand } from '@latch/protocol'
 import { escapeSecurityText } from '@latch/protocol'
 import { Button, CodeGlyph, FileGlyph, Icon, Kbd, Suggest } from '@latch/ui'
@@ -146,8 +146,8 @@ export function useSlashCommands({
     }
     dismiss()
   }
-  const keydown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!open || event.nativeEvent.isComposing || event.keyCode === 229 || event.metaKey || event.ctrlKey || event.altKey) return false
+  const keydown = (event: KeyboardEvent) => {
+    if (!open || event.isComposing || event.keyCode === 229 || event.metaKey || event.ctrlKey || event.altKey) return false
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()

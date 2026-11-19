@@ -11,6 +11,7 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openPanelTab, openSession, reachable } from './helpers/layout.ts'
 import { motions, tokens } from './helpers/motion.ts'
 import { homeInput, switchView } from './helpers/workbench.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 /**
  * A phone stacks its pages: the session list is the root, a session's page is pushed over it and slides back, and a new
@@ -100,7 +101,7 @@ describe('the phone stack', () => {
         await reachable(list.getByRole('searchbox', { name: '搜索会话', exact: true }))
         await list.getByRole('button', { name: '新建会话', exact: true }).click()
         await home.waitFor()
-        expect(await input.inputValue()).toBe('首页尚未发送的草稿')
+        expect(await promptValue(input)).toBe('首页尚未发送的草稿')
         // Code's tab leads to its list, not to the start screen.
         await page.locator('.phone-tabs').getByRole('button', { name: 'Code', exact: true }).click()
         await list.waitFor()
@@ -175,7 +176,7 @@ describe('the phone stack', () => {
         const box = (selector: string) => form.querySelector(selector)?.getBoundingClientRect()
         const control = (name: string) => box(`.composer-toolbar [data-composer-control="${name}"]`)
         const [input, harness, entry, send, add, line] = [
-          box('textarea'),
+          box('.composer-input .cm-scroller'),
           control('harness'),
           control('model'),
           box('.composer-toolbar .send-button'),
@@ -305,7 +306,7 @@ describe('the phone stack', () => {
       await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
       await home.waitFor()
       await settled(page)
-      expect(await input.inputValue()).toBe('展示流式输出')
+      expect(await promptValue(input)).toBe('展示流式输出')
       await noHorizontalOverflow(page)
       await send.click()
       await page.locator('main.workspace[data-pushed]').waitFor()

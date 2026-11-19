@@ -41,7 +41,9 @@ import { placeByTime, quotedSummary } from '../handoffs/model.ts'
 import { useTopicProposals } from '../agents/TopicProposals.tsx'
 import { useSessionBoardProposals } from '../board/SessionProposals.tsx'
 import { MemberLine } from '../teams/MemberLine.tsx'
-import { TeamPageContext, type TeamPage } from '../teams/TeamGraph.tsx'
+import { MemberTile, TeamPageContext, type TeamPage } from '../teams/TeamGraph.tsx'
+import { leadTeamOf, memberChoices } from '../teams/rounds.ts'
+import { SentCatalogue } from '../components/MentionedText.tsx'
 import { RoundPageContext, type RoundPage } from '../teams/RoundControls.tsx'
 import { placeTeams } from '../teams/placeTeams.tsx'
 import { teamsOf } from '../teams/model.ts'
@@ -152,6 +154,21 @@ export function ConversationView({
     owner,
     openSettings,
   } = shell
+  // A sent message draws its skills, commands and members as the input does; members only while this session leads a team.
+  const leadTeam = current && catalog?.features?.teams ? leadTeamOf(shell.snapshot.teams, current.summary.id) : undefined
+  const sentCatalogue = useMemo(
+    () => ({
+      commands: current?.commands,
+      skills: current?.skills,
+      members: leadTeam
+        ? memberChoices(leadTeam, shell.snapshot.tasks).map(choice => ({
+            ...choice,
+            media: <MemberTile harnessId={choice.harnessId} harnesses={catalog?.harnesses ?? []} size={16} />,
+          }))
+        : undefined,
+    }),
+    [current?.commands, current?.skills, leadTeam, shell.snapshot.tasks, catalog?.harnesses],
+  )
   const sideQuestion = useSideQuestion(selectedId)
   const showTranscript = visible && !(phone && sideQuestion)
   const showBackdrop = showTranscript && backdrop !== 'off'
@@ -423,105 +440,107 @@ export function ConversationView({
                               resumed={current.messages.find(message => message.role === 'user')?.nativeFork === true}
                             />
                           )}
-                          <Transcript
-                            detail={current}
-                            observeStream={showTranscript && frozenAt === undefined}
-                            projection={projection}
-                            replyViewport={reading.containerRef}
-                            onSource={choose}
-                            failureSteps={owner ? OWNER_FAILURE_STEPS : access.scopes.has('run') ? DEVICE_FAILURE_STEPS : undefined}
-                            checkUnknown={access.scopes.has('run')}
-                            onFailureStep={step => takeFailureStep(step, openSettings)}
-                            onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
-                            {...(mayEdit && catalog?.features?.fork
-                              ? { onEditFrom: (message, before) => void editFrom.start(message, before) }
-                              : {})}
-                            onFork={
-                              catalog?.features?.fork && access.scopes.has('run')
-                                ? (upToMessageId, draft = FORK_CONTINUATION_PROMPT) => {
-                                    submission.setFork({
-                                      taskId: current.summary.id,
-                                      upToMessageId,
-                                      title: current.summary.title,
-                                      choice: forkChoice(),
-                                      source: forkSource(current, harnessInfo),
-                                    })
-                                    choose(null)
-                                    submission.setDraft(draft)
-                                    shell.showHome()
-                                  }
-                                : undefined
-                            }
-                            approvals={approvals}
-                            harnessName={harnessName}
-                            {...(speaker ? { speaker } : {})}
-                            login={
-                              harnessInfo?.login
-                                ? {
-                                    harnessId: harnessInfo.id,
-                                    login: harnessInfo.login,
-                                    // In this session's 终端 tab, where it can have one.
-                                    surface: loginSurface(
-                                      catalog?.features,
-                                      current.summary.archived || current.summary.personal ? undefined : current.summary.id,
-                                    ),
-                                  }
-                                : undefined
-                            }
-                            harness={topHarness}
-                            demo={demo}
-                            active={active}
-                            changes={{
-                              // The Host shows a session's files only to a device whose data scope covers them.
-                              enabled: catalog?.features?.changes === true && readsProjectFiles(snapshot.device.dataScope),
-                              undo: sessionReadOnly(current.summary) || !access.scopes.has('run') ? 'read-only' : 'open',
-                              // As the 改动 tab reads it: nothing can be written until the connection is back.
-                              offline: connection === 'reconnecting' || connection === 'offline',
-                            }}
-                            {...(run ? { onStop: run.onCancel } : {})}
-                            {...(current.summary.personal
-                              ? {}
-                              : {
-                                  onStopSubagent: async (subagentId: string) => {
-                                    try {
-                                      await api(`tasks/${encodeURIComponent(current.summary.id)}/stop-subagent`, {
-                                        method: 'POST',
-                                        body: { subagentId },
+                          <SentCatalogue.Provider value={sentCatalogue}>
+                            <Transcript
+                              detail={current}
+                              observeStream={showTranscript && frozenAt === undefined}
+                              projection={projection}
+                              replyViewport={reading.containerRef}
+                              onSource={choose}
+                              failureSteps={owner ? OWNER_FAILURE_STEPS : access.scopes.has('run') ? DEVICE_FAILURE_STEPS : undefined}
+                              checkUnknown={access.scopes.has('run')}
+                              onFailureStep={step => takeFailureStep(step, openSettings)}
+                              onCopyError={cause => setToast({ text: errorMessage(cause), tone: 'error' })}
+                              {...(mayEdit && catalog?.features?.fork
+                                ? { onEditFrom: (message, before) => void editFrom.start(message, before) }
+                                : {})}
+                              onFork={
+                                catalog?.features?.fork && access.scopes.has('run')
+                                  ? (upToMessageId, draft = FORK_CONTINUATION_PROMPT) => {
+                                      submission.setFork({
+                                        taskId: current.summary.id,
+                                        upToMessageId,
+                                        title: current.summary.title,
+                                        choice: forkChoice(),
+                                        source: forkSource(current, harnessInfo),
                                       })
-                                    } catch (cause) {
-                                      setToast({ text: errorMessage(cause), tone: 'error' })
-                                      throw cause
+                                      choose(null)
+                                      submission.setDraft(draft)
+                                      shell.showHome()
                                     }
-                                  },
-                                })}
-                            onReveal={reading.reveal}
-                            {...(handing ? { onHandoff: handOff } : {})}
-                            {...(ownTeams.length ? { teams: ownTeams } : {})}
-                            {...(returned.length || placeProposals || placeResults || placeBoard || placeOwnTeams
-                              ? {
-                                  placed: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) =>
-                                    // After a turn, what it proposed comes first (想定时), then the results of what was
-                                    // set up since, which can only come later.
-                                    joinPlaced(
+                                  : undefined
+                              }
+                              approvals={approvals}
+                              harnessName={harnessName}
+                              {...(speaker ? { speaker } : {})}
+                              login={
+                                harnessInfo?.login
+                                  ? {
+                                      harnessId: harnessInfo.id,
+                                      login: harnessInfo.login,
+                                      // In this session's 终端 tab, where it can have one.
+                                      surface: loginSurface(
+                                        catalog?.features,
+                                        current.summary.archived || current.summary.personal ? undefined : current.summary.id,
+                                      ),
+                                    }
+                                  : undefined
+                              }
+                              harness={topHarness}
+                              demo={demo}
+                              active={active}
+                              changes={{
+                                // The Host shows a session's files only to a device whose data scope covers them.
+                                enabled: catalog?.features?.changes === true && readsProjectFiles(snapshot.device.dataScope),
+                                undo: sessionReadOnly(current.summary) || !access.scopes.has('run') ? 'read-only' : 'open',
+                                // As the 改动 tab reads it: nothing can be written until the connection is back.
+                                offline: connection === 'reconnecting' || connection === 'offline',
+                              }}
+                              {...(run ? { onStop: run.onCancel } : {})}
+                              {...(current.summary.personal
+                                ? {}
+                                : {
+                                    onStopSubagent: async (subagentId: string) => {
+                                      try {
+                                        await api(`tasks/${encodeURIComponent(current.summary.id)}/stop-subagent`, {
+                                          method: 'POST',
+                                          body: { subagentId },
+                                        })
+                                      } catch (cause) {
+                                        setToast({ text: errorMessage(cause), tone: 'error' })
+                                        throw cause
+                                      }
+                                    },
+                                  })}
+                              onReveal={reading.reveal}
+                              {...(handing ? { onHandoff: handOff } : {})}
+                              {...(ownTeams.length ? { teams: ownTeams } : {})}
+                              {...(returned.length || placeProposals || placeResults || placeBoard || placeOwnTeams
+                                ? {
+                                    placed: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) =>
+                                      // After a turn, what it proposed comes first (想定时), then the results of what was
+                                      // set up since, which can only come later.
                                       joinPlaced(
                                         joinPlaced(
-                                          joinPlaced(returned.length ? placeReturned(turns) : undefined, placeProposals?.(turns)),
-                                          placeBoard?.(turns),
+                                          joinPlaced(
+                                            joinPlaced(returned.length ? placeReturned(turns) : undefined, placeProposals?.(turns)),
+                                            placeBoard?.(turns),
+                                          ),
+                                          // A team started from a turn's proposal stands where that proposal stood.
+                                          placeOwnTeams?.(turns),
                                         ),
-                                        // A team started from a turn's proposal stands where that proposal stood.
-                                        placeOwnTeams?.(turns),
+                                        placeResults?.(turns),
                                       ),
-                                      placeResults?.(turns),
-                                    ),
-                                }
-                              : {})}
-                            {...(frozenAt !== undefined ? { frozenAt } : {})}
-                            cancelling={cancelState === 'cancelling'}
-                            coarse={coarse}
-                            providerName={providerName}
-                            {...(fallbackElapsed !== undefined ? { fallbackElapsed } : {})}
-                            {...(retry ? { retry } : {})}
-                          />
+                                  }
+                                : {})}
+                              {...(frozenAt !== undefined ? { frozenAt } : {})}
+                              cancelling={cancelState === 'cancelling'}
+                              coarse={coarse}
+                              providerName={providerName}
+                              {...(fallbackElapsed !== undefined ? { fallbackElapsed } : {})}
+                              {...(retry ? { retry } : {})}
+                            />
+                          </SentCatalogue.Provider>
                           <SendingBubble shell={shell} />
                         </RoundPageContext.Provider>
                       </TeamPageContext.Provider>

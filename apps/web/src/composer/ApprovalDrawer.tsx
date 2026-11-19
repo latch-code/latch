@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 
+import { promptInputOf } from './PromptEditor.tsx'
 import type { Approval, ApprovalOption, FileDiff, Message } from '@latch/protocol'
 import {
   Button,
@@ -207,7 +208,7 @@ function approvalChoices(options: readonly ApprovalOption[]): {
 const typingOutsideComposer = (target: EventTarget | null) =>
   target instanceof Element
   && target.closest('input, textarea, select, [contenteditable="true"], [role="menu"], [role="dialog"], .ui-popover') !== null
-  && !target.closest('.composer textarea')
+  && !target.closest('.composer .cm-content')
 
 /** Closed Sheets retain their dialog node; only open layers take Esc for themselves. */
 const layerOpen = () => document.querySelector(':popover-open:not([role="tooltip"]), dialog[open]') !== null
@@ -216,7 +217,9 @@ const layerOpen = () => document.querySelector(':popover-open:not([role="tooltip
 function escapeRefusesAt(target: EventTarget | null): boolean {
   if (typingOutsideComposer(target)) return false
   if (layerOpen()) return false
-  return !(target instanceof HTMLTextAreaElement && target.value.trim())
+  // Only the input that has the keys: its own words, not a draft somewhere on the page.
+  const input = target instanceof Element ? target.closest('.cm-content') : null
+  return !promptInputOf(input)?.value.trim()
 }
 
 /** Where ⌘⏎ is taken: inside the card, and never from a field or a menu in it. */

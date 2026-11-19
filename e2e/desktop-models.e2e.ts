@@ -14,6 +14,7 @@ import { latchEnv } from '@latch/host/env'
 import { startTestHost } from './helpers/host.ts'
 import { backToPhoneSessions, openSection, openSession, openSettings, reachable } from './helpers/layout.ts'
 import { homeInput } from './helpers/workbench.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 'darwin')(
   'actual Agent model and reasoning controls',
@@ -206,7 +207,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             .toBe(effort.toLowerCase())
           await expect.poll(() => thinkingPicker.getAttribute('aria-busy')).not.toBe('true')
           await expect.poll(() => thinkingPicker.locator('.model-level').innerText()).toBe(effort)
-          expect(await input.inputValue()).toBe('切换设置时保留这份草稿。')
+          expect(await promptValue(input)).toBe('切换设置时保留这份草稿。')
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
           await mkdir('test-results/model-controls', { recursive: true })
           await page.screenshot({ path: 'test-results/model-controls/agent-' + width + '.png', animations: 'disabled' })

@@ -11,6 +11,7 @@ import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openPanelTab, openSection, openSession, openSettings, settleShell, tooltipText } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/git-sync'
 const SLOW = { timeout: 30_000 }
@@ -174,8 +175,8 @@ it('fetches to learn it is behind, pulls by fast-forward, hands a divergence and
     await shots(phone.page, 'diverged')
     const messages = (await detail()).messages.length
     await diverged.getByRole('button', { name: '交给 Agent', exact: true }).click()
-    const draft = page.locator('.composer textarea').first()
-    await expect.poll(() => draft.inputValue(), SLOW).toContain('分支 main 与上游 origin/main 已分叉')
+    const draft = page.locator('.composer .composer-input [role="textbox"]').first()
+    await expect.poll(() => promptValue(draft), SLOW).toContain('分支 main 与上游 origin/main 已分叉')
     expect((await detail()).messages.length).toBe(messages)
     await draft.fill('')
     await diverged.getByRole('button', { name: '保持原样', exact: true }).click()
@@ -200,9 +201,9 @@ it('fetches to learn it is behind, pulls by fast-forward, hands a divergence and
     expect(await fetch.getAttribute('aria-disabled')).not.toBe('true')
     await shots(page, 'conflict')
     await conflict.getByRole('button', { name: '交给 Agent 解决', exact: true }).click()
-    await expect.poll(() => draft.inputValue(), SLOW).toContain('仓库正在合并，这些文件有冲突')
-    expect(await draft.inputValue()).toContain('tracked.txt')
-    expect(await draft.inputValue()).toContain('git merge --continue')
+    await expect.poll(() => promptValue(draft), SLOW).toContain('仓库正在合并，这些文件有冲突')
+    expect(await promptValue(draft)).toContain('tracked.txt')
+    expect(await promptValue(draft)).toContain('git merge --continue')
     expect((await detail()).messages.length).toBe(messages)
     await draft.fill('')
 

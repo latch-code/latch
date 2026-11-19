@@ -3,15 +3,15 @@ import { useFileMentions, type FileMentionChoice, type MentionMembers } from '..
 import type { AttachmentDraftController } from '../hooks/useAttachments.ts'
 import type { MenuSection } from '../components/overlays.tsx'
 import { AttachmentButton, AttachmentDrafts, pasteAttachments, dropAttachments } from './AttachmentDrafts.tsx'
-import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { CornerDownRight, ListPlus, Slash } from 'lucide-react'
-import { escapeSecurityText, type PromptTemplate, type SessionCommand, type SessionSkill } from '@latch/protocol'
+import type { PromptTemplate, SessionCommand, SessionSkill } from '@latch/protocol'
 import type { PendingSubmission } from '../core/api.ts'
 import type { SendKey } from '../preferences.ts'
 import { escapeIsLeftover } from '../escapeGrace.ts'
 import { SlashCommands, useSlashCommands, type SlashAction } from './SlashCommands.tsx'
 import { latchActionOf } from './latchActions.ts'
-import { deleteText, PromptMirrorText, usePromptMarks } from './PromptMarks.tsx'
+import { PromptEditor, type PromptInput } from './PromptEditor.tsx'
 import {
   Button,
   IconButton,
@@ -135,21 +135,6 @@ export interface ConfigUnknownState {
 }
 
 const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
-/** Eight lines of body text plus padding; the transcript keeps the remaining height. */
-const MAX_TEXTAREA = 232
-
-function sizeComposerInput(element: HTMLTextAreaElement | null) {
-  if (!element?.clientWidth) return
-  const from = element.style.height
-  element.style.transition = 'none'
-  element.style.height = 'auto'
-  const border = element.offsetHeight - element.clientHeight
-  const next = `${Math.min(element.scrollHeight + border, MAX_TEXTAREA)}px`
-  element.style.height = from
-  if (from && from !== next) element.getBoundingClientRect()
-  element.style.removeProperty('transition')
-  element.style.height = next
-}
 
 /**
  * The message input, on the new-session page and docked under a conversation, with its drawers joined above the card
@@ -252,7 +237,7 @@ export function Composer({
   actions?: SlashAction[]
   /** The optional insertion shortcut; typing slash commands uses the same sender either way. */
   showSlashButton?: boolean
-  textareaRef: RefObject<HTMLTextAreaElement | null>
+  textareaRef: RefObject<PromptInput | null>
   variant: 'new' | 'session'
   label: string
   placeholder: string
@@ -333,53 +318,21 @@ export function Composer({
   const [slashCaret, setSlashCaret] = useState<{ draft: string; at: number }>()
   const [slashSendRevision, refreshSlashSend] = useState(0)
   const slashToSend = useRef<string | undefined>(undefined)
-  const slashSelection = useRef<{ draft: string; start: number; end: number } | undefined>(undefined)
-  const commandMirror = useRef<HTMLDivElement>(null)
   const commandHead = /^([/／][^\s/／]+)([ \t]+)([\s\S]*)$/u.exec(draft)
   const commandName = commandHead?.[1]?.slice(1)
   const commandDefinition = actions?.find(action => action.name === commandName) ?? commands?.find(command => command.name === commandName)
   const commandChip = commandHead && commandDefinition ? commandHead[1]! : undefined
   const argumentHint = commandChip && !commandHead?.[3]?.trim() ? commandDefinition?.inputHint : undefined
-  const mentions = useFileMentions(draft, onDraft, textareaRef, fileMentions, commandAnchor, members?.mention)
-  const marks = usePromptMarks({
-    draft,
-    catalogue: { commands, skills, actions, members: members?.marks },
-    textareaRef,
-    mirrorRef: commandMirror,
-  })
-  // The input grows with its content a line at a time, up to eight lines, its height moving over 120ms (composer.css).
-  // Measuring needs the height let go for a moment; it is put back without a transition, so the move then starts from
-  // the height the input had and not from the measurement.
-  // A phone lays the input out in another row (`inline`), which is another element: crossing that width with words in
-  // the input must measure the new element and watch it, or it stays one line high whatever it holds.
-  useLayoutEffect(() => {
-    sizeComposerInput(textareaRef.current)
-  }, [draft, textareaRef, inline])
-  useLayoutEffect(() => {
-    const element = textareaRef.current
-    if (!element) return undefined
-    let width = -1
-    let alive = true
-    const measure = () => {
-      if (alive) sizeComposerInput(element)
-    }
-    const observer = new ResizeObserver(entries => {
-      const next = entries[0]?.contentRect.width
-      // Height changes are our own output; observing those would create a resize feedback loop.
-      if (next !== undefined && next !== width) {
-        width = next
-        measure()
-      }
-    })
-    observer.observe(element)
-    void document.fonts.ready.then(measure)
-    document.fonts.addEventListener('loadingdone', measure)
-    return () => {
-      alive = false
-      observer.disconnect()
-      document.fonts.removeEventListener('loadingdone', measure)
-    }
-  }, [textareaRef, readOnly, inline])
+  /**
+   * What the @ and slash menus put in the draft: an edit in the input, so it is one step of its undo and the caret lands
+   * where the menu says. Without a mounted input it is a plain draft change.
+   */
+  const editDraft = (value: string, selection?: { start: number; end: number }) => {
+    const input = textareaRef.current
+    if (input && !input.disabled) input.edit(value, selection)
+    else onDraft(value)
+  }
+  const mentions = useFileMentions(draft, editDraft, textareaRef, fileMentions, commandAnchor, members?.mention)
 
   const roundSending = members?.sending === true
   const locked = sending || roundSending || pending !== null || attachments?.preparing === true
@@ -419,13 +372,7 @@ export function Composer({
     } else onSubmit()
   }
   useLayoutEffect(() => {
-    const selection = slashSelection.current
     const input = textareaRef.current
-    slashSelection.current = undefined
-    if (selection && selection.draft === draft && input) {
-      input.setSelectionRange(selection.start, selection.end)
-      setSlashCaret({ draft, at: selection.end })
-    }
     const command = slashToSend.current
     if (command === undefined) return
     // Consume before invoking the existing sender, including Strict Mode's repeated layout effects.
@@ -435,8 +382,8 @@ export function Composer({
       && sendable
       && !run
       && !answer
-      && input?.getClientRects().length
-      && !input.closest('[inert], [hidden], [aria-hidden="true"]')
+      && input?.element.getClientRects().length
+      && !input.element.closest('[inert], [hidden], [aria-hidden="true"]')
     )
       submit()
   }, [draft, sendable, submit, textareaRef, slashSendRevision, run, answer])
@@ -459,8 +406,8 @@ export function Composer({
     ...(actions ? { actions } : {}),
     enabled: !locked && readOnly === undefined && answer === undefined,
     onDraft: (value, selection) => {
-      slashSelection.current = selection ? { draft: value, ...selection } : undefined
-      onDraft(value)
+      editDraft(value, selection)
+      if (selection) setSlashCaret({ draft: value, at: selection.end })
       textareaRef.current?.focus({ preventScroll: true })
     },
     onCommand: value => {
@@ -470,22 +417,30 @@ export function Composer({
       refreshSlashSend(revision => revision + 1)
     },
   })
-  const keydown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  /** The input's keys before its own: the menus, then the command's Backspace, Esc, ↑ and the send keys. */
+  const keydown = (event: KeyboardEvent) => {
     if (slash.keydown(event)) return
     // Hidden while a submission is held: its keys are the input's again.
     if (!locked && readOnly === undefined && mentions.keydown(event)) return
-    if (event.nativeEvent.isComposing || event.keyCode === 229) return
+    if (event.isComposing || event.keyCode === 229) return
+    const input = textareaRef.current
+    // Backspace after a command and the space that follows it takes both, so the draft does not start with a space.
     if (
       event.key === 'Backspace'
       && commandChip
-      && event.currentTarget.selectionStart === event.currentTarget.selectionEnd
-      && [commandChip.length, commandChip.length + 1].includes(event.currentTarget.selectionStart)
+      && commandHead?.[2]
+      && input
+      && input.selectionStart === input.selectionEnd
+      && [commandChip.length, commandChip.length + 1].includes(input.selectionStart)
+      && !event.altKey
+      && !event.ctrlKey
+      && !event.metaKey
+      && !event.shiftKey
     ) {
       event.preventDefault()
-      deleteText(event.currentTarget, 0, commandChip.length + (commandHead?.[2]?.length ?? 0))
+      input.edit(draft.slice(commandChip.length + commandHead[2].length), { start: 0, end: 0 })
       return
     }
-    if (marks.keydown(event)) return
     if (event.key === 'Escape' && escapeIsLeftover(event)) return
     // Esc belongs to the approval drawer while one waits (it refuses once), or to the text just written.
     if (event.key === 'Escape' && answer?.kind === 'reject') return
@@ -514,7 +469,7 @@ export function Composer({
       onDraft(lastPrompt)
       return
     }
-    if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return
+    if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return
     const explicit = event.metaKey || event.ctrlKey
     if (!explicit && (event.shiftKey || event.altKey || coarse || sendKey !== 'enter')) return
     event.preventDefault()
@@ -552,34 +507,41 @@ export function Composer({
       )
   })
 
-  const textarea = (
-    <textarea
-      ref={textareaRef}
-      aria-label={label}
-      aria-autocomplete={slash.open || mentions.open ? 'list' : undefined}
-      aria-controls={slash.open ? slash.id : mentions.open ? mentions.listId : undefined}
-      aria-activedescendant={
-        slash.open && slash.options[slash.active] ? slash.id + '-' + slash.active : !slash.open ? mentions.activeId : undefined
-      }
-      placeholder={placeholder}
+  const catalogue = { commands, skills, actions, members: members?.marks }
+  const editor = (
+    <PromptEditor
+      inputRef={textareaRef}
       value={draft}
-      rows={1}
+      onChange={(value, caret) => {
+        mentions.setCaret(caret)
+        setSlashCaret({ draft: value, at: caret })
+        onDraft(value)
+      }}
+      onCaret={caret => {
+        mentions.setCaret(caret)
+        setSlashCaret({ draft, at: caret })
+      }}
+      catalogue={catalogue}
+      refs={fileMentions?.refs}
+      hint={argumentHint}
+      attributes={{
+        label,
+        autocomplete: slash.open || mentions.open ? 'list' : undefined,
+        controls: slash.open ? slash.id : mentions.open ? mentions.listId : undefined,
+        activeDescendant:
+          slash.open && slash.options[slash.active] ? slash.id + '-' + slash.active : !slash.open ? mentions.activeId : undefined,
+      }}
+      placeholder={placeholder}
       disabled={textLocked}
-      onChange={event => {
-        mentions.setCaret(event.target.selectionStart)
-        setSlashCaret({ draft: event.target.value, at: event.target.selectionStart })
-        onDraft(event.target.value)
+      onKeyDown={event => {
+        keydown(event)
+        return event.defaultPrevented
       }}
-      onKeyDown={keydown}
-      {...marks.inputProps}
-      onSelect={event => {
-        mentions.setCaret(event.currentTarget.selectionStart)
-        setSlashCaret({ draft: event.currentTarget.value, at: event.currentTarget.selectionStart })
+      onPaste={event => {
+        if (!attachments || !event.clipboardData) return false
+        pasteAttachments(event, attachments)
+        return event.defaultPrevented
       }}
-      onScroll={event => {
-        if (commandMirror.current) commandMirror.current.scrollTop = event.currentTarget.scrollTop
-      }}
-      onPaste={attachments ? event => pasteAttachments(event, attachments) : undefined}
     />
   )
   // The prompt glyph says where to tell it what to do; the phone's sheet is a page of its own and has none.
@@ -598,26 +560,7 @@ export function Composer({
         </p>
       )
     ) : (
-      <div className="composer-input" data-marks={marks.shown ? '' : undefined}>
-        {(commandChip || marks.shown) && (
-          <div ref={commandMirror} className="composer-command-mirror" aria-hidden="true">
-            {marks.shown ? (
-              <PromptMirrorText
-                text={draft}
-                marks={marks.marks}
-                hint={argumentHint ? <span className="composer-command-hint">{escapeSecurityText(argumentHint)}</span> : undefined}
-              />
-            ) : (
-              <>
-                <span className="composer-command-chip">{commandChip}</span>
-                {draft.slice(commandChip!.length)}
-                {argumentHint && <span className="composer-command-hint">{escapeSecurityText(argumentHint)}</span>}
-              </>
-            )}
-          </div>
-        )}
-        {textarea}
-      </div>
+      <div className="composer-input">{editor}</div>
     )
   const slashButton = showSlashButton && readOnly === undefined && (
     <IconButton
@@ -632,9 +575,9 @@ export function Composer({
         const before = draft.slice(0, start)
         const insert = before && !/\s$/u.test(before) ? ' /' : '/'
         const value = before + insert + draft.slice(end)
-        slashSelection.current = { draft: value, start: start + insert.length, end: start + insert.length }
         slash.reopen()
-        onDraft(value)
+        editDraft(value, { start: start + insert.length, end: start + insert.length })
+        setSlashCaret({ draft: value, at: start + insert.length })
         input?.focus({ preventScroll: true })
       }}
     />

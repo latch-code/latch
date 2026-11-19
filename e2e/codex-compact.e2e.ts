@@ -9,6 +9,7 @@ import { startFakeModels } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const binary = process.env.LATCH_CODEX_GATEWAY_BINARY
 it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
@@ -103,7 +104,7 @@ it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
           await page.screenshot({ path: `${output}/menu-${width}-${theme}.png`, animations: 'disabled' })
         }
         await list.getByRole('option').filter({ hasText: '/compact' }).click()
-        expect((await input.inputValue()).trim()).toBe('/compact')
+        expect((await promptValue(input)).trim()).toBe('/compact')
         await input.press('Meta+Enter')
         await expect.poll(async () => (await detail()).messages.some(message => message.text === 'Codex 已压缩上下文')).toBe(true)
         await expect.poll(async () => (await detail()).summary.status).toBe('idle')

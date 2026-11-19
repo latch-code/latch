@@ -7,6 +7,7 @@ import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, permissionControl } from './helpers/layout.ts'
+import { promptSelection, promptValue } from './helpers/prompt.ts'
 
 describe('slash suggestions in the real composer', () => {
   for (const engine of ['chromium', 'webkit'] as const)
@@ -86,26 +87,26 @@ describe('slash suggestions in the real composer', () => {
               const before = (await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages.length
               await input.press('ArrowDown')
               await input.press('Tab')
-              expect(await input.inputValue()).toBe('/command-000 ')
+              expect(await promptValue(input)).toBe('/command-000 ')
               expect(await input.evaluate(element => element === document.activeElement)).toBe(true)
               expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages).toHaveLength(before)
               await input.fill('／command-199')
               await list.getByRole('option').first().click()
-              expect(await input.inputValue()).toBe('/command-199 ')
+              expect(await promptValue(input)).toBe('/command-199 ')
               expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages).toHaveLength(before)
               await input.fill('/command-197')
               await input.press('Tab')
               expect(await page.locator('.composer-command-hint').innerText()).toBe('文件或目录')
               await page.screenshot({ path: `test-results/slash/parameter-${engine}-${width}-${theme}.png`, animations: 'disabled' })
               await input.press('Backspace')
-              expect(await input.inputValue()).toBe('')
+              expect(await promptValue(input)).toBe('')
               await input.fill('/command-197')
               await list.waitFor()
               await input.press('Tab')
-              expect(await input.inputValue()).toBe('/command-197 ')
+              expect(await promptValue(input)).toBe('/command-197 ')
               expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages).toHaveLength(before)
               await input.press('Backspace')
-              expect(await input.inputValue()).toBe('')
+              expect(await promptValue(input)).toBe('')
               // A phone's input is one line of ＋, the input and send: there is no 插入命令 button, the key opens the list.
               if (width === 390) {
                 expect(await page.getByRole('button', { name: '插入命令', exact: true }).count()).toBe(0)
@@ -124,16 +125,13 @@ describe('slash suggestions in the real composer', () => {
               await list.getByRole('option').first().waitFor()
               expect(await list.getByRole('option').count()).toBe(1)
               await input.press('Tab')
-              expect(await input.inputValue()).toBe('检查 $ARGUMENTS 的正确性')
-              expect(
-                await input.evaluate(element =>
-                  element instanceof HTMLTextAreaElement ? element.value.slice(element.selectionStart, element.selectionEnd) : null,
-                ),
-              ).toBe('$ARGUMENTS')
+              expect(await promptValue(input)).toBe('检查 $ARGUMENTS 的正确性')
+              const selected = await promptSelection(input)
+              expect((await promptValue(input)).slice(selected.from, selected.to)).toBe('$ARGUMENTS')
               await input.fill(mcpCommand)
               await list.getByRole('option', reportedPrompt).waitFor()
               await input.press('Tab')
-              expect(await input.inputValue()).toBe(`${mcpCommand} `)
+              expect(await promptValue(input)).toBe(`${mcpCommand} `)
               expect((await owner.json<TaskDetail>(`tasks/${sessionId}`)).messages).toHaveLength(before)
               await input.fill('')
               await input.fill(mcpCommand)
@@ -160,7 +158,7 @@ describe('slash suggestions in the real composer', () => {
               await page.screenshot({ path: `test-results/slash/${engine}-${width}-${theme}.png`, animations: 'disabled' })
               await input.press('Escape')
               await list.waitFor({ state: 'hidden' })
-              expect(await input.inputValue()).toBe('/command')
+              expect(await promptValue(input)).toBe('/command')
               await input.fill('')
               await input.fill('/command')
               await list.waitFor()
@@ -189,20 +187,20 @@ describe('slash suggestions in the real composer', () => {
                 await input.fill('/new 新会话首句')
                 await input.press('Control+Enter')
                 const nextInput = page.getByRole('textbox', { name: '新会话消息', exact: true })
-                await expect.poll(() => nextInput.inputValue()).toBe('新会话首句')
+                await expect.poll(() => promptValue(nextInput)).toBe('新会话首句')
                 expect(starts).toBe(0)
                 await page.locator(`[data-task-id="${sessionId}"]:visible`).first().click()
                 await page.getByText('planned', { exact: true }).waitFor()
-                expect(await input.inputValue()).toBe('')
+                expect(await promptValue(input)).toBe('')
                 await input.fill('/fork 从这一轮接着检查')
                 await expect
                   .poll(() => input.locator('xpath=ancestor::form').getByRole('button', { name: '运行动作', exact: true }).isEnabled())
                   .toBe(true)
                 await input.press('Control+Enter')
-                await expect.poll(() => nextInput.inputValue()).toBe('从这一轮接着检查')
+                await expect.poll(() => promptValue(nextInput)).toBe('从这一轮接着检查')
                 expect(starts).toBe(0)
                 await page.locator(`[data-task-id="${sessionId}"]:visible`).first().click()
-                expect(await input.inputValue()).toBe('')
+                expect(await promptValue(input)).toBe('')
                 if (theme === 'light') {
                   const draft = 'A draft should keep its words and resize with the available width. '.repeat(4)
                   await input.fill(draft)
@@ -210,11 +208,11 @@ describe('slash suggestions in the real composer', () => {
                   await page.setViewportSize({ width: 390, height: 900 })
                   await expect.poll(async () => (await input.boundingBox())!.height).toBeGreaterThan(initial)
                   const narrow = (await input.boundingBox())!.height
-                  expect(await input.inputValue()).toBe(draft)
+                  expect(await promptValue(input)).toBe(draft)
                   await noHorizontalOverflow(page)
                   await page.setViewportSize({ width: 1440, height: 900 })
                   await expect.poll(async () => Math.abs((await input.boundingBox())!.height - initial)).toBeLessThanOrEqual(1)
-                  expect(await input.inputValue()).toBe(draft)
+                  expect(await promptValue(input)).toBe(draft)
                   await writeFile(
                     `test-results/slash/resize-${engine}.json`,
                     JSON.stringify({ initial, narrow, restored: (await input.boundingBox())!.height, draftPreserved: true }) + '\n',

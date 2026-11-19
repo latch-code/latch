@@ -12,6 +12,7 @@ import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, settleShell } from './helpers/layout.ts'
 import { stillMotion } from './helpers/visual.ts'
 import { switchView } from './helpers/workbench.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/board-proposals'
 
@@ -209,7 +210,7 @@ it('an agent proposes 待办: shown as proposed, edited and accepted, started at
     await itemCard(page, external!.id).getByRole('button', { name: '开始', exact: true }).click()
     const startExternal = page.getByRole('dialog', { name: '开始' })
     await startExternal.getByText('来自外部内容').waitFor()
-    await expect.poll(() => startExternal.locator('textarea').inputValue()).toBe('echo 照网页改配置')
+    await expect.poll(() => promptValue(startExternal.locator('.composer-input [role="textbox"]'))).toBe('echo 照网页改配置')
     await shot(page, 'start-external', 1440, 'light')
     await page.setViewportSize({ width: 1440, height: 900 })
     await startExternal.getByRole('button', { name: '发送', exact: true }).click()
@@ -223,7 +224,9 @@ it('an agent proposes 待办: shown as proposed, edited and accepted, started at
     // 开始 the edited one: the input holds the 要求 at the revision the person accepted; that is what the session gets.
     await itemCard(page, accepted!.id).getByRole('button', { name: '开始', exact: true }).click()
     const start = page.getByRole('dialog', { name: '开始' })
-    await expect.poll(() => start.locator('textarea').inputValue()).toBe('echo 在 README 末尾加安装一节，写清 Node 版本')
+    await expect
+      .poll(() => promptValue(start.locator('.composer-input [role="textbox"]')))
+      .toBe('echo 在 README 末尾加安装一节，写清 Node 版本')
     await start.getByRole('button', { name: '发送', exact: true }).click()
     await start.waitFor({ state: 'hidden' })
     await expect

@@ -8,6 +8,7 @@ import type { WorkItemAnswer, WorkThreadAnswer } from '@latch/protocol'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, reachable } from './helpers/layout.ts'
+import { promptSelection, promptValue, setPromptSelection } from './helpers/prompt.ts'
 import { stillMotion } from './helpers/visual.ts'
 
 async function hasLanguage(page: Page, language: 'en' | 'zh-CN') {
@@ -73,7 +74,7 @@ it.each([320, 390, 768, 1100, 1440])('preserves the draft, caret and focus when 
     const draft = page.locator('.workbench-home').getByRole('textbox').first()
     await draft.fill('draft to keep')
     const input = await draft.elementHandle()
-    await input.evaluate(element => (element as HTMLTextAreaElement).setSelectionRange(2, 6))
+    await setPromptSelection(draft, 2, 6)
     let navigations = 0
     page.on('request', request => {
       if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations += 1
@@ -87,12 +88,11 @@ it.each([320, 390, 768, 1100, 1440])('preserves the draft, caret and focus when 
     })
     await hasLanguage(page, 'zh-CN')
     expect(page.url()).toBe(composerUrl)
-    expect(
-      await input.evaluate(element => {
-        const field = element as HTMLTextAreaElement
-        return [field === document.activeElement, field.value, field.selectionStart, field.selectionEnd]
-      }),
-    ).toEqual([true, 'draft to keep', 2, 6])
+    expect([
+      await input.evaluate(element => element === document.activeElement),
+      await promptValue(draft),
+      await promptSelection(draft),
+    ]).toEqual([true, 'draft to keep', { from: 2, to: 6, head: 6 }])
     await capture(page, width, 'zh-CN', 'composer')
 
     await page.getByTestId('open-settings').filter({ visible: true }).first().click()
@@ -111,12 +111,11 @@ it.each([320, 390, 768, 1100, 1440])('preserves the draft, caret and focus when 
     await capture(page, width, 'en', 'language')
 
     await page.getByTestId('close-settings').click()
-    expect(
-      await input.evaluate(element => {
-        const field = element as HTMLTextAreaElement
-        return [field.isConnected, field.value, field.selectionStart, field.selectionEnd]
-      }),
-    ).toEqual([true, 'draft to keep', 2, 6])
+    expect([await input.evaluate(element => element.isConnected), await promptValue(draft), await promptSelection(draft)]).toEqual([
+      true,
+      'draft to keep',
+      { from: 2, to: 6, head: 6 },
+    ])
     expect(navigations).toBe(0)
 
     await page.reload()

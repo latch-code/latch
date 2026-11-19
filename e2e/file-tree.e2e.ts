@@ -8,6 +8,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { startTestHost } from './helpers/host.ts'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { backToPhoneSessions, openPanelTab, openSession, settleShell } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 it.each([
   [390, 'light'],
@@ -93,7 +94,7 @@ it.each([
       if (width !== 390) {
         await page.setViewportSize({ width, height: 960 })
         await settleShell(page)
-        expect(await input.inputValue()).toBe('给新项目的草稿')
+        expect(await promptValue(input)).toBe('给新项目的草稿')
       }
       const reads: string[] = []
       const starts: unknown[] = []
@@ -125,7 +126,7 @@ it.each([
         expect(hit.height).toBeGreaterThanOrEqual(44)
         await page.mouse.click(hit.x, hit.y)
         await files.waitFor({ state: 'hidden' })
-        expect(await input.inputValue()).toBe('给新项目的草稿')
+        expect(await promptValue(input)).toBe('给新项目的草稿')
         await browse()
       }
       await page.getByRole('treeitem', { name: 'new.txt', exact: true }).click()
@@ -143,8 +144,8 @@ it.each([
       await page.screenshot({ path: `test-results/file-tree/home-preview-${width}-${theme}.png`, animations: 'disabled' })
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
       await preview.getByRole('button', { name: '引用到对话', exact: true }).click()
-      await expect.poll(() => input.inputValue()).toContain(`@${newProject.folders![0]!.id}:new.txt`)
-      expect(await input.inputValue()).toContain('给新项目的草稿')
+      await expect.poll(() => promptValue(input)).toContain(`@${newProject.folders![0]!.id}:new.txt`)
+      expect(await promptValue(input)).toContain('给新项目的草稿')
       await page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }).click()
       await expect.poll(() => starts.length).toBe(1)
       expect(starts[0]).toMatchObject({ workspaceId: newProject.id, fileRefs: [{ root: newProject.folders![0]!.id, path: 'new.txt' }] })
@@ -155,7 +156,7 @@ it.each([
       }
       await header.getByRole('button', { name: '返回会话列表', exact: true }).click()
       await openOld()
-      expect(await page.getByRole('textbox', { name: '继续对话', exact: true }).inputValue()).toBe('旧会话草稿')
+      expect(await promptValue(page.getByRole('textbox', { name: '继续对话', exact: true }))).toBe('旧会话草稿')
       await header.getByRole('button', { name: '侧边面板', exact: true }).click()
       await page.getByRole('region', { name: '文件预览', exact: true }).getByText('旧文件页签保留。', { exact: true }).waitFor()
     } finally {
@@ -245,9 +246,9 @@ it('browses a saved project before creating a session, previews and quotes real 
           element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
         })
         await preview.getByRole('button', { name: '引用到对话', exact: true }).click()
-        await expect.poll(() => input.inputValue()).toContain('> 这个文件在发消息前就可以查看。')
-        expect(await input.inputValue()).toContain('保留我的草稿')
-        expect(await input.inputValue()).toContain('引用时文件：')
+        await expect.poll(() => promptValue(input)).toContain('> 这个文件在发消息前就可以查看。')
+        expect(await promptValue(input)).toContain('保留我的草稿')
+        expect(await promptValue(input)).toContain('引用时文件：')
         expect(await host.host.bridge.listTasks()).toHaveLength(taskCount)
         expect(submissions).toHaveLength(0)
         await page.screenshot({ path: `test-results/file-tree/quoted-draft-${width}-${theme}.png`, animations: 'disabled' })
@@ -256,7 +257,7 @@ it('browses a saved project before creating a session, previews and quotes real 
           // Leaving the start screen for the list and coming back through 新建会话 keeps the draft.
           await backToPhoneSessions(page)
           await page.locator('.phone-list').getByRole('button', { name: '新建会话', exact: true }).click()
-          expect(await input.inputValue()).toBe('保留我的草稿')
+          expect(await promptValue(input)).toBe('保留我的草稿')
         }
         // The home has no title row of its own: the draft's files come back with their key.
         if (!(await page.getByRole('tab', { name: '文件', exact: true }).isVisible())) await page.keyboard.press('Alt+Shift+e')
@@ -293,8 +294,8 @@ it('browses a saved project before creating a session, previews and quotes real 
             .getByRole('button', { name: 'start.ts 文件操作', exact: true })
             .click()
           await page.getByRole('menuitem', { name: '引用到对话', exact: true }).click()
-          expect(await input.inputValue()).toContain('保留我的草稿')
-          expect(await input.inputValue()).toContain(`@${project.folders![0]!.id}:src/start.ts`)
+          expect(await promptValue(input)).toContain('保留我的草稿')
+          expect(await promptValue(input)).toContain(`@${project.folders![0]!.id}:src/start.ts`)
           await page.getByRole('button', { name: '发送', exact: true }).click()
           await expect.poll(() => submissions.length).toBe(1)
           expect(submissions[0]).toMatchObject({
@@ -319,8 +320,8 @@ it('browses a saved project before creating a session, previews and quotes real 
               .filter({ visible: true })
               .first()
               .click()
-            await expect.poll(() => input.inputValue()).toBe('保留我的草稿')
-          } else expect(await input.inputValue()).toBe('保留我的草稿')
+            await expect.poll(() => promptValue(input)).toBe('保留我的草稿')
+          } else expect(await promptValue(input)).toBe('保留我的草稿')
         }
       } finally {
         await context.close()

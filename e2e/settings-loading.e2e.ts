@@ -9,6 +9,7 @@ import { startFakeModels, type FakeModels, type TestDevice } from '@latch/testki
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { closeSettings, noHorizontalOverflow, openEntry, openSection, openSettings, reachable } from './helpers/layout.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 describe('optional settings chunk lifecycle', () => {
   let host: TestHost
@@ -37,7 +38,7 @@ describe('optional settings chunk lifecycle', () => {
       await retry.click()
       await settings.getByText('无法加载插件设置，当前会话和草稿仍保留。', { exact: true }).waitFor()
       await closeSettings(settings)
-      expect(await draft.inputValue()).toBe('Keep the draft through a settings module failure')
+      expect(await promptValue(draft)).toBe('Keep the draft through a settings module failure')
     } finally {
       await context.close()
     }
@@ -176,7 +177,7 @@ describe('optional settings chunk lifecycle', () => {
       )
       await closeSettings(settings)
       await page.setViewportSize({ width: 1440, height: 1000 })
-      expect(await draft.inputValue()).toBe('Retain this unsent draft while settings loads')
+      expect(await promptValue(draft)).toBe('Retain this unsent draft while settings loads')
     } finally {
       release()
       await context.close()

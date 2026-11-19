@@ -7,6 +7,9 @@
   "license": "MIT",
   "dependencies": {
     "@aiden0z/pptx-renderer": "catalog:",
+    "@codemirror/commands": "catalog:",
+    "@codemirror/state": "catalog:",
+    "@codemirror/view": "catalog:",
     "@latch/app-sdk": "workspace:*",
     "@latch/protocol": "workspace:*",
     "@latch/ui": "workspace:*",
@@ -39,6 +42,7 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "esbuild": "catalog:",
+    "happy-dom": "catalog:",
     "vite": "catalog:"
   },
   "latch": {

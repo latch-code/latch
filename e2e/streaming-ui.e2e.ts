@@ -610,12 +610,13 @@ describe('streamed messages in the real workspace', () => {
       await newDraft(page)
       const input = page.getByRole('textbox', { name: '新会话消息' })
       await input.waitFor()
-      // Each height transition the input starts, as it starts, with the timing it runs on.
+      // Each height transition the input's scrolling box starts, as it starts, with the timing it runs on.
       await input.evaluate(element => {
+        const box = element.closest<HTMLElement>('.cm-scroller')!
         element.dataset.runs = ''
-        element.addEventListener('transitionrun', event => {
-          if (!(event instanceof TransitionEvent) || event.propertyName !== 'height') return
-          const style = getComputedStyle(element)
+        box.addEventListener('transitionrun', event => {
+          if (!(event instanceof TransitionEvent) || event.propertyName !== 'height' || event.target !== box) return
+          const style = getComputedStyle(box)
           element.dataset.runs += `${style.transitionDuration} ${style.transitionTimingFunction}|`
         })
       })
@@ -631,7 +632,7 @@ describe('streamed messages in the real workspace', () => {
         return value
       })
       expect(tokens).toBe('0.12s cubic-bezier(0.2, 0, 0, 1)')
-      const height = () => input.evaluate(element => element.getBoundingClientRect().height)
+      const height = () => input.evaluate(element => element.closest('.cm-scroller')!.getBoundingClientRect().height)
       const resting = await height()
       // Within the three lines it starts with, typing moves nothing.
       await input.fill('第一行')

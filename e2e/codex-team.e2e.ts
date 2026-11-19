@@ -9,6 +9,7 @@ import { FAKE_CODEX_APP_SERVER } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { noHorizontalOverflow, openSession, reachable } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 it('delegates from the same Codex chat, opens the actual member approval and restores member results after a reload', async () => {
   const root = await mkdtemp(join(tmpdir(), 'latch-codex-team-ui-'))
@@ -87,7 +88,7 @@ it('delegates from the same Codex chat, opens the actual member approval and res
       /^请启动 Codex 的子 Agent[\s\S]*\n1\. 核对移动端和审批回执$/u,
     )
     // The input keeps what it held.
-    expect(await input.inputValue()).toBe('先留着')
+    expect(await promptValue(input)).toBe('先留着')
     await input.fill('')
     await expect.poll(async () => (await read()).summary.status).toBe('waiting-approval')
     await open('Agent 团队').click()

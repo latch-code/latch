@@ -3,6 +3,7 @@ import { requestLeave } from '../preview/editDrafts.ts'
 import { requestBoard } from '../board/requests.ts'
 import { readsProjectFiles, type AppSnapshot, type BoardGroup, type TerminalTarget } from '@latch/protocol'
 import type { useHarness } from '../core/useHarness.ts'
+import type { PromptInput } from '../composer/PromptEditor.tsx'
 import { mentionMarker } from '../fileMentions.ts'
 import type { ChangeTotals, FileMention } from '@latch/protocol'
 import type { ChangesTarget as ChangesPanelTarget } from '../panel/changes/ChangesPanel.tsx'
@@ -151,11 +152,11 @@ const stroke = (event: KeyboardEvent) => ({
  * Gives the input the keys on the next frame, once the page that holds it is drawn, unless something took focus in that
  * frame: a control opened by its key at once (⌥⇧1 right after ⌥N) keeps its menu, and Escape still reaches it.
  */
-function focusNextFrame(target: RefObject<HTMLElement | null>) {
+function focusNextFrame(target: RefObject<PromptInput | null>) {
   const before = document.activeElement
   requestAnimationFrame(() => {
     const now = document.activeElement
-    if (now !== before && now !== null && now !== document.body && now !== target.current) return
+    if (now !== before && now !== null && now !== document.body && now !== target.current?.element) return
     target.current?.focus({ preventScroll: true })
   })
 }
@@ -282,7 +283,6 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     submission,
     choice,
     attachmentDraft,
-    fileMentions,
     setFileMentions,
     quoteSnapshots,
     mentionChoice,
@@ -351,7 +351,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
   /** The new-session page's 「添加 Agent」 tile, which the line under the input opens as well. */
   const setupTrigger = useRef<HTMLButtonElement>(null)
   /** The home's input, which starts a session; the open session's own input stays mounted under the home. */
-  const homeComposerRef = useRef<HTMLTextAreaElement>(null)
+  const homeComposerRef = useRef<PromptInput>(null)
   /** The home with its input focused, for what has already let go of the open session (a fork, a pending start). */
   const showHome = useStableCallback(() => {
     drawer.setOpen(false)
@@ -1554,7 +1554,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       else if (space === 'agents') delegate()
       else if (routeRef.current.entry === 'sessions' && routeRef.current.start) {
         drawer.setOpen(false)
-        if (!homeComposerRef.current?.closest('.composer')?.querySelector(':popover-open:not([role="tooltip"])'))
+        if (!homeComposerRef.current?.element.closest('.composer')?.querySelector(':popover-open:not([role="tooltip"])'))
           focusNextFrame(homeComposerRef)
       } else startNewDraft()
       return
@@ -1908,7 +1908,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     setCommandOpen(false)
     requestAnimationFrame(() => {
       const composer = composerRef.current
-      if (coarse || !composer || composer.disabled || composer.offsetParent === null || composer.closest('[inert]')) return
+      if (coarse || !composer || composer.disabled || composer.element.offsetParent === null || composer.element.closest('[inert]')) return
       if (document.querySelector('dialog[open]') || document.activeElement?.closest('.find-bar')) return
       composer.focus({ preventScroll: true })
     })
@@ -1924,7 +1924,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
     requestAnimationFrame(() => composerRef.current?.focus())
   }
   const mentionFile = (mention: FileMention) => {
-    if (!mentionChoice.enabled || fileMentions.length >= 32) return
+    if (!mentionChoice.enabled || mentionChoice.refs.length >= 32) return
     submission.setDraft(previous => `${previous.trimEnd()}${previous.trim() ? ' ' : ''}${mentionMarker(mention)} `)
     setFileMentions(previous => [...previous.filter(ref => ref.root !== mention.root || ref.path !== mention.path), mention])
     returnToFileInput()
@@ -1943,7 +1943,12 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       return
     const mention =
       quote.file.source === 'attachment' || !mentionChoice.enabled ? undefined : { root: quote.file.root, path: quote.file.path }
-    if (mention && fileMentions.length >= 32 && !fileMentions.some(ref => ref.root === mention.root && ref.path === mention.path)) return
+    if (
+      mention
+      && mentionChoice.refs.length >= 32
+      && !mentionChoice.refs.some(ref => ref.root === mention.root && ref.path === mention.path)
+    )
+      return
     const formatted = quoteDraft(quote, mention && mentionMarker(mention))
     submission.setDraft(previous => previous.trimEnd() + (previous.trim() ? '\n\n' : '') + formatted.text)
     if (mention) setFileMentions(previous => [...previous.filter(ref => ref.root !== mention.root || ref.path !== mention.path), mention])

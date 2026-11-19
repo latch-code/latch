@@ -9,6 +9,7 @@ import { FAKE_PI_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { permissionWords, noHorizontalOverflow, openSection, openSettings, phoneStartScreen } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/pi'
 
@@ -150,7 +151,7 @@ describe('pi over its own RPC mode', () => {
       )
     ) {
       await elsewhere.click()
-      expect(await draft(page).inputValue()).toBe(text)
+      expect(await promptValue(draft(page))).toBe(text)
       expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(before)
       await draft(page).press('Meta+Enter')
     }
@@ -310,7 +311,7 @@ describe('pi over its own RPC mode', () => {
     await refusal.waitFor()
     const [notice, box] = await Promise.all([refusal.boundingBox(), page.locator('form.composer').boundingBox()])
     expect(notice!.y + notice!.height).toBeLessThanOrEqual(box!.y)
-    expect(await composer(page).inputValue()).toBe('/compact')
+    expect(await promptValue(composer(page))).toBe('/compact')
     expect((await received()).filter(entry => entry.type === 'compact')).toHaveLength(1)
     expect((await latest()).summary.status).toBe('running')
     await noHorizontalOverflow(page)

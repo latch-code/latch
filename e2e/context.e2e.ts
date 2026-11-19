@@ -8,6 +8,7 @@ import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/context'
 
@@ -98,7 +99,7 @@ describe('a new context in a session', () => {
         .waitFor()
       await input(page).press('Enter')
       await armed(page).waitFor()
-      expect(await input(page).inputValue()).toBe('')
+      expect(await promptValue(input(page))).toBe('')
       await page.screenshot({ path: `${OUTPUT}/armed-${width}.png` })
       await page.getByRole('button', { name: '保留上下文', exact: true }).click()
       await armed(page).waitFor({ state: 'detached' })

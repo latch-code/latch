@@ -213,7 +213,9 @@
     --syn-punctuation: var(--ink-2);
     /* Content: colours that appear only inside what an agent wrote or did (prose, code, a work row's kind mark and its
      * output), never on app chrome. syn-flag: a command's flags and an object's keys. code-ink and code-tint: an inline
-     * code chip. path-ink and path-tint: a file chip, which opens the file. kind-*: the glyph of a work row by what it did
+     * code chip. path-ink and path-tint: a file chip, which opens the file. chip-wash, chip-wash-strong and chip-ring: a token
+     * chip of the message input and a sent message (file, skill, command, member), its hover and its selected ring; the ink
+     * is path-ink. kind-*: the glyph of a work row by what it did
      * (read, search, edit, run, web, sub-agent). ansi-*: the colours a command's output asked for; red and green are the
      * state colours, because a test runner's red and green mean failed and passed. */
     --syn-flag: #9c3f6a;
@@ -221,6 +223,9 @@
     --content-code-tint: rgba(47, 79, 143, 0.08);
     --content-path-ink: #1d52c4;
     --content-path-tint: rgba(36, 97, 224, 0.07);
+    --content-chip-wash: rgba(36, 97, 224, 0.05);
+    --content-chip-wash-strong: rgba(36, 97, 224, 0.1);
+    --content-chip-ring: rgba(36, 97, 224, 0.55);
     --kind-read: #4d6b86;
     --kind-search: #6f52b0;
     --kind-edit: #a2466f;
@@ -627,6 +632,9 @@
       --content-code-tint: rgba(150, 178, 240, 0.12);
       --content-path-ink: #80aafb;
       --content-path-tint: rgba(107, 155, 250, 0.12);
+      --content-chip-wash: rgba(107, 155, 250, 0.09);
+      --content-chip-wash-strong: rgba(107, 155, 250, 0.16);
+      --content-chip-ring: rgba(128, 170, 251, 0.6);
       --kind-read: #9db4cc;
       --kind-search: #b9a2f0;
       --kind-edit: #ef9ac0;
@@ -749,6 +757,9 @@
     --content-code-tint: rgba(150, 178, 240, 0.12);
     --content-path-ink: #80aafb;
     --content-path-tint: rgba(107, 155, 250, 0.12);
+    --content-chip-wash: rgba(107, 155, 250, 0.09);
+    --content-chip-wash-strong: rgba(107, 155, 250, 0.16);
+    --content-chip-ring: rgba(128, 170, 251, 0.6);
     --kind-read: #9db4cc;
     --kind-search: #b9a2f0;
     --kind-edit: #ef9ac0;
@@ -921,6 +932,9 @@
     --content-code-tint: rgba(47, 79, 143, 0.08) !important;
     --content-path-ink: #1d52c4 !important;
     --content-path-tint: rgba(36, 97, 224, 0.07) !important;
+    --content-chip-wash: rgba(36, 97, 224, 0.05) !important;
+    --content-chip-wash-strong: rgba(36, 97, 224, 0.1) !important;
+    --content-chip-ring: rgba(36, 97, 224, 0.55) !important;
     --kind-read: #4d6b86 !important;
     --kind-search: #6f52b0 !important;
     --kind-edit: #a2466f !important;
@@ -1122,6 +1136,9 @@
       --content-code-tint: rgba(150, 178, 240, 0.12) !important;
       --content-path-ink: #80aafb !important;
       --content-path-tint: rgba(107, 155, 250, 0.12) !important;
+      --content-chip-wash: rgba(107, 155, 250, 0.09) !important;
+      --content-chip-wash-strong: rgba(107, 155, 250, 0.16) !important;
+      --content-chip-ring: rgba(128, 170, 251, 0.6) !important;
       --kind-read: #9db4cc !important;
       --kind-search: #b9a2f0 !important;
       --kind-edit: #ef9ac0 !important;
@@ -1244,6 +1261,9 @@
     --content-code-tint: rgba(150, 178, 240, 0.12) !important;
     --content-path-ink: #80aafb !important;
     --content-path-tint: rgba(107, 155, 250, 0.12) !important;
+    --content-chip-wash: rgba(107, 155, 250, 0.09) !important;
+    --content-chip-wash-strong: rgba(107, 155, 250, 0.16) !important;
+    --content-chip-ring: rgba(128, 170, 251, 0.6) !important;
     --kind-read: #9db4cc !important;
     --kind-search: #b9a2f0 !important;
     --kind-edit: #ef9ac0 !important;

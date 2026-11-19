@@ -8,6 +8,7 @@ import { startFakeModels } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSession, settleShell } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const binary = process.env.LATCH_CODEX_GATEWAY_BINARY
 it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
@@ -115,13 +116,13 @@ it.skipIf(process.env.LATCH_SLASH_LIVE !== '1' || !binary)(
           await noHorizontalOverflow(page)
           await page.screenshot({ path: `${output}/picker-${width}-${theme}.png`, animations: 'disabled' })
           await continued.press('Enter')
-          expect(await continued.inputValue()).toBe('$latch-ui-proof ')
+          expect(await promptValue(continued)).toBe('$latch-ui-proof ')
           expect(service.requests).toHaveLength(1)
         }
         await page.setViewportSize({ width: 1440, height: 1000 })
         await settleShell(page)
         if (!(await continued.isVisible())) await openSession(page, id)
-        expect(await continued.inputValue()).toBe('$latch-ui-proof ')
+        expect(await promptValue(continued)).toBe('$latch-ui-proof ')
         await continued.press('End')
         await continued.pressSequentially('请再次直接回答公开验证语句，不要运行工具。')
         await continued.press('Meta+Enter')

@@ -11,6 +11,7 @@ import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, settleShell } from './helpers/layout.ts'
 import { stillMotion } from './helpers/visual.ts'
 import { switchView } from './helpers/workbench.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/board-items'
 
@@ -96,7 +97,7 @@ it('keeps 待办 in 未开始, starts them as one card with their sessions, and 
     const sessionsBefore = (await owner.json<AppSnapshot>('snapshot')).tasks.length
     await board(page).getByRole('button', { name: '新建', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '新建' })
-    await dialog.locator('textarea').fill('echo 补一份迁移说明\n细节稍后')
+    await dialog.locator('.composer-input [role="textbox"]').fill('echo 补一份迁移说明\n细节稍后')
     await dialog.getByRole('switch', { name: '先不开始' }).click()
     await dialog.getByRole('radio', { name: '低', exact: true }).click()
     const tagField = dialog.getByRole('textbox', { name: '标签', exact: true })
@@ -160,7 +161,7 @@ it('keeps 待办 in 未开始, starts them as one card with their sessions, and 
     // 开始 opens the input with the 待办's 要求 and suggestions; the started card is the same card, now 进行中.
     await itemCard(page, running.id).getByRole('button', { name: '开始', exact: true }).click()
     const start = page.getByRole('dialog', { name: '开始' })
-    await expect.poll(() => start.locator('textarea').inputValue()).toBe('hang 重写设置页')
+    await expect.poll(() => promptValue(start.locator('.composer-input [role="textbox"]'))).toBe('hang 重写设置页')
     await shot(page, 'start', 1440, 'light')
     await page.setViewportSize({ width: 1440, height: 900 })
     await start.getByRole('button', { name: '发送', exact: true }).click()

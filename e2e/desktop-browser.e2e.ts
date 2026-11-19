@@ -12,6 +12,7 @@ import { desktopShellEnvironment } from '@latch/host/desktop-host'
 import { latchEnv } from '@latch/host/env'
 import type { ServerOptions } from '@latch/host'
 import { startTestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 type Launch = NonNullable<NonNullable<ServerOptions['terminal']>['launch']>
 
@@ -353,7 +354,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await waitFor(async () => (await dark()) === nativeDark)
 
       // 截图 puts the visible page into the draft's attachments; nothing is sent.
-      const draft = page.locator('.composer textarea').first()
+      const draft = page.locator('.composer .composer-input [role="textbox"]').first()
       await panel.getByRole('button', { name: '截图', exact: true }).click()
       const shotName = `截图-127.0.0.1-${site.port}.png`
       await page.getByRole('button', { name: shotName, exact: true }).waitFor()
@@ -368,8 +369,8 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await panel.locator('.browser-pick-box').first().waitFor()
       await captureThemes(app, page, 'picking--1440')
       await pick.click({ position: { x: 100, y: 100 } })
-      await expect.poll(() => draft.inputValue()).toContain('选择器：#save')
-      expect(await draft.inputValue()).toContain('元素 · button「保存设置」（页面提供的内容）')
+      await expect.poll(() => promptValue(draft)).toContain('选择器：#save')
+      expect(await promptValue(draft)).toContain('元素 · button「保存设置」（页面提供的内容）')
       await page.getByRole('button', { name: `元素-127.0.0.1-${site.port}.png`, exact: true }).waitFor()
       await frame.waitFor({ state: 'detached' })
       await waitFor(async () => (await viewOf(guestId))?.visible === true)
@@ -386,18 +387,18 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       ])
       await captureThemes(app, page, 'drawer--1440')
       await panel.getByRole('button', { name: '加入对话', exact: true }).click()
-      await expect.poll(() => draft.inputValue()).toContain(`浏览器控制台 · 127.0.0.1:${site.port}（页面提供的内容）`)
-      expect(await draft.inputValue()).toContain('[error] fixture error')
-      expect(await draft.inputValue()).not.toContain('fixture warning')
+      await expect.poll(() => promptValue(draft)).toContain(`浏览器控制台 · 127.0.0.1:${site.port}（页面提供的内容）`)
+      expect(await promptValue(draft)).toContain('[error] fixture error')
+      expect(await promptValue(draft)).not.toContain('fixture warning')
       await draft.fill('')
       // A chosen entry stays chosen while the page logs more.
       await list.getByText(/fixture warning/u).click()
       await inGuest(guestId, `for (let i = 0; i < 5; i++) console.log('later ' + i); true`)
       await list.getByText('[info] later 4', { exact: true }).waitFor()
       await panel.getByRole('button', { name: '加入对话', exact: true }).click()
-      await expect.poll(() => draft.inputValue()).toContain('[warn] fixture warning')
-      expect(await draft.inputValue()).not.toContain('later')
-      expect(await draft.inputValue()).not.toContain('fixture error')
+      await expect.poll(() => promptValue(draft)).toContain('[warn] fixture warning')
+      expect(await promptValue(draft)).not.toContain('later')
+      expect(await promptValue(draft)).not.toContain('fixture error')
       await draft.fill('')
       await panel.getByRole('radio', { name: '网络', exact: true }).click()
       const requests = panel.getByRole('listbox', { name: '网络', exact: true })

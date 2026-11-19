@@ -11,6 +11,7 @@ import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browse
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { closeSettings, openSection, openSession, openSettings, permissionControl, permissionWords } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = 'test-results/permissions'
 
@@ -145,7 +146,7 @@ describe('permission states in a browser', () => {
     const card = page.locator('[data-approval-id]')
     await card.getByRole('button', { name: '拒绝', exact: true }).waitFor()
     const note = page.getByRole('textbox', { name: '拒绝并说明改做什么…', exact: true })
-    expect(await note.getAttribute('placeholder')).toBe('拒绝并说明改做什么…')
+    expect(await note.getAttribute('aria-placeholder')).toBe('拒绝并说明改做什么…')
     // Enter with nothing written decides nothing.
     await note.press('Enter')
     expect((await detail(sessionId)).approvals).toHaveLength(1)
@@ -161,7 +162,7 @@ describe('permission states in a browser', () => {
     // What was written went with the rejection, not into the draft.
     const composer = page.getByRole('textbox', { name: '继续对话', exact: true })
     await composer.waitFor()
-    expect(await composer.inputValue()).toBe('')
+    expect(await promptValue(composer)).toBe('')
   })
 
   const activeKeys = async (card: Locator, name: string) =>
@@ -443,7 +444,7 @@ describe('permission states in a browser', () => {
     await home.locator('.composer .harness-picker').click()
     await page.getByRole('menuitemradio', { name: /Fake Agent/ }).click()
     expect(await page.getByText('只能在 Mac 上开始', { exact: false }).count()).toBe(0)
-    await home.locator('.composer textarea').fill('permission')
+    await home.locator('.composer .composer-input [role="textbox"]').fill('permission')
     await page.keyboard.press('Enter')
     const card = page.locator('[data-approval-id]')
     await card.waitFor()

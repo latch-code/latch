@@ -273,7 +273,7 @@ describe('Latch 内置’s permission levels in a browser', () => {
         .getByRole('button', { name: /^新会话/u })
         .first()
         .click()
-      const input = page.getByPlaceholder('想让 Agent 做什么？').filter({ visible: true }).first()
+      const input = page.getByRole('textbox', { name: '新会话消息', exact: true }).filter({ visible: true }).first()
       await input.waitFor()
       expect(await permissionWords(page)).toBe('权限：先问你')
       await permissionControl(page).click()

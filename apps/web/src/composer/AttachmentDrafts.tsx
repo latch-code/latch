@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent } from 'react'
 import {
   Button,
   ConfirmDialog,
@@ -80,7 +80,9 @@ const uploadBytes = (value: number) =>
       ? `${(value / 1024).toFixed(1)} KB`
       : `${(value / 1024 / 1024).toFixed(1)} MB`
 
-export function pasteAttachments(event: ClipboardEvent<HTMLTextAreaElement>, controller: AttachmentDraftController) {
+/** A paste into the input: files become attachments, and so does a long text, as a file; the rest is the input's. */
+export function pasteAttachments(event: ClipboardEvent, controller: AttachmentDraftController) {
+  if (!event.clipboardData) return
   const files = [...event.clipboardData.files]
   if (files.length) {
     event.preventDefault()

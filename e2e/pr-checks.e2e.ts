@@ -10,6 +10,7 @@ import { FAKE_ACP_AGENT, installFakeGh, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openPanelTab, openSession, settleShell, showTooltip } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/pr-checks'
 const SLOW = { timeout: 30_000 }
@@ -237,9 +238,9 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
     }
     const messages = (await owner.json<TaskDetail>(`tasks/${first}`)).messages.length
     await section.locator('.delivery-log').getByRole('button', { name: '加入对话' }).click()
-    const draft = page.locator('.composer textarea').first()
-    await expect.poll(() => draft.inputValue(), SLOW).toContain(`PR #1 的检查 test (node 24) 失败（${head.slice(0, 7)}）：`)
-    expect(await draft.inputValue()).toContain('```text\n[Run tests]\nFAIL src/api/transactions.test.ts')
+    const draft = page.locator('.composer .composer-input [role="textbox"]').first()
+    await expect.poll(() => promptValue(draft), SLOW).toContain(`PR #1 的检查 test (node 24) 失败（${head.slice(0, 7)}）：`)
+    expect(await promptValue(draft)).toContain('```text\n[Run tests]\nFAIL src/api/transactions.test.ts')
     expect((await owner.json<TaskDetail>(`tasks/${first}`)).messages.length).toBe(messages)
     await draft.fill('')
 
@@ -249,7 +250,7 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
     await section.getByRole('article', { name: 'reviewer · 要求修改' }).getByText('Round JPY to whole yen.').waitFor()
     await comment.getByRole('button', { name: '加入对话' }).click()
     await expect
-      .poll(() => draft.inputValue(), SLOW)
+      .poll(() => promptValue(draft), SLOW)
       .toBe("PR #1 · reviewer · src/filters/CurrencyFilter.tsx:18：\n\n```text\n'formatCode' is declared but never used\n```")
     await draft.fill('')
     await shots(page, 'reviews')

@@ -968,9 +968,11 @@ describe('composer', () => {
       createElement('span', { 'data-composer-control': 'model' }, 'gpt-5.5 · 高'),
     )
     const order = (markup: string) =>
-      [...markup.matchAll(/<textarea|class="composer-(controls|end)"|data-composer-control="(\w+)"|aria-label="(发送|插入命令)"/gu)].map(
-        match => (match[0] === '<textarea' ? 'text' : (match[1] ?? match[2] ?? (match[3] === '发送' ? 'send' : 'slash'))),
-      )
+      [
+        ...markup.matchAll(
+          /class="prompt-editor"|class="composer-(controls|end)"|data-composer-control="(\w+)"|aria-label="(发送|插入命令)"/gu,
+        ),
+      ].map(match => (match[0] === 'class="prompt-editor"' ? 'text' : (match[1] ?? match[2] ?? (match[3] === '发送' ? 'send' : 'slash'))))
     expect(order(renderToStaticMarkup(createElement(Composer, { ...base, controls })))).toEqual([
       'text',
       'controls',

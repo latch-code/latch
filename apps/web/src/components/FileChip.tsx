@@ -61,6 +61,8 @@ interface ChipProps {
   alt?: string
   /** The label is the path or its file name, so it is set in the mono face and keeps the file name whole. */
   mono?: boolean
+  /** A file a person chose with @ in a message they sent: the message input's chip, with its file name and 14px glyph. */
+  prompt?: boolean
 }
 
 /**
@@ -120,8 +122,18 @@ function PathText({ text }: { text: string }) {
   )
 }
 
-function ChipBody({ path, label, image, alt, mono = true, icon }: ChipProps & { icon: ReactNode }) {
+function ChipBody({ path, rootId, label, image, alt, mono = true, icon, prompt }: ChipProps & { icon: ReactNode }) {
   const name = referenceName(path)
+  if (prompt)
+    return (
+      <>
+        {icon}
+        <span className="prompt-chip-label">{name}</span>
+        <span className="prompt-chip-token" aria-hidden="true">
+          {`@${rootId ?? ''}:${path}`}
+        </span>
+      </>
+    )
   const described = image === true && alt !== undefined && alt !== name
   const text = label === undefined ? path : typeof label === 'string' ? label : undefined
   return (
@@ -197,11 +209,15 @@ function ChipMenu({ name, checking = false, sections, note, copied, onOpen, trig
           else menu.onClick()
         }
         return (
-          <Tooltip content={<span className="file-chip-tip-path">{props.path}</span>}>
+          <Tooltip
+            content={
+              <span className="file-chip-tip-path">{props.prompt && props.rootId ? `${props.rootId}:${props.path}` : props.path}</span>
+            }>
             <button
               ref={menu.ref}
               type="button"
-              className="file-chip"
+              className={props.prompt ? 'file-chip prompt-chip' : 'file-chip'}
+              data-kind={props.prompt ? 'file' : undefined}
               data-file-chip=""
               aria-haspopup={menu['aria-haspopup']}
               aria-expanded={menu['aria-expanded']}
@@ -229,8 +245,8 @@ function ChipMenu({ name, checking = false, sections, note, copied, onOpen, trig
               <ChipBody
                 {...props}
                 icon={
-                  <Swap value={copied} className="file-chip-icon">
-                    <Icon icon={copied ? CheckGlyph : referenceIcon(props.path)} size={12} />
+                  <Swap value={copied} className={props.prompt ? 'file-chip-icon prompt-chip-icon' : 'file-chip-icon'}>
+                    <Icon icon={copied ? CheckGlyph : referenceIcon(props.path)} size={props.prompt ? 14 : 12} />
                   </Swap>
                 }
               />

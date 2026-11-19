@@ -1,4 +1,5 @@
 import { shortcutMatches } from '../workbenchShortcuts.ts'
+import type { PromptInput } from '../composer/PromptEditor.tsx'
 import { isPersonalChat, personalChatModel, topicOwner } from '../agents/chat.ts'
 import { sessionAgent } from '../agents/model.ts'
 import { parseModelChoice, readsProjectFiles, type AppSnapshot } from '@latch/protocol'
@@ -226,7 +227,7 @@ export function useSessionController({
   const summary = preferDetail ? current.summary : (listed ?? current?.summary)
   if (summary && privateSession(summary) && selectedId) privateDraftId.current = selectedId
   else if (privateDraftId.current !== selectedId) privateDraftId.current = null
-  const composerRef = useRef<HTMLTextAreaElement>(null)
+  const composerRef = useRef<PromptInput>(null)
   const [renaming, setRenaming] = useState<TaskSummary | null>(null)
   const [tagging, setTagging] = useState<TaskSummary | null>(null)
   const [deleting, setDeleting] = useState<TaskSummary | null>(null)
@@ -531,8 +532,9 @@ export function useSessionController({
   }, [selectedId, snapshot.device.dataScope])
   const setSubmissionDraft = (text: string) => {
     restoringDraft.current = undefined
+    // A reference whose marker left the text is kept until the draft is sent or let go: undo can bring the marker, and
+    // so its chip, back. Only those still in the text count (`mentionChoice.refs`).
     submission.setDraft(text)
-    setFileMentions(previous => previous.filter(ref => hasFileMention(text, ref)))
   }
   const mentionHarness = inputId === null ? findHarness(catalog, choice.harnessId) : harnessInfo
   const mentionable =

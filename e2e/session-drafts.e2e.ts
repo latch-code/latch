@@ -6,6 +6,7 @@ import type { CustomAgent, TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 it.each([false, true])('clears the active draft when another device deletes its session (agent=%s)', async owned => {
   let modelCalls = 0
@@ -84,7 +85,7 @@ it.each([false, true])('clears the active draft when another device deletes its 
       await expect.poll(() => page.getByText('会话已被删除', { exact: true }).isVisible(), { timeout: 10_000 }).toBe(true)
       await page.keyboard.press('Alt+l')
       await expect
-        .poll(() => page.locator('textarea').evaluateAll(elements => elements.map(element => (element as HTMLTextAreaElement).value)))
+        .poll(async () => Promise.all((await page.locator('.composer-input [role="textbox"]').all()).map(promptValue)))
         .toEqual([''])
       expect(submissions).toEqual([])
       expect(modelCalls).toBe(callsBefore)
@@ -193,13 +194,13 @@ it.each([
       if (unknown) await page.getByRole('button', { name: '重试这次提交', exact: true }).waitFor()
       else await expect.poll(() => accepted).toBe(true)
       await choose(b.summary.title)
-      expect(await input.inputValue()).toBe('Draft B stays with B')
+      expect(await promptValue(input)).toBe('Draft B stays with B')
       if (reload) {
         await page.reload()
         await connected(page)
         await page.getByRole('button', { name: '打开', exact: true }).waitFor()
         // Kept in this device's browser storage across the reload.
-        expect(await input.inputValue()).toBe('Draft B stays with B')
+        expect(await promptValue(input)).toBe('Draft B stays with B')
       }
       const expectedB = 'Draft B stays with B'
       if (unknown) {
@@ -215,12 +216,12 @@ it.each([
       expect(routeFailed).toBe(false)
       const bMessage = b.messages.find(message => message.role === 'user')!.id
       await page.locator('.transcript [data-message-id="' + bMessage + '"]').waitFor({ state: 'visible' })
-      expect(await input.inputValue()).toBe(expectedB)
+      expect(await promptValue(input)).toBe(expectedB)
       expect(await page.getByRole('button', { name: '发送', exact: true }).isEnabled()).toBe(expectedB.length > 0)
       await choose(a.summary.title)
-      expect(await input.inputValue()).toBe(resend ? draftA : '')
+      expect(await promptValue(input)).toBe(resend ? draftA : '')
       await choose(b.summary.title)
-      expect(await input.inputValue()).toBe(expectedB)
+      expect(await promptValue(input)).toBe(expectedB)
       expect((calls.get('会话 A') ?? 0) + (calls.get(draftA) ?? 0)).toBe(2)
       expect(requestIds).toHaveLength(unknown ? 2 : 1)
       expect(new Set(requestIds).size).toBe(1)
@@ -296,22 +297,22 @@ it('keeps text drafts across a reload, per session and for a new session, and cl
     await input.fill('草稿 B：还没发')
     await page.reload()
     await connected(page)
-    await expect.poll(() => input.inputValue()).toBe('草稿 B：还没发')
+    await expect.poll(() => promptValue(input)).toBe('草稿 B：还没发')
     await page.screenshot({ path: 'test-results/session-drafts/after-reload-1440-light.png', animations: 'disabled' })
     await choose(a.summary.title)
-    expect(await input.inputValue()).toBe('草稿 A：还没发')
+    expect(await promptValue(input)).toBe('草稿 A：还没发')
     await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
     const fresh = page.getByRole('textbox', { name: '新会话消息', exact: true })
     await fresh.fill('新会话的草稿')
     // 新建会话 is the home over session A, which stayed open: its own draft is untouched.
     expect(await page.locator('main.workspace').getAttribute('inert')).toBe('')
-    expect(await page.locator('main.workspace textarea').first().inputValue()).toBe('草稿 A：还没发')
+    expect(await promptValue(page.locator('main.workspace .composer-input [role="textbox"]').first())).toBe('草稿 A：还没发')
     await page.reload()
     await connected(page)
     // A reload opens the session that was open; the home's draft waits where 新建会话 leads.
     if (!(await page.locator('.workbench-home').isVisible()))
       await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
-    await expect.poll(() => fresh.inputValue()).toBe('新会话的草稿')
+    await expect.poll(() => promptValue(fresh)).toBe('新会话的草稿')
     // Deleted on another device while this page shows something else: its text goes from storage.
     expect((await owner.request('tasks/' + a.summary.id, { method: 'DELETE' })).status).toBe(200)
     await expect.poll(stored, { timeout: 10_000 }).not.toContain('草稿 A')

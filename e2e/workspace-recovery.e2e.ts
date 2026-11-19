@@ -7,6 +7,7 @@ import type { TaskDetail, WorkspaceInfo } from '@latch/protocol'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { backToPhoneSessions, noHorizontalOverflow } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 describe('continue in a saved project after the old folder disappears', () => {
   it.each([
@@ -51,7 +52,7 @@ describe('continue in a saved project after the old folder disappears', () => {
       expect((await refused).status()).toBe(409)
       const recovery = page.getByRole('region', { name: '选择项目继续会话', exact: true })
       await recovery.waitFor()
-      expect(await input.inputValue()).toBe(draft)
+      expect(await promptValue(input)).toBe(draft)
       await recovery.getByRole('button', { name: /继续会话的项目/u }).click()
       await page.getByRole(width === 390 ? 'radio' : 'menuitemradio', { name: /继续工作的项目/u }).click()
       await mkdir('test-results/workspace-recovery', { recursive: true })
@@ -64,7 +65,7 @@ describe('continue in a saved project after the old folder disappears', () => {
       await recovery.getByRole('button', { name: '在新会话中继续', exact: true }).click()
       const nextInput = page.getByRole('textbox', { name: '新会话消息', exact: true })
       await nextInput.waitFor()
-      expect(await nextInput.inputValue()).toBe(draft)
+      expect(await promptValue(nextInput)).toBe(draft)
       await expect.poll(() => nextInput.evaluate(element => element === document.activeElement)).toBe(true)
       expect(creates).toBe(0)
       const accepted = page.waitForResponse(

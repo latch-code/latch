@@ -9,6 +9,7 @@ import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { backToPhoneSessions, noHorizontalOverflow } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = process.env.LATCH_HANDOFF_SHOTS ?? 'test-results/handoffs'
 
@@ -277,7 +278,7 @@ it('hands a reply and a file to a new code session, takes its result back, and c
     await result.getByText('已接入 ECB 每日汇率，缓存 24 小时。').waitFor()
     await page.screenshot({ path: `${OUT}/returned-1440.png` })
     await result.getByRole('button', { name: '带入输入框', exact: true }).click()
-    await expect.poll(() => page.getByRole('textbox', { name: '继续对话', exact: true }).inputValue()).toContain('> 已接入 ECB 每日汇率')
+    await expect.poll(() => promptValue(page.getByRole('textbox', { name: '继续对话', exact: true }))).toContain('> 已接入 ECB 每日汇率')
     await result.getByRole('button', { name: 'rates.md', exact: true }).click()
     await page.locator('.file-preview').getByText('补充：每天 16:00 发布。').waitFor()
     await page.locator(`[data-task-id="${sourceId}"]`).first().click()

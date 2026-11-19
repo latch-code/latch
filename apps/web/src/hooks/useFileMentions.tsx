@@ -1,10 +1,11 @@
 import { mentionMarker } from '../fileMentions.ts'
-import { useEffect, useId, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { useEffect, useId, useState, type ReactNode, type RefObject } from 'react'
 import type { FileMention } from '@latch/protocol'
 import { FileGlyph, Hint, Icon, Kbd, Spinner, Suggest, Tooltip } from '@latch/ui'
 import { api, errorMessage } from '../core/api.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { defineCopy } from '../core/i18n.ts'
+import type { PromptInput } from '../composer/PromptEditor.tsx'
 
 const COPY = defineCopy(
   {
@@ -135,8 +136,8 @@ export function mentionKey(input: {
  */
 export function useFileMentions(
   draft: string,
-  onDraft: (text: string) => void,
-  textarea: RefObject<HTMLTextAreaElement | null>,
+  onDraft: (text: string, selection?: { start: number; end: number }) => void,
+  textarea: RefObject<PromptInput | null>,
   choice: FileMentionChoice | undefined,
   anchorRef: RefObject<HTMLElement | null>,
   members?: MentionMembers,
@@ -220,16 +221,11 @@ export function useFileMentions(
     if (!token || item.disabled) return
     const marker = `${item.token} `
     const next = `${draft.slice(0, token.start)}${marker}${draft.slice(token.end)}`
-    onDraft(next)
+    const caret = token.start + marker.length
+    onDraft(next, { start: caret, end: caret })
     setDismissed(undefined)
-    requestAnimationFrame(() => {
-      const input = textarea.current
-      input?.focus()
-      // Typing that came in meanwhile has put the caret where it belongs.
-      if (input?.value !== next) return
-      input.setSelectionRange(token.start + marker.length, token.start + marker.length)
-      setCaret(token.start + marker.length)
-    })
+    setCaret(caret)
+    requestAnimationFrame(() => textarea.current?.focus())
   }
   const chooseEntry = (index: number) => {
     if (index < choosable.length) chooseMember(choosable[index]!)
@@ -245,18 +241,16 @@ export function useFileMentions(
       return
     }
     const marker = `${mentionMarker(file)} `
-    onDraft(`${draft.slice(0, token.start)}${marker}${draft.slice(token.end)}`)
+    const caret = token.start + marker.length
+    // The reference first, so the marker is a chip as soon as it is in the text.
     choice.onRefs([...choice.refs.filter(ref => ref.root !== file.root || ref.path !== file.path), { root: file.root, path: file.path }])
+    onDraft(`${draft.slice(0, token.start)}${marker}${draft.slice(token.end)}`, { start: caret, end: caret })
     setDismissed(undefined)
-    requestAnimationFrame(() => {
-      textarea.current?.focus()
-      textarea.current?.setSelectionRange(token.start + marker.length, token.start + marker.length)
-      setCaret(token.start + marker.length)
-    })
+    setCaret(caret)
+    requestAnimationFrame(() => textarea.current?.focus())
   }
-  const keydown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((!open && !hiddenOpen) || event.nativeEvent.isComposing || event.keyCode === 229 || event.metaKey || event.ctrlKey || event.altKey)
-      return false
+  const keydown = (event: KeyboardEvent) => {
+    if ((!open && !hiddenOpen) || event.isComposing || event.keyCode === 229 || event.metaKey || event.ctrlKey || event.altKey) return false
     // A device that cannot list files only has the note to close.
     const action = open
       ? mentionKey({ key: event.key, shift: event.shiftKey, count, loading: waiting, query, active })

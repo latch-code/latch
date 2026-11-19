@@ -7,6 +7,7 @@ import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { backToPhoneSessions } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 test('keeps text written before a question arrived as the next message, until 其他… makes it the answer', async () => {
   let release!: () => void
@@ -87,7 +88,7 @@ test('keeps text written before a question arrived as the next message, until �
     // The text stays in the input and the slot still queues; Enter would not have answered.
     await page.getByRole('button', { name: '排队发送', exact: true }).waitFor()
     expect(await page.getByRole('button', { name: '发送', exact: true }).count()).toBe(0)
-    expect(await input.inputValue()).toBe('顺便看看手机端')
+    expect(await promptValue(input)).toBe('顺便看看手机端')
     // 其他… says this text is the answer.
     await card.getByRole('button', { name: '其他…', exact: true }).click()
     await page.getByRole('button', { name: '发送', exact: true }).waitFor()
@@ -212,7 +213,7 @@ test('answers a multi-question wizard, keeps per-device drafts across sessions, 
       await card.getByRole('button', { name: '其他…', exact: true }).click()
       const input = page.getByRole('textbox', { name: '继续对话', exact: true })
       await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
-      expect(await input.getAttribute('placeholder')).toContain('输入你自己的回答')
+      expect(await input.getAttribute('aria-placeholder')).toContain('输入你自己的回答')
       await input.fill('再检查可访问性')
       await input.press('Meta+Enter')
       await expect.poll(async () => (await owner.json<TaskDetail>(path)).summary.status).toBe('idle')

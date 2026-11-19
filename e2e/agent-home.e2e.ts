@@ -63,7 +63,7 @@ it('talks to 通用 on a fresh data directory, sets its deleted home up again, a
     await page.getByRole('navigation', { name: '我的 Agent', exact: true }).locator('[data-agent-id="general"]').first().click()
     const send = async (text: string) => {
       // The first message goes from 通用's new-chat input, later ones from the chat's own.
-      const input = page.locator('textarea').filter({ visible: true }).first()
+      const input = page.locator('.composer-input [role="textbox"]').filter({ visible: true }).first()
       await input.fill(text)
       await input.press('Meta+Enter')
     }
@@ -84,7 +84,7 @@ it('talks to 通用 on a fresh data directory, sets its deleted home up again, a
     // Opened onto the chat afterwards, as after a restart: nothing to pick, no failure, the input ready.
     await page.reload()
     await connected(page)
-    await page.locator('textarea').filter({ visible: true }).first().waitFor()
+    await page.locator('.composer-input [role="textbox"]').filter({ visible: true }).first().waitFor()
     await page.waitForTimeout(1500)
     expect(
       await page
@@ -189,7 +189,7 @@ it('moves 通用’s chat to the home under a new start directory, and the page 
       await page.getByRole('navigation', { name: '我的 Agent', exact: true }).locator('[data-agent-id="general"]').first().click()
     }
     const send = async (text: string) => {
-      const input = page.locator('textarea').filter({ visible: true }).first()
+      const input = page.locator('.composer-input [role="textbox"]').filter({ visible: true }).first()
       await input.fill(text)
       await input.press('Meta+Enter')
     }

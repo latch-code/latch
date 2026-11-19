@@ -111,7 +111,7 @@ describe('responsive workspace controls', () => {
       }
       const composer = page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true })
       // Home can cover a parked input; exactly one target may accept editing, and the other is inert.
-      const targets = await page.locator('textarea[aria-label="新会话消息"]').evaluateAll(elements => {
+      const targets = await page.locator('[role="textbox"][aria-label="新会话消息"]').evaluateAll(elements => {
         const modal = document.querySelector('dialog:modal')
         return elements.map(element => ({
           visible: element.checkVisibility({ visibilityProperty: true }),

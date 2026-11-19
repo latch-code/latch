@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import type { SessionCommand, SessionSkill } from '@latch/protocol'
+import type { FileMention, SessionCommand, SessionSkill } from '@latch/protocol'
+import { mentionRanges } from '../fileMentions.ts'
 
 /** A token of the draft that the current Harness's catalogue names; the draft itself stays plain text. */
 export interface PromptMark {
@@ -83,8 +84,25 @@ export function promptMarks(text: string, catalogue: PromptCatalogue): PromptMar
   return marks
 }
 
-/** Backspace with the caret right after a mark takes the whole token. */
-export function markBeforeCaret(marks: readonly PromptMark[], start: number, end: number): PromptMark | undefined {
-  if (start !== end) return undefined
-  return marks.find(mark => mark.end === start)
+/** A token of the draft drawn as a chip: a catalogue mark, or a file chosen with `@` whose marker is still in the text. */
+export type PromptChip = PromptMark | { start: number; end: number; kind: 'file'; name: string; root: string; path: string }
+
+/**
+ * Every chip of the draft, in order and never overlapping: the catalogue's marks and the `@root:path` markers of the
+ * files currently referenced, each standing on its own between whitespace. Where two would overlap the earlier one wins.
+ */
+export function promptChips(text: string, catalogue: PromptCatalogue, refs: readonly FileMention[] = []): PromptChip[] {
+  const files: PromptChip[] = refs.flatMap(ref =>
+    mentionRanges(text, ref).map(range => ({
+      ...range,
+      kind: 'file' as const,
+      name: ref.path.slice(ref.path.lastIndexOf('/') + 1) || ref.path,
+      root: ref.root,
+      path: ref.path,
+    })),
+  )
+  const all = [...promptMarks(text, catalogue), ...files].sort((a, b) => a.start - b.start || b.end - a.end)
+  const chips: PromptChip[] = []
+  for (const chip of all) if (chip.end > chip.start && (!chips.length || chip.start >= chips.at(-1)!.end)) chips.push(chip)
+  return chips
 }

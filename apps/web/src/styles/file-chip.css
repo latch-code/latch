@@ -86,3 +86,19 @@
 .file-chip-note {
   padding: 0 var(--sp-4) 0 var(--sp-10);
 }
+/* A file a person chose with @, in a message they sent: the message input's chip (composer.css), still a button. */
+.file-chip.prompt-chip {
+  height: calc(1lh - 4px);
+  margin-inline: var(--sp-2);
+  padding: 0 var(--sp-6) 0 var(--sp-4);
+  border-radius: var(--r-6);
+  background: var(--content-chip-wash);
+  font-size: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+.file-chip.prompt-chip:hover,
+.file-chip.prompt-chip:active,
+.file-chip.prompt-chip[aria-expanded='true'] {
+  background: var(--content-chip-wash-strong);
+}

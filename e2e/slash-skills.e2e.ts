@@ -9,6 +9,7 @@ import { FAKE_CODEX_APP_SERVER } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openSession } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const quoted = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
@@ -86,15 +87,15 @@ it.each(['chromium', 'webkit'] as const)('inserts native skills without sending 
           await input.fill('/')
           const last = skills.getByRole('option').last()
           await last.click()
-          expect(await input.inputValue()).toBe('$check-199 ')
+          expect(await promptValue(input)).toBe('$check-199 ')
           expect((await detail()).messages.length).toBe(before)
           await input.fill('/check-000')
           await input.press('Enter')
-          expect(await input.inputValue()).toBe('$check-000 ')
+          expect(await promptValue(input)).toBe('$check-000 ')
           expect((await detail()).messages.length).toBe(before)
           await input.fill('请 /check-001')
           await input.press('Tab')
-          expect(await input.inputValue()).toBe('请 $check-001 ')
+          expect(await promptValue(input)).toBe('请 $check-001 ')
           expect(await input.evaluate(element => document.activeElement === element)).toBe(true)
           expect((await detail()).messages.length).toBe(before)
           await input.fill('/check')
@@ -119,7 +120,7 @@ it.each(['chromium', 'webkit'] as const)('inserts native skills without sending 
     await list.getByRole('option').first().waitFor()
     expect(await list.getByRole('option').first().innerText()).toContain('技能（上次会话）')
     await draft.press('Enter')
-    expect(await draft.inputValue()).toBe('$check-000 ')
+    expect(await promptValue(draft)).toBe('$check-000 ')
     const nativeLog = () => readFile(log, 'utf8')
     const promptsBefore = (await nativeLog()).split('\n').filter(line => line.includes('"method":"turn/start"')).length
     await openSession(page, sessionId)

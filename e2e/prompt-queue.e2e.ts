@@ -6,6 +6,7 @@ import type { TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin, ModelProvider } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 describe('queued follow-ups', () => {
   it('queues and edits during work, drains after success, parks at stop, resumes explicitly and displays dropped authority', async () => {
@@ -96,7 +97,7 @@ describe('queued follow-ups', () => {
         await dialog.getByRole('button', { name: '保存', exact: true }).click()
         await dialog.waitFor({ state: 'detached' })
         await tray.getByText(edited, { exact: true }).waitFor()
-        expect(await input.inputValue()).toBe(`仍在输入的草稿 ${width}`)
+        expect(await promptValue(input)).toBe(`仍在输入的草稿 ${width}`)
         expect((await owner.json<TaskDetail>(path)).queue).toHaveLength(2)
         await input.fill('')
         await page.screenshot({ path: `test-results/queue-waiting-${width}.png`, fullPage: true })

@@ -11,6 +11,7 @@ import { FAKE_ACP_AGENT, installFakeGh, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, openPanelTab, openSession, settleShell, showTooltip, tooltipText } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/delivery'
 const SLOW = { timeout: 30_000 }
@@ -222,9 +223,9 @@ touch '${control}/commit-ran'`,
     await shots(page, 'hook-failed', true)
     const messages = (await detail()).messages.length
     await card.getByRole('button', { name: '加入对话', exact: true }).click()
-    const draft = page.locator('.composer textarea').first()
-    await expect.poll(() => draft.inputValue(), SLOW).toContain('提交钩子 pre-commit 没通过，退出码 1，没有生成提交：')
-    expect(await draft.inputValue()).toContain('```text\nlint: checking staged files')
+    const draft = page.locator('.composer .composer-input [role="textbox"]').first()
+    await expect.poll(() => promptValue(draft), SLOW).toContain('提交钩子 pre-commit 没通过，退出码 1，没有生成提交：')
+    expect(await promptValue(draft)).toContain('```text\nlint: checking staged files')
     expect((await detail()).messages.length).toBe(messages)
     await draft.fill('')
 

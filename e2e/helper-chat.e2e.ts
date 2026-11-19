@@ -10,6 +10,7 @@ import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browse
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, tooltipText } from './helpers/layout.ts'
 import { stillMotion } from './helpers/visual.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/helper-chat'
 
@@ -429,7 +430,7 @@ it('keeps one topic and the same attachments when the first send reaches the Hos
     await uploadFinished
     await page.unroute('**/link/api/attachments')
     await page.getByRole('button', { name: '重试上传', exact: true }).waitFor()
-    expect(await input.inputValue()).toBe('取消上传等待后保留这条草稿')
+    expect(await promptValue(input)).toBe('取消上传等待后保留这条草稿')
     expect(calls).toBe(0)
     expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(0)
     await mkdir(OUT, { recursive: true })
@@ -523,7 +524,7 @@ it('keeps one topic and the same attachments when the first send reaches the Hos
     await laterInput.fill('放下等待后不要自动重发')
     await laterInput.press('Meta+Enter')
     await page.getByRole('button', { name: '放弃这次提交', exact: true }).click()
-    expect(await laterInput.inputValue()).toBe('放下等待后不要自动重发')
+    expect(await promptValue(laterInput)).toBe('放下等待后不要自动重发')
     expect(await page.locator('.attachment-draft').count()).toBe(0)
     await page.getByText('附件需要重新添加。', { exact: true }).waitFor()
     expect(calls).toBe(2)

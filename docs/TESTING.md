@@ -78,7 +78,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | `latch` | `tests/` | `@latch/core`、`@latch/sdk`、根包的再导出与仓库脚本 |
 | `@latch/host` | `apps/host/test/` | Host、内置插件与 Host 脚本 |
 | `@latch/host-swift` | `apps/host/test/native-swift.test.ts` | Swift 原生核心与 Host 的互操作；全局 setup 先编译 Swift 夹具，其他 Host 运行不触发 |
-| `@latch/web` | `apps/web/test/` | 组件渲染为字符串，不启动浏览器 |
+| `@latch/web` | `apps/web/test/` | 组件渲染为字符串，不启动浏览器；要 DOM 的（输入框编辑器）在文件头写 `// @vitest-environment happy-dom` |
 | `@latch/desktop` | `apps/desktop/test/` | CommonJS 模块经 `createRequire` 加载，不启动 Electron |
 | `@latch/harness-acp` | `packages/harness-acp/test/` | ACP Driver |
 | `@latch/app-sdk` | `packages/app-sdk/test/` | 插件页面的桥 |
@@ -136,6 +136,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | Git 受限运行器、工作树与交付 | `changes-git.test.ts`、`worktrees.test.ts`、`git-delivery.test.ts`、`git-hunks.test.ts`、`git-pr.test.ts`、`git-routes.test.ts`、`git-sync.test.ts`（获取、拉取、中止）、`git-clone.test.ts`（克隆，经假 `ssh`）、`branch-switch.test.ts` 与 `branch-routes.test.ts`（切换分支；`e2e/branch-switch.e2e.ts`） |
 | 待办投递、来源与证据 | `work-threads.test.ts`（原请求、同轮提问与私有范围）、`native.test.ts`（正文窗口、PR 评论响应字节预算）、`apps/web/test/workbench-evidence.test.ts`（SHA）、`e2e/task-flow.e2e.ts`（浏览器、假 ACP 与假 GitHub CLI） |
 | 会话文件与预览 | `files.test.ts`、`file-content.test.ts`、`file-outside.test.ts`、`file-tree.test.ts` |
+| 输入框（块、原子删除、撤销、输入法、粘贴与拖入） | `apps/web/test/prompt-editor.test.ts`、`prompt-tokens.test.ts`、`e2e/prompt-marks.e2e.ts`（Chromium 与 WebKit）；成员块见 `e2e/teams.e2e.ts` |
 | 团队（开始、停止、交回与页面） | `apps/host/test/teams.test.ts`、`apps/web/test/teams.test.ts`、`e2e/teams.e2e.ts`；改 Codex 委派入口时加 `e2e/codex-team.e2e.ts` |
 | 插件页面框 | `app-frame.test.ts`、`app-pages.test.ts`（Host 与 `apps/web/test/` 各一份）、`apps/desktop/test/desktop-frames.test.ts`、`e2e/app-pages.e2e.ts` |
 | 插件资产与生命周期 | `plugin-assets.test.ts`、`plugin-packages.test.ts`、`tests/registry.test.ts` |
@@ -414,6 +415,7 @@ testkit 另导出：`FAKE_ACP_AGENT`、`FAKE_CODEX_APP_SERVER`、`FAKE_PI_AGENT`
 - **浏览器。** 默认用 `playwright install chromium` 装的 Chromium，设置 `LATCH_BROWSER_PATH` 时用该路径的 Chrome，都无头运行。WebKit 用例（`webkit.e2e.ts`、`preview-security-webkit.e2e.ts`，以及 `slash.e2e.ts` 等的 WebKit 分支）需要 `pnpm --filter @latch/e2e exec playwright install webkit`。
 - **设备。** 每台设备是独立的 BrowserContext，用 `enrollBrowser` 经真实连接页登记。手机经 HTTPS 与邀请的登记只在 `enrollment.e2e.ts`。需要本机桌面端或另一台设备时，用 `testHost.enroll({ listener: 'unix' })` 等 API 设备直接驱动 Host。
 - **走正常入口。** 用例经页面的真实控件到达状态：按 Host ID 打开会话用 `helpers/layout.ts` 的 `openSession`，不用 CSS 隐藏、直接调用内部函数或手填 DTO 代替。
+- **输入框。** 消息输入框是 CodeMirror，`getByRole('textbox')` 是它的 `.cm-content`：`fill`、`press` 照用，但块显示名字，元素的文字不是草稿，`inputValue` 也不可用；草稿与光标只经 `e2e/helpers/prompt.ts` 的 `promptValue`、`promptSelection`、`setPromptSelection` 读写。
 - **故障注入。** 拦截与替换只放在 Host 已授权的响应之后；拆除拦截前先释放并等待处理结算。
 - **剪贴板。** 复制用例只在所测顶层页面记录内存写入并阻断选区复制，不读写系统剪贴板；系统剪贴板的传输要实机验证。
 - **宽度与主题。** UI 用例覆盖手机、平板与桌面宽度和浅深色，并断言没有横向溢出、控件可达（`helpers/layout.ts` 的 `reachable`、`layersInWindow`）。

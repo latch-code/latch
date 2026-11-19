@@ -1,13 +1,14 @@
 import type { FileMention } from '@latch/protocol'
 export const mentionMarker = (ref: FileMention) => `@${ref.root}:${ref.path}`
-export function mentionRange(text: string, ref: FileMention): { start: number; end: number } | undefined {
+/** Where the file's marker stands on its own in the text, between whitespace or the text's ends. */
+export function mentionRanges(text: string, ref: FileMention): Array<{ start: number; end: number }> {
   const marker = mentionMarker(ref)
-  let start = text.indexOf(marker)
-  while (start >= 0) {
+  const ranges: Array<{ start: number; end: number }> = []
+  for (let start = text.indexOf(marker); start >= 0; start = text.indexOf(marker, start + 1)) {
     const end = start + marker.length
-    if ((start === 0 || /\s/u.test(text[start - 1]!)) && (end === text.length || /\s/u.test(text[end]!))) return { start, end }
-    start = text.indexOf(marker, start + 1)
+    if ((start === 0 || /\s/u.test(text[start - 1]!)) && (end === text.length || /\s/u.test(text[end]!))) ranges.push({ start, end })
   }
-  return
+  return ranges
 }
+export const mentionRange = (text: string, ref: FileMention) => mentionRanges(text, ref)[0]
 export const hasFileMention = (text: string, ref: FileMention) => mentionRange(text, ref) !== undefined

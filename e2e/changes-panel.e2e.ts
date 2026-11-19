@@ -10,6 +10,7 @@ import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { openSession, settleShell } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/changes-panel'
 
@@ -124,7 +125,7 @@ it('reviews a turn, undoes and restores it with a receipt, and names what Git is
     await panel.getByRole('textbox', { name: '反馈' }).fill('这里写得不对')
     await panel.getByRole('button', { name: '加入待发', exact: true }).click()
     await panel.getByText('待发反馈 1 条').waitFor()
-    expect(await page.locator('.composer textarea').inputValue()).toBe('')
+    expect(await promptValue(page.locator('.composer .composer-input [role="textbox"]'))).toBe('')
     await panel.getByRole('button', { name: '删除反馈', exact: true }).click()
     await expect.poll(() => panel.getByText('待发反馈 1 条').count()).toBe(0)
 

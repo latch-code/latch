@@ -9,6 +9,7 @@ import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { openSession, settleShell } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/edit-message'
 const SLOW = { timeout: 20_000 }
@@ -53,7 +54,7 @@ test('edits an earlier message and resends it in a new session from that point, 
 
     // A later message whose turn changed nothing: straight back to the composer, forked before it.
     await editButton(page, 'echo second').click()
-    await expect.poll(() => draft.inputValue(), SLOW).toBe('echo second')
+    await expect.poll(() => promptValue(draft), SLOW).toBe('echo second')
     await page.locator('.fork-notice').waitFor()
     await draft.fill('echo edited')
     await draft.press('Meta+Enter')
@@ -79,7 +80,7 @@ test('edits an earlier message and resends it in a new session from that point, 
     await page.screenshot({ path: `${OUT}/rewind-1440-dark.png`, animations: 'disabled' })
     await page.emulateMedia({ colorScheme: 'light' })
     await dialog.getByRole('button', { name: '退回文件并编辑', exact: true }).click()
-    await expect.poll(() => draft.inputValue(), SLOW).toBe('shell-edit')
+    await expect.poll(() => promptValue(draft), SLOW).toBe('shell-edit')
     expect(existsSync(file('agent-edit.txt'))).toBe(false)
     expect(existsSync(file('command-edit.txt'))).toBe(false)
     // The changes record shows those turns undone: 恢复 brings them back.
@@ -187,7 +188,7 @@ test('puts the message’s attachment and file reference back with its words, an
     await openSession(page, sessionId)
     await editButton(page, 'echo look').click()
     const draft = page.getByRole('textbox', { name: '新会话消息', exact: true })
-    await expect.poll(() => draft.inputValue(), SLOW).toBe('echo look @default:reference.txt ')
+    await expect.poll(() => promptValue(draft), SLOW).toBe('echo look @default:reference.txt ')
     // The attachment comes back as a draft of this device, read back for its preview.
     await page.locator('.attachment-draft[data-state="ready"]', { hasText: 'notes.txt' }).waitFor(SLOW)
     await page.screenshot({ path: `${OUT}/edit-attachment-1440.png`, animations: 'disabled' })
@@ -202,7 +203,7 @@ test('puts the message’s attachment and file reference back with its words, an
     // Edited again in the new session: its first message still goes on from where the fork began, not from nothing.
     await openSession(page, forked.id)
     await editButton(page, 'echo look').click()
-    await expect.poll(() => draft.inputValue(), SLOW).toBe('echo look @default:reference.txt ')
+    await expect.poll(() => promptValue(draft), SLOW).toBe('echo look @default:reference.txt ')
     await page.locator('.fork-notice', { hasText: 'echo first' }).waitFor(SLOW)
     await context.close()
   } finally {

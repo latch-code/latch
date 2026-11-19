@@ -18,6 +18,7 @@ import {
   openSessions,
   settleShell,
 } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const CONNECTION_SHOTS = 'test-results/workbench-connection'
 
@@ -164,13 +165,13 @@ describe('the shell', () => {
     await settings.waitFor({ state: 'detached' })
     const opener = page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name: '设置', exact: true })
     expect(await opener.evaluate(element => element === document.activeElement)).toBe(true)
-    expect(await input.inputValue()).toBe('切换入口时保留的草稿')
+    expect(await promptValue(input)).toBe('切换入口时保留的草稿')
     await openEntry(page, '设置')
     await settings.waitFor()
     await page.reload()
     await connected(page)
     await settings.waitFor({ state: 'detached' })
-    expect(await input.inputValue()).toBe('切换入口时保留的草稿')
+    expect(await promptValue(input)).toBe('切换入口时保留的草稿')
     await page.context().close()
   })
 
@@ -452,14 +453,14 @@ describe('the shell', () => {
       await openSessions(page)
       const pending = page.locator('main.workspace[data-pending-start]:not([inert])')
       await pending.locator('.sending-message').waitFor()
-      expect(await pending.locator('form[hidden] textarea').isDisabled()).toBe(true)
+      expect(await pending.locator('form[hidden] .composer-input [role="textbox"]').isDisabled()).toBe(true)
       const created = page.waitForResponse(response => response.url().endsWith('/tasks') && response.request().method() === 'POST')
       release()
       await created
       await page.locator('main.workspace:not([inert]) .transcript-content').waitFor()
       await page.locator('main.workspace .topbar-title-button', { hasText: '回到原输入后接收结果' }).waitFor()
       await page.locator('#session-navigation [data-space-primary]').click()
-      expect(await input.inputValue()).toBe('')
+      expect(await promptValue(input)).toBe('')
       await page.context().close()
     })
 

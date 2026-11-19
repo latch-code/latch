@@ -9,6 +9,7 @@ import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
 import { startTestHost } from './helpers/host.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUTPUT = join('test-results', 'agent-helper')
 
@@ -107,9 +108,9 @@ it('an Agent speaks first, knows what you told 通用, and knows what its schedu
     // A click fills the input and sends nothing.
     const input = page.getByRole('textbox', { name: '给小林发消息', exact: true })
     await opening.getByRole('button', { name: '记住一件事' }).click()
-    expect(await input.inputValue()).toBe('记住：')
+    expect(await promptValue(input)).toBe('记住：')
     await opening.getByRole('button', { name: '交给你一件事' }).click()
-    expect(await input.inputValue()).toBe('记住：\n查资料，写成一页摘要：')
+    expect(await promptValue(input)).toBe('记住：\n查资料，写成一页摘要：')
     expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(0)
 
     // Its first turn carries what the person confirmed in 通用 (the fake agent echoes what it received).

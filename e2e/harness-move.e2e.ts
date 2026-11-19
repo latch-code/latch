@@ -159,7 +159,7 @@ describe('a conversation that moved to another Harness', () => {
     await page.getByRole('button', { name: 'Harness：Second Agent', exact: true }).filter({ visible: true }).first().click()
     await page.getByRole('button', { name: '换到 First Agent 继续', exact: true }).click()
     await pending.waitFor()
-    await home.locator('.composer textarea').fill('echo back on the first')
+    await home.locator('.composer .composer-input [role="textbox"]').fill('echo back on the first')
     await page.keyboard.press('Meta+Enter')
     await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.length, { timeout: 20_000 }).toBe(3)
     const third = (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.id !== first && task.id !== second)!
@@ -199,7 +199,7 @@ describe('a conversation that moved to another Harness', () => {
     expect(noted.messages.at(-2)!.text).toContain('交接说明')
     await home.locator('.move-history').getByText('请为接手这件事的另一个 Agent 写一份交接说明', { exact: false }).first().waitFor()
     await page.screenshot({ path: `${OUTPUT}/carry-brief-written--1440--light.png`, animations: 'disabled' })
-    await home.locator('.composer textarea').fill('echo with the note only')
+    await home.locator('.composer .composer-input [role="textbox"]').fill('echo with the note only')
     await page.keyboard.press('Meta+Enter')
     await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.length, { timeout: 20_000 }).toBe(4)
     const next = (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => !before.some(item => item.id === task.id))!

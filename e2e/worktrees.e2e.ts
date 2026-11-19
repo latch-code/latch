@@ -10,6 +10,7 @@ import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, tooltipText } from './helpers/layout.ts'
+import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/worktrees'
 
@@ -170,7 +171,7 @@ it('starts a session in a new worktree from the draft, keeps showing it, and say
     await input.fill('hello')
     await input.press('Enter')
     await page.getByText('仓库配置（.git/config）里有 includeIf', { exact: false }).filter({ visible: true }).first().waitFor()
-    expect(await input.inputValue()).toBe('hello')
+    expect(await promptValue(input)).toBe('hello')
     expect((await owner.json<AppSnapshot>('snapshot')).tasks).toHaveLength(1)
     // Disabled can precede the async reason. Hold the real Host reply to distinguish loading from a settled refusal.
     const endpoint = '**/link/api/workspaces/rust-learn/worktree'
