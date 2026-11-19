@@ -271,7 +271,7 @@ describe('a team of sessions, in the page', () => {
     await poll(() => end.innerText()).toContain('等成员')
     // Decided elsewhere: the toast that pointed at it leaves at once, whichever session is open.
     await poll(() => page.getByText('另一个会话等你处理', { exact: true }).count()).toBe(0)
-    // With motion allowed, marks travel only on the track of the member at work, and along the trunk while it works.
+    // With motion allowed, work flows only along the pipe of the member at work; this session's pipe is simply full.
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     const moving = (selector: string) =>
       card(team.id)
@@ -281,7 +281,7 @@ describe('a team of sessions, in the page', () => {
         )
     await poll(() => moving('.team-member[data-state="running"]')).toBeGreaterThan(0)
     expect(await moving('.team-member[data-state="done"]')).toBe(0)
-    await poll(() => moving('.team-trunk:not(.is-out)')).toBe(2)
+    expect(await moving('.team-trunk')).toBe(0)
     await page.emulateMedia({ reducedMotion: 'reduce' })
     expect(await moving('.team-graph')).toBe(0)
     await shots('running', '核对支付回调', async view => {

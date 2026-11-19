@@ -157,29 +157,92 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Between this session and the members, and between the members and the end: one hairline at the graph's middle. */
-.team-trunk {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  height: 12px;
-  /* The marks take this ink; the lines and the arrow keep the muted one. */
-  color: var(--accent);
+/*
+ * The pipes. Each is a 2px channel in the line ink; `--pipe` is the colour of what is in it, set by its member's state.
+ * Work flows along a pipe as a short bright run while its member is at work; once the member has ended the pipe fills
+ * from its start, and the member's part of the join takes the same colour, so the results are seen to flow together.
+ */
+.team-graph {
+  --pipe: var(--accent);
+  --pipe-w: 2px;
 }
-.team-trunk::before {
-  position: absolute;
-  inset: 50% 0 auto;
-  height: 1px;
+.team-pipe {
+  position: relative;
+  display: block;
+  min-width: var(--sp-24);
+  height: var(--pipe-w);
+  overflow: hidden;
+  border-radius: var(--r-full);
   background: var(--line-strong);
+}
+.team-pipe::before {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--pipe) 72%, transparent);
+  transform: scaleX(0);
+  transform-origin: left center;
   content: '';
 }
-.team-trunk.is-out::before {
-  inset-inline-end: 8px;
+.team-flow {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  display: none;
+  width: 40%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--pipe), transparent);
+  /* Where it rests when motion is reduced: a run of work part way along. */
+  transform: translateX(60%);
+}
+.team-member[data-work] .team-flow,
+.team-trunk[data-out='flow'] .team-flow {
+  display: block;
+}
+/*
+ * Filled once what it carries has gone through: this session's pipe as soon as the work is handed out, an ended
+ * member's, and the results' once they are back. Light runs only where work is under way: along a member at work, and
+ * along the results' pipe while they wait to go back.
+ */
+.team-trunk:not(.is-out) .team-pipe::before,
+.team-member[data-ended] .team-pipe::before,
+.team-member[data-state='waiting'] .team-pipe::before,
+.team-trunk[data-out='full'] .team-pipe::before {
+  transform: scaleX(1);
+}
+.team-member[data-state='waiting'] {
+  --pipe: var(--amber-icon);
+}
+.team-member[data-state='failed'] {
+  --pipe: var(--red);
+}
+.team-member[data-state='cancelled'],
+.team-member[data-state='unknown'] {
+  --pipe: var(--muted);
+}
+/* One that never started carried nothing: its pipe stays empty, and the state word says why in red. */
+.team-member[data-state='unstarted'] .team-pipe::before {
+  transform: scaleX(0);
+}
+/* Between this session and the members, and between the members and the end. */
+.team-trunk {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.team-trunk > .team-pipe {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.team-trunk.is-out {
+  gap: var(--sp-2);
 }
 .team-arrow {
-  position: relative;
+  flex: none;
   color: var(--muted);
+}
+.team-trunk[data-out='full'] > .team-arrow {
+  color: var(--accent);
 }
 .team-members {
   display: grid;
@@ -189,23 +252,25 @@
   list-style: none;
 }
 .team-member {
+  /* Its place in the team, from the page: where its pipe's flow starts. */
+  --team-row: 0;
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) 16px;
   align-items: stretch;
   min-width: 0;
 }
 /*
- * A member's own piece of track: a hairline from the rail to its row, and the rail itself, which each row draws for
- * its own height (the first from its middle down, the last from its middle up), so the fan needs no measuring.
+ * The fan and the join: a piece of pipe from the rail to the row, and the rail itself, which each row draws for its
+ * own height (the first from its middle down, the last from its middle up), so neither needs measuring.
  */
 .team-stub {
   position: relative;
-  color: var(--accent);
 }
 .team-stub::before {
   position: absolute;
   inset: 50% 0 auto;
-  height: 1px;
+  height: var(--pipe-w);
+  margin-top: calc(var(--pipe-w) / -2);
   background: var(--line-strong);
   content: '';
 }
@@ -213,7 +278,7 @@
   position: absolute;
   inset-block: 0;
   inset-inline-start: 0;
-  width: 1px;
+  width: var(--pipe-w);
   background: var(--line-strong);
   content: '';
 }
@@ -221,50 +286,28 @@
   inset-inline: auto 0;
 }
 .team-member:first-child > .team-stub::after {
-  inset-block-start: 50%;
+  inset-block-start: calc(50% - var(--pipe-w) / 2);
 }
 .team-member:last-child > .team-stub::after {
-  inset-block-end: calc(50% - 1px);
+  inset-block-end: calc(50% - var(--pipe-w) / 2);
 }
 .team-member:only-child > .team-stub::after {
   content: none;
 }
-/* A mark on a track: at rest it stands at the track's far end; while its member works it travels there. */
-.team-dot {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  width: 4px;
-  height: 4px;
-  margin-top: -2px;
-  border-radius: 50%;
-  background: color-mix(in srgb, currentColor 55%, transparent);
-  transform: translateX(10px);
+/* Work handed to a member has gone through the fan to it; an ended member's results have reached the join, in the colour
+ * of what it carried. */
+.team-member:not([data-state='unstarted']) > .team-stub:not(.is-out)::before,
+.team-member:not([data-state='unstarted']) > .team-stub:not(.is-out)::after {
+  background: color-mix(in srgb, var(--accent) 72%, transparent);
 }
-.team-trunk > .team-dot:nth-child(1) {
-  background: color-mix(in srgb, currentColor 30%, transparent);
-  transform: translateX(6px);
-}
-.team-trunk > .team-dot:nth-child(2) {
-  transform: translateX(18px);
-}
-/* A member that is not at work has no mark on its way out; one that has ended has left its own at the join. */
-.team-member:not([data-work]) > .team-stub:not(.is-out) > .team-dot {
-  display: none;
-}
-.team-stub.is-out > .team-dot {
-  color: var(--muted);
-}
-.team-member[data-state='done'] > .team-stub.is-out > .team-dot {
-  background: color-mix(in srgb, var(--accent) 85%, transparent);
-}
-.team-member[data-state='failed'] > .team-stub.is-out > .team-dot,
-.team-member[data-state='unstarted'] > .team-stub.is-out > .team-dot {
-  background: var(--red);
+.team-member[data-ended]:not([data-state='unstarted']) > .team-stub.is-out::before,
+.team-member[data-ended]:not([data-state='unstarted']) > .team-stub.is-out::after {
+  background: color-mix(in srgb, var(--pipe) 72%, transparent);
 }
 .team-member-main {
   display: grid;
-  grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr) auto;
+  /* Its name and what it said take what they need; the pipe takes the rest of the row. */
+  grid-template-columns: auto minmax(0, max-content) minmax(0, max-content) minmax(var(--sp-24), 1fr) auto;
   align-items: center;
   gap: var(--sp-8);
   width: 100%;
@@ -303,6 +346,7 @@ button.team-member-main:hover {
 }
 .team-member-said {
   min-width: 0;
+  max-width: 32ch;
   overflow: hidden;
   color: var(--muted);
   font-size: var(--fs-caption);
@@ -376,7 +420,7 @@ button.team-member-main:hover {
     content: '';
   }
   .team-member-main {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, max-content) minmax(var(--sp-16), 1fr) auto;
     row-gap: 0;
     padding-block: var(--sp-6);
   }
@@ -386,13 +430,18 @@ button.team-member-main:hover {
   .team-member-said {
     grid-row: 2;
     grid-column: 2 / -1;
+    max-width: none;
+  }
+  .team-member-main > .team-pipe {
+    grid-row: 1;
+    grid-column: 3;
   }
   .team-member-said:empty {
     display: none;
   }
   .team-member-state {
     grid-row: 1;
-    grid-column: 3;
+    grid-column: 4;
   }
   /* The rail turns into the end: down from the last member, then across to the words. */
   .team-end {
@@ -405,8 +454,8 @@ button.team-member-main:hover {
     inset-block: 0 50%;
     inset-inline-start: 0;
     width: 16px;
-    border-block-end: 1px solid var(--line-strong);
-    border-inline-start: 1px solid var(--line-strong);
+    border-block-end: var(--pipe-w) solid var(--line-strong);
+    border-inline-start: var(--pipe-w) solid var(--line-strong);
     border-end-start-radius: var(--r-6);
     content: '';
   }
@@ -415,51 +464,30 @@ button.team-member-main:hover {
   }
 }
 
-@keyframes team-along {
-  0% {
-    transform: translateX(0);
-    opacity: 0;
+@keyframes team-flow {
+  from {
+    transform: translateX(-100%);
   }
-  25% {
-    opacity: 1;
-  }
-  75% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(14px);
-    opacity: 0;
-  }
-}
-@keyframes team-out {
-  0% {
-    transform: translateX(0);
-    opacity: 0;
-  }
-  25% {
-    opacity: 1;
-  }
-  75% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(24px);
-    opacity: 0;
+  to {
+    transform: translateX(250%);
   }
 }
 @media (prefers-reduced-motion: no-preference) {
-  /* Once as the card appears; for as long as a member works. */
-  .team-trunk > .team-dot {
-    animation: team-out 1.2s var(--e-micro) 2 backwards;
+  /* Work runs along a pipe for as long as its member is at work, each row from its own point in the run. */
+  .team-flow {
+    animation: team-flow 1.6s linear infinite;
+    animation-delay: calc(var(--team-row) * -0.42s);
   }
-  .team-graph[data-live] > .team-trunk > .team-dot {
-    animation-iteration-count: infinite;
+  /* A pipe fills from its start when its member ends, and the join takes the colour as the fill arrives. */
+  .team-pipe::before {
+    transition: transform var(--m-settle) var(--e-settle);
   }
-  .team-trunk > .team-dot:nth-child(2) {
-    animation-delay: 0.3s;
-  }
-  .team-member[data-work] > .team-stub > .team-dot {
-    animation: team-along 1.2s var(--e-micro) 0.4s infinite backwards;
+  .team-stub.is-out::before,
+  .team-stub.is-out::after,
+  .team-arrow {
+    transition:
+      background-color var(--m-panel) var(--e-panel) var(--m-settle),
+      color var(--m-panel) var(--e-panel) var(--m-settle);
   }
 }
 
