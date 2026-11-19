@@ -2049,11 +2049,7 @@ export class AgentRuntime implements Bridge {
     const profile = this.selection.profile
     // pi's wire answers no session/list or session/load: Latch reads pi's files, only where the Host lets it. Claude's
     // direct wire reads Claude's store only where the Host lets it.
-    if (
-      !profile?.historyImport
-      || (profile.wire === 'pi' && !this.piPlace())
-      || (profile.wire === 'claude' && !this.limits.claudeStore)
-    )
+    if (!profile?.historyImport || (profile.wire === 'pi' && !this.piPlace()) || (profile.wire === 'claude' && !this.limits.claudeStore))
       throw historyNotSupported(this.agent.name)
   }
 

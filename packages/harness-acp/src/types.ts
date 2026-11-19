@@ -72,6 +72,7 @@ export interface AcpAgentOptions {
    * the start script passes; left out, as in tests, nothing of Claude's on this computer is read or changed.
    */
   claudeStore?: boolean
+  /**
    * The home whose CLI stores this driver may read and, for its own sessions, change (`pi-store.ts`): pi's session files
    * for 接入已有会话 and for deleting a session Latch started, and pi's project trust. The start script passes the
    * person's home; left out, as in tests, nothing of a CLI's own store is read or removed.
