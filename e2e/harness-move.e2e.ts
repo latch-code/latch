@@ -1,9 +1,11 @@
 import { chromium, type Browser, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AppSnapshot, TaskDetail } from '@latch/protocol'
-import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
+import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow } from './helpers/layout.ts'
@@ -212,4 +214,99 @@ describe('a conversation that moved to another Harness', () => {
     expect(lines.at(-1)).toMatch(/First Agent[\s\S]*Second Agent[\s\S]*带着 First Agent 写的交接说明/u)
     await page.screenshot({ path: `${OUTPUT}/moved-with-brief--1440--light.png`, animations: 'disabled' })
   })
+})
+
+/**
+ * Back on a Harness it used before, which keeps its own record (Codex here, a fake app server): the line says that
+ * Harness went on from its earlier session, and the first message is not marked as an ordinary fork.
+ */
+describe('a conversation that came back to a Harness it had left', () => {
+  let host: TestHost
+  let browser: Browser
+  let root = ''
+
+  afterAll(async () => {
+    await browser?.close()
+    await host?.close()
+    if (root) await rm(root, { recursive: true, force: true })
+  })
+
+  it('says the Harness went on from its earlier session', async () => {
+    await mkdir(OUTPUT, { recursive: true })
+    root = await mkdtemp(join(tmpdir(), 'latch-move-back-'))
+    const bin = join(root, 'bin'),
+      command = join(bin, 'codex')
+    await mkdir(bin)
+    await writeFile(command, `#!/bin/sh\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`)
+    await chmod(command, 0o755)
+    host = await startTestHost({
+      commandDirectories: () => [bin],
+      loginPrograms: (name: string) => (name === 'codex' ? command : undefined),
+      detectPreset: (preset: { id: string }) => (preset.id === 'codex' ? { found: true, path: command } : { found: false }),
+    })
+    const owner = await host.enroll({ listener: 'unix' })
+    await owner.confirmedJson('agents', {
+      body: {
+        id: 'codex',
+        presetId: 'codex',
+        name: 'Codex',
+        command: 'codex',
+        args: [],
+        env: { FAKE_CODEX_STATE: join(root, 'threads.json'), FAKE_CODEX_VERSION: '0.169.0' },
+      },
+    })
+    await owner.confirmedJson('agents', { body: { id: 'fake', name: 'Second Agent', command: process.execPath, args: [FAKE_ACP_AGENT] } })
+    const detail = (id: string) => owner.json<TaskDetail>(`tasks/${id}`)
+    const start = async (body: Record<string, unknown>) => {
+      const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { requestId: randomUUID(), mode: 'agent', workspaceId: 'default', ...body },
+      })
+      for (let tries = 0; (await detail(sessionId)).summary.status !== 'idle'; tries++) {
+        if (tries > 300) throw new Error('the session did not settle')
+        await new Promise(done => setTimeout(done, 50))
+      }
+      return sessionId
+    }
+    const end = async (id: string) => (await detail(id)).messages.at(-1)!.id
+    const first = await start({ harnessId: 'codex', prompt: 'said to Codex first' })
+    await owner.json(`tasks/${first}`, { method: 'PATCH', body: { title: '换回来的会话' } })
+    const away = await start({
+      harnessId: 'fake',
+      prompt: 'echo said elsewhere',
+      forkOf: { taskId: first, upToMessageId: await end(first), moved: true },
+    })
+    const back = await start({
+      harnessId: 'codex',
+      prompt: 'back again',
+      forkOf: { taskId: away, upToMessageId: await end(away), moved: true },
+    })
+    expect((await detail(back)).messages.find(message => message.role === 'user')).toMatchObject({ nativeFork: true })
+
+    browser = await chromium.launch(browserLaunchOptions())
+    for (const [width, height, theme] of [
+      [1440, 900, 'light'],
+      [390, 844, 'dark'],
+    ] as const) {
+      const page = await browser.newPage({ viewport: { width, height }, locale: 'zh-CN', reducedMotion: 'reduce', colorScheme: theme })
+      await enrollBrowser(page, host)
+      await connected(page)
+      await page.keyboard.press('Meta+k')
+      const palette = page.getByRole('dialog', { name: '命令面板', exact: true })
+      await palette.getByRole('searchbox').fill('换回来的会话')
+      await palette.getByRole('option', { name: '换回来的会话', exact: true }).click()
+      const lines = page.locator('.move-line')
+      await expect.poll(() => lines.count(), { timeout: 15_000 }).toBe(2)
+      // The earlier move carried the record; the one back says whose earlier session went on.
+      expect(await lines.first().innerText()).toMatch(/Codex[\s\S]*Second Agent[\s\S]*带着前 1 轮的记录/u)
+      expect(await lines.last().innerText()).toMatch(/Second Agent[\s\S]*Codex[\s\S]*Codex 接上它之前的会话/u)
+      // The move line says it; the first message carries no fork mark of its own, and shows only the person's words.
+      const opening = page.locator('.transcript-content > .transcript .user-bubble, .transcript-content .turn .user-bubble').last()
+      expect(await opening.innerText()).toBe('back again')
+      expect(await opening.locator('.fork-context').count()).toBe(0)
+      await noHorizontalOverflow(page)
+      await page.screenshot({ path: `${OUTPUT}/moved-back--${width}--${theme}.png`, animations: 'disabled' })
+      await page.close()
+    }
+  }, 120_000)
 })

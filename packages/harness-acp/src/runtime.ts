@@ -746,9 +746,12 @@ function forkKey(fork: unknown): { taskId: unknown; upToMessageId: unknown } {
   return { taskId, upToMessageId }
 }
 
+/** What is sent in place of the text record is a text record of fewer turns; twice the Host's cap on one. */
+const MAX_FORK_INSTEAD = 400_000
+
 /** The Host's fork as a driver keeps it: the source and position bounded, the text record a part of the prompt. */
 function checkedFork(fork: unknown, prompt: string): NonNullable<AcpRecord['fork']> {
-  const { taskId, upToMessageId, prefixLength } = (fork ?? {}) as Record<string, unknown>
+  const { taskId, upToMessageId, prefixLength, instead } = (fork ?? {}) as Record<string, unknown>
   const id = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 128
   if (
     !id(taskId)
@@ -756,9 +759,10 @@ function checkedFork(fork: unknown, prompt: string): NonNullable<AcpRecord['fork
     || !Number.isSafeInteger(prefixLength)
     || (prefixLength as number) < 0
     || (prefixLength as number) > prompt.length
+    || (instead !== undefined && (typeof instead !== 'string' || instead.length > MAX_FORK_INSTEAD))
   )
     throw new AppError(400, 'fork-invalid', '分叉的位置无效')
-  return { taskId, upToMessageId, prefixLength: prefixLength as number }
+  return { taskId, upToMessageId, prefixLength: prefixLength as number, ...(typeof instead === 'string' ? { instead } : {}) }
 }
 
 /** A choice made in the session replaces what the draft chose for that option. True when there was one. */
@@ -5186,7 +5190,7 @@ export class AgentRuntime implements Bridge {
       this.holdIdle(binding.live)
       const fork = this.state.tasks[run.taskId]?.acp.fork
       // The agent forked its own record of the source: the Host's text record of it is not sent as well.
-      if (fork?.native && run.seq === 1) run.prompt = run.prompt.slice(fork.prefixLength)
+      if (fork?.native && run.seq === 1) run.prompt = (fork.instead ?? '') + run.prompt.slice(fork.prefixLength)
       // A picture goes to a routed model as a picture unless the person declared that model text-only.
       const routed = this.state.tasks[run.taskId] && this.routedCapabilities(this.state.tasks[run.taskId]!, binding.live)
       const content = await promptBlocks(

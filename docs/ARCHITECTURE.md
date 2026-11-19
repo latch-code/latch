@@ -1021,6 +1021,10 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。
 
 **原生分叉。** Driver 声明 `capabilities.fork: 'native'`（pi 与 Codex）时，分叉到同一个 Harness 的会话另外收到 `CreateTaskInput.fork: { taskId, upToMessageId, prefixLength }`。Driver 让 Harness 分叉它自己的记录，成功时第一轮不发种子，首条用户消息带 `nativeFork`；做不到时照常发送种子并在会话里写明原因。来源必须是同一 Driver 的会话与同一个工作目录，由 Driver 核对。见 [HARNESSES.md](HARNESSES.md#pi-的-rpc-模式) 与 [Codex 的 app-server](HARNESSES.md#codex-的-app-server)。
 
+**换 Harness 继续。** `forkOf` 带 `moved: true` 时，新会话是同一场对话在另一个 Harness 上的下一段：`TaskSummary.forkOf.moved.from` 记下离开的 Harness，页面把来源会话接在上方，只读。种子是到分叉点为止的文字记录；多次更换时种子里只有一份记录，不嵌套。带 `brief: true` 时只带分叉点那条回复（离开的 Harness 写的交接说明），只能与 `moved` 同用。文件、工具结果与 Harness 自己的会话状态不随之过去。
+
+**换回用过的 Harness。** 目标 Harness 能原生分叉，且沿 `moved` 链往回（最多 8 段，每段都按调用设备核对可见性）能找到它自己的会话时，`CreateTaskInput.fork` 指向对话离开那个会话的位置并带 `instead`：Driver 分叉成功后第一轮用 `instead`（离开之后在别处说过的话，每个会话只算到对话离开它为止；或交接说明）代替种子；做不到时照常发送完整种子并写明原因。首条消息的 `nativeFork` 就是「接上了它之前的会话」的依据。
+
 **从这里编辑**是从被编辑那一条之前分叉（第一条没有之前，开同一项目、同一 Harness 的新会话），可选先把文件退回到那一条之前（[CHANGES.md](CHANGES.md#退回到某一条之前)）。机制见 [STREAMING.md](STREAMING.md#从这里编辑)。
 
 ## 排队输入

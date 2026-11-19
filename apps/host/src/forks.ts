@@ -103,3 +103,27 @@ export function forkSeed(
     },
   }
 }
+
+/**
+ * What a Harness is told when a conversation comes back to it: only what was said after it left, on the other
+ * Harnesses, oldest first. Its own earlier turns are not repeated, since it goes on from its own record of them.
+ * `sessions` are the ones the conversation went through since, in order, each as far as the conversation went in it
+ * (`upTo`; what a session was told after the conversation left it is not part of this conversation). Each one's first
+ * message loses the record it carried, which is of turns this Harness already has.
+ */
+export function relaySeed(sessions: ReadonlyArray<{ detail: TaskDetail; upTo: string }>): ReturnType<typeof forkSeed> {
+  const last = sessions.at(-1)
+  if (!last) throw new AppError(400, 'fork-position', '找不到要接上的位置，请重新打开原会话')
+  const messages = sessions.flatMap(({ detail: session, upTo }) => {
+    const opening = session.messages.find(message => message.role === 'user')
+    const end = session.messages.findIndex(message => message.id === upTo)
+    if (end < 0) throw new AppError(400, 'fork-position', '找不到要接上的位置，请重新打开原会话')
+    // The last one whole: `forkSeed` reads what follows the position to know its turn has ended.
+    return (session === last.detail ? session.messages : session.messages.slice(0, end + 1)).map(message => {
+      if (message !== opening || !message.forkContext) return message
+      const { forkContext, nativeFork: _native, ...own } = message
+      return { ...own, text: message.text.slice(forkContext.prefixLength) }
+    })
+  })
+  return forkSeed({ ...last.detail, messages }, last.upTo, () => '以下是你离开之后，这场对话在别的 Agent 那里继续的记录')
+}

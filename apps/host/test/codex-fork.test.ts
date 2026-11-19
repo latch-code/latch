@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
-import { FAKE_CODEX_APP_SERVER } from '@latch/testkit'
+import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER } from '@latch/testkit'
 import type { HarnessInfo, TaskDetail } from '@latch/protocol'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
@@ -135,4 +135,56 @@ test('says so when the wrong fork could not be archived either', async () => {
   expect(await h.notes(edited)).toEqual([
     'Codex 没有用它自己的记录分叉：分叉出的线程没有停在这一轮，而且没能归档，它留在 Codex 自己的会话列表里。这次以文字带上来源会话到这一轮为止的记录。',
   ])
+})
+
+test('a conversation that comes back to Codex goes on from the Codex thread it left, told only what was said since', async () => {
+  const h = await codexHost()
+  await h.owner.confirmedJson('agents', { body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT] } })
+  const last = async (sessionId: string) => (await h.detail(sessionId)).messages.at(-1)!.id
+  const first = await h.start({ prompt: 'alpha' })
+  await h.send(first, 'beta')
+  // On to another Harness, which is told the record, then back.
+  const away = await h.start({
+    harnessId: 'fake',
+    prompt: 'delta',
+    forkOf: { taskId: first, upToMessageId: await last(first), moved: true },
+  })
+  const left = await last(away)
+  // What either session is told after the conversation left it is not this conversation's.
+  await h.send(first, 'stray')
+  await h.send(away, 'astray')
+  const back = await h.start({ prompt: 'omega', forkOf: { taskId: away, upToMessageId: left, moved: true } })
+  const opening = (await h.detail(back)).messages.find(item => item.role === 'user')
+  expect(opening).toMatchObject({ nativeFork: true })
+  expect(await h.notes(back)).toEqual([])
+  // Codex is sent what the other Harness heard and said, not its own two turns again.
+  const [heard] = await h.replies(back)
+  // (The other Harness here echoes what it was sent, so its reply quotes the record; the turns told begin at its own.)
+  expect(heard).toMatch(/^echo: 以下是你离开之后[^\n]*\n<会话记录>\n\n你：\ndelta\n/u)
+  expect(heard).toMatch(/omega$/u)
+  expect(heard).not.toContain('stray')
+  // Its thread is a fork of the one it left: the two turns are in its own record.
+  await h.send(back, 'recall')
+  expect((await h.replies(back)).at(-1)).toMatch(/^remembers: alpha \| beta \| 以下是你离开之后/u)
+  // The thread it left is as it was.
+  await h.send(first, 'recall')
+  expect((await h.replies(first)).at(-1)).toBe('remembers: alpha | beta | stray')
+})
+
+test('a Codex that cannot fork the thread it left is sent the whole record instead', async () => {
+  const h = await codexHost({ FAKE_CODEX_NO_CLIENT_ID: '1' })
+  await h.owner.confirmedJson('agents', { body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT] } })
+  const last = async (sessionId: string) => (await h.detail(sessionId)).messages.at(-1)!.id
+  const first = await h.start({ prompt: 'alpha' })
+  const away = await h.start({
+    harnessId: 'fake',
+    prompt: 'delta',
+    forkOf: { taskId: first, upToMessageId: await last(first), moved: true },
+  })
+  const back = await h.start({ prompt: 'omega', forkOf: { taskId: away, upToMessageId: await last(away), moved: true } })
+  expect((await h.detail(back)).messages.find(item => item.role === 'user')?.nativeFork).toBeUndefined()
+  const [heard] = await h.replies(back)
+  expect(heard).toContain('alpha')
+  expect(heard).toContain('delta')
+  expect(heard).not.toContain('以下是你离开之后')
 })

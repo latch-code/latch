@@ -358,7 +358,7 @@ function UserMessage({
       {message.text && (
         <div className="user-bubble" data-clamped={tall && !whole ? '' : undefined}>
           <div className="user-bubble-text" ref={bubble}>
-            {message.forkContext && message.nativeFork && (
+            {message.forkContext && message.nativeFork && !message.forkContext.moved && (
               // The harness forked its own record: the text record was not sent, so there is none to show.
               <p className="fork-context">
                 <GitFork size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />

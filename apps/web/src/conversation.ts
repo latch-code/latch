@@ -1239,11 +1239,16 @@ export function resendWarning(effects: SideEffects): string | undefined {
 
 /**
  * What resending a turn sends again: the person's words, without the Host's note about an undo. A fork's text record of
- * its source stays unless the Harness forked its own record, since the record may never have reached it otherwise.
+ * its source stays unless the Harness forked its own record, since the record may never have reached it otherwise. A
+ * conversation that came back to a Harness keeps it too: the fork it went on from lacks what was said elsewhere, which
+ * went only with the first send.
  */
 export function resendText(message: Pick<Message, 'text' | 'forkContext' | 'nativeFork' | 'importContext'>): string {
   // A text rebuild's conversation went with the first send; the session holds it from then on.
-  const own = message.forkContext && message.nativeFork ? message.forkContext.prefixLength : (message.importContext?.prefixLength ?? 0)
+  const own =
+    message.forkContext && message.nativeFork && !message.forkContext.moved
+      ? message.forkContext.prefixLength
+      : (message.importContext?.prefixLength ?? 0)
   return splitChangeNote(message.text.slice(own)).text
 }
 

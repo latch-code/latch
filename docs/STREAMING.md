@@ -403,7 +403,7 @@ Face ID 关闭时，前台原阅读意图的正文窗口到期后沿原验证入
 
 - **`requestId` 写在用户消息上。** Standard 与 ACP 在接纳用户输入时把原始 `requestId` 写到用户消息，两种消息存储的 schema 都保留它；`catalog.features.messageIdentity` 声明这一点。客户端据此关联重试与发送中的气泡。
 - **分叉。** Host 为分叉的首条消息补 `forkContext`，`prefixLength` 是正文开头的上下文字符数，其余是新输入。正文完整发给 Harness；消息带 `nativeFork` 时例外：Harness 用自己的记录分叉了，开头的上下文没有发给它（[ARCHITECTURE.md](./ARCHITECTURE.md#会话分叉)）。
-- **重试分叉的一轮。** 带 `nativeFork` 的只重发新输入；其余连同上下文一起重发，因为第一轮失败时上下文可能还没到 Harness。折叠只是显示方式，复制消息保留完整正文。
+- **重试分叉的一轮。** 带 `nativeFork` 的只重发新输入（换回用过的 Harness 的那一条例外：它分叉的记录里没有离开之后的内容，重试连同记录一起重发）；其余连同上下文一起重发，因为第一轮失败时上下文可能还没到 Harness。折叠只是显示方式，复制消息保留完整正文。
 - **接入的会话。** `TaskSummary.imported` 的会话里，从 Harness 重放来的消息带 `imported: true`，不属于任何一轮。按文字重建的会话首条消息开头 `imported.prefixLength` 个字符是带上的对话文字，Host 补 `importContext`；页面据此折叠，重试只重发新输入，因为这段文字已随第一次发送交给会话（[HARNESSES.md](./HARNESSES.md#接入已有会话)）。
 - `Message.thinking` 是助手消息那一步的思考深度，与 `Message.model` 一起让客户端标出两轮之间换了什么；没有记录的消息不标。
 

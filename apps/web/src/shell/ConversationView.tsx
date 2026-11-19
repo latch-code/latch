@@ -387,6 +387,7 @@ export function ConversationView({
                           fork={current.summary.forkOf}
                           harnesses={catalog?.harnesses}
                           to={{ name: harnessName, harness: harnessInfo }}
+                          resumed={current.messages.find(message => message.role === 'user')?.nativeFork === true}
                         />
                       )}
                       <Transcript

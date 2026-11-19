@@ -105,9 +105,10 @@ export interface CreateTaskInput {
    * Drivers that declare `fork: 'native'`, for a fork of one of their own sessions: the source and the last message of
    * the turn it forks after. `prompt` then begins with the Host's text record of that history, `prefixLength` characters
    * long; a driver that forks its own record instead leaves those characters out of what it sends, and marks the first
-   * user message `nativeFork`.
+   * user message `nativeFork`. With `instead`, the source is an earlier session the conversation has since left: its own
+   * record lacks what was said elsewhere, so a driver that forks it sends `instead` in place of those characters.
    */
-  fork?: { taskId: string; upToMessageId: string; prefixLength: number }
+  fork?: { taskId: string; upToMessageId: string; prefixLength: number; instead?: string }
   /**
    * Drivers that declare `seededStart`: the session is recorded idle with no turn, and this text goes before the person's
    * first message, which starts its first turn. `prompt` is then empty. A text rebuild of an earlier session uses it, so

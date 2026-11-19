@@ -122,7 +122,7 @@ export interface AcpRecord {
    * first opens, and dropped when it cannot be, so the first prompt sends the Host's text record. `native` once the
    * agent forked, from then on the first prompt leaves the text record out.
    */
-  fork?: { taskId: string; upToMessageId: string; prefixLength: number; native?: true }
+  fork?: { taskId: string; upToMessageId: string; prefixLength: number; instead?: string; native?: true }
   /**
    * Brought in from the agent's own session `agentSessionId`, which Latch did not start: removing the task, or clearing
    * its context, never deletes that session in the agent. `cwd`: the real path of `AcpRecord.cwd` when it was brought in;
@@ -560,6 +560,7 @@ const stateSchema = z.object({
             taskId: z.string(),
             upToMessageId: z.string(),
             prefixLength: z.number().int().nonnegative(),
+            instead: z.string().optional(),
             native: z.literal(true).optional(),
           })
           .optional(),

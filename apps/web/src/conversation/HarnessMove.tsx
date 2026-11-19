@@ -15,6 +15,7 @@ const COPY = defineCopy(
     pending: '下一条消息起换过去',
     carried: (turns: number) => `带着前 ${turns} 轮的记录`,
     briefed: (from: string) => `带着 ${from} 写的交接说明`,
+    resumed: (to: string) => `${to} 接上它之前的会话`,
     carry: '带过去',
     record: '全文记录',
     brief: '交接说明',
@@ -36,6 +37,7 @@ const COPY = defineCopy(
     pending: 'Moves with the next message',
     carried: (turns: number) => (turns === 1 ? 'With the record of 1 turn' : `With the record of ${turns} turns`),
     briefed: (from: string) => `With the handoff note ${from} wrote`,
+    resumed: (to: string) => `${to} goes on from its earlier session`,
     carry: 'Goes across',
     record: 'Full record',
     brief: 'Handoff note',
@@ -78,11 +80,14 @@ export function MoveLine({
   to,
   turns,
   brief,
+  resumed,
   pending,
   onCancel,
 }: {
   from: Side
   to: Side
+  /** It came back to a Harness it had left, which went on from its own record of its earlier session. */
+  resumed?: boolean | undefined
   /** Only the note the one it left wrote went across. */
   brief?: boolean | undefined
   /** How many turns of the conversation went across. */
@@ -113,7 +118,15 @@ export function MoveLine({
         </span>
       </div>
       <p className="move-note">
-        {pending ? COPY.pending : brief ? COPY.briefed(from.name) : turns ? COPY.carried(turns) : COPY.moved}
+        {pending
+          ? COPY.pending
+          : resumed
+            ? COPY.resumed(to.name)
+            : brief
+              ? COPY.briefed(from.name)
+              : turns
+                ? COPY.carried(turns)
+                : COPY.moved}
         {pending && onCancel && (
           <button type="button" className="move-cancel" onClick={onCancel}>
             {COPY.cancel}
@@ -134,9 +147,12 @@ export function MoveHistory({
   harnesses,
   to,
   depth = 0,
+  resumed,
   pending,
   onCancel,
 }: {
+  /** The session this line leads to forked its own earlier session instead of reading the record. */
+  resumed?: boolean | undefined
   fork: Pick<NonNullable<TaskSummary['forkOf']>, 'taskId' | 'moved' | 'brief'> & { turn?: number }
   harnesses: readonly HarnessInfo[] | undefined
   to: Side
@@ -165,7 +181,15 @@ export function MoveHistory({
     <>
       {detail ? (
         <>
-          {earlier?.moved && depth < MAX_MOVES && <MoveHistory fork={earlier} harnesses={harnesses} to={from} depth={depth + 1} />}
+          {earlier?.moved && depth < MAX_MOVES && (
+            <MoveHistory
+              fork={earlier}
+              harnesses={harnesses}
+              to={from}
+              depth={depth + 1}
+              resumed={detail.messages.find(message => message.role === 'user')?.nativeFork === true}
+            />
+          )}
           <div className="move-history">
             <Transcript detail={detail} approvals={[]} harnessName={from.name} harness={from.harness} observeStream={false} />
           </div>
@@ -178,6 +202,7 @@ export function MoveHistory({
         to={to}
         turns={fork.turn}
         brief={fork.brief}
+        resumed={resumed}
         {...(pending ? { pending } : {})}
         {...(onCancel ? { onCancel } : {})}
       />

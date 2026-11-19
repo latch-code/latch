@@ -46,7 +46,7 @@ import { readUiBuild } from './ui-build.ts'
 import { PromptQueues, type QueueActor } from './prompt-queues.ts'
 import { Questions } from './questions.ts'
 import { createQuestionsPlugin } from './plugins/tools/questions/index.ts'
-import { forkSeed } from './forks.ts'
+import { forkSeed, relaySeed } from './forks.ts'
 import { createFileTrackingService } from './files/output-tracker.ts'
 import { checkedFileMentions, fileMentionsSchema } from './file-mentions.ts'
 import { AttachmentStore, ATTACHMENT_FILE_LIMIT, ATTACHMENT_IMAGE_LIMIT, ATTACHMENT_REMOTE_LIMIT } from './attachments.ts'
@@ -9373,7 +9373,39 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               recheck(caller, 'view')
               privateAccess(caller, detail.summary)
               if (input.forkOf!.brief && !input.forkOf!.moved) throw new AppError(400, 'invalid-input', '交接说明只用于换 Harness 继续')
-              return { ...forkSeed(detail, input.forkOf!.upToMessageId, undefined, input.forkOf!.brief === true), source: detail.summary }
+              const seeded = {
+                ...forkSeed(detail, input.forkOf!.upToMessageId, undefined, input.forkOf!.brief === true),
+                source: detail.summary,
+                resume: undefined as { taskId: string; upToMessageId: string; instead: string } | undefined,
+              }
+              if (!input.forkOf!.moved || hub!.info(harnessId)?.capabilities.fork !== 'native') return seeded
+              // Back to a Harness the conversation left earlier, which can fork its own record: it goes on from the
+              // session it had (its own context, as it kept it) and is told only what was said since, or the note.
+              const since = [{ detail, upTo: input.forkOf!.upToMessageId }]
+              let anchor: { detail: TaskDetail; upTo: string } | undefined
+              for (let step = detail.summary.forkOf, depth = 0; step?.moved && depth < 8; depth++) {
+                let earlier: TaskDetail
+                try {
+                  checkPrivateSession(caller, step.taskId)
+                  earlier = await hub!.detail(step.taskId)
+                  privateAccess(caller, earlier.summary)
+                } catch {
+                  break
+                }
+                // Each session only as far as the conversation went in it: where the next one forked.
+                const upTo = step.upToMessageId
+                if (!earlier.messages.some(message => message.id === upTo)) break
+                if (earlier.summary.harnessId === harnessId) {
+                  anchor = { detail: earlier, upTo }
+                  break
+                }
+                since.unshift({ detail: earlier, upTo })
+                step = earlier.summary.forkOf
+              }
+              if (!anchor) return seeded
+              // The whole record stays in the prompt for when it cannot fork there; when it does, this goes instead.
+              const instead = input.forkOf!.brief ? seeded.text : relaySeed(since).text
+              return { ...seeded, resume: { taskId: anchor.detail.summary.id, upToMessageId: anchor.upTo, instead } }
             })()
           : undefined
         if (input.editOf && input.forkOf) throw new AppError(400, 'edit-invalid', '编辑与分叉不能同时使用')
@@ -9547,9 +9579,20 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(!fork && title ? { initialTitle: title } : {}),
           // A harness that forks its own record does so only for its own sessions; the text record stays in the prompt
           // for when it cannot.
-          ...(fork && harness.capabilities.fork === 'native' && fork.source.harnessId === harnessId
-            ? { fork: { taskId: fork.context.taskId, upToMessageId: fork.context.upToMessageId, prefixLength: fork.context.prefixLength } }
-            : {}),
+          ...(fork?.resume
+            ? {
+                fork: {
+                  taskId: fork.resume.taskId,
+                  upToMessageId: fork.resume.upToMessageId,
+                  prefixLength: fork.context.prefixLength,
+                  instead: fork.resume.instead,
+                },
+              }
+            : fork && harness.capabilities.fork === 'native' && fork.source.harnessId === harnessId
+              ? {
+                  fork: { taskId: fork.context.taskId, upToMessageId: fork.context.upToMessageId, prefixLength: fork.context.prefixLength },
+                }
+              : {}),
           ...(startRefs.length ? { fileRefs: startRefs } : {}),
           ...(attachments.length ? { attachments } : {}),
           requestId: input.requestId,
