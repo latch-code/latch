@@ -251,6 +251,42 @@ describe('Responses to Anthropic encoding', () => {
     input.input.push({ type: 'reasoning', state: { wire: 'chat-completions', text: 'not native' } })
     expect(() => encodeAnthropic(input)).toThrow('思考状态与上游协议不一致')
   })
+
+  it('marks the system text and the conversation’s end for Anthropic’s cache when the harness asked for caching', () => {
+    const conversation = {
+      instructions: 'stable instructions',
+      input: [
+        { role: 'user', content: 'inspect' },
+        { type: 'reasoning', encrypted_content: 'not ours' },
+        { type: 'function_call', call_id: 'one', name: 'inspect', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'one', output: 'done' },
+      ],
+    }
+    const asked = request({ ...conversation, prompt_cache_key: 'thread-1' })
+    const { body } = encodeAnthropic(asked)
+    expect(body.system).toEqual([{ type: 'text', text: 'stable instructions', cache_control: { type: 'ephemeral' } }])
+    const messages = body.messages as Array<{ content: Array<Record<string, unknown>> }>
+    expect(messages.at(-1)!.content.at(-1)).toMatchObject({ type: 'tool_result', cache_control: { type: 'ephemeral' } })
+    expect(JSON.stringify(body).match(/cache_control/gu)).toHaveLength(2)
+    // What the key asked for is done, so the turn records no loss of it; the replay it could not open still is one.
+    expect(asked.dropped).toEqual(['reasoning-state'])
+    // The next request moves the conversation's mark forward and leaves the system's where it was.
+    const next = encodeAnthropic(
+      request({
+        ...conversation,
+        input: [...conversation.input, { role: 'assistant', content: 'ok' }, { role: 'user', content: 'again' }],
+        prompt_cache_key: 'thread-1',
+      }),
+    ).body.messages as Array<{ content: Array<Record<string, unknown>> }>
+    expect(next.at(-1)!.content.at(-1)).toEqual({ type: 'text', text: 'again', cache_control: { type: 'ephemeral' } })
+    expect(next[2]!.content.at(-1)).toEqual({ type: 'tool_result', tool_use_id: 'one', content: [{ type: 'text', text: 'done' }] })
+    // How long to keep it has no Anthropic counterpart that means the same: that much is still lost.
+    const kept = request({ ...conversation, prompt_cache_key: 'thread-1', prompt_cache_retention: '24h' })
+    encodeAnthropic(kept)
+    expect(kept.dropped).toContain('prompt-cache')
+    // Without the key nothing is marked: the harness did not ask the service to keep anything.
+    expect(JSON.stringify(encodeAnthropic(request(conversation)).body)).not.toContain('cache_control')
+  })
 })
 
 describe('native Anthropic reply decoding', () => {

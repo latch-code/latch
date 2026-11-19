@@ -217,6 +217,14 @@ export function decodeResponses(
     ...(body.temperature != null ? { temperature: body.temperature } : {}),
     ...(body.top_p != null ? { topP: body.top_p } : {}),
     ...(format ? { format } : {}),
+    ...(typeof body.prompt_cache_key === 'string' && body.prompt_cache_key
+      ? {
+          cache: {
+            key: body.prompt_cache_key,
+            ...(typeof body.prompt_cache_retention === 'string' ? { retention: body.prompt_cache_retention } : {}),
+          },
+        }
+      : {}),
     dropped: [...dropped],
   }
 }

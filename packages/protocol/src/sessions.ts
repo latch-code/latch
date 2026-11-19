@@ -100,7 +100,10 @@ export interface RoutedModel {
   requests: number
   /** Of `requests`, those with no complete reply: Latch refused it, the service failed, or the harness gave up waiting. */
   failed?: number
-  /** Of `requests`, those whose reply reported tokens; `usage` sums those. */
+  /**
+   * Of `requests`, those whose reply reported tokens; `usage` sums those, and what a failed request's reply reported
+   * before it broke off (the service bills it).
+   */
   measured?: number
   /** Of `requests`, those still under way when the turn ended: their results are not counted. */
   open?: number

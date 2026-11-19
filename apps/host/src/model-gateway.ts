@@ -225,11 +225,19 @@ function settle(entry: RoutedModel, facts: ReplyFacts, apiKey: string): void {
   }
 }
 
-/** Counts a forwarded request's result once: what its reply said when given, else that it did not complete. */
-function finish(request: OpenRequest | undefined, facts?: ReplyFacts): void {
+/**
+ * Counts a forwarded request's result once: what its reply said when given, else that it did not complete. A reply that
+ * broke off or was given up on may still have reported tokens (Anthropic says the input in its first event): the service
+ * bills them, so the turn counts them as the usage ledger does.
+ */
+function finish(request: OpenRequest | undefined, facts?: ReplyFacts, partial?: ReplyFacts): void {
   if (!request?.tally.open.delete(request)) return
   if (facts) settle(request.entry, facts, request.apiKey)
-  else failed(request.entry)
+  else {
+    failed(request.entry)
+    // Still a failed request, not a measured one: the counts of a turn stay apart.
+    if (partial?.usage) request.entry.usage = addUsage(request.entry.usage, partial.usage)
+  }
   request.settled?.(facts)
 }
 
@@ -984,7 +992,9 @@ export class ModelGatewayServer implements ModelGateway {
         signal,
         // An answer that comes whole may rightly take longer than any first-byte limit.
         firstByte: fields.stream === true,
-        retryServer: !stateful && !runsOnService(fields),
+        // Judged by what goes out: a converted request never carries the service's own tools (they are left out or
+        // refused before it is sent), so only a candidate the request passes through to as it came can run one.
+        retryServer: !stateful && !(runsOnService(fields) && candidates.some(({ candidate }) => candidate.upstream === binding.entry)),
         attempt: async (index, attemptSignal, timer) => {
           const { candidate } = candidates[index]!
           const usable = () => (index === 0 ? this.current(hash, binding) : this.candidateService(candidate))
@@ -1274,7 +1284,7 @@ export class ModelGatewayServer implements ModelGateway {
       // as such though the stream broke after: the harness may stop reading once it has the last event.
       const facts = (metered.facts = reply.end())
       ended = complete || facts.ended === true
-      finish(request, ended ? facts : undefined)
+      finish(request, ended ? facts : undefined, facts)
       await reader.cancel().catch(() => {})
       const tail = redactor.end()
       // Never a silent end: a stream that broke says so in the harness's own protocol, and nothing is sent again.
@@ -1400,9 +1410,16 @@ export class ModelGatewayServer implements ModelGateway {
       return 'complete'
     } catch (error) {
       metered.facts = reply.facts()
-      finish(request)
+      finish(request, undefined, metered.facts)
       if (res.destroyed || signal.aborted) return 'aborted'
-      const message = error instanceof AppError ? safe(error.message) : '模型回复未完整转换，本轮没有确认完成'
+      // Once the reply streams, anything but the gateway's own refusal is the service's connection going: said as the
+      // pass-through path says it, not as a conversion that failed.
+      const message =
+        error instanceof AppError
+          ? safe(error.message)
+          : res.headersSent
+            ? '模型服务的回复中断了，这一轮没有完成。'
+            : '模型回复未完整转换，本轮没有确认完成'
       if (res.headersSent) {
         await write(output.fail(message, error instanceof AppError ? error.code : 'gateway-upstream'))
         res.end()

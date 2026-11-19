@@ -2050,7 +2050,17 @@ export class CodexWire implements AgentWire {
             turn.call = undefined
           }
           this.update({ sessionUpdate: TOKENS_UPDATE, scope: 'session', ...usage, ...(turn?.stream ? { stream: turn.stream } : {}) })
-        } else if (turn && input !== undefined && output !== undefined) turn.usage = { inputTokens: input, outputTokens: output }
+        } else if (turn && input !== undefined && output !== undefined) {
+          // On a route the session's count is the gateway's; the turn still says what Codex read from cache and thought.
+          const cached = count(total.cachedInputTokens)
+          const thought = count(total.reasoningOutputTokens)
+          turn.usage = {
+            inputTokens: input,
+            outputTokens: output,
+            ...(cached !== undefined ? { cachedReadTokens: cached } : {}),
+            ...(thought !== undefined ? { thoughtTokens: thought } : {}),
+          }
+        }
         const used = count(last.totalTokens)
         const size = count(usage.modelContextWindow)
         if (used !== undefined || size)

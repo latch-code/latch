@@ -91,4 +91,35 @@ describe('what the gateway reads of a reply', () => {
     expect(read('responses', 'application/json', '<html>busy</html>')).toEqual({})
     expect(read('responses', SSE, '')).toEqual({})
   })
+
+  it('reads the cached part of a Chat prompt in DeepSeek’s fields as well as in OpenAI’s', () => {
+    const chunk = (usage: unknown) => `data: ${JSON.stringify({ model: 'deepseek-chat', choices: [], usage })}\n\ndata: [DONE]\n\n`
+    const reader = (text: string) => {
+      const reply = replyReader('chat-completions', SSE)
+      reply.feed(bytes(text))
+      return reply.end().usage
+    }
+    expect(
+      reader(
+        chunk({
+          prompt_tokens: 1000,
+          completion_tokens: 40,
+          prompt_cache_hit_tokens: 896,
+          prompt_cache_miss_tokens: 104,
+          completion_tokens_details: { reasoning_tokens: 9 },
+        }),
+      ),
+    ).toEqual({ inputTokens: 1000, outputTokens: 40, cacheReadTokens: 896, reasoningTokens: 9 })
+    // OpenAI's own field wins where a service reports both; a written part is kept where a service reports one.
+    expect(
+      reader(
+        chunk({
+          prompt_tokens: 1000,
+          completion_tokens: 40,
+          prompt_cache_hit_tokens: 1,
+          prompt_tokens_details: { cached_tokens: 768, cache_write_tokens: 200 },
+        }),
+      ),
+    ).toEqual({ inputTokens: 1000, outputTokens: 40, cacheReadTokens: 768, cacheWriteTokens: 200 })
+  })
 })

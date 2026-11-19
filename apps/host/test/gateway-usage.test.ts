@@ -411,6 +411,10 @@ describe('what a reply reported before it ended badly', () => {
     expect(row).toMatchObject({ outcome: 'stream', attempts: 1 })
     expect(row!.inputTokens).toBeGreaterThan(0)
     expect(meter.progress(store.budgetOf('service', 'a')!).used).toBe(row!.inputTokens! + row!.outputTokens!)
+    // The turn counts the same tokens as the ledger, and still says the request did not complete.
+    const [model] = lease.takeTurn().models
+    expect(model).toMatchObject({ requests: 1, failed: 1, usage: { inputTokens: row!.inputTokens, outputTokens: row!.outputTokens } })
+    expect(model).not.toHaveProperty('measured')
     expectNothingKept(JSON.stringify(row), [lease.token])
   })
 

@@ -14,6 +14,39 @@ function content(parts: Content[], request: GatewayRequest): Array<Record<string
   })
 }
 
+/** Blocks Anthropic lets a cache mark sit on; a thinking block may not carry one. */
+const MARKABLE = new Set(['text', 'image', 'tool_use', 'tool_result'])
+const EPHEMERAL = { type: 'ephemeral' } as const
+
+/**
+ * Anthropic caches only up to a marked block, where an OpenAI-style service caches every prefix by itself. A harness that
+ * asked for caching gets the marks a long agent conversation needs: the end of the system text, which also covers the
+ * tools before it, and the end of the conversation, which the next request reads back. Two of the four marks a request
+ * may carry, on blocks the gateway built for this request only.
+ */
+function markCache(
+  system: Array<Record<string, unknown>>,
+  messages: Array<{ content: Array<Record<string, unknown>> }>,
+  request: GatewayRequest,
+): void {
+  let marked = false
+  const last = system.at(-1)
+  if (last && MARKABLE.has(String(last.type))) {
+    last.cache_control = EPHEMERAL
+    marked = true
+  }
+  const blocks = messages.at(-1)!.content
+  const tail = blocks.findLastIndex(block => MARKABLE.has(String(block.type)))
+  if (tail >= 0) {
+    blocks[tail] = { ...blocks[tail], cache_control: EPHEMERAL }
+    marked = true
+  }
+  // The key itself has no place in Anthropic's request; what it asked for is done, so it is no loss of this turn. How
+  // long to keep the cache has no counterpart that means the same, so that stays one.
+  const at = request.dropped.indexOf('prompt-cache')
+  if (marked && at >= 0 && !request.cache?.retention) request.dropped.splice(at, 1)
+}
+
 /** Native thinking blocks and adjacent assistant blocks retain their exact order; no history is stored upstream. */
 export function encodeAnthropic(request: GatewayRequest): { body: Record<string, unknown>; tools: ToolNames } {
   if (request.temperature !== undefined && request.temperature > 1) throw invalidRequest('Anthropic temperature 不能超过 1')
@@ -54,6 +87,7 @@ export function encodeAnthropic(request: GatewayRequest): { body: Record<string,
     }
   }
   if (!messages.length) throw invalidRequest('Anthropic 请求必须包含对话消息')
+  if (request.cache) markCache(system, messages, request)
   const choice = request.choice
   const toolChoice =
     typeof choice === 'object' ? { type: 'tool', name: tools.name(choice) } : { type: choice === 'required' ? 'any' : (choice ?? 'auto') }

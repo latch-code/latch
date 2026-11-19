@@ -55,6 +55,11 @@ export interface GatewayRequest {
   topP?: number
   stop?: string[]
   format?: Record<string, unknown>
+  /**
+   * The harness asked the service to cache the request's prefix (Responses' `prompt_cache_key`, and how long to keep it).
+   * An upstream that caches only marked prefixes gets its marks from this.
+   */
+  cache?: { key: string; retention?: string }
   dropped: GatewayLoss[]
 }
 

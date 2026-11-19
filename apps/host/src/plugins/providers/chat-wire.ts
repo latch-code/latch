@@ -118,7 +118,12 @@ const usageSchema = z.object({
   prompt_tokens: z.number().int().nonnegative(),
   completion_tokens: z.number().int().nonnegative(),
   // Optional parts some services report; a gateway that sends them malformed just loses the part.
-  prompt_tokens_details: z.object({ cached_tokens: z.number().int().nonnegative().nullish() }).nullish().catch(undefined),
+  prompt_tokens_details: z
+    .object({ cached_tokens: z.number().int().nonnegative().nullish(), cache_write_tokens: z.number().int().nonnegative().nullish() })
+    .nullish()
+    .catch(undefined),
+  // DeepSeek reports the cached part of the prompt here instead of in `prompt_tokens_details`.
+  prompt_cache_hit_tokens: z.number().int().nonnegative().nullish().catch(undefined),
   completion_tokens_details: z.object({ reasoning_tokens: z.number().int().nonnegative().nullish() }).nullish().catch(undefined),
   // What the request cost, from services that say so themselves (OpenRouter).
   cost: z.number().nonnegative().nullish().catch(undefined),
@@ -163,12 +168,14 @@ export function chatUsage(value: unknown): ChatUsage | undefined {
 }
 
 function readChatUsage(usage: z.infer<typeof usageSchema>): ChatUsage {
-  const cached = usage.prompt_tokens_details?.cached_tokens
+  const cached = usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens
+  const written = usage.prompt_tokens_details?.cache_write_tokens
   const reasoning = usage.completion_tokens_details?.reasoning_tokens
   return {
     inputTokens: usage.prompt_tokens,
     outputTokens: usage.completion_tokens,
     ...(cached != null ? { cacheReadTokens: cached } : {}),
+    ...(written != null ? { cacheWriteTokens: written } : {}),
     ...(reasoning != null ? { reasoningTokens: reasoning } : {}),
     ...(usage.cost != null && Number.isFinite(usage.cost) ? { cost: usage.cost } : {}),
   }

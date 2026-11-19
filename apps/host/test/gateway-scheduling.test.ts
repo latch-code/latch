@@ -152,6 +152,14 @@ describe('the gateway schedules a session across its candidates', () => {
     expect(scheduler.health('a')).toMatchObject({ state: 'failing', last: 'stream' })
   })
 
+  it('says a converted reply broke off because the service’s connection went, not that converting it failed', async () => {
+    const { ask } = await setup({ a: [{ text: 'partial text here', cut: true }], kinds: ['openai-compatible', 'openai-compatible'] })
+    const text = await (await ask()).text()
+    expect(text).toContain('response.failed')
+    expect(text).toContain('模型服务的回复中断了，这一轮没有完成。')
+    expect(text).not.toContain('未完整转换')
+  })
+
   it.each([
     { kind: 'anthropic' as const, path: '/v1/messages', expected: 'event: error' },
     { kind: 'openai-compatible' as const, path: '/v1/chat/completions', expected: '"code":"gateway-upstream"' },
@@ -567,6 +575,20 @@ describe('the gateway schedules a session across its candidates', () => {
     const dropped = await setup({ a: [{ text: 'never arrives', dropped: true }, { text: 'second try' }] })
     expect(await (await dropped.answered(dropped.ask())).text()).toContain('second try')
     expect(dropped.a.requests).toHaveLength(2)
+  })
+
+  it('tries a converted request again after a 5xx: the service’s own tools it named never go out with it', async () => {
+    const tools = [{ type: 'web_search' }, { type: 'function', name: 'read_file', parameters: { type: 'object', properties: {} } }]
+    // Responses to Chat for both candidates: the search is left out of what each service gets, so nothing runs there twice.
+    const converted = await setup({ a: [failed(500)], b: [{ text: 'second' }], kinds: ['openai-compatible', 'openai-compatible'] })
+    expect(await (await converted.answered(converted.ask({ body: { tools } }))).text()).toContain('second')
+    expect(converted.a.requests).toHaveLength(3)
+    expect(JSON.stringify(converted.a.requests[0]?.body)).not.toContain('web_search')
+    // A candidate the request would reach as it came still could run the search: then it is sent once, as before.
+    const passed = await setup({ a: [failed(500)], b: [{ text: 'must not be asked' }], kinds: ['openai-compatible', 'openai-responses'] })
+    expect((await passed.ask({ body: { tools } })).status).toBe(503)
+    expect(passed.a.requests).toHaveLength(1)
+    expect(passed.b.requests).toHaveLength(0)
   })
 
   it("answers with the first service's real failure when the fallback refuses the request itself", async () => {
