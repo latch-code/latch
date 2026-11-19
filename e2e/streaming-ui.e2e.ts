@@ -437,9 +437,9 @@ describe('streamed messages in the real workspace', () => {
       const turn = page.locator('.turn').last()
       const status = turn.locator('.status-line')
       const footer = turn.locator('.turn-footer')
-      // While the turn waits on the model its author line says so, once, with the clock (faa6ee50 moved it there from the
+      // While the turn waits on the model a thinking mark stands where its text will be, once, with the clock (faa6ee50 moved it there from the
       // title row); under the turn it is only announced. The title row, the bar above the input and the footer say nothing.
-      const said = page.locator('.assistant-meta-status .ui-status-word[data-tone="running"]').filter({ visible: true })
+      const said = page.locator('.thinking-line').filter({ visible: true })
       await said.first().waitFor()
       expect(await said.count()).toBe(1)
       await expect.poll(() => said.first().textContent(), { interval: 50, timeout: 5000 }).toMatch(/\d+:\d{2}/)

@@ -1,5 +1,6 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import { isFileMetadata, type AttachmentRef } from '@latch/protocol'
+import { Modal, ModalHeader } from '@latch/ui'
 import { FileSession } from './FileChip.tsx'
 import { FileOpenContext } from '../preview/fileContext.ts'
 import { AttachmentTile, tileType } from './AttachmentTile.tsx'
@@ -20,7 +21,8 @@ const sizeText = (bytes: number) =>
 
 /**
  * A sent attachment as a tile of the file itself. A picture, video or sound asks for its preview handle once the tile
- * comes into view and draws from it; nothing that may hold a secret is drawn. Pressing it opens the file pane.
+ * comes into view and draws from it; nothing that may hold a secret is drawn. Pressing a drawn picture shows it large
+ * over the page; anything else opens the file pane.
  */
 function MessageAttachment({ attachment }: { attachment: AttachmentRef }) {
   const session = useContext(FileSession),
@@ -30,6 +32,8 @@ function MessageAttachment({ attachment }: { attachment: AttachmentRef }) {
   const drawn = type === 'image' || type === 'video' || type === 'audio'
   const key = `${session?.id ?? ''}\n${attachment.id}\n${attachment.sha256}`
   const [media, setMedia] = useState<{ key: string; url: string }>()
+  const [large, setLarge] = useState(false)
+  const picture = type === 'image' && media?.key === key ? media.url : undefined
   useEffect(() => {
     if (!drawn || !session || !open || !anchor.current) return
     const controller = new AbortController()
@@ -78,9 +82,19 @@ function MessageAttachment({ attachment }: { attachment: AttachmentRef }) {
         title={`${attachment.name} · ${sizeText(attachment.size)}`}
         disabled={!session || !open}
         onOpen={() => {
-          if (session) open?.({ sessionId: session.id, reference: attachment.name, attachmentId: attachment.id })
+          // A picture is looked at where it is, large; any other file opens in the file pane.
+          if (picture) setLarge(true)
+          else if (session) open?.({ sessionId: session.id, reference: attachment.name, attachmentId: attachment.id })
         }}
       />
+      {large && picture && (
+        <Modal label={attachment.name} variant="dialog" onClose={() => setLarge(false)} className="attachment-preview is-large">
+          <ModalHeader title={attachment.name} onClose={() => setLarge(false)} />
+          <div className="ui-modal-body">
+            <img src={picture} alt={attachment.name} />
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

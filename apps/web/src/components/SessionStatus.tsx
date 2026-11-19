@@ -6,12 +6,14 @@ import { currentLocale, defineCopy, plural, useLocale } from '../core/i18n.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import { useSteady } from '../hooks/useSteady.ts'
 import { activityWords, rowMark, runningWords, silentWords, type RowStatus, type WaitKind } from '../sessions.ts'
+import { runClock, runElapsed } from '../conversation.ts'
 import { MarkTile } from './BrandTile.tsx'
 import { personActivity } from '../agents/personWords.ts'
 
 const COPY = defineCopy(
   {
     stopping: '正在停止',
+    thinking: '思考中',
     waiting: '等你处理',
     failed: '失败',
     fresh: '有新内容',
@@ -22,6 +24,7 @@ const COPY = defineCopy(
   },
   {
     stopping: 'Stopping',
+    thinking: 'Thinking',
     waiting: 'Needs you',
     failed: 'Failed',
     fresh: 'New content',
@@ -41,6 +44,26 @@ export function RunningWords({ live, person = false }: { live: RunLive | undefin
   const words = runningWords(live, hostNow())
   const said = person ? personActivity(live)?.words : undefined
   return <>{said ? words.replace(activityWords(live), said) : words}</>
+}
+
+/**
+ * The live turn before its words arrive, where they will be: one mark of Latch's own (two arcs turning round a point)
+ * and how long it has run. It says nothing of what the Harness waits on; a tool's own row says that when there is one.
+ */
+export function ThinkingLine({ live }: { live: RunLive | undefined }) {
+  useTicker('second')
+  const ms = live && runElapsed(live, hostNow())
+  return (
+    <div className="thinking-line" role="status">
+      <svg className="thinking-mark" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+        <circle className="thinking-mark-core" cx="8" cy="8" r="1.75" />
+        <path className="thinking-mark-arc" d="M8 2.5 A5.5 5.5 0 0 1 13.5 8" />
+        <path className="thinking-mark-arc is-far" d="M8 13.5 A5.5 5.5 0 0 1 2.5 8" />
+      </svg>
+      <span>{COPY.thinking}</span>
+      {ms !== undefined && <span className="thinking-clock">{runClock(ms)}</span>}
+    </div>
+  )
 }
 
 function SilentWords({ live }: { live: RunLive | undefined }) {

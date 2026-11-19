@@ -283,19 +283,20 @@ describe('streaming render', () => {
     expect(await page.evaluate(() => window.renders.ConversationRail)).toBe(railRenders)
   })
 
-  it('says what the live turn waits on beside its author, and takes it away when text arrives', async () => {
+  it("stands a thinking mark where the live turn's text will be, and takes it away when text arrives", async () => {
     await open()
     const user: Message = { id: 'user-wait', role: 'user', text: '继续' }
     const waitingOnModel = detail([user], { running: true, liveId: 'reply-wait', cursor: 1 })
     const since = new Date(Date.now() - 12_000).toISOString()
     waitingOnModel.summary.live = { runId: 'run-wait', activity: 'model', since, runStartedAt: since, lastEventAt: since }
     await show(waitingOnModel)
-    const status = page.locator('.assistant-meta .assistant-meta-status')
-    await expect.poll(() => status.textContent()).toMatch(/^在等模型 0:1\d$/u)
-    // Its spinner is the running glyph, on the author's own line.
+    const status = page.locator('.thinking-line')
+    await expect.poll(() => status.textContent()).toMatch(/^思考中0:1\d$/u)
+    // Under the author's line, where the reply's first words will start; the author's line itself says nothing.
     const [line, word] = await Promise.all([page.locator('.assistant-meta').last().boundingBox(), status.boundingBox()])
-    expect(word!.y).toBeGreaterThanOrEqual(line!.y - 1)
-    expect(word!.y + word!.height).toBeLessThanOrEqual(line!.y + line!.height + 1)
+    expect(word!.y).toBeGreaterThanOrEqual(line!.y + line!.height - 1)
+    expect(word!.x).toBeLessThan(line!.x + 8)
+    expect(await page.locator('.assistant-meta-status').count()).toBe(0)
     await mkdir('test-results/reply-waiting', { recursive: true })
     await page.screenshot({ path: 'test-results/reply-waiting/waiting.png', animations: 'disabled' })
     const writing = detail([user], { running: true, liveId: 'reply-wait', liveText: '开始回答', cursor: 2 })

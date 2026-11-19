@@ -1541,3 +1541,59 @@ button.summary-file:hover {
 .assistant-meta-person > .agent-avatar {
   flex-shrink: 0;
 }
+
+/*
+ * The live turn before its words: a mark of two arcs turning round a point, 「思考中」 and the run's clock, in muted ink
+ * where the reply will start. The arcs turn slowly and the point breathes; with reduced motion it stands still.
+ */
+.thinking-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-height: var(--lh-ui);
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.thinking-mark {
+  flex: none;
+  color: var(--accent);
+}
+.thinking-mark-core {
+  fill: currentColor;
+  transform-origin: 8px 8px;
+}
+.thinking-mark-arc {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  transform-origin: 8px 8px;
+}
+.thinking-mark-arc.is-far {
+  opacity: 0.45;
+}
+.thinking-clock {
+  font-variant-numeric: tabular-nums;
+}
+@keyframes thinking-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes thinking-breathe {
+  from {
+    transform: scale(0.7);
+  }
+  to {
+    transform: scale(1.15);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .thinking-mark-core {
+    animation: thinking-breathe 1.6s var(--e-micro) infinite alternate;
+  }
+  .thinking-mark-arc {
+    animation: thinking-turn 2.4s linear infinite;
+  }
+}

@@ -668,6 +668,14 @@ button.attachment-tile-face:disabled {
   margin-inline: auto;
   object-fit: contain;
 }
+/* A sent picture, looked at large: the dialog takes what the window gives. */
+.attachment-preview.is-large {
+  width: min(1200px, calc(100vw - 2 * var(--sp-24)));
+  max-width: none;
+}
+.attachment-preview.is-large img {
+  max-height: calc(100vh - 160px);
+}
 .attachment-preview audio {
   display: block;
   width: 100%;

@@ -1110,7 +1110,7 @@ describe('a settled turn', () => {
     expect(settledTranscript([user('u'), reply('a', '好', { model: 'Fake Model' })], 'idle')).not.toContain('经 Latch')
   })
 
-  it('says what a running turn waits on beside its author until text arrives', () => {
+  it("stands a thinking mark where a running turn's text will be until it arrives", () => {
     vi.useFakeTimers({ now: Date.parse('2026-11-11T10:01:12Z'), toFake: ['Date'] })
     const live = {
       runId: 'r',
@@ -1141,10 +1141,11 @@ describe('a settled turn', () => {
         }),
       )
     const waiting = turn('running', '')
-    expect(waiting).toMatch(/class="assistant-meta-status">.*在等模型 1:12/u)
+    expect(waiting).toMatch(/class="thinking-line"[^>]*>.*思考中.*1:12/su)
+    expect(waiting).not.toContain('在等模型')
     // Once the reply writes, its text speaks for itself; a turn at rest says nothing either.
-    expect(turn('running', '正在写')).not.toContain('assistant-meta-status')
-    expect(turn('idle', '')).not.toContain('assistant-meta-status')
+    expect(turn('running', '正在写')).not.toContain('thinking-line')
+    expect(turn('idle', '')).not.toContain('thinking-line')
     vi.useRealTimers()
   })
 

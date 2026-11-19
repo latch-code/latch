@@ -51,7 +51,7 @@ import { VisibleText } from './VisibleText.tsx'
 import { transcriptMarkdown } from '../exportMarkdown.ts'
 import { useStableCallback } from '../hooks/useStableCallback.ts'
 import { Button, Collapse, ICON_STROKE, StatusWord, useLivePrevious, ChevronRightGlyph, CloseGlyph, writeClipboard } from '@latch/ui'
-import { RunningWords } from './SessionStatus.tsx'
+import { ThinkingLine } from './SessionStatus.tsx'
 import { defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'
 
 const COPY = defineCopy(
@@ -470,14 +470,9 @@ const TurnView = memo(function TurnView({
   const replyBefore = useLivePrevious(hasReply)
   const replyArrived = hasReply && (arrived || replyBefore === false)
   // A helper speaks for itself; only a login, which the person must do in the Harness, names the Harness.
-  // The live turn says what it waits on beside its author until text arrives; then the text speaks for itself.
+  // Until the live turn's text arrives, one quiet mark stands where it will be; then the text speaks for itself.
   const writing = trailingLive && turn.replies.some(reply => reply.id === rowContext.streamingId && reply.text !== '')
-  const waitingOn =
-    trailingLive && !writing && summary?.status === 'running' && summary.live ? (
-      <StatusWord tone="running">
-        <RunningWords live={summary.live} />
-      </StatusWord>
-    ) : undefined
+  const thinking = trailingLive && !writing && summary?.status === 'running' && summary.live ? summary.live : undefined
   const voice = speaker?.name ?? engine ?? harnessName
   const endVoice = summary?.runEnd?.reason === 'login-required' ? harnessName : voice
   const runEnd = summary && !trailingLive && latest ? runEndLine(summary, endVoice) : undefined
@@ -533,7 +528,6 @@ const TurnView = memo(function TurnView({
               provider={provider}
               chosen={chosen}
               fallback={fallback}
-              status={waitingOn}
             />
           )}
           {!trailingLive && hasWork && (
@@ -601,6 +595,7 @@ const TurnView = memo(function TurnView({
               </Collapse>
             )
           })}
+          {thinking && <ThinkingLine live={thinking} />}
           {!trailingLive && (
             <TurnCards
               sessionId={rowContext.sessionId}

@@ -1255,11 +1255,11 @@ describe('visual capture of the real product', () => {
       await openSession(target, viewport, sessions.running)
       await shows(target, '用例覆盖了省略密钥的情况，运行一次确认。')
       await reachable(target.getByRole('button', { name: '停止', exact: true }))
-      // Running work turns the spinner on its tool row, and the reply's author line says what runs and for how long, once
+      // Running work turns the spinner on its tool row, and a thinking mark with the run's clock stands where the reply's text will be, once
       // (faa6ee50 moved it there from the title row): no line is drawn under the turn and the title row says nothing. The
       // bar above the input says nothing then, and the open session's own row says it runs like any other.
       await target.locator('.tool-card .ui-spinner').first().waitFor()
-      const runningWord = target.locator('.assistant-meta-status .ui-status-word[data-tone="running"]').filter({ visible: true })
+      const runningWord = target.locator('.thinking-line').filter({ visible: true })
       await runningWord.waitFor()
       expect(await runningWord.count()).toBe(1)
       await expect.poll(() => runningWord.textContent()).toMatch(/[0-9]+:[0-9]{2}$/u)

@@ -191,6 +191,17 @@ describe('attachment tiles', () => {
           page.locator('.message-user .message-attachments img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0),
         )
         .toBe(true)
+      // A sent picture is looked at large over the page, not in the file pane.
+      await page.locator('.message-user .message-attachment[data-type="image"]').getByRole('button').first().click()
+      const large = page.locator('.attachment-preview.is-large')
+      await large.locator('img').waitFor()
+      const [box, shown] = await Promise.all([large.boundingBox(), large.locator('img').boundingBox()])
+      expect(box!.width).toBeGreaterThan(600)
+      expect(shown!.width).toBeGreaterThan(104)
+      expect(await page.getByRole('region', { name: '文件预览', exact: true }).count()).toBe(0)
+      await page.screenshot({ path: `${OUT}/large-image-1440-light.png`, animations: 'disabled' })
+      await large.getByRole('button', { name: '关闭', exact: true }).click()
+      await expect.poll(() => large.count()).toBe(0)
       // A sent video opens in the file pane.
       await page
         .locator('.message-user')
