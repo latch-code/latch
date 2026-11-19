@@ -173,12 +173,16 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
     try {
       await chip(page).getByText('每周已用 68%', { exact: true }).waitFor()
       expect(await chip(page).getAttribute('data-state')).toBe('ok')
-      // The chip comes after every control in the line's order; the one entry is drawn at the line's end, beside send.
-      const order = await page
-        .locator('main.workspace:not([inert]) form.composer')
-        .locator('[data-composer-control], .composer-usage')
-        .evaluateAll(items => items.map(item => item.getAttribute('data-composer-control') ?? 'usage'))
-      expect(order).toEqual(['harness', 'model', 'usage'])
+      // The chip is no control of the input: it stands under it, at the end of the line that says what the session used.
+      const workspace = page.locator('main.workspace:not([inert])')
+      expect(await workspace.locator('form.composer .composer-usage').count()).toBe(0)
+      const [form, foot, mark] = await Promise.all([
+        workspace.locator('form.composer').boundingBox(),
+        workspace.locator('.composer-foot[data-usage]').boundingBox(),
+        chip(page).boundingBox(),
+      ])
+      expect(foot!.y).toBeGreaterThanOrEqual(form!.y + form!.height - 1)
+      expect(mark!.x + mark!.width).toBeGreaterThan(foot!.x + foot!.width - 24)
       // Its hover says when the window resets, and the shortcut.
       await chip(page).hover()
       await page.getByRole('tooltip').getByText('5 天 23 小时后重置', { exact: true }).waitFor()

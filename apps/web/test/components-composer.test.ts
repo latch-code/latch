@@ -979,15 +979,12 @@ describe('composer', () => {
       'end',
       'send',
     ])
-    // What comes and goes by itself, as a Harness's limits mark, is given last, after every control and right before
-    // send at either width: when it appears or leaves, no control before it moves.
+    // What comes and goes by itself, as a Harness's limits mark, is no control of the input: at either width it stands
+    // at the end of the line under the input, so when it appears or leaves nothing in the input moves.
     const usage = createElement('span', { 'data-composer-control': 'late' }, '68%')
-    expect(order(renderToStaticMarkup(createElement(Composer, { ...base, controls, usage }))).slice(-4)).toEqual([
-      'model',
-      'late',
-      'end',
-      'send',
-    ])
+    const wide = renderToStaticMarkup(createElement(Composer, { ...base, controls, usage }))
+    expect(order(wide).slice(-4)).toEqual(['model', 'end', 'send', 'late'])
+    expect(wide).toContain('class="composer-foot" data-usage=""')
     // No separate 权限 control and no row of chips: a phone draws the same line, without the slash button; its limit
     // stands at the end of the line under the input, where its coming moves no control of the input.
     const phone = renderToStaticMarkup(createElement(Composer, { ...base, variant: 'session', inline: true, controls, usage }))

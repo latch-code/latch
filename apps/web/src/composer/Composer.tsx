@@ -758,7 +758,6 @@ export function Composer({
             {!inline && slashButton}
             {controls}
             {trailing}
-            {!inline && usage}
           </div>
           <div className="composer-end">
             {meta && <div className="composer-meta">{meta}</div>}
@@ -768,8 +767,8 @@ export function Composer({
         {status}
       </form>
       {below}
-      {/* A phone's line has no room to share: the limit stands at the end of the line under the input instead. */}
-      {inline && usage ? (
+      {/* The limit is not a choice: it stands at the end of the line under the input, with what the session used. */}
+      {usage ? (
         <div className="composer-foot" data-usage="">
           {vitalsLead}
           {vitals}
