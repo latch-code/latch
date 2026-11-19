@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { chromium } from '@playwright/test'
 import { expect, it } from 'vitest'
-import type { CancelReceipt, TaskDetail } from '@latch/protocol'
+import type { CancelReceipt, TaskDetail, TeamAnswer } from '@latch/protocol'
 import { FAKE_CODEX_APP_SERVER } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { noHorizontalOverflow, openSession, reachable } from './helpers/layout.ts'
@@ -74,8 +74,12 @@ it('delegates from the same Codex chat, opens the actual member approval and res
       page.waitForResponse(response => response.url().endsWith(`/${path}/cancel`) && response.request().method() === 'POST')
     const input = page.getByRole('textbox', { name: '继续对话', exact: true })
     await input.fill('核对移动端和审批回执')
+    // The one entry opens the list of tasks; Codex's own subagents are a quiet way in from it.
     await open('用团队分工').click()
-    await dialog.getByRole('button', { name: '加入输入框', exact: true }).click()
+    await page
+      .getByRole('dialog', { name: '团队分工', exact: true })
+      .getByRole('button', { name: '用 Codex 自带的子 Agent', exact: true })
+      .click()
     expect(await input.inputValue()).toContain('核对移动端和审批回执')
     expect(await input.inputValue()).toMatch(/^请启动 Codex 的子 Agent/u)
     expect((await read()).messages.filter(message => message.role === 'user')).toHaveLength(1)
@@ -247,6 +251,23 @@ it('delegates from the same Codex chat, opens the actual member approval and res
     expect(ordinaryPayload).toMatchObject({ runId: ordinaryRunId, requestId: expect.any(String) })
     expect((await ordinaryResponse.json()).receipt).toMatchObject({ ...ordinaryPayload, outcome: 'stopped', status: 'cancelled' })
     expect(await teamMembers()).toEqual(settledMembers)
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+
+    // A Codex session that is a member of a team offers no 「用团队分工」, Codex's own subagents included.
+    const other = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { harnessId: 'codex', prompt: 'echo 另一个会话', requestId: randomUUID() },
+    })
+    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${other.sessionId}`)).summary.status).toBe('idle')
+    const { team } = await owner.json<TeamAnswer>(`tasks/${other.sessionId}/team`, {
+      method: 'POST',
+      body: { requestId: randomUUID(), tasks: [{ title: '成员', prompt: 'echo 成员', harnessId: 'codex' }] },
+    })
+    const memberId = team.members[0]!.sessionId!
+    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${memberId}`)).codexTeam).toBe('available')
+    await openSession(page, memberId)
+    await page.locator('.team-member-line').waitFor()
+    expect(await open('用团队分工').count()).toBe(0)
   } finally {
     await browser?.close()
     await host?.close()

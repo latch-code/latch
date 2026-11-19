@@ -9,6 +9,7 @@ import { ProposalReview } from './ProposalReview.tsx'
 import { pendingEntries, todoProposals, type ChangeProposal, type TodoProposal } from './proposals.ts'
 import { ExternalMark } from './WorkBoardProposalCard.tsx'
 import { ProposalRecovery } from './ProposalRecovery.tsx'
+import { canStartTeam } from '../teams/model.ts'
 
 const COPY = defineCopy(
   { single: '提议待办', many: (count: number) => `提议 ${formatNumber(count)} 条待办`, review: '审阅' },
@@ -129,6 +130,17 @@ export function useSessionBoardProposals(
             proposal={reviewing}
             writes={writes}
             shell={shell}
+            team={
+              shell.catalog?.features?.teams && canDecide && canStartTeam(detail.summary, shell.snapshot.teams)
+                ? {
+                    lead: detail.summary,
+                    catalog: shell.catalog,
+                    deviceId: shell.snapshot.device.id,
+                    access: shell.access,
+                    refresh: shell.refresh,
+                  }
+                : undefined
+            }
             onClose={() => {
               setReviewing(null)
             }}

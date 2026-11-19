@@ -1,0 +1,638 @@
+/*
+ * Teams (docs/TEAMS.md). The panel where a person writes the split; the team in its session's conversation, drawn as
+ * the work passing through it (this session, a track that fans out to the members, the tracks joining at where the
+ * results are), a sibling of the line that says a conversation changed Harness; the results the Host handed back; the
+ * line over a member's conversation.
+ */
+
+/* ---- The panel ---------------------------------------------------------------------------------------------------- */
+.team-panel {
+  display: grid;
+  gap: var(--sp-10);
+  min-width: 0;
+  padding: var(--sp-12);
+}
+.ui-sheet .team-panel {
+  padding: 0;
+}
+.team-tasks {
+  display: grid;
+  gap: var(--sp-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.team-task {
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  background: var(--raised);
+}
+.team-task:focus-within {
+  border-color: var(--line-strong);
+}
+.team-task-input.ui-input {
+  display: block;
+  width: 100%;
+  min-height: calc(2 * var(--lh-ui-para) + var(--sp-12));
+  max-height: 160px;
+  padding: var(--sp-6) var(--sp-8);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  box-shadow: none;
+  outline: 0;
+  resize: none;
+  field-sizing: content;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui-para);
+}
+.team-task-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  padding-inline: var(--sp-2);
+}
+.team-harness {
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+.team-model {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-task-count {
+  flex: none;
+  color: var(--red);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+}
+.team-panel-add,
+.team-panel-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+.team-panel-count {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+}
+.team-panel-foot {
+  padding-block-start: var(--sp-10);
+  border-block-start: 1px solid var(--line);
+}
+.team-panel-asks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  min-width: 0;
+}
+.team-panel-asks .ui-button {
+  color: var(--muted);
+}
+
+/* ---- The team in its conversation --------------------------------------------------------------------------------- */
+.team-cards {
+  display: grid;
+  gap: var(--sp-12);
+  /* Clear of the footer that overlays the 32 under the turn before. */
+  margin-block: var(--sp-32) var(--sp-16);
+}
+.team-card {
+  container: team-card / inline-size;
+  display: grid;
+  gap: var(--sp-8);
+  min-width: 0;
+  padding: var(--sp-10) var(--sp-12);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--band);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.team-goal {
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-graph {
+  display: grid;
+  grid-template-columns: auto 28px minmax(0, 1fr) 28px auto;
+  align-items: center;
+  min-width: 0;
+}
+.team-lead {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  max-width: 160px;
+  padding-inline-end: var(--sp-8);
+  color: var(--ink);
+  font-weight: 500;
+}
+.team-lead-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Between this session and the members, and between the members and the end: one hairline at the graph's middle. */
+.team-trunk {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 12px;
+  /* The marks take this ink; the lines and the arrow keep the muted one. */
+  color: var(--accent);
+}
+.team-trunk::before {
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 1px;
+  background: var(--line-strong);
+  content: '';
+}
+.team-trunk.is-out::before {
+  inset-inline-end: 8px;
+}
+.team-arrow {
+  position: relative;
+  color: var(--muted);
+}
+.team-members {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.team-member {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 16px;
+  align-items: stretch;
+  min-width: 0;
+}
+/*
+ * A member's own piece of track: a hairline from the rail to its row, and the rail itself, which each row draws for
+ * its own height (the first from its middle down, the last from its middle up), so the fan needs no measuring.
+ */
+.team-stub {
+  position: relative;
+  color: var(--accent);
+}
+.team-stub::before {
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 1px;
+  background: var(--line-strong);
+  content: '';
+}
+.team-stub::after {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 1px;
+  background: var(--line-strong);
+  content: '';
+}
+.team-stub.is-out::after {
+  inset-inline: auto 0;
+}
+.team-member:first-child > .team-stub::after {
+  inset-block-start: 50%;
+}
+.team-member:last-child > .team-stub::after {
+  inset-block-end: calc(50% - 1px);
+}
+.team-member:only-child > .team-stub::after {
+  content: none;
+}
+/* A mark on a track: at rest it stands at the track's far end; while its member works it travels there. */
+.team-dot {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: color-mix(in srgb, currentColor 55%, transparent);
+  transform: translateX(10px);
+}
+.team-trunk > .team-dot:nth-child(1) {
+  background: color-mix(in srgb, currentColor 30%, transparent);
+  transform: translateX(6px);
+}
+.team-trunk > .team-dot:nth-child(2) {
+  transform: translateX(18px);
+}
+/* A member that is not at work has no mark on its way out; one that has ended has left its own at the join. */
+.team-member:not([data-work]) > .team-stub:not(.is-out) > .team-dot {
+  display: none;
+}
+.team-stub.is-out > .team-dot {
+  color: var(--muted);
+}
+.team-member[data-state='done'] > .team-stub.is-out > .team-dot {
+  background: color-mix(in srgb, var(--accent) 85%, transparent);
+}
+.team-member[data-state='failed'] > .team-stub.is-out > .team-dot,
+.team-member[data-state='unstarted'] > .team-stub.is-out > .team-dot {
+  background: var(--red);
+}
+.team-member-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-8);
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: var(--sp-4) var(--sp-8);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  text-align: start;
+}
+button.team-member-main {
+  cursor: pointer;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+button.team-member-main:hover {
+  background: var(--hover);
+}
+.team-member-main:focus-visible,
+.team-end-link:focus-visible,
+.team-end-kept:focus-visible,
+.team-result-head:focus-visible,
+.team-member-line-lead:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.team-member-title {
+  max-width: 28ch;
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-member-said {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Why a member did not start: said in red, quieted toward the muted ink so the state word stays the loud part. */
+.team-member-said[data-refusal] {
+  color: color-mix(in srgb, var(--red) 70%, var(--muted));
+}
+.team-member-state {
+  flex: none;
+  white-space: nowrap;
+}
+.team-clock {
+  margin-inline-start: var(--sp-4);
+  font-variant-numeric: tabular-nums;
+}
+.team-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+  padding-inline-start: var(--sp-8);
+  white-space: nowrap;
+}
+.team-end-link {
+  padding: var(--sp-2) var(--sp-4);
+  margin: calc(-1 * var(--sp-2)) calc(-1 * var(--sp-4));
+  border: 0;
+  border-radius: var(--r-6);
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.team-end-link:hover {
+  background: var(--hover);
+}
+.team-end-kept {
+  border-radius: var(--r-4);
+}
+
+/* Top to bottom where the card is narrow: this session, a rail down the members, the end under them. */
+@container team-card (max-width: 559.98px) {
+  .team-graph {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0;
+  }
+  .team-lead {
+    max-width: 100%;
+    padding-block-end: var(--sp-4);
+  }
+  .team-trunk,
+  .team-stub.is-out {
+    display: none;
+  }
+  /* The rail runs under the middle of this session's mark. */
+  .team-members,
+  .team-end {
+    margin-inline-start: calc(var(--sp-10) - 0.5px);
+  }
+  .team-member {
+    grid-template-columns: 16px minmax(0, 1fr);
+  }
+  .team-member:first-child > .team-stub::after,
+  .team-member:last-child > .team-stub::after,
+  .team-member:only-child > .team-stub::after {
+    inset-block: 0;
+    content: '';
+  }
+  .team-member-main {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    row-gap: 0;
+    padding-block: var(--sp-6);
+  }
+  .team-member-title {
+    max-width: none;
+  }
+  .team-member-said {
+    grid-row: 2;
+    grid-column: 2 / -1;
+  }
+  .team-member-said:empty {
+    display: none;
+  }
+  .team-member-state {
+    grid-row: 1;
+    grid-column: 3;
+  }
+  /* The rail turns into the end: down from the last member, then across to the words. */
+  .team-end {
+    position: relative;
+    min-height: 32px;
+    padding-inline-start: calc(16px + var(--sp-8));
+  }
+  .team-end::before {
+    position: absolute;
+    inset-block: 0 50%;
+    inset-inline-start: 0;
+    width: 16px;
+    border-block-end: 1px solid var(--line-strong);
+    border-inline-start: 1px solid var(--line-strong);
+    border-end-start-radius: var(--r-6);
+    content: '';
+  }
+  .team-end > .ui-button {
+    margin-inline-start: auto;
+  }
+}
+
+@keyframes team-along {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(14px);
+    opacity: 0;
+  }
+}
+@keyframes team-out {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* Once as the card appears; for as long as a member works. */
+  .team-trunk > .team-dot {
+    animation: team-out 1.2s var(--e-micro) 2 backwards;
+  }
+  .team-graph[data-live] > .team-trunk > .team-dot {
+    animation-iteration-count: infinite;
+  }
+  .team-trunk > .team-dot:nth-child(2) {
+    animation-delay: 0.3s;
+  }
+  .team-member[data-work] > .team-stub > .team-dot {
+    animation: team-along 1.2s var(--e-micro) 0.4s infinite backwards;
+  }
+}
+
+/* ---- The results the Host handed back ----------------------------------------------------------------------------- */
+.team-results {
+  container-type: inline-size;
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  margin-block: var(--sp-16) var(--sp-12);
+  padding: var(--sp-8) var(--sp-8) var(--sp-6);
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--band);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.team-results-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  margin: 0;
+  padding: var(--sp-2) var(--sp-4) var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.team-results-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.team-result {
+  min-width: 0;
+}
+.team-result-head {
+  display: grid;
+  grid-template-columns: 12px auto minmax(0, max-content) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-8);
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: var(--sp-4);
+  border: 0;
+  border-radius: var(--r-6);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  text-align: start;
+}
+button.team-result-head {
+  cursor: pointer;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+button.team-result-head:hover {
+  background: var(--hover);
+}
+.team-result-chevron {
+  width: 12px;
+  color: var(--muted);
+  transition: transform var(--m-micro) var(--e-micro);
+}
+.team-result[data-open] > .team-result-head > .team-result-chevron {
+  transform: rotate(90deg);
+}
+.team-results-source > .team-result-head {
+  grid-template-columns: 12px minmax(0, 1fr);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.team-result-body {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-8);
+  min-width: 0;
+  margin: var(--sp-2) var(--sp-4) var(--sp-8) calc(12px + var(--sp-12));
+  padding: var(--sp-10) var(--sp-12);
+  border-radius: var(--r-8);
+  background: var(--sunken);
+  overflow-wrap: anywhere;
+}
+.team-result-body > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.team-results-text {
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+  white-space: pre-wrap;
+}
+.team-result-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+}
+@container (max-width: 479.98px) {
+  .team-result-head {
+    grid-template-columns: 12px auto minmax(0, 1fr) auto;
+  }
+  .team-result-head > .team-member-said {
+    display: none;
+  }
+}
+
+/* ---- Over a member's conversation --------------------------------------------------------------------------------- */
+.team-member-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4) var(--sp-8);
+  margin-block: var(--sp-8) var(--sp-16);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.team-member-line-lead {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--sp-2) var(--sp-6);
+  border: 0;
+  border-radius: var(--r-6);
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--m-micro) var(--e-micro);
+}
+.team-member-line-lead:hover {
+  background: var(--hover);
+}
+.team-member-line-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 680px) {
+  .team-result-head,
+  .team-member-main {
+    min-height: 44px;
+  }
+}
+
+/* ---- Members under their session, in the list --------------------------------------------------------------------- */
+/* One step in, on a hairline that comes down from the session above and ends at the last member. */
+.session-entry[data-team-member],
+.phone-entry[data-team-member] {
+  position: relative;
+  padding-inline-start: var(--sp-16);
+}
+.session-entry[data-team-member]::after,
+.phone-entry[data-team-member]::after {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: var(--sp-8);
+  width: var(--sp-6);
+  border-inline-start: 1px solid var(--line-strong);
+  content: '';
+  pointer-events: none;
+}
+.session-entry[data-team-member]:not(:has(+ [data-team-member]))::after,
+.phone-entry[data-team-member]:not(:has(+ [data-team-member]))::after {
+  inset-block-end: 50%;
+  border-block-end: 1px solid var(--line-strong);
+  border-end-start-radius: var(--r-6);
+}

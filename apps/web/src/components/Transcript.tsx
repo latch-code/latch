@@ -1,6 +1,16 @@
 import { Fragment, memo, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Eraser, RotateCcw } from 'lucide-react'
-import { type Approval, type HarnessInfo, type HarnessLogin, type Message, type TaskDetail, type TurnChanges } from '@latch/protocol'
+import {
+  type Approval,
+  type HarnessInfo,
+  type HarnessLogin,
+  type Message,
+  type TaskDetail,
+  type TeamSummary,
+  type TurnChanges,
+} from '@latch/protocol'
+import { TeamResults } from '../teams/TeamResults.tsx'
+import { returnOf } from '../teams/model.ts'
 import {
   deliveryWords,
   foldWords,
@@ -252,6 +262,8 @@ interface TurnViewProps {
   trailingLive: boolean
   latest: boolean
   outcome?: TurnOutcome
+  /** The turn's message is a team's results, sent by the Host: the team, or `true` where the page has no record of it. */
+  teamReturn?: TeamSummary | true
   /** The page saw this turn arrive: its prompt rises in. */
   arrived: boolean
   /** The model or thinking changed from the turn before: what changed, as `from → to`. */
@@ -292,7 +304,8 @@ function sameTurnProps(a: TurnViewProps, b: TurnViewProps): boolean {
   if (keys.length !== Object.keys(b).length) return false
   return keys.every(key => {
     if (Object.is(a[key], b[key])) return true
-    if (key === 'harness' || key === 'changes' || key === 'plan' || key === 'login' || key === 'speaker') return sameData(a[key], b[key])
+    if (key === 'harness' || key === 'changes' || key === 'plan' || key === 'login' || key === 'speaker' || key === 'teamReturn')
+      return sameData(a[key], b[key])
     if (key !== 'context') return false
     const left = a.context,
       right = b.context
@@ -316,7 +329,7 @@ function historyDetail(detail: TaskDetail): Record<string, unknown> {
   return { ...rest, summary: { ...summary, ...(live ? { live: phase } : {}) } }
 }
 
-const HISTORY_DATA = new Set(['detail', 'approvals', 'harness', 'login', 'speaker', 'changes', 'failureSteps', 'retry'])
+const HISTORY_DATA = new Set(['detail', 'approvals', 'harness', 'login', 'speaker', 'changes', 'failureSteps', 'retry', 'teams'])
 
 /** New props compare by identity unless they are one of the JSON values whose every field we already read. */
 function sameHistoryInputs(before: Record<string, unknown>, next: Record<string, unknown>): boolean {
@@ -439,6 +452,7 @@ const TurnView = memo(function TurnView({
   trailingLive,
   latest,
   outcome,
+  teamReturn,
   arrived,
   status,
   delivery,
@@ -505,17 +519,21 @@ const TurnView = memo(function TurnView({
     <div className="turn" data-turn={turn.key} data-settled={latest ? undefined : ''}>
       {turn.user?.freshContext && <TimelineDivider icon={Eraser} text={COPY.cleared} />}
       {switched && !speaker && <TimelineDivider text={switched} />}
-      {turn.user && (
-        <MessageRow
-          message={turn.user}
-          coarse={rowContext.coarse}
-          arrived={arrived}
-          harness={speaker ? speaker.name : harnessName}
-          {...(speaker ? { voice: speaker.name } : {})}
-          {...(delivery ? { delivery } : {})}
-          {...(onEdit ? { onEdit } : {})}
-          {...(onHandoff ? { onHandoff } : {})}
-        />
+      {turn.user && teamReturn ? (
+        <TeamResults message={turn.user} team={teamReturn === true ? undefined : teamReturn} />
+      ) : (
+        turn.user && (
+          <MessageRow
+            message={turn.user}
+            coarse={rowContext.coarse}
+            arrived={arrived}
+            harness={speaker ? speaker.name : harnessName}
+            {...(speaker ? { voice: speaker.name } : {})}
+            {...(delivery ? { delivery } : {})}
+            {...(onEdit ? { onEdit } : {})}
+            {...(onHandoff ? { onHandoff } : {})}
+          />
+        )
       )}
       {hasReply && (
         <div
@@ -787,6 +805,8 @@ interface TranscriptProps {
    * began before it, '' before every turn. Given the turns' keys and start times, it answers what goes where.
    */
   placed?: (turns: ReadonlyArray<{ key: string; at: number | undefined }>) => ReadonlyMap<string, ReactNode>
+  /** The teams this session started: a message that is one's results shows as its members' results, not as a bubble. */
+  teams?: readonly TeamSummary[] | undefined
 }
 
 export function Transcript(props: TranscriptProps) {
@@ -818,6 +838,7 @@ export function Transcript(props: TranscriptProps) {
     changes,
     onHandoff,
     placed,
+    teams,
     failureSteps,
     onFailureStep,
     checkUnknown,
@@ -936,6 +957,7 @@ export function Transcript(props: TranscriptProps) {
     const delivery = speaker && said && detail.summary.live?.activity !== 'starting' ? COPY.speakerStarted(speaker.name) : said
     const record = records.get(turn.key)
     const hasChangeRecord = changes?.enabled === true && record !== undefined
+    const teamReturn = turn.user && !speaker ? returnOf(turn.user, teams) : false
     return (
       <Fragment key={turn.key}>
         <TurnView
@@ -968,6 +990,7 @@ export function Transcript(props: TranscriptProps) {
           latest={latest}
           trailingLive={trailingLive}
           outcome={outcome}
+          {...(teamReturn ? { teamReturn } : {})}
           arrived={latest && previousLast !== undefined && previousLast !== lastKey}
           {...(switches.has(turn.key) ? { switched: switches.get(turn.key)! } : {})}
           {...(trailingLive ? { status: statusProps } : {})}

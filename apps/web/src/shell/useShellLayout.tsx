@@ -1002,6 +1002,7 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
       search,
       folded: readFolded(shelvesKey(snapshot.device.id)),
       projectTree: !phone,
+      teams: snapshot.teams,
       ...listSpace,
     })
   }

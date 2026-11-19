@@ -28,6 +28,7 @@ import { useHarnessCommands } from '../hooks/useHarnessCommands.ts'
 import { ApprovalDrawer } from '../composer/ApprovalDrawer.tsx'
 import { Composer } from '../composer/Composer.tsx'
 import { CodexTeam } from '../composer/CodexTeam.tsx'
+import { canStartTeam, teamOpen, teamsOf } from '../teams/model.ts'
 import { HarnessLimitChip, ServiceBudgetChip } from '../usage/UsageChip.tsx'
 import { ComposerControl, openControlWhenShown } from '../composer/ComposerControl.tsx'
 import { composerActions } from './composerActions.ts'
@@ -695,6 +696,16 @@ export function SessionComposer({
       {!phone && showControls && <span className="home-place-end">{usageChip}</span>}
     </div>
   ) : undefined
+  // The input can take a request for the agent: nothing runs, waits or is being sent.
+  const teamPrepare =
+    gate.kind === 'open'
+    && !shell.active
+    && !sessionBlock
+    && !sideBlocked
+    && !permissionBlocked
+    && !answer
+    && !submission.pending
+    && !submission.sending
   const composer = (
     <Composer
       showSlashButton={speaker === undefined}
@@ -825,22 +836,36 @@ export function SessionComposer({
             key={current.summary.id}
             detail={current}
             draft={submission.draft}
-            canPrepare={
-              gate.kind === 'open'
-              && !shell.active
-              && !sessionBlock
-              && !sideBlocked
-              && !permissionBlocked
-              && !answer
-              && !submission.pending
-              && !submission.sending
-            }
+            canPrepare={teamPrepare}
             onPrepare={value => {
               setSubmissionDraft(value)
               requestAnimationFrame(() => composerRef.current?.focus())
             }}
             onApproval={selectApproval}
             run={run}
+            inTeam={
+              shell.catalog?.features?.teams === true
+              && (current.summary.teamOf !== undefined || teamsOf(shell.snapshot.teams, current.summary.id).some(teamOpen))
+            }
+            team={
+              shell.catalog?.features?.teams && access.scopes.has('run') && canStartTeam(current.summary, shell.snapshot.teams)
+                ? {
+                    summary: current.summary,
+                    catalog: shell.catalog,
+                    deviceId: shell.snapshot.device.id,
+                    access,
+                    refresh: shell.refresh,
+                    prepare: {
+                      draft: submission.draft,
+                      open: teamPrepare,
+                      put: value => {
+                        setSubmissionDraft(value)
+                        requestAnimationFrame(() => composerRef.current?.focus())
+                      },
+                    },
+                  }
+                : undefined
+            }
           />
         ) : undefined
       }

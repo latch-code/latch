@@ -89,7 +89,10 @@ const SessionItem = memo(function SessionItem({
   menu,
   handoffWaits = false,
   from,
+  member = false,
 }: {
+  /** A member of the team of the session above it: drawn one step in, on a thin line down from that session. */
+  member?: boolean
   /** A handoff here waits for its result to be handed back. */
   handoffWaits?: boolean
   /** The plugin page that started it: 「来自 <页面名>」. */
@@ -150,7 +153,12 @@ const SessionItem = memo(function SessionItem({
     .map(word => COPY.detailSeparator + word)
     .join('')
   return (
-    <li className="session-entry" data-flip-id={task.id} data-leaving={leaving ? '' : undefined} inert={leaving || undefined}>
+    <li
+      className="session-entry"
+      data-team-member={member ? '' : undefined}
+      data-flip-id={task.id}
+      data-leaving={leaving ? '' : undefined}
+      inert={leaving || undefined}>
       <div
         className={`session-item ${selected ? 'is-selected' : ''} ${strong ? 'is-strong' : ''} ${showsUnread(status) ? 'is-unread' : ''}`}>
         <button
@@ -314,6 +322,7 @@ function SessionGroupView({
             const project = waiting && workspaces ? projectOf(task, workspaces) : undefined
             return (
               <SessionItem
+                member={group.members?.has(task.id) === true}
                 handoffWaits={awaiting.has(task.id)}
                 from={originTitle(task, snapshot)}
                 key={task.id}
@@ -565,6 +574,7 @@ function CodeList({
       : otherComputerLists(computers, hostView(snapshot)?.hostId).filter(list => list.count > 0 || !list.live)
   const grouped = groupSessions(visible, snapshot.catalog?.workspaces, {
     includeEmpty: projectSections,
+    teams: snapshot.teams,
     ...(archived || projectTree ? {} : { waitingFrom: own }),
   })
   const groups: SessionGroup[] =

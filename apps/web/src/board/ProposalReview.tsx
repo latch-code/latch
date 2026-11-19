@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   escapeSecurityText,
+  TEAM_LIMITS,
   WORK_ITEM_LIMITS,
+  type HostCatalog,
+  type TaskSummary,
   type WorkProposal,
   type WorkProposalAnswer,
   type WorkProposalEntryEdit,
@@ -16,8 +19,15 @@ import type { TodoProposal, ProposalWrites } from './proposals.ts'
 import { ExternalMark, ProposedBy } from './WorkBoardProposalCard.tsx'
 import { BOARD_CARD_COPY, TagChips } from './WorkBoardCard.tsx'
 import { ItemWriteLine } from './WriteLine.tsx'
+import { readChoice } from '../composerChoice.ts'
+import { TEAM_COPY } from '../teams/copy.ts'
+import { HarnessPick } from '../teams/HarnessPick.tsx'
+import { memberModel } from '../teams/memberModel.ts'
+import { proposalStart } from '../teams/model.ts'
+import { draftKey, useTeamStart } from '../teams/start.ts'
 
 const chars = (text: string) => Array.from(text).length
+const noRefresh = () => Promise.resolve()
 const COPY = defineCopy(
   {
     saveFailed: '没有保存',
@@ -81,7 +91,18 @@ interface Draft {
   chosen: boolean
   title: string
   prompt: string
+  /** The Harness this entry runs on when the entries are started together. */
+  harnessId: string
   read: { title: string; prompt: string }
+}
+
+/** The session that proposed, where it can start what it proposed as a team (docs/TEAMS.md). */
+export interface ProposalTeam {
+  lead: TaskSummary
+  catalog: HostCatalog
+  deviceId: string
+  access: { legacy: boolean; local: boolean }
+  refresh: () => Promise<void>
 }
 
 /**
@@ -94,11 +115,14 @@ export function ProposalReview({
   writes,
   shell,
   onClose,
+  team,
 }: {
   proposal: TodoProposal
   writes: ProposalWrites
   shell: ShellState
   onClose: () => void
+  /** 一起开始: the entries chosen start at once as this session's team, each on the Harness chosen in its row. */
+  team?: ProposalTeam | undefined
 }) {
   const [read, setRead] = useState<WorkProposal | null>(null)
   const [drafts, setDrafts] = useState<Draft[]>([])
@@ -114,6 +138,20 @@ export function ProposalReview({
   }, [])
   const write = writes.states.get(proposal.id)
   const unknown = write?.state === 'unknown'
+  const leadHarness = team?.lead.harnessId
+  const teamStart = useTeamStart(draftKey(team?.deviceId ?? '', `proposal:${proposal.id}`), team?.lead.id ?? '', team?.refresh ?? noRefresh)
+  const starting = teamStart.status.state === 'sending'
+  const startUnknown = teamStart.status.state === 'unknown'
+  const remembered = useMemo(() => (team ? readChoice(team.deviceId) : null), [team?.deviceId])
+  const ready = useMemo(() => team?.catalog.harnesses.filter(harness => harness.status === 'ready') ?? [], [team?.catalog.harnesses])
+  const modelOf = (harnessId: string) =>
+    team ? memberModel(team.catalog, remembered, harnessId, { projectId: team.lead.workspaceId, access: team.access }) : undefined
+  // The proposal changed under 一起开始: what the card holds is the revision it was opened at, so read it again here.
+  const [reread, setReread] = useState(0)
+  const startRefusal = teamStart.status.state === 'refused' ? teamStart.status.code : undefined
+  useEffect(() => {
+    if (startRefusal === 'proposal-changed') setReread(count => count + 1)
+  }, [startRefusal])
   useEffect(() => {
     let live = true
     api<WorkProposalAnswer>(`work/proposals/${encodeURIComponent(proposal.id)}`)
@@ -128,6 +166,7 @@ export function ProposalReview({
               chosen: true,
               title: entry.title,
               prompt: entry.prompt,
+              harnessId: entry.harnessId ?? leadHarness ?? '',
               read: { title: entry.title, prompt: entry.prompt },
             })),
         )
@@ -138,7 +177,7 @@ export function ProposalReview({
     return () => {
       live = false
     }
-  }, [proposal.id, proposal.revision])
+  }, [proposal.id, proposal.revision, leadHarness, reread])
   const chosen = drafts.filter(draft => draft.chosen)
   const invalid = chosen.some(
     draft =>
@@ -172,6 +211,23 @@ export function ProposalReview({
     }
     setBusy(false)
   }
+  // Offered for a split, two or more waiting entries; what is chosen of them starts.
+  const teamOffered = team !== undefined && drafts.length >= 2
+  const teamReady =
+    chosen.length > 0 && chosen.length <= TEAM_LIMITS.members && !invalid && chosen.every(draft => draft.prompt.trim() && draft.harnessId)
+  const startTogether = async () => {
+    if (!read || busy || unknown || starting) return
+    setError('')
+    const started = await teamStart.start({
+      proposal: proposalStart(
+        read,
+        chosen.map(draft => ({ ...draft, model: modelOf(draft.harnessId) })),
+      ),
+    })
+    // The team's card takes the proposal's place in the conversation, which can mount this review anew: close it either way.
+    if (started) onClose()
+  }
+  const locked = busy || unknown || starting || startUnknown
   const showAccepted = (ids: string[] | undefined) => {
     if (ids && ids.length > 1) {
       setAccepted(ids)
@@ -188,7 +244,7 @@ export function ProposalReview({
     if (result.ok) showAccepted(result.itemIds)
   }
   const close = () => {
-    if (!busy) onClose()
+    if (!busy && !starting) onClose()
   }
   const group = read?.goal !== undefined
   const heading = group ? escapeSecurityText(read.goal!) : COPY.heading
@@ -197,7 +253,7 @@ export function ProposalReview({
     <Modal
       label={COPY.review}
       variant={shell.phone ? 'sheet' : 'dialog'}
-      dismissible={!busy}
+      dismissible={!busy && !starting}
       onClose={close}
       className="work-board-proposal-review">
       <form
@@ -244,7 +300,7 @@ export function ProposalReview({
                     <Checkbox
                       label={COPY.choose(draft.index + 1)}
                       checked={draft.chosen}
-                      disabled={busy || unknown}
+                      disabled={locked}
                       onChange={() => {
                         edit(draft.index, { chosen: !draft.chosen })
                       }}
@@ -253,7 +309,7 @@ export function ProposalReview({
                   <TextField
                     label={COPY.title}
                     value={draft.title}
-                    disabled={busy || unknown || !draft.chosen}
+                    disabled={locked || !draft.chosen}
                     autoComplete="off"
                     error={
                       titleLong ? `${formatNumber(chars(draft.title.trim()))} / ${formatNumber(WORK_ITEM_LIMITS.titleChars)}` : undefined
@@ -266,16 +322,26 @@ export function ProposalReview({
                     label={COPY.instructions}
                     value={draft.prompt}
                     rows={drafts.length > 1 ? 5 : 8}
-                    disabled={busy || unknown || !draft.chosen}
+                    disabled={locked || !draft.chosen}
                     error={promptLong ? `${formatNumber(draft.prompt.length)} / ${formatNumber(WORK_ITEM_LIMITS.promptChars)}` : undefined}
                     onChange={event => {
                       edit(draft.index, { prompt: event.target.value })
                     }}
                   />
-                  {(project || harness || entry?.tags?.length) && (
+                  {(project || harness || entry?.tags?.length || teamOffered) && (
                     <span className="work-board-proposal-facts">
-                      {project && <span>{escapeSecurityText(project)}</span>}
-                      {harness && <span>{escapeSecurityText(harness)}</span>}
+                      {teamOffered && (
+                        <HarnessPick
+                          value={draft.harnessId}
+                          ready={ready}
+                          listed={team.catalog.harnesses}
+                          model={draft.harnessId ? modelOf(draft.harnessId) : undefined}
+                          disabled={locked || !draft.chosen}
+                          onChange={harnessId => edit(draft.index, { harnessId })}
+                        />
+                      )}
+                      {project && !teamOffered && <span>{escapeSecurityText(project)}</span>}
+                      {harness && !teamOffered && <span>{escapeSecurityText(harness)}</span>}
                       <TagChips tags={entry?.tags} />
                     </span>
                   )}
@@ -284,13 +350,30 @@ export function ProposalReview({
             })
           )}
           {error && <InlineNotice tone="error">{error}</InlineNotice>}
+          {teamStart.status.state === 'refused' && <InlineNotice tone="error">{teamStart.status.reason}</InlineNotice>}
+          {teamStart.status.state === 'unknown' && (
+            <InlineNotice
+              tone="warn"
+              action={
+                <>
+                  <Button size="xs" variant="ghost" onClick={teamStart.forget}>
+                    {TEAM_COPY.giveUp}
+                  </Button>
+                  <Button size="xs" variant="outline" onClick={() => void startTogether()}>
+                    {TEAM_COPY.retry}
+                  </Button>
+                </>
+              }>
+              {teamStart.status.reason || TEAM_COPY.unanswered}
+            </InlineNotice>
+          )}
           {unknown && <ItemWriteLine state={write} onRetry={() => void retry()} onDismiss={() => writes.forget(proposal.id)} />}
         </div>
         <footer className="ui-modal-footer">
           <Button
             size="md"
             variant="ghost"
-            disabled={busy || unknown || read === null}
+            disabled={locked || read === null}
             onClick={() => {
               void finish('dismiss')
             }}>
@@ -298,12 +381,22 @@ export function ProposalReview({
           </Button>
           <Button
             size="md"
-            variant="primary"
+            variant={teamOffered ? 'outline' : 'primary'}
             type="submit"
-            disabled={busy || unknown || read === null || !chosen.length || invalid}
+            disabled={locked || read === null || !chosen.length || invalid}
             loading={busy}>
             {drafts.length > 1 ? COPY.acceptCount(chosen.length) : COPY.accept}
           </Button>
+          {teamOffered && (
+            <Button
+              size="md"
+              variant="primary"
+              disabled={busy || unknown || startUnknown || read === null || !teamReady}
+              loading={starting}
+              onClick={() => void startTogether()}>
+              {TEAM_COPY.startTogether}
+            </Button>
+          )}
         </footer>
       </form>
     </Modal>

@@ -9,6 +9,9 @@ sources:
   - apps/host/src/audit-actions/sessions.ts
   - packages/protocol/src/teams.ts
   - packages/protocol/src/work-proposals.ts
+  - apps/web/src/teams
+  - apps/web/src/composer/CodexTeam.tsx
+  - apps/web/src/board/ProposalReview.tsx
 ---
 # 团队
 
@@ -110,3 +113,15 @@ detail 只有 ID、计数、哈希与枚举，不含标题、目标或回复。
 ## Agent 得到的说明
 
 `propose_todos` 的工具说明（`PROPOSE_TODOS_GUIDE`）告诉 Agent：用户可以把整组作为团队开始，各项同时运行，结果作为一条消息回到这个对话由它核对汇总，所以各项要互不依赖，只在确知某个 Harness 已安装且合适时才写 `harness`。工具不列出有哪些 Harness；写了不存在的会被拒（`proposal-harness`）。
+
+## 界面
+
+页面只在 `catalog.features.teams` 时给出下面这些；画法见 [DESIGN.md](DESIGN.md)。
+
+- **开始。** Code 会话输入框末行的「用团队分工」（[TeamEntry.tsx](../apps/web/src/teams/TeamEntry.tsx)）：会话已归档、自己是成员、由插件页面开始、设备没有 `run`，或它已有一个没结束的团队时不出现。面板里每行的整段文字是要求，第一行是标题；空行不算任务。第一行默认用这个会话的 Harness，之后的行优先用还没用过的可用 Harness。写到一半的列表按设备与会话留在页面内存里，关掉面板或切换会话后还在，刷新页面后没有，不写入浏览器存储。
+- **模型。** 每个成员带的 `model` 是这个人的输入框给该 Harness 的新会话记住的选择（[memberModel.ts](../apps/web/src/teams/memberModel.ts)），按来源会话的项目解析；那是 Harness 自己的模型时不带。
+- **从提议开始。** 会话里审阅自己 Agent 的一组待办提议（待处理的不少于两条）时多一个「一起开始」，每条可改 Harness；「接受」与「不要」照旧。看板上的审阅没有它。409 `proposal-changed` 后页面重读提议。
+- **结果未知。** 开始的请求没有收到答复时，列表锁住，「重试」原样再发（同一 `requestId` 与内容），「放弃」后才能改。停止同理。
+- **对话里。** 团队的卡片排在 `messageId` 所在那一轮之后，找不到那条消息时排在最后（[placeTeams.tsx](../apps/web/src/teams/placeTeams.tsx)）。交回的消息按 `returnedMessageId` 认；快照里没有这个团队时，以 `TEAM_RETURN_HEADING` 开头的用户消息也画成结果卡，只是没有成员行。成员行展开时读的是成员会话的最后一条回复，不解析交回的文字。
+- **Codex 自带的子 Agent** 仍由 Codex 自己分工（[CodexTeam.tsx](../apps/web/src/composer/CodexTeam.tsx)）。还没有委派时它是面板里的一个入口；有了委派后，同一个入口打开委派记录，记录里的「用团队分工」回到面板。这个会话是成员或已有没结束的团队时，还没有委派的 Codex 会话也不出现这个入口。
+- **列表。** 成员排在来源会话下面，按团队里的顺序（`nestMembers`）；来源会话不在同一组（被搜索或归档筛掉、成员在「等你处理」）时成员照常显示。

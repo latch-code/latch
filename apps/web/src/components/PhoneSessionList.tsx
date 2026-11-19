@@ -108,7 +108,10 @@ const PhoneRow = memo(function PhoneRow({
   from,
   review,
   onReview,
+  member = false,
 }: {
+  /** A member of the team of the session above it: drawn one step in. */
+  member?: boolean
   /** 「复核 N 处改动」: the session's changes wait for the person; pressing it pushes the review over the list. */
   review?: string | undefined
   onReview?: ((id: string) => void) | undefined
@@ -155,7 +158,12 @@ const PhoneRow = memo(function PhoneRow({
     onHold(task)
   })
   return (
-    <li className="phone-entry" data-flip-id={task.id} data-leaving={leaving ? '' : undefined} inert={leaving || undefined}>
+    <li
+      className="phone-entry"
+      data-team-member={member ? '' : undefined}
+      data-flip-id={task.id}
+      data-leaving={leaving ? '' : undefined}
+      inert={leaving || undefined}>
       <button
         type="button"
         className={`phone-row ${selected ? 'is-selected' : ''} ${held ? 'is-held' : ''} ${strong ? 'is-strong' : ''} ${showsUnread(status) ? 'is-unread' : ''}`}
@@ -294,6 +302,7 @@ function PhoneGroup({
           const project = waiting && workspaces ? projectOf(task, workspaces) : undefined
           return (
             <PhoneRow
+              member={group.members?.has(task.id) === true}
               handoffWaits={awaiting.has(task.id)}
               from={originTitle(task, snapshot)}
               key={task.id}
@@ -406,6 +415,7 @@ export function PhoneSessionList({
   const projectSections = snapshot.catalog?.projectFolders !== undefined && browsing
   const groups = groupSessions(visible, snapshot.catalog?.workspaces, {
     includeEmpty: projectSections,
+    teams: snapshot.teams,
     ...(browsing ? { waitingFrom: own } : {}),
   })
   const archivedCount = own.filter(task => task.archived).length

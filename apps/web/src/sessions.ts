@@ -4,6 +4,7 @@ import {
   type BoardGroup,
   type RunLive,
   type TaskSummary,
+  type TeamSummary,
   type WorkItemSummary,
   type WorkspaceInfo,
 } from '@latch/protocol'
@@ -359,6 +360,42 @@ export interface SessionGroup {
   /** The saved project the group stands for, where a new session can start. */
   workspaceId?: string
   project?: WorkspaceInfo
+  /** The rows drawn one step in, under the session whose team they are members of (the row before them, or before their fellow members). */
+  members?: ReadonlySet<string>
+}
+
+/**
+ * A shelf's rows with the members of a team right under the session that started it, in the team's order (the order
+ * they were listed in where this device was not given the team). Only a member whose session is on the same shelf
+ * moves: one lifted to 等你处理, filtered apart from it or found alone by a search stays where it was.
+ */
+export function nestMembers(
+  tasks: readonly TaskSummary[],
+  teams: readonly Pick<TeamSummary, 'id' | 'members'>[] | undefined,
+): { tasks: TaskSummary[]; members: ReadonlySet<string> } {
+  const here = new Set(tasks.map(task => task.id))
+  const under = new Map<string, TaskSummary[]>()
+  for (const task of tasks) {
+    const lead = task.teamOf?.leadSessionId
+    if (!lead || lead === task.id || !here.has(lead)) continue
+    under.set(lead, [...(under.get(lead) ?? []), task])
+  }
+  if (!under.size) return { tasks: [...tasks], members: new Set() }
+  const place = (task: TaskSummary) => {
+    const team = teams?.find(row => row.id === task.teamOf?.teamId)
+    const at = team?.members.findIndex(member => member.sessionId === task.id) ?? -1
+    return at < 0 ? Number.MAX_SAFE_INTEGER : at
+  }
+  // One team's members together, in the team's order; a session's teams in the order the list had them.
+  const ordered = (rows: TaskSummary[]) => {
+    const teamIds = [...new Set(rows.map(task => task.teamOf!.teamId))]
+    return teamIds.flatMap(id => rows.filter(task => task.teamOf!.teamId === id).toSorted((a, b) => place(a) - place(b)))
+  }
+  const members = new Set([...under.values()].flatMap(rows => rows.map(task => task.id)))
+  return {
+    tasks: tasks.filter(task => !members.has(task.id)).flatMap(task => [task, ...ordered(under.get(task.id) ?? [])]),
+    members,
+  }
 }
 
 const trimPath = (path: string) => path.replace(/[\\/]+$/u, '') || path
@@ -400,7 +437,7 @@ export function recentProjectSessions(
 export function groupSessions(
   tasks: TaskSummary[],
   workspaces: readonly WorkspaceInfo[] | undefined,
-  options: { includeEmpty?: boolean; waitingFrom?: readonly TaskSummary[] } = {},
+  options: { includeEmpty?: boolean; waitingFrom?: readonly TaskSummary[]; teams?: readonly TeamSummary[] | undefined } = {},
 ): SessionGroup[] {
   const waiting: SessionGroup = {
     id: 'waiting',
@@ -447,7 +484,13 @@ export function groupSessions(
     group => group.tasks.length > 0 || (options.includeEmpty && group.project !== undefined),
   )
   // A stable sort, so pinned rows keep their own recency order at the head of the shelf.
-  return shelves.map(group => ({ ...group, tasks: group.tasks.toSorted((a, b) => Number(b.pinned === true) - Number(a.pinned === true)) }))
+  return shelves.map(group => {
+    const pinnedFirst = group.tasks.toSorted((a, b) => Number(b.pinned === true) - Number(a.pinned === true))
+    // 等你处理 is a flat list of what waits: a member there is shown like any other session.
+    if (group === waiting) return { ...group, tasks: pinnedFirst }
+    const nested = nestMembers(pinnedFirst, options.teams)
+    return { ...group, tasks: nested.tasks, ...(nested.members.size ? { members: nested.members } : {}) }
+  })
 }
 
 /**
@@ -464,7 +507,9 @@ export function listedSessions(
     space,
     expanded = false,
     projectTree = false,
+    teams,
   }: {
+    teams?: readonly TeamSummary[] | undefined
     filter: SessionFilter
     search: string
     folded: ReadonlySet<string>
@@ -475,11 +520,10 @@ export function listedSessions(
   },
 ): TaskSummary[] {
   if (space === 'agents') return delegationRows(tasks, { filter, expanded }).rows
-  return groupSessions(
-    filterSessions(tasks, filter, search, space),
-    workspaces,
-    filter !== 'archived' && !search && !projectTree ? { waitingFrom: inSpace(tasks, space) } : {},
-  )
+  return groupSessions(filterSessions(tasks, filter, search, space), workspaces, {
+    ...(filter !== 'archived' && !search && !projectTree ? { waitingFrom: inSpace(tasks, space) } : {}),
+    teams,
+  })
     .filter(group => !folded.has(group.id))
     .flatMap(group => group.tasks)
 }
