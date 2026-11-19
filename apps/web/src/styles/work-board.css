@@ -409,11 +409,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Its own row with air above: the place row's marks are taller than text and would crowd it. */
 .work-board-tags-row {
   display: flex;
   flex-wrap: wrap;
   gap: var(--sp-4);
   min-width: 0;
+  margin-block-start: var(--sp-4);
 }
 .work-board-tag {
   display: inline-flex;

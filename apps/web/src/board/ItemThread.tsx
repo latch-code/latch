@@ -16,6 +16,7 @@ import { AtSign } from 'lucide-react'
 import { AgentAvatar } from '../agents/AgentAvatar.tsx'
 import { MarkTile } from '../components/BrandTile.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
+import { MessageContent } from '../MessageContent.tsx'
 import { api, ApiError, errorMessage, newRequestId } from '../core/api.ts'
 import { unconfirmedReason } from '../core/sendingMessage.ts'
 import { hostNow } from '../core/hostClock.ts'
@@ -648,25 +649,26 @@ function ThreadReply({
   }, [open, read, reply.more, reply.live])
   const text = open && full ? full.text : reply.more ? `${reply.text}…` : reply.text
   const long = !!reply.more || longReply(text)
-  const content = <VisibleText text={text} />
   return (
     <div className="item-thread-reply-box">
-      {onOpen ? (
-        <button
-          type="button"
-          className="item-thread-reply"
-          aria-label={COPY.viewReply}
-          data-live={reply.live ? '' : undefined}
-          data-clipped={long && !open ? '' : undefined}
-          onClick={onOpen}>
-          {content}
-        </button>
-      ) : (
-        <div className="item-thread-reply" data-clipped={long && !open ? '' : undefined}>
-          {content}
-        </div>
-      )}
+      {/* Read as Markdown, like the reply in its conversation. Its links and file chips are its own controls, so the
+          box opens the reply only on a press elsewhere; 查看原回复 below is the way in for keyboard and readers. */}
+      <div
+        className="item-thread-reply"
+        data-live={reply.live ? '' : undefined}
+        data-clipped={long && !open ? '' : undefined}
+        data-opens={onOpen ? '' : undefined}
+        onClick={event => {
+          if (onOpen && !(event.target as Element).closest('a, button, summary, [role="button"]')) onOpen()
+        }}>
+        <MessageContent text={text} streaming={reply.live === true} />
+      </div>
       <div className="item-thread-reply-actions">
+        {onOpen && (
+          <Button size="xs" variant="ghost" onClick={onOpen}>
+            {COPY.viewReply}
+          </Button>
+        )}
         {long && (
           <Button size="xs" variant="ghost" aria-expanded={open} onClick={() => setOpen(!open)}>
             {open ? COPY.collapse : COPY.expandReply}
