@@ -1257,3 +1257,28 @@
   font-size: var(--fs-title);
   line-height: var(--lh-title);
 }
+
+/*
+ * A conversation going on with another Harness, before its next message: what was said so far fills the page and
+ * scrolls, as in the session it came from, and the input keeps to the foot under it.
+ */
+.workbench-home.code-home[data-moving] {
+  justify-content: flex-start;
+}
+.code-home-thread {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.code-home-thread-content {
+  width: min(100%, var(--content-width));
+  margin-inline: auto;
+  padding: var(--sp-16) var(--gutter) var(--sp-8);
+}
+.code-home[data-moving] > .code-home-input {
+  flex: none;
+  width: min(100%, var(--content-width));
+  max-height: none;
+  padding-inline: var(--gutter);
+}

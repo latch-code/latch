@@ -115,7 +115,8 @@ const LONG_PROJECT = 28
  */
 function HomeHeadline({ shell }: { shell: ShellState }) {
   const { catalog, choice, newChoicesLocked, access, owner, openSettings, createProject, projectAsk, chooseProject } = shell
-  if (!catalog) return null
+  // Going on with another Harness is not a new question: the conversation so far stands where the headline would.
+  if (!catalog || shell.submission.fork?.moved) return null
   const project = catalog.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')
   const name = project ? escapeHiddenCharacters(project.name || basename(project.path)) : undefined
   const picker = (face: string | undefined) => (
@@ -978,7 +979,8 @@ export function SetupNotices({ shell }: { shell: ShellState }) {
         surface={loginSurface(catalog?.features)}
         onRead={refresh}
       />
-      {submission.fork && (
+      {/* A move to another Harness says itself on the line over the input, with its own way back. */}
+      {submission.fork && !submission.fork.moved && (
         <InlineNotice
           tone="neutral"
           className="fork-notice"

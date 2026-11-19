@@ -10,7 +10,8 @@ import { keepAwakeLine } from '../core/shellLifecycle.ts'
 import { openLayer, useBackLayer } from '../hooks/backStack.ts'
 import { FoundHarnessesCard } from '../newSession/NewSession.tsx'
 import { HistoryImportEntry } from '../history/HistoryImport.tsx'
-import { usesDemoModel, listsFoundHarnesses } from '../composerChoice.ts'
+import { harnessName as harnessLabel, usesDemoModel, listsFoundHarnesses } from '../composerChoice.ts'
+import { MoveHistory, MovingThread } from '../conversation/HarnessMove.tsx'
 import { PhoneSessionList } from '../components/PhoneSessionList.tsx'
 import { Sidebar } from '../components/Sidebar.tsx'
 import { ConversationHeader } from './ConversationHeader.tsx'
@@ -162,6 +163,18 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
   const startRoute = route.entry === 'sessions' && route.start === true && !board
   const pendingStart = startRoute && catalog?.features?.messageIdentity && submission.startingMessage
   const start = startRoute && !pendingStart
+  // A conversation going on with another Harness: its source, the Harness it leaves and the one chosen for the next message.
+  const movingFork = start && submission.fork?.moved ? submission.fork : undefined
+  const movingSource = movingFork ? snapshot.tasks.find(task => task.id === movingFork.taskId) : undefined
+  const movingTo = movingFork ? catalog?.harnesses.find(item => item.id === choice.harnessId) : undefined
+  const moving =
+    movingFork && movingSource
+      ? {
+          taskId: movingFork.taskId,
+          from: movingSource.harnessId,
+          to: { name: movingTo ? harnessLabel(movingTo) : (choice.harnessId ?? ''), harness: movingTo },
+        }
+      : undefined
   const phoneSession = selectedPhoneSession || (phone && !!pendingStart)
   const pendingStartId = pendingStart ? pendingStart.submission.requestId : undefined
   const homeShell = { ...shell, ...shell.homeComposerState }
@@ -543,6 +556,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               {start && (
                 <section
                   className={homeBackdrop ? 'workbench-home code-home ui-backdrop-host' : 'workbench-home code-home'}
+                  data-moving={moving ? '' : undefined}
                   aria-label={SHELL_COPY.newSession}
                   onDragEnter={event => {
                     if (
@@ -589,6 +603,23 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       {access.scopes.has('view') && <UsageEntry />}
                       <ShellUpdateCheck shell={shell} />
                     </header>
+                  )}
+                  {/* Going on with another Harness: what was said so far stays in view, over a line that says where it goes next. */}
+                  {moving && (
+                    <MovingThread>
+                      <>
+                        <MoveHistory
+                          fork={{ taskId: moving.taskId, moved: { from: moving.from } }}
+                          harnesses={catalog?.harnesses}
+                          to={moving.to}
+                          pending
+                          onCancel={() => {
+                            submission.setFork(null)
+                            choose(moving.taskId)
+                          }}
+                        />
+                      </>
+                    </MovingThread>
                   )}
                   {/* The whole column of words keeps the background clear: notices, counts and the history entry too. */}
                   <div className="code-home-input" data-backdrop-clear="">

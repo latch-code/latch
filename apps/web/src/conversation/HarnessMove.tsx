@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { HarnessInfo, TaskDetail, TaskSummary } from '@latch/protocol'
 import { ArrowRight, ArrowRightLeft } from 'lucide-react'
 import { Icon } from '@latch/ui'
@@ -105,10 +105,15 @@ export function MoveHistory({
   harnesses,
   to,
   depth = 0,
+  pending,
+  onCancel,
 }: {
-  fork: NonNullable<TaskSummary['forkOf']>
+  fork: Pick<NonNullable<TaskSummary['forkOf']>, 'taskId' | 'moved'> & { turn?: number }
   harnesses: readonly HarnessInfo[] | undefined
   to: Side
+  /** Chosen and not sent yet: the line under what was said says so, and offers the way back. */
+  pending?: boolean
+  onCancel?: () => void
   /** How many moves back this is: a conversation that moved many times shows the last few. */
   depth?: number
 }) {
@@ -139,7 +144,35 @@ export function MoveHistory({
       ) : detail === null ? (
         <p className="move-gone">{COPY.gone}</p>
       ) : null}
-      <MoveLine from={from} to={to} turns={fork.turn} />
+      <MoveLine from={from} to={to} turns={fork.turn} {...(pending ? { pending } : {})} {...(onCancel ? { onCancel } : {})} />
     </>
+  )
+}
+
+/**
+ * The page a conversation is in while it waits to go on with another Harness: what was said so far, scrolling, kept at
+ * its end as the record loads, so the line that says where the next message goes stands right over the input.
+ */
+export function MovingThread({ children }: { children: ReactNode }) {
+  const scroller = useRef<HTMLDivElement>(null)
+  const content = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const box = scroller.current
+    const inner = content.current
+    if (!box || !inner) return
+    const toEnd = () => {
+      box.scrollTop = box.scrollHeight
+    }
+    toEnd()
+    const observer = new ResizeObserver(toEnd)
+    observer.observe(inner)
+    return () => observer.disconnect()
+  }, [])
+  return (
+    <div className="code-home-thread" data-backdrop-clear="" ref={scroller}>
+      <div className="code-home-thread-content" ref={content}>
+        {children}
+      </div>
+    </div>
   )
 }
