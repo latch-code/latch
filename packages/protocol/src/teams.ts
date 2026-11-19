@@ -1,3 +1,5 @@
+import type { ModelRef } from './settings.ts'
+
 /**
  * A team (docs/TEAMS.md): one session, the lead, with several others that each do one piece of work at the same time,
  * each on the Harness chosen for it, and whose results the Host hands back to the lead once every one has ended. The
@@ -76,6 +78,11 @@ export interface TeamTaskInput {
   title: string
   prompt: string
   harnessId: string
+  /**
+   * One of Latch's model services for this member, as the person's own choice for that Harness (what a new session of it
+   * would start on in their input box). Absent: the Harness's own model. Never taken from the lead.
+   */
+  model?: ModelRef
 }
 
 /**
@@ -85,7 +92,11 @@ export interface TeamTaskInput {
  */
 export interface TeamStartInput {
   requestId: string
-  proposal?: { id: string; baseRevision: number; entries?: Array<{ index: number; title?: string; prompt?: string; harnessId?: string }> }
+  proposal?: {
+    id: string
+    baseRevision: number
+    entries?: Array<{ index: number; title?: string; prompt?: string; harnessId?: string; model?: ModelRef }>
+  }
   tasks?: TeamTaskInput[]
   goal?: string
 }

@@ -32,8 +32,8 @@ sources:
 
 请求是 `{ requestId, proposal?, tasks?, goal? }`，`proposal` 与 `tasks` 二选一。
 
-- `proposal: { id, baseRevision, entries? }`：带队会话自己提出的一条待办提议（别的会话的提议 409 `team-proposal`）。`entries` 是 `{ index, title?, prompt?, harnessId? }`，不写就是全部待处理条目。这些条目按人改过的值被接受，与 `POST /work/proposals/:id/accept` 是同一个函数（同样的审计、回执与私有规则），再逐条开始。
-- `tasks: [{ title, prompt, harnessId }]`：人写的列表，每项建成一条待办（与 `POST /work/items` 同一个函数）。标题 1–120 字，要求 1–4 000 个字符。
+- `proposal: { id, baseRevision, entries? }`：带队会话自己提出的一条待办提议（别的会话的提议 409 `team-proposal`）。`entries` 是 `{ index, title?, prompt?, harnessId?, model? }`，不写就是全部待处理条目。这些条目按人改过的值被接受，与 `POST /work/proposals/:id/accept` 是同一个函数（同样的审计、回执与私有规则），再逐条开始。
+- `tasks: [{ title, prompt, harnessId, model? }]`：人写的列表，每项建成一条待办（与 `POST /work/items` 同一个函数）。标题 1–120 字，要求 1–4 000 个字符。
 - 成员 1–8 个（`TEAM_LIMITS.members`），超出 400 `invalid-input`。
 
 带队会话必须是这台设备能读的 Code 会话，没有归档，不是插件页面开始的，也不是某个团队的成员（团队结束后仍算），否则 409 `team-lead`。一个带队会话同时只有一个没结束的团队，否则 409 `team-open`。
@@ -44,7 +44,8 @@ sources:
 | --- | --- |
 | 项目 | 带队会话的项目（提议条目里写的项目不用） |
 | Harness | 任务或条目写的；提议条目没写时用带队会话的 |
-| 模型与权限 | Harness 与项目的默认值，不随带队会话 |
+| 模型 | 任务或条目带 `model`（Latch 的一个模型服务，人自己为这个 Harness 选的）时用它，由会话开始的同一套检查核对；不带时用 Harness 自己的。从不取带队会话的 |
+| 权限 | Harness 与项目的默认值，不随带队会话 |
 | 文件夹 | 项目是只有一个文件夹的已保存项目、且该文件夹是 Git 仓库时，每个成员在自己的新工作树里开始（与 `POST /tasks` 的 `worktree: true` 相同）；仓库此刻建不出工作树（还没有提交、工作树位置不可用等）时成员被拒，不改用共用文件夹。不是仓库、多个文件夹或默认项目时，与在该项目里手动开始的会话相同。只对话的 Harness 不用工作树 |
 | 私有 | 带队会话私有时成员也私有（`privateFrom`），团队记下 `private`，此后不取消；不私有时成员不带私有上下文开始，这样它的回复才能交回 |
 | 外部内容 | 带队会话从外部内容开始、或提议标了 `external` 时，成员以 `outsideStart` 开始 |

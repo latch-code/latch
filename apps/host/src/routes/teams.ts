@@ -99,6 +99,8 @@ const startSchema = z
                 .max(WORK_ITEM_LIMITS.promptChars * 2)
                 .optional(),
               harnessId: z.string().regex(HARNESS_ID).optional(),
+              // Checked by the session's own start, as a 待办's is.
+              model: z.unknown().optional(),
             }),
           )
           .min(1)
@@ -112,6 +114,7 @@ const startSchema = z
           title: z.string().max(4 * KIB),
           prompt: z.string().max(TEAM_LIMITS.promptChars * 2),
           harnessId: z.string().regex(HARNESS_ID),
+          model: z.unknown().optional(),
         }),
       )
       .min(1)
@@ -451,7 +454,7 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
     const derived = (kind: string, index?: number) => sha256Hex(canonicalJson([kind, deviceId, leadId, body.requestId, index ?? 0]))
     const goalText = body.goal?.trim() ? checkedTitle(body.goal) : undefined
     const row = body.proposal ? items.proposal(body.proposal.id) : undefined
-    let plan: Array<{ index?: number; title?: string; prompt?: string; harnessId: string }>
+    let plan: Array<{ index?: number; title?: string; prompt?: string; harnessId: string; model?: unknown }>
     // A retry of a start whose members were all refused: its entries were accepted then, and are those 待办 now.
     const acceptedBefore = body.proposal ? items.receipt('accept', deviceId, derived('team-accept'))?.itemIds : undefined
     if (body.proposal) {
@@ -466,7 +469,7 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
       } else {
         if (row.revision !== body.proposal.baseRevision) throw new AppError(409, 'proposal-changed', '提议已有变化，请刷新后再试。')
         const pending = row.entries.flatMap((entry, index) => (entry.state === 'pending' ? [index] : []))
-        const chosen: Array<{ index: number; title?: string; prompt?: string; harnessId?: string }> =
+        const chosen: Array<{ index: number; title?: string; prompt?: string; harnessId?: string; model?: unknown }> =
           body.proposal.entries ?? pending.map(index => ({ index }))
         if (new Set(chosen.map(edit => edit.index)).size !== chosen.length) throw new AppError(400, 'invalid-input', '同一项只能开始一次。')
         if (!chosen.length || chosen.some(edit => !pending.includes(edit.index)))
@@ -479,7 +482,12 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
         const prompt = checkedPrompt(task.prompt)
         if (!prompt || prompt.length > TEAM_LIMITS.promptChars)
           throw new AppError(400, 'invalid-input', `每个成员的要求要 1–${TEAM_LIMITS.promptChars} 个字符。`)
-        return { title: checkedTitle(task.title), prompt, harnessId: task.harnessId }
+        return {
+          title: checkedTitle(task.title),
+          prompt,
+          harnessId: task.harnessId,
+          ...(task.model !== undefined ? { model: task.model } : {}),
+        }
       })
     }
     if (plan.length > TEAM_LIMITS.members) throw new AppError(400, 'invalid-input', `一个团队最多 ${TEAM_LIMITS.members} 个成员。`)
@@ -599,6 +607,8 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
               workspaceId: projectId,
               harnessId: member.harnessId,
               ...(ownTree ? { worktree: true } : {}),
+              // The person's own choice for this member's Harness; never the lead's.
+              ...(plan[index]!.model !== undefined ? { model: plan[index]!.model } : {}),
             },
             {
               // A lead that is not private gets its members' replies: they start without private context.

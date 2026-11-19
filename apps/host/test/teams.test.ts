@@ -334,6 +334,24 @@ describe('a team started by a person', () => {
   })
 })
 
+describe('the model a member runs on', () => {
+  it("is the one the person chose for that member, checked as any session's is, and never the lead's", SLOW, async () => {
+    const { owner } = await fixture()
+    const lead = await leadSession(owner)
+    // A service that does not exist: the member's own start refuses it, and the other member runs.
+    const team = await started(owner, lead, {
+      tasks: [
+        { ...task('有模型', 'echo a', 'alpha'), model: { providerId: 'no-such-service', model: 'm' } },
+        task('没写模型', 'echo b', 'beta'),
+      ],
+    })
+    expect(team.members.map(member => member.state === 'unstarted')).toEqual([true, false])
+    expect(team.members[0]!.refusal).toBeTruthy()
+    const done = await teamIn(owner, team.id, 'returned')
+    expect(done.members.map(member => member.state)).toEqual(['unstarted', 'done'])
+  })
+})
+
 describe('who reads a team, and as whom its results go back', () => {
   it("makes a private lead's members private and shows the team only to the full data scope", SLOW, async () => {
     const { t, owner } = await fixture()
