@@ -1255,11 +1255,15 @@ describe('visual capture of the real product', () => {
       await openSession(target, viewport, sessions.running)
       await shows(target, '用例覆盖了省略密钥的情况，运行一次确认。')
       await reachable(target.getByRole('button', { name: '停止', exact: true }))
-      // Running work turns the spinner on its tool row, and the title row says what runs and for how long, once: no line
-      // is drawn under the turn. The bar above the input says nothing then, and the open session's own row says it runs
-      // like any other.
+      // Running work turns the spinner on its tool row, and the reply's author line says what runs and for how long, once
+      // (faa6ee50 moved it there from the title row): no line is drawn under the turn and the title row says nothing. The
+      // bar above the input says nothing then, and the open session's own row says it runs like any other.
       await target.locator('.tool-card .ui-spinner').first().waitFor()
-      await target.locator('.topbar .ui-status-word').filter({ visible: true }).first().waitFor()
+      const runningWord = target.locator('.assistant-meta-status .ui-status-word[data-tone="running"]').filter({ visible: true })
+      await runningWord.waitFor()
+      expect(await runningWord.count()).toBe(1)
+      await expect.poll(() => runningWord.textContent()).toMatch(/[0-9]+:[0-9]{2}$/u)
+      expect(await target.locator('.topbar .ui-status-word').filter({ visible: true }).count()).toBe(0)
       expect(await target.locator('.status-line, .status-clock').count()).toBe(0)
       expect(await target.locator('.run-bar-collapse[data-state="open"]').count()).toBe(0)
       if (sidebar)
@@ -1288,8 +1292,9 @@ describe('visual capture of the real product', () => {
       await reachable(runBar.getByRole('button', { name: '重试', exact: true }))
       expect(await target.locator('.composer-stack > .ui-notice').count()).toBe(0)
       await target.locator('.stop-button .stop-glyph').waitFor()
-      // Nothing is known to be stopping: the title row says what runs again and claims no 正在停止.
-      await target.locator('.topbar .ui-status-word').filter({ visible: true }).first().waitFor()
+      // Nothing is known to be stopping: the author line says what runs again, and the title row claims no 正在停止.
+      await runningWord.waitFor()
+      expect(await target.locator('.topbar .ui-status-word').filter({ visible: true }).count()).toBe(0)
       expect(await target.locator('.status-line').count()).toBe(0)
       expect(await target.locator('.topbar').getByText('正在停止', { exact: true }).count()).toBe(0)
       await target.locator('.run-bar-collapse[data-settled]').waitFor()
@@ -1869,8 +1874,17 @@ describe('visual capture of the real product', () => {
         await recorder.capture(target, viewport, 'settings', 'section list')
         await openSection(settings, '通用')
       }
-      await settings.getByRole('radiogroup', { name: '外观', exact: true }).getByRole('radio', { name: '跟随系统', exact: true }).waitFor()
+      await settings
+        .getByRole('radiogroup', { name: '界面语言', exact: true })
+        .getByRole('radio', { name: '跟随系统', exact: true })
+        .waitFor()
       await recorder.capture(target, viewport, 'settings-general', 'general')
+      // 外观 holds the theme, the background, density and motion (4c9d4d2d moved them out of 通用).
+      await openSection(settings, '外观')
+      await settings.getByRole('radiogroup', { name: '主题', exact: true }).getByRole('radio', { name: '跟随系统', exact: true }).waitFor()
+      await settings.getByRole('radiogroup', { name: '动效', exact: true }).waitFor()
+      await noHorizontalOverflow(target, settings)
+      await recorder.capture(target, viewport, 'settings-appearance', 'appearance')
       for (const [surface, section, ready] of [
         ['settings-providers', '模型', settings.getByText('本地模型服务').first()],
         ['settings-agents', 'Harness', settings.getByText('本地 ACP Harness').first()],
@@ -1969,9 +1983,11 @@ describe('visual capture of the real product', () => {
       await recorder.capture(target, viewport, 'session-diff-restricted', 'work-scoped device: edit status and path, no file diff')
       {
         const settings = await openSettings(target, '设置')
+        // 外观 is this device's own, so a device without 管理此 Host has it too.
+        await reachable(settings.getByRole('tab', { name: '外观', exact: true }))
         await openSection(settings, '通用')
         await settings
-          .getByRole('radiogroup', { name: '外观', exact: true })
+          .getByRole('radiogroup', { name: '界面语言', exact: true })
           .getByRole('radio', { name: '跟随系统', exact: true })
           .waitFor()
         // Only what this device may use is listed, and the list says where the rest is.

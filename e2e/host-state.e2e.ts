@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow } from './helpers/layout.ts'
+import { noHorizontalOverflow, showTooltip } from './helpers/layout.ts'
 
 /** The widths the banner is checked at besides the desktop one; each is a separately enrolled browser. */
 const NARROW = [
@@ -229,11 +229,13 @@ describe('a Host older than the page', () => {
         expect(await page.getByText(title, { exact: true }).filter({ visible: true }).count()).toBe(1)
         await notice.getByText('重启 Latch 后才能用新功能', { exact: true }).waitFor()
         expect(await notice.getByRole('button', { name: '重启 Latch' }).count()).toBe(0)
-        await notice.getByRole('button', { name: '怎么重启' }).click()
-        await notice
+        // The ⓘ is a mark whose tooltip is the detail (00d98cb1), held on touch.
+        const hint = await showTooltip(page, notice.getByRole('img', { name: '怎么重启' }), touch)
+        await hint.tip
           .getByText('在 studio-mini 上停止 Latch 服务；开发确认组件更新后运行 pnpm latch presence repin；再启动 Latch。', { exact: true })
           .waitFor()
         await captureBothThemes(page, `old-host-${label}`, title)
+        await hint.close()
       } finally {
         await context.close()
       }

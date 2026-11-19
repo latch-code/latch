@@ -9,7 +9,7 @@ import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, installFakeGh, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openPanelTab, openSession, settleShell } from './helpers/layout.ts'
+import { noHorizontalOverflow, openPanelTab, openSession, settleShell, showTooltip } from './helpers/layout.ts'
 
 const OUT = 'test-results/pr-checks'
 const SLOW = { timeout: 30_000 }
@@ -338,9 +338,15 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
     })
     await section.getByRole('button', { name: '刷新' }).click()
     await section.getByText('gh 未登录').waitFor()
-    await section.locator('.delivery-line', { hasText: 'gh 未登录' }).getByRole('button', { name: '说明' }).click()
-    await section.getByText('在终端里运行 gh auth login。').waitFor()
+    // The ⓘ is a mark whose tooltip is the detail (00d98cb1), held on touch.
+    const hint = await showTooltip(
+      page,
+      section.locator('.delivery-line', { hasText: 'gh 未登录' }).getByRole('img', { name: '说明' }),
+      (page.viewportSize()?.width ?? 0) < 768,
+    )
+    await hint.tip.getByText('在终端里运行 gh auth login。').waitFor()
     await shots(page, 'logged-out')
+    await hint.close()
     await gh.setMissing(true)
     await section.getByRole('button', { name: '重试' }).click()
     await section.getByText('没有 gh', { exact: true }).waitFor()

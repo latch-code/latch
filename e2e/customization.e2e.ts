@@ -170,7 +170,7 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
     const other = await open(390)
     try {
       const settings = await openSettings(page)
-      await openSection(settings, '通用')
+      await openSection(settings, '外观')
       const group = settings.locator('.settings-group', { hasText: '自定义' })
       const before = {
         radius: await rootToken(page, '--r-8'),
@@ -327,7 +327,7 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
     const { context, page } = await open(1440, 'light', '编辑旧外观的浏览器')
     try {
       const settings = await openSettings(page)
-      await openSection(settings, '通用')
+      await openSection(settings, '外观')
       const group = settings.locator('.settings-group', { hasText: '自定义' })
       await group.getByRole('radiogroup', { name: '圆角' }).getByRole('radio', { name: '圆', exact: true }).click()
       expect(await rootToken(page, '--r-8')).toBe('12px')
@@ -403,7 +403,7 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
       await selectDevice(alternateCookies, alternate.id)
       await settings.waitFor({ state: 'detached' })
       await openSettings(page)
-      await openSection(settings, '通用')
+      await openSection(settings, '外观')
       const group = settings.locator('.settings-group', { hasText: '自定义' })
       await group.getByRole('button', { name: '恢复默认', exact: true }).click()
       await group.getByText('结果未知', { exact: true }).waitFor()
@@ -412,7 +412,7 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
       await settings.waitFor({ state: 'detached' })
       recordingAlternate = false
       await openSettings(page)
-      await openSection(settings, '通用')
+      await openSection(settings, '外观')
       await group.getByRole('button', { name: '恢复默认', exact: true }).click()
       await group.getByText('结果未知', { exact: true }).waitFor()
       expect(requests).toEqual([{ requestId: expect.any(String), baseRevision: before.revision }])
@@ -434,7 +434,7 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
       await retry.waitFor({ state: 'detached' })
       await banner.getByRole('button', { name: '放弃等待', exact: true }).waitFor()
       await openSettings(page)
-      await openSection(settings, '通用')
+      await openSection(settings, '外观')
       await group.getByText('结果未知', { exact: true }).waitFor()
       expect(await group.getByRole('button', { name: '重试同一请求' }).count()).toBe(0)
       await page.screenshot({ path: `${OUTPUT}/unknown-after-scope-change-768-dark.png`, animations: 'disabled' })

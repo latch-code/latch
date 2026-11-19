@@ -164,7 +164,7 @@ describe('responsive workspace controls', () => {
 
       const settings = await openSettings(page, '设置')
       await noHorizontalOverflow(page, settings)
-      await openSection(settings, '通用')
+      await openSection(settings, '外观')
       await page.emulateMedia({ reducedMotion: 'no-preference' })
       const motion = settings.getByRole('radiogroup', { name: '动效', exact: true })
       const reduce = motion.getByRole('radio', { name: '减弱', exact: true })

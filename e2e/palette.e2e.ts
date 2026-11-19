@@ -73,7 +73,7 @@ it('applies appearance commands locally and reads the same choices back in setti
     expect(await attribute('data-density')).toBe('compact')
     expect(await input.inputValue()).toBe('切换外观前保留的草稿')
     const settings = await openSettings(page)
-    await openSection(settings, '通用')
+    await openSection(settings, '外观')
     for (const [group, label] of [
       ['背景效果', '关'],
       ['动效', '减弱'],

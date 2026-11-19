@@ -412,8 +412,9 @@ describe('a turn through Latch shows what the service said it used', () => {
       commandDirectories: () => [bin],
     })
     owner = await host.enroll({ listener: 'unix' })
-    // Saved on this Mac with its confirmation: a page elsewhere is offered no preset, only saved definitions.
-    expect((await owner.confirmed('agents', { body: savedPreset('opencode') })).status).toBe(201)
+    // Saved on this Mac with its confirmation: a page elsewhere is offered no preset, only saved definitions. The fake
+    // speaks ACP, so the definition is `opencode acp`: the preset's own args start `opencode serve` since 8427ab3f.
+    expect((await owner.confirmed('agents', { body: { ...savedPreset('opencode'), args: ['acp'] } })).status).toBe(201)
     const created = await owner.confirmed('providers', {
       method: 'POST',
       body: {
@@ -480,14 +481,16 @@ describe('a turn through Latch shows what the service said it used', () => {
     const second = turn(page, 1)
     await second.locator('.assistant-meta-chosen').getByText('选的是 fake-model', { exact: true }).waitFor()
     expect(await second.locator('.assistant-meta-model').innerText()).toBe('fake-model-preview')
+    // 请求记录 is an ⓘ whose tooltip lists the requests, never something to press (00d98cb1).
     await second.hover()
-    await second.getByRole('button', { name: '请求记录', exact: true }).click()
-    const requests = page.locator('.ui-popover:popover-open')
+    const requests = page.locator('.ui-tooltip:popover-open')
+    await second.getByRole('img', { name: '请求记录', exact: true }).hover()
     await requests
       .getByText('fake-model：1 次，服务说用的是 fake-model-preview · 输入 10 tokens · 输出 5 tokens', { exact: true })
       .waitFor()
     await shot(page, 'usage-1440-light')
-    await page.keyboard.press('Escape')
+    await page.mouse.move(0, 0)
+    await requests.waitFor({ state: 'hidden' })
     // The third: the service failed, so there are no tokens to show and the request did not complete.
     const third = turn(page, 2)
     await third.hover()
@@ -503,7 +506,7 @@ describe('a turn through Latch shows what the service said it used', () => {
     const fourth = turn(page, 3)
     await fourth.hover()
     await expect.poll(() => fourth.locator('.turn-footer').innerText(), { timeout: 10_000 }).toContain('输入 10 tokens')
-    await fourth.getByRole('button', { name: '请求记录', exact: true }).click()
+    await fourth.getByRole('img', { name: '请求记录', exact: true }).hover()
     await requests.getByText('fake-model：1 次 · 输入 10 tokens · 输出 5 tokens', { exact: true }).waitFor()
     expect(await requests.innerText()).not.toContain('没有')
     // The session does not wait for the stream the service still holds.

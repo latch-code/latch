@@ -340,7 +340,7 @@ describe('streamed messages in the real workspace', () => {
       await canvas.waitFor()
       expect(await canvas.getAttribute('data-kind')).toBe('field')
       const settings = await openSettings(page)
-      await openSection(settings, '通用')
+      await openSection(settings, '外观')
       const backdrop = settings.getByRole('radiogroup', { name: '背景效果' })
       expect(await backdrop.getByRole('radio', { name: '标准', exact: true }).getAttribute('aria-checked')).toBe('true')
       await backdrop.getByRole('radio', { name: '关', exact: true }).click()
@@ -351,7 +351,7 @@ describe('streamed messages in the real workspace', () => {
       expect(await canvas.count()).toBe(0)
 
       await openSettings(page)
-      await openSection(settings, '通用')
+      await openSection(settings, '外观')
       expect(await backdrop.getByRole('radio', { name: '关', exact: true }).getAttribute('aria-checked')).toBe('true')
       await backdrop.getByRole('radio', { name: '轻', exact: true }).click()
       await closeSettings(settings)
@@ -430,17 +430,20 @@ describe('streamed messages in the real workspace', () => {
     }
   })
 
-  it('says what the run does once, in the title row, and settles it into the facts the Host recorded, the same after a reload', async () => {
+  it("says what the run does once, beside the reply's author, and settles it into the facts the Host recorded, the same after a reload", async () => {
     const { context, page } = await open(1280, 820)
     try {
       const { id, reply } = await start(page, '检验回合脚部的进行与结算')
       const turn = page.locator('.turn').last()
       const status = turn.locator('.status-line')
       const footer = turn.locator('.turn-footer')
-      // While the turn runs the title row says so, once; under the turn it is only announced, never drawn. The bar above
-      // the input has nothing to say, and there is no footer.
-      const said = page.locator('.workspace .topbar .ui-status-word').filter({ visible: true })
+      // While the turn waits on the model its author line says so, once, with the clock (faa6ee50 moved it there from the
+      // title row); under the turn it is only announced. The title row, the bar above the input and the footer say nothing.
+      const said = page.locator('.assistant-meta-status .ui-status-word[data-tone="running"]').filter({ visible: true })
       await said.first().waitFor()
+      expect(await said.count()).toBe(1)
+      await expect.poll(() => said.first().textContent(), { interval: 50, timeout: 5000 }).toMatch(/\d+:\d{2}/)
+      expect(await page.locator('.workspace .topbar .ui-status-word').filter({ visible: true }).count()).toBe(0)
       const announced = page.locator('.transcript p.sr-only[role="status"]')
       await expect.poll(() => announced.last().textContent(), { interval: 20 }).toContain('运行中')
       expect(await status.count()).toBe(0)
@@ -450,8 +453,9 @@ describe('streamed messages in the real workspace', () => {
 
       reply.append('回合脚部的第一段正文。')
       await liveRow(page, id)
-      // The clock is the title row's, written once.
-      await expect.poll(() => said.first().textContent(), { interval: 50, timeout: 5000 }).toMatch(/\d+:\d{2}/)
+      // Once text arrives it speaks for itself: the author line drops the words, and the title row stays quiet.
+      await said.first().waitFor({ state: 'detached' })
+      expect(await page.locator('.workspace .topbar .ui-status-word').filter({ visible: true }).count()).toBe(0)
       expect(await status.count()).toBe(0)
       reply.usage(1234, 340)
       reply.finish()

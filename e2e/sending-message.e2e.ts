@@ -8,7 +8,7 @@ import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSession } from './helpers/layout.ts'
+import { noHorizontalOverflow, openSession, showTooltip } from './helpers/layout.ts'
 import { homeInput } from './helpers/workbench.ts'
 
 test('shows immediate text, delays delivery wording and retries an uncertain input with the same identity on three widths', async () => {
@@ -208,13 +208,15 @@ test('a retry that stays unconfirmed says why, and 放弃这次提交 lets go of
         expect(await card.getByText('没有收到电脑的答复').count()).toBe(0)
       }
       expect(await card.getByRole('button', { name: '放弃这次提交', exact: true }).isEnabled()).toBe(true)
-      await card.getByRole('button', { name: '说明', exact: true }).click()
-      await card.getByText('再发送就是第二条消息', { exact: false }).waitFor()
+      // The ⓘ is a mark whose tooltip is the detail (00d98cb1), held on touch.
+      const hint = await showTooltip(page, card.getByRole('img', { name: '说明', exact: true }))
+      await hint.tip.getByText('再发送就是第二条消息', { exact: false }).waitFor()
       for (const scheme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme: scheme })
         await page.screenshot({ path: `${SHOTS}/unconfirmed-reason--${scheme}--${width}.png` })
       }
       await page.emulateMedia({ colorScheme: 'light' })
+      await hint.close()
 
       if (width >= 768) {
         // In the session: the text goes back into the input and is sent as a new message with a new requestId.

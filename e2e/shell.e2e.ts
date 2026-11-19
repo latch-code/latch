@@ -249,6 +249,7 @@ describe('the shell', () => {
     await allData(owner)
     expect(await tabsOf(owner)).toEqual([
       '通用',
+      '外观',
       '模型',
       'Harness',
       'MCP',
@@ -263,7 +264,7 @@ describe('the shell', () => {
     ])
     await owner.context().close()
     const guest = await open(1440, 900, '壳层分区只读')
-    expect(await tabsOf(guest)).toEqual(['通用', '设备', '快捷键', '关于'])
+    expect(await tabsOf(guest)).toEqual(['通用', '外观', '设备', '快捷键', '关于'])
     await guest.context().close()
   })
 

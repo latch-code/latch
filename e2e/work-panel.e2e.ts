@@ -232,8 +232,15 @@ describe('the v8 work canvas', () => {
             await capture(`session-${state}`)
           }
           const title = page.locator('main.workspace .topbar')
+          // A running turn is said in the conversation, not the title row (faa6ee50): this one is writing, so its live
+          // reply stands for it and the title row has no running word.
           await choose(page, sessions.running)
-          await title.locator('.ui-status-word[data-tone="running"]', { hasText: /[0-9]+:[0-9]{2}$/u }).waitFor()
+          const live = (await host.host.bridge.detail(sessions.running)).liveMessageId
+          expect(live).toBeTruthy()
+          const liveReply = page.locator(`.transcript [data-message-id="${live}"]`)
+          await liveReply.getByText('先读一下现有的测试，再运行一次。').waitFor()
+          expect(await liveReply.getAttribute('aria-label')).not.toBeNull()
+          expect(await title.locator('.ui-status-word[data-tone="running"]').count()).toBe(0)
           await choose(page, sessions.waiting)
           await title.locator('.ui-status-word[data-tone="waiting"]', { hasText: '等你处理' }).waitFor()
           await choose(page, sessions.failed)

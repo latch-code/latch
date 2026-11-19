@@ -107,11 +107,21 @@ describe('settings pages', () => {
           await openSection(settings, '通用')
         }
         await settings
-          .getByRole('radiogroup', { name: '外观', exact: true })
+          .getByRole('radiogroup', { name: '界面语言', exact: true })
           .getByRole('radio', { name: '跟随系统', exact: true })
           .waitFor()
         await noHorizontalOverflow(page, settings)
         await shot('general')
+
+        // 外观 holds the theme, the background, density and motion (4c9d4d2d moved them out of 通用).
+        await openSection(settings, '外观')
+        await settings
+          .getByRole('radiogroup', { name: '主题', exact: true })
+          .getByRole('radio', { name: '跟随系统', exact: true })
+          .waitFor()
+        await settings.getByRole('radiogroup', { name: '动效', exact: true }).waitFor()
+        await noHorizontalOverflow(page, settings)
+        await shot('appearance')
 
         await openSection(settings, '模型')
         await settings.getByRole('heading', { name: '模型服务', exact: true }).waitFor()

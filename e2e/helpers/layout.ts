@@ -278,24 +278,35 @@ export async function openFileFind(page: Page): Promise<void> {
 }
 
 /**
- * Opens the tooltip that explains `trigger` the way its device would, and returns its text: a hover with a pointer, a
- * press and hold by touch (which has no hover). The tooltip closes again before this returns.
+ * Opens the tooltip that explains `trigger` the way its device would (a hover with a pointer, a press and hold by touch,
+ * which has no hover) and leaves it open for a check or a screenshot; `close` puts it away again.
  */
-export async function tooltipText(page: Page, trigger: Locator, touch = false): Promise<string> {
+export async function showTooltip(page: Page, trigger: Locator, touch = false): Promise<{ tip: Locator; close: () => Promise<void> }> {
   await trigger.scrollIntoViewIfNeeded()
+  const tip = page.locator('.ui-tooltip:popover-open')
   if (touch) {
     const box = (await trigger.boundingBox())!
     const at = { pointerType: 'touch', isPrimary: true, bubbles: true, clientX: box.x + 4, clientY: box.y + box.height / 2 }
     await trigger.dispatchEvent('pointerdown', at)
-    await page.locator('.ui-tooltip:popover-open').waitFor()
+    await tip.waitFor()
     await trigger.dispatchEvent('pointerup', at)
     await trigger.dispatchEvent('pointerleave', at)
   } else await trigger.hover()
-  const open = page.locator('.ui-tooltip:popover-open')
-  await open.waitFor()
-  const text = (await open.textContent()) ?? ''
-  if (touch) await page.locator('body').dispatchEvent('pointerdown', { pointerType: 'touch', bubbles: true })
-  else await page.mouse.move(0, 0)
-  await open.waitFor({ state: 'hidden' })
+  await tip.waitFor()
+  return {
+    tip,
+    close: async () => {
+      if (touch) await page.locator('body').dispatchEvent('pointerdown', { pointerType: 'touch', bubbles: true })
+      else await page.mouse.move(0, 0)
+      await tip.waitFor({ state: 'hidden' })
+    },
+  }
+}
+
+/** The tooltip's text, read as {@link showTooltip} opens it; it closes again before this returns. */
+export async function tooltipText(page: Page, trigger: Locator, touch = false): Promise<string> {
+  const { tip, close } = await showTooltip(page, trigger, touch)
+  const text = (await tip.textContent()) ?? ''
+  await close()
   return text
 }

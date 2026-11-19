@@ -10,7 +10,7 @@ import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, installFakeGh, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openPanelTab, openSession, settleShell, tooltipText } from './helpers/layout.ts'
+import { noHorizontalOverflow, openPanelTab, openSession, settleShell, showTooltip, tooltipText } from './helpers/layout.ts'
 
 const OUT = 'test-results/delivery'
 const SLOW = { timeout: 30_000 }
@@ -580,9 +580,15 @@ it('keeps a retried push and PR unknown on a refusal, shows it, and lets the pag
       await stop()
       await acceptance(page, 'push-retry-refused')
       // The fine print says what abandoning does.
-      await unknownRow.getByRole('button', { name: '说明', exact: true }).click()
-      await unknownRow.getByText('电脑上的记录仍是结果未知', { exact: false }).waitFor()
+      // The ⓘ is a mark whose tooltip is the detail (00d98cb1), held on touch.
+      const hint = await showTooltip(
+        page,
+        unknownRow.getByRole('img', { name: '说明', exact: true }),
+        (page.viewportSize()?.width ?? 0) < 768,
+      )
+      await hint.tip.getByText('电脑上的记录仍是结果未知', { exact: false }).waitFor()
       await acceptance(page, 'push-retry-refused-hint')
+      await hint.close()
 
       // Abandoned: the row goes, and a new push is a new request that goes through.
       await unknownRow.getByRole('button', { name: '放弃这次结果', exact: true }).click()
