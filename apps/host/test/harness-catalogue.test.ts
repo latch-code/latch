@@ -82,11 +82,14 @@ describe("reading Codex's own model list before a session", () => {
       ['gpt-fake', ['low', 'medium', 'high']],
       ['gpt-fake-mini', ['low', 'medium']],
     ])
+    // The configuration names its MCP servers and `hooks/list` its hooks, starting none: no status list, no thread.
     expect((await lines()).filter(line => line.event === 'recv').map(line => line.method)).toEqual([
       'initialize',
       'config/read',
+      'hooks/list',
       'model/list',
     ])
+    expect(known.ownMcp?.last).toMatchObject({ via: 'read', namesOnly: true, servers: [], hooks: [] })
 
     // Kept: selecting it again, here or on another page, starts nothing.
     expect(await read(true)).toMatchObject({ ran: false })

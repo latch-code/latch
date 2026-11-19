@@ -32,6 +32,7 @@ import {
 } from '../codex-models.ts'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
 import { GENERATED_IMAGES_PER_TURN, generatedImage, generatedImageNote, savedImagePath } from './codex-images.ts'
+import { codexHooks, hooksReport, type CodexHooks } from './codex-hooks.ts'
 import { CODEX_GATEWAY_PROVIDER, CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
 import { codexGatewayEnvironment } from '../profiles/codex-environment.ts'
 import { codexGatewayClash, codexModeRefusal, codexPolicy, codexProviderRefusal, type CodexPolicy } from '../profiles/codex-policy.ts'
@@ -219,24 +220,22 @@ const sessionParams = z.object({
 /** Pages and servers of Codex's own MCP servers Latch reads at most. */
 const MCP_PAGES = 4
 const MCP_MAX = 200
-/** Hooks Latch lists at most. */
-const MAX_HOOKS = 100
-const word = text.regex(/^[A-Za-z]{1,64}$/u)
-/** `hooks/list` (0.156, 0.170): Latch reads only these fields of each hook; its command, path and key stay unread. */
-const hookList = z.object({ data: z.array(z.object({ hooks: z.array(z.unknown()).max(1000) })).max(16) })
-const hookEntry = z.object({
-  eventName: word,
-  source: word,
-  isManaged: z.boolean(),
-  enabled: z.boolean(),
-  trustStatus: word.optional().catch(undefined),
-})
-interface CodexHooks {
-  hooks: Array<{ event: string; source: string; managed: boolean; enabled: boolean; trust?: string }>
-  truncated?: true
+/** A cursor of `session/list`: where each of its two `thread/list` queries goes on (`null`: that one is done). */
+const LIST_CURSOR = 'latch-list:'
+const listCursor = z.object({ interactive: text.max(1800).nullable(), exec: text.max(1800).nullable() })
+function listPlaces(cursor: string | undefined): { interactive?: string | null; exec?: string | null } {
+  if (cursor === undefined) return {}
+  if (!cursor.startsWith(LIST_CURSOR)) throw new RpcError(RPC.invalidParams, 'Invalid cursor')
+  let value: unknown
+  try {
+    value = JSON.parse(cursor.slice(LIST_CURSOR.length))
+  } catch {
+    throw new RpcError(RPC.invalidParams, 'Invalid cursor')
+  }
+  const read = listCursor.safeParse(value)
+  if (!read.success) throw new RpcError(RPC.invalidParams, 'Invalid cursor')
+  return read.data
 }
-const hooksReport = (hooks: CodexHooks | undefined) =>
-  hooks ? { hooks: hooks.hooks, ...(hooks.truncated ? { hooksTruncated: true as const } : {}) } : {}
 /** A name `codex mcp login <name>` can be given as one word that no shell, nor Codex, reads as anything else (no leading `-`). */
 const LOGIN_NAME = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/u
 /** `McpServerStatus.runtimeStatus` (0.156, 0.167) in Latch's words. */
@@ -278,9 +277,10 @@ const terminalPage = z.object({
 /**
  * How long a stop waits on Codex to end a command it left running, and then on the command Latch ended itself
  * (`commandMs`); and how long a turn Codex interrupted with no stop of Latch's waits on its commands (`unaskedMs`, the
- * runtime's own cancel limit), after which its process is ended and those commands' results are unknown.
+ * runtime's own cancel limit), after which its process is ended and those commands' results are unknown. A turn whose
+ * thread Codex marked `systemError` and that then neither completes nor goes on is failed after `systemErrorMs`.
  */
-const STOP_LIMITS = { commandMs: 2_000, unaskedMs: 30_000 }
+const STOP_LIMITS = { commandMs: 2_000, unaskedMs: 30_000, systemErrorMs: 3_000 }
 let stopLimits = { ...STOP_LIMITS }
 
 /** Tests only. */
@@ -493,6 +493,12 @@ interface Turn {
   /** Pictures of Codex's image tool passed on in this turn, and those still being read through `fs/readFile`. */
   images?: number
   imageReads?: number
+  /** Codex marked the thread `systemError` in this turn. */
+  systemErrorSeen?: true
+  /** It did, after an error that ends turns: the turn fails unless it completes or goes on first. */
+  systemError?: NodeJS.Timeout
+  /** It failed so: its answer, whatever Codex then says of the interrupted turn. */
+  systemFailure?: string
 }
 
 interface McpCall {
@@ -1210,7 +1216,8 @@ export class CodexWire implements AgentWire {
   /**
    * Codex's own MCP servers, as `mcpServerStatus/list` reports them: for the thread, reusing its connections and starting
    * nothing. Without a thread Codex 0.167 lists only the names it has configured, with no state (and none a plugin adds
-   * in a thread): `namesOnly`. Latch's own servers on the thread are left out: they are Latch's to show.
+   * in a thread): `namesOnly`; Codex 0.170 starts them to answer, so only a person's 读取 asks without a thread. Latch's
+   * own servers on the thread are left out: they are Latch's to show.
    */
   private async readMcp(
     threadId: string | undefined,
@@ -1269,33 +1276,9 @@ export class CodexWire implements AgentWire {
    * its file or its key. A Codex that cannot list them says nothing.
    */
   private async readHooks(threadId: string | undefined, timeoutMs?: number, signal?: AbortSignal): Promise<CodexHooks | undefined> {
-    const answer = await this.send('hooks/list', threadId ? { threadId } : {}, Math.min(timeoutMs ?? 5_000, 5_000), signal).catch(
-      () => undefined,
+    return codexHooks(
+      await this.send('hooks/list', threadId ? { threadId } : {}, Math.min(timeoutMs ?? 5_000, 5_000), signal).catch(() => undefined),
     )
-    const read = hookList.safeParse(answer)
-    if (!read.success) return undefined
-    const hooks: CodexHooks['hooks'] = []
-    let truncated = false
-    for (const entry of read.data.data)
-      for (const raw of entry.hooks) {
-        const hook = hookEntry.safeParse(raw)
-        if (!hook.success) {
-          truncated = true
-          continue
-        }
-        if (hooks.length >= MAX_HOOKS) {
-          truncated = true
-          break
-        }
-        hooks.push({
-          event: hook.data.eventName,
-          source: hook.data.source,
-          managed: hook.data.isManaged,
-          enabled: hook.data.enabled,
-          ...(hook.data.trustStatus ? { trust: hook.data.trustStatus } : {}),
-        })
-      }
-    return { hooks, ...(truncated ? { truncated: true as const } : {}) }
   }
 
   /** `_latch/mcp/status`: the session's servers when it names one, or, in a process with no thread, the names Codex has. */
@@ -1394,31 +1377,62 @@ export class CodexWire implements AgentWire {
     }
   }
 
+  /**
+   * Codex's threads, newest update first, in two queries merged by ID: the interactive sources Codex lists by default
+   * (its terminal, editors and app-server clients, Latch among them, and the `atlas`/`chatgpt` ones a named `sourceKinds`
+   * would leave out) and `codex exec` runs, which only a named `sourceKinds: ["exec"]` lists. Every provider's: Codex
+   * lists only the process's provider's by default, so those started through Latch and those on the person's own login
+   * both show. The cursor carries both queries' places; an older Codex that refuses the second gives the first alone.
+   */
   private async list(params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
-    const cursor = isRecord(params) && typeof params.cursor === 'string' ? params.cursor : undefined
-    // Every provider's threads: Codex lists only the process's provider's by default, so those started through Latch
-    // and those on the person's own login both show.
-    const read = listing.safeParse(
-      await this.send('thread/list', { ...(cursor ? { cursor } : {}), limit: MAX_THREADS, modelProviders: [] }, timeoutMs, signal),
-    )
-    if (!read.success) throw new RpcError(RPC.internal, 'Codex answered thread/list in a shape Latch does not read')
-    const sessions = read.data.data.flatMap(row => {
-      const parsed = thread.safeParse(row)
-      if (!parsed.success || !parsed.data.cwd) return []
-      const { id, cwd, name, preview, updatedAt } = parsed.data
-      const title = (name || preview || '').trim()
-      // Codex counts seconds since the epoch.
-      const at = typeof updatedAt === 'number' ? new Date(updatedAt < 1e12 ? updatedAt * 1000 : updatedAt) : undefined
-      return [
-        {
-          sessionId: id,
-          cwd,
-          ...(title ? { title: clip(title, 200) } : {}),
-          ...(at && Number.isFinite(at.getTime()) ? { updatedAt: at.toISOString() } : {}),
-        },
-      ]
-    })
-    return { sessions, ...(read.data.nextCursor ? { nextCursor: read.data.nextCursor } : {}) }
+    const given = isRecord(params) && typeof params.cursor === 'string' ? params.cursor : undefined
+    const places = listPlaces(given)
+    const query = (extra: Record<string, unknown>, cursor: string | null | undefined) =>
+      this.send(
+        'thread/list',
+        { ...(cursor ? { cursor } : {}), limit: MAX_THREADS, modelProviders: [], sortKey: 'updated_at', ...extra },
+        timeoutMs,
+        signal,
+      )
+    const [interactive, exec] = await Promise.all([
+      places.interactive === null ? undefined : query({}, places.interactive),
+      places.exec === null
+        ? undefined
+        : query({ sourceKinds: ['exec'] }, places.exec).catch((error: unknown) => {
+            if (error instanceof RpcError && error.code === RPC.cancelled) throw error
+            return undefined
+          }),
+    ])
+    const first = interactive === undefined ? undefined : listing.safeParse(interactive)
+    if (first && !first.success) throw new RpcError(RPC.internal, 'Codex answered thread/list in a shape Latch does not read')
+    const second = exec === undefined ? undefined : listing.safeParse(exec)
+    const rows = [...(first?.data?.data ?? []), ...(second?.success ? second.data.data : [])]
+    const seen = new Set<string>()
+    const sessions = rows
+      .flatMap(row => {
+        const parsed = thread.safeParse(row)
+        if (!parsed.success || !parsed.data.cwd || seen.has(parsed.data.id)) return []
+        seen.add(parsed.data.id)
+        const { id, cwd, name, preview, updatedAt } = parsed.data
+        const title = (name || preview || '').trim()
+        // Codex counts seconds since the epoch.
+        const at = typeof updatedAt === 'number' ? new Date(updatedAt < 1e12 ? updatedAt * 1000 : updatedAt) : undefined
+        return [
+          {
+            sessionId: id,
+            cwd,
+            ...(title ? { title: clip(title, 200) } : {}),
+            ...(at && Number.isFinite(at.getTime()) ? { updatedAt: at.toISOString() } : {}),
+          },
+        ]
+      })
+      .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+    const next = {
+      interactive: first?.data?.nextCursor ?? null,
+      exec: second?.success ? (second.data.nextCursor ?? null) : null,
+    }
+    const nextCursor = next.interactive === null && next.exec === null ? undefined : `${LIST_CURSOR}${JSON.stringify(next)}`
+    return { sessions, ...(nextCursor && nextCursor.length <= 4096 ? { nextCursor } : {}) }
   }
 
   /**
@@ -1748,13 +1762,16 @@ export class CodexWire implements AgentWire {
     }
     const usage = turn.usage ? { usage: turn.usage } : {}
     this.finish(turn, () => {
-      if (root.status === 'interrupted' || (turn.cancelled && root.status !== 'failed')) turn.resolve({ stopReason: 'cancelled', ...usage })
+      if (turn.systemFailure && !turn.cancelled) this.answer(turn, 'failed', { message: turn.systemFailure })
+      else if (root.status === 'interrupted' || (turn.cancelled && root.status !== 'failed'))
+        turn.resolve({ stopReason: 'cancelled', ...usage })
       else this.answer(turn, root.status, root.error)
     })
   }
 
   private finish(turn: Turn, answer: () => void): void {
     if (this.turn !== turn) return
+    clearTimeout(turn.systemError)
     if (!turn.commands.size && turn.memberInterruptions)
       for (const [child, childTurnId] of turn.memberInterruptions) this.team?.finish(child, childTurnId, 'interrupted')
     this.turn = undefined
@@ -2263,7 +2280,21 @@ export class CodexWire implements AgentWire {
       return
     }
     const turn = this.turn
+    // Work on the turn after a `systemError`: Codex went on with it, so it is not failed for that.
+    if (turn?.systemError && (method === 'turn/started' || method.startsWith('item/'))) {
+      clearTimeout(turn.systemError)
+      turn.systemError = undefined
+    }
     switch (method) {
+      case 'thread/status/changed': {
+        // Codex marks a thread `systemError` on any error event; one that ends turns also reaches this turn as an
+        // `error`, after which Codex may never complete it (`systemErrorFailure`).
+        const status = isRecord(params.status) ? params.status.type : undefined
+        if (status !== 'systemError' || params.threadId !== this.threadId || !turn || turn.rootResult) return
+        turn.systemErrorSeen = true
+        this.systemErrorFailure(turn)
+        return
+      }
       case 'turn/started':
         if (turn && isRecord(params.turn) && typeof params.turn.id === 'string') {
           turn.id ??= params.turn.id
@@ -2404,12 +2435,39 @@ export class CodexWire implements AgentWire {
               title: clip(redactKnownSecrets(message), 300),
               description: 'Codex 正在重试',
             })
-        } else if (turn) turn.error = message
+        } else if (turn) {
+          turn.error = message
+          this.systemErrorFailure(turn)
+        }
         return
       }
       default:
         return
     }
+  }
+
+  /**
+   * A turn whose thread Codex marked `systemError` after an error that ends turns (an `error` without `willRetry`) may
+   * never complete: unless it completes or goes on within `systemErrorMs`, it is asked to stop (for as long as a command's
+   * stop, so the next turn is not refused as one already running) and fails with Codex's own error. An error Codex does
+   * not end turns for (a failed rollback, a steer it refused) sends no `error`, and its turn runs on untouched.
+   */
+  private systemErrorFailure(turn: Turn): void {
+    if (!turn.systemErrorSeen || turn.error === undefined || turn.systemError || turn.rootResult || this.turn !== turn) return
+    turn.systemError = setTimeout(() => {
+      turn.systemError = undefined
+      if (this.turn !== turn || turn.rootResult) return
+      const thread = this.threadId
+      turn.systemFailure = turn.error || 'Codex 报告这个会话出了内部错误，这一轮没有结束'
+      void (
+        thread && turn.id
+          ? this.send('turn/interrupt', { threadId: thread, turnId: turn.id }, stopLimits.commandMs).catch(() => {})
+          : Promise.resolve()
+      ).then(() => {
+        if (this.turn === turn && !turn.rootResult) this.settle('failed', { message: turn.systemFailure })
+      })
+    }, stopLimits.systemErrorMs)
+    turn.systemError.unref()
   }
 
   /**

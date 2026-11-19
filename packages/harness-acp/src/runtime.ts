@@ -140,7 +140,15 @@ import {
 } from './catalogue.ts'
 import { authFacts, reportedLogin, terminalLogins, type AuthFacts } from './auth.ts'
 import { QUOTA_UPDATE, QuotaFacts, quotaReport, type QuotaReport } from './quota.ts'
-import { CODEX_EFFORT_ID, codexOptions, GATEWAY_DEFAULT_EFFORT, gatewayEffortOption, readCodexModels } from './codex-models.ts'
+import {
+  CODEX_EFFORT_ID,
+  codexOptions,
+  GATEWAY_DEFAULT_EFFORT,
+  gatewayEffortOption,
+  readCodexModels,
+  type CodexModels,
+} from './codex-models.ts'
+import { hooksReport } from './wires/codex-hooks.ts'
 import { buildGatewayCatalog } from './gateway-catalog.ts'
 import { readQuotaCommand } from './login.ts'
 import { commandMoved, commandUnconfirmed, harnessRetired, redactor, resolveCommand } from './command.ts'
@@ -2515,9 +2523,16 @@ export class AgentRuntime implements Bridge {
     try {
       const configured = this.selection.profile?.catalogueRead
       if (configured && 'codexModels' in configured) {
-        const listed = await this.readCodexModels(key, cwd, configured.codexModels)
+        const { own, ...listed } = await this.readCodexModels(key, cwd, configured.codexModels)
         if (!listed.options.length) throw new AppError(502, 'catalogue-empty', `${this.agent.name} 没有列出可选的模型。`)
         this.state.catalogue = modelListCatalogue(this.state.catalogue, { ...listed, definitionHash, at: this.now() })
+        // Before any session: its MCP servers by name and its hooks, from the same read, starting none of them. What a
+        // session or a 读取 reported stays.
+        if (own && this.reportsOwnMcp() && this.definitionNow(true) === definitionHash && !this.ownMcp()?.last)
+          this.noteOwnMcp(
+            { servers: own.servers, namesOnly: true, ...(own.truncated ? { truncated: true } : {}), ...hooksReport(own.hooks) },
+            'read',
+          )
         return
       }
       const launch = this.currentLaunch(await this.projectConfig(cwd))
@@ -2601,7 +2616,11 @@ export class AgentRuntime implements Bridge {
   }
 
   /** Codex's list from its app-server, with the environment and program its sessions get. */
-  private async readCodexModels(key: string, cwd: string, args: readonly string[]): Promise<ReturnType<typeof codexOptions>> {
+  private async readCodexModels(
+    key: string,
+    cwd: string,
+    args: readonly string[],
+  ): Promise<ReturnType<typeof codexOptions> & Pick<CodexModels, 'own'>> {
     const { command } = this.currentLaunch()
     const materializedEnv = await this.selection.profile?.materialize?.({ dataDir: this.options.dataDir })
     const env = agentEnvironment({
@@ -2614,12 +2633,12 @@ export class AgentRuntime implements Bridge {
     this.assertOpen()
     const listed = await readCodexModels(
       { command, args: [...this.agent.args, ...args], cwd, env, redact: this.redact },
-      { timeoutMs: this.readTimeout(), signal: this.lifetime.signal },
+      { timeoutMs: this.readTimeout(), signal: this.lifetime.signal, own: this.reportsOwnMcp() },
     ).catch((error: unknown) => {
       throw this.publicError(error, undefined)
     })
     // Speed is offered only where the session's wire sends it: Codex's own app-server, not the adapter.
-    return codexOptions(listed, this.selection.profile?.wire === 'codex')
+    return { ...codexOptions(listed, this.selection.profile?.wire === 'codex'), ...(listed.own ? { own: listed.own } : {}) }
   }
 
   private readTimeout(): number {

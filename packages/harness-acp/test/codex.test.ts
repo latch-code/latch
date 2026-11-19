@@ -2151,6 +2151,31 @@ describe('Codex over its app-server', () => {
     expect(said(detail, 'system')).toContain('The model service failed')
   })
 
+  it('fails a turn whose thread Codex marked systemError and then left, with Codex’s own error, instead of hanging', async () => {
+    setCodexStopLimits({ systemErrorMs: 200 })
+    cleanups.push(() => setCodexStopLimits(undefined))
+    const t = await computer()
+    const bridge = await t.open()
+    const id = await start(bridge, t.main, 'system-error')
+    const detail = await settled(bridge, id)
+    expect(detail.summary.status).toBe('failed')
+    expect(said(detail, 'system')).toContain('The session hit an internal error')
+    // The thread goes on: the next turn runs.
+    await bridge.prompt(id, 'echo again', rid())
+    expect((await settled(bridge, id)).summary.status).toBe('idle')
+  })
+
+  it('leaves a turn running when Codex marks its thread systemError for an error that does not end turns', async () => {
+    setCodexStopLimits({ systemErrorMs: 100 })
+    cleanups.push(() => setCodexStopLimits(undefined))
+    const t = await computer()
+    const bridge = await t.open()
+    const detail = await settled(bridge, await start(bridge, t.main, 'system-quiet'))
+    expect(detail.summary.status).toBe('idle')
+    expect(said(detail, 'assistant')).toBe('went on')
+    expect(sent(await t.log(), 'turn/interrupt')).toEqual([])
+  })
+
   it('says Codex is not logged in when its account says so, before any thread', async () => {
     const t = await computer({ FAKE_CODEX_LOGGED_OUT: '1' })
     const bridge = await t.open()
@@ -2177,8 +2202,57 @@ describe('Codex over its app-server', () => {
     expect(load.messages.map(message => message.role)).toEqual(['user', 'assistant'])
     expect(load.messages[1]!.text).toBe('echo: echo remember me')
     const log = await t.log()
-    expect(sent(log, 'thread/list')).toHaveLength(1)
+    // The interactive sources and `codex exec` runs, each by their latest update.
+    expect(sent(log, 'thread/list').map(entry => entry.params)).toEqual([
+      { limit: 50, modelProviders: [], sortKey: 'updated_at' },
+      { limit: 50, modelProviders: [], sortKey: 'updated_at', sourceKinds: ['exec'] },
+    ])
     expect(sent(log, 'thread/read')[0]!.params).toMatchObject({ includeTurns: true })
+  })
+
+  it('lists `codex exec` runs with the rest, once each, newest update first, and pages both queries', async () => {
+    const exec = (id: string, updatedAt: number) => ({
+      id,
+      cwd: '/work/exec',
+      model: 'gpt-fake',
+      turns: [],
+      preview: `exec ${id}`,
+      createdAt: 1,
+      updatedAt,
+    })
+    const t = await computer({
+      FAKE_CODEX_EXEC_THREADS: JSON.stringify([exec('exec-new', 4_000_000_000), exec('exec-old', 1)]),
+    })
+    const bridge = await t.open()
+    await settled(bridge, await start(bridge, t.main, 'echo terminal'))
+    const listed = await bridge.listExternalSessions!()
+    expect(listed.sessions.map(row => row.agentSessionId)).toEqual(['exec-new', expect.stringMatching(/^thread-/u), 'exec-old'])
+    // Sixty `exec` runs: two pages, the cursor carrying where each query goes on.
+    const wire = CodexWire.spawn(
+      {
+        command: process.execPath,
+        args: [FAKE_CODEX_APP_SERVER],
+        cwd: t.root,
+        env: {
+          PATH: process.env.PATH ?? '',
+          FAKE_CODEX_EXEC_THREADS: JSON.stringify(Array.from({ length: 60 }, (_, index) => exec(`e${index}`, index + 10))),
+        },
+        maxLineBytes: 1 << 20,
+        redact: text => text,
+      },
+      { request: async () => ({}), notification: () => {}, exit: () => {} },
+    )
+    cleanups.push(async () => {
+      await wire.stop('kill', 100)
+    })
+    await wire.request('initialize', {}, 5_000)
+    const first = (await wire.request('session/list', {}, 5_000)) as { sessions: Array<{ sessionId: string }>; nextCursor?: string }
+    expect(first.sessions).toHaveLength(50)
+    expect(first.nextCursor).toMatch(/^latch-list:/u)
+    const second = (await wire.request('session/list', { cursor: first.nextCursor }, 5_000)) as { sessions: unknown[]; nextCursor?: string }
+    expect(second.sessions).toHaveLength(10)
+    expect(second.nextCursor).toBeUndefined()
+    await expect(wire.request('session/list', { cursor: 'not-ours' }, 5_000)).rejects.toThrow('Invalid cursor')
   })
 
   describe('this computer’s Codex policy', () => {
@@ -2607,6 +2681,33 @@ describe('Codex over its app-server', () => {
       expect(bridge.ownMcp!()!.last!.hooks).toEqual(shownHooks)
       expect(sent(await t.log(), 'hooks/list').at(-1)!.params).toEqual({ threadId: expect.any(String) })
       expect(JSON.stringify(bridge.ownMcp!())).not.toMatch(/sk-live|audit|Managed Preferences|hooks\.json|managed:pre/u)
+    })
+
+    it('names its servers and hooks before any session from the draft’s read of its configuration, starting none', async () => {
+      const t = await computer({
+        FAKE_CODEX_MCP: OWN,
+        FAKE_CODEX_HOOKS: HOOKS,
+        FAKE_CODEX_CONFIG: JSON.stringify({
+          mcp_servers: {
+            docs: { command: 'npx', args: ['docs-mcp'], env: { DOCS_TOKEN: 'secret-value' } },
+            remote: { url: 'https://mcp.example.com/path?key=secret-value', http_headers: { Authorization: 'Bearer secret-value' } },
+            off: { command: 'off-mcp', enabled: false },
+          },
+        }),
+      })
+      const bridge = await t.open()
+      await bridge.readCatalogue!({ auto: true })
+      const last = bridge.ownMcp!()!.last!
+      expect(last).toMatchObject({ via: 'read', namesOnly: true, hooks: shownHooks })
+      expect(last.servers).toEqual([
+        { name: 'docs', state: 'unknown' },
+        { name: 'remote', state: 'unknown', origin: 'https://mcp.example.com' },
+        { name: 'off', state: 'disabled' },
+      ])
+      expect(JSON.stringify(last)).not.toContain('secret-value')
+      // Named from the configuration: nothing asked Codex for their status, which would start them.
+      expect(sent(await t.log(), 'mcpServerStatus/list')).toEqual([])
+      expect(sent(await t.log(), 'thread/start')).toEqual([])
     })
 
     it('never replaces a session’s report with names alone', async () => {

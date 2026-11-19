@@ -3,8 +3,9 @@
  * the same option IDs and values, so a draft's pick applies to the session that follows.
  */
 import { z } from 'zod'
-import type { SessionConfigOption } from '@latch/protocol'
+import { escapeSecurityText, type HarnessMcpServer, type SessionConfigOption } from '@latch/protocol'
 import { AcpWire } from './wires/acp.ts'
+import { codexHooks, type CodexHooks } from './wires/codex-hooks.ts'
 import { clip } from './mapping.ts'
 import { RPC, RpcError } from './protocol.ts'
 
@@ -43,9 +44,30 @@ const configured = z.object({
       model: z.string().max(256).nullish(),
       model_reasoning_effort: z.string().max(64).nullish(),
       service_tier: z.string().max(64).nullish().catch(undefined),
+      // Names, whether each is on, and a remote one's address only: never its command, variables or headers.
+      mcp_servers: z
+        .record(
+          z.string(),
+          z.object({ enabled: z.boolean().nullish().catch(undefined), url: z.string().max(2048).nullish().catch(undefined) }).passthrough(),
+        )
+        .nullish()
+        .catch(undefined),
     })
     .nullish(),
 })
+/** Servers Latch lists at most. */
+const MAX_SERVERS = 200
+
+/** A remote server's origin, never its path, query or credentials. */
+function origin(value: string | null | undefined): string | undefined {
+  if (!value) return undefined
+  try {
+    const read = new URL(value).origin
+    return read === 'null' ? undefined : read
+  } catch {
+    return undefined
+  }
+}
 
 export interface CodexModels {
   models: CodexModel[]
@@ -54,6 +76,11 @@ export interface CodexModels {
   effort?: string
   /** The tier the person's own configuration or the thread is on, as Codex reports it. */
   tier?: string
+  /**
+   * Codex's own MCP servers by name as its configuration lists them (`config/read`, which starts none of them, unlike a
+   * threadless `mcpServerStatus/list`), and the hooks it would run (`hooks/list`). Absent: it did not say.
+   */
+  own?: { servers: HarnessMcpServer[]; truncated?: true; hooks?: CodexHooks }
 }
 
 const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1)
@@ -169,12 +196,13 @@ export function codexOptions(
 }
 
 /**
- * Starts the app-server, asks for the configuration and the model list, and stops it. Requests from it are refused and
- * nothing it sends besides the answers is read; no thread is started, so it runs no tools, hooks or MCP servers.
+ * Starts the app-server, asks for the configuration, the hooks and the model list, and stops it. Requests from it are
+ * refused and nothing it sends besides the answers is read; no thread is started, so it runs no tools, hooks or MCP
+ * servers (its MCP servers are named from the configuration: Codex 0.170 starts them to answer `mcpServerStatus/list`).
  */
 export async function readCodexModels(
   spec: { command: string; args: readonly string[]; cwd: string; env: Record<string, string>; redact: (text: string) => string },
-  options: { timeoutMs: number; signal?: AbortSignal },
+  options: { timeoutMs: number; signal?: AbortSignal; own?: boolean },
 ): Promise<CodexModels> {
   const connection = AcpWire.spawn(
     { command: spec.command, args: [...spec.args], cwd: spec.cwd, env: spec.env, maxLineBytes: 4 * 1024 * 1024, redact: spec.redact },
@@ -195,13 +223,32 @@ export async function readCodexModels(
     let model: string | undefined
     let effort: string | undefined
     let tier: string | undefined
+    let own: CodexModels['own']
     try {
       const read = configured.safeParse(await request('config/read', { cwd: spec.cwd }))
       model = read.data?.config?.model ?? undefined
       effort = read.data?.config?.model_reasoning_effort ?? undefined
       tier = tierValue(read.data?.config?.service_tier)
+      // Only where Latch shows them (Codex's own wire): the adapter's sessions report none of this.
+      const servers = options.own && read.success ? Object.entries(read.data.config?.mcp_servers ?? {}) : undefined
+      if (servers)
+        own = {
+          servers: servers.slice(0, MAX_SERVERS).map(([name, server]) => {
+            const at = origin(server.url)
+            return {
+              name: escapeSecurityText(clip(name, 128)),
+              state: server.enabled === false ? ('disabled' as const) : ('unknown' as const),
+              ...(at ? { origin: at } : {}),
+            }
+          }),
+          ...(servers.length > MAX_SERVERS ? { truncated: true as const } : {}),
+        }
     } catch {
       // An older Codex has no config/read; its default model is then the list's.
+    }
+    if (own) {
+      const hooks = codexHooks(await request('hooks/list', {}).catch(() => undefined))
+      if (hooks) own.hooks = hooks
     }
     const models: CodexModel[] = []
     let cursor: string | null | undefined = null
@@ -215,7 +262,7 @@ export async function readCodexModels(
       cursor = parsed.data.nextCursor
       if (!cursor || models.length >= MAX_MODELS) break
     }
-    return { models, ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(tier ? { tier } : {}) }
+    return { models, ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(tier ? { tier } : {}), ...(own ? { own } : {}) }
   } finally {
     await connection.stop('kill', 0)
   }

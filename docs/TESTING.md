@@ -173,6 +173,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | `LATCH_HELPER_LIVE=1` 加 pi、Codex 或 OpenCode 的上述路径 | `e2e/helper-live.e2e.ts` |
 | `LATCH_HELPER_PROPOSALS_LIVE=1` 加 Codex 或 OpenCode 的上述路径 | `e2e/helper-proposals.e2e.ts`、`packages/harness-acp/test/codex-skills.live.test.ts` |
 | `LATCH_CODEX_ACTIONS_LIVE=1` 加 `LATCH_CODEX_GATEWAY_BINARY` | `packages/harness-acp/test/codex-actions.live.test.ts` |
+| `LATCH_CODEX_DELETE_REAL=1` 加 `LATCH_CODEX_GATEWAY_BINARY` | `apps/host/test/codex-delete.live.test.ts`：用本人的登录在临时项目里发一句极短的提示（一次付费的回合），经 Latch 删除会话，再用本人的 `codex app-server` 的 `thread/read` 核对它已读不到这个 thread；只打印布尔值 |
 | `LATCH_CODEX_IMAGE_REAL=1` 加 `LATCH_CODEX_GATEWAY_BINARY` | `apps/host/test/codex-image.live.test.ts`：用本人的登录生成一张图（一次付费的图片生成），图片工具的行要带图片附件 |
 | `LATCH_DSH_BINARY` | `packages/harness-acp/test/dsh-mode.test.ts` 的真实部分，无模型调用 |
 | `LATCH_AGY_BINARY` | `antigravity.live.test.ts` |

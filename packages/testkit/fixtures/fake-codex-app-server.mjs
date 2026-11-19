@@ -54,7 +54,7 @@
 // Policy: FAKE_CODEX_REQUIREMENTS is configRequirements/read's `requirements` (JSON; none: null), and a turn whose
 // approval policy, sandbox or reviewer it does not allow is refused as Codex refuses one. FAKE_CODEX_HOOKS is the
 // hooks hooks/list reports for every folder (JSON array of `HookMetadata`). A turn `system-error` reports an error and the
-// thread's `systemError` status and never completes. Threads carry a `source` (`vscode`; FAKE_CODEX_EXEC_THREADS is a
+// thread's `systemError` status and never completes; `system-quiet` reports the status alone and completes later. Threads carry a `source` (`vscode`; FAKE_CODEX_EXEC_THREADS is a
 // JSON array of `exec` threads listed only for `sourceKinds: ["exec"]`).
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -1061,6 +1061,12 @@ async function play(text) {
       turn.interrupt = resolve
     })
     return 'interrupted'
+  }
+  // As after an error Codex does not end turns for (a failed rollback): the status alone, then the turn goes on quietly.
+  if (word === 'system-quiet') {
+    notify('thread/status/changed', { threadId: thread.id, status: { type: 'systemError' } })
+    await sleep(400)
+    return reply('went on')
   }
   if (word === 'fail') {
     notify('error', { threadId: thread.id, turnId: turn.id, willRetry: true, error: { message: 'stream disconnected, retrying' } })
