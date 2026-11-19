@@ -196,8 +196,10 @@ describe('attachment tiles', () => {
       const large = page.locator('.attachment-preview.is-large')
       await large.locator('img').waitFor()
       const [box, shown] = await Promise.all([large.boundingBox(), large.locator('img').boundingBox()])
-      expect(box!.width).toBeGreaterThan(600)
+      // No panel round it: the dialog is as wide as the picture, and its surface is clear.
       expect(shown!.width).toBeGreaterThan(104)
+      expect(Math.abs(box!.width - shown!.width)).toBeLessThan(16)
+      expect(await large.locator('.ui-modal-surface').evaluate(node => getComputedStyle(node).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
       expect(await page.getByRole('region', { name: '文件预览', exact: true }).count()).toBe(0)
       await page.screenshot({ path: `${OUT}/large-image-1440-light.png`, animations: 'disabled' })
       await large.getByRole('button', { name: '关闭', exact: true }).click()
