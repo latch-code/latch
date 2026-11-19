@@ -8,7 +8,7 @@ import { useSteady } from '../hooks/useSteady.ts'
 import { activityWords, rowMark, runningWords, silentWords, type RowStatus, type WaitKind } from '../sessions.ts'
 import { runClock, runElapsed } from '../conversation.ts'
 import { MarkTile } from './BrandTile.tsx'
-import { personActivity } from '../agents/personWords.ts'
+import { personActivity, THOUGHT_WORDS } from '../agents/personWords.ts'
 
 const COPY = defineCopy(
   {
@@ -56,7 +56,7 @@ export function ThinkingLine({ live, person = false }: { live: RunLive | undefin
   return (
     <div className="thinking-line" role="status">
       <Spinner size={12} />
-      <span>{person ? personActivity(live)?.words : COPY.thinking}</span>
+      <span>{person ? (personActivity(live)?.words ?? THOUGHT_WORDS.live) : COPY.thinking}</span>
       {ms !== undefined && <span className="thinking-clock">{runClock(ms)}</span>}
     </div>
   )
