@@ -61,6 +61,8 @@ export interface MentionMembers {
   items: ReadonlyArray<{
     id: string
     token: string
+    /** What the member is called, the list's line; `title`, its task, is found by a search too. */
+    name: string
     title: string
     media: ReactNode
     description?: ReactNode
@@ -69,11 +71,16 @@ export interface MentionMembers {
   }>
 }
 
-/** Members a query after `@` finds: by title or token, case-insensitively; all of them with nothing typed. */
-export function matchingMembers<T extends { title: string; token: string }>(items: readonly T[], query: string): T[] {
+/** Members a query after `@` finds: by name, task or token, case-insensitively; all of them with nothing typed. */
+export function matchingMembers<T extends { name?: string; title: string; token: string }>(items: readonly T[], query: string): T[] {
   const words = query.trim().toLocaleLowerCase()
   if (!words) return [...items]
-  return items.filter(item => item.title.toLocaleLowerCase().includes(words) || item.token.slice(1).toLocaleLowerCase().includes(words))
+  return items.filter(
+    item =>
+      (item.name ?? '').toLocaleLowerCase().includes(words)
+      || item.title.toLocaleLowerCase().includes(words)
+      || item.token.slice(1).toLocaleLowerCase().includes(words),
+  )
 }
 
 export function activeFileMention(draft: string, caret: number): { start: number; end: number; query: string } | undefined {
@@ -303,7 +310,7 @@ export function useFileMentions(
                     label: (
                       <Tooltip content={item.disabled}>
                         <span className="mention-member" tabIndex={item.disabled ? -1 : undefined}>
-                          <VisibleText text={item.title} />
+                          <VisibleText text={item.name} />
                         </span>
                       </Tooltip>
                     ),

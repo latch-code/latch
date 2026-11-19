@@ -241,7 +241,8 @@ describe('a team started by a person', () => {
     const done = await teamIn(owner, team.id, 'returned')
     const [text] = await returnsIn(owner, lead)
     expect(text).toContain('【读日志】（Beta）：已完成\necho: echo logs')
-    expect(text).toContain('【读配置（改）】（Alpha）：已完成\necho: echo edited')
+    // Named by the start of its edited title, as nobody gave it a name.
+    expect(text).toContain('【读配置】（Alpha）：已完成\necho: echo edited')
     // The entry not named still waits for the person; the two started are ordinary 待办 that record the proposal.
     const snapshot = await snapshotOf(owner)
     expect(snapshot.workProposals?.find(row => row.id === proposal!.id)?.entries?.map(entry => entry.state)).toEqual([
@@ -332,6 +333,27 @@ describe('a team started by a person', () => {
     expect(await errorOf(await owner.request(`teams/tem_${'Z'.repeat(22)}`))).toEqual({ status: 404, error: 'team-not-found' })
     expect((await snapshotOf(owner)).teams).toBeUndefined()
     expect(await audited(t, 'team.started')).toEqual([])
+  })
+})
+
+describe('what a member is called', () => {
+  it('is the name it was given, or the start of its task; the results and the agent call it so', SLOW, async () => {
+    const { owner } = await fixture()
+    const lead = await leadSession(owner)
+    const team = await started(owner, lead, {
+      tasks: [
+        { ...task('读一遍登录接口，记下超时的地方', 'echo login', 'alpha'), name: '登录排查' },
+        task('核对回执：签名与顺序', 'echo receipt', 'beta'),
+      ],
+    })
+    expect(team.members.map(member => [member.name, member.title])).toEqual([
+      ['登录排查', '读一遍登录接口，记下超时的地方'],
+      ['核对回执', '核对回执：签名与顺序'],
+    ])
+    await teamIn(owner, team.id, 'returned')
+    const [text] = await returnsIn(owner, lead)
+    expect(text).toContain('【登录排查】（Alpha）：已完成')
+    expect(text).toContain('【核对回执】（Beta）：已完成')
   })
 })
 
@@ -826,8 +848,8 @@ describe('later rounds on an existing team', () => {
       // The live server lists them once the roster is beside it: no new session needed.
       await vi.waitFor(async () => expect(await say(owner, lead, 'mcp-list latch-skills')).toContain('list_members,send_to_members'), WAIT)
       const roster = await say(owner, lead, 'mcp latch-skills list_members')
-      expect(roster).toContain('"id":"m1","title":"一","harness":"Latch 内置","state":"done"')
-      expect(roster).toContain('"id":"m2","title":"二","harness":"Alpha","state":"done"')
+      expect(roster).toContain('"id":"m1","name":"一","title":"一","harness":"Latch 内置","state":"done"')
+      expect(roster).toContain('"id":"m2","name":"二","title":"二","harness":"Alpha","state":"done"')
 
       // Refused by the Host: a member not in the team. Nothing is sent.
       expect(await call({ sends: [{ member: 'm3', prompt: 'echo nobody' }] })).toContain('m3 is not a member of this team')
@@ -951,8 +973,10 @@ describe('later rounds on an existing team', () => {
     await settled(owner, lead)
     expect(seen.flat()).not.toContain('send_to_members')
     expect((await dispatchSwitch(owner, team.id, true)).status).toBe(200)
+    // The tools of the run that 'dispatch it' started: the run the returned results start may already have come after it.
+    const from = seen.length
     await say(owner, lead, 'dispatch it')
-    expect(seen.at(-1)).toEqual(expect.arrayContaining(['list_members', 'send_to_members']))
+    expect(seen[from]).toEqual(expect.arrayContaining(['list_members', 'send_to_members']))
     expect(answers.at(-1)).toContain('Sent as round 3.')
     const done = await teamIn(owner, team.id, 'returned')
     expect(done.rounds?.at(-1)).toMatchObject({ round: 3, by: 'agent' })

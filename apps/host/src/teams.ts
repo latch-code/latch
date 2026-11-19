@@ -38,6 +38,12 @@ const memberSchema = z.strictObject({
     .string()
     .min(1)
     .max(WORK_ITEM_LIMITS.titleChars * 4),
+  /** What it is called (`TeamMember.name`); absent on a member of an older record, which reads the start of its title. */
+  name: z
+    .string()
+    .min(1)
+    .max(TEAM_LIMITS.nameChars * 4)
+    .optional(),
   harnessId: z.string().regex(HARNESS_ID),
   state: memberState,
   refusal: z.string().min(1).max(1000).optional(),
@@ -203,7 +209,8 @@ export function teamReturnText(
 ): string {
   const build = (limit: number) => {
     const blocks = team.members.map(member => {
-      const head = `【${member.title}】（${harnessName(member.harnessId)}）：${END_WORDS[member.state]}`
+      // By the name the member goes by, as the lead's agent gave it or the start of its task.
+      const head = `【${member.name ?? nameOf(member.title)}】（${harnessName(member.harnessId)}）：${END_WORDS[member.state]}`
       if (member.state === 'unstarted') return `${head}\n${member.refusal ?? '会话没有开始。'}`
       if (member.state !== 'done') return `${head}\n这个成员没有正常结束，没有可用的结果。`
       if (member.sessionId && withheld.has(member.sessionId)) return `${head}\n它的会话是私有的，结果没有带回，请到它的会话里查看。`
@@ -223,12 +230,30 @@ export function teamReturnText(
   return text
 }
 
+/**
+ * A member's name from a task's own words, where nobody gave one: the title's first line up to its first stop or comma,
+ * at most `TEAM_LIMITS.nameChars` characters; the whole title when that leaves nothing.
+ */
+export function nameOf(title: string): string {
+  const line = title.split('\n')[0]!.trim()
+  const head = line.split(/[，。,.;；:：、!?！？()（）]/u)[0]!.trim() || line
+  return Array.from(head).slice(0, TEAM_LIMITS.nameChars).join('').trim() || '成员'
+}
+
+/** A name given for a member: one line, at most `TEAM_LIMITS.nameChars` characters; undefined when it says nothing. */
+export function checkedName(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const line = value.replace(/[\u0000-\u001f\u007f]+/gu, ' ').trim()
+  return line ? Array.from(line).slice(0, TEAM_LIMITS.nameChars).join('').trim() : undefined
+}
+
 /** A member as a device reads it; `readable`: it may read the member's session (its ID and what it said). */
 function memberView(member: TeamMemberRecord, readable: boolean): TeamMember {
   return {
     itemId: member.itemId,
     ...(member.sessionId && readable ? { sessionId: member.sessionId } : {}),
     title: member.title,
+    name: member.name ?? nameOf(member.title),
     harnessId: member.harnessId,
     state: member.state,
     ...(member.refusal ? { refusal: member.refusal } : {}),

@@ -1921,6 +1921,11 @@ interface ProposalSession {
 
 const todoProperties = {
   title: { type: 'string', maxLength: WORK_PROPOSAL_LIMITS.titleChars, description: 'A short imperative title, one line.' },
+  name: {
+    type: 'string',
+    maxLength: TEAM_LIMITS.nameChars,
+    description: 'A short name for the member that would do it, like a role (e.g. 签名校验, API review); one line.',
+  },
   prompt: {
     type: 'string',
     maxLength: WORK_PROPOSAL_LIMITS.promptChars,
@@ -1941,6 +1946,7 @@ function todoArgs(value: unknown): WorkTodoProposal {
   return {
     title,
     prompt,
+    ...(typeof args.name === 'string' && args.name.trim() ? { name: args.name.trim() } : {}),
     ...(typeof args.project === 'string' && args.project.trim() ? { project: args.project.trim() } : {}),
     ...(typeof args.harness === 'string' && args.harness.trim() ? { harness: args.harness.trim() } : {}),
     ...(tags?.length ? { tags } : {}),

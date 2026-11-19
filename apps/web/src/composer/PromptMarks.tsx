@@ -140,9 +140,9 @@ export function PromptMirrorText({ text, marks, hint }: { text: string; marks: r
     parts.push(
       text.slice(at, mark.start),
       <span key={mark.start} className="prompt-mark" data-kind={mark.kind} data-start={mark.start}>
-        <span className="prompt-mark-sigil">
+        <span className="prompt-mark-sigil" data-media={mark.media ? '' : undefined}>
           {text[mark.start]}
-          <Icon icon={mark.kind === 'skill' ? BookOpen : mark.kind === 'member' ? Users : CodeGlyph} size={14} />
+          {mark.media ?? <Icon icon={mark.kind === 'skill' ? BookOpen : mark.kind === 'member' ? Users : CodeGlyph} size={14} />}
         </span>
         <span className="prompt-mark-name">{text.slice(mark.start + 1, mark.end)}</span>
       </span>,

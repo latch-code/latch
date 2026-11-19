@@ -23,6 +23,8 @@ import { memberAtWork, teamOpen } from './model.ts'
 export interface MemberChoice {
   itemId: string
   token: string
+  /** What the member is called; `title` is its task. */
+  name: string
   title: string
   harnessId: string
   member: TeamMember
@@ -32,11 +34,12 @@ export interface MemberChoice {
 
 const TOKEN_CHARS = 24
 
-/** A member's chip in the draft: `@` and its title with spaces as `-`, cut short; a second of the same name gets `-2`. */
-export function memberTokens(members: readonly Pick<TeamMember, 'title'>[]): string[] {
+/** A member's chip in the draft: `@` and its name with spaces as `-`, cut short; a second of the same name gets `-2`. */
+export function memberTokens(members: readonly Pick<TeamMember, 'name' | 'title'>[]): string[] {
   const seen = new Map<string, number>()
   return members.map(member => {
-    const base = `@${Array.from(member.title.trim().replace(/\s+/gu, '-')).slice(0, TOKEN_CHARS).join('') || 'member'}`
+    const said = (member.name || member.title).trim().replace(/\s+/gu, '-')
+    const base = `@${Array.from(said).slice(0, TOKEN_CHARS).join('') || 'member'}`
     const count = (seen.get(base) ?? 0) + 1
     seen.set(base, count)
     return count === 1 ? base : `${base}-${count}`
@@ -68,6 +71,7 @@ export function memberChoices(team: TeamSummary, tasks: readonly Pick<TaskSummar
     return {
       itemId: member.itemId,
       token: tokens[index]!,
+      name: member.name || member.title,
       title: member.title,
       harnessId: member.harnessId,
       member,

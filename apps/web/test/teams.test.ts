@@ -35,6 +35,7 @@ import {
 const member = (itemId: string, state: TeamMember['state'], sessionId?: string): TeamMember => ({
   itemId,
   title: itemId,
+  name: itemId,
   harnessId: 'alpha',
   state,
   ...(sessionId ? { sessionId } : {}),

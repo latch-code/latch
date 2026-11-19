@@ -232,7 +232,7 @@ export function Composer({
    */
   members?: {
     mention: MentionMembers
-    marks: ReadonlyArray<{ token: string; title: string }>
+    marks: ReadonlyArray<{ token: string; name: string; title: string; media?: ReactNode }>
     round?: { ready: boolean; reason?: string }
     sending: boolean
     sendLabel: string

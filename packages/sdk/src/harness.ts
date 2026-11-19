@@ -348,6 +348,8 @@ export interface ScheduleProposalInput {
 export interface WorkTodoProposal {
   title: string
   prompt: string
+  /** The short name the agent gives this piece of work's member, should the group be started as a team. */
+  name?: string
   project?: string
   harness?: string
   tags?: string[]

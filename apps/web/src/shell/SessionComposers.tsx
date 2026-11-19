@@ -757,15 +757,20 @@ export function SessionComposer({
                   return {
                     id: choice.itemId,
                     token: choice.token,
+                    name: choice.name,
                     title: choice.title,
                     media: <MemberTile harnessId={choice.harnessId} harnesses={catalog.harnesses} />,
-                    description: harness ? harnessName(harness) : choice.harnessId,
+                    // Its task under its name, then its Harness.
+                    description: choice.name === choice.title ? (harness ? harnessName(harness) : choice.harnessId) : choice.title,
                     source: memberWords(choice.member.state),
                     ...(choice.disabled ? { disabled: choice.disabled } : {}),
                   }
                 }),
               },
-              marks: choices,
+              marks: choices.map(choice => ({
+                ...choice,
+                media: <MemberTile harnessId={choice.harnessId} harnesses={catalog.harnesses} size={16} />,
+              })),
               ...(roundDraft ? { round: { ready: roundDraft.ready, ...(roundDraft.reason ? { reason: roundDraft.reason } : {}) } } : {}),
               sending: teamRound.status.state === 'sending',
               sendLabel: TEAM_COPY.sendToMembers,

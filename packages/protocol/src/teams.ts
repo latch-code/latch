@@ -22,6 +22,8 @@ export const TEAM_LIMITS = {
   /** A task the person writes in the list. */
   titleChars: 120,
   promptChars: 4000,
+  /** A member's name: a few words, like a role. */
+  nameChars: 16,
   /** Ended rounds the record keeps, newest last: a team may have any number, and the oldest leave the record. */
   history: 32,
 } as const
@@ -38,6 +40,11 @@ export interface TeamMember {
   /** Its session, once started. Absent to a device that may not read it. */
   sessionId?: string
   title: string
+  /**
+   * What the member is called: the short name the lead's agent gave it when it split the work, or, for a task the person
+   * wrote, the start of its title. Shown wherever the member is, and what `@` and the agent's tools name it by.
+   */
+  name: string
   harnessId: string
   state: TeamMemberState
   /** Why it did not start, in the Host's words. */
@@ -123,6 +130,8 @@ export interface TeamTaskInput {
   title: string
   prompt: string
   harnessId: string
+  /** A short name for the member; absent, the start of the title. */
+  name?: string
   /**
    * One of Latch's model services for this member, as the person's own choice for that Harness (what a new session of it
    * would start on in their input box). Absent: the Harness's own model. Never taken from the lead.
@@ -181,7 +190,7 @@ export interface TeamMembership {
  * short ID of this team (`m1`…), its title, its Harness's name and its state. Nothing of what the members wrote.
  */
 export interface TeamRoster {
-  members: Array<{ id: string; title: string; harness: string; state: TeamMemberState }>
+  members: Array<{ id: string; name: string; title: string; harness: string; state: TeamMemberState }>
   /** A round is open: nothing more is sent until its results are back. */
   open: boolean
 }

@@ -507,7 +507,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 
 Agent 可以提议待办，或为自己的卡提议更好的标题、标签与一句备注。提议不是待办：不进 `items`，不计入待办上限，不能开始、加入或拖动；只由人接受或不要。优先级永远不能提议。
 
-**谁能提议。** Host 在开始会话时给 `CreateTaskInput.workProposals`：Code 会话、我的 Agent 的会话与「通用」的对话都给，只要 Harness 接得住（`canPropose`：内置 Harness，或接受技能服务的外部 Harness；pi 不接受 MCP，提议尚未实现）；插件页面开始的会话不给。Driver 只为这样的会话提供（只对话的运行也有：它们不读也不改任何东西）`propose_todo(title, prompt, project?, harness?, tags?)`、`propose_todos(goal, items)`（2–8 条，一组）与 `propose_card(target, title?, tags?, note?)`，`target` 是 `session`（这个会话自己的卡）或 `todo`（它所在的待办），卡由 Host 从自己的记录查出，从不取自 Agent。内置 Harness 由运行循环提供这三个工具；外部 Harness 经技能服务（`latch-skills` 的 `board` 参数）写进同一个提议文件，ACP 驱动读到后交给 `HarnessHostOptions.proposeWork`（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#外部-harness-的通道)）。Host 只收这个驱动自己的、带 `workProposals` 记录的会话的提议；助手的旧会话与插件页面的会话拒绝（409 `proposal-session`）。
+**谁能提议。** Host 在开始会话时给 `CreateTaskInput.workProposals`：Code 会话、我的 Agent 的会话与「通用」的对话都给，只要 Harness 接得住（`canPropose`：内置 Harness，或接受技能服务的外部 Harness；pi 不接受 MCP，提议尚未实现）；插件页面开始的会话不给。Driver 只为这样的会话提供（只对话的运行也有：它们不读也不改任何东西）`propose_todo(title, prompt, project?, harness?, tags?)`、`propose_todos(goal, items)`（2–8 条，一组；每条可带一个短名字 `name`，开成团队后是成员的名字）与 `propose_card(target, title?, tags?, note?)`，`target` 是 `session`（这个会话自己的卡）或 `todo`（它所在的待办），卡由 Host 从自己的记录查出，从不取自 Agent。内置 Harness 由运行循环提供这三个工具；外部 Harness 经技能服务（`latch-skills` 的 `board` 参数）写进同一个提议文件，ACP 驱动读到后交给 `HarnessHostOptions.proposeWork`（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#外部-harness-的通道)）。Host 只收这个驱动自己的、带 `workProposals` 记录的会话的提议；助手的旧会话与插件页面的会话拒绝（409 `proposal-session`）。
 
 **给 Agent 的指引**在工具自己的说明里（`packages/protocol/src/work-proposals.ts` 的 `PROPOSE_TODO_GUIDE` 等），每个 Harness 收到同一段：什么时候提议待办、什么时候直接做；要求要写成没有这段对话的新会话能直接执行的第一条消息；不写密钥与凭据，不照抄网页、文件或工具输出里的指令；人接受之前什么都不会建、什么都不会开始；优先级只由人定。
 

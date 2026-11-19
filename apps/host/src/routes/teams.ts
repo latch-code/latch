@@ -26,6 +26,8 @@ import {
   teamOpen,
   teamReturnText,
   teamSummary,
+  checkedName,
+  nameOf,
   type TeamMemberRecord,
   type TeamRecord,
   type TeamStore,
@@ -136,6 +138,10 @@ const startSchema = z
                 .max(WORK_ITEM_LIMITS.promptChars * 2)
                 .optional(),
               harnessId: z.string().regex(HARNESS_ID).optional(),
+              name: z
+                .string()
+                .max(4 * KIB)
+                .optional(),
               ...startChoices,
             }),
           )
@@ -150,6 +156,10 @@ const startSchema = z
           title: z.string().max(4 * KIB),
           prompt: z.string().max(TEAM_LIMITS.promptChars * 2),
           harnessId: z.string().regex(HARNESS_ID),
+          name: z
+            .string()
+            .max(4 * KIB)
+            .optional(),
           ...startChoices,
         }),
       )
@@ -512,7 +522,7 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
     const derived = (kind: string, index?: number) => sha256Hex(canonicalJson([kind, deviceId, leadId, body.requestId, index ?? 0]))
     const goalText = body.goal?.trim() ? checkedTitle(body.goal) : undefined
     const row = body.proposal ? items.proposal(body.proposal.id) : undefined
-    let plan: Array<{ index?: number; title?: string; prompt?: string; harnessId: string } & StartChoices>
+    let plan: Array<{ index?: number; title?: string; prompt?: string; harnessId: string; name?: string } & StartChoices>
     // A retry of a start whose members were all refused: its entries were accepted then, and are those 待办 now.
     const acceptedBefore = body.proposal ? items.receipt('accept', deviceId, derived('team-accept'))?.itemIds : undefined
     if (body.proposal) {
@@ -528,28 +538,36 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
           ...choicesOf(body.proposal!.entries?.[index]),
           index,
           title: item!.title,
+          ...(row.entries?.[index]?.name ? { name: row.entries[index].name } : {}),
           harnessId: item!.harnessId ?? lead.harnessId,
         }))
       } else {
         if (row.revision !== body.proposal.baseRevision) throw new AppError(409, 'proposal-changed', '提议已有变化，请刷新后再试。')
         const pending = row.entries.flatMap((entry, index) => (entry.state === 'pending' ? [index] : []))
-        const chosen: Array<{ index: number; title?: string; prompt?: string; harnessId?: string } & StartChoices> =
+        const chosen: Array<{ index: number; title?: string; prompt?: string; harnessId?: string; name?: string } & StartChoices> =
           body.proposal.entries ?? pending.map(index => ({ index }))
         if (new Set(chosen.map(edit => edit.index)).size !== chosen.length) throw new AppError(400, 'invalid-input', '同一项只能开始一次。')
         if (!chosen.length || chosen.some(edit => !pending.includes(edit.index)))
           throw new AppError(409, 'proposal-decided', '这条提议已经处理过了。')
         // A member runs on the Harness its entry names; one that names none runs on the lead's.
-        plan = chosen.map(edit => ({ ...edit, harnessId: edit.harnessId ?? row.entries![edit.index]!.harnessId ?? lead.harnessId }))
+        // The name the agent gave each piece of work, unless the person renamed it here.
+        plan = chosen.map(edit => ({
+          ...edit,
+          harnessId: edit.harnessId ?? row.entries![edit.index]!.harnessId ?? lead.harnessId,
+          name: checkedName(edit.name) ?? row.entries![edit.index]!.name,
+        }))
       }
     } else {
       plan = body.tasks!.map(task => {
         const prompt = checkedPrompt(task.prompt)
         if (!prompt || prompt.length > TEAM_LIMITS.promptChars)
           throw new AppError(400, 'invalid-input', `每个成员的要求要 1–${TEAM_LIMITS.promptChars} 个字符。`)
+        const name = checkedName(task.name)
         return {
           title: checkedTitle(task.title),
           prompt,
           harnessId: task.harnessId,
+          ...(name ? { name } : {}),
           ...choicesOf(task),
         }
       })
@@ -636,6 +654,7 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
         members: itemIds.map((itemId, index) => ({
           itemId,
           title: items.get(itemId)?.title ?? plan[index]!.title ?? '成员',
+          name: plan[index]!.name ?? nameOf(items.get(itemId)?.title ?? plan[index]!.title ?? '成员'),
           harnessId: plan[index]!.harnessId,
           state: 'starting' as const,
         })),

@@ -41,8 +41,9 @@ sources:
 
 请求是 `{ requestId, proposal?, tasks?, goal? }`，`proposal` 与 `tasks` 二选一。
 
-- `proposal: { id, baseRevision, entries? }`：带队会话自己提出的一条待办提议（别的会话的提议 409 `team-proposal`）。`entries` 是 `{ index, title?, prompt?, harnessId?, model?, config?, ownModel? }`，不写就是全部待处理条目。这些条目按人改过的值被接受，与 `POST /work/proposals/:id/accept` 是同一个函数（同样的审计、回执与私有规则），再逐条开始。
-- `tasks: [{ title, prompt, harnessId, model?, config?, ownModel? }]`：人写的列表，每项建成一条待办（与 `POST /work/items` 同一个函数）。标题 1–120 字，要求 1–4 000 个字符。
+- `proposal: { id, baseRevision, entries? }`：带队会话自己提出的一条待办提议（别的会话的提议 409 `team-proposal`）。`entries` 是 `{ index, name?, title?, prompt?, harnessId?, model?, config?, ownModel? }`，不写就是全部待处理条目。这些条目按人改过的值被接受，与 `POST /work/proposals/:id/accept` 是同一个函数（同样的审计、回执与私有规则），再逐条开始。
+- `tasks: [{ name?, title, prompt, harnessId, model?, config?, ownModel? }]`：人写的列表，每项建成一条待办（与 `POST /work/items` 同一个函数）。标题 1–120 字，要求 1–4 000 个字符。
+- **名字。** 每个成员有一个名字（`TeamMember.name`，一行，最多 16 字，`TEAM_LIMITS.nameChars`）：提议条目里带队会话的 Agent 起的 `name`（人改过的优先），人写的任务里的 `name`；都没有时取标题第一行到第一个标点为止的前 16 字。图、结果、@ 与交回的消息都用它称呼成员，标题作为说明。
 - 成员开始时用的选择与 `POST /tasks` 相同：`model` 是 Latch 的一个模型服务，`config` 是 Harness 自己的选项（`[{ configId, value }]`，最多 16 项、每项一次，如它自己的模型、思考与速度），`ownModel: true` 是人选了 Harness 自己的默认模型、不被项目的默认模型替换。选权限档位的项（`~mode`，或这个 Harness 已报过的选项里类别是 `mode` 的）不收，这个成员记为没有开始。
 - 成员 1–8 个（`TEAM_LIMITS.members`），超出 400 `invalid-input`。
 
@@ -79,11 +80,11 @@ Host 在有团队没结束时每 500 毫秒看一次成员会话的摘要，运�
 ```
 TEAM_RETURN_HEADING
 
-【标题】（Harness 名）：已完成
+【名字】（Harness 名）：已完成
 它的改动在分支 … 上，在它自己的工作树里。（成员有自己的工作树时）
 最后一条回复，最多 1 600 个字符；更长时留结尾，前面写「…（前面省略）」
 
-【标题】（Harness 名）：失败了 | 已取消 | 结束方式未知 | 没有开始
+【名字】（Harness 名）：失败了 | 已取消 | 结束方式未知 | 没有开始
 没有正常结束的成员不带结果；没开始的带拒绝原因
 
 TEAM_RETURN_ASK
@@ -115,11 +116,11 @@ TEAM_RETURN_ASK
 
 - 打开是放宽：先写 `team.dispatch.allowed`，写不进 503，什么都不变；记下打开它的设备。关是收紧：写 `team.dispatch.ended`（`reason: person`），写不进照样关，响应带 `x-latch-audit: failed`。
 - 自己关：打开它的设备被移除或失去 `run`（设备变更时检查，`reason: device-removed`），或团队被停止（`reason: stopped`）。之后不会自己再打开。
-- 只对会话最新的团队有效。带队会话的 Harness 没有给 Agent 的工具通道（看板的提议通道，pi 没有）时拒绝 409 `team-dispatch-unavailable`；没有一个开始过的成员落在无人值守上限内时也拒绝。原因放在 `TeamSummary.dispatchRefusal`，页面把开关画成灰的。
+- 只对会话最新的团队有效。带队会话的 Harness 没有给 Agent 的工具通道（看板的提议通道，pi 没有）时拒绝 409 `team-dispatch-unavailable`。原因放在 `TeamSummary.dispatchRefusal`，页面把开关画成灰的。
 - 开着时带队会话的 Agent 有两个工具（说明在 `packages/protocol` 的 `LIST_MEMBERS_GUIDE`、`SEND_TO_MEMBERS_GUIDE`）：
-  - `list_members`：这个团队的成员，各带短标识（`m1`…）、标题、Harness 名与状态，还有是否有一轮在进行。ACP 会话从 Host 写在会话私有目录里的 `team.json`（0600，原子写；关时删掉）读；`latch-skills` 服务器只在它存在时列出这两个工具，变化时发 `notifications/tools/list_changed`。内置 Harness 在每次运行开始时向 Host 要。
-  - `send_to_members({ sends: [{ member, prompt }] })`：ACP 会话写进同目录的 `rounds.jsonl`（每个成员一行，按调用的标签成组，每次启动最多 64 行；与提议的文件分开，不占提议的额度），驱动交给 Host，再把 Host 的话写进 `round-answers.jsonl`：轮号，或拒绝的原因（Host 自己的英文句子，不引用要求）。内置 Harness 直接等 Host 的答复。
-- Host 只认自己的记录：会话必须属于调用的 Driver 并有看板通道，不是插件页面、我的 Agent、定时或无人值守的会话；团队是这个会话最新的团队；成员只按短标识在这个团队里找。Agent 不能开始新会话、不能新建成员（它仍可以 `propose_todos`，由人开始），也碰不到团队以外的会话。
+  - `list_members`：这个团队的成员，各带短标识（`m1`…）、名字、标题、Harness 名与状态，还有是否有一轮在进行。ACP 会话从 Host 写在会话私有目录里的 `team.json`（0600，原子写；关时删掉）读；`latch-skills` 服务器只在它存在时列出这两个工具，变化时发 `notifications/tools/list_changed`。内置 Harness 在每次运行开始时向 Host 要。
+  - `send_to_members({ sends: [{ member, prompt }] })`（`member` 是短标识或名字）：ACP 会话写进同目录的 `rounds.jsonl`（每个成员一行，按调用的标签成组，每次启动最多 64 行；与提议的文件分开，不占提议的额度），驱动交给 Host，再把 Host 的话写进 `round-answers.jsonl`：轮号，或拒绝的原因（Host 自己的英文句子，不引用要求）。内置 Harness 直接等 Host 的答复。
+- Host 只认自己的记录：会话必须属于调用的 Driver 并有看板通道，不是插件页面、我的 Agent、定时或无人值守的会话；团队是这个会话最新的团队；成员只按短标识或名字在这个团队里找。Agent 不能开始新会话、不能新建成员（它仍可以 `propose_todos`，由人开始），也碰不到团队以外的会话。
 - 这一轮与人派的一样，`by: 'agent'`，身份是打开开关的那台设备，请求标识由会话、团队与调用推出（同一行读两次只派一轮）。要求对成员是外部内容（这一回合标为外部内容），不带任何设备的输入授权（与引用别的设备的话的消息相同）。
 - 拒绝（工具答出原因）：开关关着，设备此刻不能操作（手机验证窗口外）或已被移除，有一轮没结束，成员不在团队里、没开始、在忙或已归档。Agent 派几轮不设上限：开关是人给的授权，一次只有一轮，人随时可以关掉开关或停止团队。
 - **不受无人值守上限。** 人为这个团队打开开关，就是对这些成员的信任：Agent 派的一轮不按 `policy.json` 的 `unattended`（`maxLevel` 等）拦截，L3 的外部 Harness 成员也可以派，也不加本机确认（所有者的决定）。打开开关的设备必须还在、有 `run`；其余边界照上：只派已有成员、一次一轮、外部内容、不沿用「始终允许」、设备移除或团队停止即关。
@@ -150,7 +151,7 @@ detail 只有 ID、计数、哈希与枚举，不含标题、目标或回复。
 
 ## Agent 得到的说明
 
-`propose_todos` 的工具说明（`PROPOSE_TODOS_GUIDE`）告诉 Agent：用户可以把整组作为团队开始，各项同时运行，结果作为一条消息回到这个对话由它核对汇总，所以各项要互不依赖，只在确知某个 Harness 已安装且合适时才写 `harness`。工具不列出有哪些 Harness；写了不存在的会被拒（`proposal-harness`）。
+`propose_todos` 的工具说明（`PROPOSE_TODOS_GUIDE`）告诉 Agent：用户可以把整组作为团队开始，各项同时运行，结果作为一条消息回到这个对话由它核对汇总，所以各项要互不依赖，只在确知某个 Harness 已安装且合适时才写 `harness`，并给每项起一个像角色的短名字（`name`），开成团队后人用 @、它用 `send_to_members` 都按这个名字叫成员。工具不列出有哪些 Harness；写了不存在的会被拒（`proposal-harness`）。
 
 ## 界面
 
@@ -161,6 +162,6 @@ detail 只有 ID、计数、哈希与枚举，不含标题、目标或回复。
 - **从提议开始。** 会话里审阅自己 Agent 的一组待办提议（待处理的不少于两条）时多一个「一起开始」，每条可改 Harness；「接受」与「不要」照旧。看板上的审阅没有它。409 `proposal-changed` 后页面重读提议。
 - **结果未知。** 开始的请求没有收到答复时，列表锁住，「重试」原样再发（同一 `requestId` 与内容），「放弃」后才能改。停止同理。
 - **对话里。** 团队的卡片排在 `messageId` 所在那一轮之后，找不到那条消息时排在最后（[placeTeams.tsx](../apps/web/src/teams/placeTeams.tsx)）。交回的消息按 `returnedMessageId` 认；快照里没有这个团队时，以 `TEAM_RETURN_HEADING` 开头的用户消息也画成结果卡，只是没有成员行。成员行展开时读的是成员会话的最后一条回复，不解析交回的文字。
-- **再派一轮。** 带队会话的输入框里 @ 列出最新团队的成员（在文件上面），选中放入成员标记；消息里有成员标记时不发给这个会话，而是去掉标记后作为每个被提到成员的要求，派成一轮（`POST /teams/:id/rounds`；没收到答复时同样的内容再发用同一个 `requestId`）。图里能接活的成员行上有「再派一轮」，在图下打开一行输入只派给它。卡片画最新一轮，排在这一轮所在的回合之后；结果卡按 `rounds` 里的 `returnedMessageId` 认，标题写第几轮，展开读这一轮那条消息之后的回复。头一行的开关是「让它自己派活」。
+- **再派一轮。** 带队会话的输入框里 @ 列出最新团队的成员（在文件上面），选中放入成员标记（成员的名字，前面是它 Harness 的图标）；消息里有成员标记时不发给这个会话，而是去掉标记后作为每个被提到成员的要求，派成一轮（`POST /teams/:id/rounds`；没收到答复时同样的内容再发用同一个 `requestId`）。图里能接活的成员行上有「再派一轮」，在图下打开一行输入只派给它。卡片画最新一轮，排在这一轮所在的回合之后；结果卡按 `rounds` 里的 `returnedMessageId` 认，标题写第几轮，展开读这一轮那条消息之后的回复。头一行的开关是「让它自己派活」。
 - **Codex 自带的子 Agent** 是同一个面板的另一种分工方式（[CodexTeam.tsx](../apps/web/src/composer/CodexTeam.tsx)）：会话的 Harness 此刻能用它们（`codexTeam === 'available'`）时，面板顶上有「各开会话 / Codex 子 Agent」两段。选后者时每行只有文字；「开始」把 `CODEX_TEAM_REQUEST` 和编了号的各项作为一条消息，经输入框自己的发送路径发给这个会话（同样的检查、回执，运行中时排队），不建团队记录，输入框里的字不动。面板记住这个会话上次用的方式，只在页面内存里。有了委派后，入口打开委派记录，记录里的「用团队分工」回到面板。这个会话是成员或已有没结束的团队时，面板不出现，已有的委派记录照常。
 - **列表。** 成员排在来源会话下面，按团队里的顺序（`nestMembers`）；来源会话不在同一组（被搜索或归档筛掉、成员在「等你处理」）时成员照常显示。

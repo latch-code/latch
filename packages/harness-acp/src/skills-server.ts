@@ -62,7 +62,7 @@ const team = modes.includes('team')
 // Round lines the Host already took from earlier copies of the rounds file: the next line's index goes on from them.
 const roundsEarlier = Math.max(0, Math.min(Number(process.argv[5]) || 0, 1000))
 const ROUNDS = ${JSON.stringify(ROUND_LIMITS)}
-const TEAM = ${JSON.stringify({ members: TEAM_LIMITS.members, promptChars: TEAM_LIMITS.promptChars })}
+const TEAM = ${JSON.stringify({ members: TEAM_LIMITS.members, promptChars: TEAM_LIMITS.promptChars, nameChars: TEAM_LIMITS.nameChars })}
 // Lines the Host already took from earlier copies of the file count toward the session's limit.
 const earlier = Math.max(0, Math.min(Number(process.argv[3]) || 0, 1000))
 // How long a board proposal waits for the Host's answer (the driver writes it to answers.jsonl), in milliseconds.
@@ -71,6 +71,7 @@ const LIMITS = ${JSON.stringify(PROPOSAL_LIMITS)}
 const WORK = ${JSON.stringify(WORK_PROPOSAL_LIMITS)}
 const todoProperties = {
   title: { type: 'string', maxLength: WORK.titleChars, description: 'A short imperative title, one line.' },
+  name: { type: 'string', maxLength: ${TEAM_LIMITS.nameChars}, description: 'A short name for the member that would do it, like a role (e.g. 签名校验, API review); one line.' },
   prompt: { type: 'string', maxLength: WORK.promptChars, description: 'The complete first message for a fresh session that has none of this conversation.' },
   project: { type: 'string', maxLength: 64, description: "A registered project's id; leave it out for this session's project." },
   harness: { type: 'string', maxLength: 64, description: 'A Harness id to suggest; leave it out unless you know it fits.' },
@@ -257,13 +258,18 @@ const PROMPT_REFUSED = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\p{Cf}]/u
 // Only these fields are written; priority or anything else the agent sends is refused, never carried.
 function todo(args) {
   if (!args || typeof args !== 'object' || Array.isArray(args)) return 'Each to-do must be an object.'
-  const extra = Object.keys(args).filter(key => !['title', 'prompt', 'project', 'harness', 'tags'].includes(key))
-  if (extra.length) return 'Only title, prompt, project, harness and tags can be proposed; priority is the user\'s alone.'
+  const extra = Object.keys(args).filter(key => !['title', 'name', 'prompt', 'project', 'harness', 'tags'].includes(key))
+  if (extra.length) return 'Only title, name, prompt, project, harness and tags can be proposed; priority is the user\'s alone.'
   const title = typeof args.title === 'string' ? args.title.trim() : ''
   const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : ''
   if (!title || [...title].length > WORK.titleChars || ONE_LINE.test(title)) return 'title must be one line of 1 to ' + WORK.titleChars + ' characters.'
   if (!prompt || prompt.length > WORK.promptChars || PROMPT_REFUSED.test(prompt)) return 'prompt must be 1 to ' + WORK.promptChars + ' characters.'
   const value = { title, prompt }
+  if (args.name !== undefined) {
+    const name = typeof args.name === 'string' ? args.name.trim() : ''
+    if (!name || [...name].length > TEAM.nameChars || ONE_LINE.test(name)) return 'name must be one line of 1 to ' + TEAM.nameChars + ' characters.'
+    value.name = name
+  }
   for (const key of ['project', 'harness'])
     if (args[key] !== undefined) {
       if (typeof args[key] !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(args[key])) return key + ' must be an id.'
@@ -679,6 +685,13 @@ const todoLine = z.strictObject({
     .min(1)
     .max(WORK_PROPOSAL_LIMITS.titleChars * 2)
     .refine(printable),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(TEAM_LIMITS.nameChars * 2)
+    .refine(printable)
+    .optional(),
   // As the Host keeps a 要求: tabs and line ends stay (an indented snippet, CRLF); other controls are refused.
   prompt: z
     .string()

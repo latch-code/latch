@@ -9,6 +9,7 @@ import { draftRound, leadTeamOf, memberChoices, memberMarks, memberTokens, reply
 const member = (itemId: string, title: string, state: TeamMember['state'], sessionId?: string): TeamMember => ({
   itemId,
   title,
+  name: title,
   harnessId: 'codex',
   state,
   ...(sessionId ? { sessionId } : {}),
@@ -27,8 +28,9 @@ const team = (members: TeamMember[], extra: Partial<TeamSummary> = {}): TeamSumm
 const idle = (id: string) => ({ id, status: 'idle' as const })
 
 describe('a team’s members in the lead’s input', () => {
-  it('names each member by its title, spaces as dashes, a second of the same name numbered', () => {
-    expect(memberTokens([{ title: '查 前端' }, { title: '查 前端' }, { title: '  ' }, { title: 'x'.repeat(40) }])).toEqual([
+  it('names each member by its name, spaces as dashes, a second of the same name numbered', () => {
+    const named = (name: string) => ({ name, title: `任务：${name}` })
+    expect(memberTokens([named('查 前端'), named('查 前端'), { name: '  ', title: '  ' }, named('x'.repeat(40))])).toEqual([
       '@查-前端',
       '@查-前端-2',
       '@member',
@@ -91,8 +93,8 @@ describe('a team’s members in the lead’s input', () => {
   it('draws a chip as a mark where it stands on its own', () => {
     const marks = promptMarks('@一 再看 @一x @二', {
       members: [
-        { token: '@一', title: '一' },
-        { token: '@二', title: '二' },
+        { token: '@一', name: '一', title: '一' },
+        { token: '@二', name: '二', title: '二' },
       ],
     })
     expect(marks.map(mark => [mark.kind, mark.start, mark.end, mark.name])).toEqual([

@@ -35,8 +35,8 @@ function MemberResult({ member, page, requestId }: { member: TeamMember; page: T
   const head = (
     <>
       <MemberTile harnessId={member.harnessId} harnesses={page.harnesses} />
-      <span className="team-member-title">
-        <VisibleText text={member.title} />
+      <span className="team-member-title" title={member.title}>
+        <VisibleText text={member.name || member.title} />
       </span>
       <span className="team-member-said" data-refusal={member.state === 'unstarted' && member.refusal ? '' : undefined}>
         {!open

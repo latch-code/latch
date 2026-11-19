@@ -31,6 +31,7 @@ import {
   type WorkProposalEntryRecord,
   type WorkProposalRecord,
 } from '../work-items.ts'
+import { checkedName } from '../teams.ts'
 import type { DeviceCaller, RouteContext, RouteModule } from './registry.ts'
 
 /** What the Host knows of the proposing session when it takes a proposal; nothing here comes from the agent. */
@@ -162,6 +163,7 @@ function full(row: WorkProposalRecord, isPrivate: boolean): WorkProposal {
             index,
             state: entry.state,
             title: entry.title ?? '',
+            ...(entry.name ? { name: entry.name } : {}),
             prompt: entry.prompt ?? '',
             ...(entry.prompt ? { hasPrompt: true as const } : {}),
             ...(entry.projectId ? { projectId: entry.projectId } : {}),
@@ -278,8 +280,10 @@ export function createWorkProposalRoutes(context: RouteContext, deps: WorkPropos
       throw refuse(400, 'proposal-harness', 'Unknown Harness. Leave harness out.')
     const projectId = todo.project ?? (session.projectId && deps.projectExists(session.projectId) ? session.projectId : undefined)
     const tags = tagsFor(todo.tags, true)
+    const name = checkedName(todo.name)
     return {
       title,
+      ...(name ? { name } : {}),
       prompt,
       ...(projectId ? { projectId } : {}),
       ...(todo.harness ? { harnessId: todo.harness } : {}),

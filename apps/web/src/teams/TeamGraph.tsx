@@ -164,8 +164,8 @@ function MemberRow({ member, page, index, action }: { member: TeamMember; page: 
   const body = (
     <>
       <MemberTile harnessId={member.harnessId} harnesses={page.harnesses} />
-      <span className="team-member-title">
-        <VisibleText text={member.title} />
+      <span className="team-member-title" title={member.title}>
+        <VisibleText text={member.name || member.title} />
       </span>
       <span className="team-member-said" data-refusal={member.state === 'unstarted' && member.refusal ? '' : undefined}>
         {member.state === 'unstarted' && member.refusal ? (
@@ -177,7 +177,7 @@ function MemberRow({ member, page, index, action }: { member: TeamMember; page: 
       <MemberState member={member} />
     </>
   )
-  const name = `${member.title} · ${memberHarnessName(member.harnessId, page.harnesses)} · ${memberWords(member.state)}`
+  const name = `${member.name || member.title} · ${member.title} · ${memberHarnessName(member.harnessId, page.harnesses)} · ${memberWords(member.state)}`
   const main = member.sessionId ? (
     <button type="button" className="team-member-main" aria-label={name} onClick={() => page.openSession(member.sessionId!)}>
       {body}

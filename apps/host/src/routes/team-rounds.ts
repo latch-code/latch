@@ -4,7 +4,7 @@ import { AppError } from '@latch/sdk'
 import { TEAM_LIMITS, type TeamRoster } from '@latch/protocol'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { errorText, jsonBody } from '../http-util.ts'
-import { derivedUuid, memberEnded, pastRound, roundOf, teamOpen, type TeamMemberRecord, type TeamRecord } from '../teams.ts'
+import { derivedUuid, memberEnded, nameOf, pastRound, roundOf, teamOpen, type TeamMemberRecord, type TeamRecord } from '../teams.ts'
 import { checkedPrompt } from '../work-items.ts'
 import type { DeviceCaller, RouteContext } from './registry.ts'
 import type { TeamRouteDeps } from './teams.ts'
@@ -39,7 +39,15 @@ const roundSchema = z.strictObject({
 })
 const changeSchema = z.strictObject({ agentDispatch: z.boolean() })
 const agentSends = z
-  .array(z.strictObject({ member: z.string().regex(/^m[1-9]$/u), prompt: z.string().max(TEAM_LIMITS.promptChars * 2) }))
+  .array(
+    z.strictObject({
+      member: z
+        .string()
+        .min(1)
+        .max(TEAM_LIMITS.nameChars * 4),
+      prompt: z.string().max(TEAM_LIMITS.promptChars * 2),
+    }),
+  )
   .min(1)
   .max(TEAM_LIMITS.members)
 
@@ -426,6 +434,7 @@ export function createTeamRounds(env: RoundEnv) {
     return {
       members: team.members.map((member, index) => ({
         id: `m${index + 1}`,
+        name: member.name ?? nameOf(member.title),
         title: member.title,
         harness: deps.harnessName(member.harnessId),
         state: member.state,
@@ -455,7 +464,9 @@ export function createTeamRounds(env: RoundEnv) {
     const prior = findRound(team, team.dispatch.deviceId, request)
     if (prior) return { round: prior.round }
     const sends: RoundSend[] = parsed.data.map(send => {
-      const member = team.members[Number(send.member.slice(1)) - 1]
+      // By its short ID (`m1`…) or by its name, as list_members gives both.
+      const byId = /^m[1-9]$/u.test(send.member) ? team.members[Number(send.member.slice(1)) - 1] : undefined
+      const member = byId ?? team.members.find(row => (row.name ?? nameOf(row.title)) === send.member.trim())
       if (!member) throw new Error(AGENT('unknown-member', send.member))
       let prompt: string
       try {

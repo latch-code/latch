@@ -91,7 +91,12 @@ export function useAgain(team: TeamSummary, page: TeamPage | undefined) {
 /** 「再派一轮」 at the end of a member's pill, shown on the row's hover or focus (always on touch). */
 export function AgainButton({ member, onOpen }: { member: TeamMember; onOpen: () => void }): ReactNode {
   return (
-    <Button size="xs" variant="ghost" className="team-again-button" aria-label={TEAM_COPY.againTo(member.title)} onClick={onOpen}>
+    <Button
+      size="xs"
+      variant="ghost"
+      className="team-again-button"
+      aria-label={TEAM_COPY.againTo(member.name || member.title)}
+      onClick={onOpen}>
       <Icon icon={CornerDownRight} size={12} />
       <span className="team-again-word">{TEAM_COPY.again}</span>
     </Button>
@@ -143,13 +148,13 @@ function AgainInput({ team, member, page, onClose }: { team: TeamSummary; member
       <div className="team-again-field">
         <span className="team-again-to">
           <Icon icon={CornerDownRight} size={12} />
-          <span className="team-again-title">{member.title}</span>
+          <span className="team-again-title">{member.name || member.title}</span>
         </span>
         <input
           // A new input the person just asked for: where typing goes next.
           autoFocus
           className="team-again-input"
-          aria-label={TEAM_COPY.againTo(member.title)}
+          aria-label={TEAM_COPY.againTo(member.name || member.title)}
           aria-invalid={failed ? true : undefined}
           placeholder={TEAM_COPY.againPlaceholder}
           value={text}

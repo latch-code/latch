@@ -11,6 +11,7 @@ import {
   DATA_SCOPES,
   MODEL_EFFORT,
   WORK_ITEM_LIMITS,
+  TEAM_LIMITS,
   WORK_PROPOSAL_LIMITS,
   type DataScope,
   type GitPrStatus,
@@ -140,6 +141,12 @@ const proposalEntrySchema = z
     key: hex64,
     state: entryState,
     title: titleText.optional(),
+    /** The member name the agent gave it, for a start as a team (`TeamMember.name`). */
+    name: z
+      .string()
+      .min(1)
+      .max(TEAM_LIMITS.nameChars * 4)
+      .optional(),
     prompt: promptText.max(WORK_PROPOSAL_LIMITS.promptChars).optional(),
     projectId: z.string().regex(PROJECT_ID).optional(),
     harnessId: z.string().regex(HARNESS_ID).optional(),
