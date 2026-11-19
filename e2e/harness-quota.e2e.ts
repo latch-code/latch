@@ -383,6 +383,14 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
           .click()
       }
       await page.locator('.workbench-home .usage-chip').first().waitFor({ state: 'attached' })
+      // On the start page the limit ends the line that says where the session starts, each window after its own disc.
+      const [place, mark] = await Promise.all([
+        page.locator('.workbench-home .home-place').boundingBox(),
+        page.locator('.workbench-home .home-place .usage-chip').boundingBox(),
+      ])
+      expect(mark!.y).toBeGreaterThanOrEqual(place!.y - 1)
+      expect(mark!.y + mark!.height).toBeLessThanOrEqual(place!.y + place!.height + 1)
+      expect(await page.locator('.workbench-home .usage-chip .usage-pie').count()).toBeGreaterThan(0)
       await step('start')
       long = true
       await step('start, long values')

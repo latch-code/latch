@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Box, Brain } from 'lucide-react'
+import { Box, Brain, Zap } from 'lucide-react'
 import {
   parseModelChoice,
   type HarnessInfo,
@@ -111,6 +111,7 @@ const COPY = defineCopy(
     addService: '添加模型服务…',
     entryModel: (value1: string) => `模型：${value1}`,
     entryThinking: (value1: string) => `思考：${value1}`,
+    entryFast: '速度：快速',
     nextMessage: (value1: string) => `下一条：${value1}`,
   },
   {
@@ -134,6 +135,7 @@ const COPY = defineCopy(
     addService: 'Add model service…',
     entryModel: (value1: string) => `Model: ${value1}`,
     entryThinking: (value1: string) => `Thinking: ${value1}`,
+    entryFast: 'Speed: fast',
     nextMessage: (value1: string) => `Next message: ${value1}`,
   },
 )
@@ -173,6 +175,8 @@ export interface Board {
   onLevel: (model: string | undefined, level: string) => void
   staysOn?: (value: string) => boolean
   settings?: ReactNode
+  /** The Harness's fast tier is chosen: the entry says so with a mark before the model. */
+  fast?: boolean
   footer?: ReactNode
   /** Shown in the board's place: adding a service, typing a model ID. */
   panel?: ReactNode
@@ -308,7 +312,16 @@ function BoardChip({ board, kind, withLevel = false }: { board: Board; kind: 'mo
           return { ...shown, options: locks(shown.options) }
         }
   // The maker's mark before the name, read from the ID; a service's own tile where the model goes through one.
-  const leading = face.leading ?? (entry && board.value && modelArt(board.value) ? <ModelTile model={board.value} size={14} /> : undefined)
+  const art = face.leading ?? (entry && board.value && modelArt(board.value) ? <ModelTile model={board.value} size={14} /> : undefined)
+  const leading =
+    entry && board.fast ? (
+      <span className="entry-lead">
+        <Icon icon={Zap} size={14} className="entry-fast" />
+        {art}
+      </span>
+    ) : (
+      art
+    )
   const longName = face.valueText && face.valueText.length > LONG_NAME ? face.valueText : undefined
   const hint = entry
     ? entryTip([
@@ -316,6 +329,7 @@ function BoardChip({ board, kind, withLevel = false }: { board: Board; kind: 'mo
         face.hint,
         level?.valueText !== undefined && COPY.entryThinking(level.valueText),
         level?.hint,
+        board.fast === true && COPY.entryFast,
       ])
     : (face.hint ?? longName)
   const focus = asked.part ?? (kind === 'thinking' ? 'levels' : 'list')
@@ -691,6 +705,8 @@ function harnessBoard({
     },
     // A session's switch is answered later: the panel stays on the levels, which follow once it is.
     staysOn: next => (session ? next !== value && !blocked : levels(next).options.length > 1),
+    // Codex's speed option on its priority tier.
+    fast: others.some(option => option.id === 'service_tier' && option.currentValue === 'priority'),
     settings: others.length ? (
       <>
         {others.map(option => (

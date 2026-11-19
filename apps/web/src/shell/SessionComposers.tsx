@@ -692,6 +692,7 @@ export function SessionComposer({
           switchBranch={branchSwitchable}
         />
       )}
+      {!phone && showControls && <span className="home-place-end">{usageChip}</span>}
     </div>
   ) : undefined
   const composer = (
@@ -867,7 +868,8 @@ export function SessionComposer({
       meta={!showControls || phone ? undefined : <MoreMenu options={otherOptions} disabled={newChoicesLocked} onOption={chooseOption} />}
       // The limit arrives seconds after a turn starts and leaves with the Host's memory: last before send at every width,
       // so the controls before it stay where they are.
-      usage={showControls ? usageChip : undefined}
+      // On the start page the limit ends the line that says where the session starts.
+      usage={showControls && !(home && !phone) ? usageChip : undefined}
       controls={
         !showControls ? null : !catalog ? (
           selectedId === null ? (

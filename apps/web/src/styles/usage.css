@@ -97,6 +97,18 @@
 .usage-chip-part[data-state='limited'] {
   color: var(--red);
 }
+.usage-chip-part {
+  display: inline-flex;
+  align-items: center;
+}
+.usage-pie {
+  flex: none;
+  margin-inline-end: var(--sp-4);
+  fill: currentColor;
+}
+.usage-pie-rest {
+  fill: color-mix(in srgb, currentColor 22%, transparent);
+}
 .usage-chip-dot {
   margin-inline: var(--sp-6);
   color: var(--muted);

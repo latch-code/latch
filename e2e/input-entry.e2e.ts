@@ -130,6 +130,8 @@ describe('the input’s one entry and the start page’s headline', () => {
       await speed.getByRole('radio', { name: '快速', exact: true }).click()
       await expect.poll(async () => current(await detail(sessionId), 'service_tier')).toBe('priority')
       expect(await panelOpen(page)).toBe(1)
+      // The entry says the fast tier with a mark before the model, and the standard one with none.
+      await expect.poll(() => entry.locator('.entry-fast').count()).toBe(1)
       await board.getByRole('menuitemradio', { name: 'High', exact: true }).click()
       await expect.poll(async () => current(await detail(sessionId), 'reasoning_effort')).toBe('high')
       expect(await panelOpen(page)).toBe(1)
@@ -171,6 +173,7 @@ describe('the input’s one entry and the start page’s headline', () => {
       await board.getByRole('menuitemradio', { name: /^GPT Fake Mini/u }).click()
       await expect.poll(async () => current(await detail(sessionId), 'model')).toBe('gpt-fake-mini')
       await expect.poll(() => board.getByRole('radiogroup', { name: '速度', exact: true }).count()).toBe(0)
+      expect(await entry.locator('.entry-fast').count()).toBe(0)
       expect(await permissionWords(page)).toBe('权限：按规则放行')
       expect(await panelOpen(page)).toBe(1)
       await shot(page, 'no-speed-1440-light')

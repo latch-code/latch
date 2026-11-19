@@ -326,6 +326,8 @@ export interface MarkPart {
   key: string
   text: string
   state: QuotaState
+  /** The share used, 0 to 100, when the window says one. */
+  percent?: number
   reset?: string
 }
 
@@ -342,6 +344,7 @@ export function markParts(limits: Pick<HarnessLimits, 'shown' | 'account'>): Mar
       view.percent !== undefined ? formatNumber(view.percent / 100, { style: 'percent' }) : (view.status ?? COPY.quota),
     ),
     state: view.state,
+    ...(view.percent !== undefined ? { percent: view.percent } : {}),
     ...(view.reset ? { reset: view.reset } : {}),
   }))
 }

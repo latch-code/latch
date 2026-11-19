@@ -457,6 +457,18 @@
   display: inline-flex;
   align-items: center;
 }
+/* The limit of the Harness chosen ends the same line. */
+.home-place > .home-place-end {
+  flex: none;
+  max-width: none;
+  margin-inline-start: auto;
+}
+.home-place > .home-place-end::before {
+  content: none;
+}
+.home-place > .home-place-end:empty {
+  display: none;
+}
 .workbench-home-composer .composer-input {
   padding-top: var(--sp-8);
   padding-bottom: var(--sp-16);

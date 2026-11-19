@@ -26,6 +26,23 @@ const COPY = defineCopy(
   },
 )
 
+/** The share used as a filled sector of a small disc, from the top clockwise, in the part's own colour. */
+function UsedPie({ percent }: { percent: number }) {
+  const share = Math.min(1, Math.max(0, percent / 100))
+  const angle = share * 2 * Math.PI
+  const [x, y] = [6 + 5 * Math.sin(angle), 6 - 5 * Math.cos(angle)]
+  return (
+    <svg className="usage-pie" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+      <circle className="usage-pie-rest" cx="6" cy="6" r="5" />
+      {share >= 1 ? (
+        <circle cx="6" cy="6" r="5" />
+      ) : share > 0 ? (
+        <path d={`M6 6 L6 1 A5 5 0 ${share > 0.5 ? 1 : 0} 1 ${x.toFixed(2)} ${y.toFixed(2)} Z`} />
+      ) : null}
+    </svg>
+  )
+}
+
 /**
  * The composer's mark of a limit, at the end of the line under the input: each window it names in words of its own
  * state, 「5 小时 12% · 周 68%」, amber from 80% and red at the limit. A click opens 额度与用量 on what it stands for;
@@ -85,6 +102,7 @@ function LimitChip({
                     {' · '}
                   </span>
                 )}
+                {part.percent !== undefined && <UsedPie percent={part.percent} />}
                 {part.text}
               </span>
             ))}
