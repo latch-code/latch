@@ -469,7 +469,7 @@ export function SessionHarnessControl({
   )
 }
 
-/** 换到 another Harness: the same conversation goes on there. Off for the reason a fork is off. */
+/** Another Harness, by its name alone: the same conversation goes on there. Off for the reason a fork is off. */
 function MoveRow({ move, blocked }: { move: NonNullable<SessionFork['moves']>[number]; blocked: string | undefined }) {
   const close = useLayerClose()
   const off = blocked !== undefined
@@ -478,6 +478,7 @@ function MoveRow({ move, blocked }: { move: NonNullable<SessionFork['moves']>[nu
       <button
         type="button"
         className="ui-menu-footer-link harness-move"
+        aria-label={COPY.moveTo(harnessName(move.harness))}
         aria-disabled={off || undefined}
         onClick={() => {
           if (off) return
@@ -487,7 +488,7 @@ function MoveRow({ move, blocked }: { move: NonNullable<SessionFork['moves']>[nu
         <span className="ui-menu-item-lead">
           <HarnessTile harness={move.harness} size={16} />
         </span>
-        <span className="harness-fork-text">{COPY.moveTo(harnessName(move.harness))}</span>
+        <span className="harness-fork-text">{harnessName(move.harness)}</span>
       </button>
     </Tooltip>
   )
