@@ -654,8 +654,8 @@ describe('the words sent to the lead', () => {
 })
 
 /**
- * The same Host with the demo model, so a member can be on Latch 内置 (`standard`, L1): the only level the default
- * unattended ceiling lets a round nobody pressed run on. The ACP Harnesses are L3.
+ * The same Host with the demo model, so a member can be on Latch 内置 (`standard`, L1) beside the ACP Harnesses (L3). An
+ * agent round runs on either: the person who turned the switch on trusts the members, whatever their level.
  */
 const unattendedFixture = () => fixture(undefined, undefined, true)
 const DEMO_SAID = '当前为演示模式。'
@@ -830,9 +830,8 @@ describe('later rounds on an existing team', () => {
       expect(roster).toContain('"id":"m2","title":"二","harness":"Alpha","state":"done"')
       expect(roster).toContain('"roundsLeft":6')
 
-      // Refused by the Host: a member not in the team, and an L3 member past the unattended ceiling. Nothing is sent.
+      // Refused by the Host: a member not in the team. Nothing is sent.
       expect(await call({ sends: [{ member: 'm3', prompt: 'echo nobody' }] })).toContain('m3 is not a member of this team')
-      expect(await call({ sends: [{ member: 'm2', prompt: 'echo agent two' }] })).toContain('Alpha 是 L3，后台运行最高 L1。')
       expect((await teamOf(owner, team.id)).round).toBeUndefined()
 
       const answer = await call({ sends: [{ member: 'm1', prompt: '请再写一句问候' }] })
@@ -862,14 +861,20 @@ describe('later rounds on an existing team', () => {
     },
   )
 
-  it('refuses an agent round past the cap, and the switch where the unattended ceiling allows no member', SLOW, async () => {
+  it('lets the agent send to members on any Harness once allowed, and refuses a round past the cap', SLOW, async () => {
     const { owner } = await unattendedFixture()
     const lead = await leadSession(owner)
     const team = await started(owner, lead, { tasks: [task('一', 'echo one', 'alpha')] })
     await teamIn(owner, team.id, 'returned')
-    // Only L3 members under the default L1 ceiling: the switch cannot go on, and says why.
-    expect((await teamOf(owner, team.id)).dispatchRefusal).toBe('Alpha 是 L3，后台运行最高 L1。')
-    expect(await errorOf(await dispatchSwitch(owner, team.id, true))).toEqual({ status: 409, error: 'team-dispatch-unavailable' })
+    // Only an L3 member, past the unattended ceiling: the switch goes on all the same, and the agent's round runs.
+    expect((await teamOf(owner, team.id)).dispatchRefusal).toBeUndefined()
+    expect((await dispatchSwitch(owner, team.id, true)).status).toBe(200)
+    await settled(owner, lead)
+    expect(
+      await say(owner, lead, `mcp latch-skills send_to_members ${JSON.stringify({ sends: [{ member: 'm1', prompt: 'echo agent one' }] })}`),
+    ).toContain('Sent as round 2.')
+    expect((await teamIn(owner, team.id, 'returned')).rounds?.at(-1)).toMatchObject({ round: 2, by: 'agent' })
+    await settled(owner, lead)
 
     const other = await leadSession(owner)
     const capped = await started(owner, other, { tasks: [task('一', '写一句问候', 'standard')] })

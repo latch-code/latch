@@ -3397,7 +3397,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             how.agent,
           )
         },
-        unattendedRefusal: teamUnattendedRefusal,
+        dispatchRefusal: teamDispatchRefusal,
         channelRefusal(leadSessionId) {
           if (hub?.teamChannel(leadSessionId)) return undefined
           const harnessId = hub?.ownerOf(leadSessionId)
@@ -3987,26 +3987,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       if (hub!.personalOf(id)) throw new AppError(409, 'session-read-only', '这个会话来自已移除的 Agent，只能查看。')
     }
     /**
-     * A team round the lead's agent makes: nobody presses anything, so the ceiling scheduled runs keep applies to the
-     * device that allowed it (it still stands behind unattended work, has `run`, was seen within the idle days) and to
-     * every Harness the round runs on. Without a device, only the Harnesses. Undefined when it may run.
+     * A team round the lead's agent makes. The person who turned 「让它自己派活」 on trusts these members, so it is not held
+     * to the unattended ceiling (owner's decision, docs/TEAMS.md); the device that allowed it must still be there with
+     * `run`. Undefined when it may run.
      */
-    function teamUnattendedRefusal(deviceId: string | undefined, harnessIds: readonly string[]): string | undefined {
-      const current = policy.get()
-      if (deviceId !== undefined) {
-        const device = devices.get(deviceId)
-        if (!device || !devices.standsBehind(deviceId) || !device.scopes.includes('run')) return '允许它的设备现在不能替你在后台运行。'
-        if (now() - Date.parse(device.lastSeenAt) > current.unattended.pauseAfterIdleDays * 86400000)
-          return `允许它的设备超过 ${current.unattended.pauseAfterIdleDays} 天没有用过，后台运行已暂停。`
-      }
-      for (const id of harnessIds) {
-        const level = hub!.levelOf(id)
-        if (!levelAtMost(level, current.unattended.maxLevel)) {
-          const name = hub!.info(id)?.capabilities.display.label ?? id
-          return `${name} 是 ${level}，后台运行最高 ${current.unattended.maxLevel}。`
-        }
-      }
-      return undefined
+    function teamDispatchRefusal(deviceId: string): string | undefined {
+      const device = devices.get(deviceId)
+      return !device || !device.scopes.includes('run') ? '允许它的设备已移除或不能运行会话。' : undefined
     }
     /** Manual runs need the caller's current authority; background grants also need the unattended ceiling and activity. */
     function authorizeAutomation(deviceId: string, definition: AutomationConfig, trigger: 'schedule' | 'manual'): void {

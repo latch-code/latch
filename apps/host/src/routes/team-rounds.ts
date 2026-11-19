@@ -164,10 +164,8 @@ export function createTeamRounds(env: RoundEnv) {
     const channel = deps.channelRefusal(team.leadSessionId)
     if (channel) return channel
     if (newestOf(team.leadSessionId)?.id !== team.id) return '只有这个会话最新的团队可以让 Agent 派活。'
-    const harnessIds = [...new Set(team.members.flatMap(member => (member.sessionId ? [member.harnessId] : [])))]
-    if (!harnessIds.length) return '这个团队没有开始过的成员。'
-    const ceiling = harnessIds.map(id => deps.unattendedRefusal(undefined, [id]))
-    return ceiling.every(Boolean) ? ceiling[0] : undefined
+    if (!team.members.some(member => member.sessionId)) return '这个团队没有开始过的成员。'
+    return undefined
   }
 
   /** Is the member able to take a round now: started, readable, there, and ended with nothing running or waiting. */
@@ -481,9 +479,9 @@ export function createTeamRounds(env: RoundEnv) {
       if (prompt.length > TEAM_LIMITS.promptChars) throw new Error(AGENT('prompt'))
       return { member, name: send.member, prompt }
     })
-    // Nobody pressed anything: the ceiling scheduled runs keep, for every Harness the round would run on.
-    const ceiling = deps.unattendedRefusal(team.dispatch.deviceId, [...new Set(sends.map(send => send.member.harnessId))])
-    if (ceiling) throw new Error(`Not sent: ${ceiling}`)
+    // The person who turned this on trusts these members, whatever their Harness; the device must still be able to act.
+    const refused = deps.dispatchRefusal(team.dispatch.deviceId)
+    if (refused) throw new Error(`Not sent: ${refused}`)
     try {
       const round = await makeRound(caller, team.id, sends, {
         by: 'agent',

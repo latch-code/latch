@@ -72,10 +72,10 @@ export interface TeamRouteDeps {
     how: { agent: boolean; outside: boolean; withoutPrivateContext: boolean },
   ) => Promise<void>
   /**
-   * Why a round nobody pressed cannot run as this device on these Harnesses now, by the ceiling scheduled runs keep
-   * (`policy.json` `unattended`): the Harness's level, the device standing behind unattended work, its idle days.
+   * Why the lead's agent cannot send a round as the device that let it, now: that device is gone or lost `run`. The
+   * person's 「让它自己派活」 is the trust in these members, so no Harness level holds a round back (docs/TEAMS.md).
    */
-  unattendedRefusal: (deviceId: string | undefined, harnessIds: readonly string[]) => string | undefined
+  dispatchRefusal: (deviceId: string) => string | undefined
   /** Why the lead's Harness gives its agent no team tools (no agent channel); undefined when it does. */
   channelRefusal: (leadSessionId: string) => string | undefined
   /** What the lead's agent may read of its team changed: its driver reads it again. */
