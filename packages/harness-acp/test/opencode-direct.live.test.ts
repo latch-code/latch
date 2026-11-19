@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { startFakeModels } from '@latch/testkit'
-import { clientCapabilities } from '../src/protocol.ts'
+import { execFileSync } from 'node:child_process'
+import { clientCapabilities, PERMISSION_FACTS, RELEASE_CLAIM } from '../src/protocol.ts'
+import { opencodeProfile } from '../src/profiles/opencode.ts'
 import { openWire } from '../src/wires/index.ts'
 import { descendants } from '../src/wires/process.ts'
 import type { AgentWire } from '../src/wires/types.ts'
@@ -68,9 +70,9 @@ it.skipIf(!binary)(
       },
     })
     cleanups.push(() => upstream.close())
-    const ask = { '*': 'ask', read: 'allow', glob: 'allow', grep: 'allow', list: 'allow' }
+    // Latch's rules, without which the server wire does not start a server.
     const config = {
-      permission: ask,
+      ...(JSON.parse(opencodeProfile.permission.defaultEnv.OPENCODE_CONFIG_CONTENT!) as Record<string, unknown>),
       model: 'latch/fake-model',
       small_model: 'latch/fake-model-large',
       providers: {
@@ -195,4 +197,71 @@ it.skipIf(!binary)(
     expect(pids.filter(pid => left.has(pid))).toEqual([])
   },
   180_000,
+)
+
+/**
+ * The server wire alone on a temporary home (`serve --stdio`, never a subcommand that reaches the person's background
+ * service), its model a closed loopback port so nothing can answer: a claim a killed run left is let go on resume
+ * without a model, and the project's saved 「总是允许」 come with the session. The temporary database is seeded with
+ * the system's sqlite3, as a killed run and OpenCode's TUI would leave it.
+ */
+it.skipIf(!binary || !existsSync('/usr/bin/sqlite3'))(
+  'releases a leftover claim on resume and reports the saved allows, through serve --stdio',
+  async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-opencode-claim-')))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const home = join(root, 'home')
+    const cwd = join(root, 'workspace')
+    for (const path of [home, cwd]) await mkdir(path, { recursive: true })
+    const config = {
+      ...(JSON.parse(opencodeProfile.permission.defaultEnv.OPENCODE_CONFIG_CONTENT!) as Record<string, unknown>),
+      enabled_providers: ['latchdead'],
+      provider: {
+        latchdead: { npm: '@ai-sdk/openai-compatible', options: { baseURL: 'http://127.0.0.1:9/v1', apiKey: 'x' }, models: { m: {} } },
+      },
+      model: 'latchdead/m',
+      small_model: 'latchdead/m',
+    }
+    const env = {
+      PATH: process.env.PATH,
+      HOME: home,
+      XDG_CONFIG_HOME: join(home, '.config'),
+      XDG_DATA_HOME: join(home, '.local/share'),
+      XDG_STATE_HOME: join(home, '.local/state'),
+      XDG_CACHE_HOME: join(home, '.cache'),
+      OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
+    }
+    const db = join(home, '.local/share/opencode/opencode.db')
+    const sql = (text: string) => execFileSync('/usr/bin/sqlite3', [db, text]).toString().trim()
+    let processes = 0
+    const started = async (): Promise<AgentWire> => {
+      const tmp = join(root, `tmp-${processes++}`)
+      mkdirSync(tmp, { mode: 0o700 })
+      const wire = openWire(
+        'opencode',
+        { command: binary!, args: [], cwd, env: { ...env, TMPDIR: tmp }, maxLineBytes: 8 * 1024 * 1024, redact: text => text },
+        { request: async () => ({}), notification: () => {}, exit: () => {} },
+      )
+      cleanups.push(async () => void (await wire.stop('kill', 2_000)))
+      await wire.request('initialize', { protocolVersion: 1, clientCapabilities: clientCapabilities(true) }, 60_000)
+      return wire
+    }
+    let wire = await started()
+    const { sessionId } = (await wire.request('session/new', { cwd, mcpServers: [] }, 60_000)) as { sessionId: string }
+    const stopped = await wire.stop('stop', 5_000)
+    // `--stdio` ended with its input.
+    expect(stopped.signal).toBeNull()
+    const now = Date.now()
+    sql(`UPDATE session_v2 SET time_suspended=${now}, time_busy=${now} WHERE id='${sessionId}'`)
+    const project = sql(`SELECT project_id FROM session_v2 WHERE id='${sessionId}'`)
+    sql(`INSERT INTO permission VALUES ('psv_latch1', '${project}', 'shell', 'git *', ${now}, ${now})`)
+    wire = await started()
+    const resumed = (await wire.request('session/resume', { sessionId, cwd, mcpServers: [], [RELEASE_CLAIM]: true }, 60_000)) as {
+      _meta?: Record<string, unknown>
+    }
+    expect(resumed._meta?.[PERMISSION_FACTS]).toEqual(['总是允许 · shell git *'])
+    await wire.stop('stop', 5_000)
+    expect(sql(`SELECT coalesce(time_suspended, 'released') FROM session_v2 WHERE id='${sessionId}'`)).toBe('released')
+  },
+  120_000,
 )

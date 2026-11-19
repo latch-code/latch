@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AppError } from '@latch/sdk'
-import { RPC, RpcError } from '../src/protocol.ts'
+import { PERMISSION_FACTS, RELEASE_CLAIM, RPC, RpcError } from '../src/protocol.ts'
 import { opencodeProfile } from '../src/profiles/opencode.ts'
 import { openWire } from '../src/wires/index.ts'
-import { messageId, opencodeArgs } from '../src/wires/opencode.ts'
+import { latchConfig, messageId, opencodeArgs } from '../src/wires/opencode.ts'
 import { ConnectionClosed, type ExitInfo } from '../src/wires/process.ts'
 import type { AgentWire } from '../src/wires/types.ts'
 
@@ -23,10 +23,13 @@ const request = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/
   response.resume()
   response.on('end', () => {
     process.stderr.write('debug: password is ' + process.env.OPENCODE_PASSWORD + '\\n')
-    process.stdout.write('server listening on http://127.0.0.1:' + port + '\\n')
+    process.stdout.write(JSON.stringify({ url: 'http://127.0.0.1:' + port }) + '\\n')
   })
 })
 request.end(body)
+// As \`serve --stdio\`: the server's lease ends with its standard input.
+process.stdin.resume()
+process.stdin.on('end', () => process.exit(0))
 setInterval(() => {}, 1000)
 `
 
@@ -197,6 +200,7 @@ async function open(fake: Fake, answer?: (method: string, params: unknown) => Pr
         FAKE_PORT: String(fake.port),
         OPENCODE_SERVER_USERNAME: 'someone',
         TMPDIR: tmp,
+        OPENCODE_CONFIG_CONTENT: opencodeProfile.permission.defaultEnv.OPENCODE_CONFIG_CONTENT!,
         ...extraEnv,
       },
       maxLineBytes: 1024 * 1024,
@@ -242,7 +246,17 @@ describe('OpenCode server wire', () => {
   it('starts the server on a loopback port it picks, with the password only in its environment', async () => {
     const { fake, init, wire } = await started()
     const child = await fake.child
-    expect(child.argv.slice(-5)).toEqual(['serve', '--hostname', '127.0.0.1', '--port', '0'])
+    expect(child.argv.slice(-9)).toEqual([
+      'serve',
+      '--stdio',
+      '--hostname',
+      '127.0.0.1',
+      '--port',
+      '0',
+      '--print-logs',
+      '--log-level',
+      'warn',
+    ])
     expect(child.password).toMatch(/^[\w-]{40,}$/u)
     expect(child.legacy).toBe(child.password)
     expect(child.user).toBeUndefined()
@@ -409,7 +423,7 @@ describe('OpenCode server wire', () => {
     fake.emit('session.tool.called', { sessionID, id: 'call_1', input: { command: 'rm x' } })
     for (const id of ['per_1', 'per_2', 'per_3'])
       fake.emit('permission.asked', { id, sessionID, action: 'shell', resources: ['rm x'], source: { type: 'tool', id: 'call_1' } })
-    await vi.waitFor(() => expect(fake.seen.filter(item => item.path.includes('/permission/')).length).toBe(3))
+    await vi.waitFor(() => expect(fake.seen.filter(item => item.path.includes('/permission/per_')).length).toBe(3))
     expect(requests[0]).toMatchObject({
       method: 'session/request_permission',
       params: {
@@ -422,7 +436,7 @@ describe('OpenCode server wire', () => {
         ],
       },
     })
-    expect(fake.seen.filter(item => item.path.includes('/permission/')).map(item => [item.path, item.body])).toEqual([
+    expect(fake.seen.filter(item => item.path.includes('/permission/per_')).map(item => [item.path, item.body])).toEqual([
       [`/api/session/${sessionID}/permission/per_1/reply`, { decision: 'once' }],
       [`/api/session/${sessionID}/permission/per_2/reply`, { decision: 'reject' }],
       [`/api/session/${sessionID}/permission/per_3/reply`, { decision: 'always' }],
@@ -626,7 +640,18 @@ describe('OpenCode server wire', () => {
   })
 
   it('refuses arguments that would make it another command or listen elsewhere', () => {
-    expect(opencodeArgs(['--log-level', 'debug'])).toEqual(['--log-level', 'debug', 'serve', '--hostname', '127.0.0.1', '--port', '0'])
+    // A definition's own logging stays; Latch adds what it leaves out.
+    expect(opencodeArgs(['--log-level', 'debug'])).toEqual([
+      '--log-level',
+      'debug',
+      'serve',
+      '--stdio',
+      '--hostname',
+      '127.0.0.1',
+      '--port',
+      '0',
+      '--print-logs',
+    ])
     for (const reserved of ['acp', 'serve', '--port=4096', '--hostname', 'run'])
       expect(() => opencodeArgs([reserved])).toThrow(/由 Latch 设置/u)
     const first = messageId(1795047138527)
@@ -637,13 +662,14 @@ describe('OpenCode server wire', () => {
   it('keeps the password from the commands OpenCode runs with a private plugin, beside the configuration’s own', async () => {
     const fake = await startFake()
     cleanups.push(fake.close)
-    const config = JSON.stringify({ permission: { '*': 'ask' }, plugins: ['/elsewhere/own-plugin'] })
+    const rules = JSON.parse(opencodeProfile.permission.defaultEnv.OPENCODE_CONFIG_CONTENT!) as Record<string, unknown>
+    const config = JSON.stringify({ ...rules, plugins: ['/elsewhere/own-plugin'] })
     const { wire, tmp } = await open(fake, undefined, { OPENCODE_CONFIG_CONTENT: config })
     await wire.request('initialize', { protocolVersion: 1 }, 10_000)
     const child = await fake.child
     const seen = JSON.parse(child.config!) as { permission: unknown; plugins: string[] }
     const plugin = join(tmp, 'latch-opencode-server')
-    expect(seen).toEqual({ permission: { '*': 'ask' }, plugins: ['/elsewhere/own-plugin', plugin] })
+    expect(seen).toEqual({ ...rules, plugins: ['/elsewhere/own-plugin', plugin] })
     const file = join(plugin, 'index.ts')
     expect((await stat(file)).mode & 0o777).toBe(0o600)
     const source = await readFile(file, 'utf8')
@@ -673,5 +699,134 @@ describe('OpenCode server wire', () => {
     fake.emit('permission.replied', { sessionID, requestID: 'per_x', reply: 'reject' })
     await vi.waitFor(() => expect(notes).toContainEqual({ method: '$/cancel_request', params: { requestId: 'opencode-per_x' } }))
     expect(fake.seen.some(item => item.path.includes('/per_x/reply'))).toBe(false)
+  })
+
+  it('shows the project’s saved 「总是允许」 with a session it opens, and changes none of them', async () => {
+    const fake = await startFake()
+    cleanups.push(fake.close)
+    fake.routes.set('GET /api/permission/saved', () => ({
+      body: {
+        data: [
+          { id: 'psv_1', projectID: 'p', action: 'shell', resource: 'git *' },
+          { id: 'psv_2', action: 'edit' },
+        ],
+      },
+    }))
+    const opened = await open(fake)
+    await opened.wire.request('initialize', { protocolVersion: 1 }, 10_000)
+    const created = (await opened.wire.request('session/new', { cwd: opened.cwd, mcpServers: [] }, 10_000)) as Record<string, unknown>
+    expect(created._meta).toEqual({ [PERMISSION_FACTS]: ['总是允许 · shell git *'] })
+    const read = fake.seen.find(item => item.path.startsWith('/api/permission/saved'))!
+    expect(read.method).toBe('GET')
+    expect(read.path).toContain(`location%5Bdirectory%5D=${encodeURIComponent(opened.cwd)}`)
+    expect(fake.seen.filter(item => item.path.startsWith('/api/permission/saved') && item.method !== 'GET')).toEqual([])
+    // Never the routes that answer with secrets.
+    expect(fake.seen.some(item => /^\/api\/(credential|provider|config)\b/u.test(item.path))).toBe(false)
+  })
+
+  it('lets a leftover claim of its own session go on resume when nothing is queued, and never on a load', async () => {
+    const fake = await startFake()
+    cleanups.push(fake.close)
+    const opened = await open(fake)
+    await opened.wire.request('initialize', { protocolVersion: 1 }, 10_000)
+    const { sessionId } = (await opened.wire.request('session/new', { cwd: opened.cwd, mcpServers: [] }, 10_000)) as { sessionId: string }
+    const session = fake.sessions.get(sessionId)!
+    // A run that began and never ended: busy after idle.
+    session.time = { created: 1, updated: 2, busy: 20, idle: 10 }
+    let inbox: unknown[] = [{ id: 'inb_1' }]
+    fake.routes.set(`GET /api/session/${sessionId}/inbox`, () => ({ body: { data: inbox } }))
+    fake.routes.set(`DELETE /api/session/${sessionId}/revert`, () => {
+      session.time = { created: 1, updated: 2, busy: 30, idle: 31 }
+      return { status: 204 }
+    })
+    const cleared = () => fake.seen.filter(item => item.method === 'DELETE' && item.path.endsWith('/revert'))
+    const own = { sessionId, cwd: opened.cwd, mcpServers: [], [RELEASE_CLAIM]: true }
+    // Something queued would run as the session wakes: left alone.
+    await opened.wire.request('session/resume', own, 5_000)
+    expect(cleared()).toEqual([])
+    inbox = []
+    // A load reads someone else's session, and a resume the runtime does not mark as Latch's (one brought in) may be
+    // running in the person's own OpenCode: neither wakes it.
+    await opened.wire.request('session/load', { sessionId, cwd: opened.cwd, mcpServers: [] }, 5_000)
+    await opened.wire.request('session/resume', { sessionId, cwd: opened.cwd, mcpServers: [] }, 5_000)
+    expect(cleared()).toEqual([])
+    await opened.wire.request('session/resume', own, 5_000)
+    expect(cleared()).toHaveLength(1)
+    // Once idle again, nothing more is done.
+    await opened.wire.request('session/resume', own, 5_000)
+    expect(cleared()).toHaveLength(1)
+  })
+
+  it('interrupts what the server still runs before it stops, as a person’s stop', async () => {
+    const { fake, wire, created } = await started()
+    fake.emit('session.execution.started', { sessionID: created.sessionId })
+    await vi.waitFor(() => expect(fake.seen.length).toBeGreaterThan(0))
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const stopping = wire.stop('stop', 1_000)
+    await vi.waitFor(() => expect(fake.seen.some(item => item.path === `/api/session/${created.sessionId}/interrupt`)).toBe(true))
+    fake.emit('session.execution.interrupted', { sessionID: created.sessionId, reason: 'user' })
+    const info = await stopping
+    // `--stdio` ends with its input: no signal was needed.
+    expect(info.signal).toBeNull()
+  })
+
+  it('never starts a server whose configuration lacks Latch’s rules, whatever produced it', async () => {
+    const base = opencodeProfile.permission.defaultEnv.OPENCODE_CONFIG_CONTENT!
+    expect(() => latchConfig(base)).not.toThrow()
+    const rules = JSON.parse(base) as {
+      permission: Record<string, unknown>
+      agent: Record<string, { permission: Record<string, unknown> }>
+    }
+    for (const bad of [
+      undefined,
+      '',
+      '{',
+      '[1]',
+      'null',
+      JSON.stringify({}),
+      JSON.stringify({ ...rules, permission: { ...rules.permission, '*': 'allow' } }),
+      JSON.stringify({ ...rules, agent: { ...rules.agent, build: { permission: { '*': 'allow' } } } }),
+      JSON.stringify({ ...rules, agent: { ...rules.agent, yolo: undefined } }),
+      JSON.stringify({ ...rules, agent: { ...rules.agent, plan: { permission: { ...rules.agent.plan!.permission, bash: 7 } } } }),
+    ])
+      expect(() => latchConfig(bad)).toThrow(/OPENCODE_CONFIG_CONTENT/u)
+    // Every configuration the gateway delivers carries them.
+    for (const wire of ['chat-completions', 'responses', 'anthropic-messages'] as const) {
+      const gateway = opencodeProfile.gateway as unknown as { deliver(place: unknown, route: unknown): unknown }
+      const delivered = gateway.deliver(
+        {
+          baseURL: 'http://127.0.0.1:1/gw',
+          file: (name: string) => `/tmp/latch/${name}`,
+          models: [{ id: 'm', capabilities: { thinking: ['low'], contextTokens: 1000 } }],
+        } as never,
+        { model: 'm', wire } as never,
+      )
+      expect(() => latchConfig((delivered as { env: Record<string, string> }).env.OPENCODE_CONFIG_CONTENT)).not.toThrow()
+    }
+    // A definition cannot replace them either: the profile's value is set after the definition's variables.
+    const fake = await startFake()
+    cleanups.push(fake.close)
+    await expect(open(fake, undefined, { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { '*': 'allow' } }) })).rejects.toThrow(
+      /询问规则/u,
+    )
+  })
+
+  it('says which agents the person pinned to another provider on Latch’s model service', async () => {
+    const fake = await startFake()
+    cleanups.push(fake.close)
+    fake.routes.set('GET /api/agent', () => ({
+      body: {
+        data: [
+          ...AGENTS,
+          { id: 'compaction', mode: 'primary', hidden: true, model: { providerID: 'anthropic', id: 'pinned-x' } },
+          { id: 'summary', mode: 'primary', hidden: true, model: { providerID: 'latch', id: 'fake-model' } },
+        ],
+      },
+    }))
+    const rules = JSON.parse(opencodeProfile.permission.defaultEnv.OPENCODE_CONFIG_CONTENT!) as Record<string, unknown>
+    const opened = await open(fake, undefined, { OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...rules, providers: { latch: {} } }) })
+    await opened.wire.request('initialize', { protocolVersion: 1 }, 10_000)
+    const created = (await opened.wire.request('session/new', { cwd: opened.cwd, mcpServers: [] }, 10_000)) as Record<string, unknown>
+    expect(created._meta).toEqual({ [PERMISSION_FACTS]: ['不经 Latch 的模型服务 · compaction 用 anthropic/pinned-x'] })
   })
 })

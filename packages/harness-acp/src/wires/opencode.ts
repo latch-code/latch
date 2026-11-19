@@ -9,12 +9,14 @@
 import { randomBytes, randomInt } from 'node:crypto'
 import { chmodSync, mkdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
+import { isDeepStrictEqual } from 'node:util'
 import { isAbsolute, join, resolve } from 'node:path'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
 import { clip } from '../mapping.ts'
 import { RPC, RpcError } from '../protocol.ts'
-import { OPENCODE_DIRECT_MINIMUM } from '../profiles/opencode.ts'
+import { OPENCODE_DIRECT_MINIMUM, OPENCODE_RULES } from '../profiles/opencode.ts'
+import { PERMISSION_FACTS, RELEASE_CLAIM } from '../protocol.ts'
 import { compareVersions } from '../semver.ts'
 import {
   addTokens,
@@ -51,8 +53,26 @@ import {
 import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
 import type { AgentWire, WireHandlers } from './types.ts'
 
-/** Appended to the definition's arguments: the server, on loopback, on a port it picks itself. */
-export const OPENCODE_SERVE_ARGS: readonly string[] = ['serve', '--hostname', '127.0.0.1', '--port', '0']
+/**
+ * Appended to the definition's arguments: the server, on loopback, on a port it picks itself, in its `--stdio` mode
+ * (2.2.6 `server-process.ts`), the one OpenCode's own private servers use: it says where it listens as one JSON line,
+ * drops the password from its own environment once read, so no tool, MCP server or language server it starts inherits
+ * it, and ends when its standard input closes, so a Host that dies leaves no server behind. Its warnings go to stderr,
+ * where a failed start's reasons are read.
+ */
+export const OPENCODE_SERVE_ARGS: readonly string[] = [
+  'serve',
+  '--stdio',
+  '--hostname',
+  '127.0.0.1',
+  '--port',
+  '0',
+  '--print-logs',
+  '--log-level',
+  'warn',
+]
+/** The logging flags above, which a definition may set itself. */
+const LOG_FLAGS = new Set(['--print-logs', '--log-level'])
 /** Server flags that would make it listen elsewhere or serve another way, and global flags that end it: this wire decides them. */
 const RESERVED = new Set([
   '--hostname',
@@ -83,7 +103,18 @@ export function opencodeArgs(args: readonly string[]): string[] {
     if (RESERVED.has(flag) || !arg.startsWith('-')) throw new Error(`参数 ${clip(arg, 64)} 由 Latch 设置，不能写在 OpenCode 的定义里`)
     if (VALUE_FLAGS.has(arg)) index++
   }
-  return [...args, ...OPENCODE_SERVE_ARGS]
+  const named = new Set(args.map(arg => arg.split('=')[0]!))
+  const serve: string[] = []
+  for (let index = 0; index < OPENCODE_SERVE_ARGS.length; index++) {
+    const arg = OPENCODE_SERVE_ARGS[index]!
+    const value = VALUE_FLAGS.has(arg)
+    if (LOG_FLAGS.has(arg) && named.has(arg)) {
+      if (value) index++
+      continue
+    }
+    serve.push(arg)
+  }
+  return [...args, ...serve]
 }
 
 /** The variables 2.x reads its server password from (`OPENCODE_PASSWORD` first, the documented legacy name after it). */
@@ -114,17 +145,7 @@ const PASSWORD_PLUGIN = `export default {
 function withPasswordPlugin(env: NodeJS.ProcessEnv): void {
   const tmp = env.TMPDIR
   if (!tmp) throw new Error('OpenCode 的进程没有自己的临时目录，Latch 无法让它运行的命令看不到服务口令')
-  let config: Record<string, unknown> = {}
-  if (env.OPENCODE_CONFIG_CONTENT) {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(env.OPENCODE_CONFIG_CONTENT)
-    } catch {
-      parsed = undefined
-    }
-    if (!isRecord(parsed)) throw new Error('OPENCODE_CONFIG_CONTENT 不是 JSON 对象，Latch 无法让 OpenCode 运行的命令看不到服务口令')
-    config = parsed
-  }
+  const config = latchConfig(env.OPENCODE_CONFIG_CONTENT)
   const directory = join(realpathSync(tmp), PASSWORD_PLUGIN_DIR)
   mkdirSync(directory, { recursive: true, mode: 0o700 })
   const path = join(directory, 'index.ts')
@@ -136,10 +157,33 @@ function withPasswordPlugin(env: NodeJS.ProcessEnv): void {
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ ...config, plugins: [...plugins, directory] })
 }
 
+/**
+ * The configuration Latch hands OpenCode, parsed, when it holds Latch's rules exactly as the profile writes them; else
+ * the server does not start. OpenCode 2.2.6 starts on content it cannot parse and then asks nothing at all (its own
+ * `* allow`), and skips a value it does not take while the rest still loads: only JSON that carries every rule goes.
+ */
+export function latchConfig(content: string | undefined): Record<string, unknown> {
+  let parsed: unknown
+  try {
+    parsed = content === undefined ? undefined : JSON.parse(content)
+  } catch {
+    parsed = undefined
+  }
+  if (!isRecord(parsed)) throw new Error('OPENCODE_CONFIG_CONTENT 不是 JSON 对象，Latch 设置的询问规则不会生效，没有启动 OpenCode')
+  const agents = isRecord(parsed.agent) ? parsed.agent : {}
+  const holds =
+    isDeepStrictEqual(parsed.permission, OPENCODE_RULES.permission)
+    && Object.entries(OPENCODE_RULES.agent).every(
+      ([id, agent]) => isRecord(agents[id]) && isDeepStrictEqual((agents[id] as Record<string, unknown>).permission, agent.permission),
+    )
+  if (!holds) throw new Error('OPENCODE_CONFIG_CONTENT 缺少 Latch 设置的询问规则，没有启动 OpenCode')
+  return parsed
+}
+
 /** The user name 2.x's own clients send; 1.x let `OPENCODE_SERVER_USERNAME` change it, which 2.x does not read. */
 const USER = 'opencode'
-/** `opencode serve` says where it listens on stdout; only the loopback address it was told to use is taken. */
-const LISTENING = /\blistening on http:\/\/127\.0\.0\.1:(\d{1,5})\/?\s*$/u
+/** `opencode serve --stdio` says where it listens as `{"url": …}`; only the loopback address it was told to use is taken. */
+const LISTENING = /^http:\/\/127\.0\.0\.1:(\d{1,5})\/?$/u
 const RESPONSE_LIMIT = 64 * 1024 * 1024
 const RETRY_META = 'opencode/retry'
 const COMPACTION_META = 'opencode/compaction'
@@ -158,6 +202,13 @@ const COMMAND_QUEUE_MS = 5_000
 const CATALOG_POLL_MS = 25
 const CATALOG_WAIT_MS = 5_000
 const DEFAULT_VARIANT = 'default'
+/** How long a stop waits for the server's runs to end after interrupting them, at most. */
+const STOP_INTERRUPT_MS = 2_000
+/** How long releasing a leftover claim waits for the session to read as idle. */
+const CLAIM_RELEASE_MS = 3_000
+const SAVED_RULES_MAX = 20
+/** The provider the gateway's configuration adds (`profiles/opencode.ts`). */
+const GATEWAY_PROVIDER = 'latch'
 
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
 const rec = (value: unknown): Json => (isRecord(value) ? value : {})
@@ -452,6 +503,8 @@ export class OpencodeWire implements AgentWire {
   private readonly agent = new http.Agent({ keepAlive: true, maxSockets: 32 })
   private readonly redact: (text: string) => string
   private readonly maxLineBytes: number
+  /** On Latch's model service: the configuration adds its provider. */
+  private readonly routed: boolean
   private port?: number
   private readonly listening: Promise<number>
   private onListening!: (port: number) => void
@@ -491,14 +544,16 @@ export class OpencodeWire implements AgentWire {
     // commands its shell tool runs.
     for (const name of PASSWORD_ENV) env[name] = password
     withPasswordPlugin(env)
+    const providers = rec(rec(JSON.parse(env.OPENCODE_CONFIG_CONTENT!) as unknown).providers)
+    this.routed = isRecord(providers[GATEWAY_PROVIDER])
     this.process = AgentProcess.spawn(
       { ...spec, args: opencodeArgs(spec.args), env, redact: this.redact },
       {
-        record: () => {},
-        text: line => this.onStdout(line),
+        record: record => this.onReady(record),
         closed: info => this.onClosed(info),
       },
-      { endsWithStdin: false },
+      // `--stdio` ends with its standard input: a stop closes it first, and SIGTERM only follows the grace.
+      { endsWithStdin: true },
     )
     this.exited = this.process.exited
   }
@@ -596,6 +651,10 @@ export class OpencodeWire implements AgentWire {
   }
 
   async stop(reason: 'stop' | 'kill', graceMs: number, cause?: string): Promise<ExitInfo> {
+    // A run the server is still in when it shuts down keeps its claim on purpose, and the person's background service
+    // (`opencode serve --service`) carries such a run on at its next start, unseen. Interrupted by Latch first, it ends
+    // as a person's stop, which lets the claim go.
+    if (this.running.size && this.port !== undefined && !this.process.exit) await this.interruptAll(Math.min(graceMs, STOP_INTERRUPT_MS))
     this.events?.destroy()
     const info = await this.process.stop(reason, graceMs, cause)
     this.agent.destroy()
@@ -606,11 +665,86 @@ export class OpencodeWire implements AgentWire {
     return this.process.stderrTail(limit)
   }
 
+  /** Every session the server runs, interrupted; settled once its events say so, or after `ms`. */
+  private async interruptAll(ms: number): Promise<void> {
+    const deadline = Date.now() + ms
+    await Promise.race([
+      Promise.allSettled([...this.running].map(id => this.post(`/api/session/${encodeURIComponent(id)}/interrupt`))),
+      sleep(ms),
+    ])
+    while (this.running.size && Date.now() < deadline && !this.process.exit) await sleep(CATALOG_POLL_MS)
+  }
+
+  /**
+   * A session of Latch's whose last run never ended (busy after idle: a run cut off by a kill, a timeout or a crash)
+   * still holds OpenCode's claim, and the person's background service would carry that run on at its next start. With
+   * nothing queued and no revert staged, waking it through OpenCode's own revert route (`DELETE …/revert`, which only
+   * wakes the session then) finds nothing to do and ends the run as succeeded, which lets the claim go; no model is
+   * asked. Anything else is left as it is.
+   */
+  private async releaseClaim(session: Json): Promise<void> {
+    const id = str(session.id)
+    const time = rec(session.time)
+    const busy = typeof time.busy === 'number' ? time.busy : undefined
+    const idle = typeof time.idle === 'number' ? time.idle : undefined
+    if (!id || busy === undefined || (idle !== undefined && idle >= busy) || session.revert != null || this.running.has(id)) return
+    const path = `/api/session/${encodeURIComponent(id)}`
+    try {
+      const inbox = rec(await this.get(`${path}/inbox`)).data
+      if (!Array.isArray(inbox) || inbox.length) return
+      await this.call('DELETE', `${path}/revert`)
+      const deadline = Date.now() + CLAIM_RELEASE_MS
+      while (Date.now() < deadline) {
+        const now = rec(rec(rec(await this.get(path)).data).time)
+        if (typeof now.idle === 'number' && typeof now.busy === 'number' && now.idle >= now.busy) return
+        await sleep(CATALOG_POLL_MS)
+      }
+    } catch {
+      /* Left as it was; the session itself still opens. */
+    }
+  }
+
+  /**
+   * On Latch's model service: the agents the person's configuration pins to a model of another provider (2.2.6 lets
+   * every agent, the hidden `compaction`, `summary` and `title` among them, name its own), whose requests do not go
+   * through Latch. Said, not changed.
+   */
+  private async pinnedElsewhere(cwd: string): Promise<string[]> {
+    const listed = rec(await this.get(`/api/agent?${OpencodeWire.location(cwd)}`).catch(() => undefined)).data
+    if (!Array.isArray(listed)) return []
+    return listed
+      .flatMap(item => {
+        const agent = rec(item)
+        const model = modelRef(agent.model)
+        return typeof agent.id === 'string' && model && model.providerID !== GATEWAY_PROVIDER
+          ? [clip(this.redact(`不经 Latch 的模型服务 · ${agent.id} 用 ${advertised(model)}`), 200)]
+          : []
+      })
+      .slice(0, SAVED_RULES_MAX)
+  }
+
+  /**
+   * The project's 「总是允许」 OpenCode saved (its TUI's Always), which it adds after every rule as allow, so they are
+   * not asked here either unless the mode denies them. Read for display only; nothing is changed.
+   */
+  private async savedRules(cwd: string): Promise<string[]> {
+    const listed = rec(await this.get(`/api/permission/saved?${OpencodeWire.location(cwd)}`).catch(() => undefined)).data
+    if (!Array.isArray(listed)) return []
+    return listed
+      .flatMap(item => {
+        const rule = rec(item)
+        return typeof rule.action === 'string' && typeof rule.resource === 'string'
+          ? [clip(this.redact(`总是允许 · ${rule.action} ${rule.resource}`), 200)]
+          : []
+      })
+      .slice(0, SAVED_RULES_MAX)
+  }
+
   // --- The server and its stream ---
 
-  private onStdout(line: string): void {
-    if (this.port !== undefined) return
-    const match = LISTENING.exec(line)
+  private onReady(record: Record<string, unknown>): void {
+    if (this.port !== undefined || typeof record.url !== 'string') return
+    const match = LISTENING.exec(record.url)
     const port = match ? Number(match[1]) : NaN
     if (Number.isInteger(port) && port > 0 && port < 65536) {
       this.port = port
@@ -969,7 +1103,13 @@ export class OpencodeWire implements AgentWire {
     if (typeof created.id !== 'string') throw new RpcError(RPC.internal, 'OpenCode did not name the new session')
     const { attached, configOptions: options } = await this.attach(created, cwd, params.mcpServers)
     this.unprompted.add(attached.id)
-    return { sessionId: attached.id, configOptions: options }
+    return { sessionId: attached.id, configOptions: options, ...(await this.facts(cwd)) }
+  }
+
+  /** What OpenCode's own settings decide beside the mode, for the setup answer (`PERMISSION_FACTS`). */
+  private async facts(cwd: string): Promise<{ _meta?: Record<string, unknown> }> {
+    const lines = [...(await this.savedRules(cwd)), ...(this.routed ? await this.pinnedElsewhere(cwd) : [])]
+    return lines.length ? { _meta: { [PERMISSION_FACTS]: lines } } : {}
   }
 
   private async session(sessionId: unknown, cwd: string): Promise<Json> {
@@ -1003,10 +1143,13 @@ export class OpencodeWire implements AgentWire {
     const cwd = str(params.cwd) ?? ''
     const directories = parseDirectories(cwd, params.additionalDirectories)
     const session = await this.session(params.sessionId, cwd)
+    // Only for a session Latch started (the runtime says so): one brought in, or read for a preview, may be running in
+    // the person's own OpenCode right now, and is left as it is.
+    if (!replay && params[RELEASE_CLAIM] === true) await this.releaseClaim(session)
     await this.activate(session, directories)
     const directory = str(rec(session.location).directory) ?? cwd
     const { attached, configOptions: options } = await this.attach(session, directory, params.mcpServers)
-    if (!replay) return { configOptions: options }
+    if (!replay) return { configOptions: options, ...(await this.facts(directory)) }
     try {
       let cursor: string | undefined
       for (;;) {

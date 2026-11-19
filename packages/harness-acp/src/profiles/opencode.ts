@@ -29,7 +29,8 @@ const ASK_FIRST = {
  * the last matching rule, so `plan` refuses edits (its write and patch tools included) and commands after `'*': 'ask'`,
  * and starts no subagent: a subagent works under its own agent's rules and these global ones, not under `plan`'s.
  */
-const CONFIG = JSON.stringify({
+/** Latch's rules as OpenCode must receive them; the wire refuses to start a server whose configuration lacks any. */
+export const OPENCODE_RULES = {
   permission: ASK_FIRST,
   agent: {
     build: { permission: ASK_FIRST },
@@ -50,7 +51,9 @@ const CONFIG = JSON.stringify({
       permission: { ...ASK_FIRST, '*': 'allow', external_directory: 'allow', subagent: 'allow' },
     },
   },
-})
+} as const
+
+const CONFIG = JSON.stringify(OPENCODE_RULES)
 
 const GATEWAY_MODELS = prefixedModels('latch')
 const GATEWAY_ENV_PLUGIN = 'index.ts'
@@ -272,7 +275,8 @@ export const OPENCODE_DIRECT_MINIMUM = '2.2.6'
  */
 export const opencodeProfile: HarnessProfile = {
   ...opencodeAcpProfile,
-  version: 1,
+  // 2: `serve --stdio` with its warnings on stderr, leftover claims of Latch's sessions released (`wires/opencode.ts`).
+  version: 2,
   wire: 'opencode',
   minimumVersion: {
     args: ['--version'],
@@ -282,8 +286,11 @@ export const opencodeProfile: HarnessProfile = {
   },
   permission: {
     ...opencodeAcpProfile.permission,
+    // 2.2.6 reads OPENCODE_CONFIG_CONTENT after the global and project configuration (`config.ts`, checked with
+    // `GET /api/agent`): their allows come before Latch's asks and lose to them. What still decides past Latch is below.
     notes: [
-      ...opencodeAcpProfile.permission.notes.slice(0, 3),
+      'OpenCode 先读你的全局与项目配置，再读 Latch 的询问规则，那些配置里的放行不会越过它；仍能让 OpenCode 不问就执行的是系统托管设置、插件的权限钩子，以及你在 OpenCode 里对这个项目点过的「总是允许」（列在下方）',
+      ...opencodeAcpProfile.permission.notes.slice(1, 3),
       'OpenCode 的子 Agent 可以在后台运行，本轮结束或停止后仍可能继续；Latch 不能单独停止它，它之后的请求照常出现在这个会话里',
     ],
   },
