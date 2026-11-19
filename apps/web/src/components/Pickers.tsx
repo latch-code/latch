@@ -297,6 +297,8 @@ export function ProjectPicker({
   notice,
   onClosed,
   defaultLocation,
+  face,
+  hint,
 }: {
   catalog: HostCatalog
   harness?: HarnessInfo | undefined
@@ -317,6 +319,10 @@ export function ProjectPicker({
   onClosed?: (() => void) | undefined
   /** Agent forms use the same default ID for the Host-allocated home, never for the public start folder. */
   defaultLocation?: { label: string; description: string }
+  /** The words the trigger shows instead of the chosen project's name (「选一个项目」 under the start page's headline). */
+  face?: string
+  /** The trigger's hover: a long name in full. */
+  hint?: string
 }) {
   const workspaces = catalog.workspaces
   const start = workspaces.find(workspace => workspace.id === 'default')
@@ -374,6 +380,8 @@ export function ProjectPicker({
       className={inline ? 'project-inline' : variant === 'row' ? 'new-sheet-row' : undefined}
       menuChevron={variant !== 'row'}
       openRequest={openRequest}
+      {...(face !== undefined ? { valueText: face } : {})}
+      {...(hint !== undefined ? { hint } : {})}
       onOpenChange={next => {
         setOpen(next)
         if (!next) onClosed?.()

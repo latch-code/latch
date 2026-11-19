@@ -188,14 +188,13 @@ it.each(['openai-responses', 'openai-compatible', 'anthropic'] as const)(
       await chip().click()
       await (await serviceRow(names[1]!)).click()
       await expect.poll(async () => (await detail()).config?.find(option => option.category === 'model')?.currentValue).toBe(names[1])
-      // A session's model switch keeps the panel open on the new model's levels; close it to open them from their chip.
+      // A session's model switch keeps the panel open on the new model's levels; close it to open them from the entry.
       if (await modelSurface.filter({ visible: true }).count()) {
         await page.keyboard.press('Escape')
         await expect.poll(() => modelSurface.filter({ visible: true }).count()).toBe(0)
       }
-      const thinking = page.locator('button.thinking-picker').filter({ visible: true }).first()
-      await thinking.click()
-      // The thinking chip opens the same panel on its levels.
+      // 思考 is set in the model's one entry: its panel holds the levels.
+      await chip().click()
       const high = page
         .getByRole('menu', { name: '思考', exact: true })
         .getByRole('menuitemradio', { name: 'High', exact: true })

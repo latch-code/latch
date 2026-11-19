@@ -152,12 +152,18 @@ it.each([
       expect(await home.getByRole('button', { name: 'home.txt', exact: true }).isEnabled()).toBe(true)
       expect(await home.getByRole('button', { name: 'session.txt', exact: true }).count()).toBe(0)
       expect(await page.getByRole('dialog', { name: '放弃你的修改？', exact: true }).count()).toBe(0)
-      // The phone's input is one row of chips over ＋, the text and send.
-      const chips = home.getByRole('group', { name: '会话选项', exact: true })
-      expect(await chips.evaluate(element => element.classList.contains('composer-chips'))).toBe(true)
-      for (const name of [/^(?:项目：|不选项目)/u, /^Harness：/u]) expect(await chips.getByRole('button', { name }).count()).toBe(1)
-      expect(await home.locator('.composer-line textarea').count()).toBe(1)
-      expect(await home.locator('.composer-line .send-button').getAttribute('aria-label')).toBe('发送')
+      // The phone's input is the text over one line of ＋, the Harness, the one entry and send; the project is the
+      // headline's over it.
+      const line = home.locator('form.composer .composer-toolbar')
+      expect(
+        await home
+          .locator('.home-headline')
+          .getByRole('button', { name: /^项目：/u })
+          .count(),
+      ).toBe(1)
+      expect(await line.getByRole('button', { name: /^Harness：/u }).count()).toBe(1)
+      expect(await home.locator('form.composer textarea').count()).toBe(1)
+      expect(await line.locator('.send-button').getAttribute('aria-label')).toBe('发送')
       expect(await home.isVisible()).toBe(true)
       await page.setViewportSize({ width: 1440, height: 1000 })
       // The session under the home is still the current row; it leads back.

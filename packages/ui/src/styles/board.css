@@ -98,12 +98,81 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
+/*
+ * The compact strip, for a panel's foot: the heading and a narrower well side by side, the shown mode's name, a dot and
+ * its line on one line of fixed height under them, cut with an ellipsis (the whole line is the segment's description).
+ */
+.ui-mode-strip[data-compact] {
+  grid-template-columns: auto auto;
+  justify-content: end;
+  align-items: center;
+  column-gap: var(--sp-8);
+  row-gap: var(--sp-4);
+  min-width: 0;
+  padding: 0;
+}
+.ui-mode-strip[data-compact] .ui-mode-strip-head {
+  justify-content: start;
+  gap: var(--sp-6);
+}
+.ui-mode-strip[data-compact] .ui-mode-strip-track {
+  grid-template-columns: repeat(var(--mode-columns), 32px);
+  justify-self: end;
+}
+.ui-mode-strip[data-compact] .ui-mode-strip-option {
+  height: 28px;
+}
+.ui-mode-strip[data-compact] .ui-mode-strip-shown {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  justify-content: end;
+  gap: var(--sp-4);
+  height: var(--lh-ui);
+  min-width: 0;
+  padding: 0;
+}
+.ui-mode-strip[data-compact] .ui-mode-strip-name {
+  flex: none;
+  max-width: 50%;
+}
+.ui-mode-strip-dot {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.ui-mode-strip[data-compact] .ui-mode-strip-line {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 @media (max-width: 767.98px) {
   .ui-mode-strip {
     padding: 0 0 var(--sp-8);
   }
   .ui-mode-strip-option {
     height: 44px;
+  }
+  .ui-mode-strip[data-compact] {
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
+  }
+  .ui-mode-strip[data-compact] .ui-mode-strip-track {
+    grid-template-columns: repeat(var(--mode-columns), minmax(0, 1fr));
+    justify-self: stretch;
+  }
+  .ui-mode-strip[data-compact] .ui-mode-strip-option {
+    height: 44px;
+  }
+  .ui-mode-strip[data-compact] .ui-mode-strip-shown {
+    justify-content: start;
+    height: auto;
+  }
+  .ui-mode-strip[data-compact] .ui-mode-strip-line {
+    white-space: normal;
   }
 }
 
@@ -124,6 +193,25 @@
 }
 .ui-board[data-rail] {
   grid-template-columns: 44px minmax(0, 1fr) var(--board-levels);
+}
+/*
+ * With a foot: the columns keep a fixed block over it, and the foot runs across the whole board on a hairline, its
+ * settings at the start and the permission at the end, so the layer's size never changes with the highlight.
+ */
+.ui-board[data-foot] {
+  --board-main: 352px;
+  grid-template-rows: var(--board-main) auto;
+  height: auto;
+}
+.ui-board-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-16);
+  min-width: 0;
+  padding: var(--sp-10) var(--sp-16) var(--sp-12);
+  border-top: 1px solid var(--line);
 }
 .ui-board-rail {
   display: grid;
@@ -393,6 +481,12 @@
 .ui-board[data-phone] :is(.ui-board-note, .ui-board-settings) {
   padding: 0;
   border: 0;
+}
+.ui-board[data-phone] .ui-board-foot {
+  display: grid;
+  justify-content: stretch;
+  gap: var(--sp-12);
+  padding: var(--sp-8) 0 0;
 }
 .ui-board[data-phone] .ui-board-footer {
   max-height: none;

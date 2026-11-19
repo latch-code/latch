@@ -274,12 +274,12 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         const owner = await host.enroll({ listener: 'unix' })
         expect((await owner.json<{ agents: AgentSettings[] }>('agents')).agents).toEqual([])
 
-        // Nothing asks for a folder before sending: the input's place reads 不选项目, and its list opens when pressed. The
-        // draft stays; nothing has been saved or started.
+        // Nothing asks for a folder before sending: the headline asks 想做什么？, and 选一个项目 under it opens the list.
+        // The draft stays; nothing has been saved or started.
         const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await input.fill('修一下测试')
-        const place = page.locator('.workbench-home .home-composer-location')
-        expect(await place.innerText()).toContain('不选项目')
+        const place = page.locator('.workbench-home .home-headline')
+        expect(await place.innerText()).toContain('想做什么？')
         expect(await page.getByText('选择项目', { exact: true }).count()).toBe(0)
         await place.getByRole('button', { name: /^项目：/u }).click()
         const open = page.getByRole('menuitem', { name: '添加项目…', exact: true })
@@ -303,9 +303,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [chosen] })) as typeof dialog.showOpenDialog
         }, project)
         await open.click()
-        await page.locator('.home-composer-location').getByText('rust-learn', { exact: true }).first().waitFor()
+        await page.locator('.home-headline').getByText('rust-learn', { exact: true }).first().waitFor()
         // Shut by the choice, not opened again: the title can name the project while the list still fades out.
-        expect(await page.locator('.home-composer-location [aria-haspopup]').first().getAttribute('aria-expanded')).toBe('false')
+        expect(await page.locator('.home-headline [aria-haspopup]').first().getAttribute('aria-expanded')).toBe('false')
         await open.waitFor({ state: 'hidden' })
         await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
 

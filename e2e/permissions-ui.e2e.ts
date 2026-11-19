@@ -10,7 +10,7 @@ import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { expectUnmovedByInjectedStyles } from './helpers/security.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { openSection, openSession, openSettings, closeSettings } from './helpers/layout.ts'
+import { composerEntry, entryPermission, openSection, openSession, openSettings, closeSettings } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/permissions'
 
@@ -470,11 +470,18 @@ describe('permission states in a browser', () => {
     await expect.poll(async () => (await detail(sessionId)).summary.status).toBe('idle')
     await page.getByRole('textbox', { name: '继续对话' }).waitFor()
 
-    // The mode menu offers the wider row here and takes it at once.
-    await page.locator('.chip-permission').click()
-    await page.getByRole('radio', { name: /auto/iu }).click()
+    // The entry's panel offers the wider row in its foot and takes it at once, staying open; Escape closes it.
+    expect(await entryPermission(page)).toMatch(/^权限：/u)
+    await composerEntry(page).click()
+    const foot = page.locator('.ui-board-foot .entry-permission-part[data-lock]')
+    await foot.waitFor()
+    await foot.getByRole('radio', { name: /auto/iu }).click()
     await expect.poll(async () => (await detail(sessionId)).config?.find(option => option.id === 'mode')?.currentValue).toBe('auto')
+    await expect.poll(() => foot.getByRole('radio', { name: /auto/iu }).getAttribute('aria-checked')).toBe('true')
+    expect(await foot.isVisible()).toBe(true)
+    await expect.poll(() => entryPermission(page)).toBe('权限：auto')
     await page.keyboard.press('Escape')
+    await foot.waitFor({ state: 'hidden' })
     expect(testHost.presence.requests).toHaveLength(before)
     const records = (await readFile(join(testHost.dataDir, 'audit', 'audit.jsonl'), 'utf8'))
       .trim()

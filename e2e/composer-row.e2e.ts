@@ -16,8 +16,8 @@ const LONG_PROJECT = '一个名字非常非常长的项目用来检查输入框�
 const WIDTHS = [320, 400, 480, 560, 640, 700, 760, 820, 880, 960, 1040, 1200]
 
 /**
- * The boxes of everything on the composer's control row: ＋, the place chips, the four controls, what sits before send,
- * and send. None may overlap another, and none may leave the composer.
+ * The boxes of everything on the composer's line and the place under it: ＋, the Harness, the one entry, what sits before
+ * send, and send, then the folder and branch. None may overlap another, and none may leave the composer.
  */
 async function overlaps(page: Page): Promise<string[]> {
   return page.evaluate(() => {
@@ -26,7 +26,7 @@ async function overlaps(page: Page): Promise<string[]> {
     const bounds = stack.getBoundingClientRect()
     const boxes = [
       ...stack.querySelectorAll<HTMLElement>(
-        '.composer-add, [data-composer-control], .home-composer-location > *, .composer-meta > *, .composer-slot > *, .send-button',
+        '.composer-add, [data-composer-control], .home-place > *, .composer-meta > *, .composer-slot > *, .send-button',
       ),
     ]
       .filter(element => element.getClientRects().length > 0 && !element.closest('[popover], dialog'))
@@ -155,18 +155,18 @@ describe('the composer control row at every width of its own', () => {
     await page.context().close()
   })
 
-  it('keeps a phone’s chip row apart: the project never slides under the Harness, the row scrolls instead', async () => {
+  it('keeps a phone’s one line apart: the Harness, the entry and send never slide under each other or shrink to nothing', async () => {
     for (const width of [320, 390]) {
       const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true, locale: 'zh-CN' })
       const page = await context.newPage()
       page.setDefaultTimeout(15_000)
       await enrollBrowser(page, host, { scopes: ['view', 'run', 'admin'] })
       await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
-      const chips = page.locator('.workbench-home').getByRole('group', { name: '会话选项', exact: true })
+      const chips = page.locator('.workbench-home .composer-toolbar')
       await chips.waitFor()
       const wrong = await chips.evaluate(row => {
-        const items = [...row.querySelectorAll<HTMLElement>(':scope > *, .home-composer-location > *')]
-          .filter(element => !element.classList.contains('home-composer-location') && element.getClientRects().length > 0)
+        const items = [...row.querySelectorAll<HTMLElement>('.composer-controls > *, .composer-end > *')]
+          .filter(element => element.getClientRects().length > 0)
           .map(element => ({ name: element.className || element.tagName, rect: element.getBoundingClientRect() }))
           .filter(item => item.rect.width > 0)
           .toSorted((a, b) => a.rect.left - b.rect.left)

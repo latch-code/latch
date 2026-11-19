@@ -5,7 +5,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSection, openSettings, reachable, closeSettings, backToPhoneSessions } from './helpers/layout.ts'
+import {
+  backToPhoneSessions,
+  closeSettings,
+  composerEntry,
+  entryPermission,
+  noHorizontalOverflow,
+  openSection,
+  openSettings,
+  reachable,
+} from './helpers/layout.ts'
 import { viewSwitch } from './helpers/workbench.ts'
 
 const OUTPUT = 'test-results/design'
@@ -118,23 +127,15 @@ describe('responsive workspace controls', () => {
       await reachable(composer)
       await composer.fill('这是一条未提交的布局验收草稿。')
       await noHorizontalOverflow(page)
-      // Phone options scroll above the input, while permission stays next to Send regardless of the scroll position.
-      if (phone) {
-        const chips = page.locator('.workbench-home').getByRole('group', { name: '会话选项', exact: true })
-        expect(await chips.evaluate(element => element.classList.contains('composer-chips'))).toBe(true)
-        expect(await chips.locator('.home-composer-location').count()).toBe(1)
-        for (const control of ['harness', 'model']) {
-          const chip = chips.locator(`[data-composer-control="${control}"]`).getByRole('button').first()
-          await chip.scrollIntoViewIfNeeded()
-          await reachable(chip)
-        }
-        const actions = page.locator('.workbench-home .composer-line')
-        await reachable(actions.locator('[data-composer-control="permission"]').getByRole('button'))
-        await reachable(actions.getByRole('button', { name: '发送', exact: true }))
-        expect(await page.locator('.workbench-home .composer-toolbar, .workbench-home [data-rows]').count()).toBe(0)
-        await noHorizontalOverflow(page)
-      } else
-        for (const control of [/^Harness：/, /^模型：/, /^权限：/]) await reachable(page.getByRole('button', { name: control }).first())
+      // One line under the text at every width: 「+」, the Harness, then the one entry (模型 · 思考 · 权限) beside send; the
+      // project is the headline's, where in it the line under the input.
+      const line = page.locator('.workbench-home .composer-toolbar')
+      await reachable(line.locator('[data-composer-control="harness"]').getByRole('button').first())
+      await reachable(composerEntry(line))
+      expect(await entryPermission(line)).toMatch(/^权限：/u)
+      expect(await page.locator('.workbench-home [data-composer-control="permission"], .workbench-home .composer-chips').count()).toBe(0)
+      await reachable(page.locator('.workbench-home .home-headline').getByRole('button').first())
+      if (phone) await noHorizontalOverflow(page)
       await reachable(page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }))
       await composer.fill('')
       await capture(page, `${label}-new-session`)

@@ -20,10 +20,14 @@ import { redactKnownSecrets } from '@latch/core/node-kit'
 import {
   CODEX_EFFORT_ID,
   CODEX_MODEL_ID,
+  CODEX_TIER_ID,
   codexModel,
   codexOptions,
+  fastTierOf,
+  speedOption,
   GATEWAY_DEFAULT_EFFORT,
   gatewayEffortOption,
+  tierValue,
   type CodexModels,
 } from '../codex-models.ts'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
@@ -160,6 +164,7 @@ const opened = z.object({
   thread,
   model: text.max(256).nullish().catch(undefined),
   reasoningEffort: text.max(64).nullish().catch(undefined),
+  serviceTier: text.max(64).nullish().catch(undefined),
 })
 const account = z.object({ account: z.unknown().nullish(), requiresOpenaiAuth: z.boolean().nullish() })
 const listing = z.object({ data: z.array(z.unknown()), nextCursor: text.max(4096).nullish() })
@@ -498,6 +503,10 @@ export class CodexWire implements AgentWire {
   private models: CodexModels = { models: [] }
   private model?: string
   private effort?: string
+  /** The tier the thread is on, as Codex last reported it or as the person picked it. */
+  private tier?: string
+  /** A person picked 速度: from then on each turn names the tier, so the thread follows the pick, not the configuration. */
+  private tierPicked = false
   private routeEffort?: string
   private turn?: Turn
   /** Items whose text arrived in pieces, so their completion does not repeat it. */
@@ -871,6 +880,8 @@ export class CodexWire implements AgentWire {
     if (this.route && reported !== this.route.model) throw new RpcError(RPC.internal, 'Codex 没有采用所选模型，未发送本轮输入。')
     this.model = this.route ? (reported && this.route.models.includes(reported) ? reported : this.model) : (reported ?? this.model)
     this.effort = this.route?.setThinking && this.routeEffort !== undefined ? this.routeEffort : (read.data.reasoningEffort ?? this.effort)
+    // A route's turns run on a model service, which has no tier of Codex's plan.
+    if (!this.route && !this.tierPicked) this.tier = tierValue(read.data.serviceTier)
     await this.readSkills(timeoutMs, signal)
     this.reportMcp(timeoutMs)
     this.reportQuota(timeoutMs)
@@ -1276,11 +1287,15 @@ export class CodexWire implements AgentWire {
   }
 
   private options(): unknown[] {
-    const listed = codexOptions({
-      models: this.models.models,
-      ...(this.model ? { model: this.model } : {}),
-      ...(this.effort ? { effort: this.effort } : {}),
-    }).options
+    const listed = codexOptions(
+      {
+        models: this.models.models,
+        ...(this.model ? { model: this.model } : {}),
+        ...(this.effort ? { effort: this.effort } : {}),
+        ...(this.tier ? { tier: this.tier } : {}),
+      },
+      !this.route,
+    ).options
     if (this.route?.setThinking && this.model) {
       const thinking = gatewayEffortOption(this.route.modelCapabilities?.[this.model]?.thinking, this.routeEffort)
       if (thinking) listed.push(thinking)
@@ -1317,6 +1332,13 @@ export class CodexWire implements AgentWire {
       const entry = this.models.models.find(item => item.id === value)
       const efforts = entry?.supportedReasoningEfforts?.map(item => item.reasoningEffort) ?? []
       if (this.effort && efforts.length && !efforts.includes(this.effort)) this.effort = entry?.defaultReasoningEffort ?? efforts[0]
+    } else if (configId === CODEX_TIER_ID) {
+      const entry = this.route ? undefined : this.models.models.find(item => item.id === this.model)
+      const offered = entry && speedOption(entry, this.tier)
+      if (!offered?.options.some(item => item.value === value))
+        throw new RpcError(RPC.invalidParams, 'Codex does not offer this speed for the model')
+      this.tier = value
+      this.tierPicked = true
     } else if (configId === CODEX_EFFORT_ID) {
       if (this.route?.setThinking) {
         if (!this.model) throw new RpcError(RPC.invalidParams, 'No selected gateway model')
@@ -1328,6 +1350,16 @@ export class CodexWire implements AgentWire {
       } else this.effort = value
     } else throw new RpcError(RPC.invalidParams, 'Unknown option')
     return { configOptions: this.options() }
+  }
+
+  /**
+   * The tier a turn names: only once a person picked 速度, only on Codex's own login and only for a model that takes the
+   * Fast tier. Otherwise the turn inherits the thread's tier, which is the person's own configuration.
+   */
+  private tierSetting(): { serviceTier?: string } {
+    if (this.route || !this.tierPicked || !this.tier) return {}
+    if (!fastTierOf(this.models.models.find(item => item.id === this.model))) return {}
+    return { serviceTier: this.tier }
   }
 
   private assertSession(sessionId: string): void {
@@ -1402,6 +1434,7 @@ export class CodexWire implements AgentWire {
           ...turnSettings(this.mode, this.cwd, this.folders),
           ...(this.model ? { model: this.model } : {}),
           ...(this.effort ? { effort: this.effort } : {}),
+          ...this.tierSetting(),
           summary: 'auto',
         },
         timeoutMs,

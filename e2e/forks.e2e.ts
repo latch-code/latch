@@ -8,7 +8,7 @@ import { AGENT_PRESETS, type AppSnapshot, type TaskDetail } from '@latch/protoco
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { tooltipText } from './helpers/layout.ts'
+import { composerEntry, entryPermission, tooltipText } from './helpers/layout.ts'
 
 describe('conversation forks', () => {
   it('opens a selectable new session, folds authoritative context and returns to its source at desktop, tablet and phone widths', async () => {
@@ -148,14 +148,7 @@ describe('conversation forks', () => {
         .toContain('权限「按规则放行」→ 更严的「先问你」')
       // That files are not copied or rolled back is the notice's tooltip.
       expect(await tooltipText(page, notice.locator('.ui-hint-label'))).toBe('文件不会复制或回滚；同一项目中的会话共用项目文件夹。')
-      await expect
-        .poll(async () =>
-          page
-            .getByRole('button', { name: /^权限：/u })
-            .first()
-            .getAttribute('aria-label'),
-        )
-        .toContain('先问你')
+      await expect.poll(() => entryPermission(page)).toContain('先问你')
       await page.screenshot({ path: 'test-results/fork-popover-1440.png' })
       await notice.getByRole('button', { name: '取消分叉', exact: true }).click()
 
@@ -249,7 +242,11 @@ describe('conversation forks', () => {
       const page = await context.newPage()
       await enrollBrowser(page, host, { name: '分叉沿用' })
       await connected(page)
-      const label = async (name: RegExp) => (await page.getByRole('button', { name }).first().getAttribute('aria-label')) ?? ''
+      // 权限 is said on the one entry, in its description; the other controls by their names.
+      const label = async (name: RegExp) =>
+        name.source.startsWith('^权限')
+          ? entryPermission(page)
+          : ((await page.getByRole('button', { name }).first().getAttribute('aria-label')) ?? '')
       const pick = (page: Page, name: string) =>
         page
           .getByRole('radio', { name: new RegExp(name, 'u') })
@@ -263,12 +260,10 @@ describe('conversation forks', () => {
         .click()
       await pick(page, 'Qwen Code').click()
       await expect.poll(() => label(/^权限：/u), { timeout: 20_000 }).toContain('先问你')
-      await page
-        .getByRole('button', { name: /^权限：/u })
-        .first()
-        .click()
+      await composerEntry(page).click()
       await pick(page, '不再询问').click()
       await expect.poll(() => label(/^权限：/u)).toContain('不再询问')
+      await page.keyboard.press('Escape')
 
       await page.keyboard.press('Meta+k')
       const palette = page.getByRole('dialog', { name: '命令面板', exact: true })

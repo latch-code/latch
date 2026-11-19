@@ -754,6 +754,11 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
   leading?: IconComponent | ReactNode
   /** After the value and before the arrow, in muted ink: a second value the same panel sets (a model's 思考 level). */
   trailing?: ReactNode
+  /**
+   * After `trailing`, before the arrow, drawn even while a write is pending: a state the trigger must always show (the
+   * session's permission, which the same panel sets).
+   */
+  mark?: ReactNode
   /** Shown in muted ink when nothing is chosen (「选择模型」), never in a warning colour. */
   placeholder?: string
   /** xs: 24 with 6px corners, for the inspector. */
@@ -804,8 +809,8 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
   disabled?: boolean
   /** The tooltip of a disabled picker (also read as its description): why it cannot change. */
   disabledReason?: string
-  /** The tooltip of an enabled one: a fact about its value that the menu does not spell out. */
-  hint?: string
+  /** The tooltip of an enabled one: a fact about its value that the menu does not spell out (a few lines at most). */
+  hint?: ReactNode
   /** row: the phone row of a settings sheet (label, value, arrow) that opens a single-choice sheet. */
   variant?: 'inline' | 'row'
   className?: string
@@ -836,6 +841,7 @@ export function ValuePicker<T extends string>({
   onValueChange,
   leading,
   trailing,
+  mark,
   placeholder = UI_COPY.unselected,
   size = 'sm',
   bleed,
@@ -1054,6 +1060,7 @@ export function ValuePicker<T extends string>({
       {lead}
       {valueLayers}
       {trailing !== undefined && trailing !== null && !pending && <span className="ui-value-picker-trail">{trailing}</span>}
+      {mark !== undefined && mark !== null && mark}
       <Icon icon={menuChevron ? ChevronDownGlyph : UpDownGlyph} size={variant === 'row' ? 16 : 12} className="ui-value-picker-chevron" />
     </button>
   )

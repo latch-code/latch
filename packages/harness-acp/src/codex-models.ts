@@ -10,6 +10,12 @@ import { RPC, RpcError } from './protocol.ts'
 
 export const CODEX_MODEL_ID = 'model'
 export const CODEX_EFFORT_ID = 'reasoning_effort'
+/** Codex's speed: `serviceTier` on a turn, from the tiers `model/list` names for each model. */
+export const CODEX_TIER_ID = 'service_tier'
+/** Standard speed, as `turn/start` takes it ("default"). */
+const STANDARD_TIER = 'default'
+/** The one faster tier Latch offers: the ID Codex 0.169's `serviceTiers` gives Fast, and the request value of its old `fast`. */
+const FAST_TIER = 'priority'
 const MAX_PAGES = 5
 const MAX_MODELS = 64
 
@@ -22,11 +28,23 @@ export const codexModel = z.object({
   isDefault: z.boolean().nullish(),
   defaultReasoningEffort: z.string().nullish(),
   supportedReasoningEfforts: z.array(effort).nullish().catch(undefined),
+  /** The tiers beyond standard this model takes, each with Codex's own words on what it costs. */
+  serviceTiers: z
+    .array(z.object({ id: z.string().min(1).max(64), name: z.string().max(64).nullish(), description: z.string().max(400).nullish() }))
+    .max(16)
+    .nullish()
+    .catch(undefined),
 })
 type CodexModel = z.infer<typeof codexModel>
 const page = z.object({ data: z.array(z.unknown()), nextCursor: z.string().max(1024).nullish() })
 const configured = z.object({
-  config: z.object({ model: z.string().max(256).nullish(), model_reasoning_effort: z.string().max(64).nullish() }).nullish(),
+  config: z
+    .object({
+      model: z.string().max(256).nullish(),
+      model_reasoning_effort: z.string().max(64).nullish(),
+      service_tier: z.string().max(64).nullish().catch(undefined),
+    })
+    .nullish(),
 })
 
 export interface CodexModels {
@@ -34,6 +52,8 @@ export interface CodexModels {
   /** What the person's own configuration starts a thread on, when it says. */
   model?: string
   effort?: string
+  /** The tier the person's own configuration or the thread is on, as Codex reports it. */
+  tier?: string
 }
 
 const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1)
@@ -75,8 +95,50 @@ function effortOption(entry: CodexModel, current: string | undefined): SessionCo
   }
 }
 
-/** The model and thinking options a new session would show, and thinking for every other model. */
-export function codexOptions(listed: CodexModels): {
+/** Codex's word for a tier, as Latch sends it: its old config value `fast` is the request value `priority`. */
+export function tierValue(reported: string | null | undefined): string | undefined {
+  if (!reported) return undefined
+  return reported === 'fast' ? FAST_TIER : reported
+}
+
+/** Whether a model takes Codex's Fast tier: only what `model/list` names, never guessed from the model's name. */
+export function fastTierOf(entry: Pick<CodexModel, 'serviceTiers'> | undefined): { description?: string } | undefined {
+  const tier = entry?.serviceTiers?.find(item => item.id === FAST_TIER)
+  return tier ? { ...(tier.description ? { description: clip(tier.description, 200) } : {}) } : undefined
+}
+
+/**
+ * 速度 for a model that takes the Fast tier: 标准 or 快速, the tier the thread is on chosen. Faster turns use more of the
+ * plan; Codex's own sentence on that is the option's description. Other tiers (Ultrafast) are offered only while the
+ * thread is already on one.
+ */
+export function speedOption(entry: CodexModel, current: string | undefined): SessionConfigOption | undefined {
+  const fast = fastTierOf(entry)
+  if (!fast) return undefined
+  const now = tierValue(current) ?? STANDARD_TIER
+  // A thread already on another tier (the person's own configuration) says so, and stays a choice until another is made.
+  const other = now === STANDARD_TIER || now === FAST_TIER ? undefined : entry.serviceTiers?.find(item => item.id === now)
+  return {
+    id: CODEX_TIER_ID,
+    name: '速度',
+    category: 'model_config',
+    currentValue: other || now === FAST_TIER ? now : STANDARD_TIER,
+    options: [
+      { value: STANDARD_TIER, name: '标准' },
+      { value: FAST_TIER, name: '快速', ...(fast.description ? { description: fast.description } : {}) },
+      ...(other ? [{ value: other.id, name: clip(other.name || other.id, 64) }] : []),
+    ],
+  }
+}
+
+/**
+ * The model and thinking options a new session would show, and thinking for every other model. `speed`: only where the
+ * session runs Codex's own app-server on its own login (`wires/codex.ts`), the one route that sends a tier.
+ */
+export function codexOptions(
+  listed: CodexModels,
+  speed = false,
+): {
   options: SessionConfigOption[]
   perModel: Array<{ model: string; options: SessionConfigOption[] }>
 } {
@@ -91,16 +153,17 @@ export function codexOptions(listed: CodexModels): {
   // codex-acp offers a configured model it does not list in the same place.
   if (!models.some(entry => entry.id === current)) choices.unshift({ value: current, name: clip(current, 200) })
   const thinking = (entry: CodexModel) => effortOption(entry, entry.id === current ? listed.effort : undefined)
+  const follows = (entry: CodexModel) =>
+    [thinking(entry), speed ? speedOption(entry, listed.tier) : undefined].filter(option => option !== undefined)
   const now = models.find(entry => entry.id === current)
-  const nowThinking = now && thinking(now)
   return {
     options: [
       { id: CODEX_MODEL_ID, name: 'Model', category: 'model', currentValue: current, options: choices },
-      ...(nowThinking ? [nowThinking] : []),
+      ...(now ? follows(now) : []),
     ],
     perModel: models.flatMap(entry => {
-      const option = thinking(entry)
-      return option ? [{ model: entry.id, options: [option] }] : []
+      const options = follows(entry)
+      return options.length ? [{ model: entry.id, options }] : []
     }),
   }
 }
@@ -131,10 +194,12 @@ export async function readCodexModels(
     })
     let model: string | undefined
     let effort: string | undefined
+    let tier: string | undefined
     try {
       const read = configured.safeParse(await request('config/read', { cwd: spec.cwd }))
       model = read.data?.config?.model ?? undefined
       effort = read.data?.config?.model_reasoning_effort ?? undefined
+      tier = tierValue(read.data?.config?.service_tier)
     } catch {
       // An older Codex has no config/read; its default model is then the list's.
     }
@@ -150,7 +215,7 @@ export async function readCodexModels(
       cursor = parsed.data.nextCursor
       if (!cursor || models.length >= MAX_MODELS) break
     }
-    return { models, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
+    return { models, ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(tier ? { tier } : {}) }
   } finally {
     await connection.stop('kill', 0)
   }

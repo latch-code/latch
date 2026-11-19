@@ -173,9 +173,10 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | `LATCH_AGY_BINARY` | `antigravity.live.test.ts` |
 | `LATCH_COMPUTER_GUIDE_LIVE=codex=<路径>,claude-agent=<claude-agent-acp 路径>,opencode=<路径>` | `computer-guide.live.test.ts`：CLI 用自己的登录与模型，假 Driver，不碰桌面；替换与前置的 A/B（[MCP.md](MCP.md#给-agent-的指引)）。`LATCH_COMPUTER_GUIDE_ARMS=replace` 或 `prepend` 只跑一组，`LATCH_COMPUTER_GUIDE_RUNS` 每组次数，`LATCH_COMPUTER_GUIDE_VENDOR_FILE` 是 Driver 原文（不进仓库），`LATCH_COMPUTER_GUIDE_BROWSER=0` 跳过 latch-browser 一项，`LATCH_COMPUTER_GUIDE_EVIDENCE_DIR` 写下每轮的结果。`PATH` 里的 `cua-driver` 与 `cua` 要换成只记录的替身 |
 | `LATCH_CODEX_QUOTA_BINARY` | `harness-quota.live.test.ts`，结果写到 `LATCH_CODEX_QUOTA_OUT` |
+| `LATCH_CODEX_SPEED_BINARY`（本机已登录的 `codex`） | `packages/harness-acp/test/codex-speed.live.test.ts`：Codex 自己的登录，一个一词的回复；选与 thread 起始相反的速度档，核对它随这一轮发出、新进程恢复 thread 后读回同一档，然后归档这个 thread；模型、档位与结果写到 `test-results/codex-speed-live.json` |
 | `LATCH_LIVE_HARNESS` 和 `LATCH_LIVE_HARNESS_BINARY` | `e2e/harness-acceptance.e2e.ts`，在真实浏览器中验收所选 CLI 的一轮回复与重入 |
 
-电脑指引、Codex 额度、Antigravity 实测与单回合浏览器验收使用 CLI 自己已有的登录与模型。它们在临时 Host 与临时项目里发送极短的提示，不读取 CLI 自己的任何文件。
+电脑指引、Codex 额度与速度、Antigravity 实测与单回合浏览器验收使用 CLI 自己已有的登录与模型。它们在临时 Host 与临时项目里发送极短的提示，不读取 CLI 自己的任何文件。
 
 `LATCH_GATEWAY_EVIDENCE_DIR` 与 `LATCH_AGY_EVIDENCE_DIR` 收每一轮去掉正文的结果。
 

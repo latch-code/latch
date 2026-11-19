@@ -267,17 +267,15 @@
 }
 
 /*
- * Two parts that never wrap past each other: the choices (「+」, Harness, 模型, 思考, 权限, then the limit in what is
- * left of their line) and the end (「⋯」 and send), which keeps the right of the choices' last line, so send never stands
- * alone or under anything. As the composer narrows, in this order: the limit chip's words go (its bar stays, the words
- * in its hover), then its bar goes; then the choices take another line among themselves, the last first (权限, then
- * 思考, …); then a choice alone wider than its line cuts its value with an ellipsis (the whole value in its hover).
- * No choice is ever hidden.
+ * One line under the text in two parts: the choices (「+」, slash, the Harness, the limit, then the one entry drawn at
+ * their end) and the end (「⋯」 and send). As the composer narrows: the limit chip's words go (its bar stays, the words
+ * in its hover), then its bar goes, then the model's name gives way with an ellipsis, then a long Harness name. The line
+ * never wraps and no choice is hidden.
  */
 .composer-toolbar {
   display: flex;
   flex-wrap: nowrap;
-  align-items: flex-end;
+  align-items: center;
   gap: var(--sp-8);
   min-height: 44px;
   padding: 0 var(--sp-8) var(--sp-8) var(--sp-8);
@@ -321,6 +319,7 @@
 }
 .composer-control .ui-value-picker-text,
 .composer-control .chip-text {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -352,66 +351,114 @@
   white-space: nowrap;
 }
 /*
- * A phone: the place, Harness, 模型 and 思考 can scroll sideways. 权限 stays beside the send key.
+ * The entry's permission: the mode's glyph in muted ink after the level; where nothing asks or the mode cannot be
+ * confirmed, the glyph in amber with the mode's short name in amber words. Never cut before the model's name is.
  */
-.composer-chips {
-  display: flex;
+.entry-permission {
+  display: inline-flex;
+  flex: none;
   align-items: center;
   gap: var(--sp-4);
-  min-width: 0;
-  padding: var(--sp-6) var(--sp-8) 0;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
+  max-width: 12em;
+  margin-inline-start: var(--sp-2);
+  color: var(--muted);
 }
-.composer-chips::-webkit-scrollbar {
+.entry-permission[data-amber] {
+  color: var(--amber);
+}
+.entry-permission[data-amber] > svg {
+  color: var(--amber-icon);
+}
+.entry-permission-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The entry's hover says each thing it sets on its own line. */
+.entry-tip {
+  display: grid;
+  gap: var(--sp-2);
+}
+/* The panel's foot: the model's other settings (速度) at the start, the permission at the end. */
+.entry-foot-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-16);
+  min-width: 0;
+}
+.entry-foot-settings:empty {
   display: none;
 }
-.composer-inline-controls {
-  display: contents;
+/* A setting here is its name in the strip's heading ink, then its segments at the height of the strip's well. */
+.ui-board-foot .entry-foot-settings .model-setting {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--sp-8);
+  width: auto;
+  min-height: 32px;
+  padding: 0;
 }
-.composer-chips > *,
-.composer-inline-controls > *,
-.composer-chips .home-composer-location > * {
-  flex: 0 0 auto;
+.ui-board-foot .entry-foot-settings .model-setting-name {
+  margin: 0;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
 }
-/* A chip is never squeezed under its neighbour: the row scrolls instead. */
-.composer-chips .composer-status-seg:is([data-seg='folder'], [data-seg='branch']) {
-  flex: 0 0 auto;
+.ui-board-foot .entry-foot-settings .model-setting > .ui-segmented {
+  flex: none;
 }
-.composer-line {
+.ui-board-foot {
+  align-items: flex-start;
+}
+.entry-permission-part {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: end;
-  gap: var(--sp-2);
+  gap: var(--sp-6);
   min-width: 0;
-  padding: var(--sp-2) var(--sp-6) var(--sp-6);
+  margin-inline-start: auto;
 }
-.composer-line > :is(.composer-input, .composer-readonly) {
-  grid-column: 1 / -1;
+@media (max-width: 767.98px) {
+  .entry-permission-part {
+    margin-inline-start: 0;
+  }
+  .ui-board-foot .entry-foot-settings .model-setting {
+    display: grid;
+    gap: var(--sp-6);
+  }
+  .ui-board-foot .entry-foot-settings,
+  .ui-board-foot .entry-foot-settings .model-setting > .ui-segmented {
+    width: 100%;
+  }
+  /* On a phone the Harness is its mark alone, its name in its menu: the model's name keeps the room. */
+  .composer[data-inline]
+    [data-composer-control='harness']
+    :is(.ui-value-picker-value, .chip-text, .ui-value-picker-chevron, .chip-chevron) {
+    display: none;
+  }
+  .composer[data-inline] .composer-control[data-composer-control='harness'] {
+    max-width: none;
+    margin-inline-end: var(--sp-4);
+  }
+  /* With the amber mode's name on the entry, the level leaves for the panel so the model keeps its name. */
+  .composer[data-inline] .entry-picker:has(.entry-permission[data-amber]) .ui-value-picker-trail {
+    display: none;
+  }
 }
-.composer-line > [data-composer-control='permission'] {
-  grid-column: 2;
-  justify-self: end;
-  min-width: 0;
-  max-width: 100%;
+/*
+ * The input's line stays one line at every width: a long model name gives way first (its whole name in the entry's
+ * hover and in the panel), then a long Harness name; the level, the permission and send never do.
+ */
+.composer-toolbar .composer-controls {
+  flex-wrap: nowrap;
 }
-.composer-line > .composer-slot {
-  grid-column: 3;
+.composer-toolbar .composer-control:is([data-composer-control='harness'], [data-composer-control='model']) {
+  flex: 0 1 auto;
 }
-.composer-line .chip-permission {
-  min-width: 0;
-  min-height: 44px;
-  height: auto;
-  padding-block: var(--sp-4);
-}
-.composer-line .chip-permission > .chip-text {
-  white-space: normal;
-  overflow-wrap: anywhere;
-  text-align: start;
-}
-.composer-line > :is(.ui-icon-button, .composer-slot, .ui-button) {
-  margin-bottom: var(--sp-2);
+.composer-toolbar .composer-control[data-composer-control='harness'] {
+  flex-shrink: 0;
+  max-width: 40%;
 }
 .composer-meta > * {
   flex-shrink: 0;

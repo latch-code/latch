@@ -153,6 +153,11 @@ export function Boards() {
             />
           </div>
         </Cell>
+        <Cell caption="面板脚部 · 一行 · 写入中">
+          <div className="ui-popover" data-size="md">
+            <ModeStrip compact pending label="权限" value={mode} options={GALLERY_MODES.slice(1)} onChoose={setMode} />
+          </div>
+        </Cell>
       </Row>
       <Row label="选择面板">
         <Cell caption="多个来源 · 档位 · 设置">
@@ -182,6 +187,35 @@ export function Boards() {
                 <MenuFooterLink icon={ModelGlyph} chevron={false} onClick={() => {}}>
                   管理模型…
                 </MenuFooterLink>
+              }
+            />
+          </div>
+        </Cell>
+        <Cell caption="脚部 · 速度与权限 · 选了不关">
+          <div className="ui-popover" data-size="lg">
+            <PickerBoard
+              keepOpen
+              label="模型"
+              levelsLabel="思考"
+              sources={GALLERY_SOURCES.slice(1)}
+              value={model}
+              levels={galleryLevels}
+              onItem={setModel}
+              onLevel={() => {}}
+              foot={
+                <>
+                  <SegmentedControl
+                    label="速度"
+                    size="xs"
+                    value="standard"
+                    onValueChange={() => {}}
+                    options={[
+                      { value: 'standard', label: '标准' },
+                      { value: 'fast', label: '快速' },
+                    ]}
+                  />
+                  <ModeStrip compact label="权限" value="never" options={GALLERY_MODES.slice(1)} onChoose={() => {}} />
+                </>
               }
             />
           </div>

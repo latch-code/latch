@@ -2,8 +2,8 @@ import { SHELL_COPY } from './copy.ts'
 import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conversation/failureAction.ts'
 import { Eraser, GitFork } from 'lucide-react'
 import { NOT_ACCEPTED_5XX, type ModelRef, type SessionConfigOption, type TaskSummary } from '@latch/protocol'
-import { Button, Collapse, Hint, Icon, InlineNotice, FolderGlyph, HistoryGlyph, ShieldAlertGlyph, LaptopGlyph, Drawer } from '@latch/ui'
-import { VisibleText } from '../components/VisibleText.tsx'
+import { Button, Collapse, Hint, Icon, InlineNotice, FolderGlyph, HistoryGlyph, ShieldAlertGlyph, Drawer } from '@latch/ui'
+import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import {
   draftConfig,
   harnessName,
@@ -38,7 +38,8 @@ import { ComposerStatus, FolderSegment, statusRoute } from '../composer/Composer
 import { SessionVitalsLine } from '../composer/VitalsStrip.tsx'
 import { DraftHarnessControl, forkBusy, SessionHarnessControl, type SessionFork } from '../composer/ModelControl.tsx'
 import { DraftModelControl, SessionModelControl } from '../composer/ModelPanel.tsx'
-import { PermissionChip } from '../composer/PermissionChip.tsx'
+import type { EntryPermission } from '../composer/EntryPermission.tsx'
+import { ConfigFeedback } from '../composer/ThinkingControl.tsx'
 import { composerOptions, configUnknownBar, ownModelName } from '../composer/modelReasoning.ts'
 import { draftPermission, draftRead, permissionView } from '../composer/permission.ts'
 import { helperPermissionBlocked } from '../agents/personWords.ts'
@@ -68,6 +69,13 @@ const COMPOSER_COPY = defineCopy(
     fork: (title: string) => `从「${title}」分叉`,
     moved: (title: string) => `接着「${title}」聊`,
     editFirst: (title: string) => `改写「${title}」的第一条`,
+    askIn: '想在 ',
+    askAfter: ' 里做什么？',
+    ask: '想做什么？',
+    skipProject: '不选项目直接开始',
+    pickProject: '选一个项目',
+    place: '在哪里开始',
+    busy: '正在切换，请稍后。',
   },
   {
     service: (harness: string) => `Model service used by ${harness}`,
@@ -76,6 +84,13 @@ const COMPOSER_COPY = defineCopy(
     fork: (title: string) => `Fork from “${title}”`,
     moved: (title: string) => `Continue “${title}”`,
     editFirst: (title: string) => `Edit the first message of “${title}”`,
+    askIn: 'What should we build in ',
+    askAfter: '?',
+    ask: 'What should we build?',
+    skipProject: 'Start without a project',
+    pickProject: 'Choose a project',
+    place: 'Where it starts',
+    busy: 'Switching. Try again in a moment.',
   },
 )
 
@@ -89,13 +104,23 @@ export function SendingBubble({ shell }: { shell: ShellState }) {
 /** On a phone the input has no room for the part after the two spaces, which teaches @ and /. */
 const phoneWords = (words: string) => words.split('  ')[0]!
 
-/** The home input's project: the one chosen, or 不选项目, which starts in the Host's default folder. */
-function HomeProject({ shell }: { shell: ShellState }) {
+/** A project's name on the headline is cut past this many characters; its hover shows it whole. */
+const LONG_PROJECT = 28
+
+/**
+ * The start page's headline over its input: 「想在 〈项目〉 里做什么？」, the project's name with a dotted underline that
+ * opens the project list, and under it one small action, 「不选项目直接开始」. With no project chosen it asks
+ * 「想做什么？」 and the small line 「选一个项目」 opens the list. What the list offers (不选项目, adding one, the reason a
+ * folder was refused) is the project picker's own.
+ */
+function HomeHeadline({ shell }: { shell: ShellState }) {
   const { catalog, choice, newChoicesLocked, access, owner, openSettings, createProject, projectAsk, chooseProject } = shell
-  if (!catalog) return SHELL_COPY.newSession
+  if (!catalog) return null
   const project = catalog.workspaces.find(item => item.id === choice.workspaceId && item.id !== 'default')
-  return (
+  const name = project ? escapeHiddenCharacters(project.name || basename(project.path)) : undefined
+  const picker = (face: string | undefined) => (
     <ProjectPicker
+      inline
       access={access}
       catalog={catalog}
       value={project?.id ?? (choice.projectSkipped ? 'default' : undefined)}
@@ -107,7 +132,33 @@ function HomeProject({ shell }: { shell: ShellState }) {
       openRequest={projectAsk.request}
       notice={projectAsk.notice}
       onClosed={projectAsk.clearNotice}
+      {...(face !== undefined ? { face } : {})}
+      {...(name && name.length > LONG_PROJECT ? { hint: name } : {})}
     />
+  )
+  return (
+    <div className="home-headline" data-backdrop-clear="">
+      <h2 className="home-headline-ask">
+        {name ? (
+          <>
+            {COMPOSER_COPY.askIn}
+            <span className="home-headline-project">{picker(name)}</span>
+            {COMPOSER_COPY.askAfter}
+          </>
+        ) : (
+          COMPOSER_COPY.ask
+        )}
+      </h2>
+      <p className="home-headline-sub">
+        {name ? (
+          <button type="button" className="home-headline-skip" disabled={newChoicesLocked} onClick={() => chooseProject('default')}>
+            {COMPOSER_COPY.skipProject}
+          </button>
+        ) : (
+          <span className="home-headline-pick">{picker(COMPOSER_COPY.pickProject)}</span>
+        )}
+      </p>
+    </div>
   )
 }
 
@@ -405,6 +456,39 @@ export function SessionComposer({
   const speaker = selectedId !== null ? speakerOf(shell.snapshot, summary) : undefined
   const showControls = speaker === undefined && (selectedId === null || (!!summary && !summary.personal && gate.kind !== 'stopped'))
   const permissionChange = selectedId !== null ? configFeedback.get(selectedId) : undefined
+  // The permission is set in the model's entry: its mark on the entry, its modes in the panel's foot.
+  const modeId = permission?.option?.id
+  const entryPermission: EntryPermission | undefined =
+    permission && catalog && (selectedId === null || summary)
+      ? {
+          // While another of the session's settings is being written, the other modes wait for it, with why; a choice is
+          // never dropped unsaid.
+          view:
+            selectedId !== null && configBusy.has(selectedId) && permission.rows
+              ? {
+                  ...permission,
+                  rows: permission.rows.map(row =>
+                    row.current || row.disabledReason ? row : { ...row, disabledReason: COMPOSER_COPY.busy },
+                  ),
+                }
+              : permission,
+          onChoose: value => {
+            if (permission.option) chooseOption(permission.option, value)
+          },
+          ...(selectedId !== null && modeId !== undefined && configBusy.get(selectedId) === modeId ? { pending: true } : {}),
+          ...(permissionChange && modeId !== undefined && permissionChange.configId === modeId
+            ? { feedback: <ConfigFeedback feedback={permissionChange} onRefresh={refreshConfig} /> }
+            : {}),
+          // A draft's modes come from the same read as its model list, so opening the panel asks for them as well.
+          ...(selectedId === null && !newChoicesLocked
+            ? {
+                onOpen: () => {
+                  if (readsOnPermission(chosenHarness, access)) readOnSelect(chosenHarness, refresh)
+                },
+              }
+            : {}),
+        }
+      : undefined
   const permissionBlocked =
     selectedId !== null && helperPermissionBlocked(current, permissionChange?.kind === 'unknown' ? permissionChange.configId : undefined)
   const worktreeOffer = selectedId === null ? worktreeProject(catalog, choice, submission.fork !== null) : undefined
@@ -591,7 +675,25 @@ export function SessionComposer({
   ) : ownLogin && ownLogin.capabilities.models.owner === 'harness' ? (
     <HarnessLimitChip harness={ownLogin} />
   ) : undefined
-  return (
+  // Where in the project the new session starts, one quiet line under the input: the computer, then the project folder
+  // or a new worktree, then the branch. The project itself is the headline's.
+  const homePlace = home ? (
+    <div className="home-place" role="group" aria-label={COMPOSER_COPY.place}>
+      <StartComputer hostId={hostView(base.snapshot)?.hostId} disabled={newChoicesLocked} />
+      {worktreeOffer && (
+        <FolderControl
+          project={worktreeOffer}
+          worktree={submission.worktree}
+          onWorktree={submission.setWorktree}
+          disabled={newChoicesLocked}
+          branch={catalog?.workspaces.find(item => item.id === choice.workspaceId)?.branch}
+          starts
+          switchBranch={branchSwitchable}
+        />
+      )}
+    </div>
+  ) : undefined
+  const composer = (
     <Composer
       showSlashButton={speaker === undefined}
       textareaRef={composerRef}
@@ -685,35 +787,10 @@ export function SessionComposer({
           <SessionVitalsLine summary={summary} detail={current} harness={harnessInfo} phone={phone} />
         ) : undefined
       }
-      locationPosition={home && phone ? 'toolbar' : 'top'}
-      location={
-        home ? (
-          <div className="home-composer-location">
-            <StartComputer hostId={hostView(base.snapshot)?.hostId} disabled={newChoicesLocked} />
-            <HomeProject shell={base} />
-            {worktreeOffer && (
-              <FolderControl
-                project={worktreeOffer}
-                worktree={submission.worktree}
-                onWorktree={submission.setWorktree}
-                disabled={newChoicesLocked}
-                branch={catalog?.workspaces.find(item => item.id === choice.workspaceId)?.branch}
-                starts
-                switchBranch={branchSwitchable}
-              />
-            )}
-            {phone && (
-              <span className="home-composer-computer">
-                <Icon icon={LaptopGlyph} size={14} />
-                {computerName(base.snapshot.hostName)}
-              </span>
-            )}
-          </div>
-        ) : undefined
-      }
       below={
         selectedId === null && catalog ? (
           <>
+            {!phone && homePlace}
             {/* Captions open under the input like disclosures, so the input and everything above it stay put. */}
             <Collapse open={codeRootChoice !== undefined}>
               <p className="composer-notice" data-tint="warn" role="note">
@@ -765,6 +842,8 @@ export function SessionComposer({
           />
         ) : undefined
       }
+      // A phone keeps the place over its input, first in reading order as it is on screen.
+      {...(phone && homePlace ? { over: homePlace } : {})}
       confirmation={
         <InlineConfirm active={submission.sending || (selectedId !== null && configBusy.has(selectedId))} className="composer-confirm" />
       }
@@ -788,30 +867,6 @@ export function SessionComposer({
       // The limit arrives seconds after a turn starts and leaves with the Host's memory: last before send at every width,
       // so the controls before it stay where they are.
       usage={showControls ? usageChip : undefined}
-      permission={
-        showControls && catalog && (selectedId === null || summary) ? (
-          <ComposerControl name="permission">
-            {permission ? (
-              <PermissionChip
-                view={permission}
-                onChoose={chooseOption}
-                // A draft's modes come from the same read as its model list, so opening this first asks as well.
-                {...(selectedId === null && !newChoicesLocked
-                  ? {
-                      onOpenChange: (open: boolean) => {
-                        if (open && readsOnPermission(chosenHarness, access)) readOnSelect(chosenHarness, refresh)
-                      },
-                    }
-                  : {})}
-              />
-            ) : (
-              <button type="button" className="chip chip-permission" disabled>
-                <span className="chip-text">{SHELL_COPY.permissions}</span>
-              </button>
-            )}
-          </ComposerControl>
-        ) : undefined
-      }
       controls={
         !showControls ? null : !catalog ? (
           selectedId === null ? (
@@ -848,6 +903,7 @@ export function SessionComposer({
             <ComposerControl name="model">
               <DraftModelControl
                 withLevel
+                permission={entryPermission}
                 catalog={catalog}
                 choice={choice}
                 onChoice={submission.updateChoice}
@@ -873,6 +929,7 @@ export function SessionComposer({
               <ComposerControl name="model">
                 <SessionModelControl
                   withLevel
+                  permission={entryPermission}
                   catalog={catalog}
                   harness={harnessInfo}
                   model={effectiveModel}
@@ -900,6 +957,14 @@ export function SessionComposer({
         )
       }
     />
+  )
+  // The start page asks first, over its input; a session's input, and the start's input held under a pending send, do not.
+  if (!home || pendingInTranscript) return composer
+  return (
+    <>
+      <HomeHeadline shell={base} />
+      {composer}
+    </>
   )
 }
 

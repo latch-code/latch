@@ -371,6 +371,72 @@ describe('the picker board', () => {
     await expect.element(page.getByRole('menuitemradio', { name: '高' })).toHaveFocus()
   })
 
+  it('with keepOpen and a foot: stays open through an item, a level and the foot, opens on the foot when asked, and Escape closes', async () => {
+    const onItem = vi.fn()
+    const onLevel = vi.fn()
+    const onMode = vi.fn()
+    function Footed() {
+      const [mode, setMode] = useState('ask')
+      return (
+        <ValuePicker
+          label="模型"
+          value="face"
+          options={[{ value: 'face', label: 'beta' }]}
+          onValueChange={() => {}}
+          width="lg"
+          mark={<span data-testid="mark">{mode}</span>}
+          pending
+          panel={
+            <PickerBoard
+              keepOpen
+              focus="foot"
+              label="模型"
+              levelsLabel="思考"
+              sources={GALLERY_SOURCES}
+              value="lab/beta"
+              levels={galleryLevels}
+              onItem={onItem}
+              onLevel={onLevel}
+              foot={
+                <ModeStrip
+                  compact
+                  label="权限"
+                  value={mode}
+                  options={GALLERY_MODES}
+                  onChoose={next => {
+                    setMode(next)
+                    onMode(next)
+                  }}
+                />
+              }
+            />
+          }
+        />
+      )
+    }
+    const open = () => document.querySelector('.ui-board')?.closest('[popover]')?.matches(':popover-open')
+    const screen = await render(<Footed />)
+    // The mark stays while the trigger waits on a write; the second value (trailing) would not.
+    await expect.element(screen.getByTestId('mark')).toBeVisible()
+    await screen.getByRole('button', { name: /^模型/u }).click()
+    await expect.element(page.getByRole('radio', { name: '先问你' })).toHaveFocus()
+    await userEvent.keyboard('{ArrowRight}{Enter}')
+    expect(onMode).toHaveBeenCalledWith('rule')
+    expect(open()).toBe(true)
+    await page.getByRole('menuitemradio', { name: 'alpha' }).click()
+    expect(onItem).toHaveBeenCalledWith('lab/alpha')
+    await page.getByRole('menuitemradio', { name: '高' }).click()
+    expect(onLevel).toHaveBeenCalled()
+    expect(open()).toBe(true)
+    // The foot runs under all three columns, inside the layer.
+    const foot = document.querySelector<HTMLElement>('.ui-board-foot')!.getBoundingClientRect()
+    const whole = board().getBoundingClientRect()
+    expect(Math.round(foot.width)).toBe(Math.round(whole.width))
+    expect(document.querySelector('.ui-mode-strip-shown')?.textContent).toContain('按规则放行')
+    await userEvent.keyboard('{Escape}')
+    await expect.poll(open).toBe(false)
+  })
+
   it('opens on a search asked for (a slash argument), with the field filled and focused', async () => {
     function Asked() {
       const [request, setRequest] = useState<{ query: string; revision: number }>()

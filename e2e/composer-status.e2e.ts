@@ -230,23 +230,22 @@ describe('the composer without a status line', () => {
       try {
         const form = page.locator('form.composer').filter({ visible: true })
         expect(await status(page).count()).toBe(0)
-        expect(await form.locator('.composer-toolbar, [data-rows], .composer-prompt').count()).toBe(0)
+        expect(await form.locator('.composer-chips, .composer-line, [data-rows], .composer-prompt').count()).toBe(0)
         expect(await form.getByRole('button', { name: '／', exact: true }).count()).toBe(0)
-        const chips = form.getByRole('group', { name: '会话选项', exact: true })
-        expect(await chips.evaluate(item => item.classList.contains('composer-chips'))).toBe(true)
-        expect(await chips.locator('[data-composer-control]').count()).toBeGreaterThanOrEqual(2)
-        // The row scrolls sideways by itself; the page never does.
-        expect(await chips.evaluate(item => getComputedStyle(item).overflowX)).toMatch(/auto|scroll/u)
-        const line = form.locator('.composer-line')
-        const [chipsBox, lineBox, inputBox, sendBox] = await Promise.all([
-          chips.boundingBox(),
+        // The full-width text over one line: the Harness and the one entry, then send, all inside the frame.
+        const line = form.locator('.composer-toolbar')
+        expect(await line.locator('[data-composer-control]').count()).toBe(2)
+        const [frameBox, lineBox, inputBox, sendBox, entryBox] = await Promise.all([
+          form.boundingBox(),
           line.boundingBox(),
-          line.locator('textarea').boundingBox(),
+          form.locator('textarea').boundingBox(),
           line.locator('.send-button').boundingBox(),
+          line.locator('[data-composer-control="model"]').boundingBox(),
         ])
-        expect(chipsBox!.y + chipsBox!.height).toBeLessThanOrEqual(lineBox!.y + 1)
-        expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(sendBox!.y + 1)
-        expect(inputBox!.width).toBeGreaterThan(lineBox!.width - 20)
+        expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(lineBox!.y + 1)
+        expect(inputBox!.width).toBeGreaterThan(frameBox!.width - 20)
+        expect(Math.abs(entryBox!.y + entryBox!.height / 2 - (sendBox!.y + sendBox!.height / 2))).toBeLessThan(2)
+        expect(sendBox!.x + sendBox!.width).toBeLessThanOrEqual(frameBox!.x + frameBox!.width)
         expect(await line.locator('.send-button').getAttribute('aria-label')).toBe('发送')
         await noHorizontalOverflow(page)
         if (width === 390) await shot(page, `phone-composer--390--${theme}`)
@@ -275,11 +274,12 @@ describe('the composer without a status line', () => {
           .getByRole('menuitemradio', { name: /Fake Agent/u })
           .first()
           .click()
-        // No project: the input's place says 不选项目 beside a folder glyph, and never asks to choose one.
-        const place = page.locator('.home-composer-location')
-        expect(await place.innerText()).toContain('不选项目')
+        // No project: the headline asks 想做什么？ with 选一个项目 under it, and never 选择项目.
+        const headline = page.locator('.home-headline')
+        expect(await headline.innerText()).toContain('想做什么？')
+        expect(await headline.innerText()).toContain('选一个项目')
         expect(await page.getByText('选择项目', { exact: true }).count()).toBe(0)
-        expect(await place.locator('svg').count()).toBeGreaterThan(0)
+        expect(await page.locator('.home-place').innerText()).toBe('')
         expect(await status(page).locator('visible=true').count()).toBe(0)
         expect(
           await page
@@ -287,7 +287,7 @@ describe('the composer without a status line', () => {
             .count(),
         ).toBe(0)
         await shot(page, `a-new-no-project--${width}--${theme}`)
-        // The title is the project; the line has its folder choice and its branch.
+        // The headline names the project; the line under the input has its folder choice and its branch.
         await page
           .getByRole('button', { name: /^项目：/u })
           .first()
@@ -296,8 +296,8 @@ describe('the composer without a status line', () => {
           .getByRole('menuitemradio', { name: /latch-demo/u })
           .first()
           .click()
-        const location = page.locator('.home-composer-location')
-        await expect.poll(() => location.innerText()).toContain('latch-demo')
+        await expect.poll(() => headline.innerText()).toContain('latch-demo')
+        const location = page.locator('.home-place')
         await expect.poll(() => location.innerText()).toContain('main')
         expect(await location.innerText()).toContain('当前文件夹')
         // The folder choice is whole in the line: its arrow comes after its words.

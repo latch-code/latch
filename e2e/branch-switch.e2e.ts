@@ -140,7 +140,7 @@ describe('the branch chip', () => {
         await page.screenshot({ path: `${OUT}/long-draft--${width}--${theme}.png` })
         expect(await oneLine(page)).toBeGreaterThan(0)
         // The chip is the switch: its list, at this width.
-        await page.locator('.home-composer-location button.branch-switch').click()
+        await page.locator('.home-place button.branch-switch').click()
         await page.getByRole('menuitemradio', { name: LONG }).or(page.getByRole('menuitemradio').first()).first().waitFor()
         await page.waitForTimeout(500)
         await page.screenshot({ path: `${OUT}/list--${width}--${theme}.png` })
@@ -159,7 +159,7 @@ describe('the branch chip', () => {
     const page = await open(1440, 'light')
     try {
       await chooseProject(page)
-      const chip = page.locator('.home-composer-location button.branch-switch')
+      const chip = page.locator('.home-place button.branch-switch')
       await chip.waitFor()
       // Esc closes the list and gives focus back to the chip.
       await chip.click()

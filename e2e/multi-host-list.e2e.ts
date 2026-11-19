@@ -282,7 +282,7 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
       expect(await page.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }).inputValue()).toBe(
         '只在这台 Mac 的草稿',
       )
-      await bPage.locator('.home-composer-location').getByText('乙方项目').or(bPage.locator('.home-composer-location')).first().waitFor()
+      await bPage.locator('.home-headline').getByText('乙方项目').or(bPage.locator('.home-headline')).first().waitFor()
       await bPage.screenshot({ path: join(SHOTS, 'start-on-b--light--1440.png'), animations: 'disabled' })
       const before = { a: (await a.host.bridge.listTasks()).length, b: (await b.host.bridge.listTasks()).length }
       await bInput.fill('在乙方电脑上开始')

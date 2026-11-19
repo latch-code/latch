@@ -62,7 +62,8 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
   }
   const quota = async (id: string) =>
     (await owner.json<AppSnapshot>('snapshot')).catalog?.harnesses.find(harness => harness.id === id)?.quota
-  const chip = (page: Page) => page.locator('main.workspace:not([inert]) form.composer .usage-chip')
+  // On the input's line; a phone's stands at the end of the line under the input.
+  const chip = (page: Page) => page.locator('main.workspace:not([inert]) .composer-stack .usage-chip')
   const surface = (page: Page) => page.getByRole('dialog', { name: '额度与用量', exact: true })
   const windows = (page: Page) =>
     surface(page)
@@ -172,12 +173,12 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
     try {
       await chip(page).getByText('每周已用 68%', { exact: true }).waitFor()
       expect(await chip(page).getAttribute('data-state')).toBe('ok')
-      // The chip stands after every control, right before send.
+      // The chip comes after every control in the line's order; the one entry is drawn at the line's end, beside send.
       const order = await page
         .locator('main.workspace:not([inert]) form.composer')
         .locator('[data-composer-control], .composer-usage')
         .evaluateAll(items => items.map(item => item.getAttribute('data-composer-control') ?? 'usage'))
-      expect(order).toEqual(['harness', 'model', 'thinking', 'permission', 'usage'])
+      expect(order).toEqual(['harness', 'model', 'usage'])
       // Its hover says when the window resets, and the shortcut.
       await chip(page).hover()
       await page.getByRole('tooltip').getByText('5 天 23 小时后重置', { exact: true }).waitFor()
@@ -235,7 +236,7 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
           )
         const height = async () => Math.round((await composer.boundingBox())!.height)
         const withChip = { boxes: await boxes(), height: await height() }
-        expect(withChip.boxes.map(box => box[0])).toEqual(['harness', 'model', 'thinking', 'permission'])
+        expect(withChip.boxes.map(box => box[0])).toEqual(['harness', 'model'])
         const box = (await chip(page).boundingBox())!
         expect(box.x >= 0 && box.x + box.width <= width && box.width > 0, `${width}`).toBe(true)
         const hidden = await page.addStyleTag({ content: '.composer-usage { display: none !important; }' })

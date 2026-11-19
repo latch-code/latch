@@ -30,7 +30,7 @@ import {
   type AgentRecord,
 } from '../src/index.ts'
 import { CodexWire, codexMcpServer, codexVersion, setCodexStopLimits } from '../src/wires/codex.ts'
-import { gatewayEffortOption } from '../src/codex-models.ts'
+import { codexOptions, gatewayEffortOption } from '../src/codex-models.ts'
 import { MCP_STATUS_METHOD } from '../src/protocol.ts'
 import { RequestTimeout, setProcessLister } from '../src/wires/process.ts'
 import { cliTree, seedCliFiles } from './helpers/cli-config.ts'
@@ -659,6 +659,85 @@ describe('Codex over its app-server', () => {
     })
     expect(detail.config?.find(option => option.category === 'mode')?.currentValue).toBe('read-only')
     expect(detail.config?.find(option => option.category === 'model')?.currentValue).toBe('gpt-fake')
+  })
+
+  it('offers 速度 only for a model with the Fast tier, sends the tier once picked, and reads it back from the thread', async () => {
+    const t = await computer({ FAKE_CODEX_TIERS: '1' })
+    let bridge = await t.open()
+    const id = await start(bridge, t.main, 'echo first')
+    let detail = await settled(bridge, id)
+    const speed = () => detail.config?.find(option => option.id === 'service_tier')
+    expect(speed()).toMatchObject({
+      name: '速度',
+      category: 'model_config',
+      currentValue: 'default',
+      options: [
+        { value: 'default', name: '标准' },
+        { value: 'priority', name: '快速', description: '1.5x speed, increased usage' },
+      ],
+    })
+    // Nothing picked: the turn names no tier, so the thread keeps what the person's own configuration says.
+    expect(sent(await t.log(), 'turn/start')[0]!.params).not.toHaveProperty('serviceTier')
+
+    await bridge.setConfig!(id, 'service_tier', 'priority')
+    await bridge.prompt(id, 'echo fast', rid())
+    detail = await settled(bridge, id)
+    expect(sent(await t.log(), 'turn/start').at(-1)!.params).toMatchObject({ serviceTier: 'priority' })
+    expect(speed()?.currentValue).toBe('priority')
+    await expect(bridge.setConfig!(id, 'service_tier', 'ultrafast')).rejects.toThrow()
+
+    // A model without the tier offers no 速度, and its turns name none.
+    await bridge.setConfig!(id, 'model', 'gpt-fake-mini')
+    detail = await bridge.detail(id)
+    expect(speed()).toBeUndefined()
+    await bridge.prompt(id, 'echo mini', rid())
+    await settled(bridge, id)
+    expect(sent(await t.log(), 'turn/start').at(-1)!.params).not.toHaveProperty('serviceTier')
+    await bridge.setConfig!(id, 'model', 'gpt-fake')
+    await bridge.setConfig!(id, 'service_tier', 'priority')
+    await bridge.prompt(id, 'echo back', rid())
+    await settled(bridge, id)
+    await bridge.close()
+
+    // A new process reads the tier back from the resumed thread, as Codex reports it.
+    bridge = await t.open()
+    await bridge.prompt(id, 'echo again', rid())
+    detail = await settled(bridge, id)
+    expect(sent(await t.log(), 'thread/resume').length).toBeGreaterThan(0)
+    expect(speed()?.currentValue).toBe('priority')
+  })
+
+  it('lists 速度 per model for a draft only on Codex’s own wire, the configured tier read as its current value', () => {
+    const fast = { id: 'priority', name: 'Fast', description: '2x speed, increased usage' }
+    const listed = {
+      models: [
+        { id: 'a', isDefault: true, supportedReasoningEfforts: [], serviceTiers: [fast, { id: 'ultrafast', name: 'Ultrafast' }] },
+        { id: 'b', supportedReasoningEfforts: [] },
+      ],
+      tier: 'priority',
+    }
+    const own = codexOptions(listed, true)
+    expect(own.options.find(option => option.id === 'service_tier')?.currentValue).toBe('priority')
+    expect(own.perModel.map(entry => [entry.model, entry.options.map(option => option.id)])).toEqual([['a', ['service_tier']]])
+    // Ultrafast is no choice of its own here; a thread already on it shows it.
+    expect(own.options.find(option => option.id === 'service_tier')?.options.map(option => option.value)).toEqual(['default', 'priority'])
+    expect(
+      codexOptions({ ...listed, tier: 'ultrafast' }, true)
+        .options.at(-1)
+        ?.options.map(option => option.name),
+    ).toEqual(['标准', '快速', 'Ultrafast'])
+    expect(codexOptions(listed).perModel).toEqual([])
+  })
+
+  it('reads a configured tier as the thread’s and offers no 速度 without the tier', async () => {
+    const configured = await computer({ FAKE_CODEX_TIERS: '1', FAKE_CODEX_SERVICE_TIER: 'fast' })
+    const bridge = await configured.open()
+    const detail = await settled(bridge, await start(bridge, configured.main, 'echo hi'))
+    expect(detail.config?.find(option => option.id === 'service_tier')?.currentValue).toBe('priority')
+    const plain = await computer()
+    const other = await plain.open()
+    const none = await settled(other, await start(other, plain.main, 'echo hi'))
+    expect(none.config?.some(option => option.id === 'service_tier')).toBe(false)
   })
 
   it("carries Codex's own classification of a command only when it classified every part of it", async () => {

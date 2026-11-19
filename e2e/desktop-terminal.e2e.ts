@@ -545,7 +545,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       const selected = await owner.addFolders({ name: '终端验收项目', paths: [projectPath] })
       expect(selected.status).toBe(201)
       const { workspace } = (await selected.json()) as { workspace: WorkspaceInfo }
-      const projectPicker = page.locator('.workbench-home .home-composer-location').getByRole('button').first()
+      const projectPicker = page.locator('.workbench-home .home-headline').getByRole('button').first()
       await projectPicker.click()
       await page.getByRole('menu', { name: '项目', exact: true }).getByText('终端验收项目', { exact: true }).click()
       // The dock stays open on the new target, so its first terminal starts at once; no button in between.

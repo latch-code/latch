@@ -8,7 +8,7 @@ import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSession, showTooltip } from './helpers/layout.ts'
+import { composerEntry, entryPermission, noHorizontalOverflow, openSession, showTooltip } from './helpers/layout.ts'
 import { homeInput } from './helpers/workbench.ts'
 
 test('shows immediate text, delays delivery wording and retries an uncertain input with the same identity on three widths', async () => {
@@ -515,15 +515,19 @@ test('opens the new-session transcript on send, keeps the lost receipt, and open
         const task = matches[0]!
         expect((await owner.json<TaskDetail>(`tasks/${task.id}`)).messages.filter(message => message.role === 'user')).toHaveLength(1)
         if (width === 390) {
-          const chip = page.locator('.composer-line').getByRole('button', { name: `权限：${permission}`, exact: true })
+          // The permission is said on the one entry beside send; its mark is never cut, whatever the model's name is.
+          const form = page.locator('main.workspace:not([inert]) form.composer')
+          const chip = composerEntry(form)
           await chip.waitFor()
+          expect(await entryPermission(form)).toBe(`权限：${permission}`)
           expect(
-            await chip.locator('.chip-text').evaluate(element => ({
-              horizontal: element.scrollWidth <= element.clientWidth + 1,
-              vertical: element.getBoundingClientRect().height <= element.closest('button')!.getBoundingClientRect().height,
-            })),
-          ).toEqual({ horizontal: true, vertical: true })
-          const sendBox = (await page.locator('.composer-line .composer-slot').boundingBox())!
+            await chip.evaluate(button => {
+              const mark = button.querySelector('.entry-permission')!.getBoundingClientRect()
+              const box = button.getBoundingClientRect()
+              return { inside: mark.left >= box.left - 1 && mark.right <= box.right + 1, vertical: mark.height <= box.height }
+            }),
+          ).toEqual({ inside: true, vertical: true })
+          const sendBox = (await form.locator('.composer-slot').boundingBox())!
           const permissionBox = (await chip.boundingBox())!
           expect(sendBox.x - (permissionBox.x + permissionBox.width)).toBeLessThan(12)
         }

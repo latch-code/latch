@@ -168,6 +168,15 @@
 .composer-toolbar .usage-chip-text.chip-text {
   align-items: center;
 }
+/* On a phone the chip ends the line under the input, after what the session used, whole and never squeezed. */
+.composer-foot[data-usage] > .composer-usage {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+}
+.composer-foot[data-usage] > :not(.composer-usage) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 @container composer-usage (max-width: 31.98px) {
   .usage-chip {
     display: none;
@@ -190,17 +199,6 @@
 .usage-chip-figure {
   flex: none;
 }
-/* On a phone the chip stays at the end of the row of chips while the row scrolls under it. */
-.composer-chips > .composer-usage {
-  position: sticky;
-  right: calc(-1 * var(--sp-8));
-  z-index: 1;
-  flex: none;
-  margin: 0 calc(-1 * var(--sp-8)) 0 auto;
-  padding: 0 var(--sp-8) 0 var(--sp-4);
-  background: var(--raised);
-}
-
 /*
  * The surface fits what it holds under a fixed top edge, so a switch of view or data arriving only moves its bottom; the
  * views are its header's control, beside the close button (on a phone, the first row of the sheet).

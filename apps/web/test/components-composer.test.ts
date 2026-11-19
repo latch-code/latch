@@ -959,41 +959,42 @@ describe('composer', () => {
     expect(html).not.toContain('取消')
   })
 
-  it('puts Harness and 模型 first, then 思考 and 权限, and keeps 「⋯」 and send in an end of their own', () => {
-    const controls = createElement('span', { 'data-composer-control': 'model' }, 'gpt-5.5')
-    const trailing = createElement('span', { 'data-composer-control': 'thinking' }, '高')
-    const permission = createElement('span', { 'data-composer-control': 'permission' }, '写入前询问')
+  it('draws the text, then one line: 「+」, slash, the Harness and the one entry, then 「⋯」 and send in an end of their own, on a phone too', () => {
+    const controls = createElement(
+      'span',
+      null,
+      createElement('span', { 'data-composer-control': 'harness' }, 'Codex'),
+      createElement('span', { 'data-composer-control': 'model' }, 'gpt-5.5 · 高 · 权限'),
+    )
     const order = (markup: string) =>
-      [...markup.matchAll(/class="composer-(controls|end)"|data-composer-control="(\w+)"|aria-label="发送"/gu)].map(
-        match => match[1] ?? match[2] ?? 'send',
+      [...markup.matchAll(/<textarea|class="composer-(controls|end)"|data-composer-control="(\w+)"|aria-label="(发送|插入命令)"/gu)].map(
+        match => (match[0] === '<textarea' ? 'text' : (match[1] ?? match[2] ?? (match[3] === '发送' ? 'send' : 'slash'))),
       )
-    expect(order(renderToStaticMarkup(createElement(Composer, { ...base, controls, trailing, permission })))).toEqual([
+    expect(order(renderToStaticMarkup(createElement(Composer, { ...base, controls })))).toEqual([
+      'text',
       'controls',
+      'slash',
+      'harness',
       'model',
-      'thinking',
-      'permission',
       'end',
       'send',
     ])
     // What comes and goes by itself, as a Harness's limits mark, is given last, after every control and right before
     // send at either width: when it appears or leaves, no control before it moves.
     const usage = createElement('span', { 'data-composer-control': 'late' }, '68%')
-    expect(order(renderToStaticMarkup(createElement(Composer, { ...base, controls, trailing, usage, permission }))).slice(-4)).toEqual([
-      'permission',
+    expect(order(renderToStaticMarkup(createElement(Composer, { ...base, controls, usage }))).slice(-4)).toEqual([
+      'model',
       'late',
       'end',
       'send',
     ])
-    const phone = renderToStaticMarkup(
-      createElement(Composer, { ...base, variant: 'session', inline: true, controls, trailing, usage, permission }),
-    )
-    expect(order(phone)).toEqual(['model', 'thinking', 'late', 'permission', 'send'])
-    expect(phone).not.toContain('composer-toolbar')
-    expect(phone.indexOf('composer-chips')).toBeLessThan(phone.indexOf('composer-line'))
-    expect(phone.indexOf('data-composer-control="thinking"')).toBeLessThan(phone.indexOf('composer-line'))
-    expect(phone.indexOf('composer-line')).toBeLessThan(phone.indexOf('<textarea'))
-    expect(phone.indexOf('<textarea')).toBeLessThan(phone.indexOf('data-composer-control="permission"'))
-    expect(phone.indexOf('data-composer-control="permission"')).toBeLessThan(phone.indexOf('aria-label="发送"'))
+    // No separate 权限 control and no row of chips: a phone draws the same line, without the slash button; its limit
+    // stands at the end of the line under the input, where its coming moves no control of the input.
+    const phone = renderToStaticMarkup(createElement(Composer, { ...base, variant: 'session', inline: true, controls, usage }))
+    expect(order(phone)).toEqual(['text', 'controls', 'harness', 'model', 'end', 'send', 'late'])
+    expect(phone).toContain('class="composer-foot" data-usage=""')
+    expect(phone).not.toContain('composer-chips')
+    expect(phone).not.toContain('data-composer-control="permission"')
   })
 
   it('shows a device that may only watch a dashed frame with the reason instead of the input', () => {

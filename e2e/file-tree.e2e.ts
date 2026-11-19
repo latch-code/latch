@@ -78,10 +78,10 @@ it.each([
       await page.locator('.info-page-head').getByRole('button', { name: '返回', exact: true }).click()
       await page.locator('.info-page').waitFor({ state: 'detached' })
       await page.getByRole('textbox', { name: '继续对话', exact: true }).fill('旧会话草稿')
-      // Back on the list, 新建会话 opens the start screen; the project is the first chip of the row over its input.
+      // Back on the list, 新建会话 opens the start screen; the project is chosen from the headline over its input.
       await header.getByRole('button', { name: '返回会话列表', exact: true }).click()
       await page.locator('.phone-list').getByRole('button', { name: '新建会话', exact: true }).click()
-      await page.locator('.workbench-home .composer-chips .home-composer-location').getByRole('button').first().click()
+      await page.locator('.workbench-home .home-headline').getByRole('button').first().click()
       await page
         .getByRole('dialog', { name: '项目', exact: true })
         .getByRole('radio', { name: /新项目/u })

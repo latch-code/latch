@@ -60,6 +60,11 @@ async function service(page: Page, name: string): Promise<Locator> {
 async function pickModel(page: Page, name: string) {
   await layer(page).getByRole('searchbox', { name: '搜索模型' }).fill(name)
   await row(page, name).click()
+  // The entry's panel stays open on a choice, for the level, speed and permission; put it away as a person would.
+  if (await layer(page).locator('.ui-board.is-entry').count()) {
+    await page.keyboard.press('Escape')
+    await layer(page).locator('.ui-board.is-entry').waitFor({ state: 'hidden' })
+  }
 }
 /** A disabled row's reason: its tooltip, which is also its accessible description. */
 const reason = (locator: Locator) =>
@@ -181,7 +186,7 @@ describe('a Harness with its own models on a saved service', () => {
     // Opening the menu first reads Codex's own list.
     await row(page, /GPT Own/u).waitFor()
     await pickModel(page, 'fake-model-large')
-    await expect.poll(() => chip(page, '模型').innerText()).toBe('fake-model-large')
+    await expect.poll(() => chip(page, '模型').locator('.ui-value-picker-text[data-shown]').innerText()).toBe('fake-model-large')
     // The panel opens on the service picked; Codex's own models are its first rail entry.
     await chip(page, '模型').click()
     await source(page, 'Codex')
@@ -226,7 +231,7 @@ describe('a Harness with its own models on a saved service', () => {
       if (width === 390) {
         await expect.poll(() => chip(page, '模型').innerText()).toContain('fake-model')
         await shot(page, `chip-picked-${width}-${theme}`)
-      } else await expect.poll(() => chip(page, '模型').innerText()).toBe('fake-model')
+      } else await expect.poll(() => chip(page, '模型').locator('.ui-value-picker-text[data-shown]').innerText()).toBe('fake-model')
       await page.context().close()
     }
   })
@@ -259,11 +264,11 @@ describe('a Harness with its own models on a saved service', () => {
     await shot(page, 'draft-menu-1440-light')
     await service(page, 'OpenAI')
     await row(page, 'fake-model-large').click()
-    await expect.poll(() => chip(page, '模型').innerText()).toBe('fake-model-large')
+    await expect.poll(() => chip(page, '模型').locator('.ui-value-picker-text[data-shown]').innerText()).toBe('fake-model-large')
     await page.reload()
     await connected(page)
     // The pick is Codex's own and stays across a reload.
-    await expect.poll(() => chip(page, '模型').innerText()).toBe('fake-model-large')
+    await expect.poll(() => chip(page, '模型').locator('.ui-value-picker-text[data-shown]').innerText()).toBe('fake-model-large')
 
     await input(page).fill('model 你好')
     await sendDraft(page)
@@ -354,7 +359,7 @@ describe('a Harness with its own models on a saved service', () => {
     await chip(page, '模型').click()
     await (await service(page, 'Relay')).getByRole('menuitemradio', { name: 'fake-model', exact: true }).click()
     await page.locator('.transcript').getByText('模型改为 fake-model · 经 Latch · Relay', { exact: true }).waitFor({ timeout: 20_000 })
-    await expect.poll(() => chip(page, '模型').innerText()).toBe('Fake-model')
+    await expect.poll(() => chip(page, '模型').locator('.ui-value-picker-text[data-shown]').innerText()).toBe('Fake-model')
     await shot(page, 'moved-service-1440-light')
     await composer.fill('model 第四轮')
     await composer.press('Meta+Enter')

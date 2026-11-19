@@ -50,9 +50,18 @@ export function ModeStrip<T extends string>({
   options,
   onChoose,
   className,
+  compact = false,
+  pending = false,
 }: {
   /** The heading over the strip, also the group's name. */
   label: string
+  /**
+   * One row for the foot of a larger panel: the heading and the segments side by side, the shown mode's name and its line
+   * after a dot on one line under them, of fixed height.
+   */
+  compact?: boolean
+  /** A write of the mode is under way: a small turn after the heading; the strip shows the mode the Host confirmed. */
+  pending?: boolean
   /** The shortcut that opens it, drawn at the heading's end. */
   keys?: string | undefined
   value: T | undefined
@@ -103,9 +112,10 @@ export function ModeStrip<T extends string>({
     buttons.current[index]?.focus()
   }
   return (
-    <div className={cx('ui-mode-strip', className)}>
+    <div className={cx('ui-mode-strip', className)} data-compact={compact ? '' : undefined} aria-busy={pending || undefined}>
       <p className="ui-mode-strip-head" id={`${id}-label`}>
         <span>{label}</span>
+        {pending && <Spinner size={12} />}
         {keys && <Kbd>{keys}</Kbd>}
       </p>
       <div
@@ -162,6 +172,7 @@ export function ModeStrip<T extends string>({
       </div>
       <div className="ui-mode-strip-shown" data-risk={shown?.risk ? '' : undefined} aria-hidden="true">
         <span className="ui-mode-strip-name">{shown?.label}</span>
+        {compact && shown?.line && <span className="ui-mode-strip-dot">·</span>}
         <span className="ui-mode-strip-line">{shown?.line}</span>
       </div>
     </div>
@@ -299,8 +310,8 @@ export interface PickerBoardProps<T extends string, L extends string> {
   onLevel: (item: T | undefined, level: L) => void
   /** Whether choosing this item keeps the board open on its levels; by default when it has more than one. */
   staysOn?: ((value: T) => boolean) | undefined
-  /** Where focus lands when the layer opens. */
-  focus?: 'list' | 'levels'
+  /** Where focus lands when the layer opens: the list, the levels, or the foot's first choice. */
+  focus?: 'list' | 'levels' | 'foot'
   /** The keys printed on the Nth row of the list (from 0), for the first nine. */
   keyCaps?: ((index: number) => string | undefined) | undefined
   /** The row a key press picks (from 0), or undefined when it is no such key. */
@@ -312,6 +323,13 @@ export interface PickerBoardProps<T extends string, L extends string> {
   settings?: ReactNode
   /** Rows under the list: where the values are managed, notes on them. */
   footer?: ReactNode
+  /**
+   * A row across the whole board, under its columns: choices that go with the item but are not levels (the session's
+   * speed and permission). On phones it comes last, its parts stacked.
+   */
+  foot?: ReactNode
+  /** Choosing an item or a level keeps the board open: it closes on Escape or a click outside, for a board that sets several things at once. */
+  keepOpen?: boolean
   /** sheet: the phone's column, wherever it is drawn; by default it follows the width. */
   layout?: 'auto' | 'sheet'
   className?: string
@@ -370,6 +388,8 @@ export function PickerBoard<T extends string, L extends string>({
   query: request,
   settings,
   footer,
+  foot,
+  keepOpen = false,
   layout = 'auto',
   className,
 }: PickerBoardProps<T, L>) {
@@ -383,11 +403,12 @@ export function PickerBoard<T extends string, L extends string>({
   const [query, setQuery] = useState(request?.query ?? '')
   const [highlighted, setHighlighted] = useState<T | undefined>(value)
   // Where focus goes after the next render: each request a new object, so asking twice for the same place still moves it.
-  const [target, setTarget] = useState<{ to: 'list' | 'levels' | 'search' } | null>(null)
+  const [target, setTarget] = useState<{ to: 'list' | 'levels' | 'search' | 'foot' } | null>(null)
   const rail = useRef<HTMLDivElement>(null)
   const list = useRef<HTMLDivElement>(null)
   const column = useRef<HTMLDivElement>(null)
   const search = useRef<HTMLInputElement>(null)
+  const footBox = useRef<HTMLDivElement>(null)
 
   // A search asked for (a slash argument) fills the field, now if the board is open, or when it next opens.
   const [seenRequest, setSeenRequest] = useState(request)
@@ -421,8 +442,23 @@ export function PickerBoard<T extends string, L extends string>({
       setTarget({ to: waiting ? 'search' : focus })
     }
   }
+  // Asked for another part while open (a key for 权限 after one for 思考): focus moves there, nothing closes.
+  const [askedFocus, setAskedFocus] = useState(focus)
+  if (focus !== askedFocus) {
+    setAskedFocus(focus)
+    if (open) setTarget({ to: focus })
+  }
   useEffect(() => {
     if (target === null) return
+    if (target.to === 'foot') {
+      const first = footBox.current?.querySelector<HTMLElement>(
+        '[role="radio"][tabindex="0"], [role="radio"][aria-checked="true"], button:not([tabindex="-1"]), [tabindex="0"]',
+      )
+      if (first) {
+        first.focus()
+        return
+      }
+    }
     if (target.to === 'levels') {
       if (!focusRow(column.current, 'checked')) focusRow(list.current, 'checked')
     } else if (target.to === 'search' || !focusRow(list.current, 'checked')) search.current?.focus()
@@ -474,12 +510,12 @@ export function PickerBoard<T extends string, L extends string>({
     const stays = staysOn ? staysOn(item.value) : levels(item.value).options.length > 1
     onItem(item.value)
     if (stays) setTarget({ to: 'levels' })
-    else close()
+    else if (!keepOpen) close()
   }
   const chooseLevel = (level: BoardLevel<L>) => {
     if (level.disabledReason !== undefined) return
     onLevel(now, level.value)
-    close()
+    if (!keepOpen) close()
   }
   const showSource = (sourceId: string) => {
     setViewed(sourceId)
@@ -732,13 +768,23 @@ export function PickerBoard<T extends string, L extends string>({
           {shownLevels.note && <div className="ui-board-note">{shownLevels.note}</div>}
           {settings && <div className="ui-board-settings">{settings}</div>}
         </div>
+        {foot && (
+          <div ref={footBox} className="ui-board-foot">
+            {foot}
+          </div>
+        )}
         {/* Under the levels on a phone, so the choice of the model and its thinking stay in one view. */}
         {footer && <div className="ui-board-footer">{footer}</div>}
       </div>
     )
 
   return (
-    <div className={cx('ui-board', className)} data-rail={withRail ? '' : undefined} onKeyDown={boardKeys} onFocusCapture={noteFocus}>
+    <div
+      className={cx('ui-board', className)}
+      data-rail={withRail ? '' : undefined}
+      data-foot={foot ? '' : undefined}
+      onKeyDown={boardKeys}
+      onFocusCapture={noteFocus}>
       {withRail && (
         <div
           ref={rail}
@@ -791,6 +837,11 @@ export function PickerBoard<T extends string, L extends string>({
         {shownLevels.note && <div className="ui-board-note">{shownLevels.note}</div>}
         {settings && <div className="ui-board-settings">{settings}</div>}
       </div>
+      {foot && (
+        <div ref={footBox} className="ui-board-foot">
+          {foot}
+        </div>
+      )}
     </div>
   )
 }

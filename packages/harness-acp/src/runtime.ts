@@ -2510,7 +2510,8 @@ export class AgentRuntime implements Bridge {
     ).catch((error: unknown) => {
       throw this.publicError(error, undefined)
     })
-    return codexOptions(listed)
+    // Speed is offered only where the session's wire sends it: Codex's own app-server, not the adapter.
+    return codexOptions(listed, this.selection.profile?.wire === 'codex')
   }
 
   private readTimeout(): number {

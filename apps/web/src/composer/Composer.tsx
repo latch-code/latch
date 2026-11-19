@@ -56,7 +56,6 @@ const COPY = defineCopy(
     retrySubmission: '重试这次提交',
     checking: '核对中…',
     discardSubmission: '放弃这次提交',
-    options: '会话选项',
     stopping: '正在停止…',
     stop: '停止',
     unknown: '结果未知',
@@ -94,7 +93,6 @@ const COPY = defineCopy(
     retrySubmission: 'Retry submission',
     checking: 'Checking…',
     discardSubmission: 'Discard submission',
-    options: 'Session options',
     stopping: 'Stopping…',
     stop: 'Stop',
     unknown: 'Outcome unknown',
@@ -198,7 +196,6 @@ export function Composer({
   coarse,
   controls,
   trailing,
-  permission,
   run,
   configUnknown,
   readOnly,
@@ -212,10 +209,9 @@ export function Composer({
   vitals,
   vitalsLead,
   status,
-  location,
-  locationPosition = 'top',
   inline = false,
   confirmation,
+  over,
   queueable = false,
   steerable = false,
   queueTray,
@@ -275,12 +271,13 @@ export function Composer({
   onSubmit: () => void
   sendKey: SendKey
   coarse: boolean
-  /** The toolbar's start, after 「+」: who does the work and with which model (Harness, 模型). */
+  /**
+   * The line under the text, after 「+」 and the slash button: the Harness, and the one entry (模型 · 思考 · 权限), which
+   * the toolbar draws at the line's end beside send.
+   */
   controls: ReactNode
-  /** The trailing controls, such as 思考. */
+  /** The trailing controls, such as a phone's 「⋯」. */
   trailing?: ReactNode
-  /** On phones the permission stays beside the send key when the other controls scroll. */
-  permission?: ReactNode
   run?: RunState
   configUnknown?: ConfigUnknownState
   /** This device may watch, reject and cancel but not type: the text replaces the input. */
@@ -296,8 +293,8 @@ export function Composer({
   /** The footer's right side, before send: 「⋯」. */
   meta?: ReactNode
   /**
-   * The limit of what runs it (a Harness's window, a service's budget), last before send. On a phone it stays at the end
-   * of the row of chips while that row scrolls, so it is always in sight and never moves another chip.
+   * The limit of what runs it (a Harness's window, a service's budget), last before the entry and send. On a phone it
+   * stands at the end of the line under the input, so it is always in sight and never moves a control of the input.
    */
   usage?: ReactNode
   /** Attached above the card: the approval, question, queue and notice drawers. */
@@ -312,16 +309,12 @@ export function Composer({
   vitalsLead?: ReactNode
   /** The frame's last row: where a new session will work and which way its model goes (`ComposerStatus`). */
   status?: ReactNode
-  /** The workbench's project and execution location, inside the same input frame. */
-  location?: ReactNode
-  locationPosition?: 'top' | 'toolbar'
-  /**
-   * Phone session: the toolbar takes two rows inside the frame, Harness and 模型 on the first, 「+」, 思考, 权限 and
-   * send on the second, so neither the Harness's name nor the model is cut.
-   */
+  /** A phone: the same line with touch-sized targets and no slash button; a long model name gives way first. */
   inline?: boolean
   /** Shown above the input. */
   confirmation?: ReactNode
+  /** Over the drawers and the input, in reading order before them: a phone's place of a new session. */
+  over?: ReactNode
 }) {
   const box = useRef<HTMLDivElement>(null)
   const commandAnchor = useRef<HTMLFormElement>(null)
@@ -671,10 +664,7 @@ export function Composer({
     </div>
   )
 
-  const desktopLocation = !inline && !!location
   const add = attachments && <AttachmentButton controller={attachments} disabled={locked} sections={attachmentMenu} />
-  // The location chips share the toolbar's row here, so ＋ goes ahead of them to stay the row's first control.
-  const addLeads = desktopLocation && locationPosition === 'toolbar'
   const fields = (
     <>
       <RunBar run={run} />
@@ -710,6 +700,7 @@ export function Composer({
         </InlineNotice>
       )}
       {confirmation}
+      {over}
       {pending !== null && !sending && (
         <div className="pending-submission" data-tint="warn" role="status">
           <div className="pending-submission-text">
@@ -745,7 +736,6 @@ export function Composer({
         hidden={pendingInTranscript}
         className={`composer ${run ? 'is-running' : ''}`}
         data-inline={inline ? '' : undefined}
-        data-location-position={desktopLocation ? locationPosition : undefined}
         data-variant={readOnly !== undefined ? 'read-only' : undefined}
         onDragOver={
           attachments
@@ -759,63 +749,33 @@ export function Composer({
           event.preventDefault()
           if (sendable) submit()
         }}>
-        {desktopLocation ? (
-          <>
-            {addLeads && add && <div className="composer-add">{add}</div>}
-            {location}
-            <div className="composer-home-fields">
-              {fields}
-              {input}
-            </div>
-          </>
-        ) : (
-          fields
-        )}
-        {inline ? (
-          <>
-            {/* The other choices scroll sideways. The current permission stays beside the send key. */}
-            {(location || controls || trailing || meta || usage) && (
-              <div className="composer-chips" role="group" aria-label={COPY.options}>
-                {location}
-                <div className="composer-inline-controls">
-                  {controls}
-                  {trailing}
-                  {meta}
-                </div>
-                {usage}
-              </div>
-            )}
-            <div className="composer-line">
-              {input}
-              {add}
-              {permission}
-              {action}
-            </div>
-          </>
-        ) : (
-          <>
-            {!desktopLocation && input}
-            {/* The choices wrap among themselves; 「⋯」 and send keep the line's end (composer.css). */}
-            <div className="composer-toolbar">
-              <div className="composer-controls">
-                {!addLeads && add}
-                {slashButton}
-                {controls}
-                {trailing}
-                {permission}
-                {usage}
-              </div>
-              <div className="composer-end">
-                {meta && <div className="composer-meta">{meta}</div>}
-                {action}
-              </div>
-            </div>
-          </>
-        )}
+        {fields}
+        {input}
+        {/* The text, then one line: 「+」, slash and the Harness at its start; the one entry, 「⋯」 and send at its end. */}
+        <div className="composer-toolbar">
+          <div className="composer-controls">
+            {add}
+            {!inline && slashButton}
+            {controls}
+            {trailing}
+            {!inline && usage}
+          </div>
+          <div className="composer-end">
+            {meta && <div className="composer-meta">{meta}</div>}
+            {action}
+          </div>
+        </div>
         {status}
       </form>
       {below}
-      {vitals && vitalsLead ? (
+      {/* A phone's line has no room to share: the limit stands at the end of the line under the input instead. */}
+      {inline && usage ? (
+        <div className="composer-foot" data-usage="">
+          {vitalsLead}
+          {vitals}
+          {usage}
+        </div>
+      ) : vitals && vitalsLead ? (
         <div className="composer-foot">
           {vitalsLead}
           {vitals}

@@ -99,7 +99,7 @@ it('starts a worktree from another branch, then removes a dirty one after the di
     await panel.getByRole('radio', { name: '新分支' }).click()
     await panel.getByRole('button', { name: /feature\/login/u }).click()
     expect(await folder.getAttribute('aria-label')).toBe('文件夹：新工作树')
-    const row = page.locator('.home-composer-location, .composer-status').filter({ visible: true })
+    const row = page.locator('.home-place, .composer-status').filter({ visible: true })
     await expect.poll(() => row.locator('[data-seg="branch"]').count()).toBe(1)
     await expect.poll(() => row.innerText()).toContain(`从 feature/login 的 ${feature.slice(0, 7)}`)
 

@@ -310,3 +310,20 @@ export async function tooltipText(page: Page, trigger: Locator, touch = false): 
   await close()
   return text
 }
+
+/**
+ * The input's one entry in `scope`: the model, its thinking and the permission on one trigger, at the end of the input's
+ * line. Its panel sets all three.
+ */
+export function composerEntry(scope: Page | Locator): Locator {
+  return scope.locator('[data-composer-control="model"] button.entry-picker').filter({ visible: true }).first()
+}
+
+/** What the entry says of the permission, 「权限：先问你」, as its description (the hover) reads it to a screen reader. */
+export async function entryPermission(scope: Page | Locator): Promise<string> {
+  return composerEntry(scope).evaluate(element => {
+    const ids = element.getAttribute('aria-describedby')?.split(' ') ?? []
+    const text = ids.map(id => document.getElementById(id)?.textContent ?? '').join(' ')
+    return /权限：[^。]*/u.exec(text)?.[0] ?? ''
+  })
+}

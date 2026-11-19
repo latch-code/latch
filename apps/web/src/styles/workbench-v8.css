@@ -322,89 +322,140 @@
   box-shadow: var(--work-card-shadow);
   padding-top: var(--sp-12);
 }
-.home-composer-location {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-8);
-  min-width: 0;
-  padding: 0 var(--sp-16) var(--sp-4);
-}
-.home-composer-location > .composer-status-seg {
-  max-width: none;
-}
-.home-composer-location .composer-status-seg::before {
-  display: none;
-}
-.home-composer-computer {
-  display: inline-flex;
-  align-items: center;
+/*
+ * The start page asks over its input, in the question role (centred, 500): 「想在 〈项目〉 里做什么？」, the project's
+ * name with a dotted underline that opens the project list. Under it one small muted action, or with no project the
+ * small line that opens the list. Text on the canvas: the backdrop keeps clear of it (data-backdrop-clear).
+ */
+.home-headline {
+  display: grid;
+  justify-items: center;
   gap: var(--sp-6);
-  color: var(--muted);
+  margin: 0 auto var(--sp-20);
+  max-width: 100%;
+  padding: 0 var(--sp-16);
+  text-align: center;
+}
+.home-headline-ask {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  max-width: 100%;
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-question);
+  line-height: var(--lh-question);
+  font-weight: 500;
+}
+.home-headline-project {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 18em;
+  margin: 0 0.25em;
+}
+.home-headline-project .project-inline.ui-value-picker {
+  max-width: 100%;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--muted);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 6px;
+}
+.home-headline-project .project-inline.ui-value-picker:hover,
+.home-headline-project .project-inline.ui-value-picker[aria-expanded='true'] {
+  text-decoration: underline;
+  text-decoration-color: var(--ink-2);
+  text-decoration-thickness: 1px;
+}
+.home-headline .project-inline.ui-value-picker {
+  min-width: 0;
+}
+.home-headline .project-inline .ui-value-picker-value {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+}
+.home-headline .project-inline .ui-value-picker-text {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.home-composer-location .project-picker {
-  width: auto;
+/* The name is the control: its underline says it opens, so the arrow goes. */
+.home-headline .project-inline > .ui-value-picker-chevron {
+  display: none;
 }
-.workbench-home-composer .composer[data-location-position='toolbar'] {
-  display: grid;
-  grid-template:
-    'fields fields fields' auto
-    'add location actions' auto / auto minmax(0, max-content) minmax(0, 1fr);
+.home-headline-sub {
+  min-height: var(--lh-ui);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
 }
-.workbench-home-composer .composer[data-location-position='toolbar'] > .composer-add {
-  grid-area: add;
-  display: flex;
-  align-items: center;
-  align-self: start;
-  min-height: 44px;
-  padding: 0 0 var(--sp-12) var(--sp-12);
+.home-headline-skip,
+.home-headline-pick .project-inline.ui-value-picker {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
 }
-.workbench-home-composer .composer[data-location-position='toolbar'] > .home-composer-location {
-  grid-area: location;
-  overflow: hidden;
-  padding: 0 0 var(--sp-12) var(--sp-8);
+.home-headline-skip:hover:not(:disabled),
+.home-headline-pick .project-inline.ui-value-picker:hover {
+  color: var(--ink-2);
+  text-decoration: none;
+}
+.home-headline-skip:disabled {
+  opacity: 0.45;
+}
+.home-headline-skip:focus-visible {
+  border-radius: var(--r-4);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 /*
- * The place takes what its chips need, each at most a few words wide, and the controls the rest, wrapping whole chips;
- * a place chip gives way before it overlaps the next: it truncates, its full name on hover.
+ * Where in the project a new session starts, one quiet line under the input: the computer, the project folder or a new
+ * worktree, then the branch, small and muted, lined up with the input's text. Each gives way with an ellipsis, the
+ * branch first, its full name in its hover.
  */
-.workbench-home-composer .home-composer-location > * {
+.home-place {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+  min-height: 28px;
+  margin-top: var(--sp-6);
+  padding: 0 var(--sp-6);
+  color: var(--muted);
+}
+.home-place:empty {
+  display: none;
+}
+.home-place > * {
   flex-shrink: 1;
   min-width: 0;
-  max-width: 16em;
+  max-width: 18em;
 }
-/* A branch is read whole where the row has room; it gives way first, keeping its last word. */
-.workbench-home-composer .home-composer-location > [data-seg='branch'] {
+.home-place > .composer-status-seg {
+  max-width: 18em;
+}
+.home-place > [data-seg='branch'] {
   flex-shrink: 4;
   max-width: 32em;
 }
-/* In a phone's chip row the row scrolls instead: no chip gives way under its neighbour. */
-.workbench-home-composer .composer-chips .home-composer-location > * {
-  flex-shrink: 0;
+/* The same hairline as between the parts of the status line. */
+.home-place > * + *::before {
+  content: '';
+  flex: none;
+  width: 1px;
+  height: 12px;
+  margin: 0 var(--sp-8);
+  background: var(--line-strong);
 }
-/*
- * The row is laid out by the composer's own width, not the window's: a side panel or the sidebar narrows the column at
- * any window size. Below what holds ＋, the place and the four controls on one line, the place takes its own line
- * above, and the controls wrap whole after ＋, with send at the row's end.
- */
-.workbench-home-composer .composer-stack {
-  container: home-composer / inline-size;
-}
-@container home-composer (max-width: 879.98px) {
-  .workbench-home-composer .composer[data-location-position='toolbar'] {
-    grid-template: 'fields fields' 'location location' 'add actions' / auto minmax(0, 1fr);
-  }
-  .workbench-home-composer .composer[data-location-position='toolbar'] > .home-composer-location {
-    padding-inline-start: var(--sp-12);
-    padding-block-end: var(--sp-4);
-  }
-}
-.workbench-home-composer .composer[data-location-position='toolbar'] > .composer-home-fields {
-  grid-area: fields;
-  min-width: 0;
-}
-.workbench-home-composer .composer[data-location-position='toolbar'] > .composer-toolbar {
-  grid-area: actions;
+.home-place > * {
+  display: inline-flex;
+  align-items: center;
 }
 .workbench-home-composer .composer-input {
   padding-top: var(--sp-8);
@@ -1080,12 +1131,20 @@
   .workbench-home-composer .composer-stack {
     gap: 0;
   }
-  /* The place is the first chips of the row: the project, then where in it; the computer is the page's own. */
-  .workbench-home-composer .home-composer-location {
-    display: contents;
+  /* One line: the project's name gives way with an ellipsis, the question's words stay whole. */
+  .home-headline-ask {
+    flex-wrap: nowrap;
+    white-space: nowrap;
   }
-  .home-composer-computer {
-    display: none;
+  .home-headline-project {
+    flex: 0 1 auto;
+  }
+  .home-headline {
+    margin-bottom: var(--sp-12);
+  }
+  /* The place stands over the input, the headline over both. */
+  .workbench-home-composer .home-place {
+    margin: 0 0 var(--sp-6);
   }
   .workbench-home-composer .composer-input {
     padding: 0;
@@ -1189,4 +1248,12 @@
 .code-home > .workbench-backdrop {
   inset-block-start: var(--title-row);
   height: calc(100% - var(--title-row));
+}
+/* In the board's 新建 and a 待办's 开始, a dialog with a title of its own: the same question, at the title's size. */
+.work-board-new .home-headline {
+  margin-bottom: var(--sp-12);
+}
+.work-board-new .home-headline-ask {
+  font-size: var(--fs-title);
+  line-height: var(--lh-title);
 }

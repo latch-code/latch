@@ -51,6 +51,12 @@ describe('the marks that stay the same under every customisation', () => {
 const LOCKED_SOURCES: ReadonlyArray<[file: string, what: string, needle: RegExp]> = [
   ['composer/PermissionList.tsx', '权限菜单（含不再询问的档位）', /className="permission-panel" data-lock=""/u],
   ['composer/PermissionChip.tsx', '琥珀色的权限 chip', /chip-permission[\s\S]{0,80}data-lock=\{view\.amber \? '' : undefined\}/u],
+  [
+    'composer/EntryPermission.tsx',
+    '输入框入口上的琥珀权限',
+    /className="entry-permission"[\s\S]{0,80}data-lock=\{view\.amber \? '' : undefined\}/u,
+  ],
+  ['composer/EntryPermission.tsx', '入口面板脚部的权限', /className="entry-permission-part permission-panel" data-lock=""/u],
   ['composer/Composer.tsx', '运行条的「结果未知」', /className="run-bar-status" data-lock=""/u],
   [
     'composer/Composer.tsx',

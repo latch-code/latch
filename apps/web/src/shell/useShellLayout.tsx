@@ -1,3 +1,4 @@
+import { openControlWhenShown } from '../composer/ComposerControl.tsx'
 import { requestLeave } from '../preview/editDrafts.ts'
 import { requestBoard } from '../board/requests.ts'
 import { readsProjectFiles, type AppSnapshot, type BoardGroup, type TerminalTarget } from '@latch/protocol'
@@ -1491,12 +1492,10 @@ export function useShellLayout({ harness, snapshot }: { harness: Harness; snapsh
         if (terminalOpen) terminalKeys.current?.(action)
         return
       }
-      // A key opens the control's own menu, as a click would; it never picks a value. Phones have no keys for it.
+      // A key opens the control's own menu, as a click would; it never picks a value. Phones have no keys for it. 思考
+      // and 权限 open the model's entry on their part.
       if (phone) return
-      const trigger = [...document.querySelectorAll<HTMLElement>(`[data-composer-control="${action.control}"]`)]
-        .find(control => control.getClientRects().length > 0 && !control.closest('[inert]'))
-        ?.querySelector<HTMLButtonElement>('button')
-      if (trigger && !trigger.disabled && trigger.getAttribute('aria-disabled') !== 'true') trigger.click()
+      openControlWhenShown(action.control, 1, false)
       return
     }
     if (action === 'close-file') {

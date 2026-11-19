@@ -161,59 +161,51 @@ describe('the phone stack', () => {
       await reachable(header.getByRole('button', { name: '返回会话列表', exact: true }))
       await reachable(header.getByRole('button', { name: '侧边面板', exact: true }))
       await reachable(header.locator('.topbar-title-button'))
-      // The chips scroll above the full-width input. The permission stays beside the send key below it.
+      // The full-width input, then one line: 「+」, the Harness by its mark, and the one entry (模型 · 思考 · 权限) beside
+      // send at the line's end. No row of chips and no separate 权限.
       const composer = page.locator('.composer-dock form.composer')
-      expect(await composer.locator('.composer-toolbar, [data-rows], .composer-prompt').count()).toBe(0)
+      expect(await composer.locator('.composer-chips, .composer-line, [data-rows], .composer-prompt').count()).toBe(0)
       expect(await composer.getByRole('button', { name: '／', exact: true }).count()).toBe(0)
+      expect(await composer.locator('[data-composer-control="permission"], [data-composer-control="thinking"]').count()).toBe(0)
       expect(
         await page.locator('.composer-dock [data-composer-control]').evaluateAll(nodes => nodes.every(node => node.closest('form'))),
       ).toBe(true)
-      const chips = composer.getByRole('group', { name: '会话选项', exact: true })
-      expect(await chips.evaluate(element => element.classList.contains('composer-chips'))).toBe(true)
       const rows = await composer.evaluate(form => {
         const box = (selector: string) => form.querySelector(selector)?.getBoundingClientRect()
-        const control = (name: string) => box(`.composer-chips [data-composer-control="${name}"]`)
-        const [input, harness, model, thinking, permission, send, add, line, row] = [
-          box('.composer-line textarea'),
+        const control = (name: string) => box(`.composer-toolbar [data-composer-control="${name}"]`)
+        const [input, harness, entry, send, add, line] = [
+          box('textarea'),
           control('harness'),
           control('model'),
-          control('thinking'),
-          box('.composer-line [data-composer-control="permission"]'),
-          box('.composer-line .send-button'),
-          box('.composer-line .attachment-button, .composer-line button'),
-          box('.composer-line'),
-          box('.composer-chips'),
+          box('.composer-toolbar .send-button'),
+          box('.composer-toolbar .attachment-button, .composer-toolbar button'),
+          box('.composer-toolbar'),
         ]
         const frame = form.getBoundingClientRect()
         const level = (a?: DOMRect, b?: DOMRect) => !!a && !!b && Math.abs(a.top + a.height / 2 - (b.top + b.height / 2)) < 2
-        const scroller = form.querySelector('.composer-chips')!
         return {
-          found: [input, harness, model, thinking, permission, send, add, line, row].every(Boolean),
-          oneRow: level(harness, model) && level(model, thinking),
-          inOrder: harness!.right <= model!.left + 1 && model!.right <= thinking!.left + 1,
-          chipsOverLine: row!.bottom <= line!.top + 1,
-          inputOverActions: input!.bottom <= add!.top + 1 && input!.bottom <= permission!.top + 1,
-          permissionBesideSend: add!.right <= permission!.left + 1 && Math.abs(permission!.right - send!.left) < 12,
+          found: [input, harness, entry, send, add, line].every(Boolean),
+          oneRow: level(add, harness) && level(harness, entry) && level(entry, send),
+          inOrder: add!.right <= harness!.left + 1 && harness!.right <= entry!.left + 1,
+          inputOverLine: input!.bottom <= line!.top + 1,
+          entryBesideSend: Math.abs(entry!.right - send!.left) < 12,
           sendAtEnd: frame.right - send!.right < 16,
-          scrolls: /auto|scroll/u.test(getComputedStyle(scroller).overflowX),
-          inside: row!.left >= frame.left && row!.right <= frame.right && send!.right <= frame.right,
+          inside: line!.left >= frame.left && entry!.right <= frame.right && send!.right <= frame.right,
         }
       })
       expect(rows).toEqual({
         found: true,
         oneRow: true,
         inOrder: true,
-        chipsOverLine: true,
-        inputOverActions: true,
-        permissionBesideSend: true,
+        inputOverLine: true,
+        entryBesideSend: true,
         sendAtEnd: true,
-        scrolls: true,
         inside: true,
       })
-      expect(await composer.locator('.composer-line .send-button').getAttribute('aria-label')).toBe('发送')
+      expect(await composer.locator('.composer-toolbar .send-button').getAttribute('aria-label')).toBe('发送')
       // The send key is neutral ink, never the blue of what runs.
       expect(
-        await composer.locator('.composer-line .send-button').evaluate(element => {
+        await composer.locator('.composer-toolbar .send-button').evaluate(element => {
           const probe = document.createElement('i')
           probe.style.color = 'var(--blue)'
           document.body.append(probe)
@@ -222,9 +214,10 @@ describe('the phone stack', () => {
           return getComputedStyle(element).backgroundColor !== blue
         }),
       ).toBe(true)
-      // The Harness's name is never what gives way.
-      const harness = composer.locator('[data-composer-control="harness"] .chip-text')
-      expect(await harness.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+      // The Harness is its whole mark on a phone, its name the control's name; the model's name is what gives way.
+      const harness = composer.locator('[data-composer-control="harness"]').getByRole('button').first()
+      expect(await harness.getAttribute('aria-label')).toMatch(/^Harness：/u)
+      expect(await harness.evaluate(button => button.scrollWidth <= button.clientWidth + 1)).toBe(true)
       await noHorizontalOverflow(page)
 
       // Back: the page slides away in 70% of the time on the exit curve, the list returns and focus lands on the row it
@@ -295,13 +288,13 @@ describe('the phone stack', () => {
       expect(await page.getByRole('dialog', { name: '新会话', exact: true }).count()).toBe(0)
       expect(await page.locator('.new-session-sheet, .new-sheet-card, .new-session').count()).toBe(0)
       expect(await page.getByRole('button', { name: '新会话选项', exact: true }).count()).toBe(0)
-      // What the message goes with is the row of chips over the input: the project first, then the four controls.
-      const chips = home.getByRole('group', { name: '会话选项', exact: true })
-      await reachable(chips.locator('.home-composer-location').getByRole('button').first())
-      expect(await chips.locator('.home-composer-location').innerText()).not.toContain('选择项目')
+      // The project is the headline's; the input's own line holds the Harness and the one entry.
+      const chips = home.locator('form.composer .composer-toolbar')
+      await reachable(home.locator('.home-headline').getByRole('button').first())
+      expect(await home.locator('.home-headline').innerText()).not.toContain('选择项目')
       // Another device runs on the built-in engine alone: the Harness chip holds nothing else.
       expect(await chips.getByText('Codex').count()).toBe(0)
-      const send = home.locator('.composer-line').getByRole('button', { name: '发送', exact: true })
+      const send = chips.getByRole('button', { name: '发送', exact: true })
       expect(await send.getAttribute('aria-disabled')).toBe('true')
       await input.fill('展示流式输出')
       await expect.poll(() => send.getAttribute('aria-disabled')).toBeNull()
@@ -329,7 +322,7 @@ describe('the phone stack', () => {
       await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
       const home = page.locator('.workbench-home')
       await home.waitFor()
-      const chips = home.getByRole('group', { name: '会话选项', exact: true })
+      const chips = home.locator('form.composer .composer-toolbar')
       for (const [label, link, other] of [
         ['项目', '管理项目…', '管理模型…'],
         ['模型', '管理模型…', '管理项目…'],
@@ -337,7 +330,7 @@ describe('the phone stack', () => {
         // Each chip opens its own bottom sheet.
         await (
           label === '项目'
-            ? chips.locator('.home-composer-location').getByRole('button').first()
+            ? home.locator('.home-headline').getByRole('button').first()
             : chips.locator('[data-composer-control="model"]').getByRole('button').first()
         ).click()
         const picker = page.getByRole('dialog', { name: label, exact: true })
@@ -407,7 +400,7 @@ describe('the phone stack', () => {
       await page.locator('.phone-list-head').getByRole('button', { name: '新建会话', exact: true }).click()
       const home = page.locator('.workbench-home')
       await home.waitFor()
-      await home.locator('.composer-chips .home-composer-location').getByRole('button').first().click()
+      await home.locator('.home-headline').getByRole('button').first().click()
       const sheet = page.getByRole('dialog', { name: '项目', exact: true })
       await sheet.waitFor()
       await page.goBack()

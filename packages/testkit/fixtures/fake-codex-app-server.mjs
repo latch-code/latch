@@ -8,6 +8,8 @@
 // does with no login, and account/logout removes that file; FAKE_ACP_INIT_AUTH=1 refuses initialize as a stored login
 // the service no longer takes. FAKE_CODEX_STATE names a
 // JSON file of threads, so another process can list, read and resume them. Everything received goes to FAKE_ACP_LOG.
+// Speed: FAKE_CODEX_TIERS=1 gives the default model Codex 0.169's Fast tier (`serviceTiers`); FAKE_CODEX_SERVICE_TIER is
+// the configured `service_tier` a new thread starts on. A turn's `serviceTier` moves the thread to that tier.
 //
 // A turn plays its first word: `echo <text>` replies with the text in pieces; `think` reasons first; `run` runs a
 // command and `edit` changes a file, each asking first unless the turn's approval policy is `never` (a declined call
@@ -80,6 +82,12 @@ const models = env.FAKE_CODEX_MODELS
         isDefault: true,
         defaultReasoningEffort: 'medium',
         supportedReasoningEfforts: [effort('low', 'Fast'), effort('medium', 'Balanced'), effort('high', 'Deep')],
+        ...(env.FAKE_CODEX_TIERS === '1'
+          ? {
+              serviceTiers: [{ id: 'priority', name: 'Fast', description: '1.5x speed, increased usage' }],
+              additionalSpeedTiers: ['fast'],
+            }
+          : {}),
       },
       {
         id: 'gpt-fake-mini',
@@ -1032,7 +1040,7 @@ function opened(record) {
     thread: shown(record),
     model: record.model,
     modelProvider: record.provider ?? 'openai',
-    serviceTier: null,
+    serviceTier: record.tier ?? null,
     reasoningEffort: record.effort,
     cwd: record.cwd,
     approvalPolicy: record.policy?.approvalPolicy,
@@ -1115,6 +1123,7 @@ async function handle(method, params) {
         config: {
           model: env.FAKE_CODEX_MODEL ?? null,
           model_reasoning_effort: null,
+          service_tier: env.FAKE_CODEX_SERVICE_TIER ?? null,
           shell_environment_policy: JSON.parse(env.FAKE_CODEX_SHELL_ENVIRONMENT ?? '{}'),
         },
         origins: {},
@@ -1168,6 +1177,7 @@ async function handle(method, params) {
         model: params.model ?? env.FAKE_CODEX_MODEL ?? 'gpt-fake',
         provider: providerId ?? 'openai',
         effort: 'medium',
+        tier: params.serviceTier ?? env.FAKE_CODEX_SERVICE_TIER ?? null,
         policy: {
           approvalPolicy: params.approvalPolicy,
           approvalsReviewer: params.approvalsReviewer,
@@ -1308,6 +1318,7 @@ async function handle(method, params) {
       turn = { id: `turn-${randomUUID()}`, items: [], steered: [], policy: params, cancelled: false }
       if (params.model) thread.model = params.model
       if (params.effort) thread.effort = params.effort
+      if (params.serviceTier !== undefined) thread.tier = params.serviceTier
       thread.policy = params
       save(thread)
       const id = turn.id

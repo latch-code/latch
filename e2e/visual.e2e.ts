@@ -664,8 +664,8 @@ describe('visual capture of the real product', () => {
     const phone = (await target.locator('.phone-tabs').count()) > 0
     await target.getByRole('button', { name: '新建会话', exact: true }).filter({ visible: true }).first().click()
     if (phone) {
-      // A phone pushes the start screen over its list; its options are the row of chips over the input.
-      await target.locator('.workbench-home').getByRole('group', { name: '会话选项', exact: true }).waitFor()
+      // A phone pushes the start screen over its list: the headline, then the input with its one line.
+      await target.locator('.workbench-home .composer-toolbar').waitFor()
       await settled()
       await settleMotion(target)
       return
@@ -886,7 +886,7 @@ describe('visual capture of the real product', () => {
       }
       await reachable(target.locator('.workbench-home').getByRole('textbox', { name: '新会话消息', exact: true }))
       if (viewport.name === 'phone')
-        await reachable(target.locator('.workbench-home .composer-chips').getByRole('button', { name: /^项目：/u }))
+        await reachable(target.locator('.workbench-home .home-headline').getByRole('button', { name: /^项目：/u }))
       if (viewport.name !== 'phone') {
         await target.emulateMedia({ reducedMotion: 'reduce' })
         await target.evaluate(() => new Promise(done => setTimeout(done, 400)))
@@ -1097,8 +1097,8 @@ describe('visual capture of the real product', () => {
       await target.getByRole(viewport.name === 'phone' ? 'radio' : 'menuitemradio', { name: /Latch 内置/ }).click()
       await settleMotion(target)
       if (viewport.name === 'phone') {
-        const sheet = target.locator('.workbench-home .composer-chips')
-        // The project and the model are chips that open single-choice sheets of their own.
+        const sheet = target.locator('.workbench-home .workbench-home-composer')
+        // The project (the headline's) and the model (the entry's) open sheets of their own.
         for (const [surface, row, title] of [
           ['new-session-project', /^项目：/, '项目'],
           ['new-session-model', /^模型：/, '模型'],
