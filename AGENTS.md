@@ -79,7 +79,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 - **Host 不运行仓库里的程序，交付除外。** Host 的 Git 经受限运行器（钩子含配置钩子、filter、传输全关）；只有人按下的提交、推送、带 filter 的暂存及关钩子的获取、克隆以你的账户运行：先审计并复查权限，远端只取仓库配置，不强制推送（[文档](docs/GIT-DELIVERY.md)）。
 - **插件页面只凭已批准的能力行事。** 只在不透明隔离框运行、不拿凭据，草稿只经 Host 固定工具在沙箱构建；Host 按已应用清单核对每次页面调用（`via`）；页面会话只用项目默认权限、无私有上下文，人放宽后页面不能继续（[文档](docs/APP-PAGES.md)）。
 - **自定义是数据。** 只写允许的令牌，安全界面不可改（[文档](docs/CUSTOMIZATION.md)）。
-- **CLI 目录与配置。** Latch 可以读 CLI 自己的目录与配置（如 Codex 生成的图片、额度用的密钥、会话日志的 tokens 数，见 [HARNESSES](docs/HARNESSES.md#额度)）；只是尽量不对它们做侵入式改动。外部会话只经 ACP、直连或 SDK（Cursor 只用定义的密钥），均私有，删除不删原会话。
+- **CLI 目录与配置。** Latch 可以读 CLI 自己的目录与配置（如 Codex 生成的图片、额度用的密钥、会话日志的 tokens 数，见 [HARNESSES](docs/HARNESSES.md#额度)），Claude 的登录凭据除外；只是尽量不对它们做侵入式改动。外部会话只经 ACP、直连或 SDK（Cursor 只用定义的密钥），均私有，删除不删原会话。
 - **其他电脑互不相通。** 桌面端经各自来源与分区，凭据按来源选取，绑定证书与身份（[文档](docs/ARCHITECTURE.md#桌面端与其他电脑)）。
 - **Host 与 `pnpm latch` 不响应 SIGUSR1。** 启动 Host 的脚本、桌面端与 `pnpm latch` 都带 `--disable-sigusr1`，否则同用户进程能用 `process._debugProcess` 让持有秘密的进程打开调试端口；新增启动 Host 或处理秘密的入口同样加上。
 - **依赖供应链。** 依赖以精确版本写在 `pnpm-workspace.yaml` 的 `catalog`，`package.json` 只写 `catalog:`；新版本须发布满 7 天。放宽 `pnpm-workspace.yaml` 的供应链设置、新增例外（[格式](docs/TESTING.md#供应链金丝雀)）或 `allowBuilds` 条目都要所有者同意；改依赖、`pnpm-workspace.yaml` 或 `packageManager` 后跑 `pnpm check:supply`。
