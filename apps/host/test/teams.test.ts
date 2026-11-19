@@ -828,7 +828,6 @@ describe('later rounds on an existing team', () => {
       const roster = await say(owner, lead, 'mcp latch-skills list_members')
       expect(roster).toContain('"id":"m1","title":"一","harness":"Latch 内置","state":"done"')
       expect(roster).toContain('"id":"m2","title":"二","harness":"Alpha","state":"done"')
-      expect(roster).toContain('"roundsLeft":6')
 
       // Refused by the Host: a member not in the team. Nothing is sent.
       expect(await call({ sends: [{ member: 'm3', prompt: 'echo nobody' }] })).toContain('m3 is not a member of this team')
@@ -882,15 +881,12 @@ describe('later rounds on an existing team', () => {
     expect((await dispatchSwitch(owner, capped.id, true)).status).toBe(200)
     const send = (prompt: string) =>
       say(owner, other, `mcp latch-skills send_to_members ${JSON.stringify({ sends: [{ member: 'm1', prompt }] })}`)
-    for (let index = 0; index < TEAM_LIMITS.agentRounds; index++) {
+    // No cap on the agent's rounds: past the old six, it keeps sending.
+    for (let index = 0; index < 7; index++) {
       await settled(owner, other)
       expect(await send(`第 ${index} 句问候`)).toContain(`Sent as round ${index + 2}.`)
       await teamIn(owner, capped.id, 'returned')
     }
-    await settled(owner, other)
-    expect(await send('再来一句')).toContain(`the ${TEAM_LIMITS.agentRounds} rounds you may make`)
-    // The person can still send more.
-    expect((await round(owner, capped.id, [{ itemId: capped.members[0]!.itemId, prompt: '写一句' }])).status).toBe(201)
   })
 
   it('gives the built-in Harness the same tools while the switch is on, and its call makes a round', SLOW, async () => {

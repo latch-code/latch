@@ -22,10 +22,8 @@ export const TEAM_LIMITS = {
   /** A task the person writes in the list. */
   titleChars: 120,
   promptChars: 4000,
-  /** Rounds of one team, the start included; the record keeps every one's states. */
-  rounds: 32,
-  /** Of those, rounds the lead's agent made by itself (`send_to_members`). */
-  agentRounds: 6,
+  /** Ended rounds the record keeps, newest last: a team may have any number, and the oldest leave the record. */
+  history: 32,
 } as const
 
 /**
@@ -186,8 +184,6 @@ export interface TeamRoster {
   members: Array<{ id: string; title: string; harness: string; state: TeamMemberState }>
   /** A round is open: nothing more is sent until its results are back. */
   open: boolean
-  /** Rounds the agent may still make in this team. */
-  roundsLeft: number
 }
 
 export const LIST_MEMBERS_TOOL = 'list_members'

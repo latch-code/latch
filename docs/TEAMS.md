@@ -102,7 +102,7 @@ TEAM_RETURN_ASK
 
 - 请求是 `{ requestId, sends: [{ itemId, prompt }] }`，1–8 项，每条 1–4 000 个字符（同 `checkedPrompt`，像密钥的拒绝）。
 - 成员必须在这个团队里（否则 404 `team-member-not-found`）、开始过（409 `team-member-unstarted`）、会话没有归档（409 `team-member-archived`）、上一件已经结束且没有在运行、等批准、等回答或排队（409 `team-member-busy`）。不替人排队。
-- 一个团队同时只有一轮没结束：还有一轮在进行时 409 `team-round-open`，所以带队会话每轮只收到一条结果。所有轮都结束了（交回、留下或停止）的团队可以再派一轮，它因此重新打开；带队会话另有没结束的团队时 409 `team-open`。最多 32 轮（`TEAM_LIMITS.rounds`，409 `team-rounds-full`）。
+- 一个团队同时只有一轮没结束：还有一轮在进行时 409 `team-round-open`，所以带队会话每轮只收到一条结果。所有轮都结束了（交回、留下或停止）的团队可以再派一轮，它因此重新打开；带队会话另有没结束的团队时 409 `team-open`。轮数不限；记录只留最近 32 轮的各成员状态（`TEAM_LIMITS.history`），更早的淘汰。
 - 顺序：核对 → 写 `team.round.started`（写不进 503 `audit-unavailable`，什么都不发）→ 记下这一轮（每个成员这一轮的消息的请求标识由团队、轮号与待办推出）→ 同时发出每一条。每条走人发消息的同一条检查路径（`POST /tasks/:id/prompt` 的同一函数），身份是调用的设备。发不出的成员这一轮记为 `unstarted` 并带原因；一条都没发出时团队回到这一轮之前，答第一个拒绝。
 - 人派的一轮里，带队会话从外部内容开始时，消息标为外部内容；否则是人自己的话。
 - 成员结束看的是这一轮那条消息之后的回复，不看之前的轮；成员显示最新一轮的状态。交回的消息只列这一轮的成员。
@@ -117,12 +117,12 @@ TEAM_RETURN_ASK
 - 自己关：打开它的设备被移除或失去 `run`（设备变更时检查，`reason: device-removed`），或团队被停止（`reason: stopped`）。之后不会自己再打开。
 - 只对会话最新的团队有效。带队会话的 Harness 没有给 Agent 的工具通道（看板的提议通道，pi 没有）时拒绝 409 `team-dispatch-unavailable`；没有一个开始过的成员落在无人值守上限内时也拒绝。原因放在 `TeamSummary.dispatchRefusal`，页面把开关画成灰的。
 - 开着时带队会话的 Agent 有两个工具（说明在 `packages/protocol` 的 `LIST_MEMBERS_GUIDE`、`SEND_TO_MEMBERS_GUIDE`）：
-  - `list_members`：这个团队的成员，各带短标识（`m1`…）、标题、Harness 名与状态，还有是否有一轮在进行、Agent 还能派几轮。ACP 会话从 Host 写在会话私有目录里的 `team.json`（0600，原子写；关时删掉）读；`latch-skills` 服务器只在它存在时列出这两个工具，变化时发 `notifications/tools/list_changed`。内置 Harness 在每次运行开始时向 Host 要。
+  - `list_members`：这个团队的成员，各带短标识（`m1`…）、标题、Harness 名与状态，还有是否有一轮在进行。ACP 会话从 Host 写在会话私有目录里的 `team.json`（0600，原子写；关时删掉）读；`latch-skills` 服务器只在它存在时列出这两个工具，变化时发 `notifications/tools/list_changed`。内置 Harness 在每次运行开始时向 Host 要。
   - `send_to_members({ sends: [{ member, prompt }] })`：ACP 会话写进同目录的 `rounds.jsonl`（每个成员一行，按调用的标签成组，每次启动最多 64 行；与提议的文件分开，不占提议的额度），驱动交给 Host，再把 Host 的话写进 `round-answers.jsonl`：轮号，或拒绝的原因（Host 自己的英文句子，不引用要求）。内置 Harness 直接等 Host 的答复。
 - Host 只认自己的记录：会话必须属于调用的 Driver 并有看板通道，不是插件页面、我的 Agent、定时或无人值守的会话；团队是这个会话最新的团队；成员只按短标识在这个团队里找。Agent 不能开始新会话、不能新建成员（它仍可以 `propose_todos`，由人开始），也碰不到团队以外的会话。
 - 这一轮与人派的一样，`by: 'agent'`，身份是打开开关的那台设备，请求标识由会话、团队与调用推出（同一行读两次只派一轮）。要求对成员是外部内容（这一回合标为外部内容），不带任何设备的输入授权（与引用别的设备的话的消息相同）。
-- 拒绝（工具答出原因）：开关关着，设备此刻不能操作（手机验证窗口外）或已被移除，有一轮没结束，成员不在团队里、没开始、在忙或已归档，每个团队 Agent 最多 6 轮（`TEAM_LIMITS.agentRounds`，人仍可以再派）。
-- **不受无人值守上限。** 人为这个团队打开开关，就是对这些成员的信任：Agent 派的一轮不按 `policy.json` 的 `unattended`（`maxLevel` 等）拦截，L3 的外部 Harness 成员也可以派，也不加本机确认（所有者的决定）。打开开关的设备必须还在、有 `run`；其余边界照上：只派已有成员、每团队 6 轮、一次一轮、外部内容、不沿用「始终允许」、设备移除或团队停止即关。
+- 拒绝（工具答出原因）：开关关着，设备此刻不能操作（手机验证窗口外）或已被移除，有一轮没结束，成员不在团队里、没开始、在忙或已归档。Agent 派几轮不设上限：开关是人给的授权，一次只有一轮，人随时可以关掉开关或停止团队。
+- **不受无人值守上限。** 人为这个团队打开开关，就是对这些成员的信任：Agent 派的一轮不按 `policy.json` 的 `unattended`（`maxLevel` 等）拦截，L3 的外部 Harness 成员也可以派，也不加本机确认（所有者的决定）。打开开关的设备必须还在、有 `run`；其余边界照上：只派已有成员、一次一轮、外部内容、不沿用「始终允许」、设备移除或团队停止即关。
 
 ## 停止
 

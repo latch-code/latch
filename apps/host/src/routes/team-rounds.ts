@@ -49,8 +49,6 @@ type Refusal =
   | 'starting'
   | 'open'
   | 'other-open'
-  | 'full'
-  | 'agent-full'
   | 'duplicate'
   | 'unknown-member'
   | 'unstarted'
@@ -70,10 +68,6 @@ function refusalError(refusal: Refusal, message: string): AppError {
       return new AppError(409, 'team-round-open', message)
     case 'other-open':
       return new AppError(409, 'team-open', message)
-    case 'full':
-      return new AppError(409, 'team-rounds-full', message)
-    case 'agent-full':
-      return new AppError(409, 'team-agent-rounds', message)
     case 'duplicate':
       return new AppError(400, 'invalid-input', message)
     case 'unknown-member':
@@ -99,8 +93,6 @@ const PERSON: Words = (refusal, member) => {
   if (refusal === 'starting') return '团队正在开始或派活，稍后再试。'
   if (refusal === 'open') return '这个团队还有一轮没有结束，等它的结果交回后再派下一轮。'
   if (refusal === 'other-open') return '这个会话已有一个还没结束的团队，等它结束或停止后再派。'
-  if (refusal === 'full') return `一个团队最多 ${TEAM_LIMITS.rounds} 轮。`
-  if (refusal === 'agent-full') return `Agent 在这个团队里最多自己派 ${TEAM_LIMITS.agentRounds} 轮。`
   if (refusal === 'duplicate') return '同一个成员在一轮里只能派一次。'
   if (refusal === 'unknown-member') return '这个团队里没有这个成员。'
   if (refusal === 'unstarted') return `${who}没有开始过，不能再派活。`
@@ -116,9 +108,6 @@ const AGENT: Words = (refusal, member) => {
   if (refusal === 'starting') return 'Not sent: the team is being started or sent work right now. Try again shortly.'
   if (refusal === 'open') return 'Not sent: a round of this team is still open. Its results come back here as one message first.'
   if (refusal === 'other-open') return 'Not sent: another team of this conversation is still open.'
-  if (refusal === 'full') return `Not sent: a team has at most ${TEAM_LIMITS.rounds} rounds.`
-  if (refusal === 'agent-full')
-    return `Not sent: you have made the ${TEAM_LIMITS.agentRounds} rounds you may make in this team. The user can still send more.`
   if (refusal === 'duplicate') return 'Not sent: name each member once in a round.'
   if (refusal === 'unknown-member') return `Not sent: ${member ?? 'that member'} is not a member of this team. Use list_members.`
   if (refusal === 'unstarted') return `Not sent: ${who} never started, so it cannot be sent work.`
@@ -208,8 +197,6 @@ export function createTeamRounds(env: RoundEnv) {
       if (!held && starting.has(lead)) throw refuse('starting')
       if (teamOpen(row)) throw refuse('open')
       if (all.some(other => other.id !== row.id && other.leadSessionId === lead && teamOpen(other))) throw refuse('other-open')
-      if (roundOf(row) >= TEAM_LIMITS.rounds) throw refuse('full')
-      if (how.by === 'agent' && (row.agentRounds ?? 0) >= TEAM_LIMITS.agentRounds) throw refuse('agent-full')
     }
     valid(team, store.list())
     if (new Set(sends.map(send => send.member.itemId)).size !== sends.length) throw refuse('duplicate')
@@ -244,7 +231,8 @@ export function createTeamRounds(env: RoundEnv) {
           if (!row) throw new AppError(404, 'team-not-found', '找不到这个团队。')
           valid(row, draft, true)
           before = structuredClone(row)
-          row.history = [...(row.history ?? []), pastRound(row)]
+          // Any number of rounds: the record keeps the latest ones' states.
+          row.history = [...(row.history ?? []), pastRound(row)].slice(-TEAM_LIMITS.history)
           row.round = {
             round,
             by: how.by,
@@ -443,7 +431,6 @@ export function createTeamRounds(env: RoundEnv) {
         state: member.state,
       })),
       open: teamOpen(team),
-      roundsLeft: Math.max(0, Math.min(TEAM_LIMITS.agentRounds - (team.agentRounds ?? 0), TEAM_LIMITS.rounds - roundOf(team))),
     }
   }
 

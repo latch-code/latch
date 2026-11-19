@@ -5281,11 +5281,11 @@ describe('agent context', () => {
     const call = (name: string, args: unknown) => ask('tools/call', { name, arguments: args })
     expect((await call('send_to_members', { sends: [{ member: 'm1', prompt: 'x' }] })).result).toMatchObject({ isError: true })
 
-    await writeTeamRoster(directory, { members: [{ id: 'm1', title: '一', harness: 'Alpha', state: 'done' }], open: false, roundsLeft: 6 })
+    await writeTeamRoster(directory, { members: [{ id: 'm1', title: '一', harness: 'Alpha', state: 'done' }], open: false })
     expect((await stat(join(directory, TEAM_FILE))).mode & 0o777).toBe(0o600)
     await vi.waitFor(() => expect(lines.some(line => line.method === 'notifications/tools/list_changed')).toBe(true), { timeout: 5_000 })
     expect(await names()).toEqual(expect.arrayContaining(['list_members', 'send_to_members']))
-    expect(JSON.stringify((await call('list_members', {})).result)).toContain('roundsLeft')
+    expect(JSON.stringify((await call('list_members', {})).result)).toContain('\\"open\\":false')
     expect((await call('send_to_members', { sends: [{ member: 'x1', prompt: 'x' }] })).result).toMatchObject({ isError: true })
     expect((await call('send_to_members', { sends: [{ member: 'm1', prompt: '' }] })).result).toMatchObject({ isError: true })
 

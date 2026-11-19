@@ -65,7 +65,7 @@ const roundRequestSchema = z.strictObject({
 })
 /** A round that has ended, as the record keeps it once a later one is made: who was in it and how each ended. */
 const pastRoundSchema = z.strictObject({
-  round: z.number().int().min(1).max(TEAM_LIMITS.rounds),
+  round: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   by: z.enum(['person', 'agent']),
   members: z
     .array(z.strictObject({ itemId: ITEM_ID, state: memberState, requestId: z.string().uuid().optional() }))
@@ -116,7 +116,7 @@ const teamSchema = z.strictObject({
    */
   round: z
     .strictObject({
-      round: z.number().int().min(2).max(TEAM_LIMITS.rounds),
+      round: z.number().int().min(2).max(Number.MAX_SAFE_INTEGER),
       by: z.enum(['person', 'agent']),
       itemIds: z.array(ITEM_ID).min(1).max(TEAM_LIMITS.members),
       request: roundRequestSchema,
@@ -125,9 +125,9 @@ const teamSchema = z.strictObject({
     })
     .optional(),
   /** The rounds before the latest, oldest first. */
-  history: z.array(pastRoundSchema).max(TEAM_LIMITS.rounds).optional(),
-  /** Rounds the lead's agent made by itself. */
-  agentRounds: z.number().int().min(1).max(TEAM_LIMITS.agentRounds).optional(),
+  history: z.array(pastRoundSchema).max(TEAM_LIMITS.history).optional(),
+  /** Rounds the lead's agent made by itself, counted; nothing is held back by it. */
+  agentRounds: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   /**
    * The person let the lead's agent send work to the members: the device that allowed it, as whom its rounds are made.
    * Cleared when that device is removed or loses `run`, and when the team is stopped.
