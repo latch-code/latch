@@ -128,7 +128,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | 日志脱敏与秘密形状 | `tests/redact.test.ts`；新增秘密格式时补用例 |
 | Host 进程、数据目录锁、`pnpm latch`、`--disable-sigusr1` | `security.test.ts`、`cli.test.ts` |
 | 路径、项目目录与会话文件夹 | `paths.test.ts`、`projects.test.ts`、`session-folders.test.ts` |
-| 风险分级与审批 | `risk.test.ts`、`tests/runtime.test.ts`、`hub.test.ts` |
+| 风险分级与审批 | `risk.test.ts`、`tests/runtime.test.ts`、`hub.test.ts`；Latch 内置的权限档位是 `tests/permission-modes.test.ts`、`builtin-modes.test.ts`、`apps/web/test/builtin-permission.test.ts` 与 `e2e/builtin-modes.e2e.ts` |
 | 审批与取消的回执 | `server.test.ts` 的 `receipts and cancels`、`session-meta.test.ts` |
 | 事件流与阅读位置 | `streaming.test.ts`、`apps/web/test/reading-position.test.ts`、`e2e/streaming-ui.e2e.ts`、`e2e/takeover.e2e.ts` |
 | ACP 进程：环境白名单、启动指纹、权限模式、子 Agent | `packages/harness-acp/test/` 的 `acp.test.ts`、`subagents.test.ts`、`replay.test.ts`；Cursor 的 SDK 路线是 `cursor-sdk.test.ts`（假 SDK 模块 `fixtures/fake-cursor-sdk.mjs`，从不连 Cursor） |

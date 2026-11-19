@@ -480,7 +480,15 @@ export interface ToolBlock {
 export interface ToolJudgement {
   /** The harness, as its definition names it. */
   by: string
-  outcome: 'approved' | 'denied' | 'none' | 'unasked'
+  /** `referred`: Latch 内置's model left the call to the person, who was then asked. */
+  outcome: 'approved' | 'denied' | 'none' | 'unasked' | 'referred'
+  /**
+   * Latch 内置's 由模型判断: the verdict is on this row's own call, judged before it ran, not a separate review row. The
+   * model's answer is never a person's approval; anything but `approved` asked the person.
+   */
+  own?: true
+  /** With `own`: the model's one-line reason, untrusted text the Host cut to 300 characters. */
+  reason?: string
 }
 
 export interface Message {

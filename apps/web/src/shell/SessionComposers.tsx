@@ -449,6 +449,7 @@ export function SessionComposer({
           choice.mode,
           withLadderMode(chosenHarness, draftConfig(chosenHarness, choice.config)?.config, choice.config),
           draftRead(chosenHarness, access, draftReading),
+          access.scopes,
         )
       : !summary
         ? undefined

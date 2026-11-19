@@ -20,6 +20,7 @@ export const PASSED_ON: Readonly<Record<string, readonly string[]>> = {
   'apps/host/src/config-requests.ts': ['error.code'],
   'apps/host/src/routes/work-proposals.ts': ['normalized.problem'],
   'apps/host/src/server.ts': ['code'],
+  'packages/core/src/runtime.ts': ['error.code'],
   'packages/harness-acp/src/runtime.ts': ['error.code'],
 }
 const CODE = /^[A-Za-z][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*$/u

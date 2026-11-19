@@ -1497,7 +1497,18 @@ export class HarnessHub implements Bridge {
 
   /** Latch enforces, or: what the bridge verified, but never more than L3. Plugin harness: nothing verified. */
   private permission(member: Member, reported: SessionPermission | undefined): SessionPermission {
-    if (member.trust.level === 'L1') return { level: 'L1', enforcer: 'LATCH', notes: [] }
+    if (member.trust.level === 'L1') {
+      // Latch enforces; a driver says only which of its levels the session is at.
+      const { expectedMode, defaultMode, modeTiers } = reported ?? {}
+      return {
+        level: 'L1',
+        enforcer: 'LATCH',
+        ...(typeof expectedMode === 'string' ? { expectedMode } : {}),
+        ...(typeof defaultMode === 'string' ? { defaultMode } : {}),
+        ...(modeTiers ? { modeTiers: structuredClone(modeTiers) } : {}),
+        notes: [],
+      }
+    }
     if (member.trust.kind === 'acp') return { ...reported, notes: [...(reported?.notes ?? [])], level: 'L3', enforcer: 'NONE' }
     return { level: 'L3', enforcer: 'NONE', notes: [PLUGIN_NOTE] }
   }

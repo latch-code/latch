@@ -1578,6 +1578,12 @@ export const JUDGED_COPY = defineCopy(
     approved: '放行',
     denied: '拦下',
     none: '没有判断',
+    referred: '交给你',
+    /** Latch 内置's model judged the row's own call: who decided in a few words, its reason behind ⓘ. */
+    ownBrief: (outcome: 'approved' | 'denied' | 'none' | 'unasked' | 'referred', reason?: string): Brief => ({
+      label: outcome === 'approved' ? '模型放行，不是你的批准' : outcome === 'referred' ? '模型交给你决定' : '模型没有判断，问了你',
+      detail: reason ? `模型的理由：${reason}` : '模型的回答无法使用，这次调用照常问你。',
+    }),
     /** In a folded turn's words. */
     deniedCount: (count: number) => `模型拦下 ${count} 次`,
     reviewNote: (agent: string) => `这是 ${agent} 自己的模型代你做的判断，不是你的批准；它拦下的在这里不能改为允许。`,
@@ -1600,6 +1606,16 @@ export const JUDGED_COPY = defineCopy(
     approved: 'Let through',
     denied: 'Blocked',
     none: 'No judgment',
+    referred: 'Left to you',
+    ownBrief: (outcome: 'approved' | 'denied' | 'none' | 'unasked' | 'referred', reason?: string): Brief => ({
+      label:
+        outcome === 'approved'
+          ? 'The model let it through, not your approval'
+          : outcome === 'referred'
+            ? 'The model left it to you'
+            : 'The model did not judge; you were asked',
+      detail: reason ? `The model’s reason: ${reason}` : 'The model’s answer could not be used, so you were asked as usual.',
+    }),
     deniedCount: (count: number) => plural(count, { one: 'Model blocked {n} time', other: 'Model blocked {n} times' }),
     reviewNote: (agent: string) =>
       `This is ${agent}’s own model judging for you, not your approval; what it blocked cannot be changed to allowed here.`,

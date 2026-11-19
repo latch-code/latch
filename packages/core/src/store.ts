@@ -33,6 +33,8 @@ export interface StoredTask {
   batch?: { calls: ToolCall[]; started: string[]; completed: string[] }
   /** Tools the user allowed for the rest of this session. */
   allowedTools?: string[]
+  /** The session's level (`BuiltinMode`); absent or unreadable: 先问你. */
+  permissionMode?: string
   /** A call that may have read outside content ran since the context last started over: proposals are external. */
   outsideRead?: true
   /** How many memories this session has proposed through `propose_memory`. */
@@ -136,6 +138,15 @@ const toolDetailSchema = z.object({
       via: z.enum(['this-mac', 'other-device']).optional(),
     })
     .optional(),
+  judged: z
+    .object({
+      by: z.string().max(200),
+      outcome: z.enum(['approved', 'denied', 'none', 'unasked', 'referred']),
+      own: z.literal(true).optional(),
+      reason: z.string().max(300).optional(),
+    })
+    .optional(),
+  blocked: z.object({ by: z.string().max(200), source: z.enum(['model', 'rule']), reason: z.string().max(1000).optional() }).optional(),
 })
 const messageSchema = z.object({
   origin: z.literal('mcp-prompt').optional(),
@@ -237,6 +248,7 @@ const stateSchema = z.object({
         .optional(),
       batch: z.object({ calls: z.array(callSchema), started: z.array(z.string()), completed: z.array(z.string()) }).optional(),
       allowedTools: z.array(z.string()).optional(),
+      permissionMode: z.string().max(16).optional(),
       outsideRead: z.literal(true).optional(),
       proposals: z.number().int().min(0).max(1000).optional(),
       workProposals: z.literal(true).optional(),

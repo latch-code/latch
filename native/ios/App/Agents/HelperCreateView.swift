@@ -265,7 +265,8 @@ struct HelperDefaultFields: View {
                 }
             }
             row("做事前") {
-                let modes = harness["permission"]["modes"].array.compactMap(\.string)
+                // Latch 内置's levels are a session's: an Agent on it starts at 先问你.
+                let modes = harness["level"].string == "L3" ? harness["permission"]["modes"].array.compactMap(\.string) : []
                 if modes.isEmpty { Text(harness["permission"]["approvals"].string == "none" ? "不先问你" : "先问你").foregroundStyle(harness["permission"]["approvals"].string == "none" ? PhoneTheme.amber : PhoneTheme.ink) }
                 else {
                     Menu {

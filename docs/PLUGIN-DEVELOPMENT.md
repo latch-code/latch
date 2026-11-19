@@ -11,6 +11,7 @@ sources:
   - apps/host/scripts/cleanup-plugin-generations.ts
   - apps/host/src/plugins
   - apps/host/src/risk.ts
+  - packages/core/src/permission-modes.ts
   - apps/host/src/egress.ts
   - apps/host/src/providers.ts
   - src
@@ -255,7 +256,7 @@ context.registerSkill({ id: 'review', name: '发布检查', description: '逐项
 | 等级 | 哪些调用 | 审批 |
 | --- | --- | --- |
 | R0 | 内置 `list_folders`，会话任一文件夹中的 `list_files`、`read_file`；内置 `ask_user`；内置浏览器工具里只看不动的（`BROWSER_READS`）与关闭 Agent 自己开的标签；`--demo` 时的 `long_task` | 直接执行 |
-| R1 | 内置 `write_file` 写会话任一文件夹内的普通路径；内置浏览器工具的其余操作，关闭人开的标签；`--demo` 时的 `write_report` | 每次询问，可选「本会话始终允许」 |
+| R1 | 内置 `write_file` 写会话任一文件夹内的普通路径；内置浏览器工具的其余操作，关闭人开的标签；`--demo` 时的 `write_report` | 每次询问，可选「本会话始终允许」；会话的[权限档位](#权限档位)可以不问 |
 | R2 | 其余全部，见下 | 每次询问，没有「始终允许」，即使同一工具此前在本会话被始终允许 |
 
 R2 的情形与原因（`riskReason`）：
@@ -272,10 +273,29 @@ R2 的情形与原因（`riskReason`）：
 | `sensitive-field` | 浏览器工具往密码、一次性验证码、卡号或隐藏字段输入，或往从没读到过的元素输入 |
 
 - 第三方工具的 `requiresApproval: false` 被忽略。它只在没有分级器的场合（直接用 `createRuntime` 的测试）决定是否询问。
-- 分级器抛错或返回未知值按 R2。
+- 分级器抛错或返回未知值按 R2。分级器返回等级，或 `{ risk, reason }`（`ToolRisk`）：R2 带 Host 的原因，供权限档位判断。
 - 审批的 `risk` 由 Host 按当前分级重算：不低于运行时记录的值，至少 R1；Driver 自报的 `riskReason` 被丢弃。Host 重启后旧审批失效，不会被重新批准。
 - 允许 R2 要 `approve:elevated`，允许 R1 要 `approve:standard`；拒绝与取消只要 `view`。都不弹本机确认，每次决定有审计。
 - 浏览器工具的分级不看标签现在在哪（它可以在分级与执行之间变）：标签不在这台 Mac 的本机地址上时，除列标签与关标签外 broker 一律拒绝，不论批准与否，所以「本会话始终允许」带不到别的地址。外部 Harness 经工具网关用同一组工具时 R0 与 R1 直接执行并审计，R2 一律拒绝（`elevated-refused`）。见 [PREVIEW-BROWSER.md](PREVIEW-BROWSER.md#agent-的工具)。
+
+#### 权限档位
+
+Latch 内置的会话有五档（`BUILTIN_MODES`，[permission-modes.ts](../packages/core/src/permission-modes.ts) 的 `modeAnswer`）。档位只决定谁回答，分级与 `riskReason` 不变；每次调用时读当前档位，改了从下一个调用起生效。
+
+| 档位 | R1 | R2 |
+| --- | --- | --- |
+| 只看不改（`plan`） | 不运行、不问，模型收到「只看不改」的拒绝 | 同左 |
+| 先问你（`ask`，默认） | 问，可「本会话始终允许」 | 每次问 |
+| 按规则放行（`rule`） | 直接运行 | 每次问 |
+| 由模型判断（`model`） | 直接运行 | 先由模型判断，「放行」就运行，其余问 |
+| 不再询问（`never`） | 直接运行 | 直接运行 |
+
+- **始终问。** `code-root` 与 `sensitive-field` 在问人的各档都问（`ALWAYS_ASK_REASONS`）；Host 没给原因或原因不认得的 R2（分级器出错）也问，不交给模型判断。
+- **模型的判断。** 用会话这一轮的模型，不带工具，系统提示固定（`JUDGE_PROMPT`）；用户消息只有工具名、R2 原因、参数与人最近一条消息，后两者标为外部内容。回答必须恰好是 `{"decision":"allow"|"ask","reason":"…"}`；别的回答、出错、30 秒超时都问人，取消这一轮就是取消。结论记在这一行（`ToolDetail.judged`，`own: true`，理由脱敏后限 300 字），它的 tokens 计入会话与这一轮的用量。
+- **记录。** 每个模型结论（`source: 'latch-model'`，`approved`、`referred`、`timed-out`、`unknown`）与每个没问人就运行的 R2（`source: 'mode'`、`ran-unasked`）在调用运行前写 `task.tool.judged`；写不进去时这一轮停止，调用不运行。没问人就运行的 R1 不另记，与「本会话始终允许」相同。
+- **无人值守。** 定时运行与团队派的一轮（`unattended`）最多按「先问你」回答，「只看不改」照样拒绝；更宽的档位到不了它们，所以 Standard 仍按 L1 对照 `unattended.maxLevel`。
+- **持久化。** 档位存在会话里（`permissionMode`，读不懂按「先问你」）；`TaskDetail.config` 的 `mode` 项与 `TaskDetail.permission`（`expectedMode`、`defaultMode`、`modeTiers`）报告它。开始请求可以带一项 `{ configId: 'mode' 或 '~mode', value }`，只对 Agent 会话；插件页面、我的 Agent、通用与团队成员的开始不带。
+- **谁能改。** 与其他 Harness 同一接口（`POST /tasks/:id/config`）：`run`，加上该档代答的批准权限（`modeScopes`：「按规则放行」`approve:standard`，「由模型判断」「不再询问」再加 `approve:elevated`）。放宽写 `task.mode.widened`；从更宽的一档开始时，Driver 在会话建立之前经 `HarnessHostOptions.modeWidened` 让 Host 写这一条，写不进去就不建会话，之后开始失败则记 `action.failed`。
 
 ## 注册模型 Provider
 

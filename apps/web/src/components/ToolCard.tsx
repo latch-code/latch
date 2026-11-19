@@ -178,6 +178,7 @@ const sameTool = (a: ToolDetail | undefined, b: ToolDetail | undefined) =>
     && sameDecision(a.decision, b.decision)
     && a.judged?.outcome === b.judged?.outcome
     && a.judged?.by === b.judged?.by
+    && a.judged?.reason === b.judged?.reason
     && a.blocked?.by === b.blocked?.by
     && a.blocked?.source === b.blocked?.source
     && a.blocked?.reason === b.blocked?.reason)
@@ -498,8 +499,12 @@ export const ToolCard = memo(
     }, [open, headed, object])
     const well = command && (state === 'running' || shown === 'failed' || shown === 'interrupted' || shown === 'unknown')
     // A judgement's words, once its call settled: the review's verdict, or that the call ran without an ask.
+    // Latch 内置's own judgement says 放行 only; a call its model left to the person reads as the person's decision.
     const judgedWords =
-      judged && (state === 'completed' || state === 'failed') && !(state === 'failed' && judged.outcome === 'unasked')
+      judged
+      && (state === 'completed' || state === 'failed')
+      && !(state === 'failed' && judged.outcome === 'unasked')
+      && !(judged.own && judged.outcome !== 'approved')
         ? JUDGED_COPY[judged.outcome]
         : undefined
     // The verb says the kind; the glyph at the row's end says only a state the words do not already make plain.
@@ -523,6 +528,8 @@ export const ToolCard = memo(
       line && line.reported !== title && line.reported !== object ? line.reported : undefined,
       tool?.toolTitle && toolName && toolName !== label.object ? toolName : undefined,
       decision?.outcome === 'allowed' ? decisionLine(decision, 0).full : undefined,
+      // Latch 内置's model judged this call: who decided and why, also where an edit's row opens in Changes.
+      judged?.own ? [JUDGED_COPY.ownBrief(judged.outcome, judged.reason).label, judged.reason].filter(Boolean).join('：') : undefined,
     ]
       .filter(Boolean)
       .join('\n')
@@ -531,11 +538,13 @@ export const ToolCard = memo(
       ? block.source === 'model'
         ? JUDGED_COPY.reviewBrief(block.by)
         : JUDGED_COPY.ruleBrief(block.by)
-      : judged && (review || judgedWords)
-        ? review
-          ? JUDGED_COPY.reviewBrief(judged.by)
-          : JUDGED_COPY.unaskedBrief(judged.by)
-        : undefined
+      : judged?.own
+        ? JUDGED_COPY.ownBrief(judged.outcome, judged.reason)
+        : judged && (review || judgedWords)
+          ? review
+            ? JUDGED_COPY.reviewBrief(judged.by)
+            : JUDGED_COPY.unaskedBrief(judged.by)
+          : undefined
     const path = label.mono ? undefined : rowPath(tool, label.object, session)
     // A state change the page saw happen: the spinner and the result icon cross-fade and the new words fade in.
     const glyphKind: RowKind = review ? 'other' : newFile ? 'new' : applied ? 'edit' : kind

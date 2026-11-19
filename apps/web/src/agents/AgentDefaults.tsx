@@ -61,10 +61,11 @@ export function AgentDefaults({
   const harness = catalog.harnesses.find(item => item.id === draft.harnessId)
   const choice = agentDefaultChoice(catalog, draft)
   const reading = useReading(harness)
+  // Latch 内置's levels are a session's, chosen in Code: an Agent on it starts at 先问你.
   const permission = draftPermission(
     harness,
     draft.mode,
-    withLadderMode(harness, draftConfig(harness, choice.config)?.config, choice.config),
+    harness?.level === 'L3' ? withLadderMode(harness, draftConfig(harness, choice.config)?.config, choice.config) : undefined,
     draftRead(harness, access, reading),
   )
   const update = (patch: Partial<ComposerChoice>) => {

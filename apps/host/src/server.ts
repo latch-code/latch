@@ -24,6 +24,11 @@ import { resultContent } from './agent-activity.ts'
 import { agentPluginRevision } from './agent-revisions.ts'
 import { executionBuildRevision } from './execution-build.ts'
 import {
+  BUILTIN_DEFAULT_MODE,
+  LADDER_MODE,
+  builtinMode,
+  modeScopes,
+  type BuiltinMode,
   GENERAL_AGENT_ID,
   outsideMemory,
   BOARD_SETTLE_CHARS,
@@ -145,12 +150,13 @@ import {
   type ModelProvider,
   type ModelRoute,
   type ProjectFolder,
+  type ToolRisk,
   type ToolRiskInput,
   type ToolDefinition,
   type HarnessPlugin,
   type SessionFolder,
 } from '@latch/sdk'
-import { PluginRegistry } from '@latch/core'
+import { MODE_CONFIG_ID, PluginRegistry, modeChange } from '@latch/core'
 import { canonicalJson, sha256Hex, redactKnownSecrets, syncDirectory } from '@latch/core/node-kit'
 import {
   assertCommandVersion,
@@ -5771,11 +5777,31 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       }
     }
 
-    async function classifyToolCall(input: ToolRiskInput): Promise<RiskLevel> {
-      const { risk } = await classifyCall(input)
+    async function classifyToolCall(input: ToolRiskInput): Promise<ToolRisk> {
+      const { risk, reason } = await classifyCall(input)
       // Right before the call: the class it is approved at goes with it to main.
       if (isBrowserTool(input.toolName)) browserRisks.set(input.sessionId, { key: browserKey(input.toolName, input.arguments), risk })
-      return risk
+      // The reason lets the session's level keep Latch's own code and sensitive fields asking.
+      return reason ? { risk, reason } : { risk }
+    }
+
+    /**
+     * Starts of Latch 内置 sessions at a wider level, by request, while the driver creates them: who chose it, and the
+     * widening's record once the driver has the session's ID (`modeWidened`).
+     */
+    const startWidenings = new Map<string, { caller: DeviceCaller; mode: BuiltinMode; seq?: number }>()
+    async function modeWidened(input: { sessionId: string; mode: string; requestId: string }): Promise<void> {
+      const pending = startWidenings.get(input.requestId)
+      if (!pending || pending.mode !== input.mode) throw new AppError(403, 'mode-unauthorized', '这个权限档位没有经过这台设备选择。')
+      recheck(pending.caller, 'run')
+      for (const scope of modeScopes(pending.mode)) recheck(pending.caller, scope)
+      pending.seq = await audited({
+        action: 'task.mode.widened',
+        actor: actorOf(pending.caller),
+        target: input.sessionId,
+        stepup: 'none',
+        detail: { sessionId: input.sessionId, toHash: sha256Hex(input.mode) },
+      })
     }
 
     function securityEvent(event: HarnessSecurityEvent): void | Promise<void> {
@@ -6346,6 +6372,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             defaultModel: savedDefaultModel,
             tmpRoot: runtime.tmpRoot,
             securityEvent,
+            ...(driver.id === STANDARD ? { modeWidened } : {}),
             clock,
             // Turns the gateway does not meter, for 额度与用量: an ACP Harness on its own login, and the built-in harness on
             // a plugin's own provider. Saved services are in the ledger already; the demo model is counted nowhere.
@@ -9605,8 +9632,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (input.model) assertModel(input.model)
         // A harness with its own models takes a service only through the gateway, by the Host's own reckoning of the pair.
         const modelRoute = input.model && harness.capabilities.models.owner !== 'latch' ? modelRouteFor(harness, input.model) : undefined
-        if (input.config?.length && harness.capabilities.models.owner === 'latch')
+        // Latch 内置 takes one pick before it starts: its level, which a page's session never takes.
+        const startLevel =
+          input.config?.length === 1 && (input.config[0]!.configId === MODE_CONFIG_ID || input.config[0]!.configId === LADDER_MODE)
+            ? builtinMode(input.config[0]!.value)
+            : undefined
+        if (
+          input.config?.length
+          && harness.capabilities.models.owner === 'latch'
+          && (!startLevel || hub!.levelOf(harnessId) !== 'L1' || pageStart || input.mode === 'chat')
+        )
           throw new AppError(400, 'config-unsupported', `${harness.capabilities.display.label} 不能在开始前这样设置`)
+        // A level answers approvals for the person: the device must hold the scopes those approvals take.
+        if (startLevel) for (const scope of modeScopes(startLevel)) requireScope(caller, scope)
         const workspaceId = input.workspaceId ?? 'default'
         const chosen = workspaceId === 'default' ? undefined : savedProject(workspaceId)
         if (workspaceId !== 'default' && !chosen) throw new AppError(400, 'workspace-unavailable', '找不到所选项目')
@@ -9825,7 +9863,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               )
           return created
         }
-        if (hub!.levelOf(harnessId) === 'L1') {
+        const startBuiltin = async () => {
           if (ownFolder) {
             const own = await ownFolders.allocate(folderRequest)
             if (input.appDraft) await writeAppDraft(own.path, own.name)
@@ -9845,6 +9883,22 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
               createInWorktree(() => hub!.createTask(folders ? { ...task, folders: folders.map(({ id, path }) => ({ id, path })) } : task)),
             ),
           )
+        }
+        if (hub!.levelOf(harnessId) === 'L1') {
+          // The driver records the widening, with this device, before the session exists; a failed start marks it failed.
+          if (startLevel && modeChange(BUILTIN_DEFAULT_MODE, startLevel) === 'wider') {
+            if (startWidenings.has(input.requestId)) throw new AppError(409, 'request-in-progress', '同一个请求正在处理。')
+            startWidenings.set(input.requestId, { caller, mode: startLevel })
+          }
+          try {
+            return await startBuiltin()
+          } catch (error) {
+            const widened = startWidenings.get(input.requestId)
+            auditFailed(widened?.seq, caller)
+            throw error
+          } finally {
+            startWidenings.delete(input.requestId)
+          }
         }
         if (workspaceId === 'default' && defaultFlags.insideData)
           throw new AppError(409, 'workspace-inside-data', '该工作区位于数据目录内，迁出之前只能使用内置 Harness')
@@ -10617,8 +10671,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const input = configSchema.parse(await jsonBody(req)),
           originalWindow = caller.nativeOpening?.windowHash
         let level: 'L1' | 'L3' = 'L3'
+        // A Latch 内置 level answers approvals for the person: the device must hold the scopes those approvals take.
+        const target = input.configId === MODE_CONFIG_ID ? builtinMode(input.value) : undefined
+        let levelScopes: DeviceScope[] = []
         const authority = () => {
           recheck(caller, 'run')
+          for (const scope of levelScopes) recheck(caller, scope)
           checkPrivateSession(caller, id, true)
           assertWritable(id)
           if (isNativeListener(caller.connection.listener) && (!originalWindow || caller.nativeOpening?.windowHash !== originalWindow))
@@ -10631,6 +10689,11 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           authority()
         }
         await authorize()
+        if (target) {
+          const owner = await hub!.detail(id)
+          if (hub!.levelOf(owner.summary.harnessId) === 'L1') levelScopes = modeScopes(target)
+          authority()
+        }
         // Before the change, and whether or not it lands: a page cannot drive a session whose mode a person touched.
         if (input.configId === 'mode') await hub!.markOriginChanged(id)
         else {

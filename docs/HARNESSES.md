@@ -705,6 +705,9 @@ DeepSeek Harness 用 API 密钥时，密钥是 DeepSeek 发给这个人的，Dee
 | Cursor 经 SDK | `read-only` | — | `sandbox` | — | `full` |
 | Claude Agent | `plan` | `default` | `acceptEdits` | `auto` | `bypassPermissions` |
 | Antigravity | — | `default` | `accept-edits` | `auto` | — |
+| Latch 内置 | `plan` | `ask` | `rule` | `model` | `never` |
+
+Latch 内置的档位由 Latch 自己执行：它不改调用的风险等级，只决定谁来回答，规则见 [PLUGIN-DEVELOPMENT.md](PLUGIN-DEVELOPMENT.md#权限档位)。
 
 「由模型判断」各家的意思：
 
@@ -712,12 +715,13 @@ DeepSeek Harness 用 API 密钥时，密钥是 DeepSeek 发给这个人的，Dee
 - Qwen Code `auto`：用户的允许规则、只读工具与项目内的文件编辑先放行（`.git`、`package.json` 等除外），其余由它的分类器判断，判断不了时问。
 - goose `smart_approve`：工具声明或模型判断为只读的不问，其余问。
 - Claude Agent `auto`：Claude 的分类器。
+- Latch 内置 `model`：会话自己的模型按固定的审阅提示判断每个 R2 调用，只有它答「放行」才运行，其余都问你。
 
 规则：
 
 - **没有匹配预设的定义**按 Agent 自己报告的模式与说明列出，没有报告时写「权限无法确认」。Agent 报告了表里没有的模式时菜单不列它，除非会话正处在这个模式。Grok Build 不报告模式，不生成档位。
 - **三行。** 模式超过三个时只列「先问你」、一个中间档（有「由模型判断」用它，否则「按规则放行」）与「不再询问」，其余收在「更多」；当前模式总是列出。「不再询问」是琥珀色，「由模型判断」不是。
-- **谁能选。** 有 `run` 的设备都能选任何一档，不弹确认；放宽写 `task.mode.widened`。
+- **谁能选。** 有 `run` 的设备都能选任何一档，不弹确认；放宽写 `task.mode.widened`。Latch 内置的档位替人回答审批，所以还要那一档代答的批准权限（「按规则放行」要 `approve:standard`，「由模型判断」与「不再询问」另要 `approve:elevated`）；设备选不了的档位不列出，当前所在的一档除外。
 - **默认。** 会话总从预设的预期模式开始，Latch 从不替人选更宽的一档。设备按 Harness 记住人在草稿里选的模式与其他选项。
 
 **分叉草稿的模式**用来源会话当时的模型、思考与模式，不用设备记住的，也不写入设备记住的选项：
@@ -806,7 +810,7 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 
 **应用。**
 
-- 开始请求带 `config: [{ configId, value }]`（最多 16 项，同一项只能一次），计入请求摘要。Latch 内置 Harness 用 `model`，带 `config` 返回 400 `config-unsupported`。
+- 开始请求带 `config: [{ configId, value }]`（最多 16 项，同一项只能一次），计入请求摘要。Latch 内置 Harness 用 `model`，`config` 只收一项权限档位（`mode` 或 `~mode`，见 [PLUGIN-DEVELOPMENT.md](PLUGIN-DEVELOPMENT.md#权限档位)），别的返回 400 `config-unsupported`。
 - `session/new` 之后、第一条提示之前，依次设置模型、Agent 为这个模型提供的其他选项、模式；模式交给「权限模式」的设置与读回。Cursor 的 force 只报告启动配置完成，不冒充读回。
 - **不再提供时。** 选的模型、模式或其他选项 Agent 不再提供、被拒绝或没采用：这一轮失败、不发提示，文字说出它的名字与下一次会用什么。失败之前照常设好草稿里的其他选择并读回模式，所以会话显示的就是之后运行的。Agent 要先登录时，还没设好的选择留到登录后的那次发送（尚未实现：会话详情不带还没设好的选择）。
 - **审计。** `task.l3.start-requested` 与 `task.l3.started` 带 `configHash`（所选内容的摘要，不原样记录）。

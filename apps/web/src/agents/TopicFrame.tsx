@@ -93,7 +93,9 @@ export function TopicFrame({
         ? draftPermission(
             freshHarness,
             fresh.mode ?? 'agent',
-            withLadderMode(freshHarness, draftConfig(freshHarness, fresh.config)?.config, fresh.config),
+            freshHarness.level === 'L3'
+              ? withLadderMode(freshHarness, draftConfig(freshHarness, fresh.config)?.config, fresh.config)
+              : undefined,
           )
         : undefined,
     current !== null

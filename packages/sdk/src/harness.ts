@@ -1,6 +1,7 @@
 import type { Bridge, ModelRoute, ProjectFolder } from './bridge.ts'
 import type { AttachmentContent, RuntimeRegistry, ToolDefinition } from './plugins.ts'
 import type {
+  ApprovalRiskReason,
   AttachmentRef,
   FileChange,
   HarnessCapabilities,
@@ -14,6 +15,12 @@ import type {
   TokenUsage,
   ToolKind,
 } from '@latch/protocol/types'
+
+/** A call's class with the Host's reason for an R2 (`ApprovalRiskReason`). */
+export interface ToolRisk {
+  risk: RiskLevel
+  reason?: ApprovalRiskReason
+}
 
 export interface ToolRiskInput {
   toolName: string
@@ -53,8 +60,12 @@ export type HarnessSecurityEvent =
       callHash: string
       modeHash: string
       kind: ToolKind
-      outcome: 'approved' | 'denied' | 'timed-out' | 'aborted' | 'unknown' | 'ran-unasked'
-      source: 'agent-report' | 'no-ask-seen'
+      outcome: 'approved' | 'denied' | 'timed-out' | 'aborted' | 'unknown' | 'ran-unasked' | 'referred'
+      /**
+       * `latch-model`: Latch 内置's 由模型判断 asked the session's model about an R2 call (`referred`: it left the call to the
+       * person). `mode`: an R2 call ran with no person asked, because the session's level does not ask.
+       */
+      source: 'agent-report' | 'no-ask-seen' | 'latch-model' | 'mode'
     }
   /** A turn of a session on `CreateTaskInput.modelRoute` had a reply, and no request of it reached the gateway. */
   | { type: 'model-route-bypassed'; sessionId: string }
@@ -233,8 +244,12 @@ export interface HarnessHostOptions {
   /** Default model for sessions that do not choose one. Read when a session is created. */
   defaultModel?: () => ModelRef | undefined
   maxSteps?: number
-  /** Host classifier. R0: no approval. R1: approval; "本会话始终允许" allowed. R2: approval every time; no always option. Absent: legacy (requiresApproval → R1, else R0). */
-  classifyToolCall?(input: ToolRiskInput): Promise<RiskLevel>
+  /**
+   * Host classifier. R0: no approval. R1: approval; "本会话始终允许" allowed. R2: approval every time; no always option.
+   * Absent: legacy (requiresApproval → R1, else R0). The built-in harness's levels decide who answers from the class and,
+   * for R2, the Host's reason; an R2 without a reason it knows asks at every level.
+   */
+  classifyToolCall?(input: ToolRiskInput): Promise<RiskLevel | ToolRisk>
   /** Private 0700 directory for per-session temporary directories. */
   tmpRoot?: string
   /**
@@ -243,6 +258,12 @@ export interface HarnessHostOptions {
    * not go unrecorded.
    */
   securityEvent?(event: HarnessSecurityEvent): void | Promise<void>
+  /**
+   * The built-in harness: a new session starts at a level wider than its default (`CreateTaskInput.config`). Called once,
+   * before the session is recorded or runs anything, with the ID it will have; the Host writes the widening's record and
+   * rejects when it cannot, and then nothing is created. The Host marks that record failed when the start fails after.
+   */
+  modeWidened?(input: { sessionId: string; mode: string; requestId: string }): Promise<void>
   /**
    * A turn settled whose model calls the gateway's ledger does not hold: an ACP session on the Harness's own login (no
    * model route), or a built-in turn on a provider (`providerId`) the Host does not meter. `usage` is the turn's own

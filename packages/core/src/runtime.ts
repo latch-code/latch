@@ -4,6 +4,12 @@ import { createHash, randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
 import {
+  BUILTIN_DEFAULT_MODE,
+  BUILTIN_HARNESS_LABEL,
+  BUILTIN_MODE_TIERS,
+  LADDER_MODE,
+  builtinMode,
+  type BuiltinMode,
   MODEL_EFFORT,
   attachmentDelivery,
   attachmentPathText,
@@ -54,8 +60,11 @@ import {
   type ToolCall,
   type ToolDefinition,
   type ToolResult,
+  type ToolRisk,
   type ToolRiskInput,
   type Bridge,
+  type ConfigChangeClass,
+  type SetConfigOptions,
   type CancelOptions,
   type CreateTaskInput,
   type DecideOptions,
@@ -77,9 +86,24 @@ import { isoTime, ReasoningTimer, RunClock } from './node-kit/timing.ts'
 import { redactKnownSecrets } from './node-kit/redact.ts'
 import { RECALL_LIMITS, recallText } from './node-kit/recall.ts'
 import { createSnapshotStore, emptyRuntimeState } from './store.ts'
+import {
+  JUDGE_ANSWER_LIMIT,
+  JUDGE_PROMPT,
+  JUDGE_TIMEOUT_MS,
+  MODE_CONFIG_ID,
+  PLAN_REFUSAL,
+  PLAN_REFUSAL_LINE,
+  judgeRequest,
+  modeAnswer,
+  modeChange,
+  modeOption,
+  readVerdict,
+  storedMode,
+} from './permission-modes.ts'
 import type { RuntimeState, RuntimeStore, StoredTask } from './store.ts'
 
 const DEFAULT_MAX_STEPS = 50
+type JudgedOutcome = 'approved' | 'referred' | 'timed-out' | 'unknown' | 'ran-unasked'
 /** What every built-in session starts from; an agent's instructions and skills come after it. */
 const BASE_PROMPT = [
   '你是 Latch 的内置 Agent，在用户自己的电脑上替用户工作。',
@@ -157,7 +181,11 @@ export interface RuntimeOptions {
    * "本会话始终允许"; R2 asks every time without that option. A rejection or unknown value counts as R2.
    * Absent: legacy behaviour, where `requiresApproval` means R1 and anything else R0.
    */
-  classifyToolCall?(input: ToolRiskInput): Promise<RiskLevel>
+  classifyToolCall?(input: ToolRiskInput): Promise<RiskLevel | ToolRisk>
+  /** The Host's records: the model's verdicts and the R2 calls a level ran without asking, written before they run. */
+  securityEvent?: HarnessHostOptions['securityEvent']
+  /** A session that starts at a wider level than the default: the Host's record, before the session exists. */
+  modeWidened?: HarnessHostOptions['modeWidened']
   /** Private 0700 directory for per-session temporary files. The built-in tools write in place and do not use it yet. */
   tmpRoot?: string
   /** Alternate backends must atomically commit state and receipts, with one writer. */
@@ -307,6 +335,8 @@ interface Run {
   proposals?: ToolDefinition[]
   /** A scheduled run: nobody watched what it read, so all it proposes is external. */
   unattended?: boolean
+  /** Tokens the model spent judging this run's calls (由模型判断), for the turn's record beside its steps'. */
+  judgeUsage?: TokenUsage
   /**
    * A call in this run may have read outside content: one the Host put at R2 (any plugin's tool, a folder outside the
    * session), or without a classifier, any call that asks. What it proposes after that is marked external.
@@ -894,7 +924,73 @@ class HarnessRuntime implements Bridge {
       ...(run ? run.clock.live() : {}),
       ...(run?.lastOutputAt !== undefined ? { lastOutputAt: isoTime(run.lastOutputAt) } : {}),
       clearContext: true,
+      ...this.permissionDetail(task),
     })
+  }
+
+  /**
+   * An Agent session's level, with the Host's classifier (the only way levels apply): as the mode option the composer
+   * shows, and Latch's word and line for each. A chat session has no tools, so no level.
+   */
+  private permissionDetail(task: StoredTask): Pick<DriverTaskDetail, 'config' | 'permission'> {
+    if (!this.options.classifyToolCall || task.summary.mode === 'chat') return {}
+    const current = storedMode(task.permissionMode)
+    return {
+      config: [modeOption(current)],
+      permission: {
+        level: 'L1',
+        enforcer: 'LATCH',
+        readback: 'mode',
+        approvals: 'prompts',
+        expectedMode: current,
+        defaultMode: BUILTIN_DEFAULT_MODE,
+        modeTiers: structuredClone(BUILTIN_MODE_TIERS) as Record<string, (typeof BUILTIN_MODE_TIERS)[BuiltinMode]>,
+        notes: [],
+      },
+    }
+  }
+
+  /** A level chosen for a new session: only `mode` (or a draft's `~mode`), only on an Agent session with the classifier. */
+  private startMode(config: CreateTaskInput['config'], mode: string): BuiltinMode | undefined {
+    if (config === undefined || config.length === 0) return undefined
+    const picks = Array.isArray(config) ? config : []
+    const value =
+      picks.length === 1 && (picks[0]?.configId === MODE_CONFIG_ID || picks[0]?.configId === LADDER_MODE)
+        ? builtinMode(picks[0].value)
+        : undefined
+    if (!this.options.classifyToolCall || mode !== 'agent' || value === undefined)
+      throw new AppError(400, 'config-unsupported', '这个会话开始前只能选权限档位。')
+    return value
+  }
+
+  /** Only the level is a setting of a built-in session; it applies from the session's next call. */
+  async setConfig(sessionId: string, configId: string, value: string, options: SetConfigOptions = {}): Promise<void> {
+    await this.ready()
+    const notSent = (status: number, code: string, text: string) => new AppError(status, code, text, { configOutcome: 'not-sent' })
+    const task = this.task(this.state, sessionId)
+    if (configId !== MODE_CONFIG_ID || !this.options.classifyToolCall || task.summary.mode === 'chat')
+      throw notSent(404, 'config-not-found', '该会话没有这个设置项。')
+    const mode = builtinMode(value)
+    if (!mode) throw notSent(400, 'config-value-invalid', '设置值不在可选范围内。')
+    if (task.summary.personal) throw notSent(409, 'session-read-only', '这个会话来自已移除的 Agent，只能查看。')
+    try {
+      options.authorize?.()
+    } catch (error) {
+      if (error instanceof AppError)
+        throw new AppError(error.status, error.code, error.message, { ...error.details, configOutcome: 'not-sent' })
+      throw error
+    }
+    await this.change(sessionId, current => {
+      if (mode === BUILTIN_DEFAULT_MODE) delete current.permissionMode
+      else current.permissionMode = mode
+    })
+  }
+
+  async classifyConfigChange(sessionId: string, configId: string, value: string): Promise<ConfigChangeClass> {
+    await this.ready()
+    const mode = builtinMode(value)
+    if (configId !== MODE_CONFIG_ID || !mode) return 'neutral'
+    return modeChange(storedMode(this.task(this.state, sessionId).permissionMode), mode)
   }
 
   async createTask(input: CreateTaskInput): Promise<{ sessionId: string }> {
@@ -906,6 +1002,7 @@ class HarnessRuntime implements Bridge {
     const mode = input.mode ?? 'agent'
     if (mode !== 'chat' && mode !== 'agent') throw new AppError(400, 'invalid-mode', '对话模式必须是 chat 或 agent')
     const model = input.model === undefined ? undefined : modelRef(input.model)
+    const startMode = this.startMode(input.config, mode)
     if (input.cwd !== undefined && typeof input.cwd !== 'string') throw new AppError(400, 'workspace-unavailable', '项目目录无效')
     const cwd = input.cwd === undefined ? this.workspaceRoot : await this.workspaceFor(input.cwd)
     const scope = await this.projectOf(input, cwd)
@@ -920,12 +1017,21 @@ class HarnessRuntime implements Bridge {
       ...(fileRefs.length ? { fileRefs } : {}),
       mode,
       ...(model ? { model } : {}),
+      // Only when a level was chosen, so receipts written before levels existed still match.
+      ...(startMode !== undefined ? { permissionMode: startMode } : {}),
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
       ...(Array.isArray(requestedFolders) && requestedFolders.length > 1
         ? { folders: (requestedFolders as Array<Partial<ProjectFolder> | null>).map(folder => ({ id: folder?.id, path: folder?.path })) }
         : {}),
     })
     let run: Run | undefined
+    const sessionId = `task-${randomUUID()}`
+    // A start at a wider level is on the Host's record before the session exists; a retried request is not a new one.
+    if (startMode !== undefined && modeChange(BUILTIN_DEFAULT_MODE, startMode) === 'wider' && !this.state.receipts[key]) {
+      // No one to keep the record: no wider start.
+      if (!this.options.modeWidened) throw new AppError(400, 'config-unsupported', '这个会话开始前只能选权限档位。')
+      await this.options.modeWidened({ sessionId, mode: startMode, requestId: input.requestId })
+    }
     try {
       const result = await this.commit(draft => {
         const receipt = draft.receipts[key]
@@ -958,9 +1064,8 @@ class HarnessRuntime implements Bridge {
           throw new AppError(400, 'file-reference-invalid', '文件引用无效。')
         }
         if (fileRefs.length && mode === 'chat') throw new AppError(415, 'file-references-unavailable', '只对话模式不能引用项目文件。')
-        run = this.allocateRun(`task-${randomUUID()}`, mode, selection, cwd, folders, agentContext, input.workProposals === true)
+        run = this.allocateRun(sessionId, mode, selection, cwd, folders, agentContext, input.workProposals === true)
         this.assertAttachments(run, attachments)
-        const sessionId = run.sessionId
         const at = isoTime(run.clock.startedAt)
         draft.tasks[sessionId] = {
           summary: {
@@ -997,6 +1102,7 @@ class HarnessRuntime implements Bridge {
           history: [{ role: 'user', content: context, ...(attachments.length ? { attachmentRefs: attachments } : {}) }],
           ...(skillContext(run.lease) ? { skillContext: skillContext(run.lease) } : {}),
           ...(input.workProposals ? { workProposals: true as const } : {}),
+          ...(startMode !== undefined && startMode !== BUILTIN_DEFAULT_MODE ? { permissionMode: startMode } : {}),
           revision: 1,
         }
         draft.receipts[key] = { taskId: sessionId, payloadHash }
@@ -1368,14 +1474,17 @@ class HarnessRuntime implements Bridge {
     }
   }
 
-  /** Fails closed: a classifier that throws or returns anything else yields R2. */
-  private async risk(run: Run, call: ToolCall, tool: ToolDefinition): Promise<RiskLevel> {
+  /**
+   * Fails closed: a classifier that throws or returns anything else yields R2 without a reason, which asks at every level.
+   * A reason comes only with an R2, and only as text the levels then check against the reasons they know.
+   */
+  private async risk(run: Run, call: ToolCall, tool: ToolDefinition): Promise<ToolRisk> {
     // The run's own tools only hand the Host a proposal, which waits for the person, or read the agent's own memories.
-    if (run.proposals?.includes(tool)) return 'R0'
-    if (!this.options.classifyToolCall) return tool.requiresApproval ? 'R1' : 'R0'
-    let level: unknown
+    if (run.proposals?.includes(tool)) return { risk: 'R0' }
+    if (!this.options.classifyToolCall) return { risk: tool.requiresApproval ? 'R1' : 'R0' }
+    let answer: unknown
     try {
-      level = await this.options.classifyToolCall({
+      answer = await this.options.classifyToolCall({
         toolName: call.name,
         arguments: structuredClone(call.arguments),
         cwd: run.cwd,
@@ -1383,9 +1492,111 @@ class HarnessRuntime implements Bridge {
         folders: structuredClone(run.folders),
       })
     } catch {
-      level = 'R2'
+      return { risk: 'R2' }
     }
-    return RISK_LEVELS.has(level) ? (level as RiskLevel) : 'R2'
+    if (RISK_LEVELS.has(answer)) return { risk: answer as RiskLevel }
+    const level = answer && typeof answer === 'object' ? (answer as { risk?: unknown }).risk : undefined
+    if (!RISK_LEVELS.has(level)) return { risk: 'R2' }
+    const reason = (answer as { reason?: unknown }).reason
+    return level === 'R2' && typeof reason === 'string'
+      ? { risk: 'R2', reason: reason as ToolRisk['reason'] }
+      : { risk: level as RiskLevel }
+  }
+
+  /** The session's level, read at each call so a change applies from the next one. Without a classifier there are none. */
+  private modeOf(sessionId: string): BuiltinMode {
+    return this.options.classifyToolCall ? storedMode(this.task(this.state, sessionId).permissionMode) : BUILTIN_DEFAULT_MODE
+  }
+
+  /** The Host's record of a call no person is asked about; a failed write stops the turn before the call runs. */
+  private async judged(
+    run: Run,
+    call: ToolCall,
+    tool: ToolDefinition,
+    mode: BuiltinMode,
+    outcome: JudgedOutcome,
+    source: 'latch-model' | 'mode',
+  ) {
+    if (!this.options.securityEvent) return
+    try {
+      await this.options.securityEvent({
+        type: 'tool-judged',
+        sessionId: run.sessionId,
+        callHash: digest(['call', run.sessionId, call.id]),
+        modeHash: digest(['mode', mode]),
+        kind: tool.kind ?? 'other',
+        outcome,
+        source,
+      })
+    } catch {
+      throw new AppError(503, 'judgement-unrecorded', '没有问你就运行的调用无法写入审计记录，本轮已停止，这次调用没有运行。')
+    }
+  }
+
+  /**
+   * 由模型判断: the session's model, with the fixed reviewer prompt and no tools, answers whether this R2 call runs or
+   * goes to the person. Only a strict `allow` runs it; another answer, an error, a timeout or an answer that does not
+   * parse goes to the person. A cancel of the run cancels, it is not an answer. Its tokens count in the session's usage.
+   */
+  private async judge(run: Run, call: ToolCall, tool: ToolDefinition, reason: NonNullable<ToolRisk['reason']>): Promise<boolean> {
+    const signal = run.controller.signal
+    const timeout = AbortSignal.timeout(JUDGE_TIMEOUT_MS)
+    const task = this.task(this.state, run.sessionId)
+    const request = task.messages.findLast(message => message.role === 'user')?.text
+    let text = ''
+    let usage: TokenUsage | undefined
+    let finished = false
+    try {
+      for await (const delta of run.lease.provider.stream({
+        messages: [
+          { role: 'system', content: JUDGE_PROMPT },
+          {
+            role: 'user',
+            content: judgeRequest({ toolName: call.name, toolTitle: toolTitleOf(tool), reason, arguments: call.arguments, request }),
+          },
+        ],
+        tools: [],
+        signal: AbortSignal.any([signal, timeout]),
+        model: run.model,
+        run: { sessionId: run.sessionId, runId: run.id },
+      })) {
+        run.lastEventAt = this.clock()
+        if (delta.type === 'text') text += delta.text
+        else if (delta.type === 'usage') usage = addUsage(usage, delta)
+        else if (delta.type === 'spend') run.spend = addSpend(run.spend, delta.spend)
+        else if (delta.type === 'finish') finished = true
+        if (text.length > JUDGE_ANSWER_LIMIT) break
+      }
+    } catch {
+      finished = false
+    }
+    signal.throwIfAborted()
+    const verdict = finished ? readVerdict(text) : undefined
+    const outcome: JudgedOutcome = verdict
+      ? verdict.decision === 'allow'
+        ? 'approved'
+        : 'referred'
+      : timeout.aborted
+        ? 'timed-out'
+        : 'unknown'
+    const reasonText = verdict?.reason ? redactKnownSecrets(verdict.reason).slice(0, 300) : undefined
+    if (usage) run.judgeUsage = addUsage(run.judgeUsage, usage)
+    await this.change(run.sessionId, current => {
+      if (usage) current.summary.usage = addUsage(current.summary.usage, usage)
+      const message = toolMessage(current, call)
+      if (message)
+        message.tool = {
+          ...message.tool,
+          judged: {
+            by: BUILTIN_HARNESS_LABEL,
+            outcome: verdict ? (verdict.decision === 'allow' ? 'approved' : 'referred') : 'none',
+            own: true,
+            ...(reasonText ? { reason: reasonText } : {}),
+          },
+        }
+    })
+    await this.judged(run, call, tool, 'model', outcome, 'latch-model')
+    return verdict?.decision === 'allow'
   }
 
   private async approval(
@@ -1471,7 +1682,8 @@ class HarnessRuntime implements Bridge {
       )
       return
     }
-    const risk = await this.risk(run, call, tool)
+    const classified = await this.risk(run, call, tool)
+    const risk = classified.risk
     if (risk === 'R2' || (!this.options.classifyToolCall && risk !== 'R0')) {
       run.outside = true
       // The whole session's context holds what it read, until it starts over; recorded before the call runs.
@@ -1484,9 +1696,25 @@ class HarnessRuntime implements Bridge {
     if (tool.requiresApproval || risk !== 'R0') preview = await this.preview(run, call, tool)
     signal.throwIfAborted()
     if (risk !== 'R0') {
+      // The session's level decides who answers; the class stays what the Host said.
+      const mode = this.modeOf(run.sessionId)
+      const answer = modeAnswer({ mode, risk, reason: classified.reason, unattended: run.unattended === true })
+      if (answer === 'refuse') {
+        this.output(run)
+        await this.change(run.sessionId, task => {
+          recordResult(task, call, this.now(), PLAN_REFUSAL, true)
+          const message = toolMessage(task, call)
+          if (message) message.tool = { ...message.tool, blocked: { by: BUILTIN_HARNESS_LABEL, source: 'rule', reason: PLAN_REFUSAL_LINE } }
+        })
+        return
+      }
+      const asks = answer === 'ask' || (answer === 'judge' && !(await this.judge(run, call, tool, classified.reason!)))
+      signal.throwIfAborted()
+      // An R2 call that runs with nobody asked is on record before it runs, as every R2 approval is.
+      if (!asks && risk === 'R2' && answer === 'run') await this.judged(run, call, tool, mode, 'ran-unasked', 'mode')
       // An R1 tool the user allowed for this session still shows its preview and result, without asking again.
       // R2 ignores that allowance and asks every time.
-      if (risk === 'R2' || run.unattended === true || !this.task(this.state, run.sessionId).allowedTools?.includes(call.name)) {
+      if (asks && (risk === 'R2' || run.unattended === true || !this.task(this.state, run.sessionId).allowedTools?.includes(call.name))) {
         const answer = await this.approval(run, call, tool, preview, risk)
         signal.throwIfAborted()
         if (answer.decision !== 'allow') {
@@ -1627,7 +1855,9 @@ class HarnessRuntime implements Bridge {
     if (!this.options.turnEnded || !prompt.turn?.endedAt) return
     const index = task.messages.indexOf(prompt)
     const turn = index >= 0 ? task.messages.slice(index + 1) : []
-    const usage = turnTokens(turn)
+    const steps = turnTokens(turn)
+    // The judge's requests are the turn's too.
+    const usage = steps && run.judgeUsage ? addUsage(steps, run.judgeUsage) : (steps ?? run.judgeUsage)
     try {
       this.options.turnEnded({
         sessionId: task.summary.id,

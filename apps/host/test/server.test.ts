@@ -4034,7 +4034,7 @@ describe('sessions, plugins and the change stream', () => {
     expect((await admin.request(`tasks/${sessionId}`, { method: 'PATCH', body: {} })).status).toBe(400)
     expect(
       await body(await admin.request(`tasks/${sessionId}/config`, { method: 'POST', body: { configId: 'model', value: 'x' } })),
-    ).toMatchObject({ error: 'not-supported' })
+    ).toMatchObject({ error: 'config-not-found', configOutcome: 'not-sent' })
     const running = await t.host.bridge.createTask({ prompt: '生成需要审批的报告', requestId: randomUUID() })
     await pendingApproval(t, running.sessionId)
     expect(await body(await admin.request(`tasks/${running.sessionId}`, { method: 'DELETE' }))).toMatchObject({ error: 'task-running' })

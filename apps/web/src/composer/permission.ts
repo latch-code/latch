@@ -1,4 +1,14 @@
-import type { HarnessInfo, ModeGlyph, ModeTier, PermissionTier, SessionConfigOption, SessionPermission, TaskMode } from '@latch/protocol'
+import { builtinMode, modeScopes } from '@latch/protocol'
+import type {
+  DeviceScope,
+  HarnessInfo,
+  ModeGlyph,
+  ModeTier,
+  PermissionTier,
+  SessionConfigOption,
+  SessionPermission,
+  TaskMode,
+} from '@latch/protocol'
 import { modeRows, type DeviceAccess, type ModeRow } from '../core/permissions.ts'
 import { MODE_COPY, type Brief } from '../core/securityCopy.ts'
 
@@ -143,9 +153,24 @@ export function permissionTip(view: PermissionView): string | undefined {
   return parts.length ? parts.join('。') : undefined
 }
 
+/** A Latch 内置 level this device may choose: it holds the approvals the level answers for the person. */
+function choosable(value: string, scopes: ReadonlySet<DeviceScope> | undefined): boolean {
+  const mode = builtinMode(value)
+  if (!mode) return false
+  return scopes === undefined || modeScopes(mode).every(scope => scopes.has(scope))
+}
+
 /** The harness's own facts, which need no session: for a draft, and for a session whose detail has not arrived. */
 function declaredPermission(harness: PermissionHarness, read?: DraftRead): PermissionView {
-  if (harness.level !== 'L3') return { label: MODE_COPY.askFirst, line: MODE_COPY.askBeforeWritesLine, icon: 'shield', amber: false }
+  if (harness.level !== 'L3') {
+    const initial = Object.values(harness.permission?.modeTiers ?? {}).find(tier => tier.tier === 'ask')
+    return {
+      label: initial?.name ?? MODE_COPY.askFirst,
+      line: initial?.line ?? MODE_COPY.askBeforeWritesLine,
+      icon: 'shield',
+      amber: false,
+    }
+  }
   const declared = harness.permission
   if (declared?.approvals === 'none')
     return {
@@ -197,13 +222,27 @@ export function permissionView(input: {
   mode?: TaskMode | undefined
   permission?: Partial<Pick<SessionPermission, 'approvals' | 'readback' | 'modeTiers' | 'modeGlyphs'>>
   config: readonly SessionConfigOption[]
-  access: Pick<DeviceAccess, 'legacy' | 'local'>
+  access: Pick<DeviceAccess, 'legacy' | 'local'> & { scopes?: ReadonlySet<DeviceScope> }
   locked?: string
 }): PermissionView | undefined {
   const { harness, permission, config, access, locked } = input
   if (!harness) return undefined
   if (input.mode === 'chat') return chatPermission()
-  if (harness.level !== 'L3') return declaredPermission(harness)
+  // Latch 内置's levels are Latch's own: no Harness setting to note, and only those this device may choose.
+  if (harness.level !== 'L3') {
+    const option = modeOption(config)
+    if (!option || !permission?.modeTiers) return declaredPermission(harness)
+    const rows = tierRows(option, permission.modeTiers, undefined, locked).filter(row => row.current || choosable(row.value, access.scopes))
+    const current = rows.find(row => row.current)
+    return {
+      label: current?.name ?? MODE_COPY.askFirst,
+      line: current?.line ?? '',
+      icon: current?.icon ?? 'shield',
+      amber: current?.neverAsks === true,
+      option,
+      rows,
+    }
+  }
   const option = modeOption(config)
   if (!option) {
     // The session's own report outranks the declaration, and once it started the agent has said what modes it has.
@@ -246,6 +285,7 @@ export function draftPermission(
   mode: TaskMode,
   config?: readonly SessionConfigOption[],
   read?: DraftRead,
+  scopes?: ReadonlySet<DeviceScope>,
 ): PermissionView | undefined {
   if (!harness) return undefined
   if (mode === 'chat') return chatPermission()
@@ -255,6 +295,6 @@ export function draftPermission(
     mode,
     ...(harness.permission ? { permission: harness.permission } : {}),
     config,
-    access: { legacy: false, local: true },
+    access: { legacy: false, local: true, ...(scopes ? { scopes } : {}) },
   })
 }

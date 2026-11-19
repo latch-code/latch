@@ -213,13 +213,17 @@ export const SESSION_ACTIONS = {
   }),
   /** A person stopped one subagent of the session; `subagentId` is its row's message ID. */
   'task.subagent.stopped': z.strictObject({ sessionId: opaqueId, subagentId: opaqueId }),
-  /** A call no person was asked about, in a mode where the harness's own model decides; written after the fact. */
+  /**
+   * A call no person was asked about, in a mode where the harness's own model decides; written after the fact. Latch
+   * 内置 writes it before the call runs: its model's verdict on an R2 call (`latch-model`, `referred` when it left the call
+   * to the person), or an R2 call its level runs without asking (`mode`).
+   */
   'task.tool.judged': z.strictObject({
     sessionId: opaqueId,
     callHash: hex64,
     modeHash: hex64,
     kind: z.enum(['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'other']),
-    outcome: z.enum(['approved', 'denied', 'timed-out', 'aborted', 'unknown', 'ran-unasked']),
-    source: z.enum(['agent-report', 'no-ask-seen']),
+    outcome: z.enum(['approved', 'denied', 'timed-out', 'aborted', 'unknown', 'ran-unasked', 'referred']),
+    source: z.enum(['agent-report', 'no-ask-seen', 'latch-model', 'mode']),
   }),
 } as const

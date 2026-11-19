@@ -726,7 +726,7 @@ export function toolLabel(message: Pick<Message, 'tool' | 'toolName' | 'state'>)
 
 /** The row is the harness's own model reviewing a request, not a call of its own. */
 export const isReview = (tool: Message['tool']) =>
-  tool?.judged !== undefined && tool.judged.outcome !== 'unasked' && tool.blocked === undefined
+  tool?.judged !== undefined && tool.judged.outcome !== 'unasked' && tool.judged.own !== true && tool.blocked === undefined
 
 /** A call the harness refused itself before it ran: it reports the call failed, but nothing ran and nothing broke. */
 export const isBlocked = (message: Pick<Message, 'state' | 'tool'>) => message.state === 'failed' && message.tool?.blocked !== undefined

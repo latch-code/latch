@@ -247,7 +247,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 
 | Harness | 级别 | 谁把关 | 设备权限 |
 | --- | --- | --- | --- |
-| `standard` | L1：逐项询问 | Latch：Host 对每个工具调用分级 | `run` 发起与输入，`approve:standard` 批准 R1，`approve:elevated` 批准 R2，`view` 拒绝与取消 |
+| `standard` | L1：逐项分级 | Latch：Host 对每个工具调用分级，会话的权限档位决定谁回答 | `run` 发起与输入，`approve:standard` 批准 R1，`approve:elevated` 批准 R2，`view` 拒绝与取消；选更宽的档位还要它代答的批准权限 |
 | ACP Agent、插件 Harness | L3：完全访问 | 无：Agent 自己的询问只是提示 | `run` 发起、输入、放宽模式与允许询问，`view` 拒绝与取消 |
 
 所有设备与这台 Mac 相同，只看设备权限。Standard 工具调用的风险等级（R0、R1、R2）见 [PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md#风险分级与审批)。
@@ -864,7 +864,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `POST /tasks/:id/attend` | `opened`：`view`；`checked`：`run`；私有会话另需 `all` | 看板记号，见「看板的组」 |
 | `POST /tasks/:id/cancel`、`…/stop-subagent`、`…/keep-waiting`、`…/computer-stop` | `view` | 取消；停止一个子 Agent（[HARNESSES.md](./HARNESSES.md#子-agent)）；推迟沉默提示（[STREAMING.md](./STREAMING.md#运行的真实状态)）；结束这个会话的「操控这台 Mac」（[MCP.md](./MCP.md#操控这台-mac)） |
 | `POST /approvals/:id` | 拒绝 `view`；允许 R1 `approve:standard`；允许 R2 `approve:elevated`；允许 L3 询问 `run` | 见「审批与取消」 |
-| `POST /tasks/:id/config`、`GET /tasks/:id/config-requests/:requestId`、`POST …/check` | 修改与核对 `run`；查询为原设备的 `view` | 见「会话配置修改回执」 |
+| `POST /tasks/:id/config`、`GET /tasks/:id/config-requests/:requestId`、`POST …/check` | 修改与核对 `run`（Latch 内置放宽档位另要该档代答的批准权限）；查询为原设备的 `view` | 见「会话配置修改回执」 |
 | `PATCH`/`DELETE /tasks/:id/queue/:itemId`、`POST …/send` | `run` | 见「排队输入」 |
 | `POST /tasks/:id/questions/:questionId/answer` | `run` | 见「Agent 提问」 |
 | `POST /search` | `view` | 见「会话搜索与批处理」 |
@@ -963,7 +963,7 @@ Latch 不再提供个人助手、助手群聊与它们的定时任务，数据�
 | 系统 Keychain 保存 Host 身份与密钥 | 需要签名的 Host 程序；目前为数据目录内的 0600 文件 |
 | 远程客户端的公钥固定、仅 mTLS 入口、证书自动申请与续期、可信反向代理配置 | 未实现；证书由运营者提供并续期（文件更新后 Host 自动重新加载）；从不读取代理请求头 |
 | 操作系统沙箱、Agent 出站代理、项目配置中和、托管安装 | 未实现；因此每个 ACP 与插件 Harness 会话都是 L3 |
-| Standard 的 L0 / L2 级别与级别选择 | 未实现；Standard 固定为 L1，L0–L2 只是 `policy.json` 中 `unattended.maxLevel` 的取值：低于 L1 时定时任务不能开启或运行 |
+| Standard 的 L0 / L2 级别 | 未实现；Standard 固定为 L1，L0–L2 只是 `policy.json` 中 `unattended.maxLevel` 的取值：低于 L1 时定时任务不能开启或运行。会话的权限档位（[PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md#权限档位)）不改级别：无人值守的运行最多按「先问你」回答 |
 | `write_file` 基于原内容哈希的并发检查 | 未实现 |
 | 自动批准规则 | 未实现；`unattended.allowAutoApproveRules` 与 `unattended.approvalTtlHours.acp` 只保存。无人值守运行检查 `unattended.maxLevel` 与 `pauseAfterIdleDays`，在每个审批处停下，超过 `approvalTtlHours.standard` 后取消 |
 | 在其他设备上对会话文件做本机动作（访达、快速查看、默认应用、编辑器） | 不提供：这些动作只在 `host.sock` 上进行 |
