@@ -145,6 +145,10 @@
   align-content: flex-start;
   row-gap: var(--sp-24);
 }
+/* Each line the strip wraps to is the foot's own height, so its words sit on the limit's line, not above it. */
+.composer-foot[data-usage] > .vitals-strip > * {
+  min-height: var(--sp-24);
+}
 .usage-chip {
   min-width: 0;
   max-width: none;

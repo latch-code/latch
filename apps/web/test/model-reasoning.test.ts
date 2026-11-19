@@ -22,11 +22,13 @@ import {
   agentConfigChoice,
   agentConfigValues,
   agentModelControls,
+  calmWrite,
   composerOptions,
   modelWords,
   thinkingWord,
   unreportedModelNote,
   unreportedThinkingNote,
+  withPicked,
 } from '../src/composer/modelReasoning.ts'
 
 const model: SessionConfigOption = {
@@ -197,6 +199,22 @@ describe('Agent model and reasoning controls', () => {
     expect(trigger(thinkingHtml({ ...props(), busy: model.id }))).not.toContain('aria-busy="true"')
     // The panel's levels wait on either write.
     expect(levelsColumn(html({ ...props(), busy: model.id }))).toContain('aria-busy="true"')
+  })
+
+  it("draws the panel's own pick at once and shows nothing of a write that answers quickly", () => {
+    const config = [model, reasoning, context]
+    // The pick stands in for the reported value only while its own write is under way, and only for a value offered.
+    expect(withPicked(config, { configId: model.id, value: 'two' }, model.id).find(item => item.id === model.id)?.currentValue).toBe('two')
+    expect(withPicked(config, { configId: model.id, value: 'two' }, null)).toBe(config)
+    expect(withPicked(config, { configId: model.id, value: 'two' }, reasoning.id)).toBe(config)
+    // A move to another source is no value the option offers: the session switches, and says so.
+    expect(withPicked(config, { configId: model.id, value: 'service:p\u0000m' }, model.id)).toEqual(config)
+    // Quiet: its own pick, not yet slow, nothing unknown or locked. Any other write is drawn.
+    expect(calmWrite({ busy: model.id }, true, false)).toBe(true)
+    expect(calmWrite({ busy: model.id }, true, true)).toBe(false)
+    expect(calmWrite({ busy: model.id }, false, false)).toBe(false)
+    expect(calmWrite({ busy: model.id, disabled: true }, true, false)).toBe(false)
+    expect(calmWrite({ busy: null }, true, false)).toBe(false)
   })
 
   it('shows a device that may only watch both controls with the reason, and no way to change them', () => {

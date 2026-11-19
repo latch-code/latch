@@ -127,13 +127,30 @@ describe('the input’s one entry and the start page’s headline', () => {
       // 速度 only for a model that lists the Fast tier, with Codex's own words on what it costs as the hover.
       const speed = foot.getByRole('radiogroup', { name: '速度', exact: true })
       await speed.waitFor()
+      // Within one model source a pick is drawn at once and nothing waits on screen: each write is held back 800 ms here,
+      // and meanwhile the pick shows as chosen, no row is greyed and the entry does not say it is switching.
+      await page.route('**/tasks/*/config', async route => {
+        await new Promise(done => setTimeout(done, 800))
+        await route.continue()
+      })
+      const calm = async () => ({
+        locked: await board.locator('[aria-disabled="true"]').count(),
+        busy: await page.locator('[aria-busy="true"]').filter({ visible: true }).count(),
+        switching: await entry.locator('[data-pending][data-shown]').count(),
+      })
       await speed.getByRole('radio', { name: '快速', exact: true }).click()
+      expect(await speed.getByRole('radio', { name: '快速', exact: true }).getAttribute('aria-checked')).toBe('true')
+      expect(await calm()).toEqual({ locked: 0, busy: 0, switching: 0 })
       await expect.poll(async () => current(await detail(sessionId), 'service_tier')).toBe('priority')
       expect(await panelOpen(page)).toBe(1)
       // The entry says the fast tier with a mark before the model, and the standard one with none.
       await expect.poll(() => entry.locator('.entry-fast').count()).toBe(1)
       await board.getByRole('menuitemradio', { name: 'High', exact: true }).click()
+      expect(await board.getByRole('menuitemradio', { name: 'High', exact: true }).getAttribute('aria-checked')).toBe('true')
+      await expect.poll(() => entry.locator('.model-level').innerText()).toBe('High')
+      expect(await calm()).toEqual({ locked: 0, busy: 0, switching: 0 })
       await expect.poll(async () => current(await detail(sessionId), 'reasoning_effort')).toBe('high')
+      await page.unroute('**/tasks/*/config')
       expect(await panelOpen(page)).toBe(1)
       // The foot holds the model's settings only: the permission is set beside the Harness.
       expect(await foot.locator('.permission-panel').count()).toBe(0)

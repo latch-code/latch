@@ -206,6 +206,30 @@ export function agentConfigLabel(option: SessionConfigOption): string {
   return option.options.find(item => item.value === option.currentValue)?.name ?? option.currentValue
 }
 
+/**
+ * The options as the panel draws them while a pick of its own is written: the value picked stands in for the one the
+ * Harness reported, until the Host answers (it refreshes the session before the write ends, so the reported value is
+ * current by then, or the failure is said). Only a value the option offers: a move to another model source is a switch
+ * of the session, and is drawn as one.
+ */
+export function withPicked(
+  config: readonly SessionConfigOption[],
+  picked: { configId: string; value: string } | undefined,
+  busy: string | null,
+): readonly SessionConfigOption[] {
+  if (!picked || busy !== picked.configId) return config
+  return config.map(option =>
+    option.id === picked.configId && option.options.some(item => item.value === picked.value)
+      ? { ...option, currentValue: picked.value }
+      : option,
+  )
+}
+
+/** A write the panel shows nothing of: its own pick, among what the option offers, answered within `SLOW_WRITE_MS`. */
+export function calmWrite(state: AgentConfigState, picked: boolean, slow: boolean): boolean {
+  return state.busy !== null && picked && !slow && state.feedback?.kind !== 'unknown' && state.disabled !== true
+}
+
 export function agentConfigBlocked(state: AgentConfigState): boolean {
   return state.disabled === true || state.busy !== null || state.feedback?.kind === 'unknown'
 }

@@ -84,6 +84,8 @@ import {
   thinkingWord,
   unreportedModelNote,
   unreportedThinkingNote,
+  calmWrite,
+  withPicked,
   type AgentConfigState,
 } from './modelReasoning.ts'
 import { ConfigFeedback, ReadPickedModel, useSlowWrite } from './ThinkingControl.tsx'
@@ -433,12 +435,23 @@ function noteOf(note: string | Brief | undefined): ReactNode {
 }
 
 /** A model setting the Harness reports besides thinking (a speed): a few values as segments, more as a row. */
-function ConfigRow({ option, disabled, onChoose }: { option: SessionConfigOption; disabled: boolean; onChoose: (value: string) => void }) {
+function ConfigRow({
+  option,
+  pending = false,
+  disabled,
+  onChoose,
+}: {
+  option: SessionConfigOption
+  /** Its own write is under way: the row says so, and the rest of the panel does not. */
+  pending?: boolean
+  disabled: boolean
+  onChoose: (value: string) => void
+}) {
   const values = agentConfigValues(option)
   const name = escapeHiddenCharacters(option.name)
   if (values.length >= 2 && values.length <= 3)
     return (
-      <div className="model-setting">
+      <div className="model-setting" aria-busy={pending || undefined}>
         <span className="model-setting-name">{name}</span>
         <SegmentedControl
           label={name}
@@ -532,6 +545,7 @@ function harnessBoard({
   reported,
   state,
   slow,
+  ownPick = false,
   onRefresh,
   onConfig,
   manage,
@@ -554,6 +568,8 @@ function harnessBoard({
   state: AgentConfigState
   /** A write has waited long enough to say whose answer it waits for. */
   slow: boolean
+  /** The write under way is the panel's own pick, among what its option offers (`withPicked`). */
+  ownPick?: boolean | undefined
   onRefresh?: (() => void | Promise<void>) | undefined
   onConfig: (configId: string, value: string) => void | Promise<void>
   manage: ReactNode
@@ -591,7 +607,14 @@ function harnessBoard({
   const pickedProvider = findProvider(catalog, picked?.providerId ?? session?.route?.providerId)
   const text = picked ? picked.model : (reportedOr ?? REASONING_COPY.defaultModel)
   const note = noteOverride === null ? undefined : (noteOverride ?? unreportedModelNote(name, true, config))
-  const writing = busy !== null && (busy === modelOption?.id || others.some(option => option.id === busy))
+  // A write that answers within `SLOW_WRITE_MS` changes nothing on screen: no row is greyed, no chip says it is
+  // switching, nothing spins; the new value shows once the Harness reports it. A pick made meanwhile is a no-op, as any
+  // pick during a write is (`agentConfigChoice`). Only a write that keeps waiting says so, on the part it changes.
+  const calm = calmWrite(state, ownPick, slow)
+  const rowsReason = calm ? undefined : blockedReason
+  // A write that says so: a switch of model source at once, any other once it keeps waiting.
+  const shown = busy !== null && !calm
+  const writing = shown && busy === modelOption?.id
   const ownFeedback = feedbackFor(feedback, [modelOption?.id, ...others.map(option => option.id)])
   const groups = ownModelGroups(
     catalog,
@@ -601,7 +624,7 @@ function harnessBoard({
           value: item.value,
           label: escapeHiddenCharacters(item.name),
           ...defaultTag(item.value, defaultModel),
-          ...(blockedReason ? { disabledReason: blockedReason } : {}),
+          ...(rowsReason ? { disabledReason: rowsReason } : {}),
         }))
       : [{ value: OWN_MODEL, label: reportedOr ?? REASONING_COPY.defaultModel }],
     session,
@@ -616,6 +639,7 @@ function harnessBoard({
 
   // Thinking: the levels of the model in use, or of another as far as the Host knows them.
   const own = thinking.option
+  const levelWriting = shown && (busy === own?.id || busy === modelOption?.id)
   const thinkingFeedback = feedbackFor(feedback, [own?.id])
   const levelsOf = (option: SessionConfigOption | undefined, current: boolean): BoardLevels<string> => {
     if (!option)
@@ -628,17 +652,17 @@ function harnessBoard({
       options: agentConfigValues(option).map(item => ({
         value: item.value,
         label: escapeHiddenCharacters(item.name),
-        ...(current && blockedReason ? { disabledReason: blockedReason } : {}),
+        ...(current && rowsReason ? { disabledReason: rowsReason } : {}),
       })),
     }
   }
-  const levels = (shown: string | undefined): BoardLevels<string> => {
-    const current = shown === undefined || shown === value
+  const levels = (other: string | undefined): BoardLevels<string> => {
+    const current = other === undefined || other === value
     if (current) {
       const notice = (feedback && thinkingFeedback) || thinking.footer
       return {
         ...levelsOf(own, true),
-        pending: reading || (busy !== null && (busy === own?.id || writing)),
+        pending: reading || levelWriting,
         note:
           own?.source === 'launch' || thinking.note || notice ? (
             <>
@@ -649,7 +673,7 @@ function harnessBoard({
           ) : undefined,
       }
     }
-    return { ...levelsOf(thinking.of?.(shown), false), pending: busy !== null }
+    return { ...levelsOf(thinking.of?.(other), false), pending: shown && busy === modelOption?.id }
   }
 
   const pickModel = (next: string) => {
@@ -684,7 +708,7 @@ function harnessBoard({
         feedback?.kind === 'unknown' && own && thinkingFeedback ? COPY.outcomeUnknown(thinkingLabel) : thinkingLabel,
       ),
       className: (own?.options.length ?? 0) <= 1 ? 'thinking-picker is-fixed' : 'thinking-picker',
-      pending: reading || (own !== undefined && busy === own.id),
+      pending: reading || (shown && own !== undefined && busy === own.id),
       pendingLabel: reading ? COPY.reading : slow ? COPY.waitingFor(name) : COPY.switching,
       disabled: locked !== undefined || disabled === true,
       disabledReason: locked,
@@ -713,7 +737,8 @@ function harnessBoard({
           <ConfigRow
             key={option.id}
             option={option}
-            disabled={blocked}
+            pending={shown && busy === option.id}
+            disabled={rowsReason !== undefined}
             onChoose={next => {
               void choose(option.id, next)
             }}
@@ -1037,11 +1062,20 @@ function useSessionBoard({
   route,
   computer,
 }: SessionBoardProps): Board {
+  const given = config
   const preferences = useModelPreferences()
   const writes = config.filter(
     option => option.category === 'model' || option.category === 'model_config' || option.category === 'thought_level',
   )
   const slow = useSlowWrite(busy !== null && writes.some(option => option.id === busy))
+  // The panel's own pick, drawn as chosen while it is written; the Host's answer takes over once the write ends.
+  const [pick, setPick] = useState<{ configId: string; value: string }>()
+  const shownConfig = withPicked(given, pick, busy)
+  const ownPick = shownConfig !== given
+  const write = (configId: string, value: string) => {
+    setPick({ configId, value })
+    return onConfig(configId, value)
+  }
   const manage = onManageModels && (
     <MenuFooterLink icon={ModelGlyph} chevron={false} closes onClick={onManageModels}>
       {COPY.manageModels}
@@ -1098,19 +1132,20 @@ function useSessionBoard({
       ),
     }
   }
-  const option = config.find(item => item.category === 'thought_level')
+  const option = shownConfig.find(item => item.category === 'thought_level')
   // Only where 默认 sends no level: elsewhere the Harness's own default applies, as the note says.
   const routed = route !== undefined && !route.bypassed && harness?.capabilities.models.serviceThinking === true
   const name = harness ? harnessName(harness) : 'Harness'
   return harnessBoard({
     catalog,
     harness,
-    config,
+    config: shownConfig,
     reported,
     state: { busy, ...(feedback ? { feedback } : {}) },
     slow,
+    ownPick,
     onRefresh,
-    onConfig,
+    onConfig: write,
     manage,
     locked,
     service: { session: true, route },

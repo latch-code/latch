@@ -317,6 +317,19 @@ describe('额度与用量: a Harness’s limits on its composer and in the one s
         )
           problems.push('send on a line of its own')
       }
+      // The limit at the end of the usage line stands on that line: what of the line shows shares its middle.
+      const foot = form.parentElement?.querySelector('.composer-foot[data-usage]')
+      const mark = foot?.querySelector('.usage-chip')
+      if (foot && mark && shown(mark)) {
+        const middle = (box: DOMRect) => box.top + box.height / 2
+        const line = rect(mark)
+        for (const item of foot.querySelectorAll('.vitals-item')) {
+          const box = rect(item)
+          if (!shown(item) || box.width === 0 || box.top >= rect(foot).bottom - 1) continue
+          if (Math.abs(middle(box) - middle(line)) > 1)
+            problems.push(`usage line off the limit's middle by ${Math.round(middle(line) - middle(box))}px`)
+        }
+      }
       return problems
     })
 
