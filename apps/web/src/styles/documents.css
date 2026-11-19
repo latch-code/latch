@@ -707,20 +707,64 @@
   cursor: zoom-out;
 }
 
-.message-local-image {
-  display: block;
-  max-width: min(100%, 320px);
-  height: auto;
-  object-fit: contain;
-  margin-block: var(--sp-8);
-}
-.message-local-image-button {
+/* A picture, video or sound a reply names or an agent made, drawn at its own shape within the reply column. */
+.inline-media {
   display: block;
   max-width: 100%;
+  margin-block: var(--sp-8);
+  border-radius: var(--r-12);
+  overflow: hidden;
+  background: var(--sunken);
+}
+.inline-media-open {
   border: 0;
   padding: 0;
-  background: transparent;
   cursor: zoom-in;
+}
+.inline-media-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.inline-media-image {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+.inline-media-frame {
+  width: 100%;
+}
+.inline-media-frame[data-type='video'],
+.inline-media-video {
+  width: min(100%, 640px);
+  aspect-ratio: auto 16 / 9;
+}
+.inline-media-video {
+  height: auto;
+  background: var(--sunken);
+}
+.inline-media-audio {
+  width: min(100%, 420px);
+  overflow: visible;
+  background: transparent;
+}
+/* The link's own chip stays under what it shows: the way to the file. */
+.message-media {
+  display: block;
+  margin-block: var(--sp-8);
+}
+.message-media > .inline-media {
+  margin-block: 0 var(--sp-6);
+}
+.message-media-caption {
+  display: block;
+}
+.message-attachments[data-inline] .message-attachment-media {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.message-attachments[data-inline] .message-attachment-media > .inline-media {
+  margin-block: 0;
 }
 .file-markdown {
   padding: var(--sp-16);

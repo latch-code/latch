@@ -500,7 +500,7 @@ function AssistantMessage({
       className={`message message-assistant ${streaming && !frozen ? 'is-live' : ''}`}
       data-message-id={message.id}
       aria-label={streaming ? COPY.live : undefined}>
-      <MessageAttachments attachments={message.attachments} output />
+      <MessageAttachments attachments={message.attachments} output inline />
       {message.text && (
         <div ref={stream} className="message-text">
           <MessageContent text={text} streaming={streaming} />

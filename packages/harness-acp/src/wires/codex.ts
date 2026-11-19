@@ -31,6 +31,7 @@ import {
   type CodexModels,
 } from '../codex-models.ts'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
+import { GENERATED_IMAGES_PER_TURN, generatedImage, generatedImageNote, savedImagePath } from './codex-images.ts'
 import { CODEX_GATEWAY_PROVIDER, CODEX_MODES, type CodexMode } from '../profiles/codex.ts'
 import { codexGatewayEnvironment } from '../profiles/codex-environment.ts'
 import {
@@ -453,6 +454,9 @@ interface Turn {
   memberStops?: Map<string, string>
   /** Those member turns said interrupted. Their public state waits for commands to end. */
   memberInterruptions?: Map<string, string>
+  /** Pictures of Codex's image tool passed on in this turn, and those still being read through `fs/readFile`. */
+  images?: number
+  imageReads?: number
 }
 
 interface McpCall {
@@ -1526,7 +1530,8 @@ export class CodexWire implements AgentWire {
 
   private finishWhenSettled(turn: Turn): void {
     const root = turn.rootResult
-    if (this.turn !== turn || !root || turn.checkingMembers) return
+    // A picture still being read is shown in this turn, not dropped after it.
+    if (this.turn !== turn || !root || turn.checkingMembers || turn.imageReads) return
     const active = this.team?.activeMembers() ?? []
     if (active.length) turn.delegated = true
     if (active.some(({ threadId, turnId }) => turn.memberInterruptions?.get(threadId) !== turnId)) return
@@ -1808,9 +1813,71 @@ export class CodexWire implements AgentWire {
           ...(asked ? {} : this.refusal(id, item.status)),
         })
       }
+      case 'imageGeneration':
+        return this.imageItem(item, id, done, child, emit)
       default:
         return
     }
+  }
+
+  /**
+   * Codex's image tool: a row while it runs, then the picture as an image the agent said, which the runtime keeps as the
+   * reply's attachment. The bytes come from the item (`result`), else from Codex itself (`fs/readFile` on the path it
+   * reported), which finds it wherever CODEX_HOME points. A failure, or a picture that is not passed on, is a short line on the row.
+   */
+  private imageItem(
+    item: Record<string, unknown>,
+    id: string,
+    done: boolean,
+    child: string | undefined,
+    emit: (update: Record<string, unknown> & { sessionUpdate: string }) => void,
+  ): void {
+    if (child) return
+    const row = { toolCallId: id, title: '生成图片', kind: 'other' }
+    if (!done) return emit({ sessionUpdate: 'tool_call', ...row, status: 'in_progress' })
+    const settled = (status: 'completed' | 'failed', note?: string) =>
+      emit({
+        sessionUpdate: 'tool_call_update',
+        ...row,
+        status,
+        content: note ? [{ type: 'content', content: { type: 'text', text: note } }] : [],
+      })
+    if (item.failure != null || item.status === 'failed')
+      return settled(
+        'failed',
+        generatedImageNote(isRecord(item.failure) && item.failure.type === 'usageLimitExceeded' ? 'usage-limit' : 'failed'),
+      )
+    // A thread read back (`replay`) has no turn: its pictures were shown when it ran, or never.
+    const turn = this.turn
+    if (!turn) return settled('completed')
+    if ((turn.images ?? 0) >= GENERATED_IMAGES_PER_TURN) return settled('completed', generatedImageNote('count'))
+    turn.images = (turn.images ?? 0) + 1
+    const pass = (base64: string) => {
+      const image = generatedImage(base64)
+      if ('refused' in image) return settled('completed', generatedImageNote(image.refused))
+      settled('completed')
+      emit({ sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: image.data, mimeType: image.mimeType } })
+    }
+    if (typeof item.result === 'string' && item.result) return pass(item.result)
+    const path = savedImagePath(item.savedPath)
+    if (!path) return settled('completed', generatedImageNote('unread'))
+    turn.imageReads = (turn.imageReads ?? 0) + 1
+    void this.send('fs/readFile', { path }, 30_000)
+      .then(
+        answer => {
+          if (this.turn !== turn) return
+          const data = isRecord(answer) && typeof answer.dataBase64 === 'string' ? answer.dataBase64 : undefined
+          if (data) pass(data)
+          else settled('completed', generatedImageNote('unread'))
+        },
+        () => {
+          if (this.turn === turn) settled('completed', generatedImageNote('unread'))
+        },
+      )
+      .finally(() => {
+        turn.imageReads = Math.max(0, (turn.imageReads ?? 1) - 1)
+        this.finishWhenSettled(turn)
+      })
   }
 
   /**

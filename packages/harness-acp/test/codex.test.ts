@@ -81,7 +81,7 @@ async function computer(
   env: Record<string, string> = {},
   extra: string[] = [],
   options: AcpAgentOptions = {},
-  host: Pick<HarnessHostOptions, 'toolGateway' | 'modelGateway'> = {},
+  host: Pick<HarnessHostOptions, 'toolGateway' | 'modelGateway' | 'saveAttachment'> = {},
 ) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-codex-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
@@ -95,7 +95,12 @@ async function computer(
   await mkdir(docs)
   await mkdir(tmpRoot, { mode: 0o700 })
   const logFile = join(root, 'codex.log')
-  const exports = Object.entries({ FAKE_ACP_LOG: logFile, FAKE_CODEX_STATE: join(root, 'threads.json'), ...env })
+  const exports = Object.entries({
+    FAKE_ACP_LOG: logFile,
+    FAKE_CODEX_STATE: join(root, 'threads.json'),
+    FAKE_CODEX_IMAGE_DIR: join(root, 'codex-home', 'generated_images'),
+    ...env,
+  })
     .map(([name, value]) => `export ${name}='${value}'`)
     .join('\n')
   await writeFile(join(bin, 'codex'), `#!/bin/sh\n${exports}\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`)
@@ -659,6 +664,82 @@ describe('Codex over its app-server', () => {
     })
     expect(detail.config?.find(option => option.category === 'mode')?.currentValue).toBe('read-only')
     expect(detail.config?.find(option => option.category === 'model')?.currentValue).toBe('gpt-fake')
+  })
+
+  describe('its image tool', () => {
+    const picture = {
+      id: 'abcdefghijklmnopqrstuv',
+      name: 'Agent-image.png',
+      mime: 'image/png',
+      kind: 'image',
+      size: 1,
+      sha256: 'b'.repeat(64),
+    } as const
+    async function imaging(how: string) {
+      const saved: Array<{ sessionId: string; mime: string; data: string }> = []
+      const t = await computer(
+        {},
+        [],
+        {},
+        {
+          saveAttachment: async input => {
+            saved.push(input)
+            return picture
+          },
+        },
+      )
+      const bridge = await t.open()
+      const id = await start(bridge, t.main, `image ${how}`)
+      const detail = await settled(bridge, id)
+      const row = detail.messages.find(message => message.role === 'tool' && message.tool?.title === '生成图片')
+      return { t, detail, saved, row, log: await t.log() }
+    }
+    const png = (data: string) =>
+      Buffer.from(data, 'base64')
+        .subarray(0, 8)
+        .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+
+    it('passes on the picture in the item’s result as the reply’s image, with a row while it ran', async () => {
+      const { detail, saved, row, log } = await imaging('result')
+      expect(detail.summary.status).toBe('idle')
+      expect(saved).toHaveLength(1)
+      expect(saved[0]!.mime).toBe('image/png')
+      expect(png(saved[0]!.data)).toBe(true)
+      expect(detail.messages.find(message => message.role === 'assistant' && message.attachments)?.attachments).toEqual([picture])
+      expect(row?.state).toBe('completed')
+      // The bytes were in the item: Codex is not asked to read anything.
+      expect(sent(log, 'fs/readFile')).toHaveLength(0)
+    })
+
+    it('asks Codex itself for a picture it only saved, through fs/readFile on the path it reported', async () => {
+      const { detail, saved, log } = await imaging('saved')
+      const reads = sent(log, 'fs/readFile')
+      expect(reads).toHaveLength(1)
+      expect(String(reads[0]!.params?.path)).toMatch(/\/generated_images\/ig_[^/]+\.png$/u)
+      expect(saved).toHaveLength(1)
+      expect(png(saved[0]!.data)).toBe(true)
+      // The turn waited for the read: the picture is in this turn, before its reply settled.
+      expect(detail.messages.find(message => message.role === 'assistant' && message.attachments)?.attachments).toEqual([picture])
+    })
+
+    it('shows a failed generation as a failed row with a short line, and passes on nothing', async () => {
+      const { detail, saved, row } = await imaging('failed')
+      expect(detail.summary.status).toBe('idle')
+      expect(saved).toHaveLength(0)
+      expect(row?.state).toBe('failed')
+      expect(JSON.stringify(row?.tool)).toContain('图片生成失败：已达用量上限')
+    })
+
+    for (const [how, note] of [
+      ['big', '图片超过 5 MB，未显示'],
+      ['bad', '生成的图片格式无效，未显示'],
+    ] as const)
+      it(`passes on no ${how === 'big' ? 'picture over 5 MiB' : 'bytes that are not a PNG, JPEG or WebP'}, and says so on the row`, async () => {
+        const { saved, row } = await imaging(how)
+        expect(saved).toHaveLength(0)
+        expect(row?.state).toBe('completed')
+        expect(JSON.stringify(row?.tool)).toContain(note)
+      })
   })
 
   it('offers 速度 only for a model with the Fast tier, sends the tier once picked, and reads it back from the thread', async () => {

@@ -492,6 +492,25 @@ describe('adjudicated file content', () => {
     expect(changed.headers.get('etag')).not.toBe(tag)
   })
 
+  it('serves a referenced video with its real type and byte ranges, so a reply can play and seek it inline', async () => {
+    const f = await fixture()
+    // An ISO media header (`ftyp isom`) and some body: kind video, served as video/mp4.
+    const body = Buffer.concat([
+      Buffer.from([0, 0, 0, 24]),
+      Buffer.from('ftypisom\u0000\u0000\u0002\u0000isomiso2', 'latin1'),
+      Buffer.alloc(4096, 7),
+    ])
+    await writeFile(join(f.workspace, 'clip.mp4'), body)
+    const file = (await f.resolve('desktop', ['clip.mp4'])).files[0]!.file!
+    expect(file).toMatchObject({ kind: 'video', mime: 'video/mp4', secret: false, actions: { preview: true } })
+    const response = await f.request('desktop', `files/${file.handle}`, undefined, { range: 'bytes=100-199' })
+    expect(response.status).toBe(206)
+    expect(response.headers.get('content-type')).toBe('video/mp4')
+    expect(response.headers.get('accept-ranges')).toBe('bytes')
+    expect(response.headers.get('content-range')).toBe(`bytes 100-199/${body.length}`)
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(body.subarray(100, 200))
+  })
+
   it('stops a live response when the same inode changes without changing its size', async () => {
     const f = await fixture()
     const path = join(f.workspace, 'large.bin')

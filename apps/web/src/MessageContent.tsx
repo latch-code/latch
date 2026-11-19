@@ -27,10 +27,11 @@ import { ErrorBoundary } from './components/ErrorBoundary.tsx'
 import { FileChip, FileRootContext, FileSession } from './components/FileChip.tsx'
 import { FileOpenContext } from './preview/fileContext.ts'
 import { FileSandbox } from './preview/FileSandbox.tsx'
-import { resolveFileImage } from './preview/fileImages.ts'
+import { drawableMedia, mediaTypeOf, resolveFileMedia, type ResolvedMedia } from './preview/fileImages.ts'
+import { InlineMedia } from './components/InlineMedia.tsx'
 import { useKnownFiles } from './components/FileReferences.tsx'
 import { hasHiddenCharacters, VisibleText } from './components/VisibleText.tsx'
-import { codePathCandidate, linkTarget, namesPath, referenceText, urlScheme } from './fileReference.ts'
+import { codePathCandidate, linkTarget, namesPath, referenceName, referenceText, urlScheme } from './fileReference.ts'
 import { exceedsMarkdownNesting, MAX_TREE_DEPTH, treeDepth } from './markdownNesting.ts'
 import { createStreamingMarkdown } from './markdown/renderBlocks.tsx'
 import { TerminalFillButton } from './components/TerminalFillButton.tsx'
@@ -55,7 +56,6 @@ const COPY = defineCopy(
     copiedStatus: '代码已复制到剪贴板',
     copyFailed: '复制失败，请选中代码手动复制，或重试。',
     image: '图片',
-    previewImage: (name: string) => `预览图片：${name}`,
     externalImage: '外部图片：',
     imagePrefix: '图片：',
     table: '表格，可横向滚动',
@@ -77,7 +77,6 @@ const COPY = defineCopy(
     copiedStatus: 'Code copied to the clipboard',
     copyFailed: 'Couldn’t copy. Select the code and copy it by hand, or try again.',
     image: 'Image',
-    previewImage: (name: string) => `Preview image: ${name}`,
     externalImage: 'External image: ',
     imagePrefix: 'Image: ',
     table: 'Table, scrolls sideways',
@@ -90,6 +89,8 @@ export interface MarkdownFiles {
   path?: string
   onOpenFile?: (reference: string) => void
   resolveImage?: (reference: string, signal: AbortSignal) => Promise<{ url: string; width?: number; height?: number }>
+  /** A reference as a picture, video or sound the Host authorized; a reply's files have it, a document's do not. */
+  resolveMedia?: (reference: string, signal: AbortSignal) => Promise<ResolvedMedia>
 }
 export interface MessageContentProps extends MarkdownFiles {
   text: string
@@ -389,70 +390,104 @@ function relativeFile(reference: string, path?: string): string | undefined {
   }
   return parts.join('/')
 }
+/**
+ * A local file a reply or document names. `![](…)` draws the picture, video or sound it names, and a link (`fallback`
+ * given: a reply's path chip) draws its media above that chip, once the reply settled and the place nears the view, from
+ * a handle the Host authorized. What the Host does not authorize as media stays the chip or link it was.
+ */
 function MarkdownFile({
   reference,
   children,
   image = false,
   alt,
+  fallback,
 }: {
   reference: string
   children?: ReactNode
   image?: boolean
   alt?: string
+  fallback?: ReactNode
 }) {
   const files = useContext(MarkdownFileContext),
+    settled = useContext(ReplySettled),
     path = relativeFile(reference, files.path),
-    [value, setValue] = useState<{ path: string; url: string; width?: number; height?: number }>()
+    anchor = useRef<HTMLSpanElement>(null),
+    [value, setValue] = useState<{ key: string; media: ResolvedMedia }>(),
+    [failed, setFailed] = useState<string>(),
+    // A handle idles out (15 minutes): the first failure asks the Host once more and resumes where playback stood.
+    [retry, setRetry] = useState<{ key: string; at?: number }>()
+  const resolve = useMemo(
+    () =>
+      files.resolveMedia
+      ?? (image && files.resolveImage
+        ? (target: string, signal: AbortSignal) => files.resolveImage!(target, signal).then(found => ({ kind: 'image' as const, ...found }))
+        : undefined),
+    [files.resolveMedia, files.resolveImage, image],
+  )
+  const wanted = !!path && !!resolve && (image || (fallback !== undefined && mediaTypeOf(path) !== undefined))
+  const seen = useSeen(anchor)
+  // A new resolver is a new session or root: what an older one answered is not shown for it.
+  const key = `${path ?? ''}\n${image}`
+  const ready = wanted && settled && seen
   useEffect(() => {
-    if (!image || !path || !files.resolveImage) return
+    if (!ready || !path || !resolve) return
     const controller = new AbortController()
-    void files
-      .resolveImage(path, controller.signal)
-      .then(result => {
-        if (controller.signal.aborted) return
-        if (result.url.length > 4096) return
-        const url = new URL(result.url, location.href)
-        const here = new URL(location.href)
-        if (
-          !(url.protocol === 'blob:' && url.origin === location.origin)
-          && !(
-            url.protocol === here.protocol
-            && url.host === here.host
-            && /^\/link\/api\/files\/[A-Za-z0-9_-]{22}$/u.test(url.pathname)
-            && (!url.search || /^\?v=[a-f0-9]{32}$/u.test(url.search))
-            && !url.hash
-          )
-        )
-          return
-        if ([result.width, result.height].some(n => n !== undefined && (!Number.isFinite(n) || n <= 0 || n > 40_000))) return
-        setValue({ path, ...result })
+    void resolve(path, controller.signal)
+      .then(media => {
+        if (controller.signal.aborted || !drawableMedia(media, location.href)) return
+        setValue({ key, media })
       })
       .catch(() => {})
-    return () => controller.abort()
-  }, [image, path, files.resolveImage])
-  if (image && path && value?.path === path) {
-    const picture = (
-      <img
-        className="message-local-image"
-        src={value.url}
-        alt={alt || COPY.image}
-        width={value.width}
-        height={value.height}
-        loading="lazy"
+    return () => {
+      controller.abort()
+      setValue(undefined)
+    }
+  }, [ready, path, key, resolve, retry])
+  const shown = value?.key === key && failed !== key ? value.media : undefined
+  if (path && shown) {
+    const label = alt || (typeof children === 'string' ? children : '') || referenceName(path)
+    const media = (
+      <InlineMedia
+        media={shown}
+        label={label}
+        onFail={at => (retry?.key === key ? setFailed(key) : setRetry({ key, ...(at ? { at } : {}) }))}
+        {...(retry?.key === key && retry.at ? { startAt: retry.at } : {})}
+        {...(files.onOpenFile && shown.kind === 'image' ? { onOpen: () => files.onOpenFile?.(path) } : {})}
       />
     )
-    return files.onOpenFile ? (
-      <button
-        type="button"
-        className="message-local-image-button"
-        aria-label={COPY.previewImage(alt || reference)}
-        onClick={() => files.onOpenFile?.(path)}>
-        {picture}
-      </button>
-    ) : (
-      picture
+    if (image) return media
+    return (
+      <span className="message-media" data-kind={shown.kind}>
+        {media}
+        <span className="message-media-caption">{fallback}</span>
+      </span>
     )
   }
+  const plain =
+    fallback !== undefined ? (
+      fallback
+    ) : (
+      <MarkdownFileLink reference={reference} path={path} image={image} alt={alt}>
+        {children}
+      </MarkdownFileLink>
+    )
+  return wanted ? <span ref={anchor}>{plain}</span> : plain
+}
+
+function MarkdownFileLink({
+  reference,
+  path,
+  children,
+  image,
+  alt,
+}: {
+  reference: string
+  path: string | undefined
+  children?: ReactNode
+  image: boolean
+  alt?: string | undefined
+}) {
+  const files = useContext(MarkdownFileContext)
   if (path && files.onOpenFile)
     return (
       <button type="button" className="message-local-link" onClick={() => files.onOpenFile?.(path)}>
@@ -526,13 +561,15 @@ export const MessageContent = memo(function MessageContent({
       openFile && session
         ? {
             onOpenFile: reference => openFile({ sessionId: session.id, reference, ...(rootId ? { rootId } : {}) }),
-            resolveImage: (reference, signal) => resolveFileImage(session.id, reference, rootId, signal),
+            resolveMedia: (reference, signal) => resolveFileMedia(session.id, reference, rootId, signal),
           }
         : {},
     [openFile, session?.id, rootId],
   )
   const effectiveOpenFile = onOpenFile ?? inherited.onOpenFile
+  // A document given its own image resolver draws only its pictures, as before; a reply draws any media it names.
   const effectiveImage = resolveImage ?? inherited.resolveImage
+  const effectiveMedia = resolveImage ? undefined : inherited.resolveMedia
   const normalized = useMemo(() => normalizeMathDelimiters(text), [text])
   // Footnote ids must be unique across messages in the same conversation.
   const footnoteLabel = COPY.footnotes
@@ -548,12 +585,19 @@ export const MessageContent = memo(function MessageContent({
         if (target.kind === 'path') {
           if (onOpenFile) return <MarkdownFile reference={target.path}>{children}</MarkdownFile>
           const linkText = textOf(node).trim()
-          if (!linkText) return <FileChip path={target.path} />
           // A label that is the path itself is drawn from its text, so its folders can give way to the file name.
-          return namesPath(linkText, target.path) ? (
+          const chip = !linkText ? (
+            <FileChip path={target.path} />
+          ) : namesPath(linkText, target.path) ? (
             <FileChip path={target.path} label={linkText} />
           ) : (
             <FileChip path={target.path} label={children} mono={false} />
+          )
+          // A picture, video or sound the reply links to is drawn above its chip once the Host authorizes it.
+          return mediaTypeOf(target.path) ? (
+            <MarkdownFile reference={target.path} fallback={chip} {...(linkText ? { alt: linkText } : {})} />
+          ) : (
+            chip
           )
         }
         if (target.kind === 'text') return <span>{children}</span>
@@ -605,8 +649,8 @@ export const MessageContent = memo(function MessageContent({
     [normalized, streaming, path, renderer],
   )
   const files = useMemo(
-    () => ({ path, onOpenFile: effectiveOpenFile, resolveImage: effectiveImage }),
-    [path, effectiveOpenFile, effectiveImage],
+    () => ({ path, onOpenFile: effectiveOpenFile, resolveImage: effectiveImage, resolveMedia: effectiveMedia }),
+    [path, effectiveOpenFile, effectiveImage, effectiveMedia],
   )
   const plain = <PlainText text={text} />
   const content = (

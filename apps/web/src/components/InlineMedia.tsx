@@ -1,0 +1,82 @@
+import type { ResolvedMedia } from '../preview/fileImages.ts'
+import { defineCopy } from '../core/i18n.ts'
+
+const COPY = defineCopy(
+  { open: (name: string) => `预览图片：${name}`, image: '图片', video: '视频', audio: '音频' },
+  { open: (name: string) => `Preview image: ${name}`, image: 'Image', video: 'Video', audio: 'Audio' },
+)
+
+/** The tallest an inline picture is drawn; a portrait one is narrowed to keep its shape, never cropped. */
+const IMAGE_MAX_HEIGHT = 480
+
+/** Width cap that keeps a picture of this shape within the height cap, never wider than the reply column. */
+export function inlineImageWidth(width: number, height: number): string {
+  return `min(100%, ${Math.max(1, Math.min(width, Math.round((IMAGE_MAX_HEIGHT * width) / height)))}px)`
+}
+
+/**
+ * A picture, video or sound in a reply, drawn from a handle the Host authorized. Its size is reserved from the Host's
+ * metadata before the bytes arrive. A picture opens the file preview when pressed; video and sound keep the browser's
+ * own controls. `onFail` lets the caller fall back to its chip when the bytes cannot be drawn.
+ */
+export function InlineMedia({
+  media,
+  label,
+  onOpen,
+  onFail,
+  startAt,
+}: {
+  media: ResolvedMedia
+  label: string
+  onOpen?: () => void
+  /** The bytes could not be read; for video and sound, where playback stood. */
+  onFail?: (position?: number) => void
+  /** Where a video or sound resumes after its handle was renewed. */
+  startAt?: number
+}) {
+  const name = label || COPY[media.kind]
+  if (media.kind === 'video' || media.kind === 'audio') {
+    const events = {
+      onError: (event: { currentTarget: HTMLMediaElement }) => onFail?.(event.currentTarget.currentTime),
+      onLoadedMetadata: (event: { currentTarget: HTMLMediaElement }) => {
+        const node = event.currentTarget
+        if (startAt && Number.isFinite(node.duration)) node.currentTime = Math.min(startAt, node.duration)
+      },
+    }
+    return media.kind === 'video' ? (
+      <video
+        className="inline-media inline-media-video"
+        src={media.url}
+        controls
+        preload="metadata"
+        playsInline
+        aria-label={name}
+        {...events}
+      />
+    ) : (
+      <audio className="inline-media inline-media-audio" src={media.url} controls preload="metadata" aria-label={name} {...events} />
+    )
+  }
+  const picture = (
+    <img
+      className="inline-media-image"
+      src={media.url}
+      alt={name}
+      width={media.width}
+      height={media.height}
+      loading="lazy"
+      decoding="async"
+      onError={() => onFail?.()}
+    />
+  )
+  const style = media.width && media.height ? { maxWidth: inlineImageWidth(media.width, media.height) } : undefined
+  return onOpen ? (
+    <button type="button" className="inline-media inline-media-open" style={style} aria-label={COPY.open(name)} onClick={onOpen}>
+      {picture}
+    </button>
+  ) : (
+    <span className="inline-media" style={style}>
+      {picture}
+    </span>
+  )
+}

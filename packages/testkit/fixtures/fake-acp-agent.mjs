@@ -12,6 +12,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileS
 import { dirname, isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { zstdCompressSync } from 'node:zlib'
+import { png } from './png.mjs'
 import { callFakeModel } from './fake-model-client.mjs'
 
 const env = process.env
@@ -2252,6 +2253,15 @@ const scenarios = {
       },
     })
     say('image delivered')
+    return END
+  },
+  // A picture large enough to look at, as an agent's image tool hands one back.
+  'image-picture': ({ sessionId, say }) => {
+    update(sessionId, {
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'image', mimeType: 'image/png', data: png(768, 512).toString('base64') },
+    })
+    say('图片已生成。')
     return END
   },
   stray: ({ sessionId, say }) => {

@@ -44,15 +44,18 @@
 // (TOML values, as Codex reads them) makes it the process's provider, as Codex does. account/read then says no OpenAI
 // login is needed, and every turn calls `<base_url>/responses` for real, streamed, with the variable `env_key` names as
 // its bearer token, replying with the text the service streamed; a failed call fails the turn with the service's words.
-import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { png } from './png.mjs'
 
 const env = process.env
 // Codex keeps its threads across processes; so does this fake, beside the fake ACP agent's state when no file is named.
 const STATE = env.FAKE_CODEX_STATE ?? (env.FAKE_ACP_STATE ? `${env.FAKE_ACP_STATE}.codex-threads.json` : undefined)
 const VERSION = env.FAKE_CODEX_VERSION ?? '0.167.0'
+const IMAGE_DIR = env.FAKE_CODEX_IMAGE_DIR ?? join(tmpdir(), `latch-fake-codex-images-${process.pid}`, 'generated_images')
 // The simulator its latch-browser calls name, in the exact shape the Host's own tools take.
 const SIMULATOR_FIXTURE_UDID = '22222222-2222-4222-8222-222222222222'
 const args = process.argv.slice(2)
@@ -272,6 +275,29 @@ async function play(text) {
     return reply('Ordinary turn completed.')
   }
   if (word === 'echo') return reply(`echo: ${text}`)
+  // `image <result|saved|failed|big|bad>`: Codex's image tool as 0.170 reports it (`imageGeneration`). Each picture is
+  // also saved under FAKE_CODEX_IMAGE_DIR, as Codex keeps them in its home; `saved` sends only that path, with an empty
+  // `result` and a `fileId` (as the migration does), for fs/readFile. `big` is over 5 MiB; `bad` is not a picture.
+  if (word === 'image') {
+    const how = text.trim().split(/\s+/u)[1] ?? 'result'
+    const id = `ig_${randomUUID()}`
+    const bytes =
+      how === 'big' ? Buffer.concat([png(4, 4), Buffer.alloc(6 * 1024 * 1024)]) : how === 'bad' ? Buffer.from('not a picture') : png(96, 64)
+    mkdirSync(IMAGE_DIR, { recursive: true })
+    const savedPath = join(IMAGE_DIR, `${id}.png`)
+    writeFileSync(savedPath, bytes)
+    const base = { type: 'imageGeneration', id, revisedPrompt: 'a blue gradient', generationId: null, transparentBackground: null }
+    notify('item/started', { threadId: thread.id, turnId: turn.id, item: { ...base, status: 'in_progress', result: '' } })
+    const done =
+      how === 'failed'
+        ? { ...base, status: 'failed', result: '', failure: { type: 'usageLimitExceeded', limitId: 'images', resetsAt: null } }
+        : how === 'saved'
+          ? { ...base, status: 'completed', result: '', fileId: 'file_fake', savedPath }
+          : { ...base, status: 'completed', result: bytes.toString('base64'), savedPath }
+    notify('item/completed', { threadId: thread.id, turnId: turn.id, item: done })
+    turn.items.push(done)
+    return reply(`[下载 PNG 原图](${savedPath})`)
+  }
   // What the thread holds before this turn, as Codex's own record: `remembers: a | b`.
   if (word === 'recall') {
     const said = thread.turns.flatMap(item =>
@@ -1114,6 +1140,12 @@ async function handle(method, params) {
       if (!entry || env.FAKE_CODEX_TERMINALS === 'ignore' || entry.threadId !== params.threadId) return { terminated: false }
       process.kill(-entry.child.pid, 'SIGKILL')
       return { terminated: true }
+    }
+    // Only the pictures it saved itself, as a fake has no business reading anything else.
+    case 'fs/readFile': {
+      if (typeof params.path !== 'string' || !params.path.startsWith(`${IMAGE_DIR}/`) || params.path.includes('..'))
+        throw Object.assign(new Error('not found'), { code: -32603 })
+      return { dataBase64: readFileSync(params.path).toString('base64') }
     }
     case 'initialize':
       if (env.FAKE_ACP_INIT_AUTH === '1') throw Object.assign(new Error('Authentication required'), { code: -32000 })
