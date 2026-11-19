@@ -269,6 +269,8 @@ describe('a team of sessions, in the page', () => {
     await owner.confirmed(`approvals/${approval.id}`, { method: 'POST', body: { decision: 'allow', requestId: randomUUID() } })
     await membersIn(team.id, ['done', 'running', 'done'])
     await poll(() => end.innerText()).toContain('等成员')
+    // Decided elsewhere: the toast that pointed at it leaves at once, whichever session is open.
+    await poll(() => page.getByText('另一个会话等你处理', { exact: true }).count()).toBe(0)
     // With motion allowed, marks travel only on the track of the member at work, and along the trunk while it works.
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     const moving = (selector: string) =>

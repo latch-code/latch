@@ -896,16 +896,18 @@ export function useSessionController({
     previousApprovals.current = new Set(snapshot.approvals.map(item => item.id))
     if (other) setApprovalToast({ sessionId: other.sessionId, id: other.id })
   }, [snapshot.approvals, selectedId])
+  // Opened by any way, or decided anywhere: it is no longer another session waiting, and the toast must not hide what
+  // this one says.
+  const toastAnswered = approvalToast !== null && !snapshot.approvals.some(item => item.id === approvalToast.id)
+  useEffect(() => {
+    if (approvalToast && (approvalToast.sessionId === selectedId || toastAnswered)) setApprovalToast(null)
+  }, [approvalToast, selectedId, toastAnswered])
+  // Its six seconds run from when it appeared; moving between sessions does not start them again.
   useEffect(() => {
     if (!approvalToast) return
-    // Opened by any way: it is no longer another session, and the toast must not hide what this one says.
-    if (approvalToast.sessionId === selectedId) {
-      setApprovalToast(null)
-      return
-    }
     const timer = setTimeout(() => setApprovalToast(null), 6000)
     return () => clearTimeout(timer)
-  }, [approvalToast, selectedId])
+  }, [approvalToast])
   const approvalCursor = useRef<string | null>(null)
   const [approvalFocus, setApprovalFocus] = useState<string | null>(null)
   const [approvalTarget, setApprovalTarget] = useState<{ sessionId: string; approvalId: string }>()
