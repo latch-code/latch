@@ -226,6 +226,57 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       }
     })
 
+    it('folds what was found to one line, and never lets the list push the input out of a short window', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'latch-electron-found-many-'))
+      const bin = join(directory, 'bin')
+      await mkdir(bin)
+      const adapter = join(bin, 'codex-acp')
+      await writeFile(adapter, ['#!/bin/sh', `exec "${process.execPath}" "${FAKE_ACP_AGENT}" "$@"`].join('\n'))
+      await chmod(adapter, 0o755)
+      // Every preset found, as on a Mac with many installed: only Codex can run.
+      const host = await startTestHost({
+        demo: false,
+        detectPreset: preset => ({ found: true, path: preset.id === 'codex' ? adapter : join(bin, preset.id) }),
+        commandDirectories: () => [bin],
+      })
+      let application: ElectronApplication | undefined
+      try {
+        application = await launch(host, join(directory, 'electron'))
+        const page = await application.firstWindow()
+        await application.evaluate(({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows()[0]!
+          window.setMinimumSize(320, 400)
+          window.setSize(1280, 640)
+        })
+        await page.waitForFunction(() => innerWidth === 1280)
+        await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+        await enroll(page)
+        const found = page.getByRole('region', { name: '找到的 Harness', exact: true })
+        await found.waitFor()
+        const toggle = found.locator('.harness-found-toggle')
+        const inView = async () => {
+          const box = await page.locator('.workbench-home form.composer').boundingBox()
+          return box !== null && box.y >= 0 && box.y + box.height <= (await page.evaluate(() => innerHeight))
+        }
+        // One line: how many, their marks, and the way to open the list.
+        expect(await toggle.getAttribute('aria-expanded')).toBe('false')
+        expect(await found.locator('.harness-found-marks > *').count()).toBeGreaterThan(1)
+        expect(await inView()).toBe(true)
+        await mkdir('test-results/desktop-first-use', { recursive: true })
+        await page.screenshot({ path: 'test-results/desktop-first-use/found-many-1280x640.png', animations: 'disabled' })
+        // Open, the list scrolls in what is left; the input stays whole.
+        await toggle.click()
+        await found.locator('.harness-found-row').first().waitFor()
+        expect(await inView()).toBe(true)
+        await noHorizontalOverflow(page)
+        await page.screenshot({ path: 'test-results/desktop-first-use/found-many-open-1280x640.png', animations: 'disabled' })
+      } finally {
+        await application?.close()
+        await host.close()
+        await rm(directory, { recursive: true, force: true })
+      }
+    })
+
     it('runs a Harness found on this computer with nothing to add, asking only for the folder', async () => {
       const directory = await mkdtemp(join(tmpdir(), 'latch-electron-found-'))
       const bin = join(directory, 'bin')
@@ -263,6 +314,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         // The first open lists only what was found, with the file the Host found; what is not installed is in settings.
         const found = page.getByRole('region', { name: '找到的 Harness', exact: true })
         await found.getByText(/^在这台 Mac 上找到 1 个 Harness$/u).waitFor()
+        await found.locator('.harness-found-toggle').click()
         const codexRow = found.locator('.harness-found-row').filter({ hasText: 'Codex' })
         await codexRow.getByText('已找到', { exact: true }).waitFor()
         // A long path is shortened in the middle; the whole of it is the row's tooltip.

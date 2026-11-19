@@ -617,12 +617,29 @@
   overflow: clip;
 }
 .code-home-input {
+  display: flex;
+  flex-direction: column;
   max-height: 60dvh;
   overflow: auto;
   overscroll-behavior: contain;
   /* Leave room for the composer's outer edge inside its fallback scroll area. */
   margin: -1px;
   padding: 1px;
+}
+/* The input never gives way: what stands over it (notices, what was found) scrolls in what is left. */
+.code-home-input > * {
+  flex-shrink: 0;
+}
+.code-home-input > .code-home-notices {
+  flex-shrink: 1;
+  min-height: 0;
+  overflow: auto;
+  /* Room above and below for a card's rounded edge and shadow inside the scroll, and a clear step to the headline. */
+  margin-block: calc(-1 * var(--sp-12)) var(--sp-12);
+  padding-block: var(--sp-12);
+}
+.code-home-input > .code-home-notices:empty {
+  display: none;
 }
 .code-home .workbench-home-composer textarea {
   max-height: min(232px, 24dvh);
