@@ -123,7 +123,14 @@ export const qwenProfile: HarnessProfile = {
   presetId: 'qwen',
   // 2: a model choice is marked as the session's alone, and a session on a model service gets private system settings
   // that leave it no subagents.
-  version: 2,
+  // 3: the project's `.agents/skills` and `.mcp.json` count in the launch fingerprint.
+  version: 3,
+  // It advertises no `session/delete`; its own extension method removes the record and what hangs off it, as its VS Code
+  // companion does (0.27.4 `acpAgent.ts`, `SessionService.removeSession`). The folder picks the project directory.
+  deleteMethod: 'deleteSession',
+  deleteWithFolder: true,
+  // Its installed entry runs a version from `<QWEN_HOME>/updates/npm/` when it updated itself (`scripts/cli-entry.js`).
+  selfUpdates: true,
   // Its `session/set_config_option` already keeps a model choice to the session; this says so wherever it reads it.
   modelSetMeta: { 'qwen.session.modelPersistDefault': false },
   // Read in the sources of 0.26.8 and 0.27.3: per-model `wireApi`, `envKey` and the session-only model choice over ACP.
@@ -152,8 +159,9 @@ export const qwenProfile: HarnessProfile = {
       }
     },
   },
-  // An empty session runs no turn and calls no model.
-  catalogueRead: { when: 'select' },
+  // Its `session/new` connects the person's MCP servers and fires their `SessionStart` hooks (0.27.4 `newSession` →
+  // `startChat` → `fireSessionStartHook`); no flag keeps the hooks from running.
+  catalogueRead: { when: 'request' },
   permission: {
     approvals: 'prompts',
     defaultEnv: {},
@@ -174,8 +182,9 @@ export const qwenProfile: HarnessProfile = {
   },
   // The process arguments apply to its ACP sessions, and the value is split on commas.
   folders: { via: 'args', flag: '--include-directories', maxExtra: 4 },
-  // Workspace settings, commands, agents and extensions.
-  projectConfigPaths: ['.qwen'],
+  // Workspace settings, commands, agents and extensions; the skills it also reads from `.agents/skills` (which may carry
+  // hooks) and the project's MCP servers (0.27.4 `skill-manager.ts`, `mcpJson.ts`).
+  projectConfigPaths: ['.qwen', '.agents/skills', '.mcp.json'],
   // Its prompt answer carries no usage; each model call's arrives as an update, summed into the turn.
   usageScope: 'turn',
   callUsage: qwenCallUsage,

@@ -54,6 +54,29 @@ if (env.FAKE_ACP_LOGIN_FILE && process.argv[2] === 'login') {
   process.stderr.write('Successfully logged in\n')
   process.exit(0)
 }
+// Like `dsh --profile acp --dump-config`: the composed plugin tree, each entry after the layer it comes from, and exit.
+// FAKE_DSH_DUMP replaces the official composition DeepSeek Harness 0.2.2-rc.1 prints for an untouched profile.
+if (process.argv.includes('--dump-config')) {
+  process.stdout.write(
+    env.FAKE_DSH_DUMP
+      ?? [
+        '# == @deepseek-ai/dsh-base',
+        '- id: deepseek-account',
+        "  name: '@deepseek-ai/dsh-deepseek-account'",
+        '- id: credentials',
+        "  name: '@deepseek-ai/dsh-credentials-local'",
+        '- id: llm-pi-ai',
+        "  name: '@deepseek-ai/dsh-llm-pi-ai'",
+        '- id: session-persistence-jsonl',
+        "  name: '@deepseek-ai/dsh-session-persistence-jsonl'",
+        '# == @deepseek-ai/dsh-acp-app',
+        '- id: llm-deepseek',
+        "  name: '@deepseek-ai/dsh-llm-deepseek-api-key'",
+        '',
+      ].join('\n'),
+  )
+  process.exit(0)
+}
 // Like a CLI's `--version`: FAKE_ACP_CLI_VERSION prints `fake-cli <version>`; `fail` exits 1 having printed nothing.
 if (env.FAKE_ACP_CLI_VERSION && process.argv[2] === '--version') {
   if (env.FAKE_ACP_CLI_VERSION === 'fail') process.exit(1)
@@ -1008,6 +1031,20 @@ async function handle(method, params) {
       delete sessions[params.sessionId]
       save()
       return { success: true }
+    // As Qwen Code's own `deleteSession` extension (it advertises no `session/delete`): the folder picks its project
+    // directory, and a session it does not find there is `{ success: false }`, not an error.
+    case 'deleteSession': {
+      const stored = sessions[params.sessionId] ?? readDisk()[params.sessionId]
+      if (!stored || stored.cwd !== params.cwd) return { success: false }
+      touched.add(params.sessionId)
+      delete sessions[params.sessionId]
+      save()
+      return { success: true }
+    }
+    // As goose: removes one extension from the session's own list of them.
+    case '_goose/unstable/session/extensions/remove':
+      existing(params.sessionId)
+      return {}
     case 'session/close':
       if (!caps.has('close')) throw rpcError(-32601, 'Method not found')
       existing(params.sessionId)

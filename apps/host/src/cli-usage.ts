@@ -7,7 +7,8 @@
  * 1. One file, at a path built from fixed parts and two things Latch holds: `~/.dsh/sessions/<project>/<id>/
  *    session.v4.jsonl.zstd` (`@deepseek-ai/dsh-session-persistence-jsonl` 0.2.2-rc.1: `projectKey` of the `cwd` Latch
  *    sent in `session/new`, the session ID dsh-acp answered, format 4, Zstandard). No directory is listed or searched.
- *    `DSH_HOME`, or a patch layer that names the session store, ends the read before anything is opened.
+ *    `DSH_HOME`, or DeepSeek Harness's own composition saying its session store is not as shipped (`dsh-config.ts`),
+ *    ends the read before anything is opened.
  * 2. Every directory on the way is a real directory owned by this user; the file is opened without following a link,
  *    must be a regular file owned by this user and at most 64 MiB, and is decompressed and split into lines a chunk at
  *    a time, giving up past 256 MiB of text or a line past 16 MiB (`BOUNDS`).
@@ -26,21 +27,20 @@ import { pipeline } from 'node:stream/promises'
 import { createZstdDecompress } from 'node:zlib'
 import { z } from 'zod'
 import type { TokenUsage } from '@latch/protocol'
+import type { DshConfigVerdict } from './dsh-config.ts'
 
 const DSH_DIR = '.dsh'
-const DSH_PROFILE = 'acp'
 const SESSIONS = 'sessions'
 const LOG_FILE = 'session.v4.jsonl.zstd'
 const FORMAT_VERSION = 4
 /** The compressed file, all its text, and one line: past any of them the turn is not known. */
 const BOUNDS = { file: 64 * 1024 * 1024, text: 256 * 1024 * 1024, line: 16 * 1024 * 1024 }
 type Bounds = typeof BOUNDS
-const MAX_PATCH_BYTES = 64 * 1024
 const MAX_CWD = 4096
 /** The session IDs dsh-acp makes (`randomUUID()`), which its path encoding keeps as they are. */
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
-/** Words in a patch layer that could move the session store or change its encoding. */
-const RELOCATING = /session-persistence|compression/u
+/** The plugin whose layers decide where session logs are and how they are written (`dshConfigCheck`). */
+export const DSH_STORE_PLUGINS = ['session-persistence-jsonl'] as const
 /** The start of an event line: its `type` first, as the v4 encoder writes it. */
 const EVENT_TYPE = /^\{"type":"([^"\\]{1,128})"/u
 const WANTED = new Set(['turn/start', 'turn/end', 'assistant/message', 'subagent/catalog'])
@@ -87,31 +87,12 @@ export function dshProjectKey(cwd: string): string {
 }
 
 /** A directory that is itself a directory (not a link) owned by `uid`. */
-async function ownDirectory(path: string, uid: number): Promise<boolean> {
+export async function ownDirectory(path: string, uid: number): Promise<boolean> {
   try {
     const info = await lstat(path)
     return info.isDirectory() && !info.isSymbolicLink() && info.uid === uid
   } catch {
     return false
-  }
-}
-
-/** Whether a patch layer is absent, or present, ours, small and silent about the session store. */
-async function silentPatch(path: string, uid: number): Promise<boolean> {
-  let handle
-  try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ENOENT'
-  }
-  try {
-    const info = await handle.stat()
-    if (!info.isFile() || info.uid !== uid || info.size > MAX_PATCH_BYTES) return false
-    return !RELOCATING.test(await handle.readFile('utf8'))
-  } catch {
-    return false
-  } finally {
-    await handle.close().catch(() => {})
   }
 }
 
@@ -298,6 +279,8 @@ export async function readDshTurnUsage(input: {
   from: number
   to: number
   signal: AbortSignal
+  /** What DeepSeek Harness's own composition says of `DSH_STORE_PLUGINS`. */
+  config: () => Promise<DshConfigVerdict>
   /** Tests only: smaller bounds. */
   bounds?: Bounds
 }): Promise<TokenUsage | undefined> {
@@ -308,8 +291,7 @@ export async function readDshTurnUsage(input: {
   if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from > to) return undefined
   const dir = join(home, DSH_DIR)
   if (!(await ownDirectory(dir, uid))) return undefined
-  for (const path of [join(dir, 'cordis.patch.yml'), join(dir, 'profiles', DSH_PROFILE, 'cordis.patch.yml')])
-    if (!(await silentPatch(path, uid))) return undefined
+  if ((await input.config()) !== 'official') return undefined
   const sessions = join(dir, SESSIONS)
   const project = join(sessions, dshProjectKey(cwd))
   const own = join(project, sessionId)

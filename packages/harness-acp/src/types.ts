@@ -78,6 +78,29 @@ export interface AcpAgentOptions {
    * person's home; left out, as in tests, nothing of a CLI's own store is read or removed.
    */
   cliStore?: { home: string }
+  /**
+   * The Host's reads and removals in the harness CLI's own store (`apps/host/src/cli-stores.ts`), only where the start
+   * script opts in; the profile says which apply. Absent, as in tests, no store is touched, and a profile that needs a
+   * read to open a session again (`loadResumesTurn`) does not open one.
+   */
+  storeAccess?: CliStoreAccess
+}
+
+/** `inherited`: the profile's `inheritEnv` values the agent gets, which can move the harness's home. */
+export interface CliStoreAccess {
+  /** `clear` only when the harness's record shows opening the session again goes on with nothing. */
+  resumeState?(input: { presetId: string; sessionId: string; inherited: Record<string, string> }): Promise<'clear' | 'blocked'>
+  childSessions?(input: { presetId: string; sessionIds: readonly string[]; inherited: Record<string, string> }): Promise<string[]>
+  /** Removes the record of a session Latch opened in `cwd`; true when something was removed. `command`: the program. */
+  removeSession?(input: {
+    presetId: string
+    sessionId: string
+    cwd: string
+    command: string
+    inherited: Record<string, string>
+  }): Promise<boolean>
+  /** A digest of what `command` runs instead of itself, or undefined when it runs itself. Called synchronously. */
+  launchCode?(input: { presetId: string; command: string; inherited: Record<string, string> }): string | undefined
 }
 
 export interface ResolvedOptions {
@@ -99,6 +122,7 @@ export interface ResolvedOptions {
   turnUsageReadMs: number
   claudeStore: boolean
   cliStore?: AcpAgentOptions['cliStore']
+  storeAccess?: CliStoreAccess
 }
 
 export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
@@ -131,6 +155,7 @@ export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
     ...(options.readQuota ? { readQuota: options.readQuota } : {}),
     ...(options.readTurnUsage ? { readTurnUsage: options.readTurnUsage } : {}),
     ...(options.cliStore ? { cliStore: { home: options.cliStore.home } } : {}),
+    ...(options.storeAccess ? { storeAccess: options.storeAccess } : {}),
   }
 }
 

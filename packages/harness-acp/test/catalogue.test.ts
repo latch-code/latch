@@ -68,8 +68,10 @@ describe("when a draft reads a Harness's lists by itself", () => {
     // Grok Build's answer to initialize lists its models and thinking; that process opens no session.
     expect(rule('grok')).toEqual({ when: 'select', modes: false })
     // An empty ACP session: no prompt, so no turn and no model call.
-    for (const presetId of ['dsh', 'cursor', 'goose', 'qwen', 'opencode']) expect(rule(presetId)).toEqual({ when: 'select', modes: true })
+    for (const presetId of ['dsh', 'cursor', 'opencode']) expect(rule(presetId)).toEqual({ when: 'select', modes: true })
     // Starting these runs the person's own session hooks and extensions, so only a person asks.
+    expect(rule('goose')).toEqual({ when: 'request', modes: true })
+    expect(rule('qwen')).toEqual({ when: 'request', modes: true })
     expect(rule('pi')).toEqual({ when: 'request', modes: true })
     expect(rule('claude-agent')).toEqual({ when: 'request', modes: true })
     expect(rule('antigravity')).toEqual({ when: 'request', modes: true })

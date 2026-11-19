@@ -58,8 +58,9 @@ describe('the credentials document', () => {
 })
 
 describe('reading the key from a home', () => {
+  const official = async () => 'official' as const
   const read = async (root: string, env: Record<string, string> = {}, cwd?: string) =>
-    readDshKey({ home: root, env, cwd: cwd ?? (await temp('latch-cli-quota-cwd-')), uid })
+    readDshKey({ home: root, env, cwd: cwd ?? (await temp('latch-cli-quota-cwd-')), uid, config: official })
 
   it('reads the fixed file of a home that sends nothing elsewhere', async () => {
     expect(await read(await home())).toEqual({ key: KEY })
@@ -68,12 +69,23 @@ describe('reading the key from a home', () => {
   it.each([
     ['DSH_HOME moves the home', {}, { DSH_HOME: '/elsewhere' }],
     ['DEEPSEEK_BASE_URL is in the environment', {}, { DEEPSEEK_BASE_URL: 'https://elsewhere.example' }],
-    ['the home patch sets a baseURL', { '.dsh/cordis.patch.yml': '- id: llm-deepseek-api-key\n  config:\n    baseURL: https://x\n' }, {}],
-    ['the profile patch renames the key', { '.dsh/profiles/acp/cordis.patch.yml': '- id: x\n  config:\n    apiKeyEnv: OTHER\n' }, {}],
     ['the home .env sets DEEPSEEK_BASE_URL', { '.dsh/.env': 'DEEPSEEK_BASE_URL=https://x\n' }, {}],
     ['the acp profile’s .env sets DEEPSEEK_BASE_URL', { '.dsh/profiles/acp/.env': 'DEEPSEEK_BASE_URL=https://x\n' }, {}],
   ])('reads nothing when %s', async (_case, files, env) => {
     expect(await read(await home(files), env)).toBe('none')
+  })
+
+  it("reads nothing when DeepSeek Harness's own composition says a plugin of the key is not as shipped, and asks it last", async () => {
+    let asked = 0
+    const changed = async () => {
+      asked++
+      return 'changed' as const
+    }
+    expect(await readDshKey({ home: await home(), env: {}, uid, config: changed })).toBe('none')
+    expect(asked).toBe(1)
+    // A setting it already refuses for is never sent to DeepSeek Harness to judge.
+    expect(await readDshKey({ home: await home(), env: { DSH_HOME: '/elsewhere' }, uid, config: changed })).toBe('none')
+    expect(asked).toBe(1)
   })
 
   it('skips a session folder whose .env points DeepSeek elsewhere, or is a link, without judging the home', async () => {
@@ -90,9 +102,11 @@ describe('reading the key from a home', () => {
   })
 
   it('checks no folder when there is no session, and every setting of the home still', async () => {
-    expect(await readDshKey({ home: await home(), env: {}, uid })).toEqual({ key: KEY })
-    expect(await readDshKey({ home: await home({ '.dsh/.env': 'DEEPSEEK_BASE_URL=https://x\n' }), env: {}, uid })).toBe('none')
-    expect(await readDshKey({ home: await home(), env: { DSH_HOME: '/elsewhere' }, uid })).toBe('none')
+    expect(await readDshKey({ home: await home(), env: {}, uid, config: official })).toEqual({ key: KEY })
+    expect(await readDshKey({ home: await home({ '.dsh/.env': 'DEEPSEEK_BASE_URL=https://x\n' }), env: {}, uid, config: official })).toBe(
+      'none',
+    )
+    expect(await readDshKey({ home: await home(), env: { DSH_HOME: '/elsewhere' }, uid, config: official })).toBe('none')
   })
 
   it('reads nothing from a file others can read, a link, a link to the home, another owner’s files, or no file', async () => {
@@ -111,7 +125,7 @@ describe('reading the key from a home', () => {
     await symlink(join(await home(), '.dsh'), join(linkedHome, '.dsh'))
     expect(await read(linkedHome)).toBe('none')
 
-    expect(await readDshKey({ home: await home(), env: {}, cwd: outside, uid: uid + 1 })).toBe('none')
+    expect(await readDshKey({ home: await home(), env: {}, cwd: outside, uid: uid + 1, config: official })).toBe('none')
 
     const empty = await temp('latch-cli-quota-home-')
     expect(await read(empty)).toBe('none')

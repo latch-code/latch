@@ -76,6 +76,7 @@ import {
   setLoginPrograms,
   type AcpAgentOptions,
   type AgentRecord,
+  type CliStoreAccess,
 } from '../src/index.ts'
 import { classifyMode, filterPermissionOptions, launchHash, selectProfile, validateAgentDefinition } from '../src/permission.ts'
 import { FALLBACK_PROFILES, HARNESS_PROFILES, profileFor } from '../src/profiles/index.ts'
@@ -1307,6 +1308,27 @@ describe('ACP project configuration', () => {
     expect(await (await goose.open()).launchPreview!({ cwd: goose.workspace })).toMatchObject({
       launchHash: definitionHash(goose.record),
     })
+  })
+
+  it("counts Qwen Code's project skills and MCP servers, and goose's project recipes and agent sources", async () => {
+    for (const [presetId, files] of [
+      ['qwen', ['.mcp.json', '.agents/skills/review/SKILL.md']],
+      ['goose', ['.goose/recipes/ship.yaml', '.agents/recipes/ship.yaml', '.agents/agents/helper.md']],
+    ] as const) {
+      for (const file of files) {
+        const fixture = await preset(presetId)
+        const bridge = await fixture.open()
+        const before = (await bridge.launchPreview!({ cwd: fixture.workspace })).launchHash
+        await mkdir(dirname(join(fixture.workspace, file)), { recursive: true })
+        await writeFile(join(fixture.workspace, file), 'model: elsewhere\n')
+        expect((await bridge.launchPreview!({ cwd: fixture.workspace })).launchHash, `${presetId} ${file}`).not.toBe(before)
+      }
+    }
+    // Claude's own agent definitions are Claude's settings: goose's fingerprint does not read them.
+    const goose = await preset('goose')
+    await mkdir(join(goose.workspace, '.claude', 'agents'), { recursive: true })
+    await writeFile(join(goose.workspace, '.claude', 'agents', 'helper.md'), 'model: elsewhere\n')
+    expect(await (await goose.open()).launchPreview!({ cwd: goose.workspace })).toMatchObject({ launchHash: definitionHash(goose.record) })
   })
 
   it('looks above both the path the agent is given and its real path', async () => {
@@ -2895,6 +2917,30 @@ describe('ACP turn mapping', () => {
     expect(turns[1]!.usage).toEqual({ inputTokens: 7, outputTokens: 3 })
     // The session itself shows only what the agent said.
     expect((await bridge.detail(sessionId)).summary.usage).toEqual({ inputTokens: 10, outputTokens: 20 })
+  })
+
+  it("never takes goose's prompt usage for the turn's, and asks the Host for the turn's tokens instead", async () => {
+    const turns: HarnessTurnRecord[] = []
+    const asked: string[] = []
+    const fixture = await setup(
+      { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'chat,approve,auto', FAKE_ACP_INITIAL_MODE: 'approve' },
+      {
+        readTurnUsage: async ({ sessionId }) => {
+          asked.push(sessionId)
+          return { inputTokens: 7, outputTokens: 3, cacheReadTokens: 5 }
+        },
+      },
+      { presetId: 'goose' },
+      { turnEnded: turn => void turns.push(turn) },
+    )
+    const bridge = await fixture.open()
+    // The fake reports usage with its answer, as goose reports its last call's context.
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid() })
+    await settled(bridge, sessionId)
+    await vi.waitFor(() => expect(turns).toHaveLength(1))
+    expect(asked).toHaveLength(1)
+    expect(turns[0]!.usage).toEqual({ inputTokens: 7, outputTokens: 3, cacheReadTokens: 5 })
+    expect((await bridge.detail(sessionId)).summary.usage).toBeUndefined()
   })
 
   it('records the turn without tokens and closes when the Host’s read never settles', async () => {
@@ -8892,5 +8938,204 @@ describe('the browser tools for ACP sessions', () => {
     expect(gateway.leases).toHaveLength(1)
     const servers = (received(await fixture.log(), 'session/new')[0]!.params as { mcpServers: Array<{ name: string }> }).mcpServers
     expect(servers.map(server => server.name).sort()).toEqual(['latch-browser', 'latch-skills'])
+  })
+})
+
+describe("what the Host reads and removes in a Harness CLI's own record", () => {
+  const GOOSE = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: 'chat,approve,auto', FAKE_ACP_INITIAL_MODE: 'approve' }
+  const QWEN = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_MODES: QWEN_MODES, FAKE_ACP_INITIAL_MODE: 'default' }
+
+  /** A session of `presetId`'s profile that ran one turn, and the bridge of a Host started again on the same data. */
+  async function afterRestart(presetId: string | undefined, env: Record<string, string>, options: AcpAgentOptions = {}) {
+    const fixture = await setup(env, options, presetId ? { presetId } : {})
+    const first = await fixture.open()
+    const { sessionId } = await first.createTask({ prompt: 'echo one', requestId: rid() })
+    expect(systemText(await settled(first, sessionId))).toBe('')
+    await first.close()
+    const agentSession = received(await fixture.log(), 'session/prompt')[0]!.params!.sessionId as string
+    return { fixture, bridge: await fixture.open(), sessionId, agentSession }
+  }
+
+  it('opens a goose session again only once its record shows no tool confirmation left, and never without reading it', async () => {
+    // Without the Host's read nothing says what goose would go on with, so it is never asked to load.
+    const unread = await afterRestart('goose', { ...GOOSE, FAKE_ACP_CAPS: 'load' })
+    await expect(unread.bridge.prompt(unread.sessionId, 'echo two', rid())).rejects.toMatchObject({
+      status: 409,
+      code: 'harness-resume-unchecked',
+    })
+    expect(received(await unread.fixture.log(), 'session/load')).toEqual([])
+    // Clearing the context lets the session go on in Latch with a new goose session, and nothing is loaded.
+    await unread.bridge.prompt(unread.sessionId, 'echo fresh', rid(), { freshContext: true })
+    expect(systemText(await settled(unread.bridge, unread.sessionId))).toBe('')
+    expect(received(await unread.fixture.log(), 'session/load')).toEqual([])
+    expect(received(await unread.fixture.log(), 'session/new')).toHaveLength(2)
+
+    // A record that stopped on a confirmation: goose would go on with that turn by itself, one nobody sent here.
+    let verdict: 'clear' | 'blocked' = 'blocked'
+    const asked: unknown[] = []
+    const cliStore: CliStoreAccess = {
+      resumeState: async input => {
+        asked.push(input)
+        return verdict
+      },
+    }
+    const held = await afterRestart('goose', { ...GOOSE, FAKE_ACP_CAPS: 'load' }, { storeAccess: cliStore })
+    const requestId = rid()
+    await expect(held.bridge.prompt(held.sessionId, 'echo two', requestId)).rejects.toMatchObject({
+      status: 409,
+      code: 'harness-resume-pending-tool',
+    })
+    expect(received(await held.fixture.log(), 'session/load')).toEqual([])
+    expect(asked).toMatchObject([{ presetId: 'goose', sessionId: held.agentSession }])
+    const detail = await held.bridge.detail(held.sessionId)
+    expect(detail.summary.status).toBe('idle')
+    expect(detail.messages).toHaveLength(2)
+
+    // Nothing left to go on with: the session opens and the turn runs.
+    verdict = 'clear'
+    await held.bridge.prompt(held.sessionId, 'echo two', rid())
+    expect((await settled(held.bridge, held.sessionId)).messages.map(message => message.text)).toEqual([
+      'echo one',
+      'echo: echo one',
+      'echo two',
+      'echo: echo two',
+    ])
+    expect(received(await held.fixture.log(), 'session/load')).toHaveLength(1)
+
+    // A harness that resumes without going on with a turn is not asked about.
+    const plain = await afterRestart(undefined, { FAKE_ACP_CAPS: 'load' })
+    await plain.bridge.prompt(plain.sessionId, 'echo two', rid())
+    await settled(plain.bridge, plain.sessionId)
+    expect(received(await plain.fixture.log(), 'session/load')).toHaveLength(1)
+  })
+
+  it("removes Latch's MCP servers from goose's record of a session before its process stops", async () => {
+    const fixture = await setup({ ...GOOSE, FAKE_ACP_CAPS: 'load' }, { idleMs: 80, agentIdleMs: 80 }, { presetId: 'goose' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({
+      prompt: 'echo hi',
+      requestId: rid(),
+      agentContext: {
+        agent: { customAgentId: `agt_${randomUUID()}` },
+        instructions: '',
+        skillBodies: [{ id: 'plugin:list', name: '审阅清单', description: '逐项检查', content: 'SKILL BODY' }],
+        revision: 'a'.repeat(64),
+      },
+    })
+    await settled(bridge, sessionId)
+    const log = await vi.waitFor(
+      async () => {
+        const current = await fixture.log()
+        expect(current.some(entry => entry.event === 'stdin-end')).toBe(true)
+        return current
+      },
+      { timeout: 5_000, interval: 20 },
+    )
+    const agentSession = received(log, 'session/new')[0]!.params as { mcpServers: Array<{ name: string }> }
+    expect(agentSession.mcpServers.map(server => server.name)).toEqual(['latch-skills'])
+    const removed = received(log, '_goose/unstable/session/extensions/remove')
+    expect(removed.map(entry => entry.params)).toEqual([
+      { sessionId: received(log, 'session/prompt')[0]!.params!.sessionId, extensionKey: 'latch-skills' },
+    ])
+    // Asked while the process still read its input.
+    expect(log.indexOf(removed[0]!)).toBeLessThan(log.findIndex(entry => entry.event === 'stdin-end'))
+  })
+
+  it("deletes a goose session's subagent sessions with it, as the Host found them in goose's record", async () => {
+    const asked: unknown[] = []
+    const cliStore: CliStoreAccess = {
+      resumeState: async () => 'clear',
+      childSessions: async input => {
+        asked.push(input)
+        return ['child-1']
+      },
+    }
+    const { fixture, bridge, sessionId, agentSession } = await afterRestart(
+      'goose',
+      { ...GOOSE, FAKE_ACP_CAPS: 'load,delete' },
+      { storeAccess: cliStore },
+    )
+    await bridge.remove!(sessionId)
+    await vi.waitFor(
+      async () =>
+        expect(received(await fixture.log(), 'session/delete').map(entry => entry.params?.sessionId)).toEqual(['child-1', agentSession]),
+      { timeout: 5_000, interval: 10 },
+    )
+    expect(asked).toMatchObject([{ presetId: 'goose', sessionIds: [agentSession] }])
+  })
+
+  it("deletes a Qwen Code session with its own request, which takes the session's folder", async () => {
+    const { fixture, bridge, sessionId, agentSession } = await afterRestart('qwen', { ...QWEN, FAKE_ACP_CAPS: 'resume' })
+    expect(Object.keys(await fixture.agentSessions())).toEqual([agentSession])
+    await bridge.remove!(sessionId)
+    await vi.waitFor(async () => expect(await fixture.agentSessions()).toEqual({}), { timeout: 5_000, interval: 10 })
+    const log = await fixture.log()
+    expect(received(log, 'deleteSession').map(entry => entry.params)).toEqual([{ sessionId: agentSession, cwd: fixture.workspace }])
+    expect(received(log, 'session/delete')).toEqual([])
+  })
+
+  it('has the Host remove the DeepSeek Harness record of a removed session, and of a list read, once the process is gone', async () => {
+    const removed: Array<{ sessionId: string; cwd: string; alive: boolean }> = []
+    let pids: number[] = []
+    const cliStore: CliStoreAccess = {
+      removeSession: async ({ sessionId, cwd }) => {
+        removed.push({ sessionId, cwd, alive: pids.some(alive) })
+        return true
+      },
+    }
+    const env = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_PROCESS_MODE: '1', FAKE_ACP_CAPS: 'resume,close' }
+    const fixture = await setup(env, { storeAccess: cliStore }, { presetId: 'dsh' })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    pids = (await fixture.log()).filter(entry => entry.event === 'start').map(entry => entry.pid)
+    const agentSession = received(await fixture.log(), 'session/prompt')[0]!.params!.sessionId as string
+    await bridge.remove!(sessionId)
+    await vi.waitFor(() => expect(removed).toHaveLength(1), { timeout: 5_000, interval: 10 })
+    expect(removed[0]).toEqual({ sessionId: agentSession, cwd: fixture.workspace, alive: false })
+    // dsh offers no deletion, so no process is started to ask.
+    expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(1)
+
+    // The empty session of a list read goes too, after its process.
+    expect(await bridge.readCatalogue!({ auto: false })).toEqual({ ran: true })
+    const log = await fixture.log()
+    const read = received(log, 'session/new').at(-1)!
+    pids = log.filter(entry => entry.event === 'start').map(entry => entry.pid)
+    await vi.waitFor(() => expect(removed).toHaveLength(2), { timeout: 5_000, interval: 10 })
+    expect(removed[1]).toMatchObject({ cwd: read.params!.cwd, alive: false })
+    expect(received(log, 'session/close')).toHaveLength(1)
+  })
+
+  it("counts what Qwen Code's own update runs in its launch fingerprint, and nothing when it runs itself", async () => {
+    let code: string | undefined
+    const calls: unknown[] = []
+    const cliStore: CliStoreAccess = {
+      launchCode: input => {
+        calls.push(input)
+        return code
+      },
+    }
+    const fixture = await setup(QWEN, { storeAccess: cliStore }, { presetId: 'qwen' })
+    const bridge = await fixture.open()
+    const plain = await bridge.launchPreview!({ cwd: fixture.workspace })
+    code = 'a'.repeat(64)
+    const updated = await bridge.launchPreview!({ cwd: fixture.workspace })
+    expect(calls.at(-1)).toMatchObject({ presetId: 'qwen', command: process.execPath })
+    expect(updated.definitionHash).not.toBe(plain.definitionHash)
+    code = 'b'.repeat(64)
+    expect((await bridge.launchPreview!({ cwd: fixture.workspace })).definitionHash).not.toBe(updated.definitionHash)
+    // Back to running itself, it is the launch it was, as for a Host that reads no store.
+    code = undefined
+    expect((await bridge.launchPreview!({ cwd: fixture.workspace })).definitionHash).toBe(plain.definitionHash)
+    expect(plain.definitionHash).toBe(
+      launchHash({
+        resolvedCommand: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        definitionEnv: fixture.record.env,
+        presetId: 'qwen',
+        profileVersion: profileFor('qwen')!.version,
+        ...launchExtras('qwen'),
+      }),
+    )
   })
 })

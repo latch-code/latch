@@ -12,15 +12,18 @@
  * 3. Only numbers leave this module: the balance in hundredths and its currency, and whether DeepSeek says the account
  *    can still be used.
  *
- * Any setting that could send DeepSeek Harness's key to another address (`DEEPSEEK_BASE_URL`, a `baseURL` or
- * `apiKeyEnv` in its patch layers, either in its `.env` files) ends the read before the key file is opened: such a key may
- * not be DeepSeek's. The key is never refreshed, rewritten or retried; a refusal ends in nothing to report.
+ * Any setting that could send DeepSeek Harness's key to another address ends the read before the key file is opened:
+ * such a key may not be DeepSeek's. Its plugin layers are judged by DeepSeek Harness's own composition
+ * (`dsh-config.ts`): the DeepSeek, credentials and account plugins must be as its official bundles ship them, and no
+ * other layer may add a plugin. `DEEPSEEK_BASE_URL` in its `.env` files, which that composition does not read, is
+ * checked here. The key is never refreshed, rewritten or retried; a refusal ends in nothing to report.
  */
 import { constants } from 'node:fs'
 import { lstat, open } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import type { QuotaReport } from '@latch/harness-acp'
+import type { DshConfigVerdict } from './dsh-config.ts'
 import type { FetchLike } from './egress.ts'
 
 /** DeepSeek's API origin, as the `deepseek` model-service preset names it. */
@@ -33,8 +36,10 @@ const MAX_FILE_BYTES = 64 * 1024
 const MAX_BODY_BYTES = 16 * 1024
 /** What a DeepSeek API key looks like; anything else is not sent. */
 const DEEPSEEK_KEY = /^sk-[A-Za-z0-9]{16,128}$/u
-/** Words that point DeepSeek Harness's DeepSeek route at another address or another key. */
+/** Words in a `.env` file that point DeepSeek Harness's DeepSeek route at another address or another key. */
 const REDIRECTING = /baseURL|DEEPSEEK_BASE_URL|apiKeyEnv/u
+/** The plugins whose layers decide where the key goes (`dshConfigCheck`). */
+export const DSH_KEY_PLUGINS = ['llm-deepseek', 'credentials', 'llm-pi-ai', 'deepseek-account'] as const
 
 type Read = { text: string } | 'absent' | 'refused'
 
@@ -119,19 +124,16 @@ export async function readDshKey(input: {
   env: Readonly<Record<string, string | undefined>>
   cwd?: string
   uid: number
+  /** What DeepSeek Harness's own composition says of `DSH_KEY_PLUGINS`, asked only when everything else allows the read. */
+  config: () => Promise<DshConfigVerdict>
 }): Promise<{ key: string } | 'none' | 'skip'> {
   const { home, env, cwd, uid } = input
   if (env.DSH_HOME?.trim() || env.DEEPSEEK_BASE_URL !== undefined) return 'none'
   const dir = join(home, DSH_DIR)
   if ((await ownDirectory(dir, uid)) !== 'ok') return 'none'
-  for (const path of [
-    join(dir, 'cordis.patch.yml'),
-    join(dir, 'profiles', DSH_PROFILE, 'cordis.patch.yml'),
-    join(dir, '.env'),
-    join(dir, 'profiles', DSH_PROFILE, '.env'),
-  ])
-    if (!(await silent(path, uid))) return 'none'
+  for (const path of [join(dir, '.env'), join(dir, 'profiles', DSH_PROFILE, '.env')]) if (!(await silent(path, uid))) return 'none'
   if (cwd !== undefined && !(await silent(join(cwd, '.env'), uid))) return 'skip'
+  if ((await input.config()) !== 'official') return 'none'
   const read = await readOwnFile(join(dir, '.credentials.yaml'), uid, true)
   if (read === 'absent' || read === 'refused') return 'none'
   const key = deepSeekKeyOf(read.text)

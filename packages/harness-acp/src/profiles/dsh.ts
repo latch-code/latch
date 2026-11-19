@@ -35,6 +35,8 @@ export const dshProfile: HarnessProfile = {
   presetId: 'dsh',
   version: 4,
   processMode: { prepare: prepareDshMode, read: readDshMode },
+  // dsh has no way to delete a session, and even the empty one of a list read is written to its history.
+  removesOwnSessions: true,
   // dsh-acp offers `reasoning_effort` when the exact model declares one (its README).
   thinkingPerModel: true,
   // An empty session runs no turn and calls no model.
@@ -44,7 +46,7 @@ export const dshProfile: HarnessProfile = {
     wires: ['chat-completions', 'responses', 'anthropic-messages'],
     tokenEnv: 'LMG_TOKEN',
     envNames: [],
-    templates: { args: 1, files: 2 },
+    templates: { args: 1, files: 3 },
     models: GATEWAY_MODELS,
     minimumVersion: MINIMUM_VERSION,
     // ACP reports the application's hard-coded 0.0.1, not the dsh release version.
@@ -52,9 +54,12 @@ export const dshProfile: HarnessProfile = {
     deliver(place, route) {
       const provider = GATEWAY_PROVIDER
       const selection = { provider, model: route.model }
+      // Each plugin the route needs says `disabled: false`: a layer that only sets `config` leaves a plugin the person
+      // disabled in their own `cordis.patch.yml` disabled (seen with `--dump-config` on 0.2.2-rc.1).
       const patch = [
         {
           id: 'llm-pi-ai',
+          disabled: false,
           config: {
             providers: {
               [provider]: {
@@ -82,6 +87,7 @@ export const dshProfile: HarnessProfile = {
         },
         {
           id: 'compaction-basic',
+          disabled: false,
           config: {
             modelPolicies: place.models.flatMap(({ id, capabilities }) =>
               capabilities?.contextTokens
@@ -90,8 +96,8 @@ export const dshProfile: HarnessProfile = {
             ),
           },
         },
-        { id: 'acp', config: selection },
-        { id: 'agent-default-model', config: selection },
+        { id: 'acp', disabled: false, config: selection },
+        { id: 'agent-default-model', disabled: false, config: selection },
         { id: 'session-log-deepseek', disabled: true },
         { id: 'plugin-package-inventory-deepseek', disabled: true },
       ]

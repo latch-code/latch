@@ -10,6 +10,20 @@ import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browse
 import { startTestHost } from './helpers/host.ts'
 import { permissionControl, permissionWords, tooltipText } from './helpers/layout.ts'
 
+/** Reads a Harness's lists the way a person does where it reads them only on request: from the model menu. */
+async function readListsFromMenu(page: Page, harness: string): Promise<void> {
+  await page
+    .getByRole('button', { name: /^模型：/u })
+    .filter({ visible: true })
+    .first()
+    .click()
+  const menu = page.locator('[role=menu], [role=listbox]').filter({ visible: true }).first()
+  await menu.getByText(`读取 ${harness} 的模型列表`, { exact: true }).click()
+  await page.keyboard.press('Escape')
+  // Away from the chip, so its own tooltip is not the one a later check reads.
+  await page.mouse.move(0, 0)
+}
+
 describe('conversation forks', () => {
   it('opens a selectable new session, folds authoritative context and returns to its source at desktop, tablet and phone widths', async () => {
     const host = await startTestHost({ uiDir: resolve('dist/web') })
@@ -143,6 +157,9 @@ describe('conversation forks', () => {
       const menu = page.getByRole('menu', { name: /^Harness/u })
       await menu.waitFor()
       await menu.getByRole('menuitemradio', { name: /goose/u }).click()
+      // goose's lists are read only when someone asks (its sessions start the person's extensions); the next case asks
+      // from the model menu, this one asks the Host directly.
+      await owner.json('agents/goose/catalogue', { method: 'POST', body: {} })
       await expect
         .poll(() => notice.locator('.fork-missed').allInnerTexts(), { timeout: 20_000 })
         .toContain('权限「按规则放行」→ 更严的「先问你」')
@@ -297,6 +314,9 @@ describe('conversation forks', () => {
         }).observe(document.body, { subtree: true, childList: true, characterData: true })
       })
       await pick(page, 'goose').click()
+      // Read only when someone asks, as goose's sessions start the person's extensions.
+      await page.locator('.fork-missed').first().waitFor()
+      await readListsFromMenu(page, 'goose')
       const mapped = ['没有沿用来源会话的模型「Large」：goose 在这里不能选。', '权限「按规则放行」→ 更严的「先问你」']
       await expect.poll(() => notice.locator('.fork-missed').allInnerTexts(), { timeout: 20_000 }).toEqual(mapped)
       const shown = new Set(await page.evaluate(() => (window as unknown as { forkLines: string[] }).forkLines))

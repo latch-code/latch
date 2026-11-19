@@ -252,8 +252,9 @@ async function main(): Promise<void> {
     // DeepSeek Harness's DeepSeek balance, read with its own key from this home (cli-quota.ts).
     cliQuota: { home: homedir() },
     cliUsage: { home: homedir() },
-    // CLI stores read through each session's own environment: Claude Code's (claude-store.ts) and pi's session files
-    // and project trust (pi-store.ts), for 接入已有会话, real deletion, settings and the permission panel.
+    // CLI stores read through each session's own environment: Claude Code's (claude-store.ts), pi's session files and
+    // project trust (pi-store.ts), goose's, DeepSeek Harness's and Qwen Code's (cli-stores.ts): for 接入已有会话, real
+    // deletion, settings, the permission panel and guarding what a session opened again would do.
     cliStore: { home: homedir() },
     // 「操控这台 Mac」 looks for Cua Driver at its one place, on macOS only.
     ...(process.platform === 'darwin'

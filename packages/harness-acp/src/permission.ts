@@ -204,6 +204,8 @@ export function launchHash(input: {
   route?: LaunchRoute
   /** A process-level permission choice; absent preserves fingerprints for other Harnesses. */
   launchMode?: string
+  /** A digest of what the program runs instead of itself after its own update; absent when it runs itself. */
+  runningCode?: string
 }): string {
   return sha256Hex(
     canonicalJson({
@@ -220,6 +222,7 @@ export function launchHash(input: {
       ...(input.programs && Object.keys(input.programs).length ? { programs: input.programs } : {}),
       ...(input.route ? { route: input.route } : {}),
       ...(input.launchMode ? { launchMode: input.launchMode } : {}),
+      ...(input.runningCode ? { runningCode: input.runningCode } : {}),
     }),
   )
 }

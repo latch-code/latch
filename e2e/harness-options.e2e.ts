@@ -675,7 +675,7 @@ describe('opening 权限 first on a Harness that declares no modes', () => {
 })
 
 /** A Harness Latch has a profile for, whose read opens a session and so reports its modes too. */
-describe('opening 权限 first on a Harness whose read reports its modes', () => {
+describe('opening 权限 first on a Harness whose lists are read only on request', () => {
   let directory: string
   let log: string
   let host: TestHost
@@ -716,7 +716,8 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
     })
     expect(saved.status).toBe(201)
     const qwen = (await owner.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(harness => harness.id === 'qwen')
-    expect(qwen?.catalogueRead).toEqual({ when: 'select', modes: true })
+    // Its sessions start the person's MCP servers and hooks, so nothing reads its lists unasked.
+    expect(qwen?.catalogueRead).toEqual({ when: 'request', modes: true })
     browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUTPUT, { recursive: true })
   })
@@ -726,11 +727,7 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
     await rm(directory, { recursive: true, force: true })
   })
 
-  it('keeps the known modes selectable while reading and preserves a choice made before the list arrives', async () => {
-    let releaseRead!: () => void
-    const readReleased = new Promise<void>(resolve => {
-      releaseRead = resolve
-    })
+  it('offers the known modes without reading, and keeps a choice made before the person reads the list', async () => {
     const context = await browser.newContext({
       viewport: { width: 1280, height: 900 },
       colorScheme: 'dark',
@@ -752,31 +749,32 @@ describe('opening 权限 first on a Harness whose read reports its modes', () =>
       ).toBe('Harness：Qwen Code')
       const chip = permissionControl(page)
       await expect.poll(() => permissionWords(page)).toBe('权限：先问你')
-      expect(await sent()).toEqual([])
-      // Keep the read pending until its loading state was observed, even under a busy browser test run.
-      await page.route(/\/agents\/[^/]+\/catalogue$/u, async route => {
-        await readReleased
-        await route.continue()
-      })
       await chip.click()
       const rule = page
         .getByRole('menuitemradio', { name: /由模型判断/u })
         .or(page.getByRole('radio', { name: /由模型判断/u }))
         .first()
       await rule.waitFor({ timeout: 20_000 })
-      expect(await sent()).toHaveLength(0)
-      await shot('permission-reading-1280-dark')
       await rule.click()
       await expect.poll(() => permissionWords(page)).toBe('权限：由模型判断')
-      releaseRead()
+      // Opening 权限 started nothing.
+      expect(await sent()).toEqual([])
+      await shot('permission-request-1280-dark')
+      // The person reads the list from the model menu; the choice made before it stays.
+      await page
+        .getByRole('button', { name: /^模型：/u })
+        .filter({ visible: true })
+        .first()
+        .click()
+      const menu = page.locator('[role=menu], [role=listbox]').filter({ visible: true }).first()
+      await menu.getByText('读取 Qwen Code 的模型列表', { exact: true }).click()
       await expect.poll(sent).toHaveLength(1)
+      await page.keyboard.press('Escape')
+      await expect.poll(() => permissionWords(page)).toBe('权限：由模型判断')
       expect(await page.getByText('发第一条消息后可以换', { exact: false }).count()).toBe(0)
       await shot('permission-read-1280-dark')
-      expect(await sent()).toHaveLength(1)
-      await expect.poll(() => permissionWords(page)).toBe('权限：由模型判断')
       await noHorizontalOverflow(page)
     } finally {
-      releaseRead()
       await context.close()
     }
   })

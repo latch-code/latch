@@ -77,7 +77,7 @@ describe('goose on a model service', () => {
 
   it('hides the option that would move a session to another provider, and requires the version it was checked against', () => {
     expect(gateway.hiddenConfig).toEqual(['provider'])
-    expect(gooseProfile.version).toBe(2)
+    expect(gooseProfile.version).toBe(3)
     expect(gateway.templates).toEqual({})
     expect(gateway.minimumVersion?.minimum).toBe('1.57.0')
     // Marked experimental: a delegated subagent's provider cannot be pinned.

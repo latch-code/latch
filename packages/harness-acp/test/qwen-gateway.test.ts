@@ -109,7 +109,7 @@ describe('Qwen Code on a model service', () => {
 
   it('marks a model choice as the session alone and requires the version these settings were checked against', () => {
     expect(qwenProfile.modelSetMeta).toEqual({ 'qwen.session.modelPersistDefault': false })
-    expect(qwenProfile.version).toBe(2)
+    expect(qwenProfile.version).toBe(3)
     // Wired from reading its source, not from a run: clients say 实验性, and that its commands can read the credential.
     expect(gateway.experimental).toBe(true)
     expect(gateway.credentialInherited).toBe(true)

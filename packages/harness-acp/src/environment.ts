@@ -59,6 +59,20 @@ function withLoopback(value: string): string {
   return [...new Set([...listed, ...LOOPBACK])].join(',')
 }
 
+/** The values of the profile's `inheritEnv` the agent gets, as `agentEnvironment` takes them: the Host's before the login shell's. */
+export function inheritedValues(
+  profile: AcpPermissionProfile | undefined,
+  hostEnv: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const shell = loginShellValues()
+  const values: Record<string, string> = {}
+  for (const name of profile?.inheritEnv ?? []) {
+    const value = hostEnv[name] || shell[name]
+    if (value) values[name] = value
+  }
+  return values
+}
+
 /**
  * Later steps win: Host allowlist, what the person's own environment names for this agent, the programs it finds, the
  * definition's variables, the profile's, then values Latch forces, the gateway's last. A Host started from a terminal

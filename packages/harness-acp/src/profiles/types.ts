@@ -364,6 +364,35 @@ export interface HarnessProfile {
    */
   readonly historyImport?: true | HistoryImportRule
   /**
+   * Its `session/load` goes on by itself with a turn that stopped on a tool confirmation, a turn nobody sent in this
+   * session (goose: it asks again, or applies an answer it holds, then calls the model). A session is opened again only
+   * when the Host's read of the harness's own record says nothing is left to go on with
+   * (`AcpAgentOptions.storeAccess.resumeState`); without that read it is not opened again.
+   */
+  readonly loadResumesTurn?: true
+  /**
+   * The harness keeps its subagents' sessions as sessions of their own that deleting the parent leaves; the Host reads
+   * them from its record (`storeAccess.childSessions`) and they are deleted with it (goose).
+   */
+  readonly childSessionsInRecord?: true
+  /**
+   * The harness has no way to delete a session, so the Host removes its record of the sessions Latch opened itself
+   * (`storeAccess.removeSession`), after the process is gone (DeepSeek Harness).
+   */
+  readonly removesOwnSessions?: true
+  /** Its own delete request (`deleteMethod`) also takes the folder the session was opened in (Qwen Code's `deleteSession`). */
+  readonly deleteWithFolder?: true
+  /**
+   * The harness keeps the MCP servers a session was given in its own record, so resuming it outside Latch would start
+   * Latch's. Before a process stops gracefully, each server Latch gave a session is removed with this request.
+   */
+  readonly mcpRemoval?: { readonly method: string; params(sessionId: string, name: string): unknown }
+  /**
+   * The installed program may run another version it downloaded itself; the Host's digest of that
+   * (`storeAccess.launchCode`) is part of the definition's fingerprint, as the program's path is (Qwen Code).
+   */
+  readonly selfUpdates?: true
+  /**
    * A command that says whether the harness is logged in, without a prompt or a session. Only a clear answer is an answer:
    * `read` returns `unknown` for anything else. The output never leaves `read`, since it may hold an account or part of a key.
    */
@@ -507,9 +536,10 @@ export interface HarnessProfile {
   readonly quota?: ProfileQuota
   /**
    * What the token counts the harness reports cover: the whole session (the default) or the turn they end. Checked
-   * against the real program; it changes nothing that runs, so the version stays.
+   * against the real program; it changes nothing that runs, so the version stays. `none`: what it reports is neither
+   * (goose's is its last model call's context), so it is not recorded and the Host may read the turn's tokens itself.
    */
-  readonly usageScope?: 'session' | 'turn'
+  readonly usageScope?: 'session' | 'turn' | 'none'
   /** Its `inputTokens` leave out the cached input it reports beside them (ACP counts it in): Latch adds it back. */
   readonly inputExcludesCache?: true
   /** Token counts its prompt answer carries outside ACP's `usage`, read from the whole answer. */

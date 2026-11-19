@@ -176,7 +176,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | `LATCH_CODEX_ACTIONS_LIVE=1` 加 `LATCH_CODEX_GATEWAY_BINARY` | `packages/harness-acp/test/codex-actions.live.test.ts` |
 | `LATCH_CODEX_DELETE_REAL=1` 加 `LATCH_CODEX_GATEWAY_BINARY` | `apps/host/test/codex-delete.live.test.ts`：用本人的登录在临时项目里发一句极短的提示（一次付费的回合），经 Latch 删除会话，再用本人的 `codex app-server` 的 `thread/read` 核对它已读不到这个 thread；只打印布尔值 |
 | `LATCH_CODEX_IMAGE_REAL=1` 加 `LATCH_CODEX_GATEWAY_BINARY` | `apps/host/test/codex-image.live.test.ts`：用本人的登录生成一张图（一次付费的图片生成），图片工具的行要带图片附件 |
-| `LATCH_DSH_BINARY` | `packages/harness-acp/test/dsh-mode.test.ts` 的真实部分，无模型调用 |
+| `LATCH_DSH_BINARY` | `packages/harness-acp/test/dsh-mode.test.ts` 与 `apps/host/test/dsh-config.test.ts` 的真实部分（临时家目录里的 `--dump-config`），无模型调用 |
 | `LATCH_AGY_BINARY` | `antigravity.live.test.ts` |
 | `LATCH_COMPUTER_GUIDE_LIVE=codex=<路径>,claude-agent=<claude-agent-acp 路径>,opencode=<路径>` | `computer-guide.live.test.ts`：CLI 用自己的登录与模型，假 Driver，不碰桌面；替换与前置的 A/B（[MCP.md](MCP.md#给-agent-的指引)）。`LATCH_COMPUTER_GUIDE_ARMS=replace` 或 `prepend` 只跑一组，`LATCH_COMPUTER_GUIDE_RUNS` 每组次数，`LATCH_COMPUTER_GUIDE_VENDOR_FILE` 是 Driver 原文（不进仓库），`LATCH_COMPUTER_GUIDE_BROWSER=0` 跳过 latch-browser 一项，`LATCH_COMPUTER_GUIDE_EVIDENCE_DIR` 写下每轮的结果。`PATH` 里的 `cua-driver` 与 `cua` 要换成只记录的替身 |
 | `LATCH_CODEX_QUOTA_BINARY` | `harness-quota.live.test.ts`，结果写到 `LATCH_CODEX_QUOTA_OUT` |
@@ -366,6 +366,7 @@ testkit 另导出：`FAKE_ACP_AGENT`、`FAKE_CODEX_APP_SERVER`、`FAKE_PI_AGENT`
 
 - 写 `FAKE_ACP_STATE`（会话状态，多个进程共享、每次保存都合并磁盘内容）与 `FAKE_ACP_LOG`（逐行 JSON 日志）；此外只有 `shell-edit` 一轮在会话目录写两个文件、用例排进 `FAKE_ACP_EDIT_QUEUE` 的文件改动，扮演 Qwen Code 时夹具家目录里的设置，以及设了 `FAKE_ACP_DSH_LOG` 时那个家目录里 DeepSeek Harness 格式的会话日志。
 - 唯一的网络访问是 `model` 一轮：访问客户端指给它的模型服务。
+- 参数里有 `--dump-config` 时像 `dsh --profile acp --dump-config` 那样打印一份官方组合（`FAKE_DSH_DUMP` 替换它）后退出；`deleteSession`（Qwen Code）与 `_goose/unstable/session/extensions/remove`（goose）照它们的形状回答。goose 的 `sessions.db` 与 Qwen Code 的自更新文件由用例在临时目录里按真实形状写出（`apps/host/test/cli-stores.test.ts`）。
 - 进程级行为由 `FAKE_ACP_*` 环境变量决定，每一轮通常按提示的第一个词分派，其他输入回显。发送多块正文时，最后一块开头的 `schedule` 命令仍会执行，前面的 Agent 摘要保留在会话记录中。变量与关键词在该文件中查找（`grep -o 'FAKE_[A-Z_]*'`）。
 - `FAKE_SECRET` 出现在 stderr 与错误中，`FAKE_ACP_DUMP_ENV=1` 把完整环境写入日志：分别用来检查脱敏与环境白名单。日志里的 `latchEnv`（收到的 `LATCH_*` 变量名）应为空。
 - `acp.test.ts` 的 `setup()` 把预览的 `launchHash` 作为 `expectedLaunchHash` 传入，代替 Host 的本机确认；`preset(presetId)` 套用预设的权限配置，不算已验证的预设。

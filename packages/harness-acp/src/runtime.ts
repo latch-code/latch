@@ -155,7 +155,7 @@ import { commandMoved, commandUnconfirmed, harnessRetired, redactor, resolveComm
 import { openWire, wireLaunch } from './wires/index.ts'
 import { ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './wires/process.ts'
 import { ForkRefused, type AgentWire } from './wires/types.ts'
-import { agentEnvironment, programPaths } from './environment.ts'
+import { agentEnvironment, inheritedValues, programPaths } from './environment.ts'
 import { loginShellValues } from './login-shell.ts'
 import { ClaudeStore } from './claude-store.ts'
 import {
@@ -332,6 +332,8 @@ interface Live {
   capture?: Capture
   /** Subagent sessions the agent announced on a bound session, by their ACP session. */
   children: Map<string, Child>
+  /** The MCP servers of Latch's each session was given, by ACP session, for a profile that removes them (`mcpRemoval`). */
+  latchMcp?: Map<string, string[]>
   idleTimer?: NodeJS.Timeout
   /** For choosing which idle process to stop when the process limit is reached. */
   lastUsed: number
@@ -2307,6 +2309,7 @@ export class AgentRuntime implements Bridge {
       } catch (error) {
         throw this.publicError(error, live)
       }
+      await this.assertLoadSafe(place.agentSessionId)
       const capture = newCapture(place.agentSessionId)
       live.capture = capture
       let result: unknown
@@ -2529,6 +2532,7 @@ export class AgentRuntime implements Bridge {
   private async readOnce(definitionHash: string, model?: string): Promise<void> {
     const key = `catalogue-${randomUUID()}`
     const cwd = await this.makeTemporaryDirectory('catalogue-')
+    let sessionId: string | undefined
     try {
       const configured = this.selection.profile?.catalogueRead
       if (configured && 'codexModels' in configured) {
@@ -2563,12 +2567,13 @@ export class AgentRuntime implements Bridge {
       try {
         // No MCP servers and no prompt: the session exists only to say what it offers.
         result = await live.wire.request('session/new', { cwd, mcpServers: [] }, this.readTimeout(), this.lifetime.signal)
-        const sessionId = sessionState.safeParse(result).data?.sessionId
+        sessionId = sessionState.safeParse(result).data?.sessionId
         try {
           if (model !== undefined) switched = await this.switchReadModel(live, sessionId, result, model)
         } finally {
           const end = live.capabilities.delete ? this.deleteMethod() : live.capabilities.close ? 'session/close' : undefined
-          if (sessionId && end) await live.wire.request(end, { sessionId }, Math.min(this.readTimeout(), 10_000)).catch(() => {})
+          if (sessionId && end)
+            await live.wire.request(end, this.deleteParams(end, sessionId, cwd), Math.min(this.readTimeout(), 10_000)).catch(() => {})
         }
       } catch (error) {
         throw this.publicError(error, live)
@@ -2600,6 +2605,8 @@ export class AgentRuntime implements Bridge {
       })
     } finally {
       await this.discardProcess(key)
+      // A harness that cannot delete one keeps even this empty session in its history: the Host removes it.
+      if (sessionId) await this.removeOwnSessions([sessionId], cwd)
       await this.removeTemporaryDirectory(cwd).catch(() => {})
     }
   }
@@ -4599,6 +4606,7 @@ export class AgentRuntime implements Bridge {
       profileVersion: selection.profile?.version ?? 1,
       ...(profile?.inheritEnv ? { inheritEnv: profile.inheritEnv } : {}),
       programs: programPaths(profile),
+      ...this.runningCode(command, selection.profile),
     }
     const definitionHash = launchHash(definition)
     const routed = this.launchRoute(route, selection)
@@ -4614,6 +4622,49 @@ export class AgentRuntime implements Bridge {
           })
         : definitionHash
     return { command, hash, definitionHash, ...(launchMode ? { launchMode } : {}) }
+  }
+
+  /**
+   * For a program that may run another version it downloaded itself (`selfUpdates`): the Host's digest of that, which a
+   * silent update changes. Nothing when it runs itself, so the fingerprint is the one it always was.
+   */
+  private runningCode(command: string, profile: HarnessProfile | undefined): { runningCode?: string } {
+    const read = this.limits.storeAccess?.launchCode
+    if (!profile?.selfUpdates || !read) return {}
+    let code: string | undefined
+    try {
+      code = read({ presetId: profile.presetId, command, inherited: inheritedValues(profile.permission) })
+    } catch {
+      code = undefined
+    }
+    return code ? { runningCode: code } : {}
+  }
+
+  /**
+   * Before a profile's `session/load` that may go on with a turn stopped on a tool confirmation (`loadResumesTurn`): the
+   * Host's read of the harness's record must say nothing is left, since the harness would go on with that turn by itself,
+   * one nobody sent in this session. Without the read, or with any doubt, the session is not opened.
+   */
+  private async assertLoadSafe(sessionId: string): Promise<void> {
+    const profile = this.selection.profile
+    if (!profile?.loadResumesTurn) return
+    const read = this.limits.storeAccess?.resumeState
+    const name = this.agent.name
+    if (!read)
+      throw new AppError(
+        409,
+        'harness-resume-unchecked',
+        `Latch 读不到 ${name} 自己的会话记录，不能确认重新打开这个会话不会让它自己接着运行，所以没有打开它。清空上下文后可以在这里接着发，或新建会话。`,
+      )
+    const state = await read({ presetId: profile.presetId, sessionId, inherited: inheritedValues(profile.permission) }).catch(
+      () => 'blocked' as const,
+    )
+    if (state !== 'clear')
+      throw new AppError(
+        409,
+        'harness-resume-pending-tool',
+        `${name} 的这个会话停在一次工具确认上，重新打开会让它不等你发送就接着那一轮。Latch 没有打开它；清空上下文后可以在这里接着发，或在 ${name} 里结束那一轮。`,
+      )
   }
 
   /** A token for one process of the session `key`, kept so that nothing the process says repeats it. */
@@ -5581,7 +5632,8 @@ export class AgentRuntime implements Bridge {
         ? { ...said, inputTokens: said.inputTokens + (said.cachedReadTokens ?? 0) + (said.cachedWriteTokens ?? 0) }
         : said
     // Agents disagree on whether this counts the turn or the session; the profile says which, and the session otherwise.
-    if (reported && task) this.noteTokens(task, run, reported, this.selection.profile?.usageScope ?? 'session')
+    const scope = this.selection.profile?.usageScope ?? 'session'
+    if (reported && task && scope !== 'none') this.noteTokens(task, run, reported, scope)
     const stopReason = parsed.success ? parsed.data.stopReason : undefined
     // The Host's own stop is no cancel by anyone: the turn was interrupted, whatever the agent answered.
     if (run.cancelRequested && this.closed && run.sent) {
@@ -6585,6 +6637,7 @@ export class AgentRuntime implements Bridge {
       result = await setup('session/resume', { sessionId: current, cwd, mcpServers, ...directories, ...own })
       acpSessionId = current
     } else if (live.capabilities.load) {
+      await this.assertLoadSafe(current)
       // The replay arrives before the response while the session is still unbound, so it is discarded.
       result = await setup('session/load', { sessionId: current, cwd, mcpServers, ...directories })
       acpSessionId = current
@@ -6596,6 +6649,7 @@ export class AgentRuntime implements Bridge {
     const target = this.state.tasks[taskId]
     if (!target) throw new AppError(404, 'task-not-found', '找不到该任务')
     live.sessions.set(acpSessionId, taskId)
+    this.noteLatchMcp(live, acpSessionId, mcpServers)
     if (live.wire.reconcileCodexTeam) {
       const memberIds = new Set(target.messages.flatMap(message => (message.subagent?.team ? [message.subagent.team.memberId] : [])))
       live.wire.reconcileCodexTeam(
@@ -6664,6 +6718,28 @@ export class AgentRuntime implements Bridge {
         throw new AppError(503, 'agent-exited', `${this.agent.name} 进程已退出，请重试`)
     }
     return { live, acpSessionId }
+  }
+
+  /**
+   * For a harness that keeps the MCP servers it is given in its own record of the session (`mcpRemoval`): Latch's are
+   * removed from it before the process stops gracefully, so the session resumed outside Latch does not start them. A
+   * process that crashes leaves them, and the next opening replaces them by name.
+   */
+  private noteLatchMcp(live: Live, acpSessionId: string, servers: readonly unknown[]): void {
+    const removal = this.selection.profile?.mcpRemoval
+    if (!removal) return
+    const names = servers.flatMap(server => {
+      const name = (server as { name?: unknown }).name
+      return typeof name === 'string' ? [name] : []
+    })
+    const kept = (live.latchMcp ??= new Map())
+    if (names.length) kept.set(acpSessionId, names)
+    else kept.delete(acpSessionId)
+    if (live.wire.beforeStop !== undefined || !kept.size) return
+    live.wire.beforeStop = async send => {
+      for (const [sessionId, given] of kept)
+        for (const name of given) await send(removal.method, removal.params(sessionId, name)).catch(() => {})
+    }
   }
 
   /**
@@ -7136,6 +7212,7 @@ export class AgentRuntime implements Bridge {
     listed: () => Promise<boolean>,
     privately = false,
   ): void {
+    const profile = this.selection.profile
     const work: Promise<void> = (async () => {
       try {
         await this.spawning.get(key)?.catch(() => undefined)
@@ -7145,7 +7222,10 @@ export class AgentRuntime implements Bridge {
           live = undefined
         }
         if (!acpSessionIds.length) return
-        for (const id of acpSessionIds) live?.sessions.delete(id)
+        for (const id of acpSessionIds) {
+          live?.sessions.delete(id)
+          live?.latchMcp?.delete(id)
+        }
         // Claude's direct wire deletes in a reader process with the session's environment, nothing of the project's
         // runs: no launch fingerprint, project or command is needed for it.
         if (!live && this.deletesWithoutStart()) {
@@ -7161,6 +7241,8 @@ export class AgentRuntime implements Bridge {
           await this.deletePrivately(acpSessionIds)
           return
         }
+        // Removed from the record after the process is gone, below; no process is started for it.
+        if (this.selection.profile?.removesOwnSessions) return
         if (
           live
             ? !live.capabilities.delete
@@ -7180,10 +7262,15 @@ export class AgentRuntime implements Bridge {
           return
         }
         const target = live ?? (await this.ensureProcess(key, cwd, confirmed))
-        for (const id of acpSessionIds) target.sessions.delete(id)
+        for (const id of acpSessionIds) {
+          target.sessions.delete(id)
+          target.latchMcp?.delete(id)
+        }
         if (!target.capabilities.delete) return
         this.holdIdle(target)
-        await this.deleteAgentSessions(target, acpSessionIds)
+        // Its subagents' sessions, which deleting the parent leaves, first: the parent is what links them.
+        const children = await this.childSessions(acpSessionIds)
+        await this.deleteAgentSessions(target, [...children, ...acpSessionIds], cwd)
       } catch {
         /* Best effort. */
       } finally {
@@ -7191,6 +7278,7 @@ export class AgentRuntime implements Bridge {
         if (live) await live.wire.stop('stop', this.limits.stopGraceMs).catch(() => {})
         await this.removeTemporaryDirectory(this.tmpDirFor(key)).catch(() => {})
         await this.removeSessionFolders(acpSessionIds, cwd).catch(() => {})
+        if (this.selection.profile?.removesOwnSessions) await this.removeOwnSessions(acpSessionIds, cwd)
       }
     })().finally(() => {
       if (this.forgetting.get(key) === work) this.forgetting.delete(key)
@@ -7199,10 +7287,10 @@ export class AgentRuntime implements Bridge {
   }
 
   /** `session/delete` for each, in the order given; one the agent refuses is said in the Host's log, the rest go on. */
-  private async deleteAgentSessions(target: Live, ids: readonly string[]): Promise<void> {
+  private async deleteAgentSessions(target: Live, ids: readonly string[], cwd?: string): Promise<void> {
     for (const id of ids)
       await target.wire
-        .request(this.deleteMethod(), { sessionId: id }, Math.min(this.limits.requestTimeoutMs, 10_000))
+        .request(this.deleteMethod(), this.deleteParams(this.deleteMethod(), id, cwd), Math.min(this.limits.requestTimeoutMs, 10_000))
         .catch((error: unknown) => {
           const said = clip(this.redact(message(error)), 300)
           this.limits.log(`已删除 ${this.agent.name} 会话在 Latch 中的记录；${this.agent.name} 自己保存的一份会话副本没有删除：${said}`)
@@ -7227,6 +7315,29 @@ export class AgentRuntime implements Bridge {
       await this.discardProcess(key)
       await this.removeTemporaryDirectory(cwd).catch(() => {})
     }
+  }
+
+  /** What a delete request carries: the session, and the folder it was opened in for a harness that wants it (Qwen Code). */
+  private deleteParams(method: string, sessionId: string, cwd: string | undefined): Record<string, string> {
+    return method !== 'session/delete' && this.selection.profile?.deleteWithFolder && cwd !== undefined ? { sessionId, cwd } : { sessionId }
+  }
+
+  /** The subagent sessions of these, from the harness's record (`childSessionsInRecord`); none without the Host's read. */
+  private async childSessions(sessionIds: readonly string[]): Promise<string[]> {
+    const profile = this.selection.profile
+    const read = this.limits.storeAccess?.childSessions
+    if (!profile?.childSessionsInRecord || !read || !sessionIds.length) return []
+    return read({ presetId: profile.presetId, sessionIds, inherited: inheritedValues(profile.permission) }).catch(() => [])
+  }
+
+  /** The record of sessions Latch opened, removed by the Host for a harness that cannot delete one (`removesOwnSessions`). */
+  private async removeOwnSessions(sessionIds: readonly string[], cwd: string): Promise<void> {
+    const profile = this.selection.profile
+    const remove = this.limits.storeAccess?.removeSession
+    const command = this.agent.confirmedCommand ?? resolveCommand(this.agent.command)
+    if (!profile?.removesOwnSessions || !remove || !command) return
+    const inherited = inheritedValues(profile.permission)
+    for (const sessionId of sessionIds) await remove({ presetId: profile.presetId, sessionId, cwd, command, inherited }).catch(() => false)
   }
 
   /** Stops the process started for a session that was never recorded, and removes its temporary directory. */

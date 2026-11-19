@@ -52,6 +52,12 @@ export interface AgentWire {
   notify(method: string, params: unknown): void
   /** `stop`: end stdin, then SIGTERM, then SIGKILL the group. `kill` skips stdin. Resolves once the process is gone. */
   stop(reason: 'stop' | 'kill', graceMs: number, cause?: string): Promise<ExitInfo>
+  /**
+   * Runs once as a graceful stop begins, while the process still answers, with requests of its own through `send`; no
+   * other request is taken from then on, and the stop goes on after a few seconds whatever it does. A wire without it
+   * leaves the property alone.
+   */
+  beforeStop?: ((send: (method: string, params: unknown) => Promise<unknown>) => Promise<void>) | undefined
   stderrTail(limit?: number): string
   /** Commands the wire runs itself when a prompt is one of them, never sent as text, and only between turns. */
   readonly idleCommands?: ReadonlySet<string>

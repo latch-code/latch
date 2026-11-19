@@ -179,6 +179,7 @@ import {
   setLoginPrograms,
   validateAgentDefinition,
   isRetiredAdapterDefinition,
+  type CliStoreAccess,
 } from '@latch/harness-acp'
 import { AuditLog, type AuditActor, type StepupMethod } from './audit.ts'
 import { excludeFromBackup } from './backup.ts'
@@ -194,8 +195,10 @@ import { RelayProfiles, secretBytes } from './relay/profiles.ts'
 import { HostAddressBooks } from './relay/address-book.ts'
 import { HostRelayDirectory } from './relay/directory.ts'
 import { createEgressFetch, createEgressInspector, type EgressReason, type FetchLike, type LookupFunction } from './egress.ts'
-import { DEEPSEEK_ORIGIN, fetchDeepSeekBalance, readDshKey } from './cli-quota.ts'
-import { readDshTurnUsage } from './cli-usage.ts'
+import { DEEPSEEK_ORIGIN, DSH_KEY_PLUGINS, fetchDeepSeekBalance, readDshKey } from './cli-quota.ts'
+import { gooseChildSessions, gooseResumeState, gooseTurnUsage, qwenRunningCode, removeDshSession } from './cli-stores.ts'
+import { DSH_STORE_PLUGINS, readDshTurnUsage } from './cli-usage.ts'
+import { dshConfigCheck } from './dsh-config.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 import { loadOrCreateHostIdentity } from './identity.ts'
 import { ModelGatewayServer, type GatewayService } from './model-gateway.ts'
@@ -906,8 +909,10 @@ export interface ServerOptions {
    * The home whose CLI stores Agent drivers may read and, for what Latch started or the person chose, change: Claude
    * Code's own store (settings for the mode menu and a gateway's checks, sessions to bring in, forks and deleting
    * transcripts — `packages/harness-acp/src/claude-store.ts`, in a process with each session's environment) and pi's
-   * session files and project trust (`pi-store.ts`). The start script passes the person's home; left out, as in tests,
-   * no CLI's own store is read or changed.
+   * session files and project trust (`pi-store.ts`), goose's, DeepSeek Harness's and Qwen Code's (`cli-stores.ts`: goose's
+   * record before a session is opened again, sessions Latch opened in a CLI that cannot delete them, what Qwen Code's own
+   * update runs). The start script passes the person's home; left out, as in tests, no CLI's own store is read or
+   * changed and goose does not open a session again.
    */
   cliStore?: { home: string }
   /**
@@ -1574,6 +1579,19 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
      * The Host's read of DeepSeek Harness's DeepSeek balance with that CLI's own key (`cli-quota.ts`), for a definition
      * that still is the preset's own when asked. On record before the key leaves; a failed audit sends nothing.
      */
+    /**
+     * DeepSeek Harness's own composition of its profile (`dsh-config.ts`), one cached check per home: what the balance,
+     * session log and session removal rely on before they touch its files.
+     */
+    const dshConfigs = new Map<string, ReturnType<typeof dshConfigCheck>>()
+    const dshConfig = (home: string) => {
+      let check = dshConfigs.get(home)
+      if (!check) {
+        check = dshConfigCheck({ home, path: () => loginShellValues().PATH || process.env.PATH })
+        dshConfigs.set(home, check)
+      }
+      return check
+    }
     const cliQuotaReader = (cliQuota: NonNullable<ServerOptions['cliQuota']>) => {
       const fetch =
         cliQuota.fetch
@@ -1587,7 +1605,14 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           DSH_HOME: process.env.DSH_HOME || loginShellValues().DSH_HOME,
           DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL ?? loginShellValues().DEEPSEEK_BASE_URL,
         }
-        const read = await readDshKey({ home: cliQuota.home, env, ...(input.cwd !== undefined ? { cwd: input.cwd } : {}), uid })
+        const command = current.confirmedCommand!
+        const read = await readDshKey({
+          home: cliQuota.home,
+          env,
+          ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+          uid,
+          config: () => dshConfig(cliQuota.home)(command, DSH_KEY_PLUGINS),
+        })
         // A folder that could send the key elsewhere skips this read and keeps what the others showed.
         if (read === 'skip') return undefined
         if (read === 'none') return null
@@ -1623,15 +1648,63 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (!current || !readsCliQuota(current) || uid === undefined) return undefined
         await delay(TURN_LOG_SETTLE_MS, undefined, { signal: input.signal }).catch(() => {})
         if (input.signal.aborted) return undefined
+        const command = current.confirmedCommand!
         return readDshTurnUsage({
           home: cliUsage.home,
           env: { DSH_HOME: process.env.DSH_HOME || loginShellValues().DSH_HOME },
           uid,
+          config: () => dshConfig(cliUsage.home)(command, DSH_STORE_PLUGINS),
           ...input,
         })
       }
     }
     const readCliUsage = options.cliUsage ? cliUsageReader(options.cliUsage) : undefined
+    /**
+     * The Host's reads and removals in a Harness CLI's own store (`cli-stores.ts`), each for the one preset whose store it
+     * knows; the profile decides when each is asked. Only verdicts, IDs and a digest come back.
+     */
+    const cliStoreAccess = (cliStores: NonNullable<ServerOptions['cliStore']>): CliStoreAccess | undefined => {
+      const uid = process.getuid?.()
+      if (uid === undefined) return undefined
+      const { home } = cliStores
+      return {
+        resumeState: async ({ presetId, sessionId, inherited }) =>
+          presetId === 'goose' ? gooseResumeState({ home, env: inherited, uid, sessionId }) : 'blocked',
+        childSessions: async ({ presetId, sessionIds, inherited }) =>
+          presetId === 'goose' ? gooseChildSessions({ home, env: inherited, uid, sessionIds }) : [],
+        removeSession: async ({ presetId, sessionId, cwd, command, inherited }) =>
+          presetId === 'dsh'
+            ? removeDshSession({ home, env: inherited, uid, sessionId, cwd, config: () => dshConfig(home)(command, DSH_STORE_PLUGINS) })
+            : false,
+        launchCode: ({ presetId, command, inherited }) =>
+          presetId === 'qwen' ? qwenRunningCode({ home, env: inherited, command }) : undefined,
+      }
+    }
+    const storeAccess = options.cliStore ? cliStoreAccess(options.cliStore) : undefined
+    /**
+     * The tokens of a goose turn from goose's own ledger (`cli-stores.ts`), whose prompt answer reports only its last
+     * call's context. Only numbers come back; nothing is audited, as for DeepSeek Harness's log.
+     */
+    const readGooseUsage = options.cliStore
+      ? (() => {
+          const { home } = options.cliStore
+          const uid = process.getuid?.()
+          return async (
+            agentId: string,
+            input: { sessionId: string; from: number; to: number; signal: AbortSignal },
+          ): Promise<TokenUsage | undefined> => {
+            const current = config.settings().agents.find(agent => agent.id === agentId)
+            if (current?.presetId !== 'goose' || uid === undefined) return undefined
+            // goose writes a call's row as the call ends; the turn's answer can come first.
+            await delay(TURN_LOG_SETTLE_MS, undefined, { signal: input.signal }).catch(() => {})
+            if (input.signal.aborted) return undefined
+            const env = Object.fromEntries(
+              ['GOOSE_PATH_ROOT', 'XDG_DATA_HOME'].map(name => [name, process.env[name] || loginShellValues()[name]]),
+            )
+            return gooseTurnUsage({ home, env, uid, sessionId: input.sessionId, from: input.from, to: input.to })
+          }
+        })()
+      : undefined
     const buildAgentPlugin =
       options.agentPlugin
       ?? ((agent: AgentRecord) =>
@@ -1642,6 +1715,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(readCliQuota && readsCliQuota(agent) ? { readQuota: input => readCliQuota(agent.id, input) } : {}),
           ...(readCliUsage && readsCliQuota(agent) ? { readTurnUsage: input => readCliUsage(agent.id, input) } : {}),
           ...(options.cliStore ? { cliStore: { home: options.cliStore.home } } : {}),
+          ...(readGooseUsage && agent.presetId === 'goose' ? { readTurnUsage: input => readGooseUsage(agent.id, input) } : {}),
+          ...(storeAccess ? { storeAccess } : {}),
         }))
     const egressExtra = [...(options.egressAllow ?? [])]
     const egressFetch = createEgressFetch({

@@ -9,6 +9,9 @@ interface Pending {
   cleanup(): void
 }
 
+/** How long a stop waits for `beforeStop`. */
+const BEFORE_STOP_MS = 3000
+
 function rpcError(error: unknown): { code: number; message: string; data?: unknown } {
   if (error instanceof RpcError)
     return { code: error.code, message: error.message, ...(error.data === undefined ? {} : { data: error.data }) }
@@ -21,6 +24,9 @@ export class AcpWire implements AgentWire {
   private readonly process: AgentProcess
   private nextId = 0
   private readonly pending = new Map<RpcId, Pending>()
+  beforeStop?: ((send: (method: string, params: unknown) => Promise<unknown>) => Promise<void>) | undefined
+  /** A graceful stop running `beforeStop`: nothing else is taken meanwhile. */
+  private draining?: Promise<ExitInfo>
 
   private constructor(
     spec: SpawnSpec,
@@ -42,7 +48,7 @@ export class AcpWire implements AgentWire {
     return this.process.closed
   }
   get stopping(): boolean {
-    return this.process.stopping
+    return this.draining !== undefined || this.process.stopping
   }
 
   /** A timeout or an aborted `signal` withdraws the request with `$/cancel_request`; a late reply is dropped. */
@@ -53,10 +59,21 @@ export class AcpWire implements AgentWire {
     signal?: AbortSignal,
     onResult?: (result: unknown) => void,
   ): Promise<unknown> {
+    // Once stdin ends the line would be dropped silently and the caller would wait for the exit instead.
+    if (!this.process.exit && this.stopping) return Promise.reject(new ConnectionStopping())
+    return this.send(method, params, timeoutMs, signal, onResult)
+  }
+
+  private send(
+    method: string,
+    params: unknown,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+    onResult?: (result: unknown) => void,
+  ): Promise<unknown> {
     const exit = this.process.exit
     if (exit) return Promise.reject(new ConnectionClosed(exit))
-    // Once stdin ends the line would be dropped silently and the caller would wait for the exit instead.
-    if (this.stopping) return Promise.reject(new ConnectionStopping())
+    if (this.process.stopping) return Promise.reject(new ConnectionStopping())
     if (signal?.aborted) return Promise.reject(new RpcError(RPC.cancelled, 'Request cancelled'))
     const id = this.nextId++
     return new Promise((resolve, reject) => {
@@ -87,7 +104,24 @@ export class AcpWire implements AgentWire {
   }
 
   stop(reason: 'stop' | 'kill', graceMs: number, cause?: string): Promise<ExitInfo> {
-    return this.process.stop(reason, graceMs, cause)
+    if (reason === 'stop' && this.draining) return this.draining
+    const hook = this.beforeStop
+    this.beforeStop = undefined
+    if (!hook || reason !== 'stop' || this.process.exit || this.process.stopping) return this.process.stop(reason, graceMs, cause)
+    const draining = (async () => {
+      let timer: NodeJS.Timeout | undefined
+      await Promise.race([
+        hook((method, params) => this.send(method, params, BEFORE_STOP_MS)).catch(() => {}),
+        new Promise(resolve => {
+          timer = setTimeout(resolve, BEFORE_STOP_MS)
+          timer.unref()
+        }),
+      ])
+      clearTimeout(timer)
+      return this.process.stop(reason, graceMs, cause)
+    })()
+    this.draining = draining
+    return draining
   }
 
   stderrTail(limit?: number): string {

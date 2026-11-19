@@ -242,13 +242,14 @@ OpenCode 2.x 的核对依据是它的源码与按源码手写的回放（`replay
 | --- | --- | --- |
 | OpenCode | `opencode.json`、`opencode.jsonc`、`.opencode/` | `.opencode/` 下的 `node_modules`、`bun.lock`、`bun.lockb`、`.gitignore`、`plans`；`.opencode/package.json` 里它自己加的 `@opencode-ai/plugin` 依赖（只剩这一项时整个文件不计） |
 | Codex | `.codex/`；收到其他文件夹的会话另计每个文件夹的 `.agents/skills/` | — |
-| Qwen Code | `.qwen/` | — |
+| Qwen Code | `.qwen/`、`.agents/skills/`（技能可带钩子）、`.mcp.json` | — |
 | pi | `.pi/`、`.agents/skills/` | `.pi/npm`、`.pi/git` |
 | Claude Agent | `.claude/`、`.mcp.json` | `.claude/worktrees` |
 | Cursor | `.cursor/`、`.cursorrules` | — |
 | Antigravity | `.agents`、`.agent`、`_agents`、`_agent`、`.gemini/config.json`（清单引用的这些目录之外的代码不在覆盖范围内） | — |
 | Grok Build | `.grok/`，以及它兼容读取的 `.claude/`、`.mcp.json`、`.cursor/`、`.agents/` | `.claude/worktrees` |
-| goose、DeepSeek Harness | 无 | — |
+| goose | `.goose/`、`.agents/recipes/`、`.agents/agents/`（`summon` 读的配方与 agent 源，能把子 Agent 换到别的 provider）；同样会读的 `.claude/agents/` 是 Claude 的设置，不读 | — |
+| DeepSeek Harness | 无 | — |
 
 - **查找范围。** 从会话目录逐级向上到根目录，分别沿 Agent 收到的路径（可能经过符号链接）与它的真实路径；同一目录只查一次。主目录本身跳过，因为那里是 Agent 的用户级数据。范围比各 Agent 自己的（通常到 Git 仓库根）更宽。
 - **其他文件夹。** Agent 收到的其他文件夹（见下节）同样从它们开始向上查找，与会话目录共用上限。
@@ -282,7 +283,7 @@ OpenCode 2.x 的核对依据是它的源码与按源码手写的回放（`replay
 开始会话不弹确认。`launchHash` 由以下各项算出：
 
 - 解析出的命令路径、参数、定义的变量；
-- 预设（profile 版本、`inheritEnv` 的名字、`programEnv` 找到的路径）；
+- 预设（profile 版本、`inheritEnv` 的名字、`programEnv` 找到的路径）；Qwen Code 自己更新后实际运行的版本（`selfUpdates`，见「CLI 自己的存储」），它在运行安装的那个版本时不计入；
 - 计入的项目配置、交给 Agent 的其他文件夹；
 - 经 Latch 使用的模型服务：服务 ID、源、协议、交法与变量名，不含凭据。
 
@@ -585,13 +586,14 @@ Cursor 预设的定义在这台 Mac 上带了 `CURSOR_API_KEY`，且 Host 找得
 | Antigravity | `PromptResponse.usage` | 未核实，按会话 | 报 0 |
 | Cursor 经 SDK | 运行结束时 `RunResult.usage`（没有时 `run.usage`）；花费是 `agent.getUsage()` 的 `cost.chargedCents`，经 `usage_update` | 一轮 | 未核实，按原样（`cacheReadTokens`、`cacheWriteTokens` 另列） |
 | DeepSeek Harness | 适配器不报告 tokens（`usage_update` 只有上下文）；自己登录的轮次由 Host 读它这一个会话的日志（见下） | 一轮，只进轮次记录 | 日志里输入不含缓存，加回 |
+| goose | `PromptResponse.usage` 是这个会话最后一次模型调用的上下文（1.57.0 `session.usage`），既不是这一轮也不是累计，不记（`usageScope: 'none'`）；Host 读它的 `usage_ledger`（见「CLI 自己的存储」） | 一轮，只进轮次记录 | 已含（goose 的 `Usage` 输入含缓存） |
 
 ### DeepSeek Harness 的会话日志
 
 Latch 读 CLI 自己的存储时只读要用的那部分（另见下面的「DeepSeek Harness 的余额」与「Claude 的 Agent SDK 线」）。Host 只读它启动的那一个会话的日志里的 tokens 数（`apps/host/src/cli-usage.ts`），依据 `@deepseek-ai/dsh-session-persistence-jsonl` 与 `dsh-session` 0.2.2-rc.1 的源码与说明：
 
 - **何时。** 只对预设自己的命令（与额度同一判断 `readsCliQuota`），只在启动脚本给了 `cliUsage` 时；测试 Host 没有它就不读。一轮不经模型路由、Agent 没报这一轮的 tokens、会话不是接入的（`imported`）时，轮次结束 1 秒后读一次（dsh 每 200 ms 批量写一次事件），10 秒内读不完就按没有 tokens 记；驱动另有自己的计时，读的一方再过 1 秒还没答复，这一行照写、关闭也不等它。
-- **读哪个文件。** 固定路径 `~/.dsh/sessions/<projectKey(cwd)>/<会话 ID>/session.v4.jsonl.zstd`：`cwd` 是 Latch 在 `session/new` 发的目录，ID 是 dsh-acp 回的 UUID（形状不对不读）。不列目录、不找别的格式代号。`DSH_HOME` 有值，或 `~/.dsh/cordis.patch.yml`、`~/.dsh/profiles/acp/cordis.patch.yml` 提到 `session-persistence` 或 `compression`，就不读。
+- **读哪个文件。** 固定路径 `~/.dsh/sessions/<projectKey(cwd)>/<会话 ID>/session.v4.jsonl.zstd`：`cwd` 是 Latch 在 `session/new` 发的目录，ID 是 dsh-acp 回的 UUID（形状不对不读）。不列目录、不找别的格式代号。`DSH_HOME` 有值，或它自己的配置（见「DeepSeek Harness 的余额」的「它自己的配置」）说 `session-persistence-jsonl` 不是官方 bundle 原样的，就不读。
 - **怎么读。** 每层目录都必须是这个用户的真目录（不是链接）；文件以不跟随链接的方式打开，必须是这个用户的普通文件，不超过 64 MiB；Zstandard 流式解压、逐行处理，文字超过 256 MiB、一行超过 16 MiB 或这几类事件超过 10 万条就放弃；中止或读失败时整条解压链一起结束。最后一帧写了一半时，它之前的完整行照用。首行必须是这个 ID、这个目录、格式 4。只看 `turn/start`、`turn/end`、`assistant/message`、`subagent/catalog`，每行必须以 `{"type":` 开头；回复会随整行解析进内存，只取出轮号、时间与 `usage` 的数字，其余随行丢掉。
 - **怎么归到这一轮。** 开始与结束都在 Latch 这一轮之内的 dsh 轮次，把它们的 `assistant/message.usage` 相加（输入加回缓存读写）。有 dsh 轮次跨过这一轮的边、没有完整的轮、有回复没带 `usage`、会话到这一轮为止建过子 Agent（它的用量在 Latch 没有 ID 的子会话日志里），都一个数也不写。
 - **去向。** 只有数字，只进轮次记录（`usage/turns-*.jsonl`），不进会话的 `TurnStats`，不进日志、错误、SSE。失败不说话。不写审计：不碰秘密，没有东西离开这台电脑，读到的数就是记录里那一行。
@@ -677,7 +679,7 @@ Latch 从不替人登录：不调用 `authenticate`，不读凭据文件或钥�
 
 其他设备只看到命令。macOS 以外的 Host 上这两条路径尚未实现。Claude Agent 没有登录命令，也就没有按钮。
 
-**测试 Host。** `startServer` 没有 `loginPrograms` 时不运行任何登录命令，没有 `cliQuota` 时不读任何 CLI 的凭据、不问厂商余额，没有 `cliUsage` 时不读任何 CLI 的会话日志；没有 `commandDirectories` 时只认绝对路径，按名字找命令一律找不到。只有启动脚本传 `resolveCommand` 与 `personCommandDirectories`，所以带预设定义的测试 Host 碰不到这台电脑上真实安装的程序。
+**测试 Host。** `startServer` 没有 `loginPrograms` 时不运行任何登录命令，没有 `cliQuota` 时不读任何 CLI 的凭据、不问厂商余额，没有 `cliUsage` 时不读任何 CLI 的会话日志，没有 `cliStores` 时不碰任何 CLI 自己的存储（goose 会话因此不重新打开）；没有 `commandDirectories` 时只认绝对路径，按名字找命令一律找不到。只有启动脚本传 `resolveCommand` 与 `personCommandDirectories`，所以带预设定义的测试 Host 碰不到这台电脑上真实安装的程序。
 
 ## 额度
 
@@ -709,11 +711,13 @@ DeepSeek Harness 用 API 密钥时，密钥是 DeepSeek 发给这个人的，Dee
 
 **密钥经过的每一处**（`cli-quota.ts`）：
 
-1. `readDshKey` 先排除可能把密钥发去别处的设置：DeepSeek Harness 会继承的环境（Host 的环境与登录 shell 读出的值）里有 `DSH_HOME` 或 `DEEPSEEK_BASE_URL`；`~/.dsh/cordis.patch.yml`、`~/.dsh/profiles/acp/cordis.patch.yml`、`~/.dsh/.env` 或 `~/.dsh/profiles/acp/.env` 写了 `baseURL`、`DEEPSEEK_BASE_URL` 或 `apiKeyEnv`，或读不了、是链接。有一项就不读密钥，已显示的余额也清掉。会话文件夹的 `.env` 这样时只跳过这一次，已显示的余额不动；有人看时没有会话文件夹，只核对上面这些属于家目录的设置。
+1. `readDshKey` 先排除可能把密钥发去别处的设置：DeepSeek Harness 会继承的环境（Host 的环境与登录 shell 读出的值）里有 `DSH_HOME` 或 `DEEPSEEK_BASE_URL`；`~/.dsh/.env` 或 `~/.dsh/profiles/acp/.env` 写了 `baseURL`、`DEEPSEEK_BASE_URL` 或 `apiKeyEnv`，或读不了、是链接。有一项就不读密钥，已显示的余额也清掉。会话文件夹的 `.env` 这样时只跳过这一次，已显示的余额不动；有人看时没有会话文件夹，只核对属于家目录的设置。这些都通过后，问 DeepSeek Harness 自己组合出的配置（见下面「它自己的配置」）：`llm-deepseek`、`credentials`、`llm-pi-ai`、`deepseek-account` 不是官方 bundle 原样的，或有插件来自官方 bundle 以外，也不读。
 2. 再读固定路径 `~/.dsh/.credentials.yaml`：`~/.dsh` 必须是本人的目录而不是链接；文件以 `O_NOFOLLOW` 打开，打开后核对是普通文件、属于本人、其他人不可读、不超过 64 KiB。只认 DeepSeek Harness 写的版本 1 布局里 `refs.DEEPSEEK_API_KEY`，值必须像 DeepSeek 密钥（`sk-…`）；引用里有 `DEEPSEEK_BASE_URL` 也不读。
 3. 审计先写 `agent.quota.read`（只有 Harness 与预设 ID），写不进就不发。
 4. `fetchDeepSeekBalance` 把密钥放进这一次请求的头，地址写死，经 Host 出站策略（不加任何放行）、TLS、不跟随重定向。失败不记日志、不抛出、不重试；401、403 或形状不对就清掉已显示的余额。
 5. 离开这个模块的只有余额（百分之一单位）、币种与能不能用；随会话存进 `acp.json` 的也只有这些。
+
+**它自己的配置（`dsh-config.ts`）。** 不再在 patch 文件里找关键词，而是运行确认过的程序 `dsh --profile acp --dump-config`：它打印组合好的整棵插件树后退出，不挂载插件、不开会话；每个条目前有 `# == <层>`，被后面的层改过时写 `, patched by <层>…`，bundle 写包名、文件写绝对路径（0.2.2-rc.1 实测，用户层与 `--patch` 都如此）。判定：每个条目都来自 `@deepseek-ai/dsh-base` 或 `@deepseek-ai/dsh-acp-app`，所问的插件都在，且只被这两个 bundle 改过，才是官方；运行失败、超过 10 秒或 1 MiB 也不算。这样 bundle 自带的 patch、多个或其他扩展名的 patch 文件与 profile 的 bundle 清单都在里面。在私有空文件夹里运行（它会读启动目录的 `.env`），环境只有 `HOME`、`PATH`；它每次也会重写 profile 根的 `cordis.yml`（固定模板，正常启动同样写）。同一个家与程序的结论保留 5 分钟，人的 patch 层或 bundle 清单的修改时间一变就重问。它不求值 `!!js`、不读 `.env`，所以 `.env` 照上面另查。
 
 密钥只在这次请求的内存里，不进日志、磁盘、参数、其他进程的环境、SSE、错误与审计，Latch 不刷新、不改写它。`redactKnownSecrets` 的 `sk-` 规则从 16 个字符起，覆盖这里接受的最短密钥。响应体按块读，超过 16 KiB 就停。
 
@@ -821,7 +825,7 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 
 **读取。** 还没有列表时可以不开始会话读一次：`POST /link/api/agents/:id/catalogue { auto?, model? }`（`HarnessInfo.catalogueRead`）。
 
-- 在 Host 临时目录的新空文件夹里启动 Agent，`session/new` 带空的 `mcpServers`，不发提示；Agent 声明 `sessionCapabilities.delete` 就 `session/delete`，否则声明了 `close` 就 `session/close`；然后停止进程并删除文件夹，最多 20 秒。
+- 在 Host 临时目录的新空文件夹里启动 Agent，`session/new` 带空的 `mcpServers`，不发提示；Agent 声明 `sessionCapabilities.delete` 就 `session/delete`，profile 有自己的删除请求（Qwen Code 的 `deleteSession`）就用它，否则声明了 `close` 就 `session/close`；然后停止进程并删除文件夹，最多 20 秒。DeepSeek Harness 不能删会话，连这个空会话也写进它的历史，所以进程停下后由 Host 删掉（见「CLI 自己的存储」）。
 - Codex 不开会话：只发 `initialize`、`config/read` 与 `model/list`（最多 5 页）。经 codex-acp 时用定义的命令加 `cli app-server`。它不报告模式，`catalogueRead.modes` 是 `false`。
 - Grok Build 不开会话：它对 `initialize` 的回答 `_meta.modelState` 已有默认模型、模型列表与每个模型的思考档位（`reasoningEfforts`），Latch 照 `session/new` 报告的样子写成 `model` 与 `reasoning_effort` 两项（`profiles/grok.ts` 的 `grokStartCatalogue`，ID 与取值对真实 1.0.89 核对过）。这个进程不开会话，不启动人配置的 MCP 服务器与钩子（1.0.89 核对）。每个模型的思考都已知，选模型时不再读。`catalogueRead.modes` 是 `false`。
 - **什么时候读。** 新会话里选中这个 Harness、打开它的模型菜单，或打开会报告模式的 Harness 的权限菜单，而它既没有列表、这份定义也没读过时，自动读一次（`auto: true`；Host 再查一遍，不符合就返回 `ran: false`）。从不按时间读，失败后也不自动重读。
@@ -829,7 +833,7 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 
   | 自动读（`select`） | 只在人点「读取模型列表」时读（`request`） |
   | --- | --- |
-  | Codex（`model/list`，不开线程）、Grok Build（`initialize`，不开会话）、DeepSeek Harness、Cursor、goose、Qwen Code、OpenCode、没有 profile 的自定义命令 | pi、Claude Agent、Antigravity：启动会话会加载人的扩展或插件、运行会话开始的钩子 |
+  | Codex（`model/list`，不开线程）、Grok Build（`initialize`，不开会话）、DeepSeek Harness、Cursor、OpenCode、没有 profile 的自定义命令 | pi、Claude Agent、Antigravity：启动会话会加载人的扩展或插件、运行会话开始的钩子。goose：`session/new` 启动人在 goose 里启用的全部扩展（含 stdio MCP 程序）并等它们，1.57.0 实测一个不握手的扩展让它等了 20 秒。Qwen Code：`session/new` 连接人的 MCP 服务器并触发 `SessionStart` 钩子（0.27.4 源码），钩子没有开关能关 |
 
 - **只读确认过的定义。** 自动读取遇到没确认过的定义或命令已解析到别的程序时不读（`ran: false`，不写审计、不启动）；人点读取时返回原因（409 `harness-unconfirmed` 等）。还没有定义的预设（`offer`）从不自动读。
 - **谁能读。** 与开始会话同一道门：`run`，Harness 可以开始。同一定义同时只读一次；同一模型的请求共用结果。启动进程前写 `agent.catalogue.requested`（写不进就不启动），结束后 `agent.catalogue.read`。
@@ -1018,6 +1022,7 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 - **删除会话**删除 Latch 的记录、结束进程并清理临时目录。只有 Agent 声明支持时才调用 `session/delete`，从新到旧：清空过上下文或换过路线的会话，之前的 Agent 会话也一并删除（`earlierSessionIds`），分叉的历史可能引用它分叉自的那一条，先删新的才删得掉。Agent 拒绝删除时只删 Latch 的记录，Host 日志写明它留下了什么与它的原话（脱敏）。
   - Grok Build 不声明 `session/delete`（-32601），但它自己的 `_x.ai/session/delete` 回答 `{ success: true }` 并删掉会话文件夹，没发过消息的也一样（1.0.89 核对）：profile 的 `deleteMethod` 让 Latch 在用 `session/delete` 的地方改用它，包括读模型列表时开的空会话。记下这个能力之前绑定的会话同样删除。经网关的 Grok 会话记录在它私有的家里，随会话删除，不为它启动进程。只剩空的 `<编码的目录>/` 分组文件夹；`session_search.sqlite` 的索引行是否随之清掉没有核对。
   - Cursor 的 ACP 没有删除与关闭：它把每个会话存在 `acp-sessions/<会话 ID>/`（`meta.json` 与 `store.db`，在 `CURSOR_CONFIG_DIR`，否则 `$XDG_CONFIG_HOME/cursor`，否则 `~/.cursor` 下，按定义的变量与 `HOME` 找）。删除 Latch 开的 Cursor 会话时，进程停止后删掉这个文件夹：只限这个会话记下的 ID（单段名字），只在这个根目录正下方、不是链接，且 `meta.json`（schema 1）的 `cwd` 就是会话的目录。接入的会话与别的客户端的会话不碰。依据是 cursor-agent 2026.11.19 包里的代码，没有运行 Cursor 核对。
+  - Agent 声明支持时调用 `session/delete`；Qwen Code 不声明，用它自己的 `deleteSession { sessionId, cwd }`（profile 的 `deleteMethod`，它的 VS Code 伴侣也这样删，会一并清掉它挂在会话上的文件）。goose 的子 Agent 会话不随主会话删除，Host 从它的记录里找出来先删（`childSessionsInRecord`）。DeepSeek Harness 没有删除接口，由 Host 删除它的记录（`removesOwnSessions`，不为此启动进程）。清空过上下文的会话，每次清空前的 Agent 会话也一并删除（`earlierSessionIds`）。接入的会话的原会话从不删除。后两项见「CLI 自己的存储」。
 - **接入的会话的原会话**默认保留。profile 的 `HistoryImportRule.deletes` 说它的 `session/delete` 删的是 Agent 自己的记录时（Claude 的两条路线），Driver 声明 `historyDelete`、Harness 带 `history.deleteOriginal`，删除对话框给一个默认不勾的「同时删除 … 里的原会话」，只对这一次删除有效。勾选后 `DELETE /tasks/:id?original=1`：Host 先确认会话是原样接入的、Harness 能删，再写审计 `history.original.deleted`（会话与 Harness 的 ID），写不进就不删；然后运行时把原会话 ID 一并交给 `session/delete`。批量删除不提供。
 - 进程已退出时，只有项目目录仍在 Host 的项目列表中才会为删除启动进程（Agent 启动时可能运行工作目录里的代码）；否则只删 Latch 的记录，并在 Host 日志里注明。Claude 的直连线删除不起 `claude`，不受这道门限制。Codex 直连例外：删除不开 thread、不读项目，所以在 Host 临时目录的空文件夹里用当前定义起一个进程删除（与「读取」「接入」同样起进程），项目已移除、启动配置或 profile 变了也删得掉；当前定义的 Codex 不认识这个 thread（例如换了 `CODEX_HOME`）时什么也不删。
 
@@ -1032,6 +1037,28 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 - 带附件会话的 stderr 不进 Host 日志，RPC 失败也不回显附件。限额与授权见 [ATTACHMENTS.md](ATTACHMENTS.md)。
 - 显式 `fileRefs` 由 Host 对固定目录再次验证，ACP 只在本轮模型输入里追加真实目录映射，公开消息保留原文。
 - 文件变化的范围与结算见 [FILE-OUTPUTS.md](FILE-OUTPUTS.md)。
+
+## CLI 自己的存储
+
+AGENTS.md「CLI 目录与配置」允许读 CLI 自己的目录，只是尽量不做侵入式改动。下面这些读与删都在 `apps/host/src/cli-stores.ts`，只在启动脚本带 `cliStores: { home }` 时有（`AcpAgentOptions.cliStore`）；测试 Host 不带，碰不到真实存储。profile 决定什么时候问哪一项，Host 只认它知道存储的那个预设；回来的只有判断、会话 ID 与摘要。路径按 Agent 实际继承的 `inheritEnv` 值算。
+
+**goose 重新打开会话之前（`loadResumesTurn`）。** goose 没有 `session/resume`，Latch 只能用 `session/load`；会话停在一次工具确认上时，`session/load` 会自己接着那一轮：没答的确认再问一次，已答的照答案处理，然后接着调模型（1.57.0 `load_session.rs`、`resume_state_machine_turn_inner`），这一轮不是在 Latch 里发的。所以每次 `session/load` 之前（恢复与接入共用一处），Host 只读打开 goose 的 `sessions.db`（`GOOSE_PATH_ROOT/data/sessions/`，否则 `XDG_DATA_HOME/goose/sessions/`，否则 `~/.local/share/goose/sessions/`）：
+
+- 从最后一条人看得见、不是工具结果的用户消息起（goose 的 `active_turn_messages`），有确认请求或确认答复而那次调用没有结果，就不打开：409 `harness-resume-pending-tool`。出路在 Latch 里：清空上下文后接着发，开的是新的 goose 会话、不加载旧的（`earlierSessionIds`），或在 goose 里结束那一轮。进程在一次已批准的工具运行中被停掉或崩溃时，记录里那次调用没有结果，也会这样。比 goose 自己的两个条件宽（不看答案是允许还是拒绝）。
+- 找不到库或这个会话、库是链接或不属于本人、行读不懂、超过 2 万行或 64 MiB，都按不能打开处理。没有 `cliStores` 时一律不打开：409 `harness-resume-unchecked`。
+- 只读：有 `-wal` 时照常经它读（goose 正开着），没有时以 `immutable` 打开，不在人的目录里生出 `-wal`、`-shm`。
+- 1.57.0 实测（临时根，不发提示，模型地址不通）：已答允许、没执行的调用，在新进程里 goose 不执行，答「Tool approval expired」并接着这一轮；没答的确认，goose 在加载时重新发 `session/request_permission`，会话还没绑定时 Latch 答取消，goose 记成拒绝并接着这一轮。两种都是 Latch 没发的一轮，所以照样拦。
+
+**goose 会话记录里的 Latch MCP 服务器（`mcpRemoval`）。** goose 把 `session/new`、`session/load` 收到的 `mcpServers` 存进这个会话的扩展列表，人以后在 goose 里恢复这个会话会去启动 Latch 的桥。进程正常停止前，Latch 对每个给过它的服务器发 `_goose/unstable/session/extensions/remove`（只从这个会话的列表里拿掉，1.57.0 实测其他扩展不动），最多等 3 秒，期间不接别的请求。进程崩溃时条目留着，下次打开按名字替换、停止时再拿掉。
+
+**goose 一轮的 tokens。** goose 每次模型调用在 `sessions.db` 的 `usage_ledger` 记一行（会话、到秒的时间、输入含缓存、输出、缓存读写），子 Agent 的在它自己的会话里。一轮结束 1 秒后（`cliStores`，定义的预设是 goose）只读查这个会话、这一轮时间里的行相加；本轮开始的那一秒里有行（可能是上一轮的）、计数不是整数、或一行也没有，就一个数也不写。只进轮次记录，不进会话的 `TurnStats`。
+
+**删除。**
+
+- goose：`sessions.db` 里 `parent_session_id` 指向要删的会话的（任意层），先逐个 `session/delete`，最多 1000 个。读不了就只删主会话。
+- DeepSeek Harness：进程停下后删除 `~/.dsh/sessions/<projectKey(cwd)>/<ID>/`（日志与锁）与 `~/.dsh/storages/session_projcache/sessions/<ID>.json`，以及头里 `parentSession` 指向它（任意层）的同目录会话。前提与读 tokens 相同（`DSH_HOME` 无值、它自己的配置说会话存储是原样的、每层目录是本人的真目录），另要日志头的 ID 与目录正是这个会话的。附件按内容去重、可能被别的会话用，不删。只删 Latch 自己开的会话：删除会话时的那些 ID（接入的原会话不在其中），以及读模型列表那次的空会话。
+
+**Qwen Code 的自更新（`selfUpdates`）。** 安装的入口会改去运行 `<QWEN_HOME>/updates/npm/<入口路径 sha256 前 16 位>/active.json` 指的版本（0.27.4 `scripts/cli-entry.js`），所以真正运行的代码可以在两次启动之间换掉而命令路径不变。Host 读这个文件与该版本的 `package.json`，摘要计入 `definitionHash`（`runningCode`）；没有更新时什么也不计入，指纹与以前相同。`QWEN_HOME` 取环境，否则取 `~/.qwen/.env`、`~/.env` 里的那一行（与它自己的顺序相同），文件其余内容不留。更新之后已有会话按「定义已变化」处理，换新会话继续。
 
 ## 接入已有会话
 
@@ -1268,7 +1295,10 @@ Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别�
 | pi 接收 Latch 的 MCP 与技能 | pi 0.99 起内置 MCP，Latch 的私有扩展可用 `pi.registerMcpServer` 只为当前会话登记；需要 0.99 的单独门槛，没有用真实 pi 核对 |
 | OpenCode 删除后的核对 | `DELETE /api/session/:id` 失败时仍不提示；进程不在时为删除起一个服务 |
 | DeepSeek Harness 用 DeepSeek 账号登录时的余额 | 没有文档化的余额接口 |
-| DeepSeek Harness 余额读取没有核对的设置 | 只核对上面列的文件与这次会话文件夹的 `.env`；profile 清单 `dsh.profile.bundles` 里各 bundle 自带的 patch 与其他扩展名的 patch 文件没有核对 |
+| Qwen Code、goose、DeepSeek Harness 的登录状态 | 仍是「未知」：Qwen 的 `qwen/status/workspace/preflight` 与 goose 的 `_goose/unstable/providers/config/status` 都要在 `initialize` 之后发扩展请求，探测现在只做 `initialize` |
+| 权限菜单写出这些 CLI 自己的设置 | Qwen 不信任文件夹时设不上的档位与 `permissions.allow` 规则数、goose `permission.yaml` 的总是允许、DeepSeek Harness 被改过的权限预设：读法已查清，菜单尚未接上 |
+| Qwen Code、DeepSeek Harness、goose 接入已有会话 | Qwen 的列出要带每个文件夹的 `cwd`、判忙要读它的 `sessions/<pid>.json`；dsh 没有 `session/load`，要从日志预览再 `session/resume`；goose 加载会写回原会话并启动人的扩展。都没有用真实程序核对 |
+| 进程崩溃后 goose 会话记录里留下的 Latch MCP 条目 | 只在正常停止前拿掉；下次打开按名字替换 |
 
 ## 测试
 

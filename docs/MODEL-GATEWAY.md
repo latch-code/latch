@@ -209,6 +209,7 @@ Antigravity 与 Cursor 不经网关（`ownModelsOnly`）；未知的自定义命
 ### DeepSeek Harness
 
 - 网关 patch 与权限服务 patch 一起交付。这条路线关掉它的会话日志与包清单遥测插件。
+- 它要用的插件（`llm-pi-ai`、`compaction-basic`、`acp`、`agent-default-model`）都写 `disabled: false`：只写 `config` 的层不改变人在自己的 `cordis.patch.yml` 里写的 `disabled: true`（0.2.2-rc.1 `--dump-config` 实测），那样经 Latch 的会话会失败。
 - 配置值严格解码为该协议指定的 provider 与模型二元组；恢复不接受其他 provider 的同名模型。
 - **压缩。** dsh-compaction-basic 在 `floor(min(W × 0.8, W − O − headroomTokens))` 开始压缩（它的 README「Tuning when condensation starts」）：O 是请求的输出上限，取模型的 `maxTokens`，没有时取 llm-pi-ai 的 `defaultMaxTokens` 128,000；`headroomTokens` 默认 65,536。只交 `contextWindow` 时，声明 64,000 的模型算不出正数，它只警告一次、从不压缩；声明 200,000 的模型在 6,464 tokens 就压缩。所以声明了窗口 W 的模型另交 `maxTokens = min(32768, W/4)`，并在 `compaction-basic` 的 `modelPolicies` 里写 `headroomTokens = min(65536, W/8)`（`dshWindowBudget`）：64,000 与 128,000 在 62.5% 开始，200,000 在 71%，100 万在 80%（它自己的默认）。这也把请求的 `max_tokens` 从 128,000 降到这个数。没有声明的模型不变。0.2.2-rc.1 实测：声明 64,000 时用量报 62,122、200,000 时报 194,042 后，下一轮先发两次摘要请求再发本轮；200,000 报 100,042 时不压缩。
 - **重试。** provider 的 `retryPolicy` 是 `{ mode: 'normal', maxRetries: 0 }`：只由网关重试。
@@ -445,7 +446,7 @@ Host 每发出或拒绝一个模型请求，就在数据目录的 `gateway/usage
 - 有模型路由的会话一行都不写：它的请求已在账本里，不重复计。
 - 内置 Harness 用插件自己的模型服务（不经网关、不进账本）的轮次也写一行，带 `via: plugin` 与 `providerId`，tokens 是这一轮各步报告的和（`turnTokens`）；用已保存的模型服务的轮次在账本里，演示模型的轮次哪里都不记。汇总里它的来源是 `plugin`。
 - Harness 报的是会话累计而这一轮之前没有报过（接入的会话、晚开始报告的 Harness）时，除会话首轮外不写 tokens 与花费：差值里有 Latch 之前的用量。
-- 只算 Latch 自己跑的轮。Agent 这一轮什么 tokens 都没报时，DeepSeek Harness 的轮次由 Host 从它自己这一个会话的日志里读数（[HARNESSES.md](HARNESSES.md#deepseek-harness-的会话日志)），这一行等读完再写；其他 CLI 的日志与存储不读。文件的写法、轮转、90 天删除与读取上限与账本相同（`usage-log.ts`）；删会话不删行。
+- 只算 Latch 自己跑的轮。Agent 这一轮什么 tokens 都没报时，DeepSeek Harness 的轮次由 Host 从它自己这一个会话的日志里读数（[HARNESSES.md](HARNESSES.md#deepseek-harness-的会话日志)），goose 的从它的 `usage_ledger` 读（它报告的不是这一轮的数，[HARNESSES.md](HARNESSES.md#cli-自己的存储)），这一行等读完再写；其他 CLI 的日志与存储不读。文件的写法、轮转、90 天删除与读取上限与账本相同（`usage-log.ts`）；删会话不删行。
 
 ### 汇总
 

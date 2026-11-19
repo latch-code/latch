@@ -43,6 +43,19 @@ describe('a declared context window on the gateway wires', () => {
     ])
   })
 
+  it('turns on every plugin the route needs again, since a config-only layer leaves one the person disabled off', () => {
+    const patch = JSON.parse(Object.values(deliver('dsh', place()).files!)[0]!) as Array<{ id: string; disabled?: boolean }>
+    const state = Object.fromEntries(patch.map(entry => [entry.id, entry.disabled]))
+    expect(state).toEqual({
+      'llm-pi-ai': false,
+      'compaction-basic': false,
+      acp: false,
+      'agent-default-model': false,
+      'session-log-deepseek': true,
+      'plugin-package-inventory-deepseek': true,
+    })
+  })
+
   it('sizes DeepSeek Harness’s output and compaction headroom to a declared window, so it compacts before the window', () => {
     const launch = deliver('dsh', place())
     const patch = JSON.parse(Object.values(launch.files!)[0]!) as Array<{ id: string; config?: Record<string, unknown> }>

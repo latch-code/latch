@@ -187,9 +187,12 @@ it('shows a Harness that cannot be asked about its login the same login row once
       .filter({ visible: true })
       .first()
     const menu = page.locator('[role=menu], [role=listbox]').filter({ visible: true }).first()
-    // Opening the model menu reads its lists; the session it opens for that is refused for want of a login.
+    // Qwen Code's lists are read only when asked, since its sessions start the person's MCP servers and hooks; the read
+    // opens a session, which is refused for want of a login.
     await chip.click()
-    await expect.poll(async () => (await qwen()).catalogueRead?.last).toMatchObject({ ok: false, loginRequired: true })
+    expect((await qwen()).catalogueRead).toMatchObject({ when: 'request' })
+    await menu.getByText('读取 Qwen Code 的模型列表', { exact: true }).click()
+    await expect.poll(async () => (await qwen()).catalogueRead?.last, { timeout: 20_000 }).toMatchObject({ ok: false, loginRequired: true })
     await menu.getByText('重新读取', { exact: true }).waitFor()
     await page.screenshot({ path: `${OUTPUT}/unasked-menu-1440.png`, animations: 'disabled' })
     // The menu says the state in a word; the sentence and the way to log in are not repeated in it.
@@ -211,6 +214,7 @@ it('shows a Harness that cannot be asked about its login the same login row once
     await source(/^Latch 网关$/u).click()
     await row(/fake-model/u).click()
     await expect.poll(() => notice.count()).toBe(0)
+    if (await menu.isVisible()) await page.keyboard.press('Escape')
     await chip.click()
     await menu.getByText('重新读取', { exact: true }).waitFor()
     expect(await menu.getByText('还没登录', { exact: true }).count()).toBe(0)

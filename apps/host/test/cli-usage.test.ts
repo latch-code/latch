@@ -75,6 +75,7 @@ const read = (
     from,
     to,
     signal: AbortSignal.timeout(5_000),
+    config: async () => 'official',
     ...extra,
   })
 
@@ -203,14 +204,8 @@ describe('reading a turn’s tokens', () => {
     const place = await fixture([turn])
     expect(await read(place, 900, 1_300, { env: { DSH_HOME: place.home } })).toBeUndefined()
     expect(await read(place, 900, 1_300, { env: { DSH_HOME: ' ' } })).toBeDefined()
-    for (const layer of [join('.dsh', 'cordis.patch.yml'), join('.dsh', 'profiles', 'acp', 'cordis.patch.yml')]) {
-      const moved = await fixture([turn])
-      await mkdir(join(moved.home, '.dsh', 'profiles', 'acp'), { recursive: true })
-      await writeFile(join(moved.home, layer), '- id: session-persistence-jsonl\n  config:\n    root: /tmp/elsewhere\n')
-      expect(await read(moved, 900, 1_300)).toBeUndefined()
-      await writeFile(join(moved.home, layer), '- id: system-prompt\n')
-      expect(await read(moved, 900, 1_300)).toBeDefined()
-    }
+    // DeepSeek Harness's own composition says a layer changed its session store.
+    expect(await read(place, 900, 1_300, { config: async () => 'changed' })).toBeUndefined()
   })
 })
 

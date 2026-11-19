@@ -1,12 +1,43 @@
 import type { HarnessProfile } from './types.ts'
 
+/** goose's key for an extension name (1.57.0 `config/extensions.rs`, `name_to_key`). */
+function gooseExtensionKey(name: string): string {
+  let key = ''
+  for (const char of name) {
+    if (/^[A-Za-z0-9_-]$/u.test(char)) key += char
+    else if (/^\s$/u.test(char)) continue
+    else key += '_'
+  }
+  return key.toLowerCase()
+}
+
 /** A line of `goose --version` that is the version alone, with or without the program's name before it. */
 const readGooseVersion = (output: string) => /^\s*(?:goose\s+)?v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\s*$/mu.exec(output)?.[1]
 
 export const gooseProfile: HarnessProfile = {
   presetId: 'goose',
   // 2: a session on a model service is pointed at the gateway through goose's own variables.
-  version: 2,
+  // 3: Latch's MCP servers are removed from goose's record of a session before its process stops, and the project's
+  // recipes and agent sources count in the launch fingerprint.
+  version: 3,
+  /**
+   * goose has no `session/resume`, and its `session/load` goes on with a turn that stopped on a tool confirmation, as a
+   * run of its own: it asks the question again, or applies an answer it already holds, and calls the model after
+   * (1.57.0 `load_session.rs`, `agent.rs` `resume_state_machine_turn_inner`). On a new process 1.57.0 answers an approved
+   * tool as expired instead of running it (`ops_toolcalling.rs`, seen in a real run), but the turn still goes on.
+   */
+  loadResumesTurn: true,
+  // `summon` keeps a subagent as a session of its own (`parent_session_id`), which `session/delete` leaves.
+  childSessionsInRecord: true,
+  /**
+   * The `mcpServers` of `session/new` and `session/load` are kept in the session's `enabled_extensions`
+   * (`prepare_session_for_activation`, seen in a real run of 1.57.0); this removes one from that session's list only
+   * (`ExtensionManager::disable`).
+   */
+  mcpRemoval: {
+    method: '_goose/unstable/session/extensions/remove',
+    params: (sessionId, name) => ({ sessionId, extensionKey: gooseExtensionKey(name) }),
+  },
   /**
    * Through the gateway by the environment alone, which goose reads before its configuration file and, for a key, before
    * the keyring (1.57.0 and 1.59.0 `crates/goose/src/config/base.rs`), so it needs no login of its own. Its built-in `openai` and
@@ -70,8 +101,9 @@ export const gooseProfile: HarnessProfile = {
       }
     },
   },
-  // An empty session runs no turn and calls no model.
-  catalogueRead: { when: 'select' },
+  // Its `session/new` starts every extension the person enabled in goose, their stdio MCP programs among them, and waits
+  // for each (1.57.0 `prepare_acp_session_agent`; a real run waited 20 s on one that never answered).
+  catalogueRead: { when: 'request' },
   permission: {
     approvals: 'prompts',
     defaultEnv: { GOOSE_MODE: 'approve' },
@@ -90,4 +122,11 @@ export const gooseProfile: HarnessProfile = {
   },
   // goose has no other folders to receive and does not limit the paths its tools use.
   folderAccess: 'primary-unbounded',
+  // The recipes and agent sources `summon` reads from the project (1.57.0 `summon.rs`): a recipe's
+  // `settings.goose_provider`, or an agent source with a model, can move its subagent to another provider. Claude's own
+  // project `.claude/agents`, which it reads too, is left out: Latch does not read Claude's settings.
+  projectConfigPaths: ['.goose', '.agents/recipes', '.agents/agents'],
+  // Its prompt answer's `usage` is the session's last model call (1.57.0 `acp/server.rs`, `session.usage`): the context
+  // then, not this turn's tokens nor a running total. The Host reads the turn's calls from goose's own ledger instead.
+  usageScope: 'none',
 }
