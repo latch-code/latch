@@ -243,14 +243,16 @@ describe('a team of sessions, in the page', () => {
     await membersIn(team.id, ['waiting', 'running', 'done'])
     await open('核对支付回调')
     await card(team.id).waitFor()
-    // Left to right: this session, the members, where the results are.
-    const [left, middle, right] = await Promise.all([
+    // Top to bottom: this session, the members off its spine, where the results are.
+    const [top, middle, bottom] = await Promise.all([
       card(team.id).locator('.team-lead').boundingBox(),
       card(team.id).locator('.team-members').boundingBox(),
       card(team.id).locator('.team-end').boundingBox(),
     ])
-    expect(left!.x + left!.width).toBeLessThanOrEqual(middle!.x + 1)
-    expect(middle!.x + middle!.width).toBeLessThanOrEqual(right!.x + 1)
+    expect(top!.y + top!.height).toBeLessThanOrEqual(middle!.y + 1)
+    expect(middle!.y + middle!.height).toBeLessThanOrEqual(bottom!.y + 1)
+    // How many have ended, beside where the results will be.
+    expect(await card(team.id).locator('.team-end-count').innerText()).toBe('1/3')
     expect(await card(team.id).locator('.team-lead').innerText()).toContain('Alpha')
     // A member waits for the person: the end says so, in the waiting tone.
     const end = card(team.id).locator('.team-end')
@@ -271,7 +273,7 @@ describe('a team of sessions, in the page', () => {
     await poll(() => end.innerText()).toContain('等成员')
     // Decided elsewhere: the toast that pointed at it leaves at once, whichever session is open.
     await poll(() => page.getByText('另一个会话等你处理', { exact: true }).count()).toBe(0)
-    // With motion allowed, work flows only along the pipe of the member at work; this session's pipe is simply full.
+    // With motion allowed, a bead of work runs only round the elbow of the member at work.
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     const moving = (selector: string) =>
       card(team.id)
@@ -281,9 +283,9 @@ describe('a team of sessions, in the page', () => {
         )
     await poll(() => moving('.team-member[data-state="running"]')).toBeGreaterThan(0)
     expect(await moving('.team-member[data-state="done"]')).toBe(0)
-    expect(await moving('.team-trunk')).toBe(0)
+    expect(await moving('.team-end .team-elbow')).toBe(0)
     await page.emulateMedia({ reducedMotion: 'reduce' })
-    expect(await moving('.team-graph')).toBe(0)
+    expect(await moving('.team-card')).toBe(0)
     await shots('running', '核对支付回调', async view => {
       await view.locator(`.team-card[data-team="${team.id}"] .team-end[data-end="members"]`).waitFor()
     })

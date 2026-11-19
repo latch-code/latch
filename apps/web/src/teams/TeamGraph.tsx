@@ -1,7 +1,6 @@
 import { createContext, useContext, type CSSProperties, type ReactNode } from 'react'
 import type { HarnessInfo, TeamMember, TeamSummary } from '@latch/protocol'
-import { ArrowRight } from 'lucide-react'
-import { Button, Icon, StatusWord, Tooltip } from '@latch/ui'
+import { Button, StatusWord, Tooltip } from '@latch/ui'
 import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { runClock } from '../conversation.ts'
@@ -9,7 +8,7 @@ import { harnessName } from '../core/harnessName.ts'
 import { hostNow, parseTime, useTicker } from '../core/hostClock.ts'
 import { useLocale } from '../core/i18n.ts'
 import { TEAM_COPY, endWords, keptWords, memberWords } from './copy.ts'
-import { MEMBER_TONE, endMark, memberAtWork, teamOpen } from './model.ts'
+import { MEMBER_TONE, endMark, memberAtWork } from './model.ts'
 import { useTeamStop } from './start.ts'
 
 /** What the team's parts in a conversation need from the page around them. */
@@ -53,14 +52,11 @@ export function MemberState({ member }: { member: TeamMember }) {
   )
 }
 
-/**
- * A member's pipe, across the middle of its row from the fan to the join: work flows along it while the member is at
- * work, and it fills in the member's colour once it has ended.
- */
-function Pipe() {
+/** A member's elbow off the spine, and the bead of work that runs round it while the member works. */
+function Elbow() {
   return (
-    <span className="team-pipe" aria-hidden="true">
-      <span className="team-flow" />
+    <span className="team-elbow" aria-hidden="true">
+      <span className="team-bead" />
     </span>
   )
 }
@@ -79,7 +75,6 @@ function MemberRow({ member, page, index }: { member: TeamMember; page: TeamPage
           member.said && <VisibleText text={member.said} />
         )}
       </span>
-      <Pipe />
       <MemberState member={member} />
     </>
   )
@@ -99,11 +94,10 @@ function MemberRow({ member, page, index }: { member: TeamMember; page: TeamPage
       data-state={member.state}
       data-work={member.state === 'running' || member.state === 'starting' ? '' : undefined}
       data-ended={memberAtWork(member.state) ? undefined : ''}
-      // Each pipe's flow starts at its own point, so the rows never pulse in step.
+      // Each bead starts at its own point in the run, so they seem to come down the spine in turn.
       style={{ '--team-row': index } as CSSProperties}>
-      <span className="team-stub" aria-hidden="true" />
+      <Elbow />
       <Tooltip content={member.state === 'unstarted' ? member.refusal : undefined}>{main}</Tooltip>
-      <span className="team-stub is-out" aria-hidden="true" />
     </li>
   )
 }
@@ -117,8 +111,10 @@ function End({ team, page }: { team: TeamSummary; page: TeamPage }) {
     </StatusWord>
   )
   const stoppable = page.canStop && (team.state === 'running' || team.state === 'returning')
+  const ended = team.members.filter(member => !memberAtWork(member.state)).length
   return (
-    <div className="team-end" data-end={mark}>
+    <div className="team-end" data-end={mark} style={{ '--team-row': team.members.length } as CSSProperties}>
+      <Elbow />
       {mark === 'returned' && team.returnedMessageId ? (
         <button type="button" className="team-end-link" onClick={() => page.reveal(team.returnedMessageId!)}>
           {word}
@@ -132,6 +128,7 @@ function End({ team, page }: { team: TeamSummary; page: TeamPage }) {
       ) : (
         word
       )}
+      {(mark === 'members' || mark === 'you') && <span className="team-end-count">{TEAM_COPY.ended(ended, team.members.length)}</span>}
       {stoppable && (
         <Button
           size="xs"
@@ -150,46 +147,37 @@ function End({ team, page }: { team: TeamSummary; page: TeamPage }) {
 }
 
 /**
- * A team in its session's conversation, as work through pipes: this session on one side, a pipe that fans out to one
- * per member across its row, and the pipes joining into the one that carries the results back. Left to right where
- * there is room; on a narrow card each member's pipe runs under its row. Work flows only along a pipe whose member is
- * at work, and a pipe fills once its member has ended.
+ * A team in its session's conversation, as work through pipes: this session's mark, a spine under it with a rounded
+ * elbow into each member, and a last elbow into where the results are. The same at every width; a narrow card puts what
+ * a member said under its name. A bead of work runs round the elbow of each member at work, and of the results while
+ * they wait to go back; an elbow takes its member's colour once the member has ended.
  */
 export function TeamGraph({ team, lead }: { team: TeamSummary; lead: { name: string; harness?: HarnessInfo | undefined } }): ReactNode {
   useLocale()
   const page = useContext(TeamPageContext)
   if (!page) return null
-  const live = teamOpen(team) && team.members.some(member => member.state === 'running' || member.state === 'starting')
-  // The results' pipe: flowing while they wait to go back, full once they have.
-  const out = team.state === 'returning' ? 'flow' : team.state === 'returned' ? 'full' : undefined
   return (
     <section className="team-card" data-team={team.id} data-state={team.state} aria-label={TEAM_COPY.said(team.members.length)}>
-      {team.goal && (
-        <p className="team-goal">
-          <VisibleText text={team.goal} />
-        </p>
-      )}
-      <div className="team-graph" data-live={live ? '' : undefined}>
-        <div className="team-lead">
+      <header className="team-head">
+        <span className="team-lead">
           {lead.harness ? <HarnessTile harness={lead.harness} size={20} /> : <MarkTile mark={undefined} size={20} />}
           <span className="team-lead-name">
             <VisibleText text={lead.name} />
           </span>
-        </div>
-        <span className="team-trunk" aria-hidden="true">
-          <Pipe />
         </span>
-        <ul className="team-members">
-          {team.members.map((member, index) => (
-            <MemberRow key={member.itemId} member={member} page={page} index={index} />
-          ))}
-        </ul>
-        <span className="team-trunk is-out" data-out={out} aria-hidden="true">
-          <Pipe />
-          <Icon icon={ArrowRight} size={12} className="team-arrow" />
-        </span>
-        <End team={team} page={page} />
-      </div>
+        {team.goal && (
+          <p className="team-goal">
+            <VisibleText text={team.goal} />
+          </p>
+        )}
+        <span className="team-count">{TEAM_COPY.memberCount(team.members.length)}</span>
+      </header>
+      <ul className="team-members">
+        {team.members.map((member, index) => (
+          <MemberRow key={member.itemId} member={member} page={page} index={index} />
+        ))}
+      </ul>
+      <End team={team} page={page} />
     </section>
   )
 }
