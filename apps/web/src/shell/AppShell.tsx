@@ -590,7 +590,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                       <ShellUpdateCheck shell={shell} />
                     </header>
                   )}
-                  <div className="code-home-input">
+                  {/* The whole column of words keeps the background clear: notices, counts and the history entry too. */}
+                  <div className="code-home-input" data-backdrop-clear="">
                     {usesDemoModel(snapshot, choice.harnessId, choice.model?.providerId) && (
                       <p className="workbench-home-demo" data-backdrop-clear="">
                         <StatusPill tone="warn">{SHELL_COPY.demoModel}</StatusPill>

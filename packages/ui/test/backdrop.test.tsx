@@ -329,6 +329,33 @@ describe('the background layer', () => {
     await expect.poll(() => drawn(canvas, grown)).toBe(0)
   })
 
+  it.for(['digits', 'field'] as const)(
+    'cuts out a security surface on the next frames, not after the beat it was waiting out (%s)',
+    async kind => {
+      const stats = reader()
+      const screen = await render(<Stage kind={kind} ambient running={0} stats={stats} />)
+      const canvas = screen.container.querySelector('canvas')!
+      await expect.poll(() => stats.read?.().frames ?? 0).toBeGreaterThan(2)
+      // Just after a drawn frame the engine waits most of a 15-a-second beat on its timer.
+      const frames = stats.read!().frames
+      await new Promise<void>(done => {
+        const look = () => {
+          if (stats.read!().frames > frames) done()
+          else requestAnimationFrame(look)
+        }
+        requestAnimationFrame(look)
+      })
+      expect(stats.read!().armed).toBe(true)
+      const before = stats.read!().frames
+      const late = { left: 0, top: 0, width: 400, height: 300 }
+      surface(screen.getByTestId('host').element(), late)
+      // One animation frame to measure the surface, the next to draw without it: well inside the beat.
+      for (let frame = 0; frame < 3; frame++) await new Promise(done => requestAnimationFrame(done))
+      expect(stats.read!().frames).toBeGreaterThan(before)
+      expect(drawn(canvas, WHOLE)).toBe(0)
+    },
+  )
+
   it('cuts a security surface that arrives during a stream out of the still frame', async () => {
     const stats = reader()
     const screen = await render(<Stage kind="grid" stats={stats} />)
@@ -434,12 +461,12 @@ describe('the background layer', () => {
     await expect.poll(() => stats.read!().frames).toBeGreaterThan(held)
   })
 
-  it('draws one still frame with reduced motion, the same frame every time', async () => {
+  it.for(['field', 'digits'] as const)('draws one still frame with reduced motion, the same frame every time (%s)', async kind => {
     await emulateMedia({ 'prefers-reduced-motion': 'reduce' }, async () => {
       const frames: string[] = []
       for (let pass = 0; pass < 2; pass++) {
         const stats = reader()
-        const screen = await render(<Stage stats={stats} />)
+        const screen = await render(<Stage kind={kind} stats={stats} />)
         const canvas = screen.container.querySelector('canvas')!
         await expect.poll(() => stats.read?.().paused ?? []).toEqual(['reduced'])
         await expect.poll(() => drawn(canvas, WHOLE)).toBeGreaterThan(0)
@@ -450,23 +477,23 @@ describe('the background layer', () => {
         frames.push(canvas.toDataURL())
         await screen.unmount()
       }
-      // The field is seeded, not random: two mounts hold the identical frame.
+      // Seeded, not random: two mounts hold the identical frame.
       expect(frames[1]).toBe(frames[0])
     })
   })
 
-  it('holds the same still frame for a capture after the layer shrank and grew back', async () => {
+  it.for(['field', 'digits'] as const)('holds the same still frame for a capture after the layer shrank and grew back (%s)', async kind => {
     document.documentElement.dataset.capture = 'still'
     const stats = reader()
-    const screen = await render(<Stage stats={stats} />)
+    const screen = await render(<Stage kind={kind} stats={stats} />)
     const canvas = screen.container.querySelector('canvas')!
     await expect.poll(() => stats.read?.().paused ?? []).toContain('capture')
     await expect.poll(() => drawn(canvas, WHOLE)).toBeGreaterThan(0)
     const first = canvas.toDataURL()
-    await screen.rerender(<Stage stats={stats} style={{ width: 160, height: 120 }} />)
+    await screen.rerender(<Stage kind={kind} stats={stats} style={{ width: 160, height: 120 }} />)
     await expect.poll(() => canvas.clientWidth).toBe(160)
     await pause(100)
-    await screen.rerender(<Stage stats={stats} />)
+    await screen.rerender(<Stage kind={kind} stats={stats} />)
     await expect.poll(() => canvas.clientWidth).toBe(400)
     // The particles seeded again for the larger area are the ones it had, not the next of one running sequence.
     await expect.poll(() => canvas.toDataURL()).toBe(first)

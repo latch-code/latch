@@ -241,6 +241,7 @@ Live 模式只在 `LatchScreens`（仅模拟器）中编译，用进程内存里
 | --- | --- | --- |
 | `VITE_LATCH_UI_PERF=1` | `packages/ui/test/v9-performance.test.tsx` | `VITE_LATCH_UI_PERF_ENFORCE=1` 时超过每帧 8ms 的脚本预算即失败；只量脚本，不量合成 |
 | `LATCH_STREAM_BENCH=1` | `e2e/stream-performance.e2e.ts` | `LATCH_STREAM_LABEL`（结果名）、`LATCH_STREAM_TRANSPORT=full`（去掉增量协商作对照）、`LATCH_STREAM_PROFILE=1`、`LATCH_STREAM_QUIET=1`、`LATCH_STREAM_MOTION=1`、`LATCH_STREAM_ENFORCE_BUDGET=1`（每帧脚本不超过 8ms 且没有 50ms 长任务）；`LATCH_E2E_UI_DIR` 可对照旧构建 |
+| `LATCH_BACKDROP_BENCH=1` | `e2e/backdrop-performance.e2e.ts` | 起始页背景在 1440×900 与 2560×1440（2 倍像素）下的帧间隔、绘制节拍、每帧脚本、长任务、渲染与 GPU 主线程每秒耗时、每帧画布调用，以及打字时按键到下一帧；`LATCH_BACKDROP_LABEL`、`LATCH_BACKDROP_SECONDS`、`LATCH_BACKDROP_THROTTLE=4`（CPU 降速）、`LATCH_BACKDROP_ONLY`；`LATCH_E2E_UI_DIR` 可对照旧构建。`LATCH_BACKDROP_SHOTS=<仓库外目录>` 改为截两种样式在三宽、深浅下的起始页，桌面另截会话与外观设置 |
 | `LATCH_NATIVE_CADENCE=1` | `apps/host/test/native-swift.test.ts -t "large-history publication cadence"` | 不含 SwiftUI 渲染 |
 
 堆内存没有强制 GC，不能用来宣称泄漏。

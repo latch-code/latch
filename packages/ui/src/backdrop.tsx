@@ -79,7 +79,7 @@ const holdsHole = (node: Node): boolean => node instanceof Element && (node.matc
 /**
  * The background layer: 点阵 (`grid`: a fine dot grid that drifts, with a slow band of light), 粒子 (`field`: points at
  * several depths that drift and twinkle, the near ones linked by thin lines and reaching for the pointer), 01 (`digits`:
- * a lattice of 0s and 1s lit by slow shapes of light) or 柔光 (`glow`: one faint light), on a single canvas that is
+ * soft forms of 0s and 1s drifting over a fixed lattice) or 柔光 (`glow`: one faint light), on a single canvas that is
  * its own layer behind the content of the element it is placed in (which gets `ui-backdrop-host`, or any positioned
  * element that isolates its stacking). It is decoration and says nothing by itself. It is given three real states,
  * each also written in the foreground:
@@ -91,12 +91,13 @@ const holdsHole = (node: Node): boolean => node instanceof Element && (node.matc
  *   a new ring.
  *
  * It never draws under or over a security surface (`[data-secure]`), is not rendered inside one, and keeps clear of
- * regions marked `data-backdrop-clear` (words set straight on the canvas), with a 56px feather. Where those regions
- * are is measured again whenever they can have moved: a region appears, leaves or changes size, the page scrolls or
- * the window resizes; also while the layer is paused, so a surface that arrives during a stream is cut out of the
- * still frame. It draws at most 30 frames a second with a point count capped by the viewport, and holds one still
- * frame while the tab is hidden or the window is in the background, a reply is streaming in view, motion is reduced
- * (the system's preference or 减弱), the page is frozen for a capture, or power is low. `level` off renders nothing.
+ * regions marked `data-backdrop-clear` (words set straight on the canvas), with a feather: 120px for 粒子 and 01 on
+ * the start page, 56px otherwise. Where those regions are is measured again whenever they can have moved: a region
+ * appears, leaves or changes size, the page scrolls or the window resizes; also while the layer is paused, so a surface
+ * that arrives during a stream is cut out of the still frame. It draws at most 30 frames a second (15 for slow drift)
+ * with a point count capped by the viewport, and holds one still frame while the tab is hidden or the window is in the
+ * background, a reply is streaming in view, motion is reduced (the system's preference or 减弱), the page is frozen
+ * for a capture, or power is low. `level` off renders nothing.
  */
 export function Backdrop({
   kind = 'field',
@@ -245,7 +246,7 @@ export function Backdrop({
     const left = () => {
       created.setPointer(null)
     }
-    if (kind === 'field' || kind === 'digits') {
+    if (kind === 'field') {
       window.addEventListener('pointermove', moved, { passive: true })
       document.documentElement.addEventListener('pointerleave', left)
     }
@@ -310,7 +311,7 @@ export function Backdrop({
       theme.disconnect()
       scheme.removeEventListener('change', schedule)
       density?.removeEventListener('change', densityChanged)
-      if (kind === 'field' || kind === 'digits') {
+      if (kind === 'field') {
         window.removeEventListener('pointermove', moved)
         document.documentElement.removeEventListener('pointerleave', left)
       }
