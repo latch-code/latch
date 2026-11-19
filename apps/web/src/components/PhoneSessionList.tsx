@@ -12,9 +12,13 @@ import type { ConnectionStatus } from '../core/useHarness.ts'
 import { relativeTime } from '../format.ts'
 import { useListMotion, usePresence } from '../hooks/useListMotion.ts'
 import { projectName } from '../projects.tsx'
+import { TeamFold, useFoldedShelves } from './TeamFold.tsx'
 import {
   filterSessions,
+  foldMembers,
   groupSessions,
+  shelvesKey,
+  teamFoldKey,
   inSpace,
   projectOf,
   rowMeta,
@@ -109,9 +113,12 @@ const PhoneRow = memo(function PhoneRow({
   review,
   onReview,
   member = false,
+  members,
 }: {
   /** A member of the team of the session above it: drawn one step in. */
   member?: boolean
+  /** It has members under it: how many, whether they are folded away, and the way to fold them. */
+  members?: { count: number; folded: boolean; onToggle: () => void } | undefined
   /** 「复核 N 处改动」: the session's changes wait for the person; pressing it pushes the review over the list. */
   review?: string | undefined
   onReview?: ((id: string) => void) | undefined
@@ -210,6 +217,9 @@ const PhoneRow = memo(function PhoneRow({
         </span>
         <span className="sr-only">{details}</span>
       </button>
+      {members && !leaving && (
+        <TeamFold className="phone-team-fold" count={members.count} folded={members.folded} onToggle={members.onToggle} />
+      )}
       {review && onReview && !leaving && (
         <div className="phone-row-review">
           <Button
@@ -247,9 +257,14 @@ function PhoneGroup({
   onHold,
   reviews,
   onReview,
+  foldedSet,
+  onFoldMembers,
 }: ProjectNavigationActions & {
   reviews?: ReadonlyMap<string, string> | undefined
   onReview?: ((id: string) => void) | undefined
+  /** The sessions whose members this device has folded, and the way to fold a session's members. */
+  foldedSet: ReadonlySet<string>
+  onFoldMembers: (leadId: string) => void
   group: SessionGroup
   snapshot: AppSnapshot
   context: string
@@ -264,7 +279,8 @@ function PhoneGroup({
   onNewIn?: (workspaceId: string) => void
   onHold: (task: TaskSummary) => void
 }) {
-  const rows = usePresence(group.tasks, task => task.id, context, settled)
+  const shown = useMemo(() => foldMembers(group.tasks, group.members, foldedSet), [group.tasks, group.members, foldedSet])
+  const rows = usePresence(shown.tasks, task => task.id, context, settled)
   const awaiting = sessionsAwaitingReturn(snapshot)
   const workspaceId = group.workspaceId
   const waiting = group.id === 'waiting'
@@ -303,6 +319,17 @@ function PhoneGroup({
           return (
             <PhoneRow
               member={group.members?.has(task.id) === true}
+              members={
+                shown.counts.has(task.id)
+                  ? {
+                      count: shown.counts.get(task.id)!,
+                      folded: foldedSet.has(teamFoldKey(task.id)),
+                      onToggle: () => {
+                        onFoldMembers(task.id)
+                      },
+                    }
+                  : undefined
+              }
               handoffWaits={awaiting.has(task.id)}
               from={originTitle(task, snapshot)}
               key={task.id}
@@ -400,6 +427,7 @@ export function PhoneSessionList({
   const locale = useLocale()
   const list = useRef<HTMLElement>(null)
   const [held, setHeld] = useState<TaskSummary | null>(null)
+  const [foldedSet, toggleFold] = useFoldedShelves(shelvesKey(snapshot.device.id))
   const empty = inSpace(snapshot.tasks, space).length === 0
   const closeSearch = () => {
     onSearch('')
@@ -504,6 +532,10 @@ export function PhoneSessionList({
                 onHold={setHeld}
                 reviews={reviews}
                 onReview={onReview}
+                foldedSet={foldedSet}
+                onFoldMembers={leadId => {
+                  toggleFold(teamFoldKey(leadId))
+                }}
                 onEditProject={onEditProject}
                 onProjectsChanged={onProjectsChanged}
               />

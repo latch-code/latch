@@ -303,6 +303,21 @@ describe('a team of sessions, in the page', () => {
       .evaluateAll(rows => rows.map(row => [row.getAttribute('data-task-id'), row.closest('[data-team-member]') !== null] as const))
     const at = listed.findIndex(([task]) => task === id)
     expect(listed.slice(at, at + 4)).toEqual([[id, false], ...team.members.map(member => [member.sessionId, true])])
+    // Its row says how many members it has and folds them away and back, remembered on this device.
+    const visibleIds = () =>
+      page
+        .locator('.sidebar [data-task-id]')
+        .filter({ visible: true })
+        .evaluateAll(rows => rows.map(row => row.getAttribute('data-task-id')))
+    const fold = page.locator(`.sidebar .session-entry:has([data-task-id="${id}"]) .team-fold`).filter({ visible: true })
+    expect(await fold.count()).toBe(1)
+    expect(await fold.innerText()).toContain('3')
+    await fold.click()
+    await poll(async () => (await visibleIds()).filter(task => team.members.some(member => member.sessionId === task))).toEqual([])
+    expect(await fold.getAttribute('aria-expanded')).toBe('false')
+    await page.screenshot({ path: `${OUTPUT}/list-folded--1440--light.png`, animations: 'disabled', caret: 'hide' })
+    await fold.click()
+    await poll(async () => (await visibleIds()).filter(task => team.members.some(member => member.sessionId === task)).length).toBe(3)
     await line.getByRole('button').click()
     await card(team.id).waitFor()
     // The phone's list nests them the same way.

@@ -664,3 +664,51 @@ button.team-result-head:hover {
   border-block-end: 1px solid var(--line-strong);
   border-end-start-radius: var(--r-6);
 }
+
+/* On a session with members under it: how many, and the chevron that folds them away; muted until pointed at. */
+.team-fold {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  align-self: center;
+  gap: var(--sp-2);
+  height: var(--sp-20);
+  padding: 0 var(--sp-4) 0 var(--sp-6);
+  border: 0;
+  border-radius: var(--r-4);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    background-color var(--m-micro) var(--e-micro),
+    color var(--m-micro) var(--e-micro);
+}
+.team-fold:hover {
+  background: var(--hover);
+  color: var(--ink-2);
+}
+.team-fold:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.team-fold-chevron {
+  transition: transform var(--m-micro) var(--e-micro);
+}
+.team-fold[aria-expanded='false'] .team-fold-chevron {
+  transform: rotate(-90deg);
+}
+/* On a phone it stands at the end of the row's second line, a touch target of its own beside the row. */
+.phone-entry:has(> .phone-team-fold) {
+  position: relative;
+}
+.phone-team-fold.team-fold {
+  position: absolute;
+  inset-block-end: var(--sp-4);
+  inset-inline-end: var(--sp-8);
+  height: 36px;
+  padding-inline: var(--sp-10);
+}

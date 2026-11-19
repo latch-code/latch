@@ -398,6 +398,33 @@ export function nestMembers(
   }
 }
 
+/** What a session's folded members are remembered under, beside the folded shelves (`shelvesKey`). */
+export const teamFoldKey = (leadId: string): string => `team:${leadId}`
+
+/**
+ * A shelf's rows as the list shows them: the members under a session whose members are folded leave, and each session
+ * with members says how many it has (`nestMembers` put them right under it). Nothing folded away: the same rows, the
+ * same array, so a list that animates on a change of its rows sees none.
+ */
+export function foldMembers<T extends TaskSummary>(
+  tasks: readonly T[],
+  members: ReadonlySet<string> | undefined,
+  folded: ReadonlySet<string>,
+): { tasks: readonly T[]; counts: ReadonlyMap<string, number> } {
+  const counts = new Map<string, number>()
+  if (!members?.size) return { tasks, counts }
+  let lead: string | undefined
+  const shown = tasks.filter(task => {
+    if (!members.has(task.id)) {
+      lead = task.id
+      return true
+    }
+    if (lead !== undefined) counts.set(lead, (counts.get(lead) ?? 0) + 1)
+    return lead === undefined || !folded.has(teamFoldKey(lead))
+  })
+  return { tasks: shown.length === tasks.length ? tasks : shown, counts }
+}
+
 const trimPath = (path: string) => path.replace(/[\\/]+$/u, '') || path
 const within = (path: string, root: string) => {
   const [inner, outer] = [trimPath(path), trimPath(root)]
@@ -525,7 +552,7 @@ export function listedSessions(
     teams,
   })
     .filter(group => !folded.has(group.id))
-    .flatMap(group => group.tasks)
+    .flatMap(group => foldMembers(group.tasks, group.members, folded).tasks)
 }
 
 /** How many delegations 我的 Agent's list shows under 最近委托 before 全部. */

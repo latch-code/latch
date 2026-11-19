@@ -1,6 +1,6 @@
 import { sessionsAwaitingReturn } from '../handoffs/model.ts'
 import { ProjectGroupHeading, ShelfHead, type ProjectNavigationActions } from './ProjectNavigation.tsx'
-import { Fragment, memo, useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, memo, useMemo, useRef, type ReactNode } from 'react'
 import { Coffee, FolderGit2 } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type HarnessInfo, type TaskSummary } from '@latch/protocol'
 import { HARNESS_MARKS, harnessArt, presetOf } from '../brands.ts'
@@ -17,7 +17,6 @@ import {
   groupSessions,
   inSpace,
   projectOf,
-  readFolded,
   shelvesKey,
   rowGateway,
   rowModel,
@@ -26,7 +25,8 @@ import {
   unknownNote,
   waitKind,
   waitsOnYou,
-  writeFolded,
+  foldMembers,
+  teamFoldKey,
   type SessionFilter,
   type SessionGroup,
   type Space,
@@ -34,6 +34,7 @@ import {
 import type { ConnectionStatus } from '../core/useHarness.ts'
 import type { ComputersView } from '../core/shell.ts'
 import { MarkTile } from './BrandTile.tsx'
+import { TeamFold, useFoldedShelves } from './TeamFold.tsx'
 import { Menu, rowOf, type MenuSection } from './overlays.tsx'
 import { SessionRowGlyph, SessionStatus, statusLabel, useLastConfirmed, WaitWords } from './SessionStatus.tsx'
 import { Collapse, ICON_STROKE, Icon, IconButton, Tooltip, ArchiveGlyph, ChevronLeftGlyph, MoreGlyph, PinGlyph, PlusGlyph } from '@latch/ui'
@@ -90,9 +91,12 @@ const SessionItem = memo(function SessionItem({
   handoffWaits = false,
   from,
   member = false,
+  members,
 }: {
   /** A member of the team of the session above it: drawn one step in, on a thin line down from that session. */
   member?: boolean
+  /** It has members under it: how many, whether they are folded away, and the way to fold them. */
+  members?: { count: number; folded: boolean; onToggle: () => void } | undefined
   /** A handoff here waits for its result to be handed back. */
   handoffWaits?: boolean
   /** The plugin page that started it: 「来自 <页面名>」. */
@@ -212,6 +216,7 @@ const SessionItem = memo(function SessionItem({
           </span>
           <span className="sr-only">{details}</span>
         </button>
+        {members && <TeamFold count={members.count} folded={members.folded} onToggle={members.onToggle} />}
         <span className="session-actions">
           {archive && (
             <IconButton
@@ -256,6 +261,8 @@ function SessionGroupView({
   frozen,
   folded,
   onFold,
+  foldedSet,
+  onFoldMembers,
   now,
   onSelect,
   onNewIn,
@@ -279,13 +286,17 @@ function SessionGroupView({
   frozen: string | null
   folded: boolean
   onFold: () => void
+  /** The shelves and the sessions whose members this device has folded, and the way to fold a session's members. */
+  foldedSet: ReadonlySet<string>
+  onFoldMembers: (leadId: string) => void
   now: number
   onSelect: (id: string) => void
   onNewIn?: (workspaceId: string) => void
   onNewWithoutProject?: () => void
   menu: (task: TaskSummary) => MenuSection[]
 }) {
-  const rows = usePresence(group.tasks, task => task.id, context, settled)
+  const shown = useMemo(() => foldMembers(group.tasks, group.members, foldedSet), [group.tasks, group.members, foldedSet])
+  const rows = usePresence(shown.tasks, task => task.id, context, settled)
   const awaiting = sessionsAwaitingReturn(snapshot)
   const workspaceId = group.workspaceId
   const waiting = group.id === 'waiting'
@@ -323,6 +334,17 @@ function SessionGroupView({
             return (
               <SessionItem
                 member={group.members?.has(task.id) === true}
+                members={
+                  shown.counts.has(task.id)
+                    ? {
+                        count: shown.counts.get(task.id)!,
+                        folded: foldedSet.has(teamFoldKey(task.id)),
+                        onToggle: () => {
+                          onFoldMembers(task.id)
+                        },
+                      }
+                    : undefined
+                }
                 handoffWaits={awaiting.has(task.id)}
                 from={originTitle(task, snapshot)}
                 key={task.id}
@@ -346,23 +368,6 @@ function SessionGroupView({
       </Collapse>
     </section>
   )
-}
-
-/** The shelves this device has folded, remembered per device. */
-function useFoldedShelves(key: string) {
-  const [folded, setFolded] = useState(() => readFolded(key))
-  const toggle = useCallback(
-    (id: string) => {
-      setFolded(previous => {
-        const next = new Set(previous)
-        if (!next.delete(id)) next.add(id)
-        writeFolded(key, next)
-        return next
-      })
-    },
-    [key],
-  )
-  return [folded, toggle] as const
 }
 
 /**
@@ -633,6 +638,10 @@ function CodeList({
               folded={folded.has(group.id)}
               onFold={() => {
                 toggleShelf(group.id)
+              }}
+              foldedSet={folded}
+              onFoldMembers={leadId => {
+                toggleShelf(teamFoldKey(leadId))
               }}
               now={now}
               onSelect={onSelect}
