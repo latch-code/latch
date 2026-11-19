@@ -134,7 +134,8 @@ describe('private attachments through the composer', () => {
           .poll(() => message.locator('.message-attachments img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))
           .toBe(true)
         await message.getByRole('button', { name: 'sample.png 1 KB', exact: true }).click()
-        const preview = page.getByRole('region', { name: '文件预览', exact: true })
+        // A sent picture opens large over the page, not in the side panel.
+        const preview = page.locator('.attachment-preview.is-large')
         await expect.poll(() => preview.locator('img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
         await page.screenshot({ path: `test-results/attachments/${width}-${theme}-sent.png`, animations: 'disabled' })
         const tasks = await host.host.bridge.listTasks()

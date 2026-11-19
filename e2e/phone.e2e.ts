@@ -466,7 +466,8 @@ describe('the phone stack', () => {
       // Rotate to the tablet layout to change tabs without discarding the edit, then return to the portrait conversation.
       await page.setViewportSize({ width: 844, height: 390 })
       await page.locator('.info-page').waitFor({ state: 'detached' })
-      await openPanelTab(page, '文件')
+      // A session without a project has no 文件 tab to add; 概要 is always there.
+      await openPanelTab(page, '概要')
       await editor.waitFor({ state: 'detached' })
       await page.setViewportSize({ width: 390, height: 844 })
       await page.locator('.info-page-head').getByRole('button', { name: '返回', exact: true }).click()
