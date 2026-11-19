@@ -520,12 +520,16 @@ describe('bringing in an earlier OpenCode session', () => {
     { sessionId: 'ext-granted', cwd: main, title: 'Granted elsewhere', additionalDirectories: [other], updates: fakeConversation() },
   ]
 
-  it('declares itself for OpenCode, and not for pi, Qwen Code or goose, whose listing has no checked official interface', async () => {
+  it('declares itself for OpenCode and Claude’s adapter, and not for pi, Qwen Code or goose, whose listing has no checked official interface', async () => {
     expect((await fixture(OPENCODE, AS_OPENCODE)).driver.historyImport).toBe(true)
-    for (const presetId of ['pi', 'qwen', 'goose', 'claude-agent']) {
+    for (const presetId of ['pi', 'qwen', 'goose']) {
       const other = await fixture({}, { presetId, id: presetId, name: presetId })
       expect(other.driver.historyImport, presetId).toBeUndefined()
     }
+    // Claude's adapter lists and replays Claude's sessions (0.101 checked), and deletes an original on request.
+    const claude = await fixture({}, { presetId: 'claude-agent', id: 'claude-agent', name: 'Claude Agent' })
+    expect(claude.driver.historyImport).toBe(true)
+    expect(claude.driver.historyDelete).toBe(true)
     const qwen = await fixture({}, { presetId: 'qwen', id: 'qwen', name: 'Qwen Code' })
     await expect((await qwen.open()).listExternalSessions!()).rejects.toMatchObject({ code: 'history-not-supported' })
     expect(await qwen.log()).toEqual([])

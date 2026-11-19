@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -13,11 +14,19 @@ import {
   setCommandSearch,
   setLoginPrograms,
 } from '../src/index.ts'
-import { claudeArgs, ClaudeWire, type ClaudeQuery, type ClaudeQueryFunction, type ClaudeSpawnOptions } from '../src/wires/claude.ts'
+import {
+  claudeArgs,
+  ClaudeWire,
+  routeWarnings,
+  type ClaudeQuery,
+  type ClaudeQueryFunction,
+  type ClaudeSpawnOptions,
+} from '../src/wires/claude.ts'
 import { ConnectionClosed, type ExitInfo, type SpawnSpec } from '../src/wires/process.ts'
 import { RpcError } from '../src/protocol.ts'
-import { claudeErrorQuota, claudeUsageQuota } from '../src/quota.ts'
-import type { WireHandlers } from '../src/wires/types.ts'
+import { claudeErrorQuota, claudeUsageQuota, claudeUsageRead } from '../src/quota.ts'
+import { ForkRefused, type WireHandlers } from '../src/wires/types.ts'
+import { answer, claudeFixture, line, prompt, uuidOf, type ClaudeFixture } from './helpers/claude-store.ts'
 
 const run = promisify(execFile)
 const SESSION = '0b7c3f2e-5d1a-4c8e-9f60-1a2b3c4d5e6f'
@@ -146,7 +155,7 @@ const SPEC: SpawnSpec = {
   redact: text => text.split(TOKEN).join('[redacted]'),
 }
 
-function harness(route?: { model: string; models: string[] }, spec: SpawnSpec = SPEC): Harness {
+function harness(route?: { model: string; models: string[] }, spec: SpawnSpec = SPEC, store = false): Harness {
   const queries: FakeQuery[] = []
   const query: ClaudeQueryFunction = ({ prompt, options }) => {
     const made = new FakeQuery(options, prompt)
@@ -176,6 +185,7 @@ function harness(route?: { model: string; models: string[] }, spec: SpawnSpec = 
   }
   h.wire = ClaudeWire.spawn(spec, handlers, route ? ({ ...route, modelCapabilities: {}, setThinking: () => {} } as never) : undefined, {
     query,
+    ...(store ? { store: true } : {}),
   })
   return h
 }
@@ -217,8 +227,8 @@ describe('Claude through the Agent SDK', () => {
       mcpServers: { 'latch-skills': { type: 'stdio', command: '/usr/bin/node', args: ['--disable-sigusr1', '-e', 'x'] } },
     })
     expect(options.resume).toBeUndefined()
-    // Never the Host's environment, which the SDK takes when it is given none.
-    expect(options.env).toEqual(SPEC.env)
+    // Never the Host's environment, which the SDK takes when it is given none; Claude says when a turn is over.
+    expect(options.env).toEqual({ ...SPEC.env, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1' })
     expect(opened.configOptions.map(option => (option as { id: string }).id)).toEqual(['mode', 'model', 'effort'])
     expect(optionValue(opened.configOptions, 'mode')).toBe('default')
     // The CLI reports the model it runs; the default row resolves to it.
@@ -990,5 +1000,237 @@ describe('what the adapter shows, on the direct wire', () => {
     expect(routed.sent.filter(item => item.method === '_auth/status_update').map(item => item.params)).toEqual([
       { authStatus: { kind: 'gateway', label: 'Custom model gateway' } },
     ])
+  })
+})
+
+describe('Claude’s own store, read only where the Host lets the wire', () => {
+  const S1 = '11111111-1111-4111-8111-111111111111'
+  const LATCH_MESSAGE = '44444444-4444-4444-8444-444444444444'
+  let fixture: ClaudeFixture | undefined
+  afterEach(async () => {
+    await fixture?.remove()
+    fixture = undefined
+  })
+
+  async function stored(store = true) {
+    fixture = await claudeFixture()
+    const spec: SpawnSpec = { ...SPEC, cwd: fixture.project, env: { ...fixture.env } }
+    return harness(undefined, spec, store)
+  }
+
+  it('without the Host’s leave, advertises no list, load or delete, forks nothing and reads nothing', async () => {
+    const h = await stored(false)
+    const init = (await h.wire.request('initialize', {})) as Record<string, any>
+    expect(init.agentCapabilities.loadSession).toBe(false)
+    expect(init.agentCapabilities.sessionCapabilities).toEqual({ resume: {}, close: {} })
+    expect(h.wire.forks).toBeUndefined()
+    await expect(h.wire.request('session/list', {})).rejects.toMatchObject({ code: -32601 })
+    await expect(h.wire.request('session/delete', { sessionId: S1 })).rejects.toMatchObject({ code: -32601 })
+    await expect(h.wire.request('_latch/session/fork', { sessionId: S1, cwd: '/w', through: S1 })).rejects.toThrow(/不能读写/u)
+    // A session's start reads no settings either: the menu is the full one.
+    await writeFile(join(fixture!.config, 'settings.json'), JSON.stringify({ permissions: { disableBypassPermissionsMode: 'disable' } }))
+    const opened = (await h.wire.request('session/new', { cwd: fixture!.project, mcpServers: [] })) as { configOptions: any[] }
+    expect(opened.configOptions[0].options.map((item: { value: string }) => item.value)).toContain('bypassPermissions')
+  })
+
+  it('deletes a session’s transcript without starting claude', async () => {
+    const h = await stored()
+    const init = (await h.wire.request('initialize', {})) as Record<string, any>
+    expect(init.agentCapabilities).toMatchObject({ loadSession: true, sessionCapabilities: { list: {}, delete: {} } })
+    expect(h.wire.forks).toBe(true)
+    const file = await fixture!.write(S1, [line(S1, fixture!.project, 'sdk-ts')(prompt(uuidOf(1), null, 'hi'))])
+    await h.wire.request('session/delete', { sessionId: S1 })
+    expect(existsSync(file)).toBe(false)
+    expect(h.queries).toHaveLength(0)
+    // Gone already: nothing to say.
+    await expect(h.wire.request('session/delete', { sessionId: S1 })).resolves.toEqual({})
+  })
+
+  it('marks each turn with Latch’s own message ID, once', async () => {
+    const h = await stored()
+    const { sessionId } = (await h.wire.request('session/new', { cwd: fixture!.project, mcpServers: [] })) as { sessionId: string }
+    const q = h.queries[0]!
+    void h.wire.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] }, undefined, undefined, undefined, {
+      messageId: LATCH_MESSAGE,
+    })
+    await tick()
+    expect(q.prompts[0]!.uuid).toBe(LATCH_MESSAGE)
+    q.out.push({ type: 'result', subtype: 'success', user_message_uuid: LATCH_MESSAGE, stop_reason: 'end_turn', usage: {} })
+    await tick()
+    await tick()
+    void h.wire.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'again' }] }, undefined, undefined, undefined, {
+      messageId: LATCH_MESSAGE,
+    })
+    await tick()
+    expect(q.prompts[1]!.uuid).not.toBe(LATCH_MESSAGE)
+  })
+
+  it('offers no mode Claude’s settings disable and never starts with the flag that allows it; says where rules come from', async () => {
+    const h = await stored()
+    await writeFile(
+      join(fixture!.config, 'settings.json'),
+      JSON.stringify({
+        permissions: {
+          disableBypassPermissionsMode: 'disable',
+          disableAutoMode: 'disable',
+          defaultMode: 'acceptEdits',
+          allow: ['Bash(npm test:*)'],
+        },
+        maxEffortLevel: 'low',
+      }),
+    )
+    const opened = (await h.wire.request('session/new', { cwd: fixture!.project, mcpServers: [] })) as Record<string, any>
+    const options = h.queries[0]!.options
+    expect(options.allowDangerouslySkipPermissions).toBe(false)
+    // Latch never starts in a wider mode than asking, whatever the settings name.
+    expect(options.permissionMode).toBe('default')
+    expect(opened.configOptions[0].options.map((item: { value: string }) => item.value)).toEqual(['default', 'acceptEdits', 'plan'])
+    // `low` and nothing above it.
+    expect(opened.configOptions[2].options.map((item: { value: string }) => item.value)).toEqual(['default', 'low'])
+    expect(opened._meta.latch.permissionNotes.join('\n')).toMatch(/Bash\(npm test:\*\)（用户设置）/u)
+    expect(opened._meta.latch.permissionNotes.join('\n')).toMatch(/默认模式是 acceptEdits；Latch 仍从「询问」开始/u)
+    await expect(
+      h.wire.request('session/set_config_option', { sessionId: opened.sessionId, configId: 'mode', value: 'bypassPermissions' }),
+    ).rejects.toThrow(/不允许/u)
+  })
+
+  it('says a session Claude no longer has is gone, before starting claude for it', async () => {
+    const h = await stored()
+    await writeFile(join(fixture!.config, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 14 }))
+    const refused = (await h.wire
+      .request('session/resume', { sessionId: S1, cwd: fixture!.project, mcpServers: [] })
+      .catch((error: unknown) => error)) as RpcError
+    expect(refused).toBeInstanceOf(RpcError)
+    expect(refused.code).toBe(-32002)
+    expect((refused.data as { lostReason: string }).lostReason).toMatch(/14 天/u)
+    expect(h.queries).toHaveLength(0)
+  })
+
+  it('lists Claude’s sessions, replays one and goes on in it; refuses one another claude holds', async () => {
+    const h = await stored()
+    const l = line(S1, fixture!.project)
+    await fixture!.write(S1, [
+      l(prompt(uuidOf(1), null, 'from the terminal')),
+      l(answer(uuidOf(2), uuidOf(1), 'msg_1', [{ type: 'text', text: 'hello back' }])),
+    ])
+    const listed = (await h.wire.request('session/list', {})) as { sessions: any[]; nextCursor: unknown }
+    expect(listed.sessions).toEqual([expect.objectContaining({ sessionId: S1, cwd: fixture!.project, title: 'from the terminal' })])
+    expect(listed.nextCursor).toBeNull()
+    const loaded = (await h.wire.request('session/load', { sessionId: S1, cwd: fixture!.project, mcpServers: [] })) as { sessionId: string }
+    expect(loaded.sessionId).toBe(S1)
+    const replay = h.sent.filter(item => item.sessionId === S1 && item.update).map(item => item.update!.sessionUpdate)
+    expect(replay).toEqual(['user_message_chunk', 'agent_message_chunk'])
+    // The original session goes on, as `/resume` would.
+    expect(h.queries[0]!.options.resume).toBe(S1)
+    await h.wire.request('session/close', { sessionId: S1 })
+    const registry = join(fixture!.config, 'sessions')
+    await mkdir(registry, { recursive: true })
+    await writeFile(join(registry, `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: S1 }))
+    await expect(h.wire.request('session/load', { sessionId: S1, cwd: fixture!.project, mcpServers: [] })).rejects.toThrow(/busy/u)
+  })
+
+  it('forks Claude’s own record at the turn Latch’s message opened, and refuses where the transcript does not have it', async () => {
+    const h = await stored()
+    const source = '55555555-5555-4555-8555-555555555555'
+    const second = '66666666-6666-4666-8666-666666666666'
+    const l = line(source, fixture!.project, 'sdk-ts')
+    await fixture!.write(source, [
+      l(prompt(LATCH_MESSAGE, null, 'first')),
+      l(answer(uuidOf(2), LATCH_MESSAGE, 'msg_1', [{ type: 'text', text: 'one' }])),
+      l(prompt(second, uuidOf(2), 'second')),
+      l(answer(uuidOf(4), second, 'msg_2', [{ type: 'text', text: 'two' }])),
+    ])
+    const forked = (await h.wire.request('_latch/session/fork', {
+      sessionId: source,
+      cwd: fixture!.project,
+      before: new Date().toISOString(),
+      through: LATCH_MESSAGE,
+      mcpServers: [],
+    })) as { sessionId: string }
+    expect(forked.sessionId).not.toBe(source)
+    expect(h.queries[0]!.options.resume).toBe(forked.sessionId)
+    const copy = await readFile(join(fixture!.projectDir, `${forked.sessionId}.jsonl`), 'utf8')
+    expect(copy).toContain('"text":"one"')
+    expect(copy).not.toContain('"text":"two"')
+    await h.wire.request('session/close', { sessionId: forked.sessionId })
+    await expect(
+      h.wire.request('_latch/session/fork', { sessionId: source, cwd: fixture!.project, through: uuidOf(77), mcpServers: [] }),
+    ).rejects.toBeInstanceOf(ForkRefused)
+  })
+
+  it('ends a turn when Claude says it is idle again and no result came', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    try {
+      const h = await stored()
+      const { sessionId } = (await h.wire.request('session/new', { cwd: fixture!.project, mcpServers: [] })) as { sessionId: string }
+      const q = h.queries[0]!
+      const answered = h.wire.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
+      answered.catch(() => {})
+      await vi.advanceTimersByTimeAsync(0)
+      q.out.push({ type: 'system', subtype: 'session_state_changed', state: 'running' })
+      q.out.push({ type: 'system', subtype: 'session_state_changed', state: 'idle' })
+      await vi.advanceTimersByTimeAsync(2_000)
+      await expect(answered).rejects.toThrow(/没有给出结果/u)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('asks Claude for its limits on the session’s process, told to skip its scan, and reads only the shape it knows', async () => {
+    const h = harness()
+    const { sessionId } = (await h.wire.request('session/new', { cwd: '/work', mcpServers: [] })) as { sessionId: string }
+    // A Claude without the experimental request: nothing is said.
+    await expect(h.wire.request('_latch/quota/read', {})).rejects.toMatchObject({ code: -32601 })
+    let asked: unknown
+    Object.assign(h.queries[0]!, {
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async (options: unknown) => {
+        asked = options
+        return {
+          subscription_type: 'max',
+          rate_limits_available: true,
+          rate_limits: { five_hour: { utilization: 42, resets_at: new Date(Date.now() + 3_600_000).toISOString() }, seven_day: null },
+        }
+      },
+    })
+    const answer = await h.wire.request('_latch/quota/read', { sessionId })
+    expect(asked).toEqual({ skipBehaviors: true })
+    const report = claudeUsageRead(answer, Date.now())
+    expect(report).toMatchObject({ windows: [{ kind: 'five-hour', usedPercent: 42 }], plan: 'max' })
+    expect(claudeUsageRead({ rate_limits_available: false, rate_limits: null }, Date.now())).toBeUndefined()
+    expect(claudeUsageRead({ something: 'else' }, Date.now())).toBeUndefined()
+  })
+
+  it('reports Claude’s own MCP servers once the session has a turn, not those Latch gave it', async () => {
+    const h = harness()
+    const { sessionId } = (await h.wire.request('session/new', {
+      cwd: '/work',
+      mcpServers: [{ name: 'latch-skills', command: '/usr/bin/node', args: [], env: [] }],
+    })) as { sessionId: string }
+    Object.assign(h.queries[0]!, {
+      mcpServerStatus: async () => [
+        { name: 'latch-skills', status: 'connected', scope: 'dynamic', tools: [{}] },
+        { name: 'github', status: 'needs-auth', scope: 'user' },
+        { name: 'docs', status: 'connected', scope: 'project', tools: [{}, {}] },
+      ],
+    })
+    void h.wire.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
+    await vi.waitFor(() => expect(updates(h, '_latch_mcp_status')).toHaveLength(1))
+    expect(updates(h, '_latch_mcp_status')[0]!.servers).toEqual([
+      { name: 'github', state: 'needs-login', origin: 'user' },
+      { name: 'docs', state: 'ready', tools: 2, origin: 'project' },
+    ])
+  })
+
+  it('warns before the first turn of what in Claude’s settings may keep Latch’s model service from working', () => {
+    const settings = { disableBypass: false, disableAuto: false, allow: [], hooks: false, managed: true }
+    const route = { model: 'svc-model', models: ['svc-model'], modelCapabilities: {}, setThinking: () => {} } as never
+    expect(routeWarnings({ ...settings, managedKeyHelper: true, managedModels: ['opus'] }, route)).toEqual([
+      expect.stringMatching(/密钥脚本/u),
+      expect.stringMatching(/svc-model 不在其中/u),
+    ])
+    expect(routeWarnings({ ...settings, managedModels: ['svc-model'] }, route)).toEqual([])
+    // On Claude's own login, its own endpoint is where the session's requests go.
+    expect(routeWarnings({ ...settings, ownEndpoint: true }, undefined)).toEqual([expect.stringMatching(/ANTHROPIC_BASE_URL/u)])
+    expect(routeWarnings(undefined, route)).toEqual([])
   })
 })

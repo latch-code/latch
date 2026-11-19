@@ -903,6 +903,13 @@ export interface ServerOptions {
    */
   cliUsage?: { home: string }
   /**
+   * Claude Code's own store may be read and, for what Latch started or the person chose, changed: its settings (the mode
+   * menu, notes, a gateway's checks), its sessions to bring in, forks of Latch's sessions and deleting their transcripts
+   * (`packages/harness-acp/src/claude-store.ts`, in a process with each session's environment). The start script passes
+   * it; left out, as in tests, nothing of Claude's on this computer is read or changed.
+   */
+  cliStore?: true
+  /**
    * Where a bare command name is looked for: an agent's command, its adapter, the programs a preset points it at. The
    * start script passes `personCommandDirectories`; left out, as in tests, only absolute commands are found, so no real
    * agent on this computer can be described, offered or started. Tests name their own directories.
@@ -1630,6 +1637,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         createAcpAgentPlugin(agent, {
           log,
           requireConfirmedCommand: true,
+          ...(options.cliStore ? { claudeStore: true } : {}),
           ...(readCliQuota && readsCliQuota(agent) ? { readQuota: input => readCliQuota(agent.id, input) } : {}),
           ...(readCliUsage && readsCliQuota(agent) ? { readTurnUsage: input => readCliUsage(agent.id, input) } : {}),
         }))
@@ -2892,14 +2900,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     })
     /**
      * Everything Latch keeps for a session, removed the same way by every delete (one, or a batch of archived ones): the
-     * harness's record (an ACP agent is asked to delete its own copy only where it offers that, never for an imported
-     * session; docs/HARNESSES.md), queued input, questions, attachments, file references and the session's summary;
-     * `sessionDeleted` then removes its change snapshots, review notes and page data. The worktree stays, marked private.
+     * harness's record (an ACP agent is asked to delete its own copy only where it offers that; an imported session's
+     * original only when the person chose it for this one deletion, `original`; docs/HARNESSES.md), queued input,
+     * questions, attachments, file references and the session's summary; `sessionDeleted` then removes its change
+     * snapshots, review notes and page data. The worktree stays, marked private.
      */
-    async function removeSessionRecords(id: string): Promise<void> {
+    async function removeSessionRecords(id: string, options: { original?: boolean } = {}): Promise<void> {
       memoryRefusals.delete(id)
       await keepWorktreePrivacy(id)
-      await harnessHub.remove(id)
+      await harnessHub.remove(id, options)
       await promptQueues.forgetSession(id)
       await questions.forgetSession(id)
       fileRoutes.forgetSession(id)
@@ -10565,7 +10574,25 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         await assertSessionAccess(caller, id)
         restrictChatRemoval(id)
         terminalRoutes.checkSessionEnd(caller, id)
-        await removeSessionRecords(id)
+        // The person chose, for this deletion, to delete the imported session's original in its harness too: refused
+        // where that cannot be done, and on record before anything is deleted.
+        const original = new URL(req.url ?? '/', 'http://latch.invalid').searchParams.get('original') === '1'
+        if (original) {
+          const { summary } = await harnessHub.detail(id)
+          if (!summary?.imported || summary.imported.mode !== 'native' || !(await harnessHub.deletesOriginal(id)))
+            throw new AppError(409, 'delete-original-unsupported', '这个会话没有可以一并删除的原会话。')
+          try {
+            await audited({
+              action: 'history.original.deleted',
+              actor: actorOf(caller),
+              target: id,
+              detail: { sessionId: id, harnessId: summary.harnessId },
+            })
+          } catch {
+            throw new AppError(503, 'audit-unavailable', '审计记录暂时无法保存，没有删除这个会话。')
+          }
+        }
+        await removeSessionRecords(id, original ? { original: true } : {})
         json(res, { deleted: true })
         return true
       }

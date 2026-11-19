@@ -565,7 +565,7 @@ Cursor 预设的定义在这台 Mac 上带了 `CURSOR_API_KEY`，且 Host 找得
 
 ### DeepSeek Harness 的会话日志
 
-Latch 不读 CLI 自己的存储，有两个例外，这是第二个（第一个是下面的「DeepSeek Harness 的余额」）。Host 只读它启动的那一个会话的日志里的 tokens 数（`apps/host/src/cli-usage.ts`），依据 `@deepseek-ai/dsh-session-persistence-jsonl` 与 `dsh-session` 0.2.2-rc.1 的源码与说明：
+Latch 读 CLI 自己的存储时只读要用的那部分（另见下面的「DeepSeek Harness 的余额」与「Claude 的 Agent SDK 线」）。Host 只读它启动的那一个会话的日志里的 tokens 数（`apps/host/src/cli-usage.ts`），依据 `@deepseek-ai/dsh-session-persistence-jsonl` 与 `dsh-session` 0.2.2-rc.1 的源码与说明：
 
 - **何时。** 只对预设自己的命令（与额度同一判断 `readsCliQuota`），只在启动脚本给了 `cliUsage` 时；测试 Host 没有它就不读。一轮不经模型路由、Agent 没报这一轮的 tokens、会话不是接入的（`imported`）时，轮次结束 1 秒后读一次（dsh 每 200 ms 批量写一次事件），10 秒内读不完就按没有 tokens 记；驱动另有自己的计时，读的一方再过 1 秒还没答复，这一行照写、关闭也不等它。
 - **读哪个文件。** 固定路径 `~/.dsh/sessions/<projectKey(cwd)>/<会话 ID>/session.v4.jsonl.zstd`：`cwd` 是 Latch 在 `session/new` 发的目录，ID 是 dsh-acp 回的 UUID（形状不对不读）。不列目录、不找别的格式代号。`DSH_HOME` 有值，或 `~/.dsh/cordis.patch.yml`、`~/.dsh/profiles/acp/cordis.patch.yml` 提到 `session-persistence` 或 `compression`，就不读。
@@ -588,14 +588,22 @@ Claude Agent 与 OpenCode 的预设原先保存的是适配器路线（`claude-a
 - **程序与进程。** `pathToClaudeCodeExecutable` 是查到的 `claude`；SDK 的平台包（自带的 Claude Code）在 `pnpm-workspace.yaml` 的 `ignoredOptionalDependencies` 里不安装，两个只供类型用的 peer 经 `packageExtensions` 标为可选、也不安装。SDK 经线的 `spawnClaudeCodeProcess` 起进程：`process.ts` 的 `AgentProcess`（自己的进程组、stderr 尾巴、停止时先关 stdin 再 SIGTERM、SIGKILL），环境是运行时算好的那份，SDK 只能再加 `CLAUDE_CODE_*`、`CLAUDE_AGENT_SDK_*` 标记，其余（包括 Host 的变量）丢掉。网关令牌只在这份环境里；网关的模型清单经 `settings` 进 `--settings` 参数，里面没有令牌。SDK 启动时写进 Host 环境的 `CLAUDE_AGENT_SDK_VERSION` 随即还原。`claude` 是原生程序，`--disable-sigusr1` 不适用（SDK 会把 `executableArgs` 也放在原生程序前面，所以不传）。
 - **与适配器相同的设置。** `settingSources: ['user','project','local']`、`systemPrompt` 与 `tools` 用 `claude_code` 预设、会话的 MCP 服务器、`includePartialMessages`、`allowDangerouslySkipPermissions`（root 时不给）；Claude 自己的 CLAUDE.md、技能、斜杠命令、hooks、插件与 MCP 服务器都由它自己加载。适配器自己注册的 hooks（计划、任务清单、子 Agent 配置、模型切换同步）不注册。
 - **会话。** 新会话由线生成 UUID 作为 SDK 的 `sessionId`，恢复用 `resume`，与适配器相同；不是 UUID 的 ID 不找。`claude` 说找不到会话时是 `-32002`。一个线同时只开一个会话，另开会话或 `session/close` 先结束上一个 `query()` 与它的进程，那不算线退出；会话打开后进程自己退出才算。
-- **一轮。** 输入是带 `uuid` 的 `SDKUserMessage`；图片按 base64 块，嵌入的资源成文字。只有带同一 `user_message_uuid` 的结果结束这一轮，别的结果（Claude 自己开始的一轮）只报告用量。流式的 `text_delta`、`thinking_delta` 成为文字与思考，消息 ID 是 Claude 的 `msg_…`；同一 ID 的整条消息（`claude` 可能每个内容块发一条）只补流式没发出的部分。
+- **Claude 自己的存储（`cliStore`）。** 只有启动脚本给 Host 的 `cliStore` 打开时（经 `AcpAgentOptions.claudeStore` 到线），线才读写 Claude 的存储；测试 Host 不给，线不宣告列出、加载、删除与分叉，也不读设置。读写都在一个短命的 Node 进程里（`claude-store.ts` 起 `claude-store-runner.ts`，`--disable-sigusr1`、自己的进程组、15 秒超时杀整组、输出至多 16 MiB），环境只有会话那份里的 `HOME`、`USER`、`PATH`、`TMPDIR`、`LANG`、`CLAUDE_CONFIG_DIR`、`CLAUDE_CODE_PROJECT_DIR_NAME`：SDK 的会话函数读的是所在进程的 `CLAUDE_CONFIG_DIR`，这样读到的就是这个会话的 `claude` 写的那份，Host 自己的环境不参与，大转录的内存也不进 Host。会话 ID 先按 UUID 校验才交给 SDK。设置只以事实返回（布尔、规则文字、数字、模型名），从不返回 `env` 的值、密钥脚本或 hooks 的命令；登录凭据与注册表的 `.key` 文件不读。
+- **设置。** 开会话前读 `resolveSettings({ cwd, settingSources })` 与 `filterEscalatingDefaultMode`（同一目录 30 秒内复用，5 秒读不到当作没读）。`disableBypassPermissionsMode`、`disableAutoMode` 为 `disable` 时菜单不列「不再询问」或自动模式，`allowDangerouslySkipPermissions` 不给，`set_config_option` 也拒绝；`maxEffortLevel` 截掉更高的思考档位。设置里的 `defaultMode` 只作说明，会话照旧从 `default` 开始（Latch 不替人预选宽松档位）。自动放行的规则与它所在的层（用户、项目、项目本地、组织托管）、有无 hooks、有无托管设置作会话权限的 `notes` 返回（`_meta.latch.permissionNotes`，只在内存）。`resolveSettings` 不是安全判定，最终仍以 `setPermissionMode` 的读回为准。
+- **一轮。** 输入是带 `uuid` 的 `SDKUserMessage`，`uuid` 是这一轮 Latch 用户消息的 ID（`PromptContext.messageId`，同一会话上同一 ID 只用一次，再发同一条时换线自己的 UUID）；图片按 base64 块，嵌入的资源成文字。只有带同一 `user_message_uuid` 的结果结束这一轮，别的结果（Claude 自己开始的一轮）只报告用量。流式的 `text_delta`、`thinking_delta` 成为文字与思考，消息 ID 是 Claude 的 `msg_…`；同一 ID 的整条消息（`claude` 可能每个内容块发一条）只补流式没发出的部分。
 - **工具行。** 标题、种类、差异与位置照适配器给既非 AIR 也非 ACP v2 的客户端的样子（`wires/claude-tools.ts`，依据它的 `tool-calls/reporters/`）：`Read a.txt`（位置带行号）、`Edit`（`old_string` 到 `new_string` 的差异）、`Write`（新文本的差异，运行后换成结果里 `structuredPatch` 的真实差异）、`NotebookEdit` 只有标题，命令的输出放进 console 代码块。
 - **任务清单。** TodoWrite 的列表与 `TaskCreate`、`TaskUpdate`、`TaskList` 的结果作 `plan` 更新，它们不成工具行，与适配器相同。真实核对时 2.1.327 的 SDK 会话没有提供这些工具（`init` 只列 `Task`、`TaskStop`），所以只用假 SDK 测过。
 - **子 Agent。** 照适配器的 RFD 形式：Agent 调用在发起它的会话上宣告 `subagent_update`（`state: running`），子会话 ID 是 `<会话>/subagent/<调用 ID>`；带这次调用 `parent_tool_use_id` 的文字与工具调用发在子会话上，它的审批（`canUseTool` 的 `agentID`）也在子会话上。`task_started` 之后带 `capabilities.cancel`，单独停止经 `stopTask`。Agent 调用的结果到达时报告 `idle`（失败时带错误，停止这一轮时 `cancelled`）。
 - **审批。** `canUseTool` 成为运行时的权限请求，选项与适配器的 `permissions/options*` 相同（ID、类型、名字与顺序，`wires/claude-permissions.ts`）：一般调用 `allow-once`、`reject`，Claude 给出建议时另有 `allow-with-updates`（`allow_always`，选中时把建议原样作 `updatedPermissions` 交回），Skill 的 `allow-skill-*`、WebFetch 的按域名规则；人的 ask 规则触发或 `suppressAlwaysAllowRule` 时不给。Latch 对所有预设都只展示一次性的允许与拒绝（见「预设的权限配置」），所以「始终允许」在两条路线上都不出现。ExitPlanMode 给 `exit-plan-clear-*`、`exit-plan-auto`/`exit-plan-bypass` 或 `exit-plan-accept-edits`、`exit-plan-default`、`reject`；接受时把 Claude 换到所选模式并报告；`reject`（继续规划）以 `interrupt` 拒绝，这一轮按取消结束，与适配器相同。EnterPlanMode 的类型是 `switch_mode`。Claude 自己拦下的调用（`permission_denied`）照适配器的样子写 `_meta.claudeCode.toolResponse`。
 - **提问。** 客户端声明表单提问时（Latch 有 `askUser` 时），AskUserQuestion 经 `canUseTool` 成为 `elicitation/create` 的表单：每题 `question_<n>`（单选 `oneOf`、多选 `anyOf`）加 `question_<n>_custom`；回答写进工具输入的 `answers`（多选逗号连接，选了又写的话进 `annotations[问题].notes`），拒答给空的 `answers`，取消中止调用。没有表单时与适配器一样关掉这个工具。MCP 服务器的表单提问经 `onElicitation` 同样交给人，URL 形式答「取消」。
 - **模式、模型与思考。** 选项 ID 与适配器相同：`mode`（`default`、`acceptEdits`、`plan`、模型支持时 `auto`、`bypassPermissions`）经 `setPermissionMode`；`model` 的值是 `supportedModels()` 的 `value`，`default` 经 `setModel()` 交回 Claude；`effort`（`default` 加模型声明的档位）经 `applyFlagSettings({ effortLevel })`，与适配器相同。新会话与恢复的会话都以 `default` 开始；运行时在下一条消息前把会话记下的模式设回去（模式读回），模型与思考经 `resumeResetsOptions` 设回去。当前模型按 `getContextUsage()` 报告的模型认出所在一行。Claude 自己换模式（`init`、`status` 消息里的 `permissionMode`）时报告 `config_option_update`。
-- **取消。** `session/cancel` 发 `interrupt()`，等它答复、且这一轮的结果到了才按取消结束。
+- **取消与轮次结束。** `session/cancel` 发 `interrupt()`，等它答复、且这一轮的结果到了才按取消结束。线给 `claude` 设 `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`（与适配器相同），`session_state_changed` 的 `idle` 是 Claude 说这一轮已结束：已经到了结果、只差中断答复的取消由它结算；这一轮报过 `running` 之后变 `idle`、1.5 秒内还没有结果时按失败结束（「Claude Code 结束了这一轮，但没有给出结果」），不再一直等。
+- **恢复前查记录。** `resume` 前在存储进程里 `getSessionInfo`（先按目录，再跨项目）；记录已不在时直接回 `-32002` 并带 `lostReason`（Claude 会删除超过 `cleanupPeriodDays`，默认 30 天未用的会话），运行时把原因写进提示，不再起 `claude` 等它说找不到。读不到存储时照常恢复。
+- **删除。** `session/delete` 在存储进程里 `deleteSession`（先按目录，再跨项目；找不到算成功），不起 `claude`、不运行项目里的任何东西；删的是转录与同名目录（子 Agent、大工具输出），`file-history/<id>`、`session-env/<id>` 等由 Claude 自己按 `cleanupPeriodDays` 清理。线自己开着这个会话时先关掉，另一个 `claude` 开着时（注册表）拒绝。运行时对这条线不看「项目仍在列表中」的门，也不看会话开始时记下的 `deletable`，所以改动前开始的会话同样真删除。
+- **分叉。** 宣告 `forks`，回答 `FORK_METHOD`：在存储进程里读来源的全部条目（`importSessionToStore`，压缩前的也在），沿 `parentUuid`（压缩处 `logicalParentUuid`）找到 `uuid` 等于 `through` 的那条人的提示，取下一条人的提示之前最后一条用户或助手记录作 `forkSession` 的 `upToMessageId`；复制出的最后一条的 `forkedFrom.messageUuid` 不是它时删掉副本。之后 `resume` 新会话。找不到这一轮（改动前或在适配器上开始的会话）、复制没停在这一轮或副本打不开时 `ForkRefused`，运行时改用背景文本。副本的 `entrypoint` 沿用来源（Latch 的会话是 `sdk-ts`），终端 `/resume` 不列出。
+- **自己的 MCP 服务器。** 第一轮开始时报告 `mcpServerStatus()`（不含 Latch 给会话的服务器）作 `_latch_mcp_status`；没有会话时为「读取」开一个不留记录的会话（`persistSession: false`）读完即关。
+- **第一轮前的额度。** 会话打开时在会话自己的进程上问 Claude 的实验接口 `get_usage`（SDK 类型里没有的 `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`，带 `skipBehaviors`，否则它会扫近 7 天的转录），只读认得的形状（`rate_limits` 各窗口的 `utilization` 0–100 与 `resets_at`、套餐）；没有这个接口、经网关或形状不对时什么也不说，之前显示的照旧。只在会话进程上问（`openOnly`），有人查看额度时不为它另起进程。
+- **经 Latch 使用模型服务的预检。** 第一轮开始时以 `notice` 警告：组织托管设置里的 `apiKeyHelper`、托管的 `availableModels` 不含这个模型；不经网关时设置 `env` 里自己的 `ANTHROPIC_BASE_URL`；设置 `env` 里写了 `CLAUDE_CONFIG_DIR`（这时 Latch 读到的存储可能不是 Claude 在用的那份）。
 - **用量与额度。** 结果的 `usage`：`input_tokens` 是不含缓存的输入，缓存读写另记。之后 2 秒内读 `getContextUsage()` 的 `totalTokens` 与 `maxTokens` 作上下文占用；`total_cost_usd` 作花费（经网关时不报）。`rate_limit_event` 照适配器放进 `usage_update._meta["_claude/rateLimit"]`；一轮因回复错误失败时错误 `data` 带 `errorKind`（适配器同样），`rate_limit` 时另带最近一次的 `rateLimit`，额度照常读。
 - **登录。** 开会话时把 `initializationResult().account` 照适配器的 `fromAccountInfo` 推送为 `_auth/status_update`（`account` 套餐、`api_key`、`external`、经网关时 `gateway`），不带邮箱与组织；变了才推送。
 - **斜杠命令。** 第一轮开始时把 `initializationResult()` 列出的命令报告给运行时。
@@ -607,7 +615,9 @@ Claude Agent 与 OpenCode 的预设原先保存的是适配器路线（`claude-a
 | ExitPlanMode 的「清空上下文后执行」 | 选中时直连只按「继续规划」结束这一轮，不像适配器那样换新上下文接着执行；Latch 对两条路线都不展示这个选项（`allow_always`，也不在 `planAnswers`），所以没有接上 |
 | 子 Agent 的流式文字、模型与文件夹 | 子 Agent 的文字按整条消息发到子会话；适配器另报告的子 Agent 模型与 `cwd` 没有 |
 | 提示建议 | 适配器经 `session_info_update._meta.promptSuggestions` 发，Latch 的运行时不读，两条路线都不显示 |
-| 读 Claude 的设置与记录 | Latch 不读 Claude 的设置与会话记录：`defaultMode`、`disableBypassPermissionsMode` 等由 Claude 在换模式时自己拒绝；恢复的会话以 `default` 开始，再由运行时设回记下的模式 |
+| `agents` 目录项 | `initializationResult().agents` 没有读：Latch 的输入框没有列子 Agent 的地方 |
+| 结果未知时查转录 | 每轮的 `uuid` 是 Latch 的消息 ID，转录里能查到 Claude 是否收到这一轮；运行时还没有向线要这种证据的接口 |
+| 预热备用进程（`prewarm`） | 环境、MCP 与 `canUseTool` 在停车时就固定，每个约 250 MB，收益没有测过 |
 | 适配器其他私有功能 | 文件改动报告、按某一条分叉、空闲压缩、目标（goal）与 AIR 扩展只在适配器里 |
 
 ## 登录
@@ -980,10 +990,11 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 - 数据在 `<数据目录>/harnesses/<agent-id>/acp.json`，与 Standard 相同的原子写入与锁文件，字段由 `packages/harness-acp/src/store.ts` 的 zod schema 校验。请求回执与用户消息在发送 `session/prompt` 之前写入；用户消息保留 `requestId`。
 - Host 重启后，运行中或待审批的会话转为 `interrupted`，不自动重发输入。
 - **继续进程已退出的会话。** 先核对启动指纹（含项目配置），再依次尝试 `session/resume`、`session/load`（丢弃重放的历史，Latch 已保存），然后读回权限模式；都不支持时 409 `harness-session-lost`。没有启动指纹记录的会话是 409 `l3-confirmation-missing`。
-- **删除会话**删除 Latch 的记录、结束进程并清理临时目录。只有 Agent 声明支持时才调用 `session/delete`。清空过上下文的会话，每次清空前的 Agent 会话也一并删除（`earlierSessionIds`）。接入的会话的原会话从不删除。
-- 进程已退出时，只有项目目录仍在 Host 的项目列表中才会为删除启动进程（Agent 启动时可能运行工作目录里的代码）；否则只删 Latch 的记录，并在 Host 日志里注明。
+- **删除会话**删除 Latch 的记录、结束进程并清理临时目录。只有 Agent 声明支持时才调用 `session/delete`。清空过上下文的会话，每次清空前的 Agent 会话也一并删除（`earlierSessionIds`）。
+- **接入的会话的原会话**默认保留。profile 的 `HistoryImportRule.deletes` 说它的 `session/delete` 删的是 Agent 自己的记录时（Claude 的两条路线），Driver 声明 `historyDelete`、Harness 带 `history.deleteOriginal`，删除对话框给一个默认不勾的「同时删除 … 里的原会话」，只对这一次删除有效。勾选后 `DELETE /tasks/:id?original=1`：Host 先确认会话是原样接入的、Harness 能删，再写审计 `history.original.deleted`（会话与 Harness 的 ID），写不进就不删；然后运行时把原会话 ID 一并交给 `session/delete`。批量删除不提供。
+- 进程已退出时，只有项目目录仍在 Host 的项目列表中才会为删除启动进程（Agent 启动时可能运行工作目录里的代码）；否则只删 Latch 的记录，并在 Host 日志里注明。Claude 的直连线删除不起 `claude`，不受这道门限制。
 
-**分叉。** 由 Host 以一条背景文本加新输入开启新会话，仍是新的启动；ACP 不需要私有分叉方法。pi 的例外见「pi 的 RPC 模式」。
+**分叉。** 由 Host 以一条背景文本加新输入开启新会话，仍是新的启动；ACP 不需要私有分叉方法。pi、Codex 与 Claude 的直连线（`cliStore` 打开时）用它们自己的记录分叉，见各自的小节。
 
 **排队。** Host 队列只在明确的 `runOutcome=completed` 后自动派发。ACP 只有 `session/prompt` 的 `end_turn` 算 completed；取消、输出上限、拒绝、未知 stopReason 与断连都暂停。`PromptOptions.queuedAt` 只作为用户消息的排队时间，不改变输入的幂等哈希与权限。
 
@@ -997,11 +1008,11 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 
 ## 接入已有会话
 
-用户在 Latch 之外用 CLI 做过的会话，可以经它自己的适配器列出、预览并接入为一个 Latch 会话。找会话与接入都不读 CLI 的文件夹。接管终端里正开着的会话不做，遇到时拒绝。
+用户在 Latch 之外用 CLI 做过的会话，可以经它自己的适配器（Claude 的直连线经 SDK 的会话函数）列出、预览并接入为一个 Latch 会话。接管终端里正开着的会话不做，遇到时拒绝。
 
 **范围与权限。**
 
-- 只对 profile 声明 `historyImport` 的预设开放：Codex（直连经 `thread/list` 与 `thread/read`；经 codex-acp 时 `session/list` 给元数据、`session/load` 重放）与 OpenCode 2.x。
+- 只对 profile 声明 `historyImport` 的预设开放：Codex（直连经 `thread/list` 与 `thread/read`；经 codex-acp 时 `session/list` 给元数据、`session/load` 重放）、OpenCode 2.x 与 Claude Agent（见下）。
 - 运行中的 Agent 没有同时声明 `sessionCapabilities.list` 与 `loadSession` 时返回 409 `history-not-supported`，不发 `session/list`。
 - 每一步都要 `run` 与数据范围 `all`，不弹确认。`catalog.features.historyImport` 只对这样的设备出现。
 - 接入的会话一律私有（`sessions-meta.json` 的 `imported`），只对数据范围 `all` 的设备可见，分叉出的会话同样私有。
@@ -1016,6 +1027,14 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 - 接入之后在别处给这个会话加的目录授权，会在 Latch 下一次恢复它时被去掉。预览结束时的 `session/close` 只让 OpenCode 丢弃从未发过消息的新会话，不动加载的会话。
 - 直连时列出是 `GET /api/session`（`directory`、倒序、每页 100），载入按 `GET /api/session/:id/message` 重放，授权读写与适配器相同；`opencode acp` 建的会话在直连上载入并重放已用真实 2.2.6 核对。
 - 列出与授权尚未用真实 OpenCode 核对。两个前提要等核对：2.x 的列表行确实带 `additionalDirectories`；再读一行与 `session/load` 之间没有别的客户端加授权（这个窗口关不上，ACP 没有带条件的加载）。
+
+**Claude Agent 的规则。**
+
+- 两条路线算同一份存储：`Bridge.historyStore` 是 Claude 配置目录（Host 环境或登录 shell 的 `CLAUDE_CONFIG_DIR`，否则 `~/.claude`）真实路径的哈希，同一会话不会经两条路线各接入一次。
+- 适配器 0.99 起的 0.x（`agentInfo.version`）：它自己的 `session/list`、`session/load` 与 `session/delete`，0.101 的源码核对过。它列出 SDK 启动的会话；Latch 自己的会话照常由「Latch 会话用过的不列出」去掉。
+- 直连线只在 `cliStore` 打开时：`session/list` 是 `listSessions({ includeProgrammatic: false })`，与终端的 `/resume` 一样不列 SDK 启动的会话（Latch 直连开始的、分叉出的都是 `sdk-ts`）；标题是 Claude 的自定义标题、自动标题或第一条提示。`session/load` 先查 Claude 的注册表（`<配置目录>/sessions/<pid>.json`，进程活着且启动时间吻合，`.key` 文件从不打开），被别的 `claude` 开着时回答 busy，Host 给 409 `history-session-busy`；再 `getSessionMessages` 重放，然后照常 `resume` 原会话——接入续写原会话，与 Codex 相同。
+- 重放：人的文字（去掉 Claude Code 的命令标记与 `<system-reminder>`；它自己回答的 `/compact`、`/model`、`/mcp` 等整条不显示，别的命令写成 `/名字 参数`）、Claude 的文字、工具调用与结果（标题照工具行）。不重放：Claude 自己加的说明（`isMeta`）、压缩摘要、`<synthetic>` 的登录与限额提示、思考、图片的字节、子 Agent 里面的消息（只有 Agent 调用与它的结果）。`getSessionMessages` 只给最后一次压缩之后的部分，压缩之前的只在 Claude 里。
+- 它没有写锁：接入时没开着的会话，之后仍可在终端里打开，预览带 `useUnknown`。
 
 **步骤。**
 
@@ -1061,7 +1080,8 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 - pi：它的 RPC 没有列出会话的命令，发现会话要读它的存储（允许，见「CLI 目录与配置」），尚未实现。
 - OpenCode 1.x：ACP 没有 `session/list`。
 - Qwen Code、goose：源码声明了列出与加载，但加载对原会话的影响（恢复旧模式、写回设置等）没有读完，也没有用真实程序核对。
-- Claude Agent、Grok Build、Antigravity：没有核对；Claude 的会话记录不碰。Cursor 不开放。
+- Grok Build、Antigravity：没有核对。Cursor 不开放。
+- Claude：压缩之前的历史不带上（要按原始条目自己接回，未做）；子 Agent 里面的消息不重放。
 - iPhone/iPad 的列表与预览不显示「未列出」的数量与「看不出是否在别处使用」；停止行没有「在新会话中继续」。
 
 ## 会话命令
@@ -1172,7 +1192,7 @@ Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别�
 | goose 的运行中追加 | 它的私有方法要 goose 自己的运行标识，也没有声明字段，未经真实核对 |
 | 按会话放行 OpenCode 访问其他文件夹 | 需要按会话改变 OpenCode 的配置并提高 profile 版本；2.x 的 ACP 字段尚未使用 |
 | Claude Agent 的其他文件夹（`additionalDirectories`） | Claude 访问会话目录以外的路径时逐次询问 |
-| ACP 的原生分叉（`session/fork`） | `session/fork` 只能分叉整个会话；Claude 适配器按某一条分叉只认另一个客户端的私有 `_meta`，`resumeSessionAt` 也不对客户端开放。pi 与 Codex 以外的分叉都用背景文本 |
+| ACP 的原生分叉（`session/fork`） | `session/fork` 只能分叉整个会话；Claude 适配器按某一条分叉只认另一个客户端的私有 `_meta`，`resumeSessionAt` 也不对客户端开放。pi、Codex 与 Claude 直连线以外的分叉都用背景文本 |
 | 「从这里编辑」原地回退 Harness 的上下文 | Codex 0.169 有 `thread/revert`，但 Latch 的会话记录是会话的权威，原地回退会让记录与 Harness 的记忆分开。编辑都从那一条之前分叉，原会话不动（[STREAMING.md](STREAMING.md#从这里编辑)） |
 | 编辑 Harness 的计划 | Claude、Cursor 的 ACP 都没有这个回答 |
 | 回答提问时附文件 | 没有哪个 Harness 的提问协议能收文件 |
@@ -1193,7 +1213,7 @@ Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别�
 | Cursor SDK 路线的项目其他文件夹、接入已有会话与分叉 | 没有接线：只给主文件夹，分叉用背景文本 |
 | Cursor SDK 路线在 Host 重启后恢复会话 | agent 的记录在会话私有临时目录，Host 停止时随运行目录删除；要放到数据目录还得接上删除会话时的清理 |
 | Cursor SDK 路线只读档里的 Latch MCP 服务器（技能、浏览器、桥） | 只读档不给 `mcp`，否则 MCP 工具不受只读约束 |
-| Claude Agent 第一轮前的额度 | 适配器只在每轮模型回答后的限额事件里报告；它的 `/usage` 要开一个 Claude 会话并发提示，Latch 不发 |
+| Claude 适配器路线第一轮前的额度 | 适配器只在每轮模型回答后的限额事件里报告；它的 `/usage` 要开一个 Claude 会话并发提示，Latch 不发。直连线见「Claude 的 Agent SDK 线」 |
 | Codex 按模型的额度桶 | 只显示套餐自己的桶 |
 | Cursor、OpenCode、Qwen Code、goose、pi 的额度 | 程序不报告；没有可用的官方接口与凭据，见「DeepSeek Harness 的余额」 |
 | DeepSeek Harness 用 DeepSeek 账号登录时的余额 | 没有文档化的余额接口 |

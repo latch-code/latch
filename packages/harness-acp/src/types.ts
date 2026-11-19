@@ -65,6 +65,12 @@ export interface AcpAgentOptions {
   }) => Promise<TokenUsage | undefined>
   /** How long `readTurnUsage` may take; past it, plus a second, the turn is recorded without tokens. Default 10 s. */
   turnUsageReadMs?: number
+  /**
+   * Claude's direct wire may read Claude Code's own store (`claude-store.ts`): its settings, its sessions to list and
+   * replay, forks of Latch's sessions and the deletion of their transcripts. The Host sets it from `cliStore`, which only
+   * the start script passes; left out, as in tests, nothing of Claude's on this computer is read or changed.
+   */
+  claudeStore?: boolean
 }
 
 export interface ResolvedOptions {
@@ -84,6 +90,7 @@ export interface ResolvedOptions {
   readQuota?: AcpAgentOptions['readQuota']
   readTurnUsage?: AcpAgentOptions['readTurnUsage']
   turnUsageReadMs: number
+  claudeStore: boolean
 }
 
 export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
@@ -94,6 +101,7 @@ export function resolveOptions(options: AcpAgentOptions = {}): ResolvedOptions {
   }
   return {
     requireConfirmedCommand: options.requireConfirmedCommand === true,
+    claudeStore: options.claudeStore === true,
     cancelGraceMs: pick(options.cancelGraceMs, 30_000),
     idleMs: pick(options.idleMs, 10 * 60_000),
     agentIdleMs: Math.max(pick(options.agentIdleMs, 30 * 60_000), pick(options.idleMs, 10 * 60_000)),

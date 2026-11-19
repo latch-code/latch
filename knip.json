@@ -65,7 +65,7 @@
     },
     "packages/harness-acp": {
       // Node runs the Cursor SDK runner by path (wires/cursor.ts), and its tests hand it the fake SDK by path.
-      "entry": ["src/cursor-runner.ts", "test/fixtures/*.mjs"]
+      "entry": ["src/cursor-runner.ts", "src/claude-store-runner.ts", "test/fixtures/*.mjs"]
     },
     "packages/protocol": {},
     "packages/sdk": {},

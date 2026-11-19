@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HarnessInfo } from '@latch/protocol'
-import { agentDeletionMessage, sessionDeletionMessage } from '../src/deletionCopy.ts'
+import { agentDeletionMessage, originalDeletion, sessionDeletionMessage } from '../src/deletionCopy.ts'
 
 const harnesses = [
   { id: 'standard', capabilities: { display: { label: '内置' }, models: { owner: 'latch' } } },
@@ -9,6 +9,26 @@ const harnesses = [
 ] as unknown as HarnessInfo[]
 
 describe('deletion wording', () => {
+  it('offers to delete an imported original only where its Harness can, and then says so with the choice alone', () => {
+    const withDelete = [
+      ...harnesses,
+      {
+        id: 'acp:claude',
+        capabilities: { display: { label: 'Claude Agent' }, models: { owner: 'harness' } },
+        history: { list: true, deleteOriginal: true },
+      },
+    ] as unknown as HarnessInfo[]
+    const imported = { harnessId: 'acp:claude', imported: { from: 'acp:claude', mode: 'native' } as never }
+    expect(originalDeletion(imported, withDelete)).toBe('同时删除 Claude Agent 里的原会话')
+    expect(sessionDeletionMessage([imported], withDelete, 'c')).not.toContain('原会话不会删除')
+    // Started in Latch, rebuilt as text, or on a Harness that cannot: no choice.
+    expect(originalDeletion({ harnessId: 'acp:claude' }, withDelete)).toBeUndefined()
+    expect(originalDeletion({ ...imported, imported: { from: 'acp:codex', mode: 'text' } as never }, withDelete)).toBeUndefined()
+    expect(
+      originalDeletion({ harnessId: 'acp:codex', imported: { from: 'acp:codex', mode: 'native' } as never }, withDelete),
+    ).toBeUndefined()
+  })
+
   it('says the built-in harness keeps nothing elsewhere, and never promises a recall from the model service', () => {
     const text = sessionDeletionMessage([{ harnessId: 'standard' }], harnesses, '计划')
     expect(text).toContain('删除「计划」在 Latch 里的对话、附件与改动快照。')

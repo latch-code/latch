@@ -1,4 +1,5 @@
-import { claudeErrorQuota, claudeUsageQuota } from '../quota.ts'
+import { QUOTA_READ_METHOD } from '../protocol.ts'
+import { claudeErrorQuota, claudeUsageQuota, claudeUsageRead } from '../quota.ts'
 import type { ModelRoute } from '@latch/sdk'
 import type { GatewayPlace, HarnessProfile, LoginCheck, SessionUpdate, ToolDenial } from './types.ts'
 
@@ -179,7 +180,7 @@ const CLAUDE_PERMISSION = {
   inheritEnv: ['CLAUDE_CONFIG_DIR'],
   notes: [
     '工作目录内的读取、只读命令等 Claude 不需要批准的调用不会出现在 Latch 的审批里',
-    '你在 Claude Code 设置里写的允许规则与 hooks 先于 Latch 生效，Latch 看不到',
+    '你在 Claude Code 设置里写的允许规则与 hooks 先于 Latch 生效',
     '自动模式下由 Claude 的分类器决定是否执行，不问你；计划模式下若自动模式可用，命令也可能由分类器决定',
     '项目的 .mcp.json 中的服务器会直接连接，不经询问',
   ],
@@ -250,6 +251,9 @@ export const claudeAgentProfile: HarnessProfile = {
     versionRule: { pattern: '^0\\.(?:99|[1-9]\\d{2,})\\.', message: 'Claude Agent 适配器需要 0.99 或之后的 0.x 版本' },
   },
   ...CLAUDE_SHARED,
+  // The adapter lists and replays Claude's sessions (0.101 checked 2026-11-19: `session/list`, `session/load`) and its
+  // `session/delete` deletes Claude's transcript. Claude keeps no writer lock, so a terminal may open the session later.
+  historyImport: { version: '^0\\.(?:99|[1-9]\\d{2,})\\.', useUnknown: true, deletes: true },
   // The adapter's `--cli` hands the rest to the Claude CLI it ships, the one its sessions use; it is how the date a
   // sign-in ends is known without reading the login.
   loginStatus: {
@@ -278,11 +282,17 @@ export const claudeProfile: HarnessProfile = {
     minimumVersion: { args: ['--version'], read: readClaudeVersion, minimum: CLAUDE_DIRECT_MINIMUM, upgrade: CLAUDE_UPGRADE },
   },
   catalogueRead: { when: 'request' },
+  // The wire lists, replays and deletes Claude's sessions itself through the SDK Latch pins, where the Host lets it read
+  // Claude's store (`cliStore`); an import goes on in the original session, as the terminal's `/resume` would.
+  historyImport: { useUnknown: true, deletes: true },
   // A new `query()` on a resumed session starts at Claude's default effort and the model `claude` resumes with, so what
   // the session showed is set again before the next prompt.
   resumeResetsOptions: true,
   permission: CLAUDE_PERMISSION,
   ...CLAUDE_SHARED,
+  // Each turn's limits as it reports them, and before the first turn Claude's own answer to its experimental `get_usage`
+  // on the session's process; never for someone looking, so a Claude without it changes nothing anyone sees.
+  quota: { ...CLAUDE_SHARED.quota, request: { method: QUOTA_READ_METHOD, read: claudeUsageRead, openOnly: true } },
   minimumVersion: { args: ['--version'], read: readClaudeVersion, minimum: CLAUDE_DIRECT_MINIMUM, upgrade: CLAUDE_UPGRADE },
   loginStatus: {
     expires: true,

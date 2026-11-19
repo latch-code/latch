@@ -162,6 +162,8 @@ export const SESSION_ACTIONS = {
    * external session only by its hash, never a title, a path or any content.
    */
   'history.list': z.strictObject({ harnessId: opaqueId, workspaceId: opaqueId }),
+  /** A person chose to delete an imported session's original in its harness's own record too, before it is asked. */
+  'history.original.deleted': z.strictObject({ sessionId: opaqueId, harnessId: opaqueId }),
   'history.preview': z.strictObject({ harnessId: opaqueId, workspaceId: opaqueId, agentSessionHash: hex64 }),
   'history.import': z.strictObject({
     /** The harness the session continues in; `from` is the one whose record it came from. */

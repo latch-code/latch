@@ -1,12 +1,12 @@
 import { SHELL_COPY } from './copy.ts'
 import { agentsOverview, OVERVIEW_ROWS } from '../agents/roster.ts'
-import { useLayoutEffect } from 'react'
+import { useLayoutEffect, useState, type ReactNode } from 'react'
 import { api, errorMessage, MessageError } from '../core/api.ts'
 import { ShellPalette } from '../palette/ShellPalette.tsx'
 import { ConfirmDialog, PromptDialog } from '../components/overlays.tsx'
 import { toolRowId } from '../conversation.ts'
-import { sessionDeletionMessage } from '../deletionCopy.ts'
-import { Button, Toast } from '@latch/ui'
+import { DELETION_COPY, originalDeletion, sessionDeletionMessage } from '../deletionCopy.ts'
+import { Button, Checkbox, Toast } from '@latch/ui'
 import { settingsSections } from '../settings/SettingsPage.tsx'
 import { ShortcutsOverlay } from './ShortcutsOverlay.tsx'
 import { UsageSurface } from '../usage/UsageSurface.tsx'
@@ -28,6 +28,50 @@ const COPY = defineCopy(
     delete: 'Delete',
   },
 )
+
+/**
+ * Deleting one session. An imported one whose Harness can delete its own record offers that too, off unless chosen for
+ * this deletion; the Host records the choice before it asks the Harness.
+ */
+function DeleteSessionDialog({
+  title,
+  message,
+  original,
+  onConfirm,
+  onClose,
+}: {
+  title: string
+  message: ReactNode
+  /** The choice's label, when there is one. */
+  original: string | undefined
+  onConfirm: (original: boolean) => Promise<void>
+  onClose: () => void
+}) {
+  const [chosen, setChosen] = useState(false)
+  return (
+    <ConfirmDialog
+      title={title}
+      danger
+      confirmLabel={COPY.delete}
+      message={message}
+      extra={
+        original ? (
+          <Checkbox
+            className="delete-original"
+            checked={chosen}
+            onChange={event => {
+              setChosen(event.currentTarget.checked)
+            }}
+            label={original}
+            description={DELETION_COPY.originalDetail}
+          />
+        ) : undefined
+      }
+      onClose={onClose}
+      onConfirm={() => onConfirm(original !== undefined && chosen)}
+    />
+  )
+}
 
 /**
  * Lifts the window's toast 12 above the composer while one is on screen and not covered, centred on it, so it never lies
@@ -215,17 +259,16 @@ export function Overlays({ shell }: { shell: ShellState }) {
         />
       )}
       {deleting && (
-        <ConfirmDialog
+        <DeleteSessionDialog
           title={SHELL_COPY.deleteSession}
-          danger
-          confirmLabel={COPY.delete}
           message={sessionDeletionMessage([deleting], snapshot.catalog?.harnesses ?? [], deleting.title || SHELL_COPY.untitled)}
+          original={originalDeletion(deleting, snapshot.catalog?.harnesses ?? [])}
           onClose={() => {
             setDeleting(null)
           }}
-          onConfirm={async () => {
+          onConfirm={async original => {
             try {
-              await api<unknown>(`tasks/${encodeURIComponent(deleting.id)}`, { method: 'DELETE' })
+              await api<unknown>(`tasks/${encodeURIComponent(deleting.id)}${original ? '?original=1' : ''}`, { method: 'DELETE' })
             } catch (cause) {
               throw new MessageError(errorMessage(cause))
             }

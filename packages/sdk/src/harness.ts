@@ -508,6 +508,11 @@ export interface HarnessDriver {
    * `loadExternalSession` and `adoptExternalSession`. Whether the running harness can list and load is learned at runtime.
    */
   historyImport?: true
+  /**
+   * With `historyImport`: deleting an imported session may also delete its original in the harness's own record, when the
+   * person asks for that one deletion (`Bridge.remove(…, { original: true })`).
+   */
+  historyDelete?: true
   /** `CreateTaskInput.seed` is honoured: a session can be recorded with no turn, waiting for its first message. */
   seededStart?: true
   /** Creates an unstarted instance; asynchronous initialization belongs to Bridge.start(). */

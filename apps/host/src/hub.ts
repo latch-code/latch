@@ -1309,14 +1309,22 @@ export class HarnessHub implements Bridge {
     }
   }
 
-  async remove(sessionId: string): Promise<void> {
+  /** Whether deleting this session can delete its original in its harness's own record too (`historyDelete`). */
+  async deletesOriginal(sessionId: string): Promise<boolean> {
+    const member = await this.route(sessionId)
+    return member.driver.historyImport === true && member.driver.historyDelete === true
+  }
+
+  async remove(sessionId: string, options: { original?: boolean } = {}): Promise<void> {
     const member = await this.route(sessionId)
     if (!member.bridge.remove) throw new AppError(409, 'delete-unsupported', `${member.driver.name} 不支持删除会话`)
+    if (options.original && !(member.driver.historyImport && member.driver.historyDelete))
+      throw new AppError(409, 'delete-original-unsupported', `${member.driver.name} 不能删除接入会话的原会话`)
     await this.readRunNow(member.bridge, sessionId)
     // Read before the driver and the metadata forget it.
     const projectId = await this.projectFor('sessionDeleted', member, sessionId)
     await this.options.beforeRemove?.(sessionId, this.agentPrivate(sessionId))
-    await member.bridge.remove(sessionId)
+    await member.bridge.remove(sessionId, options.original ? { original: true } : undefined)
     this.routes.delete(sessionId)
     // The session is already gone; a stale overlay entry is harmless, a reported failure would mislead.
     if (this.meta.has(sessionId)) await this.meta.remove(sessionId).catch(error => this.log(`会话设置清理失败：${message(error)}`))
@@ -1721,6 +1729,7 @@ export class HarnessHub implements Bridge {
             history: {
               ...(driver.historyImport ? { list: true as const } : {}),
               ...(driver.seededStart ? { rebuild: true as const } : {}),
+              ...(driver.historyImport && driver.historyDelete ? { deleteOriginal: true as const } : {}),
             },
           }
         : {}),

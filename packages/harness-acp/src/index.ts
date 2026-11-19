@@ -246,6 +246,7 @@ function agentFacts(
   presetId: string | undefined,
   profile: HarnessProfile | undefined,
   hostQuota = false,
+  claudeStore = false,
 ): HarnessCapabilities {
   const gateway = profile?.gateway
   return {
@@ -270,8 +271,10 @@ function agentFacts(
     permission: { enforcement: profile?.permission.approvals === 'prompts' ? 'harness' : 'none', rejectionNote: false },
     tools: { shell: true, fileMentions: true },
     display: { label: name, ...(isHarnessMark(presetId) ? { mark: presetId } : {}) },
-    // Its wire forks pi's own session files.
-    ...(profile?.wire === 'pi' || profile?.wire === 'codex' ? { fork: 'native' as const } : {}),
+    // Its wire forks pi's own session files, Codex's threads, or Claude's transcripts where the Host lets it.
+    ...(profile?.wire === 'pi' || profile?.wire === 'codex' || (profile?.wire === 'claude' && claudeStore)
+      ? { fork: 'native' as const }
+      : {}),
   }
 }
 
@@ -312,6 +315,17 @@ export function presetOffer(preset: AgentPreset): HarnessInfo {
   }
 }
 
+/**
+ * Whether the Host may bring in this harness's own sessions: its profile says so and its wire lists and loads (pi's
+ * answers neither); Claude's direct wire only where the Host lets it read Claude's store.
+ */
+function historyImport(profile: HarnessProfile | undefined, claudeStore: boolean): boolean {
+  return profile?.historyImport !== undefined && profile.wire !== 'pi' && (profile.wire !== 'claude' || claudeStore)
+}
+
+const historyRuleOf = (profile: HarnessProfile | undefined) =>
+  typeof profile?.historyImport === 'object' ? profile.historyImport : undefined
+
 /** Plugin `agent-<id>` contributing one ACP HarnessDriver whose id is the agent's id. Throws for a definition Latch refuses to run. */
 export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOptions = {}): HarnessPlugin {
   const validation = validateAgentDefinition(agent)
@@ -350,15 +364,16 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
         description,
         capabilities: {
           ...ACP_CAPABILITIES,
-          ...agentFacts(record.name, record.presetId, selectProfile(record).profile, limits.readQuota !== undefined),
+          ...agentFacts(record.name, record.presetId, selectProfile(record).profile, limits.readQuota !== undefined, limits.claudeStore),
         },
         agentContext: 'first-turn',
         ...skillsOf(record.presetId),
         extensionSupport: { reports, ...(plugins ? { plugins } : {}) },
         ...folderDeclaration(selectProfile(record).profile),
         ...permissionDeclaration(selectProfile(record).profile),
-        ...(selectProfile(record).profile?.historyImport && selectProfile(record).profile?.wire !== 'pi'
-          ? { historyImport: true as const }
+        ...(historyImport(selectProfile(record).profile, limits.claudeStore) ? { historyImport: true as const } : {}),
+        ...(historyImport(selectProfile(record).profile, limits.claudeStore) && historyRuleOf(selectProfile(record).profile)?.deletes
+          ? { historyDelete: true as const }
           : {}),
         seededStart: true,
         login: () => (retired ? undefined : harnessLogin(record)),

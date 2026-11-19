@@ -11,6 +11,7 @@ export function ConfirmDialog({
   message,
   confirmLabel,
   danger = false,
+  extra,
   onConfirm,
   onClose,
 }: {
@@ -18,6 +19,8 @@ export function ConfirmDialog({
   message: ReactNode
   confirmLabel: string
   danger?: boolean
+  /** Under the message: a choice that goes with this one confirmation, such as a checkbox. */
+  extra?: ReactNode
   onConfirm: () => Promise<void>
   onClose: () => void
 }) {
@@ -46,6 +49,7 @@ export function ConfirmDialog({
       <ModalHeader title={title} onClose={close} />
       <div className="ui-modal-body">
         <p className="ui-confirm-message">{message}</p>
+        {extra}
         {error && <InlineNotice tone="error">{error}</InlineNotice>}
       </div>
       <footer className="ui-modal-footer">

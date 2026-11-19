@@ -68,6 +68,7 @@ export const AUDIT_LABELS: Readonly<Record<AuditAction, readonly [AuditKind, str
   'history.list': ['sessions', '列出 Harness 的历史会话'],
   'history.preview': ['sessions', '预览历史会话'],
   'history.import': ['sessions', '接入历史会话'],
+  'history.original.deleted': ['sessions', '删除接入会话的原会话'],
   'task.cancelled': ['sessions', '停止运行'],
   'task.config.changed': ['sessions', '修改会话设置'],
   'task.mode.widened': ['sessions', '放宽会话权限'],

@@ -268,8 +268,11 @@ type ProfileGateway = {
 
 /** What bringing in this harness's sessions depends on, beyond the agent advertising `session/list` and `session/load`. */
 export interface HistoryImportRule {
-  /** A RegExp source over `initialize.agentInfo.version`: the versions whose listing and replay were read in its source. */
-  readonly version: string
+  /**
+   * A RegExp source over `initialize.agentInfo.version`: the versions whose listing and replay were read in its source.
+   * Absent: Latch's own wire lists and replays, through the SDK version Latch pins (Claude's direct wire).
+   */
+  readonly version?: string
   /**
    * Its `session/load` stores the `additionalDirectories` it is given as the session's own grants, so loading a session
    * that has some without the same list would rewrite it (OpenCode 2.x). Such a session is not listed, and its row is
@@ -281,6 +284,11 @@ export interface HistoryImportRule {
    * succeeds does not show the session is open nowhere else; a preview says so.
    */
   readonly useUnknown?: true
+  /**
+   * Its `session/delete` deletes the agent's own record of a session. The person may then choose, per deletion, to delete
+   * an imported session's original with it (off by default); the Host audits that choice first.
+   */
+  readonly deletes?: true
 }
 
 /** A command of the harness's own program that prints its limits and exits: no prompt, no model turn, no session. */
@@ -300,7 +308,15 @@ interface ProfileQuota {
   /** Reads the `data` of the error a failed turn ended with. */
   error?(data: unknown, now: number): QuotaReport | undefined
   /** An extension request the agent answers without a turn, sent on a process that runs a session. */
-  readonly request?: { readonly method: string; read(result: unknown, now: number): QuotaReport | undefined }
+  readonly request?: {
+    readonly method: string
+    read(result: unknown, now: number): QuotaReport | undefined
+    /**
+     * Asked only on a session's process (as it opens and as a turn ends), never for someone looking: an answer this
+     * harness may not give (an experimental request) then changes nothing anyone sees.
+     */
+    readonly openOnly?: true
+  }
   readonly command?: QuotaCommand
 }
 

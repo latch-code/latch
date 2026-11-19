@@ -74,6 +74,7 @@ const actionLabels: Readonly<Record<string, string>> = {
   'history.list': 'Listed Harness sessions',
   'history.preview': 'Previewed session history',
   'history.import': 'Imported session history',
+  'history.original.deleted': 'Deleted an imported session’s original',
   'task.cancelled': 'Stopped run',
   'task.config.changed': 'Changed session settings',
   'task.mode.widened': 'Widened session permissions',

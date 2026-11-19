@@ -376,7 +376,7 @@ Driver 上的其他声明：
 
 - `projectFolders: 'all'`：Driver 能用项目的全部文件夹。Host 新建会话时传 `workspaceId` 与 `folders`（有序，`[0]` 即 `cwd`），并在 `options.projects()` 列出可用项目。Driver 据此核对 `folders`、随会话保存，并在每次输入前确认它们仍属于该项目。没有声明的只收到主文件夹作为 `cwd`。
 - `folderAccess`：告诉客户端它怎样对待其他文件夹。声明了 `projectFolders: 'all'` 时写 `{ access: 'all', max? }`，项目文件夹数超过 `max` 时 Host 返回 409 `harness-folder-limit`；否则写 `primary`（默认）、`primary-asks` 或 `primary-unbounded`。没有声明 `projectFolders: 'all'` 的写 `all` 被忽略。
-- `agentContext`：见「Agent 上下文」。`historyImport`：见 [HARNESSES.md](HARNESSES.md#接入已有会话)。
+- `agentContext`：见「Agent 上下文」。`historyImport`、`historyDelete`：见 [HARNESSES.md](HARNESSES.md#接入已有会话) 与 [持久化与恢复](HARNESSES.md#持久化与恢复)。
 
 ### Host 给 Driver 的选项
 
@@ -424,7 +424,7 @@ ACP 的 `ToolGatewayCallContext.runId` 由 Driver 在收到工具调用时取自
 | `approvals` / `decide` | 只返回当前有效的审批；并发决定只有一个成功，`optionId` 必须属于该审批，旧审批或重复决定返回 `false`。`via` 记人在哪里决定；`note` 只随拒绝出现，权限回复不能带文字的 Driver 忽略它 |
 | `subscribe` | 状态变化时通知；带 `sessionId` 时 Host 合并通知并推送该会话 |
 | `liveRuns?` | 同步返回内存中活动的运行，开销只随活动运行数增长；Host 据此发现沉默，不提供就没有沉默通知 |
-| `remove?` | 删除已结束会话的数据；运行中 409 `task-running` |
+| `remove?` | 删除已结束会话的数据；运行中 409 `task-running`。`{ original: true }`：人为这一次删除选了连接入会话的原会话一起删（Driver 声明 `historyDelete`），Host 已先写审计 |
 | `warm?` | 在下一轮之前启动已结束会话的进程，像那一轮的绑定一样，不发提示。只在进程数低于自己的上限时做，从不为它停掉别的会话；会话忙时不做。`false` 表示什么都没启动（含失败） |
 | `setConfig?` | 从下一轮生效。`options.authorize()` 须在异步准备之后、实际外部修改之前同步调用，抛错即停。只在确定没改时用 409 `task-running` 或 `details.configOutcome`（`not-sent`、`refused`）拒绝；其他错误在回执之后都记为结果未知。模型选项的 `serviceChoice`／`ownChoice` 值让会话换路线，服务的路线由 Host 经 `options.route` 给出（[会话中换路线](MODEL-GATEWAY.md#会话中换路线)） |
 | `readConfig?` | 从 Agent 本身读一项的当前值，不用 Driver 记下的值，只在会话空闲时读，不改任何设置；读取期间拒绝这个会话的发送、追加与修改，并先结束收到未回答修改的进程。`source: 'launch'` 的选项是 Host 管理的启动设置，不能拿持久化值当读回 |

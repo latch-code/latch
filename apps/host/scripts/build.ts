@@ -28,6 +28,9 @@ await build({
     // The Cursor SDK route's runner (packages/harness-acp/src/wires/cursor.ts finds it in dist/harness/). It loads
     // @cursor/sdk at run time from the root's node_modules, never bundled.
     'harness/cursor-runner': 'packages/harness-acp/src/cursor-runner.ts',
+    // Claude's store reader (packages/harness-acp/src/claude-store.ts finds it in dist/harness/). It loads the Claude
+    // Agent SDK at run time from the root's node_modules, never bundled.
+    'harness/claude-store-runner': 'packages/harness-acp/src/claude-store-runner.ts',
   },
   outdir: 'dist',
   sourcemap: true,

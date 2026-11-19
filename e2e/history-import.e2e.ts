@@ -40,6 +40,7 @@ describe('接入已有会话 from the home', () => {
   let plainLog: string
   let historyFile: string
   let codexState: string
+  let claudeLog: string
 
   beforeAll(async () => {
     root = await realpath(await mkdtemp(join(tmpdir(), 'latch-e2e-history-')))
@@ -99,6 +100,28 @@ describe('接入已有会话 from the home', () => {
       body: { id: 'fake', name: 'Fake', command: process.execPath, args: [FAKE_ACP_AGENT], env: { FAKE_ACP_LOG: plainLog } },
     })
     expect(plain.status).toBe(201)
+    // The fake agent as Claude's adapter, whose `session/delete` deletes Claude's own transcript.
+    claudeLog = join(root, 'claude.log')
+    const claude = await owner.confirmed('agents', {
+      method: 'POST',
+      body: {
+        id: 'claude',
+        name: 'Claude Agent',
+        presetId: 'claude-agent',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: {
+          ...CODEX_ENV,
+          FAKE_ACP_VERSION: '0.101.0',
+          FAKE_ACP_MODES: 'default,acceptEdits,plan,bypassPermissions',
+          FAKE_ACP_INITIAL_MODE: 'default',
+          FAKE_ACP_STATE: join(root, 'claude-state.json'),
+          FAKE_ACP_LOG: claudeLog,
+          FAKE_ACP_HISTORY_FILE: history,
+        },
+      },
+    })
+    expect(claude.status).toBe(201)
     const added = await owner.addFolders({ name: 'Shop', paths: [main, other] })
     expect(added.status).toBe(201)
     projectId = ((await added.json()) as { workspace: { id: string } }).workspace.id
@@ -388,5 +411,97 @@ describe('接入已有会话 from the home', () => {
     await noHorizontalOverflow(page)
     await shot(page, 'imported-390-dark')
     await page.context().close()
+  })
+
+  it('lists Claude’s sessions and deletes one’s original only when chosen for that deletion', async () => {
+    await owner.json('preferences', { method: 'PUT', body: { defaults: { workspaceId: projectId, harnessId: 'claude' } } })
+    try {
+      for (const [width, theme] of [
+        [1440, 'light'],
+        [1440, 'dark'],
+        [390, 'light'],
+        [390, 'dark'],
+      ] as const) {
+        const page = await open(width, theme)
+        const dialog = width < 768 ? dialogOf(page) : await openEntry(page)
+        if (width < 768) {
+          await page.locator('.workbench-home').getByRole('button', { name: '接入已有会话', exact: true }).click()
+          await dialog.locator('.history-row').first().waitFor()
+        }
+        // The list is of one Harness at a time: Claude's.
+        const picker = dialog.locator('.history-scope').getByRole('button').first()
+        if (!(await picker.innerText()).includes('Claude Agent')) {
+          await picker.click()
+          await page
+            .getByRole('menuitemradio', { name: /Claude Agent/u })
+            .or(page.getByRole('radio', { name: /Claude Agent/u }))
+            .or(page.getByRole('option', { name: /Claude Agent/u }))
+            .first()
+            .click()
+        }
+        await expect.poll(() => picker.innerText()).toContain('Claude Agent')
+        await dialog.locator('.history-row').first().waitFor()
+        if (width < 768) await noHorizontalOverflow(page)
+        await expect.poll(() => rows(dialog).allTextContents(), { timeout: 15_000 }).toContain('Login bug [redacted]')
+        await shot(page, `claude-list-${width}-${theme}`)
+        await page.context().close()
+      }
+      const listed = await owner.json<HistoryList>('history/list', { method: 'POST', body: { projectId, harnessId: 'claude' } })
+      const imported = async (title: string) =>
+        (
+          await owner.json<HistoryImportResult>('history/imports', {
+            method: 'POST',
+            body: { requestId: randomUUID(), handle: listed.rows.find(item => item.title === title)!.handle },
+          })
+        ).taskId
+      const deletes = async () =>
+        (await readLog(claudeLog))
+          .filter(entry => entry.event === 'recv' && entry.method === 'session/delete')
+          .map(entry => entry.params?.sessionId)
+      const ask = async (page: Page, id: string, phone = false) => {
+        if (phone) {
+          // From the start screen back to the list, then into the session.
+          await page.goBack()
+          await page.locator(`.phone-list [data-task-id="${id}"]`).click()
+        } else await page.locator(`.sidebar [data-task-id="${id}"]`).click()
+        await page.locator('.topbar .topbar-title-button').click()
+        await page.getByRole('menu').locator('[data-label="删除"]').click()
+        return page.getByRole('dialog', { name: '删除会话', exact: true })
+      }
+      const first = await imported('Phone notes')
+      for (const [width, theme] of [
+        [1440, 'light'],
+        [1440, 'dark'],
+        [390, 'light'],
+        [390, 'dark'],
+      ] as const) {
+        const page = await open(width, theme)
+        const confirm = await ask(page, first, width < 768)
+        const choice = confirm.getByRole('checkbox', { name: '同时删除 Claude Agent 里的原会话' })
+        expect(await choice.isChecked()).toBe(false)
+        expect(await confirm.textContent()).not.toContain('原会话不会删除')
+        if (width < 768) await noHorizontalOverflow(page)
+        await shot(page, `delete-original-${width}-${theme}`)
+        await page.context().close()
+      }
+      // Kept unless chosen.
+      const page = await open(1440, 'light')
+      let confirm = await ask(page, first)
+      await confirm.getByRole('button', { name: '删除', exact: true }).click()
+      await confirm.waitFor({ state: 'detached' })
+      expect((await tasks()).some(task => task.id === first)).toBe(false)
+      await new Promise(resolve => setTimeout(resolve, 500))
+      expect(await deletes()).not.toContain('ext-phone')
+      // Chosen: Claude is asked to delete it.
+      const second = await imported('Rebuild me')
+      confirm = await ask(page, second)
+      await confirm.getByRole('checkbox', { name: '同时删除 Claude Agent 里的原会话' }).check()
+      await confirm.getByRole('button', { name: '删除', exact: true }).click()
+      await confirm.waitFor({ state: 'detached' })
+      await expect.poll(deletes, { timeout: 10_000 }).toContain('ext-rebuild')
+      await page.context().close()
+    } finally {
+      await owner.json('preferences', { method: 'PUT', body: { defaults: { workspaceId: projectId, harnessId: 'codex' } } })
+    }
   })
 })

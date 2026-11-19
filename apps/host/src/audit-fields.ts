@@ -212,6 +212,7 @@ export const AUDIT_FIELDS: AuditFieldTable = {
     taskId: 'short',
   },
   'history.list': { harnessId: 'short', workspaceId: 'short' },
+  'history.original.deleted': { sessionId: 'short', harnessId: 'short' },
   'history.preview': { harnessId: 'short', workspaceId: 'short', agentSessionHash: 'short' },
   'host.started': { hostId: 'short', version: 'short', policyHash: 'short', settingsHash: 'short', devMode: 'show' },
   'host.update-window': { state: 'show', reason: 'show', busy: 'show', planned: 'show' },

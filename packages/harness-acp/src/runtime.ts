@@ -46,9 +46,11 @@ import {
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
+import { z } from 'zod'
 import { CommandCache, commandDirectory, commandDirectoryNow, commandScope, type CommandCacheEntry } from './command-cache.ts'
 import { beginHarnessSteer, harnessPromptSource } from './prompt-source.ts'
 import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type {
@@ -146,6 +148,7 @@ import { openWire, wireLaunch } from './wires/index.ts'
 import { ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './wires/process.ts'
 import { ForkRefused, type AgentWire } from './wires/types.ts'
 import { agentEnvironment, programPaths } from './environment.ts'
+import { loginShellValues } from './login-shell.ts'
 import {
   append,
   blockText,
@@ -973,6 +976,8 @@ export class AgentRuntime implements Bridge {
   private readonly routeChanges = new Map<string, { authorize?: () => void; carry?: true; done: Promise<void> }>()
   /** How many times each session's agent has reported its options, from a response or a notification. */
   private readonly configReports = new Map<string, number>()
+  /** Per session, what the harness's own settings do that its approvals do not show, as its process last said. */
+  private readonly settingsNotes = new Map<string, string[]>()
   /** Tasks whose ACP session is being set up and first checked; mode reports then are its starting point, not drift. */
   private readonly quiet = new Map<string, number>()
   /** Mode changes Latch has requested per task and not yet seen answered. */
@@ -1700,7 +1705,8 @@ export class AgentRuntime implements Bridge {
 
   /** Whether this harness reports its own MCP servers over its protocol: Codex's app-server does; ACP does not. */
   private reportsOwnMcp(): boolean {
-    return this.selection.profile?.wire === 'codex'
+    // Codex's app-server, and Claude's SDK (`mcpServerStatus`) on its direct wire.
+    return this.selection.profile?.wire === 'codex' || this.selection.profile?.wire === 'claude'
   }
 
   /** Its own MCP servers as it last reported them for its current definition; undefined when it never reports them. */
@@ -1789,7 +1795,7 @@ export class AgentRuntime implements Bridge {
    */
   private quotaLookRoute(): 'request' | 'command' | 'host' | undefined {
     const profile = this.selection.profile
-    if (profile?.wire === 'codex' || profile?.quota?.request) return 'request'
+    if (profile?.wire === 'codex' || (profile?.quota?.request && !profile.quota.request.openOnly)) return 'request'
     if (profile?.quota?.command) return 'command'
     return this.limits.readQuota ? 'host' : undefined
   }
@@ -2037,8 +2043,10 @@ export class AgentRuntime implements Bridge {
 
   private assertHistoryImport(): void {
     const profile = this.selection.profile
-    // pi's wire answers no session/list or session/load; ACP and Codex's app-server do.
-    if (!profile?.historyImport || profile.wire === 'pi') throw historyNotSupported(this.agent.name)
+    // pi's wire answers no session/list or session/load; ACP and Codex's app-server do. Claude's direct wire reads
+    // Claude's store only where the Host lets it.
+    if (!profile?.historyImport || profile.wire === 'pi' || (profile.wire === 'claude' && !this.limits.claudeStore))
+      throw historyNotSupported(this.agent.name)
   }
 
   /** The profile's own conditions on bringing sessions in, when it has any. */
@@ -2051,7 +2059,7 @@ export class AgentRuntime implements Bridge {
   private assertHistoryProcess(live: Live): void {
     if (!live.capabilities.list || !live.capabilities.load) throw historyNotSupported(this.agent.name)
     const rule = this.historyRule()
-    if (rule && !(live.agentVersion && new RegExp(rule.version, 'u').test(live.agentVersion)))
+    if (rule?.version !== undefined && !(live.agentVersion && new RegExp(rule.version, 'u').test(live.agentVersion)))
       throw historyVersionUnchecked(this.agent.name, live.agentVersion && clip(this.redact(live.agentVersion), 64))
   }
 
@@ -2271,6 +2279,18 @@ export class AgentRuntime implements Bridge {
    * import is refused, never doubled. A reinstall to another path is another key.
    */
   historyStore(): string {
+    // Claude keeps its sessions in its configuration directory, which the adapter and the direct wire read alike: one
+    // store for both routes, wherever the variable that names it comes from (as `agentEnvironment` takes it).
+    if (this.selection.profile?.presetId === 'claude-agent') {
+      const named = process.env.CLAUDE_CONFIG_DIR || loginShellValues().CLAUDE_CONFIG_DIR
+      let place = named || join(homedir(), '.claude')
+      try {
+        place = realpathSync(place)
+      } catch {
+        /* A directory not made yet keeps its name. */
+      }
+      return `claude-config:${sha256Hex(place)}`
+    }
     const command = resolveCommand(this.agent.command) ?? this.agent.command
     let resolved = command
     try {
@@ -3270,7 +3290,11 @@ export class AgentRuntime implements Bridge {
     }
   }
 
-  async remove(sessionId: string): Promise<void> {
+  /**
+   * `original`: the session was brought in from the harness's own record, and the person chose to delete that record
+   * too; the Host audited the choice before asking. Otherwise an imported session's original stays.
+   */
+  async remove(sessionId: string, options: { original?: boolean } = {}): Promise<void> {
     await this.ready()
     // A move to another route settles first (done or put back), so that nothing writes to a removed session.
     for (let move = this.routeChanges.get(sessionId); move; move = this.routeChanges.get(sessionId)) await move.done
@@ -3300,15 +3324,39 @@ export class AgentRuntime implements Bridge {
     this.stray.delete(sessionId)
     this.unconfirmed.delete(sessionId)
     this.configReports.delete(sessionId)
+    this.settingsNotes.delete(sessionId)
     this.mark()
     await this.flush()
     this.notify(sessionId)
-    // A session brought in from the agent's own record stays the agent's: only those Latch opened after it go.
-    const kept = task.acp.imported?.agentSessionId
+    // A session brought in from the agent's own record stays the agent's unless the person chose otherwise: only those
+    // Latch opened after it go.
+    const original = options.original === true && this.deletesOriginal()
+    const kept = original ? undefined : task.acp.imported?.agentSessionId
     const agentSessionIds = (acpSessionId === undefined ? earlierSessionIds : [...earlierSessionIds, acpSessionId]).filter(
       id => id !== kept,
     )
-    this.forget(sessionId, agentSessionIds, cwd, deletable === true, confirmedOf(recorded.acp), () => this.stillListed(recorded))
+    // Deletable as recorded at its start, or by the harness alone: Claude's direct wire deletes without starting
+    // anything, so its sessions recorded before it could are deleted too; a chosen original is asked of a process that
+    // says it can.
+    this.forget(
+      sessionId,
+      agentSessionIds,
+      cwd,
+      deletable === true || this.deletesWithoutStart() || (original && task.acp.imported !== undefined),
+      confirmedOf(recorded.acp),
+      () => this.stillListed(recorded),
+    )
+  }
+
+  /** Claude's direct wire, allowed to read its store: it deletes a session's record in a reader process, not in `claude`. */
+  private deletesWithoutStart(): boolean {
+    return this.selection.profile?.wire === 'claude' && this.limits.claudeStore
+  }
+
+  /** An imported session's original can be deleted with it, on request (`HistoryImportRule.deletes`). */
+  deletesOriginal(): boolean {
+    const rule = this.historyRule()
+    return rule?.deletes === true && (this.selection.profile?.wire !== 'claude' || this.limits.claudeStore)
   }
 
   async classifyConfigChange(sessionId: string, configId: string, value: string): Promise<ConfigChangeClass> {
@@ -4845,12 +4893,12 @@ export class AgentRuntime implements Bridge {
       ...(this.profile?.modeTiers ? { modeTiers: structuredClone(this.profile.modeTiers) } : {}),
       ...(this.profile?.modeGlyphs ? { modeGlyphs: structuredClone(this.profile.modeGlyphs) } : {}),
       ...(task.acp.drift ? { drift: task.acp.drift } : {}),
-      notes: this.permissionNotes(),
+      notes: this.permissionNotes(task),
     }
   }
 
-  private permissionNotes(): string[] {
-    return [...(this.profile?.notes ?? []), ...(this.selection.notes ?? [])]
+  private permissionNotes(task: AcpTask): string[] {
+    return [...(this.profile?.notes ?? []), ...(this.selection.notes ?? []), ...(this.settingsNotes.get(task.summary.id) ?? [])]
   }
 
   /**
@@ -5452,7 +5500,10 @@ export class AgentRuntime implements Bridge {
       }
       if (error.code === RPC.notFound) {
         if (run.live && run.acpSessionId) run.live.sessions.delete(run.acpSessionId)
-        notes.push(`${this.agent.name} 找不到这个会话，请新建会话。`)
+        // A wire that knows why says so (Claude's direct wire: its record was cleaned up).
+        const lost = isObject(error.data) ? (error.data as { lostReason?: unknown }).lostReason : undefined
+        const why = typeof lost === 'string' ? clip(this.redact(lost), 300) : ''
+        notes.push(why ? `${this.agent.name} 找不到这个会话：${why}。请新建会话。` : `${this.agent.name} 找不到这个会话，请新建会话。`)
         return 'failed'
       }
       if (run.live && !this.state.tasks[run.taskId]?.acp.route)
@@ -5879,19 +5930,22 @@ export class AgentRuntime implements Bridge {
           notification: (method, params) => this.onNotification(live, method, params),
           exit: info => this.onExit(live, info),
         },
-        gateway
-          ? {
-              route: {
-                model: selectedModel!,
-                models: gateway.models,
-                modelCapabilities: gateway.modelCapabilities,
-                setThinking: gateway.setThinking,
-                ...(this.selection.profile?.wire === 'codex' && savedEffort
-                  ? { effort: savedEffort === GATEWAY_DEFAULT_EFFORT ? null : savedEffort }
-                  : {}),
-              },
-            }
-          : {},
+        {
+          ...(gateway
+            ? {
+                route: {
+                  model: selectedModel!,
+                  models: gateway.models,
+                  modelCapabilities: gateway.modelCapabilities,
+                  setThinking: gateway.setThinking,
+                  ...(this.selection.profile?.wire === 'codex' && savedEffort
+                    ? { effort: savedEffort === GATEWAY_DEFAULT_EFFORT ? null : savedEffort }
+                    : {}),
+                },
+              }
+            : {}),
+          ...(this.limits.claudeStore ? { claudeStore: true } : {}),
+        },
       )
     } catch (error) {
       gateway?.close()
@@ -6378,6 +6432,15 @@ export class AgentRuntime implements Bridge {
     }
     target.acp.deletable = live.capabilities.delete
     if (live.agentVersion) target.acp.agentVersion = live.agentVersion
+    // What the harness's own settings do that Latch's approvals do not show (Claude's direct wire reads them).
+    const said = z.object({ _meta: z.object({ latch: z.object({ permissionNotes: z.array(z.string()).max(20) }) }) }).safeParse(result).data
+      ?._meta.latch.permissionNotes
+    if (said?.length)
+      this.settingsNotes.set(
+        taskId,
+        said.map(note => clip(this.redact(note), 600)),
+      )
+    else this.settingsNotes.delete(taskId)
     const parsed = sessionState.safeParse(result)
     const folded = parsed.success ? foldConfig(parsed.data) : undefined
     if (folded || live.processModes?.has(acpSessionId)) {
@@ -6843,8 +6906,8 @@ export class AgentRuntime implements Bridge {
         )
           return
         // Agents can run code from their working directory, and the other folders they receive, at start-up; a project
-        // the owner removed, or one that lost a session's folder, gets none.
-        if (!live && !(await listed())) {
+        // the owner removed, or one that lost a session's folder, gets none. Claude's direct wire starts nothing to delete.
+        if (!live && !this.deletesWithoutStart() && !(await listed())) {
           this.limits.log(
             `已删除 ${this.agent.name} 会话在 Latch 中的记录。该会话使用的文件夹已不在 Host 的项目列表中，未启动 ${this.agent.name} 删除它自己保存的会话副本。`,
           )

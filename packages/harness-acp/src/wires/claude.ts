@@ -6,15 +6,29 @@
  * on either route.
  *
  * The SDK spawns `claude` through this wire's `spawnClaudeCodeProcess`: Latch's own process handling (`process.ts`), its
- * own process group, the environment the runtime built and nothing of the Host's. Latch never reads Claude's settings,
- * transcripts or login: the CLI reads them itself, as it would in a terminal.
+ * own process group, the environment the runtime built and nothing of the Host's. Claude's login is never read. When the
+ * Host lets it (`store`, from `cliStore`), the wire reads Claude's own store through `claude-store.ts`, in a process with
+ * the session's environment: the settings that shape the mode menu, its sessions to list, replay and delete, and the
+ * forks of Latch's own sessions; without it, nothing of Claude's is read.
  */
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { z } from 'zod'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { clip, TOOL_TEXT_LIMIT } from '../mapping.ts'
-import { AUTH_STATUS_METHOD, commandsUpdate, RPC, RpcError, type TurnTokens } from '../protocol.ts'
+import { ClaudeStore, type ClaudeSettings } from '../claude-store.ts'
+import { CAPTURE_BYTES } from '../history.ts'
+import {
+  AUTH_STATUS_METHOD,
+  commandsUpdate,
+  FORK_METHOD,
+  MCP_STATUS_METHOD,
+  MCP_STATUS_UPDATE,
+  QUOTA_READ_METHOD,
+  RPC,
+  RpcError,
+  type TurnTokens,
+} from '../protocol.ts'
 import { ELICITATION_METHOD } from '../questions.ts'
 import { decide, normalizeChangeSet, OPTION, permissionOptions, type AskContext } from './claude-permissions.ts'
 import {
@@ -31,8 +45,9 @@ import {
   toolFacts,
   type TaskList,
 } from './claude-tools.ts'
+import { replayUpdates } from './claude-history.ts'
 import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
-import type { AgentWire, WireHandlers, WireModelRoute } from './types.ts'
+import { ForkRefused, type AgentWire, type PromptContext, type WireHandlers, type WireModelRoute } from './types.ts'
 
 /** The parts of the SDK this wire uses, so tests can drive it without the CLI. */
 export interface ClaudeQuery extends AsyncIterable<unknown> {
@@ -44,6 +59,10 @@ export interface ClaudeQuery extends AsyncIterable<unknown> {
   supportedCommands(): Promise<unknown[]>
   getContextUsage(): Promise<unknown>
   stopTask(taskId: string): Promise<void>
+  /** Each MCP server of the session and its state. */
+  mcpServerStatus?(): Promise<unknown[]>
+  /** Claude Code's experimental `get_usage` (SDK 0.3.322, not in its types): the plan's windows, asked of Claude itself. */
+  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?(options: { skipBehaviors?: boolean }): Promise<unknown>
   close(): void
 }
 
@@ -97,6 +116,31 @@ const MAX_REMEMBERED = 2_000
 const SDK_ENV = /^CLAUDE_(?:AGENT_SDK_|CODE_)/u
 /** The tools that start a subagent. */
 const AGENT_TOOLS = new Set(['Agent', 'Task'])
+/** How long a session's start waits for Claude's settings; past it the session starts as if none were read. */
+const SETTINGS_TIMEOUT_MS = 5_000
+const SETTINGS_TTL_MS = 30_000
+/** After Claude says it is idle again, how long a turn without its result waits before it ends without one. */
+const IDLE_SETTLE_MS = 1_500
+/** One page of `session/list`. */
+const LIST_PAGE = 100
+/** Claude Code's effort levels, lowest first: a cap in its settings (`maxEffortLevel`) leaves out those above it. */
+const EFFORT_ORDER = ['low', 'medium', 'high', 'xhigh', 'max']
+/** Claude's MCP states, as Latch names them (`ownMcpStatus`). */
+const MCP_STATES: Readonly<Record<string, string>> = {
+  connected: 'ready',
+  failed: 'failed',
+  'needs-auth': 'needs-login',
+  pending: 'starting',
+  disabled: 'disabled',
+}
+/** The settings layers, as a person reads them. */
+const LAYERS: Readonly<Record<string, string>> = {
+  user: '用户设置',
+  project: '项目设置',
+  local: '项目本地设置',
+  managed: '组织托管设置',
+  flag: '启动参数',
+}
 /** The adapter's labels for a non-firstParty backend (`auth-status.js`). */
 const EXTERNAL_PROVIDERS: Readonly<Record<string, string>> = {
   bedrock: 'AWS Bedrock',
@@ -150,6 +194,14 @@ const promptParams = z.object({
   ),
 })
 const optionParams = z.object({ sessionId: text, configId: text, value: text.max(1024) })
+const forkParams = z.object({ sessionId: text, cwd: text, through: text.optional() })
+const listParams = z.object({ cursor: text.max(64).nullish(), cwd: text.nullish() })
+const mcpStatus = z.object({
+  name: text.min(1).max(1024),
+  status: text.max(64),
+  scope: text.max(64).optional().catch(undefined),
+  tools: z.array(z.unknown()).optional().catch(undefined),
+})
 const nameValue = z.array(z.object({ name: text, value: text }))
 const mcpServer = z.union([
   z.object({ type: z.enum(['http', 'sse']), name: text.min(1), url: text, headers: nameValue.optional() }),
@@ -200,6 +252,44 @@ function loginOf(account: unknown): { kind: string; label: string } | undefined 
   return { kind: 'account', label: clip(/^claude(\s|$)/iu.test(plan!) ? titled : `Claude ${titled}`, 80) }
 }
 
+/**
+ * What Claude's own settings do to a session that Latch cannot see in its approvals, as display-only notes: the rules
+ * that let calls through without asking and where each is written, hooks, an organization's policy, and the mode the
+ * settings name, which Latch never starts in (it starts every session asking).
+ */
+function settingsNotes(settings: ClaudeSettings | undefined): string[] {
+  if (!settings) return []
+  const notes: string[] = []
+  if (settings.allow.length) {
+    const shown = settings.allow.slice(0, 8).map(item => `${item.rule}（${LAYERS[item.source] ?? item.source}）`)
+    const more = settings.allow.length > shown.length ? ` 等 ${settings.allow.length} 条` : ''
+    notes.push(`Claude 设置里自动允许：${shown.join('、')}${more}`)
+  }
+  if (settings.hooks) notes.push('Claude 设置里有 hooks，它们先于 Latch 运行')
+  if (settings.managed) notes.push('这台电脑有 Claude 的组织托管设置，优先于你的设置')
+  if (settings.startMode && settings.startMode !== 'default')
+    notes.push(`Claude 设置的默认模式是 ${settings.startMode}；Latch 仍从「询问」开始`)
+  if (settings.disableBypass) notes.push('Claude 设置禁用了「不再询问」模式')
+  if (settings.disableAuto) notes.push('Claude 设置禁用了自动模式')
+  return notes
+}
+
+/**
+ * What in Claude's settings may keep a session on Latch's model service from working as it should, said before its
+ * first turn: an organization's key helper or model list (they rank above the settings Latch passes), and an effort cap.
+ */
+export function routeWarnings(settings: ClaudeSettings | undefined, route: WireModelRoute | undefined): string[] {
+  if (!settings) return []
+  const warnings: string[] = []
+  if (route) {
+    if (settings.managedKeyHelper) warnings.push('组织托管设置指定了密钥脚本（apiKeyHelper），经 Latch 的模型服务可能不生效')
+    if (settings.managedModels && !settings.managedModels.includes(route.model))
+      warnings.push(`组织托管设置限定了可用模型，${clip(route.model, 200)} 不在其中，Claude 可能拒绝`)
+  } else if (settings.ownEndpoint) warnings.push('Claude 设置里配置了自己的模型端点（ANTHROPIC_BASE_URL），这个会话的请求发往那里')
+  if (settings.configDirInSettings) warnings.push('Claude 设置里写了 CLAUDE_CONFIG_DIR，Latch 读到的记录可能不是 Claude 正在用的那份')
+  return warnings
+}
+
 /** Input the SDK reads as the session's prompts; `end` lets `claude` finish once it has read the last one. */
 class Inbox implements AsyncIterable<unknown> {
   private items: unknown[] = []
@@ -241,6 +331,8 @@ class Inbox implements AsyncIterable<unknown> {
 /** The prompt being run, answered once its result came and, after a cancel, once `claude` acknowledged the interrupt. */
 interface Turn {
   uuid: string
+  /** Claude said it is running since this turn was sent (`session_state_changed`). */
+  running?: boolean
   resolve(result: unknown): void
   reject(error: Error): void
   cancelled: boolean
@@ -305,6 +397,14 @@ interface Session {
   opened: boolean
   /** Closed by Latch (`session/close`, another session): its process ending is not the wire's. */
   closing: boolean
+  /** What Claude's settings said as the session started; undefined when they were not read. */
+  settings?: ClaudeSettings
+  /** Warnings said before the first turn, once. */
+  warnings: string[]
+  /** The MCP servers Latch gave the session, which are not Claude's own. */
+  given: Set<string>
+  /** Prompt IDs sent on this session: one is never sent twice. */
+  sent: Map<string, true>
 }
 
 const remember = <K, V>(map: Map<K, V>, key: K, value: V) => {
@@ -341,6 +441,11 @@ class SpawnedClaude extends EventEmitter {
 
 export interface ClaudeWireDeps {
   query?: ClaudeQueryFunction
+  /**
+   * The Host lets this wire read Claude's own store (`ServerOptions.cliStore`): its settings, its sessions and their
+   * forks and deletion. Without it the wire advertises none of that and reads nothing of Claude's.
+   */
+  store?: boolean
 }
 
 export class ClaudeWire implements AgentWire {
@@ -354,6 +459,9 @@ export class ClaudeWire implements AgentWire {
   /** The client shows form questions (`clientCapabilities.elicitation.form`): Claude's questions are put to the person. */
   private asks = false
   private lastLogin?: string
+  /** Claude's own store, when the Host lets this wire read it. */
+  private readonly store?: ClaudeStore
+  private settingsRead?: { cwd: string; at: number; read: Promise<ClaudeSettings | undefined> }
 
   private constructor(
     private readonly spec: SpawnSpec,
@@ -362,6 +470,7 @@ export class ClaudeWire implements AgentWire {
     private readonly deps: ClaudeWireDeps,
   ) {
     claudeArgs(spec.args)
+    if (deps.store) this.store = new ClaudeStore(spec.env)
     this.exited = new Promise(resolve => {
       this.resolveExited = resolve
     })
@@ -379,7 +488,19 @@ export class ClaudeWire implements AgentWire {
     return this.info !== undefined || this.stopReason !== undefined
   }
 
-  async request(method: string, params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+  /** It forks Claude's own record of a session (`FORK_METHOD`), only when it may read and write Claude's store. */
+  get forks(): true | undefined {
+    return this.store ? true : undefined
+  }
+
+  async request(
+    method: string,
+    params: unknown,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+    _onResult?: (result: unknown) => void,
+    context?: PromptContext,
+  ): Promise<unknown> {
     if (this.info) throw new ConnectionClosed(this.info)
     if (this.stopping) throw new ConnectionStopping()
     if (signal?.aborted) throw new RpcError(RPC.cancelled, 'Request cancelled')
@@ -387,13 +508,14 @@ export class ClaudeWire implements AgentWire {
       case 'initialize': {
         const client = isRecord(params) && isRecord(params.clientCapabilities) ? params.clientCapabilities : {}
         this.asks = isRecord(client.elicitation) && client.elicitation.form != null
+        const store = this.store !== undefined
         return {
           protocolVersion: 1,
           agentInfo: { name: 'claude-code' },
           agentCapabilities: {
-            loadSession: false,
+            loadSession: store,
             promptCapabilities: { image: true, embeddedContext: true },
-            sessionCapabilities: { resume: {}, close: {} },
+            sessionCapabilities: { resume: {}, close: {}, ...(store ? { list: {}, delete: {} } : {}) },
             _meta: { authStatus: {} },
           },
         }
@@ -405,13 +527,25 @@ export class ClaudeWire implements AgentWire {
         if (!id || !UUID.test(id)) throw new RpcError(RPC.notFound, 'Session not found')
         return this.bounded(this.open(id, params), method, timeoutMs, signal)
       }
+      case 'session/load':
+        return this.bounded(this.load(params, signal), method, timeoutMs, signal)
+      case 'session/list':
+        return this.bounded(this.list(params, signal), method, timeoutMs, signal)
+      case 'session/delete':
+        return this.bounded(this.remove(params, signal), method, timeoutMs, signal)
+      case FORK_METHOD:
+        return this.bounded(this.fork(params, signal), method, timeoutMs, signal)
+      case QUOTA_READ_METHOD:
+        return this.bounded(this.usage(), method, timeoutMs, signal)
+      case MCP_STATUS_METHOD:
+        return this.bounded(this.mcpStatus(params), method, timeoutMs, signal)
       case 'session/close': {
         const id = isRecord(params) ? params.sessionId : undefined
         if (this.session && this.session.id === id) await this.closeSession(this.session)
         return {}
       }
       case 'session/prompt':
-        return this.prompt(params)
+        return this.prompt(params, context)
       case 'session/set_config_option':
         return this.bounded(this.setOption(params), method, timeoutMs, signal)
       default:
@@ -536,6 +670,8 @@ export class ClaudeWire implements AgentWire {
     parsed: z.infer<typeof sessionParams>,
     session: Partial<Session>,
     abort: AbortController,
+    claudeSettings: ClaudeSettings | undefined,
+    ephemeral: boolean,
   ) {
     const mcpServers: Record<string, unknown> = {}
     for (const server of parsed.mcpServers) {
@@ -561,8 +697,9 @@ export class ClaudeWire implements AgentWire {
     const settings = isRecord(meta.settings) ? meta.settings : undefined
     return {
       cwd: parsed.cwd,
-      // The runtime's environment, never the Host's: the SDK otherwise starts from `process.env`.
-      env: { ...this.spec.env },
+      // The runtime's environment, never the Host's: the SDK otherwise starts from `process.env`. Claude says when a turn
+      // is over (`session_state_changed`), as it does for the adapter.
+      env: { ...this.spec.env, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1' },
       // The person's own; no `executableArgs`, which the SDK puts before the native binary's own arguments too.
       pathToClaudeCodeExecutable: this.spec.command,
       spawnClaudeCodeProcess: this.spawnFor(session, info => this.onProcessExit(session as Session, info)),
@@ -578,21 +715,54 @@ export class ClaudeWire implements AgentWire {
       includePartialMessages: true,
       // Claude Code's own default; the runtime sets the mode it recorded for the session before each turn.
       permissionMode: 'default',
-      // As the adapter: switching to it later needs the flag at start; root outside a sandbox is refused by the CLI.
-      allowDangerouslySkipPermissions: process.getuid?.() !== 0,
+      // As the adapter: switching to it later needs the flag at start; root outside a sandbox is refused by the CLI, and
+      // settings that disable the mode leave it off.
+      allowDangerouslySkipPermissions: process.getuid?.() !== 0 && claudeSettings?.disableBypass !== true,
       canUseTool: (tool: string, input: Record<string, unknown>, context: AskOptions) =>
         this.canUseTool(session as Session, tool, input, context),
       ...(parsed.additionalDirectories?.length ? { additionalDirectories: parsed.additionalDirectories } : {}),
+      // A session opened only to read what it offers leaves no transcript behind.
+      ...(ephemeral ? { persistSession: false } : {}),
       ...(resume ? { resume } : { sessionId: id }),
     }
   }
 
-  private async open(resume: string | undefined, params: unknown): Promise<unknown> {
+  /**
+   * Claude's settings for a session in `cwd`, when the wire may read them, read again after a short while; a read that
+   * fails or is slow says nothing.
+   */
+  private readSettings(cwd: string): Promise<ClaudeSettings | undefined> {
+    if (!this.store || !cwd.startsWith('/')) return Promise.resolve(undefined)
+    const held = this.settingsRead
+    if (held && held.cwd === cwd && Date.now() - held.at < SETTINGS_TTL_MS) return held.read
+    const read = this.withTimeout(this.store.settings(cwd), SETTINGS_TIMEOUT_MS).catch(() => undefined)
+    this.settingsRead = { cwd, at: Date.now(), read }
+    return read
+  }
+
+  /**
+   * Before a session is resumed: whether Claude still has its record. Claude deletes a session's transcript once it has
+   * been idle longer than `cleanupPeriodDays` (30 by default), so a long-idle session says that, instead of starting
+   * `claude` to be told it found nothing. A read that fails says nothing either way.
+   */
+  private async assertRecord(id: string, cwd: string, settings: ClaudeSettings | undefined): Promise<void> {
+    if (!this.store) return
+    const found = await this.withTimeout(this.store.info(id, cwd), SETTINGS_TIMEOUT_MS).catch(() => undefined)
+    if (found?.exists !== false) return
+    const days = settings?.cleanupPeriodDays ?? 30
+    throw new RpcError(RPC.notFound, 'Session not found', {
+      lostReason: `Claude 的记录里已经没有这个会话（Claude 会删除超过 ${days} 天未用的会话）`,
+    })
+  }
+
+  private async open(resume: string | undefined, params: unknown, ephemeral = false): Promise<unknown> {
     const parsed = sessionParams.safeParse(params)
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     if (this.turn) throw new RpcError(RPC.internal, 'A turn is already running')
     // One `claude` per session: another session's ends first.
     if (this.session) await this.closeSession(this.session)
+    const settings = await this.readSettings(parsed.data.cwd)
+    if (resume) await this.assertRecord(resume, parsed.data.cwd, settings)
     const id = resume ?? randomUUID()
     const inbox = new Inbox()
     const abort = new AbortController()
@@ -602,7 +772,10 @@ export class ClaudeWire implements AgentWire {
     const marker = process.env.CLAUDE_AGENT_SDK_VERSION
     let query: ClaudeQuery
     try {
-      query = start({ prompt: inbox, options: this.queryOptions(resume, id, parsed.data, partial, abort) })
+      query = start({
+        prompt: inbox,
+        options: this.queryOptions(resume, id, parsed.data, partial, abort, settings, ephemeral),
+      })
     } finally {
       if (marker === undefined) delete process.env.CLAUDE_AGENT_SDK_VERSION
       else process.env.CLAUDE_AGENT_SDK_VERSION = marker
@@ -626,6 +799,10 @@ export class ClaudeWire implements AgentWire {
       tasks: new Map() as TaskList,
       closing: false,
       opened: false,
+      ...(settings ? { settings } : {}),
+      warnings: routeWarnings(settings, this.route),
+      given: new Set(parsed.data.mcpServers.map(server => server.name)),
+      sent: new Map<string, true>(),
     })
     this.session = session
     void this.consume(session)
@@ -654,7 +831,12 @@ export class ClaudeWire implements AgentWire {
     session.model =
       rowFor(session.models, used)
       ?? (this.route?.model && session.models.some(item => item.value === this.route!.model) ? this.route.model : DEFAULT_MODEL)
-    return { sessionId: id, configOptions: this.options(session) }
+    const notes = settingsNotes(settings)
+    return {
+      sessionId: id,
+      configOptions: this.options(session),
+      ...(notes.length ? { _meta: { latch: { permissionNotes: notes } } } : {}),
+    }
   }
 
   /** The login, pushed as the adapter pushes it (`_auth/status_update`), only when it changed. */
@@ -711,9 +893,23 @@ export class ClaudeWire implements AgentWire {
     await session.process?.stop('stop', 2_000)
   }
 
+  /**
+   * The modes Claude would take now: `auto` only for a model that supports it, and neither `auto` nor
+   * `bypassPermissions` where Claude's settings disable them (as the adapter offers them). The mode in force stays listed.
+   */
   private availableModes(session: Session): string[] {
     const current = session.models.find(item => item.value === session.model)
-    return MODES.filter(mode => mode.id !== 'auto' || current?.supportsAutoMode === true || session.mode === 'auto').map(mode => mode.id)
+    const off = (id: string) =>
+      (id === 'auto' && (current?.supportsAutoMode !== true || session.settings?.disableAuto === true))
+      || (id === 'bypassPermissions' && session.settings?.disableBypass === true)
+    return MODES.filter(mode => !off(mode.id) || session.mode === mode.id).map(mode => mode.id)
+  }
+
+  /** The effort levels a model offers, less those above a cap in Claude's settings (`maxEffortLevel`). */
+  private effortLevels(session: Session, model: ModelInfo | undefined): string[] {
+    const levels = model?.supportsEffort ? (model.supportedEffortLevels ?? []) : []
+    const cap = session.settings?.maxEffortLevel ? EFFORT_ORDER.indexOf(session.settings.maxEffortLevel) : -1
+    return cap < 0 ? levels : levels.filter(level => EFFORT_ORDER.indexOf(level) <= cap)
   }
 
   private options(session: Session): unknown[] {
@@ -739,7 +935,7 @@ export class ClaudeWire implements AgentWire {
     }))
     if (!models.some(item => item.value === session.model)) models.push({ value: session.model, name: session.model })
     options.push({ type: 'select', id: MODEL, category: 'model', name: 'Model', currentValue: session.model, options: models })
-    const levels = current?.supportsEffort ? (current.supportedEffortLevels ?? []) : []
+    const levels = this.effortLevels(session, current)
     if (levels.length)
       options.push({
         type: 'select',
@@ -777,6 +973,7 @@ export class ClaudeWire implements AgentWire {
     const { configId, value } = parsed.data
     if (configId === MODE) {
       if (!MODE_IDS.has(value)) throw new RpcError(RPC.invalidParams, 'Unknown mode')
+      if (!this.availableModes(session).includes(value)) throw new RpcError(RPC.invalidParams, 'Claude 的设置不允许这个模式')
       // Claude Code answers the control request once the mode is in force; a mode it refuses fails here.
       await session.query.setPermissionMode(value)
       session.prePlanMode = value === 'plan' && session.mode !== 'plan' ? session.mode : undefined
@@ -796,7 +993,7 @@ export class ClaudeWire implements AgentWire {
     return { configOptions: this.options(session) }
   }
 
-  private async prompt(params: unknown): Promise<unknown> {
+  private async prompt(params: unknown, context?: PromptContext): Promise<unknown> {
     const parsed = promptParams.safeParse(params)
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     const session = this.assertSession(parsed.data.sessionId)
@@ -815,8 +1012,14 @@ export class ClaudeWire implements AgentWire {
     if (!session.listed) {
       session.listed = true
       this.update(session, { sessionUpdate: 'available_commands_update', availableCommands: session.commands })
+      for (const title of session.warnings.splice(0)) this.update(session, { sessionUpdate: 'notice', severity: 'warning', title })
+      void this.reportMcp(session)
     }
-    const uuid = randomUUID()
+    // Latch's own message ID marks the turn in Claude's transcript, so a later fork finds it (`forkSession`'s
+    // `upToMessageId`). Never the same ID twice on one session: a second send gets one of its own.
+    const mine = context?.messageId
+    const uuid = mine && UUID.test(mine) && !session.sent.has(mine) ? mine : randomUUID()
+    remember(session.sent, uuid, true)
     const done = new Promise<unknown>((resolve, reject) => {
       this.turn = { uuid, resolve, reject, cancelled: false }
     })
@@ -1083,12 +1286,40 @@ export class ClaudeWire implements AgentWire {
       })
       return
     }
+    if (message.subtype === 'session_state_changed') return this.onState(session, message.state)
     // The mode Claude Code is in, as it reports it: a change it made itself (EnterPlanMode, an accepted plan) is read back.
     const reported =
       (message.subtype === 'init' || message.subtype === 'status') && typeof message.permissionMode === 'string'
         ? message.permissionMode
         : undefined
     if (reported) this.modeIs(session, reported)
+  }
+
+  /**
+   * Claude's own word on whether it is working (`session_state_changed`), its authoritative signal that a turn is over:
+   * `idle` comes after the turn's result. A cancelled turn whose result came is settled by it even before the interrupt
+   * is acknowledged; a turn still without a result shortly after ends then, as failed, rather than waiting for ever.
+   */
+  private onState(session: Session, state: unknown): void {
+    const turn = this.turn
+    if (!turn || this.session !== session) return
+    if (state === 'running') {
+      turn.running = true
+      return
+    }
+    if (state !== 'idle' || !turn.running) return
+    if (turn.ended) {
+      turn.interrupted = true
+      void this.settle(turn, turn.ended)
+      return
+    }
+    setTimeout(() => {
+      if (this.turn !== turn) return
+      if (turn.ended) return void this.settle(turn, turn.ended)
+      this.turn = undefined
+      if (turn.cancelled || turn.stopped) turn.resolve({ stopReason: 'cancelled' })
+      else turn.reject(new RpcError(RPC.internal, 'Claude Code 结束了这一轮，但没有给出结果'))
+    }, IDLE_SETTLE_MS).unref()
   }
 
   private onResult(session: Session, message: Record<string, unknown>): void {
@@ -1165,6 +1396,157 @@ export class ClaudeWire implements AgentWire {
     }
     const stop = message.stop_reason
     turn.resolve({ stopReason: stop === 'max_tokens' ? 'max_tokens' : stop === 'refusal' ? 'refusal' : 'end_turn', ...withUsage })
+  }
+
+  // ---- Claude's own store (`store`) --------------------------------------------------------------------------------
+
+  private assertStore(): ClaudeStore {
+    if (!this.store) throw new RpcError(RPC.methodNotFound, 'Method not found')
+    return this.store
+  }
+
+  /** Claude's sessions, newest first, as its terminal `/resume` lists them: none an SDK started (Latch's among them). */
+  private async list(params: unknown, signal?: AbortSignal): Promise<unknown> {
+    const store = this.assertStore()
+    const parsed = listParams.safeParse(params ?? {})
+    if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
+    const offset = Number(/^offset:(\d{1,9})$/u.exec(parsed.data.cursor ?? '')?.[1] ?? 0)
+    const page = await store.list(offset, LIST_PAGE, signal).catch(storeFailure)
+    return {
+      sessions: page.sessions
+        .filter(row => UUID.test(row.sessionId))
+        .map(row => ({ ...row, ...(row.title ? { title: clip(row.title, 400) } : {}) })),
+      nextCursor: page.more ? `offset:${offset + page.sessions.length}` : null,
+    }
+  }
+
+  /**
+   * A session of Claude's own, replayed and then resumed as this wire's: refused while another `claude` holds it (its
+   * registry), since both would write to the one transcript.
+   */
+  private async load(params: unknown, signal?: AbortSignal): Promise<unknown> {
+    const store = this.assertStore()
+    const parsed = sessionParams.safeParse(params)
+    const id = parsed.data?.sessionId
+    if (!parsed.success || !id || !UUID.test(id)) throw new RpcError(RPC.notFound, 'Session not found')
+    if (this.turn) throw new RpcError(RPC.internal, 'A turn is already running')
+    if (this.session) await this.closeSession(this.session)
+    if ((await store.busy(id, signal).catch(storeFailure)).busy)
+      throw new RpcError(RPC.internal, 'The session is already open in another Claude Code process (busy)')
+    const read = await store.messages(id, parsed.data.cwd, CAPTURE_BYTES, signal).catch(storeFailure)
+    if (!read.messages.length) throw new RpcError(RPC.notFound, 'Session not found')
+    // Before the answer, as ACP replays: the session is not this wire's yet, so the replay goes out as it is.
+    for (const update of replayUpdates(read.messages, parsed.data.cwd)) {
+      try {
+        this.handlers.notification('session/update', { sessionId: id, update })
+      } catch {
+        // A replay the runtime does not take changes nothing here.
+      }
+    }
+    return this.open(id, params)
+  }
+
+  /**
+   * Deletes Claude's record of a session (`deleteSession`): its transcript and its folder of subagents and large tool
+   * output, never Claude's other per-session leftovers, which Claude itself cleans up. No `claude` starts for it. Its own
+   * session is closed first, so a query still writing cannot put the file back; one another `claude` holds is refused.
+   */
+  private async remove(params: unknown, signal?: AbortSignal): Promise<unknown> {
+    const store = this.assertStore()
+    const id = isRecord(params) && typeof params.sessionId === 'string' ? params.sessionId : undefined
+    if (!id || !UUID.test(id)) return {}
+    if (this.session?.id === id) {
+      if (this.turn) throw new RpcError(RPC.internal, 'A turn is already running')
+      await this.closeSession(this.session)
+    }
+    if ((await store.busy(id, signal).catch(storeFailure)).busy)
+      throw new RpcError(RPC.internal, 'The session is open in another Claude Code process (busy)')
+    await store.delete(id, this.spec.cwd, signal).catch(storeFailure)
+    return {}
+  }
+
+  /**
+   * Claude's own fork of the source session through the turn Latch's message `through` opened (`FORK_METHOD`), opened
+   * as this wire's session. A `ForkRefused` when the transcript does not hold that message (a session begun before Latch
+   * marked its turns, or on the adapter), or the copy does not end there; a copy that cannot be opened is deleted again.
+   */
+  private async fork(params: unknown, signal?: AbortSignal): Promise<unknown> {
+    if (!this.store) throw new ForkRefused('它不能读写 Claude 自己的记录')
+    const parsed = forkParams.safeParse(params)
+    if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
+    const { sessionId: source, cwd, through } = parsed.data
+    if (this.turn) throw new ForkRefused('这个进程有一轮正在运行')
+    if (!UUID.test(source)) throw new ForkRefused('来源会话不是 Claude 的会话')
+    if (!through || !UUID.test(through)) throw new ForkRefused('来源会话没有这一轮的标识')
+    let forked: Awaited<ReturnType<ClaudeStore['fork']>>
+    try {
+      forked = await this.store.fork(source, through, cwd, signal)
+    } catch (error) {
+      throw new ForkRefused(`它读不到来源的记录（${clip(redactKnownSecrets(this.spec.redact(message(error))), 160)}）`)
+    }
+    if ('refused' in forked) throw new ForkRefused(forked.refused === 'missing' ? '它的记录里找不到这一轮' : '分叉出的记录没有停在这一轮')
+    try {
+      return await this.open(forked.sessionId, params)
+    } catch (error) {
+      await this.store.delete(forked.sessionId, cwd).catch(() => {})
+      if (error instanceof ConnectionClosed || error instanceof ConnectionStopping) throw error
+      throw new ForkRefused(`分叉出的会话没有打开（${clip(redactKnownSecrets(this.spec.redact(message(error))), 160)}）`)
+    }
+  }
+
+  /**
+   * The plan's limits, asked of Claude itself on the session's process (its experimental `get_usage`, told to skip the
+   * scan of recent transcripts it would otherwise make). Any failure says nothing: what was shown stays.
+   */
+  private async usage(): Promise<unknown> {
+    const ask = this.session?.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET
+    if (!this.session || !ask) throw new RpcError(RPC.methodNotFound, 'Method not found')
+    return ask.call(this.session.query, { skipBehaviors: true })
+  }
+
+  /** Claude's own MCP servers and their states (`mcpServerStatus`), without those Latch gave the session. */
+  private async readMcp(session: Session): Promise<{ servers: unknown[]; truncated?: true }> {
+    const listed = (await session.query.mcpServerStatus?.()) ?? []
+    const servers: unknown[] = []
+    for (const item of listed) {
+      const read = mcpStatus.safeParse(item)
+      if (!read.success || session.given.has(read.data.name)) continue
+      servers.push({
+        name: read.data.name,
+        state: MCP_STATES[read.data.status] ?? 'unknown',
+        ...(read.data.tools ? { tools: read.data.tools.length } : {}),
+        ...(read.data.scope ? { origin: read.data.scope } : {}),
+      })
+      if (servers.length >= 200) return { servers, truncated: true }
+    }
+    return { servers }
+  }
+
+  /** The session's own MCP servers, once it has had a turn and they have started. */
+  private async reportMcp(session: Session): Promise<void> {
+    try {
+      const read = await this.withTimeout(this.readMcp(session), CONTEXT_TIMEOUT_MS * 5)
+      if (read) this.update(session, { sessionUpdate: MCP_STATUS_UPDATE, ...read })
+    } catch {
+      // Not reported this time; the next session says it.
+    }
+  }
+
+  /**
+   * `MCP_STATUS_METHOD`: the session's servers, or, with no session open, those of one opened just to read them in the
+   * process's folder, which leaves no transcript.
+   */
+  private async mcpStatus(params: unknown): Promise<unknown> {
+    const id = isRecord(params) && typeof params.sessionId === 'string' ? params.sessionId : undefined
+    if (this.session && (!id || this.session.id === id)) return this.readMcp(this.session)
+    if (this.session || this.turn) throw new RpcError(RPC.internal, 'This process runs another session')
+    await this.open(undefined, { cwd: this.spec.cwd, mcpServers: [] }, true)
+    const session = this.session as Session | undefined
+    try {
+      return session ? await this.readMcp(session) : { servers: [] }
+    } finally {
+      if (session) await this.closeSession(session)
+    }
   }
 
   /** An MCP server's form question to the person; anything else (a URL to open) is cancelled, as Latch shows no such form. */
@@ -1296,6 +1678,13 @@ export class ClaudeWire implements AgentWire {
     if (tool === 'ExitPlanMode' && typeof update?.mode === 'string' && outcome.optionId !== OPTION.reject) this.modeIs(session, update.mode)
     return decision.result
   }
+}
+
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/** A read of Claude's store that failed: an internal error that says why, never what it read. */
+function storeFailure(error: unknown): never {
+  throw new RpcError(RPC.internal, `读取 Claude 的记录失败：${clip(message(error), 300)}`)
 }
 
 /** What `canUseTool` is told beside the tool and its input (the SDK's `CanUseTool` options this wire reads). */

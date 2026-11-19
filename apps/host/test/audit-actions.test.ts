@@ -87,6 +87,7 @@ const SAMPLES: Record<AuditAction, Record<string, unknown>> = {
   },
   'browser.provider.ended': {},
   'history.list': { harnessId: 'codex', workspaceId: 'proj' },
+  'history.original.deleted': { sessionId: 'session-1', harnessId: 'claude' },
   'history.preview': { harnessId: 'codex', workspaceId: 'proj', agentSessionHash: hex },
   'history.import': {
     harnessId: 'codex',

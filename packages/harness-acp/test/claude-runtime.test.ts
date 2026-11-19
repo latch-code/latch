@@ -1,4 +1,6 @@
 // The Claude Agent SDK wire under the real runtime, with a fake `query()` in place of the SDK: no `claude`, no model.
+import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,6 +17,7 @@ import {
   type AgentRecord,
 } from '../src/index.ts'
 import { setClaudeQuery, type ClaudeQuery } from '../src/wires/claude.ts'
+import { answer, claudeFixture, line, prompt, uuidOf, type ClaudeFixture } from './helpers/claude-store.ts'
 
 const FAST: AcpAgentOptions = { cancelGraceMs: 2_000, stopGraceMs: 200, restartDelayMs: 0, requestTimeoutMs: 5_000, log: () => {} }
 const cleanups: Array<() => Promise<void> | void> = []
@@ -40,6 +43,7 @@ class ScriptedQuery implements ClaudeQuery {
   private waiting?: (result: IteratorResult<unknown>) => void
   private done = false
   readonly calls: Array<[string, ...unknown[]]> = []
+  readonly prompts: Array<Record<string, unknown>> = []
   constructor(
     readonly options: Record<string, unknown>,
     prompt: AsyncIterable<unknown>,
@@ -48,6 +52,7 @@ class ScriptedQuery implements ClaudeQuery {
     void (async () => {
       for await (const item of prompt) {
         this.calls.push(['prompt'])
+        this.prompts.push(item as Record<string, unknown>)
         await script(this, item as Record<string, unknown>)
       }
     })()
@@ -127,7 +132,7 @@ async function activate(plugin: HarnessPlugin): Promise<HarnessDriver> {
 }
 
 /** A computer whose `claude` is a stub that only prints a version, and a runtime whose SDK is the script. */
-async function computer(script: Script, host: Partial<HarnessHostOptions> = {}) {
+async function computer(script: Script, host: Partial<HarnessHostOptions> = {}, extra: { options?: AcpAgentOptions } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-claude-runtime-')))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const bin = join(root, 'bin')
@@ -153,15 +158,25 @@ async function computer(script: Script, host: Partial<HarnessHostOptions> = {}) 
     env: {},
     enabled: true,
   }
-  const driver = await activate(createAcpAgentPlugin(record, FAST))
-  const open = async (): Promise<Bridge> => {
-    const bridge = driver.create({
+  const projects = [{ id: 'proj', folders: [{ id: 'main', path: main }] }]
+  const drivers = new Map<boolean, HarnessDriver>()
+  const driverFor = async (store: boolean) => {
+    let made = drivers.get(store)
+    if (!made) {
+      made = await activate(createAcpAgentPlugin(record, { ...FAST, ...extra.options, ...(store ? { claudeStore: true } : {}) }))
+      drivers.set(store, made)
+    }
+    return made
+  }
+  const driver = await driverFor(extra.options?.claudeStore === true)
+  const open = async (store = extra.options?.claudeStore === true): Promise<Bridge> => {
+    const bridge = (await driverFor(store)).create({
+      projects: () => structuredClone(projects),
       ...host,
       dataDir: join(root, 'data'),
       workspaceRoot: main,
       tmpRoot: join(root, 'run-tmp'),
       workspaces: () => [main],
-      projects: () => [],
       providerId: 'unused',
       registry: {
         acquire() {
@@ -173,7 +188,7 @@ async function computer(script: Script, host: Partial<HarnessHostOptions> = {}) 
     await bridge.start()
     return bridge
   }
-  return { main, open, queries }
+  return { main, open, queries, driver }
 }
 
 async function until(bridge: Bridge, id: string, predicate: (detail: DriverTaskDetail) => boolean): Promise<DriverTaskDetail> {
@@ -270,5 +285,121 @@ describe('the Claude Agent SDK wire under the runtime', () => {
     expect(detail.summary.status).toBe('idle')
     expect(said(detail)).toContain('noted')
     expect(decided).toMatchObject({ behavior: 'allow', updatedInput: { answers: { 'Which colour?': 'Green' } } })
+  })
+})
+
+describe('Claude’s own store under the runtime (a configuration directory of the test’s own)', () => {
+  const S1 = '11111111-1111-4111-8111-111111111111'
+
+  async function withStore(store: boolean) {
+    const fixture = await claudeFixture()
+    cleanups.push(() => fixture.remove())
+    // Where `claude` keeps its store comes from the Host's environment (or its login shell), never a definition.
+    vi.stubEnv('CLAUDE_CONFIG_DIR', fixture.config)
+    cleanups.push(() => void vi.unstubAllEnvs())
+    const t = await computer(async (query, prompt) => query.reply(prompt, 'ok'), {}, { options: { claudeStore: store } })
+    return { ...t, fixture }
+  }
+
+  /** The transcript `claude` would have written for the session, keyed by the prompt's own ID. */
+  async function transcript(fixture: ClaudeFixture, sessionId: string, promptId: string, cwd: string) {
+    const l = line(sessionId, cwd, 'sdk-ts')
+    return fixture.write(sessionId, [
+      l(prompt(promptId, null, 'one')),
+      l(answer(uuidOf(2), promptId, 'msg_1', [{ type: 'text', text: 'ok' }])),
+    ])
+  }
+
+  it('deletes the transcript of a session Latch started, and of one recorded before it could', async () => {
+    const t = await withStore(false)
+    // Recorded without the Host's leave: `deletable` stays false on record.
+    let bridge = await t.open(false)
+    const { launchHash } = await bridge.launchPreview!({ cwd: t.main })
+    const { sessionId } = await bridge.createTask({ prompt: 'one', requestId: rid(), cwd: t.main, expectedLaunchHash: launchHash })
+    await settled(bridge, sessionId)
+    const claudeId = t.queries[0]!.options.sessionId as string
+    const promptId = (await bridge.detail(sessionId)).messages.find(message => message.role === 'user')!.id
+    // Without the leave, the turn went out under an ID of the wire's own.
+    expect(t.queries[0]!.options).not.toHaveProperty('resume')
+    await bridge.close()
+    const file = await transcript(t.fixture, claudeId, promptId, t.main)
+    bridge = await t.open(true)
+    await bridge.remove!(sessionId)
+    await vi.waitFor(() => expect(existsSync(file)).toBe(false), { timeout: 8_000, interval: 20 })
+  })
+
+  it('marks the turn with Latch’s message ID, so a fork can find it', async () => {
+    const t = await withStore(true)
+    const bridge = await t.open()
+    const { launchHash } = await bridge.launchPreview!({ cwd: t.main })
+    const { sessionId } = await bridge.createTask({ prompt: 'one', requestId: rid(), cwd: t.main, expectedLaunchHash: launchHash })
+    const detail = await settled(bridge, sessionId)
+    const first = detail.messages.find(message => message.role === 'user')!
+    expect(first.id).toMatch(/^[0-9a-f-]{36}$/u)
+    expect(t.queries[0]!.calls).toContainEqual(['prompt'])
+    expect(t.queries[0]!.prompts.at(0)?.uuid).toBe(first.id)
+  })
+
+  it('imports a terminal session, keeps its original unless the person chooses to delete it too', async () => {
+    const t = await withStore(true)
+    const l = line(S1, t.main)
+    const file = await t.fixture.write(S1, [
+      l(prompt(uuidOf(1), null, 'from the terminal')),
+      l(answer(uuidOf(2), uuidOf(1), 'msg_1', [{ type: 'text', text: 'hello back' }])),
+    ])
+    const bridge = await t.open()
+    const listed = await bridge.listExternalSessions!()
+    expect(listed.sessions.map(row => row.agentSessionId)).toEqual([S1])
+    const place = { agentSessionId: S1, cwd: t.main, workspaceId: 'proj', folders: [{ id: 'main', path: t.main }] }
+    const load = await bridge.loadExternalSession!(place)
+    expect(load.messages.map(message => `${message.role}:${message.text}`)).toEqual(['user:from the terminal', 'assistant:hello back'])
+    expect(load.useUnknown).toBe(true)
+    const kept = await bridge.adoptExternalSession!({ ...place, sessionId: `task-${randomUUID()}`, loadId: load.loadId, title: 'imported' })
+    await bridge.remove!(kept.sessionId)
+    await new Promise(resolve => setTimeout(resolve, 300))
+    expect(existsSync(file)).toBe(true)
+    const gone = await bridge.adoptExternalSession!({ ...place, sessionId: `task-${randomUUID()}`, title: 'imported again' })
+    await bridge.remove!(gone.sessionId, { original: true })
+    await vi.waitFor(() => expect(existsSync(file)).toBe(false), { timeout: 8_000, interval: 20 })
+  })
+
+  it('brings in nothing and deletes nothing of Claude’s without the Host’s leave', async () => {
+    const t = await withStore(false)
+    await t.fixture.write(S1, [line(S1, t.main)(prompt(uuidOf(1), null, 'from the terminal'))])
+    expect(t.driver.historyImport).toBeUndefined()
+    expect(t.driver.historyDelete).toBeUndefined()
+    const bridge = await t.open(false)
+    await expect(bridge.listExternalSessions!()).rejects.toMatchObject({ code: 'history-not-supported' })
+  })
+
+  it('counts both routes as one store, Claude’s configuration directory, so a session is brought in once', async () => {
+    const t = await withStore(true)
+    const direct = await t.open()
+    const adapter = (
+      await activate(
+        createAcpAgentPlugin(
+          {
+            id: 'claude-acp',
+            name: 'Claude Agent',
+            presetId: 'claude-agent',
+            command: '/opt/x/claude-agent-acp',
+            args: [],
+            env: {},
+            enabled: true,
+          },
+          FAST,
+        ),
+      )
+    ).create({
+      dataDir: join(t.fixture.root, 'adapter-data'),
+      workspaceRoot: t.main,
+      tmpRoot: join(t.fixture.root, 'adapter-tmp'),
+      workspaces: () => [t.main],
+      projects: () => [],
+      providerId: 'unused',
+      registry: { acquire: () => ({}) as never },
+    } as unknown as HarnessHostOptions)
+    expect(direct.historyStore!()).toBe(adapter.historyStore!())
+    expect(direct.historyStore!()).toMatch(/^claude-config:[0-9a-f]{64}$/u)
   })
 })

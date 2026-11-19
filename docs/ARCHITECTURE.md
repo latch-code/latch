@@ -417,7 +417,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 - **工具网关。** ACP Driver 另得到 `toolGateway`：Host 运行目录里 0700 的 `tools/` 下的 Unix 套接字 `gateway.sock`（0600），转发浏览器工具的 `tools/list` 与 `tools/call`，以及 `latch-mcp` 桥的请求（[MCP.md](./MCP.md)）。
 - **浏览器工具的令牌。** Driver 每次打开、恢复、载入或分叉 Agent 的会话时换一个 `lbt1.` 令牌，写进新建的 0600 文件，`mcpServers` 只拿到文件路径，读出后即删；Host 只存哈希，令牌绑定会话与进程的生命期。它不是 API 的入口类别：持有令牌的进程不能当设备用。调用只在会话正在运行的一轮里执行，完全访问的会话里 R2 一律拒绝（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md#agent-的工具)）。
 - **远程 MCP。** 远程 MCP 服务器只由 Host 连接（`mcp-remote.ts`、`mcp-oauth.ts`）：请求只经出站策略发往本机确认时绑定的源与路径，不跟随重定向，请求头的值与令牌从不离开 Host。见 [MCP.md](./MCP.md#远程地址)。
-- **会话元数据。** 重命名、置顶、归档、标签、优先级与看板记号保存在 `sessions-meta.json`，对所有 Harness 生效；Driver 自报的 `tags`、`priority`、`board` 被丢弃。删除调用 Driver 的可选 `remove`，不支持时返回 409 `delete-unsupported`；删除成功后一并删除该会话的元数据与回执。
+- **会话元数据。** 重命名、置顶、归档、标签、优先级与看板记号保存在 `sessions-meta.json`，对所有 Harness 生效；Driver 自报的 `tags`、`priority`、`board` 被丢弃。删除调用 Driver 的可选 `remove`，不支持时返回 409 `delete-unsupported`；删除成功后一并删除该会话的元数据与回执。接入的会话只有人在这一次删除里选了（`DELETE /tasks/:id?original=1`，Driver 声明 `historyDelete`）才连 Harness 里的原会话一起删，Host 先写审计 `history.original.deleted`（[HARNESSES](HARNESSES.md#持久化与恢复)）。
 - **运行。** Driver 在每次运行开始时给会话写入新的 `TaskSummary.runId` 并持久化。`cancel(sessionId, { runId })` 只在它仍是当前运行时取消，并回答是否取消了什么。
 - **挂载与卸载。** 启停 Harness 插件或修改 Agent 定义时先卸载旧 Driver；仍有运行中或待审批的会话时返回 409 `harness-busy`。
 
@@ -1025,7 +1025,7 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。
 
 **旁支提问（`/btw`）。** 客户端用同一个 `POST /tasks` 开一个只对话的分叉：同一个 Harness 与模型服务，分叉点是最后一轮已结束的回复，不排进也不打断正在运行的一轮，来源会话的历史不变。插入或关闭面板后分叉被归档，回答还在运行时先取消再归档。Harness 没有只对话方式或 Host 没有 `features.fork` 时不提供。
 
-**原生分叉。** Driver 声明 `capabilities.fork: 'native'`（pi 与 Codex）时，分叉到同一个 Harness 的会话另外收到 `CreateTaskInput.fork: { taskId, upToMessageId, prefixLength }`。Driver 让 Harness 分叉它自己的记录，成功时第一轮不发种子，首条用户消息带 `nativeFork`；做不到时照常发送种子并在会话里写明原因。来源必须是同一 Driver 的会话与同一个工作目录，由 Driver 核对。见 [HARNESSES.md](HARNESSES.md#pi-的-rpc-模式) 与 [Codex 的 app-server](HARNESSES.md#codex-的-app-server)。
+**原生分叉。** Driver 声明 `capabilities.fork: 'native'`（pi、Codex，以及 Host 给了 `cliStore` 时 Claude 的直连线）时，分叉到同一个 Harness 的会话另外收到 `CreateTaskInput.fork: { taskId, upToMessageId, prefixLength }`。Driver 让 Harness 分叉它自己的记录，成功时第一轮不发种子，首条用户消息带 `nativeFork`；做不到时照常发送种子并在会话里写明原因。来源必须是同一 Driver 的会话与同一个工作目录，由 Driver 核对。见 [HARNESSES.md](HARNESSES.md#pi-的-rpc-模式)、[Codex 的 app-server](HARNESSES.md#codex-的-app-server) 与 [Claude 的 Agent SDK 线](HARNESSES.md#claude-的-agent-sdk-线)。
 
 **换 Harness 继续。** `forkOf` 带 `moved: true` 时，新会话是同一场对话在另一个 Harness 上的下一段：`TaskSummary.forkOf.moved.from` 记下离开的 Harness，页面把来源会话接在上方，只读。种子是到分叉点为止的文字记录；多次更换时种子里只有一份记录，不嵌套。带 `brief: true` 时只带分叉点那条回复（离开的 Harness 写的交接说明），只能与 `moved` 同用。文件、工具结果与 Harness 自己的会话状态不随之过去。
 

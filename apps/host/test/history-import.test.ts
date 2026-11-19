@@ -556,3 +556,63 @@ describe('preview and seed limits', () => {
     expect(seed.prefixLength).toBe(seed.text.length)
   })
 })
+
+describe('deleting an imported session’s original', () => {
+  /** The fake agent as Claude's adapter (whose `session/delete` deletes Claude's transcript), with the same history. */
+  async function claude(f: Fixture) {
+    const saved = await f.owner.confirmed('agents', {
+      method: 'POST',
+      body: {
+        id: 'claude',
+        name: 'Claude Agent',
+        presetId: 'claude-agent',
+        command: process.execPath,
+        args: [FAKE_ACP_AGENT],
+        env: {
+          ...f.env,
+          FAKE_ACP_VERSION: '0.101.0',
+          FAKE_ACP_MODES: 'default,acceptEdits,plan,bypassPermissions',
+          FAKE_ACP_INITIAL_MODE: 'default',
+          FAKE_ACP_STATE: join(f.root, 'claude-state.json'),
+        },
+      },
+    })
+    expect(saved.status).toBe(201)
+    const rows = (
+      await f.owner.json<HistoryList>('history/list', { method: 'POST', body: { projectId: f.projectId, harnessId: 'claude' } })
+    ).rows
+    const imported = async (title: string) =>
+      ((await (await importOf(f.owner, { requestId: randomUUID(), handle: handleOf(rows, title) })).json()) as HistoryImportResult).taskId
+    return { imported }
+  }
+
+  const deletes = (log: LogEntry[]) => received(log, 'session/delete').map(entry => entry.params?.sessionId)
+
+  it('is offered only where the harness deletes its own record, off unless chosen, and on record before it is asked', SLOW, async () => {
+    const f = await fixture()
+    const catalog = async () =>
+      (await f.owner.json<{ catalog: { harnesses: Array<{ id: string; history?: unknown }> } }>('snapshot')).catalog.harnesses
+    expect((await catalog()).find(item => item.id === 'codex')?.history).toEqual({ list: true, rebuild: true })
+    const c = await claude(f)
+    expect((await catalog()).find(item => item.id === 'claude')?.history).toMatchObject({ list: true, deleteOriginal: true })
+
+    // Kept by default.
+    const kept = await c.imported('Web build')
+    expect((await f.owner.request(`tasks/${kept}`, { method: 'DELETE' })).status).toBe(200)
+    // Chosen for this one deletion.
+    const chosen = await c.imported('Login bug [redacted]')
+    expect((await f.owner.request(`tasks/${chosen}?original=1`, { method: 'DELETE' })).status).toBe(200)
+    await vi.waitFor(async () => expect(deletes(await f.log())).toContain('ext-main'), { timeout: 10_000, interval: 50 })
+    expect(deletes(await f.log())).not.toContain('ext-sub')
+    expect(await f.audit()).toContain('history.original.deleted')
+
+    // Nothing to delete with it: a session Latch started, and a harness that cannot.
+    const codex = await importOf(f.owner, { requestId: randomUUID(), handle: handleOf((await list(f)).rows, 'Long') })
+    const codexTask = ((await codex.json()) as HistoryImportResult).taskId
+    const refused = await f.owner.request(`tasks/${codexTask}?original=1`, { method: 'DELETE' })
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({ error: 'delete-original-unsupported' })
+    // Refused before anything was deleted: the session is still there.
+    expect((await f.owner.request(`tasks/${codexTask}`)).status).toBe(200)
+  })
+})

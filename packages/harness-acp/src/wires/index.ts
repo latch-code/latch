@@ -17,6 +17,8 @@ export type WireKind = 'acp' | 'pi' | 'codex' | 'cursor' | 'opencode' | 'claude'
  */
 export interface WireOptions {
   route?: WireModelRoute
+  /** Claude's direct wire may read Claude's own store (`AcpAgentOptions.claudeStore`). */
+  claudeStore?: boolean
 }
 
 export function openWire(kind: WireKind | undefined, spec: SpawnSpec, handlers: WireHandlers, options: WireOptions = {}): AgentWire {
@@ -24,7 +26,7 @@ export function openWire(kind: WireKind | undefined, spec: SpawnSpec, handlers: 
   if (kind === 'codex') return CodexWire.spawn(spec, handlers, options.route)
   if (kind === 'cursor') return CursorWire.spawn(spec, handlers)
   if (kind === 'opencode') return OpencodeWire.spawn(spec, handlers)
-  if (kind === 'claude') return ClaudeWire.spawn(spec, handlers, options.route)
+  if (kind === 'claude') return ClaudeWire.spawn(spec, handlers, options.route, options.claudeStore ? { store: true } : {})
   return AcpWire.spawn(spec, handlers)
 }
 

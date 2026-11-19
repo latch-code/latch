@@ -341,8 +341,12 @@ export interface Bridge {
    * retry answers what the first request got, and one whose answer was lost is never sent again (409 `steer-unknown`).
    */
   steer?(sessionId: string, prompt: string, requestId: string): Promise<SteerOutcome>
-  /** Optional. Delete a settled session's data; reject with 409 `task-running` while it runs. */
-  remove?(sessionId: string): Promise<void>
+  /**
+   * Optional. Delete a settled session's data; reject with 409 `task-running` while it runs. `original`: the person chose
+   * to delete an imported session's original in the harness's own record too (`HarnessDriver.historyDelete`), and the
+   * Host audited that choice first.
+   */
+  remove?(sessionId: string, options?: { original?: boolean }): Promise<void>
   /**
    * Optional. Change one of `TaskDetail.config` for later turns. Reject with 409 `task-running`, or with
    * `details.configOutcome` (`ConfigRefusal`), only when the change certainly did not apply: the Host records that change

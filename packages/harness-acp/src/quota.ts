@@ -296,6 +296,36 @@ export function claudeUsageQuota(update: Record<string, unknown>, now: number): 
   return meta && Object.hasOwn(meta, CLAUDE_META) ? claudeRateLimit(meta[CLAUDE_META], now) : undefined
 }
 
+const claudeUsageWindow = z
+  .object({ utilization: finite.min(0).max(100).nullish().catch(undefined), resets_at: z.string().max(64).nullish().catch(undefined) })
+  .nullish()
+  .catch(undefined)
+const claudeUsage = z.object({
+  subscription_type: z.string().max(64).nullish().catch(undefined),
+  rate_limits_available: z.boolean(),
+  rate_limits: z.record(z.string().max(64), claudeUsageWindow).nullish().catch(undefined),
+})
+
+/**
+ * Claude Code's answer to its experimental `get_usage` control request (SDK 0.3.322, `SDKControlGetUsageResponse`):
+ * each plan window's share used, 0 to 100, and its reset. Only the shape it knows: anything else says nothing, so what
+ * was shown stays.
+ */
+export function claudeUsageRead(result: unknown, now: number): QuotaReport | undefined {
+  const parsed = claudeUsage.safeParse(result)
+  if (!parsed.success || !parsed.data.rate_limits_available || !parsed.data.rate_limits) return undefined
+  const windows: QuotaWindow[] = []
+  for (const [name, value] of Object.entries(parsed.data.rate_limits)) {
+    const kind = Object.hasOwn(CLAUDE_KINDS, name) ? CLAUDE_KINDS[name] : undefined
+    if (!kind || !value || typeof value.utilization !== 'number') continue
+    const resetsAt = resetTime(value.resets_at, now, 62)
+    windows.push({ kind, usedPercent: percent(value.utilization), ...(resetsAt ? { resetsAt } : {}) })
+  }
+  if (!windows.length) return undefined
+  const plan = planOf(parsed.data.subscription_type)
+  return { windows: windows.slice(0, MAX_WINDOWS), ...(plan ? { plan } : {}) }
+}
+
 /** The `data` of the error a turn refused for the limit ends with. */
 export function claudeErrorQuota(data: unknown, now: number): QuotaReport | undefined {
   const fields = record(data)
