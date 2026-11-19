@@ -1,5 +1,6 @@
 // Codex over its own app-server (`wires/codex.ts`), driven against the fake app-server: no network, no model.
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -754,7 +755,7 @@ describe('Codex over its app-server', () => {
       const { detail, saved, row, log } = await imaging('saved')
       const reads = sent(log, 'fs/readFile')
       expect(reads).toHaveLength(1)
-      expect(String(reads[0]!.params?.path)).toMatch(/\/generated_images\/ig_[^/]+\.png$/u)
+      expect(String(reads[0]!.params?.path)).toMatch(/\/generated_images\/thread-[^/]+\/ig_[^/]+\.png$/u)
       expect(saved).toHaveLength(1)
       expect(png(saved[0]!.data)).toBe(true)
       // The turn waited for the read: the picture is on its row in this turn, before its reply settled.
@@ -790,6 +791,14 @@ describe('Codex over its app-server', () => {
         tool: { imageGeneration: true },
       })
       expect(resumed.messages.filter(message => message.tool?.imageGeneration)).toHaveLength(1)
+    })
+
+    it('passes on a GIF, as Codex 0.170 may make one, with its own type', async () => {
+      const { detail, saved } = await imaging('gif')
+      expect(detail.summary.status).toBe('idle')
+      expect(saved).toHaveLength(1)
+      expect(saved[0]!.mime).toBe('image/gif')
+      expect(Buffer.from(saved[0]!.data, 'base64').toString('latin1', 0, 6)).toBe('GIF89a')
     })
 
     it('shows a failed generation as a failed row with a short line, and keeps nothing', async () => {
@@ -844,7 +853,7 @@ describe('Codex over its app-server', () => {
       ['big', '图片超过 5 MB，未显示'],
       ['bad', '生成的图片格式无效，未显示'],
     ] as const)
-      it(`keeps no ${how === 'big' ? 'picture over 5 MiB' : 'bytes that are not a PNG, JPEG or WebP'}, and says so on the row`, async () => {
+      it(`keeps no ${how === 'big' ? 'picture over 5 MiB' : 'bytes that are not a PNG, JPEG, GIF or WebP'}, and says so on the row`, async () => {
         const { saved, row } = await imaging(how)
         expect(saved).toHaveLength(0)
         expect(row).toMatchObject({ state: 'completed', tool: { imageGeneration: true } })
@@ -2169,6 +2178,130 @@ describe('Codex over its app-server', () => {
     const log = await t.log()
     expect(sent(log, 'thread/list')).toHaveLength(1)
     expect(sent(log, 'thread/read')[0]!.params).toMatchObject({ includeTurns: true })
+  })
+
+  describe('deleting a session', () => {
+    const deleted = (log: LogEntry[]) => sent(log, 'thread/delete').map(entry => entry.params?.threadId as string)
+    const threadsOf = async (t: Awaited<ReturnType<typeof computer>>) =>
+      Object.keys(JSON.parse(await readFile(join(t.root, 'threads.json'), 'utf8').catch(() => '{}')) as Record<string, unknown>)
+
+    it('deletes the thread through thread/delete, with the pictures Codex saved for it, and checks Codex no longer reads it', async () => {
+      const t = await computer(
+        {},
+        [],
+        {},
+        { saveAttachment: async () => ({ id: 'a', kind: 'image', mime: 'image/png', size: 1, name: 'a.png' }) as never },
+      )
+      const bridge = await t.open()
+      const id = await start(bridge, t.main, 'image saved')
+      await settled(bridge, id)
+      const [thread] = await threadsOf(t)
+      const pictures = join(t.root, 'codex-home', 'generated_images', thread!)
+      // Something of the person's own beside it, in a name Codex never gives a picture: it stays.
+      await writeFile(join(pictures, 'notes.txt'), 'mine')
+      await bridge.remove!(id)
+      await vi.waitFor(async () => expect(deleted(await t.log())).toEqual([thread]), { timeout: 5_000, interval: 20 })
+      await vi.waitFor(async () => expect(await threadsOf(t)).toEqual([]), { timeout: 5_000, interval: 20 })
+      const log = await t.log()
+      const removed = log.filter(entry => entry.event === 'removed') as Array<LogEntry & { path: string; recursive: boolean }>
+      await vi.waitFor(async () => expect((await t.log()).filter(entry => entry.event === 'removed').length).toBeGreaterThanOrEqual(2))
+      expect(removed.every(entry => entry.recursive === false)).toBe(true)
+      expect(removed[0]!.path).toMatch(new RegExp(`/generated_images/${thread}/ig_[^/]+\\.png$`, 'u'))
+      expect(await readFile(join(pictures, 'notes.txt'), 'utf8')).toBe('mine')
+      expect(sent(log, 'thread/read').at(-1)?.params).toEqual({ threadId: thread, includeTurns: false })
+      // No thread was opened for it: the process only deleted.
+      expect(sent(log, 'thread/resume')).toEqual([])
+    })
+
+    it('deletes the newest thread first, so a fork that refers to an older one does not stop it', async () => {
+      const t = await computer({}, [], { idleMs: 200 })
+      const bridge = await t.open()
+      const id = await start(bridge, t.main, 'echo one')
+      await settled(bridge, id)
+      // A move to Codex's route and back forks the thread each time: three threads, each a fork of the one before.
+      const one = (await threadsOf(t))[0]!
+      const two = `thread-two-${rid()}`
+      const three = `thread-three-${rid()}`
+      const all = JSON.parse(await readFile(join(t.root, 'threads.json'), 'utf8')) as Record<string, Record<string, unknown>>
+      all[two] = { ...all[one], id: two, forkedFrom: one }
+      all[three] = { ...all[one], id: three, forkedFrom: two }
+      await writeFile(join(t.root, 'threads.json'), JSON.stringify(all))
+      const state = JSON.parse(await readFile(join(t.root, 'data', 'acp.json'), 'utf8')) as {
+        tasks: Record<string, { acp: Record<string, unknown> }>
+      }
+      await bridge.close()
+      state.tasks[id]!.acp.earlierSessionIds = [one, two]
+      state.tasks[id]!.acp.acpSessionId = three
+      await writeFile(join(t.root, 'data', 'acp.json'), JSON.stringify(state))
+      const reopened = await t.open()
+      await reopened.remove!(id)
+      await vi.waitFor(async () => expect(deleted(await t.log())).toEqual([three, two, one]), { timeout: 5_000, interval: 20 })
+      await vi.waitFor(async () => expect(await threadsOf(t)).toEqual([]), { timeout: 5_000, interval: 20 })
+    })
+
+    it('deletes a session recorded before the wire offered deletion, in a private empty folder', async () => {
+      const t = await computer({}, [], { idleMs: 100 })
+      const bridge = await t.open()
+      const id = await start(bridge, t.main, 'echo one')
+      await settled(bridge, id)
+      await bridge.close()
+      const file = join(t.root, 'data', 'acp.json')
+      const state = JSON.parse(await readFile(file, 'utf8')) as { tasks: Record<string, { acp: Record<string, unknown> }> }
+      state.tasks[id]!.acp.deletable = false
+      await writeFile(file, JSON.stringify(state))
+      const reopened = await t.open()
+      const [thread] = await threadsOf(t)
+      await reopened.remove!(id)
+      await vi.waitFor(async () => expect(deleted(await t.log())).toEqual([thread]), { timeout: 5_000, interval: 20 })
+      const deleting = (await t.log()).find(entry => entry.event === 'recv' && entry.method === 'thread/delete')!
+      const spawned = (await t.log()).find(entry => entry.pid === deleting.pid && entry.argv) as (LogEntry & { cwd?: string }) | undefined
+      expect(spawned?.cwd ?? '').not.toBe(t.main)
+    })
+
+    it('says in the Host log what Codex refused to delete, and leaves nothing half-done', async () => {
+      const lines: string[] = []
+      const t = await computer({ FAKE_CODEX_DELETE_FAIL: 'thread is in use by another process' }, [], {
+        log: line => void lines.push(line),
+      })
+      const bridge = await t.open()
+      const id = await start(bridge, t.main, 'echo one')
+      await settled(bridge, id)
+      await bridge.remove!(id)
+      await vi.waitFor(() => expect(lines.join('\n')).toContain('自己保存的一份会话副本没有删除'), { timeout: 5_000, interval: 20 })
+      expect(lines.join('\n')).toContain('thread is in use by another process')
+      expect(await threadsOf(t)).toHaveLength(1)
+      expect((await t.log()).filter(entry => entry.event === 'removed')).toEqual([])
+    })
+
+    it('never deletes a thread brought in from Codex’s own list', async () => {
+      const t = await computer()
+      const bridge = await t.open()
+      const id = await start(bridge, t.main, 'echo remember me')
+      await settled(bridge, id)
+      const original = (await threadsOf(t))[0]!
+      await bridge.remove!(id)
+      await vi.waitFor(async () => expect(await threadsOf(t)).toEqual([]), { timeout: 5_000, interval: 20 })
+      // Brought back in from a copy of Codex's record, as a session started in its terminal would be.
+      const other = `thread-terminal-${rid()}`
+      await writeFile(
+        join(t.root, 'threads.json'),
+        JSON.stringify({
+          [other]: { id: other, cwd: t.main, model: 'gpt-fake', turns: [], preview: 'from the terminal', createdAt: 1, updatedAt: 1 },
+        }),
+      )
+      const place = { agentSessionId: other, cwd: t.main, workspaceId: 'proj', folders: [{ id: 'app', path: t.main }] }
+      const load = await bridge.loadExternalSession!(place)
+      const adopted = await bridge.adoptExternalSession!({
+        ...place,
+        sessionId: `task-${randomUUID()}`,
+        loadId: load.loadId,
+        title: 'Brought in',
+      })
+      await bridge.remove!(adopted.sessionId)
+      await new Promise(resolve => setTimeout(resolve, 500))
+      expect(deleted(await t.log())).toEqual([original])
+      expect(await threadsOf(t)).toEqual([other])
+    })
   })
 
   it('refuses a Codex below the floor, and offers the adapter only when Codex is not installed at all', async () => {

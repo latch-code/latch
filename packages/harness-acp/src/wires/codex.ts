@@ -115,6 +115,16 @@ const isMode = (value: string): value is Mode => Object.hasOwn(MODES, value)
 export const CODEX_CHILD_META = 'latch/codexChild'
 /** Codex's own words for a thread it has no record of; any other refusal keeps its reason. */
 const NOT_FOUND = /^(?:no rollout found for thread id|invalid session id)\b/u
+/** A thread `thread/delete` or `thread/read` no longer finds: already gone, as far as a deletion is concerned. */
+const GONE = /^(?:no rollout found for thread id|invalid session id|thread not found|thread not loaded)\b|\bnot found\b/iu
+/**
+ * A thread ID Codex names its pictures' folder by unchanged (`generated_images/<id>/`, its `artifact.rs` keeps ASCII
+ * letters, digits, `-` and `_`): anything else is not deleted by path.
+ */
+const THREAD_ID = /^[A-Za-z0-9_-]{1,128}$/u
+/** A picture Codex's image tool saved: `<call id>.<png|gif>` (0.170), JPEG and WebP for a later one. */
+const SAVED_IMAGE = /^[A-Za-z0-9_-]{1,200}\.(?:png|gif|jpe?g|webp)$/iu
+const DELETE_MS = 10_000
 /** One-time answers only: Codex's `acceptForSession` and policy amendments would outlive the person's choice. */
 const ASK_OPTIONS = [
   { optionId: 'accept', name: '允许', kind: 'allow_once' },
@@ -479,6 +489,8 @@ export class CodexWire implements AgentWire {
   readonly forks = true
   /** This Codex keeps `clientUserMessageId` on a turn's user message (checked on 0.169); older ones are not sent it. */
   private marksTurns = false
+  /** Codex's home as its `initialize` reported it: where its image tool saves pictures, which a deletion removes. */
+  private codexHome?: string
   readonly commandsWithoutContext = new Set([COMPACT.name, 'review'])
   private listedFor?: string
   private readonly skillPaths = new Map<string, { name: string; path: string }>()
@@ -591,6 +603,8 @@ export class CodexWire implements AgentWire {
         return this.fork(params, timeoutMs, signal)
       case 'session/list':
         return this.list(params, timeoutMs, signal)
+      case 'session/delete':
+        return this.deleteThread(params, timeoutMs, signal)
       case 'session/prompt':
         return this.prompt(params, timeoutMs, context)
       case 'session/set_config_option':
@@ -675,13 +689,17 @@ export class CodexWire implements AgentWire {
     this.process.write({ method: 'initialized' })
     const version = codexVersion(isRecord(result) ? result.userAgent : undefined)
     this.marksTurns = version !== undefined && atLeast(version, MARKED_TURNS)
+    const home = isRecord(result) ? result.codexHome : undefined
+    if (typeof home === 'string' && isAbsolute(home) && home.length <= 4096 && !/[\u0000-\u001f\u007f]/u.test(home))
+      this.codexHome = home.replace(/\/+$/u, '')
     return {
       protocolVersion: 1,
       agentInfo: { name: 'Codex', ...(version ? { version } : {}) },
       agentCapabilities: {
         loadSession: true,
         promptCapabilities: { image: true, embeddedContext: false },
-        sessionCapabilities: { resume: {}, list: {}, additionalDirectories: {} },
+        // `delete`: `thread/delete`, Codex's own hard delete (0.156, the oldest Codex this wire runs).
+        sessionCapabilities: { resume: {}, list: {}, additionalDirectories: {}, delete: {} },
         // `account/logout`, which the runtime asks for as ACP's `logout`.
         auth: { logout: {} },
       },
@@ -827,12 +845,22 @@ export class CodexWire implements AgentWire {
       if (!forked.success || forked.data.thread.id === source) throw new ForkRefused('它没有为分叉新建线程')
       // A Codex that does not know `lastTurnId` forks the whole thread: the copy must end at the turn asked for.
       if (!(await this.endsWith(forked.data.thread.id, through, timeoutMs, signal))) {
-        const archived = await this.send('thread/archive', { threadId: forked.data.thread.id }, timeoutMs).then(
-          () => true,
-          () => false,
+        // Deleted, as nobody asked for it; archived when Codex will not delete it, so it at least leaves the list.
+        const copy = forked.data.thread.id
+        const left = await this.send('thread/delete', { threadId: copy }, Math.min(timeoutMs ?? DELETE_MS, DELETE_MS)).then(
+          () => undefined,
+          () =>
+            this.send('thread/archive', { threadId: copy }, timeoutMs).then(
+              () => 'archived' as const,
+              () => 'kept' as const,
+            ),
         )
         throw new ForkRefused(
-          archived ? '分叉出的线程没有停在这一轮' : '分叉出的线程没有停在这一轮，而且没能归档，它留在 Codex 自己的会话列表里',
+          left === undefined
+            ? '分叉出的线程没有停在这一轮'
+            : left === 'archived'
+              ? '分叉出的线程没有停在这一轮，Codex 没有删除它，已归档'
+              : '分叉出的线程没有停在这一轮，而且没能删除或归档，它留在 Codex 自己的会话列表里',
         )
       }
     } else if (kind === 'carry') {
@@ -1289,6 +1317,63 @@ export class CodexWire implements AgentWire {
       ]
     })
     return { sessions, ...(read.data.nextCursor ? { nextCursor: read.data.nextCursor } : {}) }
+  }
+
+  /**
+   * `session/delete`: Codex's own hard delete (`thread/delete`), which takes the thread's subagent threads with it, then
+   * the pictures its image tool saved for each of them in Codex's home, through Codex's own file requests. Codex
+   * refuses while another process writes the thread or a fork's history still refers to it; that refusal is the answer,
+   * so the runtime can say what was left. A thread Codex no longer finds is already gone. Done once Codex's own read no
+   * longer finds it.
+   */
+  private async deleteThread(params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+    const id = isRecord(params) && typeof params.sessionId === 'string' ? params.sessionId : ''
+    if (!THREAD_ID.test(id)) throw new RpcError(RPC.invalidParams, 'Invalid params')
+    const limit = Math.min(timeoutMs ?? DELETE_MS, DELETE_MS)
+    const children = await this.childThreads(id, limit)
+    await this.send('thread/delete', { threadId: id }, limit, signal).catch((error: unknown) => {
+      if (error instanceof RpcError && error.code !== RPC.cancelled && GONE.test(error.message)) return
+      if (error instanceof RpcError && error.code !== RPC.cancelled)
+        throw new RpcError(RPC.internal, `Codex 没有删除它保存的会话：${clip(redactKnownSecrets(error.message), 300)}`)
+      throw error
+    })
+    for (const thread of [id, ...children]) await this.removePictures(thread, limit)
+    const found = await this.send('thread/read', { threadId: id, includeTurns: false }, limit).then(
+      () => true,
+      () => false,
+    )
+    if (found) throw new RpcError(RPC.internal, 'Codex 删除后仍能读到这个会话')
+    return {}
+  }
+
+  /** The subagent threads Codex lists under this one (one page): `thread/delete` removes them, and their pictures go too. */
+  private async childThreads(threadId: string, timeoutMs: number): Promise<string[]> {
+    const raw = await this.send('thread/list', { parentThreadId: threadId, limit: 64, modelProviders: [] }, timeoutMs).catch(
+      () => undefined,
+    )
+    const read = listing.safeParse(raw)
+    if (!read.success) return []
+    return read.data.data.flatMap(row => {
+      const child = codexTeamThread.safeParse(row)
+      return child.success && child.data.parentThreadId === threadId && THREAD_ID.test(child.data.id) ? [child.data.id] : []
+    })
+  }
+
+  /**
+   * The pictures Codex's image tool saved for a thread, `<CODEX_HOME>/generated_images/<thread>/<call>.<ext>`, removed
+   * through `fs/remove` one file at a time (never recursively), then the folder once it is empty. Only names in Codex's own
+   * shape are removed; anything else stays, and so does the folder. Best effort: a Codex without these requests keeps them.
+   */
+  private async removePictures(threadId: string, timeoutMs: number): Promise<void> {
+    if (!this.codexHome || !THREAD_ID.test(threadId)) return
+    const folder = `${this.codexHome}/generated_images/${threadId}`
+    const listed = await this.send('fs/readDirectory', { path: folder }, timeoutMs).catch(() => undefined)
+    const entries = isRecord(listed) && Array.isArray(listed.entries) ? listed.entries.slice(0, 1000) : []
+    for (const entry of entries) {
+      if (!isRecord(entry) || entry.isFile !== true || typeof entry.fileName !== 'string' || !SAVED_IMAGE.test(entry.fileName)) continue
+      await this.send('fs/remove', { path: `${folder}/${entry.fileName}`, recursive: false, force: true }, timeoutMs).catch(() => {})
+    }
+    if (entries.length) await this.send('fs/remove', { path: folder, recursive: false, force: true }, timeoutMs).catch(() => {})
   }
 
   private options(): unknown[] {

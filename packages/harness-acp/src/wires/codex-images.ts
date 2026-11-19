@@ -1,6 +1,7 @@
 /**
  * Pictures Codex's image tool made (`imageGeneration` thread items). Everything here is the Harness's word: the bytes
- * are only passed on when they are canonical base64 of a PNG, JPEG or WebP within the Host's picture-attachment limit.
+ * are only passed on when they are canonical base64 of a PNG, JPEG, GIF or WebP within the Host's picture-attachment limit.
+ * Codex 0.170 makes PNG and GIF (`GeneratedImageFormat`), the Host keeps all four as picture attachments.
  */
 
 /**
@@ -14,11 +15,13 @@ export const GENERATED_IMAGES_PER_TURN = 8
 
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/u
 
-export type GeneratedImage = { data: string; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' } | { refused: 'too-large' | 'invalid' }
+type PictureType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
+export type GeneratedImage = { data: string; mimeType: PictureType } | { refused: 'too-large' | 'invalid' }
 
-function sniff(bytes: Buffer): 'image/png' | 'image/jpeg' | 'image/webp' | undefined {
+function sniff(bytes: Buffer): PictureType | undefined {
   if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png'
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+  if (bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(bytes.toString('latin1', 0, 6))) return 'image/gif'
   if (bytes.length >= 12 && bytes.toString('latin1', 0, 4) === 'RIFF' && bytes.toString('latin1', 8, 12) === 'WEBP') return 'image/webp'
   return undefined
 }
@@ -35,11 +38,11 @@ export function generatedImage(base64: string): GeneratedImage {
   return { data: base64, mimeType }
 }
 
-/** Where Codex says it saved the picture: an absolute path to a PNG, JPEG or WebP file, else nothing to ask for. */
+/** Where Codex says it saved the picture: an absolute path to a PNG, JPEG, GIF or WebP file, else nothing to ask for. */
 export function savedImagePath(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length > 4096 || !value.startsWith('/')) return undefined
   if ([...value].some(character => character.charCodeAt(0) < 0x20)) return undefined
-  return /\.(?:png|jpe?g|webp)$/iu.test(value) ? value : undefined
+  return /\.(?:png|jpe?g|gif|webp)$/iu.test(value) ? value : undefined
 }
 
 /** The short line under the image tool's row when no picture is shown. */

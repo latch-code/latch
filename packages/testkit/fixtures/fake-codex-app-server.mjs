@@ -44,11 +44,23 @@
 // (TOML values, as Codex reads them) makes it the process's provider, as Codex does. account/read then says no OpenAI
 // login is needed, and every turn calls `<base_url>/responses` for real, streamed, with the variable `env_key` names as
 // its bearer token, replying with the text the service streamed; a failed call fails the turn with the service's words.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+// config/read reports each `-c` key's origin as `sessionFlags`; FAKE_CODEX_CONFIG is more effective config (merged under
+// `config`) and FAKE_CODEX_ORIGINS more origins by key, as a person's own config.toml or a managed layer would add.
+//
+// Deletion (0.170): thread/delete removes a thread and the subagent threads under it, refusing while a fork made by
+// thread/fork still refers to it (as a paginated history does) or when FAKE_CODEX_DELETE_FAIL says why; a thread it does
+// not know is `thread not found`. fs/readDirectory and fs/remove act only inside FAKE_CODEX_IMAGE_DIR, where pictures
+// are kept as Codex keeps them, `generated_images/<thread>/<call>.<ext>`; `initialize` names its parent as the home.
+// Policy: FAKE_CODEX_REQUIREMENTS is configRequirements/read's `requirements` (JSON; none: null), and a turn whose
+// approval policy, sandbox or reviewer it does not allow is refused as Codex refuses one. FAKE_CODEX_HOOKS is the
+// hooks hooks/list reports for every folder (JSON array of `HookMetadata`). A turn `system-error` reports an error and the
+// thread's `systemError` status and never completes. Threads carry a `source` (`vscode`; FAKE_CODEX_EXEC_THREADS is a
+// JSON array of `exec` threads listed only for `sourceKinds: ["exec"]`).
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { png } from './png.mjs'
 
 const env = process.env
@@ -58,6 +70,9 @@ const VERSION = env.FAKE_CODEX_VERSION ?? '0.167.0'
 const IMAGE_DIR = env.FAKE_CODEX_IMAGE_DIR ?? join(tmpdir(), `latch-fake-codex-images-${process.pid}`, 'generated_images')
 // The simulator its latch-browser calls name, in the exact shape the Host's own tools take.
 const SIMULATOR_FIXTURE_UDID = '22222222-2222-4222-8222-222222222222'
+/** A 1×1 GIF, as Codex's image tool may make one (`GeneratedImageFormat::Gif`). */
+const GIF = Buffer.from('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64')
+const REQUIREMENTS = env.FAKE_CODEX_REQUIREMENTS ? JSON.parse(env.FAKE_CODEX_REQUIREMENTS) : null
 const args = process.argv.slice(2)
 // `codex debug models`: the bundled catalog, or the one a `-c model_catalog_json=` names, read back.
 if (args[0] === 'debug' && args[1] === 'models') {
@@ -178,6 +193,34 @@ function threads() {
   }
 }
 const memory = {}
+/** Gone from this process and from the shared file. */
+function drop(ids) {
+  const all = threads()
+  for (const id of ids) {
+    delete memory[id]
+    delete all[id]
+  }
+  if (STATE) writeFileSync(STATE, JSON.stringify(all))
+}
+/** Inside the folder its pictures are kept in, and nowhere else. */
+const insideImages = path => typeof path === 'string' && path.startsWith(`${IMAGE_DIR}/`) && !path.includes('..')
+/** What configRequirements/read would refuse of a turn's settings, in Codex's words. */
+function forbidden(params) {
+  if (!REQUIREMENTS) return undefined
+  const { allowedApprovalPolicies: policies, allowedSandboxModes: sandboxes, allowedApprovalsReviewers: reviewers } = REQUIREMENTS
+  const sandbox =
+    params.sandboxPolicy?.type === 'readOnly'
+      ? 'read-only'
+      : params.sandboxPolicy?.type === 'workspaceWrite'
+        ? 'workspace-write'
+        : params.sandboxPolicy?.type === 'dangerFullAccess'
+          ? 'danger-full-access'
+          : params.sandbox
+  if (params.approvalPolicy && policies && !policies.includes(params.approvalPolicy)) return `approval_policy ${params.approvalPolicy}`
+  if (sandbox && sandboxes && !sandboxes.includes(sandbox)) return `sandbox ${sandbox}`
+  if (params.approvalsReviewer && reviewers && !reviewers.includes(params.approvalsReviewer)) return `reviewer ${params.approvalsReviewer}`
+  return undefined
+}
 function save(thread) {
   memory[thread.id] = thread
   if (STATE) writeFileSync(STATE, JSON.stringify(threads()))
@@ -192,6 +235,7 @@ const shown = thread => ({
   updatedAt: thread.updatedAt,
   modelProvider: thread.provider ?? 'openai',
   model: thread.model,
+  source: thread.source ?? 'vscode',
   status: { type: 'idle' },
   turns: [],
   ...(thread.parentThreadId ? { parentThreadId: thread.parentThreadId, agentNickname: thread.agentNickname } : {}),
@@ -296,9 +340,13 @@ async function play(text) {
           ? Buffer.concat([png(4, 4), Buffer.alloc(6 * 1024 * 1024)])
           : how === 'bad'
             ? Buffer.from('not a picture')
-            : png(width, height, colour)
-      mkdirSync(IMAGE_DIR, { recursive: true })
-      savedPath = join(IMAGE_DIR, `${id}.png`)
+            : how === 'gif'
+              ? GIF
+              : png(width, height, colour)
+      // One folder per thread, as Codex keeps them, so deleting a thread can take its pictures.
+      const folder = join(IMAGE_DIR, thread.id)
+      mkdirSync(folder, { recursive: true })
+      savedPath = join(folder, `${id}.${how === 'gif' ? 'gif' : 'png'}`)
       writeFileSync(savedPath, bytes)
       const base = { type: 'imageGeneration', id, revisedPrompt: 'a blue gradient', generationId: null, transparentBackground: null }
       notify('item/started', { threadId: thread.id, turnId: turn.id, item: { ...base, status: 'in_progress', result: '' } })
@@ -1005,6 +1053,15 @@ async function play(text) {
     })
     return 'interrupted'
   }
+  // As Codex marks a thread after an error event it cannot attach to the turn: the status, and no turn/completed.
+  if (word === 'system-error') {
+    notify('error', { threadId: thread.id, turnId: turn.id, willRetry: false, error: { message: 'The session hit an internal error' } })
+    notify('thread/status/changed', { threadId: thread.id, status: { type: 'systemError' } })
+    await new Promise(resolve => {
+      turn.interrupt = resolve
+    })
+    return 'interrupted'
+  }
   if (word === 'fail') {
     notify('error', { threadId: thread.id, turnId: turn.id, willRetry: true, error: { message: 'stream disconnected, retrying' } })
     notify('error', { threadId: thread.id, turnId: turn.id, willRetry: false, error: { message: 'The model service failed' } })
@@ -1167,20 +1224,71 @@ async function handle(method, params) {
         throw Object.assign(new Error('not found'), { code: -32603 })
       return { dataBase64: readFileSync(params.path).toString('base64') }
     }
+    case 'fs/readDirectory': {
+      if (!insideImages(params.path) || !existsSync(params.path)) throw Object.assign(new Error('not found'), { code: -32603 })
+      return {
+        entries: readdirSync(params.path, { withFileTypes: true }).map(entry => ({
+          fileName: entry.name,
+          isDirectory: entry.isDirectory(),
+          isFile: entry.isFile(),
+        })),
+      }
+    }
+    // Only what it keeps itself; a directory goes only when empty unless `recursive`, as Codex's `remove_dir`.
+    case 'fs/remove': {
+      if (!insideImages(params.path)) throw Object.assign(new Error('outside the fake home'), { code: -32603 })
+      log('removed', { path: params.path, recursive: params.recursive ?? true })
+      if (!existsSync(params.path)) {
+        if (params.force === false) throw Object.assign(new Error('not found'), { code: -32603 })
+        return {}
+      }
+      if (statSync(params.path).isDirectory()) {
+        if (params.recursive === false) rmdirSync(params.path)
+        else rmSync(params.path, { recursive: true })
+      } else rmSync(params.path)
+      return {}
+    }
+    case 'thread/delete': {
+      const all = threads()
+      if (!all[params.threadId]) throw Object.assign(new Error(`thread not found: ${params.threadId}`), { code: -32600 })
+      if (env.FAKE_CODEX_DELETE_FAIL)
+        throw Object.assign(new Error(`thread ${params.threadId} cannot be deleted: ${env.FAKE_CODEX_DELETE_FAIL}`), { code: -32600 })
+      if (Object.values(all).some(item => item.forkedFrom === params.threadId))
+        throw Object.assign(new Error(`thread ${params.threadId} cannot be deleted because forked history still references it`), {
+          code: -32600,
+        })
+      const subtree = [params.threadId]
+      for (let index = 0; index < subtree.length; index++)
+        for (const item of Object.values(all)) if (item.parentThreadId === subtree[index]) subtree.push(item.id)
+      drop(subtree.toReversed())
+      for (const id of subtree.toReversed()) notify('thread/deleted', { threadId: id })
+      log('deleted', { threadId: params.threadId, subtree })
+      return {}
+    }
+    case 'configRequirements/read':
+      return { requirements: REQUIREMENTS }
+    case 'hooks/list': {
+      const hooks = env.FAKE_CODEX_HOOKS ? JSON.parse(env.FAKE_CODEX_HOOKS) : []
+      const cwds = params.threadId ? [thread?.cwd ?? ''] : (params.cwds ?? [])
+      return { data: cwds.map(cwd => ({ cwd, hooks, warnings: [], errors: [] })) }
+    }
     case 'initialize':
       if (env.FAKE_ACP_INIT_AUTH === '1') throw Object.assign(new Error('Authentication required'), { code: -32000 })
-      return { userAgent: `latch/${VERSION} (fake)`, codexHome: '/nonexistent', platformFamily: 'unix', platformOs: 'macos' }
-    case 'config/read':
+      return { userAgent: `latch/${VERSION} (fake)`, codexHome: dirname(IMAGE_DIR), platformFamily: 'unix', platformOs: 'macos' }
+    case 'config/read': {
+      const flags = Object.fromEntries(Object.keys(overrides).map(key => [key, { name: { type: 'sessionFlags' }, version: 'flags' }]))
       return {
         config: {
           model: env.FAKE_CODEX_MODEL ?? null,
           model_reasoning_effort: null,
           service_tier: env.FAKE_CODEX_SERVICE_TIER ?? null,
           shell_environment_policy: JSON.parse(env.FAKE_CODEX_SHELL_ENVIRONMENT ?? '{}'),
+          ...JSON.parse(env.FAKE_CODEX_CONFIG ?? '{}'),
         },
-        origins: {},
+        origins: { ...flags, ...JSON.parse(env.FAKE_CODEX_ORIGINS ?? '{}') },
         layers: null,
       }
+    }
     case 'account/logout':
       if (env.FAKE_ACP_LOGIN_FILE && existsSync(env.FAKE_ACP_LOGIN_FILE)) rmSync(env.FAKE_ACP_LOGIN_FILE)
       return {}
@@ -1214,6 +1322,8 @@ async function handle(method, params) {
       return { data: data.slice(start, start + 2), nextCursor: next }
     }
     case 'thread/start': {
+      const refused = forbidden(params)
+      if (refused) throw Object.assign(new Error(`invalid config override: ${refused} is not allowed by requirements`), { code: -32600 })
       if (
         env.FAKE_CODEX_PERSIST_START_TRUST === '1'
         && params.cwd
@@ -1292,6 +1402,7 @@ async function handle(method, params) {
         ...structuredClone(found),
         ...(through >= 0 ? { turns: structuredClone(found.turns.slice(0, through + 1)) } : {}),
         id: `thread-${randomUUID()}`,
+        forkedFrom: found.id,
         provider: onto,
         model: params.model ?? (onto === (found.provider ?? 'openai') ? found.model : (env.FAKE_CODEX_MODEL ?? 'gpt-fake')),
         createdAt: now(),
@@ -1332,13 +1443,26 @@ async function handle(method, params) {
     case 'experimentalFeature/list':
       return { data: [{ name: 'multi_agent', enabled: env.FAKE_CODEX_TEAM !== 'off' }], nextCursor: null }
     // As Codex: only the process's provider's threads, unless `modelProviders` names others (`[]`: every provider's).
+    // `sourceKinds` absent or empty: the interactive sources only; `exec` threads only when asked for. `sortKey`:
+    // `updated_at`, else by creation, newest first. `limit` and a numeric `cursor` page the result.
     case 'thread/list': {
       const wanted = Array.isArray(params.modelProviders) ? params.modelProviders : [providerId ?? 'openai']
-      const data = Object.values(threads()).filter(item => {
-        if (params.parentThreadId ? item.parentThreadId !== params.parentThreadId : item.parentThreadId) return false
-        return !wanted.length || wanted.includes(item.provider ?? 'openai')
-      })
-      return { data: data.map(shown), nextCursor: null, backwardsCursor: null }
+      const kinds = Array.isArray(params.sourceKinds) && params.sourceKinds.length ? params.sourceKinds : ['cli', 'vscode']
+      const exec = env.FAKE_CODEX_EXEC_THREADS ? JSON.parse(env.FAKE_CODEX_EXEC_THREADS).map(item => ({ ...item, source: 'exec' })) : []
+      const data = [...Object.values(threads()), ...exec]
+        .filter(item => {
+          if (params.parentThreadId ? item.parentThreadId !== params.parentThreadId : item.parentThreadId) return false
+          if (!params.parentThreadId && !kinds.includes(item.source ?? 'vscode')) return false
+          return !wanted.length || wanted.includes(item.provider ?? 'openai')
+        })
+        .toSorted((a, b) =>
+          params.sortKey === 'updated_at' ? (b.updatedAt ?? 0) - (a.updatedAt ?? 0) : (b.createdAt ?? 0) - (a.createdAt ?? 0),
+        )
+      log('listed', { params })
+      const start = params.cursor ? Number(params.cursor) : 0
+      const limit = params.limit ?? data.length
+      const next = start + limit < data.length ? String(start + limit) : null
+      return { data: data.slice(start, start + limit).map(shown), nextCursor: next, backwardsCursor: null }
     }
     case 'thread/compact/start': {
       if (!thread || params.threadId !== thread.id || turn) throw Object.assign(new Error('thread not idle'), { code: -32600 })
@@ -1366,6 +1490,9 @@ async function handle(method, params) {
     }
     case 'turn/start': {
       if (!thread || params.threadId !== thread.id) throw Object.assign(new Error('thread not loaded'), { code: -32600 })
+      const refused = forbidden(params)
+      if (refused)
+        throw Object.assign(new Error(`invalid thread settings override: ${refused} is not allowed by requirements`), { code: -32600 })
       if (turn) throw Object.assign(new Error('a turn is already running'), { code: -32600 })
       turn = { id: `turn-${randomUUID()}`, items: [], steered: [], policy: params, cancelled: false }
       if (params.model) thread.model = params.model

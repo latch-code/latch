@@ -715,7 +715,7 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 
 删除会话、项目与 Agent 的确认都取自 `apps/web/src/deletionCopy.ts`，按实际行为写：
 
-- **会话**：删除 Latch 里的对话、附件与改动快照（每条删除路径都经 `removeSessionRecords`）。用 Host 自己的模型服务运行的 Harness（`capabilities.models.owner` 为 `latch`）只有 Latch 这一份；其他 Harness 在 Latch 能启动它（项目仍在、启动方式核对通过）且它声明 `session/delete` 时，Latch 也请它删除自己保存的副本，否则它的副本可能留下（Grok 的私有目录随会话删除，见 [HARNESSES](HARNESSES.md)）；接入的原会话从不删除。审计与用量记录保留；已发给模型服务的内容无法撤回。
+- **会话**：删除 Latch 里的对话、附件与改动快照（每条删除路径都经 `removeSessionRecords`）。用 Host 自己的模型服务运行的 Harness（`capabilities.models.owner` 为 `latch`）只有 Latch 这一份；其他 Harness 在 Latch 能启动它（项目仍在、启动方式核对通过）且它声明 `session/delete` 时，Latch 也请它删除自己保存的副本，从新到旧，否则它的副本可能留下（Grok 的私有目录随会话删除；Codex 直连经 `thread/delete` 硬删除，连同子 Agent 的 thread 与它为这些 thread 存的图片，项目已移除时在空文件夹里删，见 [HARNESSES](HARNESSES.md#codex-的-app-server)）；Agent 拒绝时它的副本留下，Host 日志写明原因。接入的原会话从不删除。审计与用量记录保留；已发给模型服务的内容无法撤回。
 - **项目**：只从列表移除，文件、会话与快照都保留。
 - **Agent**：记忆、提议与撤销记录删除，聊天记录与家保留；外部 Harness 已收到的上下文留在原会话里。
 - 没有「删除全部数据」：停止 Host 后删除数据目录才是。

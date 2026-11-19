@@ -3399,12 +3399,18 @@ export class AgentRuntime implements Bridge {
     await this.flush()
     this.notify(sessionId)
     // A session brought in from the agent's own record stays the agent's unless the person chose otherwise: only those
-    // Latch opened after it go.
+    // Latch opened after it go. Newest first: a fork's history can refer to the session it came from, and the agent may
+    // then refuse to delete that one.
     const original = options.original === true && this.deletesOriginal()
     const kept = original ? undefined : task.acp.imported?.agentSessionId
-    const agentSessionIds = (acpSessionId === undefined ? earlierSessionIds : [...earlierSessionIds, acpSessionId]).filter(
-      id => id !== kept,
-    )
+    const agentSessionIds = (acpSessionId === undefined ? earlierSessionIds : [...earlierSessionIds, acpSessionId])
+      .filter(id => id !== kept)
+      .toReversed()
+    // Codex's own app-server deletes a thread with no thread open and no project read (`thread/delete`), so a process of
+    // the current definition in a private empty folder does it, as 读取 and 接入 start one: for a session recorded before
+    // the wire offered deletion, or whose project, launch or profile has changed since. A thread that Codex (another home,
+    // say) does not know is not found, and nothing else can match its ID.
+    const privately = this.selection.profile?.wire === 'codex'
     // Deletable as recorded at its start, or by the harness alone: Claude's direct wire deletes without starting
     // anything, so its sessions recorded before it could are deleted too; a chosen original is asked of a process that
     // says it can.
@@ -3415,6 +3421,7 @@ export class AgentRuntime implements Bridge {
       deletable === true || this.deletesWithoutStart() || (original && task.acp.imported !== undefined),
       confirmedOf(recorded.acp),
       () => this.stillListed(recorded),
+      privately,
     )
   }
 
@@ -6996,6 +7003,7 @@ export class AgentRuntime implements Bridge {
     deletable: boolean,
     confirmed: Confirmed,
     listed: () => Promise<boolean>,
+    privately = false,
   ): void {
     const work: Promise<void> = (async () => {
       try {
@@ -7015,6 +7023,11 @@ export class AgentRuntime implements Bridge {
             if ((await store.busy(id).catch(() => ({ busy: true }))).busy) continue
             await store.delete(id, cwd).catch(() => {})
           }
+          return
+        }
+        if (!live?.capabilities.delete && privately) {
+          if (live) await live.wire.stop('stop', this.limits.stopGraceMs).catch(() => {})
+          await this.deletePrivately(acpSessionIds)
           return
         }
         if (
@@ -7039,8 +7052,7 @@ export class AgentRuntime implements Bridge {
         for (const id of acpSessionIds) target.sessions.delete(id)
         if (!target.capabilities.delete) return
         this.holdIdle(target)
-        for (const id of acpSessionIds)
-          await target.wire.request('session/delete', { sessionId: id }, Math.min(this.limits.requestTimeoutMs, 10_000)).catch(() => {})
+        await this.deleteAgentSessions(target, acpSessionIds)
       } catch {
         /* Best effort. */
       } finally {
@@ -7052,6 +7064,37 @@ export class AgentRuntime implements Bridge {
       if (this.forgetting.get(key) === work) this.forgetting.delete(key)
     })
     this.forgetting.set(key, work)
+  }
+
+  /** `session/delete` for each, in the order given; one the agent refuses is said in the Host's log, the rest go on. */
+  private async deleteAgentSessions(target: Live, ids: readonly string[]): Promise<void> {
+    for (const id of ids)
+      await target.wire
+        .request('session/delete', { sessionId: id }, Math.min(this.limits.requestTimeoutMs, 10_000))
+        .catch((error: unknown) => {
+          const said = clip(this.redact(message(error)), 300)
+          this.limits.log(`已删除 ${this.agent.name} 会话在 Latch 中的记录；${this.agent.name} 自己保存的一份会话副本没有删除：${said}`)
+        })
+  }
+
+  /** The agent's sessions deleted by a process of the current definition in a private empty folder, then stopped. */
+  private async deletePrivately(ids: readonly string[]): Promise<void> {
+    const key = `delete-${randomUUID()}`
+    const cwd = await this.makeTemporaryDirectory('delete-')
+    try {
+      const launch = this.currentLaunch(await this.projectConfig(cwd))
+      const live = await this.ensureProcess(key, cwd, { launchHash: launch.hash, definitionHash: launch.definitionHash })
+      if (!live.capabilities.delete) return
+      this.enter(this.holds, key)
+      try {
+        await this.deleteAgentSessions(live, ids)
+      } finally {
+        this.leave(this.holds, key)
+      }
+    } finally {
+      await this.discardProcess(key)
+      await this.removeTemporaryDirectory(cwd).catch(() => {})
+    }
   }
 
   /** Stops the process started for a session that was never recorded, and removes its temporary directory. */

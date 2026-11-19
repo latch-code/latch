@@ -158,7 +158,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 
 | 变量 | 用例 |
 | --- | --- |
-| `LATCH_CODEX_GATEWAY_BINARY` | `codex-chat-gateway.live.test.ts`、`codex-catalog.live.test.ts`、`codex-anthropic-gateway.live.test.ts`、`e2e/codex-model-gateway.e2e.ts`（不设时用假 app-server） |
+| `LATCH_CODEX_GATEWAY_BINARY` | `codex-chat-gateway.live.test.ts`、`codex-catalog.live.test.ts`、`codex-anthropic-gateway.live.test.ts`、`e2e/codex-model-gateway.e2e.ts`（不设时用假 app-server）；`packages/harness-acp/test/codex-delete.live.test.ts`：临时 `CODEX_HOME`、不登录、不发一轮，在 Latch 的服务上开一个 thread，经线删除，图片随之删掉、旁边的别的文件留下 |
 | `LATCH_CLAUDE_GATEWAY_BINARY` | `claude-gateway.live.test.ts`、`claude-gateway-thinking.live.test.ts`、`e2e/claude-model-gateway.e2e.ts`：指向 `claude` 时走 Agent SDK 线，指向 `claude-agent-acp` 时走适配器 |
 | `LATCH_CLAUDE_DIRECT_BINARY`（本机已登录的 `claude`） | `claude-direct.live.test.ts`：一个词的回复、读一个文件、一次被拒的写入（只有一次性选项）、一次取消、一次带差异的编辑、一道提问、一个子 Agent、计划里选「继续规划」、Host 重启后在记下的模式、模型与思考上恢复同一会话；再加 `LATCH_CLAUDE_ADAPTER_BINARY` 时 `packages/harness-acp/test/claude-resume.live.test.ts` 在直连上恢复适配器开的会话。都是真实的小提示 |
 | `LATCH_CLAUDE_STORE_LIVE`（本机已登录的 `claude`） | `packages/harness-acp/test/claude-store.live.test.ts`：Claude 自己的存储。临时项目里一条真实的短提示，按第一条消息原生分叉，列出（Latch 与 SDK 的会话不列出）、重放，再真删除两份转录并确认不在。只打印数量与布尔值（加 `--silent=false` 看到这一行），不打印标题与文字 |

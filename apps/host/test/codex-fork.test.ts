@@ -67,12 +67,14 @@ async function codexHost(env: Record<string, string> = {}) {
     const starts = messages.flatMap((item, index) => (item.role === 'user' && !item.steered ? [index] : []))
     return messages[(starts[turn] ?? messages.length) - 1]!.id
   }
-  const archived = async () =>
+  const events = async (event: string) =>
     (await readFile(log, 'utf8').catch(() => ''))
       .split('\n')
       .filter(Boolean)
-      .filter(line => (JSON.parse(line) as { event: string }).event === 'archived').length
-  return { owner, start, send, replies, notes, turnEnd, detail, archived }
+      .filter(line => (JSON.parse(line) as { event: string }).event === event).length
+  const archived = () => events('archived')
+  const deleted = () => events('deleted')
+  return { owner, start, send, replies, notes, turnEnd, detail, archived, deleted }
 }
 
 test("a fork of a Codex session into Codex forks Codex's own thread through the turn, by the message that opened it", async () => {
@@ -114,7 +116,7 @@ async function fallsBack(h: Awaited<ReturnType<typeof codexHost>>) {
   expect(await h.replies(edited)).toEqual([expect.stringMatching(/^echo: 以下是会话「alpha」到第 1 轮为止的记录/u)])
 }
 
-test('a Codex that forks the whole thread despite the turn named is caught, its copy archived, and the text record sent', async () => {
+test('a Codex that forks the whole thread despite the turn named is caught, its copy deleted, and the text record sent', async () => {
   const h = await codexHost({ FAKE_CODEX_FORK_WHOLE: '1' })
   const source = await h.start({ prompt: 'alpha' })
   await h.send(source, 'beta')
@@ -124,16 +126,28 @@ test('a Codex that forks the whole thread despite the turn named is caught, its 
   ])
   // The text record goes with the new words, to a thread of its own.
   expect(await h.replies(edited)).toEqual([expect.stringMatching(/^echo: 以下是会话「alpha」到第 1 轮为止的记录/u)])
-  expect(await h.archived()).toBe(1)
+  expect(await h.deleted()).toBe(1)
+  expect(await h.archived()).toBe(0)
 })
 
-test('says so when the wrong fork could not be archived either', async () => {
-  const h = await codexHost({ FAKE_CODEX_FORK_WHOLE: '1', FAKE_CODEX_ARCHIVE_FAIL: '1' })
+test('archives the wrong fork when Codex will not delete it, and says so', async () => {
+  const h = await codexHost({ FAKE_CODEX_FORK_WHOLE: '1', FAKE_CODEX_DELETE_FAIL: 'locked' })
   const source = await h.start({ prompt: 'alpha' })
   await h.send(source, 'beta')
   const edited = await h.start({ prompt: 'recall', forkOf: { taskId: source, upToMessageId: await h.turnEnd(source, 1) } })
   expect(await h.notes(edited)).toEqual([
-    'Codex 没有用它自己的记录分叉：分叉出的线程没有停在这一轮，而且没能归档，它留在 Codex 自己的会话列表里。这次以文字带上来源会话到这一轮为止的记录。',
+    'Codex 没有用它自己的记录分叉：分叉出的线程没有停在这一轮，Codex 没有删除它，已归档。这次以文字带上来源会话到这一轮为止的记录。',
+  ])
+  expect(await h.archived()).toBe(1)
+})
+
+test('says so when the wrong fork could be neither deleted nor archived', async () => {
+  const h = await codexHost({ FAKE_CODEX_FORK_WHOLE: '1', FAKE_CODEX_DELETE_FAIL: 'locked', FAKE_CODEX_ARCHIVE_FAIL: '1' })
+  const source = await h.start({ prompt: 'alpha' })
+  await h.send(source, 'beta')
+  const edited = await h.start({ prompt: 'recall', forkOf: { taskId: source, upToMessageId: await h.turnEnd(source, 1) } })
+  expect(await h.notes(edited)).toEqual([
+    'Codex 没有用它自己的记录分叉：分叉出的线程没有停在这一轮，而且没能删除或归档，它留在 Codex 自己的会话列表里。这次以文字带上来源会话到这一轮为止的记录。',
   ])
 })
 
