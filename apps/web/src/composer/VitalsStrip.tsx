@@ -93,13 +93,10 @@ interface Item {
  */
 function VitalsStrip({
   vitals,
-  harnessId,
   by,
   phone = false,
 }: {
   vitals: SessionVitals
-  /** The Harness whose limits the token item opens. */
-  harnessId: string | undefined
   /** Who reported the Harness's numbers, for the breakdown. */
   by: string
   phone?: boolean
@@ -148,8 +145,9 @@ function VitalsStrip({
         className="vitals-item"
         data-item="tokens"
         aria-haspopup="dialog"
+        // What was used, never the plan's limits: those are the quota mark's own.
         onClick={() => {
-          openUsage(harnessId && tokens.by === 'harness' ? { view: 'limits', harnessId } : { view: 'usage' })
+          openUsage({ view: 'usage' })
         }}>
         <Database size={12} strokeWidth={ICON_STROKE[12]} aria-hidden="true" />
         <span>{formatTokens(tokens.total)} tok</span>
@@ -242,5 +240,5 @@ export function SessionVitalsLine({
 }) {
   const vitals = sessionVitals(summary, detail)
   if (!hasVitals(vitals)) return <div className="vitals-strip" aria-hidden="true" />
-  return <VitalsStrip vitals={vitals} harnessId={summary.harnessId} by={harness ? harnessName(harness) : 'Harness'} phone={phone} />
+  return <VitalsStrip vitals={vitals} by={harness ? harnessName(harness) : 'Harness'} phone={phone} />
 }
