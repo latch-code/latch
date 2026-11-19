@@ -31,7 +31,8 @@ export function sessionSource(
   const handed = snapshot.catalog?.features?.handoffs ? sourceCrumb(snapshot, task.id) : undefined
   if (handed)
     return { kind: 'handoff', sessionId: handed.sourceId, ...(handed.title ? { title: handed.title } : {}), listed: !!handed.title }
-  if (task.forkOf) {
+  // A conversation that moved to another Harness is still itself: it has no source to name.
+  if (task.forkOf && !task.forkOf.moved) {
     const listed = snapshot.tasks.find(item => item.id === task.forkOf!.taskId)
     return {
       kind: 'fork',

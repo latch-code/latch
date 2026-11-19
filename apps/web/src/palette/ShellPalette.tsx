@@ -38,7 +38,7 @@ import { harnessName } from '../composerChoice.ts'
 import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
 import { currentShell } from '../core/shell.ts'
 import { BACKDROP_CHOICES, DENSITY_CHOICES, MOTION_CHOICES, backdropLevel, setPreference, toggleWorkView } from '../preferences.ts'
-import { projectOf } from '../sessions.ts'
+import { movedFrom, projectOf } from '../sessions.ts'
 import { sectionLabel, settingsSections } from '../settings/SettingsPage.tsx'
 import { settingsSectionsAt, type SettingsSection } from '../shell/routes.ts'
 import type { ShellState } from '../shell/useShellLayout.tsx'
@@ -283,10 +283,15 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       }
     }
   }, [catalog?.workspaces, catalog?.harnesses, customAgents, choose, spaces, locale])
-  const recent = useMemo(() => recentSessions(snapshot.tasks).map(sessionEntry), [snapshot.tasks, sessionEntry])
+  // A session its conversation left for another Harness is found as the one it went on in.
+  const listed = useMemo(() => {
+    const left = movedFrom(snapshot.tasks)
+    return snapshot.tasks.filter(task => !left.has(task.id))
+  }, [snapshot.tasks])
+  const recent = useMemo(() => recentSessions(listed).map(sessionEntry), [listed, sessionEntry])
   const sessions = useMemo(
-    () => snapshot.tasks.toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(sessionEntry),
-    [snapshot.tasks, sessionEntry],
+    () => listed.toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(sessionEntry),
+    [listed, sessionEntry],
   )
 
   const agents: PaletteEntry[] = allowed.includes('engines')

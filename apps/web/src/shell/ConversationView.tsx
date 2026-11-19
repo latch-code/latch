@@ -14,6 +14,7 @@ import { Banner } from '../components/Banner.tsx'
 import { JumpLatest } from '../components/JumpLatest.tsx'
 import { ConversationRail } from '../components/ConversationRail.tsx'
 import { Transcript } from '../components/Transcript.tsx'
+import { MoveHistory, movedSide } from '../conversation/HarnessMove.tsx'
 import { FillPlace } from '../panel/terminal/fills.ts'
 import { isLive, liveMessageId, renderedMessages } from '../conversation.ts'
 import { ChangesLinkContext } from '../conversation/changesLink.ts'
@@ -380,6 +381,13 @@ export function ConversationView({
                         <div className="session-start-note" role="note">
                           <Hint label={COPY.unfiltered(current.summary.worktree.unfiltered)}>{COPY.unfilteredHint}</Hint>
                         </div>
+                      )}
+                      {current.summary.forkOf?.moved && (
+                        <MoveHistory
+                          fork={current.summary.forkOf}
+                          from={movedSide(catalog?.harnesses, current.summary.forkOf.moved.from)}
+                          to={{ name: harnessName, harness: harnessInfo }}
+                        />
                       )}
                       <Transcript
                         detail={current}

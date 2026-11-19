@@ -1646,3 +1646,55 @@ button.summary-file:hover {
 .subagent-group-rows .subagent-head > .subagent-toggle {
   grid-template-columns: 16px minmax(0, max-content) minmax(0, 1fr) max-content max-content;
 }
+
+/*
+ * Where a conversation went on with another Harness: a hairline across the column with the two marks and names in its
+ * middle, the one it left in muted ink. What was said before stands above it as it was, a little quieter.
+ */
+.move-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  margin-block: var(--sp-32) var(--sp-16);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.move-line::before,
+.move-line::after {
+  flex: 1 1 0;
+  height: 1px;
+  background: var(--line);
+  content: '';
+}
+.move-line-words {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+.move-side {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.move-side.is-next {
+  color: var(--ink);
+}
+.move-cancel {
+  margin-inline-start: var(--sp-4);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.move-gone {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+  text-align: center;
+}

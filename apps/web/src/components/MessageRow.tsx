@@ -365,7 +365,7 @@ function UserMessage({
                 <VisibleText text={COPY.nativeFork(harness ?? 'Harness', message.forkContext.title, message.forkContext.turn)} />
               </p>
             )}
-            {message.forkContext && !message.nativeFork && (
+            {message.forkContext && !message.nativeFork && !message.forkContext.moved && (
               <details className="fork-context">
                 <summary>
                   <GitFork size={14} nonScalingStroke strokeWidth={ICON_STROKE[14]} aria-hidden="true" />

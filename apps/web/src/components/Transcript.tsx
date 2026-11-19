@@ -1046,7 +1046,8 @@ export function Transcript(props: TranscriptProps) {
       <SubagentStop.Provider value={onStopSubagent ? stopSubagent : undefined}>
         <TurnSummaryOptions.Provider value={summaryOptions}>
           <FileReferences sessionId={sessionId} active={active}>
-            {detail.summary.forkOf && (
+            {/* A conversation that moved shows its earlier record itself, above its line: no note of a fork. */}
+            {detail.summary.forkOf && !detail.summary.forkOf.moved && (
               <p className="fork-origin">
                 {COPY.forkBegin}
                 {onSource ? (

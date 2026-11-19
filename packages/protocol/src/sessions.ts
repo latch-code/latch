@@ -225,8 +225,20 @@ export interface DriverTaskSummary {
   runId?: string
   /** Explicit driver settlement; absent for older or third-party drivers. Only completed permits automatic follow-ups. */
   runOutcome?: 'completed' | 'failed' | 'cancelled' | 'interrupted'
-  /** Host-generated provenance; files remain shared with the chosen project. */
-  forkOf?: { taskId: string; upToMessageId: string; title: string; turn: number; prefixLength: number; truncated?: true }
+  /**
+   * Host-generated provenance; files remain shared with the chosen project. `moved`: the person went on with the same
+   * conversation on another Harness (`from` is the one it left): the page shows the source's record above this session's
+   * and lists the two as one conversation.
+   */
+  forkOf?: {
+    taskId: string
+    upToMessageId: string
+    title: string
+    turn: number
+    prefixLength: number
+    truncated?: true
+    moved?: { from: string }
+  }
   /**
    * Host-recorded: the session was brought in from a session the harness `from` had before Latch (docs/HARNESSES.md#接入已有会话).
    * `native`: bound to that session and continued by the same harness with its own record. `text`: rebuilt from the

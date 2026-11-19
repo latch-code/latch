@@ -329,10 +329,20 @@ export function workStatus(
   return { tone: 'neutral', words: task.runOutcome === 'completed' ? COPY.completed : COPY.transcript }
 }
 
-/** Archived sessions appear only under their own filter; search matches titles; a place keeps only its own sessions. */
+/** The sessions a conversation left for another Harness: each is shown inside the one it went on in, not on its own. */
+export function movedFrom(tasks: readonly Pick<TaskSummary, 'forkOf'>[]): ReadonlySet<string> {
+  return new Set(tasks.flatMap(task => (task.forkOf?.moved ? [task.forkOf.taskId] : [])))
+}
+
+/**
+ * Archived sessions appear only under their own filter; search matches titles; a place keeps only its own sessions. A
+ * session the conversation left for another Harness is listed as the one it went on in, which shows its record.
+ */
 export function filterSessions(tasks: TaskSummary[], filter: SessionFilter, query: string, space?: Space): TaskSummary[] {
   const needle = query.trim().toLocaleLowerCase()
+  const left = movedFrom(tasks)
   return tasks.filter(task => {
+    if (left.has(task.id)) return false
     if (filter === 'archived' ? !task.archived : task.archived) return false
     if (space !== undefined && spaceOf(task) !== space) return false
     return !needle || task.title.toLocaleLowerCase().includes(needle)

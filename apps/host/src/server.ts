@@ -485,7 +485,12 @@ const createTaskSchema = promptSchema.extend({
   /** 让 Agent 做: an Agent session in its own folder, where the Host writes a page draft's skeleton before the first input. */
   appDraft: z.literal(true).optional(),
   forkOf: z
-    .object({ taskId: z.string().min(1).max(256), upToMessageId: z.string().min(1).max(256) })
+    .object({
+      taskId: z.string().min(1).max(256),
+      upToMessageId: z.string().min(1).max(256),
+      /** The same conversation, going on with another Harness: recorded on the new session, with the Harness it left. */
+      moved: z.literal(true).optional(),
+    })
     .strict()
     .optional(),
   /**
@@ -9529,7 +9534,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           prompt,
           // A text rebuild waits for the person's first message, which carries it.
           ...(seed ? { seed } : {}),
-          ...(fork ? { forkOf: fork.context, initialTitle: input.prompt || `从「${fork.context.title}」分叉` } : {}),
+          ...(fork
+            ? input.forkOf?.moved
+              ? // The same conversation on another Harness: it keeps its name, and says which Harness it left.
+                { forkOf: { ...fork.context, moved: { from: fork.source.harnessId } }, initialTitle: fork.source.title }
+              : { forkOf: fork.context, initialTitle: input.prompt || `从「${fork.context.title}」分叉` }
+            : {}),
           // A Host-written start (a handoff) names itself; the driver would title it after the first message.
           ...(!fork && title ? { initialTitle: title } : {}),
           // A harness that forks its own record does so only for its own sessions; the text record stays in the prompt
