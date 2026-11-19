@@ -202,6 +202,7 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 - 模型值是 `latch/<模型>`，启动配置同时设主模型与小模型，保留原权限与 Agent 档位。
 - 会话私有插件用官方的 shell `create.before` hook 把工具子进程里 `LMG_TOKEN` 的值清空。OpenCode 的环境合并保留空变量名，所以不说成变量不存在。
 - 插件目录与源码计入启动指纹。
+- 人的配置给某个 Agent 钉的模型（含隐藏的 `compaction`、`summary`、`title`）不改成 `latch/…`：这些请求不经 Latch，直连读 `/api/agent` 把它们列在权限面板下面（[HARNESSES](HARNESSES.md#opencode-的服务接口)）。会话里选的模型是否压过 Agent 的钉选没有核对。
 - 重试读 `x-should-retry`；次数没有设置（见[重试只由一层负责](#重试只由一层负责)）。
 
 ### DeepSeek Harness

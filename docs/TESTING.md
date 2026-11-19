@@ -163,7 +163,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | `LATCH_CLAUDE_DIRECT_BINARY`（本机已登录的 `claude`） | `claude-direct.live.test.ts`：一个词的回复、读一个文件、一次被拒的写入（只有一次性选项）、一次取消、一次带差异的编辑、一道提问、一个子 Agent、计划里选「继续规划」、Host 重启后在记下的模式、模型与思考上恢复同一会话；再加 `LATCH_CLAUDE_ADAPTER_BINARY` 时 `packages/harness-acp/test/claude-resume.live.test.ts` 在直连上恢复适配器开的会话。都是真实的小提示 |
 | `LATCH_CLAUDE_STORE_LIVE`（本机已登录的 `claude`） | `packages/harness-acp/test/claude-store.live.test.ts`：Claude 自己的存储。临时项目里一条真实的短提示，按第一条消息原生分叉，列出（Latch 与 SDK 的会话不列出）、重放，再真删除两份转录并确认不在。只打印数量与布尔值（加 `--silent=false` 看到这一行），不打印标题与文字 |
 | `LATCH_OPENCODE_GATEWAY_BINARY`；或 `LATCH_CLAUDE_ADAPTER_BINARY`（`claude-agent-acp`）加 `LATCH_CLAUDE_DIRECT_BINARY` | `direct-migrate.live.test.ts`：适配器上建的会话，Host 重启后定义改为直连，会话接着回答；经网关到本地假模型 |
-| `LATCH_OPENCODE_GATEWAY_BINARY`、`LATCH_DSH_GATEWAY_BINARY`、`LATCH_PI_GATEWAY_BINARY` | `opencode-gateway.live.test.ts`（直连与 `opencode acp` 两条路线）、`opencode-direct.live.test.ts`（直连：回复、拒绝与允许的调用、停止、Host 停止后无残留的 `opencode serve`、恢复；`ps` 里没有口令，工具命令看不到口令与网关令牌）、`packages/harness-acp/test/opencode-direct.live.test.ts`（`opencode acp` 建的会话在直连上恢复，选项相同，载入重放）、`dsh-gateway.live.test.ts`、`dsh-gateway-auxiliary.live.test.ts`、`pi-gateway.live.test.ts`、`gateway-fallback.live.test.ts`、`e2e/harness-model-gateway.e2e.ts`（不设时用假 CLI） |
+| `LATCH_OPENCODE_GATEWAY_BINARY`、`LATCH_DSH_GATEWAY_BINARY`、`LATCH_PI_GATEWAY_BINARY` | `opencode-gateway.live.test.ts`（直连与 `opencode acp` 两条路线）、`opencode-direct.live.test.ts`（直连：回复、拒绝与允许的调用、停止、Host 停止后无残留的 `opencode serve`、恢复；`ps` 里没有口令，工具命令看不到口令与网关令牌）、`packages/harness-acp/test/opencode-direct.live.test.ts`（`opencode acp` 建的会话在直连上恢复，选项相同，载入重放；另一例只用 `serve --stdio`：停止不需信号，被强杀留下的 claim 在恢复时释放、不问模型，项目的「总是允许」随会话报告，要 `/usr/bin/sqlite3` 往临时库里写种子）、`dsh-gateway.live.test.ts`、`dsh-gateway-auxiliary.live.test.ts`、`pi-gateway.live.test.ts`、`gateway-fallback.live.test.ts`、`e2e/harness-model-gateway.e2e.ts`（不设时用假 CLI） |
 | 上述 Codex、Claude、OpenCode、pi、dsh 的任一路径 | `gateway-efficiency.live.test.ts`：每个已设路径的 Harness 对本地记录服务跑四轮（含一次工具调用），量前缀稳定、缓存提示、用量逐层是否一致、网关增加的首字节与分块延迟、上下文窗口与压缩（断言用量报到声明窗口的 97% 后下一轮之前先压缩）、失败与取消（429、500、回复中途断开与熔断打开各自的上游请求数、到失败的时长有上限，原因里有服务的原话）；结果写到 `LATCH_GATEWAY_EVIDENCE_DIR` |
 | 上述路径中的任意两个以上 | `harness-move.live.test.ts`：每一对 Harness 之间换过去再换回来。默认经本地记录服务核对各自实际发出的请求；`LATCH_RELAY_REAL=1` 时各用本机已登录的模型，下一个要说出上一个记下的暗号（真实调用，提示只有一行）。`LATCH_RELAY_PAIRS=codex-claude,…` 只跑指定的组合 |
 | 上述路径中的任意三个以上 | `teams.live.test.ts`：每个 Harness 带队一次，后两个当成员，核对成员同时在跑、结果交回带队会话。默认经本地记录服务；`LATCH_TEAM_REAL=1` 时各用本机已登录的模型，带队会话的汇总要含两个成员的暗号（真实调用，提示只有一行）。`LATCH_TEAM_LEADS=codex,…` 只跑指定的带队 |
@@ -276,6 +276,7 @@ testkit 另导出：`FAKE_ACP_AGENT`、`FAKE_CODEX_APP_SERVER`、`FAKE_PI_AGENT`
 - 数据目录、工作区、运行目录的父目录与 TLS 材料都在一个新的临时目录中（前缀短，`host.sock` 路径不超过 macOS 的 104 字节上限）；`close()` 关闭 Host 并删除整个目录。
 - 默认 `port: 0`、`demo: true`、`uiDir: dist/web`、`rateLimits: 'relaxed'` 与测试确认后端（`presenceMode: 'approve'`）；其他 `ServerOptions` 原样传给 `startServer`。
 - 不传 `commandDirectories` 的测试 Host 按名字找不到任何命令；需要假 CLI 的用例用 `loginPrograms` 与 `commandDirectories` 只指向临时目录。
+- 不传 `cliStore` 的测试 Host 不读也不删任何 CLI 自己的存储（pi 的会话文件与项目信任）；`pi-store.test.ts` 与 `e2e/pi-history.e2e.ts` 只把它指向写了假会话文件的临时主目录。
 - 三种入口：
 
   | 入口 | 地址 | 凭据 |

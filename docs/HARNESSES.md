@@ -103,7 +103,7 @@ OpenCode 的后备规则（适配器与预设是同一个程序，按参数区�
 | --- | --- | --- | --- | --- |
 | Codex | `codex`，线追加 `app-server` | Apache-2.0 | `npm i -g @openai/codex`，0.156.0 起 | `codex login`；只有适配器时 `codex-acp cli login` |
 | pi | `pi`，线追加 `--mode rpc` | MIT | `npm i -g @earendil-works/pi-coding-agent`，0.84.4 起 | 进入 pi 后 `/login` |
-| OpenCode | `opencode`，线追加 `serve --hostname 127.0.0.1 --port 0`；后备 `opencode acp` | MIT | `npm i -g @opencode/cli`；直连 2.2.6 起，`opencode acp` 1.x 与 2.x | `opencode auth login` |
+| OpenCode | `opencode`，线追加 `serve --stdio --hostname 127.0.0.1 --port 0 --print-logs --log-level warn`；后备 `opencode acp` | MIT | `npm i -g @opencode/cli`；直连 2.2.6 起，`opencode acp` 1.x 与 2.x | `opencode auth login` |
 | DeepSeek Harness | `dsh --profile acp` | MIT | `npm i -g @deepseek-ai/dsh`，0.2.2-rc.1 起；它自己要求 Node.js 24.9 起；按完整消息回复 | 无 |
 | Qwen Code | `qwen --acp` | Apache-2.0 | `npm i -g @qwen-code/qwen-code` | 进入后 `/auth` |
 | goose | `goose acp` | Apache-2.0 | `brew install block-goose-cli` | `goose configure` |
@@ -195,7 +195,9 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 - 同样的规则也写进 `build` 与 `plan` 两个 Agent，避免它们各自的设置覆盖全局。`plan` 另拒绝 `edit`（含写入与补丁工具）与 `bash`，所以计划模式不改文件、不运行命令，也不写自己的计划文件。
 - `auto-edit` 与 `yolo` 是 Latch 用同一份配置声明的两个主 Agent：前者沿用 `build` 只放行文件编辑，后者直接允许工具。
 - 子 Agent：先写 `task: 'deny'`，再写 `subagent: 'ask'`。1.x 只认 `task`，子 Agent 保持禁用（1.x 的 ACP 不回答子会话的权限请求，子 Agent 会一直等）；2.x 把 `task` 读作 `subagent`，后写的生效，启动子 Agent 先问。`plan` 另写 `subagent: 'deny'`：子 Agent 按它自己的 Agent 工作，不受 `plan` 的拒绝约束。
-- 这些只是默认值，不是保证。OpenCode 还合并用户与项目的配置（用户配置目录、向上查找的 `opencode.json`/`opencode.jsonc`、项目与主目录下 `.opencode` 中的配置和 Agent 定义），一部分在 Latch 的规则之后加载，可把询问改成直接允许，而模式读回仍是 `build`。项目里的计入启动指纹，用户配置不计入。
+- 加载顺序（2.2.6 `config.ts`，直连）：托管策略、全局配置目录、`OPENCODE_CONFIG` 文件、向上查找的 `opencode.json`/`opencode.jsonc`、项目 `.opencode`，然后才是 `OPENCODE_CONFIG_CONTENT`，最后是系统托管设置。OpenCode 按「最后匹配」求值，所以人的全局与项目配置里的放行排在 Latch 的 `* ask` 之前，被它盖住（用 `GET /api/agent` 读回展开规则核对过）。仍能越过 Latch 询问的是：系统托管设置、`.opencode` 里新定义的 Agent（不在模式顺序里）、插件的 `permission.evaluate` 钩子，以及数据库里这个项目的「总是允许」（见下）。`opencode acp`（1.x 与旧定义）的合并顺序没有核对，仍按「可能被覆盖」说明。项目里的配置计入启动指纹，用户配置不计入。
+- **「总是允许」。** 人在 OpenCode 自己的界面里点过 Always 的动作与资源存在它的数据库里，按项目保存，求值时作为 `allow` 加在所有规则之后（`deny` 除外），所以在 Latch 的 `build` 等模式里同样不再询问。直连在开会话和恢复时读 `GET /api/permission/saved`（带 `location[directory]`），在权限面板的模式下面逐条列出「总是允许 · 动作 资源」（`SessionPermission.inEffect`，最多 20 条）；只读，不删除也不改。Latch 自己从不回答 `always`：审批只给一次性的选项。
+- **配置必须完整。** 2.2.6 收到不是 JSON 的 `OPENCODE_CONFIG_CONTENT` 时只记一条警告，照常启动，什么都不问（内置的 `* allow`）；某个值不合法时跳过那一项。所以直连只在最终的 `OPENCODE_CONFIG_CONTENT` 是 JSON 对象、且 `permission` 与 `build`、`plan`、`auto-edit`、`yolo` 的 `permission` 与 profile 写的完全相同时才启动服务（`latchConfig`，`opencode.test.ts` 覆盖定义的变量、网关三种协议的内容与各种残缺）。
 - 托管设置、`.opencode` 中的插件与项目新定义的 Agent 不受这些规则约束；这样的 Agent 不在模式顺序里，按更宽的模式对待。OpenCode 启动时会在 `.opencode` 安装依赖并加载插件，所以在不信任的项目里使用会运行项目里的代码。会话权限说明注明这两点。
 
 **Cursor。** 前两档以 `--mode` 启动，`agent` 不传，`agent-force` 加 `--force`；空闲换档时重启、恢复并核对 ACP 模式。`--force` 不覆盖显式拒绝；ACP 不独立报告它，所以 force 档带 `source: launch`，一次重启不算对旧标志的核对。尚未做真实 Cursor 验收。
@@ -459,7 +461,10 @@ Codex 自己中断、Latch 没有要求停止的一轮同样先等它的命令�
 - **版本。** 需要 0.84.4：一轮以 `agent_settled` 结束，`message_update` 只带增量，停止前能清空队列。pi 的 RPC 不报告版本，所以进程启动时 `get_state` 之后先发一次 `clear_queue`：pi 答「Unknown command」时它早于 0.84.4，会话与测试启动都拒绝（409 `harness-version-unsupported`）。
 - **回答顺序。** pi 1.5 在回答第一条命令前先发一条 `queue_update`，`new_session` 的回答可能晚于其后发出的命令；线按 `id` 对应，忽略不认识的事件。
 - **保留参数。** 决定协议与会话的参数（`--mode`、`--print`、`--session`、`--continue`、`--resume`、`--fork`、`--help` 等，线里的 `RESERVED`）保存时拒绝，400 `agent-args-reserved`。
-- **会话。** pi 启动时就有一个新会话；`get_state` 报告的会话文件就是 Latch 记下的会话标识。恢复用 `switch_session` 切到这个文件再用 `get_state` 核对，不是同一个文件就是「该 Harness 已找不到这个会话」。pi 没有删除会话的命令，删除 Latch 的会话时留下 pi 自己的副本。pi 不接收 MCP 服务器。
+- **会话。** pi 启动时就有一个新会话；`get_state` 报告的会话文件就是 Latch 记下的会话标识。恢复用 `switch_session` 切到这个文件再用 `get_state` 核对，不是同一个文件就是「该 Harness 已找不到这个会话」。`switch_session` 会把 pi 的工作目录换成文件头里的 `cwd` 并加载那里的 `.pi`，所以切换前线先读文件头（本人的普通文件、不跟随链接、1 MiB 内），`cwd` 的真实路径与进程目录不同就不切换，同样答「找不到这个会话」；还没写出的文件没有目录，照旧打开。
+- **删除。** pi 没有删除命令；它的文档说删除会话就是删掉那个 `.jsonl`，一个会话的全部记录就是这一个文件。Host 由启动脚本给了 `cliStore` 时，线声明 `delete`：先 `new_session` 离开这个文件（pi 按路径追加，否则会重新写出它），再只删这一个文件，条件是文件名是 pi 的 `<时间>_<ID>.jsonl`、文件头的 `id` 与名字相同、`cwd` 是进程目录、所在目录是会话存储本身（平铺）或其下一层且都是本人的真目录、文件是本人的普通文件并且删除前一刻仍是核对过的那个（`dev` 与 `inode`）。不符就留着。接入的会话不删（`remove` 把它排除；「同时删除原会话」由另一处选择决定）。这之前开的会话记的是 `deletable: false`，下一次恢复后才会删，在那之前删除仍留下 pi 的文件。测试 Host 没有 `cliStore`，不声明删除。
+- **MCP。** pi 0.99 起内置 MCP（`~/.pi/agent/mcp.json` 与受信项目的 `.pi/mcp.json`，扩展可用 `pi.registerMcpServer` 只为当前会话登记）。Latch 还不把会话的 MCP 服务器交给 pi：收到 `mcpServers` 就拒绝，技能服务器不提供（见「尚未实现」）。
+- **项目信任。** RPC 模式没有人可问，pi 只按 `trust.json` 里离会话目录最近的决定（`true`/`false`），没有时按全局 `defaultProjectTrust`（`always` 才算信任）决定是否加载项目 `.pi` 的设置、扩展、MCP 与技能。会话目录有 `.pi` 且 Host 有 `cliStore` 时，Latch 读这两个文件（只取这两项）并在权限面板写「.pi 已信任：会加载」或「.pi 未信任：不加载」（`pi-store.ts` 的 `piProjectTrust`）。Latch 自己的扩展经 `-e` 加载，不受信任影响。
 - **权限扩展。** 启动追加 Latch 私有的 0600 扩展 `latch-permission.ts`（`-e`，`wires/pi-gate.ts`）。`ask`：read、grep、find、ls 不问，其余先问；`plan` 拦下所有非读取；`rule` 直接允许 edit 与 write，其他先问；`never` 直接允许。线经私有命令换档，只接受 `get_commands` 报告的完整扩展路径与本次进程的状态回报；用户提示不能调用这个控制命令。扩展拒绝或询问失败时不执行调用。pi 的其他扩展仍可在工具回调之外运行代码，这不是隔离。
 - **模型与思考。** `get_available_models` 列出模型（值写作 `provider/model`），一个都没有按未登录处理；`get_available_thinking_levels` 列出当前模型的思考深度，换模型后重读，读回 `get_state` 才算换好。
 - **一轮。** `prompt` 发出，等到 `agent_settled` 才结束，再读 `get_session_stats`（令牌、上下文占用与花费）。回复以 `error` 结束时这一轮失败；以 `length` 结束按达到长度上限处理；扩展把输入当自己的命令处理（`handled`）时立即结束。
@@ -524,11 +529,14 @@ Cursor 预设的定义在这台 Mac 上带了 `CURSOR_API_KEY`，且 Host 找得
 
 `wires/opencode.ts` 启动 `opencode serve --hostname 127.0.0.1 --port 0`（接在定义的参数之后），一个进程一个会话槽位，进程的启动、空闲回收与停止与其他线相同。它把运行时说的 ACP 换成服务的 HTTP 接口，把服务的事件流换成 ACP 的会话更新，换法照 OpenCode 2.2.6 自带的 ACP 适配器（它本身就是这套接口的客户端，`packages/cli/src/acp/`），接口形状按运行中 2.2.6 的 `/openapi.json` 与录下的事件核对。所以模式（`plan`、`build`、`auto-edit`、`yolo`）、选项 ID（`model`、`effort`、`mode`）与取值、会话 ID（`ses_…`）、子 Agent 的标记、思考的消息 ID 都与 `opencode acp` 相同，`opencode acp` 建的会话在直连上恢复（`opencode-direct.live.test.ts` 用真实程序核对）。
 
-- **端口与口令。** 端口由服务自己选，地址只从它标准输出的 `server listening on http://127.0.0.1:<端口>` 读，再用 `GET /api/info` 核对回答的 `pid` 就是这个子进程、版本是 2.x 中的 2.2.6 或更高。口令每个进程随机生成，只放进子进程的 `OPENCODE_PASSWORD` 与文档化的旧名 `OPENCODE_SERVER_PASSWORD`（定义里的同名变量与 `OPENCODE_SERVER_USERNAME` 被去掉）；每个请求带 HTTP Basic（用户名 `opencode`）。它不进参数、文件、URL、日志与错误：线的脱敏先替换口令，再经 `redactKnownSecrets`。
-- **口令与工具命令。** 2.2.6 的 shell 工具把服务的整个环境（含口令）交给它运行的命令。线在进程的临时目录写一个 Latch 私有插件（`latch-opencode-server/index.ts`，0600），经 `OPENCODE_CONFIG_CONTENT` 的 `plugins` 加载，在 `shell` 的 `create.before` 把这两个变量清空，与网关清空 `LMG_TOKEN` 的插件同一做法。没有临时目录或 `OPENCODE_CONFIG_CONTENT` 不是 JSON 对象时不启动。Latch 给会话的 MCP 服务器登记时把这两个变量设为空（真实 2.2.6 核对：不设时它们能看到口令）。人自己在 OpenCode 配置里的 MCP 服务器、LSP 与格式化程序仍继承服务的环境，Latch 不改那些配置。这不是隔离：同一用户的进程能读到服务进程的环境（macOS 的 `ps -E`）。
-- **停止。** `opencode serve` 不随标准输入结束，所以停止直接向进程组发 SIGTERM，宽限期后 SIGKILL。事件流在服务还在时断开（被关闭、出错、单条超过 `maxLineBytes`），线结束服务：没有事件就读不到结果，运行时看到进程退出。
+- **`--stdio`。** 这是 OpenCode 自己的私有服务用的模式（2.2.6 `server-process.ts`、`standalone.ts`）：读入口令后从自己的环境里删掉，它启动的工具、MCP 服务器、LSP 与格式化程序都继承不到；标准输入关闭就退出，Host 崩溃不留下服务；`--print-logs --log-level warn` 让警告（例如配置被拒的原因）进标准错误，启动失败时与其他线一样从标准错误的末尾读原因。定义自己写了 `--print-logs` 或 `--log-level` 时用它的。`serve` 本身就是服务，不接 `--standalone`（2.2.6 报「Unrecognized flag」）；其他会连人的后台服务的子命令 Latch 不运行。
+- **端口与口令。** 端口由服务自己选，地址只从它标准输出的一行 `{"url":"http://127.0.0.1:<端口>"}` 读，再用 `GET /api/info` 核对回答的 `pid` 就是这个子进程、版本是 2.x 中的 2.2.6 或更高。口令每个进程随机生成，只放进子进程的 `OPENCODE_PASSWORD` 与文档化的旧名 `OPENCODE_SERVER_PASSWORD`（定义里的同名变量与 `OPENCODE_SERVER_USERNAME` 被去掉）；每个请求带 HTTP Basic（用户名 `opencode`）。它不进参数、文件、URL、日志与错误：线的脱敏先替换口令，再经 `redactKnownSecrets`。
+- **口令与工具命令。** 2.2.6 的 shell 工具把服务的整个环境（含口令）交给它运行的命令。线在进程的临时目录写一个 Latch 私有插件（`latch-opencode-server/index.ts`，0600），经 `OPENCODE_CONFIG_CONTENT` 的 `plugins` 加载，在 `shell` 的 `create.before` 把这两个变量清空，与网关清空 `LMG_TOKEN` 的插件同一做法。没有临时目录或 `OPENCODE_CONFIG_CONTENT` 不是 JSON 对象时不启动。Latch 给会话的 MCP 服务器登记时把这两个变量设为空（真实 2.2.6 核对：不设时它们能看到口令）。插件与 MCP 的清空在 `--stdio` 之后仍保留，因为「服务从自己环境里删掉口令后工具拿不到」只读了源码，没有用跑工具的一轮核对。这不是隔离：同一用户的进程能读到服务进程的环境（macOS 的 `ps -E`）。
+- **停止。** 先对服务还在运行的会话 `POST …/interrupt`（最多等 2 秒它们结束），再关闭标准输入，宽限期后 SIGTERM、SIGKILL。原因见下一条。
+- **重启续跑与残留的 claim。** 2.x 开始一轮时在会话上写一个 claim，成功、失败与人的中断都释放它，因关闭而中断时故意保留；人的后台服务（`opencode serve --service`）每次启动时把所有带 claim 的顶层会话接着跑（注入「The server restarted while you were working…」），Latch 不知道。所以停止前先中断。被强杀、取消超时或 Host 崩溃的那一轮仍会留下 claim：恢复 Latch 开的会话（运行时在 `session/resume` 里标明；接入的会话可能正在人自己的 OpenCode 里运行，预览的 `session/load` 读的是别人的，都不唤醒）时，`time.busy` 晚于 `time.idle`（关闭中断不写 idle）、收件箱为空、没有暂存的撤销，线就调 `DELETE …/revert`：这条路由在没有撤销时只唤醒会话，唤醒发现没有要做的事就以成功结束，释放 claim，不问模型；最多等 3 秒读回 idle。会话记录里因此多一条 OpenCode 自己的 `idle` 标记。收件箱里有东西时不唤醒（唤醒会把它跑起来），留着 claim。临时 XDG 加真实 2.2.6 核对过（`opencode-direct.live.test.ts`，模型指向关着的回环端口）。Host 崩溃后从未再恢复的会话，claim 留到下次恢复。事件流在服务还在时断开（被关闭、出错、单条超过 `maxLineBytes`），线结束服务：没有事件就读不到结果，运行时看到进程退出。
 - **握手。** `initialize` 等到地址、核对 `/api/info`，打开 `GET /api/event` 并等到 `server.connected`。回答的能力与适配器相同（`loadSession`，`list`、`resume`、`close`、`delete`、`additionalDirectories`，图片与嵌入上下文），版本来自 `/api/info`。
 - **目录。** 每个文件夹读一次：`GET /api/plugin`（位置刚启动时等到插件列出，最多 5 秒）后并行读 `/api/model`（只取 `enabled`）、`/api/model/default`、`/api/agent`（去掉 `subagent` 与隐藏的）、`/api/command`，都带 `location[directory]`。`model.updated`、`agent.updated`、`command.updated` 后重读，变化时推送 `config_option_update` 与 `available_commands_update`。
+- **用 Latch 的模型服务时。** 人的配置可以给任一 Agent（含隐藏的 `compaction`、`summary`、`title`）钉自己的模型，那些请求不经 Latch。直连在开会话和恢复时读 `/api/agent`，把钉了别家模型的列在权限面板下面（「不经 Latch 的模型服务 · compaction 用 anthropic/…」），不改配置。
 - **会话。** 新会话 `POST /api/session`（`location.directory`）；恢复 `GET /api/session/:id`，目录不同则拒绝，服务没有这个会话时是「该 Harness 已找不到这个会话」；载入另按 `GET /api/session/:id/message`（每页 200）重放。其他文件夹的授权与适配器写法相同（会话的 `permissions` 与 `metadata["opencode.acp.additionalDirectories"]`），两条路线互相读得懂。会话给的 MCP 服务器经 `PUT /api/experimental/mcp/:name` 登记，与适配器相同。没发过消息就关闭的会话删除。
 - **一轮。** 线自己按 OpenCode 的格式生成输入的消息 ID，`POST /api/session/:id/prompt`（`delivery: steer`），看到 `session.inbox.delivered` 是这条消息才算开始，`session.execution.succeeded`、`interrupted`、`failed` 才结束。只给模型看的上下文先 `POST …/synthetic`；`/compact` 走 `POST …/compact`；目录里的命令走 `POST …/command`，它回答后服务排进的那条输入就是这一轮（5 秒内没有排进任何输入则这一轮结束）。图片作 data URI，`file://` 链接与文字资源与适配器的换法相同。
 - **事件。** 文字与推理增量（推理的消息 ID 是 `<消息>:reasoning:<序号>`）、工具调用（`tool.input.started`、`called`、`progress`、`success`、`failed`，标题、种类、位置与原始输入同适配器）、压缩、重试；每步的 `tokens` 加起来是这一轮的用量（输入不含缓存），最后一步的总数与模型的上下文窗口、会话的 `cost` 作为 `usage_update`。改动文件的调用带它报告的补丁里的改动片段（适配器读整份文件，这条线不读项目文件）。
@@ -1012,7 +1020,7 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 
 **范围与权限。**
 
-- 只对 profile 声明 `historyImport` 的预设开放：Codex（直连经 `thread/list` 与 `thread/read`；经 codex-acp 时 `session/list` 给元数据、`session/load` 重放）、OpenCode 2.x 与 Claude Agent（见下）。
+- 只对 profile 声明 `historyImport` 的预设开放：Codex（直连经 `thread/list` 与 `thread/read`；经 codex-acp 时 `session/list` 给元数据、`session/load` 重放）、OpenCode 2.x、Claude Agent，以及 Host 有 `cliStore` 时的 pi（都见下）。
 - 运行中的 Agent 没有同时声明 `sessionCapabilities.list` 与 `loadSession` 时返回 409 `history-not-supported`，不发 `session/list`。
 - 每一步都要 `run` 与数据范围 `all`，不弹确认。`catalog.features.historyImport` 只对这样的设备出现。
 - 接入的会话一律私有（`sessions-meta.json` 的 `imported`），只对数据范围 `all` 的设备可见，分叉出的会话同样私有。
@@ -1026,7 +1034,15 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 - 它没有写锁，也不报告会话是否正在别处使用：终端里正开着的会话同样能加载，Latch 不察觉；预览带 `useUnknown` 说明这一点。
 - 接入之后在别处给这个会话加的目录授权，会在 Latch 下一次恢复它时被去掉。预览结束时的 `session/close` 只让 OpenCode 丢弃从未发过消息的新会话，不动加载的会话。
 - 直连时列出是 `GET /api/session`（`directory`、倒序、每页 100），载入按 `GET /api/session/:id/message` 重放，授权读写与适配器相同；`opencode acp` 建的会话在直连上载入并重放已用真实 2.2.6 核对。
-- 列出与授权尚未用真实 OpenCode 核对。两个前提要等核对：2.x 的列表行确实带 `additionalDirectories`；再读一行与 `session/load` 之间没有别的客户端加授权（这个窗口关不上，ACP 没有带条件的加载）。
+- 列表行确实带回 `permissions` 与 `metadata["opencode.acp.additionalDirectories"]`：照 Latch 的写法 `PATCH` 后用真实 2.2.6 读过。另一个前提关不上：再读一行与 `session/load` 之间没有别的客户端加授权（ACP 没有带条件的加载）。
+
+**pi（`pi-store.ts`）。** pi 的 RPC 没有列出会话的命令，pi 自己列出时会建目录、打开时会往文件里写（缺思考条目时补一条、旧格式整份重写、补末尾换行），所以列出与预览都是 Latch 自己有界地读 pi 的文件，不起 pi、不调 pi 的任何代码；只有接入后的第一轮才在 pi 里 `switch_session`。
+
+- **只在启动脚本给了 `cliStore`（人的主目录）时**：测试 Host 没有它，Driver 不声明 `historyImport`，什么都不读。
+- **会话在哪。** 按 Latch 启动 pi 时给的环境（`agentEnvironment`）：`PI_CODING_AGENT_SESSION_DIR`，否则全局 `settings.json` 的 `sessionDir`（只取这一项，两者都是平铺目录），否则 `<PI_CODING_AGENT_DIR 或 ~/.pi/agent>/sessions/--<目录编码>--/`。项目自己 `.pi/settings.json` 指的目录不找。`PI_CODING_AGENT_SESSION_DIR` 进了 pi 的 `inheritEnv`（profile 版本 8），终端里设了它的人，Latch 启动的 pi 写到同一处。
+- **怎么读。** 默认布局只打开名字像项目主文件夹（或其下目录）的目录；编码有损（`/a-b/c` 与 `/a/b-c` 同名），所以由每个文件头的 `cwd` 决定。只读本人的真目录与本人的普通文件（不跟随链接）、名字是 pi 的、文件头 `version` 为 3 且 `id` 与名字相同；最多 2,000 个目录、5,000 个文件。标题按 pi 的规则：最新的 `session_info.name`，否则第一条人的消息（只读文件头尾各 256 KiB），时间是文件的修改时间。读不建目录、不改任何文件（`pi-store.test.ts` 比对前后的大小与修改时间）。
+- **预览。** 整份读（64 MiB、单行 16 MiB 内），从最后一条沿 `parentId` 取 pi 当前的分支：人和模型的文字，工具只有名字与结束状态，思考与工具输出不留。再走与其他 Harness 相同的重放、遮密钥与上限。文件头的 `cwd` 必须是请求的目录。
+- **接入。** 再读一次文件头，`cwd` 的真实路径必须是核对过的会话目录，然后只记录；第一轮照常 `session/resume`，线在 `switch_session` 前再核对一次（见「pi 的 RPC 模式」）。pi 没有锁，预览带 `useUnknown`。旧格式（v1、v2）的文件不列出：打开会被 pi 整份重写。
 
 **Claude Agent 的规则。**
 
@@ -1077,7 +1093,7 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 
 - 接入后又在终端里继续了同一会话时 Latch 不察觉。
 - 项目其他文件夹里的会话只给数量。
-- pi：它的 RPC 没有列出会话的命令，发现会话要读它的存储（允许，见「CLI 目录与配置」），尚未实现。
+- pi：项目 `.pi/settings.json` 另指的会话目录不找；v1、v2 格式的会话不列出。
 - OpenCode 1.x：ACP 没有 `session/list`。
 - Qwen Code、goose：源码声明了列出与加载，但加载对原会话的影响（恢复旧模式、写回设置等）没有读完，也没有用真实程序核对。
 - Grok Build、Antigravity：没有核对。Cursor 不开放。
@@ -1215,7 +1231,9 @@ Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别�
 | Cursor SDK 路线只读档里的 Latch MCP 服务器（技能、浏览器、桥） | 只读档不给 `mcp`，否则 MCP 工具不受只读约束 |
 | Claude 适配器路线第一轮前的额度 | 适配器只在每轮模型回答后的限额事件里报告；它的 `/usage` 要开一个 Claude 会话并发提示，Latch 不发。直连线见「Claude 的 Agent SDK 线」 |
 | Codex 按模型的额度桶 | 只显示套餐自己的桶 |
-| Cursor、OpenCode、Qwen Code、goose、pi 的额度 | 程序不报告；没有可用的官方接口与凭据，见「DeepSeek Harness 的余额」 |
+| Cursor、OpenCode、Qwen Code、goose、pi 的额度 | 程序不报告；没有可用的官方接口与凭据，见「DeepSeek Harness 的余额」。OpenCode 2.x 有 `GET /api/experimental/usage/limits`，只覆盖 OpenCode Console/Go 账号，登录后的形状没有核对 |
+| pi 接收 Latch 的 MCP 与技能 | pi 0.99 起内置 MCP，Latch 的私有扩展可用 `pi.registerMcpServer` 只为当前会话登记；需要 0.99 的单独门槛，没有用真实 pi 核对 |
+| OpenCode 删除后的核对 | `DELETE /api/session/:id` 失败时仍不提示；进程不在时为删除起一个服务 |
 | DeepSeek Harness 用 DeepSeek 账号登录时的余额 | 没有文档化的余额接口 |
 | DeepSeek Harness 余额读取没有核对的设置 | 只核对上面列的文件与这次会话文件夹的 `.env`；profile 清单 `dsh.profile.bundles` 里各 bundle 自带的 patch 与其他扩展名的 patch 文件没有核对 |
 
