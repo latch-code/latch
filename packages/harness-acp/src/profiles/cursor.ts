@@ -1,5 +1,10 @@
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { z } from 'zod'
 import type { HarnessProfile, SessionUpdate } from './types.ts'
+
+/** `acp-sessions/<id>/meta.json` (schema 1): the folder the session was started in. */
+const cursorSessionMeta = z.object({ schemaVersion: z.literal(1), cwd: z.string().min(1).max(4096) })
 
 const text = z.string().max(4000)
 const todo = z.object({
@@ -51,6 +56,7 @@ function merged(sessionKey: string, items: Todo[], merge: boolean): Todo[] {
 
 export const cursorProfile: HarnessProfile = {
   presetId: 'cursor',
+  // Removing a deleted session's folder changes nothing a session runs, so the version stays.
   version: 3,
   processMode: {
     prepare(_directory, mode) {
@@ -74,6 +80,23 @@ export const cursorProfile: HarnessProfile = {
           },
         ],
       }
+    },
+  },
+  // Its ACP has no session/delete or close: each session it serves stays in `acp-sessions/<id>/` (`meta.json` with the
+  // session's `cwd`, and `store.db`) below `CURSOR_CONFIG_DIR`, else `$XDG_CONFIG_HOME/cursor`, else `~/.cursor`
+  // (`acp-storage` and `cursor-config/dist/paths.js` of cursor-agent 2026.11.19, read in its bundle, not run).
+  sessionFolders: {
+    root: env =>
+      env.CURSOR_CONFIG_DIR
+        ? join(env.CURSOR_CONFIG_DIR, 'acp-sessions')
+        : env.XDG_CONFIG_HOME
+          ? join(env.XDG_CONFIG_HOME, 'cursor', 'acp-sessions')
+          : env.HOME
+            ? join(env.HOME, '.cursor', 'acp-sessions')
+            : undefined,
+    async owns(folder, cwd) {
+      const meta = cursorSessionMeta.safeParse(JSON.parse(await readFile(join(folder, 'meta.json'), 'utf8')))
+      return meta.success && meta.data.cwd === cwd
     },
   },
   ownModelsOnly: true,

@@ -169,7 +169,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | 上述路径中的任意三个以上 | `teams.live.test.ts`：每个 Harness 带队一次，后两个当成员，核对成员同时在跑、结果交回带队会话。默认经本地记录服务；`LATCH_TEAM_REAL=1` 时各用本机已登录的模型，带队会话的汇总要含两个成员的暗号（真实调用，提示只有一行）。`LATCH_TEAM_LEADS=codex,…` 只跑指定的带队 |
 | 上述 Codex、Claude、OpenCode、pi 的任一路径 | `attachment-path.live.test.ts`：声明不看图的服务，一个 PDF 与一张图片按路径交出，Agent 用自己的 shell 工具读出两者的摘要 |
 | `LATCH_NO_LOGIN_<ID>=<程序路径>` | `gateway-no-login.live.test.ts`：空的临时 HOME、不带登录 |
-| `LATCH_NO_LOGIN_GROK=<grok 路径>` | 另跑 `packages/harness-acp/test/grok.live.test.ts`：临时 HOME 与 `GROK_HOME`，只发控制请求、不发提示；网关路线不启动 Claude Code、Cursor 配置里的 MCP 服务器（对照旧的家会启动），Latch 给的服务器看到空凭据 |
+| `LATCH_NO_LOGIN_GROK=<grok 路径>` | 另跑 `packages/harness-acp/test/grok.live.test.ts`：临时 HOME 与 `GROK_HOME`，只发控制请求、不发提示。网关路线不启动 Claude Code、Cursor 配置里的 MCP 服务器（对照旧的家会启动），Latch 给的服务器看到空凭据；`initialize` 读到的模型与思考与 `session/new` 报告的一致；`session/set_mode` 只认 `plan` 等；`_x.ai/session/delete` 删掉会话文件夹；手写的有消息会话经不带目录的 `session/list` 列出、`session/load` 带 `isReplay` 重放 |
 | `LATCH_SLASH_LIVE=1` 加 Codex 或 pi 的上述路径 | `packages/harness-acp/test/` 的 `codex-commands.live.test.ts`、`codex-skills.live.test.ts`；`e2e/codex-compact.e2e.ts`、`e2e/codex-skills.e2e.ts`、`e2e/pi-commands.e2e.ts` |
 | `LATCH_HELPER_LIVE=1` 加 pi、Codex 或 OpenCode 的上述路径 | `e2e/helper-live.e2e.ts` |
 | `LATCH_HELPER_PROPOSALS_LIVE=1` 加 Codex 或 OpenCode 的上述路径 | `e2e/helper-proposals.e2e.ts`、`packages/harness-acp/test/codex-skills.live.test.ts` |

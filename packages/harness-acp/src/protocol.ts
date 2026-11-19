@@ -100,7 +100,14 @@ export const initializeResult = z.object({
   agentInfo: z.object({ name: optionalText, version: optionalText }).nullish().catch(undefined),
   /** `steering.supported`: the agent takes `_session/steering`, adding text to a running turn. */
   _meta: z
-    .object({ steering: z.object({ supported: z.boolean().nullish() }).nullish().catch(undefined) })
+    .object({
+      steering: z.object({ supported: z.boolean().nullish() }).nullish().catch(undefined),
+      /** Grok Build's version, which it reports here and not in `agentInfo` (1.0.89). Read only for a profile that says so. */
+      agentVersion: optionalText.catch(undefined),
+      /** Grok Build's models and commands before any session; untrusted, read only by its profile. */
+      modelState: z.unknown().optional(),
+      availableCommands: z.unknown().optional(),
+    })
     .nullish()
     .catch(undefined),
 })

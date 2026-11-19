@@ -301,6 +301,8 @@ interface Live {
   wire: AgentWire
   commandCache?: { directory: string; confirmed: Confirmed; ordinal: number; plugins?: HarnessPluginReport }
   initialized: boolean
+  /** What the agent's answer to initialize said beside ACP's fields, for a profile that reads it (Grok's models). */
+  startMeta?: unknown
   capabilities: {
     resume: boolean
     /** `session/list`, which only bringing in an earlier session uses. */
@@ -938,6 +940,8 @@ export class AgentRuntime implements Bridge {
   private readonly fileTracking: RunFileTracking
   private readonly store: AcpStore
   private readonly commandCache: CommandCache
+  /** `HarnessProfile.savedRules` notes per session, read when it binds. */
+  private readonly savedRules = new Map<string, string[]>()
   private readonly extensionReports: CommandCache
   private readonly pendingReportSources = new Map<string, Promise<void>>()
   private readonly workspaceRoot: string
@@ -1668,7 +1672,12 @@ export class AgentRuntime implements Bridge {
       const configured = this.selection.profile?.catalogueRead
       const listed = this.catalogue()
       const option = listed?.options.find(item => item.category === 'model')
-      if (!stored || !option || (configured && 'codexModels' in configured) || this.selection.profile?.wire === 'codex')
+      if (
+        !stored
+        || !option
+        || (configured && ('codexModels' in configured || 'fromInitialize' in configured))
+        || this.selection.profile?.wire === 'codex'
+      )
         throw new AppError(409, 'catalogue-model-unsupported', `${this.agent.name} 不能在开始前读取这个模型的选项。`)
       if (!option.options.some(item => item.value === model) && !this.state.customModels?.includes(model))
         throw new AppError(400, 'catalogue-model-unknown', `${this.agent.name} 没有列出这个模型。`)
@@ -2537,6 +2546,17 @@ export class AgentRuntime implements Bridge {
       }
       const launch = this.currentLaunch(await this.projectConfig(cwd))
       const live = await this.ensureProcess(key, cwd, { launchHash: launch.hash, definitionHash: launch.definitionHash })
+      if (configured && 'fromInitialize' in configured) {
+        // The process opened no session: its answer to initialize is the list.
+        const listed = configured.fromInitialize(live.startMeta)
+        if (!listed?.options.length) throw new AppError(502, 'catalogue-empty', `${this.agent.name} 没有列出可选的模型。`)
+        this.state.catalogue = modelListCatalogue(this.state.catalogue, {
+          ...listed,
+          definitionHash: launch.definitionHash,
+          at: this.now(),
+        })
+        return
+      }
       this.enter(this.holds, key)
       let result: unknown
       let switched: SessionConfigOption[] | undefined
@@ -2547,7 +2567,7 @@ export class AgentRuntime implements Bridge {
         try {
           if (model !== undefined) switched = await this.switchReadModel(live, sessionId, result, model)
         } finally {
-          const end = live.capabilities.delete ? 'session/delete' : live.capabilities.close ? 'session/close' : undefined
+          const end = live.capabilities.delete ? this.deleteMethod() : live.capabilities.close ? 'session/close' : undefined
           if (sessionId && end) await live.wire.request(end, { sessionId }, Math.min(this.readTimeout(), 10_000)).catch(() => {})
         }
       } catch (error) {
@@ -2688,6 +2708,7 @@ export class AgentRuntime implements Bridge {
   async createTask(input: CreateTaskInput): Promise<{ sessionId: string }> {
     await this.ready()
     assertStart(input)
+    this.assertNoModeCommand(input.prompt)
     const userText = harnessPromptSource({ method: 'create', requestId: input.requestId }, input.prompt)
     const attachments = checkedAttachments(input.attachments)
     const fileRefs = input.fileRefs ?? []
@@ -2999,6 +3020,7 @@ export class AgentRuntime implements Bridge {
   async prompt(sessionId: string, prompt: string, requestId: string, options: PromptOptions = {}): Promise<void> {
     await this.ready()
     assertPrompt(prompt, requestId, options.attachments)
+    this.assertNoModeCommand(prompt)
     const userText = harnessPromptSource({ method: 'prompt', sessionId, requestId }, prompt)
     const key = digest(['prompt', sessionId, requestId])
     const attachments = checkedAttachments(options.attachments)
@@ -3225,6 +3247,7 @@ export class AgentRuntime implements Bridge {
   async steer(sessionId: string, prompt: string, requestId: string): Promise<SteerOutcome> {
     await this.ready()
     assertPrompt(prompt, requestId)
+    this.assertNoModeCommand(prompt)
     const userText = harnessPromptSource({ method: 'steer', sessionId, requestId }, prompt)
     const key = digest(['steer', sessionId, requestId])
     const payloadHash = digest(prompt)
@@ -3438,13 +3461,20 @@ export class AgentRuntime implements Bridge {
     // say) does not know is not found, and nothing else can match its ID.
     const privately = this.selection.profile?.wire === 'codex'
     // Deletable as recorded at its start, or by the harness alone: Claude's direct wire deletes without starting
-    // anything, so its sessions recorded before it could are deleted too; a chosen original is asked of a process that
-    // says it can.
+    // anything, and a harness with its own delete method (Grok's) deletes sessions recorded before Latch knew it, so
+    // those are deleted too; a chosen original is asked of a process that says it can. One whose record lives in the
+    // private home of its gateway route goes with that home: nothing is started for it.
+    const profile = this.selection.profile
+    const privateHome = task.acp.route !== undefined && profile?.gateway?.recordInPrivateHome === true
     this.forget(
       sessionId,
       agentSessionIds,
       cwd,
-      deletable === true || this.deletesWithoutStart() || (original && task.acp.imported !== undefined),
+      !privateHome
+        && (deletable === true
+          || profile?.deleteMethod !== undefined
+          || this.deletesWithoutStart()
+          || (original && task.acp.imported !== undefined)),
       confirmedOf(recorded.acp),
       () => this.stillListed(recorded),
       privately,
@@ -5007,7 +5037,7 @@ export class AgentRuntime implements Bridge {
       ...(this.profile?.modeTiers ? { modeTiers: structuredClone(this.profile.modeTiers) } : {}),
       ...(this.profile?.modeGlyphs ? { modeGlyphs: structuredClone(this.profile.modeGlyphs) } : {}),
       ...(task.acp.drift ? { drift: task.acp.drift } : {}),
-      notes: this.permissionNotes(task),
+      notes: [...this.permissionNotes(task), ...(this.savedRules.get(task.summary.id) ?? [])],
       ...(task.acp.permissionFacts?.length ? { inEffect: [...task.acp.permissionFacts] } : {}),
     }
   }
@@ -6147,7 +6177,8 @@ export class AgentRuntime implements Bridge {
       if (result.data.protocolVersion !== PROTOCOL_VERSION) {
         throw new Error(`Harness 使用 ACP 协议版本 ${result.data.protocolVersion}，Latch 仅支持版本 ${PROTOCOL_VERSION}`)
       }
-      const reported = result.data.agentInfo?.version ?? undefined
+      const reported =
+        result.data.agentInfo?.version ?? (this.selection.profile?.versionInMeta ? result.data._meta?.agentVersion : undefined) ?? undefined
       if (gatewayVersion) {
         const actual = (this.selection.profile?.gateway?.commandVersionOnly ? undefined : reported) ?? gatewayVerdict?.version
         const compared = actual ? compareVersions(actual, gatewayVersion.minimum) : undefined
@@ -6171,7 +6202,7 @@ export class AgentRuntime implements Bridge {
         resume: capabilities?.sessionCapabilities?.resume != null,
         list: capabilities?.sessionCapabilities?.list != null,
         load: capabilities?.loadSession === true,
-        delete: capabilities?.sessionCapabilities?.delete != null,
+        delete: capabilities?.sessionCapabilities?.delete != null || this.selection.profile?.deleteMethod !== undefined,
         close: capabilities?.sessionCapabilities?.close != null,
         additionalDirectories: isObject(capabilities?.sessionCapabilities?.additionalDirectories),
         images: capabilities?.promptCapabilities?.image === true,
@@ -6186,6 +6217,7 @@ export class AgentRuntime implements Bridge {
         ...(method.description ? { description: clip(this.redact(method.description), 500) } : {}),
       }))
       if (reported) live.agentVersion = clip(reported, 100)
+      if (result.data._meta?.modelState !== undefined) live.startMeta = { modelState: result.data._meta.modelState }
       if (gateway && this.selection.profile?.gateway?.via === 'providers')
         await this.setProvider(wire, capabilities?.providers !== undefined, gateway)
       live.initialized = true
@@ -6590,6 +6622,7 @@ export class AgentRuntime implements Bridge {
     target.acp.deletable = live.capabilities.delete
     if (facts) target.acp.permissionFacts = facts
     else delete target.acp.permissionFacts
+    void this.readSavedRules(taskId, live, target.acp.cwd)
     if (live.agentVersion) target.acp.agentVersion = live.agentVersion
     // What the harness's own settings do that Latch's approvals do not show (Claude's direct wire reads them).
     const said = z.object({ _meta: z.object({ latch: z.object({ permissionNotes: z.array(z.string()).max(20) }) }) }).safeParse(result).data
@@ -7031,6 +7064,64 @@ export class AgentRuntime implements Bridge {
     return false
   }
 
+  /** What the harness's own home says it applies here besides Latch's view (`HarnessProfile.savedRules`). */
+  private async readSavedRules(taskId: string, live: Live, cwd: string): Promise<void> {
+    const read = this.selection.profile?.savedRules
+    // A session on a gateway route runs in a home of its own, with nothing of the person's saved there.
+    if (!read || live.gateway) return
+    // Where its home is, as its own process would find it: HOME and the profile's inherited names, nothing else.
+    const env: Record<string, string> = {}
+    for (const name of ['HOME', ...(this.profile?.inheritEnv ?? [])]) {
+      const value = process.env[name] || loginShellValues()[name]
+      if (value) env[name] = value
+    }
+    const notes = await read(cwd, env).catch(() => [])
+    if (this.closed || !this.state.tasks[taskId]) return
+    const before = this.savedRules.get(taskId) ?? []
+    if (notes.length) this.savedRules.set(taskId, notes.map(note => clip(this.redact(note), 300)).slice(0, 4))
+    else this.savedRules.delete(taskId)
+    if (!isDeepStrictEqual(before, this.savedRules.get(taskId) ?? [])) this.notify(taskId)
+  }
+
+  /**
+   * The harness's own folder of each of these sessions, once its process is gone (`HarnessProfile.sessionFolders`): only a
+   * plain directory named by the ID right below the root, whose record names the session's folder.
+   */
+  private async removeSessionFolders(ids: readonly string[], cwd: string): Promise<void> {
+    const folders = this.selection.profile?.sessionFolders
+    if (!folders || !ids.length) return
+    const home = process.env.HOME || loginShellValues().HOME
+    const root = folders.root({ ...(home ? { HOME: home } : {}), ...this.agent.env })
+    if (!root || !isAbsolute(root)) return
+    const realRoot = await realpath(root).catch(() => undefined)
+    if (!realRoot) return
+    for (const id of ids) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(id)) continue
+      const folder = join(realRoot, id)
+      const stats = await lstat(folder).catch(() => undefined)
+      if (!stats?.isDirectory() || (await realpath(folder).catch(() => undefined)) !== folder) continue
+      if (!(await folders.owns(folder, cwd).catch(() => false))) continue
+      await rm(folder, { recursive: true, force: true })
+      this.limits.log(`已删除 ${this.agent.name} 为这个 Latch 会话保存的会话文件夹。`)
+    }
+  }
+
+  /** A prompt that starts with one of the harness's own mode commands is never sent (`HarnessProfile.modeCommands`). */
+  private assertNoModeCommand(prompt: string): void {
+    const named = /^\s*\/(\S+)/u.exec(prompt)?.[1]
+    if (named === undefined || !this.selection.profile?.modeCommands?.includes(named)) return
+    throw new AppError(
+      409,
+      'mode-command-refused',
+      `Latch 不转发 /${named}：它在 ${this.agent.name} 里改变权限档位，但不经 ACP 报告，Latch 记录的档位会与实际不符。`,
+    )
+  }
+
+  /** ACP's delete, or the harness's own where it offers that instead (`HarnessProfile.deleteMethod`). */
+  private deleteMethod(): string {
+    return this.selection.profile?.deleteMethod ?? 'session/delete'
+  }
+
   /**
    * Cleans up after a removed task in the background: asks the agent to delete its sessions when it offers that,
    * starting a process only for the launch on record and only in a project the Host still lists, then stops
@@ -7099,6 +7190,7 @@ export class AgentRuntime implements Bridge {
         const live = this.lives.get(key)
         if (live) await live.wire.stop('stop', this.limits.stopGraceMs).catch(() => {})
         await this.removeTemporaryDirectory(this.tmpDirFor(key)).catch(() => {})
+        await this.removeSessionFolders(acpSessionIds, cwd).catch(() => {})
       }
     })().finally(() => {
       if (this.forgetting.get(key) === work) this.forgetting.delete(key)
@@ -7110,7 +7202,7 @@ export class AgentRuntime implements Bridge {
   private async deleteAgentSessions(target: Live, ids: readonly string[]): Promise<void> {
     for (const id of ids)
       await target.wire
-        .request('session/delete', { sessionId: id }, Math.min(this.limits.requestTimeoutMs, 10_000))
+        .request(this.deleteMethod(), { sessionId: id }, Math.min(this.limits.requestTimeoutMs, 10_000))
         .catch((error: unknown) => {
           const said = clip(this.redact(message(error)), 300)
           this.limits.log(`已删除 ${this.agent.name} 会话在 Latch 中的记录；${this.agent.name} 自己保存的一份会话副本没有删除：${said}`)
@@ -7635,12 +7727,15 @@ export class AgentRuntime implements Bridge {
         if (this.closed || this.lives.get(live.key) !== live || live.wire.stopping) return
         const parsed = commandsUpdate.safeParse(update)
         if (!parsed.success) return
-        task.commands = parsed.data.availableCommands.map(command => ({
-          name: command.name,
-          ...(command.description ? { description: command.description } : {}),
-          ...(command.input?.hint ? { inputHint: command.input.hint } : {}),
-          ...(live.wire.idleCommands?.has(command.name) ? { idleOnly: true as const } : {}),
-        }))
+        const modeCommands = this.selection.profile?.modeCommands ?? []
+        task.commands = parsed.data.availableCommands
+          .filter(command => !modeCommands.includes(command.name))
+          .map(command => ({
+            name: command.name,
+            ...(command.description ? { description: command.description } : {}),
+            ...(command.input?.hint ? { inputHint: command.input.hint } : {}),
+            ...(live.wire.idleCommands?.has(command.name) ? { idleOnly: true as const } : {}),
+          }))
         this.noteCommandCatalogue(live, task)
         break
       }

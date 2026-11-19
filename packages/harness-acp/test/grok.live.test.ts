@@ -1,10 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { agentEnvironment } from '../src/environment.ts'
-import { grokGatewayModels, grokProfile } from '../src/profiles/grok.ts'
+import { grokGatewayModels, grokProfile, grokStartCatalogue } from '../src/profiles/grok.ts'
 
 /**
  * The real Grok Build in temporary homes: no login, nothing of the person's read, and never a prompt. Opt-in by
@@ -158,7 +158,10 @@ async function otherTools(paths: Homes): Promise<void> {
 
 /** Starts the binary as a launch on a gateway route would, from the profile's own delivery and environment. */
 /** `earlier`: the version 2 home, which held the custom models alone and set no variable but its path. */
-async function startRouted(paths: Homes, options: { earlier?: true; definitionEnv?: Record<string, string> } = {}): Promise<Client> {
+async function startRouted(
+  paths: Homes,
+  options: { earlier?: true; definitionEnv?: Record<string, string> } = {},
+): Promise<Client & { started: Json }> {
   const gateway = grokProfile.gateway
   if (gateway?.via !== 'launch') throw new Error('Grok is a launch route')
   const launch = gateway.deliver(
@@ -184,7 +187,7 @@ async function startRouted(paths: Homes, options: { earlier?: true; definitionEn
   cleanups.push(() => client.stop())
   const answer = await client.request('initialize', { protocolVersion: 1, clientCapabilities: {} })
   expect(answer.error).toBeUndefined()
-  return client
+  return Object.assign(client, { started: answer.result as Json })
 }
 
 async function seen(paths: Homes): Promise<Array<{ tag: string; token: string | null }>> {
@@ -239,4 +242,136 @@ describe.skipIf(!binary)('Grok Build, real program, temporary homes', () => {
     expect(await openSession(launch, after, [given])).toEqual(['latch-given'])
     expect(await seen(after)).toEqual([{ tag: 'latch-given', token: '' }])
   }, 90_000)
+
+  it('reads models before a session, deletes with its own method, lists and replays, and sets only plan over ACP', async () => {
+    const paths = await homes()
+    let client = await startRouted(paths)
+    const meta = client.started._meta as Json
+    const rule = grokProfile.historyImport
+    expect(typeof rule === 'object' && rule.version !== undefined && new RegExp(rule.version, 'u').test(String(meta.agentVersion))).toBe(
+      true,
+    )
+    expect(client.started.agentInfo ?? undefined).toBeUndefined()
+    const catalogue = grokStartCatalogue(meta)!
+    expect(catalogue).toBeDefined()
+
+    // The options a draft reads from initialize are the ones session/new then reports, by ID and value.
+    const created = (await client.request('session/new', { cwd: paths.project, mcpServers: [] })).result as Json
+    const first = created.sessionId as string
+    expect(created.configOptions).toEqual(catalogue.options.map(option => expect.objectContaining(option)))
+    const thinking = catalogue.perModel.find(entry => entry.options.length)
+    if (thinking) {
+      const switched = (await client.request('session/set_config_option', { sessionId: first, configId: 'model', value: thinking.model }))
+        .result as Json
+      expect(switched.configOptions).toEqual(
+        expect.arrayContaining(thinking.options.map(option => expect.objectContaining({ ...option, currentValue: expect.any(String) }))),
+      )
+    }
+
+    // Modes: plan is set and reported; Latch's other words for a mode are not modes of its ACP.
+    expect((await client.request('session/set_mode', { sessionId: first, modeId: 'plan' })).error).toBeUndefined()
+    await expect
+      .poll(() => client.notes.some(note => JSON.stringify(note.params).includes('"currentModeId":"plan"')), { timeout: 5_000 })
+      .toBe(true)
+    for (const modeId of ['auto', 'bypassPermissions', 'always-approve'])
+      expect(((await client.request('session/set_mode', { sessionId: first, modeId })).error as Json | undefined)?.code).toBe(-32602)
+
+    // Delete: not ACP's method, its own; the folder of a session that never had a message goes too.
+    const folderOf = async (id: string) => {
+      for (const group of await readdir(join(paths.grokHome, 'sessions')).catch(() => [] as string[]))
+        if (
+          await stat(join(paths.grokHome, 'sessions', group, id)).then(
+            () => true,
+            () => false,
+          )
+        )
+          return join(paths.grokHome, 'sessions', group, id)
+      return undefined
+    }
+    expect(await folderOf(first)).toBeDefined()
+    expect(((await client.request('session/delete', { sessionId: first })).error as Json | undefined)?.code).toBe(-32601)
+    expect((await client.request('_x.ai/session/delete', { sessionId: first })).result).toEqual({ success: true })
+    expect(await folderOf(first)).toBeUndefined()
+
+    // A session with messages, written as Grok records one: listed with no folder given, replayed on load.
+    const second = ((await client.request('session/new', { cwd: paths.project, mcpServers: [] })).result as Json).sessionId as string
+    await client.request('session/close', { sessionId: second }, 5_000)
+    await client.stop()
+    const folder = (await folderOf(second))!
+    const summary = JSON.parse(await readFile(join(folder, 'summary.json'), 'utf8')) as Json
+    await writeFile(join(folder, 'summary.json'), JSON.stringify({ ...summary, num_messages: 2, session_summary: 'Fixture title' }))
+    const line = (sessionUpdate: string, text: string, at: number) =>
+      JSON.stringify({
+        timestamp: at,
+        timestamp_us: at * 1_000_000,
+        method: 'session/update',
+        params: { sessionId: second, update: { sessionUpdate, content: { type: 'text', text } } },
+      })
+    const now = Math.floor(Date.now() / 1000)
+    await writeFile(
+      join(folder, 'updates.jsonl'),
+      `${line('user_message_chunk', 'fixture question', now)}\n${line('agent_message_chunk', 'fixture answer', now + 1)}\n`,
+    )
+    client = await startRouted(paths)
+    const listed = (await client.request('session/list', {})).result as { sessions: Array<{ sessionId: string; cwd: string }> }
+    expect(listed.sessions.find(row => row.sessionId === second)).toMatchObject({ cwd: paths.project })
+    const before = client.notes.length
+    expect((await client.request('session/load', { sessionId: second, cwd: paths.project, mcpServers: [] })).error).toBeUndefined()
+    const replayed = client.notes
+      .slice(before)
+      .filter(note => note.method === 'session/update')
+      .map(note => note.params as { update: { sessionUpdate: string; content?: { text?: string } }; _meta?: { isReplay?: boolean } })
+      .filter(note => note.update.content?.text?.startsWith('fixture'))
+    expect(replayed.map(note => [note.update.sessionUpdate, note.update.content?.text, note._meta?.isReplay])).toEqual([
+      ['user_message_chunk', 'fixture question', true],
+      ['agent_message_chunk', 'fixture answer', true],
+    ])
+    expect((await client.request('_x.ai/session/delete', { sessionId: second })).result).toEqual({ success: true })
+  }, 120_000)
+
+  it('starts none of its own MCP servers before a session, and a loaded session comes back in the plan mode it was left in', async () => {
+    const paths = await homes()
+    await writeFile(paths.recorder, RECORDER)
+    // Its own home's configuration: the custom model and one MCP server of its own.
+    const own = [
+      grokGatewayModels('http://127.0.0.1:9/v1', 'chat-completions', 'main-model', ['main-model']),
+      '[mcp_servers.own-recorder]',
+      `command = ${JSON.stringify(process.execPath)}`,
+      `args = ${JSON.stringify([paths.recorder, paths.seen, 'own-recorder'])}`,
+      '',
+    ].join('\n')
+    const start = async () => {
+      const env = agentEnvironment({
+        resolvedCommand: binary!,
+        profile: grokProfile.permission,
+        definitionEnv: {},
+        sessionTmpDir: paths.root,
+        gatewayEnv: { GROK_HOME: paths.grokHome, LMG_TOKEN: SENTINEL },
+        hostEnv: { HOME: paths.home, PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
+        shellEnv: {},
+      })
+      const client = new Client(spawn(binary!, ARGS, { cwd: paths.project, env, stdio: ['pipe', 'pipe', 'pipe'] }))
+      cleanups.push(() => client.stop())
+      expect((await client.request('initialize', { protocolVersion: 1, clientCapabilities: {} })).error).toBeUndefined()
+      return client
+    }
+    await writeFile(join(paths.grokHome, 'config.toml'), own, { mode: 0o600 })
+    let client = await start()
+    await client.request('session/list', {})
+    await new Promise(resolve => setTimeout(resolve, 5_000))
+    expect(await seen(paths)).toEqual([])
+    // A session does start it: the recorder works.
+    const sessionId = ((await client.request('session/new', { cwd: paths.project, mcpServers: [] })).result as Json).sessionId as string
+    await expect.poll(async () => (await seen(paths)).map(item => item.tag), { timeout: 10_000 }).toEqual(['own-recorder'])
+
+    // Left in plan and loaded by a new process.
+    expect((await client.request('session/set_mode', { sessionId, modeId: 'plan' })).error).toBeUndefined()
+    await client.request('session/close', { sessionId }, 5_000)
+    await client.stop()
+    client = await start()
+    expect((await client.request('session/load', { sessionId, cwd: paths.project, mcpServers: [] })).error).toBeUndefined()
+    await expect
+      .poll(() => client.notes.some(note => JSON.stringify(note.params).includes('"currentModeId":"plan"')), { timeout: 5_000 })
+      .toBe(true)
+  }, 120_000)
 })

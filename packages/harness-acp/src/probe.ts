@@ -20,6 +20,8 @@ interface ProbeOptions {
 const HANDSHAKE_MS = 15_000
 /** How long a harness that pushes its login state gets to push it after the handshake. */
 const PUSH_WAIT_MS = 5_000
+/** Antigravity answered session/list in 37 to 353 ms (1.5.11). */
+const LOGIN_REQUEST_MS = 10_000
 const CAPABILITIES = { embeddedContext: false, images: false, resume: false, load: false, additionalDirectories: false }
 const isObject = (value: unknown) => value !== null && typeof value === 'object' && !Array.isArray(value)
 
@@ -137,6 +139,7 @@ export async function probeAgent(
   let diagnostic: string | undefined
   let pushed: ReportedLogin | undefined
   let pushedNow: (() => void) | undefined
+  let asked: 'authenticated' | 'unauthenticated' | 'unknown' | undefined
   try {
     const parsed = initializeResult.safeParse(
       await connection.request(
@@ -172,6 +175,17 @@ export async function probeAgent(
         options.signal?.addEventListener('abort', stop, { once: true })
       })
       options.signal?.removeEventListener('abort', stop)
+    }
+    // A request that needs a login and opens no session (Antigravity's session/list): its refusal is a clear no.
+    const loginRequest = profile?.loginRequest
+    if (loginRequest && !pushed && !options.signal?.aborted) {
+      asked = await connection
+        .request(loginRequest, {}, Math.max(1, Math.min(LOGIN_REQUEST_MS, deadline - Date.now())), options.signal)
+        .then(
+          () => 'authenticated' as const,
+          (error: unknown) =>
+            error instanceof RpcError && error.code === RPC.authRequired ? ('unauthenticated' as const) : ('unknown' as const),
+        )
     }
     result = {
       status: 'ready',
@@ -217,7 +231,12 @@ export async function probeAgent(
   const left = deadline - Date.now()
   const reads = left > 0 ? { timeoutMs: left, ...(options.signal ? { signal: options.signal } : {}) } : undefined
   // What the harness pushed is its own answer, so its status command, whose output may hold part of a key, need not run.
-  const asksLogin = result.status !== 'authentication-required' && !pushed && profile?.loginStatus !== undefined && !options.signal?.aborted
+  const asksLogin =
+    result.status !== 'authentication-required'
+    && !pushed
+    && asked === undefined
+    && profile?.loginStatus !== undefined
+    && !options.signal?.aborted
   const pairing = profile?.programVersion
   const name = selection.preset?.name
   const [login, program] = await Promise.all([
@@ -226,6 +245,7 @@ export async function probeAgent(
   ])
   if (result.status === 'authentication-required') result.login = 'unauthenticated'
   else if (pushed) result.login = pushed.status
+  else if (asked) result.login = asked
   else if (asksLogin) result.login = login?.status ?? 'unknown'
   if (pairing && name && program) {
     const adapter = result.agent?.version

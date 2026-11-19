@@ -1,5 +1,6 @@
-import { dirname } from 'node:path'
-import type { ModelWire } from '@latch/protocol'
+import { lstat, readdir, realpath } from 'node:fs/promises'
+import { dirname, isAbsolute, join } from 'node:path'
+import type { ModelWire, SessionConfigOption } from '@latch/protocol'
 import { GROK_BILLING_METHOD, grokQuota } from '../quota.ts'
 import { z } from 'zod'
 import type { TurnTokens } from '../protocol.ts'
@@ -30,6 +31,110 @@ function grokTurnUsage(result: unknown): TurnTokens | undefined {
     ...(cacheCreationTokens !== undefined ? { cachedWriteTokens: cacheCreationTokens } : {}),
     ...(reasoningTokens !== undefined ? { thoughtTokens: reasoningTokens } : {}),
   }
+}
+
+const name = z.string().min(1).max(200)
+const effort = z.object({ value: name, label: name, description: z.string().max(1000).optional().catch(undefined) })
+/**
+ * `initialize._meta.modelState` (1.0.89): the default model and each model's reasoning efforts, the same list and IDs its
+ * session/new then reports as the `model` and `reasoning_effort` options.
+ */
+const modelState = z.object({
+  currentModelId: name,
+  availableModels: z
+    .array(
+      z.object({
+        modelId: name,
+        name,
+        _meta: z
+          .object({
+            reasoningEffort: name.optional().catch(undefined),
+            reasoningEfforts: z.array(effort).max(16).optional().catch(undefined),
+          })
+          .optional()
+          .catch(undefined),
+      }),
+    )
+    .min(1)
+    .max(200),
+})
+
+/** Grok's thinking option for one model as its session/new reports it, or undefined for a model without one. */
+function effortOption(model: z.infer<typeof modelState>['availableModels'][number]): SessionConfigOption | undefined {
+  const efforts = model._meta?.reasoningEfforts
+  const current = model._meta?.reasoningEffort
+  if (!efforts?.length || !current || !efforts.some(item => item.value === current)) return undefined
+  return {
+    id: 'reasoning_effort',
+    name: 'Reasoning Effort',
+    category: 'thought_level',
+    currentValue: current,
+    options: efforts.map(item => ({ value: item.value, name: item.label, ...(item.description ? { description: item.description } : {}) })),
+  }
+}
+
+/** The model list and each model's thinking before any session, from Grok's answer to initialize. */
+export function grokStartCatalogue(
+  meta: unknown,
+): { options: SessionConfigOption[]; perModel: Array<{ model: string; options: SessionConfigOption[] }> } | undefined {
+  const parsed = z.object({ modelState }).safeParse(meta)
+  if (!parsed.success) return undefined
+  const { currentModelId, availableModels } = parsed.data.modelState
+  const current = availableModels.find(model => model.modelId === currentModelId)
+  if (!current) return undefined
+  const model: SessionConfigOption = {
+    id: 'model',
+    name: 'Model',
+    category: 'model',
+    currentValue: currentModelId,
+    options: availableModels.map(item => ({ value: item.modelId, name: item.name })),
+  }
+  const thinking = effortOption(current)
+  return {
+    options: [model, ...(thinking ? [thinking] : [])],
+    perModel: availableModels.map(item => ({ model: item.modelId, options: [effortOption(item)].filter(option => option !== undefined) })),
+  }
+}
+
+/**
+ * Grok's saved 「Always allow」 and 「never allow」 answers for the project of `cwd`: `permission.toml` and per-client
+ * `permission_<client>.toml` in `$GROK_HOME/sessions/<URL-encoded scope root>/`, the scope root being the git
+ * repository's root or else the folder (its user guide, 22-permissions-and-safety「Persistence Is Per Project」). Their
+ * shape is not documented, so only whether such a file holds anything is read, never what it says. A scope root whose
+ * encoding is longer than a file name (Grok then writes a hashed name) and a worktree's main checkout are not looked up.
+ */
+export async function grokSavedRules(cwd: string, env: Readonly<Record<string, string>>): Promise<string[]> {
+  const home = env.GROK_HOME || (env.HOME ? join(env.HOME, '.grok') : undefined)
+  if (!home || !isAbsolute(home)) return []
+  let root = cwd
+  for (let at = cwd; ; at = dirname(at)) {
+    if (
+      await lstat(join(at, '.git')).then(
+        () => true,
+        () => false,
+      )
+    ) {
+      root = at
+      break
+    }
+    if (dirname(at) === at) break
+  }
+  // The path as given and as resolved: which of the two Grok records was not checked.
+  const scopes = [...new Set([root, await realpath(root).catch(() => root)])].map(path => encodeURIComponent(path))
+  const saved = new Set<string>()
+  for (const scope of scopes.filter(item => Buffer.byteLength(item) <= 255)) {
+    const directory = join(home, 'sessions', scope)
+    const names = await readdir(directory).catch(() => [] as string[])
+    for (const name of names.filter(item => /^permission(?:_[\w.-]+)?\.toml$/u.test(item)).slice(0, 8)) {
+      const stats = await lstat(join(directory, name)).catch(() => undefined)
+      if (stats?.isFile() && stats.size > 0) saved.add(name)
+    }
+  }
+  return saved.size
+    ? [
+        `Grok 在这个项目存有你在它自己界面里给过的「始终允许」或「不再允许」回答（${[...saved].join('、')}），在 Latch 的会话里同样生效；Latch 不改也不显示其内容。`,
+      ]
+    : []
 }
 
 const GATEWAY_CONFIG = 'config.toml'
@@ -120,6 +225,7 @@ export const grokProfile: HarnessProfile = {
   presetId: 'grok',
   // 2: a session on a model service runs in a home of its own that holds its custom models.
   // 3: that home reads no other tool's MCP servers or hooks; Claude's, Cursor's and agents' project files count.
+  // Also in 3: its own delete, its sessions brought in, its models read from initialize, /always-approve withheld.
   version: 3,
   gateway: {
     via: 'launch',
@@ -132,6 +238,7 @@ export const grokProfile: HarnessProfile = {
     credentialInherited: true,
     // A routed session's record lives in its private home, which the person's own Grok never reads.
     sessionBoundToRoute: true,
+    recordInPrivateHome: true,
     envNames: ['GROK_HOME', ...Object.keys(ISOLATION_ENV)],
     templates: { files: 2 },
     deliver(place, route) {
@@ -149,8 +256,23 @@ export const grokProfile: HarnessProfile = {
       }
     },
   },
-  // SessionStart hooks and project plugins may run before the first prompt.
-  catalogueRead: { when: 'request' },
+  // It does not advertise session/delete (-32601) but answers its own with `{ success: true }` and removes the session's
+  // folder, an empty one too (1.0.89, checked 2026-11-20 on a temporary GROK_HOME).
+  deleteMethod: '_x.ai/session/delete',
+  // `/always-approve on` turns the session to approving everything and reports nothing over ACP (1.0.89 lists it in
+  // its commands; readback covers plan only).
+  modeCommands: ['always-approve'],
+  savedRules: grokSavedRules,
+  // 1.0.89 reports no `agentInfo`, only `_meta.agentVersion`.
+  versionInMeta: true,
+  // Its session/list without a folder lists the sessions of every folder (`sessionId`, `cwd`, `title`, `updatedAt`),
+  // leaving out ones with no message, and session/load replays the session's recorded updates, each marked
+  // `_meta.isReplay` (1.0.89, checked 2026-11-20 against hand-written sessions in a temporary GROK_HOME, not its
+  // source). It reports no session as open elsewhere and keeps no lock Latch can see.
+  historyImport: { version: '^1\\.0\\.89$', useUnknown: true },
+  // Its answer to initialize lists the models and their thinking; that process opens no session and starts none of the
+  // person's MCP servers or hooks (1.0.89, checked 2026-11-20), so a draft reads it by itself.
+  catalogueRead: { fromInitialize: grokStartCatalogue },
   permission: {
     approvals: 'prompts',
     defaultEnv: {},

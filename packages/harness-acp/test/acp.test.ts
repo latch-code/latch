@@ -5,7 +5,22 @@ import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { chmod, link, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -3758,6 +3773,144 @@ describe('ACP sessions across processes', () => {
     expect((await plain.fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(1)
   })
 
+  it('never lists or sends Grok\u2019s /always-approve, which changes its mode without saying so over ACP', async () => {
+    const commands = [
+      { name: 'compact', description: 'Compress conversation history' },
+      { name: 'always-approve', description: 'Toggle always-approve mode', input: { hint: 'on|off' } },
+    ]
+    const fixture = await preset('grok', { FAKE_ACP_CONFIG: 'options', FAKE_ACP_COMMANDS: JSON.stringify(commands) })
+    const bridge = await fixture.open()
+    await expect(bridge.createTask({ prompt: '/always-approve on', requestId: rid() })).rejects.toMatchObject({
+      status: 409,
+      code: 'mode-command-refused',
+    })
+    const { sessionId } = await bridge.createTask({ prompt: 'plan', requestId: rid() })
+    const detail = await settled(bridge, sessionId)
+    expect(detail.commands?.map(command => command.name)).toEqual(['compact'])
+    await expect(bridge.prompt(sessionId, '  /always-approve on', rid())).rejects.toMatchObject({ code: 'mode-command-refused' })
+    // Only the word itself: text that merely mentions it is a prompt like any other.
+    await bridge.prompt(sessionId, 'echo what does /always-approve do', rid())
+    await settled(bridge, sessionId)
+    const sent = received(await fixture.log(), 'session/prompt').map(entry => JSON.stringify(entry.params?.prompt))
+    expect(sent).toHaveLength(2)
+    expect(sent.some(text => text.includes('"/always-approve on"'))).toBe(false)
+    await bridge.close()
+  })
+
+  it('tells a Grok session that the project has answers saved in Grok\u2019s own home', async () => {
+    const fixture = await preset('grok', { FAKE_ACP_CONFIG: 'options' })
+    const home = join(fixture.root, 'grok-home')
+    const saved = join(home, 'sessions', encodeURIComponent(await realpath(fixture.workspace)))
+    await mkdir(saved, { recursive: true })
+    await writeFile(join(saved, 'permission.toml'), 'remembered')
+    vi.stubEnv('GROK_HOME', home)
+    cleanups.push(async () => void vi.unstubAllEnvs())
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    await vi.waitFor(async () =>
+      expect((await bridge.detail(sessionId)).permission?.notes.some(note => note.includes('permission.toml'))).toBe(true),
+    )
+    expect(JSON.stringify(await bridge.detail(sessionId))).not.toContain('remembered')
+    await bridge.close()
+  })
+
+  it('deletes a removed Grok session with its own delete, also one recorded before that was known', async () => {
+    const env = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'resume', FAKE_ACP_XAI_DELETE: '1' }
+    const fixture = await preset('grok', env)
+    let bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    await settled(bridge, sessionId)
+    const agentSession = received(await fixture.log(), 'session/prompt')[0]!.params?.sessionId as string
+    await bridge.close()
+    // As a session bound before Grok's delete was known stored it.
+    const store = JSON.parse(await readFile(join(fixture.dataDir, 'acp.json'), 'utf8')) as {
+      tasks: Record<string, { acp: { deletable?: boolean } }>
+    }
+    store.tasks[sessionId]!.acp.deletable = false
+    await writeFile(join(fixture.dataDir, 'acp.json'), JSON.stringify(store))
+    bridge = await fixture.open()
+    await bridge.remove!(sessionId)
+    await vi.waitFor(
+      async () =>
+        expect(received(await fixture.log(), '_x.ai/session/delete').map(entry => entry.params?.sessionId)).toEqual([agentSession]),
+      { timeout: 5_000, interval: 10 },
+    )
+    await vi.waitFor(async () => expect(await fixture.agentSessions()).toEqual({}), { timeout: 5_000, interval: 10 })
+    expect(received(await fixture.log(), 'session/delete')).toEqual([])
+    await bridge.close()
+  })
+
+  it('removes the folder Cursor keeps for a session Latch started, and only that one, once the process is gone', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'latch-cursor-config-'))
+    cleanups.push(() => rm(config, { recursive: true, force: true }))
+    const fixture = await preset('cursor', {
+      FAKE_ACP_CONFIG: 'options',
+      FAKE_ACP_MODES: 'agent,plan,ask',
+      FAKE_ACP_INITIAL_MODE: 'agent',
+      FAKE_ACP_CAPS: 'load',
+      CURSOR_CONFIG_DIR: config,
+    })
+    const bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
+    const first = await settled(bridge, sessionId)
+    expect(first.summary.status, systemText(first)).toBe('idle')
+    const own = received(await fixture.log(), 'session/prompt')[0]!.params?.sessionId as string
+    const folder = (id: string) => join(config, 'acp-sessions', id)
+    const cwd = (await bridge.detail(sessionId)).summary.cwd!
+    await mkdir(folder(own), { recursive: true })
+    await writeFile(join(folder(own), 'meta.json'), JSON.stringify({ schemaVersion: 1, cwd }))
+    await writeFile(join(folder(own), 'store.db'), 'x')
+    // Another client's session, and a folder whose record names another place, stay.
+    await mkdir(folder('someone-else'), { recursive: true })
+    await writeFile(join(folder('someone-else'), 'meta.json'), JSON.stringify({ schemaVersion: 1, cwd }))
+    await bridge.remove!(sessionId)
+    await vi.waitFor(
+      async () =>
+        expect(
+          await stat(folder(own)).then(
+            () => true,
+            () => false,
+          ),
+        ).toBe(false),
+      { timeout: 5_000, interval: 20 },
+    )
+    expect(
+      await stat(folder('someone-else')).then(
+        () => true,
+        () => false,
+      ),
+    ).toBe(true)
+
+    // A folder whose record says another place is not this session's.
+    const second = await bridge.createTask({ prompt: 'echo two', requestId: rid() })
+    await settled(bridge, second.sessionId)
+    const other = received(await fixture.log(), 'session/prompt').at(-1)!.params?.sessionId as string
+    await mkdir(folder(other), { recursive: true })
+    await writeFile(join(folder(other), 'meta.json'), JSON.stringify({ schemaVersion: 1, cwd: '/elsewhere' }))
+    await bridge.remove!(second.sessionId)
+    await new Promise(resolve => setTimeout(resolve, 300))
+    expect(
+      await stat(folder(other)).then(
+        () => true,
+        () => false,
+      ),
+    ).toBe(true)
+    // A link in its place is followed by nothing: neither the link nor what it points at goes.
+    const third = await bridge.createTask({ prompt: 'echo three', requestId: rid() })
+    await settled(bridge, third.sessionId)
+    const linked = received(await fixture.log(), 'session/prompt').at(-1)!.params?.sessionId as string
+    const target = join(config, 'elsewhere')
+    await mkdir(target)
+    await writeFile(join(target, 'meta.json'), JSON.stringify({ schemaVersion: 1, cwd }))
+    await symlink(target, folder(linked))
+    await bridge.remove!(third.sessionId)
+    await new Promise(resolve => setTimeout(resolve, 300))
+    expect((await lstat(folder(linked))).isSymbolicLink()).toBe(true)
+    expect((await stat(join(target, 'meta.json'))).isFile()).toBe(true)
+    await bridge.close()
+  })
+
   it('does not start a process to delete a session whose project the Host no longer lists', async () => {
     const fixture = await setup({ FAKE_ACP_CAPS: 'resume,delete' }, { idleMs: 80 })
     const other = join(fixture.root, 'other')
@@ -5709,6 +5862,29 @@ describe('reading what a Harness offers without a turn, and model IDs a person t
   const models = (catalogue: ReturnType<NonNullable<Bridge['catalogue']>>) =>
     catalogue?.options.find(option => option.category === 'model')?.options.map(item => item.value)
 
+  it('takes Grok Build\u2019s models and thinking from its answer to initialize, without a session', async () => {
+    const fixture = await preset('grok', { ...OPTIONS, FAKE_ACP_GROK_INIT: '1', FAKE_ACP_VERSION: '1.0.89' })
+    const bridge = await fixture.open()
+    expect(bridge.catalogueRead!()).toEqual({ when: 'select', modes: false })
+    expect(await bridge.readCatalogue!({ auto: true })).toEqual({ ran: true })
+    const catalogue = bridge.catalogue!()!
+    expect(models(catalogue)).toEqual(['small', 'large'])
+    expect(catalogue.options.find(option => option.category === 'thought_level')).toMatchObject({
+      id: 'reasoning_effort',
+      currentValue: 'high',
+    })
+    expect(catalogue.perModel).toEqual([
+      { model: 'small', options: [expect.objectContaining({ id: 'reasoning_effort' })] },
+      { model: 'large', options: [] },
+    ])
+    const log = await fixture.log()
+    expect(received(log, 'initialize')).toHaveLength(1)
+    expect(received(log, 'session/new')).toEqual([])
+    expect(received(log, 'session/prompt')).toEqual([])
+    // Every model's thinking is known already: picking one opens nothing.
+    await expect(bridge.readCatalogue!({ auto: false, model: 'large' })).rejects.toMatchObject({ code: 'catalogue-model-unsupported' })
+  })
+
   it('opens one empty session in a private folder, sends no prompt and no MCP server, deletes it, and keeps the list', async () => {
     const fixture = await setup(OPTIONS)
     const bridge = await fixture.open()
@@ -7640,6 +7816,29 @@ describe('sessions on a model service through the gateway', () => {
     FAKE_ACP_VERSION: '1.57.0',
   }
 
+  it('still deletes a routed session of a harness whose record is not in a private home (goose)', async () => {
+    const { fixture, route } = await routed(
+      'goose',
+      { ...GOOSE, FAKE_ACP_CAPS: 'resume,delete' },
+      { providerId: 'svc', model: 'fake-model', wire: 'chat-completions' },
+    )
+    let bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    const own = received(await fixture.log(), 'session/prompt')[0]!.params?.sessionId as string
+    await bridge.close()
+    bridge = await fixture.open()
+    await bridge.remove!(sessionId)
+    await vi.waitFor(
+      async () => expect(received(await fixture.log(), 'session/delete').map(entry => entry.params?.sessionId)).toEqual([own]),
+      {
+        timeout: 5_000,
+        interval: 10,
+      },
+    )
+    await bridge.close()
+  })
+
   it('routes Qwen Code through private system settings over each protocol, the token in LMG_TOKEN alone', async () => {
     for (const wire of ['chat-completions', 'responses', 'anthropic-messages'] as const) {
       const auth = wire === 'anthropic-messages' ? 'anthropic' : 'openai'
@@ -7986,6 +8185,25 @@ describe('sessions on a model service through the gateway', () => {
     for (const server of (received(await fixture.log(), 'session/new').at(-1)!.params as { mcpServers: Array<{ env: unknown[] }> })
       .mcpServers)
       expect(server.env).toEqual([])
+    await bridge.close()
+  })
+
+  it('starts nothing to delete a routed Grok session, whose record goes with its private home', async () => {
+    const { fixture, route } = await routed(
+      'grok',
+      { FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'resume', FAKE_ACP_GATEWAY: 'grok', FAKE_ACP_XAI_DELETE: '1' },
+      { providerId: 'svc', model: 'fake-model', wire: 'responses' },
+    )
+    let bridge = await fixture.open()
+    const { sessionId } = await bridge.createTask({ prompt: 'model first', requestId: rid(), modelRoute: route })
+    expect((await settled(bridge, sessionId)).summary.status).toBe('idle')
+    await bridge.close()
+    bridge = await fixture.open()
+    await bridge.remove!(sessionId)
+    await new Promise(resolve => setTimeout(resolve, 200))
+    const log = await fixture.log()
+    expect(log.filter(entry => entry.event === 'start')).toHaveLength(1)
+    expect(received(log, '_x.ai/session/delete')).toEqual([])
     await bridge.close()
   })
 

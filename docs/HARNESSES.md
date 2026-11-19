@@ -180,7 +180,7 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 | Cursor | `--mode` 或 `--force` 启动参数 | `agent` | `ask`、`plan`、`agent`、`agent-force` | `allow-always` | ACP 报告前三档；force 只标为启动设置 |
 | Cursor 经 SDK | 创建或恢复 agent 时的工具名单与沙箱 | `read-only` | `read-only`、`sandbox`、`full` | 不询问，没有选项 | 运行器报告它交给 SDK 的档位 |
 | Antigravity | — | `default` | `default`、`accept-edits`、`auto` | — | 可读回 |
-| Grok Build | 预设参数 `--permission-mode default` | 无 | 无 | — | 不报告模式（`readback: 'none'`），不生成档位 |
+| Grok Build | 预设参数 `--permission-mode default` | 无 | 无 | — | 不报告模式（`readback: 'none'`），不生成档位；`/always-approve` 不列出、不转发（`modeCommands`） |
 
 **DeepSeek Harness。**
 
@@ -217,7 +217,11 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 - 服务端拒绝一轮时 CLI 只发一段固定正文并以 `end_turn` 结束，不报告原因。profile 的 `terminatedReplies` 记下这段正文：一轮的全部回复正好是它（首尾空白除外）时记为失败，那条回复沿用原消息 ID 并标为失败；只是包含这段文字的仍是普通回复。只对 Antigravity 生效。
 - 创建空会话可能加载扩展，所以模型列表只在人请求时读取。
 
-**Grok Build。** stdio 模式是独立的 Agent 进程，不连接终端用的共享 leader；Latch 不运行 `grok leader kill`，只停自己启动的进程。继承 `GROK_HOME` 的名字与路径，不读其中的登录或历史文件。
+**Grok Build。** stdio 模式是独立的 Agent 进程，不连接终端用的共享 leader；Latch 不运行 `grok leader kill`，只停自己启动的进程。继承 `GROK_HOME` 的名字与路径，不读其中的登录文件；会话经它自己的 ACP 列出与载入（见「接入已有会话」）。
+
+- **模式。** 1.0.89 的 initialize 与 `session/new` 都不报告模式。`session/set_mode` 只接受 `default`、`ask`、`plan`，只有进入 `plan` 时推送 `current_mode_update`；`auto`、`bypassPermissions`、`always-approve` 都是 -32602。`_meta.yoloMode`、`_meta.autoMode`（`session/new`、`session/load`、`session/resume`）是文档化的入口，但设了之后没有任何通知或回答提到它（`_x.ai/yolo_mode_changed` 没有出现）。所以 Latch 仍不生成档位。
+- **`/always-approve`。** 它在 `available_commands_update` 里列出，`on` 让会话不再询问，不经 ACP 报告。Latch 不把它列进会话命令，以它开头的输入（新会话、输入与运行中追加）返回 409 `mode-command-refused`，不发给 Grok（profile 的 `modeCommands`）。
+- **它自己记住的回答。** 人在 Grok 自己的界面里选「Always allow」或「never allow」时，回答存在 `$GROK_HOME/sessions/<URL 编码的项目根>/permission.toml` 与 `permission_<client>.toml`，在 Latch 的会话里同样生效。会话（不经网关时）接上进程后，Latch 只看这些文件在不在、是否非空（项目根是 Git 仓库根，不在仓库里时是会话目录；给的路径与真实路径各查一次），有就在会话权限说明里加一句，从不读内容：格式没有文档。编码超过 255 字节时 Grok 改用哈希名，工作树还用主检出的回答，这两种不查。
 
 ### 版本规则
 
@@ -386,8 +390,8 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 | pi | Chat、Responses、Anthropic | 1.5.0 | 私有扩展注册 provider，只在当前进程 | 见 [pi 运行预算](MODEL-GATEWAY.md#pi-运行预算) |
 | Qwen Code | Chat、Responses、Anthropic，实验性 | 0.26.8 | `QWEN_CODE_SYSTEM_SETTINGS_PATH` 指向 0600 的会话私有系统设置 | 没有子 Agent；凭据被工具子进程继承 |
 | goose | Chat、Responses、Anthropic，实验性 | 1.57.0 | 只有环境变量；凭据在 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY` | `provider` 选项不提供；`delegate` 子 Agent 固定不了服务；凭据被继承 |
-| Grok Build | Chat、Responses、Anthropic，实验性 | 1.0.77 | `GROK_HOME` 指向会话私有的家目录，其中 0600 的 `config.toml` 给每个服务模型写一个自定义模型，并关掉对 Claude Code、Cursor 配置的兼容读取 | 这个家里没有用户的 Grok 登录、钩子、插件与 MCP，也不启动 Claude Code、Cursor 配置里的 MCP 服务器与钩子；凭据被继承（见下） |
-| Antigravity、Cursor | 不支持（`ownModelsOnly`） | — | — | 两者都不接受别人的模型服务地址；模型菜单不给它们列服务 |
+| Grok Build | Chat、Responses、Anthropic，实验性 | 1.0.77 | `GROK_HOME` 指向会话私有的家目录，其中 0600 的 `config.toml` 给每个服务模型写一个自定义模型，并关掉 Claude Code、Cursor 配置里的 MCP 服务器、插件与钩子 | 这个家里没有用户的 Grok 登录、钩子、插件与 MCP，也不启动 Claude Code、Cursor 配置里的 MCP 服务器与钩子；凭据被继承（见下） |
+| Antigravity、Cursor | 不支持（`ownModelsOnly`） | — | — | Cursor 的推理走它自己的后端。Antigravity 1.5.x 的更新说明与设置文档写了 Gemini API key 路线（`modelProvider: "gemini"`、`GEMINI_API_KEY`，另一地址经 `GOOGLE_GEMINI_BASE_URL`，后者只见于更新说明，请求是否真发到那里未核对），网关没有 Gemini 协议，尚未接；模型菜单不给它们列服务 |
 
 **凭据被工具子进程继承（`credentialInherited`）。** Qwen Code、goose 与 Grok Build 没有清理工具子进程环境的官方开关：它们运行的命令、钩子与 stdio MCP 服务器读得到网关凭据。经网关的会话里，Latch 经 ACP 交给 Harness 的自己的 MCP 服务器（技能、浏览器、`latch-mcp` 桥）都把凭据变量设为空。Grok Build 另按它的文档用 `[shell_environment_policy] exclude` 不让 bash 工具与终端拿到凭据，但没有真实的工具调用核对过，所以仍标继承。
 
@@ -399,7 +403,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 
 - **Qwen Code。** 私有系统设置替代了系统设置路径，这个进程不再读真正的系统设置里的管理策略。子 Agent 以 `permissions.deny: ["Agent"]` 关掉：它的定义文件可以点名任何模型，而用户自己起名的服务与内置 OAuth 模型删不掉。用户自己的钩子、网页搜索的模型、`batch.model` 与实验性语音仍不经网关。
 - **goose。** `delegate` 启动子 Agent 时，配方的 `settings.goose_provider` 或模型自己传的 `provider` 先于 `GOOSE_SUBAGENT_PROVIDER`：这样的子 Agent 用用户在 goose 里另配的服务，按轮的核对发现不了。Latch 不给会话传 `_meta.provider`（goose 会改用该服务的默认模型而不是 `GOOSE_MODEL`）。
-- **Grok Build。** 自定义模型只能写在用户配置里，所以用私有 `GROK_HOME`；Grok 自己的会话记录也写在这里，随 Latch 会话删除。它起标题时用内置模型向同一地址发请求，网关拒绝，Grok 改用截断的用户文字，不影响这一轮。私有家里不读 Grok 自己的 MCP 与钩子，但 Grok 默认还从真实 HOME 读 Claude Code 与 Cursor 的配置；这条路线把这些兼容来源关掉（[依据](MODEL-GATEWAY.md#grok-build)），所以人在 Claude Code、Cursor 里配的 MCP 服务器、插件与钩子在这里都不运行，`~/.claude/settings.json` 的放行规则也不生效（拒绝规则仍生效）。私有家里没有文件夹信任，项目里的 Grok MCP、钩子与权限规则同样不加载。
+- **Grok Build。** 自定义模型只能写在用户配置里，所以用私有 `GROK_HOME`；Grok 自己的会话记录也写在这里，随 Latch 会话删除。它起标题时用内置模型向同一地址发请求，网关拒绝，Grok 改用截断的用户文字，不影响这一轮。私有家里不读 Grok 自己的 MCP 与钩子，但 Grok 默认还从真实 HOME 读 Claude Code 与 Cursor 的配置；这条路线关掉其中会启动进程的部分（[依据](MODEL-GATEWAY.md#grok-build)），所以人在 Claude Code、Cursor 里配的 MCP 服务器、插件与钩子在这里都不运行（技能、规则与说明文件照旧读取），`~/.claude/settings.json` 的放行规则也不生效（拒绝规则仍生效）。私有家里没有文件夹信任，项目里的 Grok MCP、钩子与权限规则同样不加载。
 
 三者标「实验性」：都只在没有登录的临时 HOME 下对本地假服务跑通过一轮（`apps/host/test/gateway-no-login.live.test.ts`），没有对真实服务、带工具与多轮跑过。假 Agent 与回放夹具是照源码与文档写的，不是录制。
 
@@ -652,7 +656,8 @@ Latch 从不替人登录：不调用 `authenticate`，不读凭据文件或钥�
 **状态。**
 
 - **Agent 推送。** codex-acp、Claude Agent 的适配器与 Claude 直连推送 `_auth/status_update`（以 `agentCapabilities._meta.authStatus` 宣告）。Latch 只读 `kind` 与 `label`：`none` 是未登录，`account`、`api_key`、`gateway`、`external` 是已登录，其他是 `unknown`。`label` 显出不可见字符、遮住像密钥的部分、最多 80 字，含 `@` 的整个不用。`account`（email、组织、套餐）在解析时就丢掉。推送只在发出它的进程还在时算数。Claude Agent 的适配器只在 `initialize`、建会话与每轮开始时重读登录，直连只在建会话时读，所以空闲进程的推送可能是旧的。
-- **状态命令（`loginStatus`）。** 只有 Codex 与 Claude Agent 有；其他 Harness 始终 `unknown`，要到 `session/new` 被拒才知道。
+- **状态命令（`loginStatus`）。** 只有 Codex 与 Claude Agent 有；其他 Harness 始终 `unknown`，要到 `session/new` 被拒才知道，Antigravity 除外（见下）。
+- **不开会话的请求（`loginRequest`）。** Antigravity 的「测试启动」在 `initialize` 之后再发 `session/list`（不带参数，最多 10 秒）：回答了就是已登录，`-32000 Authentication required` 是未登录，其他都是 `unknown`。它不开会话、不跑一轮（1.5.11 核对，已登录一侧用 Gemini API key 夹具）。
   - Codex：`codex login status`。退出 0 算已登录；退出 1 且文字是 `Not logged in` 才算未登录，其他都是 `unknown`。
   - Claude Agent：直连是 `claude auth status --json`，适配器上是它自带 CLI 的 `claude-agent-acp --cli auth status --json`，只读 `loggedIn`、`apiKeySource`、`apiProvider` 与 `loginExpiresAt`。有推送时它仍运行，因为推送里没有到期日。
   - 超时 10 秒。输出只在判断时读一次，可能含账号或部分密钥，不返回、不记录。
@@ -688,7 +693,7 @@ Harness 用自己的订阅登录时，Latch 显示它自己的程序报告的额
 | DeepSeek Harness | Host 自己读（`apps/host/src/cli-quota.ts`），不起进程：有人看时与一轮结束时，两者合起来至少隔 5 分钟（重试也一样），15 秒超时 | DeepSeek 账户余额与币种（`balanceCents`、`currency`，没有窗口）；`is_available` 为假时是 `limited`。只有余额时输入框不显示，账户不能用时显示「额度已用尽」。没有可用的密钥时「额度」写「无 API 密钥」 |
 | Cursor、OpenCode、Qwen Code、goose、pi | 程序不报告订阅额度 | 输入框不显示；「额度与用量」末尾一行「不报告额度」 |
 
-- **有人看时。** `POST /link/api/quota/refresh`（`{ ids?, retry? }`）立即回答，结果随 Harness 目录推送。它与开始会话同一道门：要 `run`，等待后再核对设备；只能看的设备不触发，只看到上次的数字。只问已绑定、状态可用、声明能报告的定义，不问预设报价。每个 Harness 同时只有一次读取，第二次共用；数字不到 5 分钟不问；两次开始至少隔 1 分钟（「重试」10 秒）；一次读取连起进程在内 30 秒为限（不超过请求超时）。起的进程在私有空目录、没有会话，读完连临时目录一起停掉删掉。真正开始前先写审计 `agent.quota.requested`（只有 Harness），写不进就不读。它起的是开会话本来就会起的同一个程序，少了会话与提示，所以不比开会话宽：有 `run` 的设备本来就能开这个 Harness 的会话。程序启动时做的事照旧发生，例如 Grok Build 在 `initialize` 后就报告并可能启动它自己配置的 MCP 服务器，与开会话时一样。
+- **有人看时。** `POST /link/api/quota/refresh`（`{ ids?, retry? }`）立即回答，结果随 Harness 目录推送。它与开始会话同一道门：要 `run`，等待后再核对设备；只能看的设备不触发，只看到上次的数字。只问已绑定、状态可用、声明能报告的定义，不问预设报价。每个 Harness 同时只有一次读取，第二次共用；数字不到 5 分钟不问；两次开始至少隔 1 分钟（「重试」10 秒）；一次读取连起进程在内 30 秒为限（不超过请求超时）。起的进程在私有空目录、没有会话，读完连临时目录一起停掉删掉。真正开始前先写审计 `agent.quota.requested`（只有 Harness），写不进就不读。它起的是开会话本来就会起的同一个程序，少了会话与提示，所以不比开会话宽：有 `run` 的设备本来就能开这个 Harness 的会话。程序启动时做的事照旧发生，Grok Build 1.0.89 只 `initialize` 时不启动它自己配置的 MCP 服务器（等 5 秒核对过，开会话时才启动）。
 - **读取状态。** `HarnessInfo.quotaRead`：`running` 正在读；`failed` 是上次读取没有数字的原因（`login` 程序说未登录，`no-key` Host 没有可用的密钥，`failed` 其他；固定集合，不带程序的文字），有数字到来就清掉，只在内存；`afterTurn` 只在一轮里报告（Claude Agent）。「额度」视图据此显示：Host 在读、或这个视图刚请求的读取还没有结果时（以 Host 回答的 `asked` 为准，最多 35 秒）显示上次的数字（悬停是读到的时间）或一个安静的读取标记；失败时上次的数字留着，没有数字时写「未登录」「无 API 密钥」或「读取失败 · 重试」；还没添加的预设写「未添加」，不转圈。
 - **形状。** `HarnessInfo.quota`（`packages/protocol/src/quota.ts`）全部是数字与固定集合里的值，没有厂商写的文字：不认识的窗口种类整个丢掉，不在集合里的套餐名不显示（`packages/harness-acp/src/quota.ts` 的 `harnessQuota`）。Codex 的 `rateLimitUpsell`、`limitName`、`accountId` 与完整邮箱不离开读它的进程；邮箱读到时就遮住。
 - **随会话保存。** 按 Agent 定义保存在驱动的 `acp.json`（`AcpState.quota`，只有数字、固定集合的值与遮住的邮箱），不进日志与审计；Host 重启后照旧显示上次的数字与时间。窗口过了重置时间不再显示；报告它的进程退出后，有重置时间的窗口留到重置为止（额度属于账号），没有的随进程消失。退出登录或定义变化后全部清除。
@@ -818,12 +823,13 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 
 - 在 Host 临时目录的新空文件夹里启动 Agent，`session/new` 带空的 `mcpServers`，不发提示；Agent 声明 `sessionCapabilities.delete` 就 `session/delete`，否则声明了 `close` 就 `session/close`；然后停止进程并删除文件夹，最多 20 秒。
 - Codex 不开会话：只发 `initialize`、`config/read` 与 `model/list`（最多 5 页）。经 codex-acp 时用定义的命令加 `cli app-server`。它不报告模式，`catalogueRead.modes` 是 `false`。
+- Grok Build 不开会话：它对 `initialize` 的回答 `_meta.modelState` 已有默认模型、模型列表与每个模型的思考档位（`reasoningEfforts`），Latch 照 `session/new` 报告的样子写成 `model` 与 `reasoning_effort` 两项（`profiles/grok.ts` 的 `grokStartCatalogue`，ID 与取值对真实 1.0.89 核对过）。这个进程不开会话，不启动人配置的 MCP 服务器与钩子（1.0.89 核对）。每个模型的思考都已知，选模型时不再读。`catalogueRead.modes` 是 `false`。
 - **什么时候读。** 新会话里选中这个 Harness、打开它的模型菜单，或打开会报告模式的 Harness 的权限菜单，而它既没有列表、这份定义也没读过时，自动读一次（`auto: true`；Host 再查一遍，不符合就返回 `ran: false`）。从不按时间读，失败后也不自动重读。
 - **哪些自动读**（profile 的 `catalogueRead`）。只有读取不跑一轮、不调模型、也不运行人自己的会话钩子或扩展时才自动读：
 
   | 自动读（`select`） | 只在人点「读取模型列表」时读（`request`） |
   | --- | --- |
-  | Codex（`model/list`，不开线程）、DeepSeek Harness、Cursor、goose、Qwen Code、OpenCode、没有 profile 的自定义命令 | pi、Claude Agent、Antigravity、Grok Build：启动会话会加载人的扩展或插件、运行会话开始的钩子 |
+  | Codex（`model/list`，不开线程）、Grok Build（`initialize`，不开会话）、DeepSeek Harness、Cursor、goose、Qwen Code、OpenCode、没有 profile 的自定义命令 | pi、Claude Agent、Antigravity：启动会话会加载人的扩展或插件、运行会话开始的钩子 |
 
 - **只读确认过的定义。** 自动读取遇到没确认过的定义或命令已解析到别的程序时不读（`ran: false`，不写审计、不启动）；人点读取时返回原因（409 `harness-unconfirmed` 等）。还没有定义的预设（`offer`）从不自动读。
 - **谁能读。** 与开始会话同一道门：`run`，Harness 可以开始。同一定义同时只读一次；同一模型的请求共用结果。启动进程前写 `agent.catalogue.requested`（写不进就不启动），结束后 `agent.catalogue.read`。
@@ -1010,6 +1016,8 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 - Host 重启后，运行中或待审批的会话转为 `interrupted`，不自动重发输入。
 - **继续进程已退出的会话。** 先核对启动指纹（含项目配置），再依次尝试 `session/resume`、`session/load`（丢弃重放的历史，Latch 已保存），然后读回权限模式；都不支持时 409 `harness-session-lost`。没有启动指纹记录的会话是 409 `l3-confirmation-missing`。
 - **删除会话**删除 Latch 的记录、结束进程并清理临时目录。只有 Agent 声明支持时才调用 `session/delete`，从新到旧：清空过上下文或换过路线的会话，之前的 Agent 会话也一并删除（`earlierSessionIds`），分叉的历史可能引用它分叉自的那一条，先删新的才删得掉。Agent 拒绝删除时只删 Latch 的记录，Host 日志写明它留下了什么与它的原话（脱敏）。
+  - Grok Build 不声明 `session/delete`（-32601），但它自己的 `_x.ai/session/delete` 回答 `{ success: true }` 并删掉会话文件夹，没发过消息的也一样（1.0.89 核对）：profile 的 `deleteMethod` 让 Latch 在用 `session/delete` 的地方改用它，包括读模型列表时开的空会话。记下这个能力之前绑定的会话同样删除。经网关的 Grok 会话记录在它私有的家里，随会话删除，不为它启动进程。只剩空的 `<编码的目录>/` 分组文件夹；`session_search.sqlite` 的索引行是否随之清掉没有核对。
+  - Cursor 的 ACP 没有删除与关闭：它把每个会话存在 `acp-sessions/<会话 ID>/`（`meta.json` 与 `store.db`，在 `CURSOR_CONFIG_DIR`，否则 `$XDG_CONFIG_HOME/cursor`，否则 `~/.cursor` 下，按定义的变量与 `HOME` 找）。删除 Latch 开的 Cursor 会话时，进程停止后删掉这个文件夹：只限这个会话记下的 ID（单段名字），只在这个根目录正下方、不是链接，且 `meta.json`（schema 1）的 `cwd` 就是会话的目录。接入的会话与别的客户端的会话不碰。依据是 cursor-agent 2026.11.19 包里的代码，没有运行 Cursor 核对。
 - **接入的会话的原会话**默认保留。profile 的 `HistoryImportRule.deletes` 说它的 `session/delete` 删的是 Agent 自己的记录时（Claude 的两条路线），Driver 声明 `historyDelete`、Harness 带 `history.deleteOriginal`，删除对话框给一个默认不勾的「同时删除 … 里的原会话」，只对这一次删除有效。勾选后 `DELETE /tasks/:id?original=1`：Host 先确认会话是原样接入的、Harness 能删，再写审计 `history.original.deleted`（会话与 Harness 的 ID），写不进就不删；然后运行时把原会话 ID 一并交给 `session/delete`。批量删除不提供。
 - 进程已退出时，只有项目目录仍在 Host 的项目列表中才会为删除启动进程（Agent 启动时可能运行工作目录里的代码）；否则只删 Latch 的记录，并在 Host 日志里注明。Claude 的直连线删除不起 `claude`，不受这道门限制。Codex 直连例外：删除不开 thread、不读项目，所以在 Host 临时目录的空文件夹里用当前定义起一个进程删除（与「读取」「接入」同样起进程），项目已移除、启动配置或 profile 变了也删得掉；当前定义的 Codex 不认识这个 thread（例如换了 `CODEX_HOME`）时什么也不删。
 
@@ -1031,7 +1039,7 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 
 **范围与权限。**
 
-- 只对 profile 声明 `historyImport` 的预设开放：Codex（直连经 `thread/list` 与 `thread/read`；经 codex-acp 时 `session/list` 给元数据、`session/load` 重放）、OpenCode 2.x、Claude Agent，以及 Host 有 `cliStore` 时的 pi（都见下）。
+- 只对 profile 声明 `historyImport` 的预设开放：Codex（直连经 `thread/list` 与 `thread/read`；经 codex-acp 时 `session/list` 给元数据、`session/load` 重放）、OpenCode 2.x、Claude Agent、Grok Build 1.0.89，以及 Host 有 `cliStore` 时的 pi（都见下）。
 - Codex 直连列两次再按 ID 合并、按更新时间倒序：一次不带 `sourceKinds`（Codex 默认的交互来源：终端、编辑器与 app-server 客户端，包括 Latch 自己，以及显式写 `sourceKinds` 时会漏掉的 `atlas`、`chatgpt`），一次 `sourceKinds: ["exec"]`（`codex exec` 跑的会话，只有这样才列得出）。两次都带 `sortKey: "updated_at"` 与 `modelProviders: []`；翻页的游标同时记两次各自的位置。不认 `exec` 的旧 Codex 只给第一次的。
 - 运行中的 Agent 没有同时声明 `sessionCapabilities.list` 与 `loadSession` 时返回 409 `history-not-supported`，不发 `session/list`。
 - 每一步都要 `run` 与数据范围 `all`，不弹确认。`catalog.features.historyImport` 只对这样的设备出现。
@@ -1063,6 +1071,14 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 - 直连线只在 `cliStore` 打开时：`session/list` 是 `listSessions({ includeProgrammatic: false })`，与终端的 `/resume` 一样不列 SDK 启动的会话（Latch 直连开始的、分叉出的都是 `sdk-ts`）；标题是 Claude 的自定义标题、自动标题或第一条提示。`session/load` 先查 Claude 的注册表（`<配置目录>/sessions/<pid>.json`，进程活着且启动时间吻合，`.key` 文件从不打开），被别的 `claude` 开着时回答 busy，Host 给 409 `history-session-busy`；再 `getSessionMessages` 重放，然后照常 `resume` 原会话——接入续写原会话，与 Codex 相同。
 - 重放：人的文字（去掉 Claude Code 的命令标记与 `<system-reminder>`；它自己回答的 `/compact`、`/model`、`/mcp` 等整条不显示，别的命令写成 `/名字 参数`）、Claude 的文字、工具调用与结果（标题照工具行）。不重放：Claude 自己加的说明（`isMeta`）、压缩摘要、`<synthetic>` 的登录与限额提示、思考、图片的字节、子 Agent 里面的消息（只有 Agent 调用与它的结果）。`getSessionMessages` 只给最后一次压缩之后的部分，压缩之前的只在 Claude 里。
 - 它没有写锁：接入时没开着的会话，之后仍可在终端里打开，预览带 `useUnknown`。
+
+**Grok Build 1.0.89 的规则。**
+
+- 版本取它 `initialize._meta.agentVersion`（它不报告 `agentInfo`，profile 的 `versionInMeta`），只认 1.0.89：别的版本在列出前返回 409 `history-not-supported`。
+- `session/list` 不带目录时列出所有目录的会话（`sessionId`、`cwd`、`title`、`updatedAt`），没发过消息的不列；`session/load` 按会话的 `updates.jsonl` 重放，每条带 `_meta.isReplay`。这是在临时 `GROK_HOME` 里对照手写的会话核对的（`grok.live.test.ts`），没有读它的源码，也没有用人自己的会话核对。
+- 载入按记录重放，停在计划模式的会话回来仍在计划模式（核对过）；Latch 读不回 Grok 的其他档位，所以接入后它可能比 Latch 显示的更严。always-approve 是否随会话保存没有核对（要发提示）。
+- 它不报告会话是否正在别处使用，也没有 Latch 看得见的锁：终端里正开着的会话同样能载入，预览带 `useUnknown`。`grok sessions list --all` 另查云端会话，ACP 列表只有本机的。
+- 列出用人自己的登录启动（经网关的私有家里没有人的会话）。接入的原会话从不删除；之后在 Latch 里开的会话删除时经 `_x.ai/session/delete` 删除（见「持久化与恢复」）。
 
 **步骤。**
 
@@ -1108,7 +1124,7 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 - pi：项目 `.pi/settings.json` 另指的会话目录不找；v1、v2 格式的会话不列出。
 - OpenCode 1.x：ACP 没有 `session/list`。
 - Qwen Code、goose：源码声明了列出与加载，但加载对原会话的影响（恢复旧模式、写回设置等）没有读完，也没有用真实程序核对。
-- Grok Build、Antigravity：没有核对。Cursor 不开放。
+- Antigravity：没有核对。Cursor 不开放。
 - Claude：压缩之前的历史不带上（要按原始条目自己接回，未做）；子 Agent 里面的消息不重放。
 - iPhone/iPad 的列表与预览不显示「未列出」的数量与「看不出是否在别处使用」；停止行没有「在新会话中继续」。
 
@@ -1230,8 +1246,13 @@ Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别�
 | Qwen Code、goose、Grok Build 去掉「实验性」，以及清理工具子进程里的网关凭据 | 见「经 Latch 使用模型服务」 |
 | Qwen Code 经 Latch 时的思考档位与子 Agent | 思考只提供它自己经 ACP 报告的选项；子 Agent 关掉，直到 Qwen Code 能把子 Agent 的模型限制在指定的服务上 |
 | goose 固定 `delegate` 子 Agent 的服务 | goose 没有文档化的设置能固定或关掉它 |
-| Antigravity、Cursor 经 Latch 使用模型服务 | 做不了：两者都不接受别人的模型服务地址 |
-| Antigravity、Grok Build 接入已有会话 | 没有核对它们的列出与加载 |
+| Antigravity、Cursor 经 Latch 使用模型服务 | Cursor 做不了：推理走它的后端。Antigravity 有 Gemini API key 路线（见「经 Latch 使用模型服务」），要先有网关的 Gemini 协议，地址是否生效未核对 |
+| Antigravity 接入已有会话 | 有内容的会话要发提示才造得出，列出与加载没有核对 |
+| Grok Build 的权限档位菜单 | 1.0.89 的 ACP 不报告模式；`plan` 能设能读回，`auto` 与 always-approve 只能在建会话、载入或恢复时经 `_meta` 设，设了读不回。要做成「重启并恢复会话」的启动设置，运行时还没有为不报告模式的 Harness 合成档位的路径 |
+| Grok Build 会话前的命令列表 | `initialize` 已报告命令，但草稿的命令列表按项目与上一个会话记录（`HarnessCommandCatalogue.source: 'previous-session'`），定义级的来源要改协议与三个客户端 |
+| Grok Build 的扩展页（`grok inspect --json` 的 MCP、技能、插件与钩子） | 没有接：它不开会话就能列出，但 MCP 的 `target` 可能带令牌，要先定脱敏；没有核对它在人自己的家里的耗时 |
+| Grok Build 记住的回答的内容 | `permission*.toml` 的格式没有文档，只说有没有 |
+| Cursor 的登录状态 | `cursor-agent status --format json` 的输出形状只读过源码，没有运行过，不做 |
 | Cursor 的真实验收 | 权限档位只按文档接线；SDK 路线只用假 SDK 模块测过，从未连过 Cursor |
 | Cursor SDK 路线的逐次询问 | SDK 没有逐次审批的回调；1.3.1 的类型里有替换工具执行器的 `resourceProviderOptions.override*Executor`，文档没写、接口只按形状给出，不拿来做审批；文件钩子要写 `.cursor/hooks.json`，违反「不修改原 CLI 配置」 |
 | Cursor SDK 路线的 Auto-review 档 | `local.autoReview` 在后端没有分类器时悄悄退回默认行为（文档写明不是安全边界），给不出真实的档位 |

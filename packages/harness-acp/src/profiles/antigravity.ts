@@ -5,6 +5,7 @@ const CUSTOMIZATIONS = ['.agents', '.agent', '_agents', '_agent', '.gemini/confi
 
 export const antigravityProfile: HarnessProfile = {
   presetId: 'antigravity',
+  // A launch test's login request changes nothing a session runs, so the version stays.
   version: 4,
   // Its own `/usage`, run beside a session: it starts no turn (checked on 1.5.8) and nothing waits for it.
   quota: { command: antigravityQuotaCommand },
@@ -26,8 +27,13 @@ export const antigravityProfile: HarnessProfile = {
     readback: 'mode',
     notes: ['Antigravity 的允许规则与 toolPermission 设置仍然生效；规划模式不保证只读'],
   },
-  // It takes no model provider of another's: `--help` has only `--model` and `models`, and `cloud_code_endpoint` is
-  // Google's own address. Display only.
+  // Without a login its session/list is `-32000 Authentication required`; with one it lists, opening no session and
+  // running no turn (1.5.11, checked 2026-11-19 in a temporary HOME, the login side with a Gemini API key).
+  loginRequest: 'session/list',
+  // Latch points it at no model service of another's. Its 1.5.x changelog and settings documentation describe a Gemini
+  // API key route (`modelProvider: "gemini"`, `GEMINI_API_KEY`, and `GOOGLE_GEMINI_BASE_URL` for another address, the
+  // last in the changelog only); whether requests reach that address was not checked, and the gateway has no Gemini
+  // protocol. Display only.
   ownModelsOnly: true,
   folders: { via: 'acp', configPaths: CUSTOMIZATIONS },
   projectConfigPaths: CUSTOMIZATIONS,

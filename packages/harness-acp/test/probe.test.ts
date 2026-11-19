@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -9,7 +9,7 @@ const roots: string[] = []
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
-async function fixture(env: Record<string, string> = {}) {
+async function fixture(env: Record<string, string> = {}, overrides: Partial<AgentRecord> = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-probe-')))
   roots.push(root)
   const dataDir = join(root, 'data')
@@ -22,6 +22,7 @@ async function fixture(env: Record<string, string> = {}) {
     args: [FAKE_ACP_AGENT],
     env: { FAKE_ACP_LOG: log, ...env },
     enabled: true,
+    ...overrides,
   }
   const options = { dataDir, cwd: root }
   const preview = await agentProbePreview(agent, options)
@@ -45,6 +46,20 @@ describe('initialize-only Agent probes', () => {
     const logs = await t.logs()
     expect(logs.filter(line => line.event === 'recv').map(line => line.method)).toEqual(['initialize'])
     expect(() => process.kill(logs[0]!.pid, 0)).toThrow()
+  })
+  it('asks Antigravity whether it is logged in with a session/list that opens no session', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-probe-login-')))
+    roots.push(root)
+    const login = join(root, 'login')
+    const t = await fixture({ FAKE_ACP_CAPS: 'list,load', FAKE_ACP_LOGIN_FILE: login }, { presetId: 'antigravity' })
+    expect(await probeAgent(t.agent, { ...t.options, expectedLaunchHash: t.preview.launchHash })).toMatchObject({
+      status: 'ready',
+      login: 'unauthenticated',
+    })
+    await writeFile(login, 'yes')
+    expect((await probeAgent(t.agent, { ...t.options, expectedLaunchHash: t.preview.launchHash })).login).toBe('authenticated')
+    const methods = (await t.logs()).filter(line => line.event === 'recv').map(line => line.method)
+    expect(methods).toEqual(['initialize', 'session/list', 'initialize', 'session/list'])
   })
   it('labels only an explicit authentication-required error as requiring login', async () => {
     const t = await fixture({ FAKE_ACP_INIT_AUTH: '1' })

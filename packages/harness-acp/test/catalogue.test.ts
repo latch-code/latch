@@ -65,13 +65,14 @@ describe("when a draft reads a Harness's lists by itself", () => {
     // Codex's model/list opens no thread, on its own app-server and through the adapter's; it reports no modes.
     expect(rule('codex')).toEqual({ when: 'select', modes: false })
     expect(catalogueReadOf(FALLBACK_PROFILES.get('codex'))).toEqual({ when: 'select', modes: false })
+    // Grok Build's answer to initialize lists its models and thinking; that process opens no session.
+    expect(rule('grok')).toEqual({ when: 'select', modes: false })
     // An empty ACP session: no prompt, so no turn and no model call.
     for (const presetId of ['dsh', 'cursor', 'goose', 'qwen', 'opencode']) expect(rule(presetId)).toEqual({ when: 'select', modes: true })
     // Starting these runs the person's own session hooks and extensions, so only a person asks.
     expect(rule('pi')).toEqual({ when: 'request', modes: true })
     expect(rule('claude-agent')).toEqual({ when: 'request', modes: true })
     expect(rule('antigravity')).toEqual({ when: 'request', modes: true })
-    expect(rule('grok')).toEqual({ when: 'request', modes: true })
     // A command with no profile was confirmed as the program to run, and its empty session runs no turn either.
     expect(catalogueReadOf(undefined)).toEqual({ when: 'select', modes: true })
     // Every preset decides; none is left to the default.

@@ -200,6 +200,8 @@ type ProfileGateway = {
    * never onto one (`HarnessCapabilities.models.routeSwitch: 'services'`). Absent: a session can move either way.
    */
   readonly sessionBoundToRoute?: true
+  /** A routed session's record lives in the session's private directory and goes with it: nothing is started to delete it. */
+  readonly recordInPrivateHome?: true
   /**
    * A session moves between the harness's own login and a service only as a new session of the agent's with the same
    * history (`CARRY_METHOD`), since it resumes one only on the provider it began on (Codex).
@@ -408,7 +410,18 @@ export interface HarnessProfile {
    * `codexModels`: Codex's own `model/list` with these arguments after the definition's, which opens no session or
    * thread, so a draft reads it by itself.
    */
-  readonly catalogueRead: { readonly when: 'select' | 'request' } | { readonly codexModels: readonly string[] }
+  readonly catalogueRead:
+    | { readonly when: 'select' | 'request' }
+    | { readonly codexModels: readonly string[] }
+    | {
+        /**
+         * Its own `initialize._meta` already lists its models and their thinking, as `session/new` reports them: read
+         * from a process that opens no session, so a draft reads it by itself. Undefined for a shape it does not know.
+         */
+        readonly fromInitialize: (
+          meta: unknown,
+        ) => { options: SessionConfigOption[]; perModel: Array<{ model: string; options: SessionConfigOption[] }> } | undefined
+      }
   /**
    * Rewrites one `session/update` into what ACP says before Latch reads it, where this harness says the same thing its own
    * way. Returns the update to read; it never adds what the harness did not send.
@@ -444,6 +457,42 @@ export interface HarnessProfile {
    */
   readChildEnd?(update: SessionUpdate): { sessionId: string; outcome: 'done' | 'failed' } | undefined
   readonly extensions?: HarnessExtensions
+  /**
+   * Its own commands that change its permission mode without reporting the change over ACP (Grok's
+   * `/always-approve`): left out of the commands a session lists, and a prompt that starts with one is refused, so the
+   * mode Latch records cannot silently stop being the one the harness runs in.
+   */
+  readonly modeCommands?: readonly string[]
+  /**
+   * Chinese notes on what of the person's own the harness applies in a session in `cwd` beyond what Latch shows, read
+   * from its home when a session on its own login binds (Grok's saved 「Always allow」 answers). `env`: the session's
+   * environment. Read only: nothing is written, and contents never leave this function.
+   */
+  savedRules?(cwd: string, env: Readonly<Record<string, string>>): Promise<string[]>
+  /**
+   * A request a launch test sends after initialize, with no parameters, that needs a login but opens no session and runs
+   * no turn (Antigravity's `session/list`): an answer is a login, `Authentication required` is none, anything else is
+   * unknown. Taken before `loginStatus`, which then does not run.
+   */
+  readonly loginRequest?: string
+  /**
+   * For a harness with no way to delete a session over its protocol that keeps each session in a folder of its own named
+   * by the session ID (Cursor's `acp-sessions/<id>/`): where those folders are for the environment its process had
+   * (`HOME` and the definition's variables), and whether a folder's record says it is the session Latch started in
+   * `cwd`. Latch removes the folder of each session it started, after the process exited, when a removed session is
+   * deleted; never one it brought in, one outside that folder or behind a link.
+   */
+  readonly sessionFolders?: {
+    root(env: Readonly<Record<string, string>>): string | undefined
+    owns(folder: string, cwd: string): Promise<boolean>
+  }
+  /** It reports its version as `initialize._meta.agentVersion` rather than in `agentInfo` (Grok Build). */
+  readonly versionInMeta?: true
+  /**
+   * The harness's own method that deletes one of its sessions (`{ sessionId }`), for one that does not advertise ACP's
+   * `session/delete`: Latch uses it where it would use that, checked against the real program.
+   */
+  readonly deleteMethod?: string
   readonly gateway?: ProfileGateway
   /**
    * `_meta` sent with every `session/set_config_option` for the model, where the harness reads there that the choice is

@@ -630,6 +630,33 @@ describe('bringing in an earlier OpenCode session', () => {
     expect(received(await test.log(), 'session/delete')).toEqual([])
   })
 
+  it('lists and loads Grok Build 1.0.89 sessions, says it cannot tell one in use, and deletes only what Latch opened', async () => {
+    const grok = { FAKE_ACP_CONFIG: 'options', FAKE_ACP_CAPS: 'list,load,resume,close', FAKE_ACP_GROK_INIT: '1', FAKE_ACP_XAI_DELETE: '1' }
+    const AS_GROK: Partial<AgentRecord> = { presetId: 'grok', id: 'grok', name: 'Grok Build' }
+    // Its version is read from `_meta.agentVersion`; a line the listing was not checked in is refused before listing.
+    const older = await fixture({ ...grok, FAKE_ACP_VERSION: '1.0.77' }, AS_GROK)
+    expect(older.driver.historyImport).toBe(true)
+    await expect((await older.open()).listExternalSessions!()).rejects.toMatchObject({ status: 409, code: 'history-not-supported' })
+    expect(received(await older.log(), 'session/list')).toEqual([])
+
+    const test = await fixture({ ...grok, FAKE_ACP_VERSION: '1.0.89' }, AS_GROK)
+    const bridge = await test.open()
+    expect((await bridge.listExternalSessions!()).sessions.map(row => row.agentSessionId)).toContain('ext-main')
+    const load = await bridge.loadExternalSession!(test.place('ext-main'))
+    expect(load.useUnknown).toBe(true)
+    const sessionId = newId()
+    await bridge.adoptExternalSession!({ ...test.place('ext-main'), sessionId, loadId: load.loadId, title: 'Fix the login bug' })
+    await bridge.prompt(sessionId, 'echo fresh', `request-${randomUUID()}`, { freshContext: true })
+    await settled(bridge, sessionId)
+    const fresh = (
+      JSON.parse(await readFile(join(test.dataDir, 'acp.json'), 'utf8')) as { tasks: Record<string, { acp: { acpSessionId: string } }> }
+    ).tasks[sessionId]!.acp.acpSessionId
+    await bridge.remove!(sessionId)
+    await vi.waitFor(async () => expect(received(await test.log(), '_x.ai/session/delete').length).toBeGreaterThan(0))
+    await bridge.close()
+    expect(received(await test.log(), '_x.ai/session/delete').map(entry => entry.params?.sessionId)).toEqual([fresh])
+  })
+
   it('takes a refusal that names a lock or a session in use as held elsewhere, and does not retry', async () => {
     const test = await fixture(OPENCODE, AS_OPENCODE)
     const bridge = await test.open()

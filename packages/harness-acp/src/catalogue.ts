@@ -28,7 +28,7 @@ export const MAX_START_CHOICES = MAX_OPTIONS
 /** When a draft reads the harness's lists, and whether that read reports its modes: Codex's model list does not. */
 export function catalogueReadOf(profile: Pick<HarnessProfile, 'catalogueRead'> | undefined): Pick<CatalogueRead, 'when' | 'modes'> {
   const configured = profile?.catalogueRead
-  if (configured && 'codexModels' in configured) return { when: 'select', modes: false }
+  if (configured && ('codexModels' in configured || 'fromInitialize' in configured)) return { when: 'select', modes: false }
   // A command without a profile was confirmed on this Mac as the program to run; its empty session runs no turn.
   return { when: configured?.when ?? 'select', modes: true }
 }

@@ -152,7 +152,7 @@ Host 为经 Latch 使用模型服务的 Harness 提供一个单独的回环临�
 | goose | 只有环境变量 | `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`（它的 provider 规定） | 继承 | 不交 |
 | Grok Build | `GROK_HOME` 指向会话私有的家，`config.toml` 里 `env_key = "LMG_TOKEN"` | `LMG_TOKEN` | bash 工具按 `shell_environment_policy` 排除（文档，未经工具调用核对）；Latch 给的 MCP 服务器置空；其余继承 | 不交 |
 
-Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）；未知的自定义命令同样。订阅登录不进入网关。凭据被继承的后果见 [HARNESSES.md](HARNESSES.md#经-latch-使用模型服务)。
+Antigravity 与 Cursor 不经网关（`ownModelsOnly`）；未知的自定义命令同样。Cursor 的推理走它的后端；Antigravity 1.5.x 写了 Gemini API key 路线（`GOOGLE_GEMINI_BASE_URL` 只见于更新说明，未核对），网关没有 Gemini 协议，尚未接。订阅登录不进入网关。凭据被继承的后果见 [HARNESSES.md](HARNESSES.md#经-latch-使用模型服务)。
 
 **launch 交付的共同规则**（`profiles/types.ts`、`runtime.ts`）
 
@@ -259,10 +259,11 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 
 - **自定义模型只在用户配置里。** `[model."<id>"]` 写 `model`、`base_url`、`env_key` 与 `api_backend`（`chat_completions`、`responses`、`messages`）；`[models]` 的 `default` 是会话模型，`web_search` 也指向它。配置在 `$GROK_HOME/config.toml`，没有另指配置文件的参数；项目的 `.grok/config.toml` 只管 MCP、插件与权限规则。
 - **会话私有的家。** `GROK_HOME` 指向会话私有目录，里面只有 Latch 写的 0600 `config.toml`（模型 ID 与地址按 TOML 字符串转义，凭据只写变量名）。用户自己的 Grok 登录、钩子、插件、MCP 与托管配置都不在这里；没有登录，xAI 自己的模型答不了，不经网关的请求没有去处。
-- **不读别的工具的配置。** 私有家挡不住 Grok 的兼容读取：它默认还从真实 HOME 读 `~/.claude.json`、`~/.cursor/mcp.json`、Claude 的插件（`~/.claude/plugins`，按 `~/.claude/settings.json` 的 `enabledPlugins`）与项目里的 `.mcp.json`、`.cursor/mcp.json`，启动其中的 stdio MCP 服务器时给它们 Grok 的整个环境，网关凭据在内（1.0.89，临时 HOME 里放记录环境的服务器核对，`packages/harness-acp/test/grok.live.test.ts`）。`config.toml` 因此另写：
+- **不启动别的工具配置的 MCP 服务器、插件与钩子。** 私有家挡不住 Grok 的兼容读取：它默认还从真实 HOME 读 `~/.claude.json`、`~/.cursor/mcp.json`、Claude 的插件（`~/.claude/plugins`，按 `~/.claude/settings.json` 的 `enabledPlugins`）与项目里的 `.mcp.json`、`.cursor/mcp.json`，启动其中的 stdio MCP 服务器时给它们 Grok 的整个环境，网关凭据在内（1.0.89，临时 HOME 里放记录环境的服务器核对，`packages/harness-acp/test/grok.live.test.ts`）。`config.toml` 因此另写：
   - `[compat.claude]`、`[compat.cursor]` 的 `mcps = false` 与 `hooks = false`，`[compat.codex] hooks = false`（文档 05-configuration「Harness compatibility」）；同名变量 `GROK_CLAUDE_MCPS_ENABLED`、`GROK_CURSOR_MCPS_ENABLED`、`GROK_CLAUDE_HOOKS_ENABLED`、`GROK_CURSOR_HOOKS_ENABLED` 设为 `0`，放在网关变量里最后写入，定义里的同名变量改不回来（变量优先于配置文件）。
-  - `[claude_compat] imported = true`：Grok 的 `/import-claude` 写下的导入标记。文档说标记在时不再读 `enabledPlugins` 与项目 `.mcp.json`；实测它关掉 Claude 插件的 MCP 服务器与 `.mcp.json`，并让 `~/.claude/settings.json` 的放行规则不再生效，拒绝规则仍在。键名不在文档里，是从 Grok 的报错文字读到的，核对只覆盖 1.0.89。
+  - `[claude_compat] imported = true`：Grok 的 `/import-claude` 写下的导入标记。文档说标记在时不再读 `enabledPlugins` 与项目 `.mcp.json`；实测它关掉 Claude 插件的 MCP 服务器与 `.mcp.json`，并让 `~/.claude/settings.json` 的放行规则不再生效，拒绝规则仍在。键名不在文档里，是从 Grok 程序里的字符串读到的，核对只覆盖 1.0.89。
   - `[shell_environment_policy] exclude = ["LMG_TOKEN"]`：文档说它管 bash 工具与终端；没有一轮真实的工具调用就证明不了，所以 `credentialInherited` 照旧。
+  - Claude 与 Cursor 的技能、规则与说明文件（`skills`、`rules`、`agents`）照旧读取：它们不启动进程，技能调用的命令走 bash 工具。
   - 逐项拿掉核对过：只关 `mcps` 时 Claude 插件的服务器仍拿到凭据；只有导入标记时 `~/.cursor/mcp.json` 的仍拿到。私有家里没有文件夹信任，项目的 `.grok/config.toml` 服务器、钩子与权限规则都不启用（核对时列为未启用）。
 - **Latch 给的 MCP 服务器。** Grok 启动 ACP 收到的 stdio 服务器时同样给整个环境；Latch 给每个服务器的 `env` 加上 `LMG_TOKEN` 为空（核对过：空值覆盖了继承的值）。
 - Grok 的会话记录也写在这个目录，进程重启后凭它恢复，随 Latch 会话删除。

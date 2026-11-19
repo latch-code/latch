@@ -791,8 +791,35 @@ async function handle(method, params) {
           ...(env.FAKE_ACP_AUTH ? [{ id: 'fake-login', name: 'Fake login', description: 'Run `fake login` in a terminal' }] : []),
           ...(env.FAKE_ACP_TERMINAL_LOGIN && clientCapabilities.auth?.terminal === true ? terminalLogins() : []),
         ],
-        agentInfo: { name: 'Fake ACP', ...(version === 'none' ? {} : { version }) },
-        ...(caps.has('steer') ? { _meta: { steering: { supported: true } } } : {}),
+        // Grok Build's shape (FAKE_ACP_GROK_INIT=1): no version in `agentInfo`, its own in `_meta` with its models.
+        ...(env.FAKE_ACP_GROK_INIT === '1'
+          ? {
+              agentInfo: { name: 'Fake ACP' },
+              _meta: {
+                agentVersion: version,
+                modelState: {
+                  currentModelId: 'small',
+                  availableModels: [
+                    {
+                      modelId: 'small',
+                      name: 'Small',
+                      _meta: {
+                        reasoningEffort: 'high',
+                        reasoningEfforts: [
+                          { value: 'high', label: 'High' },
+                          { value: 'low', label: 'Low' },
+                        ],
+                      },
+                    },
+                    { modelId: 'large', name: 'Large', _meta: {} },
+                  ],
+                },
+              },
+            }
+          : {
+              agentInfo: { name: 'Fake ACP', ...(version === 'none' ? {} : { version }) },
+              ...(caps.has('steer') ? { _meta: { steering: { supported: true } } } : {}),
+            }),
       }
     case 'session/new': {
       if (env.FAKE_ACP_NEW_SILENT === '1') await new Promise(() => {})
@@ -974,6 +1001,13 @@ async function handle(method, params) {
       delete sessions[params.sessionId]
       save()
       return {}
+    // Grok Build's own delete (FAKE_ACP_XAI_DELETE=1), which it answers though it advertises no session/delete.
+    case '_x.ai/session/delete':
+      if (env.FAKE_ACP_XAI_DELETE !== '1') throw rpcError(-32601, `Method not found: ${method}`)
+      existing(params.sessionId)
+      delete sessions[params.sessionId]
+      save()
+      return { success: true }
     case 'session/close':
       if (!caps.has('close')) throw rpcError(-32601, 'Method not found')
       existing(params.sessionId)
