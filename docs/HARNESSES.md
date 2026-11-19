@@ -93,7 +93,7 @@ Codex 与 Claude Agent 的后备规则（Claude 把下文的 `codex` 换成 `cla
 
 OpenCode 的后备规则（适配器与预设是同一个程序，按参数区分，`runsPresetFallback`）：
 
-- 定义的参数里有 `acp`、或命令不是 `opencode` 时走 ACP，用 `profiles/opencode.ts` 的 `opencodeAcpProfile`（与改为直连之前的 profile 相同，版本 7，原有会话的启动指纹不变）；设置里它的行写「经 opencode acp」。改为直连之前保存的预设定义都是 `opencode acp`，不迁移，继续走 ACP。
+- 定义的参数里有 `acp`、或命令不是 `opencode` 时走 ACP，用 `profiles/opencode.ts` 的 `opencodeAcpProfile`（与改为直连之前的 profile 相同，版本 7，原有会话的启动指纹不变）；设置里它的行写「经 opencode acp」。改为直连之前保存的预设定义都是 `opencode acp`：Host 启动时把它们改成直连，见「旧定义改为直连」。
 - 从草稿或「添加 Harness」选 OpenCode 时，确认程序后先读版本：低于 2.2.6（含 1.x）时保存为 `opencode acp`，2.2.6 起保存为 `opencode`（直连）；读不出版本时按直连保存。`presetRoute` 在已知版本太旧时同样给出 `opencode acp`。
 - 已保存的直连定义遇到低于 2.2.6 的程序时以 409 `harness-version-unsupported` 拒绝并给出升级命令，不静默改走 ACP；握手时服务报告的版本不是 2.x 中的 2.2.6 或更高也同样拒绝，错误里写明可改用 `opencode acp`。
 
@@ -570,6 +570,14 @@ Latch 不读 CLI 自己的存储，有两个例外，这是第二个（第一个
 - **怎么读。** 每层目录都必须是这个用户的真目录（不是链接）；文件以不跟随链接的方式打开，必须是这个用户的普通文件，不超过 64 MiB；Zstandard 流式解压、逐行处理，文字超过 256 MiB、一行超过 16 MiB 或这几类事件超过 10 万条就放弃；中止或读失败时整条解压链一起结束。最后一帧写了一半时，它之前的完整行照用。首行必须是这个 ID、这个目录、格式 4。只看 `turn/start`、`turn/end`、`assistant/message`、`subagent/catalog`，每行必须以 `{"type":` 开头；回复会随整行解析进内存，只取出轮号、时间与 `usage` 的数字，其余随行丢掉。
 - **怎么归到这一轮。** 开始与结束都在 Latch 这一轮之内的 dsh 轮次，把它们的 `assistant/message.usage` 相加（输入加回缓存读写）。有 dsh 轮次跨过这一轮的边、没有完整的轮、有回复没带 `usage`、会话到这一轮为止建过子 Agent（它的用量在 Latch 没有 ID 的子会话日志里），都一个数也不写。
 - **去向。** 只有数字，只进轮次记录（`usage/turns-*.jsonl`），不进会话的 `TurnStats`，不进日志、错误、SSE。失败不说话。不写审计：不碰秘密，没有东西离开这台电脑，读到的数就是记录里那一行。
+
+## 旧定义改为直连
+
+Claude Agent 与 OpenCode 的预设原先保存的是适配器路线（`claude-agent-acp`，以及 `opencode acp`）。Host 启动时（启动脚本允许它运行这个人的程序之后、加载 Harness 之前）逐个看保存的定义，把仍与当时预设写下的内容完全一致的改成预设现在的命令（`claude`、`opencode`），与今天添加这个预设保存的一样：
+
+- **只改没动过的。** 命令、参数与当时的默认逐项相同，没有环境变量，已启用，才算；换过命令或路径、加过参数或变量的不动。预设自己的程序要装着、版本读得出且够新（`claude` 2.1.322、`opencode` 2.2.6），否则不动，下次启动再看。读版本运行的就是适配器本来驱动的那个程序。
+- **只改一次，先审计。** 改之前写一条 `agent.defined`（启动者是 Host），再写设置；定义记下它原来的样子（`migratedFrom`）。之后在设置里保存或改动运行内容的定义带 `routeKept`，Host 不再动它：有人特意改回适配器就留在适配器。
+- **原有会话接着用。** 会话的启动指纹记的是旧定义。运行时核对指纹不符时，再按 `migratedFrom` 算一遍旧定义的指纹（同样的项目配置、文件夹、模型服务路线与模式，按今天的值）：与会话记下的相同，就把会话的指纹换成现在的并继续；不同照旧拒绝。所以它只接受 Host 自己这一次、审计过的改动，项目配置或别的东西变了仍然拒绝；人改过的定义没有 `migratedFrom`。会话在列表里的位置不变。适配器建的会话在直连线上按同一个会话 ID 恢复（`direct-migrate.live.test.ts` 用真实的两个程序各走一遍）。
 
 ## Claude 的 Agent SDK 线
 

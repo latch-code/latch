@@ -966,13 +966,16 @@ describe('ACP agent environment', () => {
     expect(assistants(await settled(kept, b.sessionId)).at(-1)?.text).toBe('echo: echo b again')
   })
 
-  it("warms a settled session's process without a turn, and only under the limit, never stopping another's", async () => {
+  // Skipped at the owner's word (2026-11-19): it fails only when this file runs beside others on a busy machine, within
+  // a quarter of a second and not by a timeout, and the cause is not found. Warming is an optimisation, not a boundary.
+  it.skip("warms a settled session's process without a turn, and only under the limit, never stopping another's", async () => {
     const fixture = await setup({ FAKE_ACP_CAPS: 'resume' }, { maxProcesses: 1, idleMs: 80 })
     const bridge = await fixture.open()
     const first = await bridge.createTask({ prompt: 'echo one', requestId: rid() })
     await settled(bridge, first.sessionId)
-    // Reclaimed when idle; warming it starts it again with no prompt.
-    await vi.waitFor(async () => expect((await fixture.log()).some(entry => entry.event === 'stdin-end')).toBe(true), {
+    // Reclaimed when idle; warming it starts it again with no prompt. Gone, not only told to go: while the reclaimed
+    // process is still leaving it holds the one slot, and a warm-up then rightly gives up.
+    await vi.waitFor(async () => expect((await fixture.log()).some(entry => entry.event === 'exit')).toBe(true), {
       timeout: 5_000,
       interval: 20,
     })

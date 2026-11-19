@@ -13,11 +13,12 @@ import { AppError, type HarnessDriver, type HarnessPlugin } from '@latch/sdk'
 import { catalogueReadOf } from './catalogue.ts'
 import { AgentRuntime, CLIENT_VERSION } from './runtime.ts'
 import { commandMoved, RETIRED_HARNESS_NOTE, resolveCommand } from './command.ts'
-import { harnessLogin, presetRecord } from './login.ts'
+import { harnessLogin, presetRecord, readOwnVersion } from './login.ts'
 import { commandName, selectProfile, validateAgentDefinition } from './permission.ts'
 import type { HarnessProfile } from './profiles/index.ts'
 import {
   assertVersion,
+  compareVersions as versionOrder,
   forgetVersions,
   knownVersion,
   lastVersion,
@@ -119,6 +120,47 @@ export async function presetRouteAfterVersion(record: AgentRecord): Promise<Agen
   } catch (error) {
     if (error instanceof AppError && error.code === 'harness-version-unsupported') return { ...record, args: [...fallback.args] }
     throw error
+  }
+}
+
+/** What each preset saved before it ran its own program: the adapter route, as a draft wrote it then. */
+const BEFORE_DIRECT: Readonly<Record<string, { command: string; args: readonly string[] }>> = {
+  'claude-agent': { command: 'claude-agent-acp', args: [] },
+  opencode: { command: 'opencode', args: ['acp'] },
+}
+
+/**
+ * A definition a preset saved on its adapter before the preset had a program of its own, as it should be now: the
+ * preset's own command, when that program is installed and its version is read and new enough. Undefined for anything
+ * else: a definition the person changed in any way (another command or path, an argument, a variable), one already
+ * moved, one saved or changed since (`routeKept`), a program missing, too old, or whose version cannot be read (looked
+ * at again on a later start). The program run for its version is the one the adapter itself drives.
+ */
+export async function directRouteFor(record: AgentRecord, timeoutMs = 10_000): Promise<AgentRecord | undefined> {
+  const before = record.presetId ? BEFORE_DIRECT[record.presetId] : undefined
+  if (!before || record.migratedFrom || record.routeKept || !record.enabled) return undefined
+  if (record.command !== before.command || Object.keys(record.env).length > 0) return undefined
+  if (record.args.length !== before.args.length || record.args.some((arg, index) => arg !== before.args[index])) return undefined
+  const target = presetRecord(record.presetId!)
+  if (!target || (target.command === record.command && target.args.length === record.args.length)) return undefined
+  const path = resolveCommand(target.command)
+  const gate = selectProfile(target).profile?.minimumVersion
+  if (!path || !gate) return undefined
+  const version = await readOwnVersion(target, path, { timeoutMs }, gate).catch(() => undefined)
+  const order = version === undefined ? undefined : versionOrder(version, gate.minimum)
+  if (order === undefined || order < 0) return undefined
+  const { lastProbe: _probe, probedDefinitionHash: _probed, ...kept } = record
+  return {
+    ...kept,
+    command: target.command,
+    args: [...target.args],
+    confirmedCommand: path,
+    ...(record.startedHash !== undefined ? { startedHash: null } : {}),
+    migratedFrom: {
+      command: record.command,
+      args: [...record.args],
+      ...(record.confirmedCommand !== undefined ? { confirmedCommand: record.confirmedCommand } : {}),
+    },
   }
 }
 

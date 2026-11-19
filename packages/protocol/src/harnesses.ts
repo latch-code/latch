@@ -339,6 +339,13 @@ export interface AgentRecord {
    * before confirmations, which start as before.
    */
   confirmedCommand?: string
+  /**
+   * What this definition was before the Host moved it from a preset's adapter to the preset's own program (Claude,
+   * OpenCode): a session confirmed on exactly that earlier definition continues on this one.
+   */
+  migratedFrom?: { command: string; args: string[]; confirmedCommand?: string }
+  /** The person saved or changed what runs after the presets had their own programs: the Host never moves it. */
+  routeKept?: true
 }
 
 /** Result of resolving a command on the Host's PATH and install directories. */

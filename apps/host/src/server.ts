@@ -163,6 +163,7 @@ import {
   recheckVersions,
   presetOffer,
   presetRecord,
+  directRouteFor,
   presetRoute,
   presetRouteAfterVersion,
   commandName,
@@ -2228,6 +2229,32 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         log(`Harness ${stale.id} 的定义指向已不再使用的适配器，已移除；它会按现在的方式重新出现。`)
       } catch (error) {
         logNoted('agent-load-failed', { id: stale.id, error: error }, `Agent ${stale.id} 的旧定义未能移除：${errorText(error)}`)
+      }
+    }
+    // A definition a preset saved on its adapter before the preset ran its own program (Claude, OpenCode), still exactly
+    // as the preset wrote it: moved to the preset's own command, as adding the preset today would save it. Only once the
+    // start script has let the Host run the person's programs, since the program's version is read first; audited
+    // before it is written; anything the person changed is left alone (`directRouteFor`).
+    if (options.loginPrograms) {
+      setLoginPrograms(options.loginPrograms)
+      for (const record of config.settings().agents) {
+        try {
+          const next = await directRouteFor(record)
+          if (!next) continue
+          await audit.append({
+            action: 'agent.defined',
+            actor: startupActor,
+            target: record.id,
+            detail: { agentId: record.id, definitionHash: definitionHash(next), created: false },
+          })
+          await config.updateSettings(draft => {
+            const index = draft.agents.findIndex(agent => agent.id === record.id)
+            if (index >= 0) draft.agents[index] = structuredClone(next)
+          })
+          log(`Harness ${record.id} 改为直接运行 ${next.command}（之前经 ${record.command}）；已有会话可以继续。`)
+        } catch (error) {
+          logNoted('agent-load-failed', { id: record.id, error: error }, `Agent ${record.id} 未能改为直连：${errorText(error)}`)
+        }
       }
     }
     for (const agent of config.settings().agents)
@@ -10992,6 +11019,8 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // Bound to the program the sheet named: one that later resolves elsewhere waits for a new confirmation. Its
         // version is read only now, from that program.
         if (found) next.confirmedCommand = found
+        // Saved now, with the presets' own programs to choose from: the route is the person's, never moved at a start.
+        next.routeKept = true
         if (next.enabled && found) {
           // A preset whose adapter is the same program is saved on the adapter when the program is too old for its
           // own protocol (OpenCode before 2.2.6 answers only `opencode acp`); both are the preset's commands.
@@ -11429,6 +11458,9 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         if (confirmed) {
           if (confirmed.found) next.confirmedCommand = confirmed.found
           else delete next.confirmedCommand
+          // What runs is the person's choice from here: no earlier definition's sessions continue on it, and no start moves it.
+          delete next.migratedFrom
+          next.routeKept = true
         }
         const hash = changed || stepup !== 'none' ? checkAgent(next) : undefined
         const record = await serial(caller, 'admin', async () => {

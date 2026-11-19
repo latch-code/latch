@@ -399,6 +399,14 @@ const agentSchema = z.object({
     .refine(env => Object.keys(env).length <= 64, '环境变量数量过多'),
   enabled: z.boolean(),
   confirmedCommand: z.string().min(1).max(4096).optional(),
+  migratedFrom: z
+    .object({
+      command: z.string().min(1).max(4096),
+      args: z.array(z.string().max(4096)).max(64),
+      confirmedCommand: z.string().min(1).max(4096).optional(),
+    })
+    .optional(),
+  routeKept: z.literal(true).optional(),
   startedHash: z
     .string()
     .regex(/^[0-9a-f]{64}$/u)

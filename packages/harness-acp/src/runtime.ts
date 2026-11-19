@@ -4303,18 +4303,32 @@ export class AgentRuntime implements Bridge {
     // The program confirmed on this Mac, and no other: a command that now resolves elsewhere waits for a new confirmation.
     if (this.agent.confirmedCommand !== undefined && command !== this.agent.confirmedCommand) throw commandMoved(this.agent.name)
     if (this.agent.confirmedCommand === undefined && this.limits.requireConfirmedCommand) throw commandUnconfirmed(this.agent.name)
+    return this.launchOf(command, this.agent.args, this.selection, project, passed, route, mode)
+  }
+
+  /** The fingerprint of one definition's launch: the program, its arguments and variables, its profile, and the session's own parts. */
+  private launchOf(
+    command: string,
+    args: readonly string[],
+    selection: ReturnType<typeof selectProfile>,
+    project?: ProjectConfig,
+    passed?: LaunchFolders,
+    route?: ModelRoute,
+    mode?: string,
+  ): Launch {
+    const profile = selection.profile?.permission
     const definition = {
       resolvedCommand: command,
-      args: this.agent.args,
+      args: [...args],
       definitionEnv: this.agent.env,
-      ...(this.selection.profile ? { presetId: this.selection.profile.presetId } : {}),
-      profileVersion: this.selection.profile?.version ?? 1,
-      ...(this.profile?.inheritEnv ? { inheritEnv: this.profile.inheritEnv } : {}),
-      programs: programPaths(this.profile),
+      ...(selection.profile ? { presetId: selection.profile.presetId } : {}),
+      profileVersion: selection.profile?.version ?? 1,
+      ...(profile?.inheritEnv ? { inheritEnv: profile.inheritEnv } : {}),
+      programs: programPaths(profile),
     }
     const definitionHash = launchHash(definition)
-    const routed = this.launchRoute(route)
-    const launchMode = this.selection.profile?.processMode ? (mode ?? this.profile?.expectedMode) : undefined
+    const routed = this.launchRoute(route, selection)
+    const launchMode = selection.profile?.processMode ? (mode ?? profile?.expectedMode) : undefined
     const hash =
       project?.digest || passed || routed || launchMode
         ? launchHash({
@@ -4621,9 +4635,9 @@ export class AgentRuntime implements Bridge {
   }
 
   /** What a launch on `route` records of it, or a refusal when this harness cannot be pointed at the gateway that way. */
-  private launchRoute(route: ModelRoute | undefined): LaunchRoute | undefined {
+  private launchRoute(route: ModelRoute | undefined, selection = this.selection): LaunchRoute | undefined {
     if (!route) return undefined
-    const gateway = this.selection.profile?.gateway
+    const gateway = selection.profile?.gateway
     if (!gateway?.wires.includes(route.wire))
       throw new AppError(400, 'model-route-unsupported', `${this.agent.name} 不能经 Latch 使用这个模型服务`)
     const base = {
@@ -4657,6 +4671,7 @@ export class AgentRuntime implements Bridge {
       confirmed.launchMode,
     )
     if (launch.hash === confirmed.launchHash) return launch
+    if (this.carryMoved(confirmed, launch, await this.projectConfig(cwd, confirmed.folders))) return launch
     // A session confirmed before project configuration counted stored only the definition's fingerprint.
     throw launch.definitionHash === (confirmed.definitionHash ?? confirmed.launchHash) ? this.projectConfigChanged() : definitionChanged()
   }
@@ -4668,7 +4683,54 @@ export class AgentRuntime implements Bridge {
   private assertUsable(task: AcpTask): void {
     if (task.acp.drift) throw permissionDrift()
     this.assertConfirmed(confirmedOf(task.acp))
-    if (this.currentLaunch().definitionHash !== (task.acp.definitionHash ?? task.acp.launchHash)) throw definitionChanged()
+    const recorded = task.acp.definitionHash ?? task.acp.launchHash
+    if (this.currentLaunch().definitionHash !== recorded && this.earlierLaunch()?.definitionHash !== recorded) throw definitionChanged()
+  }
+
+  /**
+   * The launch of the definition this one was moved from (`AgentRecord.migratedFrom`), computed as that definition
+   * computed it: its adapter's command and arguments, its profile, and the same project configuration, folders, route
+   * and mode. Undefined when this definition was not moved, or the earlier one cannot be computed now.
+   */
+  private earlierLaunch(project?: ProjectConfig, passed?: LaunchFolders, route?: ModelRoute, mode?: string): Launch | undefined {
+    const from = this.agent.migratedFrom
+    if (!from) return undefined
+    const command = from.confirmedCommand ?? resolveCommand(from.command)
+    if (!command) return undefined
+    const { migratedFrom: _moved, confirmedCommand: _confirmed, ...rest } = this.agent
+    try {
+      return this.launchOf(
+        command,
+        from.args,
+        selectProfile({ ...rest, command: from.command, args: [...from.args] }),
+        project,
+        passed,
+        route,
+        mode,
+      )
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * A session confirmed on exactly the definition this one was moved from goes on with this one. The only difference
+   * the Host accepts is its own audited move from a preset's adapter to the preset's own program (the adapter drove that
+   * same program): the stored fingerprint must equal the earlier definition's launch computed now, with the project
+   * configuration, folders, route and mode as they are today, so any other change still refuses the session. A
+   * definition the person changed afterwards has no `migratedFrom`, and nothing a session or a device sends reaches here.
+   */
+  private carryMoved(confirmed: Confirmed, launch: Launch, project: ProjectConfig | undefined): boolean {
+    const earlier = this.earlierLaunch(project, confirmed.folders, confirmed.route, confirmed.launchMode)
+    if (!earlier || earlier.hash !== confirmed.launchHash) return false
+    for (const task of Object.values(this.state.tasks)) {
+      if (task.acp.launchHash !== confirmed.launchHash) continue
+      // The record alone: the session did nothing, so its place in the list and its revision stay.
+      task.acp.launchHash = launch.hash
+      task.acp.definitionHash = launch.definitionHash
+    }
+    this.mark()
+    return true
   }
 
   private expectedMode(task: AcpTask): string | undefined {
