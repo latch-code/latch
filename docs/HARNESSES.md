@@ -1053,7 +1053,7 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 
 - 接入后又在终端里继续了同一会话时 Latch 不察觉。
 - 项目其他文件夹里的会话只给数量。
-- pi：它的 RPC 没有列出会话的命令，发现会话只能读它的存储，违反「CLI 存储与凭据」。
+- pi：它的 RPC 没有列出会话的命令，发现会话要读它的存储（允许，见「CLI 目录与配置」），尚未实现。
 - OpenCode 1.x：ACP 没有 `session/list`。
 - Qwen Code、goose：源码声明了列出与加载，但加载对原会话的影响（恢复旧模式、写回设置等）没有读完，也没有用真实程序核对。
 - Claude Agent、Grok Build、Antigravity：没有核对；Claude 的会话记录不碰。Cursor 不开放。
