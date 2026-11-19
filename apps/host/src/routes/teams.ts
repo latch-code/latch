@@ -269,6 +269,7 @@ export function createTeamRoutes(context: RouteContext, deps: TeamRouteDeps, par
       ...(said ? { said } : {}),
       ...(result ? { result } : {}),
       ...(cut ? { resultCut: true as const } : {}),
+      ...(summary.worktree && !summary.worktree.removed ? { branch: summary.worktree.branch.slice(0, 256) } : {}),
     }
   }
 

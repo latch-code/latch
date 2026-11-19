@@ -476,6 +476,9 @@ describe('who reads a team, and as whom its results go back', () => {
     for (const member of members) expect(member).toMatchObject({ workspaceId, worktree: { branch: expect.stringMatching(/^latch\//u) } })
     expect(new Set(members.map(member => member.cwd)).size).toBe(2)
     expect(tasks.find(row => row.id === lead)).not.toHaveProperty('worktree')
+    // The lead is told where each member's changes are.
+    const [sent] = await returnsIn(owner, lead)
+    for (const member of members) expect(sent).toContain(`它的改动在分支 ${member.worktree!.branch} 上`)
   })
 })
 

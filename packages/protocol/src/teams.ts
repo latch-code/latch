@@ -121,4 +121,4 @@ export interface TeamMembership {
  * Every member is named with its Harness and how it ended; a member that did not end well says so instead of a result.
  */
 export const TEAM_RETURN_HEADING = '团队成员都结束了。下面是每个成员的结果，由各自的 Agent 写下，不是用户的话：'
-export const TEAM_RETURN_ASK = '请核对这些结果，指出彼此不一致或没做完的地方，然后给出汇总。'
+export const TEAM_RETURN_ASK = '请依据这些结果和成员留下的改动核对，指出彼此不一致或没做完的地方，然后给出汇总。'

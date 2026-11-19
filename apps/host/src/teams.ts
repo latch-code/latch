@@ -44,6 +44,8 @@ const memberSchema = z.strictObject({
   /** The end of its last reply, at most `TEAM_LIMITS.resultChars`; `resultCut`: the reply was longer. Never sent to a device. */
   result: z.string().max(TEAM_LIMITS.resultChars).optional(),
   resultCut: z.literal(true).optional(),
+  /** The branch of its own worktree, where its changes are; the lead is told, so it reads the work, not only the reply. */
+  branch: z.string().min(1).max(256).optional(),
   startedAt: isoTime.optional(),
   endedAt: isoTime.optional(),
 })
@@ -157,7 +159,8 @@ export function teamReturnText(
       if (member.sessionId && withheld.has(member.sessionId)) return `${head}\n它的会话是私有的，结果没有带回，请到它的会话里查看。`
       if (!member.result) return `${head}\n它没有留下回复。`
       const { result, cut } = resultOf(member.result, limit)
-      return `${head}\n${cut || member.resultCut ? `${TEAM_CUT_MARK}\n` : ''}${result}`
+      const where = member.branch ? `它的改动在分支 ${member.branch} 上，在它自己的工作树里。\n` : ''
+      return `${head}\n${where}${cut || member.resultCut ? `${TEAM_CUT_MARK}\n` : ''}${result}`
     })
     return [TEAM_RETURN_HEADING, ...blocks, TEAM_RETURN_ASK].join('\n\n')
   }
