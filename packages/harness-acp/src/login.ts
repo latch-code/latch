@@ -271,6 +271,22 @@ export async function readQuotaCommand(
   return result?.code === 0 ? command.read(result.stdout, now) : undefined
 }
 
+/**
+ * Runs the preset's own program with a profile's fixed arguments, by the rules a login check follows, and gives back its
+ * exit code and standard output. Undefined: not allowed, could not start, timed out or killed.
+ */
+export async function runPresetProgram(
+  record: AgentRecord,
+  args: readonly string[],
+  limits: { timeoutMs: number; maxOutput: number },
+): Promise<{ code: number | null; stdout: string } | undefined> {
+  const preset = selectProfile(record).preset
+  const path = preset && locate?.(preset.command)
+  if (!path) return undefined
+  const result = await runProgram(record, path, args, { quota: { ...limits, env: {} } })
+  return result ? { code: result.code, stdout: result.stdout } : undefined
+}
+
 /** Where the Host finds one of the person's programs for version and login reads; undefined while it may not run them. */
 export const locateProgram = (command: string): string | undefined => locate?.(command)
 

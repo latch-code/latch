@@ -250,7 +250,19 @@ type ProfileGateway = {
       runtimeBudget?(environment: Readonly<Record<string, string>>): GatewayPlace['budget']
       /** Recognizes only a fixed diagnostic marker from the profile's own extension, never forwards arbitrary stderr. */
       startupFailure?(stderr: string): string | undefined
-      deliver(place: GatewayPlace, route: ModelRoute): GatewayLaunch
+      /**
+       * A file `deliver` points the harness at, made from what the harness's own program prints before a launch (no
+       * prompt, no session, its arguments hold no secret). `build` gets the standard output of `read`; the file is kept
+       * only if the program then exits 0 on `check`, so one a later version no longer reads is left out, not launched.
+       */
+      readonly catalog?: {
+        readonly file: string
+        readonly read: { readonly args: readonly string[]; readonly timeoutMs: number; readonly maxOutput: number }
+        build(stdout: string, place: GatewayPlace, route: ModelRoute): string | undefined
+        check(path: string): readonly string[]
+      }
+      /** `catalog`: the path of the profile's catalog file, when one was built and accepted for this launch. */
+      deliver(place: GatewayPlace, route: ModelRoute, catalog?: string): GatewayLaunch
     }
 )
 

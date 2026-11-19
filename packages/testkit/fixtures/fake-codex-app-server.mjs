@@ -54,6 +54,11 @@ const VERSION = env.FAKE_CODEX_VERSION ?? '0.167.0'
 // The simulator its latch-browser calls name, in the exact shape the Host's own tools take.
 const SIMULATOR_FIXTURE_UDID = '22222222-2222-4222-8222-222222222222'
 const args = process.argv.slice(2)
+// `codex debug models`: the bundled catalog, or the one a `-c model_catalog_json=` names, read back.
+if (args[0] === 'debug' && args[1] === 'models') {
+  process.stdout.write(JSON.stringify({ models: [{ slug: 'gpt-5.5', context_window: 272000 }] }))
+  process.exit(0)
+}
 if (args.includes('--version')) {
   process.stdout.write(`codex-cli ${VERSION}\n`)
   process.exit(0)

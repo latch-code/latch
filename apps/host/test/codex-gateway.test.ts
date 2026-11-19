@@ -151,6 +151,8 @@ it.each(['openai-responses', 'openai-compatible'] as const)(
       ).toEqual(['high', 'high'])
       for (const process of frames.filter(frame => frame.event === 'start')) {
         expect(process.argv).toContain('model_provider="latch"')
+        // The service's models are not Codex's: a private catalog names them, so their windows are not held to 272k.
+        expect((process.argv ?? []).some((arg: string) => /^model_catalog_json=".*\/gateway\/codex-models\.json"$/u.test(arg))).toBe(true)
         expect(process.argv).not.toContain('shell_environment_policy.exclude=["LMG_TOKEN"]')
       }
     } finally {

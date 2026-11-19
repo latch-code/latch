@@ -135,6 +135,7 @@ import {
 import { authFacts, reportedLogin, terminalLogins, type AuthFacts } from './auth.ts'
 import { QUOTA_UPDATE, QuotaFacts, quotaReport, type QuotaReport } from './quota.ts'
 import { CODEX_EFFORT_ID, codexOptions, GATEWAY_DEFAULT_EFFORT, gatewayEffortOption, readCodexModels } from './codex-models.ts'
+import { buildGatewayCatalog } from './gateway-catalog.ts'
 import { readQuotaCommand } from './login.ts'
 import { commandMoved, commandUnconfirmed, harnessRetired, redactor, resolveCommand } from './command.ts'
 import { openWire, wireArgs } from './wires/index.ts'
@@ -176,7 +177,7 @@ import {
   type ProfileSelection,
 } from './permission.ts'
 import type { AcpPermissionProfile, ExtensionRequest, ProjectedChild, RetryReport, ToolDenial } from './profiles/index.ts'
-import type { GatewayModelValues, HarnessProfile, HistoryImportRule } from './profiles/types.ts'
+import type { GatewayModelValues, GatewayPlace, HarnessProfile, HistoryImportRule } from './profiles/types.ts'
 import { fingerprintProjectConfig, type ProjectConfig } from './project-config.ts'
 import {
   AUTH_STATUS_METHOD,
@@ -4330,19 +4331,25 @@ export class AgentRuntime implements Bridge {
     if (gateway?.via !== 'launch') return undefined
     const directory = join(sessionTmpDir, 'gateway')
     const budget = gateway.runtimeBudget?.(this.agent.env)
-    const launch = gateway.deliver(
-      {
-        baseURL: lease.baseURL,
-        models: lease.models.map(id => ({ id, ...(lease.modelCapabilities?.[id] ? { capabilities: lease.modelCapabilities[id] } : {}) })),
-        ...(budget ? { budget } : {}),
-        ...(thinking ? { thinking } : {}),
-        file: name => {
-          if (!/^[a-z0-9][a-z0-9.-]{0,63}$/u.test(name)) throw new Error(`invalid gateway file name ${clip(name, 64)}`)
-          return join(directory, name)
-        },
+    const place: GatewayPlace = {
+      baseURL: lease.baseURL,
+      models: lease.models.map(id => ({ id, ...(lease.modelCapabilities?.[id] ? { capabilities: lease.modelCapabilities[id] } : {}) })),
+      ...(budget ? { budget } : {}),
+      ...(thinking ? { thinking } : {}),
+      file: name => {
+        if (!/^[a-z0-9][a-z0-9.-]{0,63}$/u.test(name)) throw new Error(`invalid gateway file name ${clip(name, 64)}`)
+        return join(directory, name)
       },
-      route,
-    )
+    }
+    let catalog: string | undefined
+    if (gateway.catalog) {
+      const { build, file } = gateway.catalog
+      await this.assertPrivateDirectory(this.tmpRoot(), '会话临时根目录')
+      await this.assertPrivateDirectory(sessionTmpDir, '会话临时目录')
+      await this.makePrivateDirectory(directory, '网关配置目录')
+      catalog = await buildGatewayCatalog(this.agent, place.file(file), stdout => build(stdout, place, route))
+    }
+    const launch = gateway.deliver(place, route, catalog)
     const env = launch.env ?? {}
     const args = launch.args ?? []
     const files = Object.entries(launch.files ?? {})

@@ -1,3 +1,4 @@
+import { codexRouteCatalog } from './codex-catalog.ts'
 import type { ExtensionRequest, GatewayPlace, HarnessProfile, ProjectedChild, SessionUpdate, ToolDenial } from './types.ts'
 
 /**
@@ -103,7 +104,7 @@ const readVersion = (output: string) => /\bcodex-cli (\d+\.\d+\.\d+(?:-[0-9A-Za-
  * what Codex should act on. Before opening a thread, the wire preserves the effective command environment filters
  * and adds the token's exclusion through that thread's config, without overwriting the person's config files.
  */
-function codexGatewayArgs(place: GatewayPlace): string[] {
+function codexGatewayArgs(place: GatewayPlace, catalog?: string): string[] {
   const provider = `model_providers.${CODEX_GATEWAY_PROVIDER}`
   return [
     `model_provider="${CODEX_GATEWAY_PROVIDER}"`,
@@ -113,6 +114,7 @@ function codexGatewayArgs(place: GatewayPlace): string[] {
     `${provider}.env_key="LMG_TOKEN"`,
     `${provider}.supports_websockets=false`,
     `${provider}.request_max_retries=1`,
+    ...(catalog ? [`model_catalog_json=${JSON.stringify(catalog)}`] : []),
   ].flatMap(setting => ['-c', setting])
 }
 
@@ -161,14 +163,30 @@ export const codexProfile: HarnessProfile = {
     carriesAcrossLogin: true,
     tokenEnv: 'LMG_TOKEN',
     envNames: [],
-    templates: { args: 1 },
+    templates: { args: 2, files: 1 },
     minimumVersion: {
       args: ['--version'],
       read: readVersion,
       minimum: '0.167.0',
       upgrade: 'npm i -g @openai/codex@latest',
     },
-    deliver: place => ({ args: codexGatewayArgs(place) }),
+    // Codex holds a model it has no entry for to 272,000 tokens: a private catalog names the service's models with
+    // their windows. Its own bundled entries stay; nothing of Codex's is written.
+    catalog: {
+      file: 'codex-models.json',
+      read: { args: ['debug', 'models', '--bundled'], timeoutMs: 5_000, maxOutput: 8 * 1024 * 1024 },
+      build: (stdout, place, route) =>
+        codexRouteCatalog(
+          stdout,
+          place.models.map(model => ({
+            id: model.id,
+            ...(model.capabilities?.contextTokens ? { contextTokens: model.capabilities.contextTokens } : {}),
+          })),
+          route.model,
+        ),
+      check: path => ['debug', 'models', '-c', `model_catalog_json=${JSON.stringify(path)}`],
+    },
+    deliver: (place, _route, catalog) => ({ args: codexGatewayArgs(place, catalog) }),
   },
   readProjectedChild: projectedChild,
   readDenial: denial,

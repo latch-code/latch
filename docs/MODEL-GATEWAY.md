@@ -139,7 +139,7 @@ Host 为经 Latch 使用模型服务的 Harness 提供一个单独的回环临�
 
 | Harness | 接线 | 凭据 | 工具子进程 | 上下文 |
 | --- | --- | --- | --- | --- |
-| Codex 直连 | 启动参数里的自定义 provider `latch`，只有地址、变量名与公开选项 | `LMG_TOKEN` | 线程 config 的环境过滤规则排除它 | 线程 config 的 `model_context_window` |
+| Codex 直连 | 启动参数里的自定义 provider `latch`，只有地址、变量名与公开选项 | `LMG_TOKEN` | 线程 config 的环境过滤规则排除它 | 线程 config 的 `model_context_window`，未知模型另经 `model_catalog_json` |
 | codex-acp | ACP `providers/set`，只在适配器声明并列出该 provider 与 API 类型时 | ACP 头字段 | — | 不交 |
 | OpenCode | `OPENCODE_CONFIG_CONTENT` 里的私有 provider `latch` 与会话私有插件 | `LMG_TOKEN` | 插件清空它的值 | 模型的 `limit.context` |
 | DeepSeek Harness | 私有 `--patch`：provider `latch-gateway`、ACP 与默认模型 | `LMG_TOKEN` | dsh 自己清除敏感变量 | llm-pi-ai 模型的 `contextWindow` |
@@ -190,6 +190,7 @@ Antigravity 与 Cursor 不接受别人的模型服务地址（`ownModelsOnly`）
 - **思考。** 「默认」指模型服务的默认。wire 提供的思考选项由 `gatewayEffortOption` 按服务声明生成，Host 用同一个函数给新会话草稿投影（[HARNESSES.md](HARNESSES.md#开始前的选项)），所以开始前就能选。wire 用租约的 `setThinking(model, effort)` 登记当前模型的意图：`null` 时出站只删这个模型请求的 `reasoning.effort`（Codex 自己的 `model_reasoning_effort` 可能补上一个值），其余字段不动；显式选择只允许服务声明的档位，实际请求必须相符。没登记意图的模型按「思考档位」处理。
 - 显式选择随会话 config 持久化，恢复后优先于 Codex 的旧配置。运行中的选择只保存下一轮意图；换模型清掉原选择。尚未应用的改档不能用 compact 绕过上下文核对。
 - **上下文长度。** 线程开始与恢复时，所选模型声明了长度就写进线程 config 的 `model_context_window`（Codex 配置参考：「Context window tokens available to the active model」）；`model_auto_compact_token_limit` 不写，自动压缩用 Codex 相对这个窗口的默认。不写时 Codex 对它不认识的模型假定 258,400，只在服务以上下文溢出拒绝一轮后才压缩。0.169 实测：声明 64,000 时它报告 `modelContextWindow` 60,800（窗口的 95%），用量过线后在下一轮发出之前先压缩。窗口按线程打开时的模型定下：会话中换到声明了另一长度的模型，下次打开线程才生效。
+- **模型目录。** Codex 0.169 把目录里没有的模型的窗口压在 272,000 以内（报告 258,400），线程 config 写更大的值也不生效。所以每次启动前 Latch 运行 `codex debug models --bundled` 读出它自带的目录，原样保留，再为服务里它不认识的模型各加一条（本会话的模型在前，最多 32 条）：窗口取声明或服务列出的长度，都没有时取 512,000（Codex 报告 486,400）；其余字段与 Codex 对未知模型的回退一致，指令是它的回退指令原文（`profiles/codex-fallback.ts`，随 Codex 的 Apache-2.0 许可）。文件写在会话私有的网关目录，经启动参数 `model_catalog_json` 给这个进程，不写 Codex 自己的任何文件。写好后先用 `codex debug models -c model_catalog_json=…` 让 Codex 读一遍，读不了就不带目录启动（窗口回到 258,400）。读取与校验按程序文件记住，同一个 Codex 只跑一次。Codex 认识的模型不加条目，行为不变。窗口比模型真实长度大时，Codex 的自动压缩来不及，服务会先拒绝：真实长度小于 512,000 的模型要在「模型服务」里声明。`codex-catalog.live.test.ts` 用真实 Codex 核对：带目录与不带目录的指令和工具相同，只有窗口不同。
 - 原生委派的成员继承父轮的 provider 与进程内凭据；角色改用的模型超出会话的服务模型名单时网关拒绝。成员请求与父轮共享会话用量，账本没有成员 ID（[Codex 的 Agent 团队](HARNESSES.md#codex-的-agent-团队)）。
 
 ### OpenCode
