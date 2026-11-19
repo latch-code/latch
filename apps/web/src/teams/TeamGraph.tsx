@@ -1,5 +1,5 @@
 import { createContext, useContext, type CSSProperties, type ReactNode } from 'react'
-import type { HarnessInfo, TeamMember, TeamSummary } from '@latch/protocol'
+import type { HarnessInfo, TeamMember, TeamState, TeamSummary } from '@latch/protocol'
 import { Button, StatusWord, Tooltip } from '@latch/ui'
 import { HarnessTile, MarkTile } from '../components/BrandTile.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
@@ -74,8 +74,38 @@ function wireStates(member: TeamMember): { into: string; out: string | undefined
   return { into, out }
 }
 
+/**
+ * What runs along a wire, as light: `flow` carries work to a member at work, two beads apart, for as long as it works;
+ * `sent` is the work handed out, once, as the drawing appears; `back` is a member's result reaching the results once, as
+ * it ends; `stream` carries every result in while they wait to go back.
+ */
+type Run = 'flow' | 'sent' | 'back' | 'stream'
+
+function Wire({ d, wire, run, row }: { d: string; wire: string; run: Run | undefined; row: number }) {
+  const style = { '--team-row': row } as CSSProperties
+  return (
+    <g className="team-wire-group" data-wire={wire} style={style}>
+      <path className="team-wire" data-wire={wire} d={d} />
+      {run && <path className="team-bead" data-run={run} d={d} pathLength={100} />}
+      {(run === 'flow' || run === 'stream') && <path className="team-bead is-second" data-run={run} d={d} pathLength={100} />}
+    </g>
+  )
+}
+
+/** The light on a member's wire out, and on its wire back in while the team is where `state` says. */
+function runs(member: TeamMember, team: TeamState): { out: Run | undefined; back: Run | undefined } {
+  const out =
+    member.state === 'running' || member.state === 'starting'
+      ? 'flow'
+      : member.state === 'unstarted' || member.state === 'waiting'
+        ? undefined
+        : 'sent'
+  const back = member.state !== 'done' ? undefined : team === 'returning' ? 'stream' : 'back'
+  return { out, back }
+}
+
 /** The wide drawing's connectors: from this session out to every member, or from every member in to the results. */
-function Fan({ members, side }: { members: readonly TeamMember[]; side: 'out' | 'in' }) {
+function Fan({ members, side, team }: { members: readonly TeamMember[]; side: 'out' | 'in'; team: TeamState }) {
   const height = members.length * (WIDE.row + WIDE.gap) - WIDE.gap
   const middle = height / 2
   const w = WIDE.fan
@@ -85,14 +115,14 @@ function Fan({ members, side }: { members: readonly TeamMember[]; side: 'out' | 
         const y = index * (WIDE.row + WIDE.gap) + WIDE.row / 2
         const [from, to] = side === 'out' ? [middle, y] : [y, middle]
         const { into, out } = wireStates(member)
-        const state = side === 'out' ? into : (out ?? 'idle')
+        const light = runs(member, team)
         return (
-          <path
+          <Wire
             key={member.itemId}
-            className="team-wire"
-            data-wire={state}
-            style={{ '--team-row': index } as CSSProperties}
             d={`M 0 ${from} C ${w * 0.55} ${from} ${w * 0.45} ${to} ${w} ${to}`}
+            wire={side === 'out' ? into : (out ?? 'idle')}
+            run={side === 'out' ? light.out : light.back}
+            row={index}
           />
         )
       })}
@@ -101,7 +131,7 @@ function Fan({ members, side }: { members: readonly TeamMember[]; side: 'out' | 
 }
 
 /** The narrow drawing's rail: down from this session, round into each member's pill, and last into the results. */
-function Rail({ members, end }: { members: readonly TeamMember[]; end: string }) {
+function Rail({ members, end, team }: { members: readonly TeamMember[]; end: string; team: TeamState }) {
   const pitch = NARROW.row + NARROW.gap
   const listed = members.length * pitch - NARROW.gap
   const height = listed + NARROW.gap + NARROW.end
@@ -110,14 +140,19 @@ function Rail({ members, end }: { members: readonly TeamMember[]; end: string })
   const elbow = (y: number) => `M ${x} 0 V ${y - 8} Q ${x} ${y} ${x + 8} ${y} H ${w}`
   return (
     <svg className="team-rail" width={w} height={height} viewBox={`0 0 ${w} ${height}`} aria-hidden="true">
-      <path className="team-wire" data-wire={end} d={elbow(listed + NARROW.gap + NARROW.end / 2)} />
+      <Wire
+        d={elbow(listed + NARROW.gap + NARROW.end / 2)}
+        wire={end}
+        run={team === 'returning' ? 'stream' : team === 'returned' ? 'back' : undefined}
+        row={members.length}
+      />
       {members.map((member, index) => (
-        <path
+        <Wire
           key={member.itemId}
-          className="team-wire"
-          data-wire={wireStates(member).into}
-          style={{ '--team-row': index } as CSSProperties}
           d={elbow(index * pitch + NARROW.row / 2)}
+          wire={wireStates(member).into}
+          run={runs(member, team).out}
+          row={index}
         />
       ))}
     </svg>
@@ -250,14 +285,14 @@ export function TeamGraph({ team, lead }: { team: TeamSummary; lead: { name: str
             <VisibleText text={lead.name} />
           </span>
         </span>
-        <Fan members={team.members} side="out" />
-        <Rail members={team.members} end={endWire(team)} />
+        <Fan members={team.members} side="out" team={team.state} />
+        <Rail members={team.members} end={endWire(team)} team={team.state} />
         <ul className="team-members">
           {team.members.map((member, index) => (
             <MemberRow key={member.itemId} member={member} page={page} index={index} />
           ))}
         </ul>
-        <Fan members={team.members} side="in" />
+        <Fan members={team.members} side="in" team={team.state} />
         <End team={team} page={page} />
       </div>
     </section>

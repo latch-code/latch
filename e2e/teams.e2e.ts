@@ -279,16 +279,17 @@ describe('a team of sessions, in the page', () => {
       card(team.id)
         .locator(selector)
         .evaluateAll(
-          // Animations that run on, not a colour easing once from one state to the next.
+          // Animations that run on, not light that runs once or a colour easing from one state to the next.
           nodes =>
             nodes
               .flatMap(node => node.getAnimations({ subtree: true }))
-              .filter(item => item.playState === 'running' && item instanceof CSSAnimation).length,
+              .filter(item => item.playState === 'running' && item.effect?.getTiming().iterations === Infinity).length,
         )
     await poll(() => moving('.team-member[data-state="running"]')).toBeGreaterThan(0)
     expect(await moving('.team-member[data-state="done"]')).toBe(0)
     expect(await moving('.team-fan.is-in')).toBe(0)
-    await poll(() => moving('.team-fan.is-out')).toBe(1)
+    // Two runs of light apart on the wire to the member at work, and none on the others.
+    await poll(() => moving('.team-fan.is-out')).toBe(2)
     await page.emulateMedia({ reducedMotion: 'reduce' })
     expect(await moving('.team-card')).toBe(0)
     await shots('running', '核对支付回调', async view => {

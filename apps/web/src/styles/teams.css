@@ -252,8 +252,9 @@ button.team-end-link {
 .team-wire[data-wire='done'] {
   stroke: color-mix(in srgb, var(--accent) 70%, transparent);
 }
+/* A wire that carries work now is fainter than one that has carried it: the light running along it says the rest. */
 .team-wire[data-wire='flow'] {
-  stroke-dasharray: 2 5;
+  stroke: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 .team-wire[data-wire='waiting'] {
   stroke: color-mix(in srgb, var(--amber-icon) 75%, transparent);
@@ -266,6 +267,24 @@ button.team-end-link {
 }
 .team-wire[data-wire='none'] {
   stroke-dasharray: 1 4;
+}
+
+/*
+ * Light along a wire: a short bright run, round-ended and softly glowing, that travels from the wire's start to its end
+ * (`pathLength` 100: a 9-long dash, then a gap longer than the wire). It shows only while it moves, so reduced motion
+ * shows none.
+ */
+.team-bead {
+  display: none;
+  fill: none;
+  color: var(--accent);
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 9 120;
+  /* Wholly before the wire's start, so not even a round cap shows. */
+  stroke-dashoffset: 11;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 70%, transparent));
 }
 
 /* ---- Members ---- */
@@ -417,9 +436,21 @@ button.team-member-main:hover {
   }
 }
 
-@keyframes team-wire {
+@keyframes team-bead {
+  from {
+    stroke-dashoffset: 11;
+  }
   to {
-    stroke-dashoffset: -14;
+    stroke-dashoffset: -102;
+  }
+}
+/* The results arrive: a ring of light leaves the node once. */
+@keyframes team-arrive {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 0%, transparent);
   }
 }
 @keyframes team-light {
@@ -431,10 +462,27 @@ button.team-member-main:hover {
   }
 }
 @media (prefers-reduced-motion: no-preference) {
-  /* Work moves along a wire for as long as it carries some, each member's from its own point in the run. */
-  .team-wire[data-wire='flow'] {
-    animation: team-wire 0.9s linear infinite;
-    animation-delay: calc(var(--team-row, 0) * -0.3s);
+  .team-bead {
+    display: inline;
+  }
+  /* Handed out as the drawing appears, member after member; a result reaching the results once, as its member ends. */
+  .team-bead[data-run='sent'],
+  .team-bead[data-run='back'] {
+    animation: team-bead 0.9s var(--e-enter) both;
+    animation-delay: calc(0.15s + var(--team-row, 0) * 0.12s);
+  }
+  /* Work carried to a member at work, and every result carried in while they wait to go back: two runs apart, on. */
+  .team-bead[data-run='flow'],
+  .team-bead[data-run='stream'] {
+    animation: team-bead 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+    animation-delay: calc(var(--team-row, 0) * -0.4s);
+  }
+  .team-bead.is-second[data-run='flow'],
+  .team-bead.is-second[data-run='stream'] {
+    animation-delay: calc(var(--team-row, 0) * -0.4s - 0.8s);
+  }
+  .team-end[data-end='returned'] > .team-node {
+    animation: team-arrive 0.9s var(--e-enter) 0.4s backwards;
   }
   .team-member[data-work] .team-member-main::after {
     animation: team-light 2.4s var(--e-micro) infinite;
