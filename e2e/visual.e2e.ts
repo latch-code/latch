@@ -1399,15 +1399,17 @@ describe('visual capture of the real product', () => {
           .getByRole('menu', { name: /^模型/ })
           .getByRole('menuitemradio', { name: 'fixture-small' })
           .click()
-        const switched = input.getByRole('button', { name: '模型：下一条：fixture-small', exact: true })
+        // The entry's name runs on with the thinking level after the model.
+        const switched = input.getByRole('button', { name: /^模型：下一条：fixture-small/u })
         expect(await target.getByText(/^下一轮起用/u).count()).toBe(0)
-        await switched.click()
-        const undo = target.getByRole('menuitem', { name: '撤销切换，继续使用 fixture-large', exact: true })
+        // The model panel stays open on a pick (a board, not a menu), so its footer's undo is right there as a button.
+        await switched.waitFor()
+        const undo = target.getByText('撤销切换，继续使用 fixture-large', { exact: true })
         await reachable(undo)
         await settleMotion(target)
         await recorder.capture(target, viewport, 'session-model-switch', 'a model switch for the next message, with its undo')
         await undo.click()
-        await input.getByRole('button', { name: '模型：fixture-large', exact: true }).waitFor()
+        await input.getByRole('button', { name: /^模型：fixture-large/u }).waitFor()
       }
 
       // Opening the fold shows the rows as they were.
