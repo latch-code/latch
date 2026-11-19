@@ -2015,6 +2015,7 @@ const HOST_REFUSALS: Readonly<Record<string, string>> = defineCopy<Record<string
     'terminal-unavailable': '终端组件不可用，请重新构建 Latch。',
     'terminal-stopping': 'Latch 正在停止，不能打开终端。',
     'terminal-closed': '终端已关闭。',
+    'permission-ask-unavailable': '这条路线不会逐次问你，请从它自己的档位里选。',
   },
   {
     'credential-rotated': 'The credential was renewed in another page. Reload.',
@@ -2100,6 +2101,7 @@ const HOST_REFUSALS: Readonly<Record<string, string>> = defineCopy<Record<string
     'terminal-unavailable': 'The terminal component is unavailable. Rebuild Latch.',
     'terminal-stopping': 'Latch is stopping, so the terminal cannot open.',
     'terminal-closed': 'The terminal is closed.',
+    'permission-ask-unavailable': 'This route never asks before each action. Pick one of its own modes.',
   },
 )
 
