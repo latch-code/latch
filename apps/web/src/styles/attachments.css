@@ -1,123 +1,654 @@
+/*
+ * Attachments as compact tiles: the file itself where a browser can draw it (a picture, a video's first frame with
+ * its play mark and length), else its type and extension; the name under it, cut in the middle. In the composer each
+ * tile has a round × on its corner, its progress along its foot, and a failure beside it.
+ */
 .attachment-drafts {
   display: flex;
   align-items: flex-start;
-  gap: var(--sp-8);
-  margin: var(--sp-8);
-  padding: var(--sp-4);
-  max-height: 180px;
-  overflow: auto;
+  gap: var(--sp-12);
+  margin: 0;
+  padding: var(--sp-12) var(--sp-12) var(--sp-4);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.attachment-drafts::-webkit-scrollbar {
+  display: none;
 }
 .attachment-draft {
   position: relative;
+  display: flex;
   flex: 0 0 auto;
-  width: 224px;
-  max-width: 100%;
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
-  background: var(--pop);
+  align-items: flex-start;
+  gap: var(--sp-8);
+  width: 64px;
 }
-.attachment-draft > .attachment-draft-open {
-  display: flex;
-  justify-content: flex-start;
-  width: 100%;
-  min-height: 64px;
-  min-width: 0;
-  padding: var(--sp-10) var(--sp-32) var(--sp-10) var(--sp-10);
-  gap: var(--sp-10);
-  border-radius: inherit;
-  text-align: start;
-  white-space: normal;
-  color: var(--ink-2);
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
+.attachment-draft > .attachment-tile {
+  flex: 0 0 64px;
 }
-/* Anything but an image is a chip one line high: glyph, name, size, ×. Only a failure may wrap to say why. */
-.attachment-draft[data-kind='file'] {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
+/* A failure says why beside its tile, briefly, with what to do. */
+.attachment-draft:is([data-state='failed'], [data-state='refused'], [data-state='confirm']) {
   width: auto;
-  max-width: 224px;
-  min-height: 28px;
-  padding-inline-end: var(--sp-2);
-  border-radius: var(--r-8);
+  max-width: 244px;
+  gap: var(--sp-16);
 }
-.attachment-draft[data-kind='file'] > .attachment-draft-open {
-  flex: 1;
-  align-items: center;
-  width: auto;
-  min-height: 26px;
-  height: auto;
-  padding: 0 var(--sp-4) 0 var(--sp-8);
-  gap: var(--sp-6);
-}
-.attachment-draft[data-kind='file'] > .attachment-remove {
-  position: static;
-  flex-shrink: 0;
-}
-.attachment-draft[data-kind='file'] > .attachment-retry {
-  order: 3;
-  margin: 0 var(--sp-6) var(--sp-4);
-}
-.attachment-file-icon {
-  display: inline-flex;
-  flex-shrink: 0;
-  color: var(--muted);
-}
-.attachment-file-copy {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-6);
+.attachment-draft:is([data-state='failed'], [data-state='refused'], [data-state='confirm']) > .attachment-state {
+  display: -webkit-box;
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 164px;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  padding-block-start: var(--sp-2);
 }
-.attachment-file-copy > .attachment-state {
-  flex-shrink: 0;
+.attachment-draft:is([data-state='failed'], [data-state='refused']) > .attachment-state {
+  color: var(--red);
+}
+/* Progress is on the tile and the size on hover: the line stays for screen readers. */
+.attachment-draft:is([data-state='uploading'], [data-state='ready']) > .attachment-state {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
   white-space: nowrap;
 }
-.attachment-draft[data-kind='file']:is([data-state='failed'], [data-state='refused'], [data-state='confirm']) .attachment-file-copy {
-  flex-wrap: wrap;
-}
-.attachment-draft[data-kind='file']:is([data-state='failed'], [data-state='refused'], [data-state='confirm']) .attachment-state {
-  flex-shrink: 1;
-  white-space: normal;
-}
-.attachment-draft > .attachment-remove {
+.attachment-draft > .attachment-retry {
   position: absolute;
-  inset-block-start: var(--sp-4);
-  inset-inline-end: var(--sp-4);
+  inset-block-end: 0;
+  inset-inline-start: calc(64px + var(--sp-16));
 }
-.attachment-draft[data-kind='image'] {
-  width: 104px;
+.attachment-draft:is([data-state='failed'], [data-state='confirm']) {
+  min-height: 92px;
 }
-.attachment-draft[data-kind='image'] > .attachment-draft-open {
-  justify-content: center;
-  height: 104px;
+.attachment-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+  width: 100%;
+}
+.attachment-tile-face {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  margin: 0;
   padding: 0;
   overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--sunken);
+  color: var(--muted);
+  font: inherit;
+  appearance: none;
 }
-.attachment-draft-open > img {
+button.attachment-tile-face {
+  cursor: pointer;
+  transition: border-color var(--m-micro, 120ms) ease;
+}
+button.attachment-tile-face:hover:not(:disabled) {
+  border-color: var(--line-strong);
+}
+button.attachment-tile-face:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+button.attachment-tile-face:disabled {
+  cursor: default;
+}
+.attachment-tile-face > img,
+.attachment-tile-face > video {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  pointer-events: none;
 }
-.attachment-draft[data-kind='image'] > .attachment-state {
-  padding: var(--sp-4) var(--sp-8);
+.attachment-tile-type {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
 }
-.attachment-draft[data-kind='image'] > .attachment-remove {
+.attachment-tile-ext {
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  line-height: var(--lh-meta);
+}
+.attachment-tile-play {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding-inline-start: 2px;
   border-radius: var(--r-full);
-  background: var(--pop);
-  color: var(--ink);
-  box-shadow: var(--sh-1);
+  background: color-mix(in srgb, var(--tip-bg) 64%, transparent);
+  color: var(--tip-ink);
+  backdrop-filter: blur(6px);
 }
-.attachment-draft > .attachment-retry {
-  margin: 0 var(--sp-8) var(--sp-8);
+.attachment-tile-play svg {
+  fill: currentColor;
 }
-.attachment-name {
+.attachment-tile-duration {
+  position: absolute;
+  inset-inline-end: var(--sp-4);
+  inset-block-end: var(--sp-4);
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-4);
+  background: color-mix(in srgb, var(--tip-bg) 64%, transparent);
+  color: var(--tip-ink);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-variant-numeric: tabular-nums;
+}
+.attachment-tile-ext[data-caption] {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.attachment-tile-progress {
+  position: absolute;
+  inset-inline: var(--sp-6);
+  inset-block-end: var(--sp-6);
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--r-full);
+  background: var(--track);
+}
+.attachment-tile-progress > span {
+  display: block;
+  height: 100%;
+  inline-size: 40%;
+  border-radius: inherit;
+  background: var(--ink-2);
+  transition: inline-size 160ms linear;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .attachment-tile-progress > span:not([style]) {
+    animation: attachment-busy 1.1s ease-in-out infinite;
+  }
+}
+@keyframes attachment-busy {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+.attachment-draft[data-state='uploading'] .attachment-tile-face > :is(img, video) {
+  filter: saturate(0.4) brightness(0.92);
+}
+.attachment-tile[data-failed] > .attachment-tile-face {
+  border-color: var(--red-line);
+}
+.attachment-tile-name {
+  display: flex;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.attachment-tile-head {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 240px;
+}
+.attachment-tile-tail {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+/* The round ×: ink on a ring of the surface, so it reads on any picture; on touch its target is 44 around it. */
+.attachment-tile > .attachment-remove {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: -7px;
+  inset-inline-end: -7px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-full);
+  background: var(--ink);
+  color: var(--canvas);
+  box-shadow: 0 0 0 2px var(--pop);
+  cursor: pointer;
+  appearance: none;
+}
+.attachment-tile > .attachment-remove:hover:not(:disabled) {
+  background: var(--ink-2);
+}
+.attachment-tile > .attachment-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.attachment-tile > .attachment-remove:disabled {
+  cursor: default;
+}
+@media (pointer: coarse) {
+  .attachment-tile > .attachment-remove::after {
+    content: '';
+    position: absolute;
+    inset: -12px;
+  }
+}
+.attachment-state {
+  display: -webkit-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 164px;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  padding-block-start: var(--sp-2);
+}
+.attachment-draft:is([data-state='failed'], [data-state='refused']) > .attachment-state {
+  color: var(--red);
+}
+/* Progress is on the tile and the size on hover: the line stays for screen readers. */
+.attachment-draft:is([data-state='uploading'], [data-state='ready']) > .attachment-state {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.attachment-draft > .attachment-retry {
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline-start: calc(64px + var(--sp-16));
+}
+.attachment-draft:is([data-state='failed'], [data-state='confirm']) {
+  min-height: 92px;
+}
+.attachment-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+  width: 100%;
+}
+.attachment-tile-face {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--sunken);
+  color: var(--muted);
+  font: inherit;
+  appearance: none;
+}
+button.attachment-tile-face {
+  cursor: pointer;
+  transition: border-color var(--m-micro, 120ms) ease;
+}
+button.attachment-tile-face:hover:not(:disabled) {
+  border-color: var(--line-strong);
+}
+button.attachment-tile-face:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+button.attachment-tile-face:disabled {
+  cursor: default;
+}
+.attachment-tile-face > img,
+.attachment-tile-face > video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.attachment-tile-type {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.attachment-tile-ext {
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  line-height: var(--lh-meta);
+}
+.attachment-tile-play {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding-inline-start: 2px;
+  border-radius: var(--r-full);
+  background: color-mix(in srgb, var(--tip-bg) 64%, transparent);
+  color: var(--tip-ink);
+  backdrop-filter: blur(6px);
+}
+.attachment-tile-play svg {
+  fill: currentColor;
+}
+.attachment-tile-duration {
+  position: absolute;
+  inset-inline-end: var(--sp-4);
+  inset-block-end: var(--sp-4);
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-4);
+  background: color-mix(in srgb, var(--tip-bg) 64%, transparent);
+  color: var(--tip-ink);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-variant-numeric: tabular-nums;
+}
+.attachment-tile-ext[data-caption] {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.attachment-tile-progress {
+  position: absolute;
+  inset-inline: var(--sp-6);
+  inset-block-end: var(--sp-6);
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--r-full);
+  background: var(--track);
+}
+.attachment-tile-progress > span {
+  display: block;
+  height: 100%;
+  inline-size: 40%;
+  border-radius: inherit;
+  background: var(--ink-2);
+  transition: inline-size 160ms linear;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .attachment-tile-progress > span:not([style]) {
+    animation: attachment-busy 1.1s ease-in-out infinite;
+  }
+}
+@keyframes attachment-busy {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+.attachment-draft[data-state='uploading'] .attachment-tile-face > :is(img, video) {
+  filter: saturate(0.4) brightness(0.92);
+}
+.attachment-tile[data-failed] > .attachment-tile-face {
+  border-color: var(--red-line);
+}
+.attachment-tile-name {
+  display: flex;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.attachment-tile-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachment-tile-tail {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+/* The round ×: ink on a ring of the surface, so it reads on any picture; on touch its target is still 44. */
+.attachment-tile > .attachment-remove.ui-icon-button {
+  --icon-button-size: 20px;
+  --icon-button-radius: var(--r-full);
+  position: absolute;
+  z-index: 1;
+  inset-block-start: -7px;
+  inset-inline-end: -7px;
+  color: var(--canvas);
+}
+.attachment-tile > .attachment-remove.ui-icon-button::before {
+  background-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--pop);
+}
+.attachment-tile > .attachment-remove.ui-icon-button:hover:not([aria-disabled='true']) {
+  color: var(--canvas);
+}
+.attachment-tile > .attachment-remove.ui-icon-button:hover:not([aria-disabled='true'])::before {
+  background-color: var(--ink-2);
+}
+@media (pointer: coarse) {
+  /* The box grows to 44 around the same 20px face: centred on the same corner point. */
+  .attachment-tile > .attachment-remove.ui-icon-button {
+    inset-block-start: -19px;
+    inset-inline-end: -19px;
+  }
+}
+.attachment-tile > .attachment-remove svg {
+  width: 12px;
+  height: 12px;
+}
+.attachment-state {
+  display: -webkit-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 164px;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  padding-block-start: var(--sp-2);
+}
+.attachment-draft:is([data-state='failed'], [data-state='refused']) > .attachment-state {
+  color: var(--red);
+}
+/* Progress is on the tile and the size on hover: the line stays for screen readers. */
+.attachment-draft:is([data-state='uploading'], [data-state='ready']) > .attachment-state {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.attachment-draft > .attachment-retry {
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline-start: calc(64px + var(--sp-16));
+}
+.attachment-draft:is([data-state='failed'], [data-state='confirm']) {
+  min-height: 92px;
+}
+.attachment-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+  width: 100%;
+}
+.attachment-tile-face {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-12);
+  background: var(--sunken);
+  color: var(--muted);
+  font: inherit;
+  appearance: none;
+}
+button.attachment-tile-face {
+  cursor: pointer;
+  transition: border-color var(--m-micro, 120ms) ease;
+}
+button.attachment-tile-face:hover:not(:disabled) {
+  border-color: var(--line-strong);
+}
+button.attachment-tile-face:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+button.attachment-tile-face:disabled {
+  cursor: default;
+}
+.attachment-tile-face > img,
+.attachment-tile-face > video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.attachment-tile-type {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.attachment-tile-ext {
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  line-height: var(--lh-meta);
+}
+.attachment-tile-play {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding-inline-start: 2px;
+  border-radius: var(--r-full);
+  background: color-mix(in srgb, var(--tip-bg) 64%, transparent);
+  color: var(--tip-ink);
+  backdrop-filter: blur(6px);
+}
+.attachment-tile-play svg {
+  fill: currentColor;
+}
+.attachment-tile-duration {
+  position: absolute;
+  inset-inline-end: var(--sp-4);
+  inset-block-end: var(--sp-4);
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-4);
+  background: color-mix(in srgb, var(--tip-bg) 64%, transparent);
+  color: var(--tip-ink);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-variant-numeric: tabular-nums;
+}
+.attachment-tile[data-type='audio'] .attachment-tile-duration {
+  inset-inline: 0;
+  margin-inline: auto;
+  width: max-content;
+  background: none;
+  color: var(--muted);
+}
+.attachment-tile-progress {
+  position: absolute;
+  inset-inline: var(--sp-6);
+  inset-block-end: var(--sp-6);
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--r-full);
+  background: var(--track);
+}
+.attachment-tile-progress > span {
+  display: block;
+  height: 100%;
+  inline-size: 40%;
+  border-radius: inherit;
+  background: var(--ink-2);
+  transition: inline-size 160ms linear;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .attachment-tile-progress > span:not([style]) {
+    animation: attachment-busy 1.1s ease-in-out infinite;
+  }
+}
+@keyframes attachment-busy {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+.attachment-draft[data-state='uploading'] .attachment-tile-face > :is(img, video) {
+  filter: saturate(0.4) brightness(0.92);
+}
+.attachment-tile[data-failed] > .attachment-tile-face {
+  border-color: var(--red-line);
+}
+.attachment-tile-name {
+  display: flex;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+}
+.attachment-tile-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachment-tile-tail {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.attachment-tile > .attachment-remove {
+  position: absolute;
+  inset-block-start: -7px;
+  inset-inline-end: -7px;
+  z-index: 1;
+}
+.attachment-tile > .attachment-remove .ui-icon-button-face,
+.attachment-tile > .attachment-remove:where(.ui-icon-button) {
+  border-radius: var(--r-full);
+}
+.attachment-tile > .attachment-remove {
+  --remove-size: 20px;
+  min-width: var(--remove-size);
+  width: var(--remove-size);
+  height: var(--remove-size);
+  border-radius: var(--r-full);
+  background: var(--ink);
+  color: var(--canvas);
+  box-shadow: 0 0 0 2px var(--pop);
+}
+.attachment-tile > .attachment-remove:hover:not(:disabled) {
+  background: var(--ink-2);
+  color: var(--canvas);
 }
 .attachment-state {
   display: inline-flex;
@@ -129,18 +660,17 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
 }
-.attachment-draft:is([data-state='failed'], [data-state='refused']) .attachment-state {
-  color: var(--red);
-}
-/* Pressable, to say why it adds nothing; looks as a disabled button does. */
-.attachment-button[data-unavailable] {
-  opacity: 0.45;
-}
-.attachment-preview img {
+.attachment-preview img,
+.attachment-preview video {
   display: block;
   max-width: 100%;
   max-height: 60vh;
+  margin-inline: auto;
   object-fit: contain;
+}
+.attachment-preview audio {
+  display: block;
+  width: 100%;
 }
 .attachment-preview pre {
   white-space: pre-wrap;
@@ -160,39 +690,28 @@
 .message-user .message-attachments {
   justify-content: flex-end;
 }
-.message-attachment-picture.ui-button {
+.message-attachment {
+  width: 104px;
+}
+/* An agent's or a tool's picture is there to be looked at: wider, and its generated name left out. */
+.message-attachments[data-output] .message-attachment[data-type='image'] {
   width: 176px;
-  height: 128px;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--r-12);
 }
-.message-attachment-picture > img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.message-attachments[data-output] .message-attachment[data-type='image'] .attachment-tile-face {
+  aspect-ratio: 11 / 8;
 }
-.message-attachment-picture .attachment-name {
-  max-width: 110px;
-}
-.message-attachment-file.ui-button {
-  min-height: 56px;
-  max-width: 100%;
-  gap: var(--sp-10);
-  padding: var(--sp-8) var(--sp-12);
-  text-align: start;
+.message-attachments[data-output] .message-attachment[data-type='image'] .attachment-tile-name {
+  display: none;
 }
 @media (max-width: 719px) {
-  .attachment-name {
-    max-width: 144px;
-  }
-  .attachment-draft {
-    flex-wrap: wrap;
+  .message-attachment {
+    width: 88px;
   }
 }
-
+/* Pressable, to say why it adds nothing; looks as a disabled button does. */
+.attachment-button[data-unavailable] {
+  opacity: 0.45;
+}
 .attachment-drop-mask {
   position: absolute;
   inset: var(--sp-8);

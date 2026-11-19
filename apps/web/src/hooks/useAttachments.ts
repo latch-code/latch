@@ -1,5 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { AttachmentCapabilities, AttachmentRef, AttachmentSelection } from '@latch/protocol'
+import {
+  ATTACHMENT_EMBEDDED_TEXT_BYTES,
+  attachmentDelivery,
+  type AttachmentCapabilities,
+  type AttachmentRef,
+  type AttachmentSelection,
+} from '@latch/protocol'
 import { api, ApiError, ApiTimeoutError, errorMessage, MessageError, newRequestId, NoAnswerError, uploadAttachment } from '../core/api.ts'
 import { looksLikeImage, SHRINK_INPUT_BYTES, ShrinkRefusal, shrinkImage } from './imageShrink.ts'
 import { defineCopy } from '../core/i18n.ts'
@@ -10,6 +16,7 @@ const COPY = defineCopy(
     imageLimit: (value1: string) => `图片 ${value1} 内`,
     textLimit: (value1: string) => `文字文件 ${value1} 内`,
     eight: '每条 8 个',
+    fileLimit: (value1: string) => `每个文件 ${value1} 内`,
     empty: '空文件不能添加。',
     unsupported: '这个 Harness 不接收附件。',
     tooLarge: (value1: string, value2: string, value3: string) => `「${value1}」超过 ${value2}，没有添加。${value3}`,
@@ -20,12 +27,14 @@ const COPY = defineCopy(
     refused: '有附件不能发送，请移除后再发送。',
     notReady: '附件尚未准备好。请重试失败的文件，或移除后发送。',
     notAccepted: '当前 Harness 不接受这些附件。请移除附件或更换模型。',
+    byPath: '以文件交给 Agent',
   },
   {
     badReply: 'The attachment response was invalid.',
     imageLimit: (value1: string) => `Images up to ${value1}`,
     textLimit: (value1: string) => `Text files up to ${value1}`,
     eight: '8 per message',
+    fileLimit: (value1: string) => `Files up to ${value1}`,
     empty: 'Empty files cannot be added.',
     unsupported: 'This Harness does not accept attachments.',
     tooLarge: (value1: string, value2: string, value3: string) => `“${value1}” exceeds ${value2} and was not added.${value3}`,
@@ -36,6 +45,7 @@ const COPY = defineCopy(
     refused: 'Some attachments cannot be sent. Remove them before sending.',
     notReady: 'Attachments are not ready. Retry the failed files or remove them and send.',
     notAccepted: 'The current Harness does not accept these attachments. Remove them or choose another model.',
+    byPath: 'Given to the agent as a file',
   },
 )
 
@@ -84,9 +94,11 @@ async function reuseAttachment(
     signal,
     timeoutMs: 60_000,
   })
-  return { ref, file: new File([bytes], ref.name, { type: ref.kind === 'image' ? ref.mime : 'text/plain' }) }
+  return { ref, file: new File([bytes], ref.name, { type: ref.mime }) }
 }
 
+/** As the Host's per-device limit on uploads received at once. */
+const UPLOADS_AT_ONCE = 2
 const IMAGE_BYTES = 5 * 1024 * 1024
 const FILE_BYTES = 25 * 1024 * 1024
 /**
@@ -110,9 +122,25 @@ export const refusedUpload = (cause: unknown): boolean => cause instanceof ApiEr
 export const sizeText = (bytes: number): string =>
   bytes >= 1024 * 1024 ? `${Math.round(bytes / 1024 / 1024)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`
 
+/**
+ * The quiet word on a tile that goes to the agent as a saved file rather than as a picture or text it is shown; none
+ * for the usual case, or while the Host has not said what it takes.
+ */
+export function deliveryHint(
+  ref: Pick<AttachmentRef, 'kind' | 'size'> | undefined,
+  caps: AttachmentCapabilities | undefined,
+): string | undefined {
+  if (!ref || !caps?.files || caps.pending) return undefined
+  // Text is embedded only up to the embed limit, whatever a Harness lets a client upload.
+  return attachmentDelivery(ref, { ...caps, textBytes: Math.min(caps.textBytes, ATTACHMENT_EMBEDDED_TEXT_BYTES) }) === 'path'
+    ? COPY.byPath
+    : undefined
+}
+
 /** The limits the Host states for what this composer may attach, in a short line; empty when nothing can be attached. */
 export function attachmentLimits(caps: AttachmentCapabilities | undefined): string {
-  if (!caps || (!caps.images && !caps.text)) return ''
+  if (!caps || (!caps.images && !caps.text && !caps.files)) return ''
+  if (caps.files) return [COPY.fileLimit(sizeText(caps.fileBytes ?? FILE_BYTES)), COPY.eight].join(' · ')
   const file = caps.fileBytes ?? FILE_BYTES
   return [
     caps.images ? COPY.imageLimit(sizeText(Math.min(caps.imageBytes ?? IMAGE_BYTES, file))) : '',
@@ -127,6 +155,7 @@ export function attachmentLimits(caps: AttachmentCapabilities | undefined): stri
 function largestAccepted(caps: AttachmentCapabilities | undefined): number | undefined {
   if (!caps) return undefined
   const file = caps.fileBytes ?? FILE_BYTES
+  if (caps.files) return file
   return Math.min(file, Math.max(caps.images ? (caps.imageBytes ?? IMAGE_BYTES) : 0, caps.text ? caps.textBytes : 0))
 }
 
@@ -149,7 +178,7 @@ export function addRefusal(
   caps: AttachmentCapabilities | undefined,
 ): string | undefined {
   if (!file.size) return COPY.empty
-  if (caps && !caps.images && !caps.text) return caps.reason ?? COPY.unsupported
+  if (caps && !caps.images && !caps.text && !caps.files) return caps.reason ?? COPY.unsupported
   if (shrinkLimit(file, caps) !== undefined) return undefined
   const largest = largestAccepted(caps) ?? FILE_BYTES
   if (file.size > largest) {
@@ -212,6 +241,21 @@ export function useAttachments({
   const state = useRef(items)
   const jobs = useRef(new Map<string, { controller: AbortController; promise: Promise<void> }>())
   const generation = useRef(0)
+  // The Host takes two uploads from a device at a time: the rest wait their turn here rather than being refused.
+  const slots = useRef({ active: 0, waiting: [] as Array<() => void> })
+  const inTurn = async <T>(signal: AbortSignal, send: () => Promise<T>): Promise<T> => {
+    const pool = slots.current
+    if (pool.active < UPLOADS_AT_ONCE) pool.active++
+    else await new Promise<void>(resolve => pool.waiting.push(resolve))
+    try {
+      signal.throwIfAborted()
+      return await send()
+    } finally {
+      const next = pool.waiting.shift()
+      if (next) next()
+      else pool.active--
+    }
+  }
   const update = (change: (previous: DraftAttachment[]) => DraftAttachment[]) => {
     state.current = change(state.current)
     setItems(state.current)
@@ -303,15 +347,18 @@ export function useAttachments({
             : entry,
         ),
       )
-      const promise = reuseAttachment(
-        item.source,
-        {
-          requestId: item.requestId,
-          selection,
-          ...(sessionId ? { sessionId } : {}),
-          ...(acknowledged || item.secretAcknowledged ? { secretAcknowledged: true as const } : {}),
-        },
-        controller.signal,
+      const source = item.source
+      const promise = inTurn(controller.signal, () =>
+        reuseAttachment(
+          source,
+          {
+            requestId: item.requestId,
+            selection,
+            ...(sessionId ? { sessionId } : {}),
+            ...(acknowledged || item.secretAcknowledged ? { secretAcknowledged: true as const } : {}),
+          },
+          controller.signal,
+        ),
       )
         .then(({ ref, file }) => {
           if (current !== generation.current || !state.current.some(entry => entry.key === key)) {
@@ -386,23 +433,25 @@ export function useAttachments({
           : entry,
       ),
     )
-    const promise = uploadAttachment(
-      item.file,
-      {
-        requestId: item.requestId,
-        name: item.file.name,
-        size: item.file.size,
-        selection,
-        ...(sessionId ? { sessionId } : {}),
-        ...(acknowledgedSecret ? { secretAcknowledged: true } : {}),
-      },
-      {
-        signal: controller.signal,
-        onProgress: (loaded, total) => {
-          if (current === generation.current)
-            update(items => items.map(entry => (entry.key === key ? { ...entry, progress: total ? loaded / total : 0 } : entry)))
+    const promise = inTurn(controller.signal, () =>
+      uploadAttachment(
+        item.file,
+        {
+          requestId: item.requestId,
+          name: item.file.name,
+          size: item.file.size,
+          selection,
+          ...(sessionId ? { sessionId } : {}),
+          ...(acknowledgedSecret ? { secretAcknowledged: true } : {}),
         },
-      },
+        {
+          signal: controller.signal,
+          onProgress: (loaded, total) => {
+            if (current === generation.current)
+              update(items => items.map(entry => (entry.key === key ? { ...entry, progress: total ? loaded / total : 0 } : entry)))
+          },
+        },
+      ),
     )
       .then(ref => {
         if (current !== generation.current || !state.current.some(item => item.key === key)) {
@@ -466,7 +515,7 @@ export function useAttachments({
     const accepted: DraftAttachment[] = refs.slice(0, room).map(ref => ({
       key: crypto.randomUUID(),
       requestId: newRequestId(),
-      file: new File([], ref.name, { type: ref.kind === 'image' ? ref.mime : 'text/plain' }),
+      file: new File([], ref.name, { type: ref.mime }),
       source: ref,
       status: 'uploading',
       progress: 0,
@@ -501,7 +550,13 @@ export function useAttachments({
         setError(COPY.notReady)
         return
       }
-      if (state.current.some(item => (item.ref?.kind === 'image' ? !caps?.images : !caps?.text || draftSize(item) > caps.textBytes))) {
+      // A Harness that takes files takes every one, natively or by its path; an older one only what it names.
+      if (
+        !caps?.files
+        && state.current.some(item =>
+          item.ref?.kind === 'image' ? !caps?.images : item.ref?.kind === 'file' || !caps?.text || draftSize(item) > caps.textBytes,
+        )
+      ) {
         setError(caps?.reason ?? COPY.notAccepted)
         return
       }

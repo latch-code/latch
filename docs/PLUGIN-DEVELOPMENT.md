@@ -377,7 +377,7 @@ Driver 上的其他声明：
 | `proposeWork` | 建会话时 `CreateTaskInput.workProposals` 为真时可用：Agent 为看板提议待办或自己卡上的改动，Host 只建一条待人接受的提议（[ARCHITECTURE.md](ARCHITECTURE.md#agent-的提议)）；只交 `todo` 或 `card`，不交优先级 |
 | `proposeMemory`、`proposeSchedule` | 会话的执行上下文带 `proposals` 时可用。Host 只建一条待人确认的提议，从不直接保存或运行；`key` 在会话的通道内唯一，重复只建一条；`external` 拿不准时为真；拒绝的原因不复述内容（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#记忆提议)） |
 | `recallMemory` | 只给内置 Harness；只读，只回该归属已确认的记忆（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#查记忆)） |
-| `readAttachment`、`saveAttachment` | 取本轮附件的内容、保存 Agent 输出的图片。持久化只存引用，不把附件复制到项目目录；Host 仍验证设备、会话、类型与限额 |
+| `readAttachment`、`attachmentPath`、`saveAttachment` | 取本轮附件的内容；把不原生交的附件存成会话附件目录里的文件并给出路径（[ATTACHMENTS.md](ATTACHMENTS.md#按路径交给-agent)）；保存 Agent 输出的图片。持久化只存引用，不把附件复制到项目目录；Host 仍验证设备、会话、类型与限额 |
 | `trackFiles` | 见 [FILE-OUTPUTS.md](FILE-OUTPUTS.md) |
 | `extensionReportProject` | Host 已登记且当前仍为普通会话时返回项目 ID。新会话可等 `CreateTaskInput.extensionReportReady` 结算后核对归属 |
 

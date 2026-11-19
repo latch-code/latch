@@ -3,7 +3,14 @@ import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, rename, rm } fr
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { imageDimensions, isAttachmentRef, type AttachmentRef } from '@latch/protocol'
+import {
+  ATTACHMENT_FILE_MIMES,
+  ATTACHMENT_IMAGE_MIMES,
+  imageDimensions,
+  isAttachmentRef,
+  type AttachmentFileMime,
+  type AttachmentRef,
+} from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, redactSecrets, syncDirectory, writeFileAtomic } from '@latch/core/node-kit'
 import { fileFormat } from './files/metadata.ts'
@@ -24,6 +31,64 @@ export function attachmentInputHash(name: string, size: number, sha256: string):
   return createHash('sha256').update(canonicalJson({ name, size, sha256 })).digest('hex')
 }
 const ID = /^[A-Za-z0-9_-]{22}$/u
+const TEXT_FORMATS = new Set(['text', 'code', 'markdown', 'csv', 'html', 'svg'])
+const OFFICE: Record<string, AttachmentFileMime> = {
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+}
+const HEIF_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'mif1', 'msf1'])
+/**
+ * What a file is, by its content: a picture a model can see (PNG, JPEG, GIF, WebP up to 5 MiB), text, or a file of a
+ * sniffed type. Every file is one of the three: nothing is refused for its type.
+ */
+export function attachmentKind(
+  head: Uint8Array,
+  ext: string,
+  size: number,
+):
+  | { kind: 'image'; mime: (typeof ATTACHMENT_IMAGE_MIMES)[number] }
+  | { kind: 'text'; mime: 'text/plain' }
+  | { kind: 'file'; mime: AttachmentFileMime } {
+  const brand =
+    head.length >= 12 && String.fromCharCode(...head.subarray(4, 8)) === 'ftyp' ? String.fromCharCode(...head.subarray(8, 12)) : ''
+  if (HEIF_BRANDS.has(brand)) return { kind: 'file', mime: 'image/heic' }
+  if (brand === 'qt  ') return { kind: 'file', mime: 'video/quicktime' }
+  const format = fileFormat({ head, ext })
+  if (format.kind === 'image') {
+    const mime = format.mime as AttachmentFileMime
+    return (ATTACHMENT_IMAGE_MIMES as readonly string[]).includes(mime) && size <= ATTACHMENT_IMAGE_LIMIT
+      ? { kind: 'image', mime: mime as (typeof ATTACHMENT_IMAGE_MIMES)[number] }
+      : { kind: 'file', mime: (ATTACHMENT_FILE_MIMES as readonly string[]).includes(mime) ? mime : 'application/octet-stream' }
+  }
+  if (TEXT_FORMATS.has(format.kind)) return { kind: 'text', mime: 'text/plain' }
+  if (format.kind === 'pdf') return { kind: 'file', mime: 'application/pdf' }
+  if (format.kind === 'docx' || format.kind === 'xlsx' || format.kind === 'pptx') return { kind: 'file', mime: OFFICE[format.kind]! }
+  if (format.kind === 'binary' && ext === 'zip' && head[0] === 0x50 && head[1] === 0x4b) return { kind: 'file', mime: 'application/zip' }
+  if (format.kind === 'audio' || format.kind === 'video') {
+    // An ID3 tag opens MP3 files far more often than FLAC ones; a QuickTime file may lack its `ftyp`.
+    if (head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33)
+      return { kind: 'file', mime: ext === 'flac' ? 'audio/flac' : 'audio/mpeg' }
+    if (format.kind === 'video' && ext === 'mov') return { kind: 'file', mime: 'video/quicktime' }
+    const mime = format.mime as AttachmentFileMime
+    return { kind: 'file', mime: (ATTACHMENT_FILE_MIMES as readonly string[]).includes(mime) ? mime : 'application/octet-stream' }
+  }
+  return { kind: 'file', mime: 'application/octet-stream' }
+}
+/** A name an agent's tools can open: the attachment's own, without separators, control characters or a leading dot. */
+export function attachmentFileName(name: string): string {
+  const plain = name.replace(/[\u0000-\u001f\u007f/\\:]/gu, '_').trim()
+  return (plain.startsWith('.') ? `_${plain}` : plain || 'attachment').slice(0, 200)
+}
+/** A directory of Latch's own: made 0700 when missing, and refused when what is there is a link or not a directory. */
+async function privateFolder(path: string): Promise<void> {
+  await mkdir(path, { mode: 0o700 }).catch(error => {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  })
+  const info = await lstat(path)
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new AppError(409, 'attachment-changed', '附件目录已变化，请重新添加。')
+  await chmod(path, 0o700)
+}
 const taskId = z
   .string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}$/u)
@@ -351,31 +416,28 @@ export class AttachmentStore {
   }): Promise<AttachmentRef> {
     const { name, size, head: first, temporary } = input
     await input.recheck()
-    const ext = name.includes('.') ? name.split('.').at(-1)!.toLowerCase() : '',
-      format = fileFormat({ head: first, ext })
-    if (format.kind !== 'image' && !['text', 'code', 'markdown', 'csv'].includes(format.kind))
-      throw new AppError(
-        415,
-        'attachment-type-unsupported',
-        format.kind === 'pdf' ? '尚未实现：需要在 Host 上解析 PDF。' : '当前 Harness 不接受这种附件。',
-      )
-    const image = format.kind === 'image'
-    if (image && (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(format.mime) || size > ATTACHMENT_IMAGE_LIMIT))
-      throw new AppError(415, 'attachment-image-unsupported', '图片仅支持 PNG、JPEG、GIF、WebP，每张最多 5 MB。')
-    const dims = image ? imageDimensions(first, format.mime) : undefined
-    if (image && (!dims || dims.width * dims.height > 40_000_000))
-      throw new AppError(415, 'attachment-image-invalid', '图片尺寸无法验证，或超过 4,000 万像素。')
-    const decoded = image ? undefined : this.decodeText(await readFile(temporary))
-    const secret = isSecretPath(name, first) || hasSecretContent(image ? first : new TextEncoder().encode(decoded!))
+    const ext = name.includes('.') ? name.split('.').at(-1)!.toLowerCase() : ''
+    const kind = attachmentKind(first, ext, size)
+    const dims = kind.kind === 'image' ? imageDimensions(first, kind.mime) : undefined
+    // A picture whose size cannot be read, or that is too large to show, still goes: as a file, by its path.
+    const picture = kind.kind === 'image' && dims && dims.width * dims.height <= 40_000_000
+    const text = kind.kind === 'text' ? this.textOf(await readFile(temporary)) : undefined
+    const sniffed: { kind: AttachmentRef['kind']; mime: AttachmentRef['mime'] } =
+      kind.kind === 'image' && !picture
+        ? { kind: 'file', mime: kind.mime }
+        : kind.kind === 'text' && text === undefined
+          ? { kind: 'file', mime: 'application/octet-stream' }
+          : kind
+    const secret = isSecretPath(name, first) || hasSecretContent(text === undefined ? first : new TextEncoder().encode(text))
     if (secret && !input.secretAcknowledged) throw new AppError(409, 'attachment-secret', '附件可能包含密钥，请确认后再添加。')
     const ref: AttachmentRef = {
       id: randomBytes(16).toString('base64url'),
       name: redactSecrets(name),
-      mime: image ? (format.mime as AttachmentRef['mime']) : 'text/plain',
-      kind: image ? 'image' : 'text',
+      mime: sniffed.mime,
+      kind: sniffed.kind,
       size,
       sha256: input.sha256,
-      ...(dims ?? {}),
+      ...(picture ? dims : {}),
     }
     await input.accept(ref)
     await input.recheck()
@@ -558,6 +620,53 @@ export class AttachmentStore {
       await fd.close()
     }
   }
+  /**
+   * A sent attachment as a file its agent opens with its own tools: `attachments/<session>/files/<id>/<name>` in the data
+   * directory, 0600 in 0700 folders, written from the stored bytes after their hash is checked. No link is followed: a
+   * folder must be a real directory, the file is written beside its place and renamed onto it, and a copy left there is
+   * kept only while it is a plain file with the same bytes. Removed with the session, or by `prune` when no attachment
+   * is bound to that session.
+   */
+  async materialize(ref: AttachmentRef, sessionId: string): Promise<string> {
+    const entry = this.state.entries[ref.id]
+    // The run may start before its draft is bound to the session (`bind`); a draft bound elsewhere is not this one's.
+    if (!entry || (entry.taskId ?? sessionId) !== sessionId || !taskId.safeParse(sessionId).success)
+      throw new AppError(404, 'attachment-missing', '附件不可用。')
+    const content = await this.read(ref)
+    const session = join(this.directory, sessionId),
+      files = join(session, 'files'),
+      folder = join(files, ref.id)
+    for (const path of [session, files, folder]) await privateFolder(path)
+    const target = join(folder, attachmentFileName(ref.name))
+    const existing = await lstat(target).catch(() => undefined)
+    if (existing?.isFile() && existing.size === ref.size) {
+      const kept = await readFile(target, { flag: constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) }).catch(() => undefined)
+      if (kept && createHash('sha256').update(kept).digest('hex') === ref.sha256) return target
+    }
+    const temporary = join(folder, `.write-${randomUUID()}`)
+    const fd = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600)
+    try {
+      await fd.writeFile(content.data)
+      await fd.sync()
+    } finally {
+      await fd.close()
+    }
+    try {
+      await rename(temporary, target)
+    } catch (error) {
+      await rm(temporary, { force: true })
+      throw error
+    }
+    return target
+  }
+  /** The file's whole text, or undefined when it does not decode as text. */
+  private textOf(data: Uint8Array): string | undefined {
+    try {
+      return this.decodeText(data)
+    } catch {
+      return undefined
+    }
+  }
   private decodeText(data: Uint8Array): string {
     try {
       const encoding = data[0] === 0xff && data[1] === 0xfe ? 'utf-16le' : data[0] === 0xfe && data[1] === 0xff ? 'utf-16be' : 'utf-8'
@@ -695,6 +804,15 @@ export class AttachmentStore {
       for (const entry of removed) {
         this.leases.delete(entry.ref.id)
         await rm(this.path(entry), { force: true })
+      }
+      // Files saved for a run whose session never took its attachments (its start failed after the save).
+      const bound = new Set(Object.values(this.state.entries).flatMap(entry => (entry.taskId ? [entry.taskId] : [])))
+      for (const name of await readdir(this.directory)) {
+        if (name.startsWith('_') || name === 'index.json' || bound.has(name) || !taskId.safeParse(name).success) continue
+        const path = join(this.directory, name),
+          info = await lstat(path).catch(() => undefined)
+        if (!info?.isDirectory() || info.mtimeMs + ATTACHMENT_TTL > this.now()) continue
+        if ((await readdir(path)).every(entry => entry === 'files')) await rm(path, { recursive: true, force: true })
       }
       for (const name of await readdir(join(this.directory, '_drafts'))) {
         if (

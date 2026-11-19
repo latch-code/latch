@@ -7,6 +7,8 @@ sources:
   - apps/desktop/src/host.cjs
   - apps/web/src/core/api.ts
   - apps/web/src/hooks/useAttachments.ts
+  - apps/web/src/components/AttachmentTile.tsx
+  - packages/harness-acp/src/attachments.ts
   - apps/web/src/hooks/imageShrink.ts
   - apps/web/src/hooks/useFileMentions.tsx
   - apps/web/src/settings/devices/ReservedAttachments.tsx
@@ -20,9 +22,9 @@ sources:
 ---
 # 附件
 
-附件 v1 只支持内容块：不往项目文件夹写文件，不把私有存储路径给 Agent。
+人附上的每个文件都交给 Agent，不因类型被拒：Harness 与模型原生收的作为图片或文本，其余保存成文件、把路径交给 Agent（[按路径交给 Agent](#按路径交给-agent)）。不往项目文件夹写文件。
 
-- `AttachmentRef` 只有 ID、名称、内容摘要、大小、嗅探后的 MIME 和图片尺寸；消息与持久历史只保留这些引用。
+- `AttachmentRef` 只有 ID、名称、内容摘要、大小、嗅探后的种类与 MIME 和图片尺寸；消息与持久历史只保留这些引用。种类 `image` 是模型能看的图片（PNG、JPEG、GIF、WebP，5 MiB、4,000 万像素以内），`text` 是能整份解码的文本，`file` 是其余一切（MIME 取自内容：HEIC、BMP、AVIF、PDF、MP4、MOV、WebM、MP3、WAV、M4A、OGG、FLAC、ZIP、docx、xlsx、pptx，否则 `application/octet-stream`）。
 - Model Provider 收到的 `AttachmentContent` 是本轮调用前按引用读取的文字或 base64 图片，不进入任务快照、SSE、请求 URL 或 Host 日志。
 - 附件预览经短期、绑定设备的句柄读取，不获得项目路径或原生文件动作（[DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)）。
 - 可能含密钥的文件名或文本需要明确确认（`attachment-secret`）。
@@ -33,31 +35,44 @@ sources:
 | 项 | 上限 |
 | --- | --- |
 | 每个文件 | 本机（`host.sock`）25 MiB，其他入口 10 MiB |
-| 图片（PNG、JPEG、GIF、WebP） | 5 MiB、4,000 万像素；超出的由页面先缩小 |
+| 图片（PNG、JPEG、GIF、WebP） | 作为图片 5 MiB、4,000 万像素；页面先把超出的缩小，缩不了的作为文件按路径交出 |
 | 每条消息 | 8 个附件 |
-| 内置 Harness 的文本 | 256 KiB |
+| 作为文本嵌入 | 256 KiB；更长的按路径交出 |
 | ACP 单轮内容 | 编码后 60 MiB（`attachments-too-large`） |
-| 同时上传 | 每设备 2 个，全 Host 8 个 |
+| 同时上传 | 每设备 2 个，全 Host 8 个；页面一次只发 2 个，其余排队 |
 | 草稿 | 每设备 32 个、256 MiB；全 Host 草稿与正在接收的字节合计 1 GiB |
 | 索引 | 50,000 个（`attachment-quota`） |
 
-- 文件类型来自内容，不看扩展名。完整文本必须能解码且没有 NUL。
+- 文件种类来自内容，不看扩展名（只用扩展名区分同一容器：ZIP 里的 docx、xlsx、pptx，ISO 媒体里的 m4a，带 ID3 的 FLAC，没有 `ftyp` 的 MOV）。完整文本必须能解码且没有 NUL，否则是 `file`。
 - **添加时缩小。** 超过这条连接 `imageBytes`（不超过 `fileBytes`）的图片由页面在本机解码、按方向转正后重新编码，直到同时在字节与像素上限内（首次按像素上限与 4096 长边，再降质量或按超出比例缩边，至多 6 次）；不透明的编码为 JPEG，有透明的为 WebP 或 PNG。只上传缩小后的文件，Host 照常嗅探与检查。动图、本机无法解码或仍超限的拒绝并写明原因；附件和提示标「已缩小」，原大小在悬停。
 - 附件按钮的提示只写「添加文件」；上限只在文件真的超出时说出。
-- PDF 尚未实现 Host 解析；其他二进制与 Office 输入明确拒绝。
 - 运行中排队或追加的消息只带文字：带附件或文件引用的以 400 `queue-attachments-unsupported` 拒绝。
 
 ## 模型与 Harness 能力
 
+**一条规则**（`@latch/protocol` 的 `attachmentDelivery`）：图片在 Harness 与模型都收图片时作为图片；文本在 Harness 收嵌入文本且不超过 256 KiB 时作为文本；其余都按路径。在发送时按运行中的 Harness 决定，不在上传时；上传只拒绝真正的失败（太大、读不完、摘要不符、额度）。
+
+- **内置 Harness**：图片只给声明 `vision` 的模型；文本总是嵌入（256 KiB 内）；其余按路径追加到这条消息的模型输入。只对话模式没有工具，Agent 只能看到文件名、类型与路径。
+- **ACP Agent**：按它本轮 `initialize` 报告的 `image` 与 `embeddedContext`（[HARNESSES.md](HARNESSES.md)）；经网关路由到一个声明不看图（`vision: false`）的模型时，图片也按路径。Codex 直连与 pi 只报告图片，文本也按路径；Claude 直连与 OpenCode 直连两者都报告。
+- **插件 Harness**（不经内置运行时也不是 ACP）仍按它声明或报告的 `images`、`text`，不声明 `files`，其余种类以 415 `attachment-type-unsupported` 拒绝。
+
 - **图片要显式声明。** 模型能力由 Provider 的 `modelCapabilities[model].vision` 声明，未声明就不能发送图片，不按模型名称猜测。Host 托管的服务把声明保存在配置，插件也可声明。
 - **Harness 必须显式声明接收附件。** 第三方 Harness 没有声明时不可用；插件 Harness 实现了 `Bridge.promptCapabilities` 时以它报告的为准。
 - **ACP Agent** 以它最近一次为当前定义启动时 `initialize` 报告的能力为准（会话启动、新会话读取可选项、「测试启动」都算）；随驱动状态持久化，定义改了就作废。文本作为 embedded resource，图片作为 image，两者要分别声明 `embeddedContext` 与 `image`；旧记录缺少字段时不推测支持。
-- **Codex 直连与 pi** 只报告图片（`image: true, embeddedContext: false`）。
 - 页面只在 Host 声明 `catalog.features.attachments` 时显示上传与模型设置里的图片开关。
-- `HarnessInfo.attachmentsReported` 把「报告过没有」带给页面，页面在它或 Harness 状态变化时重读能力。没启动过时页面说明发出第一条消息后才能添加文件。
-- `POST /attachments/capabilities` 同时给出这条连接每个文件与每张图片的上限（`fileBytes`、`imageBytes`），文本另有 `textBytes`。
+- `HarnessInfo.attachmentsReported` 把「报告过没有」带给页面，页面在它或 Harness 状态变化时重读能力。没启动过的 ACP Agent 也收文件（`pending`）：页面不提示按路径，第一条消息按它启动时报告的决定。
+- `POST /attachments/capabilities` 给出原生收的 `images`、`text`（`textBytes`）、其余是否按路径收（`files`），以及这条连接每个文件与每张图片的上限（`fileBytes`、`imageBytes`）。
 - 网页会话与起始页的附件能力读取随连接横幅暂停和恢复。能力请求无应答由横幅提示。Host 明确回答的读取错误、上传与发送的操作回执各自保留。
 - 内置的三种协议各自生成图片块（Chat Completions 的 `image_url`、Responses 的 `input_image`、Anthropic 的 base64 `image`），仍只调用 Host 注入的出站 fetch，密钥绑定与出站策略不变。
+
+## 按路径交给 Agent
+
+不原生交的附件在发送时由 Host 写成文件（`AttachmentStore.materialize`）：
+
+- 位置：`<dataDir>/attachments/<会话>/files/<附件 ID>/<名称>`。名称是附件自己的，去掉分隔符与控制字符，开头的点换成 `_`。目录 0700、文件 0600；目录是链接或不是目录时拒绝（409 `attachment-changed`），文件先写在旁边再改名覆盖，留着的副本只在是普通文件且字节相同时沿用，所以 Agent 改了或换成链接都会被换回。
+- 字节取自私有存储并核对 SHA-256；草稿尚未绑定时写进本轮会话的目录，已绑定到别的会话的拒绝。会话删除时一起删除；启动或清理时，没有任何附件绑定、只有 `files/` 且超过一小时的会话目录被删除（开始失败留下的）。
+- 模型输入在提示之后多一段：「用户附上了这些文件，已保存在本机，可用你的工具按路径读取：」，每个一行 `- 名称（MIME，大小）：绝对路径`。ACP 是最后一个 text 块；内置 Harness 追加在这条用户消息的内容后。路径只进本轮模型输入，不进消息、快照、SSE 或日志。
+- 这是交给可信本机 Agent 的一份副本，不是隔离。真实的 Codex、Claude、OpenCode 与 pi 经网关各自用自己的 shell 工具读到了它（`attachment-path.live.test.ts`），在默认权限下按各自的规则询问一次，Latch 显示为普通审批。内置 Harness 的 `read_file` 只读项目文件夹，读不到它：它只得到名称、类型与路径。
 
 ## 单请求上传
 
@@ -141,7 +156,7 @@ sources:
 
 **完成：**
 
-- 核对总大小与 `sha256`，再做与单请求相同的内容检查：按内容嗅探类型且必须是开始时声明的 `kind`、图片像素上限、整份文本解码、密钥确认、按开始时的选择重查能力。
+- 核对总大小与 `sha256`，再做与单请求相同的内容检查：按内容嗅探种类且必须是开始时声明的 `kind`（`image`、`text` 或 `file`）、整份文本解码、密钥确认、按开始时的选择重查能力。
 - 通过后的草稿在 ID、幂等、保留与释放上都与单请求上传的相同。审计只在完成时写一条 `attachment.add`（本机 `host.sock` 之外的入口），不按段写。
 - `attachment-secret` 保留各段，以 `secretAcknowledged` 再完成一次，不重发字节。
 - **只有内容本身被拒时删除各段并记住这个回答**：`attachment-invalid`（含摘要或声明类型不符）、`attachment-too-large`、`attachment-type-unsupported`、`attachment-image-unsupported`、`attachment-image-invalid`、`attachment-text-invalid` 与 `request-conflict`。
@@ -164,8 +179,9 @@ sources:
 
 ## 输入与预览
 
-- **添加。** 输入框接收文件选择、图片粘贴和文件拖入。超过上限的文件不上传，直接说明；Harness 不收任何附件时说它不收，不说文件太大；不能添加时按钮不停用，按下说明原因。超过 2,000 字的文字粘贴折为文本附件。
-- **永久拒绝。** Host 按这些错误码拒绝的文件只能移除，不提供重试：`attachment-invalid`、`attachment-too-large`、`attachment-type-unsupported`、`attachment-image-unsupported`、`attachment-text-unsupported`、`attachment-image-invalid`、`attachment-text-invalid`、`attachment-text-too-large`、`attachments-unsupported`。网页（`useAttachments.ts` 的 `REFUSED`）与手机（`PhoneAttachments` 的 `refused`）是同一组。
+- **添加。** 输入框接收文件选择、图片粘贴和文件拖入。超过这条连接每文件上限的不上传，直接说明上限；不能添加时按钮不停用，按下说明原因。超过 2,000 字的文字粘贴折为文本附件。
+- **显示。** 草稿与消息里的附件都是方块（`AttachmentTile`）：图片与视频首帧（带播放标与时长）、音频时长，其余是类型图标与扩展名；名字从中间截断。消息里的图片、视频、音频进入视野后才申请预览句柄，可能含密钥的不画。点开：草稿在输入框自己的预览里看图片、视频、音频与文本；已发送的打开文件列（视频与音频以真实类型服务，文档按字节下载）。悬停写大小，按路径交出的另写「以文件交给 Agent」。
+- **永久拒绝。** Host 按这些错误码拒绝的文件只能移除，不提供重试：`attachment-invalid`、`attachment-too-large`、`attachment-type-unsupported`、`attachment-image-unsupported`、`attachment-text-unsupported`、`attachment-image-invalid`、`attachment-text-invalid`、`attachment-text-too-large`、`attachments-unsupported`。收 `files` 的 Harness 只会因太大、内容与声明不符或 Harness 没有接入读取而给出其中几个。网页（`useAttachments.ts` 的 `REFUSED`）与手机（`PhoneAttachments` 的 `refused`）是同一组。
 - **可重试。** 其余的可以重试，包括 400 `attachment-incomplete`、网络、超时与 5xx。每个文件独立重试与移除；编辑后的字节用新的上传请求。
 - **发送。** 点击发送时等待当前上传；取消等待不发送消息且保留草稿。失败和结果未知不清空内容：未知提交保留 `attachmentIds`、`fileRefs` 与原 `requestId`，确认后再清理。
 - **新会话**尚无 ID 时，只在输入框内预览用户选中的这份图片或有界纯文本，不伪造会话。本地图片 URL 在移除、文件变化或组件卸载时释放，不持久化。
@@ -204,7 +220,7 @@ sources:
 - 发送中与结果未知时附件行锁定。带附件的消息是手机唯一的那条待确认写入：结果未知时保留原 `requestId` 与 `attachmentIds`，确认送达后才清空附件行。
 - 重试得到 409 `attachment-released` 时按 Host 证明没有送达处理：文字回到原输入框，附件行只能移除后重新添加。
 
-**预览。** 已发送的附件经 `resolve` 取得短期句柄，再按文件预览的规则分段读取：只预览纯文字与重绘后的 PNG/JPEG，GIF、WebP 等只显示名称与大小。
+**预览。** 已发送的附件经 `resolve` 取得短期句柄，再按文件预览的规则分段读取：只预览纯文字与重绘后的 PNG/JPEG，GIF、WebP 等只显示名称与大小；`file` 种类的附件（PDF、音视频等）只列名称，不能打开。手机仍只选取并上传图片与文字文件。
 
 真机相机、照片权限提示与 Face ID 下的行为由所有者人工验收。
 

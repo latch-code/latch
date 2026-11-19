@@ -645,7 +645,7 @@ export const ToolCard = memo(
             {/* A tool's pictures (the browser's screenshots): opened as attachments are, on any device that may read the session. */}
             {message?.attachments?.length ? (
               <div className="tool-images">
-                <MessageAttachments attachments={message.attachments} />
+                <MessageAttachments attachments={message.attachments} output />
                 <Hint className="tool-images-note" lead={<Icon icon={Camera} size={12} />} label={COPY.screenshotTitle}>
                   {COPY.screenshotInfo}
                 </Hint>

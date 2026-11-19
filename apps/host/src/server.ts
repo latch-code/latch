@@ -2520,36 +2520,32 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         const taken = harness.attachmentsReported ?? { images: declared?.images === true, text: declared?.text === true }
         const vision = Boolean(choice && provider?.modelCapabilities?.[choice.model]?.vision === true)
         const images = taken.images && vision
+        // Whatever it does not take natively goes by its path (`attachmentDelivery`): nothing is refused for its type.
         return {
           images,
           text: taken.text,
           textBytes: Math.min(declared?.textBytes ?? 256 * 1024, 256 * 1024),
+          files: true,
           ...limits,
-          ...(!images ? { reason: taken.images ? '当前模型不能看图片。' : '这个 Harness 不接收图片。' } : {}),
         }
       }
       const agent = config.settings().agents.find(item => item.id === selected.harnessId)
       if (agent || harness.offer) {
+        // Before the agent first started, what it takes natively is not known: anything goes by its path until then, and
+        // each prompt is decided again by what the running agent reported (`promptBlocks`).
         const reported = reportedAttachments(harness)
-        const images = reported?.images === true,
-          text = reported?.text === true
+        // A model routed through the gateway that the person declared text-only gets pictures by their path.
+        const routed = selected.model
+          ? usableProviders().find(item => item.id === selected.model!.providerId)?.modelCapabilities?.[selected.model.model]
+          : undefined
         return {
-          images,
-          text,
+          images: reported?.images === true && routed?.vision !== false,
+          text: reported?.text === true,
+          // As before for clients that hold text to it (the phone); the embed limit applies at send (`promptBlocks`).
           textBytes: 25 * 1024 * 1024,
+          files: true,
+          ...(reported ? {} : { pending: true as const }),
           ...limits,
-          ...(!reported
-            ? {
-                reason: '发出第一条消息后可添加文件',
-                reasonDetail: '这个 Harness 还没启动过，还不知道它接收哪些文件。也可以先在 设置 › Harness 里测试启动。',
-              }
-            : !images && !text
-              ? { reason: '这个 Harness 不接收图片和文件。' }
-              : !images
-                ? { reason: '这个 Harness 不接收图片。' }
-                : !text
-                  ? { reason: '这个 Harness 只接收图片。' }
-                  : {}),
         }
       }
       // A plugin Harness that reports what it took when it started (`Bridge.promptCapabilities`) is held to that.
@@ -6198,6 +6194,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
             trackFiles: async input => {
               await runStarting(driver.id, input)
               return fileTracking.start(input)
+            },
+            attachmentPath: async (ref, sessionId, signal) => {
+              signal?.throwIfAborted()
+              const path = await attachmentStore.materialize(ref, sessionId)
+              signal?.throwIfAborted()
+              return path
             },
             readAttachment: async (ref, signal) => {
               signal?.throwIfAborted()

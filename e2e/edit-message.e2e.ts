@@ -189,7 +189,7 @@ test('puts the message’s attachment and file reference back with its words, an
     const draft = page.getByRole('textbox', { name: '新会话消息', exact: true })
     await expect.poll(() => draft.inputValue(), SLOW).toBe('echo look @default:reference.txt ')
     // The attachment comes back as a draft of this device, read back for its preview.
-    await page.locator('.attachment-state', { hasText: 'KB' }).waitFor(SLOW)
+    await page.locator('.attachment-draft[data-state="ready"]', { hasText: 'notes.txt' }).waitFor(SLOW)
     await page.screenshot({ path: `${OUT}/edit-attachment-1440.png`, animations: 'disabled' })
     await draft.press('Meta+Enter')
     await expect.poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.length, SLOW).toBe(2)

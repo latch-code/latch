@@ -145,7 +145,7 @@ describe('authenticated attachment routes', () => {
     )
     expect((await local.json<TaskDetail>(`tasks/${created.sessionId}`)).messages[0]!.attachments).toEqual([ref])
   })
-  it('refuses image uploads for a model that never declared vision and supports text-only attachment messages', async () => {
+  it('takes a picture for a model that never declared vision, to go by its path, and text-only attachment messages', async () => {
     const host = await startTestHost()
     hosts.push(host)
     const local = await host.enroll({ listener: 'unix' })
@@ -160,8 +160,8 @@ describe('authenticated attachment routes', () => {
           ).toString('base64url'),
         },
       })
-    const denied = await upload(png, 'image.png')
-    expect(denied.status).toBe(415)
+    const picture = await upload(png, 'image.png')
+    expect(picture.status).toBe(201)
     const uploaded = await upload(Buffer.from('logs'), 'note.txt')
     expect(uploaded.status).toBe(201)
     const ref = ((await uploaded.json()) as { attachment: AttachmentRef }).attachment
@@ -558,7 +558,7 @@ describe('authenticated attachment routes', () => {
       await rm(dataDir, { recursive: true, force: true })
     }
   })
-  it("learns an agent's attachment capabilities from its first session, without 测试启动, and says why when it takes none", async () => {
+  it('learns what an agent takes natively from its first session, without 测试启动, and takes every file before that', async () => {
     const host = await startTestHost()
     hosts.push(host)
     const desktop = await host.enroll({ listener: 'unix' })
@@ -575,10 +575,9 @@ describe('authenticated attachment routes', () => {
       (await desktop.json<{ catalog: { harnesses: HarnessInfo[] } }>('snapshot')).catalog.harnesses.find(item => item.id === id)
         ?.attachmentsReported
     const before = await caps('seeing-agent')
-    expect(before).toMatchObject({ images: false, text: false, fileBytes: 25 * 1024 * 1024, imageBytes: 5 * 1024 * 1024 })
-    // A short label; the detail goes behind its Hint.
-    expect(before.reason).toBe('发出第一条消息后可添加文件')
-    expect(before.reasonDetail).toContain('还没启动过')
+    // Not started yet: every file goes by its path until the agent says what it takes natively.
+    expect(before).toMatchObject({ images: false, text: false, files: true, fileBytes: 25 * 1024 * 1024, imageBytes: 5 * 1024 * 1024 })
+    expect(before.reason).toBeUndefined()
     expect(await reported('seeing-agent')).toBeUndefined()
     for (const harnessId of ['seeing-agent', 'plain-agent']) {
       const created = await desktop.confirmed('tasks', { body: { prompt: 'hello', requestId: randomUUID(), harnessId } })
@@ -591,7 +590,8 @@ describe('authenticated attachment routes', () => {
     expect(await caps('seeing-agent')).toMatchObject({ images: true, text: true })
     expect((await caps('seeing-agent')).reason).toBeUndefined()
     expect(await reported('seeing-agent')).toEqual({ images: true, text: true })
-    expect(await caps('plain-agent')).toMatchObject({ images: false, text: false, reason: '这个 Harness 不接收图片和文件。' })
+    expect(await caps('plain-agent')).toMatchObject({ images: false, text: false, files: true })
+    expect((await caps('plain-agent')).reason).toBeUndefined()
     expect(await reported('plain-agent')).toEqual({ images: false, text: false })
   })
   it('lets a device release only its own reserved uploads that no saved message or request needs, and audits it', async () => {
@@ -943,7 +943,9 @@ describe('releasing reserved uploads while a retry is on its way', () => {
       ).capabilities
     expect(await caps()).toMatchObject({ images: true, text: true })
     reported = { images: false, text: true }
-    expect(await caps()).toMatchObject({ images: false, text: true, reason: '这个 Harness 不接收图片。' })
+    // What it does not take natively goes by its path: said by `images`, not as a refusal.
+    expect(await caps()).toMatchObject({ images: false, text: true, files: true })
+    expect((await caps()).reason).toBeUndefined()
   })
 })
 describe('whether the snapshot lists every session', () => {

@@ -23,7 +23,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 
 测试：`pnpm test --project @latch/harness-acp` 与 `e2e/permissions-ui.e2e.ts`。先读 [docs/HARNESSES.md](../../docs/HARNESSES.md)。
 
-- 附件只按 initialize 协商的能力发送；Agent 图片输出经 Host 私有存储转成引用，原始字节不进消息、快照或 stderr。
+- 附件按协商能力原生发，余者按路径；Agent 图片输出经 Host 私有存储转成引用，字节不进消息、快照或 stderr。
 - 文件产物只表示运行时间窗口中的观察；范围与预算见 [FILE-OUTPUTS.md](../../docs/FILE-OUTPUTS.md)。
 - 配置修改准备前和发 RPC 前调用 Host `authorize`；超时结果未知，核对时拒绝写入。
 

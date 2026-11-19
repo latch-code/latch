@@ -49,7 +49,7 @@ const uploadSchema = z.strictObject({
   owner: z.string().min(1).max(256),
   requestId: z.string().uuid(),
   name: z.string().min(1).max(200),
-  kind: z.enum(['image', 'text']),
+  kind: z.enum(['image', 'text', 'file']),
   size: z.number().int().positive().max(ATTACHMENT_FILE_LIMIT),
   sha256,
   remote: z.boolean(),
@@ -242,7 +242,7 @@ export class AttachmentUploads {
     owner: string
     requestId: string
     name: string
-    kind: 'image' | 'text'
+    kind: 'image' | 'text' | 'file'
     size: number
     sha256: string
     remote: boolean

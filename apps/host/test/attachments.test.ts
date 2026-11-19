@@ -1,10 +1,10 @@
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { writeFileAtomic } from '@latch/core/node-kit'
-import { AttachmentStore, ATTACHMENT_CLAIM_TTL, ATTACHMENT_TTL } from '../src/attachments.ts'
+import { AttachmentStore, ATTACHMENT_CLAIM_TTL, ATTACHMENT_TTL, attachmentFileName, attachmentKind } from '../src/attachments.ts'
 const directories: string[] = []
 const directory = async () => {
   const path = await mkdtemp(join(tmpdir(), 'latch-attachments-'))
@@ -27,7 +27,81 @@ const input = (text = 'ordinary text', extra: Partial<Parameters<AttachmentStore
   accept: () => {},
   ...extra,
 })
+const binary = (bytes: Buffer, name: string) => ({
+  ...input('', { name, size: bytes.length }),
+  stream: (async function* () {
+    yield bytes
+  })(),
+})
+const ftyp = (brand: string) => Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from(`ftyp${brand}`), Buffer.alloc(16)])
+describe('what an attachment is', () => {
+  it('is a picture, text or a file, by its content and never refused for its type', () => {
+    const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489', 'hex')
+    expect(attachmentKind(png, 'png', png.length)).toEqual({ kind: 'image', mime: 'image/png' })
+    // Over the picture limit: still sent, by its path.
+    expect(attachmentKind(png, 'png', 6 * 1024 * 1024)).toEqual({ kind: 'file', mime: 'image/png' })
+    expect(attachmentKind(ftyp('heic'), 'heic', 100)).toEqual({ kind: 'file', mime: 'image/heic' })
+    expect(attachmentKind(ftyp('qt  '), 'mov', 100)).toEqual({ kind: 'file', mime: 'video/quicktime' })
+    expect(attachmentKind(ftyp('isom'), 'mp4', 100)).toEqual({ kind: 'file', mime: 'video/mp4' })
+    expect(attachmentKind(ftyp('M4A '), 'm4a', 100)).toEqual({ kind: 'file', mime: 'audio/mp4' })
+    expect(attachmentKind(Buffer.from('ID3\u0004\u0000\u0000'), 'mp3', 100)).toEqual({ kind: 'file', mime: 'audio/mpeg' })
+    const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVEfmt ')])
+    expect(attachmentKind(wav, 'wav', 100)).toEqual({ kind: 'file', mime: 'audio/wav' })
+    const zip = Buffer.from('PK\u0003\u0004rest')
+    expect(attachmentKind(zip, 'zip', 100)).toEqual({ kind: 'file', mime: 'application/zip' })
+    expect(attachmentKind(zip, 'docx', 100).mime).toMatch(/wordprocessingml/u)
+    expect(attachmentKind(zip, 'xlsx', 100).mime).toMatch(/spreadsheetml/u)
+    for (const [text, ext] of [
+      ['# 标题', 'md'],
+      ['const a = 1', 'ts'],
+      ['print(1)', 'py'],
+      ['{"a":1}', 'json'],
+      ['a,b\n1,2', 'csv'],
+      ['<svg xmlns="http://www.w3.org/2000/svg"/>', 'svg'],
+    ])
+      expect(attachmentKind(Buffer.from(text), ext, text.length)).toEqual({ kind: 'text', mime: 'text/plain' })
+  })
+  it('names a saved file as the person did, with nothing that leaves its folder', () => {
+    expect(attachmentFileName('季度报告 2026（最终版）.pdf')).toBe('季度报告 2026（最终版）.pdf')
+    expect(attachmentFileName('..')).toBe('_..')
+    expect(attachmentFileName('.env')).toBe('_.env')
+    expect(attachmentFileName('a\u0000b:c')).toBe('a_b_c')
+  })
+})
 describe('private attachment store', () => {
+  it('saves a sent attachment as a private file under its own name for its agent, without following a link', async () => {
+    const path = await directory(),
+      store = await AttachmentStore.open(path)
+    const bytes = Buffer.from('%PDF-1.7\nbody')
+    const ref = await store.add(binary(bytes, '报告.pdf'))
+    // A run may save its draft before the draft is bound, into the session's folder all the same.
+    expect(await store.materialize(ref, 'session-1')).toBe(join(path, 'attachments', 'session-1', 'files', ref.id, '报告.pdf'))
+    await store.bind('device-a', [ref.id], 'session-1')
+    await expect(store.materialize(ref, 'session-2')).rejects.toMatchObject({ code: 'attachment-missing' })
+    const file = await store.materialize(ref, 'session-1')
+    expect(file).toBe(join(path, 'attachments', 'session-1', 'files', ref.id, '报告.pdf'))
+    expect(await readFile(file)).toEqual(bytes)
+    expect((await stat(file)).mode & 0o777).toBe(0o600)
+    expect((await stat(join(path, 'attachments', 'session-1', 'files', ref.id))).mode & 0o777).toBe(0o700)
+    // The agent changed its copy: it is written again from the checked bytes.
+    await writeFile(file, 'changed')
+    expect(await readFile(await store.materialize(ref, 'session-1'))).toEqual(bytes)
+    // A link put in its place is replaced, never followed.
+    const outside = join(path, 'outside.txt')
+    await writeFile(outside, 'keep')
+    await rm(file)
+    await symlink(outside, file)
+    expect(await readFile(await store.materialize(ref, 'session-1'))).toEqual(bytes)
+    expect((await lstat(file)).isSymbolicLink()).toBe(false)
+    expect(await readFile(outside, 'utf8')).toBe('keep')
+    // A folder that became a link is refused.
+    await rm(join(path, 'attachments', 'session-1', 'files'), { recursive: true })
+    await symlink(path, join(path, 'attachments', 'session-1', 'files'))
+    await expect(store.materialize(ref, 'session-1')).rejects.toMatchObject({ code: 'attachment-changed' })
+    await rm(join(path, 'attachments', 'session-1', 'files'))
+    await store.removeTask('session-1')
+    await expect(stat(join(path, 'attachments', 'session-1'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
   it('keeps original blobs recoverable after a failed bind and stops new writes until storage is reopened', async () => {
     const path = await directory()
     let failed = false
@@ -163,10 +237,9 @@ describe('private attachment store', () => {
     // The slots are given back: the next copy goes through.
     await expect(copy()).resolves.toMatchObject({ sha256: sent.sha256 })
   })
-  it('sniffs bytes, refuses unsupported PDFs and invalid text, and only publishes after acceptance and audit', async () => {
+  it('sniffs bytes into a picture, text or a file of its type, and only publishes after acceptance and audit', async () => {
     const path = await directory(),
       store = await AttachmentStore.open(path)
-    await expect(store.add(input('%PDF-1.7'))).rejects.toMatchObject({ code: 'attachment-type-unsupported' })
     await expect(
       store.add(
         input('text', {
@@ -187,6 +260,8 @@ describe('private attachment store', () => {
       ),
     ).rejects.toThrow('audit unavailable')
     expect(await readdir(join(path, 'attachments', '_drafts'))).toEqual([])
+    expect(await store.add(binary(Buffer.from('%PDF-1.7\n'), 'report.pdf'))).toMatchObject({ kind: 'file', mime: 'application/pdf' })
+    expect(await store.add(binary(Buffer.from('ab\0cd'), 'b.txt'))).toMatchObject({ kind: 'file', mime: 'application/octet-stream' })
     const ref = await store.add(input('plain text', { name: 'pretend.png' }))
     expect(ref.mime).toBe('text/plain')
   })

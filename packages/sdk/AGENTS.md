@@ -13,6 +13,6 @@
 
 测试在根项目 `tests/`（`pnpm test --project latch`）；改接口后运行 `pnpm typecheck`、`pnpm test` 与 `pnpm test:e2e`。
 
-- 附件在 Bridge/Message 里用元数据引用，在 Provider 输入里用经 Host 校验的 `AttachmentContent`；Harness 必须显式声明能力并在实际协商后复查，缺少 Host 读写接口时拒绝。
+- 附件在 Bridge/Message 里用元数据引用，在 Provider 输入里用经 Host 校验的 `AttachmentContent`；Harness 必须显式声明能力并在实际协商后复查，缺少 Host 读写接口时拒绝；原生不收的经 `attachmentPath` 按路径交出（ATTACHMENTS）。
 
 - `setConfig` 在异步准备后、外部修改前调用 `options.authorize`；拒绝立即结束，回调和配置原值不进入持久回执。409 `task-running` 只用于还没发给 Agent 的拒绝，`details.configOutcome` 只标确定没改的拒绝，Host 把它们记为失败。`readConfig` 只读 Agent 本身报告的值，不改设置。

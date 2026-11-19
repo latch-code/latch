@@ -1047,7 +1047,7 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。
 
 ## 附件内容
 
-附件的私有存储、上传路由、设备草稿租约与内容句柄见 [ATTACHMENTS.md](ATTACHMENTS.md)；会话只保存 metadata 引用，附件目录从不加入项目根。运行期间文件变化的观察见 [FILE-OUTPUTS.md](FILE-OUTPUTS.md)。
+附件的私有存储、上传路由、设备草稿租约与内容句柄见 [ATTACHMENTS.md](ATTACHMENTS.md)；会话只保存 metadata 引用，附件目录从不加入项目根；按路径交给 Agent 的副本在数据目录的会话附件目录里（[ATTACHMENTS.md](ATTACHMENTS.md#按路径交给-agent)）。运行期间文件变化的观察见 [FILE-OUTPUTS.md](FILE-OUTPUTS.md)。
 
 ## Agent 领域
 

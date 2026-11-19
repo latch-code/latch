@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
-import { Image } from 'lucide-react'
 import {
   Button,
   ConfirmDialog,
@@ -9,13 +8,13 @@ import {
   InlineNotice,
   Modal,
   ModalHeader,
-  Spinner,
   TextAreaField,
   FileGlyph,
   PlusGlyph,
   CloseGlyph,
 } from '@latch/ui'
-import { draftSize, type AttachmentDraftController, type DraftAttachment } from '../hooks/useAttachments.ts'
+import { deliveryHint, draftSize, type AttachmentDraftController, type DraftAttachment } from '../hooks/useAttachments.ts'
+import { AttachmentTile, tileType, type TileType } from '../components/AttachmentTile.tsx'
 import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
@@ -107,7 +106,7 @@ export function dropAttachments(event: DragEvent, controller: AttachmentDraftCon
 }
 /** Why the button adds nothing now, or undefined when it can. */
 export function attachmentBlock(controller: AttachmentDraftController): string | undefined {
-  if (controller.caps?.images || controller.caps?.text) return undefined
+  if (controller.caps?.images || controller.caps?.text || controller.caps?.files) return undefined
   if (controller.caps?.reason) return controller.caps.reason
   return controller.checking ? COPY.checking : COPY.unavailable
 }
@@ -189,8 +188,9 @@ function DraftPreview({
 }) {
   const [url, setUrl] = useState(''),
     [text, setText] = useState(item.pastedText ?? '')
+  const type = tileType({ name: item.file.name, mime: item.ref?.mime ?? item.file.type, ...(item.ref ? { kind: item.ref.kind } : {}) })
   useEffect(() => {
-    if (item.ref?.kind === 'image') {
+    if (type === 'image' || type === 'video' || type === 'audio') {
       const value = URL.createObjectURL(item.file)
       setUrl(value)
       return () => URL.revokeObjectURL(value)
@@ -200,12 +200,16 @@ function DraftPreview({
         .slice(0, 256 * 1024)
         .text()
         .then(setText)
-  }, [item.file, item.ref?.kind])
+  }, [item.file, type])
   return (
     <Modal label={item.file.name} variant="dialog" onClose={onClose} className="attachment-preview">
       <ModalHeader title={item.file.name} onClose={onClose} />
       <div className="ui-modal-body">
-        {url ? (
+        {url && type === 'video' ? (
+          <video src={url} controls playsInline autoPlay />
+        ) : url && type === 'audio' ? (
+          <audio src={url} controls autoPlay />
+        ) : url ? (
           <img src={url} alt={item.file.name} />
         ) : item.pastedText !== undefined ? (
           <TextAreaField label={COPY.pastedText} value={text} maxLength={256 * 1024} onChange={event => setText(event.target.value)} />
@@ -227,7 +231,11 @@ function DraftPreview({
   )
 }
 
-/** An image is a thumbnail; any other attachment is a chip one line high: its glyph, name, size and ×. */
+/**
+ * A compact tile of the file itself: a picture, a video's first frame with its play mark and length, a sound's length,
+ * else its type and extension; the name under it, cut in the middle, and a round × on its corner. Progress and a
+ * failure are on the tile; a failure says why under it, with what to do.
+ */
 function DraftAttachmentCard({
   item,
   controller,
@@ -241,70 +249,78 @@ function DraftAttachmentCard({
   onPreview(): void
   onConfirm(): void
 }) {
-  const image = item.ref?.kind === 'image'
-  const [picture, setPicture] = useState<{ file: File; url: string }>()
-  useEffect(() => {
-    if (!image) return
-    const url = URL.createObjectURL(item.file)
-    setPicture({ file: item.file, url })
-    return () => URL.revokeObjectURL(url)
-  }, [item.file, image])
   const name = item.pastedText === undefined ? item.file.name : COPY.pastedCount(item.pastedText.length)
-  const status = (
-    <span
-      className="attachment-state"
-      role="status"
-      title={item.shrunkFrom === undefined ? undefined : COPY.originalImage(uploadBytes(item.shrunkFrom))}>
-      {item.status === 'uploading' && item.shrink ? (
-        <>
-          <Spinner size={12} />
-          {COPY.shrinking}
-        </>
-      ) : item.status === 'uploading' ? (
-        <>
-          <Spinner size={12} />
-          {item.source ? COPY.retrieving : `${uploadBytes(item.file.size * item.progress)} / ${uploadBytes(item.file.size)}`}
-        </>
-      ) : item.status === 'ready' ? (
-        item.shrunkFrom === undefined ? (
-          `${Math.ceil(draftSize(item) / 1024)} KB`
-        ) : (
-          COPY.shrunk(uploadBytes(item.file.size))
-        )
-      ) : (
-        item.error
-      )}
-    </span>
-  )
-  const content = image ? (
-    picture?.file === item.file ? (
-      <img src={picture.url} alt="" decoding="async" />
-    ) : (
-      <Icon icon={Image} size={20} />
-    )
-  ) : (
-    <>
-      <span className="attachment-file-icon">
-        <Icon icon={FileGlyph} size={14} />
+  const type = tileType({ name: item.file.name, mime: item.ref?.mime ?? item.file.type, ...(item.ref ? { kind: item.ref.kind } : {}) })
+  const drawn = type === 'image' || type === 'video' || type === 'audio'
+  const [url, setUrl] = useState<{ file: File; url: string }>()
+  useEffect(() => {
+    if (!drawn || !item.file.size) return
+    const value = URL.createObjectURL(item.file)
+    setUrl({ file: item.file, url: value })
+    return () => URL.revokeObjectURL(value)
+  }, [item.file, drawn])
+  const failed = item.status === 'failed' || item.status === 'refused'
+  const opens = (item.status === 'ready' || item.status === 'confirm') && previewable(type)
+  const size = uploadBytes(draftSize(item))
+  const hint = deliveryHint(item.ref, controller.caps)
+  const title = [
+    name,
+    item.shrunkFrom === undefined ? size : `${COPY.shrunk(size)} · ${COPY.originalImage(uploadBytes(item.shrunkFrom))}`,
+    hint,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const state =
+    item.status === 'uploading' ? (
+      <span className="attachment-state" role="status">
+        {item.shrink
+          ? COPY.shrinking
+          : item.source
+            ? COPY.retrieving
+            : `${uploadBytes(item.file.size * item.progress)} / ${uploadBytes(item.file.size)}`}
       </span>
-      <span className="attachment-file-copy">
-        <span className="attachment-name">
-          <VisibleText text={name} />
-        </span>
-        {status}
+    ) : failed ? (
+      <span className="attachment-state" role="status">
+        {item.error}
       </span>
-    </>
-  )
+    ) : item.status === 'ready' ? (
+      <span
+        className="attachment-state"
+        role="status"
+        title={item.shrunkFrom === undefined ? undefined : COPY.originalImage(uploadBytes(item.shrunkFrom))}>
+        {item.shrunkFrom === undefined ? size : COPY.shrunk(size)}
+      </span>
+    ) : null
   return (
-    <div className="attachment-draft" data-state={item.status} data-kind={image ? 'image' : 'file'}>
-      {item.status === 'ready' || item.status === 'confirm' ? (
-        <Button variant="ghost" size="sm" className="attachment-draft-open" aria-label={name} disabled={locked} onClick={onPreview}>
-          {content}
-        </Button>
-      ) : (
-        <div className="attachment-draft-open">{content}</div>
-      )}
-      {image && (item.status !== 'ready' || item.shrunkFrom !== undefined) && status}
+    <div
+      className="attachment-draft"
+      data-state={item.status}
+      data-kind={type === 'image' ? 'image' : 'file'}
+      data-delivery={hint ? 'path' : undefined}>
+      <AttachmentTile
+        name={name}
+        type={type}
+        {...(url?.file === item.file ? { src: url.url } : {})}
+        {...(item.status === 'uploading' ? (item.shrink || item.source ? { busy: true } : { progress: item.progress }) : {})}
+        failed={failed}
+        title={title}
+        label={name}
+        disabled={locked}
+        {...(opens ? { onOpen: onPreview } : {})}
+        corner={
+          // A plain round ×: a toolbar's icon button grows its box on touch screens, which this corner cannot hold.
+          <button
+            type="button"
+            className="attachment-remove"
+            aria-label={COPY.remove(item.file.name)}
+            title={COPY.remove(item.file.name)}
+            disabled={locked}
+            onClick={() => controller.remove(item.key)}>
+            <Icon icon={CloseGlyph} size={12} />
+          </button>
+        }
+      />
+      {state}
       {(item.status === 'failed' || item.status === 'confirm') && (
         <Button
           className="attachment-retry"
@@ -314,17 +330,11 @@ function DraftAttachmentCard({
           {item.status === 'confirm' ? COPY.review : COPY.retry}
         </Button>
       )}
-      <IconButton
-        label={COPY.remove(item.file.name)}
-        icon={CloseGlyph}
-        {...(image ? {} : { size: 'xs' as const })}
-        disabled={locked}
-        className="attachment-remove"
-        onClick={() => controller.remove(item.key)}
-      />
     </div>
   )
 }
+/** What the composer's own preview shows: pictures, videos, sounds and text; other files only show their tile. */
+const previewable = (type: TileType) => ['image', 'video', 'audio', 'text', 'code'].includes(type)
 
 export function AttachmentDrafts({
   controller,

@@ -325,7 +325,7 @@ public enum PhoneAttachments {
         guard case let .object(fields) = ref, Set(fields.keys).isSubset(of: ["id", "name", "mime", "kind", "size", "sha256", "width", "height"]),
               let id = ref["id"].string, LinkBytes.matches(id, "[A-Za-z0-9_-]{22}"), let hash = ref["sha256"].string, LinkBytes.matches(hash, "[a-f0-9]{64}"),
               let name = ref["name"].string, !name.isEmpty, name.count <= 200, let size = ref["size"].integer, size > 0,
-              ["image", "text"].contains(ref["kind"].string ?? "") else { return false }
+              ["image", "text", "file"].contains(ref["kind"].string ?? "") else { return false }
         return true
     }
     /** A sent message's attachments, as chips: name, kind, size. */
@@ -334,7 +334,8 @@ public enum PhoneAttachments {
             guard validRef(ref), let id = ref["id"].string, let name = ref["name"].string, let size = ref["size"].integer else { return nil }
             let image = ref["kind"].string == "image"
             // Quick Look stays with plain text and redrawn PNG/JPEG (native/ios/AGENTS.md).
-            let opens = image ? ["image/png", "image/jpeg"].contains(ref["mime"].string ?? "") : size <= 524_288
+            // A file the Host gave its agent by path (PDF, video, archive…) is listed by name only.
+            let opens = image ? ["image/png", "image/jpeg"].contains(ref["mime"].string ?? "") : ref["kind"].string == "text" && size <= 524_288
             return PhoneAttachChip(id: id, name: name, image: image, size: sizeText(Int(size)), opens: opens)
         }
     }

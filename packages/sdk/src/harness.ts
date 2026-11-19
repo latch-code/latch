@@ -208,6 +208,11 @@ export interface HarnessHostOptions {
   extensionReportProject?(sessionId: string): string | undefined
   trackFiles?: (input: FileTrackingInput) => Promise<FileTrackingHandle>
   readAttachment?: (ref: AttachmentRef, signal?: AbortSignal) => Promise<AttachmentContent>
+  /**
+   * Saves a sent attachment where its agent can open it with its own tools and answers the absolute path: for what goes
+   * by its path rather than as a picture or text (`attachmentDelivery`).
+   */
+  attachmentPath?: (ref: AttachmentRef, sessionId: string, signal?: AbortSignal) => Promise<string>
   saveAttachment?: (input: { sessionId: string; mime: string; data: string }) => Promise<AttachmentRef>
   /** Private data directory assigned to the selected driver. */
   dataDir: string

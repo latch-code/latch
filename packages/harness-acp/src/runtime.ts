@@ -29,7 +29,7 @@ import {
 } from './skills-server.ts'
 import { browserServer } from './browser-server.ts'
 import { mcpBridgeServer } from './mcp-bridge.ts'
-import type { AttachmentRef, QuestionResult } from '@latch/protocol'
+import type { AttachmentRef, ModelCapabilities, QuestionResult } from '@latch/protocol'
 import {
   CURSOR_DECLINE_REPLY,
   CURSOR_QUESTION_METHOD,
@@ -1496,6 +1496,10 @@ export class AgentRuntime implements Bridge {
    */
   /** The context window the person declared for the routed model the session runs now, if they declared one. */
   private declaredContext(task: AcpTask, live: Live): number | undefined {
+    return this.routedCapabilities(task, live)?.contextTokens
+  }
+  /** What the person declared for the routed model the session runs now, if anything. */
+  private routedCapabilities(task: AcpTask, live: Live): ModelCapabilities | undefined {
     const route = task.acp.route
     const lease = live.gateway
     if (!route || !lease?.modelCapabilities) return undefined
@@ -1503,7 +1507,7 @@ export class AgentRuntime implements Bridge {
     const current = task.config?.find(item => item.category === 'model')?.currentValue
     const valueOf = (id: string) => (gateway?.via === 'launch' && gateway.models ? gateway.models.value(id, route.wire) : id)
     const model = (current === undefined ? undefined : lease.models.find(id => id === current || valueOf(id) === current)) ?? route.model
-    return lease.modelCapabilities[model]?.contextTokens
+    return lease.modelCapabilities[model]
   }
 
   private noteServiceOptions(task: AcpTask, options: SessionConfigOption[], lease: ModelGatewayLease | undefined): void {
@@ -5120,7 +5124,15 @@ export class AgentRuntime implements Bridge {
       const fork = this.state.tasks[run.taskId]?.acp.fork
       // The agent forked its own record of the source: the Host's text record of it is not sent as well.
       if (fork?.native && run.seq === 1) run.prompt = run.prompt.slice(fork.prefixLength)
-      const content = await promptBlocks(run.prompt, run.attachments ?? [], binding.live.capabilities, this.options.readAttachment)
+      // A picture goes to a routed model as a picture unless the person declared that model text-only.
+      const routed = this.state.tasks[run.taskId] && this.routedCapabilities(this.state.tasks[run.taskId]!, binding.live)
+      const content = await promptBlocks(
+        run.prompt,
+        run.attachments ?? [],
+        { ...binding.live.capabilities, images: binding.live.capabilities.images && routed?.vision !== false },
+        this.options.readAttachment,
+        this.options.attachmentPath && (ref => this.options.attachmentPath!(ref, run.taskId)),
+      )
       // Native commands with no separate context input keep their prefix. Keep the brief pending for the next ordinary prompt.
       const named = /^\/(\S+)/u.exec(run.prompt)?.[1]
       const nativeCommand = named !== undefined && (binding.live.wire.commandsWithoutContext ?? binding.live.wire.idleCommands)?.has(named)

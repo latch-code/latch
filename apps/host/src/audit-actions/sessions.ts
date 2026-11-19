@@ -7,7 +7,7 @@ const attachmentEvent = z.strictObject({
   attachmentId,
   contentHash: hex64,
   bytes: count,
-  type: z.enum(['image', 'text']),
+  type: z.enum(['image', 'text', 'file']),
 })
 
 /** Sessions: prompts, queue, questions, attachments, approvals, cancels and full-access starts. */

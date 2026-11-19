@@ -5,6 +5,9 @@ import { realpath } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
 import {
   MODEL_EFFORT,
+  attachmentDelivery,
+  attachmentPathText,
+  type AttachmentDelivery,
   fileMentionContext,
   isAttachmentRef,
   escapeSecurityText,
@@ -119,6 +122,11 @@ function privateContext(value: AgentExecutionContext | undefined): AgentExecutio
 export interface RuntimeOptions {
   trackFiles?: (input: FileTrackingInput) => Promise<FileTrackingHandle>
   readAttachment?: (ref: AttachmentRef, signal?: AbortSignal) => Promise<AttachmentContent>
+  /**
+   * Saves a sent attachment where its agent can open it with its own tools and answers the absolute path: for what goes
+   * by its path rather than as a picture or text (`attachmentDelivery`).
+   */
+  attachmentPath?: (ref: AttachmentRef, sessionId: string, signal?: AbortSignal) => Promise<string>
   /** Keeps an image a tool returned as a private attachment of the session. Without it tool images are dropped. */
   saveAttachment?: (input: { sessionId: string; mime: string; data: string }) => Promise<AttachmentRef>
   dataDir: string
@@ -1631,14 +1639,19 @@ class HarnessRuntime implements Bridge {
     if (refs === undefined) return []
     if (!Array.isArray(refs) || refs.length > 8 || !refs.every(isAttachmentRef) || new Set(refs.map(ref => ref.id)).size !== refs.length)
       throw new AppError(400, 'attachment-invalid', '附件引用无效。')
-    if (refs.some(ref => ref.kind === 'text' && ref.size > 256 * 1024))
-      throw new AppError(415, 'attachment-text-too-large', 'Latch 内置只接受 256 KB 以内的文本附件。')
     return structuredClone(refs)
   }
+  /**
+   * How an attachment reaches this run's model: a picture only to a model that sees, text up to 256 KiB, anything else by
+   * its path (`attachmentDelivery`), which the run's file tools or the model's answer can use.
+   */
+  private delivery(run: Run, ref: AttachmentRef): AttachmentDelivery {
+    return attachmentDelivery(ref, { images: this.sees(run), text: true, textBytes: 256 * 1024 })
+  }
   private assertAttachments(run: Run, refs: readonly AttachmentRef[]): void {
-    if (refs.length && !this.options.readAttachment) throw new AppError(415, 'attachments-unsupported', '当前 Harness 尚未接入附件读取。')
-    if (refs.some(ref => ref.kind === 'image') && run.lease.provider.modelCapabilities?.[run.model]?.vision !== true)
-      throw new AppError(415, 'model-vision-unsupported', '当前模型不能看图片。')
+    for (const ref of refs)
+      if (this.delivery(run, ref) === 'path' ? !this.options.attachmentPath : !this.options.readAttachment)
+        throw new AppError(415, 'attachments-unsupported', '当前 Harness 尚未接入附件读取。')
   }
 
   private async drive(run: Run): Promise<void> {
@@ -1688,8 +1701,17 @@ class HarnessRuntime implements Bridge {
             const attachmentRefs = message.role === 'tool' ? (imageWindow.get(index) ?? []) : stored
             if (!attachmentRefs.length) return { ...message, content: `${message.content}\n\n${OLDER_TOOL_IMAGES}` }
             this.assertAttachments(run, attachmentRefs)
-            const attachments = await Promise.all(attachmentRefs.map(ref => this.options.readAttachment!(ref, signal)))
-            return { ...message, attachments }
+            const native = attachmentRefs.filter(ref => message.role === 'tool' || this.delivery(run, ref) !== 'path')
+            const byPath = attachmentRefs.filter(ref => !native.includes(ref))
+            const attachments = await Promise.all(native.map(ref => this.options.readAttachment!(ref, signal)))
+            const files = await Promise.all(
+              byPath.map(async ref => ({ ref, path: await this.options.attachmentPath!(ref, run.sessionId, signal) })),
+            )
+            return {
+              ...message,
+              ...(files.length ? { content: `${message.content}\n\n${attachmentPathText(files)}` } : {}),
+              ...(attachments.length ? { attachments } : {}),
+            }
           }),
         )
         if (task.skillContext) messages.unshift({ role: 'system', content: task.skillContext })

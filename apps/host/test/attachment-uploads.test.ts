@@ -151,18 +151,21 @@ describe('chunked attachment uploads', () => {
     const answer = await refused.json()
     expect(answer).toMatchObject({ error: 'attachment-invalid' })
     expect(await (await complete(phone, mismatch.id)).json()).toEqual(answer)
-    // Sniffed, not declared: a PNG named text, a binary file, text that is not UTF-8, a PDF and a picture past 40 megapixels.
+    // Sniffed, not declared: what the bytes are must be the kind the start named (a picture, text or a file).
     for (const [bytes, extra, error] of [
       [png, { name: 'a.txt' }, 'attachment-invalid'],
-      [Buffer.from('ab\0cd'), { name: 'b.txt' }, 'attachment-type-unsupported'],
-      // Plain text in the sniffed head, not UTF-8 after it: the whole assembled file is decoded.
-      [Buffer.concat([text(70_000), Buffer.from([0xe9, 0x0a])]), { name: 'e.txt' }, 'attachment-text-invalid'],
-      [Buffer.from('%PDF-1.7\n'), { name: 'c.pdf' }, 'attachment-type-unsupported'],
-      [hugePng, { name: 'd.png', kind: 'image' }, 'attachment-image-invalid'],
+      [Buffer.from('ab\0cd'), { name: 'b.txt' }, 'attachment-invalid'],
+      // Plain text in the sniffed head, not UTF-8 after it: the whole assembled file is decoded, and it is a file.
+      [Buffer.concat([text(70_000), Buffer.from([0xe9, 0x0a])]), { name: 'e.txt' }, 'attachment-invalid'],
+      [Buffer.from('%PDF-1.7\n'), { name: 'c.pdf' }, 'attachment-invalid'],
+      // A picture past 40 megapixels is a file, not one a model is shown.
+      [hugePng, { name: 'd.png', kind: 'image' }, 'attachment-invalid'],
     ] as const) {
       const upload = await send(phone, bytes, extra)
       expect(await (await complete(phone, upload.id)).json()).toMatchObject({ error })
     }
+    const pdf = await send(phone, Buffer.from('%PDF-1.7\n'), { name: 'c.pdf', kind: 'file' })
+    expect(await (await complete(phone, pdf.id)).json()).toMatchObject({ attachment: { kind: 'file', mime: 'application/pdf' } })
     // A secret asks first; 仍然添加 completes the same parts without sending them again.
     const secret = await send(phone, Buffer.from('TOKEN=1\n'), { name: '.env' })
     expect(await (await complete(phone, secret.id)).json()).toMatchObject({ error: 'attachment-secret' })

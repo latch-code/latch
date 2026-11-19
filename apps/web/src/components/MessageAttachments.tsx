@@ -1,10 +1,8 @@
 import { useContext, useEffect, useRef, useState } from 'react'
-import { Image } from 'lucide-react'
-import { Button, Icon, FileGlyph } from '@latch/ui'
 import { isFileMetadata, type AttachmentRef } from '@latch/protocol'
 import { FileSession } from './FileChip.tsx'
 import { FileOpenContext } from '../preview/fileContext.ts'
-import { VisibleText } from './VisibleText.tsx'
+import { AttachmentTile, tileType } from './AttachmentTile.tsx'
 import { api } from '../core/api.ts'
 import { defineCopy } from '../core/i18n.ts'
 
@@ -17,15 +15,23 @@ const COPY = defineCopy(
   },
 )
 
+const sizeText = (bytes: number) =>
+  bytes < 1024 * 1024 ? `${Math.max(1, Math.ceil(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
+
+/**
+ * A sent attachment as a tile of the file itself. A picture, video or sound asks for its preview handle once the tile
+ * comes into view and draws from it; nothing that may hold a secret is drawn. Pressing it opens the file pane.
+ */
 function MessageAttachment({ attachment }: { attachment: AttachmentRef }) {
   const session = useContext(FileSession),
     open = useContext(FileOpenContext)
   const anchor = useRef<HTMLButtonElement>(null)
+  const type = tileType(attachment)
+  const drawn = type === 'image' || type === 'video' || type === 'audio'
   const key = `${session?.id ?? ''}\n${attachment.id}\n${attachment.sha256}`
-  const [image, setImage] = useState<{ key: string; url: string }>(),
-    [failed, setFailed] = useState('')
+  const [media, setMedia] = useState<{ key: string; url: string }>()
   useEffect(() => {
-    if (attachment.kind !== 'image' || !session || !open || !anchor.current) return
+    if (!drawn || !session || !open || !anchor.current) return
     const controller = new AbortController()
     let started = false
     const load = () => {
@@ -42,18 +48,15 @@ function MessageAttachment({ attachment }: { attachment: AttachmentRef }) {
             !isFileMetadata(file)
             || file.source !== 'attachment'
             || file.attachmentId !== attachment.id
-            || file.kind !== 'image'
+            || file.kind !== type
             || file.secret
             || !file.actions.preview
-            || !file.width
-            || !file.height
+            || (type === 'image' && (!file.width || !file.height))
           )
             return
-          setImage({ key, url: `/link/api/attachments/${encodeURIComponent(file.handle)}/content` })
+          setMedia({ key, url: `/link/api/attachments/${encodeURIComponent(file.handle)}/content` })
         })
-        .catch(() => {
-          if (!controller.signal.aborted) setFailed(key)
-        })
+        .catch(() => {})
     }
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) load()
@@ -63,40 +66,33 @@ function MessageAttachment({ attachment }: { attachment: AttachmentRef }) {
       controller.abort()
       observer.disconnect()
     }
-  }, [key, attachment.id, attachment.kind, session?.id, open])
-  const picture = image?.key === key && failed !== key ? image.url : undefined
+  }, [key, attachment.id, type, drawn, session?.id, open])
   return (
-    <Button
-      ref={anchor}
-      size="sm"
-      variant="secondary"
-      className={attachment.kind === 'image' ? 'message-attachment-picture' : 'message-attachment-file'}
-      aria-label={`${attachment.name} ${Math.ceil(attachment.size / 1024)} KB`}
-      disabled={!session || !open}
-      onClick={() => {
-        if (session) open?.({ sessionId: session.id, reference: attachment.name, attachmentId: attachment.id })
-      }}>
-      {picture ? (
-        <img src={picture} alt="" loading="lazy" decoding="async" onError={() => setFailed(key)} />
-      ) : (
-        <>
-          <Icon icon={attachment.kind === 'image' ? Image : FileGlyph} size={20} />
-          <span className="attachment-file-copy">
-            <span className="attachment-name">
-              <VisibleText text={attachment.name} />
-            </span>
-            <span className="attachment-state">{Math.ceil(attachment.size / 1024)} KB</span>
-          </span>
-        </>
-      )}
-    </Button>
+    <div className="message-attachment" data-type={type}>
+      <AttachmentTile
+        ref={anchor}
+        name={attachment.name}
+        type={type}
+        {...(media?.key === key ? { src: media.url } : {})}
+        label={`${attachment.name} ${sizeText(attachment.size)}`}
+        title={`${attachment.name} · ${sizeText(attachment.size)}`}
+        disabled={!session || !open}
+        onOpen={() => {
+          if (session) open?.({ sessionId: session.id, reference: attachment.name, attachmentId: attachment.id })
+        }}
+      />
+    </div>
   )
 }
 
-export function MessageAttachments({ attachments }: { attachments?: AttachmentRef[] }) {
+/**
+ * A message's attachments. What a person sent is a row of tiles; what an agent or a tool made (`output`) is mostly
+ * pictures to look at, drawn larger and without their generated names.
+ */
+export function MessageAttachments({ attachments, output = false }: { attachments?: AttachmentRef[]; output?: boolean }) {
   if (!attachments?.length) return null
   return (
-    <div className="message-attachments" aria-label={COPY.attachments}>
+    <div className="message-attachments" data-output={output ? '' : undefined} aria-label={COPY.attachments}>
       {attachments.map(ref => (
         <MessageAttachment key={ref.id} attachment={ref} />
       ))}

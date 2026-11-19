@@ -975,8 +975,8 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 
 **附件与文件引用。**
 
-- ACP 附件只走 `session/prompt` 的内容块。`initialize` 的 `promptCapabilities.image` 与 `embeddedContext` 必须各自为 true；探测缺少字段不代表支持，实际启动后再核对。
-- 图片是 base64 image，文本是带 `latch-attachment:<id>` URI 的 embedded resource，不在项目里创建文件。Agent 输出的图片经 Host 回调存为会话附件。
+- ACP 附件走 `session/prompt` 的内容块，按本轮运行中的 Agent 在 `initialize` 报告的能力逐个决定（`attachmentDelivery`）：`promptCapabilities.image` 为 true 时图片是 base64 image；`embeddedContext` 为 true 时 256 KiB 以内的文本是带 `latch-attachment:<id>` URI 的 embedded resource。探测缺少字段不代表支持。
+- 其余的（PDF、音视频、压缩包、Office、HEIC、二进制，以及 Agent 不原生收的图片和文本）保存为会话附件目录里的文件，提示末尾一个 text 块列出名称、类型、大小与绝对路径，Agent 用自己的工具打开（[ATTACHMENTS.md](ATTACHMENTS.md#按路径交给-agent)）。所有 ACP 线路都收 text 块，所以没有附件因类型被拒。Agent 输出的图片经 Host 回调存为会话附件。
 - 带附件会话的 stderr 不进 Host 日志，RPC 失败也不回显附件。限额与授权见 [ATTACHMENTS.md](ATTACHMENTS.md)。
 - 显式 `fileRefs` 由 Host 对固定目录再次验证，ACP 只在本轮模型输入里追加真实目录映射，公开消息保留原文。
 - 文件变化的范围与结算见 [FILE-OUTPUTS.md](FILE-OUTPUTS.md)。

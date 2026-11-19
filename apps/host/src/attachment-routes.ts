@@ -35,7 +35,7 @@ const reuseInput = context.extend({ requestId: z.string().uuid(), secretAcknowle
 const uploadStart = context.extend({
   requestId: z.string().uuid(),
   name: z.string().min(1).max(200),
-  kind: z.enum(['image', 'text']),
+  kind: z.enum(['image', 'text', 'file']),
   size: z.number().int().positive().max(ATTACHMENT_FILE_LIMIT),
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
 })
@@ -60,12 +60,36 @@ export interface AttachmentRoutesOptions<Caller extends AttachmentCaller> {
   /** Counts a person's write against the device's rate (the Host's class C); throws when it is spent. */
   limit?(caller: Caller): void
 }
+/**
+ * Whether this Harness takes the file at all. One that takes files (`caps.files`: the built-in Harness and every ACP
+ * agent) takes every file, natively or by its path (`attachmentDelivery`); only a plugin Harness without it is held to
+ * what it declares.
+ */
 export function assertAttachmentCapability(ref: Pick<AttachmentRef, 'kind' | 'size'>, caps: AttachmentCapabilities): void {
+  if (caps.files) return
+  if (ref.kind === 'file') throw new AppError(415, 'attachment-type-unsupported', caps.reason ?? '当前 Harness 只接收图片和文字文件。')
   if (ref.kind === 'image' && !caps.images) throw new AppError(415, 'attachment-image-unsupported', caps.reason ?? '当前模型不能看图片。')
   if (ref.kind === 'text' && !caps.text)
     throw new AppError(415, 'attachment-text-unsupported', caps.reason ?? '当前 Harness 不接受文本附件。')
   if (ref.kind === 'text' && ref.size > caps.textBytes)
     throw new AppError(415, 'attachment-text-too-large', `当前 Harness 只接受 ${Math.floor(caps.textBytes / 1024)} KB 以内的文本附件。`)
+}
+/** How the file pane previews an attachment: by its sniffed type, never as a page. */
+function previewKind(ref: AttachmentRef): FileMetadata['kind'] {
+  if (ref.kind !== 'file') return ref.kind
+  if (ref.mime === 'application/pdf') return 'pdf'
+  if (ref.mime.startsWith('video/')) return 'video'
+  if (ref.mime.startsWith('audio/')) return 'audio'
+  if (ref.mime.endsWith('wordprocessingml.document')) return 'docx'
+  if (ref.mime.endsWith('spreadsheetml.sheet')) return 'xlsx'
+  if (ref.mime.endsWith('presentationml.presentation')) return 'pptx'
+  return ref.mime.startsWith('image/') && ref.mime !== 'image/heic' ? 'image' : 'binary'
+}
+/** Only media a browser decodes gets its real type (a picture, a video, a sound); every document is bytes to download. */
+function servedMime(ref: AttachmentRef): string {
+  return ref.kind === 'image' || /^(?:video|audio)\//u.test(ref.mime) || (ref.kind === 'file' && previewKind(ref) === 'image')
+    ? ref.mime
+    : 'application/octet-stream'
 }
 export function createAttachmentRoutes<Caller extends AttachmentCaller>(options: AttachmentRoutesOptions<Caller>) {
   const releases = new Map<string, { asked: string; released: Promise<{ count: number; bytes: number }> }>()
@@ -169,7 +193,8 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
         if (!uploadId && method === 'POST') {
           const input = uploadStart.parse(await jsonBody(req))
           const caps = await options.capabilities(caller, input.selection, input.sessionId)
-          if (!caps.images && !caps.text) throw new AppError(415, 'attachments-unsupported', caps.reason ?? '当前 Harness 不接受附件。')
+          if (!caps.images && !caps.text && !caps.files)
+            throw new AppError(415, 'attachments-unsupported', caps.reason ?? '当前 Harness 不接受附件。')
           assertAttachmentCapability(input, caps)
           options.recheck(caller, 'run')
           const begun = await options.uploads.begin({
@@ -262,7 +287,8 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
           caps = await options.capabilities(caller, input.selection, input.sessionId)
         // Expired chunked uploads give back the room they held before this one is counted.
         await options.uploads.prune()
-        if (!caps.images && !caps.text) throw new AppError(415, 'attachments-unsupported', caps.reason ?? '当前 Harness 不接受附件。')
+        if (!caps.images && !caps.text && !caps.files)
+          throw new AppError(415, 'attachments-unsupported', caps.reason ?? '当前 Harness 不接受附件。')
         const timer = setTimeout(() => req.destroy(), 60_000)
         try {
           const ref = await options.store.add({
@@ -319,7 +345,8 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
         const entry = await get(caller, id)
         if (!entry.taskId) throw new AppError(404, 'attachment-missing', '附件已过期或不存在。')
         const caps = await options.capabilities(caller, input.selection, input.sessionId)
-        if (!caps.images && !caps.text) throw new AppError(415, 'attachments-unsupported', caps.reason ?? '当前 Harness 不接受附件。')
+        if (!caps.images && !caps.text && !caps.files)
+          throw new AppError(415, 'attachments-unsupported', caps.reason ?? '当前 Harness 不接受附件。')
         assertAttachmentCapability(entry.ref, caps)
         const ref = await options.store.copy({
           owner: device.id,
@@ -360,8 +387,8 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
           root: 'attachment',
           path: entry.ref.name,
           ext: entry.ref.name.split('.').at(-1)?.toLowerCase() ?? '',
-          kind: entry.ref.kind === 'image' ? 'image' : 'text',
-          mime: entry.ref.kind === 'image' ? entry.ref.mime : 'application/octet-stream',
+          kind: previewKind(entry.ref),
+          mime: servedMime(entry.ref),
           size: entry.ref.size,
           mtime: 0,
           etag: `"${entry.ref.sha256.slice(0, 32)}"`,
@@ -396,7 +423,7 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
             start = range?.start ?? 0,
             end = range?.end ?? entry.ref.size - 1
           await get(caller, handle.id)
-          res.setHeader('content-type', entry.ref.kind === 'image' ? entry.ref.mime : 'application/octet-stream')
+          res.setHeader('content-type', servedMime(entry.ref))
           res.setHeader(
             'content-disposition',
             `attachment; filename*=UTF-8''${encodeURIComponent(entry.ref.name).replace(/['()*]/gu, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`,

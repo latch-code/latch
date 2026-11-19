@@ -49,7 +49,7 @@ describe('private attachments through the composer', () => {
     await browser?.close()
     await host?.close()
   })
-  it('shows mixed attachment previews at narrow and wide sizes without stretching file cards across the composer', async () => {
+  it('shows mixed attachments as tiles of one size at narrow and wide sizes', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN' })
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
@@ -73,16 +73,14 @@ describe('private attachments through the composer', () => {
           await page.emulateMedia({ colorScheme: theme })
           const visible = page.locator('.attachment-drafts').filter({ visible: true })
           await expect.poll(() => visible.count()).toBe(1)
-          expect(
-            await visible.locator('.attachment-draft[data-kind="file"]').evaluate(node => node.getBoundingClientRect().width),
-          ).toBeLessThanOrEqual(224)
-          // Anything but an image is a chip one line high; only an image is a thumbnail.
+          // Every attachment is the same compact tile: a picture shows itself, a text file its type.
           const [chip, thumbnail] = await Promise.all([
             visible.locator('.attachment-draft[data-kind="file"]').boundingBox(),
             visible.locator('.attachment-draft:has(img)').boundingBox(),
           ])
-          expect(chip!.height).toBeLessThanOrEqual(40)
-          expect(thumbnail!.height).toBeGreaterThan(chip!.height)
+          expect(chip!.width).toBe(64)
+          expect(thumbnail!.width).toBe(64)
+          expect(thumbnail!.height).toBe(chip!.height)
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
           await page.screenshot({ path: `test-results/attachments/mixed-${width}-${theme}.png`, animations: 'disabled' })
           await page
@@ -484,7 +482,7 @@ describe('the attach button and @ on every Harness', () => {
     [1440, 'light'],
     [1440, 'dark'],
   ] as const)
-    it(`says why at a press, learns from the first session without a reload, and never offers to retry a refusal at ${width}/${theme}`, async () => {
+    it(`takes every file before and after the first session, by path where it is not native, at ${width}/${theme}`, async () => {
       const phone = width < 600
       const late = `late-${width}-${theme}`,
         plain = `plain-${width}-${theme}`
@@ -521,26 +519,30 @@ describe('the attach button and @ on every Harness', () => {
             .waitFor()
         } else await page.getByRole('menuitemradio', { name: lateName }).first().click()
         const add = page.getByRole('button', { name: '添加文件', exact: true })
-        // No hover on a touch screen: pressing says why, in place.
-        await add.click()
-        const notice = page.locator('.workbench-home .ui-notice-text').or(page.locator('main.workspace:not([inert]) .ui-notice-text'))
-        await notice.getByText('发出第一条消息后可添加文件', { exact: true }).waitFor()
-        await page.screenshot({ path: `${shots}/${width}-${theme}-not-started.png`, animations: 'disabled' })
-        // Started from another device: this page learns it without a reload.
-        await start(late, `已启动 ${width} ${theme}`)
-        await expect.poll(() => add.getAttribute('data-unavailable'), { timeout: 15_000 }).toBeNull()
         const composer = phone ? page.locator('.workbench-home') : page
+        const drafts = composer.getByLabel('消息附件', { exact: true })
+        // Not started yet: it takes files all the same, and nothing is said about it.
+        await expect.poll(() => add.getAttribute('data-unavailable'), { timeout: 15_000 }).toBeNull()
         await composer.getByLabel('选择附件', { exact: true }).setInputFiles({
           name: 'tool.bin',
           mimeType: 'application/octet-stream',
           buffer: Buffer.from([0, 1, 2, 3, 0, 255]),
         })
-        const drafts = composer.getByLabel('消息附件', { exact: true })
-        await drafts.locator('.attachment-draft[data-state="refused"]').waitFor()
-        expect(await drafts.getByRole('button', { name: '重试上传', exact: true }).count()).toBe(0)
-        await page.screenshot({ path: `${shots}/${width}-${theme}-refused.png`, animations: 'disabled' })
+        await drafts.locator('.attachment-draft[data-state="ready"]').waitFor()
+        expect(await page.locator('.attachment-draft:is([data-state="refused"], [data-state="failed"])').count()).toBe(0)
+        await page.screenshot({ path: `${shots}/${width}-${theme}-not-started.png`, animations: 'disabled' })
         await drafts.getByRole('button', { name: '移除附件 tool.bin', exact: true }).click()
-        // A Harness that takes none says so at once, never 正在检查 for good.
+        // Started from another device: what it takes is learned without a reload, and a binary file still goes, by path.
+        await start(late, `已启动 ${width} ${theme}`)
+        await composer.getByLabel('选择附件', { exact: true }).setInputFiles({
+          name: 'tool.bin',
+          mimeType: 'application/octet-stream',
+          buffer: Buffer.from([0, 1, 2, 3, 0, 255]),
+        })
+        await drafts.locator('.attachment-draft[data-state="ready"][data-delivery="path"]').waitFor()
+        await page.screenshot({ path: `${shots}/${width}-${theme}-by-path.png`, animations: 'disabled' })
+        await drafts.getByRole('button', { name: '移除附件 tool.bin', exact: true }).click()
+        // A Harness that takes nothing natively takes a picture too: by its path, said only on hover.
         const plainSession = await start(plain, `不收附件 ${width} ${theme}`)
         if (phone) await openSession(page, plainSession)
         else {
@@ -549,9 +551,15 @@ describe('the attach button and @ on every Harness', () => {
           await palette.getByRole('searchbox').fill(`不收附件 ${width} ${theme}`)
           await palette.getByRole('option', { name: `不收附件 ${width} ${theme}`, exact: true }).click()
         }
-        await add.click()
-        await notice.getByText('这个 Harness 不接收图片和文件。', { exact: true }).waitFor()
+        const sessionComposer = page.locator('.composer').filter({ visible: true }).last()
+        await sessionComposer
+          .getByLabel('选择附件', { exact: true })
+          .setInputFiles({ name: 'sample.png', mimeType: 'image/png', buffer: image })
+        const sessionDrafts = sessionComposer.getByLabel('消息附件', { exact: true })
+        await sessionDrafts.locator('.attachment-draft[data-state="ready"][data-delivery="path"]').waitFor()
+        expect(await sessionDrafts.locator('.attachment-tile').getAttribute('title')).toContain('以文件交给 Agent')
         await page.screenshot({ path: `${shots}/${width}-${theme}-takes-none.png`, animations: 'disabled' })
+        await sessionDrafts.getByRole('button', { name: '移除附件 sample.png', exact: true }).click()
         if (phone) {
           // The permission sheet closes when the mode already chosen is pressed, as any picker does.
           await page
@@ -581,7 +589,6 @@ describe('the attach button and @ on every Harness', () => {
           await page
             .getByLabel('选择附件', { exact: true })
             .setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('notes') })
-          const drafts = composer.getByLabel('消息附件', { exact: true })
           await drafts.locator('.attachment-draft[data-state="ready"]').waitFor()
           await page.route('**/link/api/tasks/*/prompt', route =>
             route.fulfill({

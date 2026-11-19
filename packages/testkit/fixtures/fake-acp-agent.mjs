@@ -7,7 +7,7 @@
 // Process-wide behaviour comes from environment variables; each turn's behaviour from the prompt's first word.
 // Several processes may share FAKE_ACP_STATE (one per session), so every save merges into what is on disk.
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -1031,6 +1031,16 @@ async function prompt({ sessionId, prompt: blocks }) {
     log('prompt-store', { sessionId, durable })
   }
   if (env.FAKE_ACP_AUTH === 'prompt' || needsLogin()) throw rpcError(-32000, 'Authentication required')
+  // What each block was, for a test to assert what reached the agent: no bytes, only their kind and size.
+  log('prompt-blocks', {
+    sessionId,
+    blocks: blocks.map(block => ({
+      type: block.type,
+      ...(block.mimeType ? { mimeType: block.mimeType, bytes: Buffer.from(block.data ?? '', 'base64').length } : {}),
+      ...(block.resource ? { uri: block.resource.uri, chars: block.resource.text?.length } : {}),
+      ...(block.type === 'text' ? { text: block.text } : {}),
+    })),
+  })
   const input = blocks.map(block => block.text ?? '').join('')
   // The Host may send the Agent's updated digest before the user's schedule command as a separate text block.
   const lastText = blocks.at(-1)?.text ?? ''
@@ -1048,7 +1058,9 @@ async function prompt({ sessionId, prompt: blocks }) {
   const tool = (value, kind = 'tool_call') => update(sessionId, { sessionUpdate: kind, ...value })
   const permission = (toolCall, options = ALLOW_OPTIONS) => request('session/request_permission', { sessionId, toolCall, options })
   const queued = queuedReply()
-  const scenario = queued ? replying(queued) : (scenarios[keyword] ?? scenarios.echo)
+  // The files the Host names by path come in a text block of their own, after the prompt's.
+  const opens = blocks.length > 1 && /^read-attachments(?:\s|$)/u.test(blocks[0]?.text ?? '')
+  const scenario = queued ? replying(queued) : (scenarios[opens ? 'read-attachments' : keyword] ?? scenarios.echo)
   queuedEdit(session, tool)
   const steers = []
   running.set(sessionId, steers)
@@ -2220,6 +2232,14 @@ const scenarios = {
   },
   big: ({ argument, say }) => {
     say('x'.repeat(Number(argument)))
+    return END
+  },
+  // Opens every file the prompt names by its path, as an agent's own read tool would, and says each one's size and hash.
+  'read-attachments': ({ input, say }) => {
+    for (const [, path] of input.matchAll(/：(\/[^\n]+)/gu)) {
+      const data = readFileSync(path)
+      say(`read ${data.length} ${createHash('sha256').update(data).digest('hex')}\n`)
+    }
     return END
   },
   'image-output': ({ sessionId, say }) => {
