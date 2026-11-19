@@ -352,7 +352,7 @@
 }
 .entry-fast {
   flex: none;
-  color: var(--amber);
+  color: var(--muted);
   fill: currentColor;
 }
 .model-level {
