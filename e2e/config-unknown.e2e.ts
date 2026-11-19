@@ -8,7 +8,7 @@ import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSession } from './helpers/layout.ts'
+import { composerEntry, noHorizontalOverflow, openSession } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/config-unknown'
 
@@ -85,7 +85,8 @@ describe('a config change the Harness never answers', () => {
   }
   const model = async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).config?.find(row => row.id === 'model')?.currentValue
   const pick = async (page: Page, name: string) => {
-    await page.locator('button.model-picker').click()
+    // The input's one entry: a team's own model pickers share its class.
+    await composerEntry(page).click()
     // One model panel at every width since d0ccdd6e, its rows menu items on a phone too.
     await page
       .getByRole('menuitemradio', { name: new RegExp(`^${name}`, 'u') })

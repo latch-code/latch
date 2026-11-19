@@ -134,6 +134,12 @@ it('offers previous-session commands in a normal new draft after recovery withou
                   )
                 : undefined
               void reply?.catch(() => {})
+              // The list opens above the input, over the headline's project (db1f5618): Escape puts it away first, as a
+              // person would, and leaves the draft as it is. It stays away for that word until the word changes.
+              if (await list.isVisible()) {
+                await input.press('Escape')
+                await list.waitFor({ state: 'hidden' })
+              }
               await page.getByRole('button', { name: /^项目：/u }).click()
               await page
                 .getByRole('menuitemradio')
@@ -186,6 +192,8 @@ it('offers previous-session commands in a normal new draft after recovery withou
               await selectProject('另一个项目', other.id)
               release()
               await Promise.allSettled(pending)
+              // Typed afresh after the Escape above: the list opens again.
+              await input.fill('')
               await input.fill('/')
               await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))))
               await list.getByText('开始会话后列出', { exact: true }).waitFor()
@@ -197,6 +205,7 @@ it('offers previous-session commands in a normal new draft after recovery withou
               await page.unroute(pattern, handler)
             }
             await selectProject('命令项目', project.id)
+            await input.fill('')
             await input.fill('/')
             await group.getByText('/public-plan', { exact: true }).waitFor()
             await page.getByRole('button', { name: /^Harness：/u }).click()

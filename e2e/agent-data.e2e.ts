@@ -280,8 +280,20 @@ it('a picture takes the face’s place from PNG and JPEG, says why a file cannot
         await expect.poll(async () => JSON.stringify(await avatarOf())).not.toBe(JSON.stringify(first))
         expect((await avatarOf()).kind).toBe('image')
         await expect.poll(async () => (await stored()).length).toBe(1)
-        // Nothing of the page carries the picture as a data URL.
-        expect(await page.evaluate(() => document.documentElement.innerHTML.includes('data:image'))).toBe(false)
+        // Nothing of the page carries the picture as a data URL. The input's editor (CodeMirror) injects its own base
+        // stylesheet, which draws a tab mark as an SVG data URL; that sheet alone is set aside.
+        expect(
+          await page.evaluate(() => {
+            const copy = document.documentElement.cloneNode(true) as HTMLElement
+            const editorSheets = [...copy.querySelectorAll('style')].filter(sheet => /\.cm-[a-z]/iu.test(sheet.textContent ?? ''))
+            for (const sheet of editorSheets) sheet.remove()
+            return {
+              editorSheets: editorSheets.length <= 1,
+              picture: /data:image\/(?:png|jpe?g|webp)/iu.test(document.documentElement.innerHTML),
+              dataImage: copy.innerHTML.includes('data:image'),
+            }
+          }),
+        ).toEqual({ editorSheets: true, picture: false, dataImage: false })
 
         // 清除: the face again, the one it had.
         await row.getByRole('button', { name: '清除', exact: true }).click()

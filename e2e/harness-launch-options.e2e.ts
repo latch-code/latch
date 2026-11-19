@@ -86,6 +86,9 @@ it.each(cases)('$id launch settings keep their provenance in a $width $theme men
     const choice = 'Agent --force'
     await chip(control).click()
     await row(page, choice).click()
+    // The permission's popover stays open on a choice (4bb97f33); on a phone it is a sheet over the input. Close it.
+    await page.keyboard.press('Escape')
+    await expect.poll(() => chip(control).getAttribute('aria-expanded')).toBe('false')
     const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
     const submit = () =>
       width < 600 ? page.locator('.workbench-home').getByRole('button', { name: '发送', exact: true }).click() : input.press('Meta+Enter')

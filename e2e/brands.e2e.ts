@@ -173,7 +173,10 @@ it.each(cases)('keeps official marks in the normal Harness menu at $width $theme
     await noHorizontalOverflow(page)
     await page.screenshot({ path: `${output}/harness-menu-${width}-${theme}.png`, fullPage: true })
     await choices.filter({ hasText: 'Grok Build' }).first().click()
-    await expect.poll(() => picker.innerText()).toContain('Grok Build')
+    await expect.poll(() => picker.getAttribute('aria-label')).toBe('Harness：Grok Build')
+    // On a phone the Harness is its mark alone, its name the control's name (DESIGN「输入框的一行」); wider, its name too.
+    if (width < 768) expect(await picker.innerText()).toBe('')
+    else expect(await picker.innerText()).toContain('Grok Build')
     expect(await picker.locator('img').count()).toBe(2)
     await page.screenshot({ path: `${output}/harness-selected-${width}-${theme}.png`, fullPage: true })
   } finally {

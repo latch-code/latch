@@ -232,9 +232,13 @@ describe('the composer without a status line', () => {
         expect(await status(page).count()).toBe(0)
         expect(await form.locator('.composer-chips, .composer-line, [data-rows], .composer-prompt').count()).toBe(0)
         expect(await form.getByRole('button', { name: '／', exact: true }).count()).toBe(0)
-        // The full-width text over one line: the Harness and the one entry, then send, all inside the frame.
+        // The full-width text over one line: the Harness, its permission and the one entry, then send, all inside the frame.
         const line = form.locator('.composer-toolbar')
-        expect(await line.locator('[data-composer-control]').count()).toBe(2)
+        expect(
+          await line
+            .locator('[data-composer-control]')
+            .evaluateAll(controls => controls.map(control => control.getAttribute('data-composer-control'))),
+        ).toEqual(['harness', 'permission', 'model'])
         const [frameBox, lineBox, inputBox, sendBox, entryBox] = await Promise.all([
           form.boundingBox(),
           line.boundingBox(),
