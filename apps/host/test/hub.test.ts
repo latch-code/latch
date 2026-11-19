@@ -1032,7 +1032,7 @@ describe('host-level session metadata', () => {
     await value.receipts.record('s-1', receipt)
     expect(value.receipts.cancel('s-1', receipt.deviceId, receipt.requestId)).toEqual(receipt)
     await value.remove('s-1')
-    expect(remove).toHaveBeenCalledExactlyOnceWith('s-1')
+    expect(remove).toHaveBeenCalledExactlyOnceWith('s-1', undefined)
     expect(value.receipts.cancel('s-1', receipt.deviceId, receipt.requestId)).toBeUndefined()
     expect(JSON.parse(await readFile(join(dataDir, 'sessions-meta.json'), 'utf8'))).toEqual({ version: 1, sessions: [] })
     await expect(value.remove('s-2')).rejects.toMatchObject({ status: 409, code: 'delete-unsupported' })

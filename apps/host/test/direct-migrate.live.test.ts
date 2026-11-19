@@ -33,7 +33,12 @@ const CASES = [
 
 afterEach(() => vi.unstubAllEnvs())
 
-it.each(CASES.filter(item => Object.values(item.programs).every(Boolean)))(
+const RUNNABLE = CASES.filter(item => Object.values(item.programs).every(Boolean))
+
+// Without the programs' paths set there is nothing to run, and an empty file is an error to Vitest.
+if (!RUNNABLE.length) it.skip('moves an adapter definition to its preset program (no program paths set)', () => {})
+
+it.each(RUNNABLE)(
   'moves a $preset definition saved on its adapter to its own program at a start, and its session goes on',
   async ({ preset, before, after, programs, homes, kind }) => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'latch-direct-migrate-')))
