@@ -3,6 +3,7 @@ import { claudeAgentProfile } from './claude-agent.ts'
 import { codexAcpProfile } from './codex-acp.ts'
 import { codexProfile } from './codex.ts'
 import { cursorProfile } from './cursor.ts'
+import { cursorSdkProfile } from './cursor-sdk.ts'
 import { dshProfile } from './dsh.ts'
 import { gooseProfile } from './goose.ts'
 import { grokProfile } from './grok.ts'
@@ -45,3 +46,6 @@ export const FALLBACK_PROFILES: ReadonlyMap<string, HarnessProfile> = new Map([[
 export function profileFor(presetId: string | undefined): HarnessProfile | undefined {
   return presetId === undefined ? undefined : HARNESS_PROFILES.get(presetId)
 }
+
+/** Cursor through its official SDK, for a Cursor definition that carries the key the SDK reads (`selectProfile`). */
+export const CURSOR_SDK_PROFILE: HarnessProfile = cursorSdkProfile

@@ -10,6 +10,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@cursor/sdk": "catalog:",
     "@latch/core": "workspace:*",
     "@latch/protocol": "workspace:*",
     "@latch/sdk": "workspace:*",

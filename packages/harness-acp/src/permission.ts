@@ -5,7 +5,14 @@ import { AGENT_PRESETS, isReservedAgentEnvName, isRetiredAgentPreset, type Agent
 import { AppError, type ConfigChangeClass } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { resolveCommand } from './command.ts'
-import { FALLBACK_PROFILES, HARNESS_PROFILES, type AcpPermissionProfile, type HarnessProfile } from './profiles/index.ts'
+import {
+  CURSOR_SDK_PROFILE,
+  FALLBACK_PROFILES,
+  HARNESS_PROFILES,
+  type AcpPermissionProfile,
+  type HarnessProfile,
+} from './profiles/index.ts'
+import { CURSOR_KEY_ENV, cursorSdkAvailable } from './wires/cursor.ts'
 import type { PermissionOption } from './protocol.ts'
 import type { AgentRecord } from './types.ts'
 import { codexArgs } from './wires/codex.ts'
@@ -74,6 +81,15 @@ export function isRetiredAdapterDefinition(record: Pick<AgentRecord, 'presetId' 
   )
 }
 
+/**
+ * Cursor runs through its official SDK instead of `cursor-agent acp` when its definition carries the key the SDK reads
+ * and this Host can run the SDK's runner; otherwise as before. The key is part of the definition, so adding or removing
+ * it changes the launch fingerprint and a session never moves between the two routes.
+ */
+function cursorSdkRoute(presetId: string, viaFallback: boolean, record: AgentRecord): boolean {
+  return presetId === 'cursor' && !viaFallback && Boolean(record.env[CURSOR_KEY_ENV]?.trim()) && cursorSdkAvailable()
+}
+
 /** By `presetId`, else by the command's file name. The profile's environment applies even when not verified. */
 export function selectProfile(record: AgentRecord, locate: CommandLocator = resolveCommand): ProfileSelection {
   const name = commandName(record.command)
@@ -88,7 +104,11 @@ export function selectProfile(record: AgentRecord, locate: CommandLocator = reso
   // or a wrapper of the person's) runs with the adapter's profile, and is verified against the adapter's command.
   const viaFallback = preset?.fallback !== undefined && name !== preset.command
   const route = viaFallback ? preset!.fallback! : preset
-  const profile = preset ? (viaFallback ? FALLBACK_PROFILES : HARNESS_PROFILES).get(preset.id) : undefined
+  const profile = preset
+    ? cursorSdkRoute(preset.id, viaFallback, record)
+      ? CURSOR_SDK_PROFILE
+      : (viaFallback ? FALLBACK_PROFILES : HARNESS_PROFILES).get(preset.id)
+    : undefined
   const configEnv = profile?.permission.configEnv ?? []
   const redirected = Object.keys(record.env)
     .filter(key => matchesName(configEnv, key))

@@ -25,6 +25,9 @@ await build({
     // The `import` targets of ./plugin-sdk and ./harness-sdk in package.json.
     'core/plugins': 'src/plugin-sdk.ts',
     'core/harness': 'src/harness-sdk.ts',
+    // The Cursor SDK route's runner (packages/harness-acp/src/wires/cursor.ts finds it in dist/harness/). It loads
+    // @cursor/sdk at run time from the root's node_modules, never bundled.
+    'harness/cursor-runner': 'packages/harness-acp/src/cursor-runner.ts',
   },
   outdir: 'dist',
   sourcemap: true,

@@ -138,7 +138,7 @@ import { CODEX_EFFORT_ID, codexOptions, GATEWAY_DEFAULT_EFFORT, gatewayEffortOpt
 import { buildGatewayCatalog } from './gateway-catalog.ts'
 import { readQuotaCommand } from './login.ts'
 import { commandMoved, commandUnconfirmed, harnessRetired, redactor, resolveCommand } from './command.ts'
-import { openWire, wireArgs } from './wires/index.ts'
+import { openWire, wireLaunch } from './wires/index.ts'
 import { ConnectionClosed, ConnectionStopping, RequestTimeout, type ExitInfo } from './wires/process.ts'
 import { ForkRefused, type AgentWire } from './wires/types.ts'
 import { agentEnvironment, programPaths } from './environment.ts'
@@ -1305,8 +1305,7 @@ export class AgentRuntime implements Bridge {
     return {
       launchHash: launch.hash,
       definitionHash: launch.definitionHash,
-      command: launch.command,
-      args: [...this.agent.args, ...wireArgs(this.selection.profile?.wire)],
+      ...wireLaunch(this.selection.profile?.wire, launch.command, this.agent.args),
       envNames: Object.keys(env).sort(),
       definitionEnvNames: Object.keys(this.agent.env).sort(),
       cwd,
@@ -2627,6 +2626,7 @@ export class AgentRuntime implements Bridge {
       return { sessionId: receipt.taskId }
     }
     const route = checkedRoute(input.modelRoute)
+    this.assertAskableMode(config)
     const launch = this.currentLaunch(project, scope?.passed, route, this.startProcessMode(config))
     if (launch.hash !== input.expectedLaunchHash) throw this.launchRefusal(input.expectedLaunchHash, launch, scope?.passed)
     const sessionId = `task-${randomUUID()}`
@@ -3557,6 +3557,23 @@ export class AgentRuntime implements Bridge {
       this.leave(this.holds, id)
       this.scheduleIdle(id)
     }
+  }
+
+  /**
+   * A harness that never asks (`approvals: 'none'`, the Cursor SDK route) starts only in a mode of its own: a session
+   * that asks for any other (a draft or fork carrying another route's 「先问你」) is refused, never run unasked on a mode
+   * that stands in for it.
+   */
+  private assertAskableMode(config: ReadonlyArray<{ configId: string; value: string }>): void {
+    const ladder = this.profile?.modeLadder
+    if (this.profile?.approvals !== 'none' || !ladder) return
+    const asked = config.find(item => item.configId === LADDER_MODE || item.configId === 'mode')?.value
+    if (asked !== undefined && !ladder.includes(asked))
+      throw new AppError(
+        409,
+        'permission-ask-unavailable',
+        `${this.agent.name} 在这条路线上不会逐次问你，没有「${clip(asked, 64)}」这一档；请从它自己的档位里选。`,
+      )
   }
 
   private startProcessMode(config?: ReadonlyArray<{ configId: string; value: string }>): string | undefined {

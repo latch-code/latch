@@ -1,5 +1,5 @@
 ---
-description: Latch 怎样启动并驱动用户本机的 Agent（ACP、Codex 的 app-server、pi 的 RPC）：预设与命令、不改原 CLI 配置、完全访问（L3）、权限模式与读回、项目配置与文件夹、启动指纹、进程与环境、经 Latch 使用模型服务、登录、额度、审批、取消、子 Agent、提问、持久化与恢复、接入已有会话、会话命令、扩展、错误与尚未实现。
+description: Latch 怎样启动并驱动用户本机的 Agent（ACP、Codex 的 app-server、pi 的 RPC、Cursor 的 SDK）：预设与命令、不改原 CLI 配置、完全访问（L3）、权限模式与读回、项目配置与文件夹、启动指纹、进程与环境、经 Latch 使用模型服务、登录、额度、审批、取消、子 Agent、提问、持久化与恢复、接入已有会话、会话命令、扩展、错误与尚未实现。
 sources:
   - packages/harness-acp/src
   - packages/protocol/src/agent-presets.ts
@@ -79,6 +79,7 @@ Agent 自己提供官方机器协议时 Latch 直接说它，ACP 适配器只作
 | --- | --- |
 | Codex | `codex app-server`（见「Codex 的 app-server」） |
 | pi | `pi --mode rpc`（见「pi 的 RPC 模式」） |
+| Cursor | 定义带 `CURSOR_API_KEY` 时用官方 SDK `@cursor/sdk`（见「Cursor 的 SDK 路线」），否则 `cursor-agent acp` |
 | DeepSeek Harness | `dsh --profile acp`：随包的 `acp` 配置是它给自动化客户端的官方协议 |
 | 其他预设 | ACP：它们的官方集成方式（Claude Agent 用官方适配器） |
 
@@ -169,6 +170,7 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 | pi | 私有 `-e` 扩展 | `ask` | `plan`、`ask`、`rule`、`never` | — | 扩展报告 |
 | Claude Agent | — | `default` | `plan`、`default`、`acceptEdits`、`auto`、`bypassPermissions` | ExitPlanMode 只留 `exit-plan-default` | 可读回；适配器新会话默认进 `auto`，每轮前设回 |
 | Cursor | `--mode` 或 `--force` 启动参数 | `agent` | `ask`、`plan`、`agent`、`agent-force` | `allow-always` | ACP 报告前三档；force 只标为启动设置 |
+| Cursor 经 SDK | 创建或恢复 agent 时的工具名单与沙箱 | `read-only` | `read-only`、`sandbox`、`full` | 不询问，没有选项 | 运行器报告它交给 SDK 的档位 |
 | Antigravity | — | `default` | `default`、`accept-edits`、`auto` | — | 可读回 |
 | Grok Build | 预设参数 `--permission-mode default` | 无 | 无 | — | 不报告模式（`readback: 'none'`），不生成档位 |
 
@@ -474,6 +476,40 @@ Codex 自己中断、Latch 没有要求停止的一轮同样先等它的命令�
 - **退回背景文本**并在新会话里写一行原因：不在来源的文件夹里、分叉点之后清空过上下文、来源会话文件已不在、下一轮开始之后的压缩会被带进来、扩展取消了 `switch_session` 或 `fork`、pi 拒绝命令、复制出的文件没停在那一轮。退回前进程先 `new_session` 离开来源（这一步也被取消时停止进程）；分叉不往来源的文件里写。
 - 已知限制：系统时钟在两轮之间往回拨时，按时间找到的位置可能错一轮，核对只能确认 pi 停在了所要求的条目上。
 
+## Cursor 的 SDK 路线
+
+Cursor 预设的定义在这台 Mac 上带了 `CURSOR_API_KEY`，且 Host 找得到 Latch 的运行器与 `@cursor/sdk` 时，会话改用 Cursor 的官方 TypeScript SDK（`profiles/cursor-sdk.ts`、`wires/cursor.ts`）；没有密钥（空白也算没有）或找不到 SDK 时照旧是 `cursor-agent acp`。密钥是定义的一部分，加上或去掉它会改变启动指纹，所以一个会话只在开始时的那条路线上继续，换路线要开新会话。版本按官方文档（2026-11-19 读）与 `@cursor/sdk` 1.3.1 的类型声明核对；文档描述的是 1.4.x，接口以 1.3.1 的 `.d.ts` 为准。
+
+**文档里的三件事（决定这条路线的形状）：**
+
+1. **只认 API key。**「Authentication」写的顺序是显式 `apiKey`、`CURSOR_API_KEY`、再是 `Cursor.auth.login()` 存在 `~/.cursor/sdk/auth.json` 的登录；不读 `cursor-agent` 的登录。运行器每个调用都显式传 `apiKey`，没有密钥就拒绝，所以 SDK 从不回退到这台电脑上存的登录。
+2. **agent 循环在调用它的 Node 进程里。**「Local means local agent loop, not local model」：循环与文件在本机，推理在 Cursor 的服务上。所以 SDK 只在运行器里加载，从不进 Host 进程。
+3. **本机工具调用不逐次审批。**「Quickstart approves tool calls automatically」写明默认直接运行；「Hooks」写明只有文件钩子、没有程序回调；能管住它的只有「Restricting the toolset」（`tools`、`disallowedTools`）、「Sandbox options」与「Auto-review」。
+
+**运行器。** `packages/harness-acp/src/cursor-runner.ts`，构建为 `dist/harness/cursor-runner.js`；源码运行时 Node 直接剥掉类型执行它。线用 Host 自己的 Node 以 `--disable-sigusr1 <运行器>` 启动它，独立进程组、同一份经白名单的环境、同样的停止与 stderr 摘要；每行一个 JSON。`--help` 与握手不加载 SDK，SDK 只在开会话时 `import`。测试经 `setCursorSdkModule` 让它加载假 SDK 模块（`--sdk`），定义、会话与设备都设不了它。
+
+**密钥走过的路。** 与其他定义变量相同：只能在这台 Mac 上经 `host.sock` 保存（任何变量都要本机确认 `harness.command.apply`，确认表只列变量名）→ `settings.json`（0600，不进 Time Machine 备份）→ 设备只收到 `envKeys` → 启动指纹只含它的摘要 → 运行器进程的环境。运行器读到后立刻从自己的环境删掉，再交给 SDK 的 `apiKey`，所以 agent 运行的命令与 MCP 服务器看不到它；它不在参数、URL、SSE 与预览里。运行器写出的每一行先遮掉它，驱动再按定义的变量值遮一遍；Host 把定义里 `CURSOR_API_KEY` 的值登记进 `redactKnownSecrets`，Host 的日志、错误与事件都遮掉它（Cursor 没有公开密钥的形状，不能按形状认）。
+
+**存储。** `local.store` 是会话私有临时目录里的 `JsonlLocalAgentStore`；`CURSOR_DATA_DIR` 也指向那里，让 SDK 把本会话的记录写在那里而不是 `~/.cursor/projects`（这个变量只见于 SDK 包里的代码，文档没写，没有对真实 SDK 核对）。私有临时目录在 Host 的运行目录里：空闲停止后能恢复，删除会话时随它删掉，Host 停止时也删掉，所以 Host 重启后 SDK 找不到这个 agent（见「尚未实现」）。`settingSources` 只给 `project`：项目 `.cursor` 下的规则、钩子与沙箱设置生效并计入启动指纹，人自己的 `~/.cursor` 设置不读。
+
+**档位。** 每档都由运行器在创建或恢复 agent 时交给 SDK；换档在空闲时用同一个 agent ID 重新 `Agent.resume`（`tools`、模型等不随 agent 保存，每次恢复都重给）。
+
+| 档位 | 交给 SDK 的 | 说明 |
+| --- | --- | --- |
+| `read-only`（默认，只看不改） | `tools: ['read','grep','glob','ls']` | 没有命令、写入、子 Agent（`task`）与 MCP |
+| `sandbox`（按规则放行） | `local.sandboxOptions.enabled: true` | 命令在 Cursor 的平台沙箱里，写入限工作目录与临时目录，默认不联网；被拦的直接拒绝，不问人；平台不支持沙箱时 SDK 报错，换档或开会话失败，不降级 |
+| `full`（不再询问） | 默认工具、无沙箱 | 不问你 |
+
+- 没有「先问你」：profile 写 `approvals: 'none'`，客户端显示「不先问你」。默认是最严的一档，不是 ACP 路线的 `agent`。
+- 会话开始时要的档位不在这三档里（例如从 ACP 路线的草稿或分叉带来的 `agent`），Host 以 409 `permission-ask-unavailable` 拒绝，不拿别的档位顶替；会话中也只能在这三档之间换。要逐次询问就去掉密钥、用 `cursor-agent acp`。
+- 档位的读回是运行器报告它交给 SDK 的值，不是 SDK 自己报告的。
+
+**翻译。** `session/new` 是 `Agent.create`，`session/resume` 是 `Agent.resume`（SDK 找不到时是「该 Harness 已找不到这个会话」）。模型菜单来自 `Cursor.models.list`，每个变体一个选项（值写作 `id?参数=值`，思考在模型里选）；没有指定时用标了默认的那个。一轮用 `agent.send`：`onDelta` 的 `text-delta`、`thinking-delta` 是回复与思考，`run.stream()` 的 `tool_call` 是工具行（`running` 开始，`completed`、`error` 结束），SDK 没发增量时才用整条 `assistant` 消息。运行中追加用 `run.steer`。停止发 `run.cancel()`，等 `run.wait()` 报告 `cancelled` 才算停下。运行器退出时这一轮按进程退出处理。
+
+**使用统计。** SDK 依赖 `@statsig/js-client`，但只用后端下发的开关，并设了 `preventAllNetworkTraffic`；它自己的使用事件（运行开始与结束、失败、延迟等，带 SDK 版本与系统平台）用这把密钥发到 Cursor 的后端（`api2.cursor.sh`）。没有文档化的开关能关掉，Latch 也不改它。
+
+**包。** `@cursor/sdk` 1.3.1（2026-11-03 发布，专有许可，见包里的 `LICENSE.md`）约 20 MB，依赖 `@bufbuild/protobuf`、`@connectrpc/connect`、`@connectrpc/connect-web`、`@statsig/js-client`，另按平台装一个约 10 MB 的可选包（沙箱助手 `cursorsandbox`、`rg` 与 tree-sitter 的原生模块）；都没有安装脚本。
+
 ## 通知与压缩
 
 - **通知（`notice`）。** Agent 不属于对话历史的提示。每条在时间线上一行系统消息，按 `severity` 写「报告错误」或「提示」。它不改变本轮状态。
@@ -490,6 +526,7 @@ Codex 自己中断、Latch 没有要求停止的一轮同样先等它的命令�
 | Grok Build | `PromptResponse._meta.usage`（`turnUsage`） | 一轮 | 已含 |
 | Qwen Code | 每次模型调用（含子 Agent 的）后一条空文字的 `agent_message_chunk` 的 `_meta.usage`（`callUsage`，0.26.8），只在已发出的一轮里收，相加；载入历史时重放的不收 | 一轮 | 已含；有一次没报缓存，这一轮就不记缓存 |
 | Antigravity | `PromptResponse.usage` | 未核实，按会话 | 报 0 |
+| Cursor 经 SDK | 运行结束时 `RunResult.usage`（没有时 `run.usage`）；花费是 `agent.getUsage()` 的 `cost.chargedCents`，经 `usage_update` | 一轮 | 未核实，按原样（`cacheReadTokens`、`cacheWriteTokens` 另列） |
 | DeepSeek Harness | 适配器不报告 tokens（`usage_update` 只有上下文）；自己登录的轮次由 Host 读它这一个会话的日志（见下） | 一轮，只进轮次记录 | 日志里输入不含缓存，加回 |
 
 ### DeepSeek Harness 的会话日志
@@ -594,6 +631,7 @@ DeepSeek Harness 用 API 密钥时，密钥是 DeepSeek 发给这个人的，Dee
 | pi | `plan` | `ask` | `rule` | — | `never` |
 | DeepSeek Harness | `read-only` | — | `workspace-write` | — | `danger-full-access` |
 | Cursor | `ask`、`plan`（官方名称） | `agent` | — | — | `agent-force` |
+| Cursor 经 SDK | `read-only` | — | `sandbox` | — | `full` |
 | Claude Agent | `plan` | `default` | `acceptEdits` | `auto` | `bypassPermissions` |
 | Antigravity | — | `default` | `accept-edits` | `auto` | — |
 
@@ -1070,7 +1108,15 @@ Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别�
 | goose 固定 `delegate` 子 Agent 的服务 | goose 没有文档化的设置能固定或关掉它 |
 | Antigravity、Cursor 经 Latch 使用模型服务 | 做不了：两者都不接受别人的模型服务地址 |
 | Antigravity、Grok Build 接入已有会话 | 没有核对它们的列出与加载 |
-| Cursor 的真实验收 | 权限档位只按文档接线 |
+| Cursor 的真实验收 | 权限档位只按文档接线；SDK 路线只用假 SDK 模块测过，从未连过 Cursor |
+| Cursor SDK 路线的逐次询问 | SDK 没有逐次审批的回调；1.3.1 的类型里有替换工具执行器的 `resourceProviderOptions.override*Executor`，文档没写、接口只按形状给出，不拿来做审批；文件钩子要写 `.cursor/hooks.json`，违反「不修改原 CLI 配置」 |
+| Cursor SDK 路线的 Auto-review 档 | `local.autoReview` 在后端没有分类器时悄悄退回默认行为（文档写明不是安全边界），给不出真实的档位 |
+| 只装 SDK、不装 `cursor-agent` 的 Cursor | SDK 路线仍以 Cursor 预设的定义（`cursor-agent acp`）为入口，启动前的命令检查照旧要找到 `cursor-agent`，虽然这条路线不运行它 |
+| 桌面安装包里的 Cursor SDK 路线 | 打包的 Host 不带 `node_modules`，找不到 `@cursor/sdk` 时走 `cursor-agent acp`；SDK 是专有许可，是否随包分发未定 |
+| 关掉 Cursor SDK 的使用统计 | 没有文档化的开关，见「Cursor 的 SDK 路线」 |
+| Cursor SDK 路线的项目其他文件夹、接入已有会话与分叉 | 没有接线：只给主文件夹，分叉用背景文本 |
+| Cursor SDK 路线在 Host 重启后恢复会话 | agent 的记录在会话私有临时目录，Host 停止时随运行目录删除；要放到数据目录还得接上删除会话时的清理 |
+| Cursor SDK 路线只读档里的 Latch MCP 服务器（技能、浏览器、桥） | 只读档不给 `mcp`，否则 MCP 工具不受只读约束 |
 | Claude Agent 第一轮前的额度 | 适配器只在每轮模型回答后的限额事件里报告；它的 `/usage` 要开一个 Claude 会话并发提示，Latch 不发 |
 | Codex 按模型的额度桶 | 只显示套餐自己的桶 |
 | Cursor、OpenCode、Qwen Code、goose、pi 的额度 | 程序不报告；没有可用的官方接口与凭据，见「DeepSeek Harness 的余额」 |

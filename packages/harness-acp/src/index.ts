@@ -252,7 +252,10 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
   const wire = selection.profile?.wire
   const { reports, plugins } = extensionProfile(wire ?? (selection.preset?.id === 'dsh' ? 'dsh' : undefined))
   const protocol = wire === 'pi' ? 'pi 的 RPC 模式' : wire === 'codex' ? 'Codex 的 app-server' : 'ACP'
-  const description = `通过 ${protocol} 运行 ${commandLine(record)}；模型、登录与工具权限由该 Harness 自身管理。`
+  const description =
+    wire === 'cursor'
+      ? '通过 Cursor 官方 SDK（@cursor/sdk）在 Latch 的独立进程里运行 Cursor，用定义里的 CURSOR_API_KEY；不逐次询问。'
+      : `通过 ${protocol} 运行 ${commandLine(record)}；模型、登录与工具权限由该 Harness 自身管理。`
   return {
     id: `agent-${record.id}`,
     name: record.name,

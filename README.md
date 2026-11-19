@@ -40,7 +40,7 @@ Latch 不下载、不安装 Agent，也不代为登录。在运行 Host 的电�
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | `npm i -g @deepseek-ai/dsh` | `dsh --profile acp` | MIT |
 | [Qwen Code](https://github.com/QwenLM/qwen-code) | `npm i -g @qwen-code/qwen-code` | `qwen --acp` | Apache-2.0 |
 | [goose](https://github.com/block/goose) | `brew install block-goose-cli` | `goose acp` | Apache-2.0 |
-| [Cursor](https://cursor.com/docs/cli/acp) | 见链接 | `cursor-agent acp` | 专有（Cursor 服务条款） |
+| [Cursor](https://cursor.com/docs/cli/acp) | 见链接 | `cursor-agent acp`；定义在这台 Mac 上带 `CURSOR_API_KEY` 时改用官方 SDK `@cursor/sdk`，不逐次询问 | 专有（Cursor 服务条款） |
 | [Antigravity](https://antigravity.google/docs/ide/extensions/acp/) | 见链接 | `agy acp …` | 专有（Google Antigravity 条款） |
 | [Grok Build](https://docs.x.ai/build) | `npm i -g @xai-official/grok` | `grok … agent stdio` | Grok Build 发布版条款；开源源码 Apache-2.0 |
 

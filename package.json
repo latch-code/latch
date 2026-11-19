@@ -67,6 +67,7 @@
     "harness:record": "node --disable-sigusr1 --import tsx packages/harness-acp/test/record-harness.ts"
   },
   "dependencies": {
+    "@cursor/sdk": "catalog:",
     "@latch/core": "workspace:*",
     "@latch/protocol": "workspace:*",
     "@latch/sdk": "workspace:*",

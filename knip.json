@@ -29,7 +29,8 @@
       // imported only by workspace projects (qrcode by the Host and the web client, undici by the Host); the Host
       // bundles in dist/ load them from the root's node_modules, so the root declares them too.
       // @types/react: the Host type-checks page drafts against it at run time (app-build.ts); dist/ resolves it from the root.
-      "ignoreDependencies": ["lefthook", "qrcode", "undici", "@types/react"],
+      // @cursor/sdk: dist/harness/cursor-runner.js imports it at run time from the root's node_modules.
+      "ignoreDependencies": ["lefthook", "qrcode", "undici", "@types/react", "@cursor/sdk"],
       // System commands that tests run.
       "ignoreBinaries": ["mkfifo"]
     },
@@ -61,7 +62,10 @@
       // The owner's own wrangler deploys these entries from deploy/; nothing in the repository imports them.
       "entry": ["src/worker.ts", "src/work.ts", "scripts/*.ts"]
     },
-    "packages/harness-acp": {},
+    "packages/harness-acp": {
+      // Node runs the Cursor SDK runner by path (wires/cursor.ts), and its tests hand it the fake SDK by path.
+      "entry": ["src/cursor-runner.ts", "test/fixtures/*.mjs"]
+    },
     "packages/protocol": {},
     "packages/sdk": {},
     "packages/app-sdk": {},

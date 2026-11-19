@@ -4,7 +4,7 @@ import { AppError, type LaunchPreview } from '@latch/sdk'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { authFacts, reportedLogin, terminalLogins, type ReportedLogin } from './auth.ts'
 import { harnessRetired, redactor, resolveCommand } from './command.ts'
-import { openWire, wireArgs } from './wires/index.ts'
+import { openWire, wireLaunch } from './wires/index.ts'
 import { ConnectionClosed } from './wires/process.ts'
 import { agentEnvironment, programPaths } from './environment.ts'
 import { checkLogin, readProgramVersion } from './login.ts'
@@ -56,9 +56,8 @@ export async function agentProbePreview(agent: AgentRecord, options: ProbeOption
     sessionTmpDir: cwd,
   })
   return {
-    command,
+    ...wireLaunch(profile?.wire, command, agent.args),
     cwd,
-    args: [...agent.args, ...wireArgs(profile?.wire)],
     envNames: Object.keys(env).sort(),
     definitionEnvNames: Object.keys(agent.env).sort(),
     launchHash: hash,

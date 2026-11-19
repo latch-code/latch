@@ -22,7 +22,7 @@ import {
   type TaskMode,
 } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
-import { syncDirectory } from '@latch/core/node-kit'
+import { setKnownSecrets, syncDirectory } from '@latch/core/node-kit'
 import { excludeFromBackup } from './backup.ts'
 
 export interface ProviderRecord {
@@ -493,6 +493,20 @@ async function readConfig<T>(file: string, schema: z.ZodType<T>, tighten: boolea
   return parsed.data
 }
 
+/** Definition variables that hold a key the Host itself routes: the Cursor SDK route's (docs/HARNESSES.md). */
+const SECRET_ENV_NAMES: ReadonlySet<string> = new Set(['CURSOR_API_KEY'])
+
+/**
+ * Those values, masked in every Host log line, error and event (`redactKnownSecrets`) as MCP secrets are. Cursor's API
+ * keys have no documented shape to match, so the values themselves are registered.
+ */
+function maskAgentSecrets(agents: ReadonlyArray<{ env: Record<string, string> }>): void {
+  setKnownSecrets(
+    'agent-env',
+    agents.flatMap(agent => Object.entries(agent.env).flatMap(([name, value]) => (SECRET_ENV_NAMES.has(name) ? [value] : []))),
+  )
+}
+
 type BeforePublish<T> = (next: T, commit: () => Promise<void>) => Promise<void>
 
 /**
@@ -518,6 +532,7 @@ export class HostConfig {
     const stored = await readConfig(join(config.dataDir, PROVIDERS_FILE), providersFileSchema, true)
     const settings = await readConfig(join(config.dataDir, SETTINGS_FILE), settingsSchema, true)
     if (settings) config.hostSettings = settings
+    maskAgentSecrets(config.hostSettings.agents)
     if (stored) {
       config.providerList = stored.providers
       config.providerAdditions = stored.additions
@@ -604,9 +619,12 @@ export class HostConfig {
       const checked = settingsSchema.safeParse(draft)
       if (!checked.success) throw new AppError(400, 'invalid-settings', `设置无效：${issueText(checked.error, false)}`)
       const next = checked.data
+      // Masked from before the file holds them until after the old values are gone.
+      maskAgentSecrets([...this.hostSettings.agents, ...next.agents])
       await this.persist(SETTINGS_FILE, next, next, beforePublish, () => {
         this.hostSettings = next
       })
+      maskAgentSecrets(this.hostSettings.agents)
     })
   }
 

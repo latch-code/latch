@@ -1,8 +1,8 @@
 # @latch/harness-acp
 
-ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentPlugin`）。`src/runtime.ts`（会话、启动指纹、权限模式）、`wires/`（进程与协议）、`protocol.ts`（ACP v1）与同目录模块，预设的权限配置在 `profiles/`。不负责浏览器可见的预设（`packages/protocol/src/agent-presets.ts`）与保存 Agent 定义（Host）。
+ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentPlugin`）。`src/runtime.ts`（会话、启动指纹、权限模式）、`wires/`（进程与协议）、`protocol.ts`（ACP v1）与同目录模块，预设的权限配置在 `profiles/`。不负责浏览器可见的预设（protocol 的 `agent-presets.ts`）与保存定义（Host）。
 
-运行环境 node；依赖 `@latch/protocol`、`@latch/sdk`、`@latch/core`（只用 `./node-kit`、`./file-tracking` 与 `./run-end`）与 `zod`。只有 Host 依赖本包，且只经入口 `src/index.ts`。
+运行环境 node；依赖 `@latch/protocol`、`@latch/sdk`、`@latch/core`（只用 `./node-kit`、`./file-tracking` 与 `./run-end`）、`zod`；`@cursor/sdk` 只在运行器进程。只有 Host 依赖本包，且只经入口 `src/index.ts`。
 
 不变量：
 
@@ -16,9 +16,10 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 - 终端登录只跑会话的程序；登录推送只读 `kind`、`label`（`test/auth.test.ts`）。
 - 新持久字段可选并入 `src/store.ts`。技能和扩展路径不存不发。Team 核父轮、父关系。
 - 提议保留首轮材料和本机 MCP 来源（CUSTOM-AGENTS、MCP）。
-- 审批活动的 `since` 复用 RunClock 的原等待起点（`test/acp.test.ts#uses one approval wait timestamp even when every clock read advances`）。
+- 审批活动的 `since` 复用 RunClock 的原等待起点（`test/acp.test.ts`）。
 - 不支持的请求共用事件时间，不回退已知输出（HARNESSES）。
-- 测试只用假 Agent 与回放 Agent（`test/replay.test.ts`），不向真实 Agent 发提示。
+- 测试只用假 Agent、回放与假 Cursor SDK，不给真实 Agent 发提示。
+- Cursor 密钥只经运行器环境，读后删（`test/cursor-sdk.test.ts`）。
 
 测试：`pnpm test --project @latch/harness-acp` 与 `e2e/permissions-ui.e2e.ts`。先读 [docs/HARNESSES.md](../../docs/HARNESSES.md)。
 
