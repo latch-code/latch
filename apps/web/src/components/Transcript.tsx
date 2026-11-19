@@ -17,6 +17,7 @@ import {
   quietGroupWords,
   rowKind,
   isBlocked,
+  isPictureRow,
   isLive,
   liveMessageId,
   outcomeWords,
@@ -39,7 +40,7 @@ import {
   type WorkItem,
 } from '../conversation.ts'
 import { useTranscriptProjection } from '../conversation/useTranscriptProjection.ts'
-import { ReplyViewport } from '../MessageContent.tsx'
+import { ReplyViewport, TurnPictured } from '../MessageContent.tsx'
 import type { LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { TurnCards } from '../conversation/TurnCards.tsx'
 import { RunEndNote, StatusLine, type StatusLineProps } from '../conversation/StatusLine.tsx'
@@ -53,6 +54,7 @@ import { FileSession } from './FileChip.tsx'
 import { FileReferences } from './FileReferences.tsx'
 import { AuthorLine, MessageRow, SpeakerLine, ThinkingRow, TurnEditLocked, type LiveReasoning, type Speaker } from './MessageRow.tsx'
 import { ToolCard } from './ToolCard.tsx'
+import { GeneratedImage } from './GeneratedImage.tsx'
 import { KindGlyph } from '../conversation/KindGlyph.tsx'
 import { SubagentGroup, SubagentRow, SubagentStop } from './SubagentRow.tsx'
 import { QuestionResultCard } from '../composer/QuestionDrawer.tsx'
@@ -482,6 +484,7 @@ const TurnView = memo(function TurnView({
   // 工作过程, this device's choice: what always shows (approvals, failures, unknown results) is never among what it hides.
   const level = usePreferences().workDisplay
   const blocks = useMemo(() => turnBlocks(turn, level), [turn, level])
+  const pictured = blocks.some(block => block.kind === 'picture')
   const folds = !trailingLive && workFolds(turn, outcome)
   const hasWork = blocks.some(block => block.kind === 'work' && block.items.some(item => item.kind !== 'thinking'))
   // The rows stay in one tree from the first to the last, so the fold is seen to happen when the turn settles.
@@ -511,7 +514,8 @@ const TurnView = memo(function TurnView({
   // One 重试 in the turn's reading order: on what failed last. A call the harness refused itself did not fail.
   const failedHere = (message: Message) =>
     (message.role === 'tool' || message.role === 'system') && message.state === 'failed' && !isBlocked(message)
-  const lastFailed = turn.replies.findLast(failedHere)?.id
+  // A picture that was not made says so in its own place, with no 重试 of its own.
+  const lastFailed = turn.replies.findLast(message => failedHere(message) && !isPictureRow(message))?.id
   // A failure says itself once: a failed note or row already has the words, and the run's end note has its own.
   const speaksFailure = turn.replies.some(failedHere)
   const showOutcome = outcome !== undefined && outcome !== 'completed' && !runEnd && !(outcome === 'failed' && speaksFailure)
@@ -579,16 +583,20 @@ const TurnView = memo(function TurnView({
               const streaming = block.message.id === rowContext.streamingId
               return (
                 <ReplyViewport.Provider key={block.message.id} value={replyViewport}>
-                  <MessageRow
-                    message={block.message}
-                    streaming={streaming}
-                    observeStream={rowContext.observeStream === true}
-                    frozen={rowContext.frozen}
-                    coarse={rowContext.coarse}
-                  />
+                  <TurnPictured.Provider value={pictured}>
+                    <MessageRow
+                      message={block.message}
+                      streaming={streaming}
+                      observeStream={rowContext.observeStream === true}
+                      frozen={rowContext.frozen}
+                      coarse={rowContext.coarse}
+                    />
+                  </TurnPictured.Provider>
                 </ReplyViewport.Provider>
               )
             }
+            if (block.kind === 'picture')
+              return <GeneratedImage key={block.message.id} message={block.message} frozen={rowContext.frozen} />
             if (block.kind === 'note') {
               if (block.message.role === 'tool') return <QuestionRow key={block.message.id} message={block.message} context={rowContext} />
               // The run's end line says the same and offers the same 重试; the note is the record once a later turn replaces it.

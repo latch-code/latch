@@ -1,5 +1,6 @@
 /** Pure conversions from ACP payloads to Latch's browser-safe types. */
 import type {
+  AttachmentRef,
   FileDiff,
   Message,
   PlanEntry,
@@ -26,6 +27,8 @@ const TRUNCATED = '\n…（内容过长，已截断）'
 
 export const OUTCOME_UNKNOWN = 'TOOL_OUTCOME_UNKNOWN: 结果未知，请先核对它做了什么。Latch 不会自动重做。'
 export const NOT_STARTED = 'TOOL_NOT_STARTED: 本轮已结束，工具没有开始执行。'
+/** An image tool's row whose turn ended before its picture came: nothing was made that anyone needs to check. */
+export const IMAGE_NOT_MADE = '图片未生成'
 
 export function clip(text: string, limit: number): string {
   return text.length <= limit ? text : `${text.slice(0, limit)}${TRUNCATED}`
@@ -95,6 +98,10 @@ export interface ToolState {
   blocked?: ToolBlock
   /** The plan the call asked the person to approve (`HarnessProfile.readPlan`). */
   plan?: string
+  /** The Harness's image tool, as Latch's own wire marks it (`ToolDetail.imageGeneration`). */
+  imageGeneration?: true
+  /** The picture the image tool made, kept by the Host: the row's `Message.attachments`. */
+  attachments?: AttachmentRef[]
   /** When Latch first saw the call, when the agent reported it in progress, and when it settled (ISO). */
   createdAt?: string
   startedAt?: string
@@ -175,6 +182,11 @@ export function mayHaveRun(state: Pick<ToolState, 'status' | 'decision' | 'judge
 export function settleTool(state: ToolState, at: string): boolean {
   if (state.final || state.status === 'completed' || state.status === 'failed') return false
   state.awaiting = 0
+  // A picture that never came changed nothing: the row ends quietly, with no result to check.
+  if (state.imageGeneration) {
+    state.final = { state: 'cancelled', note: IMAGE_NOT_MADE }
+    return true
+  }
   const ran = mayHaveRun(state)
   state.final = ran ? { state: 'failed', note: OUTCOME_UNKNOWN } : { state: 'cancelled', note: NOT_STARTED }
   if (ran) state.completedAt ??= at
@@ -276,6 +288,7 @@ export function toolDetail(state: ToolState): ToolDetail {
         }
       : {}),
     ...(state.plan ? { plan: clip(state.plan, TOOL_TEXT_LIMIT) } : {}),
+    ...(state.imageGeneration ? { imageGeneration: true as const } : {}),
   }
 }
 
@@ -303,6 +316,7 @@ export function toolMessage(state: ToolState): Message {
     state: toolMessageState(state),
     text: state.simulatorInput ? [tool.title, tool.input].filter(Boolean).join(' · ') : (tool.output ?? tool.input ?? tool.title ?? ''),
     tool,
+    ...(state.attachments?.length ? { attachments: state.attachments } : {}),
     ...(state.createdAt ? { createdAt: state.createdAt } : {}),
     ...(state.startedAt ? { startedAt: state.startedAt } : {}),
     ...(state.completedAt ? { completedAt: state.completedAt } : {}),
@@ -325,7 +339,10 @@ export function settleToolMessage(message: Message, at: string): boolean {
   if (message.role !== 'tool') return false
   let note: string
   const asked = message.state === 'awaiting-approval'
-  if (toolRowMayHaveRun(message)) {
+  if (message.tool?.imageGeneration && (message.state === 'running' || message.state === 'queued')) {
+    message.state = 'cancelled'
+    note = IMAGE_NOT_MADE
+  } else if (toolRowMayHaveRun(message)) {
     message.state = 'failed'
     note = OUTCOME_UNKNOWN
   } else if (message.state === 'queued' || asked) {

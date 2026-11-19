@@ -212,12 +212,14 @@ import {
   sessionState,
   CARRY_METHOD,
   FORK_METHOD,
+  IMAGE_GENERATION_META,
   MCP_STATUS_METHOD,
   QUOTA_READ_METHOD,
   MCP_STATUS_UPDATE,
   ownMcpStatus,
   STEER_METHOD,
   steerResult,
+  toolContent,
   toolFields,
   updateEnvelope,
   SESSION_SKILLS_UPDATE,
@@ -7296,6 +7298,8 @@ export class AgentRuntime implements Bridge {
       case 'tool_call':
       case 'tool_call_update': {
         const parsed = toolFields.safeParse(update)
+        if (parsed.success && this.imageTool(update) && this.applyImageTool(task, run, parsed.data, update.sessionUpdate === 'tool_call'))
+          return
         if (parsed.success)
           this.applyTool(
             task,
@@ -7628,6 +7632,59 @@ export class AgentRuntime implements Bridge {
     const index = task.messages.findIndex(existing => existing.id === item.id)
     if (index >= 0) task.messages[index] = item
     else task.messages.push(item)
+  }
+
+  /** A row Latch's own Codex wire marks as its image tool's (`IMAGE_GENERATION_META`); any other agent's mark is ignored. */
+  private imageTool(update: Record<string, unknown>): boolean {
+    if (this.selection.profile?.wire !== 'codex') return false
+    const meta = update._meta
+    return typeof meta === 'object' && meta !== null && Reflect.get(meta, IMAGE_GENERATION_META) === true
+  }
+
+  /**
+   * The image tool's row. It is the picture's place: an image block in its content is the picture, kept by the Host as
+   * the row's attachment, never in the row's content. The row stays running until the picture is stored, then settles
+   * with it, so a client never sees it finished without its picture. Pictures count toward the turn's 8 as an Agent's
+   * other pictures do; one that cannot be kept leaves a short line on the row. Returns false when the update is the
+   * ordinary kind (no picture in it).
+   */
+  private applyImageTool(task: AcpTask, run: Run | undefined, fields: ToolFields, created: boolean): boolean {
+    this.toolState(task, fields.toolCallId).imageGeneration = true
+    const pictureOf = (item: unknown) => {
+      const parsed = toolContent.safeParse(item)
+      return parsed.success && parsed.data.type === 'content' && parsed.data.content?.type === 'image' ? parsed.data.content : undefined
+    }
+    const image = fields.content?.map(pictureOf).find(Boolean)
+    if (!image) return false
+    const rest: ToolFields = { ...fields, content: fields.content!.filter(item => !pictureOf(item)) }
+    const noted = (note: string) => ({
+      ...rest,
+      content: [...(rest.content ?? []), { type: 'content', content: { type: 'text', text: note } }],
+    })
+    if (run) run.sensitiveOutput = true
+    const { data, mimeType: mime } = image
+    if (!run || !this.options.saveAttachment || !data || !mime || (run.imageCount ?? 0) >= 8) {
+      this.applyTool(task, run, noted('图片未保存：内容无效或超过每轮 8 张上限'), created)
+      return true
+    }
+    run.imageCount = (run.imageCount ?? 0) + 1
+    const taskId = task.summary.id
+    const state = this.toolState(task, fields.toolCallId)
+    // Running until its picture is kept: the update that settles it is applied with the picture.
+    const { status, ...waiting } = rest
+    if (created || status === 'in_progress') this.applyTool(task, run, waiting, created)
+    run.imageChain = (run.imageChain ?? Promise.resolve()).then(async () => {
+      let settled = rest
+      try {
+        const ref = await this.options.saveAttachment!({ sessionId: taskId, mime, data })
+        state.attachments = [ref]
+      } catch {
+        settled = noted('图片未保存：图片类型、大小或附件存储不可用')
+      }
+      if (this.state.tasks[taskId] !== task) return
+      this.applyTool(task, run, settled, false)
+    })
+    return true
   }
 
   private applyTool(task: AcpTask, run: Run | undefined, fields: ToolFields, created: boolean, denial?: ToolDenial): void {

@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
-import { FAKE_ACP_AGENT } from '@latch/testkit'
+import { FAKE_ACP_AGENT, FAKE_CODEX_APP_SERVER } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { openSession, settleShell } from './helpers/layout.ts'
@@ -65,8 +65,8 @@ async function media(page: Page): Promise<{ png: Buffer; webm: Buffer }> {
 }
 
 /** Each width and theme, once with each of `parts` scrolled to the top of the view. */
-async function shots(page: Page, name: string, parts: Record<string, Locator>): Promise<void> {
-  for (const width of [390, 820, 1440]) {
+async function shots(page: Page, name: string, parts: Record<string, Locator>, widths = [390, 820, 1440]): Promise<void> {
+  for (const width of widths) {
     await page.setViewportSize({ width, height: 960 })
     for (const theme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme: theme })
@@ -315,6 +315,141 @@ describe('media in replies', () => {
       expect(await picture.getAttribute('src')).toMatch(/^\/link\/api\/attachments\/[A-Za-z0-9_-]{22}\/content$/u)
       expect((await picture.boundingBox())!.width).toBeGreaterThan(400)
       await shots(page, 'agent', { image: picture })
+    } finally {
+      await context.close()
+    }
+  })
+})
+
+describe('a picture Codex makes', () => {
+  let root: string, host: TestHost, browser: Browser
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), 'latch-image-canvas-'))
+    const bin = join(root, 'bin'),
+      command = join(bin, 'codex')
+    await mkdir(bin)
+    await writeFile(command, `#!/bin/sh\nexec '${process.execPath}' '${FAKE_CODEX_APP_SERVER}' "$@"\n`)
+    await chmod(command, 0o755)
+    host = await startTestHost({
+      demo: false,
+      commandDirectories: () => [bin],
+      loginPrograms: name => (name === 'codex' ? command : undefined),
+      detectPreset: preset => (preset.id === 'codex' ? { found: true, path: command } : { found: false }),
+    })
+    browser = await chromium.launch(browserLaunchOptions())
+    await mkdir(OUT, { recursive: true })
+  })
+  afterAll(async () => {
+    await browser?.close()
+    await host?.close()
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('is made on a canvas in its place, which the picture replaces; one that fails is one line', async () => {
+    // The fake holds the image item in progress until this file exists, so the canvas is seen for as long as the test needs.
+    const gate = join(root, 'release')
+    const owner = await host.enroll({ listener: 'unix' })
+    await owner.confirmedJson('agents', {
+      body: {
+        id: 'codex',
+        presetId: 'codex',
+        name: 'Codex',
+        command: 'codex',
+        args: [],
+        env: { FAKE_CODEX_STATE: join(root, 'threads.json'), FAKE_CODEX_IMAGE_DIR: join(root, 'images'), FAKE_CODEX_IMAGE_GATE: gate },
+      },
+    })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    try {
+      // Enrolled first: a new device waits while a full-access session runs.
+      await enrollBrowser(page, host, { name: '生成图片', scopes: ['admin'] })
+      const created = await owner.confirmed('tasks', {
+        method: 'POST',
+        body: { prompt: 'image result 1536x1024', requestId: randomUUID(), mode: 'agent', harnessId: 'codex', workspaceId: 'default' },
+      })
+      expect(created.status).toBe(201)
+      const { sessionId } = (await created.json()) as { sessionId: string }
+      const detail = () => owner.json<TaskDetail>(`tasks/${sessionId}`)
+      await expect
+        .poll(async () => (await detail()).messages.some(message => message.tool?.imageGeneration && message.state === 'running'), SLOW)
+        .toBe(true)
+      await settleShell(page)
+      await openSession(page, sessionId)
+      const place = page.locator('.generated-image')
+      const canvas = place.locator('.generated-image-canvas')
+      await canvas.waitFor()
+      // A square canvas on the picture's own surface, the page's particles in it, and no tool row besides it.
+      expect(await place.getAttribute('data-state')).toBe('making')
+      const square = (await canvas.boundingBox())!
+      expect(Math.abs(square.width - square.height)).toBeLessThan(1)
+      expect(square.width).toBeLessThanOrEqual(480)
+      expect(await canvas.locator('canvas.ui-backdrop[data-kind="field"]').count()).toBe(1)
+      await canvas.getByText('生成图片', { exact: true }).waitFor()
+      expect(await page.locator('.tool-card', { hasText: '生成图片' }).count()).toBe(0)
+      // The particles move while the picture is made, and hold a still frame under reduced motion and out of view.
+      const particles = canvas.locator('canvas.ui-backdrop')
+      const moving = async () => {
+        const before = await particles.evaluate((node: HTMLCanvasElement) => node.toDataURL())
+        await page.waitForTimeout(500)
+        return before !== (await particles.evaluate((node: HTMLCanvasElement) => node.toDataURL()))
+      }
+      expect(await page.evaluate(() => document.hasFocus())).toBe(true)
+      expect(await moving()).toBe(true)
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await page.waitForTimeout(200)
+      expect(await moving()).toBe(false)
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+      expect(await moving()).toBe(true)
+      await canvas.evaluate((node: HTMLElement) => (node.style.transform = 'translateY(-10000px)'))
+      await page.waitForTimeout(200)
+      expect(await moving()).toBe(false)
+      await canvas.evaluate((node: HTMLElement) => (node.style.transform = ''))
+      expect(await moving()).toBe(true)
+      // A still frame of the particles for the captures.
+      await page.evaluate(() => (document.documentElement.dataset.capture = 'still'))
+      await shots(page, 'image-making', { canvas }, [390, 1440])
+      await page.setViewportSize({ width: 1440, height: 960 })
+      await page.evaluate(() => delete document.documentElement.dataset.capture)
+
+      // The picture comes: it takes the canvas's place, at its own shape, and is the only picture of the turn.
+      // Where the place stands in its turn, which the picture keeps.
+      const offset = () =>
+        place.evaluate(element => element.getBoundingClientRect().top - element.closest('.turn')!.getBoundingClientRect().top)
+      const top = await offset()
+      await writeFile(gate, '')
+      const picture = place.locator('img.inline-media-image')
+      await expect.poll(() => picture.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth === 1536), SLOW).toBe(true)
+      await canvas.waitFor({ state: 'detached' })
+      expect(await place.getAttribute('data-state')).toBe('drawn')
+      expect(await picture.getAttribute('src')).toMatch(/^\/link\/api\/attachments\/[A-Za-z0-9_-]{22}\/content$/u)
+      const drawn = (await picture.boundingBox())!
+      expect(Math.abs(drawn.width / drawn.height - 1.5)).toBeLessThan(0.02)
+      expect(Math.abs((await offset()) - top)).toBeLessThan(2)
+      expect(await page.locator('.turn img.inline-media-image').count()).toBe(1)
+      expect(await page.locator('.tool-card', { hasText: '生成图片' }).count()).toBe(0)
+      await expect.poll(async () => (await detail()).summary.status, SLOW).toBe('idle')
+      await shots(page, 'image-drawn', { picture }, [390, 1440])
+
+      // Read again, the picture is simply where the canvas was.
+      await page.reload()
+      await settleShell(page)
+      await openSession(page, sessionId)
+      await expect.poll(() => picture.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth === 1536), SLOW).toBe(true)
+      expect(await page.locator('.generated-image-canvas').count()).toBe(0)
+
+      // A generation that fails is one short line in its place, with no empty canvas.
+      const sent = await owner.request(`tasks/${sessionId}/prompt`, {
+        method: 'POST',
+        body: { requestId: randomUUID(), prompt: 'image failed' },
+      })
+      expect(sent.status).toBe(200)
+      const failed = page.locator('.generated-image-line.is-failed')
+      await failed.getByText('图片生成失败：已达用量上限', { exact: true }).waitFor()
+      await expect.poll(async () => (await detail()).summary.status, SLOW).toBe('idle')
+      expect(await page.locator('.generated-image-canvas').count()).toBe(0)
+      await shots(page, 'image-failed', { failed }, [390, 1440])
     } finally {
       await context.close()
     }

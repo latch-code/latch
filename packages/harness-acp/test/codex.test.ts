@@ -32,6 +32,7 @@ import {
 import { CodexWire, codexMcpServer, codexVersion, setCodexStopLimits } from '../src/wires/codex.ts'
 import { codexOptions, gatewayEffortOption } from '../src/codex-models.ts'
 import { MCP_STATUS_METHOD } from '../src/protocol.ts'
+import { IMAGE_NOT_MADE, settleToolMessage } from '../src/mapping.ts'
 import { RequestTimeout, setProcessLister } from '../src/wires/process.ts'
 import { cliTree, seedCliFiles } from './helpers/cli-config.ts'
 
@@ -667,15 +668,16 @@ describe('Codex over its app-server', () => {
   })
 
   describe('its image tool', () => {
-    const picture = {
-      id: 'abcdefghijklmnopqrstuv',
-      name: 'Agent-image.png',
-      mime: 'image/png',
-      kind: 'image',
-      size: 1,
-      sha256: 'b'.repeat(64),
-    } as const
-    async function imaging(how: string) {
+    const picture = (n = 0) =>
+      ({
+        id: `abcdefghijklmnopqrstu${n}`,
+        name: 'Agent-image.png',
+        mime: 'image/png',
+        kind: 'image',
+        size: 1,
+        sha256: 'b'.repeat(64),
+      }) as const
+    async function imaging(how: string, save?: (input: { sessionId: string; mime: string; data: string }) => Promise<unknown>) {
       const saved: Array<{ sessionId: string; mime: string; data: string }> = []
       const t = await computer(
         {},
@@ -684,60 +686,169 @@ describe('Codex over its app-server', () => {
         {
           saveAttachment: async input => {
             saved.push(input)
-            return picture
+            await save?.(input)
+            return picture(saved.length - 1)
           },
         },
       )
       const bridge = await t.open()
       const id = await start(bridge, t.main, `image ${how}`)
       const detail = await settled(bridge, id)
-      const row = detail.messages.find(message => message.role === 'tool' && message.tool?.title === '生成图片')
-      return { t, detail, saved, row, log: await t.log() }
+      const rows = detail.messages.filter(message => message.role === 'tool' && message.tool?.imageGeneration)
+      return { t, bridge, id, detail, saved, rows, row: rows[0], log: await t.log() }
     }
     const png = (data: string) =>
       Buffer.from(data, 'base64')
         .subarray(0, 8)
         .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    /** No reply message carries a picture: the picture is the image tool's row. */
+    const noReplyPicture = (detail: DriverTaskDetail) =>
+      expect(detail.messages.filter(message => message.role !== 'tool' && message.attachments?.length)).toEqual([])
 
-    it('passes on the picture in the item’s result as the reply’s image, with a row while it ran', async () => {
-      const { detail, saved, row, log } = await imaging('result')
+    it('keeps the picture in the item’s result on the image tool’s row, which was its place while it ran', async () => {
+      const { detail, saved, row, rows, log } = await imaging('result')
       expect(detail.summary.status).toBe('idle')
       expect(saved).toHaveLength(1)
       expect(saved[0]!.mime).toBe('image/png')
       expect(png(saved[0]!.data)).toBe(true)
-      expect(detail.messages.find(message => message.role === 'assistant' && message.attachments)?.attachments).toEqual([picture])
-      expect(row?.state).toBe('completed')
+      expect(rows).toHaveLength(1)
+      expect(row).toMatchObject({ state: 'completed', attachments: [picture(0)], tool: { title: '生成图片', imageGeneration: true } })
+      // The bytes are the attachment's alone: never the row's text or output.
+      expect(JSON.stringify(row)).not.toContain(saved[0]!.data.slice(0, 64))
+      noReplyPicture(detail)
       // The bytes were in the item: Codex is not asked to read anything.
       expect(sent(log, 'fs/readFile')).toHaveLength(0)
     })
 
+    it('holds the row running until its picture is kept, then settles it with the picture', async () => {
+      let release!: () => void
+      const held = new Promise<void>(resolve => (release = resolve))
+      let saving = false
+      const t = await computer(
+        {},
+        [],
+        {},
+        {
+          saveAttachment: async () => {
+            saving = true
+            await held
+            return picture(0)
+          },
+        },
+      )
+      const bridge = await t.open()
+      const id = await start(bridge, t.main, 'image result')
+      await vi.waitFor(() => expect(saving).toBe(true), { timeout: 8_000, interval: 10 })
+      const during = (await bridge.detail(id)).messages.find(message => message.tool?.imageGeneration)
+      expect(during).toMatchObject({ state: 'running', tool: { imageGeneration: true } })
+      expect(during?.attachments).toBeUndefined()
+      release()
+      const detail = await settled(bridge, id)
+      expect(detail.messages.find(message => message.tool?.imageGeneration)).toMatchObject({
+        state: 'completed',
+        attachments: [picture(0)],
+      })
+    })
+
     it('asks Codex itself for a picture it only saved, through fs/readFile on the path it reported', async () => {
-      const { detail, saved, log } = await imaging('saved')
+      const { detail, saved, row, log } = await imaging('saved')
       const reads = sent(log, 'fs/readFile')
       expect(reads).toHaveLength(1)
       expect(String(reads[0]!.params?.path)).toMatch(/\/generated_images\/ig_[^/]+\.png$/u)
       expect(saved).toHaveLength(1)
       expect(png(saved[0]!.data)).toBe(true)
-      // The turn waited for the read: the picture is in this turn, before its reply settled.
-      expect(detail.messages.find(message => message.role === 'assistant' && message.attachments)?.attachments).toEqual([picture])
+      // The turn waited for the read: the picture is on its row in this turn, before its reply settled.
+      expect(row).toMatchObject({ state: 'completed', attachments: [picture(0)] })
+      noReplyPicture(detail)
     })
 
-    it('shows a failed generation as a failed row with a short line, and passes on nothing', async () => {
+    it('keeps each of two pictures of one turn on its own row, in order', async () => {
+      const { detail, saved, rows } = await imaging('two')
+      expect(saved).toHaveLength(2)
+      expect(rows.map(row => [row.state, row.attachments])).toEqual([
+        ['completed', [picture(0)]],
+        ['completed', [picture(1)]],
+      ])
+      expect(new Set(rows.map(row => row.id)).size).toBe(2)
+      noReplyPicture(detail)
+    })
+
+    it('keeps the picture on its row when the session is read again and goes on in a new process', async () => {
+      const { t, bridge, id, row } = await imaging('result')
+      await bridge.close()
+      const again = await t.open()
+      const reread = await again.detail(id)
+      expect(reread.messages.find(message => message.id === row!.id)).toMatchObject({
+        state: 'completed',
+        attachments: [picture(0)],
+        tool: { imageGeneration: true },
+      })
+      await again.prompt(id, 'echo after', rid())
+      const resumed = await settled(again, id)
+      expect(resumed.messages.find(message => message.id === row!.id)).toMatchObject({
+        attachments: [picture(0)],
+        tool: { imageGeneration: true },
+      })
+      expect(resumed.messages.filter(message => message.tool?.imageGeneration)).toHaveLength(1)
+    })
+
+    it('shows a failed generation as a failed row with a short line, and keeps nothing', async () => {
       const { detail, saved, row } = await imaging('failed')
       expect(detail.summary.status).toBe('idle')
       expect(saved).toHaveLength(0)
-      expect(row?.state).toBe('failed')
+      expect(row).toMatchObject({ state: 'failed', tool: { imageGeneration: true } })
+      expect(row?.attachments).toBeUndefined()
       expect(JSON.stringify(row?.tool)).toContain('图片生成失败：已达用量上限')
+    })
+
+    it('says so on the row when the Host cannot keep the picture', async () => {
+      const { saved, row, detail } = await imaging('result', async () => {
+        throw new Error('store unavailable')
+      })
+      expect(saved).toHaveLength(1)
+      expect(row).toMatchObject({ state: 'completed', tool: { imageGeneration: true } })
+      expect(row?.attachments).toBeUndefined()
+      expect(row?.tool?.output).toContain('图片未保存')
+      noReplyPicture(detail)
+    })
+
+    it('ends the row of a picture a stopped turn never made quietly, with no result to check', async () => {
+      // A gate nobody opens, in a folder of this test: the item stays in progress.
+      const gate = await mkdtemp(join(tmpdir(), 'latch-image-gate-'))
+      cleanups.push(() => rm(gate, { recursive: true, force: true }))
+      const t = await computer({ FAKE_CODEX_IMAGE_GATE: join(gate, 'open') })
+      const bridge = await t.open()
+      const id = await start(bridge, t.main, 'image result')
+      await until(bridge, id, detail => detail.messages.some(message => message.tool?.imageGeneration && message.state === 'running'))
+      await bridge.cancel(id)
+      const done = await settled(bridge, id)
+      expect(done.summary.status).toBe('cancelled')
+      const row = done.messages.find(message => message.tool?.imageGeneration)
+      expect(row).toMatchObject({ state: 'cancelled', tool: { output: '图片未生成' } })
+      expect(row?.attachments).toBeUndefined()
+    })
+
+    it('ends a stored image row the Host stopped under quietly, not as a result to check', () => {
+      const row = {
+        id: 'tool:1:ig',
+        role: 'tool' as const,
+        text: '生成图片',
+        state: 'running' as const,
+        tool: { title: '生成图片', imageGeneration: true as const },
+      }
+      expect(settleToolMessage(row, '2026-11-20T00:00:00.000Z')).toBe(true)
+      expect(row).toMatchObject({ state: 'cancelled', text: IMAGE_NOT_MADE, tool: { output: IMAGE_NOT_MADE, imageGeneration: true } })
     })
 
     for (const [how, note] of [
       ['big', '图片超过 5 MB，未显示'],
       ['bad', '生成的图片格式无效，未显示'],
     ] as const)
-      it(`passes on no ${how === 'big' ? 'picture over 5 MiB' : 'bytes that are not a PNG, JPEG or WebP'}, and says so on the row`, async () => {
+      it(`keeps no ${how === 'big' ? 'picture over 5 MiB' : 'bytes that are not a PNG, JPEG or WebP'}, and says so on the row`, async () => {
         const { saved, row } = await imaging(how)
         expect(saved).toHaveLength(0)
-        expect(row?.state).toBe('completed')
+        expect(row).toMatchObject({ state: 'completed', tool: { imageGeneration: true } })
+        expect(row?.attachments).toBeUndefined()
         expect(JSON.stringify(row?.tool)).toContain(note)
       })
   })

@@ -172,7 +172,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | `LATCH_HELPER_LIVE=1` 加 pi、Codex 或 OpenCode 的上述路径 | `e2e/helper-live.e2e.ts` |
 | `LATCH_HELPER_PROPOSALS_LIVE=1` 加 Codex 或 OpenCode 的上述路径 | `e2e/helper-proposals.e2e.ts`、`packages/harness-acp/test/codex-skills.live.test.ts` |
 | `LATCH_CODEX_ACTIONS_LIVE=1` 加 `LATCH_CODEX_GATEWAY_BINARY` | `packages/harness-acp/test/codex-actions.live.test.ts` |
-| `LATCH_CODEX_IMAGE_REAL=1` 加 `LATCH_CODEX_GATEWAY_BINARY` | `apps/host/test/codex-image.live.test.ts`：用本人的登录生成一张图（一次付费的图片生成），回复要带图片附件 |
+| `LATCH_CODEX_IMAGE_REAL=1` 加 `LATCH_CODEX_GATEWAY_BINARY` | `apps/host/test/codex-image.live.test.ts`：用本人的登录生成一张图（一次付费的图片生成），图片工具的行要带图片附件 |
 | `LATCH_DSH_BINARY` | `packages/harness-acp/test/dsh-mode.test.ts` 的真实部分，无模型调用 |
 | `LATCH_AGY_BINARY` | `antigravity.live.test.ts` |
 | `LATCH_COMPUTER_GUIDE_LIVE=codex=<路径>,claude-agent=<claude-agent-acp 路径>,opencode=<路径>` | `computer-guide.live.test.ts`：CLI 用自己的登录与模型，假 Driver，不碰桌面；替换与前置的 A/B（[MCP.md](MCP.md#给-agent-的指引)）。`LATCH_COMPUTER_GUIDE_ARMS=replace` 或 `prepend` 只跑一组，`LATCH_COMPUTER_GUIDE_RUNS` 每组次数，`LATCH_COMPUTER_GUIDE_VENDOR_FILE` 是 Driver 原文（不进仓库），`LATCH_COMPUTER_GUIDE_BROWSER=0` 跳过 latch-browser 一项，`LATCH_COMPUTER_GUIDE_EVIDENCE_DIR` 写下每轮的结果。`PATH` 里的 `cua-driver` 与 `cua` 要换成只记录的替身 |

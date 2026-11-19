@@ -97,7 +97,7 @@ const holdsHole = (node: Node): boolean => node instanceof Element && (node.matc
  * that arrives during a stream is cut out of the still frame. It draws at most 30 frames a second (15 for slow drift)
  * with a point count capped by the viewport, and holds one still frame while the tab is hidden or the window is in the
  * background, a reply is streaming in view, motion is reduced (the system's preference or 减弱), the page is frozen
- * for a capture, or power is low. `level` off renders nothing.
+ * for a capture, power is low, or the caller asks (`paused`). `level` off renders nothing.
  */
 export function Backdrop({
   kind = 'field',
@@ -108,6 +108,7 @@ export function Backdrop({
   resolved = null,
   fixed = false,
   ambient = false,
+  paused = false,
   className,
   onStats,
 }: {
@@ -122,6 +123,8 @@ export function Backdrop({
   fixed?: boolean
   /** The field keeps drifting slowly while nothing runs: for a page with no text set over it (the start screen). */
   ambient?: boolean
+  /** Holds the still frame for a reason of the caller's own (the layer is out of view, the connection is down). */
+  paused?: boolean
   className?: string
   /** For measurement and tests: receives a function that reads the engine's counters. */
   onStats?: (read: (() => BackdropStats) | null) => void
@@ -132,9 +135,9 @@ export function Backdrop({
   const remeasure = useRef<() => void>(() => {})
   /** A point of the window in the canvas's own coordinates, whatever scales or moves its ancestors. */
   const toCanvas = useRef<(x: number, y: number) => { x: number; y: number }>((x, y) => ({ x, y }))
-  const inputs = useRef({ running, focus, focusTarget })
+  const inputs = useRef({ running, focus, focusTarget, paused })
   useLayoutEffect(() => {
-    inputs.current = { running, focus, focusTarget }
+    inputs.current = { running, focus, focusTarget, paused }
   })
   const stats = useRef(onStats)
   useLayoutEffect(() => {
@@ -148,6 +151,7 @@ export function Backdrop({
     const created = createBackdropEngine(element, kind, level, ambient)
     engine.current = created
     created.setRunning(inputs.current.running)
+    if (inputs.current.paused) created.pause('caller')
     stats.current?.(() => created.stats())
     const host = element.parentElement
     const regions = new Set<Element>()
@@ -333,6 +337,11 @@ export function Backdrop({
   useEffect(() => {
     engine.current?.setRunning(running)
   }, [running])
+
+  useEffect(() => {
+    if (paused) engine.current?.pause('caller')
+    else engine.current?.resume('caller')
+  }, [paused])
 
   useEffect(() => {
     if (!focus) engine.current?.setFocus(null)

@@ -6,7 +6,7 @@ import { startRealHarnessHost, systemNotes, type RealHarnessHost } from './helpe
 /**
  * Codex's image tool, for real: the person's own `codex` (`LATCH_CODEX_GATEWAY_BINARY`), signed in, on its own model,
  * asked once for a tiny picture (`LATCH_CODEX_IMAGE_REAL=1`; one paid image generation). The picture must reach the
- * session as the reply's image attachment, whichever way Codex hands it over (`result` or `savedPath` + `fs/readFile`).
+ * session as the image tool row's attachment, whichever way Codex hands it over (`result` or `savedPath` + `fs/readFile`).
  */
 
 const REAL = process.env.LATCH_CODEX_IMAGE_REAL === '1' && !!process.env.LATCH_CODEX_GATEWAY_BINARY
@@ -23,7 +23,7 @@ afterAll(async () => {
 
 if (!REAL) it.skip('draws a picture Codex generated (LATCH_CODEX_IMAGE_REAL=1 and the Codex path not set)', () => {})
 else
-  it('keeps a picture Codex generated as the reply image', async () => {
+  it('keeps a picture Codex generated on its image tool row', async () => {
     const created = await live.owner.confirmed('tasks', {
       method: 'POST',
       body: {
@@ -34,10 +34,8 @@ else
     })
     expect(created.status, await created.clone().text()).toBe(201)
     const done: TaskDetail = await live.firstTurn(((await created.json()) as { sessionId: string }).sessionId, 300_000)
-    const pictures = done.messages.flatMap(message =>
-      message.role === 'assistant' ? (message.attachments ?? []).filter(item => item.kind === 'image') : [],
-    )
-    const row = done.messages.find(message => message.tool?.title === '生成图片')
+    const row = done.messages.find(message => message.tool?.imageGeneration)
+    const pictures = (row?.attachments ?? []).filter(item => item.kind === 'image')
     // Only counts and booleans: the reply's words stay out of the log.
     console.info(
       JSON.stringify({

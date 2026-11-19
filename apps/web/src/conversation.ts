@@ -989,9 +989,16 @@ export type TurnBlock =
   | { kind: 'work'; key: string; items: WorkItem[] }
   | { kind: 'prose'; message: Message }
   | { kind: 'note'; message: Message }
+  | { kind: 'picture'; message: Message }
 
 /** A question stays in reading order: its card or its record 「你选了…」 is what the person said, not the agent's work. */
 const isQuestion = (message: Message) => message.toolName === 'ask_user'
+
+/**
+ * The Harness's image tool (`ToolDetail.imageGeneration`): not work but the picture's place, a block of its own that
+ * never folds, holding the picture once it is made.
+ */
+export const isPictureRow = (message: Message) => message.role === 'tool' && message.tool?.imageGeneration === true
 
 const itemKey = (item: WorkItem): string =>
   item.kind === 'reads' ? item.messages[0]!.id : item.kind === 'steps' ? itemKey(item.items[0]!) : item.message.id
@@ -1098,6 +1105,11 @@ export function turnBlocks(turn: Turn, level: WorkLevel = 'all'): TurnBlock[] {
     work = []
   }
   for (const message of turn.replies) {
+    if (isPictureRow(message)) {
+      flush()
+      blocks.push({ kind: 'picture', message })
+      continue
+    }
     if (message.role === 'tool' && !isQuestion(message)) {
       work.push({ kind: 'tool', message })
       continue
@@ -1122,14 +1134,17 @@ export function turnBlocks(turn: Turn, level: WorkLevel = 'all'): TurnBlock[] {
  */
 export function workFolds(turn: Turn, outcome: TurnOutcome | undefined): boolean {
   if (outcome !== 'completed') return false
-  return turn.replies.some(message => message.role === 'tool' && !isQuestion(message)) && turnText(turn).trim().length > 0
+  return (
+    turn.replies.some(message => message.role === 'tool' && !isQuestion(message) && !isPictureRow(message))
+    && turnText(turn).trim().length > 0
+  )
 }
 
 /** The fold's words: 「已工作 2 分 13 秒」 when the Host recorded it, 「已工作」 for older history, and what it must not hide. */
 export function foldWords(turn: Turn): string {
   const spent = formatDuration(turnTimes(turn).activeMs ?? 0)
   const count = (state: ShownToolState) =>
-    turn.replies.filter(message => message.role === 'tool' && shownToolState(message) === state).length
+    turn.replies.filter(message => message.role === 'tool' && !isPictureRow(message) && shownToolState(message) === state).length
   const failed = count('failed')
   const rejected = count('rejected')
   // What the Harness's own model stopped happened without the person, so the fold says it, its subagents' too.

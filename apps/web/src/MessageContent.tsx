@@ -217,6 +217,11 @@ const TAIL_LINES = COLLAPSED_LINES - 1
 
 /** Direct replies share the transcript's scrollport. Other Markdown surfaces find their own. */
 export const ReplyViewport = createContext<RefObject<Element | null> | undefined>(undefined)
+/**
+ * The reply's turn already shows a picture its Harness generated: a link in it to a picture is that picture's 「下载原图」
+ * as a rule, so it stays a path chip instead of drawing the same picture a second time. `![](…)` still draws.
+ */
+export const TurnPictured = createContext(false)
 
 const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { code: string; language?: string; closed?: boolean }) {
   const [expanded, setExpanded] = useState(false)
@@ -424,7 +429,9 @@ function MarkdownFile({
         : undefined),
     [files.resolveMedia, files.resolveImage, image],
   )
-  const wanted = !!path && !!resolve && (image || (fallback !== undefined && mediaTypeOf(path) !== undefined))
+  const pictured = useContext(TurnPictured)
+  const linked = fallback !== undefined && path ? mediaTypeOf(path) : undefined
+  const wanted = !!path && !!resolve && (image || (linked !== undefined && !(pictured && linked === 'image')))
   const seen = useSeen(anchor)
   // A new resolver is a new session or root: what an older one answered is not shown for it.
   const key = `${path ?? ''}\n${image}`

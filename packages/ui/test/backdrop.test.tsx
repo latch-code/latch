@@ -28,6 +28,7 @@ function Stage({
   clear = false,
   resolved = null,
   ambient = false,
+  paused = false,
   stats,
   children,
   style,
@@ -40,6 +41,7 @@ function Stage({
   clear?: boolean
   resolved?: { id: number; x: number; y: number } | null
   ambient?: boolean
+  paused?: boolean
   stats: Reader
   children?: ReactNode
   style?: CSSProperties
@@ -55,6 +57,7 @@ function Stage({
         focusTarget={card}
         resolved={resolved}
         ambient={ambient}
+        paused={paused}
         onStats={read => {
           stats.read = read
         }}
@@ -416,6 +419,20 @@ describe('the background layer', () => {
     expect(stats.read!().frames).toBe(held)
     expect(drawn(canvas, WHOLE)).toBeGreaterThan(0)
     unmark()
+    expect(stats.read!().paused).toEqual([])
+    await expect.poll(() => stats.read!().frames).toBeGreaterThan(held)
+  })
+
+  it('holds one still frame while its caller pauses it, from the start too, and moves again when it lets go', async () => {
+    const stats = reader()
+    const screen = await render(<Stage paused stats={stats} />)
+    const canvas = screen.container.querySelector('canvas')!
+    await expect.poll(() => stats.read?.().paused ?? []).toEqual(['caller'])
+    await expect.poll(() => drawn(canvas, WHOLE)).toBeGreaterThan(0)
+    const held = stats.read!().frames
+    await pause(250)
+    expect(stats.read!().frames).toBe(held)
+    await screen.rerender(<Stage stats={stats} />)
     expect(stats.read!().paused).toEqual([])
     await expect.poll(() => stats.read!().frames).toBeGreaterThan(held)
   })

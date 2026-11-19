@@ -451,6 +451,11 @@ export interface ToolDetail {
    * in full, as the harness wrote it (Markdown). `decision` says how it was answered.
    */
   plan?: string
+  /**
+   * The call is the Harness's image tool (Codex's `imageGeneration`), as Latch's own wire reports it: clients draw it
+   * where the picture will be, and the picture it made is the row's `Message.attachments`.
+   */
+  imageGeneration?: true
 }
 
 /**

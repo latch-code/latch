@@ -274,6 +274,13 @@ export const tokensUpdate = turnTokens.extend({
   stream: z.object({ outputTokens: z.number().positive().finite(), ms: z.number().positive().finite() }).optional().catch(undefined),
 })
 
+/**
+ * `_meta` key a wire that reads its Harness's image tool itself (Codex's app-server) puts on that tool's `tool_call` and
+ * `tool_call_update`: the row is the picture's place, and an image block in its content is the picture, which the
+ * runtime keeps as the row's attachment. Taken only from Latch's own wire.
+ */
+export const IMAGE_GENERATION_META = 'latch/imageGeneration'
+
 export const promptResult = z.object({
   stopReason: z.string(),
   usage: turnTokens.nullish().catch(undefined),

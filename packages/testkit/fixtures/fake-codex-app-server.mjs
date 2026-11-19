@@ -275,27 +275,47 @@ async function play(text) {
     return reply('Ordinary turn completed.')
   }
   if (word === 'echo') return reply(`echo: ${text}`)
-  // `image <result|saved|failed|big|bad>`: Codex's image tool as 0.170 reports it (`imageGeneration`). Each picture is
-  // also saved under FAKE_CODEX_IMAGE_DIR, as Codex keeps them in its home; `saved` sends only that path, with an empty
-  // `result` and a `fileId` (as the migration does), for fs/readFile. `big` is over 5 MiB; `bad` is not a picture.
+  // `image <result|saved|failed|big|bad|two> [WxH]`: Codex's image tool as 0.170 reports it (`imageGeneration`). Each
+  // picture is also saved under FAKE_CODEX_IMAGE_DIR, as Codex keeps them in its home; `saved` sends only that path,
+  // with an empty `result` and a `fileId` (as the migration does), for fs/readFile. `big` is over 5 MiB; `bad` is not a
+  // picture; `two` makes two pictures in the turn. `WxH` sizes the picture (96x64 by default). With
+  // FAKE_CODEX_IMAGE_GATE set, each item stays in progress until that file exists or the turn is interrupted.
   if (word === 'image') {
-    const how = text.trim().split(/\s+/u)[1] ?? 'result'
-    const id = `ig_${randomUUID()}`
-    const bytes =
-      how === 'big' ? Buffer.concat([png(4, 4), Buffer.alloc(6 * 1024 * 1024)]) : how === 'bad' ? Buffer.from('not a picture') : png(96, 64)
-    mkdirSync(IMAGE_DIR, { recursive: true })
-    const savedPath = join(IMAGE_DIR, `${id}.png`)
-    writeFileSync(savedPath, bytes)
-    const base = { type: 'imageGeneration', id, revisedPrompt: 'a blue gradient', generationId: null, transparentBackground: null }
-    notify('item/started', { threadId: thread.id, turnId: turn.id, item: { ...base, status: 'in_progress', result: '' } })
-    const done =
-      how === 'failed'
-        ? { ...base, status: 'failed', result: '', failure: { type: 'usageLimitExceeded', limitId: 'images', resetsAt: null } }
-        : how === 'saved'
-          ? { ...base, status: 'completed', result: '', fileId: 'file_fake', savedPath }
-          : { ...base, status: 'completed', result: bytes.toString('base64'), savedPath }
-    notify('item/completed', { threadId: thread.id, turnId: turn.id, item: done })
-    turn.items.push(done)
+    const [, how = 'result', size] = text.trim().split(/\s+/u)
+    const [width, height] = /^\d+x\d+$/u.test(size ?? '') ? size.split('x').map(Number) : [96, 64]
+    let savedPath = ''
+    for (const colour of how === 'two'
+      ? [
+          [74, 120, 220],
+          [220, 130, 74],
+        ]
+      : [[74, 120, 220]]) {
+      const id = `ig_${randomUUID()}`
+      const bytes =
+        how === 'big'
+          ? Buffer.concat([png(4, 4), Buffer.alloc(6 * 1024 * 1024)])
+          : how === 'bad'
+            ? Buffer.from('not a picture')
+            : png(width, height, colour)
+      mkdirSync(IMAGE_DIR, { recursive: true })
+      savedPath = join(IMAGE_DIR, `${id}.png`)
+      writeFileSync(savedPath, bytes)
+      const base = { type: 'imageGeneration', id, revisedPrompt: 'a blue gradient', generationId: null, transparentBackground: null }
+      notify('item/started', { threadId: thread.id, turnId: turn.id, item: { ...base, status: 'in_progress', result: '' } })
+      // An interrupted turn leaves the item in progress, as Codex does.
+      while (env.FAKE_CODEX_IMAGE_GATE && !existsSync(env.FAKE_CODEX_IMAGE_GATE)) {
+        if (turn.cancelled) return 'interrupted'
+        await sleep(10)
+      }
+      const done =
+        how === 'failed'
+          ? { ...base, status: 'failed', result: '', failure: { type: 'usageLimitExceeded', limitId: 'images', resetsAt: null } }
+          : how === 'saved'
+            ? { ...base, status: 'completed', result: '', fileId: 'file_fake', savedPath }
+            : { ...base, status: 'completed', result: bytes.toString('base64'), savedPath }
+      notify('item/completed', { threadId: thread.id, turnId: turn.id, item: done })
+      turn.items.push(done)
+    }
     return reply(`[下载 PNG 原图](${savedPath})`)
   }
   // What the thread holds before this turn, as Codex's own record: `remembers: a | b`.

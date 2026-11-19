@@ -299,6 +299,7 @@ const toolDetail = z.object({
     .string()
     .max(64 * 1024)
     .optional(),
+  imageGeneration: z.literal(true).optional(),
 })
 const agentBrief = z.object({ segments: z.array(z.object({ source: z.enum(['latch', 'user', 'material']), text: z.string() })) })
 // Its steps are messages, and may hold its own subagents.

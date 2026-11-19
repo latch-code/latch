@@ -452,6 +452,24 @@ describe("a turn's blocks and its fold", () => {
     expect(linesBelow({ scrollHeight: 1000, clientHeight: 320, scrollTop: 0 }, Number.NaN)).toBe(0)
   })
 
+  it('gives the image tool its own block where its picture goes, never folded or hidden, and leaves it out of the fold', () => {
+    const picture = (id: string, extra: Partial<Message> = {}) =>
+      tool(id, { tool: { kind: 'other', title: '生成图片', imageGeneration: true }, ...extra })
+    const turn = firstTurn([
+      user('u'),
+      tool('r', { tool: { kind: 'read' } }),
+      picture('p1', { state: 'running' }),
+      picture('p2', { state: 'failed', tool: { kind: 'other', imageGeneration: true, output: '图片生成失败' } }),
+      reply('a', '画好了。'),
+    ])
+    for (const level of ['all', 'failures', 'folded'] as const)
+      expect(shape(turnBlocks(turn, level)).filter(block => typeof block === 'string')).toEqual(['p1', 'p2', 'a'])
+    expect(turnBlocks(turn).map(block => block.kind)).toEqual(['work', 'picture', 'picture', 'prose'])
+    // A turn whose only call made a picture has no work to fold, and a failed picture is no failed step of the fold.
+    expect(workFolds(firstTurn([user('u'), picture('p'), reply('a', '画好了。')]), 'completed')).toBe(false)
+    expect(foldWords(turn)).not.toContain('失败')
+  })
+
   it('leaves every row, only what always shows, or those with the rest folded, by the level the reader chose', () => {
     const read = (id: string, extra: Partial<Message> = {}) => tool(id, { tool: { kind: 'read' }, ...extra })
     const replies = [

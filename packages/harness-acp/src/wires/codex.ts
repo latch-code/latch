@@ -37,6 +37,7 @@ import { codexGatewayEnvironment } from '../profiles/codex-environment.ts'
 import {
   CARRY_METHOD,
   FORK_METHOD,
+  IMAGE_GENERATION_META,
   MCP_STATUS_METHOD,
   QUOTA_READ_METHOD,
   MCP_STATUS_UPDATE,
@@ -1821,9 +1822,11 @@ export class CodexWire implements AgentWire {
   }
 
   /**
-   * Codex's image tool: a row while it runs, then the picture as an image the agent said, which the runtime keeps as the
-   * reply's attachment. The bytes come from the item (`result`), else from Codex itself (`fs/readFile` on the path it
-   * reported), which finds it wherever CODEX_HOME points. A failure, or a picture that is not passed on, is a short line on the row.
+   * Codex's image tool: a row marked as the picture's place while it runs, which settles with the picture as an image
+   * block in its content; the runtime keeps that as the row's attachment, so the picture is where the row was in any
+   * order of the turn's updates. The bytes come from the item (`result`), else from Codex itself (`fs/readFile` on the
+   * path it reported), which finds it wherever CODEX_HOME points. A failure, or a picture that is not passed on, is a
+   * short line on the row.
    */
   private imageItem(
     item: Record<string, unknown>,
@@ -1833,7 +1836,7 @@ export class CodexWire implements AgentWire {
     emit: (update: Record<string, unknown> & { sessionUpdate: string }) => void,
   ): void {
     if (child) return
-    const row = { toolCallId: id, title: '生成图片', kind: 'other' }
+    const row = { toolCallId: id, title: '生成图片', kind: 'other', _meta: { [IMAGE_GENERATION_META]: true } }
     if (!done) return emit({ sessionUpdate: 'tool_call', ...row, status: 'in_progress' })
     const settled = (status: 'completed' | 'failed', note?: string) =>
       emit({
@@ -1855,8 +1858,12 @@ export class CodexWire implements AgentWire {
     const pass = (base64: string) => {
       const image = generatedImage(base64)
       if ('refused' in image) return settled('completed', generatedImageNote(image.refused))
-      settled('completed')
-      emit({ sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: image.data, mimeType: image.mimeType } })
+      emit({
+        sessionUpdate: 'tool_call_update',
+        ...row,
+        status: 'completed',
+        content: [{ type: 'content', content: { type: 'image', data: image.data, mimeType: image.mimeType } }],
+      })
     }
     if (typeof item.result === 'string' && item.result) return pass(item.result)
     const path = savedImagePath(item.savedPath)
