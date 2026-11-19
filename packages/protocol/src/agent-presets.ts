@@ -153,14 +153,25 @@ export const AGENT_PRESETS: AgentPreset[] = [
   {
     id: 'opencode',
     name: 'OpenCode',
+    // OpenCode's own server (`opencode serve`), which its own clients use; the wire adds the subcommand. The same program
+    // answers ACP as `opencode acp`, which 1.x and definitions saved with it keep.
     command: 'opencode',
-    args: ['acp'],
+    args: [],
     license: 'MIT',
     homepage: 'https://github.com/anomalyco/opencode',
-    description: '模型与登录由 OpenCode 管理。',
+    description: '直接连接 OpenCode；模型与登录由 OpenCode 管理。',
     install: 'npm i -g @opencode/cli',
-    installNote: '经 Latch 使用服务需 2.2.6 或更高',
+    installNote: '直接连接需 2.2.6 或更高；更早的版本经 opencode acp',
     login: { command: 'opencode', args: ['auth', 'login'] },
+    fallback: {
+      command: 'opencode',
+      args: ['acp'],
+      install: 'npm i -g @opencode/cli',
+      homepage: 'https://github.com/anomalyco/opencode',
+      license: 'MIT',
+      description: '经 opencode acp 运行；模型与登录由 OpenCode 管理。',
+      direct: '直接连接需要 OpenCode 2.2.6 或更高版本：npm i -g @opencode/cli@latest',
+    },
     helperCard: {
       face: { bracket: 'angle', eyes: 'dot' },
       line: '开源的多面手，动手前先问你。',
@@ -332,6 +343,22 @@ export const RETIRED_AGENT_PRESETS: Readonly<Record<string, string>> = { gemini:
 
 export function isRetiredAgentPreset(presetId: string | undefined): boolean {
   return presetId !== undefined && Object.hasOwn(RETIRED_AGENT_PRESETS, presetId)
+}
+
+/**
+ * Whether a definition of this preset runs its `fallback` adapter rather than the preset's own protocol, by the command's
+ * file name (no directory, no Windows extension) and its arguments. Any command other than the preset's own is the
+ * adapter's, as before; when the adapter is the same program (`opencode acp`), the adapter's arguments pick it.
+ */
+export function runsPresetFallback(
+  preset: Pick<AgentPreset, 'command' | 'fallback'>,
+  commandName: string,
+  args: readonly string[],
+): boolean {
+  const fallback = preset.fallback
+  if (!fallback) return false
+  if (commandName !== preset.command) return true
+  return fallback.command === preset.command && fallback.args.length > 0 && fallback.args.every(arg => args.includes(arg))
 }
 
 /** Icons no preset owns: `latch` for the built-in harness only, `plugin` for a third-party one that names no other. */

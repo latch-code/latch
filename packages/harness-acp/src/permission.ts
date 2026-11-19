@@ -1,7 +1,7 @@
 /** Permission rules for ACP agents: profile selection, definition checks, launch fingerprint, modes and options. */
 import { realpathSync } from 'node:fs'
 import { basename, isAbsolute } from 'node:path'
-import { AGENT_PRESETS, isReservedAgentEnvName, isRetiredAgentPreset, type AgentPreset } from '@latch/protocol'
+import { AGENT_PRESETS, isReservedAgentEnvName, isRetiredAgentPreset, runsPresetFallback, type AgentPreset } from '@latch/protocol'
 import { AppError, type ConfigChangeClass } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { resolveCommand } from './command.ts'
@@ -16,6 +16,7 @@ import { CURSOR_KEY_ENV, cursorSdkAvailable } from './wires/cursor.ts'
 import type { PermissionOption } from './protocol.ts'
 import type { AgentRecord } from './types.ts'
 import { codexArgs } from './wires/codex.ts'
+import { opencodeArgs } from './wires/opencode.ts'
 import { piArgs } from './wires/pi.ts'
 
 export interface ProfileSelection {
@@ -101,8 +102,9 @@ export function selectProfile(record: AgentRecord, locate: CommandLocator = reso
       ? undefined
       : AGENT_PRESETS.find(item => item.command === name || item.fallback?.command === name))
   // Only the preset's own program speaks its own protocol: any other command of a preset with an adapter (the adapter,
-  // or a wrapper of the person's) runs with the adapter's profile, and is verified against the adapter's command.
-  const viaFallback = preset?.fallback !== undefined && name !== preset.command
+  // or a wrapper of the person's) runs with the adapter's profile, and is verified against the adapter's command. An
+  // adapter that is the same program (`opencode acp`) is picked by its arguments.
+  const viaFallback = preset !== undefined && runsPresetFallback(preset, name, record.args)
   const route = viaFallback ? preset!.fallback! : preset
   const profile = preset
     ? cursorSdkRoute(preset.id, viaFallback, record)
@@ -139,9 +141,10 @@ export function validateAgentDefinition(
     }
   }
   const selection = selectProfile(record, locate)
-  if (selection.profile?.wire === 'pi' || selection.profile?.wire === 'codex') {
+  if (selection.profile?.wire === 'pi' || selection.profile?.wire === 'codex' || selection.profile?.wire === 'opencode') {
     try {
       if (selection.profile.wire === 'pi') piArgs(record.args)
+      else if (selection.profile.wire === 'opencode') opencodeArgs(record.args)
       else codexArgs(record.args)
     } catch (error) {
       return { ok: false, error: new AppError(400, 'agent-args-reserved', error instanceof Error ? error.message : String(error)) }

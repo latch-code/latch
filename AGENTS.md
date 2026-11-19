@@ -72,14 +72,14 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 
 **安全**
 
-- **秘密不外泄。** 设备凭据、邀请码、离线连接码、模型密钥、MCP 秘密值与令牌不进标准输出、日志、环境变量、命令行参数、URL、SSE、错误信息、Git 或截图。URL 里的邀请码只在配对链接的 `#pair=` 片段，页面读后即从地址栏移除；`pnpm latch` 只把邀请与离线码显示在交互终端，或写入新建的 0600 `--code-file`。Host 每行日志经 `redactKnownSecrets`，新增秘密格式时补充模式。网关凭据 `lmg1.`、`lbt1.` 只给所属 Agent 进程，不进参数、URL、日志与 SSE。
+- **秘密不外泄。** 设备凭据、邀请码、离线连接码、模型密钥、MCP 秘密值与令牌不进标准输出、日志、环境变量、命令行参数、URL、SSE、错误信息、Git 或截图。URL 里的邀请码只在配对链接的 `#pair=` 片段，页面读后即从地址栏移除；`pnpm latch` 只把邀请与离线码显示在交互终端，或写入新建的 0600 `--code-file`。Host 每行日志经 `redactKnownSecrets`，新增秘密格式时补充模式。网关凭据 `lmg1.`、`lbt1.` 与 OpenCode 口令只给所属 Agent 进程，不进参数、URL、日志与 SSE。
 - **磁盘上只存哈希。** 凭据与离线连接码只保存 SHA-256；邀请只在内存、只存哈希。模型密钥与 MCP 秘密值只在数据目录的 0600 文件中，不返回设备；`LATCH_API_KEY` 只在内存使用。
 - **本机确认只经 `PresenceService`。** 测试确认后端（`@latch/testkit`）只经 `startServer({ presence })` 注入。只有测试（`tests/`、`e2e/` 与各项目的 `test/`）导入 testkit 与测试目录的文件，其他用法由 `pnpm check:boundaries`、`pnpm lint` 与 Host 构建拒绝；构建后 `grep -rnE 'createTestPresence|startHostFixture|latch-test\.localhost|(tests?|e2e)/(helpers|fixtures)|packages/testkit|@latch/testkit' dist/` 必须为空。
 - **信任在连接时建立一次。** 设备凭 scope 工作：开始会话、放宽模式、批准 R2、预设模型地址与 Harness 命令（预设表原样命令与参数、无变量、在 PATH、未另绑）不弹确认，只留审计；审批是看管程度，不是边界。`PRESENCE_ACTIONS` 只留新设备与扩权、自填模型或出站地址、插件代码与页面能力变宽、新增或放宽 MCP 与其他 Harness 命令；只由 `host.sock` 发起（`isLocalListener`，登记例外），L3 运行或等待时全部拒绝。
 - **Host 不运行仓库里的程序，交付除外。** Host 的 Git 经受限运行器（钩子含配置钩子、filter、传输全关）；只有人按下的提交、推送、带 filter 的暂存及关钩子的获取、克隆以你的账户运行：先审计并复查权限，远端只取仓库配置，不强制推送（[文档](docs/GIT-DELIVERY.md)）。
 - **插件页面只凭已批准的能力行事。** 只在不透明隔离框运行、不拿凭据，草稿只经 Host 固定工具在沙箱构建；Host 按已应用清单核对每次页面调用（`via`）；页面会话只用项目默认权限、无私有上下文，人放宽后页面不能继续（[文档](docs/APP-PAGES.md)）。
 - **自定义是数据。** 只写允许的令牌，安全界面不可改（[文档](docs/CUSTOMIZATION.md)）。
-- **CLI 存储与凭据。** Latch 不读写；外部会话只经 ACP 适配器或 Cursor SDK（只用定义的 `CURSOR_API_KEY`），均私有，删除或清空不删原会话。两处例外，只读：额度读 dsh 预设的 DeepSeek 密钥，只在内存、不刷新，只发官方地址（[文档](docs/HARNESSES.md#额度)）；不报 tokens 的预设（非 Claude）按 ID 读 Latch 所启会话日志的 tokens 数，不列目录（[文档](docs/HARNESSES.md#deepseek-harness-的会话日志)）。
+- **CLI 存储与凭据。** Latch 不读写；外部会话只经官方协议或 SDK（Cursor 只用定义的密钥），均私有，删除不删原会话。两处只读例外：额度读 dsh 预设的 DeepSeek 密钥，只在内存、不刷新，只发官方地址（[文档](docs/HARNESSES.md#额度)）；不报 tokens 的预设（非 Claude）按 ID 读 Latch 所启会话日志的 tokens 数，不列目录（[文档](docs/HARNESSES.md#deepseek-harness-的会话日志)）。
 - **其他电脑互不相通。** 桌面端经各自来源与分区，凭据按来源选取，绑定证书与身份（[文档](docs/ARCHITECTURE.md#桌面端与其他电脑)）。
 - **Host 与 `pnpm latch` 不响应 SIGUSR1。** 启动 Host 的脚本、桌面端与 `pnpm latch` 都带 `--disable-sigusr1`，否则同用户进程能用 `process._debugProcess` 让持有秘密的进程打开调试端口；新增启动 Host 或处理秘密的入口同样加上。
 - **依赖供应链。** 依赖以精确版本写在 `pnpm-workspace.yaml` 的 `catalog`，`package.json` 只写 `catalog:`；新版本须发布满 7 天。放宽 `pnpm-workspace.yaml` 的供应链设置、新增例外（[格式](docs/TESTING.md#供应链金丝雀)）或 `allowBuilds` 条目都要所有者同意；改依赖、`pnpm-workspace.yaml` 或 `packageManager` 后跑 `pnpm check:supply`。

@@ -33,6 +33,7 @@ import {
   onModelChoice,
   parseModelChoice,
   refusedBeforeAccepting,
+  runsPresetFallback,
   type AgentExecutionContext,
   type AgentHome,
   type AgentNote,
@@ -163,6 +164,7 @@ import {
   presetOffer,
   presetRecord,
   presetRoute,
+  presetRouteAfterVersion,
   commandName,
   resolveCommand,
   setCommandSearch,
@@ -1271,10 +1273,10 @@ function detectCommand(command: string, agent?: string, record?: AgentRecord): C
  * The program a definition's adapter drives, for saying it is installed when only the adapter is missing: the preset's
  * `agentCommand`, or for a definition on a preset's `fallback` adapter, the program that adapter drives.
  */
-function programOf(agent: Pick<AgentRecord, 'presetId' | 'command'>): string | undefined {
+function programOf(agent: Pick<AgentRecord, 'presetId' | 'command' | 'args'>): string | undefined {
   const preset = AGENT_PRESETS.find(item => item.id === agent.presetId)
   if (!preset) return undefined
-  return preset.fallback && commandName(agent.command) !== preset.command ? preset.fallback.drives : preset.agentCommand
+  return runsPresetFallback(preset, commandName(agent.command), agent.args) ? preset.fallback?.drives : preset.agentCommand
 }
 
 /**
@@ -1312,8 +1314,8 @@ function firstReadyHarness(harnesses: readonly HarnessInfo[]): HarnessInfo | und
 
 /** What this computer has of a preset's commands: its own, or its adapter when a draft would use that. */
 export const detectPresetCommands = (preset: AgentPreset): CommandDetection => {
-  const route = presetRoute(preset.id) ?? { command: preset.command }
-  return detectCommand(route.command, programOf({ presetId: preset.id, command: route.command }))
+  const route = presetRoute(preset.id) ?? { command: preset.command, args: preset.args }
+  return detectCommand(route.command, programOf({ presetId: preset.id, command: route.command, args: route.args }))
 }
 
 /** A preset's detection with what its command's version says, whichever way it was found. */
@@ -10937,7 +10939,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...preset,
           ...(() => {
             const route = presetRoute(preset.id)
-            return route && route.command !== preset.command && preset.fallback
+            return route && preset.fallback && runsPresetFallback(preset, commandName(route.command), route.args)
               ? { command: route.command, args: [...route.args], description: preset.fallback.description }
               : {}
           })(),
@@ -10989,6 +10991,13 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         // version is read only now, from that program.
         if (found) next.confirmedCommand = found
         if (next.enabled && found) {
+          // A preset whose adapter is the same program is saved on the adapter when the program is too old for its
+          // own protocol (OpenCode before 2.2.6 answers only `opencode acp`); both are the preset's commands.
+          const routed = await presetRouteAfterVersion(next)
+          if (routed.args !== next.args) {
+            next.args = routed.args
+            hash = checkAgent(next)
+          }
           await assertCommandVersion(next)
           recheck(caller, 'admin')
         }

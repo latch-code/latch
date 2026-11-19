@@ -34,13 +34,16 @@ function toolOutputs(input: unknown): string[] {
   ].map(value => JSON.stringify(value))
 }
 
-it.skipIf(!binary).each<{ kind: ProviderKind; wire: ModelWire }>([
-  { kind: 'openai-responses', wire: 'responses' },
-  { kind: 'openai-compatible', wire: 'chat-completions' },
-  { kind: 'anthropic', wire: 'anthropic-messages' },
-])(
-  'runs a real OpenCode $wire tool through the gateway without exposing the token to its shell',
-  async ({ kind, wire }) => {
+/** Both routes: OpenCode's own server (the preset, `opencode serve`) and `opencode acp`, which definitions saved with it keep. */
+it.skipIf(!binary).each<{ kind: ProviderKind; wire: ModelWire; route: 'direct' | 'acp' }>(
+  (['direct', 'acp'] as const).flatMap(route => [
+    { kind: 'openai-responses' as const, wire: 'responses' as const, route },
+    { kind: 'openai-compatible' as const, wire: 'chat-completions' as const, route },
+    { kind: 'anthropic' as const, wire: 'anthropic-messages' as const, route },
+  ]),
+)(
+  'runs a real OpenCode $wire tool through the gateway on the $route route without exposing the token to its shell',
+  async ({ kind, wire, route }) => {
     const root = await mkdtemp(join(tmpdir(), 'latch-opencode-gateway-live-'))
     for (const [name, directory] of Object.entries({
       HOME: 'home',
@@ -58,7 +61,7 @@ it.skipIf(!binary).each<{ kind: ProviderKind; wire: ModelWire }>([
       if (!process.env.LATCH_GATEWAY_EVIDENCE_DIR) return
       await mkdir(process.env.LATCH_GATEWAY_EVIDENCE_DIR, { recursive: true })
       await appendFile(
-        join(process.env.LATCH_GATEWAY_EVIDENCE_DIR, `${wire}-stages.jsonl`),
+        join(process.env.LATCH_GATEWAY_EVIDENCE_DIR, `${route}-${wire}-stages.jsonl`),
         `${JSON.stringify({ stage, at: new Date().toISOString() })}\n`,
       )
     }
@@ -114,7 +117,14 @@ it.skipIf(!binary).each<{ kind: ProviderKind; wire: ModelWire }>([
         (
           await owner.confirmed('agents', {
             method: 'POST',
-            body: { id: 'opencode', name: 'OpenCode', presetId: 'opencode', command: 'opencode', args: ['acp'], env: {} },
+            body: {
+              id: 'opencode',
+              name: 'OpenCode',
+              presetId: 'opencode',
+              command: 'opencode',
+              args: route === 'acp' ? ['acp'] : [],
+              env: {},
+            },
           })
         ).status,
       ).toBe(201)
@@ -236,7 +246,7 @@ it.skipIf(!binary).each<{ kind: ProviderKind; wire: ModelWire }>([
       )
       if (process.env.LATCH_GATEWAY_EVIDENCE_DIR) {
         await mkdir(process.env.LATCH_GATEWAY_EVIDENCE_DIR, { recursive: true })
-        await writeFile(join(process.env.LATCH_GATEWAY_EVIDENCE_DIR, `${wire}.json`), JSON.stringify(evidence, null, 2))
+        await writeFile(join(process.env.LATCH_GATEWAY_EVIDENCE_DIR, `${route}-${wire}.json`), JSON.stringify(evidence, null, 2))
       }
 
       await mark('reply-restored')

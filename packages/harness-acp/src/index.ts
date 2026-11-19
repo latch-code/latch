@@ -4,11 +4,12 @@ import {
   extensionProfile,
   isHarnessMark,
   isRetiredAgentPreset,
+  runsPresetFallback,
   type AgentPreset,
   type HarnessCapabilities,
   type HarnessInfo,
 } from '@latch/protocol'
-import type { HarnessDriver, HarnessPlugin } from '@latch/sdk'
+import { AppError, type HarnessDriver, type HarnessPlugin } from '@latch/sdk'
 import { catalogueReadOf } from './catalogue.ts'
 import { AgentRuntime, CLIENT_VERSION } from './runtime.ts'
 import { commandMoved, RETIRED_HARNESS_NOTE, resolveCommand } from './command.ts'
@@ -92,8 +93,33 @@ const outdatedLine = (record: AgentRecord, path: string | undefined): string | u
 export function presetRoute(presetId: string): AgentRecord | undefined {
   const record = presetRecord(presetId)
   const fallback = AGENT_PRESETS.find(item => item.id === presetId)?.fallback
-  if (!record || !fallback || resolveCommand(record.command) !== undefined) return record
+  if (!record || !fallback) return record
+  const path = resolveCommand(record.command)
+  // An adapter that is the same program takes over when that program is known to be too old for the preset's own
+  // protocol: OpenCode before 2.2.6 still answers `opencode acp`.
+  if (path !== undefined)
+    return fallback.command === record.command && outdatedCommand(record, path) ? { ...record, args: [...fallback.args] } : record
   return resolveCommand(fallback.command) ? { ...record, command: fallback.command, args: [...fallback.args] } : record
+}
+
+/**
+ * The definition a draft saves once its command's version is read: the preset's own when that program is new enough or
+ * unknown, else its same-program adapter (`opencode acp`). Reads the version, at most once per file; changes nothing else.
+ */
+export async function presetRouteAfterVersion(record: AgentRecord): Promise<AgentRecord> {
+  const preset = AGENT_PRESETS.find(item => item.id === record.presetId)
+  const fallback = preset?.fallback
+  if (!preset || !fallback || fallback.command !== preset.command || record.command !== preset.command) return record
+  if (runsPresetFallback(preset, commandName(record.command), record.args) || record.args.length) return record
+  const path = resolveCommand(record.command)
+  if (!path) return record
+  try {
+    await assertVersion(record, path)
+    return record
+  } catch (error) {
+    if (error instanceof AppError && error.code === 'harness-version-unsupported') return { ...record, args: [...fallback.args] }
+    throw error
+  }
 }
 
 /**
@@ -127,7 +153,7 @@ function missingParts(command: string, found: boolean, drives: string | undefine
 function routeOf(record: AgentRecord): { install?: string; drives?: string } {
   const preset = AGENT_PRESETS.find(item => item.id === record.presetId)
   if (!preset) return {}
-  const fallback = preset.fallback && commandName(record.command) !== preset.command ? preset.fallback : undefined
+  const fallback = runsPresetFallback(preset, commandName(record.command), record.args) ? preset.fallback : undefined
   if (fallback) return { install: fallback.install, ...(fallback.drives ? { drives: fallback.drives } : {}) }
   return { ...(preset.install ? { install: preset.install } : {}), ...(preset.agentCommand ? { drives: preset.agentCommand } : {}) }
 }
@@ -223,7 +249,10 @@ export function presetOffer(preset: AgentPreset): HarnessInfo {
   const outdated = outdatedLine(record, resolveCommand(record.command))
   return {
     id: preset.id,
-    description: record.command !== preset.command && preset.fallback ? preset.fallback.description : preset.description,
+    description:
+      runsPresetFallback(preset, commandName(record.command), record.args) && preset.fallback
+        ? preset.fallback.description
+        : preset.description,
     ...(outdated
       ? { status: 'unavailable' as const, statusMessage: `${preset.name} ${outdated}`, statusReason: 'outdated' as const }
       : { status: 'ready' as const }),

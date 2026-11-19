@@ -36,7 +36,7 @@ Latch 不下载、不安装 Agent，也不代为登录。在运行 Host 的电�
 | [Codex](https://github.com/openai/codex) | `npm i -g @openai/codex` | `codex app-server`（只装了 `codex-acp` 时经它） | Apache-2.0 |
 | [Claude Agent](https://github.com/agentclientprotocol/claude-agent-acp) | `npm i -g @agentclientprotocol/claude-agent-acp` | `claude-agent-acp`（运行 Claude Code，用它已有的登录） | Apache-2.0 适配器；Claude Code 专有 |
 | [pi](https://github.com/earendil-works/pi) | `npm i -g @earendil-works/pi-coding-agent` | `pi --mode rpc` | MIT |
-| [OpenCode](https://github.com/anomalyco/opencode) | `npm i -g @opencode/cli` | `opencode acp` | MIT |
+| [OpenCode](https://github.com/anomalyco/opencode) | `npm i -g @opencode/cli` | `opencode serve`（2.2.6 起，只听本机回环；更早的版本经 `opencode acp`） | MIT |
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | `npm i -g @deepseek-ai/dsh` | `dsh --profile acp` | MIT |
 | [Qwen Code](https://github.com/QwenLM/qwen-code) | `npm i -g @qwen-code/qwen-code` | `qwen --acp` | Apache-2.0 |
 | [goose](https://github.com/block/goose) | `brew install block-goose-cli` | `goose acp` | Apache-2.0 |

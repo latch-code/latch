@@ -142,7 +142,11 @@ function withoutOwnPlugin(text: string): unknown {
   return Object.keys(rest).length ? rest : undefined
 }
 
-export const opencodeProfile: HarnessProfile = {
+/**
+ * `opencode acp`: definitions saved with it, and OpenCode before 2.2.6, which a draft saves on it. Unchanged from when it
+ * was the preset's only route, so its sessions keep their launch fingerprint.
+ */
+export const opencodeAcpProfile: HarnessProfile = {
   presetId: 'opencode',
   version: 7,
   // It lists `effort` only for a model with variants (2.x `config-option.ts`).
@@ -251,4 +255,36 @@ export const opencodeProfile: HarnessProfile = {
     configId === 'model' && reported.startsWith(`${asked}/`) && !reported.slice(asked.length + 1).includes('/'),
   readProjectedChild: projectedChild,
   readChildEnd: childEnd,
+}
+
+/** `opencode --version` prints `opencode v2.2.6`; a bare version is read as well. Anything else is no answer. */
+function opencodeVersion(stdout: string): string | undefined {
+  const first = stdout.split(/\r?\n/u).find(line => line.trim()) ?? ''
+  return /^\s*(?:opencode\s+)?v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\s*$/u.exec(first)?.[1]
+}
+
+/** The oldest OpenCode whose own server this wire was built and checked against (`wires/opencode.ts`). */
+export const OPENCODE_DIRECT_MINIMUM = '2.2.6'
+
+/**
+ * OpenCode's own server (`opencode serve`, `wires/opencode.ts`). The wire translates the server's API the way `opencode
+ * acp` does, so the modes, option IDs, session IDs, configuration, rules and the gateway's delivery are those above.
+ */
+export const opencodeProfile: HarnessProfile = {
+  ...opencodeAcpProfile,
+  version: 1,
+  wire: 'opencode',
+  minimumVersion: {
+    args: ['--version'],
+    read: opencodeVersion,
+    minimum: OPENCODE_DIRECT_MINIMUM,
+    upgrade: 'npm i -g @opencode/cli@latest',
+  },
+  permission: {
+    ...opencodeAcpProfile.permission,
+    notes: [
+      ...opencodeAcpProfile.permission.notes.slice(0, 3),
+      'OpenCode 的子 Agent 可以在后台运行，本轮结束或停止后仍可能继续；Latch 不能单独停止它，它之后的请求照常出现在这个会话里',
+    ],
+  },
 }

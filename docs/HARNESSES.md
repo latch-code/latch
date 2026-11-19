@@ -80,6 +80,7 @@ Agent 自己提供官方机器协议时 Latch 直接说它，ACP 适配器只作
 | Codex | `codex app-server`（见「Codex 的 app-server」） |
 | pi | `pi --mode rpc`（见「pi 的 RPC 模式」） |
 | Cursor | 定义带 `CURSOR_API_KEY` 时用官方 SDK `@cursor/sdk`（见「Cursor 的 SDK 路线」），否则 `cursor-agent acp` |
+| OpenCode | `opencode serve`，2.2.6 起（见「OpenCode 的服务接口」）；更早的版本与保存为 `opencode acp` 的定义走 ACP |
 | DeepSeek Harness | `dsh --profile acp`：随包的 `acp` 配置是它给自动化客户端的官方协议 |
 | 其他预设 | ACP：它们的官方集成方式（Claude Agent 用官方适配器） |
 
@@ -89,13 +90,19 @@ Codex 的后备规则：
 - 只有这台电脑没有 `codex`、却装了 `codex-acp` 时，从草稿选 Codex 才保存为 `codex-acp`（预设的 `fallback`），它运行自己随包带的 Codex。
 - 定义的命令是 `codex-acp` 或任何别的命令时走 ACP，用 `profiles/codex-acp.ts`；设置里它的行写「经 codex-acp」。
 
+OpenCode 的后备规则（适配器与预设是同一个程序，按参数区分，`runsPresetFallback`）：
+
+- 定义的参数里有 `acp`、或命令不是 `opencode` 时走 ACP，用 `profiles/opencode.ts` 的 `opencodeAcpProfile`（与改为直连之前的 profile 相同，版本 7，原有会话的启动指纹不变）；设置里它的行写「经 opencode acp」。改为直连之前保存的预设定义都是 `opencode acp`，不迁移，继续走 ACP。
+- 从草稿或「添加 Harness」选 OpenCode 时，确认程序后先读版本：低于 2.2.6（含 1.x）时保存为 `opencode acp`，2.2.6 起保存为 `opencode`（直连）；读不出版本时按直连保存。`presetRoute` 在已知版本太旧时同样给出 `opencode acp`。
+- 已保存的直连定义遇到低于 2.2.6 的程序时以 409 `harness-version-unsupported` 拒绝并给出升级命令，不静默改走 ACP；握手时服务报告的版本不是 2.x 中的 2.2.6 或更高也同样拒绝，错误里写明可改用 `opencode acp`。
+
 预设只用本机已安装、未经修改的命令，不用 `npx` 等运行时下载，不捆绑。Latch 不提供一键安装，只显示可复制的安装命令与项目主页。
 
 | 预设 | 命令 | 许可证 | 安装与版本 | 登录命令（`AgentPreset.login`） |
 | --- | --- | --- | --- | --- |
 | Codex | `codex`，线追加 `app-server` | Apache-2.0 | `npm i -g @openai/codex`，0.156.0 起 | `codex login`；只有适配器时 `codex-acp cli login` |
 | pi | `pi`，线追加 `--mode rpc` | MIT | `npm i -g @earendil-works/pi-coding-agent`，0.84.4 起 | 进入 pi 后 `/login` |
-| OpenCode | `opencode acp` | MIT | `npm i -g @opencode/cli`，1.x 与 2.x | `opencode auth login` |
+| OpenCode | `opencode`，线追加 `serve --hostname 127.0.0.1 --port 0`；后备 `opencode acp` | MIT | `npm i -g @opencode/cli`；直连 2.2.6 起，`opencode acp` 1.x 与 2.x | `opencode auth login` |
 | DeepSeek Harness | `dsh --profile acp` | MIT | `npm i -g @deepseek-ai/dsh`，0.2.2-rc.1 起；它自己要求 Node.js 24.9 起；按完整消息回复 | 无 |
 | Qwen Code | `qwen --acp` | Apache-2.0 | `npm i -g @qwen-code/qwen-code` | 进入后 `/auth` |
 | goose | `goose acp` | Apache-2.0 | `brew install block-goose-cli` | `goose configure` |
@@ -129,7 +136,7 @@ profile 的 `minimumVersion` 是它的命令支持的最低版本，用 `<命令
 | DeepSeek Harness | 0.2.2-rc.1（0.2.1-rc.1 之前的 ACP 一轮不等子 Agent 结算，取消也不等真实停止） | 同左 |
 | Antigravity | 1.5.8 | 不支持 |
 | Grok Build | 1.0.77 | 同左 |
-| OpenCode | 无（版本规则 1.x、2.x） | 2.2.6 |
+| OpenCode | 直连 2.2.6（`opencode --version` 打印 `opencode v2.2.6`）；`opencode acp` 无（版本规则 1.x、2.x） | 2.2.6 |
 | Qwen Code | 无 | 0.26.8 |
 | goose | 无 | 1.57.0 |
 | Claude Agent | 无（版本规则见下） | 适配器自带的 Claude Code 2.1.318（`--cli --version`） |
@@ -509,6 +516,29 @@ Cursor 预设的定义在这台 Mac 上带了 `CURSOR_API_KEY`，且 Host 找得
 **使用统计。** SDK 依赖 `@statsig/js-client`，但只用后端下发的开关，并设了 `preventAllNetworkTraffic`；它自己的使用事件（运行开始与结束、失败、延迟等，带 SDK 版本与系统平台）用这把密钥发到 Cursor 的后端（`api2.cursor.sh`）。没有文档化的开关能关掉，Latch 也不改它。
 
 **包。** `@cursor/sdk` 1.3.1（2026-11-03 发布，专有许可，见包里的 `LICENSE.md`）约 20 MB，依赖 `@bufbuild/protobuf`、`@connectrpc/connect`、`@connectrpc/connect-web`、`@statsig/js-client`，另按平台装一个约 10 MB 的可选包（沙箱助手 `cursorsandbox`、`rg` 与 tree-sitter 的原生模块）；都没有安装脚本。
+## OpenCode 的服务接口
+
+`wires/opencode.ts` 启动 `opencode serve --hostname 127.0.0.1 --port 0`（接在定义的参数之后），一个进程一个会话槽位，进程的启动、空闲回收与停止与其他线相同。它把运行时说的 ACP 换成服务的 HTTP 接口，把服务的事件流换成 ACP 的会话更新，换法照 OpenCode 2.2.6 自带的 ACP 适配器（它本身就是这套接口的客户端，`packages/cli/src/acp/`），接口形状按运行中 2.2.6 的 `/openapi.json` 与录下的事件核对。所以模式（`plan`、`build`、`auto-edit`、`yolo`）、选项 ID（`model`、`effort`、`mode`）与取值、会话 ID（`ses_…`）、子 Agent 的标记、思考的消息 ID 都与 `opencode acp` 相同，`opencode acp` 建的会话在直连上恢复（`opencode-direct.live.test.ts` 用真实程序核对）。
+
+- **端口与口令。** 端口由服务自己选，地址只从它标准输出的 `server listening on http://127.0.0.1:<端口>` 读，再用 `GET /api/info` 核对回答的 `pid` 就是这个子进程、版本是 2.x 中的 2.2.6 或更高。口令每个进程随机生成，只放进子进程的 `OPENCODE_PASSWORD` 与文档化的旧名 `OPENCODE_SERVER_PASSWORD`（定义里的同名变量与 `OPENCODE_SERVER_USERNAME` 被去掉）；每个请求带 HTTP Basic（用户名 `opencode`）。它不进参数、文件、URL、日志与错误：线的脱敏先替换口令，再经 `redactKnownSecrets`。
+- **口令与工具命令。** 2.2.6 的 shell 工具把服务的整个环境（含口令）交给它运行的命令。线在进程的临时目录写一个 Latch 私有插件（`latch-opencode-server/index.ts`，0600），经 `OPENCODE_CONFIG_CONTENT` 的 `plugins` 加载，在 `shell` 的 `create.before` 把这两个变量清空，与网关清空 `LMG_TOKEN` 的插件同一做法。没有临时目录或 `OPENCODE_CONFIG_CONTENT` 不是 JSON 对象时不启动。Latch 给会话的 MCP 服务器登记时把这两个变量设为空（真实 2.2.6 核对：不设时它们能看到口令）。人自己在 OpenCode 配置里的 MCP 服务器、LSP 与格式化程序仍继承服务的环境，Latch 不改那些配置。这不是隔离：同一用户的进程能读到服务进程的环境（macOS 的 `ps -E`）。
+- **停止。** `opencode serve` 不随标准输入结束，所以停止直接向进程组发 SIGTERM，宽限期后 SIGKILL。事件流在服务还在时断开（被关闭、出错、单条超过 `maxLineBytes`），线结束服务：没有事件就读不到结果，运行时看到进程退出。
+- **握手。** `initialize` 等到地址、核对 `/api/info`，打开 `GET /api/event` 并等到 `server.connected`。回答的能力与适配器相同（`loadSession`，`list`、`resume`、`close`、`delete`、`additionalDirectories`，图片与嵌入上下文），版本来自 `/api/info`。
+- **目录。** 每个文件夹读一次：`GET /api/plugin`（位置刚启动时等到插件列出，最多 5 秒）后并行读 `/api/model`（只取 `enabled`）、`/api/model/default`、`/api/agent`（去掉 `subagent` 与隐藏的）、`/api/command`，都带 `location[directory]`。`model.updated`、`agent.updated`、`command.updated` 后重读，变化时推送 `config_option_update` 与 `available_commands_update`。
+- **会话。** 新会话 `POST /api/session`（`location.directory`）；恢复 `GET /api/session/:id`，目录不同则拒绝，服务没有这个会话时是「该 Harness 已找不到这个会话」；载入另按 `GET /api/session/:id/message`（每页 200）重放。其他文件夹的授权与适配器写法相同（会话的 `permissions` 与 `metadata["opencode.acp.additionalDirectories"]`），两条路线互相读得懂。会话给的 MCP 服务器经 `PUT /api/experimental/mcp/:name` 登记，与适配器相同。没发过消息就关闭的会话删除。
+- **一轮。** 线自己按 OpenCode 的格式生成输入的消息 ID，`POST /api/session/:id/prompt`（`delivery: steer`），看到 `session.inbox.delivered` 是这条消息才算开始，`session.execution.succeeded`、`interrupted`、`failed` 才结束。只给模型看的上下文先 `POST …/synthetic`；`/compact` 走 `POST …/compact`；目录里的命令走 `POST …/command`，它回答后服务排进的那条输入就是这一轮（5 秒内没有排进任何输入则这一轮结束）。图片作 data URI，`file://` 链接与文字资源与适配器的换法相同。
+- **事件。** 文字与推理增量（推理的消息 ID 是 `<消息>:reasoning:<序号>`）、工具调用（`tool.input.started`、`called`、`progress`、`success`、`failed`，标题、种类、位置与原始输入同适配器）、压缩、重试；每步的 `tokens` 加起来是这一轮的用量（输入不含缓存），最后一步的总数与模型的上下文窗口、会话的 `cost` 作为 `usage_update`。改动文件的调用带它报告的补丁里的改动片段（适配器读整份文件，这条线不读项目文件）。
+- **审批。** `permission.asked` 交给人，选项与适配器相同（`once`、`always`、`reject`），答复 `POST …/permission/:id/reply`。OpenCode 报告已在别处答复（`permission.replied`）的请求，Latch 撤下卡片（`$/cancel_request`）。OpenCode 的问题表单（`form.created`）在客户端声明能显示时作为提问卡，否则取消并告诉模型没能显示。
+- **停止一轮。** 先拒绝这一轮还开着的审批，消息还没被取走时 `DELETE …/inbox/:id` 撤回，再 `POST …/interrupt`；只有服务报告这次运行结束（或撤回后 `/api/session/active` 里没有这个会话）才算停下。
+- **模式、模型与思考。** `POST …/agent` 与 `POST …/model`（`variant` 是思考档位），先记下再切换，服务回声的 `session.*.selected` 不再改变什么。
+
+**与 `opencode acp` 不同的地方。**
+
+- 目录里的命令（如 `/review`）的回复在这一轮里显示；适配器在命令请求得到回答时就结束这一轮。
+- 子 Agent：线记住这个进程里见过的子会话，后来的一轮里继续的子 Agent 的更新与权限请求也转发；一轮结束后后台子 Agent 的权限请求照常给人，更新不再转发（与适配器相同）。子 Agent 的路径只有单测，未用真实运行核对。
+- 停止不设 5 秒的放弃时限：适配器 5 秒后把未结束的调用记为取消，这条线一直等服务的结束事件，由运行时的取消时限兜底。
+- 改动文件的预览只含补丁片段，见上。
+- `/api/info` 之外不报告 OpenCode 的登录状态；与适配器一样不提供登录。
 
 ## 通知与压缩
 
@@ -854,7 +884,7 @@ Latch 在 `initialize` 声明 `clientCapabilities.subagents: {}`（ACP 子 Agent
 - Latch 不声明它的私有能力 `opencode/child-session-updates`，于是子会话的更新与权限请求都发在启动它的会话上，带 `_meta["opencode/child-session"]`。profile 的 `readProjectedChild` 把它当作那个子 Agent 在自己会话上的报告；`parentID` 是另一个子 Agent 时放进它的步骤。
 - 子会话结束时没有报告，按会话自己的 `subagent` 调用读（`readChildEnd`）：调用完成且 `rawOutput.metadata.status` 为 `completed` 记完成，为 `running` 表示它在后台继续；调用失败记失败，在停止这一轮时失败的记已取消。
 - 一轮结束后 OpenCode 不再发子 Agent 的更新，所以后台子 Agent 之后是「未回报结果」。
-- 后来的一轮里用 `sessionID` 继续一个已有的子 Agent 时，OpenCode 不转发它的更新与权限请求：它要批准时这一轮一直显示运行中，只能停止。按 2.x 的源码确认，尚未在真实运行中核对。
+- 后来的一轮里用 `sessionID` 继续一个已有的子 Agent 时，经 `opencode acp` 不转发它的更新与权限请求：它要批准时这一轮一直显示运行中，只能停止。按 2.x 的源码确认，尚未在真实运行中核对。直连记住见过的子会话，照常转发（见「OpenCode 的服务接口」）。
 
 ## Agent 自己的请求
 
@@ -939,7 +969,8 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 - 加载前在同一进程上按会话目录再读一次这一行；仍带授权或已不在列表里时 409 `history-session-changed`，不发 `session/load`。
 - 它没有写锁，也不报告会话是否正在别处使用：终端里正开着的会话同样能加载，Latch 不察觉；预览带 `useUnknown` 说明这一点。
 - 接入之后在别处给这个会话加的目录授权，会在 Latch 下一次恢复它时被去掉。预览结束时的 `session/close` 只让 OpenCode 丢弃从未发过消息的新会话，不动加载的会话。
-- 尚未用真实 OpenCode 核对。两个前提要等核对：2.x 的列表行确实带 `additionalDirectories`；再读一行与 `session/load` 之间没有别的客户端加授权（这个窗口关不上，ACP 没有带条件的加载）。
+- 直连时列出是 `GET /api/session`（`directory`、倒序、每页 100），载入按 `GET /api/session/:id/message` 重放，授权读写与适配器相同；`opencode acp` 建的会话在直连上载入并重放已用真实 2.2.6 核对。
+- 列出与授权尚未用真实 OpenCode 核对。两个前提要等核对：2.x 的列表行确实带 `additionalDirectories`；再读一行与 `session/load` 之间没有别的客户端加授权（这个窗口关不上，ACP 没有带条件的加载）。
 
 **步骤。**
 
@@ -1090,7 +1121,7 @@ Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别�
 | macOS 以外的 Host 打开登录终端 | 只显示命令 |
 | OpenCode 2.x 的私有子会话通道 | Latch 不声明 `opencode/child-session-updates`，改读发在启动会话上的更新（见「子 Agent」） |
 | OpenCode 1.x 的子 Agent | 1.x 的 ACP 不回答子会话的权限请求，`task` 保持禁用 |
-| OpenCode 2.x 在后来的一轮里继续的子 Agent 的请求 | OpenCode 的 ACP 不转发，这一轮会一直等到停止 |
+| OpenCode 2.x 经 `opencode acp` 在后来的一轮里继续的子 Agent 的请求 | OpenCode 的 ACP 不转发，这一轮会一直等到停止；直连转发同一进程里见过的子会话 |
 | 单独停止没有宣告 `capabilities.cancel` 的子 Agent | ACP 不允许。OpenCode 2.x 不宣告：它的后台子 Agent 在一轮结束或停止后仍可能继续，直到空闲进程被结束 |
 | 让启动子 Agent 的 Agent 回答子 Agent 的请求 | ACP 没有把客户端收到的权限请求交给另一个 Agent 回答的方法 |
 | goose 的运行中追加 | 它的私有方法要 goose 自己的运行标识，也没有声明字段，未经真实核对 |

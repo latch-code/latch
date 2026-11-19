@@ -6,7 +6,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 
 不变量：
 
-- 子进程环境只来自 `agentEnvironment`：白名单加这个人的代理、CA 文件和 profile 的 `inheritEnv`，移除 `NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`（不区分大小写，`test/acp.test.ts`）。`inheritEnv` 不点名秘密（`test/login.test.ts`）。
+- 子进程环境只来自 `agentEnvironment`：白名单加代理、CA 文件和 profile 的 `inheritEnv`，移除 `NODE_OPTIONS`、`LATCH_*`、`npm_*`、`DYLD_*`、`LD_*`（不区分大小写，`test/acp.test.ts`）；opencode 线另加口令。`inheritEnv` 不点名秘密（`test/login.test.ts`）。
 - 登录 shell 只读点名的变量；登录与版本命令只在启动脚本经 `startServer({ loginPrograms })` 打开后运行，测试 Host 碰不到真实程序；状态命令的输出不离开 `read`（`test/login.test.ts`）。
 - 会话只启动与开始时记录的 `launchHash` 一致的进程（`test/acp.test.ts#starts a session only with a launch fingerprint on record`）；指纹覆盖命令、参数、定义的环境变量、预设、profile 版本、profile 列出的项目配置、`inheritEnv` 的名字（不含值）与 `programEnv` 的路径（`test/acp.test.ts`）。
 - 只有 profile 声明了 `folders` 的预设收到项目的其他文件夹（Codex 经 ACP `additionalDirectories`，只在 Agent 声明支持时；Qwen Code 经 `--include-directories`）；它们计入 `launchHash`，没有其他文件夹时指纹不变（`test/acp.test.ts`）。
@@ -18,8 +18,8 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 - 提议保留首轮材料和本机 MCP 来源（CUSTOM-AGENTS、MCP）。
 - 审批活动的 `since` 复用 RunClock 的原等待起点（`test/acp.test.ts`）。
 - 不支持的请求共用事件时间，不回退已知输出（HARNESSES）。
-- 测试只用假 Agent、回放与假 Cursor SDK，不给真实 Agent 发提示。
-- Cursor 密钥只经运行器环境，读后删（`test/cursor-sdk.test.ts`）。
+- 测试只用假 Agent、回放与假 SDK，不提示真实 Agent。
+- Cursor 密钥只经运行器环境（`test/cursor-sdk.test.ts`）。
 
 测试：`pnpm test --project @latch/harness-acp` 与 `e2e/permissions-ui.e2e.ts`。先读 [docs/HARNESSES.md](../../docs/HARNESSES.md)。
 

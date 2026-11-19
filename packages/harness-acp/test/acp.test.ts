@@ -137,9 +137,15 @@ function hostEnv(values: Record<string, string>): void {
   })
 }
 
+/**
+ * The profile a fixture of this preset runs with: these fixtures launch `node`, not the preset's own program, so a preset
+ * with an adapter runs on the adapter's profile.
+ */
+const fixtureProfile = (presetId: string) => FALLBACK_PROFILES.get(presetId) ?? profileFor(presetId)
+
 /** What a preset's own profile adds to its launch fingerprint. */
 const launchExtras = (presetId: string) => {
-  const permission = profileFor(presetId)!.permission
+  const permission = fixtureProfile(presetId)!.permission
   return { ...(permission.inheritEnv ? { inheritEnv: permission.inheritEnv } : {}), programs: programPaths(permission) }
 }
 
@@ -1208,7 +1214,7 @@ describe('ACP project configuration', () => {
       args: [FAKE_ACP_AGENT],
       definitionEnv: record.env,
       presetId: record.presetId,
-      profileVersion: profileFor(record.presetId!)!.version,
+      profileVersion: fixtureProfile(record.presetId!)!.version,
       ...launchExtras(record.presetId!),
     })
   const CHANGED = {
@@ -2424,7 +2430,7 @@ describe('ACP permission mode', () => {
       args: [FAKE_ACP_AGENT],
       definitionEnv: fixture.record.env,
       presetId: 'opencode',
-      profileVersion: profileFor('opencode')!.version,
+      profileVersion: fixtureProfile('opencode')!.version,
       ...launchExtras('opencode'),
     }
     expect(preview.definitionHash).toBe(launchHash(definition))
@@ -2562,7 +2568,7 @@ describe('ACP permission mode', () => {
       '定义设置了 XDG_CONFIG_HOME，OpenCode 可能改从其他位置读取配置、Agent 定义与插件，覆盖 Latch 设置的询问规则；该定义不作为已验证的预设'
     expect(preview).toMatchObject({ verified: false })
     const { sessionId } = await other.createTask({ prompt: 'echo', requestId: rid() })
-    expect((await settled(other, sessionId)).permission?.notes).toEqual([...profileFor('opencode')!.permission.notes, note])
+    expect((await settled(other, sessionId)).permission?.notes).toEqual([...fixtureProfile('opencode')!.permission.notes, note])
   })
 
   it('describes a preset launch', async () => {

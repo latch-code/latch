@@ -20,8 +20,10 @@ const ENGLISH: Readonly<
     installNote: 'Native models need 0.84.4 or later. Model services through Latch need 1.5.0 or later.',
   },
   opencode: {
-    description: 'OpenCode manages models and login.',
-    installNote: 'Model services through Latch need 2.2.6 or later',
+    description: 'Connects directly to OpenCode. OpenCode manages models and login.',
+    installNote: 'Direct connections need 2.2.6 or later. Earlier versions run through opencode acp.',
+    adapterDescription: 'Runs through opencode acp. OpenCode manages models and login.',
+    direct: 'Direct connections require OpenCode 2.2.6 or later: npm i -g @opencode/cli@latest',
   },
   dsh: {
     description: 'Replies arrive as complete messages.',

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
 import { ShieldCheck, ShieldQuestion } from 'lucide-react'
-import type { AgentPresetSettings, AgentSettings, AppSnapshot, AgentPreset, HarnessInfo } from '@latch/protocol'
+import {
+  runsPresetFallback,
+  type AgentPresetSettings,
+  type AgentSettings,
+  type AppSnapshot,
+  type AgentPreset,
+  type HarnessInfo,
+} from '@latch/protocol'
 import { api, errorMessage, inlineError, MessageError } from '../core/api.ts'
 import { deviceAccess, type DeviceAccess } from '../core/permissions.ts'
 import { computerName, RUNS_AS_YOU_COPY, SETUP_COPY } from '../core/securityCopy.ts'
@@ -995,7 +1002,7 @@ export function AgentRow({
   onToggle: () => void
 }) {
   // Saved on the preset's adapter rather than its own program: said, with what the direct route needs.
-  const viaAdapter = preset?.fallback !== undefined && commandBase(agent.command) === preset.fallback.command
+  const viaAdapter = preset?.fallback !== undefined && runsPresetFallback(preset, commandBase(agent.command), agent.args)
   const words = preset && harnessPresetCopy(preset)
   return (
     <ObjectRow
@@ -1022,7 +1029,9 @@ export function AgentRow({
       onOpen={onOpen}
       trailing={
         <>
-          {viaAdapter && preset?.fallback && <Hint label={COPY.via(preset.fallback.command)}>{words?.direct}</Hint>}
+          {viaAdapter && preset?.fallback && (
+            <Hint label={COPY.via([preset.fallback.command, ...preset.fallback.args].join(' '))}>{words?.direct}</Hint>
+          )}
           <EngineStatus agent={agent} harness={harness} />
           <Switch label={COPY.enableName(agent.name)} checked={agent.enabled} disabled={busy} onCheckedChange={onToggle} />
         </>

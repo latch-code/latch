@@ -47,6 +47,8 @@ export interface SpawnSpec {
 /** What a wire reads from its process: one JSON object per line, then the end of the process. */
 export interface ProcessEvents {
   record(message: Record<string, unknown>): void
+  /** A line on stdout that is not a JSON object, for a program that speaks elsewhere and only says where on stdout. */
+  text?(line: string): void
   /** Called once, before `exited` resolves. */
   closed(info: ExitInfo): void
 }
@@ -150,6 +152,8 @@ export class AgentProcess {
     private readonly child: ChildProcessWithoutNullStreams,
     private readonly spec: SpawnSpec,
     private readonly events: ProcessEvents,
+    /** Whether the program ends when its stdin does; one that does not is signalled at once on `stop`. */
+    private readonly endsWithStdin: boolean,
   ) {
     this.exited = new Promise(resolve => {
       this.resolveExited = resolve
@@ -165,7 +169,7 @@ export class AgentProcess {
   }
 
   /** Throws only for invalid arguments; launch failures such as ENOENT arrive as an exit with `reason: 'spawn'`. */
-  static spawn(spec: SpawnSpec, events: ProcessEvents): AgentProcess {
+  static spawn(spec: SpawnSpec, events: ProcessEvents, options: { endsWithStdin?: boolean } = {}): AgentProcess {
     const child = spawn(spec.command, spec.args, {
       cwd: spec.cwd,
       env: spec.env,
@@ -174,7 +178,7 @@ export class AgentProcess {
       detached: process.platform !== 'win32',
       windowsHide: true,
     })
-    return new AgentProcess(child, spec, events)
+    return new AgentProcess(child, spec, events, options.endsWithStdin ?? true)
   }
 
   get closed(): boolean {
@@ -216,7 +220,7 @@ export class AgentProcess {
     }
     if (reason === 'stop' && !this.leaderExited) {
       this.child.stdin.end()
-      if (await this.waitFor(graceMs)) return this.exited
+      if (this.endsWithStdin && (await this.waitFor(graceMs))) return this.exited
     }
     // A forced end takes along what the agent started in groups of their own (Codex runs each command in one), which the
     // group's signal misses and which would outlive it: found while the leader is alive, before they are reparented.
@@ -316,11 +320,11 @@ export class AgentProcess {
     try {
       message = JSON.parse(text)
     } catch {
-      this.noise++
-      return
+      message = undefined
     }
     if (!isRecord(message)) {
-      this.noise++
+      if (this.events.text) this.events.text(text)
+      else this.noise++
       return
     }
     this.events.record(message)

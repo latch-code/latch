@@ -159,7 +159,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | --- | --- |
 | `LATCH_CODEX_GATEWAY_BINARY` | `codex-chat-gateway.live.test.ts`、`codex-catalog.live.test.ts`、`codex-anthropic-gateway.live.test.ts`、`e2e/codex-model-gateway.e2e.ts`（不设时用假 app-server） |
 | `LATCH_CLAUDE_GATEWAY_BINARY` | `claude-gateway.live.test.ts`、`claude-gateway-thinking.live.test.ts`、`e2e/claude-model-gateway.e2e.ts` |
-| `LATCH_OPENCODE_GATEWAY_BINARY`、`LATCH_DSH_GATEWAY_BINARY`、`LATCH_PI_GATEWAY_BINARY` | `opencode-gateway.live.test.ts`、`dsh-gateway.live.test.ts`、`dsh-gateway-auxiliary.live.test.ts`、`pi-gateway.live.test.ts`、`gateway-fallback.live.test.ts`、`e2e/harness-model-gateway.e2e.ts`（不设时用假 CLI） |
+| `LATCH_OPENCODE_GATEWAY_BINARY`、`LATCH_DSH_GATEWAY_BINARY`、`LATCH_PI_GATEWAY_BINARY` | `opencode-gateway.live.test.ts`（直连与 `opencode acp` 两条路线）、`opencode-direct.live.test.ts`（直连：回复、拒绝与允许的调用、停止、Host 停止后无残留的 `opencode serve`、恢复；`ps` 里没有口令，工具命令看不到口令与网关令牌）、`packages/harness-acp/test/opencode-direct.live.test.ts`（`opencode acp` 建的会话在直连上恢复，选项相同，载入重放）、`dsh-gateway.live.test.ts`、`dsh-gateway-auxiliary.live.test.ts`、`pi-gateway.live.test.ts`、`gateway-fallback.live.test.ts`、`e2e/harness-model-gateway.e2e.ts`（不设时用假 CLI） |
 | `LATCH_NO_LOGIN_<ID>=<程序路径>` | `gateway-no-login.live.test.ts`：空的临时 HOME、不带登录 |
 | `LATCH_SLASH_LIVE=1` 加 Codex 或 pi 的上述路径 | `packages/harness-acp/test/` 的 `codex-commands.live.test.ts`、`codex-skills.live.test.ts`；`e2e/codex-compact.e2e.ts`、`e2e/codex-skills.e2e.ts`、`e2e/pi-commands.e2e.ts` |
 | `LATCH_HELPER_LIVE=1` 加 pi、Codex 或 OpenCode 的上述路径 | `e2e/helper-live.e2e.ts` |
