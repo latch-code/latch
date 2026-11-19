@@ -319,8 +319,16 @@ export function presetOffer(preset: AgentPreset): HarnessInfo {
  * Whether the Host may bring in this harness's own sessions: its profile says so and its wire lists and loads (pi's
  * answers neither); Claude's direct wire only where the Host lets it read Claude's store.
  */
-function historyImport(profile: HarnessProfile | undefined, claudeStore: boolean): boolean {
-  return profile?.historyImport !== undefined && profile.wire !== 'pi' && (profile.wire !== 'claude' || claudeStore)
+/**
+ * Whether the driver offers 接入已有会话: pi has no command that lists its sessions and Claude's direct wire reads Claude's
+ * store, so both only where the Host lets them read CLI stores.
+ */
+function historyImport(profile: HarnessProfile | undefined, limits: ReturnType<typeof resolveOptions>): boolean {
+  return (
+    profile?.historyImport !== undefined
+    && (profile.wire !== 'pi' || limits.cliStore !== undefined)
+    && (profile.wire !== 'claude' || limits.claudeStore)
+  )
 }
 
 const historyRuleOf = (profile: HarnessProfile | undefined) =>
@@ -371,8 +379,8 @@ export function createAcpAgentPlugin(agent: AgentRecord, options: AcpAgentOption
         extensionSupport: { reports, ...(plugins ? { plugins } : {}) },
         ...folderDeclaration(selectProfile(record).profile),
         ...permissionDeclaration(selectProfile(record).profile),
-        ...(historyImport(selectProfile(record).profile, limits.claudeStore) ? { historyImport: true as const } : {}),
-        ...(historyImport(selectProfile(record).profile, limits.claudeStore) && historyRuleOf(selectProfile(record).profile)?.deletes
+        ...(historyImport(selectProfile(record).profile, limits) ? { historyImport: true as const } : {}),
+        ...(historyImport(selectProfile(record).profile, limits) && historyRuleOf(selectProfile(record).profile)?.deletes
           ? { historyDelete: true as const }
           : {}),
         seededStart: true,

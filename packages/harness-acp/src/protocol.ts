@@ -4,6 +4,10 @@ import { z } from 'zod'
 export const PROTOCOL_VERSION = 1
 /** Wire-to-runtime metadata; native paths never belong to this update. */
 export const SESSION_SKILLS_UPDATE = '_latch/skills_update'
+/** In `_meta` of a session's setup answer from one of Latch's own wires: short lines on what the harness's settings decide. */
+export const PERMISSION_FACTS = 'latch/permissionFacts'
+/** In `session/resume` to Latch's own OpenCode wire: the session is one Latch started, whose leftover claim may go. */
+export const RELEASE_CLAIM = 'latchReleaseClaim'
 
 /**
  * What Latch tells every agent it can take. No file system or terminal, so agents keep those to themselves; questions

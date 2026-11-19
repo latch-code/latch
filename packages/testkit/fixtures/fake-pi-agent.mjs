@@ -17,7 +17,7 @@
 // blocks anything but reading, `ask` confirms the rest, `rule` lets edits and writes through. "write" in a prompt writes
 // a file with the write tool. Each tool that really runs is logged as `executed`.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { callFakeModel } from './fake-model-client.mjs'
@@ -97,7 +97,13 @@ const LEVELS = { anthropic: ['off', 'minimal', 'low', 'medium', 'high'], openai:
 let model = MODELS.find(item => item.id === gateway?.selected) ?? MODELS[0]
 let thinkingLevel = 'medium'
 let sessions = 0
-const newFile = () => join(env.FAKE_PI_SESSIONS ?? tmpdir(), `fake-pi-${process.pid}-${++sessions}.jsonl`)
+/** pi's own names: `<time>_<id>.jsonl`, the ID in the header too (pi 1.5.0 `session-manager.js`). */
+let sessionUuid
+const newFile = () => {
+  sessions++
+  sessionUuid = randomUUID()
+  return join(env.FAKE_PI_SESSIONS ?? tmpdir(), `${new Date().toISOString().replace(/[:.]/gu, '-')}_${sessionUuid}.jsonl`)
+}
 let sessionFile = newFile()
 /** The session's entries in the order they were written, and the one the branch ends at. */
 let entries = []
@@ -106,7 +112,7 @@ let leafId = null
 /** Written only where the test asked for files; without FAKE_PI_SESSIONS the session lives in this process alone. */
 function persist() {
   if (!env.FAKE_PI_SESSIONS) return
-  const header = { type: 'session', version: 3, id: sessionFile, timestamp: new Date().toISOString(), cwd: process.cwd() }
+  const header = { type: 'session', version: 3, id: sessionUuid, timestamp: new Date().toISOString(), cwd: process.cwd() }
   writeFileSync(sessionFile, [header, ...entries].map(item => `${JSON.stringify(item)}\n`).join(''))
 }
 
@@ -121,6 +127,7 @@ function append(type, fields) {
 /** pi opens a file that is not there as an empty session, written once something is said in it. */
 function load(path) {
   sessionFile = path
+  sessionUuid = /_([^_]+)\.jsonl$/u.exec(path)?.[1] ?? randomUUID()
   const lines = existsSync(path)
     ? readFileSync(path, 'utf8')
         .split('\n')

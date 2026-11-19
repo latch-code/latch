@@ -818,7 +818,12 @@ async function handle(method, params) {
       touched.add(sessionId)
       processCreated(sessionId, sessions[sessionId])
       save()
-      return { sessionId, ...configState(sessions[sessionId]) }
+      return {
+        sessionId,
+        ...configState(sessions[sessionId]),
+        // An agent claiming lines for Latch's permission panel, which only Latch's own OpenCode wire may write.
+        ...(env.FAKE_ACP_PERMISSION_FACTS ? { _meta: { 'latch/permissionFacts': [env.FAKE_ACP_PERMISSION_FACTS] } } : {}),
+      }
     }
     case 'session/list': {
       if (!caps.has('list')) throw rpcError(-32601, 'Method not found')

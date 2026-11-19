@@ -101,6 +101,13 @@ export function PermissionPanel({
           if (view.rows) onChoose(value)
         }}
       />
+      {view.inEffect?.length ? (
+        <ul className="permission-in-effect">
+          {view.inEffect.map(line => (
+            <li key={line}>{escapeHiddenCharacters(line)}</li>
+          ))}
+        </ul>
+      ) : null}
       {feedback}
     </div>
   )

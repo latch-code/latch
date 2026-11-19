@@ -227,6 +227,8 @@ import {
   toolFields,
   updateEnvelope,
   SESSION_SKILLS_UPDATE,
+  PERMISSION_FACTS,
+  RELEASE_CLAIM,
   type ContentBlock,
   type PermissionOption,
   type RpcId,
@@ -264,6 +266,7 @@ import {
   sessionBusy,
   type Capture,
 } from './history.ts'
+import { listPiSessions, piProjectTrust, readPiHeader, readPiSession, type PiPlace } from './pi-store.ts'
 import { createAcpStore, emptyAcpState, type AcpRecord, type AcpState, type AcpStore, type AcpTask, type StartChoice } from './store.ts'
 import type { AgentHealth, AgentRecord, ResolvedOptions } from './types.ts'
 import { assertVersion, compareVersions } from './version.ts'
@@ -2044,10 +2047,70 @@ export class AgentRuntime implements Bridge {
 
   private assertHistoryImport(): void {
     const profile = this.selection.profile
-    // pi's wire answers no session/list or session/load; ACP and Codex's app-server do. Claude's direct wire reads
-    // Claude's store only where the Host lets it.
-    if (!profile?.historyImport || profile.wire === 'pi' || (profile.wire === 'claude' && !this.limits.claudeStore))
+    // pi's wire answers no session/list or session/load: Latch reads pi's files, only where the Host lets it. Claude's
+    // direct wire reads Claude's store only where the Host lets it.
+    if (
+      !profile?.historyImport
+      || (profile.wire === 'pi' && !this.piPlace())
+      || (profile.wire === 'claude' && !this.limits.claudeStore)
+    )
       throw historyNotSupported(this.agent.name)
+  }
+
+  /**
+   * What pi reads its agent directory and session store from in a process Latch starts (`agentEnvironment`), with the
+   * home the start script named; undefined in a Host that may not read CLI stores, or for another wire.
+   */
+  private piPlace(): PiPlace | undefined {
+    const home = this.limits.cliStore?.home
+    const uid = process.getuid?.()
+    if (this.selection.profile?.wire !== 'pi' || !home || uid === undefined) return undefined
+    const env = agentEnvironment({
+      resolvedCommand: resolveCommand(this.agent.command) ?? this.agent.command,
+      profile: this.profile,
+      definitionEnv: this.agent.env,
+      sessionTmpDir: this.tmpRoot(),
+    })
+    return { env, home, uid }
+  }
+
+  /** pi's sessions in the projects the Host lists, from Latch's own reads of pi's files: no pi process runs. */
+  private async listPiExternal(place: PiPlace): Promise<ExternalSessionList> {
+    const roots = (this.options.projects?.() ?? []).flatMap(project => (project.folders[0] ? [project.folders[0].path] : []))
+    const listed = await listPiSessions(place, roots, LIST_MAX)
+    return {
+      sessions: listed.sessions.map(row => ({
+        agentSessionId: row.path,
+        cwd: row.cwd,
+        ...(row.title ? { title: clip(this.redact(row.title.replace(/\s+/gu, ' ').trim()), 200) } : {}),
+        updatedAt: row.updatedAt,
+      })),
+      truncated: listed.truncated,
+    }
+  }
+
+  /**
+   * One pi session read from its file for its preview, without pi: the file must be pi's, of this folder, and the
+   * replay is what pi's branch holds. Opening it in pi waits for the session's first turn, after its adoption.
+   */
+  private async loadPiExternal(place: PiPlace, input: ExternalSessionPlace): Promise<ExternalSessionLoad> {
+    const { real: cwd, scope } = await this.externalScope(input)
+    const read = await readPiHeader(input.agentSessionId, place.uid)
+    if (!read || resolve(read.cwd) !== resolve(input.cwd)) throw sessionUnlisted(this.harnessName())
+    const replay = await readPiSession(input.agentSessionId, place.uid, read.cwd)
+    if (!replay) throw new AppError(409, 'history-session-changed', `${this.harnessName()} 的这个会话文件读不懂或太大，Latch 没有加载。`)
+    const launch = this.currentLaunch(await this.projectConfig(cwd, scope.passed), scope.passed)
+    const capture = newCapture(input.agentSessionId)
+    for (const item of replay.updates) captureUpdate(capture, item.update, item.at, this.redact)
+    const loadId = `load-${randomUUID()}`
+    const load: ExternalSessionLoad = {
+      loadId,
+      ...captured(capture, this.now(), this.redact),
+      ...(replay.model ? { model: clip(this.redact(replay.model), 200) } : {}),
+      useUnknown: true,
+    }
+    this.external.set(loadId, { key: `history-${loadId}`, place: structuredClone(input), scope, launch, load })
+    return structuredClone(load)
   }
 
   /** The profile's own conditions on bringing sessions in, when it has any. */
@@ -2102,6 +2165,8 @@ export class AgentRuntime implements Bridge {
     await this.ready()
     this.assertOpen()
     this.assertHistoryImport()
+    const pi = this.piPlace()
+    if (pi) return this.listPiExternal(pi)
     const key = `history-list-${randomUUID()}`
     const cwd = await this.makeTemporaryDirectory('history-')
     try {
@@ -2201,6 +2266,8 @@ export class AgentRuntime implements Bridge {
     await this.ready()
     this.assertOpen()
     this.assertHistoryImport()
+    const pi = this.piPlace()
+    if (pi) return this.loadPiExternal(pi, place)
     // The checked real path, never one through a link: the agent works where the check looked.
     const { real: cwd, scope } = await this.externalScope(place)
     const launch = this.currentLaunch(await this.projectConfig(cwd, scope.passed), scope.passed)
@@ -2354,6 +2421,12 @@ export class AgentRuntime implements Bridge {
       // The session works in the checked real path from now on, so a link swapped later cannot move it.
       const { real, scope } = await this.externalScope(input)
       const cwd = real
+      // pi runs a session in the folder its file names, whatever folder it was started in: they must be the same.
+      const pi = this.piPlace()
+      if (pi) {
+        const read = await readPiHeader(input.agentSessionId, pi.uid)
+        if (!read || (await realpath(read.cwd).catch(() => undefined)) !== cwd) throw sessionUnlisted(this.harnessName())
+      }
       const launch = this.currentLaunch(await this.projectConfig(cwd, scope.passed), scope.passed)
       if (launch.hash !== entry.launch.hash) throw this.projectConfigChanged()
       this.assertOpen()
@@ -4906,7 +4979,31 @@ export class AgentRuntime implements Bridge {
       ...(this.profile?.modeGlyphs ? { modeGlyphs: structuredClone(this.profile.modeGlyphs) } : {}),
       ...(task.acp.drift ? { drift: task.acp.drift } : {}),
       notes: this.permissionNotes(task),
+      ...(task.acp.permissionFacts?.length ? { inEffect: [...task.acp.permissionFacts] } : {}),
     }
+  }
+
+  /**
+   * What the harness's own settings decide for a session just bound: the wire's report in the setup answer
+   * (`PERMISSION_FACTS`), and for pi, read by Latch where it may, whether pi trusts the folder's `.pi`.
+   */
+  private async permissionFacts(result: unknown, cwd: string): Promise<string[] | undefined> {
+    // Only Latch's own OpenCode wire writes this; an ACP agent's `_meta` never reaches the permission panel.
+    const meta = this.selection.profile?.wire === 'opencode' && isObject(result) ? (result as { _meta?: unknown })._meta : undefined
+    const reported = isObject(meta) ? (meta as Record<string, unknown>)[PERMISSION_FACTS] : undefined
+    const facts = Array.isArray(reported)
+      ? reported.filter((line): line is string => typeof line === 'string' && line.trim() !== '').map(line => clip(this.redact(line), 300))
+      : []
+    const pi = this.piPlace()
+    if (
+      pi
+      && (await lstat(join(cwd, '.pi')).then(
+        info => info.isDirectory(),
+        () => false,
+      ))
+    )
+      facts.unshift((await piProjectTrust(pi, cwd)) === 'trusted' ? '.pi 已信任：会加载' : '.pi 未信任：不加载')
+    return facts.length ? facts.slice(0, 24) : undefined
   }
 
   private permissionNotes(task: AcpTask): string[] {
@@ -5957,6 +6054,7 @@ export class AgentRuntime implements Bridge {
               }
             : {}),
           ...(this.limits.claudeStore ? { claudeStore: true } : {}),
+          ...(this.limits.cliStore ? { cliStore: this.limits.cliStore } : {}),
         },
       )
     } catch (error) {
@@ -6407,7 +6505,9 @@ export class AgentRuntime implements Bridge {
       acpSessionId = id.data.sessionId
       carried = current
     } else if (live.capabilities.resume) {
-      result = await setup('session/resume', { sessionId: current, cwd, mcpServers, ...directories })
+      // A session Latch started may hold OpenCode's claim of a run Latch cut off; one brought in may be running elsewhere.
+      const own = this.selection.profile?.wire === 'opencode' && !task.acp.imported ? { [RELEASE_CLAIM]: true } : {}
+      result = await setup('session/resume', { sessionId: current, cwd, mcpServers, ...directories, ...own })
       acpSessionId = current
     } else if (live.capabilities.load) {
       // The replay arrives before the response while the session is still unbound, so it is discarded.
@@ -6416,6 +6516,8 @@ export class AgentRuntime implements Bridge {
     } else {
       throw new AppError(409, 'harness-session-lost', '该 Harness 不支持恢复会话，请新建会话')
     }
+    // Read before the session is bound: nothing may await between binding it and recording it.
+    const facts = await this.permissionFacts(result, cwd)
     const target = this.state.tasks[taskId]
     if (!target) throw new AppError(404, 'task-not-found', '找不到该任务')
     live.sessions.set(acpSessionId, taskId)
@@ -6443,6 +6545,8 @@ export class AgentRuntime implements Bridge {
       delete target.acp.routeMove
     }
     target.acp.deletable = live.capabilities.delete
+    if (facts) target.acp.permissionFacts = facts
+    else delete target.acp.permissionFacts
     if (live.agentVersion) target.acp.agentVersion = live.agentVersion
     // What the harness's own settings do that Latch's approvals do not show (Claude's direct wire reads them).
     const said = z.object({ _meta: z.object({ latch: z.object({ permissionNotes: z.array(z.string()).max(20) }) }) }).safeParse(result).data

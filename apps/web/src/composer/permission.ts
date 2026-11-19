@@ -104,6 +104,8 @@ export interface PermissionView {
   note?: Brief
   option?: SessionConfigOption
   rows?: PermissionRow[]
+  /** What the Harness's own settings decide beside the mode for this session (OpenCode's 「总是允许」, pi's `.pi`). */
+  inEffect?: string[]
 }
 
 const modeOption = (config: readonly SessionConfigOption[]) => config.find(option => option.category === 'mode')
@@ -220,11 +222,17 @@ const chatPermission = (): PermissionView => ({
 export function permissionView(input: {
   harness: PermissionHarness | undefined
   mode?: TaskMode | undefined
-  permission?: Partial<Pick<SessionPermission, 'approvals' | 'readback' | 'modeTiers' | 'modeGlyphs'>>
+  permission?: Partial<Pick<SessionPermission, 'approvals' | 'readback' | 'modeTiers' | 'modeGlyphs' | 'inEffect'>>
   config: readonly SessionConfigOption[]
   access: Pick<DeviceAccess, 'legacy' | 'local'> & { scopes?: ReadonlySet<DeviceScope> }
   locked?: string
 }): PermissionView | undefined {
+  const view = baseView(input)
+  const inEffect = input.permission?.inEffect?.slice(0, 24)
+  return view && inEffect?.length ? { ...view, inEffect } : view
+}
+
+function baseView(input: Parameters<typeof permissionView>[0]): PermissionView | undefined {
   const { harness, permission, config, access, locked } = input
   if (!harness) return undefined
   if (input.mode === 'chat') return chatPermission()

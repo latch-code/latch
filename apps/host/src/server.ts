@@ -903,12 +903,13 @@ export interface ServerOptions {
    */
   cliUsage?: { home: string }
   /**
-   * Claude Code's own store may be read and, for what Latch started or the person chose, changed: its settings (the mode
-   * menu, notes, a gateway's checks), its sessions to bring in, forks of Latch's sessions and deleting their transcripts
-   * (`packages/harness-acp/src/claude-store.ts`, in a process with each session's environment). The start script passes
-   * it; left out, as in tests, nothing of Claude's on this computer is read or changed.
+   * The home whose CLI stores Agent drivers may read and, for what Latch started or the person chose, change: Claude
+   * Code's own store (settings for the mode menu and a gateway's checks, sessions to bring in, forks and deleting
+   * transcripts — `packages/harness-acp/src/claude-store.ts`, in a process with each session's environment) and pi's
+   * session files and project trust (`pi-store.ts`). The start script passes the person's home; left out, as in tests,
+   * no CLI's own store is read or changed.
    */
-  cliStore?: true
+  cliStore?: { home: string }
   /**
    * Where a bare command name is looked for: an agent's command, its adapter, the programs a preset points it at. The
    * start script passes `personCommandDirectories`; left out, as in tests, only absolute commands are found, so no real
@@ -1640,6 +1641,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           ...(options.cliStore ? { claudeStore: true } : {}),
           ...(readCliQuota && readsCliQuota(agent) ? { readQuota: input => readCliQuota(agent.id, input) } : {}),
           ...(readCliUsage && readsCliQuota(agent) ? { readTurnUsage: input => readCliUsage(agent.id, input) } : {}),
+          ...(options.cliStore ? { cliStore: { home: options.cliStore.home } } : {}),
         }))
     const egressExtra = [...(options.egressAllow ?? [])]
     const egressFetch = createEgressFetch({

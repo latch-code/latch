@@ -55,6 +55,11 @@ export interface AcpRecord {
   configSource?: ConfigSource
   /** The agent offered session/delete when this session was last bound, so removal may start it to ask. */
   deletable?: boolean
+  /**
+   * What the harness's own settings decide beside Latch's mode, as read when this session was last bound: OpenCode's
+   * saved 「总是允许」 of the project, whether pi trusts the project's `.pi`. Display only, short lines.
+   */
+  permissionFacts?: string[]
   /** Launch fingerprint the owner confirmed. Absent on sessions created before it existed; those cannot continue. */
   launchHash?: string
   /**
@@ -520,6 +525,7 @@ const stateSchema = z.object({
           .optional(),
         configSource: z.enum(['options', 'legacy']).optional(),
         deletable: z.boolean().optional(),
+        permissionFacts: z.array(z.string().max(300)).max(24).optional(),
         launchHash: z
           .string()
           .regex(/^[0-9a-f]{64}$/)

@@ -434,6 +434,18 @@
 .composer-control .composer-permission-name {
   max-width: 12em;
 }
+/* Under the modes: what the Harness's own settings decide beside them, one short muted line each. */
+.permission-in-effect {
+  display: grid;
+  gap: var(--sp-2);
+  margin: var(--sp-8) 0 0;
+  padding: var(--sp-8) 0 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  overflow-wrap: anywhere;
+}
 /* The entry's hover says each thing it sets on its own line. */
 .entry-tip {
   display: grid;

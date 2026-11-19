@@ -19,10 +19,12 @@ export interface WireOptions {
   route?: WireModelRoute
   /** Claude's direct wire may read Claude's own store (`AcpAgentOptions.claudeStore`). */
   claudeStore?: boolean
+  /** The home whose CLI store the wire may change for Latch's own sessions (`AcpAgentOptions.cliStore`). */
+  cliStore?: { home: string }
 }
 
 export function openWire(kind: WireKind | undefined, spec: SpawnSpec, handlers: WireHandlers, options: WireOptions = {}): AgentWire {
-  if (kind === 'pi') return PiWire.spawn(spec, handlers, options.route !== undefined)
+  if (kind === 'pi') return PiWire.spawn(spec, handlers, options.route !== undefined, options.cliStore)
   if (kind === 'codex') return CodexWire.spawn(spec, handlers, options.route)
   if (kind === 'cursor') return CursorWire.spawn(spec, handlers)
   if (kind === 'opencode') return OpencodeWire.spawn(spec, handlers)

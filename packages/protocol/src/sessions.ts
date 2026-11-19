@@ -793,4 +793,9 @@ export interface SessionPermission {
   drift?: { at: string; observed: string }
   /** Display-only Chinese notes on how far the harness's own permissions go. */
   notes: string[]
+  /**
+   * Display only: what the harness's own settings decide for this session beside the mode, read as it was last bound
+   * (OpenCode's saved 「总是允许」 of the project, whether pi trusts the project's `.pi`). Short lines, at most 24.
+   */
+  inEffect?: string[]
 }

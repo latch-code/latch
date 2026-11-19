@@ -3,7 +3,8 @@
  * The runtime keeps speaking ACP; this wire answers its methods with pi's commands and turns pi's events into ACP
  * session updates, so pi runs without an adapter and every check of the runtime applies to it unchanged.
  */
-import { isAbsolute } from 'node:path'
+import { existsSync, realpathSync } from 'node:fs'
+import { isAbsolute, resolve } from 'node:path'
 import { z } from 'zod'
 import { redactKnownSecrets } from '@latch/core/node-kit'
 import { AppError } from '@latch/sdk'
@@ -13,6 +14,7 @@ import { commandsUpdate, FORK_METHOD, RPC, RpcError, STEER_METHOD, SESSION_SKILL
 import { AgentProcess, ConnectionClosed, ConnectionStopping, isRecord, RequestTimeout, type ExitInfo, type SpawnSpec } from './process.ts'
 import { GATE_COMMAND, GATE_LEVELS, GATE_MARK, writeGate } from './pi-gate.ts'
 import { piPlugins } from './pi-plugins.ts'
+import { deletePiSessionFile, readPiHeader } from '../pi-store.ts'
 import { PI_GATEWAY_PROVIDER } from '../profiles/pi-gateway.ts'
 import { ForkRefused, type AgentWire, type WireHandlers } from './types.ts'
 
@@ -111,6 +113,7 @@ const promptParams = z.object({
 const optionParams = z.object({ sessionId: text, configId: text, value: text.max(1024) })
 const steerParams = z.object({ sessionId: text, prompt: z.array(z.object({ type: text, text: text.optional() })) })
 const sessionParams = z.object({ sessionId: text.optional(), mcpServers: z.array(z.unknown()).optional() })
+const deleteParams = z.object({ sessionId: text })
 const forkParams = z.object({ sessionId: text, before: text, mcpServers: z.array(z.unknown()).optional() })
 const entry = z.object({
   type: text,
@@ -270,6 +273,15 @@ function blocksText(content: unknown, type: 'text' | 'thinking'): string {
     .join('')
 }
 
+/** A folder as its real path, which pi writes into a session's header; as written when it cannot be resolved. */
+function realCwd(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return resolve(path)
+  }
+}
+
 /** `pi --mode rpc` after the definition's arguments; refused when they set what this wire must. */
 export function piArgs(args: readonly string[]): string[] {
   const reserved = args.find(arg => RESERVED.has(arg.split('=')[0]!))
@@ -318,12 +330,19 @@ export class PiWire implements AgentWire {
   /** Records that came after an answer, kept until the code waiting on that answer has acted on it. */
   private held?: Array<Record<string, unknown>>
 
+  /** The folder pi was started in, and where a session file it deletes must say it belongs. */
+  private readonly cwd: string
+  private readonly env: Readonly<Record<string, string | undefined>>
+
   private constructor(
     spec: SpawnSpec,
     private readonly handlers: WireHandlers,
     private readonly routed = false,
+    private readonly cliStore?: { home: string },
   ) {
     this.redact = spec.redact
+    this.cwd = spec.cwd
+    this.env = { ...spec.env }
     // In the process's own temporary directory, written afresh: every start loads the gate as Latch wrote it.
     const tmp = spec.env.TMPDIR
     if (tmp) this.gatePath = writeGate(tmp)
@@ -338,8 +357,8 @@ export class PiWire implements AgentWire {
   }
 
   /** Throws for arguments pi must not get; launch failures such as ENOENT arrive as an exit with `reason: 'spawn'`. */
-  static spawn(spec: SpawnSpec, handlers: WireHandlers, routed = false): PiWire {
-    return new PiWire(spec, handlers, routed)
+  static spawn(spec: SpawnSpec, handlers: WireHandlers, routed = false, cliStore?: { home: string }): PiWire {
+    return new PiWire(spec, handlers, routed, cliStore)
   }
 
   get closed(): boolean {
@@ -369,9 +388,34 @@ export class PiWire implements AgentWire {
         return this.setOption(params, timeoutMs, signal)
       case STEER_METHOD:
         return this.steer(params, timeoutMs, signal)
+      case 'session/delete':
+        if (!this.cliStore) break
+        return this.deleteSession(params, timeoutMs, signal)
       default:
-        return Promise.reject(new RpcError(RPC.methodNotFound, `Method not found: ${clip(method, 200)}`))
+        break
     }
+    return Promise.reject(new RpcError(RPC.methodNotFound, `Method not found: ${clip(method, 200)}`))
+  }
+
+  /**
+   * pi's own way to delete a session is to remove its file, which is the whole of its record. pi appends to the file it
+   * is on by its path, so it first leaves for a new session of its own; then only that one file goes, after the checks
+   * of `deletePiSessionFile`. A file that does not pass is left where it is.
+   */
+  private async deleteSession(params: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<unknown> {
+    const parsed = deleteParams.safeParse(params)
+    if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
+    const path = parsed.data.sessionId
+    const uid = process.getuid?.()
+    if (!this.cliStore || uid === undefined || this.turn) return {}
+    if (path === this.sessionId) {
+      const left = await this.send({ type: 'new_session' }, timeoutMs, signal)
+      if (!isRecord(left) || left.cancelled === true) return {}
+      this.sessionId = undefined
+      this.foreign = false
+    }
+    const deleted = await deletePiSessionFile(path, resolve(realCwd(this.cwd)), { env: this.env, home: this.cliStore.home, uid })
+    return { deleted }
   }
 
   notify(method: string): void {
@@ -454,7 +498,8 @@ export class PiWire implements AgentWire {
       agentCapabilities: {
         loadSession: false,
         promptCapabilities: { image: true, embeddedContext: false },
-        sessionCapabilities: { resume: {} },
+        // Deleting removes pi's file of the session, only where the Host may change CLI stores.
+        sessionCapabilities: { resume: {}, ...(this.cliStore ? { delete: {} } : {}) },
       },
       _meta: { steering: { supported: true } },
     }
@@ -480,6 +525,13 @@ export class PiWire implements AgentWire {
     }
     if (resume !== undefined && resume !== this.sessionId) {
       if (!isAbsolute(resume) || !resume.endsWith('.jsonl')) throw new RpcError(RPC.notFound, 'Session not found')
+      // pi moves to the folder a session's file names and loads that folder's own settings, which the launch did not
+      // check: a file of another folder is not opened. A file not written yet holds no folder and opens empty here.
+      const uid = process.getuid?.()
+      if (uid !== undefined && existsSync(resume)) {
+        const read = await readPiHeader(resume, uid)
+        if (!read || realCwd(read.cwd) !== realCwd(this.cwd)) throw new RpcError(RPC.notFound, 'Session not found')
+      }
       const switched = await this.send({ type: 'switch_session', sessionPath: resume }, timeoutMs, signal)
       if (isRecord(switched) && switched.cancelled === true)
         throw new RpcError(RPC.internal, 'A pi extension cancelled resuming the session')
