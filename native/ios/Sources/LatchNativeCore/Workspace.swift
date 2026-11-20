@@ -132,7 +132,7 @@ public actor NativeWorkspace {
     private var bookUpdating = false
     private let directoryResolver: NativeDirectoryResolver
     private var reopen: (@Sendable () async throws -> NativeHTTPConnection)?
-    private var bulk: (connection: NativeHTTPConnection, handle: String, etag: String, size: Int, started: ContinuousClock.Instant)?
+    private var bulk: (connection: NativeHTTPConnection, handle: String, etag: String, size: Int, until: Date)?
     private var bulkBusy = false
     private var bulkCover: Task<Void, Never>?
     private var bulkClosing: Task<Void, Never>?
@@ -496,7 +496,8 @@ public actor NativeWorkspace {
     private func companion(handle: String, etag: String, minimum: Int, epoch current: UUID, lease: BodyLease) async throws -> NativeHTTPConnection {
         await bulkClosing?.value
         bulkCover?.cancel(); bulkCover = nil
-        if let bulk, bulk.handle == handle, bulk.etag == etag, bulk.started.duration(to: .now) < .seconds(55) {
+        // The Host ends a companion at its content window, after 15 s without progress, or after 10 minutes.
+        if let bulk, bulk.handle == handle, bulk.etag == etag, bulk.until.timeIntervalSinceNow > 2, !(await bulk.connection.isClosed()) {
             try lease.requireValid(); guard epoch == current else { throw NativeFailure.unavailable }; return bulk.connection
         }
         await closeCompanion()
@@ -516,9 +517,10 @@ public actor NativeWorkspace {
             guard Set(value.object.keys) == Set(["size", "expiresAt"]), let size = value["size"].integer,
                   size >= max(131_072, minimum), let expiry = value["expiresAt"].string,
                   let until = Self.bulkDate(expiry), until > Date(),
-                  until <= lease.verifiedUntil, until.timeIntervalSinceNow <= 60 else { throw NativeFailure.invalidRecord }
+                  until <= lease.verifiedUntil, until.timeIntervalSinceNow <= 600 else { throw NativeFailure.invalidRecord }
             guard size <= 8_388_608 else { throw NativeFailure.invalidRecord }
-            bulk = (next, handle, etag, Int(size), .now)
+            try await next.enableBulk { lease.valid }
+            bulk = (next, handle, etag, Int(size), until)
             return next
         } catch { await next.close(); throw error }
     }
@@ -526,13 +528,22 @@ public actor NativeWorkspace {
         let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.date(from: value)
     }
+    /**
+     * The Host pads a companion's total to its size bucket once it has been quiet for a second, so the companion closes
+     * only after two quiet seconds on its downlink, and at most 15 s after the read.
+     */
     private func coverCompanion() {
         guard let bulk else { return }
-        let connection = bulk.connection, end = bulk.started.advanced(by: .seconds(5))
+        let connection = bulk.connection, end = ContinuousClock.now.advanced(by: .seconds(15))
         bulkCover?.cancel()
         bulkCover = Task {
-            do { try await Task.sleep(until: end, clock: .continuous); try Task.checkCancellation() }
-            catch { return }
+            do {
+                while ContinuousClock.now < end {
+                    try await Task.sleep(for: .milliseconds(250)); try Task.checkCancellation()
+                    guard let idle = await connection.inboundIdleMs(), idle < 2000 else { break }
+                }
+                try Task.checkCancellation()
+            } catch { return }
             await self.closeCompanion(ifSame: connection)
         }
     }
@@ -1361,6 +1372,10 @@ public actor NativeWorkspace {
     func cancelFileTransfer() async {
         if let operation = bulkRun { operation.cancel(); _ = try? await operation.value }
         await closeCompanion()
+    }
+    /** Returns once the explicit-transfer companion's cover has ended and the connection has closed. */
+    public func waitForCompanion() async {
+        await bulkCover?.value; await bulkClosing?.value
     }
     func closeCompanion() async {
         bulkCover?.cancel(); bulkCover = nil

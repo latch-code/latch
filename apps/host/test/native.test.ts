@@ -1,4 +1,4 @@
-import { connect } from 'node:net'
+import { connect, createServer, type AddressInfo } from 'node:net'
 import type { ClientHttp2Session } from 'node:http2'
 import { createHash, createPrivateKey, generateKeyPairSync, randomUUID, sign } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -7,6 +7,8 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  connectNative,
+  PaddedStream,
   createTransportCertificate,
   renewDeviceCertificate,
   NativeWorkspace,
@@ -38,7 +40,7 @@ import type {
 import type { Bridge, HarnessPlugin } from '@latch/sdk'
 import type { PresenceBackend } from '../src/presence.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { startNativeHost } from '../src/native.ts'
+import { NATIVE_BULK, startNativeHost, type NativeOpening } from '../src/native.ts'
 import { loadOrCreateHostIdentity } from '../src/identity.ts'
 import { NativeReplay } from '../src/native-replay.ts'
 import { FileDirectoryReader } from '../src/files/directory.ts'
@@ -1482,6 +1484,107 @@ describe('native Host entry with existing authorization', () => {
     await native.close()
     expect(() => staged.commit()).toThrow('Host 正在停止')
     await staged.cancel()
+  })
+  describe('transport windows and the bulk deadline', () => {
+    const settled = async (client: NativeHttpClient) => {
+      expect((await client.request('GET', '/link/api/ping')).status).toBe(200)
+      const session = (client as unknown as { session: ClientHttp2Session }).session
+      return { stream: session.remoteSettings.initialWindowSize, connection: session.state.remoteWindowSize }
+    }
+    async function fixture(handler: (path: string, response: import('node:http').ServerResponse, opening: NativeOpening) => void) {
+      const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+      cleanup.push(() => host.close())
+      const registered = await pair(host)
+      const native = await startNativeHost({
+        tlsBinary: resolve('dist/native/latch-native-tls'),
+        identity: await loadOrCreateHostIdentity(host.dataDir),
+        devices: host.host.security.devices,
+        enrollments: host.host.security.enrollments,
+        bind: { host: '127.0.0.1', port: 0 },
+        handler(request, response, opening) {
+          handler(request.url ?? '', response, opening)
+        },
+      })
+      cleanup.push(() => native.close())
+      const binding = { path: 'relay' as const, relayId: new Uint8Array(16).fill(3), routeId: new Uint8Array(16).fill(4) }
+      const relay = createServer(socket => {
+        socket.on('error', () => {})
+        void native.acceptRelay(socket, binding).catch(() => {})
+      })
+      relay.listen(0, '127.0.0.1')
+      await new Promise(done => relay.once('listening', done))
+      cleanup.push(() => new Promise<void>(done => relay.close(() => done())))
+      const open = async (path: 'direct' | 'relay') => {
+        const raw = connect(path === 'direct' ? native.port! : (relay.address() as AddressInfo).port, '127.0.0.1')
+        raw.on('error', () => {})
+        const client = new NativeHttpClient(await connectNative(raw, path === 'direct' ? { path } : binding, registered.clientOptions))
+        cleanup.push(() => client.close())
+        return client
+      }
+      return { open }
+    }
+    const answer = (response: import('node:http').ServerResponse) => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end('{}')
+    }
+    it('gives a direct phone 256 KiB stream and 1 MiB connection upload windows, and keeps a relay control connection small and clocked', async () => {
+      let relayOpening: NativeOpening | undefined
+      const { open } = await fixture((_path, response, opening) => {
+        if (opening.listener.listener === 'native-relay') relayOpening = opening
+        answer(response)
+      })
+      expect(await settled(await open('direct'))).toEqual({ stream: 262_144, connection: 1_048_576 })
+      const control = await open('relay')
+      expect(await settled(control)).toEqual({ stream: 32_768, connection: 65_535 })
+      // Past the bulk delay, an idle control connection still sends its dummy cells on the clock.
+      const padding = relayOpening!.padding as PaddedStream
+      await new Promise(done => setTimeout(done, 3600))
+      const before = padding.traffic().cells
+      await new Promise(done => setTimeout(done, 800))
+      expect(padding.traffic().cells - before).toBeGreaterThanOrEqual(2)
+      expect(padding.traffic().bulkBytes).toBe(0)
+    }, 30_000)
+    it('opens bulk windows only on an activated relay connection and closes it after its progress stops, never later than its lifetime', async () => {
+      const stalled = NATIVE_BULK.stalledMs
+      Object.assign(NATIVE_BULK as { stalledMs: number }, { stalledMs: 1500 })
+      cleanup.push(() => {
+        Object.assign(NATIVE_BULK as { stalledMs: number }, { stalledMs: stalled })
+      })
+      let lifetime = 60_000,
+        trickle = 0
+      const { open } = await fixture((path, response, opening) => {
+        if (path === '/link/api/bulk') opening.activateBulk!(lifetime)
+        if (path !== '/link/api/trickle') {
+          answer(response)
+          return
+        }
+        response.writeHead(200, { 'content-type': 'application/octet-stream' })
+        const timer = setInterval(() => {
+          if (--trickle < 0) clearInterval(timer)
+          else response.write(Buffer.alloc(512, 1))
+        }, 300)
+        response.once('close', () => clearInterval(timer))
+      })
+      const bulk = await open('relay')
+      expect((await bulk.request('POST', '/link/api/bulk')).status).toBe(200)
+      expect(await settled(bulk)).toEqual({ stream: NATIVE_BULK.streamWindow, connection: NATIVE_BULK.connectionWindow })
+      trickle = 10
+      const started = performance.now()
+      void bulk.request('GET', '/link/api/trickle').catch(() => {})
+      await vi.waitFor(() => expect(bulk.isClosed()).toBe(true), { timeout: 10_000, interval: 50 })
+      const lasted = performance.now() - started
+      // Three seconds of progress kept it open; it closed within the stall limit after the last byte.
+      expect(lasted).toBeGreaterThan(3000)
+      expect(lasted).toBeLessThan(3000 + 1500 + 1500)
+      lifetime = 700
+      const short = await open('relay')
+      expect((await short.request('POST', '/link/api/bulk')).status).toBe(200)
+      trickle = 100
+      const begun = performance.now()
+      void short.request('GET', '/link/api/trickle').catch(() => {})
+      await vi.waitFor(() => expect(short.isClosed()).toBe(true), { timeout: 5000, interval: 50 })
+      expect(performance.now() - begun).toBeLessThan(1500)
+    }, 30_000)
   })
   it('reclaims the oldest pending handshake and bounds the authenticated connection pool per device', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })

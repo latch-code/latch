@@ -161,6 +161,36 @@ do {
             if let batch = try writer.batch(elapsedMs: time.uint64Value) { batches.append(LinkBytes.hex(batch)) }
         }
         result = ["batches": batches, "bufferedBytes": writer.bufferedBytes]
+    case "paddingPacer":
+        // A phone bulk uplink with a full queue against the outer cover of a leg that opened at `start`.
+        guard let queuedInput = input["queued"] as? NSNumber, let opened = input["pacerOpenedMs"] as? NSNumber,
+              let duration = input["durationMs"] as? NSNumber, duration.intValue <= 20_000 else { throw NativeFailure.invalidRecord }
+        let start: UInt64 = 3500
+        var pacer = NativePaddingPacer(openedMs: opened.uint64Value), outer = NativeRelayOuterPadding()
+        var queued = queuedInput.intValue, overflowAt: UInt64?, maxBuffered = 0, cells: [[Any]] = [], covering = true
+        pacer.enableBulk(nowMs: start)
+        func emit(_ size: Int, _ now: UInt64) throws {
+            let payload = min(queued, size - 3); queued -= payload
+            pacer.record(size: size, nowMs: now); cells.append([now - start, size, payload])
+            // One TLS record per cell, as the relay framer carries it: DATA messages of at most 16 KiB each.
+            var left = size + 22
+            while covering, left > 0 { let part = min(left, 16_384); left -= part; try outer.enqueue(Data(count: part + 9)) }
+        }
+        for now in start..<(start + duration.uint64Value) where overflowAt == nil {
+            do {
+                if pacer.unclocked(nowMs: now) {
+                    while true { let next = pacer.next(nowMs: now, queued: queued); if next.size == 0 { break }; try emit(next.size, now) }
+                } else if now % 250 == 0 { try emit(pacer.tick(nowMs: now, queued: queued), now) }
+                maxBuffered = max(maxBuffered, outer.bufferedBytes)
+                // As the framer does: after the cover, what is left goes out and later frames are written directly.
+                if covering, now - start >= NativeRelayOuterPadding.durationMs {
+                    while try outer.batch(elapsedMs: NativeRelayOuterPadding.durationMs + 1) != nil {}
+                    covering = false
+                } else if covering { _ = try outer.batch(elapsedMs: now - start) }
+            } catch { overflowAt = now - start }
+        }
+        result = ["overflowAtMs": overflowAt.map { Int($0) as Any } ?? NSNull(), "maxBufferedBytes": maxBuffered, "cells": cells, "bulkBytes": pacer.bulkBytes,
+            "buckets": [0, 262_145, 327_681, 8_388_608].map { NativePaddingPacer.bucket($0) }]
     case "padding":
         guard let vector = input["padding"] as? [String: String], let payload = vector["payload"], let encoded = vector["small"] else { throw NativeFailure.invalidRecord }
         let bytes = try LinkBytes.unhex(encoded, maximum: 16_384)
@@ -196,7 +226,7 @@ do {
         guard let rows = input["interfaces"] as? [[String: String]], let routers = input["routers"] as? [String], let peer = input["peer"] as? String else { throw NativeFailure.invalidRecord }
         let hash = NativeDiscoveryWire.pairingGatewayHash(peer: peer, interfaces: try rows.map { (address: $0["address"] ?? "", mask: try LinkBytes.unhex($0["mask"] ?? "")) }, routers: routers)
         result["hash"] = hash.map { LinkBytes.hex($0) }
-    case "nativeRelayLifecycle", "nativeRelayTransferNormal", "nativeRelayTransferAfterCancel", "nativeRelayBulkNormal", "nativeRelayBulkLegacy", "nativeRelayBulkReauthenticate", "nativeRelayBulkAfterCancel", "nativeRelayBulkCancel", "nativeRelayBulkEarlyCancel", "nativeDirectTransfer":
+    case "nativeRelayLifecycle", "nativeRelayTransferNormal", "nativeRelayTransferAfterCancel", "nativeRelayBulkNormal", "nativeRelayBulkLegacy", "nativeRelayBulkReauthenticate", "nativeRelayBulkAfterCancel", "nativeRelayBulkCancel", "nativeRelayBulkEarlyCancel", "nativeDirectTransfer", "nativeRelayThroughput":
         stage = "relay-pairing"
         let invitation = try PairingInvitation.parse(input["payload"] as? String ?? "", privateOnly: false), keys = try FixtureKeys()
         let anchor = try LinkBytes.unhex(input["trustAnchor"] as? String ?? "")
@@ -225,7 +255,16 @@ do {
         await temporary.close()
         let now = UInt64(Date().timeIntervalSince1970 * 1000)
         let book = try AddressBookCodec.verify(device.signedAddressBook, rootSpki: device.rootSpki, deviceId: device.deviceId, nowMs: now)
-        guard let endpoint = book.relays.first else { throw NativeFailure.invalidRecord }
+        guard let signed = book.relays.first else { throw NativeFailure.invalidRecord }
+        // A measuring proxy may stand in front of the relay for the phone's leg only; the Host keeps the signed URL.
+        var shaped = signed
+        if let port = input["relayPort"] as? NSNumber, var parts = URLComponents(url: signed.url, resolvingAgainstBaseURL: false) {
+            parts.port = port.intValue
+            guard let url = parts.url else { throw NativeFailure.invalidRecord }
+            shaped = NativeRelayAddress(relayId: signed.relayId, url: url, spkiHash: signed.spkiHash, passes: signed.passes,
+                profile: signed.profile, edge: signed.edge, region: signed.region)
+        }
+        let endpoint = shaped
         var usable: NativeRelayPass?
         for pass in endpoint.passes {
             let value = try AdmissionPass.decode(pass.bytes)
@@ -272,16 +311,39 @@ do {
         guard let file = files["files"].array.first?["file"], let handle = file["handle"].string,
               let etag = file["etag"].string, let count = file["size"].integer,
               try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: Int(count)) == Data("Swift relay file fixture".utf8) else { throw NativeFailure.invalidRecord }
-        let bulk = direct || (input["operation"] as? String ?? "").hasPrefix("nativeRelayTransfer") || (input["operation"] as? String ?? "").hasPrefix("nativeRelayBulk")
+        let throughput = input["operation"] as? String == "nativeRelayThroughput"
+        let bulk = direct || throughput || (input["operation"] as? String ?? "").hasPrefix("nativeRelayTransfer") || (input["operation"] as? String ?? "").hasPrefix("nativeRelayBulk")
         let companion = (input["operation"] as? String ?? "").hasPrefix("nativeRelayBulk")
         let afterCancel = (input["operation"] as? String ?? "").hasSuffix("AfterCancel")
         if bulk && !afterCancel {
             stage = "relay-large-file"
-            let large = try await workspace.resolveFile(sessionId: taskId, reference: "large.txt", rootId: nil)
+            let size = throughput ? (input["bytes"] as? NSNumber)?.intValue ?? 0 : 1_048_576
+            let large = try await workspace.resolveFile(sessionId: taskId, reference: throughput ? "large.bin" : "large.txt", rootId: nil)
             guard let file = large["files"].array.first?["file"], let handle = file["handle"].string,
-                  let etag = file["etag"].string, file["size"].integer == 1_048_576 else { throw NativeFailure.invalidRecord }
+                  let etag = file["etag"].string, file["size"].integer == UInt64(size), size % 1_048_576 == 0 else { throw NativeFailure.invalidRecord }
             try await Task.sleep(for: .milliseconds(5250))
             let timing = FixtureTransfer()
+            if throughput {
+                // Successive 1 MiB explicit reads share one companion, as the App opens a large file; then one control read.
+                stage = "relay-throughput-bulk"
+                let started = ProcessInfo.processInfo.systemUptime
+                var parts: [Double] = []
+                for part in 0..<(size / 1_048_576) { stage = "relay-throughput-bulk-\(part)"
+                    guard try await workspace.fileBytes(handle: handle, etag: etag, offset: part * 1_048_576, count: 1_048_576,
+                        explicitOpen: true) == Data(repeating: 0, count: 1_048_576) else { throw NativeFailure.invalidRecord }
+                    parts.append((ProcessInfo.processInfo.systemUptime - started) * 1000)
+                }
+                let bulkMs = (ProcessInfo.processInfo.systemUptime - started) * 1000
+                stage = "relay-throughput-cover"
+                let covered = ProcessInfo.processInfo.systemUptime
+                await workspace.waitForCompanion()
+                let coverMs = (ProcessInfo.processInfo.systemUptime - covered) * 1000
+                stage = "relay-throughput-control"
+                let control = ProcessInfo.processInfo.systemUptime
+                guard try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: 1_048_576) == Data(repeating: 0, count: 1_048_576) else { throw NativeFailure.invalidRecord }
+                result = ["bulkMs": bulkMs, "partsMs": parts.map { $0.rounded() }, "coverMs": coverMs, "controlMs": (ProcessInfo.processInfo.systemUptime - control) * 1000, "bytes": size]
+                await workspace.closeOpening(); break
+            }
             if input["operation"] as? String == "nativeRelayBulkReauthenticate" {
                 let reading = Task { try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: 1_048_576,
                     explicitOpen: true, progress: timing.progress) }

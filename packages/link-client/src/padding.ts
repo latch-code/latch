@@ -1,7 +1,10 @@
 import { Duplex } from 'node:stream'
 import { PADDING, PaddingClock, PaddingDecoder, encodePaddingCell } from '@latch/link-wire'
 
-/** A shallow application transport. TLS, raw sockets and all timers share this connection's lifetime. */
+/**
+ * A shallow application transport. TLS, raw sockets and all timers share this connection's lifetime. Its clock starts
+ * when the inner TLS is up, after both outer relay legs opened, so a bulk connection's 3.5 s grid outlasts their cover.
+ */
 export class PaddedStream extends Duplex {
   private readonly decoder = new PaddingDecoder()
   private readonly clock: PaddingClock
@@ -13,6 +16,8 @@ export class PaddedStream extends Duplex {
   private permitted = () => true
   private sent = 0
   private useful = 0
+  private cells = 0
+  private dummies = 0
   constructor(
     private readonly transport: Duplex,
     private readonly role: 'host' | 'client',
@@ -42,11 +47,17 @@ export class PaddedStream extends Duplex {
     this.clock.protect(performance.now(), deadline)
     this.wake()
   }
-  traffic(): { paddedBytes: number; payloadBytes: number } {
-    return { paddedBytes: this.sent, payloadBytes: this.useful }
+  traffic(): { paddedBytes: number; payloadBytes: number; cells: number; dummyCells: number; bulkBytes: number } {
+    return {
+      paddedBytes: this.sent,
+      payloadBytes: this.useful,
+      cells: this.cells,
+      dummyCells: this.dummies,
+      bulkBytes: this.clock.bulkTotal(),
+    }
   }
   enableBulk(): void {
-    this.clock.enableBulk()
+    this.clock.enableBulk(performance.now())
     this.wake()
   }
   guard(check: () => boolean): void {
@@ -81,8 +92,14 @@ export class PaddedStream extends Duplex {
   private wake(): void {
     if (this.destroyed) return
     clearTimeout(this.timer)
-    const interval = this.role === 'host' ? PADDING.activeMs : PADDING.idleMs,
-      now = performance.now()
+    const now = performance.now()
+    if (this.clock.unclocked(now)) {
+      if (this.blocked) return
+      this.timer = setTimeout(() => this.schedule(), 0)
+      this.timer.unref()
+      return
+    }
+    const interval = this.role === 'host' ? PADDING.activeMs : PADDING.idleMs
     this.timer = setTimeout(() => this.schedule(), (Math.floor(now / interval) + 1) * interval - now)
     this.timer.unref()
   }
@@ -92,7 +109,11 @@ export class PaddedStream extends Duplex {
       this.destroy(new Error('Padded transport expired'))
       return
     }
-    const next = this.clock.next(performance.now(), this.pending.length, this.active.size > 0)
+    const now = performance.now(),
+      unclocked = this.clock.unclocked(now)
+    // Unclocked, the write callback asks for the next cell; clocked, a blocked slot is consumed and skipped.
+    if (unclocked && this.blocked) return
+    const next = this.clock.next(now, this.pending.length, this.active.size > 0)
     if (next.size && !this.blocked) {
       const length = Math.min(this.pending.length, next.size - 3),
         cell = encodePaddingCell(this.pending.subarray(0, length), next.size === PADDING.large)
@@ -104,15 +125,20 @@ export class PaddedStream extends Duplex {
           this.destroy(new Error('Padded write failed'))
           return
         }
+        this.clock.record(cell.length, performance.now())
         this.sent += cell.length
         this.useful += length
+        this.cells++
+        if (!length) this.dummies++
         this.pending = this.pending.subarray(length)
         if (this.pending.length < PADDING.queue / 2) {
           const done = this.flushed
           this.flushed = undefined
           done?.()
         }
+        if (this.clock.unclocked(performance.now())) this.wake()
       })
+      if (unclocked) return
     }
     this.timer = setTimeout(() => this.schedule(), next.wait)
     this.timer.unref()

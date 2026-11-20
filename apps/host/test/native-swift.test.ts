@@ -37,6 +37,8 @@ import {
   parsePairingPayload,
   verifyProof,
   hex,
+  PADDING,
+  paddingBucket,
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
 import { FAKE_ACP_AGENT, fakeConversation, swiftFixturePath, testHarness, writeFakeHistory } from '@latch/testkit'
@@ -885,6 +887,35 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     const frames = new WebSocketParser(true).feed(batches[0]!)
     expect(frames.map(value => decodeMessage(value.payload, 2).type)).toEqual(['data', 'data', 'pad'])
     expect(frames.slice(0, 2).map(value => Buffer.from(value.payload).toString('hex'))).toEqual(['0004', '0005'])
+  })
+  it('keeps a full bulk padding uplink inside the outer cover for its first three seconds, then sends it unclocked', async () => {
+    type Pacing = {
+      overflowAtMs: number | null
+      maxBufferedBytes: number
+      cells: Array<[number, number, number]>
+      bulkBytes: number
+      buckets: number[]
+    }
+    const shaped = (await invoke({ operation: 'paddingPacer', queued: 67_108_864, pacerOpenedMs: 3500, durationMs: 6000 })) as Pacing
+    expect(shaped.overflowAtMs).toBeNull()
+    expect(shaped.maxBufferedBytes).toBeLessThanOrEqual(65_536)
+    const early = shaped.cells.filter(([at]) => at < PADDING.bulkDelayMs),
+      late = shaped.cells.filter(([at]) => at >= PADDING.bulkDelayMs)
+    // Clocked first: one cell per 250 ms slot, never a burst.
+    expect(early.every(([at]) => at % 250 === 0)).toBe(true)
+    expect(new Set(early.map(([at]) => at)).size).toBe(early.length)
+    // Then the queue goes as fast as the token bucket allows: its 4 MiB burst at once, whole large cells only.
+    expect(late[0]![0]).toBe(PADDING.bulkDelayMs)
+    expect(late.filter(([at]) => at === PADDING.bulkDelayMs).length).toBe(PADDING.bulkBurst / PADDING.large)
+    expect(late.every(([, size]) => size === PADDING.large)).toBe(true)
+    // After the burst, the rest follows at the token rate.
+    const after = late.filter(([at]) => at > PADDING.bulkDelayMs && at <= PADDING.bulkDelayMs + 1000).length * PADDING.large
+    expect(after).toBeGreaterThan(PADDING.bulkRate - 2 * PADDING.large)
+    expect(after).toBeLessThanOrEqual(PADDING.bulkRate + PADDING.large)
+    // The same queue unclocked from the cover's start would overflow it at once: the delay is what keeps it whole.
+    const unshaped = (await invoke({ operation: 'paddingPacer', queued: 4_194_304, pacerOpenedMs: 0, durationMs: 100 })) as Pacing
+    expect(unshaped.overflowAtMs).toBe(0)
+    expect(shaped.buckets).toEqual([0, 262_145, 327_681, 8_388_608].map(paddingBucket))
   })
   it('keeps the explicit v3 relay profile and outer-padding HMAC bound to the shared wire vector', async () => {
     const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {

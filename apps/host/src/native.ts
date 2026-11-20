@@ -26,7 +26,8 @@ export interface NativeOpening {
   controlUsed?: boolean
   bulkAttempted?: boolean
   bulk?: { handle: string; etag: string; requestId: string; windowHash: string; expiresAt: number }
-  activateBulk?(): void
+  /** `lifetimeMs`: until the earlier of the content window and the absolute bulk limit; never extended. */
+  activateBulk?(lifetimeMs: number): void
   close?(): Promise<void>
   signal?: AbortSignal
   guardTransportWrites?(check: () => boolean): void
@@ -46,6 +47,16 @@ export interface NativeHostOptions {
   relayAvailable?(): boolean
   handler(req: IncomingMessage, res: ServerResponse, opening: NativeOpening): void | Promise<void>
 }
+
+/** A bulk connection ends at its content window, its absolute limit, or after this long without delivered payload. */
+export const NATIVE_BULK = {
+  maximumMs: 600_000,
+  stalledMs: 15_000,
+  streamWindow: 2 * 1024 * 1024,
+  connectionWindow: 4 * 1024 * 1024,
+} as const
+/** A direct, paired connection has no padding queue to protect, so uploads get a window near a LAN's BDP. */
+export const NATIVE_DIRECT = { streamWindow: 262_144, connectionWindow: 1_048_576, sessionMemoryMb: 4 } as const
 
 export async function startNativeHost(options: NativeHostOptions) {
   const origin = `https://native-${options.identity.hostId}.invalid`
@@ -187,6 +198,7 @@ export async function startNativeHost(options: NativeHostOptions) {
       state.padding = accepted.padding
       const cooldown = cooldowns.get(accepted.deviceId)
       if (cooldown !== undefined) accepted.padding?.protectUntil(cooldown)
+      let session: ServerHttp2Session | undefined
       const opening: NativeOpening = {
         signal: disconnected.signal,
         ...(stream instanceof RelayTunnel ? { guardTransportWrites: (check: () => boolean) => stream.guardWrites(check) } : {}),
@@ -195,20 +207,39 @@ export async function startNativeHost(options: NativeHostOptions) {
           stream.destroy()
           await settled
         },
-        activateBulk() {
+        activateBulk(lifetimeMs: number) {
           if (binding.path !== 'relay' || accepted.pairing || !accepted.padding || bulkSlots.has(accepted.deviceId))
             throw new AppError(409, 'native-bulk-busy', '文件连接正在准备，请稍后重试')
+          const padding = accepted.padding
           const lease = {}
           bulkSlots.set(accepted.deviceId, lease)
           bulkSettlements.add(settled)
-          const timer = setTimeout(() => stream.destroy(), 60_000)
+          const timer = setTimeout(() => stream.destroy(), Math.max(0, Math.min(lifetimeMs, NATIVE_BULK.maximumMs)))
           timer.unref()
+          // Progress is payload the transport confirmed written, so a reader that stops pulling cannot hold the slot.
+          let delivered = padding.traffic().payloadBytes,
+            progressAt = performance.now()
+          const watchdog = setInterval(() => {
+            const now = performance.now(),
+              current = padding.traffic().payloadBytes
+            if (current !== delivered) {
+              delivered = current
+              progressAt = now
+            } else if (now - progressAt >= NATIVE_BULK.stalledMs) stream.destroy()
+          }, NATIVE_BULK.stalledMs / 15)
+          watchdog.unref()
           void settled.finally(() => {
             clearTimeout(timer)
+            clearInterval(watchdog)
             bulkSettlements.delete(settled)
             if (bulkSlots.get(accepted.deviceId) === lease) bulkSlots.delete(accepted.deviceId)
           })
-          accepted.padding.enableBulk()
+          // Bounded windows for this connection only; the control connection keeps the shape its phone queue relies on.
+          if (session && !session.destroyed) {
+            session.settings({ initialWindowSize: NATIVE_BULK.streamWindow })
+            session.setLocalWindowSize(NATIVE_BULK.connectionWindow)
+          }
+          padding.enableBulk()
         },
         ...(accepted.padding ? { padding: accepted.padding } : {}),
         deviceId: accepted.deviceId,
@@ -219,10 +250,17 @@ export async function startNativeHost(options: NativeHostOptions) {
         ...(candidate.kind === 'pairing' ? { invitationHash: Buffer.from(candidate.knockKey).toString('hex') } : {}),
       }
       state.id = accepted.deviceId
+      // A relay phone's padding queue holds 64 KiB, so its windows stay small; a pairing opening stays small everywhere.
+      const direct = binding.path === 'direct' && !accepted.pairing
       const h2 = createHttp2Server(
         {
-          maxSessionMemory: 1,
-          settings: { headerTableSize: 0, maxConcurrentStreams: 8, maxHeaderListSize: 8192, initialWindowSize: 32_768 },
+          maxSessionMemory: direct ? NATIVE_DIRECT.sessionMemoryMb : 1,
+          settings: {
+            headerTableSize: 0,
+            maxConcurrentStreams: 8,
+            maxHeaderListSize: 8192,
+            initialWindowSize: direct ? NATIVE_DIRECT.streamWindow : 32_768,
+          },
         },
         (request, response) => {
           if (request.method === 'GET' || request.method === 'HEAD') {
@@ -251,13 +289,15 @@ export async function startNativeHost(options: NativeHostOptions) {
           void handled.finally(() => requests.delete(handled)).catch(() => accepted.socket.destroy())
         },
       )
-      h2.on('session', session => {
-        sessions.add(session)
-        const close = () => session.destroy()
+      h2.on('session', created => {
+        session = created
+        if (direct) created.setLocalWindowSize(NATIVE_DIRECT.connectionWindow)
+        sessions.add(created)
+        const close = () => created.destroy()
         stream.once('close', close)
         accepted.socket.once('close', close)
-        session.once('close', () => {
-          sessions.delete(session)
+        created.once('close', () => {
+          sessions.delete(created)
           stream.off('close', close)
           accepted.socket.off('close', close)
         })

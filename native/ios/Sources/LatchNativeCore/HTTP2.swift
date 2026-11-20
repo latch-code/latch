@@ -69,7 +69,8 @@ public actor NativeHTTPConnection {
     }
     private static func establishOnce(_ connection: NWConnection, state: HandshakeState,
         cancellation: NativeConnectionCancellation) async throws -> NativeHTTPConnection {
-        let window = fileTransferBuffer ? 262_144 : 65_535
+        // A bulk companion's stream and connection windows near the BDP of a fast, far link; the Host bounds the rest.
+        let window = fileTransferBuffer ? 2_097_152 : 65_535
         let group = NIOTSEventLoopGroup(loopCount: 1)
         let completion = group.next().makePromise(of: Void.self), gate = HostProofGate(state: state, completion: completion)
         do {
@@ -298,6 +299,16 @@ public actor NativeHTTPConnection {
     }
     private func eventEnded() { eventCount = max(0, eventCount - 1) }
     public func isClosed() -> Bool { closed || !channel.isActive }
+    /** After the Host activated this companion: its uplink goes unclocked past the bulk delay, each cell checked first. */
+    func enableBulk(permitted: @escaping @Sendable () -> Bool) async throws {
+        guard let padding, !closed else { throw NativeFailure.unavailable }
+        try await channel.eventLoop.submit { padding.bulk(permitted: permitted) }.get()
+    }
+    /** How long since the Host's last cell arrived, so a companion closes only after the Host's end padding. */
+    func inboundIdleMs() async -> UInt64? {
+        guard let padding, !closed, channel.isActive else { return nil }
+        return try? await channel.eventLoop.submit { padding.inboundIdleMs() }.get()
+    }
 }
 
 /** An upload's answer that came before its body finished. */

@@ -20,7 +20,7 @@ import { createRelayEgress, type LookupFunction } from '../egress.ts'
 import { json, jsonBody, KIB, optionalJsonBody, safeDecode } from '../http-util.ts'
 import type { HostIdentity } from '../identity.ts'
 import type { ListenerContext } from '../listeners.ts'
-import { startNativeHost, type NativeOpening } from '../native.ts'
+import { NATIVE_BULK, startNativeHost, type NativeOpening } from '../native.ts'
 import { NativeNetwork } from '../native-network.ts'
 import { MacNetworkBackend, type NativeNetworkBackend } from '../native-network-backend.ts'
 import { NativeNetworks } from '../native-networks.ts'
@@ -257,7 +257,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
         requireScope(caller, 'view')
         recheck(caller, 'view')
         const windowHash = nativeOpening.windowHash
-        const expiresAt = Math.min(nativeVerifiedUntil(nativeOpening), now() + 60_000)
+        const expiresAt = Math.min(nativeVerifiedUntil(nativeOpening), now() + NATIVE_BULK.maximumMs)
         if (!windowHash || expiresAt <= now()) throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
         const input = z
           .strictObject({
@@ -271,7 +271,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
         if (nativeOpening.controlUsed || nativeOpening.windowHash !== windowHash || expiresAt <= now())
           throw new AppError(409, 'native-bulk-unavailable', '请重新打开这个文件')
         if (!nativeOpening.activateBulk) throw new AppError(503, 'native-bulk-unavailable', '文件连接暂时不可用')
-        nativeOpening.activateBulk()
+        nativeOpening.activateBulk(expiresAt - now())
         nativeOpening.bulk = { ...input, windowHash, expiresAt }
         json(res, { size, expiresAt: new Date(expiresAt).toISOString() })
         return true

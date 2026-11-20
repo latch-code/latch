@@ -9,6 +9,7 @@ import { startRelay } from '@latch/relay'
 import { createTransportCertificate, PaddedStream } from '@latch/link-client'
 import { buildSwiftFixture, swiftFixturePath } from '@latch/testkit'
 import { startTestHost } from './helpers/host.ts'
+import { startShapedProxy } from './helpers/shaped-proxy.ts'
 
 const descriptors = vi.hoisted(() => new Map<object, { close(): Promise<void>; origin: string }>())
 vi.mock('node:fs/promises', async importOriginal => {
@@ -112,6 +113,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
       return Reflect.apply(originalEnd, this, args) as Http2ServerResponse
     })
     let host: Awaited<ReturnType<typeof startTestHost>> | undefined
+    // A read the other opening must interrupt is held to about 5 s on a slow phone link; at network speed it would win the race.
+    const slow =
+      operation === 'nativeRelayBulkReauthenticate'
+        ? await startShapedProxy({ host: '127.0.0.1', port: relay.port }, { rttMs: 0, mbps: 1.5 })
+        : undefined
     try {
       const dataDir = join(directory, 'data'),
         nativeDir = join(dataDir, 'native')
@@ -162,6 +168,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         requestId,
         payload: invitation.payload,
         trustAnchor: new X509Certificate(tls.cert).raw.toString('hex'),
+        ...(slow ? { relayPort: slow.port } : {}),
       }
       const fixtureHost = host
       const response = await new Promise<unknown>((resolve, reject) => {
@@ -258,6 +265,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
       responseSpy.mockRestore()
       bulkSpy.mockRestore()
       await host?.close()
+      await slow?.close()
       await relay.close()
       await rm(directory, { recursive: true, force: true })
       const leaked = [...descriptors.values()]
