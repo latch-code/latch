@@ -435,35 +435,40 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
             res.end()
             return true
           }
-          const content = method === 'HEAD' ? undefined : await options.store.read(entry.ref)
-          res.setHeader('content-length', end - start + 1)
-          if (range) res.setHeader('content-range', `bytes ${start}-${end}/${entry.ref.size}`)
-          res.writeHead(range ? 206 : 200)
-          if (method === 'HEAD') {
-            res.end()
-            return true
-          }
-          for (let offset = start; offset <= end && !res.destroyed; offset += 65536) {
-            await get(caller, handle.id)
-            const bytes = content!.data.subarray(offset, Math.min(end + 1, offset + 65536))
-            await get(caller, handle.id)
-            if (!res.write(bytes)) {
-              const drained = await new Promise<boolean>(done => {
-                const close = () => {
-                    res.off('drain', drain)
-                    done(false)
-                  },
-                  drain = () => {
-                    res.off('close', close)
-                    done(true)
-                  }
-                res.once('close', close)
-                res.once('drain', drain)
-              })
-              if (!drained) return true
+          // Only the asked range is read, 64 KiB at a time; the whole file was checked against its hash once.
+          const reader = method === 'HEAD' ? undefined : await options.store.reader(entry.ref)
+          try {
+            res.setHeader('content-length', end - start + 1)
+            if (range) res.setHeader('content-range', `bytes ${start}-${end}/${entry.ref.size}`)
+            res.writeHead(range ? 206 : 200)
+            if (!reader) {
+              res.end()
+              return true
             }
+            for (let offset = start; offset <= end && !res.destroyed; offset += 65536) {
+              await get(caller, handle.id)
+              const bytes = await reader.read(offset, Math.min(end + 1, offset + 65536) - offset)
+              await get(caller, handle.id)
+              if (!res.write(bytes)) {
+                const drained = await new Promise<boolean>(done => {
+                  const close = () => {
+                      res.off('drain', drain)
+                      done(false)
+                    },
+                    drain = () => {
+                      res.off('close', close)
+                      done(true)
+                    }
+                  res.once('close', close)
+                  res.once('drain', drain)
+                })
+                if (!drained) return true
+              }
+            }
+            res.end()
+          } finally {
+            await reader?.close()
           }
-          res.end()
         } catch (error) {
           if (res.headersSent) {
             res.destroy()

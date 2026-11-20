@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises'
+import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, rename, rm, type FileHandle } from 'node:fs/promises'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { z } from 'zod'
@@ -26,6 +26,23 @@ const ATTACHMENT_DEVICE_FILES = 32
 export const ATTACHMENT_DEVICE_BYTES = 512 * 1024 * 1024
 /** For the Host: drafts and every upload's bytes, received or held. */
 const ATTACHMENT_HOST_BYTES = 2 * 1024 * 1024 * 1024
+/** Stored bytes are hashed and copied a mebibyte at a time, never held whole: a file may be 50 MiB. */
+const READ_CHUNK = 1024 * 1024
+/** Files whose whole content was checked against their ref, remembered by the file they were read from. */
+const VERIFIED_FILES = 256
+/** A stored attachment opened for reading ranges, after its whole content was checked once against its ref. */
+export interface AttachmentReader {
+  /** `length` bytes from `offset`, inside the file. */
+  read(offset: number, length: number): Promise<Buffer>
+  close(): Promise<void>
+}
+/** The file a descriptor holds, as far as a write to it would change: device, inode, size and both times. */
+function fileIdentity(info: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number }): string {
+  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
+}
+async function writeAll(file: FileHandle, chunk: Uint8Array): Promise<void> {
+  for (let at = 0; at < chunk.byteLength;) at += (await file.write(chunk, at, chunk.byteLength - at)).bytesWritten
+}
 /** What a request named, so that its replay is told apart from another file under the same request ID. */
 export function attachmentInputHash(name: string, size: number, sha256: string): string {
   return createHash('sha256').update(canonicalJson({ name, size, sha256 })).digest('hex')
@@ -125,6 +142,8 @@ export class AttachmentStore {
   private serial: Promise<unknown> = Promise.resolve()
   private uploads = new Map<string, { count: number; bytes: number }>()
   private reservedBytes = 0
+  /** By attachment ID: the identity of the file last checked whole against its ref (`reader`). */
+  private readonly verified = new Map<string, string>()
   /** Unfinished chunked uploads (`hold`), by owner: they count against the same quota as drafts. */
   private held = new Map<string, { count: number; bytes: number }>()
   private heldBytes = 0
@@ -570,9 +589,7 @@ export class AttachmentStore {
         if (creationRequestId) entry.creationRequestId = creationRequestId
         await copyFile(original, this.path(entry), constants.COPYFILE_EXCL).catch(async error => {
           if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-          const existing = await readFile(this.path(entry))
-          if (createHash('sha256').update(existing).digest('hex') !== entry.ref.sha256)
-            throw new AppError(409, 'attachment-changed', '附件内容已变化。')
+          if (!(await this.holds(this.path(entry), entry.ref))) throw new AppError(409, 'attachment-changed', '附件内容已变化。')
         })
       }
       for (const id of ids) {
@@ -588,6 +605,86 @@ export class AttachmentStore {
       for (const id of ids) this.leases.delete(id)
       for (const id of ids) await rm(join(this.directory, '_drafts', id), { force: true })
     })
+  }
+  /** The entry `ref` names, exactly as stored. */
+  private entryOf(ref: AttachmentRef): Entry {
+    const entry = this.state.entries[ref.id]
+    if (!entry || !isAttachmentRef(ref) || canonicalJson(entry.ref) !== canonicalJson(ref))
+      throw new AppError(404, 'attachment-missing', '附件不可用。')
+    return entry
+  }
+  /**
+   * Reads the whole file through `file` a mebibyte at a time, checking its size and hash against `ref`; `each` sees every
+   * chunk (a reused buffer: write or copy it before returning). Returns the identity of the file it checked.
+   */
+  private async check(file: FileHandle, ref: AttachmentRef, each?: (chunk: Buffer) => Promise<void>): Promise<string> {
+    const before = await file.stat()
+    if (!before.isFile() || before.size !== ref.size) throw new Error('attachment-changed')
+    const hash = createHash('sha256'),
+      buffer = Buffer.alloc(Math.max(1, Math.min(ref.size, READ_CHUNK)))
+    for (let at = 0; at < ref.size;) {
+      const { bytesRead } = await file.read(buffer, 0, Math.min(buffer.length, ref.size - at), at)
+      if (!bytesRead) throw new Error('attachment-changed')
+      const chunk = buffer.subarray(0, bytesRead)
+      hash.update(chunk)
+      await each?.(chunk)
+      at += bytesRead
+    }
+    const after = await file.stat()
+    if (fileIdentity(after) !== fileIdentity(before) || hash.digest('hex') !== ref.sha256) throw new Error('attachment-changed')
+    return fileIdentity(after)
+  }
+  /** Whether the plain file at `path` (no link followed) holds exactly `ref`'s bytes. */
+  private async holds(path: string, ref: AttachmentRef): Promise<boolean> {
+    const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(() => undefined)
+    if (!file) return false
+    try {
+      await this.check(file, ref)
+      return true
+    } catch {
+      return false
+    } finally {
+      await file.close()
+    }
+  }
+  /**
+   * Opens a stored attachment for reading ranges, without holding it whole. Its whole content is checked against its
+   * ref the first time, and again whenever the file is no longer the one checked (another inode, size or time).
+   */
+  async reader(ref: AttachmentRef): Promise<AttachmentReader> {
+    const entry = this.entryOf(ref)
+    const changed = () => new AppError(409, 'attachment-changed', '附件内容已变化，请重新添加。')
+    const file = await open(this.path(entry), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(() => {
+      throw changed()
+    })
+    try {
+      const identity = fileIdentity(await file.stat())
+      if (this.verified.get(ref.id) !== identity) {
+        const checked = await this.check(file, ref)
+        this.verified.delete(ref.id)
+        this.verified.set(ref.id, checked)
+        if (this.verified.size > VERIFIED_FILES) this.verified.delete(this.verified.keys().next().value!)
+      }
+    } catch {
+      this.verified.delete(ref.id)
+      await file.close()
+      throw changed()
+    }
+    return {
+      read: async (offset, length) => {
+        const data = Buffer.alloc(length)
+        for (let at = 0; at < length;) {
+          const { bytesRead } = await file.read(data, at, length - at, offset + at)
+          if (!bytesRead) {
+            this.verified.delete(ref.id)
+            throw changed()
+          }
+          at += bytesRead
+        }
+        return data
+      },
+      close: () => file.close(),
+    }
   }
   async read(ref: AttachmentRef): Promise<AttachmentData> {
     const entry = this.state.entries[ref.id]
@@ -627,24 +724,34 @@ export class AttachmentStore {
     // The run may start before its draft is bound to the session (`bind`); a draft bound elsewhere is not this one's.
     if (!entry || (entry.taskId ?? sessionId) !== sessionId || !taskId.safeParse(sessionId).success)
       throw new AppError(404, 'attachment-missing', '附件不可用。')
-    const content = await this.read(ref)
+    this.entryOf(ref)
     const session = join(this.directory, sessionId),
       files = join(session, 'files'),
       folder = join(files, ref.id)
     for (const path of [session, files, folder]) await privateFolder(path)
     const target = join(folder, attachmentFileName(ref.name))
     const existing = await lstat(target).catch(() => undefined)
-    if (existing?.isFile() && existing.size === ref.size) {
-      const kept = await readFile(target, { flag: constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) }).catch(() => undefined)
-      if (kept && createHash('sha256').update(kept).digest('hex') === ref.sha256) return target
-    }
+    if (existing?.isFile() && existing.size === ref.size && (await this.holds(target, ref))) return target
+    // Copied a mebibyte at a time while its hash is checked: a stored file that changed leaves no copy behind.
+    const source = await open(this.path(entry), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(() => {
+      throw new AppError(409, 'attachment-changed', '附件内容已变化，请重新添加。')
+    })
     const temporary = join(folder, `.write-${randomUUID()}`)
-    const fd = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600)
     try {
-      await fd.writeFile(content.data)
-      await fd.sync()
+      const fd = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600)
+      try {
+        await this.check(source, ref, chunk => writeAll(fd, chunk)).catch(() => {
+          throw new AppError(409, 'attachment-changed', '附件内容已变化，请重新添加。')
+        })
+        await fd.sync()
+      } finally {
+        await fd.close()
+      }
+    } catch (error) {
+      await rm(temporary, { force: true })
+      throw error
     } finally {
-      await fd.close()
+      await source.close()
     }
     try {
       await rename(temporary, target)

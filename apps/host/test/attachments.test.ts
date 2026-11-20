@@ -1,7 +1,7 @@
 import { lstat, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import { AttachmentStore, ATTACHMENT_CLAIM_TTL, ATTACHMENT_TTL, attachmentFileName, attachmentKind } from '../src/attachments.ts'
@@ -68,6 +68,30 @@ describe('what an attachment is', () => {
   })
 })
 describe('private attachment store', () => {
+  it('reads ranges and copies a sent file without holding it whole, and refuses one that changed', async () => {
+    const path = await directory(),
+      store = await AttachmentStore.open(path)
+    // Larger than one read chunk, so the copy and the check both take several.
+    const bytes = Buffer.concat([Buffer.from('%PDF-1.7\n'), randomBytes(3 * 1024 * 1024 + 17)])
+    const ref = await store.add(binary(bytes, 'scan.pdf'))
+    const reader = await store.reader(ref)
+    try {
+      expect(await reader.read(0, 9)).toEqual(bytes.subarray(0, 9))
+      expect(await reader.read(2 * 1024 * 1024 + 5, 70_000)).toEqual(bytes.subarray(2 * 1024 * 1024 + 5, 2 * 1024 * 1024 + 5 + 70_000))
+    } finally {
+      await reader.close()
+    }
+    expect(await readFile(await store.materialize(ref, 'session-1'))).toEqual(bytes)
+    // The stored bytes changed under it: no reader, and no copy left behind.
+    const stored = join(path, 'attachments', '_drafts', ref.id)
+    const changed = Buffer.from(bytes)
+    changed[changed.length - 1] ^= 1
+    await writeFile(stored, changed)
+    await expect(store.reader(ref)).rejects.toMatchObject({ code: 'attachment-changed' })
+    await rm(join(path, 'attachments', 'session-1'), { recursive: true })
+    await expect(store.materialize(ref, 'session-1')).rejects.toMatchObject({ code: 'attachment-changed' })
+    expect(await readdir(join(path, 'attachments', 'session-1', 'files', ref.id))).toEqual([])
+  })
   it('saves a sent attachment as a private file under its own name for its agent, without following a link', async () => {
     const path = await directory(),
       store = await AttachmentStore.open(path)
