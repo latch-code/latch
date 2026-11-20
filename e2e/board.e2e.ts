@@ -217,12 +217,11 @@ it('lays the Host’s groups out as a board that reflows by its own width, and w
       const count = snapshot.tasks.filter(task => task.board?.card && task.board.group === group).length
       expect(await column(page, group).locator('.work-board-column-head').textContent()).toContain(String(count))
     }
-    // A quiet column is still present and labeled. The column holding work keeps its filled surface.
+    // A quiet column is still present and labeled.
     const columnFill = (group: Column) => column(page, group).evaluate(el => getComputedStyle(el).backgroundColor)
     expect(await column(page, 'todo').getAttribute('data-empty')).toBe('')
     expect(await column(page, 'attention').getAttribute('data-empty')).toBeNull()
     expect(await columnFill('todo')).toBe('rgba(0, 0, 0, 0)')
-    expect(await columnFill('attention')).not.toBe(await columnFill('todo'))
     // Priority first within a column: 高 above the rest of 已结束.
     const doneOrder = await column(page, 'done')
       .locator('.work-board-card')
@@ -239,7 +238,18 @@ it('lays the Host’s groups out as a board that reflows by its own width, and w
     expect(await covers(120, 400)).toBe(true)
     expect(await covers(720, 860)).toBe(true)
     await shot(page, 'board', 1440, 'light')
+    expect(await columnFill('attention')).not.toBe(await columnFill('todo'))
     await shot(page, 'board', 1440, 'dark')
+    // Dark monochrome keeps both columns on the black canvas. Hover lifts the entire card, including its footer.
+    expect(await columnFill('attention')).toBe(await columnFill('todo'))
+    const ordinaryCard = card(page, done1)
+    const mainButton = ordinaryCard.locator('.work-board-card-main')
+    const cardFill = () => ordinaryCard.evaluate(el => getComputedStyle(el).backgroundColor)
+    expect(await cardFill()).toBe('rgb(8, 8, 8)')
+    await mainButton.hover()
+    await expect.poll(cardFill).toBe('rgb(21, 21, 21)')
+    expect(await mainButton.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+    await page.mouse.move(0, 0)
 
     // Reflow by the board's own width: five in a row, 3 + 2, 2 + 2 + 1, then the narrow list. Order never changes, and
     // an empty 未开始 keeps its cell.

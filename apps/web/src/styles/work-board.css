@@ -192,6 +192,9 @@
 .work-board-column[data-empty] {
   background: transparent;
 }
+:where([data-palette='mono']) .work-board-column:not([data-empty]) {
+  background-color: light-dark(var(--sunken), transparent);
+}
 .work-board-column[data-empty] .work-board-column-head h3 {
   color: var(--muted);
 }
@@ -333,6 +336,19 @@
 @media (hover: hover) {
   .work-board-card-main:hover {
     background: var(--hover);
+  }
+}
+/* On the black canvas, the whole card lifts together, including its actions and session rows. */
+:where([data-palette='mono']) .work-board-cards .work-board-card:where(:not([data-decision], [data-kind='proposal'])) {
+  background-color: light-dark(var(--card), var(--work-rail));
+
+  @media (hover: hover) {
+    &:hover {
+      background-color: var(--card);
+    }
+    & > .work-board-card-main:hover {
+      background-color: light-dark(var(--hover), transparent);
+    }
   }
 }
 .work-board-card-head {
