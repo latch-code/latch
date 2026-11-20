@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { Cloud, FileUp, Radio, Server } from 'lucide-react'
 import {
-  isRelayEndpoint,
+  parseRelayFile,
+  RELAY_FILE_BYTES,
   RELAY_LOCATIONS,
   type NativeLinkInfo,
   type NativeRelayFile,
@@ -64,8 +65,8 @@ const COPY = defineCopy(
     bookSigning: '签发连接信息',
     signed: '这台 Mac 已签发',
     direct: '直接连接',
-    directUnavailable: '手机现在不能直接连接这台 Mac',
-    available: '可用',
+    directUnavailable: '首次连接手机时，在这台 Mac 的「设置 › 设备」里显示二维码。',
+    listening: '已开启',
     off: '未开启',
     official: '官方转发服务',
     closed: '已关闭',
@@ -108,7 +109,7 @@ const COPY = defineCopy(
     privateKey: '私钥',
     chooseFile: '选择文件',
     relaysFolderDetail:
-      '配置文件写到这个文件夹后会出现在这里。选择窗口里按 ⌘⇧G 可输入它。添加后可以删除配置文件；Workers 转发服务的 .admin-header 留着，查看状态要用。',
+      '这个文件夹里的配置会列在这里。选择文件时按 ⌘⇧G 可输入路径。共用 Workers 转发服务时，运营者私下分发 .json 配置，自己保管 .admin-header 管理文件。',
     logIn: '登录',
     deploy: '部署',
     connect: '连接',
@@ -131,7 +132,7 @@ const COPY = defineCopy(
     connectedAt: (time: string) => `连上于 ${time}`,
     retryAt: (time: string) => `下次重试 ${time}`,
     testLatency: (latency: number) => `连上 ${formatNumber(latency)} ms`,
-    directAddress: (address: string) => `同一网络的手机可直接连接 ${address}`,
+    directAddress: (address: string) => `这台 Mac 正在 ${address} 等待同一网络的手机连接。`,
     relayAddresses: (address: string, count: number, key: string) =>
       `${address}${count > 1 ? ` 等 ${formatNumber(count)} 个地址` : ''} · 密钥 ${key}`,
     relayActions: (name: string) => `${name} 的操作`,
@@ -161,8 +162,8 @@ const COPY = defineCopy(
     bookSigning: 'Sign connection details',
     signed: 'Signed on this Mac',
     direct: 'Direct connection',
-    directUnavailable: 'Phones can’t connect directly to this Mac right now',
-    available: 'Available',
+    directUnavailable: 'For the first phone connection, show the QR code in Settings › Devices on this Mac.',
+    listening: 'On',
     off: 'Off',
     official: 'Official relay',
     closed: 'Off',
@@ -205,7 +206,7 @@ const COPY = defineCopy(
     privateKey: 'Private key',
     chooseFile: 'Choose file',
     relaysFolderDetail:
-      'A relay file written to this folder appears here. In the file dialog, press ⌘⇧G to enter it. Once the relay is added you can delete the relay file; keep a Workers relay’s .admin-header, which checking its status needs.',
+      'Files in this folder appear here. Press ⌘⇧G in the file picker to enter a path. To share a Workers relay, the operator privately distributes the .json profile and keeps the .admin-header management file.',
     logIn: 'Log in',
     deploy: 'Deploy',
     connect: 'Connect',
@@ -228,7 +229,7 @@ const COPY = defineCopy(
     connectedAt: (time: string) => `Connected ${time}`,
     retryAt: (time: string) => `Next retry ${time}`,
     testLatency: (latency: number) => `Connected in ${formatNumber(latency)} ms`,
-    directAddress: (address: string) => `Phones on the same network can connect directly to ${address}.`,
+    directAddress: (address: string) => `This Mac is listening at ${address} for phones on the same network.`,
     relayAddresses: (address: string, count: number, key: string) =>
       `${address}${count > 1 ? ` and ${formatNumber(count - 1)} more` : ''} · Key ${key}`,
     relayActions: (name: string) => `Actions for ${name}`,
@@ -242,40 +243,9 @@ const COPY = defineCopy(
  * this Mac's Host and never shows.
  */
 export function readRelayProfile(text: string): NativeRelayProfile {
-  const file = JSON.parse(text) as { version?: unknown; profile?: Record<string, unknown> } | null
-  const profile = file?.profile
-  const origin = (value: unknown) => {
-    if (typeof value !== 'string' || value.length > 512) throw new Error('Invalid relay origin')
-    const url = new URL(value)
-    // The Host and the signed address book accept exactly this grammar; anything else could never reach a phone.
-    if (url.protocol !== 'https:' || url.username || url.password || value !== `${url.origin}/` || !isRelayEndpoint(value))
-      throw new Error('Invalid relay origin')
-    return value
-  }
-  const hex = (value: unknown, size: number) => {
-    if (typeof value !== 'string' || !new RegExp(`^[a-f0-9]{${size}}$`, 'u').test(value)) throw new Error('Invalid relay profile')
-    return value
-  }
-  const registration = profile?.registrationKey
-  if (!profile || (registration !== undefined && (typeof registration !== 'string' || !/^lrt1\.[A-Za-z0-9_-]{43}$/u.test(registration))))
-    throw new Error('Invalid relay profile')
-  const shared = { url: origin(profile.url), relayId: hex(profile.relayId, 32) }
-  const key = registration === undefined ? {} : { registrationKey: registration as string }
-  if (file?.version === 1) return { ...shared, spkiHash: hex(profile.spkiHash, 64), ...key }
-  if (file?.version !== 2 || profile.kind !== 'edge') throw new Error('Invalid relay profile')
-  const extra = profile.extraUrls
-  if (extra !== undefined && (!Array.isArray(extra) || extra.length < 1 || extra.length > 3)) throw new Error('Invalid relay profile')
-  const shard = profile.shard
-  if (shard !== undefined && (!Number.isInteger(shard) || (shard as number) < 0 || (shard as number) > 15))
-    throw new Error('Invalid relay profile')
-  return {
-    ...shared,
-    kind: 'edge',
-    relayKey: hex(profile.relayKey, 64),
-    ...(extra ? { extraUrls: (extra as unknown[]).map(origin) } : {}),
-    ...(shard === undefined ? {} : { shard: shard as number }),
-    ...key,
-  }
+  const read = parseRelayFile(text, URL)
+  if ('profile' in read) return read.profile
+  throw new Error('Invalid relay profile')
 }
 
 /** The short key hash the Mac's confirmation sheet shows (Host `relayKeyHash`): compare the two before approving. */
@@ -436,7 +406,7 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
             ) : (
               <Tooltip content={direct ? COPY.directAddress(`${direct.host}:${direct.port}`) : COPY.directUnavailable}>
                 <span data-testid="relay-direct">
-                  <StatusWord tone={direct ? 'done' : 'neutral'}>{direct ? COPY.available : COPY.off}</StatusWord>
+                  <StatusWord tone="neutral">{direct ? COPY.listening : COPY.off}</StatusWord>
                 </span>
               </Tooltip>
             )
@@ -709,7 +679,7 @@ function AddRelay({
     setProgress(null)
     if (!chosen) return
     try {
-      if (chosen.size > 4096) throw new Error('too large')
+      if (chosen.size > RELAY_FILE_BYTES) throw new Error('too large')
       const profile = readRelayProfile(await chosen.text())
       if ('kind' in profile && !edgeAvailable) {
         setRejected('edge')
@@ -722,7 +692,7 @@ function AddRelay({
         urls: [profile.url, ...('extraUrls' in profile ? (profile.extraUrls ?? []) : [])],
         hash: await relayKeyHash(profile),
         fullKey: 'relayKey' in profile ? profile.relayKey : profile.spkiHash,
-        token: profile.registrationKey !== undefined,
+        token: profile.registrationKey != null,
       })
     } catch {
       setRejected('file')

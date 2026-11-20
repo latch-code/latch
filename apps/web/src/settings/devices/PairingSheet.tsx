@@ -36,9 +36,7 @@ function Center({ children }: { children: ReactNode }) {
 
 /**
  * 连接手机: a QR that refreshes itself, follows what the Host says about it, and dies with the sheet. Its payload is a
- * secret: it only ever becomes the image. After the Mac's confirmation the sheet stays until answered, with no close and Esc doing
- * nothing, because the phone in hand showing 已连接 is the proof only that phone can give; quitting without an answer
- * counts as done, and the device is on the page either way.
+ * secret: it only ever becomes the image. After the Host reports completion, the sheet shows the registered device.
  */
 export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSnapshot; onClose: () => void; onChanged: () => void }) {
   const phone = useViewport() === 'phone'
@@ -74,6 +72,7 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
       stopped.current = false
       setStop({ kind: 'none' })
       setBusy(null)
+      setQr('')
       setInvitation(answer.invitation)
     } catch (cause) {
       if (closing.current) return
@@ -224,6 +223,7 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
             <Icon icon={OfflineGlyph} size={20} />
           </span>
           <p className="pair-note">{COPY.noNetwork}</p>
+          <p className="pair-note">{COPY.networkHelp}</p>
         </Center>
       </>
     )
@@ -261,7 +261,7 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
       <>
         {holding && <PairingBlocked snapshot={snapshot} />}
         {said}
-        {offNetwork && <p className="pair-line">{COPY.offNetwork}</p>}
+        {offNetwork && !busy && <p className="pair-line">{COPY.offNetwork}</p>}
         <div className="pair-code" data-dim={busy ? '' : undefined}>
           <div className="pair-qr">{qr ? <img src={qr} alt={COPY.qrAlt} /> : <Spinner size={20} />}</div>
           {busy && (

@@ -17,7 +17,7 @@
 
 改动后运行 `pnpm typecheck`、`pnpm test` 与 `pnpm test:e2e`。消息与快照见 [docs/STREAMING.md](../../docs/STREAMING.md)，代码地图见 [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)。
 
-- Agent 便携文件的大小上限由 `src/custom-agents.ts` 的 `AGENT_FILE_BYTES` 定义，导入与导出共用。
+- Agent 导入导出共用 `AGENT_FILE_BYTES`。中继导入共用 `relay-file.ts`，保留显式 null 的回执哈希。
 - `src/files.ts` 的 `imageDimensions` 只读有界文件头，供 Host 的文件元数据与浏览器头像解码前检查共用。
 - `src/file-refs.ts` 定义显式相对引用；`src/attachments.ts` 仅定义有限的元数据、上传上下文与能力；`AttachmentRef` 不含内容或私有路径，新增字段须同步两个 Harness 的持久化 schema。
 - 文件上下文区分 session 和带 Harness 的 workspace；目录 DTO 不含绝对路径，旧会话 `FileOpenTarget` 继续兼容。

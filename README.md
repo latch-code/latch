@@ -59,7 +59,7 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 ```
 
 - **手机要在同一 Wi‑Fi 下配对或直连时，用 `scripts/desktop.sh` 代替 `pnpm desktop`**（参数相同）。macOS 只把局域网邻居的地址给有「本地网络」权限的程序，经 `pnpm`、`fnm exec` 启动的 Host 拿不到，手机会显示「连不上这台 Mac」；这个脚本直接用 `node` 启动，权限归终端应用，系统首次会询问。用数据线开热点配对两种方式都可以（[RELAY](docs/RELAY.md#同一网络怎样判断)）。
-- 这台 Mac 没有「本地网络」权限时，设置 › 连接转发 的「直接连接」与连接手机的面板显示「本地网络未允许」：桌面端里按「打开系统设置」，在「隐私与安全性 › 本地网络」打开 Latch（从源码运行时是终端应用）。经 pnpm 启动时它另外指向 `scripts/desktop.sh`。
+- 这台 Mac 没有「本地网络」权限时，「设置 › 连接转发」与连接手机的面板会显示「本地网络未允许」；若 Host 只观察到邻居信息不可读，则显示「无法读取本地网络信息」：桌面端里按「打开系统设置」，在「隐私与安全性 › 本地网络」打开 Latch（从源码运行时是终端应用）。经 pnpm 启动时它另外指向 `scripts/desktop.sh`。
 
 - `pnpm start` 打印 `http://h-<hostId>.localhost:4317/link/` 形式的地址。每台 Host 用自己的 `h-<hostId>.localhost`，不同 Host 的 Cookie 因此互不混用。
 - **只有桌面端算这台电脑。** 回环端口可能被隧道或端口转发连到别处，所以这台电脑上的浏览器与手机一样是远程设备，连接前要一次性邀请：`pnpm latch device invite --loopback`（10 分钟内有效、只能用一次）。
@@ -142,9 +142,10 @@ pnpm desktop -- --tailnet \
 
 邀请默认不含管理权限；`--scopes view,run,approve:standard,approve:elevated,admin` 可以加入。撤销一台设备时（`pnpm latch device revoke <设备 ID>`），由它邀请配对的设备降为仅查看，等待复核。
 
-**iPhone 与 iPad 上的 Latch App** 不走这个 HTTPS 入口：在桌面端的「设置 → 设备」选「连接手机」，用 App 扫码，再在 Mac 上确认一次。
+**iPhone 与 iPad 上的 Latch App** 有独立的配对入口。在 Mac 的 Latch 桌面端打开「设置 › 设备」，点「显示二维码」，用 App 扫码，再在这台 Mac 上确认。
 
-- 配对时手机要和这台 Mac 在同一个局域网，或用数据线连接 Mac 并打开 iPhone 的个人热点（[同一网络怎样判断](docs/RELAY.md#同一网络怎样判断)）。之后同一网络直连，其他网络可经[自己的中继](docs/RELAY.md)接入（Linux 服务器，或自己 Cloudflare 账户上的 Workers 中继）。在这台 Mac 的「设置 › 连接转发」导入，经本机确认后生效。Workers 中继在源码目录两条命令部署与验收：`pnpm relay-edge:setup --region ne`、`pnpm relay-edge:accept --name ne`；中继文件都放在 `~/.latch/relays`（0700），添加后可删除中继文件，保留 `.admin-header`。
+- 首次配对时，两台设备要在可互访的局域网，或用数据线连接 Mac 并打开 iPhone 的个人热点。只插线、不开热点的连接尚未实现。配对后优先尝试直连，直连不可用或发现较慢时可经已配置的中继接入。[直连条件与选路](docs/RELAY.md#同一网络怎样判断)
+- 远程接入可用自己的 Linux 中继，也可让少数人共用一个私有 Workers 中继。每个人在自己的 Mac 上打开「设置 › 连接转发 › 添加转发服务 › 已有配置文件」，添加运营者私下交给他的中继文件，再让手机连上自己的 Mac 一次，取得新的连接簿。[部署与共享](docs/RELAY.md#几个人共用一个-workers-中继)
 - 没有账号和云端用户库，不使用 P2P 或 NAT 穿透。设备、权限与会话都由 Mac 上的 Host 决定。
 - 中继只转发 Host 与已获准设备之间的连接，读不到端到端正文，也不能签发设备权限或替换 Host 身份；它的运营方仍能看到 IP、时间、填充后的大小与连接关系。
 - 局域网入口默认自动选择；`--native-host <具体 IP>` 与 `--native-port <端口>` 把它固定在一个地址。
@@ -189,9 +190,11 @@ pnpm desktop -- --tailnet \
 | --- | --- | --- |
 | `device list [--json]` | 运行中 | 列出已连接的设备 |
 | `device revoke <设备 ID>` | 运行中 | 撤销设备；由它邀请的设备降为仅查看，等待复核 |
-| `device invite [--scopes …] [--code-file <路径>]` | 运行中，已配置 HTTPS | 生成手机配对二维码 |
+| `device invite [--scopes …] [--code-file <路径>]` | 运行中，已配置 HTTPS | 生成其他设备上的浏览器或桌面端使用的 HTTPS 邀请 |
 | `device invite --loopback [--scopes …] [--code-file <路径>]` | 运行中 | 生成这台电脑上浏览器用的一次性链接；不给 `--scopes` 时可以申请「管理此 Host」 |
 | `device enroll --offline [--code-file <路径>]` | 已停止 | 生成桌面端用的一次性离线连接码（15 分钟） |
+| `relay list [--json]`、`relay add --file <中继文件>`、`relay remove <节点标识>` | 已停止 | 查看或修改保存的中继配置。Host 运行时在桌面端操作 |
+| `relay test <节点标识>` | 运行中 | 从 Mac 核对节点密钥、测试登记，并显示连接簿签发情况 |
 | `provider set-key <服务 ID> [--expect-url <服务地址>]` | 已停止 | 保存模型服务密钥；地址未确认时先列出它并一并确认 |
 | `provider confirm <服务 ID> [--expect-url <服务地址>]` | 已停止 | 列出并确认模型服务的地址，本机或局域网地址同时加入出站白名单。在终端输入 `y`；非交互环境用 `--expect-url` 写出要确认的地址，不一致就不修改 |
 | `project list [--json]` | 已停止 | 列出项目与其中的文件夹 |

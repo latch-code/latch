@@ -77,8 +77,10 @@ private func noticeFixture() -> [String] {
     result.append(targets.take(first).map { $0.computer + "/" + $0.session } ?? "none")
     result.append(targets.take(first).map { $0.computer } ?? "none")
     result.append(targets.take("unknown").map { $0.computer } ?? "none")
-    targets.forget(computer: "c")
+    let preserved = targets.add(computer: "b", session: "s3")
+    result.append(targets.forget(computer: "c") == [other] ? "only-c" : "wrong-ids")
     result.append(targets.take(other).map { $0.computer } ?? "none")
+    result.append(targets.take(preserved).map { $0.computer + "/" + $0.session } ?? "none")
     let oldest = targets.add(computer: "b", session: "old")
     for index in 0..<32 { _ = targets.add(computer: "b", session: "s\(index)") }
     result.append(targets.take(oldest).map { $0.session } ?? "none")
@@ -346,4 +348,51 @@ actor FixtureGate {
         while !released { try await Task.sleep(for: .milliseconds(5)) }
     }
     func release() { released = true }
+}
+
+func profileForgetFixture(directory: URL, key: Data, profiles: [NativeRegisteredHost], draft: NativePairingDraft) async throws {
+    let kept = profiles[0], removed = profiles[1], erased = FixtureCounter()
+    let store = try await NativeProfileStore.open(directory: directory, key: key, eraseKeys: { keys in
+        await erased.increment()
+        if keys.connectionTag == kept.keys.connectionTag { throw NativeFailure.storageUnavailable }
+    })
+    try await store.save(kept)
+    try await store.save(removed)
+    var updated = removed; updated.name = "Updated computer"
+    try await store.update(updated)
+    guard await store.list().contains(where: { $0.id == removed.id && $0.name == updated.name }) else {
+        throw NativeFailure.storageUnavailable
+    }
+
+    let keptCache = try await store.hostVault(kept), removedCache = try await store.hostVault(removed)
+    try await keptCache.storeMetadata(Data("kept cache".utf8), name: "sample")
+    try await removedCache.storeMetadata(Data("removed cache".utf8), name: "sample")
+    let otherDraft = NativePairingDraft(payload: draft.payload, keys: DeviceKeyReference(
+        connectionTag: removed.keys.connectionTag, verificationTag: kept.keys.verificationTag,
+        connectionSpki: removed.keys.connectionSpki, verificationSpki: kept.keys.verificationSpki), name: draft.name)
+    try await store.saveDraft(otherDraft)
+    try await store.forget(removed.id)
+    guard await store.list().map(\.id) == [kept.id], await erased.value == 1,
+          try await store.draft()?.keys.verificationTag == kept.keys.verificationTag,
+          try await keptCache.metadata(name: "sample") == Data("kept cache".utf8),
+          !FileManager.default.fileExists(atPath: directory.appendingPathComponent("cache").appendingPathComponent(removed.id).path)
+    else { throw NativeFailure.storageUnavailable }
+    do { try await store.update(updated); throw NativeFailure.invalidRecord }
+    catch NativeFailure.contextChanged {}
+    do { _ = try await removedCache.metadata(name: "sample"); throw NativeFailure.invalidRecord }
+    catch NativeFailure.storageUnavailable {}
+    do { _ = try await store.hostVault(removed); throw NativeFailure.invalidRecord }
+    catch NativeFailure.storageUnavailable {}
+
+    try await store.clearDraft(matching: otherDraft.payload)
+    try await store.saveDraft(draft)
+    do { try await store.forget(kept.id); throw NativeFailure.invalidRecord }
+    catch NativeFailure.storageUnavailable {}
+    guard await store.list().isEmpty, try await store.draft() == nil, await erased.value == 2 else {
+        throw NativeFailure.storageUnavailable
+    }
+    await store.lock()
+    let reopened = try await NativeProfileStore.open(directory: directory, key: key, eraseKeys: { _ in await erased.increment() })
+    guard await reopened.list().isEmpty, await erased.value == 3 else { throw NativeFailure.storageUnavailable }
+    await reopened.lock()
 }

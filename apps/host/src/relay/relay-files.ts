@@ -1,7 +1,8 @@
 import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { relayFilePath, relayNames, RELAY_NAME } from '@latch/link-client/relay-files'
-import { relayKeyHash, relayNodeFields, relayProfileInput, type RelayProfileInput } from './profiles.ts'
+import { parseRelayFile, RELAY_FILE_BYTES } from '@latch/protocol'
+import { relayKeyHash, relayNodeFields, type RelayProfileInput } from './profiles.ts'
 
 export type RelayFileRead = { profile: RelayProfileInput } | { failure: 'unreadable' | 'not-relay' | 'version' }
 
@@ -12,28 +13,22 @@ export type RelayFileRead = { profile: RelayProfileInput } | { failure: 'unreada
 export async function loadRelayFile(path: string): Promise<RelayFileRead> {
   const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK).catch(() => undefined)
   if (!handle) return { failure: 'unreadable' }
-  let text: string
   try {
     if (!(await handle.stat()).isFile()) return { failure: 'not-relay' }
-    const buffer = Buffer.alloc(4097)
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
-    if (bytesRead > 4096) return { failure: 'not-relay' }
-    text = buffer.subarray(0, bytesRead).toString('utf8')
-  } finally {
-    await handle.close()
-  }
-  let file: { version?: unknown; profile?: Record<string, unknown> }
-  try {
-    file = JSON.parse(text) as typeof file
+    const buffer = Buffer.alloc(RELAY_FILE_BYTES + 1)
+    let used = 0
+    while (used < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, used, buffer.length - used, used)
+      if (bytesRead === 0) break
+      used += bytesRead
+    }
+    if (used > RELAY_FILE_BYTES) return { failure: 'not-relay' }
+    return parseRelayFile(new TextDecoder().decode(buffer.subarray(0, used)), URL)
   } catch {
-    return { failure: 'not-relay' }
+    return { failure: 'unreadable' }
+  } finally {
+    await handle.close().catch(() => {})
   }
-  const profile = file?.profile ?? {}
-  if (file?.version === 1 && 'kind' in profile) return { failure: 'not-relay' }
-  if (file?.version === 2 && profile.kind !== 'edge') return { failure: 'not-relay' }
-  if (file?.version !== 1 && file?.version !== 2) return { failure: 'version' }
-  const parsed = relayProfileInput.safeParse(profile)
-  return parsed.success ? { profile: parsed.data } : { failure: 'not-relay' }
 }
 
 /** What settings shows of a relay file before it is added: never the registration token or the relay's key. */
@@ -63,7 +58,7 @@ export async function listRelayFiles(known: ReadonlySet<string>, home?: string):
       kind: 'kind' in node ? 'edge' : 'self',
       urls: [node.url, ...('extraUrls' in node ? (node.extraUrls ?? []) : [])],
       keyHash: relayKeyHash(node),
-      hasRegistrationKey: read.profile.registrationKey !== undefined,
+      hasRegistrationKey: read.profile.registrationKey != null,
     })
   }
   return files

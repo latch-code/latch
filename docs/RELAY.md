@@ -37,23 +37,27 @@ sources:
 
 ## 什么时候需要中继
 
-- **同一网络：直连。** 手机与 Mac 在同一个局域网时，手机直接连 Mac，不经过任何中继。首次配对也在同一网络完成。
-- **不在同一网络：经中继。** 手机从 Mac 签名的连接簿里取中继地址，Mac 事先在中继上登记好；中继只把两条连接接在一起。
+- **首次配对。** 手机通过可互访的局域网或 USB 个人热点连上 Mac，扫码并在 Mac 上确认。中继不承办首次配对。
+- **配对以后。** 手机尝试当前网络发现的直连入口。配置了中继时，两条路可以同时尝试；手机从 Mac 签名的连接簿里取中继地址，Mac 事先在中继上登记好。先验证成功的路径承载连接。没有可用直连和中继时，手机离线。
 - 中继看不到会话正文：手机与 Mac 之间还有一层只在两端建立和验证的 TLS，Host 身份证明与设备授权都在这层里。中继能看到连接 IP、时间、填充后的大小与流向、哪条登记的路由被谁连接。显式传输（上传附件、打开文件）按网速走，在中继看来是一段有大小和速率的突发流量。
 
-跨网络接入使用你自己的中继：Linux 服务器，或你自己 Cloudflare 账户上的 Workers 中继。Latch 没有官方中继。设置 › 连接转发 第一行是直接连接的状态（同一网络的手机现在能否直接连这台 Mac，原因在悬停里），下面是你的中继，每行有方式、地址、状态和 ⋯（测试、停用 / 启用、移除），底部是「添加转发服务」。
+跨网络接入使用运营者自己的 Linux 服务器或 Cloudflare Workers 中继。Latch 没有官方中继。「设置 › 连接转发」第一行显示这台 Mac 是否已开启直连监听。手机是否发现并连通它，要看手机端结果。下面列出每个中继的方式、地址和状态，可测试、启停或移除；底部是「添加转发服务」。
 
 - **谁能看到什么。** 中继的运营者（你自己）与平台（服务器所在的云，或 Cloudflare）能看到：两端 IP、时间、填充后的大小与方向、路由标识、哪条路由被接通、通行证字段、路由令牌与准入证明；一次显式传输表现为一段有大小和速率的突发流量。看不到：会话正文、Host 身份、设备授权，它们都在端到端的内层。Latch 的中继代码不写日志、不存完整 IP；Cloudflare 自己的边缘日志不在 Latch 控制之内，部署时关闭了 Workers 的日志与观测。
 - 当前没有官方中继的行、开关与「优先使用」设置。
 
 ### 同一网络怎样判断
 
+首次配对期间，或 Mac 认出已经证明过的网络时，它会在选中的接口上通过 Bonjour 发布匿名名称。换到陌生 Wi-Fi 后，即使两台设备都连上了，也可能还发现不了对方；可以在 Mac 上打开「显示二维码」暂时开启发现。访客网络若隔离设备，仍须换到能互访的网络。
+
+工作台已有直连候选时，iOS 给直连约 250 毫秒先行；上次在当前网关直连成功时给约 600 毫秒。没有这些线索时，中继可立即开始。若中继先接通，之后发现直连并且当前连接空闲，App 会在后台尝试切回。失败时继续使用中继。见 [Reconnect.swift](../native/ios/Sources/LatchNativeCore/Reconnect.swift) 和 [PhoneModel.swift](../native/ios/App/Root/PhoneModel.swift)。
+
 - **网络组件。** `latch-network`（`native/macos/LatchNetwork.swift`）把这台 Mac 的地址交给 Host，最多 16 行：先排物理网口（`en*` 的 Wi‑Fi、有线）的私网 IPv4，再排它们的唯一本地与链路本地 IPv6，隧道最后，所以排在系统列表末尾的 USB 网卡不会被挤掉。每个接口的网关取它自己服务的 `Router`（`State:/Network/Service/<id>/IPv4|6`），不是只有主接口才有；同一接口两个服务给出不同网关时不给网关。
 - **配对的邻近证明。** 手机报它所在网络的网关哈希；Host 只用手机连进来的那个地址（`localAddress`）所在接口的网关比对，再看邻居表里手机与网关的硬件地址。不符就拒绝，不会借用另一个接口的网关。
 - **自动选址。** 直连入口只有一个地址，按数据线热点、Wi‑Fi、有线的顺序选：手机只会从 Wi‑Fi（包括 Mac 临时连上的 iPhone 个人热点）或数据线进来，有线口常在手机到不了的另一个网段。已绑定的地址只在没有更靠前的种类时保留，所以启动时只有有线、之后 Wi‑Fi 起来，入口会移到 Wi‑Fi。要固定地址用 `--native-host`。
-- **iPhone 的个人热点经数据线。** iPhone 用数据线共享网络时，这台 Mac 多一个以太网接口，iPhone 是它的网关。组件按 USB 厂商（Apple）与产品名（iPhone、iPad）认出它并标为 `tether`，连接簿里它仍是 `ethernet`。自动选址时它排在 Wi‑Fi 与有线之前：数据线插着时直连入口在这根线上，二维码下方显示「用数据线连接这台 Mac」，同一 Wi‑Fi 的其他手机这段时间经中继连接。邻近证明：手机就是这根线的网关，来源就是网关地址即成立，配对与日常的 `/native/proximity` 都不查邻居表。理由：USB 接口是到这台 iPhone 的点对点链路，只有它能是这根线的网关；它路由出去的流量不会转发进来，热点上的其他设备（Wi‑Fi、蓝牙或另一根线）用自己的地址，仍按邻居表判断。这根线以子网命名（`knownTetherHash`，不含网关 MAC），证明过一次就算已知网络，之后没有邻居表也在上面发布 Bonjour。每台 iPhone 的热点子网相同，所以「已知」只决定在这根线上发布匿名名称，认证不变。数据线本身不建立信任，配对仍要扫码并在 Mac 上确认。Wi‑Fi 不放宽：日常证明与已知网络都要网关 MAC。
+- **iPhone 的个人热点经数据线。** iPhone 用数据线共享网络时，这台 Mac 多一个以太网接口，iPhone 是它的网关。组件按 USB 厂商（Apple）与产品名（iPhone、iPad）认出它并标为 `tether`，连接簿里它仍是 `ethernet`。自动选址时它排在 Wi‑Fi 与有线之前：数据线插着时直连入口在这根线上，二维码下方提示用数据线连接并打开个人热点。同一 Wi‑Fi 的其他手机此时需要可用中继才能连接。邻近证明：手机就是这根线的网关，来源就是网关地址即成立，配对与日常的 `/native/proximity` 都不查邻居表。理由：USB 接口是到这台 iPhone 的点对点链路，只有它能是这根线的网关；它路由出去的流量不会转发进来，热点上的其他设备（Wi‑Fi、蓝牙或另一根线）用自己的地址，仍按邻居表判断。这根线以子网命名（`knownTetherHash`，不含网关 MAC），证明过一次就算已知网络，之后没有邻居表也在上面发布 Bonjour。每台 iPhone 的热点子网相同，所以「已知」只决定在这根线上发布匿名名称，认证不变。数据线本身不建立信任，配对仍要扫码并在 Mac 上确认。Wi‑Fi 不放宽：日常证明与已知网络都要网关 MAC。
 - **本地网络权限。** macOS 只把局域网邻居的硬件地址给有「本地网络」权限的进程。经 `pnpm` 或 `fnm exec` 启动的 Host 归这些命令行工具负责，它们没有这项权限，邻居表看起来是空的：同一 Wi‑Fi 的配对与日常直连都证明不了邻近，只有数据线热点的配对不受影响。桌面端安装版由 Latch 申请这项权限（Info.plist 带用途说明与 `_latch._tcp`）；开发时用 `scripts/desktop.sh` 直接以 `node` 启动，让终端应用负责。
-- **权限状态。** 没有这项权限时，macOS 拒绝 Bonjour 注册（`kDNSServiceErr_PolicyDenied`）。网络组件把它报为 `denied`，Host 不再按 30 秒重试，组件挂一个等待中的 TCP 连接到该接口的网关，系统给了权限后报 `ready`，Host 立即重新发布。另一个信号是邻居表：绑定的 Wi‑Fi 或有线接口问过网关后仍看不到它的硬件地址。两者之一成立时，`native/info` 与配对面板的轮询带 `localNetwork`（`denied` 或 `unreadable`），设置 › 连接转发 的「直接连接」与连接手机的面板显示「本地网络未允许」：桌面端的按钮打开「系统设置 › 隐私与安全性 › 本地网络」（桌面端只放行这一个 `x-apple.systempreferences:` 地址），打包的应用另在屏幕底部居中浮出一张不取焦点的引导卡（`local-network-guide.cjs`）：「在「本地网络」里找到 Latch，打开它的开关」与 Latch 的图标和名字；它每秒读一次 `native/info`，看到 `allowed` 显示「已允许」约 1.2 秒后关闭，也在按 ×、5 分钟后或回到 Latch 窗口时关闭；浏览器里写出这条路径，源码运行另指向 `scripts/desktop.sh`。数据线热点上看不到邻居表不算问题，不提示。
+- **权限状态。** 没有这项权限时，macOS 拒绝 Bonjour 注册（`kDNSServiceErr_PolicyDenied`）。网络组件把它报为 `denied`，Host 不再按 30 秒重试，组件挂一个等待中的 TCP 连接到该接口的网关，系统给了权限后报 `ready`，Host 立即重新发布。另一个信号是邻居表：绑定的 Wi‑Fi 或有线接口问过网关后仍看不到它的硬件地址。两者之一成立时，`native/info` 与配对面板的轮询带 `localNetwork`（`denied` 或 `unreadable`），设置 › 连接转发 的「直接连接」与连接手机的面板分别按证据显示「本地网络未允许」或「无法读取本地网络信息」：桌面端的按钮打开「系统设置 › 隐私与安全性 › 本地网络」（桌面端只放行这一个 `x-apple.systempreferences:` 地址），打包的应用另在屏幕底部居中浮出一张不取焦点的引导卡（`local-network-guide.cjs`）：「在「本地网络」里找到 Latch，打开它的开关」与 Latch 的图标和名字；它每秒读一次 `native/info`，看到 `allowed` 显示「已允许」约 1.2 秒后关闭，也在按 ×、5 分钟后或回到 Latch 窗口时关闭；浏览器里写出这条路径，源码运行另指向 `scripts/desktop.sh`。数据线热点上看不到邻居表不算问题，不提示。
 - **只有数据线、不开热点**：尚未实现。要由 Mac 经 usbmuxd（系统未公开的接口）拨到手机 App 的回环端口，还需要一种不靠局域网的邻近证据。
 
 ## 中继协议的身份
@@ -132,7 +136,7 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 
 ### 方式 B：自己的 Cloudflare 账户（edge）
 
-给你自己和少数持有中继文件的人用。只有持有注册令牌（在中继文件里）的 Mac 能登记；Latch 不设花费上限，也不做多用户公平分摊，在 Cloudflare 为账户设账单提醒。开放登记只在你明确把 `OPEN_REGISTRATION` 设为 `true` 且不设注册令牌时才有，部署命令不提供。
+适合自己和少数受邀者共用。默认只有持有注册令牌的 Mac 能登记。Latch 未实现按人限额。开放登记只在你明确把 `OPEN_REGISTRATION` 设为 `true` 且不设注册令牌时才有，部署命令不提供。
 
 在 Latch 的源码目录依次运行（设置里的「Cloudflare Workers」给出同样的两条命令，名称与位置在页面上填）：
 
@@ -158,8 +162,18 @@ mv -n ~/.latch-relay/latch-relay-ne ~/.latch/relays/ne/deploy && rmdir ~/.latch-
 ```
 
 - 再次运行部署命令会换新的中继密钥、注册令牌与节点标识，旧中继文件随之失效：这也是收回某人使用权的办法，之后只把新文件交给仍要用的人。默认位置已有 `ne.json` 或 `ne.json.admin-header` 时它在部署前停下：先在 Mac 上移除旧中继并删除这两个文件，或用 `--out` 把新文件写到别处。
-- 每次部署都会让经过这个节点的连接断开一次，Mac 自动重新登记，手机自动重连。删除：先在 Mac 上移除这个中继，再 `wrangler delete --name latch-relay-ne`。
+- 保留节点身份和令牌的更新会短暂断开连接，Mac 可用原配置重新登记。若同名 setup 已换身份，各台 Mac 需导入新文件，手机也要经直连或其他仍可用的路径取得新连接簿。删除：先在 Mac 上移除这个中继，再 `wrangler delete --name latch-relay-ne`。
 - 自定义域名作为同一节点的另一个地址尚未接入部署命令。
+
+### 几个人共用一个 Workers 中继
+
+这条路径需要支持 Workers 中继的原生 iOS App；当前仓库提供源码，尚无公开安装入口。
+
+1. 运营者保留一个已验收、凭注册令牌登记的节点。已有节点无需重新部署；同名 `setup` 会更换节点身份和令牌。通过私密渠道把 `<名称>.json` 交给受邀者，另行核对节点地址和密钥短哈希。`.admin-header` 留在运营者手中，受邀者无需 Cloudflare 账号或管理令牌。
+2. 每位受邀者在自己的 Mac 上打开「设置 › 连接转发 › 添加转发服务 › 已有配置文件」，选择文件，核对地址和短哈希，并在系统窗口确认。每个 Host 独立生成路由密钥，注册令牌只赋予在中继上登记路由的资格。
+3. 每人的手机先与自己的 Mac 配对。若此前已配对，在原有可用路径上连一次，让手机取得含中继的签名连接簿。要验证异网接入，保持 Mac 在线，将手机切到蜂窝网络，从手机读取自己 Mac 上的会话。Mac 上「测试」成功只证明 Mac 到中继的这一段。只让一台测试手机打开会话，可在 Mac 上用 `pnpm latch traffic --json --data-dir <测试 Host 的数据目录>` 查看仍在打开的事件流（`connections` 中没有 `closedAt` 的项）；`listener` 为 `native-direct` 或 `native-relay` 表明该流实际经过的入口。
+
+同一节点的持有人共用注册令牌，目前没有逐人撤销或逐人额度。收回一人的登记资格需要轮换并给其余 Mac 更新配置；仅从某台 Mac 移除中继并不能收回已经发出的文件。若需要不同组能独立退出，可以部署不同名称的节点，每组一份文件。Cloudflare 的 Workers 和 Durable Objects 可分别配置账户级支出限额，达到限额会影响该产品在账户里的其他服务；账单提醒只发送通知。[Cloudflare 支出限额与提醒](https://developers.cloudflare.com/billing/manage/spend-management/)
 
 ### 在 Mac 上添加
 
@@ -167,8 +181,8 @@ mv -n ~/.latch-relay/latch-relay-ne ~/.latch/relays/ne/deploy && rmdir ~/.latch-
 
 - 只有这台 Mac 上有 `admin` 的设备能添加、停用、移除；其他有 `admin` 的设备只看得到列表与状态。
 - 每个节点只能添加一次，至多四个自己的中继。
-- 地址只接受连接簿的格式：`https://` 加小写域名或 IPv6、可选端口，末尾至多一个 `/`。设置、`latch relay add` 与 Host 都按同一份规则拒绝其他写法（[relay-endpoint.ts](../packages/protocol/src/relay-endpoint.ts)）。
-- Host 停止时可用 `latch relay add --data-dir <目录>`（读 `~/.latch/relays` 里唯一的中继文件；`--name <名称>` 选其中一个，`--file <中继文件>` 指定其他位置）、`relay list` 和 `relay remove <节点标识>`。源码运行使用 `pnpm latch`。添加时终端列出每个地址与密钥短哈希，核对后输入 y，非交互用 `--expect-key <密钥短哈希>`。先写审计再保存为待核对，Host 启动后节点证明密钥并接受登记，才可进入签名连接簿。Host 运行时可用 `relay test <节点标识>` 检查连通性、身份与登记，并查看 Host 签发状态。`relay setup linux` 显示服务器发布物尚未提供，Linux 源码部署流程见上文。
+- 中继文件使用完整、规范化的 HTTPS 来源地址，例如 `https://relay.example.com/` 或 `https://relay.example.com:8443/`，保留末尾的 `/`。域名小写，IPv6 用方括号。设置、`latch relay add` 与 Host 都核对地址（[relay-endpoint.ts](../packages/protocol/src/relay-endpoint.ts)）。
+- Host 停止时可用 `latch relay add --data-dir <目录>`（读 `~/.latch/relays` 里唯一的中继文件；`--name <名称>` 选其中一个，`--file <中继文件>` 指定其他位置）、`relay list` 和 `relay remove <节点标识>`。源码运行使用 `pnpm latch`。添加时终端列出每个地址与密钥短哈希，核对后输入 y，非交互用 `--expect-key <密钥短哈希>`。先写审计再保存为待核对，Host 启动后节点证明密钥并接受登记，才可进入签名连接簿。离线 `relay list` 会标出「已停用」与「待核对」。Host 运行时可用 `relay test <节点标识>` 检查连通性、身份与登记，并查看 Host 签发状态。`relay setup linux` 显示服务器发布物尚未提供，Linux 源码部署流程见上文。
 
 **Host 做什么。**
 

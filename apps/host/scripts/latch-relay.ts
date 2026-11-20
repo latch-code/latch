@@ -165,6 +165,7 @@ export async function runRelayCommand(input: {
             kind: item.kind ?? 'self',
             urls: [item.url, ...(item.extraUrls ?? [])],
             ...(item.unverified ? { unverified: true } : {}),
+            ...(item.disabled ? { disabled: true } : {}),
             ...(!relayAvailable(item) ? { unsupported: true } : {}),
             ...(!relayAddressValid(item) ? { invalidAddress: true } : {}),
           })),
@@ -172,10 +173,14 @@ export async function runRelayCommand(input: {
       }
       if (flags.has('--json')) out(JSON.stringify(view, null, 2))
       else {
-        for (const relay of view.relays)
-          out(
-            `${relay.relayId}  ${relay.kind === 'edge' ? 'Workers' : '自建服务器'}  ${relay.urls.join(' ')}${relay.unsupported ? '  尚未实现' : ''}${relay.invalidAddress ? '  地址无效：不进连接簿，请移除后用新的中继文件添加' : ''}`,
-          )
+        for (const relay of view.relays) {
+          const columns = [relay.relayId, relay.kind === 'edge' ? 'Workers' : '自建服务器', relay.urls.join(' ')]
+          if (relay.disabled) columns.push('已停用')
+          if (relay.unverified) columns.push('待核对')
+          if (relay.unsupported) columns.push('尚未实现')
+          if (relay.invalidAddress) columns.push('地址无效：不进连接簿，请移除后用新的中继文件添加')
+          out(columns.join('  '))
+        }
         if (!view.relays.length) out('没有自己的中继')
       }
     } finally {

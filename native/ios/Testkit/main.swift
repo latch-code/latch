@@ -864,8 +864,10 @@ do {
         let recovered = try await NativeProfileStore.open(directory: directory, key: key, eraseKeys: { _ in await erased.increment() })
         guard await recovered.list().isEmpty, await erased.value == 3 else { throw NativeFailure.storageUnavailable }
         await recovered.lock()
+        try await profileForgetFixture(directory: directory.appendingPathComponent("local"), key: key, profiles: profiles, draft: draft)
         result = ["sameDeviceIdIsolated": true, "concurrentSave": true, "encryptedRecovery": true, "lockClosedCache": true,
-            "immutableDraft": true, "rootBoundRetirement": true, "otherCachePreserved": true, "retirementRetry": true, "ciphertextProtected": true]
+            "immutableDraft": true, "rootBoundRetirement": true, "otherCachePreserved": true, "retirementRetry": true,
+            "ciphertextProtected": true, "confirmedLocalRemoval": true]
     case "discovery":
         let key = try LinkBytes.unhex(input["key"] as? String ?? ""), day = (input["day"] as? NSNumber)?.uint64Value ?? 0
         let names = try NativeDiscoveryWire.names(key: key, day: day)

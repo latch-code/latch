@@ -67,39 +67,61 @@ struct PhoneSettingsView: View {
 }
 
 private struct PhoneHostDetail: View {
+    private enum Removal {
+        case disconnect, forget
+        var action: String { self == .disconnect ? "断开" : "移除" }
+    }
     @EnvironmentObject private var model: PhoneModel
     @Environment(\.dismiss) private var dismiss
     let host: RegisteredHost
-    @State private var confirming = false
+    @State private var removal: Removal?
     @State private var working = false
-    @State private var failed = false
-    private var current: Bool { model.selectedHost?.id == host.id }
+    @State private var failed: Removal?
+    private var row: PhoneComputerRow? { model.computerRows.first { $0.id == host.id } }
+    private var name: String { row?.name ?? host.name }
+    private var connectedHere: Bool { model.selectedHost?.id == host.id && model.connected }
     var body: some View {
         Form {
             Section {
-                LabeledContent("名称", value: host.name)
-                LabeledContent("状态", value: current && model.connected ? "在线" : "不在线")
+                LabeledContent("名称", value: name)
+                LabeledContent("状态", value: PhoneComputers.stateWords(row?.state, lastSeen: row?.lastSeen))
+            }
+            if !connectedHere {
+                Section {
+                    Button(row?.state == .online ? "连接这台 Mac" : "重新连接") {
+                        Task { await model.retryComputer(host.id) }
+                    }.disabled(working || model.busy || row == nil)
+                }
             }
             Section {
-                Button("断开这台 Mac", role: .destructive) { confirming = true }
-                    .disabled(working || !current || !model.connected)
+                if connectedHere {
+                    Button("断开这台 Mac", role: .destructive) { removal = .disconnect }.disabled(working)
+                } else {
+                    Button("从这台设备移除", role: .destructive) { removal = .forget }
+                        .disabled(working || model.busy || row == nil)
+                }
             } footer: {
-                if failed { Text("没有断开。连上这台 Mac 后再试一次。") }
-                else if !current || !model.connected { Text("连上这台 Mac 后才能断开。") }
+                if failed == .disconnect { Text("没有断开。连上这台 Mac 后再试一次。") }
+                else if failed == .forget, row != nil { Text("未能完成移除。请根据当前连接状态重试。") }
             }
         }
-        .navigationTitle(host.name).navigationBarTitleDisplayMode(.inline)
-        .alert("断开「\(host.name)」？", isPresented: $confirming) {
-            Button("断开", role: .destructive) {
-                working = true; failed = false
+        .navigationTitle(name).navigationBarTitleDisplayMode(.inline)
+        .alert("\(removal?.action ?? "")「\(name)」？", isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
+               presenting: removal) { action in
+            Button(action.action, role: .destructive) {
+                working = true; failed = nil
                 Task {
-                    let done = await model.disconnect(host)
-                    working = false; failed = !done
+                    let done = action == .disconnect ? await model.disconnect(host) : await model.forgetComputer(host)
+                    working = false
                     if done { dismiss() }
+                    else if model.storeState == .ready { failed = action }
                 }
             }
             Button("取消", role: .cancel) {}
-        } message: { Text("之后要在 Mac 上重新扫码才能连接。") }
+        } message: { action in
+            if action == .disconnect { Text("之后要在 Mac 上重新扫码才能连接。") }
+            else { Text("会清除这台设备上保存的连接资料和缓存。Mac 上的设备记录会保留。需要时可以重新扫码连接。") }
+        }
     }
 }
 

@@ -93,7 +93,7 @@ public actor NativeProfileStore {
             for host in value { try validate(host) }
             retirements = value
             hosts.removeAll { host in value.contains { $0.id == host.id } }
-            // This authenticated record is written only after a verified Root notice. Retry cleanup without reconnecting.
+            // A confirmed local removal or Root notice survives incomplete cleanup. Do not reconnect those profiles.
             for host in value { try? await retireStoredHost(host) }
         }
     }
@@ -117,10 +117,16 @@ public actor NativeProfileStore {
     public func save(_ host: NativeRegisteredHost) async throws {
         try await serializeProfiles { try await self.saveHost(host) }
     }
-    private func saveHost(_ host: NativeRegisteredHost) async throws {
+    /** A late refresh may update an existing registration, but only a fresh pairing may create one. */
+    public func update(_ host: NativeRegisteredHost) async throws {
+        try await serializeProfiles { try await self.saveHost(host, existingOnly: true) }
+    }
+    private func saveHost(_ host: NativeRegisteredHost, existingOnly: Bool = false) async throws {
         guard !closed else { throw NativeFailure.storageUnavailable }; try validate(host)
+        let previous = hosts.first { $0.id == host.id }
+        guard !existingOnly || previous != nil else { throw NativeFailure.contextChanged }
         guard !retirements.contains(where: { $0.id == host.id }) else { throw NativeFailure.revoked }
-        if let previous = hosts.first(where: { $0.id == host.id }) {
+        if let previous {
             guard host.device.bookGeneration >= previous.device.bookGeneration,
                   host.device.bookGeneration != previous.device.bookGeneration || host.device.bookHash == previous.device.bookHash,
                   host.device.knockKey == previous.device.knockKey,
@@ -171,13 +177,22 @@ public actor NativeProfileStore {
         guard let key, !closed, hosts.contains(where: { $0.id == host.id }) else { throw NativeFailure.storageUnavailable }
         try validate(host)
         if let previous = children.removeValue(forKey: host.id) { await previous.lock() }
-        guard !closed else { throw NativeFailure.storageUnavailable }
+        guard !closed, hosts.contains(where: { $0.id == host.id }) else { throw NativeFailure.storageUnavailable }
         let child = try EncryptedVault(directory: root.appendingPathComponent("cache").appendingPathComponent(host.id), key: key,
             binding: host.id)
         children[host.id] = child; return child
     }
     public func retire(_ host: NativeRegisteredHost, proof: VerifiedNativeRevocation) async throws {
         try await serializeProfiles { try await self.retireHost(host, proof: proof) }
+    }
+    /** The person's confirmed removal on this device. This does not revoke its registration on the Host. */
+    public func forget(_ id: String) async throws {
+        try await serializeProfiles { try await self.forgetHost(id) }
+    }
+    private func forgetHost(_ id: String) async throws {
+        guard !closed else { throw NativeFailure.storageUnavailable }
+        guard let host = hosts.first(where: { $0.id == id }) ?? retirements.first(where: { $0.id == id }) else { return }
+        try await retireStoredHost(host, userRequested: true)
     }
     /** A host saved before `complete` that the Host refused: nothing can ever connect to it. Never one that finished. */
     public func discardPrepared(keys: DeviceKeyReference) async throws {
@@ -190,16 +205,27 @@ public actor NativeProfileStore {
         guard proof.hostId == host.device.hostId, proof.deviceId == host.device.deviceId else { throw NativeFailure.identityMismatch }
         try await retireStoredHost(host)
     }
-    private func retireStoredHost(_ host: NativeRegisteredHost) async throws {
+    private func rememberRetirement(_ host: NativeRegisteredHost) async throws {
+        let pending = retirements.filter { $0.id != host.id } + [host]
+        guard pending.count <= 16 else { throw NativeFailure.storageUnavailable }
+        try await vault.storeMetadata(JSONEncoder().encode(pending), name: "retirements")
+        if !closed { retirements = pending }
+    }
+    private func retireStoredHost(_ host: NativeRegisteredHost, userRequested: Bool = false) async throws {
+        // Once local removal is recorded, reopening must not offer this registration again even if cleanup is interrupted.
+        if userRequested { try await rememberRetirement(host) }
         let next = hosts.filter { $0.id != host.id }
         hosts = next
-        let pending = retirements.filter { $0.id != host.id } + [host]
         var failed = false
         if let child = children.removeValue(forKey: host.id) { await child.lock() }
-        if pending.count <= 16 {
-            do { try await vault.storeMetadata(JSONEncoder().encode(pending), name: "retirements"); if !closed { retirements = pending } }
+        if !userRequested {
+            do { try await rememberRetirement(host) }
             catch { failed = true }
-        } else { failed = true }
+        }
+        do {
+            if let draft = try await draft(), draft.keys.connectionTag == host.keys.connectionTag,
+               draft.keys.verificationTag == host.keys.verificationTag { try await vault.remove(name: "pairing", body: false) }
+        } catch { failed = true }
         do { try await eraseKeys(host.keys) } catch { failed = true }
         do { try await vault.storeMetadata(JSONEncoder().encode(next), name: "hosts") } catch { failed = true }
         do { try FileManager.default.removeItem(at: root.appendingPathComponent("cache").appendingPathComponent(host.id)) }

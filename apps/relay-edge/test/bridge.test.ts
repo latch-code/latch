@@ -1,6 +1,6 @@
 import { once } from 'node:events'
 import { afterEach, expect, it } from 'vitest'
-import { holder, issuePass, routeKey, UTC_DAY } from '@latch/link-wire'
+import { hex, holder, issuePass, routeKey, UTC_DAY } from '@latch/link-wire'
 import { connectRelayTunnel, createTransportCertificate, nodeCrypto, RelayControl, type RelayEndpoint } from '@latch/link-client'
 import type { FakeObjects } from './harness.ts'
 import { startTlsEdge } from './tls-edge.ts'
@@ -16,8 +16,9 @@ afterEach(async () => {
 const certificate = createTransportCertificate(Date.now(), 3_600_000, 'localhost')
 const relayId = nodeCrypto.random(16)
 
-async function edgeServer(seed: Uint8Array): Promise<{ url: URL; objects: FakeObjects }> {
-  const edge = await startTlsEdge({ seed, relayId, certificate, env: { OPEN_REGISTRATION: 'true' } })
+async function edgeServer(seed: Uint8Array, registrationToken?: Uint8Array): Promise<{ url: URL; objects: FakeObjects }> {
+  const env = registrationToken ? { OPEN_REGISTRATION: 'false', REGISTRATION_TOKEN: hex(registrationToken) } : { OPEN_REGISTRATION: 'true' }
+  const edge = await startTlsEdge({ seed, relayId, certificate, env })
   cleanup.push(() => edge.close())
   return edge
 }
@@ -74,6 +75,50 @@ it('registers, admits and carries bytes both ways for the real Node clients, rac
   expect(String((await echoed)[0])).toBe('across the edge')
   expect(upstream.passTag).toEqual(value.device.tag)
   expect(impostor.objects.nodes.size + real.objects.nodes.size).toBe(2)
+}, 30_000)
+
+it('carries each phone to its own Mac when two Macs share a Worker registration token', async () => {
+  const seed = nodeCrypto.random(32),
+    registrationToken = nodeCrypto.random(32),
+    edge = await edgeServer(seed, registrationToken)
+  const endpoint: RelayEndpoint = {
+    url: edge.url,
+    relayId,
+    edge: { relayKey: await nodeCrypto.publicKey(seed), shard: 0 },
+    ca: certificate.cert,
+    profile: 'outer-pad-v2',
+    resolveAddress: async () => '127.0.0.1',
+  }
+  const macs = await Promise.all(
+    ['first Mac', 'second Mac'].map(async name => {
+      const control = await RelayControl.connect({ ...endpoint, registrationToken })
+      cleanup.push(() => control.close())
+      const value = await credentials()
+      await control.register({ routeKey: value.key, day: value.day, alternate: false })
+      return { name, control, value }
+    }),
+  )
+  const replies = await Promise.all(
+    macs.map(async ({ name, control, value }) => {
+      const [upstream, phone] = await Promise.all([
+        control.accept().then(upstream => {
+          cleanup.push(() => void upstream.stream.destroy())
+          return upstream
+        }),
+        connectRelayTunnel({ ...endpoint, pass: value.pass, holderKey: value.device.seed }).then(phone => {
+          cleanup.push(() => void phone.destroy())
+          return phone
+        }),
+      ])
+      upstream.finishSetup()
+      upstream.stream.once('data', request => upstream.stream.write(`${name}: ${request}`))
+      const response = once(phone, 'data')
+      phone.write('hello')
+      return String((await response)[0])
+    }),
+  )
+  expect(replies).toEqual(['first Mac: hello', 'second Mac: hello'])
+  expect(edge.objects.nodes.size).toBe(1)
 }, 30_000)
 
 it('refuses a node whose challenge is signed by another key before sending anything that depends on it', async () => {

@@ -1199,6 +1199,12 @@ describe('latch CLI', () => {
     expect(await piped.latch('relay', 'add', '--file', 'own.json', '--data-dir', dataDir, '--expect-key', '00000000')).toBe(1)
     // A device or anything that is not a regular file is refused without being read to its end.
     expect(await piped.latch('relay', 'add', '--file', '/dev/zero', '--data-dir', dataDir, '--expect-key', '00000000')).toBe(1)
+    const malformed = 'unexpected-file-content'
+    await writeFile(join(directory, 'malformed.json'), JSON.stringify({ version: 1, profile: malformed }), { mode: 0o600 })
+    const failedImport = cli({ cwd: directory })
+    expect(await failedImport.latch('relay', 'add', '--file', 'malformed.json', '--data-dir', dataDir)).toBe(1)
+    expect(failedImport.output.stderr).toContain('这个文件不是中继导出的连接配置')
+    expect(`${failedImport.output.stdout}${failedImport.output.stderr}`).not.toContain(malformed)
     // Addresses the signed address book cannot carry are refused before anything is saved.
     for (const url of ['https://relay.example/?', 'https://relay.example/#', 'https://a_b.example/']) {
       await writeFile(join(directory, 'bad.json'), JSON.stringify({ version: 1, profile: { ...self, url } }), { mode: 0o600 })
@@ -1255,6 +1261,10 @@ describe('latch CLI', () => {
       inAddressBook: [],
     })
     expect(list.output.stdout).not.toContain(key)
+    const textList = cli()
+    expect(await textList.latch('relay', 'list', '--data-dir', dataDir)).toBe(0)
+    expect(textList.output.stdout).toContain(`${own.url}  待核对`)
+    expect(textList.output.stdout).not.toContain(key)
     // There is no official relay: no switch and no order to set.
     expect(await cli().latch('relay', 'official', 'off', '--data-dir', dataDir)).toBe(1)
     expect(await cli().latch('relay', 'order', 'own', '--data-dir', dataDir)).toBe(1)
@@ -1282,6 +1292,33 @@ describe('latch CLI', () => {
       'native.config.changed',
       'native.config.changed',
     ])
+  })
+
+  it('lists a disabled relay offline without including it in the address book', async () => {
+    const dataDir = await stoppedDataDir()
+    const profiles = await RelayProfiles.open(dataDir)
+    const disabled = { relayId: 'a'.repeat(32), url: 'https://off.example/', spkiHash: 'b'.repeat(64) }
+    const enabled = { relayId: 'c'.repeat(32), url: 'https://on.example/', spkiHash: 'd'.repeat(64) }
+    await profiles.replace([disabled, enabled])
+    await profiles.setDisabled(
+      disabled.relayId,
+      true,
+      () => {},
+      async () => true,
+    )
+
+    const jsonList = cli()
+    expect(await jsonList.latch('relay', 'list', '--json', '--data-dir', dataDir)).toBe(0)
+    expect(JSON.parse(jsonList.output.stdout)).toEqual({
+      relays: [
+        { relayId: disabled.relayId, kind: 'self', urls: [disabled.url], disabled: true },
+        { relayId: enabled.relayId, kind: 'self', urls: [enabled.url] },
+      ],
+      inAddressBook: [enabled.relayId],
+    })
+    const textList = cli()
+    expect(await textList.latch('relay', 'list', '--data-dir', dataDir)).toBe(0)
+    expect(textList.output.stdout).toContain(`${disabled.url}  已停用`)
   })
 
   it('tests a relay through the running Host with the anonymous Unix audit actor', async () => {

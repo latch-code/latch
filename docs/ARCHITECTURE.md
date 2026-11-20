@@ -25,10 +25,12 @@ sources:
 
 Latch 由一个 Host 与任意数量的客户端组成。Host 持有会话状态、执行权限、密钥与设备登记；Electron 窗口、浏览器和手机经 HTTP 与 SSE 连接 Host。工具始终在 Host 所在的电脑上执行。
 
+iOS 工作台优先尝试当前网络的直连入口，也可经配置好的中继连接。中继先连上时，后续发现直连且连接空闲，会在后台尝试切回。[原生选路](RELAY.md#同一网络怎样判断)
+
 信任在连接设备时建立一次：之后每台设备只受自己的设备权限（scope）限制，都不弹确认。需要在执行端电脑上经本机确认（Touch ID 或登录密码）的操作见「安全模型概览」。模型服务密钥只在桌面端填写。
 
 ```text
-Latch 桌面端（Electron 主进程）     这台电脑上的浏览器（按远程处理）  手机 / 其他电脑
+Latch 桌面端（Electron 主进程）     这台电脑上的浏览器（按远程处理）  其他设备的浏览器 / 桌面端
         │ host.sock                  │ 127.0.0.1 / ::1                  │ HTTPS（运营者提供的证书）
         ▼                            ▼                                  ▼
 Host（apps/host/src/server.ts）
@@ -978,10 +980,9 @@ Latch 不再提供个人助手、助手群聊与它们的定时任务，数据�
 | 按设备或文件夹的项目授权、只读文件夹、按文件夹的 Standard 风险级别 | 未实现；设备权限对所有项目生效 |
 | 官方中继 | 不提供；中继是运营者自己的 Linux 服务器或 Cloudflare 账户。见 [RELAY.md](RELAY.md) |
 | 安装版里引导部署中继 | 未实现；Linux 部署命令 `pnpm relay` 在服务器的源码目录运行，Workers 部署命令 `pnpm latch relay setup cloudflare` 在 Mac 的源码目录运行（安装包不带 Workers 部署包），安装版可添加两种中继文件 |
-| edge 中继的花费上限 | 未实现；运营者在服务商处设的账单提醒就是上限 |
+| edge 中继的花费上限 | Latch 内未实现逐人预算。运营者可在 Cloudflare 分别设置账户级 Workers 与 Durable Objects 支出限额或账单提醒。见 [RELAY](RELAY.md#几个人共用一个-workers-中继) |
 | 向公众开放登记的 edge 中继 | 未实现；需要另行实现用户预算与接合数限制 |
 | edge 中继在 WebSocket 内对节点密钥的再一层加密 | 未实现；现在节点身份靠签名挑战，不绑定 TLS 会话，能为域名终止 TLS 的一方可实时转发并看到路由元数据（[RELAY.md](RELAY.md#中继协议的身份)） |
-| iOS 在网络不变时从中继切回直连 | 未实现；只在网络变化时重新竞速 |
 | 地址目录的入口、可安装的手机 App 与推送通知 | 尚未提供；Host 直连和[自己的 Linux 中继](RELAY.md)已接入 |
 | 一条消息在多个 Agent 之间依次回答 | 规则在 `apps/host/src/agent-relay.ts`，尚未接入任何路由 |
 

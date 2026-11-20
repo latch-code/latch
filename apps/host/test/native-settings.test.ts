@@ -122,6 +122,8 @@ it('lists the relay files that could be added without their tokens, and adds one
   const token = `lrt1.${'A'.repeat(43)}`
   const edge = { relayId: 'c'.repeat(32), url: 'https://latch-relay-home.example.workers.dev/', kind: 'edge', relayKey: 'd'.repeat(64) }
   await writeFile(join(relays, 'home.json'), JSON.stringify({ version: 2, profile: { ...edge, registrationKey: token } }), { mode: 0o600 })
+  const openRelay = { relayId: 'b'.repeat(32), url: 'https://relay.example/', spkiHash: 'a'.repeat(64), registrationKey: null }
+  await writeFile(join(relays, 'open.json'), JSON.stringify({ version: 1, profile: openRelay }), { mode: 0o600 })
   await writeFile(join(relays, 'broken.json'), '{"version":2,"profile":{"kind":"edge"}}', { mode: 0o600 })
   await writeFile(join(relays, 'home.json.admin-header'), 'Authorization: Bearer x\n', { mode: 0o600 })
   const lookup = vi.fn<LookupFunction>((_hostname, _options, callback) => callback(new Error('fixture refuses network'), []))
@@ -134,7 +136,10 @@ it('lists the relay files that could be added without their tokens, and adds one
   expect(text).not.toContain('lrt1.')
   expect(text).not.toContain(edge.relayKey)
   expect(JSON.parse(text)).toEqual({
-    files: [{ name: 'home', kind: 'edge', urls: [edge.url], keyHash: expect.stringMatching(/^[a-f0-9]{8}$/u), hasRegistrationKey: true }],
+    files: [
+      { name: 'home', kind: 'edge', urls: [edge.url], keyHash: expect.stringMatching(/^[a-f0-9]{8}$/u), hasRegistrationKey: true },
+      { name: 'open', kind: 'self', urls: [openRelay.url], keyHash: openRelay.spkiHash.slice(0, 8), hasRegistrationKey: false },
+    ],
   })
   const add = (body: Record<string, unknown>) =>
     desktop.request('native/relays', { method: 'POST', body: { requestId: randomUUID(), ...body } })

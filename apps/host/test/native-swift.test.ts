@@ -2307,7 +2307,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     for (const time of [issuedAt - 901000, expiresAt, expiresAt + 1])
       await expect(invoke({ ...input, times: [time] })).rejects.toThrow('rejected')
   })
-  it('keeps two computers with the same device ID isolated through concurrent saves, locking and signed retirement', async () => {
+  it('keeps two computers with the same device ID isolated through concurrent saves, locking, signed retirement and local removal', async () => {
     const temporary = await mkdtemp(join(tmpdir(), 'latch-swift-profiles-'))
     try {
       const now = Date.now(),
@@ -2394,6 +2394,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         otherCachePreserved: true,
         retirementRetry: true,
         ciphertextProtected: true,
+        confirmedLocalRemoval: true,
       })
     } finally {
       await rm(temporary, { recursive: true, force: true })
@@ -3219,7 +3220,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       'offline',
     ])
     // A notification leads once, to its own computer and session; a removed computer's lead nowhere; at most 32 kept.
-    expect(result.notices).toEqual(['b/s1', 'none', 'none', 'none', 'none'])
+    expect(result.notices).toEqual(['b/s1', 'none', 'none', 'only-c', 'none', 'b/s3', 'none'])
   })
   it('watches two real Hosts read-only, one at a time, drops late snapshots, tells unreachable from not that computer, and opens B’s item on B', async () => {
     const first = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })

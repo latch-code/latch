@@ -25,8 +25,8 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 import { openEntry } from './helpers/layout.ts'
 
 /**
- * The edge protocol fixture uses real TLS and WebSocket framing over a local Workers adapter. The desktop exercises
- * the production import flow with a Linux relay and rejects a Workers relay file.
+ * The edge protocol fixture uses real TLS and WebSocket framing over a local Workers adapter. The desktop opens the
+ * source checkout's Workers setup guide, rejects an invalid file, then imports a Linux relay.
  */
 const cleanup: Array<() => void | Promise<void>> = []
 afterEach(async () => {
@@ -438,11 +438,36 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       }
       await page.getByRole('button', { name: '添加转发服务', exact: true }).click()
       const sheet = page.locator('.relay-add-dialog')
-      expect(await sheet.getByRole('button', { name: /Cloudflare Workers/u }).getAttribute('aria-disabled')).toBe('true')
+      // This Host runs from a source checkout, where the deployment commands exist. Just inspect the commands.
+      const relayInfo = await host.raw('unix', 'api/native/info')
+      expect(await relayInfo.json()).toMatchObject({ sourceCheckout: true, edgeRelayAvailable: true })
+      await sheet.getByRole('button', { name: 'Cloudflare Workers', exact: true }).click()
+      await sheet.getByText('wrangler login', { exact: true }).waitFor()
+      await sheet.getByLabel('名称', { exact: true }).fill('relay-test')
+      await sheet.getByRole('button', { name: '位置：自动', exact: true }).click()
+      await page.getByRole('menuitemradio', { name: '亚太东北', exact: true }).click()
+      await sheet.getByText('pnpm latch relay setup cloudflare --name relay-test --location apac-ne', { exact: true }).waitFor()
+      await sheet.getByRole('button', { name: '选择文件', exact: true }).waitFor()
+      await sheet.getByRole('button', { name: '返回', exact: true }).click()
+
+      // Import is separate from deployment. An invalid Workers URL is rejected before asking for confirmation.
       await sheet.getByRole('button', { name: '已有配置文件', exact: true }).click()
-      await sheet
-        .getByTestId('relay-file')
-        .setInputFiles({ name: 'relay.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ version: 1, profile })) })
+      const file = sheet.getByTestId('relay-file')
+      await file.setInputFiles({
+        name: 'invalid-workers.json',
+        mimeType: 'application/json',
+        buffer: Buffer.from(
+          JSON.stringify({ version: 2, profile: { relayId, kind: 'edge', relayKey: '1'.repeat(64), url: 'https://a_b.example/' } }),
+        ),
+      })
+      await sheet.getByText('请选择由转发服务导出的连接配置。', { exact: true }).waitFor()
+      expect(await sheet.getByTestId('relay-candidate').count()).toBe(0)
+      expect(host.presence.requests).toHaveLength(0)
+      await file.setInputFiles({
+        name: 'relay.json',
+        mimeType: 'application/json',
+        buffer: Buffer.from(JSON.stringify({ version: 1, profile })),
+      })
       await sheet.getByText('已包含', { exact: true }).waitFor()
       const capture = async (stage: string) => {
         for (const [width, height] of [

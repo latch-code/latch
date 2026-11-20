@@ -10,27 +10,29 @@ export const LOCAL_NETWORK_SETTINGS = 'x-apple.systempreferences:com.apple.prefe
 const COPY = defineCopy(
   {
     denied: '本地网络未允许',
+    unreadable: '无法读取本地网络信息',
     open: '打开系统设置',
     path: '系统设置 › 隐私与安全性 › 本地网络',
-    detail: '打开 Latch 的「本地网络」开关后，同一 Wi‑Fi 的手机才能直接连接这台 Mac。',
+    detail: '检查这台 Mac 的「本地网络」权限。安装版找 Latch，终端直接启动时找终端应用。',
     sourceScript: 'scripts/desktop.sh',
-    sourceDetail: '用 pnpm 启动 Latch 时无法获得本地网络权限。请用 scripts/desktop.sh 启动，见 README「安装与首次运行」。',
+    sourceDetail: '如果你用 pnpm 或 fnm exec 启动了 Latch，请先停止 Latch，再从终端运行 scripts/desktop.sh。',
   },
   {
     denied: 'Local Network not allowed',
+    unreadable: 'Can’t read local network information',
     open: 'Open System Settings',
     path: 'System Settings › Privacy & Security › Local Network',
-    detail: 'Turn on Local Network for Latch so phones on the same Wi‑Fi can connect to this Mac directly.',
+    detail:
+      'Check Local Network access on this Mac. Look for Latch if installed, or your terminal app if launched directly from a terminal.',
     sourceScript: 'scripts/desktop.sh',
-    sourceDetail:
-      'When started with pnpm, Latch cannot get Local Network access. Start Latch with scripts/desktop.sh as described in the README.',
+    sourceDetail: 'If you started Latch with pnpm or fnm exec, stop Latch and run scripts/desktop.sh from your terminal.',
   },
 )
 
 /** Only this Mac's own desktop window can open System Settings; a browser, a phone or another computer reads the path. */
 export function canOpenSystemSettings(local: boolean): boolean {
   const shell = currentShell()
-  return local && shell !== null && shell.remote !== true
+  return local && shell?.platform === 'darwin' && shell.remote !== true
 }
 
 const refused = (state: LocalNetworkAccess | undefined): state is 'denied' | 'unreadable' => state === 'denied' || state === 'unreadable'
@@ -64,9 +66,7 @@ export function LocalNetworkOpen({ state, openable }: { state: LocalNetworkAcces
 }
 
 /**
- * 「本地网络未允许」 when the Host reports Local Network access refused or its neighbour table unreadable, details on hover.
- * Where the page cannot open System Settings it names the path instead; a source run also names the script that gets
- * the Host access.
+ * Distinguish a system refusal from a neighbour table the Host could not read. A source run also names its launch script.
  */
 export function LocalNetworkNote({
   state,
@@ -83,7 +83,7 @@ export function LocalNetworkNote({
     <span className="local-network-hint" data-testid="local-network-hint" data-state={state}>
       <Tooltip content={COPY.detail}>
         <span>
-          <StatusWord tone="warn">{COPY.denied}</StatusWord>
+          <StatusWord tone="warn">{state === 'denied' ? COPY.denied : COPY.unreadable}</StatusWord>
         </span>
       </Tooltip>
       {!openable && <span className="local-network-path">{COPY.path}</span>}

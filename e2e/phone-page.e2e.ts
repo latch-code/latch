@@ -32,13 +32,14 @@ const device = (id: string, name: string, listener: Device['listener'], hoursAgo
 
 /**
  * The page as the desktop app sees it, in a browser: this device reads as the Mac's own and the Host's answers about
- * phones are fixtures, so every state of the sheet can be drawn. The QR is made from a dead code: a live invitation is
- * never captured. `e2e/desktop-native.e2e.ts` runs the real flow against the Host.
+ * phones are fixtures, so every state of the sheet can be drawn. The QR uses an invalid code and stays masked in
+ * screenshots. `e2e/desktop-native.e2e.ts` runs the real flow against the Host.
  */
 interface PageState {
   devices: Device[]
   pairing: NativePairingStatus
   create: 'ok' | 'no-lan' | 'blocked' | 'failed'
+  cable?: boolean
   relays: NativeLinkInfo['relays']
   /** The Mac cannot confirm anything. */
   presenceDown?: boolean
@@ -95,7 +96,14 @@ async function asDesktop(page: Page, state: PageState, options: { tls?: boolean 
     if (state.create === 'ok')
       return route.fulfill({
         status: 201,
-        json: { invitation: { id: `qr-${Date.now()}`, payload: 'LATCHPAIR2.fixture-dead-code', expiresAt: '2030-01-01T00:00:00.000Z' } },
+        json: {
+          invitation: {
+            id: `qr-${Date.now()}`,
+            payload: 'LATCHPAIR2.fixture-dead-code',
+            expiresAt: '2030-01-01T00:00:00.000Z',
+            ...(state.cable ? { cable: true } : {}),
+          },
+        },
       })
     const code = state.create === 'no-lan' ? 'native-no-lan' : state.create === 'blocked' ? 'presence-blocked' : 'native-not-ready'
     return route.fulfill({ status: state.create === 'failed' ? 503 : 409, json: { error: code, code, message: '手机连接服务正在准备' } })
@@ -151,7 +159,12 @@ describe('设置 › 设备', () => {
         for (const colorScheme of ['light', 'dark'] as const) {
           await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
           await page.waitForTimeout(60)
-          await page.screenshot({ path: `${OUTPUT}/${name}-${size.label}-${colorScheme}.png`, animations: 'disabled' })
+          await page.screenshot({
+            path: `${OUTPUT}/${name}-${size.label}-${colorScheme}.png`,
+            animations: 'disabled',
+            mask: [page.getByAltText('原生客户端配对二维码')],
+            maskColor: '#fff',
+          })
         }
         await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
       }
@@ -286,6 +299,7 @@ describe('设置 › 设备', () => {
       const sheet = page.getByRole('dialog', { name: '连接手机', exact: true })
       const qr = sheet.getByAltText('原生客户端配对二维码')
       await qr.waitFor()
+      await sheet.getByText('用 iPhone 或 iPad 上的 Latch 扫码', { exact: true }).waitFor()
       expect(await sheet.getByRole('button', { name: '关闭', exact: true }).count()).toBe(1)
       await capture('sheet-ready')
       for (const word of ['发送到其他设备', '防火墙', '六位', '剩余']) expect(await sheet.getByText(word).count()).toBe(0)
@@ -336,12 +350,15 @@ describe('设置 › 设备', () => {
         state.pairing = { state: 'ready', offNetwork: false }
       })
       await capture('sheet-contention')
-      await setPairing({ state: 'ready', offNetwork: true }, () =>
-        sheet.getByText('有设备从其他网络尝试连接，已拒绝。', { exact: true }).waitFor(),
-      )
+      const offNetwork = sheet.getByText('Mac 无法确认扫码设备在同一网络。请按下面的方式连接后再扫码。', { exact: true })
+      await setPairing({ state: 'ready', offNetwork: true }, () => offNetwork.waitFor())
       await capture('sheet-offnet')
 
       // After Touch ID the sheet says the phone is connected; one press closes it.
+      await setPairing({ state: 'confirming', device: 'iPhone 16 Pro', offNetwork: true }, () =>
+        sheet.getByText('在系统窗口中确认', { exact: true }).waitFor(),
+      )
+      await offNetwork.waitFor({ state: 'hidden' })
       await setPairing({ state: 'done', device: 'iPhone 16 Pro', deviceId: 'dev_phone', offNetwork: false }, () =>
         sheet.locator('.pair-title', { hasText: '已连接「' }).waitFor(),
       )
@@ -353,12 +370,16 @@ describe('设置 › 设备', () => {
       state.pairing = { state: 'ready', offNetwork: false }
       state.create = 'no-lan'
       await connect.click()
-      await sheet.getByText('这台 Mac 没有连接 Wi‑Fi 或有线网络。', { exact: true }).waitFor()
+      await sheet.getByText('这台 Mac 暂时没有可用于配对的网络。', { exact: true }).waitFor()
+      await sheet.getByText('让两台设备连同一个 Wi‑Fi，或用数据线连接并打开手机或平板的个人热点。', { exact: true }).waitFor()
       expect(await qr.count()).toBe(0)
       await capture('sheet-nonet')
-      // The network comes back: the QR appears by itself.
+      // The network comes back on a wired hotspot: the QR and the corresponding instructions appear by themselves.
+      state.cable = true
       state.create = 'ok'
       await qr.waitFor()
+      await sheet.getByText('用数据线连接这台 Mac，并打开设备上的个人热点', { exact: true }).waitFor()
+      expect(await sheet.getByText('和这台 Mac 连同一个 Wi‑Fi', { exact: true }).count()).toBe(0)
       await sheet.getByRole('button', { name: '关闭', exact: true }).click()
       await sheet.waitFor({ state: 'hidden' })
       state.create = 'failed'
@@ -536,7 +557,7 @@ describe('设置 › 设备', () => {
       const { context, page, sheet, qr } = await open(state)
       await page.locator('.device-connect').click()
       await sheet.getByText('有外部 Harness 的会话正在运行或等你处理', { exact: false }).waitFor()
-      expect(await sheet.getByText('用 iPhone 上的 Latch 扫码', { exact: true }).count()).toBe(0)
+      expect(await sheet.getByText('用 iPhone 或 iPad 上的 Latch 扫码', { exact: true }).count()).toBe(0)
       expect(await sheet.locator('.pair-qr').count()).toBe(0)
       await page.screenshot({ path: `${OUTPUT}/sheet-held-back-desktop-light.png`, animations: 'disabled' })
       const asked = state.created ?? 0

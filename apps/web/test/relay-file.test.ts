@@ -15,3 +15,25 @@ it('reads only relay addresses the Host and the signed address book accept', () 
     expect(() => readRelayProfile(JSON.stringify({ version: 2, profile: { ...edge, extraUrls: [url] } }))).toThrow()
   }
 })
+
+it('preserves the explicit null registration key in old self-hosted and Workers files', () => {
+  const openSelf = { ...self, registrationKey: null }
+  const openEdge = { ...edge, registrationKey: null }
+  expect(readRelayProfile(JSON.stringify({ version: 1, profile: openSelf }))).toEqual(openSelf)
+  expect(readRelayProfile(JSON.stringify({ version: 2, profile: openEdge }))).toEqual(openEdge)
+})
+
+it('rejects malformed or mixed profiles and repeated addresses without reflecting the file', () => {
+  const alternate = 'https://other.example/'
+  for (const file of [
+    'unexpected-file-content',
+    JSON.stringify({ version: 1, profile: 'unexpected-file-content' }),
+    JSON.stringify({ version: 1, profile: { ...self, kind: 'edge' } }),
+    JSON.stringify({ version: 1, profile: { ...self, shard: 0 } }),
+    JSON.stringify({ version: 2, profile: { ...edge, spkiHash: self.spkiHash } }),
+    JSON.stringify({ version: 2, profile: { ...edge, extraUrls: [edge.url] } }),
+    JSON.stringify({ version: 2, profile: { ...edge, extraUrls: [alternate, alternate] } }),
+    JSON.stringify({ version: 3, profile: edge }),
+  ])
+    expect(() => readRelayProfile(file)).toThrow(/^Invalid relay profile$/u)
+})

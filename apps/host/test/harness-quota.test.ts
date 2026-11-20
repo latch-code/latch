@@ -86,18 +86,25 @@ it('sends the limits with the Harness to every device that is sent the Harness, 
   // No credential, no catalogue.
   const anonymous = await t.raw('loopback-tcp', 'api/snapshot')
   expect(anonymous.status).toBe(401)
-  expect(await anonymous.text()).not.toContain('usedPercent')
+  expect((await anonymous.text()).includes('usedPercent'), 'anonymous snapshot contains quota').toBe(false)
 
-  // What Codex said beside the numbers stays in the process that read it.
+  // The snapshot can show the numbers before the asynchronous write keeps them for a restart.
+  const persisted = await vi.waitFor(
+    async () => {
+      const text = await everything(t.dataDir)
+      expect(text.includes('usedPercent'), 'quota usage is on disk').toBe(true)
+      return text
+    },
+    { timeout: 8_000, interval: 20 },
+  )
   const sent = JSON.stringify(await desktop.json<AppSnapshot>('snapshot'))
-  const kept = `${await everything(t.dataDir)}\n${lines.join('\n')}`
+  const log = lines.join('\n')
   for (const raw of ['person@example.com', 'acct_private', 'A banner of the vendor', 'A name of the vendor']) {
-    expect(sent).not.toContain(raw)
-    expect(kept).not.toContain(raw)
+    expect(sent.includes(raw), 'snapshot contains unmasked quota data').toBe(false)
+    expect(persisted.includes(raw), 'disk contains unmasked quota data').toBe(false)
+    expect(log.includes(raw), 'log contains unmasked quota data').toBe(false)
   }
-  // Numbers and the masked address are kept with the Harness's sessions for a restart; the log has none of them.
-  expect(await everything(t.dataDir)).toContain('usedPercent')
-  for (const word of ['usedPercent', 'p•••@e•••']) expect(lines.join('\n')).not.toContain(word)
+  for (const word of ['usedPercent', 'p•••@e•••']) expect(log.includes(word), 'log contains quota data').toBe(false)
 })
 
 it('asks a Codex session on a model service nothing about the plan, logged in or not, and shows no limits for it', async () => {

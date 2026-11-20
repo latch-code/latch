@@ -20,7 +20,7 @@ struct PhoneComputerRow: Identifiable {
  * (`NativeListWatcher`), with its own keys and address book, only while the App is in front.
  */
 extension PhoneModel {
-    var otherHosts: [RegisteredHost] { hosts.filter { $0.id != selectedHost?.id } }
+    var otherHosts: [RegisteredHost] { hosts.filter { $0.id != selectedHost?.id && !forgettingComputers.contains($0.id) } }
     /** Names as the phone shows them: one that could pass for another carries its hostId. */
     var computerNames: [String: String] { PhoneComputers.names(hosts.map { ($0.id, $0.device.hostId, $0.name) }) }
     func computerName(_ host: RegisteredHost) -> String { computerNames[host.id] ?? host.name }
@@ -97,9 +97,13 @@ extension PhoneModel {
         }
     }
     /** A computer gone from this phone: its notifications go too. */
-    func forgetNotices(_ host: RegisteredHost) {
-        PhoneComputerNotices.forget(computer: host.id)
-        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+    func forgetNotices(_ host: RegisteredHost, onlyThisComputer: Bool) {
+        let identifiers = PhoneComputerNotices.forget(computer: host.id)
+        let center = UNUserNotificationCenter.current()
+        if onlyThisComputer {
+            center.removePendingNotificationRequests(withIdentifiers: identifiers)
+            center.removeDeliveredNotifications(withIdentifiers: identifiers)
+        } else { center.removeAllDeliveredNotifications() }
     }
     /** Bonjour for that computer's own key, a fresh pairing's LAN hints, then its own relay; never the selected computer's ways in. */
     private func watchCandidates(_ host: RegisteredHost) async throws -> [NativePathCandidate] {
@@ -172,7 +176,7 @@ extension PhoneModel {
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
     }
     static func target(_ id: String) -> (computer: String, session: String)? { targets.take(id) }
-    static func forget(computer: String) { targets.forget(computer: computer) }
+    static func forget(computer: String) -> [String] { targets.forget(computer: computer) }
 }
 
 extension Notification.Name {

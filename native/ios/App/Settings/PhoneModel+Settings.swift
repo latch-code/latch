@@ -3,6 +3,12 @@ import LatchNativeCore
 import UIKit
 
 extension PhoneModel {
+    func retryComputer(_ id: String) async {
+        guard let host = hosts.first(where: { $0.id == id }), !busy, !forgettingComputers.contains(id) else { return }
+        if selectedHost?.id == id { retryConnection() }
+        else { await switchComputer(host) }
+    }
+
     /**
      * Removes this phone from the Mac it is connected to. No Face ID: it only lowers privilege. Local keys and caches go
      * only on the Root-signed tombstone, which the next connection reads.

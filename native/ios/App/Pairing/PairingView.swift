@@ -10,8 +10,8 @@ struct PairingWelcome: View {
         VStack(spacing: 20) {
             bundled("LatchMark").resizable().frame(width: 42, height: 42).clipShape(RoundedRectangle(cornerRadius: 10))
             Text("连接你的 Mac").font(.title2.weight(.semibold))
-            Text("在 Mac 上的 Latch 中，打开 手机 › 连接手机。").foregroundStyle(.secondary).multilineTextAlignment(.center)
-            Text("连接后，拿着这台解锁手机的人可以操作 Mac 上的 Agent，直到你移除它。").font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Text("在 Mac 上的 Latch 中，打开「设置 › 设备」，点「显示二维码」。").foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Text("连接后，拿着这台解锁设备的人可以操作 Mac 上的 Agent，直到你移除它。").font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Button("扫码", action: scan).buttonStyle(.borderedProminent).controlSize(.large)
         }.frame(maxWidth: .infinity)
     }
@@ -39,7 +39,7 @@ struct PairingView: View {
             PairingStep {
                 Image(systemName: "laptopcomputer").font(.system(size: 44)).foregroundStyle(.secondary)
                 Text("在 Mac 上确认").font(.title2.weight(.semibold))
-                Text("用 Touch ID 允许这台 iPhone。").foregroundStyle(.secondary).multilineTextAlignment(.center)
+                Text("在 Mac 的系统窗口中，用 Touch ID 或登录密码允许这台设备。").foregroundStyle(.secondary).multilineTextAlignment(.center)
                 Button("取消") { model.cancelPairing(); close() }
             }
         case let .connected(name):

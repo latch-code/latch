@@ -133,7 +133,7 @@ export interface NativeRelayFile {
 }
 /** The local relay CLI exports this to a private file. The Host never sends it back to any client. */
 export type NativeRelayProfile =
-  | { relayId: string; url: string; spkiHash: string; registrationKey?: string }
+  | { relayId: string; url: string; spkiHash: string; registrationKey?: string | null }
   | {
       relayId: string
       url: string
@@ -142,7 +142,7 @@ export type NativeRelayProfile =
       relayKey: string
       extraUrls?: string[]
       shard?: number
-      registrationKey?: string
+      registrationKey?: string | null
     }
 export type LocalNetworkAccess = 'allowed' | 'denied' | 'unreadable'
 /** One QR on the Mac's pairing sheet. Its payload is the secret: the sheet renders it and closes it, nothing else. */

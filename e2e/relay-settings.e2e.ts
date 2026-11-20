@@ -148,7 +148,9 @@ describe('设置 › 连接转发', () => {
           }
           await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
         }
-        await page.getByTestId('relay-direct').getByText('可用').waitFor()
+        const listening = page.getByTestId('relay-direct').getByText('已开启', { exact: true })
+        await listening.waitFor()
+        expect(await listening.getAttribute('data-tone')).toBe('neutral')
         for (const word of ['连接中', '已连接 · 38 ms', '密钥不符', '连不上', '已停用', '尚未实现', '地址无效'])
           await page.getByText(word, { exact: true }).first().waitFor()
         await expect.poll(() => page.getByText('官方转发服务').count()).toBe(0)

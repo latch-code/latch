@@ -143,21 +143,28 @@ it('imports relay files of both kinds, the self-hosted one as written before the
   }
   const selfFile = await write('self.json', { version: 1, profile: ownSelf })
   expect(await readRelayFile(selfFile)).toEqual(ownSelf)
+  const openSelf = { ...ownSelf, registrationKey: null }
+  expect(await readRelayFile(await write('open-self.json', { version: 1, profile: openSelf }))).toEqual(openSelf)
   const { kind: _kind, ...edgeFields } = ownEdge
   const edgeFile = await write('edge.json', { version: 2, profile: ownEdge })
   expect(await readRelayFile(edgeFile)).toEqual(ownEdge)
+  const openEdge = { ...ownEdge, registrationKey: null }
+  expect(await readRelayFile(await write('open-edge.json', { version: 2, profile: openEdge }))).toEqual(openEdge)
   const facts = relayFacts(ownEdge)
   expect(facts).toContain(`中继公钥：${ownEdge.relayKey}`)
   expect(facts).toContain(`地址：${ownEdge.extraUrls[0]}`)
   expect(facts.join('\n')).not.toContain(ownEdge.registrationKey)
   for (const [name, value] of [
     ['v1-edge.json', { version: 1, profile: ownEdge }],
+    ['v1-array.json', { version: 1, profile: [ownSelf] }],
     ['v2-self.json', { version: 2, profile: ownSelf }],
     ['v2-nokind.json', { version: 2, profile: edgeFields }],
-    ['v3.json', { version: 3, profile: ownEdge }],
+    ['v2-pin.json', { version: 2, profile: { ...ownEdge, spkiHash: ownSelf.spkiHash } }],
     ['repeat.json', { version: 2, profile: { ...ownEdge, extraUrls: [ownEdge.url] } }],
+    ['repeat-extra.json', { version: 2, profile: { ...ownEdge, extraUrls: [...ownEdge.extraUrls, ...ownEdge.extraUrls] } }],
   ] as const)
-    await expect(readRelayFile(await write(name, value))).rejects.toThrow()
+    await expect(readRelayFile(await write(name, value))).rejects.toThrow(/^这个文件不是中继导出的连接配置$/u)
+  await expect(readRelayFile(await write('v3.json', { version: 3, profile: ownEdge }))).rejects.toThrow(/^不认识这个中继文件的版本$/u)
 })
 
 it('keeps a relay added with the Host stopped out of books until its node is verified, and refuses an official ID', async () => {

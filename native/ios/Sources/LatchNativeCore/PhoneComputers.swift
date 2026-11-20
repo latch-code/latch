@@ -187,8 +187,11 @@ public struct PhoneNoticeTargets: Sendable {
         order.removeAll { $0 == id }
         return targets.removeValue(forKey: id)
     }
-    /** A computer removed from this phone takes its notifications' targets with it. */
-    public mutating func forget(computer: String) {
-        targets = targets.filter { $0.value.computer != computer }; order.removeAll { targets[$0] == nil }
+    /** A computer removed from this phone takes its known notification IDs with it. */
+    public mutating func forget(computer: String) -> [String] {
+        let removed = order.filter { targets[$0]?.computer == computer }
+        for id in removed { targets[id] = nil }
+        order.removeAll { targets[$0] == nil }
+        return removed
     }
 }

@@ -39,6 +39,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
 
 @MainActor final class PhoneModel: ObservableObject {
     @Published var hosts: [RegisteredHost] = []
+    var forgettingComputers: Set<String> = []
     @Published var selectedHost: RegisteredHost?
     @Published var snapshot = NativeJSON.null { didSet { shelfCache = nil } }
     @Published var detail = NativeJSON.null { didSet { detailCached = false; if detail != .null { detailFailed = nil }; subagentStops.observe(detail) } }
@@ -226,6 +227,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     private var pendingEvent: (NativeEvent, NativeWorkspaceEvents, String?)?
     private var expiryTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    private var reconnectId: UUID?
     var pairingTask: Task<Void, Never>?
     var pairingConnection: NativeHTTPConnection?
     private var monitor: NWPathMonitor?
@@ -378,7 +380,8 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         if let previous, !(await previous.closeOpening()), let hostId { offlineCacheBlocked.insert(hostId) }
     }
     func connect(_ host: RegisteredHost) async {
-        guard let store, !busy, storageAvailable else { return }
+        guard let store, !busy, storageAvailable, !forgettingComputers.contains(host.id),
+              hosts.contains(where: { $0.id == host.id }) else { return }
         hold.release(); upgradeTask?.cancel(); upgradeTask = nil
         busy = true
         generation = UUID(); let current = generation
@@ -404,7 +407,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             workspace = next
             bookRefresher = NativeBookRefresher(workspace: next, persist: { device in
                 var saved = host; saved.device = device; saved.prepared = false
-                try await store.save(saved)
+                try await store.update(saved)
                 if let pending = try await store.draft(), pending.keys.connectionTag == host.keys.connectionTag,
                    pending.keys.verificationTag == host.keys.verificationTag { try await store.clearDraft(matching: pending.payload) }
             }, updated: { [weak self] device in
@@ -925,14 +928,17 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     }
     /** Reconnecting is automatic; this only starts the next try now. */
     func retryConnection() {
+        guard let selectedHost, !busy, !connected, !forgettingComputers.contains(selectedHost.id) else { return }
         reconnectTask?.cancel(); reconnectTask = nil
-        if let selectedHost, workspace == nil { Task { await connect(selectedHost) } } else { startReconnect() }
+        if workspace == nil { Task { await connect(selectedHost) } }
+        else { offline = false; status = "正在连接…"; startReconnect(immediately: true) }
     }
     private func startReconnect(immediately: Bool = false) {
         guard reconnectTask == nil, !hold.holding, let workspace, let host = selectedHost else { return }
-        let current = generation
+        let current = generation, attemptId = UUID()
+        reconnectId = attemptId
         reconnectTask = Task {
-            defer { reconnectTask = nil }
+            defer { if reconnectId == attemptId { reconnectTask = nil; reconnectId = nil } }
             for attempt in 0..<1000 {
                 do {
                     // An announced restart, update, stop or sleep says when to look again, as the web's: not a failure to back off from.
@@ -940,13 +946,16 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                     else { try await Task.sleep(for: NativeReconnectPolicy.delay(attempt: attempt, afterNetworkChange: immediately)) }
                     guard current == generation else { return }
                     try await dialRound(host, workspace: workspace, current: current)
-                    guard current == generation else { return }
+                    guard current == generation, !Task.isCancelled else { return }
                     await bookRefresher?.connectionChanged()
-                    guard current == generation else { return }
+                    guard current == generation, !Task.isCancelled else { return }
                     _ = await refresh(); scheduleProximity(workspace); return
                 } catch {
                     if Task.isCancelled || current != generation { return }
-                    if let proof = await workspace.verifiedRevocation() { await retire(host, proof: proof); return }
+                    let proof = await workspace.verifiedRevocation()
+                    guard current == generation, !Task.isCancelled else { return }
+                    if let proof { await retire(host, proof: proof); return }
+                    if !connected { offline = true; status = "不在线" }
                 }
             }
         }
@@ -1044,7 +1053,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         let latest = hosts.first { $0.id == host.id } ?? host
         try? startDiscovery(latest)
         let available = try await candidates(latest)
-        guard generation == current, storageAvailable, self.workspace === workspace else { throw NativeFailure.unavailable }
+        guard generation == current, storageAvailable, self.workspace === workspace, !Task.isCancelled else { throw NativeFailure.unavailable }
         let known = available.contains { $0.kind == .direct }, gateway = currentGateway()
         let later = known || !discovery.browsing ? nil : discovery.lateCandidates(device: latest.device, keys: PhoneKeys.provider(latest.keys))
         let delay = NativeReconnectPolicy.relayDelay(directKnown: known, lastWinner: winners.winner(gateway: gateway))
@@ -1121,39 +1130,77 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         network == networkGeneration && (freshPairings[id]?.0.expiresAt ?? .distantPast) > Date()
     }
     func retire(_ host: RegisteredHost, proof: VerifiedNativeRevocation, retiredStore: PhoneStore? = nil, removedHere: Bool = false) async {
-        let currentStore = retiredStore ?? store, isCurrent = selectedHost?.id == host.id
+        guard let currentStore = retiredStore ?? store, currentStore === store, !forgettingComputers.contains(host.id) else { return }
+        _ = await removeComputer(host, from: currentStore, showRevocation: !removedHere) {
+            try await currentStore.retire(host, proof: proof)
+        }
+    }
+    func forgetComputer(_ host: RegisteredHost) async -> Bool {
+        guard let store, storageAvailable, !busy, pairingTask == nil,
+              selectedHost?.id != host.id || !connected,
+              hosts.contains(where: { $0.id == host.id }), forgettingComputers.insert(host.id).inserted else { return false }
+        watchOthers()
+        let removed = await removeComputer(host, from: store, showRevocation: false, localOnly: true) { try await store.forget(host.id) }
+        forgettingComputers.remove(host.id)
+        if !removed, self.store === store, storageAvailable {
+            watchOthers()
+            if selectedHost == nil, let saved = hosts.first { await connect(saved) }
+            if self.store === store, storageAvailable, !hosts.contains(where: { $0.id == host.id }) {
+                error = "本机资料未清理完。请重新打开 Latch 继续清理。"
+            }
+        }
+        return removed
+    }
+    private func removeComputer(_ host: RegisteredHost, from currentStore: PhoneStore, showRevocation: Bool, localOnly: Bool = false,
+                                remove: @escaping @MainActor () async throws -> Void) async -> Bool {
+        let isCurrent = selectedHost?.id == host.id
         let old = isCurrent ? workspace : nil
         offlineCacheBlocked.insert(host.id)
+        freshPairings.removeValue(forKey: host.id)
+        if pendingOther?.computer == host.id { pendingOther = nil }
         if isCurrent {
-            generation = UUID(); reconnectTask?.cancel(); eventTask?.cancel(); expiryTask?.cancel()
+            generation = UUID(); reconnectTask?.cancel(); eventTask?.cancel(); expiryTask?.cancel(); refreshTask?.cancel()
+            resetBookRefresh(); proximityTask?.cancel(); proximityTask = nil
             hold.release(); holdWatch?.cancel(); holdWatch = nil; upgradeTask?.cancel(); upgradeTask = nil
-            clearPrivateContent(); resetWorkItems(); controlPending = .null; snapshot = .null; verifiedUntil = nil; selectedHost = nil; connected = false
-            PreviewFiles.clear(); clearAttachments(); discovery.stop(); freshPairings.removeValue(forKey: host.id)
+            clearPrivateContent(); resetWorkItems(); resetSessionActions(); resetReview()
+            controlPending = .null; snapshot = .null; verifiedUntil = nil; selectedHost = nil; connected = false; offline = false
+            sessionId = nil; resumeSession = nil; lastHostId = nil; agentPath = []; appPath = []; heldDrafts = [:]
+            returnedText = [:]; openAfterDismiss = nil
+            controlsInFlight = []; controlTail = nil; discovery.stop()
             workspace = nil; installedTransport = nil; busy = false
         }
         let current = generation
-        let remove = { @MainActor in
-            do { try await currentStore?.retire(host, proof: proof) }
-            catch { if self.generation == current { self.report(error) } }
+        var removed = false
+        let finish = { @MainActor in
+            do { try await remove(); removed = true }
+            catch { if !localOnly, self.generation == current { self.report(error) } }
         }
         if isCurrent {
             storageOpening.close {
                 await self.closeConnection(old, hostId: host.id)
-                await remove()
+                await finish()
             }
-            guard await storageOpening.waitForClose() else { return }
-        } else { await remove() }
-        guard generation == current, storageAvailable else { return }
-        if let store, store === currentStore {
-            let saved = await store.list()
-            guard generation == current, self.store === store, storageAvailable else { return }
-            hosts = saved; forgetNotices(host); if !isCurrent { watchOthers() }
+            guard await storageOpening.waitForClose() else { return false }
+        } else {
+            await watchTail?.value
+            await finish()
         }
+        let saved = await currentStore.list()
+        guard store === currentStore, storageAvailable else { return false }
+        if !saved.contains(where: { $0.id == host.id }) {
+            hosts.removeAll { $0.id == host.id }
+            if let draft, draft.keys.connectionTag == host.keys.connectionTag,
+               draft.keys.verificationTag == host.keys.verificationTag { self.draft = nil }
+            forgetNotices(host, onlyThisComputer: localOnly)
+            watchOthers()
+        }
+        guard generation == current else { return removed }
         if isCurrent || selectedHost == nil {
-            removedByMac = !removedHere
+            removedByMac = showRevocation
             status = "选择一台电脑"
-            if let next = hosts.first { await connect(next) }
+            if let next = hosts.first(where: { !forgettingComputers.contains($0.id) }) { await connect(next) }
         }
+        return removed
     }
     func report(_ failure: Error) {
         guard !(failure is CancellationError) else { return }
