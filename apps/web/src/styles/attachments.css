@@ -632,41 +632,6 @@ button.attachment-tile-face:disabled {
   margin-inline: auto;
   object-fit: contain;
 }
-/*
- * A sent picture, looked at large: no panel, only the picture over the dimmed page, with its name and the way out on a
- * small dark bar above it (the tooltip's surface, readable over any page and any picture).
- */
-.attachment-preview.is-large {
-  width: fit-content;
-  max-width: calc(100vw - 2 * var(--sp-24));
-}
-.attachment-preview.is-large > .ui-modal-surface {
-  background: transparent;
-  box-shadow: none;
-  border: 0;
-}
-.attachment-preview.is-large .ui-modal-header {
-  width: fit-content;
-  max-width: 100%;
-  min-height: 0;
-  margin: 0 auto var(--sp-8);
-  padding: var(--sp-2) var(--sp-4) var(--sp-2) var(--sp-12);
-  border: 0;
-  border-radius: var(--r-8);
-  background: color-mix(in srgb, var(--tip-bg) 88%, transparent);
-  color: var(--tip-ink);
-}
-.attachment-preview.is-large .ui-modal-header :is(h2, button) {
-  color: inherit;
-}
-.attachment-preview.is-large .ui-modal-body {
-  padding: 0;
-}
-.attachment-preview.is-large img {
-  max-width: calc(100vw - 2 * var(--sp-24));
-  max-height: calc(100vh - 120px);
-  border-radius: var(--r-8);
-}
 .attachment-preview audio {
   display: block;
   width: 100%;

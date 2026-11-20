@@ -41,6 +41,7 @@ import {
 } from '../conversation.ts'
 import { useTranscriptProjection } from '../conversation/useTranscriptProjection.ts'
 import { ReplyViewport, TurnPictured } from '../MessageContent.tsx'
+import { PictureGroup } from './PictureViewer.tsx'
 import type { LoginSurface } from '../panel/terminal/loginRuns.ts'
 import { TurnCards } from '../conversation/TurnCards.tsx'
 import { RunEndNote, StatusLine, type StatusLineProps } from '../conversation/StatusLine.tsx'
@@ -578,66 +579,70 @@ const TurnView = memo(function TurnView({
             </button>
           )}
           {plan && plan.length > 0 && <PlanRow plan={plan} active={trailingLive} />}
-          {blocks.map(block => {
-            if (block.kind === 'prose') {
-              const streaming = block.message.id === rowContext.streamingId
-              return (
-                <ReplyViewport.Provider key={block.message.id} value={replyViewport}>
-                  <TurnPictured.Provider value={pictured}>
-                    <MessageRow
-                      message={block.message}
-                      streaming={streaming}
-                      observeStream={rowContext.observeStream === true}
-                      frozen={rowContext.frozen}
-                      coarse={rowContext.coarse}
-                    />
-                  </TurnPictured.Provider>
-                </ReplyViewport.Provider>
-              )
-            }
-            if (block.kind === 'picture')
-              return <GeneratedImage key={block.message.id} message={block.message} frozen={rowContext.frozen} />
-            if (block.kind === 'note') {
-              if (block.message.role === 'tool') return <QuestionRow key={block.message.id} message={block.message} context={rowContext} />
-              // The run's end line says the same and offers the same 重试; the note is the record once a later turn replaces it.
-              if (runEnd && (block.message.state === 'failed' || block.message.interrupted)) return null
-              const action = failureStep(block.message, onFailureStep, onContinue)
-              return (
-                <MessageRow
-                  key={block.message.id}
-                  message={block.message}
-                  coarse={rowContext.coarse}
-                  {...(speaker ? { voice: speaker.name } : {})}
-                  {...(onRetry && action?.kind !== 'none' ? { onRetry } : {})}
-                  {...(action && action.kind !== 'none' ? { action } : {})}
-                />
-              )
-            }
-            return (
-              <Collapse
-                key={block.key}
-                className="work-group"
-                open={workOpen}
-                onReveal={() => {
-                  setFoldChoice(true)
-                }}>
-                <div className="work-rows">
-                  {gathered(block.items).map(item =>
-                    item.kind === 'team' ? (
-                      <SubagentGroup key={`team:${item.messages[0]!.id}`} messages={item.messages} frozen={rowContext.frozen} />
-                    ) : (
-                      <WorkRow
-                        key={workItemKey(item)}
-                        item={item}
-                        context={rowContext}
-                        onRetry={!runEnd && item.kind === 'tool' && item.message.id === lastFailed ? onRetry : undefined}
+          {/* The turn's pictures share one viewer, stepping from one to the next. */}
+          <PictureGroup>
+            {blocks.map(block => {
+              if (block.kind === 'prose') {
+                const streaming = block.message.id === rowContext.streamingId
+                return (
+                  <ReplyViewport.Provider key={block.message.id} value={replyViewport}>
+                    <TurnPictured.Provider value={pictured}>
+                      <MessageRow
+                        message={block.message}
+                        streaming={streaming}
+                        observeStream={rowContext.observeStream === true}
+                        frozen={rowContext.frozen}
+                        coarse={rowContext.coarse}
                       />
-                    ),
-                  )}
-                </div>
-              </Collapse>
-            )
-          })}
+                    </TurnPictured.Provider>
+                  </ReplyViewport.Provider>
+                )
+              }
+              if (block.kind === 'picture')
+                return <GeneratedImage key={block.message.id} message={block.message} frozen={rowContext.frozen} />
+              if (block.kind === 'note') {
+                if (block.message.role === 'tool')
+                  return <QuestionRow key={block.message.id} message={block.message} context={rowContext} />
+                // The run's end line says the same and offers the same 重试; the note is the record once a later turn replaces it.
+                if (runEnd && (block.message.state === 'failed' || block.message.interrupted)) return null
+                const action = failureStep(block.message, onFailureStep, onContinue)
+                return (
+                  <MessageRow
+                    key={block.message.id}
+                    message={block.message}
+                    coarse={rowContext.coarse}
+                    {...(speaker ? { voice: speaker.name } : {})}
+                    {...(onRetry && action?.kind !== 'none' ? { onRetry } : {})}
+                    {...(action && action.kind !== 'none' ? { action } : {})}
+                  />
+                )
+              }
+              return (
+                <Collapse
+                  key={block.key}
+                  className="work-group"
+                  open={workOpen}
+                  onReveal={() => {
+                    setFoldChoice(true)
+                  }}>
+                  <div className="work-rows">
+                    {gathered(block.items).map(item =>
+                      item.kind === 'team' ? (
+                        <SubagentGroup key={`team:${item.messages[0]!.id}`} messages={item.messages} frozen={rowContext.frozen} />
+                      ) : (
+                        <WorkRow
+                          key={workItemKey(item)}
+                          item={item}
+                          context={rowContext}
+                          onRetry={!runEnd && item.kind === 'tool' && item.message.id === lastFailed ? onRetry : undefined}
+                        />
+                      ),
+                    )}
+                  </div>
+                </Collapse>
+              )
+            })}
+          </PictureGroup>
           {thinking && <ThinkingLine live={thinking} person={speaker !== undefined} />}
           {!trailingLive && (
             <TurnCards

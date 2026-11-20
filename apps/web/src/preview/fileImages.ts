@@ -1,5 +1,5 @@
 import { isFileMetadata, type FileContext } from '@latch/protocol'
-import { api } from '../core/api.ts'
+import { api, fileBytes } from '../core/api.ts'
 import { fileContextBody, fileRoute } from './fileContext.ts'
 
 export type MediaKind = 'image' | 'video' | 'audio'
@@ -10,6 +10,10 @@ export interface ResolvedMedia {
   url: string
   width?: number
   height?: number
+  /** The file's own name, for a download. */
+  name?: string
+  /** The Host lets this device download the file. */
+  download?: boolean
 }
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp'])
@@ -82,11 +86,26 @@ export function mediaFromAnswer(answer: { status?: string; file?: unknown } | un
       || file.width * file.height > 50_000_000
     )
       return undefined
-    return { kind: 'image', url, width: file.width, height: file.height }
+    return { kind: 'image', url, width: file.width, height: file.height, name: file.name, download: file.actions.download }
   }
   if (file.kind === 'video' && file.mime.startsWith('video/')) return { kind: 'video', url }
   if (file.kind === 'audio' && file.mime.startsWith('audio/')) return { kind: 'audio', url }
   return undefined
+}
+
+/**
+ * The bytes behind a media URL the page may draw, read through the same authorized handle (a file handle bound to its
+ * version, or an attachment's content handle), for a download. Anything else is refused before a request is made.
+ */
+export function mediaBytes(url: string, here: string, signal?: AbortSignal): Promise<ArrayBuffer> {
+  if (!trustedMediaUrl(url, here)) return Promise.reject(new Error('media-unavailable'))
+  const { pathname, search } = new URL(url, here)
+  const attachment = /^\/link\/api\/attachments\/([A-Za-z0-9_-]{22})\/content$/u.exec(pathname)
+  if (attachment) return fileBytes(attachment[1]!, undefined, undefined, signal, undefined, 'attachment')
+  const file = /^\/link\/api\/files\/([A-Za-z0-9_-]{22})$/u.exec(pathname)
+  if (!file) return Promise.reject(new Error('media-unavailable'))
+  const version = /^\?v=([a-f0-9]{32})$/u.exec(search)?.[1]
+  return fileBytes(file[1]!, undefined, undefined, signal, version ? `"${version}"` : undefined)
 }
 
 /** Resolve a reference as media through the same session authorization as a clicked file reference. */

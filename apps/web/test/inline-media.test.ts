@@ -58,6 +58,8 @@ describe('inline media in a reply', () => {
       url: `/link/api/files/${HANDLE}?v=${'a'.repeat(32)}`,
       width: 1536,
       height: 1024,
+      name: 'chart.png',
+      download: true,
     })
     expect(
       mediaFromAnswer({ status: 'ok', file: metadata({ kind: 'video', mime: 'video/mp4', width: undefined, height: undefined }) })?.kind,
@@ -74,11 +76,12 @@ describe('inline media in a reply', () => {
 
   it('reserves a picture’s shape from its size and keeps a tall one within the height cap', () => {
     const html = renderToStaticMarkup(
-      createElement(InlineMedia, { media: { kind: 'image', url: '/x', width: 1536, height: 1024 }, label: '图表', onOpen: () => {} }),
+      createElement(InlineMedia, { media: { kind: 'image', url: '/x', width: 1536, height: 1024 }, label: '图表' }),
     )
     expect(html).toContain('width="1536"')
     expect(html).toContain('height="1024"')
     expect(html).toContain('aria-label="预览图片：图表"')
+    expect(html).toContain('aria-haspopup="dialog"')
     expect(html).toMatch(/^<button type="button" class="inline-media inline-media-open"/u)
     expect(inlineImageWidth(1536, 1024)).toBe('min(100%, 720px)')
     expect(inlineImageWidth(1024, 1536)).toBe('min(100%, 320px)')
@@ -152,7 +155,14 @@ describe('a picture the conversation names outside the session folders', () => {
     })
     const media = await resolveFileMedia('session-1', generated, 'primary', new AbortController().signal)
     expect(asked).toEqual([['/link/api/tasks/session-1/files/resolve', { paths: [generated], rootId: 'primary' }]])
-    expect(media).toEqual({ kind: 'image', url: `/link/api/files/${HANDLE}?v=${'a'.repeat(32)}`, width: 1536, height: 1024 })
+    expect(media).toEqual({
+      kind: 'image',
+      url: `/link/api/files/${HANDLE}?v=${'a'.repeat(32)}`,
+      width: 1536,
+      height: 1024,
+      name: 'ig_1.png',
+      download: true,
+    })
     expect(drawableMedia(media, HERE)).toBe(true)
   })
 

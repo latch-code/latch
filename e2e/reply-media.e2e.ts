@@ -82,6 +82,46 @@ async function shots(page: Page, name: string, parts: Record<string, Locator>, w
   await page.emulateMedia({ colorScheme: 'light' })
 }
 
+/**
+ * The viewer is open on a loaded picture, fitted inside the window, never past its natural size, over a scrim that
+ * is dark in either theme; focus is inside it.
+ */
+async function viewerShows(page: Page, viewer: Locator, width: number, height: number): Promise<void> {
+  await viewer.waitFor()
+  const picture = viewer.locator('img.picture-viewer-image')
+  await expect.poll(() => picture.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0), SLOW).toBe(true)
+  expect(await picture.evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight])).toEqual([width, height])
+  const box = (await picture.boundingBox())!
+  const view = page.viewportSize()!
+  expect(box.width).toBeLessThanOrEqual(width + 0.5)
+  expect(box.x).toBeGreaterThanOrEqual(-0.5)
+  expect(box.y).toBeGreaterThanOrEqual(-0.5)
+  expect(box.x + box.width).toBeLessThanOrEqual(view.width + 0.5)
+  expect(box.y + box.height).toBeLessThanOrEqual(view.height + 0.5)
+  // Contain: the picture keeps its own shape.
+  expect(Math.abs(box.width / box.height - width / height)).toBeLessThan(0.02)
+  expect(await viewer.evaluate(node => node.matches(':modal') && node.contains(document.activeElement))).toBe(true)
+  const scrim = await viewer.evaluate(node => getComputedStyle(node, '::backdrop').backgroundColor)
+  const [r, g, b, a] = (scrim.match(/[\d.]+/gu) ?? []).map(Number)
+  expect(Math.max(r!, g!, b!)).toBeLessThan(24)
+  expect(a).toBeGreaterThan(0.8)
+}
+
+/** The open viewer at a phone and a desktop width, in both themes. */
+async function viewerShots(page: Page, name: string): Promise<void> {
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 900 })
+    for (const theme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme: theme })
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.screenshot({ path: `${OUT}/${name}-${width}-${theme}.png`, animations: 'disabled' })
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await page.emulateMedia({ colorScheme: 'light' })
+}
+
 describe('media in replies', () => {
   let host: TestHost, browser: Browser
   beforeAll(async () => {
@@ -185,10 +225,158 @@ describe('media in replies', () => {
       expect(await reply.locator('img, video, audio').count()).toBe(2)
 
       await shots(page, 'reply', { image, video })
-      // Pressing the picture opens it in the file pane.
-      await reply.getByRole('button', { name: '预览图片：销量图', exact: true }).click()
+      // Pressing the picture shows it large over the page, not in the file pane; Esc closes it and focus comes back.
+      const press = reply.getByRole('button', { name: '预览图片：销量图', exact: true })
+      // A handle that lapsed since the picture was drawn: the viewer asks for it once more, as the message does.
+      const drawnSource = (await image.getAttribute('src'))!.split('?')[0]!
+      let refused = 0
+      await page.route(`**${drawnSource}*`, async route => {
+        if (refused++ === 0)
+          await route.fulfill({ status: 410, json: { error: 'file-handle-expired', message: '文件已不可用，请重新打开' } })
+        else await route.continue()
+      })
+      await press.click()
+      const viewer = page.getByRole('dialog', { name: '销量图', exact: true })
+      await viewerShows(page, viewer, 960, 600)
+      expect(await page.getByRole('region', { name: '文件预览', exact: true }).count()).toBe(0)
+      // One picture: no count and no steps.
+      expect(await viewer.locator('.picture-viewer-count').count()).toBe(0)
+      expect(await viewer.getByRole('button', { name: '下一张', exact: true }).count()).toBe(0)
+      expect(refused).toBeGreaterThan(1)
+      await page.unrouteAll()
+      await viewerShots(page, 'viewer-reply')
+      // 下载 reads the same authorized handle and saves under the file's own name.
+      const [download] = await Promise.all([
+        page.waitForEvent('download'),
+        viewer.getByRole('button', { name: '下载', exact: true }).click(),
+      ])
+      expect(download.suggestedFilename()).toBe('chart.png')
+      await page.keyboard.press('Escape')
+      await viewer.waitFor({ state: 'detached' })
+      await expect.poll(() => press.evaluate(node => node === document.activeElement)).toBe(true)
+      // A press beside the picture closes it too.
+      await press.click()
+      await viewer.waitFor()
+      await page.mouse.click(8, 480)
+      await viewer.waitFor({ state: 'detached' })
+      // 在文件中打开 is the way to the file pane.
+      await press.click()
+      await viewer.getByRole('button', { name: '在文件中打开', exact: true }).click()
       await page.getByRole('region', { name: '文件预览', exact: true }).waitFor()
+      expect(await viewer.count()).toBe(0)
     } finally {
+      await context.close()
+    }
+  })
+
+  it('steps between a reply’s pictures in the viewer with ← → and a swipe, and fits a tall one', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN', hasTouch: true })
+    const page = await context.newPage()
+    page.setDefaultTimeout(15_000)
+    try {
+      await enrollBrowser(page, host, { name: '多张图片', scopes: ['admin'] })
+      const home = page.locator('.workbench-home')
+      await home.getByRole('textbox', { name: '新会话消息', exact: true }).waitFor()
+      const { png } = await media(page)
+      // A tall picture, larger than the window, drawn by the page.
+      const tall = await page.evaluate(() => {
+        const canvas = document.createElement('canvas')
+        canvas.width = 1200
+        canvas.height = 2400
+        const ctx = canvas.getContext('2d')!
+        ctx.fillStyle = 'hsl(160 50% 45%)'
+        ctx.fillRect(0, 0, 1200, 2400)
+        ctx.fillStyle = 'hsl(40 80% 70%)'
+        ctx.fillRect(200, 400, 800, 1600)
+        return canvas.toDataURL('image/png').split(',')[1]!
+      })
+      await mkdir(join(host.workspaceRoot, 'out'), { recursive: true })
+      await writeFile(join(host.workspaceRoot, 'out', 'first.png'), png)
+      await writeFile(join(host.workspaceRoot, 'out', 'tall.png'), Buffer.from(tall, 'base64'))
+      reply = ['两张图：', '', '![第一张](out/first.png)', '', '![高的一张](out/tall.png)'].join('\n')
+      await home.getByRole('textbox', { name: '新会话消息', exact: true }).fill('两张图')
+      await home.getByRole('button', { name: '发送', exact: true }).click()
+      const answer = page.locator('.message-assistant').last()
+      const first = answer.getByRole('button', { name: '预览图片：第一张', exact: true })
+      const second = answer.getByRole('button', { name: '预览图片：高的一张', exact: true })
+      for (const button of [first, second])
+        await expect
+          .poll(() => button.locator('img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0), SLOW)
+          .toBe(true)
+
+      await first.click()
+      const viewer = page.locator('dialog.picture-viewer')
+      await viewerShows(page, page.getByRole('dialog', { name: '第一张', exact: true }), 960, 600)
+      expect(await viewer.locator('.picture-viewer-count').textContent()).toBe('1 / 2')
+      await page.keyboard.press('ArrowRight')
+      await viewerShows(page, page.getByRole('dialog', { name: '高的一张', exact: true }), 1200, 2400)
+      expect(await viewer.locator('.picture-viewer-count').textContent()).toBe('2 / 2')
+      // Fitted: smaller than its own size, whole in the window.
+      const picture = viewer.locator('img.picture-viewer-image')
+      const fitted = (await picture.boundingBox())!
+      expect(fitted.height).toBeLessThan(960)
+      await viewerShots(page, 'viewer-steps')
+      // A press shows it at 100%, where the stage scrolls; another fits it again.
+      await picture.click()
+      await expect.poll(async () => (await picture.boundingBox())!.width).toBe(1200)
+      const stage = viewer.locator('.picture-viewer-stage')
+      expect(await stage.getAttribute('data-zoom')).toBe('actual')
+      expect(await stage.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true)
+      await page.mouse.wheel(0, 400)
+      await expect.poll(() => stage.evaluate(node => node.scrollTop)).toBeGreaterThan(0)
+      // At 100% the arrows pan, they do not step.
+      await page.keyboard.press('ArrowLeft')
+      expect(await viewer.locator('.picture-viewer-count').textContent()).toBe('2 / 2')
+      await picture.click()
+      await expect
+        .poll(async () => [await stage.getAttribute('data-zoom'), Math.round((await picture.boundingBox())!.width)])
+        .toEqual(['fit', Math.round(fitted.width)])
+      await page.keyboard.press('ArrowLeft')
+      await page.getByRole('dialog', { name: '第一张', exact: true }).waitFor()
+      // At either end it stays.
+      await page.keyboard.press('ArrowLeft')
+      expect(await viewer.locator('.picture-viewer-count').textContent()).toBe('1 / 2')
+      await page.keyboard.press('Escape')
+      await viewer.waitFor({ state: 'detached' })
+      await expect.poll(() => first.evaluate(node => node === document.activeElement)).toBe(true)
+
+      // On a phone: full screen, a swipe steps and a drag down closes.
+      await page.setViewportSize({ width: 390, height: 844 })
+      await first.scrollIntoViewIfNeeded()
+      await first.tap()
+      await viewer.waitFor()
+      const full = (await viewer.boundingBox())!
+      expect([Math.round(full.width), Math.round(full.height)]).toEqual([390, 844])
+      const swipe = async (dx: number, dy: number) => {
+        await stage.evaluate(
+          (node, [x, y]) => {
+            const at = (type: string, cx: number, cy: number) =>
+              node.dispatchEvent(
+                new PointerEvent(type, {
+                  pointerId: 7,
+                  pointerType: 'touch',
+                  isPrimary: true,
+                  bubbles: true,
+                  clientX: cx,
+                  clientY: cy,
+                  button: 0,
+                }),
+              )
+            at('pointerdown', 195, 400)
+            for (let step = 1; step <= 6; step++) at('pointermove', 195 + (x! * step) / 6, 400 + (y! * step) / 6)
+            at('pointerup', 195 + x!, 400 + y!)
+          },
+          [dx, dy],
+        )
+      }
+      await swipe(-160, 0)
+      await page.getByRole('dialog', { name: '高的一张', exact: true }).waitFor()
+      await swipe(160, 0)
+      await page.getByRole('dialog', { name: '第一张', exact: true }).waitFor()
+      await swipe(0, 200)
+      await viewer.waitFor({ state: 'detached' })
+    } finally {
+      reply = REPLY
       await context.close()
     }
   })
@@ -251,6 +439,15 @@ describe('media in replies', () => {
       expect(['outside', 'not-referenced']).toContain(sibling)
 
       await shots(page, 'outside', { image: img })
+      // The same file drawn twice is one picture in the viewer: no count, no steps.
+      await drawn.click()
+      const viewer = page.getByRole('dialog', { name: '紫粉色粒子在深色背景中形成涡环', exact: true })
+      await viewerShows(page, viewer, 960, 600)
+      expect(await viewer.locator('.picture-viewer-count').count()).toBe(0)
+      await viewerShots(page, 'viewer-outside')
+      await viewer.getByRole('button', { name: '关闭', exact: true }).click()
+      await viewer.waitFor({ state: 'detached' })
+      await expect.poll(() => drawn.evaluate(node => node === document.activeElement)).toBe(true)
       // The chip opens the picture in the file pane, whose breadcrumb names the real folder, not a session folder.
       await chip.click()
       const pane = page.getByRole('region', { name: '文件预览', exact: true })
@@ -315,6 +512,15 @@ describe('media in replies', () => {
       expect(await picture.getAttribute('src')).toMatch(/^\/link\/api\/attachments\/[A-Za-z0-9_-]{22}\/content$/u)
       expect((await picture.boundingBox())!.width).toBeGreaterThan(400)
       await shots(page, 'agent', { image: picture })
+      // Pressed, it is shown large, with its way to the file pane and its download.
+      await page.locator('.message-assistant .message-attachment-media button.inline-media-open').click()
+      const viewer = page.locator('dialog.picture-viewer')
+      await viewerShows(page, viewer, 768, await picture.evaluate((img: HTMLImageElement) => img.naturalHeight))
+      expect(await page.getByRole('region', { name: '文件预览', exact: true }).count()).toBe(0)
+      await viewer.getByRole('button', { name: '下载', exact: true }).waitFor()
+      await viewerShots(page, 'viewer-agent')
+      await viewer.getByRole('button', { name: '在文件中打开', exact: true }).click()
+      await page.getByRole('region', { name: '文件预览', exact: true }).waitFor()
     } finally {
       await context.close()
     }
@@ -431,6 +637,14 @@ describe('a picture Codex makes', () => {
       expect(await page.locator('.tool-card', { hasText: '生成图片' }).count()).toBe(0)
       await expect.poll(async () => (await detail()).summary.status, SLOW).toBe('idle')
       await shots(page, 'image-drawn', { picture }, [390, 1440])
+      // Pressed, the made picture is shown large over the page, not in the file pane.
+      await place.locator('button.inline-media-open').click()
+      const viewer = page.locator('dialog.picture-viewer')
+      await viewerShows(page, viewer, 1536, 1024)
+      expect(await page.getByRole('region', { name: '文件预览', exact: true }).count()).toBe(0)
+      await viewerShots(page, 'viewer-generated')
+      await page.keyboard.press('Escape')
+      await viewer.waitFor({ state: 'detached' })
 
       // Read again, the picture is simply where the canvas was.
       await page.reload()

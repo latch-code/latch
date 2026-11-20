@@ -213,13 +213,20 @@ describe('attachment tiles', () => {
         .toBe(true)
       // A sent picture is looked at large over the page, not in the file pane.
       await page.locator('.message-user .message-attachment[data-type="image"]').getByRole('button').first().click()
-      const large = page.locator('.attachment-preview.is-large')
-      await large.locator('img').waitFor()
-      const [box, shown] = await Promise.all([large.boundingBox(), large.locator('img').boundingBox()])
-      // No panel round it: the dialog is as wide as the picture, and its surface is clear.
+      const large = page.locator('dialog.picture-viewer')
+      const shownImage = large.locator('img.picture-viewer-image')
+      await expect.poll(() => shownImage.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
+      const [natural, shown] = await Promise.all([
+        shownImage.evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight] as const),
+        shownImage.boundingBox(),
+      ])
+      // Larger than its tile, never past its own size, whole in the window; no panel round it, its surface is clear.
       expect(shown!.width).toBeGreaterThan(104)
-      expect(Math.abs(box!.width - shown!.width)).toBeLessThan(16)
+      expect(shown!.width).toBeLessThanOrEqual(natural[0] + 0.5)
+      expect(shown!.y + shown!.height).toBeLessThanOrEqual(960.5)
+      expect(Math.abs(shown!.width / shown!.height - natural[0] / natural[1])).toBeLessThan(0.02)
       expect(await large.locator('.ui-modal-surface').evaluate(node => getComputedStyle(node).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+      expect(await large.getAttribute('aria-label')).toBe('首页截图.png')
       expect(await page.getByRole('region', { name: '文件预览', exact: true }).count()).toBe(0)
       await page.screenshot({ path: `${OUT}/large-image-1440-light.png`, animations: 'disabled' })
       await large.getByRole('button', { name: '关闭', exact: true }).click()

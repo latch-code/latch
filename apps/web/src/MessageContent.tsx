@@ -459,7 +459,7 @@ function MarkdownFile({
         label={label}
         onFail={at => (retry?.key === key ? setFailed(key) : setRetry({ key, ...(at ? { at } : {}) }))}
         {...(retry?.key === key && retry.at ? { startAt: retry.at } : {})}
-        {...(files.onOpenFile && shown.kind === 'image' ? { onOpen: () => files.onOpenFile?.(path) } : {})}
+        {...(files.onOpenFile && shown.kind === 'image' ? { openInFiles: () => files.onOpenFile?.(path) } : {})}
       />
     )
     if (image) return media

@@ -1,5 +1,7 @@
+import { useRef } from 'react'
 import type { ResolvedMedia } from '../preview/fileImages.ts'
 import { defineCopy } from '../core/i18n.ts'
+import { usePictureViewer } from './PictureViewer.tsx'
 
 const COPY = defineCopy(
   { open: (name: string) => `预览图片：${name}`, image: '图片', video: '视频', audio: '音频' },
@@ -16,25 +18,42 @@ export function inlineImageWidth(width: number, height: number): string {
 
 /**
  * A picture, video or sound in a reply, drawn from a handle the Host authorized. Its size is reserved from the Host's
- * metadata before the bytes arrive. A picture opens the file preview when pressed; video and sound keep the browser's
- * own controls. `onFail` lets the caller fall back to its chip when the bytes cannot be drawn.
+ * metadata before the bytes arrive. A picture is shown large over the page when pressed (with its turn's other pictures
+ * a step away), and opens in the file pane only from there; video and sound keep the browser's own controls. `onFail`
+ * lets the caller fall back to its chip when the bytes cannot be drawn.
  */
 export function InlineMedia({
   media,
   label,
-  onOpen,
+  openInFiles,
   onFail,
   startAt,
 }: {
   media: ResolvedMedia
   label: string
-  onOpen?: () => void
+  /** The viewer's 在文件中打开, where the file pane can open this picture. */
+  openInFiles?: () => void
   /** The bytes could not be read; for video and sound, where playback stood. */
   onFail?: (position?: number) => void
   /** Where a video or sound resumes after its handle was renewed. */
   startAt?: number
 }) {
   const name = label || COPY[media.kind]
+  const button = useRef<HTMLButtonElement>(null)
+  const { open, viewer } = usePictureViewer(
+    media.kind === 'image'
+      ? {
+          url: media.url,
+          name,
+          ...(media.name ? { fileName: media.name } : {}),
+          ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
+          download: media.download === true,
+          ...(openInFiles ? { openInFiles } : {}),
+          ...(onFail ? { renew: () => onFail() } : {}),
+          element: () => button.current,
+        }
+      : undefined,
+  )
   if (media.kind === 'video' || media.kind === 'audio') {
     const events = {
       onError: (event: { currentTarget: HTMLMediaElement }) => onFail?.(event.currentTarget.currentTime),
@@ -70,13 +89,19 @@ export function InlineMedia({
     />
   )
   const style = media.width && media.height ? { maxWidth: inlineImageWidth(media.width, media.height) } : undefined
-  return onOpen ? (
-    <button type="button" className="inline-media inline-media-open" style={style} aria-label={COPY.open(name)} onClick={onOpen}>
-      {picture}
-    </button>
-  ) : (
-    <span className="inline-media" style={style}>
-      {picture}
-    </span>
+  return (
+    <>
+      <button
+        ref={button}
+        type="button"
+        className="inline-media inline-media-open"
+        style={style}
+        aria-label={COPY.open(name)}
+        aria-haspopup="dialog"
+        onClick={open}>
+        {picture}
+      </button>
+      {viewer}
+    </>
   )
 }
