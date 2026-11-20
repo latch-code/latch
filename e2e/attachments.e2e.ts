@@ -9,7 +9,7 @@ import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 import { closeActiveFile, closeSettings, openSection, openSession, openSettings, permissionControl } from './helpers/layout.ts'
-import { promptValue } from './helpers/prompt.ts'
+import { promptSelection, promptValue, setPromptSelection } from './helpers/prompt.ts'
 /** The new draft is the home's input on every width: already in sight, or where 新建会话 leads. */
 async function newDraft(page: Page) {
   const home = page.locator('.workbench-home')
@@ -214,6 +214,8 @@ describe('private attachments through the composer', () => {
       expect(calls).toBe(before + 1)
       const next = page.getByRole('textbox', { name: '继续对话', exact: true })
       await expect.poll(() => next.isEnabled(), { timeout: 10000 }).toBe(true)
+      await next.fill('before placeholder after')
+      await setPromptSelection(next, 7, 18)
       await next.evaluate(element => {
         const data = new DataTransfer()
         data.setData('text/plain', 'long pasted text '.repeat(160))
@@ -226,12 +228,17 @@ describe('private attachments through the composer', () => {
         .catch(async () => {
           throw new Error(await page.locator('.attachment-drafts').innerText())
         })
+      expect(await promptValue(next)).toBe('before placeholder after')
       await folded.click()
       const editor = page.getByRole('textbox', { name: '粘贴的文字', exact: true })
       await editor.fill('restored text')
       await page.getByRole('button', { name: '放回输入框', exact: true }).click()
-      expect(await promptValue(next)).toBe('restored text')
+      expect(await promptValue(next)).toBe('before restored text after')
+      expect(await promptSelection(next)).toEqual({ from: 20, to: 20, head: 20 })
       expect(await page.locator('.attachment-draft').count()).toBe(0)
+      await expect.poll(() => next.evaluate(element => document.activeElement === element)).toBe(true)
+      await next.press('ControlOrMeta+z')
+      expect(await promptValue(next)).toBe('before placeholder after')
     } finally {
       await context.close()
     }

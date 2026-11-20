@@ -20,6 +20,7 @@ sources:
   - apps/web/src/core
   - apps/web/src/components
   - apps/web/src/conversation.ts
+  - apps/web/src/conversation/SideQuestion.tsx
   - apps/web/src/conversation/useTranscriptProjection.ts
   - apps/web/src/hooks/useSubmission.ts
   - apps/web/src/MessageContent.tsx
@@ -223,6 +224,12 @@ Host 从启动起在内存里计数自己发出的字节（[traffic.ts](../apps/
 - **刷新后的未知结果。** 只有原目标匹配当前输入才恢复文字，其余只恢复原请求卡片与 `requestId`。
 
 创建 Agent 的未知请求独立于消息草稿，沿用原 `requestId`，跨窗口先取得 Web Lock 再核对同一记录；规则见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#创建的待确认请求)。
+
+### 再次旁支提问
+
+浏览器在当前窗口为每个会话保留一张 `/btw` 旁支卡。卡还在时再次发送，先询问是否替换。选择「保留第一问」或退出确认，原卡、原请求和第二问草稿都保留。切换会话取消这次确认，草稿跟随原会话。手机从旁支卡返回对话只收起卡，仍可重开或用「关闭并归档」结束。
+
+「替换并发送」只对确认时那张卡的请求 ID 生效。若首问仍在启动，收到迟到的回执后只清理首问的分叉。首问结果未知时，可保留它并用原请求重试。确认替换时不会重发首问，若它已开始但回执丢失，其分叉仍可在会话列表里找到。第二问按自身的回执或失败状态更新旁支卡。
 
 ## 原生客户端的流
 

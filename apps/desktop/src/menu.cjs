@@ -20,6 +20,7 @@ const COPY = defineCopy(
     cut: '剪切',
     copy: '拷贝',
     paste: '粘贴',
+    pastePlainText: '粘贴纯文本',
     selectAll: '全选',
     view: '显示',
     agents: '我的 Agent',
@@ -51,6 +52,7 @@ const COPY = defineCopy(
     cut: 'Cut',
     copy: 'Copy',
     paste: 'Paste',
+    pastePlainText: 'Paste as Plain Text',
     selectAll: 'Select All',
     view: 'View',
     agents: 'My Agents',
@@ -77,7 +79,7 @@ const COPY = defineCopy(
  * used, so it asks nothing of the page.
  * The two items' keys are the focused window's own bindings (`spaceAccelerator`); the template is built again when they
  * change.
- * @param {{ packaged: boolean, onAbout?: () => void, onSettings?: () => void, onCheckForUpdates: () => void, onSpace?: (space: 'code' | 'agents') => void, onSafeMode?: () => void, accelerators?: SpaceAccelerators }} input
+ * @param {{ packaged: boolean, onAbout?: () => void, onSettings?: () => void, onCheckForUpdates: () => void, onPastePlainText?: () => void, onSpace?: (space: 'code' | 'agents') => void, onSafeMode?: () => void, accelerators?: SpaceAccelerators }} input
  * @returns {import('electron').MenuItemConstructorOptions[]}
  */
 function menuTemplate({
@@ -85,6 +87,7 @@ function menuTemplate({
   onAbout = () => {},
   onSettings = () => {},
   onCheckForUpdates,
+  onPastePlainText = () => {},
   onSpace = () => {},
   onSafeMode = () => {},
   accelerators = DEFAULT_SPACE_ACCELERATORS,
@@ -117,6 +120,12 @@ function menuTemplate({
         { role: 'cut', label: COPY.cut },
         { role: 'copy', label: COPY.copy },
         { role: 'paste', label: COPY.paste },
+        {
+          label: COPY.pastePlainText,
+          id: 'paste-plain-text',
+          ...(accelerators.pastePlainTextConflict ? {} : { accelerator: 'Command+Shift+V' }),
+          click: () => onPastePlainText(),
+        },
         { role: 'selectAll', label: COPY.selectAll },
       ],
     },
@@ -163,7 +172,7 @@ function menuTemplate({
   ]
 }
 
-/** @typedef {{ code: string | null, agents: string | null }} SpaceAccelerators */
+/** @typedef {{ code: string | null, agents: string | null, pastePlainTextConflict?: true }} SpaceAccelerators */
 
 /** @type {SpaceAccelerators} */
 const DEFAULT_SPACE_ACCELERATORS = Object.freeze({ code: 'Shift+CmdOrCtrl+1', agents: 'Shift+CmdOrCtrl+2' })
@@ -280,7 +289,12 @@ function spaceMenu({ focused, item, rebuild = () => {} }) {
   const sync = (rebuildLabels = false) => {
     const contents = focused()
     const wanted = (contents && keysOf.get(contents)) ?? DEFAULT_SPACE_ACCELERATORS
-    if (rebuildLabels || wanted.code !== shown.code || wanted.agents !== shown.agents) {
+    if (
+      rebuildLabels
+      || wanted.code !== shown.code
+      || wanted.agents !== shown.agents
+      || wanted.pastePlainTextConflict !== shown.pastePlainTextConflict
+    ) {
       shown = wanted
       rebuild(wanted)
     }
@@ -311,7 +325,13 @@ function spaceMenu({ focused, item, rebuild = () => {} }) {
    */
   const keys = (contents, value) => {
     const record = value && typeof value === 'object' ? /** @type {Record<string, unknown>} */ (value) : {}
-    keysOf.set(contents, { code: spaceAccelerator(record.code), agents: spaceAccelerator(record.agents) })
+    keysOf.set(contents, {
+      code: spaceAccelerator(record.code),
+      agents: spaceAccelerator(record.agents),
+      ...(record.pastePlainTextConflict === true || record.code === 'Mod+Shift+KeyV' || record.agents === 'Mod+Shift+KeyV'
+        ? { pastePlainTextConflict: true }
+        : {}),
+    })
     sync()
   }
   return { ready, sync, keys }

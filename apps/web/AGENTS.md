@@ -35,8 +35,8 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 
 仅淡入消息。脚本用 `motionAllowed`。
 
-设置留会话草稿和本次授权读回（CLIENT-LOADING）；准备原号（DESIGN）；终端折叠保活（TERMINAL）；暂存回执（GIT-DELIVERY）。ProfileLayer跨断点同实例，保留草稿/焦点/未知写，撤权卸载（CUSTOM-AGENTS）。
+设置保留草稿与授权读回，准备沿用原号；终端折叠保活，暂存保留回执。ProfileLayer 跨断点沿用实例、草稿、焦点与未知写，撤权卸载。
 
-- 附件专用上传，未知提交保留原请求与引用；读能力的断线提示归连接横幅；裸 `@` 无预选（ATTACHMENTS.md）。
-- Slash 透传 Harness 命令；技能只补全，pi 限开头（HARNESSES.md）。
+- 附件专用上传，未知提交沿用请求与引用；断线读能力看连接横幅；裸 `@` 无预选。纯文本粘贴替换选区（ATTACHMENTS）。
+- Slash 透传 Harness 命令；技能只补全，pi 限开头（HARNESSES）。替换 `/btw` 先确认；PR 摘录只追加草稿。
 - 外观未知写在同页按 Host 与设备保留，设置和安全模式共用（CUSTOMIZATION）。

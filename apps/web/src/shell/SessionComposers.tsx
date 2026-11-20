@@ -1,4 +1,5 @@
 import { SHELL_COPY } from './copy.ts'
+import { useState } from 'react'
 import { FAILURE_ACTION_LABEL, failureAction, type FailureStep } from '../conversation/failureAction.ts'
 import { Eraser, GitFork } from 'lucide-react'
 import { NOT_ACCEPTED_5XX, type ModelRef, type SessionConfigOption, type TaskSummary } from '@latch/protocol'
@@ -59,7 +60,15 @@ import { hostView } from '../core/permissions.ts'
 import { DraftLoginNotice } from '../components/HarnessLogin.tsx'
 import { loginSurface } from '../panel/terminal/loginRuns.ts'
 import { SendingMessage } from '../components/SendingMessage.tsx'
-import { askSideQuestion, sideQuestionBlock, sideQuestionOf, sideQuestionRefusal } from '../conversation/SideQuestion.tsx'
+import {
+  askSideQuestion,
+  currentSideQuestion,
+  ReplaceSideQuestionDialog,
+  sideQuestionBlock,
+  sideQuestionOf,
+  sideQuestionRefusal,
+  type SideQuestion,
+} from '../conversation/SideQuestion.tsx'
 import type { ShellState } from './useShellLayout.tsx'
 import { speakerOf } from '../agents/model.ts'
 import { RouteWarning } from '../agents/parts.tsx'
@@ -276,10 +285,14 @@ export function SessionComposer({
   shell: base,
   home = false,
   pendingInTranscript = false,
+  visible = true,
+  sidePanel,
 }: {
   shell: ShellState
   home?: boolean
   pendingInTranscript?: boolean
+  visible?: boolean
+  sidePanel?: SideQuestion | undefined
 }) {
   const shell = home
     ? { ...base, ...base.homeComposerState, composerRef: base.homeComposerRef }
@@ -661,6 +674,37 @@ export function SessionComposer({
   const sideBlocked = sideQuestionBlock(submission.draft, sideOffered, sideRefusal)
   // No network on this device: the text stays a draft, and Enter obeys the same gate as the button.
   const offline = shell.connection === 'offline'
+  const mayAskSide =
+    current
+    && sideOffered
+    && !sideRefusal
+    && visible
+    && !offline
+    && gate.kind === 'open'
+    && !sessionBlock
+    && !permissionBlocked
+    && !submission.pending
+    && !submission.sending
+      ? current
+      : undefined
+  const [replaceSide, setReplaceSide] = useState<{ draft: string; question: string; requestId: string }>()
+  const replacement =
+    mayAskSide && sidePanel && replaceSide?.requestId === sidePanel.body.requestId && replaceSide.draft === submission.draft
+      ? replaceSide
+      : undefined
+  if (replaceSide && !replacement) setReplaceSide(undefined)
+  const sendSideQuestion = (question: string) => {
+    if (!mayAskSide || !question) return
+    const previous = currentSideQuestion(mayAskSide.summary.id)
+    if (previous) {
+      const draft = sideQuestion === question ? submission.draft : `/btw ${question}`
+      if (draft !== submission.draft) setSubmissionDraft(draft)
+      setReplaceSide({ draft, question, requestId: previous.body.requestId })
+      return
+    }
+    const sent = askSideQuestion(mayAskSide, question, projectFor(catalog, mayAskSide.summary), shell.active)
+    if (sent) setSubmissionDraft('')
+  }
   const answer = asked
     ? answersQuestion
       ? {
@@ -676,11 +720,7 @@ export function SessionComposer({
       : sideQuestion !== undefined && current
         ? {
             kind: 'question' as const,
-            onSubmit: () => {
-              if (!sideQuestion) return
-              setSubmissionDraft('')
-              void askSideQuestion(current, sideQuestion, projectFor(catalog, current.summary), shell.active)
-            },
+            onSubmit: () => sendSideQuestion(sideQuestion),
           }
         : undefined
   // A Harness on its own login shows its subscription's limits; a draft or session on one of Latch's services shows that
@@ -793,7 +833,7 @@ export function SessionComposer({
             }
           : undefined
       }
-      actions={composerActions(shell)}
+      actions={composerActions(shell, 'slash', sendSideQuestion)}
       onCreateTemplate={owner ? () => openSettings('general') : undefined}
       historyScope={{ deviceId: shell.snapshot.device.id, harnessId: selectedId === null ? choice.harnessId : summary?.harnessId }}
       templates={scopedTemplates(
@@ -1057,7 +1097,27 @@ export function SessionComposer({
     />
   )
   // The start page asks first, over its input; a session's input, and the start's input held under a pending send, do not.
-  if (!home || pendingInTranscript) return composer
+  if (!home || pendingInTranscript)
+    return (
+      <>
+        {composer}
+        {replacement && mayAskSide && sidePanel && (
+          <ReplaceSideQuestionDialog
+            phase={sidePanel.phase}
+            onKeep={() => setReplaceSide(undefined)}
+            onReplace={() => {
+              const firstStatus = shell.snapshot.tasks.find(task => task.id === sidePanel.forkId)?.status
+              const sent = askSideQuestion(mayAskSide, replacement.question, projectFor(catalog, mayAskSide.summary), shell.active, {
+                requestId: replacement.requestId,
+                status: firstStatus,
+              })
+              setReplaceSide(undefined)
+              if (sent) setSubmissionDraft('')
+            }}
+          />
+        )}
+      </>
+    )
   return (
     <>
       <HomeHeadline shell={base} />

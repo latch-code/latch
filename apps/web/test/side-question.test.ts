@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Message, TaskDetail } from '@latch/protocol'
+import { ApiError, NoAnswerError } from '../src/core/api.ts'
 import {
   askSideQuestion,
   closeSideQuestion,
@@ -17,6 +18,16 @@ import { slashOptions } from '../src/composer/SlashCommands.tsx'
 const message = (id: string, role: Message['role'], extra: Partial<Message> = {}) =>
   ({ id, role, text: id, createdAt: '2026-11-13T00:00:00.000Z', ...extra }) as Message
 
+function pendingReceipt() {
+  let resolve!: (value: { sessionId: string }) => void
+  let reject!: (cause: Error) => void
+  const promise = new Promise<{ sessionId: string }>((accept, refuse) => {
+    resolve = accept
+    reject = refuse
+  })
+  return { promise, resolve, reject }
+}
+
 describe('/btw', () => {
   it('keeps the fork of an open panel out of the session list, unless it is the open session', () => {
     const tasks = [{ id: 'a' }, { id: 'fork' }] as unknown as TaskDetail['summary'][]
@@ -31,6 +42,7 @@ describe('/btw', () => {
     expect(sideQuestionOf('  /btw  多行\n问题 ')).toBe('多行\n问题')
     expect(sideQuestionOf('/btw ')).toBe('')
     expect(sideQuestionOf('/btw')).toBe('')
+    expect(sideQuestionOf('／BTW 再问一次')).toBe('再问一次')
     expect(sideQuestionOf('/btwx 不是')).toBeUndefined()
     expect(sideQuestionOf('问一下 /btw')).toBeUndefined()
   })
@@ -137,6 +149,76 @@ describe('/btw', () => {
       expect(calls.slice(1).map(call => call.split(' ').slice(0, 2).join(' '))).toEqual(['PATCH tasks/fork-3'])
     } finally {
       sideQuestionTransport.request = original
+    }
+  })
+
+  it('keeps the original request through starting, unknown, failed and open until the exact replacement is approved', async () => {
+    const detail = {
+      summary: { id: 'replace-src', harnessId: 'standard', status: 'idle' },
+      messages: [message('u1', 'user'), message('a1', 'assistant')],
+    } as unknown as TaskDetail
+    const request = vi.spyOn(sideQuestionTransport, 'request')
+    const attempt = () => askSideQuestion(detail, '第二问', undefined, false)
+    try {
+      const receipt = pendingReceipt()
+      request.mockReturnValueOnce(receipt.promise)
+      const original = askSideQuestion(detail, '第一问', undefined, false)
+      const first = currentSideQuestion(detail.summary.id)!
+      expect(first.phase).toBe('starting')
+      expect(attempt()).toBeUndefined()
+      expect(currentSideQuestion(detail.summary.id)).toBe(first)
+      receipt.reject(new NoAnswerError())
+      await original
+      expect(currentSideQuestion(detail.summary.id)).toMatchObject({ phase: 'unknown', body: first.body })
+      expect(attempt()).toBeUndefined()
+      expect(request).toHaveBeenCalledTimes(1)
+
+      request.mockRejectedValueOnce(new ApiError(400, 'invalid-prompt', '没有开始'))
+      const failed = askSideQuestion(detail, '下一问', undefined, false, { requestId: first.body.requestId })
+      await failed
+      const next = currentSideQuestion(detail.summary.id)!
+      expect(next).toMatchObject({ phase: 'failed', question: '下一问' })
+      expect(attempt()).toBeUndefined()
+      expect(askSideQuestion(detail, '迟到的确认', undefined, false, { requestId: first.body.requestId })).toBeUndefined()
+      expect(request).toHaveBeenCalledTimes(2)
+
+      request.mockResolvedValueOnce({ sessionId: 'fork-answer' })
+      await askSideQuestion(detail, '第二问', undefined, false, { requestId: next.body.requestId })
+      expect(attempt()).toBeUndefined()
+      expect(currentSideQuestion(detail.summary.id)).toMatchObject({ phase: 'open', forkId: 'fork-answer' })
+      expect(request).toHaveBeenCalledTimes(3)
+    } finally {
+      request.mockResolvedValue({})
+      await closeSideQuestion(detail.summary.id, false)
+      request.mockRestore()
+    }
+  })
+
+  it('archives the first fork when its start arrives after a confirmed replacement and leaves the second card open', async () => {
+    const detail = {
+      summary: { id: 'late-src', harnessId: 'standard', status: 'idle' },
+      messages: [message('u1', 'user'), message('a1', 'assistant')],
+    } as unknown as TaskDetail
+    const request = vi.spyOn(sideQuestionTransport, 'request').mockResolvedValue({})
+    try {
+      const receipt = pendingReceipt()
+      request.mockReturnValueOnce(receipt.promise)
+      const first = askSideQuestion(detail, '第一问', undefined, false)
+      const requestId = currentSideQuestion(detail.summary.id)!.body.requestId
+      request.mockResolvedValueOnce({ sessionId: 'fork-second' })
+      await askSideQuestion(detail, '第二问', undefined, false, { requestId })
+      receipt.resolve({ sessionId: 'fork-first' })
+      await first
+      expect(currentSideQuestion(detail.summary.id)).toMatchObject({ phase: 'open', forkId: 'fork-second' })
+      expect(request.mock.calls.map(([path, init]) => [init?.method, path])).toEqual([
+        ['POST', 'tasks'],
+        ['POST', 'tasks'],
+        ['POST', 'tasks/fork-first/cancel'],
+        ['PATCH', 'tasks/fork-first'],
+      ])
+    } finally {
+      await closeSideQuestion(detail.summary.id, false)
+      request.mockRestore()
     }
   })
 })

@@ -840,11 +840,13 @@ export function checkDuration(check: Pick<GitCheck, 'startedAt' | 'completedAt'>
   return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${seconds}` : `${minutes}:${seconds}`
 }
 
-/** A failed check's log excerpt for the composer draft, fenced, with the check and the commit it ran on. */
-export function checkExcerpt(input: { number: number; check: string; sha?: string | undefined; text: string }): string {
-  const fence = fenceFor(input.text)
+/** A failed check's commit and, if read, its fenced log for the composer draft. */
+export function checkExcerpt(input: { number: number; check: string; sha?: string | undefined; text?: string | undefined }): string {
   const at = input.sha ? `（${shortSha(input.sha)}）` : ''
-  return `PR #${input.number} 的检查 ${input.check} 失败${at}：\n\n${fence}text\n${input.text.replace(/\s+$/u, '')}\n${fence}`
+  const heading = `PR #${input.number} 的检查 ${input.check} 失败${at}`
+  if (input.text === undefined) return heading
+  const fence = fenceFor(input.text)
+  return `${heading}：\n\n${fence}text\n${input.text.replace(/\s+$/u, '')}\n${fence}`
 }
 
 /** Where a review or comment is: the file and line of a line comment, else what kind of remark it is. */

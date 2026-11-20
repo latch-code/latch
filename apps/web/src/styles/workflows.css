@@ -487,6 +487,10 @@
   padding-block-start: env(safe-area-inset-top);
   padding-block-end: env(safe-area-inset-bottom);
 }
+.side-question-resume {
+  max-width: var(--content-width);
+  margin-inline: auto;
+}
 .side-question-head {
   display: flex;
   align-items: center;

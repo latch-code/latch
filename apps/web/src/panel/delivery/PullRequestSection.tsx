@@ -1,10 +1,11 @@
 import { CircleDashed, CircleHelp, CircleMinus, GitPullRequest, MessageSquarePlus } from 'lucide-react'
-import type { Ref } from 'react'
+import { useMemo, useState, type ReactNode, type Ref } from 'react'
 import type { GitCheck, GitPrComment, GitPrState, GitPullRequest as PullRequest } from '@latch/protocol'
 import {
   Badge,
   Button,
   ButtonLink,
+  Checkbox,
   ICON_STROKE,
   IconButton,
   Spinner,
@@ -20,7 +21,7 @@ import {
   WarningGlyph,
   CloseGlyph,
 } from '@latch/ui'
-import { VisibleText } from '../../components/VisibleText.tsx'
+import { escapeHiddenCharacters, VisibleText } from '../../components/VisibleText.tsx'
 import {
   checkDuration,
   checkExcerpt,
@@ -46,6 +47,9 @@ const COPY = defineCopy(
     logName: (value1: string | number) => `${value1} 的日志`,
     logTail: '日志的最后 200 行',
     chat: '加入对话',
+    selectFeedback: (label: string) => `选择 ${label}`,
+    clearFeedback: '取消选择',
+    addFeedback: (count: number) => `将 ${formatNumber(count)} 项加入草稿`,
     open: '打开',
     refresh: '刷新',
     draft: '草稿',
@@ -77,6 +81,9 @@ const COPY = defineCopy(
     logName: (value1: string | number) => `Log for ${value1}`,
     logTail: 'Last 200 lines of the log',
     chat: 'Add to chat',
+    selectFeedback: (label: string) => `Select ${label}`,
+    clearFeedback: 'Clear selection',
+    addFeedback: (count: number) => plural(count, { one: 'Add 1 item to draft', other: 'Add {n} items to draft' }),
     open: 'Open',
     refresh: 'Refresh',
     draft: 'Draft',
@@ -119,6 +126,7 @@ export interface PullRequestSectionProps {
   form: PrForm
   onForm: (form: PrForm) => void
   canWrite: boolean
+  canReadFiles: boolean
   /** Nothing to merge into the base (`nothingToMerge`): no form to make a pull request. */
   nothingAhead?: boolean
   disabled: boolean
@@ -157,6 +165,7 @@ function CheckStateGlyph({ state }: { state: GitCheck['state'] }) {
 function CheckRow({
   check,
   pr,
+  pick,
   log,
   onReadLog,
   onCloseLog,
@@ -164,6 +173,7 @@ function CheckRow({
 }: {
   check: GitCheck
   pr: PullRequest
+  pick?: ReactNode
   log: LogRead | undefined
   onReadLog: (job: string) => void
   onCloseLog: (job: string) => void
@@ -174,6 +184,7 @@ function CheckRow({
   return (
     <>
       <div className="delivery-check" data-state={check.state}>
+        {pick}
         <CheckStateGlyph state={check.state} />
         <span className="delivery-check-name" title={check.workflow ? `${check.workflow} · ${check.name}` : check.name}>
           <VisibleText text={check.name} />
@@ -227,10 +238,22 @@ function CheckRow({
   )
 }
 
-function Comment({ comment, pr, onCompose }: { comment: GitPrComment; pr: PullRequest; onCompose?: ((text: string) => void) | undefined }) {
+function Comment({
+  comment,
+  pr,
+  pick,
+  onCompose,
+}: {
+  comment: GitPrComment
+  pr: PullRequest
+  pick?: ReactNode
+  onCompose?: ((text: string) => void) | undefined
+}) {
+  const label = escapeHiddenCharacters(`${comment.author} · ${commentPlace(comment)}`)
   return (
-    <article className="delivery-comment" aria-label={`${comment.author} · ${commentPlace(comment)}`}>
+    <article className="delivery-comment" aria-label={label}>
       <header className="delivery-comment-head">
+        {pick}
         <strong>
           <VisibleText text={comment.author} />
         </strong>
@@ -288,6 +311,161 @@ function PrRow({ pr, onReload, loading }: { pr: PullRequest; onReload: () => voi
         </span>
       </div>
     </div>
+  )
+}
+
+function feedbackKeys(state: GitPrState) {
+  const checks = state.checks.map(check =>
+    JSON.stringify(['check', check.name, check.workflow, check.state, check.job, check.startedAt, check.completedAt]),
+  )
+  const comments = (state.discussion ?? []).map(comment =>
+    JSON.stringify(['comment', comment.kind, comment.author, comment.review, comment.path, comment.line, comment.body, comment.at]),
+  )
+  const identities = [...checks, ...comments]
+  const counts = new Map<string, number>()
+  for (const identity of identities) counts.set(identity, (counts.get(identity) ?? 0) + 1)
+  // Identical rows can be selected individually while displayed, but cannot be matched safely across reads.
+  const keys = identities.map((identity, index) => (counts.get(identity) === 1 ? identity : `duplicate:${index}`))
+  return { checks: keys.slice(0, checks.length), comments: keys.slice(checks.length), counts }
+}
+
+function PrFeedback({
+  state,
+  pr,
+  stale,
+  logs,
+  canReadFiles,
+  onReadLog,
+  onCloseLog,
+  onCompose,
+}: Pick<PullRequestSectionProps, 'logs' | 'canReadFiles' | 'onReadLog' | 'onCloseLog' | 'onCompose'> & {
+  state: GitPrState
+  pr: PullRequest
+  stale: boolean
+}) {
+  const keys = useMemo(() => feedbackKeys(state), [state])
+  const canPick = canReadFiles && !!onCompose
+  const [selection, setSelection] = useState<{ source: GitPrState; keys: Set<string> }>()
+  let picked = selection?.keys
+  if (selection && (!canPick || selection.source !== state)) {
+    picked = canPick ? new Set([...selection.keys].filter(key => keys.counts.get(key) === 1)) : undefined
+    setSelection(picked?.size ? { source: state, keys: picked } : undefined)
+  }
+
+  const select = (key: string, checked: boolean) => {
+    setSelection(previous => {
+      if (!checked && !previous?.keys.has(key)) return previous
+      const next = new Set(previous?.keys)
+      if (checked) next.add(key)
+      else next.delete(key)
+      return next.size ? { source: state, keys: next } : undefined
+    })
+  }
+  const checkbox = (key: string, name: string) => (
+    <label className="delivery-feedback-pick">
+      <Checkbox
+        aria-label={COPY.selectFeedback(escapeHiddenCharacters(name))}
+        checked={picked?.has(key) ?? false}
+        onChange={event => select(key, event.target.checked)}
+      />
+    </label>
+  )
+  const addOne = (key: string, text: string) => {
+    onCompose?.(text)
+    select(key, false)
+  }
+  const addPicked = () => {
+    if (!onCompose || !picked?.size) return
+    const excerpts: string[] = []
+    for (const [index, check] of state.checks.entries()) {
+      if (!picked.has(keys.checks[index])) continue
+      const log = check.job ? logs[check.job] : undefined
+      excerpts.push(
+        checkExcerpt({ number: pr.number, check: check.name, sha: pr.headSha, text: log?.kind === 'ready' ? log.log.text : undefined }),
+      )
+    }
+    for (const [index, comment] of (state.discussion ?? []).entries()) {
+      if (picked.has(keys.comments[index])) excerpts.push(commentExcerpt({ number: pr.number, comment }))
+    }
+    if (excerpts.length) onCompose(excerpts.join('\n\n'))
+    setSelection(undefined)
+  }
+
+  return (
+    <>
+      <div className="delivery-subhead">
+        <span>{COPY.checks}</span>
+        {pr.headSha && <code className="delivery-sha">{shortSha(pr.headSha)}</code>}
+        {stale && (
+          <Badge tone="warn" title={COPY.oldCheck}>
+            {COPY.oldCommit}
+          </Badge>
+        )}
+      </div>
+      {state.checks.length === 0 ? (
+        <p className="delivery-group-empty">{COPY.noChecks}</p>
+      ) : (
+        <div className="delivery-checks" role="list" aria-label={COPY.checks}>
+          {state.checks.map((check, index) => {
+            const key = keys.checks[index]
+            return (
+              <div role="listitem" key={key}>
+                <CheckRow
+                  check={check}
+                  pr={pr}
+                  pick={
+                    canPick && check.state === 'fail' && pr.headSha
+                      ? checkbox(key, check.workflow ? `${check.workflow} · ${check.name}` : check.name)
+                      : undefined
+                  }
+                  log={check.job ? logs[check.job] : undefined}
+                  onReadLog={onReadLog}
+                  onCloseLog={onCloseLog}
+                  onCompose={onCompose ? text => addOne(key, text) : undefined}
+                />
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {state.discussion && (
+        <>
+          <div className="delivery-subhead">
+            <span>{COPY.comments}</span>
+            <span className="delivery-count">{state.discussion.length}</span>
+            {state.discussionCapped && <span className="delivery-count">{COPY.recent(state.discussion.length)}</span>}
+          </div>
+          {state.discussion.length === 0 ? (
+            <p className="delivery-group-empty">{COPY.noComments}</p>
+          ) : (
+            <div className="delivery-comments">
+              {state.discussion.map((comment, index) => {
+                const key = keys.comments[index]
+                return (
+                  <Comment
+                    key={key}
+                    comment={comment}
+                    pr={pr}
+                    pick={canPick ? checkbox(key, `${comment.author} · ${commentPlace(comment)}`) : undefined}
+                    onCompose={onCompose ? text => addOne(key, text) : undefined}
+                  />
+                )
+              })}
+            </div>
+          )}
+        </>
+      )}
+      {!!picked?.size && (
+        <div className="delivery-feedback-actions">
+          <Button size="sm" variant="ghost" onClick={() => setSelection(undefined)}>
+            {COPY.clearFeedback}
+          </Button>
+          <Button size="sm" variant="outline" icon={MessageSquarePlus} onClick={addPicked}>
+            {COPY.addFeedback(picked.size)}
+          </Button>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -355,51 +533,17 @@ export function PullRequestSection(props: PullRequestSectionProps) {
       {pr && (
         <>
           <PrRow pr={pr} onReload={props.onReload} loading={loading} />
-          <div className="delivery-subhead">
-            <span>{COPY.checks}</span>
-            {pr.headSha && <code className="delivery-sha">{shortSha(pr.headSha)}</code>}
-            {stale && (
-              <Badge tone="warn" title={COPY.oldCheck}>
-                {COPY.oldCommit}
-              </Badge>
-            )}
-          </div>
-          {state.checks.length === 0 ? (
-            <p className="delivery-group-empty">{COPY.noChecks}</p>
-          ) : (
-            <div className="delivery-checks" role="list" aria-label={COPY.checks}>
-              {state.checks.map((check, index) => (
-                <div role="listitem" key={`${check.name}\n${index}`}>
-                  <CheckRow
-                    check={check}
-                    pr={pr}
-                    log={check.job ? logs[check.job] : undefined}
-                    onReadLog={props.onReadLog}
-                    onCloseLog={props.onCloseLog}
-                    onCompose={onCompose}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-          {state.discussion && (
-            <>
-              <div className="delivery-subhead">
-                <span>{COPY.comments}</span>
-                <span className="delivery-count">{state.discussion.length}</span>
-                {state.discussionCapped && <span className="delivery-count">{COPY.recent(state.discussion.length)}</span>}
-              </div>
-              {state.discussion.length === 0 ? (
-                <p className="delivery-group-empty">{COPY.noComments}</p>
-              ) : (
-                <div className="delivery-comments">
-                  {state.discussion.map((comment, index) => (
-                    <Comment key={`${comment.kind}\n${comment.at ?? ''}\n${index}`} comment={comment} pr={pr} onCompose={onCompose} />
-                  ))}
-                </div>
-              )}
-            </>
-          )}
+          <PrFeedback
+            key={JSON.stringify([pr.url, pr.number, pr.headSha])}
+            state={state}
+            pr={pr}
+            stale={stale}
+            logs={logs}
+            canReadFiles={props.canReadFiles}
+            onReadLog={props.onReadLog}
+            onCloseLog={props.onCloseLog}
+            onCompose={onCompose}
+          />
         </>
       )}
       {state && !pr && nothingAhead && (

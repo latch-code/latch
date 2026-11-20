@@ -1,6 +1,6 @@
 import { draftConfig, projectFor, thinkingLevels } from '../composerChoice.ts'
 import { FORK_CONTINUATION_PROMPT, forkSource } from '../forkChoice.ts'
-import { askSideQuestion, sideQuestionRefusal } from '../conversation/SideQuestion.tsx'
+import { sideQuestionOf, sideQuestionRefusal } from '../conversation/SideQuestion.tsx'
 import { openControlWhenShown } from '../composer/ComposerControl.tsx'
 import { LATCH_ACTIONS, type LatchActionName } from '../composer/latchActions.ts'
 import type { SlashAction } from '../composer/slash-options.ts'
@@ -38,6 +38,7 @@ const COPY = defineCopy(
 export function composerActions(
   shell: ShellState,
   origin: 'slash' | 'palette' = 'slash',
+  sendSideQuestion?: (question: string) => void,
 ): Array<SlashAction & { name: LatchActionName; label: string }> {
   const { selectedId, current, summary, catalog, submission, access } = shell
   const session = selectedId !== null && current?.summary.id === selectedId && !summary?.personal
@@ -68,10 +69,11 @@ export function composerActions(
       shell.armClear(true)
     },
     btw: argument => {
-      if (!argument || !current) {
-        shell.setSubmissionDraft('/btw ')
+      if (argument && sendSideQuestion) sendSideQuestion(argument)
+      else {
+        if (!sideQuestionOf(submission.draft)) shell.setSubmissionDraft('/btw ')
         focus()
-      } else void askSideQuestion(current, argument, projectFor(catalog, current.summary), shell.active)
+      }
     },
     fork: argument => {
       const last = current?.messages.at(-1)
@@ -130,7 +132,7 @@ export function composerActions(
         ...action,
         description: action.label,
         run: argument => {
-          if (action.name !== 'new' && action.name !== 'fork') consume()
+          if (action.name !== 'new' && action.name !== 'fork' && action.name !== 'btw') consume()
           invoke[action.name](argument)
         },
         ...(reason[action.name] ? { unavailable: reason[action.name] } : {}),

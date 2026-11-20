@@ -9,7 +9,7 @@ import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, installFakeGh, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openPanelTab, openSession, settleShell, showTooltip } from './helpers/layout.ts'
+import { noHorizontalOverflow, openPanelTab, openSession, reachable, settleShell, showTooltip } from './helpers/layout.ts'
 import { promptValue } from './helpers/prompt.ts'
 
 const OUT = 'test-results/pr-checks'
@@ -215,6 +215,13 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
           body: "'formatCode' is declared but never used",
           created_at: '2026-11-12T10:06:00Z',
         },
+        {
+          user: { login: 'tester' },
+          path: 'src/api/currency.ts',
+          line: 27,
+          body: 'Cover currencies without fractional units.',
+          created_at: '2026-11-12T10:07:00Z',
+        },
       ]
     })
     await section.getByRole('button', { name: '刷新' }).click()
@@ -224,6 +231,93 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
     await section.locator('.delivery-check[data-state="skipped"]').getByText('跳过').waitFor()
     await panel.locator('.delivery-bar').getByText('检查失败').waitFor()
     await row.getByText('要求修改').waitFor()
+
+    const draft = page.locator('.composer .composer-input [role="textbox"]').first()
+    const comment = section.getByRole('article', { name: 'reviewer · src/filters/CurrencyFilter.tsx:18' })
+    const anotherComment = section.getByRole('article', { name: 'tester · src/api/currency.ts:27' })
+    const checkPick = failing.getByRole('checkbox', { name: '选择 CI · test (node 24)' })
+    const commentPick = comment.getByRole('checkbox', { name: '选择 reviewer · src/filters/CurrencyFilter.tsx:18' })
+    const anotherPick = anotherComment.getByRole('checkbox', { name: '选择 tester · src/api/currency.ts:27' })
+    const batch = (count: number) => section.getByRole('button', { name: `将 ${count} 项加入草稿` })
+    const existingDraft = '先保留这段草稿。\n再检查日元取整。'
+    const commentQuote = "PR #1 · reviewer · src/filters/CurrencyFilter.tsx:18：\n\n```text\n'formatCode' is declared but never used\n```"
+    const messages = (await owner.json<TaskDetail>(`tasks/${first}`)).messages.length
+    await draft.fill(existingDraft)
+    await checkPick.press('Space')
+    await commentPick.check()
+    await anotherPick.check()
+    await anotherPick.uncheck()
+    await batch(2).waitFor()
+    await anotherPick.check()
+    const logReadsBeforeBatch = (await gh.calls()).filter(args => args[0] === 'run' && args[1] === 'view').length
+    await shots(page, 'feedback-selected')
+    await batch(3).click()
+    await expect
+      .poll(() => promptValue(draft), SLOW)
+      .toBe(
+        [
+          existingDraft,
+          `PR #1 的检查 test (node 24) 失败（${head.slice(0, 7)}）`,
+          commentQuote,
+          'PR #1 · tester · src/api/currency.ts:27：\n\n```text\nCover currencies without fractional units.\n```',
+        ].join('\n\n'),
+      )
+    expect((await owner.json<TaskDetail>(`tasks/${first}`)).messages.length).toBe(messages)
+    expect((await gh.calls()).filter(args => args[0] === 'run' && args[1] === 'view').length).toBe(logReadsBeforeBatch)
+    expect(await checkPick.isChecked()).toBe(false)
+    expect(await commentPick.isChecked()).toBe(false)
+    expect(await anotherPick.isChecked()).toBe(false)
+    await draft.fill('')
+
+    // The same feedback survives refresh and reordering. A comment whose words changed must be picked again.
+    await checkPick.check()
+    await commentPick.check()
+    await anotherPick.check()
+    await gh.update(state => {
+      const pr = state.prs[0]
+      pr.lineComments = [
+        { user: { login: 'reviewer' }, path: 'src/api/currency.ts', line: 2, body: 'Earlier note.', created_at: '2026-11-12T10:04:00Z' },
+        pr.lineComments[0],
+        { ...pr.lineComments[1], body: 'Also cover currencies with three fractional digits.' },
+      ]
+    })
+    await section.getByRole('button', { name: '刷新' }).click()
+    await anotherComment.getByText('Also cover currencies with three fractional digits.').waitFor()
+    await batch(2).waitFor()
+    expect(await checkPick.isChecked()).toBe(true)
+    expect(await commentPick.isChecked()).toBe(true)
+    expect(await anotherPick.isChecked()).toBe(false)
+
+    await gh.update(state => {
+      const pr = state.prs[0]
+      pr.lineComments.push(pr.lineComments[1])
+    })
+    await section.getByRole('button', { name: '刷新' }).click()
+    await expect.poll(() => comment.count(), SLOW).toBe(2)
+    await batch(1).waitFor()
+    expect(await commentPick.first().isChecked()).toBe(false)
+    expect(await commentPick.last().isChecked()).toBe(false)
+    await gh.update(state => {
+      state.prs[0].lineComments.pop()
+    })
+    await section.getByRole('button', { name: '刷新' }).click()
+    await expect.poll(() => comment.count(), SLOW).toBe(1)
+    expect(await commentPick.isChecked()).toBe(false)
+
+    // A different session bound to the very same PR never inherits its selection or draft.
+    await draft.fill(existingDraft)
+    await choose(page, second)
+    await openDelivery(page)
+    await commentPick.waitFor()
+    expect(await commentPick.isChecked()).toBe(false)
+    expect(await promptValue(draft)).toBe('')
+    await choose(page, first)
+    await openDelivery(page)
+    await commentPick.waitFor()
+    expect(await commentPick.isChecked()).toBe(false)
+    expect(await promptValue(draft)).toBe(existingDraft)
+    await draft.fill('')
+
     await failing.getByRole('button', { name: '查看日志' }).click()
     const log = section.getByLabel('test (node 24) 的日志')
     await expect.poll(() => log.innerText(), SLOW).toContain('rounds JPY to 0 decimals')
@@ -236,22 +330,19 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
       await failing.getByRole('button', { name: '查看日志' }).click()
       await expect.poll(() => log.innerText(), SLOW).toContain('rounds JPY to 0 decimals')
     }
-    const messages = (await owner.json<TaskDetail>(`tasks/${first}`)).messages.length
+    await checkPick.check()
     await section.locator('.delivery-log').getByRole('button', { name: '加入对话' }).click()
-    const draft = page.locator('.composer .composer-input [role="textbox"]').first()
     await expect.poll(() => promptValue(draft), SLOW).toContain(`PR #1 的检查 test (node 24) 失败（${head.slice(0, 7)}）：`)
+    expect(await checkPick.isChecked()).toBe(false)
     expect(await promptValue(draft)).toContain('```text\n[Run tests]\nFAIL src/api/transactions.test.ts')
     expect((await owner.json<TaskDetail>(`tasks/${first}`)).messages.length).toBe(messages)
     await draft.fill('')
 
     // Reviews and comments, read-only, each into the draft with its author and place.
-    const comment = section.getByRole('article', { name: 'reviewer · src/filters/CurrencyFilter.tsx:18' })
     await comment.getByText("'formatCode' is declared but never used").waitFor()
     await section.getByRole('article', { name: 'reviewer · 要求修改' }).getByText('Round JPY to whole yen.').waitFor()
     await comment.getByRole('button', { name: '加入对话' }).click()
-    await expect
-      .poll(() => promptValue(draft), SLOW)
-      .toBe("PR #1 · reviewer · src/filters/CurrencyFilter.tsx:18：\n\n```text\n'formatCode' is declared but never used\n```")
+    await expect.poll(() => promptValue(draft), SLOW).toBe(commentQuote)
     await draft.fill('')
     await shots(page, 'reviews')
 
@@ -298,12 +389,20 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
       await openLog.click()
       await expect.poll(() => authorized, SLOW).toBe(200)
       await log.waitFor()
+      await checkPick.check()
+      await commentPick.check()
+      await batch(2).waitFor()
       await owner.json(`devices/${desk.deviceId}`, { method: 'PATCH', body: { dataScope: 'work' } })
       await panel.getByText('这台设备看不到会话文件夹里的文件').waitFor()
       await log.waitFor({ state: 'hidden' })
       await comment.waitFor({ state: 'hidden' })
+      await checkPick.waitFor({ state: 'hidden' })
+      await batch(2).waitFor({ state: 'hidden' })
       expect((await owner.confirmed(`devices/${desk.deviceId}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
       await openLog.waitFor()
+      await commentPick.waitFor()
+      expect(await checkPick.isChecked()).toBe(false)
+      expect(await commentPick.isChecked()).toBe(false)
       await expect.poll(() => openLog.getAttribute('aria-expanded'), SLOW).toBe('false')
       expect(await log.count()).toBe(0)
     } finally {
@@ -332,6 +431,16 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
     await comeBack(page)
     await section.getByText('旧提交', { exact: true }).waitFor()
     await shots(page, 'stale')
+    await checkPick.check()
+    await commentPick.check()
+    const newHead = git('rev-parse', 'HEAD')
+    await gh.update(state => {
+      state.prs[0].headRefOid = newHead
+    })
+    await section.getByRole('button', { name: '刷新' }).click()
+    await section.getByText(newHead.slice(0, 7), { exact: true }).waitFor()
+    expect(await checkPick.isChecked()).toBe(false)
+    expect(await commentPick.isChecked()).toBe(false)
 
     // gh logged out, then gone: short words, the command behind the Hint.
     await gh.update(state => {
@@ -367,9 +476,23 @@ it('creates a PR through a fake gh, binds an open one instead of a second, and b
     await smallSection.getByLabel('test (node 24) 的日志').waitFor()
     await noHorizontalOverflow(phone.page)
     await shots(phone.page, 'log')
+    await smallSection.locator('.delivery-check[data-state="fail"]').getByRole('checkbox').check()
+    await smallSection.getByRole('article', { name: 'reviewer · src/filters/CurrencyFilter.tsx:18' }).getByRole('checkbox').check()
+    await smallSection.getByRole('article', { name: 'tester · src/api/currency.ts:27' }).getByRole('checkbox').check()
+    const phoneBatch = smallSection.getByRole('button', { name: '将 3 项加入草稿' })
+    await reachable(phoneBatch)
+    await shots(phone.page, 'feedback-selected')
     await phone.page.setViewportSize({ width: 320, height: 700 })
-    await noHorizontalOverflow(phone.page)
-    await shots(phone.page, 'log')
+    await noHorizontalOverflow(phone.page, small)
+    await reachable(phoneBatch)
+    await shots(phone.page, 'feedback-selected')
+    await phoneBatch.tap()
+    const phoneDraft = phone.page.locator('.composer .composer-input [role="textbox"]').first()
+    await expect
+      .poll(() => promptValue(phoneDraft), SLOW)
+      .toContain(`PR #1 的检查 test (node 24) 失败（${newHead.slice(0, 7)}）：\n\n\`\`\`text\n[Run tests]`)
+    expect(await promptValue(phoneDraft)).toContain(commentQuote)
+    expect((await owner.json<TaskDetail>(`tasks/${first}`)).messages.length).toBe(messages)
 
     expect(await gh.violations()).toEqual([])
     expect((await gh.calls()).some(args => args.includes('auth'))).toBe(false)

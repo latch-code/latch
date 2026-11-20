@@ -59,11 +59,19 @@ function mount(initial: string, overrides: Partial<PromptEditorProps> = {}) {
       chip.dataset.kind,
       chip.querySelector('.prompt-chip-label')!.textContent,
     ])
-  const key = (key: string, init: KeyboardEventInit = {}) =>
+  const key = (pressed: string, init: KeyboardEventInit = {}, type = 'keydown') =>
     act(() => {
-      view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }))
+      view.contentDOM.dispatchEvent(new KeyboardEvent(type, { key: pressed, bubbles: true, cancelable: true, ...init }))
     })
-  return { state, view, input: () => inputRef.current!, chips, key, render }
+  const paste = (text: string, file?: File) => {
+    const data = new DataTransfer()
+    if (text) data.setData('text/plain', text)
+    if (file) data.items.add(file)
+    act(() => {
+      view.contentDOM.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+    })
+  }
+  return { state, view, input: () => inputRef.current!, chips, key, paste, render }
 }
 
 describe('the prompt editor', () => {
@@ -152,6 +160,61 @@ describe('the prompt editor', () => {
     expect(state.draft).toBe('请 @输出-1 ')
     expect(input().selectionStart).toBe(8)
     expect(chips()).toEqual([['member', '输出一']])
+  })
+
+  it.each([{ metaKey: true }, { ctrlKey: true }, { metaKey: true, altKey: true, code: 'KeyV', key: '◊' }])(
+    'pastes long plain text inline with %o and undoes it in one step',
+    shortcut => {
+      const onPaste = vi.fn(() => true)
+      const { state, view, input, key, paste } = mount('before item after', { onPaste })
+      act(() => {
+        view.dispatch({ changes: { from: 0, insert: '>' }, userEvent: 'input.type' })
+        input().setSelectionRange(8, 12)
+      })
+      const text = '日志\r\n'.repeat(1024)
+      key('V', { ...shortcut, shiftKey: true })
+      paste(text)
+      expect(state.draft).toBe(`>before ${text.replaceAll('\r\n', '\n')} after`)
+      expect(input().selectionStart).toBe(8 + text.replaceAll('\r\n', '\n').length)
+      expect(input().selectionEnd).toBe(input().selectionStart)
+      expect(onPaste).not.toHaveBeenCalled()
+      key('z', mod)
+      expect(state.draft).toBe('>before item after')
+      expect([input().selectionStart, input().selectionEnd]).toEqual([8, 12])
+      key('z', mod)
+      expect(state.draft).toBe('before item after')
+    },
+  )
+
+  it('leaves file-only and ordinary pastes to attachments after a plain-text shortcut', () => {
+    const onPaste = vi.fn(() => true)
+    const { state, view, key, paste } = mount('draft', { onPaste })
+    const shortcut = { ...mod, shiftKey: true }
+    key('V', shortcut)
+    const file = new File(['image bytes'], 'shot.png', { type: 'image/png' })
+    paste('', file)
+    paste('log '.repeat(1024))
+    key('V', shortcut)
+    key('V', shortcut, 'keyup')
+    paste('log '.repeat(1024))
+    key('V', shortcut)
+    act(() => {
+      view.contentDOM.dispatchEvent(new FocusEvent('blur'))
+    })
+    paste('log '.repeat(1024))
+    expect(onPaste).toHaveBeenCalledTimes(4)
+    expect(state.changes).toEqual([])
+  })
+
+  it('does not change the draft or add attachments from a paste while the editor is closed to edits', () => {
+    const onPaste = vi.fn(() => true)
+    const { state, input, key, paste } = mount('draft', { disabled: true, onPaste })
+    key('V', { ...mod, shiftKey: true })
+    paste('log '.repeat(1024))
+    paste('file only')
+    expect(input().insertText('restored')).toBe(false)
+    expect(onPaste).not.toHaveBeenCalled()
+    expect(state.changes).toEqual([])
   })
 
   it('never turns a dropped file into text, and leaves the drop to the attachments', () => {

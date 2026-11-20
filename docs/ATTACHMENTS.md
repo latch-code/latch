@@ -5,8 +5,13 @@ sources:
   - apps/host/src/attachment-routes.ts
   - apps/host/src/attachment-uploads.ts
   - apps/desktop/src/host.cjs
+  - apps/desktop/src/main.cjs
+  - apps/desktop/src/menu.cjs
   - apps/web/src/core/api.ts
   - apps/web/src/hooks/useAttachments.ts
+  - apps/web/src/composer/AttachmentDrafts.tsx
+  - apps/web/src/composer/Composer.tsx
+  - apps/web/src/composer/PromptEditor.tsx
   - apps/web/src/components/AttachmentTile.tsx
   - packages/harness-acp/src/attachments.ts
   - apps/web/src/hooks/imageShrink.ts
@@ -182,7 +187,8 @@ sources:
 
 ## 输入与预览
 
-- **添加。** 输入框接收文件选择、图片粘贴和文件拖入（拖到文字上同样进附件，字节不进草稿）。超过这条连接每文件上限的不上传，直接说明上限；不能添加时按钮不停用，按下说明原因。超过 2,000 字的文字粘贴折为文本附件。
+- **添加。** 输入框接收文件选择、图片粘贴和文件拖入（拖到文字上同样进附件，字节不进草稿）。超过这条连接每文件上限的不上传，直接说明上限；不能添加时按钮不停用，按下说明原因。普通粘贴超过 2,000 字时折为文本附件。
+- **直接粘贴文字。** macOS 桌面端用 ⌘⇧V 或「编辑 › 粘贴纯文本」。如果自定义快捷键占用了 ⌘⇧V，仍可通过「编辑」菜单粘贴纯文本。浏览器用它的纯文本粘贴快捷键（如 Chrome 的 ⌘⇧V 或 Ctrl+Shift+V、Safari 的 ⌥⇧⌘V）。在光标处插入纯文字，有选区就替换选区，一次可撤销。打开折好的文本附件，编辑后按「放回输入框」也在输入框保留的光标或选区插入，一次可撤销。普通消息的正文上限是 16,000 字，超过时可用附件发送。
 - **显示。** 草稿与消息里的附件都是方块（`AttachmentTile`）：图片与视频首帧（带播放标与时长）、音频时长，其余是类型图标与扩展名；名字从中间截断。消息里的图片、视频、音频进入视野后才申请预览句柄，可能含密钥的不画。点开：图片（草稿与已发送的）看大图（同回复里的图，见 DESIGN「看大图」，从那里可在文件中打开或下载）；草稿的视频、音频与文本在输入框自己的预览里看；已发送的其余打开文件列（视频与音频以真实类型服务，文档按字节下载）。悬停写大小，按路径交出的另写「以文件交给 Agent」。
 - **永久拒绝。** Host 按这些错误码拒绝的文件只能移除，不提供重试：`attachment-invalid`、`attachment-too-large`、`attachment-type-unsupported`、`attachment-image-unsupported`、`attachment-text-unsupported`、`attachment-image-invalid`、`attachment-text-invalid`、`attachment-text-too-large`、`attachments-unsupported`。收 `files` 的 Harness 只会因太大、内容与声明不符或 Harness 没有接入读取而给出其中几个。网页（`useAttachments.ts` 的 `REFUSED`）与手机（`PhoneAttachments` 的 `refused`）是同一组。
 - **可重试。** 其余的可以重试，包括 400 `attachment-incomplete`、网络、超时与 5xx。每个文件独立重试与移除；编辑后的字节用新的上传请求。

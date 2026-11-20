@@ -1,11 +1,23 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { HarnessInfo, HostCatalog, Message, TaskDetail, TaskSummary } from '@latch/protocol'
-import { Button, IconButton, InlineNotice, StatusWord, CloseGlyph, CopyGlyph, useStreamingLayer } from '@latch/ui'
+import {
+  Button,
+  ChevronLeftGlyph,
+  CloseGlyph,
+  CopyGlyph,
+  Dialog,
+  IconButton,
+  InlineNotice,
+  MessageGlyph,
+  StatusWord,
+  useStreamingLayer,
+} from '@latch/ui'
 import { api, errorMessage, isUncertain, newRequestId } from '../core/api.ts'
 import { defineCopy } from '../core/i18n.ts'
 import { MessageContent } from '../MessageContent.tsx'
 import { VisibleText } from '../components/VisibleText.tsx'
 import { useBackLayer } from '../hooks/backStack.ts'
+import { latchActionOf } from '../composer/latchActions.ts'
 
 const COPY = defineCopy(
   {
@@ -22,6 +34,15 @@ const COPY = defineCopy(
     retry: '重试',
     insert: '插入到输入框',
     open: '打开为会话',
+    back: '返回对话',
+    resume: '查看旁支提问',
+    replaceTitle: '替换第一条旁支提问？',
+    replaceMessage: '第一问会被归档。如果它还在回答，Latch 会先停止它。',
+    replaceStarting: '第一问还在启动。收到它的回执后，Latch 会停止并归档它。',
+    replaceUnknown: '第一问是否已经开始尚未确认。如果已开始但未收到回执，可以在会话列表中找到它。',
+    replaceFailed: '第一问没有开始。你可以保留它重试，或直接发送第二问。',
+    keep: '保留第一问',
+    replace: '替换并发送',
   },
   {
     unsupported: 'This Harness does not support side questions yet',
@@ -37,6 +58,15 @@ const COPY = defineCopy(
     retry: 'Retry',
     insert: 'Insert into input',
     open: 'Open as a session',
+    back: 'Back to conversation',
+    resume: 'View side question',
+    replaceTitle: 'Replace the first side question?',
+    replaceMessage: 'The first question will be archived. If it is still answering, Latch will stop it first.',
+    replaceStarting: 'The first question is still starting. If Latch receives its start receipt, it will stop and archive it.',
+    replaceUnknown: 'The first question’s start is unconfirmed. If it started and the receipt was lost, look for it in the session list.',
+    replaceFailed: 'The first question did not start. You can keep it to retry or send the second question now.',
+    keep: 'Keep first question',
+    replace: 'Replace and send',
   },
 )
 
@@ -49,9 +79,8 @@ const COPY = defineCopy(
 
 /** `/btw <question>` as typed into the input: the question, or undefined when the text is something else. */
 export function sideQuestionOf(draft: string): string | undefined {
-  const match = /^\/btw(?:\s+([\s\S]*))?$/u.exec(draft.trimStart())
-  if (!match) return undefined
-  return (match[1] ?? '').trim()
+  const action = latchActionOf(draft)
+  return action?.name === 'btw' ? action.argument : undefined
 }
 
 /** Why /btw is not offered for this session, or undefined when it is. */
@@ -74,6 +103,7 @@ export function sideQuestionBlock(draft: string, offered: boolean, refusal: stri
 
 const SETTLING = new Set(['running', 'queued', 'awaiting-approval'])
 const ENDED: ReadonlySet<TaskSummary['status']> = new Set(['idle', 'failed', 'cancelled', 'interrupted'])
+const mayAnswer = (status: TaskSummary['status'] | undefined) => status === undefined || !ENDED.has(status)
 
 /**
  * The last message of the last settled turn: while a turn runs, the message before its prompt. Undefined when no turn
@@ -120,6 +150,7 @@ export interface SideQuestion {
   phase: 'starting' | 'unknown' | 'failed' | 'open'
   forkId?: string
   error?: string
+  minimized?: boolean
 }
 
 /** One side question per session, in memory: it is a panel of this window, not a record. */
@@ -182,7 +213,10 @@ export const currentSideQuestion = (sourceId: string): SideQuestion | undefined 
 
 async function send(question: SideQuestion): Promise<void> {
   put({ ...question, phase: 'starting' }, question.sourceId)
-  const mine = () => questions.get(question.sourceId)?.body.requestId === question.body.requestId
+  const mine = () => {
+    const latest = questions.get(question.sourceId)
+    return latest?.body.requestId === question.body.requestId ? latest : undefined
+  }
   try {
     const { sessionId } = await sideQuestionTransport.request<{ sessionId: string }>('tasks', {
       method: 'POST',
@@ -190,26 +224,37 @@ async function send(question: SideQuestion): Promise<void> {
       timeoutMs: 30_000,
     })
     // Closed (or replaced) while it started: the fork stops and goes to 已归档, and the panel stays shut.
-    if (!mine()) {
+    const latest = mine()
+    if (!latest) {
       await dismiss(sessionId, true)
       return
     }
-    put({ ...question, phase: 'open', forkId: sessionId }, question.sourceId)
+    put({ ...latest, phase: 'open', forkId: sessionId }, question.sourceId)
   } catch (cause) {
-    if (!mine()) return
+    const latest = mine()
+    if (!latest) return
     // An unknown outcome keeps the request: 重试 sends the same one, and the Host answers it once.
-    put({ ...question, phase: isUncertain(cause) ? 'unknown' : 'failed', error: errorMessage(cause) }, question.sourceId)
+    put({ ...latest, phase: isUncertain(cause) ? 'unknown' : 'failed', error: errorMessage(cause) }, question.sourceId)
   }
 }
 
-/** Starts the side question for `detail`'s session; a new one replaces a panel that is open there. */
-export async function askSideQuestion(detail: TaskDetail, question: string, workspaceId: string | undefined, running: boolean) {
-  const previous = questions.get(detail.summary.id)
-  if (previous?.forkId) void dismiss(previous.forkId, true)
-  await send({
-    sourceId: detail.summary.id,
+/** Starts a side question. Replacement requires consent for the exact request still holding the card. */
+export function askSideQuestion(
+  detail: TaskDetail,
+  question: string,
+  workspaceId: string | undefined,
+  running: boolean,
+  replace?: { requestId: string; status?: TaskSummary['status'] | undefined },
+): Promise<void> | undefined {
+  const sourceId = detail.summary.id
+  const previous = questions.get(sourceId)
+  if (previous?.body.requestId !== replace?.requestId) return undefined
+  const body = sideQuestionBody(detail, question, workspaceId, running)
+  if (previous?.forkId) void dismiss(previous.forkId, mayAnswer(replace?.status))
+  return send({
+    sourceId,
     question,
-    body: sideQuestionBody(detail, question, workspaceId, running),
+    body,
     phase: 'starting',
   })
 }
@@ -230,6 +275,41 @@ export function closeSideQuestion(sourceId: string, running: boolean): Promise<v
   const question = questions.get(sourceId)
   put(undefined, sourceId)
   return question?.forkId ? dismiss(question.forkId, running) : Promise.resolve()
+}
+
+export function ReplaceSideQuestionDialog({
+  phase,
+  onKeep,
+  onReplace,
+}: {
+  phase: SideQuestion['phase']
+  onKeep: () => void
+  onReplace: () => void
+}) {
+  const message = {
+    starting: COPY.replaceStarting,
+    unknown: COPY.replaceUnknown,
+    failed: COPY.replaceFailed,
+    open: COPY.replaceMessage,
+  }[phase]
+  return (
+    <Dialog
+      open
+      title={COPY.replaceTitle}
+      onClose={onKeep}
+      footer={
+        <>
+          <Button size="md" onClick={onKeep}>
+            {COPY.keep}
+          </Button>
+          <Button size="md" variant="primary" onClick={onReplace}>
+            {COPY.replace}
+          </Button>
+        </>
+      }>
+      <p>{message}</p>
+    </Dialog>
+  )
 }
 
 /** The answer so far: the fork's replies after its question, as one text. */
@@ -257,6 +337,7 @@ const quote = (text: string) =>
 export function SideQuestionPanel({
   sourceId,
   question,
+  visible,
   observeStream,
   tasks,
   phone,
@@ -265,6 +346,7 @@ export function SideQuestionPanel({
 }: {
   sourceId: string
   question: SideQuestion | undefined
+  visible: boolean
   observeStream: boolean
   tasks: readonly TaskSummary[]
   phone: boolean
@@ -276,9 +358,15 @@ export function SideQuestionPanel({
   const [readError, setReadError] = useState('')
   const forkId = question?.forkId
   const status = summary?.status
+  const minimized = phone && question?.minimized === true
+  const requestId = question?.body.requestId
+  const back = useRef<HTMLButtonElement>(null)
+  const resume = useRef<HTMLButtonElement>(null)
   useEffect(() => {
-    setDetail(undefined)
-  }, [forkId])
+    if (!phone || !visible || !requestId) return
+    const target = minimized ? resume : back
+    target.current?.focus({ preventScroll: true })
+  }, [phone, visible, requestId, minimized])
   // The fork's detail follows its summary, and is read again every second while it runs.
   useEffect(() => {
     if (!forkId) return undefined
@@ -301,23 +389,47 @@ export function SideQuestionPanel({
       if (timer) clearInterval(timer)
     }
   }, [forkId, status, summary?.updatedAt])
-  // On a phone the panel is a page: the system's back closes it, as its × does.
-  const answering = status === undefined || !ENDED.has(status)
-  useBackLayer(phone && question !== undefined, () => {
-    void closeSideQuestion(sourceId, answering)
-  })
+  const minimize = (value: boolean) => {
+    const latest = currentSideQuestion(sourceId)
+    if (latest && latest.body.requestId === requestId) put({ ...latest, minimized: value }, sourceId)
+  }
+  // Back returns to the conversation; the separate close action archives the fork.
+  const answering = mayAnswer(status)
+  useBackLayer(visible && phone && question !== undefined && !minimized, () => minimize(true))
   const answer = answerOf(detail)
   const stream = useRef<HTMLDivElement>(null)
-  useStreamingLayer(stream, observeStream && question?.phase === 'open' && answer.streaming && !!answer.text)
+  useStreamingLayer(stream, !minimized && observeStream && question?.phase === 'open' && answer.streaming && !!answer.text)
   if (!question) return null
+  if (minimized)
+    return (
+      <div className="side-question-resume">
+        <Button ref={resume} size="lg" variant="ghost" icon={MessageGlyph} onClick={() => minimize(false)}>
+          {COPY.resume}
+        </Button>
+      </div>
+    )
   const settled = !!detail && !answer.streaming && (status === undefined || ENDED.has(status))
   const failed = status === 'failed' || status === 'interrupted' || detail?.summary.status === 'failed'
   const close = () => {
     void closeSideQuestion(sourceId, answering)
   }
   return (
-    <aside className="side-question" data-phone={phone ? '' : undefined} aria-label={COPY.panel} data-backdrop-clear="">
+    <aside
+      className="side-question"
+      data-phone={phone ? '' : undefined}
+      aria-label={COPY.panel}
+      data-backdrop-clear=""
+      onKeyDown={event => {
+        if (!phone || event.key !== 'Escape' || event.defaultPrevented) return
+        event.preventDefault()
+        minimize(true)
+      }}>
       <header className="side-question-head">
+        {phone && (
+          <Button ref={back} size="lg" variant="ghost" icon={ChevronLeftGlyph} onClick={() => minimize(true)}>
+            {COPY.back}
+          </Button>
+        )}
         <span className="side-question-title">
           /btw
           {question.phase === 'starting' || (question.phase === 'open' && !settled && !failed) ? (
@@ -328,7 +440,7 @@ export function SideQuestionPanel({
             <StatusWord tone="failed">{COPY.unanswered}</StatusWord>
           ) : null}
         </span>
-        <IconButton size="xs" icon={CloseGlyph} label={COPY.close} onClick={close} />
+        <IconButton size={phone ? 'lg' : 'xs'} icon={CloseGlyph} label={COPY.close} onClick={close} />
       </header>
       <p className="side-question-question">
         <VisibleText text={question.question} />

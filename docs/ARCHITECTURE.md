@@ -1025,7 +1025,7 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。
 - 项目和 Harness 可重新选择，L3 照常写新会话的启动审计。启动目录内 Host 已知的会话文件夹在分叉时复用；文件不复制或回滚。
 - 来源、位置、轮次与种子长度写入 `sessions-meta.json`，由 Hub 投影到 `TaskSummary.forkOf`；第三方 Driver 的来源声明不作为 Host 元数据。
 
-**旁支提问（`/btw`）。** 客户端用同一个 `POST /tasks` 开一个只对话的分叉：同一个 Harness 与模型服务，分叉点是最后一轮已结束的回复，不排进也不打断正在运行的一轮，来源会话的历史不变。插入或关闭面板后分叉被归档，回答还在运行时先取消再归档。Harness 没有只对话方式或 Host 没有 `features.fork` 时不提供。
+**旁支提问（`/btw`）。** 客户端用同一个 `POST /tasks` 开一个只对话的分叉：同一个 Harness 与模型服务，分叉点是最后一轮已结束的回复，不排进也不打断正在运行的一轮，来源会话的历史不变。插入、关闭面板或确认替换后归档原分叉，回答还在运行时先取消再归档。Harness 没有只对话方式或 Host 没有 `features.fork` 时不提供。再次提问前的草稿与回执规则见 [STREAMING.md](STREAMING.md#再次旁支提问)。
 
 **原生分叉。** Driver 声明 `capabilities.fork: 'native'`（pi、Codex，以及 Host 给了 `cliStore` 时 Claude 的直连线）时，分叉到同一个 Harness 的会话另外收到 `CreateTaskInput.fork: { taskId, upToMessageId, prefixLength }`。Driver 让 Harness 分叉它自己的记录，成功时第一轮不发种子，首条用户消息带 `nativeFork`；做不到时照常发送种子并在会话里写明原因。来源必须是同一 Driver 的会话与同一个工作目录，由 Driver 核对。见 [HARNESSES.md](HARNESSES.md#pi-的-rpc-模式)、[Codex 的 app-server](HARNESSES.md#codex-的-app-server) 与 [Claude 的 Agent SDK 线](HARNESSES.md#claude-的-agent-sdk-线)。
 

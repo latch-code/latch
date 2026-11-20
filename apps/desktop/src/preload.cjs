@@ -160,11 +160,15 @@ const spacesApi = Object.freeze({
       ipcRenderer.send('latch:space:ready', false)
     }
   },
-  /** The page's keys for the two items, as chords (`Mod+Shift+Digit1`); only short strings or null cross, main checks them. */
+  /** The page's keys for the two places and whether its bindings already use the plain-text paste shortcut. */
   setKeys: keys => {
     if (!keys || typeof keys !== 'object') return
     const chord = value => (typeof value === 'string' && value.length <= 32 && /^[A-Za-z0-9+]+$/u.test(value) ? value : null)
-    ipcRenderer.send('latch:space:keys', { code: chord(keys.code), agents: chord(keys.agents) })
+    ipcRenderer.send('latch:space:keys', {
+      code: chord(keys.code),
+      agents: chord(keys.agents),
+      pastePlainTextConflict: keys.pastePlainTextConflict === true,
+    })
   },
 })
 

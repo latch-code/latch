@@ -3,14 +3,14 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS, KEY_CODES, MENU_RESERVED, SYSTEM_RESERVED } from '@latch/protocol'
 
 const require = createRequire(import.meta.url)
-type Accelerators = { code: string | null; agents: string | null }
+type Accelerators = { code: string | null; agents: string | null; pastePlainTextConflict?: true }
 const menus = require('../src/menu.cjs') as {
   spaceAccelerator(chord: unknown): string | null
   ACCELERATOR_KEYS: ReadonlyMap<string, string>
   RESERVED_CHORDS: ReadonlySet<string>
   DEFAULT_SPACE_ACCELERATORS: Accelerators
-  menuTemplate(input: { packaged: boolean; onCheckForUpdates(): void; accelerators?: Accelerators }): Array<{
-    submenu: Array<{ id?: string; accelerator?: string }>
+  menuTemplate(input: { packaged: boolean; onCheckForUpdates(): void; onPastePlainText?(): void; accelerators?: Accelerators }): Array<{
+    submenu: Array<{ id?: string; accelerator?: string; click?(): void }>
   }>
   spaceMenu(input: {
     focused(): unknown
@@ -87,5 +87,28 @@ describe('the menu bar keys of Code and 我的 Agent', () => {
     expect(built.at(-1)).toEqual({ code: 'Alt+CmdOrCtrl+Y', agents: null })
     listeners.get('did-navigate')?.()
     expect(built.at(-1)).toEqual(menus.DEFAULT_SPACE_ACCELERATORS)
+  })
+
+  it('keeps a custom shortcut for the focused window and still offers the plain-text paste menu action', () => {
+    let focused = {}
+    let shown = menus.DEFAULT_SPACE_ACCELERATORS
+    let pastes = 0
+    const spaces = menus.spaceMenu({ focused: () => focused, item: () => undefined, rebuild: keys => (shown = keys) })
+    const paste = () =>
+      menus
+        .menuTemplate({ packaged: true, onCheckForUpdates() {}, onPastePlainText: () => pastes++, accelerators: shown })
+        .flatMap(menu => menu.submenu)
+        .find(item => item.id === 'paste-plain-text')!
+
+    spaces.keys(focused, { code: 'Mod+Shift+KeyV', agents: 'Mod+Shift+Digit2' })
+    expect(shown.code).toBe('Shift+CmdOrCtrl+V')
+    expect(paste()).not.toHaveProperty('accelerator')
+    paste().click!()
+    expect(pastes).toBe(1)
+    spaces.keys(focused, { code: 'Mod+Shift+Digit1', agents: 'Mod+Shift+Digit2', pastePlainTextConflict: true })
+    expect(paste()).not.toHaveProperty('accelerator')
+    focused = {}
+    spaces.sync()
+    expect(paste().accelerator).toBe('Command+Shift+V')
   })
 })

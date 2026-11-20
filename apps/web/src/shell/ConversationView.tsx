@@ -170,7 +170,8 @@ export function ConversationView({
     [current?.commands, current?.skills, leadTeam, shell.snapshot.tasks, catalog?.harnesses],
   )
   const sideQuestion = useSideQuestion(selectedId)
-  const showTranscript = visible && !(phone && sideQuestion)
+  const sideQuestionPage = visible && phone && sideQuestion !== undefined && !sideQuestion.minimized
+  const showTranscript = visible && !sideQuestionPage
   const showBackdrop = showTranscript && backdrop !== 'off'
   // Only a conversation in view marks a failed run opened: not under the start page, settings, a page or the board.
   const source = shell.itemReturn?.target
@@ -375,7 +376,7 @@ export function ConversationView({
         </div>
       ) : selectedId === null ? null : (
         <div className="conversation">
-          <div className="transcript-shell">
+          <div className="transcript-shell" inert={sideQuestionPage || undefined}>
             {showBackdrop && <span className="transcript-backdrop-clear" data-backdrop-clear="" aria-hidden="true" />}
             {findOpen && current && (
               <FindBar
@@ -628,9 +629,10 @@ export function ConversationView({
             )}
             {selectedId && (
               <SideQuestionPanel
-                key={selectedId}
+                key={sideQuestion?.body.requestId ?? selectedId}
                 sourceId={selectedId}
                 question={sideQuestion}
+                visible={visible}
                 observeStream={visible && frozenAt === undefined}
                 tasks={shell.snapshot.tasks ?? []}
                 phone={phone}
@@ -641,7 +643,9 @@ export function ConversationView({
                 onOpen={id => choose(id)}
               />
             )}
-            <SessionComposer shell={shell} />
+            <div inert={sideQuestionPage || undefined}>
+              <SessionComposer shell={shell} visible={visible} sidePanel={sideQuestion} />
+            </div>
           </div>
         </div>
       )}

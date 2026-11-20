@@ -657,7 +657,19 @@ export function Composer({
       {queueTray}
       {!locked && readOnly === undefined && mentions.menu}
       {attachments && (
-        <AttachmentDrafts controller={attachments} locked={locked} onRestore={text => onDraft(draft ? `${draft}\n${text}` : text)} />
+        <AttachmentDrafts
+          controller={attachments}
+          locked={locked}
+          onRestore={text => {
+            const input = textareaRef.current
+            if (!input?.insertText(text)) return false
+            // The dialog must close before focus can return to the editor.
+            requestAnimationFrame(() => {
+              if (textareaRef.current === input && !input.disabled) input.focus({ preventScroll: true })
+            })
+            return true
+          }}
+        />
       )}
       <SlashCommands menu={slash} anchorRef={commandAnchor} onCreateTemplate={onCreateTemplate} />
     </>

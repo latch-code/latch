@@ -71,7 +71,7 @@ export function usePullRequest(input: {
   const [created, setCreated] = useState<GitPrResult>()
   const [logReads, setLogReads] = useState<{ version: string; entries: Record<string, LogRead> }>()
   const checked = read.kind === 'ready' ? read.state.pr : undefined
-  const version = checked && canReadFiles ? `${sessionId}:${checked.number}:${checked.headSha ?? ''}` : undefined
+  const version = checked && canReadFiles ? JSON.stringify([sessionId, checked.url, checked.number, checked.headSha]) : undefined
   const logVersion = useRef(version)
   const logRequests = useRef(new Map<string, AbortController>())
   const asked = useRef(0)

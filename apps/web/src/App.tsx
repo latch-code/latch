@@ -68,7 +68,11 @@ export function App() {
   const bindings = useShortcutBindings()
   useEffect(() => {
     const keys = shortcutBindings.effective()
-    currentShell()?.spaces?.setKeys?.({ code: keys.get('space-code') ?? null, agents: keys.get('space-agents') ?? null })
+    currentShell()?.spaces?.setKeys?.({
+      code: keys.get('space-code') ?? null,
+      agents: keys.get('space-agents') ?? null,
+      pastePlainTextConflict: [...keys.values()].includes('Mod+Shift+KeyV'),
+    })
   }, [bindings])
   const safe = custom.safe !== null
   useLayoutEffect(() => {

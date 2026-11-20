@@ -16,6 +16,10 @@ describe('/btw', () => {
   it('asks a side question beside a running turn without touching it, and archives the fork when the panel closes', async () => {
     const releases: Array<() => void> = []
     const prompts: string[] = []
+    let releaseFirstReceipt!: () => void
+    const firstReceipt = new Promise<void>(resolve => {
+      releaseFirstReceipt = resolve
+    })
     const provider: ModelProvider = {
       id: 'side-question-model',
       name: '测试模型',
@@ -23,14 +27,15 @@ describe('/btw', () => {
       async *stream({ messages, signal }) {
         const prompt = String(messages.at(-1)?.content ?? '')
         prompts.push(prompt)
-        if (prompt.includes('长任务')) {
-          yield { type: 'text', text: '正在处理长任务' }
+        if (prompt.includes('长任务') || prompt.includes('第一问慢慢答')) {
+          yield { type: 'text', text: prompt.includes('第一问慢慢答') ? '第一问正在回答' : '正在处理长任务' }
           await new Promise<void>((done, fail) => {
             if (signal.aborted) return fail(signal.reason)
             signal.addEventListener('abort', () => fail(signal.reason), { once: true })
             releases.push(done)
           })
-        } else if (prompt.includes('顺便问')) yield { type: 'text', text: '旁支回答：这是 Latch 的测试项目。' }
+        } else if (prompt.includes('第二问')) yield { type: 'text', text: '第二问的回答。' }
+        else if (prompt.includes('顺便问')) yield { type: 'text', text: '旁支回答：这是 Latch 的测试项目。' }
         else yield { type: 'text', text: '收到。' }
         yield { type: 'finish', reason: 'stop' }
       },
@@ -44,7 +49,11 @@ describe('/btw', () => {
         ctx.registerProvider(provider)
       },
     }
-    const host = await startTestHost({ uiDir: resolve('dist/web'), plugins: [plugin], providerId: provider.id })
+    const host = await startTestHost({
+      uiDir: resolve(process.env.LATCH_E2E_UI_DIR ?? 'dist/web'),
+      plugins: [plugin],
+      providerId: provider.id,
+    })
     const browser = await chromium.launch(browserLaunchOptions())
     await mkdir(OUT, { recursive: true })
     try {
@@ -110,6 +119,63 @@ describe('/btw', () => {
         .poll(async () => (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.id === fork.id)?.archived)
         .toBe(true)
       expect((await owner.json<TaskDetail>(path)).summary.status).toBe('running')
+
+      await page.route('**/link/api/tasks', async route => {
+        const request = route.request()
+        if (request.method() !== 'POST' || request.postDataJSON()?.prompt !== '第一问慢慢答') return route.continue()
+        const response = await route.fetch()
+        await firstReceipt
+        await route.fulfill({ response })
+      })
+      await input.fill('/btw 第一问慢慢答')
+      expect(await promptValue(input)).toBe('/btw 第一问慢慢答')
+      await input.press('Enter')
+      await panel.getByText('正在回答', { exact: true }).waitFor()
+      await expect.poll(() => releases.length).toBe(2)
+      const firstFork = async () =>
+        (await owner.json<AppSnapshot>('snapshot')).tasks.find(task => task.forkOf?.taskId === sessionId && !task.archived)
+      await expect.poll(firstFork).toMatchObject({ status: 'running' })
+      const firstId = (await firstFork())!.id
+      const second = '/btw 第二问的草稿'
+      const replacement = page.getByRole('dialog', { name: '替换第一条旁支提问？' })
+      await input.fill(second)
+      await input.press('Enter')
+      await replacement.waitFor()
+      await page.emulateMedia({ colorScheme: 'light' })
+      await page.screenshot({ path: `${OUT}/replace-1440-light.png`, animations: 'disabled' })
+      await replacement.getByRole('button', { name: '保留第一问' }).click()
+      await replacement.waitFor({ state: 'hidden' })
+      await expect.poll(() => promptValue(input)).toBe(second)
+      expect(await input.evaluate(element => document.activeElement === element)).toBe(true)
+      await panel.getByText('第一问慢慢答', { exact: true }).waitFor()
+      releaseFirstReceipt()
+      await expect.poll(() => panel.getByRole('button', { name: '打开为会话' }).getAttribute('aria-disabled')).toBeNull()
+      expect((await owner.json<TaskDetail>(`tasks/${firstId}`)).summary).toMatchObject({ status: 'running' })
+      expect(prompts.some(prompt => prompt.includes('第二问'))).toBe(false)
+      const { sessionId: otherId } = await owner.json<{ sessionId: string }>('tasks', {
+        method: 'POST',
+        body: { prompt: '另一个会话', requestId: randomUUID() },
+      })
+      await openSession(page, otherId)
+      await panel.waitFor({ state: 'detached' })
+      expect(await promptValue(input)).toBe('')
+      await openSession(page, sessionId)
+      await panel.getByText('第一问慢慢答', { exact: true }).waitFor()
+      expect(await promptValue(input)).toBe(second)
+      await page.screenshot({ path: `${OUT}/kept-1440-light.png`, animations: 'disabled' })
+
+      await input.fill(second + '继续编辑')
+      await input.press('Enter')
+      await replacement.getByRole('button', { name: '替换并发送' }).click()
+      await panel.getByText('第二问的回答。').waitFor()
+      expect(await promptValue(input)).toBe('')
+      expect(prompts.filter(prompt => prompt.includes('第二问'))).toHaveLength(1)
+      expect(prompts.find(prompt => prompt.includes('第二问'))).toContain('第二问的草稿继续编辑')
+      await expect
+        .poll(async () => (await owner.json<TaskDetail>(`tasks/${firstId}`)).summary)
+        .toMatchObject({ archived: true, status: 'cancelled' })
+      await panel.getByRole('button', { name: '关闭并归档', exact: true }).click()
+      await panel.waitFor({ state: 'detached' })
       await page.context().close()
 
       for (const [width, theme] of [
@@ -124,12 +190,32 @@ describe('/btw', () => {
         await side.getByText('旁支回答：这是 Latch 的测试项目。').waitFor()
         expect(await narrow.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
         await narrow.screenshot({ path: `${OUT}/answer-${width}-${theme}.png`, animations: 'disabled' })
+        if (width === 390) {
+          const viewSide = narrow.getByRole('button', { name: '查看旁支提问', exact: true })
+          await side.getByRole('button', { name: '返回对话', exact: true }).click()
+          await side.waitFor({ state: 'detached' })
+          await viewSide.click()
+          await side.getByText('旁支回答：这是 Latch 的测试项目。').waitFor()
+          await narrow.goBack()
+          await viewSide.waitFor()
+        }
+        const askAgain = narrow.getByRole('dialog', { name: '替换第一条旁支提问？' })
+        await box.fill('/btw 保留这条第二问')
+        await box.press('Enter')
+        await askAgain.waitFor()
+        await narrow.screenshot({ path: `${OUT}/replace-${width}-${theme}.png`, animations: 'disabled' })
+        await narrow.keyboard.press('Escape')
+        await askAgain.waitFor({ state: 'hidden' })
+        expect(await promptValue(box)).toBe('/btw 保留这条第二问')
+        if (width === 390) await narrow.getByRole('button', { name: '查看旁支提问', exact: true }).click()
+        await side.getByText('旁支回答：这是 Latch 的测试项目。').waitFor()
         await side.getByRole('button', { name: '关闭并归档', exact: true }).click()
         await side.waitFor({ state: 'detached' })
         await narrow.context().close()
       }
       expect((await owner.json<TaskDetail>(path)).summary.status).toBe('running')
     } finally {
+      releaseFirstReceipt()
       for (const release of releases) release()
       await browser.close()
       await host.close()

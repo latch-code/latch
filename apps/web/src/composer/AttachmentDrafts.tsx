@@ -183,11 +183,13 @@ function DraftPreview({
   onClose,
   onReplace,
   onRestore,
+  locked,
 }: {
   item: DraftAttachment
   onClose(): void
   onReplace(text: string): void
   onRestore(text: string): void
+  locked: boolean
 }) {
   const [url, setUrl] = useState(''),
     [text, setText] = useState(item.pastedText ?? '')
@@ -224,8 +226,10 @@ function DraftPreview({
       </div>
       {item.pastedText !== undefined && (
         <footer className="ui-modal-footer">
-          <Button onClick={() => onRestore(text)}>{COPY.restoreText}</Button>
-          <Button variant="primary" onClick={() => onReplace(text)}>
+          <Button disabled={locked} onClick={() => onRestore(text)}>
+            {COPY.restoreText}
+          </Button>
+          <Button disabled={locked} variant="primary" onClick={() => onReplace(text)}>
             {COPY.save}
           </Button>
         </footer>
@@ -357,7 +361,7 @@ export function AttachmentDrafts({
 }: {
   controller: AttachmentDraftController
   locked: boolean
-  onRestore(text: string): void
+  onRestore(text: string): boolean
 }) {
   const [preview, setPreview] = useState<string>(),
     [confirm, setConfirm] = useState<string>()
@@ -398,6 +402,7 @@ export function AttachmentDrafts({
         <DraftPreview
           key={item.key}
           item={item}
+          locked={locked}
           onClose={() => setPreview(undefined)}
           onReplace={text => {
             controller.remove(item.key)
@@ -405,8 +410,8 @@ export function AttachmentDrafts({
             setPreview(undefined)
           }}
           onRestore={text => {
+            if (!onRestore(text)) return
             controller.remove(item.key)
-            onRestore(text)
             setPreview(undefined)
           }}
         />

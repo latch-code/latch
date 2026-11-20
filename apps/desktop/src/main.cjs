@@ -283,6 +283,29 @@ function focusedAppWindow() {
   const window = focused && focused !== aboutWindow ? focused : mainWindow
   return window && !window.isDestroyed() ? window : null
 }
+
+/** The macOS Edit menu invokes native plain-text paste without going through a DOM keydown. */
+async function pastePlainText() {
+  const window = BrowserWindow.getFocusedWindow()
+  if (!window || window === aboutWindow) return
+  const contents = window.webContents
+  const frame = contents.focusedFrame
+  if (!contents.isFocused() || !frame || frame !== contents.mainFrame || !isAppUrl(frame.url, homeOf(contents))) return
+  const url = frame.url
+  // Mark the focused element before invoking Chromium's paste. Only the native paste event carries clipboard data.
+  const marked = await frame.executeJavaScript("document.activeElement?.dispatchEvent(new Event('latch:plain-paste'))").catch(() => false)
+  if (
+    marked === true
+    && !window.isDestroyed()
+    && window.isFocused()
+    && contents.isFocused()
+    && contents.focusedFrame === frame
+    && !frame.isDestroyed()
+    && frame.url === url
+  )
+    contents.pasteAndMatchStyle()
+}
+
 function showAbout() {
   if (aboutWindow && !aboutWindow.isDestroyed()) {
     aboutWindow.show()
@@ -839,6 +862,7 @@ async function startUpdates({ proxy, supervisor }) {
           onAbout: showAbout,
           onSettings: () => focusedAppWindow()?.webContents.send('latch:settings:show'),
           onCheckForUpdates: showUpdates,
+          onPastePlainText: () => void pastePlainText(),
           onSpace: showSpace,
           onSafeMode: openSafeMode,
           ...(accelerators ? { accelerators } : {}),
@@ -1279,7 +1303,7 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
     if (!senderOf(event) || typeof ready !== 'boolean') return
     spaceMenu.ready(event.sender, ready)
   })
-  // The page's keys for Code and 我的 Agent; menu.cjs checks each again and gives a refused one no keys.
+  // The page's keys for Code and 我的 Agent and whether a binding already uses ⌘⇧V.
   ipcMain.on('latch:space:keys', (event, keys) => {
     if (!senderOf(event)) return
     spaceMenu.keys(event.sender, keys)

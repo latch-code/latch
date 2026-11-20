@@ -526,6 +526,7 @@ export function DeliveryPanel(props: DeliveryPanelProps) {
       form={prForm}
       onForm={setPrForm}
       canWrite={canWrite}
+      canReadFiles={props.canReadFiles}
       nothingAhead={!!state && nothingToMerge(state)}
       disabled={prBlocked}
       creating={pull.creating}

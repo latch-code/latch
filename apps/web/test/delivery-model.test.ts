@@ -286,6 +286,7 @@ describe('the delivery tab', () => {
   })
 
   it('puts a failed check or a comment into the draft fenced, with the check name, the author and the place', () => {
+    expect(checkExcerpt({ number: 12, check: 'test (node 24)', sha: 'abcdef1234567' })).toBe('PR #12 的检查 test (node 24) 失败（abcdef1）')
     expect(checkExcerpt({ number: 12, check: 'test (node 24)', sha: 'abcdef1234567', text: 'FAIL a\n```\nb\n' })).toBe(
       'PR #12 的检查 test (node 24) 失败（abcdef1）：\n\n````text\nFAIL a\n```\nb\n````',
     )

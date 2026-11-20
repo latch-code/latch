@@ -301,6 +301,25 @@ it.each(['chromium', 'webkit'] as const)(
           ])
           expect(await input.locator('b, i').count()).toBe(0)
 
+          // Feed the shortcut and its paste event an isolated clipboard. The prompt keeps the selected range and one undo.
+          await setPromptSelection(input, 3, 9)
+          const pastedLog = '日志：测试长文本\n'.repeat(250)
+          await input.evaluate((element, text) => {
+            const mac = /Mac/u.test(navigator.platform)
+            const shortcut = { key: 'V', metaKey: mac, ctrlKey: !mac, shiftKey: true, bubbles: true, cancelable: true }
+            element.dispatchEvent(new KeyboardEvent('keydown', shortcut))
+            const data = new DataTransfer()
+            data.setData('text/plain', text)
+            element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+            element.dispatchEvent(new KeyboardEvent('keyup', shortcut))
+          }, pastedLog)
+          expect(await promptValue(input)).toBe(`粘贴 ${pastedLog} 和\n$lark-apps`)
+          const caret = 3 + pastedLog.length
+          expect(await promptSelection(input)).toEqual({ from: caret, to: caret, head: caret })
+          expect(await page.locator('.attachment-draft').count()).toBe(0)
+          await input.press('ControlOrMeta+z')
+          expect(await promptValue(input)).toBe('粘贴 $check 和\n$lark-apps')
+
           // A dropped image never becomes text in the draft.
           await input.evaluate(element => {
             const data = new DataTransfer()

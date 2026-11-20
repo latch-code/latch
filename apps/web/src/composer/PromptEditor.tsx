@@ -21,6 +21,7 @@ export interface PromptInput {
   focus(options?: FocusOptions): void
   setSelectionRange(start: number, end: number): void
   edit(value: string, selection?: { start: number; end: number }): void
+  insertText(text: string): boolean
 }
 
 const inputs = new WeakMap<EditorView, PromptInput>()
@@ -213,6 +214,18 @@ function difference(from: string, to: string) {
   return { from: start, to: from.length - end, insert: to.slice(start, to.length - end) }
 }
 
+function insertText(view: EditorView, text: string): boolean {
+  if (view.state.readOnly) return false
+  if (text) {
+    view.dispatch(view.state.replaceSelection(text), {
+      scrollIntoView: true,
+      userEvent: 'input.paste',
+      annotations: isolateHistory.of('full'),
+    })
+  }
+  return true
+}
+
 interface Attributes {
   label: string
   autocomplete?: 'list' | undefined
@@ -262,6 +275,16 @@ export function PromptEditor(props: PromptEditorProps) {
     if (!parent) return undefined
     const { attributes, editable, placeholder, history: undo } = compartments.current
     const initial = latest.current
+    // The ClipboardEvent has the text but no modifiers. A keyboard paste arrives before the keys are released.
+    let plainPaste = false
+    let desktopPasteUntil = 0
+    const clearPlainPaste = () => {
+      plainPaste = false
+    }
+    const clearPaste = () => {
+      clearPlainPaste()
+      desktopPasteUntil = 0
+    }
     const editor: EditorView = new EditorView({
       parent,
       state: EditorState.create({
@@ -277,10 +300,28 @@ export function PromptEditor(props: PromptEditorProps) {
           attributes.of(contentAttributes(initial.attributes)),
           editable.of(editability(initial.disabled)),
           placeholder.of(placeholderText(initial.placeholder)),
+          EditorView.domEventObservers({ keyup: clearPlainPaste, blur: clearPaste, contextmenu: clearPaste, pointerdown: clearPaste }),
           Prec.highest(
             EditorView.domEventHandlers({
-              keydown: event => latest.current.onKeyDown?.(event) ?? false,
-              paste: event => latest.current.onPaste?.(event) ?? false,
+              keydown: event => {
+                clearPaste()
+                const handled = latest.current.onKeyDown?.(event) ?? false
+                plainPaste =
+                  !handled
+                  && !event.isComposing
+                  && event.keyCode !== 229
+                  && (event.key.toLowerCase() === 'v' || (event.altKey && event.metaKey && event.code === 'KeyV'))
+                  && event.shiftKey
+                  && event.metaKey !== event.ctrlKey
+                  && (!event.altKey || event.metaKey)
+                return handled
+              },
+              paste: (event, activeView) => {
+                const text = plainPaste || desktopPasteUntil > performance.now() ? event.clipboardData?.getData('text/plain') : undefined
+                clearPaste()
+                if (activeView.state.readOnly) return true
+                return text ? insertText(activeView, text) : (latest.current.onPaste?.(event) ?? false)
+              },
               // Files dropped here go to the attachments (the form's own drop handler); their bytes never become text.
               drop: event => {
                 if (![...(event.dataTransfer?.types ?? [])].includes('Files')) return false
@@ -299,6 +340,10 @@ export function PromptEditor(props: PromptEditorProps) {
           }),
         ],
       }),
+    })
+    editor.contentDOM.addEventListener('latch:plain-paste', () => {
+      // Expire the menu's intent if native paste does not produce an event (for example, with an empty clipboard).
+      desktopPasteUntil = performance.now() + 500
     })
     applied.current = {
       attributes: JSON.stringify(initial.attributes),
@@ -339,6 +384,7 @@ export function PromptEditor(props: PromptEditorProps) {
           annotations: isolateHistory.of('full'),
         })
       },
+      insertText: text => insertText(editor, text),
     }
     fitHeight(editor)
     // Once the face has loaded the lines may wrap elsewhere. (A test DOM may have no font set.)

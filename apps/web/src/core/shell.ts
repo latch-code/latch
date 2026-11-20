@@ -482,7 +482,7 @@ export interface LatchShell {
   spaces?: {
     onShow(callback: (space: 'code' | 'agents') => void): () => void
     /** The menu bar's keys for Code and 我的 Agent in this window; main checks them again. Absent in older desktop apps. */
-    setKeys?(keys: { code: string | null; agents: string | null }): void
+    setKeys?(keys: { code: string | null; agents: string | null; pastePlainTextConflict?: boolean }): void
   }
 }
 
