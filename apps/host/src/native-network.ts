@@ -90,7 +90,10 @@ function linkLocal(address: string): boolean {
 /**
  * A logical auto setting remains stable while the bound address follows this snapshot. No wildcard or tunnel is chosen.
  * An iPhone sharing its connection over the cable comes first: the one listener goes where the phone in hand can reach
- * it, and phones on the Wi‑Fi use their relay while the cable is in. Nothing about the cable grants a scope.
+ * it, and phones on the Wi‑Fi use their relay while the cable is in. Then Wi‑Fi before a wired port: a phone joins a
+ * Wi‑Fi (a Mac on its Personal Hotspot included), never the Mac's cable, and a wired network is often another subnet
+ * the phone cannot reach. The bound address is kept only while nothing of a better kind is up, so a Mac that started
+ * on its wired port moves to Wi‑Fi once that comes up. Nothing about the cable grants a scope.
  */
 export function selectAutoDirect(
   snapshot: NativeNetworkSnapshot,
@@ -102,7 +105,8 @@ export function selectAutoDirect(
       .filter(row => physical(row) && !linkLocal(row.address))
       .toSorted((a, b) => parseIp(a.address).family - parseIp(b.address).family || a.index - b.index || a.address.localeCompare(b.address)),
     tethers = all.filter(row => row.tether),
-    choices = tethers.length > 0 ? tethers : all
+    wifi = all.filter(row => row.kind === 'wifi'),
+    choices = tethers.length > 0 ? tethers : wifi.length > 0 ? wifi : all
   const selected = choices.find(row => current && sameIp(row.address, current.host)) ?? choices[0]
   return selected ? { host: selected.address, port: config.port || current?.port || 0 } : undefined
 }

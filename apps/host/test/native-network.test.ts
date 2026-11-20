@@ -249,6 +249,27 @@ it('chooses only current physical private addresses for auto binding and preserv
   })
 })
 
+it('prefers Wi‑Fi over a wired port for auto binding, and moves there once Wi‑Fi is up', async () => {
+  const { selectAutoDirect } = await import('../src/native-network.ts')
+  // A Mac on a wired office network beside Wi‑Fi on an iPhone's Personal Hotspot (the client-isolated Wi‑Fi case).
+  const wired = { ...row, name: 'en13', index: 40, kind: 'ethernet' as const, address: '10.40.12.20', prefixLength: 22 },
+    wifi = { ...row, name: 'en0', index: 13, kind: 'wifi' as const, address: '172.20.10.6', prefixLength: 28 },
+    tether = { ...row, name: 'en8', index: 41, kind: 'ethernet' as const, tether: true as const, address: '172.20.10.2', prefixLength: 28 }
+  const only = (...interfaces: NativeNetworkSnapshot['interfaces']) => ({ epoch: randomUUID(), interfaces })
+  expect(selectAutoDirect(only(wired, wifi), { host: 'auto', port: 0 }, null)).toEqual({ host: wifi.address, port: 0 })
+  // Bound to the wired port while Wi‑Fi was down: it moves to Wi‑Fi, keeping the port.
+  expect(selectAutoDirect(only(wired), { host: 'auto', port: 0 }, null)).toEqual({ host: wired.address, port: 0 })
+  expect(selectAutoDirect(only(wired, wifi), { host: 'auto', port: 0 }, { host: wired.address, port: 59314 })).toEqual({
+    host: wifi.address,
+    port: 59314,
+  })
+  // The cable still comes first.
+  expect(selectAutoDirect(only(wired, wifi, tether), { host: 'auto', port: 0 }, { host: wifi.address, port: 1 })).toEqual({
+    host: tether.address,
+    port: 1,
+  })
+})
+
 it('starts one system observer for automatic mode, follows new epochs, and releases it on disable', async () => {
   const s = await setup()
   await s.controller.close()
