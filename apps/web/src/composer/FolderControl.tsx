@@ -126,6 +126,7 @@ export function FolderControl({
   onWorktree,
   disabled,
   variant = 'inline',
+  size = 'xs',
   branch,
   starts = false,
   switchBranch = false,
@@ -137,6 +138,8 @@ export function FolderControl({
   onWorktree: (worktree: WorktreeStart | undefined) => void
   disabled: boolean
   variant?: 'inline' | 'row'
+  /** Inline only: `sm` beside other full-size pickers (a dialog's fields), `xs` in the quiet line under the input. */
+  size?: 'sm' | 'xs'
   /** Offers start points other than the folder's HEAD. */
   starts?: boolean
   /** The branch is a control that switches the project folder's branch (this device may). */
@@ -156,7 +159,7 @@ export function FolderControl({
     <ValuePicker<Where>
       label={COPY.folderLabel}
       variant={variant}
-      {...(variant === 'row' ? { className: 'new-sheet-row' } : { size: 'xs' as const })}
+      {...(variant === 'row' ? { className: 'new-sheet-row' } : { size, menuChevron: size === 'sm' })}
       leading={picked ? FolderGit2 : FolderGlyph}
       value={value}
       disabled={disabled}

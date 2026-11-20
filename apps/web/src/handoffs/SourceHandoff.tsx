@@ -473,6 +473,7 @@ export function SourceHandoffDock({
                       <dd>
                         <FolderControl
                           project={worktreeOffer}
+                          size="sm"
                           worktree={worktree ? HEAD_START : undefined}
                           onWorktree={start => {
                             setWorktree(start !== undefined)
