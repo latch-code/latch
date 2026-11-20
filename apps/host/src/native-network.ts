@@ -16,7 +16,7 @@ import { sha256Hex, canonicalJson } from '@latch/core/node-kit'
 import type { AuditLog } from './audit.ts'
 import { base32 } from './crypto.ts'
 import type { NativeOpening } from './native.ts'
-import { NativeNetworks, knownNetworkHash } from './native-networks.ts'
+import { NativeNetworks, knownNetworkHash, knownTetherHash } from './native-networks.ts'
 import {
   networkSnapshotSchema,
   type NativeNetworkBackend,
@@ -412,17 +412,21 @@ export class NativeNetwork {
     if (!equal(expected, phoneGatewayHash)) return undefined
     const observed = await this.neighbours(backend, row, opening.source, snapshot.epoch)
     recheck()
-    if (
-      this.stopping
-      || generation !== this.generation
-      || observed.epoch !== snapshot.epoch
-      || this.snapshot?.epoch !== snapshot.epoch
-      || !observed.peerMac
-      || !observed.gatewayMac
-      || !observed.gateway
-      || !sameIp(observed.gateway, row.gateway)
-    )
+    if (this.stopping || generation !== this.generation || observed.epoch !== snapshot.epoch || this.snapshot?.epoch !== snapshot.epoch)
       return undefined
+    // An iPhone sharing its connection over the cable is that cable's gateway, and the only device that can be: a pairing
+    // from the gateway's own address on it is the phone in hand. This needs no neighbour table, which macOS hides from a
+    // process without Local Network access (a Host started under pnpm or fnm). Hotspot clients keep their own addresses.
+    if (
+      pairing
+      && row.tether === true
+      && sameIp(opening.source, row.gateway)
+      && (!observed.gateway || sameIp(observed.gateway, row.gateway))
+    ) {
+      this.routers.delete(`${row.index}:${row.address}`)
+      return observed.gatewayMac ? knownNetworkHash(row, observed.gatewayMac) : knownTetherHash(row)
+    }
+    if (!observed.peerMac || !observed.gatewayMac || !observed.gateway || !sameIp(observed.gateway, row.gateway)) return undefined
     // A router forwarding traffic shows up with its own MAC. Only pairing lets that through, and only for its own IP.
     if (observed.peerMac === observed.gatewayMac && !(pairing && sameIp(opening.source, observed.gateway))) return undefined
     this.routers.delete(`${row.index}:${row.address}`)

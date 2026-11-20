@@ -26,6 +26,17 @@ export function knownNetworkHash(row: NativeNetworkInterface, gatewayMac: string
     ]),
   )
 }
+/** A cable hotspot proven without the neighbour table: named by its subnet, since there is no gateway MAC to name it by. */
+export function knownTetherHash(row: NativeNetworkInterface): string {
+  const ip = parseIp(row.address)
+  return sha256Hex(
+    Buffer.concat([
+      Buffer.from('latch-known-tether-v1\0'),
+      Buffer.from([ip.family, row.prefixLength]),
+      Buffer.from(subnetBytes(ip, row.prefixLength)),
+    ]),
+  )
+}
 export class NativeNetworks {
   private tail = Promise.resolve()
   private constructor(

@@ -8,7 +8,7 @@ import { gatewayHash } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client'
 import { AuditLog } from '../src/audit.ts'
 import { NativeNetwork } from '../src/native-network.ts'
-import { NativeNetworks, knownNetworkHash } from '../src/native-networks.ts'
+import { NativeNetworks, knownNetworkHash, knownTetherHash } from '../src/native-networks.ts'
 import {
   networkSnapshotSchema,
   type NativeNetworkBackend,
@@ -387,6 +387,37 @@ it('accepts the gateway as the peer only when the peer really is the gateway, an
   s.backend.peerMac = '00:22:33:44:55:66'
   expect(await hotspot()).toBeTypeOf('string')
 })
+it('proves the iPhone on a cable hotspot by the gateway address alone, for pairing only, and nothing else on that cable', async () => {
+  const s = await setup()
+  const cable = {
+    ...row,
+    name: 'en14',
+    index: 41,
+    kind: 'ethernet' as const,
+    tether: true as const,
+    address: '172.20.10.4',
+    prefixLength: 28,
+    gateway: '172.20.10.1',
+  }
+  s.backend.change([cable])
+  s.bind({ host: cable.address, port: 4319 })
+  const phone = await gatewayHash(nodeCrypto, '172.20.10.1', 28, '172.20.10.1')
+  const onCable = (source: string): NativeOpening => ({ ...pairingOpening(source), localAddress: cable.address })
+  // macOS hides the neighbour table from a Host started under pnpm or fnm: no MAC for anyone.
+  s.backend.peerMac = null
+  s.backend.gatewayMac = null
+  expect(await s.controller.pairingNearby(onCable('172.20.10.1'), phone)).toBe(knownTetherHash(cable))
+  // Another hotspot client on the same cable still needs the neighbour table, and a wrong network claim still fails.
+  expect(await s.controller.pairingNearby(onCable('172.20.10.5'), await gatewayHash(nodeCrypto, '172.20.10.5', 28, '172.20.10.1'))).toBe(
+    false,
+  )
+  expect(await s.controller.pairingNearby(onCable('172.20.10.1'), new Uint8Array(32))).toBe(false)
+  // Daily proximity keeps the strict rule; a Wi‑Fi gateway is not a cable.
+  expect(await s.controller.nearby({ ...s.opening, source: '172.20.10.1', localAddress: cable.address }, phone, () => {})).toBe(false)
+  const { tether: _cable, ...plain } = cable
+  s.backend.change([plain])
+  expect(await s.controller.pairingNearby(onCable('172.20.10.1'), phone)).toBe(false)
+})
 it('fails closed for relay paths, without a local address, and when the neighbour lookup breaks', async () => {
   const s = await setup()
   const relay = pairingOpening('192.168.1.9')
@@ -488,6 +519,6 @@ it('pairs the iPhone that is the hotspot on the cable, and nothing it forwards',
   expect(
     await s.controller.pairingNearby(onCable(tether.gateway), await gatewayHash(nodeCrypto, wifi.address, wifi.prefixLength, wifi.gateway)),
   ).toBe(false)
-  expect(await s.controller.pairingNearby(onCable('172.20.10.4'), phone)).toBe(false)
+  expect(await s.controller.pairingNearby(onCable('172.20.10.9'), phone)).toBe(false)
   expect(await s.controller.nearby({ ...s.opening, source: tether.gateway, localAddress: tether.address }, phone, () => {})).toBe(false)
 })
