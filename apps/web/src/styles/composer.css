@@ -205,9 +205,11 @@
 }
 /*
  * A token the Harness will read as one (a file chosen with @, a skill, a command, a member) is a chip, in the input and
- * in a sent message alike: the glyph, then the name in link ink on a quiet wash, a little lower than the line and on
- * its baseline, with room of its own on both sides so it never touches the text or the next chip. Never the primary
- * fill; a long name ends in an ellipsis and the whole of it is in the hover.
+ * in a sent message alike: the glyph, then the name, both centred on the chip, a little lower than the line, with room
+ * of its own on both sides so it never touches the text or the next chip. Each kind has its own ink: a file is link
+ * blue (it opens), a skill violet, a member and a command the text's own ink on a neutral wash, a member's colour
+ * coming from its Harness's mark. Never the primary fill; a long name ends in an ellipsis and the whole of it is in the
+ * hover.
  */
 .prompt-chip {
   display: inline-flex;
@@ -233,6 +235,24 @@
   background: var(--content-chip-wash-strong);
   box-shadow: 0 0 0 1px var(--content-chip-ring);
 }
+.prompt-chip[data-kind='skill'] {
+  background: var(--content-skill-wash);
+  color: var(--content-skill-ink);
+}
+.prompt-chip[data-kind='skill']:hover,
+.prompt-chip[data-kind='skill'][data-selected] {
+  background: var(--content-skill-wash-strong);
+}
+.prompt-chip[data-kind='skill'][data-selected] {
+  box-shadow: 0 0 0 1px var(--content-skill-ring);
+}
+.prompt-chip:is([data-kind='member'], [data-kind='command']) {
+  background: var(--content-member-wash);
+  color: var(--ink);
+}
+.prompt-chip:is([data-kind='member'], [data-kind='command']):is(:hover, [data-selected]) {
+  background: var(--content-member-wash-strong);
+}
 /*
  * The token as written, for assistive technology and for a copy across the chip, which skips the glyph and the name.
  * It stays inline (not the absolute sr-only box), so a copied line does not break round it.
@@ -250,6 +270,10 @@
 .prompt-chip-label {
   user-select: none;
 }
+/*
+ * The glyph sits 1px under the chip's middle: the eye centres on a name's lowercase and CJK body, which is lower than its
+ * line box, and on the box's middle the glyph read as riding high (measured on the drawn ink at 15px).
+ */
 .prompt-chip-icon {
   display: inline-flex;
   flex: none;
@@ -257,6 +281,7 @@
   justify-content: center;
   width: 14px;
   height: 14px;
+  translate: 0 1px;
 }
 /* A member's Harness mark keeps its brand colours, drawn at the glyphs' 14px. */
 .prompt-chip-icon > * {
@@ -267,8 +292,9 @@
   width: 14px;
   height: 14px;
 }
+/* Centred on the chip as the glyph is: on its baseline the name sat 2px under the glyph's middle. */
 .prompt-chip-label {
-  align-self: baseline;
+  align-self: center;
   min-width: 0;
   max-width: 28ch;
   overflow: hidden;

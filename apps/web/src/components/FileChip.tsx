@@ -127,7 +127,9 @@ function ChipBody({ path, rootId, label, image, alt, mono = true, icon, prompt }
   if (prompt)
     return (
       <>
-        {icon}
+        <span className="prompt-chip-icon" aria-hidden="true">
+          {icon}
+        </span>
         <span className="prompt-chip-label">{name}</span>
         <span className="prompt-chip-token" aria-hidden="true">
           {`@${rootId ?? ''}:${path}`}
