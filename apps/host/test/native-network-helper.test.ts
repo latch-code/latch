@@ -17,6 +17,7 @@ it.skipIf(process.platform !== 'darwin')(
       mac: true,
       neighbors: true,
       selection: true,
+      status: true,
       emptyTXT: true,
       target: 'l-75253tsynaig.local',
     })

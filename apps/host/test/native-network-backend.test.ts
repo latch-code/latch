@@ -87,3 +87,12 @@ it.skipIf(process.platform !== 'darwin')('bounds pending requests, times out stu
   await chmod(binary, 0o777)
   await expect(MacNetworkBackend.open(binary)).rejects.toThrow('unavailable')
 })
+it.skipIf(process.platform !== 'darwin')('passes a Local Network refusal and its end through as statuses', async () => {
+  const { backend, child } = await setup()
+  const seen: string[] = []
+  backend.onStatus(status => seen.push(status))
+  child.stdout.write(`${JSON.stringify({ version: 1, event: 'status', state: 'denied', index: 4 })}\n`)
+  child.stdout.write(`${JSON.stringify({ version: 1, event: 'status', state: 'ready', index: 4 })}\n`)
+  await vi.waitFor(() => expect(seen).toEqual(['denied', 'ready']))
+  expect(child.kill).not.toHaveBeenCalled()
+})

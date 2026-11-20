@@ -616,7 +616,7 @@ pnpm latch presence test --data-dir <临时目录>
 - 真实模型服务的完整兼容矩阵、真实 BYOK 与未覆盖的真实 CLI 场景。单回合验收须经所有者授权并显式开启。在不发送提示时也可以检查握手（`initialize`、`session/new`）。
 - macOS 的系统确认表单（见上一节）、原生文件夹面板、Quick Look、系统通知与系统剪贴板。
 - Linux 与 Windows 上的本机确认尚未实现（没有对应的确认组件），相关用例只覆盖「不可用」路径与桌面端的离线连接码。
-- 正式签名、公证后的 Electron 应用、真实系统 Node 安装路径的跨机器矩阵与发布身份的正向验证。
+- 正式签名、公证后的 Electron 应用（`desktop-release.test.ts` 只测参数、缺身份时的拒绝、Info.plist 与签名顺序）、本地网络授权弹窗与它在更新后是否保留、真实系统 Node 安装路径的跨机器矩阵与发布身份的正向验证。
 - 真机 Safari：Playwright WebKit 与 Chromium 的手机尺寸、触控模拟都不代表它。
 
 ## 已执行与未执行

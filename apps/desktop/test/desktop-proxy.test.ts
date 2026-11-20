@@ -79,6 +79,7 @@ const proxy = require('../src/proxy.cjs') as {
   isAllowedRendererRequest(url: string, options: { packaged: boolean }): boolean
   isAppUrl(url: string): boolean
   externalUrl(url: string, userGesture?: boolean): string | undefined
+  LOCAL_NETWORK_SETTINGS: string
   externalLinkDialog(url: string): DialogOptions
   createDialogGate(): { enter(): boolean; leave(): void }
   createExternalGesture(now?: () => number): {
@@ -527,6 +528,17 @@ describe('desktop shell policy', () => {
       `https://example.com/${'a'.repeat(proxy.EXTERNAL_URL_LIMIT)}`,
     ])
       expect(proxy.externalUrl(url), url).toBeUndefined()
+    // One system-settings page, exactly and only on a click; nothing else of that scheme.
+    expect(proxy.LOCAL_NETWORK_SETTINGS).toBe('x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork')
+    expect(proxy.externalUrl(proxy.LOCAL_NETWORK_SETTINGS, true)).toBe(proxy.LOCAL_NETWORK_SETTINGS)
+    expect(proxy.externalUrl(proxy.LOCAL_NETWORK_SETTINGS)).toBeUndefined()
+    for (const url of [
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_FullDisk',
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork&x',
+      'X-APPLE.SYSTEMPREFERENCES:com.apple.preference.security?Privacy_LocalNetwork',
+      'x-apple.systempreferences:',
+    ])
+      expect(proxy.externalUrl(url, true), url).toBeUndefined()
     // What the confirmation shows is printable ASCII: no bidi overrides, controls or look-alike host names.
     for (const url of ['https://example.com/\u202egnp.exe?\u0007#\u200f', 'https://exаmple.com/']) {
       expect(proxy.externalUrl(url), url).toMatch(/^[\x21-\x7e]+$/)

@@ -1,4 +1,4 @@
-import type { NativeLinkInfo, NativeRelayTest } from '@latch/protocol'
+import type { LocalNetworkAccess, NativeLinkInfo, NativeRelayTest } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
 import { EDGE_RELAY_AVAILABLE } from '@latch/link-wire'
@@ -51,12 +51,15 @@ export class NativeSettings {
       /** A paired phone exists, or a removed one has yet to read its tombstone. */
       reachable(): boolean
       changed?(): void
+      /** macOS Local Network access as the network watcher sees it. */
+      localNetwork?(): LocalNetworkAccess | undefined
       resolveDirect?(direct: NativeDirect, current: NativeDirect | null): Promise<NativeDirect | undefined>
     },
   ) {}
   info(deviceId?: string): NativeLinkInfo {
     const statuses = this.options.controller.status(),
-      state = this.options.profiles.snapshot()
+      state = this.options.profiles.snapshot(),
+      localNetwork = this.options.localNetwork?.()
     return {
       version: 1,
       enabled: this.options.native.enabled,
@@ -65,6 +68,7 @@ export class NativeSettings {
       directory: Boolean(state.directory),
       ...(this.options.sourceCheckout ? { sourceCheckout: true } : {}),
       ...(EDGE_RELAY_AVAILABLE ? { edgeRelayAvailable: true } : {}),
+      ...(localNetwork ? { localNetwork } : {}),
       official: {
         deployed: state.profiles.some(item => item.builtIn && relayAvailable(item)),
         enabled: !state.officialOff,

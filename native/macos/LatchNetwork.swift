@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import IOKit
+import Network
 import SystemConfiguration
 import dnssd
 
@@ -259,6 +260,22 @@ private struct Request: Decodable, Sendable {
   let epoch: String?
 }
 
+/**
+ * The status a failed registration reports. Without Local Network access, macOS refuses every Bonjour operation with
+ * `kDNSServiceErr_PolicyDenied` (TN3179); that is `denied`, which waits for access instead of a retry.
+ */
+private func failureState(_ error: DNSServiceErrorType) -> String {
+  error == DNSServiceErrorType(kDNSServiceErr_PolicyDenied) ? "denied" : error == DNSServiceErrorType(kDNSServiceErr_NameConflict) ? "conflict" : "blocked"
+}
+/** Whether a probe's state shows Local Network access refused: waiting with `localNetworkDenied` (TN3179). */
+private func accessDenied(_ state: NWConnection.State, _ reason: NWPath.UnsatisfiedReason?) -> Bool? {
+  switch state {
+  case .waiting: return reason == .localNetworkDenied
+  case .ready: return false
+  default: return nil
+  }
+}
+
 private final class Advertisement: @unchecked Sendable {
   let owner: Engine
   let service: Service
@@ -280,7 +297,12 @@ private final class Advertisement: @unchecked Sendable {
       guard !stopped else { return }
       dispose()
       if error == kDNSServiceErr_NameConflict && !alternate { alternate = true; changing = false; start() }
-      else { stopped = true; owner.emit(["version": 1, "event": "status", "state": error == kDNSServiceErr_NameConflict ? "conflict" : "blocked", "index": service.index]) }
+      else {
+        stopped = true
+        let state = failureState(error)
+        owner.emit(["version": 1, "event": "status", "state": state, "index": service.index])
+        if state == "denied" { owner.watchAccess(service.index) }
+      }
     }
   }
   func start() {
@@ -324,6 +346,9 @@ private final class Engine: @unchecked Sendable {
   var advertisements: [Advertisement] = []
   var epoch = UUID().uuidString
   var pending: DispatchWorkItem?
+  /** A TCP connection to a denied interface's router, held while it waits; the system retries it once access arrives. */
+  var probe: NWConnection?
+  var probeRefused = false
   func emit(_ object: [String: Any]) {
     guard let data = try? JSONSerialization.data(withJSONObject: object), data.count < 32768 else { return }
     var bytes = data; bytes.append(10)
@@ -338,8 +363,34 @@ private final class Engine: @unchecked Sendable {
     }
   }
   func stopServices() { for entry in advertisements { entry.stop() }; advertisements.removeAll() }
+  /**
+   * After a `denied`, waits for Local Network access on that interface and then reports `ready` once, so the Host
+   * publishes again at once rather than on a timer. Only a probe first seen refused may report the change; one that
+   * fails some other way reports nothing and the next network change starts over. No address leaves the helper.
+   */
+  func watchAccess(_ index: UInt32) {
+    guard probe == nil, let row = snapshot().first(where: { ($0["index"] as? UInt32) == index && $0["gateway"] != nil }),
+      let gateway = row["gateway"] as? String, address(gateway) != nil, let port = NWEndpoint.Port(rawValue: 9) else { return }
+    let connection = NWConnection(host: NWEndpoint.Host(gateway), port: port, using: .tcp)
+    probe = connection
+    probeRefused = false
+    connection.stateUpdateHandler = { [weak self, weak connection] state in
+      guard let self, let connection, self.probe === connection else { return }
+      switch accessDenied(state, connection.currentPath?.unsatisfiedReason) {
+      case true?: self.probeRefused = true
+      case false?:
+        self.probe = nil; connection.cancel()
+        if self.probeRefused { self.emit(["version": 1, "event": "status", "state": "ready", "index": index]) }
+      case nil:
+        if case .failed = state { self.probe = nil; connection.cancel() }
+      }
+    }
+    connection.start(queue: queue)
+  }
   func changed() {
     stopServices()
+    // The probe outlives a publish (closing the pairing sheet publishes nothing), so `ready` still comes after the sheet.
+    probe?.cancel(); probe = nil
     epoch = UUID().uuidString
     guard pending == nil else { return }
     let work = DispatchWorkItem { [self] in pending = nil; emit(["version": 1, "event": "network", "epoch": epoch, "interfaces": snapshot()]) }
@@ -422,7 +473,11 @@ private final class Engine: @unchecked Sendable {
       let valid = Service(index: 1, port: 4319, instance: "75253tsynaig", alternate: "4i55tlgepa4d", addresses: ["192.168.1.4", "fd00::4"]).valid()
       let invalid = !Service(index: 0, port: 0, instance: "MacBook", alternate: "other", addresses: ["malformed"]).valid()
       let normalized = mac("0:12:34:56:78:9a") == "00:12:34:56:78:9a" && mac("ff:ff:ff:ff:ff:ff") == nil && mac("00:00:00:00:00:00") == nil
-      print("{\"version\":1,\"valid\":\(valid),\"invalid\":\(invalid),\"mac\":\(normalized),\"neighbors\":\(neighborFixture()),\"selection\":\(selectionFixture()),\"emptyTXT\":true,\"target\":\"l-75253tsynaig.local\"}")
+      let status = failureState(DNSServiceErrorType(kDNSServiceErr_PolicyDenied)) == "denied" && failureState(DNSServiceErrorType(kDNSServiceErr_NameConflict)) == "conflict"
+        && failureState(DNSServiceErrorType(kDNSServiceErr_Unknown)) == "blocked" && failureState(DNSServiceErrorType(kDNSServiceErr_BadParam)) == "blocked"
+        && accessDenied(.waiting(.posix(.ENETUNREACH)), .localNetworkDenied) == true && accessDenied(.waiting(.posix(.ECONNREFUSED)), nil) == false
+        && accessDenied(.ready, nil) == false && accessDenied(.preparing, .localNetworkDenied) == nil
+      print("{\"version\":1,\"valid\":\(valid),\"invalid\":\(invalid),\"mac\":\(normalized),\"neighbors\":\(neighborFixture()),\"selection\":\(selectionFixture()),\"status\":\(status),\"emptyTXT\":true,\"target\":\"l-75253tsynaig.local\"}")
       return
     }
     guard CommandLine.arguments.count == 1 else { Darwin._exit(1) }

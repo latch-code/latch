@@ -34,6 +34,7 @@ import { ConfirmationContent } from '../components/InlineConfirm.tsx'
 import { TerminalFillButton } from '../components/TerminalFillButton.tsx'
 import type { DeviceAccess } from '../core/permissions.ts'
 import { IconTile, SettingsGroup, SettingsRow } from './common.tsx'
+import { canOpenSystemSettings, LocalNetworkNote, LocalNetworkOpen } from './LocalNetworkHint.tsx'
 import { RELAYS_DIR, relaySetupCommands, validRelayName } from './relayCommands.ts'
 import { localLatchCommand } from '../core/commands.ts'
 import { currentLocale, defineCopy, formatNumber, useLocale } from '../core/i18n.ts'
@@ -415,6 +416,8 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
   if (!info) return null
   const official = info.official
   const direct = info.listening
+  const refusedAccess = info.localNetwork === 'denied' || info.localNetwork === 'unreadable'
+  const openable = canOpenSystemSettings(access.local)
   return (
     <>
       <SettingsGroup>
@@ -422,12 +425,21 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
           leading={<IconTile icon={Radio} />}
           title={COPY.direct}
           record
+          description={
+            direct && refusedAccess ? (
+              <LocalNetworkNote state={info.localNetwork} openable={openable} source={info.sourceCheckout === true} />
+            ) : undefined
+          }
           trailing={
-            <Tooltip content={direct ? COPY.directAddress(`${direct.host}:${direct.port}`) : COPY.directUnavailable}>
-              <span data-testid="relay-direct">
-                <StatusWord tone={direct ? 'done' : 'neutral'}>{direct ? COPY.available : COPY.off}</StatusWord>
-              </span>
-            </Tooltip>
+            direct && refusedAccess ? (
+              <LocalNetworkOpen state={info.localNetwork} openable={openable} />
+            ) : (
+              <Tooltip content={direct ? COPY.directAddress(`${direct.host}:${direct.port}`) : COPY.directUnavailable}>
+                <span data-testid="relay-direct">
+                  <StatusWord tone={direct ? 'done' : 'neutral'}>{direct ? COPY.available : COPY.off}</StatusWord>
+                </span>
+              </Tooltip>
+            )
           }
         />
         {official?.deployed && (

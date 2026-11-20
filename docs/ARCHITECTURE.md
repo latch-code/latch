@@ -241,7 +241,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 
 信任起点仍是安装的应用与 Host 代码。Host 对启动器本身先做磁盘校验、再按路径执行，二者之间的竞态尚未消除；这不是对启动器实际进程的动态校验。启动器的动态校验覆盖其 helper 在文件检查后、创建进程前被替换，以及恢复执行前的身份不确定，不能用于宣称所有执行替换竞态都已消除。可以改写应用或 Host 的同用户恶意进程不在此边界之内，这仍不是操作系统隔离。
 
-当前产物用 ad-hoc 签名供本机验证。打包器在框架签名前关闭 RunAsNode、NodeOptions 和 NodeCliInspect，递归验证签名并读回开关。Electron 外壳与辅助进程带 JIT 与库校验例外，以加载没有 Team ID 的本机框架。正式发行要用同一 Team ID 重新签名 Electron 与框架，并去除该 ad-hoc 库校验例外。当前打包器拒绝 `--release`，发行仍需固定公开 Team ID、Developer ID 签名、公证、更新源和 asar 完整性验证。`--presence-team` 仅构建待所有者签名的身份验证产物。
+当前产物用 ad-hoc 签名供本机验证。打包器在框架签名前关闭 RunAsNode、NodeOptions 和 NodeCliInspect，递归验证签名并读回开关。Electron 外壳与辅助进程带 JIT 与库校验例外，以加载没有 Team ID 的本机框架。`--release` 用 `LATCH_SIGN_IDENTITY` 指名的 Developer ID 由内向外签名包内每个 Mach-O、框架版本与辅助应用（加固运行时、安全时间戳；独立组件保留自己的标识与权限，应用与辅助进程只带 JIT，不再有库校验例外），再用 `LATCH_NOTARY_PROFILE` 指名的 `notarytool` 配置公证并装订（`apps/host/scripts/desktop-release.ts`）。缺任一变量时在复制前失败；`--presence-team` 必须与证书的 Team ID 相同。这条路径尚未由所有者实际运行；更新源与 asar 完整性验证仍未实现。Info.plist 写入 `NSLocalNetworkUsageDescription` 与 `NSBonjourServices`（`_latch._tcp`）：本地网络权限归启动 Host 的应用。
 
 **iOS App 包。** `native/ios/Latch.xcodeproj` 的 `Latch` 目标（包标识 `codes.latch.ios`；仅模拟器的 `LatchScreens` 为 `codes.latch.ios.screens`）与共享方案 `Latch`（归档用 Release）。版本号来自构建设置 `MARKETING_VERSION` 与 `CURRENT_PROJECT_VERSION`，再次上传只需在命令行提高后者。`App/PrivacyInfo.xcprivacy` 声明不跟踪、不收集数据，并给出用到的 required-reason API 的理由：UserDefaults 为 `CA92.1`，App 容器内 `stat` 系列为 `C617.1`；随包链接的 NIOPosix 自带清单。新增这类 API 时同步更新。权限文件为空：推送与 App Attest 尚未接入，不申请这两项能力。出口合规键 `ITSAppUsesNonExemptEncryption` 由所有者声明，仓库不写。团队、签名与上传不在仓库中。
 
@@ -960,7 +960,7 @@ Latch 不再提供个人助手、助手群聊与它们的定时任务，数据�
 | Linux（polkit）与 Windows（Windows Hello）本机确认 | 未实现；这些系统上本机确认不可用，可用离线连接码登记桌面端，回环与 HTTPS 上的登记无法完成 |
 | 在 macOS 以外从桌面端打开浏览器 | 未实现；改用 `pnpm latch device invite --loopback` |
 | 无界面服务器的确认通道（独立系统用户、命令行确认） | 未实现，`policy.json` 的 `operators` 被忽略；Linux 服务器建议用独立系统用户运行 Host |
-| 正式安装包 | 本机 ARM64 Latch.app 使用 ad-hoc 签名，正式 Developer ID 签名、公证与发布下载尚未提供，登录项只登记应用包 |
+| 正式安装包 | 本机 ARM64 Latch.app 使用 ad-hoc 签名；`--release` 的 Developer ID 签名与公证路径尚未实际运行，发布下载尚未提供，登录项只登记应用包 |
 | asar 完整性、桌面设备的 Secure Enclave 密钥 | 打包已验证 RunAsNode、NodeOptions 和 NodeCliInspect 关闭。发行包的 asar 校验与桌面硬件密钥仍待实现 |
 | 系统 Keychain 保存 Host 身份与密钥 | 需要签名的 Host 程序；目前为数据目录内的 0600 文件 |
 | 远程客户端的公钥固定、仅 mTLS 入口、证书自动申请与续期、可信反向代理配置 | 未实现；证书由运营者提供并续期（文件更新后 Host 自动重新加载）；从不读取代理请求头 |

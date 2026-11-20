@@ -31,7 +31,7 @@ class Backend implements NativeNetworkBackend {
   peerMac: string | null = '00:22:33:44:55:66'
   gatewayMac: string | null = '00:11:22:33:44:55'
   changes = new Set<(snapshot: NativeNetworkSnapshot) => void>()
-  statuses = new Set<(status: 'off' | 'starting' | 'ready' | 'blocked' | 'conflict') => void>()
+  statuses = new Set<Parameters<NativeNetworkBackend['onStatus']>[0]>()
   closed = false
   async snapshot() {
     return structuredClone(this.state)
@@ -57,6 +57,9 @@ class Backend implements NativeNetworkBackend {
     return () => {
       this.statuses.delete(listener)
     }
+  }
+  status(value: Parameters<Parameters<NativeNetworkBackend['onStatus']>[0]>[0]) {
+    for (const listener of this.statuses) listener(value)
   }
   change(interfaces: NativeNetworkSnapshot['interfaces'] = [row]) {
     this.services = []
@@ -412,8 +415,16 @@ it('proves the iPhone on a cable hotspot by the gateway address alone, for pairi
     false,
   )
   expect(await s.controller.pairingNearby(onCable('172.20.10.1'), new Uint8Array(32))).toBe(false)
-  // Daily proximity keeps the strict rule; a Wi‑Fi gateway is not a cable.
-  expect(await s.controller.nearby({ ...s.opening, source: '172.20.10.1', localAddress: cable.address }, phone, () => {})).toBe(false)
+  // Daily proximity from the phone on the cable holds too, without the table; any other client on it does not.
+  expect(await s.controller.nearby({ ...s.opening, source: '172.20.10.1', localAddress: cable.address }, phone, () => {})).toBe(true)
+  expect(
+    await s.controller.nearby(
+      { ...s.opening, source: '172.20.10.5', localAddress: cable.address },
+      await gatewayHash(nodeCrypto, '172.20.10.5', 28, '172.20.10.1'),
+      () => {},
+    ),
+  ).toBe(false)
+  // A Wi‑Fi gateway is not a cable.
   const { tether: _cable, ...plain } = cable
   s.backend.change([plain])
   expect(await s.controller.pairingNearby(onCable('172.20.10.1'), phone)).toBe(false)
@@ -514,11 +525,77 @@ it('pairs the iPhone that is the hotspot on the cable, and nothing it forwards',
   // The phone hashes its own hotspot subnet with itself as the router; the Mac hashes the same network.
   const phone = await gatewayHash(nodeCrypto, tether.gateway, tether.prefixLength, tether.gateway)
   s.backend.peerMac = s.backend.gatewayMac
-  expect(await s.controller.pairingNearby(onCable(tether.gateway), phone)).toBe(knownNetworkHash(tether, s.backend.gatewayMac!))
-  // The Wi‑Fi's router, another device behind the phone, and daily proximity all stay refused.
+  // The cable is named by its subnet whether or not the router's MAC shows, so a change of access never forgets it.
+  expect(await s.controller.pairingNearby(onCable(tether.gateway), phone)).toBe(knownTetherHash(tether))
+  // The Wi‑Fi's router and another device behind the phone stay refused; the phone itself passes daily too.
   expect(
     await s.controller.pairingNearby(onCable(tether.gateway), await gatewayHash(nodeCrypto, wifi.address, wifi.prefixLength, wifi.gateway)),
   ).toBe(false)
   expect(await s.controller.pairingNearby(onCable('172.20.10.9'), phone)).toBe(false)
-  expect(await s.controller.nearby({ ...s.opening, source: tether.gateway, localAddress: tether.address }, phone, () => {})).toBe(false)
+  expect(await s.controller.nearby({ ...s.opening, source: tether.gateway, localAddress: tether.address }, phone, () => {})).toBe(true)
+  // On the Wi‑Fi the router's own address is still refused for daily proximity, MAC or not.
+  s.bind({ host: wifi.address, port: 4319 })
+  const wifiPhone = await gatewayHash(nodeCrypto, wifi.gateway, wifi.prefixLength, wifi.gateway)
+  expect(await s.controller.nearby({ ...s.opening, source: wifi.gateway, localAddress: wifi.address }, wifiPhone, () => {})).toBe(false)
+})
+it('advertises on a known cable without the neighbour table, and only there', async () => {
+  const s = await setup()
+  s.backend.change([wifi, tether])
+  s.bind({ host: tether.address, port: 4319 })
+  // A Host without Local Network access: no MAC for the iPhone on the cable or the Wi‑Fi router.
+  s.backend.gatewayMac = null
+  s.backend.peerMac = null
+  await vi.waitFor(() => expect(s.controller.currentEpoch()).toBe(s.backend.state.epoch))
+  s.controller.reconcile()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(s.backend.services).toHaveLength(0)
+  // The phone on the cable proves itself once, by pairing or daily, and the cable is known from then on.
+  const phone = await gatewayHash(nodeCrypto, tether.gateway, tether.prefixLength, tether.gateway)
+  expect(await s.controller.nearby({ ...s.opening, source: tether.gateway, localAddress: tether.address }, phone, () => {})).toBe(true)
+  expect((await NativeNetworks.open(s.directory)).has(knownTetherHash(tether))).toBe(true)
+  await vi.waitFor(() =>
+    expect(s.backend.services).toEqual([expect.objectContaining({ index: tether.index, addresses: [tether.address] })]),
+  )
+  // The same MAC-less Host on the Wi‑Fi stays quiet: a Wi‑Fi is known only by its router's MAC.
+  s.bind({ host: wifi.address, port: 4319 })
+  await vi.waitFor(() => expect(s.backend.services).toHaveLength(0))
+  // A cable remembered by its router's MAC (an older pairing with access) still counts while the MAC shows.
+  const older = await setup()
+  older.backend.change([tether])
+  older.bind({ host: tether.address, port: 4319 })
+  await older.networks.remember(knownNetworkHash(tether, older.backend.gatewayMac!))
+  older.controller.invalidate()
+  await vi.waitFor(() => expect(older.backend.services).toHaveLength(1))
+})
+it('waits on a Local Network refusal without retrying, and publishes at once when access arrives', async () => {
+  const s = await setup()
+  expect(s.controller.localNetwork()).toBe('allowed')
+  s.pair(true)
+  await vi.waitFor(() => expect(s.backend.services).toHaveLength(1))
+  const published = s.backend.calls.length
+  s.backend.status('denied')
+  expect(s.controller.localNetwork()).toBe('denied')
+  // No 30 s timer and no publishing into the same refusal while it lasts.
+  await new Promise(resolve => setTimeout(resolve, 1500))
+  expect(s.backend.calls.length).toBe(published)
+  s.backend.services = []
+  s.backend.status('ready')
+  expect(s.controller.localNetwork()).toBe('allowed')
+  await vi.waitFor(() => expect(s.backend.services).toHaveLength(1))
+  // A `ready` with no refusal before it changes nothing.
+  const after = s.backend.calls.length
+  s.backend.status('ready')
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(s.backend.calls.length).toBe(after)
+  // A hidden router on the Wi‑Fi reads as unreadable; the hidden iPhone on a cable does not.
+  s.backend.gatewayMac = null
+  s.backend.change([row])
+  await vi.waitFor(() => expect(s.controller.localNetwork()).toBe('unreadable'))
+  s.backend.change([tether])
+  s.bind({ host: tether.address, port: 4319 })
+  await vi.waitFor(() => expect(s.controller.currentEpoch()).toBe(s.backend.state.epoch))
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(s.controller.localNetwork()).toBeUndefined()
+  s.bind(null)
+  expect(s.controller.localNetwork()).toBeUndefined()
 })

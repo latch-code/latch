@@ -12,7 +12,7 @@ Latch 在你的电脑上运行一个 Host。Host 持有会话、执行权限、�
 - **模型**：Harness 自己登录的模型，或你在 Latch 里添加的模型服务（Chat Completions、Responses 或 Anthropic Messages 协议）。
 - **项目**：一个或多个文件夹，第一个是主文件夹。
 
-macOS 可在构建后运行 `pnpm package:desktop -- --out /绝对路径/Latch.app` 生成供本机验收的 ad-hoc 签名应用。它包含 Host、页面、本机组件与 `latch`，运行时不需要源码或 pnpm。请自行安装满足下表版本要求的系统 Node，应用启动时会检测。正式签名、公证和发布下载尚未提供。
+macOS 可在构建后运行 `pnpm package:desktop -- --out /绝对路径/Latch.app` 生成供本机验收的 ad-hoc 签名应用。它包含 Host、页面、本机组件与 `latch`，运行时不需要源码或 pnpm。请自行安装满足下表版本要求的系统 Node，应用启动时会检测。正式签名与公证的路径见下文「正式签名与公证」，尚未由所有者实际运行；发布下载尚未提供。
 
 包内命令位于 `Latch.app/Contents/Resources/bin/latch`。设置 › 通用 › 这台 Mac › 命令行可将它链接到 `~/.local/bin/latch`，并保留已有命令和 shell 配置。应用终端会把包内目录加入初始 PATH，登录 shell 仍可重新排序。链接成功或遇到占用时，可从设置复制包含包内绝对路径的命令。`latch status` 查看节点，`latch stop` 停止节点，`latch --help` 列出其他命令。源码入口是 `pnpm latch`。关闭应用后 Host 继续运行。
 
@@ -59,6 +59,7 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 ```
 
 - **手机要在同一 Wi‑Fi 下配对或直连时，用 `scripts/desktop.sh` 代替 `pnpm desktop`**（参数相同）。macOS 只把局域网邻居的地址给有「本地网络」权限的程序，经 `pnpm`、`fnm exec` 启动的 Host 拿不到，手机会显示「连不上这台 Mac」；这个脚本直接用 `node` 启动，权限归终端应用，系统首次会询问。用数据线开热点配对两种方式都可以（[RELAY](docs/RELAY.md#同一网络怎样判断)）。
+- 这台 Mac 没有「本地网络」权限时，设置 › 连接转发 的「直接连接」与连接手机的面板显示「本地网络未允许」：桌面端里按「打开系统设置」，在「隐私与安全性 › 本地网络」打开 Latch（从源码运行时是终端应用）。经 pnpm 启动时它另外指向 `scripts/desktop.sh`。
 
 - `pnpm start` 打印 `http://h-<hostId>.localhost:4317/link/` 形式的地址。每台 Host 用自己的 `h-<hostId>.localhost`，不同 Host 的 Cookie 因此互不混用。
 - **只有桌面端算这台电脑。** 回环端口可能被隧道或端口转发连到别处，所以这台电脑上的浏览器与手机一样是远程设备，连接前要一次性邀请：`pnpm latch device invite --loopback`（10 分钟内有效、只能用一次）。
@@ -90,6 +91,16 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 - 自动更新只在已打包且已签名的应用里工作，源码运行时不提供（[docs/UPDATES.md](docs/UPDATES.md)）。
 
 机制见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#桌面端与其他电脑)，崩溃后重启与休眠见[同一文档](docs/ARCHITECTURE.md#host-的生命周期)。
+
+### 正式签名与公证
+
+`pnpm package:desktop -- --release --presence-team <Team ID> --out /绝对路径/Latch.app` 用你的 Developer ID 签名 Latch.app 与包内每个原生组件（加固运行时、安全时间戳，由内向外），再经 `notarytool` 公证并装订票据。命令只读两个名字，证书与公证密码都留在你的钥匙串里；缺任一个就在复制任何文件之前退出。
+
+1. 在 Apple Developer 网站创建「Developer ID Application」证书，装进登录钥匙串。`security find-identity -v -p codesigning` 列出它的全名。
+2. 保存公证凭据（App 专用密码或 API 密钥）：`xcrun notarytool store-credentials latch-notary --apple-id <Apple ID> --team-id <Team ID>`。
+3. 运行：`LATCH_SIGN_IDENTITY='Developer ID Application: 名称 (Team ID)' LATCH_NOTARY_PROFILE=latch-notary pnpm package:desktop -- --release --presence-team <Team ID> --out /绝对路径/Latch.app`。`--presence-team` 必须与证书的 Team ID 相同。
+
+Info.plist 带「本地网络」用途说明与 `NSBonjourServices`（`_latch._tcp`）。签名后的应用第一次让手机直连时，macOS 询问是否允许 Latch 访问本地网络。
 
 ## 模型服务
 
@@ -231,7 +242,7 @@ pnpm stop -- --reason restart           # 告诉手机与浏览器原因：resta
 
 - **Linux**：没有本机确认。桌面端第一次连接不需要确认，之后用离线连接码；浏览器与手机无法连接，需要本机确认的操作都不可用。
 - **Windows**：Host 依赖的每用户运行目录（`host.sock`）尚未实现，Host 无法启动。
-- **安装包与自动更新**：可生成供本机验收的 ad-hoc 签名应用。正式的 Developer ID 签名及公证下载包、已签名的更新源尚未提供。
+- **安装包与自动更新**：可生成供本机验收的 ad-hoc 签名应用；`--release` 用你的 Developer ID 签名并公证，尚未实际运行过。公证下载包与已签名的更新源尚未提供。
 - **中继**：没有官方中继，用[自己的中继](docs/RELAY.md)（Linux 服务器或自己的 Cloudflare 账户）。
 - **插件**：在线安装尚未实现，只加载本机的目录或模块。
 - **iPhone 与 iPad**：还没有在真机上验收，测试夹具不能代替；手机上没有推送通知。

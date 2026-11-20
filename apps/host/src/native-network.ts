@@ -13,6 +13,7 @@ import {
   type NativeLanAddress,
 } from '@latch/link-wire'
 import { sha256Hex, canonicalJson } from '@latch/core/node-kit'
+import type { LocalNetworkAccess } from '@latch/protocol'
 import type { AuditLog } from './audit.ts'
 import { base32 } from './crypto.ts'
 import type { NativeOpening } from './native.ts'
@@ -129,6 +130,10 @@ export class NativeNetwork {
   private readonly pairingProofs = new Set<NativeOpening>()
   private pairingQueue: Promise<unknown> = Promise.resolve()
   private readonly routers = new Map<string, { epoch: string; hash: string; at: number }>()
+  /** The helper's last word on Local Network access; `denied` holds until it reports `ready`. */
+  private access: 'unknown' | 'allowed' | 'denied' = 'unknown'
+  /** Whether the bound non-cable interface's router showed its hardware address on the last pass. */
+  private table: 'unknown' | 'visible' | 'hidden' = 'unknown'
   constructor(private readonly options: NetworkOptions) {
     this.timer = setInterval(() => this.reconcile(), 1000)
     this.timer.unref()
@@ -190,6 +195,17 @@ export class NativeNetwork {
   currentEpoch(): string | undefined {
     return this.snapshot?.epoch
   }
+  /**
+   * macOS Local Network access as far as this Host can tell; undefined before anything is bound or observed. `denied`:
+   * the helper's Bonjour registration was refused. `unreadable`: a bound Wi‑Fi or wired interface's router shows no
+   * hardware address even after being asked, which is how the neighbour table looks to a process without access.
+   */
+  localNetwork(): LocalNetworkAccess | undefined {
+    if (!this.options.direct() || !this.snapshot) return undefined
+    if (this.access === 'denied') return 'denied'
+    if (this.table === 'hidden') return 'unreadable'
+    return this.access === 'allowed' || this.table === 'visible' ? 'allowed' : undefined
+  }
   /** Whether the bound address is on an iPhone's USB hotspot, for the sheet's label only. */
   cable(): boolean {
     return this.rows().some(row => row.tether === true)
@@ -220,9 +236,26 @@ export class NativeNetwork {
         backend.onChange(snapshot => {
           this.snapshot = networkSnapshotSchema.parse(snapshot)
           this.retryAt = 0
+          this.access = 'unknown'
+          this.table = 'unknown'
           this.invalidate()
         }),
         backend.onStatus(status => {
+          // A refusal for want of Local Network access does not end by retrying: the helper waits for access and says
+          // `ready`, and only then does the Host publish again. Invalidating here would publish into the same refusal.
+          if (status === 'denied') {
+            this.access = 'denied'
+            return
+          }
+          if (status === 'ready') {
+            const was = this.access
+            this.access = 'allowed'
+            if (was === 'denied') {
+              this.retryAt = 0
+              this.invalidate()
+            }
+            return
+          }
           if (status === 'blocked' || status === 'conflict') {
             this.retryAt = this.now() + 30_000
             this.invalidate()
@@ -284,6 +317,7 @@ export class NativeNetwork {
       alternate = base32(await mdnsDigest(nodeCrypto, key, day, true)).slice(0, 12)
     const services: NativeNetworkService[] = [],
       book: NativeLanAddress[] = []
+    let table: 'unknown' | 'visible' | 'hidden' = 'unknown'
     for (const row of this.rows()) {
       if (!row.gateway) {
         if (this.options.pairing()) services.push({ index: row.index, port: direct.port, instance, alternate, addresses: [row.address] })
@@ -300,7 +334,14 @@ export class NativeNetwork {
         if (cached) this.routers.set(`${row.index}:${row.address}`, cached)
         else this.routers.delete(`${row.index}:${row.address}`)
       }
-      if (this.options.pairing() || (cached && this.options.networks.has(cached.hash)))
+      // The cable needs no neighbour table for a hidden router to mean anything: see `proveNeighbour`.
+      if (row.tether !== true) table = cached ? 'visible' : table === 'visible' ? 'visible' : 'hidden'
+      // A cable hotspot known by its subnet alone (proven without the table) advertises without the router's MAC too.
+      if (
+        this.options.pairing()
+        || (cached && this.options.networks.has(cached.hash))
+        || (row.tether === true && this.options.networks.has(knownTetherHash(row)))
+      )
         services.push({ index: row.index, port: direct.port, instance, alternate, addresses: [row.address] })
       if (!linkLocal(row.address))
         book.push({
@@ -311,6 +352,7 @@ export class NativeNetwork {
           gatewayHash: await gatewayHash(nodeCrypto, row.address, row.prefixLength, row.gateway),
         })
     }
+    if (generation === this.generation) this.table = table
     if (
       this.stopping
       || generation !== this.generation
@@ -414,17 +456,16 @@ export class NativeNetwork {
     recheck()
     if (this.stopping || generation !== this.generation || observed.epoch !== snapshot.epoch || this.snapshot?.epoch !== snapshot.epoch)
       return undefined
-    // An iPhone sharing its connection over the cable is that cable's gateway, and the only device that can be: a pairing
-    // from the gateway's own address on it is the phone in hand. This needs no neighbour table, which macOS hides from a
-    // process without Local Network access (a Host started under pnpm or fnm). Hotspot clients keep their own addresses.
-    if (
-      pairing
-      && row.tether === true
-      && sameIp(opening.source, row.gateway)
-      && (!observed.gateway || sameIp(observed.gateway, row.gateway))
-    ) {
+    // An iPhone sharing its connection over the cable is that cable's gateway, and the only device that can be: the USB
+    // interface is a point-to-point link to it, and the phone routes but does not forward inbound traffic to the Mac, so
+    // a socket from the gateway's own address on it is the phone in hand. Its hotspot clients (Wi‑Fi, Bluetooth, another
+    // cable) keep their own addresses and fall through to the neighbour rule below. This needs no neighbour table, which
+    // macOS hides from a process without Local Network access (a Host started under pnpm or fnm), so it holds for daily
+    // proximity as for pairing. The network is named by its subnet alone (`knownTetherHash`): every iPhone hotspot shares
+    // it, so knowing it only means advertising anonymous names on that cable; authentication is unchanged.
+    if (row.tether === true && sameIp(opening.source, row.gateway) && (!observed.gateway || sameIp(observed.gateway, row.gateway))) {
       this.routers.delete(`${row.index}:${row.address}`)
-      return observed.gatewayMac ? knownNetworkHash(row, observed.gatewayMac) : knownTetherHash(row)
+      return knownTetherHash(row)
     }
     if (!observed.peerMac || !observed.gatewayMac || !observed.gateway || !sameIp(observed.gateway, row.gateway)) return undefined
     // A router forwarding traffic shows up with its own MAC. Only pairing lets that through, and only for its own IP.

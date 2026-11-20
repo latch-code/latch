@@ -603,8 +603,9 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       requireScope(caller, 'admin')
       const id = safeDecode(pairing[1]!)
       if (method === 'GET') {
-        const status: NativePairingStatus = enrollments.nativePairingStatus(id)
-        json(res, status)
+        const status: NativePairingStatus = enrollments.nativePairingStatus(id),
+          access = nativeNetwork?.localNetwork()
+        json(res, access && access !== 'allowed' ? { ...status, localNetwork: access } : status)
         return true
       }
       enrollments.revokeNativeInvitation(id)
@@ -704,6 +705,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       // The relay setup scripts exist only in a source checkout; a packaged app ships without apps/.
       sourceCheckout: existsSync(join(codeRoot, 'apps/relay/src/cli.ts')),
       changed: () => nativeNetwork?.invalidate(),
+      localNetwork: () => nativeNetwork?.localNetwork(),
       resolveDirect: async (direct, current) => {
         if (!nativeNetwork) throw new AppError(409, 'native-no-lan', '这台 Mac 没有连接 Wi‑Fi 或有线网络。')
         return nativeNetwork.resolveDirect(direct, current)

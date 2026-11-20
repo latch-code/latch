@@ -259,12 +259,17 @@ function appPermissionHandlers(home, window) {
   }
 }
 
+/** 系统设置 › 隐私与安全性 › 本地网络: the one system-settings page the app's own window may open, for 打开系统设置. */
+const LOCAL_NETWORK_SETTINGS = 'x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork'
+
 /**
  * Requested web/mail links use the system handler; unprompted requests are HTTPS-only with a confirmation.
- * The serialized URL is printable ASCII, without credentials or privileged system protocols.
+ * The serialized URL is printable ASCII, without credentials or privileged system protocols, except the one
+ * Local Network settings page, compared whole and only on a click in this Mac's own window.
  */
 function externalUrl(raw, userGesture = false) {
   if (typeof raw !== 'string' || raw.length > EXTERNAL_URL_LIMIT) return undefined
+  if (raw === LOCAL_NETWORK_SETTINGS) return userGesture ? raw : undefined
   let url
   try {
     url = new URL(raw)
@@ -1417,6 +1422,7 @@ function createShellProxy(options) {
 
 module.exports = {
   APP_ORIGIN,
+  LOCAL_NETWORK_SETTINGS,
   LOCAL_HOME,
   REMOTE_HOME,
   CLEARING_CODES,

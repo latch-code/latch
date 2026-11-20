@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Cable, Wifi } from 'lucide-react'
-import type { AppSnapshot, NativePairingInvitation, NativePairingStatus } from '@latch/protocol'
+import type { AppSnapshot, LocalNetworkAccess, NativePairingInvitation, NativePairingStatus } from '@latch/protocol'
 import { Button, Icon, InlineNotice, Modal, ModalHeader, Spinner, OfflineGlyph } from '@latch/ui'
 import { useViewport } from '../../breakpoints.ts'
 import { VisibleText } from '../../components/VisibleText.tsx'
@@ -9,6 +9,8 @@ import { api, ApiError, inlineError } from '../../core/api.ts'
 import { BLOCKED_COPY, NATIVE_LINK_COPY as COPY, presenceUnavailableText } from '../../core/securityCopy.ts'
 import { hostView } from '../../core/permissions.ts'
 import { PairingBlocked } from '../PairingBlocked.tsx'
+import { canOpenSystemSettings, LocalNetworkHint } from '../LocalNetworkHint.tsx'
+import { SOURCE_RUN } from '../../core/commands.ts'
 import { pairingQr } from '../pairingQr.ts'
 import { WaitingDevices } from './WaitingDevices.tsx'
 import { deviceIcon } from './deviceIcon.ts'
@@ -45,6 +47,7 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
     [stop, setStop] = useState<Stop>({ kind: 'none' }),
     [line, setLine] = useState(''),
     [offNetwork, setOffNetwork] = useState(false),
+    [localNetwork, setLocalNetwork] = useState<LocalNetworkAccess | undefined>(undefined),
     [busy, setBusy] = useState<{ state: 'confirming' | 'approved'; device?: string } | null>(null),
     [done, setDone] = useState<{ device: string } | null>(null)
   const issued = useRef<IssuedQr[]>([])
@@ -143,6 +146,9 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
       const answers = await Promise.all(asked.map(item => api<NativePairingStatus>(`native/pairings/${item.id}`).catch(() => null)))
       if (closing.current) return
       if (answers.some(value => value?.offNetwork)) setOffNetwork(true)
+      // Every answer carries the Host's current word on Local Network access; the newest one decides.
+      const latest = answers.findLast(value => value !== null)
+      if (latest) setLocalNetwork(latest.localNetwork)
       const read = readPairing(asked, answers, Date.now())
       if (read.kind === 'contended') {
         issued.current = []
@@ -279,6 +285,7 @@ export function PairingSheet({ snapshot, onClose, onChanged }: { snapshot: AppSn
             <Icon icon={invitation?.cable ? Cable : Wifi} size={12} />
             <span>{invitation?.cable ? COPY.byCable : COPY.sameWifi}</span>
           </p>
+          <LocalNetworkHint state={localNetwork} openable={canOpenSystemSettings(true)} source={SOURCE_RUN} />
           <p className="pair-foot-note">{COPY.drivesAgents}</p>
         </div>
         <WaitingDevices place="sheet" />

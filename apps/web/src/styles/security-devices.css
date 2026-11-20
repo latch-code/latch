@@ -512,3 +512,28 @@
   display: block !important;
   align-self: stretch;
 }
+
+/* 本地网络未允许: the status, then its one way out (a button in the desktop app, the settings path elsewhere). */
+.local-network-hint {
+  display: inline-flex !important;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  min-width: 0;
+}
+.local-network-path,
+.local-network-script {
+  color: var(--muted) !important;
+  font-size: var(--fs-caption) !important;
+  line-height: var(--lh-caption) !important;
+}
+.local-network-script {
+  font-family: var(--mono);
+}
+.local-network-line {
+  display: inline-flex !important;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4) var(--sp-8);
+}

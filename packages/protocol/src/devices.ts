@@ -66,6 +66,11 @@ export interface NativeLinkInfo {
    */
   sourceCheckout?: boolean
   edgeRelayAvailable?: boolean
+  /**
+   * macOS Local Network access of the Host's process, once a LAN address is bound and observed. `denied`: Bonjour was
+   * refused. `unreadable`: the router's hardware address stays hidden, as it does without access.
+   */
+  localNetwork?: LocalNetworkAccess
   /** The built-in official relay: whether this build has deployed nodes, and whether the person left it on. */
   official?: {
     deployed: boolean
@@ -139,6 +144,7 @@ export type NativeRelayProfile =
       shard?: number
       registrationKey?: string
     }
+export type LocalNetworkAccess = 'allowed' | 'denied' | 'unreadable'
 /** One QR on the Mac's pairing sheet. Its payload is the secret: the sheet renders it and closes it, nothing else. */
 export interface NativePairingInvitation {
   id: string
@@ -157,6 +163,8 @@ export interface NativePairingStatus {
   /** `done`: the device the sheet asks about, to remove if the phone in hand is not connected. */
   deviceId?: string
   offNetwork: boolean
+  /** Present only when this Mac lacks Local Network access (see `NativeLinkInfo.localNetwork`). */
+  localNetwork?: Exclude<LocalNetworkAccess, 'allowed'>
 }
 
 /** The device making the request, as returned in the snapshot. */

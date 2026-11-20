@@ -56,7 +56,11 @@ const mac = z
   .refine(value => value !== '00:00:00:00:00:00' && (Number.parseInt(value.slice(0, 2), 16) & 1) === 0)
 const neighborsSchema = z.strictObject({ epoch: z.uuid(), peerMac: mac.nullable(), gatewayMac: mac.nullable(), gateway: ip.nullable() })
 export type NativeNeighbors = z.infer<typeof neighborsSchema>
-export type NativeNetworkStatus = 'off' | 'starting' | 'ready' | 'blocked' | 'conflict'
+/**
+ * `denied`: macOS refused a Bonjour registration for want of Local Network access (`kDNSServiceErr_PolicyDenied`). The
+ * helper then waits for access and reports `ready` once it arrives; nothing retries in between.
+ */
+export type NativeNetworkStatus = 'off' | 'starting' | 'ready' | 'blocked' | 'conflict' | 'denied'
 export interface NativeNetworkBackend {
   snapshot(): Promise<NativeNetworkSnapshot>
   publish(services: NativeNetworkService[], epoch: string): Promise<void>
@@ -71,7 +75,7 @@ const eventSchema = z.discriminatedUnion('event', [
   z.strictObject({
     version: z.literal(1),
     event: z.literal('status'),
-    state: z.enum(['ready', 'blocked', 'conflict']),
+    state: z.enum(['ready', 'blocked', 'conflict', 'denied']),
     index: z.int().min(1).max(0xffffffff),
   }),
 ])

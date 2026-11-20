@@ -56,7 +56,7 @@ const ALL_STATES: Relay[] = [
   row('7'.repeat(32), 'invalid'),
 ]
 
-async function scripted(page: Page, local: boolean, relays: Relay[], listening = true) {
+async function scripted(page: Page, local: boolean, relays: Relay[], listening = true, localNetwork?: NativeLinkInfo['localNetwork']) {
   const state = { relays, posted: [] as unknown[], patched: [] as unknown[], deleted: [] as string[] }
   // This Mac's desktop app: the page is local only inside the shell, on host.sock.
   if (local)
@@ -71,6 +71,7 @@ async function scripted(page: Page, local: boolean, relays: Relay[], listening =
     directory: false,
     sourceCheckout: true,
     edgeRelayAvailable: true,
+    ...(localNetwork ? { localNetwork } : {}),
     relays: state.relays,
   })
   await page.route('**/link/api/snapshot', async route => {
@@ -249,6 +250,44 @@ describe('设置 › 连接转发', () => {
         await context.close()
       }
     })
+
+  it('says 本地网络未允许 on the direct row: a button in the desktop app, the settings path in a browser', async () => {
+    const shots = process.env.LATCH_LOCAL_NETWORK_SHOTS ?? OUTPUT
+    await mkdir(shots, { recursive: true })
+    for (const [local, place] of [
+      [true, 'app'],
+      [false, 'browser'],
+    ] as const)
+      for (const width of [390, 1440]) {
+        const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 } })
+        try {
+          const page = await context.newPage()
+          await enrollBrowser(page, host, { name: `本地网络-${place}-${width}`, scopes: ['admin'] })
+          await scripted(page, local, [], true, 'denied')
+          await page.reload()
+          await connected(page)
+          await openEntry(page, '连接转发')
+          const hint = page.getByTestId('local-network-hint')
+          await hint.getByText('本地网络未允许').waitFor()
+          if (local) {
+            const open = page.getByRole('link', { name: '打开系统设置' })
+            expect(await open.getAttribute('href')).toBe('x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork')
+          } else {
+            await hint.getByText('系统设置 › 隐私与安全性 › 本地网络').waitFor()
+            expect(await page.getByRole('link', { name: '打开系统设置' }).count()).toBe(0)
+          }
+          // This test Host runs from the source checkout: the script that starts it with access is named.
+          await hint.getByText('scripts/desktop.sh', { exact: true }).waitFor()
+          expect(await page.getByTestId('relay-direct').count()).toBe(0)
+          for (const colorScheme of ['light', 'dark'] as const) {
+            await page.emulateMedia({ colorScheme })
+            await page.screenshot({ path: `${shots}/local-network-${place}-${width}-${colorScheme}.png`, animations: 'disabled' })
+          }
+        } finally {
+          await context.close()
+        }
+      }
+  })
 
   it('shows another admin device the list without any way to change it, and no relays at all as empty', async () => {
     const context = await browser.newContext({ viewport: { width: 1100, height: 800 } })

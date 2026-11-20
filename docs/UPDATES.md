@@ -147,7 +147,7 @@ Host 在 `host-info` 与安装窗口接口里报告 `protocol`（`HOST_PROTOCOL`
 `pnpm package:desktop` 生成供本机验收的 ad-hoc 签名应用，包内带 Host、网页资源和 `latch`。发布仍需要以下配置与验收。
 
 - **发布流水线**负责生成已签名的 zip 资产、启用并核对 Electron 的完整性保护、写入 `update-source.cjs`。
-- **签名与公证**：Developer ID Application 证书与 notarytool 凭据。Squirrel.Mac 只为签名一致的应用安装更新。
+- **签名与公证**：`pnpm package:desktop -- --release` 用所有者的 Developer ID Application 证书与 notarytool 凭据签名并公证（[README](../README.md#正式签名与公证)），尚未实际运行。Squirrel.Mac 只为签名一致的应用安装更新。
 - **更新托管**：一个固定的 HTTPS 地址，提供签名后的更新源与同源资产。
 - **Ed25519 发布密钥**：私钥由所有者离线保管用于签发更新源，公钥写入构建。
 - **真实安装器**只有单元级替身与端到端假安装器覆盖，需在第一对签名版本上实测旧版 → 新版、失败恢复与插件停用。

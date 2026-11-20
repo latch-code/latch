@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { build } from 'esbuild'
 import { z } from 'zod'
 import { presenceIdentity } from '../src/presence-identity.ts'
+import { notarize, releaseSigning, signForRelease, writeInfoPlist } from './desktop-release.ts'
 import { hostBundleOptions, REPOSITORY_ROOT } from './host-bundle.ts'
 
 const run = promisify(execFile)
@@ -149,8 +150,8 @@ async function copyBundledLicenses(inputs: string[], root: string): Promise<void
 
 async function packageDesktop(): Promise<void> {
   if (process.platform !== 'darwin') throw new Error('Latch.app 的打包只支持 macOS')
-  if (process.argv.some(argument => argument === '--release' || argument.startsWith('--release=')))
-    throw new Error('此命令仅生成本机验收包。正式发布需固定公开 Apple Team ID、使用 Developer ID 签名、验证应用资源完整性并完成公证。')
+  // Checked before anything is copied: a release without the owner's identity and notary profile fails closed.
+  const release = releaseSigning(process.argv.slice(2), process.env)
   const team = option('--presence-team')
   if (team) presenceIdentity(team)
   const output = resolve(option('--out') ?? join(REPOSITORY_ROOT, 'out', 'Latch.app'))
@@ -268,8 +269,7 @@ async function packageDesktop(): Promise<void> {
       ])
     }
     await rename(join(contents, 'MacOS/Electron'), join(contents, 'MacOS/Latch'))
-    const plist = join(contents, 'Info.plist')
-    for (const [key, value] of Object.entries({
+    await writeInfoPlist(join(contents, 'Info.plist'), {
       CFBundleName: 'Latch',
       CFBundleDisplayName: 'Latch',
       CFBundleIdentifier: 'dev.latch.desktop',
@@ -277,15 +277,20 @@ async function packageDesktop(): Promise<void> {
       CFBundleIconFile: 'Latch.icns',
       CFBundleVersion: manifest.version,
       CFBundleShortVersionString: manifest.version,
-    }))
-      await run('/usr/bin/plutil', ['-replace', key, '-string', value, plist], { env: {} })
+    })
     await electronNodeFuses(contents, 'disable')
-    await signLocalElectronApp(app, temporary)
+    // The local package is ad-hoc signed and touches no identity or keychain. `--release` signs with the owner's
+    // Developer ID named in the environment and notarizes with their stored notary profile.
+    if (release) await signForRelease(app, release, temporary)
+    else await signLocalElectronApp(app, temporary)
     await electronNodeFuses(contents, 'verify')
-    // The local package uses ad-hoc signing. Release identity mode deliberately fails closed until its native components
-    // are signed by the owner; no signing identity, keychain, account, updater, or notarization is accessed here.
+    if (release) await notarize(app, release, temporary)
     await rename(app, output)
-    console.log(`已生成 ad-hoc 签名的本机应用：${output}${team ? '（发布身份组件尚需所有者签名）' : ''}`)
+    console.log(
+      release
+        ? `已生成 Developer ID 签名并完成公证的应用：${output}`
+        : `已生成 ad-hoc 签名的本机应用：${output}${team ? '（发布身份组件尚需所有者签名）' : ''}`,
+    )
   } finally {
     await rm(temporary, { recursive: true, force: true })
   }
