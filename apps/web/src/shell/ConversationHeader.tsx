@@ -155,6 +155,7 @@ function TitleMenu({ title, sections }: { title: string; sections: MenuSection[]
       title={title}
       placement="bottom-start"
       sections={sections}
+      frosted
       trigger={props => (
         <button {...props} type="button" className="topbar-title-button">
           <span className="topbar-title-text">{title}</span>
@@ -569,6 +570,7 @@ export function SessionHeader({
           label={SHELL_COPY.sessionActions}
           placement="bottom-end"
           sections={menu}
+          frosted
           trigger={props => <IconButton {...props} label={SHELL_COPY.sessionActions} icon={MoreGlyph} />}
         />
       )}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
-import { ArrowUp, Circle, CircleDot, Fingerprint, Plug, RotateCcw } from 'lucide-react'
+import { ArrowUp, Circle, CircleDot, Fingerprint, Flag, Plug, RotateCcw } from 'lucide-react'
 import {
   Badge,
   Button,
@@ -824,6 +824,28 @@ function Pickers() {
             />
           </div>
         </Cell>
+        <Cell caption="长标签">
+          <div className="ui-popover">
+            <MenuPanel
+              label="分支"
+              selection
+              sections={[
+                {
+                  id: 'branches',
+                  items: [
+                    { id: 'main', label: 'main', checked: true, onSelect: () => {} },
+                    {
+                      id: 'feature',
+                      label: 'feature/fix-conversation-history-scroll',
+                      labelContent: <span>feature/…-scroll</span>,
+                      onSelect: () => {},
+                    },
+                  ],
+                },
+              ]}
+            />
+          </div>
+        </Cell>
         <Cell caption="操作菜单 · 说明">
           <div style={{ display: 'grid', gap: 'var(--sp-8)' }}>
             <div className="ui-popover">
@@ -903,6 +925,12 @@ function Pickers() {
                   id: 'actions',
                   items: [
                     { id: 'rename', label: '重命名', icon: EditGlyph, onSelect: () => {} },
+                    {
+                      id: 'priority',
+                      label: '优先级',
+                      icon: Flag,
+                      choices: ['高', '中', '低'].map(label => ({ id: label, label, checked: label === '中', onSelect: () => {} })),
+                    },
                     { id: 'export', label: '导出 Markdown', icon: DownloadGlyph, meta: <Kbd>⌘E</Kbd>, onSelect: () => {} },
                     { id: 'delete', label: '删除…', icon: TrashGlyph, danger: true, onSelect: () => {} },
                   ],
@@ -956,9 +984,9 @@ function Pickers() {
         </Cell>
         <Cell caption="弹层里的脚部导航行（列表之外，可用 Tab 到达）">
           <div className="ui-popover" style={{ width: 280 }}>
-            <p className="gallery-note">一列按钮之后，分隔线下的一行</p>
-            <div className="ui-menu-separator" role="separator" />
-            <MenuFooterLink onClick={() => {}}>管理 Agent 成员…</MenuFooterLink>
+            <div className="ui-menu-footer">
+              <MenuFooterLink onClick={() => {}}>管理 Agent 成员…</MenuFooterLink>
+            </div>
           </div>
         </Cell>
         <Cell caption="单选列表 · 带磁贴">

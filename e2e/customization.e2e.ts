@@ -426,7 +426,7 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
       await setTransparency('no-preference')
       await choose('实色')
       expect(await floatingLook(picker)).toEqual(SOLID)
-      expect(await background(picker)).toBe('rgb(29, 29, 29)')
+      expect(await background(picker)).toBe('rgb(12, 12, 12)')
       await page.reload()
       await connected(page)
       expect(await page.locator('html').getAttribute('data-floating-material')).toBe('solid')

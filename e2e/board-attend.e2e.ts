@@ -7,7 +7,7 @@ import type { AppSnapshot, Device, TaskDetail, TaskSummary, WorkspaceInfo } from
 import type { HarnessPlugin } from '@latch/sdk'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, settleShell } from './helpers/layout.ts'
+import { backToPhoneSessions, noHorizontalOverflow, settleShell } from './helpers/layout.ts'
 import { switchView } from './helpers/workbench.ts'
 
 const OUT = 'test-results/board-attend'
@@ -127,11 +127,20 @@ it('marks a failed run opened only when it is really shown, and checks unknown r
 
     // 优先级 and 标签 from the session menu reach the second device.
     const menu = () => page.getByRole('button', { name: '会话操作', exact: true }).locator('visible=true').first().click()
+    const priority = page.getByRole('menuitem', { name: '优先级', exact: true })
+    const high = page.getByRole('menuitemradio', { name: '高', exact: true })
     await menu()
-    await page.getByRole('menuitem', { name: '高', exact: true }).click()
+    await priority.click()
+    await high.click()
     await expect.poll(async () => (await listed(failed)).priority).toBe('high')
     await menu()
-    await expect.poll(() => page.getByRole('menuitem', { name: '高', exact: true }).locator('svg').count()).toBe(1)
+    await priority.getByText('高', { exact: true }).waitFor()
+    await priority.focus()
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(() => high.getAttribute('aria-checked')).toBe('true')
+    await expect.poll(() => high.evaluate(element => element === document.activeElement)).toBe(true)
+    await page.keyboard.press('Escape')
+    await expect.poll(() => priority.evaluate(element => element === document.activeElement)).toBe(true)
     await shot(page, 'session-menu', 1440, 'light')
     await shot(page, 'session-menu', 1440, 'dark')
     await page.getByRole('menuitem', { name: '标签…', exact: true }).click()
@@ -234,6 +243,35 @@ it('marks a failed run opened only when it is really shown, and checks unknown r
     await page.getByRole('menuitem', { name: '标签…', exact: true }).waitFor()
     await shot(page, 'session-menu', 390, 'light')
     await shot(page, 'session-menu', 390, 'dark')
+    await priority.click()
+    await high.waitFor()
+    await shot(page, 'session-priority', 390, 'light')
+    await shot(page, 'session-priority', 390, 'dark')
+    await page.getByRole('menuitem', { name: '返回', exact: true }).click()
+    await page.getByRole('menuitem', { name: '标签…', exact: true }).waitFor()
+    await page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true }).click()
+
+    // The same sheet opens on a real touch hold; lifting over its actions must leave it open.
+    await page.setViewportSize({ width: 320, height: 568 })
+    await backToPhoneSessions(page)
+    const heldRow = row(failed)
+    await heldRow.scrollIntoViewIfNeeded()
+    const bounds = await heldRow.boundingBox()
+    if (!bounds) throw new Error('Expected a visible session row')
+    const touch = await context.newCDPSession(page)
+    await touch.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+    await touch.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: bounds.x + 24, y: bounds.y + bounds.height / 2 }],
+    })
+    const heldSheet = page.locator('dialog.ui-sheet[open]').filter({ has: page.getByRole('menu') })
+    await heldSheet.waitFor()
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await settleShell(page)
+    expect(await heldSheet.isVisible()).toBe(true)
+    await heldSheet.getByRole('menuitem', { name: '优先级', exact: true }).click()
+    await heldSheet.getByRole('menuitemradio', { name: '高', exact: true }).waitFor()
+    await touch.detach()
   } finally {
     await context.close()
     await browser.close()

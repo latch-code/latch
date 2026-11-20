@@ -128,7 +128,7 @@ describe('input suggestions', () => {
       expect(layer.dataset.sheet).toBe('')
       const box = layer.getBoundingClientRect()
       expect([box.left, box.width]).toEqual([0, 390])
-      expect(Math.abs(box.bottom - anchor.top)).toBeLessThanOrEqual(1)
+      await expect.poll(() => Math.abs(layer.getBoundingClientRect().bottom - anchor.top)).toBeLessThanOrEqual(1)
       expect(getComputedStyle(layer).borderBottomLeftRadius).toBe('0px')
       expect(document.activeElement?.getAttribute('aria-label')).toBe('消息')
     } finally {

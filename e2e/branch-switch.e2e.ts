@@ -9,7 +9,7 @@ import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openPanelTab, openSession, phoneStartScreen, reachable } from './helpers/layout.ts'
+import { layersInWindow, noHorizontalOverflow, openPanelTab, openSession, phoneStartScreen, reachable } from './helpers/layout.ts'
 
 const OUT = 'test-results/branch-switch'
 const LONG = 'fix/studio-sidebar-history-scroll'
@@ -88,9 +88,10 @@ describe('the branch chip', () => {
     if (gitHome) await rm(gitHome, { recursive: true, force: true })
   })
 
-  async function open(width: number, theme: 'light' | 'dark'): Promise<Page> {
+  async function open(width: number, theme: 'light' | 'dark', height = 900, hasTouch = false): Promise<Page> {
     const context = await browser.newContext({
-      viewport: { width, height: 900 },
+      viewport: { width, height },
+      hasTouch,
       colorScheme: theme,
       reducedMotion: 'reduce',
       locale: 'zh-CN',
@@ -123,21 +124,29 @@ describe('the branch chip', () => {
 
   it('keeps long names on one line and makes other worktrees reachable beside a long local branch list', async ({ onTestFinished }) => {
     const backups = Array.from({ length: 101 }, (_, index) => `backup/before-rebase-${index}`)
-    for (const name of backups) git('branch', name)
+    const repeated = 'keepconversationhistoryscrollstable'.repeat(3)
+    const longBranches = [
+      [`feature/studio/${repeated}-after-search`, '-after-search'],
+      [`feature/studio/${repeated}-after-switch`, '-after-switch'],
+      [`workbench${repeated}touchvariant`, 'touchvariant'],
+    ] as const
+    const names = [...backups, ...longBranches.map(([name]) => name)]
+    for (const name of names) git('branch', name)
     const other = join(host.root, 'studio-other')
     git('worktree', 'add', '-q', other, 'docs/readme')
     onTestFinished(() => {
       git('worktree', 'remove', other)
-      git('branch', '-D', ...backups)
+      git('branch', '-D', ...names)
     })
-    for (const [width, theme] of [
+    for (const [width, theme, height = 900, hasTouch = false] of [
       [1440, 'light'],
       [1440, 'dark'],
-      [1100, 'light'],
-      [768, 'light'],
-      [390, 'light'],
+      [1100, 'light', 480],
+      [768, 'light', 900, true],
+      [390, 'light', 900, true],
+      [320, 'dark', 560, true],
     ] as const) {
-      const page = await open(width, theme)
+      const page = await open(width, theme, height, hasTouch)
       try {
         await chooseProject(page)
         await page.locator('[data-seg="branch"]').locator('visible=true').first().waitFor()
@@ -151,6 +160,7 @@ describe('the branch chip', () => {
         // The worktree's branch sorts past the first hundred names.
         await page.locator('.home-place button.branch-switch').click()
         const list = page.getByRole('menu', { name: '分支' })
+        const search = page.getByRole('searchbox', { name: '搜索分支' })
         const views = page.getByRole('radiogroup', { name: '分支位置' })
         const worktrees = views.getByRole('radio', { name: '其他工作树' })
         await reachable(worktrees)
@@ -158,6 +168,69 @@ describe('the branch chip', () => {
         expect(await list.getByRole('menuitemradio', { name: LONG }).getAttribute('aria-checked')).toBe('true')
         expect(await list.getByRole('menuitemradio').count()).toBe(100)
         await page.screenshot({ path: `${OUT}/list--${width}--${theme}.png` })
+        if (width === 1440 && theme === 'dark') {
+          await views.getByRole('radio', { name: '本地分支' }).focus()
+          await search.hover()
+          await page.screenshot({ path: `${OUT}/search-hover--1440--dark.png` })
+          await page.mouse.move(0, 0)
+        }
+
+        const searchTop = (await search.boundingBox())!.y
+        await search.press('ArrowDown')
+        await page.keyboard.press('End')
+        const last = list.getByRole('menuitemradio').last()
+        await expect.poll(() => last.evaluate(element => element.matches(':focus-visible'))).toBe(true)
+        await expect.poll(() => page.locator('.branch-list-results').evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+        expect((await search.boundingBox())!.y).toBeCloseTo(searchTop, 0)
+        await layersInWindow(page)
+        if (hasTouch) {
+          expect((await worktrees.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+          expect((await last.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+        }
+
+        await search.fill('keepconversation')
+        await expect.poll(() => list.getByRole('menuitemradio').count()).toBe(longBranches.length)
+        for (const [name, suffix] of longBranches) {
+          const row = list.getByRole('menuitemradio', { name, exact: true })
+          expect(await row.locator('.middle-ellipsis-head').evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
+          const tail = row.locator('.middle-ellipsis-tail')
+          expect(await tail.textContent()).toContain(suffix)
+          expect(await tail.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+        }
+        await noHorizontalOverflow(page, page.locator('.branch-list-results'))
+        await page.screenshot({ path: `${OUT}/long-names--${width}--${theme}.png` })
+
+        if (width === 1100 || width === 320) {
+          const [name] = longBranches[0]
+          const row = list.getByRole('menuitemradio', { name, exact: true })
+          const tip = page.getByRole('tooltip').filter({ hasText: name })
+          if (hasTouch) {
+            let switchRequests = 0
+            page.on('request', request => {
+              if (request.url().endsWith('/branches/switch')) switchRequests++
+            })
+            const box = (await row.boundingBox())!
+            const cdp = await page.context().newCDPSession(page)
+            try {
+              await cdp.send('Input.dispatchTouchEvent', {
+                type: 'touchStart',
+                touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2 }],
+              })
+              await tip.waitFor()
+              await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+              await page.screenshot({ path: `${OUT}/full-name--320--dark.png` })
+              await search.tap()
+              expect(switchRequests).toBe(0)
+            } finally {
+              await cdp.detach()
+            }
+          } else {
+            await row.hover()
+            await tip.waitFor()
+            await page.screenshot({ path: `${OUT}/full-name--1100--light.png` })
+          }
+        }
+
         await worktrees.click()
         const held = list.getByRole('menuitemradio', { name: 'docs/readme' })
         await reachable(held, { allowDisabled: true })
@@ -204,6 +277,10 @@ describe('the branch chip', () => {
       await search.fill('FEAT')
       await expect.poll(() => list.getByRole('menuitemradio').count()).toBe(1)
       await page.screenshot({ path: `${OUT}/list-search--1440--light.png` })
+      await search.press('Escape')
+      expect(await search.inputValue()).toBe('')
+      await expect.poll(() => list.getByRole('menuitemradio').count()).toBe(6)
+      await search.fill('FEAT')
       // Held so the switching state can be seen.
       await page.route('**/branches/switch', async route => {
         await new Promise(done => setTimeout(done, 1200))

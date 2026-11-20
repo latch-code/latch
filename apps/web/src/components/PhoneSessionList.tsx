@@ -1,7 +1,7 @@
 import { sessionsAwaitingReturn } from '../handoffs/model.ts'
 import { originTitle } from '../plugin-pages/model.ts'
 import { ProjectGroupHeading, type ProjectNavigationActions } from './ProjectNavigation.tsx'
-import { memo, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import { FolderGit2 } from 'lucide-react'
 import { escapeSecurityText, type AppSnapshot, type TaskSummary } from '@latch/protocol'
 import { deviceAccess } from '../core/permissions.ts'
@@ -60,6 +60,14 @@ function useHold(onHold: () => void) {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const start = useRef<{ x: number; y: number } | null>(null)
   const held = useRef(false)
+  const release = useRef<AbortController | null>(null)
+  useEffect(
+    () => () => {
+      clearTimeout(timer.current)
+      release.current?.abort()
+    },
+    [],
+  )
   const cancel = () => {
     clearTimeout(timer.current)
     start.current = null
@@ -80,6 +88,21 @@ function useHold(onHold: () => void) {
         timer.current = setTimeout(() => {
           held.current = true
           start.current = null
+          // A touch release can synthesize a click on the sheet that has just covered the row.
+          const guard = new AbortController()
+          release.current = guard
+          const capture = { capture: true, signal: guard.signal }
+          window.addEventListener('pointerdown', () => guard.abort(), capture)
+          window.addEventListener(
+            'click',
+            click => {
+              if (click.detail === 0) return
+              click.preventDefault()
+              click.stopImmediatePropagation()
+              guard.abort()
+            },
+            capture,
+          )
           onHold()
         }, HOLD_MS)
       },

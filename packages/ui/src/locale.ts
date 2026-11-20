@@ -65,6 +65,7 @@ function defineCopy<T extends object>(zh: T, en: NoInfer<Translation<T>>): Trans
 export const UI_COPY = defineCopy(
   {
     unavailable: '此项暂不可用',
+    back: '返回',
     actionFailed: '操作未完成，请重试。',
     cancel: '取消',
     save: '保存',
@@ -102,6 +103,7 @@ export const UI_COPY = defineCopy(
   },
   {
     unavailable: 'Not available right now',
+    back: 'Back',
     actionFailed: 'Not done. Try again.',
     cancel: 'Cancel',
     save: 'Save',

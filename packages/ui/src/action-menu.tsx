@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import { Sheet } from './dialog.tsx'
-import { Menu, MenuPanel, useLayerClose, type MenuItem, type MenuSection, type MenuTriggerProps } from './menu.tsx'
+import { Menu, MenuPanel, useLayerClose, type MenuChoiceItem, type MenuItem, type MenuSection, type MenuTriggerProps } from './menu.tsx'
 import { UI_COPY } from './locale.ts'
 
-export interface ActionMenuItem extends Omit<MenuItem, 'media'> {
+export type ActionMenuItem = (Omit<MenuItem, 'media'> | Omit<MenuChoiceItem, 'media'>) & {
   leading?: ReactNode
   disabled?: boolean
 }
@@ -34,6 +34,7 @@ export function ActionMenu({
   context,
   placement = 'bottom-start',
   selection = false,
+  frosted = false,
   footer,
   className,
 }: {
@@ -45,6 +46,7 @@ export function ActionMenu({
   context?: ComponentProps<typeof Menu>['context']
   placement?: 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end'
   selection?: boolean
+  frosted?: boolean
   footer?: (close: () => void) => ReactNode
   className?: string
 }) {
@@ -58,6 +60,7 @@ export function ActionMenu({
       side={placement.startsWith('top') ? 'top' : 'bottom'}
       align={placement.endsWith('end') ? 'end' : 'start'}
       selection={selection}
+      frosted={frosted}
       className={className}
       footer={footer ? <Footer render={footer} /> : undefined}
     />
@@ -79,6 +82,7 @@ export function ActionSheet({ label, sections, onClose }: { label: string; secti
         label={shown?.label ?? label}
         sections={sectionsOf(shown?.sections ?? [])}
         panelRef={panel}
+        open={open}
         onChoose={item => {
           onClose()
           item.onSelect()

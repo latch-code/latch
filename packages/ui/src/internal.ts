@@ -180,8 +180,14 @@ export function pinLayer(
     const above = target.top - view.top - gap - WINDOW_MARGIN
     chosen = layerSide(height, above, below, chosen)
     const up = chosen === 'top'
-    const room = Math.min(maxHeight, Math.max(120, up ? above : below))
-    const top = up ? target.top - gap - Math.min(height, room) : target.bottom + gap
+    // A context menu has no trigger to leave visible. Slide it within the window before making its items scroll.
+    const atPointer = !(anchor instanceof Element)
+    const room = Math.min(maxHeight, atPointer ? Math.max(0, view.height - 2 * WINDOW_MARGIN) : Math.max(120, up ? above : below))
+    const drawnHeight = Math.min(height, room)
+    const adjacentTop = up ? target.top - gap - drawnHeight : target.bottom + gap
+    const top = atPointer
+      ? Math.max(view.top + WINDOW_MARGIN, Math.min(adjacentTop, view.top + view.height - WINDOW_MARGIN - drawnHeight))
+      : adjacentTop
     const preferred = align === 'end' ? target.right - width : align === 'center' ? target.left + (target.width - width) / 2 : target.left
     const left = Math.min(Math.max(view.left + margin, preferred), Math.max(view.left + margin, view.left + view.width - width - margin))
     layer.style.top = `${Math.round(top)}px`

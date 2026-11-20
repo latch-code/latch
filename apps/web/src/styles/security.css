@@ -226,6 +226,9 @@
 [data-secure] :is(.ui-modal-footer:not(.ui-sheet *), .ui-dialog-footer) {
   box-shadow: inset 0 1px 0 var(--line) !important;
 }
+:where([data-secure]) :is(.ui-modal-footer, .ui-dialog-footer):not(.ui-sheet *) {
+  background-color: var(--band);
+}
 [data-secure] .ui-button {
   display: inline-flex !important;
   min-height: 28px !important;

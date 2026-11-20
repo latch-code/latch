@@ -2,9 +2,11 @@ import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
-import { press } from './helpers.ts'
+import { onTouchScreen, press } from './helpers.ts'
 
 import {
+  ActionMenu,
+  ActionSheet,
   IconButton,
   Menu,
   MenuFooterLink,
@@ -26,6 +28,7 @@ import {
   TrashGlyph,
   UndoGlyph,
   Badge,
+  type ActionMenuSection,
   type ValuePickerProps,
 } from '../src/index.ts'
 import { keepsNativeMenu } from '../src/menu.tsx'
@@ -213,6 +216,26 @@ describe('value picker', () => {
     await userEvent.keyboard('{Escape}')
     await expect.element(screen.getByRole('button', { name: '模型：新模型' })).toHaveAttribute('aria-expanded', 'false')
     await expect.element(screen.getByRole('button', { name: '模型：新模型' })).toHaveFocus()
+  })
+
+  it('clears a search in place and dismisses the picker on the next Escape', async () => {
+    const screen = await render(<ValuePicker label="模型" value="alpha" options={MODELS} searchable onValueChange={() => {}} />)
+    const trigger = screen.getByRole('button', { name: '模型：alpha-large' })
+    await trigger.click()
+    const search = screen.getByRole('searchbox', { name: '搜索模型' })
+    await search.fill('beta')
+    search.element().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true, cancelable: true }))
+    await expect.element(search).toHaveValue('beta')
+    await userEvent.keyboard('{Escape}')
+    await expect.element(search).toHaveValue('')
+    await expect.element(search).toHaveFocus()
+    await search.fill('alpha')
+    await screen.getByRole('button', { name: '清除搜索' }).click()
+    await expect.element(search).toHaveFocus()
+    await expect.element(search).toHaveValue('')
+    await userEvent.keyboard('{Escape}')
+    await expect.element(trigger).toHaveFocus()
+    await expect.element(trigger).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('leaves surviving option, search and outside focus alone when options refresh', async () => {
@@ -490,6 +513,32 @@ describe('permission menu', () => {
 })
 
 describe('menu rows', () => {
+  it('uses a custom label for display and the full label for focus, typeahead, and the tooltip', async () => {
+    const full = 'feature/fix-conversation-history-scroll'
+    const screen = await render(
+      <Menu
+        label="分支"
+        selection
+        sections={[
+          {
+            id: 'branches',
+            items: [
+              { id: 'main', label: 'main', checked: true, onSelect: () => {} },
+              { id: 'feature', label: full, labelContent: <span>feat…scroll</span>, onSelect: () => {} },
+            ],
+          },
+        ]}
+        trigger={props => <button {...props}>换分支</button>}
+      />,
+    )
+    screen.getByRole('button', { name: '换分支' }).element().focus()
+    await userEvent.keyboard('{ArrowDown}f')
+    const branch = screen.getByRole('menuitemradio', { name: full, exact: true })
+    await expect.element(branch).toHaveFocus()
+    await expect.element(branch).toHaveTextContent('feat…scroll')
+    await expect.element(screen.getByRole('tooltip')).toHaveTextContent(full)
+  })
+
   it("puts the check of a two-line item on its title's line, and spaces a reason 4 under it and 6 from its glyph", async () => {
     const screen = await render(
       <div className="ui-popover">
@@ -711,6 +760,25 @@ describe('menu rows', () => {
   })
 })
 
+const priorityMenu = (select: () => void): ActionMenuSection[] => [
+  {
+    id: 'session',
+    items: [
+      { id: 'rename', label: '重命名', icon: EditGlyph, onSelect: () => {} },
+      {
+        id: 'priority',
+        label: '优先级',
+        choices: [
+          { id: 'high', label: '高', onSelect: select },
+          { id: 'mid', label: '中', checked: true, onSelect: () => {} },
+          { id: 'low', label: '低', onSelect: () => {} },
+        ],
+      },
+      { id: 'delete', label: '删除', icon: TrashGlyph, danger: true, onSelect: () => {} },
+    ],
+  },
+]
+
 describe('action menu', () => {
   it('opens from its trigger with focus on the first item and puts a destructive item last, after a separator', async () => {
     const renamed = vi.fn()
@@ -726,6 +794,7 @@ describe('action menu', () => {
               { id: 'rename', label: '重命名', icon: EditGlyph, onSelect: renamed },
             ],
           },
+          { id: 'share', items: [{ id: 'copy', label: '复制', onSelect() {} }] },
         ]}
         trigger={props => <IconButton {...props} label="更多" icon={MoreGlyph} />}
       />,
@@ -737,10 +806,95 @@ describe('action menu', () => {
     const items = Array.from(screen.getByRole('menu').element().querySelectorAll('[role="menuitem"], [role="separator"]'), item =>
       item.getAttribute('role'),
     )
-    expect(items).toEqual(['menuitem', 'separator', 'menuitem'])
+    expect(items).toEqual(['menuitem', 'menuitem', 'separator', 'menuitem'])
     await userEvent.keyboard('{Enter}')
     expect(renamed).toHaveBeenCalledOnce()
     expect(focused()).toBe(trigger.element())
+  })
+
+  it('shows the current choice, moves within the same layer, and returns keyboard focus on back or close', async () => {
+    const select = vi.fn()
+    const screen = await render(
+      <ActionMenu
+        label="会话操作"
+        sections={priorityMenu(select)}
+        frosted
+        trigger={props => <IconButton {...props} label="更多" icon={MoreGlyph} />}
+      />,
+    )
+    const trigger = screen.getByRole('button', { name: '更多' })
+    const priority = screen.getByRole('menuitem', { name: '优先级' })
+    const current = screen.getByRole('menuitemradio', { name: '中' })
+    const high = screen.getByRole('menuitemradio', { name: '高' })
+    await trigger.click()
+    const layer = document.querySelector('.ui-popover[data-frosted]:popover-open')
+    expect(layer).not.toBeNull()
+    await expect.element(priority).toHaveAccessibleDescription('中')
+    await userEvent.keyboard('{End}')
+    await expect.element(screen.getByRole('menuitem', { name: '删除' })).toHaveFocus()
+    await userEvent.keyboard('{ArrowUp}{ArrowRight}')
+    await expect.element(current).toHaveFocus()
+    expect(document.querySelector('.ui-popover:popover-open')).toBe(layer)
+    await expect.element(current).toHaveAttribute('aria-checked', 'true')
+    await expect.element(screen.getByRole('menuitem', { name: '删除' })).not.toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    await expect.element(priority).toHaveFocus()
+    await userEvent.keyboard('{Enter}{ArrowUp}')
+    await expect.element(high).toHaveFocus()
+    expect(select).not.toHaveBeenCalled()
+    await userEvent.keyboard('{Enter}')
+    expect(select).toHaveBeenCalledOnce()
+    await expect.element(trigger).toHaveFocus()
+    await userEvent.keyboard('{ArrowDown}')
+    await expect.element(screen.getByRole('menu', { name: '会话操作' })).toBeVisible()
+  })
+
+  it('returns to the unavailable parent when an open group of choices is disabled', async () => {
+    const select = vi.fn()
+    const panel = (disabledReason?: string) => (
+      <MenuPanel
+        label="操作"
+        sections={[
+          {
+            id: 'actions',
+            items: [{ id: 'priority', label: '优先级', disabledReason, choices: [{ id: 'high', label: '高', onSelect: select }] }],
+          },
+        ]}
+      />
+    )
+    const screen = await render(panel())
+    const parent = screen.getByRole('menuitem', { name: '优先级' })
+    await parent.click()
+    await expect.element(screen.getByRole('menuitemradio', { name: '高' })).toBeVisible()
+    await screen.rerender(panel('正在保存'))
+    await expect.element(parent).toHaveFocus()
+    await expect.element(parent).toHaveAttribute('aria-disabled', 'true')
+    await userEvent.keyboard('{ArrowRight}{Enter}')
+    await expect.element(screen.getByRole('menuitemradio', { name: '高' })).not.toBeInTheDocument()
+    expect(select).not.toHaveBeenCalled()
+  })
+
+  it('lets a phone row’s action sheet return from the choices or close from the same sheet', async () => {
+    const close = vi.fn()
+    await page.viewport(390, 844)
+    try {
+      await onTouchScreen(async () => {
+        const screen = await render(<ActionSheet label="会话" sections={priorityMenu(() => {})} onClose={close} />)
+        const sheet = screen.getByRole('dialog', { name: '会话' })
+        const priority = sheet.getByRole('menuitem', { name: '优先级' })
+        const back = sheet.getByRole('menuitem', { name: '返回' })
+        await priority.click()
+        await expect.element(sheet.getByRole('menuitemradio', { name: '中' })).toHaveFocus()
+        await back.click()
+        await expect.element(priority).toHaveFocus()
+        expect(close).not.toHaveBeenCalled()
+        await priority.click()
+        await sheet.getByRole('button', { name: '关闭' }).click()
+        expect(close).toHaveBeenCalledOnce()
+      })
+    } finally {
+      await page.viewport(1280, 800)
+    }
   })
 })
 
@@ -1222,6 +1376,35 @@ it('lets a value picker use a domain-specific search without changing labels', a
 })
 
 describe("a row's context menu", () => {
+  it.each([16, 36])('uses the whole visible window before scrolling %i actions at the pointer', async count => {
+    const screen = await render(
+      <div className="context-target">
+        <Menu
+          label="会话操作"
+          context={trigger => trigger?.closest('.context-target') ?? null}
+          sections={[
+            { id: 'actions', items: Array.from({ length: count }, (_, i) => ({ id: String(i), label: String(i), onSelect() {} })) },
+          ]}
+          trigger={props => <IconButton {...props} label="更多操作" icon={MoreGlyph} />}
+        />
+      </div>,
+    )
+    const trigger = screen.getByRole('button', { name: '更多操作' }).element()
+    trigger.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: innerWidth - 16, clientY: innerHeight / 2, button: 2 }),
+    )
+    await expect.element(screen.getByRole('menu')).toBeVisible()
+    const layer = screen.getByRole('menu').element().closest<HTMLElement>('[popover]')!
+    await expect.poll(() => layer.clientHeight).toBe(Math.min(layer.scrollHeight, innerHeight - 16))
+    const { top, bottom, right } = layer.getBoundingClientRect()
+    expect(top).toBeGreaterThanOrEqual(8)
+    expect(bottom).toBeLessThanOrEqual(innerHeight - 8)
+    expect(right).toBeLessThanOrEqual(innerWidth - 8)
+    await userEvent.keyboard('{End}')
+    await expect.element(screen.getByRole('menuitem', { name: String(count - 1), exact: true })).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+  })
+
   function Row({ onRename, onOpen }: { onRename: () => void; onOpen: () => void }) {
     return (
       <div className="row" data-testid="row">

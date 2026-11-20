@@ -1,7 +1,7 @@
 /*
  * Layers pinned to a trigger: a menu, a picker, a popover with content of its own (role=dialog) and a form shown in a
- * picker's place. Each is the highest surface (pop, solid) with the layer radius, lifted by sh-pop: no rules, but a
- * hair between groups. A menu keeps 6px inside. Their width is a step of the layer scale (data-size, sm by default) and
+ * picker's place. A menu keeps 6px inside its rounded edge, with space between ordinary groups and a line before
+ * destructive actions. Their width is a step of the layer scale (data-size, sm by default) and
  * they sit 6px from the trigger, in the top layer, so no scrolling list or dialog clips them. Opening fades them in
  * from a scale of .98 toward the trigger over --m-enter; closing plays it backwards in 70% of the time, in place. A dot
  * or count inside is cut out in the pop colour. On the pop face the faintest grey falls short of 4.5:1 in the dark
@@ -44,21 +44,14 @@
   background: var(--work-float);
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) and
     (color: color-mix(in srgb, currentcolor, transparent)) {
-    @media (min-width: 768px) and (prefers-reduced-transparency: no-preference) {
+    @media (min-width: 768px) and (prefers-reduced-transparency: no-preference) and (forced-colors: none) {
       :root:not([data-floating-material='solid']) & {
-        outline: 1px solid var(--line);
-        outline-offset: -1px;
+        box-shadow:
+          inset 0 1px 0 var(--work-float-highlight),
+          var(--sh-pop);
         background-color: var(--work-float-tint);
         -webkit-backdrop-filter: var(--work-float-filter);
         backdrop-filter: var(--work-float-filter);
-      }
-      :root:not([data-floating-material='solid']) &::after {
-        content: '';
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        border-block-start: 1px solid var(--work-float-highlight);
-        border-radius: var(--layer-radius);
       }
       :root[data-floating-material='clear'] & {
         --muted: var(--work-ink-2);
@@ -158,6 +151,11 @@
 .ui-menu-section {
   display: grid;
 }
+.ui-menu-section + .ui-menu-section,
+.ui-menu > .ui-menu-item + .ui-menu-section,
+.ui-menu-footer {
+  margin-block-start: var(--sp-8);
+}
 .ui-menu-section-label {
   display: flex;
   align-items: center;
@@ -169,10 +167,10 @@
   line-height: var(--lh-caption);
   font-weight: 500;
 }
-/* A hair between groups, inset to the items' text. */
+/* Only destructive actions get a visible divider. */
 .ui-menu-separator {
   height: 1px;
-  margin: var(--sp-4) var(--sp-10);
+  margin: 0 var(--sp-10) var(--sp-4);
   background: var(--line-strong);
 }
 
@@ -309,6 +307,11 @@
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
 }
+.ui-menu-item-meta[data-choices] {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
 .ui-menu-item[data-danger] {
   color: var(--red);
 }
@@ -318,7 +321,7 @@
 }
 
 /*
- * The footer row under a separator, 32px on the items' grid so its text starts on their titles' column: a link to where
+ * The footer row, 32px on the items' grid so its text starts on their titles' column: a link to where
  * the setting lives (13/18 in ink, an empty leading slot, chevron-right at the end), or a note (12/16 in muted ink)
  * with its lock centred in the leading slot.
  */
@@ -379,30 +382,25 @@
   color: var(--ink);
 }
 
-/* The search row of a long picker: 36px, no field of its own, a hairline under it. */
+/* Keep results behind the search row as they scroll. */
 .ui-menu-search {
   position: sticky;
   top: 0;
   z-index: 1;
   background: var(--raised);
-  box-shadow: inset 0 -1px 0 var(--line);
 }
-.ui-menu-search > input {
-  width: 100%;
+.ui-menu-search > .ui-search[data-variant='ghost'] {
   height: 36px;
-  padding: 0 var(--sp-12);
-  border: 0;
+  padding-inline: var(--sp-12) var(--sp-6);
+  border-radius: 0;
+}
+.ui-menu-search > .ui-search[data-variant='ghost']:focus-within {
   background: transparent;
-  color: var(--ink);
+  box-shadow: inset 0 -1px 0 var(--muted);
+}
+.ui-menu-search .ui-search > input {
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
-  outline: none;
-}
-.ui-menu-search > input::placeholder {
-  color: var(--faint);
-}
-.ui-menu-search > input::-webkit-search-cancel-button {
-  display: none;
 }
 
 /*
@@ -626,7 +624,12 @@
   min-width: 0;
   padding: var(--sp-4);
   border-radius: var(--r-12);
-  background: var(--raised);
+  background: var(--surface);
+}
+@supports (color: light-dark(white, black)) {
+  :where([data-palette]) .ui-sheet-body > .ui-menu:not(:where([data-secure] *, [data-lock] *)) {
+    --surface: light-dark(var(--raised), var(--pop));
+  }
 }
 .ui-sheet-body .ui-menu-item {
   --item-line: var(--lh-ui);

@@ -134,7 +134,13 @@ export function SearchField({
         }}
         onKeyDown={event => {
           onKeyDown?.(event)
-          if (event.key === 'Escape' && value && !event.defaultPrevented) {
+          if (
+            event.key === 'Escape'
+            && value
+            && !event.defaultPrevented
+            && !event.nativeEvent.isComposing
+            && event.nativeEvent.keyCode !== 229
+          ) {
             event.preventDefault()
             event.stopPropagation()
             onValueChange('')

@@ -78,7 +78,7 @@ describe('the one session menu', () => {
     expect(sessionMenuSections(task(), open, false).flatMap(section => section.items.map(item => item.id))).toEqual(['export'])
   })
 
-  it('adds 标签… and 优先级 after the first group only where the caller may change them, the chosen priority checked', () => {
+  it('keeps 标签…, 优先级 and 待办 together, and gives 优先级 one row with its current value checked', () => {
     const chosen: Array<string | undefined> = []
     let tagged = 0
     const marks = {
@@ -89,24 +89,19 @@ describe('the one session menu', () => {
         tagged++
       },
     }
-    expect(ids('idle', { ...row, marks })).toEqual([
-      'rename',
-      'pin',
-      'unread',
-      'tags',
-      'priority-high',
-      'priority-mid',
-      'priority-low',
-      'copy',
-      'export',
-      'archive',
-      'delete',
-    ])
     expect(ids('idle', row)).not.toContain('tags')
-    const sections = sessionMenuSections({ ...task(), priority: 'low' }, { ...row, marks }, true)
-    const priority = sections.find(section => section.id === 'priority')!
+    expect(ids('idle', row)).not.toContain('priority')
+    const actions = { ...open, marks, item: { join: noop }, saveProject: noop, removeWorktree: noop }
+    const sections = sessionMenuSections({ ...task('running'), priority: 'low' }, actions, true)
+    expect(sections.map(section => section.items.map(item => item.id))).toEqual([
+      ['rename', 'pin', 'unread', 'tags', 'priority', 'item-join'],
+      ['copy', 'export'],
+      ['clear', 'save-project', 'archive', 'remove-worktree', 'delete'],
+    ])
+    const priority = sections[0]?.items.find(item => item.id === 'priority')
+    if (!priority || !('choices' in priority)) throw new Error('Priority must open a choice list')
     expect(priority.label).toBe('优先级')
-    expect(priority.items.map(item => [item.label, item.icon !== undefined])).toEqual([
+    expect(priority.choices.map(item => [item.label, item.checked])).toEqual([
       ['高', false],
       ['中', false],
       ['低', true],
@@ -117,10 +112,14 @@ describe('the one session menu', () => {
         .find(section => section.id === 'priority')!
         .items.map(item => item.icon !== undefined),
     ).toEqual([false, true, false])
-    for (const item of priority.items) item.onSelect()
-    sections.find(section => section.id === 'tags')!.items[0]!.onSelect()
+    for (const option of priority.choices) option.onSelect()
+    sections[0]?.items.find(item => item.id === 'tags')?.onSelect?.()
     expect(chosen).toEqual(['high', undefined])
     expect(tagged).toBe(1)
+    expect(sections[2].items.find(item => item.id === 'remove-worktree')).toMatchObject({
+      disabled: true,
+      disabledReason: '这一轮结束后才能移除工作树',
+    })
   })
 
   it('opens the same sections from the title and from ⋯ in the title row, and from the title on a phone', () => {

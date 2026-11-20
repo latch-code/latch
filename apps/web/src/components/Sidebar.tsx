@@ -136,7 +136,7 @@ const SessionItem = memo(function SessionItem({
     || showsUnread(status)
     || (status.kind === 'frozen' && waitsOnYou(task))
   const sections = menu(task)
-  const archive = task.archived ? undefined : sections.flatMap(section => section.items).find(item => item.id === 'archive')
+  const archive = task.archived ? undefined : sections.flatMap(section => section.items).find(item => item.id === 'archive')?.onSelect
   const said = statusLabel(status, task.live)
   const worktree = task.worktree
     ? `${task.worktree.removed ? COPY.worktreeRemoved : COPY.worktree} · ${escapeSecurityText(task.branch ?? task.worktree.branch)}`
@@ -228,7 +228,7 @@ const SessionItem = memo(function SessionItem({
               label={COPY.archiveSession(title)}
               tooltip={COPY.archive}
               icon={ArchiveGlyph}
-              onClick={() => archive.onSelect()}
+              onClick={archive}
             />
           )}
           <Menu
@@ -236,6 +236,7 @@ const SessionItem = memo(function SessionItem({
             placement="bottom-end"
             context={rowOf('.session-item')}
             sections={sections}
+            frosted
             trigger={props => (
               <IconButton
                 {...props}

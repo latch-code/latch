@@ -1,4 +1,4 @@
-import { ArchiveRestore, Eraser, FolderPlus, FolderX, ListMinus, ListPlus, Mail, Tag } from 'lucide-react'
+import { ArchiveRestore, Eraser, Flag, FolderPlus, FolderX, ListMinus, ListPlus, Mail, Tag } from 'lucide-react'
 import { ArchiveGlyph, CheckGlyph, DownloadGlyph, CopyGlyph, EditGlyph, PinGlyph, UnpinGlyph, TrashGlyph } from '@latch/ui'
 import type { BoardPriority, TaskSummary } from '@latch/protocol'
 import type { MenuSection } from './components/overlays.tsx'
@@ -97,23 +97,31 @@ const PRIORITIES: ReadonlyArray<{ value: BoardPriority | undefined; id: string; 
   },
 ]
 
-/**
- * 标签… and the three priorities, the chosen one checked: the same items in the session menu and on a board card's ⋯,
- * so both read and change the same Host metadata.
- */
+function tagsItem(actions: BoardMarkActions) {
+  return { id: 'tags', label: COPY.tags, icon: Tag, onSelect: actions.editTags }
+}
+
+function priorityItems(task: Pick<TaskSummary, 'priority'>, actions: BoardMarkActions) {
+  return PRIORITIES.map(({ value, id, label }) => ({
+    id,
+    label,
+    checked: task.priority === value,
+    onSelect: () => {
+      if (task.priority !== value) actions.setPriority(value)
+    },
+  }))
+}
+
+/** The board's shorter card menu lists 标签… and all three priorities directly. */
 export function boardMarkSections(task: Pick<TaskSummary, 'priority'>, actions: BoardMarkActions): MenuSection[] {
   return [
-    { id: 'tags', items: [{ id: 'tags', label: COPY.tags, icon: Tag, onSelect: actions.editTags }] },
+    { id: 'tags', items: [tagsItem(actions)] },
     {
       id: 'priority',
       label: COPY.priority,
-      items: PRIORITIES.map(({ value, id, label }) => ({
-        id,
-        label,
-        ...(task.priority === value ? { icon: CheckGlyph } : {}),
-        onSelect: () => {
-          if (task.priority !== value) actions.setPriority(value)
-        },
+      items: priorityItems(task, actions).map(item => ({
+        ...item,
+        ...(item.checked ? { icon: CheckGlyph } : {}),
       })),
     },
   ]
@@ -141,101 +149,76 @@ export interface SessionActions {
 }
 
 /**
- * The one session menu: the title row's ⋯ (and its title), a sidebar row's ⋯ and a phone row held down all draw this.
- * The open session has eight items; any other row seven, since only the open one can clear its context; a Host that
- * groups sessions adds 标签… and 优先级 for a device that may change them, and one with 待办 加入待办… or 移出待办. While a turn
- * runs or waits, 清空上下文 and 删除 stay in place, greyed, each with the reason under it. 同步最新状态 is not here: the
- * connection's own notice retries. A Host without a catalog predates rename, pin, archive and delete, so only export
- * remains there.
+ * The title, the sidebar row and the phone's held row share the same actions. Priority opens a short choice
+ * list so the menu keeps archive and other session actions reachable. In-flight turns keep disabled reasons visible.
  */
 export function sessionMenuSections(task: TaskSummary, actions: SessionActions, manage: boolean): MenuSection[] {
   const exportItem = { id: 'export', label: COPY.export, icon: DownloadGlyph, onSelect: actions.export }
-  if (!manage) return [{ id: 'manage', items: [exportItem] }]
+  if (!manage) return [{ id: 'share', items: [exportItem] }]
   return [
     {
-      id: 'manage',
+      id: 'organize',
       items: [
         { id: 'rename', label: COPY.rename, icon: EditGlyph, onSelect: actions.rename },
         { id: 'pin', label: task.pinned ? COPY.unpin : COPY.pin, icon: task.pinned ? UnpinGlyph : PinGlyph, onSelect: actions.pin },
         ...(actions.unread ? [{ id: 'unread', label: COPY.unread, icon: Mail, onSelect: actions.unread }] : []),
-      ],
-    },
-    ...(actions.marks ? boardMarkSections(task, actions.marks) : []),
-    ...(actions.item
-      ? [
-          {
-            id: 'item',
-            items: [
+        ...(actions.marks
+          ? [tagsItem(actions.marks), { id: 'priority', label: COPY.priority, icon: Flag, choices: priorityItems(task, actions.marks) }]
+          : []),
+        ...(actions.item
+          ? [
               'join' in actions.item
                 ? { id: 'item-join', label: COPY.join, icon: ListPlus, onSelect: actions.item.join }
                 : { id: 'item-leave', label: COPY.leave, icon: ListMinus, onSelect: actions.item.leave },
-            ],
-          },
-        ]
-      : []),
+            ]
+          : []),
+      ],
+    },
     {
       id: 'share',
       items: [...(actions.copy ? [{ id: 'copy', label: COPY.copy, icon: CopyGlyph, onSelect: actions.copy }] : []), exportItem],
     },
-    ...(actions.saveProject || actions.clear
-      ? [
-          {
-            id: 'context',
-            items: [
-              ...(actions.clear
-                ? [
-                    {
-                      id: 'clear',
-                      label: actions.clearing ? COPY.keep : COPY.clear,
-                      icon: Eraser,
-                      disabled: !actions.clearing && isActive(task.status),
-                      disabledReason: COPY.clearBusy,
-                      onSelect: actions.clear,
-                    },
-                  ]
-                : []),
-              ...(actions.saveProject ? [{ id: 'save-project', label: COPY.save, icon: FolderPlus, onSelect: actions.saveProject }] : []),
-            ],
-          },
-        ]
-      : []),
-    ...(actions.archive || actions.removeWorktree
-      ? [
-          {
-            id: 'archive',
-            items: [
-              ...(actions.archive
-                ? [
-                    {
-                      id: 'archive',
-                      label: task.archived ? COPY.unarchive : COPY.archive,
-                      icon: task.archived ? ArchiveRestore : ArchiveGlyph,
-                      onSelect: actions.archive,
-                    },
-                  ]
-                : []),
-              // Archiving keeps the worktree; removing it is its own step.
-              ...(actions.removeWorktree
-                ? [
-                    {
-                      id: 'remove-worktree',
-                      label: COPY.removeWorktree,
-                      icon: FolderX,
-                      disabled: isActive(task.status),
-                      disabledReason: COPY.worktreeBusy,
-                      onSelect: actions.removeWorktree,
-                    },
-                  ]
-                : []),
-            ],
-          },
-        ]
-      : []),
-    ...(actions.remove
-      ? [
-          {
-            id: 'danger',
-            items: [
+    {
+      id: 'session',
+      items: [
+        ...(actions.clear
+          ? [
+              {
+                id: 'clear',
+                label: actions.clearing ? COPY.keep : COPY.clear,
+                icon: Eraser,
+                disabled: !actions.clearing && isActive(task.status),
+                disabledReason: COPY.clearBusy,
+                onSelect: actions.clear,
+              },
+            ]
+          : []),
+        ...(actions.saveProject ? [{ id: 'save-project', label: COPY.save, icon: FolderPlus, onSelect: actions.saveProject }] : []),
+        ...(actions.archive
+          ? [
+              {
+                id: 'archive',
+                label: task.archived ? COPY.unarchive : COPY.archive,
+                icon: task.archived ? ArchiveRestore : ArchiveGlyph,
+                onSelect: actions.archive,
+              },
+            ]
+          : []),
+        // Archiving keeps the worktree; removing it is its own step.
+        ...(actions.removeWorktree
+          ? [
+              {
+                id: 'remove-worktree',
+                label: COPY.removeWorktree,
+                icon: FolderX,
+                disabled: isActive(task.status),
+                disabledReason: COPY.worktreeBusy,
+                onSelect: actions.removeWorktree,
+              },
+            ]
+          : []),
+        ...(actions.remove
+          ? [
               {
                 id: 'delete',
                 label: COPY.delete,
@@ -245,9 +228,9 @@ export function sessionMenuSections(task: TaskSummary, actions: SessionActions, 
                 disabledReason: COPY.deleteBusy,
                 onSelect: actions.remove,
               },
-            ],
-          },
-        ]
-      : []),
+            ]
+          : []),
+      ],
+    },
   ]
 }

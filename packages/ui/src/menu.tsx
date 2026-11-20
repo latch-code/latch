@@ -14,9 +14,19 @@ import {
   type Ref,
   type RefObject,
 } from 'react'
-import { CheckGlyph, ChevronDownGlyph, ChevronRightGlyph, UpDownGlyph, BlockedGlyph, LockGlyph, ShieldAlertGlyph } from './glyphs/index.tsx'
+import {
+  CheckGlyph,
+  ChevronDownGlyph,
+  ChevronLeftGlyph,
+  ChevronRightGlyph,
+  UpDownGlyph,
+  BlockedGlyph,
+  LockGlyph,
+  ShieldAlertGlyph,
+} from './glyphs/index.tsx'
 import { motionAllowed } from './changes.ts'
 import { ChoiceList } from './choice.tsx'
+import { SearchField } from './field.tsx'
 import { Sheet } from './dialog.tsx'
 import { Icon, Spinner, type IconComponent } from './icon.tsx'
 import { Kbd } from './pill.tsx'
@@ -25,6 +35,7 @@ import {
   firstMeaningful,
   HOLD_MS,
   HOLD_SLOP,
+  mergeRefs,
   nextIndex,
   onAnchorScrolled,
   PHONE_QUERY,
@@ -263,6 +274,8 @@ export function useLayerClose(): () => void {
 export interface MenuItem {
   id: string
   label: string
+  /** A visual rendering of the label, for example one that keeps the end in view. The plain label names the row and its tooltip. */
+  labelContent?: ReactElement
   /** One line under the label. */
   description?: string | ReactElement
   /** Action menus: a leading 14px glyph. Selection menus put the check in this slot instead. */
@@ -289,6 +302,14 @@ export interface MenuItem {
   onSelect: () => void
 }
 
+/** Opens a single-choice list in the same layer. Options are actions and cannot open another list. */
+export interface MenuChoiceItem extends Omit<MenuItem, 'onSelect'> {
+  choices: MenuItem[]
+  onSelect?: never
+}
+
+type MenuEntry = MenuItem | MenuChoiceItem
+
 export interface MenuSection {
   id: string
   /** A group heading inside the menu. */
@@ -297,7 +318,7 @@ export interface MenuSection {
   media?: ReactNode
   /** More about the heading, on hover and read out with the group: where its choices go, not a row of its own. */
   hint?: string
-  items: MenuItem[]
+  items: MenuEntry[]
 }
 
 export interface MenuHeader {
@@ -326,6 +347,8 @@ interface PanelProps {
   onChoose?: (item: MenuItem) => void
   /** Escape or Tab inside the menu. */
   onDismiss?: (reason: 'escape' | 'tab') => void
+  /** Each opening starts at the main menu, even if the previous exit kept the choices mounted. */
+  open?: boolean
   panelRef?: Ref<HTMLDivElement>
   /** A static rendering in place (a design sheet); the live menus render it inside their layer. */
   className?: string
@@ -345,19 +368,77 @@ function itemsOf(container: HTMLElement): HTMLButtonElement[] {
  * letters (an item's `accelerator` letter chooses it at once), Enter or Space chooses. Danger items come last, after a
  * separator.
  */
-export function MenuPanel({ label, header, sections, selection = false, footer, onChoose, onDismiss, panelRef, className }: PanelProps) {
+export function MenuPanel({
+  label,
+  header,
+  sections,
+  selection = false,
+  footer,
+  onChoose,
+  onDismiss,
+  open = true,
+  panelRef,
+  className,
+}: PanelProps) {
   const id = useId()
+  const panel = useRef<HTMLDivElement>(null)
   const typeahead = useTypeahead()
-  const visible = sections.filter(section => section.items.length > 0)
+  const [view, setView] = useState<{ open: boolean; choiceId?: string; returnTo?: string }>({ open })
+  const choice = view.choiceId
+    ? sections
+        .flatMap(section => section.items)
+        .find((item): item is MenuChoiceItem => item.id === view.choiceId && 'choices' in item && item.disabledReason === undefined)
+    : undefined
+  if (view.open !== open) setView(open ? { open } : { ...view, open })
+  else if (open && view.choiceId && !choice) setView({ open, returnTo: view.choiceId })
+  const choiceId = choice?.id
+  useLayoutEffect(() => {
+    const element = panel.current
+    if (!open || !element) return
+    if (choiceId) {
+      focusInto(element, true)
+    } else if (view.returnTo) {
+      const entry = itemsOf(element).find(item => item.dataset.choice === view.returnTo)
+      if (entry) entry.focus()
+      else focusInto(element)
+    }
+  }, [open, choiceId, view.returnTo])
+
+  const shown: MenuSection[] = choice ? [{ id: choice.id, items: choice.choices }] : sections
+  const visible = shown.filter(section => section.items.length > 0)
   const ordered = [
     ...visible.map(section => ({ ...section, items: section.items.filter(item => !item.danger) })),
     { id: `${id}-danger`, items: visible.flatMap(section => section.items.filter(item => item.danger)) },
   ].filter(section => section.items.length > 0)
-  const leads = selection || visible.some(section => section.items.some(item => item.icon !== undefined))
+  const asRadios = selection || choice !== undefined
+  const leads = asRadios || visible.some(section => section.items.some(item => item.icon !== undefined))
+  const back = () => {
+    if (choice) setView({ open, returnTo: choice.id })
+  }
+  const choose = (item: MenuEntry) => {
+    if (item.disabledReason !== undefined) return
+    if ('choices' in item) setView({ open, choiceId: item.id })
+    else onChoose?.(item)
+  }
 
   const keydown = (event: KeyboardEvent<HTMLDivElement>) => {
     const items = itemsOf(event.currentTarget)
     const current = items.findIndex(item => item === document.activeElement)
+    if (choice && (event.key === 'Escape' || event.key === 'ArrowLeft')) {
+      event.preventDefault()
+      event.stopPropagation()
+      back()
+      return
+    }
+    const choiceFromFocus = items[current]?.dataset.choice
+    if (event.key === 'ArrowRight' && choiceFromFocus !== undefined) {
+      const entry = visible.flatMap(section => section.items).find(item => item.id === choiceFromFocus)
+      if (entry) {
+        event.preventDefault()
+        choose(entry)
+        return
+      }
+    }
     if (event.key === 'Escape' || event.key === 'Tab') {
       if (event.key === 'Escape') {
         event.preventDefault()
@@ -378,7 +459,7 @@ export function MenuPanel({ label, header, sections, selection = false, footer, 
         : undefined
     if (keyed) {
       event.preventDefault()
-      if (keyed.disabledReason === undefined) onChoose?.(keyed)
+      choose(keyed)
       return
     }
     const next =
@@ -397,14 +478,15 @@ export function MenuPanel({ label, header, sections, selection = false, footer, 
 
   return (
     <div
-      ref={panelRef}
+      ref={mergeRefs(panelRef, panel)}
       className={cx('ui-menu', className)}
       data-no-lead={leads ? undefined : ''}
       role="menu"
-      aria-label={headedName(label, header)}
-      aria-describedby={header?.meta ? `${id}-meta` : undefined}
+      aria-label={choice?.label ?? headedName(label, header)}
+      aria-describedby={!choice && header?.meta ? `${id}-meta` : undefined}
       onKeyDown={keydown}>
-      {header && (
+      {choice && <MenuChoiceBack title={choice.label} onBack={back} />}
+      {header && !choice && (
         <div className="ui-menu-header" aria-hidden="true">
           <span>{header.title}</span>
           {header.meta && (
@@ -421,7 +503,7 @@ export function MenuPanel({ label, header, sections, selection = false, footer, 
           role="group"
           aria-label={section.label}
           {...(section.hint ? { 'aria-description': section.hint } : {})}>
-          {index > 0 && <div className="ui-menu-separator" role="separator" />}
+          {index > 0 && section.items[0]?.danger && <div className="ui-menu-separator" role="separator" />}
           {section.label && (
             <div className="ui-menu-section-label" aria-hidden="true" {...(section.hint ? { title: section.hint } : {})}>
               {section.media}
@@ -429,26 +511,38 @@ export function MenuPanel({ label, header, sections, selection = false, footer, 
             </div>
           )}
           {section.items.map(item => (
-            <MenuRow key={item.id} item={item} selection={selection} onChoose={onChoose} />
+            <MenuRow key={item.id} item={item} selection={asRadios} onChoose={choose} />
           ))}
         </div>
       ))}
-      {footer && (
-        <>
-          <div className="ui-menu-separator" role="separator" />
-          <div className="ui-menu-footer">
-            <InMenu.Provider value>{footer}</InMenu.Provider>
-          </div>
-        </>
+      {footer && !choice && (
+        <div className="ui-menu-footer">
+          <InMenu.Provider value>{footer}</InMenu.Provider>
+        </div>
       )}
     </div>
   )
 }
 
-function MenuRow({ item, selection, onChoose }: { item: MenuItem; selection: boolean; onChoose?: (item: MenuItem) => void }) {
+function MenuChoiceBack({ title, onBack }: { title: string; onBack: () => void }) {
+  useUiLocale()
+  return (
+    <MenuRow
+      item={{ id: 'back', label: UI_COPY.back, icon: ChevronLeftGlyph, meta: title, onSelect: onBack }}
+      selection={false}
+      onChoose={onBack}
+    />
+  )
+}
+
+function MenuRow({ item, selection, onChoose }: { item: MenuEntry; selection: boolean; onChoose: (item: MenuEntry) => void }) {
   const id = useId()
   const disabled = item.disabledReason !== undefined
-  const described = [item.description ? `${id}-description` : '', disabled ? `${id}-reason` : ''].filter(Boolean).join(' ')
+  const hasChoices = 'choices' in item
+  const value = hasChoices ? item.choices.find(option => option.checked)?.label : undefined
+  const described = [item.description ? `${id}-description` : '', disabled ? `${id}-reason` : '', value ? `${id}-value` : '']
+    .filter(Boolean)
+    .join(' ')
   const lead = selection ? (
     item.checked ? (
       <Icon icon={CheckGlyph} size={14} className="ui-menu-check" />
@@ -456,30 +550,33 @@ function MenuRow({ item, selection, onChoose }: { item: MenuItem; selection: boo
   ) : item.icon ? (
     <Icon icon={item.icon} size={14} />
   ) : null
-  return (
+  const button = (
     <button
       type="button"
       tabIndex={-1}
       role={selection ? 'menuitemradio' : 'menuitem'}
       className="ui-menu-item"
-      title={item.hint}
+      title={item.labelContent ? undefined : item.hint}
       data-label={item.label}
+      data-choice={hasChoices ? item.id : undefined}
       data-two-line={item.description || disabled ? '' : undefined}
       data-media={item.media ? '' : undefined}
       data-danger={item.danger ? '' : undefined}
       aria-checked={selection ? item.checked === true : undefined}
       aria-disabled={disabled || undefined}
       aria-keyshortcuts={item.accelerator?.toUpperCase()}
-      aria-labelledby={`${id}-label`}
+      aria-haspopup={hasChoices ? 'menu' : undefined}
+      aria-label={item.labelContent ? item.label : undefined}
+      aria-labelledby={item.labelContent ? undefined : `${id}-label`}
       aria-describedby={described || undefined}
       onClick={() => {
-        if (!disabled) onChoose?.(item)
+        if (!disabled) onChoose(item)
       }}>
       <span className="ui-menu-item-lead">{lead}</span>
       {item.media && <span className="ui-menu-item-media">{item.media}</span>}
       <span className="ui-menu-item-text">
         <span id={`${id}-label`} className="ui-menu-item-label">
-          <span className="ui-menu-item-title">{item.label}</span>
+          <span className="ui-menu-item-title">{item.labelContent ?? item.label}</span>
           {item.tag}
         </span>
         {item.description && (
@@ -494,7 +591,12 @@ function MenuRow({ item, selection, onChoose }: { item: MenuItem; selection: boo
           </span>
         )}
       </span>
-      {item.meta !== undefined ? (
+      {hasChoices ? (
+        <span className="ui-menu-item-meta" data-choices>
+          {value && <span id={`${id}-value`}>{value}</span>}
+          <Icon icon={ChevronRightGlyph} size={12} />
+        </span>
+      ) : item.meta !== undefined ? (
         <span className="ui-menu-item-meta">{item.meta}</span>
       ) : item.accelerator ? (
         <span className="ui-menu-item-meta" aria-hidden="true">
@@ -502,6 +604,13 @@ function MenuRow({ item, selection, onChoose }: { item: MenuItem; selection: boo
         </span>
       ) : null}
     </button>
+  )
+  return item.labelContent ? (
+    <Tooltip content={item.hint ?? item.label} describe={item.hint !== undefined}>
+      {button}
+    </Tooltip>
+  ) : (
+    button
   )
 }
 
@@ -562,8 +671,7 @@ export function MenuFooterNote({ children, icon = LockGlyph }: { children: React
 }
 
 /**
- * The search row on top of a long picker's menu (models): 36px, an input without a field of its own, a subtle line
- * under it. The layer that holds it spans it edge to edge and keeps its 4px inside around the list.
+ * The search row of a long picker stays at the top while the results scroll.
  */
 export function MenuSearch({
   label,
@@ -580,16 +688,7 @@ export function MenuSearch({
   useUiLocale()
   return (
     <div className="ui-menu-search">
-      <input
-        type="search"
-        aria-label={UI_COPY.searchIn(label)}
-        placeholder={UI_COPY.search}
-        value={value}
-        onChange={event => {
-          onValueChange(event.target.value)
-        }}
-        onKeyDown={onKeyDown}
-      />
+      <SearchField variant="ghost" label={UI_COPY.searchIn(label)} value={value} onValueChange={onValueChange} onKeyDown={onKeyDown} />
     </div>
   )
 }
@@ -605,11 +704,11 @@ export interface MenuTriggerProps {
 }
 
 /** Focuses the checked item, else the first one, once the layer is shown. */
-function focusInto(panel: HTMLElement | null) {
+function focusInto(panel: HTMLElement | null, scrollIntoView = false) {
   if (!panel) return
   const items = itemsOf(panel)
   const search = panel.querySelector<HTMLInputElement>('.ui-menu-search input')
-  ;(search ?? items.find(item => item.getAttribute('aria-checked') === 'true') ?? items[0])?.focus({ preventScroll: true })
+  ;(search ?? items.find(item => item.getAttribute('aria-checked') === 'true') ?? items[0])?.focus({ preventScroll: !scrollIntoView })
 }
 
 /**
@@ -628,9 +727,10 @@ export function Menu({
   footer,
   size = 'xs',
   selection = false,
+  frosted = false,
   className,
   ...placement
-}: Omit<PanelProps, 'onChoose' | 'onDismiss' | 'panelRef'>
+}: Omit<PanelProps, 'onChoose' | 'onDismiss' | 'open' | 'panelRef'>
   & LayerPlacement & {
     trigger?: (props: MenuTriggerProps) => ReactNode
     /** The row whose context gesture opens this menu: the element, or how to find it from the trigger (or from where
@@ -638,6 +738,8 @@ export function Menu({
     context?: RefObject<HTMLElement | null> | ((trigger: HTMLElement | null) => HTMLElement | null)
     /** The layer's width, a step of the scale. */
     size?: LayerSize
+    /** A floating menu may use the device's surface preference. Phone sheets remain solid. */
+    frosted?: boolean
     title?: string
   }) {
   const phone = useMediaQuery(PHONE_QUERY)
@@ -669,6 +771,7 @@ export function Menu({
         sections={sections}
         footer={footer}
         selection={selection}
+        open={open}
         className={className}
         panelRef={panel}
         onChoose={choose}
@@ -705,7 +808,7 @@ export function Menu({
           {content}
         </Sheet>
       ) : (
-        <div ref={layer} popover="manual" className="ui-popover" data-size={size}>
+        <div ref={layer} popover="manual" className="ui-popover" data-size={size} data-frosted={frosted ? '' : undefined}>
           {content}
         </div>
       )}
@@ -1137,10 +1240,11 @@ export function ValuePicker<T extends string>({
               value={query}
               onValueChange={setQuery}
               onKeyDown={event => {
+                if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
                 if (event.key === 'ArrowDown') {
                   event.preventDefault()
                   panel.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]')?.focus()
-                } else if (event.key === 'Escape') {
+                } else if (event.key === 'Escape' && !query) {
                   event.preventDefault()
                   close(true)
                 } else if (event.key === 'Tab') close(false)

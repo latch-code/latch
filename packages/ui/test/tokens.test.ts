@@ -494,6 +494,33 @@ describe('design tokens', () => {
     }
   })
 
+  it('uses the monochrome floating surface across ordinary dark overlays and keeps the locked drawer on its own surface', () => {
+    const root = document.documentElement
+    const previous = root.dataset.theme
+    const host = document.createElement('div')
+    host.dataset.palette = 'mono'
+    const surfaces = ['ui-popover', 'ui-dialog-surface', 'ui-drawer', 'ui-sheet-surface'].map(className => {
+      const element = document.createElement('div')
+      element.className = className
+      host.append(element)
+      return element
+    })
+    const secure = document.createElement('div')
+    secure.className = 'ui-drawer'
+    secure.dataset.secure = ''
+    host.append(secure)
+    document.body.append(host)
+    try {
+      root.dataset.theme = 'dark'
+      for (const element of surfaces) expect(colour(getComputedStyle(element).backgroundColor), element.className).toEqual([12, 12, 12, 1])
+      expect(colour(getComputedStyle(secure).backgroundColor)).toEqual(colour(themes().dark.get('--raised')!))
+    } finally {
+      host.remove()
+      if (previous === undefined) delete root.dataset.theme
+      else root.dataset.theme = previous
+    }
+  })
+
   it('keeps text readable on device accent buttons, and the accent visible against each canvas', () => {
     const root = document.documentElement
     const previousTheme = root.dataset.theme

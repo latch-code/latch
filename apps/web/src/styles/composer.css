@@ -1541,6 +1541,9 @@ button.vitals-item {
 .branch-switch:active {
   background: var(--press);
 }
+.branch-switch[aria-expanded='true'] + .ui-tooltip {
+  visibility: hidden;
+}
 .branch-switch > :is(svg, .ui-spinner, .branch-switch-chevron) {
   flex: none;
 }
@@ -1573,27 +1576,119 @@ button.vitals-item {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  max-height: inherit;
 }
-/* Keep the search and worktree filter against the layer edge while branches scroll under them. */
+/* The anchor caps the popover; the branch list uses the same cap so only its results scroll. */
 .ui-popover:has(> .branch-list) {
   padding: 0;
+  overflow: clip;
+}
+.ui-sheet-body:has(> .branch-list) {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--sp-6) var(--sp-6);
 }
 .branch-list-filters {
-  position: sticky;
-  top: 0;
-  z-index: 1;
   display: grid;
-  background: var(--surface);
+  flex: none;
+  gap: var(--sp-4);
+  padding: var(--sp-10) var(--sp-10) var(--sp-8);
 }
-.branch-list-filters > .ui-menu-search {
-  position: static;
-  background: inherit;
+.branch-list-filters:has(> .ui-segmented) {
+  padding-block-end: 0;
+}
+.branch-list-filters > .ui-search {
+  position: relative;
+}
+.branch-list-filters > .ui-search:is(:hover, :focus-within) {
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-2);
+}
+.branch-list-filters > .ui-search:focus-within::after {
+  content: '';
+  position: absolute;
+  inset-inline: var(--sp-8);
+  inset-block-end: 0;
+  height: 1px;
+  background: var(--muted);
+  pointer-events: none;
 }
 .branch-list-filters > .ui-segmented {
-  margin: var(--sp-6) var(--sp-6) 0;
+  justify-self: start;
+  grid-auto-columns: auto;
+  gap: var(--sp-4);
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
-.branch-list > .ui-menu {
+.branch-list-filters .ui-segmented-option {
+  height: 30px;
+  padding-inline: var(--sp-8);
+}
+.branch-list-filters .ui-segmented-option[aria-checked='true'] {
+  background: transparent;
+  box-shadow: none;
+  font-weight: 600;
+}
+.branch-list-filters .ui-segmented-option[aria-checked='true']::after {
+  content: '';
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline: var(--sp-8);
+  height: 2px;
+  border-radius: var(--r-2);
+  background: var(--ink);
+}
+.branch-list-results {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.branch-list-results > .ui-menu {
+  min-width: 0;
   padding: var(--sp-6);
+}
+.branch-list-results .ui-menu-item {
+  background: transparent;
+}
+.branch-list-results .ui-menu-item[aria-checked='true'] {
+  background: var(--press);
+}
+.branch-list-results .ui-menu-item[aria-disabled='true'] .ui-menu-item-label {
+  color: var(--muted);
+  opacity: 1;
+}
+@media (hover: hover) {
+  .branch-list-results .ui-menu-item:hover:not([aria-checked='true'], [aria-disabled='true'], :focus-visible) {
+    background: var(--hover);
+  }
+}
+.branch-list-results .ui-menu-item:active:not([aria-checked='true'], [aria-disabled='true']) {
+  background: var(--press);
+}
+.branch-list-results .ui-menu-item-title,
+.branch-list-results .ui-tooltip {
+  font-family: var(--mono);
+}
+.branch-list-results .middle-ellipsis-head:not(:empty) + .middle-ellipsis-tail {
+  flex-shrink: 0;
+  max-inline-size: calc(100% - 2em);
+}
+.branch-list-results .ui-tooltip {
+  max-inline-size: min(var(--layer-sm), calc(100vw - var(--sp-16)));
+  overflow-wrap: anywhere;
+}
+@media (pointer: coarse) {
+  .branch-list-filters .ui-search,
+  .branch-list-filters .ui-segmented-option,
+  .branch-list-results .ui-menu-item {
+    min-height: 44px;
+  }
+  .branch-list-filters .ui-search {
+    padding-inline-end: var(--sp-10);
+  }
 }
 .branch-list-state {
   display: flex;
@@ -1610,4 +1705,7 @@ button.vitals-item {
   color: var(--muted);
   font-size: var(--fs-meta);
   line-height: var(--lh-meta);
+}
+.branch-list-results .ui-menu-footer > .branch-list-more {
+  padding: var(--sp-4) var(--sp-10);
 }

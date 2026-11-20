@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { readsProjectFiles, type AppSnapshot, type BranchListing, type BranchSwitchResult } from '@latch/protocol'
 import {
   Button,
@@ -6,8 +6,8 @@ import {
   Icon,
   InlineNotice,
   MenuPanel,
-  MenuSearch,
   Popover,
+  SearchField,
   SegmentedControl,
   Spinner,
   Tooltip,
@@ -28,6 +28,7 @@ import { branchRows, choosable, enterChoice, type BranchGroup, type SwitchState 
 const COPY = defineCopy(
   {
     label: '分支',
+    search: '搜索分支',
     location: '分支位置',
     local: '本地分支',
     worktrees: '其他工作树',
@@ -48,6 +49,7 @@ const COPY = defineCopy(
   },
   {
     label: 'Branch',
+    search: 'Search branches',
     location: 'Branch location',
     local: 'Local branches',
     worktrees: 'Other worktrees',
@@ -180,6 +182,11 @@ function BranchList({
   const [query, setQuery] = useState('')
   const [group, setGroup] = useState<BranchGroup>('local')
   const panel = useRef<HTMLDivElement>(null)
+  const results = useRef<HTMLDivElement>(null)
+  const needsAttention = switching.state === 'refused' || switching.state === 'unknown'
+  useLayoutEffect(() => {
+    if (needsAttention) results.current?.scrollTo(0, 0)
+  }, [needsAttention])
   const asked = useRef(0)
   const load = useCallback(() => {
     const ask = ++asked.current
@@ -230,7 +237,8 @@ function BranchList({
   const { rows, hidden } = ready ? branchRows(ready, query, hasWorktrees ? group : 'local') : { rows: [], hidden: 0 }
   const items: MenuItem[] = rows.map(row => ({
     id: row.name,
-    label: row.name,
+    label: escapeHiddenCharacters(row.name),
+    ...(row.name.length > 16 ? { labelContent: <BranchName branch={row.name} /> } : {}),
     checked: row.current,
     ...(row.checkedOut ? { disabledReason: COPY.held } : {}),
     ...(switching.state === 'switching' && switching.branch === row.name ? { meta: <Spinner size={12} label={COPY.switching} /> } : {}),
@@ -238,7 +246,12 @@ function BranchList({
       if (choosable(row, switching)) choose(row.name)
     },
   }))
+  const setSearch = (value: string) => {
+    setQuery(value)
+    results.current?.scrollTo(0, 0)
+  }
   const searchKeys = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing) return
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       panel.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]')?.focus()
@@ -246,17 +259,13 @@ function BranchList({
       event.preventDefault()
       const row = enterChoice(rows)
       if (row) choose(row.name)
-    } else if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      close()
     }
   }
 
   return (
     <div className="branch-list" data-switching={switching.state === 'switching' ? '' : undefined}>
       <div className="branch-list-filters">
-        <MenuSearch label={COPY.label} value={query} onValueChange={setQuery} onKeyDown={searchKeys} />
+        <SearchField variant="ghost" label={COPY.search} value={query} onValueChange={setSearch} onKeyDown={searchKeys} />
         {hasWorktrees && (
           <SegmentedControl<BranchGroup>
             label={COPY.location}
@@ -267,62 +276,67 @@ function BranchList({
             ]}
             onValueChange={next => {
               setGroup(next)
-              setQuery('')
+              setSearch('')
             }}
           />
         )}
       </div>
-      {switching.state === 'refused' && (
-        <InlineNotice tone="warn" className="branch-list-notice">
-          {switching.message}
-        </InlineNotice>
-      )}
-      {switching.state === 'unknown' && (
-        <InlineNotice
-          tone="warn"
-          className="branch-list-notice"
-          action={
-            <Button
-              size="xs"
-              variant="secondary"
-              onClick={() => {
-                send(switching.branch, switching.requestId)
-              }}>
-              {COPY.retrySame}
+      <div className="branch-list-results" ref={results}>
+        {switching.state === 'refused' && (
+          <InlineNotice tone="warn" className="branch-list-notice">
+            {switching.message}
+          </InlineNotice>
+        )}
+        {switching.state === 'unknown' && (
+          <InlineNotice
+            tone="warn"
+            className="branch-list-notice"
+            action={
+              <Button
+                size="xs"
+                variant="secondary"
+                onClick={() => {
+                  send(switching.branch, switching.requestId)
+                }}>
+                {COPY.retrySame}
+              </Button>
+            }>
+            {COPY.unknown}
+          </InlineNotice>
+        )}
+        {list.state === 'reading' ? (
+          <p className="branch-list-state" role="status">
+            <Spinner size={12} />
+            {COPY.reading}
+          </p>
+        ) : list.state === 'failed' ? (
+          <p className="branch-list-state" title={list.message}>
+            {COPY.unreadable}
+            <Button size="xs" variant="ghost" onClick={read}>
+              {COPY.retry}
             </Button>
-          }>
-          {COPY.unknown}
-        </InlineNotice>
-      )}
-      {list.state === 'reading' ? (
-        <p className="branch-list-state">
-          <Spinner size={12} label={COPY.reading} />
-        </p>
-      ) : list.state === 'failed' ? (
-        <p className="branch-list-state" title={list.message}>
-          {COPY.unreadable}
-          <Button size="xs" variant="ghost" onClick={read}>
-            {COPY.retry}
-          </Button>
-        </p>
-      ) : items.length === 0 ? (
-        <p className="branch-list-state">{COPY.none}</p>
-      ) : (
-        <MenuPanel
-          label={COPY.label}
-          sections={[{ id: 'branches', items }]}
-          selection
-          panelRef={panel}
-          footer={hidden > 0 ? <span className="branch-list-more">{COPY.more(hidden)}</span> : undefined}
-          onChoose={item => {
-            item.onSelect()
-          }}
-          onDismiss={reason => {
-            if (reason === 'escape') close()
-          }}
-        />
-      )}
-      {!!ready?.more && !query.trim() && <p className="branch-list-state branch-list-more">{COPY.omitted(ready.more)}</p>}
+          </p>
+        ) : items.length === 0 ? (
+          <p className="branch-list-state" role="status">
+            {COPY.none}
+          </p>
+        ) : (
+          <MenuPanel
+            label={COPY.label}
+            sections={[{ id: 'branches', items }]}
+            selection
+            panelRef={panel}
+            footer={hidden > 0 ? <span className="branch-list-more">{COPY.more(hidden)}</span> : undefined}
+            onChoose={item => {
+              item.onSelect()
+            }}
+            onDismiss={reason => {
+              if (reason === 'escape') close()
+            }}
+          />
+        )}
+        {!!ready?.more && !query.trim() && <p className="branch-list-state branch-list-more">{COPY.omitted(ready.more)}</p>}
+      </div>
     </div>
   )
 }
