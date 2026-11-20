@@ -101,7 +101,7 @@
   width: auto;
 }
 .settings-nav-heading {
-  padding: var(--sp-8) var(--sp-8) var(--sp-2);
+  padding: var(--sp-16) var(--sp-8) var(--sp-4);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption-para);
   font-weight: 500;
@@ -112,8 +112,11 @@
 }
 @media (max-width: 767px) {
   .settings-nav > .settings-nav-heading {
-    padding: var(--sp-8) var(--sp-16);
+    padding: var(--sp-12) var(--sp-16) var(--sp-6);
     background: var(--sidebar);
+  }
+  .settings-nav-heading:first-child {
+    padding-top: var(--sp-8);
   }
 }
 /* A device without 管理此 Host: one quiet line under the sections says what is hidden and where to grant it. */
@@ -150,6 +153,12 @@
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
   transition: background-color var(--m-micro) var(--e-micro);
+}
+.settings-nav-heading ~ button {
+  --settings-item-indent: var(--sp-8);
+}
+.settings-nav > button > .ui-icon:first-child {
+  margin-inline-start: var(--settings-item-indent, 0px);
 }
 .settings-nav > button > .ui-icon {
   color: var(--muted);
@@ -382,8 +391,7 @@
     content: '';
     position: absolute;
     top: 0;
-    right: 0;
-    left: calc(var(--sp-16) + 20px + var(--sp-12));
+    inset-inline: calc(var(--sp-16) + var(--settings-item-indent, 0px) + 20px + var(--sp-12)) 0;
     height: 1px;
     background: var(--line);
   }
