@@ -52,7 +52,36 @@ public actor NativeVerification {
     private var flight: Task<BodyLease, Error>?
     private var flightId: UUID?
     private var version = UUID()
+    private struct Challenge: Sendable { let connection: ObjectIdentifier; let opening: String; let body: Data; let deadline: ContinuousClock.Instant }
+    private var prefetched: Challenge?
+    private var prefetching: Task<Void, Never>?
     public init(hostId: String, deviceId: String) { self.hostId = hostId; self.deviceId = deviceId }
+    /** A qualify rechecks a held window or recovery proof (or waits for a verification in flight) before reading the snapshot. */
+    /** A verification or an early challenge is on the wire. */
+    func busy() -> Bool { flight != nil || prefetching != nil }
+    func restoresWindow() -> Bool { window?.lease.valid == true || proof != nil || flight != nil }
+    /**
+     * With Face ID off and no window, the challenge a verification needs is fetched as soon as a path is installed.
+     * The Host's challenge supersedes every older window of this device, so this never runs while one or a recovery proof
+     * exists or a verification is in flight. The challenge is bound to its connection and opening and used at most once.
+     */
+    func prefetchChallenge(on connection: NativeHTTPConnection) async {
+        guard window == nil, proof == nil, flight == nil, prefetching == nil else { return }
+        let current = opening, expected = version, id = ObjectIdentifier(connection)
+        let task = Task {
+            guard let response = try? await connection.request(.post, path: "/link/api/native/verification/challenge", body: json(["appOpenId": current])),
+                  response.status == 200 else { return }
+            self.keep(Challenge(connection: id, opening: current, body: response.body, deadline: ContinuousClock.now.advanced(by: .seconds(45))), version: expected)
+        }
+        prefetching = task
+        await task.value
+        prefetching = nil
+    }
+    private func keep(_ challenge: Challenge, version expected: UUID) {
+        // A verification may already wait for this fetch; it changes the version only after taking the challenge.
+        guard opening == challenge.opening, version == expected, window == nil, proof == nil else { return }
+        prefetched = challenge
+    }
     public func currentLease() -> BodyLease? { window?.lease.valid == true ? window?.lease : nil }
     /** A late stream failure may withdraw its own window, never a newer verification on this connection. */
     public func invalidate(_ lease: BodyLease?) -> Bool {
@@ -60,7 +89,7 @@ public actor NativeVerification {
         closeOpening(); return true
     }
     public func closeOpening() {
-        version = UUID()
+        version = UUID(); prefetched = nil
         _ = authority.replace(); opening = UUID().uuidString
         window = nil; windowConnection = nil; proof = nil; proofDeadline = nil
         flight?.cancel(); flight = nil; flightId = nil
@@ -141,10 +170,27 @@ public actor NativeVerification {
             if let result = try await recover(proof, on: connection, opening: current) { return result }
             guard self.proof == nil else { throw NativeFailure.resultUnknown }
         }
+        if let prefetching { await prefetching.value }
+        let early = prefetched.flatMap { $0.connection == ObjectIdentifier(connection) && $0.opening == current && ContinuousClock.now < $0.deadline ? $0 : nil }
+        prefetched = nil
+        if let early {
+            do { return try await signChallenge(early.body, on: connection, opening: current, sign: sign) }
+            catch NativeVerificationRejected.answered {
+                // A newer challenge from elsewhere superseded the early one; the Host answered, so one fresh challenge follows.
+                discardRejectedRecovery()
+            }
+        }
         version = UUID(); _ = authority.replace(); window = nil; windowConnection = nil
         let response = try await connection.request(.post, path: "/link/api/native/verification/challenge", body: json(["appOpenId": current]))
         guard current == opening, response.status == 200 else { throw NativeFailure.expired }
-        let challenge = try object(response.body)
+        do { return try await signChallenge(response.body, on: connection, opening: current, sign: sign) }
+        catch NativeVerificationRejected.answered { throw NativeFailure.resultUnknown }
+    }
+    private enum NativeVerificationRejected: Error { case answered }
+    private func signChallenge(_ body: Data, on connection: NativeHTTPConnection, opening current: String,
+        sign: @escaping @Sendable (Data) async throws -> Data) async throws -> BodyLease {
+        version = UUID(); _ = authority.replace(); window = nil; windowConnection = nil
+        let challenge = try object(body)
         guard Set(challenge.keys).isSubset(of: ["nonce", "appOpenId", "expiresAt", "generation"]), let nonce = challenge["nonce"] as? String,
               challenge["appOpenId"] as? String == current, let deadline = challenge["expiresAt"] as? NSNumber,
               CFGetTypeID(deadline) == CFNumberGetTypeID(), deadline.doubleValue.rounded(.down) == deadline.doubleValue,
@@ -164,6 +210,7 @@ public actor NativeVerification {
         do { verified = try await connection.request(.post, path: "/link/api/native/verification", body: json(["signature": LinkBytes.base64url(signature)])) }
         catch { throw NativeFailure.resultUnknown }
         guard current == opening else { throw NativeFailure.expired }
+        if verified.status == 403 { throw NativeVerificationRejected.answered }
         guard let value = try? receipt(verified) else { throw NativeFailure.resultUnknown }
         return accept(value, connection: connection)
     }

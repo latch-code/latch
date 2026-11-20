@@ -2,7 +2,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { createServer } from 'node:net'
+import { connect, createServer } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto'
@@ -64,6 +64,8 @@ const root = fileURLToPath(new URL('../../../', import.meta.url))
 const nativeSeen = vi.hoisted(() => [] as Array<{ deviceId: string; method: string; path: string }>)
 /** `METHOD path` of requests the native listener answers 503 once without passing on: a write the Host never saw. */
 const nativeDrop = vi.hoisted(() => new Set<string>())
+/** `METHOD path` of requests the native listener holds once for the given milliseconds before passing on. */
+const nativeDelays = vi.hoisted(() => new Map<string, number>())
 const nativeReadFaults = vi.hoisted(() => new Map<string, Array<{ status: number; code: string }>>())
 const nativeEventFaults = vi.hoisted(() => [] as Array<'end' | 'server' | 'transport' | 'metadata' | 'invalid'>)
 const nativeMalformedSuccess = vi.hoisted(() => new Set<string>())
@@ -269,6 +271,11 @@ vi.mock('../src/native.ts', async importOriginal => {
           if (nativeDrop.delete(key)) {
             res.writeHead(503, { 'content-type': 'application/json' }).end('{"error":"unavailable","message":"unavailable"}')
             return
+          }
+          const delay = nativeDelays.get(key)
+          if (delay !== undefined) {
+            nativeDelays.delete(key)
+            await new Promise(resolve => setTimeout(resolve, delay))
           }
           return options.handler(req, res, opening)
         },
@@ -2446,6 +2453,105 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await host.close()
     }
   }, 30_000)
+  it('reconnects the phone: retry and relay timing, path filter, background hold and PING liveness rules', async () => {
+    expect(await invoke({ operation: 'reconnectRules' })).toEqual({
+      backoff: true,
+      relayDelay: true,
+      winners: true,
+      filter: true,
+      ring: true,
+      holdWithdrawsAtOnce: true,
+      holdExpires: true,
+      holdLockTearsDown: true,
+      holdResumes: true,
+      liveness: { silentClosedAtMs: 20_000, answeredStaysOpen: true },
+    })
+  })
+  it('reconnects the phone: late direct wins, relay upgrades to direct, the window is rechecked and nothing is resent', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    // Refuses every dial at once, as a vanished LAN address does.
+    const refused = createServer(socket => socket.destroy())
+    // Forwards to the Host until the fixture writes the marker, then goes quiet without closing: a peer that stopped answering.
+    const nativePort = host.host.nativePort!
+    const markers = await mkdtemp(join(tmpdir(), 'latch-swift-silent-'))
+    const silentMarker = join(markers, 'silent')
+    const silent = createServer(client => {
+      const upstream = connect(nativePort, '127.0.0.1')
+      const open = () => !existsSync(silentMarker)
+      client.on('data', (chunk: Buffer) => open() && upstream.write(chunk))
+      upstream.on('data', (chunk: Buffer) => open() && client.write(chunk))
+      const end = () => {
+        client.destroy()
+        upstream.destroy()
+      }
+      client.on('error', end).on('close', end)
+      upstream.on('error', end).on('close', end)
+    })
+    await Promise.all([refused, silent].map(server => new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))))
+    const port = (server: typeof refused) => (server.address() as { port: number }).port
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      nativeSeen.length = 0
+      nativeDrop.add('PATCH /link/api/devices/current')
+      nativeDelays.set('GET /link/api/custom-agents/general', 800)
+      const result = await invoke(
+        {
+          operation: 'nativeReconnect',
+          payload: invitation.payload,
+          port: host.host.nativePort,
+          faultPort: port(refused),
+          silentPort: port(silent),
+          silentMarker,
+        },
+        60_000,
+      )
+      expect(result).toMatchObject({
+        lateDirectWins: true,
+        emptyBrowseLeavesNoMemory: true,
+        relayStartsAtOnce: true,
+        upgrade: {
+          relayOnlyRefused: true,
+          installedDirect: true,
+          builtBeforeTeardown: true,
+          sameWindow: true,
+          readNotInterrupted: true,
+          unknownKept: true,
+          directNotUpgradedAgain: true,
+          installs: 2,
+        },
+        holdRecheck: true,
+        revocationFirst: true,
+        liveness: { answeredStaysOpen: true, silentClosed: true },
+      })
+      // The timeline holds phase names, path kinds and numbers only.
+      const timeline = JSON.stringify(result.timeline)
+      for (const secret of ['127.0.0.1', String(nativePort), 'lan-late', invitation.payload]) expect(timeline).not.toContain(secret)
+      expect(result.phases).toEqual(
+        expect.arrayContaining(['foreground', 'candidates', 'connect:direct', 'qualify:direct', 'install:direct']),
+      )
+      expect(result.phases).not.toContain('install:relay')
+      const seen = (method: string, path: string) => nativeSeen.filter(entry => entry.method === method && entry.path === path).length
+      // The unknown write went out once; neither the upgrade nor the recheck sent it again.
+      expect(seen('PATCH', '/link/api/devices/current')).toBe(1)
+      expect(nativeDrop.size).toBe(0)
+      // Every challenge was used by a verification: an early challenge is never fetched beside a held window.
+      expect(seen('POST', '/link/api/native/verification/challenge')).toBe(result.verifications)
+      expect(seen('POST', '/link/api/native/verification')).toBe(result.verifications)
+      // The upgrade's qualify and the return from the background each rechecked the window.
+      expect(seen('POST', '/link/api/native/verification/resume')).toBeGreaterThanOrEqual(2)
+      // After the revocation both requests of the next qualify reached the Host; the snapshot was still never adopted.
+      const revokedAt = nativeSeen.findLastIndex(entry => entry.method === 'DELETE' && entry.path === '/link/api/devices/current')
+      const after = nativeSeen.slice(revokedAt + 1).map(entry => `${entry.method} ${entry.path}`)
+      expect(after).toEqual(expect.arrayContaining(['GET /link/api/native/revocation', 'GET /link/api/snapshot']))
+    } finally {
+      nativeDrop.clear()
+      nativeDelays.clear()
+      await Promise.all([refused, silent].map(server => new Promise(resolve => server.close(resolve))))
+      await rm(markers, { recursive: true, force: true })
+      await host.close()
+    }
+  }, 90_000)
   it('retains an unanswered Swift helper creation when a successful HTTP response lacks its identity', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     const key = 'POST /link/api/custom-agents'

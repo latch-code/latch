@@ -21,7 +21,12 @@ let package = Package(
             .product(name: "NIOHTTP2", package: "swift-nio-http2"),
             .product(name: "NIOTransportServices", package: "swift-nio-transport-services"),
         ]),
-        .executableTarget(name: "LatchNativeFixture", dependencies: ["LatchNativeCore"], path: "Testkit"),
+        .executableTarget(name: "LatchNativeFixture", dependencies: [
+            "LatchNativeCore",
+            .product(name: "NIOCore", package: "swift-nio"),
+            .product(name: "NIOEmbedded", package: "swift-nio"),
+            .product(name: "NIOHTTP2", package: "swift-nio-http2"),
+        ], path: "Testkit"),
     ],
     swiftLanguageModes: [.v6]
 )

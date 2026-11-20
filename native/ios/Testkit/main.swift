@@ -72,6 +72,12 @@ do {
     case "nativeWorkspace":
         stage = "workspace"
         result = try await runNativeWorkspace(input)
+    case "nativeReconnect":
+        stage = "reconnect"
+        result = try await runNativeReconnect(input)
+    case "reconnectRules":
+        stage = "reconnect-rules"
+        result = try await runReconnectRules()
     case "phoneProjection": result = try phoneProjectionFixture(input)
     case "taskStreamProjection": result = try taskStreamFixture(input)
     case "taskStreamBoundary": result = try taskStreamBoundaryFixture(input)

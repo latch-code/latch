@@ -34,12 +34,17 @@ private final class NativeConnectionCancellation: @unchecked Sendable {
 /** One authenticated inner TLS/HTTP2 channel; replacement is owned by the workspace, never by a write request. */
 public actor NativeHTTPConnection {
     @TaskLocal static var fileTransferBuffer = false
+    /** The HTTP/2 PING period; fixtures shorten it. Two unanswered PINGs close the connection. */
+    @TaskLocal public static var livenessInterval: TimeAmount = NativeLivenessHandler.interval
     public nonisolated let usesRelay: Bool
     private let channel: any Channel
     private let streams: HTTP2StreamMultiplexer.SendableView
     private let group: NIOTSEventLoopGroup
     private let padding: NativePaddingHandler?
-    private var requests = 0
+    private var requests = 0 { didSet { gauge.set(requests) } }
+    private nonisolated let gauge = NativeRequestGauge()
+    /** No request, file range or upload is in flight; event streams do not count. Readable without hopping to the actor. */
+    public nonisolated var idle: Bool { gauge.idle }
     private var eventCount = 0
     private var closed = false
     private var closeTask: Task<Void, Never>?
@@ -89,6 +94,7 @@ public actor NativeHTTPConnection {
                 HTTP2Setting(parameter: .maxConcurrentStreams, value: 32), HTTP2Setting(parameter: .maxHeaderListSize, value: 32_768),
             ], targetWindowSize: window, inboundStreamInitializer: { stream in stream.close() }).map { $0.sendableView }.get()
             try await channel.pipeline.removeHandler(gate).get()
+            try await channel.pipeline.addHandler(NativeLivenessHandler(interval: livenessInterval)).get()
             guard !Task.isCancelled else { throw CancellationError() }
             return NativeHTTPConnection(channel: channel, streams: streams, group: group, padding: padding)
         } catch {
@@ -299,6 +305,8 @@ public actor NativeHTTPConnection {
     }
     private func eventEnded() { eventCount = max(0, eventCount - 1) }
     public func isClosed() -> Bool { closed || !channel.isActive }
+    /** Returns once the channel has closed, for whatever reason. */
+    public func waitForClose() async { try? await channel.closeFuture.get() }
     /** After the Host activated this companion: its uplink goes unclocked past the bulk delay, each cell checked first. */
     func enableBulk(permitted: @escaping @Sendable () -> Bool) async throws {
         guard let padding, !closed else { throw NativeFailure.unavailable }
@@ -362,4 +370,62 @@ private final class HTTPResponseCollector: ChannelInboundHandler, @unchecked Sen
         if !settled { settled = true; timer?.cancel(); promise.fail(NativeFailure.resultUnknown) }
         context.close(promise: nil)
     }
+}
+
+/**
+ * Silent-peer detection on the parent channel, after the multiplexer that forwards stream 0's frames. A PING goes out at
+ * once and then every `interval`; any PING acknowledgement clears the count, and `misses` unanswered ones in a row close
+ * the channel (about 20 s by default) so requests and streams fail instead of waiting for the SSE timer.
+ */
+public final class NativeLivenessHandler: ChannelInboundHandler, @unchecked Sendable {
+    public typealias InboundIn = HTTP2Frame
+    public typealias OutboundOut = HTTP2Frame
+    public static let interval: TimeAmount = .seconds(10)
+    public static let misses = 2
+    private let interval: TimeAmount
+    private let misses: Int
+    private var timer: RepeatedTask?
+    private var outstanding = false
+    private var missed = 0
+    private var sequence: UInt64 = 0
+    public init(interval: TimeAmount = NativeLivenessHandler.interval, misses: Int = NativeLivenessHandler.misses) {
+        self.interval = max(interval, .milliseconds(10)); self.misses = max(1, misses)
+    }
+    public func handlerAdded(context: ChannelHandlerContext) { if context.channel.isActive { start(context) } }
+    public func channelActive(context: ChannelHandlerContext) { start(context); context.fireChannelActive() }
+    public func channelInactive(context: ChannelHandlerContext) { stop(); context.fireChannelInactive() }
+    public func handlerRemoved(context: ChannelHandlerContext) { stop() }
+    public func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        if case .ping(_, ack: true) = unwrapInboundIn(data).payload { outstanding = false; missed = 0 }
+        context.fireChannelRead(data)
+    }
+    private func start(_ context: ChannelHandlerContext) {
+        guard timer == nil else { return }
+        ping(context)
+        let loop = context.eventLoop
+        timer = loop.scheduleRepeatedTask(initialDelay: interval, delay: interval) { [weak self, weak context] _ in
+            guard let self, let context else { return }
+            self.tick(context)
+        }
+    }
+    private func stop() { timer?.cancel(); timer = nil }
+    private func tick(_ context: ChannelHandlerContext) {
+        if outstanding {
+            missed += 1
+            if missed >= misses { stop(); context.close(promise: nil); return }
+        }
+        ping(context)
+    }
+    private func ping(_ context: ChannelHandlerContext) {
+        sequence &+= 1; outstanding = true
+        context.writeAndFlush(wrapOutboundOut(HTTP2Frame(streamID: .rootStream, payload: .ping(HTTP2PingData(withInteger: sequence), ack: false))), promise: nil)
+    }
+}
+
+/** A lock-guarded copy of a connection's request count, so a path swap can check it in the same actor turn. */
+final class NativeRequestGauge: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func set(_ value: Int) { lock.lock(); count = value; lock.unlock() }
+    var idle: Bool { lock.lock(); defer { lock.unlock() }; return count == 0 }
 }

@@ -131,6 +131,8 @@ enum NativeTLS {
     }
     static func parameters(state: HandshakeState, identity: PlatformIdentity?) throws -> NWParameters {
         let tcp = NWProtocolTCP.Options(); tcp.noDelay = true; tcp.connectionTimeout = 5
+        // Direct paths: a dead LAN peer is noticed by the OS too, beside the HTTP/2 PINGs.
+        tcp.enableKeepalive = true; tcp.keepaliveIdle = 15; tcp.keepaliveInterval = 5; tcp.keepaliveCount = 2
         let parameters = NWParameters(tls: try options(state: state, identity: identity), tcp: tcp)
         let preflight = NWProtocolFramer.Options(definition: KnockFramer.definition)
         preflight["latch.state"] = state

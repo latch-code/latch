@@ -218,9 +218,16 @@ public enum NativeDiscoveryWire {
     private var generation = UUID()
     private var key: Data?
     private var found: [(label: String, interface: NWInterface)] = []
+    private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    /** Called on the main actor whenever this browser's results change. */
+    public var onChange: (@MainActor () -> Void)?
     public init() {}
+    public var browsing: Bool { browser != nil }
+    /** Starts browsing for this key; a running browser for the same key keeps its results. A network change stops it first. */
     public func start(key: Data) throws {
-        stop(); _ = try LinkBytes.fixed(key, 32); self.key = key
+        _ = try LinkBytes.fixed(key, 32)
+        if browser != nil, let current = self.key, LinkBytes.equal(current, key) { return }
+        stop(); self.key = key
         let current = generation, parameters = NWParameters.tcp
         parameters.includePeerToPeer = false
         let next = NWBrowser(for: .bonjour(type: "_latch._tcp", domain: "local."), using: parameters)
@@ -239,10 +246,48 @@ public enum NativeDiscoveryWire {
                 }
             }
             self.found = found
+            if !found.isEmpty { self.wake() }
+            self.onChange?()
         } }
+        // A failed browser is dropped, so the next dial round starts a fresh one.
+        next.stateUpdateHandler = { [weak self] state in
+            guard case .failed = state else { return }
+            Task { @MainActor in
+                guard let self, self.generation == current else { return }
+                self.stop()
+            }
+        }
         next.start(queue: DispatchQueue(label: "app.latch.bonjour"))
     }
-    public func stop() { generation = UUID(); browser?.cancel(); browser = nil; key = nil; found = [] }
+    public func stop() { generation = UUID(); browser?.cancel(); browser = nil; key = nil; found = []; wake() }
+    /** Returns once browsing has a result for this key, or after `limit`, or at once when not browsing. */
+    public func waitForResults(within limit: Duration) async {
+        guard browser != nil, found.isEmpty, waiters.count < 8 else { return }
+        let id = UUID()
+        let timer = Task { [weak self] in
+            try? await Task.sleep(for: limit)
+            self?.wake(id)
+        }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled { continuation.resume() } else { waiters[id] = continuation }
+            }
+        } onCancel: { Task { @MainActor [weak self] in self?.wake(id) } }
+        timer.cancel()
+    }
+    private func wake(_ id: UUID? = nil) {
+        if let id { waiters.removeValue(forKey: id)?.resume(); return }
+        let all = waiters.values; waiters = [:]
+        for continuation in all { continuation.resume() }
+    }
+    /** A direct candidate that waits for this browser's first result, bounded by `NativeReconnectPolicy.browseDeadline`. */
+    public func lateCandidates(device: PreparedNativeDevice, keys: any NativeIdentityProvider) -> NativeLateDirects {
+        NativeLateDirects { [weak self] in
+            guard let self else { return [] }
+            await self.waitForResults(within: NativeReconnectPolicy.browseDeadline)
+            return (try? await self.candidates(device: device, keys: keys)) ?? []
+        }
+    }
     public func candidates(device: PreparedNativeDevice, keys: any NativeIdentityProvider) async throws -> [NativePathCandidate] {
         let current = generation
         guard let key else { return [] }

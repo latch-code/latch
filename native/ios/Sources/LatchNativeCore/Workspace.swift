@@ -76,6 +76,8 @@ struct QualifiedNativePath: Sendable {
     let window: PreparedWindowRestore
     let ticket: UUID
     let reopen: (@Sendable () async throws -> NativeHTTPConnection)?
+    var kind: NativePathCandidate.Kind? = nil
+    var upgrade = false
 }
 
 /** The selected transport, independently of its restored body lease. */
@@ -132,6 +134,8 @@ public actor NativeWorkspace {
     private var bookUpdating = false
     private let directoryResolver: NativeDirectoryResolver
     private var reopen: (@Sendable () async throws -> NativeHTTPConnection)?
+    private var installedKind: NativePathCandidate.Kind?
+    private let prefetchChallenge: @Sendable () -> Bool
     private var bulk: (connection: NativeHTTPConnection, handle: String, etag: String, size: Int, until: Date)?
     private var bulkBusy = false
     private var bulkCover: Task<Void, Never>?
@@ -154,13 +158,14 @@ public actor NativeWorkspace {
     private var bodyState: NativeBodyState?
     public init(device: PreparedNativeDevice, keys: any NativeIdentityProvider, vault: EncryptedVault,
         onRevoked: (@Sendable (VerifiedNativeRevocation) -> Void)? = nil,
-        onTransportInstalled: (@MainActor @Sendable (NativeInstalledTransport) -> Void)? = nil) throws {
+        onTransportInstalled: (@MainActor @Sendable (NativeInstalledTransport) -> Void)? = nil,
+        prefetchChallenge: @escaping @Sendable () -> Bool = { false }) throws {
         guard LinkBytes.base32(LinkBytes.hash(device.rootSpki)) == device.hostId,
               LinkBytes.matches(device.deviceId, "dev_[A-Za-z0-9_-]{22}"), device.knockKey.count == 32 else { throw NativeFailure.identityMismatch }
         self.device = device; self.keys = keys; self.vault = vault
         directoryResolver = NativeDirectoryResolver(vault: vault)
         bookDevice = device
-        self.onRevoked = onRevoked; self.onTransportInstalled = onTransportInstalled
+        self.onRevoked = onRevoked; self.onTransportInstalled = onTransportInstalled; self.prefetchChallenge = prefetchChallenge
         verification = NativeVerification(hostId: device.hostId, deviceId: device.deviceId)
     }
     public func install(_ candidate: @escaping @Sendable () async throws -> NativeHTTPConnection) async throws -> NativeJSON {
@@ -169,38 +174,64 @@ public actor NativeWorkspace {
         let qualified = try await qualify(next, ticket: id, reopen: candidate)
         return try await installQualified(qualified)
     }
-    func beginPathRound() async -> UUID { await cancelFileTransfer(); let id = UUID(); attempt = id; return id }
-    func qualify(_ next: NativeHTTPConnection, ticket id: UUID, reopen: (@Sendable () async throws -> NativeHTTPConnection)? = nil) async throws -> QualifiedNativePath {
+    func beginPathRound(cancelTransfers: Bool = true) async -> UUID {
+        if cancelTransfers { await cancelFileTransfer() }
+        let id = UUID(); attempt = id; return id
+    }
+    /**
+     * Revocation and the next request go out together on the new connection, but the revocation answer is decided first:
+     * a revoked device never parses the snapshot. A held window or recovery proof is rechecked before the snapshot is read,
+     * so the snapshot sees the window the Host confirmed.
+     */
+    func qualify(_ next: NativeHTTPConnection, ticket id: UUID, kind: NativePathCandidate.Kind? = nil, upgrade: Bool = false,
+        reopen: (@Sendable () async throws -> NativeHTTPConnection)? = nil) async throws -> QualifiedNativePath {
         guard revocation == nil else { await next.close(); throw NativeFailure.revoked }
         guard closingOpening == nil else { await next.close(); throw NativeFailure.unavailable }
         guard attempt == id, !Task.isCancelled else { await next.close(); throw NativeFailure.unavailable }
         do {
-            let notice = try await next.request(.get, path: "/link/api/native/revocation")
+            let restoring = await verification.restoresWindow()
+            let window: PreparedWindowRestore, response: NativeHTTPResponse
+            async let notice = next.request(.get, path: "/link/api/native/revocation")
+            if restoring {
+                async let restored = verification.prepareRestore(on: next)
+                try await decideRevocation(try await notice, on: next, ticket: id)
+                window = try await restored
+                response = try await next.request(.get, path: "/link/api/snapshot")
+            } else {
+                async let snapshot = next.request(.get, path: "/link/api/snapshot")
+                try await decideRevocation(try await notice, on: next, ticket: id)
+                window = try await verification.prepareRestore(on: next)
+                response = try await snapshot
+            }
             guard attempt == id, !Task.isCancelled else { throw NativeFailure.unavailable }
-            if notice.status == 200 {
-                let value = try NativeJSON.decode(notice.body)
-                guard Set(value.object.keys) == Set(["revocation"]) else { throw NativeFailure.invalidRecord }
-                if value["revocation"] != .null {
-                    let verified = try VerifiedNativeRevocation.verify(value["revocation"], rootSpki: device.rootSpki,
-                        hostId: device.hostId, deviceId: device.deviceId)
-                    revocation = verified
-                    installedTransport?.withdraw()
-                    await verification.closeOpening()
-                    onRevoked?(verified)
-                    await verified.acknowledge(on: next)
-                    throw NativeFailure.revoked
-                }
-            } else if ![401, 403, 404].contains(notice.status) { throw NativeFailure.unavailable }
-            let window = try await verification.prepareRestore(on: next)
-            let response = try await next.request(.get, path: "/link/api/snapshot")
-            guard attempt == id, !Task.isCancelled else { throw NativeFailure.unavailable }
-            return QualifiedNativePath(connection: next, snapshot: try parseCheckpoint(response), window: window, ticket: id, reopen: reopen)
+            var path = QualifiedNativePath(connection: next, snapshot: try parseCheckpoint(response), window: window, ticket: id, reopen: reopen)
+            path.kind = kind; path.upgrade = upgrade
+            return path
         } catch { await next.close(); throw error }
+    }
+    private func decideRevocation(_ notice: NativeHTTPResponse, on next: NativeHTTPConnection, ticket id: UUID) async throws {
+        guard attempt == id, !Task.isCancelled else { throw NativeFailure.unavailable }
+        if notice.status == 200 {
+            let value = try NativeJSON.decode(notice.body)
+            guard Set(value.object.keys) == Set(["revocation"]) else { throw NativeFailure.invalidRecord }
+            if value["revocation"] != .null {
+                let verified = try VerifiedNativeRevocation.verify(value["revocation"], rootSpki: device.rootSpki,
+                    hostId: device.hostId, deviceId: device.deviceId)
+                revocation = verified
+                installedTransport?.withdraw()
+                await verification.closeOpening()
+                onRevoked?(verified)
+                await verified.acknowledge(on: next)
+                throw NativeFailure.revoked
+            }
+        } else if ![401, 403, 404].contains(notice.status) { throw NativeFailure.unavailable }
     }
     func installQualified(_ path: QualifiedNativePath) async throws -> NativeJSON {
         do {
             guard revocation == nil else { throw NativeFailure.revoked }
             guard path.ticket == attempt, !Task.isCancelled else { throw NativeFailure.unavailable }
+            // An upgrade never interrupts a request, write, upload, transfer or verification: the relay simply stays.
+            if path.upgrade { guard await quiet() else { throw NativeFailure.unavailable } }
             await cancelFileTransfer()
             guard revocation == nil else { throw NativeFailure.revoked }
             guard path.ticket == attempt, !Task.isCancelled else { throw NativeFailure.unavailable }
@@ -209,13 +240,18 @@ public actor NativeWorkspace {
             guard path.ticket == attempt, !Task.isCancelled else { throw NativeFailure.unavailable }
             let next = path.snapshot
             let value = next["instanceId"].string == instance && (next["revision"].integer ?? 0) <= revision ? metadata : next
+            // Checked again in the same actor turn as the swap: a read that began meanwhile keeps its relay.
+            if path.upgrade { guard idle() else { throw NativeFailure.unavailable } }
             let write = try acceptSnapshot(value)
             let old = connection, transport = NativeTransportEpoch()
             installedTransport?.withdraw()
             installedTransport = transport
-            connection = path.connection; reopen = path.reopen; epoch = transport.id
+            connection = path.connection; reopen = path.reopen; epoch = transport.id; installedKind = path.kind
             bodyState?.authority.replaceConnection(); bodyState?.resetStream(); bodyState?.offers.removeAll()
             if let old { Task { await old.close() } }
+            if lease == nil, prefetchChallenge(), value["device"]["scopes"].array.contains(.string("view")) {
+                Task { [verification, connection = path.connection] in await verification.prefetchChallenge(on: connection) }
+            }
             let installed = try await persistCurrentSnapshot(write, epoch: transport.id)
             if let onTransportInstalled {
                 await onTransportInstalled(NativeInstalledTransport(epoch: transport, snapshot: installed, lease: lease))
@@ -225,7 +261,7 @@ public actor NativeWorkspace {
         } catch {
             if connection === path.connection {
                 installedTransport?.withdraw(); installedTransport = nil
-                connection = nil; reopen = nil; epoch = UUID()
+                connection = nil; reopen = nil; epoch = UUID(); installedKind = nil
                 bodyAttempt = UUID(); bodyState?.withdraw(); bodyState = nil
             }
             await path.connection.close(); throw error
@@ -238,6 +274,31 @@ public actor NativeWorkspace {
         guard epoch == current else { throw NativeFailure.unavailable }; return lease
     }
     public func lease() async -> BodyLease? { await verification.currentLease() }
+    /** The kind of the installed path, as the dial round that installed it named it. */
+    public func installedPathKind() -> NativePathCandidate.Kind? { connection == nil ? nil : installedKind }
+    /** Nothing is in flight on the installed path but its event streams, so moving paths loses no answer. */
+    public func quiet() async -> Bool {
+        guard idle() else { return false }
+        return !(await verification.busy()) && idle()
+    }
+    private func idle() -> Bool {
+        writes.isEmpty && !controlBusy && !uploading && bulk == nil && bulkRun == nil && !bulkBusy && !bookUpdating && connection?.idle != false
+    }
+    /**
+     * After a short background: the Host rechecks the held window on the kept connection. It never extends the window;
+     * false when there is none any more.
+     */
+    public func recheckWindow() async throws -> Bool {
+        let (connection, current) = try transport()
+        let kept = try await verification.restore(on: connection)
+        guard epoch == current else { throw NativeFailure.unavailable }
+        return kept
+    }
+    /** Returns when the installed connection has closed, or at once without one. */
+    public func transportEnded() async {
+        guard let connection else { return }
+        await connection.waitForClose()
+    }
     public func verifiedRevocation() -> VerifiedNativeRevocation? { revocation }
     public func discoveryEpoch() throws -> String {
         let time = Date().timeIntervalSince1970 * 1000
@@ -1343,7 +1404,7 @@ public actor NativeWorkspace {
     @discardableResult public func closeOpening() async -> Bool {
         if let closingOpening { return await closingOpening.value }
         let previous = connection, lastSnapshot = acceptedSnapshot
-        connection = nil; reopen = nil; acceptedSnapshot = nil
+        connection = nil; reopen = nil; acceptedSnapshot = nil; installedKind = nil
         installedTransport?.withdraw(); installedTransport = nil
         attempt = UUID(); epoch = UUID(); instance = nil; revision = 0
         bodyAttempt = UUID(); bodyState?.withdraw(); bodyState = nil
