@@ -125,8 +125,11 @@ describe('private attachments through the composer', () => {
         await expect.poll(() => drafts.locator('img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
         await page.screenshot({ path: `test-results/attachments/${width}-${theme}-ready.png`, animations: 'disabled' })
         await drafts.getByRole('button', { name: 'sample.png', exact: true }).click()
+        // A draft picture opens in the same picture window as a sent one.
         const dialog = page.getByRole('dialog', { name: 'sample.png', exact: true })
         await expect.poll(() => dialog.locator('img').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
+        expect(await dialog.evaluate(node => node.matches('.picture-viewer:modal'))).toBe(true)
+        await page.screenshot({ path: `test-results/attachments/${width}-${theme}-draft-viewer.png`, animations: 'disabled' })
         await dialog.getByRole('button', { name: '关闭', exact: true }).click()
         await composer.getByRole('button', { name: '发送', exact: true }).click()
         await page.getByText('已收到 1 个附件。', { exact: true }).waitFor()

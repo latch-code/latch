@@ -83,11 +83,13 @@ async function shots(page: Page, name: string, parts: Record<string, Locator>, w
 }
 
 /**
- * The viewer is open on a loaded picture, fitted inside the window, never past its natural size, over a scrim that
- * is dark in either theme; focus is inside it.
+ * The viewer is open on a loaded picture, fitted inside the window, never past its natural size, with the whole window
+ * dimmed behind it (not blurred); focus is inside it.
  */
 async function viewerShows(page: Page, viewer: Locator, width: number, height: number): Promise<void> {
   await viewer.waitFor()
+  // Measured once the picture has come in (it grows from 98.5%).
+  await viewer.evaluate(node => Promise.all(node.getAnimations({ subtree: true }).map(animation => animation.finished)))
   const picture = viewer.locator('img.picture-viewer-image')
   await expect.poll(() => picture.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0), SLOW).toBe(true)
   expect(await picture.evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight])).toEqual([width, height])
@@ -101,10 +103,16 @@ async function viewerShows(page: Page, viewer: Locator, width: number, height: n
   // Contain: the picture keeps its own shape.
   expect(Math.abs(box.width / box.height - width / height)).toBeLessThan(0.02)
   expect(await viewer.evaluate(node => node.matches(':modal') && node.contains(document.activeElement))).toBe(true)
-  const scrim = await viewer.evaluate(node => getComputedStyle(node, '::backdrop').backgroundColor)
-  const [r, g, b, a] = (scrim.match(/[\d.]+/gu) ?? []).map(Number)
+  const scrim = await viewer.evaluate(node => [
+    getComputedStyle(node, '::backdrop').backgroundColor,
+    getComputedStyle(node, '::backdrop').backdropFilter,
+  ])
+  const [r, g, b, a] = (scrim[0]!.match(/[\d.]+/gu) ?? []).map(Number)
   expect(Math.max(r!, g!, b!)).toBeLessThan(24)
-  expect(a).toBeGreaterThan(0.8)
+  expect(a).toBeGreaterThan(0.6)
+  expect(scrim[1]).toBe('none')
+  // No frame round it: the picture is the only thing on the dim besides the icons.
+  expect(await viewer.locator('.picture-viewer-window, .picture-viewer-bar, .picture-viewer-title').count()).toBe(0)
 }
 
 /** The open viewer at a phone and a desktop width, in both themes. */
@@ -251,9 +259,27 @@ describe('media in replies', () => {
         viewer.getByRole('button', { name: '下载', exact: true }).click(),
       ])
       expect(download.suggestedFilename()).toBe('chart.png')
+      // A right click on the picture offers 复制图片 and 保存图片, inside the viewer too.
+      await viewer.locator('img.picture-viewer-image').click({ button: 'right' })
+      const saveItem = page.getByRole('menuitem', { name: '保存图片', exact: true })
+      await saveItem.waitFor()
+      expect(await page.getByRole('menuitem', { name: '复制图片', exact: true }).count()).toBe(1)
+      await page.screenshot({ path: `${OUT}/viewer-menu-1440-light.png`, animations: 'disabled' })
+      const [saved] = await Promise.all([page.waitForEvent('download'), saveItem.click()])
+      expect(saved.suggestedFilename()).toBe('chart.png')
       await page.keyboard.press('Escape')
       await viewer.waitFor({ state: 'detached' })
       await expect.poll(() => press.evaluate(node => node === document.activeElement)).toBe(true)
+      // And on the picture in the reply: 复制图片 puts a PNG on the clipboard.
+      await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+      await press.click({ button: 'right' })
+      await page.getByRole('menuitem', { name: '复制图片', exact: true }).waitFor()
+      await page.screenshot({ path: `${OUT}/reply-menu-1440-light.png`, animations: 'disabled' })
+      await page.getByRole('menuitem', { name: '复制图片', exact: true }).click()
+      await expect
+        .poll(() => page.evaluate(async () => (await navigator.clipboard.read()).flatMap(item => item.types)), SLOW)
+        .toContain('image/png')
+      expect(await viewer.count()).toBe(0)
       // A press beside the picture closes it too.
       await press.click()
       await viewer.waitFor()

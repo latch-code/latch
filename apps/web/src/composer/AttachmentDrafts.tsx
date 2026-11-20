@@ -17,6 +17,7 @@ import { deliveryHint, draftSize, type AttachmentDraftController, type DraftAtta
 import { AttachmentTile, tileType, type TileType } from '../components/AttachmentTile.tsx'
 import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 import { VisibleText } from '../components/VisibleText.tsx'
+import { PictureGroup, usePictureViewer } from '../components/PictureViewer.tsx'
 import { Menu, type MenuSection } from '../components/overlays.tsx'
 
 const COPY = defineCopy(
@@ -263,6 +264,14 @@ function DraftAttachmentCard({
   }, [item.file, drawn])
   const failed = item.status === 'failed' || item.status === 'refused'
   const opens = (item.status === 'ready' || item.status === 'confirm') && previewable(type)
+  // A picture is looked at large the same way as one in a message (its own file, so nothing to download); the rest in
+  // the composer's own preview.
+  const face = useRef<HTMLButtonElement>(null)
+  const picture = usePictureViewer(
+    type === 'image' && opens && url?.file === item.file
+      ? { url: url.url, name: item.file.name, download: false, element: () => face.current }
+      : undefined,
+  )
   const size = uploadBytes(draftSize(item))
   const hint = deliveryHint(item.ref, controller.caps)
   const title = [
@@ -300,6 +309,7 @@ function DraftAttachmentCard({
       data-kind={type === 'image' ? 'image' : 'file'}
       data-delivery={hint ? 'path' : undefined}>
       <AttachmentTile
+        ref={face}
         name={name}
         type={type}
         {...(url?.file === item.file ? { src: url.url } : {})}
@@ -308,7 +318,7 @@ function DraftAttachmentCard({
         title={title}
         label={name}
         disabled={locked}
-        {...(opens ? { onOpen: onPreview } : {})}
+        {...(opens ? { onOpen: type === 'image' && url?.file === item.file ? picture.open : onPreview } : {})}
         corner={
           // A plain round ×: a toolbar's icon button grows its box on touch screens, which this corner cannot hold.
           <button
@@ -323,6 +333,8 @@ function DraftAttachmentCard({
         }
       />
       {state}
+      {picture.viewer}
+      {picture.menu}
       {(item.status === 'failed' || item.status === 'confirm') && (
         <Button
           className="attachment-retry"
@@ -368,16 +380,18 @@ export function AttachmentDrafts({
       {controller.heldBack && <InlineNotice tone="warn">{controller.heldBack}</InlineNotice>}
       {controller.items.length > 0 && (
         <div className="attachment-drafts" aria-label={COPY.attachments}>
-          {controller.items.map(item => (
-            <DraftAttachmentCard
-              key={item.key}
-              item={item}
-              controller={controller}
-              locked={locked}
-              onPreview={() => setPreview(item.key)}
-              onConfirm={() => setConfirm(item.key)}
-            />
-          ))}
+          <PictureGroup>
+            {controller.items.map(item => (
+              <DraftAttachmentCard
+                key={item.key}
+                item={item}
+                controller={controller}
+                locked={locked}
+                onPreview={() => setPreview(item.key)}
+                onConfirm={() => setConfirm(item.key)}
+              />
+            ))}
+          </PictureGroup>
         </div>
       )}
       {item && (

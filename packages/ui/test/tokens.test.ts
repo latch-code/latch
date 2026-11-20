@@ -116,7 +116,7 @@ const TOKENS: Record<string, [string, string]> = {
   '--diff-add-edge': ['rgba(25, 135, 70, 0.55)', 'rgba(86, 196, 135, 0.6)'],
   '--diff-del-edge': ['rgba(213, 67, 61, 0.55)', 'rgba(244, 124, 117, 0.6)'],
   '--scrim': ['rgba(18, 18, 28, 0.14)', 'rgba(0, 0, 0, 0.44)'],
-  '--scrim-media': ['rgba(10, 10, 14, 0.96)', 'rgba(0, 0, 0, 0.94)'],
+  '--scrim-media': ['rgba(10, 10, 14, 0.72)', 'rgba(0, 0, 0, 0.72)'],
 }
 
 describe('design tokens', () => {

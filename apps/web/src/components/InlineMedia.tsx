@@ -18,8 +18,9 @@ export function inlineImageWidth(width: number, height: number): string {
 
 /**
  * A picture, video or sound in a reply, drawn from a handle the Host authorized. Its size is reserved from the Host's
- * metadata before the bytes arrive. A picture is shown large over the page when pressed (with its turn's other pictures
- * a step away), and opens in the file pane only from there; video and sound keep the browser's own controls. `onFail`
+ * metadata before the bytes arrive. A picture is looked at large over the page when pressed (with its turn's other pictures
+ * a step away), and in the file pane only from there; its context gesture offers 复制图片 and 保存图片. Video and sound
+ * keep the browser's own controls. `onFail`
  * lets the caller fall back to its chip when the bytes cannot be drawn.
  */
 export function InlineMedia({
@@ -40,7 +41,7 @@ export function InlineMedia({
 }) {
   const name = label || COPY[media.kind]
   const button = useRef<HTMLButtonElement>(null)
-  const { open, viewer } = usePictureViewer(
+  const { open, viewer, menu } = usePictureViewer(
     media.kind === 'image'
       ? {
           url: media.url,
@@ -102,6 +103,7 @@ export function InlineMedia({
         {picture}
       </button>
       {viewer}
+      {menu}
     </>
   )
 }

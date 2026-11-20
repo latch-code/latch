@@ -777,9 +777,11 @@
   margin-block: 0;
 }
 /*
- * A picture looked at large (PictureViewer): the whole window, dark in both themes, the picture fitted in the middle
- * and never past its own size. Above it one quiet line, its name and count, and the actions on the right; the steps sit
- * at the window's sides. At 100% the stage scrolls, so a trackpad pans it; a finger pinches the page.
+ * A picture looked at large (PictureViewer): the whole window dims (--scrim-media, no blur) and the picture floats in
+ * the middle on its own, fitted inside the margins and never past its own size, with no frame, bar or caption round it.
+ * Only two small dark pills stay on the dim, so they read over whatever page is under it: the actions at the top right
+ * (clear of a desktop window's own buttons at the top left) and, with several pictures, the steps and the count at the
+ * bottom. At 100% the stage scrolls.
  */
 .picture-viewer.ui-modal-dialog {
   width: 100vw;
@@ -802,71 +804,18 @@
 }
 .picture-viewer-frame {
   position: relative;
-  display: flex;
-  flex-direction: column;
   height: 100%;
   min-height: 0;
   color: var(--tip-ink);
 }
-.picture-viewer-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-12);
-  flex-shrink: 0;
-  min-height: 56px;
-  padding: max(var(--sp-8), env(safe-area-inset-top)) max(var(--sp-12), env(safe-area-inset-right)) var(--sp-8)
-    max(var(--sp-20), env(safe-area-inset-left));
-}
-.picture-viewer-name {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-8);
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  font-size: var(--fs-ui);
-  line-height: var(--lh-ui);
-  font-weight: 500;
-}
-.picture-viewer-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.picture-viewer-count {
-  flex-shrink: 0;
-  color: color-mix(in srgb, var(--tip-ink) 60%, transparent);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-variant-numeric: tabular-nums;
-}
-.picture-viewer-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  flex-shrink: 0;
-}
-.picture-viewer .ui-icon-button {
-  color: color-mix(in srgb, var(--tip-ink) 72%, transparent);
-}
-.picture-viewer .ui-icon-button:hover:not([aria-disabled='true']) {
-  color: var(--tip-ink);
-}
-.picture-viewer .ui-icon-button:hover:not([aria-disabled='true'])::before {
-  background-color: color-mix(in srgb, var(--tip-ink) 12%, transparent);
-}
-.picture-viewer .ui-icon-button:active:not([aria-disabled='true'])::before {
-  background-color: color-mix(in srgb, var(--tip-ink) 18%, transparent);
-}
 .picture-viewer-stage {
   display: flex;
-  flex: 1;
-  min-height: 0;
+  height: 100%;
   overflow: hidden;
   overscroll-behavior: contain;
-  /* As much below as the bar takes above, so the picture stands in the middle of the window. */
-  padding: 0 var(--sp-64) calc(56px + env(safe-area-inset-bottom));
+  /* Room above for the actions and below for the steps, the same on both sides so the picture stands in the middle. */
+  padding: calc(var(--sp-64) + var(--sp-16) + env(safe-area-inset-top)) max(var(--sp-64), env(safe-area-inset-right))
+    calc(var(--sp-64) + var(--sp-16) + env(safe-area-inset-bottom)) max(var(--sp-64), env(safe-area-inset-left));
   outline: none;
   touch-action: pinch-zoom;
   -webkit-user-select: none;
@@ -882,6 +831,8 @@
 }
 .picture-viewer-stage[data-zoom='actual'] .picture-viewer-image {
   cursor: zoom-out;
+  border-radius: 0;
+  box-shadow: none;
 }
 .picture-viewer-image {
   display: block;
@@ -889,45 +840,72 @@
   /* Centred while it fits; at 100% the auto margins fall to 0, so every edge can be scrolled to. */
   margin: auto;
   max-width: none;
-  border-radius: var(--r-4);
+  border-radius: var(--r-12);
+  box-shadow: var(--sh-dialog);
   -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+  animation: ui-sheet-in var(--m-sheet) var(--e-sheet);
 }
 .picture-viewer-stage:not([data-zoom='actual']) .picture-viewer-image:not([style]) {
   max-width: 100%;
   max-height: 100%;
-}
-.picture-viewer-stage[data-zoom='actual'] .picture-viewer-image {
-  border-radius: 0;
 }
 .picture-viewer-image[data-settling] {
   transition:
     transform var(--m-micro) var(--e-micro),
     opacity var(--m-micro) var(--e-micro);
 }
-.picture-viewer-step.ui-icon-button {
+.picture-viewer-actions,
+.picture-viewer-steps {
   position: absolute;
-  top: 50%;
-  translate: 0 -50%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  border-radius: var(--r-full);
+  background: color-mix(in srgb, var(--tip-bg) 88%, transparent);
 }
-.picture-viewer-step[data-side='previous'] {
-  left: max(var(--sp-12), env(safe-area-inset-left));
+.picture-viewer-actions {
+  top: calc(var(--sp-16) + env(safe-area-inset-top));
+  right: max(var(--sp-16), env(safe-area-inset-right));
 }
-.picture-viewer-step[data-side='next'] {
-  right: max(var(--sp-12), env(safe-area-inset-right));
+.picture-viewer-steps {
+  bottom: calc(var(--sp-16) + env(safe-area-inset-bottom));
+  left: 50%;
+  translate: -50% 0;
+}
+.picture-viewer-count {
+  min-width: 44px;
+  text-align: center;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+}
+.picture-viewer :is(.picture-viewer-actions, .picture-viewer-steps) .ui-icon-button {
+  color: color-mix(in srgb, var(--tip-ink) 80%, transparent);
+}
+.picture-viewer :is(.picture-viewer-actions, .picture-viewer-steps) .ui-icon-button {
+  --icon-button-radius: var(--r-full);
+}
+.picture-viewer :is(.picture-viewer-actions, .picture-viewer-steps) .ui-icon-button:hover:not([aria-disabled='true']) {
+  color: var(--tip-ink);
+}
+.picture-viewer :is(.picture-viewer-actions, .picture-viewer-steps) .ui-icon-button:hover:not([aria-disabled='true'])::before {
+  background-color: color-mix(in srgb, var(--tip-ink) 14%, transparent);
+}
+.picture-viewer :is(.picture-viewer-actions, .picture-viewer-steps) .ui-icon-button:active:not([aria-disabled='true'])::before {
+  background-color: color-mix(in srgb, var(--tip-ink) 20%, transparent);
 }
 @media (max-width: 767.98px) {
-  .picture-viewer-bar {
-    padding-left: max(var(--sp-16), env(safe-area-inset-left));
-  }
+  /* Edge to edge across a phone; the actions and the steps keep their room above and below. */
   .picture-viewer-stage {
-    padding: 0 0 calc(56px + env(safe-area-inset-bottom));
+    padding: calc(var(--sp-64) + var(--sp-16) + env(safe-area-inset-top)) 0 calc(var(--sp-64) + var(--sp-16) + env(safe-area-inset-bottom));
+  }
+  .picture-viewer-actions {
+    right: max(var(--sp-12), env(safe-area-inset-right));
   }
   .picture-viewer-image {
     border-radius: 0;
-  }
-  /* A finger swipes between pictures; the side steps would only cover them. */
-  .picture-viewer-step.ui-icon-button {
-    display: none;
   }
 }
 .file-markdown {

@@ -164,6 +164,7 @@ function MessageAttachment({ attachment, inline }: { attachment: AttachmentRef; 
         }}
       />
       {large.viewer}
+      {large.menu}
     </div>
   )
 }

@@ -123,8 +123,8 @@
     /* Glass, only for floating layers (menus, the composer): raised at 88% behind a blur. */
     --glass: rgba(255, 255, 255, 0.88);
     --scrim: rgba(18, 18, 28, 0.14);
-    /* Under a picture looked at large: dark in both themes, so the picture is the only light thing on screen. */
-    --scrim-media: rgba(10, 10, 14, 0.96);
+    /* Under a picture looked at large: the whole window dimmed in both themes, so the picture stands out on its own. */
+    --scrim-media: rgba(10, 10, 14, 0.72);
     /* The surface under an element, for rings that cut a dot or a count out of what it sits on; a container on another
      * surface (a menu, a dialog, the sidebar) sets it to that surface. */
     --surface: var(--canvas);
@@ -579,7 +579,7 @@
       --bubble: #242831;
       --glass: rgba(27, 27, 31, 0.88);
       --scrim: rgba(0, 0, 0, 0.44);
-      --scrim-media: rgba(0, 0, 0, 0.94);
+      --scrim-media: rgba(0, 0, 0, 0.72);
       --preview-light-a: #ffffff;
       --preview-light-b: #ededed;
       --preview-dark-a: #242424;
@@ -711,7 +711,7 @@
     --bubble: #242831;
     --glass: rgba(27, 27, 31, 0.88);
     --scrim: rgba(0, 0, 0, 0.44);
-    --scrim-media: rgba(0, 0, 0, 0.94);
+    --scrim-media: rgba(0, 0, 0, 0.72);
     --preview-light-a: #ffffff;
     --preview-light-b: #ededed;
     --preview-dark-a: #242424;
@@ -891,7 +891,7 @@
     --bubble: #e9edf3 !important;
     --glass: rgba(255, 255, 255, 0.88) !important;
     --scrim: rgba(18, 18, 28, 0.14) !important;
-    --scrim-media: rgba(10, 10, 14, 0.96) !important;
+    --scrim-media: rgba(10, 10, 14, 0.72) !important;
     --preview-light-a: #ffffff !important;
     --preview-light-b: #ededed !important;
     --preview-dark-a: #242424 !important;
@@ -1104,7 +1104,7 @@
       --bubble: #242831 !important;
       --glass: rgba(27, 27, 31, 0.88) !important;
       --scrim: rgba(0, 0, 0, 0.44) !important;
-      --scrim-media: rgba(0, 0, 0, 0.94) !important;
+      --scrim-media: rgba(0, 0, 0, 0.72) !important;
       --preview-light-a: #ffffff !important;
       --preview-light-b: #ededed !important;
       --preview-dark-a: #242424 !important;
@@ -1236,7 +1236,7 @@
     --bubble: #242831 !important;
     --glass: rgba(27, 27, 31, 0.88) !important;
     --scrim: rgba(0, 0, 0, 0.44) !important;
-    --scrim-media: rgba(0, 0, 0, 0.94) !important;
+    --scrim-media: rgba(0, 0, 0, 0.72) !important;
     --preview-light-a: #ffffff !important;
     --preview-light-b: #ededed !important;
     --preview-dark-a: #242424 !important;

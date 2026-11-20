@@ -108,6 +108,34 @@ export function mediaBytes(url: string, here: string, signal?: AbortSignal): Pro
   return fileBytes(file[1]!, undefined, undefined, signal, version ? `"${version}"` : undefined)
 }
 
+/**
+ * A picture's bytes, for copying or saving: a blob this page made (a draft) is read as it is; anything else only through
+ * the authorized handle it is drawn from (`mediaBytes`).
+ */
+export async function pictureBlob(url: string, here: string, signal?: AbortSignal): Promise<Blob> {
+  if (!trustedMediaUrl(url, here)) throw new Error('media-unavailable')
+  if (new URL(url, here).protocol === 'blob:') return (await fetch(url, signal ? { signal } : {})).blob()
+  return new Blob([await mediaBytes(url, here, signal)])
+}
+
+/** The picture as PNG, the one picture type every clipboard takes. */
+export async function pngBlob(picture: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(picture)
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = bitmap.width
+    canvas.height = bitmap.height
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('picture-unavailable')
+    context.drawImage(bitmap, 0, 0)
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(blob => (blob ? resolve(blob) : reject(new Error('picture-unavailable'))), 'image/png')
+    })
+  } finally {
+    bitmap.close()
+  }
+}
+
 /** Resolve a reference as media through the same session authorization as a clicked file reference. */
 export async function resolveFileMedia(
   scope: string | FileContext,
