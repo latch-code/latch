@@ -162,6 +162,9 @@
     /* Lines, always 1px: line for hairlines and borders, line-strong for inputs and outlined controls. */
     --line: rgba(18, 18, 28, 0.075);
     --line-strong: rgba(18, 18, 28, 0.14);
+    --scroll-thumb: rgba(24, 24, 24, 0.48);
+    --scroll-thumb-hover: rgba(24, 24, 24, 0.6);
+    --scroll-thumb-active: rgba(24, 24, 24, 0.72);
     /* The 3px joint where a card meets the composer under it. */
     --joint: rgba(18, 18, 28, 0.1);
 
@@ -615,6 +618,9 @@
       --app-ring: rgba(255, 255, 255, 0.16);
       --line: rgba(255, 255, 255, 0.06);
       --line-strong: rgba(255, 255, 255, 0.11);
+      --scroll-thumb: rgba(240, 240, 240, 0.42);
+      --scroll-thumb-hover: rgba(240, 240, 240, 0.52);
+      --scroll-thumb-active: rgba(240, 240, 240, 0.64);
       --joint: rgba(0, 0, 0, 0.55);
       --sh-panel: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 0 0 1px rgba(0, 0, 0, 0.7), 0 14px 36px -14px rgba(0, 0, 0, 0.7);
       --sh-lift:
@@ -750,6 +756,9 @@
     --app-ring: rgba(255, 255, 255, 0.16);
     --line: rgba(255, 255, 255, 0.06);
     --line-strong: rgba(255, 255, 255, 0.11);
+    --scroll-thumb: rgba(240, 240, 240, 0.42);
+    --scroll-thumb-hover: rgba(240, 240, 240, 0.52);
+    --scroll-thumb-active: rgba(240, 240, 240, 0.64);
     --joint: rgba(0, 0, 0, 0.55);
     --sh-panel: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 0 0 1px rgba(0, 0, 0, 0.7), 0 14px 36px -14px rgba(0, 0, 0, 0.7);
     --sh-lift:
@@ -1018,6 +1027,9 @@
     --app-ring: transparent !important;
     --line: rgba(18, 18, 28, 0.075) !important;
     --line-strong: rgba(18, 18, 28, 0.14) !important;
+    --scroll-thumb: rgba(24, 24, 24, 0.48) !important;
+    --scroll-thumb-hover: rgba(24, 24, 24, 0.6) !important;
+    --scroll-thumb-active: rgba(24, 24, 24, 0.72) !important;
     --joint: rgba(18, 18, 28, 0.1) !important;
     --sh-panel: 0 0 0 1px rgba(18, 18, 28, 0.05), 0 1px 2px rgba(18, 18, 28, 0.04), 0 10px 28px -14px rgba(18, 18, 28, 0.12) !important;
     --sh-lift:
@@ -1234,6 +1246,9 @@
       --app-ring: rgba(255, 255, 255, 0.16) !important;
       --line: rgba(255, 255, 255, 0.06) !important;
       --line-strong: rgba(255, 255, 255, 0.11) !important;
+      --scroll-thumb: rgba(240, 240, 240, 0.42) !important;
+      --scroll-thumb-hover: rgba(240, 240, 240, 0.52) !important;
+      --scroll-thumb-active: rgba(240, 240, 240, 0.64) !important;
       --joint: rgba(0, 0, 0, 0.55) !important;
       --sh-panel: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 0 0 1px rgba(0, 0, 0, 0.7), 0 14px 36px -14px rgba(0, 0, 0, 0.7) !important;
       --sh-lift:
@@ -1369,6 +1384,9 @@
     --app-ring: rgba(255, 255, 255, 0.16) !important;
     --line: rgba(255, 255, 255, 0.06) !important;
     --line-strong: rgba(255, 255, 255, 0.11) !important;
+    --scroll-thumb: rgba(240, 240, 240, 0.42) !important;
+    --scroll-thumb-hover: rgba(240, 240, 240, 0.52) !important;
+    --scroll-thumb-active: rgba(240, 240, 240, 0.64) !important;
     --joint: rgba(0, 0, 0, 0.55) !important;
     --sh-panel: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 0 0 1px rgba(0, 0, 0, 0.7), 0 14px 36px -14px rgba(0, 0, 0, 0.7) !important;
     --sh-lift:

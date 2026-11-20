@@ -70,7 +70,10 @@ export async function buildOfficeFrame(directory = resolve('dist/web/preview-fra
   })
   const script = result.outputFiles[0]!.text.replace(/<\/script/giu, '<\\/script')
   const scriptHash = `sha256-${createHash('sha256').update(script).digest('base64')}`
-  const tokens = await readFile(fileURLToPath(import.meta.resolve('@latch/ui/tokens.css')), 'utf8')
+  const [tokens, scrollbars] = await Promise.all([
+    readFile(fileURLToPath(import.meta.resolve('@latch/ui/tokens.css')), 'utf8'),
+    readFile(new URL('./styles/scrollbar.css', import.meta.resolve('@latch/ui/ui.css')), 'utf8'),
+  ])
   const styles =
     'html,body{margin:0;min-height:100%;background:var(--sunken);color:var(--ink);font-family:var(--font)}body{box-sizing:border-box;padding:var(--sp-4) var(--sp-16) var(--sp-24)}#document{min-height:100vh}[data-slide-index]>:first-child{border-radius:var(--r-6);overflow:hidden;box-shadow:0 0 0 1px var(--line)}[data-slide-index]{position:relative;display:flex;flex-direction:column}[data-latch-slide-head]{order:-1;display:flex;align-items:center;height:28px;color:var(--muted);font-size:var(--fs-caption);line-height:var(--lh-caption);font-variant-numeric:tabular-nums}[data-latch-notes] summary{position:absolute;top:2px;right:0;height:24px;display:flex;align-items:center;gap:var(--sp-4);padding:0 var(--sp-6);border-radius:var(--r-6);color:var(--muted);font-size:var(--fs-caption);line-height:var(--lh-caption);cursor:pointer;list-style:none}[data-latch-notes] summary::-webkit-details-marker{display:none}[data-latch-notes] summary::before{content:"";width:5px;height:5px;margin-inline:1px 2px;border-block-start:1.5px solid;border-inline-end:1.5px solid;rotate:45deg;transition:rotate var(--m-micro) var(--e-micro)}[data-latch-notes][open] summary::before{rotate:135deg}[data-latch-notes] summary:hover{background:var(--hover);color:var(--ink)}[data-latch-notes] p{margin:var(--sp-8) 0 0;padding:var(--sp-12);border-radius:var(--r-6);background:var(--canvas);color:var(--ink);font-size:var(--fs-ui);line-height:var(--lh-ui-para);white-space:pre-wrap}section.docx{margin-inline:auto;max-width:100%;box-sizing:border-box}#document[data-fit=false] section.docx{max-width:none}.docx-wrapper{padding:var(--sp-8) 0!important;background:var(--sunken)!important}'
   const notesEnglish =
@@ -78,7 +81,7 @@ export async function buildOfficeFrame(directory = resolve('dist/web/preview-fra
   await mkdir(directory, { recursive: true })
   await writeFile(
     resolve(directory, 'office.html'),
-    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${tokens}${styles}${notesEnglish}</style></head><body><main id="document"></main><script>${script}</script></body></html>`,
+    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${tokens}@layer base{${scrollbars}}${styles}${notesEnglish}</style></head><body><main id="document"></main><script>${script}</script></body></html>`,
   )
   await writeFile(resolve(directory, 'office.json'), JSON.stringify({ file: 'office.html', scriptHash }))
   const pdfDirectory = fileURLToPath(new URL('./', import.meta.resolve('pdfjs-dist/package.json')))

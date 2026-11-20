@@ -147,6 +147,22 @@
 .terminal-screen .xterm .xterm-viewport {
   background-color: var(--canvas) !important;
 }
+/* xterm paints its own 14px slider. Clip only the paint so its full width still starts a drag. */
+@media (hover: hover) and (pointer: fine) and (forced-colors: none) {
+  .terminal-screen .xterm-scrollable-element > .scrollbar.vertical > .slider {
+    box-sizing: border-box;
+    padding-inline: calc((100% - var(--sp-4)) / 2);
+    border-radius: 50% / var(--sp-2);
+    /* xterm's unlayered theme stylesheet sets the background shorthand for all three pointer states. */
+    background-clip: content-box !important;
+  }
+}
+@media (forced-colors: active) {
+  .terminal-screen .xterm-scrollable-element > .scrollbar.vertical > .slider {
+    forced-color-adjust: none;
+    background-color: ButtonText !important;
+  }
+}
 .terminal-screen .xterm:focus-within,
 .terminal-screen .xterm-helper-textarea:focus-visible {
   outline: none;

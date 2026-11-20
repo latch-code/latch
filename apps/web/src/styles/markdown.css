@@ -206,7 +206,6 @@
   overflow-wrap: normal;
   word-break: normal;
   tab-size: 2;
-  scrollbar-width: thin;
 }
 .message-code pre code {
   font: inherit;
@@ -264,7 +263,6 @@
   margin: var(--sp-12) 0 var(--sp-16);
   overflow-x: auto;
   overscroll-behavior-inline: contain;
-  scrollbar-width: thin;
 }
 .message-content table {
   width: max-content;

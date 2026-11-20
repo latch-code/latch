@@ -60,7 +60,7 @@ describe('sidebar rows', () => {
 
   beforeAll(async () => {
     host = await startTestHost({ uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'), hostName: '验收电脑' })
-    browser = await chromium.launch(browserLaunchOptions())
+    browser = await chromium.launch({ ...browserLaunchOptions(), ignoreDefaultArgs: ['--hide-scrollbars'] })
     const owner = await host.enroll({ listener: 'unix' })
     realId = (
       await owner.json<{ sessionId: string }>('tasks', {
@@ -118,6 +118,39 @@ describe('sidebar rows', () => {
   }
 
   const row = (page: Page, id: string) => page.locator(`.session-item:has([data-task-id="${id}"])`)
+
+  it('keeps a slim thumb and lets a drag start in its transparent edge', async () => {
+    const page = await open(1280, 420, 'dark')
+    try {
+      const list = page.locator('nav.session-list')
+      const { right, top, viewportWidth, target, ink, length } = await list.evaluate(element => {
+        const bar = getComputedStyle(element, '::-webkit-scrollbar')
+        const thumb = getComputedStyle(element, '::-webkit-scrollbar-thumb')
+        const box = element.getBoundingClientRect()
+        const target = Number.parseFloat(bar.width)
+        return {
+          right: box.right,
+          top: box.top,
+          viewportWidth: element.clientWidth,
+          target,
+          ink: target - Number.parseFloat(thumb.borderLeftWidth) - Number.parseFloat(thumb.borderRightWidth),
+          length: element.clientHeight ** 2 / element.scrollHeight,
+        }
+      })
+      expect(target).toBe(10)
+      expect(ink).toBe(4)
+      const x = right - target + 1
+      const y = top + length / 2
+      await page.mouse.move(x, y)
+      expect(await list.evaluate(element => element.clientWidth)).toBe(viewportWidth)
+      await page.mouse.down()
+      await page.mouse.move(x, y + 40, { steps: 5 })
+      await page.mouse.up()
+      await expect.poll(() => list.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    } finally {
+      await page.context().close()
+    }
+  })
 
   it('draws complete compact status glyphs while keeping Harness, model and branch accessible', async () => {
     const page = await open(1440, 900, 'light')

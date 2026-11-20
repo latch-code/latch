@@ -271,7 +271,6 @@
   min-width: 0;
   max-block-size: min(calc(8lh + var(--sp-16) + var(--sp-20)), 38dvh);
   overflow-y: auto;
-  scrollbar-width: thin;
   overscroll-behavior: contain;
   padding: var(--sp-16) var(--sp-20) var(--sp-20);
   color: var(--work-ink-2);

@@ -55,7 +55,6 @@
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
 }
 .ui-suggest-heading {
   position: sticky;

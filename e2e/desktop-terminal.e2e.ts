@@ -40,7 +40,7 @@ class FakeShell {
   get text() {
     return Buffer.concat(this.received).toString()
   }
-  private print(text: string) {
+  print(text: string) {
     if (!this.ended) this.emit({ type: 'output', data: Buffer.from(text) })
   }
   input(data: Uint8Array) {
@@ -483,6 +483,49 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await confirm.getByRole('button', { name: '关闭终端', exact: true }).click()
       await tabs.getByRole('tab', { name: '终端 2', exact: true }).waitFor({ state: 'detached' })
       await tabs.getByRole('tab', { name: '终端 1', exact: true, selected: true }).waitFor()
+
+      // xterm's overlay keeps a wider pointer target than the part it paints. Drag from that transparent edge.
+      shell.print(Array.from({ length: 120 }, (_, i) => `scrollback row ${i}\r\n`).join(''))
+      await expect.poll(() => rows.innerText()).toContain('scrollback row 119')
+      const slider = screen.locator('.xterm-scrollable-element > .scrollbar.vertical > .slider')
+      const scrollBox = await slider.boundingBox()
+      if (!scrollBox) throw new Error('Expected a visible terminal scrollback thumb')
+      const matchesToken = (token: string) =>
+        slider.evaluate((element, name) => {
+          const style = getComputedStyle(element)
+          const context = document.createElement('canvas').getContext('2d')!
+          context.fillStyle = style.getPropertyValue(name).trim()
+          const expected = context.fillStyle
+          context.fillStyle = style.backgroundColor
+          return context.fillStyle === expected
+        }, token)
+      await page.mouse.move(scrollBox.x - 20, scrollBox.y + scrollBox.height / 2)
+      await expect.poll(() => matchesToken('--scroll-thumb')).toBe(true)
+      await page.mouse.move(scrollBox.x + 1, scrollBox.y + scrollBox.height / 2)
+      await expect.poll(() => matchesToken('--scroll-thumb-hover')).toBe(true)
+      await page.emulateMedia({ colorScheme: 'dark' })
+      await expect.poll(() => matchesToken('--scroll-thumb-hover')).toBe(true)
+      await panel.screenshot({ path: 'test-results/desktop-terminal/scrollback-hover-dark.png', animations: 'disabled' })
+      const paint = await slider.evaluate(el => {
+        const style = getComputedStyle(el)
+        return {
+          hit: el.getBoundingClientRect().width,
+          thumb: el.getBoundingClientRect().width - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight),
+          clip: style.backgroundClip,
+        }
+      })
+      expect(paint).toEqual({ hit: 14, thumb: 4, clip: 'content-box' })
+      await page.mouse.down()
+      await expect.poll(() => matchesToken('--scroll-thumb-active')).toBe(true)
+      await page.mouse.move(scrollBox.x + 1, scrollBox.y - 75, { steps: 5 })
+      await page.mouse.up()
+      await expect.poll(() => rows.innerText()).not.toContain('scrollback row 119')
+      await page.emulateMedia({ forcedColors: 'active' })
+      expect(await slider.evaluate(el => [getComputedStyle(el).paddingLeft, getComputedStyle(el).forcedColorAdjust])).toEqual([
+        '0px',
+        'none',
+      ])
+      await page.emulateMedia({ forcedColors: 'none', colorScheme: 'light' })
 
       // The shell exits: its code shows, the output stays, and 重新打开 starts a new shell under the same name.
       await screen.locator('.xterm').click()

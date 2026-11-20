@@ -3,6 +3,7 @@
  * base layer, then each primitive in the ui layer. A page's own styles come later, in the app and security layers.
  */
 @import './base.css' layer(base);
+@import './styles/scrollbar.css' layer(ui);
 @import './styles/icon.css' layer(ui);
 @import './styles/button.css' layer(ui);
 @import './styles/pill.css' layer(ui);

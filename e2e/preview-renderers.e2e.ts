@@ -100,6 +100,14 @@ describe('isolated document renderers', () => {
     const frame = page.frameLocator('iframe[title="文档沙箱"]')
     await frame.getByText('Page 1', { exact: true }).waitFor()
     await page.getByRole('status').filter({ hasText: '1 / 25 页' }).waitFor()
+    const thumbWidth = (element: Element) => {
+      const rail = getComputedStyle(element, '::-webkit-scrollbar')
+      const thumb = getComputedStyle(element, '::-webkit-scrollbar-thumb')
+      return parseFloat(rail.width) - parseFloat(thumb.borderLeftWidth) - parseFloat(thumb.borderRightWidth)
+    }
+    const previewThumbWidth = await frame.locator('html').evaluate(thumbWidth)
+    expect(previewThumbWidth).toBeGreaterThan(0)
+    expect(previewThumbWidth).toBe(await page.locator('html').evaluate(thumbWidth))
     expect(await frame.getByText('Page 25', { exact: true }).count()).toBe(0)
     await frame.getByText('备注', { exact: true }).first().click()
     await frame.getByText('Speaker note', { exact: true }).waitFor()
