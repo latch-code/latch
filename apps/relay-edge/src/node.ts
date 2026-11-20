@@ -14,7 +14,7 @@ import { webLinkCrypto } from './crypto.ts'
 import type { EdgeEnv, EdgePlatform, EdgeRequest, EdgeResponse, EdgeState, EdgeWebSocket } from './platform.ts'
 import { encodeWorkRequest } from './scrypt.ts'
 import { EdgeDenials } from './storage.ts'
-import { EdgeBuffers } from './buffers.ts'
+import { EDGE_BUFFER_LIMITS, EdgeBuffers } from './buffers.ts'
 
 export const EDGE_PROTOCOL = 'latch-relay.2'
 type Role = 'host' | 'data' | 'client'
@@ -40,14 +40,22 @@ export interface EdgeLimits {
   /**
    * Joined pairs one node object carries; past it new phones are refused with 4302 (more shards are the way to scale).
    * Unmeasured; kept low against the platform's documented soft limit of about 1,000 requests per second per object,
-   * where an idle pair costs about 8 received messages a second and a streaming one up to about 50.
+   * where an idle pair costs about 8 received messages a second, a streaming one up to about 50, and an explicit transfer
+   * at line rate (16 KiB DATA) several hundred.
    */
   maxPairs: number
   /**
-   * A socket whose runtime reports more unsent bytes than this is closed (4302). Only used when the runtime reports a
-   * valid `bufferedAmount`; otherwise only the send budget in buffers.ts, a rate, applies.
+   * A socket that is not joined and whose runtime reports more unsent bytes than this is closed (4302); joined sockets
+   * use `joinedBacklogBytes`. Only used when the runtime reports a valid `bufferedAmount`; otherwise only the send budget
+   * in buffers.ts, a rate, applies.
    */
   maxBacklogBytes: number
+  /** An authenticated, joined socket's send budget (burst and refill per second) and backlog bound; see buffers.ts. */
+  joinedSendBytes: number
+  joinedSendRate: number
+  joinedBacklogBytes: number
+  /** Reported backlog of all sockets together; past it the largest are closed. */
+  objectBacklogBytes: number
 }
 const DEFAULT_LIMITS: EdgeLimits = {
   maxConnections: 1024,
@@ -61,7 +69,11 @@ const DEFAULT_LIMITS: EdgeLimits = {
   maxConcurrent: 4,
   maxQueuedBytes: 262_144,
   maxPairs: 40,
-  maxBacklogBytes: 1_048_576,
+  maxBacklogBytes: EDGE_BUFFER_LIMITS.maxBacklogBytes,
+  joinedSendBytes: EDGE_BUFFER_LIMITS.joinedSendBytes,
+  joinedSendRate: EDGE_BUFFER_LIMITS.joinedSendRate,
+  joinedBacklogBytes: EDGE_BUFFER_LIMITS.joinedBacklogBytes,
+  objectBacklogBytes: EDGE_BUFFER_LIMITS.objectBacklogBytes,
 }
 /**
  * Messages a socket may send before the node has authenticated it: HELLO and one REGISTER, ADMIT or ATTACH. The one
@@ -233,6 +245,10 @@ export class EdgeNode {
     this.startedAt = platform.now()
     this.buffers = new EdgeBuffers(() => platform.now(), {
       maxBacklogBytes: this.limits.maxBacklogBytes,
+      joinedSendBytes: this.limits.joinedSendBytes,
+      joinedSendRate: this.limits.joinedSendRate,
+      joinedBacklogBytes: this.limits.joinedBacklogBytes,
+      objectBacklogBytes: this.limits.objectBacklogBytes,
       maxConnections: this.limits.maxConnections,
       // Open and held slots together: the same number the core applies to open sockets of one prefix.
       maxPerPrefix: this.limits.maxPerPrefix,
@@ -336,6 +352,7 @@ export class EdgeNode {
         // The cover runs its full three seconds through the inner handshake, as on the self-hosted relay.
         markSpliced: () => {
           socket.spliced = true
+          this.buffers.join(ws)
         },
       },
     }

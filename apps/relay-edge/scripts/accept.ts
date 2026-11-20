@@ -86,7 +86,8 @@ const LABEL: Record<string, string> = {
   cover: '前三秒填充',
   unauthenticated: '未认证连接被关闭',
   oversized: '超限消息（8 MiB × 4）',
-  'slow-reader': '不读的手机',
+  'line-rate': '按线速传输',
+  'slow-reader': '不读的手机在新预算下被关闭',
 }
 const items: AcceptanceItem[] = await runAcceptance(
   {
@@ -98,7 +99,10 @@ const items: AcceptanceItem[] = await runAcceptance(
     ...(adminToken ? { adminToken } : {}),
     sockets: count(values.sockets, 24, 64),
     slowSeconds: count(values['slow-seconds'], 30, 120),
-    slowRate: 256 * 1024,
+    // Above the 768 KiB/s of an unjoined socket, below the joined 16 MiB/s.
+    slowRate: 4 * 1024 * 1024,
+    lineBytes: 32 * 1024 * 1024,
+    lineRate: 8 * 1024 * 1024,
   },
   { progress: name => process.stderr.write(`… ${LABEL[name] ?? name}\n`) },
 )

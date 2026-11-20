@@ -7,6 +7,8 @@ interface Group extends Bucket {
   routes: Map<string, Bucket>
   indices: number[]
   weight: number
+  /** Not yet given its share; the next tick seeds it from the global tokens instead of from zero. */
+  fresh: boolean
 }
 interface Waiting {
   id: number
@@ -25,7 +27,13 @@ interface FairnessOptions {
   count: 'in+out' | 'out'
   now?(): number
 }
-/** Credit reservations are asynchronous and bounded; a large frame never blocks another prefix. */
+/**
+ * Credit reservations are asynchronous and bounded; a large frame never blocks another prefix. The global tokens keep
+ * accumulating while nothing waits, up to the burst (capped by the day's remaining budget), so an explicit transfer after
+ * a quiet spell runs at line rate until the burst is spent; a frame that fits the tokens of its last tick is granted on
+ * arrival rather than at the next 20 ms tick. Every frame is still charged its bytes, and an unhealthy, uncalibrated or
+ * exhausted quota still grants nothing.
+ */
 export class FairScheduler {
   private readonly options: FairnessOptions
   private readonly waiting = new Map<number, Waiting>()
@@ -39,6 +47,9 @@ export class FairScheduler {
   private timer?: ReturnType<typeof setInterval>
   private closed = false
   private cursor = 0
+  /** Prefixes and routes that reserved credit since the last tick: a transfer between frames still counts as active. */
+  private recent = new Map<string, Set<string>>()
+  private usable = false
   constructor(options: FairnessOptions) {
     if (
       !Number.isSafeInteger(options.maxQueuedBytes)
@@ -77,22 +88,50 @@ export class FairScheduler {
       return Promise.resolve(false)
     if (bytes === 0) return Promise.resolve(true)
     const weights = new Map<string, number>()
+    for (const prefix of prefixes) if (prefix.length > 64) return Promise.resolve(false)
     for (const prefix of prefixes) {
-      if (prefix.length > 64) return Promise.resolve(false)
       weights.set(prefix, (weights.get(prefix) ?? 0) + 1 / prefixes.length)
-      if (!this.groups.has(prefix)) this.groups.set(prefix, { tokens: 0, routes: new Map(), indices: this.indices(prefix), weight: 1 })
+      if (!this.groups.has(prefix))
+        this.groups.set(prefix, { tokens: 0, routes: new Map(), indices: this.indices(prefix), weight: 1, fresh: true })
+      const routes = this.recent.get(prefix) ?? new Set<string>()
+      routes.add(route)
+      this.recent.set(prefix, routes)
     }
+    const item: Waiting = {
+      id,
+      route,
+      groups: weights,
+      remaining: bytes * (!exact && this.options.count === 'in+out' ? 2 : 1),
+      bytes,
+      resolve: () => {},
+    }
+    if (this.usable && this.grant(item, true)) return Promise.resolve(true)
     this.queuedBytes += bytes
     return new Promise(resolve => {
-      this.waiting.set(id, {
-        id,
-        route,
-        groups: weights,
-        remaining: bytes * (!exact && this.options.count === 'in+out' ? 2 : 1),
-        bytes,
-        resolve,
-      })
+      item.resolve = resolve
+      this.waiting.set(id, item)
     })
+  }
+  /** Grants what the global, prefix and route tokens allow; `whole` grants all of it or nothing. True when done. */
+  private grant(item: Waiting, whole = false): boolean {
+    let granted = Math.min(item.remaining, this.global)
+    for (const [prefix, fraction] of item.groups) {
+      const group = this.groups.get(prefix)!,
+        route = group.routes.get(item.route)
+      if (!route) return false
+      granted = Math.min(granted, group.tokens / fraction, route.tokens / fraction)
+    }
+    if (granted <= 0 || (whole && granted < item.remaining)) return false
+    this.global -= granted
+    item.remaining -= granted
+    for (const [prefix, fraction] of item.groups) {
+      const group = this.groups.get(prefix)!,
+        amount = granted * fraction
+      group.tokens -= amount
+      group.routes.get(item.route)!.tokens -= amount
+      for (const index of group.indices) this.daily[index]! += amount
+    }
+    return item.remaining < 0.000001
   }
   cancel(id: number): void {
     const item = this.waiting.get(id)
@@ -108,15 +147,17 @@ export class FairScheduler {
       elapsed = Math.max(0, Math.min(1, (now - this.at) / 1000))
     this.at = now
     if (quota.dayEndsAt !== this.dayEndsAt) {
+      // The global tokens carry over, capped below by the new day's budget; the per-prefix accounting starts again.
       this.daily.fill(0)
       this.dayEndsAt = quota.dayEndsAt
-      this.global = 0
       for (const group of this.groups.values()) {
         group.tokens = 0
+        group.fresh = true
         group.routes.clear()
       }
     }
-    const active = new Map<string, Set<string>>()
+    const active = this.recent
+    this.recent = new Map()
     for (const item of this.waiting.values())
       for (const prefix of item.groups.keys()) {
         const routes = active.get(prefix) ?? new Set<string>()
@@ -124,13 +165,16 @@ export class FairScheduler {
         active.set(prefix, routes)
       }
     for (const [prefix] of this.groups) if (!active.has(prefix)) this.groups.delete(prefix)
-    if (!quota.healthy || !quota.calibrated || quota.rate <= 0 || !active.size) {
+    if (!quota.healthy || !quota.calibrated || quota.rate <= 0) {
       this.global = 0
+      this.usable = false
       return
     }
     const rate = quota.rate,
       burst = Math.min(quota.burstBytes, quota.dailyRemaining ?? quota.dailyBudget)
     this.global = Math.min(burst, this.global + rate * elapsed)
+    this.usable = burst > 0
+    if (!active.size) return
     let normal = 0
     for (const prefix of active.keys()) {
       const group = this.groups.get(prefix)!
@@ -144,12 +188,17 @@ export class FairScheduler {
           group.weight === 1
             ? (1 - ((active.size - normal) * this.options.overageFactor) / active.size) / normal
             : this.options.overageFactor / active.size
-      group.tokens = Math.min(burst * share, group.tokens + rate * share * elapsed)
+      // A prefix that was idle starts from its share of what accumulated, not from zero.
+      group.tokens = group.fresh
+        ? Math.min(burst * share, this.global * share)
+        : Math.min(burst * share, group.tokens + rate * share * elapsed)
+      group.fresh = false
       for (const route of group.routes.keys()) if (!routes.has(route)) group.routes.delete(route)
       for (const route of routes) {
-        const bucket = group.routes.get(route) ?? { tokens: 0 }
-        bucket.tokens = Math.min((burst * share) / routes.size, bucket.tokens + ((rate * share) / routes.size) * elapsed)
-        group.routes.set(route, bucket)
+        const cap = (burst * share) / routes.size,
+          bucket = group.routes.get(route)
+        if (bucket) bucket.tokens = Math.min(cap, bucket.tokens + ((rate * share) / routes.size) * elapsed)
+        else group.routes.set(route, { tokens: Math.min(cap, group.tokens / routes.size) })
       }
     }
     const queue = [...this.waiting.values()]
@@ -157,22 +206,7 @@ export class FairScheduler {
     const start = this.cursor++ % queue.length
     for (let i = 0; i < queue.length; i++) {
       const item = queue[(start + i) % queue.length]!
-      let granted = Math.min(item.remaining, this.global)
-      for (const [prefix, fraction] of item.groups) {
-        const group = this.groups.get(prefix)!
-        granted = Math.min(granted, group.tokens / fraction, group.routes.get(item.route)!.tokens / fraction)
-      }
-      if (granted <= 0) continue
-      this.global -= granted
-      item.remaining -= granted
-      for (const [prefix, fraction] of item.groups) {
-        const group = this.groups.get(prefix)!,
-          amount = granted * fraction
-        group.tokens -= amount
-        group.routes.get(item.route)!.tokens -= amount
-        for (const index of group.indices) this.daily[index]! += amount
-      }
-      if (item.remaining < 0.000001) {
+      if (this.grant(item)) {
         this.waiting.delete(item.id)
         this.queuedBytes -= item.bytes
         item.resolve(true)

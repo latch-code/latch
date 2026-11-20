@@ -27,8 +27,6 @@ it('passes every item against the local edge and prints nothing secret', async (
       REGISTRATION_TOKEN: hex(token),
       OPEN_REGISTRATION: 'false',
       ADMIN_TOKEN: admin,
-      // A small backlog bound, so that the loopback socket buffers fill within the test.
-      LIMITS: JSON.stringify({ maxBacklogBytes: 65_536 }),
     },
   })
   cleanup.push(() => edge.close())
@@ -42,7 +40,9 @@ it('passes every item against the local edge and prints nothing secret', async (
       adminToken: admin,
       sockets: 12,
       slowSeconds: 30,
-      slowRate: 512 * 1024,
+      slowRate: 4 * 1024 * 1024,
+      lineBytes: 8 * 1024 * 1024,
+      lineRate: 8 * 1024 * 1024,
     },
     { ca: certificate.cert, address: '127.0.0.1' },
   )
@@ -54,6 +54,7 @@ it('passes every item against the local edge and prints nothing secret', async (
     ['cover', 'pass'],
     ['unauthenticated', 'pass'],
     ['oversized', 'pass'],
+    ['line-rate', 'pass'],
     ['slow-reader', 'pass'],
   ])
   const printed = JSON.stringify(items)
@@ -77,6 +78,8 @@ it('stops before any load when the admin token does not prove the relay is the o
       sockets: 4,
       slowSeconds: 1,
       slowRate: 1024,
+      lineBytes: 1024,
+      lineRate: 1024,
     },
     { ca: certificate.cert, address: '127.0.0.1' },
   )
@@ -88,6 +91,7 @@ it('stops before any load when the admin token does not prove the relay is the o
     ['cover', 'skipped'],
     ['unauthenticated', 'skipped'],
     ['oversized', 'skipped'],
+    ['line-rate', 'skipped'],
     ['slow-reader', 'skipped'],
   ])
   // Nothing reached a node object: no load ran against a relay that is not provably the operator's.

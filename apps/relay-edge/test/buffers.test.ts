@@ -200,15 +200,104 @@ it('closes on a reported backlog, one socket above its bound and the largest abo
   expect(buffers.write(slow, new Uint8Array(1), WRITE)).toBe('backlog')
   expect(buffers.overloaded()).toEqual([slow])
   buffers.close(slow)
-  const sockets = Array.from({ length: 20 }, (_, index) => open(buffers, `10.0.${index}.0/24`).socket)
+  const sockets = Array.from({ length: 40 }, (_, index) => open(buffers, `10.0.${index}.0/24`).socket)
   sockets.forEach((socket, index) => (socket.bufferedAmount = EDGE_BUFFER_LIMITS.maxBacklogBytes - index))
-  // Twenty sockets just under their own bound are above the object's: the largest go first until the sum fits.
+  // Forty sockets just under their own bound are above the object's: the largest go first until the sum fits.
   const closing = buffers.overloaded()
   expect(closing[0]).toBe(sockets[0])
-  expect(closing.length).toBe(20 - EDGE_BUFFER_LIMITS.objectBacklogBytes / EDGE_BUFFER_LIMITS.maxBacklogBytes)
+  expect(closing.length).toBe(40 - EDGE_BUFFER_LIMITS.objectBacklogBytes / EDGE_BUFFER_LIMITS.maxBacklogBytes)
   const failing = open(buffers, '203.0.113.0/24').socket
   failing.send = () => {
     throw new Error('send failed')
   }
   expect(buffers.write(failing, new Uint8Array(1), WRITE)).toBe('failed')
+})
+
+/** An accepted socket joined to its partner: authenticated and joined, in either order. */
+function joined(buffers: EdgeBuffers, prefix: string, order: 'admit' | 'attach' = 'admit') {
+  const socket = new Socket()
+  expect(buffers.accept(socket, prefix, true).accepted).toBe(true)
+  if (order === 'admit') {
+    buffers.authenticate(socket)
+    buffers.join(socket)
+  } else {
+    // The DATA leg: the core joins it just before the node sends ATTACHED.
+    buffers.join(socket)
+    buffers.authenticate(socket)
+  }
+  return socket
+}
+const MiB = 1024 * 1024
+
+it.each(['admit', 'attach'] as const)('lets a joined socket (%s) stream at 16 MiB/s without closing it', order => {
+  const { clock, buffers } = clocked()
+  const socket = joined(buffers, '192.0.2.0/24', order)
+  const cell = new Uint8Array(16_384)
+  // Ten seconds of 16 KiB every millisecond: just under 16 MiB/s.
+  for (let tick = 0; tick < 10_000; tick++) {
+    clock.now += 1
+    expect(buffers.write(socket, cell, WRITE)).toBe('written')
+  }
+  expect(socket.sent).toBe(10_000 * cell.length)
+  expect(socket.sent / 10).toBeGreaterThan(20 * EDGE_BUFFER_LIMITS.socketSendRate)
+  // The joined budget is still a rate: past its burst plus the refill, the socket is closed.
+  let refused = false,
+    elapsed = 10_000
+  for (let tick = 0; tick < 10_000 && !refused; tick++) {
+    clock.now += 1
+    elapsed += 1
+    refused = buffers.write(socket, new Uint8Array(65_536), WRITE) !== 'written'
+  }
+  expect(refused).toBe(true)
+  expect(socket.sent).toBeLessThanOrEqual(EDGE_BUFFER_LIMITS.joinedSendBytes + (elapsed / 1000) * EDGE_BUFFER_LIMITS.joinedSendRate)
+})
+
+it('keeps the old budget for every socket that is not both authenticated and joined', () => {
+  const { clock, buffers } = clocked()
+  const cell = new Uint8Array(16_384)
+  const unauthenticated = open(buffers, '192.0.2.0/24', { pending: true }).socket
+  const joinedOnly = new Socket()
+  buffers.accept(joinedOnly, '192.0.2.0/24', true)
+  buffers.join(joinedOnly)
+  const control = open(buffers, '198.51.100.0/24', { covered: false }).socket
+  const results = new Map<Socket, number>()
+  for (const socket of [unauthenticated, joinedOnly, control]) {
+    let written = 0
+    for (let tick = 0; tick < 2000; tick++) {
+      clock.now += 1
+      if (buffers.write(socket, cell, WRITE) !== 'written') break
+      written += cell.length
+    }
+    results.set(socket, written)
+  }
+  // Unauthenticated, joined or not: the 512 KiB pre-auth allowance.
+  expect(results.get(unauthenticated)).toBeLessThanOrEqual(EDGE_BUFFER_LIMITS.preauthSocketBytes)
+  expect(results.get(joinedOnly)).toBeLessThanOrEqual(EDGE_BUFFER_LIMITS.preauthSocketBytes)
+  // Authenticated but never joined (the Host's control socket): 1 MiB at 768 KiB/s, closed within two seconds.
+  expect(results.get(control)).toBeLessThanOrEqual(EDGE_BUFFER_LIMITS.socketSendBytes + 2 * EDGE_BUFFER_LIMITS.socketSendRate)
+  expect(results.get(control)).toBeLessThan(2000 * cell.length)
+})
+
+it('closes a joined socket above its own 6 MiB backlog, and an unjoined one above 1 MiB', () => {
+  const { buffers } = clocked()
+  const phone = joined(buffers, '192.0.2.0/24')
+  const control = open(buffers, '198.51.100.0/24', { covered: false }).socket
+  phone.bufferedAmount = 3 * MiB
+  control.bufferedAmount = 2 * MiB
+  expect(buffers.write(phone, new Uint8Array(1), WRITE)).toBe('written')
+  // The joined socket sorts first but is within its bound; the smaller unjoined one above its own is still found.
+  expect(buffers.overloaded()).toEqual([control])
+  buffers.close(control)
+  phone.bufferedAmount = EDGE_BUFFER_LIMITS.joinedBacklogBytes + 1
+  expect(buffers.write(phone, new Uint8Array(1), WRITE)).toBe('backlog')
+  expect(buffers.overloaded()).toEqual([phone])
+})
+
+it('closes the largest joined sockets while their sum stays above the 32 MiB object backlog', () => {
+  const { buffers } = clocked()
+  const phones = Array.from({ length: 7 }, (_, index) => joined(buffers, `10.0.${index}.0/24`))
+  phones.forEach((socket, index) => (socket.bufferedAmount = EDGE_BUFFER_LIMITS.joinedBacklogBytes - index))
+  // About 42 MiB, each under its own bound: the two largest go.
+  expect(buffers.overloaded()).toEqual([phones[0], phones[1]])
+  expect(EDGE_BUFFER_LIMITS.objectBacklogBytes).toBe(32 * MiB)
 })

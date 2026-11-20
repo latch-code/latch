@@ -151,3 +151,186 @@ it('reports repeatable bounded tick cost without inventing production handshake 
   console.info(JSON.stringify({ benchmark: 'relay-fair-tick', connections: 1024, samples: 20, p95Ms: durations[18] }))
   scheduler.close()
 })
+
+describe('the burst accumulates while idle', () => {
+  const MiB = 1024 * 1024
+  function idle(burstBytes = 64 * MiB) {
+    let now = 0
+    const quota = { healthy: true, calibrated: true, rate: MiB, burstBytes, dayEndsAt: 86_400_000, dailyBudget: 1e12, dailyRemaining: 1e12 }
+    const scheduler = new FairScheduler({
+      quota: () => quota,
+      maxQueuedBytes: MiB,
+      maxConnections: 100,
+      prefixDailyShare: 1,
+      overageFactor: 0.1,
+      count: 'out',
+      now: () => now,
+    })
+    return {
+      scheduler,
+      quota,
+      step(ms: number) {
+        now += ms
+        scheduler.tick()
+      },
+      /** Sequential 16 KiB frames of one route without moving the clock, as one transfer; how many were granted. */
+      async burst(frames: number, route = 'transfer') {
+        let granted = 0
+        for (let index = 0; index < frames; index++) {
+          let ok: boolean | undefined
+          void scheduler.wait(1, ['192.0.2.0/24'], route, 16_384).then(value => (ok = value))
+          await Promise.resolve()
+          if (!ok) {
+            scheduler.cancel(1)
+            break
+          }
+          granted++
+        }
+        return granted
+      },
+    }
+  }
+
+  it('lets a transfer after a quiet minute and more spend the whole 64 MiB burst at once, and no more', async () => {
+    const f = idle()
+    for (let i = 0; i < 700; i++) f.step(100)
+    // The first frame of a prefix that was idle waits one tick, which seeds it from what accumulated.
+    const first = f.scheduler.wait(1, ['192.0.2.0/24'], 'transfer', 16_384)
+    f.step(1)
+    expect(await first).toBe(true)
+    // The rest go on arrival, four thousand frames with the clock standing still.
+    expect(await f.burst(4096)).toBe(4095)
+    expect(f.scheduler.status()).toMatchObject({ waiting: 0, queuedBytes: 0 })
+    // Spent, a frame waits for the refill again.
+    const next = f.scheduler.wait(1, ['192.0.2.0/24'], 'transfer', 16_384)
+    let done = false
+    void next.then(() => (done = true))
+    await Promise.resolve()
+    expect(done).toBe(false)
+    f.step(20)
+    expect(await next).toBe(true)
+    f.scheduler.close()
+  })
+
+  it('accumulates no more than the burst, however long it was idle', async () => {
+    const f = idle(MiB)
+    for (let i = 0; i < 100; i++) f.step(1000)
+    const first = f.scheduler.wait(1, ['192.0.2.0/24'], 'transfer', 16_384)
+    f.step(1)
+    expect(await first).toBe(true)
+    expect(await f.burst(1000)).toBe(63)
+    f.scheduler.close()
+  })
+
+  it('still holds the daily stop: the burst is capped by the day’s remaining budget, and an exhausted day grants nothing', async () => {
+    const f = idle()
+    for (let i = 0; i < 700; i++) f.step(100)
+    f.quota.dailyRemaining = 5 * 16_384
+    const first = f.scheduler.wait(1, ['192.0.2.0/24'], 'transfer', 16_384)
+    f.step(1)
+    expect(await first).toBe(true)
+    expect(await f.burst(100)).toBe(4)
+    // The day is spent: the quota stops pacing it, and nothing is granted however long it waits.
+    f.quota.dailyRemaining = 0
+    f.quota.rate = 0
+    const blocked = f.scheduler.wait(1, ['192.0.2.0/24'], 'transfer', 16_384)
+    for (let i = 0; i < 100; i++) f.step(100)
+    expect(f.scheduler.status().waiting).toBe(1)
+    f.scheduler.cancel(1)
+    expect(await blocked).toBe(false)
+    f.scheduler.close()
+  })
+
+  it('drops what accumulated when the quota turns unhealthy', async () => {
+    const f = idle()
+    for (let i = 0; i < 700; i++) f.step(100)
+    f.quota.healthy = false
+    f.step(100)
+    f.quota.healthy = true
+    const first = f.scheduler.wait(1, ['192.0.2.0/24'], 'transfer', 16_384)
+    f.step(20)
+    // About 20 KiB came back in the one tick since: the first frame, not the minute before.
+    expect(await first).toBe(true)
+    expect(await f.burst(10)).toBe(0)
+    f.scheduler.close()
+  })
+})
+
+describe('grants on arrival in the server’s call shape', () => {
+  const MiB = 1024 * 1024
+  function shaped() {
+    let now = 0
+    const quota = { healthy: true, calibrated: true, rate: MiB, burstBytes: 64 * MiB, dayEndsAt: 86_400_000, dailyBudget: 1e12 }
+    const scheduler = new FairScheduler({
+      quota: () => quota,
+      maxQueuedBytes: MiB,
+      maxConnections: 100,
+      prefixDailyShare: 1,
+      overageFactor: 0.1,
+      count: 'in+out',
+      now: () => now,
+    })
+    const step = (ms: number) => {
+      now += ms
+      scheduler.tick()
+    }
+    /** One frame as server.ts charges it: received on the in id, then written on the out id, both exact. */
+    const frame = async (id: number, prefixes: string[], route: string) => {
+      let ok = false
+      void scheduler.wait(id * 2, prefixes, route, 16_384, true).then(value => (ok = value))
+      await Promise.resolve()
+      if (!ok) return false
+      ok = false
+      void scheduler.wait(id * 2 + 1, prefixes, route, 16_384, true).then(value => (ok = value))
+      await Promise.resolve()
+      return ok
+    }
+    return { scheduler, step, frame }
+  }
+
+  it('moves 32 MiB of payload across two prefixes, in and out, after an idle minute', async () => {
+    const f = shaped()
+    for (let i = 0; i < 700; i++) f.step(100)
+    const prefixes = ['192.0.2.0/24', '198.51.100.0/24']
+    // The first frame of idle prefixes waits one tick; it seeds both from what accumulated.
+    const first = f.scheduler.wait(2, prefixes, 'transfer', 16_384, true)
+    f.step(1)
+    expect(await first).toBe(true)
+    f.scheduler.wait(3, prefixes, 'transfer', 16_384, true)
+    await Promise.resolve()
+    let frames = 1
+    while (frames < 3000 && (await f.frame(1, prefixes, 'transfer'))) frames++
+    // 64 MiB charged twice per frame: about 2048 frames of 16 KiB, no more.
+    expect(frames).toBeGreaterThanOrEqual(2040)
+    expect(frames).toBeLessThanOrEqual(2048)
+    f.scheduler.close()
+  })
+
+  it('holds a bursting prefix to its share once another arrives, and serves the newcomer on arrival', async () => {
+    const f = shaped()
+    for (let i = 0; i < 700; i++) f.step(100)
+    const first = f.scheduler.wait(2, ['192.0.2.0/24'], 'a', 16_384, true)
+    f.step(1)
+    expect(await first).toBe(true)
+    // A spends part of the burst, then B arrives and both are given their share at the next tick.
+    for (let index = 0; index < 100; index++) expect(await f.frame(1, ['192.0.2.0/24'], 'a')).toBe(true)
+    const waiting = f.scheduler.wait(4, ['198.51.100.0/24'], 'b', 16_384, true)
+    f.step(1)
+    expect(await waiting).toBe(true)
+    f.scheduler.wait(5, ['198.51.100.0/24'], 'b', 16_384, true)
+    await Promise.resolve()
+    let a = 0,
+      b = 0
+    for (let round = 0; round < 3000; round++) {
+      const left = await f.frame(1, ['192.0.2.0/24'], 'a'),
+        right = await f.frame(2, ['198.51.100.0/24'], 'b')
+      if (left) a++
+      if (right) b++
+      if (!left && !right) break
+    }
+    // What is left of the burst splits about evenly, all of it granted on arrival with the clock standing still.
+    expect(b).toBeGreaterThan(900)
+    expect(Math.abs(a - b)).toBeLessThan(120)
+    f.scheduler.close()
+  })
+})

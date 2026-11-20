@@ -32,8 +32,11 @@ import { nodeCrypto, RelayClosed, RelayControl, type RelayEndpoint } from '@latc
  * - oversized: four unauthenticated 8 MiB messages are refused, health still answers and the object is not reset. It
  *   does not cover the platform's 32 MiB message limit.
  * Its routes are derived per relay and day from the admin token, so repeated runs reuse them.
- * - slow reader: a joined phone that stops reading while the Host streams is closed by the node, and the object is not
- *   reset. A pass needs the runtime to report the backlog; otherwise only the per-socket send budget bounds it.
+ * - line rate: after the cover, a joined pair moves `lineBytes` each way, paced at `lineRate`, well above the 768 KiB/s
+ *   of an unjoined socket and without either leg being closed. The operator's own uplink can be the slower link.
+ * - slow reader: under the joined budget, a joined phone that stops reading while the Host streams faster than the
+ *   unjoined budget is closed by the node, and the object is not reset. A pass needs the runtime to report the backlog;
+ *   otherwise only the joined send budget, a rate, bounds it.
  */
 export interface AcceptanceInput {
   url: URL
@@ -44,8 +47,11 @@ export interface AcceptanceInput {
   adminToken?: string
   sockets: number
   slowSeconds: number
-  /** Bytes per second the Host streams to the slow reader; below the node's per-socket send budget. */
+  /** Bytes per second the Host streams to the slow reader; above the unjoined budget, below the joined one. */
   slowRate: number
+  /** Bytes the line-rate item moves each way, and the pace of its sender, below the joined budget. */
+  lineBytes: number
+  lineRate: number
 }
 export interface AcceptanceOptions {
   /** Tests only: a private CA and a fixed dial address for the local fixture. */
@@ -60,6 +66,12 @@ export interface AcceptanceItem {
 }
 
 const PROTOCOL = 'latch-relay.2'
+/** The send rate of a socket that is not joined (`EDGE_BUFFER_LIMITS.socketSendRate`); line rate must beat it well. */
+const UNJOINED_RATE = 768 * 1024
+/** Past the outer cover (three seconds plus slack), when a joined pair may stream fast. */
+const AFTER_COVER_MS = 3600
+/** At most this much goes to a slow reader, so the item cannot run up the operator's uplink without end. */
+const SLOW_MAX_BYTES = 64 * 1024 * 1024
 /** The size of each oversized unauthenticated message: 8 MiB, four of them, 32 MiB of upload in all. */
 export const OVERSIZED_BYTES = 8 * 1024 * 1024
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
@@ -138,6 +150,9 @@ async function http(
 /** A client-role WebSocket written by hand, so that it can stop reading at the TCP level. */
 class RawClient {
   readonly frames: Array<{ at: number; message?: RelayMessage; bytes: number }> = []
+  /** DATA payload bytes, counted but not kept, and when the last arrived. */
+  dataBytes = 0
+  dataAt = 0
   closedAt?: number
   closeCode?: number
   private readonly parser = new WebSocketParser(false)
@@ -217,6 +232,11 @@ class RawClient {
         } catch {
           message = undefined
         }
+        if (message?.type === 'data') {
+          this.dataBytes += message.data.length
+          this.dataAt = Date.now()
+          continue
+        }
         this.frames.push({ at: Date.now() - this.started, ...(message ? { message } : {}), bytes: frame.payload.length })
       }
     }
@@ -227,6 +247,10 @@ class RawClient {
   }
   send(message: RelayMessage): void {
     this.write(2, encodeMessage(message, 2))
+  }
+  /** Bytes the TLS socket holds for the kernel; the sender waits while it is high. */
+  get pending(): number {
+    return this.socket.writableLength
   }
   /** One binary frame of any size (the shared encoder stops at the protocol's 64 KiB); the platform assembles it. */
   raw(payload: Uint8Array): void {
@@ -320,7 +344,7 @@ export async function runAcceptance(input: AcceptanceInput, options: AcceptanceO
       `无令牌 ${none.status}，错误令牌 ${wrong.status}，正确令牌 ${input.adminToken ? status.status : '缺少'}`,
     )
   })
-  const LOAD = ['wrong-key', 'register', 'cover', 'unauthenticated', 'oversized', 'slow-reader']
+  const LOAD = ['wrong-key', 'register', 'cover', 'unauthenticated', 'oversized', 'line-rate', 'slow-reader']
   if (!owned) {
     for (const name of LOAD) record(name, 'skipped', '管理令牌没有得到 200：不能确认这是你自己的中继，没有继续')
     return items
@@ -464,9 +488,17 @@ export async function runAcceptance(input: AcceptanceInput, options: AcceptanceO
     )
   })
 
-  await attempt('slow-reader', async () => {
-    if (!control) return record('slow-reader', 'skipped', '登记没有成功')
-    const device = await holder(nodeCrypto, seed, input.relayId, Uint8Array.of(1), day)
+  /** A phone of the Host's route, admitted and joined; device ids keep the items' phones apart. */
+  const joinPhone = async (
+    name: string,
+    deviceId: number,
+  ): Promise<{ client: RawClient; setup: Awaited<ReturnType<RelayControl['accept']>> } | undefined> => {
+    const stop = (result: AcceptanceItem['result'], detail: string) => {
+      record(name, result, detail)
+      return undefined
+    }
+    if (!control) return stop('skipped', '登记没有成功')
+    const device = await holder(nodeCrypto, seed, input.relayId, Uint8Array.of(deviceId), day)
     const pass = await issuePass(nodeCrypto, key, {
       pairing: false,
       relayId: input.relayId,
@@ -481,30 +513,117 @@ export async function runAcceptance(input: AcceptanceInput, options: AcceptanceO
     // Left pending on an early return; control.close() rejects it at the end.
     accepted.catch(() => {})
     const client = await RawClient.open(input, options)
-    if (typeof client === 'number') return record('slow-reader', 'fail', `升级被拒绝（${client}）`)
+    if (typeof client === 'number') return stop('fail', `升级被拒绝（${client}）`)
+    client.send({ type: 'edge-hello', clientNonce: nodeCrypto.random(32) })
+    const challenge = await client.next(5000)
+    if (challenge?.type !== 'edge-challenge') {
+      client.close()
+      return stop('fail', '没有收到挑战')
+    }
+    client.send({ type: 'bound-admit', proof: await makeProof(nodeCrypto, device.seed, pass, challenge.timeMs, challenge.nonce) })
+    const setup = await Promise.race([accepted, sleep(10_000).then(() => undefined)])
+    const spliced = setup && (await client.next(5000, 2))
+    if (!setup || spliced?.type !== 'spliced') {
+      setup?.stream.destroy()
+      client.close()
+      return stop('fail', '没有接合')
+    }
+    setup.finishSetup()
+    setup.stream.on('error', () => {})
+    return { client, setup }
+  }
+  /** The stream's next drain, or its close. */
+  const drained = (stream: NodeJS.WritableStream & NodeJS.EventEmitter) =>
+    new Promise<void>(resolve => {
+      const done = () => {
+        stream.off('drain', done)
+        stream.off('close', done)
+        resolve()
+      }
+      stream.once('drain', done)
+      stream.once('close', done)
+    })
+  const mibps = (bytes: number, ms: number) => (bytes / 1024 / 1024 / Math.max(0.001, ms / 1000)).toFixed(1)
+
+  await attempt('line-rate', async () => {
+    const joined = await joinPhone('line-rate', 2)
+    if (!joined) return
+    const { client, setup } = joined
     try {
-      client.send({ type: 'edge-hello', clientNonce: nodeCrypto.random(32) })
-      const challenge = await client.next(5000)
-      if (challenge?.type !== 'edge-challenge') return record('slow-reader', 'fail', '没有收到挑战')
-      client.send({ type: 'bound-admit', proof: await makeProof(nodeCrypto, device.seed, pass, challenge.timeMs, challenge.nonce) })
-      const setup = await Promise.race([accepted, sleep(10_000).then(() => undefined)])
-      if (!setup) return record('slow-reader', 'fail', '没有接合')
-      setup.finishSetup()
-      const spliced = await client.next(5000, 2)
-      if (spliced?.type !== 'spliced') return record('slow-reader', 'fail', '没有接合')
-      // The phone stops reading at the TCP level; the Host streams at a steady rate below the node's send budget.
-      client.socket.pause()
       let ended = false
       setup.stream.once('close', () => {
         ended = true
       })
-      setup.stream.on('error', () => {})
+      let up = 0,
+        upAt = 0
+      setup.stream.on('data', (chunk: Buffer) => {
+        up += chunk.length
+        upAt = Date.now()
+      })
+      await sleep(AFTER_COVER_MS)
+      const chunk = Buffer.alloc(16_000, 7),
+        perTick = Math.max(1, Math.round(input.lineRate / 10 / chunk.length)),
+        deadline = (bytes: number) => Date.now() + Math.max(30_000, (bytes / input.lineRate) * 4000)
+      // Down: the Host to the phone, paced, waiting whenever its own stream holds back.
+      const downStart = Date.now(),
+        downUntil = deadline(input.lineBytes)
+      for (let sent = 0; sent < input.lineBytes && !ended && client.closedAt === undefined && Date.now() < downUntil;) {
+        for (let index = 0; index < perTick && sent < input.lineBytes; index++) {
+          const piece = chunk.subarray(0, Math.min(chunk.length, input.lineBytes - sent))
+          sent += piece.length
+          if (!setup.stream.write(piece)) await drained(setup.stream)
+        }
+        await sleep(100)
+      }
+      while (client.dataBytes < input.lineBytes && !ended && client.closedAt === undefined && Date.now() < downUntil) await sleep(50)
+      const down = client.dataBytes,
+        downMs = client.dataAt - downStart
+      // Up: the phone to the Host, the direction attachments take.
+      const upStart = Date.now(),
+        upUntil = deadline(input.lineBytes)
+      for (let sent = 0; sent < input.lineBytes && !ended && client.closedAt === undefined && Date.now() < upUntil;) {
+        for (let index = 0; index < perTick && sent < input.lineBytes; index++) {
+          const piece = chunk.subarray(0, Math.min(chunk.length, input.lineBytes - sent))
+          sent += piece.length
+          client.send({ type: 'data', data: piece })
+        }
+        await sleep(100)
+        while (client.pending > 1024 * 1024 && client.closedAt === undefined) await sleep(10)
+      }
+      while (up < input.lineBytes && !ended && client.closedAt === undefined && Date.now() < upUntil) await sleep(50)
+      const upMs = upAt - upStart
+      const open = !ended && client.closedAt === undefined
+      const complete = down === input.lineBytes && up === input.lineBytes
+      const fast = (bytes: number, ms: number) => bytes / Math.max(0.001, ms / 1000) > 2 * UNJOINED_RATE
+      record(
+        'line-rate',
+        open && complete && fast(down, downMs) && fast(up, upMs) ? 'pass' : 'fail',
+        `各向 ${Math.round(input.lineBytes / 1024 / 1024)} MiB，按 ${mibps(input.lineRate, 1000)} MiB/s 发：下行收到 ${Math.round(down / 1024)} KiB、${mibps(down, downMs)} MiB/s，上行收到 ${Math.round(up / 1024)} KiB、${mibps(up, upMs)} MiB/s；${open ? '两腿都未关闭' : '连接被关闭'}`,
+      )
+    } finally {
+      setup.stream.destroy()
+      client.close()
+    }
+  })
+
+  await attempt('slow-reader', async () => {
+    const joined = await joinPhone('slow-reader', 1)
+    if (!joined) return
+    const { client, setup } = joined
+    try {
+      let ended = false
+      setup.stream.once('close', () => {
+        ended = true
+      })
+      await sleep(AFTER_COVER_MS)
+      // The phone stops reading at the TCP level; the Host streams above the unjoined budget, below the joined one.
+      client.socket.pause()
       const chunk = Buffer.alloc(16_000, 7),
         perTick = Math.max(1, Math.round(input.slowRate / 10 / chunk.length))
       const started = Date.now()
       let sent = 0,
         backlog = 0
-      while (!ended && Date.now() - started < input.slowSeconds * 1000) {
+      while (!ended && sent < SLOW_MAX_BYTES && Date.now() - started < input.slowSeconds * 1000) {
         for (let index = 0; index < perTick && !ended; index++) {
           setup.stream.write(chunk)
           sent += chunk.length
@@ -516,6 +635,8 @@ export async function runAcceptance(input: AcceptanceInput, options: AcceptanceO
             backlog = Math.max(backlog, Number((shard.buffered as { backlog?: number } | undefined)?.backlog ?? 0))
         }
       }
+      // A close the node already decided can still be on its way.
+      for (let wait = 0; wait < 20 && !ended; wait++) await sleep(100)
       const seconds = ((Date.now() - started) / 1000).toFixed(1)
       setup.stream.destroy()
       const after = await admin()
@@ -523,7 +644,7 @@ export async function runAcceptance(input: AcceptanceInput, options: AcceptanceO
       record(
         'slow-reader',
         ended && kept !== false ? 'pass' : 'fail',
-        `${ended ? `${seconds} s 后节点关闭了不读的手机` : `${seconds} s 内没有关闭（平台未报告积压，只有发送速率上限）`}；已发 ${Math.round(sent / 1024)} KiB${input.adminToken ? `，报告的最大积压 ${Math.round(backlog / 1024)} KiB；${kept ? '节点对象未重置' : '节点对象已重置'}` : ''}`,
+        `按 ${mibps(input.slowRate, 1000)} MiB/s 发：${ended ? `${seconds} s 后节点关闭了不读的手机` : `${seconds} s 内没有关闭（平台未报告积压，只有已接合连接的发送速率上限）`}；已发 ${Math.round(sent / 1024)} KiB${input.adminToken ? `，报告的最大积压 ${Math.round(backlog / 1024)} KiB；${kept ? '节点对象未重置' : '节点对象已重置'}` : ''}`,
       )
     } finally {
       client.close()

@@ -430,7 +430,7 @@ describe('edge relay node', () => {
   })
 
   it('closes a slow reader on its reported backlog and holds its slot for the hold time by the clock', async () => {
-    const t = setup({ LIMITS: JSON.stringify({ maxConnections: 3, maxBacklogBytes: 65_536 }) })
+    const t = setup({ LIMITS: JSON.stringify({ maxConnections: 3, maxBacklogBytes: 65_536, joinedBacklogBytes: 65_536 }) })
     const { client, data } = await t.join(await t.credentials())
     await t.clock.advance(3100)
     data.server.paused = true
@@ -451,6 +451,34 @@ describe('edge relay node', () => {
     await t.clock.advance(EDGE_BUFFER_LIMITS.closeHoldMs)
     expect(slots()).toBe(1)
     expect(node.status().buffered).toMatchObject({ bytes: 0 })
+  })
+
+  it('carries a joined pair at about 16 MiB/s each way after the cover, past the burst, without closing either leg', async () => {
+    const t = setup()
+    const { host, client, data } = await t.join(await t.credentials())
+    await t.clock.advance(3100)
+    const before = { phone: client.received.length, data: data.received.length }
+    // Two seconds of 16 KiB every millisecond in each direction: 32 MiB per leg, four times the joined burst.
+    for (let tick = 0; tick < 2000; tick++) {
+      client.send({ type: 'data', data: new Uint8Array(16_000) })
+      data.send({ type: 'data', data: new Uint8Array(16_000) })
+      await t.clock.advance(1)
+    }
+    await settle()
+    expect([client.closed, data.closed, host.closed]).toEqual([undefined, undefined, undefined])
+    expect(client.received.length - before.phone).toBe(2000)
+    expect(data.received.length - before.data).toBe(2000)
+  })
+
+  it('reads the joined budget from LIMITS: at the old 1 MiB and 768 KiB/s the same stream closes the phone', async () => {
+    const t = setup({ LIMITS: JSON.stringify({ joinedSendBytes: 1_048_576, joinedSendRate: 786_432 }) })
+    const { client, data } = await t.join(await t.credentials())
+    await t.clock.advance(3100)
+    for (let tick = 0; tick < 2000 && client.closed === undefined; tick++) {
+      data.send({ type: 'data', data: new Uint8Array(16_000) })
+      await t.clock.advance(1)
+    }
+    expect(client.closed).toBe(4302)
   })
 
   it.each([undefined, -1, Number.NaN, Number.POSITIVE_INFINITY])(

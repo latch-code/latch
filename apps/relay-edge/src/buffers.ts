@@ -6,7 +6,10 @@ import type { EdgeWebSocket } from './platform.ts'
  * - Received work and the outer-cover queue are this object's own JavaScript memory: exact byte and message bounds.
  * - Each socket's output to the runtime spends a byte budget that refills with time. That bounds the rate, not memory:
  *   a socket whose reader stops can still grow the runtime's buffer at that rate, unless the runtime reports it in
- *   `bufferedAmount` and the socket is closed for it (below).
+ *   `bufferedAmount` and the socket is closed for it (below). A socket that has authenticated and been joined to its
+ *   partner (a phone and its DATA leg) gets a larger budget of its own, so an explicit transfer runs at network speed:
+ *   a paired phone that stops reading can grow the runtime's buffer at `joinedSendRate`, and the backlog close is the
+ *   earlier stop. Every other socket, the Host's control socket included, keeps the small budget.
  * - Sockets that have not authenticated and get the outer cover (client and DATA legs; Host control sockets get none)
  *   are limited in number object-wide, and each may hand the runtime at most `preauthSocketBytes` before it
  *   authenticates. When the limit is reached a newcomer is not refused: the oldest unauthenticated socket of the prefix
@@ -15,7 +18,8 @@ import type { EdgeWebSocket } from './platform.ts'
  *   most `maxPerPrefix` slots, open or held. When slots run out, the prefix holding the most gives up a held slot or its
  *   oldest unauthenticated socket before a newcomer from a smaller prefix is refused.
  * - `bufferedAmount`, when the runtime reports a valid number, only closes a socket earlier: a backlog above
- *   `maxBacklogBytes` on one socket, or above `objectBacklogBytes` in sum, closes the largest. It never releases budget.
+ *   `maxBacklogBytes` (`joinedBacklogBytes` once joined) on one socket, or above `objectBacklogBytes` in sum, closes
+ *   the largest. It never releases budget.
  */
 export const EDGE_BUFFER_LIMITS = {
   socketBytes: 512 * 1024,
@@ -30,7 +34,12 @@ export const EDGE_BUFFER_LIMITS = {
   /** About 4 s of cover plus the handshake; past it the socket is closed. */
   preauthSocketBytes: 512 * 1024,
   maxBacklogBytes: 1024 * 1024,
-  objectBacklogBytes: 16 * 1024 * 1024,
+  /** Authenticated and joined: an explicit transfer at up to about 130 Mbit/s, and its bounds. */
+  joinedSendBytes: 8 * 1024 * 1024,
+  joinedSendRate: 16 * 1024 * 1024,
+  /** Above the 4 MiB HTTP/2 connection window a bulk transfer may keep in flight, with its cells and frames. */
+  joinedBacklogBytes: 6 * 1024 * 1024,
+  objectBacklogBytes: 32 * 1024 * 1024,
   closeHoldMs: 5000,
   maxConnections: 1024,
   maxPerPrefix: 64,
@@ -66,6 +75,8 @@ interface Buffered {
   /** Gets the outer cover and has not authenticated yet. */
   covered: boolean
   authenticated: boolean
+  /** Joined to its partner; with `authenticated`, the socket spends the joined budget. */
+  joined: boolean
   preauthBytes: number
   inputBytes: number
   inputMessages: number
@@ -188,6 +199,7 @@ export class EdgeBuffers {
       prefix,
       covered,
       authenticated: false,
+      joined: false,
       preauthBytes: 0,
       inputBytes: 0,
       inputMessages: 0,
@@ -217,6 +229,24 @@ export class EdgeBuffers {
     if (!state || state.authenticated) return
     state.authenticated = true
     this.leaveUnauthenticated(state)
+    this.promote(state)
+  }
+  /**
+   * The core joined the socket to its partner. The DATA leg is joined just before it is sent ATTACHED, so the joined
+   * budget starts once both have happened, in either order.
+   */
+  join(socket: EdgeWebSocket): void {
+    const state = this.sockets.get(socket)
+    if (!state || state.joined) return
+    state.joined = true
+    this.promote(state)
+  }
+  private promote(state: Buffered): void {
+    if (state.authenticated && state.joined && state.closedAt === undefined)
+      state.send = new Bucket(this.limits.joinedSendBytes, this.limits.joinedSendRate, this.now())
+  }
+  private backlogLimit(state: Buffered): number {
+    return state.authenticated && state.joined ? this.limits.joinedBacklogBytes : this.limits.maxBacklogBytes
   }
   status(): { bytes: number; messages: number; backlog: number; slots: number; covered: number; refused: number; evicted: number } {
     let backlog = 0
@@ -291,7 +321,7 @@ export class EdgeBuffers {
       return 'failed'
     }
     const backlog = this.amount(socket)
-    return backlog !== undefined && backlog > this.limits.maxBacklogBytes ? 'backlog' : 'written'
+    return backlog !== undefined && backlog > this.backlogLimit(state) ? 'backlog' : 'written'
   }
   /** The runtime's own count, when it is a valid number; used only to close sockets earlier. */
   private amount(socket: EdgeWebSocket): number | undefined {
@@ -309,12 +339,19 @@ export class EdgeBuffers {
   overloaded(): EdgeWebSocket[] {
     const open = [...this.sockets.values()]
       .filter(state => state.closedAt === undefined)
-      .map(state => ({ socket: state.socket, backlog: this.amount(state.socket) ?? 0 }))
+      .map(state => ({ socket: state.socket, backlog: this.amount(state.socket) ?? 0, limit: this.backlogLimit(state) }))
       .sort((a, b) => b.backlog - a.backlog)
     const out: EdgeWebSocket[] = []
     let sum = open.reduce((total, item) => total + item.backlog, 0)
-    for (const item of open) {
-      if (item.backlog <= this.limits.maxBacklogBytes && sum <= this.limits.objectBacklogBytes) break
+    // Bounds differ per socket, so every socket over its own is closed first, then the largest until the sum fits.
+    const rest = open.filter(item => {
+      if (item.backlog <= item.limit) return true
+      out.push(item.socket)
+      sum -= item.backlog
+      return false
+    })
+    for (const item of rest) {
+      if (sum <= this.limits.objectBacklogBytes) break
       out.push(item.socket)
       sum -= item.backlog
     }
