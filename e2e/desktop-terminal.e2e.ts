@@ -378,7 +378,7 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await panel.waitFor()
       const settings = await openSettings(page, '设置')
       expect(await page.locator('.terminal-dock .xterm[data-test-mounted="retained"]').count()).toBe(1)
-      await settings.getByRole('radiogroup', { name: '背景效果', exact: true }).waitFor()
+      await settings.getByRole('radiogroup', { name: '界面语言', exact: true }).waitFor()
       await capture(page, 'settings-over-dock-1440')
       await closeSettings(settings)
       await screen.locator('.xterm[data-test-mounted="retained"]').waitFor()

@@ -302,6 +302,10 @@ it('browses a saved project before creating a session, previews and quotes real 
             workspaceId: project.id,
             fileRefs: [{ root: project.folders![0]!.id, path: 'src/start.ts' }],
           })
+          await page
+            .locator('main.workspace:not([inert]) .turn-reply')
+            .getByText('验证跨端审批、任务持续运行与取消。', { exact: false })
+            .waitFor()
           await expect
             .poll(async () => (await host.host.bridge.listTasks()).find(task => task.workspaceId === project.id)?.status)
             .toBe('idle')

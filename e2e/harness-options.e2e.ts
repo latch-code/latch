@@ -11,7 +11,6 @@ import { startTestHost, type TestHost } from './helpers/host.ts'
 import { noHorizontalOverflow, permissionControl, permissionWords } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/harness-options'
-
 /** The phone's entry on the start page: the same one entry as on a desktop, at the end of the input's line. */
 const phonePermission = (page: Page) => permissionControl(page.locator('.workbench-home form.composer'))
 
@@ -384,6 +383,7 @@ describe("choosing a Harness's own options before the first message", () => {
     await page.getByRole('textbox', { name: '模型 ID' }).fill('vendor/typed')
     await shot(page, 'typed-panel-1280-dark')
     await page.getByRole('button', { name: '添加并选用' }).click()
+    await page.getByRole('textbox', { name: '模型 ID' }).waitFor({ state: 'hidden' })
     await expect.poll(() => chip(page, '模型').innerText()).toContain('vendor/typed')
     await send(page, '第四轮')
     expect(current(await latest(), 'model')).toBe('vendor/typed')
@@ -394,7 +394,9 @@ describe("choosing a Harness's own options before the first message", () => {
       .getByRole('menuitem', { name: '填写模型 ID…', exact: true })
       .or(page.getByRole('button', { name: '填写模型 ID…', exact: true }))
       .click()
-    await page.getByRole('button', { name: '移除 vendor/typed' }).click()
+    const removeTyped = page.getByRole('button', { name: '移除 vendor/typed' })
+    await removeTyped.click()
+    await removeTyped.waitFor({ state: 'hidden' })
     await expect
       .poll(async () => (await owner.json<AppSnapshot>('snapshot')).catalog!.harnesses.find(item => item.id === 'codex')?.customModels)
       .toBeUndefined()

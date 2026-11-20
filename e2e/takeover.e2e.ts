@@ -72,6 +72,7 @@ describe('desktop to phone takeover', () => {
     // The session list slides over on tablets; phones open it as their root page instead.
     const tabletContext = await browser.newContext({
       viewport: { width: 768, height: 1024 },
+      locale: 'zh-CN',
       isMobile: true,
       hasTouch: true,
       storageState: await desktop.context().storageState(),
@@ -163,6 +164,7 @@ describe('desktop to phone takeover', () => {
 
     const tabletContext = await browser.newContext({
       viewport: { width: 768, height: 1024 },
+      locale: 'zh-CN',
       storageState: await desktop.context().storageState(),
     })
     try {

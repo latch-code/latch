@@ -17,7 +17,7 @@ const OUT = 'test-results/helper-chat'
 it('binds abandonment to the creation shown when the confirmation opened', async () => {
   const host = await startTestHost({ plugins: [fixture] })
   const browser = await chromium.launch(browserLaunchOptions())
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
   try {
     const page = await context.newPage()
     page.setDefaultTimeout(15_000)
@@ -184,7 +184,7 @@ it('keeps a sensitive creation out of storage and requires an explicit decision 
 it('coordinates two windows retrying one creation without replacing its request', async () => {
   const host = await startTestHost({ plugins: [fixture] })
   const browser = await chromium.launch(browserLaunchOptions())
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
   let release: (() => void) | undefined
   try {
     const page = await context.newPage()

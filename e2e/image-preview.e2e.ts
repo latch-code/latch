@@ -86,7 +86,10 @@ it('uses true image pixels, retains zoom on refresh, refuses unknown or excessiv
         await enrollBrowser(page, host, { name: `Image ${width}`, scopes: ['admin'] })
         await openSession(page, sessionId)
         const open = (name: string) => page.getByRole('button', { name: `预览文件：${name}`, exact: true }).click()
-        await open('large.png')
+        await page.getByRole('button', { name: '预览图片：large.png', exact: true }).click()
+        const viewer = page.getByRole('dialog', { name: 'large.png', exact: true })
+        await viewer.getByRole('button', { name: '在文件中打开', exact: true }).click()
+        await viewer.waitFor({ state: 'detached' })
         const preview = page.getByRole('region', { name: '文件预览', exact: true }),
           image = preview.getByRole('img', { name: 'large.png', exact: true })
         const viewport = preview.getByRole('region', { name: '图片预览，支持缩放和平移', exact: true })

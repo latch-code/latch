@@ -93,7 +93,7 @@ it.each([
     await palette.getByRole('searchbox').fill('改一个文件')
     await palette.getByRole('option').first().click()
     await palette.waitFor({ state: 'hidden' })
-    await page.getByText('这个会话来自已移除的 Agent，只能查看').first().waitFor()
+    await page.getByRole('note').getByText('这个会话来自已移除的 Agent，只能查看', { exact: true }).waitFor()
 
     const card = page.getByRole('region', { name: '这一轮改动的文件', exact: true })
     await card.getByText('改动了 1 个文件', { exact: true }).waitFor()

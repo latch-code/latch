@@ -1,6 +1,7 @@
 // For the end-to-end tests. The desktop shell's tests use apps/desktop/test/helpers/host.ts, the same binding through
 // @latch/host; the Host's own tests use apps/host/test/helpers/host.ts, the same binding by path.
 import { resolve } from 'node:path'
+import { latchEnv } from '@latch/host/env'
 import { startHostFixture, type HostFixture, type TestPresence } from '@latch/testkit'
 import { startServer, type ServerOptions, type StartedHost, type TlsListenerOptions } from '@latch/host'
 
@@ -22,7 +23,7 @@ export function startTestHost(options: TestHostOptions = {}): Promise<TestHost> 
   return startHostFixture(
     setup =>
       startServer({
-        uiDir: resolve('dist/web'),
+        uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
         port: 0,
         demo: true,
         runtimeParent: setup.runtimeParent,

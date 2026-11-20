@@ -63,6 +63,7 @@ it.each([true, false])('keeps one accessible helper boundary before and after it
     const output = join('test-results', 'helper-boundary', readback ? 'known' : 'unread')
     await mkdir(output, { recursive: true })
     const check = async (state: string) => {
+      if (state !== 'new') await page.locator('.transcript-shell').getByText('echo ready', { exact: true }).first().waitFor()
       const boundary = page.locator('.agent-frame .agent-boundary-trigger').filter({ visible: true })
       expect(await boundary.count()).toBe(1)
       expect(await page.locator('.transcript .session-start-note').filter({ hasText: '不隔离' }).count()).toBe(0)
