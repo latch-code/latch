@@ -399,8 +399,9 @@ describe('a team of sessions, in the page', () => {
     await results.getByText('团队成员都结束了', { exact: false }).waitFor()
     await results.getByRole('button', { name: '发给 Agent 的原文', exact: true }).click()
     // A member's row opens to its whole reply, read from its own session.
-    await results.getByRole('button', { name: /读对账脚本/u }).click()
-    await results.locator('.team-result-body').getByText('按订单号去重', { exact: false }).waitFor()
+    const memberResult = results.getByRole('listitem').filter({ has: page.getByRole('button', { name: /读对账脚本/u }) })
+    await memberResult.getByRole('button', { name: /读对账脚本/u }).click()
+    await memberResult.locator('.team-result-body').getByText('按订单号去重', { exact: false }).waitFor()
     // The reply follows the results.
     const reply = page.locator('.turn').last().locator('.turn-reply')
     await reply.waitFor()

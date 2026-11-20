@@ -913,7 +913,8 @@ describe('later rounds on an existing team', () => {
 
   it('gives the built-in Harness the same tools while the switch is on, and its call makes a round', SLOW, async () => {
     const seen: string[][] = []
-    const answers: string[] = []
+    const dispatchId = `call-${randomUUID()}`
+    let dispatchAnswer: string | undefined
     const plugin: HarnessPlugin = {
       id: 'team-provider',
       name: 'fixture',
@@ -927,7 +928,7 @@ describe('later rounds on an existing team', () => {
           async *stream({ messages, tools }) {
             seen.push(tools.map(tool => tool.name))
             const last = messages.at(-1)
-            if (last?.role === 'tool') answers.push(JSON.stringify(last))
+            if (last?.role === 'tool' && last.toolCallId === dispatchId) dispatchAnswer = last.content
             // A member asked to propose: whether it is marked external says how its turn was sent.
             if (last?.role === 'user' && JSON.stringify(last).includes('propose now') && tools.some(tool => tool.name === 'propose_todo')) {
               yield {
@@ -941,7 +942,7 @@ describe('later rounds on an existing team', () => {
               yield {
                 type: 'tool-call',
                 call: {
-                  id: `call-${randomUUID()}`,
+                  id: dispatchId,
                   name: 'send_to_members',
                   arguments: { sends: [{ member: 'm1', prompt: 'propose now' }] },
                 },
@@ -977,7 +978,7 @@ describe('later rounds on an existing team', () => {
     const from = seen.length
     await say(owner, lead, 'dispatch it')
     expect(seen[from]).toEqual(expect.arrayContaining(['list_members', 'send_to_members']))
-    expect(answers.at(-1)).toContain('Sent as round 3.')
+    await vi.waitFor(() => expect(dispatchAnswer).toContain('Sent as round 3.'), WAIT)
     const done = await teamIn(owner, team.id, 'returned')
     expect(done.rounds?.at(-1)).toMatchObject({ round: 3, by: 'agent' })
     // The agent's words reach the member as outside content: what it proposes from them is external.
