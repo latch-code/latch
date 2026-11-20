@@ -263,16 +263,20 @@ export function FileBody({
   read,
   notes,
   onStale,
-}: Pick<FileRowProps, 'file' | 'layout' | 'revision' | 'read' | 'notes'> & { onStale: (count: number) => void }) {
-  const [detail, setDetail] = useState<FileChangeDetail>()
+  onDetail,
+}: Pick<FileRowProps, 'file' | 'layout' | 'revision' | 'read' | 'notes'> & {
+  onStale: (count: number) => void
+  onDetail?: ((detail: FileChangeDetail | undefined) => void) | undefined
+}) {
+  const [answer, setAnswer] = useState<{ detail: FileChangeDetail; revision: number; attempt: number; read: FileRowProps['read'] }>()
   const [error, setError] = useState<string>()
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     const controller = new AbortController()
     setError(undefined)
     read(file, controller.signal).then(
-      answer => {
-        if (!controller.signal.aborted) setDetail(answer)
+      detail => {
+        if (!controller.signal.aborted) setAnswer({ detail, revision, attempt, read })
       },
       (cause: unknown) => {
         if (!controller.signal.aborted) setError(errorMessage(cause))
@@ -282,6 +286,11 @@ export function FileBody({
       controller.abort()
     }
   }, [file.root, file.path, revision, attempt, read])
+  const detail = answer?.detail
+  const fresh = !error && answer?.revision === revision && answer.attempt === attempt && answer.read === read
+  useEffect(() => {
+    onDetail?.(fresh ? detail : undefined)
+  }, [detail, fresh, onDetail])
   if (error)
     return (
       <p className="changes-body-note">

@@ -42,7 +42,7 @@ import { boardMarkSections } from '../sessionMenu.ts'
 import { useBoardRequests } from './requests.ts'
 import { WorkBoard } from './WorkBoard.tsx'
 import { WorkBoardCard } from './WorkBoardCard.tsx'
-import { AllFilters, FilterChips, FilterMenus } from './WorkBoardFilters.tsx'
+import { AllFilters, FilterChips, FilterMenus, FilterResult } from './WorkBoardFilters.tsx'
 import { ITEM_WRITE_COPY, useItemWrites } from './itemWrites.ts'
 import { WorkBoardItemCard, type ItemCard } from './WorkBoardItemCard.tsx'
 import { WorkBoardItemEdit } from './WorkBoardItemEdit.tsx'
@@ -597,35 +597,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         {COPY.startAll}
       </Button>
     ) : undefined
-  const header = (
-    <header className="work-board-head">
-      <div className="work-board-filters">
-        <FilterMenus options={options} filters={filters} onFilters={setFilters} />
-        <FilterChips options={options} filters={filters} onFilters={setFilters} />
-      </div>
-      <div className="work-board-head-actions">
-        <SegmentedControl
-          label={COPY.view}
-          value={memory.view}
-          options={[
-            { value: 'board', label: COPY.columns },
-            { value: 'list', label: COPY.list },
-          ]}
-          onValueChange={setView}
-        />
-        <Button
-          variant="outline"
-          size="sm"
-          icon={NewSessionGlyph}
-          disabled={!canStart}
-          onClick={() => {
-            startNew()
-          }}>
-          {COPY.create}
-        </Button>
-      </div>
-    </header>
-  )
+  let noMatches = false
   const phoneGroup = phoneState ?? firstPhoneState(counts)
   let body
   if (narrow) {
@@ -667,7 +639,13 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
             ))}
           </ul>
         ) : (
-          <div className="work-board-phone-list" data-empty="" />
+          <div className="work-board-phone-list" data-empty="">
+            {filtered && counts[phoneGroup] > 0 && (
+              <div className="work-board-filter-result">
+                <FilterResult noMatches onFilters={setFilters} />
+              </div>
+            )}
+          </div>
         )}
       </div>
     )
@@ -678,9 +656,16 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
         listRows(tasks, state, NO_FILTERS, workspaces, 'group', items, proposals).length,
       ]),
     )
+    const rows = listRows(tasks, listState, filters, workspaces, order, items, proposals)
+    noMatches =
+      filtered
+      && !rows.length
+      && (listState === 'archived'
+        ? listRows(tasks, listState, NO_FILTERS, workspaces, order, items, proposals).length
+        : listCounts[listState]) > 0
     body = (
       <WorkBoardTable
-        rows={listRows(tasks, listState, filters, workspaces, order, items, proposals)}
+        rows={rows}
         shell={shell}
         state={listState}
         onState={setListState}
@@ -701,6 +686,7 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
       />
     )
   } else {
+    noMatches = filtered && columns.some(item => item.total > 0) && columns.every(item => !item.cards.length)
     body = (
       <WorkBoard
         columns={columns}
@@ -714,6 +700,35 @@ export function BoardSurface({ shell }: { shell: ShellState }) {
       />
     )
   }
+  const header = (
+    <header className="work-board-head">
+      <div className="work-board-filters">
+        <FilterMenus options={options} filters={filters} onFilters={setFilters} />
+        <FilterChips options={options} filters={filters} noMatches={noMatches} onFilters={setFilters} />
+      </div>
+      <div className="work-board-head-actions">
+        <SegmentedControl
+          label={COPY.view}
+          value={memory.view}
+          options={[
+            { value: 'board', label: COPY.columns },
+            { value: 'list', label: COPY.list },
+          ]}
+          onValueChange={setView}
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          icon={NewSessionGlyph}
+          disabled={!canStart}
+          onClick={() => {
+            startNew()
+          }}>
+          {COPY.create}
+        </Button>
+      </div>
+    </header>
+  )
   return (
     <section
       ref={root}

@@ -99,7 +99,10 @@ it('goes on a phone from a waiting card to the diff, two notes, the revision, on
     await writeFile(
       queue,
       JSON.stringify([
-        { path: 'rates.ts', content: text(first) },
+        [
+          { path: 'rates.ts', content: text(first) },
+          { path: 'scratch.txt', content: 'not for the commit (edited)\n' },
+        ],
         { path: 'rates.ts', content: text(revised) },
       ]),
     )
@@ -126,7 +129,7 @@ it('goes on a phone from a waiting card to the diff, two notes, the revision, on
     // The waiting card: its row offers the turn's changes directly.
     const shortcut = page.locator(`[data-review-task="${sessionId}"]`)
     await shortcut.waitFor(SLOW)
-    await expect.poll(() => shortcut.innerText()).toContain('复核 1 处改动')
+    await expect.poll(() => shortcut.innerText()).toContain('复核 2 处改动')
     await reachable(shortcut)
     const box = (await shortcut.boundingBox())!
     expect(box.height).toBeGreaterThanOrEqual(28)
@@ -146,6 +149,19 @@ it('goes on a phone from a waiting card to the diff, two notes, the revision, on
       .poll(() => review.locator('.phone-review-foot').getByRole('button', { name: '去提交', exact: true }).isVisible())
       .toBe(true)
     await shot(page, 'diff')
+
+    // Viewing a file is explicit. Closing the review reads the session but keeps the exact file and the remaining work.
+    await review.getByRole('button', { name: '标为已看', exact: true }).tap()
+    await review.getByRole('button', { name: '下一个文件', exact: true }).tap()
+    await expect.poll(() => review.locator('.phone-review-file-name').innerText()).toBe('scratch.txt')
+    await review.getByRole('button', { name: '返回会话列表', exact: true }).tap()
+    await review.waitFor({ state: 'detached' })
+    await expect.poll(() => shortcut.innerText()).toContain('继续复核')
+    await shortcut.tap()
+    await expect.poll(() => review.locator('.phone-review-file-name').innerText()).toBe('scratch.txt')
+    await review.getByText('还剩 1 个可复核文件', { exact: true }).waitFor()
+    await review.getByRole('button', { name: '上一个文件', exact: true }).tap()
+    await review.getByRole('button', { name: '已看', exact: true, pressed: true }).waitFor()
 
     // Two notes by touch: a tap starts, a second tap stretches, the sheet takes the words.
     const line = (number: number) => review.getByRole('button', { name: `反馈第 ${number} 行`, exact: true })
@@ -195,10 +211,10 @@ it('goes on a phone from a waiting card to the diff, two notes, the revision, on
     await page.locator('.phone-list:not([data-covered])').waitFor({ state: 'attached' })
     expect(await page.locator('.phone-list-scroll').evaluate(element => element.scrollTop)).toBe(listTop)
     await shortcut.waitFor(SLOW)
-    await expect.poll(() => shortcut.innerText()).toContain('复核 1 处改动')
+    await expect.poll(() => shortcut.innerText()).toContain('继续复核')
     await shortcut.tap()
     await review.locator('.diff-add', { hasText: 'v42 = 42 * account.rate' }).waitFor()
-    // Both notes looked at: the moved one under its lines, the one whose lines changed at the top as 位置可能过期.
+    // The same path in the new turn starts unviewed. The moved note is under its lines, the one whose lines changed at the top as 位置可能过期.
     await review.getByText('位置可能过期').first().waitFor()
     for (let left = 2; left > 0; left--) {
       await review.getByRole('button', { name: '标为已复核', exact: true }).first().tap()
@@ -206,17 +222,26 @@ it('goes on a phone from a waiting card to the diff, two notes, the revision, on
     }
     await expect.poll(async () => (await notes()).map(note => note.status)).toEqual(['reviewed', 'reviewed'])
 
+    await review.getByRole('button', { name: '标为已看', exact: true, pressed: false }).tap()
+    await review.getByText('可复核的文件已看完', { exact: true }).waitFor()
+
     // 未提交 holds the person's scratch file too: the pager steps through both.
     await review.getByRole('radio', { name: '未提交', exact: true }).tap()
     await expect.poll(() => review.locator('.phone-review-count').innerText()).toBe('1 / 2')
     await review.getByRole('button', { name: '下一个文件', exact: true }).tap()
     await expect.poll(() => review.locator('.phone-review-file-name').innerText()).toBe('scratch.txt')
-    await review.getByRole('button', { name: '上一个文件', exact: true }).tap()
+    expect(await review.locator('.phone-review-progress').count()).toBe(0)
 
-    // 提交: stage only rates.ts, one commit, then a push to the remote.
+    // The delivery stack leaves the file where it was when the person comes back before a commit.
     await review.getByRole('button', { name: '去提交', exact: true }).tap()
     const delivery = review.locator('.delivery-panel')
     await delivery.waitFor()
+    await review.getByRole('button', { name: '返回改动', exact: true }).tap()
+    await expect.poll(() => review.locator('.phone-review-file-name').innerText()).toBe('scratch.txt')
+    await review.getByRole('button', { name: '去提交', exact: true }).tap()
+    await delivery.waitFor()
+
+    // 提交: stage only rates.ts, one commit, then a push to the remote.
     await delivery.getByRole('checkbox', { name: '暂存 rates.ts', exact: true }).waitFor()
     await shot(page, 'stage')
     await delivery.getByRole('checkbox', { name: '暂存 rates.ts', exact: true }).tap()

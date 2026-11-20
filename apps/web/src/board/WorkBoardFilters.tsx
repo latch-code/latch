@@ -8,14 +8,16 @@ const COPY = defineCopy(
     labels: { projects: '项目', harnesses: 'Harness', who: '谁在做', tags: '标签', origin: '来源' },
     chosen: '已选筛选',
     remove: (name: string, value: string) => `去掉筛选 ${name}：${value}`,
-    clear: '清除',
+    clear: '清除筛选',
+    noMatches: '没有符合筛选条件的卡片',
     filter: '筛选',
   },
   {
     labels: { projects: 'Projects', harnesses: 'Harness', who: 'Who’s working', tags: 'Tags', origin: 'Source' },
     chosen: 'Active filters',
     remove: (name: string, value: string) => `Remove ${value} from ${name} filters`,
-    clear: 'Clear',
+    clear: 'Clear filters',
+    noMatches: 'No cards match these filters',
     filter: 'Filter',
   },
 )
@@ -115,12 +117,29 @@ export function FilterMenus({
   )
 }
 
+export function FilterResult({ onFilters, noMatches }: { onFilters: (filters: BoardFilters) => void; noMatches: boolean }) {
+  return (
+    <>
+      {noMatches && (
+        <span className="work-board-filter-empty" role="status">
+          {COPY.noMatches}
+        </span>
+      )}
+      <Button variant="ghost" size={noMatches ? 'sm' : 'xs'} onClick={() => onFilters(NO_FILTERS)}>
+        {COPY.clear}
+      </Button>
+    </>
+  )
+}
+
 /** What is chosen, as pieces that each take themselves off. A value no card holds any more is still shown, to undo. */
 export function FilterChips({
+  noMatches,
   options,
   filters,
   onFilters,
 }: {
+  noMatches: boolean
   options: Record<FilterKey, FilterOption[]>
   filters: BoardFilters
   onFilters: (filters: BoardFilters) => void
@@ -134,27 +153,20 @@ export function FilterChips({
       {chosen.map(item => (
         <span key={`${item.key}:${item.value}`} className="work-board-chip">
           <span>{escapeSecurityText(item.label)}</span>
-          <button
-            type="button"
-            className="work-board-chip-remove"
-            aria-label={COPY.remove(COPY.labels[item.key], escapeSecurityText(item.label))}
-            onClick={() => {
-              onFilters(toggle(filters, item.key, item.value))
-            }}>
-            <Icon icon={CloseGlyph} size={12} />
-          </button>
+          {(!noMatches || chosen.length > 1) && (
+            <button
+              type="button"
+              className="work-board-chip-remove"
+              aria-label={COPY.remove(COPY.labels[item.key], escapeSecurityText(item.label))}
+              onClick={() => {
+                onFilters(toggle(filters, item.key, item.value))
+              }}>
+              <Icon icon={CloseGlyph} size={12} />
+            </button>
+          )}
         </span>
       ))}
-      {chosen.length > 1 && (
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={() => {
-            onFilters(NO_FILTERS)
-          }}>
-          {COPY.clear}
-        </Button>
-      )}
+      {(noMatches || chosen.length > 1) && <FilterResult noMatches={noMatches} onFilters={onFilters} />}
     </div>
   )
 }

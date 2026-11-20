@@ -698,6 +698,7 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
               )}
               {phone && phoneReview.present && phoneReview.target && phoneReview.summary && (
                 <PhoneReview
+                  key={phoneReview.summary.id}
                   target={phoneReview.target}
                   summary={phoneReview.summary}
                   snapshot={snapshot}
@@ -705,6 +706,8 @@ export function AppShell({ harness, snapshot }: { harness: Harness; snapshot: Ap
                   canDeliver={catalog?.features?.gitDelivery === true && access.scopes.has('view') && phoneReview.summary.mode !== 'chat'}
                   offline={connection === 'reconnecting' || connection === 'offline'}
                   leaving={phoneReview.leaving}
+                  progress={phoneReview.progress}
+                  onProgress={phoneReview.remember}
                   onTarget={phoneReview.setTarget}
                   onClose={phoneReview.close}
                 />

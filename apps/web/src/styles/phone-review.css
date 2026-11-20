@@ -171,6 +171,23 @@
   font-variant-numeric: tabular-nums;
 }
 
+.phone-review-progress {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  min-height: 44px;
+  padding-inline: var(--sp-16) var(--sp-8);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.phone-review-progress > .ui-button {
+  min-height: 44px;
+}
+
 /* The page scrolls down; nothing scrolls sideways but the code, inside its block. */
 .phone-review-body {
   --diff-indent: 0ch;

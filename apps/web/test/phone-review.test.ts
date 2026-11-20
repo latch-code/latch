@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import type { ReviewNoteCounts, TaskSummary, TurnChanges } from '@latch/protocol'
+import type { ChangedFile, ReviewNoteCounts, TaskSummary, TurnChanges } from '@latch/protocol'
 import type { DiffLine } from '../src/diff.ts'
-import { footAction, reviewShortcut, shortcutCandidates, stepFile, tapLine } from '../src/phone-review/model.ts'
+import {
+  footAction,
+  reconcileReview,
+  reviewFile,
+  reviewShortcut,
+  reviewVersion,
+  shortcutCandidates,
+  stepFile,
+  tapLine,
+} from '../src/phone-review/model.ts'
 
 const task = (extra: Partial<TaskSummary> = {}): TaskSummary => ({
   id: 's1',
@@ -82,6 +91,36 @@ describe('the phone list’s 复核 shortcut', () => {
     })
     expect(picked.map(item => item.id)).toEqual(['new', 'notes', 'old', 'sent'])
     expect(shortcutCandidates(tasks, { isUnread: item => unread.has(item.id), limit: 1 }).map(item => item.id)).toEqual(['new'])
+  })
+})
+
+describe('progress for a settled turn', () => {
+  const settled = turn({ settledAt: '2026-11-12T10:00:00.000Z' })
+  const version = reviewVersion(settled)!
+  const first: ChangedFile = { root: 'default', path: 'first.ts', status: 'M', add: 1, del: 1 }
+  const second: ChangedFile = { ...first, root: 'extra' }
+
+  it('continues a partially reviewed turn after the conversation is read', () => {
+    let progress = reconcileReview(undefined, version, [first, second], 'first', reviewFile(first))
+    expect(progress.remaining).toBe(1)
+    expect(progress.seen?.has(reviewFile(second))).toBe(false)
+    expect(reviewShortcut(task(), { unread: false, turns: [settled], progress })).toEqual({ label: '继续复核' })
+    progress = reconcileReview(progress, version, [first, second], 'second', reviewFile(second))
+    expect(progress.remaining).toBe(0)
+    expect(reviewShortcut(task(), { unread: false, turns: [settled], progress })).toBeUndefined()
+    expect(reviewShortcut(task(), { unread: false, turns: [settled], progress, notes: counts({ pending: 1 }) })).toBeDefined()
+  })
+
+  it('keeps the immutable version, invalidates missing files and starts clean on a new version', () => {
+    const progress = reconcileReview(undefined, version, [first, second], 'first', reviewFile(first))
+    expect(reconcileReview(progress, version, [{ ...first }, { ...second }], 'first')).toBe(progress)
+    expect(reconcileReview(progress, version, [{ ...first, notRetained: true }, second], 'first').seen?.size).toBe(0)
+    const newer = { ...settled, turnId: 't2', settledAt: '2026-11-12T11:00:00.000Z' }
+    expect(reviewShortcut(task(), { unread: false, turns: [settled, newer], progress })).toBeUndefined()
+    expect(reconcileReview(progress, reviewVersion(newer)!, [first, second], 'first').remaining).toBe(2)
+    expect(reviewVersion({ ...settled, undone: true })).toBeUndefined()
+    expect(reviewVersion(turn())).toBeUndefined()
+    expect(reviewVersion({ ...settled, state: 'interrupted' })).toBeUndefined()
   })
 })
 

@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { CircleHelp } from 'lucide-react'
-import { noteLinesLabel, type AppSnapshot, type ChangedFile, type ReviewNote, type TaskSummary, readsProjectFiles } from '@latch/protocol'
+import {
+  noteLinesLabel,
+  type AppSnapshot,
+  type ChangedFile,
+  type FileChangeDetail,
+  type ReviewNote,
+  type TaskSummary,
+  readsProjectFiles,
+} from '@latch/protocol'
 import {
   Button,
   ConfirmDialog,
@@ -32,9 +40,18 @@ import { useChanges } from '../panel/changes/useChanges.ts'
 import { useReviewNotes } from '../panel/changes/useReviewNotes.ts'
 import { DeliveryPanel } from '../panel/delivery/DeliveryPanel.tsx'
 import { TURN_CHANGES_COPY } from '../conversation/turnChanges.copy.ts'
-import { footAction, stepFile, tapLine, type PhoneReviewTarget } from './model.ts'
+import {
+  footAction,
+  reconcileReview,
+  reviewFile,
+  reviewVersion,
+  stepFile,
+  tapLine,
+  type PhoneReviewTarget,
+  type ReviewProgress,
+} from './model.ts'
 import { moveFocus } from './usePhoneReview.ts'
-import { defineCopy, formatNumber } from '../core/i18n.ts'
+import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
 
 const COPY = defineCopy(
   {
@@ -53,6 +70,10 @@ const COPY = defineCopy(
     deleted: '已删除',
     stale: '位置可能过期',
     next: '下一个文件',
+    markSeen: '标为已看',
+    seen: '已看',
+    remaining: (count: number) => `还剩 ${formatNumber(count)} 个可复核文件`,
+    allSeen: '可复核的文件已看完',
     noFiles: '这台设备看不到会话文件夹里的文件',
     readFailed: '读不到改动',
     retry: '重试',
@@ -95,6 +116,10 @@ const COPY = defineCopy(
     deleted: 'Deleted',
     stale: 'Location may be out of date',
     next: 'Next file',
+    markSeen: 'Mark as viewed',
+    seen: 'Viewed',
+    remaining: (count: number) => plural(count, { one: '{n} file left to review', other: '{n} files left to review' }),
+    allSeen: 'All reviewable files viewed',
     noFiles: 'This device can’t see the session’s files',
     readFailed: 'Couldn’t read changes',
     retry: 'Retry',
@@ -160,6 +185,8 @@ export interface PhoneReviewProps {
   offline: boolean
   /** The page slides away to the list. */
   leaving: boolean
+  progress: ReviewProgress | undefined
+  onProgress: (progress: ReviewProgress | null) => void
   onTarget: (target: PhoneReviewTarget) => void
   onClose: () => void
 }
@@ -290,6 +317,9 @@ function ReviewChanges({
   onClose,
   backRef,
   under,
+  leaving,
+  progress,
+  onProgress,
   onDeliver,
 }: PhoneReviewProps & { backRef: RefObject<HTMLButtonElement | null>; under: boolean; onDeliver: () => void }) {
   const features = snapshot.catalog?.features
@@ -297,7 +327,7 @@ function ReviewChanges({
   const hostName = computerName(snapshot.hostName)
   const reviewNotes = features?.reviewNotes === true && canRead
   const choice = useMemo(() => choiceOf(target.scope), [target.scope])
-  const { list, running, failure, revision, reload, readFile } = useChanges(summary, choice, offline || !canRead)
+  const { list, turns, running, failure, revision, reload, readFile } = useChanges(summary, choice, offline || !canRead)
   const review = useReviewNotes(summary.id, {
     enabled: reviewNotes,
     revision: snapshot.reviewNotes?.find(counts => counts.sessionId === summary.id)?.revision ?? 0,
@@ -305,31 +335,68 @@ function ReviewChanges({
     offline,
   })
   const files = useMemo(() => (list && !list.unavailable ? list.files.toSorted(compareFiles) : []), [list])
-  const [current, setCurrent] = useState<string>()
+  const [positions, setPositions] = useState<ReadonlyMap<string, string>>(() => new Map())
+  const body = useRef<HTMLDivElement>(null)
   const [picked, setPicked] = useState<Picked>()
   const [writingNote, setWritingNote] = useState(false)
   const [text, setText] = useState('')
   const [stale, setStale] = useState(0)
   const [askClear, setAskClear] = useState(false)
-  // The file shown stays while the list refreshes; a link from 提交 lands on its file once; otherwise the first one.
+  const listedTurn = list?.turnId
+  const scopeKey = JSON.stringify([target.scope, listedTurn])
+  const version =
+    canRead && listedTurn && target.scope === 'turn' && !list?.running && !list?.undone
+      ? reviewVersion(turns.find(turn => turn.turnId === listedTurn))
+      : undefined
+  // Each scope keeps its file while under delivery. Reopening a review uses the last file of that exact settled turn.
+  const current = positions.get(scopeKey) ?? (version === progress?.version ? progress?.file : undefined)
   const wanted = target.file
   const [landed, setLanded] = useState<PhoneReviewTarget['file']>()
   const linked = wanted && files.find(file => file.path === wanted.path && (wanted.root === undefined || file.root === wanted.root))
   if (wanted && wanted !== landed && linked) {
     setLanded(wanted)
-    setCurrent(fileId(linked))
+    setPositions(previous => new Map(previous).set(scopeKey, fileId(linked)))
   }
   const index = Math.max(
     0,
     files.findIndex(file => fileId(file) === current),
   )
   const file: ChangedFile | undefined = files[index]
+  const fileKey = file ? JSON.stringify([scopeKey, fileId(file)]) : undefined
+  const readStamp = fileKey && version && file ? JSON.stringify([fileKey, version, reviewFile(file), revision]) : undefined
+  const [verified, setVerified] = useState<string>()
+  const expectedFile = file ? reviewFile(file) : undefined
+  const onDetail = useCallback(
+    (detail: FileChangeDetail | undefined) => {
+      const ready =
+        detail?.scope === 'turn'
+        && detail.turnId === listedTurn
+        && detail.hunks !== undefined
+        && !contentHidden(detail.file)
+        && reviewFile(detail.file) === expectedFile
+      setVerified(ready ? readStamp : undefined)
+    },
+    [expectedFile, listedTurn, readStamp],
+  )
+  const settledProgress = useMemo(
+    () => (version && file ? reconcileReview(progress, version, files, fileId(file)) : undefined),
+    [version, file, files, progress],
+  )
+  useEffect(() => {
+    if (leaving || under || target.scope !== 'turn') return
+    if (failure?.kind === 'denied' || list?.undone) onProgress(null)
+    else if (settledProgress && settledProgress !== progress) onProgress(settledProgress)
+  }, [leaving, under, target.scope, failure?.kind, list?.undone, onProgress, settledProgress, progress])
+  useLayoutEffect(() => {
+    if (body.current) body.current.scrollTop = 0
+    setStale(0)
+  }, [fileKey])
   const kept = review.notes ?? []
   const writing: NoteWriting | undefined =
     reviewNotes && canRun && !offline && summary.personal === undefined ? { actions: review.actions, busy: review.busy } : undefined
   const tally = noteTally(kept)
   const anchor = list && !list.unavailable ? { scope: queryOf(choice).scope, ...(list.turnId ? { turnId: list.turnId } : {}) } : undefined
-  const selection = picked && file && picked.file === fileId(file) ? picked.selection : undefined
+  const selection = picked && picked.file === fileKey ? picked.selection : undefined
   const apart = kept.filter(note => !files.some(item => sameFile(note, item)))
   const empty = emptyState(list)
   const action = footAction({
@@ -346,20 +413,19 @@ function ReviewChanges({
   const go = (by: 1 | -1) => {
     const next = stepFile(index, files.length, by)
     if (next === undefined) return
-    setCurrent(fileId(files[next]))
+    setPositions(previous => new Map(previous).set(scopeKey, fileId(files[next])))
     setPicked(undefined)
     setStale(0)
   }
   const onTap = (line: DiffLine, sides: { old: string[]; new: string[] }) => {
-    if (!file) return
-    const id = fileId(file)
+    if (!fileKey) return
     setPicked(previous => {
-      const next = tapLine(previous?.file === id ? previous.selection : undefined, line)
-      return next ? { file: id, selection: next, sides } : undefined
+      const next = tapLine(previous?.file === fileKey ? previous.selection : undefined, line)
+      return next ? { file: fileKey, selection: next, sides } : undefined
     })
   }
   const submitNote = async () => {
-    if (!picked || !file || !anchor || !writing || !text.trim()) return
+    if (!picked || !selection || !file || !anchor || !writing || !text.trim()) return
     const done = await writing.actions.create({
       root: file.root,
       path: file.path,
@@ -380,6 +446,9 @@ function ReviewChanges({
   const folder = file && file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/')) : ''
   const fileNotes = file ? kept.filter(note => sameFile(note, file)) : []
   const note = file ? fileNote(file) : undefined
+  const markable = readStamp !== undefined && verified === readStamp && !running && !offline && !failure
+  const seen = expectedFile !== undefined && settledProgress?.seen?.has(expectedFile) === true
+  const remaining = settledProgress?.remaining
 
   return (
     <section className="phone-review-level" data-state={under ? 'under' : 'top'} aria-label={COPY.changes} inert={under || undefined}>
@@ -465,7 +534,22 @@ function ReviewChanges({
           <IconButton size="lg" icon={ChevronRightGlyph} label={COPY.next} disabled={index >= files.length - 1} onClick={() => go(1)} />
         </div>
       )}
-      <div className="phone-review-body">
+      {remaining !== undefined && (remaining > 0 || settledProgress?.seen?.size) ? (
+        <div className="phone-review-progress">
+          <span role="status">{remaining === 0 ? COPY.allSeen : COPY.remaining(remaining)}</span>
+          {file && !contentHidden(file) && expectedFile !== undefined && version && (
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-pressed={seen}
+              disabled={!markable}
+              onClick={() => onProgress(reconcileReview(settledProgress, version, files, fileId(file), expectedFile))}>
+              {seen ? COPY.seen : COPY.markSeen}
+            </Button>
+          )}
+        </div>
+      ) : null}
+      <div className="phone-review-body" ref={body}>
         {!canRead ? (
           <div className="changes-empty phone-review-locked">
             <div>
@@ -532,13 +616,14 @@ function ReviewChanges({
                 </div>
               </div>
             ) : (
-              <div className="changes-file-body" key={fileId(file)}>
+              <div className="changes-file-body" key={fileKey}>
                 <FileBody
                   file={file}
                   layout="unified"
                   revision={revision}
                   read={readFile}
                   onStale={setStale}
+                  onDetail={version ? onDetail : undefined}
                   notes={{
                     notes: fileNotes,
                     ...(anchor ? { anchor } : {}),

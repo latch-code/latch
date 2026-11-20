@@ -217,6 +217,12 @@ it('lays the Host’s groups out as a board that reflows by its own width, and w
       const count = snapshot.tasks.filter(task => task.board?.card && task.board.group === group).length
       expect(await column(page, group).locator('.work-board-column-head').textContent()).toContain(String(count))
     }
+    // A quiet column is still present and labeled. The column holding work keeps its filled surface.
+    const columnFill = (group: Column) => column(page, group).evaluate(el => getComputedStyle(el).backgroundColor)
+    expect(await column(page, 'todo').getAttribute('data-empty')).toBe('')
+    expect(await column(page, 'attention').getAttribute('data-empty')).toBeNull()
+    expect(await columnFill('todo')).toBe('rgba(0, 0, 0, 0)')
+    expect(await columnFill('attention')).not.toBe(await columnFill('todo'))
     // Priority first within a column: 高 above the rest of 已结束.
     const doneOrder = await column(page, 'done')
       .locator('.work-board-card')
@@ -348,11 +354,17 @@ it('lays the Host’s groups out as a board that reflows by its own width, and w
     await connected(page)
     await expect.poll(() => board(page).locator('.work-board-card').count()).toBe(2)
     await board(page)
-      .getByRole('button', { name: '清除' })
-      .or(board(page).getByRole('button', { name: /^去掉筛选/u }))
-      .first()
+      .getByRole('button', { name: /^项目/u })
       .click()
+    await page.getByRole('checkbox', { name: '发版仓库', exact: true }).check()
+    await page.keyboard.press('Escape')
+    await expect.poll(() => board(page).locator('.work-board-card').count()).toBe(0)
+    await board(page).getByText('没有符合筛选条件的卡片', { exact: true }).waitFor()
+    const clear = board(page).getByRole('button', { name: '清除筛选', exact: true })
+    expect(await clear.count()).toBe(1)
+    await clear.click()
     await expect.poll(() => board(page).locator('.work-board-card').count()).toBeGreaterThan(2)
+    expect(await board(page).getByText('没有符合筛选条件的卡片', { exact: true }).count()).toBe(0)
 
     // The list: every session by group, the same menu, a state filter.
     await board(page).getByRole('radio', { name: '表', exact: true }).click()

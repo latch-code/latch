@@ -1,6 +1,7 @@
 // The phone's way from the session list to a turn's changes and back: which rows offer 「复核 N 处改动」, the taps that pick
 // lines, and the one action the page's bottom bar holds.
-import type { ReviewNoteCounts, TaskSummary, TurnChanges } from '@latch/protocol'
+import type { ChangedFile, ReviewNoteCounts, TaskSummary, TurnChanges } from '@latch/protocol'
+import { contentHidden, fileId } from '../panel/changes/model.ts'
 import type { DiffLine } from '../diff.ts'
 import { numberOn, selectLine, sideOf, type LineSelection } from '../panel/changes/notes.ts'
 import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
@@ -9,6 +10,7 @@ const COPY = defineCopy(
   {
     reviewCount: (count: number) => `复核 ${formatNumber(count)} 处改动`,
     review: '复核改动',
+    continueReview: '继续复核',
     line: (line: number) => `第 ${formatNumber(line)} 行`,
     lines: (first: number, last: number) => `第 ${formatNumber(first)}–${formatNumber(last)} 行`,
     nextTurn: '排到下一轮',
@@ -22,6 +24,7 @@ const COPY = defineCopy(
   {
     reviewCount: (count: number) => `Review ${plural(count, { one: '{n} change', other: '{n} changes' })}`,
     review: 'Review changes',
+    continueReview: 'Continue review',
     line: (line: number) => `Line ${formatNumber(line)}`,
     lines: (first: number, last: number) => `Lines ${formatNumber(first)}–${formatNumber(last)}`,
     nextTurn: 'Queue for next turn',
@@ -43,6 +46,41 @@ export interface PhoneReviewTarget {
   level: 'changes' | 'delivery'
   /** A file to land on, from 提交's list. */
   file?: { root?: string; path: string }
+}
+
+/** The two sides of a settled turn come from the Host's retained snapshots. Live scopes have no such version. */
+export const reviewVersion = (turn: TurnChanges | undefined): string | undefined =>
+  turn?.state === 'settled' && !turn.undone && turn.settledAt ? JSON.stringify([turn.turnId, turn.settledAt]) : undefined
+
+export interface ReviewProgress {
+  version: string
+  file?: string
+  seen?: ReadonlySet<string>
+  remaining?: number
+}
+
+/** File identity inside a settled turn. A file whose content is no longer available must be reviewed again. */
+export const reviewFile = (file: ChangedFile): string => JSON.stringify([fileId(file), file.status, file.oldPath, file.modeChanged])
+
+export function reconcileReview(
+  progress: ReviewProgress | undefined,
+  version: string,
+  files: readonly ChangedFile[],
+  current: string,
+  toggle?: string,
+): ReviewProgress {
+  const previous = progress?.version === version ? progress : undefined
+  const readable = files.filter(file => !contentHidden(file)).map(reviewFile)
+  const seen = new Set(readable.filter(key => Boolean(previous?.seen?.has(key)) !== (key === toggle)))
+  const remaining = readable.length - seen.size
+  if (
+    previous?.file === current
+    && previous.remaining === remaining
+    && previous.seen?.size === seen.size
+    && [...seen].every(key => previous.seen?.has(key))
+  )
+    return previous
+  return { version, file: current, seen, remaining }
 }
 
 /** A session whose files the review can show at all: an Agent session the Host still runs, not a chat. */
@@ -78,14 +116,21 @@ export function shortcutCandidates(
  */
 export function reviewShortcut(
   task: TaskSummary,
-  input: { unread: boolean; turns?: readonly TurnChanges[] | undefined; notes?: ReviewNoteCounts | undefined },
+  input: {
+    unread: boolean
+    turns?: readonly TurnChanges[] | undefined
+    notes?: ReviewNoteCounts | undefined
+    progress?: ReviewProgress | undefined
+  },
 ): { label: string; files?: number } | undefined {
   if (!reviewable(task)) return undefined
   const latest = input.turns?.at(-1)
   const files = latest && latest.state !== 'running' && !latest.undone ? (latest.files ?? 0) : 0
+  const progress = input.progress?.version === reviewVersion(latest) ? input.progress : undefined
+  if (progress && progress.remaining !== 0) return { label: COPY.continueReview }
   const { pending, toReview } = notesWaiting(input.notes)
   // Notes sent and back from the Agent wait until the person marks them reviewed, read or not.
-  if (!(input.unread && files > 0) && pending === 0 && toReview === 0) return undefined
+  if (!(input.unread && !progress && files > 0) && pending === 0 && toReview === 0) return undefined
   return files > 0 ? { label: COPY.reviewCount(files), files } : { label: COPY.review }
 }
 

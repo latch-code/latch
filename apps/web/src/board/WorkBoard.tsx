@@ -54,12 +54,7 @@ function ColumnCount({ column, filtered }: { column: BoardColumn; filtered: bool
 }
 
 /** The next times of the schedules that are on, under 进行中: what will start by itself. */
-function Schedules({ schedules, now }: { schedules: readonly AutomationSummary[]; now: number }) {
-  const next = schedules
-    .filter(item => item.enabled && (item.nextRunAt || item.lastRun?.state === 'missed'))
-    .toSorted((a, b) => (Date.parse(a.nextRunAt ?? '') || Infinity) - (Date.parse(b.nextRunAt ?? '') || Infinity))
-    .slice(0, 3)
-  if (!next.length) return null
+function Schedules({ next, now }: { next: readonly AutomationSummary[]; now: number }) {
   const at = (value: string) => {
     const time = new Date(value)
     const sameDay = new Date(now).toDateString() === time.toDateString()
@@ -115,15 +110,21 @@ export function WorkBoard({
   /** A press on a card's own button that may become a drag (useBoardDrag). */
   onPointerDown?: (event: PointerEvent<HTMLElement>) => void
 }) {
+  const next = schedules
+    .filter(item => item.enabled && (item.nextRunAt || item.lastRun?.state === 'missed'))
+    .toSorted((a, b) => (Date.parse(a.nextRunAt ?? '') || Infinity) - (Date.parse(b.nextRunAt ?? '') || Infinity))
+    .slice(0, 3)
   return (
     <div className="work-board-columns" data-columns={columns.length} data-drag={drag ? '' : undefined} onPointerDown={onPointerDown}>
       {columns.map(column => {
         const drop = dropState(drag, column.group)
+        const showSchedules = column.group === 'running' && next.length > 0
         return (
           <section
             key={column.group}
             className="work-board-column"
             data-group={column.group}
+            data-empty={!column.cards.length && !showSchedules ? '' : undefined}
             data-drop={drop}
             data-over={drop === 'target' && drag?.over === column.group ? '' : undefined}
             aria-label={GROUP_LABELS[column.group]}>
@@ -149,7 +150,7 @@ export function WorkBoard({
             ) : (
               <div className="work-board-cards" data-empty="" />
             )}
-            {column.group === 'running' && <Schedules schedules={schedules} now={now} />}
+            {showSchedules && <Schedules next={next} now={now} />}
           </section>
         )
       })}
