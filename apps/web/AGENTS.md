@@ -30,7 +30,7 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - Harness 与模型图标只用 `src/assets/brands/` 原文件（来源与许可见 `public/licenses/brands/`），经 `?no-inline` 用于 `<img>` 或 CSS 遮罩。各预设有图标，缺图标用中性图形，禁用字母（`test/brands.test.ts`）。
 - 只读 `HarnessInfo.capabilities` 与 `level`，不判断 Driver 种类；共享编码与 Host、测试向量一致（`test/client-security.test.ts`）。
 - 项目按会话记录的身份分组，普通会话归「无项目」；只有旧会话按主目录回退，不从附加文件夹推断归属（`test/client-sessions.test.ts`）。
-- 分支只用 Host 摘要，可见时每 30 秒同步快照，页面不运行 Git。
+- 分支用 Host 摘要，可见时每 30 秒同步。按 `checkedOut` 分类，页面不运行 Git。
 - 桌面文件夹操作需 `folders.protocolVersion === 1`；旧壳同名接口不证明支持签名请求（`test/shell-folders.test.ts`）。
 
 仅淡入消息。脚本用 `motionAllowed`。

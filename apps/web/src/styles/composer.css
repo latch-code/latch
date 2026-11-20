@@ -1570,15 +1570,23 @@ button.vitals-item {
   flex-direction: column;
   min-width: 0;
 }
-/*
- * The search row sits on the layer's own edge and stays there while the branches scroll under it, as in a searchable
- * picker (packages/ui menu.css). With the layer's 6px inside left in place, rows showed in the strip above the row.
- */
+/* Keep the search and worktree filter against the layer edge while branches scroll under them. */
 .ui-popover:has(> .branch-list) {
   padding: 0;
 }
-.branch-list > .ui-menu-search {
-  background: var(--pop);
+.branch-list-filters {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: grid;
+  background: var(--surface);
+}
+.branch-list-filters > .ui-menu-search {
+  position: static;
+  background: inherit;
+}
+.branch-list-filters > .ui-segmented {
+  margin: var(--sp-6) var(--sp-6) 0;
 }
 .branch-list > .ui-menu {
   padding: var(--sp-6);

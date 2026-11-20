@@ -9,7 +9,7 @@ import type { TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openPanelTab, openSession, phoneStartScreen } from './helpers/layout.ts'
+import { noHorizontalOverflow, openPanelTab, openSession, phoneStartScreen, reachable } from './helpers/layout.ts'
 
 const OUT = 'test-results/branch-switch'
 const LONG = 'fix/studio-sidebar-history-scroll'
@@ -121,11 +121,20 @@ describe('the branch chip', () => {
       .click()
   }
 
-  it('keeps a long branch name on one line in the draft and in the session’s header', async () => {
+  it('keeps long names on one line and makes other worktrees reachable beside a long local branch list', async ({ onTestFinished }) => {
+    const backups = Array.from({ length: 101 }, (_, index) => `backup/before-rebase-${index}`)
+    for (const name of backups) git('branch', name)
+    const other = join(host.root, 'studio-other')
+    git('worktree', 'add', '-q', other, 'docs/readme')
+    onTestFinished(() => {
+      git('worktree', 'remove', other)
+      git('branch', '-D', ...backups)
+    })
     for (const [width, theme] of [
       [1440, 'light'],
       [1440, 'dark'],
       [1100, 'light'],
+      [768, 'light'],
       [390, 'light'],
     ] as const) {
       const page = await open(width, theme)
@@ -139,11 +148,22 @@ describe('the branch chip', () => {
           .catch(() => {})
         await page.screenshot({ path: `${OUT}/long-draft--${width}--${theme}.png` })
         expect(await oneLine(page)).toBeGreaterThan(0)
-        // The chip is the switch: its list, at this width.
+        // The worktree's branch sorts past the first hundred names.
         await page.locator('.home-place button.branch-switch').click()
-        await page.getByRole('menuitemradio', { name: LONG }).or(page.getByRole('menuitemradio').first()).first().waitFor()
-        await page.waitForTimeout(500)
+        const list = page.getByRole('menu', { name: '分支' })
+        const views = page.getByRole('radiogroup', { name: '分支位置' })
+        const worktrees = views.getByRole('radio', { name: '其他工作树' })
+        await reachable(worktrees)
+        expect(await views.getByRole('radio', { name: '本地分支' }).getAttribute('aria-checked')).toBe('true')
+        expect(await list.getByRole('menuitemradio', { name: LONG }).getAttribute('aria-checked')).toBe('true')
+        expect(await list.getByRole('menuitemradio').count()).toBe(100)
         await page.screenshot({ path: `${OUT}/list--${width}--${theme}.png` })
+        await worktrees.click()
+        const held = list.getByRole('menuitemradio', { name: 'docs/readme' })
+        await reachable(held, { allowDisabled: true })
+        expect(await held.isDisabled()).toBe(true)
+        expect(await list.getByRole('menuitemradio').count()).toBe(1)
+        await page.screenshot({ path: `${OUT}/worktrees--${width}--${theme}.png` })
         await page.keyboard.press('Escape')
         await openSession(page, session)
         await page.screenshot({ path: `${OUT}/long-session--${width}--${theme}.png` })
@@ -172,6 +192,8 @@ describe('the branch chip', () => {
       const list = page.getByRole('menu', { name: '分支' })
       await expect.poll(() => list.getByRole('menuitemradio').count()).toBe(6)
       expect(await list.getByRole('menuitemradio').first().getAttribute('aria-checked')).toBe('true')
+      const views = page.getByRole('radiogroup', { name: '分支位置' })
+      expect(await views.count()).toBe(0)
       await page.waitForTimeout(400)
       for (const colorScheme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme })
@@ -253,11 +275,28 @@ describe('the branch chip', () => {
       const other = join(host.root, 'studio-other')
       git('worktree', 'add', '-q', other, 'docs/readme')
       await header.click()
-      const held = page.getByRole('menu', { name: '分支' }).getByRole('menuitemradio', { name: /docs\/readme/u })
-      await held.waitFor()
-      expect(await held.getAttribute('aria-disabled')).toBe('true')
-      await page.waitForTimeout(300)
+      const local = views.getByRole('radio', { name: '本地分支' })
+      await local.waitFor()
+      const held = list.getByRole('menuitemradio', { name: 'docs/readme' })
+      expect(await held.count()).toBe(0)
+      await search.fill('readme')
+      await page.getByText('没有匹配的分支', { exact: true }).waitFor()
+      await views.getByRole('radio', { name: '其他工作树' }).click()
+      expect(await search.inputValue()).toBe('')
+      expect(await held.isDisabled()).toBe(true)
       await page.screenshot({ path: `${OUT}/held-elsewhere--1440--light.png` })
+      let switchRequests = 0
+      page.on('request', request => {
+        if (request.url().endsWith('/branches/switch')) switchRequests++
+      })
+      await search.fill('readme')
+      await search.press('Enter')
+      await search.fill('feat')
+      await page.getByText('没有匹配的分支', { exact: true }).waitFor()
+      await search.press('Enter')
+      await local.click()
+      await list.getByRole('menuitemradio', { name: 'feature/one' }).waitFor()
+      expect(switchRequests).toBe(0)
       await page.keyboard.press('Escape')
       git('worktree', 'remove', '--force', other)
     } finally {

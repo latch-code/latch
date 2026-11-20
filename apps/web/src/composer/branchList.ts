@@ -1,7 +1,9 @@
-import type { BranchChoice, BranchListing } from '@latch/protocol'
+import type { BranchListing } from '@latch/protocol'
 
 /** Rows drawn at once; the search still looks through every branch the Host listed. */
 const BRANCH_ROWS = 100
+
+export type BranchGroup = 'local' | 'worktrees'
 
 export interface BranchRow {
   name: string
@@ -12,7 +14,7 @@ export interface BranchRow {
 
 export interface BranchRows {
   rows: BranchRow[]
-  /** Matching branches not drawn, plus those the Host left out of its listing. */
+  /** Matching branches in this group beyond the display limit. */
   hidden: number
 }
 
@@ -22,20 +24,15 @@ export function matches(name: string, query: string): boolean {
   return typed === '' || name.toLowerCase().includes(typed)
 }
 
-/**
- * The rows of the list: the Host's order (the current branch first, then by name), narrowed by the query, at most
- * `limit` drawn. What the Host could not list (`more`) counts as hidden only while nothing is typed: it may or may not
- * match a query.
- */
-export function branchRows(listing: BranchListing, query: string, limit = BRANCH_ROWS): BranchRows {
-  const matching = listing.branches.filter((branch: BranchChoice) => matches(branch.name, query))
+/** Keep the Host's order within each group, applying the display limit after searching it. */
+export function branchRows(listing: BranchListing, query: string, group: BranchGroup, limit = BRANCH_ROWS): BranchRows {
+  const matching = listing.branches.filter(branch => (branch.checkedOut ? 'worktrees' : 'local') === group && matches(branch.name, query))
   const rows = matching.slice(0, limit).map(branch => ({
     name: branch.name,
     current: branch.name === listing.current,
     checkedOut: branch.checkedOut === true,
   }))
-  const hidden = matching.length - rows.length + (query.trim() === '' ? (listing.more ?? 0) : 0)
-  return { rows, hidden }
+  return { rows, hidden: matching.length - rows.length }
 }
 
 /** What Enter in the search field switches to: the first row it can switch to that is not the current branch. */

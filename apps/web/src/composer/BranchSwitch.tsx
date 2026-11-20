@@ -8,6 +8,7 @@ import {
   MenuPanel,
   MenuSearch,
   Popover,
+  SegmentedControl,
   Spinner,
   Tooltip,
   useLayerClose,
@@ -22,16 +23,20 @@ import { api, ApiError, errorMessage, isUncertain, newRequestId } from '../core/
 import { defineCopy } from '../core/i18n.ts'
 import type { DeviceAccess } from '../core/permissions.ts'
 import type { ConnectionStatus } from '../core/useHarness.ts'
-import { branchRows, choosable, enterChoice, type SwitchState } from './branchList.ts'
+import { branchRows, choosable, enterChoice, type BranchGroup, type SwitchState } from './branchList.ts'
 
 const COPY = defineCopy(
   {
     label: '分支',
+    location: '分支位置',
+    local: '本地分支',
+    worktrees: '其他工作树',
     tip: (name: string) => `分支 ${name}`,
     trigger: (name: string) => `分支：${name}，切换分支`,
     reading: '正在读取分支',
     none: '没有匹配的分支',
     more: (count: number) => `还有 ${count} 个，搜索查看`,
+    omitted: (count: number) => `仓库中另有 ${count} 个分支未列出`,
     held: '已在另一个工作树检出',
     retry: '重试',
     unknown: '没有收到答复，结果未知',
@@ -43,11 +48,15 @@ const COPY = defineCopy(
   },
   {
     label: 'Branch',
+    location: 'Branch location',
+    local: 'Local branches',
+    worktrees: 'Other worktrees',
     tip: (name: string) => `Branch ${name}`,
     trigger: (name: string) => `Branch: ${name}, switch branch`,
     reading: 'Reading branches',
     none: 'No matching branches',
     more: (count: number) => `${count} more, search to see them`,
+    omitted: (count: number) => `${count} other branches in this repository were omitted`,
     held: 'Checked out in another worktree',
     retry: 'Retry',
     unknown: 'No answer; the result is unknown',
@@ -168,6 +177,7 @@ function BranchList({
   const close = useLayerClose()
   const [list, setList] = useState<ListState>({ state: 'reading' })
   const [query, setQuery] = useState('')
+  const [group, setGroup] = useState<BranchGroup>('local')
   const panel = useRef<HTMLDivElement>(null)
   const asked = useRef(0)
   const load = useCallback(() => {
@@ -215,7 +225,8 @@ function BranchList({
   }
 
   const ready = list.state === 'ready' ? list.listing : undefined
-  const { rows, hidden } = ready ? branchRows(ready, query) : { rows: [], hidden: 0 }
+  const hasWorktrees = ready?.branches.some(branch => branch.checkedOut)
+  const { rows, hidden } = ready ? branchRows(ready, query, hasWorktrees ? group : 'local') : { rows: [], hidden: 0 }
   const items: MenuItem[] = rows.map(row => ({
     id: row.name,
     label: row.name,
@@ -243,7 +254,23 @@ function BranchList({
 
   return (
     <div className="branch-list" data-switching={switching.state === 'switching' ? '' : undefined}>
-      <MenuSearch label={COPY.label} value={query} onValueChange={setQuery} onKeyDown={searchKeys} />
+      <div className="branch-list-filters">
+        <MenuSearch label={COPY.label} value={query} onValueChange={setQuery} onKeyDown={searchKeys} />
+        {hasWorktrees && (
+          <SegmentedControl<BranchGroup>
+            label={COPY.location}
+            value={group}
+            options={[
+              { value: 'local', label: COPY.local },
+              { value: 'worktrees', label: COPY.worktrees },
+            ]}
+            onValueChange={next => {
+              setGroup(next)
+              setQuery('')
+            }}
+          />
+        )}
+      </div>
       {switching.state === 'refused' && (
         <InlineNotice tone="warn" className="branch-list-notice">
           {switching.message}
@@ -294,6 +321,7 @@ function BranchList({
           }}
         />
       )}
+      {!!ready?.more && !query.trim() && <p className="branch-list-state branch-list-more">{COPY.omitted(ready.more)}</p>}
     </div>
   )
 }
