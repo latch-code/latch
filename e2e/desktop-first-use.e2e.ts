@@ -1,4 +1,4 @@
-import { _electron, type ElectronApplication, type Page } from '@playwright/test'
+import { _electron, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { type AppSnapshot, type AgentSettings, type TaskDetail } from '@latch/protocol'
+import { AGENT_PRESETS, type AppSnapshot, type AgentSettings, type TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { writeHostState } from '@latch/host/host-state'
@@ -64,14 +64,33 @@ async function launch(host: TestHost, directory: string): Promise<ElectronApplic
     timeout: 30_000,
   })
 }
-async function resize(application: ElectronApplication, page: Page, width: number) {
-  await application.evaluate(({ BrowserWindow }, width) => {
-    const window = BrowserWindow.getAllWindows()[0]!
-    window.setMinimumSize(320, 400)
-    window.setSize(width, 1000)
-  }, width)
-  await page.waitForFunction(width => innerWidth === width, width)
+async function resize(application: ElectronApplication, page: Page, width: number, height?: number) {
+  await application.evaluate(
+    ({ BrowserWindow }, { width, height }) => {
+      const window = BrowserWindow.getAllWindows()[0]!
+      window.setMinimumSize(320, 400)
+      if (height === undefined) window.setSize(width, 1000)
+      else window.setContentSize(width, height)
+    },
+    { width, height },
+  )
+  await page.waitForFunction(({ width, height }) => innerWidth === width && (height === undefined || innerHeight === height), {
+    width,
+    height,
+  })
   await page.emulateMedia({ colorScheme: width === 900 ? 'dark' : 'light', reducedMotion: 'reduce' })
+}
+function visibleRatio(locator: Locator) {
+  return locator.evaluate(
+    element =>
+      new Promise<number>(done => {
+        const observer = new IntersectionObserver(([entry]) => {
+          observer.disconnect()
+          done(entry!.intersectionRatio)
+        })
+        observer.observe(element)
+      }),
+  )
 }
 async function enroll(page: Page) {
   page.setDefaultTimeout(15_000)
@@ -234,45 +253,80 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       const adapter = join(bin, 'codex-acp')
       await writeFile(adapter, ['#!/bin/sh', `exec "${process.execPath}" "${FAKE_ACP_AGENT}" "$@"`].join('\n'))
       await chmod(adapter, 0o755)
+      const lastPreset = AGENT_PRESETS.at(-1)!
+      const upgrade = { need: '夹具需要升级', upgrade: 'latch-test-upgrade' }
+      let needsUpgrade = false
       // Every preset found, as on a Mac with many installed: only Codex can run.
       const host = await startTestHost({
         demo: false,
-        detectPreset: preset => ({ found: true, path: preset.id === 'codex' ? adapter : join(bin, preset.id) }),
+        detectPreset: preset => ({
+          found: true,
+          path: preset.id === 'codex' ? adapter : join(bin, preset.id),
+          ...(needsUpgrade && preset.id === lastPreset.id ? { outdated: upgrade } : {}),
+        }),
         commandDirectories: () => [bin],
       })
       let application: ElectronApplication | undefined
       try {
         application = await launch(host, join(directory, 'electron'))
         const page = await application.firstWindow()
-        await application.evaluate(({ BrowserWindow }) => {
-          const window = BrowserWindow.getAllWindows()[0]!
-          window.setMinimumSize(320, 400)
-          window.setSize(1280, 640)
-        })
-        await page.waitForFunction(() => innerWidth === 1280)
-        await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+        await resize(application, page, 1280, 640)
         await enroll(page)
         const found = page.getByRole('region', { name: '找到的 Harness', exact: true })
-        await found.waitFor()
-        const toggle = found.locator('.harness-found-toggle')
-        const inView = async () => {
-          const box = await page.locator('.workbench-home form.composer').boundingBox()
-          return box !== null && box.y >= 0 && box.y + box.height <= (await page.evaluate(() => innerHeight))
-        }
+        const summary = `在这台 Mac 上找到 ${AGENT_PRESETS.length} 个 Harness`
+        const toggle = found.getByRole('button', { name: summary, exact: true })
+        const composer = page.locator('.workbench-home form.composer')
+        const list = found.getByRole('list')
         // One line: how many, their marks, and the way to open the list.
         expect(await toggle.getAttribute('aria-expanded')).toBe('false')
+        expect(await list.isVisible()).toBe(false)
         const marks = found.locator('.harness-found-marks > :visible')
         expect(await marks.count()).toBeGreaterThan(1)
         expect(await marks.count()).toBeLessThanOrEqual(3)
-        expect(await inView()).toBe(true)
+        expect(await visibleRatio(composer)).toBe(1)
         await mkdir('test-results/desktop-first-use', { recursive: true })
         await page.screenshot({ path: 'test-results/desktop-first-use/found-many-1280x640.png', animations: 'disabled' })
-        // Open, the list scrolls in what is left; the input stays whole.
         await toggle.click()
-        await found.locator('.harness-found-row').first().waitFor()
-        expect(await inView()).toBe(true)
+        await list.waitFor()
+        expect(await visibleRatio(composer)).toBe(1)
         await noHorizontalOverflow(page)
         await page.screenshot({ path: 'test-results/desktop-first-use/found-many-open-1280x640.png', animations: 'disabled' })
+
+        // At a shorter height the rows scroll, but the card, its header and the composer stay whole.
+        await resize(application, page, 1280, 480)
+        expect(await visibleRatio(found), 'the card fits inside its scrolling ancestors').toBe(1)
+        expect(await visibleRatio(composer)).toBe(1)
+        const titlebar = (await page.locator('.app-shell > .titlebar').boundingBox())!
+        expect((await found.boundingBox())!.y, 'the card starts below the title bar').toBeGreaterThanOrEqual(titlebar.y + titlebar.height)
+        expect(await toggle.getAttribute('aria-expanded')).toBe('true')
+        expect(await marks.count()).toBe(0)
+        const rows = list.getByRole('listitem')
+        expect(await rows.count()).toBe(AGENT_PRESETS.length)
+        const lastRow = rows.last()
+        await lastRow.getByText(lastPreset.name, { exact: true }).waitFor()
+        expect(await list.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(0)
+        expect(await visibleRatio(lastRow)).toBeLessThan(1)
+        const header = found.locator('.harness-found-head')
+        const headerBeforeScroll = await header.boundingBox()
+        await list.hover()
+        await page.mouse.wheel(0, 1000)
+        await expect.poll(() => visibleRatio(lastRow)).toBe(1)
+        expect(await list.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+        expect(await header.boundingBox()).toEqual(headerBeforeScroll)
+        expect(await visibleRatio(found)).toBe(1)
+        expect(await visibleRatio(composer)).toBe(1)
+
+        // A fresh check can show an upgrade action in a row, and the card still folds from its header.
+        needsUpgrade = true
+        await found.getByRole('button', { name: '重新检测', exact: true }).click()
+        await lastRow.getByText('需要升级', { exact: true }).waitFor()
+        await lastRow.getByRole('button', { name: `怎么升级 ${lastPreset.name}`, exact: true }).click()
+        await lastRow.getByText(upgrade.upgrade, { exact: true }).waitFor()
+        await toggle.click()
+        expect(await toggle.getAttribute('aria-expanded')).toBe('false')
+        await list.waitFor({ state: 'hidden' })
+        expect(await marks.count()).toBeGreaterThan(1)
+        expect(await visibleRatio(composer)).toBe(1)
       } finally {
         await application?.close()
         await host.close()
@@ -282,7 +336,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
 
     it('runs a Harness found on this computer with nothing to add, asking only for the folder', async () => {
       const directory = await mkdtemp(join(tmpdir(), 'latch-electron-found-'))
-      const bin = join(directory, 'bin')
+      const bin = join(directory, 'installed-harness-adapters-on-this-computer')
       await mkdir(bin)
       const adapter = join(bin, 'codex-acp')
       await writeFile(
@@ -316,13 +370,19 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         expect(await page.locator('.setup-card').count()).toBe(0)
         // The first open lists only what was found, with the file the Host found; what is not installed is in settings.
         const found = page.getByRole('region', { name: '找到的 Harness', exact: true })
-        await found.getByText(/^在这台 Mac 上找到 1 个 Harness$/u).waitFor()
-        await found.locator('.harness-found-toggle').click()
-        const codexRow = found.locator('.harness-found-row').filter({ hasText: 'Codex' })
-        await codexRow.getByText('已找到', { exact: true }).waitFor()
+        const toggle = found.getByRole('button', { name: '在这台 Mac 上找到 1 个 Harness', exact: true })
+        await toggle.click()
+        expect(await toggle.getAttribute('aria-expanded')).toBe('true')
+        const list = found.getByRole('list')
+        const codexRow = list.getByRole('listitem').filter({ hasText: 'Codex' })
+        const path = codexRow.locator('code')
+        await path.waitFor()
+        expect(await codexRow.getByText('已找到', { exact: true }).count()).toBe(0)
         // A long path is shortened in the middle; the whole of it is the row's tooltip.
-        expect(await codexRow.locator('.harness-found-path').getAttribute('title')).toBe(adapter)
-        expect(await found.locator('.harness-found-row').count()).toBe(1)
+        expect(await path.textContent()).toMatch(/….*\/codex-acp$/u)
+        expect(await path.getAttribute('title')).toBe(adapter)
+        expect(await list.getByRole('listitem').count()).toBe(1)
+        expect(await list.evaluate(element => element.scrollHeight - element.clientHeight)).toBe(0)
         await noHorizontalOverflow(page)
         await mkdir('test-results/desktop-first-use', { recursive: true })
         await page.screenshot({ path: 'test-results/desktop-first-use/found-1440.png', animations: 'disabled' })

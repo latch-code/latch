@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react'
+import { useEffect, useId, useState, type RefObject } from 'react'
 import { PlugZap } from 'lucide-react'
 import { AGENT_PRESETS, type AgentPresetSettings, type ModelRef } from '@latch/protocol'
 import { Button, ChevronDownGlyph, Collapse, CopyButton, Hint, ICON_STROKE, Icon, RefreshGlyph, WarningGlyph } from '@latch/ui'
@@ -40,7 +40,6 @@ const COPY = defineCopy(
       </>
     ),
     needsUpgrade: '需要升级',
-    detected: '已找到',
     needsAdapter: '缺适配器',
   },
   {
@@ -66,7 +65,6 @@ const COPY = defineCopy(
       </>
     ),
     needsUpgrade: 'Upgrade needed',
-    detected: 'Detected',
     needsAdapter: 'Adapter missing',
   },
 )
@@ -293,11 +291,11 @@ function HowToInstall({ preset, checking, onRecheck }: { preset: AgentPresetSett
 }
 
 /**
- * The first open on this Mac with something found (J9): only what was found, each with the file the Host found, and one
- * that is half there with a short word, its detail on hover. 「已找到」 says only that an executable with that name is here:
- * the Host ran nothing, so it is not drawn as ready. What is not installed is listed in 设置 › Harness.
+ * The summary counts executables the Host found. Each row gives its path or the step needed to use it.
+ * Presets with nothing installed are listed in Settings.
  */
 export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<void> }) {
+  const listId = useId()
   const [presets, setPresets] = useState<AgentPresetSettings[] | null>(null)
   const [checking, setChecking] = useState(false)
   const [how, setHow] = useState<string | null>(null)
@@ -361,42 +359,42 @@ export function FoundHarnessesCard({ onRecheck }: { onRecheck: () => Promise<voi
           type="button"
           className="harness-found-toggle"
           aria-expanded={shown}
+          aria-controls={listId}
           onClick={() => {
             setOpen(!shown)
           }}>
           <strong>{COPY.foundCount(found.length)}</strong>
-          <span className="harness-found-marks" aria-hidden="true">
-            {found.map(({ preset }) => (
-              <MarkTile key={preset.id} mark={preset.id} size={16} />
-            ))}
-          </span>
+          {!shown && (
+            <span className="harness-found-marks" aria-hidden="true">
+              {found.slice(0, 3).map(({ preset }) => (
+                <MarkTile key={preset.id} mark={preset.id} size={16} />
+              ))}
+            </span>
+          )}
           <Icon icon={ChevronDownGlyph} size={12} className="harness-found-chevron" />
         </button>
         <Button size="xs" variant="ghost" icon={RefreshGlyph} loading={checking} onClick={recheck}>
           {COPY.recheck}
         </Button>
       </div>
-      <Collapse open={shown}>
-        <ul className="harness-found-list">
-          {found.map(({ preset, path }) =>
-            preset.detected?.outdated ? (
-              halfRow(preset, COPY.needsUpgrade, preset.detected.outdated.need)
-            ) : (
-              <li key={preset.id} className="harness-found-row">
-                <MarkTile mark={preset.id} size={16} />
-                <span className="harness-found-name">{preset.name}</span>
-                <span className="harness-found-state">{COPY.detected}</span>
-                {path && (
-                  <code className="harness-found-path" title={path}>
-                    <VisibleText text={middleEllipsis(path, 56)} />
-                  </code>
-                )}
-              </li>
-            ),
-          )}
-          {halfway.map(({ preset, program }) => halfRow(preset, COPY.needsAdapter, COPY.missingAdapter(program)))}
-        </ul>
-      </Collapse>
+      <ul id={listId} className="harness-found-list" aria-label={COPY.found} hidden={!shown} tabIndex={0}>
+        {found.map(({ preset, path }) =>
+          preset.detected?.outdated ? (
+            halfRow(preset, COPY.needsUpgrade, preset.detected.outdated.need)
+          ) : (
+            <li key={preset.id} className="harness-found-row">
+              <MarkTile mark={preset.id} size={16} />
+              <span className="harness-found-name">{preset.name}</span>
+              {path && (
+                <code className="harness-found-path" title={path}>
+                  <VisibleText text={middleEllipsis(path, 56)} />
+                </code>
+              )}
+            </li>
+          ),
+        )}
+        {halfway.map(({ preset, program }) => halfRow(preset, COPY.needsAdapter, COPY.missingAdapter(program)))}
+      </ul>
     </section>
   )
 }
