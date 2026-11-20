@@ -38,6 +38,8 @@ import {
   swipeOutcome,
   toggleZoom,
   zoomable,
+  zoomedIn,
+  zoomTo,
   type Room,
   type ViewerPicture,
   type ViewerState,
@@ -287,8 +289,9 @@ interface Gesture {
 }
 
 /**
- * The picture large over the whole window, which dims behind it: fitted to the room inside the margins, never cropped
- * and never drawn past its own size, with no frame round it. Only icons stay on the dim: 在文件中打开, 下载 and 关闭 at
+ * The picture large over the whole window, which dims behind it: fitted to the room inside the margins, never cropped,
+ * with no frame round it. It zooms on from there: a pinch (fingers or a trackpad) or + and − to any scale up to
+ * `VIEWER_MAX_SCALE`× its own size, 0 back to fit. Only icons stay on the dim: 在文件中打开, 下载 and 关闭 at
  * the top right (clear of a desktop window's own buttons at the top left) and, with several pictures, the steps and the
  * count in a pill at the bottom. A press on the picture shows it at 100% where it was pressed (drag or scroll to look
  * around) and another fits it again; on touch that is a double tap, a swipe steps, and a drag down closes. Esc, 关闭 or a
@@ -326,12 +329,22 @@ function Viewer({
   // Where the press began: with the pointer captured, the click that follows is aimed at the stage, wherever it was.
   const pressedImage = useRef(false)
   const anchor = useRef<{ fx: number; fy: number; cx: number; cy: number } | null>(null)
+  // Fingers on the stage, where each is now; two make a pinch around the point between them.
+  const fingers = useRef(new Map<number, { x: number; y: number }>())
+  const pinch = useRef<{ distance: number; scale: number; fx: number; fy: number } | null>(null)
   const controller = useRef<AbortController | null>(null)
 
   const size =
     natural?.url === picture.url ? natural : picture.width && picture.height ? { width: picture.width, height: picture.height } : undefined
-  const scale = size && room ? fitScale(size, room) : undefined
+  const fit = size && room ? fitScale(size, room) : undefined
+  const zoomed = zoomedIn(state)
+  const drawn = state.scale ?? fit
   const canZoom = !!size && !!room && zoomable(size, room)
+  // What a wheel listener outside React's render reads.
+  const latest = useRef({ state, size, room })
+  useLayoutEffect(() => {
+    latest.current = { state, size, room }
+  })
 
   useLayoutEffect(() => {
     const element = stage.current
@@ -350,35 +363,72 @@ function Viewer({
       setNatural({ url: picture.url, width: element.naturalWidth, height: element.naturalHeight })
   }, [drawing, picture.url])
 
-  // At 100% the point that was pressed stays under the pointer; without one, the middle of the picture.
+  // A new scale keeps the point it was asked about under the pointer or between the fingers; without one, the middle.
   useLayoutEffect(() => {
-    const element = stage.current
-    if (!element || !state.zoomed || !size) return
+    const element = stage.current,
+      img = image.current
     const at = anchor.current
     anchor.current = null
-    const bounds = element.getBoundingClientRect()
-    const x = at ? at.fx * size.width - (at.cx - bounds.left) : (size.width - element.clientWidth) / 2
-    const y = at ? at.fy * size.height - (at.cy - bounds.top) : (size.height - element.clientHeight) / 2
-    element.scrollTo(Math.max(0, x), Math.max(0, y))
-  }, [state.zoomed, state.index, size?.width, size?.height])
+    if (!element || !img || !zoomed) return
+    const box = img.getBoundingClientRect()
+    if (at) {
+      element.scrollLeft += box.left + at.fx * box.width - at.cx
+      element.scrollTop += box.top + at.fy * box.height - at.cy
+    } else {
+      const view = element.getBoundingClientRect()
+      element.scrollLeft += box.left + box.width / 2 - (view.left + view.width / 2)
+      element.scrollTop += box.top + box.height / 2 - (view.top + view.height / 2)
+    }
+  }, [state.scale, state.index, zoomed, size?.width, size?.height])
 
+  /** Remembers which point of the picture is under (cx, cy), for the next scale to keep it there. */
+  const anchorAt = (cx: number, cy: number) => {
+    const box = image.current?.getBoundingClientRect()
+    if (box && box.width > 0 && box.height > 0)
+      anchor.current = { fx: (cx - box.left) / box.width, fy: (cy - box.top) / box.height, cx, cy }
+  }
   const step = (delta: 1 | -1) => {
     const next = stepViewer(state, delta)
     if (next !== state) onChange(next)
   }
+  // A press or a double tap: 100% and back to fit, for a picture larger than the room.
   const zoomAt = (clientX: number, clientY: number) => {
     if (!size || !room) return
-    const bounds = image.current?.getBoundingClientRect()
-    if (!state.zoomed && bounds && bounds.width > 0 && bounds.height > 0)
-      anchor.current = {
-        fx: (clientX - bounds.left) / bounds.width,
-        fy: (clientY - bounds.top) / bounds.height,
-        cx: clientX,
-        cy: clientY,
-      }
     const next = toggleZoom(state, size, room)
-    if (next !== state) onChange(next)
+    if (next === state) return
+    if (!zoomed) anchorAt(clientX, clientY)
+    onChange(next)
   }
+  // A pinch on a trackpad, or a key: any scale between fit and the limit, around (cx, cy).
+  const scaleBy = (factor: number, cx: number, cy: number) => {
+    const { state: now, size: measured, room: space } = latest.current
+    if (!measured || !space) return
+    const from = now.scale ?? fitScale(measured, space)
+    const next = zoomTo(now, from * factor, measured, space)
+    if (next === now) return
+    anchorAt(cx, cy)
+    onChange(next)
+  }
+  const middle = () => {
+    const view = stage.current?.getBoundingClientRect()
+    return view ? { x: view.left + view.width / 2, y: view.top + view.height / 2 } : { x: 0, y: 0 }
+  }
+  // A trackpad pinch arrives as a wheel with ctrlKey; it must not zoom the page behind. A plain wheel scrolls.
+  const scaleByRef = useRef(scaleBy)
+  useLayoutEffect(() => {
+    scaleByRef.current = scaleBy
+  })
+  useEffect(() => {
+    const element = stage.current
+    if (!element) return undefined
+    const wheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return
+      event.preventDefault()
+      scaleByRef.current(Math.exp(-event.deltaY / 100), event.clientX, event.clientY)
+    }
+    element.addEventListener('wheel', wheel, { passive: false })
+    return () => element.removeEventListener('wheel', wheel)
+  }, [])
   const settle = () => {
     const element = image.current
     if (!element) return
@@ -393,6 +443,32 @@ function Viewer({
     const touch = event.pointerType !== 'mouse'
     lastTouch.current = touch
     dragged.current = false
+    if (touch) {
+      fingers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch {
+        // The gesture still works while the finger stays over the stage.
+      }
+      // A second finger: the swipe or pan ends and a pinch begins, around the point between the two.
+      if (fingers.current.size === 2) {
+        const [a, b] = [...fingers.current.values()] as [{ x: number; y: number }, { x: number; y: number }]
+        const box = image.current?.getBoundingClientRect()
+        gesture.current = null
+        lastTap.current = null
+        image.current?.style.removeProperty('transform')
+        image.current?.style.removeProperty('opacity')
+        if (box && box.width > 0 && box.height > 0 && drawn !== undefined)
+          pinch.current = {
+            distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+            scale: drawn,
+            fx: ((a.x + b.x) / 2 - box.left) / box.width,
+            fy: ((a.y + b.y) / 2 - box.top) / box.height,
+          }
+        return
+      }
+      if (fingers.current.size > 2) return
+    }
     pressedImage.current = event.target === image.current
     const element = stage.current!
     gesture.current = {
@@ -406,8 +482,8 @@ function Viewer({
       top: element.scrollTop,
       moved: false,
     }
-    // A mouse drags the zoomed picture; a finger at fit swipes. A finger at 100% pans natively.
-    if ((state.zoomed && !touch) || (!state.zoomed && touch)) {
+    // A mouse drags the zoomed picture; a finger swipes at fit and pans when zoomed (captured above).
+    if (zoomed && !touch) {
       try {
         event.currentTarget.setPointerCapture(event.pointerId)
       } catch {
@@ -416,15 +492,35 @@ function Viewer({
     }
   }
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (fingers.current.has(event.pointerId)) fingers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    const pinching = pinch.current
+    if (pinching && fingers.current.size >= 2) {
+      const [a, b] = [...fingers.current.values()] as [{ x: number; y: number }, { x: number; y: number }]
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+      const { state: now, size: measured, room: space } = latest.current
+      if (!measured || !space) return
+      const next = zoomTo(now, (pinching.scale * Math.hypot(a.x - b.x, a.y - b.y)) / pinching.distance, measured, space)
+      const at = { fx: pinching.fx, fy: pinching.fy, cx: mid.x, cy: mid.y }
+      if (next !== now) {
+        anchor.current = at
+        onChange(next)
+      } else if (zoomedIn(now) && stage.current && image.current) {
+        // The same scale (at a limit): the fingers still move the picture with them.
+        const box = image.current.getBoundingClientRect()
+        stage.current.scrollLeft += box.left + at.fx * box.width - at.cx
+        stage.current.scrollTop += box.top + at.fy * box.height - at.cy
+      }
+      return
+    }
     const current = gesture.current
     if (!current || current.id !== event.pointerId) return
     const dx = event.clientX - current.x,
       dy = event.clientY - current.y
     if (!current.moved && Math.hypot(dx, dy) > 6) current.moved = true
     if (!current.moved) return
-    if (state.zoomed && !current.touch) {
+    if (zoomed) {
       stage.current!.scrollTo(current.left - dx, current.top - dy)
-    } else if (!state.zoomed && current.touch && image.current) {
+    } else if (current.touch && image.current) {
       const across = Math.abs(dx) > Math.abs(dy)
       const down = Math.max(0, dy)
       image.current.style.transform = across ? `translateX(${dx}px)` : `translateY(${down}px)`
@@ -432,6 +528,29 @@ function Viewer({
     }
   }
   const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    fingers.current.delete(event.pointerId)
+    if (pinch.current) {
+      if (fingers.current.size < 2) {
+        pinch.current = null
+        // The finger left on the glass carries on as a pan, never as a tap or a swipe.
+        const rest = [...fingers.current.entries()][0]
+        gesture.current =
+          rest && stage.current
+            ? {
+                id: rest[0],
+                touch: true,
+                onImage: false,
+                x: rest[1].x,
+                y: rest[1].y,
+                time: event.timeStamp,
+                left: stage.current.scrollLeft,
+                top: stage.current.scrollTop,
+                moved: true,
+              }
+            : null
+      }
+      return
+    }
     const current = gesture.current
     gesture.current = null
     if (!current || current.id !== event.pointerId) return
@@ -440,7 +559,7 @@ function Viewer({
       return
     }
     if (current.moved) {
-      if (state.zoomed) return
+      if (zoomed) return
       const outcome = swipeOutcome(event.clientX - current.x, event.clientY - current.y, event.timeStamp - current.time)
       if (outcome === 'close') onClose()
       else if ((outcome === 'next' && state.index < count - 1) || (outcome === 'previous' && state.index > 0)) {
@@ -450,7 +569,7 @@ function Viewer({
       } else settle()
       return
     }
-    // A tap: twice on the picture toggles 100%, once beside it closes.
+    // A tap: twice on the picture toggles 100% (or back to fit from any zoom), once beside it closes.
     if (!current.onImage) {
       onClose()
       return
@@ -461,9 +580,11 @@ function Viewer({
       zoomAt(event.clientX, event.clientY)
     } else lastTap.current = { time: event.timeStamp, x: event.clientX, y: event.clientY }
   }
-  const onPointerCancel = () => {
+  const onPointerCancel = (event: PointerEvent<HTMLDivElement>) => {
+    fingers.current.delete(event.pointerId)
+    if (fingers.current.size < 2) pinch.current = null
     gesture.current = null
-    if (!state.zoomed) settle()
+    if (!zoomed) settle()
   }
   const onClick = (event: MouseEvent<HTMLDivElement>) => {
     // A touch was handled when it ended; a mouse drag is not a press.
@@ -479,10 +600,19 @@ function Viewer({
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     // The viewer's keys are its own: nothing behind it (a running turn, a side panel) hears them.
     if (event.key === 'Escape') event.stopPropagation()
-    if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && !state.zoomed && !event.altKey && !event.metaKey && !event.ctrlKey) {
+    if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && !zoomed && !event.altKey && !event.metaKey && !event.ctrlKey) {
       event.preventDefault()
       event.stopPropagation()
       step(event.key === 'ArrowRight' ? 1 : -1)
+    }
+    // + and − zoom around the middle of the window, 0 fits the picture again.
+    if (!event.altKey && !event.ctrlKey && (event.key === '+' || event.key === '=' || event.key === '-' || event.key === '0')) {
+      event.preventDefault()
+      event.stopPropagation()
+      const at = middle()
+      if (event.key === '0') {
+        if (zoomed) onChange({ pictures: state.pictures, index: state.index })
+      } else scaleBy(event.key === '-' ? 0.8 : 1.25, at.x, at.y)
     }
   }
   const save = async () => {
@@ -498,8 +628,7 @@ function Viewer({
     }
   }
   const saving = download?.url === picture.url ? download.state : undefined
-  const shown =
-    state.zoomed && size ? size : size && scale !== undefined ? { width: size.width * scale, height: size.height * scale } : undefined
+  const shown = size && drawn !== undefined ? { width: size.width * drawn, height: size.height * drawn } : undefined
 
   return (
     <Modal label={picture.name} variant="dialog" onClose={() => onClose()} className="picture-viewer">
@@ -511,7 +640,7 @@ function Viewer({
           tabIndex={-1}
           data-autofocus=""
           data-steps={count > 1 ? '' : undefined}
-          data-zoom={state.zoomed ? 'actual' : canZoom ? 'fit' : undefined}
+          data-zoom={zoomed ? 'actual' : canZoom ? 'fit' : undefined}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}

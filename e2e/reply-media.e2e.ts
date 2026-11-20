@@ -357,6 +357,58 @@ describe('media in replies', () => {
       await expect
         .poll(async () => [await stage.getAttribute('data-zoom'), Math.round((await picture.boundingBox())!.width)])
         .toEqual(['fit', Math.round(fitted.width)])
+      // Two fingers zoom on past 100% and back, around the point between them; nothing zooms the page behind.
+      const pinch = (from: number, to: number) =>
+        stage.evaluate(
+          (node, [a, b]) => {
+            const box = node.getBoundingClientRect(),
+              cx = box.left + box.width / 2,
+              cy = box.top + box.height / 2
+            const at = (type: string, id: number, x: number) =>
+              node.dispatchEvent(
+                new PointerEvent(type, {
+                  pointerId: id,
+                  pointerType: 'touch',
+                  isPrimary: id === 11,
+                  bubbles: true,
+                  clientX: x,
+                  clientY: cy,
+                  button: 0,
+                }),
+              )
+            at('pointerdown', 11, cx - a!)
+            at('pointerdown', 12, cx + a!)
+            for (let step = 1; step <= 8; step++) {
+              const d = a! + ((b! - a!) * step) / 8
+              at('pointermove', 11, cx - d)
+              at('pointermove', 12, cx + d)
+            }
+            at('pointerup', 12, cx + b!)
+            at('pointerup', 11, cx - b!)
+          },
+          [from, to],
+        )
+      expect(await stage.evaluate(node => getComputedStyle(node).touchAction)).toBe('none')
+      await pinch(40, 400)
+      await expect.poll(() => stage.getAttribute('data-zoom')).toBe('actual')
+      expect((await picture.boundingBox())!.width).toBeGreaterThan(1200)
+      await pinch(400, 20)
+      await expect
+        .poll(async () => [await stage.getAttribute('data-zoom'), Math.round((await picture.boundingBox())!.width)])
+        .toEqual(['fit', Math.round(fitted.width)])
+      // A trackpad pinch is a wheel with ctrl: it zooms up to four times the picture's own size.
+      await picture.hover()
+      await page.keyboard.down('Control')
+      await page.mouse.wheel(0, -600)
+      await page.keyboard.up('Control')
+      await expect.poll(async () => Math.round((await picture.boundingBox())!.width)).toBe(4800)
+      // 0 fits it again; + and − zoom around the middle.
+      await page.keyboard.press('0')
+      await expect.poll(() => stage.getAttribute('data-zoom')).toBe('fit')
+      await page.keyboard.press('+')
+      await expect.poll(() => stage.getAttribute('data-zoom')).toBe('actual')
+      await page.keyboard.press('0')
+      await expect.poll(() => stage.getAttribute('data-zoom')).toBe('fit')
       await page.keyboard.press('ArrowLeft')
       await page.getByRole('dialog', { name: '第一张', exact: true }).waitFor()
       // At either end it stays.
@@ -446,10 +498,9 @@ describe('media in replies', () => {
       const img = drawn.locator('img.inline-media-image')
       await expect.poll(() => img.evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth === 960), SLOW).toBe(true)
       expect(await img.getAttribute('src')).toMatch(/^\/link\/api\/files\/[A-Za-z0-9_-]{22}\?v=[a-f0-9]{32}$/u)
-      // The link draws the same picture above its chip; the unnamed sibling is never asked for or shown.
-      const chip = answer.locator('.message-media-caption .file-chip', { hasText: '下载 ig_e2e 原图' })
-      await chip.waitFor()
-      expect(await answer.locator('img.inline-media-image').count()).toBe(2)
+      // The link draws the same picture, with no chip left under it; the unnamed sibling is never asked for or shown.
+      await expect.poll(() => answer.locator('img.inline-media-image').count(), SLOW).toBe(2)
+      expect(await answer.locator('.file-chip', { hasText: '下载 ig_e2e 原图' }).count()).toBe(0)
       const sibling = await page.evaluate(
         async ([route, path]) => {
           const response = await fetch(route!, {
@@ -474,8 +525,9 @@ describe('media in replies', () => {
       await viewer.getByRole('button', { name: '关闭', exact: true }).click()
       await viewer.waitFor({ state: 'detached' })
       await expect.poll(() => drawn.evaluate(node => node === document.activeElement)).toBe(true)
-      // The chip opens the picture in the file pane, whose breadcrumb names the real folder, not a session folder.
-      await chip.click()
+      // The viewer's 在文件中打开 shows the picture in the file pane, whose breadcrumb names the real folder.
+      await drawn.click()
+      await viewer.getByRole('button', { name: '在文件中打开', exact: true }).click()
       const pane = page.getByRole('region', { name: '文件预览', exact: true })
       await pane.waitFor()
       const crumb = pane.locator('.file-crumb-folder')
@@ -662,6 +714,16 @@ describe('a picture Codex makes', () => {
       expect(await page.locator('.turn img.inline-media-image').count()).toBe(1)
       expect(await page.locator('.tool-card', { hasText: '生成图片' }).count()).toBe(0)
       await expect.poll(async () => (await detail()).summary.status, SLOW).toBe('idle')
+      // The reply's 「下载 PNG 原图」 names the same file: it is not shown a second time, as a picture or as a chip.
+      await expect
+        .poll(
+          async () => [
+            await page.locator('.turn img.inline-media-image').count(),
+            await page.locator('.file-chip', { hasText: '下载 PNG 原图' }).count(),
+          ],
+          SLOW,
+        )
+        .toEqual([1, 0])
       await shots(page, 'image-drawn', { picture }, [390, 1440])
       // Pressed, the made picture is shown large over the page, not in the file pane.
       await place.locator('button.inline-media-open').click()

@@ -217,11 +217,25 @@ const TAIL_LINES = COLLAPSED_LINES - 1
 
 /** Direct replies share the transcript's scrollport. Other Markdown surfaces find their own. */
 export const ReplyViewport = createContext<RefObject<Element | null> | undefined>(undefined)
+/** A picture the turn's Harness generated, as its stored copy measures: bytes and pixels. */
+export interface TurnPicture {
+  size: number
+  width?: number
+  height?: number
+}
 /**
- * The reply's turn already shows a picture its Harness generated: a link in it to a picture is that picture's 「下载原图」
- * as a rule, so it stays a path chip instead of drawing the same picture a second time. `![](…)` still draws.
+ * The pictures the reply's turn already shows as generated: a link or `![](…)` in the reply to the same file (the same
+ * bytes and pixels, as the Host measures it) is that picture's 「下载原图」, and is not shown a second time.
  */
-export const TurnPictured = createContext(false)
+export const TurnPictured = createContext<readonly TurnPicture[]>([])
+function samePicture(media: ResolvedMedia, picture: TurnPicture): boolean {
+  return (
+    media.kind === 'image'
+    && media.size === picture.size
+    && (picture.width === undefined || media.width === picture.width)
+    && (picture.height === undefined || media.height === picture.height)
+  )
+}
 
 const CodeBlock = memo(function CodeBlock({ code, language, closed = true }: { code: string; language?: string; closed?: boolean }) {
   const [expanded, setExpanded] = useState(false)
@@ -396,9 +410,11 @@ function relativeFile(reference: string, path?: string): string | undefined {
   return parts.join('/')
 }
 /**
- * A local file a reply or document names. `![](…)` draws the picture, video or sound it names, and a link (`fallback`
- * given: a reply's path chip) draws its media above that chip, once the reply settled and the place nears the view, from
- * a handle the Host authorized. What the Host does not authorize as media stays the chip or link it was.
+ * A local file a reply or document names. `![](…)` and a link (`fallback` given: a reply's path chip) draw the picture,
+ * video or sound it names once the reply settled and the place nears the view, from a handle the Host authorized: a
+ * picture alone, a video or sound above its chip. What the Host does not authorize as media stays the chip or link it
+ * was. A picture the turn already shows as generated is not shown again; until that is known, a link to a picture in
+ * such a turn holds no chip, so none appears and goes.
  */
 function MarkdownFile({
   reference,
@@ -418,6 +434,8 @@ function MarkdownFile({
     path = relativeFile(reference, files.path),
     anchor = useRef<HTMLSpanElement>(null),
     [value, setValue] = useState<{ key: string; media: ResolvedMedia }>(),
+    // The Host answered and there is nothing to draw: the chip or link stays.
+    [plainKey, setPlainKey] = useState<string>(),
     [failed, setFailed] = useState<string>(),
     // A handle idles out (15 minutes): the first failure asks the Host once more and resumes where playback stood.
     [retry, setRetry] = useState<{ key: string; at?: number }>()
@@ -431,7 +449,7 @@ function MarkdownFile({
   )
   const pictured = useContext(TurnPictured)
   const linked = fallback !== undefined && path ? mediaTypeOf(path) : undefined
-  const wanted = !!path && !!resolve && (image || (linked !== undefined && !(pictured && linked === 'image')))
+  const wanted = !!path && !!resolve && (image || linked !== undefined)
   const seen = useSeen(anchor)
   // A new resolver is a new session or root: what an older one answered is not shown for it.
   const key = `${path ?? ''}\n${image}`
@@ -441,16 +459,20 @@ function MarkdownFile({
     const controller = new AbortController()
     void resolve(path, controller.signal)
       .then(media => {
-        if (controller.signal.aborted || !drawableMedia(media, location.href)) return
-        setValue({ key, media })
+        if (controller.signal.aborted) return
+        if (drawableMedia(media, location.href)) setValue({ key, media })
+        else setPlainKey(key)
       })
-      .catch(() => {})
+      .catch(() => {
+        if (!controller.signal.aborted) setPlainKey(key)
+      })
     return () => {
       controller.abort()
       setValue(undefined)
     }
   }, [ready, path, key, resolve, retry])
   const shown = value?.key === key && failed !== key ? value.media : undefined
+  if (shown && pictured.some(picture => samePicture(shown, picture))) return null
   if (path && shown) {
     const label = alt || (typeof children === 'string' ? children : '') || referenceName(path)
     const media = (
@@ -462,7 +484,7 @@ function MarkdownFile({
         {...(files.onOpenFile && shown.kind === 'image' ? { openInFiles: () => files.onOpenFile?.(path) } : {})}
       />
     )
-    if (image) return media
+    if (image || shown.kind === 'image') return media
     return (
       <span className="message-media" data-kind={shown.kind}>
         {media}
@@ -478,7 +500,10 @@ function MarkdownFile({
         {children}
       </MarkdownFileLink>
     )
-  return wanted ? <span ref={anchor}>{plain}</span> : plain
+  // In a turn with a generated picture, a link to a picture waits unseen for the Host's answer instead of showing a chip
+  // that may then go.
+  const holding = wanted && pictured.length > 0 && (image || linked === 'image') && plainKey !== key && failed !== key
+  return wanted ? <span ref={anchor}>{holding ? null : plain}</span> : plain
 }
 
 function MarkdownFileLink({

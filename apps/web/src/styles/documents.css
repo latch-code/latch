@@ -817,7 +817,8 @@
   padding: calc(var(--sp-64) + var(--sp-16) + env(safe-area-inset-top)) max(var(--sp-64), env(safe-area-inset-right))
     calc(var(--sp-64) + var(--sp-16) + env(safe-area-inset-bottom)) max(var(--sp-64), env(safe-area-inset-left));
   outline: none;
-  touch-action: pinch-zoom;
+  /* Every finger is the viewer's: a pinch zooms the picture, never the page behind it. */
+  touch-action: none;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -827,7 +828,6 @@
 .picture-viewer-stage[data-zoom='actual'] {
   overflow: auto;
   cursor: grab;
-  touch-action: pan-x pan-y pinch-zoom;
 }
 .picture-viewer-stage[data-zoom='actual'] .picture-viewer-image {
   cursor: zoom-out;

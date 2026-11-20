@@ -59,6 +59,7 @@ describe('inline media in a reply', () => {
       width: 1536,
       height: 1024,
       name: 'chart.png',
+      size: 2048,
       download: true,
     })
     expect(
@@ -83,8 +84,8 @@ describe('inline media in a reply', () => {
     expect(html).toContain('aria-label="预览图片：图表"')
     expect(html).toContain('aria-haspopup="dialog"')
     expect(html).toMatch(/^<button type="button" class="inline-media inline-media-open"/u)
-    expect(inlineImageWidth(1536, 1024)).toBe('min(100%, 720px)')
-    expect(inlineImageWidth(1024, 1536)).toBe('min(100%, 320px)')
+    expect(inlineImageWidth(1536, 1024)).toBe('min(100%, 480px)')
+    expect(inlineImageWidth(1024, 1536)).toBe('min(100%, 213px)')
     expect(inlineImageWidth(64, 40)).toBe('min(100%, 64px)')
   })
 
@@ -161,6 +162,7 @@ describe('a picture the conversation names outside the session folders', () => {
       width: 1536,
       height: 1024,
       name: 'ig_1.png',
+      size: 2048,
       download: true,
     })
     expect(drawableMedia(media, HERE)).toBe(true)

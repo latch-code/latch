@@ -21,11 +21,12 @@ export interface ViewerPicture {
   element: () => HTMLElement | null
 }
 
-/** The open viewer: the pictures of the message or turn in reading order, the one shown, and whether it is at 100%. */
+/** The open viewer: the pictures of the message or turn in reading order, the one shown, and how large it is drawn. */
 export interface ViewerState {
   pictures: ViewerPicture[]
   index: number
-  zoomed: boolean
+  /** Drawn at this multiple of its own size; absent, fitted to the room. */
+  scale?: number
 }
 
 /** Pictures in the order they stand on the page; one without an element keeps its place after those with one. */
@@ -58,14 +59,22 @@ export function openViewer(pictures: ViewerPicture[], id: string): ViewerState |
     })
     .map(picture => (picture.url === pressed.url ? pressed : picture))
   const index = unique.findIndex(picture => picture.url === pressed.url)
-  return { pictures: unique, index, zoomed: false }
+  return { pictures: unique, index }
 }
 
 /** The next (1) or previous (-1) picture; at either end it stays. Stepping always shows the new one fitted. */
 export function stepViewer(state: ViewerState, delta: 1 | -1): ViewerState {
   const index = Math.min(state.pictures.length - 1, Math.max(0, state.index + delta))
-  return index === state.index ? state : { ...state, index, zoomed: false }
+  return index === state.index ? state : { pictures: state.pictures, index }
 }
+
+/** Whether the picture is drawn larger than fitted. */
+export function zoomedIn(state: ViewerState): boolean {
+  return state.scale !== undefined
+}
+
+/** How far a picture can be zoomed in, as a multiple of its own size (or of its fitted size, when that is larger). */
+export const VIEWER_MAX_SCALE = 4
 
 export interface Room {
   width: number
@@ -83,10 +92,23 @@ export function zoomable(size: Room, room: Room): boolean {
   return fitScale(size, room) < 1
 }
 
-/** 100% ↔ fit; a picture that already fits at 100% stays as it is. */
+/** 100% ↔ fit, from anywhere in between back to fit; a picture that already fits at 100% stays as it is. */
 export function toggleZoom(state: ViewerState, size: Room, room: Room): ViewerState {
-  if (!state.zoomed && !zoomable(size, room)) return state
-  return { ...state, zoomed: !state.zoomed }
+  if (state.scale !== undefined) return { pictures: state.pictures, index: state.index }
+  if (!zoomable(size, room)) return state
+  return { ...state, scale: 1 }
+}
+
+/**
+ * The scale a pinch, a trackpad or a key asks for, between fitted and `VIEWER_MAX_SCALE`× the picture's own size: any
+ * picture zooms this way, a small one too. At fitted or below, the picture is fitted again.
+ */
+export function zoomTo(state: ViewerState, scale: number, size: Room, room: Room): ViewerState {
+  const fit = fitScale(size, room),
+    next = Math.min(Math.max(VIEWER_MAX_SCALE, fit), scale)
+  if (!Number.isFinite(next) || next <= fit * 1.001)
+    return state.scale === undefined ? state : { pictures: state.pictures, index: state.index }
+  return state.scale === next ? state : { ...state, scale: next }
 }
 
 /** Where focus goes back when the viewer closes: the picture last shown, else the one that was pressed. */

@@ -12,6 +12,8 @@ export interface ResolvedMedia {
   height?: number
   /** The file's own name, for a download. */
   name?: string
+  /** The file's size in bytes, as the Host reports it. */
+  size?: number
   /** The Host lets this device download the file. */
   download?: boolean
 }
@@ -86,7 +88,15 @@ export function mediaFromAnswer(answer: { status?: string; file?: unknown } | un
       || file.width * file.height > 50_000_000
     )
       return undefined
-    return { kind: 'image', url, width: file.width, height: file.height, name: file.name, download: file.actions.download }
+    return {
+      kind: 'image',
+      url,
+      width: file.width,
+      height: file.height,
+      name: file.name,
+      size: file.size,
+      download: file.actions.download,
+    }
   }
   if (file.kind === 'video' && file.mime.startsWith('video/')) return { kind: 'video', url }
   if (file.kind === 'audio' && file.mime.startsWith('audio/')) return { kind: 'audio', url }

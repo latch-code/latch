@@ -485,7 +485,22 @@ const TurnView = memo(function TurnView({
   // 工作过程, this device's choice: what always shows (approvals, failures, unknown results) is never among what it hides.
   const level = usePreferences().workDisplay
   const blocks = useMemo(() => turnBlocks(turn, level), [turn, level])
-  const pictured = blocks.some(block => block.kind === 'picture')
+  // What the turn's generated pictures measure, so the reply's 「下载原图」 to the same file is not shown again.
+  const pictured = useMemo(
+    () =>
+      blocks.flatMap(block =>
+        block.kind === 'picture'
+          ? (block.message.attachments ?? [])
+              .filter(item => item.kind === 'image')
+              .map(item => ({
+                size: item.size,
+                ...(item.width ? { width: item.width } : {}),
+                ...(item.height ? { height: item.height } : {}),
+              }))
+          : [],
+      ),
+    [blocks],
+  )
   const folds = !trailingLive && workFolds(turn, outcome)
   const hasWork = blocks.some(block => block.kind === 'work' && block.items.some(item => item.kind !== 'thinking'))
   // The rows stay in one tree from the first to the last, so the fold is seen to happen when the turn settles.

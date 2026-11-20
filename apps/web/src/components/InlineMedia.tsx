@@ -9,7 +9,7 @@ const COPY = defineCopy(
 )
 
 /** The tallest an inline picture is drawn; a portrait one is narrowed to keep its shape, never cropped. */
-const IMAGE_MAX_HEIGHT = 480
+const IMAGE_MAX_HEIGHT = 320
 
 /** Width cap that keeps a picture of this shape within the height cap, never wider than the reply column. */
 export function inlineImageWidth(width: number, height: number): string {

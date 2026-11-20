@@ -12,7 +12,9 @@ import {
   stepViewer,
   swipeOutcome,
   toggleZoom,
+  VIEWER_MAX_SCALE,
   zoomable,
+  zoomTo,
   type ViewerPicture,
 } from '../src/components/pictureViewer.ts'
 import { mediaBytes } from '../src/preview/fileImages.ts'
@@ -40,14 +42,14 @@ describe('the picture viewer’s state', () => {
     const state = openViewer(pictures, 'markdown')!
     expect(state.pictures.map(item => item.id)).toEqual(['markdown', 'other'])
     expect(state.index).toBe(0)
-    expect(state.zoomed).toBe(false)
+    expect(state.scale).toBeUndefined()
     expect(openViewer(pictures, 'missing')).toBeUndefined()
   })
 
   it('steps forward and back, stays at either end, and shows each new picture fitted', () => {
-    const state = { ...openViewer([picture('a', null), picture('b', null), picture('c', null)], 'a')!, zoomed: true }
+    const state = { ...openViewer([picture('a', null), picture('b', null), picture('c', null)], 'a')!, scale: 2.5 }
     const second = stepViewer(state, 1)
-    expect([second.index, second.zoomed]).toEqual([1, false])
+    expect([second.index, second.scale]).toEqual([1, undefined])
     expect(stepViewer(stepViewer(second, 1), 1).index).toBe(2)
     expect(stepViewer(state, -1)).toBe(state)
   })
@@ -61,9 +63,26 @@ describe('the picture viewer’s state', () => {
     const state = openViewer([picture('a', null)], 'a')!
     expect(toggleZoom(state, { width: 400, height: 300 }, room)).toBe(state)
     const zoomed = toggleZoom(state, { width: 2000, height: 1000 }, room)
-    expect(zoomed.zoomed).toBe(true)
+    expect(zoomed.scale).toBe(1)
     // Back to fit even when the room grew meanwhile.
-    expect(toggleZoom(zoomed, { width: 400, height: 300 }, room).zoomed).toBe(false)
+    expect(toggleZoom(zoomed, { width: 400, height: 300 }, room).scale).toBeUndefined()
+  })
+
+  it('zooms continuously from fit to four times the picture, a small one too, and fits again at or below fit', () => {
+    const room = { width: 1000, height: 600 },
+      large = { width: 2000, height: 1000 },
+      small = { width: 400, height: 300 }
+    const state = openViewer([picture('a', null)], 'a')!
+    // A pinch between fit (0.5) and the limit.
+    expect(zoomTo(state, 0.75, large, room).scale).toBe(0.75)
+    expect(zoomTo(state, 9, large, room).scale).toBe(VIEWER_MAX_SCALE)
+    // At or below fit it is fitted, with no scale left over; the same state when nothing changes.
+    expect(zoomTo({ ...state, scale: 2 }, 0.4, large, room).scale).toBeUndefined()
+    expect(zoomTo(state, 0.5, large, room)).toBe(state)
+    // A picture smaller than the room, which a press does not zoom, still pinches past its own size.
+    expect(toggleZoom(state, small, room)).toBe(state)
+    expect(zoomTo(state, 2.5, small, room).scale).toBe(2.5)
+    expect(zoomTo(state, Number.NaN, small, room)).toBe(state)
   })
 
   it('gives focus back to the picture last shown, else to the one pressed', () => {
