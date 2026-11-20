@@ -44,8 +44,45 @@ public final class NativeConnectionTimeline: @unchecked Sendable {
     public func entries() -> [Entry] { lock.lock(); defer { lock.unlock() }; return ring }
 }
 
+/** A short background hold can resume its selected conversation once the Host lists it again. */
+public struct PhoneResumingSession: Equatable, Sendable {
+    public enum Action: Equatable, Sendable { case read, close }
+    public let session: String
+    private let host: UUID, selection: UUID, content: UUID
+    private let tab: PhoneTab, agentPath: [String]
+
+    public init(session: String, host: UUID, selection: UUID, content: UUID, tab: PhoneTab, agentPath: [String]) {
+        self.session = session; self.host = host; self.selection = selection; self.content = content
+        self.tab = tab; self.agentPath = agentPath
+    }
+
+    public static func resolve(_ pending: inout Self?, current: Self?, snapshot: NativeJSON) -> Action? {
+        guard let saved = pending else { return nil }
+        guard current == saved else { pending = nil; return nil }
+        switch PhoneWorkItems.sourceVisibility(snapshot, sessionId: saved.session) {
+        case .unconfirmed: return nil
+        case .readable: pending = nil; return .read
+        case .unavailable: pending = nil; return .close
+        }
+    }
+}
+
 /** Retry and dial-order timing; pure so fixtures can check it. */
 public enum NativeReconnectPolicy {
+    /** A newly connected Host may still be starting its Harnesses. A complete list, including an empty one, needs no retry. */
+    @MainActor public static func recoverIncompleteList(current: () -> NativeJSON?, read: () async throws -> Void) async throws {
+        func incomplete() -> Bool {
+            guard !Task.isCancelled, let snapshot = current(), case .array = snapshot["tasks"] else { return false }
+            return !snapshot["tasksComplete"].bool
+        }
+        for delay: Duration in [.milliseconds(500), .seconds(2), .seconds(5)] {
+            guard incomplete() else { return }
+            try await Task.sleep(for: delay)
+            guard incomplete() else { return }
+            try await read()
+        }
+    }
+
     /** A network change retries at once; later failures back off 0.5·2^n s up to 30 s with up to 25% jitter. */
     public static func delay(attempt: Int, afterNetworkChange: Bool, jitter: Double = .random(in: 0...1)) -> Duration {
         if attempt == 0 && afterNetworkChange { return .zero }

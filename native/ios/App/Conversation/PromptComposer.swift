@@ -16,6 +16,7 @@ struct PromptComposer: View {
     var newTopic: ((String) -> Void)? = nil
     @State private var text = ""
     @State private var focused = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var nextModel: PhoneModelChoice?
     /** 「已送达」 for a moment, after 放弃这次提交 found the message already in its session. */
     @State private var settled: String?
@@ -132,7 +133,7 @@ struct PromptComposer: View {
             if !person && gate == nil && model.sessionId != nil && (focused || !controls.isEmpty) { chips }
         }
         .padding(.bottom, 8).padding(.top, 4)
-        .animation(.easeOut(duration: 0.2), value: focused)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: focused)
         .onAppear { if let held = model.takeDraft(for: draftId) { text = held }; insert() }
         // 加入对话 and 带入输入框 put text after what is written, never send it.
         .onChange(of: draftId.flatMap { model.draftInserts[$0] }) { _, value in if value != nil { insert() } }
@@ -164,7 +165,7 @@ struct PromptComposer: View {
     private func gateLine(_ words: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: gate == "Mac 不在线" ? "wifi.slash" : gate == Self.closedWindow ? PhoneUnlock.closedWindowSymbol(faceID: faceID) : "laptopcomputer").font(.system(size: 14)).foregroundStyle(PhoneTheme.muted)
-            Text(words).font(.system(size: 15)).foregroundStyle(PhoneTheme.muted).lineLimit(2)
+            Text(words).font(.subheadline).foregroundStyle(PhoneTheme.muted).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
             if running && gate != "Mac 不在线" && model.detail["approvals"].array.isEmpty { stopButton(quiet: false) }
         }
@@ -173,22 +174,26 @@ struct PromptComposer: View {
         .padding(.horizontal, 12)
     }
     static let closedWindow = "查看内容后可以回复"
+    private var inputMenu: some View {
+        ComposerMenu(key: attachKey, harness: harness, selection: attachKey.flatMap { model.attachSelection($0) }, source: $attachSource) {
+            SlashMenuItem(slash: slash, text: $text, focused: $focused, context: slashContext)
+        }
+    }
     private var field: some View {
         let open = focused || !text.isEmpty
         // One layout that changes shape: separate branches would replace the text view, and with it the keyboard, on every focus.
         let layout = open ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
-        let attach = attachKey != nil && rejecting == nil
         return layout {
-            if attach && !open { AttachButton(key: attachKey!, harness: harness, selection: model.attachSelection(attachKey!), source: $attachSource).padding(.leading, -8) }
+            if rejecting == nil && !open { inputMenu.padding(.leading, -8) }
             editor.layoutPriority(1)
             HStack(spacing: 8) {
-                if attach && open { AttachButton(key: attachKey!, harness: harness, selection: model.attachSelection(attachKey!), source: $attachSource).padding(.leading, -6) }
-                if rejecting == nil { SlashInsertButton(disabled: !slashContext.bodyOpen || !slashContext.canRun || slashContext.pending || slash.composing) { slash.insertSlash($text, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending); focused = true } }
-                Spacer(minLength: 0)
+                if rejecting == nil && open { inputMenu.padding(.leading, -6) }
+                if open { Spacer(minLength: 0) }
                 action
             }.frame(maxWidth: open ? .infinity : nil, alignment: .trailing)
         }
         .padding(.leading, 16).padding(.trailing, open ? 10 : 8).padding(.top, open ? 12 : 0).padding(.bottom, open ? 10 : 0).frame(minHeight: 52)
+        .fixedSize(horizontal: false, vertical: true)
         .background(PhoneTheme.raised, in: RoundedRectangle(cornerRadius: open ? 22 : 26))
         .overlay(RoundedRectangle(cornerRadius: open ? 22 : 26).stroke(PhoneTheme.lineStrong))
         .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
@@ -202,7 +207,7 @@ struct PromptComposer: View {
             selection: $slash.selection, composing: $slash.composing, selectionRequest: $slash.selectionRequest,
             commandKeys: slashKeys, onCommand: slashKey,
             suffixHint: slash.hint(text, commands: slashCommands, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending))
-            .overlay(alignment: .topLeading) { if text.isEmpty { Text(hint).font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).lineLimit(1).allowsHitTesting(false).accessibilityHidden(true) } }
+            .overlay(alignment: .topLeading) { if text.isEmpty { PromptHint(text: hint) } }
     }
     /** Empty while a turn runs, the circle stops it; with text it queues. */
     @ViewBuilder private var action: some View {
@@ -212,6 +217,7 @@ struct PromptComposer: View {
             Button { send() } label: {
                 Text(steer ? "追加" : "排队").font(.system(size: 14, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint)
                     .padding(.horizontal, 14).frame(height: 36).background(canSend ? PhoneTheme.accent : PhoneTheme.bubble, in: Capsule())
+                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
             }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(steer ? "追加到本轮" : "排队发送")
         } else {
             Button { send() } label: {
@@ -219,20 +225,28 @@ struct PromptComposer: View {
                     if sending { ProgressView().controlSize(.small).tint(Color.white) }
                     else { Image(systemName: "arrow.up").font(.system(size: 15, weight: .semibold)).foregroundStyle(canSend ? Color.white : PhoneTheme.faint) }
                 }.frame(width: 36, height: 36).background(canSend || sending ? PhoneTheme.accent : PhoneTheme.bubble, in: Circle())
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
             }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel(sending ? "等待附件上传" : running ? "排队发送" : "发送")
         }
     }
     /** While a drawer waits on you, stop steps back without going away. */
     private func stopButton(quiet: Bool) -> some View {
-        Button { Task { await model.stop() } } label: {
+        let host = model.generation, run = model.currentSummary["runId"].string
+        return Button {
+            Task {
+                guard let draftId, model.generation == host, model.sessionId == draftId, model.currentSummary["runId"].string == run else { return }
+                await model.stop()
+            }
+        } label: {
             Group {
                 if model.stoppingCurrent { ProgressView().controlSize(.small).tint(PhoneTheme.canvas) }
                 else { RoundedRectangle(cornerRadius: 2).fill(quiet ? PhoneTheme.muted : PhoneTheme.canvas).frame(width: 12, height: 12) }
             }.frame(width: 36, height: 36).background(quiet ? PhoneTheme.bubble : PhoneTheme.ink, in: Circle())
+                .frame(width: 44, height: 44).contentShape(Rectangle())
         }.buttonStyle(.plain).disabled(model.stoppingCurrent).accessibilityLabel(model.stoppingCurrent ? "正在停止" : "停止")
     }
     private func send() {
-        guard !slash.composing else { return }
+        guard let target = draftId, model.sessionId == target, gate == nil, canSend else { return }
         if rejecting == nil {
             switch PhoneSlash.action(text, context: slashContext) {
             case .text: break
@@ -243,7 +257,7 @@ struct PromptComposer: View {
         let input = text, reject = rejecting, next = followUp
         let queue = running && reject == nil && next == .queue, steer = running && reject == nil && next == .steer
         // The send's target is fixed now: after waiting for uploads it goes to this session or nowhere.
-        let chosen = nextModel, key = attachKey, target = model.sessionId
+        let chosen = nextModel, key = attachKey
         let host = model.generation, reading = model.contentGeneration
         Task {
             guard model.generation == host, model.contentGeneration == reading, model.sessionId == target else { return }

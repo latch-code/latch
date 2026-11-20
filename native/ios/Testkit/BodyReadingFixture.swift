@@ -100,13 +100,26 @@ import LatchNativeCore
         }
         let before = try await vault.metadata(name: "event-cursors")
         let update = try await refresh.value
+        let list = NativeListPublication()
+        var shown = NativeJSON.null
+        if mode == "metadata" {
+            let current = try await workspace.listCheckpoint()
+            guard update.checkpoint?.value["tasks"].array.isEmpty == true,
+                  update.snapshot?["revision"] == current.value["revision"],
+                  list.apply(current, on: current.transport, to: { shown = $0; return true }) else { throw NativeFailure.invalidRecord }
+        }
         var onlyMetadata = false
-        guard let receipt = reading.publication.apply(update, to: { value in onlyMetadata = value.detail == nil && value.snapshot != nil; return true }) else { throw NativeFailure.invalidRecord }
+        guard let receipt = reading.publication.apply(update, to: { value in
+            guard let checkpoint = value.checkpoint else { return false }
+            onlyMetadata = value.detail == nil
+            return list.apply(checkpoint, on: checkpoint.transport) { shown = $0; return true }
+        }) else { throw NativeFailure.invalidRecord }
         try await workspace.applied(receipt)
         let cursor = try await vault.metadata(name: "event-cursors").map { try NativeJSON.decode($0) }
         let elapsed = start.duration(to: .now).components
         await workspace.endBody(reading); await workspace.closeOpening()
         return ["cursorHeld": before == nil, "metadataOnly": onlyMetadata, "text": text,
+            "lateNoticeKeptSession": shown["tasks"].array.contains { $0["id"].string == id },
             "cursor": cursor?.array.first?["cursor"]["sequence"].integer ?? 0,
             "metadataMs": Double(elapsed.seconds) * 1000 + Double(elapsed.attoseconds) / 1e15]
     }

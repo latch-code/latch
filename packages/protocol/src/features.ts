@@ -70,6 +70,8 @@ export interface HostFeatures {
   handoffs?: true
   /** `/work/items`: 待办 with 0–16 sessions, started through the same path as `POST /tasks` (docs/ARCHITECTURE.md#待办). */
   workItems?: true
+  /** A pending create can look up its original receipt without creating another item. */
+  workItemCreateReceipt?: true
   /** Exact work-discussion turns and bounded reply reads. */
   workItemTurns?: true
   /** `GET /work/proposals/:id`, `…/accept`, `…/dismiss`, and `AppSnapshot.workProposals`: agents' proposals for the board. */

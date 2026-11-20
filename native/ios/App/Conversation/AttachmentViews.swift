@@ -42,42 +42,43 @@ extension PhoneAttachIcon {
 /** Which picker the ＋ opened. */
 enum AttachSource: String, Identifiable { case photos, camera, files; var id: String { rawValue } }
 
-/** The composer's ＋: 照片, 拍照 and 文件 when attaching is possible, otherwise the reason next to the input. Limits are said only with a refusal. */
-struct AttachButton: View {
+/** One input menu for attachments, commands and the options offered by this composer. */
+struct ComposerMenu<Options: View>: View {
     @EnvironmentObject private var model: PhoneModel
-    let key: String
+    let key: String?
     let harness: NativeJSON
     let selection: NativeJSON?
     @Binding var source: AttachSource?
-    var extra: AnyView? = nil
+    @ViewBuilder let options: () -> Options
+
     var body: some View {
-        let state = model.attachState(key), caps = state.caps
-        Group {
-            if model.attachLocked(key) {
-                Button { model.attachTrays[key, default: PhoneAttachTray()].note = PhoneAttachments.lockedWords } label: { plus }
-            } else if extra != nil || (caps?.any == true && model.tray(key).items.count < PhoneAttachments.perMessage) {
-                Menu {
-                    if let caps, caps.any, model.tray(key).items.count < PhoneAttachments.perMessage {
-                        if caps.takesImages {
-                            Button("照片", systemImage: "photo.on.rectangle") { source = .photos }
-                            if UIImagePickerController.isSourceTypeAvailable(.camera) { Button("拍照", systemImage: "camera") { source = .camera } }
-                        }
-                        Button("文件", systemImage: "folder") { source = .files }
-                    } else { Button("添加附件") { model.explainAttach(key, harness: harness, selection: selection) } }
-                    extra
-                } label: { plus }
-            } else {
-                Button {
-                    if model.tray(key).items.count >= PhoneAttachments.perMessage { model.attachTrays[key]?.note = PhoneAttachments.tooMany }
-                    else { model.explainAttach(key, harness: harness, selection: selection) }
-                } label: { plus }
-            }
-        }
-        .buttonStyle(.plain).accessibilityLabel("添加附件")
+        Menu {
+            if let key { Section { attachments(key) } }
+            options()
+        } label: { plus }
+        .buttonStyle(.plain).accessibilityLabel("更多输入选项")
     }
+
+    @ViewBuilder private func attachments(_ key: String) -> some View {
+        if model.attachLocked(key) {
+            Button("添加附件") { model.attachTrays[key, default: PhoneAttachTray()].note = PhoneAttachments.lockedWords }
+        } else if model.tray(key).items.count >= PhoneAttachments.perMessage {
+            Button("添加附件") { model.attachTrays[key]?.note = PhoneAttachments.tooMany }
+        } else if let caps = model.attachState(key).caps, caps.any {
+            if caps.takesImages {
+                Button("照片", systemImage: "photo.on.rectangle") { source = .photos }
+                if UIImagePickerController.isSourceTypeAvailable(.camera) { Button("拍照", systemImage: "camera") { source = .camera } }
+            }
+            Button("文件", systemImage: "folder") { source = .files }
+        } else {
+            Button("添加附件") { model.explainAttach(key, harness: harness, selection: selection) }
+        }
+    }
+
     private var plus: some View {
         Image(systemName: "plus").font(.system(size: 15, weight: .semibold)).foregroundStyle(PhoneTheme.ink2)
             .frame(width: 36, height: 36).background(PhoneTheme.bubble, in: Circle())
+            .frame(width: 44, height: 44).contentShape(Rectangle())
     }
 }
 

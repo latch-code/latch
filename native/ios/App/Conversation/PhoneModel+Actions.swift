@@ -126,15 +126,16 @@ extension PhoneModel {
         guard let q = PhoneSearch.query(query), canSearchContent, let workspace, verifiedUntil != nil else {
             contentSearch = PhoneContentSearch(query: query); return
         }
-        let current = generation, reading = contentGeneration
+        let current = generation, reading = contentGeneration, window = privateSnapshot.epoch
         do {
             try await PhoneSearchRun.run(query, previous: contentSearch, search: { try await workspace.search(q) },
                 pause: { try? await Task.sleep(for: .milliseconds(300)) }) { state in
                 // A later query, another connection or a closed window drops what this one finds.
-                guard current == generation, reading == contentGeneration, contentSearch.query == query || state.loading else { return false }
+                guard !Task.isCancelled, current == generation, reading == contentGeneration, privateSnapshot.accepts(window),
+                      canSearchContent, contentSearch.query == query || state.loading else { return false }
                 contentSearch = state
                 return true
             }
-        } catch { if current == generation { report(error) } }
+        } catch { if !Task.isCancelled, current == generation, privateSnapshot.accepts(window) { report(error) } }
     }
 }

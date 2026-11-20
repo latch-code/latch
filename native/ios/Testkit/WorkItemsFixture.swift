@@ -3,6 +3,31 @@ import LatchNativeCore
 
 func phoneWorkItemsFixture(_ data: Data) throws -> [String: Any] {
     let input = try NativeJSON.decode(data), snapshot = input["snapshot"]
+    if input["creationFields"].bool {
+        let requestId = UUID().uuidString
+        let plain = try PhoneWorkChange.creation(title: "  保存  ", prompt: "", project: nil).request(requestId: requestId)
+        let project = try PhoneWorkChange.creation(title: "保存", prompt: "  要求  ", project: "two").request(requestId: requestId)
+        let plainBody = try NativeJSON.decode(plain.body), projectBody = try NativeJSON.decode(project.body)
+        let reply = NativeJSON.object(["requestId": .string(requestId), "item": input["item"]])
+        guard let change = PhoneWorkChange(project) else { throw NativeFailure.invalidRecord }
+        return ["capabilities": input["capabilities"].array.map(PhoneWorkItems.supportsCreation),
+                "keys": plainBody.object.keys.sorted(), "project": projectBody["projectId"].string ?? "",
+                "prompt": projectBody["prompt"].string ?? "", "title": plainBody["title"].string ?? "",
+                "valid": change.confirmed(by: reply, requestId: requestId),
+                "mismatch": change.confirmed(by: reply, requestId: UUID().uuidString),
+                "malformed": change.confirmed(by: .object(["requestId": .string(requestId)]), requestId: requestId),
+                "longTitleRejected": (try? PhoneWorkChange.creation(title: String(repeating: "a", count: 121), prompt: "", project: nil).request()) == nil]
+    }
+    if case let .array(filters) = input["listFilters"] {
+        let results = filters.map { filter -> [String: Any] in
+            let value = filter["offline"].bool ? PhoneWorkItems.withoutBody(snapshot) : snapshot
+            let list = PhoneWorkList(items: PhoneWorkItems.visible(value, privateAllowed: filter["privateAllowed"].bool), snapshot: value)
+            let selected = Set(filter["projects"].array.map { PhoneWorkList.Project($0.string) }).intersection(list.projects)
+            let rows = list.matching(title: filter["query"].string ?? "", projects: selected)
+            return ["choices": list.projects.map(list.name), "titles": rows.map(\.title), "groups": rows.map { $0.group?.rawValue ?? "unknown" }]
+        }
+        return ["results": results]
+    }
     let post = input["post"], detail = input["detail"]
     guard let source = PhoneWorkPost(post)?.source, let message = PhoneWorkPost(post)?.reply?.id,
           let session = detail["summary"]["id"].string, let itemId = snapshot["items"].array.first?["id"].string,
@@ -167,7 +192,7 @@ func phoneWorkItemsFixture(_ data: Data) throws -> [String: Any] {
 
 /** A live path change on one native opening, with the same Host and verification window. */
 @MainActor final class WorkTransportFixture {
-    private var latest: NativeInstalledTransport?
+    private(set) var latest: NativeInstalledTransport?
     private var installs = 0
     private var priorInvalidWhenInstalled = false
 
@@ -187,6 +212,23 @@ func phoneWorkItemsFixture(_ data: Data) throws -> [String: Any] {
     private func sawChangedAccess(_ workspace: NativeWorkspace, _ reading: NativeBodyReading) async -> Bool {
         do { try await workspace.checkBodyReading(reading); return false }
         catch { return (error as? NativeReadFailure) == .bodyAccessChanged }
+    }
+
+    /** Hold the first refresh on the wire while the automatic read finds a session at the same Host revision. */
+    func exerciseInitialList(_ workspace: NativeWorkspace, markers: URL) async throws -> [String: Any] {
+        guard var list = latest?.snapshot, list["tasks"].array.isEmpty, !list["tasksComplete"].bool else { throw NativeFailure.invalidRecord }
+        let older = Task { try await workspace.snapshot() }
+        defer { older.cancel() }
+        try await wait { FileManager.default.fileExists(atPath: markers.appendingPathComponent("candidate-read").path) }
+        try await NativeReconnectPolicy.recoverIncompleteList(current: { list }) { list = try await workspace.snapshot() }
+        try Data().write(to: markers.appendingPathComponent("release-candidate"))
+        let late = try await older.value
+        let cached = try await workspace.cachedSnapshot()
+        func hasSession(_ value: NativeJSON?) -> Bool { value?["tasks"].array.first?["id"].string == "available-session" }
+        let result = ["recovered": hasSession(list), "lateReadKeptSession": hasSession(late),
+            "cacheKeptSession": hasSession(cached), "windowClosed": await workspace.lease() == nil]
+        await workspace.closeOpening()
+        return result
     }
 
     func exercise(_ workspace: NativeWorkspace, keys: FixtureKeys, lease: BodyLease, itemId: String,

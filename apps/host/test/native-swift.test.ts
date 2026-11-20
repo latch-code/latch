@@ -69,8 +69,12 @@ const nativeDelays = vi.hoisted(() => new Map<string, number>())
 const nativeReadFaults = vi.hoisted(() => new Map<string, Array<{ status: number; code: string }>>())
 const nativeEventFaults = vi.hoisted(() => [] as Array<'end' | 'server' | 'transport' | 'metadata' | 'invalid'>)
 const nativeMalformedSuccess = vi.hoisted(() => new Set<string>())
-const workCacheRace = vi.hoisted(() => ({
-  current: undefined as { markers?: string; itemId: string; reads: number; firstRevision?: number; lockOpen?: boolean } | undefined,
+const nativeWorkAnswerGate = vi.hoisted(() => new Map<string, string>())
+const nativeWorkLostAccess = vi.hoisted(() => new Map<string, number>())
+const nativeSnapshotRace = vi.hoisted(() => ({
+  current: undefined as
+    | { markers?: string; itemId?: string; reads: number; firstRevision?: number; lockOpen?: boolean; sessionList?: boolean }
+    | undefined,
 }))
 /** Replaces successful bodies only after the real Host authorizes the route, for native protocol-ordering fixtures. */
 const nativeBodyScripts = vi.hoisted(
@@ -91,6 +95,7 @@ const nativeBodyScripts = vi.hoisted(
         beforeSnapshot?: (deviceId: string) => Promise<void>
         closedBeforeData?: boolean[]
         delayedMetadata?: { started: number; delivered: number }
+        completingList?: { revision?: number }
       }
     >(),
 )
@@ -104,7 +109,7 @@ vi.mock('../src/native.ts', async importOriginal => {
         async handler(req, res, opening) {
           nativeSeen.push({ deviceId: opening.deviceId, method: req.method ?? '', path: req.url ?? '' })
           const key = `${req.method ?? ''} ${req.url ?? ''}`
-          const work = workCacheRace.current
+          const work = nativeSnapshotRace.current
           if (work && key === 'GET /link/api/snapshot') {
             const end = res.end.bind(res)
             res.end = ((...args: Parameters<typeof res.end>) => {
@@ -123,14 +128,23 @@ vi.mock('../src/native.ts', async importOriginal => {
                 board: { group: 'todo' },
                 ...(privateRow ? { private: true } : {}),
               }
-              const response = JSON.stringify({
-                ...snapshot,
-                instanceId: restarted ? 'fixture-restarted' : snapshot.instanceId,
-                revision: restarted ? 1 : base + Math.max(0, read - (work.lockOpen ? 1 : 2)),
-                device: { ...snapshot.device, dataScope: privateRow ? 'work' : read === 3 ? 'files' : 'all' },
-                catalog: { ...snapshot.catalog, features: { ...snapshot.catalog?.features, workItems: true, workItemTurns: true } },
-                items: restarted ? [] : [item],
-              })
+              const response = JSON.stringify(
+                work.sessionList
+                  ? {
+                      ...snapshot,
+                      revision: base,
+                      tasks: read < 3 ? [] : [{ id: 'available-session', title: 'Available after startup' }],
+                      tasksComplete: read < 3 ? undefined : true,
+                    }
+                  : {
+                      ...snapshot,
+                      instanceId: restarted ? 'fixture-restarted' : snapshot.instanceId,
+                      revision: restarted ? 1 : base + Math.max(0, read - (work.lockOpen ? 1 : 2)),
+                      device: { ...snapshot.device, dataScope: privateRow ? 'work' : read === 3 ? 'files' : 'all' },
+                      catalog: { ...snapshot.catalog, features: { ...snapshot.catalog?.features, workItems: true, workItemTurns: true } },
+                      items: restarted ? [] : [item],
+                    },
+              )
               const markers = work.markers
               if (!markers || read !== 2) return end(response)
               // The candidate holds a usable but older response while the selected connection adopts two checkpoints.
@@ -142,6 +156,47 @@ vi.mock('../src/native.ts', async importOriginal => {
                     return
                   }
                   await new Promise(resolve => setTimeout(resolve, 25))
+                }
+                res.destroy()
+              })().catch(() => res.destroy())
+              return res
+            }) as typeof res.end
+          }
+          if (nativeWorkLostAccess.has(key)) {
+            const writeHead = res.writeHead.bind(res),
+              end = res.end.bind(res)
+            let denied: number | undefined
+            res.writeHead = ((...args: Parameters<typeof res.writeHead>) => {
+              if (args[0] >= 200 && args[0] < 300) {
+                denied = nativeWorkLostAccess.get(key)
+                if (denied !== undefined) {
+                  nativeWorkLostAccess.delete(key)
+                  args[0] = denied
+                }
+              }
+              return writeHead(...args)
+            }) as typeof res.writeHead
+            res.end = ((...args: Parameters<typeof res.end>) =>
+              denied === undefined
+                ? end(...args)
+                : end(JSON.stringify({ error: 'device-access-changed', message: 'Access changed before the reply' }))) as typeof res.end
+          }
+          if (nativeWorkAnswerGate.has(key)) {
+            const end = res.end.bind(res)
+            res.end = ((...args: Parameters<typeof res.end>) => {
+              if (res.statusCode < 200 || res.statusCode >= 300) return end(...args)
+              const folder = nativeWorkAnswerGate.get(key)
+              if (folder === undefined) return end(...args)
+              nativeWorkAnswerGate.delete(key)
+              void (async () => {
+                await writeFile(join(folder, 'response-ready'), '')
+                for (let i = 0; i < 250 && !res.destroyed; i++) {
+                  if (existsSync(join(folder, 'release-response'))) {
+                    end(...args)
+                    await writeFile(join(folder, 'response-sent'), '')
+                    return
+                  }
+                  await new Promise(resolve => setTimeout(resolve, 10))
                 }
                 res.destroy()
               })().catch(() => res.destroy())
@@ -184,6 +239,16 @@ vi.mock('../src/native.ts', async importOriginal => {
               if (res.statusCode !== 200) return end(...args)
               const count = (metadataScript.delayedMetadata ??= { started: 0, delivered: 0 })
               count.started++
+              if (metadataScript.completingList && typeof args[0] === 'string') {
+                const value = JSON.parse(args[0]) as AppSnapshot
+                metadataScript.completingList.revision ??= value.revision ?? 0
+                value.revision = metadataScript.completingList.revision
+                if (count.started === 1) {
+                  value.tasks = []
+                  delete value.tasksComplete
+                }
+                args[0] = JSON.stringify(value)
+              }
               const timer = setTimeout(() => {
                 if (!res.destroyed) {
                   count.delivered++
@@ -1697,6 +1762,36 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     const scopes = await invoke({ operation: 'phoneProjection', scopes: [{ cwd: '/work/\u00e9' }, { cwd: '/work/e\u0301' }] })
     expect(scopes.sameScope).toBe(false)
   })
+  it('reveals folded projects during search and restores the folds for each computer and shelf identity', async () => {
+    const shelf = 'project:shared'
+    const result = await invoke({
+      operation: 'phoneProjection',
+      query: '对话',
+      workspaces: [{ id: 'shared', name: '对话' }],
+      tasks: [
+        { id: 'code', title: '实现搜索', workspaceId: 'shared', updatedAt: '2026-01-03T00:00:00Z' },
+        { id: 'approval', title: '审批', workspaceId: 'shared', status: 'waiting-approval', updatedAt: '2026-01-02T00:00:00Z' },
+        { id: 'chat', title: '记录', mode: 'chat', updatedAt: '2026-01-01T00:00:00Z' },
+        { id: 'archived', title: '旧会话', workspaceId: 'shared', archived: true },
+      ],
+      shelfDisclosure: [
+        { computer: 'mac', shelf },
+        { computer: 'mac', shelf, toggle: true },
+        { computer: 'mac', shelf, filtering: true },
+        { computer: 'mac', shelf: 'other' },
+        { computer: 'mini', shelf },
+        { computer: 'mac', shelf },
+        { computer: 'mac', shelf, toggle: true },
+      ],
+    })
+    expect(result).toEqual({
+      collapsed: [false, true, false, false, false, true, false],
+      shelves: [
+        { id: shelf, tasks: ['code', 'approval'] },
+        { id: 'other', tasks: ['chat'] },
+      ],
+    })
+  })
   it('projects Host sessions for the phone: shelves, frozen words, turns, approvals and what it may start', async () => {
     const at = (minute: number) => `2026-11-01T10:${String(minute).padStart(2, '0')}:00.000Z`
     const result = (await invoke({
@@ -2454,8 +2549,18 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       await host.close()
     }
   }, 30_000)
+  it('settles both native HTTP/2 futures if stream creation fails before installing a response handler', async () => {
+    expect(await invoke({ operation: 'http2StreamOpening' })).toEqual({
+      openFailed: true,
+      responseFailed: true,
+      parentActive: true,
+      laterResponse: 42,
+    })
+  })
+
   it('reconnects the phone: retry and relay timing, path filter, background hold and PING liveness rules', async () => {
     expect(await invoke({ operation: 'reconnectRules' })).toEqual({
+      initialListRecovers: true,
       backoff: true,
       relayDelay: true,
       winners: true,
@@ -2896,6 +3001,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
           opened: [] as Array<{ delta: string | string[] | undefined; resume: boolean }>,
           closed: 0,
           ...(['metadata', 'overflow'].includes(mode) ? { snapshotDelay: 250 } : {}),
+          ...(mode === 'metadata' ? { completingList: {} } : {}),
         }
         if (mode === 'opening') Object.assign(script, { delays: [300, 0] })
         if (mode === 'metadata-retry') Object.assign(script, { snapshotFailures: 1 })
@@ -2934,6 +3040,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         if (mode === 'metadata' || mode === 'metadata-retry' || mode === 'detail-retry') {
           expect(result).toMatchObject({ cursorHeld: true, metadataOnly: true, text: '中🙂文', cursor: 3 })
           expect(result.metadataMs).toBeGreaterThanOrEqual(240)
+          if (mode === 'metadata') expect(result.lateNoticeKeptSession).toBe(true)
           expect(script.opened).toEqual([{ delta: 'delta-v1', resume: false }])
           if (mode === 'metadata-retry') expect(nativeBodyScripts.get(sessionId)?.snapshotReads).toBe(2)
           if (mode === 'detail-retry') {
@@ -3075,6 +3182,26 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     },
     30_000,
   )
+  it('browses a session folder through the Swift phone and resolves an unmentioned file inside its verified window', async () => {
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      await mkdir(join(host.workspaceRoot, '资料 + #'))
+      await writeFile(join(host.workspaceRoot, '资料 + #', '验收.md'), 'A file the phone can open.')
+      const task = await host.host.bridge.createTask({ prompt: 'hello', requestId: randomUUID(), mode: 'chat' })
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      expect(
+        await invoke({
+          operation: 'nativeWorkspace',
+          payload: invitation.payload,
+          port: host.host.nativePort,
+          fileBrowserSession: task.sessionId,
+        }),
+      ).toEqual({ oldPanelClosed: true, previewable: true, badFolderRejected: true, wrongRootRejected: true })
+    } finally {
+      await host.close()
+    }
+  }, 30_000)
   it('reads, writes and stops from the actual Swift workspace against a real Host', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
     try {
@@ -4411,6 +4538,30 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { allow: '这个会话都允许这类操作', option: 'o2', more: [], hidden: true, places: ['src/a\\u{200B}.ts'] },
     ])
   })
+  it('recovers the first native session list and keeps it when an older equal-revision response arrives', async () => {
+    const markers = await mkdtemp(join(tmpdir(), 'latch-native-initial-list-'))
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      const race = { markers, reads: 0, sessionList: true }
+      nativeSnapshotRace.current = race
+      expect(
+        await invoke({
+          operation: 'nativeWorkspace',
+          payload: invitation.payload,
+          port: host.host.nativePort,
+          initialListMarkers: markers,
+        }),
+      ).toEqual({ recovered: true, lateReadKeptSession: true, cacheKeptSession: true, windowClosed: true })
+      expect(race.reads).toBe(3)
+    } finally {
+      nativeSnapshotRace.current = undefined
+      await host.close()
+      await rm(markers, { recursive: true, force: true })
+    }
+  }, 30_000)
+
   it('keeps native work-item cache at the accepted checkpoint across waiting writes and a path swap', async () => {
     const markers = await mkdtemp(join(tmpdir(), 'latch-native-work-cache-'))
     try {
@@ -4420,7 +4571,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
         const itemId = 'itm_' + 'e'.repeat(22)
         const race = { markers, itemId, reads: 0 }
-        workCacheRace.current = race
+        nativeSnapshotRace.current = race
         expect(
           await invoke({
             operation: 'nativeWorkspace',
@@ -4439,7 +4590,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         })
         expect(race.reads).toBe(5)
       } finally {
-        workCacheRace.current = undefined
+        nativeSnapshotRace.current = undefined
         await host.close()
       }
     } finally {
@@ -4454,7 +4605,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
       const itemId = 'itm_' + 'f'.repeat(22)
       const race = { itemId, reads: 0, lockOpen: true }
-      workCacheRace.current = race
+      nativeSnapshotRace.current = race
       expect(
         await invoke({
           operation: 'nativeWorkspace',
@@ -4472,8 +4623,115 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       })
       expect(race.reads).toBe(2)
     } finally {
-      workCacheRace.current = undefined
+      nativeSnapshotRace.current = undefined
       await host.close()
+    }
+  }, 30_000)
+
+  it.each(['malformed', 'access lost'] as const)(
+    'closes and reopens native work items and posts once to the intended thread or member after a lost answer: %s',
+    async reply => {
+      const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+      let patch = '',
+        post = '',
+        delivery = ''
+      try {
+        const owner = await host.enroll({ listener: 'unix' })
+        const { item } = await owner.json<{ item: { id: string } }>('work/items', {
+          method: 'POST',
+          body: { title: 'Mobile work item', requestId: randomUUID() },
+        })
+        const { item: memberItem } = await owner.json<{ item: { id: string } }>('work/items', {
+          method: 'POST',
+          body: { title: 'Mobile member item', requestId: randomUUID() },
+        })
+        const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+          method: 'POST',
+          body: { mode: 'chat', prompt: 'Discussion target', requestId: randomUUID() },
+        })
+        await expect.poll(async () => (await owner.json<{ summary: { status: string } }>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+        await owner.json(`work/items/${memberItem.id}/sessions`, { method: 'POST', body: { sessionId } })
+        const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+        patch = `PATCH /link/api/work/items/${item.id}`
+        post = `POST /link/api/work/items/${item.id}/posts`
+        delivery = `POST /link/api/work/items/${memberItem.id}/posts`
+        if (reply === 'access lost') {
+          nativeWorkLostAccess.set(patch, 403)
+          nativeWorkLostAccess.set(post, 401)
+          nativeWorkLostAccess.set(delivery, 404)
+        } else {
+          nativeMalformedSuccess.add(patch)
+          nativeMalformedSuccess.add(post)
+          nativeMalformedSuccess.add(delivery)
+        }
+        expect(
+          await invoke({
+            operation: 'nativeWorkspace',
+            payload: invitation.payload,
+            port: host.host.nativePort,
+            workChangesItem: item.id,
+            workChangesDenied: reply === 'access lost',
+            workMember: sessionId,
+            workMemberItem: memberItem.id,
+          }),
+        ).toEqual({
+          closeConfirmedAfterLostAnswer: true,
+          reopened: true,
+          staleRevisionRefused: true,
+          postRetriedOnce: true,
+          deliveredToMember: true,
+          settled: true,
+          posts: [1, 1],
+        })
+        expect(nativeSeen.filter(call => call.method + ' ' + call.path === delivery)).toHaveLength(1)
+        expect(
+          nativeSeen.some(call => call.method === 'GET' && call.path.startsWith(`/link/api/work/items/${memberItem.id}/posts/pst_`)),
+        ).toBe(true)
+      } finally {
+        nativeMalformedSuccess.delete(patch)
+        nativeMalformedSuccess.delete(post)
+        nativeMalformedSuccess.delete(delivery)
+        for (const key of [patch, post, delivery]) nativeWorkLostAccess.delete(key)
+        await host.close()
+      }
+    },
+    30_000,
+  )
+
+  it('withholds a settled work reply when its window expires during removal of the encrypted pending record', async () => {
+    const markers = await mkdtemp(join(tmpdir(), 'latch-swift-work-settled-'))
+    const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+    let key = ''
+    try {
+      const owner = await host.enroll({ listener: 'unix' })
+      const { item } = await owner.json<{ item: { id: string } }>('work/items', {
+        method: 'POST',
+        body: { title: 'Private work receipt', requestId: randomUUID() },
+      })
+      const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+      key = `PATCH /link/api/work/items/${item.id}`
+      nativeWorkAnswerGate.set(key, markers)
+      expect(
+        await invoke({
+          operation: 'nativeWorkspace',
+          payload: invitation.payload,
+          port: host.host.nativePort,
+          workSettlementItem: item.id,
+          workSettlementMarkers: markers,
+        }),
+      ).toEqual({
+        resultWithdrawn: true,
+        alreadySettled: true,
+        retryRefused: true,
+        blockedDuringSettlement: true,
+        stalePendingWithdrawn: true,
+        oldWindowRefused: true,
+      })
+      expect(nativeSeen.filter(call => call.method + ' ' + call.path === key)).toHaveLength(1)
+    } finally {
+      nativeWorkAnswerGate.delete(key)
+      await host.close()
+      await rm(markers, { recursive: true, force: true })
     }
   }, 30_000)
 
@@ -4509,6 +4767,132 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     }
   }, 30_000)
 
+  it('builds an unstarted item without engine settings and accepts only a matching creation acknowledgement', async () => {
+    expect(
+      await invoke({
+        operation: 'phoneWorkItems',
+        creationFields: true,
+        capabilities: [
+          { catalog: { features: { workItems: true, workItemTurns: true } } },
+          { catalog: { features: { workItems: true, workItemTurns: true, workItemCreateReceipt: true } } },
+        ],
+        item: {
+          id: `itm_${'m'.repeat(22)}`,
+          title: '保存',
+          prompt: '要求',
+          revision: 1,
+          sessionIds: [],
+          updatedAt: '2026-10-01T00:00:00Z',
+          board: { group: 'todo' },
+        },
+      }),
+    ).toEqual({
+      capabilities: [false, true],
+      keys: ['prompt', 'requestId', 'title'],
+      project: 'two',
+      prompt: '要求',
+      title: '保存',
+      valid: true,
+      mismatch: false,
+      malformed: false,
+      longTitleRejected: true,
+    })
+  })
+
+  it.each(['lost acknowledgement', 'service unavailable', 'access changed'] as const)(
+    'checks a pending mobile work creation without sending a second create (%s)',
+    async scenario => {
+      const landed = scenario === 'lost acknowledgement'
+      const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })
+      const first = 'POST /link/api/work/items'
+      const fault = landed ? nativeMalformedSuccess : nativeDrop
+      const from = nativeSeen.length
+      try {
+        const owner = await host.enroll({ listener: 'unix' })
+        const { invitation } = await owner.json<{ invitation: { payload: string } }>('native/pairings', { method: 'POST', body: {} })
+        if (scenario === 'access changed') nativeReadFaults.set(first, [{ status: 403, code: 'forbidden' }])
+        else fault.add(first)
+        expect(
+          await invoke({
+            operation: 'nativeWorkspace',
+            workCreationReceipt: landed,
+            payload: invitation.payload,
+            port: host.host.nativePort,
+          }),
+        ).toEqual({
+          confirmed: landed,
+          cleared: true,
+        })
+        expect(
+          nativeSeen
+            .slice(from)
+            .filter(row => row.method === 'POST' && row.path.startsWith('/link/api/work/items'))
+            .map(row => row.path),
+        ).toEqual(['/link/api/work/items', '/link/api/work/items/retry-create'])
+        const snapshot = await owner.json<AppSnapshot>('snapshot')
+        expect(snapshot.items ?? []).toHaveLength(landed ? 1 : 0)
+        expect(snapshot.tasks).toHaveLength(0)
+        if (landed) expect(snapshot.items?.[0]).toMatchObject({ title: '移动端草稿', board: { group: 'todo' }, sessionIds: [] })
+      } finally {
+        fault.delete(first)
+        nativeReadFaults.delete(first)
+        await host.close()
+      }
+    },
+    30_000,
+  )
+  it('filters visible mobile work items by title and member project across Host groups', async () => {
+    const row = (key: string, title: string, day: string) => ({
+      id: `itm_${key.repeat(22)}`,
+      title,
+      revision: 1,
+      updatedAt: `2026-10-${day}T00:00:00Z`,
+      sessionIds: [] as string[],
+    })
+    const snapshot = {
+      catalog: {
+        features: { workItems: true, workItemTurns: true },
+        workspaces: [
+          { id: 'alpha', name: 'Alpha' },
+          { id: 'mobile', name: 'Mobile', path: '/phone' },
+          { id: 'private', name: 'Secret' },
+        ],
+      },
+      tasks: [{ id: 'member', cwd: '/phone/App' }],
+      items: [
+        {
+          ...row('a', 'Fix Search', '21'),
+          projectId: 'alpha',
+          sessionIds: ['member'],
+          board: { group: 'attention', postId: `pst_${'a'.repeat(22)}` },
+        },
+        { ...row('b', 'Search copy', '20'), projectId: 'default', board: { group: 'todo' } },
+        { ...row('c', 'Missing member', '19'), sessionIds: ['not-listed'], board: { group: 'running' } },
+        { ...row('d', 'Private search', '18'), private: true, projectId: 'private', board: { group: 'done' } },
+      ],
+    }
+    const { results } = await invoke({
+      operation: 'phoneWorkItems',
+      snapshot,
+      listFilters: [
+        { projects: ['mobile'], query: '  search ' },
+        { projects: ['alpha', null] },
+        { projects: [null] },
+        { offline: true, projects: ['mobile'] },
+        { privateAllowed: true, projects: ['private'] },
+        { projects: ['private'] },
+      ],
+    })
+    const choices = ['Alpha', 'Mobile', '无项目']
+    expect(results).toEqual([
+      { choices, titles: ['Fix Search'], groups: ['attention'] },
+      { choices, titles: ['Fix Search', 'Search copy'], groups: ['attention', 'todo'] },
+      { choices, titles: ['Search copy'], groups: ['todo'] },
+      { choices, titles: ['Fix Search'], groups: ['unknown'] },
+      { choices: ['Alpha', 'Mobile', 'Secret', '无项目'], titles: ['Private search'], groups: ['done'] },
+      { choices, titles: ['Fix Search', 'Search copy', 'Missing member'], groups: ['attention', 'todo', 'running'] },
+    ])
+  })
   it('keeps native work-item reads within the window, exact turn, decision and commit', async () => {
     const at = '2026-11-18T12:00:00.000Z'
     const sessionId = 'session-code'

@@ -26,6 +26,7 @@ const SCHEDULE_MODEL = { providerId: 'ios-live-schedule', model: 'fixture' }
 const SLASH = process.env.LATCH_IOS_SLASH === '1'
 /** Optional read-only Host counters and actual ACP history for the App body-stream acceptance pass. */
 const METRICS = process.env.LATCH_IOS_LIVE_METRICS === '1'
+const WORK = process.env.LATCH_IOS_LIVE_WORK === '1'
 /** The fake Agent really reports these ACP options; no fixture fills permission or model DTOs by hand. */
 const LIVE_AGENT_ENV = { FAKE_ACP_CONFIG: 'legacy', ...(SLASH ? iosSlashEnvironment : {}) }
 /** Scheduled work uses Standard under the existing unattended ceiling, with only a local scripted reply. */
@@ -339,6 +340,7 @@ it.skipIf(process.platform !== 'darwin' || process.env.LATCH_IOS_LIVE !== '1')(
         return enrolled
       }
       const owner = await prepare(host, 'A')
+      if (WORK) await addWorkItem(host, owner, agents.get(host)!)
       if (METRICS) await seedIosStream(host, owner, agents.get(host)!)
       if (ATTACH) {
         const images = await owner.confirmed('agents', {
@@ -685,6 +687,7 @@ it('reads the live fake Agent configuration and continues its same session witho
     expect(continued.permission?.drift).toBeUndefined()
     if (SLASH) await seedIosPromptHistory(owner, harnessId)
     if (AGENTS) await addAgent(owner)
+    if (WORK) await addWorkItem(host, owner, harnessId)
   } finally {
     await host.close()
   }
@@ -815,6 +818,29 @@ async function addMissedAgent(host: TestHost, owner: TestDevice, shift: (ms: num
   }
   expect((await report({ state: 'awake' })).status).toBe(200)
   shift(0)
+}
+
+/** A person's editable item and its actual project session for native board, discussion and file navigation. */
+async function addWorkItem(host: TestHost, owner: TestDevice, harnessId: string) {
+  const folder = join(host.root, 'mobile-work')
+  await mkdir(join(folder, 'docs'), { recursive: true })
+  await writeFile(join(folder, 'README.md'), '# 移动端验收项目\n\n验收步骤在 docs/验收.md。\n')
+  await writeFile(join(folder, 'docs', '验收.md'), '# 真机前的模拟器验收\n\n从项目打开文件，然后返回会话。\n')
+  expect((await owner.addFolders({ paths: [folder], name: '移动端验收项目' })).status).toBe(201)
+  const { workspaces } = await owner.json<{ workspaces: Array<{ id: string; name: string }> }>('workspaces')
+  const projectId = workspaces.find(project => project.name === '移动端验收项目')!.id
+  const { item } = await owner.json<{ item: { id: string; revision: number } }>('work/items', {
+    method: 'POST',
+    body: { requestId: randomUUID(), title: '核对移动端交付', prompt: '核对验收文档。', projectId, harnessId, worktree: 'project' },
+  })
+  const started = await owner.confirmed(`work/items/${item.id}/start`, {
+    method: 'POST',
+    body: { requestId: randomUUID(), mode: 'agent', baseRevision: item.revision },
+  })
+  expect(started.status).toBe(201)
+  const { sessionId } = (await started.json()) as { sessionId: string }
+  await expect.poll(async () => (await host.host.bridge.detail(sessionId)).summary.status).toBe('idle')
+  await owner.json(`tasks/${sessionId}`, { method: 'PATCH', body: { title: '移动端联调会话' } })
 }
 
 /** Native L3 work stays disabled for background dispatch; a person can run the write and failure tasks now. */

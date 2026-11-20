@@ -56,6 +56,46 @@ private func fixtureFailure(_ name: String) -> FixtureStage { FixtureStage(name:
 
 /** Retry and relay timing, the path filter, last winners, the timeline ring, the background hold and PING liveness. */
 @MainActor func runReconnectRules() async throws -> [String: Any] {
+    // The Host's first list can be partial while the Harness starts. A confirmed empty list is already final.
+    let partial: NativeJSON = .object(["tasks": .array([])])
+    let complete: NativeJSON = .object(["tasks": .array([]), "tasksComplete": .bool(true)])
+    var firstList: NativeJSON? = partial, listReads = 0
+    try await NativeReconnectPolicy.recoverIncompleteList(current: { firstList }) {
+        listReads += 1
+        firstList = .object(["tasks": .array([.object(["id": .string("session")])]), "tasksComplete": .bool(true)])
+    }
+    guard listReads == 1, firstList?["tasks"].array.first?["id"].string == "session" else { throw fixtureFailure("initial-list") }
+    try await NativeReconnectPolicy.recoverIncompleteList(current: { complete }) { throw fixtureFailure("complete-empty-list-retried") }
+    // Lose the selection while the first delay is running. Its read must never reach the replacement connection.
+    let withdraw = Task { @MainActor in firstList = nil }
+    firstList = partial
+    try await NativeReconnectPolicy.recoverIncompleteList(current: { firstList }) { throw fixtureFailure("old-list-retried") }
+    await withdraw.value
+
+    // An idle session can have only resumed heartbeats. Its first readable list must trigger one full body read.
+    let host = UUID(), selection = UUID(), content = UUID()
+    let resume = PhoneResumingSession(session: "held", host: host, selection: selection, content: content, tab: .code, agentPath: [])
+    var deferred: PhoneResumingSession? = resume
+    func listing(_ present: Bool, complete: Bool) -> NativeJSON {
+        .object(["device": .object(["status": .string("active"), "scopes": .array([.string("view")])]),
+            "tasks": .array(present ? [.object(["id": .string("held")])] : []), "tasksComplete": .bool(complete)])
+    }
+    guard PhoneResumingSession.resolve(&deferred, current: resume, snapshot: listing(false, complete: false)) == nil, deferred == resume,
+          PhoneResumingSession.resolve(&deferred, current: resume, snapshot: listing(true, complete: false)) == .read,
+          PhoneResumingSession.resolve(&deferred, current: resume, snapshot: listing(true, complete: true)) == nil else { throw fixtureFailure("held-session-appears") }
+    deferred = resume
+    guard PhoneResumingSession.resolve(&deferred, current: resume, snapshot: listing(false, complete: true)) == .close else { throw fixtureFailure("held-session-gone") }
+    for changed in [
+        PhoneResumingSession(session: "held", host: UUID(), selection: selection, content: content, tab: .code, agentPath: []),
+        PhoneResumingSession(session: "held", host: host, selection: UUID(), content: content, tab: .code, agentPath: []),
+        PhoneResumingSession(session: "held", host: host, selection: selection, content: UUID(), tab: .code, agentPath: []),
+        PhoneResumingSession(session: "held", host: host, selection: selection, content: content, tab: .settings, agentPath: []),
+    ] {
+        deferred = resume
+        guard PhoneResumingSession.resolve(&deferred, current: changed, snapshot: listing(true, complete: true)) == nil,
+              deferred == nil else { throw fixtureFailure("held-session-changed") }
+    }
+
     // A network change retries at once; failures still back off with bounded jitter.
     guard NativeReconnectPolicy.delay(attempt: 0, afterNetworkChange: true, jitter: 1) == .zero,
           NativeReconnectPolicy.delay(attempt: 0, afterNetworkChange: false, jitter: 0) == .milliseconds(500),
@@ -109,7 +149,7 @@ private func fixtureFailure(_ name: String) -> FixtureStage { FixtureStage(name:
     try await Task.sleep(for: .milliseconds(300))
     guard resumed, !again, log == ["withdraw", "finish"] else { throw fixtureFailure("hold-resume") }
     guard NativeBackgroundHold.limit == .seconds(30) else { throw fixtureFailure("hold-limit") }
-    return ["backoff": true, "relayDelay": true, "winners": true, "filter": true, "ring": true, "holdWithdrawsAtOnce": true,
+    return ["initialListRecovers": true, "backoff": true, "relayDelay": true, "winners": true, "filter": true, "ring": true, "holdWithdrawsAtOnce": true,
         "holdExpires": true, "holdLockTearsDown": true, "holdResumes": true, "liveness": try livenessRules()]
 }
 

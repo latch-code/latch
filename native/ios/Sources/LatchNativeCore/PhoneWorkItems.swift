@@ -61,8 +61,69 @@ public struct PhoneWorkItemSummary: Equatable, Sendable, Identifiable {
     }
 }
 
+/** The project choices of the visible work items. A missing member summary never implies that it has no project. */
+public struct PhoneWorkList {
+    public enum Project: Hashable {
+        case unassigned
+        case saved(String)
+
+        public init(_ id: String?) {
+            if let id, id != "default" { self = .saved(id) } else { self = .unassigned }
+        }
+    }
+
+    public let projects: [Project]
+    private let names: [String: String]
+    private let rows: [(item: PhoneWorkItemSummary, projects: Set<Project>)]
+
+    public init(items: [PhoneWorkItemSummary], snapshot: NativeJSON) {
+        let workspaces = snapshot["catalog"]["workspaces"].array
+        var names: [String: String] = [:]
+        for workspace in workspaces {
+            if let id = workspace["id"].string { names[id] = workspace["name"].string ?? id }
+        }
+        self.names = names
+
+        let members = Set(items.flatMap(\.sessionIds))
+        var projectBySession: [String: Project] = [:]
+        for task in snapshot["tasks"].array {
+            guard let id = task["id"].string, members.contains(id) else { continue }
+            projectBySession[id] = Project(PhoneSessions.project(of: task, workspaces: workspaces)?["id"].string)
+        }
+        rows = items.map { item in
+            var projects = Set(item.sessionIds.compactMap { projectBySession[$0] })
+            if item.projectId != nil || item.sessionIds.isEmpty { projects.insert(Project(item.projectId)) }
+            return (item, projects)
+        }
+        projects = Set(rows.flatMap(\.projects)).sorted { left, right in
+            guard case let .saved(a) = left else { return false }
+            guard case let .saved(b) = right else { return true }
+            let order = (names[a] ?? a).localizedStandardCompare(names[b] ?? b)
+            return order == .orderedSame ? a < b : order == .orderedAscending
+        }
+    }
+
+    public func name(of project: Project) -> String {
+        switch project {
+        case .unassigned: "无项目"
+        case let .saved(id): names[id] ?? id
+        }
+    }
+
+    /** Choosing several projects takes their union. A title narrows those results without changing Host order or group. */
+    public func matching(title: String, projects selected: Set<Project>) -> [PhoneWorkItemSummary] {
+        let needle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return rows.compactMap { row in
+            guard selected.isEmpty || !row.projects.isDisjoint(with: selected),
+                  needle.isEmpty || row.item.title.localizedCaseInsensitiveContains(needle) else { return nil }
+            return row.item
+        }
+    }
+}
+
 public struct PhoneWorkItemDetail: Equatable, Sendable {
     public let item: PhoneWorkItemSummary
+    public let closed: Bool
     public let prompt: String
     public let note: String?
     public let origin: PhoneWorkSource?
@@ -71,7 +132,8 @@ public struct PhoneWorkItemDetail: Equatable, Sendable {
         let value = answer["item"]
         guard let item = PhoneWorkItemSummary(value), item.id == itemId, !item.isPrivate || privateAllowed,
               item.group != nil, let prompt = PhoneWorkItems.text(value["prompt"], max: 16_000) else { throw NativeFailure.invalidRecord }
-        self.item = item; self.prompt = prompt
+        guard value.object["closedAt"] == nil || PhoneTime.parse(value["closedAt"]) != nil else { throw NativeFailure.invalidRecord }
+        self.item = item; self.prompt = prompt; closed = value.object["closedAt"] != nil
         note = PhoneWorkItems.text(value["note"], max: 512)
         if let session = value["from"]["sessionId"].string.flatMap(PhoneWorkItems.session),
            let message = PhoneWorkItems.message(value["from"]["messageId"]) {
@@ -314,6 +376,9 @@ public enum PhoneWorkItems {
     public static func supported(_ snapshot: NativeJSON) -> Bool {
         let features = snapshot["catalog"]["features"]
         return features["workItems"] == .bool(true) && features["workItemTurns"] == .bool(true)
+    }
+    public static func supportsCreation(_ snapshot: NativeJSON) -> Bool {
+        supported(snapshot) && snapshot["catalog"]["features"]["workItemCreateReceipt"] == .bool(true)
     }
     public static func visible(_ snapshot: NativeJSON, privateAllowed: Bool) -> [PhoneWorkItemSummary] {
         guard supported(snapshot) else { return [] }

@@ -41,32 +41,52 @@ extension PhoneModel {
      * A write of the review, the commit page, the editor or a handoff: the same window, receipts and one-at-a-time rule as
      * a message, with the Host's refusal handed back instead of said in an alert, and the Host read again either way.
      */
-    func write(_ request: NativePendingWrite, timeout: Int64 = 15, retryAnswered: (@Sendable (NativeHostRefusal) -> Bool)? = nil, refresh again: Bool = true) async -> PhoneWriteOutcome {
+    func write(_ request: NativePendingWrite, timeout: Int64 = 15, retryAnswered: (@Sendable (NativeHostRefusal) -> Bool)? = nil,
+        refresh again: Bool = true, on transport: NativeTransportEpoch? = nil, mustBePending: Bool = false, permitted: () -> Bool = { true }) async -> PhoneWriteOutcome {
         guard let workspace else { return .failed(NativeFailure.unavailable) }
         let current = generation
+        let window = privateSnapshot.epoch, originalLease = transport == nil ? nil : bodyLease
+        func sameWorkWindow() -> Bool {
+            guard let transport else { return true }
+            guard let originalLease, originalLease.valid, bodyLease?.sameWindow(as: originalLease) == true else { return false }
+            return generation == current && installedTransport === transport && transport.valid && privateSnapshot.accepts(window)
+        }
         // Busy from the first moment, so 放弃这次结果 cannot drop a write this is about to send.
         guard !busy else { return .failed(NativeFailure.resultUnknown) }
         busy = true; defer { if generation == current { busy = false } }
         do {
             guard canRun else { throw NativeFailure.forbidden }
-            try await ensureVerified()
+            if let transport {
+                guard installedTransport === transport, sameWorkWindow(), permitted() else { throw NativeFailure.expired }
+                let saved = try await workspace.pendingWrites()
+                guard sameWorkWindow(), !Task.isCancelled,
+                      privateSnapshot.mayRestorePending(saved, captured: window, permitted: permitted(), retry: mustBePending ? request : nil)
+                else { throw CancellationError() }
+                pending = saved
+            } else { try await ensureVerified() }
             guard current == generation else { return .failed(NativeFailure.unavailable) }
             // An earlier write without an answer goes first: the core keeps one unconfirmed write at a time.
             guard pending.allSatisfy({ $0.requestId == request.requestId }) else { return .failed(NativeFailure.resultUnknown) }
         } catch { return .failed(error) }
         if !pending.contains(where: { $0.requestId == request.requestId }) { pending.append(request) }
         do {
-            let value = try await workspace.submit(request, timeoutSeconds: timeout, explain: true, retryAnswered: retryAnswered)
+            let value = try await workspace.submit(request, timeoutSeconds: timeout, explain: true, retryAnswered: retryAnswered,
+                on: transport, expectedLease: originalLease, mustBePending: mustBePending)
             guard generation == current else { return .failed(NativeFailure.unavailable) }
             pending.removeAll { $0.requestId == request.requestId }
+            guard sameWorkWindow() else { return .failed(CancellationError()) }
             if again { busy = false; await refresh() }
+            guard sameWorkWindow() else { return .failed(CancellationError()) }
             return .done(value)
         } catch let unsettled as NativeUnsettledRefusal {
+            guard sameWorkWindow() else { return .unknown(nil) }
             return .unknown(unsettled.refusal)
         } catch let refusal as NativeHostRefusal {
             guard generation == current else { return .failed(NativeFailure.unavailable) }
             pending.removeAll { $0.requestId == request.requestId }
+            guard sameWorkWindow() else { return .failed(CancellationError()) }
             if again { busy = false; await refresh() }
+            guard sameWorkWindow() else { return .failed(CancellationError()) }
             return .refused(refusal)
         } catch {
             guard generation == current else { return .failed(error) }
@@ -78,6 +98,10 @@ extension PhoneModel {
     }
     /** 重试这次提交: the same request; a Git, file or handoff write waits as long as the Host gives it and reads its receipt. */
     func retryPending(_ request: NativePendingWrite) async {
+        if PhoneWorkChange(request) != nil {
+            if let words = await retryWorkChange(request) { error = words }
+            return
+        }
         if PhoneHistory.isImport(request) {
             let (outcome, retry) = await importHistory(request)
             switch outcome {

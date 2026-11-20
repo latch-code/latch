@@ -215,7 +215,7 @@ private struct NewTopicView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { AgentFrameItems(frame: frame, topic: .null, shown: nil) }
-        .safeAreaInset(edge: .bottom, spacing: 0) { dock.frame(maxWidth: 760).frame(maxWidth: .infinity) }
+        .conversationDock { dock.frame(maxWidth: 760).frame(maxWidth: .infinity) }
         .task(id: frame.owner + "\(agent["revision"].integer ?? 0)") {
             choice = general ? PhoneAgentChat.generalChoice(catalog) : PhoneAgents.choice(catalog, agent: agent)
         }
@@ -296,15 +296,15 @@ private struct NewTopicView: View {
     private var field: some View {
         let placeholder = PhoneAgentChat.placeholder(frame.entry.name)
         return HStack(alignment: .bottom, spacing: 8) {
-            AttachButton(key: attachKey, harness: harness, selection: attachSelection, source: $attachSource, extra: AnyView(picks)).padding(.leading, -8).padding(.bottom, 8)
-            SlashInsertButton(disabled: !slashContext.bodyOpen || !slashContext.canRun || slashContext.pending || slash.composing) {
-                slash.insertSlash($prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending); focused = true
-            }.padding(.bottom, 8)
+            ComposerMenu(key: attachKey, harness: harness, selection: attachSelection, source: $attachSource) {
+                SlashMenuItem(slash: slash, text: $prompt, focused: $focused, context: slashContext)
+                picks
+            }.padding(.leading, -8).padding(.bottom, 8)
             LocalTextEditor(text: $prompt, placeholder: placeholder, maximumLines: slashMenu == nil ? 6 : 3, focused: $focused,
                 selection: $slash.selection, composing: $slash.composing, selectionRequest: $slash.selectionRequest,
                 commandKeys: slashKeys, onCommand: slashKey, suffixHint: slash.hint(prompt, commands: [], enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending))
                 .overlay(alignment: .topLeading) {
-                    if prompt.isEmpty { Text(placeholder).font(PhoneTheme.body).foregroundStyle(PhoneTheme.faint).lineLimit(1).allowsHitTesting(false).accessibilityHidden(true) }
+                    if prompt.isEmpty { PromptHint(text: placeholder) }
                 }
                 .padding(.vertical, 12)
             Button { send() } label: {
@@ -314,6 +314,7 @@ private struct NewTopicView: View {
                 }
                 .foregroundStyle(canSend || sending ? Color.white : PhoneTheme.faint)
                 .frame(width: 36, height: 36).background(canSend || sending ? PhoneTheme.accent : PhoneTheme.bubble, in: Circle())
+                .frame(width: 44, height: 44).contentShape(Rectangle())
             }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel("发送").padding(.bottom, 8)
         }
         .padding(.leading, 16).padding(.trailing, 8).frame(minHeight: 52)

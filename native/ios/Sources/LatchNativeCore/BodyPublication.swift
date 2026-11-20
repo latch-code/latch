@@ -63,16 +63,17 @@ final class NativeBodyAuthority: @unchecked Sendable {
 /** Only Workspace constructs updates. A pure TaskStreamProjection candidate cannot be submitted directly to a publication. */
 public struct NativeBodyUpdate: Sendable {
     public let detail: NativeJSON
-    public let snapshot: NativeJSON?
+    public let checkpoint: NativeListCheckpoint?
+    public var snapshot: NativeJSON? { checkpoint?.value }
     let evidence: NativeBodyEvidence
     fileprivate let stream: NativeTaskCandidate?
 
-    init(http detail: NativeJSON, snapshot: NativeJSON? = nil, evidence: NativeBodyEvidence) {
-        self.detail = detail; self.snapshot = snapshot; self.evidence = evidence; self.stream = nil
+    init(http detail: NativeJSON, checkpoint: NativeListCheckpoint? = nil, evidence: NativeBodyEvidence) {
+        self.detail = detail; self.checkpoint = checkpoint; self.evidence = evidence; self.stream = nil
     }
 
     init(stream candidate: NativeTaskCandidate, evidence: NativeBodyEvidence) {
-        self.detail = candidate.detail; self.snapshot = nil; self.evidence = evidence; self.stream = candidate
+        self.detail = candidate.detail; self.checkpoint = nil; self.evidence = evidence; self.stream = candidate
     }
 }
 
@@ -89,8 +90,9 @@ public struct NativeBodyApplied: Sendable {
 /** Only the components that can be published now; a newer snapshot need not replace an already newer body. */
 public struct NativeBodyValue: Sendable {
     public let detail: NativeJSON?
-    public let snapshot: NativeJSON?
-    fileprivate init(detail: NativeJSON?, snapshot: NativeJSON?) { self.detail = detail; self.snapshot = snapshot }
+    public let checkpoint: NativeListCheckpoint?
+    public var snapshot: NativeJSON? { checkpoint?.value }
+    fileprivate init(detail: NativeJSON?, checkpoint: NativeListCheckpoint?) { self.detail = detail; self.checkpoint = checkpoint }
 }
 
 /**
@@ -101,7 +103,7 @@ public struct NativeBodyValue: Sendable {
     private let authority: NativeBodyAuthority
     private let instanceId: String
     private var gate: NativeTaskPublicationGate
-    private var snapshotRevision: UInt64?
+    private var snapshotFloor: (revision: UInt64, order: UInt64)?
     private var applying = false
 
     init(instanceId: String, sessionId: String, authority: NativeBodyAuthority) {
@@ -119,24 +121,25 @@ public struct NativeBodyValue: Sendable {
         var next = gate
         let ticket = next.capture()
         let accepted: NativeJSON?
-        var snapshot: NativeJSON?, nextSnapshotRevision: UInt64?
+        var checkpoint: NativeListCheckpoint?
+        var nextSnapshotFloor = snapshotFloor
         do {
             if let candidate = update.stream { accepted = next.acceptStream(candidate, ticket: ticket) }
             else { accepted = try next.acceptHTTP(update.detail.encoded(), ticket: ticket) }
-            if let value = update.snapshot {
-                let bounded = try NativeJSON.decode(value.encoded())
-                guard let instance = bounded["instanceId"].string, instance.utf8.elementsEqual(instanceId.utf8),
-                      let revision = bounded["revision"].integer else { return nil }
-                if snapshotRevision == nil || revision > snapshotRevision! { snapshot = bounded; nextSnapshotRevision = revision }
+            if let list = update.checkpoint {
+                guard let instance = list.value["instanceId"].string, instance.utf8.elementsEqual(instanceId.utf8),
+                      let revision = list.value["revision"].integer else { return nil }
+                let position = (revision: revision, order: list.order)
+                if snapshotFloor.map({ position > $0 }) ?? true { checkpoint = list; nextSnapshotFloor = position }
             }
         } catch { return nil }
-        guard accepted != nil || snapshot != nil else { return nil }
+        guard accepted != nil || checkpoint != nil else { return nil }
 
         return authority.whileCurrent(update.evidence) {
-            guard publish(NativeBodyValue(detail: accepted, snapshot: snapshot)) else { return nil }
+            guard publish(NativeBodyValue(detail: accepted, checkpoint: checkpoint)) else { return nil }
             gate = next
-            if let nextSnapshotRevision { snapshotRevision = nextSnapshotRevision }
-            return NativeBodyApplied(update.evidence, body: accepted != nil, snapshot: snapshot != nil)
+            snapshotFloor = nextSnapshotFloor
+            return NativeBodyApplied(update.evidence, body: accepted != nil, snapshot: checkpoint != nil)
         }
     }
 }

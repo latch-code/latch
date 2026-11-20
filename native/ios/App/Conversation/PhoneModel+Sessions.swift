@@ -48,19 +48,22 @@ extension PhoneModel {
      * Content opens without asking. With Face ID turned on in 设置, its sheet appears by itself the first time content is
      * opened; declining it is not an error: the conversation offers the one way back, and nothing else nags.
      */
-    func openSession(_ id: String) async {
+    func openSession(_ id: String, resuming retained: BodyLease? = nil) async {
         guard let workspace else { sessionId = id; detail = .null; return }
         let current = generation
-        let reading = UUID()
+        let reading = UUID(), selectedTab = tab, selectedPath = agentPath
         sessionId = id; detail = .null; detailFailed = nil; contentGeneration = reading; PreviewFiles.clear()
-        func stillReading() -> Bool { current == generation && sessionId == id && contentGeneration == reading }
-        do { try await ensureVerified() }
+        func stillReading() -> Bool {
+            current == generation && sessionId == id && contentGeneration == reading
+                && (retained == nil || (selectedTab == tab && selectedPath == agentPath && retained?.valid == true))
+        }
+        do { try await ensureVerified(resuming: retained) }
         catch {
-            guard stillReading() else { return }
+            guard stillReading(), !(error is CancellationError) else { return }
             if (error as? NativeFailure) != .declined, !wentAway(error) { report(error) }
             return
         }
-        guard stillReading(), let lease = await workspace.lease() else { return }
+        guard let lease = await workspace.lease(), stillReading(), retained?.sameWindow(as: lease) != false else { return }
         do {
             let applied = try await readSelectedBody(id, workspace: workspace)
             guard stillReading() else { return }

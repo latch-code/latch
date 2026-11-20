@@ -38,6 +38,9 @@ import UIKit
         model.verifiedUntil = .distantFuture
         _ = model.privateSnapshot.adopt(model.snapshot, captured: model.privateSnapshot.epoch, windowOpen: true)
         switch name {
+        case "workspace", "workspace-offline":
+            model.snapshot = workSnapshot()
+            if name == "workspace-offline" { stageDisconnected(model) }
         case "harness-menu":
             creating = true
             let names = [("standard", "Latch 内置"), ("codex", "Codex"), ("claude-agent", "Claude Agent"),
@@ -59,6 +62,36 @@ import UIKit
             }
         case "conversation":
             model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation()
+        case "conversation-reading", "project-files":
+            if name == "project-files" {
+                model.snapshot = patched(value) { root in
+                    root["catalog"] = patched(value["catalog"]) { catalog in
+                        catalog["features"] = patched(value["catalog"]["features"]) { $0["fileTree"] = .bool(true); $0["fileSearch"] = .bool(true) }
+                    }
+                }
+            }
+            model.tab = .agents; model.agentPath = [review]; model.sessionId = "ses_review"
+            model.detail = patched(conversation()) { detail in
+                let notes = [
+                    ("配对", "在 Mac 创建邀请，在手机确认显示的是预期的电脑。完成后回到会话列表。"),
+                    ("项目", "分别展开两个项目，记下它们最近更新的会话。收起其中一个，确认仍能打开另一个项目里的会话。"),
+                    ("搜索", "按会话标题搜索，进入一个结果，再回到列表清除搜索。"),
+                    ("阅读", "打开较长的回复，向上翻到较早的段落，逐段检查文字是否完整。"),
+                    ("草稿", "输入几行文字，收起键盘阅读前文，再点回输入框继续写。"),
+                    ("切换", "到另一个会话看最新的回复，再返回之前的会话，检查草稿仍在原处。"),
+                    ("待办", "打开等你处理的待办，从讨论进入关联会话，再返回原来读到的位置。"),
+                    ("离线", "断开测试电脑的连接，确认手机显示离线。恢复连接后，检查任务的最新状态。"),
+                ]
+                detail["messages"] = .array([
+                    .object(["id": .string("early-question"), "role": .string("user"), "text": .string("先看哪个项目？")]),
+                    .object(["id": .string("early-reply"), "role": .string("assistant"), "text": .string("先看手机工作台。")]),
+                    .object(["id": .string("next-question"), "role": .string("user"), "text": .string("需要核对哪些页面？")]),
+                    .object(["id": .string("next-reply"), "role": .string("assistant"), "text": .string("会话、待办和文件。")]),
+                    .object(["id": .string("checklist-request"), "role": .string("user"), "text": .string("把手机验收的步骤整理给我。")]),
+                    .object(["id": .string("checklist-reply"), "role": .string("assistant"),
+                        "text": .string(notes.map { "**\($0.0)**\n\n\($0.1)" }.joined(separator: "\n\n") + "\n\n以上八项都可以在测试项目里检查。")]),
+                ])
+            }
         case "conversation-actions":
             model.tab = .code; model.sessionId = "ses_actions"; model.detail = json(actionsText)
         case "subagents":
@@ -243,6 +276,24 @@ import UIKit
     private static let daily = "agt_7e9a1b20-3d5c-4f8b-8c2d-1b2c3d4e5f60"
     private static let docs = "agt_8f0b2c30-4e6d-4a9c-9d3e-2c3d4e5f6071"
     private static let checks = "auto_9a1c3d40-5f7e-4b0d-8e4f-3d4e5f607182"
+
+    static func fileMatches(_ query: String) throws -> PhoneFileMatches {
+        let paths = ["文档/验收步骤.md", "README.md"].filter { $0.localizedCaseInsensitiveContains(query) }
+        return try PhoneFileMatches(.object(["files": .array(paths.map { path in
+            .object(["root": .string("default"), "name": .string(String(path.split(separator: "/").last!)), "path": .string(path)])
+        }), "truncated": .bool(false)]))
+    }
+
+    static func fileDirectory(session: String, folder: PhoneFileFolder) throws -> PhoneFileDirectory {
+        guard scene == "project-files", session == "ses_review" else { throw NativeFailure.unavailable }
+        var value = json(#"{"context":{"kind":"session","sessionId":"ses_review"},"roots":[{"id":"default","name":"移动工作台"}],"entries":[],"truncated":false}"#).object
+        if let root = folder.root {
+            value["rootId"] = .string(root); value["dir"] = .string(folder.dir)
+            let files = folder.dir == "" ? [("文档", "directory"), ("README.md", "file")] : [("验收步骤.md", "file")]
+            value["entries"] = .array(files.map { .object(["name": .string($0.0), "kind": .string($0.1)]) })
+        }
+        return try PhoneFileDirectory(.object(value), session: session, folder: folder)
+    }
 
     private static func patched(_ value: NativeJSON, _ change: (inout [String: NativeJSON]) -> Void) -> NativeJSON {
         var object = value.object; change(&object); return .object(object)
@@ -440,7 +491,7 @@ import UIKit
                 }
                 .onChange(of: phase) { _, next in
                     guard PhoneLive.isOn else { return }
-                    if next == .background { model.lock() }
+                    if next == .background { model.enterBackground() }
                     if next == .active { Task { await model.open() } }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
@@ -607,13 +658,20 @@ extension ScreensStage {
 
 /** Several computers: the menu's states, 其他电脑 under 等你处理 and the notification setting. */
 extension ScreensStage {
+    private static func host(_ hostId: String, _ device: String, _ name: String) -> RegisteredHost? {
+        let device = #"{"hostId":"\#(hostId)","deviceId":"dev_\#(device)","rootSpki":"AA==","knockKey":"AA==","signedAddressBook":"","bookGeneration":0,"bookHash":"AA=="}"#
+        guard let prepared = try? JSONDecoder().decode(PreparedNativeDevice.self, from: Data(device.utf8)) else { return nil }
+        return RegisteredHost(name: name, device: prepared, keys: DeviceKeyReference(connectionTag: Data(), verificationTag: Data(), connectionSpki: Data(), verificationSpki: Data()), prepared: false)
+    }
+    fileprivate static func stageDisconnected(_ model: PhoneModel) {
+        model.selectedHost = host("studiohostaaaa", "aaaaaaaaaaaaaaaaaaaaaa", "Mac Studio")
+        model.hosts = [model.selectedHost].compactMap { $0 }
+        model.lastConfirmed = Date().addingTimeInterval(-120)
+        model.connected = false
+        model.offline = true
+    }
     fileprivate static func stageComputers(_ model: PhoneModel, _ name: String) -> Bool {
         guard name == "computers" || name == "computers-settings" else { return false }
-        func host(_ hostId: String, _ device: String, _ name: String) -> RegisteredHost? {
-            let device = #"{"hostId":"\#(hostId)","deviceId":"dev_\#(device)","rootSpki":"AA==","knockKey":"AA==","signedAddressBook":"","bookGeneration":0,"bookHash":"AA=="}"#
-            guard let prepared = try? JSONDecoder().decode(PreparedNativeDevice.self, from: Data(device.utf8)) else { return nil }
-            return RegisteredHost(name: name, device: prepared, keys: DeviceKeyReference(connectionTag: Data(), verificationTag: Data(), connectionSpki: Data(), verificationSpki: Data()), prepared: false)
-        }
         let hosts = [host("studiohostaaaa", "aaaaaaaaaaaaaaaaaaaaaa", "studio"), host("buildminibbbb", "bbbbbbbbbbbbbbbbbbbbbb", "build-mini"),
                      host("macminicccc", "cccccccccccccccccccccc", "Mac mini"), host("d7k2spoofdddd", "dddddddddddddddddddddd", "build-m\u{0456}ni")].compactMap { $0 }
         model.hosts = hosts; model.selectedHost = hosts.first; model.lastConfirmed = Date()
@@ -652,6 +710,7 @@ extension ScreensStage {
             model.snapshot = PhoneAgents.withoutPrivate(model.snapshot)
             return true
         }
+        if name == "work-list-offline" { stageDisconnected(model); return true }
         if name == "work-list" || name == "work-empty" { return true }
         model.selectWorkItem(workId)
         guard let source = PhoneWorkPost(workPostValue())?.source else { return true }
@@ -740,13 +799,13 @@ extension ScreensStage {
     private static func workSnapshot() -> NativeJSON {
         patched(snapshot()) { object in
             var catalog = object["catalog"]!.object, features = catalog["features"]!.object
-            for key in ["workItems", "workItemTurns", "changes", "reviewNotes", "gitDelivery"] { features[key] = .bool(true) }
+            for key in ["workItems", "workItemTurns", "workItemCreateReceipt", "changes", "reviewNotes", "gitDelivery"] { features[key] = .bool(true) }
             catalog["features"] = .object(features); object["catalog"] = .object(catalog)
             let item = patched(workItemValue()) { $0.removeValue(forKey: "prompt") }
             object["items"] = .array(scene == "work-empty" ? [] : [
                 item,
                 json(#"{"id":"\#(workPrivate)","title":"升级通知与内部发布检查","private":true,"projectId":"latch","sessionIds":[],"revision":1,"updatedAt":"{{-300}}","board":{"group":"running"}}"#),
-                json(#"{"id":"itm_cccccccccccccccccccccc","title":"整理连接说明","projectId":"latch","sessionIds":[],"revision":1,"updatedAt":"{{-900}}","board":{"group":"todo"}}"#),
+                json(#"{"id":"itm_cccccccccccccccccccccc","title":"整理连接说明","projectId":"site","sessionIds":[],"revision":1,"updatedAt":"{{-900}}","board":{"group":"todo"}}"#),
             ])
             object["tasks"] = .array(object["tasks"]!.array.map { task in
                 guard task["id"].string == workSession else { return task }

@@ -54,7 +54,8 @@ public struct NativePendingWrite: Codable, Sendable {
               path.hasPrefix("/link/api/"), path.utf8.count <= 1024, !path.contains("?"), !path.contains("#"),
               path.utf8.allSatisfy({ $0 >= 33 && $0 < 127 }), !path.contains("..") else { throw NativeFailure.invalidRecord }
         var input = fields
-        if method == .patch && LinkBytes.matches(path, "/link/api/tasks/[A-Za-z0-9_-]{1,160}/queue/[A-Za-z0-9_-]{1,160}") { input.removeValue(forKey: "requestId") }
+        if PhoneWorkChange.isCompletion(method, path, fields)
+            || (method == .patch && LinkBytes.matches(path, "/link/api/tasks/[A-Za-z0-9_-]{1,160}/queue/[A-Za-z0-9_-]{1,160}")) { input.removeValue(forKey: "requestId") }
         else { input["requestId"] = .string(requestId) }
         self.requestId = requestId; self.method = method.rawValue; self.path = path
         body = try NativeJSON.object(input).encoded()
@@ -73,6 +74,7 @@ public struct NativeWorkspaceEvents: Sendable {
 struct QualifiedNativePath: Sendable {
     let connection: NativeHTTPConnection
     let snapshot: NativeJSON
+    let snapshotRead: UInt64
     let window: PreparedWindowRestore
     let ticket: UUID
     let reopen: (@Sendable () async throws -> NativeHTTPConnection)?
@@ -103,9 +105,36 @@ public final class NativeTransportEpoch: @unchecked Sendable, Hashable {
     }
 }
 
+/** An authenticated list paired with the connection and order in which Workspace accepted it. */
+public struct NativeListCheckpoint: Sendable {
+    public let value: NativeJSON
+    let order: UInt64
+    public let transport: NativeTransportEpoch
+}
+
+/** One UI's publication floor. A delayed body notice is covered once a later checkpoint has been displayed. */
+@MainActor public final class NativeListPublication {
+    private weak var transport: NativeTransportEpoch?
+    private var order: UInt64 = 0
+    private var applying = false
+    public init() {}
+    @discardableResult public func apply(_ checkpoint: NativeListCheckpoint, on current: NativeTransportEpoch?,
+        to display: (NativeJSON) -> Bool) -> Bool {
+        guard !applying, let current, current === checkpoint.transport else { return false }
+        applying = true; defer { applying = false }
+        return current.whileCurrent {
+            if transport === current, checkpoint.order < order { return true }
+            guard display(checkpoint.value) else { return false }
+            transport = current; order = checkpoint.order
+            return true
+        } == true
+    }
+}
+
 public struct NativeInstalledTransport: Sendable {
     public let epoch: NativeTransportEpoch
-    public let snapshot: NativeJSON
+    public let checkpoint: NativeListCheckpoint
+    public var snapshot: NativeJSON { checkpoint.value }
     public let lease: BodyLease?
 }
 
@@ -125,6 +154,9 @@ public actor NativeWorkspace {
     private var instance: String?
     private var revision: UInt64 = 0
     private var metadata = NativeJSON.null
+    private var accessEpoch = UUID()
+    private var snapshotRead: UInt64 = 0
+    private var acceptedRead: UInt64 = 0
     private var snapshotOrder: UInt64 = 0
     private var acceptedSnapshot: NativeSnapshotWrite?
     private var writes = Set<String>()
@@ -190,21 +222,23 @@ public actor NativeWorkspace {
         guard attempt == id, !Task.isCancelled else { await next.close(); throw NativeFailure.unavailable }
         do {
             let restoring = await verification.restoresWindow()
-            let window: PreparedWindowRestore, response: NativeHTTPResponse
+            let window: PreparedWindowRestore, response: NativeHTTPResponse, read: UInt64
             async let notice = next.request(.get, path: "/link/api/native/revocation")
             if restoring {
                 async let restored = verification.prepareRestore(on: next)
                 try await decideRevocation(try await notice, on: next, ticket: id)
                 window = try await restored
+                read = beginSnapshotRead()
                 response = try await next.request(.get, path: "/link/api/snapshot")
             } else {
+                read = beginSnapshotRead()
                 async let snapshot = next.request(.get, path: "/link/api/snapshot")
                 try await decideRevocation(try await notice, on: next, ticket: id)
                 window = try await verification.prepareRestore(on: next)
                 response = try await snapshot
             }
             guard attempt == id, !Task.isCancelled else { throw NativeFailure.unavailable }
-            var path = QualifiedNativePath(connection: next, snapshot: try parseCheckpoint(response), window: window, ticket: id, reopen: reopen)
+            var path = QualifiedNativePath(connection: next, snapshot: try parseCheckpoint(response), snapshotRead: read, window: window, ticket: id, reopen: reopen)
             path.kind = kind; path.upgrade = upgrade
             return path
         } catch { await next.close(); throw error }
@@ -238,26 +272,24 @@ public actor NativeWorkspace {
             let lease = try await verification.installPrepared(prepare: path.window, on: path.connection)
             guard revocation == nil else { throw NativeFailure.revoked }
             guard path.ticket == attempt, !Task.isCancelled else { throw NativeFailure.unavailable }
-            let next = path.snapshot
-            let value = next["instanceId"].string == instance && (next["revision"].integer ?? 0) <= revision ? metadata : next
             // Checked again in the same actor turn as the swap: a read that began meanwhile keeps its relay.
             if path.upgrade { guard idle() else { throw NativeFailure.unavailable } }
-            let write = try acceptSnapshot(value)
+            let write = try acceptSnapshot(path.snapshot, read: path.snapshotRead, installing: true)
             let old = connection, transport = NativeTransportEpoch()
             installedTransport?.withdraw()
             installedTransport = transport
             connection = path.connection; reopen = path.reopen; epoch = transport.id; installedKind = path.kind
             bodyState?.authority.replaceConnection(); bodyState?.resetStream(); bodyState?.offers.removeAll()
             if let old { Task { await old.close() } }
-            if lease == nil, prefetchChallenge(), value["device"]["scopes"].array.contains(.string("view")) {
+            if lease == nil, prefetchChallenge(), metadata["device"]["scopes"].array.contains(.string("view")) {
                 Task { [verification, connection = path.connection] in await verification.prefetchChallenge(on: connection) }
             }
             let installed = try await persistCurrentSnapshot(write, epoch: transport.id)
             if let onTransportInstalled {
-                await onTransportInstalled(NativeInstalledTransport(epoch: transport, snapshot: installed, lease: lease))
+                await onTransportInstalled(NativeInstalledTransport(epoch: transport, checkpoint: installed, lease: lease))
                 guard epoch == transport.id, transport.valid else { throw NativeFailure.unavailable }
             }
-            return installed
+            return installed.value
         } catch {
             if connection === path.connection {
                 installedTransport?.withdraw(); installedTransport = nil
@@ -396,15 +428,17 @@ public actor NativeWorkspace {
         guard epoch == current else { throw NativeFailure.unavailable }; try lease.requireValid()
         return next
     }
-    public func snapshot() async throws -> NativeJSON {
+    public func snapshot() async throws -> NativeJSON { try await listCheckpoint().value }
+    public func listCheckpoint() async throws -> NativeListCheckpoint {
         let (connection, current) = try transport()
+        let read = beginSnapshotRead()
         let response = try await connection.request(.get, path: "/link/api/snapshot")
         guard epoch == current, revocation == nil else { throw NativeFailure.unavailable }
         try Task.checkCancellation()
         let value = try parseCheckpoint(response)
         // A Host instance changes only when a newly qualified transport is installed.
         guard value["instanceId"].string == instance else { throw NativeFailure.invalidRecord }
-        let write = try acceptSnapshot(value)
+        let write = try acceptSnapshot(value, read: read)
         return try await persistCurrentSnapshot(write, epoch: current)
     }
     public func detail(_ id: String) async throws -> NativeJSON {
@@ -447,11 +481,39 @@ public actor NativeWorkspace {
     }
     public func read(_ path: String, body: Bool, on expectedTransport: NativeTransportEpoch? = nil) async throws -> NativeJSON {
         guard Self.readable(path) else { throw NativeFailure.invalidRecord }
+        return try await getJSON(path, body: body, on: expectedTransport)
+    }
+    /** Directory listings are private and tied to the same session, window and connection throughout. */
+    public func fileDirectory(session: String, folder: PhoneFileFolder, access: NativeFileAccess) async throws -> PhoneFileDirectory {
+        let value = try await projectFiles(session: session, feature: .tree, path: folder.path(session: session), access: access)
+        return try PhoneFileDirectory(value, session: session, folder: folder)
+    }
+    public func findProjectFiles(session: String, query: String, access: NativeFileAccess) async throws -> PhoneFileMatches {
+        guard LinkBytes.matches(session, "[A-Za-z0-9_-]{1,160}"), !query.isEmpty, query.utf16.count <= 512 else { throw NativeFailure.invalidRecord }
+        let body = try NativeJSON.object(["q": .string(query)]).encoded()
+        let value = try await projectFiles(session: session, feature: .search, path: "/link/api/tasks/" + session + "/files/search", body: body, access: access)
+        return try PhoneFileMatches(value)
+    }
+    private func projectFiles(session: String, feature: PhoneFileDirectory.Feature, path: String, body: Data? = nil,
+                              access: NativeFileAccess) async throws -> NativeJSON {
+        guard PhoneFileDirectory.offered(metadata, session: session, feature: feature) else { throw NativeFailure.forbidden }
+        let device = metadata["device"], instance = self.instance
+        let value = try await getJSON(path, body: true, on: access.transport, post: body, access: access)
+        try Task.checkCancellation()
+        guard installedTransport === access.transport, access.transport.valid, self.instance == instance,
+              PhoneFileDirectory.offered(metadata, session: session, feature: feature),
+              ["id", "status", "scopes", "dataScope"].allSatisfy({ metadata["device"][$0] == device[$0] }) else {
+            throw NativeReadFailure.bodyAccessChanged
+        }
+        return value
+    }
+    private func getJSON(_ path: String, body: Bool, on expectedTransport: NativeTransportEpoch?, post: Data? = nil, access: NativeFileAccess? = nil) async throws -> NativeJSON {
         let (connection, current) = try transport()
         if let expectedTransport, expectedTransport !== installedTransport || !expectedTransport.valid { throw CancellationError() }
         let lease = await verification.currentLease()
+        try access?.check(installedTransport, window: lease)
         if body { guard let lease else { throw NativeFailure.expired }; try lease.requireValid() }
-        let response = try await connection.request(.get, path: path)
+        let response = try await connection.request(post == nil ? .get : .post, path: path, body: post)
         guard epoch == current else { throw NativeFailure.unavailable }
         if body { try lease?.requireValid() }
         guard response.status == 200 else {
@@ -504,10 +566,11 @@ public actor NativeWorkspace {
         }
         return try NativeJSON.decode(response.body)
     }
-    public func resolveFile(sessionId: String, reference: String, rootId: String?) async throws -> NativeJSON {
+    public func resolveFile(sessionId: String, reference: String, rootId: String?, access: NativeFileAccess? = nil) async throws -> NativeJSON {
         guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}"), !reference.isEmpty, reference.utf8.count <= 4096 else { throw NativeFailure.invalidRecord }
         let (connection, current) = try transport()
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        try access?.check(installedTransport, window: lease)
         var fields: [String: NativeJSON] = ["paths": .array([.string(reference)])]
         if let rootId {
             guard LinkBytes.matches(rootId, "[A-Za-z0-9_-]{1,32}") else { throw NativeFailure.invalidRecord }; fields["rootId"] = .string(rootId)
@@ -518,12 +581,13 @@ public actor NativeWorkspace {
         return try NativeJSON.decode(response.body)
     }
     /** `attachment`: a handle from `resolveAttachment`, read from the attachment content route, never through a bulk companion. */
-    public func fileBytes(handle: String, etag: String, offset: Int, count: Int, explicitOpen: Bool = false, attachment: Bool = false,
+    public func fileBytes(handle: String, etag: String, offset: Int, count: Int, explicitOpen: Bool = false, attachment: Bool = false, access: NativeFileAccess? = nil,
         progress: (@Sendable (Int, Int) -> Void)? = nil) async throws -> Data {
         guard LinkBytes.matches(handle, "[A-Za-z0-9_-]{22}"), LinkBytes.matches(etag, "\"[a-f0-9]{32}\""),
               offset >= 0, offset <= 8_388_608, count > 0, count <= 1_048_576 else { throw NativeFailure.invalidRecord }
         let (primary, current) = try transport()
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
+        try access?.check(installedTransport, window: lease)
         let useBulk = !attachment && explicitOpen && primary.usesRelay && count >= 131_072 && metadata["catalog"]["features"]["nativeBulk"].bool
         guard !useBulk || !bulkBusy else { throw NativeFailure.unavailable }
         if !useBulk {
@@ -824,31 +888,76 @@ public actor NativeWorkspace {
      * refusal comes back as the Host's own code, words and details. `retryAnswered`: which refusals of a retry of this write
      * the Host answered from its receipt, so they settle it rather than leave it unknown.
      */
-    public func submit(_ pending: NativePendingWrite, timeoutSeconds: Int64 = 15, explain: Bool = false, retryAnswered: (@Sendable (NativeHostRefusal) -> Bool)? = nil) async throws -> NativeJSON {
+    public func submit(_ pending: NativePendingWrite, timeoutSeconds: Int64 = 15, explain: Bool = false, retryAnswered: (@Sendable (NativeHostRefusal) -> Bool)? = nil,
+        on expectedTransport: NativeTransportEpoch? = nil, expectedLease: BodyLease? = nil, mustBePending: Bool = false) async throws -> NativeJSON {
         guard (1...660).contains(timeoutSeconds) else { throw NativeFailure.invalidRecord }
         let (connection, current) = try transport()
+        let access = accessEpoch
+        if let expectedTransport, expectedTransport !== installedTransport || !expectedTransport.valid { throw CancellationError() }
         // In flight from before the first await, so settlePending refuses it for the whole of this attempt.
         guard writes.isEmpty else { throw NativeFailure.expired }
         writes.insert(pending.requestId); defer { writes.remove(pending.requestId) }
-        guard let lease = await verification.currentLease(), let method = NativeHTTPMethod(rawValue: pending.method),
+        guard let lease = await verification.currentLease(), expectedLease?.sameWindow(as: lease) != false, let method = NativeHTTPMethod(rawValue: pending.method),
               method != .get && method != .head else { throw NativeFailure.expired }
         try lease.requireValid()
         let decoded = try NativeJSON.decode(pending.body)
         let queueEdit = method == .patch && LinkBytes.matches(pending.path, "/link/api/tasks/[A-Za-z0-9_-]{1,160}/queue/[A-Za-z0-9_-]{1,160}")
-        guard queueEdit || decoded["requestId"].string == pending.requestId else { throw NativeFailure.invalidRecord }
+        guard queueEdit || PhoneWorkChange.isCompletion(method, pending.path, decoded.object) || decoded["requestId"].string == pending.requestId else { throw NativeFailure.invalidRecord }
+        let work = PhoneWorkChange(pending)
+        func sameWorkAccess() -> Bool {
+            work == nil || (revocation == nil && installedTransport?.valid == true && accessEpoch == access
+                && (pending.path != "/link/api/work/items" || PhoneWorkItems.supportsCreation(metadata)))
+        }
+        func mayReadWorkAnswer() -> Bool {
+            work == nil || (epoch == current && lease.valid && sameWorkAccess() && !Task.isCancelled)
+        }
+        func settledWorkAnswer(_ value: NativeJSON) async throws -> NativeJSON {
+            do { try await removePending(pending.requestId) } catch { throw NativeFailure.resultUnknown }
+            // The Host already settled this write. Withdrawing its private answer cannot turn it into a new retry.
+            guard mayReadWorkAnswer() else { throw CancellationError() }
+            return value
+        }
         var index = try await pendingIndex()
         let retry = index.contains(pending.requestId)
+        // A retry selected just before someone settled it cannot turn back into a first submission.
+        guard !mustBePending || retry else { throw NativeFailure.changedElsewhere }
+        if work != nil {
+            guard epoch == current, lease.valid, sameWorkAccess(), PhoneWorkItems.supported(metadata), metadata["device"]["scopes"].array.contains(.string("run")),
+                  metadata["device"]["scopes"].array.contains(.string("view")) else { throw retry ? NativeFailure.resultUnknown : NativeFailure.forbidden }
+        }
+        let requestPath: String
+        if pending.path == "/link/api/work/items" {
+            guard case .creation = work else { throw NativeFailure.invalidRecord }
+            guard PhoneWorkItems.supportsCreation(metadata) else {
+                throw retry ? NativeFailure.resultUnknown : NativeFailure.forbidden
+            }
+            requestPath = retry ? "/link/api/work/items/retry-create" : pending.path
+        } else { requestPath = pending.path }
         if retry {
             guard let data = try await vault.body(name: "pending-" + pending.requestId, lease: lease) else { throw NativeFailure.storageUnavailable }
             let previous = try JSONDecoder().decode(NativePendingWrite.self, from: data)
             guard previous.method == pending.method, previous.path == pending.path, previous.body == pending.body else { throw NativeFailure.invalidRecord }
+            // Reposting an unknown delivery can ask the session to run again. Read only the original Host post as evidence.
+            if case let .post(item, _, .some) = work {
+                guard let transport = installedTransport else { throw NativeFailure.resultUnknown }
+                let answer: NativeJSON
+                do {
+                    let postId = try PhoneWorkChange.postId(device: device.deviceId, item: item, request: pending.requestId)
+                    answer = try await readWork(.post(item, post: postId), on: transport)
+                    guard epoch == current, lease.valid, sameWorkAccess(), work?.confirmed(by: answer, requestId: pending.requestId) == true,
+                          answer["post"]["id"].string == postId, ["sent", "failed"].contains(answer["post"]["delivery"]["state"].string ?? "") else {
+                        throw NativeFailure.resultUnknown
+                    }
+                } catch { throw NativeFailure.resultUnknown }
+                return try await settledWorkAnswer(answer)
+            }
         } else { try await vault.storeBody(JSONEncoder().encode(pending), name: "pending-" + pending.requestId, lease: lease) }
         guard index.contains(pending.requestId) || index.count < 64 else { throw NativeFailure.storageUnavailable }
         if !index.contains(pending.requestId) { index.append(pending.requestId) }
         try await vault.storeMetadata(JSONEncoder().encode(index), name: "pending-index")
-        guard epoch == current, lease.valid else { throw NativeFailure.resultUnknown }
+        guard epoch == current, lease.valid, sameWorkAccess() else { throw NativeFailure.resultUnknown }
         let response: NativeHTTPResponse
-        do { response = try await connection.request(method, path: pending.path, body: pending.body, timeoutSeconds: timeoutSeconds) }
+        do { response = try await connection.request(method, path: requestPath, body: pending.body, timeoutSeconds: timeoutSeconds) }
         catch { throw NativeFailure.resultUnknown }
         // Even a path replacement leaves the original write unknown; it must never become a new request.
         guard epoch == current else { throw NativeFailure.resultUnknown }
@@ -857,23 +966,38 @@ public actor NativeWorkspace {
             if PhoneHelperCreate.isCreation(pending), (try? PhoneHelperCreate.createdId(value, for: pending)) == nil {
                 throw NativeFailure.resultUnknown
             }
+            if let work {
+                guard lease.valid, sameWorkAccess(), work.confirmed(by: value, requestId: pending.requestId) else { throw NativeFailure.resultUnknown }
+                if case .post(_, _, .some) = work, !["sent", "failed"].contains(value["post"]["delivery"]["state"].string ?? "") {
+                    throw NativeFailure.resultUnknown
+                }
+                return try await settledWorkAnswer(value)
+            }
             try? await removePending(pending.requestId)
             return value
         }
         // A 5xx whose code says the Host accepted nothing (a Harness that could not start) is a refusal, not unknown.
         if NativeHostRefusal.leavesUnknown(status: response.status, body: response.body) { throw NativeFailure.resultUnknown }
         let refusal = NativeHostRefusal.parse(status: response.status, body: response.body)
+        if work != nil, [401, 403, 404].contains(response.status) {
+            // Work routes recheck access when presenting the result, after the change or delivery may have happened.
+            _ = await responseFailure(response, lease: lease)
+            if explain, mayReadWorkAnswer(), let refusal { throw NativeUnsettledRefusal(refusal: refusal) }
+            throw NativeFailure.resultUnknown
+        }
         // A retry's denial says nothing about whether the first submission ran before permissions changed, unless the
         // Host answered it from the first one's receipt.
         if retry, !(refusal.map { retryAnswered?($0) ?? false } ?? false) {
             // Still unknown; with `explain` the Host's words come along for the line under the row.
-            if explain, let refusal { throw NativeUnsettledRefusal(refusal: refusal) }
+            if explain, mayReadWorkAnswer(), let refusal { throw NativeUnsettledRefusal(refusal: refusal) }
             throw NativeFailure.resultUnknown
         }
         try? await removePending(pending.requestId)
+        guard mayReadWorkAnswer() else { throw CancellationError() }
         // Its own words: the generic failure of a 5xx would say nothing of the Harness that could not start.
         if response.status >= 500, let refusal { throw refusal }
         let failure = await responseFailure(response, lease: lease)
+        guard mayReadWorkAnswer() else { throw CancellationError() }
         if explain, let refusal, failure != .expired { throw refusal }
         throw failure
     }
@@ -898,6 +1022,7 @@ public actor NativeWorkspace {
         try await vault.storeMetadata(JSONEncoder().encode(value), name: "review-seen")
     }
     public func pendingWrites() async throws -> [NativePendingWrite] {
+        let current = epoch, access = accessEpoch
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
         var result: [NativePendingWrite] = []
         for id in try await pendingIndex() {
@@ -911,6 +1036,8 @@ public actor NativeWorkspace {
             }
             result.append(pending)
         }
+        try lease.requireValid()
+        guard revocation == nil, installedTransport?.valid != false, epoch == current, accessEpoch == access, !Task.isCancelled else { throw CancellationError() }
         return result
     }
     private func pendingIndex() async throws -> [String] {
@@ -1171,14 +1298,14 @@ public actor NativeWorkspace {
                   notice.event.provenance?.origin === state.origin else { throw NativeFailure.invalidRecord }
         }
         let evidence = try state.authority.issue(lease: state.lease)
-        let snapshot = notice == nil ? nil : try await self.snapshot()
+        let checkpoint = notice == nil ? nil : try await listCheckpoint()
         guard bodyState === state, epoch == current, state.authority.accepts(evidence) else { try bodyUnavailable(reading) }
         let detail = try await read("/link/api/tasks/" + reading.sessionId, body: true)
         guard bodyState === state, epoch == current, state.authority.accepts(evidence) else { try bodyUnavailable(reading) }
         var check = NativeTaskPublicationGate(instanceId: state.instanceId, sessionId: reading.sessionId)
         let ticket = check.capture()
         guard try check.acceptHTTP(detail.encoded(), ticket: ticket) != nil else { throw NativeFailure.invalidRecord }
-        return try state.offer(NativeBodyUpdate(http: detail, snapshot: snapshot, evidence: evidence), priority: 1)
+        return try state.offer(NativeBodyUpdate(http: detail, checkpoint: checkpoint, evidence: evidence), priority: 1)
     }
 
     /** Each actual frame reaches the shadow before a publication revision can suppress it. */
@@ -1468,25 +1595,34 @@ public actor NativeWorkspace {
         if response.status == 408 || response.status >= 500 { return .resultUnknown }
         return .unsupported
     }
-    /** Allocate the write in the same actor turn as the checkpoint adoption. */
-    private func acceptSnapshot(_ value: NativeJSON) throws -> NativeSnapshotWrite {
+    private func beginSnapshotRead() -> UInt64 {
+        snapshotRead += 1
+        return snapshotRead
+    }
+    /** A later read can finish listing the Harnesses without a revision bump. A late equal-revision reply must not undo it. */
+    private func acceptSnapshot(_ value: NativeJSON, read: UInt64, installing: Bool = false) throws -> NativeSnapshotWrite {
         guard let instance = value["instanceId"].string, let revision = value["revision"].integer else { throw NativeFailure.invalidRecord }
+        if let acceptedSnapshot, self.instance == instance,
+           (revision <= self.revision && read < acceptedRead) || (installing && revision < self.revision) {
+            return acceptedSnapshot
+        }
         let bytes = try listMetadata(value).encoded()
         try adoptCheckpoint(value)
+        acceptedRead = read
         snapshotOrder += 1
         let write = NativeSnapshotWrite(order: snapshotOrder, instance: instance, revision: revision, bytes: bytes)
         acceptedSnapshot = write
         return write
     }
-    private func persistCurrentSnapshot(_ write: NativeSnapshotWrite, epoch expected: UUID) async throws -> NativeJSON {
+    private func persistCurrentSnapshot(_ write: NativeSnapshotWrite, epoch expected: UUID) async throws -> NativeListCheckpoint {
         var pending = write
         for _ in 0..<8 {
             try await vault.storeSnapshot(pending)
-            guard epoch == expected, installedTransport?.valid == true, let latest = acceptedSnapshot else {
+            guard epoch == expected, let transport = installedTransport, transport.valid, let latest = acceptedSnapshot else {
                 throw NativeFailure.unavailable
             }
             // A newer snapshot may have arrived while the vault was busy. Return only the current, stored projection.
-            if pending.order == latest.order { return metadata }
+            if pending.order == latest.order { return NativeListCheckpoint(value: metadata, order: latest.order, transport: transport) }
             pending = latest
         }
         throw NativeFailure.unavailable
@@ -1504,6 +1640,7 @@ public actor NativeWorkspace {
         if instance == id, next < revision { throw NativeFailure.invalidRecord }
         let changedAccess = metadata != .null && ["status", "scopes", "dataScope"].contains { metadata["device"][$0] != value["device"][$0] }
         if instance != id || changedAccess {
+            accessEpoch = UUID()
             let previous = bodyState?.stream
             bodyAttempt = UUID(); bodyState?.withdraw(accessChanged: instance == id && changedAccess); bodyState = nil
             if let previous { Task { await previous.cancel() } }

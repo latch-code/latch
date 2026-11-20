@@ -103,8 +103,9 @@ struct NewSessionSheet: View {
                     .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 16))
                     .overlay(alignment: .bottomLeading) {
                         HStack(spacing: 4) {
-                            if attaches { AttachButton(key: attachKey, harness: harness, selection: attachSelection, source: $attachSource) }
-                            SlashInsertButton(disabled: !slashContext.bodyOpen || !slashContext.canRun || slashContext.pending || slash.composing) { slash.insertSlash($prompt, enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending); focused = true }
+                            ComposerMenu(key: attaches ? attachKey : nil, harness: harness, selection: attachSelection, source: $attachSource) {
+                                SlashMenuItem(slash: slash, text: $prompt, focused: $focused, context: slashContext)
+                            }
                         }.padding(10)
                     }
                     .background(GeometryReader { proxy in Color.clear.onChange(of: proxy.frame(in: .global).minY, initial: true) { _, value in slashSpace = max(0, value - proxy.safeAreaInsets.top - 12) } })

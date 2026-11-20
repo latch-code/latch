@@ -163,6 +163,13 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     private var hostClockOffset: TimeInterval = 0
     /** Where to come back to after the App returns from the background: within this process only. */
     private var resumeSession: String?
+    private var resumeAfterListing: PhoneResumingSession?
+    private var visibleSessionIntent: PhoneResumingSession? {
+        guard let sessionId, hasContentWindow, connected, storageAvailable, !hold.holding,
+              (tab == .code && !workItemsShown) || (tab == .agents && !agentPath.isEmpty) else { return nil }
+        return PhoneResumingSession(session: sessionId, host: generation, selection: contentGeneration,
+            content: privateSnapshot.epoch, tab: tab, agentPath: agentPath)
+    }
     private var lastHostId: String?
     /** When a window that ran out last opened again by itself; a clock far off the Mac's cannot make it spin. */
     private var lastReopen: ContinuousClock.Instant?
@@ -184,7 +191,11 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     }
     @Published var privateSnapshot = PhonePrivateSnapshot()
     @Published var createdHelper: CreatedHelper?
-    private var bodyLease: BodyLease?
+    private(set) var bodyLease: BodyLease?
+    var currentFileAccess: NativeFileAccess? {
+        guard connected, let bodyLease, bodyLease.valid, let installedTransport, installedTransport.valid else { return nil }
+        return NativeFileAccess(lease: bodyLease, transport: installedTransport)
+    }
     var hasContentWindow: Bool {
         #if LATCH_SCREENS
         if staged { return verifiedUntil.map { $0 > Date() } ?? false }
@@ -226,8 +237,9 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     private var refreshId: UUID?
     private var pendingEvent: (NativeEvent, NativeWorkspaceEvents, String?)?
     private var expiryTask: Task<Void, Never>?
-    private var reconnectTask: Task<Void, Never>?
-    private var reconnectId: UUID?
+    private let listPublication = NativeListPublication()
+    private var initialListTask: Task<Void, Never>?
+    private var reconnectTask: (id: UUID, task: Task<Void, Never>)?
     var pairingTask: Task<Void, Never>?
     var pairingConnection: NativeHTTPConnection?
     private var monitor: NWPathMonitor?
@@ -318,7 +330,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     }
     private func withdrawForHold() {
         if let sessionId, !workPath.contains(where: { $0.openedSession == sessionId }) { resumeSession = sessionId }
-        eventTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel(); reconnectTask = nil
+        eventTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); initialListTask?.cancel(); cancelReconnect()
         proximityTask?.cancel(); proximityTask = nil; upgradeTask?.cancel(); upgradeTask = nil
         streamGeneration = UUID(); stopWatching(forget: true)
         cancelPreview(); clearPrivateContent(); verifiedUntil = nil
@@ -331,18 +343,21 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         guard hold.resume() else { return }
         guard let workspace, let host = selectedHost, storageAvailable else { lock(); await open(); return }
         timeline.begin()
-        let current = generation
+        let current = generation, selected = contentGeneration, resume = resumeSession
+        resumeSession = nil
         watchOthers()
         do {
             let kept = try await workspace.recheckWindow()
             guard generation == current, storageAvailable else { return }
             timeline.record(.verification)
             if kept, let lease = await workspace.lease() { try? bindBodyLease(lease, current: current) }
-            let resume = resumeSession; resumeSession = nil
-            if kept, let resume, snapshot["tasks"].array.contains(where: { $0["id"].string == resume }) { await openSession(resume) }
-            else { startEvents() }
-            guard generation == current else { return }
-            _ = await refresh()
+            guard generation == current, storageAvailable, !hold.holding else { return }
+            if kept, let resume, sessionId == resume, contentGeneration == selected { resumeAfterListing = visibleSessionIntent }
+            // Resume the list stream while a partial first checkpoint still lacks the selected session.
+            startEvents(listOnly: contentGeneration == selected && sessionId == resume)
+            _ = await refresh(includeSelectedBody: false)
+            guard generation == current, storageAvailable, !hold.holding, connected else { return }
+            recoverInitialList()
             tryUpgrade()
         } catch {
             guard generation == current, storageAvailable else { return }
@@ -351,11 +366,25 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             startReconnect(immediately: true)
         }
     }
+    private var waitingForSessionList: Bool {
+        resumeAfterListing != nil && resumeAfterListing == visibleSessionIntent
+    }
+    private func restoreListedSession() async {
+        let current = visibleSessionIntent
+        guard let intent = resumeAfterListing,
+              let action = PhoneResumingSession.resolve(&resumeAfterListing, current: current, snapshot: snapshot) else { return }
+        switch action {
+        case .close: closeSession()
+        case .read:
+            guard let lease = bodyLease else { return }
+            await openSession(intent.session, resuming: lease)
+        }
+    }
     func lock() {
         hold.release(); holdWatch?.cancel(); holdWatch = nil; upgradeTask?.cancel(); upgradeTask = nil
         if let sessionId, !workPath.contains(where: { $0.openedSession == sessionId }) { resumeSession = sessionId }
         if let selectedHost { lastHostId = selectedHost.id }
-        generation = UUID(); eventTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel(); pairingTask?.cancel()
+        generation = UUID(); eventTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); initialListTask?.cancel(); cancelReconnect(); pairingTask?.cancel()
         monitorGeneration = UUID(); monitor?.cancel(); monitor = nil
         currentNetworkPath = nil; proximityTask?.cancel(); proximityTask = nil
         resetBookRefresh(); stopWatching(forget: true)
@@ -370,7 +399,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         } else { storageOpening.close() }
         store = nil; workspace = nil; installedTransport = nil; pairingConnection = nil
         cancelPreview()
-        detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
+        sessionId = nil; detail = .null; snapshot = .null; verifiedUntil = nil; pairing = nil; pending = []; controlPending = .null; hosts = []; draft = nil; selectedHost = nil
         agentPath = []; appPath = []; resetWorkItems(); proposals.clear(); agentResults.clear(); resetSessionActions(); resetReview()
         connected = false; offline = false; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; storeState = .opening; busy = false; verifying = false; status = "正在连接…"
         PreviewFiles.clear(); clearAttachments()
@@ -387,14 +416,14 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         generation = UUID(); let current = generation
         defer { if generation == current { busy = false } }
         eventRetryAttempt = 0
-        eventTask?.cancel(); expiryTask?.cancel(); reconnectTask?.cancel()
+        eventTask?.cancel(); expiryTask?.cancel(); initialListTask?.cancel(); cancelReconnect()
         resetBookRefresh()
         let previous = workspace, previousHost = selectedHost?.id
         storageOpening.close { await self.closeConnection(previous, hostId: previousHost) }
         workspace = nil; installedTransport = nil
         clearPrivateContent(); resetWorkItems(); resetSessionActions(); resetReview(); snapshot = .null; sessionId = nil; agentPath = []; appPath = []; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; verifiedUntil = nil; connected = false; offline = false
         let resume = resumeSession; resumeSession = nil
-        selectedHost = host; lastHostId = host.id; status = "正在连接…"; error = nil
+        selectedHost = host; lastHostId = host.id; lastConfirmed = nil; hostNotice = nil; status = "正在连接…"; error = nil
         watchOthers()
         guard await storageOpening.waitForClose(), generation == current, self.store === store, storageAvailable else { return }
         do {
@@ -416,12 +445,12 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                 await self?.bookFailed(failure, current: current)
             })
             if !offlineCacheBlocked.contains(host.id) {
-                let cached = try await next.cachedSnapshot()
+                // A damaged optional cache cannot prevent a fresh authenticated connection.
+                let cached = try? await next.cachedSnapshot()
                 guard generation == current, self.store === store, storageAvailable else { return }
-                if let cached, !offlineCacheBlocked.contains(host.id) { adoptSnapshot(cached, live: false) }
+                if let cached, installedTransport == nil, !offlineCacheBlocked.contains(host.id) { displaySnapshot(cached, live: false) }
             }
-            try startDiscovery(host)
-            try await dialRound(host, workspace: next, current: current)
+            if !connected { try await dialRound(host, workspace: next, current: current) }
             guard generation == current, storageAvailable else { return }
             await refreshControlPending()
             if generation == current, storageAvailable, let resume,
@@ -429,7 +458,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         } catch {
             guard generation == current, storageAvailable else { return }
             if let workspace, let proof = await workspace.verifiedRevocation() { await retire(host, proof: proof, retiredStore: store); return }
-            guard generation == current, storageAvailable else { return }
+            guard generation == current, storageAvailable, !(connected && installedTransport?.valid == true) else { return }
             connected = false; offline = true; status = "不在线"
             if !Self.outOfReach(error) { report(error) }
             startReconnect()
@@ -446,9 +475,30 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             }
             installedTransport = path.epoch
             if let selectedHost { offlineCacheBlocked.remove(selectedHost.id) }
-            adoptSnapshot(path.snapshot, windowOpen: bodyLease?.valid == true)
+            adoptSnapshot(path.checkpoint, windowOpen: bodyLease?.valid == true)
             connected = true; status = "已连接"
             startEvents()
+            recoverInitialList()
+        }
+    }
+    /** Retry a partial first checkpoint even when there is no body window for the list event stream. */
+    private func recoverInitialList() {
+        initialListTask?.cancel()
+        guard let workspace, let transport = installedTransport, connected else { return }
+        func current() -> Bool {
+            !Task.isCancelled && installedTransport === transport && transport.valid && connected && storageAvailable && !hold.holding
+        }
+        initialListTask = Task {
+            do {
+                try await NativeReconnectPolicy.recoverIncompleteList(current: { current() ? self.snapshot : nil }) {
+                    let reading = self.privateSnapshot.epoch, lease = self.bodyLease
+                    let value = try await workspace.listCheckpoint()
+                    guard current(), self.privateSnapshot.accepts(reading) else { throw CancellationError() }
+                    self.adoptSnapshot(value, captured: reading, windowOpen: lease?.valid == true)
+                }
+            } catch {
+                if current() { _ = wentAway(error) }
+            }
         }
     }
     func refreshControlPending() async {
@@ -469,23 +519,30 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             await refreshControlPending(); _ = await refresh()
         } catch { if generation == current { await refreshControlPending(); report(error) } }
     }
-    func ensureVerified() async throws {
-        guard let workspace else { throw NativeFailure.unavailable }
+    func ensureVerified(resuming retained: BodyLease? = nil) async throws {
+        guard let workspace, let transport = installedTransport, transport.valid else { throw NativeFailure.unavailable }
         guard hasScope("view") else { throw NativeFailure.forbidden }
-        let current = generation
-        if let lease = await workspace.lease() {
+        let current = generation, openingWindow = privateSnapshot.epoch
+        func restore(_ lease: BodyLease) async throws {
+            guard installedTransport === transport, transport.valid, privateSnapshot.accepts(openingWindow) else { throw CancellationError() }
             try bindBodyLease(lease, current: current)
-            let restored = try await workspace.pendingWrites()
-            guard current == generation else { throw NativeFailure.expired }
-            try lease.requireValid(); pending = restored
+            let window = privateSnapshot.epoch
+            let saved = try await workspace.pendingWrites()
+            guard current == generation, installedTransport === transport, transport.valid, !hold.holding, !Task.isCancelled,
+                  bodyLease?.sameWindow(as: lease) == true, privateSnapshot.accepts(window) else { throw CancellationError() }
+            try lease.requireValid()
+            pending = saved
+        }
+        if let lease = await workspace.lease() {
+            guard retained?.sameWindow(as: lease) != false else { throw CancellationError() }
+            try await restore(lease)
             return
         }
+        guard retained == nil, generation == current, installedTransport === transport, transport.valid, !hold.holding,
+              privateSnapshot.accepts(openingWindow) else { throw CancellationError() }
         verifying = true; defer { verifying = false }
         let lease = try await workspace.verify()
-        try bindBodyLease(lease, current: current)
-        let restored = try await workspace.pendingWrites()
-        guard current == generation else { throw NativeFailure.expired }
-        try lease.requireValid(); pending = restored
+        try await restore(lease)
         timeline.record(.verification)
         startEvents()
         scheduleBookRefresh(hint: snapshot["host"]["native"]["discoveryEpoch"].string, directoryHint: snapshot["host"]["native"]["directoryEpoch"].string, force: true)
@@ -591,8 +648,8 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     @discardableResult private func publishBody(_ update: NativeBodyUpdate, context: PhoneBodyRead) async throws -> Bool {
         guard let receipt = context.reading.publication.apply(update, to: { value in
             guard self.bodyIsCurrent(context) else { return false }
-            if let snapshot = value.snapshot {
-                self.adoptSnapshot(snapshot, captured: context.content, windowOpen: context.lease.valid)
+            if let checkpoint = value.checkpoint {
+                guard self.adoptSnapshot(checkpoint, captured: context.content, windowOpen: context.lease.valid) else { return false }
                 // Adopting changed scopes takes content down synchronously, before the body's assignment.
                 guard self.bodyIsCurrent(context) else { return false }
             }
@@ -665,7 +722,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         clearPrivateContent()
         var reading = contentGeneration, content = privateSnapshot.epoch
         do {
-            let value = try await context.workspace.snapshot()
+            let value = try await context.workspace.listCheckpoint()
             guard generation == host, streamGeneration == streamId, sessionId == selected,
                   contentGeneration == reading, privateSnapshot.accepts(content) else { return }
             try context.lease.requireValid()
@@ -684,7 +741,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             detailFailed = selected; report(error)
         }
     }
-    @discardableResult func refresh() async -> Bool {
+    @discardableResult func refresh(includeSelectedBody: Bool = true) async -> Bool {
         guard let workspace else { return false }
         let current = generation, selected = sessionId, transport = installedTransport
         func sameConnection() -> Bool { generation == current && installedTransport === transport && transport?.valid != false }
@@ -700,13 +757,13 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                 verifiedUntil = nil
             }
             reading = privateSnapshot.epoch
-            let value = try await workspace.snapshot()
+            let value = try await workspace.listCheckpoint()
             guard sameConnection() else { return false }
             guard privateSnapshot.accepts(reading) else { return true }
             adoptSnapshot(value, captured: reading, windowOpen: lease?.valid == true)
             await refreshControlPending()
             guard sameConnection(), privateSnapshot.accepts(reading) else { return false }
-            if let selected, lease?.valid == true {
+            if includeSelectedBody, !waitingForSessionList, let selected, lease?.valid == true {
                 let reading = contentGeneration
                 guard try await readSelectedBody(selected, workspace: workspace), sameConnection(),
                       sessionId == selected, contentGeneration == reading, lease?.valid == true else { return false }
@@ -734,13 +791,13 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         if connected { connected = false; offline = true; status = "不在线"; startReconnect() }
         return true
     }
-    func startEvents() {
+    func startEvents(listOnly: Bool = false) {
         eventTask?.cancel()
         bodyRead?.cancelPending()
         refreshTask?.cancel(); refreshTask = nil; refreshId = nil; pendingEvent = nil
         streamGeneration = UUID()
         guard let workspace else { return }
-        let current = generation, selected = verifiedUntil != nil ? sessionId : nil, streamId = streamGeneration
+        let current = generation, selected = !listOnly && verifiedUntil != nil && !waitingForSessionList ? sessionId : nil, streamId = streamGeneration
         eventTask = Task {
             var streamLease: BodyLease?
             var selectedBody: PhoneBodyRead?
@@ -793,7 +850,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                 let reading = privateSnapshot.epoch
                 guard let recovery = await PhoneUnlock.recoverStream(error, current: {
                     !Task.isCancelled && self.generation == current && self.streamGeneration == streamId && self.privateSnapshot.accepts(reading)
-                }, readMetadata: { try await workspace.snapshot() }) else { return }
+                }, readCheckpoint: { try await workspace.listCheckpoint() }) else { return }
                 if recovery.action == .eventOverflow {
                     // The selected reader already spent its one full repair; a new event task must not reset it.
                     if selectedBody?.repaired == true { report(error); return }
@@ -813,7 +870,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
 #endif
                     adoptSnapshot(value, captured: reading, windowOpen: bodyLease?.valid == true)
                     connected = true; status = "已连接"
-                    reconnectTask?.cancel()
+                    cancelReconnect()
                     if let streamLease, !streamLease.valid, bodyLease?.sameWindow(as: streamLease) == true {
                         closeBodyWindow(streamLease, current: current)
                         return
@@ -918,7 +975,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                     pendingEvent = nil
                     let value = event.data.isEmpty ? NativeJSON.null : try NativeJSON.decode(event.data)
                     if value["resumeRequired"].bool { try await workspace.forgetCursor(sessionId: selected) }
-                    guard await refresh(), current == generation, streamGeneration == streamId else { return }
+                    guard await refresh(includeSelectedBody: selected != nil), current == generation, streamGeneration == streamId else { return }
                     let applied = selected == nil ? snapshot["revision"].integer : detail["sync"]["revision"].integer
                     guard let applied else { return }
                     try await workspace.acknowledge(event, from: source, sessionId: selected, appliedRevision: applied)
@@ -926,19 +983,26 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             } catch { if !(error is CancellationError), current == generation { report(error) } }
         }
     }
+    func refreshInbox() async {
+        if connected { _ = await refresh() }
+        else if offline { retryConnection() }
+    }
+    private func cancelReconnect() {
+        reconnectTask?.task.cancel()
+        reconnectTask = nil
+    }
     /** Reconnecting is automatic; this only starts the next try now. */
     func retryConnection() {
         guard let selectedHost, !busy, !connected, !forgettingComputers.contains(selectedHost.id) else { return }
-        reconnectTask?.cancel(); reconnectTask = nil
+        cancelReconnect()
         if workspace == nil { Task { await connect(selectedHost) } }
         else { offline = false; status = "正在连接…"; startReconnect(immediately: true) }
     }
     private func startReconnect(immediately: Bool = false) {
         guard reconnectTask == nil, !hold.holding, let workspace, let host = selectedHost else { return }
-        let current = generation, attemptId = UUID()
-        reconnectId = attemptId
-        reconnectTask = Task {
-            defer { if reconnectId == attemptId { reconnectTask = nil; reconnectId = nil } }
+        let current = generation, id = UUID()
+        reconnectTask = (id, Task {
+            defer { if reconnectTask?.id == id { reconnectTask = nil } }
             for attempt in 0..<1000 {
                 do {
                     // An announced restart, update, stop or sleep says when to look again, as the web's: not a failure to back off from.
@@ -949,7 +1013,10 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                     guard current == generation, !Task.isCancelled else { return }
                     await bookRefresher?.connectionChanged()
                     guard current == generation, !Task.isCancelled else { return }
-                    _ = await refresh(); scheduleProximity(workspace); return
+                    _ = await refresh()
+                    guard current == generation, !Task.isCancelled else { return }
+                    if !connected { continue }
+                    scheduleProximity(workspace); return
                 } catch {
                     if Task.isCancelled || current != generation { return }
                     let proof = await workspace.verifiedRevocation()
@@ -958,7 +1025,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
                     if !connected { offline = true; status = "不在线" }
                 }
             }
-        }
+        })
     }
     /**
      * A monitor's first callback is its baseline: the round already dialing uses this network, so it is not cancelled.
@@ -982,7 +1049,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             if path.status == .satisfied, let host = self.selectedHost { try? self.startDiscovery(host) }
             await self.paths.networkChanged()
             self.othersNetworkChanged()
-            self.reconnectTask?.cancel(); self.reconnectTask = nil
+            self.cancelReconnect()
             if self.selectedHost != nil { self.startReconnect(immediately: true) }
         } }
         next.start(queue: DispatchQueue(label: "app.latch.path-monitor"))
@@ -1159,7 +1226,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         freshPairings.removeValue(forKey: host.id)
         if pendingOther?.computer == host.id { pendingOther = nil }
         if isCurrent {
-            generation = UUID(); reconnectTask?.cancel(); eventTask?.cancel(); expiryTask?.cancel(); refreshTask?.cancel()
+            generation = UUID(); cancelReconnect(); initialListTask?.cancel(); eventTask?.cancel(); expiryTask?.cancel(); refreshTask?.cancel()
             resetBookRefresh(); proximityTask?.cancel(); proximityTask = nil
             hold.release(); holdWatch?.cancel(); holdWatch = nil; upgradeTask?.cancel(); upgradeTask = nil
             clearPrivateContent(); resetWorkItems(); resetSessionActions(); resetReview()
@@ -1217,6 +1284,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         Task { await refresh() }
     }
     private func clearPrivateContent() {
+        resumeAfterListing = nil
         privateSnapshot.clear()
         clearWorkContent()
         createdHelper = nil
@@ -1228,25 +1296,37 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         // Agents' names, duties and schedules came with the window and go with it.
         snapshot = PhoneAgents.takeDown(snapshot, proposals: &proposals, results: &agentResults)
     }
-    private func adoptSnapshot(_ value: NativeJSON, live: Bool = true, captured: UUID? = nil, windowOpen: Bool = false) {
-        guard captured.map(privateSnapshot.accepts) ?? true else { return }
+    @discardableResult private func adoptSnapshot(_ checkpoint: NativeListCheckpoint, captured: UUID? = nil, windowOpen: Bool) -> Bool {
+        guard captured.map(privateSnapshot.accepts) ?? true else { return false }
+        return listPublication.apply(checkpoint, on: installedTransport) { value in
+            self.displaySnapshot(value, live: true, captured: captured, windowOpen: windowOpen)
+        }
+    }
+    @discardableResult private func displaySnapshot(_ value: NativeJSON, live: Bool, captured: UUID? = nil, windowOpen: Bool = false) -> Bool {
         if let instance = value["instanceId"].string, snapshot["instanceId"].string == instance,
-           let revision = value["revision"].integer, let applied = snapshot["revision"].integer, revision < applied { return }
+           let revision = value["revision"].integer, let applied = snapshot["revision"].integer, revision < applied { return false }
         let keys = ["status", "scopes", "dataScope"]
         let changedScope = snapshot != .null && keys.contains(where: { snapshot["device"][$0] != value["device"][$0] })
         let changedInstance = snapshot["instanceId"].string.map { $0 != value["instanceId"].string } ?? false
         let withdraw = changedScope || changedInstance
-        if withdraw { clearPrivateContent(); heldDrafts = [:] }
+        if withdraw {
+            if waitingForSessionList { sessionId = nil }
+            clearPrivateContent(); heldDrafts = [:]
+        }
         guard let projected = privateSnapshot.adopt(value, captured: withdraw ? privateSnapshot.epoch : captured ?? privateSnapshot.epoch,
-            windowOpen: windowOpen && !withdraw) else { return }
+            windowOpen: windowOpen && !withdraw) else { return false }
         let previousSources = workItemsShown ? snapshot["tasks"].array : []
         snapshot = PhoneSessions.projectingCurrentSummary(snapshot: projected, detail: detail, sessionId: sessionId, cached: detailCached)
         reconcileWorkSources(previousSources)
-        if live { refreshReviewShortcuts() }
+        if live {
+            refreshReviewShortcuts()
+            if resumeAfterListing != nil { Task { await restoreListedSession() } }
+        }
         if let hostTime = PhoneTime.parse(value["hostTime"]) {
             // A cached list is old by definition: it says when it was true, not what the Host's clock reads now.
             if live { hostClockOffset = hostTime.timeIntervalSinceNow; lastConfirmed = Date() } else { lastConfirmed = hostTime }
         } else if live { lastConfirmed = Date() }
         scheduleBookRefresh(hint: value["host"]["native"]["discoveryEpoch"].string, directoryHint: value["host"]["native"]["directoryEpoch"].string)
+        return true
     }
 }

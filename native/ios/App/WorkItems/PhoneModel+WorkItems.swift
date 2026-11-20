@@ -153,7 +153,27 @@ extension PhoneModel {
     }
 
     func workStamp(_ itemId: String) -> PhoneWorkReadStamp? {
-        guard tab == .code, workItemsShown, workItemId == itemId, workItem(itemId) != nil, workTransportReady else { return nil }
+        guard workItemId == itemId, workItem(itemId) != nil else { return nil }
+        return workListStamp
+    }
+
+    var offersWorkCreation: Bool {
+        tab == .code && workItemsShown && workTransportReady && offersWorkItems && canRun && PhoneWorkItems.supportsCreation(snapshot)
+    }
+
+    var workCreationStamp: PhoneWorkReadStamp? { offersWorkCreation ? workListStamp : nil }
+
+    func prepareWorkCreation() async -> PhoneWorkReadStamp? {
+        guard offersWorkCreation, !busy, !verifying, pending.isEmpty else { return nil }
+        if let stamp = workCreationStamp { return stamp }
+        let host = generation, connection = workConnection, selection = workSelection
+        await openWorkWindow()
+        guard host == generation, connection == workConnection, selection == workSelection else { return nil }
+        return workCreationStamp
+    }
+
+    private var workListStamp: PhoneWorkReadStamp? {
+        guard tab == .code, workItemsShown, workTransportReady else { return nil }
         return PhoneWorkReadStamp(connected: connected, host: generation, connection: workConnection, transport: installedTransport,
             network: networkGeneration, window: hasContentWindow ? privateSnapshot.epoch : nil, selection: workSelection, instance: snapshot["instanceId"].string)
     }
@@ -220,5 +240,93 @@ extension PhoneModel {
         return connected && !detailCached && sessionId == context.source.sessionId && workStamp(context.itemId) == context.stamp
             && workPathGeneration == context.navigation && workPath.last == .source(context.source)
             && workDestinationAllowed(.source(context.source), itemId: context.itemId) && context.source.currentDecision(detail: detail, summary: currentSummary) != nil
+    }
+}
+
+extension PhoneModel {
+    func workChange(_ change: PhoneWorkChange, stamp: PhoneWorkReadStamp, requestId: String = UUID().uuidString) async -> PhoneWriteOutcome {
+        guard canRun, let id = change.itemId, workStamp(id) == stamp, workPath.isEmpty, let transport = stamp.transport,
+              let item = workItem(id) else { return .failed(NativeFailure.forbidden) }
+        if case let .completion(_, base, _) = change, base != item.revision { return .failed(NativeFailure.changedElsewhere) }
+        if case let .post(_, _, session?) = change, !item.sessionIds.contains(session) || workSourceVisibility(session) != .readable {
+            return .failed(NativeFailure.changedElsewhere)
+        }
+        let navigation = workPathGeneration
+        do {
+            return await write(try change.request(requestId: requestId), refresh: false, on: transport) {
+                stamp == self.workStamp(id) && self.workPathGeneration == navigation && self.canRun
+            }
+        }
+        catch { return .failed(error) }
+    }
+
+    func saveWorkItem(title: String, prompt: String, project: String?, stamp: PhoneWorkReadStamp) async -> PhoneWriteOutcome {
+        guard workCreationStamp == stamp, let transport = stamp.transport, !busy, pending.isEmpty else { return .failed(NativeFailure.forbidden) }
+        if let project, !PhoneStart.projects(snapshot["catalog"]).contains(where: { $0.id == project }) { return .failed(NativeFailure.changedElsewhere) }
+        do {
+            let request = try PhoneWorkChange.creation(title: title, prompt: prompt, project: project).request()
+            let result = await write(request, refresh: false, on: transport) {
+                self.workCreationStamp == stamp && (project == nil || PhoneStart.projects(self.snapshot["catalog"]).contains { $0.id == project })
+            }
+            if case let .done(answer) = result, workCreationStamp == stamp {
+                await refresh(includeSelectedBody: false)
+                if workCreationStamp == stamp, let id = answer["item"]["id"].string { selectWorkItem(id) }
+            }
+            return result
+        } catch { return .failed(error) }
+    }
+
+    private func ownsPendingWork(_ request: NativePendingWrite) -> Bool {
+        PhoneWorkChange(request) != nil && pending.contains { $0.requestId == request.requestId && $0.method == request.method && $0.path == request.path && $0.body == request.body }
+    }
+
+    /** The original host, revision and post recipient survive a retry from outside the item page. */
+    func retryWorkChange(_ request: NativePendingWrite) async -> String? {
+        guard !busy, canRun, hasContentWindow, ownsPendingWork(request), let change = PhoneWorkChange(request),
+              let workspace, let transport = installedTransport, transport.valid else { return nil }
+        let host = generation, window = privateSnapshot.epoch
+        func authorized() -> Bool {
+            host == generation && installedTransport === transport && transport.valid && privateSnapshot.accepts(window) && hasContentWindow && canRun
+        }
+        if case .creation = change, !PhoneWorkItems.supportsCreation(snapshot) {
+            return "这台电脑暂不支持核对创建回执，保存结果仍待确认"
+        }
+        if case let .completion(id, _, _) = change {
+            do {
+                let current = try await workspace.readWork(.item(id), on: transport)
+                guard authorized(), ownsPendingWork(request), !busy else { return nil }
+                if change.confirmed(by: current, requestId: request.requestId) {
+                    await abandonWorkChange(request)
+                    if authorized() { await refresh(includeSelectedBody: false) }
+                    return nil
+                }
+            } catch {
+                guard authorized() else { return nil }
+                return "待办状态仍未确认，可以稍后重试"
+            }
+        }
+        let outcome = await write(request, refresh: false, on: transport, mustBePending: true) { authorized() && self.ownsPendingWork(request) }
+        guard authorized() else { return nil }
+        await refresh(includeSelectedBody: false)
+        guard authorized() else { return nil }
+        return workChangeFailure(outcome)
+    }
+
+    func abandonWorkChange(_ request: NativePendingWrite) async {
+        guard !busy, ownsPendingWork(request), let workspace else { return }
+        let host = generation
+        do {
+            try await workspace.settlePending(request.requestId)
+            if host == generation { pending.removeAll { $0.requestId == request.requestId } }
+        } catch { if host == generation { report(error) } }
+    }
+}
+
+func workChangeFailure(_ outcome: PhoneWriteOutcome) -> String? {
+    switch outcome {
+    case .done: nil
+    case let .refused(no): no.message.isEmpty ? "电脑未接受这次操作" : no.message
+    case let .unknown(no): no.flatMap { $0.message.isEmpty ? nil : "结果待确认 · " + $0.message } ?? "结果待确认，可重试原操作"
+    case let .failed(error): error.localizedDescription
     }
 }

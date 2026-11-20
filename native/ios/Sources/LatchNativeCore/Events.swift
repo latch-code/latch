@@ -139,11 +139,16 @@ final class NativeEventCollector: ChannelInboundHandler, @unchecked Sendable {
     }
     func channelInactive(context: ChannelHandlerContext) { fail(context); context.fireChannelInactive() }
     func errorCaught(context: ChannelHandlerContext, error: Error) { fail(context) }
-    func handlerRemoved(context: ChannelHandlerContext) { timer?.cancel(); self.context = nil }
-    private func fail(_ context: ChannelHandlerContext, error: NativeFailure = .unavailable) {
-        guard !finished else { return }; finished = true; timer?.cancel()
+    func handlerRemoved(context: ChannelHandlerContext) { self.context = nil; finish(.unavailable) }
+    private func finish(_ error: NativeFailure) {
+        guard !finished else { return }
+        finished = true; timer?.cancel()
         if !opened { ready.fail(error) }
         continuation.finish(throwing: error)
+    }
+    private func fail(_ context: ChannelHandlerContext, error: NativeFailure = .unavailable) {
+        guard !finished else { return }
+        finish(error)
         context.close(promise: nil)
     }
 }

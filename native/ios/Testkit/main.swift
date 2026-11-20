@@ -75,6 +75,7 @@ do {
     case "nativeReconnect":
         stage = "reconnect"
         result = try await runNativeReconnect(input)
+    case "http2StreamOpening": result = try http2StreamOpeningFixture()
     case "reconnectRules":
         stage = "reconnect-rules"
         result = try await runReconnectRules()

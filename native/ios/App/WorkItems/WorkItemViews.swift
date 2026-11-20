@@ -3,24 +3,52 @@ import SwiftUI
 
 struct WorkItemList: View {
     @EnvironmentObject private var model: PhoneModel
+    let showsConnectionStatus: Bool
+
+    var body: some View {
+        WorkItemRows(list: PhoneWorkList(items: model.workItems, snapshot: model.snapshot), showsConnectionStatus: showsConnectionStatus)
+            .id(model.selectedHost?.id)
+    }
+}
+
+private struct WorkItemRows: View {
+    @EnvironmentObject private var model: PhoneModel
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var query = ""
+    @State private var selectedProjects = Set<PhoneWorkList.Project>()
+    let list: PhoneWorkList
+    let showsConnectionStatus: Bool
+
     private var selection: Binding<String?> { Binding(get: { model.workItemId }, set: model.selectWorkItem) }
 
     var body: some View {
-        let items = model.workItems
+        let projects = selectedProjects.intersection(list.projects)
+        let items = list.matching(title: query, projects: projects)
+        let filtering = !projects.isEmpty || !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         List(selection: selection) {
-            if !model.connected {
-                Section { WorkConnectionLine() }
-            }
-            ForEach(PhoneWorkGroup.allCases, id: \.self) { group in
-                let rows = items.filter { $0.group == group }
-                if !rows.isEmpty {
-                    Section {
-                        ForEach(rows) { item in row(item).tag(item.id) }
-                    } header: { Text(group.label).textCase(nil).font(.subheadline).foregroundStyle(PhoneTheme.muted) }
+            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(spacing: 8))
+            layout {
+                InboxSearchField(query: $query, prompt: "搜索待办标题", identifier: "work.search")
+                if !list.projects.isEmpty {
+                    // Withdraw an open menu with the window that supplied its private project options.
+                    projectFilter(projects).id(model.mayReadPrivateWork)
                 }
             }
-            ForEach(items.filter { $0.group == nil }) { item in row(item).tag(item.id) }
-            if items.isEmpty, model.connected {
+            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+            .listRowSeparator(.hidden).listRowBackground(PhoneTheme.canvas)
+            if showsConnectionStatus { CodeConnectionRow() }
+            ForEach(PhoneWorkGroup.allCases, id: \.self) { group in
+                groupSection(items.filter { $0.group == group }, group: group)
+            }
+            groupSection(items.filter { $0.group == nil }, group: nil)
+            if items.isEmpty && filtering {
+                VStack(spacing: 6) {
+                    Text("当前列表没有匹配的待办").font(.subheadline).foregroundStyle(PhoneTheme.muted)
+                    Button("清除搜索和筛选") { query = ""; selectedProjects = [] }
+                        .font(.subheadline.weight(.medium)).foregroundStyle(PhoneTheme.accent)
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 20).listRowSeparator(.hidden)
+            } else if items.isEmpty, model.connected {
                 Text(model.hasContentWindow ? "还没有待办" : "没有可显示的待办")
                     .font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.vertical, 24)
                     .listRowSeparator(.hidden)
@@ -35,8 +63,57 @@ struct WorkItemList: View {
         .listStyle(.plain).scrollContentBackground(.hidden)
         // A split-view list uses its tint for the selected row's fill. Keep the tab's ink tint out of that surface.
         .tint(PhoneTheme.selectedRow)
-        .background(PhoneTheme.canvas).navigationTitle("待办").navigationBarTitleDisplayMode(.large)
-        .refreshable { await model.refresh() }
+        .background(PhoneTheme.canvas)
+        .onChange(of: list.projects) { _, available in selectedProjects.formIntersection(available) }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in query = ""; selectedProjects = [] }
+        .scrollDismissesKeyboard(.interactively)
+        .refreshable { await model.refreshInbox() }
+    }
+
+    private func projectFilter(_ selected: Set<PhoneWorkList.Project>) -> some View {
+        let label: String
+        if selected.count == 1, let project = selected.first { label = list.name(of: project) }
+        else { label = selected.isEmpty ? "项目" : "项目 · \(selected.count)" }
+        return Menu {
+            Button { selectedProjects = [] } label: {
+                if selected.isEmpty { Label("全部项目", systemImage: "checkmark") } else { Text("全部项目") }
+            }
+            Divider()
+            ForEach(list.projects, id: \.self) { project in
+                Toggle(PhoneConversation.visible(list.name(of: project)), isOn: Binding(get: { selectedProjects.contains(project) }, set: { checked in
+                    if checked { selectedProjects.insert(project) } else { selectedProjects.remove(project) }
+                }))
+            }
+        } label: {
+            HStack(spacing: 6) {
+                if selected.isEmpty { Image(systemName: "line.3.horizontal.decrease") }
+                Text(PhoneConversation.visible(label)).lineLimit(1).truncationMode(.middle)
+                Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
+            }
+            .font(.subheadline).foregroundStyle(PhoneTheme.ink)
+            .padding(.horizontal, 10).frame(maxWidth: 160, minHeight: 44)
+            .fixedSize(horizontal: true, vertical: false)
+            .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .menuActionDismissBehavior(.disabled)
+        .accessibilityLabel("筛选待办项目")
+        .accessibilityValue(selected.isEmpty ? "全部项目" : PhoneConversation.visible(label))
+        .accessibilityIdentifier("work.projects")
+    }
+
+    @ViewBuilder private func groupSection(_ rows: [PhoneWorkItemSummary], group: PhoneWorkGroup?) -> some View {
+        if !rows.isEmpty {
+            Section {
+                ForEach(rows) { item in row(item).tag(item.id) }
+            } header: {
+                HStack(spacing: 8) {
+                    Text(group?.label ?? "状态未确认").font(.subheadline.weight(.semibold))
+                    Text(rows.count, format: .number).font(.caption.monospacedDigit()).foregroundStyle(PhoneTheme.muted)
+                }
+                .textCase(nil).foregroundStyle(group == .attention ? PhoneTheme.amber : PhoneTheme.ink)
+                .accessibilityElement(children: .combine)
+            }
+        }
     }
 
     private func row(_ item: PhoneWorkItemSummary) -> some View {
@@ -44,11 +121,80 @@ struct WorkItemList: View {
             Text(PhoneConversation.visible(item.title)).font(.body.weight(model.workItemId == item.id ? .semibold : .medium)).foregroundStyle(PhoneTheme.ink)
                 .fixedSize(horizontal: false, vertical: true)
             if let project = projectName(item.projectId, snapshot: model.snapshot) {
-                Text(PhoneConversation.visible(project)).font(.subheadline).foregroundStyle(PhoneTheme.muted)
+                Label(PhoneConversation.visible(project), systemImage: "folder")
+                    .labelStyle(TightLabel()).font(.caption).foregroundStyle(PhoneTheme.muted).lineLimit(2)
             }
             if let reason = item.reason, item.group == .attention { WorkStatus(reason: reason) }
         }.frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+            .listRowInsets(EdgeInsets(top: 5, leading: 20, bottom: 5, trailing: 20))
+            .listRowBackground(model.workItemId == item.id ? PhoneTheme.selectedRow : PhoneTheme.canvas)
+            .listRowSeparatorTint(PhoneTheme.line)
             .contentShape(Rectangle()).accessibilityElement(children: .combine)
+    }
+}
+
+/** Saves a work item without choosing an engine or starting a session. */
+struct WorkItemCreationForm: View {
+    @EnvironmentObject private var model: PhoneModel
+    @Environment(\.dismiss) private var dismiss
+    let stamp: PhoneWorkReadStamp
+    @State private var title = ""
+    @State private var prompt = ""
+    @State private var projectId: String?
+    @State private var composingTitle = false
+    @State private var composingPrompt = false
+    @State private var saving = false
+    @State private var error: String?
+
+    var body: some View {
+        let projects = PhoneStart.projects(model.snapshot["catalog"]).filter { $0.id != "default" }
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let projectMissing = projectId != nil && !projects.contains { $0.id == projectId }
+        let invalidTitle = cleanTitle.unicodeScalars.count > 120 || cleanTitle.rangeOfCharacter(from: .newlines) != nil
+        let longPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count > 16_000
+        NavigationStack {
+            Form {
+                Section("标题") {
+                    LocalTextEditor(text: $title, placeholder: "待办标题", maximumLines: 2, minimumLines: 2, composing: $composingTitle)
+                    if invalidTitle { Text("标题最多 120 个字，只能写一行").font(.caption).foregroundStyle(PhoneTheme.red) }
+                }
+                Section("要求（选填）") {
+                    LocalTextEditor(text: $prompt, placeholder: "待办要求", maximumLines: 6, minimumLines: 4, composing: $composingPrompt)
+                    if longPrompt { Text("要求最多 16,000 个字符").font(.caption).foregroundStyle(PhoneTheme.red) }
+                }
+                Section {
+                    Picker("项目", selection: $projectId) {
+                        Text("无项目").tag(String?.none)
+                        ForEach(projects) { project in Text(PhoneConversation.visible(project.name)).tag(Optional(project.id)) }
+                        if projectMissing { Text("项目不可用").tag(projectId) }
+                    }
+                } footer: {
+                    Text("保存后列入「未开始」。")
+                }
+                if let error { Text(error).font(.subheadline).foregroundStyle(PhoneTheme.red) }
+            }
+            .disabled(saving)
+            .navigationTitle("新建待办").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.disabled(saving) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存待办") { Task { await save() } }
+                        .disabled(saving || model.busy || !model.pending.isEmpty || cleanTitle.isEmpty || invalidTitle || longPrompt
+                            || projectMissing || composingTitle || composingPrompt || model.workCreationStamp != stamp)
+                }
+            }
+        }.interactiveDismissDisabled(saving)
+    }
+
+    private func save() async {
+        guard !saving else { return }
+        saving = true; defer { saving = false }
+        let outcome = await model.saveWorkItem(title: title, prompt: prompt, project: projectId, stamp: stamp)
+        guard model.workCreationStamp == stamp else { return }
+        switch outcome {
+        case .done, .unknown: dismiss()
+        default: error = workChangeFailure(outcome)
+        }
     }
 }
 
@@ -142,6 +288,8 @@ private struct WorkItemContents: View {
     @State private var pageFailure: String?
     @State private var loadingMore = false
     @State private var ticket = UUID()
+    @State private var writingPost = false
+    @State private var actionNotice: String?
 
     private var unreadableSources: [String] {
         guard let value else { return [] }
@@ -170,6 +318,7 @@ private struct WorkItemContents: View {
                 if let failure {
                     WorkReadNotice(title: failure) { await load() }
                 }
+                if let actionNotice { Text(actionNotice).font(.subheadline).foregroundStyle(PhoneTheme.amber) }
                 if let value {
                     attention(value)
                     instructions(value.detail)
@@ -185,6 +334,17 @@ private struct WorkItemContents: View {
         }
         .scrollPosition(id: $anchor)
         .refreshable { _ = await model.refresh(); await load() }
+        .toolbar {
+            if model.canRun, let detail = value?.detail {
+                Button(detail.closed ? "重新打开" : "标为完成") {
+                    Task { _ = await perform(.completion(item: itemId, revision: detail.item.revision, closed: !detail.closed)) }
+                }.disabled(model.busy || !model.pending.isEmpty || detail.item.revision != model.workItem(itemId)?.revision)
+            }
+        }
+        .sheet(isPresented: $writingPost) {
+            WorkPostComposer(itemId: itemId, stamp: stamp) { change in await perform(change) }
+                .presentationDetents([.medium, .large])
+        }
         .task(id: refreshKey) { await load() }
         .onChange(of: unreadableSources) { _, absent in
             if !absent.isEmpty { value?.withdrawUnreadableSources(model.snapshot) }
@@ -240,7 +400,14 @@ private struct WorkItemContents: View {
 
     private func discussion(_ value: WorkItemReadout) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            WorkSectionTitle(title: "讨论")
+            HStack {
+                WorkSectionTitle(title: "讨论")
+                Spacer()
+                if model.canRun {
+                    Button("写发言", systemImage: "square.and.pencil") { writingPost = true }
+                        .font(.subheadline).disabled(model.busy || !model.pending.isEmpty)
+                }
+            }
             if value.posts.isEmpty { Text("还没有发言").font(.subheadline).foregroundStyle(PhoneTheme.muted) }
             if let before = value.before {
                 Button { Task { await older(before) } } label: {
@@ -251,8 +418,34 @@ private struct WorkItemContents: View {
             }
             ForEach(value.posts) { post in
                 WorkPostRow(post: post).id(post.id)
+                if post.delivery == .unknown || post.delivery == .sending {
+                    Button("核对投递") { Task { await checkPost(post.id) } }.disabled(!model.connected)
+                }
             }
         }
+    }
+
+    private func checkPost(_ id: String) async {
+        let reading = ticket
+        do {
+            let answer = try await model.readWork(.post(itemId, post: id), itemId: itemId, stamp: stamp)
+            guard let post = PhoneWorkPost(answer["post"]), post.id == id, reading == ticket else { return }
+            model.publishWork(stamp, itemId: itemId) {
+                let next = post.projectingSource(model.snapshot)
+                if let index = value?.posts.firstIndex(where: { $0.id == id }) { value?.posts[index] = next }
+                if value?.attention?.id == id { value?.attention = next }
+            }
+        } catch { if reading == ticket, stamp == model.workStamp(itemId) { actionNotice = workReadWords(error, fallback: "投递结果尚未确认") } }
+    }
+
+    private func perform(_ change: PhoneWorkChange) async -> PhoneWriteOutcome {
+        actionNotice = nil
+        let result = await model.workChange(change, stamp: stamp)
+        guard stamp == model.workStamp(itemId) else { return result }
+        if case .unknown = result { actionNotice = nil } else { actionNotice = workChangeFailure(result) }
+        await model.refresh(includeSelectedBody: false)
+        if stamp == model.workStamp(itemId) { await load() }
+        return result
     }
 
     private func load() async {
@@ -386,6 +579,11 @@ private struct WorkPostRow: View {
                 }
             }
             ConversationText(text: post.text)
+            if let id = visible.sourceSessionId, model.workSourceVisibility(id) == .readable {
+                Label(PhoneConversation.visible(model.summary(of: id)["title"].string ?? id), systemImage: "arrow.turn.up.right")
+                    .font(.caption).foregroundStyle(PhoneTheme.ink2)
+                    .accessibilityLabel("接收会话，" + PhoneConversation.visible(model.summary(of: id)["title"].string ?? id))
+            }
             if let refusal = visible.refusal { Text(PhoneConversation.visible(refusal)).font(.subheadline).foregroundStyle(PhoneTheme.muted) }
             if let reply = visible.reply {
                 VStack(alignment: .leading, spacing: 6) {

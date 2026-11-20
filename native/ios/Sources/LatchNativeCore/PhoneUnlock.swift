@@ -1,9 +1,10 @@
 import Foundation
 
 public enum PhoneStreamFailure: String, Sendable { case contentExpired, eventOverflow, retryEvents, reconnect }
-public struct PhoneEventRecovery: Sendable {
+public typealias PhoneEventRecovery = PhoneStreamRecovery<NativeJSON>
+public struct PhoneStreamRecovery<Metadata: Sendable>: Sendable {
     public let action: PhoneStreamFailure
-    public let snapshot: NativeJSON?
+    public let snapshot: Metadata?
 }
 
 public enum PhoneContentReopen: Sendable {
@@ -50,16 +51,20 @@ public enum PhoneUnlock {
     /** A failed HTTP stream is not evidence that its authenticated connection failed. Probe once, never replay a write. */
     @MainActor public static func recoverStream(_ error: Error, current: () -> Bool,
         readMetadata: () async throws -> NativeJSON) async -> PhoneEventRecovery? {
+        await recoverStream(error, current: current, readCheckpoint: readMetadata)
+    }
+    @MainActor public static func recoverStream<Metadata: Sendable>(_ error: Error, current: () -> Bool,
+        readCheckpoint: () async throws -> Metadata) async -> PhoneStreamRecovery<Metadata>? {
         guard current(), !(error is CancellationError) else { return nil }
         let action = streamFailure(error)
-        guard (error as? NativeFailure) == .unavailable else { return PhoneEventRecovery(action: action, snapshot: nil) }
+        guard (error as? NativeFailure) == .unavailable else { return PhoneStreamRecovery(action: action, snapshot: nil) }
         do {
-            let value = try await readMetadata()
+            let value = try await readCheckpoint()
             guard current() else { return nil }
-            return PhoneEventRecovery(action: .retryEvents, snapshot: value)
+            return PhoneStreamRecovery(action: .retryEvents, snapshot: value)
         } catch {
             guard current(), !(error is CancellationError) else { return nil }
-            return PhoneEventRecovery(action: .reconnect, snapshot: nil)
+            return PhoneStreamRecovery(action: .reconnect, snapshot: nil)
         }
     }
     /** The one way back into a session whose window closed, named for what tapping it does. */

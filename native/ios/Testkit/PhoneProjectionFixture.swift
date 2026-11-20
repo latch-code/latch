@@ -21,6 +21,16 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
                 "face": "\(PhoneAgents.face(snapshot, id: "helper", available: true))"]
         }]
     }
+    if case let .array(steps) = value["shelfDisclosure"] {
+        let shelves = PhoneSessions.shelves(tasks: value["tasks"].array, workspaces: value["workspaces"].array, query: value["query"].string ?? "")
+        var disclosure = PhoneShelfDisclosure()
+        let collapsed = steps.map { step in
+            let shelf = step["shelf"].string ?? "", computer = step["computer"].string ?? ""
+            if step["toggle"].bool { disclosure.toggle(shelf, computer: computer) }
+            return disclosure.isCollapsed(shelf, computer: computer, filtering: step["filtering"].bool)
+        }
+        return ["collapsed": collapsed, "shelves": shelves.map { ["id": $0.id, "tasks": $0.tasks.compactMap { $0["id"].string }] }]
+    }
     let hostNow = PhoneTime.parse(value["hostNow"]) ?? Date()
     func words(_ status: PhoneRowStatus) -> String {
         switch status {

@@ -31,6 +31,16 @@ private final class NativeConnectionCancellation: @unchecked Sendable {
     }
 }
 
+/** Opening can fail before a collector is installed. In that case there can be no response on this child stream. */
+package func openNativeHTTP2Stream<Value: Sendable>(on loop: any EventLoop, using streams: HTTP2StreamMultiplexer.SendableView,
+    response: Value.Type, initialize: @escaping @Sendable (any Channel, EventLoopPromise<Value>) -> EventLoopFuture<Void>)
+    -> (stream: EventLoopFuture<any Channel>, response: EventLoopFuture<Value>) {
+    let opened = loop.makePromise(of: (any Channel).self), reply = loop.makePromise(of: response)
+    opened.futureResult.cascadeFailure(to: reply)
+    streams.createStreamChannel(promise: opened) { stream in initialize(stream, reply) }
+    return (opened.futureResult, reply.futureResult)
+}
+
 /** One authenticated inner TLS/HTTP2 channel; replacement is owned by the workspace, never by a write request. */
 public actor NativeHTTPConnection {
     @TaskLocal static var fileTransferBuffer = false
@@ -79,10 +89,12 @@ public actor NativeHTTPConnection {
         let group = NIOTSEventLoopGroup(loopCount: 1)
         let completion = group.next().makePromise(of: Void.self), gate = HostProofGate(state: state, completion: completion)
         do {
-            let channel = try await NIOTSConnectionBootstrap(group: group).connectTimeout(.seconds(8))
+            let opening = NIOTSConnectionBootstrap(group: group).connectTimeout(.seconds(8))
                 .channelOption(ChannelOptions.writeBufferWaterMark, value: .init(low: 16_384, high: 32_768))
                 .channelInitializer { channel in channel.pipeline.addHandler(gate).map { cancellation.bind(channel) } }
-                .withExistingNWConnection(connection).get()
+                .withExistingNWConnection(connection)
+            opening.cascadeFailure(to: completion)
+            let channel = try await opening.get()
             guard !Task.isCancelled else { throw CancellationError() }
             try NativeTLS.validate(state)
             try await completion.futureResult.get()
@@ -117,14 +129,14 @@ public actor NativeHTTPConnection {
         if let padding, path.hasSuffix("/cancel") || path.contains("/approvals/") {
             try await channel.eventLoop.submit { [padding] in padding.protect() }.get()
         }
-        let response = channel.eventLoop.makePromise(of: NativeHTTPResponse.self), streamPromise = channel.eventLoop.makePromise(of: (any Channel).self)
-        streams.createStreamChannel(promise: streamPromise) { stream in
+        let opening = openNativeHTTP2Stream(on: channel.eventLoop, using: streams, response: NativeHTTPResponse.self) { stream, response in
             stream.eventLoop.makeCompletedFuture {
                 try stream.pipeline.syncOperations.addHandlers(HTTP2FramePayloadToHTTP1ClientCodec(httpProtocol: .https), HTTPResponseCollector(promise: response, maximum: maximum, timeoutSeconds: timeoutSeconds))
             }
         }
-        let stream = try await streamPromise.futureResult.get()
+        let stream = try await opening.stream.get()
         do {
+            if method == .get || method == .head { try Task.checkCancellation() }
             var fields = HTTPHeaders([("host", "native.latch.invalid"), ("accept", "application/json")])
             if body != nil { fields.add(name: "content-type", value: headers["content-type"] ?? "application/json") }
             for (name, value) in headers where name != "content-type" { fields.add(name: name, value: value) }
@@ -135,7 +147,7 @@ public actor NativeHTTPConnection {
             }
             try await stream.writeAndFlush(HTTPClientRequestPart.end(nil)).get()
             return try await withTaskCancellationHandler {
-                try await response.futureResult.get()
+                try await opening.response.get()
             } onCancel: { stream.close(promise: nil) }
         } catch {
             try? await stream.close().get()
@@ -210,18 +222,17 @@ public actor NativeHTTPConnection {
         let permit = NativeFileReadPermit(lease: lease) {}
         try permit.requireValid(); requests += 1
         defer { requests -= 1; permit.finish() }
-        let response = channel.eventLoop.makePromise(of: NativeHTTPResponse.self), streamPromise = channel.eventLoop.makePromise(of: (any Channel).self)
-        streams.createStreamChannel(promise: streamPromise) { stream in
+        let opening = openNativeHTTP2Stream(on: channel.eventLoop, using: streams, response: NativeHTTPResponse.self) { stream, response in
             stream.eventLoop.makeCompletedFuture {
                 try stream.pipeline.syncOperations.addHandlers(HTTP2FramePayloadToHTTP1ClientCodec(httpProtocol: .https),
                     HTTPResponseCollector(promise: response, maximum: 65_536, timeoutSeconds: timeoutSeconds))
             }
         }
-        let stream = try await streamPromise.futureResult.get()
+        let stream = try await opening.stream.get()
         permit.bind(stream)
         // The Host may answer before the whole body went (a refusal by size, scope or capability): that answer wins.
         let early = NativeEarlyAnswer()
-        response.futureResult.whenSuccess { early.set($0) }
+        opening.response.whenSuccess { early.set($0) }
         let parent = channel
         do {
             return try await withTaskCancellationHandler {
@@ -242,7 +253,7 @@ public actor NativeHTTPConnection {
                 }
                 try current()
                 try await stream.writeAndFlush(HTTPClientRequestPart.end(nil)).get()
-                return try await response.futureResult.get()
+                return try await opening.response.get()
             } onCancel: { permit.cancel() }
         } catch {
             permit.cancel(); stream.close(promise: nil)
@@ -264,17 +275,16 @@ public actor NativeHTTPConnection {
         eventCount += 1
         let origin = NativeEventOrigin()
         let pair = AsyncThrowingStream<NativeEvent, Error>.makeStream(bufferingPolicy: .bufferingOldest(8))
-        let ready = channel.eventLoop.makePromise(of: Void.self), promise = channel.eventLoop.makePromise(of: (any Channel).self)
         var installed = false
         let cancellation = NativeConnectionCancellation()
-        streams.createStreamChannel(promise: promise) { stream in
+        let opening = openNativeHTTP2Stream(on: channel.eventLoop, using: streams, response: Void.self) { stream, ready in
             stream.eventLoop.makeCompletedFuture {
                 try stream.pipeline.syncOperations.addHandlers(HTTP2FramePayloadToHTTP1ClientCodec(httpProtocol: .https),
                     NativeEventCollector(ready: ready, continuation: pair.continuation, lease: lease, origin: origin))
             }
         }
         do { return try await withTaskCancellationHandler {
-            let stream = try await promise.futureResult.get()
+            let stream = try await opening.stream.get()
             installed = true
             stream.closeFuture.whenComplete { _ in Task { await self.eventEnded() } }
             pair.continuation.onTermination = { _ in stream.close(promise: nil) }
@@ -290,7 +300,7 @@ public actor NativeHTTPConnection {
             if incremental { fields.add(name: "x-latch-state", value: "delta-v1") }
             stream.write(HTTPClientRequestPart.head(HTTPRequestHead(version: .http2, method: .GET, uri: path, headers: fields)), promise: nil)
             try await stream.writeAndFlush(HTTPClientRequestPart.end(nil)).get()
-            try await ready.futureResult.get()
+            try await opening.response.get()
             try Task.checkCancellation()
             return NativeEventStream(events: pair.stream, channel: stream, origin: origin)
         } onCancel: { cancellation.cancel() }
@@ -365,9 +375,13 @@ private final class HTTPResponseCollector: ChannelInboundHandler, @unchecked Sen
     }
     func channelInactive(context: ChannelHandlerContext) { if !settled { fail(context) }; context.fireChannelInactive() }
     func errorCaught(context: ChannelHandlerContext, error: Error) { fail(context) }
-    func handlerRemoved(context: ChannelHandlerContext) { timer?.cancel(); self.context = nil }
+    func handlerRemoved(context: ChannelHandlerContext) { self.context = nil; failResponse() }
+    private func failResponse() {
+        guard !settled else { return }
+        settled = true; timer?.cancel(); promise.fail(NativeFailure.resultUnknown)
+    }
     private func fail(_ context: ChannelHandlerContext) {
-        if !settled { settled = true; timer?.cancel(); promise.fail(NativeFailure.resultUnknown) }
+        failResponse()
         context.close(promise: nil)
     }
 }

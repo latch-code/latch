@@ -98,10 +98,20 @@ enum RichText {
     }
 }
 
+struct PromptHint: View {
+    let text: String
+    @ScaledMetric(relativeTo: .body) private var size: CGFloat = 16
+    var body: some View {
+        Text(text).font(.system(size: size)).foregroundStyle(PhoneTheme.muted).lineLimit(1)
+            .allowsHitTesting(false).accessibilityHidden(true)
+    }
+}
+
 struct LocalTextEditor: UIViewRepresentable {
     @Binding var text: String
     let placeholder: String
     var maximumLines: Int? = 6
+    var minimumLines = 1
     var focused: Binding<Bool>? = nil
     var selection: Binding<NSRange>? = nil
     var composing: Binding<Bool>? = nil
@@ -113,6 +123,7 @@ struct LocalTextEditor: UIViewRepresentable {
     func makeUIView(context: Context) -> LocalPromptView {
         let view = LocalPromptView(usingTextLayoutManager: true)
         view.isEditable = true; view.isSelectable = true; view.delegate = context.coordinator
+        view.isScrollEnabled = maximumLines == nil
         view.backgroundColor = .clear; view.textColor = .label; view.font = Self.font
         view.textContainerInset = .zero; view.textContainer.lineFragmentPadding = 0
         view.textDragInteraction?.isEnabled = false; view.dataDetectorTypes = []; view.allowsEditingTextAttributes = false
@@ -126,34 +137,28 @@ struct LocalTextEditor: UIViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.applying = true
         defer { context.coordinator.applying = false }
-        var selectionChanged = false
-        if view.text != text {
-            view.text = text
-            if selection != nil { view.selectedRange = NSRange(location: text.utf16.count, length: 0); selectionChanged = true }
+        let coordinator = context.coordinator
+        if view.isFirstResponder {
+            // During a SwiftUI update the binding can still be a snapshot taken before UIKit's last edit.
+            // Read the live binding after this render before replacing a focused editor's document or caret.
+            if !(view.text ?? "").utf8.elementsEqual(text.utf8) || selectionRequest?.wrappedValue != nil { coordinator.queueSync(view) }
+        } else {
+            coordinator.sync(view)
         }
         view.completionKeys = commandKeys; view.completionCommand = onCommand
         if view.commandHint != suffixHint { view.commandHint = suffixHint; view.setNeedsLayout() }
         view.accessibilityHint = suffixHint
-        if let request = selectionRequest?.wrappedValue, view.markedTextRange == nil {
-            let count = (view.text ?? "").utf16.count
-            if request.text.utf8.elementsEqual((view.text ?? "").utf8), request.range.location <= count,
-               request.range.length <= count - request.range.location { view.selectedRange = request.range; selectionChanged = true }
-            DispatchQueue.main.async { [weak coordinator = context.coordinator] in
-                guard let coordinator, coordinator.parent.selectionRequest?.wrappedValue?.id == request.id else { return }
-                coordinator.parent.selectionRequest?.wrappedValue = nil
-            }
-        }
         view.accessibilityLabel = placeholder
-        view.font = Self.font
-        view.isScrollEnabled = maximumLines == nil
+        let font = Self.font
+        if view.font != font { view.font = font }
+        // A capped draft keeps its caret's scroll position across unrelated session updates.
+        if maximumLines == nil { view.isScrollEnabled = true }
         if let focused, focused.wrappedValue != view.isFirstResponder, view.window != nil {
             // Changing the responder during a layout pass is refused, so it waits for the next turn.
             let wanted = focused.wrappedValue
-            DispatchQueue.main.async { if wanted { view.becomeFirstResponder() } else { view.resignFirstResponder() } }
-        }
-        if selectionChanged {
             DispatchQueue.main.async { [weak view, weak coordinator = context.coordinator] in
-                guard let view, view.window != nil else { return }; coordinator?.readSelection(view)
+                guard let view, view.window != nil, coordinator?.parent.focused?.wrappedValue == wanted else { return }
+                if wanted { view.becomeFirstResponder() } else { view.resignFirstResponder() }
             }
         }
     }
@@ -161,14 +166,58 @@ struct LocalTextEditor: UIViewRepresentable {
         guard let maximumLines, let width = proposal.width, width > 0, width.isFinite else { return nil }
         let line = uiView.font?.lineHeight ?? 22, maximum = line * CGFloat(maximumLines)
         let size = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        uiView.isScrollEnabled = size.height > maximum
-        return CGSize(width: width, height: max(line, min(maximum, size.height)))
+        let scrolls = size.height > maximum
+        if uiView.isScrollEnabled != scrolls { uiView.isScrollEnabled = scrolls }
+        // The text view itself fills the visible editor, including the blank lines a person can tap.
+        return CGSize(width: width, height: max(line * CGFloat(min(minimumLines, maximumLines)), min(maximum, size.height)))
     }
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: LocalTextEditor
         var applying = false
-        init(_ parent: LocalTextEditor) { self.parent = parent }
-        func textViewDidChange(_ textView: UITextView) { parent.text = textView.text ?? ""; readSelection(textView) }
+        private var queued = false
+        private var lastPublished: String
+        init(_ parent: LocalTextEditor) { self.parent = parent; lastPublished = parent.text }
+        func queueSync(_ view: LocalPromptView) {
+            guard !queued else { return }
+            queued = true
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self else { return }
+                queued = false
+                guard let view, view.window != nil, view.delegate === self else { return }
+                sync(view)
+            }
+        }
+        func sync(_ view: LocalPromptView) {
+            let previous = applying
+            applying = true; defer { applying = previous }
+            let before = view.selectedRange
+            let native = view.text ?? "", wanted = parent.text
+            // An unfinished composition can lead its last delegate notification. A real external draft still wins.
+            if view.markedTextRange != nil, wanted.utf8.elementsEqual(lastPublished.utf8), !native.utf8.elementsEqual(wanted.utf8) { return }
+            if !native.utf8.elementsEqual(wanted.utf8) {
+                lastPublished = wanted
+                view.text = wanted
+                if parent.selection != nil { view.selectedRange = NSRange(location: wanted.utf16.count, length: 0) }
+            }
+            if let request = parent.selectionRequest?.wrappedValue, view.markedTextRange == nil {
+                let count = wanted.utf16.count
+                if request.text.utf8.elementsEqual(wanted.utf8), request.range.location <= count,
+                   request.range.length <= count - request.range.location { view.selectedRange = request.range }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, parent.selectionRequest?.wrappedValue?.id == request.id else { return }
+                    parent.selectionRequest?.wrappedValue = nil
+                }
+            }
+            if before != view.selectedRange || parent.composing.map({ $0.wrappedValue != (view.markedTextRange != nil) }) == true {
+                DispatchQueue.main.async { [weak self, weak view] in
+                    guard let self, let view, view.window != nil else { return }
+                    readSelection(view)
+                }
+            }
+        }
+        func textViewDidChange(_ textView: UITextView) {
+            lastPublished = textView.text ?? ""; parent.text = lastPublished; readSelection(textView)
+        }
         func textViewDidChangeSelection(_ textView: UITextView) { readSelection(textView) }
         func readSelection(_ textView: UITextView) {
             guard !applying else { return }
@@ -181,14 +230,21 @@ struct LocalTextEditor: UIViewRepresentable {
     }
 }
 
-class LocalTextView: UITextView {
-    override func copy(_ sender: Any?) {
-        let source = (text ?? "") as NSString, range = selectedRange
-        guard range.location != NSNotFound, range.location <= source.length, range.length > 0,
-              range.length <= source.length - range.location else { return }
-        UIPasteboard.general.setItems([[UTType.utf8PlainText.identifier: source.substring(with: range)]],
+private extension UITextInput {
+    func copySelectedTextLocally() {
+        guard let range = selectedTextRange, !range.isEmpty, let value = text(in: range) else { return }
+        UIPasteboard.general.setItems([[UTType.utf8PlainText.identifier: value]],
             options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(120)])
     }
+    func cutSelectedTextLocally() -> Bool {
+        guard let range = selectedTextRange, !range.isEmpty else { return false }
+        copySelectedTextLocally(); replace(range, withText: "")
+        return true
+    }
+}
+
+class LocalTextView: UITextView {
+    override func copy(_ sender: Any?) { copySelectedTextLocally() }
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         [#selector(copy(_:)), #selector(select(_:)), #selector(selectAll(_:))].contains(action) && super.canPerformAction(action, withSender: sender)
     }
@@ -228,13 +284,78 @@ final class LocalPromptView: LocalTextView {
         completionCommand?(command.modifierFlags.contains(.command) ? "submit" : input)
     }
     override func cut(_ sender: Any?) {
-        guard isEditable, let selection = selectedTextRange, !selection.isEmpty else { return }
-        copy(sender); replace(selection, withText: "")
+        guard isEditable, cutSelectedTextLocally() else { return }
         delegate?.textViewDidChange?(self)
     }
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(paste(_:)) { return isEditable }
         if action == #selector(cut(_:)) { return isEditable && selectedRange.length > 0 }
         return super.canPerformAction(action, withSender: sender)
+    }
+}
+
+/** A native single-line search input. The visible composition belongs to UIKit until the IME commits it. */
+struct LocalSearchInput: UIViewRepresentable {
+    @Binding var query: String
+    let prompt: String
+    let identifier: String
+
+    func makeCoordinator() -> Coordinator { Coordinator(query: $query) }
+    func makeUIView(context: Context) -> LocalField {
+        let field = LocalField()
+        field.delegate = context.coordinator
+        field.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .editingChanged)
+        field.text = query; field.returnKeyType = .search; field.clearButtonMode = .always
+        field.autocorrectionType = .no; field.autocapitalizationType = .none; field.spellCheckingType = .no
+        field.smartDashesType = .no; field.smartQuotesType = .no
+        field.textDragInteraction?.isEnabled = false
+        if #available(iOS 18, *) { field.writingToolsBehavior = .none }
+        field.font = .preferredFont(forTextStyle: .subheadline); field.adjustsFontForContentSizeCategory = true
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+    func updateUIView(_ field: LocalField, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.query = $query
+        // External changes (clearing or changing computer) supersede even an uncommitted composition.
+        if !coordinator.committed.utf8.elementsEqual(query.utf8) {
+            coordinator.committed = query; field.text = query
+        }
+        field.placeholder = prompt; field.accessibilityLabel = prompt; field.accessibilityIdentifier = identifier
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: LocalField, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite else { return nil }
+        return CGSize(width: width, height: max(44, uiView.intrinsicContentSize.height))
+    }
+    static func dismantleUIView(_ field: LocalField, coordinator: Coordinator) {
+        field.delegate = nil
+        field.removeTarget(coordinator, action: #selector(Coordinator.changed(_:)), for: .editingChanged)
+        field.text = nil
+    }
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var query: Binding<String>
+        var committed: String
+        init(query: Binding<String>) { self.query = query; committed = query.wrappedValue }
+
+        @objc func changed(_ field: UITextField) {
+            guard field.markedTextRange == nil else { return }
+            let value = field.text ?? ""
+            guard !value.utf8.elementsEqual(committed.utf8) else { return }
+            committed = value; query.wrappedValue = value
+        }
+        func textFieldDidEndEditing(_ field: UITextField) { changed(field) }
+        func textFieldShouldReturn(_ field: UITextField) -> Bool {
+            guard field.markedTextRange == nil else { return true }
+            changed(field); field.resignFirstResponder(); return false
+        }
+    }
+    final class LocalField: UITextField {
+        override func copy(_ sender: Any?) { copySelectedTextLocally() }
+        override func cut(_ sender: Any?) { if cutSelectedTextLocally() { sendActions(for: .editingChanged) } }
+        override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+            [#selector(copy(_:)), #selector(cut(_:)), #selector(paste(_:)), #selector(select(_:)), #selector(selectAll(_:))].contains(action)
+                && super.canPerformAction(action, withSender: sender)
+        }
     }
 }

@@ -9,6 +9,7 @@ import {
   type TaskSummary,
   type WorkItem,
   type WorkItemAnswer,
+  type WorkItemCreateAnswer,
   type WorkItemStartAnswer,
 } from '@latch/protocol'
 import { canonicalJson, sha256Hex } from '@latch/core/node-kit'
@@ -233,10 +234,13 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
     json(res, { item: await present(item, caller) } satisfies WorkItemAnswer, status)
   }
 
-  async function create(req: IncomingMessage, res: ServerResponse, caller: DeviceCaller): Promise<void> {
+  async function create(req: IncomingMessage, res: ServerResponse, caller: DeviceCaller, lookupOnly: boolean): Promise<void> {
     writing(caller)
-    const { item, made } = await createItem(res, caller, createSchema.parse(await jsonBody(req, ITEM_BODY_LIMIT)))
-    return answer(res, item, caller, made ? 201 : 200)
+    const body = createSchema.parse(await jsonBody(req, ITEM_BODY_LIMIT))
+    const { item, made } = await createItem(res, caller, body, false, lookupOnly)
+    const value = await present(item, caller)
+    again(caller, item.id)
+    json(res, { requestId: body.requestId, item: value } satisfies WorkItemCreateAnswer, made ? 201 : 200)
   }
 
   /**
@@ -248,6 +252,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
     caller: DeviceCaller,
     body: WorkItemCreateBody,
     asPrivate = false,
+    lookupOnly = false,
   ): Promise<{ item: WorkItemRecord; made: boolean }> {
     const { requestId: request, ...fields } = body
     const payloadHash = sha256Hex(canonicalJson(fields))
@@ -257,6 +262,7 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
       if (!prior.itemId) throw notFound()
       return { item: visible(caller, prior.itemId), made: false }
     }
+    if (lookupOnly) throw new AppError(409, 'item-create-unconfirmed', '未找到原创建回执，待办是否已保存仍待确认。')
     const title = checkedTitle(body.title)
     const prompt = checkedPrompt(body.prompt ?? '')
     const tags = tagsOf(body.tags)
@@ -699,13 +705,13 @@ export function createWorkItemRoutes(context: RouteContext, deps: WorkItemRouteD
   }
 
   const module: RouteModule = {
-    features: () => ({ workItems: true }) satisfies HostFeatures,
+    features: () => ({ workItems: true, workItemCreateReceipt: true }) satisfies HostFeatures,
     async route({ req, res, caller, path, method }) {
       if (path !== ROOT && !path.startsWith(`${ROOT}/`)) return false
       context.requireScope(caller, 'view')
-      if (path === ROOT) {
+      if (path === ROOT || path === `${ROOT}/retry-create`) {
         if (method !== 'POST') throw new AppError(404, 'not-found', '接口不存在。')
-        await create(req, res, caller)
+        await create(req, res, caller, path !== ROOT)
         return true
       }
       const match = ONE.exec(path)

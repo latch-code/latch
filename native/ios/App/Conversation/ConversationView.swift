@@ -13,7 +13,9 @@ struct ConversationView: View {
     @State private var previewTask: Task<Void, Never>?
     @State private var previewRequest: UUID?
     /** What the 文件 sheet lists, counted when it is asked for: the counts take a diff of every edit in the session. */
-    @State private var fileList: [PhoneChangedFile]?
+    @State private var filePanel: SessionFilesPresentation?
+    @State private var panelPreview: PreviewItem?
+    @State private var readingPanel: SessionFilesContext?
     /** 按文字重建 from the stop row of a session its Harness lost. */
     @State private var rebuilding = false
     @Environment(\.horizontalSizeClass) private var width
@@ -43,25 +45,38 @@ struct ConversationView: View {
             else if !model.connected && !model.verifying { macAway }
             else { ProgressView().controlSize(.small).tint(PhoneTheme.muted).frame(maxWidth: .infinity, maxHeight: .infinity) }
         }
-        .background(PhoneTheme.canvas)
+        .conversationDock { if let work { workDock(work) } else { dock } }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(back != nil)
         .toolbar { header }
         // Beside the list on an iPad the tabs stay; a pushed conversation on a phone needs the room.
         .toolbar(width == .compact ? .hidden : .automatic, for: .tabBar)
-        .safeAreaInset(edge: .bottom, spacing: 0) { if let work { workDock(work) } else { dock } }
         .sheet(item: $preview, onDismiss: { PreviewFiles.clear() }) { NativePreviewView(item: $0) }
-        .sheet(isPresented: Binding(get: { fileList != nil }, set: { if !$0 { fileList = nil } })) {
-            SessionFilesSheet(files: fileList ?? [], open: { path, root in fileList = nil; openFile(path, root) })
+        .sheet(item: $filePanel, onDismiss: {
+            if filePanel == nil, readingPanel != nil { cancelFile() }
+            if let item = panelPreview { PreviewFiles.discard(item); panelPreview = nil }
+        }) { panel in
+            let context = panel.context
+            if hasContent, model.filesContext(id) == context {
+                SessionFilesSheet(context: context, files: panel.files) { path, root in
+                    openFile(path, root, session: context.session, panel: context)
+                }
+                .sheet(item: $panelPreview) { item in
+                    NativePreviewView(item: item).onDisappear { PreviewFiles.discard(item) }
+                }
+            }
         }
         .sheet(item: $model.forkDraft) { draft in NewSessionSheet(fork: draft).presentationCornerRadius(28) }
         .sheet(item: $model.handoffDraft) { draft in HandoffSheet(draft: draft).presentationCornerRadius(28) }
         .sheet(isPresented: $rebuilding, onDismiss: { model.openPendingImport() }) { RebuildLostSheet(summary: hasContent ? model.detail["summary"] : summary).presentationCornerRadius(28) }
         // The handoffs this session is part of, read again when the snapshot says they changed.
         .task(id: [id, PhoneHandoffs.involved(model.snapshot, sessionId: id), model.verifiedUntil == nil ? "closed" : "open"]) { await model.loadHandoffs(id) }
-        .onChange(of: model.verifiedUntil) { _, value in if value == nil { preview = nil } }
+        .onChange(of: model.verifiedUntil) { _, value in if value == nil { preview = nil; panelPreview = nil; filePanel = nil } }
         .onChange(of: model.contentGeneration) { _, _ in preview = nil; cancelFile() }
-        .onChange(of: model.privateSnapshot.epoch) { _, _ in preview = nil; fileList = nil }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in preview = nil }
+        .onChange(of: model.filesContext(id)) { _, current in
+            if let filePanel, filePanel.context != current { self.filePanel = nil; panelPreview = nil; cancelFile() }
+        }
         .onDisappear { cancelFile(); preview = nil; PreviewFiles.clear() }
     }
     @ToolbarContentBuilder private var header: some ToolbarContent {
@@ -73,8 +88,12 @@ struct ConversationView: View {
         } else {
             ToolbarItem(placement: .topBarLeading) { titleMenu }
         }
-        if hasContent && PhoneConversation.hasFiles(model.detail) {
-            ToolbarItem(placement: .topBarTrailing) { Button("文件", systemImage: "folder") { fileList = sessionFiles }.labelStyle(.iconOnly) }
+        if hasContent && (PhoneConversation.hasFiles(model.detail) || model.filesContext(id).browse) {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("文件", systemImage: "folder") {
+                    filePanel = SessionFilesPresentation(context: model.filesContext(id), files: sessionFiles)
+                }.labelStyle(.iconOnly)
+            }
         }
     }
     /** The title opens the session menu, as the web's title row does; a phone that may not run sessions has none. */
@@ -118,7 +137,8 @@ struct ConversationView: View {
         let running = status == "running" || status == "waiting-approval"
         let canSend = model.connected && inputReason == nil
         let canFork = model.connected && model.canFork && summary["personal"] == .null
-        return ScrollView {
+        return ConversationReader(session: id, contentEpoch: model.privateSnapshot.epoch,
+            offersTurnIndex: turns.lazy.compactMap(\.user).dropFirst().first != nil) {
             LazyVStack(alignment: .leading, spacing: 20) {
                 if !model.workItemsShown, model.tab == .code, let itemId = summary["itemId"].string, let item = model.workItem(itemId) {
                     Button {
@@ -151,7 +171,7 @@ struct ConversationView: View {
                         mark: model.engineMark(summary["harnessId"].string), engine: engine, helper: frame?.entry, fileScope: PhoneFileScope(model.detail["summary"]),
                         endSaid: latest && !running && PhoneConversation.runEnd(model.detail["summary"], engine: engine) != nil,
                         actions: model.detailCached ? .none : PhoneTurnActions.of(turn, latest: latest, running: latest && running, canSend: canSend, canFork: canFork),
-                        index: index, open: { openFile($0, $1) }).equatable()
+                        index: index, open: { openFile($0, $1) }).equatable().id(turn.id)
                     ForEach(returned[turn.id] ?? []) { ReturnedResultCard(result: $0, sessionId: id) }
                     if let placed = results[turn.id] { resultStack(placed) }
                     ForEach(proposals[turn.id] ?? []) { proposalRow($0) }
@@ -166,7 +186,8 @@ struct ConversationView: View {
             .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 24)
             .frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity)
         }
-        .defaultScrollAnchor(.bottom)
+        .id(id)
+        .id(model.privateSnapshot.epoch)
         .refreshable { await model.refresh() }
     }
     private func workTranscript(_ work: PhoneWorkDecisionContext) -> some View {
@@ -309,22 +330,50 @@ struct ConversationView: View {
         return result
     }
     private func cancelFile() {
-        previewTask?.cancel(); previewTask = nil; previewRequest = nil; model.cancelPreview()
+        previewTask?.cancel(); previewTask = nil; previewRequest = nil; readingPanel = nil; model.cancelPreview()
     }
     /** A file of this session, or of a run's (`session`) from a result card, under that session's file rules. */
-    private func openFile(_ path: String, _ root: String?, session: String? = nil) {
+    private func openFile(_ path: String, _ root: String?, session: String? = nil, panel: SessionFilesContext? = nil) {
+        let access = panel?.browse == true ? model.currentFileAccess : nil
+        if let panel {
+            guard filePanel?.context == panel, model.filesContext(id) == panel, !panel.browse || access != nil else { return }
+        }
         cancelFile()
         let selected = id, generation = model.contentGeneration, request = UUID()
-        previewRequest = request
+        previewRequest = request; readingPanel = panel
         previewTask = Task {
-            defer { if previewRequest == request { previewTask = nil; previewRequest = nil } }
+            defer { if previewRequest == request { previewTask = nil; previewRequest = nil; readingPanel = nil } }
             do {
-                let item = try await model.preview(reference: path, root: root, session: session)
+                guard !Task.isCancelled, model.sessionId == selected, model.contentGeneration == generation,
+                      panel == nil || (filePanel?.context == panel && model.filesContext(id) == panel) else { return }
+                let item = try await model.preview(reference: path, root: root, session: session ?? selected, access: access)
                 guard !Task.isCancelled, previewRequest == request, model.sessionId == selected, model.contentGeneration == generation, item.lease.valid else { PreviewFiles.discard(item); return }
-                preview = item
+                if let panel {
+                    guard filePanel?.context == panel, model.filesContext(id) == panel else { PreviewFiles.discard(item); return }
+                    panelPreview = item
+                } else { preview = item }
             }
             catch { if !Task.isCancelled, previewRequest == request, model.contentGeneration == generation { model.previewFailed(error) } }
         }
+    }
+}
+
+private struct SessionFilesPresentation: Identifiable {
+    let context: SessionFilesContext
+    let files: [PhoneChangedFile]
+    var id: SessionFilesContext { context }
+}
+
+extension View {
+    /** The keyboard resizes this stack. The transcript ends above the controls even midway through a long reply. */
+    func conversationDock<Dock: View>(@ViewBuilder _ dock: () -> Dock) -> some View {
+        VStack(spacing: 0) {
+            self.frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+                .scrollDismissesKeyboard(.interactively)
+            dock()
+        }
+        .background(PhoneTheme.canvas)
     }
 }
 
@@ -386,22 +435,6 @@ private struct RunEndView: View {
             Text(end.text).font(PhoneTheme.caption).foregroundStyle(end.failed ? PhoneTheme.red : PhoneTheme.amber)
             ForEach(end.unknown, id: \.self) { name in Text(name).font(.system(size: 12, design: .monospaced)).foregroundStyle(PhoneTheme.muted).lineLimit(1) }
         }
-    }
-}
-
-private struct SessionFilesSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    let files: [PhoneChangedFile]
-    let open: (String, String?) -> Void
-    var body: some View {
-        NavigationStack {
-            List(files) { file in
-                Button { open(file.path, file.root) } label: { FileRowLabel(file: file) }
-            }
-            .listStyle(.plain)
-            .navigationTitle("文件").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
-        }.presentationDetents([.medium, .large])
     }
 }
 

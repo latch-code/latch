@@ -19,6 +19,20 @@ public struct PhoneShelf: Equatable, Sendable {
     public let tasks: [NativeJSON]
 }
 
+/** Presentation state stays in this window. Searching reveals matches without changing the reader's chosen folds. */
+public struct PhoneShelfDisclosure {
+    private var collapsed: [String: Set<String>] = [:]
+    public init() {}
+
+    public func isCollapsed(_ shelf: String, computer: String, filtering: Bool) -> Bool {
+        !filtering && collapsed[computer]?.contains(shelf) == true
+    }
+
+    public mutating func toggle(_ shelf: String, computer: String) {
+        if !collapsed[computer, default: []].insert(shelf).inserted { collapsed[computer]?.remove(shelf) }
+    }
+}
+
 public enum PhoneTime {
     // A list draws many of these on every update, and building a formatter costs far more than using one. Foundation documents
     // this class as safe to share, and nothing changes its options after this.
@@ -198,16 +212,17 @@ public enum PhoneSessions {
      */
     public static func shelves(tasks: [NativeJSON], workspaces: [NativeJSON], query: String = "") -> [PhoneShelf] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let listed = tasks.filter { task in
-            !task["archived"].bool
-                && (needle.isEmpty || (task["title"].string ?? "").lowercased().contains(needle))
-        }.map { (task: $0, at: PhoneTime.parse($0["updatedAt"]) ?? .distantPast) }.sorted { $0.at > $1.at }.map(\.task)
+        let listed = tasks.filter { !$0["archived"].bool }
+            .map { (task: $0, at: PhoneTime.parse($0["updatedAt"]) ?? .distantPast) }.sorted { $0.at > $1.at }.map(\.task)
         let waiting = needle.isEmpty ? listed.filter(waitsOnYou) : []
         let shelved = Set(waiting.compactMap { $0["id"].string })
         var order: [String] = [], grouped: [String: [NativeJSON]] = [:], labels: [String: String] = [:], other: [NativeJSON] = []
         for task in listed where !shelved.contains(task["id"].string ?? "") {
-            guard let project = project(of: task, workspaces: workspaces), let id = project["id"].string else { other.append(task); continue }
-            if grouped[id] == nil { order.append(id); labels[id] = project["name"].string ?? id }
+            let project = project(of: task, workspaces: workspaces)
+            let label = project?["name"].string ?? project?["id"].string ?? "对话"
+            if !needle.isEmpty, !(task["title"].string ?? "").lowercased().contains(needle), !label.lowercased().contains(needle) { continue }
+            guard let id = project?["id"].string else { other.append(task); continue }
+            if grouped[id] == nil { order.append(id); labels[id] = label }
             grouped[id, default: []].append(task)
         }
         func pinnedFirst(_ tasks: [NativeJSON]) -> [NativeJSON] { tasks.filter { $0["pinned"].bool } + tasks.filter { !$0["pinned"].bool } }

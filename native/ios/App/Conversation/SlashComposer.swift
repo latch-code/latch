@@ -204,12 +204,18 @@ struct SlashSuggestions: View {
     }
 }
 
-struct SlashInsertButton: View {
-    let disabled: Bool
-    let action: () -> Void
+struct SlashMenuItem: View {
+    @ObservedObject var slash: SlashComposerState
+    @Binding var text: String
+    @Binding var focused: Bool
+    let context: PhoneSlashContext
+
     var body: some View {
-        Button(action: action) { Text("/").font(.system(size: 19, weight: .medium, design: .monospaced)).frame(width: 36, height: 36).frame(width: 44, height: 44).contentShape(Rectangle()) }
-            .buttonStyle(.plain).foregroundStyle(PhoneTheme.muted).disabled(disabled).accessibilityLabel("命令与提示模板")
+        let enabled = context.bodyOpen && context.canRun && !context.pending && !slash.composing
+        Button("命令与模板", systemImage: "text.badge.plus") {
+            slash.insertSlash($text, enabled: enabled)
+            focused = true
+        }.disabled(!enabled)
     }
 }
 

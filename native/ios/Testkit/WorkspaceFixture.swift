@@ -51,7 +51,72 @@ import LatchNativeCore
         do { _ = try await workspace.cachedDetail("none") }
         catch { cacheNeedsWindow = (error as? NativeFailure) == .expired }
         guard cacheNeedsWindow else { throw NativeFailure.identityMismatch }
+        if let markers = input["initialListMarkers"] as? String {
+            return try await transports.exerciseInitialList(workspace, markers: URL(fileURLWithPath: markers, isDirectory: true))
+        }
+        if let session = input["fileBrowserSession"] as? String, let transport = transports.latest?.epoch {
+            let access = NativeFileAccess(lease: try await workspace.verify(), transport: transport)
+            _ = try await workspace.snapshot()
+            let roots = try await workspace.fileDirectory(session: session, folder: PhoneFileFolder(), access: access)
+            guard let root = roots.roots.first else { throw NativeFailure.invalidRecord }
+            let top = try await workspace.fileDirectory(session: session, folder: PhoneFileFolder(root: root.id), access: access)
+            guard let folder = top.entries.first(where: { $0.kind == .directory && $0.name == "资料 + #" }) else { throw NativeFailure.invalidRecord }
+            let location = PhoneFileFolder(root: root.id, dir: folder.name)
+            let page = try await workspace.fileDirectory(session: session, folder: location, access: access)
+            guard let file = page.entries.first(where: { $0.kind == .file && $0.name == "验收.md" }) else { throw NativeFailure.invalidRecord }
+            let matches = try await workspace.findProjectFiles(session: session, query: "验收", access: access)
+            let partial = try PhoneFileMatches(.object(["files": .array([]), "truncated": .bool(false),
+                "unchecked": .object(["files": .number(1), "directories": .number(2)])]))
+            guard matches.uncheckedCount == 0, partial.uncheckedCount == 3,
+                  matches.files.contains(where: { $0.root == root.id && $0.path.utf8.elementsEqual(location.appending(file.name).utf8) }) else {
+                throw NativeFailure.invalidRecord
+            }
+            let previews = try await workspace.resolveFile(sessionId: session, reference: location.appending(file.name), rootId: root.id, access: access)
+            let previewable = previews["files"].array.first?["file"]["handle"].string != nil
+            let unsafe = (try? PhoneFileFolder(root: root.id, dir: "../other").path(session: session)) == nil
+            let wrongRoot = (try? PhoneFileDirectory(.object(["context": .object(["kind": .string("session"), "sessionId": .string(session)]),
+                "roots": .array([]), "entries": .array([]), "truncated": .bool(false)]), session: session, folder: location)) == nil
+            _ = try await workspace.install {
+                try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: device.rootSpki, knockKey: device.knockKey, identity: keys.identity())
+            }
+            let oldPreview = try? await workspace.resolveFile(sessionId: session, reference: location.appending(file.name), rootId: root.id, access: access)
+            let oldList = try? await workspace.fileDirectory(session: session, folder: location, access: access)
+            _ = await workspace.closeOpening()
+            return ["oldPanelClosed": oldPreview == nil && oldList == nil, "previewable": previewable, "badFolderRejected": unsafe, "wrongRootRejected": wrongRoot]
+        }
         let lease = try await workspace.verify()
+        if let id = input["workSettlementItem"] as? String, let markers = input["workSettlementMarkers"] as? String {
+            return try await settledWorkWindowFixture(workspace, vault: vault, lease: lease, item: id, markers: URL(fileURLWithPath: markers))
+        }
+        if let landed = input["workCreationReceipt"] as? Bool {
+            _ = try await workspace.snapshot()
+            let change = PhoneWorkChange.creation(title: "移动端草稿", prompt: "保存后不启动", project: nil)
+            let request = try change.request()
+            do { _ = try await workspace.submit(request); throw NativeFailure.invalidRecord }
+            catch { guard (error as? NativeFailure) == .resultUnknown else { throw error } }
+            let pending = try await workspace.pendingWrites()
+            guard pending.count == 1, let original = pending.first, original.requestId == request.requestId,
+                  original.body == request.body, PhoneWorkChange(original) == change else { throw NativeFailure.invalidRecord }
+            if landed {
+                let answer = try await workspace.submit(original, mustBePending: true)
+                guard change.confirmed(by: answer, requestId: original.requestId), try await workspace.pendingWrites().isEmpty else {
+                    throw NativeFailure.invalidRecord
+                }
+            } else {
+                do { _ = try await workspace.submit(original, mustBePending: true); throw NativeFailure.invalidRecord }
+                catch { guard (error as? NativeFailure) == .resultUnknown else { throw error } }
+                guard try await workspace.pendingWrites().first?.requestId == original.requestId else { throw NativeFailure.invalidRecord }
+                try await workspace.settlePending(original.requestId)
+            }
+            let cleared = try await workspace.pendingWrites().isEmpty
+            do { _ = try await workspace.submit(original, mustBePending: true); throw NativeFailure.invalidRecord }
+            catch { guard (error as? NativeFailure) == .changedElsewhere else { throw error } }
+            _ = await workspace.closeOpening()
+            return ["confirmed": landed, "cleared": cleared]
+        }
+        if let id = input["workChangesItem"] as? String, let memberItem = input["workMemberItem"] as? String, let session = input["workMember"] as? String {
+            return try await workChangesFixture(workspace, item: id, memberItem: memberItem, session: session, denied: input["workChangesDenied"] as? Bool == true)
+        }
         if let profile, let itemId = input["workCacheItem"] as? String {
             return try await transports.exerciseLockOpen(workspace, vault: vault, keys: keys, store: profile.store,
                 host: profile.host, directory: directory, vaultKey: vaultKey, itemId: itemId)

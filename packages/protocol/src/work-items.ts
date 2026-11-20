@@ -78,6 +78,11 @@ export interface WorkItemCreateInput {
   priority?: BoardPriority
 }
 
+/** Creation and receipt-only lookup acknowledge this device's request and return the current item. */
+export interface WorkItemCreateAnswer extends WorkItemAnswer {
+  requestId: string
+}
+
 /** `PATCH /link/api/work/items/:id`; null clears a suggestion. `prompt` only while it has no session. */
 export interface WorkItemPatchInput {
   baseRevision: number

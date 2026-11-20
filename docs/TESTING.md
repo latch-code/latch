@@ -211,6 +211,8 @@ pnpm exec vitest run --config e2e/vitest.config.ts e2e/harness-acceptance.e2e.ts
 
 ### iOS 模拟器用例
 
+会话列表和输入栏的截图可用 `LATCH_IOS_SCENES=workspace,work-list,conversation-reading` 筛选。`workspace-offline` 与 `work-list-offline` 展示同一台电脑断线后的两个列表。`conversation-reading` 提供超过一屏的回复，供滚动和软键盘验收。`project-files` 场景可从会话进入项目文件夹、按文件名查找。设置 `LATCH_IOS_LIVE_WORK=1` 会在 Live 夹具的临时 Host 建立一个项目、一条待办和一个关联会话。模拟器配对后可验证创建、发言、状态变更和文件预览。
+
 | 开关 | 用例 | 作用 |
 | --- | --- | --- |
 | 无 | `e2e/ios-app.e2e.ts` | 用临时 DerivedData 构建真实 App，禁用签名，不启动；核对 `Latch.app` 不含 Live 标记与软件密钥符号 |

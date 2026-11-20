@@ -6,9 +6,15 @@ struct InboxView: View {
     @EnvironmentObject private var model: PhoneModel
     @State private var query = ""
     @State private var creating = false
+    @State private var creatingWorkItem: PhoneWorkReadStamp?
     @State private var showConnecting = false
+    @State private var disclosure = PhoneShelfDisclosure()
     @State private var column = NavigationSplitViewColumn.sidebar
+    private var connecting: Bool { model.selectedHost != nil && !model.connected && !model.offline && model.hostNotice == nil }
+    private var showsConnectionStatus: Bool { !model.connected && (model.hostNotice != nil || model.offline || (connecting && showConnecting)) }
     private var frozen: Bool { !model.connected }
+    private var filtering: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var computer: String { model.selectedHost?.id ?? "" }
     private var selection: Binding<String?> {
         Binding(get: { model.sessionId }, set: { id in
             if let id { Task { await model.openSession(id) } } else if model.sessionId != nil { model.closeSession() }
@@ -17,21 +23,22 @@ struct InboxView: View {
     var body: some View {
         NavigationSplitView(preferredCompactColumn: $column) {
             Group {
-                if model.workItemsShown && model.offersWorkItems { WorkItemList() }
+                if model.workItemsShown && model.offersWorkItems { WorkItemList(showsConnectionStatus: showsConnectionStatus) }
                 else { sessionList }
             }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if model.offersWorkItems {
-                    Picker("Code 视图", selection: Binding(get: { model.workItemsShown }, set: model.showWorkItems)) {
-                        Text("会话").tag(false)
-                        Text("待办").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, 16).padding(.vertical, 8)
-                    .background(PhoneTheme.canvas)
-                }
-            }
+            .navigationTitle(model.offersWorkItems ? "Code" : "会话")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if model.offersWorkItems {
+                    ToolbarItem(placement: .principal) {
+                        Picker("Code 视图", selection: Binding(get: { model.workItemsShown }, set: model.showWorkItems)) {
+                            Text("会话").tag(false)
+                            Text("待办").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(idealWidth: 152, maxWidth: 176)
+                    }
+                }
                 if model.hosts.count > 1 {
                     ToolbarItem(placement: .topBarLeading) {
                         ComputerMenu().disabled(model.busy || model.verifying)
@@ -40,6 +47,10 @@ struct InboxView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     if !model.workItemsShown {
                         Button("新会话", systemImage: "square.and.pencil") { creating = true }.labelStyle(.iconOnly).disabled(!model.connected)
+                    } else if model.offersWorkCreation {
+                        Button("新建待办", systemImage: "plus") {
+                            Task { creatingWorkItem = await model.prepareWorkCreation() }
+                        }.labelStyle(.iconOnly).disabled(model.busy || model.verifying || !model.pending.isEmpty)
                     }
                 }
             }
@@ -55,9 +66,22 @@ struct InboxView: View {
                 }
             } else if let target = model.reviewTarget { NavigationStack { ReviewView(target: target) }.id(target.sessionId) }
             else if let id = model.sessionId { ConversationView(id: id) }
-            else { PhoneTheme.canvas.ignoresSafeArea() }
+            else {
+                ContentUnavailableView("选择会话", systemImage: "bubble.left.and.bubble.right")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity).background(PhoneTheme.canvas)
+            }
         }
         .sheet(isPresented: $creating, onDismiss: { model.openPendingImport() }) { NewSessionSheet().presentationCornerRadius(28) }
+        .sheet(isPresented: Binding(get: { creatingWorkItem != nil }, set: { if !$0 { creatingWorkItem = nil } })) {
+            if let stamp = creatingWorkItem, stamp == model.workCreationStamp {
+                WorkItemCreationForm(stamp: stamp).presentationDetents([.medium, .large])
+            }
+        }
+        .onChange(of: model.workCreationStamp) { _, updated in
+            if creatingWorkItem != updated { creatingWorkItem = nil }
+        }
+        .onChange(of: computer) { _, _ in query = "" }
+        .onChange(of: model.privateSnapshot.epoch) { _, _ in query = "" }
         .onChange(of: model.reviewTarget?.sessionId) { _, id in if id != nil { column = .detail } else if model.sessionId == nil { column = .sidebar } }
         // Back to the list from the review leaves it.
         .onChange(of: model.workItemId, initial: true) { _, id in
@@ -70,26 +94,25 @@ struct InboxView: View {
                 else if model.reviewTarget != nil { model.reviewTarget = nil }
             }
         }
+        .task(id: connecting) {
+            showConnecting = false
+            guard connecting else { return }
+            try? await Task.sleep(for: .seconds(1))
+            if !Task.isCancelled { showConnecting = true }
+        }
         .modifier(SessionDialogs())
         #if LATCH_SCREENS
         .onAppear { if model.staged, !ScreensStage.query.isEmpty { query = ScreensStage.query } }
         .task(id: model.staged) { if model.staged, ScreensStage.creating { creating = true } }
         #endif
         // The Host searches once the typing settles; a later query or a closed window drops what an earlier one finds.
-        .task(id: [query, model.verifiedUntil == nil ? "closed" : "open", model.workItemsShown ? "work" : "sessions"]) {
+        .task(id: [query, computer, model.verifiedUntil == nil ? "closed" : "open", model.workItemsShown ? "work" : "sessions", model.showArchived ? "archived" : "current", model.canSearchContent ? "search" : "unavailable"]) {
             #if LATCH_SCREENS
             if model.staged { return }
             #endif
             guard !model.workItemsShown, PhoneSearch.query(query) != nil, model.canSearchContent, !model.showArchived else { model.contentSearch = PhoneContentSearch(); return }
             try? await Task.sleep(for: .milliseconds(300))
             if !Task.isCancelled { await model.searchContent(query) }
-        }
-        .task(id: model.selectedHost == nil || model.connected || model.offline) {
-            // A connection that settles within a second never mentions connecting.
-            showConnecting = false
-            guard model.selectedHost != nil, !model.connected, !model.offline else { return }
-            try? await Task.sleep(for: .seconds(1))
-            if !Task.isCancelled { showConnecting = true }
         }
     }
     private var sessionList: some View {
@@ -99,32 +122,45 @@ struct InboxView: View {
         let shelves = model.showArchived ? PhoneSessions.archivedShelves(tasks, query: query) : model.shelves(query: query)
         let searching = PhoneSearch.query(query) != nil && model.canSearchContent && !model.showArchived
         return List(selection: selection) {
-            if showConnecting { Text("正在连接…").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).listRowSeparator(.hidden) }
-            if let notice = model.hostNotice, !model.connected { HostNoticeBanner(words: notice.words(computer: model.selectedHost.map(model.computerName) ?? "Mac")).plainRow() }
-            else if model.offline, let host = model.selectedHost { OfflineBanner(host: model.computerName(host)).plainRow() }
+            InboxSearchField(query: $query, prompt: model.showArchived ? "搜索已归档的会话" : "搜索会话或项目", identifier: "inbox.search").plainRow()
+            if showsConnectionStatus { CodeConnectionRow() }
             if model.showArchived {
                 Button { model.showArchived = false } label: { ArchivedLine(back: true, count: PhoneSessions.archived(tasks).count) }.buttonStyle(.plain).plainRow()
             }
-            let others = model.showArchived || !query.isEmpty ? [] : model.otherComputerGroups
+            let others = model.showArchived || filtering ? [] : model.otherComputerGroups
             if !others.isEmpty, shelves.first?.id != "waiting" { OtherComputersSection(groups: others) }
-            let workWaiting = model.workItems.contains { $0.group == .attention }
-            if workWaiting && shelves.first?.id != "waiting" {
-                Section { workWaitingLink.plainRow() } header: { ShelfHeader(label: "等你处理", count: nil) }
+            let waitingItems = model.showArchived || filtering ? 0 : model.workItems.filter { $0.group == .attention }.count
+            if waitingItems > 0 && shelves.first?.id != "waiting" {
+                Section { workWaitingLink(count: waitingItems).plainRow() } header: { ShelfHeader(label: "等你处理", count: nil) }
             }
             ForEach(shelves, id: \.id) { shelf in
+                let collapsible = shelf.id.hasPrefix("project:") || shelf.id == "other"
+                let collapsed = disclosure.isCollapsed(shelf.id, computer: computer, filtering: filtering)
                 Section {
-                    if workWaiting && shelf.id == "waiting" { workWaitingLink.plainRow() }
-                    ForEach(shelf.tasks, id: \.id) { task in
-                        InboxRow(task: task, frozen: frozen, inWaiting: shelf.id == "waiting", project: shelf.id == "waiting" ? PhoneSessions.project(of: task, workspaces: workspaces)?["name"].string ?? "对话" : nil)
-                            .tag(task.id).listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
-                            .sessionActions(task, model: model)
+                    if collapsible {
+                        shelfHeading(shelf, collapsed: collapsed)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 0, trailing: 16))
+                            .listRowSeparator(.hidden).listRowBackground(PhoneTheme.canvas)
                     }
-                } header: { if !shelf.label.isEmpty { ShelfHeader(label: shelf.label, count: shelf.id == "waiting" ? shelf.tasks.count : nil) } }
+                    if waitingItems > 0 && shelf.id == "waiting" { workWaitingLink(count: waitingItems).plainRow() }
+                    if !collapsed {
+                        ForEach(shelf.tasks, id: \.id) { task in
+                            InboxRow(task: task, frozen: frozen, inWaiting: shelf.id == "waiting", project: shelf.id == "waiting" ? PhoneSessions.project(of: task, workspaces: workspaces)?["name"].string ?? "对话" : nil)
+                                .tag(task.id)
+                                .listRowInsets(EdgeInsets(top: 5, leading: collapsible ? 32 : 20, bottom: 5, trailing: 20))
+                                .listRowBackground(model.sessionId == task.id ? PhoneTheme.selectedRow : PhoneTheme.canvas)
+                                .listRowSeparatorTint(PhoneTheme.line)
+                                .sessionActions(task, model: model)
+                        }
+                    }
+                } header: {
+                    if !collapsible && !shelf.label.isEmpty { ShelfHeader(label: shelf.label, count: shelf.id == "waiting" && waitingItems > 0 ? nil : shelf.tasks.count) }
+                }
                 if shelf.id == "waiting", !others.isEmpty { OtherComputersSection(groups: others) }
             }
             if shelves.isEmpty && !searching { emptyState.plainRow() }
             if searching { ContentSearchSection(query: query) }
-            if !model.showArchived, query.isEmpty, case let count = PhoneSessions.archived(tasks).count, count > 0 {
+            if !model.showArchived, !filtering, case let count = PhoneSessions.archived(tasks).count, count > 0 {
                 Button { model.showArchived = true } label: { ArchivedLine(back: false, count: count) }.buttonStyle(.plain).plainRow()
             }
         }
@@ -132,16 +168,41 @@ struct InboxView: View {
         .tint(PhoneTheme.selectedRow)
         .scrollContentBackground(.hidden)
         .background(PhoneTheme.canvas)
-        .navigationTitle("会话")
-        .navigationBarTitleDisplayMode(.large)
-        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索")
-        .refreshable { await model.refresh() }
+        .scrollDismissesKeyboard(.interactively)
+        .refreshable { await model.refreshInbox() }
     }
 
-    private var workWaitingLink: some View {
+    @ViewBuilder private func shelfHeading(_ shelf: PhoneShelf, collapsed: Bool) -> some View {
+        let title = PhoneConversation.visible(shelf.label)
+        let label = HStack(spacing: 8) {
+            Image(systemName: shelf.id == "other" ? "bubble.left.and.bubble.right" : "folder")
+                .font(.subheadline.weight(.medium)).foregroundStyle(PhoneTheme.muted)
+            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(PhoneTheme.ink).lineLimit(2)
+            Spacer(minLength: 4)
+            Text(shelf.tasks.count, format: .number).font(.caption.monospacedDigit()).foregroundStyle(PhoneTheme.muted)
+            if !filtering {
+                Image(systemName: collapsed ? "chevron.forward" : "chevron.down")
+                    .font(.caption2.weight(.semibold)).foregroundStyle(PhoneTheme.muted).frame(width: 12)
+            }
+        }.padding(.horizontal, 12).frame(minHeight: 44)
+            .background(PhoneTheme.sunken, in: RoundedRectangle(cornerRadius: 10)).contentShape(Rectangle())
+        if filtering {
+            label.accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
+        } else {
+            Button { disclosure.toggle(shelf.id, computer: computer) } label: { label }
+                .buttonStyle(.plain)
+                .accessibilityLabel(title)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityValue("\(shelf.tasks.count) 个会话，" + (collapsed ? "已折叠" : "已展开"))
+                .accessibilityHint(collapsed ? "展开会话" : "折叠会话")
+                .accessibilityIdentifier("inbox.project." + shelf.id)
+        }
+    }
+
+    private func workWaitingLink(count: Int) -> some View {
         Button { model.showWorkItems(true) } label: {
             HStack {
-                Label("待办", systemImage: "checklist").foregroundStyle(PhoneTheme.ink)
+                Label("\(count) 项待办", systemImage: "checklist").foregroundStyle(PhoneTheme.ink)
                 Spacer()
                 Image(systemName: "chevron.right").foregroundStyle(PhoneTheme.muted)
             }.frame(minHeight: 44).contentShape(Rectangle())
@@ -149,14 +210,37 @@ struct InboxView: View {
     }
 
     @ViewBuilder private var emptyState: some View {
-        if model.showArchived { Text("没有已归档的会话").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.top, 48) }
-        else if !query.isEmpty { Text("没有符合的会话").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.top, 48) }
+        if model.connected && !model.snapshot["tasksComplete"].bool {
+            VStack(spacing: 4) {
+                Text("会话列表尚未完整").font(.subheadline).foregroundStyle(PhoneTheme.muted)
+                Button("刷新会话") { Task { await model.refreshInbox() } }
+                    .font(.subheadline.weight(.medium)).foregroundStyle(PhoneTheme.accent)
+            }.frame(maxWidth: .infinity).padding(.vertical, 20)
+        } else if model.showArchived { Text("没有已归档的会话").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.top, 48) }
+        else if filtering { Text("没有符合的会话").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity).padding(.top, 48) }
         else if model.connected {
             VStack(spacing: 8) {
                 Text("还没有会话").font(PhoneTheme.body).foregroundStyle(PhoneTheme.ink)
-                Button("新会话") { creating = true }.font(PhoneTheme.body).foregroundStyle(PhoneTheme.ink)
+                Button("新会话") { creating = true }.font(.body.weight(.medium)).foregroundStyle(PhoneTheme.accent)
             }.frame(maxWidth: .infinity).padding(.top, 48)
         }
+    }
+}
+
+struct InboxSearchField: View {
+    @EnvironmentObject private var model: PhoneModel
+    @Binding var query: String
+    let prompt: String
+    let identifier: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(PhoneTheme.muted).accessibilityHidden(true)
+            LocalSearchInput(query: $query, prompt: prompt, identifier: identifier)
+                .id([model.generation, model.privateSnapshot.epoch])
+        }.font(.subheadline).padding(.leading, 12).padding(.trailing, 4)
+            .frame(minHeight: 44).background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 12))
+            .onChange(of: model.verifiedUntil == nil) { _, closed in if closed { query = "" } }
     }
 }
 
@@ -202,28 +286,44 @@ private struct ShelfHeader: View {
     let count: Int?
     var body: some View {
         HStack(spacing: 8) {
-            Text(label).font(.system(size: 13, weight: .medium)).foregroundStyle(PhoneTheme.muted).lineLimit(1)
+            Text(label).font(.subheadline.weight(.semibold)).foregroundStyle(PhoneTheme.ink).lineLimit(2)
             if let count { Text("\(count)").font(.system(size: 13)).foregroundStyle(PhoneTheme.faint) }
             Rectangle().fill(PhoneTheme.line).frame(height: 1)
         }.textCase(nil)
     }
 }
 
-/** The Mac may be away; what the list shows stays readable and says when it was last true. Nothing here is red. */
-private struct OfflineBanner: View {
+/** The same connection status and recovery action precede each Code list. */
+struct CodeConnectionRow: View {
     @EnvironmentObject private var model: PhoneModel
-    let host: String
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "wifi.slash").font(.system(size: 15)).foregroundStyle(PhoneTheme.muted)
-            Text(words).font(.system(size: 14, weight: .medium)).foregroundStyle(PhoneTheme.ink2).lineLimit(1)
-            Spacer(minLength: 4)
-            Button("重试") { model.retryConnection() }.buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small).tint(PhoneTheme.ink)
-        }.padding(.leading, 12).padding(.trailing, 6).frame(height: 44).background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 14))
-    }
-    private var words: String {
-        guard let at = model.lastConfirmed else { return host + " 不在线" }
-        return host + " 不在线 · 上次在线 " + PhoneTime.message(at)
+        Group {
+            if let notice = model.hostNotice {
+                HostNoticeBanner(words: notice.words(computer: model.selectedHost.map(model.computerName) ?? "Mac")).plainRow()
+            } else if model.offline {
+                HStack(spacing: 10) {
+                    Image(systemName: "wifi.slash").font(.subheadline).foregroundStyle(PhoneTheme.amberIcon)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text((model.selectedHost.map(model.computerName) ?? "Mac") + " 不在线")
+                            .font(.subheadline.weight(.medium)).foregroundStyle(PhoneTheme.ink)
+                        if let at = model.lastConfirmed {
+                            Text("上次在线 " + PhoneTime.message(at)).font(.caption).foregroundStyle(PhoneTheme.muted)
+                        }
+                    }
+                    Spacer(minLength: 4)
+                    Button { model.retryConnection() } label: {
+                        Text("重试").font(.subheadline.weight(.medium)).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }.buttonStyle(.borderless).foregroundStyle(PhoneTheme.ink)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 4)
+                .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 12)).plainRow()
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("正在连接…").font(.subheadline).foregroundStyle(PhoneTheme.muted)
+                }.plainRow()
+            }
+        }
     }
 }
 
@@ -255,14 +355,15 @@ struct InboxRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text(task["title"].string ?? "会话").font(.system(size: 15, weight: selected ? .semibold : strong ? .medium : .regular)).foregroundStyle(selected || strong ? PhoneTheme.ink : PhoneTheme.ink2).lineLimit(1)
+                Text(PhoneConversation.visible(task["title"].string ?? "会话")).font(.body.weight(selected ? .semibold : strong ? .medium : .regular)).foregroundStyle(PhoneTheme.ink).lineLimit(2)
                 Spacer(minLength: 4)
                 RowStatusSlot(task: task, status: status, frozenAt: model.lastConfirmed)
+                    .layoutPriority(1)
             }
             HStack(spacing: 6) {
                 EngineTile(mark: model.engineMark(task["harnessId"].string), size: 14)
                 Text(([model.engineName(task["harnessId"].string)] + [PhoneSessions.rowMeta(task, project: project)].compactMap { $0 }).joined(separator: " · "))
-                    .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
+                    .font(.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
                 if let id = task["id"].string, PhoneHandoffs.awaiting(model.snapshot).contains(id) {
                     Spacer(minLength: 4)
                     Text("待交回").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
@@ -317,6 +418,7 @@ struct TightLabel: LabelStyle {
 struct PendingWritesBar: View {
     @EnvironmentObject private var model: PhoneModel
     @State private var checked: String?
+    @State private var abandoningWork: NativePendingWrite?
     var body: some View {
         if let checked {
             Label(checked, systemImage: "info.circle").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).padding(.horizontal, 16)
@@ -324,16 +426,23 @@ struct PendingWritesBar: View {
         }
         ForEach(model.pending, id: \.requestId) { pending in
             HStack {
-                Label(PhoneReview.pendingWords(pending) ?? PhoneDelivery.pendingWords(pending) ?? PhoneFileEdit.pendingWords(pending) ?? PhoneHandoffs.pendingWords(pending) ?? PhoneAgentWrites.words(pending, proposals: model.proposals.all.flatMap { $0 }), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                Label(PhoneWorkChange(pending)?.pendingWords ?? PhoneReview.pendingWords(pending) ?? PhoneDelivery.pendingWords(pending) ?? PhoneFileEdit.pendingWords(pending) ?? PhoneHandoffs.pendingWords(pending) ?? PhoneAgentWrites.words(pending, proposals: model.proposals.all.flatMap { $0 }), systemImage: "clock").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
                 Spacer()
-                if PhoneHistory.isImport(pending) {
+                if PhoneWorkChange(pending) != nil {
+                    Button("放弃重试") { abandoningWork = pending }.font(PhoneTheme.caption).disabled(model.busy)
+                } else if PhoneHistory.isImport(pending) {
                     Button("核对并放下") { Task { checked = await model.checkImportFromList(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                 } else if PhoneAgentWrites.handles(pending) && !PhoneHelperCreate.isCreation(pending) {
                     Button("核对并放下") { Task { checked = await model.checkAgentWrite(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                 } else if PhoneDelivery.isStage(pending) || PhoneFileEdit.pendingSave(pending) != nil {
                     Button("核对并放下") { Task { checked = await model.checkAndDrop(pending) ?? "没能核对，稍后再试" } }.font(PhoneTheme.caption).disabled(model.busy || !model.connected)
                 }
-                Button("重试这次提交") {
+                let retryLabel: String = switch PhoneWorkChange(pending) {
+                case .creation: "核对保存结果"
+                case .post(_, _, .some): "核对投递"
+                default: "重试这次提交"
+                }
+                Button(retryLabel) {
                     Task {
                         // A new topic's start opens its topic in 我的 Agent, where the conversation with that Agent is.
                         if let owner = PhonePending.topicOwner(pending) {
@@ -357,6 +466,10 @@ struct PendingWritesBar: View {
                 }
             }.padding(.horizontal, 16).padding(.vertical, 6)
         }
+        .confirmationDialog("放弃重试这次待办操作？", isPresented: Binding(get: { abandoningWork != nil }, set: { if !$0 { abandoningWork = nil } }), presenting: abandoningWork) { request in
+            Button("放弃重试", role: .destructive) { Task { await model.abandonWorkChange(request) } }
+            Button("取消", role: .cancel) {}
+        } message: { _ in Text("电脑可能已经处理。放弃重试不会撤回已经完成的操作。") }
     }
 }
 

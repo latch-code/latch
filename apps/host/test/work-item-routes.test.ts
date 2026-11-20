@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppSnapshot, CustomAgentList, TaskDetail, WorkItem, WorkItemAnswer, WorkItemStartAnswer } from '@latch/protocol'
 import { AppError, type HarnessPlugin } from '@latch/sdk'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
+import { WORK_RECEIPT_TTL_MS } from '../src/work-items.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
 
 const hosts: TestHost[] = []
@@ -135,6 +136,28 @@ describe('待办 records', () => {
     expect(await errorOf(await owner.request(`work/items/${item.id}`))).toEqual({ status: 404, error: 'item-not-found' })
   })
 
+  it('looks up only this device’s original creation receipt, never creating an item on a missing receipt', SLOW, async () => {
+    let now = Date.now()
+    const t = await startTestHost({ now: () => now })
+    hosts.push(t)
+    const owner = await t.enroll({ listener: 'unix' })
+    const other = await t.enroll({ listener: 'unix' })
+    const viewer = await t.enroll({ listener: 'unix', scopes: ['view'] })
+    const body = { requestId: randomUUID(), title: '保存待办', prompt: '稍后再开始' }
+    const lookup = (device: TestDevice, input = body) => device.request('work/items/retry-create', { method: 'POST', body: input })
+    expect(await errorOf(await lookup(owner))).toEqual({ status: 409, error: 'item-create-unconfirmed' })
+    expect(await items(owner)).toHaveLength(0)
+    const { item: made } = await owner.json<WorkItemAnswer>('work/items', { method: 'POST', body })
+    expect(await (await lookup(owner)).json()).toMatchObject({ item: { id: made.id, sessionIds: [] }, requestId: body.requestId })
+    expect(await errorOf(await lookup(owner, { ...body, prompt: 'different' }))).toEqual({ status: 409, error: 'request-conflict' })
+    expect(await errorOf(await lookup(other))).toEqual({ status: 409, error: 'item-create-unconfirmed' })
+    expect((await lookup(viewer)).status).toBe(403)
+    now += WORK_RECEIPT_TTL_MS + 1
+    await owner.renew()
+    expect(await errorOf(await lookup(owner))).toEqual({ status: 409, error: 'item-create-unconfirmed' })
+    expect((await items(owner)).map(item => item.id)).toEqual([made.id])
+    expect((await audited(t, 'work.item.changed')).map(entry => entry.detail.op)).toEqual(['created'])
+  })
   it('refuses titles and prompts it cannot keep, and every write from a device that may only view', SLOW, async () => {
     const { t, owner } = await fixture()
     const post = (body: Record<string, unknown>) =>

@@ -14,7 +14,11 @@ const pause = (ms: number) => new Promise(done => setTimeout(done, ms))
 /** Scenes of the LatchScreens target (`native/ios/Screens/ScreensStage.swift`), chosen by a launch argument. */
 const SCENES = [
   'code',
+  'workspace',
+  'workspace-offline',
   'conversation',
+  'conversation-reading',
+  'project-files',
   'conversation-actions',
   'subagents',
   'steer',
@@ -49,6 +53,7 @@ const SCENES = [
   'review',
   'review-locked',
   'work-list',
+  'work-list-offline',
   'work-waiting',
   'work-question',
   'work-approval',
