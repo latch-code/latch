@@ -10,8 +10,14 @@ public struct PhoneAttachCaps: Equatable, Sendable {
     public let fileBytes: Int
     public let imageBytes: Int
     public let reason: String?
-    public init(images: Bool, text: Bool, textBytes: Int, fileBytes: Int = 10 * 1_048_576, imageBytes: Int = 5 * 1_048_576, reason: String? = nil) {
+    /**
+     * The Host takes every file for this Harness (`files`), what the agent cannot read natively by its path, so nothing is
+     * refused for its type (the built-in Harness and every ACP agent).
+     */
+    public let files: Bool
+    public init(images: Bool, text: Bool, textBytes: Int, fileBytes: Int = 10 * 1_048_576, imageBytes: Int = 5 * 1_048_576, reason: String? = nil, files: Bool = false) {
         self.images = images; self.text = text; self.textBytes = textBytes; self.fileBytes = fileBytes; self.imageBytes = imageBytes; self.reason = reason
+        self.files = files
     }
     /** From `{ capabilities }`; nil when the answer is not one. */
     public static func parse(_ value: NativeJSON) -> PhoneAttachCaps? {
@@ -20,9 +26,13 @@ public struct PhoneAttachCaps: Equatable, Sendable {
         let bound = { (value: NativeJSON, fallback: Int) in value.integer.map { Int(min($0, 25 * 1_048_576)) } ?? fallback }
         return PhoneAttachCaps(images: images, text: text, textBytes: Int(min(textBytes, 25 * 1_048_576)),
             fileBytes: bound(caps["fileBytes"], 10 * 1_048_576), imageBytes: bound(caps["imageBytes"], 5 * 1_048_576),
-            reason: caps["reason"].string.map { String($0.prefix(400)) })
+            reason: caps["reason"].string.map { String($0.prefix(400)) }, files: caps["files"].bool)
     }
-    public var any: Bool { images || text }
+    /** A picture is taken: natively, or by its path. */
+    public var takesImages: Bool { images || files }
+    /** A text file is taken: natively, or by its path. */
+    public var takesText: Bool { text || files }
+    public var any: Bool { images || text || files }
 }
 
 public enum PhoneAttachKind: String, Equatable, Sendable { case image, text }
@@ -155,7 +165,7 @@ public struct PhoneAttachTray: Equatable, Sendable {
         if busy { return .failure(.waiting) }
         if items.contains(where: { if case .refused = $0.status { true } else { false } }) { return .failure(.reason("有附件不能发送，请移除后再发送。")) }
         guard items.allSatisfy({ $0.status == .ready && $0.attachmentId != nil }) else { return .failure(.reason("附件尚未准备好。请重试失败的文件，或移除后发送。")) }
-        guard let caps, items.allSatisfy({ $0.kind == .image ? caps.images : caps.text && $0.size <= caps.textBytes }) else {
+        guard let caps, items.allSatisfy({ $0.kind == .image ? caps.takesImages : caps.files || (caps.text && $0.size <= caps.textBytes) }) else {
             return .failure(.reason(caps?.reason ?? "当前 Harness 不接受这些附件。请移除附件或更换模型。"))
         }
         return .success(items.compactMap(\.attachmentId))
@@ -235,7 +245,7 @@ public enum PhoneAttachments {
     /** The ＋ menu's line: what may be attached, in the web's words; empty when nothing can be. */
     public static func limitsLine(_ caps: PhoneAttachCaps?) -> String {
         guard let caps, caps.any else { return "" }
-        return [caps.images ? "图片 \(sizeText(limit(.image, caps))) 内" : nil, caps.text ? "文字文件 \(sizeText(limit(.text, caps))) 内" : nil, "每条 8 个"]
+        return [caps.takesImages ? "图片 \(sizeText(limit(.image, caps))) 内" : nil, caps.takesText ? "文字文件 \(sizeText(limit(.text, caps))) 内" : nil, "每条 8 个"]
             .compactMap { $0 }.joined(separator: " · ")
     }
     /**
@@ -268,8 +278,8 @@ public enum PhoneAttachments {
         guard let caps, caps.any else { return caps?.reason ?? "当前 Harness 不接收附件。" }
         guard let kind else { return "「\(shortName(name))」不能添加：只收图片和文字文件。" }
         guard size > 0 else { return "空文件不能添加。" }
-        if kind == .image && !caps.images { return caps.reason ?? "当前模型不能看图片。" }
-        if kind == .text && !caps.text { return caps.reason ?? "当前 Harness 不接收文字文件。" }
+        if kind == .image && !caps.takesImages { return caps.reason ?? "当前模型不能看图片。" }
+        if kind == .text && !caps.takesText { return caps.reason ?? "当前 Harness 不接收文字文件。" }
         let largest = kind == .image ? PhoneImagePrep.sourceBytes : limit(.text, caps)
         guard size <= largest else { return "「\(shortName(name))」超过 \(sizeText(largest))，没有添加。可以添加：\(limitsLine(caps))。" }
         return nil

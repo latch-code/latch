@@ -44,7 +44,7 @@ struct AttachButton: View {
                 Menu {
                     if let caps, caps.any, model.tray(key).items.count < PhoneAttachments.perMessage {
                         Section(PhoneAttachments.limitsLine(caps)) {
-                            if caps.images {
+                            if caps.takesImages {
                                 Button("照片", systemImage: "photo.on.rectangle") { source = .photos }
                                 if UIImagePickerController.isSourceTypeAvailable(.camera) { Button("拍照", systemImage: "camera") { source = .camera } }
                             }

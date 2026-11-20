@@ -3562,7 +3562,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       const result = await invoke({ operation: 'nativeAttachments', payload: invitation.payload, port: host.host.nativePort }, 60_000)
       expect(result).toEqual({
         window: true,
-        freshReason: '发出第一条消息后可添加文件',
+        // Before the agent first started, the Host takes every file by its path: nothing to explain.
+        freshReason: '',
         reported: 'ready:it',
         caps: '图片 5 MB 内 · 文字文件 10 MB 内 · 每条 8 个',
         sameRequest: true,
@@ -3575,9 +3576,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         leftovers: { secret: 'attachment-secret', secretNamed: true, earlyStopped: true },
         sent: ['IMG_0001.jpg', 'notes.md'],
         readBack: true,
-        plainReason: '这个 Harness 不接收图片和文件。',
-        plainRefusal: 'attachments-unsupported:refused',
-        earlyRefusal: 'attachments-unsupported',
+        // An agent that reads neither natively still gets both kinds, by their path.
+        plainReason: '',
+        plainOffers: true,
+        plainTaken: true,
+        earlyRefusal: 'attachment-too-large:refused',
         cancelMid: { stopped: true, afterCancel: 0, partial: true },
         queue: 'queue-attachments-unsupported',
       })

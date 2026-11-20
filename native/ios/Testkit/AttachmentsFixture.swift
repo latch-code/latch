@@ -441,21 +441,26 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         let bytes = try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: Int(size), attachment: true)
         result["readBack"] = bytes == prepared.data
 
-        // A Harness that takes nothing: its reason, and the Host's refusal of an upload is permanent.
+        // A Harness that reads neither natively: the Host still takes every file, by its path, so the phone offers both kinds
+        // and the upload goes through.
         stage = "plain"
         let plain = try await start("plain", "hello")
         _ = try await idle(plain)
-        let plainCaps = try await workspace.attachmentCapabilities(selection: PhoneAttachments.selection(harnessId: "plain", workspaceId: "default", model: nil), sessionId: plain)
+        let plainSelection = PhoneAttachments.selection(harnessId: "plain", workspaceId: "default", model: nil)
+        let plainCaps = try await workspace.attachmentCapabilities(selection: plainSelection, sessionId: plain)
         result["plainReason"] = PhoneAttachments.unavailable(caps: plainCaps, harness: .null, failed: false) ?? ""
-        var refusal = ""
-        do { _ = try await workspace.uploadAttachment(note, selection: PhoneAttachments.selection(harnessId: "plain", workspaceId: "default", model: nil), sessionId: plain) }
-        catch let error as NativeHostRefusal { refusal = error.code + ":" + (PhoneAttachments.classify(error.code) == .refused ? "refused" : "other") }
-        result["plainRefusal"] = refusal
-        // A refusal the Host gives before the body is in is its answer, not an unknown result, however many chunks were left.
+        result["plainOffers"] = plainCaps.takesImages && plainCaps.takesText && PhoneAttachments.admit(kind: .text, name: "notes.md", size: 10, count: 0, caps: plainCaps) == nil
+        var plainTaken = false
+        do { plainTaken = try await workspace.uploadAttachment(note, selection: plainSelection, sessionId: plain)["kind"].string == "text" }
+        catch let error as NativeHostRefusal { result["plainRefusal"] = error.code }
+        result["plainTaken"] = plainTaken
+        // A refusal the Host gives before the body is in is its answer, not an unknown result, however many chunks were left:
+        // a file over the 10 MB a phone may send is refused at the start, as permanent.
         var early = ""
-        do { _ = try await workspace.uploadAttachment(PhoneAttachDraft(name: "long.txt", kind: .text, data: Data(repeating: 0x63, count: PhoneAttachments.streamBytes)),
-                selection: PhoneAttachments.selection(harnessId: "plain", workspaceId: "default", model: nil), sessionId: plain) }
-        catch let error as NativeHostRefusal { early = error.code } catch { early = String(describing: error) }
+        do { _ = try await workspace.uploadAttachment(PhoneAttachDraft(name: "long.txt", kind: .text, data: Data(repeating: 0x63, count: 10 * 1_048_576 + 1)),
+                selection: plainSelection, sessionId: plain) }
+        catch let error as NativeHostRefusal { early = error.code + ":" + (PhoneAttachments.classify(error.code) == .refused ? "refused" : "other") }
+        catch { early = String(describing: error) }
         result["earlyRefusal"] = early
 
         // A queued message cannot carry them: the Host's own refusal, said before sending on the phone.
