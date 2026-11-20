@@ -12,6 +12,19 @@ import { noHorizontalOverflow } from './helpers/layout.ts'
 const fixtures = documentFixtures(files =>
   Array.from(zipSync(Object.fromEntries(Object.entries(files).map(([path, text]) => [path, strToU8(text)])))),
 )
+/** Runs in the preview frame. Several landscape slides can tie for the largest visible fraction on a tall phone. */
+function mostVisibleSlides(slides: Element[]): Promise<number[]> {
+  return new Promise(resolve => {
+    const observer = new IntersectionObserver(entries => {
+      observer.disconnect()
+      const largest = Math.max(...entries.map(entry => entry.intersectionRatio))
+      const visible = entries.filter(entry => entry.intersectionRatio > 0 && entry.intersectionRatio === largest)
+      resolve(visible.map(entry => Number(entry.target.getAttribute('data-slide-index'))))
+    })
+    slides.forEach(slide => observer.observe(slide))
+  })
+}
+
 describe('WebKit actual document frames and product sandbox boundary', () => {
   let host: TestHost, server: ViteDevServer, browser: Browser, origin: string
   let probes = 0,
@@ -104,19 +117,24 @@ describe('WebKit actual document frames and product sandbox boundary', () => {
       await frame().getByText('Page 1', { exact: true }).waitFor()
       if (width === 390) {
         expect(await page.getByRole('button', { name: '下一页', exact: true }).count()).toBe(0)
+        // The first slide mounts before open() finishes its initial scroll. Wait for that scroll's own page event.
+        await page.waitForFunction(() => {
+          const events = window.securityEvents as Array<{ type: string; kind?: string; index?: number }>
+          const rendered = events.findLastIndex(event => event.type === 'rendered' && event.kind === 'pptx')
+          return rendered >= 0 && events.slice(rendered + 1).some(event => event.type === 'page' && event.index === 0)
+        })
         await frame()
           .locator('[data-slide-index="1"]')
-          .evaluate(node => node.scrollIntoView({ block: 'start' }))
+          .evaluate(node => node.scrollIntoView({ behavior: 'instant', block: 'start' }))
+        const mostVisible = await frame().locator('[data-slide-index]').evaluateAll(mostVisibleSlides)
+        expect(mostVisible).not.toContain(0)
         await expect
           .poll(() =>
             page.evaluate(
-              () =>
-                window.securityEvents.findLast(
-                  (value: unknown) => !!value && typeof value === 'object' && 'type' in value && value.type === 'page',
-                ) as { index: number } | undefined,
+              () => (window.securityEvents as Array<{ type: string; index?: number }>).findLast(event => event.type === 'page')?.index,
             ),
           )
-          .toMatchObject({ index: 1 })
+          .toSatisfy((index: number | undefined) => index !== undefined && mostVisible.includes(index))
       } else {
         await frame()
           .locator('body')
