@@ -14,6 +14,9 @@ import {
 
 /** Per-viewer conveniences. Browser storage can be missing or throw; every read has a default. */
 export type ThemePreference = 'system' | 'light' | 'dark'
+export type PalettePreference = 'mono' | 'graphite' | 'cool' | 'warm'
+export type AccentPreference = 'workbench' | 'navy' | 'teal' | 'iris'
+export type FloatingMaterialPreference = 'solid' | 'frosted' | 'clear'
 export type SendKey = 'enter' | 'mod-enter'
 /** 对话 (the sessions, the composer and the panels) or 看板 (every session as a card in its group). */
 export type WorkView = 'chat' | 'board'
@@ -32,8 +35,39 @@ export type MotionPreference = 'system' | 'reduce'
 /** 密度: 标准 or 紧凑. */
 export type DensityPreference = 'standard' | 'compact'
 const APPEARANCE_COPY = defineCopy(
-  { off: '关', light: '轻', standard: '标准', system: '跟随系统', reduce: '减弱', compact: '紧凑', field: '粒子', digits: '01' },
   {
+    mono: '黑白',
+    graphite: '墨灰',
+    cool: '雾蓝',
+    warm: '暖灰',
+    workbench: '跟随工作台',
+    navy: '深蓝',
+    teal: '青绿',
+    iris: '鸢尾紫',
+    solid: '实色',
+    frosted: '磨砂',
+    clear: '通透',
+    off: '关',
+    light: '轻',
+    standard: '标准',
+    system: '跟随系统',
+    reduce: '减弱',
+    compact: '紧凑',
+    field: '粒子',
+    digits: '01',
+  },
+  {
+    mono: 'Monochrome',
+    graphite: 'Graphite',
+    cool: 'Mist blue',
+    warm: 'Warm grey',
+    workbench: 'Follow workbench',
+    navy: 'Deep blue',
+    teal: 'Teal',
+    iris: 'Iris',
+    solid: 'Solid',
+    frosted: 'Frosted',
+    clear: 'Clear',
     off: 'Off',
     light: 'Light',
     standard: 'Standard',
@@ -58,6 +92,9 @@ export const BACKDROP_CHOICES = appearanceOptions<BackdropPreference>(['off', 'l
 export const BACKDROP_STYLE_CHOICES = appearanceOptions<BackdropStyle>(['field', 'digits'])
 export const MOTION_CHOICES = appearanceOptions<MotionPreference>(['system', 'reduce'])
 export const DENSITY_CHOICES = appearanceOptions<DensityPreference>(['standard', 'compact'])
+export const PALETTE_CHOICES = appearanceOptions<PalettePreference>(['mono', 'graphite', 'cool', 'warm'])
+export const ACCENT_CHOICES = appearanceOptions<AccentPreference>(['workbench', 'navy', 'teal', 'iris'])
+export const FLOATING_MATERIAL_CHOICES = appearanceOptions<FloatingMaterialPreference>(['solid', 'frosted', 'clear'])
 
 export interface Preferences {
   autoOpenDocuments: boolean
@@ -70,12 +107,15 @@ export interface Preferences {
   /** 文件树 in the 改动 tab; absent until the person chooses, so it opens by itself where it fits. */
   diffTree?: boolean
   theme: ThemePreference
+  palette: PalettePreference
+  accent: AccentPreference
+  floatingMaterial: FloatingMaterialPreference
   locale: LocalePreference
   /** 对话 or 看板 on this device. */
   workView: WorkView
   /** 工作过程: this device only. Approvals, questions, failures and unknown results show at every level. */
   workDisplay: WorkDisplay
-  /** 背景效果 on this device; absent until the person chooses, so a phone starts lighter than a desktop (`backdropLevel`). */
+  /** 背景效果 on this device; absent until the person chooses, so the palette and viewport set the default. */
   backdrop?: BackdropPreference
   /** 粒子 or 01 behind the page, on this device. */
   backdropStyle: BackdropStyle
@@ -104,6 +144,9 @@ const defaults: Preferences = {
   diffMode: 'auto',
   diffWrap: false,
   theme: 'system',
+  palette: 'mono',
+  accent: 'workbench',
+  floatingMaterial: 'frosted',
   locale: 'system',
   workView: 'chat',
   workDisplay: 'all',
@@ -153,6 +196,10 @@ export function parsePreferences(raw: string | null): Preferences {
       diffWrap: item.diffWrap === true,
       ...(typeof item.diffTree === 'boolean' ? { diffTree: item.diffTree } : {}),
       theme: item.theme === 'light' || item.theme === 'dark' ? item.theme : 'system',
+      palette: item.palette === 'graphite' || item.palette === 'cool' || item.palette === 'warm' ? item.palette : defaults.palette,
+      accent: item.accent === 'navy' || item.accent === 'teal' || item.accent === 'iris' ? item.accent : defaults.accent,
+      floatingMaterial:
+        item.floatingMaterial === 'solid' || item.floatingMaterial === 'clear' ? item.floatingMaterial : defaults.floatingMaterial,
       locale: isLocalePreference(item.locale) ? item.locale : 'system',
       workView: storedView(item),
       workDisplay: item.workDisplay === 'failures' || item.workDisplay === 'folded' ? item.workDisplay : 'all',
@@ -213,21 +260,27 @@ export function switchWorkView(view: WorkView): void {
   }, 'viewSwitch')
 }
 
-/** 背景效果 as it applies here: the person's choice, else 标准 on a desktop or tablet and 轻 on a phone. */
-export function backdropLevel(preferences: Pick<Preferences, 'backdrop'>, phone: boolean): BackdropPreference {
-  return preferences.backdrop ?? (phone ? 'light' : 'standard')
+/** The monochrome workspace starts plain. Other palettes keep the lighter default on phones. */
+export function backdropLevel({ backdrop, palette }: Pick<Preferences, 'backdrop' | 'palette'>, phone: boolean): BackdropPreference {
+  if (backdrop !== undefined) return backdrop
+  if (palette === 'mono') return 'off'
+  return phone ? 'light' : 'standard'
 }
 
-/**
- * 动效 and 密度 are attributes of the root that the design system's tokens and stylesheets read: `data-motion` is
- * "reduce" for 减弱 and absent while the page follows the system, and `data-density` is absent while it is 标准. No
- * other attribute is touched: a page frozen for a capture carries `data-capture`, which this never clears.
- */
-export function applyAppearance(motion: MotionPreference, density: DensityPreference): void {
-  const root = document.documentElement
+export function applyAppearance({
+  motion,
+  density,
+  palette,
+  accent,
+  floatingMaterial,
+}: Pick<Preferences, 'motion' | 'density' | 'palette' | 'accent' | 'floatingMaterial'>): void {
+  const { dataset } = document.documentElement
   setReducedMotion(motion === 'reduce')
-  if (density === 'compact') root.dataset.density = 'compact'
-  else delete root.dataset.density
+  if (density === 'compact') dataset.density = 'compact'
+  else delete dataset.density
+  dataset.palette = palette
+  dataset.deviceAccent = accent
+  dataset.floatingMaterial = floatingMaterial
 }
 
 export function toggleWorkView(): void {

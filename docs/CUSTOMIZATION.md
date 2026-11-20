@@ -11,9 +11,11 @@ sources:
   - apps/web/src/core/customBoot.ts
   - apps/web/src/core/customization.ts
   - apps/web/src/App.tsx
+  - apps/web/src/preferences.ts
   - apps/web/src/components/CustomizationRecovery.tsx
   - apps/web/src/components/SafeModeBanner.tsx
   - apps/web/src/settings/CustomizationSettings.tsx
+  - apps/web/src/settings/AppearanceTiles.tsx
   - apps/desktop/src/menu.cjs
   - packages/protocol/src/shortcuts.ts
   - apps/host/src/shortcuts.ts
@@ -34,6 +36,16 @@ sources:
 - 自由 CSS 不提供：它可以盖住、藏起或仿造审批，这一条无法靠逐项封堵来保证。
 
 已实现的是外观与每台设备自己的[快捷键](#快捷键)，其余见「尚未实现」。
+
+## 设备外观
+
+「设置 › 外观 › 工作台配色」提供黑白、墨灰、雾蓝和暖灰，默认用黑白。每种配色都支持浅色和深色，预览取当前主题的工作台底色、侧栏和编辑面。选择立即生效，保存于浏览器或桌面窗口所属来源的设备偏好 `latch.preferences`。
+
+黑白配色的深色画布是纯黑。未选择过「背景效果」时，黑白配色默认关，其他配色在手机上默认轻，在平板和桌面上默认标准。选过关、轻或标准后，换配色或调整窗口大小都保留所选档位。
+
+「设备主色」可选跟随工作台、深蓝、青绿和鸢尾紫。跟随工作台使用 Host 的主色设置，Host 没有设置时用黑白主色，浅色主题的主按钮是深底白字，深色主题是浅底深字。指定主色后仅此设备采用该颜色，Host 的圆角、字号仍照常生效。管理员在下方编辑 Host 色相时可以临时预览草稿，预览结束恢复本机选择。
+
+「浮层材质」可选实色、磨砂和通透，默认用磨砂。它只影响本设备的普通浮动选择器。手机底部面板、浏览器不支持时、系统启用减少透明度时一律用实底。阅读区使用实底，审批、配对和本机确认继续使用锁定的主题令牌。下方「自定义 · 所有设备」是 Host 共享的主色、圆角与字号。
 
 ## 文档
 
@@ -127,7 +139,7 @@ sources:
 
 自定义是数据，正常情况下弄不坏页面；安全模式防的是展开或某个版本的缺陷。
 
-- 它只在这台设备上：不套 Host 的自定义，页面顶部多出一行「默认外观」。它不删除任何数据，也保留这台设备的主题、布局、面板、密度与动效偏好。
+- 它只在这台设备上：不套 Host 的自定义，页面顶部多出一行「默认外观」。它不删除任何数据，也保留这台设备的主题、工作台配色、设备主色、浮层材质、布局、面板、密度与动效偏好。
 - 横幅自己占一行，页面取其余的高度，所以不盖住也不推走任何东西，审批照常可见、可答。
 
 进入：

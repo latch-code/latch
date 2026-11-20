@@ -92,17 +92,22 @@ export interface PaletteSearchState {
   unchecked?: { label: string; detail: string } | undefined
 }
 
-/** Rows that contain the query; those that begin with it come first, and each keeps its given order otherwise. */
+/** Exact labels, then prefixes and other label matches, then keywords. Keep the given order within each rank. */
 export function matchEntries(entries: readonly PaletteEntry[], query: string): PaletteRow[] {
   const needle = query.trim()
   if (!needle) return [...entries]
-  const found: Array<{ row: PaletteRow; first: boolean }> = []
+  const exact: PaletteRow[] = []
+  const prefix: PaletteRow[] = []
+  const contains: PaletteRow[] = []
+  const keywords: PaletteRow[] = []
   for (const entry of entries) {
     const mark = textMatches(entry.label, needle, 1)[0]
-    if (mark) found.push({ row: { ...entry, mark }, first: mark.start === 0 })
-    else if (textMatches(entry.keywords ?? '', needle, 1).length) found.push({ row: entry, first: false })
+    if (mark) {
+      const ranked = mark.start > 0 ? contains : mark.end < entry.label.length ? prefix : exact
+      ranked.push({ ...entry, mark })
+    } else if (textMatches(entry.keywords ?? '', needle, 1).length) keywords.push(entry)
   }
-  return [...found.filter(item => item.first), ...found.filter(item => !item.first)].map(item => item.row)
+  return [...exact, ...prefix, ...contains, ...keywords]
 }
 
 /** The folder that tells a file from others of its name, with its root when the results span more than one. */

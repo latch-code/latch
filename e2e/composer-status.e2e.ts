@@ -269,7 +269,6 @@ describe('the composer without a status line', () => {
       try {
         const input = page.getByRole('textbox', { name: '新会话消息', exact: true })
         await input.waitFor()
-        expect(await input.getAttribute('aria-placeholder')).toBe('想让 Agent 做什么？')
         await page
           .getByRole('button', { name: /^Harness：/u })
           .first()
@@ -290,6 +289,7 @@ describe('the composer without a status line', () => {
             .locator('form.composer [data-seg="context"], form.composer [data-seg="tokens"], form.composer [data-seg="cost"]')
             .count(),
         ).toBe(0)
+        expect(await input.getAttribute('aria-placeholder')).toBe('输入消息 · / 选择命令')
         await shot(page, `a-new-no-project--${width}--${theme}`)
         // The headline names the project; the line under the input has its folder choice and its branch.
         await page
@@ -301,6 +301,7 @@ describe('the composer without a status line', () => {
           .first()
           .click()
         await expect.poll(() => headline.innerText()).toContain('latch-demo')
+        await expect.poll(() => input.getAttribute('aria-placeholder')).toBe('输入消息 · @ 引用文件 · / 选择命令')
         const location = page.locator('.home-place')
         await expect.poll(() => location.innerText()).toContain('main')
         expect(await location.innerText()).toContain('当前文件夹')

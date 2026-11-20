@@ -7,13 +7,13 @@
 不变量：
 
 - 样式的颜色、阴影、间距、圆角与动效只用令牌；原语可声明几何变量。字号、行高用角色令牌，字重为 400、500、600（`apps/web/test/styles.test.ts`）。工作台两布局和预览共用 `--work-*` 底色。
-- 每种颜色只表达一件事：蓝色只给主按钮、被勾选的控件、焦点、链接与执行状态；琥珀只表示等你处理与警告；红色只表示真实风险或失败；绿色只给新增行、通过的检查、在线点与短暂的成功对勾。选中行与计数是墨色，琥珀与红色都配文字。内容色板只用在内容里（DESIGN「令牌的类别」）。
+- 每种颜色只表达一件事：主色只给主按钮、被勾选的控件、焦点、链接与执行状态；琥珀只表示等你处理与警告；红色只表示真实风险或失败；绿色只给新增行、通过的检查、在线点与短暂的成功对勾。选中行与计数是墨色，琥珀与红色都配文字。内容色板只用在内容里（DESIGN「令牌的类别」）。
 - 深色在系统偏好（页面没有选浅色时）与 `data-theme="dark"` 下各写一份，两份相同，并重写每个含颜色的令牌（`test/tokens.test.ts#gives every colour token a dark value, identical under the system preference and under data-theme`）。换主题经 `switchTheme`，不播放过渡。
 - 层叠层固定为 `tokens, custom, base, ui, app, security`；原语在 ui 层（`test/stylesheet.test.ts`）。安全界面带 `data-secure`，`data-lock` 只取令牌锁；tokens.css 末尾以 `!important` 锁住令牌，新令牌一并加入。自定义只写 `CUSTOM_TOKENS`，须在锁内（`test/tokens.test.ts`，[文档](../../docs/CUSTOMIZATION.md)）。
 - `src/plugins.ts` 定义 `PluginPanelProps`，共享 React 与控件；`StatusPill` 是插件 API，不改名。
 - 原语的类名以 `ui-` 开头，变体与尺寸用 `data-*`，状态用 ARIA 属性；禁用用 `aria-disabled`，保持可聚焦并拦下点击。成组的单选控件只有一个 Tab 停靠点，弹层在顶层显示，对话框限制并归还焦点。
 - 浮层只由本包提供，页面不另写弹层、定位或手机面板；规则见 DESIGN「浮层」。定位只经 `pinLayer`，宽只收 `LayerSize`。`Modal` 卸载时由静态副本退场，安全界面与含密码框、iframe 的不留副本；`secure` 的 `Drawer` 进出不播动效。
-- 原语只用于已实现的能力。
+- 原语只呈现真实能力；短模型目录可收紧，单一档位随模型显示。
 - 图标：常用的在 `src/glyphs/`，线宽 `ICON_STROKE`，选中项 `solid`（`test/icon.test.tsx`）。
 - 状态（`src/status.tsx`）：状态是状态词加至多一个 12px 图形，只有运行中的转圈会动；变化只为 `LiveChanges` 纪元不变时看见的变化交叉淡化；循环在视野外暂停，减少动效时停在静帧（`test/status.test.tsx`）。
 - 动效（`src/motion.tsx`）：时长 `--m-*` 与曲线 `--e-*`，离开用 70%，`MOTION`、`EASING` 与令牌一致；高度只经网格行展开，其余只动不透明度与位移；收起的身体是 `hidden="until-found"`；减少动效只剩不超过 120ms 的淡入淡出（`test/motion.test.tsx`）。

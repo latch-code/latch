@@ -390,6 +390,7 @@
   max-height: 100%;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-16);
+  color: var(--accent);
   cursor: crosshair;
   touch-action: none;
 }

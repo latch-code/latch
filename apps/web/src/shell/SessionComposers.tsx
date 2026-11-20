@@ -89,6 +89,9 @@ const COMPOSER_COPY = defineCopy(
     pickProject: '选一个项目',
     place: '在哪里开始',
     busy: '正在切换，请稍后。',
+    files: '输入消息 · @ 引用文件',
+    commands: '输入消息 · / 选择命令',
+    filesAndCommands: '输入消息 · @ 引用文件 · / 选择命令',
   },
   {
     service: (harness: string) => `Model service used by ${harness}`,
@@ -104,6 +107,9 @@ const COMPOSER_COPY = defineCopy(
     pickProject: 'Choose a project',
     place: 'Where it starts',
     busy: 'Switching. Try again in a moment.',
+    files: 'Message · @ mention files',
+    commands: 'Message · / commands',
+    filesAndCommands: 'Message · @ files · / commands',
   },
 )
 
@@ -113,9 +119,6 @@ export function SendingBubble({ shell }: { shell: ShellState }) {
   if (!sendingView) return null
   return <SendingMessage key={sendingView.submission.requestId} view={sendingView} />
 }
-
-/** On a phone the input has no room for the part after the two spaces, which teaches @ and /. */
-const phoneWords = (words: string) => words.split('  ')[0]!
 
 /** A project's name on the headline is cut past this many characters; its hover shows it whole. */
 const LONG_PROJECT = 28
@@ -781,6 +784,38 @@ export function SessionComposer({
     && !submission.pending
     && !submission.sending
     && (!shell.active || canQueue)
+  const canSend =
+    !offline
+    && gate.kind === 'open'
+    && (selectedId === null ? block === null : sessionBlock === undefined)
+    && !sideBlocked
+    && !permissionBlocked
+  const commands = selectedId === null ? cachedCommands?.commands : current?.commands
+  const skills = selectedId === null ? cachedCommands?.skills : current?.skills
+  const actions = composerActions(shell, 'slash', sendSideQuestion)
+  const templates = scopedTemplates(
+    promptTemplates,
+    selectedId === null
+      ? (choice.workspaceId ?? catalog?.defaults.workspaceId)
+      : summary && catalog
+        ? projectOf(summary, catalog.workspaces)?.id
+        : undefined,
+    selectedId === null ? choice.harnessId : summary?.harnessId,
+  )
+  // During a turn or an answer, the placeholder says how to send that message.
+  const showHints = canSend && !shell.active && !asked && !answer && !noteComposer && !submission.pending && !submission.sending && !speaker
+  const mentionFiles = showHints && mentionChoice.enabled && (selectedId === null ? !!mentionChoice.workspaceId : !!summary?.cwd)
+  const chooseCommand =
+    showHints
+    && (selectedId === null ? choice.mode !== 'chat' : summary?.mode !== 'chat')
+    && (actions.some(action => !action.unavailable) || !!commands?.length || !!skills?.length || templates.length > 0)
+  const inputHint = mentionFiles
+    ? chooseCommand
+      ? COMPOSER_COPY.filesAndCommands
+      : COMPOSER_COPY.files
+    : chooseCommand
+      ? COMPOSER_COPY.commands
+      : words
   const composer = (
     <Composer
       showSlashButton={speaker === undefined}
@@ -818,8 +853,8 @@ export function SessionComposer({
             }
           : undefined
       }
-      commands={selectedId === null ? cachedCommands?.commands : current?.commands}
-      skills={selectedId === null ? cachedCommands?.skills : current?.skills}
+      commands={commands}
+      skills={skills}
       skillsTruncated={selectedId === null ? cachedCommands?.skillsTruncated : current?.skillsTruncated}
       commandSource={
         commandHarness
@@ -833,21 +868,13 @@ export function SessionComposer({
             }
           : undefined
       }
-      actions={composerActions(shell, 'slash', sendSideQuestion)}
+      actions={actions}
       onCreateTemplate={owner ? () => openSettings('general') : undefined}
       historyScope={{ deviceId: shell.snapshot.device.id, harnessId: selectedId === null ? choice.harnessId : summary?.harnessId }}
-      templates={scopedTemplates(
-        promptTemplates,
-        selectedId === null
-          ? (choice.workspaceId ?? catalog?.defaults.workspaceId)
-          : summary && catalog
-            ? projectOf(summary, catalog.workspaces)?.id
-            : undefined,
-        selectedId === null ? choice.harnessId : summary?.harnessId,
-      )}
+      templates={templates}
       variant={selectedId === null ? 'new' : 'session'}
       label={noteComposer ? APPROVAL_COPY.rejectPlaceholder : selectedId === null ? SHELL_COPY.message : SHELL_COPY.continueChat}
-      placeholder={home ? SHELL_COPY.composerPrompt : phone ? phoneWords(words) : words}
+      placeholder={inputHint}
       draft={submission.draft}
       onDraft={setSubmissionDraft}
       pending={submission.pending}
@@ -884,13 +911,7 @@ export function SessionComposer({
       abandoning={abandoning}
       abandonHeld={submission.sendingElsewhere ? SHELL_COPY.retryElsewhere : undefined}
       pendingNote={pendingQueued === 'waiting' ? SHELL_COPY.queued : pendingQueued === 'parked' ? SHELL_COPY.parked : undefined}
-      canSend={
-        !offline
-        && gate.kind === 'open'
-        && (selectedId === null ? block === null : sessionBlock === undefined)
-        && !sideBlocked
-        && !permissionBlocked
-      }
+      canSend={canSend}
       blockReason={offline ? CONNECTION_COPY.offline : (block?.message ?? sessionBlock ?? sideBlocked)}
       readOnly={
         gate.kind === 'read-only'

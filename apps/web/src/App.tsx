@@ -24,6 +24,7 @@ const COPY = defineCopy(
 export function App() {
   const harness = useHarness()
   const preferences = usePreferences()
+  const { motion, density, palette, accent, floatingMaterial } = preferences
   const locale = useLocale()
   useLayoutEffect(() => {
     const apply = () => setLocale(resolveLocale(preferences.locale))
@@ -43,10 +44,14 @@ export function App() {
     applyTheme(preferences.theme)
   }, [preferences.theme])
   useLayoutEffect(() => {
-    applyAppearance(preferences.motion, preferences.density)
-  }, [preferences.motion, preferences.density])
+    applyAppearance({ motion, density, palette, accent, floatingMaterial })
+  }, [motion, density, palette, accent, floatingMaterial])
   // The Host's customisation: every snapshot hands it to the boot module, which shows it or keeps this device on the default.
   const custom = useCustomizationStatus()
+  const accentPreview = custom.preview !== null && custom.preview.appearance.accentHue !== custom.host?.doc.appearance.accentHue
+  useLayoutEffect(() => {
+    document.documentElement.toggleAttribute('data-host-accent-preview', accentPreview)
+  }, [accentPreview])
   const snapshot = harness.snapshot
   const [writes] = useState(() => new CustomizationWrites())
   const identity = snapshot ? { hostId: snapshot.host.hostId, deviceId: snapshot.device.id } : null

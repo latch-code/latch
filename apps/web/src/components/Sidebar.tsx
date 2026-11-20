@@ -165,57 +165,60 @@ const SessionItem = memo(function SessionItem({
       inert={leaving || undefined}>
       <div
         className={`session-item ${selected ? 'is-selected' : ''} ${strong ? 'is-strong' : ''} ${showsUnread(status) ? 'is-unread' : ''}`}>
-        <button
-          type="button"
-          className="session-item-main"
-          data-task-id={leaving ? undefined : task.id}
-          aria-current={selected ? 'page' : undefined}
-          title={[engine, model, gateway && COPY.gatewayRoute, worktree ?? branch].filter(Boolean).join(' · ')}
-          onClick={() => {
-            onSelect(task.id)
-          }}>
-          <span className="session-line">
-            <SessionRowGlyph status={status} mark={harness.mark} />
-            {task.pinned && (
-              <PinGlyph className="session-pin" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label={COPY.pinned} />
-            )}
-            {worktree && (
-              <FolderGit2 className="session-worktree" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label={worktree} />
-            )}
-            <span className="session-title">{title}</span>
-            {handoffWaits && (
-              <span className="session-handoff" aria-hidden="true">
-                {COPY.returnPending}
-              </span>
-            )}
-            <SessionStatus
-              className="session-status"
-              status={status}
-              live={task.live}
-              inWaitingShelf={inWaitingShelf}
-              time={time}
-              dateTime={task.updatedAt}
-            />
-          </span>
-          <span className="session-meta" aria-hidden="true">
-            <span className="session-mark">
-              <MarkTile mark={harness.mark} size={14} />
+        <Tooltip
+          content={[title, engine, model, gateway && COPY.gatewayRoute, worktree ?? branch].filter(Boolean).join(' · ')}
+          describe={false}>
+          <button
+            type="button"
+            className="session-item-main"
+            data-task-id={leaving ? undefined : task.id}
+            aria-current={selected ? 'page' : undefined}
+            onClick={() => {
+              onSelect(task.id)
+            }}>
+            <span className="session-line">
+              <SessionRowGlyph status={status} mark={harness.mark} />
+              {task.pinned && (
+                <PinGlyph className="session-pin" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label={COPY.pinned} />
+              )}
+              {worktree && (
+                <FolderGit2 className="session-worktree" size={12} nonScalingStroke strokeWidth={ICON_STROKE[12]} aria-label={worktree} />
+              )}
+              <span className="session-title">{title}</span>
+              {handoffWaits && (
+                <span className="session-handoff" aria-hidden="true">
+                  {COPY.returnPending}
+                </span>
+              )}
+              <SessionStatus
+                className="session-status"
+                status={status}
+                live={task.live}
+                inWaitingShelf={inWaitingShelf}
+                time={time}
+                dateTime={task.updatedAt}
+              />
             </span>
-            {wait ? (
-              <span className="session-wait">
-                <WaitWords wait={wait} live={task.live} />
+            <span className="session-meta" aria-hidden="true">
+              <span className="session-mark">
+                <MarkTile mark={harness.mark} size={14} />
               </span>
-            ) : (
-              model !== undefined && <span className="session-model">{model}</span>
-            )}
-            {named && <span className="session-harness">{engine}</span>}
-            {wait && <span className="session-meta-rest">{`· ${project ?? COPY.noProject}`}</span>}
-            {note && <span className="session-meta-rest">{`· ${note}`}</span>}
-            {from && <span className="session-meta-rest session-from">{`· ${COPY.fromPage(from)}`}</span>}
-            {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
-          </span>
-          <span className="sr-only">{details}</span>
-        </button>
+              {wait ? (
+                <span className="session-wait">
+                  <WaitWords wait={wait} live={task.live} />
+                </span>
+              ) : (
+                model !== undefined && <span className="session-model">{model}</span>
+              )}
+              {named && <span className="session-harness">{engine}</span>}
+              {wait && <span className="session-meta-rest">{`· ${project ?? COPY.noProject}`}</span>}
+              {note && <span className="session-meta-rest">{`· ${note}`}</span>}
+              {from && <span className="session-meta-rest session-from">{`· ${COPY.fromPage(from)}`}</span>}
+              {status.kind === 'frozen' && <span className="session-frozen">{frozen}</span>}
+            </span>
+            <span className="sr-only">{details}</span>
+          </button>
+        </Tooltip>
         {members && <TeamFold count={members.count} folded={members.folded} onToggle={members.onToggle} />}
         <span className="session-actions">
           {archive && (

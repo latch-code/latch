@@ -11,9 +11,13 @@ import { noHorizontalOverflow } from './helpers/layout.ts'
 
 afterEach(() => vi.unstubAllEnvs())
 
-it.each(['opencode', 'dsh', 'pi'] as const)(
-  'chooses %s service models and thinking in the normal menus and restores them',
-  async harness => {
+it.each([
+  ['opencode', 'mouse'],
+  ['dsh', 'touch'],
+  ['pi', 'keyboard'],
+] as const)(
+  'chooses %s service models and thinking in the normal menus and restores them (%s on the phone)',
+  async (harness, phoneInput) => {
     // Only an explicitly authorized run substitutes an installed CLI. The upstream is always local and fake.
     const live = process.env[`LATCH_${harness.toUpperCase()}_GATEWAY_BINARY`]
     const root = await mkdtemp(join(tmpdir(), `latch-ui-${harness}-gateway-`))
@@ -76,7 +80,12 @@ it.each(['opencode', 'dsh', 'pi'] as const)(
     const port = Number(new URL(host.host.loopbackOrigin).port)
     let owner = await host.enroll({ listener: 'unix' })
     const browser = await chromium.launch(browserLaunchOptions())
-    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+    const page = await browser.newPage({
+      viewport: { width: 1440, height: 1000 },
+      locale: 'zh-CN',
+      reducedMotion: 'reduce',
+      hasTouch: phoneInput === 'touch',
+    })
     page.setDefaultTimeout(20_000)
     const output = `test-results/harness-model-gateway/${harness}-${live ? 'live' : 'fake'}`
     await mkdir(output, { recursive: true })
@@ -166,10 +175,21 @@ it.each(['opencode', 'dsh', 'pi'] as const)(
         await closePanel()
         await chip('模型').click()
         await serviceSource()
-        await row(new RegExp(chosen, 'u')).waitFor()
+        const choice = row(new RegExp(chosen, 'u'))
+        await choice.waitFor()
         await noHorizontalOverflow(page)
         await page.screenshot({ path: `${output}/models-${width}.png`, animations: 'disabled' })
-        await row(new RegExp(chosen, 'u')).click()
+        if (width === 390 && phoneInput === 'touch') await choice.tap()
+        else if (width === 390 && phoneInput === 'keyboard') {
+          const current = row(names[0]!)
+          await current.focus()
+          await page.keyboard.press('ArrowDown')
+          await expect.poll(() => choice.evaluate(element => element === document.activeElement)).toBe(true)
+          await page.keyboard.press('ArrowUp')
+          await expect.poll(() => current.evaluate(element => element === document.activeElement)).toBe(true)
+          await page.keyboard.press('ArrowDown')
+          await page.keyboard.press('Enter')
+        } else await choice.click()
         await expect
           .poll(async () => (await detail()).config?.find(option => option.category === 'model')?.currentValue)
           .toBe(nativeValue(chosen))

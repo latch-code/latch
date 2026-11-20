@@ -61,6 +61,17 @@ describe('optional settings loading', () => {
     expect(searchSections(list, '添加模型服务').map(item => item.id)).toEqual(['providers'])
   })
 
+  it('prioritizes a matching section title and finds device palettes by name', () => {
+    const list = [
+      { id: 'extensions', label: '扩展' },
+      { id: 'plugins', label: '插件' },
+      { id: 'appearance', label: '外观' },
+    ] as const
+    expect(searchSections(list, '插件').map(section => section.id)).toEqual(['plugins', 'extensions'])
+    expect(searchSections(list, '暖灰')).toEqual([list[2]])
+    expect(searchSections(list, '通透')).toEqual([list[2]])
+  })
+
   it('finds 设备 by its name and by the words people used for it before', () => {
     const list: Array<{ id: SettingsSection; label: string }> = [
       { id: 'general', label: '通用' },

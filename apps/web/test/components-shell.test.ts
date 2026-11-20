@@ -184,38 +184,25 @@ describe('shell routes', () => {
     expect(visibleEntries(['shortcuts'], true)).toEqual(['sessions'])
   })
 
-  it('lists 设备 among the sections, before 快捷键, which a phone does not have', () => {
-    expect(settingsSectionsAt(false)).toEqual([
+  it('keeps related settings together and omits keyboard shortcuts on a phone', () => {
+    const ordered = [
       'general',
       'appearance',
-      'providers',
-      'engines',
-      'mcp',
-      'extensions',
-      'workspaces',
-      'plugins',
-      'devices',
-      'relays',
-      'data',
-      'computers',
       'shortcuts',
-      'about',
-    ])
-    expect(settingsSectionsAt(true)).toEqual([
-      'general',
-      'appearance',
       'providers',
       'engines',
       'mcp',
       'extensions',
-      'workspaces',
       'plugins',
-      'devices',
-      'relays',
+      'workspaces',
       'data',
+      'devices',
       'computers',
+      'relays',
       'about',
-    ])
+    ]
+    expect(settingsSectionsAt(false)).toEqual(ordered)
+    expect(settingsSectionsAt(true)).toEqual(ordered.filter(id => id !== 'shortcuts'))
   })
 })
 

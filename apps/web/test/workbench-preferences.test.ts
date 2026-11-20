@@ -9,7 +9,15 @@ it('restores only a valid dock height and an explicit open flag', () => {
   expect(parsePreferences('{"dockOpen":"true","dockHeight":680.5}').dockOpen).toBe(false)
   expect(parsePreferences('{"dockOpen":true,"dockHeight":139}').dockHeight).toBeUndefined()
 })
-import { BackdropStyleTiles, BackdropTiles, DensityTiles, MotionChoice } from '../src/settings/AppearanceTiles.tsx'
+import {
+  AccentTiles,
+  BackdropStyleTiles,
+  BackdropTiles,
+  DensityTiles,
+  FloatingMaterialChoice,
+  MotionChoice,
+  PaletteTiles,
+} from '../src/settings/AppearanceTiles.tsx'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -89,23 +97,95 @@ describe('对话 or 看板 on this device', () => {
     expect(parsePreferences('{"backdrop":"light","motion":"full"}')).toMatchObject({ backdrop: 'light', motion: 'system' })
   })
 
-  it('starts 背景效果 at 标准 on a desktop and at 轻 on a phone until the person chooses', () => {
-    expect(backdropLevel({}, false)).toBe('standard')
-    expect(backdropLevel({}, true)).toBe('light')
-    for (const backdrop of ['off', 'light', 'standard'] as const) {
-      expect(backdropLevel({ backdrop }, false)).toBe(backdrop)
-      expect(backdropLevel({ backdrop }, true)).toBe(backdrop)
+  it('starts black and white with the backdrop off and preserves a saved choice across palettes and widths', () => {
+    const defaults = parsePreferences(null)
+    expect(backdropLevel(defaults, false)).toBe('off')
+    expect(backdropLevel(defaults, true)).toBe('off')
+    for (const palette of ['graphite', 'cool', 'warm'] as const) {
+      expect(backdropLevel({ palette }, false)).toBe('standard')
+      expect(backdropLevel({ palette }, true)).toBe('light')
+    }
+    for (const palette of ['mono', 'graphite', 'cool', 'warm'] as const) {
+      for (const backdrop of ['off', 'light', 'standard'] as const) {
+        const preferences = parsePreferences(JSON.stringify({ palette, backdrop }))
+        expect(backdropLevel(preferences, false)).toBe(backdrop)
+        expect(backdropLevel(preferences, true)).toBe(backdrop)
+      }
     }
   })
 
-  it('puts 动效 and 密度 on the root for the stylesheets, and leaves every other attribute of the root alone', () => {
+  it('reads the workbench palettes and defaults an old or unknown preference to monochrome', () => {
+    for (const raw of [null, '{}', '{"palette":null}', '{"palette":"bright"}', '{"theme":"dark","density":"compact"}'])
+      expect(parsePreferences(raw).palette).toBe('mono')
+    for (const palette of ['mono', 'graphite', 'cool', 'warm'])
+      expect(parsePreferences(JSON.stringify({ palette, theme: 'dark', density: 'compact' }))).toMatchObject({
+        palette,
+        theme: 'dark',
+        density: 'compact',
+      })
+    const tiles = renderToStaticMarkup(createElement(PaletteTiles, { value: 'cool', onValueChange: () => {} }))
+    expect(tiles).toContain('aria-label="工作台配色"')
+    expect(tiles).toContain('仅此设备')
+    expect(tiles.match(/data-palette="(?:mono|graphite|cool|warm)"/gu)).toEqual([
+      'data-palette="mono"',
+      'data-palette="graphite"',
+      'data-palette="cool"',
+      'data-palette="warm"',
+    ])
+    expect(tiles.match(/aria-checked="true"/gu)).toHaveLength(1)
+  })
+
+  it('puts the device appearance on the root while preserving other attributes', () => {
     // A page frozen for a capture carries data-capture; the page applying its preferences must not unfreeze it.
     const dataset: Record<string, string> = { capture: 'still', theme: 'dark' }
     vi.stubGlobal('document', { documentElement: { dataset } })
-    applyAppearance('reduce', 'compact')
-    expect(dataset).toEqual({ capture: 'still', theme: 'dark', motion: 'reduce', density: 'compact' })
-    applyAppearance('system', 'standard')
-    expect(dataset).toEqual({ capture: 'still', theme: 'dark' })
+    applyAppearance({ motion: 'reduce', density: 'compact', palette: 'warm', accent: 'teal', floatingMaterial: 'clear' })
+    expect(dataset).toEqual({
+      capture: 'still',
+      theme: 'dark',
+      motion: 'reduce',
+      density: 'compact',
+      palette: 'warm',
+      deviceAccent: 'teal',
+      floatingMaterial: 'clear',
+    })
+    applyAppearance({ motion: 'system', density: 'standard', palette: 'graphite', accent: 'workbench', floatingMaterial: 'frosted' })
+    expect(dataset).toEqual({
+      capture: 'still',
+      theme: 'dark',
+      palette: 'graphite',
+      deviceAccent: 'workbench',
+      floatingMaterial: 'frosted',
+    })
+  })
+
+  it('defaults the material to frosted and keeps a valid choice for this device', () => {
+    for (const raw of [null, '{}', '{"floatingMaterial":false}', '{"floatingMaterial":"blurred"}'])
+      expect(parsePreferences(raw).floatingMaterial).toBe('frosted')
+    for (const floatingMaterial of ['solid', 'frosted', 'clear'])
+      expect(parsePreferences(JSON.stringify({ floatingMaterial })).floatingMaterial).toBe(floatingMaterial)
+    const choice = renderToStaticMarkup(createElement(FloatingMaterialChoice, { value: 'clear', onValueChange: () => {} }))
+    expect(choice).toContain('aria-label="浮层材质"')
+    expect(['实色', '磨砂', '通透'].every(name => choice.includes(name))).toBe(true)
+    expect(choice.match(/aria-checked="true"/gu)).toHaveLength(1)
+  })
+
+  it('keeps a valid device accent and uses the workbench for old or invalid settings', () => {
+    for (const raw of [null, '{}', '{"accent":255}', '{"accent":"unknown"}']) expect(parsePreferences(raw).accent).toBe('workbench')
+    for (const accent of ['workbench', 'navy', 'teal', 'iris'])
+      expect(parsePreferences(JSON.stringify({ theme: 'dark', palette: 'warm', accent }))).toMatchObject({
+        theme: 'dark',
+        palette: 'warm',
+        accent,
+      })
+    const tiles = renderToStaticMarkup(createElement(AccentTiles, { value: 'iris', onValueChange: () => {} }))
+    expect(tiles).toContain('aria-label="设备主色"')
+    expect(tiles.match(/data-accent-sample="(?:workbench|navy|teal|iris)"/gu)).toEqual([
+      'data-accent-sample="workbench"',
+      'data-accent-sample="navy"',
+      'data-accent-sample="teal"',
+      'data-accent-sample="iris"',
+    ])
   })
 
   it('draws the choices as named controls: three strengths, two densities, and 动效 as 跟随系统 or 减弱', () => {

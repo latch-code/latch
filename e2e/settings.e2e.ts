@@ -52,6 +52,27 @@ describe('settings navigation motion', () => {
     return { context, page }
   }
 
+  it('finds appearance by palette name and keeps filtered sections reachable by keyboard', async () => {
+    const { context, page } = await device({ phone: false, reducedMotion: 'reduce' })
+    try {
+      const settings = await openSettings(page)
+      await settings.getByText('模型与工具', { exact: true }).waitFor()
+      const search = settings.getByRole('searchbox', { name: '搜索设置' })
+      await search.fill('暖灰')
+      const appearance = settings.getByRole('tab', { name: '外观', exact: true })
+      expect(await appearance.getAttribute('tabindex')).toBe('0')
+      await search.press('ArrowDown')
+      expect(await appearance.evaluate(element => element === document.activeElement)).toBe(true)
+      await appearance.press('Enter')
+      await settings.getByRole('radiogroup', { name: '工作台配色' }).waitFor()
+      await search.fill('插件')
+      await search.press('Enter')
+      await settings.getByRole('heading', { name: '插件', exact: true, level: 1 }).waitFor()
+    } finally {
+      await context.close()
+    }
+  })
+
   it('slides the first section in on a phone, then a page over the section and back', async () => {
     const { context, page } = await device({ phone: true, reducedMotion: 'no-preference' })
     try {

@@ -836,6 +836,18 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   background: var(--raised);
   box-shadow: var(--sh-lift);
 }
+.harness-found:not([data-open]) {
+  padding-block: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.harness-found:not([data-open]) .harness-found-head strong {
+  color: var(--muted);
+  font-weight: 500;
+}
+.harness-found:not([data-open]) .harness-found-marks > :nth-child(n + 4) {
+  display: none;
+}
 .harness-found-head {
   display: flex;
   align-items: center;

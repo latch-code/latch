@@ -130,6 +130,48 @@ const board = () => document.querySelector<HTMLElement>('.ui-board')!
 const levelNames = () => Array.from(document.querySelectorAll('.ui-board-level'), level => level.getAttribute('aria-label'))
 
 describe('the picker board', () => {
+  it('shows a fixed level as text in a short board and keeps keyboard focus on the model', async () => {
+    const choose = vi.fn()
+    const sources = [{ ...GALLERY_SOURCES[1]!, items: [{ value: 'lab/gamma', label: 'gamma' }] }]
+    const screen = await render(
+      <ValuePicker
+        label="模型"
+        value="gamma"
+        options={[{ value: 'gamma', label: 'gamma' }]}
+        onValueChange={() => {}}
+        width="md"
+        panel={
+          <PickerBoard
+            compact
+            fixedLevelPlacement="inline"
+            focus="levels"
+            keepOpen
+            label="模型"
+            levelsLabel="思考"
+            sources={sources}
+            value="lab/gamma"
+            levels={galleryLevels}
+            onItem={choose}
+            onLevel={() => {}}
+          />
+        }
+      />,
+    )
+    const trigger = screen.getByRole('button', { name: /^模型/u })
+    await trigger.click()
+    const model = page.getByRole('menuitemradio', { name: 'gamma' })
+    await expect.element(model).toHaveFocus()
+    await expect.element(page.getByRole('group', { name: '思考' }).getByText('默认', { exact: true })).toBeVisible()
+    await expect.element(page.getByRole('menuitemradio', { name: '默认' })).not.toBeInTheDocument()
+    expect(board().querySelector('.ui-board-levels')).toBeNull()
+    expect(board().offsetHeight).toBeLessThan(210)
+    await userEvent.keyboard('{ArrowRight}{Enter}')
+    expect(choose).toHaveBeenCalledWith('lab/gamma')
+    await expect.element(model).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+    await expect.element(trigger).toHaveFocus()
+  })
+
   it('opens on the chosen item, and the levels follow the highlight without the board changing size', async () => {
     const screen = await render(<Board />)
     await screen.getByRole('button', { name: /^模型/u }).click()

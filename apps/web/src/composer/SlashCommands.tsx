@@ -253,6 +253,7 @@ export function SlashCommands({
     : noCommands
   return (
     <Suggest
+      frosted
       id={menu.id}
       label={COPY.commands}
       open={menu.open}

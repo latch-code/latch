@@ -12,6 +12,7 @@ import {
   MenuFooterLink,
   MenuFooterNote,
   PickerBoard,
+  hasOtherBoardLevels,
   SegmentedControl,
   ValuePicker,
   HistoryGlyph,
@@ -313,6 +314,10 @@ function BoardChip({ board, kind, withLevel = false }: { board: Board; kind: 'mo
           const shown = board.levels(item)
           return { ...shown, options: locks(shown.options) }
         }
+  // A short catalogue can fit without reserving space for a full model list. Keep the level column if any item can use it.
+  const items = board.groups.flatMap(group => group.options)
+  const compact = entry && items.length <= 5
+  const inlineLevel = compact && !hasOtherBoardLevels(levels(board.value)) && items.every(item => !hasOtherBoardLevels(levels(item.value)))
   // The maker's mark before the name, read from the ID; a service's own tile where the model goes through one.
   const art = face.leading ?? (entry && board.value && modelArt(board.value) ? <ModelTile model={board.value} size={14} /> : undefined)
   const leading =
@@ -342,6 +347,7 @@ function BoardChip({ board, kind, withLevel = false }: { board: Board; kind: 'mo
       {board.effects}
       <ValuePicker
         label={COPY[kind]}
+        frosted={!board.panel}
         value={value}
         options={value ? [{ value, label: face.valueText! }] : []}
         {...(face.placeholder ? { placeholder: face.placeholder } : {})}
@@ -372,7 +378,7 @@ function BoardChip({ board, kind, withLevel = false }: { board: Board; kind: 'mo
         // The input box's entry ends its line: the panel lines its end up with it, on the side of it with more room, so a
         // short window never cuts it off (the board gives way inside the layer).
         {...(withLevel ? { align: 'end' as const, side: 'auto' as const } : {})}
-        width={board.panel ? 'md' : 'lg'}
+        width={board.panel || inlineLevel ? 'md' : 'lg'}
         pending={face.pending === true || level?.pending === true}
         {...((face.pendingLabel ?? level?.pendingLabel) ? { pendingLabel: (face.pendingLabel ?? level?.pendingLabel)! } : {})}
         disabled={disabled}
@@ -405,7 +411,9 @@ function BoardChip({ board, kind, withLevel = false }: { board: Board; kind: 'mo
               query={kind === 'model' ? request : undefined}
               settings={entry ? undefined : board.settings}
               footer={board.footer}
-              {...(entry ? { keepOpen: true, ...(foot ? { foot } : {}) } : {})}
+              {...(entry
+                ? { keepOpen: true, compact, fixedLevelPlacement: inlineLevel ? 'inline' : 'column', ...(foot ? { foot } : {}) }
+                : {})}
               className={kind === 'thinking' ? 'model-board is-thinking' : entry ? 'model-board is-entry' : 'model-board'}
             />
           )

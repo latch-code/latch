@@ -1,8 +1,8 @@
 /*
  * Switch: a 34×20 track with a 16px thumb (44×26 and 22 on touch) in a box at least 24px (44px on touch) tall. Off is
- * the meter's track grey, on the accent. The thumb is white with its own small shadow; it slides and the track changes
- * colour over --m-micro, and while pressed the thumb stretches 4px toward where it is going. The keyboard ring follows
- * the track, 2px outside it.
+ * the meter's track grey, on the accent. The thumb is white when off and takes the accent's contrasting ink when on.
+ * It slides over --m-micro, and while pressed stretches 4px toward where it is going. The keyboard ring follows the
+ * track, 2px outside it.
  */
 .ui-switch {
   --track-width: 34px;
@@ -33,7 +33,7 @@
   width: var(--thumb-size);
   height: var(--thumb-size);
   border-radius: var(--r-full);
-  background: var(--on-accent);
+  background: var(--switch-thumb);
   box-shadow: var(--sh-thumb);
   transition:
     translate var(--m-micro) var(--e-micro),
@@ -44,6 +44,7 @@
 }
 .ui-switch[aria-checked='true'] > .ui-switch-thumb {
   translate: calc(var(--track-width) - var(--thumb-size) - 4px) 0;
+  background: var(--on-accent);
 }
 .ui-switch:active:not([aria-disabled='true']) > .ui-switch-thumb {
   width: calc(var(--thumb-size) + 4px);

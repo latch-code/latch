@@ -158,6 +158,7 @@ export function FolderControl({
   const picker = (
     <ValuePicker<Where>
       label={COPY.folderLabel}
+      frosted={!choosing}
       variant={variant}
       {...(variant === 'row' ? { className: 'new-sheet-row' } : { size, menuChevron: size === 'sm' })}
       leading={picked ? FolderGit2 : FolderGlyph}

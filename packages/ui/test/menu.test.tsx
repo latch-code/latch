@@ -823,6 +823,29 @@ describe('a popover', () => {
     await expect.element(screen.getByRole('button', { name: '额度' })).toHaveFocus()
   })
 
+  it.each(['secure parent', 'password in the panel'])('uses a solid surface for a %s even when asked to frost it', async protection => {
+    const screen = await render(
+      <div data-secure={protection === 'secure parent' ? '' : undefined}>
+        <Popover
+          frosted
+          label="详情"
+          trigger={props => (
+            <button {...props} type="button">
+              详情
+            </button>
+          )}>
+          {protection === 'password in the panel' ? <input type="password" aria-label="密钥" /> : <p>内容</p>}
+        </Popover>
+      </div>,
+    )
+    await screen.getByRole('button', { name: '详情' }).click()
+    const layer = screen.getByRole('dialog', { name: '详情' }).element()
+    expect(layer).toHaveAttribute('data-frosted')
+    const style = getComputedStyle(layer)
+    expect(style.backdropFilter).toBe('none')
+    expect(style.backgroundColor).toMatch(/^rgb\(/u)
+  })
+
   it('takes a width from the layer scale only', async () => {
     const screen = await render(
       <Popover

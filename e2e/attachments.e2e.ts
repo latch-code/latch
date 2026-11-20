@@ -602,7 +602,7 @@ describe('the attach button and @ on every Harness', () => {
         }
         // A browser on the work scope: @ says so instead of staying silent.
         const input = page.getByRole('textbox', { name: '继续对话', exact: true })
-        expect(await input.getAttribute('aria-placeholder')).toBe('想让 Agent 做什么？')
+        expect(await input.getAttribute('aria-placeholder')).toBe('输入消息 · / 选择命令')
         await input.fill('看看 @app')
         await page
           .getByRole('listbox', { name: '引用项目文件', exact: true })

@@ -57,23 +57,16 @@ export interface MyAgentTarget {
   topic?: 'new'
 }
 
-/** 设置's sections on wide windows, in their order; 设备 is one of them, its devices pages inside it. */
-const WIDE_SECTIONS: readonly SettingsSection[] = [
-  'general',
-  'appearance',
-  'providers',
-  'engines',
-  'mcp',
-  'extensions',
-  'workspaces',
-  'plugins',
-  'devices',
-  'relays',
-  'data',
-  'computers',
-  'shortcuts',
-  'about',
-]
+/** Sections in reading and keyboard order. Each group is shown only when it contains an available section. */
+export const SETTINGS_GROUPS = {
+  preferences: ['general', 'appearance', 'shortcuts'],
+  tools: ['providers', 'engines', 'mcp', 'extensions', 'plugins'],
+  workspace: ['workspaces', 'data'],
+  connections: ['devices', 'computers', 'relays'],
+  product: ['about'],
+} as const satisfies Record<string, readonly SettingsSection[]>
+
+const WIDE_SECTIONS = Object.values(SETTINGS_GROUPS).flat()
 
 /** A phone has no keyboard to list. */
 const PHONE_SECTIONS: readonly SettingsSection[] = WIDE_SECTIONS.filter(section => section !== 'shortcuts')

@@ -333,8 +333,8 @@ describe.runIf(enabled || shots !== undefined)('the start page background under 
             reducedMotion: process.env.LATCH_BACKDROP_REDUCED === '1' ? 'reduce' : 'no-preference',
           })
           const page = await context.newPage()
-          // By default 标准 and a charging battery, for the moving layer; LATCH_BACKDROP_LEVEL=device keeps this device's
-          // own default level and battery (a phone that reports none holds its still frame).
+          // Use 标准 and a charging battery unless LATCH_BACKDROP_LEVEL=device asks for Graphite's viewport default
+          // and the real battery. Monochrome starts with the effect off, so it cannot show the two patterns.
           const level = process.env.LATCH_BACKDROP_LEVEL ?? 'standard'
           await page.addInitScript(
             ({ value, charged }) => {
@@ -346,7 +346,9 @@ describe.runIf(enabled || shots !== undefined)('the start page background under 
                 })
             },
             {
-              value: JSON.stringify(level === 'device' ? { backdropStyle: kind } : { backdrop: level, backdropStyle: kind }),
+              value: JSON.stringify(
+                level === 'device' ? { palette: 'graphite', backdropStyle: kind } : { backdrop: level, backdropStyle: kind },
+              ),
               charged: level !== 'device',
             },
           )

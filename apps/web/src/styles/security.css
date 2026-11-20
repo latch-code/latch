@@ -311,7 +311,7 @@
 }
 [data-secure] .ui-button[data-variant='destroy'] {
   background: var(--red-solid) !important;
-  color: var(--on-accent) !important;
+  color: var(--on-color) !important;
 }
 [data-secure] .ui-icon-button {
   display: inline-grid !important;

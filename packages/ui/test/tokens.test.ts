@@ -16,12 +16,12 @@ function block(selector: string, from = 0): Map<string, string> {
 const COLOUR = /#[0-9a-f]{3,8}\b|rgba?\(/iu
 
 type Rgba = [number, number, number, number]
-/** A token's colour: #rrggbb or rgba(r, g, b, a). */
+/** A token's colour or a solid colour serialised by the browser. */
 function colour(value: string | undefined): Rgba {
   const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/iu.exec(value ?? '')
   if (hex) return [parseInt(hex[1], 16), parseInt(hex[2], 16), parseInt(hex[3], 16), 1]
-  const rgba = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/u.exec(value ?? '')
-  if (rgba) return [Number(rgba[1]), Number(rgba[2]), Number(rgba[3]), Number(rgba[4])]
+  const rgba = /^rgba?\((\d+), (\d+), (\d+)(?:, ([\d.]+))?\)$/u.exec(value ?? '')
+  if (rgba) return [Number(rgba[1]), Number(rgba[2]), Number(rgba[3]), Number(rgba[4] ?? 1)]
   throw new Error(`Not a colour: ${value}`)
 }
 /** A translucent colour laid over an opaque one. */
@@ -463,6 +463,71 @@ describe('design tokens', () => {
             surface = `--work-${background}`
           expect(contrast(get(foreground), get(surface)), `${theme} ${foreground} on ${surface}`).toBeGreaterThanOrEqual(4.5)
         }
+    }
+  })
+
+  it('renders readable text on every workbench palette in both themes', () => {
+    const root = document.documentElement
+    const previousTheme = root.dataset.theme
+    const preview = document.createElement('span')
+    document.body.append(preview)
+    try {
+      for (const theme of ['light', 'dark']) {
+        root.dataset.theme = theme
+        for (const palette of ['mono', 'graphite', 'cool', 'warm']) {
+          preview.dataset.palette = palette
+          for (const surface of ['--work-rail', '--work-canvas', '--work-raised', '--work-float']) {
+            preview.style.backgroundColor = `var(${surface})`
+            const background = colour(getComputedStyle(preview).backgroundColor)
+            for (const ink of ['--work-ink', '--work-ink-2', '--work-muted', '--work-faint', '--accent-ink', '--red']) {
+              preview.style.color = `var(${ink})`
+              const foreground = colour(getComputedStyle(preview).color)
+              expect(contrast(foreground, background), `${theme} ${palette} ${ink} on ${surface}`).toBeGreaterThanOrEqual(4.5)
+            }
+          }
+        }
+      }
+    } finally {
+      preview.remove()
+      if (previousTheme === undefined) delete root.dataset.theme
+      else root.dataset.theme = previousTheme
+    }
+  })
+
+  it('keeps text readable on device accent buttons, and the accent visible against each canvas', () => {
+    const root = document.documentElement
+    const previousTheme = root.dataset.theme
+    const sample = document.createElement('span')
+    sample.style.color = 'var(--on-accent)'
+    document.body.append(sample)
+    try {
+      for (const theme of ['light', 'dark']) {
+        root.dataset.theme = theme
+        const fills = new Set<string>()
+        for (const accent of ['workbench', 'navy', 'teal', 'iris']) {
+          sample.dataset.accentSample = accent
+          sample.style.backgroundColor = 'var(--accent)'
+          const fill = getComputedStyle(sample).backgroundColor
+          fills.add(fill)
+          const onAccent = colour(getComputedStyle(sample).color)
+          expect(contrast(onAccent, colour(fill)), `${theme} ${accent} primary`).toBeGreaterThanOrEqual(4.5)
+          sample.style.backgroundColor = 'var(--accent-hover)'
+          expect(contrast(onAccent, colour(getComputedStyle(sample).backgroundColor)), `${theme} ${accent} hover`).toBeGreaterThanOrEqual(
+            4.5,
+          )
+          for (const palette of ['mono', 'graphite', 'cool', 'warm']) {
+            sample.dataset.palette = palette
+            sample.style.backgroundColor = 'var(--work-canvas)'
+            const canvas = colour(getComputedStyle(sample).backgroundColor)
+            expect(contrast(colour(fill), canvas), `${theme} ${accent} ring on ${palette}`).toBeGreaterThanOrEqual(3)
+          }
+        }
+        expect(fills.size).toBe(4)
+      }
+    } finally {
+      sample.remove()
+      if (previousTheme === undefined) delete root.dataset.theme
+      else root.dataset.theme = previousTheme
     }
   })
 

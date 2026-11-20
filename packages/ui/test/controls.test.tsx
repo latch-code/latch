@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import {
+  Button,
   Checkbox,
   Radio,
   ChoiceList,
@@ -32,6 +33,41 @@ function Toggle({ disabled = false }: { disabled?: boolean }) {
 }
 
 describe('switch', () => {
+  it('keeps the off thumb and red action visible with the dark monochrome accent', async () => {
+    const { dataset } = document.documentElement
+    const { theme, deviceAccent } = dataset
+    try {
+      dataset.theme = 'dark'
+      dataset.deviceAccent = 'workbench'
+      const screen = await render(
+        <>
+          <Toggle />
+          <Button variant="destroy" keys={['⌫']}>
+            删除
+          </Button>
+        </>,
+      )
+      const toggle = screen.getByRole('switch').element()
+      const thumb = toggle.querySelector('.ui-switch-thumb')!
+      const destroy = screen.getByRole('button', { name: '删除' }).element()
+      const key = destroy.querySelector('.ui-kbd')!
+      expect([style(thumb).backgroundColor, style(destroy).backgroundColor, style(destroy).color, style(key).color]).toEqual([
+        'rgb(255, 255, 255)',
+        'rgb(220, 38, 38)',
+        'rgb(255, 255, 255)',
+        'rgb(255, 255, 255)',
+      ])
+      await press(screen.getByRole('switch'))
+      await expect.poll(() => style(thumb).backgroundColor).toBe('rgb(25, 25, 25)')
+      await expect.poll(() => style(toggle, '::before').backgroundColor).toBe('rgb(231, 231, 231)')
+    } finally {
+      if (theme === undefined) delete dataset.theme
+      else dataset.theme = theme
+      if (deviceAccent === undefined) delete dataset.deviceAccent
+      else dataset.deviceAccent = deviceAccent
+    }
+  })
+
   it('is a 34×20 switch that Space toggles, the track grey when off and the accent when on, its white thumb sliding over --m-micro', async () => {
     const screen = await render(<Toggle />)
     const toggle = screen.getByRole('switch', { name: '允许其他设备' })

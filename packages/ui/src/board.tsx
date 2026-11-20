@@ -294,6 +294,10 @@ export interface BoardLevels<L extends string> {
   note?: ReactNode
 }
 
+export function hasOtherBoardLevels<L extends string>({ value, options }: BoardLevels<L>): boolean {
+  return options.some(option => option.value !== value)
+}
+
 export interface PickerBoardProps<T extends string, L extends string> {
   /** What the list picks (模型): the list's name, and its search field's. */
   label: string
@@ -330,6 +334,10 @@ export interface PickerBoardProps<T extends string, L extends string> {
   foot?: ReactNode
   /** Choosing an item or a level keeps the board open: it closes on Escape or a click outside, for a board that sets several things at once. */
   keepOpen?: boolean
+  /** Fit a short list within a shorter panel. */
+  compact?: boolean
+  /** Show a fixed level in read-only text. Use inline placement only when no listed item has a level choice. */
+  fixedLevelPlacement?: 'column' | 'inline'
   /** sheet: the phone's column, wherever it is drawn; by default it follows the width. */
   layout?: 'auto' | 'sheet'
   className?: string
@@ -390,6 +398,8 @@ export function PickerBoard<T extends string, L extends string>({
   footer,
   foot,
   keepOpen = false,
+  compact = false,
+  fixedLevelPlacement,
   layout = 'auto',
   className,
 }: PickerBoardProps<T, L>) {
@@ -460,7 +470,7 @@ export function PickerBoard<T extends string, L extends string>({
       }
     }
     if (target.to === 'levels') {
-      if (!focusRow(column.current, 'checked')) focusRow(list.current, 'checked')
+      if (!focusRow(column.current, 'checked') && !focusRow(list.current, 'checked')) search.current?.focus()
     } else if (target.to === 'search' || !focusRow(list.current, 'checked')) search.current?.focus()
   }, [target])
   // A list that changes while the board is open (a Harness's models read in, a session's switch regrouping them) can
@@ -477,8 +487,8 @@ export function PickerBoard<T extends string, L extends string>({
     const value = previous.dataset.value
     const same = value === undefined ? null : list.current?.querySelector<HTMLElement>(`[data-value="${CSS.escape(value)}"]`)
     if (same) same.focus({ preventScroll: true })
-    else if (inLevels ? focusRow(column.current, 'checked') : focusRow(list.current, 'checked')) return
-    else search.current?.focus({ preventScroll: true })
+    else if (inLevels && focusRow(column.current, 'checked')) return
+    else if (!focusRow(list.current, 'checked')) search.current?.focus({ preventScroll: true })
   })
 
   const shownSource = sources.find(source => source.id === viewed) ?? sources[0]
@@ -499,6 +509,9 @@ export function PickerBoard<T extends string, L extends string>({
   const visible = sections.flatMap(section => section.items)
   const now = highlighted !== undefined && visible.some(item => item.value === highlighted) ? highlighted : value
   const shownLevels = levels(now)
+  const fixed = fixedLevelPlacement !== undefined && !hasOtherBoardLevels(shownLevels)
+  const inlineLevel = fixedLevelPlacement === 'inline' && fixed
+  const fixedLevel = fixed ? shownLevels.options.find(level => level.value === shownLevels.value) : undefined
   // The list's one tab stop: the highlighted row, or the first one shown.
   const stop = visible.some(item => item.value === now) ? now : visible[0]?.value
   const levelStop = shownLevels.options.some(level => level.value === shownLevels.value) ? shownLevels.value : shownLevels.options[0]?.value
@@ -554,7 +567,7 @@ export function PickerBoard<T extends string, L extends string>({
   }
   const listKeys = (event: KeyboardEvent<HTMLDivElement>) => {
     if (moveInColumn(event)) return
-    if (event.key === 'ArrowRight') {
+    if (event.key === 'ArrowRight' && !fixed) {
       event.preventDefault()
       focusRow(column.current, 'checked')
     } else if (event.key === 'ArrowLeft' && withRail) {
@@ -651,7 +664,16 @@ export function PickerBoard<T extends string, L extends string>({
                 onFocus={() => {
                   setHighlighted(item.value)
                 }}
-                onClick={() => {
+                onMouseDown={
+                  phone
+                    ? event => {
+                        // Previewing another model can resize the bottom-aligned sheet and move the pressed row.
+                        if (event.button === 0) event.preventDefault()
+                      }
+                    : undefined
+                }
+                onClick={event => {
+                  if (phone) event.currentTarget.focus({ preventScroll: true })
                   chooseItem(item)
                 }}>
                 <span className="ui-menu-item-lead">
@@ -673,31 +695,56 @@ export function PickerBoard<T extends string, L extends string>({
     )
   })
 
-  const levelRows = shownLevels.options.map(level => (
-    <Tooltip key={level.value} content={level.disabledReason ?? level.hint}>
-      <button
-        type="button"
-        role="menuitemradio"
-        tabIndex={level.value === levelStop ? 0 : -1}
-        className="ui-menu-item ui-board-level"
-        data-label={level.label}
-        aria-checked={level.value === shownLevels.value}
-        aria-disabled={level.disabledReason !== undefined || undefined}
-        aria-label={level.label}
-        onClick={() => {
-          chooseLevel(level)
-        }}>
-        <span className="ui-menu-item-lead">
-          {level.value === shownLevels.value && <Icon icon={CheckGlyph} size={14} className="ui-menu-check" />}
-        </span>
-        <span className="ui-menu-item-text">
-          <span className="ui-menu-item-label">
-            <span className="ui-menu-item-title">{level.label}</span>
+  const levelRows =
+    !fixed
+    && shownLevels.options.map(level => (
+      <Tooltip key={level.value} content={level.disabledReason ?? level.hint}>
+        <button
+          type="button"
+          role="menuitemradio"
+          tabIndex={level.value === levelStop ? 0 : -1}
+          className="ui-menu-item ui-board-level"
+          data-label={level.label}
+          aria-checked={level.value === shownLevels.value}
+          aria-disabled={level.disabledReason !== undefined || undefined}
+          aria-label={level.label}
+          onClick={() => {
+            chooseLevel(level)
+          }}>
+          <span className="ui-menu-item-lead">
+            {level.value === shownLevels.value && <Icon icon={CheckGlyph} size={14} className="ui-menu-check" />}
           </span>
-        </span>
-      </button>
+          <span className="ui-menu-item-text">
+            <span className="ui-menu-item-label">
+              <span className="ui-menu-item-title">{level.label}</span>
+            </span>
+          </span>
+        </button>
+      </Tooltip>
+    ))
+
+  const fixedValue = fixedLevel && (
+    <Tooltip content={fixedLevel.hint ?? fixedLevel.disabledReason}>
+      <span className="ui-board-level-value">{fixedLevel.label}</span>
     </Tooltip>
-  ))
+  )
+  const levelState = (
+    <>
+      {shownLevels.note && <div className="ui-board-note">{shownLevels.note}</div>}
+      {settings && <div className="ui-board-settings">{settings}</div>}
+    </>
+  )
+  const inlineState = inlineLevel && (
+    <div className="ui-board-level-summary" role="group" aria-label={levelsLabel} aria-busy={shownLevels.pending || undefined}>
+      <div className="ui-board-heading">
+        {levelsIcon}
+        <span>{levelsLabel}</span>
+        {shownLevels.pending && <Spinner size={12} />}
+        {fixedValue}
+      </div>
+      {levelState}
+    </div>
+  )
 
   const searchField = (
     <div className="ui-board-search">
@@ -726,6 +773,7 @@ export function PickerBoard<T extends string, L extends string>({
           </p>
         )}
       </div>
+      {withFooter && inlineState}
       {withFooter && footer && (
         <div className="ui-board-footer">
           <InMenu.Provider value>{footer}</InMenu.Provider>
@@ -758,16 +806,24 @@ export function PickerBoard<T extends string, L extends string>({
         )}
         {searchField}
         {listColumn(false)}
-        <div className="ui-board-phone-levels" role="menu" aria-label={levelsLabel} ref={column} onKeyDown={levelKeys}>
-          <span className="ui-board-heading" aria-hidden="true">
-            {levelsIcon}
-            {levelsLabel}
-            {shownLevels.pending && <Spinner size={12} />}
-          </span>
-          <div className="ui-board-chips">{levelRows}</div>
-          {shownLevels.note && <div className="ui-board-note">{shownLevels.note}</div>}
-          {settings && <div className="ui-board-settings">{settings}</div>}
-        </div>
+        {inlineState || (
+          <div
+            className="ui-board-phone-levels"
+            role={fixed ? 'group' : 'menu'}
+            aria-label={levelsLabel}
+            aria-busy={shownLevels.pending || undefined}
+            ref={column}
+            onKeyDown={levelKeys}>
+            <span className="ui-board-heading" aria-hidden={fixed ? undefined : true}>
+              {levelsIcon}
+              {levelsLabel}
+              {shownLevels.pending && <Spinner size={12} />}
+              {fixedValue}
+            </span>
+            {!fixed && <div className="ui-board-chips">{levelRows}</div>}
+            {levelState}
+          </div>
+        )}
         {foot && (
           <div ref={footBox} className="ui-board-foot">
             {foot}
@@ -783,6 +839,8 @@ export function PickerBoard<T extends string, L extends string>({
       className={cx('ui-board', className)}
       data-rail={withRail ? '' : undefined}
       data-foot={foot ? '' : undefined}
+      data-compact={compact ? '' : undefined}
+      data-inline-level={inlineLevel ? '' : undefined}
       onKeyDown={boardKeys}
       onFocusCapture={noteFocus}>
       {withRail && (
@@ -819,24 +877,25 @@ export function PickerBoard<T extends string, L extends string>({
         {searchField}
         {listColumn(true)}
       </div>
-      <div
-        ref={column}
-        className="ui-board-levels"
-        role="menu"
-        aria-label={levelsLabel}
-        aria-busy={shownLevels.pending || undefined}
-        onKeyDown={levelKeys}>
-        <div className="ui-board-heading ui-board-levels-head" aria-hidden="true" id={`${id}-levels`}>
-          <span className="ui-board-levels-name">
-            {levelsIcon}
-            {levelsLabel}
-          </span>
-          {shownLevels.pending && <Spinner size={12} />}
+      {!inlineLevel && (
+        <div
+          ref={column}
+          className="ui-board-levels"
+          role={fixed ? 'group' : 'menu'}
+          aria-label={levelsLabel}
+          aria-busy={shownLevels.pending || undefined}
+          onKeyDown={levelKeys}>
+          <div className="ui-board-heading ui-board-levels-head" aria-hidden="true" id={`${id}-levels`}>
+            <span className="ui-board-levels-name">
+              {levelsIcon}
+              {levelsLabel}
+            </span>
+            {shownLevels.pending && <Spinner size={12} />}
+          </div>
+          <div className="ui-board-rows">{fixed ? fixedValue : levelRows}</div>
+          {levelState}
         </div>
-        <div className="ui-board-rows">{levelRows}</div>
-        {shownLevels.note && <div className="ui-board-note">{shownLevels.note}</div>}
-        {settings && <div className="ui-board-settings">{settings}</div>}
-      </div>
+      )}
       {foot && (
         <div ref={footBox} className="ui-board-foot">
           {foot}

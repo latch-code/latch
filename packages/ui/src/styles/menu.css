@@ -32,6 +32,44 @@
     display calc(var(--m-enter) * 0.7) allow-discrete,
     overlay calc(var(--m-enter) * 0.7) allow-discrete;
 }
+/* Opt in per layer. A popover stays in the trigger's DOM tree even when the browser draws it in the top layer. */
+:is(.ui-popover, .ui-suggest)[popover][data-frosted]:not(
+    [data-secure],
+    [data-lock],
+    [data-secure] *,
+    [data-lock] *,
+    :has([data-secure], [data-lock], input[type='password'], iframe, object, embed)
+  ) {
+  --surface: var(--work-float);
+  background: var(--work-float);
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) and
+    (color: color-mix(in srgb, currentcolor, transparent)) {
+    @media (min-width: 768px) and (prefers-reduced-transparency: no-preference) {
+      :root:not([data-floating-material='solid']) & {
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        background-color: var(--work-float-tint);
+        -webkit-backdrop-filter: var(--work-float-filter);
+        backdrop-filter: var(--work-float-filter);
+      }
+      :root:not([data-floating-material='solid']) &::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        border-block-start: 1px solid var(--work-float-highlight);
+        border-radius: var(--layer-radius);
+      }
+      :root[data-floating-material='clear'] & {
+        --muted: var(--work-ink-2);
+        --faint: var(--muted);
+        background-color: var(--work-float-clear-tint);
+        -webkit-backdrop-filter: var(--work-float-clear-filter);
+        backdrop-filter: var(--work-float-clear-filter);
+      }
+    }
+  }
+}
 .ui-popover[data-size='xs'] {
   width: var(--layer-xs);
 }

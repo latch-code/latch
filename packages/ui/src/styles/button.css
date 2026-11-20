@@ -82,7 +82,7 @@
   opacity: 0.45;
 }
 
-/* The key caps of the key that presses the button right now. On the accent they are darker caps with white glyphs. */
+/* The key caps of the key that presses the button right now. On a filled button they share the button's ink. */
 .ui-button-keys {
   display: inline-flex;
   flex-shrink: 0;
@@ -93,7 +93,7 @@
   margin-inline-end: calc(-1 * var(--sp-2));
 }
 .ui-button:is([data-variant='primary'], [data-variant='destroy']) .ui-kbd {
-  color: var(--on-accent);
+  color: inherit;
 }
 @media (pointer: coarse) {
   .ui-button-keys {
@@ -192,7 +192,7 @@
 /* The destructive confirmation inside a confirmation dialog: the only solid red. */
 .ui-button[data-variant='destroy'] {
   background: var(--red-solid);
-  color: var(--on-accent);
+  color: var(--on-color);
 }
 .ui-button:is([data-variant='primary'], [data-variant='destroy']):focus-visible {
   outline-offset: 2px;

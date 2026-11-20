@@ -111,7 +111,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 
 ## 产品规则
 
-- 蓝白为主，主色只给执行与勾选，琥珀只表示警告与等你处理，红色只表示真实风险或失败，都配文字；令牌只在 `packages/ui/src/tokens.css`；应用图标不改图形（[DESIGN](docs/DESIGN.md)）。
+- 默认黑白，配色可选。主色给执行与勾选；琥珀标警告与待处理，红标风险与失败，均配文字。令牌只在 `packages/ui/src/tokens.css`；应用图标不改图形（[DESIGN](docs/DESIGN.md)）。
 - 模型密钥只在这台 Mac 填写，不返回任何设备；其他事设备凭 scope 都能做。Latch 不替人预选宽松档位。
 - Harness 只收录开源或厂商官方命令，记录许可，不下载修改程序。接入不改原 CLI 配置或注册全局 hooks；覆盖只经请求、进程或 Latch 私有配置。登录只给原生命令，Claude 除外。
 - 界面与文档只展示真实功能、集成与隔离能力。缺失的写明「尚未实现」及原因。

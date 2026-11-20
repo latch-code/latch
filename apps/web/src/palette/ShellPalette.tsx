@@ -263,13 +263,14 @@ export function ShellPalette({ shell }: { shell: ShellState }) {
       // Where it lives: Code, or the Agent it was delegated to (found by the Agent's name as well).
       const owner = task.agent ? customAgents?.find(item => item.id === task.agent?.customAgentId) : undefined
       const agent = task.agent ? (owner?.name ?? 'Agent') : undefined
-      const sub = [agent, project?.name, task.archived ? COPY.archived : ''].filter(Boolean).join(' · ')
+      const sub = [project?.name, agent, task.archived ? COPY.archived : ''].filter(Boolean).join(' · ')
+      const keywords = [project?.name, agent].filter(Boolean).join(' ')
       return {
         id: `session:${task.id}`,
         codeSession: spaces && !task.agent,
         label: task.title || COPY.untitled,
         ...(sub ? { sub } : {}),
-        ...(agent ? { keywords: agent } : {}),
+        ...(keywords ? { keywords } : {}),
         icon: task.agent ? (
           <AgentAvatar avatar={owner?.avatar ?? 'general'} size={16} />
         ) : harness ? (

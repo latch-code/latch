@@ -17,7 +17,7 @@ import type { McpServerView } from '@latch/protocol'
 import { FAKE_ACP_AGENT, fakeIdbCompanion, fakeSimulatorLive } from '@latch/testkit'
 import { browserLaunchOptions, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost } from './helpers/host.ts'
-import { noHorizontalOverflow, openSession } from './helpers/layout.ts'
+import { closeSettings, noHorizontalOverflow, openSection, openSession, openSettings } from './helpers/layout.ts'
 
 const electronE2E = latchEnv(process.env, 'ELECTRON_E2E') === '1'
 const OUT = 'test-results/desktop-device'
@@ -493,6 +493,10 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await mkdir(saved)
       const downloads = await captureDownloads(app, saved)
       application = app
+      const settings = await openSettings(page)
+      await openSection(settings, '外观')
+      await settings.getByRole('radiogroup', { name: '设备主色' }).getByRole('radio', { name: '青绿', exact: true }).click()
+      await closeSettings(settings)
       const panel = await openDevicePanel(page, testHost)
       await panel.locator('img.sim-screen').waitFor()
       const tools = panel.getByRole('toolbar', { name: '设备工具', exact: true })
@@ -526,14 +530,28 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await expect.poll(downloads).toEqual([expect.stringMatching(/^latch-toolbar-.*\.mp4$/u)])
       expect(fake.calls.some(args => args[0] === 'spawn' && args.includes('recordVideo'))).toBe(true)
       // Annotate: draw an arrow and put it in the draft.
+      await page.emulateMedia({ colorScheme: 'dark' })
       await tools.getByRole('button', { name: '标注截图', exact: true }).click()
       const canvas = panel.getByLabel('在截图上标注')
       await canvas.waitFor()
+      const strokes = () =>
+        canvas.evaluate(element => {
+          const drawing = element as HTMLCanvasElement
+          const pixels = drawing.getContext('2d')!.getImageData(0, 0, drawing.width, drawing.height).data
+          const [red, green, blue] = getComputedStyle(drawing).color.match(/\d+/gu)!.map(Number)
+          let total = 0
+          for (let index = 0; index < pixels.length; index += 4)
+            if (pixels[index] === red && pixels[index + 1] === green && pixels[index + 2] === blue && pixels[index + 3] === 255) total++
+          return total
+        })
+      expect(await canvas.evaluate(element => getComputedStyle(element).color)).toBe('rgb(32, 127, 134)')
+      const before = await strokes()
       const box = (await canvas.boundingBox())!
       await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3)
       await page.mouse.down()
       await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.5, { steps: 6 })
       await page.mouse.up()
+      await expect.poll(strokes).toBeGreaterThan(before)
       await capture(page, 'toolbar-annotate')
       await panel.getByRole('button', { name: '放进草稿', exact: true }).click()
       await page

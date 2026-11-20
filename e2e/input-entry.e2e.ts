@@ -1,9 +1,9 @@
-import { chromium, type Browser, type Page } from '@playwright/test'
+import { chromium, type Browser, type Locator, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
 import { FAKE_CODEX_APP_SERVER, type TestDevice } from '@latch/testkit'
@@ -18,6 +18,7 @@ import {
   permissionWords,
   phoneStartScreen,
   reachable,
+  settleShell,
 } from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/input-entry'
@@ -75,7 +76,11 @@ describe('the input’s one entry and the start page’s headline', () => {
 
   beforeAll(async () => {
     gitHome = await mkdtemp(join(tmpdir(), 'latch-e2e-entry-home-'))
-    host = await startTestHost({ demo: false, gitDelivery: { home: gitHome } })
+    host = await startTestHost({
+      demo: false,
+      gitDelivery: { home: gitHome },
+      uiDir: resolve(process.env.LATCH_E2E_UI_DIR ?? 'dist/web'),
+    })
     owner = await host.enroll({ listener: 'unix' })
     const bin = join(host.root, 'bin')
     await mkdir(bin)
@@ -127,10 +132,13 @@ describe('the input’s one entry and the start page’s headline', () => {
       // 速度 only for a model that lists the Fast tier, with Codex's own words on what it costs as the hover.
       const speed = foot.getByRole('radiogroup', { name: '速度', exact: true })
       await speed.waitFor()
-      // Within one model source a pick is drawn at once and nothing waits on screen: each write is held back 800 ms here,
-      // and meanwhile the pick shows as chosen, no row is greyed and the entry does not say it is switching.
+      // Within one source the pick is drawn while its write is still held. Wait for this page to read the answer
+      // before choosing another option, because saving the value on the Host hasn't finished the browser's write yet.
+      let release: (() => void) | undefined
       await page.route('**/tasks/*/config', async route => {
-        await new Promise(done => setTimeout(done, 800))
+        await new Promise<void>(done => {
+          release = done
+        })
         await route.continue()
       })
       const calm = async () => ({
@@ -138,18 +146,29 @@ describe('the input’s one entry and the start page’s headline', () => {
         busy: await page.locator('[aria-busy="true"]').filter({ visible: true }).count(),
         switching: await entry.locator('[data-pending][data-shown]').count(),
       })
-      await speed.getByRole('radio', { name: '快速', exact: true }).click()
-      expect(await speed.getByRole('radio', { name: '快速', exact: true }).getAttribute('aria-checked')).toBe('true')
-      expect(await calm()).toEqual({ locked: 0, busy: 0, switching: 0 })
-      await expect.poll(async () => current(await detail(sessionId), 'service_tier')).toBe('priority')
+      const chooseSetting = async (control: Locator, id: string, value: string) => {
+        await control.click()
+        await expect.poll(() => typeof release).toBe('function')
+        expect(await control.getAttribute('aria-checked')).toBe('true')
+        expect(await calm()).toEqual({ locked: 0, busy: 0, switching: 0 })
+        const readBack = page.waitForResponse(
+          async response =>
+            response.request().method() === 'GET'
+            && new URL(response.url()).pathname.endsWith(`/tasks/${sessionId}`)
+            && response.ok()
+            && current((await response.json()) as TaskDetail, id) === value,
+        )
+        release?.()
+        release = undefined
+        await readBack
+        await settleShell(page)
+        expect(current(await detail(sessionId), id)).toBe(value)
+      }
+      await chooseSetting(speed.getByRole('radio', { name: '快速', exact: true }), 'service_tier', 'priority')
       expect(await panelOpen(page)).toBe(1)
       // The entry says the fast tier with a mark before the model, and the standard one with none.
       await expect.poll(() => entry.locator('.entry-fast').count()).toBe(1)
-      await board.getByRole('menuitemradio', { name: 'High', exact: true }).click()
-      expect(await board.getByRole('menuitemradio', { name: 'High', exact: true }).getAttribute('aria-checked')).toBe('true')
-      await expect.poll(() => entry.locator('.model-level').innerText()).toBe('High')
-      expect(await calm()).toEqual({ locked: 0, busy: 0, switching: 0 })
-      await expect.poll(async () => current(await detail(sessionId), 'reasoning_effort')).toBe('high')
+      await chooseSetting(board.getByRole('menuitemradio', { name: 'High', exact: true }), 'reasoning_effort', 'high')
       await page.unroute('**/tasks/*/config')
       expect(await panelOpen(page)).toBe(1)
       // The foot holds the model's settings only: the permission is set beside the Harness.

@@ -394,12 +394,15 @@ export class CustomizationBoot {
     fill((layer.cssRules[2] as { cssRules: ArrayLike<unknown> }).cssRules[0], darkSystem)
     fill(layer.cssRules[3], darkChosen)
     this.env.adopt([...this.env.adopted().filter(item => item !== this.sheet), sheet])
+    if (light.some(([name]) => name === '--accent')) this.env.root.dataset.hostAccent = ''
+    else delete this.env.root.dataset.hostAccent
     this.sheet = sheet
     this.shown = identity
   }
 
   private remove(): void {
     if (this.sheet !== null) this.env.adopt(this.env.adopted().filter(item => item !== this.sheet))
+    delete this.env.root.dataset.hostAccent
     this.sheet = null
     this.shown = null
   }

@@ -31,6 +31,8 @@ export interface SuggestProps {
   onDismiss(): void
   empty?: ReactNode
   footer?: ReactNode
+  /** Frost the floating list when it shows ordinary suggestions. */
+  frosted?: boolean
 }
 
 /**
@@ -51,6 +53,7 @@ export function Suggest({
   onDismiss,
   empty,
   footer,
+  frosted,
 }: SuggestProps) {
   const layer = useRef<HTMLDivElement>(null)
   const list = useRef<HTMLDivElement>(null)
@@ -127,13 +130,14 @@ export function Suggest({
       listRef={list}
       popover="manual"
       sheet={phone}
+      frosted={frosted === true}
     />
   )
 }
 
 export interface SuggestPanelProps extends Pick<
   SuggestProps,
-  'id' | 'label' | 'groups' | 'activeId' | 'onActiveChange' | 'onChoose' | 'empty' | 'footer'
+  'id' | 'label' | 'groups' | 'activeId' | 'onActiveChange' | 'onChoose' | 'empty' | 'footer' | 'frosted'
 > {
   layerRef?: RefObject<HTMLDivElement | null>
   listRef?: RefObject<HTMLDivElement | null>
@@ -156,10 +160,16 @@ export function SuggestPanel({
   listRef,
   popover,
   sheet = false,
+  frosted = false,
 }: SuggestPanelProps) {
   const visible = groups.filter(group => group.items.length || group.empty)
   return (
-    <div ref={layerRef} popover={popover} className="ui-suggest" data-sheet={sheet ? '' : undefined}>
+    <div
+      ref={layerRef}
+      popover={popover}
+      className="ui-suggest"
+      data-sheet={sheet ? '' : undefined}
+      data-frosted={popover && frosted && !sheet ? '' : undefined}>
       <div ref={listRef} id={id} role="listbox" aria-label={label} className="ui-suggest-list">
         {visible.map(group => (
           <div key={group.id} role="group" aria-label={group.label}>

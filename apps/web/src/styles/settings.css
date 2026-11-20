@@ -100,6 +100,22 @@
 .settings-overlay .settings-search {
   width: auto;
 }
+.settings-nav-heading {
+  padding: var(--sp-8) var(--sp-8) var(--sp-2);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption-para);
+  font-weight: 500;
+  color: var(--muted);
+}
+.settings-nav-heading:first-child {
+  padding-top: var(--sp-2);
+}
+@media (max-width: 767px) {
+  .settings-nav > .settings-nav-heading {
+    padding: var(--sp-8) var(--sp-16);
+    background: var(--sidebar);
+  }
+}
 /* A device without 管理此 Host: one quiet line under the sections says what is hidden and where to grant it. */
 .settings-nav-caption {
   display: flex;

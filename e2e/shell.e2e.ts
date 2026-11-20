@@ -28,7 +28,7 @@ describe('the shell', () => {
   let browser: Browser
 
   beforeAll(async () => {
-    host = await startTestHost({ uiDir: resolve('dist/web'), hostName: '验收电脑' })
+    host = await startTestHost({ hostName: '验收电脑' })
     browser = await chromium.launch(browserLaunchOptions())
   })
   afterAll(async () => {
@@ -251,21 +251,21 @@ describe('the shell', () => {
     expect(await tabsOf(owner)).toEqual([
       '通用',
       '外观',
+      '快捷键',
       '模型',
       'Harness',
       'MCP',
       '扩展',
-      '项目',
       '插件',
+      '项目',
+      '数据',
       '设备',
       '连接转发',
-      '数据',
-      '快捷键',
       '关于',
     ])
     await owner.context().close()
     const guest = await open(1440, 900, '壳层分区只读')
-    expect(await tabsOf(guest)).toEqual(['通用', '外观', '设备', '快捷键', '关于'])
+    expect(await tabsOf(guest)).toEqual(['通用', '外观', '快捷键', '设备', '关于'])
     await guest.context().close()
   })
 
@@ -865,7 +865,7 @@ describe('the session menu', () => {
   let browser: Browser
 
   beforeAll(async () => {
-    host = await startTestHost({ uiDir: resolve('dist/web') })
+    host = await startTestHost()
     owner = await host.enroll({ listener: 'unix' })
     await owner.confirmedJson('agents', {
       method: 'POST',

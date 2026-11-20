@@ -13,8 +13,8 @@
  * popovers, dialogs) and cards sit over it; sunken wells (code, command output, table headers) go below the surface
  * they sit in. In the light theme every layer above the ground is white and is told apart by its shadow; in the dark
  * one each is a step lighter, on a near-black ground. Hover and press are ink at a low alpha, so they read the same on
- * every surface. A selected row is a white card on the grey sidebar (a soft fill in dark), never blue. No gradients,
- * no tinted grounds.
+ * every surface. A selected row is a white card on the grey sidebar (a soft fill in dark), never blue. The workbench
+ * can tint its neutral surfaces as a unit; the code well and security surfaces use their fixed theme colours.
  *
  * Light values sit on :root; the dark theme redefines every token that holds a colour, both under the system
  * preference (unless the page chose light) and under data-theme="dark", and the two dark blocks stay identical.
@@ -30,18 +30,42 @@
  * Host's customisation, as values of CUSTOM_TOKENS (custom.ts) on the root and nothing else. */
 @layer tokens, custom, base, ui, app, security;
 
+/* Follow the Host while it supplies an accent, except for an explicit device choice outside a Host preview. */
+@layer app {
+  @supports (color: light-dark(white, black)) {
+    :root[data-device-accent]:not([data-host-accent]),
+    :root[data-device-accent]:not([data-device-accent='workbench'], [data-host-accent-preview]),
+    [data-accent-sample] {
+      --accent: var(--preset-accent);
+      --accent-hover: var(--preset-accent-hover);
+      --accent-ink: var(--preset-accent-ink);
+      --accent-soft: var(--preset-accent-soft);
+      --on-accent: var(--preset-on-accent);
+      --work-running: var(--preset-accent-ink);
+      --sh-accent: var(--preset-accent-shadow);
+    }
+  }
+}
+
 @layer tokens {
   :root {
     /* Shared workbench surfaces in both layouts. */
     --work-canvas: #f7f8fa;
     --work-raised: #fcfcfd;
     --work-sunken: #eceef1;
+    --work-rail: var(--work-sunken);
+    --work-float: var(--work-raised);
+    --work-float-tint: color-mix(in srgb, var(--work-float) 82%, transparent);
+    --work-float-filter: blur(18px) saturate(1.14);
+    --work-float-clear-tint: color-mix(in srgb, var(--work-float) 70%, transparent);
+    --work-float-clear-filter: blur(22px) saturate(1.14);
     --work-ink: #1c2026;
     --work-ink-2: #404954;
     --work-muted: #555f6b;
     --work-faint: #646d79;
     --work-line: rgba(28, 32, 38, 0.105);
     --work-line-strong: rgba(28, 32, 38, 0.18);
+    --work-float-highlight: rgba(255, 255, 255, 0.72);
     --work-running: #2c5ad6;
     --work-card-shadow: 0 0 0 1px rgba(16, 20, 26, 0.07), 0 1px 2px rgba(16, 20, 26, 0.04), 0 10px 24px -16px rgba(16, 20, 26, 0.2);
     --fs-work-ui: 13.5px;
@@ -182,6 +206,9 @@
     --accent-ink: #1d52c4;
     --accent-soft: rgba(36, 97, 224, 0.1);
     --on-accent: #ffffff;
+    /* Ink on fixed coloured fills, independent of the device accent's light or dark face. */
+    --on-color: #ffffff;
+    --switch-thumb: #ffffff;
 
     /* Amber: 等你处理 and warnings, always on a neutral surface. amber is text, amber-icon a glyph or dot, amber-soft only an
      * amber control's hover fill, amber-line the outline of an inline mark. */
@@ -555,6 +582,7 @@
       --work-faint: #9ba2ad;
       --work-line: rgba(239, 240, 242, 0.11);
       --work-line-strong: rgba(239, 240, 242, 0.18);
+      --work-float-highlight: rgba(255, 255, 255, 0.16);
       --work-running: #86a8ff;
       --work-card-shadow:
         inset 0 1px 0 rgba(206, 218, 238, 0.04), 0 0 0 1px rgba(206, 218, 238, 0.07), 0 12px 28px -16px rgba(0, 0, 0, 0.7);
@@ -615,6 +643,8 @@
       --accent-ink: #6b9bfa;
       --accent-soft: rgba(59, 118, 246, 0.18);
       --on-accent: #ffffff;
+      --on-color: #ffffff;
+      --switch-thumb: #ffffff;
       --amber: #f0aa45;
       --amber-icon: #e89a2c;
       --amber-soft: rgba(240, 170, 69, 0.08);
@@ -688,6 +718,7 @@
     --work-faint: #9ba2ad;
     --work-line: rgba(239, 240, 242, 0.11);
     --work-line-strong: rgba(239, 240, 242, 0.18);
+    --work-float-highlight: rgba(255, 255, 255, 0.16);
     --work-running: #86a8ff;
     --work-card-shadow: inset 0 1px 0 rgba(206, 218, 238, 0.04), 0 0 0 1px rgba(206, 218, 238, 0.07), 0 12px 28px -16px rgba(0, 0, 0, 0.7);
     --fx-ink: rgb(206, 218, 238);
@@ -747,6 +778,8 @@
     --accent-ink: #6b9bfa;
     --accent-soft: rgba(59, 118, 246, 0.18);
     --on-accent: #ffffff;
+    --on-color: #ffffff;
+    --switch-thumb: #ffffff;
     --amber: #f0aa45;
     --amber-icon: #e89a2c;
     --amber-soft: rgba(240, 170, 69, 0.08);
@@ -808,6 +841,85 @@
     --agent-mist: #a0b6cd;
   }
 
+  /* The device's chosen canvas, navigation rail, raised surfaces and ink. The previews use the same tokens. */
+  @supports (color: light-dark(white, black)) {
+    :root[data-palette],
+    [data-palette] {
+      --work-faint: light-dark(#5c6672, #9ba2ad);
+    }
+    :root[data-palette='mono'],
+    [data-palette='mono'] {
+      --work-rail: light-dark(#e9e9e9, #080808);
+      --work-canvas: light-dark(#f5f5f5, #000000);
+      --work-raised: light-dark(#ffffff, #151515);
+      --work-float: light-dark(#fcfcfc, #1d1d1d);
+      --work-ink: light-dark(#1e1e1e, #f0f0f0);
+      --work-ink-2: light-dark(#424242, #d8d8d8);
+      --work-muted: light-dark(#555555, #adadad);
+      --work-faint: light-dark(#636363, #a0a0a0);
+    }
+    :root[data-palette='graphite'],
+    [data-palette='graphite'] {
+      --work-rail: light-dark(#e8e9ec, #16171b);
+      --work-canvas: light-dark(#f3f4f6, #1c1e23);
+      --work-raised: light-dark(#fdfdfe, #272a30);
+      --work-float: light-dark(#fdfdff, #2b2e35);
+    }
+    :root[data-palette='cool'],
+    [data-palette='cool'] {
+      --work-rail: light-dark(#e4ebf2, #161c24);
+      --work-canvas: light-dark(#eff4f9, #1c2430);
+      --work-raised: light-dark(#fbfdff, #242d39);
+      --work-float: light-dark(#f8fbff, #29323e);
+      --work-ink: light-dark(#192438, #eef2f7);
+      --work-ink-2: light-dark(#37455a, #d2dce8);
+      --work-muted: light-dark(#505e70, #afbdce);
+      --work-faint: light-dark(#596879, #9baecc);
+    }
+    :root[data-palette='warm'],
+    [data-palette='warm'] {
+      --work-rail: light-dark(#ede7df, #1f1a17);
+      --work-canvas: light-dark(#f7f3ed, #26211e);
+      --work-raised: light-dark(#fffdfa, #302a25);
+      --work-float: light-dark(#fdf9f3, #352e28);
+    }
+
+    :root[data-device-accent],
+    [data-accent-sample] {
+      --preset-accent: light-dark(#242424, #e7e7e7);
+      --preset-accent-hover: light-dark(#101010, #f7f7f7);
+      --preset-accent-ink: light-dark(#292929, #e7e7e7);
+      --preset-on-accent: light-dark(#ffffff, #191919);
+      --preset-accent-soft: color-mix(in srgb, var(--preset-accent-ink) 13%, transparent);
+      --preset-accent-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.16),
+        0 1px 2px light-dark(color-mix(in srgb, var(--preset-accent) 24%, transparent), rgba(0, 0, 0, 0.4));
+    }
+    :root[data-device-accent]:not([data-device-accent='workbench'], [data-host-accent-preview]),
+    [data-accent-sample]:not([data-accent-sample='workbench']),
+    [data-accent-sample][data-host-accent] {
+      --preset-on-accent: #ffffff;
+    }
+    :root[data-device-accent='navy']:not([data-host-accent-preview]),
+    [data-accent-sample='navy'] {
+      --preset-accent: light-dark(#203f8d, #5770c7);
+      --preset-accent-hover: light-dark(#183478, #3f58b3);
+      --preset-accent-ink: light-dark(#203b80, #a7b9ff);
+    }
+    :root[data-device-accent='teal']:not([data-host-accent-preview]),
+    [data-accent-sample='teal'] {
+      --preset-accent: light-dark(#00626a, #207f86);
+      --preset-accent-hover: light-dark(#00565e, #11646b);
+      --preset-accent-ink: light-dark(#00565e, #7fd8d8);
+    }
+    :root[data-device-accent='iris']:not([data-host-accent-preview]),
+    [data-accent-sample='iris'] {
+      --preset-accent: light-dark(#504197, #7b67c1);
+      --preset-accent-hover: light-dark(#453580, #604fa8);
+      --preset-accent-ink: light-dark(#493789, #cabcff);
+    }
+  }
+
   /*
    * Security surfaces (data-secure: approval cards, the local confirmation, enrollment, pairing and security banners)
    * lock the tokens they read. Important declarations of the first layer win over every later layer and over styles
@@ -824,12 +936,19 @@
     --work-canvas: #f7f8fa !important;
     --work-raised: #fcfcfd !important;
     --work-sunken: #eceef1 !important;
+    --work-rail: var(--work-sunken) !important;
+    --work-float: var(--work-raised) !important;
+    --work-float-tint: color-mix(in srgb, var(--work-float) 82%, transparent) !important;
+    --work-float-filter: blur(18px) saturate(1.14) !important;
+    --work-float-clear-tint: color-mix(in srgb, var(--work-float) 70%, transparent) !important;
+    --work-float-clear-filter: blur(22px) saturate(1.14) !important;
     --work-ink: #1c2026 !important;
     --work-ink-2: #404954 !important;
     --work-muted: #555f6b !important;
     --work-faint: #646d79 !important;
     --work-line: rgba(28, 32, 38, 0.105) !important;
     --work-line-strong: rgba(28, 32, 38, 0.18) !important;
+    --work-float-highlight: rgba(255, 255, 255, 0.72) !important;
     --work-running: #2c5ad6 !important;
     --work-card-shadow:
       0 0 0 1px rgba(16, 20, 26, 0.07), 0 1px 2px rgba(16, 20, 26, 0.04), 0 10px 24px -16px rgba(16, 20, 26, 0.2) !important;
@@ -927,6 +1046,8 @@
     --accent-ink: #1d52c4 !important;
     --accent-soft: rgba(36, 97, 224, 0.1) !important;
     --on-accent: #ffffff !important;
+    --on-color: #ffffff !important;
+    --switch-thumb: #ffffff !important;
     --amber: #884a06 !important;
     --amber-icon: #c46f06 !important;
     --amber-soft: rgba(217, 130, 9, 0.08) !important;
@@ -1081,6 +1202,7 @@
       --work-faint: #9ba2ad !important;
       --work-line: rgba(239, 240, 242, 0.11) !important;
       --work-line-strong: rgba(239, 240, 242, 0.18) !important;
+      --work-float-highlight: rgba(255, 255, 255, 0.16) !important;
       --work-running: #86a8ff !important;
       --work-card-shadow:
         inset 0 1px 0 rgba(206, 218, 238, 0.04), 0 0 0 1px rgba(206, 218, 238, 0.07), 0 12px 28px -16px rgba(0, 0, 0, 0.7) !important;
@@ -1140,6 +1262,8 @@
       --accent-ink: #6b9bfa !important;
       --accent-soft: rgba(59, 118, 246, 0.18) !important;
       --on-accent: #ffffff !important;
+      --on-color: #ffffff !important;
+      --switch-thumb: #ffffff !important;
       --amber: #f0aa45 !important;
       --amber-icon: #e89a2c !important;
       --amber-soft: rgba(240, 170, 69, 0.08) !important;
@@ -1213,6 +1337,7 @@
     --work-faint: #9ba2ad !important;
     --work-line: rgba(239, 240, 242, 0.11) !important;
     --work-line-strong: rgba(239, 240, 242, 0.18) !important;
+    --work-float-highlight: rgba(255, 255, 255, 0.16) !important;
     --work-running: #86a8ff !important;
     --work-card-shadow:
       inset 0 1px 0 rgba(206, 218, 238, 0.04), 0 0 0 1px rgba(206, 218, 238, 0.07), 0 12px 28px -16px rgba(0, 0, 0, 0.7) !important;
@@ -1272,6 +1397,8 @@
     --accent-ink: #6b9bfa !important;
     --accent-soft: rgba(59, 118, 246, 0.18) !important;
     --on-accent: #ffffff !important;
+    --on-color: #ffffff !important;
+    --switch-thumb: #ffffff !important;
     --amber: #f0aa45 !important;
     --amber-icon: #e89a2c !important;
     --amber-soft: rgba(240, 170, 69, 0.08) !important;

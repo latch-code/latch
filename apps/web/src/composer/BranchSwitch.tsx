@@ -117,6 +117,7 @@ function ProjectBranchSwitch({ projectId, branch, variant }: BranchSwitchProps) 
   return (
     <Popover
       label={COPY.label}
+      frosted={switching.state === 'idle' || busy}
       size="md"
       align="start"
       side="auto"

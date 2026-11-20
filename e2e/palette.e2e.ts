@@ -40,10 +40,11 @@ it('applies appearance commands locally and reads the same choices back in setti
     await baselineCapabilities
     await closeSettings(await openSettings(page))
     phase = 'commands'
-    await codeCanvas.waitFor()
+    expect(await codeCanvas.count()).toBe(0)
     await input.fill('切换外观前保留的草稿')
     const attribute = (name: string) => page.locator('html').getAttribute(name)
     for (const [query, label] of [
+      ['背景效果', '背景效果：标准'],
       ['背景效果', '背景效果：关'],
       ['动效', '动效：减弱'],
       ['密度', '密度：紧凑'],
@@ -60,6 +61,7 @@ it('applies appearance commands locally and reads the same choices back in setti
       if (search) await search
       await option.click()
       await palette.waitFor({ state: 'detached' })
+      if (label === '背景效果：标准') await codeCanvas.waitFor()
     }
     await codeCanvas.waitFor({ state: 'detached' })
     expect(await attribute('data-motion')).toBe('reduce')
@@ -252,6 +254,17 @@ it.each([
       expect(frame!.y).toBeCloseTo(height * 0.12, 0)
       await noHorizontalOverflow(page, palette)
       await shot(page, 'root')
+
+      await input.fill('面板项目')
+      const projectSessions = palette.getByRole('group', { name: '会话', exact: true }).getByRole('option')
+      await expect.poll(() => projectSessions.count()).toBe(3)
+      expect(await projectSessions.evaluateAll(rows => rows.map(row => row.getAttribute('aria-description')))).toEqual([
+        '面板项目',
+        '面板项目',
+        '面板项目',
+      ])
+      expect(['升级依赖', '补充审批的端到端测试', '修复设置页密钥丢失']).toContain(await selectedRow())
+      await shot(page, 'project-sessions')
 
       // Results and their groups, in the agreed order, with the first row marked for Enter.
       await input.fill('独特')

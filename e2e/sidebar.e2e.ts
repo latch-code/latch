@@ -330,7 +330,9 @@ describe('session panel', () => {
         .locator('.session-row-glyph')
         .evaluate(item => getComputedStyle(item).color),
     ).toBe(muted)
-    expect(await row('read').locator('.session-item-main').getAttribute('title')).toContain('main')
+    await row('read').locator('.session-title').hover()
+    const rowTip = page.getByRole('tooltip').filter({ hasText: /已读会话.*main/u })
+    await rowTip.waitFor()
     for (const id of ['read', 'stopped', 'running', 'failed', 'waiting', 'silent', 'stopping', 'forced']) {
       expect(await height(id)).toBe(34)
       expect(await row(id).locator('.session-row-glyph').isVisible()).toBe(true)

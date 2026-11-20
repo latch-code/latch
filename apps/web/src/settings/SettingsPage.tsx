@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { canDelegate } from '../agents/model.ts'
 import { Radio, Blocks, Cable, Database, Palette } from 'lucide-react'
 import type { AppSnapshot } from '@latch/protocol'
@@ -33,7 +33,7 @@ import {
   HarnessGlyph,
   ModelGlyph,
 } from '@latch/ui'
-import { settingsSectionsAt, type AgentPageTarget, type SettingsSection } from '../shell/routes.ts'
+import { SETTINGS_GROUPS, settingsSectionsAt, type AgentPageTarget, type SettingsSection } from '../shell/routes.ts'
 
 export type { SettingsSection }
 
@@ -95,6 +95,17 @@ const COPY = defineCopy(
   },
 )
 
+const GROUP_LABELS = defineCopy(
+  { preferences: '使用偏好', tools: '模型与工具', workspace: '项目与数据', connections: '设备与连接', product: '产品信息' },
+  {
+    preferences: 'Preferences',
+    tools: 'Models & tools',
+    workspace: 'Projects & data',
+    connections: 'Devices & connections',
+    product: 'Product',
+  },
+)
+
 const NO_MATCH = defineCopy({ text: (query: string) => `没有找到「${query}」` }, { text: (query: string) => `No results for “${query}”` })
 
 const AboutSettings = deferredComponent(
@@ -153,8 +164,9 @@ const WorkspacesSettings = deferredComponent(
 /** What each section holds, so 搜索设置 finds a setting by the words on its row. */
 const SEARCH_TERMS = defineCopy<Partial<Record<SettingsSection, string>>>(
   {
-    general: '布局 侧栏 顶栏 按项目 按状态 发送消息 回车 新文档 自动打开 通知 唤醒 名称 语言 界面语言',
-    appearance: '主题 深色 浅色 背景 背景效果 粒子 01 密度 紧凑 动效 自定义 主色 圆角 字号 恢复默认',
+    general: '布局 侧栏 顶栏 按项目 按状态 发送消息 回车 工作过程 新文档 自动打开 通知 唤醒 名称 语言 界面语言',
+    appearance:
+      '主题 深色 浅色 配色 工作台配色 黑白 墨灰 石墨 雾蓝 暖灰 浮层材质 磨砂 实色 通透 设备主色 强调色 深蓝 青绿 鸢尾紫 背景 背景效果 粒子 01 密度 紧凑 动效 自定义 主色 圆角 字号 恢复默认',
     providers: '服务 密钥 key 添加服务 添加模型服务 单价 预算 显示的模型 已确认的地址 地址 出站',
     engines: '已安装 可以安装 怎么装 自定义启动方式 启动方式 环境变量 命令 agent',
     mcp: 'mcp 服务器 工具 连接器 npx 命令',
@@ -169,8 +181,9 @@ const SEARCH_TERMS = defineCopy<Partial<Record<SettingsSection, string>>>(
     about: '版本 许可与条款',
   },
   {
-    general: 'layout sidebar title bar project status send enter documents auto open notification awake name language',
-    appearance: 'theme dark light background effects particles 01 density compact motion customize accent corners fonts defaults',
+    general: 'layout sidebar title bar project status send enter work details documents auto open notification awake name language',
+    appearance:
+      'theme dark light palette monochrome graphite mist blue warm grey floating panel material solid frosted clear glass device accent follow workbench deep blue teal iris background effects particles 01 density compact motion customize accent corners fonts defaults',
     providers: 'service key add model service price spend budget visible models confirmed addresses',
     engines: 'installed install how to install startup command environment variables Agent',
     mcp: 'mcp server tools connector npx command',
@@ -190,7 +203,10 @@ const SEARCH_TERMS = defineCopy<Partial<Record<SettingsSection, string>>>(
 export function searchSections<T extends { id: SettingsSection; label: string }>(list: readonly T[], query: string): T[] {
   const needle = query.trim().toLocaleLowerCase()
   if (!needle) return [...list]
-  return list.filter(section => `${section.label} ${SEARCH_TERMS[section.id] ?? ''}`.toLocaleLowerCase().includes(needle))
+  const matches = list.filter(section => `${section.label} ${SEARCH_TERMS[section.id] ?? ''}`.toLocaleLowerCase().includes(needle))
+  return matches.sort(
+    (a, b) => Number(b.label.toLocaleLowerCase().startsWith(needle)) - Number(a.label.toLocaleLowerCase().startsWith(needle)),
+  )
 }
 
 /**
@@ -321,12 +337,20 @@ export function SettingsPage({
     [onSection],
   )
   const found = searchSections(available, query)
+  const groupStarts = new Map<SettingsSection, string>()
+  if (!query.trim() && available.length > 6) {
+    for (const key of Object.keys(SETTINGS_GROUPS) as Array<keyof typeof SETTINGS_GROUPS>) {
+      const first = SETTINGS_GROUPS[key].find(id => ids.includes(id))
+      if (first) groupStarts.set(first, GROUP_LABELS[key])
+    }
+  }
   const searchable = available.length > 1
   const search = useRef<HTMLDivElement>(null)
   const caption = hiddenSectionsCaption(snapshot, access)
   // On phones the last section stays laid out under the list, so going back slides it away instead of blanking it.
   const [shown, setShown] = useState<SettingsSection | null>(chosen ?? (phone ? null : (ids[0] ?? null)))
   const { active, panel } = settingsPanel(ids, chosen, phone, shown)
+  const currentTab = found.some(item => item.id === (active ?? shown)) ? (active ?? shown) : found[0]?.id
   const chosenAllowed = chosen === null || ids.includes(chosen)
   const shownAllowed = shown === null || ids.includes(shown)
   useLayoutEffect(() => {
@@ -368,7 +392,8 @@ export function SettingsPage({
     if (!keys.includes(event.key)) return
     event.preventDefault()
     if (found.length === 0) return
-    const index = found.findIndex(section => section.id === active)
+    const focused = event.target instanceof Element ? event.target.closest('[role="tab"]')?.id : undefined
+    const index = found.findIndex(section => `settings-tab-${section.id}` === focused)
     const next =
       event.key === 'Home'
         ? 0
@@ -439,7 +464,12 @@ export function SettingsPage({
                     onValueChange={setQuery}
                     trailing={!phone && !query ? <Kbd>/</Kbd> : undefined}
                     onKeyDown={event => {
-                      if (event.key === 'Enter' && found[0]) open(found[0].id)
+                      if (!found[0] || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
+                      if (event.key === 'Enter') open(found[0].id)
+                      if (event.key === 'ArrowDown') {
+                        event.preventDefault()
+                        tabs.current?.querySelector<HTMLButtonElement>('button')?.focus()
+                      }
                     }}
                   />
                 </div>
@@ -452,21 +482,27 @@ export function SettingsPage({
                 aria-label={COPY.categories}
                 onKeyDown={keydown}>
                 {found.map(section => (
-                  <button
-                    key={section.id}
-                    id={`settings-tab-${section.id}`}
-                    type="button"
-                    role="tab"
-                    aria-selected={active === section.id}
-                    aria-controls="settings-panel"
-                    tabIndex={active === section.id || (active === null && section.id === (shown ?? available[0].id)) ? 0 : -1}
-                    onClick={() => {
-                      open(section.id)
-                    }}>
-                    <Icon icon={section.icon} size={phone ? 20 : 16} solid={active === section.id} />
-                    <span>{section.label}</span>
-                    {phone && <Icon icon={ChevronRightGlyph} size={16} className="chevron" />}
-                  </button>
+                  <Fragment key={section.id}>
+                    {groupStarts.has(section.id) && (
+                      <span role="presentation" className="settings-nav-heading">
+                        {groupStarts.get(section.id)}
+                      </span>
+                    )}
+                    <button
+                      id={`settings-tab-${section.id}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={active === section.id}
+                      aria-controls="settings-panel"
+                      tabIndex={currentTab === section.id ? 0 : -1}
+                      onClick={() => {
+                        open(section.id)
+                      }}>
+                      <Icon icon={section.icon} size={phone ? 20 : 16} solid={active === section.id} />
+                      <span>{section.label}</span>
+                      {phone && <Icon icon={ChevronRightGlyph} size={16} className="chevron" />}
+                    </button>
+                  </Fragment>
                 ))}
               </div>
               {found.length === 0 && <p className="settings-nav-caption">{NO_MATCH.text(query.trim())}</p>}

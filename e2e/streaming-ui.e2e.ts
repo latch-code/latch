@@ -198,6 +198,10 @@ describe('streamed messages in the real workspace', () => {
   it('pauses the Code backdrop for a visible live reply and releases the pause when that reply is covered', async () => {
     const { context, page } = await open(1440, 900)
     try {
+      const settings = await openSettings(page)
+      await openSection(settings, '外观')
+      await settings.getByRole('radiogroup', { name: '背景效果' }).getByRole('radio', { name: '标准', exact: true }).click()
+      await closeSettings(settings)
       const { id, reply: history } = await start(page, '准备阅读旧的会话记录')
       history.append(Array.from({ length: 60 }, (_, index) => `旧记录第 ${index + 1} 段。`).join('\n\n'))
       history.finish()
@@ -333,36 +337,38 @@ describe('streamed messages in the real workspace', () => {
     }
   })
 
-  it('applies the device backdrop choice after leaving settings and reloading', async () => {
+  it('starts monochrome without effects and remembers the device backdrop choice after reloading', async () => {
     const { context, page } = await open(1440, 900)
     try {
       const canvas = page.locator('canvas.workbench-backdrop')
-      await canvas.waitFor()
-      expect(await canvas.getAttribute('data-kind')).toBe('field')
+      await homeInput(page).waitFor()
+      expect(await canvas.count()).toBe(0)
       const settings = await openSettings(page)
       await openSection(settings, '外观')
       const backdrop = settings.getByRole('radiogroup', { name: '背景效果' })
-      expect(await backdrop.getByRole('radio', { name: '标准', exact: true }).getAttribute('aria-checked')).toBe('true')
-      await backdrop.getByRole('radio', { name: '关', exact: true }).click()
-      await closeSettings(settings)
-      await canvas.waitFor({ state: 'detached' })
-      await page.reload()
-      await connected(page)
-      expect(await canvas.count()).toBe(0)
-
-      await openSettings(page)
-      await openSection(settings, '外观')
       expect(await backdrop.getByRole('radio', { name: '关', exact: true }).getAttribute('aria-checked')).toBe('true')
       await backdrop.getByRole('radio', { name: '轻', exact: true }).click()
       await closeSettings(settings)
       await canvas.waitFor()
-      expect(await canvas.count()).toBe(1)
+      await page.reload()
+      await connected(page)
+      await canvas.waitFor()
+      expect(await canvas.getAttribute('data-kind')).toBe('field')
       await page.setViewportSize({ width: 768, height: 844 })
       // Typing on the start screen leaves the layer where it is: there is no focus mode to gather it.
       await homeInput(page).click()
       expect(await canvas.getAttribute('data-fixed')).toBeNull()
       await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
       await page.screenshot({ path: 'test-results/streaming/backdrop-start-768-dark.png', animations: 'disabled' })
+
+      await openSettings(page)
+      await openSection(settings, '外观')
+      expect(await backdrop.getByRole('radio', { name: '轻', exact: true }).getAttribute('aria-checked')).toBe('true')
+      await backdrop.getByRole('radio', { name: '关', exact: true }).click()
+      await closeSettings(settings)
+      await page.reload()
+      await connected(page)
+      expect(await canvas.count()).toBe(0)
     } finally {
       await context.close()
     }

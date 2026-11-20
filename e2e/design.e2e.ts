@@ -142,11 +142,38 @@ describe('responsive workspace controls', () => {
       await composer.fill('')
       await capture(page, `${label}-new-session`)
 
-      if (width === 375 || width === 1440) {
+      const modelEntry = composerEntry(line)
+      const fixedModelPanel = async (theme: 'light' | 'dark') => {
+        await modelEntry.click()
+        const board = page.locator('.model-board.is-entry').filter({ visible: true })
+        const model = board.getByRole('menuitemradio', { name: /^demo\b/u })
+        await reachable(model)
+        expect(await board.getByRole('menuitemradio').count()).toBe(1)
+        await board.getByRole('group', { name: '思考', exact: true }).getByText('默认', { exact: true }).waitFor()
+        expect(await board.locator('.ui-board-levels').count()).toBe(0)
+        if (!phone) {
+          const box = (await board.boundingBox())!
+          expect(box.width).toBeLessThanOrEqual(400)
+          expect(box.height).toBeLessThan(288)
+        }
+        await noHorizontalOverflow(page, board)
+        await capture(page, `${label}-fixed-model-${theme}`)
+        if (phone) {
+          await page.getByRole('dialog', { name: '模型', exact: true }).getByRole('button', { name: '关闭', exact: true }).click()
+        } else {
+          await page.keyboard.press('Escape')
+          await expect.poll(() => modelEntry.evaluate(element => element === document.activeElement)).toBe(true)
+        }
+        await board.waitFor({ state: 'hidden' })
+      }
+      await fixedModelPanel('light')
+
+      if (width === 375 || width === 768 || width === 1440) {
         await page.emulateMedia({ colorScheme: 'dark' })
         await reachable(composer)
         await noHorizontalOverflow(page)
         await capture(page, `${label}-dark`)
+        await fixedModelPanel('dark')
         await page.emulateMedia({ colorScheme: 'light' })
       }
 

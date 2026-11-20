@@ -284,6 +284,7 @@ export function useFileMentions(
   )
   const menu = (
     <Suggest
+      frosted={!hiddenOpen}
       id={id}
       label={people.length ? COPY.mentionMembers : COPY.mention}
       open={shown}

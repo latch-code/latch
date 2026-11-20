@@ -14,6 +14,16 @@
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
 }
+.appearance-material {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-8) var(--sp-16);
+  margin-top: var(--sp-24);
+}
+.appearance-material .layout-choice-head {
+  margin: 0;
+}
 /*
  * 设置 › 通用: 背景效果, 密度 and 动效, this device only. The tiles are real renders: the background layer itself at each
  * strength, rows at each density, and one live sample of what moves.
@@ -34,6 +44,9 @@
 }
 .appearance-tiles-two .ui-tile-choice-row {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.appearance-tiles-four .ui-tile-choice-row {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .appearance-tiles .ui-tile-choice-group {
   display: contents;
@@ -82,6 +95,73 @@
 }
 .appearance-preview-card + .appearance-preview-card {
   width: 38%;
+}
+.appearance-palette-rail,
+.appearance-palette-composer,
+.appearance-palette-menu {
+  position: absolute;
+  display: grid;
+  align-content: start;
+  gap: var(--sp-4);
+  padding: var(--sp-4);
+}
+.appearance-palette-rail {
+  inset: 0 auto 0 0;
+  width: 26%;
+  padding-block-start: var(--sp-8);
+  border-inline-end: 1px solid var(--line);
+  background: var(--work-rail);
+}
+.appearance-palette-composer,
+.appearance-palette-menu {
+  border: 1px solid var(--line);
+  border-radius: var(--r-4);
+  box-shadow: var(--sh-1);
+}
+.appearance-palette-composer {
+  inset: auto 9% 16% 34%;
+  min-height: 22%;
+  background: var(--work-raised);
+}
+.appearance-palette-menu {
+  inset: auto 13% 46% 52%;
+  background: var(--work-float);
+}
+.appearance-palette i {
+  height: 2px;
+  border-radius: var(--r-2);
+  background: var(--line-strong);
+}
+.appearance-palette i:first-child {
+  width: 70%;
+}
+.appearance-accent {
+  display: grid;
+  align-content: center;
+  justify-items: end;
+  gap: var(--sp-8);
+  padding: var(--sp-12);
+  background: var(--work-raised);
+}
+.appearance-accent-selected {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  width: 100%;
+  padding: var(--sp-4) var(--sp-6);
+  border-radius: var(--r-4);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.appearance-accent-selected > i {
+  width: 55%;
+  height: 2px;
+  border-radius: var(--r-2);
+  background: var(--accent-ink);
+}
+.appearance-accent .ui-button {
+  min-width: 55%;
+  pointer-events: none;
 }
 .appearance-density {
   display: flex;
@@ -142,5 +222,8 @@
   }
   .appearance-preview {
     height: 88px;
+  }
+  .appearance-tiles-four .ui-tile-choice-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

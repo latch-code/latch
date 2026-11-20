@@ -798,6 +798,8 @@ export interface ValuePickerProps<T extends string> extends LayerPlacement {
   valueText?: string
   /** The menu layer's width, a step of the scale: sm by default, md for the permission levels. */
   width?: LayerSize
+  /** Frost the floating layer used for ordinary choices. Sheets and protected content keep their solid surface. */
+  frosted?: boolean
   /** A search row on top of the menu, for long lists such as models. */
   searchable?: boolean
   /** A new request opens this picker with an initial search; subsequent typing stays local to the picker. */
@@ -857,6 +859,7 @@ export function ValuePicker<T extends string>({
   openRequest = 0,
   valueText: shownText,
   width,
+  frosted = false,
   searchable = false,
   searchRequest,
   reselect = false,
@@ -1107,6 +1110,7 @@ export function ValuePicker<T extends string>({
         className="ui-popover"
         data-panel={form === undefined ? undefined : ''}
         data-size={width ?? 'sm'}
+        data-frosted={frosted ? '' : undefined}
         onFocusCapture={event => {
           if (event.target instanceof HTMLElement) lastMenuFocus.current = event.target
         }}
@@ -1254,6 +1258,7 @@ export function Popover({
   trigger,
   children,
   size = 'sm',
+  frosted = false,
   onOpenChange,
   ...placement
 }: LayerPlacement & {
@@ -1265,6 +1270,8 @@ export function Popover({
   children: ReactNode
   /** The layer's width, a step of the scale. */
   size?: LayerSize
+  /** Frost the floating layer used for ordinary choices. Sheets and protected content keep their solid surface. */
+  frosted?: boolean
   onOpenChange?: (open: boolean) => void
 }) {
   const phone = useMediaQuery(PHONE_QUERY)
@@ -1315,6 +1322,7 @@ export function Popover({
           aria-label={label}
           tabIndex={-1}
           data-size={size}
+          data-frosted={frosted ? '' : undefined}
           onKeyDown={event => {
             if (event.key === 'Escape') {
               event.preventDefault()

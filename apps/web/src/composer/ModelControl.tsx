@@ -337,6 +337,7 @@ export function DraftHarnessControl({
   return (
     <ValuePicker
       label="Harness"
+      frosted={!adding}
       placeholder={COPY.chooseHarness}
       value={harness?.id}
       options={entries.map(entry => ({

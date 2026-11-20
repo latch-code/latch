@@ -261,7 +261,9 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         }
         // One line: how many, their marks, and the way to open the list.
         expect(await toggle.getAttribute('aria-expanded')).toBe('false')
-        expect(await found.locator('.harness-found-marks > *').count()).toBeGreaterThan(1)
+        const marks = found.locator('.harness-found-marks > :visible')
+        expect(await marks.count()).toBeGreaterThan(1)
+        expect(await marks.count()).toBeLessThanOrEqual(3)
         expect(await inView()).toBe(true)
         await mkdir('test-results/desktop-first-use', { recursive: true })
         await page.screenshot({ path: 'test-results/desktop-first-use/found-many-1280x640.png', animations: 'disabled' })

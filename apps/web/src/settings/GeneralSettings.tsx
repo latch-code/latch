@@ -14,7 +14,15 @@ import { NotificationSettings } from './NotificationSettings.tsx'
 import { chooseEditor, useEditors } from '../components/OpenInEditor.tsx'
 import { PromptTemplatesSettings } from './PromptTemplatesSettings.tsx'
 import { CustomizationSettings } from './CustomizationSettings.tsx'
-import { BackdropStyleTiles, BackdropTiles, DensityTiles, MotionChoice } from './AppearanceTiles.tsx'
+import {
+  AccentTiles,
+  BackdropStyleTiles,
+  BackdropTiles,
+  DensityTiles,
+  FloatingMaterialChoice,
+  MotionChoice,
+  PaletteTiles,
+} from './AppearanceTiles.tsx'
 import { CliSettings } from './CliSettings.tsx'
 
 const COPY = defineCopy(
@@ -285,7 +293,7 @@ export function GeneralSettings({ snapshot, admin, onChanged }: { snapshot: AppS
   )
 }
 
-/** 设置 › 外观: the theme, the background effect (its look and its strength), density and motion, then 自定义. */
+/** 设置 › 外观: local appearance preferences and the Host's shared customisation. */
 export function AppearanceSettings({ snapshot, admin, onChanged }: { snapshot: AppSnapshot; admin: boolean; onChanged: () => void }) {
   const preferences = usePreferences()
   const phone = useViewport() === 'phone'
@@ -299,6 +307,9 @@ export function AppearanceSettings({ snapshot, admin, onChanged }: { snapshot: A
             setPreference('theme', value)
           }}
         />
+        <PaletteTiles value={preferences.palette} onValueChange={value => setPreference('palette', value)} />
+        <AccentTiles value={preferences.accent} onValueChange={value => setPreference('accent', value)} />
+        <FloatingMaterialChoice value={preferences.floatingMaterial} onValueChange={value => setPreference('floatingMaterial', value)} />
         <div className="layout-choice-head">
           <span>{COPY.backdrop}</span>
           <span>{COPY.onlyHere}</span>

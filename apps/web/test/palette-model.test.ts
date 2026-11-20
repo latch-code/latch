@@ -117,6 +117,21 @@ describe('palette matching', () => {
     expect(rows[2]!.mark).toBeUndefined()
   })
 
+  it('ranks title matches ahead of project and Agent names', () => {
+    const rows = matchEntries(
+      [
+        entry('project', 'Check the build', { sub: 'Workbench', keywords: 'Workbench' }),
+        entry('agent', 'Check the build', { sub: 'Internal · Workbench reviewer', keywords: 'Internal Workbench reviewer' }),
+        entry('contains', 'Fix Workbench flags'),
+        entry('prefix', 'Workbench layout'),
+        entry('exact', 'Workbench'),
+      ],
+      'workbench',
+    )
+    expect(rows.map(row => row.id)).toEqual(['exact', 'prefix', 'contains', 'project', 'agent'])
+    expect(rows.slice(3)).toMatchObject([{ sub: 'Workbench' }, { sub: 'Internal · Workbench reviewer' }])
+  })
+
   it('takes recent sessions by last activity, without the archived', () => {
     const task = (id: string, updatedAt: string, archived = false) => ({ id, updatedAt, archived }) as unknown as TaskSummary
     const recent = recentSessions(

@@ -1,7 +1,9 @@
-import { chromium, type Browser, type BrowserContext, type Cookie, type Page } from '@playwright/test'
+import { chromium, type Browser, type BrowserContext, type Cookie, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   resolvableTokens,
@@ -16,7 +18,16 @@ import type { TestDevice } from '@latch/testkit'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
-import { closeSettings, openSection, openSession, openSettings, reachable } from './helpers/layout.ts'
+import {
+  closeSettings,
+  noHorizontalOverflow,
+  openSection,
+  openSession,
+  openSettings,
+  phoneStartScreen,
+  permissionControl,
+  reachable,
+} from './helpers/layout.ts'
 
 const OUTPUT = 'test-results/customization'
 
@@ -63,6 +74,7 @@ const DEFAULT: CustomizationDocument = { schema: 1, appearance: {} }
 const PROPERTIES = [
   'color',
   'background-color',
+  'backdrop-filter',
   'border-top-color',
   'border-top-left-radius',
   'border-bottom-right-radius',
@@ -97,6 +109,38 @@ const pinnedLook = (page: Page) =>
   )
 const rootToken = (page: Page, name: string) =>
   page.evaluate(token => getComputedStyle(document.documentElement).getPropertyValue(token).trim(), name)
+const background = (locator: Locator) => locator.evaluate(element => getComputedStyle(element).backgroundColor)
+const floatingLook = (locator: Locator) =>
+  locator.evaluate(element => {
+    const style = getComputedStyle(element)
+    const canvas = document.createElement('canvas').getContext('2d')!
+    canvas.fillStyle = style.backgroundColor
+    canvas.fillRect(0, 0, 1, 1)
+    return { filter: style.backdropFilter, alpha: canvas.getImageData(0, 0, 1, 1).data[3] }
+  })
+const FROSTED = { filter: 'blur(18px) saturate(1.14)', alpha: 209 }
+const SOLID = { filter: 'none', alpha: 255 }
+
+async function transparency(context: BrowserContext, page: Page, theme: 'light' | 'dark') {
+  const cdp = await context.newCDPSession(page)
+  return (value: 'no-preference' | 'reduce') =>
+    cdp.send('Emulation.setEmulatedMedia', {
+      features: [
+        { name: 'prefers-color-scheme', value: theme },
+        { name: 'prefers-reduced-motion', value: 'reduce' },
+        { name: 'prefers-reduced-transparency', value },
+      ],
+    })
+}
+const shownAccent = (page: Page) =>
+  page.evaluate(() => {
+    const sample = document.createElement('span')
+    sample.style.color = 'var(--accent)'
+    document.body.append(sample)
+    const accent = getComputedStyle(sample).color
+    sample.remove()
+    return accent
+  })
 const settledColours = (page: Page) =>
   page.evaluate(() =>
     Promise.all(
@@ -128,6 +172,7 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
   beforeAll(async () => {
     host = await startTestHost({
       demo: true,
+      hostName: '外观验收',
       uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'),
       plugins: [highRiskFixture],
     })
@@ -151,6 +196,7 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
     width: number,
     theme: 'light' | 'dark' = 'light',
     name = `验收 ${width} ${theme}`,
+    scopes: Device['scopes'] = ['view', 'run', 'admin'],
   ): Promise<{ context: BrowserContext; page: Page }> {
     const context = await browser.newContext({
       viewport: { width, height: 900 },
@@ -160,9 +206,391 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
     })
     context.setDefaultTimeout(15_000)
     const page = await context.newPage()
-    await enrollBrowser(page, host, { name, scopes: ['view', 'run', 'admin'] })
+    await enrollBrowser(page, host, { name, scopes })
     return { context, page }
   }
+
+  it('previews and saves a workbench palette on one device while preserving Host settings and the approval', async () => {
+    const shared = await apply(EXTREME)
+    const { context, page } = await open(1440)
+    const other = await open(390, 'dark', '只读配色验收', ['view'])
+    try {
+      await openSession(page, waiting)
+      await page.locator('[data-approval-id]').waitFor()
+      await page.mouse.move(0, 0)
+      await settledColours(page)
+      const before = await pinnedLook(page)
+      expect(before.length).toBeGreaterThan(10)
+      const settings = await openSettings(page)
+      await openSection(settings, '外观')
+      const palettes = settings.getByRole('radiogroup', { name: '工作台配色' })
+      await palettes.getByRole('radio', { name: '黑白' }).focus()
+      await page.keyboard.press('ArrowLeft')
+      const warm = palettes.getByRole('radio', { name: '暖灰' })
+      expect(await warm.getAttribute('aria-checked')).toBe('true')
+      const preview = await background(warm.locator('.appearance-palette'))
+      const canvas = page.locator('main.workspace')
+      await expect.poll(() => background(canvas)).toBe(preview)
+      const themes = settings.getByRole('radiogroup', { name: '主题' })
+      for (const [label, theme] of [
+        ['浅色', 'light'],
+        ['深色', 'dark'],
+      ] as const) {
+        await themes.getByRole('radio', { name: label, exact: true }).click()
+        const colors = new Set<string>()
+        for (const name of ['黑白', '墨灰', '雾蓝', '暖灰']) {
+          const choice = palettes.getByRole('radio', { name, exact: true })
+          await choice.click()
+          const tile = await background(choice.locator('.appearance-palette'))
+          const rail = await background(page.locator('.app-shell > .sidebar'))
+          const editor = await background(canvas.locator('.composer'))
+          expect(await background(canvas)).toBe(tile)
+          expect(rail).toBe(await background(choice.locator('.appearance-palette-rail')))
+          expect(editor).toBe(await background(choice.locator('.appearance-palette-composer')))
+          if (theme === 'dark' && name === '黑白') expect([tile, rail, editor]).toEqual(['rgb(0, 0, 0)', 'rgb(8, 8, 8)', 'rgb(21, 21, 21)'])
+          colors.add(tile)
+        }
+        expect(colors.size).toBe(4)
+        await page.screenshot({ path: `${OUTPUT}/palette-1440-${theme}.png`, animations: 'disabled' })
+      }
+      await themes.getByRole('radio', { name: '浅色', exact: true }).click()
+      await settings.getByRole('radiogroup', { name: '设备主色' }).getByRole('radio', { name: '鸢尾紫', exact: true }).click()
+      await settings.getByRole('radiogroup', { name: '密度' }).getByRole('radio', { name: '紧凑' }).click()
+      await closeSettings(settings)
+      await page.mouse.move(0, 0)
+      await settledColours(page)
+      const after = await pinnedLook(page)
+      const changed = after.flatMap((computed, index) => (computed === before[index] ? [] : [index]))
+      const elements = await page
+        .locator(PINNED)
+        .evaluateAll(
+          (pinned, indexes) => indexes.map(index => pinned[index]?.closest('[data-secure], [data-lock]')?.getAttribute('class')),
+          changed,
+        )
+      expect(after, elements.join(', ')).toEqual(before)
+
+      await page.reload()
+      await connected(page)
+      await openSession(page, waiting)
+      expect(await page.locator('html').getAttribute('data-palette')).toBe('warm')
+      expect(await page.locator('html').getAttribute('data-device-accent')).toBe('iris')
+      expect(await page.locator('html').getAttribute('data-density')).toBe('compact')
+      expect(await other.page.locator('html').getAttribute('data-palette')).toBe('mono')
+
+      const otherSettings = await openSettings(other.page)
+      await openSection(otherSettings, '外观')
+      const otherPalette = otherSettings.getByRole('radiogroup', { name: '工作台配色' })
+      await otherPalette.getByRole('radio', { name: '墨灰' }).click()
+      expect(await other.page.locator('html').getAttribute('data-palette')).toBe('graphite')
+      expect(await otherSettings.getByRole('radiogroup', { name: '圆角' }).count()).toBe(0)
+      await noHorizontalOverflow(other.page, otherPalette)
+      await other.page.screenshot({ path: `${OUTPUT}/palette-390-dark.png`, animations: 'disabled' })
+      const otherAccent = otherSettings.getByRole('radiogroup', { name: '设备主色' })
+      await otherAccent.getByRole('radio', { name: '青绿', exact: true }).click()
+      await noHorizontalOverflow(other.page, otherAccent)
+      await other.page.screenshot({ path: `${OUTPUT}/accent-390-dark.png`, animations: 'disabled' })
+      expect(await page.locator('html').getAttribute('data-palette')).toBe('warm')
+      expect(await state()).toEqual({ revision: shared.revision, doc: EXTREME })
+
+      await page.keyboard.press('Control+Alt+Shift+Digit0')
+      await page.locator('.safe-banner').waitFor()
+      expect(await rootToken(page, '--r-8')).toBe('8px')
+      expect(await background(canvas)).toBe(preview)
+    } finally {
+      await context.close()
+      await other.context.close()
+    }
+  })
+
+  it('lets a device choose an accent independently, while keeping the Host editor preview and other devices in sync', async () => {
+    await reset()
+    const { context, page } = await open(1440)
+    const other = await open(390, 'light', '查看主色的只读设备', ['view'])
+    try {
+      const settings = await openSettings(page)
+      await openSection(settings, '外观')
+      const accents = settings.getByRole('radiogroup', { name: '设备主色' })
+      const preview = (name: string) => accents.getByRole('radio', { name, exact: true }).locator('[data-variant="primary"]')
+      const themes = settings.getByRole('radiogroup', { name: '主题' })
+      await themes.getByRole('radio', { name: '深色', exact: true }).click()
+      const factory = await shownAccent(page)
+      expect(await background(preview('跟随工作台'))).toBe(factory)
+      const followInk = () => preview('跟随工作台').evaluate(element => getComputedStyle(element).color)
+      expect(await followInk()).toBe('rgb(25, 25, 25)')
+      const shared = await apply(EXTREME)
+      await expect.poll(() => shownAccent(page)).not.toBe(factory)
+      await expect.poll(() => background(preview('跟随工作台'))).toBe(await shownAccent(page))
+      expect(await followInk()).toBe('rgb(255, 255, 255)')
+      await themes.getByRole('radio', { name: '浅色', exact: true }).click()
+
+      for (const name of ['深蓝', '青绿', '鸢尾紫']) {
+        await accents.getByRole('radio', { name, exact: true }).click()
+        expect(await shownAccent(page)).toBe(await background(preview(name)))
+      }
+      const iris = await shownAccent(page)
+      expect(await state()).toEqual({ revision: shared.revision, doc: shared.doc })
+      expect(await shownAccent(other.page)).toBe(await background(preview('跟随工作台')))
+      const hostAccent = settings.getByRole('radiogroup', { name: '主色', exact: true })
+      await hostAccent.getByRole('radio', { name: '紫', exact: true }).click()
+      expect(await shownAccent(page)).not.toBe(iris)
+      await settings.getByRole('button', { name: '放弃', exact: true }).click()
+      expect(await shownAccent(page)).toBe(iris)
+      const revised = await apply({ schema: 1, appearance: { accentHue: 305, radius: 'sharp' } })
+      await expect.poll(() => rootToken(page, '--r-8')).toBe('6px')
+      expect(await shownAccent(page)).toBe(iris)
+
+      await accents.scrollIntoViewIfNeeded()
+      await page.screenshot({ path: `${OUTPUT}/accent-1440-light.png`, animations: 'disabled' })
+      await themes.getByRole('radio', { name: '深色', exact: true }).click()
+      expect(await shownAccent(page)).not.toBe(iris)
+      expect(await shownAccent(page)).toBe(await background(preview('鸢尾紫')))
+      await accents.scrollIntoViewIfNeeded()
+      await page.screenshot({ path: `${OUTPUT}/accent-1440-dark.png`, animations: 'disabled' })
+      await themes.getByRole('radio', { name: '浅色', exact: true }).click()
+      await page.reload()
+      await connected(page)
+      expect(await shownAccent(page)).toBe(iris)
+      await openSettings(page)
+      await openSection(settings, '外观')
+      await accents.getByRole('radio', { name: '跟随工作台', exact: true }).click()
+      expect(await shownAccent(page)).toBe(await background(preview('跟随工作台')))
+      await expect.poll(() => shownAccent(other.page)).toBe(await shownAccent(page))
+      expect(await state()).toEqual({ revision: revised.revision, doc: revised.doc })
+    } finally {
+      await context.close()
+      await other.context.close()
+    }
+  })
+
+  it.each([
+    [1440, 'light'],
+    [768, 'dark'],
+    [390, 'dark'],
+  ] as const)('keeps the model picker readable with and without transparency (%s, %s)', async (width, theme) => {
+    const { context, page } = await open(width, theme)
+    try {
+      await phoneStartScreen(page)
+      const openModel = page.locator('.workbench-home').getByRole('button', { name: /^模型：/u })
+      await openModel.click()
+      const picker =
+        width < 768
+          ? page.getByRole('dialog', { name: '模型', exact: true }).locator('.ui-sheet-surface')
+          : page.locator('.ui-popover:popover-open', { has: page.locator('.model-board') })
+      await picker.waitFor()
+      const setTransparency = await transparency(context, page, theme)
+      await setTransparency('no-preference')
+      expect(await floatingLook(picker)).toEqual(width < 768 ? SOLID : FROSTED)
+      await page.screenshot({ path: `${OUTPUT}/model-material-${width}-${theme}.png`, animations: 'disabled' })
+      await setTransparency('reduce')
+      expect(await floatingLook(picker)).toEqual(SOLID)
+      await page.keyboard.press('Escape')
+      await picker.waitFor({ state: 'hidden' })
+      await reachable(openModel)
+    } finally {
+      await context.close()
+    }
+  })
+
+  it('saves the floating panel material and honours reduced transparency', async () => {
+    const { context, page } = await open(1440, 'dark')
+    try {
+      const model = page.locator('.workbench-home').getByRole('button', { name: /^模型：/u })
+      const picker = page.locator('.ui-popover:popover-open', { has: page.locator('.model-board') })
+      const setTransparency = await transparency(context, page, 'dark')
+      await setTransparency('no-preference')
+      const openModel = async () => {
+        await model.click()
+        await picker.waitFor()
+      }
+      const choose = async (name: string) => {
+        await page.keyboard.press('Escape')
+        await picker.waitFor({ state: 'hidden' })
+        const settings = await openSettings(page)
+        await openSection(settings, '外观')
+        await settings.getByRole('radiogroup', { name: '浮层材质' }).getByRole('radio', { name, exact: true }).click()
+        await closeSettings(settings)
+        await openModel()
+      }
+      await openModel()
+      const frosted = await floatingLook(picker)
+      expect(frosted.alpha).toBeLessThan(255)
+      expect(frosted.filter).not.toBe('none')
+      await choose('通透')
+      const clear = await floatingLook(picker)
+      expect(clear.alpha).toBeGreaterThan(0)
+      expect(clear.alpha).toBeLessThan(frosted.alpha)
+      expect(clear.filter).not.toBe('none')
+      await page.screenshot({ path: `${OUTPUT}/model-material-clear-1440-dark.png`, animations: 'disabled' })
+      await setTransparency('reduce')
+      expect(await floatingLook(picker)).toEqual(SOLID)
+      await setTransparency('no-preference')
+      await choose('实色')
+      expect(await floatingLook(picker)).toEqual(SOLID)
+      expect(await background(picker)).toBe('rgb(29, 29, 29)')
+      await page.reload()
+      await connected(page)
+      expect(await page.locator('html').getAttribute('data-floating-material')).toBe('solid')
+    } finally {
+      await context.close()
+    }
+  })
+
+  it('frosts ordinary choices over the workbench and keeps permission and code surfaces solid', async () => {
+    const project = join(host.root, 'project-selector')
+    await mkdir(project)
+    const run = promisify(execFile)
+    const git = (...args: string[]) =>
+      run('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd: project })
+    await git('init', '-q', '--initial-branch=main')
+    await writeFile(join(project, 'README.md'), '# Workbench project\n')
+    await git('add', '--', 'README.md')
+    await git('commit', '-qm', 'Initial commit', '--no-gpg-sign')
+    await git('branch', 'feature/picker-material')
+    const added = await owner.addFolders({ name: '编辑器', paths: [project] })
+    expect(added.ok).toBe(true)
+    const { workspace } = (await added.json()) as { workspace: { id: string } }
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: {
+        prompt: '流式演示',
+        mode: 'agent',
+        workspaceId: workspace.id,
+        model: { providerId: 'demo', model: 'demo' },
+        requestId: randomUUID(),
+      },
+    })
+    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status, { timeout: 20_000 }).toBe('idle')
+
+    for (const [width, theme] of [
+      [1440, 'light'],
+      [768, 'dark'],
+    ] as const) {
+      const name = `普通选择框 ${width}`
+      const { context, page } = await open(width, theme, name)
+      try {
+        const device = host.host.security.devices.list().find(item => item.name === name)!
+        expect((await owner.confirmed(`devices/${device.id}`, { method: 'PATCH', body: { dataScope: 'all' } })).status).toBe(200)
+        await page.reload()
+        await connected(page)
+        await openSession(page, sessionId)
+        const setTransparency = await transparency(context, page, theme)
+        await setTransparency('no-preference')
+        const code = page.locator('.message-content .message-code').first()
+        await code.scrollIntoViewIfNeeded()
+        const openPicker = page.locator('.ui-popover:popover-open')
+        const openSuggest = page.locator('.ui-suggest:popover-open')
+        const captureChoice = async (label: string, surface: Locator) => {
+          await surface.waitFor()
+          expect(await floatingLook(surface)).toEqual(FROSTED)
+          expect(await floatingLook(code)).toEqual(SOLID)
+          await noHorizontalOverflow(page, surface)
+          await page.screenshot({ path: `${OUTPUT}/choice-${label}-${width}-${theme}.png`, animations: 'disabled' })
+          if (label === 'slash') {
+            await page.evaluate(() => {
+              document.documentElement.dataset.floatingMaterial = 'clear'
+            })
+            const clear = await floatingLook(surface)
+            expect(clear.filter).toBe('blur(22px) saturate(1.14)')
+            // A 70% tint falls halfway between two 8-bit alpha values.
+            expect(clear.alpha / 255).toBeCloseTo(0.7, 2)
+            await page.screenshot({ path: `${OUTPUT}/choice-${label}-clear-${width}-${theme}.png`, animations: 'disabled' })
+          }
+          await setTransparency('reduce')
+          expect(await floatingLook(surface)).toEqual(SOLID)
+          if (label === 'slash')
+            await page.screenshot({ path: `${OUTPUT}/choice-${label}-solid-${width}-${theme}.png`, animations: 'disabled' })
+          await setTransparency('no-preference')
+          if (label === 'slash') {
+            await page.evaluate(() => {
+              document.documentElement.dataset.floatingMaterial = 'solid'
+            })
+            expect(await floatingLook(surface)).toEqual(SOLID)
+            await page.evaluate(() => {
+              document.documentElement.dataset.floatingMaterial = 'frosted'
+            })
+            expect(await floatingLook(surface)).toEqual(FROSTED)
+          }
+        }
+        const close = async (surface: Locator) => {
+          await page.keyboard.press('Escape')
+          await surface.waitFor({ state: 'hidden' })
+        }
+
+        const branch = page.getByRole('button', { name: /^分支：.*切换分支$/u }).first()
+        await branch.click()
+        await reachable(openPicker.getByRole('menuitemradio', { name: 'feature/picker-material', exact: true }))
+        await captureChoice('branch', openPicker)
+        await close(openPicker)
+        await expect.poll(() => branch.evaluate(element => element === document.activeElement)).toBe(true)
+
+        const input = page.getByRole('textbox', { name: '继续对话', exact: true })
+        await input.fill('/')
+        await openSuggest.getByRole('listbox', { name: '命令与提示模板', exact: true }).waitFor()
+        await captureChoice('slash', openSuggest)
+        await close(openSuggest)
+        await expect.poll(() => input.evaluate(element => element === document.activeElement)).toBe(true)
+        await input.fill('@README')
+        await openSuggest.getByRole('option', { name: /README\.md/u }).waitFor()
+        await captureChoice('mention', openSuggest)
+        await close(openSuggest)
+        await input.fill('')
+
+        await permissionControl(page).click()
+        const permission = openPicker.filter({ has: page.locator('.permission-panel') })
+        await permission.waitFor()
+        expect(await floatingLook(permission)).toEqual(SOLID)
+        await close(permission)
+
+        await page.keyboard.press('Alt+n')
+        const home = page.locator('.workbench-home')
+        const projectPicker = home.locator('.home-headline').getByRole('button').first()
+        await projectPicker.click()
+        await reachable(openPicker.getByRole('menuitemradio', { name: /^编辑器/u }))
+        await captureChoice('project', openPicker)
+        await close(openPicker)
+        await home
+          .getByRole('button', { name: /^Harness：/u })
+          .first()
+          .click()
+        await reachable(openPicker.getByRole('menuitemradio', { name: /^Latch 内置/u }))
+        await captureChoice('harness', openPicker)
+        await close(openPicker)
+      } finally {
+        await context.close()
+      }
+    }
+  })
+
+  it('keeps code blocks opaque and reading areas unfiltered when the palette changes', async () => {
+    const { sessionId } = await owner.json<{ sessionId: string }>('tasks', {
+      method: 'POST',
+      body: { prompt: '流式演示', requestId: randomUUID(), mode: 'chat', model: { providerId: 'demo', model: 'demo' } },
+    })
+    const { context, page } = await open(1440, 'dark')
+    try {
+      await openSession(page, sessionId)
+      const code = page.locator('.message-content .message-code').first()
+      const table = page.locator('.message-content table').first()
+      await code.waitFor()
+      await table.waitFor()
+      const look = () =>
+        code.evaluate(element => {
+          const style = getComputedStyle(element)
+          return { color: style.backgroundColor, filter: style.backdropFilter }
+        })
+      const before = await look()
+      expect(before).toEqual({ color: expect.stringMatching(/^rgb\(/u), filter: 'none' })
+      const settings = await openSettings(page)
+      await openSection(settings, '外观')
+      await settings.getByRole('radiogroup', { name: '工作台配色' }).getByRole('radio', { name: '暖灰' }).click()
+      await closeSettings(settings)
+      expect(await look()).toEqual(before)
+      expect(await table.evaluate(element => getComputedStyle(element).backdropFilter)).toBe('none')
+      expect(await page.locator('main.workspace').evaluate(element => getComputedStyle(element).backdropFilter)).toBe('none')
+    } finally {
+      await context.close()
+    }
+  })
 
   it('previews a choice on this page, saves it on 应用, and every other device follows without a reload', async () => {
     await reset()

@@ -109,6 +109,7 @@ describe('input suggestions', () => {
     const layer = document.querySelector<HTMLElement>('.ui-suggest')!
     const rectangle = anchor.getBoundingClientRect()
     expect(layer.matches(':popover-open')).toBe(true)
+    await Promise.allSettled(layer.getAnimations().map(animation => animation.finished))
     expect(layer.getBoundingClientRect().width).toBe(rectangle.width)
     expect(layer.getBoundingClientRect().bottom).toBeLessThanOrEqual(rectangle.top - 5)
     await page.getByRole('button', { name: '其他入口' }).click()

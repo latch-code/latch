@@ -377,6 +377,7 @@ export function ProjectPicker({
     <ValuePicker
       variant={variant}
       label={COPY.project}
+      frosted={inline}
       className={inline ? 'project-inline' : variant === 'row' ? 'new-sheet-row' : undefined}
       menuChevron={variant !== 'row'}
       openRequest={openRequest}

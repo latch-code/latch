@@ -1,19 +1,161 @@
-import { Backdrop, RunningEdge, SegmentedControl, Spinner, TileChoice, type BackdropKind, type BackdropLevel } from '@latch/ui'
+import { resolveAppearance } from '@latch/protocol'
+import {
+  Backdrop,
+  CheckGlyph,
+  Icon,
+  RunningEdge,
+  SegmentedControl,
+  Spinner,
+  TileChoice,
+  type BackdropKind,
+  type BackdropLevel,
+} from '@latch/ui'
+import type { CSSProperties } from 'react'
+import { useCustomizationStatus } from '../core/customization.ts'
 import { defineCopy } from '../core/i18n.ts'
 import {
   BACKDROP_CHOICES,
+  ACCENT_CHOICES,
   BACKDROP_STYLE_CHOICES,
   DENSITY_CHOICES,
+  FLOATING_MATERIAL_CHOICES,
   MOTION_CHOICES,
+  PALETTE_CHOICES,
   type BackdropStyle,
+  type AccentPreference,
   type DensityPreference,
+  type FloatingMaterialPreference,
   type MotionPreference,
+  type PalettePreference,
 } from '../preferences.ts'
 
 const COPY = defineCopy(
-  { backdrop: '背景效果', backdropStyle: '背景样式', density: '密度', motion: '动效' },
-  { backdrop: 'Background effects', backdropStyle: 'Background style', density: 'Density', motion: 'Motion' },
+  {
+    palette: '工作台配色',
+    accent: '设备主色',
+    floatingMaterial: '浮层材质',
+    send: '发送',
+    onlyHere: '仅此设备',
+    backdrop: '背景效果',
+    backdropStyle: '背景样式',
+    density: '密度',
+    motion: '动效',
+  },
+  {
+    palette: 'Workbench palette',
+    accent: 'Device accent',
+    floatingMaterial: 'Floating panel material',
+    send: 'Send',
+    onlyHere: 'This device only',
+    backdrop: 'Background effects',
+    backdropStyle: 'Background style',
+    density: 'Density',
+    motion: 'Motion',
+  },
 )
+
+export function FloatingMaterialChoice({
+  value,
+  onValueChange,
+}: {
+  value: FloatingMaterialPreference
+  onValueChange: (value: FloatingMaterialPreference) => void
+}) {
+  return (
+    <div className="appearance-material">
+      <div className="layout-choice-head">
+        <span>{COPY.floatingMaterial}</span>
+        <span>{COPY.onlyHere}</span>
+      </div>
+      <SegmentedControl<FloatingMaterialPreference>
+        label={COPY.floatingMaterial}
+        value={value}
+        options={FLOATING_MATERIAL_CHOICES}
+        onValueChange={onValueChange}
+      />
+    </div>
+  )
+}
+
+export function AccentTiles({ value, onValueChange }: { value: AccentPreference; onValueChange: (value: AccentPreference) => void }) {
+  const { host, preview, safe } = useCustomizationStatus()
+  const hue = safe === null ? (preview ?? host?.doc)?.appearance.accentHue : undefined
+  const shared = hue === undefined ? null : resolveAppearance({ accentHue: hue })
+  const sample = shared
+    ? ({
+        '--preset-accent': `light-dark(${shared.light['--accent']}, ${shared.dark['--accent']})`,
+        '--preset-accent-ink': `light-dark(${shared.light['--accent-ink']}, ${shared.dark['--accent-ink']})`,
+      } as CSSProperties)
+    : undefined
+  return (
+    <>
+      <div className="layout-choice-head">
+        <span>{COPY.accent}</span>
+        <span>{COPY.onlyHere}</span>
+      </div>
+      <TileChoice
+        className="appearance-tiles appearance-tiles-four"
+        label={COPY.accent}
+        value={value}
+        onValueChange={onValueChange}
+        options={ACCENT_CHOICES.map(option => ({
+          ...option,
+          tile: (
+            <span
+              className="appearance-preview appearance-accent"
+              data-accent-sample={option.value}
+              data-host-accent={option.value === 'workbench' && shared ? '' : undefined}
+              style={option.value === 'workbench' ? sample : undefined}
+              aria-hidden="true">
+              <span className="appearance-accent-selected">
+                <Icon icon={CheckGlyph} size={12} />
+                <i />
+              </span>
+              <span className="ui-button" data-variant="primary" data-size="xs">
+                {COPY.send}
+              </span>
+            </span>
+          ),
+        }))}
+      />
+    </>
+  )
+}
+
+export function PaletteTiles({ value, onValueChange }: { value: PalettePreference; onValueChange: (value: PalettePreference) => void }) {
+  return (
+    <>
+      <div className="layout-choice-head">
+        <span>{COPY.palette}</span>
+        <span>{COPY.onlyHere}</span>
+      </div>
+      <TileChoice
+        className="appearance-tiles appearance-tiles-four"
+        label={COPY.palette}
+        value={value}
+        onValueChange={onValueChange}
+        options={PALETTE_CHOICES.map(option => ({
+          ...option,
+          tile: (
+            <span className="appearance-preview appearance-palette" data-palette={option.value} aria-hidden="true">
+              <span className="appearance-palette-rail">
+                <i />
+                <i />
+              </span>
+              <span className="appearance-palette-composer">
+                <i />
+              </span>
+              <span className="appearance-palette-menu">
+                <i />
+                <i />
+              </span>
+            </span>
+          ),
+        }))}
+      />
+    </>
+  )
+}
 
 /**
  * 背景效果 as a small window: the real layer (粒子场) at this strength behind two opaque cards, drawn at two and a half

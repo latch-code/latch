@@ -57,11 +57,6 @@ export interface AnnotateImage {
   name: string
 }
 
-/** The accent colour as the page draws it, read from the token so a custom theme's accent is the one used. */
-function accent(element: Element): string {
-  return getComputedStyle(element).getPropertyValue('--accent').trim() || '#2563eb'
-}
-
 function encode(canvas: HTMLCanvasElement, type: 'image/png' | 'image/jpeg'): Promise<Blob | null> {
   return new Promise(resolve => canvas.toBlob(resolve, type, type === 'image/jpeg' ? 0.9 : undefined))
 }
@@ -107,7 +102,8 @@ export function DeviceAnnotate({
     if (!element || !context) return
     context.clearRect(0, 0, element.width, element.height)
     if (picture.current) context.drawImage(picture.current, 0, 0, element.width, element.height)
-    draw(context, drawing ? [...shapes, drawing] : shapes, accent(element), lineWidth(natural))
+    // Read the resolved colour so the drawing uses the same light or dark accent as the page.
+    draw(context, drawing ? [...shapes, drawing] : shapes, getComputedStyle(element).color, lineWidth(natural))
   })
 
   const point = (event: PointerEvent<HTMLCanvasElement>) =>

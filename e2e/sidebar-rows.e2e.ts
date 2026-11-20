@@ -7,6 +7,7 @@ import type { AppSnapshot, TaskDetail } from '@latch/protocol'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { tooltipText } from './helpers/layout.ts'
 
 const OUT = 'test-results/sidebar-rows'
 const LONG_MODEL = 'a-very-long-model-identifier-from-a-model-service-2026-11-11-preview'
@@ -148,11 +149,12 @@ describe('sidebar rows', () => {
       expect(await row(page, 'read').locator('.session-item-main').ariaSnapshot()).toContain('deepseek-chat')
       // A session that reported no model names none, anywhere: no guess, not even 默认模型.
       expect(await row(page, 'unreported').locator('.session-item-main').ariaSnapshot()).not.toContain('默认模型')
-      expect(await row(page, 'unreported').locator('.session-item-main').getAttribute('title')).toBe('qwen')
-      // The hover names the Harness, the current model and the gateway it goes through.
-      expect(await row(page, 'routed').locator('.session-item-main').getAttribute('title')).toBe('codex · kimi-k2.5 · 经 Latch 网关')
-      expect(await row(page, 'approval').locator('.session-item-main').getAttribute('title')).toBe('claude-agent · claude-sonnet-5-5')
-      expect(await row(page, 'read').locator('.session-item-main').getAttribute('title')).toContain('main')
+      const hover = (id: string) => tooltipText(page, row(page, id).locator('.session-item-main'))
+      expect(await hover('unreported')).toBe('还没报告模型的会话 · qwen')
+      // The hover shows the full title, the Harness, the current model and its route or branch.
+      expect(await hover('routed')).toBe('经服务的会话 · codex · kimi-k2.5 · 经 Latch 网关')
+      expect(await hover('approval')).toBe('等批准的会话 · claude-agent · claude-sonnet-5-5')
+      expect(await hover('read')).toBe('已读的会话 · Latch 内置 · deepseek-chat · main')
       expect(await row(page, 'command').locator('.sr-only').textContent()).toMatch(/^，Latch 内置，deepseek-chat，在跑命令，/u)
       expect(await row(page, 'approval').locator('.session-item-main').ariaSnapshot()).toContain('claude-agent')
     } finally {
@@ -218,8 +220,10 @@ describe('sidebar rows', () => {
         .toBe(220)
       expect(await row(page, 'long').locator('.session-model').isVisible()).toBe(false)
       expect(await row(page, 'long').locator('.session-item-main').ariaSnapshot()).toContain(LONG_MODEL)
-      expect(await row(page, 'long').locator('.session-item-main').getAttribute('title')).toContain(LONG_MODEL)
       const long = row(page, 'long')
+      expect(await tooltipText(page, long.locator('.session-item-main'))).toBe(
+        `模型名很长的会话，包含完整的服务与实验分支名称 · Latch 内置 · ${LONG_MODEL}`,
+      )
       const actions = long.locator('.session-actions')
       const measure = () =>
         long.evaluate(item => {

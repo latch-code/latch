@@ -250,6 +250,7 @@ it.each([
           id: 'keys-model',
           name: 'Keys fixture',
           model: 'fixture',
+          modelCapabilities: { fixture: { thinking: ['low', 'high'] } },
           async *stream() {
             modelCalls++
             yield { type: 'text', text: '运行中的会话，浮层盖在它上面。' }
@@ -259,7 +260,7 @@ it.each([
         })
       },
     }
-    const host = await startTestHost({ uiDir: resolve(latchEnv(process.env, 'E2E_UI_DIR') ?? 'dist/web'), plugins: [plugin] })
+    const host = await startTestHost({ plugins: [plugin], providerId: plugin.id })
     const browser = await (engine === 'webkit' ? webkit.launch({ headless: true }) : chromium.launch(browserLaunchOptions()))
     try {
       const owner = await host.enroll({ listener: 'unix' })

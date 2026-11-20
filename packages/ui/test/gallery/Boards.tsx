@@ -160,6 +160,26 @@ export function Boards() {
         </Cell>
       </Row>
       <Row label="选择面板">
+        <Cell caption="单个模型 · 思考只读">
+          <div className="ui-popover" data-size="md">
+            <PickerBoard
+              compact
+              fixedLevelPlacement="inline"
+              label="模型"
+              levelsLabel="思考"
+              sources={[{ ...GALLERY_SOURCES[1]!, items: [{ value: 'lab/gamma', label: 'gamma' }] }]}
+              value="lab/gamma"
+              levels={galleryLevels}
+              onItem={() => {}}
+              onLevel={() => {}}
+              footer={
+                <MenuFooterLink icon={ModelGlyph} onClick={() => {}}>
+                  管理模型…
+                </MenuFooterLink>
+              }
+            />
+          </div>
+        </Cell>
         <Cell caption="多个来源 · 档位 · 设置">
           <div className="ui-popover" data-size="lg">
             <PickerBoard

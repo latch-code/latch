@@ -403,17 +403,27 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       })
       await closed
 
-      // The start page's background in both looks, as this device chooses them in 设置 › 外观.
+      // The monochrome default has no moving background. The effects can be enabled from settings.
+      expect(await page.locator('canvas.ui-backdrop').count()).toBe(0)
+      // 设置… opens the page's settings.
+      const settings = page.locator('.settings-overlay')
+      const appearance = async () => {
+        await click('settings')
+        await settings.waitFor()
+        await settings.getByText('外观', { exact: true }).first().click()
+        await settings.getByRole('radiogroup', { name: '背景样式' }).waitFor()
+      }
+      await appearance()
+      const effects = settings.getByRole('radiogroup', { name: '背景效果' })
+      expect(await effects.getByRole('radio', { name: '关', exact: true }).getAttribute('aria-checked')).toBe('true')
+      await shot(page, 'settings-appearance')
+      await effects.getByRole('radio', { name: '标准', exact: true }).click()
+      await page.keyboard.press('Escape')
+      await settings.waitFor({ state: 'detached' })
       await page.locator('canvas.ui-backdrop[data-kind="field"]').waitFor()
       await page.waitForTimeout(1200)
       await shot(page, 'start-particles')
-      // 设置… opens the page's settings.
-      await click('settings')
-      const settings = page.locator('.settings-overlay')
-      await settings.waitFor()
-      await settings.getByText('外观', { exact: true }).first().click()
-      await settings.getByRole('radiogroup', { name: '背景样式' }).waitFor()
-      await shot(page, 'settings-appearance')
+      await appearance()
       await settings.getByRole('radio', { name: '01', exact: true }).click()
       await page.keyboard.press('Escape')
       await settings.waitFor({ state: 'detached' })

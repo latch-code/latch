@@ -441,6 +441,10 @@
 .composer-control .composer-permission-name {
   max-width: 12em;
 }
+/* The permission panel owns its locked text color instead of inheriting the workbench palette around it. */
+.permission-panel {
+  color: var(--work-ink);
+}
 /* Under the modes: what the Harness's own settings decide beside them, one short muted line each. */
 .permission-in-effect {
   display: grid;
