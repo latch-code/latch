@@ -15,7 +15,7 @@ public struct PhoneAttachCaps: Equatable, Sendable {
      * refused for its type (the built-in Harness and every ACP agent).
      */
     public let files: Bool
-    public init(images: Bool, text: Bool, textBytes: Int, fileBytes: Int = 10 * 1_048_576, imageBytes: Int = 5 * 1_048_576, reason: String? = nil, files: Bool = false) {
+    public init(images: Bool, text: Bool, textBytes: Int, fileBytes: Int = PhoneAttachments.largestFile, imageBytes: Int = 5 * 1_048_576, reason: String? = nil, files: Bool = false) {
         self.images = images; self.text = text; self.textBytes = textBytes; self.fileBytes = fileBytes; self.imageBytes = imageBytes; self.reason = reason
         self.files = files
     }
@@ -23,9 +23,10 @@ public struct PhoneAttachCaps: Equatable, Sendable {
     public static func parse(_ value: NativeJSON) -> PhoneAttachCaps? {
         let caps = value["capabilities"]
         guard case let .bool(images) = caps["images"], case let .bool(text) = caps["text"], let textBytes = caps["textBytes"].integer else { return nil }
-        let bound = { (value: NativeJSON, fallback: Int) in value.integer.map { Int(min($0, 25 * 1_048_576)) } ?? fallback }
-        return PhoneAttachCaps(images: images, text: text, textBytes: Int(min(textBytes, 25 * 1_048_576)),
-            fileBytes: bound(caps["fileBytes"], 10 * 1_048_576), imageBytes: bound(caps["imageBytes"], 5 * 1_048_576),
+        let largest = UInt64(PhoneAttachments.largestFile)
+        let bound = { (value: NativeJSON, fallback: Int) in value.integer.map { Int(min($0, largest)) } ?? fallback }
+        return PhoneAttachCaps(images: images, text: text, textBytes: Int(min(textBytes, largest)),
+            fileBytes: bound(caps["fileBytes"], PhoneAttachments.largestFile), imageBytes: bound(caps["imageBytes"], 5 * 1_048_576),
             reason: caps["reason"].string.map { String($0.prefix(400)) }, files: caps["files"].bool)
     }
     /** A picture is taken: natively, or by its path. */
@@ -35,7 +36,12 @@ public struct PhoneAttachCaps: Equatable, Sendable {
     public var any: Bool { images || text || files }
 }
 
-public enum PhoneAttachKind: String, Equatable, Sendable { case image, text }
+/**
+ * What a picked file is on this phone: a picture it re-encoded, UTF-8 text, or any other file, sent as its own bytes and
+ * taken only where the Host gives `files`. Only a re-encoded picture is declared `image` to the Host; text and files are
+ * declared `file`, and the Host sniffs what they are.
+ */
+public enum PhoneAttachKind: String, Equatable, Sendable { case image, text, file }
 
 /** A row of the composer's attachments. `unknown`: the upload's answer never came; 重试 sends the same bytes under the same requestId. */
 public enum PhoneAttachStatus: Equatable, Sendable {
@@ -56,23 +62,24 @@ public struct PhoneAttachDraft: Equatable, Sendable, Identifiable {
     public let requestId: String
     public let name: String
     public let kind: PhoneAttachKind
-    /** The bytes, in memory until the Host keeps the file; empty from then on (`PhoneAttachTray.ready`). */
-    public internal(set) var data: Data
+    /** The bytes, staged on disk until the Host keeps the file; nil from then on (`PhoneAttachTray.ready`). */
+    public internal(set) var file: PhoneStagedFile?
     public let size: Int
-    /** A small redrawn picture for the row, kept once the bytes are let go. */
-    public internal(set) var thumbnail: Data?
+    /** A small redrawn picture for an image's row. */
+    public let thumbnail: Data?
     public var status: PhoneAttachStatus
     public var ref: NativeJSON?
     public var secretAcknowledged = false
     /** The Host's chunked upload for these bytes while it is unfinished: removing the row aborts it there. */
     public var uploadId: String?
-    public init(name: String, kind: PhoneAttachKind, data: Data) {
-        id = UUID(); requestId = UUID().uuidString.lowercased(); self.name = name; self.kind = kind; self.data = data; size = data.count; status = .preparing
+    public init(name: String, kind: PhoneAttachKind, file: PhoneStagedFile, thumbnail: Data? = nil) {
+        id = UUID(); requestId = UUID().uuidString.lowercased(); self.name = name; self.kind = kind; self.file = file; size = file.size
+        self.thumbnail = thumbnail; status = .preparing
     }
-    /** What the row shows: the thumbnail once the bytes are gone. */
-    public var preview: Data { thumbnail ?? data }
-    /** Bytes this row keeps in memory. */
-    public var stagedBytes: Int { data.count + (thumbnail?.count ?? 0) }
+    /** Bytes this row keeps staged on disk. */
+    public var stagedBytes: Int { file?.size ?? 0 }
+    /** The type icon its row shows. */
+    public var icon: PhoneAttachIcon { PhoneAttachments.icon(kind: kind.rawValue, mime: nil, name: name) }
     /** The Host's attachment ID, once it kept the file. */
     public var attachmentId: String? { ref?["id"].string }
 }
@@ -88,8 +95,8 @@ public enum PhoneAttachFailure: Equatable, Sendable {
 }
 
 /**
- * The composer's attachments for one place (a session, or the new-session sheet). Bytes live only in memory, never in a
- * file, and go with the window: `clear` is called on lock, removal and window close.
+ * The composer's attachments for one place (a session, or the new-session sheet). Bytes wait in staged files
+ * (`PhoneAttachStage`), one per row, and go with the row: when the Host keeps it, on removal and on `clear`.
  */
 public struct PhoneAttachTray: Equatable, Sendable {
     public private(set) var items: [PhoneAttachDraft] = []
@@ -107,12 +114,11 @@ public struct PhoneAttachTray: Equatable, Sendable {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].status = status
     }
-    /** The Host kept it: the bytes go from memory (an image keeps a small thumbnail), and nothing is left to abort. */
+    /** The Host kept it: the staged file goes (an image keeps its small thumbnail), and nothing is left to abort. */
     public mutating func ready(_ id: UUID, ref: NativeJSON) -> Bool {
         guard let index = items.firstIndex(where: { $0.id == id }), PhoneAttachments.validRef(ref) else { return false }
         items[index].ref = ref; items[index].status = .ready; items[index].uploadId = nil
-        if items[index].kind == .image { items[index].thumbnail = PhoneImagePrep.thumbnail(items[index].data) }
-        items[index].data = Data()
+        PhoneAttachStage.remove(items[index].file); items[index].file = nil
         return true
     }
     /** The Host began a chunked upload for this row. */
@@ -120,7 +126,7 @@ public struct PhoneAttachTray: Equatable, Sendable {
         guard let index = items.firstIndex(where: { $0.id == id }), items[index].ref == nil, LinkBytes.matches(upload, "[A-Za-z0-9_-]{22}") else { return }
         items[index].uploadId = upload
     }
-    /** Bytes the rows of this tray keep in memory. */
+    /** Bytes the rows of this tray keep staged on disk. */
     public var stagedBytes: Int { items.reduce(0) { $0 + $1.stagedBytes } }
     /** Unfinished chunked uploads of these rows on the Host, to abort when the rows go. */
     public var unfinishedUploads: [String] { items.compactMap { $0.ref == nil ? $0.uploadId : nil } }
@@ -128,6 +134,7 @@ public struct PhoneAttachTray: Equatable, Sendable {
     public mutating func removeRow(_ id: UUID) -> (attachment: String?, upload: String?) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return (nil, nil) }
         let row = items.remove(at: index)
+        PhoneAttachStage.remove(row.file)
         return (row.attachmentId, row.ref == nil ? row.uploadId : nil)
     }
     public mutating func acknowledge(_ id: UUID) {
@@ -149,10 +156,13 @@ public struct PhoneAttachTray: Equatable, Sendable {
     /** The row goes; its Host attachment ID comes back to drop the draft there. */
     public mutating func remove(_ id: UUID) -> String? {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return nil }
-        return items.remove(at: index).attachmentId
+        let row = items.remove(at: index)
+        PhoneAttachStage.remove(row.file)
+        return row.attachmentId
     }
-    /** Everything goes with its bytes; the Host's IDs come back. */
+    /** Everything goes with its staged files; the Host's IDs come back. */
     @discardableResult public mutating func clear() -> [String] {
+        for item in items { PhoneAttachStage.remove(item.file) }
         let ids = items.compactMap(\.attachmentId); items = []; note = nil; return ids
     }
     /** The Host released these uploads in 设置 › 设备: each row says so and can only be removed. */
@@ -165,7 +175,7 @@ public struct PhoneAttachTray: Equatable, Sendable {
         if busy { return .failure(.waiting) }
         if items.contains(where: { if case .refused = $0.status { true } else { false } }) { return .failure(.reason("有附件不能发送，请移除后再发送。")) }
         guard items.allSatisfy({ $0.status == .ready && $0.attachmentId != nil }) else { return .failure(.reason("附件尚未准备好。请重试失败的文件，或移除后发送。")) }
-        guard let caps, items.allSatisfy({ $0.kind == .image ? caps.takesImages : caps.files || (caps.text && $0.size <= caps.textBytes) }) else {
+        guard let caps, items.allSatisfy({ PhoneAttachments.takes($0.kind, size: $0.size, caps) }) else {
             return .failure(.reason(caps?.reason ?? "当前 Harness 不接受这些附件。请移除附件或更换模型。"))
         }
         return .success(items.compactMap(\.attachmentId))
@@ -208,15 +218,15 @@ public enum PhoneAttachments {
         return .object(value)
     }
     public static let perMessage = 8
-    /** Bytes waiting in memory across every composer before the Host keeps them. */
-    public static let stagedLimit = 48 * 1_048_576
-    public static let stagedWords = "等待上传的附件已占用 48 MB，请先发送或移除一些附件。"
-    /** Refused when adding `adding` bytes would pass what all composers may keep in memory at once. */
+    /** Bytes staged on disk across every composer before the Host keeps them: a whole message of the largest files and more. */
+    public static let stagedLimit = 512 * 1_048_576
+    public static let stagedWords = "等待上传的附件已占用 512 MB，请先发送或移除一些附件。"
+    /** Refused when adding `adding` bytes would pass what all composers may stage at once. */
     public static func admitStaged(staged: Int, adding: Int) -> String? { staged + adding > stagedLimit ? stagedWords : nil }
     /** A native stream carries at most 1 MiB: a file up to that goes in one stream, a larger one in parts of this size. */
     public static let streamBytes = 1_048_576
-    /** The most this phone sends of one file, whatever a Host says: the Host's own largest file. */
-    public static let largestFile = 25 * 1_048_576
+    /** The most this phone sends of one file, whatever a Host says: the Host's own largest file (`ATTACHMENT_FILE_BYTES`). */
+    public static let largestFile = 50 * 1_048_576
     public static let tooMany = "每条消息最多添加 8 个附件。"
     public static let releasedWords = "已在 设置 › 设备 里释放，请移除后重新添加"
     /** The Host takes a queued or steered message as text only (`queue-attachments-unsupported`). */
@@ -235,17 +245,33 @@ public enum PhoneAttachments {
         if code == "attachment-secret" { return .confirm }
         return refused.contains(code) ? .refused : .retry
     }
-    /** The largest file of this kind this phone sends: the Host's limits for this connection, Harness and kind. */
+    /**
+     * The largest file of this kind this phone sends: the Host's limits for this Harness and kind. Where the Host takes
+     * every file (`files`), text is a file like any other: what it cannot embed goes by its path.
+     */
     public static func limit(_ kind: PhoneAttachKind, _ caps: PhoneAttachCaps) -> Int {
-        min(largestFile, caps.fileBytes, kind == .image ? caps.imageBytes : caps.textBytes)
+        switch kind {
+        case .image: min(largestFile, caps.fileBytes, caps.imageBytes)
+        case .text: caps.files ? min(largestFile, caps.fileBytes) : min(largestFile, caps.fileBytes, caps.textBytes)
+        case .file: min(largestFile, caps.fileBytes)
+        }
+    }
+    /** Whether the Host takes a row of this kind and size for this Harness. */
+    public static func takes(_ kind: PhoneAttachKind, size: Int, _ caps: PhoneAttachCaps) -> Bool {
+        switch kind {
+        case .image: caps.takesImages
+        case .text: caps.files || (caps.text && size <= caps.textBytes)
+        case .file: caps.files
+        }
     }
     public static func sizeText(_ bytes: Int) -> String {
         bytes >= 1_048_576 ? "\(Int((Double(bytes) / 1_048_576).rounded())) MB" : "\(max(1, Int((Double(bytes) / 1024).rounded()))) KB"
     }
-    /** The ＋ menu's line: what may be attached, in the web's words; empty when nothing can be. */
+    /** What may be attached, in the web's words, said with a refusal; empty when nothing can be. */
     public static func limitsLine(_ caps: PhoneAttachCaps?) -> String {
         guard let caps, caps.any else { return "" }
-        return [caps.takesImages ? "图片 \(sizeText(limit(.image, caps))) 内" : nil, caps.takesText ? "文字文件 \(sizeText(limit(.text, caps))) 内" : nil, "每条 8 个"]
+        if caps.files { return "每个文件 \(sizeText(limit(.file, caps))) 内 · 每条 8 个" }
+        return [caps.images ? "图片 \(sizeText(limit(.image, caps))) 内" : nil, caps.text ? "文字文件 \(sizeText(limit(.text, caps))) 内" : nil, "每条 8 个"]
             .compactMap { $0 }.joined(separator: " · ")
     }
     /**
@@ -264,31 +290,51 @@ public enum PhoneAttachments {
         guard case .object = reported else { return (harness["status"].string ?? "") + ":-" }
         return (harness["status"].string ?? "") + ":" + (reported["images"].bool ? "i" : "") + (reported["text"].bool ? "t" : "")
     }
-    /** What a file is by its type: images are re-encoded, text is sent as it is, anything else is not offered. */
-    public static func kind(typeIdentifier: String) -> PhoneAttachKind? {
-        guard let type = UTType(typeIdentifier) else { return nil }
+    /**
+     * What a file may be by its type, before its content is read: a picture to re-encode, text if its bytes turn out to be
+     * UTF-8, or a file. SVG is text (it is XML), never a picture.
+     */
+    public static func kind(typeIdentifier: String) -> PhoneAttachKind {
+        guard let type = UTType(typeIdentifier) else { return .file }
+        if type.conforms(to: .svg) { return .text }
         if type.conforms(to: .image) { return .image }
-        if type.conforms(to: .pdf) || type.conforms(to: .rtf) || type.conforms(to: .html) { return nil }
-        if type.conforms(to: .text) || type.conforms(to: .sourceCode) || type.conforms(to: .json) || type.conforms(to: .xml) || type.conforms(to: .propertyList) { return .text }
-        return nil
+        if type.conforms(to: .text) { return .text }
+        return .file
     }
     /** Refused before any upload; nil when this file may be sent. `count`: rows already in the message. */
     public static func admit(kind: PhoneAttachKind?, name: String, size: Int, count: Int, caps: PhoneAttachCaps?) -> String? {
         guard count < perMessage else { return tooMany }
         guard let caps, caps.any else { return caps?.reason ?? "当前 Harness 不接收附件。" }
-        guard let kind else { return "「\(shortName(name))」不能添加：只收图片和文字文件。" }
+        guard let kind else { return "没能读取「\(shortName(name))」，没有添加。" }
         guard size > 0 else { return "空文件不能添加。" }
         if kind == .image && !caps.takesImages { return caps.reason ?? "当前模型不能看图片。" }
         if kind == .text && !caps.takesText { return caps.reason ?? "当前 Harness 不接收文字文件。" }
-        let largest = kind == .image ? PhoneImagePrep.sourceBytes : limit(.text, caps)
-        guard size <= largest else { return "「\(shortName(name))」超过 \(sizeText(largest))，没有添加。可以添加：\(limitsLine(caps))。" }
+        if kind == .file && !caps.files { return "「\(shortName(name))」不能添加：只收图片和文字文件。" }
+        let largest = kind == .image ? PhoneImagePrep.sourceBytes : limit(kind, caps)
+        guard size <= largest else { return tooLarge(name, largest, caps) }
         return nil
     }
-    /** After re-encoding, an image must still fit; text must decode as UTF-8 without NUL, as the Host requires. */
-    public static func admitBytes(kind: PhoneAttachKind, name: String, data: Data, caps: PhoneAttachCaps) -> String? {
-        if data.count > limit(kind, caps) { return "「\(shortName(name))」超过 \(sizeText(limit(kind, caps)))，没有添加。可以添加：\(limitsLine(caps))。" }
-        if kind == .text, data.contains(0) || String(data: data, encoding: .utf8) == nil { return "「\(shortName(name))」不是 UTF-8 文字文件，没有添加。" }
-        return nil
+    /** After re-encoding, an image must still fit. */
+    public static func admitSize(kind: PhoneAttachKind, name: String, size: Int, caps: PhoneAttachCaps) -> String? {
+        size > limit(kind, caps) ? tooLarge(name, limit(kind, caps), caps) : nil
+    }
+    private static func tooLarge(_ name: String, _ largest: Int, _ caps: PhoneAttachCaps) -> String {
+        "「\(shortName(name))」超过 \(sizeText(largest))，没有添加。可以添加：\(limitsLine(caps))。"
+    }
+    /** The symbol of a file's type, from its kind, MIME and name. */
+    public static func icon(kind: String, mime: String?, name: String) -> PhoneAttachIcon {
+        if kind == "image" { return .image }
+        if kind == "text" { return .text }
+        let ext = (name as NSString).pathExtension.lowercased()
+        let type = mime.flatMap { UTType(mimeType: $0) }.flatMap { $0 == .data ? nil : $0 } ?? UTType(filenameExtension: ext)
+        guard let type else { return .document }
+        if type.conforms(to: .pdf) { return .pdf }
+        if type.conforms(to: .movie) || type.conforms(to: .video) { return .video }
+        if type.conforms(to: .audio) { return .audio }
+        if [UTType.zip, .gzip, .bz2].contains(where: type.conforms(to:)) || ["tar", "tgz", "7z", "rar", "xz"].contains(ext) { return .archive }
+        if type.conforms(to: .image) { return .image }
+        if type.conforms(to: .text) { return .text }
+        return .document
     }
     private static func shortName(_ name: String) -> String { name.count > 40 ? String(name.prefix(37)) + "…" : name }
     /** A name the Host takes: no path, no control characters, at most 200 characters with its extension. */
@@ -326,8 +372,10 @@ public enum PhoneAttachments {
     /** The start of a chunked upload (`POST /attachments/uploads`): what the file is, and its SHA-256 for the Host to check. */
     public static func uploadStart(_ draft: PhoneAttachDraft, selection: NativeJSON, sessionId: String?) throws -> Data {
         var fields = context(selection: selection, sessionId: sessionId)
-        fields["requestId"] = .string(draft.requestId); fields["name"] = .string(draft.name); fields["kind"] = .string(draft.kind.rawValue)
-        fields["size"] = .number(Double(draft.size)); fields["sha256"] = .string(LinkBytes.hex(LinkBytes.hash(draft.data)))
+        guard let file = draft.file else { throw NativeFailure.invalidRecord }
+        // Only a picture this phone re-encoded is declared one; the Host sniffs text and every other file itself.
+        fields["requestId"] = .string(draft.requestId); fields["name"] = .string(draft.name); fields["kind"] = .string(draft.kind == .image ? "image" : "file")
+        fields["size"] = .number(Double(draft.size)); fields["sha256"] = .string(file.sha256)
         return try NativeJSON.object(fields).encoded()
     }
     /** A Host `AttachmentRef`: only these keys, a fixed ID and hash. */
@@ -346,7 +394,8 @@ public enum PhoneAttachments {
             // Quick Look stays with plain text and redrawn PNG/JPEG (native/ios/AGENTS.md).
             // A file the Host gave its agent by path (PDF, video, archive…) is listed by name only.
             let opens = image ? ["image/png", "image/jpeg"].contains(ref["mime"].string ?? "") : ref["kind"].string == "text" && size <= 524_288
-            return PhoneAttachChip(id: id, name: name, image: image, size: sizeText(Int(size)), opens: opens)
+            return PhoneAttachChip(id: id, name: name, image: image, size: sizeText(Int(size)), opens: opens,
+                icon: icon(kind: ref["kind"].string ?? "file", mime: ref["mime"].string, name: name))
         }
     }
     /** The attachments a pending write carries. */
@@ -388,7 +437,11 @@ public struct PhoneAttachChip: Equatable, Sendable, Identifiable {
     public let size: String
     /** Whether this phone previews it; other formats say so when tapped. */
     public let opens: Bool
+    public let icon: PhoneAttachIcon
 }
+
+/** A file's type, as its row and chip show it. */
+public enum PhoneAttachIcon: String, Equatable, Sendable { case image, text, pdf, video, audio, archive, document }
 
 /** An image ready to upload: re-encoded from its pixels alone, so location, camera and other metadata do not leave the phone. */
 public struct PhoneImagePrepared: Equatable, Sendable {
@@ -411,7 +464,12 @@ public enum PhoneImagePrep {
               let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue else { return nil }
         return width * height <= Double(maxPixels)
     }
-    /** A JPEG of at most 160 pixels on its long side, for a row whose bytes went to the Host. */
+    /** Whether ImageIO reads this file as a picture at all; one it cannot open is sent as a file. */
+    public static func opens(url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return false }
+        return CGImageSourceGetType(source) != nil && CGImageSourceGetCount(source) > 0
+    }
+    /** A JPEG of at most 160 pixels on its long side, for an image's row. */
     public static func thumbnail(_ data: Data) -> Data? {
         guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -454,66 +512,81 @@ public enum PhoneImagePrep {
     }
 }
 
-/** A picked file before it is checked: its bytes are read once, into memory, and the picker's copy is gone by then. */
+/** A picked file before it is checked: staged once (`PhoneAttachStage`), and the picker's copy is gone by then. */
 public struct PhonePicked: Equatable, Sendable {
     public let name: String
     public let kind: PhoneAttachKind?
-    public let data: Data?
+    /** The staged bytes; nil when it was refused before staging or could not be read. Whoever refuses it removes it. */
+    public let file: PhoneStagedFile?
+    public let thumbnail: Data?
     /** The original's size, for a refusal before reading or re-encoding it. */
     public let size: Int
-    /** Why it could not be read or re-encoded; nil when `data` is there. */
+    /** Why it could not be read or re-encoded; nil when `file` is there. */
     public var failure: String?
-    public init(name: String, kind: PhoneAttachKind?, data: Data?, size: Int, failure: String? = nil) {
-        self.name = name; self.kind = kind; self.data = data; self.size = size; self.failure = failure
+    public init(name: String, kind: PhoneAttachKind?, file: PhoneStagedFile?, thumbnail: Data? = nil, size: Int, failure: String? = nil) {
+        self.name = name; self.kind = kind; self.file = file; self.thumbnail = thumbnail; self.size = size; self.failure = failure
     }
 }
 
 /**
- * Reading what a picker handed over. Bytes go to memory only: a file picker's copy is deleted whatever happens, images
- * keep their pixels alone, and a copy a picker left behind (its callback never came) is purged at launch.
+ * Reading what a picker handed over into a staged file. Images keep their pixels alone, re-encoded in memory and staged;
+ * any other file is moved from the picker's copy and read once in bounded chunks. A picker's copy is deleted whatever
+ * happens, and one a picker left behind (its callback never came) is purged at launch with every staged file.
  */
 public enum PhoneAttachLoader {
     public static let unreadable = "没能读取这张图片，没有添加。"
     public static let tooManyPixels = "图片超过 4000 万像素，没有添加。"
-    public static func image(url: URL, name: String, limit: Int) -> PhonePicked {
+    /** A picture: re-encoded from its pixels and staged, or refused. Never sent as it was: its metadata stays on the phone. */
+    public static func image(url: URL, name: String, limit: Int, temporary: URL = FileManager.default.temporaryDirectory) -> PhonePicked {
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        guard size <= PhoneImagePrep.sourceBytes else { return PhonePicked(name: name, kind: .image, data: nil, size: size) }
-        if PhoneImagePrep.withinPixels(url: url) == false { return PhonePicked(name: name, kind: .image, data: nil, size: size, failure: tooManyPixels) }
-        guard let prepared = try? PhoneImagePrep.prepare(url: url, limit: limit) else { return PhonePicked(name: name, kind: .image, data: nil, size: size, failure: unreadable) }
-        return PhonePicked(name: PhoneAttachments.fileName(name, ext: prepared.ext), kind: .image, data: prepared.data, size: size)
+        guard size <= PhoneImagePrep.sourceBytes else { return PhonePicked(name: name, kind: .image, file: nil, size: size) }
+        if PhoneImagePrep.withinPixels(url: url) == false { return PhonePicked(name: name, kind: .image, file: nil, size: size, failure: tooManyPixels) }
+        guard let prepared = try? PhoneImagePrep.prepare(url: url, limit: limit) else { return PhonePicked(name: name, kind: .image, file: nil, size: size, failure: unreadable) }
+        return staged(prepared, name: name, size: size, temporary: temporary)
     }
     /** The camera's photo: only its pixels, never its metadata dictionary. */
-    public static func camera(_ encoded: Data?, limit: Int) -> PhonePicked {
+    public static func camera(_ encoded: Data?, limit: Int, temporary: URL = FileManager.default.temporaryDirectory) -> PhonePicked {
         guard let encoded, let prepared = try? PhoneImagePrep.prepare(data: encoded, limit: limit) else {
-            return PhonePicked(name: "照片", kind: .image, data: nil, size: 1, failure: unreadable)
+            return PhonePicked(name: "照片", kind: .image, file: nil, size: 1, failure: unreadable)
         }
-        return PhonePicked(name: PhoneAttachments.fileName("照片", ext: prepared.ext), kind: .image, data: prepared.data, size: encoded.count)
+        return staged(prepared, name: "照片", size: encoded.count, temporary: temporary)
     }
-    /** A document picker's copy in this App's own sandbox: read once into memory and removed. */
-    public static func file(url: URL, imageLimit: Int, textLimit: Int) -> PhonePicked {
+    private static func staged(_ prepared: PhoneImagePrepared, name: String, size: Int, temporary: URL) -> PhonePicked {
+        let named = PhoneAttachments.fileName(name, ext: prepared.ext)
+        guard let file = try? PhoneAttachStage.write(prepared.data, temporary: temporary) else { return PhonePicked(name: named, kind: .image, file: nil, size: size, failure: unreadable) }
+        return PhonePicked(name: named, kind: .image, file: file, thumbnail: PhoneImagePrep.thumbnail(prepared.data), size: size)
+    }
+    /**
+     * A document picker's copy in this App's own sandbox. A picture ImageIO opens is re-encoded; one past its limits is
+     * refused, never sent as it was. Anything else is moved into the stage and read once: UTF-8 without NUL of a text
+     * type is text, the rest is a file. `largest`: what is staged at most; a larger one is refused by its size unread.
+     */
+    public static func file(url: URL, imageLimit: Int, largest: Int, temporary: URL = FileManager.default.temporaryDirectory) -> PhonePicked {
         defer { try? FileManager.default.removeItem(at: url) }
         let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey, .isRegularFileKey])
         let name = url.lastPathComponent, size = values?.fileSize ?? 0
-        let kind = values?.contentType.flatMap { PhoneAttachments.kind(typeIdentifier: $0.identifier) }
-            ?? UTType(filenameExtension: url.pathExtension).flatMap { PhoneAttachments.kind(typeIdentifier: $0.identifier) }
-        guard values?.isRegularFile == true else { return PhonePicked(name: name, kind: nil, data: nil, size: size) }
-        switch kind {
-        case .image: return image(url: url, name: name, limit: imageLimit)
-        case .text:
-            guard size > 0, size <= textLimit, let handle = try? FileHandle(forReadingFrom: url) else { return PhonePicked(name: PhoneAttachments.fileName(name), kind: .text, data: nil, size: size) }
-            defer { try? handle.close() }
-            guard let data = (try? handle.read(upToCount: textLimit + 1)) ?? nil, data.count == size else {
-                return PhonePicked(name: PhoneAttachments.fileName(name), kind: .text, data: nil, size: size, failure: "没能读取「\(name)」，没有添加。")
-            }
-            return PhonePicked(name: PhoneAttachments.fileName(name), kind: .text, data: data, size: size)
-        case nil: return PhonePicked(name: name, kind: nil, data: nil, size: size)
+        guard values?.isRegularFile == true else { return PhonePicked(name: name, kind: nil, file: nil, size: size) }
+        let type = values?.contentType ?? UTType(filenameExtension: url.pathExtension)
+        var kind = type.map { PhoneAttachments.kind(typeIdentifier: $0.identifier) } ?? .file
+        if kind == .image {
+            if PhoneImagePrep.opens(url: url) { return image(url: url, name: name, limit: imageLimit, temporary: temporary) }
+            kind = .file
         }
+        guard size > 0, size <= largest else { return PhonePicked(name: PhoneAttachments.fileName(name), kind: kind, file: nil, size: size) }
+        guard let (file, scan) = try? PhoneAttachStage.adopt(url, temporary: temporary) else {
+            return PhonePicked(name: PhoneAttachments.fileName(name), kind: kind, file: nil, size: size, failure: "没能读取「\(name)」，没有添加。")
+        }
+        if kind == .text && !scan.utf8 { kind = .file }
+        return PhonePicked(name: PhoneAttachments.fileName(name), kind: kind, file: file, size: file.size)
     }
-    /** Copies a document picker left in `tmp/<bundle>-Inbox` when its callback never came. Returns how many went. */
+    /**
+     * At launch: copies a document picker left in `tmp/<bundle>-Inbox` when its callback never came, and every staged
+     * file. Returns how many went.
+     */
     @discardableResult public static func purgeInbox(temporary: URL) -> Int {
-        var removed = 0
+        var removed = PhoneAttachStage.purge(temporary: temporary)
         let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey]
-        guard let folders = try? FileManager.default.contentsOfDirectory(at: temporary, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else { return 0 }
+        guard let folders = try? FileManager.default.contentsOfDirectory(at: temporary, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else { return removed }
         for folder in folders.prefix(200) where folder.lastPathComponent.hasSuffix("-Inbox") {
             guard let values = try? folder.resourceValues(forKeys: Set(keys)), values.isDirectory == true, values.isSymbolicLink != true,
                   let items = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { continue }

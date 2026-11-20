@@ -11,7 +11,7 @@ struct SentAttachmentChip: View {
     var body: some View {
         Button(action: open) {
             HStack(spacing: 6) {
-                Image(systemName: chip.image ? "photo" : "doc.text").font(.system(size: 12))
+                Image(systemName: chip.icon.symbol).font(.system(size: 12))
                 Text(chip.name).lineLimit(1).truncationMode(.middle)
                 Text(chip.size).foregroundStyle(PhoneTheme.faint)
             }
@@ -24,10 +24,25 @@ struct SentAttachmentChip: View {
     }
 }
 
+extension PhoneAttachIcon {
+    /** The SF Symbol for this type: a picture, text, a PDF, a video, a sound, an archive or any other document. */
+    var symbol: String {
+        switch self {
+        case .image: "photo"
+        case .text: "doc.text"
+        case .pdf: "doc.richtext"
+        case .video: "film"
+        case .audio: "waveform"
+        case .archive: "doc.zipper"
+        case .document: "doc"
+        }
+    }
+}
+
 /** Which picker the ＋ opened. */
 enum AttachSource: String, Identifiable { case photos, camera, files; var id: String { rawValue } }
 
-/** The composer's ＋: a menu headed by the limits when attaching is possible, otherwise the reason next to the input. */
+/** The composer's ＋: 照片, 拍照 and 文件 when attaching is possible, otherwise the reason next to the input. Limits are said only with a refusal. */
 struct AttachButton: View {
     @EnvironmentObject private var model: PhoneModel
     let key: String
@@ -43,13 +58,11 @@ struct AttachButton: View {
             } else if extra != nil || (caps?.any == true && model.tray(key).items.count < PhoneAttachments.perMessage) {
                 Menu {
                     if let caps, caps.any, model.tray(key).items.count < PhoneAttachments.perMessage {
-                        Section(PhoneAttachments.limitsLine(caps)) {
-                            if caps.takesImages {
-                                Button("照片", systemImage: "photo.on.rectangle") { source = .photos }
-                                if UIImagePickerController.isSourceTypeAvailable(.camera) { Button("拍照", systemImage: "camera") { source = .camera } }
-                            }
-                            Button("文件", systemImage: "folder") { source = .files }
+                        if caps.takesImages {
+                            Button("照片", systemImage: "photo.on.rectangle") { source = .photos }
+                            if UIImagePickerController.isSourceTypeAvailable(.camera) { Button("拍照", systemImage: "camera") { source = .camera } }
                         }
+                        Button("文件", systemImage: "folder") { source = .files }
                     } else { Button("添加附件") { model.explainAttach(key, harness: harness, selection: selection) } }
                     extra
                 } label: { plus }
@@ -104,10 +117,10 @@ struct AttachmentRows: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(borderColor(item)))
     }
     @ViewBuilder private func thumbnail(_ item: PhoneAttachDraft) -> some View {
-        if item.kind == .image, let image = UIImage(data: item.preview) {
+        if item.kind == .image, let preview = item.thumbnail, let image = UIImage(data: preview) {
             Image(uiImage: image).resizable().scaledToFill().frame(width: 40, height: 40).clipShape(RoundedRectangle(cornerRadius: 8)).accessibilityHidden(true)
         } else {
-            Image(systemName: "doc.text").font(.system(size: 16)).foregroundStyle(PhoneTheme.muted).frame(width: 40, height: 40)
+            Image(systemName: item.icon.symbol).font(.system(size: 16)).foregroundStyle(PhoneTheme.muted).frame(width: 40, height: 40)
                 .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 8)).accessibilityHidden(true)
         }
     }
@@ -155,12 +168,14 @@ struct AttachmentRows: View {
     }
 }
 
-/** The pickers. Photos need no library permission; files come as this App's own copy, read once and deleted. */
+/** The pickers. Photos need no library permission; files come as this App's own copy, moved into the stage and read once. */
 struct AttachPicker: View {
     let source: AttachSource
-    /** Images are re-encoded under this; text files above it are not read. */
+    /** Images are re-encoded under this; other files above `largest` are not read. */
     let imageLimit: Int
-    let textLimit: Int
+    let largest: Int
+    /** The Host takes any file for this Harness; otherwise the file picker offers images and text only. */
+    let files: Bool
     let remaining: Int
     let done: @MainActor (PhoneAttachPick, [PhonePicked]) -> Void
     @State private var delivery = PickDelivery()
@@ -169,7 +184,7 @@ struct AttachPicker: View {
             switch source {
             case .photos: PhotoPicker(limit: imageLimit, remaining: remaining, done: deliver).ignoresSafeArea()
             case .camera: CameraPicker(limit: imageLimit, done: deliver).ignoresSafeArea()
-            case .files: FilePicker(imageLimit: imageLimit, textLimit: textLimit, remaining: remaining, done: deliver).ignoresSafeArea()
+            case .files: FilePicker(imageLimit: imageLimit, largest: largest, files: files, remaining: remaining, done: deliver).ignoresSafeArea()
             }
         }
         // A picker that went away without answering (the document picker dismisses itself first) still says so.
@@ -181,7 +196,8 @@ struct AttachPicker: View {
     private var deliver: @MainActor @Sendable ([PhonePicked]?) -> Void {
         let delivery = delivery, done = done
         return { picked in
-            guard delivery.take() else { return }
+            // A second answer adds nothing: what it staged goes at once.
+            guard delivery.take() else { for item in picked ?? [] { PhoneAttachStage.remove(item.file) }; return }
             if let picked { done(.files(picked.count), picked) } else { done(.cancelled, []) }
         }
     }
@@ -228,7 +244,7 @@ private struct PhotoPicker: UIViewControllerRepresentable {
             await withCheckedContinuation { continuation in
                 // The provider's file exists only during this callback; it is re-encoded here and never kept.
                 _ = provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { url, _ in
-                    guard let url else { continuation.resume(returning: PhonePicked(name: name, kind: .image, data: nil, size: 1, failure: PhoneAttachLoader.unreadable)); return }
+                    guard let url else { continuation.resume(returning: PhonePicked(name: name, kind: .image, file: nil, size: 1, failure: PhoneAttachLoader.unreadable)); return }
                     continuation.resume(returning: PhoneAttachLoader.image(url: url, name: name, limit: limit))
                 }
             }
@@ -238,13 +254,14 @@ private struct PhotoPicker: UIViewControllerRepresentable {
 
 private struct FilePicker: UIViewControllerRepresentable {
     let imageLimit: Int
-    let textLimit: Int
+    let largest: Int
+    let files: Bool
     let remaining: Int
     let done: @MainActor @Sendable ([PhonePicked]?) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         // A copy into this App's own sandbox: no lasting access to the original.
-        let controller = UIDocumentPickerViewController(forOpeningContentTypes: [.image, .text, .sourceCode, .json, .xml, .propertyList, .data], asCopy: true)
+        let controller = UIDocumentPickerViewController(forOpeningContentTypes: files ? [.data] : [.image, .text], asCopy: true)
         controller.allowsMultipleSelection = remaining > 1; controller.delegate = context.coordinator
         return controller
     }
@@ -255,12 +272,12 @@ private struct FilePicker: UIViewControllerRepresentable {
         private var hold: Coordinator?
         init(_ parent: FilePicker) { self.parent = parent; super.init(); hold = self }
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            let imageLimit = parent.imageLimit, textLimit = parent.textLimit, done = parent.done
+            let imageLimit = parent.imageLimit, largest = parent.largest, done = parent.done
             hold = nil
             Task.detached {
                 var picked: [PhonePicked] = []
                 for (index, url) in urls.enumerated() {
-                    if index < PhoneAttachments.perMessage { picked.append(PhoneAttachLoader.file(url: url, imageLimit: imageLimit, textLimit: textLimit)) }
+                    if index < PhoneAttachments.perMessage { picked.append(PhoneAttachLoader.file(url: url, imageLimit: imageLimit, largest: largest)) }
                     else { try? FileManager.default.removeItem(at: url) }
                 }
                 await done(picked)
@@ -313,7 +330,8 @@ struct AttachSupport: ViewModifier {
             .sheet(item: $source) { source in
                 let caps = key.flatMap { model.attachState($0).caps }, count = key.map { model.tray($0).items.count } ?? 0
                 AttachPicker(source: source, imageLimit: caps.map { PhoneAttachments.limit(.image, $0) } ?? PhoneAttachments.streamBytes,
-                    textLimit: caps.map { PhoneAttachments.limit(.text, $0) } ?? 0, remaining: PhoneAttachments.perMessage - count) { pick, picked in
+                    largest: caps.map { PhoneAttachments.limit($0.files ? .file : .text, $0) } ?? 0, files: caps?.files == true,
+                    remaining: PhoneAttachments.perMessage - count) { pick, picked in
                     // The rows first, then the sheet goes: a pick never depends on the sheet still being there.
                     if let key { model.addAttachments(key, pick: pick, picked: picked, selection: selection) }
                     self.source = nil

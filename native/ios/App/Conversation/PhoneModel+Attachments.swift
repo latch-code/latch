@@ -63,29 +63,37 @@ extension PhoneModel {
             if attachTrays[key]?.note != nil, let caps = attachState(key).caps { attachTrays[key]?.note = caps.any ? nil : PhoneAttachments.unavailable(caps: caps, harness: harness, failed: false) }
         }
     }
-    /** Checks each pick against the limits before any upload, then uploads the ones that fit, one at a time. */
+    /**
+     * Checks each pick against the limits before any upload, then uploads the ones that fit, one at a time. A pick that
+     * is not added has its staged file removed at once.
+     */
     func addAttachments(_ key: String, pick: PhoneAttachPick, picked: [PhonePicked], selection: NativeJSON?) {
         var tray = tray(key)
-        guard !attachLocked(key) else { tray.note = PhoneAttachments.lockedWords; attachTrays[key] = tray; return }
+        let drop = { for item in picked { PhoneAttachStage.remove(item.file) } }
+        guard !attachLocked(key) else { drop(); tray.note = PhoneAttachments.lockedWords; attachTrays[key] = tray; return }
         tray.note = PhoneAttachments.pickNote(pick)
         // Nothing to add is said, never silent; a selection the Host cannot check against is said too.
-        guard tray.note == nil, !picked.isEmpty else { attachTrays[key] = tray; return }
-        guard let selection else { tray.note = PhoneAttachments.unavailable(caps: nil, harness: .null, failed: true); attachTrays[key] = tray; return }
+        guard tray.note == nil, !picked.isEmpty else { drop(); attachTrays[key] = tray; return }
+        guard let selection else { drop(); tray.note = PhoneAttachments.unavailable(caps: nil, harness: .null, failed: true); attachTrays[key] = tray; return }
         let caps = attachState(key).caps
         var added: [UUID] = []
         for item in picked {
-            if let refusal = PhoneAttachments.admit(kind: item.kind, name: item.name, size: item.size, count: tray.items.count, caps: caps) { tray.note = refusal; continue }
-            if let failure = item.failure { tray.note = failure; continue }
-            guard let data = item.data, let kind = item.kind, let caps else { continue }
-            if let refusal = PhoneAttachments.admitBytes(kind: kind, name: item.name, data: data, caps: caps) { tray.note = refusal; continue }
-            // Every composer's waiting bytes together, this tray's as it is now.
-            let staged = attachTrays.filter { $0.key != key }.values.reduce(tray.stagedBytes) { $0 + $1.stagedBytes }
-            if let refusal = PhoneAttachments.admitStaged(staged: staged, adding: data.count) { tray.note = refusal; continue }
-            let draft = PhoneAttachDraft(name: item.name, kind: kind, data: data)
-            if tray.add(draft) { added.append(draft.id) }
+            if let words = refusal(item, key: key, tray: tray, caps: caps) { tray.note = words; PhoneAttachStage.remove(item.file); continue }
+            guard let file = item.file, let kind = item.kind else { PhoneAttachStage.remove(item.file); continue }
+            let draft = PhoneAttachDraft(name: item.name, kind: kind, file: file, thumbnail: item.thumbnail)
+            if tray.add(draft) { added.append(draft.id) } else { PhoneAttachStage.remove(file) }
         }
         attachTrays[key] = tray
         for id in added { startUpload(key, id: id, selection: selection) }
+    }
+    /** Why this pick is not added; nil when it is. Every composer's staged bytes count, this tray's as it is now. */
+    private func refusal(_ item: PhonePicked, key: String, tray: PhoneAttachTray, caps: PhoneAttachCaps?) -> String? {
+        if let words = PhoneAttachments.admit(kind: item.kind, name: item.name, size: item.size, count: tray.items.count, caps: caps) { return words }
+        if let failure = item.failure { return failure }
+        guard let file = item.file, let kind = item.kind, let caps else { return nil }
+        if let words = PhoneAttachments.admitSize(kind: kind, name: item.name, size: file.size, caps: caps) { return words }
+        let staged = attachTrays.filter { $0.key != key }.values.reduce(tray.stagedBytes) { $0 + $1.stagedBytes }
+        return PhoneAttachments.admitStaged(staged: staged, adding: file.size)
     }
     /** Uploads queue behind each other, as the workspace sends one at a time. */
     func startUpload(_ key: String, id: UUID, selection: NativeJSON, acknowledge: Bool = false) {
@@ -177,11 +185,12 @@ extension PhoneModel {
             }
         }
     }
-    /** The message went: its attachments now belong to the session. */
-    func attachmentsSent(_ key: String) { attachTrays[key] = nil }
-    /** Bytes in memory go with the window, the computer or the lock; the Host's drafts expire there on their own. */
+    /** The message went: its attachments now belong to the session, and nothing of them stays staged here. */
+    func attachmentsSent(_ key: String) { attachTrays[key]?.clear(); attachTrays[key] = nil }
+    /** Staged files go with the window, the computer or the lock; the Host's drafts expire there on their own. */
     func clearAttachments() {
         for job in uploadJobs.values { job.cancel() }
         uploadJobs = [:]; uploadTail = nil; attachTrays = [:]; attachStates = [:]; attachSending = []
+        PhoneAttachStage.purge()
     }
 }

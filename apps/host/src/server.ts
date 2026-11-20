@@ -54,7 +54,7 @@ import { createQuestionsPlugin } from './plugins/tools/questions/index.ts'
 import { forkSeed, relaySeed } from './forks.ts'
 import { createFileTrackingService } from './files/output-tracker.ts'
 import { checkedFileMentions, fileMentionsSchema } from './file-mentions.ts'
-import { AttachmentStore, ATTACHMENT_FILE_LIMIT, ATTACHMENT_IMAGE_LIMIT, ATTACHMENT_REMOTE_LIMIT } from './attachments.ts'
+import { AttachmentStore, ATTACHMENT_FILE_LIMIT, ATTACHMENT_IMAGE_LIMIT } from './attachments.ts'
 import { createAttachmentRoutes, assertAttachmentCapability } from './attachment-routes.ts'
 import { AttachmentUploads } from './attachment-uploads.ts'
 import type { AttachmentSelection, AttachmentCapabilities, AttachmentRef } from '@latch/protocol'
@@ -2665,10 +2665,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       const harness = draftHarness(selected.harnessId)
       if (!harness || harness.status !== 'ready') throw new AppError(409, 'harness-unavailable', '当前 Harness 不可用。')
       const declared = harness.attachments
-      const limits = {
-        fileBytes: isLocalListener(caller.connection.listener) ? ATTACHMENT_FILE_LIMIT : ATTACHMENT_REMOTE_LIMIT,
-        imageBytes: ATTACHMENT_IMAGE_LIMIT,
-      }
+      const limits = { fileBytes: ATTACHMENT_FILE_LIMIT, imageBytes: ATTACHMENT_IMAGE_LIMIT }
       if (harness.capabilities.models.owner === 'latch') {
         const choice = selected.model ?? defaultModelRef()
         if (choice) assertModel(choice)
@@ -2699,7 +2696,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
           images: reported?.images === true && routed?.vision !== false,
           text: reported?.text === true,
           // As before for clients that hold text to it (the phone); the embed limit applies at send (`promptBlocks`).
-          textBytes: 25 * 1024 * 1024,
+          textBytes: ATTACHMENT_FILE_LIMIT,
           files: true,
           ...(reported ? {} : { pending: true as const }),
           ...limits,
@@ -2711,7 +2708,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       return {
         images: taken?.images === true,
         text: taken?.text === true,
-        textBytes: Math.min(declared?.textBytes ?? 256 * 1024, 25 * 1024 * 1024),
+        textBytes: Math.min(declared?.textBytes ?? 256 * 1024, ATTACHMENT_FILE_LIMIT),
         ...limits,
         ...(!taken?.images && !taken?.text ? { reason: '这个 Harness 不接收图片和文件。' } : {}),
       }
@@ -6519,7 +6516,6 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
                 requestId: randomUUID(),
                 name: `Agent-image.${({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' } as Record<string, string>)[input.mime] ?? 'image'}`,
                 size: bytes.length,
-                remote: false,
                 stream: (async function* () {
                   yield bytes
                 })(),

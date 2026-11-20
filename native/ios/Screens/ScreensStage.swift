@@ -149,7 +149,7 @@ import UIKit
     fileprivate static func stageAttachments(_ model: PhoneModel, _ name: String) -> Bool {
         guard name.hasPrefix("attach") else { return false }
         model.tab = .code
-        let both = PhoneAttachCaps(images: true, text: true, textBytes: 262_144, fileBytes: 10_485_760, imageBytes: 5_242_880)
+        let both = PhoneAttachCaps(images: true, text: true, textBytes: 262_144, fileBytes: PhoneAttachments.largestFile, imageBytes: 5_242_880, files: true)
         func photo(_ hue: CGFloat) -> Data {
             UIGraphicsImageRenderer(size: CGSize(width: 120, height: 90)).image { context in
                 UIColor(hue: hue, saturation: 0.35, brightness: 0.85, alpha: 1).setFill(); context.fill(CGRect(x: 0, y: 0, width: 120, height: 90))
@@ -163,7 +163,9 @@ import UIKit
         func tray(_ rows: [(String, PhoneAttachKind, PhoneAttachStatus)]) -> PhoneAttachTray {
             var tray = PhoneAttachTray()
             for (index, row) in rows.enumerated() {
-                let draft = PhoneAttachDraft(name: row.0, kind: row.1, data: row.1 == .image ? photo(CGFloat(index) * 0.17 + 0.55) : Data(repeating: 0x61, count: 18_000))
+                let data = row.1 == .image ? photo(CGFloat(index) * 0.17 + 0.55) : Data(repeating: 0x61, count: row.1 == .file ? 2_400_000 : 18_000)
+                guard let file = try? PhoneAttachStage.write(data) else { continue }
+                let draft = PhoneAttachDraft(name: row.0, kind: row.1, file: file, thumbnail: row.1 == .image ? PhoneImagePrep.thumbnail(data) : nil)
                 _ = tray.add(draft)
                 if row.2 == .ready { _ = tray.ready(draft.id, ref: ref(String(format: "att%019d", index), row.0, image: row.1 == .image, size: draft.size)) }
                 else { tray.set(draft.id, row.2) }
@@ -174,8 +176,8 @@ import UIKit
         case "attach":
             model.sessionId = "ses_review"; model.detail = conversation()
             model.attachStates["ses_review"] = PhoneAttachState(revision: "staged", caps: both)
-            model.attachTrays["ses_review"] = tray([("IMG_0412.jpg", .image, .ready), ("build.log", .text, .uploading(0.6)),
-                ("IMG_0413.jpg", .image, .unknown), ("notes.pdf.txt", .text, .refused("当前 Harness 只接受 256 KB 以内的文本附件。"))])
+            model.attachTrays["ses_review"] = tray([("IMG_0412.jpg", .image, .ready), ("spec.pdf", .file, .uploading(0.6)),
+                ("IMG_0413.jpg", .image, .unknown), ("demo.mov", .file, .refused("每个文件最多 50 MB。")), ("build.log", .text, .ready)])
             model.heldDrafts["ses_review"] = "这两张截图里按钮的间距不一样，看看是哪里的样式"
         case "attach-unavailable":
             model.sessionId = "ses_review"; model.detail = conversation()
@@ -200,7 +202,7 @@ import UIKit
         case "attach-sent":
             model.sessionId = "ses_review"
             model.detail = json(conversationText.replacingOccurrences(of: #""text":"看一下 PhoneAgents 的改动，只报真实的问题。","#,
-                with: #""text":"看一下这两个附件里的问题。","attachments":[{"id":"att0000000000000000001","name":"IMG_0412.jpg","mime":"image/jpeg","kind":"image","size":412000,"sha256":"\#(String(repeating: "a", count: 64))","width":2048,"height":1536},{"id":"att0000000000000000002","name":"build.log","mime":"text/plain","kind":"text","size":18000,"sha256":"\#(String(repeating: "b", count: 64))"}],"#))
+                with: #""text":"看一下这两个附件里的问题。","attachments":[{"id":"att0000000000000000001","name":"IMG_0412.jpg","mime":"image/jpeg","kind":"image","size":412000,"sha256":"\#(String(repeating: "a", count: 64))","width":2048,"height":1536},{"id":"att0000000000000000002","name":"build.log","mime":"text/plain","kind":"text","size":18000,"sha256":"\#(String(repeating: "b", count: 64))"},{"id":"att0000000000000000003","name":"spec.pdf","mime":"application/pdf","kind":"file","size":2400000,"sha256":"\#(String(repeating: "c", count: 64))"}],"#))
         default: return false
         }
         return true

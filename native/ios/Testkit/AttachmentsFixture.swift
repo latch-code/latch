@@ -39,16 +39,34 @@ private func metadataKeys(_ data: Data) -> [String] {
     return found
 }
 
-/** The composer's attachment decisions: capability reasons, limits, refusal classes, the tray and image re-encoding. */
+/** A fixture's own temporary folder, so staging and purges never touch another folder's files. */
+let fixtureTemporary: URL = {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("latch-attach-fixture-" + UUID().uuidString, isDirectory: true)
+    try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}()
+
+/** A row whose bytes are staged as the App stages them. */
+func fixtureDraft(name: String, kind: PhoneAttachKind, data: Data) throws -> PhoneAttachDraft {
+    try FileManager.default.createDirectory(at: fixtureTemporary, withIntermediateDirectories: true)
+    return PhoneAttachDraft(name: name, kind: kind, file: try PhoneAttachStage.write(data, temporary: fixtureTemporary),
+        thumbnail: kind == .image ? PhoneImagePrep.thumbnail(data) : nil)
+}
+
+/** The composer's attachment decisions: capability reasons, limits, refusal classes, the tray, staging and image re-encoding. */
 func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
+    defer { try? FileManager.default.removeItem(at: fixtureTemporary) }
     func caps(_ fields: [String: NativeJSON]) -> PhoneAttachCaps? { PhoneAttachCaps.parse(.object(["capabilities": .object(fields)])) }
-    let both = caps(["images": .bool(true), "text": .bool(true), "textBytes": .number(262_144), "fileBytes": .number(10_485_760), "imageBytes": .number(5_242_880)])!
+    let both = caps(["images": .bool(true), "text": .bool(true), "textBytes": .number(262_144), "fileBytes": .number(52_428_800), "imageBytes": .number(5_242_880)])!
     let textOnly = caps(["images": .bool(false), "text": .bool(true), "textBytes": .number(26_214_400), "reason": .string("这个 Harness 不接收图片。")])!
     let none = caps(["images": .bool(false), "text": .bool(false), "textBytes": .number(0), "reason": .string("这个 Harness 不接收图片和文件。")])!
+    let files = caps(["images": .bool(true), "text": .bool(true), "textBytes": .number(262_144), "fileBytes": .number(52_428_800), "imageBytes": .number(5_242_880), "files": .bool(true)])!
     let started = NativeJSON.object(["status": .string("ready"), "attachmentsReported": .object(["images": .bool(false), "text": .bool(false)])])
     let fresh = NativeJSON.object(["status": .string("ready")])
     var result: [String: Any] = [:]
-    result["limits"] = [PhoneAttachments.limitsLine(both), PhoneAttachments.limitsLine(textOnly), PhoneAttachments.limitsLine(none)]
+    result["limits"] = [PhoneAttachments.limitsLine(both), PhoneAttachments.limitsLine(textOnly), PhoneAttachments.limitsLine(none), PhoneAttachments.limitsLine(files)]
+    // A Host saying more than 50 MB is held to the phone's own largest file.
+    result["clamped"] = caps(["images": .bool(false), "text": .bool(true), "textBytes": .number(1e9), "fileBytes": .number(1e9), "files": .bool(true)]).map { [$0.fileBytes, $0.textBytes] } ?? []
     result["unavailable"] = [
         PhoneAttachments.unavailable(caps: both, harness: fresh, failed: false) ?? "",
         PhoneAttachments.unavailable(caps: none, harness: started, failed: false) ?? "",
@@ -58,25 +76,33 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     ]
     result["revision"] = [PhoneAttachments.revision(fresh), PhoneAttachments.revision(started)]
     result["malformedCaps"] = caps(["images": .string("yes"), "text": .bool(true), "textBytes": .number(1)]) == nil
-    result["kinds"] = ["public.png", "public.heic", "public.plain-text", "public.swift-source", "public.json", "com.adobe.pdf", "public.html", "com.microsoft.word.doc"]
-        .map { PhoneAttachments.kind(typeIdentifier: $0)?.rawValue ?? "-" }
+    result["kinds"] = ["public.png", "public.heic", "public.plain-text", "public.swift-source", "public.json", "com.adobe.pdf", "public.html", "com.microsoft.word.doc",
+        "public.svg-image", "public.mpeg-4", "public.zip-archive"].map { PhoneAttachments.kind(typeIdentifier: $0).rawValue }
     result["admit"] = [
         PhoneAttachments.admit(kind: .text, name: "notes.md", size: 2_000, count: 0, caps: both) ?? "ok",
         PhoneAttachments.admit(kind: .text, name: "big.log", size: 300_000, count: 0, caps: both) ?? "ok",
-        PhoneAttachments.admit(kind: .text, name: "huge.log", size: 12_000_000, count: 0, caps: textOnly) ?? "ok",
+        PhoneAttachments.admit(kind: .text, name: "huge.log", size: 30_000_000, count: 0, caps: textOnly) ?? "ok",
         PhoneAttachments.admit(kind: .image, name: "IMG_1.heic", size: 8_000_000, count: 0, caps: both) ?? "ok",
         PhoneAttachments.admit(kind: .image, name: "IMG_2.heic", size: 60_000_000, count: 0, caps: both) ?? "ok",
         PhoneAttachments.admit(kind: .image, name: "IMG_3.jpg", size: 100, count: 0, caps: textOnly) ?? "ok",
-        PhoneAttachments.admit(kind: nil, name: "deck.pdf", size: 100, count: 0, caps: both) ?? "ok",
+        PhoneAttachments.admit(kind: .file, name: "deck.pdf", size: 100, count: 0, caps: both) ?? "ok",
         PhoneAttachments.admit(kind: .text, name: "empty.txt", size: 0, count: 0, caps: both) ?? "ok",
         PhoneAttachments.admit(kind: .text, name: "ninth.txt", size: 10, count: 8, caps: both) ?? "ok",
         PhoneAttachments.admit(kind: .text, name: "a.txt", size: 10, count: 0, caps: none) ?? "ok",
+        PhoneAttachments.admit(kind: nil, name: "bundle.app", size: 10, count: 0, caps: files) ?? "ok",
     ]
-    result["admitBytes"] = [
-        PhoneAttachments.admitBytes(kind: .text, name: "nul.txt", data: Data([0x61, 0x00, 0x62]), caps: both) ?? "ok",
-        PhoneAttachments.admitBytes(kind: .text, name: "latin.txt", data: Data([0xff, 0xfe, 0x41]), caps: both) ?? "ok",
-        PhoneAttachments.admitBytes(kind: .text, name: "ok.txt", data: Data("你好".utf8), caps: both) ?? "ok",
-        PhoneAttachments.admitBytes(kind: .image, name: "big.jpg", data: Data(count: 5_242_881), caps: both) ?? "ok",
+    // Where the Host takes every file: any type, text held to the file limit rather than 256 KB, 50 MB exactly and no more.
+    result["admitFiles"] = [
+        PhoneAttachments.admit(kind: .file, name: "deck.pdf", size: 100, count: 0, caps: files) ?? "ok",
+        PhoneAttachments.admit(kind: .text, name: "big.log", size: 300_000, count: 0, caps: files) ?? "ok",
+        PhoneAttachments.admit(kind: .file, name: "clip.mov", size: 52_428_800, count: 0, caps: files) ?? "ok",
+        PhoneAttachments.admit(kind: .file, name: "clip.mov", size: 52_428_801, count: 0, caps: files) ?? "ok",
+        PhoneAttachments.admit(kind: .text, name: "dump.log", size: 52_428_801, count: 0, caps: files) ?? "ok",
+    ]
+    result["admitSize"] = [
+        PhoneAttachments.admitSize(kind: .text, name: "ok.txt", size: 3, caps: both) ?? "ok",
+        PhoneAttachments.admitSize(kind: .image, name: "big.jpg", size: 5_242_881, caps: both) ?? "ok",
+        PhoneAttachments.admitSize(kind: .image, name: "fit.jpg", size: 5_242_880, caps: files) ?? "ok",
     ]
     result["classes"] = ["attachment-too-large", "attachments-unsupported", "attachment-image-unsupported", "attachment-incomplete", "attachment-released",
         "attachment-secret", "request-conflict"].map { code -> String in
@@ -95,13 +121,20 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         PhoneAttachments.selection(startFields: ["prompt": .string("x")]) == nil ? "none" : "some",
     ]
     result["names"] = [PhoneAttachments.fileName("IMG_0001.HEIC", ext: "jpg"), PhoneAttachments.fileName("../../etc/\u{202E}gpj.txt"), PhoneAttachments.fileName("", ext: "png")]
+    result["icons"] = [("image", "image/png", "a.png"), ("text", "text/plain", "a.md"), ("file", "application/pdf", "a.pdf"), ("file", "video/quicktime", "a.mov"),
+        ("file", "audio/mpeg", "a.mp3"), ("file", "application/zip", "a.zip"), ("file", "application/octet-stream", "a.bin"),
+        ("file", "application/octet-stream", "b.key"), ("file", "application/octet-stream", "c.mp4")]
+        .map { PhoneAttachments.icon(kind: $0.0, mime: $0.1, name: $0.2).rawValue }
+    // Text sent where the Host takes files is a file: the built-in Harness no longer refuses text past 256 KB.
+    result["takes"] = [PhoneAttachments.takes(.text, size: 300_000, both), PhoneAttachments.takes(.text, size: 300_000, files), PhoneAttachments.takes(.file, size: 1, both),
+        PhoneAttachments.takes(.file, size: 1, files)]
 
     // The tray: eight at most, refusals by class, what sends, release and clearing.
     let ref = { (id: String) in NativeJSON.object(["id": .string(id), "name": .string("a.txt"), "mime": .string("text/plain"), "kind": .string("text"),
         "size": .number(3), "sha256": .string(String(repeating: "a", count: 64))]) }
     var tray = PhoneAttachTray()
     var added = 0
-    for index in 0..<9 { if tray.add(PhoneAttachDraft(name: "\(index).txt", kind: .text, data: Data("abc".utf8))) { added += 1 } }
+    for index in 0..<9 { if tray.add(try fixtureDraft(name: "\(index).txt", kind: .text, data: Data("abc".utf8))) { added += 1 } }
     result["trayAdded"] = added
     result["trayNote"] = tray.note ?? ""
     let ids = tray.items.map(\.id)
@@ -126,7 +159,7 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     let blocked = tray.sendable(both)
     let removedId = tray.remove(ids[0]) ?? ""
     var released = PhoneAttachTray()
-    _ = released.add(PhoneAttachDraft(name: "r.txt", kind: .text, data: Data("r".utf8)))
+    _ = released.add(try fixtureDraft(name: "r.txt", kind: .text, data: Data("r".utf8)))
     _ = released.ready(released.items[0].id, ref: ref("rel0000000000000000000"))
     released.markReleased()
     let cleared = tray.clear()
@@ -138,74 +171,130 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         "badRef": PhoneAttachTray().items.isEmpty && !PhoneAttachments.validRef(.object(["id": .string("x")])),
     ]
 
-    // The header the Host reads, and the pending write a message with attachments is.
-    let draft = PhoneAttachDraft(name: "photo.jpg", kind: .image, data: Data(count: 10))
+    // The header the Host reads, the start of a chunked upload, and the pending write a message with attachments is.
+    let draft = try fixtureDraft(name: "photo.jpg", kind: .image, data: Data(count: 10))
     let header = try PhoneAttachments.header(draft, selection: PhoneAttachments.selection(harnessId: "fake", workspaceId: "default", model: nil), sessionId: "ses_1")
     let decoded = try NativeJSON.decode(LinkBytes.decode64(header, maximum: 4096))
     result["header"] = [
         "keys": decoded.object.keys.sorted(), "requestId": decoded["requestId"].string == draft.requestId, "size": decoded["size"].integer ?? 0,
         "selection": decoded["selection"].object.keys.sorted(), "mode": decoded["selection"]["mode"].string ?? "",
     ]
+    // Only a re-encoded picture is declared one; text and every other file are declared files, for the Host to sniff.
+    let declared = try [draft, try fixtureDraft(name: "a.md", kind: .text, data: Data("a".utf8)), try fixtureDraft(name: "a.pdf", kind: .file, data: Data("%PDF".utf8))]
+        .map { try NativeJSON.decode(PhoneAttachments.uploadStart($0, selection: .object([:]), sessionId: nil)) }
+    result["declared"] = declared.map { $0["kind"].string ?? "" }
+    result["declaredHash"] = declared[0]["sha256"].string == LinkBytes.hex(LinkBytes.hash(Data(count: 10)))
     let write = try NativePendingWrite(method: .post, path: "/link/api/tasks/ses_1/prompt", fields: ["prompt": .string("看图"), "attachmentIds": .array([.string("a"), .string("b")])])
     result["pendingCount"] = PhoneAttachments.count(write)
-    // Bytes leave memory once the Host keeps the file; an image keeps a small thumbnail. Unfinished uploads are named for abort.
+
+    // Staged on disk, not in memory: a random name in this App's temporary folder, excluded from backup, read back in
+    // bounded chunks, and gone when the Host keeps it, its row goes, the tray clears, or everything is purged.
+    let stageFolder = PhoneAttachStage.folder(temporary: fixtureTemporary)
+    func exists(_ file: PhoneStagedFile?) -> Bool { file.map { FileManager.default.fileExists(atPath: $0.url.path) } ?? false }
     let photoBytes = try PhoneImagePrep.prepare(data: try fixturePhoto(width: 800, height: 600), limit: PhoneAttachments.streamBytes).data
     var memory = PhoneAttachTray()
-    let photoRow = PhoneAttachDraft(name: "p.jpg", kind: .image, data: photoBytes), pendingRow = PhoneAttachDraft(name: "q.txt", kind: .text, data: Data("q".utf8))
+    let photoRow = try fixtureDraft(name: "p.jpg", kind: .image, data: photoBytes), pendingRow = try fixtureDraft(name: "q.txt", kind: .text, data: Data("q".utf8))
+    let clearedRow = try fixtureDraft(name: "c.bin", kind: .file, data: Data([0, 1, 2]))
+    let photoFile = photoRow.file, pendingFile = pendingRow.file
     _ = memory.add(photoRow); _ = memory.add(pendingRow)
     memory.started(photoRow.id, upload: String(repeating: "u", count: 22)); memory.started(pendingRow.id, upload: String(repeating: "v", count: 22))
     memory.started(pendingRow.id, upload: "not an id")
     let unfinishedBefore = memory.unfinishedUploads
     let before = memory.stagedBytes
+    let backup = (try? stageFolder.resourceValues(forKeys: [.isExcludedFromBackupKey]))?.isExcludedFromBackup == true
+    let chunk = try PhoneAttachStage.read(photoFile!, offset: 2, count: 5)
     _ = memory.ready(photoRow.id, ref: .object(["id": .string(String(repeating: "a", count: 22)), "name": .string("p.jpg"), "kind": .string("image"),
         "mime": .string("image/jpeg"), "size": .number(Double(photoBytes.count)), "sha256": .string(String(repeating: "0", count: 64))]))
     let kept = memory.items[0], afterReady = memory.unfinishedUploads.count
     let removed = memory.removeRow(pendingRow.id)
+    var clearing = PhoneAttachTray(); _ = clearing.add(clearedRow); clearing.clear()
+    let orphan = try PhoneAttachStage.write(Data("left".utf8), temporary: fixtureTemporary)
+    let mode = ((try? FileManager.default.attributesOfItem(atPath: orphan.url.path))?[.posixPermissions] as? NSNumber)?.intValue ?? 0
+    let purged = PhoneAttachStage.purge(temporary: fixtureTemporary)
+    result["stage"] = [
+        "folder": photoFile!.url.deletingLastPathComponent().lastPathComponent, "random": UUID(uuidString: photoFile!.url.lastPathComponent) != nil,
+        "backup": backup, "mode": String(mode, radix: 8),
+        "hash": photoFile!.sha256 == LinkBytes.hex(LinkBytes.hash(photoBytes)), "chunk": chunk == photoBytes.subdata(in: 2..<7),
+        "past": (try? PhoneAttachStage.read(photoFile!, offset: photoBytes.count - 1, count: 2)) == nil,
+        "readyGone": !exists(photoFile), "removedGone": !exists(pendingFile), "clearedGone": !exists(clearedRow.file),
+        "purged": purged > 0, "orphanGone": !exists(orphan),
+    ]
     result["memory"] = [
         "unfinishedBefore": unfinishedBefore.count,
-        "dropped": kept.data.isEmpty && kept.size == photoBytes.count && (kept.thumbnail?.count ?? 0) > 0 && kept.preview == kept.thumbnail,
-        "smaller": memory.stagedBytes < before / 4,
+        "dropped": kept.file == nil && kept.size == photoBytes.count && (kept.thumbnail?.count ?? 0) > 0,
+        "smaller": memory.stagedBytes < before,
         "unfinishedAfter": afterReady,
         "removedUpload": removed.upload == String(repeating: "v", count: 22) && removed.attachment == nil,
         "staged": [PhoneAttachments.admitStaged(staged: PhoneAttachments.stagedLimit - 10, adding: 11) ?? "ok",
-                   PhoneAttachments.admitStaged(staged: 0, adding: 5 * 1_048_576) ?? "ok"],
+                   PhoneAttachments.admitStaged(staged: 0, adding: 50 * 1_048_576) ?? "ok"],
     ]
     result["chips"] = PhoneAttachments.chips(.object(["attachments": .array([
         .object(["id": .string("img000000000000000000a"), "name": .string("shot.png"), "mime": .string("image/png"), "kind": .string("image"), "size": .number(204_800), "sha256": .string(String(repeating: "b", count: 64))]),
         .object(["id": .string("img000000000000000000b"), "name": .string("anim.gif"), "mime": .string("image/gif"), "kind": .string("image"), "size": .number(100), "sha256": .string(String(repeating: "c", count: 64))]),
+        .object(["id": .string("pdf000000000000000000c"), "name": .string("spec.pdf"), "mime": .string("application/pdf"), "kind": .string("file"), "size": .number(2_097_152), "sha256": .string(String(repeating: "d", count: 64))]),
         .object(["id": .string("bad"), "name": .string("x"), "kind": .string("text"), "size": .number(1), "sha256": .string("short")]),
-    ])])).map { "\($0.name)|\($0.image)|\($0.size)|\($0.opens)" }
+    ])])).map { "\($0.name)|\($0.image)|\($0.size)|\($0.opens)|\($0.icon.rawValue)" }
 
-    // The file and camera paths: pixels only, the picker's copy gone, nothing else written; oversized text is never read.
-    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("latch-attach-pick-" + UUID().uuidString)
+    // The file and camera paths: pixels only for pictures, any other file moved into the stage and read once by its
+    // content; the picker's copy is gone either way, and a file past the limit is never read.
+    let folder = fixtureTemporary.appendingPathComponent("pick-" + UUID().uuidString)
     let inbox = folder.appendingPathComponent("codes.latch.ios-Inbox")
     try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: folder) }
-    let photoCopy = inbox.appendingPathComponent("IMG_9001.JPG"), bigText = inbox.appendingPathComponent("big.log"), note = inbox.appendingPathComponent("note.md")
-    try fixturePhoto(width: 1200, height: 900).write(to: photoCopy)
-    try Data(repeating: 0x61, count: 300_000).write(to: bigText)
-    try Data("# 笔记\n".utf8).write(to: note)
-    let fromFile = PhoneAttachLoader.file(url: photoCopy, imageLimit: PhoneAttachments.streamBytes, textLimit: 262_144)
-    let fromBig = PhoneAttachLoader.file(url: bigText, imageLimit: PhoneAttachments.streamBytes, textLimit: 262_144)
-    let fromCamera = PhoneAttachLoader.camera(try fixturePhoto(width: 1600, height: 1200), limit: PhoneAttachments.streamBytes)
-    let leftAfterReads = try FileManager.default.contentsOfDirectory(atPath: inbox.path)
-    // A copy whose callback never came is purged at launch.
-    try Data("left".utf8).write(to: note.deletingLastPathComponent().appendingPathComponent("orphan.txt"))
-    let purged = PhoneAttachLoader.purgeInbox(temporary: folder)
-    result["loader"] = [
-        "file": fromFile.data.map(metadataKeys) ?? ["none"], "fileName": fromFile.name, "camera": fromCamera.data.map(metadataKeys) ?? ["none"],
-        "cameraName": fromCamera.name, "bigRead": fromBig.data != nil, "bigSize": fromBig.size, "left": leftAfterReads.sorted(), "purged": purged,
-        "afterPurge": (try? FileManager.default.contentsOfDirectory(atPath: inbox.path)) ?? ["?"],
+    var picks: [String: Data] = [
+        "IMG_9001.JPG": try fixturePhoto(width: 1200, height: 900), "big.log": Data(repeating: 0x61, count: 300_000), "note.md": Data("# 笔记\n".utf8),
+        "deck.pdf": Data("%PDF-1.7\n%\u{e2}\u{e3}\n1 0 obj\n".utf8), "page.html": Data("<!doctype html><p>你好</p>\n".utf8), "blob.bin": Data([0, 1, 2, 3, 0xff, 0xfe]),
+        "nul.txt": Data([0x61, 0x00, 0x62]), "latin.txt": Data([0xff, 0xfe, 0x41]), "icon.svg": Data(#"<svg xmlns="http://www.w3.org/2000/svg"/>"#.utf8),
+        "fake.png": Data("not a picture at all".utf8),
     ]
-    // Above 40 megapixels, as the Host refuses: said before any full decode.
+    // A three-byte character split across the first 1 MiB chunk: still text.
+    picks["split.txt"] = Data(repeating: 0x61, count: PhoneAttachStage.chunkBytes - 1) + Data("中文".utf8)
+    for (name, data) in picks { try data.write(to: inbox.appendingPathComponent(name)) }
+    func pick(_ name: String, largest: Int = 52_428_800) -> PhonePicked {
+        PhoneAttachLoader.file(url: inbox.appendingPathComponent(name), imageLimit: PhoneAttachments.streamBytes, largest: largest, temporary: fixtureTemporary)
+    }
+    let fromFile = pick("IMG_9001.JPG"), fromBig = pick("big.log", largest: 262_144)
+    var kinds: [String: String] = [:]
+    for name in ["note.md", "deck.pdf", "page.html", "blob.bin", "nul.txt", "latin.txt", "icon.svg", "fake.png", "split.txt"] {
+        let picked = pick(name)
+        kinds[name] = (picked.kind?.rawValue ?? "-") + (picked.file.map { $0.size == picks[name]!.count && $0.sha256 == LinkBytes.hex(LinkBytes.hash(picks[name]!)) ? "" : ":bad" } ?? ":none")
+    }
+    let fromCamera = PhoneAttachLoader.camera(try fixturePhoto(width: 1600, height: 1200), limit: PhoneAttachments.streamBytes, temporary: fixtureTemporary)
+    let fileMetadata = fromFile.file.flatMap { try? Data(contentsOf: $0.url) }.map(metadataKeys) ?? ["none"]
+    let cameraMetadata = fromCamera.file.flatMap { try? Data(contentsOf: $0.url) }.map(metadataKeys) ?? ["none"]
+    let leftAfterReads = try FileManager.default.contentsOfDirectory(atPath: inbox.path)
+    // 50 MB exactly is staged; a byte more is refused by its size and never read.
+    let edge = inbox.appendingPathComponent("edge.bin"), over = inbox.appendingPathComponent("over.bin")
+    for (url, size) in [(edge, 52_428_800), (over, 52_428_801)] {
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: url); try handle.truncate(atOffset: UInt64(size)); try handle.close()
+    }
+    let atEdge = pick("edge.bin"), pastEdge = pick("over.bin")
+    let boundary = [atEdge.file?.size ?? -1, pastEdge.file?.size ?? -1, pastEdge.size]
+    PhoneAttachStage.remove(atEdge.file)
+    // A copy whose callback never came, and every staged file, are purged at launch.
+    try Data("left".utf8).write(to: inbox.appendingPathComponent("orphan.txt"))
+    let stagedBefore = (try? FileManager.default.contentsOfDirectory(atPath: stageFolder.path).count) ?? 0
+    let purgedAll = PhoneAttachLoader.purgeInbox(temporary: folder) + PhoneAttachLoader.purgeInbox(temporary: fixtureTemporary)
+    result["loader"] = [
+        "file": fileMetadata, "fileName": fromFile.name, "fileKind": fromFile.kind?.rawValue ?? "-",
+        "thumbnail": (fromFile.thumbnail?.count ?? 0) > 0,
+        "camera": cameraMetadata, "cameraName": fromCamera.name,
+        "bigStaged": fromBig.file != nil, "bigKind": fromBig.kind?.rawValue ?? "-", "bigSize": fromBig.size, "kinds": kinds, "left": leftAfterReads.sorted(),
+        "boundary": boundary, "purged": purgedAll == stagedBefore + 1,
+        "afterPurge": ((try? FileManager.default.contentsOfDirectory(atPath: inbox.path)) ?? ["?"]) + ((try? FileManager.default.contentsOfDirectory(atPath: stageFolder.path)) ?? []),
+    ]
+    // Above 40 megapixels, as the Host refuses: said before any full decode, and never sent as the original instead.
     let huge = folder.appendingPathComponent("huge.png")
     if let context = CGContext(data: nil, width: 8000, height: 5100, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceGray(),
         bitmapInfo: CGImageAlphaInfo.none.rawValue), let image = context.makeImage(),
        let destination = CGImageDestinationCreateWithURL(huge as CFURL, UTType.png.identifier as CFString, 1, nil) {
         CGImageDestinationAddImage(destination, image, nil); _ = CGImageDestinationFinalize(destination)
     }
-    result["hugeImage"] = PhoneAttachLoader.image(url: huge, name: "huge.png", limit: PhoneAttachments.streamBytes).failure ?? ""
-
+    let hugeCopy = inbox.appendingPathComponent("huge.png")
+    try FileManager.default.copyItem(at: huge, to: hugeCopy)
+    let hugeFromFiles = pick("huge.png")
+    result["hugeImage"] = [PhoneAttachLoader.image(url: huge, name: "huge.png", limit: PhoneAttachments.streamBytes, temporary: fixtureTemporary).failure ?? "",
+        (hugeFromFiles.kind?.rawValue ?? "-") + ":" + (hugeFromFiles.file == nil ? "unstaged" : "staged") + ":" + (hugeFromFiles.failure ?? "")]
     // When a place's attachments are locked, and when closing it lets them go.
     let start = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["prompt": .string("x"), "attachmentIds": .array([.string("a")])])
     let topic = try NativePendingWrite(method: .post, path: "/link/api/tasks", fields: ["prompt": .string("x"), "customAgentId": .string("agt_1"), "attachmentIds": .array([.string("a")])])
@@ -228,7 +317,7 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     ]
     // A send goes only to the place it began in, and only with every row it waited on.
     var sendTray = PhoneAttachTray()
-    _ = sendTray.add(PhoneAttachDraft(name: "a.txt", kind: .text, data: Data("a".utf8)))
+    _ = sendTray.add(try fixtureDraft(name: "a.txt", kind: .text, data: Data("a".utf8)))
     _ = sendTray.ready(sendTray.items[0].id, ref: ref("snd0000000000000000000"))
     let plan = PhoneAttachSend(target: "ses_1", tray: sendTray)
     let moved = plan.finish(current: "ses_2", tray: sendTray, caps: both)
@@ -267,7 +356,7 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
     }
     guard approved else { throw NativeFailure.unavailable }
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("latch-swift-attach-" + UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: directory) }
+    defer { try? FileManager.default.removeItem(at: directory); try? FileManager.default.removeItem(at: fixtureTemporary) }
     let vault = try EncryptedVault(directory: directory, key: LinkBytes.random(32), binding: invitation.hostId)
     let device = try await pairing.complete(on: temporary) { device in try await vault.storeMetadata(JSONEncoder().encode(device), name: "device") }
     await temporary.close()
@@ -298,7 +387,7 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         stage = "window"
         var closed = 0
         do { _ = try await workspace.attachmentCapabilities(selection: selection, sessionId: nil) } catch { if (error as? NativeFailure) == .expired { closed += 1 } }
-        do { _ = try await workspace.uploadAttachment(PhoneAttachDraft(name: "a.txt", kind: .text, data: Data("a".utf8)), selection: selection, sessionId: nil) }
+        do { _ = try await workspace.uploadAttachment(try fixtureDraft(name: "a.txt", kind: .text, data: Data("a".utf8)), selection: selection, sessionId: nil) }
         catch { if (error as? NativeFailure) == .expired { closed += 1 } }
         result["window"] = closed == 2
         _ = try await workspace.verify()
@@ -318,19 +407,19 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         // A photo re-encoded, uploaded in chunks; the same request again is the same attachment, as a retry after an unknown answer.
         stage = "upload"
         let prepared = try PhoneImagePrep.prepare(data: try fixturePhoto(width: 2400, height: 1600), limit: PhoneAttachments.streamBytes)
-        let photo = PhoneAttachDraft(name: PhoneAttachments.fileName("IMG_0001.HEIC", ext: prepared.ext), kind: .image, data: prepared.data)
+        let photo = try fixtureDraft(name: PhoneAttachments.fileName("IMG_0001.HEIC", ext: prepared.ext), kind: .image, data: prepared.data)
         let progress = FixtureTransfer()
         let ref = try await workspace.uploadAttachment(photo, selection: selection, sessionId: first) { done, total in progress.progress(done, total) }
         _ = try progress.result()
         let again = try await workspace.uploadAttachment(photo, selection: selection, sessionId: first)
         result["sameRequest"] = ref["id"] == again["id"] && ref["kind"].string == "image" && ref["mime"].string == "image/jpeg"
-        let note = PhoneAttachDraft(name: "notes.md", kind: .text, data: Data("# 笔记\n只有文字。\n".utf8))
+        let note = try fixtureDraft(name: "notes.md", kind: .text, data: Data("# 笔记\n只有文字。\n".utf8))
         let noteRef = try await workspace.uploadAttachment(note, selection: selection, sessionId: first)
 
         // Cancelled after its first chunk: no chunk after that, and the Host kept nothing of it, so the same request with
         // other bytes is a fresh upload rather than a conflict.
         stage = "cancel-mid"
-        let mid = PhoneAttachDraft(name: "mid.txt", kind: .text, data: Data(repeating: 0x62, count: PhoneAttachments.streamBytes))
+        let mid = try fixtureDraft(name: "mid.txt", kind: .text, data: Data(repeating: 0x62, count: PhoneAttachments.streamBytes))
         let chunks = FixtureChunks()
         let midTask = Task { try await workspace.uploadAttachment(mid, selection: selection, sessionId: first) { done, _ in chunks.saw(done) } }
         chunks.onFirst = { midTask.cancel() }
@@ -339,40 +428,48 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         result["cancelMid"] = ["stopped": midStopped, "afterCancel": chunks.afterCancel, "partial": chunks.last < PhoneAttachments.streamBytes]
         // Cancel closes the stream and waits; the next upload goes through.
         stage = "cancel"
-        let big = PhoneAttachDraft(name: "big.txt", kind: .text, data: Data(repeating: 0x61, count: PhoneAttachments.streamBytes))
+        let big = try fixtureDraft(name: "big.txt", kind: .text, data: Data(repeating: 0x61, count: PhoneAttachments.streamBytes))
         let cancelled = Task { try await workspace.uploadAttachment(big, selection: selection, sessionId: first) }
         cancelled.cancel()
         var stopped = false
         do { _ = try await cancelled.value } catch { stopped = error is CancellationError }
-        let after = try await workspace.uploadAttachment(PhoneAttachDraft(name: "after.txt", kind: .text, data: Data("after".utf8)), selection: selection, sessionId: first)
+        let after = try await workspace.uploadAttachment(try fixtureDraft(name: "after.txt", kind: .text, data: Data("after".utf8)), selection: selection, sessionId: first)
         result["cancel"] = stopped && PhoneAttachments.validRef(after)
         try await workspace.removeAttachment(after["id"].string ?? "")
 
         // More than any Host takes is refused here, before anything is sent.
         var oversize = false
-        do { _ = try await workspace.uploadAttachment(PhoneAttachDraft(name: "over.txt", kind: .text, data: Data(count: PhoneAttachments.largestFile + 1)), selection: selection, sessionId: first) }
+        do { _ = try await workspace.uploadAttachment(try fixtureDraft(name: "over.txt", kind: .text, data: Data(count: PhoneAttachments.largestFile + 1)), selection: selection, sessionId: first) }
         catch { oversize = (error as? NativeFailure) == .invalidRecord }
         result["oversize"] = oversize
 
         // Over one stream: parts of 1 MiB, one stream each; the Host assembles the file and checks its hash.
         stage = "chunked"
         func letters(_ count: Int, shift: Int) -> Data { Data((0..<count).map { $0 % 64 == 63 ? 0x0a : UInt8(97 + ($0 + shift) % 26) }) }
-        let long = PhoneAttachDraft(name: "long.log", kind: .text, data: letters(3 * PhoneAttachments.streamBytes, shift: 0))
+        let longData = letters(3 * PhoneAttachments.streamBytes, shift: 0)
+        let long = try fixtureDraft(name: "long.log", kind: .text, data: longData)
         let longProgress = FixtureTransfer()
         let longRef = try await workspace.uploadAttachment(long, selection: selection, sessionId: first) { done, total in longProgress.progress(done, total) }
         _ = try longProgress.result()
         // The same request again is answered by the Host without a part being sent.
         let resent = FixtureCross(threshold: 0)
         let longAgain = try await workspace.uploadAttachment(long, selection: selection, sessionId: first) { done, _ in resent.saw(done) }
+        // Any file goes where the Host takes files: a PDF as its own bytes, and text past 256 KB, both declared files.
+        stage = "files"
+        let pdfData = Data("%PDF-1.7\n%\u{e2}\u{e3}\n1 0 obj\n".utf8), bigText = letters(300_000, shift: 11)
+        let pdfRef = try await workspace.uploadAttachment(try fixtureDraft(name: "deck.pdf", kind: .file, data: pdfData), selection: selection, sessionId: first)
+        let bigTextRef = try await workspace.uploadAttachment(try fixtureDraft(name: "trace.log", kind: .text, data: bigText), selection: selection, sessionId: first)
+        result["files"] = [pdfRef["kind"].string ?? "", pdfRef["mime"].string ?? "", bigTextRef["kind"].string ?? "", String(bigTextRef["size"].integer ?? 0)]
+        for ref in [pdfRef, bigTextRef] { try await workspace.removeAttachment(ref["id"].string ?? "") }
         result["chunked"] = [
             "kept": longRef["kind"].string == "text" && longRef["size"].integer == UInt64(long.size)
-                && longRef["sha256"].string == LinkBytes.hex(LinkBytes.hash(long.data)),
+                && longRef["sha256"].string == LinkBytes.hex(LinkBytes.hash(longData)),
             "again": longAgain["id"] == longRef["id"] && resent.first == nil,
         ]
         // A large image, re-encoded under the Host's image limit rather than one stream's.
         stage = "large-image"
         let large = try PhoneImagePrep.prepare(data: try fixturePhoto(width: 2400, height: 1600, alpha: true), limit: PhoneAttachments.limit(.image, caps))
-        let largeRef = try await workspace.uploadAttachment(PhoneAttachDraft(name: "large.png", kind: .image, data: large.data), selection: selection, sessionId: first)
+        let largeRef = try await workspace.uploadAttachment(try fixtureDraft(name: "large.png", kind: .image, data: large.data), selection: selection, sessionId: first)
         result["largeImage"] = large.data.count > PhoneAttachments.streamBytes && largeRef["mime"].string == "image/png"
             && largeRef["size"].integer == UInt64(large.data.count) && largeRef["width"].integer == UInt64(large.width)
 
@@ -380,7 +477,8 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         stage = "resume"
         let opened = try await NativeHTTPConnection.open(host: "127.0.0.1", port: port, rootSpki: device.rootSpki, knockKey: device.knockKey, identity: keys.identity())
         _ = try await workspace.install { opened }
-        let resumable = PhoneAttachDraft(name: "resume.log", kind: .text, data: letters(3 * PhoneAttachments.streamBytes, shift: 7))
+        let resumableData = letters(3 * PhoneAttachments.streamBytes, shift: 7)
+        let resumable = try fixtureDraft(name: "resume.log", kind: .text, data: resumableData)
         let drop = FixtureCross(threshold: PhoneAttachments.streamBytes + 65_536)
         drop.onCross = { Task { await opened.close() } }
         var dropped = false
@@ -395,12 +493,12 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
             "unknown": dropped,
             // The first part is not sent again.
             "fromPart": (resumed.first ?? 0) > PhoneAttachments.streamBytes,
-            "kept": resumedRef["sha256"].string == LinkBytes.hex(LinkBytes.hash(resumable.data)),
+            "kept": resumedRef["sha256"].string == LinkBytes.hex(LinkBytes.hash(resumableData)),
         ]
 
         // Cancel in the second part closes its stream, waits, and aborts the upload on the Host: the same request starts over.
         stage = "cancel-parts"
-        let stopping = PhoneAttachDraft(name: "stop.log", kind: .text, data: letters(2 * PhoneAttachments.streamBytes + 10, shift: 13))
+        let stopping = try fixtureDraft(name: "stop.log", kind: .text, data: letters(2 * PhoneAttachments.streamBytes + 10, shift: 13))
         let stop = FixtureCross(threshold: PhoneAttachments.streamBytes + 65_536)
         let stopTask = Task { try await workspace.uploadAttachment(stopping, selection: selection, sessionId: first) { done, _ in stop.saw(done) } }
         stop.onCross = { stopTask.cancel() }
@@ -413,7 +511,7 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
 
         // A secret to confirm leaves the parts on the Host: removing that row aborts its upload there.
         stage = "secret-remove"
-        let secret = PhoneAttachDraft(name: ".env", kind: .text, data: letters(PhoneAttachments.streamBytes + 100, shift: 3))
+        let secret = try fixtureDraft(name: ".env", kind: .text, data: letters(PhoneAttachments.streamBytes + 100, shift: 3))
         let named = FixtureNamed()
         var secretCode = ""
         do { _ = try await workspace.uploadAttachment(secret, selection: selection, sessionId: first, started: { named.set($0) }) }
@@ -421,7 +519,7 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         if let upload = named.value { await workspace.abortAttachmentUpload(upload) }
         // Cancelled before its start is answered: the start still lands, and the upload it began is aborted.
         stage = "cancel-begin"
-        let beforeBegin = PhoneAttachDraft(name: "early.log", kind: .text, data: letters(PhoneAttachments.streamBytes + 100, shift: 5))
+        let beforeBegin = try fixtureDraft(name: "early.log", kind: .text, data: letters(PhoneAttachments.streamBytes + 100, shift: 5))
         let earlyNamed = FixtureNamed()
         let earlyTask = Task { try await workspace.uploadAttachment(beforeBegin, selection: selection, sessionId: first, started: { earlyNamed.set($0) }) }
         earlyTask.cancel()
@@ -455,9 +553,9 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         catch let error as NativeHostRefusal { result["plainRefusal"] = error.code }
         result["plainTaken"] = plainTaken
         // A refusal the Host gives before the body is in is its answer, not an unknown result, however many chunks were left:
-        // a file over the 10 MB a phone may send is refused at the start, as permanent.
+        // a picture declared past the 5 MB a model is shown is refused at the start, as permanent.
         var early = ""
-        do { _ = try await workspace.uploadAttachment(PhoneAttachDraft(name: "long.txt", kind: .text, data: Data(repeating: 0x63, count: 10 * 1_048_576 + 1)),
+        do { _ = try await workspace.uploadAttachment(try fixtureDraft(name: "large.jpg", kind: .image, data: Data(repeating: 0x63, count: 5 * 1_048_576 + 1)),
                 selection: plainSelection, sessionId: plain) }
         catch let error as NativeHostRefusal { early = error.code + ":" + (PhoneAttachments.classify(error.code) == .refused ? "refused" : "other") }
         catch { early = String(describing: error) }
@@ -465,7 +563,7 @@ func phoneAttachmentsFixture(_ input: [String: Any]) throws -> [String: Any] {
 
         // A queued message cannot carry them: the Host's own refusal, said before sending on the phone.
         stage = "queue"
-        let extra = try await workspace.uploadAttachment(PhoneAttachDraft(name: "q.txt", kind: .text, data: Data("q".utf8)), selection: selection, sessionId: first)
+        let extra = try await workspace.uploadAttachment(try fixtureDraft(name: "q.txt", kind: .text, data: Data("q".utf8)), selection: selection, sessionId: first)
         do {
             _ = try await workspace.submit(NativePendingWrite(method: .post, path: "/link/api/tasks/" + first + "/prompt",
                 fields: ["prompt": .string("later"), "queue": .bool(true), "attachmentIds": .array([extra["id"]])]), explain: true)

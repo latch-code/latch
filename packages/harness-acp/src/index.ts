@@ -1,6 +1,7 @@
 import { basename, isAbsolute } from 'node:path'
 import {
   AGENT_PRESETS,
+  ATTACHMENT_FILE_BYTES,
   extensionProfile,
   isHarnessMark,
   isRetiredAgentPreset,
@@ -233,7 +234,7 @@ function permissionDeclaration(profile: HarnessProfile | undefined): Pick<Harnes
 
 const ACP_CAPABILITIES = {
   modes: ['agent'],
-  attachments: { images: true, text: true, textBytes: 25 * 1024 * 1024 },
+  attachments: { images: true, text: true, textBytes: ATTACHMENT_FILE_BYTES },
 } satisfies HarnessDriver['capabilities']
 
 /**

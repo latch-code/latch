@@ -3437,8 +3437,14 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
   })
   it('derives the composer’s attachment decisions: reasons, limits, refusal classes, the tray and metadata-free images', async () => {
     const result = await invoke({ operation: 'phoneAttachments' })
-    // The Host's own limits per kind: a file over one stream goes in parts.
-    expect(result.limits).toEqual(['图片 5 MB 内 · 文字文件 256 KB 内 · 每条 8 个', '文字文件 10 MB 内 · 每条 8 个', ''])
+    // The Host's own limits, said with a refusal: per kind for a plugin Harness, one file limit where it takes every file.
+    expect(result.limits).toEqual([
+      '图片 5 MB 内 · 文字文件 256 KB 内 · 每条 8 个',
+      '文字文件 25 MB 内 · 每条 8 个',
+      '',
+      '每个文件 50 MB 内 · 每条 8 个',
+    ])
+    expect(result.clamped).toEqual([50 * 1024 * 1024, 50 * 1024 * 1024])
     expect(result.unavailable).toEqual([
       '',
       '这个 Harness 不接收图片和文件。',
@@ -3448,11 +3454,12 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     ])
     expect(result.revision).toEqual(['ready:-', 'ready:'])
     expect(result.malformedCaps).toBe(true)
-    expect(result.kinds).toEqual(['image', 'image', 'text', 'text', 'text', '-', '-', '-'])
+    // By type before the content is read: SVG and HTML are text, a PDF, a Word file, a video and an archive are files.
+    expect(result.kinds).toEqual(['image', 'image', 'text', 'text', 'text', 'file', 'text', 'file', 'text', 'file', 'file'])
     expect(result.admit).toEqual([
       'ok',
       '「big.log」超过 256 KB，没有添加。可以添加：图片 5 MB 内 · 文字文件 256 KB 内 · 每条 8 个。',
-      '「huge.log」超过 10 MB，没有添加。可以添加：文字文件 10 MB 内 · 每条 8 个。',
+      '「huge.log」超过 25 MB，没有添加。可以添加：文字文件 25 MB 内 · 每条 8 个。',
       // An original larger than the image limit is re-encoded first; only one past what the phone reads is refused.
       'ok',
       '「IMG_2.heic」超过 50 MB，没有添加。可以添加：图片 5 MB 内 · 文字文件 256 KB 内 · 每条 8 个。',
@@ -3461,13 +3468,23 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       '空文件不能添加。',
       '每条消息最多添加 8 个附件。',
       '这个 Harness 不接收图片和文件。',
+      '没能读取「bundle.app」，没有添加。',
     ])
-    expect(result.admitBytes).toEqual([
-      '「nul.txt」不是 UTF-8 文字文件，没有添加。',
-      '「latin.txt」不是 UTF-8 文字文件，没有添加。',
+    // Where the Host takes every file: any type, text up to the file limit rather than 256 KB, and 50 MB exactly.
+    expect(result.admitFiles).toEqual([
+      'ok',
+      'ok',
+      'ok',
+      '「clip.mov」超过 50 MB，没有添加。可以添加：每个文件 50 MB 内 · 每条 8 个。',
+      '「dump.log」超过 50 MB，没有添加。可以添加：每个文件 50 MB 内 · 每条 8 个。',
+    ])
+    expect(result.admitSize).toEqual([
       'ok',
       '「big.jpg」超过 5 MB，没有添加。可以添加：图片 5 MB 内 · 文字文件 256 KB 内 · 每条 8 个。',
+      'ok',
     ])
+    expect(result.takes).toEqual([false, true, false, true])
+    expect(result.icons).toEqual(['image', 'text', 'pdf', 'video', 'audio', 'archive', 'document', 'document', 'video'])
     expect(result.classes).toEqual(['refused', 'refused', 'refused', 'retry', 'released', 'confirm', 'retry'])
     expect(result.heldBack).toEqual(['排队的消息不能带附件，本轮结束后再发送。', '追加的消息不能带附件，本轮结束后再发送。', '', ''])
     // A pick that yields nothing always says why; only a cancel is silent.
@@ -3477,19 +3494,36 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       'none',
     ])
     expect(result.names).toEqual(['IMG_0001.jpg', 'gpj.txt', '图片.png'])
-    // The file and camera paths keep pixels only; the picker's copy is gone after one read; nothing else is written.
+    // Pictures keep pixels only; any other file is staged and known by its content; the picker's copy is gone after one
+    // read; a file past the limit is not read; a launch purges what a lost picker or a staged row left.
     expect(result.loader).toEqual({
       file: [],
       fileName: 'IMG_9001.jpg',
+      fileKind: 'image',
+      thumbnail: true,
       camera: [],
       cameraName: '照片.jpg',
-      bigRead: false,
+      bigStaged: false,
+      bigKind: 'text',
       bigSize: 300000,
-      left: ['note.md'],
-      purged: 2,
+      kinds: {
+        'blob.bin': 'file',
+        'deck.pdf': 'file',
+        'fake.png': 'file',
+        'icon.svg': 'text',
+        'latin.txt': 'file',
+        'note.md': 'text',
+        'nul.txt': 'file',
+        'page.html': 'text',
+        'split.txt': 'text',
+      },
+      left: [],
+      boundary: [50 * 1024 * 1024, -1, 50 * 1024 * 1024 + 1],
+      purged: true,
       afterPurge: [],
     })
-    expect(result.hugeImage).toBe('图片超过 4000 万像素，没有添加。')
+    // Past 40 megapixels is refused from 照片 and from 文件 alike, never sent as the original with its metadata.
+    expect(result.hugeImage).toEqual(['图片超过 4000 万像素，没有添加。', 'image:unstaged:图片超过 4000 万像素，没有添加。'])
     expect(result.keys).toEqual(['~new', '~topic:agt_1', 'ses_1'])
     expect(result.locked).toEqual([true, false, true, false, true])
     // Closing the sheet lets go only when nothing is starting, opening, covering it or unconfirmed for it.
@@ -3522,17 +3556,36 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       selection: ['harnessId', 'mode', 'workspaceId'],
       mode: 'agent',
     })
+    // Only a re-encoded picture is declared one; the Host sniffs text and every other file.
+    expect(result.declared).toEqual(['image', 'file', 'file'])
+    expect(result.declaredHash).toBe(true)
     expect(result.pendingCount).toBe(2)
+    // Bytes wait in a private staged file, not in memory, and go with the Host's keeping, the row, the tray or a purge.
+    expect(result.stage).toEqual({
+      folder: 'latch-attachments',
+      random: true,
+      backup: true,
+      mode: '600',
+      hash: true,
+      chunk: true,
+      past: true,
+      readyGone: true,
+      removedGone: true,
+      clearedGone: true,
+      purged: true,
+      orphanGone: true,
+    })
     expect(result.memory).toEqual({
       unfinishedBefore: 2,
       dropped: true,
       smaller: true,
       unfinishedAfter: 1,
       removedUpload: true,
-      staged: ['等待上传的附件已占用 48 MB，请先发送或移除一些附件。', 'ok'],
+      staged: ['等待上传的附件已占用 512 MB，请先发送或移除一些附件。', 'ok'],
     })
-    // A GIF is listed but not previewed: Quick Look stays with text and PNG/JPEG; a malformed reference is left out.
-    expect(result.chips).toEqual(['shot.png|true|200 KB|true', 'anim.gif|true|1 KB|false'])
+    // A GIF is listed but not previewed: Quick Look stays with text and PNG/JPEG; a PDF is listed by its type and name;
+    // a malformed reference is left out.
+    expect(result.chips).toEqual(['shot.png|true|200 KB|true|image', 'anim.gif|true|1 KB|false|image', 'spec.pdf|false|2 MB|false|pdf'])
     expect(result.image).toEqual({
       sourceMetadata: ['gps', 'make', 'comment'],
       metadata: [],
@@ -3565,7 +3618,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         // Before the agent first started, the Host takes every file by its path: nothing to explain.
         freshReason: '',
         reported: 'ready:it',
-        caps: '图片 5 MB 内 · 文字文件 10 MB 内 · 每条 8 个',
+        caps: '每个文件 50 MB 内 · 每条 8 个',
         sameRequest: true,
         cancel: true,
         oversize: true,
@@ -3580,7 +3633,9 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
         plainReason: '',
         plainOffers: true,
         plainTaken: true,
-        earlyRefusal: 'attachment-too-large:refused',
+        earlyRefusal: 'attachment-image-unsupported:refused',
+        // A PDF as its own bytes, and text past 256 KB by its path: both declared files, kept as what they are.
+        files: ['file', 'application/pdf', 'text', '300000'],
         cancelMid: { stopped: true, afterCancel: 0, partial: true },
         queue: 'queue-attachments-unsupported',
       })

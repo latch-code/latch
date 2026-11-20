@@ -601,14 +601,15 @@ public actor NativeWorkspace {
     /**
      * One attachment's bytes, one at a time. The Host keeps an upload by device and requestId, so a retry of the same
      * bytes after an unknown answer gets the same attachment; nothing here retries by itself. A refusal comes back as the
-     * Host's own code and words. A file larger than one stream goes in parts (`uploadInParts`).
+     * Host's own code and words. A file larger than one stream goes in parts (`uploadInParts`). The bytes are read from
+     * the row's staged file, at most one stream's worth at a time.
      */
     public func uploadAttachment(_ draft: PhoneAttachDraft, selection: NativeJSON, sessionId: String?,
         progress: (@Sendable (Int, Int) -> Void)? = nil, started: (@Sendable (String) -> Void)? = nil) async throws -> NativeJSON {
         guard LinkBytes.matches(draft.requestId, "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"),
               (1...PhoneAttachments.largestFile).contains(draft.size) else { throw NativeFailure.invalidRecord }
         if let sessionId { guard LinkBytes.matches(sessionId, "[A-Za-z0-9_-]{1,160}") else { throw NativeFailure.invalidRecord } }
-        guard draft.data.count == draft.size else { throw NativeFailure.invalidRecord }
+        guard let file = draft.file, file.size == draft.size else { throw NativeFailure.invalidRecord }
         if draft.size > PhoneAttachments.streamBytes {
             return try await uploadInParts(draft, selection: selection, sessionId: sessionId, progress: progress, started: started)
         }
@@ -617,7 +618,8 @@ public actor NativeWorkspace {
         guard !uploading else { throw NativeFailure.busy }
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
         uploading = true; defer { uploading = false }
-        let response = try await connection.upload(metadata: header, body: draft.data, lease: lease, timeoutSeconds: 60, progress: progress)
+        let body = try PhoneAttachStage.read(file, offset: 0, count: draft.size)
+        let response = try await connection.upload(metadata: header, body: body, lease: lease, timeoutSeconds: 60, progress: progress)
         // A path replacement leaves this upload unknown; the same requestId tells the Host it is the same one.
         guard epoch == current else { throw NativeFailure.resultUnknown }
         if response.status == 201 {
@@ -639,6 +641,7 @@ public actor NativeWorkspace {
     private func uploadInParts(_ draft: PhoneAttachDraft, selection: NativeJSON, sessionId: String?,
         progress: (@Sendable (Int, Int) -> Void)?, started report: (@Sendable (String) -> Void)?) async throws -> NativeJSON {
         let start = try PhoneAttachments.uploadStart(draft, selection: selection, sessionId: sessionId)
+        guard let file = draft.file else { throw NativeFailure.invalidRecord }
         let (connection, current) = try transport()
         guard !uploading else { throw NativeFailure.busy }
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
@@ -679,7 +682,7 @@ public actor NativeWorkspace {
                         throw await uploadFailure(done, lease: lease)
                     }
                     let offset = next * PhoneAttachments.streamBytes, end = min(offset + PhoneAttachments.streamBytes, draft.size)
-                    let body = Data(draft.data[draft.data.startIndex + offset..<draft.data.startIndex + end])
+                    let body = try PhoneAttachStage.read(file, offset: offset, count: end - offset)
                     let total = draft.size
                     let response = try await connection.upload(metadata: nil, part: base + "/parts/\(next)", body: body, lease: lease, timeoutSeconds: 60) { done, _ in
                         progress?(offset + done, total)

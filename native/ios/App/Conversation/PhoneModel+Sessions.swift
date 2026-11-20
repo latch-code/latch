@@ -209,7 +209,7 @@ extension PhoneModel {
         pending.removeAll { $0.requestId == request.requestId }
         // Its uploads stay held for that request on the Host (设置 › 设备 releases them); they cannot go with another.
         if PhoneAttachments.count(request) > 0, let key = Self.trayKey(request) {
-            attachTrays[key] = nil
+            attachTrays[key]?.clear(); attachTrays[key] = nil
             if !delivered { attachTrays[key, default: PhoneAttachTray()].note = "附件随这次提交放下了，需要时重新添加" }
         }
         // Delivered, it took its 清空上下文 with it, as an answered send does.

@@ -16,7 +16,7 @@ export const ATTACHMENT_UPLOAD_TTL = 60 * 60_000
 /**
  * Unfinished uploads a device may hold: a whole message's attachments (8), so a person can stage one even with a lost
  * upload left over. The Host holds at most 64. Their declared bytes are held from the start against the same quota as
- * drafts (256 MiB per device, 1 GiB for the Host), so parts on disk stay within it.
+ * drafts (512 MiB per device, 2 GiB for the Host), so parts on disk stay within it.
  */
 export const ATTACHMENT_UPLOADS_PER_DEVICE = 8
 const ATTACHMENT_UPLOADS_PER_HOST = 64
@@ -424,12 +424,13 @@ export class AttachmentUploads {
           name: upload.name,
           size: upload.size,
           sha256: upload.sha256,
-          remote: upload.remote,
           file,
           ...(input.secretAcknowledged ? { secretAcknowledged: true } : {}),
           recheck: input.recheck,
           accept: async ref => {
-            if (ref.kind !== upload.kind) throw new AppError(415, 'attachment-invalid', '附件内容与开始上传时声明的类型不符。')
+            // A declared `file` is whatever its content is; a declared picture or text must be that.
+            if (upload.kind !== 'file' && ref.kind !== upload.kind)
+              throw new AppError(415, 'attachment-invalid', '附件内容与开始上传时声明的类型不符。')
             capability = true
             await input.accept(ref, upload.context)
             capability = false

@@ -1,3 +1,5 @@
+/** The most one attachment may hold, on every entrance; images are held to their own 5 MiB as pictures. */
+export const ATTACHMENT_FILE_BYTES = 50 * 1024 * 1024
 /** What a picture a model can see is encoded as. */
 export const ATTACHMENT_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const
 /**
@@ -103,7 +105,7 @@ export function isAttachmentRef(value: unknown): value is AttachmentRef {
     && /^[a-f0-9]{64}$/u.test(item.sha256)
     && Number.isSafeInteger(item.size)
     && Number(item.size) > 0
-    && Number(item.size) <= 25 * 1024 * 1024
+    && Number(item.size) <= ATTACHMENT_FILE_BYTES
     && ((item.kind === 'text' && item.mime === 'text/plain')
       || (item.kind === 'image' && (ATTACHMENT_IMAGE_MIMES as readonly string[]).includes(String(item.mime)))
       || (item.kind === 'file' && (ATTACHMENT_FILE_MIMES as readonly string[]).includes(String(item.mime))))

@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import type { AttachmentRef, AttachmentUploadView } from '@latch/protocol'
-import { AppError } from '@latch/sdk'
+import { AppError, type HarnessPlugin } from '@latch/sdk'
+import { createRuntime } from '@latch/core'
 import { writeFileAtomic } from '@latch/core/node-kit'
 import { AttachmentStore, ATTACHMENT_DEVICE_BYTES } from '../src/attachments.ts'
 import {
@@ -136,8 +137,8 @@ describe('chunked attachment uploads', () => {
   }, 60_000)
   it('refuses a size or hash mismatch and runs the same content checks on completion', async () => {
     const { phone } = await setup()
-    // Limits at the start: the remote file cap, the image cap, an unknown kind.
-    expect(await (await begin(phone, text(10), { size: 10 * MiB + 1 })).json()).toMatchObject({ error: 'attachment-too-large' })
+    // Limits at the start: the file cap, the image cap, an unknown kind.
+    expect(await (await begin(phone, text(10), { size: 50 * MiB + 1 })).json()).toMatchObject({ error: 'attachment-too-large' })
     expect(await (await begin(phone, text(10), { kind: 'image', size: 5 * MiB + 1 })).json()).toMatchObject({
       error: 'attachment-image-unsupported',
     })
@@ -173,6 +174,56 @@ describe('chunked attachment uploads', () => {
     expect(kept.status).toBe(201)
     const image = await send(phone, png, { name: 'look.png', kind: 'image' })
     expect(await (await complete(phone, image.id)).json()).toMatchObject({ attachment: { kind: 'image', width: 1, height: 1 } })
+  }, 60_000)
+  it('takes whatever a declared file sniffs as, by that kind, and holds every entrance to 50 MiB', async () => {
+    const { phone } = await setup()
+    // Declared `file`: text, a picture and bytes each come out as what their content is.
+    for (const [bytes, name, kind, mime] of [
+      [Buffer.from('# 笔记\n'), 'notes.md', 'text', 'text/plain'],
+      [png, 'shot.png', 'image', 'image/png'],
+      [Buffer.from([0, 1, 2, 3, 0xff]), 'blob.bin', 'file', 'application/octet-stream'],
+    ] as const) {
+      const upload = await send(phone, bytes, { name, kind: 'file' })
+      expect(await (await complete(phone, upload.id)).json()).toMatchObject({ attachment: { kind, mime, name } })
+    }
+    // A declared picture or text is still held to that.
+    const declaredText = await send(phone, Buffer.from([0, 1, 2]), { name: 'x.txt', kind: 'text' })
+    expect(await (await complete(phone, declaredText.id)).json()).toMatchObject({ error: 'attachment-invalid' })
+    // The phone's limit and the desktop's are one: 50 MiB starts, a byte more does not.
+    const room = await begin(phone, text(10), { size: 50 * MiB })
+    expect(room.status).toBe(201)
+    const { upload: large } = (await room.json()) as { upload: AttachmentUploadView }
+    expect(large.parts).toBe(50)
+    expect(await (await begin(phone, text(10), { size: 50 * MiB + 1 })).json()).toMatchObject({ error: 'attachment-too-large' })
+    expect((await phone.request(`attachments/uploads/${large.id}`, { method: 'DELETE' })).status).toBe(200)
+  }, 60_000)
+  it('checks a declared file against a Harness without files by its sniffed kind, at completion', async () => {
+    const plugin: HarnessPlugin = {
+      id: 'text-only',
+      name: 'text-only',
+      version: '1',
+      description: '',
+      activate: ctx =>
+        ctx.registerHarness({
+          id: 'text-only',
+          name: 'text-only',
+          version: '1',
+          capabilities: { models: { owner: 'harness' }, modes: ['agent'], attachments: { text: true, textBytes: 1024 } },
+          create: options => createRuntime(options),
+        }),
+    }
+    const host = await startTestHost({ plugins: [plugin] })
+    hosts.push(host)
+    const phone = await host.enroll({ scopes: ['view', 'run'] })
+    const only = { selection: { harnessId: 'text-only' }, kind: 'file' }
+    const small = await send(phone, Buffer.from('short note\n'), { ...only, name: 'a.txt' })
+    expect(await (await complete(phone, small.id)).json()).toMatchObject({ attachment: { kind: 'text' } })
+    // Text past what it takes, and bytes it cannot take, are refused by what they are; the parts stay for a retry.
+    const long = await send(phone, text(2048), { ...only, name: 'b.txt' })
+    expect(await (await complete(phone, long.id)).json()).toMatchObject({ error: 'attachment-text-too-large' })
+    const binary = await send(phone, Buffer.from([0, 1, 2]), { ...only, name: 'c.bin' })
+    expect(await (await complete(phone, binary.id)).json()).toMatchObject({ error: 'attachment-type-unsupported' })
+    expect(await phone.json(`attachments/uploads/${binary.id}`)).toMatchObject({ upload: { next: null } })
   }, 60_000)
   it('keeps each step to the device and its scope, and aborts on request', async () => {
     const { host, phone } = await setup()
@@ -230,7 +281,6 @@ describe('chunked attachment uploads', () => {
         requestId: randomUUID(),
         name: 'x.txt',
         size: 1,
-        remote: false,
         stream: stream(Buffer.from('x')),
         recheck: () => {},
         accept: () => {},
@@ -260,7 +310,7 @@ describe('chunked attachment uploads', () => {
     const path = await mkdtemp(join(tmpdir(), 'latch-uploads-'))
     directories.push(path)
     const store = await AttachmentStore.open(path)
-    const size = 25 * MiB
+    const size = 50 * MiB
     for (let n = 0; n < Math.floor(ATTACHMENT_DEVICE_BYTES / size); n++) store.hold('device-a', size)
     expect(() => store.hold('device-a', size)).toThrow(expect.objectContaining({ code: 'attachment-quota' }))
     store.unhold('device-a', size)
@@ -335,7 +385,6 @@ describe('chunked attachment uploads', () => {
         requestId: randomUUID(),
         name: 's.txt',
         size: 2,
-        remote: false,
         stream: (async function* () {
           yield Buffer.from('s')
           await held

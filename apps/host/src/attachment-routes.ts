@@ -18,17 +18,14 @@ import type { AuditActor, AuditLog } from './audit.ts'
 import { json, jsonBody } from './http-util.ts'
 import { byteRange } from './files/read.ts'
 import { FileReadQuota } from './files/quota.ts'
-import { AttachmentStore, ATTACHMENT_FILE_LIMIT } from './attachments.ts'
+import { AttachmentStore } from './attachments.ts'
 import { attachmentContext as context, type AttachmentUploads } from './attachment-uploads.ts'
 const ID = /^[A-Za-z0-9_-]{22}$/u
 const metadata = context.extend({
   requestId: z.string().uuid(),
   name: z.string().min(1).max(200),
-  size: z
-    .number()
-    .int()
-    .positive()
-    .max(25 * 1024 * 1024),
+  // The store says a file is too large (413 \`attachment-too-large\`), which every client takes as final.
+  size: z.number().int().positive(),
   secretAcknowledged: z.boolean().optional(),
 })
 const reuseInput = context.extend({ requestId: z.string().uuid(), secretAcknowledged: z.boolean().optional() }).strict()
@@ -36,7 +33,7 @@ const uploadStart = context.extend({
   requestId: z.string().uuid(),
   name: z.string().min(1).max(200),
   kind: z.enum(['image', 'text', 'file']),
-  size: z.number().int().positive().max(ATTACHMENT_FILE_LIMIT),
+  size: z.number().int().positive(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
 })
 interface AttachmentCaller {
@@ -195,7 +192,8 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
           const caps = await options.capabilities(caller, input.selection, input.sessionId)
           if (!caps.images && !caps.text && !caps.files)
             throw new AppError(415, 'attachments-unsupported', caps.reason ?? '当前 Harness 不接受附件。')
-          assertAttachmentCapability(input, caps)
+          // A declared `file` is checked by what its content turns out to be, at completion; a picture or text already now.
+          if (input.kind !== 'file' || caps.files) assertAttachmentCapability(input, caps)
           options.recheck(caller, 'run')
           const begun = await options.uploads.begin({
             owner: device.id,
@@ -296,7 +294,6 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
             requestId: input.requestId,
             name: input.name,
             size: input.size,
-            remote: !isLocalListener(caller.connection.listener),
             secretAcknowledged: input.secretAcknowledged,
             stream: req,
             recheck: () => {
@@ -352,7 +349,6 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
           owner: device.id,
           requestId: input.requestId,
           source: entry.ref,
-          remote: !isLocalListener(caller.connection.listener),
           ...(input.secretAcknowledged ? { secretAcknowledged: true } : {}),
           recheck: async () => {
             options.recheck(caller, 'run')

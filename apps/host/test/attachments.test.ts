@@ -19,7 +19,6 @@ const input = (text = 'ordinary text', extra: Partial<Parameters<AttachmentStore
   requestId: randomUUID(),
   name: 'note.txt',
   size: Buffer.byteLength(text),
-  remote: false,
   stream: (async function* () {
     yield Buffer.from(text)
   })(),
@@ -203,7 +202,6 @@ describe('private attachment store', () => {
         owner: 'device-b',
         requestId,
         source: sent,
-        remote: true,
         recheck: () => {},
         accept: () => {},
         audit: async ref => {
@@ -227,8 +225,7 @@ describe('private attachment store', () => {
       big = 'a'.repeat(6 * 1024 * 1024),
       sent = await store.add(input(big, { name: 'big.txt' }))
     await store.bind('device-a', [sent.id], 'task-one')
-    const copy = () =>
-      store.copy({ owner: 'device-b', requestId: randomUUID(), source: sent, remote: false, recheck: () => {}, accept: () => {} })
+    const copy = () => store.copy({ owner: 'device-b', requestId: randomUUID(), source: sent, recheck: () => {}, accept: () => {} })
     const results = await Promise.allSettled(Array.from({ length: 10 }, copy))
     const refused = results.filter(result => result.status === 'rejected')
     // Two uploads at a time per device, as for any upload; the rest never read a byte.
@@ -265,10 +262,10 @@ describe('private attachment store', () => {
     const ref = await store.add(input('plain text', { name: 'pretend.png' }))
     expect(ref.mime).toBe('text/plain')
   })
-  it('rejects changed bytes, too many attachments, oversized remote uploads and interrupted or revoked streams without leaving temporary data', async () => {
+  it('rejects changed bytes, too many attachments, oversized uploads and interrupted or revoked streams without leaving temporary data', async () => {
     const path = await directory(),
       store = await AttachmentStore.open(path)
-    await expect(store.add(input('text', { size: 11 * 1024 * 1024, remote: true }))).rejects.toMatchObject({ code: 'attachment-too-large' })
+    await expect(store.add(input('text', { size: 50 * 1024 * 1024 + 1 }))).rejects.toMatchObject({ code: 'attachment-too-large' })
     await expect(store.add(input('text', { size: 5 }))).rejects.toMatchObject({ code: 'attachment-incomplete' })
     let checks = 0
     await expect(

@@ -1179,7 +1179,7 @@ export class Simulators {
   }
 
   /**
-   * Starts recording a running device, for at most a minute and the draft's 25 MB. It ends by itself at either bound,
+   * Starts recording a running device, for at most a minute and 25 MB. It ends by itself at either bound,
    * and is thrown away when the panel stops asking for frames, the device shuts down or the Host stops.
    */
   async startRecording(udid: unknown, owner: string): Promise<SimulatorRecordingView> {

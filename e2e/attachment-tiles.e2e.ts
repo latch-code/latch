@@ -266,7 +266,7 @@ describe('attachment tiles', () => {
             await held
             await route.continue()
           } else if (name === 'huge.mov')
-            await route.fulfill({ status: 413, json: { error: 'attachment-too-large', message: '每个文件最多 10 MB。' } })
+            await route.fulfill({ status: 413, json: { error: 'attachment-too-large', message: '每个文件最多 50 MB。' } })
           else await route.continue()
         })
         await home.getByLabel('选择附件', { exact: true }).setInputFiles([
@@ -274,7 +274,7 @@ describe('attachment tiles', () => {
           { name: 'huge.mov', mimeType: 'video/quicktime', buffer: Buffer.alloc(2048, 1) },
         ])
         const drafts = home.getByLabel('消息附件', { exact: true })
-        await drafts.locator('.attachment-draft[data-state="refused"]').getByText('每个文件最多 10 MB。').waitFor()
+        await drafts.locator('.attachment-draft[data-state="refused"]').getByText('每个文件最多 50 MB。').waitFor()
         await drafts.locator('.attachment-draft[data-state="uploading"] .attachment-tile-progress').waitFor()
         await page.waitForTimeout(300)
         await page

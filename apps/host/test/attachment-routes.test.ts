@@ -512,7 +512,6 @@ describe('authenticated attachment routes', () => {
           requestId,
           name: 'note.txt',
           size: Buffer.byteLength(text),
-          remote: false,
           stream: (async function* () {
             yield Buffer.from(text)
           })(),
@@ -576,7 +575,7 @@ describe('authenticated attachment routes', () => {
         ?.attachmentsReported
     const before = await caps('seeing-agent')
     // Not started yet: every file goes by its path until the agent says what it takes natively.
-    expect(before).toMatchObject({ images: false, text: false, files: true, fileBytes: 25 * 1024 * 1024, imageBytes: 5 * 1024 * 1024 })
+    expect(before).toMatchObject({ images: false, text: false, files: true, fileBytes: 50 * 1024 * 1024, imageBytes: 5 * 1024 * 1024 })
     expect(before.reason).toBeUndefined()
     expect(await reported('seeing-agent')).toBeUndefined()
     for (const harnessId of ['seeing-agent', 'plain-agent']) {

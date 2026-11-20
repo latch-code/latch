@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   ATTACHMENT_EMBEDDED_TEXT_BYTES,
+  ATTACHMENT_FILE_BYTES,
   attachmentDelivery,
   type AttachmentCapabilities,
   type AttachmentRef,
@@ -100,7 +101,7 @@ async function reuseAttachment(
 /** As the Host's per-device limit on uploads received at once. */
 const UPLOADS_AT_ONCE = 2
 const IMAGE_BYTES = 5 * 1024 * 1024
-const FILE_BYTES = 25 * 1024 * 1024
+const FILE_BYTES = ATTACHMENT_FILE_BYTES
 /**
  * Answers that hold for this file however often it is sent: its type, its size, or what the Harness takes. By code, not
  * status: `attachment-incomplete` is a 400 that a retry fixes.

@@ -4,6 +4,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { z } from 'zod'
 import {
+  ATTACHMENT_FILE_BYTES,
   ATTACHMENT_FILE_MIMES,
   ATTACHMENT_IMAGE_MIMES,
   imageDimensions,
@@ -18,14 +19,13 @@ import { hasSecretContent, isSecretPath } from './files/secrets.ts'
 export const ATTACHMENT_TTL = 60 * 60_000
 /** How long a draft reserved for a request its session proved not to hold stays, counted from its upload. */
 export const ATTACHMENT_CLAIM_TTL = 7 * 24 * 60 * 60_000
-export const ATTACHMENT_FILE_LIMIT = 25 * 1024 * 1024
-export const ATTACHMENT_REMOTE_LIMIT = 10 * 1024 * 1024
+export const ATTACHMENT_FILE_LIMIT = ATTACHMENT_FILE_BYTES
 export const ATTACHMENT_IMAGE_LIMIT = 5 * 1024 * 1024
 /** Per device: drafts, uploads under way and unfinished chunked uploads together. */
 const ATTACHMENT_DEVICE_FILES = 32
-export const ATTACHMENT_DEVICE_BYTES = 256 * 1024 * 1024
+export const ATTACHMENT_DEVICE_BYTES = 512 * 1024 * 1024
 /** For the Host: drafts and every upload's bytes, received or held. */
-const ATTACHMENT_HOST_BYTES = 1024 * 1024 * 1024
+const ATTACHMENT_HOST_BYTES = 2 * 1024 * 1024 * 1024
 /** What a request named, so that its replay is told apart from another file under the same request ID. */
 export function attachmentInputHash(name: string, size: number, sha256: string): string {
   return createHash('sha256').update(canonicalJson({ name, size, sha256 })).digest('hex')
@@ -172,20 +172,19 @@ export class AttachmentStore {
     this.serial = next.catch(() => {})
     return next
   }
-  /** The name, request and size an upload names, by the limits of its entry: `remote` is every entry but this Mac's. */
-  checkInput(input: { name: string; requestId: string; size: number; remote: boolean }): string {
+  /** The name, request and size an upload names: one size limit for every entrance. */
+  checkInput(input: { name: string; requestId: string; size: number }): string {
     if (this.failure) throw new AppError(503, 'attachments-unavailable', '附件存储暂时不可用，请重启后重试。')
     const name = input.name.trim()
     if (!name || name.length > 200 || /[\u0000-\u001f\u007f/\\]/u.test(name) || !z.string().uuid().safeParse(input.requestId).success)
       throw new AppError(400, 'attachment-invalid', '附件名称或请求标识无效。')
-    const limit = input.remote ? ATTACHMENT_REMOTE_LIMIT : ATTACHMENT_FILE_LIMIT
-    if (!Number.isSafeInteger(input.size) || input.size <= 0 || input.size > limit)
-      throw new AppError(413, 'attachment-too-large', input.remote ? '每个文件最多 10 MB。' : '每个文件最多 25 MB。')
+    if (!Number.isSafeInteger(input.size) || input.size <= 0 || input.size > ATTACHMENT_FILE_LIMIT)
+      throw new AppError(413, 'attachment-too-large', '每个文件最多 50 MB。')
     return name
   }
   /**
    * Room for `size` more bytes from `owner`: its drafts, uploads being received and unfinished chunked uploads count
-   * against 32 files and 256 MiB per device and 1 GiB for the Host. `streaming`: a single-body upload, which also takes
+   * against 32 files and 512 MiB per device and 2 GiB for the Host. `streaming`: a single-body upload, which also takes
    * one of the streams received at once (two per device, eight for the Host); a chunked upload's start holds bytes only.
    */
   private assertRoom(owner: string, size: number, streaming: boolean): void {
@@ -234,15 +233,13 @@ export class AttachmentStore {
     requestId: string
     name: string
     size: number
-    remote: boolean
     secretAcknowledged?: boolean
     stream: AsyncIterable<Uint8Array>
     recheck: () => void | Promise<void>
     accept: (ref: AttachmentRef) => void | Promise<void>
     audit?: (ref: AttachmentRef) => Promise<void>
   }): Promise<AttachmentRef> {
-    const name = this.checkInput(input),
-      limit = input.remote ? ATTACHMENT_REMOTE_LIMIT : ATTACHMENT_FILE_LIMIT
+    const name = this.checkInput(input)
     await this.prune()
     await input.recheck()
     this.assertRoom(input.owner, input.size, true)
@@ -260,7 +257,7 @@ export class AttachmentStore {
       for await (const chunk of input.stream) {
         await input.recheck()
         size += chunk.byteLength
-        if (size > input.size || size > limit) throw new AppError(413, 'attachment-too-large', '附件超过声明的大小。')
+        if (size > input.size || size > ATTACHMENT_FILE_LIMIT) throw new AppError(413, 'attachment-too-large', '附件超过声明的大小。')
         hash.update(chunk)
         if (headSize < 65536) {
           const part = Buffer.from(chunk.subarray(0, 65536 - headSize))
@@ -294,7 +291,6 @@ export class AttachmentStore {
     name: string
     size: number
     sha256: string
-    remote: boolean
     file: string
     secretAcknowledged?: boolean
     recheck: () => void | Promise<void>
@@ -336,14 +332,13 @@ export class AttachmentStore {
     owner: string
     requestId: string
     source: AttachmentRef
-    remote: boolean
     secretAcknowledged?: boolean
     recheck: () => void | Promise<void>
     accept: (ref: AttachmentRef) => void | Promise<void>
     audit?: (ref: AttachmentRef) => Promise<void>
   }): Promise<AttachmentRef> {
     const { source } = input
-    const name = this.checkInput({ name: source.name, requestId: input.requestId, size: source.size, remote: input.remote })
+    const name = this.checkInput({ name: source.name, requestId: input.requestId, size: source.size })
     const replay = this.made(input.owner, input.requestId)
     if (replay) {
       if (replay.inputHash !== attachmentInputHash(name, source.size, source.sha256))

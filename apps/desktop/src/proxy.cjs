@@ -30,7 +30,8 @@ const PLUGIN_DRAFT_BODY_LIMIT = 8 * 1024 * 1024 + 65536
 /** A 1 MiB text file in JSON, every character escaped at worst: the Host's own limit for an edit. */
 const FILE_EDIT_BODY_LIMIT = 6 * 1024 * 1024 + 4096
 const FILE_EDIT_PATH = /^\/link\/api\/tasks\/[^/]+\/files\/[A-Za-z0-9_-]{22}$/
-const UPLOAD_BODY_LIMIT = 25 * 1024 * 1024
+/** As the Host's `ATTACHMENT_FILE_BYTES`: one attachment on any entrance. */
+const UPLOAD_BODY_LIMIT = 50 * 1024 * 1024
 const JSON_RESPONSE_LIMIT = 1024 * 1024
 const RENEW_INTERVAL_MS = 24 * 60 * 60 * 1000
 const RENEW_CHECK_MS = 12 * 60 * 60 * 1000

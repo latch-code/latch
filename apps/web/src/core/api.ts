@@ -1,5 +1,5 @@
 import { MODEL_EFFORT, NOT_ACCEPTED_5XX, isFileMention, type FileMention } from '@latch/protocol'
-import { isAttachmentRef, type AttachmentRef, type AttachmentUpload } from '@latch/protocol'
+import { ATTACHMENT_FILE_BYTES, isAttachmentRef, type AttachmentRef, type AttachmentUpload } from '@latch/protocol'
 import type { ApiFailure, ModelRef, TaskMode, WorktreeStart } from '@latch/protocol'
 import { defineCopy } from './i18n.ts'
 import { describeFailure } from './securityCopy.ts'
@@ -297,7 +297,7 @@ export async function uploadAttachment(
   metadata: AttachmentUpload,
   options: { signal?: AbortSignal; onProgress?: (loaded: number, total: number) => void; retried?: boolean } = {},
 ): Promise<AttachmentRef> {
-  if (metadata.size !== file.size || file.size <= 0 || file.size > 25 * 1024 * 1024)
+  if (metadata.size !== file.size || file.size <= 0 || file.size > ATTACHMENT_FILE_BYTES)
     throw new ClientError(() => COPY.attachmentSize, 'attachment-too-large')
   const bytes = new TextEncoder().encode(JSON.stringify(metadata)),
     header = btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join(''))
