@@ -679,6 +679,11 @@ if (!REMOTE)
       openInBrowser: () => ipcRenderer.invoke('latch:open-in-browser'),
       // Main makes a one-time link for another computer and puts it on the clipboard; the renderer never sees the link.
       copyComputerLink: () => ipcRenderer.invoke('latch:copy-computer-link'),
+      // 「打开系统设置」 in the local-network hint: main opens the Local Network settings page and, in the packaged app,
+      // the guide over it (local-network-guide.cjs). Nothing goes in; whether it opened comes back.
+      localNetwork: Object.freeze({
+        openSettings: () => ipcRenderer.invoke('latch:local-network:open-settings').then(value => value === true),
+      }),
       // Login item, keeping the Mac awake and the Host's restarts (Settings › 通用); main owns all of them.
       lifecycle: Object.freeze({
         get: () => ipcRenderer.invoke('latch:lifecycle'),

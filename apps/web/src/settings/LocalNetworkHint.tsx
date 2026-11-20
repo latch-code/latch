@@ -1,3 +1,4 @@
+import type { MouseEvent } from 'react'
 import type { LocalNetworkAccess } from '@latch/protocol'
 import { ButtonLink, StatusWord, Tooltip } from '@latch/ui'
 import { defineCopy, useLocale } from '../core/i18n.ts'
@@ -34,12 +35,29 @@ export function canOpenSystemSettings(local: boolean): boolean {
 
 const refused = (state: LocalNetworkAccess | undefined): state is 'denied' | 'unreadable' => state === 'denied' || state === 'unreadable'
 
+/**
+ * A desktop app with the guide opens the page through its one call, which also shows the guide over System Settings;
+ * the link stays for an older shell. The press is spent once, so the link does not follow.
+ */
+export function openLocalNetworkSettings(event: Pick<MouseEvent, 'preventDefault'>): void {
+  const local = currentShell()?.localNetwork
+  if (!local) return
+  event.preventDefault()
+  void local.openSettings().catch(() => {})
+}
+
 /** 「打开系统设置」: the Local Network page, through the desktop app's one allowed system-settings address. */
 export function LocalNetworkOpen({ state, openable }: { state: LocalNetworkAccess | undefined; openable: boolean }) {
   useLocale()
   if (!refused(state) || !openable) return null
   return (
-    <ButtonLink variant="secondary" size="xs" href={LOCAL_NETWORK_SETTINGS} target="_blank" rel="noopener noreferrer">
+    <ButtonLink
+      variant="secondary"
+      size="xs"
+      href={LOCAL_NETWORK_SETTINGS}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={openLocalNetworkSettings}>
       {COPY.open}
     </ButtonLink>
   )

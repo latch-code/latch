@@ -37,7 +37,7 @@
     },
     "apps/desktop": {
       // Electron loads these by path; the shell has no package exports.
-      "entry": ["src/main.cjs", "src/preload.cjs"]
+      "entry": ["src/main.cjs", "src/preload.cjs", "src/local-network-guide-preload.cjs"]
     },
     "apps/host": {
       // Compiled into the application and selected by its native launcher.

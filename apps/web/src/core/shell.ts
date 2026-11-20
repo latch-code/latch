@@ -443,6 +443,12 @@ export interface LatchShell {
    * `tls-not-configured`. Absent in shells from before this action.
    */
   copyComputerLink?: () => Promise<OpenInBrowserResult>
+  /**
+   * 「打开系统设置」 in the local-network hint: main opens the Local Network settings page and, in the packaged app, a
+   * floating guide over it; resolves whether the page opened. Needs a real press a moment before. Absent in shells from
+   * before the guide.
+   */
+  localNetwork?: { openSettings(): Promise<boolean> }
   /** Absent in shells from before the desktop app ran the Host's lifecycle. */
   lifecycle?: {
     get(): Promise<ShellLifecycleResult>

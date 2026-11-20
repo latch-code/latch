@@ -25,6 +25,7 @@ const {
   powerSaveBlocker,
   protocol,
   safeStorage,
+  screen,
   session,
   shell,
   autoUpdater,
@@ -61,6 +62,16 @@ const menus = require('./menu.cjs')
 const { ABOUT_BACKGROUND, ABOUT_SIZE, ABOUT_URL, aboutCopy, aboutResponse } = require('./about.cjs')
 const { createLocale, currentLocale, defineCopy } = require('./locale.cjs')
 const {
+  GUIDE_ALLOWED_URL,
+  GUIDE_CLOSE_CHANNEL,
+  GUIDE_URL,
+  LOCAL_NETWORK_OPEN_CHANNEL,
+  createLocalNetworkGuide,
+  guideBounds,
+  guideResponse,
+  guideWindowOptions,
+} = require('./local-network-guide.cjs')
+const {
   LIFECYCLE_CHANNELS,
   createHostSupervisor,
   createKeepAwake,
@@ -94,6 +105,7 @@ const {
   isAppUrl,
   appPermissionHandlers,
   LOCAL_HOME,
+  LOCAL_NETWORK_SETTINGS,
   unexpectedArguments,
 } = require('./proxy.cjs')
 
@@ -316,8 +328,50 @@ function showAbout() {
 /** main as its Host's browser provider (browser-agent.cjs), from `start`; it runs only while the window is open. */
 let browserProvider
 
+/**
+ * The Local Network guide (local-network-guide.cjs), from `start`: a floating window over System Settings after
+ * 「打开系统设置」, in the packaged app only.
+ * @type {ReturnType<typeof createLocalNetworkGuide> | undefined}
+ */
+let localNetworkGuide
+const guideIcon = () => ({ icon: icon.resize({ width: 44, height: 44 }).toDataURL() })
+
+/** The guide's window at the bottom centre of the display nearest the cursor, never focused. */
+function openGuideWindow({ onClosed }) {
+  const place = () => guideBounds(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea)
+  const window = new BrowserWindow(
+    guideWindowOptions({
+      preload: join(__dirname, 'local-network-guide-preload.cjs'),
+      bounds: place(),
+      darwin: process.platform === 'darwin',
+    }),
+  )
+  const contents = window.webContents
+  window.setAlwaysOnTop(true, 'floating')
+  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true })
+  window.once('ready-to-show', () => window.showInactive())
+  window.once('closed', onClosed)
+  void window.loadURL(GUIDE_URL)
+  return {
+    contents,
+    reveal() {
+      if (window.isDestroyed()) return
+      window.setBounds(place())
+      window.showInactive()
+    },
+    // The same document at #allowed: the page shows 已允许 through :target, with no message to it.
+    allowed() {
+      if (!window.isDestroyed()) void window.loadURL(GUIDE_ALLOWED_URL)
+    },
+    close() {
+      if (!window.isDestroyed()) window.close()
+    },
+  }
+}
+
 function openWindow() {
   mainWindow = createWindow()
+  mainWindow.on('focus', () => localNetworkGuide?.mainFocused())
   previewBrowser.attach(mainWindow)
   // Without the window there is no provider: the Host fails the Agent's browser calls at once and never opens Latch.
   browserProvider?.start()
@@ -1331,7 +1385,7 @@ async function start() {
     // 「重启 Latch」, an update or a crash restart: the window shows it is reconnecting, and the log stays quiet.
     hostTransitioning: () => supervisor.transitioning(),
   })
-  protocol.handle('latch', request => aboutResponse(request, aboutInput()) ?? proxy.handle(request))
+  protocol.handle('latch', request => aboutResponse(request, aboutInput()) ?? guideResponse(request, guideIcon()) ?? proxy.handle(request))
   protocol.handle('latch-frame', request => proxy.previewFrame(request))
   handleFolders(proxy, store)
   // Asked by a window's own top page only; a preview tab or a frame is no window and gets false.
@@ -1366,6 +1420,24 @@ async function start() {
     isAppSender(event) ? copyComputerLink() : { ok: false, status: 403, error: 'copy-link-failed', message: '无法复制链接，请重试。' },
   )
   handleFiles(proxy)
+  localNetworkGuide = createLocalNetworkGuide({
+    packaged: app.isPackaged && process.platform === 'darwin',
+    openWindow: openGuideWindow,
+    async readAccess() {
+      const answer = await hostRequest(proxy, 'GET', '/link/api/native/info')
+      return answer.status === 200 && typeof answer.json?.localNetwork === 'string' ? answer.json.localNetwork : undefined
+    },
+  })
+  // 「打开系统设置」: this Mac's own page, a real press a moment ago, then the one settings address; the guide follows.
+  ipcMain.handle(LOCAL_NETWORK_OPEN_CHANNEL, async event => {
+    if (!trusted(event) || gestures.get(event.sender)?.take() !== true) return false
+    const opened = await openExternal(LOCAL_NETWORK_SETTINGS, mainWindow, { userGesture: true })
+    if (opened) localNetworkGuide?.show()
+    return opened
+  })
+  ipcMain.on(GUIDE_CLOSE_CHANNEL, event => {
+    if (localNetworkGuide?.owns(event.sender)) localNetworkGuide.close()
+  })
   handleBrowserRequests({ ipcMain, trusted, controller: previewBrowser })
   // The Agent's browser calls: main registers with this Mac's Host over host.sock, signed with the device key.
   const browserAccess = previewBrowser.agentAccess()
