@@ -620,8 +620,9 @@ describe('monthly budgets', () => {
       })
     // One reply's tokens, to set a budget the 17th request of the same turn uses up.
     await (await request(names[0]!)).text()
-    await expect.poll(async () => (await lines()).length).toBe(1)
-    const [first] = await lines()
+    const firstRows = await lines()
+    expect(firstRows).toHaveLength(1)
+    const [first] = firstRows
     const each = first!.inputTokens! + first!.outputTokens!
     await store.setBudget('service', 'a', { unit: 'tokens', limit: each * 17 })
     for (const name of names.slice(1, 17)) {
@@ -629,7 +630,6 @@ describe('monthly budgets', () => {
       expect(response.status).toBe(200)
       await response.text()
     }
-    await expect.poll(async () => (await lines()).length).toBe(17)
     // The turn lists 16 models; the 17th request is on the ledger and in the budget all the same.
     const rows = await lines()
     expect(rows.map(row => row.model)).toEqual(names.slice(0, 17))

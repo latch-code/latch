@@ -8,7 +8,6 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TaskDetail } from '@latch/protocol'
 import type { HarnessPlugin, ModelMessage, ToolDefinition } from '@latch/sdk'
-import type { TestDevice } from '@latch/testkit'
 import {
   Simulators,
   parseOldPlist,
@@ -20,6 +19,7 @@ import {
   type SimulatorOptions,
 } from '../src/simulators.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { openSimulatorProvider } from './helpers/simulator-provider.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
 afterEach(async () => {
@@ -182,8 +182,13 @@ function fakes(
       interrupt: () => {
         child.interrupted = true
         if (options.stuck) return
-        if (args.includes('recordVideo')) void writeFile(args.at(-1)!, MOVIE).then(() => exit(0))
-        else exit(0)
+        if (args.includes('recordVideo')) {
+          // The Host can discard the directory while the child is finishing its movie.
+          void writeFile(args.at(-1)!, MOVIE).then(
+            () => exit(0),
+            () => exit(1),
+          )
+        } else exit(0)
       },
       kill: () => {
         child.killed = true
@@ -839,14 +844,6 @@ function scripted(steps: Array<{ name: string; arguments: Record<string, unknown
   return { plugin }
 }
 
-async function provide(desktop: TestDevice) {
-  const registered = await desktop.registerBrowserProvider()
-  const { providerId } = (await registered.json()) as { providerId: string }
-  const stop = new AbortController()
-  cleanups.push(() => stop.abort())
-  expect((await desktop.request('browser-provider/stream', { method: 'POST', body: { providerId }, signal: stop.signal })).status).toBe(200)
-}
-
 describe('device tools for agents', () => {
   it('rotate, list apps and launch a listed one with no arguments, on record with hashes', async () => {
     const { plugin } = scripted([
@@ -857,7 +854,7 @@ describe('device tools for agents', () => {
     ])
     const { t, fake } = await host({ demo: false, providerId: 'scripted', plugins: [plugin] })
     const desktop = await t.enroll({ listener: 'unix' })
-    await provide(desktop)
+    cleanups.push(await openSimulatorProvider(desktop))
     const { sessionId } = await desktop.json<{ sessionId: string }>('tasks', {
       method: 'POST',
       body: { requestId: randomUUID(), prompt: '试试', mode: 'agent', model: { providerId: 'scripted', model: 'scripted' } },

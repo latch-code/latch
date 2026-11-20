@@ -1227,14 +1227,13 @@ describe.skipIf(!git)('removing a worktree', () => {
     expect(existsSync(made.path)).toBe(false)
   })
 
-  /** A repository with one commit, to add as a submodule; `inner` makes it carry a submodule of its own. */
-  async function subRepository(t: Awaited<ReturnType<typeof setup>>, name: string, inner?: string) {
+  /** A repository with one commit, to add as a submodule. */
+  async function subRepository(t: Awaited<ReturnType<typeof setup>>, name: string) {
     const sub = join(t.base, name)
     await mkdir(sub)
     t.run('-C', sub, 'init', '-q')
     await writeFile(join(sub, 's.txt'), 's\n')
     t.run('-C', sub, 'add', 's.txt')
-    if (inner) t.run('-C', sub, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'inner')
     t.run('-C', sub, 'commit', '-qm', 'sub')
     return sub
   }
@@ -1270,17 +1269,29 @@ describe.skipIf(!git)('removing a worktree', () => {
   it('refuses while a nested submodule’s clone remains', async () => {
     const t = await setup()
     const inner = await subRepository(t, 'inner')
-    const sub = await subRepository(t, 'outer', inner)
+    const outer = await subRepository(t, 'outer')
+    // Only the worktree needs clones. In the source repositories Git needs the gitlinks and their URLs.
+    for (const [parent, child, name] of [
+      [outer, inner, 'inner'],
+      [t.root, outer, 'mod'],
+    ] as const) {
+      const head = t.run('-C', child, 'rev-parse', 'HEAD').trim()
+      t.run('-C', parent, 'config', '-f', '.gitmodules', `submodule.${name}.path`, name)
+      t.run('-C', parent, 'config', '-f', '.gitmodules', `submodule.${name}.url`, child)
+      t.run('-C', parent, 'add', '.gitmodules')
+      t.run('-C', parent, 'update-index', '--add', '--cacheinfo', `160000,${head},${name}`)
+      t.run('-C', parent, 'commit', '-qm', 'add submodule')
+    }
     const worktrees = t.service()
     const made = await worktrees.create({ source: t.root, requestId: 'request-0001' })
     await worktrees.bind(made.path, 'request-0001', 'session-1')
-    t.run('-C', made.path, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'mod')
     t.run('-C', made.path, '-c', 'protocol.file.allow=always', 'submodule', 'update', '-q', '--init', '--recursive')
-    t.run('-C', made.path, 'commit', '-qm', 'add submodule')
     t.run('-C', made.path, 'submodule', 'deinit', '-q', '--all', '-f')
     const facts = await worktrees.inventory(made.path)
     expect(existsSync(join(facts.submoduleData!.path, 'mod', 'modules', 'inner'))).toBe(true)
-    await expect(worktrees.remove(made.path, { ...(await confirmed(worktrees, made.path)), audit: noAudit })).rejects.toMatchObject({
+    await expect(
+      worktrees.remove(made.path, { discard: facts.files + facts.ignored, digest: facts.digest, audit: noAudit }),
+    ).rejects.toMatchObject({
       code: 'worktree-submodule-data',
     })
     expect(existsSync(join(facts.submoduleData!.path, 'mod', 'modules', 'inner'))).toBe(true)

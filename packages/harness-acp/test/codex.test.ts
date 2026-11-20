@@ -2456,15 +2456,23 @@ describe('Codex over its app-server', () => {
       // Something of the person's own beside it, in a name Codex never gives a picture: it stays.
       await writeFile(join(pictures, 'notes.txt'), 'mine')
       await bridge.remove!(id)
-      await vi.waitFor(async () => expect(deleted(await t.log())).toEqual([thread]), { timeout: 5_000, interval: 20 })
-      await vi.waitFor(async () => expect(await threadsOf(t)).toEqual([]), { timeout: 5_000, interval: 20 })
-      const log = await t.log()
+      const log = await vi.waitFor(
+        async () => {
+          const entries = await t.log()
+          expect(deleted(entries)).toEqual([thread])
+          const afterDelete = entries.slice(entries.findIndex(entry => entry.method === 'thread/delete') + 1)
+          expect(sent(afterDelete, 'thread/read').at(-1)?.params).toEqual({ threadId: thread, includeTurns: false })
+          return entries
+        },
+        { timeout: 5_000, interval: 20 },
+      )
+      expect(await threadsOf(t)).toEqual([])
       const removed = log.filter(entry => entry.event === 'removed') as Array<LogEntry & { path: string; recursive: boolean }>
-      await vi.waitFor(async () => expect((await t.log()).filter(entry => entry.event === 'removed').length).toBeGreaterThanOrEqual(2))
+      expect(removed).toHaveLength(2)
       expect(removed.every(entry => entry.recursive === false)).toBe(true)
       expect(removed[0]!.path).toMatch(new RegExp(`/generated_images/${thread}/ig_[^/]+\\.png$`, 'u'))
+      await expect(readFile(removed[0]!.path)).rejects.toMatchObject({ code: 'ENOENT' })
       expect(await readFile(join(pictures, 'notes.txt'), 'utf8')).toBe('mine')
-      expect(sent(log, 'thread/read').at(-1)?.params).toEqual({ threadId: thread, includeTurns: false })
       // No thread was opened for it: the process only deleted.
       expect(sent(log, 'thread/resume')).toEqual([])
     })

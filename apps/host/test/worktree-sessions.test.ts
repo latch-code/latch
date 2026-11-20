@@ -53,6 +53,7 @@ async function fixture(agentEnv: Record<string, string> = {}, hostOptions: TestH
   const run = (...args: string[]) =>
     execFileSync(git!, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'init.defaultBranch=main', ...args], {
       cwd: project,
+      env: { PATH: process.env.PATH, HOME: t.root, GIT_CONFIG_NOSYSTEM: '1' },
       stdio: 'pipe',
     }).toString('utf8')
   run('init', '-q')

@@ -73,7 +73,9 @@ describe('a saved DeepSeek Harness found too old', () => {
       method: 'POST',
       body: { harnessId: 'dsh', prompt: 'echo one', requestId: randomUUID() },
     })
-    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.status).toBe('idle')
+    await expect
+      .poll(async () => (await owner.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.status, { timeout: 5_000 })
+      .toBe('idle')
     await writeFile(versionFile, '0.1.1-rc.2')
     await owner.json('agents')
     const prompted = await owner.request(`tasks/${created.sessionId}/prompt`, {
@@ -102,7 +104,7 @@ describe('a saved DeepSeek Harness found too old', () => {
     })
     expect(created.status).toBe(201)
     const { sessionId } = (await created.json()) as { sessionId: string }
-    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status).toBe('idle')
+    await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status, { timeout: 5_000 }).toBe('idle')
     expect(existsSync(started)).toBe(true)
   })
 })

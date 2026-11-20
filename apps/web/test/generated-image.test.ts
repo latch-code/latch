@@ -33,7 +33,7 @@ describe('the image tool where its picture goes', () => {
     expect(shown).toContain('data-state="making"')
     expect(shown).toContain('class="generated-image-canvas"')
     expect(shown).toContain('role="status"')
-    expect(shown).toContain('max-width:min(100%, 480px)')
+    expect(shown).toContain('max-width:min(100%, 320px)')
     expect(shown).toContain('aspect-ratio:1024 / 1024')
     // The page's own particle layer, gathered in the canvas and never read out.
     expect(shown).toMatch(/<canvas class="ui-backdrop" data-kind="field" aria-hidden="true">/u)

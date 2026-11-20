@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentRecord } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { personCommandDirectories, redactor, resolveCommand, setCommandSearch } from '../src/command.ts'
@@ -14,6 +14,7 @@ import { ALWAYS_INHERITED, loadLoginShell, loginShellValues, readLoginShell, set
 import { launchHash } from '../src/permission.ts'
 import { agentProbePreview, probeAgent } from '../src/probe.ts'
 import { FALLBACK_PROFILES, HARNESS_PROFILES, profileFor } from '../src/profiles/index.ts'
+import { AcpWire } from '../src/wires/acp.ts'
 
 const run = promisify(execFile)
 /** The Codex preset on its ACP adapter, as a definition saved before Codex was reached directly. */
@@ -373,13 +374,14 @@ describe('the program an adapter drives, beside the adapter', () => {
     expect((await probe({})).program).toEqual({ name: 'Codex', version: '0.167.0', unchecked: true })
   })
 
-  it('keeps the whole test start, login and version reads included, within its time', { timeout: 40_000 }, async () => {
+  it('keeps the whole test start, login and version reads included, within its time', { timeout: 40_000 }, async ({ onTestFinished }) => {
     const directory = await root()
     const bin = join(directory, 'bin')
     await mkdir(bin)
+    const calls = join(directory, 'codex-calls')
     const scripts = {
-      'codex-acp': `export FAKE_ACP_VERSION='2.5.0'\nexec '${process.execPath}' '${FAKE_ACP_AGENT}' "$@"`,
-      codex: 'sleep 30',
+      'codex-acp': 'exit 0',
+      codex: `echo "$*" >> '${calls}'\nexec sleep 30`,
     }
     for (const [name, body] of Object.entries(scripts)) {
       await writeFile(join(bin, name), `#!/bin/sh\n${body}\n`)
@@ -388,13 +390,14 @@ describe('the program an adapter drives, beside the adapter', () => {
     useOnly(bin)
     const record = codexAdapter()
     const options = { dataDir: directory, cwd: directory }
+    const { launchHash: expectedLaunchHash } = await agentProbePreview(record, options)
+    // The two blocked reads need the remaining budget. The probe suite exercises the actual handshake.
+    const handshake = vi.spyOn(AcpWire.prototype, 'request').mockResolvedValueOnce({ protocolVersion: 1 })
+    onTestFinished(() => handshake.mockRestore())
     const started = Date.now()
-    const result = await probeAgent(record, {
-      ...options,
-      expectedLaunchHash: (await agentProbePreview(record, options)).launchHash,
-      timeoutMs: 1500,
-    })
+    const result = await probeAgent(record, { ...options, expectedLaunchHash, timeoutMs: 1500 })
     expect(Date.now() - started).toBeLessThan(4000)
+    expect((await readFile(calls, 'utf8')).trim().split('\n').toSorted()).toEqual(['--version', 'login status'])
     expect(result).toMatchObject({ status: 'ready', login: 'unknown', program: { name: 'Codex' } })
     expect(result.program).not.toHaveProperty('version')
   })

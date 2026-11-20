@@ -32,7 +32,11 @@ async function fixture(options: TestHostOptions = {}) {
   const t = await startTestHost(options)
   hosts.push(t)
   const git = (...args: string[]) =>
-    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd: t.workspaceRoot, stdio: 'pipe' })
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], {
+      cwd: t.workspaceRoot,
+      env: { PATH: process.env.PATH, HOME: t.root, GIT_CONFIG_NOSYSTEM: '1' },
+      stdio: 'pipe',
+    })
   git('init', '-q', '-b', 'main')
   await writeFile(join(t.workspaceRoot, 'tracked.txt'), 'committed\n')
   git('add', '.')
@@ -55,7 +59,7 @@ async function fixture(options: TestHostOptions = {}) {
   await expect.poll(async () => (await turns()).at(-1)?.state, SLOW).toBe('settled')
   const turnId = (await turns()).at(-1)!.turnId
   const file = (name: string) => join(t.workspaceRoot, name)
-  return { t, owner, sessionId, path, turns, turnId, file, agentLog }
+  return { t, owner, sessionId, path, turns, turnId, file, agentLog, git }
 }
 
 const undo = (owner: TestDevice, sessionId: string, turnId: string, action = 'undo', requestId = randomUUID()) =>
@@ -283,9 +287,7 @@ describe('changes routes', () => {
   })
 
   it('refuses to discard uncommitted changes in the middle of a merge, and draws what it found', async () => {
-    const { t, owner, path, file } = await fixture()
-    const git = (...args: string[]) =>
-      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd: t.workspaceRoot, stdio: 'pipe' })
+    const { t, owner, path, file, git } = await fixture()
     git('add', '.')
     git('commit', '-q', '-m', 'turn')
     git('checkout', '-q', '-b', 'side', 'HEAD~1')

@@ -11,6 +11,7 @@ import { classifyStandardCall } from '../src/risk.ts'
 import { DEVICE_TOOL_DEFINITIONS } from '../src/plugins/tools/device/index.ts'
 import { Simulators, runFixed, simulatorUrl, type SimctlRunner } from '../src/simulators.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
+import { openSimulatorProvider } from './helpers/simulator-provider.ts'
 
 const cleanups: Array<() => Promise<void> | void> = []
 afterEach(async () => {
@@ -398,14 +399,7 @@ describe('device tools of the built-in harness', () => {
     expect(seen[0]!.tools).toEqual(expect.arrayContaining(['device_list', 'device_screenshot', 'device_open_url', 'device_set_appearance']))
     expect(closed.messages.find(message => message.toolName === 'device_list')?.text).toContain('Latch 窗口没有打开')
     // With the desktop app as the browser provider.
-    const registered = await desktop.registerBrowserProvider()
-    expect(registered.status).toBe(201)
-    const { providerId } = (await registered.json()) as { providerId: string }
-    const stop = new AbortController()
-    cleanups.push(() => stop.abort())
-    expect((await desktop.request('browser-provider/stream', { method: 'POST', body: { providerId }, signal: stop.signal })).status).toBe(
-      200,
-    )
+    cleanups.push(await openSimulatorProvider(desktop))
     const done = await settled(desktop, (await start()).sessionId)
     const list = done.messages.find(message => message.toolName === 'device_list')!
     expect(list.state).toBe('completed')
@@ -420,15 +414,6 @@ describe('device tools of the built-in harness', () => {
   })
 })
 
-/** The desktop app as the browser provider: the device tools run only while it is. */
-async function provide(desktop: TestDevice) {
-  const registered = await desktop.registerBrowserProvider()
-  const { providerId } = (await registered.json()) as { providerId: string }
-  const stop = new AbortController()
-  cleanups.push(() => stop.abort())
-  expect((await desktop.request('browser-provider/stream', { method: 'POST', body: { providerId }, signal: stop.signal })).status).toBe(200)
-}
-
 describe('what an agent may open on a device', () => {
   it('only this Mac’s own addresses, even after 本会话始终允许; never a deep link; the person may open both', async () => {
     const { plugin } = scripted([
@@ -439,7 +424,7 @@ describe('what an agent may open on a device', () => {
     ])
     const { t, sim } = await hostWithSimulators({ demo: false, providerId: 'scripted', plugins: [plugin] })
     const desktop = await t.enroll({ listener: 'unix' })
-    await provide(desktop)
+    cleanups.push(await openSimulatorProvider(desktop))
     const { sessionId } = await desktop.json<{ sessionId: string }>('tasks', {
       method: 'POST',
       body: { requestId: randomUUID(), prompt: '打开', mode: 'agent', model: { providerId: 'scripted', model: 'scripted' } },
@@ -476,7 +461,7 @@ describe('what an agent may open on a device', () => {
     const { t } = await hostWithSimulators({ demo: false, providerId: 'scripted', plugins: [plugin] })
     const desktop = await t.enroll({ listener: 'unix' })
     const phone = await t.enroll({ listener: 'tls', scopes: ['view', 'run'], dataScope: 'files' })
-    await provide(desktop)
+    cleanups.push(await openSimulatorProvider(desktop))
     const { sessionId } = await phone.json<{ sessionId: string }>('tasks', {
       method: 'POST',
       body: { requestId: randomUUID(), prompt: '看一眼', mode: 'agent', model: { providerId: 'scripted', model: 'scripted' } },

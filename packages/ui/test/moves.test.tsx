@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { flushSync } from 'react-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render } from 'vitest-browser-react'
 import {
@@ -460,14 +461,16 @@ describe('moves a stylesheet runs', () => {
   it('raises the pill on the spring, lets it leave on the exit curve, and brings it back if it is wanted again', async () => {
     const screen = await render(<Pill initial />)
     const pill = () => screen.container.querySelector<HTMLElement>('.ui-pill-move')
+    // Interrupt the 112ms exit in the same browser task, before its unmount timer can run.
+    const toggle = screen.getByRole('button').element() as HTMLButtonElement
     expect([getComputedStyle(pill()!).animationName, getComputedStyle(pill()!).animationDuration]).toEqual(['ui-pill-in', '0.42s'])
-    await screen.getByRole('button').click()
+    flushSync(() => toggle.click())
     expect(pill()!.dataset.leaving).toBe('')
     expect(pill()!.inert).toBe(true)
     expect([getComputedStyle(pill()!).animationName, getComputedStyle(pill()!).animationDuration]).toEqual(['ui-pill-out', '0.112s'])
     // Wanted again while it leaves: the same element stays and is no longer leaving.
     const leaving = pill()
-    await screen.getByRole('button').click()
+    flushSync(() => toggle.click())
     expect(pill()).toBe(leaving)
     expect(pill()!.dataset.leaving).toBeUndefined()
     await screen.getByRole('button').click()

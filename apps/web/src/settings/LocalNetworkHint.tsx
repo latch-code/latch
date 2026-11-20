@@ -14,7 +14,7 @@ const COPY = defineCopy(
     path: '系统设置 › 隐私与安全性 › 本地网络',
     detail: '打开 Latch 的「本地网络」开关后，同一 Wi‑Fi 的手机才能直接连接这台 Mac。',
     sourceScript: 'scripts/desktop.sh',
-    sourceDetail: '经 pnpm 启动的 Host 拿不到这项权限。改用 scripts/desktop.sh 启动，见 README「安装与首次运行」。',
+    sourceDetail: '用 pnpm 启动 Latch 时无法获得本地网络权限。请用 scripts/desktop.sh 启动，见 README「安装与首次运行」。',
   },
   {
     denied: 'Local Network not allowed',
@@ -23,7 +23,7 @@ const COPY = defineCopy(
     detail: 'Turn on Local Network for Latch so phones on the same Wi‑Fi can connect to this Mac directly.',
     sourceScript: 'scripts/desktop.sh',
     sourceDetail:
-      'A Host started through pnpm cannot get this access. Start it with scripts/desktop.sh instead; see the README, Install and first run.',
+      'When started with pnpm, Latch cannot get Local Network access. Start Latch with scripts/desktop.sh as described in the README.',
   },
 )
 

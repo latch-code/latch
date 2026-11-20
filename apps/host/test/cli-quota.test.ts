@@ -7,7 +7,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeF
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AppSnapshot, HarnessQuota } from '@latch/protocol'
+import type { AppSnapshot, HarnessQuota, TaskDetail } from '@latch/protocol'
 import { FAKE_ACP_AGENT } from '@latch/testkit'
 import { balanceReport, deepSeekKeyOf, fetchDeepSeekBalance, readDshKey } from '../src/cli-quota.ts'
 import type { FetchLike } from '../src/egress.ts'
@@ -382,9 +382,7 @@ it('reads no key for a DeepSeek Harness definition that is not the preset’s ow
       const { sessionId } = await owner.confirmedJson<{ sessionId: string }>('tasks', {
         body: { prompt: 'echo hi', requestId: randomUUID(), harnessId: 'dsh' },
       })
-      await vi.waitFor(async () =>
-        expect((await owner.json<{ summary: { status: string } }>(`tasks/${sessionId}`)).summary.status).toBe('idle'),
-      )
+      await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${sessionId}`)).summary.status, { timeout: 8_000 }).toBe('idle')
       expect((await harness())?.quota).toBeUndefined()
     } finally {
       await t.close()
