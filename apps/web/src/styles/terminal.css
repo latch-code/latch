@@ -152,7 +152,7 @@
   .terminal-screen .xterm-scrollable-element > .scrollbar.vertical > .slider {
     box-sizing: border-box;
     padding-inline: calc((100% - var(--sp-4)) / 2);
-    border-radius: 50% / var(--sp-2);
+    border-radius: var(--r-8);
     /* xterm's unlayered theme stylesheet sets the background shorthand for all three pointer states. */
     background-clip: content-box !important;
   }
