@@ -58,6 +58,8 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 # 或：pnpm start，再运行 pnpm latch device invite --loopback，在浏览器中打开它给出的链接
 ```
 
+- **手机要在同一 Wi‑Fi 下配对或直连时，用 `scripts/desktop.sh` 代替 `pnpm desktop`**（参数相同）。macOS 只把局域网邻居的地址给有「本地网络」权限的程序，经 `pnpm`、`fnm exec` 启动的 Host 拿不到，手机会显示「连不上这台 Mac」；这个脚本直接用 `node` 启动，权限归终端应用，系统首次会询问。用数据线开热点配对两种方式都可以（[RELAY](docs/RELAY.md#同一网络怎样判断)）。
+
 - `pnpm start` 打印 `http://h-<hostId>.localhost:4317/link/` 形式的地址。每台 Host 用自己的 `h-<hostId>.localhost`，不同 Host 的 Cookie 因此互不混用。
 - **只有桌面端算这台电脑。** 回环端口可能被隧道或端口转发连到别处，所以这台电脑上的浏览器与手机一样是远程设备，连接前要一次性邀请：`pnpm latch device invite --loopback`（10 分钟内有效、只能用一次）。
 - **连接要在电脑上确认。** 这台 Host 还没有任何设备时，桌面端的第一次连接不需要确认；之后每台设备连接，电脑上都弹出 Touch ID 表单（或登录密码），写着设备的名称。只在你正在连接这台设备时确认。
