@@ -1,6 +1,7 @@
+import { readdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { Change } from '../scripts/repository.ts'
-import { testProjects, verificationPlan, type TestProject } from '../scripts/verify-plan.ts'
+import { FLOW_E2E, testProjects, verificationPlan, type TestProject } from '../scripts/verify-plan.ts'
 
 const PROJECTS: TestProject[] = [
   { name: 'latch', dir: 'tests' },
@@ -8,36 +9,58 @@ const PROJECTS: TestProject[] = [
   { name: '@latch/web', dir: 'apps/web/test' },
   { name: '@latch/desktop', dir: 'apps/desktop/test' },
 ]
+const E2E = [
+  'board.e2e.ts',
+  'board-items.e2e.ts',
+  'design.e2e.ts',
+  'desktop.e2e.ts',
+  'desktop-notifications.e2e.ts',
+  'enrollment.e2e.ts',
+  'notifications.e2e.ts',
+  'questions.e2e.ts',
+  'questions-harnesses.e2e.ts',
+  'settings.e2e.ts',
+  'settings-pages.e2e.ts',
+  'visual.e2e.ts',
+]
+const E2E_RUN = 'pnpm exec vitest run --config e2e/vitest.config.ts'
+const COPY =
+  'pnpm exec vitest run --config vitest.config.ts tests/glossary.test.ts tests/i18n-coverage.test.ts tests/error-copy-coverage.test.ts'
 
 const changed = (...paths: string[]): Change[] => paths.map(path => ({ status: 'M', path }))
-const commands = (paths: string[]) => verificationPlan(changed(...paths), PROJECTS).run.map(item => item.command)
+const commands = (paths: string[]) => verificationPlan(changed(...paths), PROJECTS, { e2e: E2E }).run.map(item => item.command)
 
 describe('verification plan', () => {
   it('always lists the quick checks and docs:affected, and nothing else for a documentation change', () => {
-    const plan = verificationPlan(
-      changed('docs/STREAMING.md', 'apps/web/AGENTS.md', '.agents/skills/latch-verify/SKILL.md'),
-      PROJECTS,
-      'main',
-    )
+    const plan = verificationPlan(changed('docs/STREAMING.md', 'apps/web/AGENTS.md', '.agents/skills/latch-verify/SKILL.md'), PROJECTS, {
+      base: 'main',
+      e2e: E2E,
+    })
     expect(plan.run.map(item => item.command)).toEqual(['pnpm check:quick', 'pnpm docs:affected -- --base main'])
     expect(plan.skipped).toContain('pnpm test')
     expect(plan.skipped).toContain('pnpm test:e2e')
     expect(plan.unknown).toEqual([])
   })
 
-  it('captures the gallery of primitives again when it changes, but not for the other design system tests', () => {
+  it('captures every surface again for the design system and its gallery, but not for the other design system tests', () => {
     const projects = [...PROJECTS, { name: '@latch/ui', dir: 'packages/ui/test' }]
-    const plan = (path: string) => verificationPlan(changed(path), projects).run.map(item => item.command)
+    const plan = (path: string) => verificationPlan(changed(path), projects, { e2e: E2E }).run.map(item => item.command)
     expect(plan('packages/ui/test/gallery/Gallery.tsx')).toEqual([
       'pnpm check:quick',
       'pnpm knip',
       'pnpm test --project @latch/ui',
       'pnpm build',
       expect.stringMatching(/^grep -rnE .* dist\/$/u),
-      'pnpm test:e2e',
+      `${E2E_RUN} e2e/design.e2e.ts e2e/visual.e2e.ts`,
+      expect.stringContaining('深色模式'),
       'pnpm docs:affected -- --base HEAD',
     ])
-    expect(plan('packages/ui/test/button.test.tsx')).not.toContain('pnpm test:e2e')
+    expect(plan('packages/ui/test/button.test.tsx')).toEqual([
+      'pnpm check:quick',
+      'pnpm knip',
+      'pnpm test --project @latch/ui',
+      'pnpm docs:affected -- --base HEAD',
+    ])
   })
 
   it('runs only the Vitest project of a changed test file', () => {
@@ -49,18 +72,61 @@ describe('verification plan', () => {
     ])
   })
 
-  it('runs every unit test, the build with its test-code check and the browser e2e for a Host source change', () => {
-    const plan = verificationPlan(changed('apps/host/src/server.ts'), PROJECTS)
+  it('runs the projects that run a source file, the copy scans and the e2e named after it, and leaves the whole e2e suite for --full', () => {
+    const plan = verificationPlan(changed('apps/host/src/questions.ts'), PROJECTS, { e2e: E2E })
     expect(plan.run.map(item => item.command)).toEqual([
       'pnpm check:quick',
       'pnpm knip',
-      'pnpm test',
+      'pnpm test --project @latch/host',
+      COPY,
       'pnpm build',
       expect.stringMatching(/^grep -rnE .* dist\/$/u),
-      'pnpm test:e2e',
+      `${E2E_RUN} e2e/questions-harnesses.e2e.ts e2e/questions.e2e.ts`,
       'pnpm docs:affected -- --base HEAD',
     ])
-    expect(plan.run.find(item => item.command === 'pnpm test')?.because).toEqual(['apps/host/src/server.ts'])
+    expect(plan.skipped).toContain('pnpm test:e2e')
+    expect(plan.skipped).toContain('pnpm test')
+
+    // A file named after no e2e runs none, and no build.
+    expect(commands(['apps/web/src/components/ToolCard.tsx'])).toEqual([
+      'pnpm check:quick',
+      'pnpm knip',
+      'pnpm test --project @latch/web',
+      COPY,
+      expect.stringContaining('深色模式'),
+      'pnpm docs:affected -- --base HEAD',
+    ])
+    // Directory names count, in either number; a page's settings match the settings e2e files only.
+    expect(commands(['apps/web/src/settings/LocalNetworkHint.tsx'])).toContain(`${E2E_RUN} e2e/settings-pages.e2e.ts e2e/settings.e2e.ts`)
+    expect(commands(['apps/web/src/board/ItemCard.tsx'])).toContain(`${E2E_RUN} e2e/board-items.e2e.ts e2e/board.e2e.ts`)
+    // The desktop shell's files match the desktop-* files, and other files never do.
+    expect(commands(['apps/desktop/src/notifications.cjs'])).toContain(`LATCH_ELECTRON_E2E=1 ${E2E_RUN} e2e/desktop-notifications.e2e.ts`)
+    expect(commands(['apps/web/src/notifications.ts'])).toContain(`${E2E_RUN} e2e/notifications.e2e.ts`)
+    // Flows run their e2e whatever the file is called.
+    expect(commands(['apps/web/src/core/credentials.ts'])).toContain(`${E2E_RUN} e2e/enrollment.e2e.ts`)
+    // A package runs the projects that depend on it; one that the root project covers needs no separate copy scans.
+    expect(commands(['packages/core/src/registry.ts'])).toEqual([
+      'pnpm check:quick',
+      'pnpm knip',
+      'pnpm test --project @latch/harness-acp --project @latch/host --project latch',
+      'pnpm docs:affected -- --base HEAD',
+    ])
+  })
+
+  it('lists the whole set with --full, even with nothing changed', () => {
+    const full = verificationPlan(changed('apps/host/src/questions.ts'), PROJECTS, { full: true, e2e: E2E }).run.map(item => item.command)
+    expect(full).toEqual(
+      expect.arrayContaining(['pnpm knip', 'pnpm test', 'pnpm build', 'pnpm test:e2e', 'pnpm check:supply', 'pnpm check:workflows']),
+    )
+    expect(full.some(command => command.startsWith(E2E_RUN))).toBe(false)
+    expect(full).not.toContain(COPY)
+    const empty = verificationPlan([], PROJECTS, { full: true })
+    expect(empty.run.find(item => item.command === 'pnpm test:e2e')?.because).toEqual(['--full'])
+  })
+
+  it('names only e2e files that exist for the flows it knows', () => {
+    const files = new Set(readdirSync(new URL('../e2e/', import.meta.url)))
+    expect(FLOW_E2E.flatMap(([, list]) => list).filter(file => !files.has(file))).toEqual([])
   })
 
   it('adds the Electron suite for the desktop shell, its launcher and the files it relies on, and the layout check for page changes', () => {
@@ -81,9 +147,10 @@ describe('verification plan', () => {
       'pnpm check:quick',
       'pnpm knip',
       'pnpm test --project @latch/ui --project @latch/web',
+      COPY,
       'pnpm build',
       expect.stringMatching(/^grep -rnE .* dist\/$/u),
-      'pnpm test:e2e',
+      `${E2E_RUN} e2e/design.e2e.ts e2e/visual.e2e.ts`,
       expect.stringContaining('深色模式'),
       'pnpm docs:affected -- --base HEAD',
     ])
@@ -117,7 +184,7 @@ describe('verification plan', () => {
 
   it('checks a renamed file under both its old and its new path', () => {
     const plan = verificationPlan([{ status: 'R', path: 'apps/host/src/new.ts', from: 'tests/old.test.ts' }], PROJECTS)
-    expect(plan.run.find(item => item.command === 'pnpm test')?.because).toEqual(['apps/host/src/new.ts'])
+    expect(plan.run.find(item => item.command.startsWith('pnpm test '))?.because).toEqual(['apps/host/src/new.ts', 'tests/old.test.ts'])
     expect(plan.run[0]?.because).toEqual(['apps/host/src/new.ts', 'tests/old.test.ts'])
   })
 

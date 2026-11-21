@@ -40,7 +40,7 @@ sources:
 ```sh
 pnpm check:quick                             # fmt:check、lint、typecheck、check:boundaries、check:agents
 pnpm check                                   # check:quick 加 knip 与 test；每项都运行，最后逐项汇报
-pnpm check -- --plan                         # 只列出改动要求的检查，不运行；--base <ref> 比较某个提交以来的改动
+pnpm check -- --plan                         # 只列出改动要求的检查，不运行；--full 整批全量；--base <ref> 比较某个提交以来的改动
 pnpm typecheck                               # tsc -b
 pnpm lint                                    # oxlint；导入边界、循环导入与运行环境的全局变量是错误，其余只报告
 pnpm fmt:check                               # oxfmt 检查；pnpm fmt 写入，不处理 Markdown 与 packages/testkit/vectors/
@@ -108,13 +108,17 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 
 ## 按改动选择回归
 
-先运行 `pnpm check -- --plan`（规则在 `scripts/verify-plan.ts`）：它按改动路径列出要运行的检查、项目用例、构建、e2e、Electron、共享编码与确认组件的定向用例、`check:supply`、`check:workflows` 与布局检查。依赖文件与它不认识的路径要求全部检查。
+验证分两档，规则都在 `scripts/verify-plan.ts`：
 
-它只按路径判断。下面是它算不出来的部分：
+- **每项改动**：`pnpm check -- --plan` 只列受影响的部分：`check:quick`、运行这段代码的项目单测（包的改动加上依赖它的项目）、界面与错误文案的扫描、覆盖它的 e2e 文件，以及共享编码、确认组件、Electron 与布局的定向检查。覆盖的 e2e 是改动的用例、与改动文件或其目录同名的用例（`settings/` → `settings*.e2e.ts`，单复数都算），以及连接、登记、审批、取消、流式与中继文件所属流程的用例（`FLOW_E2E`）。设计系统、页面外壳与全局样式加上 `design.e2e.ts`、`visual.e2e.ts`。新功能不跑全量单测与 e2e。
+- **整批合入后或发布前**：`pnpm check -- --plan --full` 列出全部检查，跑一次。依赖文件、测试辅助与规则不认识的路径在每项改动时也要求全部检查。
 
-- 改动触及连接、登记、审批、取消或流式状态时，即使路径只要求单个项目，也运行下表的定向用例与对应 e2e。
-- 改共享协议（`packages/protocol/src/types.ts`、`packages/sdk/src/bridge.ts`、`plugins.ts`、`harness.ts`）时，先跑定向用例，再跑完整的 `pnpm test` 与 `pnpm test:e2e`。
-- 计划只列 `e2e/desktop.e2e.ts`；其他 Electron 用例见 [Electron e2e](#electron-e2e)。
+计划只按路径判断。下面是它算不出来的部分：
+
+- 名称匹配不到、却有 e2e 驱动这条流程时（例如用例按界面文字找到改动的组件），把那个用例加进去。
+- 改动触及连接、登记、审批、取消或流式状态时，即使计划没有列出，也运行下表的定向用例与对应 e2e。
+- 改共享协议（`packages/protocol/src/types.ts`、`packages/sdk/src/bridge.ts`、`plugins.ts`、`harness.ts`）时，跑完整的 `pnpm test` 与受影响流程的 e2e；全部 e2e 留到整批结束。
+- 计划对桌面端只列 `e2e/desktop.e2e.ts` 与同名的 `desktop-*.e2e.ts`（带 `LATCH_ELECTRON_E2E=1`）；其他 Electron 用例见 [Electron e2e](#electron-e2e)。
 - 真实 CLI、iOS 模拟器与性能测量默认跳过，见下面三节。
 
 定向安全用例（没有写目录的文件在 `apps/host/test/`）：
@@ -484,7 +488,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 ```
 
 - 只在 macOS 上运行；没有 `LATCH_ELECTRON_E2E=1` 或在其他系统上时整组跳过。
-- 同一开关还控制 `desktop-*.e2e.ts`、`multi-host.e2e.ts`、`app-build.e2e.ts`，以及 `release-check.e2e.ts`、`file-tree-actions.e2e.ts` 与 `html-preview.e2e.ts` 的 Electron 部分。`pnpm check -- --plan` 与 `e2e-desktop` 工作流只运行 `desktop.e2e.ts`；改到对应区域时按文件名另跑。
+- 同一开关还控制 `desktop-*.e2e.ts`、`multi-host.e2e.ts`、`app-build.e2e.ts`，以及 `release-check.e2e.ts`、`file-tree-actions.e2e.ts` 与 `html-preview.e2e.ts` 的 Electron 部分。`e2e-desktop` 工作流只运行 `desktop.e2e.ts`；`pnpm check -- --plan` 另列与改动的桌面端文件同名的 `desktop-*.e2e.ts`（带这个开关），其他区域按文件名另跑。
 - `native-relay-edge.e2e.ts` 的 Electron 用例从设置导入文件，经 Host 的测试确认与本地 Linux/TLS 中继登记。丢失保存成功的回执后用同一请求重试，再核对手机配对读到的签名连接簿及 Host 的签发状态。截图不包含配对信息。另一用例让真实 Host 经本地 TLS 的 Workers 适配器导入 Workers 中继文件（两个地址），测试两次只留一条测试路由，签进手机连接簿，拒绝另一把中继密钥并移除。运营者的验收命令在 `apps/relay-edge/test/accept.test.ts` 对同一适配器运行。
 - Host 在测试进程内用 `startTestHost` 启动，测试用 `writeHostState` 写出记录测试进程 PID 的 `host.json`，再启动 `apps/desktop/src/main.cjs --latch-host-state=<host.json> --latch-user-data=<临时目录> --use-mock-keychain`。
 - 例外是 `desktop-rebuild.e2e.ts`：它用 `ensureDesktopHost` 从 `dist/start.js` 启动真实 Host（临时数据目录，`policy.json` 停用本机确认，离线连接码连接），在 Host 运行时执行 `pnpm build:web` 重写 `dist/web`，再检查启动器先重启它、窗口连上且没有「转发请求失败」。

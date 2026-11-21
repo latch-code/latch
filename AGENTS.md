@@ -41,12 +41,10 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 pnpm install
 pnpm check:quick     # fmt:check、lint、typecheck、check:boundaries、check:agents
 pnpm check           # check:quick 加 knip 与 test，逐项汇报
-pnpm check -- --plan # 按改动列出该跑的检查；--base <ref> 指定比较的提交
+pnpm check -- --plan # 按改动列出该跑的检查；--full 整批全量；--base <ref> 指定比较的提交
 pnpm exec vitest run --config vitest.config.ts <目录>/<name>.test.ts
 pnpm build           # 含 host、web 与 presence；e2e 用 dist/web
 LATCH_BROWSER_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' pnpm test:e2e
-LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desktop.e2e.ts
-                     # 仅 macOS，先 pnpm build；用例不碰钥匙串与桌面端数据
 pnpm latch --help    # 列出子命令；都加 --data-dir <临时目录>
 pnpm start:demo -- --port 0 --data-dir <临时数据目录> --workspace <临时工作区>
 pnpm stop -- --data-dir <同一数据目录>
@@ -74,7 +72,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 
 - **秘密不外泄。** 设备凭据、邀请码、离线连接码、模型密钥、MCP 秘密值与令牌不进标准输出、日志、环境变量、命令行参数、URL、SSE、错误信息、Git 或截图。URL 里的邀请码只在配对链接的 `#pair=` 片段，页面读后即从地址栏移除；`pnpm latch` 只把邀请与离线码显示在交互终端，或写入新建的 0600 `--code-file`。Host 每行日志经 `redactKnownSecrets`，新增秘密格式时补充模式。网关凭据 `lmg1.`、`lbt1.` 与 OpenCode 口令只给所属 Agent 进程，不进参数、URL、日志与 SSE。
 - **磁盘上只存哈希。** 凭据与离线连接码只保存 SHA-256；邀请只在内存、只存哈希。模型密钥与 MCP 秘密值只在数据目录的 0600 文件中，不返回设备；`LATCH_API_KEY` 只在内存使用。
-- **本机确认只经 `PresenceService`。** 测试确认后端（`@latch/testkit`）只经 `startServer({ presence })` 注入。只有测试（`tests/`、`e2e/` 与各项目的 `test/`）导入 testkit 与测试目录的文件，其他用法由 `pnpm check:boundaries`、`pnpm lint` 与 Host 构建拒绝；构建后 `grep -rnE 'createTestPresence|startHostFixture|latch-test\.localhost|(tests?|e2e)/(helpers|fixtures)|packages/testkit|@latch/testkit' dist/` 必须为空。
+- **本机确认只经 `PresenceService`。** 测试确认后端（`@latch/testkit`）只经 `startServer({ presence })` 注入。只有测试（`tests/`、`e2e/` 与各项目的 `test/`）导入 testkit 与测试目录的文件，其他用法由 `pnpm check:boundaries`、`pnpm lint` 与 Host 构建拒绝；构建后 `dist/` 不含测试代码（检查命令由 `pnpm check -- --plan` 列出）。
 - **信任在连接时建立一次。** 设备凭 scope 工作：开始会话、放宽模式、批准 R2、预设模型地址与 Harness 命令（预设表原样命令与参数、无变量、在 PATH、未另绑）不弹确认，只留审计；审批是看管程度，不是边界。`PRESENCE_ACTIONS` 只留新设备与扩权、自填模型或出站地址、插件代码与页面能力变宽、新增或放宽 MCP 与其他 Harness 命令；只由 `host.sock` 发起（`isLocalListener`，登记例外），L3 运行或等待时全部拒绝。
 - **Host 不运行仓库里的程序，交付除外。** Host 的 Git 经受限运行器（钩子含配置钩子、filter、传输全关）；只有人按下的提交、推送、带 filter 的暂存及关钩子的获取、克隆以你的账户运行：先审计并复查权限，远端只取仓库配置，不强制推送（[文档](docs/GIT-DELIVERY.md)）。
 - **插件页面只凭已批准的能力行事。** 只在不透明隔离框运行、不拿凭据，草稿只经 Host 固定工具在沙箱构建；Host 按已应用清单核对每次页面调用（`via`）；页面会话只用项目默认权限、无私有上下文，人放宽后页面不能继续（[文档](docs/APP-PAGES.md)）。
@@ -118,9 +116,9 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 
 ## 完成标准
 
-1. 先 `pnpm build` 再 `pnpm check`，都通过（确认组件自检需先构建）；构建后 `dist/` 无测试代码。
-2. 按 `pnpm check -- --plan` 和 `latch-verify` 跑并汇报 e2e、Electron、`check:supply` 与[定向安全用例](docs/TESTING.md#按改动选择回归)。
-3. UI 在手机、平板、桌面宽度检查真实渲染，覆盖正常、进行中、失败或等待与深色（`e2e/design.e2e.ts`、`e2e/visual.e2e.ts`）。夹具、测试确认和演示模型无法替代真实模型、Touch ID 或真机验证。系统确认只由本人用 `pnpm latch presence test` 检查。
+1. 每项改动只验证受影响的部分：按 `pnpm check -- --plan` 与 `latch-verify` 跑 `check:quick`、运行这段代码的项目单测、覆盖它的 e2e 文件与[定向安全用例](docs/TESTING.md#按改动选择回归)。新功能不跑全量单测与 e2e。
+2. 整批改动合入后或发布前跑一次 `pnpm check -- --plan --full`：`pnpm build`、`pnpm check`、全部 e2e、Electron 与 `check:supply`，构建后 `dist/` 无测试代码。
+3. 改了布局或交互，在手机、平板、桌面宽度与深色下看真实渲染（`latch-ui-check`）；共享 UI 由计划加上 `e2e/design.e2e.ts`、`e2e/visual.e2e.ts`。夹具、测试确认和演示模型无法替代真实模型、Touch ID 或真机验证。系统确认只由本人用 `pnpm latch presence test` 检查。
 4. 行为变化时运行 `pnpm docs:affected`，更新对应 `docs/` 机制文档与 `AGENTS.md`。
 5. 汇报时区分已执行与未执行的检查。
 

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { readdir } from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import { changedFiles } from './repository.ts'
@@ -9,7 +10,8 @@ import { FULL_STEPS, QUICK_STEPS, testProjects, verificationPlan } from './verif
  * `pnpm check` runs the static checks and the unit tests; `pnpm check:quick` only the static checks, in seconds.
  * Every step runs even after one fails, and the summary names each result. `pnpm check -- --plan [--base <ref>]`
  * runs nothing: it lists the checks and tests the working tree's change against `--base` (HEAD by default) calls for,
- * by changed path, and the ones it does not; a path no rule knows calls for all of them.
+ * by changed path, and the ones it does not; a path no rule knows calls for all of them. `--full` lists the whole set,
+ * for the end of a batch of changes or a release.
  */
 // pnpm passes a `--` that separates its own options from the script's on to the script.
 const args = process.argv.slice(2)
@@ -19,6 +21,7 @@ const { values } = parseArgs({
   options: {
     quick: { type: 'boolean', default: false },
     plan: { type: 'boolean', default: false },
+    full: { type: 'boolean', default: false },
     base: { type: 'string', default: 'HEAD' },
   },
 })
@@ -27,12 +30,18 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 if (values.plan) {
   const config: unknown = await import(pathToFileURL(`${root}vitest.config.ts`).href)
   const changes = await changedFiles(root, values.base)
+  const e2e = (await readdir(`${root}e2e`)).filter(name => name.endsWith('.e2e.ts'))
   const plan = verificationPlan(
     changes,
     testProjects(typeof config === 'object' && config !== null && 'default' in config ? config.default : undefined),
-    values.base,
+    { base: values.base, full: values.full, e2e },
   )
   console.log(`相对 ${values.base} 的改动：${changes.length} 个文件。`)
+  console.log(
+    values.full
+      ? '范围：全量，整批改动合入后或发布前运行一次。'
+      : '范围：这次改动影响的部分。整批改动合入后或发布前运行一次 pnpm check -- --plan --full。',
+  )
   if (plan.unknown.length > 0) console.log(`这些路径不在规则中，所以运行全部检查：${plan.unknown.join('、')}`)
   console.log('运行：')
   for (const item of plan.run) {
