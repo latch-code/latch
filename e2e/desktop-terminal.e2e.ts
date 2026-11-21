@@ -700,23 +700,28 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       expect(rightShell.text).not.toContain('echo left')
       expect(Buffer.concat(leftShell.received).toString()).not.toContain('\\')
       await expect.poll(panesFit).toBe(true)
-      // Nothing of xterm's own black shows: under the last row every surface is the theme's background, in both themes.
-      const canvasUnder = () =>
-        visiblePanes.evaluateAll(panes =>
-          panes.every(pane => {
-            // The theme's background, which xterm puts on its scrollable element.
-            const canvas = (pane.querySelector('.xterm-scrollable-element') as HTMLElement).style.backgroundColor
-            return [...pane.querySelectorAll('.xterm, .xterm-viewport, .xterm-scrollable-element')].every(element => {
-              const color = getComputedStyle(element).backgroundColor
-              return color === canvas || color === 'rgba(0, 0, 0, 0)'
-            })
-          }),
-        )
-      await expect.poll(canvasUnder).toBe(true)
+      // A transparent tab strip, footer or xterm row shows the first painted surface behind it.
+      const terminalBackgrounds = () =>
+        panel.evaluate(element => {
+          const parts = element.querySelectorAll(
+            '.terminal-tabs, .terminal-screens, .terminal-foot, .terminal-pane:not([hidden]) :is(.xterm, .xterm-viewport, .xterm-scrollable-element, .xterm-rows)',
+          )
+          const colors = [element, ...parts].map(part => {
+            for (let surface: Element | null = part; surface; surface = surface.parentElement) {
+              const color = getComputedStyle(surface).backgroundColor
+              if (color !== 'rgba(0, 0, 0, 0)') return color
+            }
+            return 'transparent'
+          })
+          return [...new Set(colors)]
+        })
+      await expect.poll(terminalBackgrounds).toEqual(['rgb(255, 255, 255)'])
+      const pageColors = await page.addStyleTag({ content: ':root { --canvas: red; --mono-layer: red; --terminal-canvas: red }' })
       await page.emulateMedia({ colorScheme: 'dark' })
-      await expect.poll(canvasUnder).toBe(true)
+      await expect.poll(terminalBackgrounds).toEqual(['rgb(12, 12, 12)'])
+      await pageColors.evaluate(element => element.parentNode?.removeChild(element))
       await page.emulateMedia({ colorScheme: 'light' })
-      await expect.poll(canvasUnder).toBe(true)
+      await expect.poll(terminalBackgrounds).toEqual(['rgb(255, 255, 255)'])
       await capture(page, 'split-two-row-1440')
 
       // The header's button splits again; the other direction is refused in a tab whose panes run one way.

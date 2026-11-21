@@ -18,7 +18,7 @@ function dark(hex: string): boolean {
  */
 export function terminalTheme(element: Element): ITheme & { fontFamily: string; fontSize: number } {
   const style = getComputedStyle(element)
-  const canvas = token(style, '--canvas')
+  const canvas = token(style, '--terminal-canvas')
   const ink = token(style, '--ink')
   const night = dark(canvas)
   const black = night ? token(style, '--faint') : ink
