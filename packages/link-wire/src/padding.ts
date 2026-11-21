@@ -63,7 +63,9 @@ export class PaddingDecoder {
 /**
  * Monotonic-clock scheduling only. Missed slots are skipped, never replayed as a burst. A bulk connection keeps the
  * 40 ms grid for `bulkDelayMs`, then sends whole large cells as soon as data is queued, capped by a token bucket, with no
- * dummy cells until it falls quiet, when it pads its bulk total to the next size bucket.
+ * dummy cells until it falls quiet, when it pads its bulk total to the next size bucket. The `client` role (link-client's
+ * `NativeWorkspace`, transport plugins and the phone's stand-in in tests) keeps the 250 ms grid; the phone itself
+ * (`NativePaddingPacer`) beats as the `host` role does.
  */
 export class PaddingClock {
   private readonly role: 'host' | 'client'

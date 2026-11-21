@@ -31,12 +31,16 @@ public enum NativePaddingWire {
 }
 
 /**
- * The phone's cell schedule, with time passed in. Today's 250 ms grid on every connection; on a bulk connection, 3.5 s
- * after the padding layer started (past both outer legs' cover), whole large cells as soon as data is queued, capped by a
- * token bucket, and once quiet the bulk total padded to its size bucket. Mirrors `PADDING` and `PaddingClock` in link-wire.
+ * The phone's cell schedule, with time passed in. Clocked, it follows the Host's rule in `PaddingClock` (link-wire): a
+ * 40 ms grid while data is queued, was queued in the last 2 s, a protect hold is in force or large mode is on, otherwise
+ * 250 ms; small cells, large ones only from a 5 s boundary that found more than 4 KiB queued outside a hold. Missed slots
+ * are skipped. One difference: in the first 3.5 s large cells keep the 250 ms grid, because the phone's outer cover has no
+ * flush receipt and drains one large cell per 40 ms. (link-wire's `client` role, used by Node clients, stays on 250 ms.)
+ * On a bulk connection, 3.5 s after the padding layer started (past both outer legs' cover), whole large cells as soon as
+ * data is queued, capped by a token bucket, and once quiet the bulk total padded to its size bucket.
  */
 public struct NativePaddingPacer: Sendable {
-    public static let large = 16_384, small = 1024, gridMs: UInt64 = 250
+    public static let large = 16_384, small = 1024, gridMs: UInt64 = 250, activeGridMs: UInt64 = 40, activeHoldMs: UInt64 = 2000
     public static let bulkDelayMs: UInt64 = 3500, bulkRate = 12 * 1024 * 1024, bulkBurst = 4 * 1024 * 1024
     public static let bulkQuietMs: UInt64 = 1000, bucketBase = 262_144
     /** The smallest size bucket at or above `bytes`: 256 KiB, then each ×1.25 rounded up to whole large cells. */
@@ -46,23 +50,35 @@ public struct NativePaddingPacer: Sendable {
         return bucket
     }
     private let opened: UInt64
-    private var holdUntil: UInt64 = 0, largeUntil: UInt64 = 0, modeBucket: UInt64
+    private var holdUntil: UInt64 = 0, largeUntil: UInt64 = 0, activeUntil: UInt64 = 0, modeBucket: UInt64, lastSlot: UInt64
     public private(set) var bulk = false
     private var tokens = 0.0, refilled: UInt64 = 0, busyAt: UInt64 = 0
     public private(set) var bulkBytes = 0
-    public init(openedMs: UInt64) { opened = openedMs; modeBucket = openedMs / 5000 }
+    public init(openedMs: UInt64) { opened = openedMs; modeBucket = openedMs / 5000; lastSlot = openedMs / Self.activeGridMs * Self.activeGridMs }
     public mutating func protect(nowMs: UInt64) { holdUntil = max(holdUntil, nowMs + 15_000) }
     public mutating func enableBulk(nowMs: UInt64) {
         guard !bulk else { return }
         bulk = true; tokens = Double(Self.bulkBurst); refilled = nowMs; busyAt = nowMs
     }
     public func unclocked(nowMs: UInt64) -> Bool { bulk && nowMs >= opened + Self.bulkDelayMs }
-    /** The size of the cell a 250 ms tick sends; the clocked schedule only. */
-    public mutating func tick(nowMs: UInt64, queued: Int) -> Int {
+    /** On the 40 ms grid now: what decides when a queued write or a hold may go sooner than the 250 ms grid. */
+    public func active(nowMs: UInt64) -> Bool {
+        let large = nowMs < largeUntil
+        return nowMs < max(activeUntil, holdUntil, largeUntil) && !(large && nowMs < opened + Self.bulkDelayMs)
+    }
+    /**
+     * Clocked: the cell this slot sends (0 when this slot already sent one) and how long until the next slot. Asked again
+     * at any time it answers for the current slot only, so a late timer sends one cell, never the slots it missed.
+     */
+    public mutating func clocked(nowMs: UInt64, queued: Int) -> (size: Int, waitMs: UInt64) {
+        if queued > 0 { activeUntil = max(activeUntil, nowMs + Self.activeHoldMs) }
         if bulk, queued > 0 { busyAt = nowMs }
         let current = nowMs / 5000
         if current > modeBucket { modeBucket = current; if nowMs >= holdUntil && queued > 4096 { largeUntil = (current + 1) * 5000 } }
-        return nowMs < largeUntil ? Self.large : Self.small
+        let interval = active(nowMs: nowMs) ? Self.activeGridMs : Self.gridMs, slot = nowMs / interval * interval
+        let size = slot > lastSlot ? (nowMs < largeUntil ? Self.large : Self.small) : 0
+        if size > 0 { lastSlot = slot }
+        return (size, max(1, (nowMs / interval + 1) * interval - nowMs))
     }
     /** Unclocked: a large cell now, or nothing and how long until it is worth asking again. */
     public mutating func next(nowMs: UInt64, queued: Int) -> (size: Int, waitMs: UInt64) {
@@ -86,7 +102,8 @@ public struct NativePaddingPacer: Sendable {
 }
 
 /**
- * Client HTTP/2 bytes, including automatic flow control, share one 250 ms clock below the entire pipeline. A bulk
+ * Client HTTP/2 bytes, including automatic flow control, share one clock below the entire pipeline: the pacer's 40 ms
+ * grid while active, 250 ms otherwise; a write or a protect re-arms the timer to the next 40 ms slot. A bulk
  * connection's queue may hold the Host's 4 MiB connection window plus 64 KiB: NIO never writes more DATA than that window.
  */
 final class NativePaddingHandler: ChannelDuplexHandler, @unchecked Sendable {
@@ -108,7 +125,7 @@ final class NativePaddingHandler: ChannelDuplexHandler, @unchecked Sendable {
     private var stopped = false
     private weak var context: ChannelHandlerContext?
     init() { let now = NIODeadline.now().uptimeNanoseconds / 1_000_000; pacer = NativePaddingPacer(openedMs: now); inboundAt = now }
-    func protect() { pacer.protect(nowMs: milliseconds()) }
+    func protect() { pacer.protect(nowMs: milliseconds()); if let context { rearm(context) } }
     /** Activated by the Host's answer; before every unclocked cell `permitted` is checked, and a refusal drops the queue. */
     func bulk(permitted: @escaping @Sendable () -> Bool) {
         self.permitted = permitted; limit = Self.bulkQueue; entries = 1024
@@ -118,20 +135,26 @@ final class NativePaddingHandler: ChannelDuplexHandler, @unchecked Sendable {
     /** Nothing queued and, on a bulk connection, its total padded to its size bucket: an upload's end padding went. */
     func outboundSettled() -> Bool { queued == 0 && !pacer.owesPadding }
     private func milliseconds() -> UInt64 { NIODeadline.now().uptimeNanoseconds / 1_000_000 }
-    func handlerAdded(context: ChannelHandlerContext) { self.context = context; schedule(context) }
-    private func schedule(_ context: ChannelHandlerContext) {
+    func handlerAdded(context: ChannelHandlerContext) { self.context = context; schedule(context, in: NativePaddingPacer.gridMs - milliseconds() % NativePaddingPacer.gridMs) }
+    private func schedule(_ context: ChannelHandlerContext, in delay: UInt64) {
         guard !stopped else { return }
-        let delay = 250 - milliseconds() % 250
+        timer?.cancel()
         timer = context.eventLoop.scheduleTask(in: .milliseconds(Int64(delay))) { [self] in if let context = self.context { tick(context) } }
+    }
+    /** Queued bytes or a hold: the next 40 ms slot, as the Host's `wake()`; the pacer still sends one cell per slot. */
+    private func rearm(_ context: ChannelHandlerContext) {
+        let now = milliseconds()
+        guard !stopped, !pacer.unclocked(nowMs: now) else { return }
+        schedule(context, in: NativePaddingPacer.activeGridMs - now % NativePaddingPacer.activeGridMs)
     }
     private func tick(_ context: ChannelHandlerContext) {
         guard !stopped, context.channel.isActive else { return }
         let now = milliseconds()
-        if pacer.unclocked(nowMs: now) { drain(context); schedule(context); return }
-        // Network backpressure consumes a slot; there is no catch-up burst or unbounded timer queue.
-        let size = pacer.tick(nowMs: now, queued: queued)
-        if context.channel.isWritable { send(context, size: size, now: now) }
-        schedule(context)
+        if pacer.unclocked(nowMs: now) { drain(context); schedule(context, in: NativePaddingPacer.gridMs - now % NativePaddingPacer.gridMs); return }
+        // Network backpressure consumes a slot; a late timer sends one cell for the slot it is in. No catch-up burst.
+        let next = pacer.clocked(nowMs: now, queued: queued)
+        if next.size > 0, context.channel.isWritable { send(context, size: next.size, now: now) }
+        schedule(context, in: next.waitMs)
     }
     private func send(_ context: ChannelHandlerContext, size: Int, now: UInt64) {
         let large = size == NativePaddingPacer.large, capacity = size - 3
@@ -175,6 +198,7 @@ final class NativePaddingHandler: ChannelDuplexHandler, @unchecked Sendable {
         let bytes = unwrapOutboundIn(data)
         guard !stopped, bytes.readableBytes <= limit - queued, pending.count < entries else { promise?.fail(NativeFailure.unavailable); fail(context); return }
         queued += bytes.readableBytes; pending.append(Pending(bytes: bytes, promise: promise))
+        rearm(context)
     }
     /** Clocked, only the fixed timer flushes TLS cells; unclocked, a flush sends at once. */
     func flush(context: ChannelHandlerContext) { if pacer.unclocked(nowMs: milliseconds()) { drain(context) } }

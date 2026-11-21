@@ -178,13 +178,15 @@ do {
         }
         result = ["batches": batches, "bufferedBytes": writer.bufferedBytes]
     case "paddingPacer":
-        // A phone bulk uplink with a full queue against the outer cover of a leg that opened at `start`.
+        // A phone uplink with a full queue against the outer cover of a leg that opened at `start`: a bulk companion, or
+        // with `bulk` false a control connection. `stalls` are spans in which the outer framer's tick does not run.
         guard let queuedInput = input["queued"] as? NSNumber, let opened = input["pacerOpenedMs"] as? NSNumber,
               let duration = input["durationMs"] as? NSNumber, duration.intValue <= 20_000 else { throw NativeFailure.invalidRecord }
-        let start: UInt64 = 3500
+        let start = (input["startMs"] as? NSNumber)?.uint64Value ?? 3500
+        let stalls = (input["stalls"] as? [[NSNumber]] ?? []).map { ($0[0].uint64Value, $0[1].uint64Value) }
         var pacer = NativePaddingPacer(openedMs: opened.uint64Value), outer = NativeRelayOuterPadding()
-        var queued = queuedInput.intValue, overflowAt: UInt64?, maxBuffered = 0, cells: [[Any]] = [], covering = true
-        pacer.enableBulk(nowMs: start)
+        var queued = queuedInput.intValue, overflowAt: UInt64?, maxBuffered = 0, cells: [[Any]] = [], covering = true, wake: UInt64 = 0
+        if input["bulk"] as? Bool ?? true { pacer.enableBulk(nowMs: start) }
         func emit(_ size: Int, _ now: UInt64) throws {
             let payload = min(queued, size - 3); queued -= payload
             pacer.record(size: size, nowMs: now); cells.append([now - start, size, payload])
@@ -196,8 +198,13 @@ do {
             do {
                 if pacer.unclocked(nowMs: now) {
                     while true { let next = pacer.next(nowMs: now, queued: queued); if next.size == 0 { break }; try emit(next.size, now) }
-                } else if now % 250 == 0 { try emit(pacer.tick(nowMs: now, queued: queued), now) }
+                } else if now >= wake {
+                    let next = pacer.clocked(nowMs: now, queued: queued)
+                    if next.size > 0 { try emit(next.size, now) }
+                    wake = now + next.waitMs
+                }
                 maxBuffered = max(maxBuffered, outer.bufferedBytes)
+                if stalls.contains(where: { now - start >= $0.0 && now - start < $0.1 }) { continue }
                 // As the framer does: after the cover, what is left goes out and later frames are written directly.
                 if covering, now - start >= NativeRelayOuterPadding.durationMs {
                     while try outer.batch(elapsedMs: NativeRelayOuterPadding.durationMs + 1) != nil {}
@@ -207,6 +214,27 @@ do {
         }
         result = ["overflowAtMs": overflowAt.map { Int($0) as Any } ?? NSNull(), "maxBufferedBytes": maxBuffered, "cells": cells, "bulkBytes": pacer.bulkBytes,
             "buckets": [0, 262_145, 327_681, 8_388_608].map { NativePaddingPacer.bucket($0) }]
+    case "paddingBeat":
+        // The phone's clocked control schedule against a script: writes that queue bytes, protects, and stalls during which
+        // the timer does not fire. A write or protect re-arms the timer to the next 40 ms slot, as the handler does.
+        guard let duration = (input["durationMs"] as? NSNumber)?.uint64Value, duration <= 30_000,
+              let opened = (input["openedMs"] as? NSNumber)?.uint64Value else { throw NativeFailure.invalidRecord }
+        let writes = (input["writes"] as? [[NSNumber]] ?? []).map { ($0[0].uint64Value, $0[1].intValue) }
+        let protects = (input["protects"] as? [NSNumber] ?? []).map(\.uint64Value)
+        let stalls = (input["stalls"] as? [[NSNumber]] ?? []).map { ($0[0].uint64Value, $0[1].uint64Value) }
+        var pacer = NativePaddingPacer(openedMs: opened), queued = 0, cells: [[Int]] = [], maxQueued = 0
+        var wake = (opened / NativePaddingPacer.gridMs + 1) * NativePaddingPacer.gridMs
+        func rearm(_ now: UInt64) { wake = min(wake, (now / NativePaddingPacer.activeGridMs + 1) * NativePaddingPacer.activeGridMs) }
+        for now in opened..<(opened + duration) {
+            for (at, bytes) in writes where at == now { queued += bytes; rearm(now) }
+            for at in protects where at == now { pacer.protect(nowMs: now); rearm(now) }
+            maxQueued = max(maxQueued, queued)
+            guard now >= wake, !stalls.contains(where: { now >= $0.0 && now < $0.1 }) else { continue }
+            let next = pacer.clocked(nowMs: now, queued: queued)
+            if next.size > 0 { queued -= min(queued, next.size - 3); cells.append([Int(now), next.size]) }
+            wake = now + next.waitMs
+        }
+        result = ["cells": cells, "maxQueued": maxQueued]
     case "padding":
         guard let vector = input["padding"] as? [String: String], let payload = vector["payload"], let encoded = vector["small"] else { throw NativeFailure.invalidRecord }
         let bytes = try LinkBytes.unhex(encoded, maximum: 16_384)

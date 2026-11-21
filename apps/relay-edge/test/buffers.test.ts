@@ -301,3 +301,21 @@ it('closes the largest joined sockets while their sum stays above the 32 MiB obj
   expect(buffers.overloaded()).toEqual([phones[0], phones[1]])
   expect(EDGE_BUFFER_LIMITS.objectBacklogBytes).toBe(32 * MiB)
 })
+
+it('carries a phone control connection on its active 40 ms beat within the budget of a socket that never joined', () => {
+  const { clock, buffers } = clocked()
+  const { socket } = open(buffers, '192.0.2.0/24')
+  // One inner TLS record per padding cell (5 B header, 16 B tag, 1 B type), split into DATA messages of at most 16 KiB,
+  // each with its message byte and a WebSocket header: a large cell is about 16.4 KiB on the wire.
+  const messages = (cell: number) => {
+    const record = cell + 22
+    return Array.from({ length: Math.ceil(record / 16_384) }, (_, index) => Math.min(16_384, record - index * 16_384) + 1 + 4)
+  }
+  // A minute of large cells on every 40 ms slot, the most the beat sends: about 410 KiB/s, under 768 KiB/s.
+  for (let slot = 0; slot < 1500; slot++) {
+    clock.now += 40
+    for (const length of messages(16_384)) expect(buffers.write(socket, new Uint8Array(length), WRITE)).toBe('written')
+  }
+  expect(socket.sent / 60).toBeLessThan(EDGE_BUFFER_LIMITS.socketSendRate)
+  expect((messages(16_384).reduce((sum, length) => sum + length, 0) * 1000) / 40).toBeLessThan(EDGE_BUFFER_LIMITS.socketSendRate)
+})

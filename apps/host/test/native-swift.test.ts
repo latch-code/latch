@@ -38,6 +38,7 @@ import {
   verifyProof,
   hex,
   PADDING,
+  PaddingClock,
   paddingBucket,
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
@@ -997,8 +998,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(shaped.maxBufferedBytes).toBeLessThanOrEqual(65_536)
     const early = shaped.cells.filter(([at]) => at < PADDING.bulkDelayMs),
       late = shaped.cells.filter(([at]) => at >= PADDING.bulkDelayMs)
-    // Clocked first: one cell per 250 ms slot, never a burst.
-    expect(early.every(([at]) => at % 250 === 0)).toBe(true)
+    // Clocked first, never a burst: one cell per slot, small ones on the active 40 ms grid; large mode, from the 5 s boundary
+    // 1.5 s in, keeps the 250 ms grid until 3.5 s, so the outer cover drains it.
+    expect(early.every(([at, size]) => (at + 3500) % (size === PADDING.large ? 250 : PADDING.activeMs) === 0)).toBe(true)
+    expect(early.filter(([at]) => at < 1500).every(([, size]) => size === PADDING.small)).toBe(true)
+    expect(early.filter(([at]) => at >= 1500).every(([, size]) => size === PADDING.large)).toBe(true)
     expect(new Set(early.map(([at]) => at)).size).toBe(early.length)
     // Then the queue goes as fast as the token bucket allows: its 4 MiB burst at once, whole large cells only.
     expect(late[0]![0]).toBe(PADDING.bulkDelayMs)
@@ -1012,6 +1016,113 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     const unshaped = (await invoke({ operation: 'paddingPacer', queued: 4_194_304, pacerOpenedMs: 0, durationMs: 100 })) as Pacing
     expect(unshaped.overflowAtMs).toBe(0)
     expect(shaped.buckets).toEqual([0, 262_145, 327_681, 8_388_608].map(paddingBucket))
+  })
+  it('keeps a control connection on its active beat inside the outer cover, with the framer stalled, and its queue bound', async () => {
+    type Pacing = { overflowAtMs: number | null; maxBufferedBytes: number; cells: Array<[number, number, number]> }
+    // A queue that never drains (the worst case) and a 5 s boundary 1.5 s in: large mode begins inside the cover.
+    for (const stalls of [
+      [],
+      [[400, 560]],
+      [
+        [1500, 1580],
+        [2000, 2080],
+      ],
+    ]) {
+      const shaped = (await invoke({
+        operation: 'paddingPacer',
+        bulk: false,
+        queued: 67_108_864,
+        pacerOpenedMs: 3500,
+        durationMs: 6000,
+        stalls,
+      })) as Pacing
+      expect(shaped.overflowAtMs).toBeNull()
+      expect(shaped.maxBufferedBytes).toBeLessThanOrEqual(65_536)
+      const covered = shaped.cells.filter(([at]) => at < 3500),
+        after = shaped.cells.filter(([at]) => at >= 3500)
+      expect(covered.filter(([, size]) => size === PADDING.large).every(([at]) => (at + 3500) % 250 === 0)).toBe(true)
+      // Past 3.5 s large cells take the 40 ms grid: about 400 KiB/s, one per slot.
+      expect(after.every(([at, size]) => size === PADDING.large && (at + 3500) % PADDING.activeMs === 0)).toBe(true)
+      expect(after.length).toBeGreaterThan(2500 / PADDING.activeMs - 2)
+    }
+    // A full 64 KiB queue, as the Host's windows let NIO write it, drains on the active grid without a burst.
+    const queue = (await invoke({ operation: 'paddingBeat', openedMs: 100_000, durationMs: 4000, writes: [[100_010, 65_536]] })) as {
+      cells: Array<[number, number]>
+      maxQueued: number
+    }
+    expect(queue.maxQueued).toBe(65_536)
+    const carrying = queue.cells.filter(
+      ([at]) => at < 100_010 + Math.ceil(65_536 / (PADDING.small - 3)) * PADDING.activeMs + PADDING.activeMs,
+    )
+    expect(carrying.every(([at], index) => index === 0 || at - carrying[index - 1]![0] === PADDING.activeMs)).toBe(true)
+    expect(carrying.length).toBeGreaterThanOrEqual(Math.ceil(65_536 / (PADDING.small - 3)))
+  })
+  it('beats every 40 ms while the phone is in use and every 250 ms otherwise, as the Host clock does', async () => {
+    type Script = {
+      openedMs: number
+      durationMs: number
+      writes?: Array<[number, number]>
+      protects?: number[]
+      stalls?: Array<[number, number]>
+    }
+    const swift = async (script: Script) =>
+      ((await invoke({ operation: 'paddingBeat', ...script })) as { cells: Array<[number, number]> }).cells
+    // The Host's clock under the same script and timer rule: a write or protect re-arms to the next 40 ms slot.
+    const host = (script: Script) => {
+      const clock = new PaddingClock('host', script.openedMs),
+        cells: Array<[number, number]> = []
+      let queued = 0,
+        wake = (Math.floor(script.openedMs / PADDING.idleMs) + 1) * PADDING.idleMs
+      const rearm = (now: number) => (wake = Math.min(wake, (Math.floor(now / PADDING.activeMs) + 1) * PADDING.activeMs))
+      for (let now = script.openedMs; now < script.openedMs + script.durationMs; now++) {
+        for (const [at, bytes] of script.writes ?? []) if (at === now) ((queued += bytes), rearm(now))
+        for (const at of script.protects ?? []) if (at === now) (clock.protect(now), rearm(now))
+        if (now < wake || (script.stalls ?? []).some(([from, to]) => now >= from && now < to)) continue
+        const next = clock.next(now, queued)
+        if (next.size) {
+          queued -= Math.min(queued, next.size - 3)
+          cells.push([now, next.size])
+        }
+        wake = now + next.wait
+      }
+      return cells
+    }
+    const tap: Script = { openedMs: 100_000, durationMs: 6000, writes: [[100_510, 300]], stalls: [[101_005, 101_205]] }
+    const cells = await swift(tap)
+    expect(cells).toEqual(host(tap))
+    // Idle: the 250 ms grid. The tap goes in the next 40 ms slot, not the next 250 ms one.
+    expect(cells.filter(([at]) => at < 100_510).every(([at]) => at % PADDING.idleMs === 0)).toBe(true)
+    expect(cells.find(([at]) => at >= 100_510)).toEqual([100_520, PADDING.small])
+    // Active for 2 s after the last queued byte: 40 ms slots; the stalled timer sends one cell, not the slots it missed.
+    const active = cells.filter(([at]) => at >= 100_520 && at <= 102_520 && at !== 101_205)
+    expect(active.every(([at]) => at % PADDING.activeMs === 0)).toBe(true)
+    expect(cells.filter(([at]) => at >= 101_005 && at < 101_205)).toEqual([])
+    expect(cells.filter(([at]) => at >= 101_005 && at < 101_240)).toEqual([[101_205, PADDING.small]])
+    expect(new Set(cells.map(([at]) => at)).size).toBe(cells.length)
+    // Then idle again.
+    expect(cells.filter(([at]) => at > 102_560).every(([at]) => at % PADDING.idleMs === 0)).toBe(true)
+    expect(cells.every(([, size]) => size === PADDING.small)).toBe(true)
+    // A protect hold keeps the 40 ms grid with small cells for 15 s; large mode waits for a 5 s boundary outside it.
+    const held: Script = {
+      openedMs: 200_000,
+      durationMs: 22_000,
+      protects: [200_500],
+      writes: [
+        [209_990, 40_000],
+        [219_990, 40_000],
+      ],
+    }
+    const heldCells = await swift(held)
+    expect(heldCells).toEqual(host(held))
+    expect(
+      heldCells
+        .filter(([at]) => at >= 200_520 && at < 215_500)
+        .every(([at, size]) => at % PADDING.activeMs === 0 && size === PADDING.small),
+    ).toBe(true)
+    const large = heldCells.filter(([at]) => at >= 220_000 && at < 220_400)
+    expect(large).toHaveLength(10)
+    expect(large.every(([at, size]) => at % PADDING.activeMs === 0 && size === PADDING.large)).toBe(true)
+    expect(heldCells.filter(([at]) => at < 220_000).some(([, size]) => size === PADDING.large)).toBe(false)
   })
   it('keeps the explicit v3 relay profile and outer-padding HMAC bound to the shared wire vector', async () => {
     const vectors = JSON.parse(await readFile(join(root, 'packages/testkit/vectors/link-v1.json'), 'utf8')) as {

@@ -97,7 +97,10 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
       originalBulk.call(this)
     })
     const transferRanges: number[] = [],
-      partsAnswered: number[] = []
+      partsAnswered: number[] = [],
+      // The HTTP/2 sessions that answered an upload's start (the control connection) and its parts.
+      startSessions = new Set<unknown>(),
+      partSessions = new Set<unknown>()
     const originalEnd = Http2ServerResponse.prototype.end
     const responseSpy = vi.spyOn(Http2ServerResponse.prototype, 'end').mockImplementation(function (
       this: Http2ServerResponse,
@@ -107,8 +110,12 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
       if (range && this.req.method === 'GET') transferRanges.push(Number(range[2]) - Number(range[1]) + 1)
       const part = /\/attachments\/uploads\/[A-Za-z0-9_-]{22}\/parts\/(\d+)$/u.exec(this.req.url ?? '')
       // Only a real answer: a part whose stream closed under it is ended without one.
-      if (part && this.req.method === 'PUT' && this.statusCode === 200 && typeof args[0] === 'string' && args[0].startsWith('{"upload"'))
+      if (part && this.req.method === 'PUT' && this.statusCode === 200 && typeof args[0] === 'string' && args[0].startsWith('{"upload"')) {
         partsAnswered.push(Number(part[1]))
+        partSessions.add(this.req.stream?.session)
+      }
+      if (this.req.method === 'POST' && this.req.url === '/link/api/attachments/uploads' && this.statusCode === 201)
+        startSessions.add(this.req.stream?.session)
       if (operation === 'nativeRelayBulkLegacy' && typeof args[0] === 'string' && this.req.url?.startsWith('/link/api/snapshot')) {
         const value = JSON.parse(args[0]) as { catalog?: { features?: Record<string, unknown> } }
         if (value.catalog?.features) {
@@ -262,8 +269,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         // the missing ones.
         expect(bulkStreams.length).toBeGreaterThanOrEqual(3)
         expect(partsAnswered.toSorted((a, b) => a - b)).toEqual([0, 0, 1, 1, 2, 2, 3, 3, 4, 5, 6, 7, 8])
-        // On the control connection its first part alone would take over 16 s (about 64 KiB/s).
-        expect(nextMs).toBeLessThan(12_000)
+        // No part went on the control connection, the next file's included: each went on a companion.
+        expect(startSessions.size).toBeGreaterThanOrEqual(2)
+        expect([...startSessions, ...partSessions].every(session => session !== undefined)).toBe(true)
+        expect([...partSessions].filter(session => startSessions.has(session))).toEqual([])
+        expect(nextMs).toBeGreaterThan(0)
       } else expect(response).toEqual(expected)
       if (operation === 'nativeRelayLifecycle') {
         const snapshot = await desktop.json<{ tasks: Array<{ id: string }> }>('snapshot')
