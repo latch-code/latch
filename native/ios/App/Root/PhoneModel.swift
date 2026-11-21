@@ -1369,6 +1369,8 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         } else {
             tab = .code
         }
-        await openSession(target)
+        if sessionId != target || !hasContentWindow || detailCached || detail["summary"]["id"].string != target || detail["questions"].array.isEmpty {
+            await openSession(target)
+        }
     }
 }
