@@ -1792,6 +1792,94 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     const scopes = await invoke({ operation: 'phoneProjection', scopes: [{ cwd: '/work/\u00e9' }, { cwd: '/work/e\u0301' }] })
     expect(scopes.sameScope).toBe(false)
   })
+  it('nests only authorized team members of the same visible mobile shelf and never drops orphaned or cyclic rows', async () => {
+    const workspaces = [
+      { id: 'p', name: 'Shared' },
+      { id: 'other', name: 'Elsewhere' },
+    ]
+    const of = (teamId: string, leadSessionId = 'lead') => ({ teamOf: { teamId, leadSessionId } })
+    const row = (id: string, day: number, more: Record<string, unknown> = {}) => ({
+      id,
+      title: id,
+      workspaceId: 'p',
+      updatedAt: `2026-11-${day}T00:00:00Z`,
+      ...more,
+    })
+    const tasks = [
+      row('branch', 20, { worktree: { branch: 'latch/x' }, forkOf: { taskId: 'lead' } }),
+      row('second', 18, of('first-team')),
+      row('unlisted', 17, of('first-team')),
+      row('other-team', 16, of('another')),
+      row('first', 15, of('first-team')),
+      row('lead', 14),
+      row('waiting', 13, { ...of('first-team'), status: 'waiting-approval' }),
+      row('cross', 12, { ...of('first-team'), workspaceId: 'other' }),
+      row('orphan', 11, of('private', 'hidden')),
+    ]
+    const snapshot = {
+      tasks,
+      teams: [{ id: 'first-team', members: [{ sessionId: 'hidden' }, { sessionId: 'first' }, { sessionId: 'second' }] }],
+      instanceId: 'host',
+      revision: 1,
+    }
+    const detail = (summary: Record<string, unknown>) => ({ summary, sync: { instanceId: 'host', revision: 2 } })
+    const { answers } = (await invoke({
+      operation: 'phoneProjection',
+      workspaces,
+      teamShelfCases: [
+        { snapshot },
+        { snapshot: { ...snapshot, teams: [] } },
+        { snapshot, query: 'second' },
+        { snapshot, closed: true, detail: detail(tasks[1]!) },
+        { snapshot, offline: true },
+        { snapshot, detail: detail(row('second', 18, of('wrong', 'hidden'))) },
+        { snapshot, detail: detail(row('second', 18)) },
+        { snapshot: { tasks: tasks.map(task => ({ ...task, archived: true })) }, archived: true },
+        {
+          snapshot: {
+            tasks: [row('a', 18, of('t', 'b')), row('b', 17, of('t', 'a')), row('c', 16, of('t', 'a')), row('self', 15, of('t', 'self'))],
+          },
+        },
+      ],
+    })) as {
+      answers: {
+        rows: { shelf: string; id: string; parent: string; count: number; last: boolean }[]
+        hasTeams: boolean
+        linked: string[]
+      }[]
+    }
+    const [nested, fallback, search, closed, offline, replaced, omitted, archived, cycle] = answers
+    expect(nested!.rows.map(row => row.id)).toEqual([
+      'waiting',
+      'branch',
+      'lead',
+      'first',
+      'second',
+      'unlisted',
+      'other-team',
+      'orphan',
+      'cross',
+    ])
+    expect(nested!.rows.find(row => row.id === 'lead')?.count).toBe(4)
+    expect(nested!.rows.filter(row => row.last).map(row => row.id)).toEqual(['other-team'])
+    expect(nested!.rows.filter(row => row.parent).map(row => row.parent)).toEqual(['lead', 'lead', 'lead', 'lead'])
+    expect(nested!.rows.find(row => row.id === 'waiting')?.shelf).toBe('waiting')
+    expect(fallback!.rows.filter(row => row.parent).map(row => row.id)).toEqual(['second', 'unlisted', 'first', 'other-team'])
+    expect(search!.rows).toEqual([{ shelf: 'project:p', id: 'second', parent: '', count: 0, last: false }])
+    for (const hidden of [closed!, offline!]) {
+      expect(hidden.hasTeams).toBe(false)
+      expect(hidden.linked).toEqual([])
+      expect(hidden.rows.every(row => !row.parent && !row.count)).toBe(true)
+    }
+    for (const refresh of [replaced, omitted]) expect(refresh!.rows).toEqual(nested!.rows)
+    expect(archived!.rows.some(row => row.id === 'cross' && !row.parent)).toBe(true)
+    expect(cycle!.rows.map(row => [row.id, row.parent])).toEqual([
+      ['a', ''],
+      ['b', ''],
+      ['c', ''],
+      ['self', ''],
+    ])
+  })
   it('reveals folded projects during search and restores the folds for each computer and shelf identity', async () => {
     const shelf = 'project:shared'
     const result = await invoke({
@@ -2092,6 +2180,10 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.unlock).toEqual([
       { reopen: '查看', symbol: 'eye', atExpiry: true },
       { reopen: '用 Face ID 查看', symbol: 'faceid', atExpiry: false },
+    ])
+    expect(result.teamListRead).toEqual([
+      ['automatic', 'automatic', 'ready', 'automatic'],
+      ['onRequest', 'automatic', 'ready', 'onRequest'],
     ])
     expect(result.rows).toEqual(['waiting', 'waiting', 'running', 'silent', 'stopping', 'ended:已强制停止:2', 'failed', 'read', 'read'])
     // A list that may be stale draws nothing live; a run that has already ended still says how.

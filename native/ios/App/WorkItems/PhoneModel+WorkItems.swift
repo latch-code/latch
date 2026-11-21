@@ -105,7 +105,8 @@ extension PhoneModel {
         // An unchanged network interface and a still-valid lease are not a fresh WorkItem projection.
         workConnection = UUID()
         clearWorkContent()
-        if PhoneWorkItems.supported(snapshot) { snapshot = PhoneWorkItems.withoutBody(snapshot) }
+        let offline = PhoneSessions.withoutTeams(snapshot)
+        snapshot = PhoneWorkItems.supported(offline) ? PhoneWorkItems.withoutBody(offline) : offline
     }
 
     func workSourceVisibility(_ id: String) -> PhoneWorkSourceVisibility {

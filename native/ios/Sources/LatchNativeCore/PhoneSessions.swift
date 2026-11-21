@@ -14,9 +14,79 @@ public enum PhoneRowStatus: Equatable, Sendable {
 }
 
 public struct PhoneShelf: Equatable, Sendable {
+    public struct Row: Identifiable, Equatable, Sendable {
+        public var id: String { task["id"].string ?? "invalid" }
+        public let task: NativeJSON
+        public let parentId: String?
+        public let memberCount: Int
+        public let isLastMember: Bool
+    }
     public let id: String
     public let label: String
-    public let tasks: [NativeJSON]
+    public let rows: [Row]
+    public var tasks: [NativeJSON] { rows.map(\.task) }
+
+    init(id: String, label: String, tasks: [NativeJSON], order: PhoneTeamOrder? = nil, projects: [String: String] = [:]) {
+        self.id = id; self.label = label
+        guard let order else {
+            rows = tasks.map { Row(task: $0, parentId: nil, memberCount: 0, isLastMember: false) }
+            return
+        }
+        let here = Set(tasks.compactMap { $0["id"].string })
+        var leads: [String: String] = [:]
+        for task in tasks {
+            let membership = task["teamOf"]
+            guard let member = task["id"].string, let lead = membership["leadSessionId"].string,
+                  let team = membership["teamId"].string, !team.isEmpty, member != lead,
+                  here.contains(lead), projects[member] == projects[lead] else { continue }
+            leads[member] = lead
+        }
+        // A team member cannot lead another team. Keep every row visible if a malformed list contains a chain or cycle.
+        let parents = leads.filter { leads[$0.value] == nil }
+        var byLead: [String: [NativeJSON]] = [:]
+        for task in tasks {
+            if let lead = parents[task["id"].string ?? ""] { byLead[lead, default: []].append(task) }
+        }
+        rows = tasks.flatMap { task -> [Row] in
+            let id = task["id"].string ?? "invalid"
+            guard parents[id] == nil else { return [] }
+            let members = byLead[id].map(order.members) ?? []
+            let lead = Row(task: task, parentId: nil, memberCount: members.count, isLastMember: false)
+            return [lead] + members.enumerated().map { offset, member in
+                Row(task: member, parentId: id, memberCount: 0, isLastMember: offset == members.count - 1)
+            }
+        }
+    }
+}
+
+/** A visible roster orders existing members. It never introduces a session or establishes a parent. */
+struct PhoneTeamOrder {
+    private var places: [String: [String: Int]] = [:]
+
+    init(_ teams: [NativeJSON]) {
+        for team in teams {
+            guard let id = team["id"].string, places[id] == nil else { continue }
+            var ranks: [String: Int] = [:]
+            for (rank, entry) in team["members"].array.enumerated() {
+                if let session = entry["sessionId"].string, ranks[session] == nil { ranks[session] = rank }
+            }
+            places[id] = ranks
+        }
+    }
+
+    func members(_ tasks: [NativeJSON]) -> [NativeJSON] {
+        var teamOrder: [String] = [], grouped: [String: [NativeJSON]] = [:]
+        for task in tasks {
+            guard let team = task["teamOf"]["teamId"].string else { continue }
+            if grouped[team] == nil { teamOrder.append(team) }
+            grouped[team, default: []].append(task)
+        }
+        return teamOrder.flatMap { team -> [NativeJSON] in
+            let members = grouped[team] ?? []
+            guard let ranks = places[team] else { return members }
+            return members.sorted { (ranks[$0["id"].string ?? ""] ?? .max) < (ranks[$1["id"].string ?? ""] ?? .max) }
+        }
+    }
 }
 
 /** Presentation state stays in this window. Searching reveals matches without changing the reader's chosen folds. */
@@ -113,7 +183,11 @@ public enum PhoneSessions {
               let instance = snapshot["instanceId"].string, detail["sync"]["instanceId"].string?.utf8.elementsEqual(instance.utf8) == true,
               let bodyRevision = detail["sync"]["revision"].integer, let listRevision = snapshot["revision"].integer,
               bodyRevision >= listRevision else { return listed }
-        return detail["summary"]
+        if detail["summary"]["teamOf"] == listed["teamOf"] { return detail["summary"] }
+        var summary = detail["summary"].object
+        // Membership is authorized by the current *list*. A body response cannot create, remove, or restore a team.
+        summary["teamOf"] = listed.object["teamOf"]
+        return .object(summary)
     }
     /** A displayed body may update its existing list row without inventing a metadata revision or adding hidden rows. */
     public static func projectingCurrentSummary(snapshot: NativeJSON, detail: NativeJSON, sessionId: String?, cached: Bool) -> NativeJSON {
@@ -210,7 +284,7 @@ public enum PhoneSessions {
      * 等你处理 while something waits, then saved projects by their latest session, then conversations outside a project.
      * Archived sessions stay out; a search keeps every row in its own place.
      */
-    public static func shelves(tasks: [NativeJSON], workspaces: [NativeJSON], query: String = "") -> [PhoneShelf] {
+    public static func shelves(tasks: [NativeJSON], workspaces: [NativeJSON], teams: [NativeJSON]? = [], query: String = "") -> [PhoneShelf] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let listed = tasks.filter { !$0["archived"].bool }
             .map { (task: $0, at: PhoneTime.parse($0["updatedAt"]) ?? .distantPast) }.sorted { $0.at > $1.at }.map(\.task)
@@ -226,10 +300,24 @@ public enum PhoneSessions {
             grouped[id, default: []].append(task)
         }
         func pinnedFirst(_ tasks: [NativeJSON]) -> [NativeJSON] { tasks.filter { $0["pinned"].bool } + tasks.filter { !$0["pinned"].bool } }
+        let memberOrder = teams.map(PhoneTeamOrder.init)
         var result: [PhoneShelf] = []
         if !waiting.isEmpty { result.append(PhoneShelf(id: "waiting", label: "等你处理", tasks: waiting)) }
-        for id in order { result.append(PhoneShelf(id: "project:" + id, label: labels[id] ?? id, tasks: pinnedFirst(grouped[id] ?? []))) }
-        if !other.isEmpty { result.append(PhoneShelf(id: "other", label: "对话", tasks: pinnedFirst(other))) }
+        for id in order { result.append(PhoneShelf(id: "project:" + id, label: labels[id] ?? id, tasks: pinnedFirst(grouped[id] ?? []), order: memberOrder)) }
+        if !other.isEmpty { result.append(PhoneShelf(id: "other", label: "对话", tasks: pinnedFirst(other), order: memberOrder)) }
         return result
+    }
+
+    public static func withoutTeams(_ snapshot: NativeJSON) -> NativeJSON {
+        guard case var .object(value) = snapshot else { return snapshot }
+        value.removeValue(forKey: "teams")
+        if case let .array(tasks) = value["tasks"] {
+            value["tasks"] = .array(tasks.map { task in
+                guard task.object["teamOf"] != nil else { return task }
+                var row = task.object; row.removeValue(forKey: "teamOf")
+                return .object(row)
+            })
+        }
+        return .object(value)
     }
 }

@@ -4,6 +4,8 @@ import SwiftUI
 /** 会话: a list that collapses into a push on the phone and stays beside the conversation on an iPad. */
 struct InboxView: View {
     @EnvironmentObject private var model: PhoneModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(PhoneFaceID.key) private var faceID = false
     @State private var query = ""
     @State private var creating = false
     @State private var creatingWorkItem: PhoneWorkReadStamp?
@@ -81,6 +83,9 @@ struct InboxView: View {
             if creatingWorkItem != updated { creatingWorkItem = nil }
         }
         .onChange(of: computer) { _, _ in query = "" }
+        .onChange(of: model.teamListReadKey(faceID: faceID), initial: true) { _, key in
+            if key != nil { Task { await model.loadTeamList() } }
+        }
         .onChange(of: model.privateSnapshot.epoch) { _, _ in query = "" }
         .onChange(of: model.reviewTarget?.sessionId) { _, id in if id != nil { column = .detail } else if model.sessionId == nil { column = .sidebar } }
         // Back to the list from the review leaves it.
@@ -119,11 +124,21 @@ struct InboxView: View {
         let workspaces = model.snapshot["catalog"]["workspaces"].array
         // Code lists its own sessions; 我的 Agent's topics are in their conversations, as on the web.
         let tasks = PhoneSpaces.tasks(model.snapshot, in: .code)
-        let shelves = model.showArchived ? PhoneSessions.archivedShelves(tasks, query: query) : model.shelves(query: query)
+        let shelves = model.shelves(query: query, archived: model.showArchived)
         let searching = PhoneSearch.query(query) != nil && model.canSearchContent && !model.showArchived
         return List(selection: selection) {
             InboxSearchField(query: $query, prompt: model.showArchived ? "搜索已归档的会话" : "搜索会话或项目", identifier: "inbox.search").plainRow()
             if showsConnectionStatus { CodeConnectionRow() }
+            if model.offersTeamListUnlock(faceID: faceID) {
+                Button {
+                    Task { await model.loadTeamList(userInitiated: true) }
+                } label: {
+                    Label("查看团队关系", systemImage: "lock.open")
+                        .font(.subheadline).foregroundStyle(PhoneTheme.ink2)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain).plainRow()
+            }
             if model.showArchived {
                 Button { model.showArchived = false } label: { ArchivedLine(back: true, count: PhoneSessions.archived(tasks).count) }.buttonStyle(.plain).plainRow()
             }
@@ -138,7 +153,7 @@ struct InboxView: View {
                 let collapsed = disclosure.isCollapsed(shelf.id, computer: computer, filtering: filtering)
                 Section {
                     if collapsible {
-                        FoldableListHeading(title: PhoneConversation.visible(shelf.label), count: shelf.tasks.count, noun: "会话",
+                        FoldableListHeading(title: PhoneConversation.visible(shelf.label), count: shelf.rows.count, noun: "会话",
                             collapsed: collapsed, filtering: filtering, identifier: "inbox.project." + shelf.id,
                             symbol: shelf.id == "other" ? "bubble.left.and.bubble.right" : "folder") {
                             disclosure.toggle(shelf.id, computer: computer)
@@ -146,17 +161,18 @@ struct InboxView: View {
                     }
                     if waitingItems > 0 && shelf.id == "waiting" { workWaitingLink(count: waitingItems).plainRow() }
                     if !collapsed {
-                        ForEach(shelf.tasks, id: \.id) { task in
-                            InboxRow(task: task, frozen: frozen, inWaiting: shelf.id == "waiting", project: shelf.id == "waiting" ? PhoneSessions.project(of: task, workspaces: workspaces)?["name"].string ?? "对话" : nil)
-                                .tag(task.id)
-                                .listRowInsets(EdgeInsets(top: 5, leading: collapsible ? 32 : 20, bottom: 5, trailing: 20))
-                                .listRowBackground(model.sessionId == task.id ? PhoneTheme.selectedRow : PhoneTheme.canvas)
+                        let visibleRows = shelf.rows.filter { row in row.parentId.map { !teamCollapsed($0) } ?? true }
+                        ForEach(visibleRows) { row in
+                            sessionRow(row, inWaiting: shelf.id == "waiting", workspaces: workspaces)
+                                .tag(row.id)
+                                .listRowInsets(EdgeInsets(top: 0, leading: collapsible ? 32 : 20, bottom: 0, trailing: 16))
+                                .listRowBackground(model.sessionId == row.id ? PhoneTheme.selectedRow : PhoneTheme.canvas)
                                 .listRowSeparatorTint(PhoneTheme.line)
-                                .sessionActions(task, model: model)
+                                .sessionActions(row.task, model: model)
                         }
                     }
                 } header: {
-                    if !collapsible && !shelf.label.isEmpty { ShelfHeader(label: shelf.label, count: shelf.id == "waiting" && waitingItems > 0 ? nil : shelf.tasks.count) }
+                    if !collapsible && !shelf.label.isEmpty { ShelfHeader(label: shelf.label, count: shelf.id == "waiting" && waitingItems > 0 ? nil : shelf.rows.count) }
                 }
                 if shelf.id == "waiting", !others.isEmpty { OtherComputersSection(groups: others) }
             }
@@ -172,6 +188,51 @@ struct InboxView: View {
         .background(PhoneTheme.canvas)
         .scrollDismissesKeyboard(.interactively)
         .refreshable { await model.refreshInbox() }
+    }
+
+    private func teamCollapsed(_ lead: String) -> Bool {
+        disclosure.isCollapsed("team:" + lead, computer: computer, filtering: filtering)
+    }
+
+    private func sessionRow(_ row: PhoneShelf.Row, inWaiting: Bool, workspaces: [NativeJSON]) -> some View {
+        let task = row.task
+        return HStack(spacing: 4) {
+            InboxRow(task: task, frozen: frozen, inWaiting: inWaiting,
+                project: inWaiting ? PhoneSessions.project(of: task, workspaces: workspaces)?["name"].string ?? "对话" : nil,
+                isTeamMember: row.parentId != nil)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if row.memberCount > 0 {
+                let collapsed = teamCollapsed(row.id)
+                let title = PhoneConversation.visible(task["title"].string ?? "会话")
+                if filtering {
+                    Label("\(row.memberCount)", systemImage: "person.2")
+                        .font(.caption).foregroundStyle(PhoneTheme.muted)
+                        .accessibilityLabel("\(row.memberCount) 个匹配的团队成员")
+                } else {
+                    Button {
+                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                            disclosure.toggle("team:" + row.id, computer: computer)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(row.memberCount, format: .number).monospacedDigit()
+                            Image(systemName: collapsed ? "chevron.forward" : "chevron.down").imageScale(.small)
+                        }.font(.caption.weight(.medium)).foregroundStyle(PhoneTheme.ink2)
+                            .padding(.horizontal, 8).padding(.vertical, 4).background(PhoneTheme.bubble, in: Capsule())
+                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel((collapsed ? "展开" : "收起") + "「" + title + "」的团队成员")
+                    .accessibilityValue("\(row.memberCount) 个成员，" + (collapsed ? "已折叠" : "已展开"))
+                }
+            }
+        }
+        .padding(.vertical, 5)
+        .padding(.leading, row.parentId == nil ? 0 : 26)
+        .overlay(alignment: .leading) {
+            if row.parentId != nil { TeamBranch(last: row.isLastMember).frame(width: 20) }
+        }
+        .contentShape(Rectangle())
     }
 
     private func workWaitingLink(count: Int) -> some View {
@@ -366,12 +427,40 @@ private struct HostNoticeBanner: View {
     }
 }
 
+private struct TeamBranch: View {
+    @Environment(\.layoutDirection) private var direction
+    let last: Bool
+
+    var body: some View {
+        Canvas { context, size in
+            let rtl = direction == .rightToLeft
+            let trunk: CGFloat = rtl ? size.width - 5 : 5
+            let end: CGFloat = rtl ? 0 : size.width
+            let middle = size.height / 2
+            var branch = Path()
+            branch.move(to: CGPoint(x: trunk, y: 0))
+            if last {
+                branch.addLine(to: CGPoint(x: trunk, y: middle - 5))
+                branch.addQuadCurve(to: CGPoint(x: trunk + (rtl ? -5 : 5), y: middle),
+                                    control: CGPoint(x: trunk, y: middle))
+            } else {
+                branch.addLine(to: CGPoint(x: trunk, y: size.height))
+                branch.move(to: CGPoint(x: trunk, y: middle))
+            }
+            branch.addLine(to: CGPoint(x: end, y: middle))
+            context.stroke(branch, with: .color(PhoneTheme.lineStrong), lineWidth: 1)
+        }
+        .allowsHitTesting(false).accessibilityHidden(true)
+    }
+}
+
 struct InboxRow: View {
     @EnvironmentObject private var model: PhoneModel
     let task: NativeJSON
     let frozen: Bool
     let inWaiting: Bool
     let project: String?
+    let isTeamMember: Bool
     private var status: PhoneRowStatus { PhoneSessions.rowStatus(task, frozen: frozen) }
     private var selected: Bool { model.sessionId == task.id }
     private var strong: Bool { if case .read = status { return false }; return true }
@@ -379,6 +468,7 @@ struct InboxRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text(PhoneConversation.visible(task["title"].string ?? "会话")).font(.body.weight(selected ? .semibold : strong ? .medium : .regular)).foregroundStyle(PhoneTheme.ink).lineLimit(2)
+                    .accessibilityLabel((isTeamMember ? "团队成员，" : "") + PhoneConversation.visible(task["title"].string ?? "会话"))
                 Spacer(minLength: 4)
                 RowStatusSlot(task: task, status: status, frozenAt: model.lastConfirmed)
                     .layoutPriority(1)

@@ -603,8 +603,15 @@ extension PhoneSessions {
             .sorted { (PhoneTime.parse($0["updatedAt"]) ?? .distantPast) > (PhoneTime.parse($1["updatedAt"]) ?? .distantPast) }
     }
     /** The list in 已归档's place: one shelf without a heading. */
-    public static func archivedShelves(_ tasks: [NativeJSON], query: String = "") -> [PhoneShelf] {
+    public static func archivedShelves(_ tasks: [NativeJSON], workspaces: [NativeJSON] = [], teams: [NativeJSON]? = nil, query: String = "") -> [PhoneShelf] {
         let found = archived(tasks, query: query)
-        return found.isEmpty ? [] : [PhoneShelf(id: "archived", label: "", tasks: found)]
+        guard !found.isEmpty else { return [] }
+        var projects: [String: String] = [:]
+        if teams != nil {
+            for task in found {
+                if let id = task["id"].string { projects[id] = project(of: task, workspaces: workspaces)?["id"].string }
+            }
+        }
+        return [PhoneShelf(id: "archived", label: "", tasks: found, order: teams.map(PhoneTeamOrder.init), projects: projects)]
     }
 }

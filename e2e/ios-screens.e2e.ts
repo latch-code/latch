@@ -16,6 +16,7 @@ const SCENES = [
   'code',
   'workspace',
   'workspace-offline',
+  'session-team',
   'question-reminder',
   'conversation',
   'conversation-reading',

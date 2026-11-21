@@ -5,6 +5,24 @@ import Security
 /** Reads synthetic Host JSON through the App's own projections, and answers in plain values the test can compare. */
 func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
     let value = try NativeJSON.decode(JSONSerialization.data(withJSONObject: input))
+    if case let .array(cases) = value["teamShelfCases"] {
+        let answers = cases.map { item -> [String: Any] in
+            var snapshot = item["snapshot"]
+            if item["closed"].bool { snapshot = PhoneAgents.withoutPrivate(snapshot) }
+            if item["offline"].bool { snapshot = PhoneSessions.withoutTeams(snapshot) }
+            if let id = item["detail"]["summary"]["id"].string {
+                snapshot = PhoneSessions.projectingCurrentSummary(snapshot: snapshot, detail: item["detail"], sessionId: id, cached: false)
+            }
+            let tasks = snapshot["tasks"].array, teams = snapshot["teams"].array, workspaces = value["workspaces"].array
+            let query = item["query"].string ?? ""
+            let shelves = item["archived"].bool ? PhoneSessions.archivedShelves(tasks, workspaces: workspaces, teams: teams, query: query)
+                : PhoneSessions.shelves(tasks: tasks, workspaces: workspaces, teams: teams, query: query)
+            return ["rows": shelves.flatMap { shelf in shelf.rows.map { row -> [String: Any] in
+                ["shelf": shelf.id, "id": row.id, "parent": row.parentId ?? "", "count": row.memberCount, "last": row.isLastMember]
+            } }, "hasTeams": snapshot.object["teams"] != nil, "linked": tasks.filter { $0["teamOf"] != .null }.compactMap { $0["id"].string }]
+        }
+        return ["answers": answers]
+    }
     if let readings = input["transcriptFrames"] as? [[String: Int]] {
         var prior: PhoneTranscriptFrame?, away = false
         let positions = try readings.map { reading -> [Bool] in
@@ -89,6 +107,11 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
             .map { SecureDeviceKeys.verificationFailure(domain: $0.0, code: $0.1) == .declined },
         "verificationAsksPresence": SecureDeviceKeys.verificationAccess.contains(.userPresence),
         "unlock": [false, true].map { ["reopen": PhoneUnlock.reopenWords(faceID: $0), "symbol": PhoneUnlock.closedWindowSymbol(faceID: $0), "atExpiry": PhoneUnlock.reopensAtExpiry(faceID: $0)] as [String: Any] },
+        "teamListRead": [false, true].map { faceID in
+            [(false, false), (true, false), (true, true), (false, true)].map { open, confirmed in
+                String(describing: PhoneUnlock.teamListRead(windowOpen: open, confirmed: confirmed, faceID: faceID))
+            }
+        },
         "rows": tasks.map { words(PhoneSessions.rowStatus($0)) },
         "frozen": tasks.map { words(PhoneSessions.rowStatus($0, frozen: true)) },
         "shelves": PhoneSessions.shelves(tasks: tasks, workspaces: workspaces).map { ["label": $0.label, "ids": $0.tasks.compactMap { $0["id"].string }] },

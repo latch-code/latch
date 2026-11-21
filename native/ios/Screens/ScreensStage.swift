@@ -40,6 +40,8 @@ import UIKit
         switch name {
         case "question-reminder":
             stageQuestionReminder(model)
+        case "session-team":
+            model.snapshot = sessionTeamSnapshot(value)
         case "workspace", "workspace-offline":
             model.snapshot = workSnapshot()
             if name == "workspace-offline" { stageDisconnected(model) }
@@ -502,8 +504,12 @@ import UIKit
                     if next == .active { Task { await model.open() } }
                 }
                 .onChange(of: model.sessionId) { _, session in
-                    if model.staged, ScreensStage.scene == "question-reminder", let session {
-                        ScreensStage.openWorkSession(session, model: model)
+                    if model.staged, let session {
+                        switch ScreensStage.scene {
+                        case "question-reminder": ScreensStage.openWorkSession(session, model: model)
+                        case "session-team": ScreensStage.openTeamExample(session, model: model)
+                        default: break
+                        }
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
@@ -513,6 +519,53 @@ import UIKit
                     if PhoneLive.isOn { model.protectedDataChanged(available: true) }
                 }
         }
+    }
+}
+
+extension ScreensStage {
+    private static let teamLead = "ses_aaaaaaaaaaaaaaaaaaaaaa"
+    private static let teamExample = "tem_aaaaaaaaaaaaaaaaaaaaaa"
+    private static let teamMembers = [
+        (id: "ses_bbbbbbbbbbbbbbbbbbbbbb", title: "你好", harness: "codex"),
+        (id: "ses_cccccccccccccccccccccc", title: "输出检查结果", harness: "standard"),
+        (id: "ses_dddddddddddddddddddddd", title: "输出 1", harness: "codex"),
+        (id: "ses_eeeeeeeeeeeeeeeeeeeeee", title: "输出2", harness: "standard"),
+    ]
+
+    private static func sessionTeamSnapshot(_ base: NativeJSON) -> NativeJSON {
+        let membership = NativeJSON.object(["teamId": .string(teamExample), "leadSessionId": .string(teamLead)])
+        func task(_ id: String, _ title: String, harness: String, project: String = "pc-studio", minutes: Int) -> NativeJSON {
+            json(#"{"id":"\#(id)","title":"\#(title)","status":"idle","updatedAt":"{{-\#(minutes * 60)}}","harnessId":"\#(harness)","mode":"agent","workspaceId":"\#(project)"}"#)
+        }
+        let children = teamMembers.enumerated().map { index, member in
+            patched(task(member.id, member.title, harness: member.harness, minutes: 10 - index)) { $0["teamOf"] = membership }
+        }
+        let members = teamMembers.map { member in
+            NativeJSON.object(["itemId": .string("itm_" + member.id.dropFirst(4)), "sessionId": .string(member.id),
+                "name": .string(member.title), "title": .string(member.title), "harnessId": .string(member.harness), "state": .string("done")])
+        }
+        return patched(base) { fields in
+            fields["catalog"] = patched(base["catalog"]) {
+                $0["workspaces"] = json(#"[{"id":"pc-studio","name":"pc-studio","path":"/work/pc-studio"},{"id":"rust-learn","name":"rust-learn","path":"/work/rust-learn"}]"#)
+            }
+            fields["tasks"] = .array([task(teamLead, "你好", harness: "standard", minutes: 1),
+                task("ses_ffffffffffffffffffffff", "你好", harness: "codex", minutes: 20),
+                task("ses_gggggggggggggggggggggg", "检查 Rust 项目", harness: "codex", project: "rust-learn", minutes: 30)] + children)
+            fields["teams"] = .array([.object(["id": .string(teamExample), "leadSessionId": .string(teamLead), "members": .array(members),
+                "state": .string("returned"), "createdAt": .string("2026-11-01T09:00:00Z"), "updatedAt": .string("2026-11-01T10:00:00Z")])])
+        }
+    }
+
+    static func openTeamExample(_ session: String, model: PhoneModel) {
+        guard let summary = model.snapshot["tasks"].array.first(where: { $0["id"].string == session }) else { return }
+        let title = summary["title"].string ?? ""
+        let answer: String
+        if session == teamLead { answer = "这个会话发起了四项团队分工。" }
+        else if let index = teamMembers.firstIndex(where: { $0.id == session }) { answer = "这是第\(index + 1) 个成员的回复。" }
+        else { answer = "这是单独开始的会话。" }
+        model.detail = .object(["summary": summary, "sync": .object(["instanceId": .string("screens"), "revision": .number(42)]),
+            "messages": .array([.object(["id": .string("user"), "role": .string("user"), "text": .string(title)]),
+                .object(["id": .string("reply"), "role": .string("assistant"), "text": .string(answer)])])])
     }
 }
 

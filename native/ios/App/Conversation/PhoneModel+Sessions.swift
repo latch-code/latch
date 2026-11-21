@@ -57,7 +57,12 @@ extension PhoneModel {
             current == generation && sessionId == id && contentGeneration == reading
                 && (retained == nil || (selectedTab == tab && selectedPath == agentPath && retained?.valid == true))
         }
-        do { try await ensureVerified(resuming: retained) }
+        do {
+            // If the shelf is already opening this window, wait for its binding before capturing the content epoch.
+            if let opening = teamListOpening, opening.transport === installedTransport { try await opening.task.value }
+            guard stillReading(), !Task.isCancelled else { return }
+            try await ensureVerified(resuming: retained)
+        }
         catch {
             guard stillReading(), !(error is CancellationError) else { return }
             if (error as? NativeFailure) != .declined, !wentAway(error) { report(error) }

@@ -11,11 +11,17 @@ public enum PhoneContentReopen: Sendable {
     case agents(sessionId: String?), session(String), none
 }
 
+public enum PhoneTeamListRead: Sendable { case ready, automatic, onRequest }
+
 /**
  * A connected phone opens its content without asking. Face ID is the person's own choice in 设置, off by default; when it
  * is on, it is asked before each new content window, and the words and icons say so.
  */
 public enum PhoneUnlock {
+    public static func teamListRead(windowOpen: Bool, confirmed: Bool, faceID: Bool) -> PhoneTeamListRead {
+        if windowOpen { return confirmed ? .ready : .automatic }
+        return faceID ? .onRequest : .automatic
+    }
     /** Reopens only the captured foreground reading intent. A private page needs its newly authorized snapshot. */
     @MainActor public static func reopenContent(_ target: PhoneContentReopen, faceID: Bool, current: () -> Bool,
         verify: () async throws -> Void, refreshPrivate: () async -> Bool, openSession: (String) async -> Void) async throws {

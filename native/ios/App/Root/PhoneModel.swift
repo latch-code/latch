@@ -84,6 +84,9 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     @Published var agentPath: [String] = []
     /** Covers both verification and the subsequent private list read for this computer. */
     @Published var openingAgentsFor: UUID?
+    @Published var teamListRead: NativeTransportEpoch?
+    @Published var teamListRetry: NativeTransportEpoch?
+    var teamListOpening: (transport: NativeTransportEpoch, task: Task<Void, Error>)?
     /** Memory proposals by owner, read inside a content window and dropped with it. */
     @Published var proposals = PhoneProposalStore()
     /** Result cards waiting for an owner's next topic, read inside a content window and dropped with it. */
@@ -164,7 +167,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     var otherOpening: UUID?
     /** A notification tapped before the store was open again: opened once it is. */
     var pendingOther: (computer: String, session: String)?
-    private var shelfCache: (query: String, shelves: [PhoneShelf])?
+    private var shelfCache: (query: String, archived: Bool, window: Bool, shelves: [PhoneShelf])?
     private var hostClockOffset: TimeInterval = 0
     /** Where to come back to after the App returns from the background: within this process only. */
     private var resumeSession: String?
@@ -179,10 +182,14 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     /** When a window that ran out last opened again by itself; a clock far off the Mac's cannot make it spin. */
     private var lastReopen: ContinuousClock.Instant?
     /** Drawn on every update of anything, so it is worked out once per list and search. */
-    func shelves(query: String) -> [PhoneShelf] {
-        if let shelfCache, shelfCache.query == query { return shelfCache.shelves }
-        let value = PhoneSessions.shelves(tasks: PhoneSpaces.tasks(snapshot, in: .code), workspaces: snapshot["catalog"]["workspaces"].array, query: query)
-        shelfCache = (query, value)
+    func shelves(query: String, archived: Bool = false) -> [PhoneShelf] {
+        let window = connected && hasContentWindow && privateSnapshot.confirmed
+        if let shelfCache, shelfCache.query == query, shelfCache.archived == archived, shelfCache.window == window { return shelfCache.shelves }
+        let tasks = PhoneSpaces.tasks(snapshot, in: .code), workspaces = snapshot["catalog"]["workspaces"].array
+        let teams = window ? snapshot["teams"].array : nil
+        let value = archived ? PhoneSessions.archivedShelves(tasks, workspaces: workspaces, teams: teams, query: query)
+            : PhoneSessions.shelves(tasks: tasks, workspaces: workspaces, teams: teams, query: query)
+        shelfCache = (query, archived, window, value)
         return value
     }
     func hostNow() -> Date { Date().addingTimeInterval(hostClockOffset) }
