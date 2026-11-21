@@ -476,7 +476,7 @@ describe('design tokens', () => {
         root.dataset.theme = theme
         for (const palette of ['mono', 'graphite', 'cool', 'warm']) {
           preview.dataset.palette = palette
-          for (const surface of ['--work-rail', '--work-canvas', '--work-raised', '--work-float']) {
+          for (const surface of ['--work-rail', '--work-canvas', '--work-raised', '--work-composer', '--work-float']) {
             preview.style.backgroundColor = `var(${surface})`
             const background = colour(getComputedStyle(preview).backgroundColor)
             for (const ink of ['--work-ink', '--work-ink-2', '--work-muted', '--work-faint', '--accent-ink', '--red']) {

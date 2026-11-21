@@ -121,7 +121,7 @@
 .appearance-palette-composer {
   inset: auto 9% 16% 34%;
   min-height: 22%;
-  background: var(--work-raised);
+  background: var(--work-composer);
 }
 .appearance-palette-menu {
   inset: auto 13% 46% 52%;

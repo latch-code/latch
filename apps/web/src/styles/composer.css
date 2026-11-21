@@ -60,7 +60,7 @@
   position: relative;
   min-width: 0;
   border-radius: var(--r-16);
-  background: var(--raised);
+  background: var(--work-composer);
 }
 .composer[hidden] {
   display: none;

@@ -52,6 +52,7 @@
     /* Shared workbench surfaces in both layouts. */
     --work-canvas: #f7f8fa;
     --work-raised: #fcfcfd;
+    --work-composer: var(--work-raised);
     --work-sunken: #eceef1;
     --work-rail: var(--work-sunken);
     --work-seg-track: var(--work-sunken);
@@ -862,6 +863,7 @@
   @supports (color: light-dark(white, black)) {
     :root[data-palette],
     [data-palette] {
+      --work-composer: var(--work-raised);
       --work-faint: light-dark(#5c6672, #9ba2ad);
       --pop: var(--work-float);
     }
@@ -874,6 +876,7 @@
       --seg-track: light-dark(var(--sunken), var(--work-canvas));
       --seg-on: light-dark(#ffffff, var(--mono-layer));
       --work-raised: light-dark(#ffffff, #151515);
+      --work-composer: light-dark(var(--work-raised), var(--mono-layer));
       --work-float: var(--mono-layer);
       --work-ink: light-dark(#1e1e1e, #f0f0f0);
       --work-ink-2: light-dark(#424242, #d8d8d8);
@@ -960,6 +963,7 @@
     /* Shared workbench surfaces in both layouts. */
     --work-canvas: #f7f8fa !important;
     --work-raised: #fcfcfd !important;
+    --work-composer: var(--work-raised) !important;
     --work-sunken: #eceef1 !important;
     --work-rail: var(--work-sunken) !important;
     --work-seg-track: var(--work-sunken) !important;

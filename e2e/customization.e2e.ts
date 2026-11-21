@@ -240,14 +240,15 @@ describe('customisation: 外观 as data, and the way back to the default', () =>
         const colors = new Set<string>()
         for (const name of ['黑白', '墨灰', '雾蓝', '暖灰']) {
           const choice = palettes.getByRole('radio', { name, exact: true })
+          const previewEditor = await background(choice.locator('.appearance-palette-composer'))
           await choice.click()
           const tile = await background(choice.locator('.appearance-palette'))
           const rail = await background(page.locator('.app-shell > .sidebar'))
           const editor = await background(canvas.locator('.composer'))
           expect(await background(canvas)).toBe(tile)
           expect(rail).toBe(await background(choice.locator('.appearance-palette-rail')))
-          expect(editor).toBe(await background(choice.locator('.appearance-palette-composer')))
-          if (theme === 'dark' && name === '黑白') expect([tile, rail, editor]).toEqual(['rgb(0, 0, 0)', 'rgb(8, 8, 8)', 'rgb(21, 21, 21)'])
+          expect(editor).toBe(previewEditor)
+          if (theme === 'dark' && name === '黑白') expect([tile, rail, editor]).toEqual(['rgb(0, 0, 0)', 'rgb(8, 8, 8)', 'rgb(12, 12, 12)'])
           colors.add(tile)
         }
         expect(colors.size).toBe(4)
