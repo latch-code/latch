@@ -33,6 +33,7 @@ struct PhoneSettingsView: View {
                         changingFaceID = true
                         Task { _ = await PhoneFaceID.change(to: next); changingFaceID = false }
                     }))
+                    .tint(PhoneTheme.accent)
                     .disabled(changingFaceID || (!faceID && !faceIDAvailable))
                 } header: { Text("安全") } footer: {
                     if faceID { Text("查看会话内容前先通过 Face ID。离开 App 或过十分钟后，再查看时会再次询问。") }
@@ -41,14 +42,14 @@ struct PhoneSettingsView: View {
                 }
                 .onAppear { faceIDAvailable = PhoneFaceID.available }
                 Section {
-                    Toggle("Agent 提问提醒", isOn: $questionReminders)
+                    Toggle("Agent 提问提醒", isOn: $questionReminders).tint(PhoneTheme.accent)
                     Toggle("其他电脑等你处理时通知", isOn: Binding(get: { notifyOthers }, set: { next in
                         changingNotices = true; noticesRefused = false
                         Task {
                             let granted = await PhoneComputerNotices.change(to: next)
                             notifyOthers = PhoneComputerNotices.isOn; noticesRefused = next && !granted; changingNotices = false
                         }
-                    })).disabled(changingNotices)
+                    })).tint(PhoneTheme.accent).disabled(changingNotices)
                 } header: { Text("通知") } footer: {
                     if noticesRefused { Text("系统设置里没有允许 Latch 发通知。") }
                     else { Text("使用 Latch 时提醒你回答新问题。支持实时活动的设备也会显示待回答状态。") }

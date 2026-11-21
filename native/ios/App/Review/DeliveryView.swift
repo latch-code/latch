@@ -239,7 +239,7 @@ struct DeliveryView: View {
                 Text(skipHooks ? "这次不运行提交钩子" : "运行仓库钩子").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2)
                 InfoHint(text: PhoneDelivery.hooksDetail(state))
                 Spacer()
-                Toggle("跳过钩子", isOn: $skipHooks).font(PhoneTheme.caption).fixedSize().disabled(frozen || !canWrite)
+                Toggle("跳过钩子", isOn: $skipHooks).font(PhoneTheme.caption).fixedSize().tint(PhoneTheme.accent).disabled(frozen || !canWrite)
             }
         }
     }
