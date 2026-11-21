@@ -1,8 +1,9 @@
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { devNull, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   TEAM_LIMITS,
@@ -28,6 +29,15 @@ afterEach(async () => {
 
 const SLOW = { timeout: 60_000 }
 const WAIT = { timeout: 20_000, interval: 50 }
+const run = promisify(execFile)
+
+/** The Host and its HTTP client share this event loop while Git prepares the test project. */
+async function projectGit(cwd: string, ...args: string[]): Promise<void> {
+  await run('git', ['-c', `core.hooksPath=${devNull}`, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], {
+    cwd,
+    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull },
+  })
+}
 
 /** A Host with two Harnesses, `alpha` and `beta`: the fake ACP agent twice, each with its own record of sessions. */
 async function fixture(directories?: { dataDir: string; workspaceRoot: string }, state?: string, demo = false) {
@@ -567,12 +577,10 @@ describe('who reads a team, and as whom its results go back', () => {
     const { t, owner } = await fixture()
     const project = join(t.root, 'studio')
     await mkdir(project)
-    const git = (...args: string[]) =>
-      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd: project, stdio: 'pipe' })
-    git('init', '-q', '-b', 'main')
+    await projectGit(project, 'init', '-q', '-b', 'main')
     await writeFile(join(project, 'README.md'), '# studio\n')
-    git('add', '.')
-    git('commit', '-q', '-m', 'first')
+    await projectGit(project, 'add', '.')
+    await projectGit(project, 'commit', '-q', '-m', 'first')
     expect((await owner.addFolders({ paths: [project] })).ok).toBe(true)
     const workspaceId = (await owner.json<{ workspaces: WorkspaceInfo[] }>('workspaces')).workspaces.find(item =>
       item.path.endsWith('/studio'),
@@ -596,9 +604,7 @@ describe('a project whose worktree cannot be made now', () => {
     const { t, owner } = await fixture()
     const project = join(t.root, 'fresh')
     await mkdir(project)
-    const git = (...args: string[]) =>
-      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd: project, stdio: 'pipe' })
-    git('init', '-q', '-b', 'main')
+    await projectGit(project, 'init', '-q', '-b', 'main')
     expect((await owner.addFolders({ paths: [project] })).ok).toBe(true)
     const workspaceId = (await owner.json<{ workspaces: WorkspaceInfo[] }>('workspaces')).workspaces.find(item =>
       item.path.endsWith('/fresh'),
@@ -626,8 +632,8 @@ describe('a project whose worktree cannot be made now', () => {
       ['二', []],
     ])
     await writeFile(join(project, 'README.md'), '# fresh\n')
-    git('add', '.')
-    git('commit', '-q', '-m', 'first')
+    await projectGit(project, 'add', '.')
+    await projectGit(project, 'commit', '-q', '-m', 'first')
     const again = await send()
     expect(again.status).toBe(201)
     const { team } = (await again.json()) as TeamAnswer
