@@ -981,12 +981,16 @@ test("a conversation with 通用 is 我的 Agent's and private even while 通用
     expect(prompt.status).toBe(403)
     expect((await work.json<AppSnapshot>('snapshot')).tasks.map(task => task.id)).not.toContain(sessionId)
     // Nothing of it reaches the stream, not even an ID-less hint that would say when it moved.
+    // Wait for the later public session's complete SSE frame before inspecting what the work device heard.
+    const hints = () =>
+      heard
+        .split('\n\n')
+        .slice(0, -1)
+        .filter(frame => frame.includes('event: tasks-invalidated'))
+    await expect.poll(hints, { timeout: 4_000 }).toContainEqual(expect.stringContaining(plain.sessionId))
     expect(heard).not.toContain(sessionId)
     expect(heard).not.toContain('Hello')
-    const hints = heard.split('\n\n').filter(frame => frame.includes('event: tasks-invalidated'))
-    expect(hints.every(frame => frame.includes('"sessionId"'))).toBe(true)
-    // The plain session's hint still names it, so the work device still follows the sessions it may read.
-    expect(hints.some(frame => frame.includes(plain.sessionId))).toBe(true)
+    expect(hints().every(frame => frame.includes('"sessionId"'))).toBe(true)
 
     // It carries no project, worktree or fork; and a device that cannot read 通用 cannot start one.
     const project = await owner.request('tasks', { method: 'POST', body: { ...body, requestId: randomUUID(), workspaceId: 'wsp_other' } })
