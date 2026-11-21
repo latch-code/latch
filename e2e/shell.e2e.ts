@@ -107,6 +107,11 @@ describe('the shell', () => {
     await page.emulateMedia({ colorScheme: 'dark' })
     await page.screenshot({ path: `${CONNECTION_SHOTS}/board-1440-dark.png`, animations: 'disabled' })
     await switchView(page, 'chat')
+    const fill = (element: Element) => getComputedStyle(element).backgroundColor
+    for (const group of [page.locator('#session-navigation .space-switch'), page.locator('.shell-view-switch')]) {
+      expect(await group.evaluate(fill)).toBe('rgb(0, 0, 0)')
+      await expect.poll(() => group.getByRole('radio', { checked: true }).evaluate(fill)).toBe('rgb(12, 12, 12)')
+    }
     // Back in 对话 the input stands exactly where it stood.
     expect(await composer.boundingBox()).toEqual(before)
     await page.context().setOffline(true)

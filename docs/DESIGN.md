@@ -202,7 +202,7 @@ Latch 是跨设备的 Agent 工作台：任务在 Host 上运行，人从桌面�
 - 页头只写一个「来自 …」（[sessionSource.ts](../apps/web/src/sessionSource.ts)）：交接来源，否则分叉来源，否则定时任务，再否则插件页面。来源会话在列表里、定时任务这台设备拿得到时是链接。交接来源与待交回见 [HANDOFFS.md](HANDOFFS.md#界面)。
 - 失败的会话真正显示在主区时（对话可见：不是悬停或预读，不在起始页、设置、应用页面或看板之下，标签页可见），页面向 Host 记一次「打开过」（`attend`，每次结算一次，失败的下次打开或重连再发），它离开等你处理，红色「失败」留在行与卡上。
 
-**两个空间。** Code 与我的 Agent 是两个空间，开关不是列表筛选；另一空间有待处理时带琥珀点。应用与设置是共用目的地，按 Host 能力与设备权限决定是否出现（[routes.ts](../apps/web/src/shell/routes.ts)）。切换保留会话、阅读位置、草稿与面板。我的 Agent 的空间不出现 Harness 与模型（只在创建与资料的设置里）；布局与组件见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#界面)，应用见 [APP-PAGES.md](APP-PAGES.md#壳层)。
+**两个空间。** Code 与我的 Agent 是两个空间，开关不是列表筛选；另一空间有待处理时带琥珀点。深色黑白配色下，空间和视图切换器都用纯黑底槽，近黑选中块以亮字和细边标出当前项。应用与设置是共用目的地，按 Host 能力与设备权限决定是否出现（[routes.ts](../apps/web/src/shell/routes.ts)）。切换保留会话、阅读位置、草稿与面板。我的 Agent 的空间不出现 Harness 与模型（只在创建与资料的设置里）；布局与组件见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#界面)，应用见 [APP-PAGES.md](APP-PAGES.md#壳层)。
 
 **侧栏底部。** 两个空间共用一行图标（[SpaceNav.tsx](../apps/web/src/shell/SpaceNav.tsx) 的 `NavFoot`）：左边设置、额度与用量、应用，名称与快捷键在提示框里，连不上时设置带琥珀或红点；右端「检查更新」。侧栏收起时与看板时标题行放设置、额度与用量与检查更新；图轨与手机页头（375 以上）放同一个检查更新。
 「检查更新」（[UpdateCheck.tsx](../apps/web/src/shell/UpdateCheck.tsx)）比较本页、Host 此刻提供的页面（`build.json`）与 Host 启动时的构建，桌面端另问应用自己的更新器；检查中转圈，有可做的带琥珀点，点开按原有规则给「重新载入」「重启 Latch」或通向设置 › 关于；没有更新源的构建只检查这台 Mac 上的构建（[UPDATES.md](UPDATES.md)）。
