@@ -700,7 +700,8 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       expect(rightShell.text).not.toContain('echo left')
       expect(Buffer.concat(leftShell.received).toString()).not.toContain('\\')
       await expect.poll(panesFit).toBe(true)
-      // A transparent tab strip, footer or xterm row shows the first painted surface behind it.
+      // A transparent tab strip, footer or xterm row shows the first painted surface behind it; every one is the work
+      // area's canvas, the same as the title row above the conversation.
       const terminalBackgrounds = () =>
         panel.evaluate(element => {
           const parts = element.querySelectorAll(
@@ -715,13 +716,12 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
           })
           return [...new Set(colors)]
         })
-      await expect.poll(terminalBackgrounds).toEqual(['rgb(255, 255, 255)'])
-      const pageColors = await page.addStyleTag({ content: ':root { --canvas: red; --mono-layer: red; --terminal-canvas: red }' })
+      const workCanvas = () => page.locator('.app-shell > .titlebar').evaluate(element => getComputedStyle(element).backgroundColor)
+      await expect.poll(async () => (await terminalBackgrounds()).join() === (await workCanvas())).toBe(true)
       await page.emulateMedia({ colorScheme: 'dark' })
-      await expect.poll(terminalBackgrounds).toEqual(['rgb(12, 12, 12)'])
-      await pageColors.evaluate(element => element.parentNode?.removeChild(element))
+      await expect.poll(async () => (await terminalBackgrounds()).join() === (await workCanvas())).toBe(true)
       await page.emulateMedia({ colorScheme: 'light' })
-      await expect.poll(terminalBackgrounds).toEqual(['rgb(255, 255, 255)'])
+      await expect.poll(async () => (await terminalBackgrounds()).join() === (await workCanvas())).toBe(true)
       await capture(page, 'split-two-row-1440')
 
       // The header's button splits again; the other direction is refused in a tab whose panes run one way.

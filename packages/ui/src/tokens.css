@@ -136,7 +136,6 @@
      * the conversation and the panels); raised (the composer, menus, popovers and dialogs); card (a card on the panel,
      * such as an approval); pop (the face of a control or a layer over a card). */
     --canvas: #ffffff;
-    --terminal-canvas: var(--canvas);
     --sidebar: #ebebef;
     --raised: #ffffff;
     --sunken: #f3f3f6;
@@ -604,7 +603,6 @@
       --muted: #a3a3ad;
       --faint: #8b8b95;
       --canvas: #131316;
-      --terminal-canvas: var(--mono-layer);
       --sidebar: #09090b;
       --raised: #1b1b1f;
       --sunken: #0b0b0d;
@@ -744,7 +742,6 @@
     --muted: #a3a3ad;
     --faint: #8b8b95;
     --canvas: #131316;
-    --terminal-canvas: var(--mono-layer);
     --sidebar: #09090b;
     --raised: #1b1b1f;
     --sunken: #0b0b0d;
@@ -1029,7 +1026,6 @@
     --muted: #56565f !important;
     --faint: #66666f !important;
     --canvas: #ffffff !important;
-    --terminal-canvas: var(--canvas) !important;
     --sidebar: #ebebef !important;
     --raised: #ffffff !important;
     --sunken: #f3f3f6 !important;
@@ -1251,7 +1247,6 @@
       --muted: #a3a3ad !important;
       --faint: #8b8b95 !important;
       --canvas: #131316 !important;
-      --terminal-canvas: var(--mono-layer) !important;
       --sidebar: #09090b !important;
       --raised: #1b1b1f !important;
       --sunken: #0b0b0d !important;
@@ -1391,7 +1386,6 @@
     --muted: #a3a3ad !important;
     --faint: #8b8b95 !important;
     --canvas: #131316 !important;
-    --terminal-canvas: var(--mono-layer) !important;
     --sidebar: #09090b !important;
     --raised: #1b1b1f !important;
     --sunken: #0b0b0d !important;
