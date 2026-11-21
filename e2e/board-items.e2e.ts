@@ -203,6 +203,11 @@ it('keeps 待办 in 未开始, starts them as one card with their sessions, and 
     expect(await cardWithoutMember.getByText('1 个未加入', { exact: true }).count()).toBe(0)
     await owner.json(`work/items/${readme.id}/sessions`, { method: 'POST', body: { sessionId: completedSession } })
     await itemCard(page, readme.id).locator(`[data-work-session="${completedSession}"]`).waitFor()
+    expect(
+      await itemCard(page, readme.id)
+        .locator('.work-board-item-sessions')
+        .evaluate(el => getComputedStyle(el).borderTopWidth),
+    ).toBe('0px')
     await shot(page, 'started', 1440, 'light')
     await shot(page, 'started', 1440, 'dark')
     await page.setViewportSize({ width: 1440, height: 900 })
