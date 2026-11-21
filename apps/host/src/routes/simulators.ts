@@ -1,7 +1,7 @@
 // The 设备 panel's routes, for this Mac alone as the terminal's are: host.sock, a device with `run` and the full data
 // scope, refused before any body is read. A simulator shows what this Mac holds (an Apple ID, app data), so a picture or
 // a recording goes only as a bounded binary answer to the panel that asked, and log lines only down that panel's own
-// event stream; never over the Host's SSE, into a log, the audit or the data directory. See docs/DEVICE-PREVIEW.md.
+// event stream; never over the Host's SSE, into a log, the audit or the data directory.
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import type { ServerResponse } from 'node:http'

@@ -1031,7 +1031,7 @@ export class HarnessHub implements Bridge {
     return attended && { ...attended }
   }
 
-  /** The pull request 交付 bound to the session (docs/GIT-DELIVERY.md#pr-与检查). */
+  /** The pull request 交付 bound to the session. */
   prOf(sessionId: string): GitPrBinding | undefined {
     const pr = this.meta.get(sessionId)?.pr
     return pr && { ...pr }

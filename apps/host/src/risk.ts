@@ -136,7 +136,7 @@ export function classifyBrowserCall(tool: string, _args: unknown, facts: Browser
  * The simulator tools: listing, a picture and the apps are R0; opening an address, the appearance, rotating, launching a
  * listed app, and tapping, swiping, typing and pressing are R1. The Host refuses an address that is not this Mac's own,
  * and any deep link, whatever was approved; a launch takes no arguments; input runs only for a full-access (L3) session a
- * person started (see DEVICE-PREVIEW). There is no tool that boots, shuts down, erases, installs or records.
+ * person started. There is no tool that boots, shuts down, erases, installs or records.
  */
 export function classifyDeviceCall(tool: string): { risk: RiskLevel; reason?: RiskReason } {
   if (!isDeviceTool(tool)) return { risk: 'R2', reason: 'unlisted-tool' }

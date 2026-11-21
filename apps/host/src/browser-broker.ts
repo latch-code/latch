@@ -3,7 +3,6 @@
 // comes back as a result main posts. Nothing queues: with no provider a call fails at once, and the Host never starts the
 // desktop app. A call is audited before it is sent, and a stop is confirmed only once main says the call settled. The
 // tab table main reports lives in memory only: the phone reads it, the risk classifier reads where each tab is.
-// See docs/PREVIEW-BROWSER.md.
 import { randomBytes, randomUUID } from 'node:crypto'
 import { isIP } from 'node:net'
 import type { ServerResponse } from 'node:http'

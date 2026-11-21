@@ -135,7 +135,7 @@ interface RoundSend {
 }
 
 /**
- * Later rounds on a team's existing members (docs/TEAMS.md): one prompt to each, a new turn of its own session, through
+ * Later rounds on a team's existing members: one prompt to each, a new turn of its own session, through
  * the path a person's message takes; the results go back to the lead as one message once every one has ended, as the
  * start's do. A person makes one from the page; the lead's agent makes one only while the person lets it, for that team,
  * as the device that allowed it, within the ceiling scheduled runs keep.

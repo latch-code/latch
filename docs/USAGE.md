@@ -95,7 +95,7 @@ corepack pnpm desktop
 - 设备密钥与凭据用系统安全存储加密，保存在桌面端数据目录（macOS 为 `~/Library/Application Support/Latch/Desktop/`）的 `latch-devices/<hostId>.json`。没有可用的安全存储时桌面端拒绝启动。
 - 上面列出的本机确认只能从这台电脑的桌面端发起。模型密钥、模型服务地址的确认与添加项目另可在 Host 停止时用 `pnpm latch` 完成。
 - 关闭窗口不会停止 Host，用 `pnpm stop` 停止。
-- 自动更新只在已打包且已签名的应用里工作，源码运行时不提供（[UPDATES.md](UPDATES.md)）。
+- 自动更新只在已打包且已签名的应用里工作，源码运行时不提供。
 
 机制见 [ARCHITECTURE.md](ARCHITECTURE.md#桌面端与其他电脑)，崩溃后重启与休眠见[同一文档](ARCHITECTURE.md#host-的生命周期)。
 
@@ -119,7 +119,7 @@ Info.plist 带「本地网络」用途说明与 `NSBonjourServices`（`_latch._t
 - **撤销确认**：在桌面端的模型设置里移除已确认的地址，使用它的服务随即停止。没有桌面端时先停止 Host，再从 `<数据目录>/policy.json` 的 `confirmedAddresses` 移除这个地址，本机或局域网地址另从 `hostEgressAllow` 移除它的 `host:port`；Host 运行时的修改不生效。
 - **fake-IP 透明代理**（系统 DNS 返回 `198.18.0.0/15`）下，模型服务会被当作特殊用途地址拒绝：把它的 `host:port` 加入出站白名单，或在代理中为它关闭 fake-IP。
 - **临时服务**：`LATCH_BASE_URL`、`LATCH_MODEL`、`LATCH_API_KEY` 为本次运行提供一个服务，不写入数据目录（见 [.env.example](../.env.example)）。`LATCH_BASE_URL` 不能包含用户名、密码、查询参数或片段，它的 `host:port` 自动加入本进程的出站白名单。
-- **给 Harness 用**：部分 Harness 可以经 Latch 使用这里保存的服务，Harness 拿到的是随进程失效的凭据，不是密钥。哪些 Harness、哪些协议见 [HARNESSES.md](HARNESSES.md#经-latch-使用模型服务) 与 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
+- **给 Harness 用**：部分 Harness 可以经 Latch 使用这里保存的服务，Harness 拿到的是随进程失效的凭据，不是密钥。哪些 Harness、哪些协议见 [HARNESSES.md](HARNESSES.md#经-latch-使用模型服务)。
 
 ## 手机接入（HTTPS）
 
@@ -232,7 +232,7 @@ corepack pnpm desktop -- --tailnet \
 - 没有用 `--workspace` 或 `LATCH_WORKSPACE` 指定时，每个不在项目中的新 Agent 会话在启动目录中得到一个自己的新文件夹（权限 0700）；删除会话不删除它的文件夹。指定了启动目录时，会话直接在其中工作。
 - **项目**在桌面端「设置 → 项目」或用 `pnpm latch project` 添加，每个项目最多 8 个文件夹。项目与文件夹只能在 Host 所在的电脑上添加。
 - 主目录本身、含凭据的目录（`~/.ssh`、`~/.aws`、`~/.gnupg`、各 Agent 的配置目录等）、主目录下的隐藏目录、数据目录与 Latch 程序目录等位置不能作为启动目录或加入项目。完整规则见 [ARCHITECTURE.md](ARCHITECTURE.md)。
-- 会话可以在新的 Git 工作树里开始，工作树放在 `LATCH_WORKTREES_DIR`。工作树只分开文件，端口、进程和这台电脑上的权限仍然共用（[BRANCHES.md](BRANCHES.md)）。
+- 会话可以在新的 Git 工作树里开始，工作树放在 `LATCH_WORKTREES_DIR`。工作树只分开文件，端口、进程和这台电脑上的权限仍然共用。
 - 数据目录的内容、锁与恢复见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## 停止 Host

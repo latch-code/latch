@@ -1,4 +1,4 @@
-// The restricted half of 交付 (docs/GIT-DELIVERY.md): the status, staging without filters, unstaging and the commit
+// The restricted half of 交付: the status, staging without filters, unstaging and the commit
 // checks, all through `GitReader` with hooks, fsmonitor and transports off. None of these runs a program the repository
 // names: a filter driver the configuration lists is emptied for every process here, and `add` runs here only when the
 // configuration lists none (`git-delivery.ts` stages with your own Git otherwise).

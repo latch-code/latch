@@ -20,7 +20,7 @@ const VIEWS = [
 ] as const
 
 /**
- * A team in the page (docs/TEAMS.md): the list a person writes and starts, the team in its session's conversation
+ * A team in the page: the list a person writes and starts, the team in its session's conversation
  * while members work, wait and end, the results the Host hands back, stopping, a proposal started as a team, the line
  * over a member's conversation and the members under their session in the list.
  */

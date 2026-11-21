@@ -6,8 +6,8 @@
 | --- | --- |
 | `src/core/` | API、事件流与增量影子、同步、阅读位置、设备身份、权限、确认、桌面桥接 |
 | `src/shell/` | 壳层：`AppShell`、`routes.ts`、`panelLayout.ts`、`slots.ts`、`useSessionController` |
-| `src/agents/` | 我的 Agent：总览取 Host 待处理与定时摘要（CUSTOM-AGENTS.md） |
-| `src/handoffs/` | 交接（docs/HANDOFFS.md） |
+| `src/agents/` | 我的 Agent：总览取 Host 待处理与定时摘要 |
+| `src/handoffs/` | 交接 |
 | `src/markdown/` | 流式 Markdown |
 | `src/` | `main.tsx` → `App.tsx` → `shell/AppShell.tsx`；品牌 `brands.ts` |
 | `index.html`、`public/`、`vite.config.ts` | 页面、图标与 manifest、Vite 开发代理 |
@@ -23,7 +23,7 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 - 插件面板由 `SessionPanels` / `ClientPluginPanel` 挂载并随会话清理；可信代码没有隔离，`compose` 只追加草稿（`e2e/plugin-packages.e2e.ts`）。
 - 安全文案只按错误码从 `src/core/securityCopy.ts` 取，新安全错误码在此补（`test/client-security.test.ts`）。
 - `permissions.ts` 只是展示，Host 会再次检查；事件流用 `eventStream.ts`（fetch），不用 `EventSource`。
-- 本机按 `isLocalListener`，回环浏览器算远程。缺邀请或用掉后须重领（enrollment.e2e）。设备见 DEVICE-PREVIEW。
+- 本机按 `isLocalListener`，回环浏览器算远程。缺邀请或用掉后须重领（enrollment.e2e）。客户端的规则见 ARCHITECTURE「客户端」。
 - 回复里的文件引用渲染成路径标记，从不生成 `<a href>`；只有 http(s) 与 mailto 是链接（message-content.test）。
 - 确认走 `withConfirmation`；未知结果保留原请求，设置确认后解锁。草稿只存文字，按设备与会话存于浏览器，14 天过期；像凭据的只在内存，含摘录的要 `all`；删会话、撤权或退出即清。失效项目保留草稿供显式继续（`composer/WorkspaceRecovery.tsx`）。
 - 复用 `@latch/ui` 令牌、层与原语。对话与看板同底色，列独立滚动（DESIGN）。
@@ -37,6 +37,6 @@ browser 禁 Node 全局与模块。Host、core、testkit 仅测试。
 
 设置保留草稿与授权读回，准备沿用原号；终端折叠保活，暂存保留回执。ProfileLayer 跨断点沿用实例、草稿、焦点与未知写，撤权卸载。
 
-- 附件专用上传，未知提交沿用请求与引用；断线读能力看连接横幅；裸 `@` 无预选。纯文本粘贴替换选区（ATTACHMENTS）。
+- 附件专用上传，未知提交沿用请求与引用；断线读能力看连接横幅；裸 `@` 无预选。纯文本粘贴替换选区。
 - Slash 透传 Harness 命令；技能只补全，pi 限开头（HARNESSES）。替换 `/btw` 先确认；PR 摘录只追加草稿。
 - 配色与主色可按设备选；安全界面锁色。外观未知写按 Host、设备在同页保留，设置与安全模式共用（CUSTOMIZATION）。

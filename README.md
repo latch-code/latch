@@ -119,7 +119,6 @@ corepack pnpm desktop
 | 自定义外观与快捷键 | [CUSTOMIZATION](docs/CUSTOMIZATION.md) |
 | 架构、安全模型、流式同步 | [ARCHITECTURE](docs/ARCHITECTURE.md)、[STREAMING](docs/STREAMING.md) |
 | 界面设计、测试 | [DESIGN](docs/DESIGN.md)、[TESTING](docs/TESTING.md) |
-| 各功能的机制：附件、改动与交付、分支、团队、终端、预览、我的 Agent、模型网关、更新等 | [`docs/`](docs) 下的同名文档 |
 
 参与开发前先读 [AGENTS.md](AGENTS.md)：命令、不变量、本机运行安全与完成标准都在那里。
 

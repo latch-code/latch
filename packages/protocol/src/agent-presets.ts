@@ -20,7 +20,7 @@ export const BUILTIN_HELPER_CARD: HelperCard = {
   face: { bracket: 'round', eyes: 'dot' },
   line: '稳当，动手前每次问你。',
   abilities: ['files', 'mcp', 'ask', 'memory', 'schedule'],
-  source: 'docs/PLUGIN-DEVELOPMENT.md（L1 分级）、docs/MCP.md（内置 Harness 只用远程地址）、docs/CUSTOM-AGENTS.md（提议）',
+  source: 'docs/PLUGIN-DEVELOPMENT.md（L1 分级）、docs/MCP.md（内置 Harness 只用远程地址）、latch-skills 的提议工具',
 }
 
 /**
@@ -110,7 +110,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
       face: { bracket: 'square', eyes: 'dot' },
       line: '埋头写代码、跑命令的工程师。',
       abilities: ['files', 'commands', 'memory', 'schedule'],
-      source: 'Codex README；latch-skills 的提议工具（docs/CUSTOM-AGENTS.md）；MCP 尚未在真实 Agent 上核对',
+      source: 'Codex README；latch-skills 的提议工具；MCP 尚未在真实 Agent 上核对',
     },
   },
   {
@@ -186,7 +186,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
       face: { bracket: 'angle', eyes: 'dot' },
       line: '开源的多面手，动手前先问你。',
       abilities: ['files', 'commands', 'memory', 'schedule'],
-      source: 'OpenCode README；latch-skills 的提议工具（docs/CUSTOM-AGENTS.md）；MCP 尚未在真实 Agent 上核对',
+      source: 'OpenCode README；latch-skills 的提议工具；MCP 尚未在真实 Agent 上核对',
     },
   },
   {

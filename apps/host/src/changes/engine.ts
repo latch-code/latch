@@ -1,6 +1,5 @@
 // The changes engine: a snapshot of a session's folders when each turn starts and settles, the scopes 本轮, 这个会话,
-// 未提交 and 与 main 比较, 撤销本轮 and 恢复, discards and patches. Routes and the session lifecycle call it; see
-// docs/CHANGES.md.
+// 未提交 and 与 main 比较, 撤销本轮 and 恢复, discards and patches. Routes and the session lifecycle call it.
 import { createHash } from 'node:crypto'
 import type { BigIntStats } from 'node:fs'
 import { constants } from 'node:fs'

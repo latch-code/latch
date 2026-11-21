@@ -52,7 +52,7 @@ const STATUS_CHANGE: Record<ChangedFile['status'], ScheduleResultFile['change']>
 /**
  * A session's files, each path once: what its turns' own change records say, without the turns another session ran
  * beside in the same folder. The outputs observed during a turn are not used: they may hold another program's or
- * session's writes (FILE-OUTPUTS.md), so a session without change records lists no files here.
+ * session's writes, so a session without change records lists no files here.
  */
 function sessionFiles(changed: readonly ChangedFile[] | undefined): ScheduleResultFile[] {
   const files = new Map<string, ScheduleResultFile>()

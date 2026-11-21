@@ -104,7 +104,7 @@ export const HOST_ACTIONS = {
     devMode: z.boolean(),
   }),
   'audit.torn-tail-removed': z.strictObject({ bytes: count }),
-  /** The desktop app's install window (docs/UPDATES.md): new starts refused while it is open. */
+  /** The desktop app's install window: new starts refused while it is open. */
   'host.update-window': z.strictObject({
     state: z.enum(['entered', 'committed', 'left']),
     reason: z.enum(['cancelled', 'installing', 'failed', 'expired']).optional(),

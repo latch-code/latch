@@ -195,7 +195,7 @@ test("a deleted Agent's chat answers as it did before the digest: by the one-cha
   })
   await settled(owner, sessionId)
   await owner.json(`custom-agents/${agent.id}`, { method: 'DELETE', body: { requestId: randomUUID() } })
-  // Its chat slot went with it, so the session is history: read-only, as docs/CUSTOM-AGENTS.md says, and nothing was sent.
+  // Its chat slot went with it, so the session is history: read-only, and nothing was sent.
   const prompts = (await readFile(log, 'utf8')).split('session/prompt').length
   const answer = await owner.request(`tasks/${sessionId}/prompt`, {
     method: 'POST',

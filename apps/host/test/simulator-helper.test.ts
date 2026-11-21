@@ -1,5 +1,5 @@
 // latch-simulator's framing and the Host's wrapper, against an in-process stand-in; the real helper runs only its
-// self-tests, which touch no device. The real picture check (a `latch-` simulator) is manual: see DEVICE-PREVIEW.
+// self-tests, which touch no device. The real picture check (a `latch-` simulator) is manual.
 import { execFile, spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { existsSync, statSync } from 'node:fs'

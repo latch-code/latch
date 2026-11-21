@@ -2,7 +2,7 @@
 // an agent can build, run and use an app on a simulator through Xcode's tools. Latch finds Xcode, reads its version and
 // fills in the definition itself; the add goes through the same confirmation, audit and per-tool switches as any
 // server. Latch never changes Xcode's settings (the person allows external agents there) and never runs the headless,
-// sudo mode. See docs/DEVICE-PREVIEW.md.
+// sudo mode.
 import { execFile } from 'node:child_process'
 import type { McpXcodeCheck } from '@latch/protocol'
 import { compareVersions } from '@latch/harness-acp'

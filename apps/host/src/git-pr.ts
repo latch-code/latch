@@ -1,4 +1,4 @@
-// The pull request step of 交付 (docs/GIT-DELIVERY.md#pr-与检查): what your `gh` prints, read into the shapes the 交付
+// The pull request step of 交付: what your `gh` prints, read into the shapes the 交付
 // tab shows. Nothing here runs a program; `git-delivery.ts` runs `gh` as you and hands its output here. Everything a
 // person may read is stripped of control sequences and redacted first.
 import { z } from 'zod'

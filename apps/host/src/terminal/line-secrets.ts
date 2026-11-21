@@ -1,6 +1,6 @@
 // Secrets that redactSecrets, made for single log lines, cannot see in terminal text: a private key's body and a key a
 // program wrapped across lines. Lines that hold one are replaced whole. Best effort, by shape: the client shows the exact
-// text before it is attached (docs/TERMINAL.md).
+// text before it is attached.
 import { redactSecrets } from '@latch/core/node-kit'
 
 const REPLACEMENT = '[redacted]'

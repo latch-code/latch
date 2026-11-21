@@ -9,7 +9,7 @@
 // session of the page's: a reload of the page hides the tabs (the page lists them again), closing the window ends them.
 // The built-in harness's Agent drives them too, through browser-agent.cjs, with a fixed list of actions: its input never
 // counts as the person's click, and while it acts (and a second after) the tab's main frame goes nowhere but this Mac.
-// See docs/PREVIEW-BROWSER.md. The exported helpers are pure so they can be unit-tested without Electron.
+// The exported helpers are pure so they can be unit-tested without Electron.
 const { randomBytes } = require('node:crypto')
 const { isIP } = require('node:net')
 const { createExternalGesture } = require('./proxy.cjs')
@@ -48,7 +48,7 @@ const PROJECT_ID = /^[A-Za-z0-9_-]{1,64}$/
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/
 /**
  * The viewport presets, in CSS pixels upright, with the device pixel ratio the page renders at; 「适应面板」 (`fit`) is
- * the panel's own size. Only the size and the ratio are emulated: no user agent and no touch events (docs/PREVIEW-BROWSER.md).
+ * the panel's own size. Only the size and the ratio are emulated: no user agent and no touch events.
  */
 const VIEWPORTS = Object.freeze({
   'phone-small': Object.freeze({ width: 375, height: 667, scale: 2 }),

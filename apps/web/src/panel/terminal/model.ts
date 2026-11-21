@@ -16,7 +16,7 @@ const COPY = defineCopy(
   },
 )
 
-/** One call to `…/input` carries at most this much once decoded (docs/TERMINAL.md). */
+/** One call to `…/input` carries at most this much once decoded. */
 export const INPUT_CHUNK_BYTES = 64 * 1024
 /** Output handed to xterm and not yet parsed; past this the stream stops reading, so the Host stops writing. */
 export const PARSE_HIGH_WATER = 256 * 1024

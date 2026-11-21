@@ -7,7 +7,7 @@ import { writeFileAtomic } from '@latch/core/node-kit'
 
 /**
  * The version of the Host's API as the desktop app talks to it (`host-info.protocol`). The desktop app compares it with
- * what a release's bundled Host speaks to tell an App-only update from one that changes the Host (docs/UPDATES.md).
+ * what a release's bundled Host speaks to tell an App-only update from one that changes the Host.
  */
 export const HOST_PROTOCOL = 1
 /** The plugin package `formatVersion`s this Host loads (`plugin-packages.ts`). */

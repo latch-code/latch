@@ -27,5 +27,5 @@
 
 - `LatchScreens` 只编模拟器：截图场景与 `-LatchLive 1` 的软件密钥（`ios-live.e2e.ts`）在 `Screens/` 与 `LATCH_SCREENS` 下，不进 `Latch`（`ios-app.e2e.ts`、`check:boundaries` 核对）。
 - ＋只插入或复用 Slash；组词不执行，保留动作不转发，迟到预览丢弃。
-- 助手见 docs/CUSTOM-AGENTS.md；创建只认成功回执，畸形成功保原请求；离页重试不导航。
+- 助手的创建只认成功回执，畸形成功保原请求；离页重试不导航。
 - 目录只为固定节点/公钥恢复公网地址；提示不授予正文或替换身份。

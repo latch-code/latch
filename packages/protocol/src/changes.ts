@@ -1,4 +1,4 @@
-// The changes routes' answers: what 改动 draws, and what 撤销本轮, 恢复 and the discards report. See docs/CHANGES.md.
+// The changes routes' answers: what 改动 draws, and what 撤销本轮, 恢复 and the discards report.
 import type { FileMention } from './file-refs.ts'
 
 /**

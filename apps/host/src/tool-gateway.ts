@@ -1,7 +1,7 @@
 // The Host's tool gateway: a Unix socket in a 0700 directory of the Host's runtime directory, through which an external
 // harness's `latch-browser` MCP server reaches the browser tools. It forwards only listing and calling tools, each
 // request carrying an `lbt1.` token that one agent process holds, handed over in a 0600 file next to the socket that the
-// server deletes once read; a page cannot reach a Unix socket, and the token is no device credential. See docs/ARCHITECTURE.md (工具网关) and docs/PREVIEW-BROWSER.md.
+// server deletes once read; a page cannot reach a Unix socket, and the token is no device credential. See docs/ARCHITECTURE.md (工具网关).
 import { createHash, randomBytes } from 'node:crypto'
 import { closeSync, constants, openSync, rmSync, writeSync } from 'node:fs'
 import { chmod, lstat, mkdir, rm, unlink } from 'node:fs/promises'

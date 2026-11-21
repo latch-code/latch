@@ -585,8 +585,8 @@ export interface AgentExecutionContext {
   /** First-turn block for drivers with `agentContext: 'first-turn'`. */
   brief?: AgentBrief
   /**
-   * For drivers with `agentContext: 'first-turn'`: what the Agent's own schedules and handoffs did lately
-   * (docs/CUSTOM-AGENTS.md#它做过什么). Sent before the next turn's input whenever `key` differs from the last one this
+   * For drivers with `agentContext: 'first-turn'`: what the Agent's own schedules and handoffs did lately.
+   * Sent before the next turn's input whenever `key` differs from the last one this
    * context carried; a fresh context sends it again. Drivers with `private` get it inside `instructions`.
    */
   note?: AgentNote

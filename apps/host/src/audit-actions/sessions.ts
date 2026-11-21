@@ -77,7 +77,7 @@ export const SESSION_ACTIONS = {
     external: z.boolean(),
   }),
   /**
-   * Teams (docs/TEAMS.md). `team.started` is written before anything is accepted, made or started; `team.returned`
+   * Teams. `team.started` is written before anything is accepted, made or started; `team.returned`
    * before the results are sent to the lead, with the hash of the message; `team.kept` when they will not be sent;
    * `team.stopped` when a person stops one. Never a title, a goal or a reply.
    */

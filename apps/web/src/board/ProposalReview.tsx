@@ -96,7 +96,7 @@ interface Draft {
   read: { title: string; prompt: string }
 }
 
-/** The session that proposed, where it can start what it proposed as a team (docs/TEAMS.md). */
+/** The session that proposed, where it can start what it proposed as a team. */
 export interface ProposalTeam {
   lead: TaskSummary
   catalog: HostCatalog

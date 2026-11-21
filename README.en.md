@@ -121,7 +121,6 @@ The documents are in Chinese.
 | Custom appearance and shortcuts | [CUSTOMIZATION](docs/CUSTOMIZATION.md) |
 | Architecture, security model, streaming | [ARCHITECTURE](docs/ARCHITECTURE.md), [STREAMING](docs/STREAMING.md) |
 | Interface design, testing | [DESIGN](docs/DESIGN.md), [TESTING](docs/TESTING.md) |
-| How each feature works: attachments, changes and delivery, branches, teams, terminal, previews, My Agents, the model gateway, updates and more | the documents of the same name under [`docs/`](docs) |
 
 Contributors start with [AGENTS.md](AGENTS.md): commands, invariants, local safety rules and the definition of done.
 

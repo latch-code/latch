@@ -1,4 +1,4 @@
-// 切换分支 (docs/BRANCHES.md#切换分支): a person moves a project's folder to another of its local branches. Listing
+// 切换分支: a person moves a project's folder to another of its local branches. Listing
 // reads Git's metadata files only (branch-list.ts). The switch is the restricted Git (changes/git.ts) with no hook,
 // filter, fsmonitor, submodule or transport, and it is refused instead of neutralised whenever the repository's
 // configuration would have your Git run something here: any filter driver, or hooks the repository sets for itself.

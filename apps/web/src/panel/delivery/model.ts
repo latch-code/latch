@@ -644,7 +644,7 @@ export type WriteEnd = 'done' | 'failed' | 'unknown' | 'updating'
 
 /**
  * Answers to a retried write that the Host gives only after reading its receipt (`replay`) or what the remote holds;
- * every other answer to a retry says nothing about the first attempt (docs/GIT-DELIVERY.md「回执与结果未知」).
+ * every other answer to a retry says nothing about the first attempt.
  * - commit: never run again, so only the receipt's answer settles it.
  * - push: the failures of a push run again after `ls-remote` showed the remote's branch without the commit.
  * - pr: the Host looked the branch's pull request up and found none, then `gh pr create` refused, or found one

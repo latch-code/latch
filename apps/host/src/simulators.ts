@@ -5,7 +5,7 @@
 // Host. The Host shuts down only a device it booted itself: on the person's word, after the panel has left it for ten
 // minutes, and when the Host stops. Pictures and recordings pass through a private temporary directory (simctl will not
 // write one to a pipe) that is removed once read; pictures, recordings and log lines are never logged, recorded or
-// kept. See docs/DEVICE-PREVIEW.md.
+// kept.
 import { execFile, spawn } from 'node:child_process'
 import { lstat, mkdtemp, open, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

@@ -1,5 +1,5 @@
 /*
- * Later rounds of a team (docs/TEAMS.md), drawn by `RoundControls.tsx` wherever the team card places them: 「第 N 轮」 and
+ * Later rounds of a team, drawn by `RoundControls.tsx` wherever the team card places them: 「第 N 轮」 and
  * the switch for the lead's agent in the card's head, 「再派一轮」 on a member's row and its input under that row.
  */
 /* After the count: the round once there is more than one, then the switch for the lead's agent. */

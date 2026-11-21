@@ -90,7 +90,7 @@ export interface AppSnapshot {
   items?: WorkItemSummary[]
   /** Agents' proposals for the board still waiting for the person, under the same rule as `items`. Absent on older Hosts. */
   workProposals?: WorkProposalSummary[]
-  /** Teams whose lead the reader can see: running ones, and the last ended ones (docs/TEAMS.md). */
+  /** Teams whose lead the reader can see: running ones, and the last ended ones. */
   teams?: TeamSummary[]
   /** Line feedback counts of sessions among `tasks` that have any; the notes themselves need data scope `all`. */
   reviewNotes?: ReviewNoteCounts[]

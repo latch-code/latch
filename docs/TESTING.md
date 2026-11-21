@@ -272,6 +272,8 @@ Live 模式只在 `LatchScreens`（仅模拟器）中编译，用进程内存里
 
 堆内存没有强制 GC，不能用来宣称泄漏。
 
+大文档预览的首屏预算在 `e2e/document-performance.e2e.ts`（先 `pnpm build`）：输入由 `performanceDocumentFixtures`（`packages/testkit/src/documents.ts`）在内存里生成，不提交第三方文档；预算固定，超出即失败，不按机器或当次结果放宽。没有所有者参照（`LATCH_DOCUMENT_REFERENCE_DIR`，原应用导出的逐页 PNG）时报告标为 `unverified-original-application-fidelity`：自己的截图不是保真验收。
+
 ## 测试辅助
 
 测试辅助在 `packages/testkit`（`@latch/testkit`，只供测试，见[构建产物检查](#构建产物检查)）。它不导入 Host：Host 夹具经参数拿到启动函数。

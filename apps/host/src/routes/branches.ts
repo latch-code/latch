@@ -31,7 +31,7 @@ export interface BranchRouteDeps {
 }
 
 /**
- * 切换分支 (docs/BRANCHES.md#切换分支): `GET …/branches` lists a project folder's local branches for a device that may
+ * 切换分支: `GET …/branches` lists a project folder's local branches for a device that may
  * read its files; `POST …/branches/switch` moves the folder to one of them, pressed by a person on a device with `run`
  * that may read the project's files. No tool, page or schedule reaches these routes.
  */

@@ -1,4 +1,4 @@
-// Review notes: line feedback on the 改动 tab, kept per session on the Host (docs/CHANGES.md#行级反馈).
+// Review notes: line feedback on the 改动 tab, kept per session on the Host.
 import type { ChangeScope } from './changes.ts'
 
 /**

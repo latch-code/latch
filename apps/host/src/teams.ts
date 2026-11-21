@@ -116,7 +116,7 @@ const teamSchema = z.strictObject({
   createdAt: isoTime,
   updatedAt: isoTime,
   /**
-   * The latest round when it is not the start (docs/TEAMS.md): its number, who made it, its members, the request that
+   * The latest round when it is not the start: its number, who made it, its members, the request that
    * made it and the lead's last message then. `state`, `kept`, `actor`, `returnRequestId` and `returnedMessageId` above
    * are this round's; the members' states are each one's latest.
    */
@@ -348,7 +348,7 @@ function codeOf(error: unknown): unknown {
 }
 
 /**
- * `work/teams.json`: the teams (docs/TEAMS.md), written atomically (0600) one change at a time, as the 待办 file beside
+ * `work/teams.json`: the teams, written atomically (0600) one change at a time, as the 待办 file beside
  * it. A change is published in memory only once the file holds it. At most `TEAM_LIMITS.stored`: the oldest ended ones
  * go first, an open one never.
  */

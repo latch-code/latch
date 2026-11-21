@@ -1,4 +1,4 @@
-// An Agent's home after the Agent is deleted (docs/CUSTOM-AGENTS.md#删除-agent): removed for good, or first written
+// An Agent's home after the Agent is deleted: removed for good, or first written
 // into a zip archive in a folder the desktop's native picker chose. Only a home this Host recorded and that matches its
 // record now is ever touched; everything else is left where it is and reported.
 //

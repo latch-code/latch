@@ -1,4 +1,4 @@
-// Staging by hunk and by line (docs/GIT-DELIVERY.md#按块与按行暂存). The Host never takes patch text from a client: it
+// Staging by hunk and by line. The Host never takes patch text from a client: it
 // reads the file and its index entry itself, diffs them with its own line diff, and builds the content the index
 // should hold from the lines a request picks. That content goes in as a blob (`hash-object --no-filters`) and an index
 // entry (`update-index --index-info`) through the restricted Git, so no filter, hook or `git apply` setting is involved.

@@ -1,5 +1,5 @@
 ---
-description: Host 与客户端的整体架构：哪个文件负责哪个机制、workspace 项目与运行环境、安全模型概览、Host 进程与数据目录、会话级别、路径与项目目录、Harness 路由、审批与取消、持久化、桌面端与其他电脑、HTTP API 的路由与权限、兼容标识与尚未实现。
+description: Host 与客户端的整体架构：哪个文件负责哪个机制、workspace 项目与运行环境、安全模型概览、各功能的安全规则、Host 进程与数据目录、会话级别、路径与项目目录、Harness 路由、审批与取消、持久化、桌面端与其他电脑、HTTP API 的路由与权限、兼容标识与尚未实现。
 sources:
   - apps/host/src
   - apps/host/scripts
@@ -7,6 +7,11 @@ sources:
   - apps/web/src/core
   - apps/web/src/settings/DataSettings.tsx
   - apps/web/src/deletionCopy.ts
+  - apps/web/src/agents
+  - apps/web/src/teams
+  - apps/web/src/handoffs
+  - apps/web/src/panel
+  - apps/web/src/composer/workspaceRecovery.ts
   - apps/web/vite.config.ts
   - packages/protocol/src
   - packages/sdk/src
@@ -118,7 +123,7 @@ Provider 负责模型协议转换；Tool 执行一种操作；HarnessDriver 提�
 - **只剥离类型加载的模块。** Vite 把 `vite.config.ts` 引到的 workspace 包与 `@latch/host/paths`、`host-state`、`env` 留给 Node 只剥离类型后加载，所以这些代码开启 `erasableSyntaxOnly`：不用 enum、namespace 与构造函数参数属性。
 - **程序目录。** `latchCodeRoot()` 从模块所在目录向上找根包的 `package.json`（名称见「兼容标识」），越过各项目自己的 `package.json`。
 - **目录组件。** `latch-files` 构建到临时文件，签名并自检通过后才原子替换旧产物；自检失败保留旧版本。
-- **家组件。** `latch-home` 只为 Agent 的家做三件事：计数、写成 zip（不压缩）与按预期计数永久删除；同样构建到临时文件、临时签名（`dev.latch.home`）、自检通过才替换。自检在临时目录里打包、在删除途中把一个子目录换成指向外部的链接，确认外部文件仍在。它不在本机确认组件的固定身份里，构建它不影响 `latch-presence`。见 [CUSTOM-AGENTS](CUSTOM-AGENTS.md#删除-agent)。
+- **家组件。** `latch-home` 只为 Agent 的家做三件事：计数、写成 zip（不压缩）与按预期计数永久删除；同样构建到临时文件、临时签名（`dev.latch.home`）、自检通过才替换。自检在临时目录里打包、在删除途中把一个子目录换成指向外部的链接，确认外部文件仍在。它不在本机确认组件的固定身份里，构建它不影响 `latch-presence`。删除的规则见「我的 Agent 与定时」。
 
 ### 插件与能力组合
 
@@ -166,7 +171,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 - **不弹确认的操作只留审计。** 开始 Agent、放宽模式、批准操作、改 Harness 的名称与开关：Agent 是没有沙箱的可信代码，审批是人选择的看管程度。
 - **先审计再执行。** 授予或执行权限的操作先写入审计记录，写入失败则拒绝执行；降低权限的操作从不因审计失败而受阻。
 
-模型网关（独立回环端口、每进程凭据，密钥只在 Host 向已确认服务发请求时注入）见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)。
+模型网关是独立的回环端口，每个 Harness 进程一份凭据，密钥只在 Host 向已确认服务发请求时注入；规则见「模型网关」。
 
 ### 文件差异的数据范围
 
@@ -182,6 +187,109 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 - 同一系统用户的进程可以连接 Host、访问数据目录并改写审计记录；哈希链只能让篡改被发现。
 - 邀请链接被他人看到时，对方可以在有效期内抢先使用。
 - 回环浏览器的凭据会随请求发往同一主机名上其他端口的服务。
+
+## 各功能的安全规则
+
+各功能改动时必须守住的规则。怎样实现以源码与测试为准；路由的权限另见「HTTP API」。
+
+### 模型网关
+
+- **凭据。** `lmg1.` 凭据绑定会话、服务、入口协议与模型列表，只开放自己协议的路径；Host 内存只存哈希。它不进参数、私有文件、URL、日志、审计、SSE、启动预览与持久化的会话，只经 profile 允许的环境变量（`envNames`）交给进程；profile 写出没列出的变量时拒绝启动。准备失败撤销已建的凭据，Harness 版本无法确认或低于最低版本时在发凭据之前拒绝。
+- **不是浏览器入口。** 带 `Origin` 或浏览器 `Sec-Fetch-*` 标记的请求 403 `gateway-origin`，不返回 CORS 头。请求体、错误正文与等待队列都有上限。
+- **转发。** 入站认证、Cookie 与未列出的头不转发，回复只留列出的头；上游不跟随重定向。读完请求体后、发出之前再核对凭据与服务指纹；排队不是授权，取得名额后重新核对，不发旧密钥。回复（含成功的 JSON 与跨字节块的 SSE）去掉真实密钥的原文及其转义、编码与截断形式。
+- **不替 Agent 做事。** 网关不执行工具、不下载图片 URL，服务端工具不由 Host 代执行。转换不了的内容在出站前 400，不悄悄删掉；失败不变成空的成功。带服务端状态或可能已在服务端执行过的请求不发给另一个服务，也不发第二次。
+- **推理封装。** `latch2.` 是带 HMAC 的来源封装，不是加密；签名 key 只在 Host 内存，封装只回放给签发它的服务与模型。
+- **换服务。** 交给另一个候选前写 `task.model.fallback`，会话换路线前写 `task.model.route-changed`，写不进就不换；路线由 Host 给出，客户端给不了地址或协议。会话自己的服务在运行中被改时作废凭据，不悄悄换到下一个候选。服务的协议或地址变了不自动迁移会话，要求重选。
+- **用量账本。** 从不记提示与回复的正文、工具参数与结果、推理、图片、密钥、凭据、请求头与回复头、查询串。账本是用量元数据，不是审计：写不进只记日志，不让请求失败。预算与汇总文件 0600，schema 是 strict，不认识的字段使 Host 拒绝启动。
+- **放宽与收紧。** 新增或调整备选顺序、取消预算、调高上限、换单位或币种与任何单价改动是放宽：审计写不进就不执行（503 `model-spend-audit-unavailable`）；只会花得更少的改动照常执行，带 `x-latch-audit: failed`。
+- **汇总的可见性。** 只给这台设备此刻能读的会话 ID，其余合成一行；数据范围不是 `all` 的设备拿不到 Agent ID 与 Agent 预算；答复前复核设备权限、会话归属与私有状态。页面在权限变化时撤下旧汇总与预算。
+- **模型服务的修改。** `PUT /providers/:id` 改变目标时必须带 `expectedTarget`，缺少或目标已变就拒绝；只收紧的修改不需要它。Responses 请求用 `store: false`。
+
+### 我的 Agent 与定时
+
+- **权限。** `/custom-agents…` 与 `/automations…` 读要 `view`、写要 `run`，都要数据范围 `all`（403 `agent-scope-required`）。Agent 会话的内容只给 `all`；只有 `all` 设备发出的一轮带上「通用」与「认识你」的事实，`agentPrivate` 在模型收到这一轮之前设好，分叉与定时运行同样私有。快照的 `customAgents` 只有摘要（没有说明、技能与工具内容），`agentProposals`、`agentChats`、`agentResults` 与 `automations` 只给 `all`，不带正文与 `prompt`。原生连接不能导入或预览导入（403 `agent-import-device`）。
+- **审计。** Agent 的写入审计写不进就拒绝；删除 Agent、删除记忆、「不要」「清除」与定时提议的已保存标记照常完成。建家（`agent.home.assigned`）、导出、导入、预热与换下聊天（`agent.chat.retired`）都先审计；退回 `agent.chat.restored` 写不进也照常退回。**永久删除家先写 `agent.folder.removing`，写不进就留下它**：这是「删除从不因审计失败受阻」的唯一例外；导出家同样先写 `agent.folder.exporting`。
+- **密钥。** 像密钥的记忆、提议、导出与导入在审计之前拒绝（422 `agent-memory-secret`、`agent-export-secret`、`agent-import-secret`），什么都不存。
+- **外部内容。** ACP 的判断从宽：`fetch`、`search`、`execute`、`think`、`other`、没有 `kind` 的调用、子 Agent 与会话文件夹之外的读写（先解析 `..` 与链接）都算外部；技能服务的工具只按带前缀的精确名字豁免，ACP 也只把带这个前缀的 `propose_*` 认作 Latch 的。插件 Harness 说的 `external: false` 不采信；带 `automationId` 的会话一律外部；人自己的「记住…」从不标外部。导入的记忆与读过外部内容之后存的记忆不放在用户的记忆下，归为资料（不是用户的话，也不是指令）。近况摘要只用 Host 的记录，不抄模型的输出，每行标外部内容，名字经净化，不能伪造新的一行或字段。外部 Harness 不能自报 `generalChat`。
+- **提议通道。** 目录 0700、文件 0600，以 `O_NOFOLLOW` 打开，只读单链接的普通文件、只读到打开时的大小；每行过 strict zod 与密钥检查，归属只从 Host 的记录查出，从不取自文件。技能服务的命令是 Host 自己 Node 的绝对路径，环境变量为空。
+- **家。** 只由分配器在首次开始、人的一轮与定时运行时建；读取、预热、文件句柄、工具调用与终端从不建目录，删除了的 Agent 不再得到家（409 `agent-deleted`）。父目录与家 0700，非递归新建后经 `O_NOFOLLOW` 句柄核对是本用户的空目录；不接管已有的未知目录，不跟随链接，路径上有别的东西时不移动、覆盖、接管或删除它；两个数据目录不共用家。
+- **删除家。** 只删记录过、计数仍与人看到的一致、身份（设备号与 inode、0700、不是链接、在 `helpers/` 下）核对通过的家；不符的留下并报告，在用的家留下，`helpers` 本身不删，Agent 的删除从不被家挡住。`latch-home` 不跟随链接、遇到挂载拒绝；导出的 zip 不覆盖已有文件，不含记忆、说明与秘密值，只在本机桌面端、经主进程签名导出。
+- **头像。** Host 进程自己不解析图片，交给空环境、有时限与内存上限的一次性解码进程；类型只按文件头，重新编码去掉元数据。`GET` 只给在用的哈希，带 `nosniff`、`Content-Security-Policy: sandbox; default-src 'none'`、`Cross-Origin-Resource-Policy: same-origin` 与 `no-store`；快照与 SSE 只带哈希。
+- **导出与导入。** 只由人显式操作，Agent 没有这个工具。文件不含模型、`engineOptions`、MCP 与秘密值、设备、审计、家、会话与提议；导入总是新建，导入的记忆算资料，定时以关闭状态创建。
+- **唯一聊天。** Host 只凭自己的记录决定聊天的状态与换下；设备不能让健康的聊天被换下，预热只用 Host 记录的聊天槽，不接受客户端给的会话 ID；开始请求不接受另传的 `config`（400 `config-unsupported`）。
+- **定时。** 开启或恢复的设备成为 `grant.deviceId`，开启、恢复与每次运行前都要仍有 `run` 与 `all`（否则 403 `automation-owner` 并暂停）；超出等级 403 `automation-level`，外部 L3 Agent 不能当作 L1，只能存为关闭、手动运行。只有 Host 调度器创建 `trigger: schedule` 并给会话 `unattended: true`，客户端不能指定。每次运行前重算 `grant.basis`，不同就暂停而不运行；只有 `definitionHash` 变化才把授权换到修改的设备。结果未知时暂停、不重发；错过的时间不补跑；`enabled: false` 不授后台权。
+- **结果卡**不是消息，Harness 收不到；运行的会话删除时，卡上取自它的内容随之抹去。
+
+### 设备与浏览器
+
+- **模拟器路由**只在 `host.sock`，要 `run` 与数据范围 `all`（否则 403）。只运行 `/usr/bin/xcrun simctl`、`devicectl` 与 `/usr/bin/open`：参数是固定数组，不经 shell，工作目录 `/`，环境只有 `PATH`。UDID、URL scheme、bundle id、隐私服务与日志谓词按白名单在启动任何进程之前校验。只关 Latch 自己启动的设备，人启动的不碰。
+- **画面与日志。** 画面、录屏与日志行不进 Host 日志、审计、SSE 或数据目录，临时文件在 0700 目录里、用完即删；录屏只给开始它的设备；流按批与定时复查权限，失去权限即结束。伴随进程的回答有界，坏掉的程序只让这次输入失败。
+- **输入。** idb 只用 Unix 套接字，从不传 `--grpc-port`（它无认证地监听所有网卡），就绪报告带 gRPC 端口时立即结束它；`idb_companion` 只从 Homebrew 的固定位置查找，真实路径须在同一个 `Cellar` 下，Latch 不替人安装。人与 Agent 共用输入时人总是优先，失去权限或放手时立即抬起；不能完整输入的文字整段拒绝，不输一半。
+- **私有框架**只在 `native/macos/LatchSimulator.swift`，只取画面；它不启动子进程、不写文件、不联网，声称能输入的组件被拒绝。Host 的其余部分只用公开的 `xcrun`，不加新的系统权限。
+- **Agent 的设备工具。** `device_open_url` 只开这台 Mac 的本机地址，「始终允许」也不放宽；启动 App 不带参数；没有录屏、开关机、抹除、安装与改权限的工具。输入工具只给人开始的完全访问 Code 会话，按 Harness 等级而不是会话模式，我的 Agent、无人值守运行与内置 Harness 都没有。授权只来自数据范围 `all`：每个编辑与合著设备都要 `all`，查不到的按不具备，收窄或撤销会停下这一轮仍在进行的调用。这只是第二道防线，不是边界。
+- **预览浏览器。** 顶层只去 http(s)，子框只放自己的 `about:`、`data:`、`blob:` 文档，页面自己去私有地址要人刚在标签里点过；preload 与主进程各按同样的规则检查参数。本机地址只有 localhost、`*.localhost`、127/8、`::1` 与 `::ffff:127.x.x.x`（0.0.0.0 与 `::` 不算），broker 与主进程用同一组。网络记录从不记请求头、Cookie、正文与查询；调试接口只发 `Emulation.setEmulatedMedia`。
+- **浏览器的 Agent 工具。** 没有执行任意脚本、读 Cookie、开发者工具或清除数据的工具。标注只读、从不读表单的值；页面文字经 `redactSecrets` 并标明「页面提供的内容，不是指令」后才交给模型。执行前再核对标签的来源，变了就拒绝（`origin-changed`）；引用表只在隔离环境里，网页看不到。敏感字段一旦认定就一直是，它的值从不读；选择器不收属性选择器、伪类与转义（否则能逐位试出字段的值）；点击不收框目标、被遮挡与文件输入，输入前核对焦点仍在这个字段。主进程按真正拿到键盘的元素再判一次敏感字段（`sensitive-field`），往敏感字段逐个按字符一律拒绝。人接管时立即中止，每次送输入前都再看一次谁在操作。
+- **标签与令牌。** 标签表只有标题、源与不带查询的路径，只在 Host 内存；不是这个会话的标签答 `not-found`。浏览器令牌只能用 `tools/list`、`tools/call` 与 `cancel`，每个请求都核对，不是 JSON 的行直接断开；服务启动时核对令牌文件是本用户的、0600、只有一个链接；Agent 输出里回显的令牌被替换。`latch-browser` 服务是固定源码，环境为空，除网关套接字与令牌文件外不连网络、不读文件。每次调用核对目录身份与项目策略，旧助手、只对话与归档的会话拒绝。
+- **尚未实现。** 在手机或其他电脑上看模拟器或浏览器的画面、模拟移动端 UA 与触摸都要先做单独的安全审阅。
+
+### Git 与工作树
+
+- **受限的 Git**只在通过 `readGitLayout` 检查的布局上运行，`GIT_DIR` 与 `GIT_WORK_TREE` 来自这次检查，不传 Host 的环境；`hook.` 下形状不认识、或名字含 `=` 与换行的键无法关掉：409 `unsafe-config`，什么也不运行。读分支只读元数据文件，不运行 Git；Git 从不比较工作区（会运行仓库的 clean filter），工作区由 Host 自己哈希。客户端的补丁文字从不接受，不运行 `git apply`。
+- **以你的账户运行的 Git。** 标准输入为空，不经 Agent 进程，没有任何提示能等待回答；模型密钥、设备凭据、`lmg1.` 与 `LATCH_*` 不在它的环境里，Latch 不读取、不保存、不审计任何 Git 凭据。提交信息、路径与 PR 正文只写进 0700 临时目录里的 0600 文件，不进参数。失败只给固定的原因，原始输出不给客户端。
+- **获取与克隆。** 钩子、filter 与子模块都不运行，传输只开一种（`GIT_ALLOW_PROTOCOL`）；仓库作用域设了程序、凭据、代理、TLS、请求头或改写地址时 409 `git-repo-config`，只带种类、从不带值。远端地址只收 https、ssh、file 与回环 http；获取只写 `refs/remotes/` 与 `refs/tags/`；读状态从不获取，只有人按下才获取。拉取只快进，有 filter 或合并驱动时 409 `git-drivers`，分叉了不合并也不变基。克隆的地址带凭据时 400 `clone-url-credentials`，错误不复述地址；先审计 `git.clone` 再非递归地建目录，失败只删设备号与 inode 相同的那个目录。
+- **写入。** Git 运行之前、审计之前与所有异步读取之后复查权限，读取在返回之前再查一次；同一文件夹有运行中或等审批的一轮时 409 `git-turn-running`；同一仓库同时只做一个写入。从不 `--amend`、`-a` 或空提交，跳过钩子不记住。推送不收地址，没有 `--force`，引用规则不带 `+`，标签与子模块不随推送。
+- **回执。** Git 运行之前写入 `pending`，写不进就 503 `git-receipt-unsaved` 且不执行；从文件读回的 `pending` 是结果未知。结果未知的重试从不再运行提交，推送的重试只用回执里的远端、引用与提交；`ls-remote` 只按远端名读，不把地址放进参数。
+- **历史。** `:sha` 必须是 HEAD 的祖先；提交的主题与作者经 `redactSecrets`；像密钥的文件不给内容。
+- **`gh`。** Latch 从不运行 `gh auth token`，不读取、不保存 token，`GH_TOKEN`、`GITHUB_TOKEN` 不在终端环境的白名单里也不进参数。每个命令带 `--repo`（`gh api` 带 `--hostname`），主机只限 `github.com`、`*.ghe.com` 与显示为已登录的 GHES；从不关闭、合并或改写 PR；推送远端仓库以外的 PR 不绑定；没有绑定 PR 的会话不启动 `gh`。
+- **切换分支。** 分支必须是这次读出的列表里的名字；任何作用域的 `filter.*`、仓库的 `core.hooksPath` 或 `hook.*` 都拒绝而不置空（409 `branch-switch-config`，只带种类）。切换期间这个文件夹挡住回合、审批、文件读写与终端；先写 `git.switch` 再运行；从不 `--force`、`--discard-changes`、`--merge`，不贮藏，不覆盖被忽略的文件。切换与列表只由人按下：没有 Agent 工具、插件页面能力或定时任务能到这两条路由。
+- **工作树。** 工作树的根不在仓库、数据目录或 Latch 自己的目录里，也不包含它们；Driver 自报的位置被丢弃。新建时另关掉 attributes、LFS 下载与 replace 对象，`safe.bareRepository=explicit`，先 `--no-checkout`、置空 filter 再检出，不运行任何 setup 脚本；遇到名字含 `=` 或换行的 filter 与钩子、仓库的 `includeIf`、LFS 的程序设置或链接的位置就拒绝。`.worktreeinclude` 只复制既匹配又被忽略的文件，不跟随链接、不覆盖。只有带本用户标记的链接工作树算 Latch 的；嵌套仓库或检出的子模块拒绝，Latch 从不删 `modules/`；有未提交的文件时要带与当前一致的计数与摘要。分支从不强制删除：回滚只删这次新建且仍指向起点的分支，`existingBranch` 从不删，移除时只删 Latch 建的 `latch/<名字>`、已合并、人要求了的，经 `update-ref --stdin` 核对后删除。
+
+### 终端
+
+- **不是沙箱。** Latch 的审批、路径检查与出站策略都不适用于终端里运行的命令。
+- **权限。** 只在 `host.sock`（其他入口 403 `local-only`），要 `run` 与数据范围 `all`（`work` 403 `terminal-scope`），读请求正文前后各查一次；先写 `terminal.open`，写入之后、启动之前再查一次设备授权；凭据失效或失去权限时流随之结束。输入的内容从不记录。更新窗口确定后新开终端与输入 409 `host-updating`。
+- **启动。** 组件缺失时不提供终端，也不以其他方式启动 shell；组件自身以空环境运行。调用方与页面从不传路径。环境是白名单（`terminalEnvironment`），最后去掉 `RESERVED_ENV_PREFIXES`（含 `LATCH_`、`NODE_`、`ELECTRON_`），模型密钥、设备凭据与 Host 设置都不进入 shell。`TERM_PROGRAM=Latch` 让 `pnpm latch` 只写 `--code-file`，只防无意显示。
+- **结束。** 会话还有终端时归档或删除 409 `terminal-running`，会话不变，也不结束 shell；项目还有终端时移除 409 `workspace-terminal-open`；进入移除流程的工作树里不能再开终端。
+- **加入对话**只返回文本，由人在草稿里发送；先脱敏（`redactLineSecrets` 与 `redactKnownSecrets`）再截断，脱敏只是按形状尽力，附加前页面让人看到原文。终端报告的本地服务网址只留协议、主机与端口。
+- **登录终端。** 命令只由 Host 从定义得出，正文 strict；权限同其他终端。脚本是随机名的 0700 临时文件，shell 只拿到路径；`harness-login` 之下只能开登录命令。设备码不进日志、审计、会话或发给其他设备的事件，「加入对话」拒绝（409 `terminal-login-output`）。
+- **填入命令**只填不执行，从不带换行：多行、结尾的 `\`、控制、不可见与双向字符都拒绝；只填在提示符上空闲、不是登录终端的那一个。
+
+### 附件
+
+- 附件的内容（`AttachmentContent`）不进快照、SSE、请求 URL 或 Host 日志。可能含密钥的文件名或文本要明确确认（`attachment-secret`），复用与分片完成同样要。
+- 种类只按内容判断，声明的种类必须一致；分片上传完成时做与单次上传相同的检查。上传按设备隔离（别的设备 404 `upload-missing`），要 `run`，逐块复查设备与权限，从开始就按声明的大小占用这台设备的额度。索引写入失败时停止接收，不把损坏的索引当作空。
+- 按路径交给 Agent 时：目录 0700、文件 0600，目录是链接或不是目录时拒绝（409 `attachment-changed`）；字节取自私有存储并核对 SHA-256，已绑定到别的会话的拒绝，文件或摘要不符时拒绝而不换成别的文件；路径只进本轮的模型输入。
+- `DELETE /attachments/:id` 只删这台设备未发送的草稿（409 `attachment-in-use`）；释放保留的草稿只碰这台设备自己的、人确认过的；拿不准有没有消息需要它时一律保留。
+- 页面不传绝对目录，不从文字里的 `@` 或邮件地址推断选择；可能含密钥的图片不画。iPhone 重新编码图片，位置、相机与 EXIF 等元数据不离开手机。
+
+### 改动与文件编辑
+
+- **快照与补丁。** 不跟随链接，跳过 Host 受保护的路径；名字像密钥的文件只记元数据，内容含密钥的只记哈希、从不给内容；二进制、过大、像密钥与没有留存的文件不进补丁。改动存储必须是本用户的普通目录（500 `changes-store-insecure`）。
+- **撤销、恢复与丢弃。** 读要 `view` 与数据范围 `files`，写要 `run`、`files` 并过发送消息的检查，读取在返回之前再查一次。只写没再动过的文件（按内容哈希，否则 409 `change-files-changed`，一个文件也不写）；没有留存的不写也不删；像密钥的文件丢弃时不写不删；运行中 409 `change-running`。丢弃全部未提交的改动不可恢复，只在 `host.sock`，先预览再带 `confirm` 与预览的 `planHash` 执行；退回到某一条之前也只按预览的 `planHash` 执行。
+- **行级反馈。** 快照的 `reviewNotes` 只有每个会话的计数与修订号，文字只经列表路由；「修好了」一类状态只由人设定，Host 不推断。
+- **编辑文件。** `PUT /tasks/:id/files/:handle` 带 `baseHash`：在改动记录的锁里重读，哈希不同 409 `file-changed`，一个字节也不写；锁里、写审计 `file.edit` 之后与改名之前各按设备此刻的权限再核对，改名前再核对文件夹、文件身份与哈希。受保护的路径只给有 `approve:elevated` 的设备（`file-edit-elevated`），Latch 程序目录从不编辑（`file-code-root`），混用换行的文件不编辑；有一轮在运行时 409 `file-turn-running`；拒绝不重放；任何客户端都不提供覆盖。
+- **预览。** 预览框不是操作系统的沙箱。可能含密钥的文件只显示文本，不调用高亮、公式或图表；没有 `actions.preview` 的文件在读取之前拒绝。媒体地址只收同源的 Host 文件句柄、附件句柄或页面自己建的 blob（`trustedMediaUrl`），Markdown 里新的链接不放宽 `work` 的范围，远端图片不请求。
+- **运行期间的文件变化**只观察文件元数据，不运行 Git、shell 或项目代码；它可能含其他程序的写入，不证明由 Agent 生成，也没有撤销。扫描只看冻结的根里的普通文件，条目、层数、时间、结果的路径数与字节、同时观察的数量都有上限；秘密文件、Host 私有数据与生成目录不进记录。`fileChanges` 只给已授权的会话详情与 SSE；旧运行晚到的结算只更新原消息；Host 重启时残留的观察记为部分。这些变化不给 `work` 设备目录浏览，也不授予对已删除、秘密、私有或移出项目的路径的访问。
+
+### 团队与交接
+
+- **团队只由人开始。** 只在人的设备调用 `POST /tasks/:id/team` 时开始；带队会话的 Agent 只能提议，没有开始团队、新建成员或碰团队以外会话的工具；成员不能再带队（409 `team-lead`）。成员是普通的待办与会话，经待办的开始与 `POST /tasks/:id/prompt` 的同一检查路径，审计与回执照常；`teamOf` 由 Host 填，Driver 自报的被丢弃。工作树建不出就拒绝这个成员，不改用共用文件夹；Host 重启后不替人再开始。
+- **「让它自己派活」。** 默认关，Latch 不替人打开。打开是放宽（先写 `team.dispatch.allowed`，写不进 503），关是收紧；打开它的设备被移除或失去 `run`、团队停止时自己关上，之后不自己再开。派的一轮不受无人值守上限、不加本机确认（所有者的决定），但身份是打开开关的那台设备，它必须还在、有 `run`、此刻能操作；只派这个团队已有的成员，一次一轮，对成员是外部内容，不带任何设备的输入授权，不沿用「始终允许」与更宽的档位。Host 只认自己的记录：会话属于调用的 Driver、有看板通道，不是插件页面、我的 Agent、定时或无人值守的会话。
+- **团队的私有与外部内容。** 带队会话私有时成员也私有，团队记下 `private` 后不再取消；成员是私有会话而带队不是时，它的回复不带回。私有团队对数据范围不是 `all` 的设备 404 `team-not-found`，与不存在的团队相同，快照也不带 `teamOf`。带队会话从外部内容开始时成员带 `outsideStart`，交回的消息标为外部内容。
+- **交接。** 来源从不被改写；目标永远是普通会话，经 `POST /tasks` 或 `POST /tasks/:id/prompt` 的同一路径；交接不发给来源的 Agent，「带入输入框」只放进草稿。私有来源要数据范围 `all`，交给已有会话时目标也必须私有（403 `handoff-private-target`），新会话随之私有，私有只增不减。文件材料要 `files`，经与 `@` 相同的检查，目标侧不跟随链接再读一次，真实路径与哈希都要相同（409 `handoff-file-elsewhere`）。材料里带用户消息时这一轮不带模拟器输入授权。开始的请求 ID 从不返回设备；`GET` 不发送任何东西。每台设备只看到自己能读的一边：读不了目标时摘要与证据都是 `withheld`，两边都读不了时这条交接不存在（404）。
+
+### 桌面端更新与通知
+
+- **更新源。** 源地址、Ed25519 公钥与是否签名只来自 `update-source.cjs`；页面与插件都不能提供更新地址，页面拿不到下载地址、文件路径或公钥，主进程从不运行任意可执行文件，preload 逐字段校验视图。不支持时不检查。更新源必须验过 Ed25519 签名，字段严格校验，只接受比当前新的稳定版本 `x.y.z`（不降级），过了 `expiresAt` 即使签名正确也拒绝（`feed-expired`）。下载地址必须是 HTTPS、与更新源同源，不跟随重定向、不带凭据；文件 0600、不经链接，流式算 SHA-512，大小或哈希不符即删除、不安装。
+- **安装。** 只在打包且签名的应用里安装，只停桌面端自己启动的 Host（否则 `host-external`）。进入窗口与提交都得到答复才停止 Host 并安装，否则不装；读不到 Host 时按要更新 Host 处理。
+- **安装窗口**（`/host/update-window…`）只给经 `host.sock` 登记、在 `host.sock` 上调用的设备；只有持有者能续期、提交或离开（409 `update-window-held`）；提交时一步核对没有在忙的工作（409 `host-busy`）。提交之后新会话、新的一轮、排队、终端与以你的账户运行的 Git 写入都 409 `host-updating`；记录过的请求重试得到原来的答复。这些都是收紧，审计失败不阻止。
+- **通知。** 正文是固定文字，标题去掉控制字符并限长、默认隐藏；preload 给页面的状态只有偏好、`supported` 与 `consent`，没有标题、正文或会话参数。断连、鉴权失败或不支持通知时不伪造提醒；人关掉之后不自动再开；读坏的偏好按关闭处理。
+
+### 客户端
+
+- 设置的分类失去权限时正文立即卸载；晚到的模块不挂载旧分类、不发起它的读取；读取收到 401 或 403 时立即卸载受保护的内容。读回的数据只在当前设置实例的内存里，Host、设备、权限或数据范围变了就丢弃；用旧的服务列表画出时，等新的读回之后才允许改地址、协议或密钥。
+- 项目恢复不以 `default` 为目标（普通分叉有意复用默认的会话目录，不能借它绕过失效的旧目录）；结果未知的提交恢复原请求体与原 `requestId`，不变成一次新的分叉；失效的旧选择不自动退到别的项目。原来的工具参数不进分叉种子。
+- iPhone 在正文窗口之外不显示 Agent 的名字、角色、记忆与定时，离线列表也不带；不隐式请求 Face ID。
 
 ## Host 进程与数据目录
 
@@ -207,7 +315,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 **分工。** Host 自己宣布运行状态并重新加载证书。让它常驻、重启和保持唤醒的是桌面端主进程（`apps/desktop/src/lifecycle.cjs`），因为登录项、电源断言与系统睡眠通知只在 Electron 中可用。
 
 - **运行状态通告。** Host 在事件流上发送 `host-state`（帧与客户端处理见 [STREAMING.md](./STREAMING.md)「Host 的状态流」）。`sleeping` 与 `awake` 在收到报告时立即发出，`awake` 之后另发一次 `refresh`；`stopping` 是 Host 关闭时每条流的最后一帧，原因取此前 60 秒内报告的 `restart`、`update` 或 `shutdown`，没有报告时为 `shutdown`。`retryAfter`（秒）默认 `restart` 2、`update` 10、`sleep` 10、`shutdown` 15，报告可给 1–3600。
-- **报告。** `POST /link/api/host/state` 只在 `host.sock` 上接受（不带设备凭据，只用于通告与展示），其他入口 404；桌面端页面经主进程转发的这类请求由主进程返回 403 `shell-managed`。桌面端另报 `{ state: 'desktop', keepAwake, pid }`（[AUTOMATIONS.md](AUTOMATIONS.md#到点前后保持唤醒)；`pid` 是它的主进程，「操控这台 Mac」据此拒绝指向 Latch 的调用，见 [MCP.md](MCP.md#逐次核对)）。
+- **报告。** `POST /link/api/host/state` 只在 `host.sock` 上接受（不带设备凭据，只用于通告与展示），其他入口 404；桌面端页面经主进程转发的这类请求由主进程返回 403 `shell-managed`。桌面端另报 `{ state: 'desktop', keepAwake, pid }`（`keepAwake` 是桌面端此刻保持唤醒的原因：`busy`、`schedule` 或空；`pid` 是它的主进程，「操控这台 Mac」据此拒绝指向 Latch 的调用，见 [MCP.md](MCP.md#逐次核对)）。
 - **谁报告。** 主进程在 `powerMonitor` 的 `suspend` 与 `resume` 时报告睡眠与唤醒。系统宣布注销、重启或关机时只报告 `shutdown`，不停止 Host（注销可能被取消）；随后 30 秒内系统要求桌面端退出时，主进程推迟退出，停止 Host（核对后 SIGTERM，最多等 3 秒）再退出。所有者自己退出桌面端（⌘Q）不停止 Host。睡眠前的最后一帧不保证送达。
 - **启动记录。** 桌面启动器启动 Host 后写入 `<数据目录>/desktop-launch.json`（0600，原子写入）：版本、Host 的 PID 与 hostId、启动方式 `launch`。环境中有数据目录以外的 Host 设置（`HOST_ENV_NAMES`）时 `launch` 为 null，因为桌面端无法按原样启动它。写入失败时照常返回已启动的 Host，并提示它不会被自动重启。主进程严格解析它，不符合的内容视为没有记录。
 - **崩溃后重启。** 主进程每 5 秒读 `host.json` 并经 `host.sock` 核对。有序停止会删除 `host.json`，所以它仍记录一个已退出的进程就是崩溃。只有 PID 与 hostId 都和启动记录一致、且 `launch` 不为 null 的 Host 会被重启：等待 1、2、4、8……秒（最长 30 秒），60 秒内没有核对通过或启动后立即退出都算一次崩溃，10 分钟内第 5 次崩溃时停止自动重启。其他 Host 崩溃时只报告。
@@ -262,7 +370,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 | --- | --- |
 | 数据目录 | `--data-dir` → `LATCH_DATA_DIR` → 源码入口当前目录下已存在的 `.runtime`（打印迁移提示；应用包忽略）→ macOS `~/.latch/host`（原位置的数据见下），Linux `${XDG_DATA_HOME:-~/.local/share}/latch/host`，Windows `%APPDATA%\Latch\Host` |
 | 启动目录 | `--workspace` → `LATCH_WORKSPACE` → 数据目录内已存在的 `workspace`（打印提示）→ `~/Latch/workspace` |
-| 工作树目录 | `LATCH_WORKTREES_DIR` → 启动目录旁边的 `worktrees`（见 [BRANCHES.md](BRANCHES.md#新建工作树)） |
+| 工作树目录 | `LATCH_WORKTREES_DIR` → 启动目录旁边的 `worktrees`（规则见「Git 与工作树」） |
 | Agent 安装目录 | `LATCH_AGENTS_DIR` → macOS `~/Library/Application Support/Latch/Agents`，Linux `${XDG_DATA_HOME:-~/.local/share}/latch/agents`，Windows `%APPDATA%\Latch\Agents`（只用于重叠检查） |
 | 运行目录 | macOS 的 `DARWIN_USER_TEMP_DIR`（否则 `TMPDIR`）、Linux 的 `XDG_RUNTIME_DIR`，都没有时 `/tmp/latch-<uid>`；其下的 `latch-<hostId 前 8 位>/` 放 `host.sock` 与会话临时目录 |
 
@@ -294,7 +402,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 **谁能添加。** 加入文件夹就是授予权限，只能在 Host 所在的电脑上进行：
 
 - 桌面端：主进程经 `POST /folder-grants` 取一次性 nonce，再用渲染进程拿不到的设备密钥签名请求体后提交；这些路由要 `host.sock` 上的 `admin`，桌面代理拒绝页面自己请求它们。
-- 克隆：同一条路，地址与原生面板选出的位置一起签名，Host 在那里新建文件夹、克隆完成后加为项目（`via: 'clone'`，见 [GIT-DELIVERY.md](GIT-DELIVERY.md#克隆)）。
+- 克隆：同一条路，地址与原生面板选出的位置一起签名，Host 在那里新建文件夹、克隆完成后加为项目（`via: 'clone'`，见「Git 与工作树」）。
 - 命令行：`pnpm latch project` 只在 Host 停止时修改，持有数据目录锁。它读取上次成功启动写入的 0600 `project-context.json`（启动目录、Agent 安装目录、程序目录与 TLS 私钥路径），不从当前目录猜测；尚未记录上下文时需显式给 `--workspace`，已有记录时显式目录必须与它相同。
 
 文件夹是授予的范围，不是隔离：只有 Latch 内置的文件工具按所选文件夹检查路径，这也不是操作系统沙箱；ACP Agent 与插件 Harness 仍能访问 Host 用户能访问的任何路径（各 Agent 的做法见 [HARNESSES.md](./HARNESSES.md#项目的多个文件夹)）。
@@ -334,7 +442,7 @@ Host 按需检查每个项目的文件夹（文件夹规则与项目内的重叠
 
 ### 会话与项目
 
-- **开始。** `POST /tasks` 只带 `workspaceId`（带 `worktree: true` 时在新建的工作树里开始，见 [BRANCHES.md](BRANCHES.md#在工作树里开始会话)）。Host 检查项目可用、所选 Harness 能接受这些文件夹的数量（`HarnessInfo.projectFolders.max`，超出 409 `harness-folder-limit`），会话在主文件夹中启动，项目标识记在 `sessions-meta.json`。
+- **开始。** `POST /tasks` 只带 `workspaceId`（带 `worktree: true` 时在新建的工作树里开始）。Host 检查项目可用、所选 Harness 能接受这些文件夹的数量（`HarnessInfo.projectFolders.max`，超出 409 `harness-folder-limit`），会话在主文件夹中启动，项目标识记在 `sessions-meta.json`。
 - **启动指纹。** L3 会话在写启动审计之前算出启动指纹，含交给 Harness 的其他文件夹；有这样的文件夹时审计另记文件夹总数 `folderCount`。ACP Driver 启动 Agent 时，交给它的文件夹已与那时不同则 409 `workspace-changed`。
 - **谁收到全部文件夹。** 只有声明 `projectFolders: 'all'` 的 Driver 收到项目标识与全部文件夹，并拿到 `projects()` 自己再核对一次；其他 Driver 只收到主文件夹作为 `cwd`，摘要的 `folderAccess` 由 Host 设为 `primary`。声明 `historyImport` 的 Driver 也拿到 `projects()`，只用来核对接入的会话目录。
 - **客户端看到的事实。** `HarnessInfo.projectFolders` 说明每个 Harness 怎样对待其他文件夹（`all`、`primary`、`primary-asks`、`primary-unbounded`，可带 `max`）；取值在各预设的权限配置里，见 [HARNESSES.md](./HARNESSES.md#项目的多个文件夹)。
@@ -357,7 +465,7 @@ Host 按需检查每个项目的文件夹（文件夹规则与项目内的重叠
 
 ### 启动目录
 
-我的 Agent 与通用的固定家 `helpers/<Agent ID>` 用同一个分配器，指定了 `--workspace` 时也建立；它不加入公共项目目录，也不能存成公共项目，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#家与工具)。
+我的 Agent 与通用的固定家 `helpers/<Agent ID>` 用同一个分配器，指定了 `--workspace` 时也建立；它不加入公共项目目录，也不能存成公共项目；家的规则见「我的 Agent 与定时」。
 
 `classifyDefaultWorkspace` 对启动目录给出三项判断：
 
@@ -372,7 +480,7 @@ Host 按需检查每个项目的文件夹（文件夹规则与项目内的重叠
 
 ### 会话文件
 
-回复里提到的文件在客户端是路径标记，从不让页面导航。判断都在 Host（`apps/host/src/files/`）：读取内容需要 `view`，`work` 设备只能打开本会话提到过的文件，枚举与搜索文件夹要数据范围 `files` 或 `all`；预览与编辑见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。在访达中显示、快速查看、用默认应用或编辑器打开这些本机动作只在 `host.sock` 上进行，先审计再给出真实路径。
+回复里提到的文件在客户端是路径标记，从不让页面导航。判断都在 Host（`apps/host/src/files/`）：读取内容需要 `view`，`work` 设备只能打开本会话提到过的文件，枚举与搜索文件夹要数据范围 `files` 或 `all`；编辑的规则见「改动与文件编辑」。在访达中显示、快速查看、用默认应用或编辑器打开这些本机动作只在 `host.sock` 上进行，先审计再给出真实路径。
 
 **会话文件夹之外的文件。** 本会话 Host 记录的消息（Agent 的回复、工具的输入输出与位置、人自己的消息）用绝对路径、`~/` 或 `file:` 写出、落在每个文件夹之外的文件，记为引用集合里的外部键（`@\n<路径>`，`files/outside.ts`），上限另计（2,000 个，文件夹内的仍是 10,000 个，互不挤占）；相对路径爬出文件夹的与 URL 的尾巴（`//主机/…`）不算，旧记录的每条消息按新规则再读一次。最后一段不能是链接；中间的目录链接只用来求出真实路径，排除规则对写出的路径与真实路径都判一次。只有这样写出过的路径能打开，任何数据范围都要求它在引用里（不只 `work`）；不列目录、不搜索、不给同目录的其他文件，只在会话上下文，不能编辑或引用到对话。每个文件是自己的单文件根：根 ID 是 `outside-` 加路径哈希，句柄绑定写出的路径、真实路径与设备号和 inode，换了文件就要重新解析；读取经同一 resolve → 句柄 → 内容路径，审计、限速、读取额度、私有会话的规则与文件夹内的引用相同。一律拒绝：Latch 的数据目录（整个）、运行目录、Agent 安装目录、TLS 密钥、程序目录、凭据目录（`CREDENTIAL_HOME_PATHS`：`.ssh`、`.aws`、钥匙串、`~/.latch` 等），按完整真实路径与写出的路径判为秘密的文件（本机的「仍然显示」也不放行），最后一段是符号链接、文件夹或其他非普通文件。Agent CLI 自己的目录（`CLI_FILE_HOMES`：`~/.codex`、`~/.claude`、`~/.grok`、`~/.dsh`、`~/.cursor`、OpenCode 与 goose 的目录等）里写出的文件都能打开（计划、日志、图片），只有登录文件（`auth.json`、`.credentials.json`、`oauth_creds.json` 等）与数据库文件（可能存着令牌）不给；`~/.claude.json` 可能存 API Key，整个排除。一台能发消息的设备在自己的消息里写出路径也算写出：它本来就能让 Agent 读任何文件，这不扩大它实际拿得到的东西。
 
@@ -419,7 +527,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 - **故障隔离。** 某个 Driver 列表失败不影响快照；非必需 Driver 启动失败只在目录中标为不可用。
 - **Host 字段不下传。** `harnessId` 由 Hub 消费；`model`、`cwd` 只有客户端选择时才传给 Driver。自己带模型的 Harness 选了模型服务时，Host 用 `pairRoute` 重算这一对，只把 `modelRoute` 交给声明了 `models.wires` 的 Driver，Driver 经 `modelGateway` 为每个进程换一个网关凭据（[HARNESSES.md](./HARNESSES.md#经-latch-使用模型服务)）。
 - **工具网关。** ACP Driver 另得到 `toolGateway`：Host 运行目录里 0700 的 `tools/` 下的 Unix 套接字 `gateway.sock`（0600），转发浏览器工具的 `tools/list` 与 `tools/call`，以及 `latch-mcp` 桥的请求（[MCP.md](./MCP.md)）。
-- **浏览器工具的令牌。** Driver 每次打开、恢复、载入或分叉 Agent 的会话时换一个 `lbt1.` 令牌，写进新建的 0600 文件，`mcpServers` 只拿到文件路径，读出后即删；Host 只存哈希，令牌绑定会话与进程的生命期。它不是 API 的入口类别：持有令牌的进程不能当设备用。调用只在会话正在运行的一轮里执行，完全访问的会话里 R2 一律拒绝（[PREVIEW-BROWSER.md](./PREVIEW-BROWSER.md#agent-的工具)）。
+- **浏览器工具的令牌。** Driver 每次打开、恢复、载入或分叉 Agent 的会话时换一个 `lbt1.` 令牌，写进新建的 0600 文件，`mcpServers` 只拿到文件路径，读出后即删；Host 只存哈希，令牌绑定会话与进程的生命期。它不是 API 的入口类别：持有令牌的进程不能当设备用。调用只在会话正在运行的一轮里执行，完全访问的会话里 R2 一律拒绝（见「设备与浏览器」）。
 - **远程 MCP。** 远程 MCP 服务器只由 Host 连接（`mcp-remote.ts`、`mcp-oauth.ts`）：请求只经出站策略发往本机确认时绑定的源与路径，不跟随重定向，请求头的值与令牌从不离开 Host。见 [MCP.md](./MCP.md#远程地址)。
 - **会话元数据。** 重命名、置顶、归档、标签、优先级与看板记号保存在 `sessions-meta.json`，对所有 Harness 生效；Driver 自报的 `tags`、`priority`、`board` 被丢弃。删除调用 Driver 的可选 `remove`，不支持时返回 409 `delete-unsupported`；删除成功后一并删除该会话的元数据与回执。接入的会话只有人在这一次删除里选了（`DELETE /tasks/:id?original=1`，Driver 声明 `historyDelete`）才连 Harness 里的原会话一起删，Host 先写审计 `history.original.deleted`（[HARNESSES](HARNESSES.md#持久化与恢复)）。
 - **运行。** Driver 在每次运行开始时给会话写入新的 `TaskSummary.runId` 并持久化。`cancel(sessionId, { runId })` 只在它仍是当前运行时取消，并回答是否取消了什么。
@@ -515,7 +623,7 @@ Host 启动时挂载所有已启用的 Harness：`standard` 总是挂载，每�
 
 Agent 可以提议待办，或为自己的卡提议更好的标题、标签与一句备注。提议不是待办：不进 `items`，不计入待办上限，不能开始、加入或拖动；只由人接受或不要。优先级永远不能提议。
 
-**谁能提议。** Host 在开始会话时给 `CreateTaskInput.workProposals`：Code 会话、我的 Agent 的会话与「通用」的对话都给，只要 Harness 接得住（`canPropose`：内置 Harness，或接受技能服务的外部 Harness；pi 不接受 MCP，提议尚未实现）；插件页面开始的会话不给。Driver 只为这样的会话提供（只对话的运行也有：它们不读也不改任何东西）`propose_todo(title, prompt, project?, harness?, tags?)`、`propose_todos(goal, items)`（2–8 条，一组；每条可带一个短名字 `name`，开成团队后是成员的名字）与 `propose_card(target, title?, tags?, note?)`，`target` 是 `session`（这个会话自己的卡）或 `todo`（它所在的待办），卡由 Host 从自己的记录查出，从不取自 Agent。内置 Harness 由运行循环提供这三个工具；外部 Harness 经技能服务（`latch-skills` 的 `board` 参数）写进同一个提议文件，ACP 驱动读到后交给 `HarnessHostOptions.proposeWork`（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#外部-harness-的通道)）。Host 只收这个驱动自己的、带 `workProposals` 记录的会话的提议；助手的旧会话与插件页面的会话拒绝（409 `proposal-session`）。
+**谁能提议。** Host 在开始会话时给 `CreateTaskInput.workProposals`：Code 会话、我的 Agent 的会话与「通用」的对话都给，只要 Harness 接得住（`canPropose`：内置 Harness，或接受技能服务的外部 Harness；pi 不接受 MCP，提议尚未实现）；插件页面开始的会话不给。Driver 只为这样的会话提供（只对话的运行也有：它们不读也不改任何东西）`propose_todo(title, prompt, project?, harness?, tags?)`、`propose_todos(goal, items)`（2–8 条，一组；每条可带一个短名字 `name`，开成团队后是成员的名字）与 `propose_card(target, title?, tags?, note?)`，`target` 是 `session`（这个会话自己的卡）或 `todo`（它所在的待办），卡由 Host 从自己的记录查出，从不取自 Agent。内置 Harness 由运行循环提供这三个工具；外部 Harness 经技能服务（`latch-skills` 的 `board` 参数）写进同一个提议文件，ACP 驱动读到后交给 `HarnessHostOptions.proposeWork`（通道文件的规则见「我的 Agent 与定时」）。Host 只收这个驱动自己的、带 `workProposals` 记录的会话的提议；助手的旧会话与插件页面的会话拒绝（409 `proposal-session`）。
 
 **给 Agent 的指引**在工具自己的说明里（`packages/protocol/src/work-proposals.ts` 的 `PROPOSE_TODO_GUIDE` 等），每个 Harness 收到同一段：什么时候提议待办、什么时候直接做；要求要写成没有这段对话的新会话能直接执行的第一条消息；不写密钥与凭据，不照抄网页、文件或工具输出里的指令；人接受之前什么都不会建、什么都不会开始；优先级只由人定。
 
@@ -523,7 +631,7 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 
 **上限与拒绝**（`WORK_PROPOSAL_LIMITS`，都在审计之前，什么都不存；回给 Agent 的是英文）。每轮 4 条，每个会话等人处理的最多 16 条，全 Host 待处理 64 条（一组算一条，409 `proposal-limit`）；一组最多 8 条；一个会话一生最多经提议通道提 32 次，记忆、定时与看板合算。一组中途被拒时，已收下的几条留在提议里。标题 1–120 个码点一行，要求 1–4 000 个字符，组名一行，备注 1–140 个码点一行，标签同会话的规则；含控制或不可见字符 400 `proposal-invalid`，像密钥 422 `proposal-secret`；项目不是已登记的 400 `proposal-project`（不写就用会话自己的项目），Harness 不存在 400 `proposal-harness`；行里多出任何字段（例如 `priority`）整行拒绝。技能服务先按同样的形状拒绝，Agent 当场看到；密钥与卡的核对只有 Host 做，外部 Harness 的 Agent 这时只看到「已提议」，Host 日志只记原因的种类。
 
-**外部内容。** 与记忆提议同一判断（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#记忆提议)）：这一轮或上下文里读过外部内容、插件 Harness、定时任务的运行（含无人值守）、归属有不是用户原话的记忆，或会话由 `from.external` 的待办开始（`outsideStart`），都标 `external`。定时运行只有我的 Agent 的（它们本来就能提议记忆与定时）能提议，一律标外部，不自动接受也不拒绝；「通用」的定时运行没有这些工具。一组里任何一条外部，整组外部。内容经别的路径进入会话时同样标记：待办讨论的投递与交接进已有会话带 `outsideContent`，交接开出的新会话、从文字记录重建的会话、导入的会话，以及分叉的记录里有工具输出（或来源是定时运行、本身由外部内容开始）时，分叉出的会话都记 `outsideStart`。接受时 `external` 记进待办的 `from` 且不再改：看板、待办页与开始框写「来自外部内容」，「全部开始」跳过它，它开始的会话按 `outsideStart` 继续标外部。
+**外部内容。** 与记忆提议同一判断（见「我的 Agent 与定时」）：这一轮或上下文里读过外部内容、插件 Harness、定时任务的运行（含无人值守）、归属有不是用户原话的记忆，或会话由 `from.external` 的待办开始（`outsideStart`），都标 `external`。定时运行只有我的 Agent 的（它们本来就能提议记忆与定时）能提议，一律标外部，不自动接受也不拒绝；「通用」的定时运行没有这些工具。一组里任何一条外部，整组外部。内容经别的路径进入会话时同样标记：待办讨论的投递与交接进已有会话带 `outsideContent`，交接开出的新会话、从文字记录重建的会话、导入的会话，以及分叉的记录里有工具输出（或来源是定时运行、本身由外部内容开始）时，分叉出的会话都记 `outsideStart`。接受时 `external` 记进待办的 `from` 且不再改：看板、待办页与开始框写「来自外部内容」，「全部开始」跳过它，它开始的会话按 `outsideStart` 继续标外部。
 
 **驱动交来的提议**先按 strict 的 zod（`workProposalInputSchema`）整份核对：类型、长度（`messageId` 与文件同一上限，所以审计行不会写给存不下的提议）、`todo` 与 `card` 恰好一个、`card.target` 只能是两个值；没有所在一轮的用户消息的提议拒绝（每轮的上限要靠它数）。外部 Harness 的看板工具在 Host 决定之后才回答 Agent：驱动把每行收下与否写进会话目录的 `answers.jsonl`，技能服务等到它（最多 15 秒）；被拒时只说没有收下及可能的几类原因，不复述内容、不说是哪张卡。
 
@@ -540,7 +648,7 @@ Agent 可以提议待办，或为自己的卡提议更好的标题、标签与�
 | `GET /work/proposals/:id` | 带要求的整条提议 | `view` |
 | `POST /work/proposals/:id/accept` | `{ requestId, baseRevision, entries? }`。待办提议：`entries` 是 `{ index, title?, prompt?, projectId?, harnessId?, tags? }`（人先改过的值，`null` 清除建议），不写就是全部待处理条目；一次写入里建成未开始的待办（带 `from`，`startScope: 'work'`，私有随提议），答 `{ proposal, itemIds }`。改动提议：写到它的卡（待办在同一次写入里改，会话经 `updateMeta`） | `run` |
 | `POST /work/proposals/:id/dismiss` | `{ requestId, baseRevision, entries? }`：所选条目或全部待处理的 | `run` |
-| `POST /tasks/:id/team` | 这个会话自己的待办提议可以直接作为团队开始：所选条目被接受并同时开始，结果交回这个会话（[TEAMS.md](TEAMS.md)） | `run` |
+| `POST /tasks/:id/team` | 这个会话自己的待办提议可以直接作为团队开始：所选条目被接受并同时开始，结果交回这个会话（见「团队与交接」） | `run` |
 
 `baseRevision` 不符 409 `proposal-changed`，已处理的条目 409 `proposal-decided`。接受与不要按设备与 `requestId` 记回执（与待办同一份，7 天），重试答同一记录，返回当前仍可读的待办 ID；换内容 409 `request-conflict`。接受时待办的 `from` 保留提议 ID 和可用的来源消息 ID。会话删除时，它提的、还没处理的提议与等着它的卡的改动一起删除（一组里已有条目处理过的，剩下的记为不要，记录留给重试的回执）；接受会话卡的改动时先在写入里把提议记为已接受，再改会话，改不成就退回待处理；组里什么都处理完后组名也删去；待办删除时，等着它的改动删除。快照的 `workProposals` 只列还有待处理内容的提议，不带要求，也不带已接受条目成为的待办 ID。`catalog.features.workProposals` 表示 Host 有这些路由。提议的文字只在看板与提出它的会话里显示，人接受后成为待办的要求，由人开始才发出。
 
@@ -571,7 +679,7 @@ iOS 遇到首次发言失去回执时保留原请求。用户点核对后，App 
 
 **外部内容。** 投给任何能提议的会话（Agent 的聊天，或带 `workProposals` 的 Code 会话）的这一轮都带 `PromptOptions.outsideContent`：引用里是模型的输出，那个上下文此后的提议标外部。
 
-**给 Agent。** 只进它的唯一聊天，从不另开会话（根 `AGENTS.md`）；聊天还没开始时不投递（首次开始会在标记之前跑第一轮）。这一轮带 `PromptOptions.outsideContent`：Driver 把「带外部内容」与这一轮的用户消息在同一次写入里记下，其间别的设备清空上下文或开始的一轮都碰不到它；不支持的 Driver（没有 `markOutsideContent`）由 Host 在交给它之前拒绝（`failed`，`post-unmarked`）；记忆的「记住…」只取人自己写的那句（见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#待办里的-)）。
+**给 Agent。** 只进它的唯一聊天，从不另开会话（根 `AGENTS.md`）；聊天还没开始时不投递（首次开始会在标记之前跑第一轮）。这一轮带 `PromptOptions.outsideContent`：Driver 把「带外部内容」与这一轮的用户消息在同一次写入里记下，其间别的设备清空上下文或开始的一轮都碰不到它；不支持的 Driver（没有 `markOutsideContent`）由 Host 在交给它之前拒绝（`failed`，`post-unmarked`）；记忆的「记住…」只取人自己写的那句。
 
 **私有。** @ 过 Agent 的待办从此私有（只增不减）。较窄的设备对待办、它的讨论与发言的读写都是 404 `item-not-found`，快照不列、不计数；私有待办的变化只通知完整数据范围的连接。
 
@@ -589,7 +697,7 @@ iOS 遇到首次发言失去回执时保留原请求。用户点核对后，App 
 - **文件工具。** `workspace-files` 的 `list_files`、`read_file`、`write_file` 带可选参数 `folder`（文件夹标识，缺省为主文件夹），路径相对于该文件夹；`list_folders` 不返回绝对路径。
 - **输出。** 模型输出必须以 `finish` 结束，截断的流不派发其中的工具调用。调用 ID 在会话历史中不能重复；未知工具、拒绝和异常都作为错误结果交回模型。
 - **展示。** 需要审批的工具在请求审批前调用可选的 `preview()`，生成标题与文件差异，同时显示在审批与工具卡片上。
-- **用量、思考与时间。** Provider 报告的用量累计到助手消息与会话，失败或取消的部分步骤也计入。思考内容不进入发给模型的历史；签过名或加密的推理只在同一轮的工具循环里原样带回（[MODEL-CONFIGURATION.md](MODEL-CONFIGURATION.md#latch-内置的思考深度)）。时间用 Host 的时钟，等待审批的时间不计入一轮的用时（[STREAMING.md](./STREAMING.md)「时间与用量」）。
+- **用量、思考与时间。** Provider 报告的用量累计到助手消息与会话，失败或取消的部分步骤也计入。思考内容不进入发给模型的历史；签过名或加密的推理只在同一轮的工具循环里原样带回。时间用 Host 的时钟，等待审批的时间不计入一轮的用时（[STREAMING.md](./STREAMING.md)「时间与用量」）。
 
 ## 审批与取消
 
@@ -632,25 +740,25 @@ iOS 遇到首次发言失去回执时保留原请求。用户点核对后，App 
 | `policy.json` | 本机安全策略 |
 | `settings.json` | 默认值、插件停用列表、项目及其文件夹、Agent 定义与环境变量、首次准备状态（0600） |
 | `providers.json` | 模型服务、密钥及其绑定的源与路径、「出错时改用」与「同时请求」上限（0600）；`provider.json` 是只在首次启动时迁移、不被修改的单一配置 |
-| `gateway/` | 用量账本、汇总与预算（[MODEL-GATEWAY.md](./MODEL-GATEWAY.md#用量账本)） |
-| `usage/` | 网关以外的轮次：自己登录与插件服务（[MODEL-GATEWAY.md](./MODEL-GATEWAY.md#网关以外的轮次)） |
+| `gateway/` | 用量账本、汇总与预算（见「模型网关」） |
+| `usage/` | 网关以外的轮次：自己登录与插件服务 |
 | `mcp/servers.json`、`mcp/secrets.json`、`mcp-ended.json` | MCP 服务器定义与秘密值（目录 0700、文件 0600）、登录已结束但令牌未删净的服务器 ID（[MCP.md](./MCP.md)） |
 | `customization.json` | 外观的修订与写入回执（[CUSTOMIZATION.md](CUSTOMIZATION.md)） |
 | `sessions-meta.json` | Host 为每个会话保存的元数据：标题覆盖、置顶、归档、标签、优先级、看板记号、所属项目、会话文件夹或工作树、分叉来源、接入来源、Agent 归属、绑定的 PR，以及审批、取消、交付与配置修改的回执 |
 | `session-folders.json`、`history-imports.json` | 会话启动请求键的哈希、自有文件夹名与启动目录哈希；Agent 固定家的归属与目录身份（0600） |
 | `project-context.json` | 上次成功启动时用于离线项目校验的目录与 TLS 私钥路径（0600，不含密钥内容） |
 | `sessions/runtime.json`、`runtime.lock` | Standard 的会话、请求回执与删除记录 |
-| `harnesses/<id>/` | 外部 Harness 的私有数据；ACP 为 `acp.json`、`acp.lock`、命令目录缓存与每会话的 `skills/`（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#外部-harness-的通道)） |
+| `harnesses/<id>/` | 外部 Harness 的私有数据；ACP 为 `acp.json`、`acp.lock`、命令目录缓存与每会话的 `skills/` |
 | `queues.json`、`questions.json`、`prompt-templates.json` | 排队输入、Agent 提问、提示模板（见本文同名各节） |
 | `history-imports.json` | 接入已有会话的回执（[HARNESSES.md](HARNESSES.md#接入已有会话)） |
-| `agents/custom.json`、`agents/computer.json`、`agents/avatars/` | 我的 Agent 与「通用」的定义与记忆、电脑的睡眠与停止时段、图片头像（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)） |
-| `automations.json` | 保存的任务、运行与回执（[AUTOMATIONS.md](AUTOMATIONS.md)） |
-| `handoffs/handoffs.json` | 交接记录与回执（[HANDOFFS.md](HANDOFFS.md)） |
+| `agents/custom.json`、`agents/computer.json`、`agents/avatars/` | 我的 Agent 与「通用」的定义与记忆、电脑的睡眠与停止时段、图片头像 |
+| `automations.json` | 保存的任务、运行与回执 |
+| `handoffs/handoffs.json` | 交接记录与回执 |
 | `work/items.json` | 待办与它们新建、开始的回执（见「待办」） |
 | `work/threads/` | 每条待办的讨论，一个文件一条（见「待办的讨论」） |
-| `work/teams.json` | 团队：带队会话、成员与结果是否交回（[TEAMS.md](TEAMS.md)） |
-| `review-notes/`、`snapshots/` | 行级反馈（含改过文字的其他设备 `editors`，不发给设备）、每轮的文件快照与记录（[CHANGES.md](CHANGES.md)） |
-| `attachments/`、`file-references/` | 附件存储（[ATTACHMENTS.md](ATTACHMENTS.md)）、会话提到过的文件路径 |
+| `work/teams.json` | 团队：带队会话、成员与结果是否交回 |
+| `review-notes/`、`snapshots/` | 行级反馈（含改过文字的其他设备 `editors`，不发给设备）、每轮的文件快照与记录 |
+| `attachments/`、`file-references/` | 附件存储、会话提到过的文件路径 |
 | `plugin-packages/`、`plugin-data/<pluginId>/` | 自定义插件的资产与构建记录（[PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md)）、插件页面的数据与诊断（[APP-PAGES.md](APP-PAGES.md)） |
 | `native/` | 中继配置、网络哈希与目录信任（[RELAY.md](RELAY.md)） |
 | `host.json`、`host.lock`、`desktop-launch.json` | 见「Host 进程与数据目录」（都是 0600）；临时条目以 `.host-lock-`、`.desktop-launch-` 开头 |
@@ -725,7 +833,7 @@ iOS 遇到首次发言失去回执时保留原请求。用户点核对后，App 
 
 - **会话**：删除 Latch 里的对话、附件与改动快照（每条删除路径都经 `removeSessionRecords`）。用 Host 自己的模型服务运行的 Harness（`capabilities.models.owner` 为 `latch`）只有 Latch 这一份；其他 Harness 在 Latch 能启动它（项目仍在、启动方式核对通过）且它声明 `session/delete` 时，Latch 也请它删除自己保存的副本，从新到旧，否则它的副本可能留下（Grok 的私有目录随会话删除；Codex 直连经 `thread/delete` 硬删除，连同子 Agent 的 thread 与它为这些 thread 存的图片，项目已移除时在空文件夹里删，见 [HARNESSES](HARNESSES.md#codex-的-app-server)）；Agent 拒绝时它的副本留下，Host 日志写明原因。接入的原会话从不删除。审计与用量记录保留；已发给模型服务的内容无法撤回。
 - **项目**：只从列表移除，文件、会话与快照都保留。
-- **Agent**：记忆、提议与撤销记录删除，聊天记录与家保留；外部 Harness 已收到的上下文留在原会话里。
+- **Agent**：记忆、提议与撤销记录删除，家按人的选择先导出再删或永久删除，聊天记录保留；外部 Harness 已收到的上下文留在原会话里。
 - 没有「删除全部数据」：停止 Host 后删除数据目录才是。
 
 ## 桌面端与其他电脑
@@ -784,7 +892,6 @@ iOS 遇到首次发言失去回执时保留原请求。用户点核对后，App 
 - 条目只进这台 Mac 窗口的列表（`ComputerSummary.waiting` 与 `running`）；其他电脑的窗口拿到的列表没有这两项（主进程不发，preload 也删掉）。快照本身不交给任何页面。
 - 看起来相同的电脑名（按 NFKC、去掉不可见字符并忽略大小写比较）都加 hostId 前 4 位；拉丁字母与有拉丁形近字的文字混写的名字总是加。
 - 代价（接受并记录）：这台 Mac 页面里运行的代码能读到其他电脑等你处理的标题，所以这里只给标题与种类，不给消息、路径或审批参数；项目名只随下面「一个会话列表」的行给出。插件页面在隔离框里，拿不到 `latchShell`。
-- 系统通知与 Dock 见 [NOTIFICATIONS.md](NOTIFICATIONS.md)。
 
 **一个会话列表。** 这台 Mac 窗口的 Code 侧栏在自己的项目之后，按电脑再按项目列出其他电脑的会话；点按一行，经 `open(hostId, taskId)` 在那台电脑自己的窗口里打开。
 
@@ -860,7 +967,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `GET /audit/head`、`GET /audit/hash?seq=` | `view` | 审计检查点 |
 | `GET /audit/records`、`GET /data`、`POST /data/sizes` | `admin` 与数据范围 `all` | 审计记录、数据目录与保留、统计大小（[数据、保留与导出](#数据保留与导出)） |
 | `POST /data/export`、`GET /data/export/:id`、`POST /data/export/:id/cancel` | `admin`、`all`，本机桌面端，主进程签名 | 导出全部 |
-| `GET /data/agent-folders`、`DELETE /data/agent-folders/:key`、`POST …/:key/export` | `admin`、`all`；导出另需本机桌面端、主进程签名 | 已删除 Agent 的文件夹（[CUSTOM-AGENTS](CUSTOM-AGENTS.md#删除-agent)） |
+| `GET /data/agent-folders`、`DELETE /data/agent-folders/:key`、`POST …/:key/export` | `admin`、`all`；导出另需本机桌面端、主进程签名 | 已删除 Agent 的文件夹 |
 
 **会话**（`server.ts`、`session-routes.ts`）
 
@@ -878,35 +985,36 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `POST /tasks/:id/questions/:questionId/answer` | `run` | 见「Agent 提问」 |
 | `POST /search` | `view` | 见「会话搜索与批处理」 |
 | `GET /prompts`；`PUT`/`DELETE /prompts/:id` | 读 `view`；写 `admin` | 见「提示模板」 |
-| `GET /tasks/:id/worktree`、`POST …/remove`、`GET /workspaces/:id/worktree`、`/workspaces/:id/worktrees…` | `run` | 工作树（[BRANCHES.md](BRANCHES.md)） |
+| `GET /workspaces/:id/branches`、`POST …/branches/switch` | 列表 `view`，切换 `run`；都要数据范围 `files` | 项目文件夹的本地分支与切换（见「Git 与工作树」） |
+| `GET /tasks/:id/worktree`、`POST …/remove`、`GET /workspaces/:id/worktree`、`/workspaces/:id/worktrees…` | `run`；清单与移除另需数据范围 `files`，私有会话的工作树只给 `all` | 工作树（见「Git 与工作树」） |
 
 **按领域分出的路由**
 
 | 路径 | 模块 | 谁可调用 | 文档 |
 | --- | --- | --- | --- |
-| `/tasks/:id/files/…`、`/workspaces/:id/files/…`、`/files/:handle…` | `files/index.ts` | 读 `view`；枚举与搜索另需数据范围 `files`；编辑 `run` + `files`；`POST /files/:handle/local` 只在本机 | 「会话文件」、[DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md) |
-| `/attachments…` | `attachment-routes.ts` | 读 `view`，上传与绑定 `run` | [ATTACHMENTS.md](ATTACHMENTS.md) |
-| `/tasks/:id/changes…`、`/tasks/:id/turns/:turnId/(undo\|redo)`、`/tasks/:id/review-notes…` | `routes/changes.ts`、`routes/review-notes.ts` | 行级反馈：读 `view`，写 `run`，数据范围 `files`；改动与撤销见文档 | [CHANGES.md](CHANGES.md) |
-| `/tasks/:id/git…`、`/workbench/delivery` | `routes/git.ts` | 读 `view`，写 `run`；内容与私有会话另需 `all` | [GIT-DELIVERY.md](GIT-DELIVERY.md) |
-| `/tasks/:id/terminals…`、`/workspaces/:id/terminals…` | `routes/terminal.ts` | 见文档 | [TERMINAL.md](TERMINAL.md) |
-| `/browser-provider/…`、`/tasks/:id/browser-tabs` | `routes/browser.ts` | 见文档 | [PREVIEW-BROWSER.md](PREVIEW-BROWSER.md) |
-| `/simulators…` | `routes/simulators.ts` | 见文档 | [DEVICE-PREVIEW.md](DEVICE-PREVIEW.md) |
-| `/handoffs…` | `routes/handoffs.ts` | 读 `view`，写 `run`；都要能读相关会话 | [HANDOFFS.md](HANDOFFS.md) |
+| `/tasks/:id/files/…`、`/workspaces/:id/files/…`、`/files/:handle…` | `files/index.ts` | 读 `view`；枚举与搜索另需数据范围 `files`；编辑 `run` + `files`；`POST /files/:handle/local` 只在本机 | 「会话文件」、「改动与文件编辑」 |
+| `/attachments…` | `attachment-routes.ts` | 读 `view`，上传与绑定 `run` | 「附件」 |
+| `/tasks/:id/changes…`、`/tasks/:id/turns/:turnId/(undo\|redo)`、`/tasks/:id/review-notes…` | `routes/changes.ts`、`routes/review-notes.ts` | 读 `view`；撤销、恢复与行级反馈的写入 `run`；都要数据范围 `files`；丢弃全部未提交的改动只在 `host.sock` | 「改动与文件编辑」 |
+| `/tasks/:id/git…`、`/workbench/delivery` | `routes/git.ts` | 读 `view`，写 `run`；状态、暂存、检查日志与历史另需数据范围 `files`，私有会话另需 `all` | 「Git 与工作树」 |
+| `/tasks/:id/terminals…`、`/workspaces/:id/terminals…` | `routes/terminal.ts` | 只在 `host.sock`；`run` + 数据范围 `all` | 「终端」 |
+| `/browser-provider/…`、`/tasks/:id/browser-tabs` | `routes/browser.ts` | 提供者：经 `host.sock` 登记的设备在 `host.sock` 上，`admin`；标签列表 `view`，要能读这个会话 | 「设备与浏览器」 |
+| `/simulators…` | `routes/simulators.ts` | 只在 `host.sock`；`run` + 数据范围 `all` | 「设备与浏览器」 |
+| `/handoffs…` | `routes/handoffs.ts` | 读 `view`，写 `run`；都要能读相关会话 | 「团队与交接」 |
 | `/work/items…` | `routes/work-items.ts` | 读 `view`，写 `run`；私有待办只给数据范围 `all` | 「待办」 |
 | `/work/proposals…` | `routes/work-proposals.ts` | 读 `view`，写 `run`；私有提议只给数据范围 `all` | 「Agent 的提议」 |
-| `POST /tasks/:id/team`、`/teams/:id`、`/teams/:id/stop` | `routes/teams.ts` | 读 `view`，开始与停止 `run`；带队会话私有时只给数据范围 `all` | [TEAMS.md](TEAMS.md) |
+| `POST /tasks/:id/team`、`/teams/:id`、`/teams/:id/stop` | `routes/teams.ts` | 读 `view`，开始、停止、再派一轮（`/teams/:id/rounds`）与派活开关（`PATCH /teams/:id`）`run`；团队私有时只给数据范围 `all`，其他设备 404 `team-not-found` | 「团队与交接」 |
 | `/work/items/:id/posts` | `routes/work-threads.ts` | 读 `view`，写 `run`；对 Agent 另需数据范围 `all` | 「待办的讨论」 |
 | `/history/…` | `routes/history.ts` | `run` + 数据范围 `all` | [HARNESSES.md](HARNESSES.md#接入已有会话) |
-| `/custom-agents…` | `routes/agents.ts` | 见文档 | [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md) |
-| `/automations…` | `routes/automations.ts` | 见文档 | [AUTOMATIONS.md](AUTOMATIONS.md) |
+| `/custom-agents…` | `routes/agents.ts` | 读 `view`，写 `run`；都要数据范围 `all` | 「我的 Agent 与定时」 |
+| `/automations…` | `routes/automations.ts` | 读 `view`，写 `run`；都要数据范围 `all` | 「我的 Agent 与定时」 |
 | `/apps/:pluginId/…`、`/app-modules/…` | `routes/apps.ts` | 读 `view`，写 `run`；先核对页面的修订与能力 | [APP-PAGES.md](APP-PAGES.md) |
 | `/ui-modules/:panelId/:sha256.mjs`、`/tasks/:id/ui-panels/:panelId` | `server.ts` | `view` | [PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md) |
 | `/plugin-packages…` | `plugin-package-routes.ts` | 见文档 | [PLUGIN-DEVELOPMENT.md](./PLUGIN-DEVELOPMENT.md#应用内的自定义插件资产) |
 | `/mcp/servers…`、`/mcp/import` | `routes/mcp.ts` | 读 `view`；其余本机 `admin`，新增与放宽经本机确认 | [MCP.md](./MCP.md) |
-| `/usage`、`/model-usage`、`/model-spend`、`/model-prices`、`/model-budgets` | `model-usage-routes.ts` | 读 `view`，写 `admin`；Agent 预算另需 `all` | [MODEL-GATEWAY.md](./MODEL-GATEWAY.md#汇总) |
+| `/usage`、`/model-usage`、`/model-spend`、`/model-prices`、`/model-budgets` | `model-usage-routes.ts` | 读 `view`，写 `admin`；Agent 预算另需 `all` | 「模型网关」 |
 | `/customization…` | `routes/customization.ts` | 读 `view` 或匿名；写 `admin`；重置 `admin` 或匿名 | [CUSTOMIZATION.md](CUSTOMIZATION.md) |
 | `/harnesses/:id/(login-status\|login-terminal\|logout)` | `routes/agent-login.ts` | `run`；打开终端只在本机 | [HARNESSES.md](./HARNESSES.md#登录) |
-| `/host/update-window…` | `server.ts`、`update-window.ts` | 本机 `run` | [UPDATES.md](./UPDATES.md) |
+| `/host/update-window…` | `server.ts`、`update-window.ts` | 本机 `run` | 「桌面端更新与通知」 |
 
 **配置**（`server.ts`）
 
@@ -924,7 +1032,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `POST /quota/refresh` | `run` | 有人看「额度」时在后台读已绑定 Harness 缺失或过时的额度，不起模型轮次，立即回答 `asked`（[HARNESSES.md](./HARNESSES.md#额度)） |
 | `GET /workspaces` | `view` | 项目列表，含文件夹与不可用原因 |
 | `POST /folder-grants`、`POST /workspaces`、`POST /workspaces/:id/folders` | 本机 `admin`；后两者另需签名 | 见「谁能添加」 |
-| `POST /workspaces/clone`、`GET /workspaces/clone/:id`、`POST …/clone/:id/cancel` | 本机 `admin`；开始另需签名 | 克隆成新项目（[GIT-DELIVERY.md](GIT-DELIVERY.md#克隆)） |
+| `POST /workspaces/clone`、`GET /workspaces/clone/:id`、`POST …/clone/:id/cancel` | 本机 `admin`；开始另需签名 | 克隆成新项目（见「Git 与工作树」） |
 | `PATCH /workspaces/:id`、`DELETE /workspaces/:id`、`DELETE /workspaces/:id/folders/:folderId` | `admin` | 重命名、图标、文件夹顺序；移除项目或文件夹（文件不删除） |
 | `GET /plugins`、`POST /plugins/:id`、`PUT /preferences` | `admin` | 插件列表与启停、新会话默认值；`pinned` 及其之后的 Harness 与模型只能经 `host.sock` 修改 |
 | `GET`/`PATCH /policy` | 设备；修改 `admin`，加入出站地址需本机与本机确认 | 安全策略及其哈希；放宽只有 `hostEgressAllow` 一项 |
@@ -988,7 +1096,7 @@ Latch 不再提供个人助手、助手群聊与它们的定时任务，数据�
 | edge 中继的花费上限 | Latch 内未实现逐人预算。运营者可在 Cloudflare 分别设置账户级 Workers 与 Durable Objects 支出限额或账单提醒。见 [RELAY](RELAY.md#几个人共用一个-workers-中继) |
 | 向公众开放登记的 edge 中继 | 未实现；需要另行实现用户预算与接合数限制 |
 | edge 中继在 WebSocket 内对节点密钥的再一层加密 | 未实现；现在节点身份靠签名挑战，不绑定 TLS 会话，能为域名终止 TLS 的一方可实时转发并看到路由元数据（[RELAY.md](RELAY.md#中继协议的身份)） |
-| 地址目录的公共入口、公共 App 分发与后台推送 | 可用 Xcode 签名安装 iOS App，并使用[自己的 Linux 中继](RELAY.md)。使用中的提问提醒和实时活动见[消息提醒](NOTIFICATIONS.md)；后台远程推送尚未接入 |
+| 地址目录的公共入口、公共 App 分发与后台推送 | 可用 Xcode 签名安装 iOS App，并使用[自己的 Linux 中继](RELAY.md)。App 在使用中有提问提醒和实时活动；后台远程推送尚未接入 |
 | 一条消息在多个 Agent 之间依次回答 | 规则在 `apps/host/src/agent-relay.ts`，尚未接入任何路由 |
 
 尚未在真机上验证：Host 进程遇到 macOS「隐私与安全性」（TCC）时的行为与提示、外接与网络卷上的「在访达中显示」、iCloud「桌面与文稿」文件夹的真实路径。
@@ -1005,13 +1113,13 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。
 - 结果最多 30 条：原会话和消息 ID、160 字符片段与匹配范围。预算一秒，超时或结果未穷尽时返回 `truncated`。
 - 空闲会话以更新时间缓存，运行与等待中的会话每次重新读取；缓存最多 500 个会话、1000 万字符。删除或当前不可见的会话不从缓存返回。
 
-**批处理。** `POST /link/api/tasks/batch` 接收 `{ action: 'archive' | 'unarchive' | 'delete', ids }`，需要 `run`，最多 100 个 ID。Host 去重并逐项返回成功或错误；删除与归档沿用单个会话的检查（含终端，见 [TERMINAL.md](./TERMINAL.md)）。每次异步等待之后重新检查设备授权，部分失败不回滚已完成项。删除记录不删除项目文件。
+**批处理。** `POST /link/api/tasks/batch` 接收 `{ action: 'archive' | 'unarchive' | 'delete', ids }`，需要 `run`，最多 100 个 ID。Host 去重并逐项返回成功或错误；删除与归档沿用单个会话的检查（含终端，见「终端」）。每次异步等待之后重新检查设备授权，部分失败不回滚已完成项。删除记录不删除项目文件。
 
 ## 桌面通知
 
-通知由桌面端主进程自己读取已认证的快照后发出，页面不提交标题或正文；偏好、首次选择与其他电脑的通知见 [NOTIFICATIONS.md](./NOTIFICATIONS.md)。
+通知由桌面端主进程自己读取已认证的快照后发出，页面不提交标题或正文；规则见「桌面端更新与通知」。
 
-桌面端自身的更新由主进程完成，安装前经 `host.sock` 进入 Host 的安装窗口：窗口期间新会话与新的一轮返回 409 `host-updating`，已有工作照常结算。见 [UPDATES.md](./UPDATES.md)。
+桌面端自身的更新由主进程完成，安装前经 `host.sock` 进入 Host 的安装窗口：窗口期间新会话与新的一轮返回 409 `host-updating`，已有工作照常结算。规则见「桌面端更新与通知」。
 
 ## 提示模板
 
@@ -1039,7 +1147,7 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。
 
 **换回用过的 Harness。** 目标 Harness 能原生分叉，且沿 `moved` 链往回（最多 8 段，每段都按调用设备核对可见性）能找到它自己的会话时，`CreateTaskInput.fork` 指向对话离开那个会话的位置并带 `instead`：Driver 分叉成功后第一轮用 `instead`（离开之后在别处说过的话，每个会话只算到对话离开它为止；或交接说明）代替种子；做不到时照常发送完整种子并写明原因。首条消息的 `nativeFork` 就是「接上了它之前的会话」的依据。
 
-**从这里编辑**是从被编辑那一条之前分叉（第一条没有之前，开同一项目、同一 Harness 的新会话），可选先把文件退回到那一条之前（[CHANGES.md](CHANGES.md#退回到某一条之前)）。机制见 [STREAMING.md](STREAMING.md#从这里编辑)。
+**从这里编辑**是从被编辑那一条之前分叉（第一条没有之前，开同一项目、同一 Harness 的新会话），可选先把文件退回到那一条之前（见「改动与文件编辑」）。机制见 [STREAMING.md](STREAMING.md#从这里编辑)。
 
 ## 排队输入
 
@@ -1065,11 +1173,11 @@ Host 通过 `catalog.features.search` 与 `sessionBatch` 声明支持。
 
 ## 附件内容
 
-附件的私有存储、上传路由、设备草稿租约与内容句柄见 [ATTACHMENTS.md](ATTACHMENTS.md)；会话只保存 metadata 引用，附件目录从不加入项目根；按路径交给 Agent 的副本在数据目录的会话附件目录里（[ATTACHMENTS.md](ATTACHMENTS.md#按路径交给-agent)）。运行期间文件变化的观察见 [FILE-OUTPUTS.md](FILE-OUTPUTS.md)。
+附件有私有存储、专用上传路由、设备草稿租约与内容句柄；会话只保存 metadata 引用，附件目录从不加入项目根；按路径交给 Agent 的副本在数据目录的会话附件目录里。规则见「附件」，运行期间文件变化的观察见「改动与文件编辑」。
 
 ## Agent 领域
 
-我的 Agent 与「通用」见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)，定时任务见 [AUTOMATIONS.md](AUTOMATIONS.md)，交接见 [HANDOFFS.md](HANDOFFS.md)。
+我的 Agent、「通用」与定时任务的规则见「我的 Agent 与定时」，交接见「团队与交接」。
 
 `apps/host/src/agent-relay.ts` 的规则（尚未接入路由）：第一个回答之后最多转交 3 次，Agent 写的内容不能增加次数；一轮没有完成就不再交给下一个；任何一个 Agent 的说明、Harness、模式、模型或插件代码与收下消息时不同，下一个不开始；停止要等正在运行的那一轮真实结算后才确认。
 

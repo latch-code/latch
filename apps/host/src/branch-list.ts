@@ -1,4 +1,4 @@
-// 切换分支's list (docs/BRANCHES.md#切换分支): a project folder's local branches, read from Git's metadata files the way
+// 切换分支's list: a project folder's local branches, read from Git's metadata files the way
 // branch-reader.ts reads HEAD. Nothing here runs Git or anything a repository names; every file is opened without
 // following links, bounded in size and count, and checked to be the same file before and after it is read.
 import { constants, type BigIntStats } from 'node:fs'

@@ -6,7 +6,7 @@ import { MODE_COPY } from '../core/securityCopy.ts'
 import { toolKind } from '../icons.tsx'
 
 /**
- * What a helper is doing, in a person's words, only from events the Host already reports (docs/CUSTOM-AGENTS.md#状态词).
+ * What a helper is doing, in a person's words, only from events the Host already reports.
  * Nothing reported, nothing said: there is no word that only says time passes. The rows themselves (the command, the
  * file, the diff) stay as they are; only who acts and what it is doing read as a person.
  */

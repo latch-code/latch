@@ -74,7 +74,7 @@ const configReceiptSchema = z.strictObject({
 })
 const oidText = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u)
 const hex64Text = z.string().regex(/^[a-f0-9]{64}$/u)
-/** The pull request bound to a session (docs/GIT-DELIVERY.md#pr-与检查). */
+/** The pull request bound to a session. */
 const branchText = z
   .string()
   .min(1)
@@ -89,7 +89,7 @@ const prBindingSchema = z.strictObject({
   head: branchText,
 })
 /**
- * A commit, push or pull request of 交付 (docs/GIT-DELIVERY.md): written `pending` before Git runs, so a retry or a later Host process
+ * A commit, push or pull request of 交付: written `pending` before Git runs, so a retry or a later Host process
  * never runs it a second time. A `pending` one read from the file is `unknown`: Git may or may not have finished.
  */
 const gitReceiptSchema = z.strictObject({

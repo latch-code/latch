@@ -60,7 +60,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 **会话与界面**
 
 - Host 是会话状态的唯一权威；网络连接、任务执行与客户端阅读位置分别建模。
-- 我的 Agent 与通用由 Host 持久确定一条聊天；首条消息可重试，历史会话和定时运行保留。见 [CUSTOM-AGENTS](docs/CUSTOM-AGENTS.md#唯一聊天)。
+- 我的 Agent 与通用由 Host 持久确定一条聊天；首条消息可重试，历史会话和定时运行保留。
 - 取消须等执行端真实结算后才确认；写请求超时保持「结果未知」并复用原 `requestId`，只由 Host 的证据或人放弃结束，审批与取消回执随会话持久化。
 - 流式消息在完成、失败、取消时沿用同一 ID；切换会话、重连与迟到响应不得回滚新状态或重复追加历史。
 - 真实 Provider 失败必须报错，不得回退到演示模型；演示模式须显式启用并在界面标注。
@@ -74,7 +74,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 - **磁盘上只存哈希。** 凭据与离线连接码只保存 SHA-256；邀请只在内存、只存哈希。模型密钥与 MCP 秘密值只在数据目录的 0600 文件中，不返回设备；`LATCH_API_KEY` 只在内存使用。
 - **本机确认只经 `PresenceService`。** 测试确认后端（`@latch/testkit`）只经 `startServer({ presence })` 注入。只有测试（`tests/`、`e2e/` 与各项目的 `test/`）导入 testkit 与测试目录的文件，其他用法由 `pnpm check:boundaries`、`pnpm lint` 与 Host 构建拒绝；构建后 `dist/` 不含测试代码（检查命令由 `pnpm check -- --plan` 列出）。
 - **信任在连接时建立一次。** 设备凭 scope 工作：开始会话、放宽模式、批准 R2、预设模型地址与 Harness 命令（预设表原样命令与参数、无变量、在 PATH、未另绑）不弹确认，只留审计；审批是看管程度，不是边界。`PRESENCE_ACTIONS` 只留新设备与扩权、自填模型或出站地址、插件代码与页面能力变宽、新增或放宽 MCP 与其他 Harness 命令；只由 `host.sock` 发起（`isLocalListener`，登记例外），L3 运行或等待时全部拒绝。
-- **Host 不运行仓库里的程序，交付除外。** Host 的 Git 经受限运行器（钩子含配置钩子、filter、传输全关）；只有人按下的提交、推送、带 filter 的暂存及关钩子的获取、克隆以你的账户运行：先审计并复查权限，远端只取仓库配置，不强制推送（[文档](docs/GIT-DELIVERY.md)）。
+- **Host 不运行仓库里的程序，交付除外。** Host 的 Git 经受限运行器（钩子含配置钩子、filter、传输全关）；只有人按下的提交、推送、带 filter 的暂存及关钩子的获取、克隆以你的账户运行：先审计并复查权限，远端只取仓库配置，不强制推送（[文档](docs/ARCHITECTURE.md#git-与工作树)）。
 - **插件页面只凭已批准的能力行事。** 只在不透明隔离框运行、不拿凭据，草稿只经 Host 固定工具在沙箱构建；Host 按已应用清单核对每次页面调用（`via`）；页面会话只用项目默认权限、无私有上下文，人放宽后页面不能继续（[文档](docs/APP-PAGES.md)）。
 - **自定义是数据。** 只写允许的令牌，安全界面不可改（[文档](docs/CUSTOMIZATION.md)）。
 - **CLI 目录与配置。** Latch 可以读 CLI 自己的目录与配置（如生成的图片、额度用的密钥、会话日志的 tokens 数，见 [HARNESSES](docs/HARNESSES.md#额度)），Claude 的登录凭据除外；尽量不做侵入式改动。外部会话只经 ACP、直连或 SDK（Cursor 只用定义的密钥），均私有；删除时连同 Latch 开的 Harness 会话一起删，接入会话的原会话只在人这次勾选并先写审计后才删。
@@ -97,8 +97,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 
 | 改动 | 文档 |
 | --- | --- |
-| 模块边界、Harness 路由、持久化、HTTP API、路径与项目目录 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| 终端 | [docs/TERMINAL.md](docs/TERMINAL.md) |
+| 模块边界、Harness 路由、持久化、HTTP API、路径与项目目录、各功能的安全规则 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | ACP Agent 接入、项目配置、权限模式读回、取消与恢复 | [docs/HARNESSES.md](docs/HARNESSES.md) |
 | SSE、fetch 事件流、重连、消息身份、审批顺序、取消、阅读位置 | [docs/STREAMING.md](docs/STREAMING.md) |
 | Provider、Tool（风险分级）、插件生命周期、HarnessDriver | [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md) |

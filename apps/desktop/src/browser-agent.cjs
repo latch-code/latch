@@ -30,7 +30,7 @@ const ACTIVITY_COPY = defineCopy(
 // Reads run fixed scripts in the isolated world 标注 uses, through that world's prototypes; clicks and keys go in with
 // `sendInputEvent` and text with `insertText`. Only tabs on this Mac's own addresses (or blank) are acted on, a call
 // whose tab went elsewhere since the Host classified it is refused, and the values of password, one-time-code, card and
-// hidden fields are never read. See docs/PREVIEW-BROWSER.md.
+// hidden fields are never read.
 const { ANNOTATION_WORLD, CAPTURE_LIMITS, TAB_LIMIT, addressUrl, agentLocalHost, cleanText, lastOf } = require('./browser.cjs')
 
 /** The calls main carries out, and nothing else. */

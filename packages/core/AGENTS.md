@@ -17,7 +17,7 @@ Cordis 插件注册表（`src/registry.ts`）、Standard 执行循环（`src/run
 
 - 附件历史只持久化引用；每轮经注入的 `readAttachment` 读取并核对字节，图片必须由所选模型明确声明 vision，绝不把 base64 写入快照。
 
-- 文件产物只表示运行时间窗口中的观察；旧运行的晚到结算只更新原消息，不改新运行或会话排序。范围与预算见 [FILE-OUTPUTS.md](../../docs/FILE-OUTPUTS.md)。
+- 文件产物只表示运行时间窗口中的观察；旧运行的晚到结算只更新原消息，不改新运行或会话排序。范围与预算见 ARCHITECTURE。
 
 - `propose_memory`、`propose_schedule` 与只读的 `recall_memory` 只给上下文带 `proposals` 且 Host 给了回调的运行，是只对话运行仅有的工具，不经分级；提议待人确认，自上次清空上下文以来有过 R2 调用、查到外部记忆或带 `unattended` 时标为外部（`tests/{propose,recall}-memory.test.ts`）。
 - Agent 的说明与记忆只在本轮 Run 传递，不进入持久历史；带 `personal` 的旧会话拒绝新一轮（409 `session-read-only`）；显式 pluginIds 同时约束工具展示与实际分发，缺选中的插件就拒绝；带 expectedRevisions 的租约还要同步核对实际 Provider 与完整插件修订。

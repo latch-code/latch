@@ -44,7 +44,7 @@ export const RESULT_CODES = [
   'git-abort-failed',
   'git-repo-config',
 ] as const
-/** Why a branch switch that was recorded did not land (docs/BRANCHES.md#切换分支). */
+/** Why a branch switch that was recorded did not land. */
 export const SWITCH_CODES = [
   'branch-switch-config',
   'branch-switch-moved',
@@ -73,7 +73,7 @@ const transport = z.enum(['https', 'http', 'ssh', 'file'])
 const fetch = { ...request, remote: remoteVia, remoteHash: hex64, transport }
 
 /**
- * 交付 (docs/GIT-DELIVERY.md), its pull request included. The write is recorded before Git runs and does not run when the record fails; its outcome
+ * 交付, its pull request included. The write is recorded before Git runs and does not run when the record fails; its outcome
  * follows in `git.result`. Never a path, a message, a remote's name or URL, or anything Git printed: the remote is the
  * rule that chose it and the hash of its name.
  */
@@ -134,7 +134,7 @@ export const GIT_ACTIONS = {
     number: prNumber.optional(),
   }),
   /**
-   * 切换分支 of a project's folder (docs/BRANCHES.md#切换分支), before Git runs: the project, the request, and hashes of
+   * 切换分支 of a project's folder, before Git runs: the project, the request, and hashes of
    * the branch (or detached commit) it leaves and of the branch it goes to; never a name.
    */
   'git.switch': z.strictObject({ workspaceId: opaqueId, requestHash: hex64, fromHash: hex64, toHash: hex64, preHead: oid.optional() }),
@@ -147,7 +147,7 @@ export const GIT_ACTIONS = {
     head: oid.optional(),
   }),
   /**
-   * Removing a Latch worktree (docs/BRANCHES.md), before Git runs: what it loses as counts, whether the removal is
+   * Removing a Latch worktree, before Git runs: what it loses as counts, whether the removal is
    * forced (uncommitted files discarded) and whether Latch made its branch. Never a path or a file name.
    */
   'worktree.remove': z.strictObject({

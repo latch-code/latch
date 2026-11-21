@@ -7,7 +7,7 @@ import { leadTeamOf, memberChoices, useDispatchSwitch, useTeamRound } from './ro
 import type { TeamPage } from './TeamGraph.tsx'
 
 /**
- * A team card's parts for later rounds (docs/TEAMS.md), each self-contained so the card places them where it draws its
+ * A team card's parts for later rounds, each self-contained so the card places them where it draws its
  * head and its member rows: 「第 N 轮」, the switch that lets the lead's agent send work, and 「再派一轮」 on a member's
  * row with its input under that row.
  */

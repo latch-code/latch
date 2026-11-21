@@ -1,4 +1,4 @@
-// 交付 (docs/GIT-DELIVERY.md): the status, staging, commit and push of a session's repository. Reads, unstaging and
+// 交付: the status, staging, commit and push of a session's repository. Reads, unstaging and
 // staging in a repository without filter drivers run in the restricted Git (`changes/git-status.ts`). A commit, a push
 // and staging with filters are the one named exception to "the Host runs no program a repository names": the person
 // starts each one, it is audited before it runs, and your own Git runs it as you, through your login shell with the

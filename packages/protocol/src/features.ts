@@ -36,31 +36,31 @@ export interface HostFeatures {
   attachments?: true
   agentProbe?: true
   usage?: true
-  /** `/model-usage`, `/model-spend`: the usage ledger's sums, prices and monthly budgets (docs/MODEL-GATEWAY.md). */
+  /** `/model-usage`, `/model-spend`: the usage ledger's sums, prices and monthly budgets. */
   modelUsage?: true
   /** Updating an existing address, protocol or key compares the service target inside the Host write lock. */
   providerUpdateTarget?: true
   changes?: true
-  /** `/tasks/:id/review-notes`: line feedback kept on the Host (docs/CHANGES.md). */
+  /** `/tasks/:id/review-notes`: line feedback kept on the Host. */
   reviewNotes?: true
   gitWrites?: true
-  /** `/tasks/:id/git` and its stage, unstage, commit and push routes (docs/GIT-DELIVERY.md). */
+  /** `/tasks/:id/git` and its stage, unstage, commit and push routes. */
   gitDelivery?: true
   /** `…/git/diff`, `stage-lines`, `unstage-lines`, `history` and `compare`: staging by line and the history views. */
   gitHunks?: true
-  /** `…/git/fetch`, `pull` (fast-forward only) and `abort`, and `POST /workspaces/clone` (docs/GIT-DELIVERY.md). */
+  /** `…/git/fetch`, `pull` (fast-forward only) and `abort`, and `POST /workspaces/clone`. */
   gitSync?: true
-  /** Worktree start points (`POST /tasks` `worktree` objects), `…/worktree` inventories and removal (docs/BRANCHES.md). */
+  /** Worktree start points (`POST /tasks` `worktree` objects), `…/worktree` inventories and removal. */
   worktreeLifecycle?: true
-  /** `GET /workspaces/:id/branches` and `…/branches/switch`: a project folder's local branches and switching (docs/BRANCHES.md). */
+  /** `GET /workspaces/:id/branches` and `…/branches/switch`: a project folder's local branches and switching. */
   branchSwitch?: true
   terminal?: true
   /** A harness's login command can open in this computer's terminal: only on this computer, for a device with `run`. */
   loginTerminal?: true
   previewBrowser?: true
-  /** `GET /tasks/:id/browser-tabs`: the session's tabs in this Mac's desktop app, read-only (docs/PREVIEW-BROWSER.md). */
+  /** `GET /tasks/:id/browser-tabs`: the session's tabs in this Mac's desktop app, read-only. */
   browserTabs?: true
-  /** `/simulators`: this Mac's iOS simulators in the 设备 panel; only on host.sock, for `run` with all data (docs/DEVICE-PREVIEW.md). */
+  /** `/simulators`: this Mac's iOS simulators in the 设备 panel; only on host.sock, for `run` with all data. */
   simulators?: true
   customAgents?: true
   /** The Host owns the stable interactive conversation for each Personal Agent. */
@@ -76,7 +76,7 @@ export interface HostFeatures {
   workItemTurns?: true
   /** `GET /work/proposals/:id`, `…/accept`, `…/dismiss`, and `AppSnapshot.workProposals`: agents' proposals for the board. */
   workProposals?: true
-  /** `POST /tasks/:id/team`, `GET /teams/:id`, `POST /teams/:id/stop`, `AppSnapshot.teams` and `TaskSummary.teamOf` (docs/TEAMS.md). */
+  /** `POST /tasks/:id/team`, `GET /teams/:id`, `POST /teams/:id/stop`, `AppSnapshot.teams` and `TaskSummary.teamOf`. */
   teams?: true
   mentions?: true
   pairingV3?: true

@@ -75,7 +75,7 @@ export interface TeamRouteDeps {
   ) => Promise<void>
   /**
    * Why the lead's agent cannot send a round as the device that let it, now: that device is gone or lost `run`. The
-   * person's 「让它自己派活」 is the trust in these members, so no Harness level holds a round back (docs/TEAMS.md).
+   * person's 「让它自己派活」 is the trust in these members, so no Harness level holds a round back.
    */
   dispatchRefusal: (deviceId: string) => string | undefined
   /** Why the lead's Harness gives its agent no team tools (no agent channel); undefined when it does. */
@@ -201,7 +201,7 @@ function observed(summary: TaskSummary, questions: number): TeamMemberState | un
 }
 
 /**
- * Teams (docs/TEAMS.md): a person starts one for a session, the lead; its members are ordinary 待办 started through the
+ * Teams: a person starts one for a session, the lead; its members are ordinary 待办 started through the
  * 待办's own start, each on its Harness, at the same time. The Host watches them and, once every one has ended, sends
  * their results to the lead as one message of the device that started the team. Nothing here starts on its own: a
  * member that had not started when the Host stopped stays unstarted.

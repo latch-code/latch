@@ -8,7 +8,7 @@ export interface BranchChoice {
 
 /**
  * `GET /workspaces/:id/branches`: the local branches of a project's folder, read from Git's metadata files without
- * running Git (docs/BRANCHES.md#切换分支). The current branch comes first, then the rest by name.
+ * running Git. The current branch comes first, then the rest by name.
  */
 export interface BranchListing {
   /** The branch HEAD names; absent when HEAD is detached. */

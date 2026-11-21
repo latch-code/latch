@@ -1,6 +1,6 @@
 // The person's small text edits from the file preview: the shape of the file's text (line endings, final newline,
 // byte-order mark), the new bytes in that shape, and a replace through a temporary file and a rename that refuses once
-// the file is no longer the version the editor opened. See docs/DOCUMENT-PREVIEWS.md (编辑).
+// the file is no longer the version the editor opened.
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, type BigIntStats } from 'node:fs'
 import { lstat, open, realpath, rename, unlink } from 'node:fs/promises'

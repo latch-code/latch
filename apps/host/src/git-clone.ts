@@ -1,4 +1,4 @@
-// 克隆 (docs/GIT-DELIVERY.md「克隆」): a repository cloned by your Git into a new folder that becomes a project. The
+// 克隆: a repository cloned by your Git into a new folder that becomes a project. The
 // address is checked here and is only an https or ssh one without credentials; the folder is made by the Host (so it
 // knows exactly what it made) inside a folder the desktop's native picker chose; the clone runs with none of the
 // repository's code (no hooks, templates, filters or submodules) and with only that one transport open. A failed or

@@ -1,7 +1,7 @@
 // Input to this Mac's simulators through the person's idb_companion: the person's taps, drags, keys and buttons from
 // the 设备 panel, and an agent's `device_*` input tools, on one path. Inputs to one device are serialised per gesture:
 // an agent waits for the person's finger to lift, and yields to a person who presses. Input failure is reported.
-// Printable ASCII is typed key by key on the device's English (US) keyboard. See docs/DEVICE-PREVIEW.md.
+// Printable ASCII is typed key by key on the device's English (US) keyboard.
 import {
   SIMULATOR_BUTTONS,
   SIMULATOR_KEYS,

@@ -17,7 +17,7 @@ Latch 只调用用户本机已经装好的 Agent：启动它的命令，可以�
 | `packages/protocol/src/agent-presets.ts` | 浏览器可见的预设：命令、参数、许可证、安装与登录命令 |
 | `packages/harness-acp/src/profiles/` | 只在 Host 上使用的每个预设的 `HarnessProfile`（字段说明在 `profiles/types.ts`） |
 
-整体架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；模型网关见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)；我的 Agent 见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)。
+整体架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；模型网关与我的 Agent 的规则见其中的[各功能的安全规则](ARCHITECTURE.md#各功能的安全规则)。
 
 ## 不修改原 CLI 配置
 
@@ -124,7 +124,7 @@ OpenCode 的后备规则（适配器与预设是同一个程序，按参数区�
 - 只接受可执行的普通文件；查到的绝对路径计入启动指纹，这些目录也追加到 Agent 进程的 PATH。找不到时 Harness 显示为不可用并给出安装提示。
 - 保存在适配器上的定义由 `fallback.drives` 说出它驱动的程序：只装了程序时写「已安装 codex，还差让 Latch 连接它的适配器 codex-acp」。
 - 查找结果缓存 5 秒；`GET /link/api/agents`（「重新检测」与窗口重新获得焦点）清掉缓存。列表里每个预设带查找结果 `detected`。
-- 预设的 `helperCard` 是它作为新建 Agent 候选的样子，只写做得到的，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#界面)。
+- 预设的 `helperCard` 是它作为新建 Agent 候选的样子，只写做得到的。
 
 ### 版本门槛
 
@@ -258,7 +258,7 @@ OpenCode 2.x 的核对依据是它的源码与按源码手写的回放（`replay
 
 ## 项目的多个文件夹
 
-一个项目可以由几个文件夹组成（见 [ARCHITECTURE.md](./ARCHITECTURE.md#会话与项目)）。ACP 会话的工作目录（ACP 的 `cwd`，也是进程的工作目录）始终是主文件夹。在新工作树里开始的会话例外：工作目录是工作树，指纹按工作树里的项目配置算，不交其他文件夹（见 [BRANCHES.md](./BRANCHES.md#在工作树里开始会话)）。
+一个项目可以由几个文件夹组成（见 [ARCHITECTURE.md](./ARCHITECTURE.md#会话与项目)）。ACP 会话的工作目录（ACP 的 `cwd`，也是进程的工作目录）始终是主文件夹。在新工作树里开始的会话例外：工作目录是工作树，指纹按工作树里的项目配置算，不交其他文件夹（工作树的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#git-与工作树)）。
 
 | 预设 | 其他文件夹怎样交给它 | `HarnessInfo.projectFolders` |
 | --- | --- | --- |
@@ -300,7 +300,7 @@ Agent 详情页的「测试启动」：`POST /link/api/agents/:id/probe { reques
 - 只发 ACP `initialize`，不发 `authenticate`、`session/new` 或提示词。低于版本门槛的命令不运行。
 - 握手最多 15 秒，随后停止进程组并等真实退出。宣告登录状态推送的 Agent 握手后最多等 5 秒。登录检查与版本读取在剩下的时间里并行，每项最多 10 秒；整次最多 20 秒（`AGENT_PROBE_MAX_MS`），页面等 25 秒。Host 关闭会取消并等待探测。
 - `authMethods` 只说明程序提供哪些登录方法，不证明没登录：握手成功只是 `ready`，模型访问未验证。只有明确的 `auth_required` RPC 错误是 `authentication-required`，其他失败是 `failed`。
-- 会话启动与读取可选项的握手也记下 `initialize` 报告的图片与 embeddedContext 能力（`promptCapabilities`，按定义哈希），见 [ATTACHMENTS.md](ATTACHMENTS.md)。
+- 会话启动与读取可选项的握手也记下 `initialize` 报告的图片与 embeddedContext 能力（`promptCapabilities`，按定义哈希）。
 - 结果带 `checkedAt`、`launchHash` 与最多 4 KiB 的诊断：先按定义变量与秘密格式脱敏，再截取结尾。保存为 `AgentRecord.lastProbe` 与 `probedDefinitionHash`；改启动内容会清除它。
 - 探测通过不等于会话已启动，不改 `startedHash`，不授予以后启动的信任。
 - 审计：运行前 `agent.probe.requested`，结束后 `agent.probed`，只含 ID、哈希与状态。
@@ -312,7 +312,7 @@ Agent 详情页的「测试启动」：`POST /link/api/agents/:id/probe { reques
 
 - **每会话一个进程。** 首次需要时启动，工作目录是会话的主文件夹，在独立进程组中运行。同一定义最多同时 8 个进程（`AcpAgentOptions.maxProcesses`）：到上限时停掉最久未用、可恢复的空闲进程，没有可停的返回 503 `agent-busy`。
 - **空闲。** 空闲 10 分钟且 Agent 支持恢复会话时优雅停止，下次需要时再启动。我的 Agent 的会话放宽到 30 分钟（`agentIdleMs`，不短于 `idleMs`）；后台定时运行（`acp.unattended`，无论能否提议都记下）仍是 10 分钟。
-- **预热（`Bridge.warm`）。** 打开某个 Agent 的唯一聊天时，Host 可以让驱动先启动这个会话的进程并恢复会话，与下一轮的绑定相同，但不发提示、不调模型。只在同一定义的进程数低于 `maxProcesses` 时做：到上限时放弃，从不为它停掉别的会话的进程；会话在运行、等你处理或另有操作时不做；先做一轮会做的检查（`assertUsable`、`assertWorkspace`、`assertLaunch`），不通过就不启动。失败只是没有预热，下一轮照常启动并说明原因；预热的进程在第一轮用到它之前崩溃不计入连续崩溃暂停。谁能触发见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#回得快)。
+- **预热（`Bridge.warm`）。** 打开某个 Agent 的唯一聊天时，Host 可以让驱动先启动这个会话的进程并恢复会话，与下一轮的绑定相同，但不发提示、不调模型。只在同一定义的进程数低于 `maxProcesses` 时做：到上限时放弃，从不为它停掉别的会话的进程；会话在运行、等你处理或另有操作时不做；先做一轮会做的检查（`assertUsable`、`assertWorkspace`、`assertLaunch`），不通过就不启动。失败只是没有预热，下一轮照常启动并说明原因；预热的进程在第一轮用到它之前崩溃不计入连续崩溃暂停。只有 `run` 加数据范围 `all` 的设备能触发，先审计 `agent.warm.requested`，写不进就不预热；Host 只用自己记录的聊天槽，不接受客户端给的会话 ID。
 - **崩溃。** 会话转为 `failed`，`runEnd` 为 `process-exited` 并列出结果未知的调用，`runOutcome` 仍是 `interrupted`（见 [STREAMING.md](./STREAMING.md#运行的真实状态)）。重启从 250 ms 起按最近崩溃次数加倍（最多 5 秒）；同一定义一分钟内崩溃 3 次，暂停自动重启一分钟（503 `agent-paused`）。
 - **stderr。** 持续读入 64 KiB 环形缓冲，只在启动失败或崩溃时以脱敏的短摘要写进 Host 日志，不进会话记录。
 - **脱敏。** Agent 自己写的回复、思考与工具输出原样进入会话。它报告的错误、提示、压缩失败与停止原因先遮蔽定义的变量值、Host 的秘密变量与网关凭据，再经 `redactSecrets`：模型服务的报错常带着密钥的一部分。
@@ -358,15 +358,15 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 
 **`mcpServers`**（`session/new`、`session/resume`、`session/load` 与分叉）依次是：
 
-1. `latch-skills`（`skills-server.ts`）：会话带技能、或属于某个 Agent 或「和通用的对话」时有；Latch 内置的指引（如[操控这台 Mac](MCP.md#给-agent-的指引)）排在 Agent 的技能之后。后一种另有 `propose_memory` 与 `propose_schedule` 两个写工具；Host 给了 `workProposals` 的会话（Code 会话也是）另有看板的 `propose_todo`、`propose_todos`、`propose_card`（[ARCHITECTURE.md](ARCHITECTURE.md#agent-的提议)），为此没有技能的会话也接上它。写工具只往会话私有目录的 `proposals.jsonl` 追加提议（见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#外部-harness-的通道)）；不联网。这些会话还带 `team` 模式：只在 Host 写下的 `team.json` 在时列出 `list_members` 与 `send_to_members`，派活写进单独的 `rounds.jsonl`（[TEAMS.md](TEAMS.md#agent-派活)）。
-2. `latch-browser`（`browser-server.ts`）：打开、恢复、载入或分叉会话的那一刻，这台 Mac 的桌面端已登记为浏览器提供者、且会话有项目时有。`initialize` 带几条 `instructions`：要看布局先 `browser_viewport` 再 `browser_read`；只用最新一次读到的引用；只开本机地址；登录与密码交给人；最后用截图与控制台错误验证。Codex 直连把它列为延迟加载的工具时，模型看不到这段文字（真实 CLI 核对，Claude Agent 与 OpenCode 能看到）。令牌 `lbt1.` 在网关目录的 0600 文件里，服务只拿到文件路径，读出即删，参数与 `env` 里没有它，每次换新。桌面端没开时打开的会话没有这个服务，同一进程里不会补上（见 [PREVIEW-BROWSER.md](PREVIEW-BROWSER.md#agent-的工具)）。
+1. `latch-skills`（`skills-server.ts`）：会话带技能、或属于某个 Agent 或「和通用的对话」时有；Latch 内置的指引（如[操控这台 Mac](MCP.md#给-agent-的指引)）排在 Agent 的技能之后。后一种另有 `propose_memory` 与 `propose_schedule` 两个写工具；Host 给了 `workProposals` 的会话（Code 会话也是）另有看板的 `propose_todo`、`propose_todos`、`propose_card`（[ARCHITECTURE.md](ARCHITECTURE.md#agent-的提议)），为此没有技能的会话也接上它。写工具只往会话私有目录的 `proposals.jsonl` 追加提议（文件的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#我的-agent-与定时)）；不联网。这些会话还带 `team` 模式：只在 Host 写下的 `team.json` 在时列出 `list_members` 与 `send_to_members`，派活写进单独的 `rounds.jsonl`（规则见 [ARCHITECTURE.md](ARCHITECTURE.md#团队与交接)）。
+2. `latch-browser`（`browser-server.ts`）：打开、恢复、载入或分叉会话的那一刻，这台 Mac 的桌面端已登记为浏览器提供者、且会话有项目时有。`initialize` 带几条 `instructions`：要看布局先 `browser_viewport` 再 `browser_read`；只用最新一次读到的引用；只开本机地址；登录与密码交给人；最后用截图与控制台错误验证。Codex 直连把它列为延迟加载的工具时，模型看不到这段文字（真实 CLI 核对，Claude Agent 与 OpenCode 能看到）。令牌 `lbt1.` 在网关目录的 0600 文件里，服务只拿到文件路径，读出即删，参数与 `env` 里没有它，每次换新。桌面端没开时打开的会话没有这个服务，同一进程里不会补上（工具与令牌的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#设备与浏览器)）。
 3. 会话「用在」的每个 Latch MCP 服务器各一个 `latch-mcp` 桥：命令是 Host 的 Node，参数只有网关套接字与令牌文件的路径，`env` 为空；坏掉的服务器不挡会话（见 [MCP.md](MCP.md)）。
 
 - 都没有时传空列表。pi 的预设写了 `skillServer: false`，三者都不给。
 - Codex 直连时这些服务器随线程的 `config.mcp_servers` 交给 app-server（桥带 `startup_timeout_sec: 60`）。Codex 可能把线程配置写进它自己的会话文件：留下的是套接字与令牌文件的路径，没有令牌。
 - 会话归档后，同一进程上的浏览器工具回答要等会话恢复；取消归档后要等进程重新启动才回来。
 
-外部 Harness 的指令与记忆随话题的首轮块发送，见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#各-harness-如何收到)；记忆与定时提议的来源按当前上下文已送达的资料标记，见[不是用户原话的记忆](CUSTOM-AGENTS.md#不是用户原话的记忆)。
+外部 Harness 的指令与记忆随话题的首轮块发送；记忆与定时提议的来源按当前上下文已送达的资料标记：导入的与读过外部内容之后存的记忆是资料，不是用户的话（见 [ARCHITECTURE.md](ARCHITECTURE.md#我的-agent-与定时)）。
 
 ## 经 Latch 使用模型服务
 
@@ -374,12 +374,11 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 
 - 选了服务的模型时不显示「还没登录」，Codex 直连在这样的会话里也不查自己的账户。
 - Host 按实际协议能力与自己的服务记录重新核对每次开始；客户端不能决定转发地址或密钥。
-- 会话里可以换到别的服务的模型，或在服务与 Harness 自己的登录之间换：Latch 在空闲时结束进程，按新路线启动并恢复同一会话（[会话中换路线](MODEL-GATEWAY.md#会话中换路线)）。Codex 直连在自己的登录与服务之间换时用 `thread/fork` 把线程带过去（新线程、同样的历史）；Grok Build 与 goose 只能在服务之间换（`routeSwitch: 'services'`）。服务停用、删除、密钥或地址不可用时明确失败，不回退到 Harness 自己的登录或演示模型。
+- 会话里可以换到别的服务的模型，或在服务与 Harness 自己的登录之间换：Latch 在空闲时结束进程，按新路线启动并恢复同一会话。Codex 直连在自己的登录与服务之间换时用 `thread/fork` 把线程带过去（新线程、同样的历史）；Grok Build 与 goose 只能在服务之间换（`routeSwitch: 'services'`）。服务停用、删除、密钥或地址不可用时明确失败，不回退到 Harness 自己的登录或演示模型。
 - 订阅仍由各 Harness 自己使用，不借给网关。
 - 整轮没有经过网关时如实提示并审计；这不证明每个辅助请求都经过它。
-- 首次准备里为 Harness 选的模型来源，以及默认模型的选取顺序，见 [MODEL-CONFIGURATION.md](MODEL-CONFIGURATION.md#默认模型)。
 
-路由、协议转换、调度、用量与凭据生命周期见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md)；每个 Harness 的交付细节见其 [Harness 交付](MODEL-GATEWAY.md#harness-交付)。这里只列每个 Harness 的事实（来自 profile 的 `gateway`）：
+网关是 Host 上的回环入口：按服务转发、在协议之间转换、重试与切换备选，并记下用量（规则见 [ARCHITECTURE.md](ARCHITECTURE.md#模型网关)）。这里只列每个 Harness 的事实（来自 profile 的 `gateway`）：
 
 | Harness | 它说的协议 | 最低版本 | 交法 | 限制 |
 | --- | --- | --- | --- | --- |
@@ -388,7 +387,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 | OpenCode | Chat、Responses、Anthropic | 2.2.6 | `OPENCODE_CONFIG_CONTENT` 里的私有 provider 与私有插件 | 插件把工具子进程里的令牌值清空 |
 | DeepSeek Harness | Chat、Responses、Anthropic | 0.2.2-rc.1 | 私有 `--patch` 的 provider `latch-gateway` | 这条路线关掉它的会话日志与包清单遥测插件 |
 | Claude Agent | Anthropic（Chat、Responses 服务经实验性转换） | 直连 Claude Code 2.1.322，适配器上 2.1.318 | 官方环境变量与会话的 `modelPicker` | 只按精确的模型 ID |
-| pi | Chat、Responses、Anthropic | 1.5.0 | 私有扩展注册 provider，只在当前进程 | 见 [pi 运行预算](MODEL-GATEWAY.md#pi-运行预算) |
+| pi | Chat、Responses、Anthropic | 1.5.0 | 私有扩展注册 provider，只在当前进程 | 模型要有上下文与输出上限：取运行预算、服务声明的上下文长度或 pi 自己目录里精确匹配的数值，都没有时不注册（所选模型缺少时拒绝开始）；高级环境可写 `PI_GATEWAY_CONTEXT_TOKENS` 与 `PI_GATEWAY_OUTPUT_TOKENS` |
 | Qwen Code | Chat、Responses、Anthropic，实验性 | 0.26.8 | `QWEN_CODE_SYSTEM_SETTINGS_PATH` 指向 0600 的会话私有系统设置 | 没有子 Agent；凭据被工具子进程继承 |
 | goose | Chat、Responses、Anthropic，实验性 | 1.57.0 | 只有环境变量；凭据在 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY` | `provider` 选项不提供；`delegate` 子 Agent 固定不了服务；凭据被继承 |
 | Grok Build | Chat、Responses、Anthropic，实验性 | 1.0.77 | `GROK_HOME` 指向会话私有的家目录，其中 0600 的 `config.toml` 给每个服务模型写一个自定义模型，并关掉 Claude Code、Cursor 配置里的 MCP 服务器、插件与钩子 | 这个家里没有用户的 Grok 登录、钩子、插件与 MCP，也不启动 Claude Code、Cursor 配置里的 MCP 服务器与钩子；凭据被继承（见下） |
@@ -398,13 +397,23 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 
 - 这个凭据不是模型服务的密钥：它只能在这台电脑的回环端口上使用这个会话选定的服务与候选，进程退出或服务设置变化后失效。会话本来就是 L3。
 - goose 的凭据放在它规定的变量里，会读这些变量的工具可能把它发给真实厂商：在那里没有用，但离开了这台电脑。
-- 模型面板「Latch 网关」下服务组名的悬停说明为这三者多写一句（`HarnessCapabilities.models.credentialInherited`）。其余 Harness 各有清理办法，见 [Harness 交付](MODEL-GATEWAY.md#harness-交付)。
+- 模型面板「Latch 网关」下服务组名的悬停说明为这三者多写一句（`HarnessCapabilities.models.credentialInherited`）。其余 Harness 各有清理办法（Codex 直连的线程环境过滤规则、OpenCode 的插件、DeepSeek Harness 自己清除敏感变量、Claude 的 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`、pi 从继承的环境里删除）。
 
-**各自去不掉的限制**（依据与出处在 MODEL-GATEWAY.md 的 [Qwen Code](MODEL-GATEWAY.md#qwen-code)、[goose](MODEL-GATEWAY.md#goose)、[Grok Build](MODEL-GATEWAY.md#grok-build)）：
+**交付的规则**（`profiles/types.ts`、`runtime.ts`）：
+
+- 凭据只由 runtime 注入 profile 允许的环境变量；profile 写出的私有文件 0600、原子替换、不含凭据；写出没列在 `envNames` 里的变量时拒绝启动。
+- 受管的临时根、会话目录与网关子目录有链接、属主或权限不对时拒绝写入与启动；清理不沿已有的链接删到外面。
+- 启动指纹不含临时端口与凭据；全部异步准备之后再复查命令、项目与授权，准备失败撤销已建的凭据。版本无法确认或低于最低版本时在发凭据之前拒绝，自定义包装命令不能靠跳过版本查询绕过。
+- **Codex 直连。** `config/read` 的 `origins` 里 `model_providers.latch.*` 有一个键、或 `model_provider` 不来自启动参数（`sessionFlags`），或管理策略指定了别的 provider 时拒绝开线程：否则人的请求头、查询参数或凭据会跟着发往网关。命令环境的过滤规则畸形或读取失败也拒绝；不写 Codex 的文件。
+- **Claude Agent。** 其他 provider 开关、API key、OAuth token 与自定义头清空；子进程的 scrub 可被设置文件覆盖，不能据此说用户自己配置的秘密都被清除。
+- **goose。** 关掉工具垫片（`GOOSE_TOOLSHIM=false`：它会把回复发给本机的解释模型），`provider` 选项隐藏并拒绝设置。
+- **pi。** 凭据只留在进程内存，并从子进程继承的环境里删除。
+
+**各自去不掉的限制**：
 
 - **Qwen Code。** 私有系统设置替代了系统设置路径，这个进程不再读真正的系统设置里的管理策略。子 Agent 以 `permissions.deny: ["Agent"]` 关掉：它的定义文件可以点名任何模型，而用户自己起名的服务与内置 OAuth 模型删不掉。用户自己的钩子、网页搜索的模型、`batch.model` 与实验性语音仍不经网关。
 - **goose。** `delegate` 启动子 Agent 时，配方的 `settings.goose_provider` 或模型自己传的 `provider` 先于 `GOOSE_SUBAGENT_PROVIDER`：这样的子 Agent 用用户在 goose 里另配的服务，按轮的核对发现不了。Latch 不给会话传 `_meta.provider`（goose 会改用该服务的默认模型而不是 `GOOSE_MODEL`）。
-- **Grok Build。** 自定义模型只能写在用户配置里，所以用私有 `GROK_HOME`；Grok 自己的会话记录也写在这里，随 Latch 会话删除。它起标题时用内置模型向同一地址发请求，网关拒绝，Grok 改用截断的用户文字，不影响这一轮。私有家里不读 Grok 自己的 MCP 与钩子，但 Grok 默认还从真实 HOME 读 Claude Code 与 Cursor 的配置；这条路线关掉其中会启动进程的部分（[依据](MODEL-GATEWAY.md#grok-build)），所以人在 Claude Code、Cursor 里配的 MCP 服务器、插件与钩子在这里都不运行（技能、规则与说明文件照旧读取），`~/.claude/settings.json` 的放行规则也不生效（拒绝规则仍生效）。私有家里没有文件夹信任，项目里的 Grok MCP、钩子与权限规则同样不加载。
+- **Grok Build。** 自定义模型只能写在用户配置里，所以用私有 `GROK_HOME`；Grok 自己的会话记录也写在这里，随 Latch 会话删除。它起标题时用内置模型向同一地址发请求，网关拒绝，Grok 改用截断的用户文字，不影响这一轮。私有家里不读 Grok 自己的 MCP 与钩子，但 Grok 默认还从真实 HOME 读 Claude Code 与 Cursor 的配置；这条路线关掉其中会启动进程的部分，所以人在 Claude Code、Cursor 里配的 MCP 服务器、插件与钩子在这里都不运行（技能、规则与说明文件照旧读取），`~/.claude/settings.json` 的放行规则也不生效（拒绝规则仍生效）。私有家里没有文件夹信任，项目里的 Grok MCP、钩子与权限规则同样不加载。
 
 三者标「实验性」：都只在没有登录的临时 HOME 下对本地假服务跑通过一轮（`apps/host/test/gateway-no-login.live.test.ts`），没有对真实服务、带工具与多轮跑过。假 Agent 与回放夹具是照源码与文档写的，不是录制。
 
@@ -418,7 +427,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 - **一轮。** `turn/start` 带输入（文字；图片作 data URL；显式技能用官方目录里的 name 与 path）、模型、思考与当前模式的设置，等到 `turn/completed` 才结束：`completed` 正常，`interrupted` 算取消，`failed` 带 Codex 的原因失败。运行中追加用 `turn/steer`（带当前一轮的 ID）。
 - **事件。** 回答与推理增量流式显示；`commandExecution`、`fileChange`、`mcpToolCall`、`webSearch` 是工具调用；`turn/plan/updated` 是计划，`thread/tokenUsage/updated` 是用量；`willRetry` 的 `error` 是一条重试提示。推理摘要分段到达而段间没有分隔，Latch 在换段时补一个空行。
 - **系统错误。** Codex 遇到错误就把 thread 标为 `systemError`（`thread/status/changed`）；会结束一轮的错误另发一条不带 `willRetry` 的 `error`，之后 Codex 可能不再报告这一轮结束。两者都到了、3 秒内这一轮既没有结束也没有新的条目时，Latch 发 `turn/interrupt`（最多等 2 秒），然后以 Codex 最后一条 `error` 的原话（没有时写「Codex 报告这个会话出了内部错误，这一轮没有结束」）结束为失败，不是取消；thread 照常可以继续。只有状态、没有 `error` 的（回滚失败、拒绝追加之类，Codex 不为它结束一轮）不动这一轮。
-- **生成的图片（`imageGeneration`）。** 开始时是一行「生成图片」，`_meta` 带 `latch/imageGeneration`（`IMAGE_GENERATION_META`，运行时只认 Latch 自己的 Codex 线路），行上记 `ToolDetail.imageGeneration`：这一行就是图片的位置。结束时 `failure` 或 `failed` 写「图片生成失败」（用量上限另写），不交图片。字节先取条目的 `result`（base64）；为空时（迁移期只带 `fileId`）按 `savedPath` 发 Codex 自己的 `fs/readFile {path}`，回答 `{dataBase64}`（Codex 0.170 `generate-json-schema`）。由 Codex 自己读，所以 `CODEX_HOME` 改过也读得到；只接受绝对路径、扩展名 png/jpg/jpeg/gif/webp。字节须是规范 base64、开头是 PNG、JPEG、GIF（Codex 0.170 会生成 GIF）或 WebP，解码后不超过 5 MiB（Host 的图片附件上限），每轮最多 8 张；不合格的不交，在行上写原因。合格的放进这一行结算的 `tool_call_update`（内容里的 `image` 块）。运行时把图片块从行的内容里取出（字节不留在行上），经 `saveAttachment` 存为会话附件，作为这一行自己的 `attachments`（[ATTACHMENTS.md](ATTACHMENTS.md)），和 Agent 的其他图片共用每轮 8 张；存好之前行保持运行，存好后才带着图片结算，所以客户端不会看到结束了却没有图片的行，同一轮多张图各在各的行上，重读、换进程续接后图片仍在原处。存不下时行上写「图片未保存」。这一轮在图片到之前停下：行以「图片未生成」安静结束（`cancelled`，不是结果未知）；Host 重启时的恢复同样处理。读取期间这一轮不结算，30 秒超时；子 Agent 的与读回历史（`thread/read`）里的不交。回复里指向 `savedPath` 的链接按会话文件夹外的已提到文件打开（见 [ARCHITECTURE](ARCHITECTURE.md#会话文件)）；这一轮已经画出生成的图片时，指向图片的链接只留路径标记，不画第二遍。
+- **生成的图片（`imageGeneration`）。** 开始时是一行「生成图片」，`_meta` 带 `latch/imageGeneration`（`IMAGE_GENERATION_META`，运行时只认 Latch 自己的 Codex 线路），行上记 `ToolDetail.imageGeneration`：这一行就是图片的位置。结束时 `failure` 或 `failed` 写「图片生成失败」（用量上限另写），不交图片。字节先取条目的 `result`（base64）；为空时（迁移期只带 `fileId`）按 `savedPath` 发 Codex 自己的 `fs/readFile {path}`，回答 `{dataBase64}`（Codex 0.170 `generate-json-schema`）。由 Codex 自己读，所以 `CODEX_HOME` 改过也读得到；只接受绝对路径、扩展名 png/jpg/jpeg/gif/webp。字节须是规范 base64、开头是 PNG、JPEG、GIF（Codex 0.170 会生成 GIF）或 WebP，解码后不超过 5 MiB（Host 的图片附件上限），每轮最多 8 张；不合格的不交，在行上写原因。合格的放进这一行结算的 `tool_call_update`（内容里的 `image` 块）。运行时把图片块从行的内容里取出（字节不留在行上），经 `saveAttachment` 存为会话附件，作为这一行自己的 `attachments`，和 Agent 的其他图片共用每轮 8 张；存好之前行保持运行，存好后才带着图片结算，所以客户端不会看到结束了却没有图片的行，同一轮多张图各在各的行上，重读、换进程续接后图片仍在原处。存不下时行上写「图片未保存」。这一轮在图片到之前停下：行以「图片未生成」安静结束（`cancelled`，不是结果未知）；Host 重启时的恢复同样处理。读取期间这一轮不结算，30 秒超时；子 Agent 的与读回历史（`thread/read`）里的不交。回复里指向 `savedPath` 的链接按会话文件夹外的已提到文件打开（见 [ARCHITECTURE](ARCHITECTURE.md#会话文件)）；这一轮已经画出生成的图片时，指向图片的链接只留路径标记，不画第二遍。
 - **命令的解析（`commandActions`）。** 全部动作都是读取、列出或搜索时，作为工具条目的可选字段 `actions` 带给客户端；有一项 `unknown` 或不认得的形状就不带，命令原文照旧保存。这个字段只从 Codex 线接受（[STREAMING.md](STREAMING.md#工作过程的行)）。
 - **模型。** `model/list`（最多 5 页）给出模型与各自的思考深度；开始前的读取用同一个程序的 `codex app-server`，不开 thread。同一次读取的 `config/read` 给出默认的模型、思考与速度，以及配置里 MCP 服务器的名字（是否停用、远程的源，不取命令、变量与请求头），再加 `hooks/list`；没有会话或读取的报告时，「设置 › 扩展」先显示这些名字（`namesOnly`）。不用不带 thread 的 `mcpServerStatus/list`：0.170 为回答它会启动配置的服务器（实测）。
 - **预热不做。** 实测（0.170，临时 `CODEX_HOME`，各 6 次）：起进程到 `initialize`、`account/read`、`model/list`、`configRequirements/read` 都答完，常用的家目录中位 150 ms（72–920 ms，只有第一次慢），全新的家 468 ms；已在运行的进程上同样几个请求中位 6 ms。会话还要在项目目录开 thread（0.5–1.3 s），预热省不了那部分，而进程按项目目录与启动指纹启动，提前起的进程不能直接给会话用，所以收益约 0.1 s，不值得多一个常驻进程。
@@ -487,7 +496,7 @@ Codex 自己中断、Latch 没有要求停止的一轮同样先等它的命令�
 - **停止。** 先 `clear_queue` 再 `abort`：不清空队列，`abort` 会接着处理排队的追加。清掉的追加内容在会话里写一行。
 - **运行中追加。** pi 在跑这一轮（`agent_start` 到 `agent_end`）时用 `steer`；其他时候交回 Host 排队。
 - **工具与其他事件。** `tool_execution_*` 成为工具行（`bash` 命令，`read` 读取，`edit`、`write` 改文件，`grep`、`find`、`ls` 搜索）。压缩成为压缩行；自动重试、扩展的通知与扩展出错成为通知。pi 转来的失败回复、重试原因、压缩失败原因与扩展出错都先遮住像密钥的部分。
-- **经 Latch 的会话不让 pi 自己重试。** pi 报告 `auto_retry_start` 时线发 `abort_retry`（RPC 文档的命令，不写设置），通知只写错误，不写「第几次重试」；原因里带 `gateway-busy`（Host 的队列满）的除外。网关已经重试过几秒内会好的失败，pi 的重试按错误文字判断、不读 `x-should-retry`，而 `retry.maxRetries` 只在 pi 的设置文件里，`set_auto_retry` 会写用户的全局设置（[重试只由一层负责](MODEL-GATEWAY.md#重试只由一层负责)）。
+- **经 Latch 的会话不让 pi 自己重试。** pi 报告 `auto_retry_start` 时线发 `abort_retry`（RPC 文档的命令，不写设置），通知只写错误，不写「第几次重试」；原因里带 `gateway-busy`（Host 的队列满）的除外。网关已经重试过几秒内会好的失败，pi 的重试按错误文字判断、不读 `x-should-retry`，而 `retry.maxRetries` 只在 pi 的设置文件里，`set_auto_retry` 会写用户的全局设置；重试只由网关一层负责。
 - **扩展的提问。** `confirm` 像审批一样交给人；`select`、`input`、`editor` 是一道题，进同一张提问卡（下文「Agent 的提问」）：`select` 的回答只能是它列出的选项之一（自己写的话答「已取消」，会话里写一行），`input` 与 `editor` 收自己写的话。没人回答时答「已取消」。
 
 **`/compact`。** pi 的 RPC 不列出它界面里的 `/compact`，当文字发出去会交给模型，所以 Latch 在会话第一轮开始时把它列为 pi 的命令。
@@ -574,7 +583,7 @@ Cursor 预设的定义在这台 Mac 上带了 `CURSOR_API_KEY`，且 Host 找得
 - **压缩（`compaction_update`、`compaction_summary_chunk`）。** 一次压缩一行，按 `compactionId` 就地更新（正在、已压缩、失败、已取消），Agent 给的摘要接在后面。行的位置是第一次报告到达时，之前的回复先结束。压缩失败不让本轮失败。Codex 压缩后留下的上下文仍超过它的自动压缩上限时会在每一轮开始再压缩一次，每次一个新 ID；相邻几轮里同样的「已压缩上下文」只留最后一行并写上次数，带摘要、失败或由 /compact 发起的行照旧（`collapseCompactions`）。
 - **重试（`readRetry`）。** 把 Agent 标明的重试读成一行系统消息，不进思考；回复中途断开重新生成时，已收到的文字丢掉，新文字接在同一条消息里（消息 ID 不变），已收到的思考保留。原因先脱敏，最多 300 字。目前没有预设声明它。
 - **各家说法不同的地方（`normalizeUpdate`）。** 只换不添：Qwen Code 只在 `_meta.toolName` 给工具名，填进 `name`；OpenCode 把回复的思考放在推理片段的 ID 下，去掉这个 ID 后思考归入它所属的回复。调用的 `kind` 只是 `other` 时用标题命名。
-- **用量。** `session/prompt` 的 `usage`（含 `cachedReadTokens`、`cachedWriteTokens`、`thoughtTokens`）按 profile 的 `usageScope` 读：`turn` 是这一轮的，会话总数是轮前总数加它；默认 `session` 是整个会话的，这一轮是差。输入不含缓存的（`inputExcludesCache`）把缓存加回输入。这一轮的写在用户消息的 `TurnStats.usage` 上，不走模型路由时同一值也进自己登录轮次的记录（[MODEL-GATEWAY.md](MODEL-GATEWAY.md#网关以外的轮次)）。各家实测（2026-11-16）：
+- **用量。** `session/prompt` 的 `usage`（含 `cachedReadTokens`、`cachedWriteTokens`、`thoughtTokens`）按 profile 的 `usageScope` 读：`turn` 是这一轮的，会话总数是轮前总数加它；默认 `session` 是整个会话的，这一轮是差。输入不含缓存的（`inputExcludesCache`）把缓存加回输入。这一轮的写在用户消息的 `TurnStats.usage` 上，不走模型路由时同一值也进自己登录轮次的记录。各家实测（2026-11-16）：
 
 | Harness | 来源 | 范围 | 缓存 |
 | --- | --- | --- | --- |
@@ -674,7 +683,7 @@ Latch 从不替人登录：不调用 `authenticate`，不读凭据文件或钥�
 
 | 请求 | 在哪里运行 |
 | --- | --- |
-| 带 `terminal` | Latch 自己的终端（`features.terminal`）：会话里是底部终端中以 Harness 命名的一个，没有会话时是不属于任何会话的终端。命令以 0 退出后页面重新检查；规则见 [TERMINAL.md](TERMINAL.md#登录命令) |
+| 带 `terminal` | Latch 自己的终端（`features.terminal`）：会话里是底部终端中以 Harness 命名的一个，没有会话时是不属于任何会话的终端。命令以 0 退出后页面重新检查；规则见 [ARCHITECTURE.md](ARCHITECTURE.md#终端) |
 | 不带 | 这台电脑默认的终端（`features.loginTerminal`，仅 macOS）：Host 写一个 0700 的 `.command` 临时文件交给 `open`，脚本先删除自己。页面只在 Host 不给这台设备 Latch 终端时走这条路 |
 
 其他设备只看到命令。macOS 以外的 Host 上这两条路径尚未实现。Claude Agent 没有登录命令，也就没有按钮。
@@ -798,7 +807,7 @@ Latch 内置的档位由 Latch 自己执行：它不改调用的风险等级，�
 | `current_mode_update` / `config_option_update` | 更新记录的模式；被放宽时见「权限模式」 |
 | `session_info_update.title` | 会话标题（用户重命名优先） |
 | `PromptResponse.usage` | 会话与这一轮的用量，按 profile 的 `usageScope`（见「通知与压缩」的用量） |
-| `usage_update` | `TaskDetail.usageReport`：上下文已用、窗口大小与费用，整体替换；不算可见输出，不计入 tokens。经网关的会话没报窗口大小时，用服务为当前模型声明的上下文长度（[MODEL-GATEWAY](MODEL-GATEWAY.md#凭据)） |
+| `usage_update` | `TaskDetail.usageReport`：上下文已用、窗口大小与费用，整体替换；不算可见输出，不计入 tokens。经网关的会话没报窗口大小时，用服务为当前模型声明的上下文长度 |
 
 - 未知的更新类型被忽略。
 - 上限：单条工具文本 64 KiB；每个工具最多 32 个 diff，原内容与新内容各截到 128 KiB；单行协议消息超过 64 MiB 终止进程。
@@ -819,7 +828,7 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 
 - `declared`：Codex 直连在 Responses 入口上的思考，按服务为这个模型声明的档位给出「默认」（`~default`）加各档，与 wire 提供、`set_config_option` 接受的完全相同（`gatewayEffortOption`）。没有声明就没有这一项。
 - `session`：其他 Harness 经网关的新会话在 `session/new` 回答里报告的、跟着模型变的选项，按定义 × 服务 × 模型 × 声明摘要（两侧协议与该模型的声明，`serviceDeclarationHash`）存进 `acp.json` 的 `serviceOptions`（最多 32 对，读坏时丢弃）。定义或声明变了就不再下发。
-- Claude Agent（Anthropic 入口，profile 的 `gateway.defaultThinking` 是 `default`）的思考：在转换路线上，或这个模型声明了档位时，只给 Claude 自己的「Default」加服务声明的档位（`gatewayThinkingLevels`、`declaredThinking`，会话与草稿相同）；之前为别的模型选的档位这个模型没有声明时读作 Default，消息记下的思考随之变化。没有可选的档位时没有这一项。同协议转发且没有声明时仍是 Claude 自己的列表。见 [MODEL-GATEWAY](MODEL-GATEWAY.md#harness-交付)。
+- Claude Agent（Anthropic 入口，profile 的 `gateway.defaultThinking` 是 `default`）的思考：在转换路线上，或这个模型声明了档位时，只给 Claude 自己的「Default」加服务声明的档位（`gatewayThinkingLevels`、`declaredThinking`，会话与草稿相同）；之前为别的模型选的档位这个模型没有声明时读作 Default，消息记下的思考随之变化。没有可选的档位时没有这一项。同协议转发且没有声明时仍是 Claude 自己的列表。
 - OpenCode、DeepSeek Harness 与 pi 经网关时由 Latch 写入私有配置，但现有录制没有它们经网关时报告的选项 ID 与取值，所以不在 profile 里推导，只用 `session`。
 - 只下发至少有两个取值的项，整份受同样的 64 KiB 上限。开始时所选的值按「不再提供时」处理：拒绝时说出是哪一项（如「思考档位「xhigh」」）。
 
@@ -853,7 +862,7 @@ ACP 没有会话之外的模型接口，模型、思考与模式随 `session/new
 - `session/new` 之后、第一条提示之前，依次设置模型、Agent 为这个模型提供的其他选项、模式；模式交给「权限模式」的设置与读回。Cursor 的 force 只报告启动配置完成，不冒充读回。
 - **不再提供时。** 选的模型、模式或其他选项 Agent 不再提供、被拒绝或没采用：这一轮失败、不发提示，文字说出它的名字与下一次会用什么。失败之前照常设好草稿里的其他选择并读回模式，所以会话显示的就是之后运行的。Agent 要先登录时，还没设好的选择留到登录后的那次发送（尚未实现：会话详情不带还没设好的选择）。
 - **审计。** `task.l3.start-requested` 与 `task.l3.started` 带 `configHash`（所选内容的摘要，不原样记录）。
-- **我的 Agent 默认项。** Host 从定义的 `engineOptions` 生成同一份开始配置并冻结在原 `requestId` 的选择回执里；见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#家与工具)。
+- **我的 Agent 默认项。** Host 从定义的 `engineOptions` 生成同一份开始配置并冻结在原 `requestId` 的选择回执里；开始请求不接受另传的 `config`。
 
 **会话里修改选项。** 未知结果通过 Host 的配置回执查询，不自动再发 `set_config_option`：Agent 超时或连接关闭无法证明没有执行（见 [ARCHITECTURE.md](ARCHITECTURE.md#会话配置修改回执)）。
 
@@ -912,7 +921,7 @@ Agent 在 `initialize` 的 `_meta.steering = { supported: true }` 声明后，�
 
 停止开始后不再追加。没有声明的 Agent 照常排队。语义见 [STREAMING.md](./STREAMING.md#追加到运行中的一轮)。
 
-模拟器工具按当前运行 ID 检查发起设备。Driver 在真正发出较窄范围的追加前暂停这一轮的设备工具授权，追加送达或结果未知时撤掉授权。旧回执的重放不会触发这一步。[设备工具](DEVICE-PREVIEW.md#agent)
+模拟器工具按当前运行 ID 检查发起设备。Driver 在真正发出较窄范围的追加前暂停这一轮的设备工具授权，追加送达或结果未知时撤掉授权。旧回执的重放不会触发这一步。设备工具的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#设备与浏览器)。
 
 ## 清空上下文
 
@@ -1033,10 +1042,10 @@ Latch 只处理 Agent 发来的 `session/request_permission` 与上一节的提�
 **附件与文件引用。**
 
 - ACP 附件走 `session/prompt` 的内容块，按本轮运行中的 Agent 在 `initialize` 报告的能力逐个决定（`attachmentDelivery`）：`promptCapabilities.image` 为 true 时图片是 base64 image；`embeddedContext` 为 true 时 256 KiB 以内的文本是带 `latch-attachment:<id>` URI 的 embedded resource。探测缺少字段不代表支持。
-- 其余的（PDF、音视频、压缩包、Office、HEIC、二进制，以及 Agent 不原生收的图片和文本）保存为会话附件目录里的文件，提示末尾一个 text 块列出名称、类型、大小与绝对路径，Agent 用自己的工具打开（[ATTACHMENTS.md](ATTACHMENTS.md#按路径交给-agent)）。所有 ACP 线路都收 text 块，所以没有附件因类型被拒。Agent 输出的图片经 Host 回调存为会话附件。
-- 带附件会话的 stderr 不进 Host 日志，RPC 失败也不回显附件。限额与授权见 [ATTACHMENTS.md](ATTACHMENTS.md)。
+- 其余的（PDF、音视频、压缩包、Office、HEIC、二进制，以及 Agent 不原生收的图片和文本）保存为会话附件目录里的文件，提示末尾一个 text 块列出名称、类型、大小与绝对路径，Agent 用自己的工具打开（规则见 [ARCHITECTURE.md](ARCHITECTURE.md#附件)）。所有 ACP 线路都收 text 块，所以没有附件因类型被拒。Agent 输出的图片经 Host 回调存为会话附件。
+- 带附件会话的 stderr 不进 Host 日志，RPC 失败也不回显附件。
 - 显式 `fileRefs` 由 Host 对固定目录再次验证，ACP 只在本轮模型输入里追加真实目录映射，公开消息保留原文。
-- 文件变化的范围与结算见 [FILE-OUTPUTS.md](FILE-OUTPUTS.md)。
+- 文件变化只是运行期间的观察，范围与结算见 [ARCHITECTURE.md](ARCHITECTURE.md#改动与文件编辑)。
 
 ## CLI 自己的存储
 
@@ -1216,7 +1225,7 @@ Host 经 `HarnessInfo.extensionSupport` 给出当前适配器能报告的类别�
 
 **Codex 直连的插件清单尚未实现。** Codex 0.169.0 的 `plugin/installed` 会尝试同步账号已装插件，可能下载或更新本机插件包。这个版本的协议没有纯读取清单的接口。Codex 自己启动时亦可能同步，清单请求可以再触发一次。ACP 适配器没有插件报告。[Codex 0.169.0 的清单处理](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/app-server/src/request_processors/plugins.rs#L847)
 
-**安装、更新、卸载。** `HARNESS_EXTENSIONS`（`packages/protocol/src/extensions.ts`）记录厂商文档或 CLI 帮助给出的命令。命令经「在终端里打开」填进 Latch 的终端（[TERMINAL.md](TERMINAL.md)），由人补全参数后按回车。Codex 卸载须指定市场和插件，pi 卸载须指定原安装来源。名称只用于显示。MCP 的单项卸载命令只接受 `namedExtensionCommand` 校验过的名称。没有文档化命令时，悬停可查看原因。
+**安装、更新、卸载。** `HARNESS_EXTENSIONS`（`packages/protocol/src/extensions.ts`）记录厂商文档或 CLI 帮助给出的命令。命令经「在终端里打开」填进 Latch 的终端（只填不执行），由人补全参数后按回车。Codex 卸载须指定市场和插件，pi 卸载须指定原安装来源。名称只用于显示。MCP 的单项卸载命令只接受 `namedExtensionCommand` 校验过的名称。没有文档化命令时，悬停可查看原因。
 
 **Latch 提供的。** 都是数据：我的 Agent 的技能与「操控这台 Mac」的规则经 `latch-skills`；预览浏览器的工具经 `latch-browser`（桌面端开着时）；Latch 的 MCP 服务器经会话的 `mcpServers`（Codex 为线程配置），只给 `HarnessInfo.skills === 'server'` 的 Harness；提示词模板由 Latch 填进输入框（全部 Harness 的与只给这个 Harness 的）；数据插件（技能与数据面板）与页面在 Latch 里，不交给 Harness。含代码的插件（工具、面板模块、模型、Harness、连接）只在折叠的「这台 Mac 上的开发者」里，标「可信的本地代码」，不隔离。Latch 内置的插件（项目文件、演示的工具与模型，`PluginInfo.builtIn`）不列。Latch 自己的 MCP 与插件仍在「设置 › MCP」「设置 › 插件」里管理，改动照旧本机确认；「设置 › MCP」与 Harness 页只留一行通往「扩展」。
 

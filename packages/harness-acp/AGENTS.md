@@ -15,7 +15,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 - 探测只做 initialize（`loginStatus`、`programVersion` 另跑，`loginRequest` 不开会话），同一命令、环境与指纹，20 秒内结束并等进程停止；不发提示词，authMethods 不算未登录证据（`test/probe.test.ts`）。
 - 终端登录只跑会话的程序；登录推送只读 `kind`、`label`（`test/auth.test.ts`）。
 - 新持久字段可选并入 `src/store.ts`。技能和扩展路径不存不发。Team 核父轮、父关系。
-- 提议保留首轮材料和本机 MCP 来源（CUSTOM-AGENTS、MCP）。
+- 提议保留首轮材料和本机 MCP 来源（MCP）。
 - 审批活动的 `since` 复用 RunClock 的原等待起点（`test/acp.test.ts`）。
 - 不支持的请求共用事件时间，不回退已知输出（HARNESSES）。
 - 测试只用假 Agent、回放与假 SDK，不提示真实 Agent。
@@ -24,7 +24,7 @@ ACP HarnessDriver：每个启用的 Agent 定义一个 Driver（`createAcpAgentP
 测试：`pnpm test --project @latch/harness-acp` 与 `e2e/permissions-ui.e2e.ts`。先读 [docs/HARNESSES.md](../../docs/HARNESSES.md)。
 
 - 附件按协商能力原生发，余者按路径；Agent 图片输出经 Host 私有存储转成引用，字节不进消息、快照或 stderr。
-- 文件产物只表示运行时间窗口中的观察；范围与预算见 [FILE-OUTPUTS.md](../../docs/FILE-OUTPUTS.md)。
+- 文件产物只表示运行时间窗口中的观察；旧运行晚到的结算只更新原消息。范围与预算见 ARCHITECTURE。
 - 配置修改准备前和发 RPC 前调用 Host `authorize`；超时结果未知，核对时拒绝写入。
 
-- 不改原 CLI 配置、全局 hooks 或 shell；适配随本进程加载，私有文件 0600。核 setter 的持久化副作用。模式绑定进程/session，核对不用 setter；launch 非读回；pi 仅认私有扩展全路径。版本逐次查，未知拒绝；Claude 只认 `--cli --version`。见 HARNESSES/MODEL-GATEWAY。
+- 不改原 CLI 配置、全局 hooks 或 shell；适配随本进程加载，私有文件 0600。核 setter 的持久化副作用。模式绑定进程/session，核对不用 setter；launch 非读回；pi 仅认私有扩展全路径。版本逐次查，未知拒绝；Claude 只认 `--cli --version`。见 HARNESSES。

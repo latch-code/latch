@@ -524,7 +524,7 @@ const createTaskSchema = promptSchema.extend({
   /**
    * Start in a Git worktree of the project's folder: `true` (or `head`) on a new branch from its HEAD, `commit` on a new
    * branch from another local branch or commit, `branch` on an existing local branch, `reuse` in an earlier Latch
-   * worktree of the project (docs/BRANCHES.md).
+   * worktree of the project.
    */
   worktree: z
     .union([
@@ -1864,7 +1864,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const repositoryHolds = new RepositoryHolds({ closed: () => updateWindow.isCommitted })
     /** Project folders whose branch is being switched, by real path: their sessions start nothing until it ends. */
     const branchSwitching = new Set<string>()
-    /** 克隆 into a new project folder: your Git, like a push, with none of the repository's code (docs/GIT-DELIVERY.md). */
+    /** 克隆 into a new project folder: your Git, like a push, with none of the repository's code. */
     const clones = new GitClones({
       holds: repositoryHolds,
       ...(options.gitDelivery?.git ? { git: options.gitDelivery.git } : {}),
@@ -2861,7 +2861,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     const shortcuts = await ShortcutsStore.open(dataDir, { now, log, known: id => devices.get(id) !== undefined })
     // 设置 › 数据 and 导出全部 (docs/ARCHITECTURE.md#数据保留与导出): what Latch keeps, and the person's own data out.
     const dataInventory = new DataInventoryService({ dataDir, worktrees: worktreesDir, agents: agentsDir, now })
-    // An Agent's home after the Agent is deleted: removed for good or exported first (docs/CUSTOM-AGENTS.md#删除-agent).
+    // An Agent's home after the Agent is deleted: removed for good or exported first.
     let homeHelper: Promise<HomeHelper> | undefined
     const agentFolders = new AgentFolders({
       folders: ownFolders,
@@ -4094,7 +4094,7 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
     }
     /**
      * A team round the lead's agent makes. The person who turned 「让它自己派活」 on trusts these members, so it is not held
-     * to the unattended ceiling (owner's decision, docs/TEAMS.md); the device that allowed it must still be there with
+     * to the unattended ceiling (owner's decision); the device that allowed it must still be there with
      * `run`. Undefined when it may run.
      */
     function teamDispatchRefusal(deviceId: string): string | undefined {

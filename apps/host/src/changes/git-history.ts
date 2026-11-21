@@ -1,4 +1,4 @@
-// The history views of 交付 (docs/GIT-DELIVERY.md#历史): the session's commits, one file's history, a commit's files and
+// The history views of 交付: the session's commits, one file's history, a commit's files and
 // the branch against its base. Read-only and bounded, through the restricted Git: it lists commits and trees and
 // returns blobs, and the Host compares the texts itself, so no diff driver, textconv or filter of the repository runs.
 import type { ChangeHunk, GitCommitDiff, GitCommitEntry, GitCommitFileDiff, GitHistory, GitHistoryFile } from '@latch/protocol'

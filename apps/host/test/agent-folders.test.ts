@@ -1,4 +1,4 @@
-// Deleting an Agent and its home (docs/CUSTOM-AGENTS.md#删除-agent): removed for good, or written into a zip first;
+// Deleting an Agent and its home: removed for good, or written into a zip first;
 // only the home the Host recorded and that matches its record now; everything else left and reported.
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'

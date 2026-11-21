@@ -101,7 +101,7 @@ export function CodexTeam({
   team,
 }: {
   /**
-   * This session can start a team of its own (docs/TEAMS.md): the one entry is that panel, with Codex's own subagents as
+   * This session can start a team of its own: the one entry is that panel, with Codex's own subagents as
    * a way of working the list; once Codex has delegated, the entry opens this record, which leads to the panel. Absent
    * (a member, a session with a team open, a device without run), only a record that exists is offered.
    */

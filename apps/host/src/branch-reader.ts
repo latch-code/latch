@@ -25,7 +25,7 @@ export interface GitLayout {
 
 /**
  * Locates the Git metadata of a work tree rooted at `cwd`, by reading files only. It never invokes Git, follows refs or
- * reads the index/config/hooks. Undefined for anything but the layouts BRANCHES.md lists.
+ * reads the index/config/hooks. Undefined for any layout but the three `gitdir` names.
  */
 export async function readGitLayout(cwd: string): Promise<GitLayout | undefined> {
   if (constants.O_NOFOLLOW === undefined) return

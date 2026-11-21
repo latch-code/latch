@@ -14,7 +14,7 @@ const COPY = defineCopy(
     stillOver: (value1: string) => `Still over ${value1} after resizing`,
   },
 )
-/** The Host's pixel cap for an image (docs/ATTACHMENTS.md); the capabilities report only bytes. */
+/** The Host's pixel cap for an image; the capabilities report only bytes. */
 export const IMAGE_PIXELS = 40_000_000
 /** A sensible longest side for what a model reads; larger only costs bytes. */
 const LONGEST_SIDE = 4096

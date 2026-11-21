@@ -122,7 +122,7 @@ Host 声明可选能力 `catalog.features.pluginPackages`。资产是 `{ manifes
 - 停用或删除先禁止新租约，旧租约真实释放后才清理 effect 与源代。运行中的 Harness 不能卸载：409 `plugin-in-use`，先停止使用它的会话。
 - 收紧（停用、删除）时审计失败不阻拦，以 `x-latch-audit: failed` 告知。
 - 标准启动入口在取得数据目录锁、确认没有存活的旧 Host 后，清理私有 `generations` 中符合内部命名的遗留目录，再从已应用资产重建；它拒绝链接目录，保留其他条目，不动草稿、批准与回执。运行时应用与通用的存储打开不做这种清理；嵌入式 Host 的调用方自己保证启动互斥。
-- 新版桌面端不再加载某个 `formatVersion` 时，该插件不启用，资产保留（[UPDATES.md](./UPDATES.md#插件兼容)）。
+- 新版桌面端不再加载某个 `formatVersion` 时，该插件不启用，资产保留。
 
 ## 插件对象与生命周期
 
@@ -177,7 +177,7 @@ context.registerSkill({ id: 'review', name: '发布检查', description: '逐项
 - 内置 Harness 每轮开始时固定当时启用的技能，连同输入原子持久化 `skillContext`；这一轮的每个模型请求用同一份。替换不改变已开始的一轮，下一轮重新取启用集合。对话模式同样带技能，不带工具。
 - 每个技能最多 32,000 字符；一轮合计超过 256,000 字符时拒绝开始（409 `skills-too-large`），不静默截断。
 - `catalog.skills` 只返回名称、来源与描述，正文不下发给客户端。
-- 我的 Agent 选定的技能按 `HarnessDriver.skills` 送达：`native` 收技能 ID，`server` 经技能服务收正文，未声明的收不到（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)）。自定义 Driver 也可从 `HarnessHostOptions.registry.acquire()` 的租约读 `skills`。
+- 我的 Agent 选定的技能按 `HarnessDriver.skills` 送达：`native` 收技能 ID，`server` 经技能服务收正文，未声明的收不到。自定义 Driver 也可从 `HarnessHostOptions.registry.acquire()` 的租约读 `skills`。
 
 ## 界面与数据面板
 
@@ -276,7 +276,7 @@ R2 的情形与原因（`riskReason`）：
 - 分级器抛错或返回未知值按 R2。分级器返回等级，或 `{ risk, reason }`（`ToolRisk`）：R2 带 Host 的原因，供权限档位判断。
 - 审批的 `risk` 由 Host 按当前分级重算：不低于运行时记录的值，至少 R1；Driver 自报的 `riskReason` 被丢弃。Host 重启后旧审批失效，不会被重新批准。
 - 允许 R2 要 `approve:elevated`，允许 R1 要 `approve:standard`；拒绝与取消只要 `view`。都不弹本机确认，每次决定有审计。
-- 浏览器工具的分级不看标签现在在哪（它可以在分级与执行之间变）：标签不在这台 Mac 的本机地址上时，除列标签与关标签外 broker 一律拒绝，不论批准与否，所以「本会话始终允许」带不到别的地址。外部 Harness 经工具网关用同一组工具时 R0 与 R1 直接执行并审计，R2 一律拒绝（`elevated-refused`）。见 [PREVIEW-BROWSER.md](PREVIEW-BROWSER.md#agent-的工具)。
+- 浏览器工具的分级不看标签现在在哪（它可以在分级与执行之间变）：标签不在这台 Mac 的本机地址上时，除列标签与关标签外 broker 一律拒绝，不论批准与否，所以「本会话始终允许」带不到别的地址。外部 Harness 经工具网关用同一组工具时 R0 与 R1 直接执行并审计，R2 一律拒绝（`elevated-refused`）。其余规则见 [ARCHITECTURE.md](ARCHITECTURE.md#设备与浏览器)。
 
 #### 权限档位
 
@@ -318,9 +318,9 @@ Latch 内置的会话有五档（`BUILTIN_MODES`，[permission-modes.ts](../pack
 | `tool-call` | 已完整解析的 `{ id, name, arguments }`，`arguments` 必须是对象 |
 | `usage` | `inputTokens` 是全部输入（含缓存），`outputTokens` 是全部输出（含推理）。缓存与推理部分只在服务报告时填写，没报告就省略、不填 0。`cost` 只在服务自己在回复里报告花费时填写，Provider 不估算 |
 | `finish` | 必须是最后一个事件；之后仍有内容或流直接断开都算协议失败 |
-| `route`、`spend` | 只由 Host 的调度层发出，插件 Provider 不发（[MODEL-GATEWAY.md](MODEL-GATEWAY.md#调度)） |
+| `route`、`spend` | 只由 Host 的调度层发出，插件 Provider 不发 |
 
-**随调用带回的数据。** 服务给工具调用附带、之后必须原样带回的数据（签名或加密的推理）放在 `ToolCall.signature`：`value` 至多 1 MiB，`by` 写协议、服务与模型。会话历史保存它，界面、审批、审计与日志看不到；Provider 只把 `by` 是自己的发回。`scope: 'turn'` 的只在产生它的这一轮带回，下一条用户输入开始时 Host 从历史里删掉（[MODEL-CONFIGURATION.md](MODEL-CONFIGURATION.md#latch-内置的思考深度)）。
+**随调用带回的数据。** 服务给工具调用附带、之后必须原样带回的数据（签名或加密的推理）放在 `ToolCall.signature`：`value` 至多 1 MiB，`by` 写协议、服务与模型。会话历史保存它，界面、审批、审计与日志看不到；Provider 只把 `by` 是自己的发回。`scope: 'turn'` 的只在产生它的这一轮带回，下一条用户输入开始时 Host 从历史里删掉。
 
 **出站与密钥。** 内置模型服务的请求经 Host 出站策略，密钥只发往保存时的地址。插件上下文不提供 Host 的出站 `fetch`；第三方插件自己的网络访问不受出站策略约束。
 
@@ -364,7 +364,7 @@ Host 把第三方 Harness 的会话标为完全访问（L3）：Latch 无法核�
 | `tools.fileMentions` | 消息里提到的项目文件能送到它；默认 `false`，这时 Host 拒绝带文件引用（`fileRefs`，最多 32 条）的输入 |
 | `display.label`、`display.mark` | 显示的名字（默认 `name`）；客户端固定图标集的键，不是地址或图片 |
 | `fork` | `native`：能分叉自己会话的记录（[ARCHITECTURE.md](ARCHITECTURE.md#会话分叉)）；默认只用 Host 的文字种子 |
-| `attachments` | `{ images?, text?, textBytes? }`，缺少即不展示（[ATTACHMENTS.md](ATTACHMENTS.md)） |
+| `attachments` | `{ images?, text?, textBytes? }`，缺少即不展示 |
 
 **这些是对人的陈述，被描述的一方说了不算**（`harnessFacts`）：
 
@@ -391,15 +391,15 @@ Driver 上的其他声明：
 | `clock()` | 消息与运行的时间用它记录，不直接读 `Date.now`：客户端按 Host 的 `hostTime` 校准（[STREAMING.md](./STREAMING.md#时间与用量)） |
 | `classifyToolCall` | 只传给内置 Harness |
 | `securityEvent(event)` | 上报 `permission-drift`、`permission-unverified`、`model-route-bypassed`、`approval-auto-rejected`、`tool-judged`，只带哈希与枚举。Host 写审计（`task.permission-drift`、`task.model.bypassed`、`task.approval-auto-rejected`、`task.tool.judged`；`permission-unverified` 只写日志）并刷新会话，不向 Driver 抛错。只有 `tool-judged` 返回 Promise：审计写不进去时它被拒绝，Driver 应取消这一轮 |
-| `modelGateway` | 给声明了 `models.wires` 的 Driver：按进程 `open` 一个凭据，进程结束时 `close`，`active()` 为假后换进程；一轮发出时与结束时各调用一次 `takeTurn()`，把结果记进 `TurnStats.routed`。凭据不进参数、URL、日志与消息。路线、`upstream`、`setThinking` 与损耗见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md) |
-| `turnEnded(turn)` | 每轮结束时调用一次：ACP Driver 只在不走模型路由时调用，带与 `TurnStats.usage` 相同的用量、步数、用时与 Harness 报告的花费差值；内置 Harness 带这一轮的 `providerId` 与各步用量之和，Host 只留插件服务的轮次。Host 只追加到自己登录轮次的记录（[MODEL-GATEWAY.md](MODEL-GATEWAY.md#网关以外的轮次)），不向 Driver 抛错 |
+| `modelGateway` | 给声明了 `models.wires` 的 Driver：按进程 `open` 一个凭据，进程结束时 `close`，`active()` 为假后换进程；一轮发出时与结束时各调用一次 `takeTurn()`，把结果记进 `TurnStats.routed`。凭据不进参数、URL、日志与消息（网关的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#模型网关)） |
+| `turnEnded(turn)` | 每轮结束时调用一次：ACP Driver 只在不走模型路由时调用，带与 `TurnStats.usage` 相同的用量、步数、用时与 Harness 报告的花费差值；内置 Harness 带这一轮的 `providerId` 与各步用量之和，Host 只留插件服务的轮次。Host 只追加到自己登录轮次的记录，不向 Driver 抛错 |
 | `askUser`、`questionSettled` | 给内置以外的 Driver：把 Harness 的提问放进会话行 `tool:<callId>`，回答落进会话后得到 `latch.question-result` 的 JSON；提问结束或 `signal` 中止时拒绝。Driver 把结果写进那一行并落盘后调用 `questionSettled`，回答的设备才拿到回执 |
-| `teamRoster`、`dispatchTeam` | 同样的会话：带队会话的 Agent 在人打开开关时读团队名单、给已有成员派一轮（[TEAMS.md](TEAMS.md#agent-派活)）；名单变了 Host 调 `Bridge.teamChanged`。拒绝用英文原因 |
+| `teamRoster`、`dispatchTeam` | 同样的会话：带队会话的 Agent 在人打开开关时读团队名单、给已有成员派一轮（[规则](ARCHITECTURE.md#团队与交接)）；名单变了 Host 调 `Bridge.teamChanged`。拒绝用英文原因 |
 | `proposeWork` | 建会话时 `CreateTaskInput.workProposals` 为真时可用：Agent 为看板提议待办或自己卡上的改动，Host 只建一条待人接受的提议（[ARCHITECTURE.md](ARCHITECTURE.md#agent-的提议)）；只交 `todo` 或 `card`，不交优先级 |
-| `proposeMemory`、`proposeSchedule` | 会话的执行上下文带 `proposals` 时可用。Host 只建一条待人确认的提议，从不直接保存或运行；`key` 在会话的通道内唯一，重复只建一条；`external` 拿不准时为真；拒绝的原因不复述内容（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#记忆提议)） |
-| `recallMemory` | 只给内置 Harness；只读，只回该归属已确认的记忆（[CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#查记忆)） |
-| `readAttachment`、`attachmentPath`、`saveAttachment` | 取本轮附件的内容；把不原生交的附件存成会话附件目录里的文件并给出路径（[ATTACHMENTS.md](ATTACHMENTS.md#按路径交给-agent)）；保存 Agent 输出的图片。持久化只存引用，不把附件复制到项目目录；Host 仍验证设备、会话、类型与限额 |
-| `trackFiles` | 见 [FILE-OUTPUTS.md](FILE-OUTPUTS.md) |
+| `proposeMemory`、`proposeSchedule` | 会话的执行上下文带 `proposals` 时可用。Host 只建一条待人确认的提议，从不直接保存或运行；`key` 在会话的通道内唯一，重复只建一条；`external` 拿不准时为真；拒绝的原因不复述内容（外部内容的判断见 [ARCHITECTURE.md](ARCHITECTURE.md#我的-agent-与定时)） |
+| `recallMemory` | 只给内置 Harness；只读，只回该归属已确认的记忆 |
+| `readAttachment`、`attachmentPath`、`saveAttachment` | 取本轮附件的内容；把不原生交的附件存成会话附件目录里的文件并给出路径；保存 Agent 输出的图片。持久化只存引用，不把附件复制到项目目录；Host 仍验证设备、会话、类型与限额 |
+| `trackFiles` | Agent 模式派发提示之前固定本轮的会话文件夹，观察运行期间其中的文件变化（只看元数据，可能包含其他程序的写入）；晚到的结算只更新原消息 |
 | `extensionReportProject` | Host 已登记且当前仍为普通会话时返回项目 ID。新会话可等 `CreateTaskInput.extensionReportReady` 结算后核对归属 |
 
 ACP 的 `ToolGatewayCallContext.runId` 由 Driver 在收到工具调用时取自实际运行。Host 用它核对模拟器工具仍属于同一轮。设备身份留在 Host 内部。签名见 [harness.ts](../packages/sdk/src/harness.ts)。
@@ -426,7 +426,7 @@ ACP 的 `ToolGatewayCallContext.runId` 由 Driver 在收到工具调用时取自
 | `liveRuns?` | 同步返回内存中活动的运行，开销只随活动运行数增长；Host 据此发现沉默，不提供就没有沉默通知 |
 | `remove?` | 删除已结束会话的数据；运行中 409 `task-running`。`{ original: true }`：人为这一次删除选了连接入会话的原会话一起删（Driver 声明 `historyDelete`），Host 已先写审计 |
 | `warm?` | 在下一轮之前启动已结束会话的进程，像那一轮的绑定一样，不发提示。只在进程数低于自己的上限时做，从不为它停掉别的会话；会话忙时不做。`false` 表示什么都没启动（含失败） |
-| `setConfig?` | 从下一轮生效。`options.authorize()` 须在异步准备之后、实际外部修改之前同步调用，抛错即停。只在确定没改时用 409 `task-running` 或 `details.configOutcome`（`not-sent`、`refused`）拒绝；其他错误在回执之后都记为结果未知。模型选项的 `serviceChoice`／`ownChoice` 值让会话换路线，服务的路线由 Host 经 `options.route` 给出（[会话中换路线](MODEL-GATEWAY.md#会话中换路线)） |
+| `setConfig?` | 从下一轮生效。`options.authorize()` 须在异步准备之后、实际外部修改之前同步调用，抛错即停。只在确定没改时用 409 `task-running` 或 `details.configOutcome`（`not-sent`、`refused`）拒绝；其他错误在回执之后都记为结果未知。模型选项的 `serviceChoice`／`ownChoice` 值让会话换路线，服务的路线由 Host 经 `options.route` 给出 |
 | `readConfig?` | 从 Agent 本身读一项的当前值，不用 Driver 记下的值，只在会话空闲时读，不改任何设置；读取期间拒绝这个会话的发送、追加与修改，并先结束收到未回答修改的进程。`source: 'launch'` 的选项是 Host 管理的启动设置，不能拿持久化值当读回 |
 | `readCatalogue?` | 不发提示读取开始前的选项，同时只有一次读取。是否自动读取由 `catalogueRead()` 决定，不在需人请求的 Harness 上自动运行 |
 | `classifyConfigChange?` | 修改相对会话预期权限模式是 `neutral`、`stricter` 还是 `wider`；Host 只用它决定是否写放宽模式的审计 |
@@ -470,7 +470,7 @@ ACP 的 `ToolGatewayCallContext.runId` 由 Driver 在收到工具调用时取自
 - `private`：`instructions` 只对当前运行可见，不进入公开消息或可分叉的历史，并对每轮输入校验原归属。
 - `first-turn`：`brief` 随第一轮发给 Harness，并记在那条用户消息的 `agentBrief`。
 
-说明、记忆与数据范围的规则见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md)。
+说明、记忆与数据范围的规则见 [ARCHITECTURE.md](ARCHITECTURE.md#我的-agent-与定时)。
 
 ## 验证与调试
 

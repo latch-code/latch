@@ -223,7 +223,7 @@ Host 从启动起在内存里计数自己发出的字节（[traffic.ts](../apps/
 - **提交与草稿。** 普通发送消费原会话的草稿，不来自输入框的消息（`resent`：重新发送旧消息，或团队面板交给 Codex 子 Agent 的那一条，运行中时排队）不动输入框里的文字、附件与文件引用。回执到达前切换过会话时只结算原请求，不自动选回原会话，不清空当前输入。
 - **刷新后的未知结果。** 只有原目标匹配当前输入才恢复文字，其余只恢复原请求卡片与 `requestId`。
 
-创建 Agent 的未知请求独立于消息草稿，沿用原 `requestId`，跨窗口先取得 Web Lock 再核对同一记录；规则见 [CUSTOM-AGENTS.md](CUSTOM-AGENTS.md#创建的待确认请求)。
+创建 Agent 的未知请求独立于消息草稿，沿用原 `requestId`，跨窗口先取得 Web Lock 再核对同一记录。
 
 ### 再次旁支提问
 
@@ -384,7 +384,7 @@ Face ID 关闭时，前台原阅读意图的正文窗口到期后沿原验证入
 
 经 `api.ts` 发出的请求在 `429 rate-limited` 且 `retryAfter` 不超过 5 秒时自动等待并重试一次：被限速的请求没有执行，重试是安全的。
 
-撤销之后的第一条用户消息，文字最前面带一段给 Agent 的说明（[CHANGES.md](CHANGES.md#撤销与丢弃)），消息文字就是实际发出的内容。
+撤销之后的第一条用户消息，文字最前面带一段给 Agent 的说明，消息文字就是实际发出的内容。
 
 ### 审批决定的请求 ID 与回执
 
@@ -419,7 +419,7 @@ Face ID 关闭时，前台原阅读意图的正文窗口到期后沿原验证入
 - 没有配置回执的 Host：只有真实配置已读回目标值才解除未知，不能把一个仍旧的值当成失败。
 - 项目目录失效的确定拒绝由项目恢复面板承接，保留可编辑的草稿；结果未知时不能转成一次新的分叉。
 
-实现见 [MODEL-CONFIGURATION.md](./MODEL-CONFIGURATION.md) 与 [WORKSPACE-RECOVERY.md](./WORKSPACE-RECOVERY.md)。Harness 的进程级换档在空闲时结束旧进程并恢复同一外部会话，准备与恢复期间拒绝发送、追加与其他配置写入（[HARNESSES.md](./HARNESSES.md)）。
+Harness 的进程级换档在空闲时结束旧进程并恢复同一外部会话，准备与恢复期间拒绝发送、追加与其他配置写入（[HARNESSES.md](./HARNESSES.md)）。
 
 ### 输入身份与分叉上下文
 
@@ -434,7 +434,7 @@ Face ID 关闭时，前台原阅读意图的正文窗口到期后沿原验证入
 人自己的一条消息上的「从这里编辑」把它的文字（去掉分叉的背景与撤销的说明）、文件引用与附件放回新会话的输入框；发送后会话从这一条之前接着走。
 
 - **机制：分叉，不原地回退。** 从这一条之前的那条消息分叉。第一条没有之前：分叉出来的会话从它的分叉点再分叉；其他会话由 Host 开新会话（`POST /tasks` 的 `editOf: { taskId }`，需要能读那个会话）：来源私有时新会话同样私有，来源从外部内容开始（交接、分叉、接入、定时或无人值守的运行）时新会话标为 `outsideStart`，它之后的提议照样标为外部。页面从不自己拼这个会话。原会话一条也不删，仍可打开；新会话带 `forkOf`。Harness 能用自己的记录分叉时用它（`nativeFork`：pi、Codex 与 Claude 的直连线，见 [HARNESSES.md](./HARNESSES.md)），其余（Claude 的适配器路线、其他 ACP、内置）用背景文本。从不把一个记着后来几轮的 Harness 说成已回退。
-- **文件。** 这一条起的轮次改过文件、而且改动记录覆盖每一轮时，先给出「同时把文件退回到这一条之前」，列出要写回与删除的文件和不会改动的文件，确认后才写（[CHANGES.md](./CHANGES.md#退回到某一条之前)）。覆盖不到时这一项不可选，悬停说明原因；没有改过文件时直接回到输入框。退回成功后才放回输入框，失败就留在对话框里说明。
+- **文件。** 这一条起的轮次改过文件、而且改动记录覆盖每一轮时，先给出「同时把文件退回到这一条之前」，列出要写回与删除的文件和不会改动的文件，确认后才写。覆盖不到时这一项不可选，悬停说明原因；没有改过文件时直接回到输入框。退回成功后才放回输入框，失败就留在对话框里说明。
 - **运行中**按钮不可用，悬停写「这一轮结束后才能编辑」；Host 同样拒绝（`fork-running`、`change-running`）。
 - **附件**经 `POST /attachments/:id/reuse { requestId, selection, sessionId? }`：Host 按读附件的同一条规则核对这台设备此刻能读那条消息（`view`，会话在它能看的范围里），按当前所选 Harness 核对能力，把存好的字节复制成这台设备的新草稿（审计 `attachment.add`），不从设备或项目重读。页面再读回草稿的字节作预览。读不到或不再允许时那一行只能移除。
 - **文件引用**照原样放回；这台设备的数据范围不含会话文件夹时不带上，并提示一次。
@@ -545,7 +545,7 @@ Codex 的原生委派在同一会话的详情里沿用 `Message.subagent`。
 
 ## 附件输入
 
-附件字节独立上传，消息流只同步 `Message.attachments` 的元数据；接口、存储与权限见 [ATTACHMENTS.md](ATTACHMENTS.md)。与本文有关的规则：
+附件字节独立上传，消息流只同步 `Message.attachments` 的元数据。与本文有关的规则：
 
 - 发送引用前保存原 `requestId` 与 `attachmentIds`；响应丢失后重试相同请求，绑定后的附件也能认出原创建请求。上传中断或失败不等于消息已发送。
 - 附件队列是客户端的草稿状态：点发送后先等上传，再建立持久的待确认提交。取消等待只终止上传，不调用会话取消。
@@ -670,7 +670,7 @@ Codex 的原生委派在同一会话的详情里沿用 `Message.subagent`。
 - 会话内查找只创建 DOM Range 与 CSS Highlight，折叠行经 `beforematch` 展开，不改写消息节点。
 - 查找打开时按 `detail.sync.revision` 重扫流式追加，没有同步版本时才退回 `detail.cursor`：正文追加可能让 `cursor` 与已提交的 `messages` 引用都不变，不能据此跳过新文字。重新计数按消息与匹配身份保留当前选择。
 - 手动「标为未读」是每台设备的本地阅读偏好，存在已有的阅读标记里；重新打开或收到该会话的更新时清除，删除会话后清理。
-- 文件标签是客户端的阅读状态，不改 Host 的会话状态；文件列按会话与项目分开保留引用，切换上下文取消旧的读取，迟到的结果不更新新上下文。契约见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)；运行期间的文件变化见 [FILE-OUTPUTS.md](FILE-OUTPUTS.md)。
+- 文件标签是客户端的阅读状态，不改 Host 的会话状态；文件列按会话与项目分开保留引用，切换上下文取消旧的读取，迟到的结果不更新新上下文。
 
 ## 工作过程的行
 
@@ -723,7 +723,7 @@ Codex 的原生委派在同一会话的详情里沿用 `Message.subagent`。
 
 ## Markdown、代码与安全边界
 
-源码：[MessageContent.tsx](../apps/web/src/MessageContent.tsx)、[DiffView.tsx](../apps/web/src/components/DiffView.tsx)、[highlightScheduler.ts](../apps/web/src/preview/highlightScheduler.ts)。显示规则见 [DESIGN.md](./DESIGN.md#流式与阅读)，文件预览见 [DOCUMENT-PREVIEWS.md](DOCUMENT-PREVIEWS.md)。
+源码：[MessageContent.tsx](../apps/web/src/MessageContent.tsx)、[DiffView.tsx](../apps/web/src/components/DiffView.tsx)、[highlightScheduler.ts](../apps/web/src/preview/highlightScheduler.ts)。显示规则见 [DESIGN.md](./DESIGN.md#流式与阅读)。
 
 **安全边界。**
 

@@ -1,5 +1,5 @@
 'use strict'
-// The desktop app's own updates (docs/UPDATES.md). Main checks one fixed HTTPS feed compiled into a packaged build,
+// The desktop app's own updates. Main checks one fixed HTTPS feed compiled into a packaged build,
 // verifies its ed25519 signature with a fixed public key, downloads the asset for this platform and architecture to its
 // own cache and checks size and SHA-512 before anything can install it. Installing goes through the same gate for the
 // explicit button, a normal quit and macOS quitting the app: an update that changes the Host waits until no session on
@@ -796,7 +796,7 @@ const INSTALLER_TIMEOUT_MS = 2 * 60_000
  * (`{ url }`), so nothing is downloaded twice and nothing unverified reaches it. An update that changes the Host first
  * stops the Host this app started (as an update); a Host started elsewhere refuses the install. Squirrel saying there is
  * no update, an error or no answer within two minutes all fail the install, and the Host is started again. Not
- * exercised before a signed build exists (docs/UPDATES.md).
+ * exercised before a signed build exists.
  */
 function createElectronInstaller({ autoUpdater, stopHost, restartHost, serve, setTimer = setTimeout, clearTimer = clearTimeout }) {
   return {

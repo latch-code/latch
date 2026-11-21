@@ -1,6 +1,6 @@
 // What the Host and the 设备 panel share about this Mac's iOS simulators beyond the list: the fixed sets a request may
 // name and the bounds the Host keeps. The Host checks every request body with zod against these; the panel reads the
-// answers defensively. See docs/DEVICE-PREVIEW.md.
+// answers defensively.
 
 import type { ApprovalOption, ToolDetail } from './sessions.ts'
 
@@ -74,7 +74,7 @@ export interface SimulatorLogEvents {
   closed: { reason: 'device' | 'host' | 'exited' }
 }
 
-// ── The live picture and input (docs/DEVICE-PREVIEW.md) ──
+// ── The live picture and input ──
 
 /**
  * `GET /simulators/:udid/stream?codec=&fps=&size=`: application/octet-stream of messages, each a 13-byte header (type,

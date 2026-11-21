@@ -1,6 +1,6 @@
 // The 设备 panel's live picture and input through the Host: the stream's framing and back-pressure against a stand-in
 // helper, the new routes' guards and records, and the agent input tools' gates. Stand-ins only (the test kit's helper
-// and idb_companion); the real check on a `latch-` simulator is manual, see docs/DEVICE-PREVIEW.md.
+// and idb_companion); the real check on a `latch-` simulator is manual.
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { get, ServerResponse } from 'node:http'

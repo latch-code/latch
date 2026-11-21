@@ -631,7 +631,7 @@ extension ScreensStage {
             return json(#"{"scope":"turn","file":{"root":"latch","path":"\#(fileName)","status":"M"},"hunks":[{"oldStart":1,"oldLines":24,"newStart":1,"newLines":26,"lines":["# + lines.joined(separator: ",") + "]}]}")
         }
         if path.contains("/changes") {
-            return json(#"{"scope":"turn","turnId":"turn_1","totals":{"files":3,"add":12,"del":4},"files":[{"root":"latch","path":"\#(fileName)","status":"M","add":3,"del":1},{"root":"latch","path":"native/ios/App/Agents/AgentsView.swift","status":"M","add":8,"del":3},{"root":"latch","path":"docs/CUSTOM-AGENTS.md","status":"M","add":1,"del":0,"byCommand":true}]}"#)
+            return json(#"{"scope":"turn","turnId":"turn_1","totals":{"files":3,"add":12,"del":4},"files":[{"root":"latch","path":"\#(fileName)","status":"M","add":3,"del":1},{"root":"latch","path":"native/ios/App/Agents/AgentsView.swift","status":"M","add":8,"del":3},{"root":"latch","path":"docs/ARCHITECTURE.md","status":"M","add":1,"del":0,"byCommand":true}]}"#)
         }
         if path.contains("/review-notes") {
             return json(##"{"revision":3,"notes":[{"id":"n1","root":"latch","path":"\##(fileName)","range":{"start":15,"end":15},"side":"new","anchor":{"scope":"turn","linesHash":"h","lines":["    }"]},"text":"这里漏了 else：模型服务不可用时应该报错，而不是静默不发。","status":"pending","createdBy":{"deviceId":"d","name":"iPhone"},"createdAt":"{{-60}}","updatedAt":"{{-60}}"},{"id":"n2","root":"latch","path":"\##(fileName)","range":{"start":3,"end":3},"side":"new","anchor":{"scope":"turn","linesHash":"h","lines":["    let removed = something that is not here anymore"]},"text":"这一行后来被删了吗？","status":"sent","messageId":"m9","createdBy":{"deviceId":"d","name":"iPhone"},"createdAt":"{{-600}}","updatedAt":"{{-500}}"},{"id":"n3","root":"latch","path":"docs/OTHER.md","range":{"start":1,"end":1},"side":"new","anchor":{"scope":"session","linesHash":"h","lines":["# 其他"]},"text":"这份文档也要跟着改。","status":"pending","createdBy":{"deviceId":"d","name":"iPhone"},"createdAt":"{{-60}}","updatedAt":"{{-60}}"}]}"##)
@@ -885,7 +885,7 @@ extension ScreensStage {
             if let file {
                 return json(#"{"sha":"\#(sha)","file":{"path":"\#(file)","status":"M","add":2,"del":1},"hunks":[{"lines":[{"kind":"remove","oldLine":13,"text":"if wide { fileList }"},{"kind":"add","newLine":13,"text":"if let width = fileColumnWidth { fileList.frame(width: width) }"}]}]}"#)
             }
-            return json(#"{"sha":"\#(sha)","files":[{"path":"\#(workLongFile)","status":"M","add":12,"del":4},{"path":"docs/GIT-DELIVERY.md","status":"M","add":2,"del":0}],"totals":{"files":2,"add":14,"del":4}}"#)
+            return json(#"{"sha":"\#(sha)","files":[{"path":"\#(workLongFile)","status":"M","add":12,"del":4},{"path":"docs/HARNESSES.md","status":"M","add":2,"del":0}],"totals":{"files":2,"add":14,"del":4}}"#)
         case .pullRequest: return workPR()
         case .checkLog:
             return .object(["name": .string("native-simulator"), "truncated": .bool(true), "text": .string("""

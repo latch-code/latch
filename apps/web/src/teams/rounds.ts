@@ -15,7 +15,7 @@ import { TEAM_COPY } from './copy.ts'
 import { memberAtWork, teamOpen } from './model.ts'
 
 /**
- * Later rounds of a team (docs/TEAMS.md): who in the lead's input can be sent more work, the members a draft names, a
+ * Later rounds of a team: who in the lead's input can be sent more work, the members a draft names, a
  * round's reply in a member's own session, and the requests a round and the switch make.
  */
 

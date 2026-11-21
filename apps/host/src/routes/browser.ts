@@ -1,7 +1,7 @@
 // The browser provider's routes, for the desktop app's main process alone: host.sock, a device enrolled there, and a
 // registration signed with that device's key on a nonce of its own, as adding folders is (main's proxy answers the
 // page's own requests to these paths with 403 shell-managed). And one read for any device that may read the session:
-// the tab list the phone shows. See docs/PREVIEW-BROWSER.md.
+// the tab list the phone shows.
 import type { IncomingMessage } from 'node:http'
 import { z } from 'zod'
 import type { TaskDetail } from '@latch/protocol'

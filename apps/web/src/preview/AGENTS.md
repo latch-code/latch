@@ -1,6 +1,6 @@
 # Document previews
 
-Read [DOCUMENT-PREVIEWS.md](../../../../docs/DOCUMENT-PREVIEWS.md) before changing parser, frame or worker behavior.
+Edit and preview rules the Host keeps are in ARCHITECTURE「改动与文件编辑」.
 
 The UI in this directory is browser code. `office-frame.ts` is a separate IIFE entry point that runs only in an opaque `sandbox="allow-scripts"` frame. `zip.ts` and `xlsx.ts` parse Office data only there; do not import them into the main app. `csv.worker.ts` parses CSV in a dedicated worker. `PdfPreview.tsx` uses the PDF core API and its dedicated worker, never the viewer or annotation-layer DOM. `highlight.worker.ts` returns bounded text/role tokens. `diagram-frame.ts` is a separate Mermaid IIFE with the same opaque frame boundary.
 

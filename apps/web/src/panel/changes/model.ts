@@ -1,5 +1,5 @@
 // What the 改动 tab draws from the Host's answers: which scope is shown, the file tree, what stands in the scope row, the
-// lines above the list and the empty states. Pure, so every state of the table has a test. See docs/CHANGES.md.
+// lines above the list and the empty states. Pure, so every state of the table has a test.
 import type { ChangedFile, ChangeHunk, ChangeList, ChangeScope, GitOperation, Message, NotRestoredFile, TurnChanges } from '@latch/protocol'
 import { turnUndo, type TurnUndo, type UndoRights } from '../../conversation/turnChanges.ts'
 import type { DiffHunk, DiffGap, DiffLine, LineDiff } from '../../diff.ts'

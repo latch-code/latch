@@ -1,7 +1,7 @@
 import type { ModelRef } from './settings.ts'
 
 /**
- * A team (docs/TEAMS.md): one session, the lead, with several others that each do one piece of work at the same time,
+ * A team: one session, the lead, with several others that each do one piece of work at the same time,
  * each on the Harness chosen for it, and whose results the Host hands back to the lead once every one has ended. The
  * members are ordinary sessions and ordinary 待办; the team is what ties them to the lead and brings the results back.
  *
