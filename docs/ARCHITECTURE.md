@@ -844,6 +844,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | --- | --- | --- |
 | `GET /health` | 无 | `{ ok, hostId }`；hostId 本来就公开 |
 | `GET /host-info`、`POST /host/state` | 无，仅 `host.sock` | Host 实例信息；运行状态报告（见「Host 的生命周期」） |
+| `GET /native/relay-files` | 本机 `admin` | 列出本 Mac 已发现、尚未接入的中继配置。页面只收到名称、公开连接信息与是否包含注册令牌。文件位置和导入流程见 [RELAY](RELAY.md#在-mac-上添加)。 |
 | `POST /host-proof` | 无，仅 HTTPS 入口，按对端地址限流 | 见「桌面端与其他电脑」 |
 | `GET /enrollment-info`、`POST /enrollment-invitation`、`POST /enrollments`、`GET`/`DELETE /enrollments/:id`、`POST /enrollments/:id/prepare`、`POST /enrollments/:id/complete` | 无（同一入口与来源；完成需设备签名） | 设备登记。新设备的名称与一台未移除的设备相同时，Host 加「 (2)」等序号再交给系统确认表单 |
 | `POST /login`、`POST /pair` | — | 410 `login-removed` |

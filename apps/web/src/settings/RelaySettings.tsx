@@ -26,9 +26,10 @@ import {
   Tooltip,
   ValuePicker,
   type IconComponent,
+  type MenuTriggerProps,
   type StatusTone,
 } from '@latch/ui'
-import { api, inlineError, isUncertain } from '../core/api.ts'
+import { api, ApiError, inlineError, isUncertain } from '../core/api.ts'
 import { useInlineConfirmation, withConfirmation } from '../core/confirmations.ts'
 import { CONFIRMATION_COPY } from '../core/securityCopy.ts'
 import { ConfirmationContent } from '../components/InlineConfirm.tsx'
@@ -39,6 +40,7 @@ import { canOpenSystemSettings, LocalNetworkNote, LocalNetworkOpen } from './Loc
 import { RELAYS_DIR, relaySetupCommands, validRelayName } from './relayCommands.ts'
 import { localLatchCommand } from '../core/commands.ts'
 import { currentLocale, defineCopy, formatNumber, useLocale } from '../core/i18n.ts'
+import { readHiddenRelayIds, setRelayHidden } from './relayVisibility.ts'
 
 const COPY = defineCopy(
   {
@@ -78,6 +80,12 @@ const COPY = defineCopy(
     enable: '启用',
     disable: '停用',
     remove: '移除',
+    removeRelay: '从这台 Mac 移除',
+    relayFileReadFailed: '无法读取这台 Mac 上的转发服务文件。',
+    readyToAdd: '未添加',
+    hideRelay: '从列表隐藏',
+    fileSaveFailed: '已连接，配置文件未能保存到 ~/.latch/relays。',
+    removedAfterAdd: '本次添加已完成。该转发服务已从这台 Mac 移除。',
     unknown: '添加结果待确认',
     giveUp: '放弃',
     retry: '重试',
@@ -175,6 +183,12 @@ const COPY = defineCopy(
     enable: 'Turn on',
     disable: 'Turn off',
     remove: 'Remove',
+    removeRelay: 'Remove from this Mac',
+    relayFileReadFailed: 'Couldn’t read relay files on this Mac.',
+    readyToAdd: 'Not added',
+    hideRelay: 'Hide from list',
+    fileSaveFailed: 'Connected. The relay file couldn’t be saved to ~/.latch/relays.',
+    removedAfterAdd: 'The add request completed. This relay has been removed from this Mac.',
     unknown: 'Relay setup hasn’t been confirmed',
     giveUp: 'Abandon',
     retry: 'Retry',
@@ -276,6 +290,41 @@ const hostOf = (url: string) => {
 const at = (time: number) => new Date(time).toLocaleString(currentLocale())
 
 type Relay = NativeLinkInfo['relays'][number]
+type AddedRelayInfo = NativeLinkInfo & { addedRelayId?: string; fileSaveFailed?: true }
+type RelayCandidate = {
+  requestId: string
+  profile?: NativeRelayProfile
+  file?: NativeRelayFile
+  kind: 'self' | 'edge'
+  urls: string[]
+  hash: string
+  fullKey?: string
+  token: boolean
+}
+type RelayProgress = {
+  requestId: string
+  test: NativeRelayTest | null
+  busy: boolean
+  uncertain?: boolean
+  completed?: boolean
+  relayId?: string
+  fileSaveFailed?: boolean
+  message?: string
+}
+
+function fileCandidate(file: NativeRelayFile): RelayCandidate {
+  return {
+    requestId: crypto.randomUUID(),
+    file,
+    kind: file.kind,
+    urls: file.urls,
+    hash: file.keyHash,
+    token: file.hasRegistrationKey,
+  }
+}
+
+const relayMenuTrigger = (props: MenuTriggerProps) => <IconButton {...props} size="sm" icon={MoreGlyph} label={COPY.more} />
+
 /** A relay's state: a few words in the tone they mean, the detail in the hover. */
 function relayState(relay: Relay): { tone: StatusTone; word: string; detail?: string } {
   switch (relay.status) {
@@ -326,50 +375,132 @@ export function RelaySteps({ test, busy = false }: { test: NativeRelayTest | nul
   )
 }
 
-const FAILURE = {
+const FAILURE: Partial<Record<string, NativeRelayTest['failure']>> = {
   'native-relay-key-mismatch': 'mismatch',
   'native-relay-registration-refused': 'refused',
   'native-relay-unconfirmed': 'unreachable',
-} as const
+}
 
 /**
  * 设置 › 连接转发: whether phones reach this Mac directly, then each relay of the person's own (and the official one, once the
  * compiled list has nodes) with its state and a ⋯ menu, and 添加转发服务. Only this Mac's local administrator changes anything;
  * other admin devices read the list.
  */
-export function RelaySettings({ access }: { access: DeviceAccess }) {
+export function RelaySettings({ access, hostId }: { access: DeviceAccess; hostId: string }) {
   useLocale()
   const manage = access.admin && access.local
   const [info, setInfo] = useState<NativeLinkInfo | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [adding, setAdding] = useState(false)
+  const [files, setFiles] = useState<NativeRelayFile[]>([])
+  const [filesError, setFilesError] = useState(false)
+  const [candidate, setCandidate] = useState<RelayCandidate | null>(null)
+  const [progress, setProgress] = useState<RelayProgress | null>(null)
+  const [hidden, setHidden] = useState(() => readHiddenRelayIds(hostId))
   const [tests, setTests] = useState<Record<string, { test: NativeRelayTest | null; busy: boolean }>>({})
-  const reload = async (signal?: AbortSignal) => {
-    try {
-      const value = await api<NativeLinkInfo>('native/info', signal ? { signal } : {})
-      if (!signal?.aborted) setInfo(value)
-    } catch {
-      // The main settings connection owns connection feedback.
-    }
-  }
+  const infoRead = useRef(0)
+  const refresh = useRef<{ info: () => void; files: (force?: boolean) => void } | null>(null)
+  const writing = useRef(false)
   useEffect(() => {
     const controller = new AbortController()
-    void reload(controller.signal)
-    const timer = window.setInterval(() => void reload(controller.signal), 5000)
+    const { signal } = controller
+    let infoLoading = 0
+    const loadInfo = async () => {
+      const read = ++infoRead.current
+      infoLoading++
+      try {
+        const value = await api<NativeLinkInfo>('native/info', { signal })
+        if (!signal.aborted && read === infoRead.current) setInfo(value)
+      } catch {
+        // The main settings connection owns connection feedback.
+      } finally {
+        infoLoading--
+      }
+    }
+    let filesRead = 0
+    let filesLoading = 0
+    const loadFiles = async () => {
+      if (!manage) return
+      const read = ++filesRead
+      filesLoading++
+      try {
+        const value = await api<{ files: NativeRelayFile[] }>('native/relay-files', { signal })
+        if (!signal.aborted && read === filesRead) {
+          setFiles(value.files)
+          setFilesError(false)
+        }
+      } catch (cause) {
+        if (!signal.aborted && read === filesRead) {
+          if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) setFiles([])
+          setFilesError(true)
+        }
+      } finally {
+        filesLoading--
+      }
+    }
+    const updateVisibleFiles = () => {
+      if (!document.hidden && !filesLoading) void loadFiles()
+    }
+    const updateVisibleInfo = () => {
+      if (!document.hidden && !infoLoading) void loadInfo()
+    }
+    const updateVisible = () => {
+      updateVisibleInfo()
+      updateVisibleFiles()
+    }
+    refresh.current = {
+      info: () => void loadInfo(),
+      files: (force = true) => {
+        if (force || !filesLoading) void loadFiles()
+      },
+    }
+    void loadInfo()
+    void loadFiles()
+    const timer = window.setInterval(updateVisibleInfo, 5000)
+    const filesTimer = manage ? window.setInterval(updateVisibleFiles, 30_000) : undefined
+    window.addEventListener('focus', updateVisible)
+    document.addEventListener('visibilitychange', updateVisible)
     return () => {
       window.clearInterval(timer)
+      window.clearInterval(filesTimer)
+      window.removeEventListener('focus', updateVisible)
+      document.removeEventListener('visibilitychange', updateVisible)
       controller.abort()
+      refresh.current = null
     }
-  }, [])
-  const run = async (operation: () => Promise<NativeLinkInfo>) => {
+  }, [manage])
+  const watchingFiles = manage && adding && !candidate && !progress
+  useEffect(() => {
+    if (!watchingFiles) return
+    const look = () => {
+      if (!document.hidden) refresh.current?.files(false)
+    }
+    look()
+    const timer = window.setInterval(look, 3000)
+    return () => window.clearInterval(timer)
+  }, [watchingFiles])
+  const adoptInfo = (value: NativeLinkInfo) => {
+    infoRead.current++
+    setInfo(value)
+    refresh.current?.files()
+  }
+  const hideRelay = (relayId: string, hide: boolean) => setHidden(setRelayHidden(hostId, relayId, hide))
+  const run = async (operation: () => Promise<NativeLinkInfo>, after?: () => void) => {
+    if (writing.current || progress?.busy) return
+    writing.current = true
     setBusy(true)
     setError('')
     try {
-      setInfo(await operation())
+      const value = await operation()
+      after?.()
+      adoptInfo(value)
     } catch (cause) {
       setError(inlineError(cause))
+      refresh.current?.info()
+      refresh.current?.files()
     } finally {
+      writing.current = false
       setBusy(false)
     }
   }
@@ -388,6 +519,13 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
   const direct = info.listening
   const refusedAccess = info.localNetwork === 'denied' || info.localNetwork === 'unreadable'
   const openable = canOpenSystemSettings(access.local)
+  const availableFiles = manage
+    ? files.filter(
+        found => (found.kind !== 'edge' || info.edgeRelayAvailable) && !info.relays.some(relay => relay.relayId === found.relayId),
+      )
+    : []
+  const configuring = busy || progress?.busy === true
+  const canReviewFile = !filesError && !configuring && !progress?.uncertain && !info.pendingRelay
   return (
     <>
       <SettingsGroup>
@@ -422,7 +560,7 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
               <Switch
                 label={COPY.official}
                 checked={official.enabled}
-                disabled={!manage || busy}
+                disabled={!manage || configuring}
                 onCheckedChange={enabled => void run(() => api('native/official-relay', { method: 'PUT', body: { enabled } }))}
               />
             }
@@ -435,7 +573,7 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
               <SegmentedControl
                 label={COPY.preferred}
                 value={official.ownFirst ? 'own' : 'official'}
-                disabled={!manage || busy}
+                disabled={!manage || configuring}
                 options={[
                   { value: 'official', label: COPY.officialKind },
                   { value: 'own', label: COPY.ownKind },
@@ -451,6 +589,7 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
           const state = relayState(relay)
           const kind = KIND[relay.kind ?? 'self']
           const shown = tests[relay.relayId]
+          const relayBusy = configuring || (shown?.busy ?? false)
           return (
             <div key={relay.relayId} className="relay-row" data-testid="relay-own">
               <SettingsRow
@@ -474,13 +613,20 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
                       <ActionMenu
                         label={COPY.relayActions(kind.label)}
                         placement="bottom-end"
-                        trigger={props => <IconButton {...props} size="sm" icon={MoreGlyph} label={COPY.more} />}
+                        trigger={relayMenuTrigger}
                         sections={[
                           {
                             id: 'relay',
                             items: [
                               ...(relay.status !== 'invalid' && (relay.kind !== 'edge' || info.edgeRelayAvailable)
-                                ? [{ id: 'test', label: COPY.test, onSelect: () => void test(relay.relayId) }]
+                                ? [
+                                    {
+                                      id: 'test',
+                                      label: COPY.test,
+                                      disabled: relayBusy,
+                                      onSelect: () => void test(relay.relayId),
+                                    },
+                                  ]
                                 : []),
                               ...(relay.status !== 'invalid'
                               && (relay.kind !== 'edge' || info.edgeRelayAvailable || relay.status !== 'disabled')
@@ -488,6 +634,7 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
                                     {
                                       id: 'toggle',
                                       label: relay.status === 'disabled' ? COPY.enable : COPY.disable,
+                                      disabled: relayBusy,
                                       onSelect: () =>
                                         void run(() =>
                                           api(`native/relays/${relay.relayId}`, {
@@ -500,9 +647,21 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
                                 : []),
                               {
                                 id: 'remove',
-                                label: COPY.remove,
+                                label: COPY.removeRelay,
                                 danger: true,
-                                onSelect: () => void run(() => api(`native/relays/${relay.relayId}`, { method: 'DELETE' })),
+                                disabled: relayBusy,
+                                onSelect: () =>
+                                  void run(
+                                    () => api(`native/relays/${relay.relayId}`, { method: 'DELETE' }),
+                                    () => {
+                                      hideRelay(relay.relayId, true)
+                                      setTests(current => {
+                                        const next = { ...current }
+                                        delete next[relay.relayId]
+                                        return next
+                                      })
+                                    },
+                                  ),
                               },
                             ],
                           },
@@ -520,6 +679,51 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
             </div>
           )
         })}
+        {availableFiles
+          .filter(found => !hidden.has(found.relayId))
+          .map(found => (
+            <div key={found.relayId} className="relay-row" data-testid="relay-local-file">
+              <SettingsRow
+                className="relay-local-row"
+                leading={<IconTile icon={KIND[found.kind].icon} />}
+                title={found.name}
+                record
+                description={
+                  <Tooltip content={COPY.relayAddresses(found.urls[0] ?? '', found.urls.length, found.keyHash)}>
+                    <span>
+                      {KIND[found.kind].label} · {hostOf(found.urls[0] ?? '')}
+                    </span>
+                  </Tooltip>
+                }
+                trailing={
+                  <span className="relay-row-end">
+                    <StatusWord tone="neutral">{COPY.readyToAdd}</StatusWord>
+                    <Button
+                      size="sm"
+                      disabled={!canReviewFile}
+                      onClick={() => {
+                        setProgress(null)
+                        setCandidate(fileCandidate(found))
+                        setAdding(true)
+                      }}>
+                      {COPY.review}
+                    </Button>
+                    <ActionMenu
+                      label={COPY.relayActions(found.name)}
+                      placement="bottom-end"
+                      trigger={relayMenuTrigger}
+                      sections={[
+                        {
+                          id: 'visibility',
+                          items: [{ id: 'hide', label: COPY.hideRelay, onSelect: () => hideRelay(found.relayId, true) }],
+                        },
+                      ]}
+                    />
+                  </span>
+                }
+              />
+            </div>
+          ))}
         {info.pendingRelay && manage && (
           <SettingsRow
             title={COPY.unknown}
@@ -527,8 +731,19 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
             trailing={
               <span className="relay-row-end">
                 <Button
-                  disabled={busy}
-                  onClick={() => void run(() => api(`native/relay-requests/${info.pendingRelay!.requestId}`, { method: 'DELETE' }))}>
+                  disabled={configuring}
+                  onClick={() => {
+                    const { requestId } = info.pendingRelay!
+                    void run(
+                      () => api(`native/relay-requests/${requestId}`, { method: 'DELETE' }),
+                      () => {
+                        if (progress?.requestId === requestId) {
+                          setCandidate(null)
+                          setProgress(null)
+                        }
+                      },
+                    )
+                  }}>
                   {COPY.giveUp}
                 </Button>
                 {info.pendingRelay.canRetry && (
@@ -545,7 +760,7 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
             title={COPY.savedAddresses}
             trailing={
               manage ? (
-                <Button disabled={busy} onClick={() => void run(() => api('native/directory', { method: 'DELETE' }))}>
+                <Button disabled={configuring} onClick={() => void run(() => api('native/directory', { method: 'DELETE' }))}>
                   {COPY.remove}
                 </Button>
               ) : undefined
@@ -560,6 +775,14 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
           </Button>
         </div>
       )}
+      {manage && filesError && (
+        <InlineNotice tone="warn" secure>
+          {COPY.relayFileReadFailed}{' '}
+          <Button size="xs" onClick={() => refresh.current?.files()}>
+            {COPY.retry}
+          </Button>
+        </InlineNotice>
+      )}
       {error && (
         <InlineNotice tone="error" secure>
           {error}
@@ -571,12 +794,20 @@ export function RelaySettings({ access }: { access: DeviceAccess }) {
           sourceCheckout={info.sourceCheckout === true}
           edgeAvailable={info.edgeRelayAvailable === true}
           pending={info.pendingRelay?.canRetry ? info.pendingRelay.requestId : undefined}
-          bookIssuedAt={id => info.relays.find(relay => relay.relayId === id)?.bookIssuedAt}
+          files={availableFiles}
+          filesError={filesError}
+          candidate={candidate}
+          onCandidate={setCandidate}
+          progress={progress}
+          onProgress={setProgress}
+          onCompleted={(relayId, configured) => hideRelay(relayId, !configured)}
+          configuredRelay={id => info.relays.find(relay => relay.relayId === id)}
           onClose={() => {
             setAdding(false)
-            void reload()
+            refresh.current?.info()
+            refresh.current?.files()
           }}
-          onInfo={setInfo}
+          onInfo={adoptInfo}
         />
       )}
     </>
@@ -618,7 +849,14 @@ function AddRelay({
   sourceCheckout,
   edgeAvailable,
   pending,
-  bookIssuedAt,
+  files,
+  filesError,
+  candidate,
+  onCandidate: setCandidate,
+  progress,
+  onProgress: setProgress,
+  onCompleted,
+  configuredRelay,
   onClose,
   onInfo,
 }: {
@@ -628,11 +866,18 @@ function AddRelay({
   edgeAvailable: boolean
   /** A request whose result is unknown: 重试 continues it with the same request ID and no file. */
   pending: string | undefined
-  bookIssuedAt: (relayId: string) => number | undefined
+  files: NativeRelayFile[]
+  filesError: boolean
+  candidate: RelayCandidate | null
+  onCandidate: (candidate: RelayCandidate | null) => void
+  progress: RelayProgress | null
+  onProgress: (progress: RelayProgress | null) => void
+  onCompleted: (relayId: string, configured: boolean) => void
+  configuredRelay: (relayId: string) => Relay | undefined
   onClose: () => void
   onInfo: (info: NativeLinkInfo) => void
 }) {
-  const file = useRef<HTMLInputElement>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
   const [way, setWay] = useState<Way | null>(null)
   const [name, setName] = useState('relay')
   const [location, setLocation] = useState<RelayLocation | 'auto'>('auto')
@@ -641,32 +886,15 @@ function AddRelay({
   const [port, setPort] = useState('8443')
   const [cert, setCert] = useState('')
   const [key, setKey] = useState('')
-  const [files, setFiles] = useState<NativeRelayFile[]>([])
-  // Either a file the page read (its profile is sent) or one the Host found (only its name is sent, the Host reads it).
-  const [candidate, setCandidate] = useState<{
-    requestId: string
-    profile?: NativeRelayProfile
-    file?: string
-    kind: 'self' | 'edge'
-    urls: string[]
-    hash: string
-    fullKey?: string
-    token: boolean
-  } | null>(null)
   const [rejected, setRejected] = useState<'file' | 'edge' | null>(null)
-  const [progress, setProgress] = useState<{
-    requestId: string
-    test: NativeRelayTest | null
-    busy: boolean
-    uncertain?: boolean
-    relayId?: string
-    message?: string
-  } | null>(null)
+  const reading = useRef(0)
+  const connecting = useRef(false)
   // The dialog replaces its children at the phone breakpoint, but the confirmation must stay with the request.
   const confirmationId = useId()
   const confirmation = useInlineConfirmation(confirmationId, open && progress?.busy === true, 2)
   const awaitingConfirmation = confirmation?.view.phase === 'waiting'
   const reset = () => {
+    reading.current++
     confirmation?.actions.dismiss()
     setWay(null)
     setCandidate(null)
@@ -674,6 +902,7 @@ function AddRelay({
     setProgress(null)
   }
   const read = async (chosen: File | undefined) => {
+    const attempt = ++reading.current
     setRejected(null)
     setCandidate(null)
     setProgress(null)
@@ -681,42 +910,73 @@ function AddRelay({
     try {
       if (chosen.size > RELAY_FILE_BYTES) throw new Error('too large')
       const profile = readRelayProfile(await chosen.text())
+      if (attempt !== reading.current) return
       if ('kind' in profile && !edgeAvailable) {
         setRejected('edge')
         return
       }
+      const hash = await relayKeyHash(profile)
+      if (attempt !== reading.current) return
       setCandidate({
         requestId: crypto.randomUUID(),
         profile,
         kind: 'kind' in profile ? 'edge' : 'self',
         urls: [profile.url, ...('extraUrls' in profile ? (profile.extraUrls ?? []) : [])],
-        hash: await relayKeyHash(profile),
+        hash,
         fullKey: 'relayKey' in profile ? profile.relayKey : profile.spkiHash,
         token: profile.registrationKey != null,
       })
     } catch {
-      setRejected('file')
+      if (attempt === reading.current) setRejected('file')
     }
   }
-  const connect = async ({ requestId, profile, file }: { requestId: string; profile?: NativeRelayProfile; file?: string }) => {
+  const connect = async ({ requestId, profile, file }: Pick<RelayCandidate, 'requestId' | 'profile' | 'file'>) => {
+    if (connecting.current) return
+    connecting.current = true
     confirmation?.actions.dismiss()
-    const body = { requestId, ...(file ? { file } : profile ? { profile } : {}) }
+    const body = file
+      ? {
+          requestId,
+          file: file.name,
+          fileRelayId: file.relayId,
+          fileIdentity: file.fileIdentity,
+          ...(file.source === 'legacy' ? { fileSource: 'legacy' } : {}),
+        }
+      : profile
+        ? { requestId, profile, saveFile: true }
+        : { requestId }
+    const resume = (file || profile) && (pending === requestId || (progress?.requestId === requestId && progress.uncertain))
+    const submit = (request: typeof body) =>
+      withConfirmation(receipt =>
+        api<AddedRelayInfo>('native/relays', { method: 'POST', body: request, ...(receipt ? { confirmation: receipt } : {}) }),
+      )
     setProgress({ requestId, test: null, busy: true })
     try {
-      const info = await withConfirmation(confirmation =>
-        api<NativeLinkInfo>('native/relays', { method: 'POST', body, ...(confirmation ? { confirmation } : {}) }),
-      )
+      // A lost response may have committed even if the selected file no longer exists.
+      const info = resume
+        ? await submit({ requestId }).catch((cause: unknown) => {
+            if (cause instanceof ApiError && cause.code === 'native-relay-request-missing') return submit(body)
+            throw cause
+          })
+        : await submit(body)
       onInfo(info)
-      const relayId = profile?.relayId ?? info.relays.at(-1)?.relayId
+      const relayId = info.addedRelayId ?? profile?.relayId ?? file?.relayId
+      if (relayId)
+        onCompleted(
+          relayId,
+          info.relays.some(relay => relay.relayId === relayId),
+        )
       setProgress({
         requestId,
         test: { reached: 'registered' },
         busy: false,
+        completed: true,
+        ...(info.fileSaveFailed ? { fileSaveFailed: true } : {}),
         ...(relayId ? { relayId } : {}),
       })
     } catch (cause) {
-      const code = (cause as { code?: string }).code as keyof typeof FAILURE | undefined
-      const failure = code && code in FAILURE ? FAILURE[code] : undefined
+      const code = cause instanceof ApiError ? cause.code : undefined
+      const failure = code && Object.hasOwn(FAILURE, code) ? FAILURE[code] : undefined
       const uncertain = failure === undefined && isUncertain(cause)
       setProgress({
         requestId,
@@ -725,36 +985,46 @@ function AddRelay({
         uncertain,
         message: uncertain ? COPY.unknown : inlineError(cause),
       })
+    } finally {
+      connecting.current = false
     }
   }
-  // While a way is open and nothing is being checked, the Host looks in ~/.latch/relays for files not added yet.
-  const watching = open && way !== null && !candidate && !progress
-  useEffect(() => {
-    if (!watching) return
-    const controller = new AbortController()
-    const look = () =>
-      api<{ files: NativeRelayFile[] }>('native/relay-files', { signal: controller.signal })
-        .then(value => {
-          if (!controller.signal.aborted) setFiles(value.files.filter(found => found.kind !== 'edge' || edgeAvailable))
-        })
-        .catch(() => {})
-    void look()
-    const timer = window.setInterval(() => void look(), 3000)
-    return () => {
-      window.clearInterval(timer)
-      controller.abort()
-    }
-  }, [watching, edgeAvailable])
   const drop = (event: DragEvent) => {
     event.preventDefault()
     void read(event.dataTransfer.files[0])
   }
   const relayId = progress?.relayId
-  const shown = progress?.test && relayId ? { ...progress.test, bookIssuedAt: bookIssuedAt(relayId) } : progress?.test
+  const relay = relayId ? configuredRelay(relayId) : undefined
+  const removed = progress?.completed && relayId && !relay
+  const progressDetails = progress ? (
+    removed ? (
+      <InlineNotice tone="warn" secure>
+        {COPY.removedAfterAdd}
+      </InlineNotice>
+    ) : (
+      <>
+        <RelaySteps
+          test={progress.test && relay ? { ...progress.test, bookIssuedAt: relay.bookIssuedAt } : progress.test}
+          busy={progress.busy && !awaitingConfirmation}
+        />
+        {progress.fileSaveFailed && (
+          <InlineNotice tone="warn" secure>
+            {COPY.fileSaveFailed}
+          </InlineNotice>
+        )}
+        {progress.message && (
+          <InlineNotice tone={progress.uncertain ? 'warn' : 'error'} secure>
+            {progress.message}
+          </InlineNotice>
+        )}
+      </>
+    )
+  ) : null
+  const listedFiles = files.filter(found => way === 'file' || (found.kind === way && (way !== 'edge' || found.name === name)))
   const fileStep = (
     <>
-      {files.map(found => (
-        <div key={found.name} className="relay-found" data-testid="relay-found">
+      {listedFiles.map(found => (
+        <div key={found.relayId} className="relay-found" data-testid="relay-found">
           <Icon icon={KIND[found.kind].icon} size={16} />
           <b>{found.name}</b>
           <Tooltip content={found.urls.join(' · ')}>
@@ -764,16 +1034,12 @@ function AddRelay({
           <Button
             size="sm"
             variant="primary"
-            onClick={() =>
-              setCandidate({
-                requestId: crypto.randomUUID(),
-                file: found.name,
-                kind: found.kind,
-                urls: found.urls,
-                hash: found.keyHash,
-                token: found.hasRegistrationKey,
-              })
-            }>
+            disabled={filesError || Boolean(pending)}
+            onClick={() => {
+              reading.current++
+              setRejected(null)
+              setCandidate(fileCandidate(found))
+            }}>
             {COPY.review}
           </Button>
         </div>
@@ -786,11 +1052,11 @@ function AddRelay({
             {RELAYS_DIR}
           </code>
         </Tooltip>
-        <Button size="sm" onClick={() => file.current?.click()}>
+        <Button size="sm" onClick={() => fileInput.current?.click()}>
           {COPY.chooseFile}
         </Button>
         <input
-          ref={file}
+          ref={fileInput}
           type="file"
           accept=".json,application/json"
           hidden
@@ -920,11 +1186,11 @@ function AddRelay({
         onClose()
       }}
       footer={
-        way !== null && !progress?.relayId ? (
+        (way !== null || candidate) && !progress?.completed ? (
           <Button onClick={reset} disabled={progress?.busy || progress?.uncertain}>
             {COPY.back}
           </Button>
-        ) : progress?.relayId ? (
+        ) : progress?.completed ? (
           <Button
             variant="primary"
             onClick={() => {
@@ -935,7 +1201,7 @@ function AddRelay({
           </Button>
         ) : undefined
       }>
-      {pending && way === null && !progress && (
+      {pending && way === null && !candidate && !progress && (
         <div className="relay-check">
           <b>{COPY.previousUnknown}</b>
           <Button variant="primary" onClick={() => void connect({ requestId: pending })}>
@@ -943,7 +1209,7 @@ function AddRelay({
           </Button>
         </div>
       )}
-      {way === null && !progress && (
+      {way === null && !candidate && !progress && (
         <div className="relay-ways" data-testid="relay-ways">
           {(['edge', 'self', 'file'] as const).map(option => {
             const platformUnavailable = option === 'edge' && !edgeAvailable
@@ -982,7 +1248,7 @@ function AddRelay({
         <div className="relay-check" data-testid="relay-candidate">
           <SettingsRow
             leading={<IconTile icon={KIND[candidate.kind].icon} />}
-            title={candidate.file ?? KIND[candidate.kind].label}
+            title={candidate.file?.name ?? KIND[candidate.kind].label}
             record
           />
           <dl className="relay-facts">
@@ -1003,13 +1269,8 @@ function AddRelay({
           </dl>
           {progress ? (
             <>
-              <RelaySteps test={shown ?? null} busy={progress.busy && !awaitingConfirmation} />
-              {progress.message && (
-                <InlineNotice tone={progress.uncertain ? 'warn' : 'error'} secure>
-                  {progress.message}
-                </InlineNotice>
-              )}
-              {!progress.busy && !progress.relayId && (
+              {progressDetails}
+              {!progress.busy && !progress.completed && (
                 <Button variant="primary" onClick={() => void connect(candidate)}>
                   {COPY.retry}
                 </Button>
@@ -1024,13 +1285,8 @@ function AddRelay({
       )}
       {!candidate && progress && (
         <div className="relay-check">
-          <RelaySteps test={shown ?? null} busy={progress.busy && !awaitingConfirmation} />
-          {progress.message && (
-            <InlineNotice tone={progress.uncertain ? 'warn' : 'error'} secure>
-              {progress.message}
-            </InlineNotice>
-          )}
-          {!progress.busy && !progress.relayId && (
+          {progressDetails}
+          {!progress.busy && !progress.completed && (
             <Button variant="primary" onClick={() => void connect({ requestId: progress.requestId })}>
               {COPY.retry}
             </Button>

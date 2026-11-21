@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 import type { Duplex } from 'node:stream'
 import { once } from 'node:events'
 import { connect, type AddressInfo } from 'node:net'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication } from '@playwright/test'
@@ -299,7 +299,10 @@ it('adds a Workers relay from its file in the real Host, tests it, signs both ad
     token = nodeCrypto.random(32),
     relayId = Buffer.from(nodeCrypto.random(16)).toString('hex')
   const relay = await edgeRelay(seed, relayId, token)
+  const home = await mkdtemp(join(tmpdir(), 'latch-worker-home-'))
+  cleanup.push(() => rm(home, { recursive: true, force: true }))
   const host = await startTestHost({
+    relayFilesHome: home,
     native: { host: '127.0.0.1', port: 0 },
     nativeRelayCa: relay.certificate.cert,
     egressAllow: [`localhost:${relay.port}`, `localhost:${relay.second}`],
@@ -324,16 +327,34 @@ it('adds a Workers relay from its file in the real Host, tests it, signs both ad
   const refusedId = crypto.randomUUID()
   const mismatch = await desktop.confirmed('native/relays', {
     method: 'POST',
-    body: { requestId: refusedId, profile: { ...file, relayKey: other } },
+    body: { requestId: refusedId, profile: { ...file, relayKey: other }, saveFile: true },
   })
   expect(await mismatch.json()).toMatchObject({ error: 'native-relay-key-mismatch' })
   expect((await desktop.json<NativeLinkInfo>('native/info')).relays).toEqual([])
   // The refused addition stays pending until it is given up.
   expect((await desktop.request(`native/relay-requests/${refusedId}`, { method: 'DELETE' })).ok).toBe(true)
 
+  const archive = join(home, '.latch', 'relays', 'ne.json')
+  const exported = JSON.stringify({ version: 2, profile: file })
+  const legacy = join(home, 'latch-relay-ne.json')
+  await writeFile(legacy, exported, { mode: 0o600 })
+  expect(await desktop.json('native/relay-files')).toMatchObject({ files: [{ name: 'ne', source: 'legacy', relayId }] })
+  await expect(stat(join(home, '.latch', 'relays'))).rejects.toMatchObject({ code: 'ENOENT' })
   const before = host.presence.requests.length
-  const added = await desktop.confirmed('native/relays', { method: 'POST', body: { requestId: crypto.randomUUID(), profile: file } })
+  const requestId = crypto.randomUUID()
+  const added = await desktop.confirmed('native/relays', {
+    method: 'POST',
+    body: { requestId, file: 'ne', fileSource: 'legacy', fileRelayId: relayId },
+  })
   expect(added.ok).toBe(true)
+  expect(await added.json()).toMatchObject({ addedRelayId: relayId })
+  expect((await stat(archive)).mode & 0o777).toBe(0o600)
+  expect((await readFile(legacy, 'utf8')) === exported).toBe(true)
+  const archived = JSON.parse(await readFile(archive, 'utf8'))
+  expect(archived.version === 2 && archived.profile.registrationKey === file.registrationKey && archived.profile.relayId === relayId).toBe(
+    true,
+  )
+  expect(await desktop.json('native/relay-files')).toEqual({ files: [] })
   const confirmation = host.presence.requests[before]!
   expect(confirmation.preview.subject).toMatchObject({ form: 'relay.add', slots: { count: '2', hash: keyHash } })
   expect(JSON.stringify(confirmation.preview)).not.toContain(file.registrationKey)
@@ -360,6 +381,12 @@ it('adds a Workers relay from its file in the real Host, tests it, signs both ad
 
   expect((await desktop.request(`native/relays/${relayId}`, { method: 'DELETE' })).ok).toBe(true)
   expect((await desktop.json<NativeLinkInfo>('native/info')).relays).toEqual([])
+  const candidates = await desktop.json<{ files: Array<{ name: string; relayId: string; source?: string }> }>('native/relay-files')
+  expect(candidates.files).toHaveLength(1)
+  expect(candidates.files[0]).toMatchObject({ name: 'ne', relayId })
+  expect(candidates.files[0]?.source).toBeUndefined()
+  const replay = await desktop.request('native/relays', { method: 'POST', body: { requestId } })
+  expect(await replay.json()).toMatchObject({ addedRelayId: relayId, relays: [] })
   // No longer dialed: its live control connection is closed.
   await expect.poll(() => relay.controls()).toBe(0)
 }, 90_000)
@@ -557,7 +584,8 @@ it.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platform !== 
       }>
       expect(requests.length).toBeGreaterThanOrEqual(3)
       expect(new Set(requests.map(request => request.requestId)).size).toBe(1)
-      expect(requests.every(request => request.keys.join(',') === 'profile,requestId')).toBe(true)
+      expect(requests[0]?.keys).toEqual(['profile', 'requestId', 'saveFile'])
+      expect(requests.every(request => ['profile,requestId,saveFile', 'requestId'].includes(request.keys.join(',')))).toBe(true)
       const saved = JSON.parse(await readFile(join(host.dataDir, 'native', 'relays.json'), 'utf8')) as {
         profiles: Array<{ relayId: string }>
         configReceipts: Array<{ requestId: string }>

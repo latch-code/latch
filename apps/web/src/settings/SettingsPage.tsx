@@ -577,7 +577,13 @@ export function SettingsPage({
                         />
                       )}
                       {panel === 'devices' && <PhoneDevicesPage snapshot={snapshot} access={access} onChanged={onChanged} />}
-                      {panel === 'relays' && <RelaySettings access={access} />}
+                      {panel === 'relays' && (
+                        <RelaySettings
+                          key={`${snapshot.host.hostId}:${access.admin && access.local}`}
+                          hostId={snapshot.host.hostId}
+                          access={access}
+                        />
+                      )}
                       {panel === 'data' && <DataSettings />}
                       {panel === 'computers' && <ComputersSettings />}
                       {panel === 'about' && (

@@ -3,7 +3,7 @@ import { chromium, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { Device, NativeLinkInfo, NativeRelayTest } from '@latch/protocol'
+import type { Device, NativeLinkInfo, NativeRelayFile, NativeRelayTest } from '@latch/protocol'
 import { latchEnv } from '@latch/host/env'
 import { browserLaunchOptions, connected, enrollBrowser } from './helpers/browser.ts'
 import { startTestHost, type TestHost } from './helpers/host.ts'
@@ -36,6 +36,7 @@ const self = {
 }
 const keyHash = self.spkiHash.slice(0, 8)
 const edgeHash = createHash('sha256').update(Buffer.from(edge.relayKey, 'hex')).digest('hex').slice(0, 8)
+const fileIdentity = 'a'.repeat(64)
 type Relay = NativeLinkInfo['relays'][number]
 const row = (relayId: string, status: Relay['status'], extra: Partial<Relay> = {}): Relay => ({
   relayId,
@@ -57,7 +58,28 @@ const ALL_STATES: Relay[] = [
 ]
 
 async function scripted(page: Page, local: boolean, relays: Relay[], listening = true, localNetwork?: NativeLinkInfo['localNetwork']) {
-  const state = { relays, posted: [] as unknown[], patched: [] as unknown[], deleted: [] as string[] }
+  const files: NativeRelayFile[] = [
+    {
+      name: 'home',
+      source: 'legacy',
+      relayId: edge.relayId,
+      fileIdentity,
+      kind: 'edge',
+      urls: [edge.url],
+      keyHash: edgeHash,
+      hasRegistrationKey: true,
+    },
+  ]
+  const state = {
+    relays,
+    files,
+    fileReads: 0,
+    dropAddResponse: false,
+    posted: [] as unknown[],
+    patched: [] as unknown[],
+    deleted: [] as string[],
+  }
+  const receipts = new Map<string, string>()
   // This Mac's desktop app: the page is local only inside the shell, on host.sock.
   if (local)
     await page.addInitScript(() => {
@@ -85,16 +107,27 @@ async function scripted(page: Page, local: boolean, relays: Relay[], listening =
     await route.fulfill({ response, json: snapshot })
   })
   await page.route('**/link/api/native/info', route => route.fulfill({ json: info() }))
-  // What the Host found in ~/.latch/relays: a name, addresses and a key hash, never a token.
-  await page.route('**/link/api/native/relay-files', route =>
-    route.fulfill({
-      json: { files: [{ name: 'home', kind: 'edge', urls: [edge.url], keyHash: edgeHash, hasRegistrationKey: true }] },
-    }),
-  )
+  await page.route('**/link/api/native/relay-files', route => {
+    state.fileReads++
+    return route.fulfill({ json: { files: state.files.filter(file => !state.relays.some(relay => relay.relayId === file.relayId)) } })
+  })
   await page.route('**/link/api/native/relays', route => {
-    state.posted.push(route.request().postDataJSON())
-    state.relays = [...state.relays, { ...row(self.relayId, 'connected', { latencyMs: 41 }), url: self.url, keyHash }]
-    return route.fulfill({ status: 201, json: info() })
+    const body = route.request().postDataJSON()
+    state.posted.push(body)
+    const receipt = receipts.get(body.requestId)
+    if (receipt) return route.fulfill({ json: { ...info(), addedRelayId: receipt } })
+    const node = body.file || body.profile?.relayId === edge.relayId ? edge : self
+    const added = row(node.relayId, 'connected', {
+      url: node.url,
+      kind: 'kind' in node ? 'edge' : 'self',
+      keyHash: node === edge ? edgeHash : keyHash,
+      latencyMs: 41,
+    })
+    // The new row can be anywhere in a response containing other concurrent registrations.
+    state.relays = [added, ...state.relays]
+    receipts.set(body.requestId, added.relayId)
+    if (state.dropAddResponse) return route.abort()
+    return route.fulfill({ status: 201, json: { ...info(), addedRelayId: added.relayId } })
   })
   await page.route('**/link/api/native/relays/*', route => {
     const id = route.request().url().split('/').at(-1)!
@@ -166,11 +199,11 @@ describe('设置 › 连接转发', () => {
         await page.getByRole('menuitem', { name: '停用' }).last().click()
         await expect.poll(() => state.patched).toEqual([{ id: '2'.repeat(32), disabled: true }])
         await page.getByTestId('relay-own').nth(4).getByRole('button', { name: '更多' }).click()
-        await page.getByRole('menuitem', { name: '移除' }).last().click()
+        await page.getByRole('menuitem', { name: '从这台 Mac 移除' }).last().click()
         await expect.poll(() => state.deleted).toEqual(['5'.repeat(32)])
         // A saved address outside the book's grammar can only be removed.
         await page.getByTestId('relay-own').filter({ hasText: '地址无效' }).getByRole('button', { name: '更多' }).click()
-        await page.getByRole('menuitem', { name: '移除' }).last().waitFor()
+        await page.getByRole('menuitem', { name: '从这台 Mac 移除' }).last().waitFor()
         expect(await page.getByRole('menuitem', { name: '测试' }).count()).toBe(0)
         expect(await page.getByRole('menuitem', { name: '启用' }).count()).toBe(0)
         await page.keyboard.press('Escape')
@@ -195,8 +228,8 @@ describe('设置 › 连接转发', () => {
         await capture('relays-check-card-found')
         await sheet.getByTestId('relay-candidate').getByRole('button', { name: '确认并连接' }).click()
         await sheet.getByRole('button', { name: '完成' }).click()
-        // Only the name went to the Host, which reads the file itself.
-        expect(state.posted.at(-1)).toMatchObject({ file: 'home' })
+        // The Host reads the named legacy file and verifies its ID; the page only submits the selection.
+        expect(state.posted.at(-1)).toMatchObject({ file: 'home', fileSource: 'legacy', fileRelayId: edge.relayId, fileIdentity })
         expect(state.posted.at(-1)).not.toHaveProperty('profile')
         state.posted.length = 0
         // 自己的服务器: the form's answers become the commands.
@@ -246,12 +279,120 @@ describe('设置 › 连接转发', () => {
         await card.getByText('注册', { exact: true }).waitFor()
         await sheet.getByRole('button', { name: '完成' }).waitFor()
         expect(state.posted).toHaveLength(1)
-        expect((state.posted[0] as { profile: unknown }).profile).toEqual(self)
+        expect(state.posted[0]).toMatchObject({ profile: self, saveFile: true })
         await capture('relays-connected')
       } finally {
         await context.close()
       }
     })
+
+  it('manages a discovered Worker on this Mac from the main list and can reconnect it from its preserved file', async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    try {
+      const page = await context.newPage()
+      await enrollBrowser(page, host, { name: '本机 Workers', scopes: ['admin'] })
+      const state = await scripted(page, true, [])
+      await page.reload()
+      await connected(page)
+      await openEntry(page, '连接转发')
+      const localFile = page.getByTestId('relay-local-file')
+      await localFile.getByText('未添加', { exact: true }).waitFor()
+      const address = localFile.getByText(new URL(edge.url).host, { exact: false }).first()
+      await address.waitFor()
+      const details = await address.boundingBox()
+      const review = localFile.getByRole('button', { name: '核对并连接' })
+      const action = await review.boundingBox()
+      expect(details).not.toBeNull()
+      expect(action).not.toBeNull()
+      expect(action!.y).toBeGreaterThanOrEqual(details!.y + details!.height)
+      expect(state.posted).toEqual([])
+      expect(await page.getByTestId('relay-own').count()).toBe(0)
+      const sheet = page.locator('.relay-add-dialog')
+      await review.click()
+      await sheet.getByTestId('relay-candidate').getByText(edgeHash, { exact: true }).waitFor()
+      expect(state.posted).toHaveLength(0)
+      await sheet.getByRole('button', { name: '关闭', exact: true }).click()
+      await localFile.getByRole('button', { name: '更多' }).click()
+      await page.getByRole('menuitem', { name: '从列表隐藏' }).click()
+      await localFile.waitFor({ state: 'detached' })
+      await page.getByRole('button', { name: '添加转发服务' }).click()
+      await sheet.getByRole('button', { name: '已有配置文件' }).click()
+      await sheet.getByTestId('relay-found').getByRole('button', { name: '核对并连接' }).click()
+      await sheet.getByTestId('relay-candidate').getByText(edgeHash, { exact: true }).waitFor()
+      await sheet.getByRole('button', { name: '确认并连接' }).click()
+      await sheet.getByRole('button', { name: '完成' }).click()
+      expect(state.posted).toEqual([
+        { requestId: expect.any(String), file: 'home', fileSource: 'legacy', fileRelayId: edge.relayId, fileIdentity },
+      ])
+      const added = page.getByTestId('relay-own')
+      await added.getByText('Cloudflare Workers', { exact: true }).waitFor()
+      await added.getByRole('button', { name: '更多' }).click()
+      await page.getByRole('menuitem', { name: '停用' }).click()
+      await added.getByText('已停用', { exact: true }).waitFor()
+      await added.getByRole('button', { name: '更多' }).click()
+      await page.getByRole('menuitem', { name: '启用' }).click()
+      await added.getByText('连接中', { exact: true }).waitFor()
+      await added.getByRole('button', { name: '更多' }).click()
+      await page.getByRole('menuitem', { name: '从这台 Mac 移除' }).click()
+      await added.waitFor({ state: 'detached' })
+      await page.reload()
+      await connected(page)
+      await openEntry(page, '连接转发')
+      await page.getByRole('button', { name: '添加转发服务' }).click()
+      await sheet.getByRole('button', { name: '已有配置文件' }).click()
+      await sheet.getByTestId('relay-found').getByText(edgeHash, { exact: true }).waitFor()
+      expect(await localFile.count()).toBe(0)
+      expect(state.deleted).toEqual([edge.relayId])
+      expect(state.patched).toEqual([
+        { id: edge.relayId, disabled: true },
+        { id: edge.relayId, disabled: false },
+      ])
+      expect(state.posted).toHaveLength(1)
+    } finally {
+      await context.close()
+    }
+  })
+
+  it('shows a recovered add receipt without reviving a relay removed in the meantime', async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    try {
+      const page = await context.newPage()
+      await enrollBrowser(page, host, { name: '中继回执', scopes: ['admin'] })
+      const state = await scripted(page, true, [])
+      state.dropAddResponse = true
+      await page.reload()
+      await connected(page)
+      await openEntry(page, '连接转发')
+
+      const localFile = page.getByTestId('relay-local-file')
+      await localFile.getByRole('button', { name: '核对并连接' }).click()
+      const sheet = page.locator('.relay-add-dialog')
+      const candidate = sheet.getByTestId('relay-candidate')
+      await candidate.getByRole('button', { name: '确认并连接' }).click()
+      await candidate.getByText('添加结果待确认', { exact: true }).waitFor()
+      expect(state.relays.map(relay => relay.relayId)).toEqual([edge.relayId])
+      state.relays = []
+      await sheet.getByRole('button', { name: '关闭', exact: true }).click()
+      await page.getByRole('button', { name: '添加转发服务' }).click()
+      await candidate.getByRole('button', { name: '重试', exact: true }).click()
+      await candidate.getByText('本次添加已完成。该转发服务已从这台 Mac 移除。', { exact: true }).waitFor()
+      expect(await candidate.locator('.relay-steps').count()).toBe(0)
+      const { requestId } = state.posted[0] as { requestId: string }
+      expect(state.posted).toEqual([
+        { requestId, file: 'home', fileSource: 'legacy', fileRelayId: edge.relayId, fileIdentity },
+        { requestId },
+      ])
+
+      await sheet.getByRole('button', { name: '完成' }).click()
+      expect(await page.getByTestId('relay-own').count()).toBe(0)
+      await page.getByRole('button', { name: '添加转发服务' }).click()
+      await sheet.getByRole('button', { name: '已有配置文件' }).click()
+      await sheet.getByTestId('relay-found').getByText(edgeHash, { exact: true }).waitFor()
+      expect(await localFile.count()).toBe(0)
+    } finally {
+      await context.close()
+    }
+  })
 
   it('says 本地网络未允许 on the direct row: a button in the desktop app, the settings path in a browser', async () => {
     const shots = process.env.LATCH_LOCAL_NETWORK_SHOTS ?? OUTPUT
@@ -296,7 +437,7 @@ describe('设置 › 连接转发', () => {
     try {
       const page = await context.newPage()
       await enrollBrowser(page, host, { name: '只读设备', scopes: ['admin'] })
-      await scripted(page, false, [row('2'.repeat(32), 'connected', { latencyMs: 38 })], false)
+      const state = await scripted(page, false, [row('2'.repeat(32), 'connected', { latencyMs: 38 })], false)
       await page.reload()
       await connected(page)
       await openEntry(page, '连接转发')
@@ -304,6 +445,8 @@ describe('设置 › 连接转发', () => {
       await page.getByTestId('relay-direct').getByText('未开启').waitFor()
       expect(await page.getByRole('button', { name: '添加转发服务' }).count()).toBe(0)
       expect(await page.getByRole('button', { name: '更多' }).count()).toBe(0)
+      expect(state.fileReads).toBe(0)
+      expect(await page.getByTestId('relay-local-file').count()).toBe(0)
       for (const colorScheme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme })
         await page.screenshot({ path: `${OUTPUT}/relays-read-only-1100-${colorScheme}.png`, animations: 'disabled' })
@@ -315,7 +458,8 @@ describe('设置 › 连接转发', () => {
     try {
       const page = await empty.newPage()
       await enrollBrowser(page, host, { name: '空的', scopes: ['admin'] })
-      await scripted(page, true, [])
+      const state = await scripted(page, true, [])
+      state.files = []
       await page.reload()
       await connected(page)
       await openEntry(page, '连接转发')

@@ -2496,6 +2496,18 @@
   align-items: center;
   gap: var(--sp-8);
 }
+@media (width < 640px) {
+  .relay-local-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    row-gap: var(--sp-8);
+  }
+  .relay-local-row > .settings-row-end {
+    grid-column: 2;
+    justify-self: start;
+    margin-inline-start: 0;
+  }
+}
 .relay-row-test {
   padding: 0 var(--sp-12) var(--sp-8) var(--sp-48);
 }

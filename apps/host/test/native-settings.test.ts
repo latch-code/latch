@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { NativeLinkInfo } from '@latch/protocol'
+import { RELAY_FILE_BYTES, type NativeLinkInfo, type NativeRelayFile } from '@latch/protocol'
 import { AppError } from '@latch/sdk'
 import type { LookupFunction } from '../src/egress.ts'
+import { listRelayFiles, loadRelayFile } from '../src/relay/relay-files.ts'
 import { startTestHost } from './helpers/host.ts'
 
 const cleanup: Array<() => Promise<void>> = []
@@ -113,15 +114,29 @@ it('switches the official relay and the order on this Mac, audited, and reports 
   expect(saved).toMatchObject({ officialOff: true, ownFirst: true })
 })
 
-it('lists the relay files that could be added without their tokens, and adds one by name only', async () => {
+it('lists private relay files without their tokens and binds named imports to the selected node', async () => {
   const home = await mkdtemp(join(tmpdir(), 'latch-relay-files-'))
   cleanup.push(() => rm(home, { recursive: true, force: true }))
   const relays = join(home, '.latch', 'relays')
   await mkdir(join(home, '.latch'), { mode: 0o700 })
   await mkdir(relays, { mode: 0o700 })
   const token = `lrt1.${'A'.repeat(43)}`
-  const edge = { relayId: 'c'.repeat(32), url: 'https://latch-relay-home.example.workers.dev/', kind: 'edge', relayKey: 'd'.repeat(64) }
-  await writeFile(join(relays, 'home.json'), JSON.stringify({ version: 2, profile: { ...edge, registrationKey: token } }), { mode: 0o600 })
+  const edge = {
+    relayId: 'c'.repeat(32),
+    url: 'https://latch-relay-home.example.workers.dev/',
+    kind: 'edge',
+    relayKey: 'd'.repeat(64),
+    extraUrls: ['https://second.example/', 'https://third.example/'],
+  }
+  const legacy = { ...edge, relayId: 'e'.repeat(32), url: 'https://latch-relay-legacy.example.workers.dev/' }
+  const standardFile = join(relays, 'home.json')
+  const legacyFile = join(home, 'latch-relay-home.json')
+  const edgeFile = (profile: typeof edge, registrationKey = token) =>
+    JSON.stringify({ version: 2, profile: { ...profile, registrationKey } })
+  await writeFile(standardFile, edgeFile(edge), { mode: 0o600 })
+  await writeFile(legacyFile, edgeFile(legacy), { mode: 0o600 })
+  await writeFile(join(home, 'latch-relay-copy.json'), edgeFile(edge), { mode: 0o600 })
+  await writeFile(join(home, 'elsewhere.json'), edgeFile(legacy), { mode: 0o600 })
   const openRelay = { relayId: 'b'.repeat(32), url: 'https://relay.example/', spkiHash: 'a'.repeat(64), registrationKey: null }
   await writeFile(join(relays, 'open.json'), JSON.stringify({ version: 1, profile: openRelay }), { mode: 0o600 })
   await writeFile(join(relays, 'broken.json'), '{"version":2,"profile":{"kind":"edge"}}', { mode: 0o600 })
@@ -133,22 +148,121 @@ it('lists the relay files that could be added without their tokens, and adds one
   const listed = await desktop.request('native/relay-files')
   expect(listed.status).toBe(200)
   const text = await listed.text()
-  expect(text).not.toContain('lrt1.')
-  expect(text).not.toContain(edge.relayKey)
-  expect(JSON.parse(text)).toEqual({
+  expect(text.includes('lrt1.')).toBe(false)
+  expect(text.includes(edge.relayKey)).toBe(false)
+  const listing = JSON.parse(text) as { files: NativeRelayFile[] }
+  const identity = expect.stringMatching(/^[a-f0-9]{64}$/u)
+  expect(listing).toEqual({
     files: [
-      { name: 'home', kind: 'edge', urls: [edge.url], keyHash: expect.stringMatching(/^[a-f0-9]{8}$/u), hasRegistrationKey: true },
-      { name: 'open', kind: 'self', urls: [openRelay.url], keyHash: openRelay.spkiHash.slice(0, 8), hasRegistrationKey: false },
+      {
+        name: 'home',
+        relayId: edge.relayId,
+        fileIdentity: identity,
+        kind: 'edge',
+        urls: [edge.url, ...edge.extraUrls],
+        keyHash: expect.stringMatching(/^[a-f0-9]{8}$/u),
+        hasRegistrationKey: true,
+      },
+      {
+        name: 'open',
+        relayId: openRelay.relayId,
+        fileIdentity: identity,
+        kind: 'self',
+        urls: [openRelay.url],
+        keyHash: openRelay.spkiHash.slice(0, 8),
+        hasRegistrationKey: false,
+      },
+      {
+        name: 'home',
+        relayId: legacy.relayId,
+        fileIdentity: identity,
+        source: 'legacy',
+        kind: 'edge',
+        urls: [legacy.url, ...legacy.extraUrls],
+        keyHash: expect.stringMatching(/^[a-f0-9]{8}$/u),
+        hasRegistrationKey: true,
+      },
     ],
   })
+  expect((await desktop.json<NativeLinkInfo>('native/info')).relays).toEqual([])
+  expect(lookup).not.toHaveBeenCalled()
   const add = (body: Record<string, unknown>) =>
     desktop.request('native/relays', { method: 'POST', body: { requestId: randomUUID(), ...body } })
-  // A name is one path component the folder lists; nothing else is ever opened.
   for (const file of ['../home', 'home.json', '/etc/hosts', 'broken', 'absent']) expect(await add({ file })).toMatchObject({ status: 400 })
   expect(await add({ file: 'home', profile: edge })).toMatchObject({ status: 400 })
-  // The named file is read by the Host and goes on to this Mac's confirmation like a profile sent by the page.
+  expect(await add({ file: 'home', fileSource: 'legacy' })).toMatchObject({ status: 400 })
+  expect(await add({ fileRelayId: edge.relayId })).toMatchObject({ status: 400 })
+  expect(await add({ fileIdentity: listing.files[0]!.fileIdentity })).toMatchObject({ status: 400 })
+  expect(await add({ file: 'home', saveFile: true })).toMatchObject({ status: 400 })
+  expect(await add({ saveFile: true })).toMatchObject({ status: 400 })
+  const wrongSource = await add({ file: 'home', fileRelayId: legacy.relayId })
+  expect(wrongSource.status).toBe(409)
+  expect(await wrongSource.json()).toMatchObject({ error: 'native-relay-file-changed' })
   const named = await add({ file: 'home' })
-  const sent = await add({ profile: { ...edge, relayId: 'e'.repeat(32) } })
+  const sent = await add({ profile: { ...edge, relayId: 'f'.repeat(32) } })
   expect(named.status).toBe(sent.status)
   expect(named.status).not.toBe(400)
+  expect((await add({ file: 'home', fileSource: 'legacy', fileRelayId: legacy.relayId })).status).toBe(sent.status)
+
+  const [standard, open, old] = listing.files
+  const select = (file: NativeRelayFile) =>
+    add({
+      file: file.name,
+      fileRelayId: file.relayId,
+      fileIdentity: file.fileIdentity,
+      ...(file.source ? { fileSource: file.source } : {}),
+    })
+  expect((await select(standard!)).status).toBe(named.status)
+  expect((await select(old!)).status).toBe(named.status)
+
+  await writeFile(standardFile, edgeFile(edge, `lrt1.${'B'.repeat(43)}`))
+  expect(await desktop.json('native/relay-files')).toEqual(listing)
+  expect((await select(standard!)).status).toBe(named.status)
+
+  const confirmations = host.presence.requests.length
+  await writeFile(standardFile, edgeFile({ ...edge, extraUrls: edge.extraUrls.toReversed() }))
+  await writeFile(legacyFile, edgeFile({ ...legacy, relayKey: 'f'.repeat(64) }))
+  await writeFile(
+    join(relays, 'open.json'),
+    JSON.stringify({ version: 1, profile: { ...openRelay, spkiHash: `${openRelay.spkiHash.slice(0, 8)}${'f'.repeat(56)}` } }),
+  )
+  for (const file of [standard!, old!, open!]) {
+    const replaced = await select(file)
+    expect(replaced.status).toBe(409)
+    expect(await replaced.json()).toMatchObject({ error: 'native-relay-file-changed' })
+  }
+  await writeFile(legacyFile, edgeFile({ ...legacy, relayId: '7'.repeat(32) }))
+  const replacedId = await add({ file: 'home', fileSource: 'legacy', fileRelayId: legacy.relayId })
+  expect(replacedId.status).toBe(409)
+  expect(await replacedId.json()).toMatchObject({ error: 'native-relay-file-changed' })
+  expect(host.presence.requests).toHaveLength(confirmations)
+  expect(lookup).not.toHaveBeenCalled()
+})
+
+it('excludes symlinks, shared files, oversized files, non-files and management files from relay discovery', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'latch-relay-file-modes-'))
+  cleanup.push(() => rm(home, { recursive: true, force: true }))
+  const relays = join(home, '.latch', 'relays')
+  await mkdir(join(home, '.latch'), { mode: 0o700 })
+  await mkdir(relays, { mode: 0o700 })
+  const profile = { relayId: 'a'.repeat(32), url: 'https://relay.example/', spkiHash: 'b'.repeat(64) }
+  const content = JSON.stringify({ version: 1, profile })
+  const explicit = join(home, 'explicit.json')
+  await writeFile(explicit, content, { mode: 0o600 })
+  for (const [directory, prefix] of [
+    [relays, ''],
+    [home, 'latch-relay-'],
+  ] as const) {
+    const pathFor = (name: string) => join(directory, `${prefix}${name}.json`)
+    await symlink(explicit, pathFor('link'))
+    await writeFile(pathFor('wide'), content, { mode: 0o600 })
+    await chmod(pathFor('wide'), 0o640)
+    await writeFile(pathFor('large'), content.padEnd(RELAY_FILE_BYTES + 1), { mode: 0o600 })
+    await mkdir(pathFor('folder'), { mode: 0o700 })
+    await writeFile(`${pathFor('admin')}.admin-header`, content, { mode: 0o600 })
+  }
+  expect(await listRelayFiles(new Set(), home)).toEqual([])
+  const owner = process.getuid?.()
+  if (owner !== undefined) expect(await loadRelayFile(explicit, owner + 1)).toEqual({ failure: 'unreadable' })
+  expect('profile' in (await loadRelayFile(join(relays, 'link.json')))).toBe(true)
 })

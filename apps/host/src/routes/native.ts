@@ -31,7 +31,7 @@ import { HostRelayController } from '../relay/controller.ts'
 import type { HostRelayDirectory } from '../relay/directory.ts'
 import { OFFICIAL_RELAYS, type OfficialRelay } from '../relay/official.ts'
 import { relayKeyHash, relayNodeFields, relayProfileInput, relayUsable, type RelayProfiles } from '../relay/profiles.ts'
-import { listRelayFiles, relayFileByName } from '../relay/relay-files.ts'
+import { listRelayFiles, relayFileByName, relayFileIdentity } from '../relay/relay-files.ts'
 import { signatureSchema } from './devices.ts'
 import { type Caller, type CallerRequest, type RouteContext, type RouteModule, type RouteRequest } from './registry.ts'
 
@@ -472,21 +472,51 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       if (!nativeSettings) throw new AppError(503, 'native-not-ready', '手机连接服务正在准备')
       const settings = nativeSettings
       const body = z
-        .strictObject({ requestId: z.uuid(), profile: relayProfileInput.optional(), file: z.string().max(64).optional() })
-        .refine(value => value.profile === undefined || value.file === undefined)
+        .strictObject({
+          requestId: z.uuid(),
+          profile: relayProfileInput.optional(),
+          file: z.string().max(64).optional(),
+          fileSource: z.literal('legacy').optional(),
+          fileRelayId: z
+            .string()
+            .regex(/^[a-f0-9]{32}$/u)
+            .optional(),
+          fileIdentity: z
+            .string()
+            .regex(/^[a-f0-9]{64}$/u)
+            .optional(),
+          saveFile: z.literal(true).optional(),
+        })
+        .refine(({ file, fileSource, fileRelayId, fileIdentity, profile, saveFile }) => {
+          if (file === undefined)
+            return (
+              fileSource === undefined
+              && fileRelayId === undefined
+              && fileIdentity === undefined
+              && (saveFile === undefined || profile !== undefined)
+            )
+          return profile === undefined && saveFile === undefined && (fileSource === undefined || fileRelayId !== undefined)
+        })
         .parse(await jsonBody(req, 4 * KIB))
       const { requestId } = body
-      // A file is named, never sent: the Host reads `~/.latch/relays/<name>.json` itself, so its token stays off the page.
-      const profile = body.file === undefined ? body.profile : await relayFileByName(body.file, options.relayFilesHome)
-      if (body.file !== undefined && !profile)
-        throw new AppError(400, 'native-relay-file-invalid', '这个配置文件不在 ~/.latch/relays，或不是转发服务导出的连接配置。')
+      // The Host reads the named file itself so the registration token stays off the page.
+      const profile = body.file === undefined ? body.profile : await relayFileByName(body.file, options.relayFilesHome, body.fileSource)
+      if (body.file !== undefined) {
+        if (!profile) throw new AppError(400, 'native-relay-file-invalid', '无法读取这份中继配置。请核对文件来源、格式和访问权限。')
+        if (
+          (body.fileRelayId !== undefined && profile.relayId !== body.fileRelayId)
+          || (body.fileIdentity !== undefined && relayFileIdentity(profile) !== body.fileIdentity)
+        )
+          throw new AppError(409, 'native-relay-file-changed', '这份中继配置已变化。请重新选择并核对。')
+      }
       const current = () => {
         if (closing()) throw new AppError(503, 'host-closing', '电脑正在停止，请稍后查询原请求。')
         recheck(caller, 'admin')
       }
       await settings.settleRelayWrite()
       current()
-      const plan = settings.planRelay(requestId, caller.device.id, profile)
+      const archiveName = body.fileSource === 'legacy' ? body.file : body.saveFile ? profile?.relayId : undefined
+      const plan = settings.planRelay(requestId, caller.device.id, profile, archiveName)
       if (plan) {
         const url = new URL(plan.input.url)
         const target = `${url.hostname}:${url.port || 443}`
@@ -494,7 +524,12 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
           req,
           caller,
           'policy.change',
-          { base: plan.base, requestId, profile: plan.request.requestHash },
+          {
+            base: plan.base,
+            requestId,
+            profile: plan.request.requestHash,
+            ...(plan.request.archiveName ? { archiveName: plan.request.archiveName } : {}),
+          },
           // The system sheet names the first address, how many the Host will dial and the key's short hash.
           {
             form: 'relay.add',
@@ -522,7 +557,16 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
         refresh()
       }
       current()
-      json(res, settings.info(caller.device.id), plan ? 201 : 200)
+      const receipt = relayProfiles.relayReceipt(requestId)
+      json(
+        res,
+        {
+          ...settings.info(caller.device.id),
+          ...(receipt?.addedRelayId ? { addedRelayId: receipt.addedRelayId } : {}),
+          ...(receipt?.fileSaveFailed ? { fileSaveFailed: true } : {}),
+        },
+        plan ? 201 : 200,
+      )
       return true
     }
     const auditFailed = () => res.setHeader('x-latch-audit', 'failed')
@@ -694,6 +738,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
     }
     nativeSettings = new NativeSettings({
       profiles: relayProfiles,
+      relayFilesHome: options.relayFilesHome,
       native,
       controller,
       audit,

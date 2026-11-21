@@ -123,9 +123,13 @@ export interface NativeRelayTest {
   /** When this Host last signed a book containing this relay's current configuration. */
   bookIssuedAt?: number
 }
-/** A relay file in this Mac's ~/.latch/relays that could be added: what the check card shows, never its token or key. */
+/** A relay file found on this Mac: what the check card shows, without its token or key. */
 export interface NativeRelayFile {
   name: string
+  relayId: string
+  /** SHA-256 of the public node fields, including the complete key and the ordered addresses. */
+  fileIdentity: string
+  source?: 'legacy'
   kind: 'self' | 'edge'
   urls: string[]
   keyHash: string

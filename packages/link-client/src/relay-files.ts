@@ -69,7 +69,7 @@ export function relayFilePath(name: string, home?: string): string {
 
 /** The names of the relay files in `~/.latch/relays` (regular `<name>.json` files only); none when it does not exist. */
 export async function relayNames(home?: string): Promise<string[]> {
-  const relays = await privateLevels(relayLevels(base(home)), false)
+  const relays = await existingRelaysDir(home)
   if (!relays) return []
   const names: string[] = []
   for (const entry of await readdir(relays)) {
@@ -79,6 +79,11 @@ export async function relayNames(home?: string): Promise<string[]> {
     if (info?.isFile() && !info.isSymbolicLink()) names.push(name)
   }
   return names.sort()
+}
+
+/** Opens no files and creates no directories. Applies the same private-directory checks as the writer. */
+export function existingRelaysDir(home?: string): Promise<string | undefined> {
+  return privateLevels(relayLevels(base(home)), false)
 }
 
 /**

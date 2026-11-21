@@ -100,6 +100,23 @@ it('reserves one unpublished route across restart and atomically installs it wit
   expect(saved.relayReceipt(request.requestId)?.requestHash).toBe(request.requestHash)
   await expect(saved.reserveRelay(node, request, base, () => {})).rejects.toMatchObject({ code: 'native-config-changed' })
 })
+it('retains the requested archive across restart and reports an archive failure with the successful installation', async () => {
+  const { directory, profiles } = await fixture()
+  const node = input()
+  const request = { requestId: randomUUID(), requestHash: 'c'.repeat(64), deviceId: 'local-fixture', archiveName: 'ne' }
+  const base = profiles.configHash()
+  await profiles.reserveRelay(node, request, base, () => {})
+  const restarted = await RelayProfiles.open(directory)
+  const pending = restarted.snapshot().pendingRelay!
+  expect(pending.archiveName).toBe('ne')
+  const refused = vi.fn().mockRejectedValue(new Error('private directory unavailable'))
+  await restarted.installRelay(pending, base, () => {}, refused)
+  expect(refused).toHaveBeenCalledOnce()
+  const saved = await RelayProfiles.open(directory)
+  expect(saved.snapshot().profiles.map(item => item.relayId)).toEqual([node.relayId])
+  expect(saved.relayReceipt(request.requestId)).toMatchObject({ addedRelayId: node.relayId, fileSaveFailed: true })
+})
+
 it('abandoning a reserved relay keeps its receipt and blocks a late install', async () => {
   const { directory, profiles } = await fixture()
   const request = { requestId: randomUUID(), requestHash: 'c'.repeat(64), deviceId: 'local-fixture' }

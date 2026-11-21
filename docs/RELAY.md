@@ -41,7 +41,7 @@ sources:
 - **配对以后。** 手机尝试当前网络发现的直连入口。配置了中继时，两条路可以同时尝试；手机从 Mac 签名的连接簿里取中继地址，Mac 事先在中继上登记好。先验证成功的路径承载连接。没有可用直连和中继时，手机离线。
 - 中继看不到会话正文：手机与 Mac 之间还有一层只在两端建立和验证的 TLS，Host 身份证明与设备授权都在这层里。中继能看到连接 IP、时间、填充后的大小与流向、哪条登记的路由被谁连接。显式传输（上传附件、打开文件）按网速走，在中继看来是一段有大小和速率的突发流量。
 
-跨网络接入使用运营者自己的 Linux 服务器或 Cloudflare Workers 中继。Latch 没有官方中继。「设置 › 连接转发」第一行显示这台 Mac 是否已开启直连监听。手机是否发现并连通它，要看手机端结果。下面列出每个中继的方式、地址和状态，可测试、启停或移除；底部是「添加转发服务」。
+跨网络接入使用运营者自己的 Linux 服务器或 Cloudflare Workers 中继。Latch 没有官方中继。「设置 › 连接转发」第一行显示这台 Mac 是否已开启直连监听。手机是否发现并连通它，要看手机端结果。下面列出已接入的中继。本机管理员还会看到找到的连接配置，可以直接核对并连接。已接入的中继可测试、启停或从这台 Mac 移除。
 
 - **谁能看到什么。** 中继的运营者（你自己）与平台（服务器所在的云，或 Cloudflare）能看到：两端 IP、时间、填充后的大小与方向、路由标识、哪条路由被接通、通行证字段、路由令牌与准入证明；一次显式传输表现为一段有大小和速率的突发流量。看不到：会话正文、Host 身份、设备授权，它们都在端到端的内层。Latch 的中继代码不写日志、不存完整 IP；Cloudflare 自己的边缘日志不在 Latch 控制之内，部署时关闭了 Workers 的日志与观测。
 - 当前没有官方中继的行、开关与「优先使用」设置。
@@ -142,11 +142,11 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 
 1. **登录**：`wrangler login`，在自己的终端由你本人完成。Free 计划可以运行：节点对象从不休眠，一个节点一天约用 10,800 GB-s，Free 每天 13,000 GB-s 与 100,000 次对象请求（收到的消息按 20 条计 1 次），超出后到 UTC 0 点前连接失败；长期使用选 Workers Paid（[价格](https://developers.cloudflare.com/durable-objects/platform/pricing/)）。Free 计划上，陌生人只要知道地址、每秒约 1.2 次升级请求就能用完当天的请求额度（被拒绝的升级同样计数）。Latch 不替你登录，也不读、不存 Cloudflare 的令牌。部署命令要求 wrangler 4.164.0，不在 PATH 上就停下，不代装。
 2. **部署并验收**：`pnpm latch relay setup cloudflare --name home`。名称自己起（小写字母、数字与连字符，至多 40 个字符），它决定中继文件名、部署目录与 Worker 名（`latch-relay-home`）。`--location <位置>` 是 Cloudflare 的位置提示（`apac`、`apac-ne`、`apac-se`、`wnam`、`enam`、`sam`、`weur`、`eeur`、`oc`、`afr`、`me`），只是偏好；不给时不设提示，Cloudflare 把节点放在离第一次请求最近的地方。命令构建两个 Worker，部署注册挑战校验 Worker 与节点，生成中继密钥、注册令牌与管理令牌，经同一个加固的 wrangler 调用器从标准输入写进 secret（不进命令行参数、屏幕或日志），填好地址与节点标识后再部署一次，检查 `/healthz`，写出中继文件 `~/.latch/relays/home.json` 与旁边的 `home.json.admin-header`（都是新建的 0600 文件，已存在时在部署前停下，不覆盖；`--out <绝对路径>` 把中继文件写到别处），然后对刚部署的节点运行验收，逐项打印通过、失败或跳过，不打印令牌或地址。有失败项时退出码为 1，不要添加这个中继。各项见下文「Workers 的界限与验收」。
-3. **添加**：Mac 的「设置 › 连接转发 › 添加转发服务」第三步列出 `~/.latch/relays` 里尚未添加的配置文件（名称、地址、密钥短哈希）。选「核对并连接」，对照核对卡、系统确认窗口与第 2 步打印的密钥短哈希。页面只把文件名交给 Host，由 Host 读文件，注册令牌不经过页面。别处的文件用「选择文件」。
+3. **添加**：打开这台 Mac 的「设置 › 连接转发」，找到标有「未添加」的 Worker，点「核对并连接」。对照配置文件、系统确认窗口与部署时的密钥短哈希。对于本机发现的文件，页面只提交文件选择和节点标识，由 Host 读取注册令牌。其他位置的文件可从「添加转发服务 › 已有配置文件」选择。
 
 `pnpm relay-edge:setup --name home [--location <位置>]` 与 `pnpm relay-edge:accept --name home` 是这一流程的两步，可分开运行；早先的 `--region ne|se` 仍可用，等同 `--name ne --location apac-ne` 与 `--name se --location apac-se`，沿用原来的部署目录。安装版的 `latch relay setup cloudflare` 尚未实现：安装包不带 Workers 部署包。
 
-**你的中继文件放在哪里。** 都在 `~/.latch/relays`：`~/.latch` 与 `relays` 都是 0700，命令逐级创建，是链接、不归你或组与其他用户可访问时拒绝使用。
+**你的中继文件放在哪里。** 默认目录是 `~/.latch/relays/`。`~/.latch` 与 `relays` 都是本人所有的 0700 目录。主列表也识别主目录下原有的 `~/latch-relay-<名称>.json`。自动发现只读自己的私有普通连接文件，跳过符号链接和管理文件，不联系 Cloudflare。相同节点只显示一次，优先使用标准目录的配置。
 
 | 文件 | 内容 | 添加之后 |
 | --- | --- | --- |
@@ -154,7 +154,7 @@ pnpm relay profile --data-dir /srv/latch-relay --url https://relay.example.com:8
 | `<名称>.json.admin-header` | Workers 中继的管理令牌（`Authorization` 头） | 留着：查看状态与排空要用；重新验收还需要中继文件 |
 | `<名称>/deploy/` | 部署命令生成的 wrangler 配置与 Worker 副本，不含秘密 | 留着，`wrangler deploy -c` 或 `wrangler delete` 时用 |
 
-部署目录按名称命名，因为 Worker 按名称命名（`latch-relay-<名称>`）：同一名称再次部署就是重新部署同一个 Worker。早先版本把部署目录放在 `~/.latch-relay/latch-relay-<地区>`，中继文件放在 `--out` 指定处；新位置没有这个名称的部署目录时，部署命令照常使用旧目录并打印一行搬移命令，从不自动移动或删除。以东京节点为例，搬移是两条命令：
+部署目录按名称命名，因为 Worker 按名称命名（`latch-relay-<名称>`）：同一名称再次部署就是重新部署同一个 Worker。早先版本把部署目录放在 `~/.latch-relay/latch-relay-<地区>`，中继文件放在 `--out` 指定处；新位置没有这个名称的部署目录时，部署命令照常使用旧目录并打印一行搬移命令，从不自动移动或删除。日常连接不需要迁移部署目录或管理令牌。运营者如需连同部署工具搬移，以东京节点为例：
 
 ```sh
 (umask 077 && mkdir -p ~/.latch/relays/ne) && mv -n ~/latch-relay-ne.json ~/.latch/relays/ne.json && mv -n ~/latch-relay-ne.json.admin-header ~/.latch/relays/ne.json.admin-header
@@ -170,7 +170,7 @@ mv -n ~/.latch-relay/latch-relay-ne ~/.latch/relays/ne/deploy && rmdir ~/.latch-
 这条路径需要支持 Workers 中继的原生 iOS App；当前仓库提供源码，尚无公开安装入口。
 
 1. 运营者保留一个已验收、凭注册令牌登记的节点。已有节点无需重新部署；同名 `setup` 会更换节点身份和令牌。通过私密渠道把 `<名称>.json` 交给受邀者，另行核对节点地址和密钥短哈希。`.admin-header` 留在运营者手中，受邀者无需 Cloudflare 账号或管理令牌。
-2. 每位受邀者在自己的 Mac 上打开「设置 › 连接转发 › 添加转发服务 › 已有配置文件」，选择文件，核对地址和短哈希，并在系统窗口确认。每个 Host 独立生成路由密钥，注册令牌只赋予在中继上登记路由的资格。
+2. 每位受邀者在自己的 Mac 上打开「设置 › 连接转发」。已发现的配置可直接核对；收到的其他文件从「添加转发服务 › 已有配置文件」选择。核对地址与短哈希，在系统窗口确认。每个 Host 独立生成路由密钥，注册令牌只授予在中继上登记路由的资格。
 3. 每人的手机先与自己的 Mac 配对。若此前已配对，在原有可用路径上连一次，让手机取得含中继的签名连接簿。要验证异网接入，保持 Mac 在线，将手机切到蜂窝网络，从手机读取自己 Mac 上的会话。Mac 上「测试」成功只证明 Mac 到中继的这一段。只让一台测试手机打开会话，可在 Mac 上用 `pnpm latch traffic --json --data-dir <测试 Host 的数据目录>` 查看仍在打开的事件流（`connections` 中没有 `closedAt` 的项）；`listener` 为 `native-direct` 或 `native-relay` 表明该流实际经过的入口。
 
 同一节点的持有人共用注册令牌，目前没有逐人撤销或逐人额度。收回一人的登记资格需要轮换并给其余 Mac 更新配置；仅从某台 Mac 移除中继并不能收回已经发出的文件。若需要不同组能独立退出，可以部署不同名称的节点，每组一份文件。Cloudflare 的 Workers 和 Durable Objects 可分别配置账户级支出限额，达到限额会影响该产品在账户里的其他服务；账单提醒只发送通知。[Cloudflare 支出限额与提醒](https://developers.cloudflare.com/billing/manage/spend-management/)
@@ -179,6 +179,9 @@ mv -n ~/.latch-relay/latch-relay-ne ~/.latch/relays/ne/deploy && rmdir ~/.latch-
 
 选中页面列出的配置文件，或用「选择文件」读入一个之后，出现核对卡：方式、地址、密钥短哈希（Linux 中继是证书公钥 SHA-256 的前 8 位十六进制，Workers 中继是中继公钥 SHA-256 的前 8 位）；注册令牌只写「已包含」。选「确认并连接」后这台 Mac 弹出系统确认，窗口写明第一个地址、地址总数与同一个密钥短哈希，对照后再确认。之后一行进度：连上、密钥相符、注册、签发连接信息。Host 签好包含当前中继配置的连接簿后显示「这台 Mac 已签发」。手机收到和使用连接簿的状态需要手机端的证据。任一步失败就停在那一步，写明原因并给「重试」（原 requestId 与原 profile，不重复添加）；结果未知时关闭对话框仍在本页内存中保留原请求，展示用的密钥短哈希不进入请求体。
 
+- 首屏的「未添加」表示找到本机文件。隐藏后仍可从「添加转发服务 › 已有配置文件」找回。这里不枚举 Cloudflare 账户中的部署。
+- 手选文件或连接旧位置的文件，Host 在身份核验和登记通过后默认归档一份 0600 的连接配置。旧文件优先用原名称，手选文件按节点 ID 命名；同名冲突时按节点 ID 保存，同内容的私有文件可复用，已有文件不会被覆盖。归档和 Host 登记是两次写入：归档成功后如果 Host 的保存结果待确认，可继续原请求；如果只失败在归档，页面会报告已连接及归档失败。
+- 「从这台 Mac 移除」从本 Host 收回中继连接并隐藏首页的本机文件。导出的配置仍可重新添加。云端 Worker 及其他 Mac 的连接不受影响。启停和移除都不用 Cloudflare 账户权限。
 - 只有这台 Mac 上有 `admin` 的设备能添加、停用、移除；其他有 `admin` 的设备只看得到列表与状态。
 - 每个节点只能添加一次，至多四个自己的中继。
 - 中继文件使用完整、规范化的 HTTPS 来源地址，例如 `https://relay.example.com/` 或 `https://relay.example.com:8443/`，保留末尾的 `/`。域名小写，IPv6 用方括号。设置、`latch relay add` 与 Host 都核对地址（[relay-endpoint.ts](../packages/protocol/src/relay-endpoint.ts)）。

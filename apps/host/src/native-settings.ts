@@ -20,6 +20,7 @@ import {
 } from './relay/profiles.ts'
 import type { AuditActor, AuditLog, StepupMethod } from './audit.ts'
 import type { HostRelayDirectory } from './relay/directory.ts'
+import { saveRelayFile } from './relay/save-relay-file.ts'
 
 type NativeHost = Awaited<ReturnType<typeof startNativeHost>>
 type RelayAddition = { base: string; input: RelayProfileInput; request: Omit<PendingRelay, 'profile'> }
@@ -41,6 +42,7 @@ export class NativeSettings {
       controller: HostRelayController
       audit: AuditLog
       directory?: HostRelayDirectory
+      relayFilesHome?: string | undefined
       managedDirect?: { host: string; port: number }
       /** The Host runs from a source checkout with the relay setup commands. */
       sourceCheckout?: boolean
@@ -167,11 +169,12 @@ export class NativeSettings {
       if (!this.options.managedDirect && !this.wanted() && this.options.native.direct) await this.bind(undefined, () => true)
     })
   }
-  planRelay(requestId: string, deviceId: string, submitted?: RelayProfileInput): RelayAddition | undefined {
+  planRelay(requestId: string, deviceId: string, submitted?: RelayProfileInput, archiveName?: string): RelayAddition | undefined {
     const { profiles } = this.options
     const receipt = profiles.relayReceipt(requestId)
     const pending = profiles.snapshot().pendingRelay
-    const requestHash = submitted === undefined ? undefined : sha256Hex(canonicalJson(submitted))
+    const requestHash =
+      submitted === undefined ? undefined : sha256Hex(canonicalJson(archiveName ? { profile: submitted, archiveName } : submitted))
     if (receipt) {
       if (requestHash !== undefined && receipt.requestHash !== requestHash) throw this.relayConflict()
       if (receipt.cancelled) throw new AppError(409, 'native-relay-cancelled', '这次中继添加已放弃。')
@@ -186,12 +189,21 @@ export class NativeSettings {
       return {
         base: profiles.configHash(),
         input: { ...relayNodeFields(pending.profile), ...(registrationKey ? { registrationKey } : {}) },
-        request: { requestId, deviceId, requestHash: pending.requestHash },
+        request: {
+          requestId,
+          deviceId,
+          requestHash: pending.requestHash,
+          ...(pending.archiveName ? { archiveName: pending.archiveName } : {}),
+        },
       }
     }
     if (submitted === undefined || requestHash === undefined) throw new AppError(404, 'native-relay-request-missing', '没有找到这次添加。')
     profiles.assertNewRelay(submitted)
-    return { base: profiles.configHash(), input: submitted, request: { requestId, deviceId, requestHash } }
+    return {
+      base: profiles.configHash(),
+      input: submitted,
+      request: { requestId, deviceId, requestHash, ...(archiveName ? { archiveName } : {}) },
+    }
   }
   private relayConflict(): AppError {
     return new AppError(409, 'request-conflict', '同一个请求标识不能用于不同的中继配置。')
@@ -238,10 +250,14 @@ export class NativeSettings {
         throw new AppError(503, 'native-relay-unconfirmed', '连不上这个中继。请核对地址与网络，再重试或放弃。')
       })
       controller.rememberVerifiedRegistration(pending.profile, proof)
-      await profiles.installRelay(pending, plan.base, () => {
+      const stillPermitted = () => {
         current()
         if (!proof.permitted()) throw new AppError(403, 'native-relay-egress', '当前的出站规则不允许连接这个中继。')
-      })
+      }
+      const archive = pending.archiveName
+        ? () => saveRelayFile(plan.input, pending.archiveName, this.options.relayFilesHome, stillPermitted)
+        : undefined
+      await profiles.installRelay(pending, plan.base, stillPermitted, archive)
       controller.reconcile()
       this.options.changed?.()
     } finally {

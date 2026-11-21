@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { AppError } from '@latch/sdk'
 import { canonicalJson, sha256Hex, syncDirectory, writeFileAtomic } from '@latch/core/node-kit'
 import { EDGE_RELAY_AVAILABLE } from '@latch/link-wire'
+import { RELAY_NAME } from '@latch/link-client/relay-files'
 import { isRelayEndpoint } from '@latch/protocol'
 import { OFFICIAL_RELAYS, type OfficialRelay } from './official.ts'
 import {
@@ -141,8 +142,11 @@ const receiptSchema = z.strictObject({
   requestHash: z.string().regex(/^[a-f0-9]{64}$/u),
   cancelled: z.literal(true).optional(),
   cancelAuditFailed: z.literal(true).optional(),
+  addedRelayId: relayId.optional(),
+  fileSaveFailed: z.literal(true).optional(),
 })
-const pendingRelaySchema = receiptSchema.omit({ cancelled: true, cancelAuditFailed: true }).extend({
+const pendingRelaySchema = receiptSchema.pick({ requestId: true, requestHash: true }).extend({
+  archiveName: z.string().regex(RELAY_NAME).optional(),
   deviceId: z.string().min(1).max(128),
   profile: profileFields.omit({ builtIn: true }).refine(kindRule),
 })
@@ -326,17 +330,33 @@ export class RelayProfiles {
       })
     }, authorize)
   }
-  installRelay(pending: PendingRelay, base: string, authorize: () => void): Promise<void> {
-    return this.change(draft => {
+  installRelay(pending: PendingRelay, base: string, authorize: () => void, archive?: () => Promise<void>): Promise<void> {
+    return this.change(async draft => {
       authorize()
       this.checkBase(base)
       this.assertNewRelay(pending.profile)
       assertRelayUsable(pending.profile)
       if (draft.pendingRelay?.requestId !== pending.requestId || draft.pendingRelay.requestHash !== pending.requestHash)
         throw new AppError(409, 'native-relay-cancelled', '这次中继添加已放弃。')
+      // Archiving is optional. Record its outcome with the installed relay so a lost response can be read back.
+      let fileSaveFailed = false
+      if (archive) {
+        try {
+          await archive()
+        } catch (error) {
+          if (error instanceof AppError) throw error
+          fileSaveFailed = true
+        }
+        authorize()
+      }
       draft.profiles.push(draft.pendingRelay.profile)
       delete draft.pendingRelay
-      this.advanceConfiguration(draft, { requestId: pending.requestId, requestHash: pending.requestHash })
+      this.advanceConfiguration(draft, {
+        requestId: pending.requestId,
+        requestHash: pending.requestHash,
+        addedRelayId: pending.profile.relayId,
+        ...(fileSaveFailed ? { fileSaveFailed: true } : {}),
+      })
     }, authorize)
   }
   cancelRelay(
