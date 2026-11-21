@@ -59,7 +59,15 @@ const { createAgentRunner, createBrowserProvider } = require('./browser-agent.cj
 // Through the module objects, so the end-to-end test's bootstrap can give the updater a local feed and a fake installer.
 const updates = require('./updater.cjs')
 const menus = require('./menu.cjs')
-const { ABOUT_BACKGROUND, ABOUT_SIZE, ABOUT_URL, aboutCopy, aboutResponse } = require('./about.cjs')
+const {
+  ABOUT_BACKGROUND,
+  ABOUT_SIZE,
+  ABOUT_URL,
+  aboutCopy,
+  aboutResponse,
+  parseAboutAppearance,
+  followAboutAppearance,
+} = require('./about.cjs')
 const { createLocale, currentLocale, defineCopy } = require('./locale.cjs')
 const {
   GUIDE_ALLOWED_URL,
@@ -277,6 +285,9 @@ const aboutInput = () => ({
   icon: icon.resize({ width: 168, height: 168 }).toDataURL(),
 })
 let aboutWindow
+const aboutAppearances = new WeakMap()
+let aboutOwner
+let refreshAbout
 /** The window a menu command acts on: the focused one that shows a Latch page (never 关于), else this Mac's. */
 function focusedAppWindow() {
   const focused = BrowserWindow.getFocusedWindow()
@@ -307,11 +318,13 @@ async function pastePlainText() {
 }
 
 function showAbout() {
+  const focused = BrowserWindow.getFocusedWindow()
+  if (!aboutWindow || (focused && focused !== aboutWindow)) aboutOwner = focusedAppWindow()?.webContents
   if (aboutWindow && !aboutWindow.isDestroyed()) {
-    aboutWindow.show()
-    aboutWindow.focus()
+    refreshAbout(true)
     return
   }
+  const fallback = () => (nativeTheme.shouldUseDarkColors ? ABOUT_BACKGROUND.dark : ABOUT_BACKGROUND.light)
   const window = new BrowserWindow({
     ...ABOUT_SIZE,
     resizable: false,
@@ -320,7 +333,7 @@ function showAbout() {
     fullscreenable: false,
     show: false,
     title: aboutCopy.title,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? ABOUT_BACKGROUND.dark : ABOUT_BACKGROUND.light,
+    backgroundColor: aboutAppearances.get(aboutOwner)?.background ?? fallback(),
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' } : {}),
     webPreferences: {
       sandbox: true,
@@ -334,9 +347,12 @@ function showAbout() {
   })
   aboutWindow = window
   window.setMenuBarVisibility(false)
-  window.once('ready-to-show', () => window.show())
   window.once('closed', () => {
-    if (aboutWindow === window) aboutWindow = undefined
+    if (aboutWindow === window) {
+      aboutWindow = undefined
+      aboutOwner = undefined
+      refreshAbout = undefined
+    }
   })
   // The page takes no keys of its own: Escape closes it, as ⌘W does through the menu.
   window.webContents.on('before-input-event', (event, input) => {
@@ -345,6 +361,7 @@ function showAbout() {
       window.close()
     }
   })
+  refreshAbout = followAboutAppearance(window, () => aboutAppearances.get(aboutOwner), fallback)
   void window.loadURL(ABOUT_URL)
 }
 
@@ -1298,6 +1315,21 @@ async function startComputers({ localHostId, localState, onSnapshot, onChange, o
   ipcMain.on('latch:locale', (event, preference, language) => {
     if (!trusted(event)) return
     if (desktopLocale.set(preference, language)) syncSpaceMenu(true)
+  })
+  ipcMain.on('latch:about:appearance', (event, value) => {
+    const frame = event.senderFrame
+    if (
+      !senderOf(event)
+      || !frame
+      || frame.detached
+      || frame !== event.sender.mainFrame
+      || !frame.url.startsWith(`latch://${homeOf(event.sender)}/link/`)
+    )
+      return
+    const appearance = parseAboutAppearance(value)
+    if (!appearance || aboutAppearances.get(event.sender)?.css === appearance.css) return
+    aboutAppearances.set(event.sender, appearance)
+    if (event.sender === aboutOwner) refreshAbout?.()
   })
   ipcMain.on('latch:space:ready', (event, ready) => {
     if (!senderOf(event) || typeof ready !== 'boolean') return

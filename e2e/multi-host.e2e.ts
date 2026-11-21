@@ -294,7 +294,7 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
           return { keys: Object.keys(shell).sort(), computers: Object.keys(shell.computers).sort(), remote: shell.remote }
         })
         expect(remoteShell).toEqual({
-          keys: ['computers', 'devMode', 'kind', 'lights', 'platform', 'remote', 'spaces'],
+          keys: ['about', 'computers', 'devMode', 'kind', 'lights', 'platform', 'remote', 'settings', 'spaces'],
           computers: ['list', 'open', 'start', 'subscribe', 'subscribeSession', 'subscribeStart'],
           remote: true,
         })
@@ -336,6 +336,49 @@ describe.skipIf(process.platform !== 'darwin' || latchEnv(process.env, 'ELECTRON
           document.cookie = '__Host-latch_forged=x; Secure; Path=/'
         })
         expect(await bPage.evaluate(async () => (await fetch('/link/api/snapshot')).status)).toBe(200)
+
+        // Another workbench can change its theme without recoloring this Mac's open About window.
+        const showAboutFrom = (source: Page) =>
+          app.evaluate(async ({ BrowserWindow, Menu }, url) => {
+            const workbench = BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === url)!
+            if (!workbench.isFocused())
+              await new Promise<void>(done => {
+                workbench.once('focus', done)
+                workbench.focus()
+              })
+            Menu.getApplicationMenu()!.getMenuItemById('about')!.click()
+          }, source.url())
+        const aboutBackground = () =>
+          app.evaluate(({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows()
+              .find(window => window.webContents.getURL() === 'latch://app/about')
+              ?.getBackgroundColor()
+              .toLowerCase(),
+          )
+        const aboutOpened = app.waitForEvent('window')
+        await showAboutFrom(page)
+        const about = await aboutOpened
+        const aboutColor = () => about.locator('body').evaluate(body => getComputedStyle(body).backgroundColor)
+        await expect.poll(aboutBackground).toBe('#fcfcfc')
+        await expect.poll(aboutColor).toBe('rgb(252, 252, 252)')
+        await openEntry(bPage, '外观')
+        const remoteThemes = bPage.getByRole('radiogroup', { name: '主题' })
+        await remoteThemes.getByRole('radio', { name: '深色', exact: true }).click()
+        await bPage.locator('html[data-theme="dark"]').waitFor({ state: 'attached' })
+        // Wait for a round trip to main after the remote workbench has published its change.
+        await bPage.evaluate(async () => {
+          const shell = Reflect.get(globalThis, 'latchShell') as { lights: { fullScreen(): Promise<boolean> } }
+          await shell.lights.fullScreen()
+        })
+        expect(await aboutBackground()).toBe('#fcfcfc')
+        expect(await aboutColor()).toBe('rgb(252, 252, 252)')
+        await showAboutFrom(bPage)
+        await expect.poll(aboutBackground).toBe('#0c0c0c')
+        await expect.poll(aboutColor).toBe('rgb(12, 12, 12)')
+        expect(app.windows()).toHaveLength(3)
+        await about.close()
+        await remoteThemes.getByRole('radio', { name: '跟随系统', exact: true }).click()
+        await openSessions(bPage)
 
         // One session, all of it in B's window: start, approve, finish.
         await bPage.getByRole('textbox', { name: '新会话消息' }).fill('生成需要审批的报告')

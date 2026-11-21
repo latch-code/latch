@@ -772,7 +772,7 @@ iOS 遇到首次发言失去回执时保留原请求。用户点核对后，App 
 
 **远程页面能做的事。** 凭据、登记、配对链接、睡眠与停止报告、更新、会话文件与添加文件夹的路由在远程来源上一律 403 `shell-managed`。
 
-- 远程页面的 `latchShell` 只有 `{ kind: 'electron', remote: true, devMode, platform, computers: { list, subscribe, open, start, subscribeSession, subscribeStart }, spaces: { onShow }, lights? }`：没有文件夹、文件、预览浏览器、生命周期、通知与更新；那台 Host 判定 `access.local` 为 false。
+- 远程页面的 `latchShell` 只有 `{ kind: 'electron', remote: true, devMode, platform, computers: { list, subscribe, open, start, subscribeSession, subscribeStart }, spaces, settings, about?, lights? }`。已登记工作台的顶层页可通过 `about.setAppearance` 上报本窗口的浅深色和四个不透明颜色。主进程只将它们用于该窗口打开的「关于 Latch」。那台 Host 判定 `access.local` 为 false。
 - 这台 Mac 的页面另有 `add`、`cancelAdd`、`remove`、`trustCertificate`。`open`、`start`、`add`、`remove` 与 `trustCertificate` 只接受该页面一秒内的真实点按或按键；同一台电脑同时多次 `open` 只开一个窗口。
 - 跨电脑交给页面的只有电脑名、状态、上次在线、版本与 Host 宣布的停止原因。
 

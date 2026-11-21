@@ -560,6 +560,15 @@ const HOME = (() => {
   }
 })()
 const REMOTE = /^h-[a-z2-7]{52}$/.test(HOME)
+const ABOUT =
+  process.isMainFrame && (HOME === 'app' || REMOTE)
+    ? Object.freeze({
+        setAppearance: appearance => {
+          if (typeof appearance === 'string' && /^(?:light|dark)(?: #[0-9a-f]{6}){4}$/.test(appearance))
+            ipcRenderer.send('latch:about:appearance', appearance)
+        },
+      })
+    : undefined
 const CLI_EXECUTABLE =
   HOME === 'app' && process.isMainFrame
     ? process.argv.find(value => value.startsWith('--latch-cli-executable='))?.slice('--latch-cli-executable='.length)
@@ -598,6 +607,7 @@ if (REMOTE)
       computers: computersApi(false),
       spaces: spacesApi,
       settings: settingsApi,
+      ...(ABOUT ? { about: ABOUT } : {}),
       ...(LIGHTS ? { lights: LIGHTS } : {}),
     }),
   )
@@ -614,6 +624,7 @@ if (!REMOTE)
       computers: computersApi(true),
       spaces: spacesApi,
       settings: settingsApi,
+      ...(ABOUT ? { about: ABOUT } : {}),
       locale: Object.freeze({
         set: (preference, language) => {
           if (language !== 'zh-CN' && language !== 'en') return

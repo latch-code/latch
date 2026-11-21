@@ -2,12 +2,32 @@ import { createRequire } from 'node:module'
 import { expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { ABOUT_CSP, ABOUT_URL, aboutPage, aboutResponse } = require('../src/about.cjs') as {
+const { ABOUT_CSP, ABOUT_URL, aboutPage, aboutResponse, parseAboutAppearance } = require('../src/about.cjs') as {
   ABOUT_CSP: string
   ABOUT_URL: string
   aboutPage(input: { version: string; icon?: string }): string
   aboutResponse(request: Request, input: { version: string; icon?: string }): Response | undefined
+  parseAboutAppearance(value: unknown): { background: string; css: string } | undefined
 }
+
+it('accepts only a resolved scheme with four opaque colours for the native window', () => {
+  const colors = '#010203 #fafafa #adadad #636363'
+  for (const scheme of ['light', 'dark']) {
+    const theme = parseAboutAppearance(`${scheme} ${colors}`)
+    expect(theme?.background).toBe('#010203')
+    expect(theme?.css).toContain(`color-scheme:${scheme}`)
+  }
+  for (const bad of [
+    null,
+    {},
+    colors,
+    `system ${colors}`,
+    `dark ${colors} extra`,
+    'dark red #ffffff #ffffff #ffffff',
+    'dark #000000 #000000 #000000 #fff;}',
+  ])
+    expect(parseAboutAppearance(bad)).toBeUndefined()
+})
 
 it('writes a static page: no script, nothing loaded but its inlined mark, and the version as text only', () => {
   const icon = `data:image/png;base64,${Buffer.from('png').toString('base64')}`

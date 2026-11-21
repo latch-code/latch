@@ -1340,18 +1340,20 @@ describe('what waits on other computers', () => {
 describe('the computers preload', () => {
   type Shell = {
     remote?: true
+    about?: { setAppearance(value: unknown): void }
     computers: {
       list(): Promise<{ computers: Array<Record<string, unknown>> } | undefined>
       open(hostId: string, taskId?: string): Promise<unknown>
       subscribeSession?(callback: (id: string) => void): () => void
     }
   }
-  async function load(href: string) {
+  async function load(href: string, isMainFrame = true) {
     const listeners = new Map<string, (event: unknown, value: unknown) => void>()
     const invoke = vi.fn(async (..._args: unknown[]): Promise<unknown> => ({ ok: true }))
+    const send = vi.fn()
     let shell: Shell | undefined
     runInNewContext(await readFile('apps/desktop/src/preload.cjs', 'utf8'), {
-      process: { platform: 'darwin' },
+      process: { platform: 'darwin', isMainFrame, argv: [] },
       location: { href },
       URL,
       require: () => ({
@@ -1362,14 +1364,30 @@ describe('the computers preload', () => {
         },
         ipcRenderer: {
           invoke,
+          send,
           on: (name: string, listener: (event: unknown, value: unknown) => void) => listeners.set(name, listener),
           removeListener: (name: string) => listeners.delete(name),
         },
         webUtils: { getPathForFile: () => '' },
       }),
     })
-    return { shell: shell!, invoke, listeners }
+    return { shell: shell!, invoke, send, listeners }
   }
+
+  it('forwards only a checked About palette from a local or remote top-level page', async () => {
+    const appearance = 'dark #2f2f2f #f0f0f0 #adadad #a0a0a0'
+    for (const origin of ['app', `h-${HOST_B}`]) {
+      const href = `latch://${origin}/link/`
+      const { shell, send } = await load(href)
+      for (const bad of [null, { appearance }, `${appearance}\n`, `${appearance};`, appearance.replace('#a0a0a0', 'red')])
+        shell.about!.setAppearance(bad)
+      expect(send).not.toHaveBeenCalled()
+      shell.about!.setAppearance(appearance)
+      expect(send).toHaveBeenCalledExactlyOnceWith('latch:about:appearance', appearance)
+      expect((await load(href, false)).shell.about).toBeUndefined()
+    }
+    expect((await load('https://app/link/')).shell.about).toBeUndefined()
+  })
   const item = { hostId: HOST_B, taskId: 'wait-1', title: '添加币种筛选', kind: 'approval', since: '2026-11-12T08:00:00.000Z' }
   const view = {
     computers: [

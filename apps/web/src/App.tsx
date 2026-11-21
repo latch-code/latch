@@ -13,6 +13,7 @@ import { AppShell } from './shell/AppShell.tsx'
 import { ConnectScreen, CrashScreen, EnrollmentPage } from './components/EnrollmentPage.tsx'
 import { ErrorBoundary } from './components/ErrorBoundary.tsx'
 import { SafeModeBanner } from './components/SafeModeBanner.tsx'
+import { aboutAppearance } from './hooks/aboutAppearance.ts'
 import { ModelSpendWritesProvider } from './settings/modelSpendWrites.tsx'
 
 const COPY = defineCopy(
@@ -24,7 +25,7 @@ const COPY = defineCopy(
 export function App() {
   const harness = useHarness()
   const preferences = usePreferences()
-  const { motion, density, palette, accent, floatingMaterial } = preferences
+  const { theme, motion, density, palette, accent, floatingMaterial } = preferences
   const locale = useLocale()
   useLayoutEffect(() => {
     const apply = () => setLocale(resolveLocale(preferences.locale))
@@ -41,11 +42,22 @@ export function App() {
     currentShell()?.locale?.set(preferences.locale, locale)
   }, [preferences.locale, locale])
   useLayoutEffect(() => {
-    applyTheme(preferences.theme)
-  }, [preferences.theme])
+    applyTheme(theme)
+  }, [theme])
   useLayoutEffect(() => {
     applyAppearance({ motion, density, palette, accent, floatingMaterial })
-  }, [motion, density, palette, accent, floatingMaterial])
+    const about = currentShell()?.about
+    if (!about) return undefined
+    const publish = () => {
+      const appearance = aboutAppearance()
+      if (appearance) about.setAppearance(appearance)
+    }
+    publish()
+    if (theme !== 'system') return undefined
+    const media = matchMedia('(prefers-color-scheme: dark)')
+    media.addEventListener('change', publish)
+    return () => media.removeEventListener('change', publish)
+  }, [motion, density, palette, accent, floatingMaterial, theme])
   // The Host's customisation: every snapshot hands it to the boot module, which shows it or keeps this device on the default.
   const custom = useCustomizationStatus()
   const accentPreview = custom.preview !== null && custom.preview.appearance.accentHue !== custom.host?.doc.appearance.accentHue

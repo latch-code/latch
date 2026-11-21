@@ -381,6 +381,27 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           Menu.getApplicationMenu()!.getMenuItemById(item)!.click()
         }, id)
 
+      // The monochrome default has no moving background. 设置… opens the page's settings.
+      expect(await page.locator('canvas.ui-backdrop').count()).toBe(0)
+      const settings = page.locator('.settings-overlay')
+      const appearance = async () => {
+        await click('settings')
+        await settings.waitFor()
+        await settings.getByText('外观', { exact: true }).first().click()
+        await settings.getByRole('radiogroup', { name: '背景样式' }).waitFor()
+      }
+      await appearance()
+      const themes = settings.getByRole('radiogroup', { name: '主题' })
+      const palettes = settings.getByRole('radiogroup', { name: '工作台配色' })
+      const setNativeTheme = (theme: 'light' | 'dark' | 'system') =>
+        application!.evaluate(({ nativeTheme }, value) => {
+          nativeTheme.themeSource = value
+        }, theme)
+      // A light system theme makes it possible to tell whether the window follows the workbench's explicit dark theme.
+      await setNativeTheme('light')
+      await themes.getByRole('radio', { name: '深色', exact: true }).click()
+      await page.locator('html[data-theme="dark"][data-palette="mono"]').waitFor({ state: 'attached' })
+
       // 关于 Latch: a window of its own at Latch's address, with the name and the version and no script.
       const opened = application.waitForEvent('window')
       await click('about')
@@ -391,7 +412,70 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       expect(await about.locator('p').innerText()).toMatch(/^版本 \d+\.\d+\.\d+/u)
       expect(await about.locator('img').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true)
       expect(await about.locator('script').count()).toBe(0)
-      await shot(about, 'about')
+      await expect
+        .poll(() =>
+          application!.evaluate(({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows()
+              .find(window => window.webContents.getURL() === 'latch://app/about')!
+              .getBackgroundColor()
+              .toLowerCase(),
+          ),
+        )
+        .toBe('#0c0c0c')
+
+      const checkAboutAppearance = async (name?: string) => {
+        const workbench = await page.evaluate(() => {
+          // These tokens can contain light-dark(), so read them as used colors.
+          const sample = document.createElement('span')
+          sample.hidden = true
+          document.body.append(sample)
+          sample.style.backgroundColor = 'var(--work-float)'
+          const background = getComputedStyle(sample).backgroundColor
+          const inks = ['--work-ink', '--work-muted', '--work-faint'].map(token => {
+            sample.style.color = `var(${token})`
+            return getComputedStyle(sample).color
+          })
+          sample.remove()
+          return { background, inks }
+        })
+        await expect
+          .poll(() =>
+            about.evaluate(() => ({
+              background: getComputedStyle(document.body).backgroundColor,
+              inks: ['h1', 'p', 'footer'].map(selector => getComputedStyle(document.querySelector(selector)!).color),
+            })),
+          )
+          .toEqual(workbench)
+        if (name) await shot(about, name)
+      }
+      await checkAboutAppearance('about-dark-mono')
+      await about.reload()
+      await checkAboutAppearance()
+      // Keep the About window open while changing both settings in the workbench.
+      await application.evaluate(({ BrowserWindow }) => {
+        const workbench = BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === 'latch://app/link/')
+        workbench!.focus()
+      })
+      await palettes.getByRole('radio', { name: '雾蓝', exact: true }).click()
+      await page.locator('html[data-theme="dark"][data-palette="cool"]').waitFor({ state: 'attached' })
+      await checkAboutAppearance('about-dark-cool')
+      await themes.getByRole('radio', { name: '浅色', exact: true }).click()
+      await page.locator('html[data-theme="light"][data-palette="cool"]').waitFor({ state: 'attached' })
+      await checkAboutAppearance('about-light-cool')
+
+      // Disable Playwright's default media emulation so the system choice follows Electron's native theme.
+      await page.emulateMedia({ colorScheme: null })
+      await themes.getByRole('radio', { name: '跟随系统', exact: true }).click()
+      await page.locator('html:not([data-theme])').waitFor({ state: 'attached' })
+      const isDark = () => page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)
+      await setNativeTheme('dark')
+      await expect.poll(isDark).toBe(true)
+      await checkAboutAppearance()
+      await setNativeTheme('light')
+      await expect.poll(isDark).toBe(false)
+      await checkAboutAppearance()
+      await setNativeTheme('system')
+
       // A second choice brings the same window forward; Escape closes it.
       await click('about')
       expect(application.windows().length).toBe(2)
@@ -403,17 +487,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       })
       await closed
 
-      // The monochrome default has no moving background. The effects can be enabled from settings.
-      expect(await page.locator('canvas.ui-backdrop').count()).toBe(0)
-      // 设置… opens the page's settings.
-      const settings = page.locator('.settings-overlay')
-      const appearance = async () => {
-        await click('settings')
-        await settings.waitFor()
-        await settings.getByText('外观', { exact: true }).first().click()
-        await settings.getByRole('radiogroup', { name: '背景样式' }).waitFor()
-      }
-      await appearance()
+      // The effects can be enabled from settings.
+      await palettes.getByRole('radio', { name: '黑白', exact: true }).click()
       const effects = settings.getByRole('radiogroup', { name: '背景效果' })
       expect(await effects.getByRole('radio', { name: '关', exact: true }).getAttribute('aria-checked')).toBe('true')
       await shot(page, 'settings-appearance')
@@ -498,6 +573,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
           const lifecycle = shell.lifecycle as Record<string, unknown>
           return {
             ...shell,
+            about: Object.keys(shell.about as object),
             locale: Object.keys(shell.locale as object),
             cli: Object.keys(shell.cli as object),
             folders: Object.keys(shell.folders as object),
@@ -509,6 +585,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
             updates: Object.keys(shell.updates as object),
             computers: Object.keys(shell.computers as object),
             spaces: Object.keys(shell.spaces as object),
+            settings: Object.keys(shell.settings as object),
+            localNetwork: Object.keys(shell.localNetwork as object),
             lights: Object.fromEntries(Object.entries(shell.lights as object).map(([name, value]) => [name, typeof value])),
             diagnostics: Object.keys(shell.diagnostics as object),
             editors: Object.keys(shell.editors as object),
@@ -520,9 +598,21 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         devMode: true,
         platform: 'darwin',
         previews: { protocolVersion: 1, htmlScripts: true },
+        about: ['setAppearance'],
         locale: ['set'],
         cli: ['get', 'install'],
-        folders: ['protocolVersion', 'pick', 'drop', 'reveal', 'revealAgentHome', 'saveSessionFolder', 'revealData', 'exportData', 'clone'],
+        folders: [
+          'protocolVersion',
+          'pick',
+          'drop',
+          'reveal',
+          'revealAgentHome',
+          'saveSessionFolder',
+          'revealData',
+          'exportData',
+          'exportAgentFolder',
+          'clone',
+        ],
         openInBrowser: 'function',
         copyComputerLink: 'function',
         lifecycle: { get: 'function', setLoginItem: 'function', setKeepAwake: 'function', restartHost: 'function', subscribe: 'function' },
@@ -533,6 +623,8 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
         updates: ['get', 'check', 'download', 'install', 'cancelWaiting', 'setAutoDownload', 'onChange', 'onShow'],
         computers: ['list', 'subscribe', 'open', 'start', 'subscribeStart', 'add', 'cancelAdd', 'trustCertificate', 'remove'],
         spaces: ['onShow', 'setKeys'],
+        settings: ['onShow'],
+        localNetwork: ['openSettings'],
         // Where the traffic lights end (a number) and whether the window is in full screen (a boolean out, nothing in).
         lights: { end: 'number', fullScreen: 'function', onFullScreen: 'function' },
         browser: [

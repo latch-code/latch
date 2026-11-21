@@ -476,6 +476,8 @@ export interface LatchShell {
   updates?: ShellUpdates
   /** The 浏览器 tab's tabs; version 1 shells (no sessions, no list) are not used. Never on another computer's page. */
   browser?: ShellBrowser
+  /** The light or dark scheme and four opaque hex colors for this window's About panel. */
+  about?: { setAppearance(appearance: string): void }
   /** 设置… chosen in the menu bar. Shells from before it do not have it. */
   settings?: { onShow(callback: () => void): () => void }
   /** Code or 我的 Agent chosen in the menu bar. Shells from before the two places do not have it. */
