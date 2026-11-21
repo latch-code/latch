@@ -76,8 +76,7 @@ struct ComposerMenu<Options: View>: View {
     }
 
     private var plus: some View {
-        Image(systemName: "plus").font(.system(size: 15, weight: .semibold)).foregroundStyle(PhoneTheme.ink2)
-            .frame(width: 36, height: 36).background(PhoneTheme.bubble, in: Circle())
+        Image(systemName: "plus").font(.system(size: 18, weight: .medium)).foregroundStyle(PhoneTheme.ink2)
             .frame(width: 44, height: 44).contentShape(Rectangle())
     }
 }

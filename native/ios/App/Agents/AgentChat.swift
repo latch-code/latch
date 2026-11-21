@@ -295,18 +295,19 @@ private struct NewTopicView: View {
     }
     private var field: some View {
         let placeholder = PhoneAgentChat.placeholder(frame.entry.name)
-        return HStack(alignment: .bottom, spacing: 8) {
+        return ConversationInputBar(focused: $focused) {
             ComposerMenu(key: attachKey, harness: harness, selection: attachSelection, source: $attachSource) {
                 SlashMenuItem(slash: slash, text: $prompt, focused: $focused, context: slashContext)
                 picks
-            }.padding(.leading, -8).padding(.bottom, 8)
+            }
+        } editor: {
             LocalTextEditor(text: $prompt, placeholder: placeholder, maximumLines: slashMenu == nil ? 6 : 3, focused: $focused,
                 selection: $slash.selection, composing: $slash.composing, selectionRequest: $slash.selectionRequest,
                 commandKeys: slashKeys, onCommand: slashKey, suffixHint: slash.hint(prompt, commands: [], enabled: slashContext.bodyOpen && slashContext.canRun && !slashContext.pending))
                 .overlay(alignment: .topLeading) {
                     if prompt.isEmpty { PromptHint(text: placeholder) }
                 }
-                .padding(.vertical, 12)
+        } action: {
             Button { send() } label: {
                 Group {
                     if sending { ProgressView().controlSize(.small).tint(.white) }
@@ -315,13 +316,8 @@ private struct NewTopicView: View {
                 .foregroundStyle(canSend || sending ? Color.white : PhoneTheme.faint)
                 .frame(width: 36, height: 36).background(canSend || sending ? PhoneTheme.accent : PhoneTheme.bubble, in: Circle())
                 .frame(width: 44, height: 44).contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel("发送").padding(.bottom, 8)
+            }.buttonStyle(.plain).disabled(!canSend).accessibilityLabel("发送")
         }
-        .padding(.leading, 16).padding(.trailing, 8).frame(minHeight: 52)
-        .background(PhoneTheme.raised, in: RoundedRectangle(cornerRadius: 26))
-        .overlay(RoundedRectangle(cornerRadius: 26).stroke(PhoneTheme.lineStrong))
-        .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
-        .padding(.horizontal, 12)
         .background(GeometryReader { proxy in Color.clear.onChange(of: proxy.frame(in: .global).minY, initial: true) { _, value in slashSpace = max(0, value - proxy.safeAreaInsets.top - 12) } })
         .disabled(!mine.isEmpty)
     }

@@ -46,6 +46,26 @@ func phoneSlashFixture(_ input: Data) throws -> [String: Any] {
           edit.text == "🙂 检查 $ARGUMENTS 后缀", edit.selectionStart == 6, edit.selectionEnd == 16,
           PhoneSlash.complete(menu, optionId: menu.options[0].id, draft: draft + "changed", caret: 7, enabled: true) == nil,
           PhoneSlash.complete(menu, optionId: menu.options[0].id, draft: draft, caret: 7, enabled: false) == nil else { throw NativeFailure.invalidRecord }
+    func opens(_ draft: String, _ location: Int, _ length: Int = 0, as expected: String, at caret: Int) -> Bool {
+        guard let first = PhoneSlash.openSuggestions(draft, selection: NSRange(location: location, length: length)),
+              first.text == expected, first.selectionStart == caret, first.selectionEnd == caret,
+              PhoneSlash.token(first.text, caret: caret) != nil,
+              let again = PhoneSlash.openSuggestions(first.text, selection: NSRange(location: caret, length: 0)) else { return false }
+        return again.text == first.text && again.selectionStart == caret && again.selectionEnd == caret
+    }
+    guard opens("", 0, as: "/", at: 1),
+          opens("/", 1, as: "/", at: 1),
+          opens("／模型 后缀", 1, as: "／模型 后缀", at: 3),
+          opens("🙂 /rev 后缀", 5, as: "🙂 /rev 后缀", at: 7),
+          opens("前🙂后", 1, 2, as: "前 / 后", at: 3),
+          opens("草稿正文", 2, as: "草稿 / 正文", at: 4),
+          opens("草稿", 2, as: "草稿 /", at: 4),
+          PhoneSlash.openSuggestions("🙂", selection: NSRange(location: 1, length: 0)) == nil,
+          PhoneSlash.openSuggestions("/", selection: NSRange(location: NSNotFound, length: 0)) == nil,
+          PhoneSlash.menu("正文 /", commands: commands, templates: [], context: context)?.sections == [],
+          PhoneSlash.menu("正文 /", commands: commands, templates: templates, context: context)?.sections == [.template],
+          all.sections == [.command, .action]
+    else { throw NativeFailure.invalidRecord }
     let native: [NativeJSON] = [.object(["name": .string("compact"), "idleOnly": .bool(true)]), .object(["name": .string("status")])]
     context.running = true
     let running = PhoneSlash.menu("/", commands: native, templates: [], context: context)!

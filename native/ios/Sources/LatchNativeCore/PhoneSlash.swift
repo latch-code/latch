@@ -68,6 +68,10 @@ public struct PhoneSlashMenu: Sendable {
     public let options: [PhoneSlashOption]
     fileprivate let draft: String
     fileprivate let caret: Int
+    public var sections: [PhoneSlashOption.Kind] {
+        guard token.query.isEmpty else { return [] }
+        return [PhoneSlashOption.Kind.command, .template, .action].filter { kind in options.contains { $0.kind == kind } }
+    }
     public var initialSelection: Int? { token.query.isEmpty ? nil : options.firstIndex { $0.unavailable == nil } }
     public func moved(from current: Int?, down: Bool) -> Int? {
         let usable = options.indices.filter { options[$0].unavailable == nil }
@@ -147,6 +151,25 @@ public enum PhoneSlash {
         while start > 0, !space(units[start - 1]) { start -= 1 }
         guard start < end, [47, 65295].contains(units[start]), !units[(start + 1)..<end].contains(where: { [47, 65295].contains($0) }) else { return nil }
         return PhoneSlashToken(query: String(decoding: units[(start + 1)..<end], as: UTF16.self).lowercased(), start: start, end: end, initial: start == 0)
+    }
+    /** Opening suggestions again keeps the current query. An explicit selection is replaced like a normal edit. */
+    public static func openSuggestions(_ draft: String, selection: NSRange) -> PhoneSlashEdit? {
+        let units = Array(draft.utf16), start = selection.location
+        guard boundary(units, start), selection.length >= 0, selection.length <= units.count - start else { return nil }
+        let end = start + selection.length
+        guard boundary(units, end) else { return nil }
+        if selection.length == 0 {
+            var wordEnd = start
+            while wordEnd < units.count, !space(units[wordEnd]) { wordEnd += 1 }
+            if let existing = token(draft, caret: wordEnd), existing.start <= start {
+                return PhoneSlashEdit(text: draft, selectionStart: wordEnd, selectionEnd: wordEnd)
+            }
+        }
+        let prefix = (start == 0 || space(units[start - 1])) ? "/" : " /"
+        let suffix = end < units.count && !space(units[end]) ? " " : ""
+        let next = (draft as NSString).replacingCharacters(in: selection, with: prefix + suffix)
+        let caret = start + prefix.utf16.count
+        return PhoneSlashEdit(text: next, selectionStart: caret, selectionEnd: caret)
     }
     public static func actionOf(_ draft: String) -> (action: PhoneSlashAction, argument: String)? {
         let units = Array(trim(draft).utf16)

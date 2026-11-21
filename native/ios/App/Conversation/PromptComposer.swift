@@ -16,12 +16,11 @@ struct PromptComposer: View {
     var newTopic: ((String) -> Void)? = nil
     @State private var text = ""
     @State private var focused = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var nextModel: PhoneModelChoice?
     /** 「已送达」 for a moment, after 放弃这次提交 found the message already in its session. */
     @State private var settled: String?
     @AppStorage(PhoneFaceID.key) private var faceID = false
-    /** The picker the ＋ opened; held here, as the field changes shape when focus leaves it. */
+    /** The picker opened from the input menu. */
     @State private var attachSource: AttachSource?
     /** Waiting for uploads before the message goes. */
     @State private var sending = false
@@ -133,7 +132,6 @@ struct PromptComposer: View {
             if !person && gate == nil && model.sessionId != nil && (focused || !controls.isEmpty) { chips }
         }
         .padding(.bottom, 8).padding(.top, 4)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: focused)
         .onAppear { if let held = model.takeDraft(for: draftId) { text = held }; insert() }
         // 加入对话 and 带入输入框 put text after what is written, never send it.
         .onChange(of: draftId.flatMap { model.draftInserts[$0] }) { _, value in if value != nil { insert() } }
@@ -180,24 +178,13 @@ struct PromptComposer: View {
         }
     }
     private var field: some View {
-        let open = focused || !text.isEmpty
-        // One layout that changes shape: separate branches would replace the text view, and with it the keyboard, on every focus.
-        let layout = open ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
-        return layout {
-            if rejecting == nil && !open { inputMenu.padding(.leading, -8) }
-            editor.layoutPriority(1)
-            HStack(spacing: 8) {
-                if rejecting == nil && open { inputMenu.padding(.leading, -6) }
-                if open { Spacer(minLength: 0) }
-                action
-            }.frame(maxWidth: open ? .infinity : nil, alignment: .trailing)
+        ConversationInputBar(focused: $focused) {
+            if rejecting == nil { inputMenu }
+        } editor: {
+            editor.padding(.leading, rejecting == nil ? 0 : 10)
+        } action: {
+            action
         }
-        .padding(.leading, 16).padding(.trailing, open ? 10 : 8).padding(.top, open ? 12 : 0).padding(.bottom, open ? 10 : 0).frame(minHeight: 52)
-        .fixedSize(horizontal: false, vertical: true)
-        .background(PhoneTheme.raised, in: RoundedRectangle(cornerRadius: open ? 22 : 26))
-        .overlay(RoundedRectangle(cornerRadius: open ? 22 : 26).stroke(PhoneTheme.lineStrong))
-        .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
-        .padding(.horizontal, 12)
         .background(GeometryReader { proxy in
             Color.clear.onChange(of: proxy.frame(in: .global).minY, initial: true) { _, value in slashSpace = max(0, value - proxy.safeAreaInsets.top - 12) }
         })
@@ -345,6 +332,36 @@ struct PromptComposer: View {
     private func chip<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content().font(.system(size: 13)).foregroundStyle(PhoneTheme.ink2).lineLimit(1).padding(.horizontal, 12).frame(height: 32)
             .background(PhoneTheme.raised, in: Capsule()).overlay(Capsule().stroke(PhoneTheme.line))
+    }
+}
+
+struct ConversationInputBar<Menu: View, Editor: View, Action: View>: View {
+    @Binding var focused: Bool
+    @ViewBuilder let menu: () -> Menu
+    @ViewBuilder let editor: () -> Editor
+    @ViewBuilder let action: () -> Action
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 4) {
+            menu()
+            editor()
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .background {
+                    Color.clear.contentShape(Rectangle())
+                        .onTapGesture { focused = true }.accessibilityHidden(true)
+                }
+            action()
+        }
+        .padding(.horizontal, 6).padding(.vertical, 4)
+        .fixedSize(horizontal: false, vertical: true)
+        .background {
+            RoundedRectangle(cornerRadius: 24)
+                .fill(PhoneTheme.raised)
+                .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
+        }
+        .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(PhoneTheme.lineStrong).allowsHitTesting(false) }
+        .padding(.horizontal, 12)
     }
 }
 

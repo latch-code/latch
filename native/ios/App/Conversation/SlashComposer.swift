@@ -63,14 +63,9 @@ struct SlashReadKey: Equatable {
         chosen = nil; dismissed = nil; selectionRequest = nil
     }
     func insertSlash(_ text: Binding<String>, enabled: Bool) {
-        guard enabled, !composing else { return }
-        let source = text.wrappedValue as NSString, range = selection
-        guard range.location != NSNotFound, range.location <= source.length, range.length <= source.length - range.location else { return }
-        let before = source.substring(to: range.location)
-        let insert = before.isEmpty || before.last?.isWhitespace == true ? "/" : " /"
-        let next = source.replacingCharacters(in: range, with: insert), caret = range.location + insert.utf16.count
-        text.wrappedValue = next; selection = NSRange(location: caret, length: 0)
-        selectionRequest = EditorSelectionRequest(text: next, range: selection)
+        guard enabled, !composing, let edit = PhoneSlash.openSuggestions(text.wrappedValue, selection: selection) else { return }
+        text.wrappedValue = edit.text; selection = NSRange(location: edit.selectionStart, length: 0)
+        selectionRequest = EditorSelectionRequest(text: edit.text, range: selection)
         chosen = nil; dismissed = nil
     }
     @discardableResult func complete(_ menu: PhoneSlashMenu, option: PhoneSlashOption, text: Binding<String>, enabled: Bool) -> Bool {
@@ -127,14 +122,18 @@ struct SlashSuggestions: View {
     let maximumHeight: CGFloat
     let retry: () -> Void
     let choose: (PhoneSlashOption) -> Void
+    private var showUnreportedCommands: Bool { menu.token.initial && menu.token.query.isEmpty && reportedCommands == 0 }
+    private var emptyMessage: String? {
+        guard menu.options.isEmpty, !loading, failure == nil else { return nil }
+        if !menu.token.initial { return menu.token.query.isEmpty ? "没有可插入的提示模板" : "没有匹配的提示模板" }
+        if menu.token.query.isEmpty { return nil }
+        return PhoneSlash.actionOf("/" + menu.token.query) == nil ? "没有匹配的命令，文字会照常发送" : "这个动作在当前页面不可用"
+    }
     private var height: CGFloat {
         let notices = (loading ? 44 : 0) + (failure == nil ? 0 : 44)
         let rows = menu.options.count * 44
-        let sections = menu.token.query.isEmpty
-            ? [PhoneSlashOption.Kind.command, .template, .action].filter { kind in kind == .command || menu.options.contains { $0.kind == kind } }.count * 24
-            : 0
-        let empty = menu.token.query.isEmpty ? (reportedCommands == 0 ? 44 : 0) : (menu.options.isEmpty ? 52 : 0)
-        return min(198, max(0, maximumHeight), CGFloat(rows + sections + notices + empty + 8))
+        let empty = (showUnreportedCommands ? 44 : 0) + (emptyMessage == nil ? 0 : 52)
+        return min(198, max(0, maximumHeight), CGFloat(rows + menu.sections.count * 24 + notices + empty + 8))
     }
     private func source(_ kind: PhoneSlashOption.Kind) -> String { switch kind { case .command: engine; case .template: "提示模板"; case .action: "Latch" } }
     private func highlighted(_ option: PhoneSlashOption) -> Text {
@@ -155,37 +154,37 @@ struct SlashSuggestions: View {
                     if let failure {
                         HStack { Text(failure); Spacer(); Button("重试", action: retry) }.font(PhoneTheme.caption).padding(12)
                     }
+                    if showUnreportedCommands { Text(engine + " 还没报告命令").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).padding(12) }
                     if menu.token.query.isEmpty {
-                        ForEach([PhoneSlashOption.Kind.command, .template, .action], id: \.rawValue) { kind in
-                            let rows = menu.options.filter { $0.kind == kind }
-                            if !rows.isEmpty || kind == .command {
-                                Section {
-                                    if kind == .command && reportedCommands == 0 { Text(engine + " 还没报告命令").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).padding(12) }
-                                    ForEach(rows) { row($0, searching: false) }
-                                } header: {
-                                    HStack(spacing: 6) {
-                                        if kind == .command { EngineTile(mark: mark, size: 12) }
-                                        Text(source(kind)).font(.system(size: 11, weight: .medium)).foregroundStyle(PhoneTheme.muted)
-                                        Spacer()
-                                    }.padding(.horizontal, 12).frame(height: 24).background(PhoneTheme.raised)
-                                }
+                        ForEach(menu.sections, id: \.rawValue) { kind in
+                            Section {
+                                ForEach(menu.options.filter { $0.kind == kind }) { row($0, searching: false) }
+                            } header: {
+                                HStack(spacing: 6) {
+                                    if kind == .command { EngineTile(mark: mark, size: 12) }
+                                    Text(source(kind)).font(.system(size: 11, weight: .medium)).foregroundStyle(PhoneTheme.muted)
+                                    Spacer()
+                                }.padding(.horizontal, 12).frame(height: 24).background(PhoneTheme.raised)
                             }
                         }
                     } else {
                         ForEach(menu.options) { row($0, searching: true) }
-                        if menu.options.isEmpty {
-                            Text(PhoneSlash.actionOf("/" + menu.token.query) == nil ? "没有匹配的命令，文字会照常发送" : "这个动作在当前页面不可用")
-                                .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).padding(12)
-                        }
+                    }
+                    if let emptyMessage {
+                        Text(emptyMessage).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).padding(12)
                     }
                 }.padding(.vertical, 4)
             }
             .frame(height: height)
             .onChange(of: active) { _, index in if let index, menu.options.indices.contains(index) { proxy.scrollTo(menu.options[index].id, anchor: .center) } }
         }
-        .background(PhoneTheme.raised, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(PhoneTheme.line))
-        .shadow(color: .black.opacity(0.1), radius: 8, y: 2)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .background {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(PhoneTheme.raised)
+                .shadow(color: .black.opacity(0.1), radius: 8, y: 2)
+        }
+        .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(PhoneTheme.line).allowsHitTesting(false) }
         .accessibilityElement(children: .contain).accessibilityLabel("命令与提示模板")
     }
     private func row(_ option: PhoneSlashOption, searching: Bool) -> some View {
