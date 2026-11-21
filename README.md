@@ -1,43 +1,59 @@
-<p align="center"><img src="apps/web/public/icon.png" width="80" height="80" alt="Latch"></p>
+<h1 align="center"><img src="apps/web/public/icon.png" width="44" height="44" alt="" valign="middle"> Latch</h1>
 
-<h1 align="center">Latch</h1>
-
-<p align="center">把你电脑上已经装好的 Agent 放进一个工作台，在桌面、浏览器和手机上接着干。</p>
+<p align="center"><strong>One workbench for the agents on your computer, open on every device you own.</strong></p>
 
 <p align="center">
-  <a href="README.en.md">English</a> ·
-  <a href="docs/USAGE.md">使用说明</a> ·
-  <a href="docs/HARNESSES.md">Harness</a> ·
-  <a href="docs/RELAY.md">中继</a> ·
-  <a href="docs/PLUGIN-DEVELOPMENT.md">插件开发</a>
+  English · <a href="README.zh-CN.md" lang="zh-CN">简体中文</a> · <a href="#quick-start">Quick start</a> · <a href="#documentation">Docs</a> · <a href="#contributing">Contributing</a>
 </p>
 
-<!-- 主图位置：.github/readme/hero.webp，全宽。画面是桌面窗口，右下角叠一台手机，两者都是同一个 Host 的真实界面。
+<a href=".github/readme/hero.webp">
+  <picture>
+    <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset=".github/readme/hero-mobile-dark.webp">
+    <source media="(max-width: 600px)" srcset=".github/readme/hero-mobile.webp">
+    <source media="(prefers-color-scheme: dark)" srcset=".github/readme/hero-dark.webp">
+    <img src=".github/readme/hero.webp" width="100%" alt="Latch on a Mac and a phone. On the Mac, a team of three agents reviews offline drafts and one member is waiting for approval. On the phone, the same member asks to run a test command, with Deny and Allow buttons.">
+  </picture>
+</a>
+
 <p align="center">
-  <img src=".github/readme/hero.webp" width="100%" alt="Latch 桌面端的一个会话与它的改动，右下角是手机上的同一个会话">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/readme/agents-dark.png">
+    <img src=".github/readme/agents.png" width="372" alt="Icons of the supported agents: Codex, Claude Code, OpenCode, pi, DeepSeek Harness, Qwen Code, goose, Cursor, Antigravity, Grok Build">
+  </picture>
 </p>
--->
 
-Latch 在你的 Mac 上运行一个 Host，驱动本机已登录的 Agent（Latch 里叫 Harness）。在桌面端开始一个会话，离开座位后在手机上看进度、批准下一步。
+<p align="center"><sub>Works with Codex, Claude Code, OpenCode, pi, DeepSeek Harness, Qwen Code, goose, Cursor, Antigravity, Grok Build, and any <a href="docs/USAGE.md#先装好一个-harness">ACP agent</a>.</sub></p>
 
-支持 [Codex](https://github.com/openai/codex)、[Claude Agent](https://github.com/agentclientprotocol/claude-agent-acp)（运行 Claude Code）、[pi](https://github.com/earendil-works/pi)、[OpenCode](https://github.com/anomalyco/opencode)、[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)、[Qwen Code](https://github.com/QwenLM/qwen-code)、[goose](https://github.com/block/goose)、[Cursor](https://cursor.com/docs/cli/acp)、[Antigravity](https://antigravity.google/docs/ide/extensions/acp/)、[Grok Build](https://docs.x.ai/build)、Latch 内置的执行循环，以及你自己填写的 ACP 命令。安装与登录方式见[使用说明](docs/USAGE.md#先装好一个-harness)。
+> [!NOTE]
+> I maintain Latch on my own and may not get to GitHub Issues every day. If something is urgent or blocking you, email me at [nirvanaxiaojie@gmail.com](mailto:nirvanaxiaojie@gmail.com).
 
-## 你会得到什么
+---
 
-- **用你自己的订阅。** Latch 不转售额度，不下载也不修改 Agent，不改它们的配置；每个 Harness 用它自己的登录。
-- **所有 Agent 在一个地方。** 对话中途换一个 Harness，它带着前面的记录接着做。一件事可以分给最多 8 个成员同时做，结果交回原来的会话。
-- **Harness 与模型分开选。** 部分 Harness 可以经 Latch 的模型网关使用你添加的模型服务，见 [HARNESSES](docs/HARNESSES.md#经-latch-使用模型服务)。
-- **桌面、浏览器和手机。** 三端连同一个 Host，看同一份进度，批准同一个操作。关掉页面不会取消任务，断线后从 Host 的状态恢复。
-- **Git 就在会话里。** 每轮的改动可以查看和撤销；可以在新的工作树里开始会话，然后暂存、提交、推送、开 PR。
-- **信任只建立一次。** 新设备与扩大权限要在这台 Mac 上用 Touch ID 确认，之后的日常操作不再弹窗，只留审计记录。模型密钥只在 Mac 上填写，不返回任何设备。
-- **没有账号，没有云端。** 设备、权限与会话都由你 Mac 上的 Host 决定。其他网络经你自己的中继接入，中继读不到正文。
-- **可以扩展。** MCP 服务器、插件与插件页面、自定义外观，以及带长期记忆和定时任务的「我的 Agent」。
+Latch runs coding agents like Codex and Claude Code on your Mac. Start a team in one conversation, give each agent a different part of the job, then check in from your phone. Closing the window leaves the agents running on your Mac.
 
-Agent 与插件以 Host 的权限运行，Latch 不提供操作系统沙箱；审批决定你看管得多紧，不是隔离。见[安全边界](docs/USAGE.md#安全边界)。
+In the sample session above, Codex has reviewed draft storage and the built-in agent has checked reconnection. Claude Agent wants to run the recovery tests, and the phone is where that command gets approved.
 
-## 安装与启动
+## Why Latch?
 
-需要 macOS、Node.js 24.22.1、pnpm 11.28.6、Xcode 命令行工具与 Go 1.26.10（构建用），以及至少一个已安装并登录的 Harness。
+- **Run an agent team.** Choose **Split work with a team** in a session and pick a Harness for each task. Members can work in separate Git worktrees. Their replies come back to the original conversation, where you can send a member another task.
+- **Hand work from one agent to another.** Ask Claude Code to investigate a failing test, then give Codex the conversation or a summary of the findings so it can implement the fix. Latch uses the CLIs you install and keeps its settings separate from theirs.
+- **Review the code where you discussed it.** See what changed in each turn, leave a note on a line, or undo that turn’s edits. When the patch is ready, stage it, commit, push, and open a pull request from Latch.
+- **Choose what each device can do.** Pair a phone for viewing, or give it permission to run tasks and approve changes. The Host on your Mac keeps the session history, checks device permissions, and stores your model service keys. Agents and plugins run with your Mac user’s permissions. [Security boundary](docs/USAGE.md#安全边界)
+
+## Quick start
+
+Latch runs from source on macOS for now. A signed installer is not yet available. You’ll need Node.js 24.22.1, pnpm 11.28.6, Go 1.26.10, and the Xcode Command Line Tools.
+
+**1. Install an agent and sign in.** Any supported agent works. With Codex, for example:
+
+```sh
+npm i -g @openai/codex
+codex login
+```
+
+[Agent setup](docs/USAGE.md#先装好一个-harness) lists the commands for the others.
+
+**2. Build and open Latch.** From the root of this repository:
 
 ```sh
 corepack pnpm install
@@ -45,26 +61,37 @@ corepack pnpm build
 corepack pnpm desktop
 ```
 
-第一次打开，桌面端会列出在这台 Mac 上找到的 Harness。想先不配模型体验流程，运行 `corepack pnpm desktop -- --demo`（演示模型，界面会标注）。
+**3. Start a session.** Open **New session**, choose your agent, and add a project folder. Try asking “Where does this project handle errors? Show me one example.”
 
-正式签名的安装包尚未提供。`pnpm package:desktop` 可生成供本机使用的应用，用你自己的 Developer ID 签名与公证见[使用说明](docs/USAGE.md#正式签名与公证)。
+To look around before you set up an agent, skip step 1 and launch the demo. It uses a simulated model, and its file tools still operate on the folder you select.
 
-## 手机接入
+```sh
+corepack pnpm desktop -- --demo
+```
 
-- **iPhone 与 iPad App。** 源码在 [`native/ios`](native/ios)，在桌面端「设置 → 设备 → 连接手机」扫码配对。尚未上架，真机验收还没有做完。
-- **手机浏览器。** 用你自己的 HTTPS 证书启动 Host，运行 `pnpm latch device invite` 扫码，再在 Mac 上确认一次。见[手机接入](docs/USAGE.md#手机接入https)。
-- **不在同一个网络。** 经你自己的中继（Linux 服务器或你自己的 Cloudflare 账户）接入，见 [RELAY](docs/RELAY.md)。
+## Connect a phone
 
-## 文档
+- **Mobile browser.** Start the Host with your own HTTPS certificate. On the Mac, run `pnpm latch device invite`, scan the QR code with your phone, and confirm the connection on the Mac. [HTTPS setup](docs/USAGE.md#手机接入https)
+- **iPhone or iPad app.** Build the app from source and put both devices on the same local network. In Latch on the Mac, open **Settings → Devices → Show QR code**. Scan it in the app and confirm on the Mac. After pairing, the app can reach your Mac from another network through a relay you host. The app has yet to ship on the App Store or complete testing on physical devices. [iOS source](native/ios) · [Relay setup](docs/RELAY.md)
 
-- [使用说明](docs/USAGE.md)：安装、启动参数、手机接入、`pnpm latch`、数据目录与限制
-- [HARNESSES](docs/HARNESSES.md)：接入本机 Agent、权限模式、额度、模型服务
-- [MCP](docs/MCP.md) · [RELAY](docs/RELAY.md) · [CUSTOMIZATION](docs/CUSTOMIZATION.md)
-- 插件：[PLUGIN-DEVELOPMENT](docs/PLUGIN-DEVELOPMENT.md) · [APP-PAGES](docs/APP-PAGES.md) · [TRANSPORT-PLUGINS](docs/TRANSPORT-PLUGINS.md)
-- 机制：[ARCHITECTURE](docs/ARCHITECTURE.md) · [STREAMING](docs/STREAMING.md) · [DESIGN](docs/DESIGN.md) · [TESTING](docs/TESTING.md)
+## Documentation
 
-参与开发前先读 [AGENTS.md](AGENTS.md)。
+The detailed guides are in Chinese.
 
-## 许可证
+- [Usage guide](docs/USAGE.md) · [Agent compatibility, models, and permissions](docs/HARNESSES.md)
+- [Connect a custom ACP agent](docs/USAGE.md#先装好一个-harness) · [Use your own model service](docs/USAGE.md#模型服务)
+- [MCP servers](docs/MCP.md) · [Plugin development](docs/PLUGIN-DEVELOPMENT.md) · [Plugin pages](docs/APP-PAGES.md) · [Transport plugins](docs/TRANSPORT-PLUGINS.md)
+- [My Agents, memory, and scheduled tasks](docs/ARCHITECTURE.md#我的-agent-与定时) · [Appearance](docs/CUSTOMIZATION.md)
+- [Architecture](docs/ARCHITECTURE.md) · [Streaming and reconnection](docs/STREAMING.md) · [Design](docs/DESIGN.md) · [Testing](docs/TESTING.md)
 
-源代码以 [MIT License](LICENSE) 授权。"Latch" 名称与图标不在该许可范围内。随产品分发的第三方组件与品牌图标保留各自的许可证，说明见 [apps/web/public/licenses/README.txt](apps/web/public/licenses/README.txt)。
+## Contributing
+
+Latch is maintained by one person, so small, focused changes are the easiest to review.
+
+- Read the [contributor guide](AGENTS.md) first. It has the code map, the commands, and the rules a change must keep.
+- Run `corepack pnpm check:quick` before you open a pull request. [Testing](docs/TESTING.md) explains which tests a change needs.
+- [Architecture](docs/ARCHITECTURE.md) explains how the Host, the clients, and the agents fit together.
+
+## License
+
+The source code is MIT licensed. The Latch name and icon are excluded from that license. Bundled third-party components and brand icons retain their respective licenses. [MIT License](LICENSE) · [Third-party notices](apps/web/public/licenses/README.txt)
