@@ -64,6 +64,8 @@
 }
 
 .find-bar {
+  --work-float-tint: var(--glass);
+  --work-float-filter: blur(16px) saturate(1.1);
   position: absolute;
   inset-block-start: var(--sp-10);
   inset-inline-end: var(--sp-20);
@@ -75,9 +77,6 @@
   height: 36px;
   padding-inline: var(--sp-4);
   border-radius: var(--r-12);
-  background: var(--glass);
-  -webkit-backdrop-filter: blur(16px) saturate(1.1);
-  backdrop-filter: blur(16px) saturate(1.1);
   box-shadow: var(--sh-pop);
   animation: ui-fade-in var(--m-enter) var(--e-enter);
 }

@@ -236,6 +236,7 @@ export function FindBar({
       ref={bar}
       className="find-bar"
       role="search"
+      data-frosted=""
       aria-label={COPY.region}
       onKeyDownCapture={event => {
         // These keys belong to the input method while it composes: Enter commits the text, Esc drops it.

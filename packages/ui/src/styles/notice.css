@@ -162,6 +162,10 @@
 .ui-copied:not(:popover-open) {
   display: none;
 }
+:where([data-palette='mono']) :is(.ui-tooltip, .ui-copied):not(:where([data-secure], [data-secure] *, [data-lock], [data-lock] *)) {
+  outline: 1px solid light-dark(transparent, var(--line-strong));
+  outline-offset: -1px;
+}
 
 /* Reduced motion: a tooltip that follows a neighbour appears in its place instead of gliding there. */
 @media (prefers-reduced-motion: reduce) {

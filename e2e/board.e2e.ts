@@ -381,6 +381,11 @@ it('lays the Host’s groups out as a board that reflows by its own width, and w
     await board(page).locator('.work-board-table').waitFor()
     await shot(page, 'list', 1440, 'light')
     await shot(page, 'list', 1440, 'dark')
+    const viewSwitch = board(page).getByRole('radiogroup', { name: '看法', exact: true })
+    expect(await viewSwitch.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgb(0, 0, 0)')
+    await expect
+      .poll(() => viewSwitch.getByRole('radio', { name: '表', checked: true }).evaluate(el => getComputedStyle(el).backgroundColor))
+      .toBe('rgb(12, 12, 12)')
     await board(page)
       .getByRole('button', { name: /^已结束/u })
       .click()

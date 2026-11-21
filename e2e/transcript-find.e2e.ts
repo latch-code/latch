@@ -54,6 +54,7 @@ it('finds never-opened tool output, opens both disclosures, highlights each matc
       const context = await browser.newContext({
         viewport: { width, height: 960 },
         colorScheme: width === 900 ? 'dark' : 'light',
+        locale: 'zh-CN',
         reducedMotion: 'reduce',
       })
       const page = await context.newPage()
@@ -68,6 +69,10 @@ it('finds never-opened tool output, opens both disclosures, highlights each matc
         await row.waitFor({ state: 'attached' })
         expect(await row.locator('.tool-output').count()).toBe(0)
         const draft = page.getByRole('textbox', { name: '继续对话', exact: true })
+        const bubble = page.locator('.transcript .user-bubble').first()
+        expect(await bubble.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(
+          width === 900 ? 'rgb(21, 21, 21)' : 'rgb(233, 237, 243)',
+        )
         await draft.fill('尚未发送的草稿')
         await draft.focus()
         await page.keyboard.press('Meta+f')
@@ -86,7 +91,29 @@ it('finds never-opened tool output, opens both disclosures, highlights each matc
         await query.press('Shift+Enter')
         await expect.poll(() => find.getByRole('status').textContent()).toBe('1/2')
         await noHorizontalOverflow(page, find)
+        expect(await find.evaluate(element => getComputedStyle(element).backdropFilter)).toBe(
+          width < 768 ? 'none' : 'blur(16px) saturate(1.1)',
+        )
+        if (width === 900) {
+          await find.getByRole('button', { name: '下一个匹配' }).hover()
+          const tip = page.getByRole('tooltip', { name: /^下一个/u })
+          await tip.waitFor()
+          expect(await tip.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgb(12, 12, 12)')
+          await page.mouse.move(0, 0)
+        }
         await page.screenshot({ path: 'test-results/transcript-find/output-' + width + '.png', animations: 'disabled' })
+        if (width === 900) {
+          const cdp = await context.newCDPSession(page)
+          await cdp.send('Emulation.setEmulatedMedia', {
+            features: [
+              { name: 'prefers-color-scheme', value: 'dark' },
+              { name: 'prefers-reduced-transparency', value: 'reduce' },
+            ],
+          })
+          await expect
+            .poll(() => find.evaluate(element => [getComputedStyle(element).backdropFilter, getComputedStyle(element).backgroundColor]))
+            .toEqual(['none', 'rgb(12, 12, 12)'])
+        }
         await query.fill('')
         await expect.poll(() => page.evaluate(() => CSS.highlights.get('latch-find')?.size ?? 0)).toBe(0)
         await query.press('Escape')

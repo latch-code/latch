@@ -28,7 +28,7 @@
   gap: var(--sp-2);
   padding: var(--sp-2);
   border-radius: var(--r-8);
-  background: var(--sunken);
+  background: var(--seg-track);
   box-shadow: var(--sh-well);
 }
 .ui-mode-strip-option {
@@ -471,7 +471,7 @@
   padding: 0 var(--sp-12);
   border: 0;
   border-radius: var(--r-full);
-  background: var(--sunken);
+  background: var(--seg-track);
   color: var(--ink-2);
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
@@ -517,7 +517,7 @@
   min-height: 36px;
   padding: 0 var(--sp-12);
   border-radius: var(--r-full);
-  background: var(--sunken);
+  background: var(--seg-track);
 }
 .ui-board-chips > .ui-board-level > .ui-menu-item-lead {
   display: none;

@@ -5,7 +5,8 @@
   --canvas: var(--work-canvas);
   --raised: var(--work-raised);
   --card: var(--work-raised);
-  --sunken: var(--work-sunken);
+  --sunken: var(--work-well, var(--work-sunken));
+  --seg-track: var(--work-seg-track);
   --ink: var(--work-ink);
   --ink-2: var(--work-ink-2);
   --muted: var(--work-muted);
@@ -22,6 +23,10 @@
   --content-width: 860px;
   --gutter: 40px;
   background: var(--canvas);
+}
+/* Keep syntax colours on the same opaque surface across workbench palettes. */
+.app-shell .message-content .message-code {
+  --sunken: var(--work-sunken);
 }
 .app-shell {
   grid-template-rows: var(--title-row) minmax(0, 1fr);

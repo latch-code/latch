@@ -33,7 +33,7 @@
     overlay calc(var(--m-enter) * 0.7) allow-discrete;
 }
 /* Opt in per layer. A popover stays in the trigger's DOM tree even when the browser draws it in the top layer. */
-:is(.ui-popover, .ui-suggest)[popover][data-frosted]:not(
+:is(.ui-popover[popover], .ui-suggest[popover], [role='search'])[data-frosted]:not(
     [data-secure],
     [data-lock],
     [data-secure] *,

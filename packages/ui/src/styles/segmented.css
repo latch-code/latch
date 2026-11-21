@@ -13,7 +13,7 @@
   flex-shrink: 0;
   padding: var(--sp-2);
   border-radius: var(--r-8);
-  background: var(--sunken);
+  background: var(--seg-track);
   box-shadow: var(--sh-well);
 }
 .ui-segmented-option {
