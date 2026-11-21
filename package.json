@@ -47,6 +47,7 @@
     "check:agents": "tsx scripts/check-agents.ts",
     "agents:sync": "tsx scripts/agents-sync.ts",
     "docs:affected": "tsx scripts/docs-affected.ts",
+    "ui:check": "tsx scripts/ui-check.ts",
     "i18n:coverage": "tsx scripts/i18n-coverage.ts",
     "error-copy": "tsx scripts/error-copy-coverage.ts",
     "security:scan": "tsx scripts/security-scan.ts",

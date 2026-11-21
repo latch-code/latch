@@ -439,7 +439,7 @@ testkit 另导出：`FAKE_ACP_AGENT`、`FAKE_CODEX_APP_SERVER`、`FAKE_PI_AGENT`
 
 `e2e/visual.e2e.ts` 是 `pnpm test:e2e` 的一部分：把真实产品驱动到浏览器能到达的每个状态，在手机 390×844、平板 768×1024（都模拟触控）与桌面 1440×900 下以 `deviceScaleFactor` 1 截浅色与深色，并截原语总览页（`ui-gallery-<分组>`）。截取哪些状态以该文件为准。
 
-技能 `latch-ui-check` 调用 `pnpm exec tsx scripts/ui-check.ts`：依次运行 `check:quick`、`@latch/ui` 与 `@latch/web` 的用例、构建，以及 `design.e2e.ts` 与 `visual.e2e.ts`。`--plan` 只列命令，`--boards`、`--baseline`、`--strict` 对应下面三个变量。
+技能 `latch-ui-check` 调用 `pnpm ui:check`：依次运行 `check:quick`、`@latch/ui` 与 `@latch/web` 的用例、构建，以及 `design.e2e.ts` 与 `visual.e2e.ts`。`--plan` 只列命令，`--boards`、`--baseline`、`--strict` 对应下面三个变量。
 
 **输出。** `test-results/visual/<状态>--<视口>--<主题>.png` 与 `index.json`（每张图的状态、视口、主题、说明、尺寸与参考图 `board`）。参考图由 `LATCH_VISUAL_BOARDS=<json 文件>` 给出，格式为 `{ "<状态>": { "<视口>": "<文件名，{theme} 换成主题>" } }`。
 
