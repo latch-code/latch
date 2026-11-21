@@ -1499,4 +1499,25 @@
     --agent-moss: #a0b07e !important;
     --agent-mist: #a0b6cd !important;
   }
+
+  /*
+   * The terminal panel is a secure surface laid on the work canvas, so its canvas follows the device's built-in palette
+   * instead of the lock's default theme. The values are the palettes' own --work-canvas written out, still important in
+   * this first layer: the custom tokens (and a --work-canvas set by them) cannot reach it. Descendants are listed
+   * because the lock pins each of them too.
+   */
+  @supports (color: light-dark(white, black)) {
+    :root[data-palette='mono'] :is(.terminal-panel[data-secure], .terminal-panel[data-secure] *) {
+      --canvas: light-dark(#f5f5f5, #000000) !important;
+    }
+    :root[data-palette='graphite'] :is(.terminal-panel[data-secure], .terminal-panel[data-secure] *) {
+      --canvas: light-dark(#f3f4f6, #1c1e23) !important;
+    }
+    :root[data-palette='cool'] :is(.terminal-panel[data-secure], .terminal-panel[data-secure] *) {
+      --canvas: light-dark(#eff4f9, #1c2430) !important;
+    }
+    :root[data-palette='warm'] :is(.terminal-panel[data-secure], .terminal-panel[data-secure] *) {
+      --canvas: light-dark(#f7f3ed, #26211e) !important;
+    }
+  }
 }

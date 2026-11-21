@@ -720,6 +720,12 @@ describe.skipIf(!electronE2E || process.platform !== 'darwin')('native desktop s
       await expect.poll(async () => (await terminalBackgrounds()).join() === (await workCanvas())).toBe(true)
       await page.emulateMedia({ colorScheme: 'dark' })
       await expect.poll(async () => (await terminalBackgrounds()).join() === (await workCanvas())).toBe(true)
+      // The terminal is a secure surface: tokens set from outside the lock repaint the work area, never the terminal.
+      const pinned = await terminalBackgrounds()
+      const pageColors = await page.addStyleTag({ content: ':root, .app-shell { --canvas: red; --work-canvas: red; --mono-layer: red }' })
+      await expect.poll(workCanvas).toBe('rgb(255, 0, 0)')
+      expect(await terminalBackgrounds()).toEqual(pinned)
+      await pageColors.evaluate(element => element.parentNode?.removeChild(element))
       await page.emulateMedia({ colorScheme: 'light' })
       await expect.poll(async () => (await terminalBackgrounds()).join() === (await workCanvas())).toBe(true)
       await capture(page, 'split-two-row-1440')

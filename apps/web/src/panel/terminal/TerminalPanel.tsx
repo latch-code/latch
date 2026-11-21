@@ -978,7 +978,7 @@ export function TerminalScreen({
       const scheme = matchMedia('(prefers-color-scheme: dark)')
       scheme.addEventListener('change', retheme)
       const attributes = new MutationObserver(retheme)
-      attributes.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] })
+      attributes.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-palette', 'class', 'style'] })
       const unwatchMotion = watchMotion(() => {
         terminal.options.cursorBlink = cursorBlink()
       })
