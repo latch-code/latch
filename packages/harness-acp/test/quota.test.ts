@@ -724,10 +724,10 @@ describe('Codex over its app-server', () => {
     // Kept with the sessions as numbers and the masked address: a runtime started over the directory shows the last
     // word, with the time it was said, until each window resets.
     const said = t.bridge.quota!()
+    await t.bridge.close()
     const stored = await everything(t.dataDir)
     expect(stored).toContain('usedPercent')
     for (const word of ['person@example.com', 'acct_']) expect(stored).not.toContain(word)
-    await t.bridge.close()
     const reopened = await t.open()
     expect(reopened.quota?.()).toEqual({ ...said, observedAt: expect.any(String) })
     expect(Date.parse(reopened.quota?.()?.observedAt ?? '')).toBeLessThan(Date.now())
