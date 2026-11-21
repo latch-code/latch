@@ -38,6 +38,8 @@ import UIKit
         model.verifiedUntil = .distantFuture
         _ = model.privateSnapshot.adopt(model.snapshot, captured: model.privateSnapshot.epoch, windowOpen: true)
         switch name {
+        case "question-reminder":
+            stageQuestionReminder(model)
         case "workspace", "workspace-offline":
             model.snapshot = workSnapshot()
             if name == "workspace-offline" { stageDisconnected(model) }
@@ -123,6 +125,11 @@ import UIKit
             model.tab = .code; query = "relay"
             model.contentSearch = PhoneContentSearch(query: "relay", hits: PhoneSearch.results(json(hitsText)).hits, truncated: false)
         case "agents", "agents-locked": model.tab = .agents
+        case "agents-loading":
+            model.tab = .agents
+            model.snapshot = PhoneAgents.withoutPrivate(model.snapshot)
+            model.privateSnapshot.clear()
+            model.openingAgentsFor = model.generation
         case "agents-faces":
             // Every state a face shows: 运行中 (代码审阅), 等你处理 (每日简报), 休息 (文档整理) and 失败 (发布检查).
             model.tab = .agents
@@ -494,6 +501,11 @@ import UIKit
                     if next == .background { model.enterBackground() }
                     if next == .active { Task { await model.open() } }
                 }
+                .onChange(of: model.sessionId) { _, session in
+                    if model.staged, ScreensStage.scene == "question-reminder", let session {
+                        ScreensStage.openWorkSession(session, model: model)
+                    }
+                }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
                     if PhoneLive.isOn { model.protectedDataChanged(available: false) }
                 }
@@ -658,6 +670,37 @@ extension ScreensStage {
 
 /** Several computers: the menu's states, 其他电脑 under 等你处理 and the notification setting. */
 extension ScreensStage {
+    private static func stageQuestionReminder(_ model: PhoneModel) {
+        guard let computer = host("studiohostaaaa", "aaaaaaaaaaaaaaaaaaaaaa", "Mac Studio") else { return }
+        model.hosts = [computer]; model.selectedHost = computer
+        setQuestionCount(0, model: model)
+        Task {
+            try? await Task.sleep(for: .seconds(1))
+            setQuestionCount(1, model: model)
+        }
+    }
+
+    private static func setQuestionCount(_ count: Int, model: PhoneModel) {
+        guard let computer = model.selectedHost else { return }
+        model.snapshot = patched(model.snapshot) { fields in
+            fields["tasksComplete"] = .bool(true)
+            fields["tasks"] = .array([json(#"{"id":"ses_review","title":"调整并验证原生审阅","status":"running","harnessId":"codex","workspaceId":"latch","pendingQuestions":\#(count)}"#)])
+        }
+        model.updateQuestionAttention(computer: computer.id)
+    }
+
+    static func answerFixtureQuestion(_ fields: [String: NativeJSON], model: PhoneModel) -> Bool {
+        guard model.sessionId == workSession,
+              fields["answers"]?.array.first?["questionId"].string == "layout",
+              !model.detail["questions"].array.isEmpty else { return false }
+        model.detail = patched(model.detail) { detail in
+            detail["questions"] = .array([])
+            detail["summary"] = patched(model.currentSummary) { $0["pendingQuestions"] = .number(0) }
+        }
+        setQuestionCount(0, model: model)
+        return true
+    }
+
     private static func host(_ hostId: String, _ device: String, _ name: String) -> RegisteredHost? {
         let device = #"{"hostId":"\#(hostId)","deviceId":"dev_\#(device)","rootSpki":"AA==","knockKey":"AA==","signedAddressBook":"","bookGeneration":0,"bookHash":"AA=="}"#
         guard let prepared = try? JSONDecoder().decode(PreparedNativeDevice.self, from: Data(device.utf8)) else { return nil }

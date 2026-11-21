@@ -42,6 +42,9 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     var forgettingComputers: Set<String> = []
     @Published var selectedHost: RegisteredHost?
     @Published var snapshot = NativeJSON.null { didSet { shelfCache = nil } }
+    @Published private(set) var questionAttention: PhoneQuestionAttention?
+    @Published var questionTopic: String?
+    private var pendingQuestionLink: (computer: String?, expires: Date)?
     @Published var detail = NativeJSON.null { didSet { detailCached = false; if detail != .null { detailFailed = nil }; subagentStops.observe(detail) } }
     /** The conversation on screen is what this window read before the Mac went away. */
     @Published var detailCached = false
@@ -62,7 +65,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     @Published var connected = false {
         didSet {
             if connected { offline = false; hostNotice = nil; lastConfirmed = Date() }
-            else if oldValue { withdrawDisconnectedWork() }
+            else if oldValue { questionAttention = nil; questionTopic = nil; withdrawDisconnectedWork() }
         }
     }
     /** The store has answered, so an empty host list means this phone has none. */
@@ -79,6 +82,8 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     @Published var tab = PhoneTab.code
     /** 我的 Agent's pushed pages, by Agent; 应用's, by page. */
     @Published var agentPath: [String] = []
+    /** Covers both verification and the subsequent private list read for this computer. */
+    @Published var openingAgentsFor: UUID?
     /** Memory proposals by owner, read inside a content window and dropped with it. */
     @Published var proposals = PhoneProposalStore()
     /** Result cards waiting for an owner's next topic, read inside a content window and dropped with it. */
@@ -329,6 +334,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         }
     }
     private func withdrawForHold() {
+        questionAttention = nil; questionTopic = nil
         if let sessionId, !workPath.contains(where: { $0.openedSession == sessionId }) { resumeSession = sessionId }
         eventTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); initialListTask?.cancel(); cancelReconnect()
         proximityTask?.cancel(); proximityTask = nil; upgradeTask?.cancel(); upgradeTask = nil
@@ -381,6 +387,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         }
     }
     func lock() {
+        questionAttention = nil; questionTopic = nil; pendingQuestionLink = nil
         hold.release(); holdWatch?.cancel(); holdWatch = nil; upgradeTask?.cancel(); upgradeTask = nil
         if let sessionId, !workPath.contains(where: { $0.openedSession == sessionId }) { resumeSession = sessionId }
         if let selectedHost { lastHostId = selectedHost.id }
@@ -656,6 +663,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             if let detail = value.detail {
                 self.detail = detail
                 self.snapshot = PhoneSessions.projectingCurrentSummary(snapshot: self.snapshot, detail: detail, sessionId: context.session, cached: false)
+                self.updateQuestionAttention()
                 if let time = PhoneTime.parse(detail["sync"]["hostTime"]) { self.hostClockOffset = time.timeIntervalSinceNow }
                 self.lastConfirmed = Date()
             }
@@ -1284,6 +1292,8 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         Task { await refresh() }
     }
     private func clearPrivateContent() {
+        if questionAttention != nil { questionAttention = nil }
+        questionTopic = nil
         resumeAfterListing = nil
         privateSnapshot.clear()
         clearWorkContent()
@@ -1319,6 +1329,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         snapshot = PhoneSessions.projectingCurrentSummary(snapshot: projected, detail: detail, sessionId: sessionId, cached: detailCached)
         reconcileWorkSources(previousSources)
         if live {
+            updateQuestionAttention()
             refreshReviewShortcuts()
             if resumeAfterListing != nil { Task { await restoreListedSession() } }
         }
@@ -1328,5 +1339,36 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         } else if live { lastConfirmed = Date() }
         scheduleBookRefresh(hint: value["host"]["native"]["discoveryEpoch"].string, directoryHint: value["host"]["native"]["directoryEpoch"].string)
         return true
+    }
+
+    func updateQuestionAttention(computer: String? = nil) {
+        let next = (computer ?? selectedHost?.id).flatMap { PhoneQuestionAttention(computer: $0, snapshot: snapshot) }
+        if next != questionAttention { questionAttention = next }
+        if let link = pendingQuestionLink, let next {
+            pendingQuestionLink = nil
+            if link.expires > Date(), link.computer == nil || link.computer == next.computer, let session = next.sessions.first {
+                Task { await requestPendingQuestion(computer: next.computer, session: session) }
+            }
+        }
+    }
+
+    /** Taps navigate only through a live, authorized list. The widget URL never carries an identifier. */
+    func requestPendingQuestion(computer: String? = nil, session: String? = nil) async {
+        guard let attention = questionAttention, connected, storageAvailable, !hold.holding else {
+            if computer == nil && session == nil {
+                pendingQuestionLink = (selectedHost?.id, Date().addingTimeInterval(15))
+            }
+            return
+        }
+        guard computer == nil || computer == attention.computer, let target = session ?? attention.sessions.first,
+              attention.sessions.contains(target), let row = snapshot["tasks"].array.first(where: { $0["id"].string == target }) else { return }
+        resumeAfterListing = nil
+        showWorkItems(false); reviewTarget = nil
+        if PhoneSpaces.split(snapshot), let owner = PhoneAgentChat.owner(row) {
+            tab = .agents; agentPath = [owner]; questionTopic = target
+        } else {
+            tab = .code
+        }
+        await openSession(target)
     }
 }

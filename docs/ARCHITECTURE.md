@@ -245,7 +245,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 
 当前产物用 ad-hoc 签名供本机验证。打包器在框架签名前关闭 RunAsNode、NodeOptions 和 NodeCliInspect，递归验证签名并读回开关。Electron 外壳与辅助进程带 JIT 与库校验例外，以加载没有 Team ID 的本机框架。`--release` 用 `LATCH_SIGN_IDENTITY` 指名的 Developer ID 由内向外签名包内每个 Mach-O、框架版本与辅助应用（加固运行时、安全时间戳；独立组件保留自己的标识与权限，应用与辅助进程只带 JIT，不再有库校验例外），再用 `LATCH_NOTARY_PROFILE` 指名的 `notarytool` 配置公证并装订（`apps/host/scripts/desktop-release.ts`）。缺任一变量时在复制前失败；`--presence-team` 必须与证书的 Team ID 相同。这条路径尚未由所有者实际运行；更新源与 asar 完整性验证仍未实现。Info.plist 写入 `NSLocalNetworkUsageDescription` 与 `NSBonjourServices`（`_latch._tcp`）：本地网络权限归启动 Host 的应用。
 
-**iOS App 包。** `native/ios/Latch.xcodeproj` 的 `Latch` 目标（包标识 `codes.latch.ios`；仅模拟器的 `LatchScreens` 为 `codes.latch.ios.screens`）与共享方案 `Latch`（归档用 Release）。版本号来自构建设置 `MARKETING_VERSION` 与 `CURRENT_PROJECT_VERSION`，再次上传只需在命令行提高后者。`App/PrivacyInfo.xcprivacy` 声明不跟踪、不收集数据，并给出用到的 required-reason API 的理由：UserDefaults 为 `CA92.1`，App 容器内 `stat` 系列为 `C617.1`；随包链接的 NIOPosix 自带清单。新增这类 API 时同步更新。权限文件为空：推送与 App Attest 尚未接入，不申请这两项能力。出口合规键 `ITSAppUsesNonExemptEncryption` 由所有者声明，仓库不写。团队、签名与上传不在仓库中。
+**iOS App 包。** `native/ios/Latch.xcodeproj` 的 `Latch` 目标（包标识 `codes.latch.ios`；仅模拟器的 `LatchScreens` 为 `codes.latch.ios.screens`）与共享方案 `Latch`（归档用 Release）。主 App 内嵌待回答问题的 WidgetKit 扩展 `codes.latch.ios.questions`；真机导出时主 App 和扩展分别使用本团队的描述文件。版本号来自构建设置 `MARKETING_VERSION` 与 `CURRENT_PROJECT_VERSION`，再次上传只需在命令行提高后者。`App/PrivacyInfo.xcprivacy` 声明不跟踪、不收集数据，并给出用到的 required-reason API 的理由：UserDefaults 为 `CA92.1`，App 容器内 `stat` 系列为 `C617.1`；随包链接的 NIOPosix 自带清单。新增这类 API 时同步更新。权限文件为空：推送与 App Attest 尚未接入，不申请这两项能力。出口合规键 `ITSAppUsesNonExemptEncryption` 由所有者声明，仓库不写。团队、签名与上传不在仓库中。
 
 ## 会话级别与审批风险
 
@@ -988,7 +988,7 @@ Latch 不再提供个人助手、助手群聊与它们的定时任务，数据�
 | edge 中继的花费上限 | Latch 内未实现逐人预算。运营者可在 Cloudflare 分别设置账户级 Workers 与 Durable Objects 支出限额或账单提醒。见 [RELAY](RELAY.md#几个人共用一个-workers-中继) |
 | 向公众开放登记的 edge 中继 | 未实现；需要另行实现用户预算与接合数限制 |
 | edge 中继在 WebSocket 内对节点密钥的再一层加密 | 未实现；现在节点身份靠签名挑战，不绑定 TLS 会话，能为域名终止 TLS 的一方可实时转发并看到路由元数据（[RELAY.md](RELAY.md#中继协议的身份)） |
-| 地址目录的入口、可安装的手机 App 与推送通知 | 尚未提供；Host 直连和[自己的 Linux 中继](RELAY.md)已接入 |
+| 地址目录的公共入口、公共 App 分发与后台推送 | 可用 Xcode 签名安装 iOS App，并使用[自己的 Linux 中继](RELAY.md)。使用中的提问提醒和实时活动见[消息提醒](NOTIFICATIONS.md)；后台远程推送尚未接入 |
 | 一条消息在多个 Agent 之间依次回答 | 规则在 `apps/host/src/agent-relay.ts`，尚未接入任何路由 |
 
 尚未在真机上验证：Host 进程遇到 macOS「隐私与安全性」（TCC）时的行为与提示、外接与网络卷上的「在访达中显示」、iCloud「桌面与文稿」文件夹的真实路径。

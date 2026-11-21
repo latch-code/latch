@@ -82,6 +82,7 @@ struct AgentChat: View {
     var body: some View {
         Group {
             switch model.agentAccess {
+            case .loading: LoadingAgents()
             case .locked: LockedAgents()
             case .confirming: ConfirmingAgents()
             case .closed: ClosedAgents()
@@ -110,6 +111,11 @@ struct AgentChat: View {
         }
         // The topic shown is the one this page keeps open; a topic opened elsewhere meanwhile is replaced when it shows again.
         .task(id: [shown ?? "", model.verifiedUntil == nil ? "closed" : "open"]) { await follow() }
+        .onChange(of: model.questionTopic, initial: true) { _, target in
+            guard let target, model.agentPath.first == id,
+                  PhoneAgentChat.home(tasks, session: target, owner: id) == .agents else { return }
+            picked = target; profile = false; model.questionTopic = nil
+        }
         .task(id: [id, PhoneProposals.signature(model.snapshot, owner: id), model.verifiedUntil == nil ? "closed" : "open"]) { await model.loadProposals(id) }
         .onChange(of: model.verifiedUntil == nil) { _, closed in if closed { profile = false } }
         #if LATCH_SCREENS

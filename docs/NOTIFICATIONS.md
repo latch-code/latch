@@ -1,5 +1,5 @@
 ---
-description: 桌面通知的完成与失败、首次选择状态、偏好恢复和 preload 合同。
+description: 桌面通知的设置与投递，iOS 使用中的提问提醒和实时活动。
 sources:
   - apps/desktop/src/notifications.cjs
   - apps/desktop/src/main.cjs
@@ -8,14 +8,26 @@ sources:
   - apps/desktop/test/notifications.test.ts
   - e2e/multi-host.e2e.ts
   - e2e/desktop-notifications.e2e.ts
+  - native/ios/App/Inbox/PhoneQuestionReminders.swift
+  - native/ios/App/Root/QuestionLiveActivity.swift
+  - native/ios/QuestionWidget
+  - native/ios/Sources/LatchNativeCore/PhoneQuestionAttention.swift
   - packages/protocol/src/notifications.ts
   - apps/web/src/settings/NotificationSettings.tsx
 ---
-# 桌面通知
+# 消息提醒
 
 桌面端主进程（`notifications.cjs`）自己经已认证的 `host.sock` 读取 Host 快照并决定通知。页面不给通知文字或会话标识。
 
-## 什么时候发
+## iPhone 与 iPad 的提问提醒
+
+「设置 › 通知 › Agent 提问提醒」默认开启。使用 App 时，当前 Mac 上可回答的会话有新问题，就在 App 顶部显示「有问题等你回答」。点「去回答」会复核这条会话是否仍在等你，再打开回答界面。正在看的回答卡自行更新。关闭横幅只收起这次提醒，问题仍留在会话里。
+
+第一次收到完整列表时，已有问题只建立基线。重复刷新不会再弹；同一会话又出现新问题时可以再次提醒。切换 Mac、权限变化或断线后，用新的已认证列表重新判断。
+
+允许实时活动时，支持的 iPhone 还会在灵动岛或锁定屏幕显示待回答状态。系统表面只显示固定提示，问题、选项、会话名和项目名都留在 App 内。当前状态两分钟未获更新时，实时活动提示打开 Latch 查看最新状态。回到 App 后按当前权限和问题状态决定打开哪里。后台远程送达尚未接入，App 已挂起或退出时新产生的问题需回到 Latch 后查看。
+
+## 桌面端什么时候发
 
 | 事件 | 条件 | 开关 |
 | --- | --- | --- |

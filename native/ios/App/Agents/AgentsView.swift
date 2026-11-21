@@ -4,15 +4,30 @@ import SwiftUI
 /** 我的 Agent: the list is the root; choosing an Agent opens the conversation with it, pushed on a phone and beside the list on an iPad. */
 struct AgentsTabView: View {
     @EnvironmentObject private var model: PhoneModel
+    @State private var column = NavigationSplitViewColumn.sidebar
     private var selection: Binding<String?> {
         Binding(get: { model.agentPath.first }, set: { model.agentPath = $0.map { [$0] } ?? [] })
     }
+    private var activeComputer: UUID? {
+        model.tab == .agents && model.connected && model.snapshot["catalog"]["features"]["customAgents"].bool ? model.generation : nil
+    }
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(preferredCompactColumn: $column) {
             AgentList(selection: selection)
         } detail: {
             if let id = model.agentPath.first { NavigationStack { AgentChat(id: id).id(id) } }
-            else { PhoneTheme.canvas.ignoresSafeArea() }
+            else {
+                ContentUnavailableView("选择 Agent", systemImage: "person.crop.circle")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity).background(PhoneTheme.canvas)
+            }
+        }
+        .onChange(of: model.agentPath.first, initial: true) { _, id in column = id == nil ? .sidebar : .detail }
+        .onChange(of: activeComputer, initial: true) { _, current in
+            guard let current else { return }
+            Task {
+                guard activeComputer == current, model.agentAccess == .closed else { return }
+                await model.openAgents()
+            }
         }
     }
 }
@@ -81,10 +96,9 @@ private struct AgentList: View {
         let access = model.agentAccess
         let entries = PhoneAgents.entries(model.snapshot, windowOpen: model.verifiedUntil != nil)
         List(selection: $selection) {
-            if !model.connected, let host = model.selectedHost {
-                Label(host.name + " 不在线", systemImage: "wifi.slash").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).plainAgentRow()
-            }
+            if !model.connected && (model.offline || model.hostNotice != nil) { CodeConnectionRow() }
             switch access {
+            case .loading: LoadingAgents().plainAgentRow()
             case .locked: LockedAgents().plainAgentRow()
             case .confirming: ConfirmingAgents().plainAgentRow()
             case .closed: ClosedAgents().plainAgentRow()
@@ -128,9 +142,19 @@ private struct AgentList: View {
             HelperCreateSheet { id in creating = false; selection = id; model.createdHelper = nil }.presentationCornerRadius(28)
         }
         .onChange(of: model.privateSnapshot.epoch) { _, _ in creating = false }
-        .refreshable { await model.refresh() }
-        // Without Face ID nothing asks, so the list comes by itself; with it, the first opening asks once, as a conversation does.
-        .task(id: model.connected) { if model.agentAccess == .closed { await model.openAgents() } }
+        .refreshable {
+            if model.agentAccess == .closed && model.connected { await model.openAgents() }
+            else { await model.refreshInbox() }
+        }
+    }
+}
+
+struct LoadingAgents: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView().controlSize(.small).tint(PhoneTheme.muted).accessibilityHidden(true)
+            Text("正在读取 Agent…").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted)
+        }.frame(maxWidth: .infinity).padding(.top, 36)
     }
 }
 
@@ -140,9 +164,8 @@ struct ClosedAgents: View {
     @AppStorage(PhoneFaceID.key) private var faceID = false
     var body: some View {
         Group {
-            if model.verifying { ProgressView().controlSize(.small).tint(PhoneTheme.muted) }
-            else if model.connected {
-                Button(PhoneUnlock.reopenWords(faceID: faceID)) { Task { await model.openAgents() } }
+            if model.connected {
+                Button(model.hasContentWindow ? "重新读取 Agent" : PhoneUnlock.reopenWords(faceID: faceID)) { Task { await model.openAgents() } }
                     .buttonStyle(.bordered).buttonBorderShape(.capsule).tint(PhoneTheme.ink)
             } else { Text("Mac 不在线，连上后可以查看").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted) }
         }.frame(maxWidth: .infinity).padding(.top, 48)

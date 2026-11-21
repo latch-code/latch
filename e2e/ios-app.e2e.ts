@@ -55,6 +55,13 @@ it.skipIf(process.platform !== 'darwin')(
       const application = join(directory, 'Build/Products/Debug-iphonesimulator/Latch.app')
       const binary = await readFile(join(application, 'Latch'))
       expect(binary.readUInt32LE(0)).toBe(0xfeedfacf)
+      const widget = join(application, 'PlugIns/LatchQuestionWidget.appex')
+      const widgetBinary = await readFile(join(widget, 'LatchQuestionWidget'))
+      expect(widgetBinary.readUInt32LE(0)).toBe(0xfeedfacf)
+      const widgetPlist = join(widget, 'Info.plist')
+      expect((await run('/usr/bin/plutil', ['-extract', 'CFBundleIdentifier', 'raw', widgetPlist])).stdout.trim()).toBe(
+        'codes.latch.ios.questions',
+      )
       // The notices and licences of the marks the App carries, shown under 设置 › 关于 › 开源许可.
       const bundled = await readdir(application)
       for (const name of ['NOTICE-brands.txt', 'SOURCES.txt', 'LICENSE-Apache-2.0.txt', 'LICENSE-lobe-icons.txt'])

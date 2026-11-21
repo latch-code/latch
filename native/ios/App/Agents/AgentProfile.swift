@@ -26,6 +26,7 @@ struct AgentProfileSheet: View {
         NavigationStack {
             Group {
                 if let entry, model.agentAccess == .ready { content(entry) }
+                else if model.agentAccess == .loading { LoadingAgents() }
                 else { AgentReadState(read: model.agentAccess == .locked ? .locked : model.agentAccess == .confirming ? .confirming : .closed, retry: reload) }
             }
             .background(PhoneTheme.canvas)

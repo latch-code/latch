@@ -39,12 +39,22 @@ extension PhoneModel {
         #if LATCH_SCREENS
         if staged { return }
         #endif
-        guard workspace != nil, connected, !verifying else { return }
-        do { try await ensureVerified(); _ = await refresh() }
-        catch { if (error as? NativeFailure) != .declined, !wentAway(error) { report(error) } }
+        let host = generation
+        guard workspace != nil, connected, !verifying, openingAgentsFor != host else { return }
+        openingAgentsFor = host
+        defer { if openingAgentsFor == host { openingAgentsFor = nil } }
+        do {
+            try await ensureVerified()
+            guard host == generation, !Task.isCancelled else { return }
+            _ = await refresh()
+        } catch {
+            guard host == generation, !Task.isCancelled, !(error is CancellationError), (error as? NativeFailure) != .declined else { return }
+            if !wentAway(error) { report(error) }
+        }
     }
     var agentAccess: PhoneAgentAccess {
-        PhoneAgents.access(snapshot, windowOpen: verifiedUntil != nil, privateConfirmed: privateSnapshot.confirmed)
+        let reading = !offline && (snapshot == .null || verifying || openingAgentsFor == generation)
+        return PhoneAgents.access(snapshot, windowOpen: hasContentWindow, privateConfirmed: privateSnapshot.confirmed, reading: reading)
     }
     func readAgent(_ id: String) async -> PhoneAgentRead {
         guard PhoneAgents.validId(id) else { return .missing }

@@ -4,6 +4,7 @@ import LatchNativeCore
 /** Several computers' 等你处理, names and menu words from synthetic lists, as plain values. */
 func phoneComputersFixture(_ input: [String: Any]) throws -> [String: Any] {
     let value = try NativeJSON.decode(JSONSerialization.data(withJSONObject: input))
+    try checkQuestionAttention()
     let snapshot = value["snapshot"]
     let items = PhoneComputers.attention(snapshot)
     let sessions = PhoneSessions.shelves(tasks: snapshot["tasks"].array, workspaces: []).first { $0.id == "waiting" }?.tasks.compactMap { $0["id"].string } ?? []
@@ -33,6 +34,33 @@ func phoneComputersFixture(_ input: [String: Any]) throws -> [String: Any] {
         "desk": deskFixture(),
         "notices": noticeFixture(),
     ]
+}
+
+private func checkQuestionAttention() throws {
+    func list(_ count: Int, complete: Bool = true, scope: String = "run") -> NativeJSON {
+        func task(_ id: String, count: Int, status: String = "running", archived: Bool = false, cancelling: Bool = false) -> NativeJSON {
+            .object(["id": .string(id), "pendingQuestions": .number(Double(count)), "status": .string(status), "archived": .bool(archived),
+                     "live": .object(["activity": .string(cancelling ? "cancelling" : "working")])])
+        }
+        return .object(["device": .object(["status": .string("active"), "scopes": .array([.string("view"), .string(scope)])]),
+                        "tasksComplete": .bool(complete),
+                        "tasks": .array([task("one", count: count), task("two", count: count),
+                                         task("archived", count: 1, archived: true), task("cancelled", count: 1, cancelling: true),
+                                         task("idle", count: 1, status: "idle"), task("bad id", count: 1)])])
+    }
+    guard let first = PhoneQuestionAttention(computer: "mac", snapshot: list(1)),
+          let next = PhoneQuestionAttention(computer: "mac", snapshot: list(2)),
+          let done = PhoneQuestionAttention(computer: "mac", snapshot: list(0)),
+          let switched = PhoneQuestionAttention(computer: "other", snapshot: list(2)),
+          first.sessions == ["one", "two"], done.entries.isEmpty,
+          first.newlyWaiting(since: nil, excluding: nil) == nil,
+          first.newlyWaiting(since: first, excluding: nil) == nil,
+          done.newlyWaiting(since: next, excluding: nil) == nil,
+          switched.newlyWaiting(since: first, excluding: nil) == nil,
+          next.newlyWaiting(since: first, excluding: "one")?.session == "two",
+          next.newlyWaiting(since: first, excluding: nil)?.count == 2,
+          PhoneQuestionAttention(computer: "mac", snapshot: list(1, complete: false)) == nil,
+          PhoneQuestionAttention(computer: "mac", snapshot: list(1, scope: "manage")) == nil else { throw NativeFailure.invalidRecord }
 }
 
 /** The App's guards on readings: token, selected and watched computers, baselines, and what a switch forgets. */

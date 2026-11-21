@@ -23,7 +23,7 @@
 - Swift 包版本精确锁定，主源发布至少七天；提交 Package.resolved。共享编码遵循 link-v1/security-v1 向量，不另创协议。
 - Vitest 编排 Swift 编译、向量与互操作，不另设 JS/XCTest。用临时目录、端口 0、假模型、无签名模拟器及夹具身份；不碰用户 Host 与默认钥匙串。
 
-见 docs/STREAMING.md。真机 Secure Enclave、Face ID、App Attest 与推送签名由所有者验收。
+真机安全验收见 docs/TESTING.md。灵动岛只含通用状态，回跳复核待答问题。
 
 - `LatchScreens` 只编模拟器：截图场景与 `-LatchLive 1` 的软件密钥（`ios-live.e2e.ts`）在 `Screens/` 与 `LATCH_SCREENS` 下，不进 `Latch`（`ios-app.e2e.ts`、`check:boundaries` 核对）。
 - ＋只插入或复用 Slash；组词不执行，保留动作不转发，迟到预览丢弃。

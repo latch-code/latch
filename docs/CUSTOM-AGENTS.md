@@ -562,7 +562,7 @@ Host 在 `custom.json` 的 `chats` 里为每个 Agent 与「通用」保留一�
 - 首条消息的待确认请求单独存放，不占用草稿。「放弃这次提交」只在这台设备上放下它，文字回到输入框。
 - 没有完整数据范围的设备看到「这台设备看不到 Agent」，不显示空列表；`agent-write-unknown` 时显示正在确认并稍后重读。
 
-**通知**：`notifications` 的三个开关由桌面端过滤（[NOTIFICATIONS.md](NOTIFICATIONS.md)）。iPhone 与 iPad 只在 App 在前台时为「等你处理」发通知，按 Agent 区分尚未实现。MCP 的挂载见 [MCP.md](MCP.md)，定时的界面见 [AUTOMATIONS.md](AUTOMATIONS.md#界面)。
+**通知**：`notifications` 的三个开关由桌面端过滤（[NOTIFICATIONS.md](NOTIFICATIONS.md)）。iPhone 与 iPad 使用 App 时可以收到当前电脑的提问提醒，也可以选择接收其他电脑的「等你处理」通知。手机端使用设备自己的开关。MCP 的挂载见 [MCP.md](MCP.md)，定时的界面见 [AUTOMATIONS.md](AUTOMATIONS.md#界面)。
 
 **iPhone 与 iPad**
 

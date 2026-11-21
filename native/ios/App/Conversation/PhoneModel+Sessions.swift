@@ -220,6 +220,12 @@ extension PhoneModel {
         return delivered ? .delivered : .text(text, queuedTwin: twin != nil)
     }
     @discardableResult func mutate(_ method: NativeHTTPMethod, path: String, fields: [String: NativeJSON], work: PhoneWorkDecisionContext? = nil) async -> Bool {
+        #if LATCH_SCREENS
+        if staged, ScreensStage.scene == "question-reminder", method == .post,
+           path == "/link/api/tasks/ses_review/questions/question-work/answer" {
+            return ScreensStage.answerFixtureQuestion(fields, model: self)
+        }
+        #endif
         guard permitsWorkDecision(work) else { return false }
         let current = generation, reading = contentGeneration
         do {

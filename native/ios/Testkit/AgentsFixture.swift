@@ -16,11 +16,17 @@ func phoneAgentsFixture(_ input: [String: Any]) throws -> [String: Any] {
         projection.clear()
         let cleared = PhoneAgents.takeDown(snapshot, proposals: &proposals, results: &results)
         let clearedAccess = PhoneAgents.access(cleared, privateConfirmed: projection.confirmed).rawValue
+        let loading = PhoneAgents.access(cleared, privateConfirmed: projection.confirmed, reading: true).rawValue
+        let refreshing = PhoneAgents.access(initial, privateConfirmed: true, reading: true).rawValue
+        let locked = PhoneAgents.access(value["restricted"], privateConfirmed: false, reading: true).rawValue
+        let retainedTab = PhoneTabs.entries(.null, selected: .agents).contains { $0.id == .agents }
+        let unsupportedTab = PhoneTabs.entries(.object([:]), selected: .agents).contains { $0.id == .agents }
         let lateIgnored = projection.adopt(snapshot, captured: old, windowOpen: true) == nil && !projection.accepts(old)
         guard let hostMissing = projection.adopt(cleared, captured: projection.epoch, windowOpen: true) else { throw NativeFailure.invalidRecord }
         let hostAccess = PhoneAgents.access(hostMissing, privateConfirmed: projection.confirmed).rawValue
         let closed = projection.adopt(snapshot, captured: projection.epoch, windowOpen: false)
         return ["initial": initialAccess, "offlineCache": offline, "cleared": clearedAccess, "hostMissing": hostAccess,
+            "loading": loading, "refreshing": refreshing, "restricted": locked, "retainedTab": retainedTab, "unsupportedTab": unsupportedTab,
             "lateIgnored": lateIgnored, "closedPrivate": closed?["customAgents"] == .null && !projection.confirmed]
     }
     func fieldValue(_ json: NativeJSON) throws -> Any { try JSONSerialization.jsonObject(with: json.encoded(), options: .fragmentsAllowed) }

@@ -163,6 +163,7 @@ struct QuestionDrawer: View {
                 }
             }
         }
+        .preference(key: VisibleQuestionSession.self, value: sessionId)
         .onChange(of: question["id"].string) { _, _ in page = 0; choices = [:]; other = [:]; writing = false }
     }
     private func optionRow(_ option: NativeJSON, question item: NativeJSON) -> some View {

@@ -4,6 +4,8 @@ import SwiftUI
 /** 会话: a list that collapses into a push on the phone and stays beside the conversation on an iPad. */
 struct InboxView: View {
     @EnvironmentObject private var model: PhoneModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.layoutDirection) private var layoutDirection
     @State private var query = ""
     @State private var creating = false
     @State private var creatingWorkItem: PhoneWorkReadStamp?
@@ -181,15 +183,20 @@ struct InboxView: View {
             Spacer(minLength: 4)
             Text(shelf.tasks.count, format: .number).font(.caption.monospacedDigit()).foregroundStyle(PhoneTheme.muted)
             if !filtering {
-                Image(systemName: collapsed ? "chevron.forward" : "chevron.down")
+                Image(systemName: "chevron.down")
                     .font(.caption2.weight(.semibold)).foregroundStyle(PhoneTheme.muted).frame(width: 12)
+                    .rotationEffect(.degrees(collapsed ? (layoutDirection == .rightToLeft ? 90 : -90) : 0))
             }
         }.padding(.horizontal, 12).frame(minHeight: 44)
             .background(PhoneTheme.sunken, in: RoundedRectangle(cornerRadius: 10)).contentShape(Rectangle())
         if filtering {
             label.accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
         } else {
-            Button { disclosure.toggle(shelf.id, computer: computer) } label: { label }
+            Button {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                    disclosure.toggle(shelf.id, computer: computer)
+                }
+            } label: { label }
                 .buttonStyle(.plain)
                 .accessibilityLabel(title)
                 .accessibilityAddTraits(.isHeader)

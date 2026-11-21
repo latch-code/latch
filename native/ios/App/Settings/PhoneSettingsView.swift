@@ -12,6 +12,7 @@ struct PhoneSettingsView: View {
     @State private var faceIDAvailable = true
     @State private var changingFaceID = false
     @AppStorage(PhoneComputerNotices.key) private var notifyOthers = false
+    @AppStorage(PhoneQuestionReminders.enabledKey) private var questionReminders = true
     @State private var changingNotices = false
     @State private var noticesRefused = false
     var body: some View {
@@ -40,6 +41,7 @@ struct PhoneSettingsView: View {
                 }
                 .onAppear { faceIDAvailable = PhoneFaceID.available }
                 Section {
+                    Toggle("Agent 提问提醒", isOn: $questionReminders)
                     Toggle("其他电脑等你处理时通知", isOn: Binding(get: { notifyOthers }, set: { next in
                         changingNotices = true; noticesRefused = false
                         Task {
@@ -47,9 +49,9 @@ struct PhoneSettingsView: View {
                             notifyOthers = PhoneComputerNotices.isOn; noticesRefused = next && !granted; changingNotices = false
                         }
                     })).disabled(changingNotices)
-                    LabeledContent("后台推送", value: "尚未开通")
                 } header: { Text("通知") } footer: {
                     if noticesRefused { Text("系统设置里没有允许 Latch 发通知。") }
+                    else { Text("使用 Latch 时提醒你回答新问题。支持实时活动的设备也会显示待回答状态。") }
                 }
                 Section("关于") {
                     LabeledContent("版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")

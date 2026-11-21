@@ -11,9 +11,11 @@ public struct PhoneTabEntry: Equatable, Sendable, Identifiable {
 
 public enum PhoneTabs {
     /** Code, 我的 Agent where the Host has them, 应用 where plugin pages are applied, and 设置. */
-    public static func entries(_ snapshot: NativeJSON) -> [PhoneTabEntry] {
+    public static func entries(_ snapshot: NativeJSON, selected: PhoneTab? = nil) -> [PhoneTabEntry] {
         var result = [PhoneTabEntry(id: .code, label: "Code", symbol: "chevron.left.forwardslash.chevron.right")]
-        if snapshot["catalog"]["features"]["customAgents"].bool { result.append(PhoneTabEntry(id: .agents, label: "我的 Agent", symbol: "person.crop.circle")) }
+        if snapshot["catalog"]["features"]["customAgents"].bool || (snapshot == .null && selected == .agents) {
+            result.append(PhoneTabEntry(id: .agents, label: "我的 Agent", symbol: "person.crop.circle"))
+        }
         if !PhoneApps.listed(snapshot).isEmpty { result.append(PhoneTabEntry(id: .apps, label: "应用", symbol: "square.grid.2x2")) }
         result.append(PhoneTabEntry(id: .settings, label: "设置", symbol: "gearshape"))
         return result
@@ -88,6 +90,8 @@ public enum PhoneApps {
 public enum PhoneAgentAccess: String, Equatable, Sendable {
     /** The Host has no such domain. */
     case hidden
+    /** The list is being read; no private entries are available to present yet. */
+    case loading
     /** A smaller data scope: what is locked, never an empty list. */
     case locked
     /** A phone gets the list only inside a content window; it opens as a conversation does. */
@@ -171,11 +175,12 @@ public enum PhoneAgents {
     public static let generalId = "general"
     public static let generalName = "通用"
     public static let generalDuty = "没选别的 Agent 的会话都带上它"
-    public static func access(_ snapshot: NativeJSON, windowOpen: Bool = true, privateConfirmed: Bool = true) -> PhoneAgentAccess {
+    public static func access(_ snapshot: NativeJSON, windowOpen: Bool = true, privateConfirmed: Bool = true, reading: Bool = false) -> PhoneAgentAccess {
+        if snapshot == .null && reading { return .loading }
         guard snapshot["catalog"]["features"]["customAgents"].bool else { return .hidden }
         guard snapshot["device"]["dataScope"].string == "all" else { return .locked }
         // Names, duties and schedules are content: outside a window they are not shown, whatever is still in memory.
-        guard windowOpen && privateConfirmed else { return .closed }
+        guard windowOpen && privateConfirmed else { return reading ? .loading : .closed }
         return snapshot["customAgents"] == .null ? .confirming : .ready
     }
     /** The snapshot with what only a content window may show taken out, for when a window closes. */

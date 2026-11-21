@@ -14,7 +14,9 @@ struct PhoneRootView: View {
     var body: some View {
         Group {
             switch model.storeState {
-            case .opening: PhoneTheme.canvas.ignoresSafeArea()
+            case .opening:
+                ProgressView("正在打开 Latch…").font(PhoneTheme.body).foregroundStyle(PhoneTheme.muted).tint(PhoneTheme.muted)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity).background(PhoneTheme.canvas)
             case let .unavailable(failure):
                 ContentUnavailableView {
                     Label("无法打开安全存储", systemImage: "lock.circle")
@@ -31,7 +33,7 @@ struct PhoneRootView: View {
                     Button("重试") { Task { await model.open() } }
                 }
             case .ready:
-                if hasComputers { RootTabs(addComputer: { scan = true }) }
+                if hasComputers { RootTabs(addComputer: { scan = true }).modifier(PhoneQuestionReminders()) }
                 else { PairingWelcome { scan = true }.padding(32).frame(maxWidth: 460) }
             }
         }
@@ -45,7 +47,14 @@ struct PhoneRootView: View {
             // A cover is its own presentation; it is handed the model rather than trusting inheritance.
             PairingView { scan = false }.environmentObject(model)
         }
-        .onOpenURL { url in if PairingInvitation.recognizes(url.absoluteString) { Task { await model.beginPairing(payload: url.absoluteString) } } }
+        .modifier(QuestionLiveActivityObserver())
+        .onOpenURL { url in
+            if url == LatchQuestionAttributes.link {
+                Task { await model.requestPendingQuestion() }
+            } else if PairingInvitation.recognizes(url.absoluteString) {
+                Task { await model.beginPairing(payload: url.absoluteString) }
+            }
+        }
         .alert("这台 Mac 已移除这台 iPhone", isPresented: $model.removedByMac) {
             Button("好") {}
         } message: { Text("需要时在 Mac 上重新扫码。") }
@@ -84,7 +93,7 @@ private struct RootTabs: View {
     @Environment(\.colorScheme) private var scheme
     let addComputer: () -> Void
     var body: some View {
-        let entries = PhoneTabs.entries(model.snapshot)
+        let entries = PhoneTabs.entries(model.snapshot, selected: model.tab)
         let shown = entries.contains { $0.id == model.tab } ? model.tab : .code
         let dot = PhoneTabs.codeDot(model.snapshot, current: shown), agentsDot = PhoneTabs.agentsDot(model.snapshot, current: shown)
         TabView(selection: Binding(get: { shown }, set: { next in
