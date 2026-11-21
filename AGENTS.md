@@ -107,7 +107,7 @@ LATCH_DATA_DIR=<临时目录> pnpm dev:web  # 仅开发；打开 Vite 打印的 
 | 布局、配色、图标、组件与交互，设备与权限界面 | [docs/DESIGN.md](docs/DESIGN.md) |
 | 选择测试范围、编写测试、测试 Host 与共享向量、仓库检查 | [docs/TESTING.md](docs/TESTING.md) |
 | MCP 服务器与 `latch-mcp` | [docs/MCP.md](docs/MCP.md) |
-| 用户可见的启动参数、手机接入、`pnpm latch` 命令 | [README.md](README.md) |
+| 用户可见的启动参数、手机接入、`pnpm latch` 命令 | [USAGE](docs/USAGE.md) |
 
 ## 产品规则
 

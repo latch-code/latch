@@ -38,6 +38,7 @@ const DOCUMENTS: ReadonlySet<string> = new Set(
     'TESTING',
     'TRANSPORT-PLUGINS',
     'UPDATES',
+    'USAGE',
     'WORKSPACE-RECOVERY',
   ].map(name => `docs/${name}.md`),
 )
@@ -46,6 +47,8 @@ const DOCUMENTS: ReadonlySet<string> = new Set(
  * SHA-256 of folded phrases that do not belong in tracked documents. The hashes keep the phrases themselves out of the
  * tree; they can be guessed, so this catches a slip and keeps nothing secret. See `wordHash` for how to add one.
  */
+/** The root README in each language: `README.md`, `README.en.md`. */
+const README = /^README(?:\.[a-z]{2}(?:-[A-Z]{2})?)?\.md$/u
 const BLOCKED_WORDS: ReadonlySet<string> = new Set([
   '0380db97ec507816cb2435f11d56f1bfe151dea2ae25a75859e9b2f0417dda5b',
   'd6eeb57a5f64a9d4b448c6f1c9eb0eda6a0640f0ffd56037b8bfefd9838e77a0',
@@ -95,7 +98,7 @@ export async function checkDocHygiene(repo: Repository, blocked: ReadonlySet<str
   if (!ignore.split(/\r?\n/u).includes(LOCAL_IGNORE_LINE)) problems.push(`.gitignore：缺少 ${LOCAL_IGNORE_LINE} 这一行`)
 
   const scanned = inDocs.filter(file => !file.startsWith(`${LOCAL_DIR}/`))
-  for (const file of repo.files) if (file === 'README.md' || file === 'AGENTS.md' || file.endsWith('/AGENTS.md')) scanned.push(file)
+  for (const file of repo.files) if (README.test(file) || file === 'AGENTS.md' || file.endsWith('/AGENTS.md')) scanned.push(file)
   for (const file of scanned.toSorted()) {
     for (const phrase of phrases(await repo.read(file))) {
       if (blocked.has(wordHash(phrase))) problems.push(`${file}：含有不应写进仓库的词「${phrase}」`)

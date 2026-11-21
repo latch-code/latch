@@ -77,6 +77,7 @@ describe('document hygiene checks', () => {
       repository(
         valid({
           'README.md': 'see ZORBLAX here\n',
+          'README.en.md': 'a zorblax\n',
           'apps/app/AGENTS.md': 'the Quux\n  engine,  room\n',
           'docs/TESTING.md': `${DOC}这是虚词吗\n`,
         }),
@@ -84,6 +85,7 @@ describe('document hygiene checks', () => {
       blocked,
     )
     expect(problems).toEqual([
+      'README.en.md：含有不应写进仓库的词「zorblax」',
       'README.md：含有不应写进仓库的词「zorblax」',
       'apps/app/AGENTS.md：含有不应写进仓库的词「quux engine room」',
       'docs/TESTING.md：含有不应写进仓库的词「虚词」',
@@ -94,6 +96,7 @@ describe('document hygiene checks', () => {
     const contents = valid({
       'README.md': 'zorblaxes and the quux engine\n',
       'apps/app/README.md': 'zorblax\n',
+      'apps/app/README.en.md': 'zorblax\n',
       'src/index.ts': '// zorblax\n',
     })
     expect(await checkDocHygiene(repository(contents), blocked)).toEqual([])

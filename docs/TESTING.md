@@ -539,7 +539,7 @@ grep -rnE 'createTestPresence|startHostFixture|latch-test\.localhost|(tests?|e2e
   - 写成 `<文件>#<用例名>` 的用例引用：文件存在，名称按 ` > ` 分开的每一段都以字符串字面量出现在文件中。
   - 根 `AGENTS.md` 提到每个 workspace 项目的目录；每个技能的 `SKILL.md` 有与目录同名的 `name` 与 `description`，`.claude/skills` 中恰好有指向它们的链接。
   - 每个 `docs/*.md` 以 front matter 开头，含 `description` 与非空的 `sources`，`sources` 中的路径都存在。
-  - `docs/` 的文件名都在 `scripts/doc-hygiene.ts` 的列表里；`docs/`、`AGENTS.md` 与 `README.md` 不含词表中的词。词表只存哈希，防误写，不是保密手段。
+  - `docs/` 的文件名都在 `scripts/doc-hygiene.ts` 的列表里；`docs/`、`AGENTS.md` 与根目录各语言的 `README` 不含词表中的词。词表只存哈希，防误写，不是保密手段。
 - **`pnpm docs:affected`**（`scripts/docs-affected.ts`）：列出 `sources` 覆盖改动路径的 `docs/*.md` 与相关的 `AGENTS.md`；只是候选，从不失败。
 - **`pnpm agents:sync`**（`scripts/agents-sync.ts`）：为每个技能建立相对链接 `.claude/skills/<名称>` → `../../.agents/skills/<名称>`，删除指向已不存在的技能的链接。检出不支持符号链接时 `check:agents` 失败；复制加校验的做法尚未实现。
 - **`pnpm security:scan`**（`scripts/security-scan.ts`，规则在 `scripts/security-rules.ts`）：只看新增行，是安全审阅的机械部分；技能 `latch-security-review` 在它之后按不变量审阅。
