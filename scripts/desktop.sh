@@ -1,20 +1,17 @@
 #!/bin/sh
-# Starts the Host and the Latch desktop app, as `pnpm desktop` does, with node run directly instead of through pnpm.
+# To start from a source checkout, run `corepack pnpm desktop` directly from a terminal. This script starts the same
+# Host and desktop app through Node.
 #
-# Why: macOS gives a process the hardware (MAC) addresses of its local-network neighbours only with Local Network
-# access, and it counts a process started by pnpm or `fnm exec` as theirs. Those command-line tools never get that
-# access, so a Host started by `pnpm desktop` sees an empty neighbour table and cannot prove that a phone on the same
-# Wi-Fi is nearby: pairing over Wi-Fi fails with 「连不上这台 Mac」 and daily direct connections fall back to a relay.
-# Started by node directly, the Host belongs to the terminal app instead, which macOS asks about once.
-# Pairing over the iPhone's cable hotspot works either way (docs/RELAY.md, 本地网络权限).
+# Run this script directly from macOS Terminal.app if Corepack is unavailable or Latch still cannot read the local network.
+# The launcher reuses a running Host for the same data directory. Stop that Host normally before switching how it starts.
 #
-# Usage, from anywhere: scripts/desktop.sh [the same arguments as `pnpm desktop --`], e.g. scripts/desktop.sh --demo
+# It accepts the same arguments as `corepack pnpm desktop --`, with no separator. For example, `./scripts/desktop.sh --demo`.
 set -eu
 
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
 
-# `pnpm desktop` refuses another Node.js through package.json `engines`; this does not, so it says so.
+# The direct Node fallback uses the exact version in .node-version.
 want=$(cat .node-version)
 have=$(node --version | sed 's/^v//')
 if [ "$have" != "$want" ]; then

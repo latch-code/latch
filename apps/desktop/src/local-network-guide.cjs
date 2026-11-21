@@ -2,8 +2,8 @@
 // The Local Network guide: after 「打开系统设置」 in the local-network hint, a small floating window at the bottom of
 // the screen over System Settings shows what to do there (find Latch, turn its switch on). Main writes the page
 // itself and serves it at latch://app/local-network-guide, like 关于: no network, no remote content, one inline
-// script whose hash the policy names, and a preload that exposes only close(). Packaged app only: a Host started from
-// a checkout never gets the access, so there the hint names scripts/desktop.sh instead.
+// script whose hash the policy names, and a preload that exposes only close(). Only the packaged app shows the guide
+// for the Latch permission switch. Source runs show relaunch instructions in the settings hint.
 
 const { createHash } = require('node:crypto')
 const { defineCopy, currentLocale } = require('./locale.cjs')

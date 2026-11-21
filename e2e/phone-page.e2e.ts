@@ -353,6 +353,11 @@ describe('设置 › 设备', () => {
       const offNetwork = sheet.getByText('Mac 无法确认扫码设备在同一网络。请按下面的方式连接后再扫码。', { exact: true })
       await setPairing({ state: 'ready', offNetwork: true }, () => offNetwork.waitFor())
       await capture('sheet-offnet')
+      await setPairing({ state: 'ready', offNetwork: true, localNetwork: 'unreadable' }, () =>
+        sheet.getByText('无法读取本地网络信息', { exact: true }).waitFor(),
+      )
+      await sheet.getByText('corepack pnpm desktop', { exact: true }).waitFor({ state: 'visible' })
+      await capture('sheet-unreadable')
 
       // After Touch ID the sheet says the phone is connected; one press closes it.
       await setPairing({ state: 'confirming', device: 'iPhone 16 Pro', offNetwork: true }, () =>

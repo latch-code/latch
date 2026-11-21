@@ -51,21 +51,22 @@ Latch 不下载、不安装 Agent，也不代为登录。在运行 Host 的电�
 
 ## 安装与首次运行
 
+在仓库根目录安装、构建，然后从终端启动桌面端。最后一条命令用 Corepack 运行仓库指定版本的 pnpm。
+
 ```sh
 pnpm install
-pnpm build      # host、web、relay，macOS 上另有本机确认组件
-pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
-# 或：pnpm start，再运行 pnpm latch device invite --loopback，在浏览器中打开它给出的链接
+pnpm build
+corepack pnpm desktop
 ```
 
-- **手机要在同一 Wi‑Fi 下配对或直连时，用 `scripts/desktop.sh` 代替 `pnpm desktop`**（参数相同）。macOS 只把局域网邻居的地址给有「本地网络」权限的程序，经 `pnpm`、`fnm exec` 启动的 Host 拿不到，手机会显示「连不上这台 Mac」；这个脚本直接用 `node` 启动，权限归终端应用，系统首次会询问。用数据线开热点配对两种方式都可以（[RELAY](docs/RELAY.md#同一网络怎样判断)）。
-- 这台 Mac 没有「本地网络」权限时，「设置 › 连接转发」与连接手机的面板会显示「本地网络未允许」；若 Host 只观察到邻居信息不可读，则显示「无法读取本地网络信息」：桌面端里按「打开系统设置」，在「隐私与安全性 › 本地网络」打开 Latch（从源码运行时是终端应用）。经 pnpm 启动时它另外指向 `scripts/desktop.sh`。
-
+- **用 iPhone 或 iPad 连这台 Mac**：在桌面端的「设置 › 设备」点「显示二维码」，用手机上的 Latch 扫码，再在 Mac 上确认。macOS 上，独立可执行版 pnpm 启动的 Host 有时读不到 Wi‑Fi 网关的硬件地址，即使「本地网络」权限已经打开，也会提示「无法读取本地网络信息」。从终端直接运行上面的 Corepack 命令即可使用 Node 版 pnpm。[同一网络怎样判断](docs/RELAY.md#同一网络怎样判断)
+- **从旧启动方式切过来**：关闭桌面窗口后 Host 仍在运行。等任务结束，先运行 `corepack pnpm stop`，再运行 `corepack pnpm desktop`。原来指定过数据目录，就在两条命令后都加上 `-- --data-dir <原数据目录>`，启动时也沿用原来的其他参数。已安装依赖并完成构建时，也可以用 `./scripts/desktop.sh` 直接启动 Node，例如 `./scripts/desktop.sh --data-dir <原数据目录>`。
+- 只使用浏览器时，运行 `pnpm start`，再运行 `pnpm latch device invite --loopback` 并打开给出的链接。
 - `pnpm start` 打印 `http://h-<hostId>.localhost:4317/link/` 形式的地址。每台 Host 用自己的 `h-<hostId>.localhost`，不同 Host 的 Cookie 因此互不混用。
 - **只有桌面端算这台电脑。** 回环端口可能被隧道或端口转发连到别处，所以这台电脑上的浏览器与手机一样是远程设备，连接前要一次性邀请：`pnpm latch device invite --loopback`（10 分钟内有效、只能用一次）。
 - **连接要在电脑上确认。** 这台 Host 还没有任何设备时，桌面端的第一次连接不需要确认；之后每台设备连接，电脑上都弹出 Touch ID 表单（或登录密码），写着设备的名称。只在你正在连接这台设备时确认。
 - 设备凭据每 24 小时自动续期，从连接起 30 天后失效，届时重新连接。
-- **不配置模型体验流程：** `pnpm start:demo` 或 `pnpm desktop -- --demo` 使用显式启用的演示模型，界面会标注；文件工具真实执行。真实模型服务失败时报错，不会回退到演示模型。
+- **不配置模型体验流程：** `pnpm start:demo` 或 `corepack pnpm desktop -- --demo` 使用显式启用的演示模型，界面会标注；文件工具真实执行。真实模型服务失败时报错，不会回退到演示模型。
 
 **本机确认组件**（`dist/native/latch-presence`）：
 
@@ -74,13 +75,13 @@ pnpm desktop    # 启动 Host 并打开 Latch 桌面端（推荐）
 - 本机 ad-hoc 签名应用沿用上述 CDHash 固定。发布身份构建通过 `--presence-team <公开 Apple Team ID>` 将 Developer ID、团队与 `dev.latch.presence` 要求编入 Host 与启动器；它不会调用钥匙串或代签名，所有者签名完成前确认功能拒绝运行。已有 CDHash 数据目录须在 Host 停止后显式运行 `latch presence repin` 迁移，先写审计；同身份的后续更新不需要重新固定。身份模式不会回退到开发组件。
 - `pnpm latch presence status` 查看状态；`pnpm latch presence test` 显示一次示例确认，确认或拒绝都不改变设置。
 
-**本机确认不可用时**（Linux、未构建组件）用离线连接码连接桌面端：停止 Host，运行 `pnpm latch device enroll --offline`，再 `pnpm desktop`，在桌面端的连接页填写这个码。码 15 分钟内有效、只能用一次，只有桌面端接受；它依赖此刻本机没有恶意的同用户进程。浏览器与手机的连接都需要本机确认，这时无法完成。
+**本机确认不可用时**（Linux、未构建组件）用离线连接码连接桌面端：停止 Host，运行 `pnpm latch device enroll --offline`，再运行 `corepack pnpm desktop`，在桌面端的连接页填写这个码。码 15 分钟内有效、只能用一次，只有桌面端接受；它依赖此刻本机没有恶意的同用户进程。浏览器与手机的连接都需要本机确认，这时无法完成。
 
 **连上之后哪些事还要确认。** 信任在连接设备时建立一次：连上的设备凭自己的权限范围工作，开始会话、放宽权限模式、批准操作都不再确认，只留审计记录。仍要在这台 Mac 上确认的只有：连接新设备与为设备增加权限，第一次使用一个自定义或本机模型服务地址与放行出站地址，应用含代码的插件或更宽的页面能力，新增或放宽本机程序（MCP 服务器、Harness 命令）。代价是：拿着已解锁手机的人可以操作这台 Mac 上的 Agent，直到你移除这台设备。
 
 ## 桌面端
 
-`pnpm desktop`（先 `pnpm build`）：
+在仓库根目录完成构建后，用 `corepack pnpm desktop` 打开源码版桌面端。
 
 - 为解析出的数据目录在后台启动 Host（日志在 `<数据目录>/host.log`），或复用已在运行的 Host。复用时本次的启动参数与模型环境变量不生效：要改启动配置，先 `pnpm stop`。
 - 重新 `pnpm build` 后，空闲的 Host 会先重启再打开窗口（「检测到新的构建，已重启 Host。」）；有会话正在运行或等待审批时不重启，结束后在窗口里点「重启 Latch」。
@@ -119,10 +120,9 @@ Info.plist 带「本地网络」用途说明与 `NSBonjourServices`（`_latch._t
 其他设备上的浏览器（例如手机）只通过 HTTPS 接入，证书由你提供，Latch 不生成自签名证书，也没有明文局域网接入。这台电脑上的浏览器走回环地址，见「安装与首次运行」。以 Tailscale 为例（需启用 MagicDNS 与 HTTPS 证书）：
 
 ```sh
-mkdir -p ~/latch-tls && cd ~/latch-tls
-tailscale cert my-mac.example.ts.net          # 生成 my-mac.example.ts.net.crt 与 .key
-chmod 600 my-mac.example.ts.net.key
-pnpm desktop -- --tailnet \
+mkdir -p ~/latch-tls
+(cd ~/latch-tls && tailscale cert my-mac.example.ts.net && chmod 600 my-mac.example.ts.net.key)
+corepack pnpm desktop -- --tailnet \
   --tls-cert ~/latch-tls/my-mac.example.ts.net.crt \
   --tls-key  ~/latch-tls/my-mac.example.ts.net.key \
   --public-origin https://my-mac.example.ts.net:4318
@@ -132,7 +132,7 @@ pnpm desktop -- --tailnet \
 - 监听地址必须是具体的 IP：`--tailnet` 取本机的 Tailscale 地址，`--lan` 取第一个私网 IPv4，`--tls-host <IP>` 指定；公开地址的主机本身是 IP 时可省略。不接受主机名与 `0.0.0.0`、`::`。
 - 私钥必须是你拥有的 0600 普通文件，且不在数据目录或项目目录内；证书要与公开地址的主机名匹配。证书剩余不足 14 天时 Host 写日志提醒，Latch 不续签；续签后直接覆盖文件，Host 自动重新加载，不需要重启。
 - HTTPS 入口只接受 TLS 1.3，并断开来自本机网卡地址的连接：请用另一台设备测试（手机也要加入同一 tailnet）。
-- 该数据目录的 Host 已在运行时，`pnpm desktop` 复用它而忽略这些参数，请先 `pnpm stop`。
+- 该数据目录的 Host 已在运行时，`corepack pnpm desktop` 复用它而忽略这些参数，请先 `pnpm stop`。
 
 **配对手机上的浏览器：**
 
@@ -161,7 +161,7 @@ pnpm desktop -- --tailnet \
 
 ## 启动参数与环境变量
 
-`pnpm start`、`pnpm start:demo` 与 `pnpm desktop` 接受同一组参数（`pnpm desktop -- <参数>`）：
+`pnpm start`、`pnpm start:demo` 与 `corepack pnpm desktop` 接受同一组参数（`corepack pnpm desktop -- <参数>`）：
 
 | 参数 | 环境变量 | 默认值 |
 | --- | --- | --- |

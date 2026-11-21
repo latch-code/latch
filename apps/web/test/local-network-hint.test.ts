@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, expect, it, vi } from 'vitest'
+import { setLocale } from '../src/core/i18n.ts'
 import {
   canOpenSystemSettings,
   LOCAL_NETWORK_SETTINGS,
@@ -12,6 +13,7 @@ import {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  setLocale('zh-CN')
 })
 const render = (props: Parameters<typeof LocalNetworkHint>[0]) => renderToStaticMarkup(createElement(LocalNetworkHint, props))
 
@@ -30,10 +32,11 @@ it('offers the Local Network settings page in the desktop app and its path elsew
     expect(app).toContain('打开系统设置')
     expect(app).toContain(`href="${LOCAL_NETWORK_SETTINGS}"`)
     expect(app).toContain('target="_blank"')
-    expect(app).not.toContain('scripts/desktop.sh')
+    expect(app).not.toContain('corepack pnpm desktop')
     const browser = render({ state, openable: false, source: false })
     expect(browser).toContain(label)
     expect(browser).toContain('系统设置 › 隐私与安全性 › 本地网络')
+    expect(browser).not.toContain('corepack pnpm desktop')
     expect(browser).not.toContain('href=')
   }
   // The settings row splits them: the note under the title, the button at the end, and the path only without one.
@@ -42,8 +45,18 @@ it('offers the Local Network settings page in the desktop app and its path elsew
   )
   expect(renderToStaticMarkup(createElement(LocalNetworkOpen, { state: 'denied', openable: false }))).toBe('')
   expect(renderToStaticMarkup(createElement(LocalNetworkOpen, { state: 'allowed', openable: true }))).toBe('')
-  // A source run names the script that starts the Host with access.
-  expect(render({ state: 'denied', openable: true, source: true })).toContain('scripts/desktop.sh')
+})
+
+it('gives source users the relaunch steps in both languages', () => {
+  const denied = render({ state: 'denied', openable: true, source: true })
+  expect(denied).toContain('先停止同一数据目录的 Host。关窗口后它仍会运行。')
+  expect(denied).toContain('corepack pnpm desktop')
+
+  setLocale('en')
+  const unreadable = render({ state: 'unreadable', openable: true, source: true })
+  expect(unreadable).toContain('Can’t read local network information')
+  expect(unreadable).toContain('Stop the Host for this data directory before switching. Closing the window leaves it running.')
+  expect(unreadable).toContain('corepack pnpm desktop')
 })
 
 it('lets only this Mac’s own desktop window open System Settings', () => {

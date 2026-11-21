@@ -149,7 +149,8 @@ async function rebuildDecision(
   if (record.launch === null && options.repeatable)
     return {
       action: 'keep',
-      reason: '检测到新的构建，但这个 Host 的设置来自环境变量，未重启；请先 pnpm stop，再带上这些环境变量运行 pnpm desktop。',
+      reason:
+        '检测到新的构建，但这个 Host 的设置来自环境变量，未重启。请先运行 pnpm stop，再带上这些环境变量，在终端中直接运行 corepack pnpm desktop。',
     }
   const activity = host.info.activity ?? { running: host.info.activeSessions, waiting: 0 }
   if (activity.running + activity.waiting > 0)

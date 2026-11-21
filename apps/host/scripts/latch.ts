@@ -886,7 +886,7 @@ export async function runLatch(argv: string[], io: CliIO): Promise<number> {
             out(`${expires} 前有效，只能使用一次。`)
           }
           // Only host.sock takes offline codes: a browser's loopback port may be forwarded from elsewhere.
-          const launch = program === 'latch' ? '打开 Latch 应用' : '启动 Latch 桌面端（pnpm desktop）'
+          const launch = program === 'latch' ? '打开 Latch 应用' : '从终端直接启动 Latch 桌面端（corepack pnpm desktop）'
           out(`${launch}后，在它的连接页面填写离线连接码。浏览器与手机不接受离线连接码。`)
         } finally {
           await audit.close()

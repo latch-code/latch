@@ -6,6 +6,7 @@ import { currentShell } from '../core/shell.ts'
 
 /** The desktop app lets exactly this one system-settings address through (apps/desktop/src/proxy.cjs). */
 export const LOCAL_NETWORK_SETTINGS = 'x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork'
+const SOURCE_DESKTOP_COMMAND = 'corepack pnpm desktop'
 
 const COPY = defineCopy(
   {
@@ -14,8 +15,7 @@ const COPY = defineCopy(
     open: '打开系统设置',
     path: '系统设置 › 隐私与安全性 › 本地网络',
     detail: '检查这台 Mac 的「本地网络」权限。安装版找 Latch，终端直接启动时找终端应用。',
-    sourceScript: 'scripts/desktop.sh',
-    sourceDetail: '如果你用 pnpm 或 fnm exec 启动了 Latch，请先停止 Latch，再从终端运行 scripts/desktop.sh。',
+    sourceDetail: '换启动方式前，先停止同一数据目录的 Host。关窗口后它仍会运行。然后在终端进入 Latch 源码目录，运行',
   },
   {
     denied: 'Local Network not allowed',
@@ -24,8 +24,8 @@ const COPY = defineCopy(
     path: 'System Settings › Privacy & Security › Local Network',
     detail:
       'Check Local Network access on this Mac. Look for Latch if installed, or your terminal app if launched directly from a terminal.',
-    sourceScript: 'scripts/desktop.sh',
-    sourceDetail: 'If you started Latch with pnpm or fnm exec, stop Latch and run scripts/desktop.sh from your terminal.',
+    sourceDetail:
+      'Stop the Host for this data directory before switching. Closing the window leaves it running. In a terminal, go to the Latch checkout and run',
   },
 )
 
@@ -66,7 +66,7 @@ export function LocalNetworkOpen({ state, openable }: { state: LocalNetworkAcces
 }
 
 /**
- * Distinguish a system refusal from a neighbour table the Host could not read. A source run also names its launch script.
+ * Distinguish a system refusal from a neighbour table the Host could not read. A source run also shows how to relaunch.
  */
 export function LocalNetworkNote({
   state,
@@ -88,9 +88,9 @@ export function LocalNetworkNote({
       </Tooltip>
       {!openable && <span className="local-network-path">{COPY.path}</span>}
       {source && (
-        <Tooltip content={COPY.sourceDetail}>
-          <code className="local-network-script">{COPY.sourceScript}</code>
-        </Tooltip>
+        <span className="local-network-path">
+          {COPY.sourceDetail} <code className="local-network-script">{SOURCE_DESKTOP_COMMAND}</code>
+        </span>
       )}
     </span>
   )
