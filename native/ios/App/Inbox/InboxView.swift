@@ -4,8 +4,6 @@ import SwiftUI
 /** 会话: a list that collapses into a push on the phone and stays beside the conversation on an iPad. */
 struct InboxView: View {
     @EnvironmentObject private var model: PhoneModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.layoutDirection) private var layoutDirection
     @State private var query = ""
     @State private var creating = false
     @State private var creatingWorkItem: PhoneWorkReadStamp?
@@ -25,7 +23,7 @@ struct InboxView: View {
     var body: some View {
         NavigationSplitView(preferredCompactColumn: $column) {
             Group {
-                if model.workItemsShown && model.offersWorkItems { WorkItemList(showsConnectionStatus: showsConnectionStatus) }
+                if model.workItemsShown && model.offersWorkItems { WorkItemList(disclosure: $disclosure, showsConnectionStatus: showsConnectionStatus) }
                 else { sessionList }
             }
             .navigationTitle(model.offersWorkItems ? "Code" : "会话")
@@ -140,9 +138,11 @@ struct InboxView: View {
                 let collapsed = disclosure.isCollapsed(shelf.id, computer: computer, filtering: filtering)
                 Section {
                     if collapsible {
-                        shelfHeading(shelf, collapsed: collapsed)
-                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 0, trailing: 16))
-                            .listRowSeparator(.hidden).listRowBackground(PhoneTheme.canvas)
+                        FoldableListHeading(title: PhoneConversation.visible(shelf.label), count: shelf.tasks.count, noun: "会话",
+                            collapsed: collapsed, filtering: filtering, identifier: "inbox.project." + shelf.id,
+                            symbol: shelf.id == "other" ? "bubble.left.and.bubble.right" : "folder") {
+                            disclosure.toggle(shelf.id, computer: computer)
+                        }
                     }
                     if waitingItems > 0 && shelf.id == "waiting" { workWaitingLink(count: waitingItems).plainRow() }
                     if !collapsed {
@@ -172,38 +172,6 @@ struct InboxView: View {
         .background(PhoneTheme.canvas)
         .scrollDismissesKeyboard(.interactively)
         .refreshable { await model.refreshInbox() }
-    }
-
-    @ViewBuilder private func shelfHeading(_ shelf: PhoneShelf, collapsed: Bool) -> some View {
-        let title = PhoneConversation.visible(shelf.label)
-        let label = HStack(spacing: 8) {
-            Image(systemName: shelf.id == "other" ? "bubble.left.and.bubble.right" : "folder")
-                .font(.subheadline.weight(.medium)).foregroundStyle(PhoneTheme.muted)
-            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(PhoneTheme.ink).lineLimit(2)
-            Spacer(minLength: 4)
-            Text(shelf.tasks.count, format: .number).font(.caption.monospacedDigit()).foregroundStyle(PhoneTheme.muted)
-            if !filtering {
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold)).foregroundStyle(PhoneTheme.muted).frame(width: 12)
-                    .rotationEffect(.degrees(collapsed ? (layoutDirection == .rightToLeft ? 90 : -90) : 0))
-            }
-        }.padding(.horizontal, 12).frame(minHeight: 44)
-            .background(PhoneTheme.sunken, in: RoundedRectangle(cornerRadius: 10)).contentShape(Rectangle())
-        if filtering {
-            label.accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
-        } else {
-            Button {
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
-                    disclosure.toggle(shelf.id, computer: computer)
-                }
-            } label: { label }
-                .buttonStyle(.plain)
-                .accessibilityLabel(title)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityValue("\(shelf.tasks.count) 个会话，" + (collapsed ? "已折叠" : "已展开"))
-                .accessibilityHint(collapsed ? "展开会话" : "折叠会话")
-                .accessibilityIdentifier("inbox.project." + shelf.id)
-        }
     }
 
     private func workWaitingLink(count: Int) -> some View {
@@ -285,6 +253,54 @@ private struct ArchivedLine: View {
             Text("\(count)").font(.system(size: 13)).foregroundStyle(PhoneTheme.faint)
             Spacer()
         }.frame(minHeight: 44).contentShape(Rectangle()).accessibilityElement(children: .combine).accessibilityLabel(back ? "返回会话 · 已归档 \(count)" : "已归档的会话（\(count)）")
+    }
+}
+
+struct FoldableListHeading: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.layoutDirection) private var layoutDirection
+    let title: String
+    let count: Int
+    let noun: String
+    let collapsed: Bool
+    let filtering: Bool
+    let identifier: String
+    var symbol: String? = nil
+    var titleColor = PhoneTheme.ink
+    let toggle: () -> Void
+
+    var body: some View {
+        let label = HStack(spacing: 8) {
+            if let symbol { Image(systemName: symbol).font(.subheadline.weight(.medium)).foregroundStyle(PhoneTheme.muted) }
+            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(titleColor).lineLimit(2)
+            Spacer(minLength: 4)
+            Text(count, format: .number).font(.caption.monospacedDigit()).foregroundStyle(PhoneTheme.muted)
+            if !filtering {
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold)).foregroundStyle(PhoneTheme.muted).frame(width: 12)
+                    .rotationEffect(.degrees(collapsed ? (layoutDirection == .rightToLeft ? 90 : -90) : 0))
+            }
+        }.padding(.horizontal, 12).frame(minHeight: 44)
+            .background(PhoneTheme.sunken, in: RoundedRectangle(cornerRadius: 10)).contentShape(Rectangle())
+        Group {
+            if filtering {
+                label.accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
+            } else {
+                Button {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                        toggle()
+                    }
+                } label: { label }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(title)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityValue("\(count) 个\(noun)，" + (collapsed ? "已折叠" : "已展开"))
+                    .accessibilityHint((collapsed ? "展开" : "折叠") + noun)
+                    .accessibilityIdentifier(identifier)
+            }
+        }
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 0, trailing: 16))
+        .listRowSeparator(.hidden).listRowBackground(PhoneTheme.canvas)
     }
 }
 

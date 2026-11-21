@@ -16,52 +16,49 @@ struct ConversationReader<Content: View>: View {
 
     var body: some View {
         ScrollViewReader { reader in
-            VStack(spacing: 0) {
-                GeometryReader { bounds in
-                    ScrollView {
-                        VStack(spacing: 0) {
-                            content
-                            Color.clear.frame(height: 1).id(ConversationAnchor.latest).accessibilityHidden(true)
-                        }
-                        .background {
-                            GeometryReader { transcript in
-                                Color.clear.preference(key: TranscriptGeometry.self, value: TranscriptFrame(
-                                    content: transcript.frame(in: .named(viewport)), viewport: bounds.size.height))
-                            }
-                        }
+            GeometryReader { bounds in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        content
+                        Color.clear.frame(height: 1).id(ConversationAnchor.latest).accessibilityHidden(true)
                     }
-                    .coordinateSpace(name: viewport)
-                    .defaultScrollAnchor(away ? nil : .bottom)
-                    .readingGestures(movement)
-                    .onPreferenceChange(TranscriptGeometry.self) { frame in
-                        guard let frame else { return }
-                        let prior = movement.last
-                        movement.last = frame
-                        let resized = prior?.height != frame.height || prior?.viewport != frame.viewport
-                        if frame.gap <= 48 { away = false }
-                        else if frame.gap > 72, movement.scrolling || (!resized && frame.offset < (prior?.offset ?? frame.offset)) {
-                            away = true
-                        }
-                        if resized && !away && !movement.scrolling && frame.gap > 1 {
-                            // A late card or a growing reply moves the end without any gesture from the reader.
-                            reader.scrollTo(ConversationAnchor.latest, anchor: .bottom)
+                    .background {
+                        GeometryReader { transcript in
+                            let frame = transcript.frame(in: .named(viewport))
+                            Color.clear.preference(key: TranscriptGeometry.self, value: PhoneTranscriptFrame(
+                                contentHeight: frame.height, viewportHeight: bounds.size.height, offset: -frame.minY))
                         }
                     }
                 }
+                .coordinateSpace(name: viewport)
+                .defaultScrollAnchor(away ? nil : .bottom)
+                .readingGestures(movement)
+                .onPreferenceChange(TranscriptGeometry.self) { frame in
+                    guard let frame else { return }
+                    let position = frame.position(after: movement.last, away: away, scrolling: movement.scrolling)
+                    movement.last = frame
+                    if away != position.away { away = position.away }
+                    if position.followEnd { reader.scrollTo(ConversationAnchor.latest, anchor: .bottom) }
+                }
                 .clipped()
-                if away {
-                    HStack(spacing: 16) {
-                        if offersTurnIndex {
-                            Button { choosingTurn = true } label: { Label("定位提问", systemImage: "list.bullet") }
+                .overlay(alignment: .bottom) {
+                    ZStack {
+                        if away {
+                            readingControls(reader)
+                                .frame(maxWidth: .infinity)
+                                .background {
+                                    LinearGradient(stops: [
+                                        .init(color: PhoneTheme.canvas.opacity(0), location: 0),
+                                        .init(color: PhoneTheme.canvas, location: 0.68),
+                                        .init(color: PhoneTheme.canvas, location: 1),
+                                    ], startPoint: .top, endPoint: .bottom)
+                                    .padding(.top, -12)
+                                    .allowsHitTesting(false).accessibilityHidden(true)
+                                }
+                                .transition(.asymmetric(insertion: .opacity, removal: .identity))
                         }
-                        Button {
-                            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
-                                reader.scrollTo(ConversationAnchor.latest, anchor: .bottom)
-                            }
-                        } label: { Label("回到最新", systemImage: "arrow.down") }
                     }
-                    .font(.subheadline.weight(.medium)).buttonStyle(ReadingButtonStyle())
-                    .frame(maxWidth: .infinity)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: away)
                 }
             }
             .sheet(isPresented: $choosingTurn) {
@@ -73,18 +70,35 @@ struct ConversationReader<Content: View>: View {
             }
         }
     }
-}
-
-private struct TranscriptFrame: Equatable {
-    let height: CGFloat, viewport: CGFloat, offset: CGFloat
-    var gap: CGFloat { height - offset - viewport }
-    init(content: CGRect, viewport: CGFloat) {
-        height = content.height.rounded(); offset = -content.minY.rounded(); self.viewport = viewport.rounded()
+    private func readingControls(_ reader: ScrollViewProxy) -> some View {
+        HStack(spacing: 0) {
+            if offersTurnIndex {
+                Button { choosingTurn = true } label: {
+                    Label("定位提问", systemImage: "list.bullet")
+                        .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                Rectangle().fill(PhoneTheme.line).frame(width: 1, height: 14).accessibilityHidden(true)
+            }
+            Button {
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                    reader.scrollTo(ConversationAnchor.latest, anchor: .bottom)
+                }
+            } label: {
+                Label("回到最新", systemImage: "arrow.down")
+                    .padding(.horizontal, 12).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+            }
+        }
+        .font(.subheadline.weight(.medium)).foregroundStyle(PhoneTheme.ink2).buttonStyle(.plain)
+        .background {
+            Capsule().fill(PhoneTheme.raised).overlay { Capsule().strokeBorder(PhoneTheme.line) }
+                .padding(.vertical, 6).shadow(color: .black.opacity(0.08), radius: 3, y: 1)
+                .allowsHitTesting(false)
+        }
     }
 }
 
 private final class ReadingMovement {
-    var last: TranscriptFrame?
+    var last: PhoneTranscriptFrame?
     var scrolling = false
 }
 
@@ -99,18 +113,8 @@ private extension View {
 }
 
 private enum TranscriptGeometry: PreferenceKey {
-    static var defaultValue: TranscriptFrame? { nil }
-    static func reduce(value: inout TranscriptFrame?, nextValue: () -> TranscriptFrame?) { value = nextValue() ?? value }
-}
-
-private struct ReadingButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.foregroundStyle(PhoneTheme.ink2)
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(configuration.isPressed ? PhoneTheme.bubble : PhoneTheme.raised, in: Capsule())
-            .overlay { Capsule().stroke(PhoneTheme.line) }
-            .frame(minHeight: 44).contentShape(Rectangle())
-    }
+    static var defaultValue: PhoneTranscriptFrame? { nil }
+    static func reduce(value: inout PhoneTranscriptFrame?, nextValue: () -> PhoneTranscriptFrame?) { value = nextValue() ?? value }
 }
 
 private struct QuestionIndex: View {

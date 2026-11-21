@@ -1,5 +1,27 @@
 import Foundation
 
+/** The transcript viewport excludes the composer and keyboard. Floating controls never enter its measurements. */
+public struct PhoneTranscriptFrame: Equatable, Sendable {
+    private let contentHeight: CGFloat, viewportHeight: CGFloat, offset: CGFloat
+
+    public init(contentHeight: CGFloat, viewportHeight: CGFloat, offset: CGFloat) {
+        self.contentHeight = contentHeight.rounded()
+        self.viewportHeight = viewportHeight.rounded()
+        self.offset = offset.rounded()
+    }
+
+    public func position(after prior: Self?, away: Bool, scrolling: Bool) -> (away: Bool, followEnd: Bool) {
+        let overflow = contentHeight - viewportHeight
+        guard viewportHeight > 0, overflow > 1 else { return (false, false) }
+        // Rubber-banding above the first line does not create any additional content below.
+        let gap = overflow - max(0, offset)
+        let resized = prior?.contentHeight != contentHeight || prior?.viewportHeight != viewportHeight
+        let movedUp = !resized && offset < (prior?.offset ?? offset)
+        let readingHistory = gap > 48 && (away || (gap > 72 && (scrolling || movedUp)))
+        return (readingHistory, resized && !readingHistory && !scrolling && gap > 1)
+    }
+}
+
 /** A prompt and everything that answered it, up to the next prompt. */
 public struct PhoneTurn: Equatable, Sendable, Identifiable {
     public let id: String

@@ -40,6 +40,9 @@ public struct PhoneWorkItemSummary: Equatable, Sendable, Identifiable {
     public let group: PhoneWorkGroup?
     public let reason: PhoneWorkReason?
     public let postId: String?
+    public let note: String?
+    public let tags: [String]
+    public let priority: String?
 
     public init?(_ value: NativeJSON) {
         guard let id = value["id"].string, PhoneWorkItems.validItem(id),
@@ -58,6 +61,24 @@ public struct PhoneWorkItemSummary: Equatable, Sendable, Identifiable {
         updatedAt = at; isPrivate = value["private"] == .bool(true); projectId = PhoneWorkItems.text(value["projectId"], max: 256)
         sessionIds = ids; self.group = group
         reason = value["board"]["reason"].string.flatMap(PhoneWorkReason.init); self.postId = postId
+        note = Self.line(value["note"], limit: 140)
+        var seen = Set<String>()
+        tags = value["tags"].array.prefix(8).compactMap {
+            guard let tag = Self.line($0, limit: 24), seen.insert(tag).inserted else { return nil }
+            return tag
+        }
+        switch value["priority"].string {
+        case "high": priority = "高优先级"
+        case "low": priority = "低优先级"
+        default: priority = nil
+        }
+    }
+
+    private static func line(_ value: NativeJSON, limit: Int) -> String? {
+        guard let raw = PhoneWorkItems.text(value, max: limit) else { return nil }
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !text.unicodeScalars.contains(where: { CharacterSet.newlines.contains($0) }) else { return nil }
+        return PhoneConversation.visible(text)
     }
 }
 
@@ -74,7 +95,18 @@ public struct PhoneWorkList {
 
     public let projects: [Project]
     private let names: [String: String]
+    private let membersById: [String: (project: Project, updated: Date?)]
     private let rows: [(item: PhoneWorkItemSummary, projects: Set<Project>)]
+
+    public struct Presentation {
+        public let project: String?
+        public let updatedAt: Date
+        public let sessionCount: Int
+        public let note: String?
+        public let tags: [String]
+        public let priority: String?
+        public let reason: PhoneWorkReason?
+    }
 
     public init(items: [PhoneWorkItemSummary], snapshot: NativeJSON) {
         let workspaces = snapshot["catalog"]["workspaces"].array
@@ -85,13 +117,15 @@ public struct PhoneWorkList {
         self.names = names
 
         let members = Set(items.flatMap(\.sessionIds))
-        var projectBySession: [String: Project] = [:]
+        var byId: [String: (project: Project, updated: Date?)] = [:]
         for task in snapshot["tasks"].array {
             guard let id = task["id"].string, members.contains(id) else { continue }
-            projectBySession[id] = Project(PhoneSessions.project(of: task, workspaces: workspaces)?["id"].string)
+            let project = Project(PhoneSessions.project(of: task, workspaces: workspaces)?["id"].string)
+            byId[id] = (project, PhoneTime.parse(task["updatedAt"]))
         }
+        membersById = byId
         rows = items.map { item in
-            var projects = Set(item.sessionIds.compactMap { projectBySession[$0] })
+            var projects = Set(item.sessionIds.compactMap { byId[$0]?.project })
             if item.projectId != nil || item.sessionIds.isEmpty { projects.insert(Project(item.projectId)) }
             return (item, projects)
         }
@@ -101,6 +135,20 @@ public struct PhoneWorkList {
             let order = (names[a] ?? a).localizedStandardCompare(names[b] ?? b)
             return order == .orderedSame ? a < b : order == .orderedAscending
         }
+    }
+
+    /** The member index comes only from visible session summaries. A missing member has no name or update time to show. */
+    public func presentation(for item: PhoneWorkItemSummary) -> Presentation {
+        let members = item.sessionIds.compactMap { membersById[$0] }
+        let suggested = item.projectId.flatMap { $0 == "default" ? nil : names[$0] }
+        let memberProject = members.lazy.compactMap { member -> String? in
+            guard case let .saved(id) = member.project else { return nil }
+            return names[id]
+        }.first
+        let latest = members.compactMap(\.updated).max() ?? item.updatedAt
+        let reason = item.group == .attention || (item.group == .deliver && item.reason == .settled) ? item.reason : nil
+        return Presentation(project: suggested ?? memberProject, updatedAt: max(item.updatedAt, latest), sessionCount: item.sessionIds.count,
+                            note: item.note, tags: item.tags, priority: item.priority, reason: reason)
     }
 
     public func name(of project: Project) -> String {

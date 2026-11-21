@@ -414,6 +414,30 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       }),
     ).toEqual({ allowed: [true, false, false, false] })
   })
+  it('fades only a scrollable transcript while reading history and preserves that position across keyboard and reply changes', async () => {
+    const step = (height: number, viewport: number, offset: number, drag = 0) => ({ height, viewport, offset, drag })
+    const transcriptFrames = [
+      step(300, 600, -120, 1), // Short transcript pulled down past its start.
+      step(620, 600, -90, 1), // Only 20 points actually remain to scroll.
+      step(900, 600, 0), // Open a long transcript at the end.
+      step(900, 600, 300),
+      step(900, 600, 200, 1), // Leave the end.
+      step(900, 400, 200), // Keyboard opens while reading history.
+      step(1000, 400, 200), // A reply grows without moving the reader.
+      step(1000, 400, 540), // Keep controls until the near-end threshold is crossed.
+      step(1000, 400, 600), // The last line and its actions are fully visible.
+      step(1100, 400, 600), // Follow growth while already at the end.
+      step(1100, 400, 700),
+      step(1100, 400, 450), // iOS 17 detects scrolling up from the offset change.
+      step(1100, 1200, -100), // A larger viewport fits all the text again.
+    ]
+    const history = [true, false]
+    const latest = [false, false]
+    const follow = [false, true]
+    expect(await invoke({ operation: 'phoneProjection', transcriptFrames })).toEqual({
+      positions: [latest, latest, follow, latest, history, history, history, history, latest, follow, latest, history, latest],
+    })
+  })
   it('projects a delivered body into its existing list row and helper face without fabricating global revision', async () => {
     const summary = (id: string, title: string, status: string) => ({ id, title, status, agent: { customAgentId: 'helper' } })
     const snapshot = {
@@ -4899,6 +4923,59 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       { choices, titles: ['Fix Search', 'Search copy', 'Missing member'], groups: ['attention', 'todo', 'running'] },
     ])
   })
+  it('presents reported work-item facts and withdraws private card text and discussion reasons with the body window', async () => {
+    const item = `itm_${'a'.repeat(22)}`
+    const secret = `itm_${'b'.repeat(22)}`
+    const legacy = `itm_${'c'.repeat(22)}`
+    const updatedAt = '2026-11-18T00:00:00Z'
+    const later = '2026-11-19T00:00:00Z'
+    const base = { id: item, title: '修改输入栏', revision: 1, updatedAt, sessionIds: ['missing', 'visible'] }
+    const { open, closed } = await invoke({
+      operation: 'phoneWorkItems',
+      listRows: true,
+      snapshot: {
+        catalog: { features: { workItems: true, workItemTurns: true }, workspaces: [{ id: 'mobile', name: '移动端' }] },
+        tasks: [
+          { id: 'visible', workspaceId: 'mobile', updatedAt: later },
+          { id: 'unrelated', workspaceId: 'mobile', updatedAt: '2026-11-20T00:00:00Z' },
+        ],
+        items: [
+          {
+            ...base,
+            board: { group: 'attention', reason: 'question', postId: `pst_${'b'.repeat(22)}` },
+            priority: 'high',
+            note: '先核对软键盘',
+            tags: ['iOS', '界面', '', 'iOS', 'x'.repeat(25), '可验收'],
+          },
+          { ...base, id: secret, private: true, board: { group: 'deliver', reason: 'settled' }, priority: 'low' },
+          { ...base, id: legacy, sessionIds: [], board: { group: 'deliver' } },
+        ],
+      },
+    })
+    const expected = { project: '移动端', updatedAt: Date.parse(later) / 1000, sessions: 2 }
+    expect(open).toEqual({
+      [item]: {
+        ...expected,
+        priority: '高优先级',
+        note: '先核对软键盘',
+        tags: ['iOS', '界面', '可验收'],
+        reason: 'question',
+      },
+      [secret]: expect.objectContaining({ priority: '低优先级', reason: 'settled' }),
+      [legacy]: {
+        updatedAt: Date.parse(updatedAt) / 1000,
+        project: '',
+        sessions: 0,
+        priority: '',
+        note: '',
+        tags: [],
+        reason: '',
+      },
+    })
+    expect(closed).toMatchObject({ [item]: { ...expected, priority: '', note: '', tags: [], reason: '' } })
+    expect(closed).not.toHaveProperty(secret)
+  })
+
   it('keeps native work-item reads within the window, exact turn, decision and commit', async () => {
     const at = '2026-11-18T12:00:00.000Z'
     const sessionId = 'session-code'

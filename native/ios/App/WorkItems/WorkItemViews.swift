@@ -3,10 +3,11 @@ import SwiftUI
 
 struct WorkItemList: View {
     @EnvironmentObject private var model: PhoneModel
+    @Binding var disclosure: PhoneShelfDisclosure
     let showsConnectionStatus: Bool
 
     var body: some View {
-        WorkItemRows(list: PhoneWorkList(items: model.workItems, snapshot: model.snapshot), showsConnectionStatus: showsConnectionStatus)
+        WorkItemRows(disclosure: $disclosure, list: PhoneWorkList(items: model.workItems, snapshot: model.snapshot), showsConnectionStatus: showsConnectionStatus)
             .id(model.selectedHost?.id)
     }
 }
@@ -16,6 +17,7 @@ private struct WorkItemRows: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var query = ""
     @State private var selectedProjects = Set<PhoneWorkList.Project>()
+    @Binding var disclosure: PhoneShelfDisclosure
     let list: PhoneWorkList
     let showsConnectionStatus: Bool
 
@@ -38,9 +40,9 @@ private struct WorkItemRows: View {
             .listRowSeparator(.hidden).listRowBackground(PhoneTheme.canvas)
             if showsConnectionStatus { CodeConnectionRow() }
             ForEach(PhoneWorkGroup.allCases, id: \.self) { group in
-                groupSection(items.filter { $0.group == group }, group: group)
+                groupSection(items.filter { $0.group == group }, group: group, filtering: filtering)
             }
-            groupSection(items.filter { $0.group == nil }, group: nil)
+            groupSection(items.filter { $0.group == nil }, group: nil, filtering: filtering)
             if items.isEmpty && filtering {
                 VStack(spacing: 6) {
                     Text("当前列表没有匹配的待办").font(.subheadline).foregroundStyle(PhoneTheme.muted)
@@ -101,36 +103,80 @@ private struct WorkItemRows: View {
         .accessibilityIdentifier("work.projects")
     }
 
-    @ViewBuilder private func groupSection(_ rows: [PhoneWorkItemSummary], group: PhoneWorkGroup?) -> some View {
+    @ViewBuilder private func groupSection(_ rows: [PhoneWorkItemSummary], group: PhoneWorkGroup?, filtering: Bool) -> some View {
         if !rows.isEmpty {
+            let key = "work.group." + (group?.rawValue ?? "unknown")
+            let computer = model.selectedHost?.id ?? ""
+            let collapsed = disclosure.isCollapsed(key, computer: computer, filtering: filtering)
             Section {
-                ForEach(rows) { item in row(item).tag(item.id) }
-            } header: {
-                HStack(spacing: 8) {
-                    Text(group?.label ?? "状态未确认").font(.subheadline.weight(.semibold))
-                    Text(rows.count, format: .number).font(.caption.monospacedDigit()).foregroundStyle(PhoneTheme.muted)
+                FoldableListHeading(title: group?.label ?? "状态未确认", count: rows.count, noun: "待办",
+                    collapsed: collapsed, filtering: filtering, identifier: key, titleColor: group == .attention ? PhoneTheme.amber : PhoneTheme.ink) {
+                    disclosure.toggle(key, computer: computer)
                 }
-                .textCase(nil).foregroundStyle(group == .attention ? PhoneTheme.amber : PhoneTheme.ink)
-                .accessibilityElement(children: .combine)
+                if !collapsed {
+                    ForEach(rows) { item in row(item).tag(item.id) }
+                }
             }
         }
     }
 
     private func row(_ item: PhoneWorkItemSummary) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(PhoneConversation.visible(item.title)).font(.body.weight(model.workItemId == item.id ? .semibold : .medium)).foregroundStyle(PhoneTheme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            if let project = projectName(item.projectId, snapshot: model.snapshot) {
-                Label(PhoneConversation.visible(project), systemImage: "folder")
-                    .labelStyle(TightLabel()).font(.caption).foregroundStyle(PhoneTheme.muted).lineLimit(2)
+        let facts = list.presentation(for: item)
+        let time = PhoneTime.relative(facts.updatedAt, now: model.hostNow())
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+        return VStack(alignment: .leading, spacing: 5) {
+            layout {
+                Text(PhoneConversation.visible(item.title))
+                    .font(.body.weight(model.workItemId == item.id ? .semibold : .medium)).foregroundStyle(PhoneTheme.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(time).font(.caption).foregroundStyle(PhoneTheme.muted)
+                    .fixedSize().accessibilityLabel("最近更新，" + PhoneTime.message(facts.updatedAt, now: model.hostNow()))
             }
-            if let reason = item.reason, item.group == .attention { WorkStatus(reason: reason) }
+            if let reason = facts.reason { WorkStatus(reason: reason) }
+            if let note = facts.note {
+                Text(PhoneConversation.visible(note)).font(.subheadline).foregroundStyle(PhoneTheme.ink2)
+                    .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+            }
+            if facts.project != nil || facts.sessionCount > 0 {
+                layout {
+                    if let project = facts.project {
+                        Label(PhoneConversation.visible(project), systemImage: "folder").lineLimit(1).truncationMode(.middle)
+                    }
+                    if facts.sessionCount > 0 {
+                        Label("\(facts.sessionCount) 个会话", systemImage: "bubble.left.and.bubble.right")
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                .labelStyle(TightLabel()).font(.caption).foregroundStyle(PhoneTheme.muted)
+            }
+            if facts.priority != nil || !facts.tags.isEmpty {
+                let tagLayout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout(spacing: 5))
+                tagLayout {
+                    if let priority = facts.priority { workPriority(priority) }
+                    ForEach(facts.tags.prefix(2), id: \.self) { tag in
+                        Text(PhoneConversation.visible(tag)).lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    if facts.tags.count > 2 {
+                        Text("+\(facts.tags.count - 2)").fixedSize().accessibilityLabel("另有 \(facts.tags.count - 2) 个标签")
+                    }
+                }
+                .font(.caption).foregroundStyle(PhoneTheme.ink2)
+            }
         }.frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-            .listRowInsets(EdgeInsets(top: 5, leading: 20, bottom: 5, trailing: 20))
+            .listRowInsets(EdgeInsets(top: 9, leading: 20, bottom: 9, trailing: 20))
             .listRowBackground(model.workItemId == item.id ? PhoneTheme.selectedRow : PhoneTheme.canvas)
             .listRowSeparatorTint(PhoneTheme.line)
             .contentShape(Rectangle()).accessibilityElement(children: .combine)
     }
+}
+
+private func workPriority(_ priority: String) -> some View {
+    Label(priority, systemImage: "flag").labelStyle(TightLabel()).font(.caption.weight(.medium))
+        .foregroundStyle(PhoneTheme.ink).fixedSize(horizontal: true, vertical: false)
 }
 
 /** Saves a work item without choosing an engine or starting a session. */
@@ -520,6 +566,11 @@ private struct WorkItemHeading: View {
                 .font(.subheadline).foregroundStyle(PhoneTheme.muted)
             Text(PhoneConversation.visible(item.title)).font(.title2.weight(.semibold)).foregroundStyle(PhoneTheme.ink)
                 .accessibilityAddTraits(.isHeader)
+            if let priority = item.priority { workPriority(priority) }
+            if !item.tags.isEmpty {
+                Label(item.tags.map(PhoneConversation.visible).joined(separator: "、"), systemImage: "tag")
+                    .font(.subheadline).foregroundStyle(PhoneTheme.muted)
+            }
             if model.connected && !model.canRun {
                 Text("无运行权限").font(.caption).foregroundStyle(PhoneTheme.muted)
             }

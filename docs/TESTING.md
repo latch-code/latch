@@ -213,6 +213,8 @@ pnpm exec vitest run --config e2e/vitest.config.ts e2e/harness-acceptance.e2e.ts
 
 会话列表和输入栏的截图可用 `LATCH_IOS_SCENES=workspace,work-list,conversation-reading` 筛选。`workspace-offline` 与 `work-list-offline` 展示同一台电脑断线后的两个列表。`conversation-reading` 提供超过一屏的回复，供滚动和软键盘验收。`project-files` 场景可从会话进入项目文件夹、按文件名查找。设置 `LATCH_IOS_LIVE_WORK=1` 会在 Live 夹具的临时 Host 建立一个项目、一条待办和一个关联会话。模拟器配对后可验证创建、发言、状态变更和文件预览。
 
+`work-list` 提供带优先级、备注与标签的待办，可实走分组折叠、搜索和筛选恢复；`work-list-offline` 对照离线摘要的展示范围。
+
 `agents-loading` 可与 `agents`、`agents-locked` 对照检查首次读取、已有目录和权限不足。`question-reminder` 在 App 内建立基线后产生一个模拟提问。可分别点横幅与灵动岛回到会话，提交回答后检查两处提醒撤下。需在支持灵动岛的 iPhone 模拟器上验收系统展示。
 
 | 开关 | 用例 | 作用 |

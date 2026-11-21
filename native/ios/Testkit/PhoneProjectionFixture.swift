@@ -5,6 +5,19 @@ import Security
 /** Reads synthetic Host JSON through the App's own projections, and answers in plain values the test can compare. */
 func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
     let value = try NativeJSON.decode(JSONSerialization.data(withJSONObject: input))
+    if let readings = input["transcriptFrames"] as? [[String: Int]] {
+        var prior: PhoneTranscriptFrame?, away = false
+        let positions = try readings.map { reading -> [Bool] in
+            guard let height = reading["height"], let viewport = reading["viewport"], let offset = reading["offset"] else {
+                throw NativeFailure.invalidRecord
+            }
+            let frame = PhoneTranscriptFrame(contentHeight: CGFloat(height), viewportHeight: CGFloat(viewport), offset: CGFloat(offset))
+            let position = frame.position(after: prior, away: away, scrolling: reading["drag"] == 1)
+            prior = frame; away = position.away
+            return [position.away, position.followEnd]
+        }
+        return ["positions": positions]
+    }
     if case let .array(cases) = value["bodyAvailability"] {
         return ["allowed": cases.map { PhoneSessions.mayReadBody(snapshot: $0, sessionId: "selected") }]
     }

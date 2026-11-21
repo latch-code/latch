@@ -3,6 +3,19 @@ import LatchNativeCore
 
 func phoneWorkItemsFixture(_ data: Data) throws -> [String: Any] {
     let input = try NativeJSON.decode(data), snapshot = input["snapshot"]
+    if input["listRows"].bool {
+        func rows(_ value: NativeJSON, privateAllowed: Bool) -> [String: Any] {
+            let items = PhoneWorkItems.visible(value, privateAllowed: privateAllowed)
+            let list = PhoneWorkList(items: items, snapshot: value)
+            return Dictionary(uniqueKeysWithValues: items.map { item in
+                let row = list.presentation(for: item)
+                return (item.id, ["project": row.project ?? "", "updatedAt": row.updatedAt.timeIntervalSince1970,
+                                  "sessions": row.sessionCount, "priority": row.priority ?? "", "note": row.note ?? "",
+                                  "tags": row.tags, "reason": row.reason?.rawValue ?? ""] as [String: Any])
+            })
+        }
+        return ["open": rows(snapshot, privateAllowed: true), "closed": rows(PhoneWorkItems.withoutBody(snapshot), privateAllowed: false)]
+    }
     if input["creationFields"].bool {
         let requestId = UUID().uuidString
         let plain = try PhoneWorkChange.creation(title: "  保存  ", prompt: "", project: nil).request(requestId: requestId)

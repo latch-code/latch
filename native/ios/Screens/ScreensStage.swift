@@ -808,6 +808,11 @@ extension ScreensStage {
 
     static func workRead(_ read: PhoneWorkRead) throws -> NativeJSON {
         switch read {
+        case let .item(id) where scene.hasPrefix("work-list") && id != workId:
+            guard let item = workSnapshot()["items"].array.first(where: { $0["id"].string == id }) else { throw PhoneWorkReadFailure.itemMissing }
+            return .object(["item": patched(item) { $0["prompt"] = .string("") }])
+        case let .posts(id, _) where scene.hasPrefix("work-list") && id != workId:
+            return .object(["posts": .array([]), "revision": .number(0)])
         case .item: return .object(["item": workItemValue()])
         case .posts: return .object(["posts": .array([workPostValue()]), "revision": .number(2)])
         case .post: return .object(["post": workPostValue()])
@@ -845,12 +850,26 @@ extension ScreensStage {
             for key in ["workItems", "workItemTurns", "workItemCreateReceipt", "changes", "reviewNotes", "gitDelivery"] { features[key] = .bool(true) }
             catalog["features"] = .object(features); object["catalog"] = .object(catalog)
             let item = patched(workItemValue()) { $0.removeValue(forKey: "prompt") }
-            object["items"] = .array(scene == "work-empty" ? [] : [
+            let todo = json(#"{"id":"itm_cccccccccccccccccccccc","title":"整理连接说明","projectId":"site","sessionIds":[],"revision":1,"updatedAt":"{{-900}}","board":{"group":"todo"}}"#)
+            var items = [
                 item,
                 json(#"{"id":"\#(workPrivate)","title":"升级通知与内部发布检查","private":true,"projectId":"latch","sessionIds":[],"revision":1,"updatedAt":"{{-300}}","board":{"group":"running"}}"#),
-                json(#"{"id":"itm_cccccccccccccccccccccc","title":"整理连接说明","projectId":"site","sessionIds":[],"revision":1,"updatedAt":"{{-900}}","board":{"group":"todo"}}"#),
-            ])
+                scene.hasPrefix("work-list") ? patched(todo) { fields in
+                    fields["priority"] = .string("low")
+                    fields["tags"] = .array([.string("文档")])
+                } : todo,
+            ]
+            if scene.hasPrefix("work-list") {
+                items += [
+                    json(#"{"id":"itm_dddddddddddddddddddddd","title":"更新官网的手机端截图","projectId":"site","sessionIds":["ses_site"],"revision":2,"createdAt":"{{-86400}}","updatedAt":"{{-600}}","board":{"group":"deliver"},"note":"浅色和深色两套截图已就绪。"}"#),
+                    json(#"{"id":"itm_eeeeeeeeeeeeeeeeeeeeee","title":"核对新版本的发布说明","projectId":"latch","sessionIds":[],"revision":2,"createdAt":"{{-172800}}","updatedAt":"{{-7200}}","closedAt":"{{-7200}}","board":{"group":"done"}}"#),
+                ]
+            }
+            object["items"] = .array(scene == "work-empty" ? [] : items)
             object["tasks"] = .array(object["tasks"]!.array.map { task in
+                if scene.hasPrefix("work-list"), task["id"].string == "ses_site" {
+                    return patched(task) { $0["itemId"] = .string("itm_dddddddddddddddddddddd") }
+                }
                 guard task["id"].string == workSession else { return task }
                 return patched(task) { fields in
                     fields["itemId"] = .string(workId)
@@ -875,7 +894,15 @@ extension ScreensStage {
         {"id":"\#(workId)","title":"让 iPad 分屏里的改动更好读","projectId":"latch","sessionIds":["\#(workSession)"],
           "revision":2,"threadRevision":2,"updatedAt":"{{-150}}",
           "prompt":"窄屏时保留差异宽度。检查横竖屏、分屏以及较大的字体，并完整显示过期反馈警告。"}
-        """#)) { $0["board"] = board }
+        """#)) { fields in
+            fields["board"] = board
+            if scene.hasPrefix("work-list") {
+                fields["tags"] = .array([.string("iPad"), .string("审阅"), .string("无障碍")])
+                fields["priority"] = .string("high")
+                fields["hasPrompt"] = .bool(true)
+                fields["note"] = .string("先确认窄屏时的文件选择方式。")
+            }
+        }
     }
 
     private static func workTurn() -> NativeJSON {
