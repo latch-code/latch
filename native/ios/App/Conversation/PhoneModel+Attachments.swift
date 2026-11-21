@@ -191,6 +191,6 @@ extension PhoneModel {
     func clearAttachments() {
         for job in uploadJobs.values { job.cancel() }
         uploadJobs = [:]; uploadTail = nil; attachTrays = [:]; attachStates = [:]; attachSending = []
-        PhoneAttachStage.purge()
+        PhoneAttachStage.purge(); PhonePictures.clear()
     }
 }

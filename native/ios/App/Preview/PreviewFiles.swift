@@ -46,6 +46,41 @@ struct PreviewEdit: Equatable {
             try? FileManager.default.removeItem(at: url)
         }
     }
+    /**
+     * A PNG or JPEG, sniffed by its bytes rather than its name, redrawn from its pixels alone at most `maxPixels` on its
+     * longer side. Anything else, or a picture whose stated size is absurd, is nil.
+     */
+    nonisolated static func redrawn(_ data: Data, maxPixels: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary), CGImageSourceGetCount(source) > 0,
+              let actualType = CGImageSourceGetType(source) as String?, [UTType.png.identifier, UTType.jpeg.identifier].contains(actualType),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber, let height = properties[kCGImagePropertyPixelHeight] as? NSNumber,
+              width.doubleValue > 0, height.doubleValue > 0, width.doubleValue <= 100_000, height.doubleValue <= 100_000,
+              width.doubleValue * height.doubleValue <= 100_000_000 else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixels, kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+    }
+    /**
+     * A message's PNG or JPEG attachment drawn where it is: read through the window already open, never opening one or
+     * asking for Face ID, and kept only in memory. The Host audits each read, so the caller keeps one per window.
+     */
+    static func picture(attachment id: String, lease: BodyLease, workspace: NativeWorkspace) async throws -> UIImage {
+        try lease.requireValid()
+        let meta = try await workspace.resolveAttachment(id)
+        guard meta["source"].string == "attachment", meta["attachmentId"].string == id, !meta["secret"].bool, meta["actions"]["preview"].bool,
+              meta["kind"].string == "image", ["image/png", "image/jpeg"].contains(meta["mime"].string ?? ""),
+              let handle = meta["handle"].string, let etag = meta["etag"].string, let size = meta["size"].integer, size > 0, size <= 8_388_608 else { throw NativeFailure.unsupported }
+        var data = Data()
+        while data.count < size {
+            try Task.checkCancellation(); try lease.requireValid()
+            let count = min(1_048_576, Int(size) - data.count)
+            data.append(try await workspace.fileBytes(handle: handle, etag: etag, offset: data.count, count: count, attachment: true))
+        }
+        try lease.requireValid()
+        guard let image = await Task.detached(priority: .userInitiated, operation: { redrawn(data, maxPixels: 1200) }).value else { throw NativeFailure.unsupported }
+        return UIImage(cgImage: image)
+    }
     /** The root a sent attachment's chip opens with; no folder ID has this shape. */
     static let attachmentRoot = "@attachment"
     static func load(reference: String, root: String?, session: String, workspace: NativeWorkspace, access: NativeFileAccess? = nil, progress: (@Sendable (Int, Int) -> Void)? = nil) async throws -> PreviewItem {
@@ -86,16 +121,7 @@ struct PreviewEdit: Equatable {
                 ? PreviewEdit(sessionId: session, handle: handle, baseHash: PhoneFileEdit.baseHash(data), reference: reference, root: root) : nil
             return PreviewItem(name: name, text: value, url: nil, lease: lease, edit: edit)
         }
-        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary), CGImageSourceGetCount(source) > 0,
-              let actualType = CGImageSourceGetType(source) as String?, [UTType.png.identifier, UTType.jpeg.identifier].contains(actualType),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber, let height = properties[kCGImagePropertyPixelHeight] as? NSNumber,
-              width.doubleValue > 0, height.doubleValue > 0, width.doubleValue <= 100_000, height.doubleValue <= 100_000,
-              width.doubleValue * height.doubleValue <= 100_000_000,
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceThumbnailMaxPixelSize: 4096, kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceShouldCacheImmediately: true] as CFDictionary),
-              let png = UIImage(cgImage: image).pngData(), png.count <= 8_388_608 else { throw NativeFailure.unsupported }
+        guard let image = redrawn(data, maxPixels: 4096), let png = UIImage(cgImage: image).pngData(), png.count <= 8_388_608 else { throw NativeFailure.unsupported }
         try lease.requireValid()
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("latch-preview-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false,

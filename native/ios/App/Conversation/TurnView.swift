@@ -1,5 +1,6 @@
 import LatchNativeCore
 import SwiftUI
+import UIKit
 
 /** One prompt and its answer. Prose never folds; a turn's work folds away only once it has answered. */
 struct TurnView: View, Equatable {
@@ -16,6 +17,8 @@ struct TurnView: View, Equatable {
     let engine: String
     var helper: PhoneAgentEntry? = nil
     var fileScope = PhoneFileScope()
+    /** The prompt is a team's results the Host sent: drawn as their card, not as the person's words. */
+    var teamCard: PhoneTeamReturn.Card? = nil
     /** The run's own line says how it ended, so the footer does not say it twice. */
     let endSaid: Bool
     /** 复制, 重试 and 从这里分叉, and where the turn is in the session. */
@@ -28,7 +31,7 @@ struct TurnView: View, Equatable {
     nonisolated static func == (a: TurnView, b: TurnView) -> Bool {
         a.turn == b.turn && a.latest == b.latest && a.status == b.status && a.running == b.running && a.frozen == b.frozen && a.delivery == b.delivery
             && a.switched == b.switched && a.mark == b.mark && a.engine == b.engine && a.fileScope == b.fileScope
-            && a.endSaid == b.endSaid && a.actions == b.actions && a.index == b.index && a.helper == b.helper
+            && a.endSaid == b.endSaid && a.actions == b.actions && a.index == b.index && a.helper == b.helper && a.teamCard == b.teamCard
     }
     private var outcome: String { PhoneConversation.outcome(turn, latestStatus: status) }
     var body: some View {
@@ -40,7 +43,9 @@ struct TurnView: View, Equatable {
             if let words = PhoneConversation.origin(turn) {
                 Text(words).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).frame(maxWidth: .infinity, alignment: .trailing)
             }
-            if let user = turn.user { UserBubble(message: user, delivery: delivery, open: open) }
+            if let user = turn.user {
+                if let teamCard { TeamResultsView(message: user, card: teamCard) } else { UserBubble(message: user, delivery: delivery, open: open) }
+            }
             if !turn.replies.isEmpty || running {
                 AuthorLine(mark: mark, engine: engine, model: PhoneConversation.turnModel(turn), helper: helper)
                     .contentShape(Rectangle()).onTapGesture { if !latest && !actions.isEmpty { withAnimation(.easeOut(duration: 0.15)) { tapped.toggle() } } }
@@ -57,7 +62,11 @@ struct TurnView: View, Equatable {
                 switch block {
                 case let .work(_, items):
                     if !folds || unfolded { VStack(alignment: .leading, spacing: 8) { ForEach(Array(items.enumerated()), id: \.offset) { _, item in WorkRow(item: item, frozen: frozen, person: helper != nil, open: open) } } }
-                case let .prose(message): ConversationText(text: message["text"].string ?? "", markdown: true).frame(maxWidth: .infinity, alignment: .leading)
+                case let .prose(message):
+                    VStack(alignment: .leading, spacing: 10) {
+                        if !(message["text"].string ?? "").isEmpty { MarkdownView(text: message["text"].string ?? "", streaming: running, open: open).frame(maxWidth: .infinity, alignment: .leading) }
+                        ReplyAttachments(message: message, open: open)
+                    }
                 case let .note(message) where message["steered"].bool:
                     VStack(alignment: .trailing, spacing: 4) {
                         Text("已追加到本轮").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
@@ -99,31 +108,50 @@ private struct UserBubble: View {
     @State private var unfolded = false
     var body: some View {
         let fold = PhoneHistory.fold(message)
+        let all = PhoneAttachments.chips(message), pictures = all.filter(\.drawn), chips = all.filter { !$0.drawn }
         VStack(alignment: .trailing, spacing: 4) {
-            VStack(alignment: .leading, spacing: 8) {
-                if let fold {
-                    Button { withAnimation(.easeOut(duration: 0.2)) { unfolded.toggle() } } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "clock.arrow.circlepath").font(.system(size: 12))
-                            Text(PhoneConversation.visible(fold.summary))
-                            Image(systemName: unfolded ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .semibold))
-                        }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
-                    }.buttonStyle(.plain).accessibilityValue(unfolded ? "已展开" : "已折叠")
-                    if unfolded { ConversationText(text: PhoneConversation.visible(fold.context), monospaced: true, size: 14) }
-                }
-                let text = fold?.rest ?? message["text"].string ?? ""
-                if !text.isEmpty || fold != nil { ConversationText(text: text) }
-                let chips = PhoneAttachments.chips(message)
-                if !chips.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) { ForEach(chips) { chip in SentAttachmentChip(chip: chip) { open?(chip.id, PreviewFiles.attachmentRoot) } } }
-                }
-            }.padding(.horizontal, 14).padding(.vertical, 9)
-                .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 18))
-                .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in width * 0.86 }
+            if !pictures.isEmpty {
+                MessagePictures(chips: pictures, alignment: .trailing) { chip in open?(chip.id, PreviewFiles.attachmentRoot) }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            let text = fold?.rest ?? message["text"].string ?? ""
+            if !text.isEmpty || fold != nil || !chips.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let fold {
+                        Button { withAnimation(.easeOut(duration: 0.2)) { unfolded.toggle() } } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "clock.arrow.circlepath").font(.system(size: 12))
+                                Text(PhoneConversation.visible(fold.summary))
+                                Image(systemName: unfolded ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .semibold))
+                            }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+                        }.buttonStyle(.plain).accessibilityValue(unfolded ? "已展开" : "已折叠")
+                        if unfolded { ConversationText(text: PhoneConversation.visible(fold.context), monospaced: true, size: 14) }
+                    }
+                    if !text.isEmpty || fold != nil { ConversationText(text: text) }
+                    if !chips.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) { ForEach(chips) { chip in SentAttachmentChip(chip: chip) { open?(chip.id, PreviewFiles.attachmentRoot) } } }
+                    }
+                }.padding(.horizontal, 14).padding(.vertical, 9)
+                    .background(PhoneTheme.bubble, in: RoundedRectangle(cornerRadius: 18))
+                    .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in width * 0.86 }
+            }
             let time = PhoneTime.parse(message["createdAt"]).map { PhoneTime.message($0) }
             let line = [time, delivery].compactMap { $0 }.joined(separator: " · ")
             if !line.isEmpty { Text(line).font(.system(size: 12)).foregroundStyle(PhoneTheme.faint) }
         }.frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+/** What an agent attached to its reply: its pictures drawn large, any other file a chip that previews what it can. */
+private struct ReplyAttachments: View {
+    let message: NativeJSON
+    let open: (String, String?) -> Void
+    var body: some View {
+        let all = PhoneAttachments.chips(message), pictures = all.filter(\.drawn), chips = all.filter { !$0.drawn }
+        if !pictures.isEmpty { MessagePictures(chips: pictures, output: true) { chip in open(chip.id, PreviewFiles.attachmentRoot) } }
+        if !chips.isEmpty {
+            VStack(alignment: .leading, spacing: 6) { ForEach(chips) { chip in SentAttachmentChip(chip: chip) { open(chip.id, PreviewFiles.attachmentRoot) } } }
+        }
     }
 }
 
@@ -152,7 +180,7 @@ private struct WorkRow: View {
     var body: some View {
         switch item {
         case let .thinking(message):
-            row(icon: "brain", words: Text(thinkingWords(message)), detail: message["reasoning"].string, stat: nil, tail: nil)
+            row(icon: "brain", words: Text(thinkingWords(message)), detail: message["reasoning"].string, stat: nil, tail: nil, thought: true)
         case let .reads(messages):
             row(icon: "doc.text", words: Text("读取 \(messages.count) 个文件"), detail: nil, stat: nil, tail: nil, places: messages.flatMap { $0["tool"]["locations"].array.compactMap(\.string) })
         case let .tool(message):
@@ -197,7 +225,7 @@ private struct WorkRow: View {
         case "search": "magnifyingglass"; case "execute": "terminal"; case "fetch": "globe"; default: "wrench"
         }
     }
-    private func row(icon: String, words: Text, detail: String?, stat: PhoneDiffStat?, tail: (String, Color)?, running: Bool = false, diff: [NativeJSON] = [], open path: String? = nil, places: [String] = []) -> some View {
+    private func row(icon: String, words: Text, detail: String?, stat: PhoneDiffStat?, tail: (String, Color)?, running: Bool = false, diff: [NativeJSON] = [], open path: String? = nil, places: [String] = [], thought: Bool = false) -> some View {
         let expandable = !(detail ?? "").isEmpty || !diff.isEmpty || !places.isEmpty
         return VStack(alignment: .leading, spacing: 6) {
             Button { if expandable { withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() } } } label: {
@@ -219,6 +247,9 @@ private struct WorkRow: View {
                 }
                 if !diff.isEmpty { ForEach(Array(diff.enumerated()), id: \.offset) { _, entry in DiffPreview(diff: entry) }.padding(.leading, 26)
                     if let path { Button("打开文件") { self.open(path, nil) }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink).underline().padding(.leading, 26) }
+                } else if let detail, thought {
+                    MarkdownView(text: String(detail.suffix(16_000)), size: 14, inert: true, ink: UIColor(PhoneTheme.ink2))
+                        .padding(.leading, 26).frame(maxWidth: .infinity, alignment: .leading)
                 } else if let detail {
                     ConversationText(text: String(detail.suffix(16_000)), monospaced: true, size: 14).padding(10).frame(maxWidth: .infinity, alignment: .leading)
                         .background(PhoneTheme.sunken, in: RoundedRectangle(cornerRadius: 10)).padding(.leading, 26)

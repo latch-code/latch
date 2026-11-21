@@ -76,7 +76,7 @@ struct ResultCard: View {
                 if let reason = result.reason { Text(reason).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).textSelection(.disabled) }
                 if let reply = result.reply, !reply.isEmpty {
                     let preview = PhoneResults.preview(reply)
-                    ConversationText(text: open ? reply : preview.short, markdown: true).frame(maxWidth: .infinity, alignment: .leading)
+                    MarkdownView(text: open ? reply : preview.short).frame(maxWidth: .infinity, alignment: .leading)
                     if preview.more {
                         Button(open ? "收起" : "展开") { open.toggle() }.font(PhoneTheme.caption).foregroundStyle(PhoneTheme.ink2).buttonStyle(.plain)
                             .accessibilityValue(open ? "已展开" : "已收起")

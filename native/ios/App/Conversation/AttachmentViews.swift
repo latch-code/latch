@@ -24,6 +24,65 @@ struct SentAttachmentChip: View {
     }
 }
 
+/**
+ * A message's PNG and JPEG attachments drawn as themselves, as the web draws them: one alone at its own shape, several
+ * as square tiles. Until a window is open, or for anything else, the tile holds its place with the picture mark.
+ * Pressing one shows it large through the ordinary preview.
+ */
+struct MessagePictures: View {
+    let chips: [PhoneAttachChip]
+    /** An agent's picture is there to be looked at, so it is drawn larger. */
+    var output = false
+    var alignment: HorizontalAlignment = .leading
+    let open: (PhoneAttachChip) -> Void
+    var body: some View {
+        if chips.count == 1, let chip = chips.first {
+            AttachmentPicture(chip: chip, size: single(chip)) { open(chip) }
+        } else {
+            let side: CGFloat = output ? 128 : 96
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(side), spacing: 6), count: min(chips.count, output ? 2 : 3)), alignment: alignment, spacing: 6) {
+                ForEach(chips) { chip in AttachmentPicture(chip: chip, size: CGSize(width: side, height: side)) { open(chip) } }
+            }
+        }
+    }
+    private func single(_ chip: PhoneAttachChip) -> CGSize {
+        let box = output ? CGSize(width: 300, height: 320) : CGSize(width: 220, height: 240)
+        guard let pixels = chip.pixels else { return CGSize(width: min(box.width, 180), height: min(box.height, 180)) }
+        let ratio = CGFloat(pixels.width) / CGFloat(pixels.height)
+        var size = CGSize(width: box.width, height: box.width / ratio)
+        if size.height > box.height { size = CGSize(width: box.height * ratio, height: box.height) }
+        return CGSize(width: max(size.width, 72), height: max(size.height, 56))
+    }
+}
+
+struct AttachmentPicture: View {
+    @EnvironmentObject private var model: PhoneModel
+    let chip: PhoneAttachChip
+    let size: CGSize
+    let open: () -> Void
+    @State private var image: UIImage?
+    var body: some View {
+        Button(action: open) {
+            ZStack {
+                PhoneTheme.sunken
+                if let image { Image(uiImage: image).resizable().scaledToFill().transition(.opacity) }
+                else { Image(systemName: "photo").font(.system(size: 20)).foregroundStyle(PhoneTheme.faint) }
+            }
+            .frame(width: size.width, height: size.height).clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(PhoneTheme.line))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("图片：" + chip.name).accessibilityHint("预览")
+        .task(id: chip.id + (model.hasContentWindow ? "|open" : "|closed")) {
+            guard model.hasContentWindow else { image = nil; return }
+            let found = await model.picture(attachment: chip.id)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.2)) { image = found }
+        }
+    }
+}
+
 extension PhoneAttachIcon {
     /** The SF Symbol for this type: a picture, text, a PDF, a video, a sound, an archive or any other document. */
     var symbol: String {

@@ -158,7 +158,7 @@ struct WorkPullRequestView: View {
                             Text(PhoneConversation.visible(path) + (comment["line"].integer.map { ":\($0)" } ?? ""))
                                 .font(.caption.monospaced()).foregroundStyle(PhoneTheme.muted)
                         }
-                        if let body = comment["body"].string { ConversationText(text: PhoneConversation.visible(body), markdown: true) }
+                        if let body = comment["body"].string { MarkdownView(text: PhoneConversation.visible(body)) }
                     }.workEvidenceCard()
                 }
             }

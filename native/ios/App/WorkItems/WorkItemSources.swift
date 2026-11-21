@@ -63,7 +63,7 @@ struct WorkReplyView: View {
                     WorkRouteLink(title: "查看原回合", icon: "arrow.turn.down.right",
                         destination: .source(PhoneWorkSource(sessionId: turn.sessionId, anchor: .turn(turn, source.decision))), subrow: true)
                 }
-                if !text.isEmpty { ConversationText(text: PhoneConversation.visible(text), markdown: true) }
+                if !text.isEmpty { MarkdownView(text: PhoneConversation.visible(text)) }
                 if let failure {
                     WorkReadNotice(title: failure) { if let offset { await load(offset) } }
                 } else if loading {

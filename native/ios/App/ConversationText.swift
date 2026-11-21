@@ -1,13 +1,23 @@
+import LatchNativeCore
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/** Native selection stays in TextKit 2; no WebView, detectors, indexing or cloud clipboard is involved. */
+/**
+ * Native selection stays in TextKit 2; no WebView, detectors, indexing or cloud clipboard is involved. Rich text comes
+ * from `MarkdownView` with its links listed apart: a pressed link runs `onLink`, and its long-press preview, menu and
+ * drag stay off, so nothing in a reply opens or leaves by itself.
+ */
 struct ConversationText: UIViewRepresentable {
-    let text: String
+    var text: String = ""
     var monospaced = false
-    var markdown = false
     var size: CGFloat = 16
+    /** Drawn as given instead of `text`; its `.link` values are `latch-link:<index>` into `links`. */
+    var rich: NSAttributedString? = nil
+    var links: [PhoneRichText.LinkTarget] = []
+    var onLink: ((PhoneRichText.LinkTarget) -> Void)? = nil
+    /** Off for code: the lines keep their width and the caller scrolls sideways. */
+    var wraps = true
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> LocalTextView {
         let view = LocalTextView(usingTextLayoutManager: true)
@@ -18,83 +28,61 @@ struct ConversationText: UIViewRepresentable {
         view.dataDetectorTypes = []; view.autocorrectionType = .no; view.spellCheckingType = .no
         view.smartDashesType = .no; view.smartQuotesType = .no
         view.adjustsFontForContentSizeCategory = true
+        view.linkTextAttributes = [:]
+        view.delegate = context.coordinator
         if #available(iOS 18, *) { view.writingToolsBehavior = .none }
         return view
     }
     func updateUIView(_ view: LocalTextView, context: Context) {
-        let trait = context.environment.sizeCategory
-        guard context.coordinator.shown != text || context.coordinator.category != trait else { return }
-        context.coordinator.shown = text; context.coordinator.category = trait
+        let coordinator = context.coordinator, trait = context.environment.sizeCategory
+        coordinator.links = links; coordinator.onLink = onLink
+        if !wraps { view.textContainer.lineBreakMode = .byClipping; view.textContainer.widthTracksTextView = false; view.textContainer.size.width = .greatestFiniteMagnitude }
+        if let rich {
+            guard coordinator.shownRich.map({ !$0.isEqual(to: rich) }) ?? true || coordinator.category != trait else { return }
+            coordinator.shownRich = rich; coordinator.shown = nil; coordinator.category = trait
+            let selected = view.selectedRange
+            view.attributedText = rich
+            restore(selected, in: view)
+            return
+        }
+        guard coordinator.shown != text || coordinator.category != trait else { return }
+        coordinator.shown = text; coordinator.shownRich = nil; coordinator.category = trait
         let selected = view.selectedRange, scaled = UIFontMetrics(forTextStyle: .body).scaledValue(for: size)
-        let font = monospaced ? UIFont.monospacedSystemFont(ofSize: scaled - 2, weight: .regular) : UIFont.systemFont(ofSize: scaled)
-        if markdown { view.attributedText = RichText.attributed(text, font: font) }
-        else { view.text = text; view.font = font; view.textColor = .label }
+        view.text = text; view.textColor = .label
+        view.font = monospaced ? UIFont.monospacedSystemFont(ofSize: scaled - 2, weight: .regular) : UIFont.systemFont(ofSize: scaled)
+        restore(selected, in: view)
+    }
+    private func restore(_ selected: NSRange, in view: UITextView) {
         if selected.location != NSNotFound, selected.location <= view.text.utf16.count,
            selected.length <= view.text.utf16.count - selected.location { view.selectedRange = selected }
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: LocalTextView, context: Context) -> CGSize? {
+        if !wraps {
+            let size = uiView.attributedText.boundingRect(with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil).size
+            return CGSize(width: ceil(size.width) + 2, height: ceil(size.height))
+        }
         guard let width = proposal.width, width > 0, width.isFinite else { return nil }
         return uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
     }
-    final class Coordinator { var shown: String?; var category: ContentSizeCategory? }
-}
-
-/** The prose the agents write, as the desktop draws it. Links stay plain words: nothing in a reply opens by itself. */
-enum RichText {
-    private static let limit = 200_000
-    static func attributed(_ text: String, font: UIFont) -> NSAttributedString {
-        guard text.utf8.count <= limit else { return NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: UIColor.label]) }
-        let result = NSMutableAttributedString(), mono = UIFont.monospacedSystemFont(ofSize: font.pointSize - 2, weight: .regular)
-        var fenced = false, first = true
-        func paragraph(indent: CGFloat = 0, head: CGFloat? = nil, after: CGFloat = 8) -> NSParagraphStyle {
-            let style = NSMutableParagraphStyle()
-            style.lineHeightMultiple = 1.18; style.paragraphSpacing = after; style.headIndent = indent; style.firstLineHeadIndent = head ?? indent
-            return style
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var shown: String?
+        var shownRich: NSAttributedString?
+        var category: ContentSizeCategory?
+        var links: [PhoneRichText.LinkTarget] = []
+        var onLink: ((PhoneRichText.LinkTarget) -> Void)?
+        private func target(_ item: UITextItem) -> PhoneRichText.LinkTarget? {
+            guard case let .link(url) = item.content, url.scheme == "latch-link", let index = Int(url.absoluteString.dropFirst(11)),
+                  links.indices.contains(index) else { return nil }
+            return links[index]
         }
-        func add(_ line: NSAttributedString) {
-            if !first { result.append(NSAttributedString(string: "\n")) }
-            result.append(line); first = false
+        func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
+            guard let target = target(textItem) else { return nil }
+            if case .text = target { return nil }
+            return UIAction { [weak self] _ in self?.onLink?(target) }
         }
-        for raw in text.components(separatedBy: "\n") {
-            let trimmed = raw.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") { fenced.toggle(); continue }
-            if fenced {
-                add(NSAttributedString(string: raw, attributes: [.font: mono, .foregroundColor: UIColor.secondaryLabel, .backgroundColor: UIColor.secondarySystemBackground, .paragraphStyle: paragraph(after: 0)]))
-                continue
-            }
-            if trimmed.isEmpty { continue }
-            if let match = trimmed.range(of: "^#{1,6} ", options: .regularExpression) {
-                add(inline(String(trimmed[match.upperBound...]), font: UIFont.systemFont(ofSize: font.pointSize, weight: .semibold), mono: mono, style: paragraph()))
-            } else if let match = trimmed.range(of: "^([-*+]|[0-9]{1,3}[.)]) ", options: .regularExpression) {
-                let mark = String(trimmed[..<match.upperBound]).trimmingCharacters(in: .whitespaces)
-                let shown = mark.first?.isNumber == true ? mark : "•"
-                let line = NSMutableAttributedString(string: shown + "\t", attributes: [.font: font, .foregroundColor: UIColor.secondaryLabel])
-                line.append(inline(String(trimmed[match.upperBound...]), font: font, mono: mono, style: nil))
-                let style = paragraph(indent: 22, head: 0, after: 4).mutableCopy() as! NSMutableParagraphStyle
-                style.tabStops = [NSTextTab(textAlignment: .left, location: 22)]
-                line.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: line.length))
-                add(line)
-            } else {
-                add(inline(trimmed, font: font, mono: mono, style: paragraph()))
-            }
-        }
-        return result
-    }
-    private static func inline(_ text: String, font: UIFont, mono: UIFont, style: NSParagraphStyle?) -> NSAttributedString {
-        var base: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.label]
-        if let style { base[.paragraphStyle] = style }
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        guard let parsed = try? AttributedString(markdown: text, options: options) else { return NSAttributedString(string: text, attributes: base) }
-        let result = NSMutableAttributedString()
-        for run in parsed.runs {
-            var attributes = base
-            let intent = run.inlinePresentationIntent ?? []
-            if intent.contains(.code) { attributes[.font] = mono; attributes[.backgroundColor] = UIColor.secondarySystemBackground }
-            else if intent.contains(.stronglyEmphasized) { attributes[.font] = UIFont.systemFont(ofSize: font.pointSize, weight: .semibold) }
-            if run.link != nil { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-            result.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attributes))
-        }
-        return result
+        /** No preview, menu or share sheet for a link: only the press above. */
+        func textView(_ textView: UITextView, menuConfigurationFor textItem: UITextItem, defaultMenu: UIMenu) -> UITextItem.MenuConfiguration? { nil }
     }
 }
 

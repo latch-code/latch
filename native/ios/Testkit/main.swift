@@ -104,6 +104,8 @@ do {
         result = try await runNativeAgentActivity(input)
     case "phoneActions": result = try phoneActionsFixture(input)
     case "phoneSlash": result = try phoneSlashFixture(data)
+    case "phoneRichText": result = try phoneRichTextFixture(data)
+    case "phoneTeamReturn": result = try phoneTeamReturnFixture(data)
     case "phoneFlows": result = try await phoneFlowsFixture()
     case "phoneReview": result = try phoneReviewFixture(input)
     case "phoneWorkItems": result = try phoneWorkItemsFixture(data)

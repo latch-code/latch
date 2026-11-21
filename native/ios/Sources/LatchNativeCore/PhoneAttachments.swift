@@ -398,8 +398,12 @@ public enum PhoneAttachments {
             // Quick Look stays with plain text and redrawn PNG/JPEG (native/ios/AGENTS.md).
             // A file the Host gave its agent by path (PDF, video, archive…) is listed by name only.
             let opens = image ? ["image/png", "image/jpeg"].contains(ref["mime"].string ?? "") : ref["kind"].string == "text" && size <= 524_288
+            // Pixel sizes the Host measured, to hold a picture's place before it loads; nonsense is left out.
+            let width = ref["width"].integer.flatMap { (1...100_000).contains($0) ? Int($0) : nil }
+            let height = ref["height"].integer.flatMap { (1...100_000).contains($0) ? Int($0) : nil }
             return PhoneAttachChip(id: id, name: name, image: image, size: sizeText(Int(size)), opens: opens,
-                icon: icon(kind: ref["kind"].string ?? "file", mime: ref["mime"].string, name: name))
+                icon: icon(kind: ref["kind"].string ?? "file", mime: ref["mime"].string, name: name),
+                pixels: width.flatMap { width in height.map { (width, $0) } }.map { PhoneAttachChip.Pixels(width: $0.0, height: $0.1) })
         }
     }
     /** The attachments a pending write carries. */
@@ -453,6 +457,10 @@ public struct PhoneAttachChip: Equatable, Sendable, Identifiable {
     /** Whether this phone previews it; other formats say so when tapped. */
     public let opens: Bool
     public let icon: PhoneAttachIcon
+    public struct Pixels: Equatable, Sendable { public let width: Int; public let height: Int }
+    public var pixels: Pixels? = nil
+    /** A PNG or JPEG the phone may draw in place, from bytes it redraws in memory. */
+    public var drawn: Bool { image && opens }
 }
 
 /** A file's type, as its row and chip show it. */

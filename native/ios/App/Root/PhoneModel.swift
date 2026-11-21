@@ -105,6 +105,8 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
     #if LATCH_SCREENS
     /** A screenshot scene: canned Host data, no network, no keys. Only the LatchScreens target compiles this. */
     @Published var staged = false
+    /** A scene's team members' sessions, read when a result row opens. */
+    var stagedMemberSessions: [String: [NativeJSON]] = [:]
     #endif
     /** Sessions whose Harness lost its own session (`harness-session-lost` on a prompt): input stops, 按文字重建 offered. In memory only. */
     @Published var lostSessions: Set<String> = []

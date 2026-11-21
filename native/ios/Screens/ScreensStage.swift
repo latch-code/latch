@@ -42,6 +42,8 @@ import UIKit
             stageQuestionReminder(model)
         case "session-team":
             model.snapshot = sessionTeamSnapshot(value)
+        case "team-results":
+            stageTeamResults(model, base: value)
         case "workspace", "workspace-offline":
             model.snapshot = workSnapshot()
             if name == "workspace-offline" { stageDisconnected(model) }
@@ -66,6 +68,10 @@ import UIKit
             }
         case "conversation":
             model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation()
+        case "pictures":
+            model.tab = .code; model.sessionId = "ses_review"; model.detail = picturesConversation()
+        case "markdown", "markdown-code":
+            model.tab = .code; model.sessionId = "ses_review"; model.detail = markdownConversation(code: name == "markdown-code")
         case "conversation-reading", "project-files":
             if name == "project-files" {
                 model.snapshot = patched(value) { root in
@@ -330,6 +336,97 @@ import UIKit
     private static func snapshot() -> NativeJSON { json(snapshotText) }
     private static func conversation() -> NativeJSON { json(conversationText) }
 
+    /** A sent screenshot and an agent's generated picture, drawn from bytes staged in memory. */
+    private static func picturesConversation() -> NativeJSON {
+        func ref(_ id: String, _ name: String, _ width: Int, _ height: Int, size: Int) -> NativeJSON {
+            .object(["id": .string(id), "name": .string(name), "mime": .string("image/png"), "kind": .string("image"), "size": .number(Double(size)),
+                     "sha256": .string(String(repeating: "a", count: 64)), "width": .number(Double(width)), "height": .number(Double(height))])
+        }
+        let shot = "shotAAAAAAAAAAAAAAAAAA", chart = "chartAAAAAAAAAAAAAAAAA", log = "logAAAAAAAAAAAAAAAAAAA"
+        PhonePictures.staged[shot] = stagedPicture(CGSize(width: 390, height: 300), title: "image.png", hue: 0.62)
+        PhonePictures.staged[chart] = stagedPicture(CGSize(width: 640, height: 400), title: "chart.png", hue: 0.38)
+        var logRef = ref(log, "build.log", 0, 0, size: 4096).object
+        logRef["mime"] = .string("text/plain"); logRef["kind"] = .string("text"); logRef["width"] = nil; logRef["height"] = nil
+        return patched(conversation()) { root in
+            root["messages"] = .array([
+                .object(["id": .string("m1"), "role": .string("user"), "text": .string("这些你没感知到嘛"), "createdAt": .string(stamp.string(from: Date().addingTimeInterval(-1000))),
+                         "attachments": .array([ref(shot, "image.png", 390, 300, size: 51_200), .object(logRef)])]),
+                .object(["id": .string("m2"), "role": .string("assistant"), "text": .string("看到了。按你贴的截图，团队里出现过 **5 种** Agent。我画了一张分布图："),
+                         "createdAt": .string(stamp.string(from: Date().addingTimeInterval(-940))), "attachments": .array([ref(chart, "chart.png", 640, 400, size: 88_000)])]),
+            ])
+        }
+    }
+    private static func stagedPicture(_ size: CGSize, title: String, hue: CGFloat) -> UIImage {
+        UIGraphicsImageRenderer(size: size).image { context in
+            let colors = [UIColor(hue: hue, saturation: 0.35, brightness: 0.95, alpha: 1).cgColor, UIColor(hue: hue + 0.08, saturation: 0.55, brightness: 0.6, alpha: 1).cgColor]
+            let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: [0, 1])!
+            context.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: size.width, y: size.height), options: [])
+            for index in 0..<5 {
+                let bar = CGRect(x: 40 + CGFloat(index) * (size.width - 80) / 5, y: size.height * (0.75 - CGFloat(index % 3) * 0.15), width: (size.width - 80) / 7, height: size.height * (0.2 + CGFloat(index % 3) * 0.15))
+                UIColor.white.withAlphaComponent(0.8).setFill(); UIBezierPath(roundedRect: bar, cornerRadius: 6).fill()
+            }
+            (title as NSString).draw(at: CGPoint(x: 24, y: 20), withAttributes: [.font: UIFont.systemFont(ofSize: 24, weight: .semibold), .foregroundColor: UIColor.white])
+        }
+    }
+    /** A reply with each kind of block the web draws: headings, a table, lists and tasks, a quote, code, a rule, links. */
+    private static func markdownConversation(code: Bool) -> NativeJSON {
+        let table = """
+        当前会话的团队共有 4 个 Agent，只有主 Agent 正在运行。
+
+        | Agent | 角色 | 当前状态 |
+        |---|---|---|
+        | `/root` | 主 Agent（Codex） | **正在运行** |
+        | `/root/greeting_one` | 子 Agent | 已完成，回复了“你好” |
+        | `/root/greeting_two` | 子 Agent | 已完成，回复了“你好” |
+        | `/root/greeting_three` | 子 Agent | ~~等待~~ 已完成 |
+
+        ## 下一步
+
+        1. 读 `PhoneRichText.swift` 的分块规则
+        2. 对照 [Markdown 文档](https://github.github.com/gfm/) 补齐表格
+           - 嵌套的要点
+           - 第二个要点
+        - [x] 表格横向滚动
+        - [ ] 公式渲染
+
+        > 引用：手机上的回复应和电脑上一样易读。
+        >
+        > 第二段引用，*斜体*与 **加粗**。
+
+        ---
+
+        改动在 [MarkdownView.swift](native/ios/App/Conversation/MarkdownView.swift)。
+        """
+        let source = """
+        先看解析：
+
+        ```swift
+        /// Reads a reply as blocks.
+        public static func blocks(_ text: String) -> [PhoneRichBlock]? {
+            guard text.utf8.count <= limit else { return nil }
+            let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .full)
+            return try? AttributedString(markdown: text, options: options).runs.map { _ in .rule(quote: 0) } // a deliberately long line to scroll sideways
+        }
+        ```
+
+        ```bash
+        pnpm exec vitest run --config vitest.config.ts apps/host/test/native-swift.test.ts
+        ```
+
+        ```diff
+        - let font = UIFont.systemFont(ofSize: 16)
+        + let font = UIFont.systemFont(ofSize: scaled)
+        ```
+
+        """ + "\n\n```text\n" + (1...30).map { "第 \($0) 行日志" }.joined(separator: "\n") + "\n```"
+        return patched(conversation()) { root in
+            root["messages"] = .array([
+                .object(["id": .string("m1"), "role": .string("user"), "text": .string("我们现在的 agent team 有哪些 agent"), "createdAt": .string(stamp.string(from: Date().addingTimeInterval(-1000)))]),
+                .object(["id": .string("m2"), "role": .string("assistant"), "text": .string(code ? source : table), "createdAt": .string(stamp.string(from: Date().addingTimeInterval(-940)))]),
+            ])
+        }
+    }
+
     private static let harnesses = """
     [{"id":"standard","status":"ready","modes":["agent","chat"],"agentContext":"private","capabilities":{"display":{"label":"Latch","mark":"latch"},"models":{"owner":"latch"},"permission":{"enforcement":"latch"}}},
      {"id":"codex","status":"ready","modes":["agent"],"agentContext":"first-turn","capabilities":{"display":{"label":"Codex","mark":"codex"},"models":{"owner":"harness"},"permission":{"enforcement":"harness"}}},
@@ -553,6 +650,43 @@ extension ScreensStage {
                 task("ses_gggggggggggggggggggggg", "检查 Rust 项目", harness: "codex", project: "rust-learn", minutes: 30)] + children)
             fields["teams"] = .array([.object(["id": .string(teamExample), "leadSessionId": .string(teamLead), "members": .array(members),
                 "state": .string("returned"), "createdAt": .string("2026-11-01T09:00:00Z"), "updatedAt": .string("2026-11-01T10:00:00Z")])])
+        }
+    }
+
+    /** The lead after round 3 came back: the results card in place of the Host's message, as the desktop draws it. */
+    fileprivate static func stageTeamResults(_ model: PhoneModel, base: NativeJSON) {
+        let returned = "msg_return_round_three_x", (one, four) = (teamMembers[2], teamMembers[3])
+        let item = { (id: String) in "itm_" + id.dropFirst(4) }
+        model.snapshot = patched(sessionTeamSnapshot(base)) { fields in
+            var team = fields["teams"]!.array[0].object
+            team["members"] = .array(team["members"]!.array.enumerated().map { index, member in
+                patched(member) { $0["said"] = .string(index >= 2 ? "你好" : "完成了检查") }
+            })
+            team["round"] = .number(3); team["returnedMessageId"] = .string(returned)
+            func round(_ number: Int, _ ids: [String], returned id: String) -> NativeJSON {
+                .object(["round": .number(Double(number)), "by": .string("person"), "state": .string("returned"), "returnedMessageId": .string(id), "createdAt": .string("2026-11-01T09:00:00Z"),
+                         "members": .array(ids.map { .object(["itemId": .string(item($0)), "state": .string("done"), "requestId": .string("req_" + $0.dropFirst(4))]) })])
+            }
+            team["rounds"] = .array([round(1, teamMembers.map(\.id), returned: "msg_r1"), round(2, [one.id], returned: "msg_r2"), round(3, [one.id, four.id], returned: returned)])
+            fields["teams"] = .array([.object(team)])
+        }
+        let lead = model.snapshot["tasks"].array.first { $0["id"].string == teamLead } ?? .null
+        let now = Date()
+        func message(_ id: String, _ role: String, _ text: String, _ ago: Double) -> NativeJSON {
+            .object(["id": .string(id), "role": .string(role), "text": .string(text), "createdAt": .string(stamp.string(from: now.addingTimeInterval(-ago)))])
+        }
+        let back = PhoneTeamReturn.heading + "\n\n## 输出 1\n你好\n\n## 输出 4\n你好"
+        model.tab = .code; model.sessionId = teamLead
+        model.detail = .object(["summary": lead, "sync": .object(["instanceId": .string("screens"), "revision": .number(42)]),
+            "messages": .array([message("m1", "user", "@输出 1 @输出 4 再各说一次你好", 300), message("m2", "assistant", "已经发给两个成员，等它们回来。", 290),
+                                message(returned, "user", back, 60), message("m4", "assistant", "两个成员都回复了“你好”。", 40)])])
+        for member in [one, four] {
+            model.stagedMemberSessions[member.id] = [
+                .object(["id": .string("a"), "role": .string("user"), "text": .string("开始"), "requestId": .string("first")]),
+                .object(["id": .string("b"), "role": .string("assistant"), "text": .string("你好")]),
+                .object(["id": .string("c"), "role": .string("user"), "text": .string("再说一次"), "requestId": .string("req_" + member.id.dropFirst(4))]),
+                .object(["id": .string("d"), "role": .string("assistant"), "text": .string("**你好**，这是第 3 轮的回复。\n\n| 项 | 结果 |\n|---|---|\n| 问候 | 已完成 |")]),
+            ]
         }
     }
 

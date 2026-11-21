@@ -47,6 +47,7 @@ import {
   AGENT_PRESETS,
   BUILTIN_HELPER_CARD,
   NOT_ACCEPTED_5XX,
+  TEAM_RETURN_HEADING,
   pairRoute,
   type AppSnapshot,
   type TaskDetail,
@@ -3932,6 +3933,156 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.unknown).toEqual([false, false, false, true, true, true, false, true])
     expect(result.refusal).toBe('Flaky Agent 启动失败：进程退出（退出码 1）')
     expect(result.bare).toEqual([true, true])
+  })
+  it('reads a reply’s Markdown as the web’s blocks: tables, tasks, nesting, literal HTML, formulas and safe links', async () => {
+    const result = await invoke({
+      operation: 'phoneRichText',
+      cases: [
+        '会话：\n\n| Agent | 角色 | 状态 |\n|---|:---:|---:|\n| `/root` | 主 **Agent** | 运行中 |\n\n后文',
+        '- [ ] 待做\n- [x] 完成 ~~旧~~ *斜*\n  - 嵌套\n\n  续段\n1. 一\n2. 二\n   - 内层',
+        '<details>\n<summary>标题</summary>\n\n内容 <br> 换行 <!-- 注释 -->\n\n</details>\n\n<div>标记</div>',
+        '> 引用\n>\n> ---\n\n---\n# 一\n## 二',
+        '[链接](https://a.example) ![网图](https://a.example/x.png)\n\n![截图](out/shot.png)',
+        '```swift\nlet a = 1\n\n    缩进\n```',
+        '文字\n\n```py\n未关\nx=1',
+        '$$\nE=mc^2\n$$',
+        `${'>'.repeat(40)} 太深`,
+        '    缩进的代码不算嵌套\n' + ' '.repeat(80) + 'x',
+      ],
+      links: [
+        'https://a.example/x',
+        'mailto:a@b.example',
+        'javascript:alert(1)',
+        'src/app.ts',
+        'file:///tmp/a.png',
+        '//evil.example',
+        'tel:1',
+        'http:///x',
+      ],
+    })
+    expect(result.cases).toEqual([
+      ['p d0 q0: 会话：', 'table lcr q0: Agent | 角色 | 状态 / `/root` | 主 **Agent** | 运行中', 'p d0 q0: 后文'],
+      [
+        'todo d1 q0: 待做',
+        'done d1 q0: 完成 ~~旧~~ _斜_',
+        'bullet d2 q0: 嵌套',
+        'more d1 q0: 续段',
+        'number 1 d1 q0: 一',
+        'number 2 d1 q0: 二',
+        'bullet d2 q0: 内层',
+      ],
+      // A disclosure is its words, a line break breaks the line, a comment says nothing, other markup reads as code.
+      ['p d0 q0: 标题', 'p d0 q0: 内容 \n 换行 ', 'code html d0 q0: <div>标记</div>'],
+      ['p d0 q1: 引用', 'rule q1', 'rule q0', 'h1 d0 q0: 一', 'h2 d0 q0: 二'],
+      // A web picture is never a block to load; a project picture alone in its paragraph is.
+      ['p d0 q0: [链接] ![网图]', 'image d0 q0: out/shot.png (截图)'],
+      ['code swift d0 q0: let a = 1\n\n    缩进'],
+      ['p d0 q0: 文字', 'code py open d0 q0: 未关\nx=1'],
+      ['code math d0 q0: E=mc^2'],
+      null,
+      ['code - d0 q0: 缩进的代码不算嵌套\n' + ' '.repeat(76) + 'x'],
+    ])
+    expect(result.links).toEqual([
+      'web https://a.example/x',
+      'web mailto:a@b.example',
+      'text',
+      'path src/app.ts',
+      'path /tmp/a.png',
+      'text',
+      'text',
+      'text',
+    ])
+  })
+  it('draws a team’s returned results from its record: the round’s members, each reply in its own session', async () => {
+    const member = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
+      itemId: `itm_${id}`,
+      sessionId: `ses_${id}`,
+      title: `${name} 的任务`,
+      name,
+      harnessId: 'codex',
+      state: 'done',
+      said: '你好',
+      ...extra,
+    })
+    const team = {
+      id: 'tem_aaaaaaaaaaaaaaaaaaaaaa',
+      leadSessionId: 'ses_lead',
+      state: 'returned',
+      round: 2,
+      returnedMessageId: 'm_r2',
+      createdAt: 't',
+      updatedAt: 't',
+      members: [
+        member('one', '输出 1'),
+        member('two', '', { title: '输出 2 的任务', state: 'unstarted', sessionId: undefined, refusal: '没有安装' }),
+        member('three', '输出 3', { state: 'failed' }),
+      ],
+      rounds: [
+        {
+          round: 1,
+          by: 'person',
+          state: 'returned',
+          returnedMessageId: 'm_r1',
+          createdAt: 't',
+          members: [
+            { itemId: 'itm_one', state: 'done' },
+            { itemId: 'itm_two', state: 'unstarted' },
+            { itemId: 'itm_three', state: 'done' },
+          ],
+        },
+        {
+          round: 2,
+          by: 'agent',
+          state: 'returned',
+          returnedMessageId: 'm_r2',
+          createdAt: 't',
+          members: [{ itemId: 'itm_three', state: 'failed', requestId: 'req_2' }],
+        },
+      ],
+    }
+    const single = {
+      ...team,
+      id: 'tem_bbbbbbbbbbbbbbbbbbbbbb',
+      round: undefined,
+      rounds: undefined,
+      returnedMessageId: 'm_single',
+      members: [member('four', '输出 4')],
+    }
+    const result = await invoke({
+      operation: 'phoneTeamReturn',
+      teams: [team, single],
+      messages: [
+        { id: 'm_r1', role: 'user', text: 'x' },
+        { id: 'm_r2', role: 'user', text: 'x' },
+        { id: 'm_single', role: 'user', text: 'x' },
+        { id: 'm_lost', role: 'user', text: `${TEAM_RETURN_HEADING}\n\n…` },
+        { id: 'm_plain', role: 'user', text: '你好' },
+        { id: 'm_r1', role: 'assistant', text: 'x' },
+      ],
+      session: [
+        { role: 'user', text: '开始' },
+        { role: 'assistant', text: '第一轮' },
+        { role: 'assistant', text: '  ' },
+        { role: 'user', text: '再来', requestId: 'req_2' },
+        { role: 'assistant', text: '第二轮的草稿' },
+        { role: 'assistant', text: '第二轮' },
+        { role: 'user', text: '第三次', requestId: 'req_3' },
+      ],
+      replies: [null, 'req_2', 'req_3', 'req_missing'],
+    })
+    // The Swift copy of the heading cannot drift from the Host's.
+    expect(result.heading).toBe(TEAM_RETURN_HEADING)
+    expect(result.cards).toEqual([
+      // An earlier round: its members as they ended it, with no first line of a later reply.
+      { title: '成员的结果 · 第 1 轮', rows: ['输出 1 done - - ses_one', '输出 2 的任务 unstarted - - -', '输出 3 done - - ses_three'] },
+      { title: '成员的结果 · 第 2 轮', rows: ['输出 3 failed 你好 req_2 ses_three'] },
+      { title: '成员的结果', rows: ['输出 4 done 你好 - ses_four'] },
+      { title: '成员的结果', rows: [] },
+      null,
+      null,
+    ])
+    expect(result.replies).toEqual(['第一轮', '第二轮', '', ''])
+    expect(result.words).toEqual(['正在开始', '运行中', '等你处理', '已完成', '失败', '已停止', '未回报结果', '没有开始'])
   })
   it('derives the composer’s attachment decisions: reasons, limits, refusal classes, the tray and metadata-free images', async () => {
     const result = await invoke({ operation: 'phoneAttachments' })

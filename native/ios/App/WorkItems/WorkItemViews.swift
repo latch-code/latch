@@ -421,7 +421,7 @@ private struct WorkItemContents: View {
         if !detail.prompt.isEmpty || detail.note != nil || detail.origin != nil {
             VStack(alignment: .leading, spacing: 10) {
                 WorkSectionTitle(title: "要求")
-                if !detail.prompt.isEmpty { ConversationText(text: detail.prompt, markdown: true) }
+                if !detail.prompt.isEmpty { MarkdownView(text: detail.prompt) }
                 if let note = detail.note { Text(PhoneConversation.visible(note)).font(.subheadline).foregroundStyle(PhoneTheme.muted) }
                 if let origin = detail.origin, PhoneSessions.mayReadBody(snapshot: model.snapshot, sessionId: origin.sessionId) {
                     WorkRouteLink(title: "查看提议来源", icon: "arrow.turn.down.right", destination: .source(origin))
@@ -639,7 +639,7 @@ private struct WorkPostRow: View {
             if let reply = visible.reply {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(reply.live && model.connected ? "回复中" : "本轮回复").font(.caption.weight(.medium)).foregroundStyle(PhoneTheme.muted)
-                    ConversationText(text: reply.text, markdown: true)
+                    MarkdownView(text: reply.text)
                     if let source = visible.source {
                         WorkRouteLink(title: "完整回复", icon: "text.alignleft", destination: .reply(post: post.id, message: reply.id, source: source), subrow: true)
                             .disabled(!model.connected)

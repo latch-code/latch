@@ -4,11 +4,13 @@ import UIKit
 
 /** The product's colour tokens, in the words of the desktop's: blue is for execution and ticks, amber for what waits on you, red for real failure. */
 enum PhoneTheme {
-    private static func dynamic(_ light: UInt32, _ dark: UInt32) -> Color {
-        func color(_ value: UInt32) -> UIColor {
-            UIColor(red: CGFloat(value >> 16 & 255) / 255, green: CGFloat(value >> 8 & 255) / 255, blue: CGFloat(value & 255) / 255, alpha: 1)
+    private static func dynamic(_ light: UInt32, _ dark: UInt32) -> Color { Color(uiDynamic(light, dark)) }
+    /** The same pair for text drawn by TextKit, which takes UIKit colours. */
+    static func uiDynamic(_ light: UInt32, _ dark: UInt32, alpha: (light: CGFloat, dark: CGFloat) = (1, 1)) -> UIColor {
+        func color(_ value: UInt32, _ alpha: CGFloat) -> UIColor {
+            UIColor(red: CGFloat(value >> 16 & 255) / 255, green: CGFloat(value >> 8 & 255) / 255, blue: CGFloat(value & 255) / 255, alpha: alpha)
         }
-        return Color(UIColor { $0.userInterfaceStyle == .dark ? color(dark) : color(light) })
+        return UIColor { $0.userInterfaceStyle == .dark ? color(dark, alpha.dark) : color(light, alpha.light) }
     }
     static let ink = dynamic(0x18181B, 0xF4F4F5)
     static let ink2 = dynamic(0x3F3F46, 0xD4D4D8)
@@ -26,6 +28,22 @@ enum PhoneTheme {
     static let amberIcon = dynamic(0xD47306, 0xFBBF24)
     static let red = dynamic(0xB91C1C, 0xF87171)
     static let green = dynamic(0x15803D, 0x4ADE80)
+    /** Links in a reply: blue words, as the web's --accent-ink. */
+    static let accentInk = uiDynamic(0x1D52C4, 0x6B9BFA)
+    /** Inline code's chip, the web's --content-code-tint. */
+    static let codeTint = uiDynamic(0x2F4F8F, 0x96B2F0, alpha: (0.08, 0.12))
+    /** Code colours by role, the web's --syn-* tokens. */
+    enum Syntax: CaseIterable { case plain, keyword, string, comment, number, function, punctuation }
+    static func syntax(_ role: Syntax) -> UIColor {
+        switch role {
+        case .plain, .punctuation: uiDynamic(0x3F3F46, 0xD4D4D8)
+        case .keyword: uiDynamic(0x7C3AA8, 0xC8A2F0)
+        case .string: uiDynamic(0x9A5A16, 0xE6B47C)
+        case .comment: uiDynamic(0x8B8B94, 0x6E6E78)
+        case .number: uiDynamic(0xAD4F19, 0xF2A072)
+        case .function: uiDynamic(0x0F6E78, 0x79D0D6)
+        }
+    }
     static let body = Font.system(size: 16)
     static let row = Font.system(size: 15, weight: .medium)
     static let caption = Font.system(size: 13)

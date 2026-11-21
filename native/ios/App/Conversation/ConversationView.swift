@@ -164,11 +164,13 @@ struct ConversationView: View {
                 let results = placedResults(turns)
                 if let lead = results[""] { resultStack(lead) }
                 ForEach(proposals[""] ?? []) { proposalRow($0) }
+                let teams = model.hasContentWindow && model.privateSnapshot.confirmed ? model.snapshot["teams"].array : []
                 ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
                     let latest = index == turns.count - 1
                     TurnView(turn: turn, latest: latest, status: latest ? status : nil, running: latest && running, frozen: !model.connected,
                         delivery: latest && running ? PhoneConversation.delivery(model.detail, turn: turn) : nil, switched: switches[turn.id],
                         mark: model.engineMark(summary["harnessId"].string), engine: engine, helper: frame?.entry, fileScope: PhoneFileScope(model.detail["summary"]),
+                        teamCard: turn.user.flatMap { PhoneTeamReturn.card($0, teams: teams) },
                         endSaid: latest && !running && PhoneConversation.runEnd(model.detail["summary"], engine: engine) != nil,
                         actions: model.detailCached ? .none : PhoneTurnActions.of(turn, latest: latest, running: latest && running, canSend: canSend, canFork: canFork),
                         index: index, open: { openFile($0, $1) }).equatable().id(turn.id)
@@ -208,6 +210,7 @@ struct ConversationView: View {
                     TurnView(turn: turn, latest: live, status: live ? status : nil, running: live, frozen: !model.connected,
                         delivery: live ? PhoneConversation.delivery(model.detail, turn: turn) : nil, switched: nil,
                         mark: model.engineMark(summary["harnessId"].string), engine: engine, fileScope: PhoneFileScope(model.detail["summary"]),
+                        teamCard: turn.user.flatMap { PhoneTeamReturn.card($0, teams: model.hasContentWindow && model.privateSnapshot.confirmed ? model.snapshot["teams"].array : []) },
                         endSaid: false, open: { openFile($0, $1) }).equatable()
                     if let run = work.source.runId, PhoneWorkItems.canReadFiles(model.snapshot), model.snapshot["catalog"]["features"]["changes"].bool {
                         WorkRouteLink(title: "本轮改动与反馈", icon: "list.bullet.rectangle", destination: .review(session: id, turn: run), subrow: true)
