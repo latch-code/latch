@@ -211,7 +211,7 @@ pnpm exec vitest run --config e2e/vitest.config.ts e2e/harness-acceptance.e2e.ts
 
 ### 原生中继吞吐
 
-`e2e/native-swift-throughput.e2e.ts` 在 Swift 夹具与本地自建中继之间放一个注入 RTT 与带宽的 TCP 代理（只整形手机一腿，中继不设配额），测显式下载（经大块连接的连续 1 MiB 读取）与控制连接读取的吞吐、单元数与哑单元比例，结果写入 `test-results/native-throughput/rows.json`。默认一组短用例；`LATCH_TRANSFER_MATRIX=1` 跑 RTT 50/150/300 ms × 20/50/100 Mbit/s 的 8 MiB 矩阵，`LATCH_TRANSFER_CASE=<rtt>,<mbps>,<bytes>` 只跑一组。代理的延迟不经过端点的 TCP 拥塞控制，测的是窗口、填充节奏与请求往返决定的上限。
+`e2e/native-swift-throughput.e2e.ts` 在 Swift 夹具与本地自建中继之间放一个注入 RTT 与带宽的 TCP 代理（只整形手机一腿，中继不设配额），测显式下载（经大块连接的连续 1 MiB 读取）与控制连接读取的吞吐、单元数与哑单元比例，经中继的附件分段上传的吞吐，以及控制连接上小请求的往返时间（连接静默后与连续发），结果写入 `test-results/native-throughput/rows.json`。默认一组短用例；`LATCH_TRANSFER_MATRIX=1` 跑 RTT 50/150/300 ms × 20/50/100 Mbit/s 的 8 MiB 矩阵，`LATCH_TRANSFER_CASE=<rtt>,<mbps>,<bytes>` 只跑一组，`LATCH_TRANSFER_DIRECTION=download|upload|control` 只跑一类，`LATCH_TRANSFER_LEGACY=1` 去掉 `nativeBulkUpload`，按没有大块上传连接时测上传。代理的延迟不经过端点的 TCP 拥塞控制，测的是窗口、填充节奏与请求往返决定的上限。
 
 ### iOS 模拟器用例
 

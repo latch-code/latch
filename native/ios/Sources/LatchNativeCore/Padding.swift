@@ -73,6 +73,8 @@ public struct NativePaddingPacer: Sendable {
         if tokens < Double(Self.large) { return (0, max(1, UInt64(((Double(Self.large) - tokens) * 1000 / Double(Self.bulkRate)).rounded(.up)))) }
         return (Self.large, 0)
     }
+    /** A bulk connection whose total has not reached its size bucket yet: it still owes dummy cells once quiet. */
+    public var owesPadding: Bool { bulk && bulkBytes < Self.bucket(bulkBytes) }
     /** A cell went out: a bulk large cell spends tokens and counts towards the size bucket. */
     public mutating func record(size: Int, nowMs: UInt64) {
         guard bulk, size == Self.large else { return }
@@ -113,6 +115,8 @@ final class NativePaddingHandler: ChannelDuplexHandler, @unchecked Sendable {
         pacer.enableBulk(nowMs: milliseconds())
     }
     func inboundIdleMs() -> UInt64 { milliseconds() - min(milliseconds(), inboundAt) }
+    /** Nothing queued and, on a bulk connection, its total padded to its size bucket: an upload's end padding went. */
+    func outboundSettled() -> Bool { queued == 0 && !pacer.owesPadding }
     private func milliseconds() -> UInt64 { NIODeadline.now().uptimeNanoseconds / 1_000_000 }
     func handlerAdded(context: ChannelHandlerContext) { self.context = context; schedule(context) }
     private func schedule(_ context: ChannelHandlerContext) {

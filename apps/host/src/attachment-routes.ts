@@ -19,7 +19,7 @@ import { json, jsonBody } from './http-util.ts'
 import { byteRange } from './files/read.ts'
 import { FileReadQuota } from './files/quota.ts'
 import { AttachmentStore } from './attachments.ts'
-import { attachmentContext as context, type AttachmentUploads } from './attachment-uploads.ts'
+import { ATTACHMENT_PARTS_PER_BULK, attachmentContext as context, type AttachmentUploads } from './attachment-uploads.ts'
 const ID = /^[A-Za-z0-9_-]{22}$/u
 const metadata = context.extend({
   requestId: z.string().uuid(),
@@ -56,6 +56,8 @@ export interface AttachmentRoutesOptions<Caller extends AttachmentCaller> {
   busy(caller: Caller, requestId: string): boolean
   /** Counts a person's write against the device's rate (the Host's class C); throws when it is spent. */
   limit?(caller: Caller): void
+  /** On a phone's bulk upload connection for this upload: four parts at once, and its part bytes are its progress. */
+  bulkUpload?(caller: Caller, uploadId: string): { progress(bytes: number): void } | undefined
 }
 /**
  * Whether this Harness takes the file at all. One that takes files (`caps.files`: the built-in Harness and every ACP
@@ -222,9 +224,11 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
           if (req.headers['content-type']?.split(';')[0]?.trim() !== 'application/octet-stream' || req.headers['content-encoding'])
             throw new AppError(415, 'attachment-invalid', '附件上传需要原始文件内容。')
           const length = req.headers['content-length'] === undefined ? undefined : Number(req.headers['content-length'])
-          const timer = setTimeout(() => req.destroy(), 60_000)
+          const timer = setTimeout(() => req.destroy(), 60_000),
+            bulk = options.bulkUpload?.(caller, uploadId)
           try {
             const view = await options.uploads.part({
+              ...(bulk ? { limit: ATTACHMENT_PARTS_PER_BULK, progress: bulk.progress } : {}),
               owner: device.id,
               id: uploadId,
               index: Number(part),

@@ -58,6 +58,8 @@ export interface NativeRouteDeps {
   synchronizeDiscovery: () => Promise<void>
   /** Reuses read authorization before a relay connection can be narrowed to one large opaque file. */
   authorizeBulk: (caller: Caller, handle: string, etag: string) => Promise<{ size: number }>
+  /** This device's own unfinished chunked upload under that request, before a relay connection is narrowed to it. */
+  authorizeBulkUpload: (caller: Caller, uploadId: string, requestId: string) => void
 }
 
 /** What server.ts hands the native entry once its listeners are up. */
@@ -103,7 +105,17 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
   const { hostId, dataDir, codeRoot, now, audit, policy, devices, enrollments, plugins: registry, closing, refresh, actorOf } = context
   const { requireLocal, recheck } = context
   const requireScope: RouteContext['requireScope'] = context.requireScope
-  const { options, identity, egressExtra, relayProfiles, relayDirectory, addressBooks, revokedDiscoveryHash, authorizeBulk } = deps
+  const {
+    options,
+    identity,
+    egressExtra,
+    relayProfiles,
+    relayDirectory,
+    addressBooks,
+    revokedDiscoveryHash,
+    authorizeBulk,
+    authorizeBulkUpload,
+  } = deps
   const synchronizeNativeDiscovery = deps.synchronizeDiscovery
 
   let nativeNetwork: NativeNetwork | undefined
@@ -148,8 +160,8 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
   }
 
   /**
-   * Before any route: a bulk connection carries only its file, a revoked phone reads only its revocation, and a pairing
-   * opening only enrolls.
+   * Before any route: a bulk connection carries only its file, a bulk upload connection only its upload's parts and
+   * progress, a revoked phone reads only its revocation, and a pairing opening only enrolls.
    */
   async function screen({ res, req, connection, opening: nativeOpening, path, method }: RouteRequest): Promise<boolean> {
     if (nativeOpening && !nativeOpening.pairing) {
@@ -185,7 +197,23 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
           await nativeOpening.close?.()
           return true
         }
-      } else if (!revocation && !resume && !(path === '/link/api/native/bulk' && method === 'POST')) {
+      } else if (nativeOpening.bulkUpload) {
+        const upload = nativeOpening.bulkUpload,
+          base = `/link/api/attachments/uploads/${upload.uploadId}`
+        const allowed = (/^\/parts\/\d{1,3}$/u.test(path.slice(base.length)) && method === 'PUT') || (path === base && method === 'GET')
+        if (
+          (!revocation && !resume && !(path.startsWith(base) && allowed))
+          || (!revocation
+            && (upload.windowHash !== nativeOpening.windowHash || upload.expiresAt <= now() || nativeVerifiedUntil(nativeOpening) <= now()))
+        ) {
+          await nativeOpening.close?.()
+          return true
+        }
+      } else if (
+        !revocation
+        && !resume
+        && !((path === '/link/api/native/bulk' || path === '/link/api/native/bulk-upload') && method === 'POST')
+      ) {
         // A business request permanently prevents repurposing this connection, even when it later fails.
         nativeOpening.controlUsed = true
       }
@@ -274,6 +302,35 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
         nativeOpening.activateBulk(expiresAt - now())
         nativeOpening.bulk = { ...input, windowHash, expiresAt }
         json(res, { size, expiresAt: new Date(expiresAt).toISOString() })
+        return true
+      } catch {
+        await nativeOpening.close?.()
+        return true
+      }
+    }
+    if (path === '/link/api/native/bulk-upload' && method === 'POST') {
+      if (!nativeOpening || nativeOpening.pairing) throw authFailure('unauthorized')
+      try {
+        if (nativeOpening.listener.listener !== 'native-relay' || nativeOpening.controlUsed || nativeOpening.bulkAttempted)
+          throw new AppError(409, 'native-bulk-unavailable', '请重新上传这个附件')
+        nativeOpening.bulkAttempted = true
+        requireScope(caller, 'run')
+        recheck(caller, 'run')
+        const windowHash = nativeOpening.windowHash
+        const expiresAt = Math.min(nativeVerifiedUntil(nativeOpening), now() + NATIVE_BULK.maximumMs)
+        if (!windowHash || expiresAt <= now()) throw new AppError(403, 'native-verification-required', '请先在手机上完成身份验证')
+        const input = z.strictObject({ uploadId: z.string().regex(/^[A-Za-z0-9_-]{22}$/u), requestId: z.uuid() }).parse(await jsonBody(req))
+        authorizeBulkUpload(caller, input.uploadId, input.requestId)
+        recheck(caller, 'run')
+        if (nativeOpening.controlUsed || nativeOpening.windowHash !== windowHash || expiresAt <= now())
+          throw new AppError(409, 'native-bulk-unavailable', '请重新上传这个附件')
+        const opening = nativeOpening,
+          activate = opening.activateBulk
+        if (!activate) throw new AppError(503, 'native-bulk-unavailable', '文件连接暂时不可用')
+        opening.bulkReceived = 0
+        activate(expiresAt - now(), () => opening.bulkReceived ?? 0)
+        opening.bulkUpload = { ...input, windowHash, expiresAt }
+        json(res, { expiresAt: new Date(expiresAt).toISOString() })
         return true
       } catch {
         await nativeOpening.close?.()
@@ -397,6 +454,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
         if (
           !window
           || (nativeOpening.bulk && nativeOpening.bulk.windowHash !== hash)
+          || (nativeOpening.bulkUpload && nativeOpening.bulkUpload.windowHash !== hash)
           || window.deviceId !== nativeOpening.deviceId
           || window.appOpenId !== input.appOpenId
           || window.expiresAt <= now()
@@ -676,12 +734,15 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
       },
       handler(req, res, opening) {
         const permitted = () =>
-          (!opening.windowHash || nativeVerifiedUntil(opening) > now()) && (!opening.bulk || opening.bulk.expiresAt > now())
+          (!opening.windowHash || nativeVerifiedUntil(opening) > now())
+          && (!opening.bulk || opening.bulk.expiresAt > now())
+          && (!opening.bulkUpload || opening.bulkUpload.expiresAt > now())
         opening.padding?.guard(permitted)
         opening.guardTransportWrites?.(permitted)
         nativeRequests.set(req, opening)
         return handle(req, res, opening.listener).catch(async error => {
-          if (opening.bulkAttempted || opening.bulk) await opening.close?.()
+          // A bulk upload's parts are answered (order, conflict, quota, expiry), so the phone knows what to send.
+          if (opening.bulk || (opening.bulkAttempted && !opening.bulkUpload)) await opening.close?.()
           else fail(res, error, opening.listener)
         })
       },
@@ -764,7 +825,7 @@ export function createNativeRoutes(context: RouteContext, deps: NativeRouteDeps)
     unauthenticated,
     authenticated,
     route: handleNative,
-    features: (): HostFeatures => ({ nativeBulk: true, nativeBulkStream: true, pairingV3: true }),
+    features: (): HostFeatures => ({ nativeBulk: true, nativeBulkStream: true, nativeBulkUpload: true, pairingV3: true }),
     opening: req => nativeRequests.get(req),
     verifiedUntil: nativeVerifiedUntil,
     deviceView: nativeDeviceView,

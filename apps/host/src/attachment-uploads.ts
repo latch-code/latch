@@ -26,9 +26,15 @@ const ATTACHMENT_UPLOADS_PER_HOST = 64
  */
 export const ATTACHMENT_RECORDS_PER_DEVICE = 32
 const ATTACHMENT_RECORDS_PER_HOST = 256
-/** Parts being received at once, each buffered up to 1 MiB: as many as the single-body route lets stream. */
-const PARTS_PER_DEVICE = 2
+/**
+ * Parts being received at once, each buffered up to 1 MiB until it is written: as many as the single-body route lets
+ * stream, or four on a phone's bulk upload connection, which its 4 MiB connection window bounds the same way.
+ */
+export const ATTACHMENT_PARTS_PER_DEVICE = 2
+export const ATTACHMENT_PARTS_PER_BULK = 4
 const PARTS_PER_HOST = 8
+/** A part may arrive this many places past the first missing one, so parts in flight on one connection land in any order. */
+export const ATTACHMENT_PART_WINDOW = 4
 const ID = /^[A-Za-z0-9_-]{22}$/u
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u)
 
@@ -56,8 +62,8 @@ const uploadSchema = z.strictObject({
   context: attachmentContext,
   createdAt: z.number().finite(),
   touchedAt: z.number().finite(),
-  /** SHA-256 of each part received, in order. */
-  parts: z.array(sha256).max(Math.ceil(ATTACHMENT_FILE_LIMIT / ATTACHMENT_PART_BYTES)),
+  /** The received-part bitmap: the SHA-256 of each part by its index, null where that part has not arrived. */
+  parts: z.array(sha256.nullable()).max(Math.ceil(ATTACHMENT_FILE_LIMIT / ATTACHMENT_PART_BYTES)),
   done: z.custom<AttachmentRef>(isAttachmentRef).optional(),
   /** A refusal of its content, given again to every replay of the completion. */
   failed: z
@@ -67,6 +73,17 @@ const uploadSchema = z.strictObject({
 type Upload = z.infer<typeof uploadSchema>
 
 const partCount = (size: number) => Math.ceil(size / ATTACHMENT_PART_BYTES)
+/** The first part not yet received; the part count when all are in. */
+const firstMissing = (upload: Upload) => {
+  const index = upload.parts.indexOf(null)
+  return index >= 0 ? index : upload.parts.length
+}
+const receivedParts = (upload: Upload) => upload.parts.reduce((sum, hash) => sum + (hash ? 1 : 0), 0)
+/** Where the bytes the record vouches for end: past the last received part. */
+const recordedEnd = (upload: Upload) => {
+  const last = upload.parts.findLastIndex(hash => hash !== null)
+  return last < 0 ? 0 : Math.min((last + 1) * ATTACHMENT_PART_BYTES, upload.size)
+}
 const isOpen = (upload: Upload) => !upload.done && !upload.failed
 /**
  * Refusals of what was sent, which hold however often the completion is replayed: the content checks, the SHA-256 and
@@ -86,9 +103,10 @@ const FINAL = new Set([
 
 /**
  * Resumable uploads of one attachment in parts of at most 1 MiB, kept under `<dataDir>/attachments/_uploads/<id>/` as
- * `meta.json` (strict) and `data`, both private to the Host. Parts arrive in order; a part already received is answered
- * again when its bytes are the same. Completion runs the store's content checks on the assembled file and makes a normal
- * draft. Everything is per device: another device's upload is not found.
+ * `meta.json` (strict) and `data`, both private to the Host. A part may arrive out of order within `ATTACHMENT_PART_WINDOW`
+ * of the first missing one and is written at its offset; the record keeps which parts arrived. A part already received
+ * is answered again when its bytes are the same. Completion runs the store's content checks on the assembled file and
+ * makes a normal draft. Everything is per device: another device's upload is not found.
  */
 export class AttachmentUploads {
   private uploads = new Map<string, Upload>()
@@ -122,8 +140,9 @@ export class AttachmentUploads {
         upload = uploadSchema.parse(JSON.parse(await readFile(join(folder, 'meta.json'), 'utf8')))
         if (upload.id !== name) upload = undefined
         else if (isOpen(upload)) {
-          // A part written before its record: the record is the truth, the bytes after it go.
-          const received = Math.min(upload.parts.length * ATTACHMENT_PART_BYTES, upload.size),
+          // A part written before its record: the record is the truth, the bytes after the last recorded part go. A
+          // missing part below it is a hole its own part fills later.
+          const received = recordedEnd(upload),
             file = await open(join(folder, 'data'), constants.O_RDWR | (constants.O_NOFOLLOW ?? 0))
           try {
             const info = await file.stat()
@@ -195,8 +214,9 @@ export class AttachmentUploads {
       size: upload.size,
       partBytes: ATTACHMENT_PART_BYTES,
       parts,
-      received: upload.parts.length,
-      next: upload.parts.length < parts ? upload.parts.length : null,
+      received: receivedParts(upload),
+      next: firstMissing(upload) < parts ? firstMissing(upload) : null,
+      bitmap: Array.from({ length: parts }, (_, index) => (upload.parts[index] ? '1' : '0')).join(''),
       expiresAt: upload.touchedAt + ATTACHMENT_UPLOAD_TTL,
       ...(upload.done ? { attachment: structuredClone(upload.done) } : {}),
     }
@@ -311,8 +331,10 @@ export class AttachmentUploads {
     return this.view(upload)
   }
   /**
-   * Part `index` of the upload. Only the next part is written; one already received is answered again when its bytes are
-   * the same, and a later one is refused with the part to send next. `recheck` runs before and after every chunk read.
+   * Part `index` of the upload, written at its offset when it is within `ATTACHMENT_PART_WINDOW` of the first missing
+   * part; one already received is answered again when its bytes are the same, and one further on is refused with the
+   * part to send next. `recheck` runs before and after every chunk read. `limit`: parts this device may have being
+   * received and written at once (`ATTACHMENT_PARTS_PER_BULK` on a bulk upload connection). `progress` hears every chunk.
    */
   async part(input: {
     owner: string
@@ -321,22 +343,31 @@ export class AttachmentUploads {
     declared?: number
     stream: AsyncIterable<Uint8Array>
     recheck: () => void | Promise<void>
+    limit?: number
+    progress?: (bytes: number) => void
   }): Promise<AttachmentUploadView> {
     const upload = this.find(input.owner, input.id)
     if (upload.failed) this.refuse(upload)
     const parts = partCount(upload.size)
     if (!Number.isSafeInteger(input.index) || input.index < 0 || input.index >= parts)
       throw new AppError(400, 'attachment-invalid', '分段序号无效。')
-    if (input.index > upload.parts.length)
-      throw new AppError(409, 'upload-part-order', `请先上传第 ${upload.parts.length + 1} 段。`, { next: upload.parts.length })
+    const order = (current: Upload) => {
+      const next = firstMissing(current)
+      if (input.index >= next + ATTACHMENT_PART_WINDOW)
+        throw new AppError(409, 'upload-part-order', `请先上传第 ${next + 1} 段。`, { next })
+    }
+    order(upload)
     const expected = input.index < parts - 1 ? ATTACHMENT_PART_BYTES : upload.size - ATTACHMENT_PART_BYTES * (parts - 1)
     if (input.declared !== undefined && input.declared > expected)
       throw new AppError(413, 'attachment-too-large', '分段超过这一段应有的大小。')
     const own = this.receiving.get(input.owner) ?? 0
-    if (own >= PARTS_PER_DEVICE || [...this.receiving.values()].reduce((sum, count) => sum + count, 0) >= PARTS_PER_HOST)
+    if (
+      own >= Math.min(input.limit ?? ATTACHMENT_PARTS_PER_DEVICE, ATTACHMENT_PARTS_PER_BULK)
+      || [...this.receiving.values()].reduce((sum, count) => sum + count, 0) >= PARTS_PER_HOST
+    )
       throw new AppError(429, 'attachment-quota', '同时上传的附件过多，请稍后重试。')
+    // The slot is held until the part is written, so bodies waiting for their turn count against it too.
     this.receiving.set(input.owner, own + 1)
-    let body: Buffer
     try {
       const check = async () => {
         // An abort or expiry meanwhile stops the reading too.
@@ -351,40 +382,41 @@ export class AttachmentUploads {
         size += chunk.byteLength
         if (size > expected) throw new AppError(413, 'attachment-too-large', '分段超过这一段应有的大小。')
         chunks.push(Buffer.from(chunk))
+        input.progress?.(chunk.byteLength)
         await check()
       }
       if (size !== expected) throw new AppError(400, 'attachment-incomplete', '这一段没有传完，请重试。')
-      body = Buffer.concat(chunks)
+      const body = Buffer.concat(chunks)
+      const hash = createHash('sha256').update(body).digest('hex')
+      return await this.serial(input.id, async () => {
+        const current = this.find(input.owner, input.id)
+        if (current.failed) this.refuse(current)
+        const known = current.parts[input.index]
+        if (known) {
+          if (known !== hash)
+            throw new AppError(409, 'upload-part-conflict', '这一段与已经收到的内容不同。', { next: this.view(current).next })
+          return this.view(current)
+        }
+        order(current)
+        await input.recheck()
+        const file = await open(join(this.folder(current.id), 'data'), constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0))
+        try {
+          await file.write(body, 0, body.length, input.index * ATTACHMENT_PART_BYTES)
+          await file.sync()
+        } finally {
+          await file.close()
+        }
+        const received = Array.from({ length: Math.max(current.parts.length, input.index + 1) }, (_, at) => current.parts[at] ?? null)
+        received[input.index] = hash
+        const next = { ...current, parts: received, touchedAt: this.now() }
+        await this.save(next)
+        return this.view(next)
+      })
     } finally {
       const count = this.receiving.get(input.owner)!
       if (count <= 1) this.receiving.delete(input.owner)
       else this.receiving.set(input.owner, count - 1)
     }
-    const hash = createHash('sha256').update(body).digest('hex')
-    return this.serial(input.id, async () => {
-      const current = this.find(input.owner, input.id)
-      if (current.failed) this.refuse(current)
-      if (input.index < current.parts.length) {
-        if (current.parts[input.index] !== hash)
-          throw new AppError(409, 'upload-part-conflict', '这一段与已经收到的内容不同。', { next: this.view(current).next })
-        return this.view(current)
-      }
-      if (input.index > current.parts.length)
-        throw new AppError(409, 'upload-part-order', `请先上传第 ${current.parts.length + 1} 段。`, { next: current.parts.length })
-      await input.recheck()
-      const file = await open(join(this.folder(current.id), 'data'), constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0))
-      try {
-        const offset = input.index * ATTACHMENT_PART_BYTES
-        await file.truncate(offset)
-        await file.write(body, 0, body.length, offset)
-        await file.sync()
-      } finally {
-        await file.close()
-      }
-      const next = { ...current, parts: [...current.parts, hash], touchedAt: this.now() }
-      await this.save(next)
-      return this.view(next)
-    })
   }
   /**
    * Checks the assembled file's size and SHA-256, then the same content checks as a single upload, and keeps it as a
@@ -407,11 +439,10 @@ export class AttachmentUploads {
       // Kept before its record said so (a restart in between): the same request already made it.
       const made = this.store.made(upload.owner, upload.requestId)
       if (made && made.inputHash === attachmentInputHash(upload.name, upload.size, upload.sha256)) return this.finish(upload, made.ref)
-      const parts = partCount(upload.size)
-      if (upload.parts.length < parts)
-        throw new AppError(400, 'attachment-incomplete', `还有 ${parts - upload.parts.length} 段没有上传。`, {
-          next: upload.parts.length,
-        })
+      const parts = partCount(upload.size),
+        received = receivedParts(upload)
+      if (received < parts)
+        throw new AppError(400, 'attachment-incomplete', `还有 ${parts - received} 段没有上传。`, { next: firstMissing(upload) })
       const file = join(this.folder(upload.id), 'data')
       if ((await stat(file)).size !== upload.size) throw new AppError(400, 'attachment-incomplete', '附件还有分段没有上传。')
       let ref: AttachmentRef

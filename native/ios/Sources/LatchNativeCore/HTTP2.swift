@@ -322,6 +322,11 @@ public actor NativeHTTPConnection {
         guard let padding, !closed else { throw NativeFailure.unavailable }
         try await channel.eventLoop.submit { padding.bulk(permitted: permitted) }.get()
     }
+    /** Whether this companion's own uplink sent its end padding, so an upload companion closes only after it. */
+    func outboundSettled() async -> Bool {
+        guard let padding, !closed, channel.isActive else { return true }
+        return (try? await channel.eventLoop.submit { padding.outboundSettled() }.get()) ?? true
+    }
     /** How long since the Host's last cell arrived, so a companion closes only after the Host's end padding. */
     func inboundIdleMs() async -> UInt64? {
         guard let padding, !closed, channel.isActive else { return nil }

@@ -32,6 +32,7 @@ final class FixtureKeys: NativeIdentityProvider, @unchecked Sendable {
     }
 }
 actor FixtureCounter { var value = 0; func increment() { value += 1 } }
+actor FixtureOnce { private(set) var claimed = false; func claim() -> Bool { defer { claimed = true }; return !claimed } }
 final class FixtureTransfer: @unchecked Sendable {
     private let lock = NSLock(), start = ProcessInfo.processInfo.systemUptime
     private var first = 0.0, chunks = 0, received = 0, expected = 0
@@ -48,6 +49,14 @@ final class FixtureTransfer: @unchecked Sendable {
         guard valid, expected > 0, received == expected else { throw NativeFailure.invalidRecord }
         return ["firstChunkMs": first, "totalMs": (ProcessInfo.processInfo.systemUptime - start) * 1000, "chunks": chunks]
     }
+}
+/** An upload's reported progress: never backwards, ending at the whole file. */
+final class FixtureUploadProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ordered = true, latest = 0
+    func saw(_ done: Int, _ total: Int) { lock.lock(); if done < latest || done > total { ordered = false }; latest = max(latest, done); lock.unlock() }
+    var monotonic: Bool { lock.lock(); defer { lock.unlock() }; return ordered }
+    var last: Int { lock.lock(); defer { lock.unlock() }; return latest }
 }
 actor FixtureBookGate {
     var waiting = false
@@ -233,7 +242,7 @@ do {
         guard let rows = input["interfaces"] as? [[String: String]], let routers = input["routers"] as? [String], let peer = input["peer"] as? String else { throw NativeFailure.invalidRecord }
         let hash = NativeDiscoveryWire.pairingGatewayHash(peer: peer, interfaces: try rows.map { (address: $0["address"] ?? "", mask: try LinkBytes.unhex($0["mask"] ?? "")) }, routers: routers)
         result["hash"] = hash.map { LinkBytes.hex($0) }
-    case "nativeRelayLifecycle", "nativeRelayTransferNormal", "nativeRelayTransferAfterCancel", "nativeRelayBulkNormal", "nativeRelayBulkLegacy", "nativeRelayBulkReauthenticate", "nativeRelayBulkAfterCancel", "nativeRelayBulkCancel", "nativeRelayBulkEarlyCancel", "nativeDirectTransfer", "nativeRelayThroughput":
+    case "nativeRelayLifecycle", "nativeRelayTransferNormal", "nativeRelayTransferAfterCancel", "nativeRelayBulkNormal", "nativeRelayBulkLegacy", "nativeRelayBulkReauthenticate", "nativeRelayBulkAfterCancel", "nativeRelayBulkCancel", "nativeRelayBulkEarlyCancel", "nativeDirectTransfer", "nativeRelayThroughput", "nativeRelayUploadThroughput", "nativeRelayUpload", "nativeRelayControlLatency":
         stage = "relay-pairing"
         let invitation = try PairingInvitation.parse(input["payload"] as? String ?? "", privateOnly: false), keys = try FixtureKeys()
         let anchor = try LinkBytes.unhex(input["trustAnchor"] as? String ?? "")
@@ -318,6 +327,88 @@ do {
         guard let file = files["files"].array.first?["file"], let handle = file["handle"].string,
               let etag = file["etag"].string, let count = file["size"].integer,
               try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: Int(count)) == Data("Swift relay file fixture".utf8) else { throw NativeFailure.invalidRecord }
+        if input["operation"] as? String == "nativeRelayUpload" {
+            // Eight parts over the bulk upload companion; a path round in the middle stops it with the answer unknown, and
+            // the retry under the same request sends only the parts the Host's bitmap lacks.
+            stage = "relay-upload"
+            let size = 8 * PhoneAttachments.streamBytes + 4321
+            let content = Data((0..<size).map { UInt8(truncatingIfNeeded: ($0 / 4096) &* 31 &+ $0) })
+            let draft = try fixtureDraft(name: "upload.bin", kind: .file, data: content)
+            defer { try? FileManager.default.removeItem(at: fixtureTemporary) }
+            let selection = PhoneAttachments.selection(harnessId: "standard", workspaceId: "default", model: nil)
+            let drop = FixtureUploadProgress(), switching = FixtureOnce()
+            var interrupted = false
+            do {
+                _ = try await workspace.uploadAttachment(draft, selection: selection, sessionId: taskId) { done, total in
+                    drop.saw(done, total)
+                    // Four parts share the uplink and finish together, so past 5 MiB at least two are confirmed.
+                    if done > 5 * PhoneAttachments.streamBytes {
+                        Task { if await switching.claim() { _ = try? await workspace.install(dial) } }
+                    }
+                }
+            } catch { interrupted = (error as? NativeFailure) == .resultUnknown }
+            while !(await switching.claimed) { try await Task.sleep(for: .milliseconds(20)) }
+            stage = "relay-upload-reinstall"
+            while !(await workspace.quiet()) { try await Task.sleep(for: .milliseconds(50)) }
+            _ = try await workspace.install(dial)
+            stage = "relay-upload-resume"
+            let resumed = FixtureUploadProgress(), first = FixtureCross(threshold: 0)
+            let ref = try await workspace.uploadAttachment(draft, selection: selection, sessionId: taskId) { done, total in
+                first.saw(done); resumed.saw(done, total)
+            }
+            // The next attachment of the same message right away, as the queue sends it: its own companion, not the
+            // control connection, though the Host frees the last one's slot only once it has closed.
+            stage = "relay-upload-next"
+            let nextSize = 3 * PhoneAttachments.streamBytes + 17
+            let nextContent = Data((0..<nextSize).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ 3) })
+            let nextDraft = try fixtureDraft(name: "next.bin", kind: .file, data: nextContent)
+            let nextStarted = ProcessInfo.processInfo.systemUptime
+            let nextRef = try await workspace.uploadAttachment(nextDraft, selection: selection, sessionId: taskId)
+            let nextMs = (ProcessInfo.processInfo.systemUptime - nextStarted) * 1000
+            await workspace.waitForCompanion()
+            result = [
+                "interrupted": interrupted && drop.monotonic,
+                "kept": ref["size"].integer == UInt64(size) && ref["sha256"].string == LinkBytes.hex(LinkBytes.hash(content)),
+                "resumed": (first.first ?? 0) > PhoneAttachments.streamBytes && resumed.monotonic && resumed.last == size,
+                "next": nextRef["sha256"].string == LinkBytes.hex(LinkBytes.hash(nextContent)), "nextMs": nextMs.rounded(),
+            ]
+            await workspace.closeOpening(); break
+        }
+        if input["operation"] as? String == "nativeRelayUploadThroughput" {
+            // One staged file of `bytes` uploaded as the App sends an attachment over the relay; timed from start to kept.
+            stage = "relay-throughput-upload"
+            let size = (input["bytes"] as? NSNumber)?.intValue ?? 0
+            guard (1...PhoneAttachments.largestFile).contains(size) else { throw NativeFailure.invalidRecord }
+            let content = Data((0..<size).map { UInt8(truncatingIfNeeded: $0 &* 2_654_435_761 >> 13) })
+            let draft = try fixtureDraft(name: "upload.bin", kind: .file, data: content)
+            defer { try? FileManager.default.removeItem(at: fixtureTemporary) }
+            let selection = PhoneAttachments.selection(harnessId: "standard", workspaceId: "default", model: nil)
+            let progress = FixtureUploadProgress()
+            let started = ProcessInfo.processInfo.systemUptime
+            let ref = try await workspace.uploadAttachment(draft, selection: selection, sessionId: taskId) { done, total in progress.saw(done, total) }
+            let uploadMs = (ProcessInfo.processInfo.systemUptime - started) * 1000
+            guard ref["size"].integer == UInt64(size), ref["sha256"].string == LinkBytes.hex(LinkBytes.hash(content)),
+                  progress.monotonic, progress.last == size else { throw NativeFailure.invalidRecord }
+            stage = "relay-throughput-upload-cover"
+            let covered = ProcessInfo.processInfo.systemUptime
+            await workspace.waitForCompanion()
+            result = ["uploadMs": uploadMs, "coverMs": (ProcessInfo.processInfo.systemUptime - covered) * 1000, "bytes": size]
+            await workspace.closeOpening(); break
+        }
+        if input["operation"] as? String == "nativeRelayControlLatency" {
+            // A small control request as a tap makes it: each after the connection went quiet, then back to back.
+            stage = "relay-control-latency"
+            func once() async throws -> Double {
+                let started = ProcessInfo.processInfo.systemUptime
+                guard try await workspace.fileBytes(handle: handle, etag: etag, offset: 0, count: Int(count)) == Data("Swift relay file fixture".utf8) else { throw NativeFailure.invalidRecord }
+                return ((ProcessInfo.processInfo.systemUptime - started) * 1000).rounded()
+            }
+            var idle: [Double] = [], busy: [Double] = []
+            for _ in 0..<8 { try await Task.sleep(for: .milliseconds(2600 + Int.random(in: 0..<250))); idle.append(try await once()) }
+            for _ in 0..<8 { busy.append(try await once()) }
+            result = ["idleMs": idle, "busyMs": busy]
+            await workspace.closeOpening(); break
+        }
         let throughput = input["operation"] as? String == "nativeRelayThroughput"
         let bulk = direct || throughput || (input["operation"] as? String ?? "").hasPrefix("nativeRelayTransfer") || (input["operation"] as? String ?? "").hasPrefix("nativeRelayBulk")
         let companion = (input["operation"] as? String ?? "").hasPrefix("nativeRelayBulk")

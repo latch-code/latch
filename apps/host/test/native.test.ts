@@ -27,7 +27,7 @@ import {
   parsePairingPayload,
 } from '@latch/link-wire'
 import { nodeCrypto } from '@latch/link-client/crypto'
-import type { TestDevice } from '@latch/testkit'
+import { FAKE_ACP_AGENT, type TestDevice } from '@latch/testkit'
 import type {
   AppSnapshot,
   GitPrState,
@@ -48,6 +48,20 @@ import { buildFilesHelper } from '../scripts/build-files.ts'
 import { GitDelivery } from '../src/git-delivery.ts'
 import { messageCarrierFixture } from './helpers/message-carrier.ts'
 import { connectPluginTransport } from '../src/native-transports.ts'
+
+/** Every native entry a Host starts here, so a test can hand it a relay connection as the relay controller would. */
+const nativeHosts = vi.hoisted(() => [] as Array<{ acceptRelay: (stream: import('node:stream').Duplex, binding: never) => Promise<void> }>)
+vi.mock('../src/native.ts', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/native.ts')>()
+  return {
+    ...actual,
+    startNativeHost: async (...args: Parameters<typeof actual.startNativeHost>) => {
+      const started = await actual.startNativeHost(...args)
+      nativeHosts.push(started as never)
+      return started
+    },
+  }
+})
 
 const cleanup: (() => void | Promise<void>)[] = []
 afterEach(async () => {
@@ -1585,6 +1599,173 @@ describe('native Host entry with existing authorization', () => {
       await vi.waitFor(() => expect(short.isClosed()).toBe(true), { timeout: 5000, interval: 50 })
       expect(performance.now() - begun).toBeLessThan(1500)
     }, 30_000)
+  })
+  describe('the bulk upload role', () => {
+    const MiB = 1_048_576
+    async function fixture() {
+      let now = Date.now()
+      const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 }, now: () => now })
+      cleanup.push(() => host.close())
+      const native = nativeHosts.at(-1)!
+      const desktop = await desktopOf(host)
+      await desktop.confirmedJson('agents', {
+        body: { id: 'acp', name: 'ACP', command: process.execPath, args: [FAKE_ACP_AGENT] },
+      })
+      expect((await desktop.confirmed('agents/acp/probe', { body: { requestId: randomUUID() } })).status).toBe(200)
+      const registered = await pair(host)
+      const receipt = await verifyDevice(host, registered.client, registered.deviceId, registered.verification.privateKey)
+      const binding = { path: 'relay' as const, relayId: new Uint8Array(16).fill(5), routeId: new Uint8Array(16).fill(6) }
+      const relay = createServer(socket => {
+        socket.on('error', () => {})
+        void native.acceptRelay(socket, binding as never).catch(() => {})
+      })
+      relay.listen(0, '127.0.0.1')
+      await new Promise(done => relay.once('listening', done))
+      cleanup.push(() => new Promise<void>(done => relay.close(() => done())))
+      /** A fresh relay connection that resumed the phone's window and has carried nothing else. */
+      const companion = async () => {
+        const raw = connect((relay.address() as AddressInfo).port, '127.0.0.1')
+        raw.on('error', () => {})
+        const client = new NativeHttpClient(await connectNative(raw, binding, registered.clientOptions))
+        cleanup.push(() => client.close())
+        const resumed = await client.request('POST', '/link/api/native/verification/resume', {
+          appOpenId: receipt.appOpenId,
+          windowToken: receipt.windowToken,
+        })
+        expect(resumed.status).toBe(200)
+        return client
+      }
+      // One megabyte and ten bytes: the Node client sends on the phone's clock, so the part it carries is the short one.
+      const content = Buffer.concat([Buffer.alloc(MiB, 'a'), Buffer.alloc(10, 'b')])
+      const start = async (client: NativeHttpClient | TestDevice, requestId = randomUUID()) => {
+        const input = {
+          requestId,
+          name: 'notes.txt',
+          kind: 'text',
+          size: content.length,
+          sha256: createHash('sha256').update(content).digest('hex'),
+          selection: { harnessId: 'acp' },
+        }
+        const answer =
+          client instanceof NativeHttpClient
+            ? await client.request('POST', '/link/api/attachments/uploads', input)
+            : { status: 0, body: await client.json('attachments/uploads', { body: input }) }
+        if (answer.status) expect(answer.status).toBe(201)
+        return (answer.body as { upload: { id: string; requestId: string } }).upload
+      }
+      /** A raw part PUT: the convenience client sends JSON only. */
+      const put = (client: NativeHttpClient, id: string, index: number, bytes: Buffer) =>
+        new Promise<{ status: number; body: Record<string, unknown> }>((done, reject) => {
+          const session = Reflect.get(client, 'session') as ClientHttp2Session
+          const stream = session.request({
+            ':method': 'PUT',
+            ':path': `/link/api/attachments/uploads/${id}/parts/${index}`,
+            'content-type': 'application/octet-stream',
+            'content-length': String(bytes.length),
+          })
+          let status = 0
+          const chunks: Buffer[] = []
+          stream.once('response', headers => (status = Number(headers[':status'])))
+          stream.on('data', (chunk: Buffer) => chunks.push(chunk))
+          stream.once('error', reject)
+          stream.once('close', () =>
+            status ? done({ status, body: JSON.parse(Buffer.concat(chunks).toString() || '{}') as never }) : reject(new Error('closed')),
+          )
+          stream.end(bytes)
+        })
+      return {
+        host,
+        registered,
+        companion,
+        start,
+        put,
+        content,
+        advance: (ms: number) => {
+          now += ms
+        },
+      }
+    }
+    it('narrows a fresh relay connection to one upload of this device, answers its parts in any order within the window and closes on anything else', async () => {
+      const { host, registered, companion, start, put, content } = await fixture()
+      const upload = await start(registered.client)
+      const activate = (client: NativeHttpClient, uploadId = upload.id, requestId = upload.requestId) =>
+        client.request('POST', '/link/api/native/bulk-upload', { uploadId, requestId })
+      // Another device's upload is not this phone's to carry.
+      const other = await start(await host.enroll({ scopes: ['view', 'run'] }))
+      const foreign = await companion()
+      await expect(activate(foreign, other.id, other.requestId)).rejects.toThrow()
+      await vi.waitFor(() => expect(foreign.isClosed()).toBe(true))
+      // Nor another request's, nor on a connection that already carried business.
+      const mismatched = await companion()
+      await expect(activate(mismatched, upload.id, randomUUID())).rejects.toThrow()
+      const used = await companion()
+      expect((await used.request('GET', '/link/api/snapshot')).status).toBe(200)
+      await expect(activate(used)).rejects.toThrow()
+      await vi.waitFor(() => expect(used.isClosed()).toBe(true))
+      const bulk = await companion()
+      const activated = await activate(bulk)
+      expect(activated.status).toBe(200)
+      expect(Object.keys(activated.body as object)).toEqual(['expiresAt'])
+      // One bulk slot per device, whichever direction: a second companion is refused while this one lives.
+      const busy = await companion()
+      await expect(activate(busy)).rejects.toThrow()
+      // The short last part first, out of order; then the progress of this upload. A refusal is answered, not closed.
+      const last = await put(bulk, upload.id, 1, content.subarray(MiB))
+      expect(last).toMatchObject({ status: 200, body: { upload: { next: 0, bitmap: '01' } } })
+      expect(await put(bulk, upload.id, 1, Buffer.alloc(10, 'c'))).toMatchObject({ status: 409, body: { error: 'upload-part-conflict' } })
+      expect(
+        body<{ upload: { bitmap: string } }>(await bulk.request('GET', `/link/api/attachments/uploads/${upload.id}`)).upload.bitmap,
+      ).toBe('01')
+      expect(bulk.isClosed()).toBe(false)
+      // The first part on the control connection, then the completion there too.
+      expect((await put(registered.client, upload.id, 0, content.subarray(0, MiB))).status).toBe(200)
+      expect((await registered.client.request('POST', `/link/api/attachments/uploads/${upload.id}/complete`, {})).status).toBe(201)
+      // Anything but its parts and progress closes the companion: completion, another route.
+      await expect(bulk.request('POST', `/link/api/attachments/uploads/${upload.id}/complete`, {})).rejects.toThrow()
+      await vi.waitFor(() => expect(bulk.isClosed()).toBe(true))
+      const second = await start(registered.client)
+      const narrow = await companion()
+      expect((await activate(narrow, second.id, second.requestId)).status).toBe(200)
+      await expect(narrow.request('GET', '/link/api/snapshot')).rejects.toThrow()
+      await vi.waitFor(() => expect(narrow.isClosed()).toBe(true))
+    }, 60_000)
+    it('ends a bulk upload connection after its part bytes stop and when its content window expires', async () => {
+      const stalled = NATIVE_BULK.stalledMs
+      Object.assign(NATIVE_BULK as { stalledMs: number }, { stalledMs: 1500 })
+      cleanup.push(() => {
+        Object.assign(NATIVE_BULK as { stalledMs: number }, { stalledMs: stalled })
+      })
+      const { registered, companion, start, advance } = await fixture()
+      const upload = await start(registered.client)
+      const activate = (client: NativeHttpClient) =>
+        client.request('POST', '/link/api/native/bulk-upload', { uploadId: upload.id, requestId: upload.requestId })
+      // Part bytes keep it open; once they stop, it closes within the stall limit.
+      const slow = await companion()
+      expect((await activate(slow)).status).toBe(200)
+      const session = Reflect.get(slow, 'session') as ClientHttp2Session
+      const stream = session.request({
+        ':method': 'PUT',
+        ':path': `/link/api/attachments/uploads/${upload.id}/parts/0`,
+        'content-type': 'application/octet-stream',
+      })
+      stream.on('error', () => {})
+      const started = performance.now()
+      let sent = 0
+      const timer = setInterval(() => {
+        if (++sent > 10) clearInterval(timer)
+        else stream.write(Buffer.alloc(512, 'a'))
+      }, 300)
+      cleanup.push(() => clearInterval(timer))
+      await vi.waitFor(() => expect(slow.isClosed()).toBe(true), { timeout: 10_000, interval: 50 })
+      expect(performance.now() - started).toBeGreaterThan(3000)
+      expect(performance.now() - started).toBeLessThan(3000 + 1500 + 1500)
+      // The content window ends the role: its next part closes the connection rather than being read.
+      const late = await companion()
+      expect((await activate(late)).status).toBe(200)
+      advance(10 * 60_000 + 1)
+      await expect(late.request('GET', `/link/api/attachments/uploads/${upload.id}`)).rejects.toThrow()
+      await vi.waitFor(() => expect(late.isClosed()).toBe(true))
+    }, 60_000)
   })
   it('reclaims the oldest pending handshake and bounds the authenticated connection pool per device', async () => {
     const host = await startTestHost({ native: { host: '127.0.0.1', port: 0 } })

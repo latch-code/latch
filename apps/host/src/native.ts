@@ -26,8 +26,15 @@ export interface NativeOpening {
   controlUsed?: boolean
   bulkAttempted?: boolean
   bulk?: { handle: string; etag: string; requestId: string; windowHash: string; expiresAt: number }
-  /** `lifetimeMs`: until the earlier of the content window and the absolute bulk limit; never extended. */
-  activateBulk?(lifetimeMs: number): void
+  /** The bulk upload role: this connection carries only this upload's parts and progress. */
+  bulkUpload?: { uploadId: string; requestId: string; windowHash: string; expiresAt: number }
+  /** Part body bytes this connection's bulk upload received: its progress, not the phone's PINGs or padding. */
+  bulkReceived?: number
+  /**
+   * `lifetimeMs`: until the earlier of the content window and the absolute bulk limit; never extended. `progress`: a
+   * count that grows while the transfer moves; by default the payload the Host's transport confirmed written.
+   */
+  activateBulk?(lifetimeMs: number, progress?: () => number): void
   close?(): Promise<void>
   signal?: AbortSignal
   guardTransportWrites?(check: () => boolean): void
@@ -207,7 +214,7 @@ export async function startNativeHost(options: NativeHostOptions) {
           stream.destroy()
           await settled
         },
-        activateBulk(lifetimeMs: number) {
+        activateBulk(lifetimeMs: number, progress?: () => number) {
           if (binding.path !== 'relay' || accepted.pairing || !accepted.padding || bulkSlots.has(accepted.deviceId))
             throw new AppError(409, 'native-bulk-busy', '文件连接正在准备，请稍后重试')
           const padding = accepted.padding
@@ -216,12 +223,14 @@ export async function startNativeHost(options: NativeHostOptions) {
           bulkSettlements.add(settled)
           const timer = setTimeout(() => stream.destroy(), Math.max(0, Math.min(lifetimeMs, NATIVE_BULK.maximumMs)))
           timer.unref()
-          // Progress is payload the transport confirmed written, so a reader that stops pulling cannot hold the slot.
-          let delivered = padding.traffic().payloadBytes,
+          // Progress is payload the transport confirmed written, so a reader that stops pulling cannot hold the slot; an
+          // upload's is the part bytes it received.
+          const moved = progress ?? (() => padding.traffic().payloadBytes)
+          let delivered = moved(),
             progressAt = performance.now()
           const watchdog = setInterval(() => {
             const now = performance.now(),
-              current = padding.traffic().payloadBytes
+              current = moved()
             if (current !== delivered) {
               delivered = current
               progressAt = now

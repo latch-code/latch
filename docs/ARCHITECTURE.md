@@ -258,6 +258,7 @@ Latch 的安全边界是「谁能让 Host 做什么」，不是对执行代码�
 
 - 附件的内容（`AttachmentContent`）不进快照、SSE、请求 URL 或 Host 日志。可能含密钥的文件名或文本要明确确认（`attachment-secret`），复用与分片完成同样要。
 - 种类只按内容判断，声明的种类必须一致；分片上传完成时做与单次上传相同的检查。上传按设备隔离（别的设备 404 `upload-missing`），要 `run`，逐块复查设备与权限，从开始就按声明的大小占用这台设备的额度。索引写入失败时停止接收，不把损坏的索引当作空。
+- 分片可乱序到达，只收第一个缺的段起四段以内的，按偏移写入；`meta.json`（strict）记已收段的位图，重放按位图只补缺的段。手机经中继的大块上传连接（`/native/bulk-upload`）只在没处理过业务的新中继连接、本设备这次上传的同一 `requestId`、`run` 下激活，此后只收这次上传的分段、进度与自身撤销或窗口恢复，别的请求关闭连接；与显式下载共用每设备一个大块槽，窗口流 2 MiB、连接 4 MiB，到期取正文窗口、15 秒无段字节与 10 分钟中最早的，不延长窗口。
 - 按路径交给 Agent 时：目录 0700、文件 0600，目录是链接或不是目录时拒绝（409 `attachment-changed`）；字节取自私有存储并核对 SHA-256，已绑定到别的会话的拒绝，文件或摘要不符时拒绝而不换成别的文件；路径只进本轮的模型输入。
 - `DELETE /attachments/:id` 只删这台设备未发送的草稿（409 `attachment-in-use`）；释放保留的草稿只碰这台设备自己的、人确认过的；拿不准有没有消息需要它时一律保留。
 - 页面不传绝对目录，不从文字里的 `@` 或邮件地址推断选择；可能含密钥的图片不画。iPhone 重新编码图片，位置、相机与 EXIF 等元数据不离开手机。
@@ -962,7 +963,7 @@ Host 约每 40ms 合并一次变化，把选中会话的状态推送给订阅它
 | `PATCH /devices/:id/name`、`GET /enrollments` | 本机 `admin` | 重命名任一设备；仍在等待的登记 |
 | `POST /pairings` | 本机 `admin` 或匿名 | 配对邀请 `{ scopes?, target? }`；未配置 HTTPS 入口时 409 `tls-not-configured`。桌面端只由主进程调用 |
 | `GET /native/info`、`/native/pairings…`、`/native/relays…`（含 `PATCH /native/relays/:id` 停用与启用、`POST /native/relays/:id/test` 测试）、`/native/relay-requests/:id`、`PUT /native/official-relay`、`DELETE /native/directory` | 本机 `admin`（`GET /native/info`：任何 `admin` 设备，或本机匿名；测试：本机 `admin` 或本机匿名）；添加中继需本机确认 | 手机配对二维码、设置 › 连接转发（[RELAY.md](RELAY.md)）。签发二维码要先打开局域网入口：没有网络时 409 `native-no-lan`；入口在 iPhone 的数据线热点上时回执带 `cable: true`（[RELAY.md](RELAY.md#同一网络怎样判断)）；完全访问的会话运行或等待时 409 `presence-blocked` |
-| `/native/pairing`、`/native/verification…`、`/native/revocation…`、`/native/address-book`、`/native/proximity`、`/native/bulk` | 原生连接上的设备 | 手机 App 的验证窗口、撤销通知、地址簿与文件传输 |
+| `/native/pairing`、`/native/verification…`、`/native/revocation…`、`/native/address-book`、`/native/proximity`、`/native/bulk`、`/native/bulk-upload` | 原生连接上的设备 | 手机 App 的验证窗口、撤销通知、地址簿、文件传输与附件上传 |
 | `GET`/`DELETE /confirmations/:id` | 发起确认的设备 | 查询或取消本机确认 |
 | `GET /audit/head`、`GET /audit/hash?seq=` | `view` | 审计检查点 |
 | `GET /audit/records`、`GET /data`、`POST /data/sizes` | `admin` 与数据范围 `all` | 审计记录、数据目录与保留、统计大小（[数据、保留与导出](#数据保留与导出)） |

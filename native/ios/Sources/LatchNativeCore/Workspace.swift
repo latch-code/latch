@@ -174,6 +174,13 @@ public actor NativeWorkspace {
     private var bulkClosing: Task<Void, Never>?
     private var bulkRun: Task<Data, Error>?
     private var uploading = false
+    /** A relay upload's bulk companion, bound on the Host to one chunked upload; it shares the device's one bulk slot. */
+    private var uploadLane: (connection: NativeHTTPConnection, id: String, until: Date)?
+    private var uploadCover: Task<Void, Never>?
+    private var uploadClosing: Task<Void, Never>?
+    private var uploadRun: Task<NativeJSON, Error>?
+    /** Set when a path round, lock or revocation stops the upload: the Host keeps its parts, the answer is unknown. */
+    private var uploadInterrupted = false
     private struct AppliedCursor: Codable, Sendable {
         let selection: String
         let cursor: NativeEventCursor
@@ -314,7 +321,8 @@ public actor NativeWorkspace {
         return !(await verification.busy()) && idle()
     }
     private func idle() -> Bool {
-        writes.isEmpty && !controlBusy && !uploading && bulk == nil && bulkRun == nil && !bulkBusy && !bookUpdating && connection?.idle != false
+        writes.isEmpty && !controlBusy && !uploading && bulk == nil && bulkRun == nil && !bulkBusy && uploadLane == nil && uploadRun == nil
+            && !bookUpdating && connection?.idle != false
     }
     /**
      * After a short background: the Host rechecks the held window on the kept connection. It never extends the window;
@@ -588,7 +596,9 @@ public actor NativeWorkspace {
         let (primary, current) = try transport()
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
         try access?.check(installedTransport, window: lease)
+        // The device has one bulk slot on the Host: while an upload holds it, an explicit read stays on the control connection.
         let useBulk = !attachment && explicitOpen && primary.usesRelay && count >= 131_072 && metadata["catalog"]["features"]["nativeBulk"].bool
+            && uploadLane == nil && uploadRun == nil
         guard !useBulk || !bulkBusy else { throw NativeFailure.unavailable }
         if !useBulk {
             return try await readFile(connection: primary, handle: handle, etag: etag, offset: offset, count: count,
@@ -770,9 +780,12 @@ public actor NativeWorkspace {
     /**
      * A file larger than one stream, in parts of 1 MiB, each its own stream with the same per-chunk checks. The start
      * names the request, so starting again after an unknown answer finds the same upload on the Host and sends only the
-     * parts it lacks, from the next one it asks for; a part it has is not sent again. Cancel closes the part's stream,
-     * waits for it, then aborts the upload on the Host. The start itself is not cut off by a cancel: its answer names
-     * the upload, which is then aborted. `started` hears the upload's ID, so a row removed later can abort it too.
+     * parts its bitmap lacks; a part it has is not sent again. Over a relay, when the Host offers it, the parts go on a
+     * bulk upload companion at network speed, four in flight; otherwise one at a time on this connection. Cancel closes
+     * the parts' streams and the companion, waits for them, then aborts the upload on the Host; a path round, lock or
+     * revocation stops it the same way but keeps the Host's parts and leaves the answer unknown. The start itself is not
+     * cut off by a cancel: its answer names the upload, which is then aborted. `started` hears the upload's ID, so a row
+     * removed later can abort it too.
      */
     private func uploadInParts(_ draft: PhoneAttachDraft, selection: NativeJSON, sessionId: String?,
         progress: (@Sendable (Int, Int) -> Void)?, started report: (@Sendable (String) -> Void)?) async throws -> NativeJSON {
@@ -782,7 +795,19 @@ public actor NativeWorkspace {
         guard !uploading else { throw NativeFailure.busy }
         guard let lease = await verification.currentLease() else { throw NativeFailure.expired }; try lease.requireValid()
         uploading = true; defer { uploading = false }
+        let bulk = connection.usesRelay && metadata["catalog"]["features"]["nativeBulkUpload"].bool
+        uploadInterrupted = false
+        let operation = Task { try await self.sendParts(draft, start: start, file: file, connection: connection, epoch: current,
+            lease: lease, bulk: bulk, progress: progress, report: report) }
+        uploadRun = operation
+        defer { uploadRun = nil }
+        return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
+    }
+    private func sendParts(_ draft: PhoneAttachDraft, start: Data, file: PhoneStagedFile, connection: NativeHTTPConnection,
+        epoch current: UUID, lease: BodyLease, bulk: Bool, progress: (@Sendable (Int, Int) -> Void)?,
+        report: (@Sendable (String) -> Void)?) async throws -> NativeJSON {
         var started: String?
+        let tracker = PhoneUploadProgress(total: draft.size, report: progress)
         do {
             for _ in 0..<2 {
                 // Outside this task, so a cancel meanwhile still hears which upload the Host began.
@@ -795,11 +820,12 @@ public actor NativeWorkspace {
                 report?(upload.id)
                 try Task.checkCancellation()
                 let base = "/link/api/attachments/uploads/" + upload.id
-                var steps = 0
+                var steps = 0, laneRetryAt: ContinuousClock.Instant?
                 parts: while true {
                     steps += 1
                     guard steps <= upload.parts * 2 + 4 else { throw NativeFailure.resultUnknown }
-                    guard let next = upload.next else {
+                    tracker.confirm(upload.received)
+                    if upload.missing.isEmpty {
                         var fields: [String: NativeJSON] = [:]
                         if draft.secretAcknowledged { fields["secretAcknowledged"] = .bool(true) }
                         let done = try await connection.request(.post, path: base + "/complete", body: try NativeJSON.object(fields).encoded(),
@@ -809,44 +835,184 @@ public actor NativeWorkspace {
                             guard let ref = try? NativeJSON.decode(done.body)["attachment"], PhoneAttachments.validRef(ref) else { throw NativeFailure.resultUnknown }
                             return ref
                         }
-                        // The Host lacks a part after all: it says which one to send next.
+                        // The Host lacks a part after all: its progress says which.
                         let refusal = NativeHostRefusal.parse(status: done.status, body: done.body)
-                        if refusal?.code == "attachment-incomplete", let missing = refusal?.details["next"].integer, missing < UInt64(upload.parts) {
-                            upload.next = Int(missing); continue parts
-                        }
+                        if refusal?.code == "attachment-incomplete" { upload = try await uploadStatus(connection, upload, size: draft.size, epoch: current, lease: lease); continue parts }
                         if refusal?.code == "upload-missing" { started = nil; break parts }
                         throw await uploadFailure(done, lease: lease)
                     }
-                    let offset = next * PhoneAttachments.streamBytes, end = min(offset + PhoneAttachments.streamBytes, draft.size)
-                    let body = try PhoneAttachStage.read(file, offset: offset, count: end - offset)
-                    let total = draft.size
-                    let response = try await connection.upload(metadata: nil, part: base + "/parts/\(next)", body: body, lease: lease, timeoutSeconds: 60) { done, _ in
-                        progress?(offset + done, total)
+                    // Over a relay the companion carries the parts. If it cannot open (an explicit read holds the
+                    // device's bulk slot, or the Host has not freed it yet), one part goes here and the companion is
+                    // tried again a few seconds on.
+                    var lane = connection, width = 1, round = Int.max
+                    if bulk, laneRetryAt.map({ ContinuousClock.now >= $0 }) ?? true {
+                        if let (companion, fresh) = try await openUploadLane(upload.id, requestId: draft.requestId, epoch: current, lease: lease) {
+                            lane = companion; width = PhoneAttachments.partsInFlight; laneRetryAt = nil
+                            // A new companion asks for the progress first: an earlier one's last parts may have landed since, and a
+                            // part the Host already has is not sent again (one landing later still gets the same answer).
+                            if fresh {
+                                upload = try await uploadStatus(companion, upload, size: draft.size, epoch: current, lease: lease)
+                                if let ref = upload.attachment { coverUploadLane(); return ref }
+                                tracker.confirm(upload.received)
+                                if upload.missing.isEmpty { coverUploadLane(); continue parts }
+                            }
+                        } else { laneRetryAt = ContinuousClock.now.advanced(by: PhoneAttachments.laneRetry) }
                     }
-                    guard epoch == current else { throw NativeFailure.resultUnknown }
-                    if response.status == 200 {
-                        guard let parsed = PhoneAttachUpload.parse(try NativeJSON.decode(response.body), size: draft.size) else { throw NativeFailure.resultUnknown }
-                        if let ref = parsed.attachment { return ref }
+                    if bulk, lane === connection { round = 1 }
+                    let outcome = try await sendMissing(upload, lane: lane, width: width, round: round, file: file, base: base,
+                        size: draft.size, epoch: current, lease: lease, tracker: tracker)
+                    switch outcome {
+                    case let .view(parsed):
+                        if let ref = parsed.attachment { coverUploadLane(); return ref }
                         guard parsed.id == upload.id else { throw NativeFailure.resultUnknown }
-                        upload = parsed; continue
-                    }
-                    let refusal = NativeHostRefusal.parse(status: response.status, body: response.body)
-                    if refusal?.code == "upload-part-order", let missing = refusal?.details["next"].integer, missing < UInt64(upload.parts) {
-                        upload.next = Int(missing); continue
-                    }
+                        upload = parsed
+                        if upload.missing.isEmpty { coverUploadLane() }
+                    case .order: upload = try await uploadStatus(connection, upload, size: draft.size, epoch: current, lease: lease)
                     // Expired on the Host meanwhile: start once more, from the first part.
-                    if refusal?.code == "upload-missing" { started = nil; break parts }
-                    throw await uploadFailure(response, lease: lease)
+                    case .missing: started = nil; tracker.restart(); await closeUploadLane(); break parts
+                    }
                 }
             }
             throw NativeFailure.resultUnknown
         } catch {
+            await closeUploadLane()
             if Task.isCancelled {
+                if uploadInterrupted { throw NativeFailure.resultUnknown }
                 if let started { await abortUpload(connection, started) }
                 throw CancellationError()
             }
             throw error
         }
+    }
+    private enum PartsOutcome { case view(PhoneAttachUpload), order, missing }
+    /**
+     * The missing parts, at most `width` in flight, `round` in all, and each within four places of the first missing one,
+     * read from the staged file one stream's worth at a time. The last answer that names the upload wins; a refusal of order or a
+     * missing upload ends the round, and any other refusal or failure ends the upload.
+     */
+    private func sendMissing(_ upload: PhoneAttachUpload, lane: NativeHTTPConnection, width: Int, round: Int, file: PhoneStagedFile,
+        base: String, size: Int, epoch current: UUID, lease: BodyLease, tracker: PhoneUploadProgress) async throws -> PartsOutcome {
+        var pending = Array(upload.missing.prefix(round)), confirmed = upload.received, latest = upload
+        func lowest() -> Int { (0..<upload.parts).first { !confirmed.contains($0) } ?? upload.parts }
+        return try await withThrowingTaskGroup(of: (Int, NativeHTTPResponse).self) { group in
+            var running = 0
+            func fill() throws {
+                while running < width, let index = pending.first, index < lowest() + PhoneAttachments.partsInFlight {
+                    try Task.checkCancellation(); try lease.requireValid()
+                    guard epoch == current else { throw NativeFailure.resultUnknown }
+                    pending.removeFirst(); running += 1
+                    let offset = index * PhoneAttachments.streamBytes, end = min(offset + PhoneAttachments.streamBytes, size)
+                    let body = try PhoneAttachStage.read(file, offset: offset, count: end - offset)
+                    group.addTask {
+                        (index, try await lane.upload(metadata: nil, part: base + "/parts/\(index)", body: body, lease: lease, timeoutSeconds: 60) { done, _ in
+                            tracker.sending(index, done)
+                        })
+                    }
+                }
+            }
+            try fill()
+            while let (index, response) = try await group.next() {
+                running -= 1
+                guard epoch == current else { throw NativeFailure.resultUnknown }
+                if response.status == 200 {
+                    guard let parsed = PhoneAttachUpload.parse(try NativeJSON.decode(response.body), size: size) else { throw NativeFailure.resultUnknown }
+                    if parsed.attachment != nil { group.cancelAll(); return .view(parsed) }
+                    guard parsed.id == upload.id, parsed.received.contains(index) else { throw NativeFailure.resultUnknown }
+                    confirmed.formUnion(parsed.received); latest = parsed; latest.received = confirmed
+                    tracker.confirm(confirmed, publish: true)
+                    try fill()
+                    continue
+                }
+                let refusal = NativeHostRefusal.parse(status: response.status, body: response.body)
+                if refusal?.code == "upload-part-order" { group.cancelAll(); return .order }
+                if refusal?.code == "upload-missing" { group.cancelAll(); return .missing }
+                throw await uploadFailure(response, lease: lease)
+            }
+            return .view(latest)
+        }
+    }
+    /** The Host's progress of this upload, asked on the control connection. */
+    private func uploadStatus(_ connection: NativeHTTPConnection, _ upload: PhoneAttachUpload, size: Int, epoch current: UUID,
+        lease: BodyLease) async throws -> PhoneAttachUpload {
+        let response = try await connection.request(.get, path: "/link/api/attachments/uploads/" + upload.id, maximum: 65_536)
+        guard epoch == current else { throw NativeFailure.resultUnknown }
+        guard response.status == 200 else { throw await uploadFailure(response, lease: lease) }
+        guard let parsed = PhoneAttachUpload.parse(try NativeJSON.decode(response.body), size: size), parsed.id == upload.id || parsed.attachment != nil
+        else { throw NativeFailure.resultUnknown }
+        return parsed
+    }
+    /**
+     * The upload's bulk companion: a new relay connection with the same identity that resumes this window and asks the
+     * Host to narrow it to this upload, then sends unclocked past its cover. Nil when it cannot be had now (an explicit
+     * read holds the slot, or the Host refused): the parts then go on the control connection.
+     */
+    private func openUploadLane(_ id: String, requestId: String, epoch current: UUID, lease: BodyLease) async throws -> (NativeHTTPConnection, fresh: Bool)? {
+        await uploadClosing?.value
+        if let lane = uploadLane, lane.id == id, lane.until.timeIntervalSinceNow > 2, !(await lane.connection.isClosed()) {
+            uploadCover?.cancel(); uploadCover = nil
+            return (lane.connection, false)
+        }
+        await closeUploadLane()
+        guard !bulkBusy, bulkRun == nil, let reopen else { return nil }
+        // One slot per device: a download companion still in its cover goes first.
+        await closeCompanion()
+        let next: NativeHTTPConnection
+        do { next = try await NativeHTTPConnection.$fileTransferBuffer.withValue(true) { try await reopen() } }
+        catch { try Task.checkCancellation(); return nil }
+        do {
+            guard next.usesRelay, epoch == current, !Task.isCancelled else { throw NativeFailure.unavailable }
+            let original = try await verification.attachCompanion(on: next)
+            try original.requireValid(); try lease.requireValid()
+            guard epoch == current else { throw NativeFailure.unavailable }
+            let response = try await next.request(.post, path: "/link/api/native/bulk-upload", body: NativeJSON.object([
+                "uploadId": .string(id), "requestId": .string(requestId),
+            ]).encoded())
+            guard response.status == 200, epoch == current, !Task.isCancelled else { throw NativeFailure.unavailable }
+            try lease.requireValid()
+            let value = try NativeJSON.decode(response.body)
+            guard Set(value.object.keys) == Set(["expiresAt"]), let expiry = value["expiresAt"].string, let until = Self.bulkDate(expiry),
+                  until > Date(), until <= lease.verifiedUntil, until.timeIntervalSinceNow <= 600 else { throw NativeFailure.invalidRecord }
+            try await next.enableBulk { lease.valid }
+            uploadLane = (next, id, until)
+            return (next, true)
+        } catch {
+            await next.close()
+            try Task.checkCancellation(); try lease.requireValid()
+            guard epoch == current else { throw NativeFailure.resultUnknown }
+            return nil
+        }
+    }
+    /**
+     * After the last part: the phone pads its bulk total to the size bucket once quiet for a second, and the Host its own,
+     * so the companion closes once its uplink has done so and its downlink has been quiet for two seconds, at most 15 s on.
+     */
+    private func coverUploadLane() {
+        guard let lane = uploadLane else { return }
+        let connection = lane.connection, end = ContinuousClock.now.advanced(by: .seconds(15))
+        uploadCover?.cancel()
+        uploadCover = Task {
+            do {
+                while ContinuousClock.now < end {
+                    try await Task.sleep(for: .milliseconds(250)); try Task.checkCancellation()
+                    guard let idle = await connection.inboundIdleMs() else { break }
+                    if idle >= 2000, await connection.outboundSettled() { break }
+                }
+                try Task.checkCancellation()
+            } catch { return }
+            await self.closeUploadLane(ifSame: connection)
+        }
+    }
+    private func closeUploadLane(ifSame connection: NativeHTTPConnection) async {
+        guard uploadLane?.connection === connection else { return }; await closeUploadLane()
+    }
+    /** Closes the upload companion and waits until it has really closed. */
+    func closeUploadLane() async {
+        uploadCover?.cancel(); uploadCover = nil
+        if let closing = uploadClosing { await closing.value; return }
+        let previous = uploadLane; uploadLane = nil
+        guard let previous else { return }
+        let closing = Task { await previous.connection.close() }; uploadClosing = closing
+        await closing.value; uploadClosing = nil
     }
     /** Aborts this device's unfinished chunked upload on the Host (a row removed before it finished); best effort. */
     public func abortAttachmentUpload(_ id: String) async {
@@ -1559,11 +1725,14 @@ public actor NativeWorkspace {
     }
     func cancelFileTransfer() async {
         if let operation = bulkRun { operation.cancel(); _ = try? await operation.value }
+        if let operation = uploadRun { uploadInterrupted = true; operation.cancel(); _ = try? await operation.value }
         await closeCompanion()
+        await closeUploadLane()
     }
-    /** Returns once the explicit-transfer companion's cover has ended and the connection has closed. */
+    /** Returns once the explicit-transfer companions' cover has ended and the connections have closed. */
     public func waitForCompanion() async {
         await bulkCover?.value; await bulkClosing?.value
+        await uploadCover?.value; await uploadClosing?.value
     }
     func closeCompanion() async {
         bulkCover?.cancel(); bulkCover = nil
@@ -1663,5 +1832,31 @@ public actor NativeWorkspace {
             "hostTime": value["hostTime"]]
         if PhoneWorkItems.supported(value) { result["items"] = PhoneWorkItems.withoutBody(value)["items"] }
         return .object(result)
+    }
+}
+
+/** A chunked upload's progress for its row: the parts the Host has plus the bytes of parts in flight, never backwards. */
+final class PhoneUploadProgress: @unchecked Sendable {
+    private let lock = NSLock(), total: Int, report: (@Sendable (Int, Int) -> Void)?
+    private var confirmed = Set<Int>(), flying: [Int: Int] = [:], shown = 0
+    init(total: Int, report: (@Sendable (Int, Int) -> Void)?) { self.total = total; self.report = report }
+    private func bytes(_ index: Int) -> Int { min(PhoneAttachments.streamBytes, total - index * PhoneAttachments.streamBytes) }
+    /** What the Host has; silent unless a part just landed, so an upload that sends nothing reports nothing. */
+    func confirm(_ parts: Set<Int>, publish: Bool = false) {
+        lock.lock(); confirmed = parts; flying = flying.filter { !parts.contains($0.key) }
+        let value = publish ? next() : nil; lock.unlock()
+        if let value { report?(value, total) }
+    }
+    func sending(_ index: Int, _ done: Int) {
+        lock.lock(); if !confirmed.contains(index) { flying[index] = done }
+        let value = next(); lock.unlock()
+        if let value { report?(value, total) }
+    }
+    /** The upload starts over on the Host: the row keeps what it showed until this passes it. */
+    func restart() { lock.lock(); confirmed = []; flying = [:]; lock.unlock() }
+    private func next() -> Int? {
+        let value = confirmed.reduce(0) { $0 + bytes($1) } + flying.values.reduce(0, +)
+        guard value > shown else { return nil }
+        shown = value; return value
     }
 }

@@ -2736,6 +2736,15 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
       unused: (caller, reserved) => unusedReservations(caller.device!.id, reserved),
       busy: (caller, requestId) => reservationBusy(caller.device!.id, requestId),
       limit: caller => limits.classC.take(caller.device!.id),
+      bulkUpload: (caller, uploadId) => {
+        const opening = caller.nativeOpening
+        if (opening?.bulkUpload?.uploadId !== uploadId) return undefined
+        return {
+          progress: bytes => {
+            opening.bulkReceived = (opening.bulkReceived ?? 0) + bytes
+          },
+        }
+      },
       sessionAccess: async (caller, id) => {
         requireScope(caller, 'view')
         await assertSessionAccess(caller, id)
@@ -3342,6 +3351,12 @@ export async function startServer(options: ServerOptions): Promise<StartedHost> 
         revokedDiscoveryHash,
         synchronizeDiscovery: synchronizeNativeDiscovery,
         authorizeBulk: (caller, handle, etag) => fileRoutes.authorizeBulk(caller, handle, etag),
+        authorizeBulkUpload: (caller, uploadId, requestId) => {
+          // Another device's upload is not found; a finished one or another request's has nothing left to carry.
+          const upload = attachmentUploads.status(caller.device!.id, uploadId)
+          if (upload.requestId !== requestId || upload.attachment || upload.next === null)
+            throw new AppError(409, 'native-bulk-unavailable', '请重新上传这个附件')
+        },
       },
       devices: {
         authenticate,

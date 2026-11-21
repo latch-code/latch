@@ -225,6 +225,10 @@ public enum PhoneAttachments {
     public static func admitStaged(staged: Int, adding: Int) -> String? { staged + adding > stagedLimit ? stagedWords : nil }
     /** A native stream carries at most 1 MiB: a file up to that goes in one stream, a larger one in parts of this size. */
     public static let streamBytes = 1_048_576
+    /** Parts in flight on a bulk upload companion: the Host takes four within four places of the first missing one. */
+    public static let partsInFlight = 4
+    /** After a bulk upload companion could not open, how long its parts go on the control connection before it is tried again. */
+    public static let laneRetry: Duration = .seconds(3)
     /** The most this phone sends of one file, whatever a Host says: the Host's own largest file (`ATTACHMENT_FILE_BYTES`). */
     public static let largestFile = 50 * 1_048_576
     public static let tooMany = "每条消息最多添加 8 个附件。"
@@ -411,6 +415,10 @@ public struct PhoneAttachUpload: Equatable, Sendable {
     public let parts: Int
     public var next: Int?
     public let attachment: NativeJSON?
+    /** Parts the Host has, from its bitmap; a Host without one has every part before `next`. */
+    public var received: Set<Int> = []
+    /** Parts still to send, lowest first. */
+    public var missing: [Int] { (0..<parts).filter { !received.contains($0) } }
     /** From `{ upload }` or `{ attachment }`, for a file of `size` bytes; nil when the answer is not one. */
     public static func parse(_ value: NativeJSON, size: Int) -> PhoneAttachUpload? {
         let attachment = value["attachment"] == .null ? value["upload"]["attachment"] : value["attachment"]
@@ -426,7 +434,14 @@ public struct PhoneAttachUpload: Equatable, Sendable {
             guard let value = upload["next"].integer, (0..<UInt64(parts)).contains(value) else { return nil }
             next = Int(value)
         }
-        return PhoneAttachUpload(id: id, parts: parts, next: next, attachment: nil)
+        var received = Set(0..<(next ?? parts))
+        if upload["bitmap"] != .null {
+            // The bitmap agrees with `next`: every part before it is in, and that one is not.
+            guard let bitmap = upload["bitmap"].string, bitmap.utf8.count == parts, bitmap.utf8.allSatisfy({ $0 == 48 || $0 == 49 }) else { return nil }
+            received = Set(bitmap.utf8.enumerated().compactMap { $0.element == 49 ? $0.offset : nil })
+            guard received.isSuperset(of: 0..<(next ?? parts)), next.map({ !received.contains($0) }) ?? (received.count == parts) else { return nil }
+        }
+        return PhoneAttachUpload(id: id, parts: parts, next: next, attachment: nil, received: received)
     }
 }
 

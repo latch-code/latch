@@ -57,8 +57,9 @@ export interface AttachmentUpload {
   secretAcknowledged?: boolean
 }
 /**
- * One chunked upload (`POST /attachments/uploads`): parts of `partBytes` each, the last one shorter, sent in order from
- * `next`. `attachment` once it is complete; `next` is null when every part is in.
+ * One chunked upload (`POST /attachments/uploads`): parts of `partBytes` each, the last one shorter. `next` is the first
+ * missing part and null when every part is in; `bitmap` has one `1` or `0` per part, so a resume sends only the missing
+ * ones, any of them within four places of `next`. `attachment` once it is complete.
  */
 export interface AttachmentUploadView {
   id: string
@@ -68,6 +69,7 @@ export interface AttachmentUploadView {
   parts: number
   received: number
   next: number | null
+  bitmap: string
   expiresAt: number
   attachment?: AttachmentRef
 }

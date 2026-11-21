@@ -67,6 +67,7 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
     ['nativeRelayBulkLegacy', { bulk: true, direct: false, afterCancel: false, bytes: 1_048_576, chunks: 17 }],
     ['nativeRelayBulkAfterCancel', { bulk: true, direct: false, afterCancel: true, bytes: 1_048_576 }],
     ['nativeRelayTransferAfterCancel', { bulk: true, direct: false, afterCancel: true, bytes: 1_048_576, chunks: 17 }],
+    ['nativeRelayUpload', { interrupted: true, kept: true, resumed: true, next: true }],
   ])('runs %s through its fixed authenticated native path', async (operation, expected) => {
     const directory = await mkdtemp(join(tmpdir(), 'latch-swift-relay-')),
       tls = createTransportCertificate(Date.now(), 3_600_000, 'localhost')
@@ -95,7 +96,8 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
       bulkStreams.push(this)
       originalBulk.call(this)
     })
-    const transferRanges: number[] = []
+    const transferRanges: number[] = [],
+      partsAnswered: number[] = []
     const originalEnd = Http2ServerResponse.prototype.end
     const responseSpy = vi.spyOn(Http2ServerResponse.prototype, 'end').mockImplementation(function (
       this: Http2ServerResponse,
@@ -103,6 +105,10 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
     ) {
       const range = typeof this.req.headers.range === 'string' ? /^bytes=(\d+)-(\d+)$/u.exec(this.req.headers.range) : undefined
       if (range && this.req.method === 'GET') transferRanges.push(Number(range[2]) - Number(range[1]) + 1)
+      const part = /\/attachments\/uploads\/[A-Za-z0-9_-]{22}\/parts\/(\d+)$/u.exec(this.req.url ?? '')
+      // Only a real answer: a part whose stream closed under it is ended without one.
+      if (part && this.req.method === 'PUT' && this.statusCode === 200 && typeof args[0] === 'string' && args[0].startsWith('{"upload"'))
+        partsAnswered.push(Number(part[1]))
       if (operation === 'nativeRelayBulkLegacy' && typeof args[0] === 'string' && this.req.url?.startsWith('/link/api/snapshot')) {
         const value = JSON.parse(args[0]) as { catalog?: { features?: Record<string, unknown> } }
         if (value.catalog?.features) {
@@ -180,7 +186,11 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
             child.kill('SIGKILL')
             reject(new Error('Swift relay fixture timeout'))
           },
-          operation.includes('Transfer') || operation.includes('Bulk') ? 10_000 + 16 * (250 + Math.ceil(65_536 / 1021) * 40) : 20_000,
+          operation.includes('Transfer') || operation.includes('Bulk')
+            ? 10_000 + 16 * (250 + Math.ceil(65_536 / 1021) * 40)
+            : operation === 'nativeRelayUpload'
+              ? 90_000
+              : 20_000,
         )
         child.stdout.on('data', (data: Buffer) => {
           output += data.toString()
@@ -245,6 +255,15 @@ describe.skipIf(process.platform !== 'darwin')('Swift native relay interoperabil
         }
         console.info('Native padded transfer fixture milliseconds', measurement)
         await writeFile(`/private/tmp/latch-remote-bulk-metrics-${operation}.json`, JSON.stringify(measurement))
+      } else if (operation === 'nativeRelayUpload') {
+        const { nextMs, ...flags } = response as Record<string, unknown>
+        expect(flags).toEqual(expected)
+        // A companion per attempt and one for the next file; every part was taken exactly once, the retry sending only
+        // the missing ones.
+        expect(bulkStreams.length).toBeGreaterThanOrEqual(3)
+        expect(partsAnswered.toSorted((a, b) => a - b)).toEqual([0, 0, 1, 1, 2, 2, 3, 3, 4, 5, 6, 7, 8])
+        // On the control connection its first part alone would take over 16 s (about 64 KiB/s).
+        expect(nextMs).toBeLessThan(12_000)
       } else expect(response).toEqual(expected)
       if (operation === 'nativeRelayLifecycle') {
         const snapshot = await desktop.json<{ tasks: Array<{ id: string }> }>('snapshot')

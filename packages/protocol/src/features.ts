@@ -25,6 +25,8 @@ export interface HostFeatures {
   filePreview?: true
   nativeBulk?: true
   nativeBulkStream?: true
+  /** `POST /native/bulk-upload`: a relay phone sends one chunked upload's parts on a bulk connection, four in flight. */
+  nativeBulkUpload?: true
   search?: true
   sessionBatch?: true
   fork?: true

@@ -12,6 +12,7 @@ import { AttachmentStore, ATTACHMENT_DEVICE_BYTES } from '../src/attachments.ts'
 import {
   AttachmentUploads,
   ATTACHMENT_PART_BYTES,
+  ATTACHMENT_PARTS_PER_BULK,
   ATTACHMENT_RECORDS_PER_DEVICE,
   ATTACHMENT_UPLOAD_TTL,
   ATTACHMENT_UPLOADS_PER_DEVICE,
@@ -82,22 +83,23 @@ describe('chunked attachment uploads', () => {
     expect(((await (await begin(phone, bytes, { requestId })).json()) as { upload: AttachmentUploadView }).upload.id).toBe(upload.id)
     expect((await begin(phone, text(10), { requestId })).status).toBe(409)
     const [first, second, third] = parts(bytes) as [Buffer, Buffer, Buffer]
-    // Out of order: the Host says which part comes next, before reading the body.
+    // Within four places of the first missing part, a part may come first; the bitmap says which arrived.
     const early = await put(phone, upload.id, 1, second)
-    expect(early.status).toBe(409)
-    expect(await early.json()).toMatchObject({ error: 'upload-part-order', next: 0 })
-    const once = await put(phone, upload.id, 0, first)
-    expect(once.status).toBe(200)
-    const view = (await once.json()) as { upload: AttachmentUploadView }
-    expect(view.upload).toMatchObject({ received: 1, next: 1 })
+    expect(early.status).toBe(200)
+    const view = (await early.json()) as { upload: AttachmentUploadView }
+    expect(view.upload).toMatchObject({ received: 1, next: 0, bitmap: '010' })
     // A duplicate part with the same bytes gets the same answer; other bytes under that index conflict.
-    expect(await (await put(phone, upload.id, 0, first)).json()).toEqual(view)
-    expect(await (await put(phone, upload.id, 0, second)).json()).toMatchObject({ error: 'upload-part-conflict' })
+    expect(await (await put(phone, upload.id, 1, second)).json()).toEqual(view)
+    expect(await (await put(phone, upload.id, 1, first)).json()).toMatchObject({ error: 'upload-part-conflict' })
     expect(await phone.json(`attachments/uploads/${upload.id}`)).toEqual(view)
     const unfinished = await complete(phone, upload.id)
     expect(unfinished.status).toBe(400)
-    expect(await unfinished.json()).toMatchObject({ error: 'attachment-incomplete', next: 1 })
-    expect((await put(phone, upload.id, 1, second)).status).toBe(200)
+    expect(await unfinished.json()).toMatchObject({ error: 'attachment-incomplete', next: 0 })
+    expect(((await (await put(phone, upload.id, 0, first)).json()) as { upload: AttachmentUploadView }).upload).toMatchObject({
+      received: 2,
+      next: 2,
+      bitmap: '110',
+    })
     // The last part is exactly what is left, and a part never passes 1 MiB.
     expect((await put(phone, upload.id, 2, Buffer.concat([third, text(1)]))).status).toBe(413)
     expect((await put(phone, upload.id, 2, third.subarray(1))).status).toBe(400)
@@ -401,6 +403,102 @@ describe('chunked attachment uploads', () => {
     release()
     await Promise.all(both)
   })
+  it('writes parts that arrive out of order within four of the first missing one at their offsets, and refuses one further on', async () => {
+    const { path, uploads, open: begin, put } = await local()
+    const bytes = Buffer.concat(Array.from({ length: 7 }, (_, n) => text(n < 6 ? MiB : 1234, String.fromCharCode(97 + n)))),
+      pieces = parts(bytes),
+      id = await begin(bytes)
+    const order = (index: number) => put(id, index, pieces[index]!)
+    expect(await order(3)).toMatchObject({ received: 1, next: 0, bitmap: '0001000' })
+    expect(await order(1)).toMatchObject({ next: 0, bitmap: '0101000' })
+    // Four places past the first missing part is too far: the Host names the part to send next, before reading the body.
+    await expect(order(4)).rejects.toMatchObject({ status: 409, code: 'upload-part-order', details: { next: 0 } })
+    expect(await order(0)).toMatchObject({ received: 3, next: 2, bitmap: '1101000' })
+    expect(await order(5)).toMatchObject({ next: 2, bitmap: '1101010' })
+    await expect(order(6)).rejects.toMatchObject({ code: 'upload-part-order', details: { next: 2 } })
+    for (const index of [2, 6, 4]) await order(index)
+    expect(uploads.status('device-a', id)).toMatchObject({ received: 7, next: null, bitmap: '1111111' })
+    expect(await readFile(join(path, 'attachments', '_uploads', id, 'data'))).toEqual(bytes)
+    expect(await finishUpload(uploads, id, () => {})).toMatchObject({ size: bytes.length, sha256: sha(bytes) })
+  })
+  it('keeps the received-part bitmap across a restart, so a resume sends only the missing parts', async () => {
+    const { path, store, uploads, open: begin, put, clock } = await local()
+    const bytes = Buffer.concat([text(MiB, 'p'), text(MiB, 'q'), text(MiB, 'r'), text(10, 's')]),
+      pieces = parts(bytes),
+      id = await begin(bytes)
+    await put(id, 0, pieces[0]!)
+    await put(id, 2, pieces[2]!)
+    const meta = JSON.parse(await readFile(join(path, 'attachments', '_uploads', id, 'meta.json'), 'utf8')) as { parts: unknown[] }
+    expect(meta.parts).toEqual([sha(pieces[0]!), null, sha(pieces[2]!)])
+    // Bytes written past the last recorded part, before a record said so, go at the restart; the hole below stays.
+    await truncate(join(path, 'attachments', '_uploads', id, 'data'), 3 * MiB + 5)
+    const restarted = await AttachmentUploads.open(path, store, { now: clock })
+    const view = restarted.status('device-a', id)
+    expect(view).toMatchObject({ received: 2, next: 1, bitmap: '1010' })
+    expect((await stat(join(path, 'attachments', '_uploads', id, 'data'))).size).toBe(3 * MiB)
+    // The same start again answers with the same bitmap; only the missing parts go.
+    const again = await restarted.begin({
+      owner: 'device-a',
+      requestId: view.requestId,
+      name: 'n.txt',
+      kind: 'text',
+      size: bytes.length,
+      sha256: sha(bytes),
+      remote: false,
+      context: { selection },
+    })
+    expect(again).toEqual({ upload: view })
+    const missing = [...view.bitmap].flatMap((bit, index) => (bit === '0' ? [index] : []))
+    expect(missing).toEqual([1, 3])
+    for (const index of missing.toReversed())
+      await restarted.part({
+        owner: 'device-a',
+        id,
+        index,
+        stream: (async function* () {
+          yield pieces[index]!
+        })(),
+        recheck: () => {},
+      })
+    expect(await finishUpload(restarted, id, () => {})).toMatchObject({ sha256: sha(bytes) })
+    // A record from before the bitmap (a dense list of hashes) still reads.
+    const older = await begin(text(2 * MiB, 'o'))
+    await put(older, 0, text(MiB, 'o'))
+    expect((await AttachmentUploads.open(path, store, { now: clock })).status('device-a', older)).toMatchObject({ next: 1, bitmap: '10' })
+  })
+  it('receives at most two parts of a device at once, or four on its bulk upload connection, holding each until it is written', async () => {
+    const { uploads, open: begin } = await local()
+    const bytes = text(6 * MiB),
+      id = await begin(bytes),
+      other = await begin(text(2 * MiB, 'b'))
+    let release!: () => void
+    const held = new Promise<void>(done => (release = done))
+    const progress: number[] = []
+    const slow = (index: number, limit?: number, upload = id) =>
+      uploads.part({
+        owner: 'device-a',
+        id: upload,
+        index,
+        stream: (async function* () {
+          yield text(MiB / 2)
+          await held
+          yield text(MiB / 2)
+        })(),
+        recheck: () => {},
+        ...(limit ? { limit, progress: (bytes: number) => progress.push(bytes) } : {}),
+      })
+    const regular = [slow(0), slow(1)]
+    await new Promise(done => setTimeout(done, 20))
+    await expect(slow(2)).rejects.toMatchObject({ status: 429, code: 'attachment-quota' })
+    const bulk = [slow(2, ATTACHMENT_PARTS_PER_BULK), slow(3, ATTACHMENT_PARTS_PER_BULK)]
+    await new Promise(done => setTimeout(done, 20))
+    // The limit counts the device's parts, whichever upload they belong to.
+    await expect(slow(0, ATTACHMENT_PARTS_PER_BULK, other)).rejects.toMatchObject({ status: 429 })
+    release()
+    await Promise.all([...regular, ...bulk])
+    expect(progress.reduce((sum, value) => sum + value, 0)).toBe(2 * MiB)
+    expect(uploads.status('device-a', id)).toMatchObject({ received: 4, bitmap: '111100' })
+  })
 })
 
 async function local(persist?: (path: string, text: string) => Promise<void>) {
@@ -414,6 +512,7 @@ async function local(persist?: (path: string, text: string) => Promise<void>) {
     store,
     uploads,
     tick: () => (now += 1000),
+    clock: () => now,
     async open(bytes: Buffer, digest = sha(bytes)) {
       const begun = await uploads.begin({
         owner: 'device-a',
