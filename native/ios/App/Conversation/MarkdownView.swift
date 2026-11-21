@@ -21,8 +21,22 @@ struct MarkdownView: View {
     var ink: UIColor = .label
     @Environment(\.openURL) private var openURL
     @Environment(\.sizeCategory) private var sizeCategory
+    /** A long reply's last parse, made off the main thread; while it streams, the one before stays shown. */
+    @State private var parsed: MarkdownCache.Parse?
     var body: some View {
-        if let blocks = MarkdownCache.blocks(text) {
+        content(MarkdownCache.lookup(text) ?? parsed)
+            .task(id: text) {
+            guard MarkdownCache.lookup(text) == nil else { return }
+            // While a long reply arrives, one parse per pause rather than per word.
+            if streaming && parsed != nil { try? await Task.sleep(for: .milliseconds(150)) }
+            guard !Task.isCancelled else { return }
+            let next = await MarkdownCache.parse(text)
+            guard !Task.isCancelled else { return }
+            parsed = next
+        }
+    }
+    @ViewBuilder private func content(_ parse: MarkdownCache.Parse?) -> some View {
+        if let parse, let blocks = parse.blocks {
             let pieces = MarkdownPiece.group(blocks)
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(Array(pieces.enumerated()), id: \.offset) { index, piece in
@@ -30,11 +44,14 @@ struct MarkdownView: View {
                         .padding(.leading, CGFloat(piece.depth) * MarkdownStyle.indent(scaled))
                 }
             }
-        } else {
+        } else if parse != nil {
             VStack(alignment: .leading, spacing: 6) {
                 if text.utf8.count <= PhoneRichText.limit { Text("结构过深，按纯文本显示").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted) }
                 ConversationText(text: text, size: size)
             }
+        } else {
+            // A long reply's first parse is still running: its words, until their layout is ready.
+            ConversationText(text: text, size: size)
         }
     }
     @ViewBuilder private func view(_ piece: MarkdownPiece, last: Bool) -> some View {
@@ -77,12 +94,22 @@ struct MarkdownView: View {
     private static let cache: NSCache<NSString, Entry> = {
         let cache = NSCache<NSString, Entry>(); cache.countLimit = 96; cache.totalCostLimit = 4_000_000; return cache
     }()
-    static func blocks(_ text: String) -> [PhoneRichBlock]? {
+    struct Parse { let text: String; let blocks: [PhoneRichBlock]? }
+    /** Text this short is parsed where it is drawn; longer text only by `parse`, off the main thread. */
+    private static let inline = 12_000
+    /** A parse to draw now: cached, or made here for short text; nil sends a long one to `parse`. */
+    static func lookup(_ text: String) -> Parse? {
         let key = text as NSString
-        if let hit = cache.object(forKey: key) { return hit.blocks }
+        if let hit = cache.object(forKey: key) { return Parse(text: text, blocks: hit.blocks) }
+        guard text.utf8.count <= inline else { return nil }
         let blocks = PhoneRichText.blocks(text)
         cache.setObject(Entry(blocks), forKey: key, cost: key.length)
-        return blocks
+        return Parse(text: text, blocks: blocks)
+    }
+    static func parse(_ text: String) async -> Parse {
+        let blocks = await Task.detached(priority: .userInitiated) { PhoneRichText.blocks(text) }.value
+        cache.setObject(Entry(blocks), forKey: text as NSString, cost: (text as NSString).length)
+        return Parse(text: text, blocks: blocks)
     }
 }
 

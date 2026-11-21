@@ -93,6 +93,7 @@ function servedMime(ref: AttachmentRef): string {
 export function createAttachmentRoutes<Caller extends AttachmentCaller>(options: AttachmentRoutesOptions<Caller>) {
   const releases = new Map<string, { asked: string; released: Promise<{ count: number; bytes: number }> }>()
   const handles = new Map<string, { device: string; id: string; until: number }>(),
+    viewed = new Map<string, number>(),
     quota = new FileReadQuota(options.now)
   const get = async (caller: Caller, id: string) => {
     options.recheck(caller, 'view')
@@ -408,20 +409,29 @@ export function createAttachmentRoutes<Caller extends AttachmentCaller>(options:
         if (!handle || handle.device !== device.id || handle.until <= options.now())
           throw new AppError(404, 'attachment-missing', '附件预览已过期，请重新打开。')
         const entry = await get(caller, handle.id),
-          budget = quota.begin(device.id, isLocalListener(caller.connection.listener))
+          local = isLocalListener(caller.connection.listener),
+          budget = quota.begin(device.id, local)
         try {
-          budget.consume(method === 'HEAD' ? 0 : entry.ref.size)
-          if (!isLocalListener(caller.connection.listener))
+          const tag = `"${entry.ref.sha256.slice(0, 32)}"`,
+            range = req.headers['if-range'] && req.headers['if-range'] !== tag ? undefined : byteRange(req.headers.range, entry.ref.size),
+            start = range?.start ?? 0,
+            end = range?.end ?? entry.ref.size - 1
+          // A read in ranges spends the bytes it asks for, as a project file's does, not the whole file each time.
+          budget.consume(method === 'HEAD' ? 0 : end - start + 1)
+          // One view per device and attachment in 15 minutes, as `file.view`: a phone reads a picture in 1 MiB ranges.
+          const key = `${device.id}\n${entry.ref.id}`,
+            now = options.now()
+          for (const [seen, until] of viewed) if (until <= now) viewed.delete(seen)
+          if (!local && !viewed.has(key)) {
             await options.audit.append({
               action: 'attachment.view',
               actor: options.actorOf(caller),
               target: entry.ref.id,
               detail: { attachmentId: entry.ref.id, contentHash: entry.ref.sha256, bytes: entry.ref.size, type: entry.ref.kind },
             })
-          const tag = `"${entry.ref.sha256.slice(0, 32)}"`,
-            range = req.headers['if-range'] && req.headers['if-range'] !== tag ? undefined : byteRange(req.headers.range, entry.ref.size),
-            start = range?.start ?? 0,
-            end = range?.end ?? entry.ref.size - 1
+            if (viewed.size >= 4096) viewed.delete(viewed.keys().next().value!)
+            viewed.set(key, now + 15 * 60_000)
+          }
           await get(caller, handle.id)
           res.setHeader('content-type', servedMime(entry.ref))
           res.setHeader(

@@ -84,6 +84,71 @@ describe('authenticated attachment routes', () => {
     expect((await other.request(`attachments/${resolved.file.handle}/content`)).status).toBe(404)
     await expect(readFile(join(host.dataDir, 'attachments', created.sessionId, ref.id))).rejects.toMatchObject({ code: 'ENOENT' })
   })
+  it('audits a remote device’s view of an attachment once, however many ranges it reads it in', async () => {
+    const plugin: HarnessPlugin = {
+      id: 'vision-ranges',
+      name: 'fixture',
+      version: '1',
+      description: 'test',
+      activate: ctx =>
+        ctx.registerProvider({
+          id: 'fixture-model',
+          name: 'fixture',
+          model: 'visual',
+          modelCapabilities: { visual: { vision: true } },
+          async *stream() {
+            yield { type: 'text', text: 'seen' }
+            yield { type: 'finish', reason: 'stop' }
+          },
+        }),
+    }
+    const host = await startTestHost({ plugins: [plugin], tls: true })
+    hosts.push(host)
+    const local = await host.enroll({ listener: 'unix' }),
+      phone = await host.enroll({ listener: 'tls', name: 'Phone', scopes: ['view', 'run'] })
+    const selection = { harnessId: 'standard', model: { providerId: 'fixture-model', model: 'visual' } }
+    const ref = (
+      (await (
+        await local.request('attachments', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/octet-stream',
+            'x-latch-attachment': Buffer.from(
+              JSON.stringify({ requestId: randomUUID(), name: 'image.png', size: png.length, selection }),
+            ).toString('base64url'),
+          },
+          rawBody: png,
+        })
+      ).json()) as { attachment: AttachmentRef }
+    ).attachment
+    const created = await local.json<{ sessionId: string }>('tasks', {
+      body: { prompt: 'look', requestId: randomUUID(), harnessId: 'standard', model: selection.model, attachmentIds: [ref.id] },
+    })
+    await vi.waitFor(async () => expect((await local.json<TaskDetail>(`tasks/${created.sessionId}`)).summary.status).toBe('idle'))
+    const views = async () =>
+      (await readFile(join(host.dataDir, 'audit', 'audit.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line) as { action: string; target?: string })
+        .filter(entry => entry.action === 'attachment.view' && entry.target === ref.id)
+    const handle = (await phone.json<{ file: { handle: string } }>(`attachments/${ref.id}/resolve`, { body: {} })).file.handle
+    const read: Buffer[] = []
+    for (const range of ['bytes=0-19', 'bytes=20-39', `bytes=40-${png.length - 1}`]) {
+      const response = await phone.request(`attachments/${handle}/content`, { headers: { range } })
+      expect(response.status).toBe(206)
+      read.push(Buffer.from(await response.arrayBuffer()))
+    }
+    expect(Buffer.concat(read)).toEqual(png)
+    // The audit says the phone viewed it, before the first bytes; the later ranges of the same view add nothing.
+    expect(await views()).toHaveLength(1)
+    const again = (await phone.json<{ file: { handle: string } }>(`attachments/${ref.id}/resolve`, { body: {} })).file.handle
+    expect((await phone.request(`attachments/${again}/content`)).status).toBe(200)
+    expect(await views()).toHaveLength(1)
+    // A device on the Mac itself leaves no view, as before.
+    const own = (await local.json<{ file: { handle: string } }>(`attachments/${ref.id}/resolve`, { body: {} })).file.handle
+    expect((await local.request(`attachments/${own}/content`)).status).toBe(200)
+    expect(await views()).toHaveLength(1)
+  })
   it('takes a sent attachment again as a draft (从这里编辑) only for a device that may read its session and write', async () => {
     const plugin: HarnessPlugin = {
       id: 'vision-reuse',

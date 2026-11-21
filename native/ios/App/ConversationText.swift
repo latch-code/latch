@@ -81,8 +81,10 @@ struct ConversationText: UIViewRepresentable {
             if case .text = target { return nil }
             return UIAction { [weak self] _ in self?.onLink?(target) }
         }
-        /** No preview, menu or share sheet for a link: only the press above. */
-        func textView(_ textView: UITextView, menuConfigurationFor textItem: UITextItem, defaultMenu: UIMenu) -> UITextItem.MenuConfiguration? { nil }
+        /** No preview, menu or share sheet for a link, and a long press does not open it either: only the press above. */
+        func textView(_ textView: UITextView, menuConfigurationFor textItem: UITextItem, defaultMenu: UIMenu) -> UITextItem.MenuConfiguration? {
+            target(textItem) == nil ? nil : UITextItem.MenuConfiguration(menu: UIMenu(children: []))
+        }
     }
 }
 

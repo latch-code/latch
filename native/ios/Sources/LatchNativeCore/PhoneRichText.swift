@@ -204,10 +204,13 @@ public enum PhoneRichText {
         var cell: (row: Int, column: Int)?
         var startedItems: Set<Int> = []
         var htmlOpen = false
+        /** The line being filled, held apart so each run appends in place rather than copying the line. */
+        var pending: PhoneRichLine?
 
         mutating func close() {
+            if let pending { blocks.append(.text(pending)) }
             if let table { blocks.append(.table(table)) }
-            table = nil; tableIdentity = nil; cell = nil; current = nil; htmlOpen = false
+            pending = nil; table = nil; tableIdentity = nil; cell = nil; current = nil; htmlOpen = false
         }
         mutating func code(_ text: String, language: String?, identity: Int, depth: Int, quote: Int) {
             if current == identity, case let .code(lang, existing, open, d, q) = blocks.last {
@@ -226,9 +229,7 @@ public enum PhoneRichText {
         mutating func line(_ slice: AttributedString, inline: InlinePresentationIntent, kind: PhoneRichLine.Kind, identity: Int,
                            item: (Int, PhoneRichMarker)?, depth: Int, quote: Int) {
             let piece = Self.literal(slice, inline: inline)
-            if current == identity, case var .text(line) = blocks.last {
-                line.content += piece; blocks[blocks.count - 1] = .text(line); return
-            }
+            if current == identity, pending != nil { pending!.content += piece; return }
             close(); current = identity
             var shown = kind, content = piece
             if case let (itemId, marker)? = item, case .paragraph = kind {
@@ -241,7 +242,7 @@ public enum PhoneRichText {
                     }
                 } else { shown = .continuation }
             }
-            blocks.append(.text(PhoneRichLine(kind: shown, depth: depth, quote: quote, content: content)))
+            pending = PhoneRichLine(kind: shown, depth: depth, quote: quote, content: content)
         }
         mutating func tableRun(_ slice: AttributedString, components: [PresentationIntent.IntentType], table intent: PresentationIntent.IntentType, quote: Int) {
             if tableIdentity != intent.identity {
@@ -252,7 +253,8 @@ public enum PhoneRichText {
                 }
                 table = PhoneRichTable(alignments: alignments, header: Array(repeating: AttributedString(), count: alignments.count), rows: [], quote: quote)
             }
-            guard var table else { return }
+            // Moved out while filled, so the cell appends in place rather than copying the whole table.
+            guard var table = self.table.take() else { return }
             var row = 0, column = 0
             for component in components {
                 switch component.kind {

@@ -29,7 +29,9 @@ import UIKit
             // A few at a time: a long transcript of pictures must not queue every read at once.
             while active >= 3 { try? await Task.sleep(for: .milliseconds(60)); if Task.isCancelled { return nil } }
             active += 1; defer { active -= 1 }
-            guard lease.valid, let image = try? await PreviewFiles.picture(attachment: id, lease: lease, workspace: workspace), lease.valid else { return nil }
+            // Cleared while reading (a lock or the background hold, which keeps the lease a while): nothing is kept.
+            guard lease.valid, let image = try? await PreviewFiles.picture(attachment: id, lease: lease, workspace: workspace),
+                  !Task.isCancelled, lease.valid else { return nil }
             images[id] = (lease, image)
             order.removeAll { $0 == id }; order.append(id)
             while order.count > kept { images[order.removeFirst()] = nil }
