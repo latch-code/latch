@@ -109,6 +109,14 @@ interface LogEntry {
   [key: string]: unknown
 }
 
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>(finish => {
+    resolve = finish
+  })
+  return { promise, resolve }
+}
+
 let requests = 0
 const rid = () => `request-${++requests}`
 
@@ -4227,14 +4235,6 @@ describe('ACP session configuration', () => {
     expect((await fixture.log()).filter(entry => entry.event === 'start')).toHaveLength(starts)
     expect((await bridge.detail(sessionId)).permission?.expectedMode).toBe('workspace-write')
   })
-
-  const deferred = () => {
-    let resolve!: () => void
-    const promise = new Promise<void>(finish => {
-      resolve = finish
-    })
-    return { promise, resolve }
-  }
 
   it.each([
     ['assertLaunch', 'large'],
@@ -8652,10 +8652,11 @@ describe('a new context in a session', () => {
 
 /**
  * A stand-in for the Host's tool gateway: real tokens in real 0600 files, on a real socket. `browser_wait` holds until the
- * call is stopped, answered `stopMs` later and, with `unknown`, as a call whose result is unknown; any other tool
+ * call is stopped and the test releases it, optionally recording an unknown result; any other tool
  * answers at once with a tab. Every call records what `describe` said of it.
  */
-async function recordingToolGateway(options: { admit?: { now: boolean }; stopMs?: number; unknown?: boolean } = {}) {
+async function recordingToolGateway(options: { admit?: { now: boolean }; beforeStopReply?: () => Promise<void>; unknown?: boolean } = {}) {
+  const firstCall = deferred()
   const admit = options.admit ?? { now: true }
   const directory = await mkdtemp(join(tmpdir(), 'lbt-'))
   cleanups.push(() => rm(directory, { recursive: true, force: true }))
@@ -8700,18 +8701,19 @@ async function recordingToolGateway(options: { admit?: { now: boolean }; stopMs?
         const { name, arguments: args } = request.params
         const { waitForUser: _wait, ...context } = lease.describe?.(name, args) ?? {}
         calls.push({ tool: name, args, context })
+        firstCall.resolve()
         if (name !== 'browser_wait') {
           write({ id: request.id, result: { content: [{ type: 'text', text: `tab brw_${'A'.repeat(22)}` }] } })
           continue
         }
         lease.inflight++
-        const stop = () =>
-          setTimeout(() => {
-            if (options.unknown) lease.unknown = true
-            write({ id: request.id, result: { content: [{ type: 'text', text: 'stopped' }], isError: true } })
-            lease.inflight--
-            settle(lease)
-          }, options.stopMs ?? 0)
+        const stop = async () => {
+          await options.beforeStopReply?.()
+          if (options.unknown) lease.unknown = true
+          write({ id: request.id, result: { content: [{ type: 'text', text: 'stopped' }], isError: true } })
+          lease.inflight--
+          settle(lease)
+        }
         lease.stops.add(stop)
       }
     })
@@ -8766,7 +8768,7 @@ async function recordingToolGateway(options: { admit?: { now: boolean }; stopMs?
       }
     },
   }
-  return { toolGateway, leases, calls, refused, socketPath }
+  return { toolGateway, leases, calls, refused, socketPath, firstCall: firstCall.promise }
 }
 
 const browserEntry = (entry: LogEntry) =>
@@ -8876,17 +8878,14 @@ describe('the browser tools for ACP sessions', () => {
     const gateway = await recordingToolGateway()
     const fixture = await setup({ FAKE_ACP_MCP: 'dsh' }, {}, {}, { toolGateway: gateway.toolGateway })
     const bridge = await fixture.open()
+    const click = { tool: 'browser_click', args: { tabId: TAB, ref: 'e1' }, ask: true }
+    const { sessionId } = await bridge.createTask({ prompt: `browser ${JSON.stringify([{ ...click, twin: true }])}`, requestId: rid() })
     const allow = async () => {
-      const approval = await vi.waitFor(async () => {
-        const [first] = await bridge.approvals()
-        expect(first).toBeDefined()
-        return first!
-      })
+      const { approvals } = await until(bridge, sessionId, detail => detail.approvals.length === 1)
+      const approval = approvals[0]!
       await bridge.decide(approval.id, 'allow')
       return approval
     }
-    const click = { tool: 'browser_click', args: { tabId: TAB, ref: 'e1' }, ask: true }
-    const { sessionId } = await bridge.createTask({ prompt: `browser ${JSON.stringify([{ ...click, twin: true }])}`, requestId: rid() })
     const twin = await allow()
     const firstRun = (await settled(bridge, sessionId)).summary.runId
     expect(firstRun).toEqual(expect.any(String))
@@ -8902,23 +8901,37 @@ describe('the browser tools for ACP sessions', () => {
   })
 
   it('confirms a stop only once the browser call settled, and says when its result is unknown', async () => {
-    const gateway = await recordingToolGateway({ stopMs: 600, unknown: true })
+    const stopRequested = deferred()
+    const releaseReply = deferred()
+    const gateway = await recordingToolGateway({
+      unknown: true,
+      beforeStopReply: () => {
+        stopRequested.resolve()
+        return releaseReply.promise
+      },
+    })
     const fixture = await setup({ FAKE_ACP_MCP: 'dsh' }, {}, {}, { toolGateway: gateway.toolGateway })
     const bridge = await fixture.open()
+    cleanups.push(releaseReply.resolve)
     const { sessionId } = await bridge.createTask({
       prompt: `browser [{"tool":"browser_wait","args":{"tabId":"${TAB}","text":"never"}}]`,
       requestId: rid(),
     })
-    await vi.waitFor(() => expect(gateway.calls).toHaveLength(1))
-    const asked = Date.now()
-    let confirmed = false
-    const cancel = bridge.cancel(sessionId).then(() => void (confirmed = true))
-    // The agent answered the stop at once; the stop is not confirmed while the gateway's call has not ended.
-    await new Promise(resolve => setTimeout(resolve, 300))
-    expect(confirmed).toBe(false)
-    expect((await bridge.detail(sessionId)).summary.status).not.toBe('cancelled')
+    await gateway.firstCall
+    expect(gateway.calls).toHaveLength(1)
+    let inflightAtConfirmation: number | undefined
+    const cancel = bridge.cancel(sessionId).then(() => {
+      inflightAtConfirmation = gateway.leases[0]!.inflight
+    })
+    try {
+      await stopRequested.promise
+      expect((await bridge.detail(sessionId)).summary.status).not.toBe('cancelled')
+      expect(inflightAtConfirmation).toBeUndefined()
+    } finally {
+      releaseReply.resolve()
+    }
     await cancel
-    expect(Date.now() - asked).toBeGreaterThanOrEqual(550)
+    expect(inflightAtConfirmation).toBe(0)
     const stopped = await settled(bridge, sessionId)
     expect(stopped.summary.status).toBe('cancelled')
     expect(gateway.leases[0]!.cancels).toBeGreaterThanOrEqual(1)

@@ -121,7 +121,30 @@ async function publicCommandsFixture(entries: ReplayEntry[]) {
   }
   const driver = await activate(createAcpAgentPlugin(record, { stopGraceMs: 300, requestTimeoutMs: 5_000, log: () => {} }), cleanups)
   const bridge = await openBridge(driver, { dataDir: join(root, 'data'), workspace: root, tmpRoot: join(root, 'tmp') }, cleanups)
-  return { root, bridge, status }
+  // Catalogue tests read the settled turn, regardless of how long the replay process took to start.
+  // Arm the notification before reading so settlement during detail() cannot be missed.
+  const settledDetail = async (sessionId: string) => {
+    let changed: (() => void) | undefined
+    const unsubscribe = bridge.subscribe(id => {
+      if (id === sessionId || id === undefined) changed?.()
+    })
+    try {
+      for (;;) {
+        const nextChange = new Promise<void>(resolve => {
+          changed = resolve
+        })
+        const detail = await bridge.detail(sessionId)
+        if (detail.summary.status !== 'running') {
+          expect(detail.summary.status).toBe('idle')
+          return detail
+        }
+        await nextChange
+      }
+    } finally {
+      unsubscribe()
+    }
+  }
+  return { root, bridge, status, settledDetail }
 }
 
 const commandReply = (message: string): ReplayEntry[] => [
@@ -197,10 +220,9 @@ describe('pi over its own RPC', () => {
       ...Array.from({ length: 220 }, (_, i) => ({ name: `public-${i}`, source: 'prompt' })),
     ]
     const entries = [...openedWith(commands), ...commandReply('Hello')]
-    const { bridge, root, status } = await publicCommandsFixture(entries)
+    const { bridge, root, status, settledDetail } = await publicCommandsFixture(entries)
     const { sessionId } = await bridge.createTask({ prompt: 'Hello', requestId: 'first', cwd: root })
-    await expect.poll(async () => (await bridge.detail(sessionId)).summary.status).toBe('idle')
-    const listed = (await bridge.detail(sessionId)).commands!
+    const listed = (await settledDetail(sessionId)).commands!
     expect(listed).toHaveLength(200)
     expect(listed.slice(0, 4)).toEqual([
       expect.objectContaining({ name: 'compact', idleOnly: true }),
@@ -233,12 +255,11 @@ describe('pi over its own RPC', () => {
         ...commandReply(command),
         ...commandReply('PUBLIC BRIEF\n\nHello'),
       ]
-      const { bridge, root, status } = await publicCommandsFixture(entries)
+      const { bridge, root, status, settledDetail } = await publicCommandsFixture(entries)
       const brief = { segments: [{ source: 'user' as const, text: 'PUBLIC BRIEF' }] }
       const agentContext = { agent: { customAgentId: 'agt_commands' }, instructions: '', brief, revision: 'a'.repeat(64) }
       const { sessionId } = await bridge.createTask({ prompt: command, requestId: 'first', cwd: root, agentContext })
-      await expect.poll(async () => (await bridge.detail(sessionId)).summary.status).toBe('idle')
-      const detail = await bridge.detail(sessionId)
+      const detail = await settledDetail(sessionId)
       expect(readSessionSkills(detail.skills)).toEqual(detail.skills)
       expect(detail.skills?.every(skill => skill.description === undefined && skill.scope === 'project')).toBe(true)
       expect(
@@ -252,8 +273,8 @@ describe('pi over its own RPC', () => {
       expect(JSON.stringify(detail.skills)).not.toContain('/private/skills')
       expect(detail.messages.find(message => message.role === 'user')?.agentBrief).toBeUndefined()
       await bridge.prompt(sessionId, 'Hello', 'next')
-      await expect.poll(async () => (await bridge.detail(sessionId)).summary.status).toBe('idle')
-      expect((await bridge.detail(sessionId)).messages.filter(message => message.role === 'user').at(-1)?.agentBrief).toEqual(brief)
+      const followUp = await settledDetail(sessionId)
+      expect(followUp.messages.filter(message => message.role === 'user').at(-1)?.agentBrief).toEqual(brief)
       expect(readReplayStatus(status)).toMatchObject({ cursor: entries.length, total: entries.length })
     },
   )
@@ -265,17 +286,15 @@ describe('pi over its own RPC', () => {
       ...commandReply(known ? command : `PUBLIC BRIEF\n\n${command}`),
       ...commandReply(known ? 'PUBLIC BRIEF\n\nHello' : 'Hello'),
     ]
-    const { bridge, root, status } = await publicCommandsFixture(entries)
+    const { bridge, root, status, settledDetail } = await publicCommandsFixture(entries)
     const brief = { segments: [{ source: 'user' as const, text: 'PUBLIC BRIEF' }] }
     const agentContext = { agent: { customAgentId: 'agt_commands' }, instructions: '', brief, revision: 'a'.repeat(64) }
     const { sessionId } = await bridge.createTask({ prompt: command, requestId: 'first', cwd: root, agentContext })
-    await expect.poll(async () => (await bridge.detail(sessionId)).summary.status).toBe('idle')
-    expect((await bridge.detail(sessionId)).messages.find(message => message.role === 'user')?.agentBrief).toEqual(
+    expect((await settledDetail(sessionId)).messages.find(message => message.role === 'user')?.agentBrief).toEqual(
       known ? undefined : brief,
     )
     await bridge.prompt(sessionId, 'Hello', 'next')
-    await expect.poll(async () => (await bridge.detail(sessionId)).summary.status).toBe('idle')
-    expect((await bridge.detail(sessionId)).messages.filter(message => message.role === 'user').at(-1)?.agentBrief).toEqual(
+    expect((await settledDetail(sessionId)).messages.filter(message => message.role === 'user').at(-1)?.agentBrief).toEqual(
       known ? brief : undefined,
     )
     expect(readReplayStatus(status)).toMatchObject({ cursor: entries.length, total: entries.length })

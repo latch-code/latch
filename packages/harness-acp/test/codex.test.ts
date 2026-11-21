@@ -1392,7 +1392,7 @@ describe('Codex over its app-server', () => {
       }
     }
     /** Starts `prompt` (a `hold`), allows its command, and returns the pid Codex runs it as after an interrupt. */
-    async function holding(prompt: string, env: Record<string, string>, options: AcpAgentOptions = {}) {
+    async function startedCommand(prompt: string, env: Record<string, string>, options: AcpAgentOptions = {}) {
       const t = await computer(env, [], options)
       const bridge = await t.open()
       const id = await start(bridge, t.main, prompt)
@@ -1407,9 +1407,14 @@ describe('Codex over its app-server', () => {
         { timeout: 5_000 },
       )
       cleanups.push(() => killGroup(pid))
-      // Allowed, it runs, though it prints nothing.
-      await until(bridge, id, detail => detail.messages.some(message => message.role === 'tool' && message.state === 'running'))
       return { t, bridge, id, pid }
+    }
+    async function holding(prompt: string, env: Record<string, string>, options: AcpAgentOptions = {}) {
+      const command = await startedCommand(prompt, env, options)
+      await until(command.bridge, command.id, detail =>
+        detail.messages.some(message => message.role === 'tool' && message.state === 'running'),
+      )
+      return command
     }
     const row = (detail: DriverTaskDetail) => detail.messages.find(message => message.role === 'tool')
     const quick = (limits: Parameters<typeof setCodexStopLimits>[0]) => {
@@ -1488,7 +1493,8 @@ describe('Codex over its app-server', () => {
 
     it('ends Codex when its own interrupted turn leaves a command running past the bound', async () => {
       quick({ commandMs: 200, unaskedMs: 800 })
-      const { bridge, id, pid } = await holding('hold self', { FAKE_CODEX_TERMINALS: 'none' })
+      // The command may already have interrupted itself by the time its started record is read.
+      const { bridge, id, pid } = await startedCommand('hold self', { FAKE_CODEX_TERMINALS: 'none' })
       const detail = await settled(bridge, id)
       expect(detail.summary.status).toBe('interrupted')
       expect(detail.summary.runEnd).toMatchObject({

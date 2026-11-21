@@ -118,7 +118,8 @@ function rebind(host: TestHost, credential: string): Device {
 }
 
 async function settled(owner: Device, id: string) {
-  await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${id}`)).summary.status).toBe('idle')
+  // The first prompt returns before the Host finishes the turn that creates the Agent's home.
+  await expect.poll(async () => (await owner.json<TaskDetail>(`tasks/${id}`)).summary.status, { timeout: 15_000 }).toBe('idle')
 }
 
 /** One of my Agents after a first message: its home made, a few files in it, and a link to a file outside it. */

@@ -458,7 +458,7 @@ Agent 发来的请求只处理 `session/request_permission` 与提问，其他�
 2. 等 Codex 报告这一轮 `turn/completed`，并且这一轮开始的每条命令都报告了 `item/completed`，才算停下。审批被拒或因停止没有回答的命令不会运行，不等它。
 3. Codex 中断一轮后不结束它开始的命令，所以线对会话的 thread 与这一轮报告过调用的子 thread 各发 `thread/backgroundTerminals/list`，逐条 `thread/backgroundTerminals/terminate`。
 4. 2 秒内还没报告结束时读一次进程列表（`/bin/ps`，不带环境变量），按 Codex 列出的 `osPid` 结束那条命令。只有每条剩下的命令都是这个 app-server 的子孙进程、自成进程组、结束后整个进程组都已消失，才确认停止；没有结果的记为结果未知。
-5. 确认不了时等到取消的时限（30 秒），先结束 app-server 启动的自成进程组的子孙进程，再结束进程。
+5. 到取消时限（30 秒）仍无法确认时，先清理能确认归属的子孙进程，再强制结束 app-server。第一次读取进程表失败时，如果 app-server 仍在运行，且两秒的读取预算还有剩余，就再读一次。读取期间 app-server 已退出，或始终读不到进程表，就不按其中的 PID 发信号。
 
 Codex 自己中断、Latch 没有要求停止的一轮同样先等它的命令；30 秒后仍没有结束证据时强制结束 app-server，轮次标为已中断、命令结果未知。
 

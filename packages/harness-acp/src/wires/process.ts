@@ -62,14 +62,15 @@ const STDERR_TAIL = 600
 const WRITE_QUEUE_LIMIT = 64 * 1024 * 1024
 /** After the leader exits, a grandchild could hold the pipes open; stop waiting for them. */
 const CLOSE_FALLBACK_MS = 2_000
+const PROCESS_LIST_MS = 2_000
 
 /** `pid ppid pgid` lines of every process, or undefined when they cannot be read. Replaced in tests. */
-type Lister = () => Promise<string | undefined>
-const psListing: Lister = () =>
+type Lister = (timeoutMs: number) => Promise<string | undefined>
+const psListing: Lister = timeoutMs =>
   new Promise(resolve => {
     if (process.platform === 'win32') return resolve(undefined)
     // A fixed program with no inherited environment, as other system reads here run.
-    execFile('/bin/ps', ['-A', '-o', 'pid=,ppid=,pgid='], { env: {}, timeout: 2_000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) =>
+    execFile('/bin/ps', ['-A', '-o', 'pid=,ppid=,pgid='], { env: {}, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) =>
       resolve(error ? undefined : stdout),
     )
   })
@@ -84,8 +85,8 @@ export function setProcessLister(next: Lister | undefined): void {
  * The processes below `root`, each with its process group, from one listing. Undefined when the listing could not be
  * read (no `ps`, Windows, a failure or timeout): a caller then cannot tell what is the agent's, and kills nothing by pid.
  */
-export async function descendants(root: number): Promise<Map<number, number> | undefined> {
-  const listing = await lister()
+export async function descendants(root: number, timeoutMs = PROCESS_LIST_MS): Promise<Map<number, number> | undefined> {
+  const listing = await lister(Math.max(1, Math.min(timeoutMs, PROCESS_LIST_MS)))
   if (listing === undefined) return undefined
   const found = new Map<number, number>()
   const children = new Map<number, Array<{ pid: number; pgid: number }>>()
@@ -258,7 +259,13 @@ export class AgentProcess {
   private async killStrays(): Promise<void> {
     const pid = this.child.pid
     if (pid === undefined) return
-    const below = await descendants(pid)
+    const deadline = performance.now() + PROCESS_LIST_MS
+    let below = await descendants(pid)
+    // A transient failure may leave time for a fresh listing before killing and reparenting the agent's commands.
+    const remainingMs = Math.floor(deadline - performance.now())
+    if (below === undefined && !this.info && !this.leaderExited && remainingMs > 0) {
+      below = await descendants(pid, remainingMs)
+    }
     // Once the owned leader exits, an in-flight listing can name reparented or re-used PIDs. Its ancestry is no authority.
     if (this.info || this.leaderExited) return
     for (const [stray, pgid] of below ?? []) if (pgid !== pid) killProcess(stray, pgid)

@@ -1247,6 +1247,7 @@ describe.skipIf(!git)('removing a worktree', () => {
     t.run('-C', made.path, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'mod')
     t.run('-C', made.path, 'commit', '-qm', 'add submodule')
     const inside = join(made.path, 'mod')
+    t.run('-C', inside, 'checkout', '-q', '--detach')
     t.run('-C', inside, 'commit', '-q', '--allow-empty', '-m', 'work only the reflog keeps')
     const lost = t.run('-C', inside, 'rev-parse', 'HEAD').trim()
     t.run('-C', inside, 'checkout', '-q', '--detach', 'HEAD~1')
@@ -1254,12 +1255,17 @@ describe.skipIf(!git)('removing a worktree', () => {
     const facts = await worktrees.inventory(made.path)
     expect(facts.submodules).toBeUndefined()
     const modules = facts.submoduleData!.path
-    await expect(worktrees.remove(made.path, { ...(await confirmed(worktrees, made.path)), audit: noAudit })).rejects.toMatchObject({
+    const clone = join(modules, 'mod')
+    expect(t.run('--git-dir', clone, 'rev-list', '--all').split('\n')).not.toContain(lost)
+    expect(t.run('--git-dir', clone, 'rev-list', '--reflog').split('\n')).toContain(lost)
+    await expect(
+      worktrees.remove(made.path, { discard: facts.files + facts.ignored, digest: facts.digest, audit: noAudit }),
+    ).rejects.toMatchObject({
       code: 'worktree-submodule-data',
       details: { folder: modules },
     })
     // The commit is still there to recover.
-    expect(t.run('--git-dir', join(modules, 'mod'), 'cat-file', '-t', lost).trim()).toBe('commit')
+    expect(t.run('--git-dir', clone, 'cat-file', '-t', lost).trim()).toBe('commit')
     // Once the person has checked and deleted the clones, removal goes through.
     await rm(modules, { recursive: true, force: true })
     await worktrees.remove(made.path, { ...(await confirmed(worktrees, made.path)), audit: noAudit })

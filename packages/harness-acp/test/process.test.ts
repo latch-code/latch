@@ -7,6 +7,57 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+it.skipIf(process.platform === 'win32')('retries a failed process listing before ending the parent of a detached command', async () => {
+  let reportCommand!: (pid: number) => void
+  const ready = new Promise<number>(resolve => {
+    reportCommand = resolve
+  })
+  const agent = AgentProcess.spawn(
+    {
+      command: process.execPath,
+      args: [
+        '-e',
+        `
+        const { spawn } = require('node:child_process')
+        const child = spawn('/bin/sleep', ['10'], { detached: true, stdio: 'ignore' })
+        child.once('spawn', () => console.log(JSON.stringify({ pid: child.pid })))
+        process.stdin.resume()
+      `,
+      ],
+      cwd: process.cwd(),
+      env: {},
+      maxLineBytes: 1024,
+      redact: value => value,
+    },
+    {
+      record: row => {
+        if (typeof row.pid === 'number') reportCommand(row.pid)
+      },
+      closed() {},
+    },
+  )
+  let command: number | undefined
+  try {
+    command = await ready
+    const listing = `${command} ${agent.pid} ${command}`
+    const read = vi.fn<() => Promise<string | undefined>>().mockResolvedValueOnce(undefined).mockResolvedValue(listing)
+    setProcessLister(read)
+    await agent.stop('kill', 200)
+    expect(read).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => expect(() => process.kill(command!, 0)).toThrowError(expect.objectContaining({ code: 'ESRCH' })))
+  } finally {
+    setProcessLister(undefined)
+    if (command !== undefined) {
+      try {
+        process.kill(command, 'SIGKILL')
+      } catch {
+        /* Already gone. */
+      }
+    }
+    await agent.stop('kill', 0)
+  }
+})
+
 it('does not signal PIDs from a process listing that finishes after the owned leader has exited', async () => {
   const foreign = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
   const agent = AgentProcess.spawn(

@@ -374,33 +374,67 @@ describe('the program an adapter drives, beside the adapter', () => {
     expect((await probe({})).program).toEqual({ name: 'Codex', version: '0.167.0', unchecked: true })
   })
 
-  it('keeps the whole test start, login and version reads included, within its time', { timeout: 40_000 }, async ({ onTestFinished }) => {
-    const directory = await root()
-    const bin = join(directory, 'bin')
-    await mkdir(bin)
-    const calls = join(directory, 'codex-calls')
-    const scripts = {
-      'codex-acp': 'exit 0',
-      codex: `echo "$*" >> '${calls}'\nexec sleep 30`,
-    }
-    for (const [name, body] of Object.entries(scripts)) {
-      await writeFile(join(bin, name), `#!/bin/sh\n${body}\n`)
-      await chmod(join(bin, name), 0o755)
-    }
-    useOnly(bin)
-    const record = codexAdapter()
-    const options = { dataDir: directory, cwd: directory }
-    const { launchHash: expectedLaunchHash } = await agentProbePreview(record, options)
-    // The two blocked reads need the remaining budget. The probe suite exercises the actual handshake.
-    const handshake = vi.spyOn(AcpWire.prototype, 'request').mockResolvedValueOnce({ protocolVersion: 1 })
-    onTestFinished(() => handshake.mockRestore())
-    const started = Date.now()
-    const result = await probeAgent(record, { ...options, expectedLaunchHash, timeoutMs: 1500 })
-    expect(Date.now() - started).toBeLessThan(4000)
-    expect((await readFile(calls, 'utf8')).trim().split('\n').toSorted()).toEqual(['--version', 'login status'])
-    expect(result).toMatchObject({ status: 'ready', login: 'unknown', program: { name: 'Codex' } })
-    expect(result.program).not.toHaveProperty('version')
-  })
+  it(
+    'skips expired probe reads and runs login and version together with the remaining budget',
+    { timeout: 40_000 },
+    async ({ onTestFinished }) => {
+      const directory = await root()
+      const bin = join(directory, 'bin')
+      await mkdir(bin)
+      for (const [name, body] of Object.entries({ 'codex-acp': 'exit 0', codex: 'exec /bin/sleep 30' })) {
+        await writeFile(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 })
+      }
+      useOnly(bin)
+      const record = codexAdapter()
+      const options = { dataDir: directory, cwd: directory }
+      const { launchHash: expectedLaunchHash } = await agentProbePreview(record, options)
+
+      // Only the handshake's time on the deadline clock is simulated. The two optional commands and their kill timers are real.
+      const start = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(start)
+      const handshake = vi.spyOn(AcpWire.prototype, 'request')
+      onTestFinished(() => {
+        vi.restoreAllMocks()
+      })
+      const probeAfter = (handshakeMs: number) => {
+        clock.mockReturnValue(start)
+        handshake.mockImplementationOnce(async () => {
+          clock.mockReturnValue(start + handshakeMs)
+          return { protocolVersion: 1 }
+        })
+        return probeAgent(record, { ...options, expectedLaunchHash, timeoutMs: 1500 })
+      }
+      const reads = await import('../src/login.ts')
+      const { checkLogin: login, readProgramVersion: version } = reads
+      let active = 0
+      let overlapped = false
+      let started: number | undefined
+      function observe<T>(read: Promise<T>): Promise<T> {
+        started ??= performance.now()
+        if (active > 0) overlapped = true
+        active++
+        return read.finally(() => {
+          active--
+        })
+      }
+      const loginRead = vi.spyOn(reads, 'checkLogin').mockImplementation((...args) => observe(login(...args)))
+      const versionRead = vi.spyOn(reads, 'readProgramVersion').mockImplementation((...args) => observe(version(...args)))
+
+      const expired = await probeAfter(1500)
+      expect(expired).toMatchObject({ status: 'ready', login: 'unknown' })
+      expect(expired.program).toBeUndefined()
+      expect(loginRead).not.toHaveBeenCalled()
+      expect(versionRead).not.toHaveBeenCalled()
+
+      const result = await probeAfter(1000)
+      expect(loginRead).toHaveBeenCalledExactlyOnceWith(record, { timeoutMs: 500 })
+      expect(versionRead).toHaveBeenCalledExactlyOnceWith(record, { timeoutMs: 500 })
+      expect(overlapped).toBe(true)
+      expect(performance.now() - started!).toBeLessThan(4000)
+      expect(result).toMatchObject({ status: 'ready', login: 'unknown', program: { name: 'Codex' } })
+      expect(result.program).not.toHaveProperty('version')
+    },
+  )
 
   it('shows no program when the adapter runs its own copy, and runs none until the start script turns it on', async () => {
     expect((await (await pair('2.5.0', undefined)).probe()).program).toBeUndefined()
