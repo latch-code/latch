@@ -2,7 +2,7 @@
 # To start from a source checkout, run `corepack pnpm desktop` directly from a terminal. This script starts the same
 # Host and desktop app through Node.
 #
-# Run this script directly from macOS Terminal.app if Corepack is unavailable or Latch still cannot read the local network.
+# Run this script directly from a terminal if Corepack is unavailable.
 # The launcher reuses a running Host for the same data directory. Stop that Host normally before switching how it starts.
 #
 # It accepts the same arguments as `corepack pnpm desktop --`, with no separator. For example, `./scripts/desktop.sh --demo`.

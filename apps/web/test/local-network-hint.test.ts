@@ -18,8 +18,8 @@ afterEach(() => {
 const render = (props: Parameters<typeof LocalNetworkHint>[0]) => renderToStaticMarkup(createElement(LocalNetworkHint, props))
 
 it('says nothing while access is allowed or unknown', () => {
-  expect(render({ state: undefined, openable: true, source: true })).toBe('')
-  expect(render({ state: 'allowed', openable: true, source: true })).toBe('')
+  expect(render({ state: undefined, openable: true })).toBe('')
+  expect(render({ state: 'allowed', openable: true })).toBe('')
 })
 
 it('offers the Local Network settings page in the desktop app and its path elsewhere', () => {
@@ -27,36 +27,20 @@ it('offers the Local Network settings page in the desktop app and its path elsew
     ['denied', '本地网络未允许'],
     ['unreadable', '无法读取本地网络信息'],
   ] as const) {
-    const app = render({ state, openable: true, source: false })
+    const app = render({ state, openable: true })
     expect(app).toContain(label)
     expect(app).toContain('打开系统设置')
     expect(app).toContain(`href="${LOCAL_NETWORK_SETTINGS}"`)
     expect(app).toContain('target="_blank"')
-    expect(app).not.toContain('corepack pnpm desktop')
-    const browser = render({ state, openable: false, source: false })
+    const browser = render({ state, openable: false })
     expect(browser).toContain(label)
     expect(browser).toContain('系统设置 › 隐私与安全性 › 本地网络')
-    expect(browser).not.toContain('corepack pnpm desktop')
     expect(browser).not.toContain('href=')
   }
   // The settings row splits them: the note under the title, the button at the end, and the path only without one.
-  expect(renderToStaticMarkup(createElement(LocalNetworkNote, { state: 'denied', openable: true, source: false }))).not.toContain(
-    '系统设置 ›',
-  )
+  expect(renderToStaticMarkup(createElement(LocalNetworkNote, { state: 'denied', openable: true }))).not.toContain('系统设置 ›')
   expect(renderToStaticMarkup(createElement(LocalNetworkOpen, { state: 'denied', openable: false }))).toBe('')
   expect(renderToStaticMarkup(createElement(LocalNetworkOpen, { state: 'allowed', openable: true }))).toBe('')
-})
-
-it('gives source users the relaunch steps in both languages', () => {
-  const denied = render({ state: 'denied', openable: true, source: true })
-  expect(denied).toContain('先停止同一数据目录的 Latch 服务。关窗口后它仍会运行。')
-  expect(denied).toContain('corepack pnpm desktop')
-
-  setLocale('en')
-  const unreadable = render({ state: 'unreadable', openable: true, source: true })
-  expect(unreadable).toContain('Can’t read local network information')
-  expect(unreadable).toContain('Stop the Latch service for this data directory before switching. Closing the window leaves it running.')
-  expect(unreadable).toContain('corepack pnpm desktop')
 })
 
 it('lets only this Mac’s own desktop window open System Settings', () => {

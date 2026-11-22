@@ -1,5 +1,6 @@
-import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { lstat } from 'node:fs/promises'
+import type { Readable, Writable } from 'node:stream'
 import { isAbsolute } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
@@ -80,9 +81,20 @@ const eventSchema = z.discriminatedUnion('event', [
   }),
 ])
 
+/**
+ * macOS 27 hides the link-layer addresses in the IPv4 neighbour table from a process while any live ancestor is an
+ * ad-hoc signed executable (standalone pnpm, fnm, a locally packaged Latch.app). This was observed on macOS 27.3; Apple
+ * does not document it. A short-lived shell starts the helper in the background and exits, so launchd becomes its parent.
+ * The responsible app, and with it the Local Network decision, is unchanged. Node destroys a child's stdin when that
+ * child exits, so requests travel on fd 4. The shell reports the helper's pid on fd 3, and the helper keeps neither.
+ */
+const LAUNCH_HELPER = '"$0" <&4 3>&- 4>&- & echo "$!" >&3'
+
 /** The helper has no discovery key or Host identity; only anonymous labels and private OS metadata cross this pipe. */
 export class MacNetworkBackend implements NativeNetworkBackend {
-  private readonly child: ChildProcessWithoutNullStreams
+  private readonly launcher: ChildProcess
+  private readonly input: Writable
+  private readonly output: Readable
   private readonly pending = new Map<
     string,
     { resolve(data: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
@@ -90,13 +102,19 @@ export class MacNetworkBackend implements NativeNetworkBackend {
   private readonly changes = new Set<(snapshot: NativeNetworkSnapshot) => void>()
   private readonly statuses = new Set<(status: NativeNetworkStatus) => void>()
   private readonly exited: Promise<void>
+  private pid: number | undefined
+  private report = ''
   private ended = false
   private stopping = false
   private failed = false
   private tail = ''
   private constructor(binary: string) {
-    this.child = spawn(binary, [], { env: {}, stdio: ['pipe', 'pipe', 'pipe'] })
-    this.child.stderr.resume()
+    this.launcher = spawn('/bin/sh', ['-c', LAUNCH_HELPER, binary], { env: {}, stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'] })
+    const [, output, errors, report, input] = this.launcher.stdio as [null, Readable, Readable, Readable, Writable]
+    this.output = output
+    this.input = input
+    errors.resume()
+    // Only the helper and the exiting shell hold the write end of stdout, so its close is the helper's actual exit.
     this.exited = new Promise(resolve => {
       const end = () => {
         if (this.ended) return
@@ -104,15 +122,48 @@ export class MacNetworkBackend implements NativeNetworkBackend {
         this.fail()
         resolve()
       }
-      this.child.once('exit', end)
-      this.child.once('error', () => {
-        if (!this.child.pid) end()
+      this.output.once('close', end)
+      this.launcher.once('error', () => {
+        if (!this.launcher.pid) end()
         else this.fail()
       })
     })
-    this.child.stdin.on('error', () => this.fail())
-    this.child.stdout.on('error', () => this.fail())
-    this.child.stdout.on('data', (bytes: Buffer) => this.read(bytes))
+    this.launcher.once('exit', code => {
+      if (code !== 0) this.fail()
+    })
+    report.on('data', (bytes: Buffer) => this.readPid(bytes))
+    report.once('end', () => {
+      if (this.pid === undefined) this.fail()
+    })
+    report.on('error', () => this.fail())
+    this.input.on('error', () => this.fail())
+    this.output.on('error', () => this.fail())
+    this.output.on('data', (bytes: Buffer) => this.read(bytes))
+  }
+  private readPid(bytes: Buffer): void {
+    if (this.pid !== undefined) return
+    this.report += bytes.toString('utf8')
+    const match = /^([1-9]\d{0,9})\n$/u.exec(this.report)
+    if (!match) {
+      if (this.report.length > 12 || this.report.includes('\n')) this.fail()
+      return
+    }
+    this.pid = Number(match[1])
+    if (this.failed) this.terminate()
+  }
+  /**
+   * Kills by pid only until stdout closes. The helper holds stdout until it dies, so the pid can only be stale in the
+   * moment between its exit and the close event, and macOS does not reuse a pid that soon.
+   */
+  private terminate(): void {
+    if (this.ended) return
+    if (this.launcher.exitCode === null && this.launcher.signalCode === null) this.launcher.kill('SIGKILL')
+    if (this.pid === undefined) return
+    try {
+      process.kill(this.pid, 'SIGKILL')
+    } catch {
+      /* Already gone; stdout closing settles `exited`. */
+    }
   }
   static async open(binary: string): Promise<MacNetworkBackend> {
     if (process.platform !== 'darwin' || !isAbsolute(binary)) throw new Error('Native network component unavailable')
@@ -133,10 +184,9 @@ export class MacNetworkBackend implements NativeNetworkBackend {
       item.reject(new Error('Native network component unavailable'))
     }
     this.pending.clear()
-    if (!this.ended) this.child.kill('SIGKILL')
-    this.child.stdin.destroy()
-    this.child.stdout.destroy()
-    this.child.stderr.destroy()
+    this.terminate()
+    // Closing its input also ends a helper whose pid never arrived. Stdout stays open to observe the actual exit.
+    this.input.destroy()
     for (const listener of this.statuses) {
       try {
         listener('blocked')
@@ -202,7 +252,7 @@ export class MacNetworkBackend implements NativeNetworkBackend {
       const timer = setTimeout(() => this.fail(), 3000)
       timer.unref()
       this.pending.set(id, { resolve, reject, timer })
-      this.child.stdin.write(data, error => {
+      this.input.write(data, error => {
         if (error) this.fail()
       })
     })
@@ -238,9 +288,9 @@ export class MacNetworkBackend implements NativeNetworkBackend {
       item.reject(new Error('Native network component stopped'))
     }
     this.pending.clear()
-    this.child.stdin.end()
+    this.input.end()
     const timer = setTimeout(() => {
-      if (!this.ended) this.child.kill('SIGKILL')
+      this.terminate()
     }, 1000)
     timer.unref()
     try {

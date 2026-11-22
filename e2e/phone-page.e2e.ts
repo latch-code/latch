@@ -356,7 +356,6 @@ describe('设置 › 设备', () => {
       await setPairing({ state: 'ready', offNetwork: true, localNetwork: 'unreadable' }, () =>
         sheet.getByText('无法读取本地网络信息', { exact: true }).waitFor(),
       )
-      await sheet.getByText('corepack pnpm desktop', { exact: true }).waitFor({ state: 'visible' })
       await capture('sheet-unreadable')
 
       // After Touch ID the sheet says the phone is connected; one press closes it.

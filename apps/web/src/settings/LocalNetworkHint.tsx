@@ -6,7 +6,6 @@ import { currentShell } from '../core/shell.ts'
 
 /** The desktop app lets exactly this one system-settings address through (apps/desktop/src/proxy.cjs). */
 export const LOCAL_NETWORK_SETTINGS = 'x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork'
-const SOURCE_DESKTOP_COMMAND = 'corepack pnpm desktop'
 
 const COPY = defineCopy(
   {
@@ -15,7 +14,6 @@ const COPY = defineCopy(
     open: '打开系统设置',
     path: '系统设置 › 隐私与安全性 › 本地网络',
     detail: '检查这台 Mac 的「本地网络」权限。安装版找 Latch，终端直接启动时找终端应用。',
-    sourceDetail: '换启动方式前，先停止同一数据目录的 Latch 服务。关窗口后它仍会运行。然后在终端进入 Latch 源码目录，运行',
   },
   {
     denied: 'Local Network not allowed',
@@ -24,8 +22,6 @@ const COPY = defineCopy(
     path: 'System Settings › Privacy & Security › Local Network',
     detail:
       'Check Local Network access on this Mac. Look for Latch if installed, or your terminal app if launched directly from a terminal.',
-    sourceDetail:
-      'Stop the Latch service for this data directory before switching. Closing the window leaves it running. In a terminal, go to the Latch checkout and run',
   },
 )
 
@@ -65,18 +61,8 @@ export function LocalNetworkOpen({ state, openable }: { state: LocalNetworkAcces
   )
 }
 
-/**
- * Distinguish a system refusal from a neighbour table the Host could not read. A source run also shows how to relaunch.
- */
-export function LocalNetworkNote({
-  state,
-  openable,
-  source,
-}: {
-  state: LocalNetworkAccess | undefined
-  openable: boolean
-  source: boolean
-}) {
+/** Distinguish a system refusal from a neighbour table the Host could not read. */
+export function LocalNetworkNote({ state, openable }: { state: LocalNetworkAccess | undefined; openable: boolean }) {
   useLocale()
   if (!refused(state)) return null
   return (
@@ -87,17 +73,12 @@ export function LocalNetworkNote({
         </span>
       </Tooltip>
       {!openable && <span className="local-network-path">{COPY.path}</span>}
-      {source && (
-        <span className="local-network-path">
-          {COPY.sourceDetail} <code className="local-network-script">{SOURCE_DESKTOP_COMMAND}</code>
-        </span>
-      )}
     </span>
   )
 }
 
 /** Both on one line, for the pairing sheet. */
-export function LocalNetworkHint(props: { state: LocalNetworkAccess | undefined; openable: boolean; source: boolean }) {
+export function LocalNetworkHint(props: { state: LocalNetworkAccess | undefined; openable: boolean }) {
   if (!refused(props.state)) return null
   return (
     <span className="local-network-line">

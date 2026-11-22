@@ -521,14 +521,10 @@
   gap: var(--sp-4) var(--sp-8);
   min-width: 0;
 }
-.local-network-path,
-.local-network-script {
+.local-network-path {
   color: var(--muted) !important;
   font-size: var(--fs-caption) !important;
   line-height: var(--lh-caption) !important;
-}
-.local-network-script {
-  font-family: var(--mono);
 }
 .local-network-line {
   display: inline-flex !important;

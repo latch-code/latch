@@ -533,11 +533,7 @@ export function RelaySettings({ access, hostId }: { access: DeviceAccess; hostId
           leading={<IconTile icon={Radio} />}
           title={COPY.direct}
           record
-          description={
-            direct && refusedAccess ? (
-              <LocalNetworkNote state={info.localNetwork} openable={openable} source={info.sourceCheckout === true} />
-            ) : undefined
-          }
+          description={direct && refusedAccess ? <LocalNetworkNote state={info.localNetwork} openable={openable} /> : undefined}
           trailing={
             direct && refusedAccess ? (
               <LocalNetworkOpen state={info.localNetwork} openable={openable} />

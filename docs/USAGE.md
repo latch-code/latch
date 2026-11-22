@@ -65,7 +65,7 @@ pnpm build
 corepack pnpm desktop
 ```
 
-- **用 iPhone 或 iPad 连这台 Mac**：在桌面端的「设置 › 设备」点「显示二维码」，用手机上的 Latch 扫码，再在 Mac 上确认。macOS 上，独立可执行版 pnpm 启动的 Host 有时读不到 Wi‑Fi 网关的硬件地址，即使「本地网络」权限已经打开，也会提示「无法读取本地网络信息」。从终端直接运行上面的 Corepack 命令即可使用 Node 版 pnpm。[同一网络怎样判断](RELAY.md#同一网络怎样判断)
+- **用 iPhone 或 iPad 连这台 Mac**：在桌面端的「设置 › 设备」点「显示二维码」，用手机上的 Latch 扫码，再在 Mac 上确认。[同一网络怎样判断](RELAY.md#同一网络怎样判断)
 - **从旧启动方式切过来**：关闭桌面窗口后 Host 仍在运行。等任务结束，先运行 `corepack pnpm stop`，再运行 `corepack pnpm desktop`。原来指定过数据目录，就在两条命令后都加上 `-- --data-dir <原数据目录>`，启动时也沿用原来的其他参数。已安装依赖并完成构建时，也可以用 `./scripts/desktop.sh` 直接启动 Node，例如 `./scripts/desktop.sh --data-dir <原数据目录>`。
 - 只使用浏览器时，运行 `pnpm start`，再运行 `pnpm latch device invite --loopback` 并打开给出的链接。
 - `pnpm start` 打印 `http://h-<hostId>.localhost:4317/link/` 形式的地址。每台 Host 用自己的 `h-<hostId>.localhost`，不同 Host 的 Cookie 因此互不混用。
