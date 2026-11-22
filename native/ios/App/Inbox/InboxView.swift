@@ -28,19 +28,24 @@ struct InboxView: View {
                 if model.workItemsShown && model.offersWorkItems { WorkItemList(disclosure: $disclosure, showsConnectionStatus: showsConnectionStatus) }
                 else { sessionList }
             }
+            // The bar holds only the computer and the actions; 会话 | 待办 gets a full-width row under it, so a long
+            // computer name never squeezes the switch.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if model.offersWorkItems {
+                    Picker("Code 视图", selection: Binding(get: { model.workItemsShown }, set: model.showWorkItems)) {
+                        Text("会话").tag(false)
+                        Text("待办").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 6)
+                    .background(PhoneTheme.canvas)
+                }
+            }
             .navigationTitle(model.offersWorkItems ? "Code" : "会话")
             .navigationBarTitleDisplayMode(.inline)
+            .modifier(HiddenBarTitle(hidden: model.hosts.count > 1))
             .toolbar {
-                if model.offersWorkItems {
-                    ToolbarItem(placement: .principal) {
-                        Picker("Code 视图", selection: Binding(get: { model.workItemsShown }, set: model.showWorkItems)) {
-                            Text("会话").tag(false)
-                            Text("待办").tag(true)
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(idealWidth: 152, maxWidth: 176)
-                    }
-                }
                 if model.hosts.count > 1 {
                     ToolbarItem(placement: .topBarLeading) {
                         ComputerMenu().disabled(model.busy || model.verifying)
@@ -681,7 +686,9 @@ private struct ComputerMenu: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text(model.selectedHost.map(model.computerName) ?? "选择 Mac").lineLimit(1)
+                // Capped so the dot and chevron stay and the trailing actions keep their room.
+                Text(model.selectedHost.map(model.computerName) ?? "选择 Mac").lineLimit(1).truncationMode(.middle)
+                    .frame(maxWidth: 190, alignment: .leading)
                 // Something waits on another computer that answers now: an amber dot, no number, as the tab bar's.
                 if rows.contains(where: { !$0.selected && $0.state == .online && $0.waiting > 0 }) {
                     Circle().fill(PhoneTheme.amberIcon).frame(width: 6, height: 6).accessibilityLabel("其他电脑有等你处理")
@@ -689,6 +696,14 @@ private struct ComputerMenu: View {
                 Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
             }
         }
+    }
+}
+
+/** The computer menu names the list, so the centred title gives way to it; before iOS 18 the bar drops the title itself when room runs out. */
+private struct HiddenBarTitle: ViewModifier {
+    let hidden: Bool
+    func body(content: Content) -> some View {
+        if hidden, #available(iOS 18, *) { content.toolbar(removing: .title) } else { content }
     }
 }
 

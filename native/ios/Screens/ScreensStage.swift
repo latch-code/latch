@@ -970,8 +970,10 @@ extension ScreensStage {
         model.offline = true
     }
     fileprivate static func stageComputers(_ model: PhoneModel, _ name: String) -> Bool {
-        guard name == "computers" || name == "computers-settings" else { return false }
-        let hosts = [host("studiohostaaaa", "aaaaaaaaaaaaaaaaaaaaaa", "studio"), host("buildminibbbb", "bbbbbbbbbbbbbbbbbbbbbb", "build-mini"),
+        guard ["computers", "computers-settings", "computers-work", "computers-work-list"].contains(name) else { return false }
+        // A Host with 待办 puts the 会话 | 待办 switch beside a long computer name and both toolbar actions.
+        if name.hasPrefix("computers-work") { model.snapshot = workSnapshot(); model.showWorkItems(name == "computers-work-list") }
+        let hosts = [host("studiohostaaaa", "aaaaaaaaaaaaaaaaaaaaaa", "Studio-MacBook-Pro"), host("buildminibbbb", "bbbbbbbbbbbbbbbbbbbbbb", "build-mini"),
                      host("macminicccc", "cccccccccccccccccccccc", "Mac mini"), host("d7k2spoofdddd", "dddddddddddddddddddddd", "build-m\u{0456}ni")].compactMap { $0 }
         model.hosts = hosts; model.selectedHost = hosts.first; model.lastConfirmed = Date()
         let token = model.computerDesk.watch(selected: hosts[0].id, others: hosts.dropFirst().map(\.id))
@@ -981,7 +983,7 @@ extension ScreensStage {
             NativeWatchReading(token: token, id: hosts[3].id, state: .wrongHost, list: .null, lastSeen: nil),
         ]
         for reading in readings { _ = model.computerDesk.receive(reading, notifying: false) }
-        model.tab = name == "computers" ? .code : .settings
+        model.tab = name == "computers-settings" ? .settings : .code
         if name == "computers-settings" { UserDefaults.standard.set(true, forKey: PhoneComputerNotices.key) }
         return true
     }
