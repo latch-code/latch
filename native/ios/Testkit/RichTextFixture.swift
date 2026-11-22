@@ -65,3 +65,30 @@ func phoneTeamReturnFixture(_ input: Data) throws -> [String: Any] {
     return ["heading": PhoneTeamReturn.heading, "cards": cards, "replies": replies,
             "words": ["starting", "running", "waiting", "done", "failed", "cancelled", "unknown", "unstarted"].map(PhoneTeamReturn.words)]
 }
+
+/** Team cards as the phone places them in the lead's conversation: which turn each follows, its rows and its end. */
+func phoneTeamGraphFixture(_ input: Data) throws -> [String: Any] {
+    let vectors = try NativeJSON.decode(input)
+    let teams = vectors["teams"].array
+    func value(_ text: String?) -> Any { text.map { $0 as Any } ?? NSNull() }
+    func describe(_ card: PhoneTeamGraph.Card) -> [String: Any] {
+        ["id": card.id, "title": card.title, "count": card.count, "round": value(card.roundWords), "by": value(card.byWords),
+         "end": card.endWords, "endCount": value(card.endCount), "endWire": card.endWire.rawValue, "kept": value(card.kept),
+         "returned": value(card.returnedMessageId), "dispatch": card.dispatch,
+         "members": card.members.map { "\($0.name) \($0.state) \($0.wire.rawValue) \($0.refused ? "refused" : "said") \($0.line ?? "-") \($0.sessionId ?? "-")" }]
+    }
+    let placements: [Any] = vectors["placements"].array.map { item in
+        let messages = item["messages"].array
+        let turnIds = PhoneConversation.turns(messages).map(\.id)
+        let placed = PhoneTeamGraph.place(teams, session: item["session"].string ?? "", messages: messages, turnIds: turnIds)
+        return placed.mapValues { $0.map(\.id) }
+    }
+    let cards = PhoneTeamGraph.teams(teams, session: vectors["session"].string ?? "").map { team in
+        PhoneTeamGraph.card(team, newest: team["id"].string == vectors["newest"].string).map { describe($0) as Any } ?? NSNull()
+    }
+    let ends: [String] = vectors["ends"].array.map { item in
+        PhoneTeamGraph.end(state: item["state"].string ?? "", members: item["members"].array.compactMap(\.string)).rawValue
+    }
+    let words = [PhoneTeamGraph.End.members, .you, .stopping, .pending, .returned, .kept].map(PhoneTeamGraph.words)
+    return ["placements": placements, "cards": cards, "ends": ends, "words": words]
+}

@@ -106,6 +106,7 @@ do {
     case "phoneSlash": result = try phoneSlashFixture(data)
     case "phoneRichText": result = try phoneRichTextFixture(data)
     case "phoneTeamReturn": result = try phoneTeamReturnFixture(data)
+    case "phoneTeamGraph": result = try phoneTeamGraphFixture(data)
     case "phoneFlows": result = try await phoneFlowsFixture()
     case "phoneReview": result = try phoneReviewFixture(input)
     case "phoneWorkItems": result = try phoneWorkItemsFixture(data)

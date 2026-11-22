@@ -165,6 +165,8 @@ struct ConversationView: View {
                 if let lead = results[""] { resultStack(lead) }
                 ForEach(proposals[""] ?? []) { proposalRow($0) }
                 let teams = model.hasContentWindow && model.privateSnapshot.confirmed ? model.snapshot["teams"].array : []
+                let graphs = hasContent ? PhoneTeamGraph.place(teams, session: id, messages: model.detail["messages"].array, turnIds: turns.map(\.id)) : [:]
+                ForEach(graphs[""] ?? []) { teamGraph($0) }
                 ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
                     let latest = index == turns.count - 1
                     TurnView(turn: turn, latest: latest, status: latest ? status : nil, running: latest && running, frozen: !model.connected,
@@ -174,6 +176,7 @@ struct ConversationView: View {
                         endSaid: latest && !running && PhoneConversation.runEnd(model.detail["summary"], engine: engine) != nil,
                         actions: model.detailCached ? .none : PhoneTurnActions.of(turn, latest: latest, running: latest && running, canSend: canSend, canFork: canFork),
                         index: index, open: { openFile($0, $1) }).equatable().id(turn.id)
+                    ForEach(graphs[turn.id] ?? []) { teamGraph($0) }
                     ForEach(returned[turn.id] ?? []) { ReturnedResultCard(result: $0, sessionId: id) }
                     if let placed = results[turn.id] { resultStack(placed) }
                     ForEach(proposals[turn.id] ?? []) { proposalRow($0) }
@@ -300,6 +303,10 @@ struct ConversationView: View {
                     newTopic: nil)
             }
         }.frame(maxWidth: 760).frame(maxWidth: .infinity)
+    }
+    /** A team this session started, after the turn its latest round came from. */
+    private func teamGraph(_ card: PhoneTeamGraph.Card) -> some View {
+        TeamGraphView(card: card, leadName: engine, leadMark: model.engineMark(summary["harnessId"].string))
     }
     /** This topic's proposals and the 「记住…」 the Host did not keep, each after its turn; none outside 我的 Agent. */
     private func placedProposals(_ turns: [PhoneTurn]) -> [String: [PhoneProposal]] {

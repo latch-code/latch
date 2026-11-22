@@ -18,6 +18,7 @@ const SCENES = [
   'workspace-offline',
   'session-team',
   'team-results',
+  'team-graph',
   'question-reminder',
   'conversation',
   'markdown',

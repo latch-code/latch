@@ -4084,6 +4084,172 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.replies).toEqual(['第一轮', '第二轮', '', ''])
     expect(result.words).toEqual(['正在开始', '运行中', '等你处理', '已完成', '失败', '已停止', '未回报结果', '没有开始'])
   })
+  it('places each 团队分工 card after the turn its latest round came from and says where the results are', async () => {
+    const team = (id: string, createdAt: string, extra: Record<string, unknown>) => ({
+      id: `tem_${id.repeat(22)}`,
+      leadSessionId: 'ses_lead',
+      state: 'running',
+      createdAt,
+      updatedAt: createdAt,
+      members: [],
+      ...extra,
+    })
+    const member = (itemId: string, name: string, state: string, extra: Record<string, unknown> = {}) => ({
+      itemId,
+      sessionId: `ses_${itemId}`,
+      name,
+      title: `${name} 的任务`,
+      harnessId: 'codex',
+      state,
+      ...extra,
+    })
+    const returned = team('a', '2026-11-01T09:00:00Z', {
+      messageId: 'm_a2',
+      state: 'returned',
+      returnedMessageId: 'm_ret',
+      members: [
+        member('one', '审阅', 'done', { said: '好了' }),
+        // No name: the title stands for it; a refusal takes the second line from what it said.
+        member('two', '', 'unstarted', { title: '写测试', sessionId: undefined, refusal: '没有安装', said: '不该出现' }),
+        member('three', '文档', 'failed'),
+        { name: '没有 itemId', state: 'done' },
+      ],
+    })
+    const lead = team('e', '2026-11-01T09:00:00Z', {
+      messageId: 'm_lead0',
+      state: 'stopping',
+      goal: '   ',
+      rounds: [{ round: 1, by: 'person', state: 'stopping', members: [], createdAt: 't' }],
+      members: [member('four', '甲', 'running')],
+    })
+    const kept = team('d', '2026-11-01T09:30:00Z', {
+      messageId: 'm_missing',
+      state: 'kept',
+      kept: 'stopped',
+      goal: '检查 Rust 项目',
+      agentDispatch: true,
+      members: [member('five', '乙', 'cancelled')],
+    })
+    const newest = team('b', '2026-11-01T10:00:00Z', {
+      messageId: 'm_a2',
+      returnedMessageId: 'm_ret_old',
+      round: 2,
+      agentDispatch: true,
+      rounds: [
+        { round: 1, by: 'person', state: 'returned', members: [], messageId: 'm_a2', returnedMessageId: 'm_ret_old', createdAt: 't' },
+        { round: 2, by: 'agent', state: 'running', members: [], messageId: 'm_steer', createdAt: 't' },
+      ],
+      members: [
+        member('six', '丙', 'running', { startedAt: '2026-11-01T10:00:00Z' }),
+        member('seven', '丁', 'waiting', { said: '要你批准' }),
+        member('eight', '戊', 'done', { said: '你好' }),
+      ],
+    })
+    const other = { ...team('c', '2026-11-01T08:00:00Z', { messageId: 'm_a1' }), leadSessionId: 'ses_other' }
+    const messages = [
+      { id: 'm_lead0', role: 'assistant', text: '来源会话的内容' },
+      { id: 'm_a1', role: 'user', text: '分一下' },
+      { id: 'm_a2', role: 'assistant', text: '好' },
+      { id: 'm_ret', role: 'user', text: '结果' },
+      { id: 'm_b1', role: 'user', text: '再来' },
+      { id: 'm_steer', role: 'user', text: '补一句', steered: true },
+      { id: 'm_b2', role: 'assistant', text: '派出去了' },
+    ]
+    const result = await invoke({
+      operation: 'phoneTeamGraph',
+      teams: [newest, other, returned, kept, lead],
+      session: 'ses_lead',
+      newest: newest.id,
+      placements: [
+        { session: 'ses_lead', messages },
+        { session: 'ses_lead', messages: [] },
+        { session: 'ses_none', messages },
+      ],
+      ends: [
+        { state: 'running', members: ['running', 'done'] },
+        { state: 'running', members: ['done', 'waiting'] },
+        // Every member has ended once the results wait: a waiting member there is stale, not the person's to answer.
+        { state: 'returning', members: ['waiting'] },
+        { state: 'stopping', members: ['running'] },
+        { state: 'returned', members: [] },
+        { state: 'kept', members: [] },
+      ],
+    })
+    expect(result.placements).toEqual([
+      {
+        // An assistant message walks back to its prompt; before any prompt, the lead content's turn; a steered message
+        // stays in its turn; a message not in the record falls to the last turn; oldest first where two share one.
+        m_a1: [returned.id],
+        'lead:m_lead0': [lead.id],
+        m_b1: [kept.id, newest.id],
+      },
+      { '': [returned.id, lead.id, kept.id, newest.id] },
+      {},
+    ])
+    expect(result.cards).toEqual([
+      {
+        id: returned.id,
+        title: '团队分工',
+        count: '3 个成员',
+        round: null,
+        by: null,
+        end: '已交回',
+        endCount: null,
+        endWire: 'done',
+        kept: null,
+        returned: 'm_ret',
+        dispatch: false,
+        members: ['审阅 done done said 好了 ses_one', '写测试 unstarted none refused 没有安装 -', '文档 failed done said - ses_three'],
+      },
+      {
+        id: lead.id,
+        title: '团队分工',
+        count: '1 个成员',
+        // One round: no chip.
+        round: null,
+        by: null,
+        end: '正在停止…',
+        endCount: null,
+        endWire: 'idle',
+        kept: null,
+        returned: null,
+        dispatch: false,
+        members: ['甲 running flow said - ses_four'],
+      },
+      {
+        id: kept.id,
+        title: '检查 Rust 项目',
+        count: '1 个成员',
+        round: null,
+        by: null,
+        end: '留在这里',
+        endCount: null,
+        endWire: 'quiet',
+        kept: '已停止',
+        returned: null,
+        // The switch is said only on the session's newest team.
+        dispatch: false,
+        members: ['乙 cancelled done said - ses_five'],
+      },
+      {
+        id: newest.id,
+        title: '团队分工',
+        count: '3 个成员',
+        round: '第 2 轮',
+        by: 'Agent 派的',
+        end: '等你处理',
+        endCount: '1/3',
+        endWire: 'idle',
+        kept: null,
+        // An earlier round's message is not where this round's results are.
+        returned: null,
+        dispatch: true,
+        members: ['丙 running flow said - ses_six', '丁 waiting waiting said 要你批准 ses_seven', '戊 done done said 你好 ses_eight'],
+      },
+    ])
+    expect(result.ends).toEqual(['members', 'you', 'pending', 'stopping', 'returned', 'kept'])
+    expect(result.words).toEqual(['等成员', '等你处理', '正在停止…', '结果待发', '已交回', '留在这里'])
+  })
   it('derives the composer’s attachment decisions: reasons, limits, refusal classes, the tray and metadata-free images', async () => {
     const result = await invoke({ operation: 'phoneAttachments' })
     // The Host's own limits, said with a refusal: per kind for a plugin Harness, one file limit where it takes every file.

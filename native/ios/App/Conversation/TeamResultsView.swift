@@ -56,7 +56,7 @@ struct TeamResultsView: View {
             EngineTile(mark: model.engineMark(row.harnessId), size: 16)
             Text(PhoneConversation.visible(row.name)).font(.system(size: 15, weight: .medium)).foregroundStyle(PhoneTheme.ink).lineLimit(1).layoutPriority(1)
             if !open, let said = row.state == "unstarted" ? row.refusal : row.said {
-                Text(PhoneConversation.visible(said)).font(.system(size: 14)).foregroundStyle(row.state == "unstarted" ? PhoneTheme.amber : PhoneTheme.muted).lineLimit(1)
+                Text(PhoneConversation.visible(said)).font(.system(size: 14)).foregroundStyle(row.state == "unstarted" ? PhoneTheme.red.opacity(0.85) : PhoneTheme.muted).lineLimit(1)
             }
             Spacer(minLength: 6)
             MemberStateWord(state: row.state)
@@ -64,7 +64,7 @@ struct TeamResultsView: View {
     }
 }
 
-/** How a member ended, in the tone the web gives it: blue at work, amber waiting, red failed, a tick when done. */
+/** How a member ended, in the tone the web gives it: blue at work, amber waiting, red failed or never started, a tick when done. */
 struct MemberStateWord: View {
     let state: String
     var body: some View {
@@ -83,7 +83,7 @@ struct MemberStateWord: View {
         switch state {
         case "running", "starting": PhoneTheme.accent
         case "waiting": PhoneTheme.amber
-        case "failed": PhoneTheme.red
+        case "failed", "unstarted": PhoneTheme.red
         case "done": PhoneTheme.ink2
         default: PhoneTheme.muted
         }

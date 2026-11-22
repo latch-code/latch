@@ -22,6 +22,9 @@ struct ConversationReader<Content: View>: View {
                         content
                         Color.clear.frame(height: 1).id(ConversationAnchor.latest).accessibilityHidden(true)
                     }
+                    .environment(\.revealTurn, RevealTurn(session: session) { turn in
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { reader.scrollTo(turn, anchor: .top) }
+                    })
                     .background {
                         GeometryReader { transcript in
                             let frame = transcript.frame(in: .named(viewport))

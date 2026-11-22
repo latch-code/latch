@@ -44,6 +44,8 @@ import UIKit
             model.snapshot = sessionTeamSnapshot(value)
         case "team-results":
             stageTeamResults(model, base: value)
+        case "team-graph":
+            stageTeamGraph(model, base: value)
         case "workspace", "workspace-offline":
             model.snapshot = workSnapshot()
             if name == "workspace-offline" { stageDisconnected(model) }
@@ -663,11 +665,16 @@ extension ScreensStage {
                 patched(member) { $0["said"] = .string(index >= 2 ? "你好" : "完成了检查") }
             })
             team["round"] = .number(3); team["returnedMessageId"] = .string(returned)
-            func round(_ number: Int, _ ids: [String], returned id: String) -> NativeJSON {
-                .object(["round": .number(Double(number)), "by": .string("person"), "state": .string("returned"), "returnedMessageId": .string(id), "createdAt": .string("2026-11-01T09:00:00Z"),
-                         "members": .array(ids.map { .object(["itemId": .string(item($0)), "state": .string("done"), "requestId": .string("req_" + $0.dropFirst(4))]) })])
+            func round(_ number: Int, _ ids: [String], returned id: String, at message: String? = nil) -> NativeJSON {
+                var round: [String: NativeJSON] = ["round": .number(Double(number)), "by": .string("person"), "state": .string("returned"), "returnedMessageId": .string(id),
+                    "createdAt": .string("2026-11-01T09:00:00Z"),
+                    "members": .array(ids.map { .object(["itemId": .string(item($0)), "state": .string("done"), "requestId": .string("req_" + $0.dropFirst(4))]) })]
+                if let message { round["messageId"] = .string(message) }
+                return .object(round)
             }
-            team["rounds"] = .array([round(1, teamMembers.map(\.id), returned: "msg_r1"), round(2, [one.id], returned: "msg_r2"), round(3, [one.id, four.id], returned: returned)])
+            // Round 3 was sent from the lead's reply m2: its 团队分工 card stands after that turn, above the results.
+            team["rounds"] = .array([round(1, teamMembers.map(\.id), returned: "msg_r1"), round(2, [one.id], returned: "msg_r2"),
+                                     round(3, [one.id, four.id], returned: returned, at: "m2")])
             fields["teams"] = .array([.object(team)])
         }
         let lead = model.snapshot["tasks"].array.first { $0["id"].string == teamLead } ?? .null
@@ -688,6 +695,32 @@ extension ScreensStage {
                 .object(["id": .string("d"), "role": .string("assistant"), "text": .string("**你好**，这是第 3 轮的回复。\n\n| 项 | 结果 |\n|---|---|\n| 问候 | 已完成 |")]),
             ]
         }
+    }
+
+    /**
+     * The lead after round 3, with a newer team started from its last reply and still at work: one member running, one
+     * waiting for the person, one done, one failed and one its Harness refused, on the switch that lets the agent send work.
+     */
+    fileprivate static func stageTeamGraph(_ model: PhoneModel, base: NativeJSON) {
+        stageTeamResults(model, base: base)
+        let started = stamp.string(from: Date().addingTimeInterval(-95))
+        func member(_ id: String, _ name: String, _ harness: String, _ state: String, said: String? = nil, refusal: String? = nil) -> NativeJSON {
+            var fields: [String: NativeJSON] = ["itemId": .string("itm_check_" + id), "name": .string(name), "title": .string(name),
+                "harnessId": .string(harness), "state": .string(state), "startedAt": .string(started)]
+            if refusal == nil { fields["sessionId"] = .string("ses_check_" + id) }
+            if let said { fields["said"] = .string(said) }
+            if let refusal { fields["refusal"] = .string(refusal) }
+            return .object(fields)
+        }
+        let newer = NativeJSON.object(["id": .string("tem_bbbbbbbbbbbbbbbbbbbbbb"), "leadSessionId": .string(teamLead), "messageId": .string("m4"),
+            "goal": .string("核对团队分工卡片"), "state": .string("running"), "agentDispatch": .bool(true),
+            "createdAt": .string("2026-11-01T11:00:00Z"), "updatedAt": .string("2026-11-01T11:00:00Z"),
+            "members": .array([member("read", "审阅改动", "codex", "running", said: "正在读 PhoneTeamGraph.swift"),
+                               member("test", "跑测试", "standard", "waiting", said: "要运行 pnpm check:quick，等你批准"),
+                               member("docs", "写文档", "codex", "done", said: "DESIGN.md 已更新"),
+                               member("lint", "修复 lint", "standard", "failed", said: "oxlint 没有通过"),
+                               member("qwen", "对照桌面", "qwen", "unstarted", refusal: "Qwen Code 没有登录")])])
+        model.snapshot = patched(model.snapshot) { fields in fields["teams"] = .array(fields["teams"]!.array + [newer]) }
     }
 
     static func openTeamExample(_ session: String, model: PhoneModel) {
