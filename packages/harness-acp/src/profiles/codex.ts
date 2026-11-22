@@ -198,8 +198,8 @@ export const codexProfile: HarnessProfile = {
   readProjectedChild: projectedChild,
   readDenial: denial,
   extensions: { requests: DECLINED },
-  // Codex 0.156.0 keeps streamed answers when a turn is interrupted or fails (its release notes); T3 Code supports
-  // app-server from the same version (its model-manifest.json). Older ones use the adapter, when it is installed.
+  // Codex 0.156.0 keeps streamed answers when a turn is interrupted or fails (its release notes), and its app-server
+  // works from that version on. Older ones use the adapter, when it is installed.
   minimumVersion: {
     args: ['--version'],
     read: readVersion,

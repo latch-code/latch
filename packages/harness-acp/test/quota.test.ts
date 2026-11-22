@@ -88,11 +88,11 @@ const codexRead = (now: number) => ({
   accountId: 'acct_0123456789',
   rateLimitUpsell: { headline: 'Upgrade for more' },
 })
-const codexAccount = { account: { type: 'chatgpt', email: 'nirvana@fastmail.com', planType: 'plus', workspaceName: 'A workspace' } }
+const codexAccount = { account: { type: 'chatgpt', email: 'robin@post.example', planType: 'plus', workspaceName: 'A workspace' } }
 
 describe('masking an account', () => {
   it('keeps the first character of each side and the last label, and nothing of anything that is not one address', () => {
-    expect(maskAccount('nirvana@fastmail.com')).toBe('n•••@f•••.com')
+    expect(maskAccount('robin@post.example')).toBe('r•••@p•••.example')
     expect(maskAccount('  A.B+tag@Mail.Example.ORG ')).toBe('A•••@m•••.org')
     expect(maskAccount('李雷@例子.测试')).toBe('李•••@例•••')
     expect(maskAccount('person@localhost')).toBe('p•••@l•••')
@@ -115,7 +115,7 @@ describe('what a client may be sent', () => {
         'not a window',
       ],
       plan: 'Plus (legacy, grandfathered)',
-      account: 'nirvana@fastmail.com',
+      account: 'robin@post.example',
       banner: 'Upgrade for more',
     })
     expect(parsed).toEqual({
@@ -153,7 +153,7 @@ describe('Codex', () => {
       ],
       whole: true,
       plan: 'plus',
-      account: 'n•••@f•••.com',
+      account: 'r•••@p•••.example',
       limited: false,
     })
   })
