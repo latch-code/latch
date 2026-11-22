@@ -825,7 +825,10 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
 .new-session-inner:has(:is(.harness-install, .harness-found)) {
   padding-top: var(--sp-48);
 }
-/* The header stays outside the scroll area so it can always close or recheck the list. */
+/*
+ * The header stays outside the scroll area so it can always close or recheck the list. The panel takes the composer's
+ * surface under it, so both follow the device palette.
+ */
 .harness-found {
   display: flex;
   flex-direction: column;
@@ -834,8 +837,8 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
   min-height: 0;
   padding: var(--sp-6);
   border-radius: var(--r-16);
-  background: var(--raised);
-  box-shadow: inset 0 0 0 1px var(--line);
+  background: var(--work-composer);
+  box-shadow: inset 0 0 0 1px var(--work-line);
 }
 .harness-found:not([data-open]) {
   padding-block: 0;
@@ -856,7 +859,7 @@ body:has(dialog[open], :popover-open, .sidebar.is-open) .titlebar {
 }
 .harness-found[data-open] .harness-found-head {
   padding-block: var(--sp-4);
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--work-line);
 }
 .harness-found-head > .ui-button {
   flex: none;
