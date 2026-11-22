@@ -54,7 +54,8 @@ jobs:
   unit:
     name: unit
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # About twelve minutes of tests after a one-minute page build.
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -64,6 +65,9 @@ jobs:
           persist-credentials: false
       - name: Set up
         uses: $/.github/actions/setup
+      # Test Hosts serve the built pages (dist/web), preview frames included.
+      - name: Build the pages
+        run: pnpm build:web
       - name: Unit and integration tests
         env:
           # The design system's tests run in a browser: Google Chrome from the runner image, instead of downloading

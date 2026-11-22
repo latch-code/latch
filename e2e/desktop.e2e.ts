@@ -518,6 +518,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
     }
   })
 
+  // About a minute on a developer Mac and slower on a CI runner, so it gets five minutes instead of the suite's two.
   it('enrolls over host.sock, keeps credentials in main, confines the renderer and leaves the Host running', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-'))
     const marks = { ran: 0 }
@@ -897,15 +898,17 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await waitFor(async () => (await harnessTrigger.getAttribute('aria-expanded')) === 'true')
       await page.keyboard.press('Escape')
       await waitFor(async () => (await harnessTrigger.getAttribute('aria-expanded')) !== 'true')
+      // A key press the page never hears fails here within seconds instead of holding the test to its timeout.
       const jumped = page.evaluate(
         () =>
-          new Promise<boolean>(done => {
+          new Promise<boolean | 'not heard'>(done => {
             const heard = (event: KeyboardEvent) => {
               if (event.code !== 'Digit1') return
               removeEventListener('keydown', heard)
               setTimeout(() => done(event.defaultPrevented))
             }
             addEventListener('keydown', heard)
+            setTimeout(() => done('not heard'), 5000)
           }),
       )
       await page.keyboard.press('Meta+Digit1')
@@ -1718,7 +1721,7 @@ describe.skipIf(latchEnv(process.env, 'ELECTRON_E2E') !== '1' || process.platfor
       await testHost.close()
       await rm(root, { recursive: true, force: true })
     }
-  })
+  }, 300_000)
 
   it('copies a reply from the message footer through the page’s own clipboard write', async () => {
     const root = await mkdtemp(join(tmpdir(), 'latch-electron-copy-'))
