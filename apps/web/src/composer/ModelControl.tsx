@@ -55,7 +55,7 @@ import { isolationBrief } from '../agents/helpers.ts'
 import { agentConfigValues, REASONING_COPY } from './modelReasoning.ts'
 import { ValuePicker } from './ComposerControl.tsx'
 import { readOnSelect, readsOnSelect } from './harnessCatalogue.tsx'
-import { defineCopy } from '../core/i18n.ts'
+import { defineCopy, formatList, listText } from '../core/i18n.ts'
 
 const COPY = defineCopy(
   {
@@ -96,7 +96,7 @@ const COPY = defineCopy(
     unusableDetail: (value1: string, value2: string, value3: string) =>
       `这个会话开始时用的「${value1}」${value2}，下一轮会失败。${value3}，或新开一个会话。`,
     forwards: '请求由 Latch 在这台 Mac 上转发，用设置里的密钥。',
-    fallsBack: (value1: string) => `出错时改用「${value1}」。`,
+    fallsBack: (names: readonly string[]) => `出错时改用「${names.join('」「')}」。`,
     experimentalDetail: (value1: string) => `协议转换，实验性：略去或受限的有${value1}；文件与服务端会话状态不能转换。`,
     experimentalNote: (value1: string) => `${value1}协议转换，实验性。`,
     limits: '略去或受限',
@@ -145,7 +145,11 @@ const COPY = defineCopy(
     unusableDetail: (value1: string, value2: string, value3: string) =>
       `This session started with “${value1}”, which ${value2}. The next turn will fail. ${value3} or start a new session.`,
     forwards: 'Latch forwards the requests on this Mac using the key in Settings.',
-    fallsBack: (value1: string) => `If the request fails, use “${value1}”.`,
+    fallsBack: (names: readonly string[]) =>
+      `If the request fails, use ${formatList(
+        names.map(name => `“${name}”`),
+        'unit',
+      )}.`,
     experimentalDetail: (value1: string) =>
       `Experimental protocol conversion. Limited or omitted: ${value1}. Files and server-side session state cannot be converted.`,
     experimentalNote: (value1: string) => `${value1} Protocol conversion is experimental.`,
@@ -691,10 +695,10 @@ function serviceHint(
   const losses = pair?.kind === 'translate' ? [...new Set(pair.losses)].map(loss => GATEWAY_LOSS_NAMES[loss]) : undefined
   const after = [
     harness?.capabilities.models.credentialInherited ? credentialInherited(name) : '',
-    others.length ? COPY.fallsBack([...new Set(others)].join('」「')) : '',
+    others.length ? COPY.fallsBack([...new Set(others)]) : '',
   ].filter(Boolean)
   return {
-    hint: [lead, losses ? COPY.experimentalDetail(losses.join('、')) : '', ...after].join(''),
+    hint: [lead, losses ? COPY.experimentalDetail(listText(losses)) : '', ...after].join(''),
     note: {
       lead: losses ? COPY.experimentalNote(lead) : lead,
       ...(losses ? { fold: { label: COPY.limits, items: [...losses, COPY.notConverted] } } : {}),

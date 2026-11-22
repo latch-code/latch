@@ -78,7 +78,7 @@ import { StagingFeedback, StagingView } from './StagingView.tsx'
 import { useStaging, type useStagingWrites } from './useStaging.ts'
 import type { GitStagingView } from '@latch/protocol'
 import { rowOf } from '../../components/overlays.tsx'
-import { defineCopy, formatNumber, plural } from '../../core/i18n.ts'
+import { defineCopy, formatNumber, listText, plural } from '../../core/i18n.ts'
 
 const COPY = defineCopy(
   {
@@ -725,7 +725,7 @@ function LineFor({
     case 'not-git':
       return (
         <Line tone="muted" icon={InfoGlyph}>
-          <VisibleText text={line.names.join('、')} />
+          <VisibleText text={listText(line.names)} />
           {COPY.notRoot}
         </Line>
       )

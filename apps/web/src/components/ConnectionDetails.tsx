@@ -1,4 +1,5 @@
 import type { DataScope, DeviceScope } from '@latch/protocol'
+import { listText } from '../core/i18n.ts'
 import { CONNECTION_DETAILS_COPY as COPY, GRANTED_TEXT } from '../core/securityCopy.ts'
 import { VisibleText } from './VisibleText.tsx'
 
@@ -60,7 +61,13 @@ export function ConnectionDetails({
         {scopes && (
           <div className="connection-details-row">
             <dt>{COPY.granted}</dt>
-            <dd>{scopes.map(scope => GRANTED_TEXT[scope]).join('、')}</dd>
+            <dd>
+              {listText(
+                // A scope without words still shows, by its name: what a device may do is never left out.
+                scopes.map(scope => GRANTED_TEXT[scope] ?? scope),
+                'unit',
+              )}
+            </dd>
           </div>
         )}
         {dataScope && (

@@ -88,6 +88,16 @@ export function formatNumber(value: number, options?: Intl.NumberFormatOptions):
   return format.format(value)
 }
 
-export function formatList(items: readonly string[], type: 'conjunction' | 'disjunction' = 'conjunction'): string {
+export function formatList(items: readonly string[], type: 'conjunction' | 'disjunction' | 'unit' = 'conjunction'): string {
   return new Intl.ListFormat(current, { style: 'long', type }).format(items)
+}
+
+/**
+ * Items named one after another, as each language writes it: Chinese puts 、 between all of them (its list format ends
+ * on 和, which reads as a sentence), English writes `A, B, C` for a row of labels (`unit`) and `A, B, and C` in a sentence.
+ * An item with no words (a label lookup that found none) is left out rather than failing the list.
+ */
+export function listText(items: readonly (string | undefined)[], type: 'conjunction' | 'unit' = 'conjunction'): string {
+  const named = items.filter((item): item is string => typeof item === 'string' && item !== '')
+  return current === 'zh-CN' ? named.join('、') : formatList(named, type)
 }

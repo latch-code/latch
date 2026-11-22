@@ -1,5 +1,5 @@
 import type { AgentAvatar, AgentBracket, AgentEyes, AgentHue } from '@latch/protocol'
-import { defineCopy } from '../core/i18n.ts'
+import { defineCopy, listText } from '../core/i18n.ts'
 
 /**
  * The bracket face on a 40 grid: the two halves of each bracket, the eyes a little below the middle, every line with
@@ -95,4 +95,5 @@ export const HUE_NAMES = defineCopy<Record<AgentHue, string>>(
     mist: 'Mist',
   },
 )
-export const avatarName = (avatar: AgentAvatar) => `${BRACKET_NAMES[avatar.bracket]}、${EYES_NAMES[avatar.eyes]}、${HUE_NAMES[avatar.hue]}`
+export const avatarName = (avatar: AgentAvatar) =>
+  listText([BRACKET_NAMES[avatar.bracket], EYES_NAMES[avatar.eyes], HUE_NAMES[avatar.hue]], 'unit')

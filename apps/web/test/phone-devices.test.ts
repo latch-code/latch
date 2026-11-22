@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { Device, NativePairingStatus } from '@latch/protocol'
 import type { DeviceAccess } from '../src/core/permissions.ts'
 import type { LatchShell } from '../src/core/shell.ts'
+import { setLocale } from '../src/core/i18n.ts'
 import {
   connectWays,
   deviceLabel,
@@ -121,6 +122,20 @@ describe('a device page', () => {
     const managing = { scopes: ['view', 'run', 'admin'] as Device['scopes'] }
     expect(grantedText(managing, true)).toBe('查看会话、开始和继续会话')
     expect(grantedText(managing, false)).toBe('查看会话、开始和继续会话、管理这台 Mac（模型服务、插件、项目和设备）')
+    // A scope the page has no words for still shows, by its name, rather than dropping out of what the device may do.
+    expect(grantedText({ scopes: ['view', 'future:scope' as Device['scopes'][number]] }, false)).toBe('查看会话、future:scope')
+  })
+
+  describe('in English', () => {
+    afterEach(() => setLocale('zh-CN'))
+
+    it('lists what the device may do with English commas, not 、', () => {
+      setLocale('en')
+      const phone = { scopes: ['view', 'run', 'approve:standard', 'approve:elevated'] as Device['scopes'] }
+      expect(grantedText(phone, false)).toBe(
+        'View sessions, Start and continue sessions, Approve standard actions, Approve high-risk actions',
+      )
+    })
   })
 })
 

@@ -16,6 +16,7 @@ import {
   formatList,
   formatNumber,
   isLocalePreference,
+  listText,
   plural,
   resolveLocale,
   setLocale,
@@ -133,6 +134,20 @@ describe('the page language', () => {
     expect(plural(1_200, forms)).toBe('1,200 files')
     expect(formatList(items)).toBe('A, B, and C')
     expect(formatNumber(1_234.5, currencies)).toBe(new Intl.NumberFormat('en', currencies).format(1_234.5))
+  })
+
+  it('names items one after another with 、 in Chinese and the English list form in English, never mixed', () => {
+    const items = ['Codex', 'OpenCode', 'Claude Agent']
+    expect(listText(items)).toBe('Codex、OpenCode、Claude Agent')
+    expect(listText(items, 'unit')).toBe('Codex、OpenCode、Claude Agent')
+    expect(listText(['Codex'])).toBe('Codex')
+
+    setLocale('en')
+    expect(listText(items, 'unit')).toBe('Codex, OpenCode, Claude Agent')
+    expect(listText(items)).toBe('Codex, OpenCode, and Claude Agent')
+    expect(listText(['Codex', 'OpenCode'])).toBe('Codex and OpenCode')
+    expect(listText([])).toBe('')
+    expect(listText(['Codex', undefined, '', 'OpenCode'], 'unit')).toBe('Codex, OpenCode')
   })
 
   it('changes an existing security refusal by code and never repeats untrusted text or targets', async () => {

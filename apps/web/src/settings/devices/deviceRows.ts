@@ -2,7 +2,7 @@ import { escapeSecurityText, type AppSnapshot, type Device } from '@latch/protoc
 import type { DeviceAccess } from '../../core/permissions.ts'
 import { DEVICES_COPY as COPY, GRANTED_TEXT } from '../../core/securityCopy.ts'
 import type { LatchShell } from '../../core/shell.ts'
-import { defineCopy } from '../../core/i18n.ts'
+import { defineCopy, listText } from '../../core/i18n.ts'
 import { relativeTime } from '../../format.ts'
 
 /** A count of minutes, hours or days reads as time ago; 刚刚, 昨天 and dates read as they are. */
@@ -102,8 +102,8 @@ export function deviceSwitches(device: Device, self: boolean, access: DeviceAcce
 
 /** The 「可以」 line: what the device may do, in the words of the connection details, without what a switch says. */
 export function grantedText(device: Pick<Device, 'scopes'>, manageSwitch: boolean): string {
-  return device.scopes
-    .filter(scope => !(manageSwitch && scope === 'admin'))
-    .map(scope => GRANTED_TEXT[scope])
-    .join('、')
+  return listText(
+    device.scopes.filter(scope => !(manageSwitch && scope === 'admin')).map(scope => GRANTED_TEXT[scope] ?? scope),
+    'unit',
+  )
 }

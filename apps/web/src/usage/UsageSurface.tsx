@@ -10,7 +10,7 @@ import { LimitWindow } from './LimitWindow.tsx'
 import { harnessLimits, LIMIT_WORDS } from './limits.ts'
 import { closeUsage, openUsage, refreshLimits, useUsageRequest, type UsageRequest, type UsageView as View } from './surface.ts'
 import { UsageView } from './UsageView.tsx'
-import { defineCopy, useLocale } from '../core/i18n.ts'
+import { defineCopy, listText, useLocale } from '../core/i18n.ts'
 
 const COPY = defineCopy(
   {
@@ -353,7 +353,7 @@ function LimitsView({
       {quiet.length > 0 && (
         <p className="usage-silent">
           <span>{COPY.unsupported}</span>
-          <span>{quiet.map(harnessName).join('、')}</span>
+          <span>{listText(quiet.map(harnessName), 'unit')}</span>
         </p>
       )}
     </div>

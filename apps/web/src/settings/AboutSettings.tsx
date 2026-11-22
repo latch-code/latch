@@ -17,7 +17,7 @@ import {
   WarningGlyph,
 } from '@latch/ui'
 import { currentShell, type UpdateView } from '../core/shell.ts'
-import { defineCopy, formatNumber, plural, useLocale } from '../core/i18n.ts'
+import { defineCopy, formatNumber, listText, plural, useLocale } from '../core/i18n.ts'
 import { harnessPresetCopy } from '../core/harnessPresetCopy.ts'
 import { computerState, olderVersion, useComputers } from '../core/computers.ts'
 import { useShellUpdates } from '../core/shellUpdates.ts'
@@ -411,9 +411,9 @@ export function UpdateArea({
         )}
       </SettingsGroup>
       {plugins.length > 0 && showNotes && (
-        <InlineNotice tone="warn">{copy.incompatible(plugins.map(item => item.name).join('、'))}</InlineNotice>
+        <InlineNotice tone="warn">{copy.incompatible(listText(plugins.map(item => item.name)))}</InlineNotice>
       )}
-      {view.heldPlugins.length > 0 && <InlineNotice>{copy.held(view.heldPlugins.map(item => item.name).join('、'))}</InlineNotice>}
+      {view.heldPlugins.length > 0 && <InlineNotice>{copy.held(listText(view.heldPlugins.map(item => item.name)))}</InlineNotice>}
       {showNotes && notes && (
         <SettingsGroup title={copy.notes(release.version)}>
           <p className="about-notes">{notes}</p>

@@ -4,7 +4,7 @@ import { Button, Drawer, Icon, InlineNotice, Kbd, MessageGlyph, Tooltip } from '
 import { api, ApiError, inlineError, MessageError } from '../core/api.ts'
 import { escapeHiddenCharacters, VisibleText } from '../components/VisibleText.tsx'
 import { cardTakesKeys, useArmed } from './useArmed.ts'
-import { defineCopy } from '../core/i18n.ts'
+import { defineCopy, listText } from '../core/i18n.ts'
 
 const COPY = defineCopy(
   {
@@ -475,7 +475,7 @@ export function QuestionResultCard({ text }: { text: string }) {
               <VisibleText text={answer.label} />
             </dt>
             <dd>
-              <VisibleText text={[...answer.choices, ...(answer.other ? [answer.other] : [])].join('、')} />
+              <VisibleText text={listText([...answer.choices, ...(answer.other ? [answer.other] : [])], 'unit')} />
             </dd>
           </div>
         ))}

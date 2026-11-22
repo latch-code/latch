@@ -20,7 +20,7 @@ import { absoluteTime, argumentView, basename, clockTime, dayClockTime, formatDu
 import { diffLines, previousState } from './diff.ts'
 import { toolKind } from './icons.tsx'
 import { thinkingWord } from './composer/modelReasoning.ts'
-import { currentLocale, defineCopy, formatList, plural } from './core/i18n.ts'
+import { currentLocale, defineCopy, listText, plural } from './core/i18n.ts'
 
 const COPY = defineCopy(
   {
@@ -1245,7 +1245,7 @@ export function resendWarning(effects: SideEffects): string | undefined {
       effects.commands ? COPY.commands(effects.commands) : '',
       effects.others ? COPY.otherTools(effects.others) : '',
     ].filter(Boolean)
-    parts.push(COPY.executed(done, currentLocale() === 'en' ? formatList(what) : what.join('、')))
+    parts.push(COPY.executed(done, listText(what)))
   }
   if (effects.unknown > 0) parts.push(COPY.unknown(effects.unknown))
   parts.push(COPY.mayRepeat)

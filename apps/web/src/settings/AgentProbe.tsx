@@ -6,7 +6,7 @@ import { VisibleText } from '../components/VisibleText.tsx'
 import { api, inlineError, isUncertain } from '../core/api.ts'
 import { dateTime } from '../format.ts'
 import { NoteLine, SettingsGroup, SettingsRow } from './common.tsx'
-import { defineCopy, formatNumber, plural } from '../core/i18n.ts'
+import { defineCopy, formatNumber, listText, plural } from '../core/i18n.ts'
 
 const COPY = defineCopy(
   {
@@ -211,7 +211,12 @@ export function AgentProbe({
             {result.authMethods.length > 0 && (
               <p className="agent-probe-meta">
                 {COPY.loginMethods}
-                <VisibleText text={result.authMethods.map(method => method.name).join('、')} />
+                <VisibleText
+                  text={listText(
+                    result.authMethods.map(method => method.name),
+                    'unit',
+                  )}
+                />
               </p>
             )}
             {result.diagnostic && (
