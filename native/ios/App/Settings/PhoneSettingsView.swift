@@ -15,6 +15,7 @@ struct PhoneSettingsView: View {
     @AppStorage(PhoneQuestionReminders.enabledKey) private var questionReminders = true
     @State private var changingNotices = false
     @State private var noticesRefused = false
+    @State private var usage: UsageTab?
     var body: some View {
         NavigationStack {
             Form {
@@ -27,6 +28,15 @@ struct PhoneSettingsView: View {
                         }
                     }
                     Button("添加电脑", action: addComputer)
+                }
+                Section {
+                    Button { usage = .quota } label: {
+                        HStack {
+                            Text("额度与用量").foregroundStyle(PhoneTheme.ink)
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(PhoneTheme.faint)
+                        }
+                    }
                 }
                 Section {
                     Toggle("查看会话前用 Face ID", isOn: Binding(get: { faceID }, set: { next in
@@ -66,6 +76,10 @@ struct PhoneSettingsView: View {
             }
             .navigationTitle("设置")
         }
+        .sheet(item: $usage) { tab in UsageSheet(tab: tab).environmentObject(model) }
+        #if LATCH_SCREENS
+        .task(id: model.staged) { if model.staged, let tab = ScreensStage.usageTab { usage = tab } }
+        #endif
     }
 }
 

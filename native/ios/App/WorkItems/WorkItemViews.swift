@@ -680,7 +680,9 @@ struct WorkSectionTitle: View {
 struct WorkStatus: View {
     let reason: PhoneWorkReason
     var body: some View {
+        // A list Label leaves a wide icon column; the reason reads as one short phrase.
         Label(reason.label, systemImage: reason == .failed ? "exclamationmark.circle" : reason == .question ? "questionmark.bubble" : reason == .approval ? "shield" : "clock")
+            .labelStyle(TightLabel())
             .font(.subheadline.weight(.medium)).foregroundStyle(reason == .failed ? PhoneTheme.red : reason == .settled ? PhoneTheme.muted : PhoneTheme.amber)
     }
 }

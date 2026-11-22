@@ -114,6 +114,10 @@ func phoneProjectionFixture(_ input: [String: Any]) throws -> [String: Any] {
         },
         "rows": tasks.map { words(PhoneSessions.rowStatus($0)) },
         "frozen": tasks.map { words(PhoneSessions.rowStatus($0, frozen: true)) },
+        "waits": tasks.map { PhoneSessions.waitWords($0) ?? "" },
+        "marks": [false, true].map { unread in tasks.map { PhoneSessions.mark(PhoneSessions.rowStatus($0), unread: unread).map { String(describing: $0) } ?? "" } },
+        "activities": [["activity": "command"], ["activity": "model"], ["activity": "starting"], ["activity": "tool"], ["queued": true], ["queuedFor": "DeepSeek"], [:]]
+            .map { PhoneSessions.activityWords(NativeJSON.object($0.mapValues { value -> NativeJSON in (value as? Bool).map(NativeJSON.bool) ?? .string(value as? String ?? "") })) },
         "shelves": PhoneSessions.shelves(tasks: tasks, workspaces: workspaces).map { ["label": $0.label, "ids": $0.tasks.compactMap { $0["id"].string }] },
         "found": PhoneSessions.shelves(tasks: tasks, workspaces: workspaces, query: value["query"].string ?? "").map { $0.label },
         "turns": turns.map { turn -> [String: Any] in

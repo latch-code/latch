@@ -242,8 +242,59 @@ public enum PhoneSessions {
     }
     /** 运行中 1:12, or 运行中 alone when the Host did not say when the run began. */
     public static func runningWords(_ live: NativeJSON, hostNow: Date) -> String {
-        guard let elapsed = runElapsed(started: live["runStartedAt"], waited: live["runWaitMs"], waiting: live["runWaitingSince"], hostNow: hostNow) else { return "运行中" }
-        return "运行中 " + PhoneTime.runClock(seconds: elapsed)
+        let words = activityWords(live)
+        guard let clock = runningClock(live, hostNow: hostNow) else { return words }
+        return words + " " + clock
+    }
+    /** The run's clock alone (1:12), for a row that says its activity elsewhere; nil when the Host did not say when it began. */
+    public static func runningClock(_ live: NativeJSON, hostNow: Date) -> String? {
+        runElapsed(started: live["runStartedAt"], waited: live["runWaitMs"], waiting: live["runWaitingSince"], hostNow: hostNow).map { PhoneTime.runClock(seconds: $0) }
+    }
+    /**
+     * What a running row says the run is doing, as the web's `activityWords`: a request queued for a model service says
+     * which service it waits for; otherwise the phase; 运行中 when the Host named none.
+     */
+    public static func activityWords(_ live: NativeJSON) -> String {
+        if let reason = live["queuedFor"].string, !reason.isEmpty { return "排队：" + PhoneConversation.visible(reason) }
+        if live["queued"].bool { return "排队" }
+        switch live["activity"].string {
+        case "starting": return "在启动"
+        case "model": return "在等模型"
+        case "command": return "在跑命令"
+        case "tool": return "在用工具"
+        default: return "运行中"
+        }
+    }
+    /** What a row of 等你处理 waits on, as the web's `waitKind`: 审批, the questions it asked, or a request Latch could not answer. */
+    public static func waitWords(_ task: NativeJSON) -> String? {
+        let live = live(task)
+        if live["activity"].string == "cancelling" { return nil }
+        let status = task["status"].string
+        guard status == "running" || status == "waiting-approval" else { return nil }
+        let questions = Int(task["pendingQuestions"].integer ?? 0)
+        var asks: [String] = []
+        // A question also holds the session at waiting-approval: that alone is no approval.
+        if status == "waiting-approval" && questions == 0 { asks.append("审批") }
+        if questions > 0 { asks.append("\(questions) 个问题") }
+        if !asks.isEmpty { return asks.joined(separator: " · ") }
+        if stuckOnRequest(live) { return "不支持的请求" }
+        return nil
+    }
+    /**
+     * The mark on a row's Harness icon, as the web's `rowMark`: running work spins, what waits on the person is amber, a
+     * failure red, a new answer a quiet dot. Nothing at rest, after a plain stop or while the connection is down.
+     */
+    public enum Mark: Equatable, Sendable { case running, waiting, silent, unknown, failed, unread }
+    public static func mark(_ status: PhoneRowStatus, unread: Bool) -> Mark? {
+        switch status {
+        case .running, .stopping: return .running
+        case .waiting: return .waiting
+        case .silent: return .silent
+        case .failed: return .failed
+        case let .ended(_, unknown): return unknown > 0 ? .unknown : unread ? .unread : nil
+        case .read: return unread ? .unread : nil
+        case .frozen: return nil
+        }
     }
     /** 没有动静 3 分钟, counted from the engine's last sign of life. */
     public static func silentWords(_ live: NativeJSON, hostNow: Date) -> String {
@@ -289,7 +340,9 @@ public enum PhoneSessions {
         let listed = tasks.filter { !$0["archived"].bool }
             .map { (task: $0, at: PhoneTime.parse($0["updatedAt"]) ?? .distantPast) }.sorted { $0.at > $1.at }.map(\.task)
         let waiting = needle.isEmpty ? listed.filter(waitsOnYou) : []
-        let shelved = Set(waiting.compactMap { $0["id"].string })
+        // What is at work comes next, across projects, as the leading agent apps put it: the newest run first.
+        let working = needle.isEmpty ? listed.filter { $0["status"].string == "running" && !waitsOnYou($0) } : []
+        let shelved = Set((waiting + working).compactMap { $0["id"].string })
         var order: [String] = [], grouped: [String: [NativeJSON]] = [:], labels: [String: String] = [:], other: [NativeJSON] = []
         for task in listed where !shelved.contains(task["id"].string ?? "") {
             let project = project(of: task, workspaces: workspaces)
@@ -303,6 +356,7 @@ public enum PhoneSessions {
         let memberOrder = teams.map(PhoneTeamOrder.init)
         var result: [PhoneShelf] = []
         if !waiting.isEmpty { result.append(PhoneShelf(id: "waiting", label: "等你处理", tasks: waiting)) }
+        if !working.isEmpty { result.append(PhoneShelf(id: "running", label: "运行中", tasks: working)) }
         for id in order { result.append(PhoneShelf(id: "project:" + id, label: labels[id] ?? id, tasks: pinnedFirst(grouped[id] ?? []), order: memberOrder)) }
         if !other.isEmpty { result.append(PhoneShelf(id: "other", label: "对话", tasks: pinnedFirst(other), order: memberOrder)) }
         return result

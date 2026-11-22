@@ -2302,10 +2302,18 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     expect(result.frozen).toEqual(['frozen', 'frozen', 'frozen', 'frozen', 'frozen', 'ended:已强制停止:2', 'failed', 'read', 'read'])
     expect(result.shelves).toEqual([
       { label: '等你处理', ids: ['d', 'b', 'a'] },
-      { label: 'latch', ids: ['c'] },
+      // What is at work comes next, across projects, newest first; a stop being asked for is still at work.
+      { label: '运行中', ids: ['e', 'c'] },
       // A session an assistant ran stays listed, to be read.
-      { label: '对话', ids: ['i', 'g', 'f', 'e'] },
+      { label: '对话', ids: ['i', 'g', 'f'] },
     ])
+    // As the web's waitKind, rowMark and activityWords: what a waiting row asks, the mark on its icon, what a run does.
+    expect(result.waits).toEqual(['审批', '1 个问题', '', '', '', '', '', '', ''])
+    expect(result.marks).toEqual([
+      ['waiting', 'waiting', 'running', 'silent', 'running', 'unknown', 'failed', '', ''],
+      ['waiting', 'waiting', 'running', 'silent', 'running', 'unknown', 'failed', 'unread', 'unread'],
+    ])
+    expect(result.activities).toEqual(['在跑命令', '在等模型', '在启动', '在用工具', '排队', '排队：DeepSeek', '运行中'])
     expect(result.found).toEqual(['latch'])
     expect(result.turns).toEqual([
       {
@@ -4249,6 +4257,266 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
     ])
     expect(result.ends).toEqual(['members', 'you', 'pending', 'stopping', 'returned', 'kept'])
     expect(result.words).toEqual(['等成员', '等你处理', '正在停止…', '结果待发', '已交回', '留在这里'])
+  })
+  it('reads 额度与用量 as the desktop does: windows, pace, balance, failures, silent Harnesses and usage totals', async () => {
+    const now = Date.parse('2026-11-19T12:00:00.000Z')
+    const at = (seconds: number) => new Date(now + seconds * 1000).toISOString()
+    const own = (id: string, label: string, extra: Record<string, unknown> = {}, quota = true) => ({
+      id,
+      status: 'ready',
+      capabilities: { display: { label, mark: id }, models: { owner: 'harness', ...(quota ? { quota: true } : {}) } },
+      ...extra,
+    })
+    const catalog = {
+      providers: [{ id: 'deepseek', name: 'DeepSeek' }],
+      workspaces: [
+        { id: 'default', name: 'default' },
+        { id: 'latch', name: 'latch' },
+      ],
+      harnesses: [
+        { id: 'standard', status: 'ready', capabilities: { display: { label: 'Latch' }, models: { owner: 'latch' } } },
+        own('claude-agent', 'Claude Agent', { quotaRead: { afterTurn: true } }),
+        own('codex', 'Codex', {
+          quota: {
+            plan: 'pro',
+            account: 'n•••@f•••.com',
+            state: 'near',
+            observedAt: at(-180),
+            windows: [
+              { kind: 'five-hour', usedPercent: 50, resetsAt: at(2 * 3600) },
+              { kind: 'weekly', usedPercent: 85, resetsAt: at(3 * 86400 + 5 * 3600) },
+              { kind: 'weekly-opus', usedPercent: 10, resetsAt: at(-3600) },
+              { kind: 'weekly-sonnet', usedPercent: 40, resetsAt: at(5 * 86400) },
+            ],
+          },
+        }),
+        own('grok', 'Grok Build', {
+          quota: {
+            plan: 'supergrok',
+            state: 'limited',
+            observedAt: at(-10),
+            balanceCents: 1230,
+            currency: 'CNY',
+            windows: [{ kind: 'five-hour', usedPercent: 100, resetsAt: at(30) }],
+          },
+        }),
+        own('antigravity', 'Antigravity', {
+          quota: {
+            state: 'limited',
+            observedAt: at(-7200),
+            windows: [
+              { kind: 'rolling', group: 'gemini', windowMinutes: 300, usedPercent: 0, resetsAt: at(5 * 3600) },
+              { kind: 'rolling', group: 'claude-gpt', windowMinutes: 10080, state: 'near', resetsAt: at(86400) },
+            ],
+          },
+        }),
+        own('dsh', 'DeepSeek Harness', { quotaRead: { failed: { at: at(-60), reason: 'no-key' } } }),
+        own('pi', 'pi', { quotaRead: { failed: { at: at(-60), reason: 'failed' } } }),
+        own('goose', 'goose', { quotaRead: { running: true } }),
+        own('cursor', 'Cursor', {
+          quota: { state: 'ok', observedAt: at(-86400), windows: [{ kind: 'weekly', usedPercent: 20, resetsAt: at(-60) }] },
+        }),
+        own('opencode', 'OpenCode', {}, false),
+        { ...own('qwen', 'Qwen Code', {}, false), status: 'unavailable' },
+      ],
+    }
+    const row = (fields: Record<string, unknown>) => ({
+      requests: 0,
+      turns: 0,
+      failed: 0,
+      fallbacks: 0,
+      measured: 0,
+      partial: { cacheReadTokens: false, cacheWriteTokens: false, reasoningTokens: false },
+      cost: [],
+      uncosted: 0,
+      ...fields,
+    })
+    const point = (bucket: number, harness: string, by: string, input: number, output: number, cacheRead = 0, cacheBase = 0) => ({
+      bucket,
+      by,
+      harness,
+      requests: 1,
+      turns: 0,
+      measured: 1,
+      inputTokens: input,
+      outputTokens: output,
+      cacheReadTokens: cacheRead,
+      cacheBase,
+    })
+    const days = Array.from({ length: 7 }, (_, index) => `2026-11-${13 + index}T00:00:00.000Z`)
+    const summary = (period: string, group: string, buckets: string[], rows: unknown[], series: unknown[] = []) => ({
+      period,
+      group,
+      by: 'all',
+      from: buckets[0] ?? at(0),
+      to: at(0),
+      timeZone: 'UTC',
+      buckets,
+      series,
+      hours: [],
+      rows,
+      projects: [],
+      compare: [],
+      skipped: 0,
+      truncated: false,
+    })
+    const result = await invoke({
+      operation: 'phoneUsage',
+      now: at(0),
+      catalog,
+      summaries: [
+        summary(
+          '7',
+          'harness',
+          days,
+          [
+            row({
+              by: 'gateway',
+              harness: 'codex',
+              requests: 4,
+              measured: 4,
+              usage: { inputTokens: 8000, outputTokens: 2000 },
+              cost: [{ currency: 'USD', micros: 1_200_000 }],
+            }),
+            row({
+              by: 'own',
+              harness: 'codex',
+              turns: 3,
+              measured: 3,
+              usage: { inputTokens: 1000, outputTokens: 500 },
+              cost: [{ currency: 'USD', micros: 2100, estimated: true }],
+            }),
+            row({ by: 'own', harness: 'claude-agent', turns: 2 }),
+          ],
+          [point(0, 'codex', 'gateway', 8000, 2000, 3000, 6000), point(6, 'codex', 'own', 1000, 500)],
+        ),
+        summary(
+          '1',
+          'model',
+          ['2026-11-19T10:00:00.000Z', '2026-11-19T11:00:00.000Z'],
+          [
+            row({
+              by: 'gateway',
+              providerId: 'deepseek',
+              model: 'deepseek-chat',
+              requests: 1,
+              measured: 1,
+              usage: { inputTokens: 900, outputTokens: 100 },
+              cost: [{ currency: 'CNY', micros: 3_400_000 }],
+            }),
+            row({ by: 'own', harness: 'codex', model: 'gpt-5', turns: 1, measured: 1, usage: { inputTokens: 3000, outputTokens: 0 } }),
+          ],
+          [point(1, 'codex', 'own', 3000, 0), point(1, 'codex', 'gateway', 900, 100)],
+        ),
+        summary('30', 'project', days, [
+          row({ by: 'own', harness: 'codex', projectId: 'latch', turns: 1, measured: 1, usage: { inputTokens: 300, outputTokens: 0 } }),
+          row({ by: 'own', harness: 'codex', projectId: 'default', turns: 1, measured: 1, usage: { inputTokens: 100, outputTokens: 0 } }),
+          row({ by: 'own', harness: 'codex', turns: 1, measured: 1, usage: { inputTokens: 100, outputTokens: 0 } }),
+        ]),
+        summary('90', 'harness', [], []),
+        summary('2', 'harness', [], []),
+      ],
+    })
+    const block = (id: string) => (result.blocks as Array<Record<string, unknown>>).find(item => item.id === id)
+    // Those with figures first; the built-in, an unavailable one and one that never reports are not blocks.
+    expect((result.blocks as Array<{ id: string }>).map(item => item.id)).toEqual([
+      'codex',
+      'grok',
+      'antigravity',
+      'claude-agent',
+      'dsh',
+      'pi',
+      'goose',
+      'cursor',
+    ])
+    expect(result.silent).toEqual(['OpenCode'])
+    expect(result.worst).toBe('limited')
+    expect(block('codex')).toMatchObject({
+      state: 'near',
+      facts: ['Pro', 'n•••@f•••.com'],
+      balance: null,
+      account: false,
+      observed: '更新于 3 分钟前',
+      // The Opus window is past its reset and goes; the five-hour window lasts past its reset at this rate, the weekly
+      // one does not, and the Sonnet one runs out on Sunday.
+      windows: [
+        { group: null, name: '每 5 小时', state: 'ok', used: '已用 50%', reset: '2 小时后重置', pace: null },
+        { group: null, name: '每周', state: 'near', used: '已用 85%', reset: '3 天 5 小时后重置', pace: '按现在的速度约 明天 04:03 用完' },
+        { group: null, name: '每周 · Sonnet', state: 'ok', used: '已用 40%', reset: '5 天后重置', pace: '按现在的速度约 周日 12:00 用完' },
+      ],
+    })
+    expect(block('grok')).toMatchObject({
+      state: 'limited',
+      facts: ['SuperGrok'],
+      balance: '余额 ¥12.30',
+      account: false,
+      windows: [{ name: '每 5 小时', state: 'limited', used: '已用 100%', reset: '即将重置', pace: null }],
+    })
+    expect(block('antigravity')).toMatchObject({
+      state: 'limited',
+      account: true,
+      observed: '更新于 2 小时前',
+      windows: [
+        // Nothing used and a whole window to go: not started, so no reset time.
+        { group: 'Gemini 模型', name: '每 5 小时', state: 'ok', used: '已用 0%', reset: null, pace: null },
+        { group: 'Claude 与 GPT 模型', name: '每 7 天', state: 'near', used: '将用尽', reset: '1 天后重置', pace: null },
+      ],
+    })
+    expect(['claude-agent', 'dsh', 'pi', 'goose', 'cursor'].map(id => [block(id)?.note, block(id)?.retry, block(id)?.reading])).toEqual([
+      ['只在对话中报告', false, false],
+      ['无 API 密钥', false, false],
+      ['读取失败', true, false],
+      [null, false, true],
+      ['尚未报告额度', false, false],
+    ])
+    expect(result.summaries).toEqual([
+      {
+        tokens: '11.5k',
+        facts: ['5 轮', '4 次请求', '输入 9k · 输出 2.5k', '缓存命中 50%'],
+        costs: ['$1.20'],
+        estimated: true,
+        empty: false,
+        buckets: ['11/13=10000', '11/14=0', '11/15=0', '11/16=0', '11/17=0', '11/18=0', '11/19=1500'],
+        // One Harness's gateway and own-login rows are one row; a Harness that reported no tokens says so.
+        rows: ['Codex | - | 11.5k | 1.00 | $1.20', 'Claude Agent | - | 未报告 | 0.00 | -'],
+      },
+      {
+        tokens: '4k',
+        facts: ['1 轮', '1 次请求', '输入 3.9k · 输出 100'],
+        costs: ['¥3.40'],
+        estimated: false,
+        empty: false,
+        buckets: ['10:00=0', '11:00=4000'],
+        rows: ['gpt-5 | Codex · 自己登录 | 3k | 0.75 | -', 'deepseek-chat | DeepSeek | 1k | 0.25 | ¥3.40'],
+      },
+      {
+        tokens: '500',
+        facts: ['3 轮', '输入 500 · 输出 0'],
+        costs: [],
+        estimated: false,
+        empty: false,
+        buckets: ['11/13=0', '11/14=0', '11/15=0', '11/16=0', '11/17=0', '11/18=0', '11/19=0'],
+        rows: ['latch | - | 300 | 0.60 | -', '默认文件夹 | - | 100 | 0.20 | -', '其他 | - | 100 | 0.20 | -'],
+      },
+      { tokens: '0', facts: ['0 次请求'], costs: [], estimated: false, empty: true, buckets: [], rows: [] },
+      null,
+    ])
+    expect(result.tokens).toEqual(['0', '850', '9.1k', '12.4k', '100k', '124k', '999k', '1M', '1.3M'])
+    expect(result.costs).toEqual(['$0.0021', '¥12.50', '$1,234.57', '$0.00'])
+    // Above a conversation's input once its Harness used a limit up: the window and when the last used-up one starts over.
+    expect(result.notices).toEqual([
+      '',
+      '',
+      '',
+      'Grok Build 每 5 小时的额度已用完 · 即将重置',
+      'Antigravity 的额度已用完',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+    ])
   })
   it('derives the composer’s attachment decisions: reasons, limits, refusal classes, the tray and metadata-free images', async () => {
     const result = await invoke({ operation: 'phoneAttachments' })

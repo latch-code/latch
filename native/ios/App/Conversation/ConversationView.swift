@@ -297,6 +297,7 @@ struct ConversationView: View {
                 .background(PhoneTheme.raised, in: Capsule()).overlay(Capsule().stroke(PhoneTheme.lineStrong))
                 .padding(.horizontal, 12).padding(.bottom, 8)
             } else {
+                QuotaLimitLine(harnessId: summary["harnessId"].string ?? "")
                 // A stop needs no window, so it stays in reach while the content is closed.
                 PromptComposer(draftId: id, placeholder: frame.map { PhoneAgentChat.placeholder($0.entry.name) }, gate: rebuiltInto != nil ? "已按文字重建为新会话 · 这个会话只能查看"
                     : hasContent || !model.connected ? inputReason : PromptComposer.closedWindow, engine: engine, person: frame != nil,
@@ -473,5 +474,34 @@ struct DiffStatText: View {
                 Text("−\(del)").foregroundStyle(PhoneTheme.red)
             }.font(.system(size: 13).monospacedDigit())
         }
+    }
+}
+
+/**
+ * Above the input once the session's Harness has used a limit up, as the leading agent apps say it in the conversation:
+ * which limit and when it starts over. Pressing it opens 额度与用量. Nothing is shown while the Harness has room.
+ */
+private struct QuotaLimitLine: View {
+    @EnvironmentObject private var model: PhoneModel
+    let harnessId: String
+    @State private var showing = false
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { _ in
+            if let words = PhoneUsage.limitNotice(model.snapshot["catalog"], harnessId: harnessId, now: model.hostNow()) {
+                Button { showing = true } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "gauge.with.dots.needle.100percent").font(.system(size: 12))
+                        Text(words).lineLimit(2).multilineTextAlignment(.leading)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(PhoneTheme.faint)
+                    }
+                    .font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                    .padding(.horizontal, 14).frame(minHeight: 36).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).padding(.horizontal, 12)
+                .accessibilityHint("打开额度与用量")
+            }
+        }
+        .sheet(isPresented: $showing) { UsageSheet().environmentObject(model) }
     }
 }

@@ -46,6 +46,10 @@ struct InboxView: View {
                         ComputerMenu().disabled(model.busy || model.verifying)
                     }
                 }
+                // 额度与用量 beside the session list, tinted when a subscription is nearly or wholly used.
+                if !model.workItemsShown && !model.snapshot["catalog"]["harnesses"].array.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) { UsageToolbarButton() }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     if !model.workItemsShown {
                         Button("新会话", systemImage: "square.and.pencil") { creating = true }.labelStyle(.iconOnly).disabled(!model.connected)
@@ -152,6 +156,13 @@ struct InboxView: View {
                 let collapsible = shelf.id.hasPrefix("project:") || shelf.id == "other"
                 let collapsed = disclosure.isCollapsed(shelf.id, computer: computer, filtering: filtering)
                 Section {
+                    // Every group's title is a row of the same height, so the groups stand evenly apart.
+                    if !collapsible && !shelf.label.isEmpty {
+                        ShelfHeader(label: shelf.label, count: shelf.id == "waiting" && waitingItems > 0 ? nil : shelf.rows.count)
+                            .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 0, trailing: 16))
+                            .listRowSeparator(.hidden).listRowBackground(PhoneTheme.canvas)
+                            .accessibilityAddTraits(.isHeader)
+                    }
                     if collapsible {
                         FoldableListHeading(title: PhoneConversation.visible(shelf.label), count: shelf.rows.count, noun: "会话",
                             collapsed: collapsed, filtering: filtering, identifier: "inbox.project." + shelf.id,
@@ -163,16 +174,14 @@ struct InboxView: View {
                     if !collapsed {
                         let visibleRows = shelf.rows.filter { row in row.parentId.map { !teamCollapsed($0) } ?? true }
                         ForEach(visibleRows) { row in
-                            sessionRow(row, inWaiting: shelf.id == "waiting", workspaces: workspaces)
+                            sessionRow(row, inWaiting: shelf.id == "waiting" || shelf.id == "running", workspaces: workspaces)
                                 .tag(row.id)
-                                .listRowInsets(EdgeInsets(top: 0, leading: collapsible ? 32 : 20, bottom: 0, trailing: 16))
+                                .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 16))
                                 .listRowBackground(model.sessionId == row.id ? PhoneTheme.selectedRow : PhoneTheme.canvas)
                                 .listRowSeparatorTint(PhoneTheme.line)
                                 .sessionActions(row.task, model: model)
                         }
                     }
-                } header: {
-                    if !collapsible && !shelf.label.isEmpty { ShelfHeader(label: shelf.label, count: shelf.id == "waiting" && waitingItems > 0 ? nil : shelf.rows.count) }
                 }
                 if shelf.id == "waiting", !others.isEmpty { OtherComputersSection(groups: others) }
             }
@@ -183,6 +192,7 @@ struct InboxView: View {
             }
         }
         .listStyle(.plain)
+        .listSectionSpacing(.compact)
         .tint(PhoneTheme.selectedRow)
         .scrollContentBackground(.hidden)
         .background(PhoneTheme.canvas)
@@ -282,13 +292,17 @@ struct InboxSearchField: View {
 
 private extension View {
     func plainRow() -> some View { tint(PhoneTheme.ink).listRowSeparator(.hidden).listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)) }
-    /** The session menu held down, and swiped: 置顶 from the leading edge, 归档 and 删除 from the trailing one. */
+    /** The session menu held down, and swiped: 已读 and 置顶 from the leading edge, 归档 and 删除 from the trailing one. */
     @ViewBuilder func sessionActions(_ task: NativeJSON, model: PhoneModel) -> some View {
         if PhoneSessionMenu.sections(task, canRun: model.canRun).isEmpty { self }
         else {
             let busy = model.busy || !model.connected
             contextMenu { SessionMenuButtons(task: task) }
                 .swipeActions(edge: .leading) {
+                    // A new answer can be marked read without opening it; this device keeps what it has seen.
+                    if model.unread(task), let id = task["id"].string {
+                        Button("标为已读", systemImage: "checkmark.circle") { model.markSeen(id) }.tint(PhoneTheme.accent)
+                    }
                     Button(task["pinned"].bool ? "取消置顶" : "置顶", systemImage: task["pinned"].bool ? "pin.slash" : "pin") { Task { await model.choose(.pin, task: task) } }
                         .tint(PhoneTheme.muted).disabled(busy)
                 }
@@ -331,18 +345,18 @@ struct FoldableListHeading: View {
     let toggle: () -> Void
 
     var body: some View {
-        let label = HStack(spacing: 8) {
-            if let symbol { Image(systemName: symbol).font(.subheadline.weight(.medium)).foregroundStyle(PhoneTheme.muted) }
+        // A group's title is a quiet line, not a card: the rows are what is read.
+        let label = HStack(spacing: 7) {
+            if let symbol { Image(systemName: symbol).font(.footnote.weight(.medium)).foregroundStyle(PhoneTheme.muted) }
             Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(titleColor).lineLimit(2)
+            Text(count, format: .number).font(.caption.monospacedDigit()).foregroundStyle(PhoneTheme.faint)
             Spacer(minLength: 4)
-            Text(count, format: .number).font(.caption.monospacedDigit()).foregroundStyle(PhoneTheme.muted)
             if !filtering {
                 Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold)).foregroundStyle(PhoneTheme.muted).frame(width: 12)
+                    .font(.caption2.weight(.semibold)).foregroundStyle(PhoneTheme.faint).frame(width: 12)
                     .rotationEffect(.degrees(collapsed ? (layoutDirection == .rightToLeft ? 90 : -90) : 0))
             }
-        }.padding(.horizontal, 12).frame(minHeight: 44)
-            .background(PhoneTheme.sunken, in: RoundedRectangle(cornerRadius: 10)).contentShape(Rectangle())
+        }.padding(.horizontal, 4).frame(minHeight: 44).contentShape(Rectangle())
         Group {
             if filtering {
                 label.accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
@@ -360,7 +374,7 @@ struct FoldableListHeading: View {
                     .accessibilityIdentifier(identifier)
             }
         }
-        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 0, trailing: 16))
+        .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 0, trailing: 16))
         .listRowSeparator(.hidden).listRowBackground(PhoneTheme.canvas)
     }
 }
@@ -369,11 +383,11 @@ private struct ShelfHeader: View {
     let label: String
     let count: Int?
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 7) {
             Text(label).font(.subheadline.weight(.semibold)).foregroundStyle(PhoneTheme.ink).lineLimit(2)
-            if let count { Text("\(count)").font(.system(size: 13)).foregroundStyle(PhoneTheme.faint) }
-            Rectangle().fill(PhoneTheme.line).frame(height: 1)
-        }.textCase(nil)
+            if let count { Text("\(count)").font(.caption.monospacedDigit()).foregroundStyle(PhoneTheme.faint) }
+            Spacer(minLength: 0)
+        }.textCase(nil).padding(.horizontal, 4).frame(minHeight: 44)
     }
 }
 
@@ -454,6 +468,11 @@ private struct TeamBranch: View {
     }
 }
 
+/**
+ * A session row as the leading agent apps lay it out, in the web's words: its Harness with a mark for what needs you
+ * (amber), what failed (red) or a new answer (blue); the title with the time, or the run's clock while it works; then
+ * what it is doing or waits on, the Harness and its project or branch.
+ */
 struct InboxRow: View {
     @EnvironmentObject private var model: PhoneModel
     let task: NativeJSON
@@ -463,60 +482,121 @@ struct InboxRow: View {
     let isTeamMember: Bool
     private var status: PhoneRowStatus { PhoneSessions.rowStatus(task, frozen: frozen) }
     private var selected: Bool { model.sessionId == task.id }
-    private var strong: Bool { if case .read = status { return false }; return true }
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text(PhoneConversation.visible(task["title"].string ?? "会话")).font(.body.weight(selected ? .semibold : strong ? .medium : .regular)).foregroundStyle(PhoneTheme.ink).lineLimit(2)
-                    .accessibilityLabel((isTeamMember ? "团队成员，" : "") + PhoneConversation.visible(task["title"].string ?? "会话"))
-                Spacer(minLength: 4)
-                RowStatusSlot(task: task, status: status, frozenAt: model.lastConfirmed)
-                    .layoutPriority(1)
-            }
-            HStack(spacing: 6) {
-                EngineTile(mark: model.engineMark(task["harnessId"].string), size: 14)
-                Text(([model.engineName(task["harnessId"].string)] + [PhoneSessions.rowMeta(task, project: project)].compactMap { $0 }).joined(separator: " · "))
-                    .font(.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
-                if let id = task["id"].string, PhoneHandoffs.awaiting(model.snapshot).contains(id) {
+        let status = status, unread = !selected && model.unread(task), mark = PhoneSessions.mark(status, unread: unread)
+        let title = PhoneConversation.visible(task["title"].string ?? "会话")
+        HStack(alignment: .top, spacing: 10) {
+            RowMarkTile(mark: model.engineMark(task["harnessId"].string), state: mark).padding(.top, 2)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(title).font(.body.weight(selected ? .semibold : (mark != nil && mark != .running) || unread ? .medium : .regular))
+                        .foregroundStyle(PhoneTheme.ink).lineLimit(2)
+                        .accessibilityLabel((isTeamMember ? "团队成员，" : "") + title)
                     Spacer(minLength: 4)
-                    Text("待交回").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber)
+                    RowTrailing(task: task, status: status).layoutPriority(1)
+                }
+                RowSecondLine(task: task, status: status, meta: ([model.engineName(task["harnessId"].string)] + [PhoneSessions.rowMeta(task, project: project)].compactMap { $0 }).joined(separator: " · "),
+                    awaitingReturn: task["id"].string.map { PhoneHandoffs.awaiting(model.snapshot).contains($0) } ?? false)
+                if let id = task["id"].string, let label = model.reviewShortcuts[id] {
+                    Button { model.openReview(id) } label: {
+                        HStack(spacing: 4) {
+                            Text(label).font(.system(size: 13, weight: .medium))
+                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                        }.foregroundStyle(PhoneTheme.ink).padding(.horizontal, 10).frame(minHeight: 30).background(PhoneTheme.bubble, in: Capsule())
+                    }.buttonStyle(.borderless).padding(.top, 3).accessibilityHint("打开复核页")
                 }
             }
-            if let id = task["id"].string, let label = model.reviewShortcuts[id] {
-                Button { model.openReview(id) } label: {
-                    HStack(spacing: 4) {
-                        Text(label).font(.system(size: 13, weight: .medium))
-                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
-                    }.foregroundStyle(PhoneTheme.ink).padding(.horizontal, 10).frame(minHeight: 30).background(PhoneTheme.bubble, in: Capsule())
-                }.buttonStyle(.borderless).padding(.top, 2).accessibilityHint("打开复核页")
-            }
-        }.frame(minHeight: 48, alignment: .center).accessibilityElement(children: .contain)
+        }
+        .frame(minHeight: 48, alignment: .center).accessibilityElement(children: .contain)
+        .accessibilityValue(unread ? "有新内容" : "")
     }
 }
 
-private struct RowStatusSlot: View {
+/** The Harness's mark with a small dot at its corner for the row's state; a working run says so on its clock instead. */
+private struct RowMarkTile: View {
+    let mark: String?
+    let state: PhoneSessions.Mark?
+    var body: some View {
+        EngineTile(mark: mark, size: 20)
+            .overlay(alignment: .bottomTrailing) {
+                if let color {
+                    Circle().fill(color).frame(width: 8, height: 8)
+                        .overlay(Circle().stroke(PhoneTheme.canvas, lineWidth: 2))
+                        .offset(x: 3, y: 3)
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(width: 22, height: 22)
+    }
+    private var color: Color? {
+        switch state {
+        case .waiting, .silent, .unknown: PhoneTheme.amberIcon
+        case .failed: PhoneTheme.red
+        case .unread: PhoneTheme.accent
+        case .running, nil: nil
+        }
+    }
+}
+
+/** The time it last changed, or, while it works, a small ring and the run's clock, counted on the Host's clock. */
+private struct RowTrailing: View {
     @EnvironmentObject private var model: PhoneModel
     let task: NativeJSON
     let status: PhoneRowStatus
-    let frozenAt: Date?
     var body: some View {
         switch status {
-        case .waiting: Label { Text("等你处理") } icon: { Image(systemName: "shield").foregroundStyle(PhoneTheme.amberIcon) }.labelStyle(TightLabel()).foregroundStyle(PhoneTheme.amber).font(PhoneTheme.caption)
-        case .silent:
-            TimelineView(.periodic(from: .now, by: 30)) { _ in
-                Text(PhoneSessions.silentWords(task["live"], hostNow: model.hostNow())).font(PhoneTheme.caption).foregroundStyle(PhoneTheme.amber).lineLimit(1)
+        case .running, .stopping:
+            // The ring sits on the clock's line, so the row keeps the height of a row at rest.
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    ProgressView().controlSize(.mini).tint(PhoneTheme.accent)
+                        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+                    Text(PhoneSessions.runningClock(task["live"], hostNow: model.hostNow()) ?? "").font(PhoneTheme.caption.monospacedDigit()).foregroundStyle(PhoneTheme.ink2)
+                }
             }
-        case .stopping: running("正在停止")
-        case .running:
-            TimelineView(.periodic(from: .now, by: 1)) { _ in running(PhoneSessions.runningWords(task["live"], hostNow: model.hostNow())) }
-        case .failed: Label { Text("失败") } icon: { Image(systemName: "exclamationmark.circle") }.labelStyle(TightLabel()).foregroundStyle(PhoneTheme.red).font(PhoneTheme.caption)
-        case let .ended(word, unknown): Text(word).font(PhoneTheme.caption).foregroundStyle(unknown > 0 ? PhoneTheme.amber : PhoneTheme.muted)
-        case .frozen: Text(frozenAt.map { "上次确认 " + PhoneTime.message($0) } ?? "状态未更新").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted).lineLimit(1)
-        case .read: Text(PhoneTime.parse(task["updatedAt"]).map { PhoneTime.relative($0) } ?? "").font(PhoneTheme.caption).foregroundStyle(PhoneTheme.muted)
+        case .frozen:
+            EmptyView()
+        default:
+            Text(PhoneTime.parse(task["updatedAt"]).map { PhoneTime.relative($0) } ?? "").font(PhoneTheme.caption.monospacedDigit()).foregroundStyle(PhoneTheme.muted)
         }
     }
-    private func running(_ words: String) -> some View {
-        HStack(spacing: 5) { ProgressView().controlSize(.mini).tint(PhoneTheme.accent); Text(words).font(PhoneTheme.caption.monospacedDigit()).foregroundStyle(PhoneTheme.ink2).lineLimit(1) }
+}
+
+/** What the row is doing or waits on, in its tone, then the Harness and its place; a row at rest says only the latter. */
+private struct RowSecondLine: View {
+    @EnvironmentObject private var model: PhoneModel
+    let task: NativeJSON
+    let status: PhoneRowStatus
+    let meta: String
+    let awaitingReturn: Bool
+    var body: some View {
+        HStack(spacing: 5) {
+            phrase
+            Text(meta).foregroundStyle(PhoneTheme.muted).lineLimit(1).layoutPriority(-1)
+            if awaitingReturn {
+                Spacer(minLength: 4)
+                Text("待交回").foregroundStyle(PhoneTheme.amber)
+            }
+        }.font(.caption)
+    }
+    @ViewBuilder private var phrase: some View {
+        switch status {
+        case .waiting: said(PhoneSessions.waitWords(task).map { "等你处理 · " + $0 } ?? "等你处理", PhoneTheme.amber)
+        case .silent:
+            TimelineView(.periodic(from: .now, by: 30)) { _ in said(PhoneSessions.silentWords(task["live"], hostNow: model.hostNow()), PhoneTheme.amber) }
+        case .stopping: said("正在停止", PhoneTheme.ink2)
+        case .running: said(PhoneSessions.activityWords(task["live"]), PhoneTheme.ink2)
+        case .failed: said("失败", PhoneTheme.red)
+        case let .ended(word, unknown): said(word, unknown > 0 ? PhoneTheme.amber : PhoneTheme.muted)
+        case .frozen: said(model.lastConfirmed.map { "上次确认 " + PhoneTime.message($0) } ?? "状态未更新", PhoneTheme.muted)
+        case .read: EmptyView()
+        }
+    }
+    private func said(_ words: String, _ tone: Color) -> some View {
+        HStack(spacing: 5) {
+            Text(words).foregroundStyle(tone).lineLimit(1).fixedSize()
+            Text("·").foregroundStyle(PhoneTheme.faint)
+        }
     }
 }
 

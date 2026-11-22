@@ -19,6 +19,8 @@ import UIKit
     /** The list's search field, for the 内容中包含 scene. */
     static var query = ""
     static var scene: String { UserDefaults.standard.string(forKey: "LatchScene") ?? "code" }
+    /** The 额度与用量 scenes: the sheet opened from 设置 on this tab. */
+    static var usageTab: UsageTab?
     private static var locked = false
 
     static func stage(_ model: PhoneModel) {
@@ -46,6 +48,8 @@ import UIKit
             stageTeamResults(model, base: value)
         case "team-graph":
             stageTeamGraph(model, base: value)
+        case "usage-quota", "usage-spend":
+            stageUsage(model, base: value, tab: name == "usage-quota" ? .quota : .usage)
         case "workspace", "workspace-offline":
             model.snapshot = workSnapshot()
             if name == "workspace-offline" { stageDisconnected(model) }
@@ -70,6 +74,17 @@ import UIKit
             }
         case "conversation":
             model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation()
+        case "conversation-limited":
+            // Codex used its 5-hour limit up: the conversation says so above its input.
+            model.tab = .code; model.sessionId = "ses_review"; model.detail = conversation()
+            let limited = json(#"{"plan":"pro","state":"limited","observedAt":"{{-60}}","windows":[{"kind":"five-hour","usedPercent":100,"resetsAt":"{{7800}}"},{"kind":"weekly","usedPercent":64,"resetsAt":"{{400000}}"}]}"#)
+            model.snapshot = patched(model.snapshot) { object in
+                var catalog = object["catalog"]!.object
+                catalog["harnesses"] = .array(catalog["harnesses"]!.array.map { harness in
+                    harness["id"].string == "codex" ? patched(harness) { $0["quota"] = limited } : harness
+                })
+                object["catalog"] = .object(catalog)
+            }
         case "pictures":
             model.tab = .code; model.sessionId = "ses_review"; model.detail = picturesConversation()
         case "markdown", "markdown-code":
@@ -131,6 +146,22 @@ import UIKit
         case "delete":
             model.tab = .code; model.deleting = value["tasks"].array.first { $0["id"].string == "ses_site" }
         case "archived": model.tab = .code; model.showArchived = true
+        case "code-status":
+            // Each state a row can be in: at work (with its activity and clock), silent, failed, stopped, and a new answer.
+            model.tab = .code
+            func task(_ id: String, _ title: String, _ fields: String) -> NativeJSON {
+                json(#"{"id":"\#(id)","title":"\#(title)","harnessId":"codex","workspaceId":"latch","mode":"agent",\#(fields)}"#)
+            }
+            let added: [NativeJSON] = [
+                    task("ses_cmd", "跑一遍原生测试", #""status":"running","updatedAt":"{{-20}}","live":{"activity":"command","runStartedAt":"{{-192}}","lastEventAt":"{{-3}}"}"#),
+                    task("ses_model", "整理 relay 的日志格式", #""status":"running","updatedAt":"{{-40}}","workspaceId":"site","live":{"activity":"model","runStartedAt":"{{-75}}","lastEventAt":"{{-2}}"}"#),
+                    task("ses_quiet", "迁移旧的配对记录", #""status":"running","updatedAt":"{{-300}}","live":{"activity":"tool","silent":true,"runStartedAt":"{{-900}}","lastEventAt":"{{-420}}"}"#),
+                    task("ses_fail", "修复 iPad 分屏的布局", #""status":"idle","runOutcome":"failed","updatedAt":"{{-1800}}","branch":"fix/ipad-split""#),
+                    task("ses_new", "给设置页加入额度入口", #""status":"idle","updatedAt":"{{-600}}","branch":"feat/usage""#),
+                    task("ses_stop", "试一下新的差异视图", #""status":"cancelled","updatedAt":"{{-7200}}""#),
+            ]
+            model.snapshot = patched(model.snapshot) { object in object["tasks"] = .array((object["tasks"]?.array ?? []) + added) }
+            model.seenState = PhoneSeen(baseline: "2000-01-01T00:00:00.000Z", seen: ["ses_actions": "2100-01-01T00:00:00.000Z", "ses_site": "2100-01-01T00:00:00.000Z", "ses_fail": "2100-01-01T00:00:00.000Z"])
         case "search":
             model.tab = .code; query = "relay"
             model.contentSearch = PhoneContentSearch(query: "relay", hits: PhoneSearch.results(json(hitsText)).hits, truncated: false)
@@ -1155,5 +1186,78 @@ extension ScreensStage {
          "checks":[{"name":"native-simulator","state":"fail","job":"128"},{"name":"types","state":"pass"},{"name":"screenshots","state":"pending"}],
          "discussion":[{"kind":"line","review":"commented","author":"审阅者","path":"\#(workLongFile)","line":31,"body":"请保留长路径的完整内容，并在分屏下复核。"}],"discussionCapped":true}
         """#)
+    }
+}
+
+extension ScreensStage {
+    /** 额度与用量 opened from 设置: Harnesses in every state the sheet draws, and a canned 用量 for each period and grouping. */
+    fileprivate static func stageUsage(_ model: PhoneModel, base: NativeJSON, tab: UsageTab) {
+        model.tab = .settings
+        usageTab = tab
+        func own(_ id: String, _ label: String, quota: Bool = true, _ extra: String = "") -> String {
+            #"{"id":"\#(id)","status":"ready","modes":["agent"],"capabilities":{"display":{"label":"\#(label)","mark":"\#(id)"},"models":{"owner":"harness"\#(quota ? #","quota":true"# : "")}}\#(extra)}"#
+        }
+        let harnesses = "[" + [
+            #"{"id":"standard","status":"ready","modes":["agent","chat"],"capabilities":{"display":{"label":"Latch","mark":"latch"},"models":{"owner":"latch"}}}"#,
+            own("claude-agent", "Claude Agent", #","quota":{"plan":"max","account":"n•••@f•••.com","state":"near","observedAt":"{{-120}}","windows":[{"kind":"five-hour","usedPercent":18,"resetsAt":"{{9000}}"},{"kind":"weekly","usedPercent":22,"resetsAt":"{{410000}}"},{"kind":"weekly-opus","usedPercent":84,"resetsAt":"{{410000}}"}]}"#),
+            own("codex", "Codex", #","quota":{"plan":"pro","account":"l•••@e•••.com","state":"ok","observedAt":"{{-300}}","windows":[{"kind":"five-hour","usedPercent":12,"resetsAt":"{{14400}}"},{"kind":"weekly","usedPercent":61,"resetsAt":"{{432000}}"}]}"#),
+            own("antigravity", "Antigravity", #","quota":{"state":"limited","observedAt":"{{-600}}","windows":[{"kind":"rolling","group":"gemini","windowMinutes":300,"usedPercent":12,"resetsAt":"{{12000}}"},{"kind":"rolling","group":"claude-gpt","windowMinutes":300,"usedPercent":100,"resetsAt":"{{3000}}"}]}"#),
+            own("grok", "Grok Build", #","quotaRead":{"running":true}"#),
+            own("dsh", "DeepSeek Harness", #","quotaRead":{"failed":{"at":"{{-60}}","reason":"no-key"}}"#),
+            own("pi", "pi", quota: false), own("opencode", "OpenCode", quota: false),
+        ].joined(separator: ",") + "]"
+        model.snapshot = patched(base) { object in
+            var catalog = object["catalog"]!.object, features = catalog["features"]!.object
+            features["modelUsage"] = .bool(true)
+            catalog["features"] = .object(features)
+            catalog["harnesses"] = json(harnesses)
+            object["catalog"] = .object(catalog)
+        }
+    }
+
+    /** What the Host would answer for `POST /link/api/usage`, the same shape for every period and grouping. */
+    static func usage(period: String, group: String) throws -> NativeJSON {
+        guard PhoneUsage.periods.contains(period), PhoneUsage.groups.contains(group) else { throw NativeFailure.invalidRecord }
+        let hourly = period == "1", count = hourly ? 24 : Int(period) ?? 30
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = .current
+        let end = hourly ? calendar.dateInterval(of: .hour, for: Date())!.start : calendar.startOfDay(for: Date())
+        let buckets = (0..<count).map { index in
+            stamp.string(from: calendar.date(byAdding: hourly ? .hour : .day, value: index - count + 1, to: end)!)
+        }
+        let series = (0..<count).map { index -> NativeJSON in
+            // A working week's rhythm: quiet nights and weekends, a busier middle.
+            let wave = 0.55 + 0.45 * sin(Double(index) * (hourly ? 0.26 : 0.9)) + Double((index * 37) % 11) / 30
+            let input = Int(wave * (hourly ? 90_000 : 1_800_000)), output = input / 9
+            return .object(["bucket": .number(Double(index)), "by": .string("own"), "harness": .string("codex"), "requests": .number(0), "turns": .number(3),
+                "measured": .number(3), "inputTokens": .number(Double(input)), "outputTokens": .number(Double(output)),
+                "cacheReadTokens": .number(Double(input) * 0.62), "cacheBase": .number(Double(input))])
+        }
+        let scale = Double(count) / (hourly ? 24 : 7)
+        func row(_ fields: String, _ input: Double, _ output: Double, turns: Int, requests: Int = 0, cost: String = "[]") -> String {
+            #"{"by":"own",\#(fields),"requests":\#(requests),"turns":\#(turns),"failed":0,"fallbacks":0,"measured":\#(turns + requests),"usage":{"inputTokens":\#(Int(input * scale)),"outputTokens":\#(Int(output * scale))},"partial":{"cacheReadTokens":false,"cacheWriteTokens":false,"reasoningTokens":false},"cost":\#(cost),"uncosted":0}"#
+        }
+        let rows: [String] = switch group {
+        case "harness": [
+            row(#""harness":"codex""#, 6_200_000, 610_000, turns: 84, cost: #"[{"currency":"USD","micros":\#(Int(18_400_000 * scale)),"estimated":true}]"#),
+            row(#""harness":"claude-agent""#, 4_100_000, 380_000, turns: 51),
+            row(#""harness":"standard""#, 820_000, 96_000, turns: 0, requests: 140, cost: #"[{"currency":"CNY","micros":\#(Int(3_260_000 * scale))}]"#),
+        ]
+        case "model": [
+            row(#""harness":"codex","model":"gpt-5.5""#, 6_200_000, 610_000, turns: 84, cost: #"[{"currency":"USD","micros":\#(Int(18_400_000 * scale)),"estimated":true}]"#),
+            row(#""harness":"claude-agent","model":"claude-opus-5-5""#, 4_100_000, 380_000, turns: 51),
+            row(#""providerId":"deepseek","model":"deepseek-chat","harness":"standard""#, 820_000, 96_000, turns: 0, requests: 140, cost: #"[{"currency":"CNY","micros":\#(Int(3_260_000 * scale))}]"#),
+        ]
+        default: [
+            row(#""projectId":"latch""#, 8_300_000, 790_000, turns: 112),
+            row(#""projectId":"site""#, 2_000_000, 210_000, turns: 23),
+            row(#""projectId":"default""#, 820_000, 86_000, turns: 0, requests: 140),
+        ]
+        }
+        return patched(json("{\"rows\":[" + rows.joined(separator: ",") + "]}")) { fields in
+            fields["period"] = .string(period); fields["group"] = .string(group); fields["by"] = .string("all")
+            fields["timeZone"] = .string(TimeZone.current.identifier)
+            fields["buckets"] = .array(buckets.map(NativeJSON.string)); fields["series"] = .array(series)
+            fields["truncated"] = .bool(false)
+        }
     }
 }

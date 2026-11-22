@@ -1300,6 +1300,38 @@ public actor NativeWorkspace {
         return try NativeJSON.decode(response.body)
     }
     /**
+     * 用量: what Latch ran over a period from every source, grouped. A read-only POST of counts, read inside the window like
+     * other content and never stored; only the periods and groupings the sheet offers are sent.
+     */
+    public func usageSummary(period: String, group: String) async throws -> NativeJSON {
+        guard PhoneUsage.periods.contains(period), PhoneUsage.groups.contains(group) else { throw NativeFailure.invalidRecord }
+        let (connection, current) = try transport()
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        try lease.requireValid()
+        let body = try NativeJSON.object(["period": .string(period), "group": .string(group), "by": .string("all")]).encoded()
+        let response = try await connection.request(.post, path: "/link/api/usage", body: body, maximum: 1_048_576)
+        guard epoch == current else { throw NativeFailure.unavailable }
+        guard response.status == 200 else {
+            if response.status == 408 || response.status >= 500 { throw NativeReadFailure.failed }
+            throw await responseFailure(response, lease: lease)
+        }
+        try lease.requireValid()
+        return try NativeJSON.decode(response.body)
+    }
+    /**
+     * Asks the Host to read every Harness's limits again (`retry`: also those whose last read failed). What arrives comes
+     * with the catalog; the answer only names the Harnesses it asked. The Host rechecks `run` and the window.
+     */
+    public func refreshQuota(retry: Bool = false) async throws {
+        let (connection, current) = try transport()
+        guard let lease = await verification.currentLease() else { throw NativeFailure.expired }
+        try lease.requireValid()
+        let body = try NativeJSON.object(retry ? ["retry": .bool(true)] : [:]).encoded()
+        let response = try await connection.request(.post, path: "/link/api/quota/refresh", body: body, maximum: 65_536)
+        guard epoch == current else { throw NativeFailure.unavailable }
+        guard response.status == 200 else { throw await responseFailure(response, lease: lease) }
+    }
+    /**
      * 接入已有会话's listing and preview: POSTs that put nothing on record (the Host audits them) and carry no requestId,
      * read inside the window like content and never stored. A refusal comes back as the Host's own code and words.
      */
