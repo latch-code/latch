@@ -209,7 +209,8 @@ it('runs the actual CLI worker with private TLS, independent admin, graceful emp
   )
   const admin = `http://127.0.0.1:${events.find(event => event.started)!.adminPort}`
   expect((await fetch(`${admin}/healthz`)).status).toBe(200)
-  expect((await (await fetch(`${admin}/status`)).json()).memory.includesSockets).toBe(false)
+  // Linux reads the relay's own cgroup, which counts socket memory; elsewhere only the process's resident size.
+  expect((await (await fetch(`${admin}/status`)).json()).memory.includesSockets).toBe(process.platform === 'linux')
   await writeFile(join(dataDir, 'key.pem'), 'incomplete-renewal')
   expect((await run(process.execPath, ['--disable-sigusr1', '--import', 'tsx', cli, 'health', '--data-dir', dataDir])).stdout.trim()).toBe(
     '{}',
