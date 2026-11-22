@@ -736,13 +736,13 @@ DeepSeek Harness 用 API 密钥时，密钥是 DeepSeek 发给这个人的，Dee
 
 **密钥经过的每一处**（`cli-quota.ts`）：
 
-1. `readDshKey` 先排除可能把密钥发去别处的设置：DeepSeek Harness 会继承的环境（Host 的环境与登录 shell 读出的值）里有 `DSH_HOME` 或 `DEEPSEEK_BASE_URL`；`~/.dsh/.env` 或 `~/.dsh/profiles/acp/.env` 写了 `baseURL`、`DEEPSEEK_BASE_URL` 或 `apiKeyEnv`，或读不了、是链接。有一项就不读密钥，已显示的余额也清掉。会话文件夹的 `.env` 这样时只跳过这一次，已显示的余额不动；有人看时没有会话文件夹，只核对属于家目录的设置。这些都通过后，问 DeepSeek Harness 自己组合出的配置（见下面「它自己的配置」）：`llm-deepseek`、`credentials`、`llm-pi-ai`、`deepseek-account` 不是官方 bundle 原样的，或有插件来自官方 bundle 以外，也不读。
+1. `readDshKey` 先排除可能把密钥发去别处的设置：DeepSeek Harness 会继承的环境（Host 的环境与登录 shell 读出的值）里有 `DSH_HOME` 或 `DEEPSEEK_BASE_URL`；`~/.dsh/.env` 或 `~/.dsh/profiles/acp/.env` 写了 `baseURL`、`DEEPSEEK_BASE_URL` 或 `apiKeyEnv`，或读不了、是链接。有一项就不读密钥，已显示的余额也清掉。会话文件夹的 `.env` 这样时只跳过这一次，已显示的余额不动；有人看时没有会话文件夹，只核对属于家目录的设置。这些都通过后，问 DeepSeek Harness 自己组合出的配置（见下面「它自己的配置」）：`llm-deepseek`、`credentials`、`llm-pi-ai`、`deepseek-account` 不是官方 bundle 原样的，或官方 bundle 以外加入的插件能碰到它们，也不读。
 2. 再读固定路径 `~/.dsh/.credentials.yaml`：`~/.dsh` 必须是本人的目录而不是链接；文件以 `O_NOFOLLOW` 打开，打开后核对是普通文件、属于本人、其他人不可读、不超过 64 KiB。只认 DeepSeek Harness 写的版本 1 布局里 `refs.DEEPSEEK_API_KEY`，值必须像 DeepSeek 密钥（`sk-…`）；引用里有 `DEEPSEEK_BASE_URL` 也不读。
 3. 审计先写 `agent.quota.read`（只有 Harness 与预设 ID），写不进就不发。
 4. `fetchDeepSeekBalance` 把密钥放进这一次请求的头，地址写死，经 Host 出站策略（不加任何放行）、TLS、不跟随重定向。失败不记日志、不抛出、不重试；401、403 或形状不对就清掉已显示的余额。
 5. 离开这个模块的只有余额（百分之一单位）、币种与能不能用；随会话存进 `acp.json` 的也只有这些。
 
-**它自己的配置（`dsh-config.ts`）。** 不再在 patch 文件里找关键词，而是运行确认过的程序 `dsh --profile acp --dump-config`：它打印组合好的整棵插件树后退出，不挂载插件、不开会话；每个条目前有 `# == <层>`，被后面的层改过时写 `, patched by <层>…`，bundle 写包名、文件写绝对路径（0.2.2-rc.1 实测，用户层与 `--patch` 都如此）。判定：每个条目都来自 `@deepseek-ai/dsh-base` 或 `@deepseek-ai/dsh-acp-app`，所问的插件都在，且只被这两个 bundle 改过，才是官方；运行失败、超过 10 秒或 1 MiB 也不算。这样 bundle 自带的 patch、多个或其他扩展名的 patch 文件与 profile 的 bundle 清单都在里面。在私有空文件夹里运行（它会读启动目录的 `.env`），环境只有 `HOME`、`PATH`；它每次也会重写 profile 根的 `cordis.yml`（固定模板，正常启动同样写）。同一个家与程序的结论保留 5 分钟，人的 patch 层或 bundle 清单的修改时间一变就重问。它不求值 `!!js`、不读 `.env`，所以 `.env` 照上面另查。
+**它自己的配置（`dsh-config.ts`）。** 不再在 patch 文件里找关键词，而是运行确认过的程序 `dsh --profile acp --dump-config`：它打印组合好的整棵插件树后退出，不挂载插件、不开会话；每个条目前有 `# == <层>`，被后面的层改过时写 `, patched by <层>…`，bundle 写包名、文件写绝对路径（0.2.2-rc.1 实测，用户层与 `--patch` 都如此）。判定：所问的插件都在、都来自 `@deepseek-ai/dsh-base` 或 `@deepseek-ai/dsh-acp-app`、且只被这两个 bundle 改过，其他层加入的插件既不用所问插件的 ID，它的各行也不提所问的插件、`baseURL`、`apiKey`、`DEEPSEEK`、`credential`、`persist`、`session` 或 `!!js`，才是官方（人为别的用途加的插件，如状态显示的 hooks，不挡余额、轮次 tokens 与真删除）；运行失败、超过 10 秒或 1 MiB 也不算。这样 bundle 自带的 patch、多个或其他扩展名的 patch 文件与 profile 的 bundle 清单都在里面。在私有空文件夹里运行（它会读启动目录的 `.env`），环境只有 `HOME`、`PATH`；它每次也会重写 profile 根的 `cordis.yml`（固定模板，正常启动同样写）。同一个家与程序的结论保留 5 分钟，人的 patch 层或 bundle 清单的修改时间一变就重问。它不求值 `!!js`、不读 `.env`，所以 `.env` 照上面另查。
 
 密钥只在这次请求的内存里，不进日志、磁盘、参数、其他进程的环境、SSE、错误与审计，Latch 不刷新、不改写它。`redactKnownSecrets` 的 `sk-` 规则从 16 个字符起，覆盖这里接受的最短密钥。响应体按块读，超过 16 KiB 就停。
 

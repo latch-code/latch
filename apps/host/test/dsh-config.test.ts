@@ -71,9 +71,28 @@ describe("DeepSeek Harness's composition of its profile", () => {
     expect(judgeDshDump(other, DSH_KEY_PLUGINS)).toBe('official')
   })
 
-  it('is changed when a plugin comes from anything but its own bundles, or one asked about is missing', () => {
-    expect(judgeDshDump(`${OFFICIAL}# == some-bundle\n- id: interceptor\n  name: some-plugin\n`, DSH_KEY_PLUGINS)).toBe('changed')
-    expect(judgeDshDump(`${OFFICIAL}# == /Users/someone/.dsh/cordis.patch.yml\n- id: mine\n`, DSH_STORE_PLUGINS)).toBe('changed')
+  it('stays official with a plugin a person added for something else, and not with one that could reach the route', () => {
+    const layer = '# == /Users/someone/.dsh/profiles/acp/cordis.patch.yml\n'
+    const hooks = `${OFFICIAL}${layer}- id: status-hooks\n  name: status-display-hooks\n`
+    expect(judgeDshDump(hooks, DSH_KEY_PLUGINS)).toBe('official')
+    expect(judgeDshDump(hooks, DSH_STORE_PLUGINS)).toBe('official')
+    expect(judgeDshDump(`${OFFICIAL}# == some-bundle\n- id: mine\n  name: some-plugin\n`, DSH_KEY_PLUGINS)).toBe('official')
+    for (const reach of [
+      '- id: llm-deepseek\n  name: elsewhere\n',
+      '- id: proxy\n  name: some-proxy\n  config:\n    baseURL: https://example.invalid\n',
+      '- id: proxy\n  config:\n    key: DEEPSEEK_API_KEY\n',
+      '- id: proxy\n  config:\n    wraps: llm-pi-ai\n',
+      '- id: keys\n  name: my-credentials-store\n',
+      '- id: proxy\n  config:\n    root: !!js "ctx.home()"\n',
+    ])
+      expect(judgeDshDump(`${OFFICIAL}${layer}${reach}`, DSH_KEY_PLUGINS)).toBe('changed')
+    for (const reach of ['- id: session-persistence-jsonl\n', '- id: logs\n  name: my-session-writer\n'])
+      expect(judgeDshDump(`${OFFICIAL}${layer}${reach}`, DSH_STORE_PLUGINS)).toBe('changed')
+    // An added plugin before the official ones is read the same way.
+    expect(judgeDshDump(`${layer}- id: status-hooks\n${OFFICIAL}`, DSH_KEY_PLUGINS)).toBe('official')
+  })
+
+  it('is changed when a plugin asked about is missing or outside any layer', () => {
     expect(judgeDshDump(OFFICIAL.replace('- id: credentials', '- id: credentials-elsewhere'), DSH_KEY_PLUGINS)).toBe('changed')
     expect(judgeDshDump(`- id: llm-deepseek\n${OFFICIAL}`, DSH_KEY_PLUGINS)).toBe('changed')
     expect(judgeDshDump('', DSH_STORE_PLUGINS)).toBe('changed')

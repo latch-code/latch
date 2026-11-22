@@ -14,8 +14,8 @@
  *
  * Any setting that could send DeepSeek Harness's key to another address ends the read before the key file is opened:
  * such a key may not be DeepSeek's. Its plugin layers are judged by DeepSeek Harness's own composition
- * (`dsh-config.ts`): the DeepSeek, credentials and account plugins must be as its official bundles ship them, and no
- * other layer may add a plugin. `DEEPSEEK_BASE_URL` in its `.env` files, which that composition does not read, is
+ * (`dsh-config.ts`): the DeepSeek, credentials and account plugins must be as its official bundles ship them, and a
+ * plugin another layer adds may not name them, an address, a key or credential. `DEEPSEEK_BASE_URL` in its `.env` files, which that composition does not read, is
  * checked here. The key is never refreshed, rewritten or retried; a refusal ends in nothing to report.
  */
 import { constants } from 'node:fs'
