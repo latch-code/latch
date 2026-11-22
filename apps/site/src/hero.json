@@ -1,0 +1,35 @@
+{
+  "duration": 11.738,
+  "marks": {
+    "typing": 0.25,
+    "typed": 1.35,
+    "sent": 1.7,
+    "team": 2.9,
+    "running": 2.937,
+    "codex_done": 4.437,
+    "sync_done": 5.037,
+    "needs": 5.737,
+    "approval_shown": 6.337,
+    "hold_start": 7.037,
+    "tap": 8.037,
+    "allowed": 8.438,
+    "handed_back": 9.038,
+    "closing_done": 10.138,
+    "settled": 10.738,
+    "end": 11.738
+  },
+  "mac": {
+    "mp4": "hero-mac.a88ad7b5.mp4",
+    "mp4Small": "hero-mac-sm.5881c69c.mp4"
+  },
+  "phone": {
+    "mp4": "hero-phone.43fb756b.mp4",
+    "mp4Small": "hero-phone-sm.70d1b03e.mp4"
+  },
+  "allow": {
+    "left": 51.026,
+    "top": 67.062,
+    "width": 39.744,
+    "height": 5.213
+  }
+}

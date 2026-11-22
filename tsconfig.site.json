@@ -1,0 +1,11 @@
+// The website (apps/site/src): its page script runs in the browser; the pages' data modules and the robots and sitemap
+// endpoints run in Astro's build. DOM, no Node types. Astro components (.astro) are compiled by Astro, not checked here.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": [],
+    "tsBuildInfoFile": "./node_modules/.cache/typescript/site.tsbuildinfo"
+  },
+  "include": ["apps/site/src"]
+}

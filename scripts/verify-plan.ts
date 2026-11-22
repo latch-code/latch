@@ -252,6 +252,9 @@ function needsOf(path: string, projects: readonly TestProject[], e2e: readonly s
   // The terminal and simulator components' own suites run in the Host's project.
   if (path === 'native/macos/LatchTerminal.swift' || path === 'native/macos/LatchSimulator.swift') return ['build', 'project:@latch/host']
   if (path.startsWith('native/')) return ['build', 'presence']
+  // The website stands alone: no other project imports it, and its test builds it and checks the output.
+  if (path.startsWith('apps/site/'))
+    return ['knip', 'project:@latch/site', ...(/^apps\/site\/(?:src|public)\//u.test(path) ? (['layout'] as const) : [])]
 
   const needs: Need[] = ['knip', ...coveringE2e(path, e2e)]
   if (COPY_SCOPES.some(scope => path.startsWith(scope))) needs.push('copy')

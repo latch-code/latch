@@ -21,4 +21,6 @@ package.json            @Nirvana-Jie
 /knip.json              @Nirvana-Jie
 /*.config.ts            @Nirvana-Jie
 /apps/web/vite.config.ts @Nirvana-Jie
+/apps/site/astro.config.ts @Nirvana-Jie
+/apps/site/scripts/     @Nirvana-Jie
 /e2e/vitest.config.ts   @Nirvana-Jie

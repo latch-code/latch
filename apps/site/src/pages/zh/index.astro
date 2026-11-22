@@ -1,0 +1,11 @@
+---
+import Base from '../../layouts/Base.astro'
+import Home from '../../components/Home.astro'
+import Preload from '../../components/Preload.astro'
+import { COPY } from '../../i18n'
+const t = COPY.zh
+---
+<Base lang="zh" path="/" title={t.meta.homeTitle} description={t.meta.homeDescription}>
+  <Preload slot="head" />
+  <Home lang="zh" />
+</Base>

@@ -1,0 +1,17 @@
+---
+import Base from '../layouts/Base.astro'
+import { COPY } from '../i18n'
+const en = COPY.en
+const zh = COPY.zh
+---
+<Base lang="en" path="/404/" title={en.meta.notFoundTitle} description={en.notFound.body} noindex>
+  <section class="wrap lost">
+    <h1>{en.notFound.title}</h1>
+    <p class="lead">{en.notFound.body}</p>
+    <p class="lead" lang="zh-CN">{zh.notFound.title} {zh.notFound.body}</p>
+    <div class="actions">
+      <a class="btn btn--panel" href="/">{en.notFound.home}</a>
+      <a class="btn btn--quiet" href="/zh/" lang="zh-CN">{zh.notFound.home}</a>
+    </div>
+  </section>
+</Base>

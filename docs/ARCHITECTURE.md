@@ -145,7 +145,8 @@ Provider 负责模型协议转换；Tool 执行一种操作；HarnessDriver 提�
 | 插件 SDK | `tsconfig.sdk.json` | `packages/sdk` | Node ES 模块，无 DOM；`isolatedDeclarations`：导出须写明类型 |
 | Core | `tsconfig.core.json` | `packages/core` | Node ES 模块，无 DOM |
 | 浏览器 | `tsconfig.web.json` | `apps/web/src`、`packages/ui/src`、`packages/app-sdk/src` | DOM，不加载 Node 类型 |
-| Host | `tsconfig.host.json` | `apps/host/src`、`apps/host/scripts`、`apps/relay/src`、`apps/relay/scripts`、`apps/relay-edge/scripts`、`packages/link-client/src`、`packages/harness-acp/src`、兼容入口、`scripts`、根目录的 `*.config.ts`、`apps/web/vite.config.ts` | Node ES 模块，无 DOM |
+| 官网 | `tsconfig.site.json` | `apps/site/src` 的 `.ts`（`.astro` 由 Astro 编译，不在此检查） | DOM，不加载 Node 类型 |
+| Host | `tsconfig.host.json` | `apps/host/src`、`apps/host/scripts`、`apps/relay/src`、`apps/relay/scripts`、`apps/relay-edge/scripts`、`packages/link-client/src`、`packages/harness-acp/src`、兼容入口、`scripts`、根目录的 `*.config.ts`、`apps/web/vite.config.ts`、`apps/site/astro.config.ts`、`apps/site/scripts` | Node ES 模块，无 DOM |
 | 只剥离类型加载的 Host 模块 | `tsconfig.strip.json` | `apps/host/src/paths.ts`、`host-state.ts`、`env.ts` | 同 Host，另开启 `erasableSyntaxOnly` |
 | 桌面端 | `tsconfig.desktop.json` | `apps/desktop/src` | Electron 与 Node 的 CommonJS，用 `checkJs` 检查，无 DOM |
 | 测试 | `tsconfig.tests.json` | `tests`、`e2e`、各项目的 `test`、`packages/testkit` | Node 与 DOM |

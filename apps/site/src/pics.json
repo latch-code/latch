@@ -1,0 +1,237 @@
+{
+  "hero-mac-first": {
+    "file": "hero-mac-first.61e0cee0",
+    "widths": [
+      800,
+      1200,
+      1600,
+      2200,
+      2800
+    ],
+    "width": 3024,
+    "height": 1964
+  },
+  "hero-phone-first": {
+    "file": "hero-phone-first.94815a15",
+    "widths": [
+      360,
+      540,
+      780
+    ],
+    "width": 1170,
+    "height": 2532
+  },
+  "hero-mac-needs": {
+    "file": "hero-mac-needs.454e242c",
+    "widths": [
+      800,
+      1200,
+      1600,
+      2200,
+      2800
+    ],
+    "width": 3024,
+    "height": 1964
+  },
+  "hero-phone-needs": {
+    "file": "hero-phone-needs.253080a3",
+    "widths": [
+      360,
+      540,
+      780
+    ],
+    "width": 1170,
+    "height": 2532
+  },
+  "hero-mac-done": {
+    "file": "hero-mac-done.e809d17f",
+    "widths": [
+      800,
+      1200,
+      1600,
+      2200,
+      2800
+    ],
+    "width": 3024,
+    "height": 1964
+  },
+  "hero-phone-done": {
+    "file": "hero-phone-done.3e52a162",
+    "widths": [
+      360,
+      540,
+      780
+    ],
+    "width": 1170,
+    "height": 2532
+  },
+  "feat-board": {
+    "file": "feat-board.3a16f218",
+    "widths": [
+      960,
+      1400,
+      1920,
+      2560
+    ],
+    "width": 3024,
+    "height": 1964
+  },
+  "feat-models": {
+    "file": "feat-models.aa40e4ce",
+    "widths": [
+      960,
+      1400,
+      1920,
+      2560
+    ],
+    "width": 3024,
+    "height": 1964
+  },
+  "feat-handoff": {
+    "file": "feat-handoff.6acdfeeb",
+    "widths": [
+      960,
+      1400,
+      1920,
+      2560
+    ],
+    "width": 3024,
+    "height": 1964
+  },
+  "feat-review": {
+    "file": "feat-review.7e1ab9dd",
+    "widths": [
+      960,
+      1400,
+      1920,
+      2560
+    ],
+    "width": 3024,
+    "height": 1964
+  },
+  "feat-ship": {
+    "file": "feat-ship.00125c71",
+    "widths": [
+      960,
+      1400,
+      1920,
+      2560
+    ],
+    "width": 3024,
+    "height": 1964
+  },
+  "feat-tools": {
+    "file": "feat-tools.f76df1e2",
+    "widths": [
+      960,
+      1400,
+      1920,
+      2560
+    ],
+    "width": 3024,
+    "height": 1964
+  },
+  "feat-browser": {
+    "file": "feat-browser.d126b2fc",
+    "widths": [
+      960,
+      1400,
+      1920,
+      2560
+    ],
+    "width": 3024,
+    "height": 1964
+  },
+  "feat-simulator": {
+    "file": "feat-simulator.60538337",
+    "widths": [
+      960,
+      1400,
+      1920,
+      2560
+    ],
+    "width": 3024,
+    "height": 1964
+  },
+  "trust": {
+    "file": "trust.a5b66470",
+    "widths": [
+      640,
+      960,
+      1320
+    ],
+    "width": 1320,
+    "height": 620
+  },
+  "phone-a": {
+    "file": "phone-a.800a2bd9",
+    "widths": [
+      360,
+      540,
+      780
+    ],
+    "width": 1170,
+    "height": 2532
+  },
+  "phone-b": {
+    "file": "phone-b.061e3d3b",
+    "widths": [
+      360,
+      540,
+      780
+    ],
+    "width": 1170,
+    "height": 2532
+  },
+  "phone-c": {
+    "file": "phone-c.17866b65",
+    "widths": [
+      360,
+      540,
+      780
+    ],
+    "width": 1170,
+    "height": 2532
+  },
+  "phone-zh-a": {
+    "file": "phone-zh-a.61e944ec",
+    "widths": [
+      360,
+      540,
+      780
+    ],
+    "width": 1206,
+    "height": 2622
+  },
+  "phone-zh-b": {
+    "file": "phone-zh-b.eda25305",
+    "widths": [
+      360,
+      540,
+      780
+    ],
+    "width": 1206,
+    "height": 2622
+  },
+  "phone-zh-c": {
+    "file": "phone-zh-c.23ae25bd",
+    "widths": [
+      360,
+      540,
+      780
+    ],
+    "width": 1206,
+    "height": 2622
+  },
+  "feat-computer": {
+    "file": "feat-computer.1ab76b51",
+    "widths": [
+      960,
+      1400,
+      1920,
+      2560
+    ],
+    "width": 3024,
+    "height": 1964
+  }
+}

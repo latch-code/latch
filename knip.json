@@ -43,6 +43,10 @@
       // Compiled into the application and selected by its native launcher.
       "entry": ["scripts/desktop-launch.ts"]
     },
+    "apps/site": {
+      // The site's tools run by path from its package scripts; Astro's plugin finds the pages and their components.
+      "entry": ["scripts/*.ts"]
+    },
     "apps/web": {
       // Static analysis only: running vite.config.ts as a dev-server config would read the default data directory. The
       // page's entry comes from index.html.

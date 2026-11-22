@@ -14,6 +14,7 @@ Latch 是跨电脑与手机的 AI Agent 工作台。Node Host（`apps/host`）�
 | --- | --- |
 | `apps/host/` | Host 组合根、插件与命令 |
 | `apps/web/` | 浏览器与桌面共用页面，构建到 `dist/web` |
+| `apps/site/` | 官网：Astro 静态站，不用 workspace 包 |
 | `apps/desktop/` | `@latch/desktop`：Electron 主进程与 preload（CommonJS） |
 | `packages/link-wire/`、`packages/link-client/`、`packages/relay-core/`、`apps/relay/`、`apps/relay-edge/` | 原生连接：编码与 KDF、TLS 与 Go、盲中继 |
 | `packages/protocol/` | 共用 DTO、预设与安全文本 |

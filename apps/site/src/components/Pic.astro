@@ -1,0 +1,39 @@
+---
+// One product capture as a responsive picture: AVIF first, WebP after, at every width the media generator wrote
+// (listed with the picture's own size and hashed file name in src/pics.json). A `deferred` picture keeps its sources in data
+// attributes until the page script warms it, so pictures that are not on screen yet never compete with the
+// first one.
+import PICS from '../pics.json'
+
+interface Props {
+  stem: keyof typeof PICS
+  alt: string
+  sizes: string
+  class?: string
+  eager?: boolean
+  high?: boolean
+  deferred?: boolean
+  hidden?: boolean
+}
+
+const { stem, alt, sizes, eager = false, high = false, deferred = false, hidden = false } = Astro.props
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/')
+const p = PICS[stem]
+const set = (ext: string) => p.widths.map((w) => `${base}img/${p.file}-${w}.${ext} ${w}w`).join(', ')
+const fallback = `${base}img/${p.file}-${p.widths[Math.min(1, p.widths.length - 1)]}.webp`
+---
+<picture class={Astro.props.class} aria-hidden={hidden ? 'true' : undefined}>
+  {deferred ? (
+    <>
+      <source type="image/avif" data-srcset={set('avif')} sizes={sizes} />
+      <source type="image/webp" data-srcset={set('webp')} sizes={sizes} />
+      <img data-src={fallback} width={p.width} height={p.height} alt={alt} decoding="async" />
+    </>
+  ) : (
+    <>
+      <source type="image/avif" srcset={set('avif')} sizes={sizes} />
+      <source type="image/webp" srcset={set('webp')} sizes={sizes} />
+      <img src={fallback} width={p.width} height={p.height} alt={alt} loading={eager ? 'eager' : 'lazy'} decoding={eager ? 'sync' : 'async'} fetchpriority={high ? 'high' : undefined} />
+    </>
+  )}
+</picture>

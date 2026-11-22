@@ -1,0 +1,116 @@
+---
+import Pic from './Pic.astro'
+import GitHubLink from './GitHubLink.astro'
+import { COPY, type Lang } from '../i18n'
+import { LINKS } from '../config'
+
+interface Props { lang: Lang }
+const { lang } = Astro.props
+const t = COPY[lang]
+const download = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7.5M4.75 7 8 10.25 11.25 7M3 13.25h10"/></svg>'
+const copyGlyph = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.5"/><path d="M10.75 5.25V3.5a.75.75 0 0 0-.75-.75H3.5a.75.75 0 0 0-.75.75V10a.75.75 0 0 0 .75.75h1.75"/></svg>'
+const cmd = (code: string) => `<div class="cmd__row cmd__row--bare"><code class="cmd__code">${code}</code><button type="button" class="icon-btn" data-copy aria-label="${t.copy}">${copyGlyph}</button></div>`
+---
+<section class="wrap dl__head" aria-labelledby="dl-title">
+  <h1 id="dl-title">{t.dl.title}</h1>
+  <p class="lead">{t.dl.lede}</p>
+  <p class="dl__note" data-platform-note hidden></p>
+</section>
+
+<section class="wrap dl__cards" aria-label={t.dl.cards}>
+  <article class="dl-card dl-card--mac" id="mac" data-platform="mac" aria-labelledby="mac-title">
+    <div class="dl-card__body">
+      <div class="dl-card__top">
+        <svg class="i dl-card__glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.25" y="3" width="11.5" height="7.75" rx="1.25" /><path d="M1 13h14" /></svg>
+        <span class="tag" data-this hidden>{t.dl.this}</span>
+      </div>
+      <h2 id="mac-title">{t.dl.macTitle}</h2>
+      <p class="dl-card__text">{t.dl.macBody}</p>
+      <div class="dl-card__act">
+        <a class="btn btn--panel" href={LINKS.mac || '#mac'} data-download={LINKS.mac ? undefined : 'mac'} aria-describedby={LINKS.mac ? undefined : 'mac-pending'}><Fragment set:html={download} /><span>{t.dl.macCta}</span></a>
+        <p class="pending" id="mac-pending" role="status" aria-live="polite"></p>
+      </div>
+    </div>
+    <div class="dl-card__peek dl-card__peek--mac" aria-hidden="true">
+      <Pic stem="hero-mac-needs" alt="" sizes="(min-width: 1024px) 640px, 90vw" />
+    </div>
+  </article>
+
+  <article class="dl-card dl-card--ios" id="ios" data-platform="ios" aria-labelledby="ios-title">
+    <div class="dl-card__body">
+      <div class="dl-card__top">
+        <svg class="i dl-card__glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="4.25" y="1.75" width="7.5" height="12.5" rx="1.75" /><path d="M7 11.75h2" /></svg>
+        <span class="tag" data-this hidden>{t.dl.this}</span>
+      </div>
+      <h2 id="ios-title">{t.dl.iosTitle}</h2>
+      <p class="dl-card__text">{t.dl.iosBody}</p>
+      <div class="dl-card__act">
+        <a class="btn btn--quiet" href={LINKS.ios || '#ios'} data-download={LINKS.ios ? undefined : 'ios'} aria-describedby={LINKS.ios ? undefined : 'ios-pending'}><Fragment set:html={download} /><span>{t.dl.iosCta}</span></a>
+        <p class="pending" id="ios-pending" role="status" aria-live="polite"></p>
+      </div>
+    </div>
+    <div class="dl-card__peek dl-card__peek--phone" aria-hidden="true">
+      <Pic stem={lang === 'zh' ? 'phone-zh-a' : 'hero-phone-needs'} alt="" sizes="260px" />
+    </div>
+  </article>
+</section>
+
+<section class="wrap later" id="later" aria-labelledby="later-title">
+  <h2 id="later-title" class="later__title">{t.dl.laterTitle}</h2>
+  <ul class="later__list">
+    <li data-platform="win">
+      <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5 7 2.9v4.6H2.5zM8.5 2.7l5-.7v5.5h-5zM2.5 9H7v4.6l-4.5-.6zM8.5 9h5v5.5l-5-.7z" /></svg>
+      <span class="later__name">Windows</span>
+      <span class="tag" data-this hidden>{t.dl.this}</span>
+      <span class="later__soon">{t.dl.soon}</span>
+    </li>
+    <li data-platform="linux">
+      <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" /><path d="m4.5 6.25 2 1.75-2 1.75M8 10h3.25" /></svg>
+      <span class="later__name">Linux</span>
+      <span class="tag" data-this hidden>{t.dl.this}</span>
+      <span class="later__soon">{t.dl.soon}</span>
+    </li>
+    <li data-platform="android">
+      <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><rect x="4.25" y="1.75" width="7.5" height="12.5" rx="1.75" /><path d="M6.25 4h3.5" /></svg>
+      <span class="later__name">Android</span>
+      <span class="tag" data-this hidden>{t.dl.this}</span>
+      <span class="later__soon">{t.dl.soon}</span>
+    </li>
+  </ul>
+</section>
+
+<section class="wrap steps" aria-labelledby="steps-title">
+  <h2 id="steps-title">{t.dl.stepsTitle}</h2>
+  <ol class="steps__list">
+    <li>
+      <span class="steps__n" aria-hidden="true">1</span>
+      <h3>{t.dl.s1t}</h3>
+      <p>{t.dl.s1}</p>
+      <div class="cmd cmd--steps"><Fragment set:html={cmd('npm i -g @openai/codex') + cmd('codex login')} /></div>
+    </li>
+    <li>
+      <span class="steps__n" aria-hidden="true">2</span>
+      <h3>{t.dl.s2t}</h3>
+      <p>{t.dl.s2}</p>
+    </li>
+    <li>
+      <span class="steps__n" aria-hidden="true">3</span>
+      <h3>{t.dl.s3t}</h3>
+      <p>{t.dl.s3}</p>
+    </li>
+  </ol>
+</section>
+
+<section class="wrap source" id="source">
+  <details class="source__box" data-source>
+    <summary>
+      <h2 class="source__title">{t.dl.srcTitle}</h2>
+      <svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 6.25 3.5 3.5 3.5-3.5" /></svg>
+    </summary>
+    <div class="source__body">
+      <p>{t.dl.srcBody}</p>
+      <div class="cmd cmd--steps"><Fragment set:html={cmd('corepack pnpm install') + cmd('corepack pnpm build') + cmd('corepack pnpm desktop')} /></div>
+      <GitHubLink class="btn btn--quiet btn--sm source__gh" label={t.cta.github} soon={t.cta.soon} />
+    </div>
+  </details>
+</section>

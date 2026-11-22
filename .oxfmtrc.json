@@ -15,6 +15,11 @@
     // whose layout is part of the example (one JSON record per line, aligned columns).
     "**/*.md",
     // Shared security test vectors are read by TypeScript and Swift; keep the bytes as written.
-    "packages/testkit/vectors/"
+    "packages/testkit/vectors/",
+    // The website's media manifests and public files are written by its media generator outside the repository;
+    // keep them as generated so the next run does not fail the check.
+    "apps/site/src/pics.json",
+    "apps/site/src/hero.json",
+    "apps/site/public/"
   ]
 }

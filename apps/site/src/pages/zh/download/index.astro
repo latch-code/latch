@@ -1,0 +1,9 @@
+---
+import Base from '../../../layouts/Base.astro'
+import Download from '../../../components/Download.astro'
+import { COPY } from '../../../i18n'
+const t = COPY.zh
+---
+<Base lang="zh" path="/download/" title={t.meta.dlTitle} description={t.meta.dlDescription}>
+  <div class="dl"><Download lang="zh" /></div>
+</Base>

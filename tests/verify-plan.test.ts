@@ -63,6 +63,26 @@ describe('verification plan', () => {
     ])
   })
 
+  it('runs only the website test for the website, with a look at its pages for a page change', () => {
+    const projects = [...PROJECTS, { name: '@latch/site', dir: 'apps/site/test' }]
+    const plan = (path: string) => verificationPlan(changed(path), projects, { e2e: E2E })
+    expect(plan('apps/site/scripts/seo-check.ts').run.map(item => item.command)).toEqual([
+      'pnpm check:quick',
+      'pnpm knip',
+      'pnpm test --project @latch/site',
+      'pnpm docs:affected -- --base HEAD',
+    ])
+    const page = plan('apps/site/src/components/Home.astro')
+    expect(page.unknown).toEqual([])
+    expect(page.run.map(item => item.command)).toEqual([
+      'pnpm check:quick',
+      'pnpm knip',
+      'pnpm test --project @latch/site',
+      expect.stringContaining('深色模式'),
+      'pnpm docs:affected -- --base HEAD',
+    ])
+  })
+
   it('runs only the Vitest project of a changed test file', () => {
     expect(commands(['apps/web/test/client-diff.test.ts', 'tests/redact.test.ts'])).toEqual([
       'pnpm check:quick',

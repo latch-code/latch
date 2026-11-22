@@ -48,6 +48,9 @@ ignoredOptionalDependencies:
   - '@anthropic-ai/claude-agent-sdk-linux-x64-musl'
   - '@anthropic-ai/claude-agent-sdk-win32-arm64'
   - '@anthropic-ai/claude-agent-sdk-win32-x64'
+  # Astro offers sharp for image transforms. The site (apps/site) ships pictures already encoded and uses the
+  # passthrough image service, so sharp and its install script are never needed.
+  - sharp
 
 # Its two peers are imported by its type declarations only (its code bundles what it runs), so they
 # are optional here and not installed: Latch reads the SDK's messages with its own checks.
@@ -86,6 +89,7 @@ catalog:
   pdfjs-dist: 6.4.299
   '@playwright/test': 1.64.1
   '@types/node': 22.20.5
+  astro: 7.4.12
   '@types/qrcode': 1.5.6
   '@types/react': 19.3.0
   '@types/react-dom': 19.3.0

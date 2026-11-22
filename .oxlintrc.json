@@ -77,7 +77,7 @@
       }
     },
     {
-      // Browser client, its design system and isomorphic packages. tsconfig.web.json cannot keep Node out on its own:
+      // Browser client, its design system, the website and isomorphic packages. tsconfig.web.json cannot keep Node out on its own:
       // dependency typings (@types/qrcode, undici-types) load Node's globals into the browser program.
       "files": [
         "apps/web/src/**",
@@ -86,7 +86,8 @@
         "packages/protocol/**",
         "packages/link-wire/src/**",
         "packages/relay-core/src/**",
-        "apps/relay-edge/src/**"
+        "apps/relay-edge/src/**",
+        "apps/site/src/**"
       ],
       "rules": {
         "no-restricted-globals": [
@@ -140,6 +141,9 @@
         "packages/link-client/**",
         "apps/web/vite.config.ts",
         "apps/web/test/**",
+        "apps/site/astro.config.ts",
+        "apps/site/scripts/**",
+        "apps/site/test/**",
         "apps/desktop/test/**",
         "src/plugin-sdk.ts",
         "src/harness-sdk.ts",

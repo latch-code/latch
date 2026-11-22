@@ -1,5 +1,5 @@
 // Node ESM without the DOM: the Host (apps/host), the ACP driver (packages/harness-acp), the repository's scripts and
-// tool configs, the web client's Vite config among them.
+// tool configs, the web client's Vite config and the website's Astro config and tools among them.
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
@@ -19,6 +19,8 @@
     "src/harness-sdk.ts",
     "scripts",
     "*.config.ts",
-    "apps/web/vite.config.ts"
+    "apps/web/vite.config.ts",
+    "apps/site/scripts",
+    "apps/site/astro.config.ts"
   ]
 }

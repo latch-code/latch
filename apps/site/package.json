@@ -1,0 +1,22 @@
+{
+  "name": "@latch/site",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Latch product website: a static Astro site in English and Chinese, built into apps/site/dist",
+  "license": "MIT",
+  "scripts": {
+    "dev": "ASTRO_TELEMETRY_DISABLED=1 astro dev --port 4791",
+    "build": "ASTRO_TELEMETRY_DISABLED=1 astro build",
+    "preview": "tsx scripts/serve.ts",
+    "check:seo": "tsx scripts/seo.ts",
+    "measure": "tsx scripts/measure.ts"
+  },
+  "devDependencies": {
+    "astro": "catalog:",
+    "tsx": "catalog:"
+  },
+  "latch": {
+    "env": "browser"
+  }
+}

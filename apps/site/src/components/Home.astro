@@ -1,0 +1,179 @@
+---
+import Pic from './Pic.astro'
+import Mark from './Mark.astro'
+import GitHubLink from './GitHubLink.astro'
+import HERO from '../hero.json'
+import { AGENTS, COPY, FEATURES, href, type Feature, type Lang } from '../i18n'
+
+interface Props { lang: Lang }
+const { lang } = Astro.props
+const t = COPY[lang]
+const dl = href(lang, '/download/')
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/')
+const macSizes = '(min-width: 1464px) 1148px, (min-width: 832px) 70vw, 92vw'
+const phoneSizes = '(min-width: 1464px) 301px, (min-width: 832px) 19vw, 50vw'
+const featureSizes = '(min-width: 1360px) 1240px, 92vw'
+// The demo's chapters, from one mark of the recording to the next (src/hero.json, written by the media generator).
+const M = HERO.marks
+const CHAPTERS = [
+  { id: 'ask', from: 0, to: M.team },
+  { id: 'team', from: M.team, to: M.needs },
+  { id: 'needs', from: M.needs, to: M.tap },
+  { id: 'allow', from: M.tap, to: M.handed_back },
+  { id: 'done', from: M.handed_back, to: HERO.duration },
+] as const
+const download = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7.5M4.75 7 8 10.25 11.25 7M3 13.25h10"/></svg>'
+
+// Line icons for the feature tabs, drawn on the app's 16px grid.
+const ICONS: Record<Feature, string> = {
+  browser: '<circle cx="8" cy="8" r="6.25"/><path d="M1.75 8h12.5M8 1.75c1.7 1.75 2.55 3.83 2.55 6.25S9.7 12.5 8 14.25C6.3 12.5 5.45 10.42 5.45 8S6.3 3.5 8 1.75"/>',
+  simulator: '<rect x="4.25" y="1.75" width="7.5" height="12.5" rx="1.75"/><path d="M7 11.75h2"/>',
+  computer: '<path d="M3.5 2.5l3.6 10 1.55-4.1 4.1-1.55z"/><path d="M9.2 9.2l3.3 3.3"/>',
+  board: '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.75"/><path d="M6 2.75v10.5M10 2.75v10.5"/>',
+  models: '<rect x="4" y="4" width="8" height="8" rx="1.75"/><path d="M6.5 1.75V4M9.5 1.75V4M6.5 12v2.25M9.5 12v2.25M1.75 6.5H4M1.75 9.5H4M12 6.5h2.25M12 9.5h2.25"/>',
+  handoff: '<path d="M2.75 5.25h9.5M9.75 2.75l2.5 2.5-2.5 2.5M13.25 10.75h-9.5M6.25 8.25l-2.5 2.5 2.5 2.5"/>',
+  review: '<path d="M9.25 1.75H4.5A1.75 1.75 0 0 0 2.75 3.5v9a1.75 1.75 0 0 0 1.75 1.75h7a1.75 1.75 0 0 0 1.75-1.75V5.75z"/><path d="M8 5.25v4M6 7.25h4M6 11.5h4"/>',
+  ship: '<circle cx="4.25" cy="3.75" r="1.75"/><circle cx="4.25" cy="12.25" r="1.75"/><circle cx="11.75" cy="12.25" r="1.75"/><path d="M4.25 5.5v5M11.75 10.5V6.25a2 2 0 0 0-2-2H7.25M8.75 2.75 7.25 4.25l1.5 1.5"/>',
+  tools: '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.75"/><path d="M4.75 6.25 6.75 8l-2 1.75M8.25 10h3"/>',
+}
+const play = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7.5-4.5z"/></svg>'
+const pause = '<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 3.25v9.5M10.75 3.25v9.5"/></svg>'
+---
+<section class="hero" aria-labelledby="hero-title">
+  <div class="wrap hero__head">
+    <h1 id="hero-title" class="hero__title">{t.hero.title1} <span class="hero__joint">{t.hero.title2}</span></h1>
+    <p class="lead">{t.hero.lede}</p>
+    <div class="actions">
+      <a class="btn btn--panel" href={`${dl}#mac`}><Fragment set:html={download} /><span>{t.cta.mac}</span></a>
+      <GitHubLink class="btn btn--quiet" label={t.cta.github} soon={t.cta.soon} />
+    </div>
+    <p class="hero__also">{t.hero.alsoA}<a href={`${dl}#ios`}>{t.hero.alsoLink}</a>{t.hero.alsoB}</p>
+  </div>
+
+  <div class="wrap wrap--stage">
+    <figure class="film" data-film data-marks={JSON.stringify(HERO.marks)} data-duration={HERO.duration} aria-label={t.hero.film}>
+      <div class="film__mac shot" data-kind="product">
+        <Pic class="film__first" stem="hero-mac-first" alt={t.hero.macAlt.running} sizes={macSizes} eager high />
+        <Pic class="film__still" stem="hero-mac-needs" alt={t.hero.macAlt.needs} sizes={macSizes} />
+        <Pic class="film__end" stem="hero-mac-done" alt={t.hero.macAlt.done} sizes={macSizes} deferred hidden />
+        <video class="film__video" muted playsinline preload="none" aria-hidden="true" tabindex="-1" data-film-video="mac" width="2400" height="1559">
+          <source src={`${base}video/${HERO.mac.mp4Small}`} type="video/mp4" media="(max-width: 52rem)" />
+          <source src={`${base}video/${HERO.mac.mp4}`} type="video/mp4" />
+        </video>
+      </div>
+      <div class="film__phone shot shot--phone" data-kind="product">
+        <Pic class="film__first" stem="hero-phone-first" alt={t.hero.phoneAlt.running} sizes={phoneSizes} eager />
+        <Pic class="film__still" stem="hero-phone-needs" alt={t.hero.phoneAlt.needs} sizes={phoneSizes} />
+        <Pic class="film__end" stem="hero-phone-done" alt={t.hero.phoneAlt.done} sizes={phoneSizes} deferred hidden />
+        <video class="film__video" muted playsinline preload="none" aria-hidden="true" tabindex="-1" data-film-video="phone" width="780" height="1688">
+          <source src={`${base}video/${HERO.phone.mp4Small}`} type="video/mp4" media="(max-width: 52rem)" />
+          <source src={`${base}video/${HERO.phone.mp4}`} type="video/mp4" />
+        </video>
+        <button type="button" class="allow" data-allow aria-label={t.hero.allow} style={`--l: ${HERO.allow.left}%; --t: ${HERO.allow.top}%; --w: ${HERO.allow.width}%; --h: ${HERO.allow.height}%`} hidden><span aria-hidden="true"></span></button>
+        <span class="film__hint" data-hint aria-hidden="true">{t.hero.hint}</span>
+      </div>
+    </figure>
+    <div class="chapters" data-chapters hidden>
+      <ol class="chapters__list" aria-label={t.hero.steps}>
+        {CHAPTERS.map((c) => (
+          <li><button type="button" class="chapter" data-chapter={c.id} data-from={c.from} data-to={c.to}><span class="chapter__bar" aria-hidden="true"><span></span></span><span class="chapter__label">{t.hero.chapters[c.id]}</span></button></li>
+        ))}
+      </ol>
+      <button type="button" class="film__toggle" data-film-toggle aria-label={t.hero.pause} data-play={t.hero.play} data-pause={t.hero.pause} data-replay={t.hero.replay}>
+        <span class="vid__pause"><Fragment set:html={pause} /></span><span class="vid__play"><Fragment set:html={play} /></span>
+      </button>
+    </div>
+  </div>
+
+  <div class="wrap works">
+    <p class="works__label" id="works-label">{t.agents.label}</p>
+    <ul class="works__list" aria-labelledby="works-label">
+      {AGENTS.map((a) => <li><Mark agent={a} /><span>{a.name}</span></li>)}
+      <li><Mark glyph /><span>{t.agents.any}</span></li>
+    </ul>
+  </div>
+</section>
+
+<section class="band features" aria-labelledby="features-title">
+  <div class="wrap">
+    <h2 id="features-title" class="features__title">{t.features.title}</h2>
+    <div class="tabs" data-tabs>
+      <div class="tabs__list" role="tablist" aria-label={t.features.label}>
+        {FEATURES.map((f, i) => (
+          <button type="button" class="tab" role="tab" id={`tab-${f}`} aria-controls={`panel-${f}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1}>
+            <svg class="i" viewBox="0 0 16 16" aria-hidden="true" set:html={ICONS[f]} />
+            <span>{t.features.items[f].tab}</span>
+          </button>
+        ))}
+      </div>
+      {FEATURES.map((f, i) => {
+        const item = t.features.items[f]
+        return (
+          <div class="feature" role="tabpanel" id={`panel-${f}`} aria-labelledby={`tab-${f}`} tabindex="0" data-inactive={i === 0 ? undefined : ''}>
+            <div class="feature__cap">
+              <h3>{item.title}</h3>
+              <p>{item.body}</p>
+            </div>
+            <div class="feature__window shot" data-kind="product">
+              <Pic stem={`feat-${f}`} alt={item.alt} sizes={featureSizes} />
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  </div>
+</section>
+
+<section class="band phone" aria-labelledby="phone-title">
+  <div class="wrap phone__inner">
+    <div class="phone__text">
+      <h2 id="phone-title">{t.phone.title}</h2>
+      <p class="body">{t.phone.body}</p>
+      <ul class="facts">
+        <li>{t.phone.f1}</li>
+        <li>{t.phone.f2}</li>
+        <li>{t.phone.f3}</li>
+      </ul>
+    </div>
+    <div class="phones">
+      {(lang === 'zh' ? (['phone-zh-a', 'phone-zh-b', 'phone-zh-c'] as const) : (['phone-a', 'phone-b', 'phone-c'] as const)).map((stem, i) => (
+        <div class={`shot shot--phone phones__${i}`} data-kind="product">
+          <Pic stem={stem} alt={t.phone.alts[i]!} sizes="(min-width: 1024px) 236px, 30vw" />
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<section class="band trust" aria-labelledby="trust-title">
+  <div class="wrap trust__inner">
+    <figure class="trust__fig">
+      <div class="trust__shot shot" data-kind="product">
+        <Pic stem="trust" alt={t.trust.alt} sizes="(min-width: 1360px) 700px, (min-width: 1024px) 54vw, 92vw" />
+      </div>
+      <figcaption>{t.trust.caption}</figcaption>
+    </figure>
+    <div class="trust__text">
+      <h2 id="trust-title">{t.trust.title}</h2>
+      <p class="body">{t.trust.body}</p>
+      <ul class="keeps">
+        <li><strong>{t.trust.k1t}</strong> <span>{t.trust.k1}</span></li>
+        <li><strong>{t.trust.k2t}</strong> <span>{t.trust.k2}</span></li>
+        <li><strong>{t.trust.k3t}</strong> <span>{t.trust.k3}</span></li>
+      </ul>
+    </div>
+  </div>
+  <div class="wrap"><p class="fine">{t.trust.fine}</p></div>
+</section>
+
+<section class="close" aria-labelledby="get-title">
+  <div class="wrap close__inner">
+    <img class="close__icon" src={`${base}icon-192.png`} width="88" height="88" alt="" loading="lazy" decoding="async" />
+    <h2 id="get-title">{t.close.title}</h2>
+    <div class="actions">
+      <a class="btn btn--panel" href={`${dl}#mac`}><Fragment set:html={download} /><span>{t.cta.mac}</span></a>
+      <GitHubLink class="btn btn--quiet" label={t.cta.github} soon={t.cta.soon} />
+    </div>
+    <p class="close__note">{t.close.note}</p>
+  </div>
+</section>

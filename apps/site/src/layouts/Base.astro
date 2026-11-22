@@ -1,0 +1,153 @@
+---
+import '../styles/site.css'
+import { COPY, LANGS, href, type Lang } from '../i18n'
+import { LINKS } from '../config'
+import GitHubLink from '../components/GitHubLink.astro'
+
+interface Props {
+  lang: Lang
+  path: string
+  title: string
+  description: string
+  noindex?: boolean
+}
+
+const { lang, path, title, description, noindex = false } = Astro.props
+const t = COPY[lang]
+const site = Astro.site ?? new URL('https://latch.example')
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/')
+const url = (l: Lang) => new URL(href(l, path), site).href
+const canonical = url(lang)
+const other: Lang = lang === 'en' ? 'zh' : 'en'
+const ogImage = new URL(`${base}og/${lang}.jpg`, site).href
+const onDownload = path.startsWith('/download')
+const switchHref = href(other, noindex ? '/' : path)
+
+const jsonld = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'Latch',
+    applicationCategory: 'DeveloperApplication',
+    operatingSystem: 'macOS, iOS, iPadOS',
+    description: COPY[lang].meta.homeDescription,
+    url: url(lang),
+    image: ogImage,
+    inLanguage: LANGS[lang].tag,
+    license: 'https://opensource.org/licenses/MIT',
+    ...(LINKS.github ? { codeRepository: LINKS.github, sameAs: [LINKS.github] } : {}),
+  },
+  { '@context': 'https://schema.org', '@type': 'WebSite', name: 'Latch', url: new URL(href(lang, '/'), site).href, inLanguage: LANGS[lang].tag },
+]
+
+// Strings the page script needs after load (labels that change with state).
+const runtime = {
+  copy: t.copy,
+  copied: t.copied,
+  pending: t.dl.pending,
+  this: t.dl.this,
+  note: t.dl.note,
+  lang,
+}
+
+// First visit to the English home page from a Chinese browser goes to /zh/ once; choosing a language
+// in the header is remembered and wins. Crawlers are left where they are.
+const redirect = `(function(){try{var s=localStorage.getItem('latch-lang');if(!s&&/^zh\\b/i.test(navigator.language||'')&&!/bot|crawl|spider|slurp/i.test(navigator.userAgent)){location.replace('${href('zh', '/')}'+location.hash)}}catch(e){}})()`
+---
+<!doctype html>
+<html lang={LANGS[lang].tag}>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>{title}</title>
+  <meta name="description" content={description} />
+  <link rel="canonical" href={canonical} />
+  {noindex ? <meta name="robots" content="noindex" /> : (
+    <>
+      <link rel="alternate" hreflang="en" href={url('en')} />
+      <link rel="alternate" hreflang="zh-CN" href={url('zh')} />
+      <link rel="alternate" hreflang="x-default" href={url('en')} />
+    </>
+  )}
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Latch" />
+  <meta property="og:title" content={title} />
+  <meta property="og:description" content={description} />
+  <meta property="og:url" content={canonical} />
+  <meta property="og:locale" content={LANGS[lang].og} />
+  <meta property="og:locale:alternate" content={LANGS[other].og} />
+  <meta property="og:image" content={ogImage} />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content={t.meta.ogAlt} />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content={title} />
+  <meta name="twitter:description" content={description} />
+  <meta name="twitter:image" content={ogImage} />
+  <meta name="theme-color" content="#000000" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="format-detection" content="telephone=no" />
+  <link rel="icon" href={`${base}favicon.ico`} sizes="any" />
+  <link rel="icon" type="image/png" href={`${base}favicon-32.png`} sizes="32x32" />
+  <link rel="apple-touch-icon" href={`${base}apple-touch-icon.png`} />
+  <link rel="manifest" href={`${base}site.webmanifest`} />
+  <slot name="head" />
+  <script is:inline>document.documentElement.classList.add('js')</script>
+  {lang === 'en' && path === '/' && <script is:inline set:html={redirect} />}
+  <script type="application/ld+json" set:html={JSON.stringify(jsonld)} />
+</head>
+<body>
+  <a class="skip" href="#main">{t.skip}</a>
+
+  <header class="nav" data-nav>
+    <div class="nav__inner wrap">
+      <a class="brand" href={href(lang, '/')} aria-label={t.nav.home}>
+        <img src={`${base}icon-64.png`} width="28" height="28" alt="" />
+        <span>Latch</span>
+      </a>
+      <div class="nav__end">
+        <a class="lang" href={switchHref} hreflang={LANGS[other].tag} lang={LANGS[other].tag} aria-label={t.nav.switchLabel} data-lang-link={other}>{t.nav.switchTo}</a>
+        <GitHubLink class="nav__gh" label={t.nav.githubLabel} soon={t.cta.soon} iconOnly />
+        <a class="btn btn--panel btn--sm" href={href(lang, '/download/')} aria-current={onDownload ? 'page' : undefined}>{t.nav.download}</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <slot />
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot__inner">
+      <div class="foot__brand">
+        <a class="brand" href={href(lang, '/')}><img src={`${base}icon-64.png`} width="24" height="24" alt="" /><span>Latch</span></a>
+        <p>{t.foot.line}</p>
+      </div>
+      <nav class="foot__cols" aria-label={t.foot.label}>
+        <div>
+          <p class="foot__h">{t.foot.get}</p>
+          <a href={`${href(lang, '/download/')}#mac`}>{t.foot.mac}</a>
+          <a href={`${href(lang, '/download/')}#ios`}>{t.foot.ios}</a>
+          <a href={`${href(lang, '/download/')}#later`}>{t.foot.later}</a>
+        </div>
+        <div>
+          <p class="foot__h">{t.foot.open}</p>
+          <GitHubLink class="foot__link" label={t.foot.github} soon={t.cta.soon} />
+          <a href={`${href(lang, '/download/')}#source`}>{t.foot.source}</a>
+          <a href="https://opensource.org/licenses/MIT" rel="noopener">{t.foot.license}</a>
+        </div>
+      </nav>
+    </div>
+    <div class="wrap foot__base">
+      <p>{t.foot.legal}</p>
+      <a class="lang lang--foot" href={switchHref} hreflang={LANGS[other].tag} lang={LANGS[other].tag} aria-label={t.nav.switchLabel} data-lang-link={other}>{t.nav.switchTo}</a>
+    </div>
+  </footer>
+
+  <p class="toast" role="status" aria-live="polite" data-toast></p>
+  <script type="application/json" id="copy" set:html={JSON.stringify(runtime)} />
+  <script>
+    import '../scripts/site.ts'
+  </script>
+</body>
+</html>

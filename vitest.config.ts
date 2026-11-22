@@ -45,6 +45,8 @@ export default defineConfig({
         },
       },
       { extends: true, test: { name: '@latch/web', include: ['apps/web/test/**/*.test.ts'] } },
+      // Builds the website once into a temporary directory and checks the output.
+      { extends: true, test: { name: '@latch/site', include: ['apps/site/test/**/*.test.ts'] } },
       { extends: true, test: { name: '@latch/app-sdk', include: ['packages/app-sdk/test/**/*.test.ts'] } },
       { extends: true, test: { name: '@latch/desktop', include: ['apps/desktop/test/**/*.test.ts'] } },
       { extends: true, test: { name: '@latch/harness-acp', include: ['packages/harness-acp/test/**/*.test.ts'] } },

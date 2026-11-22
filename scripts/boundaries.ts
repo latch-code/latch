@@ -59,6 +59,8 @@ export const PROJECTS: Readonly<Record<string, ProjectRule>> = {
     devDependencies: ['@latch/link-client', '@latch/relay'],
   },
   '@latch/protocol': { dir: 'packages/protocol', env: 'isomorphic', dependencies: [] },
+  // The product website: a static Astro site that ships HTML, CSS and one page script, and uses no workspace package.
+  '@latch/site': { dir: 'apps/site', env: 'browser', dependencies: [] },
   // The design system of the browser client: design tokens, the order of the cascade layers and the primitive components.
   '@latch/ui': { dir: 'packages/ui', env: 'browser', dependencies: [] },
   // Plugin pages: the author types, the bridge client and the runtime that run inside the opaque page frame. It never

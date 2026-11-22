@@ -13,6 +13,7 @@ sources:
   - packages/link-wire/test
   - packages/link-client/test
   - apps/relay/test
+  - apps/site/test
   - scripts
   - vitest.config.ts
   - lefthook.yml
@@ -83,6 +84,7 @@ LATCH_ELECTRON_E2E=1 pnpm exec vitest run --config e2e/vitest.config.ts e2e/desk
 | `@latch/harness-acp` | `packages/harness-acp/test/` | ACP Driver |
 | `@latch/app-sdk` | `packages/app-sdk/test/` | 插件页面的桥 |
 | `@latch/ui` | `packages/ui/test/` | 在真实浏览器中运行，见下 |
+| `@latch/site` | `apps/site/test/` | 官网：真实 Astro 构建到临时目录，检查 SEO 与链接；`apps/site/` 的改动只运行它 |
 | `@latch/link-wire`、`@latch/link-client`、`@latch/relay` | `packages/link-wire/test/`、`packages/link-client/test/`、`apps/relay/test/` | 原生连接；共用 `packages/testkit/vectors/link-v1.json`，只连本地端口 0 |
 
 `@latch/host`、`@latch/host-swift`、`@latch/link-client` 与 `@latch/relay` 的全局 setup 从本地源码构建原生 TLS 组件。

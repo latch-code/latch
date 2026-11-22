@@ -19,6 +19,7 @@
     "packages/link-wire/test",
     "packages/link-client/test",
     "apps/web/test",
+    "apps/site/test",
     "apps/desktop/test",
     "packages/harness-acp/test",
     "packages/ui/test",
