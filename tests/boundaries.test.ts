@@ -277,6 +277,8 @@ describe('iOS LatchScreens code', () => {
       { path: 'native/ios/Sources/LatchNativeCore/Identity.swift', text: '#if LATCH_SCREENS\nlet flag = "-LatchLive"\n#endif' },
       { path: 'native/ios/Sources/LatchNativeCore/Keys.swift', text: 'let key = SecKeyCreateWithData(bytes as CFData, attributes, nil)' },
       { path: 'native/ios/App/Pairing/Draft.swift', text: 'let key = P256.Signing.PrivateKey()' },
+      { path: 'native/ios/Shared/PhoneTheme.swift', text: 'let scene = ScreensStage.scene' },
+      { path: 'native/ios/QuestionWidget/LatchQuotaWidget.swift', text: 'let key = P256.Signing.PrivateKey()' },
     ]
     expect(checkScreensOnly(files, project())).toEqual([
       `native/ios/App/Root/PhoneModel.swift:1：${SCOPE}`,
@@ -284,6 +286,8 @@ describe('iOS LatchScreens code', () => {
       `native/ios/Sources/LatchNativeCore/Identity.swift:2：${SCOPE}`,
       `native/ios/Sources/LatchNativeCore/Keys.swift:1：${SOFTWARE}`,
       `native/ios/App/Pairing/Draft.swift:1：${SOFTWARE}`,
+      `native/ios/Shared/PhoneTheme.swift:1：${SCOPE}`,
+      `native/ios/QuestionWidget/LatchQuotaWidget.swift:1：${SOFTWARE}`,
     ])
   })
 

@@ -366,7 +366,7 @@ export function parsePbxproj(text: string): Record<string, Plist> {
 /**
  * The iOS App's screenshot scenes and live mode's software keys stay out of the Latch product: they may be named, and
  * software keys made, only in `native/ios/Screens/` (a folder only LatchScreens builds) or inside `#if LATCH_SCREENS`
- * in `native/ios/App/`, never in the shared core or its fixtures. In the project, only LatchScreens builds Screens/ or
+ * in `native/ios/App/`, never in the widget extension, the code it shares with the App, the core or its fixtures. In the project, only LatchScreens builds Screens/ or
  * sets LATCH_SCREENS (simulator only), and the Latch target's settings are all in the project, with no indirection a
  * reader could miss. `files` are repository paths under native/ios with their text; `project` is project.pbxproj.
  */
@@ -386,7 +386,7 @@ export function checkScreensOnly(files: ReadonlyArray<{ path: string; text: stri
         continue
       }
       if (/^(?:\/\/|\/\*|\*)/u.test(line)) continue
-      const product = /^native\/ios\/(?:App|Sources)\//u.test(path)
+      const product = /^native\/ios\/(?:App|Shared|QuestionWidget|Sources)\//u.test(path)
       const named = SCREENS_ONLY.test(line),
         software =
           product
@@ -470,10 +470,10 @@ function checkScreensProject(text: string): string[] {
   return problems
 }
 
-/** The Swift files of the iOS App and core, for `checkScreensOnly`. */
+/** The Swift files of the iOS App, its widget extension, the code they share and the core, for `checkScreensOnly`. */
 export async function readIosSources(root: string): Promise<{ files: Array<{ path: string; text: string }>; project: string }> {
   const files: Array<{ path: string; text: string }> = []
-  for (const top of ['App', 'Screens', 'Sources', 'Testkit']) {
+  for (const top of ['App', 'Screens', 'Shared', 'QuestionWidget', 'Sources', 'Testkit']) {
     const base = posix.join('native/ios', top)
     let entries: string[] = []
     try {

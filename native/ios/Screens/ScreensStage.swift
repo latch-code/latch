@@ -50,6 +50,11 @@ import UIKit
             stageTeamGraph(model, base: value)
         case "usage-quota", "usage-spend":
             stageUsage(model, base: value, tab: name == "usage-quota" ? .quota : .usage)
+        case "usage-widgets":
+            // The quota widgets' file from the same Harnesses, Antigravity's read long enough ago to be out of date, for
+            // placing the Home and Lock Screen widgets by hand.
+            stageUsage(model, base: value, tab: .quota, staleAntigravity: true)
+            QuotaWidgetWriter.note(model.snapshot["catalog"], computer: "staged", hostNow: Date(), hostOffset: 0)
         case "workspace", "workspace-offline":
             model.snapshot = workSnapshot()
             if name == "workspace-offline" { stageDisconnected(model) }
@@ -1191,7 +1196,7 @@ extension ScreensStage {
 
 extension ScreensStage {
     /** 额度与用量 opened from 设置: Harnesses in every state the sheet draws, and a canned 用量 for each period and grouping. */
-    fileprivate static func stageUsage(_ model: PhoneModel, base: NativeJSON, tab: UsageTab) {
+    fileprivate static func stageUsage(_ model: PhoneModel, base: NativeJSON, tab: UsageTab, staleAntigravity: Bool = false) {
         model.tab = .settings
         usageTab = tab
         func own(_ id: String, _ label: String, quota: Bool = true, _ extra: String = "") -> String {
@@ -1201,7 +1206,7 @@ extension ScreensStage {
             #"{"id":"standard","status":"ready","modes":["agent","chat"],"capabilities":{"display":{"label":"Latch","mark":"latch"},"models":{"owner":"latch"}}}"#,
             own("claude-agent", "Claude Agent", #","quota":{"plan":"max","account":"n•••@f•••.com","state":"near","observedAt":"{{-120}}","windows":[{"kind":"five-hour","usedPercent":18,"resetsAt":"{{9000}}"},{"kind":"weekly","usedPercent":22,"resetsAt":"{{410000}}"},{"kind":"weekly-opus","usedPercent":84,"resetsAt":"{{410000}}"}]}"#),
             own("codex", "Codex", #","quota":{"plan":"pro","account":"l•••@e•••.com","state":"ok","observedAt":"{{-300}}","windows":[{"kind":"five-hour","usedPercent":12,"resetsAt":"{{14400}}"},{"kind":"weekly","usedPercent":61,"resetsAt":"{{432000}}"}]}"#),
-            own("antigravity", "Antigravity", #","quota":{"state":"limited","observedAt":"{{-600}}","windows":[{"kind":"rolling","group":"gemini","windowMinutes":300,"usedPercent":12,"resetsAt":"{{12000}}"},{"kind":"rolling","group":"claude-gpt","windowMinutes":300,"usedPercent":100,"resetsAt":"{{3000}}"}]}"#),
+            own("antigravity", "Antigravity", #","quota":{"state":"limited","observedAt":"{{\#(staleAntigravity ? -2400 : -600)}}","windows":[{"kind":"rolling","group":"gemini","windowMinutes":300,"usedPercent":12,"resetsAt":"{{12000}}"},{"kind":"rolling","group":"claude-gpt","windowMinutes":300,"usedPercent":100,"resetsAt":"{{3000}}"}]}"#),
             own("grok", "Grok Build", #","quotaRead":{"running":true}"#),
             own("dsh", "DeepSeek Harness", #","quotaRead":{"failed":{"at":"{{-60}}","reason":"no-key"}}"#),
             own("pi", "pi", quota: false), own("opencode", "OpenCode", quota: false),

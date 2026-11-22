@@ -4518,6 +4518,206 @@ describe.skipIf(process.platform !== 'darwin')('Swift native core interoperabili
       '',
     ])
   })
+  it('writes the quota widgets only an allow-list of the catalog, on the phone’s clock, and reads it back stale after 15 minutes', async () => {
+    const hostNow = Date.parse('2026-11-19T12:00:00.000Z')
+    // The Host's clock runs two minutes ahead of the phone's.
+    const offset = 120
+    const host = (seconds: number) => new Date(hostNow + seconds * 1000).toISOString()
+    const phone = (seconds: number) => new Date(hostNow - offset * 1000 + seconds * 1000).toISOString()
+    const own = (id: string, label: string, quota?: Record<string, unknown>) => ({
+      id,
+      status: 'ready',
+      capabilities: { display: { label, mark: id }, models: { owner: 'harness', quota: true } },
+      ...(quota ? { quota } : {}),
+    })
+    const catalog = {
+      providers: [{ id: 'deepseek', name: 'DeepSeek', apiKey: 'sk-provider-secret' }],
+      workspaces: [{ id: 'latch', name: 'secret-project', path: '/Users/someone/secret-project' }],
+      harnesses: [
+        { id: 'standard', status: 'ready', capabilities: { display: { label: 'Latch' }, models: { owner: 'latch' } } },
+        own('claude-agent', 'Claude Agent'),
+        own('codex', 'Codex', {
+          plan: 'pro',
+          account: 'n•••@f•••.com',
+          balanceCents: 4321,
+          currency: 'USD',
+          state: 'near',
+          observedAt: host(-180),
+          extra: 'secret-quota-field',
+          windows: [
+            { kind: 'five-hour', usedPercent: 50, resetsAt: host(2 * 3600), note: 'secret-window-note' },
+            { kind: 'weekly', usedPercent: 85, resetsAt: host(3 * 86400 + 5 * 3600) },
+            // Past its reset already: it is not written.
+            { kind: 'weekly-opus', usedPercent: 10, resetsAt: host(-3600) },
+          ],
+        }),
+        own('grok', 'Grok Build', {
+          plan: 'supergrok',
+          state: 'limited',
+          observedAt: host(-10),
+          balanceCents: 1230,
+          currency: 'CNY',
+          windows: [{ kind: 'five-hour', usedPercent: 100, resetsAt: host(30) }],
+        }),
+        own('antigravity', 'Antigravity', {
+          state: 'limited',
+          observedAt: host(-7200),
+          windows: [
+            { kind: 'rolling', group: 'gemini', windowMinutes: 300, usedPercent: 0, resetsAt: host(5 * 3600) },
+            { kind: 'rolling', group: 'claude-gpt', windowMinutes: 10080, state: 'near', resetsAt: host(86400) },
+          ],
+        }),
+        // Every window has reset, an id that is not one, and a balance alone: none is written.
+        own('cursor', 'Cursor', {
+          state: 'ok',
+          observedAt: host(-86400),
+          windows: [{ kind: 'weekly', usedPercent: 20, resetsAt: host(-60) }],
+        }),
+        own('../escape', 'Escape', {
+          state: 'near',
+          observedAt: host(0),
+          windows: [{ kind: 'weekly', usedPercent: 90, resetsAt: host(60) }],
+        }),
+        own('dsh', 'DeepSeek Harness', { state: 'ok', observedAt: host(0), balanceCents: 900, currency: 'CNY', windows: [] }),
+      ],
+    }
+    const result = await invoke({
+      operation: 'phoneQuotaWidget',
+      hostNow: host(0),
+      hostOffset: offset,
+      chosen: 'antigravity',
+      catalog,
+      at: [phone(0), phone(12 * 60), phone(12 * 60 + 1)],
+    })
+    const text = result.text as string
+    expect(JSON.parse(text)).toEqual({
+      version: 1,
+      harnesses: [
+        {
+          id: 'codex',
+          capabilities: { display: { label: 'Codex', mark: 'codex' } },
+          quota: {
+            state: 'near',
+            observedAt: phone(-180),
+            windows: [
+              { kind: 'five-hour', usedPercent: 50, resetsAt: phone(2 * 3600) },
+              { kind: 'weekly', usedPercent: 85, resetsAt: phone(3 * 86400 + 5 * 3600) },
+            ],
+          },
+        },
+        {
+          id: 'grok',
+          capabilities: { display: { label: 'Grok Build', mark: 'grok' } },
+          quota: { state: 'limited', observedAt: phone(-10), windows: [{ kind: 'five-hour', usedPercent: 100, resetsAt: phone(30) }] },
+        },
+        {
+          id: 'antigravity',
+          capabilities: { display: { label: 'Antigravity', mark: 'antigravity' } },
+          quota: {
+            state: 'limited',
+            observedAt: phone(-7200),
+            windows: [
+              { kind: 'rolling', windowMinutes: 300, usedPercent: 0, resetsAt: phone(5 * 3600) },
+              { kind: 'rolling', windowMinutes: 10080, state: 'near', resetsAt: phone(86400) },
+            ],
+          },
+        },
+      ],
+    })
+    // Every key the file holds, by path: nothing outside the allow-list ever reaches the App Group.
+    const allowed = new Set([
+      'version',
+      'harnesses',
+      'harnesses[].id',
+      'harnesses[].capabilities',
+      'harnesses[].capabilities.display',
+      'harnesses[].capabilities.display.label',
+      'harnesses[].capabilities.display.mark',
+      'harnesses[].quota',
+      'harnesses[].quota.state',
+      'harnesses[].quota.observedAt',
+      'harnesses[].quota.windows',
+      'harnesses[].quota.windows[].kind',
+      'harnesses[].quota.windows[].windowMinutes',
+      'harnesses[].quota.windows[].usedPercent',
+      'harnesses[].quota.windows[].state',
+      'harnesses[].quota.windows[].resetsAt',
+    ])
+    const paths = (value: unknown, at: string): string[] =>
+      Array.isArray(value)
+        ? value.flatMap(item => paths(item, `${at}[]`))
+        : value !== null && typeof value === 'object'
+          ? Object.entries(value).flatMap(([key, child]) => {
+              const path = at ? `${at}.${key}` : key
+              return [path, ...paths(child, path)]
+            })
+          : []
+    expect(paths(JSON.parse(text), '').filter(path => !allowed.has(path))).toEqual([])
+    for (const secret of ['n•••', 'pro', 'supergrok', '4321', '1230', 'secret', 'sk-', '/Users', 'Cursor', 'escape'])
+      expect(text.includes(secret)).toBe(false)
+    expect(result.unchanged).toBe(true)
+    expect(result.rejected).toEqual([true, true, true])
+    const [first, atBoundary, pastBoundary] = result.moments as Array<Array<Record<string, unknown>>>
+    // The Harness chosen in the widget's settings comes first; each shows its worst window, then its most used.
+    expect(first).toEqual([
+      {
+        id: 'antigravity',
+        name: 'Antigravity',
+        mark: 'antigravity',
+        state: 'limited',
+        account: true,
+        stale: true,
+        observed: '更新于 2 小时前',
+        leading: { name: '每 7 天', state: 'near', used: '将用尽', reset: '1 天后重置', pace: null },
+        windows: [
+          { name: '每 5 小时', state: 'ok', used: '已用 0%', reset: null, pace: null },
+          { name: '每 7 天', state: 'near', used: '将用尽', reset: '1 天后重置', pace: null },
+        ],
+      },
+      {
+        id: 'codex',
+        name: 'Codex',
+        mark: 'codex',
+        state: 'near',
+        account: false,
+        stale: false,
+        observed: '更新于 3 分钟前',
+        leading: { name: '每周', state: 'near', used: '已用 85%', reset: '3 天 5 小时后重置', pace: '按现在的速度约 明天 04:01 用完' },
+        windows: [
+          { name: '每 5 小时', state: 'ok', used: '已用 50%', reset: '2 小时后重置', pace: null },
+          { name: '每周', state: 'near', used: '已用 85%', reset: '3 天 5 小时后重置', pace: '按现在的速度约 明天 04:01 用完' },
+        ],
+      },
+      {
+        id: 'grok',
+        name: 'Grok Build',
+        mark: 'grok',
+        state: 'limited',
+        account: false,
+        stale: false,
+        observed: '更新于刚刚',
+        leading: { name: '每 5 小时', state: 'limited', used: '已用 100%', reset: '即将重置', pace: null },
+        windows: [{ name: '每 5 小时', state: 'limited', used: '已用 100%', reset: '即将重置', pace: null }],
+      },
+    ])
+    // Fifteen minutes after the Host read Codex's figures they are still current; a second later they are out of date.
+    // Grok's only window has reset, so nothing it said holds any longer.
+    const brief = (list: Array<Record<string, unknown>>) => list.map(item => [item.id, item.state, item.stale, item.leading === null])
+    expect(brief(atBoundary)).toEqual([
+      ['antigravity', 'limited', true, false],
+      ['codex', 'near', false, false],
+      ['grok', null, false, true],
+    ])
+    expect(brief(pastBoundary).map(item => item[2])).toEqual([true, true, false])
+    // Every five minutes for three hours, and when words change kind: after a reset, a minute before one, and on going stale.
+    const dates = result.dates as string[]
+    expect(dates).toEqual(dates.toSorted())
+    expect(dates[0]).toBe(phone(0))
+    expect(dates.at(-1)).toBe(phone(3 * 3600))
+    for (const moment of [phone(300), phone(31), phone(12 * 60 + 1), phone(-10 + 901), phone(2 * 3600 - 59), phone(2 * 3600 + 1)])
+      expect(dates).toContain(moment)
+    expect(dates).toHaveLength(37 + 5)
+  })
   it('derives the composer’s attachment decisions: reasons, limits, refusal classes, the tray and metadata-free images', async () => {
     const result = await invoke({ operation: 'phoneAttachments' })
     // The Host's own limits, said with a refusal: per kind for a plugin Harness, one file limit where it takes every file.

@@ -439,6 +439,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         workspace = nil; installedTransport = nil
         clearPrivateContent(); resetWorkItems(); resetSessionActions(); resetReview(); snapshot = .null; sessionId = nil; agentPath = []; appPath = []; controlPending = .null; controlsInFlight = []; controlTail = nil; heldDrafts = [:]; draftInserts = [:]; verifiedUntil = nil; connected = false; offline = false
         let resume = resumeSession; resumeSession = nil
+        QuotaWidgetWriter.connecting(to: host.id, computers: hosts.count)
         selectedHost = host; lastHostId = host.id; lastConfirmed = nil; hostNotice = nil; status = "正在连接…"; error = nil
         watchOthers()
         guard await storageOpening.waitForClose(), generation == current, self.store === store, storageAvailable else { return }
@@ -1273,6 +1274,7 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
         guard store === currentStore, storageAvailable else { return false }
         if !saved.contains(where: { $0.id == host.id }) {
             hosts.removeAll { $0.id == host.id }
+            QuotaWidgetWriter.forget()
             if let draft, draft.keys.connectionTag == host.keys.connectionTag,
                draft.keys.verificationTag == host.keys.verificationTag { self.draft = nil }
             forgetNotices(host, onlyThisComputer: localOnly)
@@ -1346,6 +1348,9 @@ enum PhoneStoreState: Equatable { case opening, ready, unavailable(NativeStoreFa
             // A cached list is old by definition: it says when it was true, not what the Host's clock reads now.
             if live { hostClockOffset = hostTime.timeIntervalSinceNow; lastConfirmed = Date() } else { lastConfirmed = hostTime }
         } else if live { lastConfirmed = Date() }
+        if live, let computer = selectedHost?.id {
+            QuotaWidgetWriter.note(snapshot["catalog"], computer: computer, hostNow: hostNow(), hostOffset: hostClockOffset)
+        }
         scheduleBookRefresh(hint: value["host"]["native"]["discoveryEpoch"].string, directoryHint: value["host"]["native"]["directoryEpoch"].string)
         return true
     }

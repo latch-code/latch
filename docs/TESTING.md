@@ -223,6 +223,8 @@ pnpm exec vitest run --config e2e/vitest.config.ts e2e/harness-acceptance.e2e.ts
 
 `agents-loading` 可与 `agents`、`agents-locked` 对照检查首次读取、已有目录和权限不足。`question-reminder` 在 App 内建立基线后产生一个模拟提问。可分别点横幅与灵动岛回到会话，提交回答后检查两处提醒撤下。需在支持灵动岛的 iPhone 模拟器上验收系统展示。
 
+`usage-widgets` 用额度页的数据写出额度小组件的副本（Antigravity 读于 40 分钟前），供在主屏与锁屏手动放置小号、中号、矩形与圆形小组件，核对过时标记、设置里选 Harness 与按下回到额度表。App Group 只在带权限文件的模拟器构建（`CODE_SIGN_IDENTITY=-`）里可用，无签名构建的小组件只显示「打开 Latch 读取」；文件保护只能在设了密码的真机上看。
+
 | 开关 | 用例 | 作用 |
 | --- | --- | --- |
 | 无 | `e2e/ios-app.e2e.ts` | 用临时 DerivedData 构建真实 App，禁用签名，不启动；核对 `Latch.app` 不含 Live 标记与软件密钥符号 |

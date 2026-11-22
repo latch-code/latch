@@ -1,4 +1,3 @@
-import LatchNativeCore
 import SwiftUI
 import UIKit
 
@@ -96,6 +95,18 @@ struct EngineTile: View {
         guard let art = mark.flatMap({ marks[$0] }) else { return Image(systemName: "cpu") }
         return bundled(scheme == .dark ? art.dark : art.light).renderingMode(art.mono ? .template : .original)
     }
+    /**
+     * A copy drawn `points` wide, for a widget: WidgetKit keeps no image far larger than it is shown, and some marks are
+     * vectors a thousand points across. Mono marks come back as templates for the ink to tint.
+     */
+    static func smallImage(_ mark: String?, scheme: ColorScheme, points: CGFloat) -> Image? {
+        guard let art = mark.flatMap({ marks[$0] }), let source = UIImage(named: scheme == .dark ? art.dark : art.light) else { return nil }
+        let format = UIGraphicsImageRendererFormat(); format.scale = 3
+        let small = UIGraphicsImageRenderer(size: CGSize(width: points, height: points), format: format).image { _ in
+            source.draw(in: CGRect(x: 0, y: 0, width: points, height: points))
+        }
+        return Image(uiImage: small).renderingMode(art.mono ? .template : .original)
+    }
     var body: some View {
         Group {
             if mark == "latch" {
@@ -109,22 +120,5 @@ struct EngineTile: View {
                 Image(systemName: "cpu").resizable().scaledToFit().foregroundStyle(PhoneTheme.muted)
             }
         }.frame(width: size, height: size).accessibilityHidden(true)
-    }
-}
-
-/** A session's engine by the catalog. */
-extension PhoneModel {
-    func engineInfo(_ harnessId: String?) -> NativeJSON {
-        snapshot["catalog"]["harnesses"].array.first { $0["id"].string == harnessId } ?? .null
-    }
-    func engineMark(_ harnessId: String?) -> String? {
-        let info = engineInfo(harnessId)
-        return info != .null ? PhoneStart.mark(info) : harnessId.map(PhoneStart.removedMark)
-    }
-    func engineName(_ harnessId: String?) -> String {
-        let info = engineInfo(harnessId)
-        if info != .null { return PhoneStart.engineName(info) }
-        // A session keeps the identifier of an engine since removed, and should not read as if another ran it.
-        return harnessId ?? "Harness"
     }
 }

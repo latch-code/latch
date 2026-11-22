@@ -2,7 +2,7 @@ import ActivityKit
 import SwiftUI
 import WidgetKit
 
-@main struct LatchQuestionWidget: Widget {
+struct LatchQuestionWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: LatchQuestionAttributes.self) { context in
             HStack(spacing: 12) {

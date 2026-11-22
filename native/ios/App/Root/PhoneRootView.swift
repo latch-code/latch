@@ -5,6 +5,8 @@ import UIKit
 struct PhoneRootView: View {
     @EnvironmentObject private var model: PhoneModel
     @State private var scan = false
+    /** 额度与用量, asked for by a quota widget. */
+    @State private var quota = false
     private var hasComputers: Bool {
         #if LATCH_SCREENS
         if model.staged { return true }
@@ -51,10 +53,14 @@ struct PhoneRootView: View {
         .onOpenURL { url in
             if url == LatchQuestionAttributes.link {
                 Task { await model.requestPendingQuestion() }
+            } else if url == LatchLink.quota {
+                // A cold start is still opening its store; the sheet shows what arrives.
+                if model.storeState == .opening || hasComputers { quota = true }
             } else if PairingInvitation.recognizes(url.absoluteString) {
                 Task { await model.beginPairing(payload: url.absoluteString) }
             }
         }
+        .sheet(isPresented: $quota) { UsageSheet().environmentObject(model) }
         .alert("这台 Mac 已移除这台 iPhone", isPresented: $model.removedByMac) {
             Button("好") {}
         } message: { Text("需要时在 Mac 上重新扫码。") }

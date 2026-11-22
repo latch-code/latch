@@ -117,6 +117,8 @@ public enum PhoneTime {
         guard let text = value.string else { return nil }
         return fractional.date(from: text) ?? whole.date(from: text)
     }
+    /** The protocol's form, to the millisecond, as `parse` reads it back. */
+    public static func format(_ date: Date) -> String { fractional.string(from: date) }
     private static func calendar() -> Calendar { var value = Calendar(identifier: .gregorian); value.timeZone = .current; return value }
     private static func days(from then: Date, to now: Date) -> Int {
         let calendar = calendar()

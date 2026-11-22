@@ -1,7 +1,7 @@
 Brand icons
 
 The web client shows the icon of each agent and model service it can use, from the files in
-apps/web/src/assets/brands/. They are copied unmodified from the sources below; native/ios/App/Brands.xcassets holds the same
+apps/web/src/assets/brands/. They are copied unmodified from the sources below; native/ios/Shared/Brands.xcassets holds the same
 engine-mark files, unmodified, for the iPhone app (SVG kept as vectors; official PNG assets retained as PNG). The
 app shows this file and the licences under 设置 › 关于 › 开源许可. The marks are trademarks of their
 respective owners and are used only to identify the service or tool; their use does not imply endorsement.
