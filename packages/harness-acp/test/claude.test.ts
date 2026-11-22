@@ -1199,8 +1199,40 @@ describe('Claude’s own store, read only where the Host lets the wire', () => {
     expect(asked).toEqual({ skipBehaviors: true })
     const report = claudeUsageRead(answer, Date.now())
     expect(report).toMatchObject({ windows: [{ kind: 'five-hour', usedPercent: 42 }], plan: 'max' })
-    expect(claudeUsageRead({ rate_limits_available: false, rate_limits: null }, Date.now())).toBeUndefined()
+    // Claude says plan limits do not apply (an API key): nothing to report, which is not a failure.
+    expect(claudeUsageRead({ rate_limits_available: false, rate_limits: null }, Date.now())).toBeNull()
+    // Limits said to apply, with no window figure Latch knows: nothing to show either.
+    expect(claudeUsageRead({ rate_limits_available: true, rate_limits: null }, Date.now())).toBeNull()
+    expect(
+      claudeUsageRead({ rate_limits_available: true, rate_limits: { five_hour: null, seven_day: { utilization: null } } }, Date.now()),
+    ).toBeNull()
     expect(claudeUsageRead({ something: 'else' }, Date.now())).toBeUndefined()
+  })
+
+  it('asks for its limits with no session open on one opened just to ask: saved nowhere, no hooks or MCP, then closed', async () => {
+    const h = harness()
+    const asked: unknown[] = []
+    const proto = FakeQuery.prototype as unknown as Record<string, unknown>
+    proto.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET = async (options: unknown) => {
+      asked.push(options)
+      return { subscription_type: 'pro', rate_limits_available: true, rate_limits: { seven_day: { utilization: 7, resets_at: null } } }
+    }
+    try {
+      const answer = await h.wire.request('_latch/quota/read', {})
+      expect(claudeUsageRead(answer, Date.now())).toMatchObject({ windows: [{ kind: 'weekly', usedPercent: 7 }], plan: 'pro' })
+      expect(asked).toEqual([{ skipBehaviors: true }])
+      const q = h.queries[0]!
+      expect(q.options).toMatchObject({ cwd: SPEC.cwd, persistSession: false, strictMcpConfig: true, mcpServers: {} })
+      expect(q.options.settings).toEqual({ disableAllHooks: true })
+      expect(q.closed).toBe(true)
+      // A session opened afterwards is an ordinary one: saved, with the person's hooks and MCP servers.
+      await h.wire.request('session/new', { cwd: '/work', mcpServers: [] })
+      expect(h.queries[1]!.options).not.toHaveProperty('persistSession')
+      expect(h.queries[1]!.options).not.toHaveProperty('strictMcpConfig')
+      expect(h.queries[1]!.options).not.toHaveProperty('settings')
+    } finally {
+      delete proto.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET
+    }
   })
 
   it('reports Claude’s own MCP servers once the session has a turn, not those Latch gave it', async () => {

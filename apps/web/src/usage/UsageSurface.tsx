@@ -1,16 +1,19 @@
 import { Fragment, useEffect, useState } from 'react'
-import type { AppSnapshot, HarnessInfo } from '@latch/protocol'
+import type { AppSnapshot, HarnessInfo, UsageSummary } from '@latch/protocol'
 import { Button, Modal, ModalHeader, SegmentedControl, Spinner } from '@latch/ui'
 import { HarnessTile } from '../components/BrandTile.tsx'
 import { harnessName } from '../composerChoice.ts'
-import { dateTime } from '../format.ts'
+import { api } from '../core/api.ts'
+import { dateTime, formatTokens } from '../format.ts'
+import { costsText } from '../settings/modelSpend.ts'
 import { hostNow, useTicker } from '../core/hostClock.ts'
 import { hostView, type DeviceAccess } from '../core/permissions.ts'
 import { LimitWindow } from './LimitWindow.tsx'
 import { harnessLimits, LIMIT_WORDS } from './limits.ts'
+import { usageTotals, type UsageTotals } from './usage.ts'
 import { closeUsage, openUsage, refreshLimits, useUsageRequest, type UsageRequest, type UsageView as View } from './surface.ts'
 import { UsageView } from './UsageView.tsx'
-import { defineCopy, listText, useLocale } from '../core/i18n.ts'
+import { defineCopy, formatNumber, listText, useLocale } from '../core/i18n.ts'
 
 const COPY = defineCopy(
   {
@@ -33,6 +36,10 @@ const COPY = defineCopy(
     noDirect: '没有用自己登录的 Harness',
     observed: (value1: string | number) => `${value1} 读到`,
     unsupported: '不报告额度',
+    recent: '近 7 天',
+    turns: (value1: string | number) => `${value1} 轮`,
+    tokens: (value1: string | number) => `${value1} tokens`,
+    recentTip: (name: string) => `${name} 经 Latch 的用量`,
   },
   {
     only: (name: string) => `Showing only ${name}`,
@@ -54,6 +61,10 @@ const COPY = defineCopy(
     noDirect: 'No Harnesses with their own sign-in',
     observed: (value1: string | number) => `Read ${value1}`,
     unsupported: 'Limits unavailable',
+    recent: 'Last 7 days',
+    turns: (value1: string | number) => `${value1} turns`,
+    tokens: (value1: string | number) => `${value1} tokens`,
+    recentTip: (name: string) => `${name} usage through Latch`,
   },
 )
 
@@ -255,6 +266,52 @@ export function NoLimits({ harness, asks, reading }: { harness: HarnessInfo; ask
   return <p className="usage-muted">{COPY.noReport}</p>
 }
 
+/** What each Harness ran through Latch in the last 7 days, read once as the limits are looked at; nothing on failure. */
+function useRecentUse(enabled: boolean): ReadonlyMap<string, UsageTotals> {
+  const [byHarness, setByHarness] = useState<ReadonlyMap<string, UsageTotals>>(() => new Map())
+  useEffect(() => {
+    if (!enabled) return undefined
+    const abort = new AbortController()
+    void api<UsageSummary>('usage', { method: 'POST', body: { period: '7', group: 'harness', by: 'all' }, signal: abort.signal }).then(
+      summary => {
+        const rows = new Map<string, Array<(typeof summary.rows)[number]>>()
+        for (const row of summary.rows) if (row.harness) rows.set(row.harness, [...(rows.get(row.harness) ?? []), row])
+        const next = new Map<string, UsageTotals>()
+        for (const [id, list] of rows) {
+          const totals = usageTotals(list)
+          if (totals.turns + totals.requests > 0) next.set(id, totals)
+        }
+        setByHarness(next)
+      },
+      () => {},
+    )
+    return () => abort.abort()
+  }, [enabled])
+  return byHarness
+}
+
+/** A Harness with no figure of its plan: what it used through Latch lately, opening its usage. */
+export function RecentUse({ harness, totals }: { harness: HarnessInfo; totals: UsageTotals }) {
+  const parts = [
+    COPY.recent,
+    totals.turns > 0 ? COPY.turns(formatNumber(totals.turns)) : undefined,
+    totals.tokens !== undefined ? COPY.tokens(formatTokens(totals.tokens)) : undefined,
+    costsText(totals.cost),
+  ].filter((part): part is string => part !== undefined)
+  return (
+    <Button
+      size="xs"
+      variant="link"
+      className="usage-recent"
+      title={COPY.recentTip(harnessName(harness))}
+      onClick={() => {
+        openUsage({ view: 'usage', harnessId: harness.id })
+      }}>
+      {parts.join(' · ')}
+    </Button>
+  )
+}
+
 function LimitsView({
   request,
   harnesses,
@@ -302,6 +359,7 @@ function LimitsView({
     const timer = setTimeout(() => expire(version => version + 1), Math.max(0, nextReset - hostNow()) + 1)
     return () => clearTimeout(timer)
   }, [nextReset])
+  const recent = useRecentUse(!offline)
   const { listed, silent } = limitHarnesses(harnesses, now)
   const shown = request.harnessId ? listed.filter(item => item.harness.id === request.harnessId) : listed
   const quiet = request.harnessId ? silent.filter(harness => harness.id === request.harnessId) : silent
@@ -342,11 +400,14 @@ function LimitsView({
               ))}
             </div>
           ) : (
-            <NoLimits
-              harness={harness}
-              asks={asks && !offline}
-              reading={!offline && (pending === 'all' ? harness.offer === undefined : pending.has(harness.id))}
-            />
+            <>
+              <NoLimits
+                harness={harness}
+                asks={asks && !offline}
+                reading={!offline && (pending === 'all' ? harness.offer === undefined : pending.has(harness.id))}
+              />
+              {recent.get(harness.id) && <RecentUse harness={harness} totals={recent.get(harness.id)!} />}
+            </>
           )}
         </section>
       ))}

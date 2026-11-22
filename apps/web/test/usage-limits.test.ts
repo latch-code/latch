@@ -7,7 +7,7 @@ import { leadingQuotaWindow, type BudgetProgress, type HarnessInfo, type Harness
 import { LimitWindow } from '../src/usage/LimitWindow.tsx'
 import { setLocale } from '../src/core/i18n.ts'
 import { HarnessLimitChip } from '../src/usage/UsageChip.tsx'
-import { NoLimits } from '../src/usage/UsageSurface.tsx'
+import { NoLimits, RecentUse } from '../src/usage/UsageSurface.tsx'
 import { budgetLimit, chipWords, harnessLimits, markParts, resetWords, usedWords, type LimitView } from '../src/usage/limits.ts'
 import { unpricedShare } from '../src/usage/usage.ts'
 
@@ -284,6 +284,23 @@ describe('a Harness with no figure in 额度', () => {
     expect(text(row({ failed: { at: observedAt, reason: 'failed' } }, { asks: false }))).toBe('读取失败')
     // True before a turn and after one that reported nothing.
     expect(text(row({ afterTurn: true }))).toBe('只在对话中报告')
+  })
+
+  it('says what it ran through Latch in the last 7 days when its plan has no figure', () => {
+    const recent = (totals: Parameters<typeof RecentUse>[0]['totals']) =>
+      text(renderToStaticMarkup(createElement(RecentUse, { harness: harness({ afterTurn: true }), totals })))
+    expect(
+      recent({
+        turns: 12,
+        requests: 0,
+        tokens: 1_250_000,
+        inputTokens: 1_000_000,
+        outputTokens: 250_000,
+        cost: [{ currency: 'USD', micros: 4_100_000 }],
+      }),
+    ).toMatch(/^近 7 天 · 12 轮 · 1\.3M tokens · \$4\.1/u)
+    // Turns that reported no tokens and no cost: only what is known.
+    expect(recent({ turns: 3, requests: 0, inputTokens: 0, outputTokens: 0, cost: [] })).toBe('近 7 天 · 3 轮')
   })
 
   it('never spins on a row nothing reads: a preset not added, or a read nobody asked for', () => {

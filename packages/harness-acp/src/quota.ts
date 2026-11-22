@@ -308,12 +308,14 @@ const claudeUsage = z.object({
 
 /**
  * Claude Code's answer to its experimental `get_usage` control request (SDK 0.3.322, `SDKControlGetUsageResponse`):
- * each plan window's share used, 0 to 100, and its reset. Only the shape it knows: anything else says nothing, so what
- * was shown stays.
+ * each plan window's share used, 0 to 100, and its reset. `null` when Claude says plan limits do not apply (an API key,
+ * Bedrock, Vertex) or names no window Latch knows: there is nothing to show outside a turn. Only the shape it knows:
+ * anything else says nothing, so what was shown stays.
  */
-export function claudeUsageRead(result: unknown, now: number): QuotaReport | undefined {
+export function claudeUsageRead(result: unknown, now: number): QuotaReport | null | undefined {
   const parsed = claudeUsage.safeParse(result)
-  if (!parsed.success || !parsed.data.rate_limits_available || !parsed.data.rate_limits) return undefined
+  if (!parsed.success) return undefined
+  if (!parsed.data.rate_limits_available || !parsed.data.rate_limits) return null
   const windows: QuotaWindow[] = []
   for (const [name, value] of Object.entries(parsed.data.rate_limits)) {
     const kind = Object.hasOwn(CLAUDE_KINDS, name) ? CLAUDE_KINDS[name] : undefined
@@ -321,7 +323,7 @@ export function claudeUsageRead(result: unknown, now: number): QuotaReport | und
     const resetsAt = resetTime(value.resets_at, now, 62)
     windows.push({ kind, usedPercent: percent(value.utilization), ...(resetsAt ? { resetsAt } : {}) })
   }
-  if (!windows.length) return undefined
+  if (!windows.length) return null
   const plan = planOf(parsed.data.subscription_type)
   return { windows: windows.slice(0, MAX_WINDOWS), ...(plan ? { plan } : {}) }
 }

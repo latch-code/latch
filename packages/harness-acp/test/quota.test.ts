@@ -897,6 +897,21 @@ describe('when someone looks', () => {
     for (const method of ['session/new', 'session/load', 'session/resume', 'session/prompt']) expect(received(log, method)).toHaveLength(0)
   })
 
+  it('reads a program without the request as one that reports only in turns, and does not ask it again for a while', async () => {
+    const t = await computer('fake-agent', 'grok', {})
+    await t.bridge.refreshQuota!()
+    expect(t.bridge.quotaRead?.()).toEqual({ afterTurn: true })
+    expect(received(await t.log(), '_x.ai/billing')).toHaveLength(1)
+    // Past the look floor, still within the half hour: nothing starts.
+    t.later(2 * 60_000)
+    await t.bridge.refreshQuota!()
+    expect(received(await t.log(), '_x.ai/billing')).toHaveLength(1)
+    t.later(30 * 60_000)
+    await t.bridge.refreshQuota!()
+    expect(received(await t.log(), '_x.ai/billing')).toHaveLength(2)
+    expect(t.bridge.quotaRead?.()).toEqual({ afterTurn: true })
+  })
+
   it('gives up on a program that does not answer in time, stops it, and keeps the last figure', async () => {
     const t = await computer('fake-agent', 'grok', { FAKE_ACP_BILLING: 'hang' })
     const started = Date.now()

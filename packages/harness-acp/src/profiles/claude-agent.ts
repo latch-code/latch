@@ -303,9 +303,9 @@ export const claudeProfile: HarnessProfile = {
   resumeResetsOptions: true,
   permission: CLAUDE_PERMISSION,
   ...CLAUDE_SHARED,
-  // Each turn's limits as it reports them, and before the first turn Claude's own answer to its experimental `get_usage`
-  // on the session's process; never for someone looking, so a Claude without it changes nothing anyone sees.
-  quota: { ...CLAUDE_SHARED.quota, request: { method: QUOTA_READ_METHOD, read: claudeUsageRead, openOnly: true } },
+  // Each turn's limits as it reports them, and Claude's own answer to its experimental `get_usage`: on the session's
+  // process before the first turn, and for someone looking on a process started for it (a session opened only to ask).
+  quota: { ...CLAUDE_SHARED.quota, request: { method: QUOTA_READ_METHOD, read: claudeUsageRead } },
   minimumVersion: {
     args: ['--version'],
     read: readClaudeVersion,

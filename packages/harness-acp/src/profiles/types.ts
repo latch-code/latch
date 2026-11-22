@@ -312,7 +312,8 @@ interface ProfileQuota {
   /** An extension request the agent answers without a turn, sent on a process that runs a session. */
   readonly request?: {
     readonly method: string
-    read(result: unknown, now: number): QuotaReport | undefined
+    /** `null`: the agent answered that no plan limits apply to this login (an API key, say); undefined: no answer. */
+    read(result: unknown, now: number): QuotaReport | null | undefined
     /**
      * Asked only on a session's process (as it opens and as a turn ends), never for someone looking: an answer this
      * harness may not give (an experimental request) then changes nothing anyone sees.

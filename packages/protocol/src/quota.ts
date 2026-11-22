@@ -85,7 +85,7 @@ export interface HarnessQuotaRead {
   failed?: { at: string; reason: QuotaReadFailure }
   /**
    * Nothing can be asked outside a turn: the program reports its limits only as one of its turns runs, and only some of
-   * the time (Claude Agent).
+   * the time (Claude Agent's adapter), or it was asked and said no plan limits apply to this login.
    */
   afterTurn?: true
 }

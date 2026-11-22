@@ -359,6 +359,15 @@ interface ToolUse {
   sessionId: string
 }
 
+/** A session opened only to read something (`mcp`: its MCP servers; `usage`: the plan's limits), saved nowhere. */
+type Probe = 'mcp' | 'usage'
+
+function askUsage(session: Session): Promise<unknown> {
+  const ask = session.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET
+  if (!ask) return Promise.reject(new RpcError(RPC.methodNotFound, 'Method not found'))
+  return ask.call(session.query, { skipBehaviors: true })
+}
+
 /** One session's `query()` and the process the SDK started for it. */
 interface Session {
   id: string
@@ -667,7 +676,7 @@ export class ClaudeWire implements AgentWire {
     session: Partial<Session>,
     abort: AbortController,
     claudeSettings: ClaudeSettings | undefined,
-    ephemeral: boolean,
+    probe: Probe | undefined,
   ) {
     const mcpServers: Record<string, unknown> = {}
     for (const server of parsed.mcpServers) {
@@ -707,7 +716,8 @@ export class ClaudeWire implements AgentWire {
       // As the adapter: Claude's questions only to a client that shows forms; without one the tool is off.
       ...(this.asks ? { onElicitation: this.onElicitation(session as Session) } : { disallowedTools: ['AskUserQuestion'] }),
       mcpServers,
-      ...(settings ? { settings } : {}),
+      // A session opened only for the plan's limits starts none of the person's hooks or MCP servers.
+      ...(probe === 'usage' ? { settings: { ...settings, disableAllHooks: true }, strictMcpConfig: true } : settings ? { settings } : {}),
       includePartialMessages: true,
       // Claude Code's own default; the runtime sets the mode it recorded for the session before each turn.
       permissionMode: 'default',
@@ -718,7 +728,7 @@ export class ClaudeWire implements AgentWire {
         this.canUseTool(session as Session, tool, input, context),
       ...(parsed.additionalDirectories?.length ? { additionalDirectories: parsed.additionalDirectories } : {}),
       // A session opened only to read what it offers leaves no transcript behind.
-      ...(ephemeral ? { persistSession: false } : {}),
+      ...(probe ? { persistSession: false } : {}),
       ...(resume ? { resume } : { sessionId: id }),
     }
   }
@@ -751,7 +761,7 @@ export class ClaudeWire implements AgentWire {
     })
   }
 
-  private async open(resume: string | undefined, params: unknown, ephemeral = false): Promise<unknown> {
+  private async open(resume: string | undefined, params: unknown, probe?: Probe): Promise<unknown> {
     const parsed = sessionParams.safeParse(params)
     if (!parsed.success) throw new RpcError(RPC.invalidParams, 'Invalid params')
     if (this.turn) throw new RpcError(RPC.internal, 'A turn is already running')
@@ -770,7 +780,7 @@ export class ClaudeWire implements AgentWire {
     try {
       query = start({
         prompt: inbox,
-        options: this.queryOptions(resume, id, parsed.data, partial, abort, settings, ephemeral),
+        options: this.queryOptions(resume, id, parsed.data, partial, abort, settings, probe),
       })
     } finally {
       if (marker === undefined) delete process.env.CLAUDE_AGENT_SDK_VERSION
@@ -1477,13 +1487,21 @@ export class ClaudeWire implements AgentWire {
   }
 
   /**
-   * The plan's limits, asked of Claude itself on the session's process (its experimental `get_usage`, told to skip the
-   * scan of recent transcripts it would otherwise make). Any failure says nothing: what was shown stays.
+   * The plan's limits, asked of Claude itself (its experimental `get_usage`, told to skip the scan of recent transcripts
+   * it would otherwise make): on the session's process, or, with no session open, on one opened just to ask, which leaves
+   * no transcript and runs none of the person's hooks or MCP servers. A Claude without it answers `methodNotFound`.
    */
   private async usage(): Promise<unknown> {
-    const ask = this.session?.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET
-    if (!this.session || !ask) throw new RpcError(RPC.methodNotFound, 'Method not found')
-    return ask.call(this.session.query, { skipBehaviors: true })
+    if (this.session) return askUsage(this.session)
+    if (this.turn) throw new RpcError(RPC.internal, 'This process runs another session')
+    await this.open(undefined, { cwd: this.spec.cwd, mcpServers: [] }, 'usage')
+    const session = this.session as Session | undefined
+    if (!session) throw new RpcError(RPC.internal, 'No session opened')
+    try {
+      return await askUsage(session)
+    } finally {
+      await this.closeSession(session)
+    }
   }
 
   /** Claude's own MCP servers and their states (`mcpServerStatus`), without those Latch gave the session. */
@@ -1522,7 +1540,7 @@ export class ClaudeWire implements AgentWire {
     const id = isRecord(params) && typeof params.sessionId === 'string' ? params.sessionId : undefined
     if (this.session && (!id || this.session.id === id)) return this.readMcp(this.session)
     if (this.session || this.turn) throw new RpcError(RPC.internal, 'This process runs another session')
-    await this.open(undefined, { cwd: this.spec.cwd, mcpServers: [] }, true)
+    await this.open(undefined, { cwd: this.spec.cwd, mcpServers: [] }, 'mcp')
     const session = this.session as Session | undefined
     try {
       return session ? await this.readMcp(session) : { servers: [] }

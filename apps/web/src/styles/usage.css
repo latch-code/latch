@@ -482,3 +482,10 @@
 .usage-foot {
   padding-top: var(--sp-8);
 }
+/* A row with no figure of its plan: what it used through Latch lately, as one quiet line that opens its usage. */
+.usage-recent {
+  justify-self: start;
+  /* The words line up with the reason above; the button's own inline padding stays for its hit area. */
+  margin-inline-start: calc(-1 * var(--sp-2));
+  color: var(--ink-2);
+}

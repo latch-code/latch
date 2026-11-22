@@ -366,6 +366,8 @@ const QUOTA_LOOK_FLOOR_MS = 60_000
 const QUOTA_RETRY_FLOOR_MS = 10_000
 /** One read for someone looking, a process's start included. */
 const QUOTA_LOOK_MS = 30_000
+/** After the harness said no plan limits apply (or that it cannot say), someone looking does not ask again this soon. */
+const QUOTA_NONE_MS = 30 * 60_000
 
 /** Why a Latch MCP server did not start, as the session says it. */
 const MCP_FAILURE_TEXT: Readonly<Record<McpStartFailure, string>> = {
@@ -1037,6 +1039,11 @@ export class AgentRuntime implements Bridge {
   private quotaLookedAt?: number
   /** How the last read for someone looking ended with nothing, for the definition it was made under. Memory only. */
   private quotaLookFailed?: { definitionHash: string; at: string; reason: QuotaReadFailure }
+  /**
+   * When a read for someone looking was answered with nothing to report outside a turn (no plan limits for this login,
+   * or a program without the request), for the definition it was made under. Memory only.
+   */
+  private quotaLookNone?: { definitionHash: string; at: number }
   private started?: Promise<void>
   private closing?: Promise<void>
   private closed = false
@@ -1760,7 +1767,7 @@ export class AgentRuntime implements Bridge {
   }
 
   /** `source`: the process that said it. Clients hear of it only when what they would be shown changes. */
-  private noteQuota(source: object, report: QuotaReport | undefined): void {
+  private noteQuota(source: object, report: QuotaReport | null | undefined): void {
     const definitionHash = this.definitionNow()
     if (!report || !definitionHash) return
     // Another command, variable or home may be another account.
@@ -1771,6 +1778,7 @@ export class AgentRuntime implements Bridge {
     const before = shown(this.quotaFacts.snapshot(now))
     this.quotaFacts.note(source, report, now)
     delete this.quotaLookFailed
+    delete this.quotaLookNone
     const after = this.quotaFacts.snapshot(now)
     // Kept with the sessions, so the last word and its time are there after a restart.
     if (after) this.state.quota = { definitionHash, value: after }
@@ -1836,11 +1844,15 @@ export class AgentRuntime implements Bridge {
   /** See `HarnessInfo.quotaRead`. */
   quotaRead(): HarnessQuotaRead | undefined {
     if (!this.quotaLookRoute()) return this.selection.profile?.quota ? { afterTurn: true } : undefined
-    const failed = this.quotaLookFailed?.definitionHash === this.definitionNow() ? this.quotaLookFailed : undefined
-    if (!this.quotaLooking && !failed) return undefined
+    const definitionHash = this.definitionNow()
+    const failed = this.quotaLookFailed?.definitionHash === definitionHash ? this.quotaLookFailed : undefined
+    // Asked, and the harness has nothing to say outside a turn: as for one that is never asked.
+    const none = !failed && this.quotaLookNone?.definitionHash === definitionHash
+    if (!this.quotaLooking && !failed && !none) return undefined
     return {
       ...(this.quotaLooking ? { running: true as const } : {}),
       ...(failed ? { failed: { at: failed.at, reason: failed.reason } } : {}),
+      ...(none ? { afterTurn: true as const } : {}),
     }
   }
 
@@ -1859,6 +1871,8 @@ export class AgentRuntime implements Bridge {
     if (!options.retry && known && now - Date.parse(known.observedAt) < QUOTA_FRESH_MS) return Promise.resolve()
     const floor = options.retry ? QUOTA_RETRY_FLOOR_MS : QUOTA_LOOK_FLOOR_MS
     if (this.quotaLookedAt !== undefined && now - this.quotaLookedAt < floor) return Promise.resolve()
+    const none = this.quotaLookNone
+    if (!options.retry && none && none.definitionHash === this.definitionNow() && now - none.at < QUOTA_NONE_MS) return Promise.resolve()
     // A vendor asked with a key the Host read: no more often than as turns end, whoever asks.
     if (route === 'host' && this.quotaAskedAt !== undefined && now - this.quotaAskedAt < QUOTA_ASK_FLOOR_MS) return Promise.resolve()
     this.quotaLookedAt = now
@@ -1877,9 +1891,16 @@ export class AgentRuntime implements Bridge {
         report = await this.lookForQuota(route, definitionHash, signal)
       } catch (error) {
         if (error instanceof RpcError && error.code === RPC.authRequired) reason = 'login'
+        // A program without the request has nothing to say outside a turn: not a failure.
+        else if (route === 'request' && error instanceof RpcError && error.code === RPC.methodNotFound) report = null
       }
       if (this.closed || this.definitionNow() !== definitionHash) return
       if (report) return this.noteQuota(this.lookQuotaSource, report)
+      if (report === null && route === 'request') {
+        delete this.quotaLookFailed
+        this.quotaLookNone = { definitionHash, at: this.clock() }
+        return
+      }
       if (report === null && route === 'host') {
         this.forgetQuota()
         reason = 'no-key'
@@ -1899,7 +1920,10 @@ export class AgentRuntime implements Bridge {
     return Math.min(QUOTA_LOOK_MS, this.limits.requestTimeoutMs)
   }
 
-  /** One read for someone looking. `undefined`: it did not finish; `null` (the Host's read): nothing to report. */
+  /**
+   * One read for someone looking. `undefined`: it did not finish; `null`: nothing to report (the Host's read: no key it
+   * may use; a request: no plan limits apply to this login).
+   */
   private async lookForQuota(
     route: 'request' | 'command' | 'host',
     definitionHash: string,
@@ -1910,7 +1934,7 @@ export class AgentRuntime implements Bridge {
     if (route === 'command') return readQuotaCommand(this.agent, quota!.command!, this.clock(), { signal })
     const codex = this.selection.profile?.wire === 'codex'
     const method = codex ? QUOTA_READ_METHOD : quota!.request!.method
-    const read = (answer: unknown): QuotaReport | undefined => {
+    const read = (answer: unknown): QuotaReport | null | undefined => {
       if (!codex) return quota!.request!.read(answer, this.clock())
       const parsed = quotaReport.safeParse(answer)
       return parsed.success ? (parsed.data as QuotaReport) : undefined
